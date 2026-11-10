@@ -248,6 +248,30 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bigfile, std::string_
 // The decoded values for each weapon (what loadWeapon returns for the game's data; tests check it).
 WeaponDef weaponDefaults(Weapon w);
 
+// A weapon object fired by script (`weaponbase` 0, tru.exe 0x7784F0 -> message 0x19B -> 0x6C9E50 mode 2): Natla's
+// wp_natla_fireball / wp_natla_fireball_adren with their projectiles pr_natla_fireball(_adren). Weapon stats block
+// (data +0xE0, query 0x36): +0x06 ammo object, +0x10 launch speed per 30 Hz frame (300 / 50). Projectile data: fire record
+// +0x18 (mode 2), its +0x1C the damage a direct hit carries (0 / 3000, 0x6C9670), +0x4C gravity (0: a straight line);
+// explosion record +0x44 (kind 2) as pr_grenade's: +0x48 damage, +0x4C radius, +0x50 damage at the edge, +0x54 degrees
+// up [I by the grenade's 70 and the squib record's angle], +0x58 / +0x5C knock speed centre / edge, +0x80 frames (150)
+// [I: ours the flight time after which it is dropped; the lingering flames it may describe are [U]].
+struct ObjectWeaponDef {
+    std::string object, ammo;
+    float speed = 0;         // units/s
+    float directDamage = 0;  // a direct hit on Lara (message 0x11C before the blast)
+    float damage = 0, edgeDamage = 0, radius = 0, knock = 0, knockEdge = 0, angle = 0; // the blast
+    float life = 5;          // seconds
+};
+std::optional<ObjectWeaponDef> loadObjectWeapon(const cdc::BigfileSet& bigfile, std::string_view object);
+// A fired one in flight (World::tickHostile): straight at the point its target stood on when it was fired (no homing:
+// 0x7784F0 copies the target's position into the fire message).
+struct HostileShot {
+    std::string weapon;         // ObjectWeaponDef::object
+    int32_t owner = 0;          // the weapon intro that fired it
+    glm::vec3 pos{0}, vel{0};
+    float age = 0;
+};
+
 // One bullet, for effects/tests.
 struct Shot {
     glm::vec3 from{0}, to{0}; // muzzle, impact (or range end)

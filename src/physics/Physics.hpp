@@ -179,6 +179,7 @@ struct Joint1 {
     float speed = 0, force = 0; // motor: target velocity per frame, impulse bound per 1/60 s step (<= 0: unbounded)
     bool motor = false;
     float push = 0;             // next step only: velocity per frame imposed from outside (Lara pushing), over gravity and motors
+    float pushBound = 0;        // the push's impulse bound per 1/60 s step, as `force` (<= 0: unbounded)
 };
 // Gravity, units per 30 Hz frame^2 (Lara's, tru.exe 5.72443).
 inline constexpr float kJointGravity = 5.72443f;
@@ -311,8 +312,9 @@ public:
     void setWater(std::span<const Water> water);
 
     // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge, loose
-    // and ragdoll bodies.
-    void blast(vec3 at, float radius, float near, float edge);
+    // and ragdoll bodies, along the line from `at` raised by half the distance; `elevation` >= 0 (degrees): along the
+    // body's heading from `at` at that elevation (Physics.cpp).
+    void blast(vec3 at, float radius, float near, float edge, float elevation = -1);
     // Vehicles, keyed by the caller. A new key starts at `model` (model -> world) at rest; existing ones keep simulating
     // with this step's `drive`, moved by `shift` (the caller's frame moved) and given `kick` (units/s, a hop or a hit);
     // missing keys are dropped. Their terrain is setTerrain's and setColliders'.

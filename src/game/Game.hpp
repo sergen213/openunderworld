@@ -11,6 +11,7 @@
 #include "formats/Formats.hpp"
 #include "formats/Uber.hpp"
 #include "game/Bend.hpp"
+#include "game/Breakables.hpp"
 #include "game/Combat.hpp"
 #include "game/Progress.hpp"
 #include "game/Water.hpp"
@@ -135,6 +136,24 @@ vec3 rootTranslation(const anim::Clip& clip, double t, bool loop);
 
 // ---- player -----------------------------------------------------------------------------------
 inline constexpr float kCameraRestPitch = -0.0225f; // tru.exe's rest pitch of the orbit camera (CameraState::pitch)
+// Lara's push / pull of a gripped object (her PushPull state; docs/GAMEPLAY.md "Thor's gauntlets"). lara.drm player
+// data +0xC7C / +0xC80 / +0xC84 / +0xC88 / +0xC8C / +0xC90 / +0xC98 [O; tru.exe 0x74AC00, 0x73F390, 0x6F1450]: speed
+// per unit of pull strength (units a second), its momentum cap, the impulse per step per unit of mass and its cap, the
+// stick arcs (degrees) that mean forward / back, the PushPull proxy's share of the object's mass.
+inline constexpr float kPushSpeed = 23.704172f, kPushMomentum = 2054.3616f, kPushImpulsePerMass = 0.75853348f,
+                       kPushImpulse = 142.22504f, kPushForwardArc = 60.0f, kPushBackArc = 30.0f, kPushProxyMass = 0.125f;
+// The way a stick (x right, y forward of her facing) moves what she grips: 1 forward (within 30 degrees), -1 back
+// (within 15 of straight back), 2 left, -2 right; 0 no input.
+int pushWay(vec2 stick);
+// Her push on a sliding body of `mass` with pull strength `strength` (1; the Thor scripts raise it while she grips)
+// against a joint motor holding it with `brake` (impulse per step, 0 none): `speed` units a second = min(23.704 x
+// strength, 2054.36 x strength / (0.125 x mass)) with at most `impulse` = min(mass x 0.7585, 142.225) x strength -
+// brake per step; speed 0: it does not move.
+struct PushDrive { float speed = 0, impulse = 0; };
+PushDrive pushDrive(float mass, float strength, float brake);
+// An engagement record naming objects (`needs`) admits Lara only with one of them in her hands (`held`) or, empty-
+// handed, among the objects she carries (tru.exe 0x6F3BB0: Thor's gauntlets and belt on the heavy mechanisms).
+bool carriesNeeded(std::span<const std::string> needs, const std::string* held, const std::set<std::string>& carried);
 enum class State {
     Idle, Walk, Run, Stop, Turn, JumpPrep, Jump, Fall, Land, Hang, Shimmy, ClimbUp,
     // water (tru.exe player states SwimSplashDownState, SwimTreadState, SwimState, SwimDiveInState,
@@ -184,8 +203,13 @@ struct Tuning {
     // she turns round) 42.53 up + 65.83 forward. Delays from the press: 359 / 290 / 109 ms (GAMEPLAY.md Numbers).
     float jumpVz = 1441.2f, standMoveJumpVz = 1499.1f, standJumpSpeed = 1200.0f; // units/s
     float runJumpVz = 1275.9f, runJumpSpeed = 1974.9f;                          // units/s
+    // A free jump's brake (Player::airBrake; jump query +0x74 / +0x68 of the ground and hang jump queries [O-data]): the
+    // stick more than 0.2 back of her heading scales the take-off's horizontal velocity, by up to 0.6 straight back.
+    float airBrakeStick = -0.2f, airBrake = 0.6f;
     float standMoveTakeoff = 0.26f; // s into ng_standing_jump a stick jump leaves the ground (0.33 s clip: 359 vs 290 ms)
     float turnRate = 6.0f;                     // rad/s
+    float runTurnRate = 1.755f, sprintTurnRate = 1.835f; // rad/s in the run / sprint loops [O Wine, l4_temple]
+    float runStopFrames = 15.0f; // frames in the run loop before letting go plays ng_running_stop (chart variable 374)
     float grabReach = 60.0f, grabWindow = 40.0f; // hand-to-ledge horizontal / vertical tolerance
     // Grab only while -13 <= zVel <= 9 units/frame * 5.72443 (30 Hz): player data bytes +0x834 / +0x833 (0x759260)
     float grabMinVz = -13 * 5.72443f * 30.0f, grabMaxVz = 9 * 5.72443f * 30.0f; // units/s
@@ -258,6 +282,16 @@ struct Tuning {
     // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
     // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
     float sprintSeconds = 9.7f, sprintResume = 0.9f;
+    // Landings (lara.drm chart S1275, Player::land): a fall of chart variable 344 or more lands in the stumble when the
+    // stick is pushed, 346 or more in the hard landing; Crouch pressed inside variable 347 frames of a landing still
+    // rolls [O-data].
+    float landStumbleFall = 632.111f, landHardFall = 1264.223f, landRollFrames = 4.0f;
+    float landCrouchTime = 0.36f; // s into the plain landing Crouch held (no stick) crouches [O Wine: 0.35..0.61 s; the clip's critical section]
+    // Hand over hand faster with Interact (chart S441 / S442 ledge, S1057 ladder): a press starts the fast move again
+    // from this frame of its clip on (T621 / T624: 8; T1809: chart variable 193 = 10); the ladder's needs more than
+    // chart variable 194 = 4 rungs to the top [O-data].
+    float hustleAgainFrame = 8.0f, ladderFastAgainFrame = 10.0f;
+    int ladderFastRungs = 4;
 };
 Tuning defaultTuning();
 
@@ -367,12 +401,15 @@ struct PlayerState {
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
+    float runTime = 0;    // Run: seconds in the run loop ng_run (the chart's state time of S65)
     // Carrying a portable that encumbers her (PortableDef::encumbers; World sets it every tick): the
     // portable_encumbered_* walk instead of the ground locomotion (Player::encumberedMove, Melee.cpp).
     bool encumbered = false;
     Buttons buttons; // input timing (Player::tick)
     int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
     float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
+    float landTime = 0;   // Land: seconds since she landed (the chart's state time of the landing group S1276)
+    float pullWait = -1;  // Hang: seconds since Jump was pressed with a top to climb onto (chart S439); -1 = not waiting
     // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
     // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
     // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
@@ -387,6 +424,10 @@ struct PlayerState {
     float wallTime = 0;
     vec3 jumpLedge{0};
     bool jumpFromLedge = false;
+    // Player::airBrake: the free jump's horizontal take-off velocity and the stick's forward part against her heading
+    // then (tru.exe chart context +0x430 / +0x420, stored on entering the flight by 0x73ECE0).
+    vec2 jumpVel0{0};
+    float jumpStick0 = 0;
     // Off balance on a balance beam (Player::beam). `build`: 30 Hz frames the stick has been held across the beam
     // (ours [I]: the escalation into the about-to-fall state). `aboutFall`: the about-to-fall state (chart S895 / S896,
     // bbeam_aboutfall_*) runs tru.exe's balance controller (chart context +0x358: enter 0x742330, update 0x742770, exit
@@ -416,8 +457,12 @@ public:
     // `move`: world-space wish direction (z ignored), length <= 1.
     void tick(vec2 move, const Actions& a, float dt);
     const PlayerState& state() const { return s_; }
+    // True once after a tick in which a climb-up clip was seated on its ledge (her position set to where the clip
+    // expects the ledge, not moved there): the world's triggers take no plane crossing from that step.
+    bool takeReseat() { const bool r = reseated_; reseated_ = false; return r; }
     const Tuning& tuning() const { return t_; }
     void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
+    void letGo() { startFall(vec3(0)); } // what she held or stood on is gone (a breakable broke): she falls from here
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
     // The orbit camera's view yaw and look pitch (rad, + = up), set by World each tick: under water the stick's forward
@@ -448,10 +493,13 @@ public:
     void launch(vec3 vel, std::string_view clip);
     void step(vec3 delta, float dt); // a ground move by `delta` with her collision (closing on a melee target)
     void setEncumbered(bool e) { s_.encumbered = e; }
-    // Push block grip, every tick: `axis` = the gripped block's push axis (0 = none), `moving` +1 push / -1 pull / 0.
-    // Grips (State::Block, obj_block_grab, facing the axis) from the states use() starts in; lets go (obj_block_release).
-    void grip(vec3 axis, int moving);
-    bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab"; } // grab clip done
+    // Push block grip, every tick: `axis` = the gripped block's push axis (0 = none), `moving` +1 push / -1 pull / 0,
+    // +2 / -2 sidestepping left / right (thor only). Grips (State::Block, facing the axis) from the states use() starts
+    // in; lets go. Clips: obj_block_grab / _idle / _front / _back / _release; `thor` (her PushPull state on a push /
+    // pull record: Thor's gauntlets, the calendar handles) thor_engage / _idle / _forward / _backward / _left / _right /
+    // _disengage.
+    void grip(vec3 axis, int moving, bool thor = false);
+    bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab" && s_.clip != "thor_engage"; } // grab clip done
     // Water: the volume overlapping the water probe box at `feet` (index into the collision markup), else -1.
     int waterAt(vec3 feet) const;
 
@@ -522,6 +570,7 @@ private:
     // HangJump velocity / flight time from here onto the target (after the take-off clip); vz: the take-off vertical
     // speed (units/s; 0 = the hang jump's by its clip)
     void launchHangJump(float vz = 0);
+    void airBrake(vec2 move); // State::Jump: the stick pulled back brakes a free jump (tru.exe 0x750040)
     void assistJump();
     // ground jump query (forward, up a 30 Hz frame; start `up` over the root, +0x2C bit 0x80, cone in radians) meeting a
     // ledge: aim at its hang
@@ -594,6 +643,8 @@ private:
     const AnimLibrary& anims_;
     Tuning t_;
     PlayerState s_;
+    bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
+    bool reseated_ = false; // this tick only (takeReseat)
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;
@@ -663,6 +714,9 @@ struct UnitData {
     // markers through them (tru.exe 0x69D690 / 0x7781D0 / 0x6AC340 mode 3; World::bindWater).
     struct IntroMarker { int32_t uid = 0; uint16_t marker = 0; vec3 pos{0}; };
     std::vector<IntroMarker> markers;
+    // Class-30 breakable intros (game/Breakables.hpp: falling floors, breaking ledges, braced doors): intro matrix, unit frame.
+    struct BreakableIntro { int32_t uid = 0; std::string object; glm::mat4 frame{1}; };
+    std::vector<BreakableIntro> breakables;
     // Render payload a UnitLoader may decode off the main thread (ou-game: formats::loadLevelScene); null = none.
     std::shared_ptr<const scene::SceneData> scene;
 };
@@ -726,8 +780,8 @@ public:
     World& operator=(const World&) = delete;
 
     void tick(const Actions& a); // one kTickSeconds step; keeps the previous state for interpolation
-    // CPU time accumulated by tick() in the script runtime and the physics step (ou-game --frames reports the means).
-    struct TickTimes { double scriptMs = 0, physicsMs = 0; } tickTimes;
+    // CPU time accumulated by tick() in Player::tick, the script runtime and the physics step (ou-game --frames reports the means).
+    struct TickTimes { double scriptMs = 0, physicsMs = 0, playerMs = 0; } tickTimes; // playerMs: Player::tick (her mover)
 
     const collision::CollisionMesh& collision() const { return col_; }
     const AnimLibrary& anims() const { return anims_; }
@@ -837,6 +891,20 @@ public:
     }
     // Hit message 0x11C on an uber object's sections (0x6D4690): shots, Mjolnir's bolts, the ground pound.
     void damageObject(int32_t uid, float damage, int damageClass);
+    // Class-30 breakables of the loaded units (Breakables.cpp, docs/GAMEPLAY.md "Breakables"): whole they collide and
+    // carry markup as their piece models; Lara's contact (standing on one, hanging from its ledge, on its pole or beam)
+    // or enough hits of a listed damage class start the record's action: the break, at once or after its delay; then
+    // every piece is a loose rigid body and the collision and markup are gone. `breakablePieces`: each piece's model
+    // and world frame now (the app draws them; `shake` = the jitter amplitude while it waits). `breakBreakable`: the
+    // script message 0x2C (break by action id). `brokenNow`: those that broke this tick.
+    enum class BreakPhase : uint8_t { Whole, Waiting, Broken };
+    struct BreakablePiece { int32_t uid = 0; int piece = 0, model = 0; glm::mat4 world{1}; BreakPhase phase = BreakPhase::Whole; vec3 shake{0}; glm::mat4 frame{1}; };
+    std::vector<BreakablePiece> breakablePieces() const;
+    std::optional<BreakPhase> breakablePhase(int32_t uid) const; // nullopt: not a breakable of the loaded units
+    bool breakBreakable(int32_t uid, int actionId);
+    const std::vector<int32_t>& brokenNow() const { return broken_; }
+    // An explosion record's area hit at `at` (0x69F1E0): targets, Lara, damageable objects, loose bodies.
+    void blast(vec3 at, const ExplosionRecord& x);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
@@ -1100,6 +1168,8 @@ public:
     int grenades = 0;                // carried; World starts with maxGrenades() [I]; saved
     const std::vector<Grenade>& liveGrenades() const { return grenades_; }
     const std::vector<vec3>& explosions() const { return explosions_; } // grenades that went off this tick
+    const std::vector<HostileShot>& hostileShots() const { return hostile_; }       // fired weapon objects' projectiles in flight
+    const std::vector<vec3>& hostileBlasts() const { return hostileBlasts_; }       // ... and where they went off this tick
 
     // ---- motorcycle (Vehicle.cpp; docs/GAMEPLAY.md "Motorcycle") ----
     // Every bike of the units loaded so far (by intro uid), kept across streaming; positions in their unit's frame.
@@ -1179,6 +1249,33 @@ private:
     // Objects' model markup (physics::ObjectPhysics::markup) in col_, placed by the object's collider each tick: ledges
     // on push blocks, cog rings, breakable ledges move with their instance (tru.exe markup boxes owned by the instance).
     void tickObjectMarkup();
+    // Breakables.cpp
+    struct Breakable { std::string unit, object; glm::mat4 frame{1}; std::shared_ptr<const BreakableData> data; };
+    struct BreakableState { BreakPhase phase = BreakPhase::Whole; int hits = 0, action = -1; float timer = 0, away = 0; };
+    std::map<int32_t, Breakable> breakables_;           // of the loaded units, world frame
+    std::map<int32_t, BreakableState> breakableStates_; // saved; kept while their unit is streamed out
+    std::map<std::string, std::shared_ptr<const BreakableData>> breakableData_; // by object name; null = not class 30
+    uint64_t breakableUnits_ = ~uint64_t(0);            // unitsVersion_ breakables_ was bound to
+    std::vector<int32_t> broken_;
+    void bindBreakables();
+    void breakableColliders();   // syncObjects: the whole ones' piece collision
+    void tickBreakableMarkup();  // tickObjectMarkup: their pieces' markup
+    void tickBreakables(float dt);
+    void breakableLoose(std::vector<physics::Scene::Loose>& out) const; // stepPhysics: the broken ones' pieces
+    void startBreak(int32_t uid, int action);
+    void breakNow(int32_t uid);
+    bool hitBreakable(int32_t uid, int damageClass, bool fromLara); // true: `uid` is a breakable (it took the message)
+    int32_t breakableOfMarkup(int markup) const;                    // the breakable owning col_.markup[markup], 0 none
+    nlohmann::json serializeBreakables() const;
+    void restoreBreakables(const nlohmann::json& j);
+    std::map<std::string, std::optional<ExplosionRecord>> explosionData_; // by object name
+    struct PendingBlast { vec3 at{0}; ExplosionRecord record; int ticks = 0; };
+    std::map<std::string, std::optional<ObjectWeaponDef>> objectWeapons_; // by weapon object name
+    std::vector<HostileShot> hostile_;     // saved ("hostile" of the combat block, only while any flies)
+    std::vector<vec3> hostileBlasts_;      // where they went off this tick
+    std::vector<PendingBlast> pendingBlasts_;                             // born squibs going off (tickBlasts)
+    void birthBlast(uint16_t object, vec3 at);
+    void tickBlasts();
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
     std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
     bool engages(const script::Object& o, const physics::Engagement& e); // Lara inside the record's shape
@@ -1193,7 +1290,8 @@ private:
     bool uberInsert(int32_t uid, size_t section, bool inserted);
     bool uberTrigger(int32_t uid, size_t section, uint32_t trigger, uint32_t param); // 0x6D4790 / 0x6D4810
     int32_t uberSectionJoint(int32_t uid, int32_t section) const; // the simulated joint moving the section, -1 none
-    bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles): grip, push, let go
+    void uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose, vec3 vel = vec3(0)); // its last joint went: a loose body
+    bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles, Thor mechanisms): grip, push, let go
     void touchCheckpoints();
     void restoreCheckpointSave(const nlohmann::json& save); // throws std::exception on a malformed one
     void restoreWorldRuntime(const nlohmann::json& runtime); // serializeRuntime's hinge limits and water levels
@@ -1216,6 +1314,15 @@ private:
     // face or living target; a struck target / script object takes the hit. Fills shot.to / hit / target / damage.
     bool strike(Weapon w, vec3 from, vec3 dir, float len, float dist0, bool wet, Shot& shot);
     void tickProjectiles(float dt);
+    // Weapon objects fired by script (Combat.cpp; docs/GAMEPLAY.md "Natla"): the `weaponbase` native, the decoded
+    // weapon by object name, a script object's point (its anchor's marker), the shots in flight.
+    void bindWeapons();
+    const ObjectWeaponDef* objectWeapon(const std::string& name);
+    vec3 objectPoint(const script::Object& o);
+    glm::mat4 objectFrame(const script::Object& o, int depth = 0);
+    void poseAnchored();
+    bool fireObjectWeapon(int32_t weapon, int32_t target);
+    void tickHostile(float dt);
     void gainAdrenaline(float dealt); // the meter += the health her hit took (message 0xD9)
     void groundPound(); // Mjolnir's shock (event 0x4B): knocks every enemy within kPoundRadius off balance
     void reloadWeapon(); // refill the current weapon's clips from its reserve
@@ -1371,6 +1478,14 @@ private:
         int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; int32_t engagement = -1;
         int32_t clip = -1; float clipTime = 0, rate = 1; bool loop = false;
         int32_t model = -1;
+        // A section instance is a rigid body its joints hold (0x4D3DA0 / 0x4D8000). `held`: a joint was created on it;
+        // `freed`: its last joint was removed (action 10) while it had one: it falls as a loose body from `freedAt`
+        // (model -> world), as ma_uo_bedroom_door's leaf once pulled or blown off its hinge. Saved.
+        bool held = false, freed = false;
+        glm::mat4 freedAt{1};
+        // The velocity the removed joint had (units/s, world): the body starts with it (a prismatic joint's slide; the
+        // ring door comes off its slide moving toward the rope's pull). Only its first step reads it: not saved.
+        vec3 freedVel{0};
     };
     std::map<std::pair<std::string, int32_t>, std::optional<physics::EngagementSet>> uberEngagements_; // (object, offset)
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };
@@ -1415,7 +1530,9 @@ private:
     void useSwitchClip(const script::Object& o); // Lara plays the switch's use clip, aligned to it (Objects.cpp)
     vec3 uberGrip_{0};                     // last tick: Lara grips one (her stick moves it): its axis toward her facing, 0 = none
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
-    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; } uberHandle_; // the push / pull record Lara grips
+    // The push / pull record Lara grips; `face`: the way she faces while gripping it (0: her own facing, World::pushUberHandle)
+    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; } uberHandle_;
+    int uberMoving_ = 0; // this tick, gripping it: the way her stick moves it (1 forward, -1 back, 2 left, -2 right; 0 not)
     std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)
     std::map<int32_t, nlohmann::json> uberSaved_; // restored uber state of objects not prepared since (prepareUber applies it)
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;

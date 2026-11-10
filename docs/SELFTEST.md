@@ -387,13 +387,16 @@ tested behaviour happen.
 
 | scenario | level | what it proves (measured) |
 |---|---|---|
-| `locomotion` | l3_main_bedroom | idle; walk 348 and run 1274 units/s; stopping; standing jump 201.6 high / 0.56 s, stick jump 218.1 / 0.58 s, running jump 157.1 / 0.50 s at 1974.9 units/s [O Wine] |
+| `locomotion` | l3_main_bedroom | idle; walk 348 and run 1274 units/s; stopping on the spot inside the run loop's first 15 frames [O Wine]; standing jump 201.6 high / 0.56 s, stick jump 218.1 / 0.58 s, running jump 157.1 / 0.50 s at 1974.9 units/s [O Wine] |
 | `sprint` | l4_trailstart | sprint_loop 9.7 s, the exhausted clips, ~2.2 s until a 0.9 s second sprint, refill at rest [O Wine] |
 | `fall_damage` | l4_pool | falls of 1000 / 1500 / 2000: air time, landing, 0 / 204.7 / 729.4 damage [O curve] |
+| `jump_brake` | l4_temple | a running jump with Jump tapped / held: the same arc; the stick pulled back in flight: 40 % of the take-off speed [O Wine] |
+| `landing` | l4_temple | landings by the chart's dispatch: plain, running on, the stumble from 632.11, the hard landing from 1264.22, the Crouch + forward roll, a jump out of the landing clip [O chart] |
 | `death_respawn` | l4_pool | checkpoint 5502 touched; a 2600 fall kills; 3 s later she stands at the checkpoint with full health |
-| `ledge` | l3_main_bedroom | standing jump catches ledge 973; shimmy left and right; pull up 496 onto the top |
+| `ledge` | l3_main_bedroom | standing jump catches ledge 973; shimmy left and right; one Interact hustle move (371 in 0.57 s); pull up 496 onto the top |
 | `traversal_chain` | l2_cliffclimb | run -> jump -> hang (911) -> shimmy -> climb up -> run on, as one state chain |
 | `ladder` | l1_ship_sinking_hall | attach from the ground (234), climb up, climb down, step off |
+| `ladder_fast` | l7_arctic_sea | ladder 2044: a rung per ladder_climb_up; Interact + up: ladder_climb_up_fast, four rungs at once, again on a second press [O chart] |
 | `pole` | l4_traprooms | standing jump to pole 1336, swing, fling 1264 to pole 1337 in 23.5 frames [O Wine] |
 | `pole_drop` | l4_traprooms | letting go of pole 1336: detach clip, fall, landing |
 | `melee_kick` | l1_baldrs_tomb | Interact kicks a target dummy once for the kick record's 60 (melee_kick_high); the mid kick at the air |
@@ -402,6 +405,7 @@ tested behaviour happen.
 | `balance_beam` | l4_temple | beam 1079: walk 140 units/s on its line, jump along it, its far end, losing balance into a ledge catch (1136) |
 | `grapple_swing` | l3_chapel | ring 4744 offered, throw, attach, Jump into the gap keeps the rope (hangs on 3632), no stick: the swing dies down, Forward held: it builds (peak height > 1000), Interact + forward / back climbs 711 / slides to 4400, jump off (1896 units/s), landing |
 | `prologue_hall_swing` | l3_main_hall | ring 4089 from the balcony: roped walk to the edge, Jump with the rope, swing over the burning staircase, leap off onto the far balcony (x < -2150, z 1716) |
+| `prologue_ring_door` | l3_main_bedroom | ring door 4526: throw onto its ring (mounted target), the stick alone walks her back roped and moves nothing, Interact held draws the leaf along its slide until it leaves the watched range (uber section 1: 0 -> 1 -> 2), the ring is no target and she lets go |
 | `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, the stick alone leaves the rope, Interact + back / forward rappels down / up (1327 / 1043 units/s), Jump leaps back off the wall and lets go |
 | `wall_run` | l5_valaskjalf | wall anchor 6750: camera behind her, right runs onto the wall and through the rope's arc over the pit, stepping onto the far ledge, rope let go |
 | `swim` | l1_seatop | drop into the sea, surface swim 1348.6 units/s, dive, under water (on the wetsuit's tanks the breath stays full), surfacing |
@@ -409,8 +413,10 @@ tested behaviour happen.
 | `swim_moves` | l1_seatop | surface turn on the spot, dive, under-water dodges up / down by their clips, pistols drawn and fired under water |
 | `swan_dive` | l2_cliffclimb | running jump + crouch off the cliff top: swan clips, 5900 down into the sea on `swim_swan_land`, no damage |
 | `puzzle_pole_block_door` | l4_ballcourt | pole 6503 into lever 6502 (graph 0 -> 1), push block 6504 under it (two pushes), up onto the block, jump to the pole: lever joint slides, door 6505 rises |
+| `gauntlet_move` | l2_maproom | Thor door 2661: Interact + stick bare-handed moves nothing; with `g_gauntletleft` given, Interact grips its handle (`thor_engage`) and a sidestep slides it to its limit 663.7; let go: it stays, braked |
 | `combat` | l2_cliffclimb | draw, hard lock, pistols kill three spiders and hit a 700 hp target dummy 8+ times, adrenaline fills |
 | `motorcycle` | l4_trailstart | mount bike 5482, accelerate (wheels on the ground), steer left, hop (both wheels off, then down), brake to a stop, dismount |
+| `chimney_floor_jumps` | l2_junglehub | at column A's unflagged face: a standing jump is a plain jump (no wall jump, apex 201.6); a stick jump plants her feet on the wall ~43 over the floor, and with no press she comes down again (both as tru.exe under Wine, docs/REFERENCE_COMPARISON.md M06) |
 | `pole_drop_after_fling` | l4_traprooms | the fling 1336 -> 1337, then Drop: `Hpole_detach_dropPerp`, down 27 beside the rubble mound under the pole, standing within 1.2 s (not caught again by pole 1337) |
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |

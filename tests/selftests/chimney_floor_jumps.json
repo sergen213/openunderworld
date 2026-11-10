@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "chimney_floor_jumps",
+  "chapter": "Core mechanics: jumps at a wall from the floor: a standing jump is no wall jump, a stick jump plants her feet (docs/GAMEPLAY.md Chimney jumps, docs/REFERENCE_COMPARISON.md M06)",
+  "note": "l2_junglehub, the streambed between the square columns: column A's unflagged east face is 111 west of her. tru.exe under Wine at this spot: a plain standing jump, apex 201.6 (the jump query q2 carries flag 0x80: tru.exe 0x7594C0 returns 0).",
+  "level": "l2_junglehub",
+  "spawn": [-12553, 23254, 4431, 180],
+  "steps": [
+    {"step": "settle", "duration": 0.5, "expect": [{"probe": "player.state", "eq": "idle"}]},
+    {"step": "standing_jump", "input": ["0.1 jump 1", "0.2 jump 0"], "duration": 2.5,
+     "expect": [{"visits": ["idle", "jumpprep", "jump", "land", "idle"]},
+                {"probe": "player.state", "over": "all", "ne": "walljump", "note": "she does not plant her feet on the column"},
+                {"probe": "step.peak_height", "near": 201.6, "tol": 3, "note": "48.04 up a 30 Hz frame [O Wine]"},
+                {"probe": "step.horizontal", "max": 3},
+                {"probe": "player.grounded", "eq": true}]},
+    {"step": "stick_jump_plants_her_feet", "fixtures": [{"teleport": [-12570, 23254, 4418.5, 180]}],
+     "input": ["0.5 forward 1", "0.5 jump 1", "0.6 jump 0", "0.9 forward 0"], "duration": 3,
+     "note": "tru.exe under Wine (chimney3-wine.txt j3 / j4): a stick jump (q43) at this face puts her in the wall state one frame after the take-off, her root 43.2 / 43.6 over the floor (ours 47.1: one 30 Hz frame of the 49.97 take-off); with no press she stays 0.62 s (ours 0.47 s: the draw onto the wall is 4 frames shorter) and comes down to the floor.",
+     "expect": [{"visits": ["jumpprep", "jump", "walljump", "fall", "land", "idle"]},
+                {"clips": ["wall_jump_attach_air", "wall_jump_idle", "wall_jump_detach_fall"]},
+                {"probe": "step.peak_height", "near": 43.4, "tol": 8, "note": "43.2 / 43.6 [O Wine]"},
+                {"probe": "player.grounded", "eq": true}]}
+  ]
+}

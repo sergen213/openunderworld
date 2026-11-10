@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "prologue_ring_door",
+  "chapter": "Prologue (docs/matrix/01_prologue.md C01-07): the grapple onto the bedroom door's ring, Interact pulls the door off its slide",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/prologue.html",
+  "note": "l3_main_bedroom door 4526 ma_uo_bedroom_door (ProgressionReal.PrologueRingDoorPulledOffByTheGrapple). Uber section 1 = the leaf on slide joint 1, watched over -47.4 .. 31.6 [O data]: leaving the range is trigger 15 -> state 1 (joint removed, squib_explode_door born), 0.2 s later state 2; section 0 (the ring) then drops the grapple target. The pull speed (240 units/s) is ours [I]. Open: the freed leaf stays standing in its frame (docs/PROGRESSION.md).",
+  "level": "l3_main_bedroom",
+  "spawn": [-8460.2, -10553.2, 1700, -30],
+  "steps": [
+    {"step": "throw", "input": ["0.2 grapple 1", "0.3 grapple 0"], "duration": 3, "until": {"probe": "grapple.pulling", "eq": true},
+     "expect": [{"probe": "grapple.target", "eq": 4526},
+                {"probe": "grapple.kind", "eq": "mounted"},
+                {"probe": "object.4526.uber.1", "eq": 0},
+                {"probe": "object.4526.uberjoint.1", "near": 0, "tol": 2, "note": "roped only: the door stands"}]},
+    {"step": "walk_back_roped", "input": ["0 forward -1"], "duration": 0.4,
+     "expect": [{"probe": "grapple.attached", "over": "all", "eq": true, "note": "the stick alone walks her on the rope"},
+                {"probe": "grapple.target", "eq": 4526},
+                {"probe": "object.4526.uber.1", "eq": 0},
+                {"probe": "object.4526.uberjoint.1", "near": 0, "tol": 2, "note": "no Interact: nothing is pulled"}]},
+    {"step": "pull", "input": ["0 interact 1", "0 forward -1"], "duration": 3, "until": {"probe": "grapple.attached", "eq": false},
+     "expect": [{"probe": "object.4526.uber.1", "min": 1, "note": "the slide left its watched range (31.6 out): trigger 15"},
+                {"probe": "grapple.target", "eq": 0, "note": "the ring is no target any more: she lets go"}]},
+    {"step": "door_off", "duration": 1,
+     "expect": [{"probe": "object.4526.uber.1", "eq": 2},
+                {"probe": "grapple.offered", "eq": 0},
+                {"probe": "grapple.attached", "over": "all", "eq": false}]}
+  ]
+}

@@ -315,6 +315,11 @@ public:
     using FeedbackNative = std::function<bool(bool shake, uint64_t key, const Member& m, uint32_t value, uint32_t function,
                                               std::span<const vm::Value> args, uint32_t& result)>;
     void setFeedbackNative(FeedbackNative native) { feedback_ = std::move(native); }
+    // `weaponbase` 0 Fire(target instance) (bind 0x7B69F0, thunk 0x79E2E0 -> 0x7784F0): the weapon instance `weapon` (an
+    // intro of a weapon object: query 0x36 = its stats block) fires at where `target` is now (target 0 = Lara): message
+    // 0x19B with the target's position and the stats' launch speed (+0x10). False when the weapon cannot fire.
+    using WeaponNative = std::function<bool(int32_t weapon, int32_t target)>;
+    void setWeaponNative(WeaponNative native) { weapon_ = std::move(native); }
     // `music` natives (bind 0x7ACB40, thunks 0x79B990/0x79B9B0/0x79B9D0 -> 0x4AA420/0x4AA450/0x4AA490) on a value
     // {char* track, i32 slot}: 1 Load(fade-out s) (0x5942F0: loads the track, the slot's playing one fades out first),
     // 2 Play(fade-out s, fade-in s) (0x594320), 3 Stop(fade-out s) (0x594320 with a null name). Slot = music player
@@ -436,6 +441,14 @@ public:
     // posts 0x186 to its receptacle (0x6C2530: vt 49(segment, 5), graph stimulus 0x40), takes the removal stimulus 0x40
     // itself and is carried (as the pick-up 0x17B: 0x6A6A20, 0x69AA50(1)).
     bool removePortable(int32_t portable, int32_t receptacle, int32_t segment = -1);
+    // Lara's push / pull grip on an object (her PushPull state's entry 0x73F4D0 -> 0x701310, exit -> 0x701350): after
+    // INSTANCE message 0x158 / 0x14F (the uber section's triggers 20 / 21, World) the object's script runs instance
+    // prototype 67 = vt 49 / 68 = vt 50 (0x799900 / 0x799950) with (the engagement record's segment, its kind). The Thor
+    // mechanisms' base type 9744 sets her pull strength there (larabase 35) and resets it to 1.
+    void engage(int32_t uid, int32_t segment, int32_t kind, bool on);
+    // Lara's pull strength (player +0x1240, 1 at birth; larabase 35 = 0x79A270 -> 0x6EE920): scales the speed and the
+    // impulse of her push / pull (0x74AC00, 0x73F390; World::pushUberHandle).
+    float pullStrength() const { return pullStrength_; }
     // Receptacles: objects whose anim graph takes the insert stimulus 0x20; null otherwise.
     std::shared_ptr<const Object::GraphSet> receptacleGraph(const std::string& name);
     const std::string* objectName(uint16_t id) const { const auto n = objectNames_.find(id); return n == objectNames_.end() ? nullptr : &n->second; }
@@ -496,6 +509,7 @@ public:
         const auto it = anchors_.find(uid);
         return it == anchors_.end() ? std::nullopt : std::optional(it->second);
     }
+    const std::map<int32_t, std::pair<int32_t, int32_t>>& anchors() const { return anchors_; }
     // Script weather (globaleffect 8 / 11 / 12, docs/formats/EFFECTS.md "Weather"): snow / rain % and lightning
     // interval seconds (tru.exe's defaults 20 / 30 s, 0x53AB30's init).
     struct Weather { int32_t snow = 0, rain = 0, lightningMin = 20, lightningMax = 30; };
@@ -596,6 +610,7 @@ private:
     std::map<std::pair<int32_t, uint32_t>, uint64_t> soundWaits_;
     ReverbNative reverb_;
     FeedbackNative feedback_;
+    WeaponNative weapon_;
     std::vector<MusicRequest> musicRequests_;
     AudioState audio_;
     std::vector<std::string> movies_;
@@ -650,6 +665,7 @@ private:
     Experience experience_;
     bool experienceSet_ = false; // a script set one this tick
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
+    float pullStrength_ = 1;              // larabase 35 (not saved: a load lets go of the grip)
     uint32_t unitEffect_ = 0;
     std::set<int32_t> grappleOff_; // unit 13 / 12: grapple targets taken from / given back to Lara; saved
     std::map<int32_t, std::pair<int32_t, int32_t>> anchors_; // anchor(): object -> {object, marker id}; saved

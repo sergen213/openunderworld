@@ -6,6 +6,42 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-11-10
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: Thor's gauntlets and belt work as in the original. The heavy stone slide doors and rubble blocks can only
+  be moved while Lara carries the piece of Thor's gear each one asks for: stand at the handle, hold Interact and
+  push, pull or sidestep with the stick. Without the gear nothing happens. (Before, any such object slid when she
+  merely stood next to it.) The free-standing pillars, which slide in two directions, are not movable yet.
+- Added: breakable scenery: floors that give way under Lara and props that break, and explosive fuel tanks: two
+  pistol hits set one off, the blast hurts Lara and enemies nearby and sets off the next tank.
+- Fixed: the prologue's burning floor collapses under Lara and the door ahead is blown off; the ring door is
+  pulled off its slide with the grapple (hold Interact). Known issue: the freed door leaf stays standing in its
+  doorway.
+- Fixed: ladders stood turned a quarter turn in their walls in every level; they now face the right way, so the
+  ladders of the sinking ship and the Arctic sea can be climbed where they are drawn.
+- Fixed: one-way trigger planes fired from the wrong side. Pits and falls that should kill now do, and several
+  scripted events start where the original starts them.
+- Changed: landings follow the original. By the height of the fall Lara lands, stumbles or lands hard; pressing
+  Crouch as she lands (a fresh press, with the stick forward) rolls out of it, holding Crouch crouches out of the
+  landing, and Jump or a roll can cut the landing short.
+- Changed: jumps follow the original's air control: pulling the stick back during a jump shortens it (down to 40 %
+  of its length); nothing else steers a jump, holding Jump does not make it higher, and a jump from a sprint is the
+  running jump.
+- Changed: ledges. Tap Jump while hanging and Lara pulls up when you let go; hold it with the stick neutral for the
+  handstand; with the stick up she pulls up at once. Interact while shimmying moves her hand over hand faster, and
+  on a ladder (with Up) she climbs four rungs at a time.
+- Changed: running and sprinting turn at the original's rates, and letting go of the stick early in a run stops
+  Lara on the spot; the sliding stop only comes after she has been running for half a second.
+- Fixed: a standing jump next to a wall no longer starts a chimney jump (the original needs a jump toward the
+  wall), and a jump started right at the wall now does.
+- Documented: docs/REFERENCE_COMPARISON.md compares each mechanic with the original (161 rows: the original's
+  numbers and their source, ours, the difference). 58 rows rest on live measurements of the original; the rows
+  still unmeasured and the differences still to fix are listed there.
+- For testers: 6 more self-test scenarios (Thor's gear, the ring door, jump brake, fast ladder, chimney floor
+  jumps, landings).
+
 ## [0.43.0] - 2026-11-10
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
@@ -33,6 +69,9 @@ Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (G
 - Fixed: Natla's buttress mounts are used from the place the original marks (the far end of each trunk).
 - For testers: 7 more self-test scenarios (close combat, urn kick, carry and throw, saving grab, safety drop, pole
   drop, the prologue swing); the grapple swing, rappel and wall run scenarios use the original's inputs.
+- Documented: the evaluation of Jolt's character controller for Lara's movement (docs/formats/PHYSICS.md
+  "Character controller"). Measured against the original on stairs, step heights, slopes, replays and saves, Lara's
+  own mover stays: it matches the original's traces and the Jolt controller did not.
 
 ## [0.42.0] - 2026-11-10
 

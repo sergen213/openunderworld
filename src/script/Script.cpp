@@ -312,7 +312,11 @@ bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b) {
     if (s.kind != ShapeKind::Plane) return false;
     const glm::mat3 rt = glm::transpose(rotation(rot));
     const vec3 la = rt * (a - pos), lb = rt * (b - pos);
-    if (s.oneSided ? !(la.y > 0 && lb.y <= 0) : !((la.y > 0) != (lb.y > 0))) return false;
+    // One-sided (data +0x44 != 0): tru.exe tests the segment as it is against the quad's triangles (v0 (-x, -z), v1 (x, -z),
+    // v2 (x, z); 0x461640 culls by -(dir . (v1 - v0) x (v2 - v0)) > 0, the normal being local -Y), so only a move toward
+    // local +Y counts [O decomp 0x5CCC20; data: l3_bedroom_hall 4375 faces the hallway she comes along, l3_main_hall 4129
+    // lies flat and fires as she drops through it, l1_ship_sinking_hall 1074 as she climbs up through it].
+    if (s.oneSided ? !(la.y <= 0 && lb.y > 0) : !((la.y > 0) != (lb.y > 0))) return false;
     if (la.y == lb.y) return false;
     const vec3 h = la + (lb - la) * (la.y / (la.y - lb.y));
     return std::abs(h.x) <= s.half.x && std::abs(h.z) <= s.half.z;
@@ -460,6 +464,7 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
     playerScript_.reset();
     playerHiddenGroups_ = playerGearGroups_ = 0;
     playerObjects_.clear();
+    pullStrength_ = 1;
     if (!bigfile_) return;
     const auto bytes = bigfile_->read("pc-w\\lara.drm");
     if (!bytes) return;
@@ -717,7 +722,9 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
         auto set = uses ? graphSet(o.name) : nullptr;
         const auto receptacle = receptacleGraph(o.name);
         if (receptacle && !(set && set->graph)) set = receptacle;
-        int initial = 0;
+        // An intro without data starts in the graph's own start state (record +0x2C; l3_bedroom_hall floor 4359: `idle`,
+        // not its first record `idle_collapsed`); with data, message 0x23 picks the record below.
+        int initial = set && set->graph && !in.data ? set->graph->initial : 0;
         if (set && set->graph && in.data) {
             const auto& d = u.drm->sections.at(in.data->section).data;
             int32_t first = 0;
@@ -1743,9 +1750,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             }
             // 31 (0x7975F0 -> 0x776EF0) posts INSTANCE message 0xC (!arg) to Lara; 61 (0x79A590 -> 0x778060) copies a global
             // clock into Lara +0x6DC and zeroes +0x6E0. The endgame warps (340 / 342 end handlers) run them [U: no effect on ours].
-            // 35 (0x79A270 -> 0x777DA0 -> 0x6EE920) stores its float in player +0x1240; the calendars' vt 54 runs it [U: what
-            // reads it].
-            if (!std::strcmp(name, "larabase") && (((nc.function == 31 || nc.function == 35) && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
+            // 35 (0x79A270 -> 0x777DA0 -> 0x6EE920) stores its float in player +0x1240, her pull strength (0x74AC00 /
+            // 0x73F390 read it): the calendars' vt 54 and the Thor mechanisms' vt 49 / 50 run it.
+            if (!std::strcmp(name, "larabase") && nc.function == 35 && nc.args.size() == 1) { // her pull strength (Script.hpp)
+                pullStrength_ = std::bit_cast<float>(nc.args[0].bits);
+                return true;
+            }
+            if (!std::strcmp(name, "larabase") && ((nc.function == 31 && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
                 return true;
             // uitext 57 (0x7A6D10 -> 0x4C32E0): returns member +0x210 of the text's lazily created widget (a localized
             // string handle) [U]; we have no widget, so null. uigamedata 106 (0x7A14F0 -> 0x77C8B0) stores that string as
@@ -1916,6 +1927,21 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             if (!std::strcmp(name, "uberobjectbase") && nc.function == 2 && nc.args.size() == 2) {
                 nc.result = vm::Value::object(self->uid);
                 nc.result.bits = kAnchorBit | (nc.args[1].bits & 0xFFFF);
+                return true;
+            }
+            // instance 8 (thunk 0x798CA0 -> 0x4AB320 -> 0x5BE1A0): a marker anchor on this instance's HInfo marker `args[0]`,
+            // as uberobjectbase 2 makes for a section; instance 23 / 26 and playersensor 2 take it (l7_yggdrasil_end:
+            // each natla_end hangs its fireball weapon on its marker 13).
+            if (!std::strcmp(name, "instance") && nc.function == 8 && nc.args.size() == 1) {
+                nc.result = vm::Value::object(self->uid);
+                nc.result.bits = kAnchorBit | (nc.args[0].bits & 0xFFFF);
+                return true;
+            }
+            // weaponbase 0 (setWeaponNative): Fire at an instance; a null target is skipped (thunk 0x79E2E0).
+            if (!std::strcmp(name, "weaponbase") && nc.function == 0 && nc.args.size() == 1 && weapon_) {
+                const vm::Value& t = nc.args[0];
+                if (t.kind != vm::Value::Kind::Object || !t.uid) return true;
+                weapon_(self->uid, playerScript_ && t.uid == playerScript_->uid ? 0 : t.uid);
                 return true;
             }
             if (!std::strcmp(name, "instance") &&
@@ -2227,6 +2253,11 @@ bool Runtime::removePortable(int32_t portable, int32_t receptacle, int32_t segme
     const bool started = graphStimulus(receptacle, formats::kStimulusRemove, -1.0f);
     graphStimulus(portable, formats::kStimulusRemove, -1.0f);
     return started;
+}
+
+void Runtime::engage(int32_t uid, int32_t segment, int32_t kind, bool on) {
+    const vm::Value args[] = {vm::Value::scalar(uint32_t(segment)), vm::Value::scalar(uint32_t(kind))};
+    callback(uid, "instance", on ? 67 : 68, args);
 }
 
 bool Runtime::graphAccepts(int32_t uid, uint32_t mask) const {

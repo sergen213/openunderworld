@@ -1,0 +1,117 @@
+{
+ "version": 1,
+ "name": "ladder_fast",
+ "chapter": "Core mechanics: climbing a ladder faster with Interact",
+ "note": "l7_arctic_sea ladder 2044 (14 rungs). The stick up climbs a rung per ladder_climb_up (110.6 in 0.30 s); Interact pressed with the stick up, more than 4 rungs under the top, plays ladder_climb_up_fast: four rungs at once [O chart S1055 -> S1057, T1808 / T1809; chart variables 193 = 10, 194 = 4]. The teleport fixture only puts her at the ladder.",
+ "level": "l7_arctic_sea",
+ "steps": [
+  {
+   "step": "attach",
+   "fixtures": [
+    {
+     "teleport": [
+      16434.6,
+      -47310.08,
+      -19110.53,
+      -90
+     ]
+    }
+   ],
+   "input": [
+    "0 forward 1",
+    "0.1 forward 0"
+   ],
+   "duration": 3,
+   "until": {
+    "probe": "player.clip",
+    "eq": "ladder_idle"
+   },
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "ladder"
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 2044
+    }
+   ]
+  },
+  {
+   "step": "one_rung",
+   "input": [
+    "0 forward 1",
+    "0.1 forward 0"
+   ],
+   "duration": 0.6,
+   "expect": [
+    {
+     "clips": [
+      "ladder_climb_up",
+      "ladder_idle"
+     ]
+    },
+    {
+     "probe": "step.height_gain",
+     "near": 110.6,
+     "tol": 6
+    }
+   ]
+  },
+  {
+   "step": "fast",
+   "input": [
+    "0 forward 1",
+    "0.05 interact 1",
+    "0.15 interact 0",
+    "0.3 forward 0"
+   ],
+   "duration": 0.9,
+   "expect": [
+    {
+     "clips": [
+      "ladder_climb_up_fast",
+      "ladder_idle"
+     ]
+    },
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "ladder"
+    },
+    {
+     "probe": "step.height_gain",
+     "near": 442.5,
+     "tol": 115,
+     "note": "four rungs (from the rung the press came on)"
+    }
+   ]
+  },
+  {
+   "step": "fast_again",
+   "input": [
+    "0 forward 1",
+    "0.05 interact 1",
+    "0.15 interact 0",
+    "0.45 interact 1",
+    "0.55 interact 0",
+    "0.7 forward 0"
+   ],
+   "duration": 1.4,
+   "expect": [
+    {
+     "clips": [
+      "ladder_climb_up_fast",
+      "ladder_idle"
+     ]
+    },
+    {
+     "probe": "step.height_gain",
+     "min": 430,
+     "max": 900,
+     "note": "near the top the second press is an ordinary rung"
+    }
+   ]
+  }
+ ]
+}

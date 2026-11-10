@@ -146,6 +146,7 @@ bool Machine::tick(float seconds) {
     failure_.clear();
     wait_ = std::max(0.0f, wait_ - std::max(0.0f, seconds));
     if (wait_ > 0) return true;
+    steps_ = 0; // the instruction budget bounds one resume: a thread that yields (SLEEP / WAIT) may poll for ever
     return run() != Step::Failed;
 }
 
@@ -185,6 +186,13 @@ bool Machine::push(Instance& object, const Function& f, std::span<const Value> a
                         !std::strcmp(type, "uberobjectquery"))) {
             if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
             fr.locals[l.offset] = Value::scalar(*l.init2);
+            continue;
+        }
+        // `marker` locals name an intro (its +0x52 marker id is what watervolumebase 0 / 2 look up): l7_yggdrasil_end's
+        // pool 8309 sets its level to marker intros 8680..8683 from locals of its constructor and its rise states.
+        if (l.init && !std::strcmp(type, "marker")) {
+            if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
+            fr.locals[l.offset] = Value::object(int32_t(*l.init));
             continue;
         }
         if (!symbol && !music) continue;

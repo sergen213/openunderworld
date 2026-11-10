@@ -1,0 +1,195 @@
+{
+ "version": 1,
+ "name": "jump_brake",
+ "chapter": "Core mechanics: a jump's hold and the stick in flight",
+ "note": "l4_temple, the runway west of block 1155, where tru.exe was traced under Wine. Holding Jump changes nothing (no chart transition and no flight code reads it); the stick pulled back in flight brakes her to 40 % of the take-off's horizontal speed (tru.exe 0x750040: 65.83 -> 26.33 a frame); nothing else steers a jump (docs/GAMEPLAY.md \"Jumps: the Jump button's hold, the gait, the stick in flight\").",
+ "level": "l4_temple",
+ "spawn": [
+  -4200,
+  -11850,
+  1730,
+  0
+ ],
+ "steps": [
+  {
+   "step": "run_up",
+   "fixtures": [
+    {
+     "teleport": [
+      -4200,
+      -11850,
+      1722.9,
+      0
+     ]
+    }
+   ],
+   "input": [
+    "0.2 forward 1"
+   ],
+   "duration": 1.2,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "run"
+    }
+   ]
+  },
+  {
+   "step": "jump_tapped",
+   "input": [
+    "0 forward 1",
+    "0 jump 1",
+    "0.1 jump 0",
+    "1.0 forward 0"
+   ],
+   "duration": 2.2,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "jumpprep",
+      "jump",
+      "run"
+     ]
+    },
+    {
+     "probe": "step.peak_height",
+     "near": 157.1,
+     "tol": 3
+    },
+    {
+     "probe": "step.air_time",
+     "near": 0.5,
+     "tol": 0.03
+    },
+    {
+     "probe": "player.vel.x",
+     "over": "max",
+     "near": 1974.9,
+     "tol": 3
+    }
+   ]
+  },
+  {
+   "step": "run_up_2",
+   "fixtures": [
+    {
+     "teleport": [
+      -4200,
+      -11850,
+      1722.9,
+      0
+     ]
+    }
+   ],
+   "input": [
+    "0.2 forward 1"
+   ],
+   "duration": 1.2,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "run"
+    }
+   ]
+  },
+  {
+   "step": "jump_held",
+   "input": [
+    "0 forward 1",
+    "0 jump 1",
+    "1.0 forward 0"
+   ],
+   "duration": 2.2,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "jumpprep",
+      "jump",
+      "run"
+     ]
+    },
+    {
+     "probe": "step.peak_height",
+     "near": 157.1,
+     "tol": 3,
+     "note": "the same arc as the tap [O Wine: 155.8 both]"
+    },
+    {
+     "probe": "step.air_time",
+     "near": 0.5,
+     "tol": 0.03
+    }
+   ]
+  },
+  {
+   "step": "run_up_3",
+   "fixtures": [
+    {
+     "teleport": [
+      -4200,
+      -11850,
+      1722.9,
+      0
+     ]
+    }
+   ],
+   "input": [
+    "0.2 forward 1"
+   ],
+   "duration": 1.2,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "run"
+    }
+   ]
+  },
+  {
+   "step": "jump_stick_back",
+   "input": [
+    "0 forward 1",
+    "0 jump 1",
+    "0.1 jump 0",
+    "0.25 forward -1",
+    "0.55 forward 0"
+   ],
+   "duration": 2.2,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "jumpprep",
+      "jump",
+      "land",
+      "idle"
+     ]
+    },
+    {
+     "probe": "step.peak_height",
+     "near": 157.1,
+     "tol": 3
+    },
+    {
+     "probe": "step.air_time",
+     "near": 0.5,
+     "tol": 0.03
+    },
+    {
+     "probe": "player.vel.x",
+     "over": "any",
+     "near": 790,
+     "tol": 3,
+     "note": "0.4 x 1974.9 [O Wine: 26.33 a frame]"
+    },
+    {
+     "probe": "step.horizontal",
+     "min": 560,
+     "max": 800,
+     "note": "against ~1120 unbraked"
+    }
+   ]
+  }
+ ]
+}

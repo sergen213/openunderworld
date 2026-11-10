@@ -45,8 +45,12 @@ bool Player::tryWallJump() {
     const float len = glm::length(ahead);
     if (len < 1e-3f) return false;
     const vec3 pelvis = s_.pos + vec3(0, 0, anims_.bind.size() > 1 ? anims_.bind[1].z : kPelvis);
+    // tru.exe tests the velocity the jump was given (+0x2A0 keeps its 40 a frame forward while she is against the
+    // wall: Wine, l2_junglehub); ours has had its horizontal part clipped by the contact by then, leaving a remnant
+    // along the wall. Under 10 units a frame (every jump with a horizontal launch has 40 or more) her heading counts,
+    // as it does for no velocity at all [I: the threshold].
     vec2 motion = xy(s_.vel);
-    motion = glm::length(motion) > 1e-3f ? glm::normalize(motion) : xy(f);
+    motion = glm::length(motion) > 300.0f ? glm::normalize(motion) : xy(f);
     const auto wall = [&](float h) -> std::optional<collision::Hit> {
         auto hit = col_.raycast(pelvis + vec3(0, 0, h), ahead / len, len);
         if (!hit) return std::nullopt;

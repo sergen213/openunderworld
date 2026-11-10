@@ -41,7 +41,7 @@ F9 quickload, docs/SAVES.md), `lookx`, `looky` (camera rate, rad/s). A value hol
 until changed; an event at `t` applies from tick `round(t · 60)`. With `--input-script` each rendered frame advances
 `1/--render-hz` seconds (default 60), so `--frames N` screenshots are reproducible. At the end, `--frames` prints
 `frame time mean / p95 / max` (wall time per frame) and `tick time mean / median / p95` (`World::tick` CPU time) with
-its script runtime and physics step means, all after 30 warm-up frames; with `--no-vsync` they compare builds.
+its script runtime, physics step and `Player::tick` means, all after 30 warm-up frames; with `--no-vsync` they compare builds.
 
 Audio (`ou_audio`, docs/formats/AUDIO.md; `--no-audio` turns it off): lara.drm Wave sections are registered and the
 unit's music stream `pc-w\music\<unit>_mus_01\<unit>_mus_01.mul` loops (all stems at gain 1; [I] the naming is seen
@@ -242,7 +242,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Jump take-offs | standing, no stick: **1441.2** up (apex 201.6, 0.56 s air), leaving the ground when `ng_standing_jump` ends (0.33 s); stick held: **1499.1** up + **1200** along the stick, at 0.26 s into the clip; running: **1275.9** up + **1974.9** forward (apex 158, 0.50 s air) after `ng_running_jump_forwards`; the stick behind her (> 1.75 rad from her heading): she turns round and takes the running jump; to a side: the standing stick jump that way (units/s) | [O-runtime] tru.exe under Wine, `wmem trace` of Instance +0x20 position / +0x2A0 velocity (Lara-local, units per 30 Hz frame: 48.04 / 49.97 + 40.00 / 42.53 + 65.83; take-off 359 / 290 / 109 ms after the press, back + jump 121 ms; horizontal speed constant in the air), l3_main_bedroom start, traces openunderworld-work/screens/stairs `j_*.txt`. [I] the 0.26 s take-off point (359 − 290 ms before the clip end) and the 1.75 rad back threshold (our turn-in-place threshold); free leaps (back off a ledge, pole fling without a target, slide jump) reuse these speeds [I] |
 | Capsule | radius **79.01**, top **489.2** (height 512) | [O-runtime] tru.exe under Wine, Lara's Havok proxy (instance +0x288) while standing: radius +0x65C = 79.0139, cylinder +0x660 = 189.633 (targets +0x6B0 / +0x6B4 equal: steady), centre 315.4 above the feet (proxy +0x648 vs Instance +0x28), so the capsule spans 141.6..489.2; swimming it is 80 / 228. 0x490E60 steps radius / cylinder towards those targets by ≤ 20 / 40 per frame; 0x7018E0 creates it (`FUN_0049a410(inst, 100.0, …, 28.82, …)`); [U] which data sets the per-state targets. Height [O] player data +0x10 = 512.01 (used as Lara's height: ×0.5 centre, ×0.75 head, capsule test `FUN_007144b0(pos, height, …)`), TRLAU-menu-hook `GeneralAttributes.height` [I name]. Ours: on the ground the capsule's bottom is the step height (110), not 141.6, so the 121-unit hearth stops her one radius short (tru.exe: 38..72 short, pushed to and fro, trace t2); what stops tru.exe there [U] (the proxy's bottom clears it). Walls climbed / hung on keep the root 100 out (`wallOffset`) [I] |
 | Step up / down | **110 / 110** units: the root takes the floor height under it within ±110 (capsule slide starts 110 above the feet), so 97..100-unit stair risers are climbed and descended walking or running without a fall | [O-runtime] tru.exe under Wine (`wmem trace`/`tp`, l3_main_bedroom, unit offset ours + (9622, 333, −2977)): running up the manor staircase (risers 97..100, treads 186) her z jumps by each riser exactly as the root crosses the riser line, at unchanged run speed; the 121-unit hearth edge beside the start stops her ~56 units short. [I] 110 is between the two. [O-runtime] Lara's Havok proxy (instance+0x288) capsule: radius 79.01 (+0x65C), cylinder 189.63 (+0x660), centre 315.4 above the feet (+0x640): its bottom is 141.6 up, so the 121 block is not the capsule; which probe stops her is [U]. Our capsule stays radius 100 [I]. Regression: `GameReal.StairsWalkAndRunUpAndDown` (every riser of seven units' staircases, the bedroom flight up and down, the hearth) |
-| Walkable slope | normal z ≥ 0.7 (≈ 45.6°); a steeper face is still stood on when one of four probes 60 units around the root finds a walkable face within 20 units of its height (bumps, seams: l4_ragnarok_room's 0.6-normal floor strips) | [I] ours |
+| Walkable slope | normal z ≥ 0.7 (≈ 45.6°); a steeper face is still stood on when one of four probes 60 units around the root finds a walkable face within 20 units of its height (bumps, seams: l4_ragnarok_room's 0.6-normal floor strips) | [I] ours. [O-runtime] tru.exe under Wine (l2_junglehub ramp series, docs/formats/PHYSICS.md "Walkable slope limit under Wine"): she stands at rest on faces of normal z 0.626..0.716 (client flag 0x0080) and slides on faces of 0.523..0.753 that carry client flag 0x0004, so the original's rule is per face flag, with a limit below 0.626 for unflagged faces; ours is not yet changed |
 | Slide | floors with 0.3 ≤ normal z < 0.7 under an unsupported root: down the fall line, accelerated by gravity along the slope (g·sinθ), no friction, no cap; the descent rate is carried into a fall | [O-runtime] tru.exe under Wine (l3_main_bedroom roof, normal z 0.45, trace slide1.txt): velocity along the slope (vz/vxy = 1.97 = tan 63.3°), speed 51.0 → 69.0 → 91.3 units per 30 Hz frame over 0.25 s = ~4.7k units/s² against g·sin 63.3° = 4601; no cap up to 2738 units/s. [I] the 0.3 lower bound; [O] the exe has `SlopeSlideState` / `SkiSlopeSlideState` / `SlideState` (RTTI) whose virtuals are all the empty 0x7987B0: the state chart drives them |
 | Edge slide-off | a capsule resting on an edge corner (floor-like contact, no floor under the root) gets ≥ 200 units/s outwards | [I] ours (fixes the Fall/Land alternation walking slowly off a ledge) |
 | Crouch capsule height | **260** | [O] player data +0x14 |
@@ -395,8 +395,8 @@ outfit (the original only reads `+0x294` on a level load).
   actions 5 (instance +0x18 |= 0x20000000: collision callbacks skip it, 0x48D590 / 0x697970) and 29 (section +0xD4 = 0);
   2 → 1 always, playing `fx_smash` (1 s, effects only) to its end; state 1 action 28 (0x6D5D90 -> 0x6D54F0: the
   section's removal record, all of them one fade over 0 s, then 0x6D5E20 removes the instance). `sh_ei_exploading_barrel`
-  (health 50): 0 → 2 on trigger 18, state 2 = 5 + two action-19 births (explosion objects, not modelled: no blast
-  damage), `fx_boom` (3 s), removed.
+  (health 50): 0 → 2 on trigger 18, state 2 = 5 + two action-19 births (`squib_exploding_barrel`: "Explosion records" below),
+  `fx_boom` (3 s), removed.
 - Ours (`World::damageObject`): Lara's bullets / bolts on an uber object's collider and the pound's rings; action 5
   drops the collider, action 28 marks the section removed and the game hides the object's meshes when model 0's section
   is gone (`World::removedObjects`); transition clips with flag 1 run their events (`objectClips`). Health, removal and
@@ -407,7 +407,52 @@ outfit (the original only reads `+0x294` on a level load).
   (0x20 each, spawned as instances), +0x28 / +0x34 break conditions (0x1C: flags, two floats, damage-class list). 0x11C
   counts a hit when the class is listed (0x69BFC0; only the temple floor lists one: 6, explosions) or by flags 0x400
   (class 6) / 0x800.. (classes 0-2 from Lara); the others break on Lara's contact (message 0x2B, 0x69C0A0). None lists
-  Mjolnir's class 13. Not implemented.
+  Mjolnir's class 13. Implemented: "Class-30 breakables" below.
+- **Class-30 breakables** (`src/game/Breakables.*`, `UnitData::breakables`). Record [O data, all 9 objects]: +0x10 hits
+  (3 everywhere), +0x18 / +0x1C pieces (model byte +0x0A), +0x28 / +0x34 conditions (0x1C: flags, speed, spin, class
+  list, +0x14 flags2, +0x18 action), action: +0 id, +2 type, +8 flags, +0x1C delay in 30 Hz frames, +0x20 shake, +0x38
+  grace. Lara's contact kinds by condition flag [O flags / I which contact]: 0x08 standing on it, 0x40 hanging from its
+  ledge, 0x20 on its pole, flags2 bit 0 on its beam; 0x200 + class list = damage of that class (temple floor: 6).
+  Contact starts the action's clock (the piece shakes), at its end the piece's collider and markup go, its pieces fall
+  as loose bodies and Lara lets go (`Player::letGo`). Survey (`GameReal.BreakableSurvey`, `OU_BREAKABLE_SURVEY=1`):
+
+  | object | condition | delay (frames) | instances |
+  |---|---|---|---|
+  | `ar_rb_falling_floor_straight` | stand 0x08 | 23 | l5_valaskjalf 6975 |
+  | `ca_uo_ledgebreak`, `_u` | hang 0x40 | 120 | l4_pool 5614..5619, l4_temple 5234 |
+  | `ca_uo_balancebreakb` | hang 0x40 | 370 | (no intro in the campaign units surveyed) |
+  | `ar_ei_break_braced_ledge` / `_corner` | hang 0x40 | 105 / 160 | l5_valaskjalf 6959..6962 |
+  | `ar_ei_breakable_hpole` | pole 0x20 | 176 | (none in the surveyed units) |
+  | `ca_rb_breakable_temple_floor` | damage class 6 (0x200) | action type 1 | (none in the surveyed units) |
+
+  [I]: which of the two condition lists applies when, the piece impulses (they drop under gravity), hits (3) is not
+  counted for contact breaks. Saved ("breakables"). `GameReal.FallingFloorBreaksUnderLara`: l5 6975 breaks 46 ticks
+  after she steps on it walking north, she catches ledge 1551; the jump across works too.
+- **Explosion records** [O layout from data; I field meanings beyond damage / radius]: tag 0x2775 at an object's
+  physical record +0x70: +4 damage, +6 damage at the edge [I], +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12
+  cone angle. `squib_exploding_barrel` 800 / 800, radius 948, knock 500 / 250; `squib_explode_door` 5 / 2, radius 1896,
+  knock 1000 / 400, angle 30. An uber action-19 birth of such an object blasts at the section's marker one tick later
+  (`World::birthBlast` / `tickBlasts` / `blast`): damage class 4 to Lara, enemies and damageable objects in the radius
+  (so tanks set each other off). The knock [O decomp]: the area hit 0x69F1E0 (called from 0x6A5C50's record hand-over
+  with +4 damage, +6, +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12 elevation) sends instances message 0x91 at knock .. edge
+  by distance, heading away from the centre at the elevation, and ends in 0x493170 → 0x492CC0 for the Havok shapes in
+  the radius: an impulse of 0.0004 × the shape's surface area × knock × (1 − distance / radius), capped per shape
+  (body +0x14C × 200 [U]), at the shape's point nearest the centre (0x4DF090), along (shape − centre) raised by half
+  their distance. Ours [I] (`physics::Scene::blast`): grenades change each body's velocity by near .. edge along that
+  raised line; a squib gives the same momentum along the body's heading from the centre at the record's elevation, at
+  the point of the body's bounds nearest the centre. A centre inside the body (the door squib is born at the foot of its
+  own leaf) has no heading: the body goes the way it already moves, else the way its centre of mass lies from the centre.
+  l3_bedroom_hall's leaf 4376 (blown off untouched) is kicked out at the foot and falls into the pit; pushed through its
+  centre of mass it only hopped and stood in its frame (494 wide in a doorway barely wider).
+- **Freed uber sections** [O action 10 removes a joint; I the body's motion]: a non-main section left without a joint
+  (13 objects: `ma_uo_bedroom_door`, tentacle gears, the snake head, ship floor panels / grates / console, thor slide
+  doors, chain debris, the naga statue) becomes a loose body with its collider, as do sections riding on it; the main
+  section uses the object's own loose flag. It starts with the velocity its prismatic joint had when removed (the ring
+  door 4526 comes off its slide moving toward the rope's pull). Saved with the section state (not the velocity). Its
+  shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. Open
+  [U]: leaf 4526, pulled 44 out into its frame when freed, is pushed back by the level collision and stays standing in
+  the doorway (`ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` notes it; what clears it in tru.exe is not
+  decoded: nothing in the object's states moves it but the removed joint and the squib).
 
 ## Close combat
 
@@ -748,6 +793,169 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   (probe of 12 chapter units: no equip call), so the gear stays hidden outside a volume with carried objects. The
   cinematic base type 3523's gear events 10-21 are never sent (no retail stream has events).
 
+## Thor's gauntlets (heavy mechanisms)
+
+- **Owning them** [O]: the gear is three objects in Lara's 15 object slots (`g_gauntletleft` 57, `g_gauntletright` 58,
+  `g_belt` 56; larabase 37 gives, 38 tests, 42 drops: "Thor's gear" above; ours `script::Runtime::playerObjects`,
+  saved, `game::chapterGear`). No global flag: what asks for them is the **engagement record** of each mechanism.
+- **The requirement** [O data + tru.exe]: a push / pull record (kind 1) lists object ids at `+0x6C / +0x70`
+  (`physics::Engagement::needs`). 0x6F3C60 admits Lara to a record with a list only if 0x6F3BB0 finds one of the
+  objects: the portable in her hands (`+0x858`), else her weapon slots (0x6E7E10), else her 15 object slots. Records
+  (dump `OU_UBER_SECTIONS=<object>`, now with the needs and every section set):
+
+  | object (units) | record | needs | script strength |
+  |---|---|---|---|
+  | `sa_ei_thor_slide_door` (l2_maproom 2661, 2662), `ar_ei_thor_slide_door` (l5_valgrind_tunnel 7400) | section 1, set 540: two half-cylinders r 711 on handle markers 11 / 12, cone 90 +- 90 | g_gauntletleft | 15 |
+  | `ma_pu_thor_pillar` (l3_secretchamber 4674) | section 0: sphere r 948 | g_gauntletright | 3 |
+  | `ca_pu_thor_pillar` 5610, `ca_pu_thor_debris` 5609 (l4_pool), `ca_pu_thor_block_rubble` (l4_ragnarok_room 5660) | section 0: cylinder r 790 / sphere r 948 | g_belt | 4 / 4 / 10 |
+  | `ar_ei_thor_valgrind_door` (l5_valgrind 7334) | sections 0 / 1, sets 464 / 476 given by their state 1 | none | 8 |
+  | `ar_pu_thor_tower_short / _tall` (l7_yggdrasil_end 8398-8400) | section 0: cylinder r 790, h 4740 | none | 5.5 |
+
+  All are class-79 uber objects ("heavy" = their mass: doors 1005 / 1015, rubble 1000, pool pillar 500, towers 175 /
+  224, manor pillar 150). Ours: `World::engaged` admits a record through `game::carriesNeeded` (held portable, else
+  `playerObjects`). Before: a record with a list never admitted an empty-handed Lara, so the Thor records were dead, and
+  `World::pushUberJoints` instead gripped ANY uber object riding a level prismatic joint from within 120 units of its
+  collision and slid it at 120 units/s whatever its record, gear or brake (even while she swam): removed.
+- **Engaging** [O]: Interact inside the record puts her in the PushPull state; its entry 0x73F4D0 builds the "PushPull
+  Proxy" body, posts message 0x158 to the object (uber trigger 20) and calls its script's vt 49 (0x701310 -> 0x799900,
+  prototype 67) with (record segment, kind); leaving posts 0x14F (trigger 21) and calls vt 50 (0x701350 -> 0x799950,
+  68). The Thor base script (type 9744) answers vt 49 with `larabase` 35 (0x79A270 -> player `+0x1240`, **her pull
+  strength**, 1 at birth; debug text "Overriding Lara pull strength to =") = its member +12 (table above) and vt 50
+  with 1; the slide doors add uber command 0 / 1: braked state 2 (motor 0 speed, 3.16e6) <-> free state 1 (no motor);
+  the rubble block does the same by triggers 20 / 21; the towers' vt 49 / 50 also switch a push camera (gamebase 50 +
+  53 (4), back 53 (1); gamebase 50 is unbound in ours, so the towers' vt 49 stops there after setting the strength).
+  Ours: `script::Runtime::engage`, `pullStrength()`.
+- **The move** [O 0x74AC00 / 0x73F390 / 0x6F1450, lara.drm player data]: every frame the stick picks one of four ways
+  by its angle off her facing: forward within 30 deg (+0xC8C = 60), back within 15 deg of straight back (+0xC90 =
+  30), else left / right; the target speed is `min(23.704 (+0xC7C) x strength, 2054.36 (+0xC80) x strength / M)` and
+  the impulse applied per step is a quarter of the velocity error x mass, at most `min(m x 0.7585 (+0xC84), 142.225
+  (+0xC88)) x strength`. [I] M = the proxy's mass = 0.125 (+0xC98) x the object's (with the object's own mass the
+  doors would crawl at 31 units/s; with the proxy's: doors 245 units/s, Valgrind gate 130, rubble 164, towers 130, the
+  manor pillar 71) - not measured under Wine. Clips [O lara.drm 1659-1665]: `thor_engage` (15 frames), `thor_idle`,
+  `thor_forward / _backward / _left / _right` (root motion 406-582 units/s, not applied), `thor_disengage`; [I] that
+  they are the PushPull state's clips (the calendar handles use them too now).
+  Ours (`World::pushUberHandle`, `game::pushWay`, `game::pushDrive`): Interact pressed inside the record and held
+  grips, the stick (measured on the stick itself [I]) drives the prismatic joint that moves the section - a joint
+  across her facing (the doors: she faces the handle, against the record's cone) by left / right, one along it by
+  forward / back - as a velocity motor bounded by the impulse; a joint motor braking with at least that impulse keeps
+  it still (the doors outside state 1), a weaker one is overcome by the difference (the retracted towers' 474 / 632
+  against 5.5 x 132.7 / 142.2); she is carried with it. When the section swaps its record set (the towers locking,
+  action 0x1D) she lets go and vt 50 runs before the new state's events. A press a switch took grips nothing.
+  [U] whether the original toggles on a press instead of holding; the proxy constraint; hinge joints keep the old
+  120 units/s at her grip point.
+- **Results** (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, each refused without its gear): l2_maproom door
+  2661 (C09-05) and l5_valgrind_tunnel door 7400 (C16-04) slide their 663.7 units in 2.9 s by sidestepping; the
+  l4_ragnarok_room rubble block 5660 (C15-12) 2054 units in 12.7 s; the l7 towers by their record
+  (`ProgressionReal.EndgameCredits`, from floors inside it; before, the test pushed them while she swam). Synthetic:
+  `Game.ThorGauntletsMoveHeavyObjects`; self-test `tests/selftests/gauntlet_move.json`.
+- **Open**: l5_valgrind gate 7334 (its section never reaches state 1 in ours: vt 55 after `240_val_gate`; `larabase`
+  54 = "is that her bike" 0x777E40 and 19 = "gauntlet charged" [U effect] stop volume 7511's and cinematic 7464's
+  handlers: decoded, not bound, because binding them lets handlers elsewhere run on into cinematics untested here);
+  `ma_pu_thor_pillar`, `ca_pu_thor_pillar` ride joint type 7 (planar, limit / motor records of kind 7) and
+  `ca_pu_thor_debris` has no joint (a free body): neither is simulated, so C11-28 and C15-03 stay open; l2_maproom's hub
+  and wall drag (C09-09 / -11) are not surveyed; the speed's M and the hold / toggle need a Wine trace.
+
+## Natla (l7_yggdrasil_end, the final fight)
+
+Survey of the unit's data and scripts (dumped from the type-8 sections and the object DRMs; nothing here is a per-level
+rule in code: the level scripts run in the VM and call general natives).
+
+- **Who does what** [O scripts]. Natla is `natla_end` 8403 (base script 19035: anim-graph states Idle 0 / Attack 3 /
+  Warping 4 / PoofIn 5 / 7 / 8, clock +52 = 0.7 s). Five more `natla_end` intros stay hidden until their set piece: 8246
+  (top of the tower, eight slow balls), 8233 / 8234 / 8236 / 8237 (one slow ball each). The three ring managers are
+  dispatchers 8448 (lower ring: zone volumes 8649, 8652-8655, 8665), 8450 (middle / upper: 8647, 8648, 8651, 8664) and
+  the zone selector 8460 with one dispatcher per zone (8452-8459). The yeti manager is 8451.
+- **Flight** [O scripts]. She does not fly a path of her own: on every "warp" the manager poofs her out (graph state 4,
+  message `natla_poofedOut_warpHer` on channel `natla_warp_channel`), then a warp point (`natla_end_mover` 8598-8637, a
+  spline mover circling its zone) calls `instance` 25 on her and hangs her on its marker anchor: `instance` 8 (13) →
+  `instance` 23 (thunk 0x798CA0 → 0x4AB320 → 0x5BE1A0: a marker anchor on an instance's HInfo marker; 23 = 0x4A41D0).
+  She rides that mover until the next warp (`natla_warp_done`). Ours: `script::Runtime::anchors`, `World::objectFrame`
+  (anchor chains) and `World::poseAnchored` (the anchored object's body follows, so it is drawn and found there).
+  The marker sits on its bone as the host's anim-graph clip poses it (bind frame without a clip); [I] a host without
+  the marker gives its own frame. The same natives hang the 24 `ar_ani_floating_runestone` platforms on the markers of
+  the eight `ar_ani_runestone_orbit_a` rings, three to a ring, so they now go round with the rings' clips.
+- **Fireballs** [O exe + data]. Each `natla_end` hangs its weapon intro (`wp_natla_fireball` 8433, `_adren` 8238-8258)
+  on its own marker 13 and fires it with `weaponbase` 0 (bind 0x7B69F0, thunk 0x79E2E0 → 0x7784F0): the weapon's stats
+  block (query 0x36, data +0xE0) gives the launch speed (+0x10) and the fire message 0x19B carries the **position of the
+  target instance at that moment**: no homing. Decoded (`game::loadObjectWeapon`, `CombatReal.NatlaFireballWeaponsDecoded`):
+
+  | | wp_natla_fireball → pr_natla_fireball | wp_natla_fireball_adren → pr_natla_fireball_adren |
+  |---|---|---|
+  | speed (stats +0x10, per 30 Hz frame) | 300 = 9000 units/s | 50 = 1500 units/s |
+  | direct hit (fire record +0x1C) | 0 | 3000 (three times her health) |
+  | blast (record +0x44, kind 2): damage centre → edge, radius | 250 → 50, 650 | 250 → 50, 200 |
+  | knock centre → edge, degrees up (+0x58 / +0x5C / +0x54) | 50 → 20, 10 | same |
+  | gravity (fire record +0x4C) | 0: a straight line | 0 |
+  | +0x80 | 150 frames [I: ours drops a ball after that flight time, 5 s] | 150 |
+
+  Ours: `World::fireObjectWeapon` / `tickHostile` (Combat.cpp): the ball flies from the weapon's point (its anchor chain)
+  straight to the target point; the first world face, enemy or Lara's capsule it meets sets it off; a direct hit takes
+  the projectile's own damage, then the explosion record goes through `World::blast` (the squibs' area hit 0x69F1E0),
+  which now also throws Lara off her feet (message 0x91 → `throwLara`) as it throws every other instance. Balls in
+  flight are saved (`hostile` in the combat block, written only while one flies). [U] the knock's unit (50 is used as
+  units/s like the grenade's 300: a small shove, but she is thrown down); whether +0x70..+0x80 describe a burn.
+- **What she throws at** [O scripts]. On the rings 8403 does **not** aim at Lara: the manager picks floor targets of
+  Lara's zone (dispatchers 8461-8522, e.g. 8463 / 8464 on the lower ring by tower 8399), calls the target's vt 62 (1.5)
+  and Natla's vt 60 (target); 0.7 s after her attack state starts her clock fires the ball at the target (`instance` 28).
+  Two balls per stop, about 2 s apart, then she warps: a pair every ~5 s (measured: throws at 2.72 / 4.73 / 7.77 /
+  9.78 s after Lara enters a lower zone). Without a target override the ball goes at Lara (`playerref` → `instance` 14):
+  the hidden set-piece Natlas do that.
+- **Burning patches** [O scripts]. Every floor target owns a trigger volume (8523-8584, a 600-unit box) and the shared
+  effect 8585 `fx_natla_fireball_explosion`: 1.5 s after the throw was ordered the target's clock moves the effect there,
+  plays it and switches the volume's damage on for 3 s (second clock). While on, Lara inside it takes `health` 2 (100)
+  at once and every second (the volume's state 1 loop). So a ball costs her up to 250 from the blast and 100 a second
+  while she stays in the fire; standing between two targets (640 and 1100 from them) costs nothing.
+- **Timed dodges** [O scripts]. Volumes 8323 (tower top), 8324, 8325, 8327, 8329 (climbing walls) start adrenaline
+  trackers 8318-8322 (time scale down), reveal the matching hidden Natla with a camera (reveals 8313-8317) and have her
+  throw the slow ball(s) at Lara: 1500 units/s and 3000 on a direct hit, so only leaving the line saves her.
+- **Hitting her** [O scripts]. Damage to 8403 (vt 22, any `damagetype`) posts `hit_by_player`; the lower-ring manager
+  counts them and at the second one ends its fight (vt 66: fireballs off, yetis off, manager 8450 takes over). She has
+  no health of her own.
+- **Yetis** [O scripts]. Lower ring: the four `yeti_thrall_pool_generator`s 8675-8678 are enabled when Lara enters a
+  lower zone (`generatorbase` 3) and each `yeti_dead` message asks for the next (manager vt 65 → 8451 vt 69) until ten
+  have died. Upper rings: 8451 gives birth to dormant yetis: vt 63 three (8667, 8668, 8669: volume 8650, the page's "1 +
+  2"), vt 64 one (8667), vt 65 one (8672), vt 67 one (8674), each once, with a reveal camera (8339 / 8341).
+- **The pool** [O scripts]. Ten flow volumes (8209-8218, 8438-8446; surface −316.2) lie under the lower ring; 8209's
+  thread polls `larabase` 3 for each every 0.1 s and kills (`health` 2 (12345), "Goo death") when Lara is in one. The
+  eleventh volume 8309 is the finale's flood: its constructor sets it to marker 8680 (z −11116.5) at once, `goo rise`
+  (vt 56) to 8681 then 8682 at speed 3, `goo rise higher` (vt 57) to 8683 at speed 2. Two fixes made this work:
+  `marker` **locals** start as their declared intro (Vm.cpp; before, 8309 kept its box top, z 2869.5, and flooded the
+  lower ring from the start), and the VM's 100 000-instruction budget now bounds one resume, not a thread's life (the
+  kill thread died after ~90 s).
+- **Towers, mounts, checkpoints**: "Thor's gauntlets" above; docs/PROGRESSION.md chapter 7. Checkpoints 8178 / 8179 /
+  8157 are activated by towers 8398 / 8399 / 8400 (vt 54 links), 8180 and 8242-8245, 8248 by the rings' volumes.
+
+- **A patch burns who walks into it** [O scripts]: the volume's OnIn (vt 70) starts the burn thread only while its
+  damage is on, so standing on a target when the ball lands costs the blast alone; walking into the flames costs 100 at
+  once and 100 a second until the patch goes out (the thread does not ask whether she is still inside).
+- **Route geometry met by input** (`ProgressionReal.NatlaFightByInput`): the unit's start walkway (z 7383) ends in a
+  ledge at x −26750 (hang, drop to z 6160), a ramp runs down into arena volume 8303 (x −14800, z 4724); 320_hel_boss
+  leaves her on the middle ring's entry walkway at (−8143, 793, 4321), which ends at x −6620 over the rings (lower ring
+  z 474, 3850 below: a fatal fall, so the original's way down is the rope). There no zone volume holds her and Natla
+  throws nothing.
+
+Tests: `CombatReal.NatlaFireballWeaponsDecoded`, `CombatReal.NatlaFireballsBlastThrowAndBurn` (throw from her warp
+point at 9000 units/s, blast on the floor target, 50-250 damage and thrown down, the patch's 100 a second on entering
+it lit, nothing between the targets, save round trip, pool level, no script stop; Lara placed on the ring),
+`ProgressionReal.NatlaFightByInput` and self-test `natla_fight` (input only: the entry to 320_hel_boss, the towers
+retract, nothing thrown at the entry walkway, the walkway's end), `ProgressionReal.EndgameCredits` (the whole script
+chain to the credits, Lara placed at the six interactions).
+
+Open (the fight is not yet playable from the entry to the credits by input alone):
+- [U] the way from the entry walkway to the rings by input: the platform ride and the rope down (matrix C21-01 / -02).
+  The 24 floating stones hang on the orbit rings' markers and the rings' sections are born by dispatcher 8360 as the
+  buttresses break; whether Lara can stand on / grab them as they move is untested (moving ledge markup: none).
+- a level start on the lower ring (a `--spawn` there, not a checkpoint load) dies at once: the World's first tick finds
+  her inside pool 8309's box before its constructor has lowered it (box top z 2869.5), she treads its surface down to
+  the marker, and 8209's goo flag, once set, kills at every poll. A tread that loses its surface by more than a step
+  should fall instead [U: tru.exe's rule]; the rings' input tests and a ring self-test wait for that.
+- the two chimney climbs, the tower's moving handholds, the buttress slide (C21-07, -12, -21, -23): no input route.
+- Natla as a shot target: nothing in ours delivers a hit to 8403's vt 22, so the lower ring's fight does not end after
+  two hits as the scripts provide; the manager keeps throwing while Lara stays on the ring.
+- [U] yeti counts actually spawned by the pool generators (enabled by the scripts; `ai::Enemies` spawns by its own
+  generator data) were not measured here; the upper rings' births are script calls (above).
+- [I] the knock's unit, the 5 s flight limit, lingering-flame fields of the explosion record (+0x70..+0x80).
+
 ## Controls
 
 - Bindings live in `config.json` under `controls` (`bindings`: action → list of inputs; `mouse_sensitivity` 0.1..10,
@@ -821,7 +1029,8 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   written before 0.12 (Shift walk, Alt sprint, …) gets these defaults for every action still on its old default;
   rebound actions are kept.
 - Sprint (Tuning in Game.hpp; tru.exe under Wine, l4_trailstart, `openunderworld-work/screens/controls/s_*.txt`):
-  sprint held while running plays `sprint_loop` (root motion 1927 units/s; tru ~1860 on a curve) for 9.7 s of
+  sprint held while running plays `sprint_loop` (root motion 1927 units/s; tru.exe 1851..1939, mean 1915, on the
+  straight of the l3_main_bedroom corridor, `openunderworld-work/jumpfid/sprint.txt`; ~1860 on a curve) for 9.7 s of
   stamina (measured 9.5..9.9), then `ng_sprint_to_exhaust` + `ng_run_exhaust` (no refill while they play) and `ng_run`.
   Stamina refills a second per second of anything else; a sprint starts again once 0.9 s is back (held throughout:
   ~2.2 s running, 0.9 s sprinting; 4 s without it after exhaustion: 4.1 s). Crouch while sprinting rolls with
@@ -874,8 +1083,8 @@ downstream reaction as tru.exe's scripts define it (`--report-objects`; PROGRESS
 
 | replay | spawn | what happens | asserted reaction |
 |---|---|---|---|
-| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematic: 6556.5,-33459.7) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) | throne section 0 state 2, its press plate in "in position" (-150..-90), seal 5701 vt 54 |
-| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | power gem 7498 carried 33 m to cog wheel 7312, set into section 1 while the wheel turns | cog wheel section 1 state 0 -> 1 |
+| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematics leave her at 8101.6,-32185.8) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) | throne section 0 state 2, its press plate in "in position" (-150..-90), seal 5701 vt 54 |
+| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | round the central column (waypoints) to power gem 7498, carried to cog wheel 7312, set into section 1 while the wheel turns | cog wheel section 1 state 0 -> 1 |
 | `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 | lever graph 1 -> 0 and its slider watch (a joint) |
 | `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 | elevator 2960 vt 54 (graph 0 -> 1), switch 2961 vt 62 |
 | `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole; a jump onto the block (its ledge loop), a standing jump from its top to the pole | lever graph 0 -> 1, its slider at -600 under her hang (state polehang), block under the pole, door 6505 raised 1200 |
@@ -1497,6 +1706,10 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 
 ## Grapple (src/game/Grapple.cpp)
 
+- Feature targets [O data]: an object's physics record lists model features; mask bit 4 marks a grapple point
+  (`physics::ObjectPhysics::features`, `kFeatureGrapple`). Uber objects and class-34 rigid bodies with one are offered
+  as `GrappleKind::Mounted` targets at the feature's bone while its model is shown (`World::uberShowsModel`):
+  `ma_uo_bedroom_door`'s ring (l3_main_bedroom 4526) among them.
 - Targets [O]: intros named `*_ei_grapple_*` (`ca_ei_grapple_post`, `sa_ei_grapple_ceiling(_invisible)`,
   `ma_ei_grapple_ceiling`, `ca_ei_grapple_wall_a`, `tp_ei_grapple_wall`, `ar_ei_grapple_wall`, …; not
   `fx_grapple_bling_*`), collected per unit into `UnitData::grapples`. Kind: Mounted (a pull target) when the intro's
@@ -1628,6 +1841,11 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   roped walk's speed) was attempted twice and not obtained: teleported to the balcony (unit offset from the ring's
   instance position: tru = ours + (1583.83, 1911.31, -1939.58)) she falls through the world after the first camera
   calibration run. Scripts and notes: `openunderworld-work/gameplaygoal/grapin/` (`wine2.sh`, `an.py`, `NOTES.md`).
+  Three more sessions (2026-11-10, `openunderworld-work/gameplaygoal/reference/failed/`) did not get her onto a rope
+  either: on this balcony she is 277 lower a second after being set down and then gone (the game restarts the
+  prologue, which is why the earlier sessions' later teleports fell through the world), and in l3_chapel the unit
+  opens with a scripted sequence that owns her. docs/REFERENCE_COMPARISON.md "Grapple" has ours' measured swing on
+  both rings and, under "Unmeasured", the session to run next.
   Open until then [U]: the time base of the brakes and of the body damping (ours: per frame), gravity on the rope
   body, the "no ground" distance, the roped walk speed, whether the jump-offs let the rope go.
 - Landing from the rope [I]: swinging down onto a floor (> 300 u/s down) off a taut rope, or coming down just over a
@@ -1686,14 +1904,19 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 
 ## Ladders, pillars, perches, wall hug (src/game/Traverse.cpp)
 
-- Markup [O]: ladders (9) have points `{top, bottom, bottom + outward hint}`, pillars (15) `{top, bottom}`; perches
+- Markup [O]: ladders (9) have points `{top, bottom, the bottom's other corner}` (see "Ladder frame" below), pillars (15) `{top, bottom}`; perches
   (13) are a short segment; 13 of the 29 pillars carry a perch on their top (within 9 units; survey of all units,
   2026-11-06). `climbNormal` holds the outward direction. Clips are those of lara.drm's anim requests for them
   (ladder 1158–1198, pillar 616–646, perch 647–676), with their fades and start frames; the `lad_*` set (requests
   1199–1212, the same animations) is not used.
+- Ladder frame [O data, corrected in 0.42]: the third point is not an outward hint: `points[2] − points[1]` runs
+  across the ladder (158..243) and the wall faces `width × up`. Rays in the units: l1_ship_sinking_hall 234 / 236 lie
+  in the valve wall y = 29 and 235 in y = −1247, open toward −Y; l7_arctic_sea 2044 / 2045 (width −X) and 2046 / 2047
+  (width +X) face each other across their chamber. Ours had the width as outward, so every real ladder stood turned
+  90° in its wall's plane (which is also why the Wine teleport below never attached). `ladderOut`, `rungPos`.
 - Ladder rungs [O]: tru.exe 0x734B70 / 0x72B920 / 0x74DCD0 (`LadderRungAlignAnimTarget`) with lara.drm player data:
-  rung r's root lies **575.221** (+0x784) + r × **110.619** (+0x770) below the top point and half the outward hint +
-  **110.619** (−(+0x778)) out from the line; rungs run 0 .. trunc(trunc(length) / 110.619) + 1 − **6** (byte +0x774),
+  rung r's root lies **575.221** (+0x784) + r × **110.619** (+0x770) below the top point, half the ladder's width along it and
+  **110.619** (−(+0x778)) out from the wall; rungs run 0 .. trunc(trunc(length) / 110.619) + 1 − **6** (byte +0x774),
   the lowest putting her feet at the bottom point (l1_ship_sinking_hall 234: 933.6 vs 940). Every climb clip
   (`ladder_climb_up` 98.4 / `_down` −89.9 of root motion) carries her from one rung to the next (scaled to 110.619, as
   the align target corrects it); attaches end on a rung (from the floor the lowest, `ladder_attach_ground_bottom`; from
@@ -1731,8 +1954,8 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   reach / settle clips hand over 311 + the 30 box]. On the lowest rung the chart steps off only on LookaheadResult 640
   and leans back on 642 (S1086 → S1088): ours leans (`ladder_idle_to_jump_back_antic`, `ladder_jump_back_prepare`,
   released `ladder_jump_back_antic_to_idle`) when no floor is where `ladder_detach_ground_bottom` ends [I: 640 = floor].
-  Real spot: l7_arctic_sea ladder 2044 hangs over a pit, balance beam 2042 (between ledges 2065 / 2066) crossing 853 to
-  its left at z −18899: rungs ~9..12 jump onto the beam. Not measured under Wine [U]: teleporting into that chamber
+  Real spot: l7_arctic_sea ladder 2044 hangs over a pit, balance beam 2042 (between ledges 2065 / 2066) crossing 853 out
+  from its wall (behind her) at z −18899: rungs ~9..12 jump back onto the beam (`GameReal.ArcticSeaLadderJumpBackOntoBeam`). Not measured under Wine [U]: teleporting into that chamber
   works (tru = ours − Level+0x80 = (5610.33, −22439.56, −19571.3)), but she did not attach to the ladder from a
   teleported fall; side-by-side ladders (reach) exist in no unit (stacked ones: l1_ship_sinking_hall 28 / 30, reached up
   by q88 S1095, not done).
@@ -1973,7 +2196,15 @@ openunderworld-work/gameplaygoal/wj.py, disassembly openunderworld-work/gameplay
   goes to S1292 on `PSCCF_WallJumpAnticipate` (0x20B, 0x763330 -> 0x759260), T2350 to S1293 on `PSCCF_WallJumpCollide`
   (0x217, 0x763490: 0x7594C0 returns 1) once 5 frames into the state (cond 0x14).
 - The wall test 0x7594C0 [O] (player data = lara.drm object data, offsets from its start):
-  - She is not attached to markup with flag 0x80.
+  - The jump query in effect (player +0xA84 -> 0x6F1950) must not carry flag 0x80 in its +0x2C word, else the test
+    returns 0 at once. The queries that carry it [O-data, lara.drm]: q2 (the standing jump), q10 (hang jump up), q23
+    (ladder jump up), q31 (DICE jump up), q35 (pole-top jump up), q55 (the wall hug's twist jump), q13, q36, and the
+    falls / drops (q44..q47, q49, q62, q64, q65, q72, q92, q93, q104, q106): the jumps launched straight up and the
+    falls. q43 (stick jump), q26 (running jump), q9 / q7 / q8 (hang jumps back / sideways), q22 (ladder), q33 / q34
+    (pole) and q12 (the wall jump itself) do not. tru.exe under Wine [O-runtime]: a standing jump 111 from l2_junglehub's
+    unflagged column face, facing it, is a plain jump (apex 201.6, 0.55 s; three runs,
+    `openunderworld-work/gameplaygoal/reference/chimney-wine2.txt` ja / jb / jc). An earlier reading of this gate as
+    "not attached to markup with flag 0x80" was wrong.
   - 0x758DD0: the pelvis (segment 1) now and N frames on, N = byte +0x821 = **3** (the anticipate test uses byte
     +0x820 = 0, a ray of no length): along her heading by N x |velocity| (a frame's), and 2.862215 x N^2 down.
   - Ray 1 (0x4935F0, mask 0x2C19E7) between the two points raised by int +0x824 = **63**; ray 2 lowered by int +0x828 =
@@ -2010,7 +2241,10 @@ openunderworld-work/gameplaygoal/wj.py, disassembly openunderworld-work/gameplay
 
 **Ours** (State::WallJump; `Player::tryWallJump`, `wallJump`, `wallJumpQuery`): the test above, literally, on the 30 Hz
 frames of a State::Jump flight that was not aimed at markup (`jumpAimed`: `aimGroundJump` / `assistJump` found a
-target), with collision rays for 0x4935F0 and the bind pose's segment 1 height for the pelvis [I] (300 without a
+target) and was not launched straight up (the flag-0x80 jump queries q2 / q10 / q23 / q31 / q35 / q55 all launch with
+no horizontal speed, so ours tests the launch's horizontal speed [I: two straight-up queries, q27 (50.57 up) and
+q110 (80.15 up), lack the flag; ours refuses the wall jump for them as well]), with collision rays for 0x4935F0 and
+the bind pose's segment 1 height for the pelvis [I] (300 without a
 skeleton). On the wall she is drawn to the 110 standoff over two frames, turned to face it, and holds her height:
 nothing moves her up but the jumps. A jump press (edge) while `wallJumps` < 5 plays wall_jump_jump_back; when it ends
 she faces away from the wall and either flies onto the ledge `ledgeOnArc(q12)` met (State::HangJump, the existing ledge
@@ -2041,20 +2275,56 @@ as a wall).
 
 **Tests**: `Game.ChimneyJumpGainsHeightEachRebound` (walls 700 apart: ~487 a rebound, 110 out, no teleport),
 `Game.ChimneyJumpNeedsThePress` (14 frames, then the fall), `Game.ChimneyJumpFallsAfterFiveInARow`,
-`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`,
+`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`, `Game.ChimneyJumpNotFromAStandingJump`,
+self-test `chimney_floor_jumps`,
 `Game.ChimneyJumpSaveLoadContinuesIdentically`, `GameReal.JunglehubChimneyJumpClimbsColumns`,
 `GameReal.ValaskjalfChimneyJumpTakesAllFive` (and l2_towerroom's kick), `StreamReal.SaveContinuesBitIdentically`
 (its l2_junglehub case: saved on column B mid-climb, bit for bit).
 
-Open [U]: not measured in tru.exe under Wine: whether a standing jump beside an unflagged wall really plants her on it
-45 over the floor (ours does, by the chart), the hold time in seconds, the attach heights, whether the count ends a climb
-at five; the camera on the wall (the jump camera is kept). Three Wine sessions (2026-11-10,
-openunderworld-work/gameplaygoal/chimney/session.sh, wine1-*.txt) teleported her to our unit-frame coordinates and
-fell through: after `wmem goto <unit>` tru.exe's world is our unit frame + (its start - our spawn): l4_ballcourt
-+ (5881.23, -10787.23, -15435.90), l2_junglehub + (8558.23, -19414.44, -18073.17). session2.sh there has the corrected
-coordinates (the l4_ballcourt corridor at ours -17544, 6342, 2841.5 for the count; l2_junglehub's streambed between
-the columns, where column B's base carries flag 0x80 up to 800 over the floor and its upper part does not) and
-ours1..3.txt our controller's traces of the same inputs to compare with; it was not run.
+**Measured in tru.exe under Wine** (2026-11-10, l2_junglehub, the streambed floor between the columns, facing column
+A's unflagged east face; `openunderworld-work/gameplaygoal/reference/chimney-wine2.txt` ja / jb / jc,
+`chimney3-wine.txt` j3 / j4, scripts `session6.sh`; docs/REFERENCE_COMPARISON.md M06) [O-runtime]:
+
+- A standing jump 111 from the face: a plain jump (apex 201.6), three runs: no wall jump (q2's flag 0x80, above). Ours
+  planted her 45 over the floor until this gate was added (`Game.ChimneyJumpNotFromAStandingJump`).
+- A stick jump (q43: 40.00 + 49.97 a frame) run up to the face: one frame after the take-off she is in the wall
+  state, her root **43.2 / 43.6** over the floor, and is drawn in 0.19..0.20 s (6 frames) to **98.5** out of ledge
+  796's line (ours: 39.7 over the floor, 105.6 out, drawn in 2 frames [I: `kAttachSeconds`; the 3-frame clip entered
+  at frame 1 does not explain tru.exe's 6]). Ours used to miss this catch when she took off within a tick's travel of
+  the wall: the test read her contact-clipped velocity (self-test `chimney_floor_jumps`).
+- No press: the idle state lasts **0.416 s** (12.5 frames; chart variable 208 = 12, so its unit is the 30 Hz frame
+  [O]), then `wall_jump_detach_fall` takes 0.267 s (8 frames), her root 32.9 back and down to the floor.
+- A press 58 ms into the idle: the turn state lasts **0.200 s** (6 frames; ours plays the 5-frame clip from its start
+  frame: 0.133 s), then the flight starts 22.8 out and 37.0 up of the wall position at **46.81** out + **77.27** up a
+  frame (first sample 74.48): q12's velocity, as ours.
+
+The climb itself, ledge 796 to 797 (`chimney4-wine.txt` h1; the hang reached by pinning her 600 over its root, where
+the fall's air grab takes the ledge) [O-runtime]:
+
+- Hang root z 5855.5 (ours 5855.2). Back + Jump: she leaves 407 ms after the press at **53.73** out + **34.77** up a
+  frame, the free leap's speeds, and is in the wall state on column B 0.149 s later, **130.6** over the hang's root
+  (ours 138), drawn to her hold in 0.2 s.
+- Each jump press: the 0.2 s turn, the flight at 46.81 + 77.27, and the wall state again **0.183..0.200 s** into the
+  flight: on the 5th frame, the first with zVel inside the window (the timing inferred above holds), while she is
+  still 105..115 short of her hold, to which she is drawn level in 0.2 s. Holds at +130.6 (B), +491.2 (A), +829.6
+  (B): **360.6** and **338.4** a rebound. From the third hold the jump is re-aimed (first sample 36.32 out + 67.06 up
+  a frame) onto ledge 797: hanging 1247.5 higher 3.17 s after the first press. Four jumps, as ours.
+- **Ours differs**: its rays (3 frames x speed from the pelvis) reach the facing column only on the 8th frame, so she
+  arrives at the wall itself and has risen **435** a rebound (holds at +138, +573, +1008;
+  `GameReal.JunglehubChimneyJumpClimbsColumns` asserts that 435). What lets tru.exe take the wall from ~110 farther out
+  is not decoded [U]: the vector at player state +0xA20 that 0x758DD0 scales may be the jump's launch velocity
+  (90.3 a frame for q12, not the current 69.6), and 0x4935F0 may cast with a radius.
+- No press after the leap back (h3): 0.200 s of draw, **0.404 s** idle, `wall_jump_detach_fall` 0.259 s (32.6 back,
+  149.4 down), then the fall.
+- Five in a row (h2: from the hang on 797, where the walls give no more height, a press every 150 ms): the leap back
+  and **five** jumps back; on the wall after the fifth the presses do nothing, she holds 0.416 s, drops and catches
+  797 again. The count is tru.exe's, as ours (`wallJumpMax`).
+
+Open [U]: the look-ahead above; the camera on the wall (the jump camera is kept); l5_valaskjalf's climb that needs
+all five; of the nine further shaft candidates above none was tried. Coordinates for such sessions: after
+`wmem goto <unit>` tru.exe's world is our unit frame + (its start - our `player` intro): l4_ballcourt + (5881.21,
+-10787.21, -15435.93), l2_junglehub + (8558.2, -19414.5, -18073.1); only the first `goto` of a session can be relied
+on (docs/REFERENCE_COMPARISON.md "Method").
 
 ## Rail slides (src/game/Traverse.cpp)
 
@@ -3215,6 +3485,14 @@ No side-by-side comparison with the original game was made.
   Wine (Numbers); traversal reach boxes and the jump-assist radius are inferred; none are in Lara's player data block
   (Numbers) [U]. The grab zVel window, height, crouch height and
   water probe are taken from it.
+- Jump timing differs from the original [O-runtime, docs/REFERENCE_COMPARISON.md]: tru.exe leaves the ground 342..359 ms
+  after the press standing, 273..290 ms with the stick, 70..109 ms running; ours 133 / 67 / 33 ms, because the take-off
+  leaves when its clip ends and `clipBlend` starts `ng_standing_jump` at request frame 6 and
+  `ng_running_jump_forwards` at frame 1. The run start (`ng_run_start` from frame 6) leads tru.exe's by 0.07..0.10 s
+  for the same reason. Not fixed yet: every recorded replay with a jump shifts with it.
+- The original has no longer jump from a sprint and none from holding Jump on flat ground: a jump out of the sprint
+  and one with Jump held 1 s are the running jump's flight (65.83 forward + 42.53 up a frame, 987 long, apex 158.0)
+  [O-runtime, `openunderworld-work/jumpfid/sprint.txt`, `hold_run.txt`]; ours does the same.
 - Swimming: breath, scuba, dodges, swan dive, surface turns, the automatic climb out and jellyfish are in ("Water
   moves"); its "Open" line lists what is left. Scripted water levels run ("Scripted levels"). Ripple/caustic
   parameters are ours [I].
@@ -3231,7 +3509,7 @@ No side-by-side comparison with the original game was made.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
   see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
   model, ledge-grapple transitions, exe rappel speeds (ours are [I]).
-- Missing: sprint on stairs / slopes (`ng_sprint_up` / `_down`), sprint jumps and beam sprint,
+- Missing: sprint on stairs / slopes (`ng_sprint_up` / `_down`), beam sprint,
   state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenade crouch / perch / under-water
   placing, the
   assault rifle / tranquilizer / Thor's hammer, projectile flight for the speargun (hitscan), mirrored side hit
@@ -3314,7 +3592,9 @@ to white, 0x5DAB40), then after 0.2 s puts her onto `uberobjectbase` 2's anchor 
 ModelMarkerAnchor, 0x4D3110, of ms_uo_yacht 998 at HInfo marker 13, 0x4D4820 -> 0x46DF20) with `instance` 26:
 standing on the stern deck, facing the frame's -Y as intros (ours: `World::markerFrame`, `Player::spawn`, the camera
 behind her [I]). Teleports and tails reset plane-crossing tracking
-(`Runtime::playerJumped`; else the 7652 warp crosses kill plane 7650). Water boxes keep their half extents and
+(`Runtime::playerJumped`; else the 7652 warp crosses kill plane 7650); so does the tick in which a climb-up clip is
+seated on its ledge (`Player::takeReseat` [I]: the whole pull-up clip sets her position 148 lower, which read as a
+fall through l3_bedroom_hall's kill plane 4379 under ledge 969). Water boxes keep their half extents and
 rotation when a unit is offset (only min / max / centre move): l7_arctic_sea's boxes failed at its offset before.
 Stowed weapons are placed from the data as the original (speargun across her back in ch1, the rifle in ch6; weapon
 data +0xB9 names Lara's stow marker, "Combat").
@@ -3773,3 +4053,157 @@ climb and the "Saving grabs [I]" sentence of PLAYER TAILORING above.
   `Game.PoleDropOverSteepGroundIsNotCaughtAgain`, `GameReal.TrapRoomsPoleDropAfterFling`,
   `Game.SafetyDropOffALedgeEdge`, `GameReal.TempleSafetyDropOffThePlatform`; self-tests `saving_grab` (l5_valaskjalf),
   `safety_drop` (l4_temple), `pole_drop_after_fling` (l4_traprooms).
+
+## Controller rules: jumps, landings, ledge extras, sprint (decoded 2026-11)
+
+Sources: the player state chart of lara.drm (`openunderworld-work/hurdles/sc.py`, `gameplaygoal/ctrl2/c.py` - states,
+transitions, the actions a state runs - and `v.py` - the chart variables), tru.exe (`ghidra/exports/decomp_all.c`,
+`gameplaygoal/inputrules/full.asm`), lara.drm clips (`hurdles/clipprobe`) and tru.exe under Wine in l4_temple
+(`gameplaygoal/ctrl2/s1.sh`, traces `w1.txt`; tru = ours + (500.70, 9432.76, -19909.81)). Chart conditions used below:
+0x65..0x68 the timed buttons ("Input rules"), 0x96 / 0x97 / 0x98 an action held / released / pressed (51 Crouch, 52
+Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full), 0x192 its quadrant against her heading
+(410 forward, 411 back, 412 / 413 the sides), 0x14 the state's time in frames, 0x1E the fall so far, 0xC9 the clip done,
+0xCA the clip's critical section; a parameter group of 1000 compares with a chart variable.
+
+### Jumps: the Jump button's hold, the gait, the stick in flight
+
+- **Holding Jump does nothing** [O chart, decomp, Wine]: no transition out of the take-off states (S248 standing, S245 /
+  S247 with the stick, S280 / S281 running, S249 from the sprint) or of the free flight (S287 -> S288 -> S294) tests
+  the Jump button (conds 0x65, 0x96..0x99 with action 52), and the flight's action 510 (table at tru.exe file 0x4B11D4:
+  enter 0x7522A0, tick 0x752410) reads no input. tru.exe under Wine, Jump tapped (60 ms) against held to the landing:
+  standing jump apex 201.5 both, in the air 550 ms both; running jump apex 155.8 both, take-off (65.83, 42.54) a frame
+  both, 954.7 from the first airborne sample to the landing both. The controls page's "a little longer in the air" is
+  not in the PC game.
+- **Gait** [O chart, Wine]: the walk and the light stick take the stick jump (S245, query q43: 40 along + 50 up), the
+  run the running jump (S280 / S281 by the planted foot, query q1: launch 65.83 + 42.54 [Wine]; its record's velocity
+  reads 90.25 + 42.54), the **sprint** S249 (T182 from S59 and its fall-off state S13), whose query q26 has q1's
+  velocity: under Wine a jump from the sprint (state S59 at 1879 units/s) takes off at the same (65.83, 42.54), apex
+  155.8, 954.6 to the landing - it is longer only by the faster run-up and the sprint that resumes 0.15 s after the
+  landing (the landing group's T2108). The roll's jump (T53 -> S251 `ng_rolling_jump_forward`, query q20: 53.83 +
+  53.83) is not ported.
+- **The stick in flight: a brake, nothing else** [O decomp, Wine]: the flight state S287 (and the wall jump's S1292)
+  runs action 511 (enter 0x73ECE0, tick 0x750040) beside 510. Enter stores the horizontal take-off velocity (chart
+  context +0x430) and the stick's forward part against her heading s0 (+0x420). Each frame, when the jump has no
+  markup target (player +0xA64 = 0), the jump query's +0x64 >= 0.05 (0.9 for the ground / hang / pole / ladder jump
+  queries, 0 for the straight DICE leap q27), the stick is off centre, |s - s0| > 0.05 and s < query +0x74 (-0.2; -1
+  for q3 and q19: never):
+  `horizontal velocity = take-off velocity x (1 - clamp((-0.2 - s) / 0.8, 0, 1) x query +0x68 (0.6))`, the vertical
+  speed untouched. Straight back = 40 % of the take-off speed; nothing gives speed back and nothing steers sideways
+  or adds speed. Wine: Back pressed 0.1 s into a running jump: 65.83 -> **26.33** a frame on the next frame, landing
+  500.3 from the first airborne sample instead of 954.7; the stick let go in flight: no change.
+  [U]: 0x750040's two time limits (frames since context +0x444 > query +0x70 = 15 once +0x444 is set - its setter
+  was not found; frames in the air > 2 x Lara data +0x4C (1280.03) / g = 447) are not applied.
+- Ours: `Player::airBrake` (State::Jump with no aimed target; `Tuning::airBrakeStick` / `airBrake`;
+  `PlayerState::jumpVel0` / `jumpStick0`, saved as `controller.airBrake`). Nothing else changed: ours already flew one
+  arc per query whatever the button did, and treated the sprint as a run for the jump.
+- Tests: `Game.JumpHoldNoEffectAndStickBackBrakes`, `GameReal.TempleJumpHoldStickBackAndSprintJump` (the Wine
+  numbers); self-test `jump_brake` (l4_temple).
+
+### Landings
+
+- **Dispatch** [O-data]: every landing passes the chart state S1275, whose transitions are tried in this order:
+  1. T2101 / T2090 / T2102: the swan dive's and the water landings ("Water moves").
+  2. T2100 -> S1283 `ng_land_rolling` (request 677, start frame 4; root 808 forward in 0.67 s): Crouch down (cond
+     0x96, action 51) but not held long (`!0x9B:51`), the stick pushed (cond 0x191 not 401) forward of her heading
+     (0x192 = 410), nothing carried (0x5DD = 0). No height condition: the roll comes at any height, before the height
+     tests. It wants a press shortly before the landing: tru.exe under Wine with Crouch held from 0.7 s before the
+     landing and the stick forward lands in the stumble (S1278) and crouches 0.15 s into it (T2106, S80); ours takes
+     0x9B as the buttons' held-long limit of 15 frames [I].
+  3. T2091 -> S1280 / T2092 -> S1281 `ng_land_hard` (request 39; 1.1 s in place): the fall >= chart variable 345 =
+     **3185.84** / 346 = **1264.22**. The fall is cond 0x1E (tru.exe 0x764B40): z on becoming airborne (player
+     `+0x6DC`) - z, compared with a chart variable (0x783BD0 / 0x782060; variables = the pointer table at lara.drm
+     object data +0x5C290, 400 entries of {type, value}).
+  4. T2118 -> S1278 `ng_running_land_stumble` (request 725, start frame 3; root 950 in 1.07 s): the fall >= variable
+     344 = **632.11**, the stick pushed and not backward (0x192 != 411), no low ceiling.
+  5. T2089 -> S1284 `ng_running_land`: the stick at run level (0x191 not 401 / 402), not backward.
+  6. T2093 -> S1281: a low ceiling (0x1F7) [not ported: ours lands plainly and stands].
+  7. T2094 -> S1279 `ng_generic_land_forwards`.
+  No transition tests her speed (ours used to need 600 units/s to run on). Fall damage starts higher (1280.03,
+  Numbers "Fall damage"): the hard landing from 1264.22 to 1280.03 costs nothing.
+- **While the landing clip plays** (group S1276) [O-data]: Jump pressed takes off again at once (T2112..T2115 into the
+  running / standing jump states, flag 7); Crouch pressed with the stick forward within state time < variable 347 =
+  **4** frames rolls after all (T2107); from 4 frames on, Crouch held with the stick pushed crouches (T2106), Sprint
+  held at full stick sprints (T2108), and the stick pushed anywhere but forward leaves the clip for the ground moves
+  (T2099) - the last three only outside the clip's critical section (cond 0xCA); the clip's end goes back to the ground
+  group (T2097). Crouch held with no stick crouches out of the plain landing once its critical section is over
+  (T2104; Wine: 0.35 s into it after falls of 400 and 800, 0.61 s after 1200; ours `Tuning::landCrouchTime` 0.36 s).
+- Ours (`Player::land`, `State::Land` in `Player::tick`; `Tuning::landStumbleFall` / `landHardFall` /
+  `landRollFrames`, `PlayerState::landTime`): exactly this dispatch, the stick quadrants taken as 45 degrees either
+  side of her heading [I] and the run level as the run's (stick >= 0.5, no Walk). [I]: `ng_land_hard` is treated as
+  critical to its end (no jump, no leaving: 1.1 s), the other landings as never critical - the clips' critical
+  sections are not read. tru.exe under Wine: see the trace
+  list at the end of this section.
+- Tests: `Game.LandingByFallHeightStickAndCrouch`, `Game.LandingClipJumpRollCrouchAndLeave`,
+  `GameReal.TempleLandingsByHeightStickAndCrouch`; self-tests `landing` (l4_temple), `fall_damage` (its 1500 fall now
+  expects `ng_land_hard`).
+
+### Ledge extras: the pull-up's button, the handstand, hand over hand faster, the free hang
+
+- **Pull-up and handstand** [O chart, Wine l4_temple ledge 1155]: Jump pressed in the idle hang with a top to climb
+  onto (clearance 650) enters S439, which waits on the button: let go -> S456, the pull-up (T608; Wine: Jump down 150
+  ms, the climb starts 13 ms after the release and she stands 0.82 s later, 231 in and 494 up = `ledgeb_climbup_fast`
+  played whole); held past the buttons' 15 frames (cond 0x65 mode 0x65), state time >= 10, the stick not back or
+  aside -> S440, the **handstand** `ledgeb_climbupflair` (request 1003; Wine: S440 0.50 s after the press, 2.47 s
+  long, ending 228.5 in and 494 up; free hang: `ledgeu_climbupflair`). With the stick up she is in the lean S435 and
+  Jump pulls up at once (T613 -> S456), held or not: no handstand there (Wine). T558 (request 1002 from its start
+  frame 6, the quick one) is the Jump press straight out of the catch states S530 / S531 / S542 / S548. Pushing the
+  stick ends S456 early into the run (T244: Wine 0.58 s instead of 0.82 s) [not ported].
+  Ours (`PlayerState::pullWait`, `Player::tick` Hang): the wait in the hang's idle pose [I: S439's own pose], the
+  release / the 15-frame hold as above, the pull-up clip whole (it used to start at frame 6 on the press: 0.57 s).
+- **Hand over hand faster with Interact** [O chart, clips, Wine]: a press while the stick shimmies (T581 / T582 from
+  S427 / S432 / S431, not at the ledge's end) plays one `ledgeb_right_hustle` (S441 / S442, request 968, mirrored to
+  the left: 371 aside in 0.57 s against `ledgeb_right`'s 196 in 0.70 s; Wine: 368 in 0.47 s from the press to the
+  ledge's corner); pressed again from the clip's frame 8 on it starts over (T621 / T624, cond 0xD7), else its end
+  returns to the shimmy (T622 / T623). Holding Interact is one press. Ladders: Interact - or Jump (T1814) - with the
+  stick up, more than chart variable 194 = 4 rungs under the top (cond 0x2B3), plays `ladder_climb_up_fast` (S1057:
+  four rungs, 429 up in 0.47 s, against a rung, 110.6, per 0.30 s); again from frame 10 (T1809, variable 193).
+  Pillars the same way (S1197 `pillar_climb_up_fast` with `_init` / `_end`, T1980 / T1981) [not ported: the pole
+  agents' file]. No such transition exists for the free climb (DICE), the ladder downward, or horizontal poles
+  (`HPole_ParaForward_fast` is not reached through cond 0x68). Sprint does nothing on a ledge (Wine).
+  Ours: `Player::tick` Shimmy (`Tuning::hustleAgainFrame`), `Player::ladder` (`ladderFastRungs`,
+  `ladderFastAgainFrame`). Not ported: the hustle's corner clips (`ledgeb_concave / convex_right_phase*_hustle`; ours
+  rounds corners with the ordinary ones).
+- **Free hang** [O chart, decomp; not ported]: lara.drm has a second clip set `ledgeu_*` ("unbraced": idle, right 161
+  in 0.80 s, right_hustle 324, attach_*, drop_antic, climbup_antic / climbupground / climbupcrouch / climbupflair,
+  convex / concave corners, `ledgeb_to_ledgeu` / `ledgeu_to_ledgeb` for a shimmy across the change). The hang states'
+  requests pick the set by cond 0x26C = 691 (tru.exe 0x7622D0: bit 1 = player `+0xED4` == 0): `+0xED4` is the feet's
+  support, set on every attach and shimmy step by 0x75D6C0 / 0x75F2D0 (0 braced, 1 free, 2 not a ledge), for a ledge
+  (MUD 0x40000000) = no wall found by the probe 0x74F480 under the attach point. In the free hang the hang jumps up /
+  aside / back are not offered (T573..T580 need 691; the leans are S434 instead of S435) and climbing up is the
+  `ledgeu` clips. Continue at 0x74F480 (the probe's reach) and `Player::placeOnLedge` (the `ledgeu` hand offset is
+  (-5.2, -145.1, 474.0) against the braced (25, -139, 492)).
+- Tests: `Game.ShimmyHustleWithInteract`, `GameReal.TempleShimmyHustle`,
+  `GameReal.ArcticSeaLadderClimbsFasterWithInteract`, `GameReal.TemplePullUpOnReleaseAndHandstandOnHold`; self-tests
+  `ledge` (step `hustle_left`), `ladder_fast` (l7_arctic_sea).
+
+### Sprint, the run's turn and stop
+
+- **Sprint** [O chart, data, Wine]: S59 is entered by the Sprint press at full stick (T224 from the run's states) or,
+  held, from the run loop S65 (T187, state time >= variable 154 = 0) while CanSprint (cond 0x205 = tru.exe 0x752220);
+  it ends on the release (T184, cond 0x97) into S65 or exhausted into S73. Under Wine the run's start S63 lasts 0.83 s
+  (855 units) whether Sprint is held or not, S65 one frame, then S59 at **1879 units/s** (`sprint_loop`'s root motion:
+  1927; the earlier trace: ~1860). Its moves: the jump S249 (the run's arc, "Jumps" above), the roll S6
+  `ng_roll_front_sprinting` (Wine: 1366 in 0.93 s; the run's S7: 1327 in 0.88 s), the kick S1432, the stair / slope
+  blends (request 740 `ng_sprint_up_stair` / `_down_stair`, not ported), and after a landing the sprint resumes from
+  the landing clip's 4th frame (T2108; Wine 0.15 s). There is no slide under anything and no sprint-only stop.
+  Stamina data [O-data, semantics U]: Lara data +0x520 = 300, +0x524 = 30, +0x528 = 30, +0x52C = 300 (frames; drain
+  0x74A090, refill 0x74A100, the test 0x74FD70); ours keeps the Wine-timed 9.7 s / 0.9 s model.
+- **Turning** [O Wine]: with the stick swung 45 degrees the run loop turns her at **1.755 rad/s** and the sprint at
+  **1.835 rad/s**, linearly, overshooting ~0.03 rad (run: yaw 1.543 -> 0.841 in 0.400 s). Ours: `Tuning::runTurnRate`
+  / `sprintTurnRate` in the loops; the start clips and the walk keep `turnRate` 6 rad/s [I] (the original's start /
+  180 clips S48 / S36 / S61 `ng_running_turn` are not ported).
+- **Stopping** [O chart, Wine]: the stick let go leaves the run loop S65 for S57 `ng_running_stop` (223 on) only
+  after variable 374 = **15 frames** in it (T176); earlier - and from the run's start S63 and the sprint S59 - the
+  group's T40 puts her into S39 at once: she stops on the spot (Wine: W let go 0.32 s into the loop: 0 units further;
+  out of a sprint: 0; 1.2 s into the loop: S57, 266 further). Ours: `PlayerState::runTime`,
+  `Tuning::runStopFrames`; S39's 0.48 s settle clip is the idle blend [I].
+- Tests: `Game.RunStopsOnTheSpotOrSlides`, `GameReal.TempleSprintTurnAndStops`; self-tests `locomotion` (step
+  `run_stop`), `sprint`, `jump_brake`, `landing`.
+
+Wine traces of this section (`gameplaygoal/ctrl2/w1.txt`, 46 runs; `an.py` prints the chart states by index: state
+address = 0x...242D0 + 40 x index): standing / stick / running / sprint jumps tapped and held, the stick let go and
+pulled back in flight; run and sprint stops, rolls, turns; falls of 200..2100 with no key, Forward, Crouch, both
+(plain landing S1279 up to 1200, hard S1281 at 1400, running landing S1284 at 400 and the stumble S1278 at 800 with
+Forward, the crouch 0.35..0.61 s into the plain landing with Crouch held, the stumble then the crouch with Crouch held
+from the start: no roll); the pull-up tapped / held / with Forward; the shimmy with Interact tapped / held / Sprint.
+

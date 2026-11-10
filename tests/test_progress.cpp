@@ -947,7 +947,7 @@ static void endingPlays(const char* unitName, int chapter, int32_t preload, int3
     const glm::mat3 r = glm::mat3(glm::rotate(glm::mat4(1), t->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), t->rot.y, {0, 1, 0}) *
                                   glm::rotate(glm::mat4(1), t->rot.z, {0, 0, 1}));
     const vec3 n = r * vec3(0, 1, 0), base = t->pos - vec3(0, 0, script::kTestPointHeight);
-    for (const vec3 p : {base + n * 300.0f, base - n * 300.0f}) {
+    for (const vec3 p : {base - n * 300.0f, base + n * 300.0f}) {
         auto s = w.player().state();
         s.pos = p;
         w.restore(s, 0, 0);

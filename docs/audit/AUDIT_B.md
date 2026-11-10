@@ -24,7 +24,8 @@ Headline findings (details in the rows and the worklist):
 
 1. Lara does not move on Jolt. Her controller, every gameplay ray / sweep, the camera, the AI and the projectiles use
    the project's own collision BVH (`src/collision`). Jolt simulates joints, loose bodies, pressure plates, ragdolls and
-   the motorcycle. The goal's CharacterVirtual evaluation has not been done or documented.
+   the motorcycle. The goal's CharacterVirtual evaluation had not been done or documented at the audit (done since:
+   `docs/formats/PHYSICS.md` "Character controller"; the sweep mover stays).
 2. Combat has no melee at all (no kicks, jump kicks, finishing moves), no evasive jumps or lock-relative dodges, no
    enemy vault, no knock-down of Lara, no dual targeting, and shooting from a ledge / ladder / pole is refused.
 3. The reward table holds 78 treasures and 6 relics; the original has 179 and 6. The 101 missing treasures are the ones
@@ -210,6 +211,8 @@ ROADMAP "Planned: Jolt Physics" has no character step. One row each, with what o
   `StreamReal.SaveContinuesBitIdentically`, `StreamReal.RagdollSaveLoad`, `VehicleReal.SaveRestoreMidRide`.
 
 ## CharacterVirtual evaluation plan
+
+(Executed: measurements and decision in `docs/formats/PHYSICS.md` "Character controller". The plan as written:)
 
 Why it is a fair candidate: tru.exe itself moves Lara as a proxy capsule in Havok (instance +0x288: radius +0x65C,
 cylinder +0x660, created by 0x7018E0, resized by 0x490E60; state-chart condition `PSCCF_CheckProxySupport`, string

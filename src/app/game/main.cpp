@@ -3673,9 +3673,9 @@ int main(int argc, char** argv) {
                 double sum = 0;
                 for (const double t : sorted) sum += t;
                 const double n = double(sorted.size());
-                std::fprintf(stderr, "ou-game: tick time mean %.3f ms median %.3f ms p95 %.3f ms, script %.3f ms, physics %.3f ms (%zu ticks)\n",
+                std::fprintf(stderr, "ou-game: tick time mean %.3f ms median %.3f ms p95 %.3f ms, script %.3f ms, physics %.3f ms, player %.3f ms (%zu ticks)\n",
                              sum / n, sorted[sorted.size() / 2], sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)],
-                             world->tickTimes.scriptMs / n, world->tickTimes.physicsMs / n, sorted.size());
+                             world->tickTimes.scriptMs / n, world->tickTimes.physicsMs / n, world->tickTimes.playerMs / n, sorted.size());
             }
             if (!opt.screenshot.empty()) {
                 if (!writePpm(opt.screenshot, renderer->readBackbuffer({w, h}))) {

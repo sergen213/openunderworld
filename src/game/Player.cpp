@@ -327,24 +327,33 @@ bool Player::use(std::string_view clip, vec3 pos, float yaw) {
 
 // [O] lara.drm requests 60 obj_block_grab, 61 obj_block_idle, 62 / 58 obj_block_front/left/right/back, 1452
 // obj_block_release; the clips have no root motion. [I] front = pushing, back = pulling; the sideways clips are unused.
-void Player::grip(vec3 axis, int moving) {
+// [O] lara.drm animations 1659-1665 thor_idle / _engage (15 frames) / _disengage (9) / _backward / _forward / _left /
+// _right: their root motion (406-582 units a second) is not applied, the pushed object carries her (World::tick); [I]
+// they are her PushPull state's clips (the chart's requests are not decoded), played at their own rate.
+void Player::grip(vec3 axis, int moving, bool thor) {
+    thor = thor && anims_.find("thor_engage") && anims_.find("thor_idle");
+    const char* const grab = thor ? "thor_engage" : "obj_block_grab";
     if (s_.state != State::Block) {
-        if (axis == vec3(0) || !canInteract() || !anims_.find("obj_block_grab")) return;
+        if (axis == vec3(0) || !canInteract() || !anims_.find(grab)) return;
         s_.state = State::Block;
         s_.vel = vec3(0), s_.yaw = std::atan2(axis.y, axis.x);
         s_.clip.clear(), s_.clipMix.clear(), s_.mix = 0;
-        play("obj_block_grab", false);
+        play(grab, false);
         return;
     }
     if (axis == vec3(0)) { // let go
+        const bool wasThor = s_.clip.starts_with("thor_");
         s_.state = State::Use;
         s_.clip.clear();
-        play("obj_block_release", false);
+        play(wasThor && anims_.find("thor_disengage") ? "thor_disengage" : "obj_block_release", false);
         return;
     }
     s_.yaw = std::atan2(axis.y, axis.x);
-    if (s_.clip == "obj_block_grab" && !clipDone()) return;
-    play(moving > 0 ? "obj_block_front" : moving < 0 ? "obj_block_back" : "obj_block_idle", true);
+    if (s_.clip == grab && !clipDone()) return;
+    if (thor)
+        play(moving == 1 ? "thor_forward" : moving == -1 ? "thor_backward" : moving == 2 ? "thor_left" : moving == -2 ? "thor_right" : "thor_idle", true);
+    else
+        play(moving > 0 ? "obj_block_front" : moving < 0 ? "obj_block_back" : "obj_block_idle", true);
 }
 
 // Collide-and-slide of a capsule [pos + bottom + r, pos + height - r]. `horizontalNormals` flattens
@@ -402,6 +411,9 @@ void Player::groundMove(vec3 delta, float dt) {
     }
 }
 
+// The chart's stick quadrants against her heading (cond 0x192: 410 forward, 411 back, 412 / 413 the sides) [I: 45 degrees]
+constexpr float kStickQuadrant = 0.70710678f;
+
 void Player::startFall(vec3 vel) {
     s_.state = State::Fall;
     s_.vel = vel;
@@ -418,10 +430,20 @@ void Player::startSlide(vec3 vel) {
     play("slope_slidefront", true);
 }
 
+// Landing: lara.drm's player chart sends every landing through the dispatcher S1275, whose transitions are tried in
+// this order [O-data; the fall = z on becoming airborne (player +0x6DC) - z, cond 0x1E = tru.exe 0x764B40]:
+// - T2100: Crouch down (cond 0x96, action 51) but not held long (not cond 0x9B: tru.exe under Wine, Crouch held from
+//   0.7 s before the landing with the stick forward lands in the stumble and then crouches; [I] the limit is the
+//   buttons' 15 frames), the stick pushed forward of her heading (0x191 not neutral, 0x192 = 410), nothing carried ->
+//   S1283 `ng_land_rolling` (a roll: 808 forward in 0.67 s), at any height;
+// - T2091 / T2092: a fall of chart variable 345 = 3185.84 / 346 = 1264.22 or more -> S1280 / S1281 `ng_land_hard`;
+// - T2118: variable 344 = 632.11 or more with the stick pushed, not backward -> S1278 `ng_running_land_stumble`;
+// - T2089: the stick pushed at run level (0x191 not 401 / 402), not backward -> S1284 `ng_running_land`;
+// - T2094: else S1279 `ng_generic_land_forwards`.
+// No transition tests her speed. While the landing clip plays (group S1276): Player::tick, State::Land.
 void Player::land(vec2 move) {
     s_.fallHeight = s_.fallStartZ - s_.pos.z;
     if (tryBeam("bbeam_jumpland", true)) return;
-    const float speed = glm::length(xy(s_.vel));
     // Out of a swan dive she tucks and rolls: ng_swan_land (request 66; root 591 forward in 11 frames), in wading water
     // swim_land_swan_wading (843). The fall counts as any other (Combat: Health::fall on fallHeight).
     if (swanClip(s_.clip) && anims_.find("ng_swan_land")) {
@@ -431,10 +453,23 @@ void Player::land(vec2 move) {
         return;
     }
     s_.vel = vec3(0);
+    s_.landTime = 0;
+    const float mag = glm::length(move);
+    const float along = mag > 0.1f ? glm::dot(move, xy(forward())) / mag : 0.0f; // the stick against her heading
+    const bool pushed = mag > 0.1f, ahead = pushed && along > kStickQuadrant, back = pushed && along < -kStickQuadrant;
     if (wading() && anims_.find("swim_land_wading")) { // into class-0x100 water
         s_.state = State::Land;
         play("swim_land_wading", false);
-    } else if (speed > 600.0f && glm::length(move) > 0.5f) {
+    } else if (s_.buttons.drop.down && !s_.buttons.drop.heldLong(t_.holdLongFrames) && ahead && !s_.encumbered && anims_.find("ng_land_rolling")) {
+        s_.state = State::Roll;
+        play("ng_land_rolling", false);
+    } else if (s_.fallHeight >= t_.landHardFall && anims_.find("ng_land_hard")) {
+        s_.state = State::Land;
+        play("ng_land_hard", false);
+    } else if (s_.fallHeight >= t_.landStumbleFall && pushed && !back && anims_.find("ng_running_land_stumble")) {
+        s_.state = State::Run;
+        play("ng_running_land_stumble", false);
+    } else if (pushed && !back && mag >= 0.5f && !walk_) {
         s_.state = State::Run;
         play("ng_running_land", false);
     } else {
@@ -1973,8 +2008,36 @@ void Player::assistJump() {
     if (bestTime > 0) s_.vel = vec3((xy(target) - xy(s_.pos)) / bestTime, vz);
 }
 
+// The one thing the stick does to a free jump: pulled back, it brakes her. The free-flight state S287 (and the wall
+// jump's S1292) runs chart action 511 beside the flight's 510: enter 0x73ECE0 stores the horizontal take-off velocity
+// (context +0x430) and the stick's forward part s0 against her heading (+0x420); every frame 0x750040, when the jump has
+// no markup target (player +0xA64 = 0) and its query's +0x64 >= 0.05 (0.9 for the ground and hang jumps, 0 for the
+// straight DICE leap q27), the stick is off centre, its forward part s has moved from s0 by more than 0.05 and
+// s < query +0x74 (-0.2): horizontal velocity = the TAKE-OFF velocity x (1 - clamp((-0.2 - s) / 0.8, 0, 1) x query
+// +0x68 (0.6)); the vertical speed stays. So the stick straight back flies on at 40 % of the take-off speed, half back
+// at 78 %; easing off afterwards does not give speed back (nothing writes it while s >= -0.2), and the stick held back
+// since the take-off does nothing. Nothing in the flight reads the Jump button: no chart transition out of S287 /
+// S294 tests it (conds 0x65, 0x96..0x99 with action 52) and the flight tick 0x752410 reads no input, so a held press
+// flies the same arc as a tap [O: decomp, chart]. [U]: the two time limits of 0x750040 (frames since the first brake
+// > query +0x70 = 15 with context +0x444 set; frames in the air > 2 x *(*0xFAD764 + 0x4C) / g) are not applied.
+void Player::airBrake(vec2 move) {
+    if (s_.jumpTime == 0) {
+        const float m0 = glm::length(move);
+        s_.jumpVel0 = xy(s_.vel);
+        s_.jumpStick0 = m0 > 0.01f ? glm::dot(move, xy(forward())) / m0 : 0.0f;
+    }
+    const float mag = glm::length(move);
+    if (s_.jumpAimed || mag < 0.01f) return;
+    const float s = glm::dot(move, xy(forward())) / mag;
+    if (s >= t_.airBrakeStick || std::abs(s - s_.jumpStick0) <= 0.05f) return;
+    const float k = 1.0f - std::clamp((t_.airBrakeStick - s) / (t_.airBrakeStick + 1.0f), 0.0f, 1.0f) * t_.airBrake;
+    s_.vel = vec3(s_.jumpVel0 * k, s_.vel.z);
+}
+
 void Player::tick(vec2 move, const Actions& a, float dt) {
     Buttons& b = s_.buttons;
+    walk_ = a.walk;
+    if (s_.state != State::Hang) s_.pullWait = -1;
     b.jump.update(a.jump, dt, t_.pressBuffer), b.interact.update(a.interact, dt, t_.pressBuffer);
     b.drop.update(a.drop, dt, t_.pressBuffer), b.grapple.update(a.grapple, dt, t_.pressBuffer);
     const bool jumpPressed = b.jump.pressed(), dropPressed = b.drop.pressed();
@@ -2010,7 +2073,42 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (enterWater()) break; // standing in water deeper than swimDepth
         if (encumberedMove(move, jumpPressed, dt)) break; // carrying a weight (Melee.cpp)
         const float diff = std::abs(wrapAngle(target - s_.yaw));
-        if (jumpPressed && s_.state != State::Land) {
+        if (s_.state == State::Land) {
+            // The landing group S1276 while its clip plays [O-data]: Jump takes off again at once (T2112..T2115, into
+            // the running / standing jump states); Crouch pressed with the stick forward inside chart variable 347 = 4
+            // frames rolls after all (T2107); from then on Crouch held with the stick pushed crouches (T2106), Sprint held
+            // at full stick sprints (T2108) and the stick pushed anywhere but forward leaves the clip for the ground moves
+            // (T2099) unless the clip is in a critical section [I: ng_land_hard taken as critical to its end, for the jump
+            // too].
+            s_.landTime += dt;
+            const bool hard = s_.clip == "ng_land_hard", late = s_.landTime * 30.0f >= t_.landRollFrames;
+            const float along = wantsMove ? glm::dot(move, xy(forward())) / glm::length(move) : 0.0f;
+            if (dropPressed && !late && along > kStickQuadrant && !s_.encumbered && anims_.find("ng_land_rolling")) {
+                s_.state = State::Roll;
+                play("ng_land_rolling", false);
+                break;
+            }
+            if (!hard && a.drop && (wantsMove ? late : s_.landTime >= t_.landCrouchTime)) {
+                s_.state = State::Crouch;
+                play("crouch_idleToCrouch", false);
+                break;
+            }
+            if (!hard && late && wantsMove && !wantsWalk && a.sprint && s_.sprintUsed <= t_.sprintSeconds - t_.sprintResume) {
+                s_.state = State::Run; // T2108: Sprint held at full stick
+                play("sprint_loop", true);
+            } else if (!hard && late && wantsMove && along <= kStickQuadrant) s_.state = State::Idle;
+        }
+        if (s_.state == State::Run && (s_.clip == "ng_running_land" || s_.clip == "ng_running_land_stumble")) {
+            // the running landings are in the same group: Crouch held from its 4th frame on crouches (T2106; Wine: 0.15 s
+            // into the stumble)
+            s_.landTime += dt;
+            if (a.drop && !dropPressed && s_.landTime * 30.0f >= t_.landRollFrames) {
+                s_.state = State::Crouch;
+                play("crouch_idleToCrouch", false);
+                break;
+            }
+        }
+        if (jumpPressed && (s_.state != State::Land || s_.clip != "ng_land_hard")) {
             if (tryHurdle(true) || tryPerch(false)) break; // a low ledge ahead / a perch
             // tru.exe (Wine): the stick behind her turns her round into a running jump; to a side, a standing one.
             s_.runJump = s_.state == State::Run || (wantsMove && diff > 1.75f);
@@ -2062,8 +2160,18 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             else if (!wantsWalk) { s_.state = State::Run; play("ng_run", true); }
             break;
         case State::Run:
-            s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
-            if (!wantsMove) { s_.state = State::Stop; play("ng_running_stop", false); }
+            // The run and sprint loops steer at a fixed rate (tru.exe under Wine, l4_temple, the stick swung 45 degrees:
+            // 1.755 rad/s running, 1.835 sprinting, linear, a slight overshoot); the start clips keep ours [I].
+            s_.yaw = approachAngle(s_.yaw, target, (s_.clip == "ng_run" ? t_.runTurnRate : s_.clip == "sprint_loop" ? t_.sprintTurnRate : t_.turnRate) * dt);
+            s_.runTime = s_.clip == "ng_run" ? s_.runTime + dt : 0.0f;
+            // The stick let go: the run loop S65 goes to S57 `ng_running_stop` (223 on) only after chart variable 374 = 15
+            // frames in it (T176); before that, and from the run's start S63 and the sprint S59, the group's T40 stops
+            // her on the spot (S39) [O-data; Wine: W let go 0.32 s into the loop, and out of a sprint: not a unit
+            // further; 1.2 s into the loop: 266 further]. [I]: S39's settle clip (0.48 s in place) is ours' idle blend.
+            if (!wantsMove && !(s_.clip == "ng_run" && s_.runTime * 30.0f >= t_.runStopFrames) && anims_.find("ng_running_stop")) {
+                s_.state = State::Idle;
+                play("ng_idle", true);
+            } else if (!wantsMove) { s_.state = State::Stop; play("ng_running_stop", false); }
             else if (wantsWalk) { s_.state = State::Walk; play("ng_walk", true); }
             else if (s_.clip == "sprint_loop") { // sprint_loop root motion 1927 units/s (tru.exe: ~1860 on a curve)
                 if (s_.sprintUsed >= t_.sprintSeconds) play("ng_sprint_to_exhaust", false);
@@ -2074,7 +2182,8 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 if (clipDone()) play("ng_run", true);
             } else if (a.sprint && s_.sprintUsed <= t_.sprintSeconds - t_.sprintResume && (s_.clip == "ng_run" || clipDone()))
                 play("sprint_loop", true);
-            else if ((s_.clip == "ng_run_start" || s_.clip == "ng_running_land") && clipDone()) play("ng_run", true);
+            else if ((s_.clip == "ng_run_start" || s_.clip == "ng_running_land" || s_.clip == "ng_running_land_stumble") && clipDone())
+                play("ng_run", true);
             break;
         case State::Stop:
             if (wantsMove && !wantsWalk) { s_.state = State::Run; play("ng_run", true); }
@@ -2252,6 +2361,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             // tru.exe's chart tests the wall jump on its 30 Hz frames: a jump back off a wall (77.27 up a frame)
             // comes inside the attach's zVel window (<= 9 x 5.72443) on its fifth, 314.8 higher.
             const float frame = std::floor(s_.jumpTime * 30.0f + 1e-3f);
+            // 0x7594C0 first asks the jump query in effect (player +0xA84 -> 0x6F1950): flag 0x80 of its +0x2C means no
+            // wall jump at all. The queries that carry it are the falls and the jumps launched straight up (q2 the
+            // standing jump, q10 hang up, q23 ladder up, q31 DICE up, q35 pole top up, q55 the wall hug's twist), none
+            // of the ones with a horizontal launch [O-data]; tru.exe under Wine: a standing jump 111 from l2_junglehub's
+            // unflagged column face is a plain 201.6 jump [O-runtime, docs/REFERENCE_COMPARISON.md].
+            if (s_.state == State::Jump && s_.jumpTime == 0 && glm::length(xy(s_.vel)) < 1.0f) s_.jumpAimed = true;
+            if (s_.state == State::Jump) airBrake(move);
             if (s_.state == State::Jump) s_.jumpTime += dt;
             const bool test = s_.state == State::Jump && !s_.jumpAimed && std::floor(s_.jumpTime * 30.0f + 1e-3f) > frame;
             airMove(dt, move);
@@ -2338,23 +2454,53 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                                      : fw > 0.5f            ? "up" : "";
         const bool leaning = s_.clip.starts_with("ledgeb_idle_to_jump_") ||
                              (s_.clip.starts_with("ledgeb_jump_") && s_.clip.ends_with("_antic") && !s_.clip.ends_with("from_antic"));
+        // A climb-up clip (State::ClimbUp): started where it expects the ledge - its hands (at the start time) on the
+        // ledge in x/y, its root at the clip's end on the ledge top (end - start rise); nothing to snap at the end.
+        // `whole`: from the clip's first frame (the chart's S456 plays ledgeb_climbup_fast whole: 0.82 s under Wine;
+        // its request 1002's start frame 6 is the quick pull-up straight out of a catch, T558).
+        const auto climb = [&](std::string_view clip, bool whole = false) {
+            s_.state = State::ClimbUp;
+            play(clip, false);
+            if (whole) s_.clipTime = 0;
+            const anim::Clip* c = anims_.find(s_.clip);
+            if (const auto h = c ? anims_.handsAt(*c, s_.clipTime) : std::nullopt) {
+                const float rise = rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z;
+                const vec3 hang = anims_.hangHandOffset;
+                s_.pos += toWorld({hang.x - h->x, hang.y - h->y, hang.z - rise});
+                reseated_ = true;
+            }
+        };
+        // Pulling up (chart S439, entered by the Jump press with a top to climb onto; tru.exe under Wine, l4_temple ledge
+        // 1155): Jump let go -> S456, the pull-up (T608; Wine: it starts 13 ms after the release and she stands 0.82 s
+        // later, 231 in and 494 up); Jump held longer than the buttons' 15 frames, with the stick up or neutral (T567: cond
+        // 0x65 mode 0x65, state time >= 10) -> S440, the handstand `ledgeb_climbupflair` (Wine: 0.50 s after the press,
+        // 2.47 s long, the same 228.5 in and 494 up). Crouch lets go as from any hang. [I]: the waiting pose (ours keeps
+        // the hang's idle).
+        if (s_.pullWait >= 0 && !jumpPressed) {
+            s_.pullWait += dt;
+            const bool flair = b.jump.down && b.jump.heldLong(t_.holdLongFrames) && s_.pullWait * 30.0f >= 10.0f &&
+                               std::abs(lateral) <= 0.5f && fw >= -0.5f;
+            if (!b.jump.down || flair) {
+                s_.pullWait = -1;
+                if (hangClearance() != 2) break; // the top got blocked meanwhile
+                if (flair) climb("ledgeb_climbupflair");
+                else climb("ledgeb_climbup_fast", true);
+                break;
+            }
+            s_.state = State::Hang;
+            play("ledgeb_idle", true);
+            advanceClip(dt);
+            placeOnLedge();
+            break;
+        }
         if (jumpPressed) {
             const int kind = std::abs(lateral) > 0.5f ? (lateral > 0 ? 1 : -1) : fw < -0.5f ? 2 : 0;
             const bool fromLean = leaning && kind != 0 && kind != 2; // the side lean's own take-off
-            const auto climb = [&](std::string_view clip) {
-                s_.state = State::ClimbUp;
-                play(clip, false);
-                // Start where the clip expects the ledge: its hands (at the start time) on the ledge in x/y, and
-                // its root at the clip end on the ledge top (end - start rise); nothing to snap at the end.
-                const anim::Clip* c = anims_.find(s_.clip);
-                if (const auto h = c ? anims_.handsAt(*c, s_.clipTime) : std::nullopt) {
-                    const float rise = rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z;
-                    const vec3 hang = anims_.hangHandOffset;
-                    s_.pos += toWorld({hang.x - h->x, hang.y - h->y, hang.z - rise});
-                }
-            };
             const int cls = kind == 0 ? hangClearance() : 0;
-            if (cls == 2) climb("ledgeb_climbup_fast");
+            // A top to climb onto: Jump pressed goes to the chart's S439, which waits on the button (below).
+            // With the stick up she is in the lean S435, whose Jump press pulls up at once (T613; Wine).
+            if (cls == 2 && fw <= 0.5f && anims_.find("ledgeb_climbupflair")) { s_.pullWait = 0; break; }
+            if (cls == 2) climb("ledgeb_climbup_fast", anims_.find("ledgeb_climbupflair") != nullptr);
             else if (cls == 5) climb("ledgeb_jumpuptocrouch"); // S439 T615 -> S455 -> crouch_Idle [O-data; clip by name I]
             else if (cls == 8) startHangToWallHug();          // S439 T697 -> S1251 bbeam_flip_foward -> Wall_Hug_Idle
             else if (kind == 0 && tryHangToBeam()) {
@@ -2394,7 +2540,21 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             placeOnLedge();
             break;
         }
-        if (std::abs(lateral) > 0.3f) {
+        // Hustle: Interact pressed while the stick shimmies (chart T581 / T582 from the hang's S427 and the shimmy states
+        // S432 / S431, not at the ledge's end) plays one faster hand-over-hand move, S441 / S442 = `ledgeb_right_hustle`
+        // (request 968; 371 aside in 0.57 s against ledgeb_right's 196 in 0.70 s: 654 vs 280 units/s), its mirror to
+        // the left (state property 201 / 202). Pressed again from the clip's frame 8 on (T621 / T624, cond 0xD7) the
+        // move starts over; with no further press the clip's end goes back to the shimmy (T622 / T623) [O-data].
+        const bool hustling = s_.clip == "ledgeb_right_hustle" && !clipDone();
+        if (std::abs(lateral) > 0.3f && b.interact.buffered() && anims_.find("ledgeb_right_hustle") &&
+            (!hustling || s_.clipTime * 30.0 >= t_.hustleAgainFrame)) {
+            b.interact.take();
+            s_.state = State::Shimmy;
+            s_.clip.clear(); // from the request's start frame again
+            play("ledgeb_right_hustle", false, 1.0f, lateral < 0);
+        } else if (hustling) {
+            s_.state = State::Shimmy;
+        } else if (std::abs(lateral) > 0.3f) {
             s_.state = State::Shimmy;
             play("ledgeb_right", true, lateral > 0 ? 1.0f : -1.0f);
         } else {
@@ -2407,7 +2567,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             // joint takes her round it (startHangCorner).
             const float ds = glm::dot(xy(d), segDir(lm, s_.ledgeSeg));
             if (((ds > 0 && s_.ledgeT + ds > segLen(lm, s_.ledgeSeg)) || (ds < 0 && s_.ledgeT + ds < 0)) &&
-                startHangCorner(s_.ledgeSeg, ds, lateral))
+                startHangCorner(s_.ledgeSeg, ds, hustling ? (s_.mirror ? -1.0f : 1.0f) : lateral))
                 break;
             moveAlong(lm, s_.ledgeSeg, s_.ledgeT, ds);
         }
