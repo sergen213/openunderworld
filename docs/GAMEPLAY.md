@@ -544,7 +544,10 @@ Code: `World::carryPortables` (`src/game/Objects.cpp`: pick-up, insert, removal)
   `game::throwVelocity` (`Combat.ThrowVelocityAsTheExe`). [U] A short press throwing shorter (the walkthrough) is the
   weapon chart's state S100, held while input 102 is down: its effect on the launch is not decoded; ours always throws
   in full. Ours flies under the scene's gravity for bodies, 5.72443 per frame² [I, PHYSICS.md], so it lands nearer
-  than tru.exe's solve assumes (about 1500 units from her on a level floor instead of about 2200).
+  than tru.exe's solve assumes (about 1500 units from her on a level floor instead of about 2200). Landed, a weight
+  lies on its cube: its loose body is made of the primitives tru.exe gives shapes that rest on the world
+  (`looseShape`, PHYSICS.md "HInfo" flag bytes), not of its r 104 sphere, on which it used to roll some 20 m and off
+  the press plates (`game_replay_baldrs_plates_gate`: thrown from plate 219 it comes to rest ~2100 units on).
 - **Inputs** [O the action map, "Close combat"]: Interact picks up, and with it in her hands inserts it into the
   receptacle she engages (chart input 99); Crouch (input 101) puts it down; Grenade (input 102) throws it; Interact
   elsewhere swings it (input 32). Before 0.42 ours set it down on Interact: the tests and the `baldrs_plates_gate`
@@ -876,7 +879,7 @@ downstream reaction as tru.exe's scripts define it (`--report-objects`; PROGRESS
 | `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 | lever graph 1 -> 0 and its slider watch (a joint) |
 | `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 | elevator 2960 vt 54 (graph 0 -> 1), switch 2961 vt 62 |
 | `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole; a jump onto the block (its ledge loop), a standing jump from its top to the pole | lever graph 0 -> 1, its slider at -600 under her hang (state polehang), block under the pole, door 6505 raised 1200 |
-| `baldrs_plates_gate` | l1_baldrs_tomb -5000,-10000,2560,180 (west room) | weight 220 picked up (Interact) and put down (Crouch, `press drop`) on press plate 219, weight 218 carried at the encumbered walk through door 223 and put down on plate 222, Lara stands on plate 221 | plates at -60, door 223 vt 57 (section 1, open), locks 69 / 70 out of range, gate 45 vt 54 and its joint fallen open (~90°) |
+| `baldrs_plates_gate` | l1_baldrs_tomb -5000,-10000,2560,180 (west room) | the room's full solution: weights 220 and 218 picked up (Interact), carried onto press plate 219 (door 223 opens while she stands on it) and thrown through the door (Grenade, `press grenade`), a running roll through the door before it shuts, both weights put down (Crouch, `press drop`) side by side on plate 222, gate 45's ring grappled from in front, she walks back roped onto plate 221 and holds Interact | plates 221 / 222 at their pressed joint (-50), door 223 vt 57 / 58, locks 69 / 70 out (-1250), gate 45 vt 54 and its joint pulled open (>= 85°, 91), the weights lying on plate 222 |
 | `ballcourt_calendar_handle_turn` | l4_ballcourt -14240,10200,3700,90 | round calendar 6506's east side, grip a push handle and push 4 s | the ring turned on hinge joint 2 (> 0.2 rad, ~0.56), section 1 back in 3 |
 
 Objects' ledges and poles [O data, tru.exe 0x5D0610 -> 0x5CE4F0]: an instance whose model carries markup items (model

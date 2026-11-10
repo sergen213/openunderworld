@@ -52,6 +52,15 @@ HInfo = `{u32 count, ptr list}` pairs [O, survey of all 1 057 models]: slot 0 sp
 - Capsule axis = local Z [I]: the floor grate's four bars only form a square outline that way.
 - Flag byte 1: `0x11` on doors, keys, switches, blocks; `0x10` on every `bend_*` plant [O]. [I] bit 0 = solid
   for the player (plants only bend). Byte 0 differs per box (door: 0x10, 0x40, 0x50) [U].
+  [O] tru.exe `0x48E710` makes a Havok shape of a primitive only with bit 0x100 of the flag u16 (byte 1 bit 0), and of
+  a sphere only when byte 2 is not 2 (wheel spheres). [I] Byte 0 bit 0x40 = a shape that does not rest on the world:
+  `ms_pt_weight_c` = a 126.4-unit cube (flags 10 11, 25 kg, base at z 1.4) inside a sphere of r 104 at z 64 (flags
+  40 11 09 1e, 5 kg) that reaches 40 units under the base its intros stand on [O data]; also on `ar_pt_pole_a`'s end
+  sphere (r 80) and the snake head's two handle capsules. Loose bodies (`looseShape`) are built from the primitives
+  with the solid bit, without bit 0x40 (all of them when none is left); masses and inertia still count every
+  primitive. [O, not used yet] 0x6AD070 scales a water volume's density / drag per body by the primitive's percent
+  byte after its mass (sphere +0x16, box +0x38, capsule +0x2C; no buoyancy when 0: both weight primitives 0) and the
+  current by the next byte; ours floats every loose body at 100 %.
 - Positions are in the segment frame [I]; `ObjectPhysics::segments` accumulates the pivots.
 - All 794 object DRMs decode: 1 668 primitives (1 195 boxes, 374 spheres, 99 capsules) (`PhysicsRealData.AllObjectsParse`).
 
