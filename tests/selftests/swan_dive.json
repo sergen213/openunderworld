@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "swan_dive",
+  "chapter": "Swan dive off the Coastal Thailand cliff into the sea",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/swandive.html",
+  "note": "l2_cliffclimb cliff top 5950 over the sea. Moving forward, Jump then Crouch while the jump still rises [I window]: ng_inair_swan_stage1 / _stage2 / _stage3 (requests 67 / 69 / 68), into the water on swim_swan_land (897), no damage.",
+  "level": "l2_cliffclimb",
+  "spawn": [-29056, 2361, 6100, 180],
+  "steps": [
+    {"step": "on_the_cliff", "duration": 0.6,
+     "expect": [{"probe": "player.state", "eq": "idle"},
+                {"probe": "player.pos.z", "min": 5900}]},
+    {"step": "swan_dive", "input": ["0 forward 1", "0.65 jump 1", "0.7 jump 0", "0.75 drop 1", "0.85 drop 0", "0.9 forward 0"],
+     "duration": 12,
+     "until": {"probe": "player.state", "eq": "swimsplash"},
+     "expect": [{"visits": ["run", "jumpprep", "jump", "swimsplash"]},
+                {"clips": ["ng_inair_swan_stage1", "ng_inair_swan_stage2", "ng_inair_swan_stage3", "swim_swan_land"]},
+                {"probe": "step.drop", "min": 5500},
+                {"probe": "step.health_lost", "eq": 0}]},
+    {"step": "in_the_sea", "duration": 3,
+     "until": {"probe": "player.state", "in": ["swimunder", "swimtread"]},
+     "expect": [{"probe": "water.in", "eq": true},
+                {"probe": "player.health", "eq": 1000, "note": "no fall damage into deep water"}]}
+  ]
+}

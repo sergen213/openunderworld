@@ -1,0 +1,281 @@
+{
+ "version": 1,
+ "name": "kraken_kill",
+ "chapter": "Coastal Thailand: the kraken's hall - raise the spiked platform, shoot both chain links by manual aim, the platform drops",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/thailand2.html",
+ "note": "l1_kraken_room, on the switch ledge. Switch 30 raises platform 27 (uber section 0: 1 -> 2), its chain sections 2 / 3 arm (1 -> 0) and the weak links 61 / 62 come down to the ledge's ends. They are no lock targets: Manual Aim, the look stick, Fire. Each hit drops a chain (section 2 / 3 -> 2); after both the platform falls (section 0 -> 3) and its script starts the kraken's death.",
+ "level": "l1_kraken_room",
+ "spawn": [
+  -1,
+  -15813,
+  2300,
+  90
+ ],
+ "steps": [
+  {
+   "step": "raise_the_platform",
+   "plan": [
+    "run -90 1.5",
+    "face -90",
+    "press interact",
+    "wait 1"
+   ],
+   "duration": 90,
+   "until": [
+    {
+     "probe": "object.27.uber.0",
+     "eq": 2
+    },
+    {
+     "probe": "camera.spline",
+     "eq": false
+    },
+    {
+     "probe": "player.state",
+     "eq": "idle"
+    }
+   ],
+   "expect": [
+    {
+     "probe": "object.27.uber.2",
+     "eq": 0,
+     "note": "chains armed"
+    },
+    {
+     "probe": "object.27.uber.3",
+     "eq": 0
+    },
+    {
+     "probe": "object.61.dead",
+     "eq": false
+    },
+    {
+     "probe": "object.62.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "walk_to_the_first_link",
+   "plan": [
+    "go 638 -15354 60"
+   ],
+   "duration": 20,
+   "expect": [
+    {
+     "probe": "player.pos.x",
+     "near": 638,
+     "tol": 80
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 2212,
+     "tol": 5
+    }
+   ]
+  },
+  {
+   "step": "aim",
+   "input": [
+    "0.5 manual 1",
+    "0.6 manual 0"
+   ],
+   "duration": 1.5,
+   "expect": [
+    {
+     "probe": "combat.manual_aim",
+     "eq": true
+    },
+    {
+     "probe": "camera.mode",
+     "eq": 23
+    },
+    {
+     "probe": "combat.has_target",
+     "eq": false,
+     "note": "the links are no lock targets"
+    }
+   ]
+  },
+  {
+   "step": "turn_onto_the_first_link",
+   "input": [
+    "0 lookx -1",
+    "0.95 lookx 0"
+   ],
+   "duration": 1.3,
+   "expect": [
+    {
+     "probe": "combat.manual_aim",
+     "eq": true
+    },
+    {
+     "probe": "camera.yaw",
+     "near": -11.0,
+     "tol": 1.0
+    },
+    {
+     "probe": "object.27.uber.2",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "shoot_the_first_link",
+   "input": [
+    "0 fire 1"
+   ],
+   "duration": 6,
+   "until": {
+    "probe": "object.27.uber.2",
+    "eq": 2
+   },
+   "expect": [
+    {
+     "probe": "object.61.dead",
+     "eq": true
+    },
+    {
+     "probe": "weapon.current",
+     "eq": "pistols"
+    },
+    {
+     "probe": "object.27.uber.3",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "platform_shifts",
+   "duration": 40,
+   "until": [
+    {
+     "probe": "object.27.uber.0",
+     "eq": 4
+    },
+    {
+     "probe": "camera.spline",
+     "eq": false
+    }
+   ],
+   "expect": [
+    {
+     "probe": "player.dead",
+     "eq": false
+    },
+    {
+     "probe": "object.27.uber.3",
+     "eq": 0,
+     "note": "one chain still holds"
+    }
+   ]
+  },
+  {
+   "step": "walk_to_the_second_link",
+   "plan": [
+    "go -877 -15355 60"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "probe": "player.pos.x",
+     "near": -877,
+     "tol": 80
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 2212,
+     "tol": 5
+    }
+   ]
+  },
+  {
+   "step": "aim_again",
+   "input": [
+    "0.5 manual 1",
+    "0.6 manual 0"
+   ],
+   "duration": 1.5,
+   "expect": [
+    {
+     "probe": "combat.manual_aim",
+     "eq": true
+    },
+    {
+     "probe": "camera.mode",
+     "eq": 23
+    },
+    {
+     "probe": "object.27.uber.3",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "turn_onto_the_second_link",
+   "input": [
+    "0 lookx -1",
+    "2.045 lookx 0"
+   ],
+   "duration": 2.4,
+   "expect": [
+    {
+     "probe": "combat.manual_aim",
+     "eq": true
+    },
+    {
+     "probe": "camera.yaw",
+     "near": -159.5,
+     "tol": 1.5
+    },
+    {
+     "probe": "object.27.uber.3",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "shoot_the_second_link",
+   "input": [
+    "0 fire 1"
+   ],
+   "duration": 6,
+   "until": {
+    "probe": "object.27.uber.3",
+    "eq": 2
+   },
+   "expect": [
+    {
+     "probe": "object.62.dead",
+     "eq": true
+    },
+    {
+     "probe": "combat.has_target",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "platform_drops",
+   "duration": 60,
+   "until": {
+    "probe": "object.27.uber.0",
+    "eq": 3
+   },
+   "expect": [
+    {
+     "probe": "object.27.uber.2",
+     "eq": 2
+    },
+    {
+     "probe": "object.27.uber.3",
+     "eq": 2
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  }
+ ]
+}

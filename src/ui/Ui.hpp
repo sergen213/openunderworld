@@ -356,6 +356,7 @@ struct HudState {
     float health = 1000, healthMax = 1000; // absolute: the HUD script's colour bands are health values
     float adrenaline = 0;                  // 0..1
     float breath = 1;                      // 0..1; below 1 the adrenaline bar shows it (breath bar)
+    bool breathBar = false;                // under water without scuba gear: the bar is the breath meter even when full
     int weapon = 0;                        // game::Weapon order: pistols, uzi, shotgun, speargun
     bool drawn = false, dual = true, dead = false;
     int clip[2] = {}, clipSize = 12;       // rounds in the right / left gun
@@ -368,7 +369,7 @@ struct HudState {
 
 // Combat reticle (screen pixels), drawn while a weapon is out.
 struct Reticle {
-    enum class Kind : uint8_t { None, Free, Target, Locked };
+    enum class Kind : uint8_t { None, Free, Target, Locked, Manual }; // Manual: the precision-aim view's small reticle
     Kind kind = Kind::None;
     float x = 0, y = 0;
     bool slowMo = false; // adrenaline head-shot window: ring + pip
@@ -403,6 +404,7 @@ public:
     void draw(Canvas& c) const;
 
     Reticle reticle;                       // set each frame
+    Reticle reticle2;                      // the second (dual) target, kind None when there is none
     std::optional<std::array<float, 2>> grapple; // grapple target marker, screen pixels; set each frame
     // GAME OPTIONS > HELPER BUTTONS shown: the grapple's helper button over that marker, locals.bin 363 (the grapple
     // placeholder U+1800 alone, expanded through Canvas::prompts to the bound key / pad icon); empty: none.

@@ -81,7 +81,7 @@ void Hud::update(const HudState& s, double dt) {
     constexpr float kHold = 3.0f, kIn = 4.0f, kOut = 2.0f; // seconds held after the trigger; fade rates per second
     const int item = s.healthPacks != prev_.healthPacks ? 0 : s.flashlight != prev_.flashlight ? 1 : s.grenades < prev_.grenades ? 3 : s.gearItem;
     const bool trig[kGroups] = {
-        s.drawn || s.health != prev_.health || s.breath < 1 || std::abs(s.adrenaline - prev_.adrenaline) > 1e-4f,
+        s.drawn || s.health != prev_.health || s.breath < 1 || s.breathBar || std::abs(s.adrenaline - prev_.adrenaline) > 1e-4f,
         s.drawn || s.weapon != prev_.weapon || s.clip[0] != prev_.clip[0] || s.clip[1] != prev_.clip[1] || s.grenades != prev_.grenades,
         item >= 0};
     if (item >= 0) lit_ = item;
@@ -110,7 +110,7 @@ void Hud::draw(Canvas& c) const {
 
     if (const float a = alpha_[Health]; a > 0) { // HEALTH: panel, adrenaline/breath bar, health meter, silhouette
         put(c, ox, oy, 78, -5.3f, -3.1f, fade(kWhite, a));
-        const float bar = std::clamp(s_.breath < 1 ? s_.breath : s_.adrenaline, 0.0f, 1.0f); // "adrenaline bar as breathbar"
+        const float bar = std::clamp(s_.breath < 1 || s_.breathBar ? s_.breath : s_.adrenaline, 0.0f, 1.0f); // "adrenaline bar as breathbar"
         const float b0 = 16.0f, b1 = 60.0f; // [V] green fill rows, under bar 77's cap
         c.rect(ox + 14.9f * u, oy + (b1 - (b1 - b0) * bar) * u, 7.4f * u, (b1 - b0) * bar * u, fade(0xFF00FF00u, a));
         put(c, ox, oy, 77, 9.3f, 16.4f, fade(kWhite, a));
@@ -151,10 +151,14 @@ void Hud::draw(Canvas& c) const {
 
     // Reticles [I]: not captured. Free aim 69 (thin arcs), soft target 65 (white brackets), hard lock 72 (red
     // cross), adrenaline window 71 (red glow) with the pip 74.
+    // Manual aim [I]: the free-aim arcs at half size, opaque ("a small reticle" in the view's centre). The second
+    // (dual) target wears the soft brackets.
+    if (reticle2.kind != Reticle::Kind::None) put(c, reticle2.x, reticle2.y, 65, 0, 0, kWhite, kReticle, true);
     if (reticle.kind != Reticle::Kind::None) {
-        static constexpr uint32_t kId[] = {0, 69, 65, 72};
+        static constexpr uint32_t kId[] = {0, 69, 65, 72, 69};
         const uint32_t id = reticle.slowMo ? 71 : kId[size_t(reticle.kind)];
-        put(c, reticle.x, reticle.y, id, 0, 0, reticle.kind == Reticle::Kind::Free ? 0xC0FFFFFFu : kWhite, kReticle, true);
+        const bool manual = reticle.kind == Reticle::Kind::Manual && !reticle.slowMo;
+        put(c, reticle.x, reticle.y, id, 0, 0, reticle.kind == Reticle::Kind::Free ? 0xC0FFFFFFu : kWhite, manual ? kReticle * 0.5f : kReticle, true);
         if (reticle.slowMo) {
             const float r = 64 * kReticle * u * 0.5f; // reticle radius in pixels
             put(c, reticle.x + reticle.pipX * r, reticle.y - reticle.pipY * r, 74, 0, 0, kWhite, kReticle * 0.3f, true);

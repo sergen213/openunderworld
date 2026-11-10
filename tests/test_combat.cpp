@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <set>
@@ -473,6 +474,10 @@ TEST(Combat, HitReactionPlaysAndReturns) {
     EXPECT_EQ(game::stateName(State::Hit), "hit");
 }
 
+// Adrenaline head shot as decoded (docs/GAMEPLAY.md "Adrenaline (decoded)"): the meter latches at its max (no drain,
+// no gain: 0x6F2930 / 0x6F28C0 with flag 0x400000); the Grapple button with a hard lock on a close enemy starts the move
+// (state chart T1404), which spends the meter (0x6E6670); its aim window slows the game to 0.2 (0x715020); the look
+// input steers the pip; fire with it in the reticle kills; time returns (0x718EA0).
 TEST(Combat, AdrenalineHeadShot) {
     CollisionMesh m;
     addFloor(m, -5000, -5000, 5000, 5000, 0);
@@ -482,26 +487,41 @@ TEST(Combat, AdrenalineHeadShot) {
     w->targets.push_back(&t);
     for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true)); // fill by damage dealt
     ASSERT_EQ(w->combat().adrenaline, 1);
+    EXPECT_TRUE(w->combat().headShotReady);
     EXPECT_GE(5000 - t.hp, 500); // Lara data +0x2D0: 500 damage dealt fills it, plus what drained (20/s) meanwhile
     EXPECT_LE(5000 - t.hp, 700);
-    Actions lock = guns(false), go = guns(false);
-    go.interact = true;
-    w->tick(lock);
-    w->tick(go); // meter + locked + interact: adrenaline mode
-    w->tick(lock);
-    ASSERT_TRUE(w->combat().adrenalineMode);
-    w->tick(go); // in the mode + close + interact: the window opens
-    ASSERT_GT(w->combat().slowMo, 0);
-    for (int i = 0; i < 21; ++i) w->tick(lock);
-    EXPECT_NEAR(w->combat().timeScale, 0.2f, 1e-4); // +0x2C8, eased down in +0x2CC = 10 frames
+    const Actions lock = guns(false);
+    for (int i = 0; i < 300; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().adrenaline, 1) << "a latched meter does not drain";
+    Actions use = lock;
+    use.interact = true; // not the button (ours used it before the decode)
+    w->tick(use), w->tick(lock);
+    EXPECT_LT(w->combat().headShot, 0);
+    EXPECT_TRUE(w->headShotAvailable());
+    Actions go = lock;
+    go.grapple = true;
+    w->tick(go);
+    ASSERT_GE(w->combat().headShot, 0);
+    EXPECT_EQ(w->combat().adrenaline, 0) << "the move spends the meter";
+    EXPECT_FALSE(w->combat().headShotReady);
+    EXPECT_EQ(w->player().state().grappleUid, 0);
+    EXPECT_EQ(w->combat().timeScale, 1);
+    for (int i = 0; i < 60 && w->combat().slowMo <= 0; ++i) w->tick(lock);
+    ASSERT_GT(w->combat().slowMo, 0) << "the aim opens inside the move";
+    for (int i = 0; i < 10; ++i) w->tick(lock); // half of +0x2CC = 10 frames: the ease 0x78C120 is half way
+    EXPECT_NEAR(w->combat().timeScale, 0.6f, 0.02f);
+    for (int i = 0; i < 11; ++i) w->tick(lock);
+    EXPECT_NEAR(w->combat().timeScale, 0.2f, 1e-4); // +0x2C8
     const vec3 at = w->player().state().pos;
-    for (int i = 0; i < 120 && glm::length(w->combat().pip) > 0.3f; ++i) { // steer the pip into the reticle
+    for (int i = 0; i < 120 && glm::length(w->combat().pip) > 0.3f; ++i) { // steer the pip into the reticle by looking
         Actions steer = lock;
-        steer.move = -glm::normalize(w->combat().pip);
+        const auto d = -glm::normalize(w->combat().pip);
+        steer.look = {-d.x * 0.3f, d.y * 0.3f}; // look left = pip left
         w->tick(steer);
     }
-    EXPECT_EQ(w->player().state().pos, at); // the stick steers the pip, not Lara
+    EXPECT_EQ(w->player().state().pos, at);
     ASSERT_LE(glm::length(w->combat().pip), 1);
+    ASSERT_GT(w->combat().slowMo, 0) << "the window lasts while the game runs at 0.2";
     const float hp = t.hp;
     Actions shoot = lock;
     shoot.fire = true;
@@ -513,35 +533,264 @@ TEST(Combat, AdrenalineHeadShot) {
     EXPECT_EQ(w->combat().adrenaline, 0);
     for (int i = 0; i < 21; ++i) w->tick({});
     EXPECT_EQ(w->combat().timeScale, 1); // time scale restored
+    for (int i = 0; i < 240 && w->combat().headShot >= 0; ++i) w->tick({});
+    EXPECT_LT(w->combat().headShot, 0);
 }
 
-// Adrenaline mode (0x718BD0): meter not empty + lock + interact toggles it; world time 0.5 over 10 frames, the meter
-// drains 225 / s, the mode ends with it.
+// The head shot needs the latch and a close lock; a miss (fire with the pip outside) wastes it; a hit on Lara ends it.
+TEST(Combat, HeadShotConditionsMissAndInterrupt) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 9000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget t;
+    t.pos = {3000, 0, 0}, t.hp = 1e6f; // beyond the close range
+    w->targets.push_back(&t);
+    const Actions lock = guns(false);
+    Actions go = lock;
+    go.grapple = true;
+    for (int i = 0; i < 120; ++i) w->tick(guns(true));
+    ASSERT_GT(w->combat().adrenaline, 0);
+    ASSERT_LT(w->combat().adrenaline, 1);
+    w->tick(lock), w->tick(go), w->tick(lock);
+    EXPECT_LT(w->combat().headShot, 0) << "not without a full meter";
+    for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true));
+    ASSERT_TRUE(w->combat().headShotReady);
+    EXPECT_FALSE(w->headShotAvailable()) << "too far";
+    w->tick(lock), w->tick(go), w->tick(lock);
+    EXPECT_LT(w->combat().headShot, 0);
+    t.pos = {900, 0, 0};
+    w->tick(lock), w->tick(go);
+    ASSERT_GE(w->combat().headShot, 0);
+    for (int i = 0; i < 60 && w->combat().slowMo <= 0; ++i) w->tick(lock);
+    ASSERT_GT(w->combat().slowMo, 0);
+    ASSERT_GT(glm::length(w->combat().pip), 1);
+    const float hp = t.hp;
+    Actions shoot = lock;
+    shoot.fire = true;
+    w->tick(shoot);
+    EXPECT_EQ(t.hp, hp) << "the pip was outside the reticle";
+    EXPECT_EQ(w->combat().slowMo, 0);
+    for (int i = 0; i < 300; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().timeScale, 1);
+    EXPECT_LT(w->combat().headShot, 0);
+    // again, interrupted by a blow
+    for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true));
+    ASSERT_TRUE(w->combat().headShotReady);
+    w->tick(lock), w->tick(go);
+    ASSERT_GE(w->combat().headShot, 0);
+    for (int i = 0; i < 60 && w->combat().slowMo <= 0; ++i) w->tick(lock);
+    ASSERT_GT(w->combat().slowMo, 0);
+    w->damageLara(50, {500, 0, 0}, game::kDamageLight);
+    EXPECT_LT(w->combat().headShot, 0);
+    EXPECT_EQ(w->combat().slowMo, 0);
+    for (int i = 0; i < 30; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().timeScale, 1);
+}
+
+// Focused fire = adrenaline mode (0x718BD0): Manual Aim with a hard lock and the meter not empty toggles it; the game's
+// time scale (Lara's too: the ramp is the global one, 0x8ABE94) goes to 0.5 over 10 frames, the meter drains 225 per
+// second of that time, the mode ends with the meter, the lock, or the button; starting it gives a latched head shot up.
 TEST(Combat, AdrenalineModeDrainsAndSlowsTime) {
     CollisionMesh m;
     addFloor(m, -5000, -5000, 5000, 5000, 0);
     auto w = makeWorld(m, {0, 0, 0});
     game::DummyTarget t;
-    t.pos = {3000, 0, 0}, t.hp = 1e6f; // out of the close range: no head shot
+    t.pos = {3000, 0, 0}, t.hp = 1e6f;
     w->targets.push_back(&t);
     for (int i = 0; i < 60 * 6; ++i) w->tick(guns(true));
     const float meter = w->combat().adrenaline;
     ASSERT_GT(meter, 0.5f);
-    Actions lock = guns(false), go = guns(false);
-    go.interact = true;
-    w->tick(lock);
+    ASSERT_LT(meter, 1.0f);
+    Actions lock = guns(false), go = guns(false), use = guns(false);
+    go.manualAim = true, use.interact = true;
+    w->tick(lock), w->tick(use), w->tick(lock);
+    EXPECT_FALSE(w->combat().adrenalineMode) << "interact is not the button";
     w->tick(go);
     ASSERT_TRUE(w->combat().adrenalineMode);
+    EXPECT_FALSE(w->combat().manualAim) << "with the lock held the button is focused fire, not the aim view";
     for (int i = 0; i < 21; ++i) w->tick(lock);
     EXPECT_NEAR(w->combat().timeScale, 0.5f, 1e-4);
     const float before = w->combat().adrenaline;
     for (int i = 0; i < 60; ++i) w->tick(lock);
-    EXPECT_NEAR(before - w->combat().adrenaline, 225.0f / 500.0f, 0.01f);
-    for (int i = 0; i < 60 * 4 && w->combat().adrenalineMode; ++i) w->tick(lock);
+    EXPECT_NEAR(before - w->combat().adrenaline, 225.0f / 500.0f * 0.5f, 0.01f) << "one real second = half a game second";
+    w->tick(go); // the button again: the mode ends
+    EXPECT_FALSE(w->combat().adrenalineMode);
+    for (int i = 0; i < 21; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().timeScale, 1);
+    w->tick(go);
+    ASSERT_TRUE(w->combat().adrenalineMode);
+    for (int i = 0; i < 60 * 8 && w->combat().adrenalineMode; ++i) w->tick(lock);
     EXPECT_FALSE(w->combat().adrenalineMode);
     EXPECT_EQ(w->combat().adrenaline, 0);
     for (int i = 0; i < 21; ++i) w->tick(lock);
     EXPECT_EQ(w->combat().timeScale, 1);
+    // without the lock it ends; a latched meter loses the latch when the mode starts
+    for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true));
+    ASSERT_TRUE(w->combat().headShotReady);
+    w->tick(lock), w->tick(go);
+    ASSERT_TRUE(w->combat().adrenalineMode);
+    EXPECT_FALSE(w->combat().headShotReady);
+    for (int i = 0; i < 30; ++i) w->tick(lock);
+    EXPECT_LT(w->combat().adrenaline, 1);
+    w->tick(guns(false, false));
+    EXPECT_FALSE(w->combat().adrenalineMode);
+}
+
+// Lara fires at the game's pace: in adrenaline mode (time scale 0.5) the pistols' clips, and so their shots, run at half
+// the real rate, exactly as every enemy does.
+TEST(Combat, TimeScaleSlowsLaraWithTheWorld) {
+    const auto shots = [](bool mode) {
+        CollisionMesh m;
+        addFloor(m, -5000, -5000, 5000, 5000, 0);
+        auto w = makeWorld(m, {0, 0, 0});
+        game::DummyTarget t;
+        t.pos = {3000, 0, 0}, t.hp = 1e9f;
+        w->targets.push_back(&t);
+        for (int i = 0; i < 60 * 9; ++i) w->tick(guns(true)); // a well filled meter (not latched)
+        if (mode) {
+            Actions go = guns(true);
+            go.manualAim = true;
+            w->tick(go);
+        }
+        for (int i = 0; i < 30; ++i) w->tick(guns(true)); // the ramp
+        const uint64_t before = w->combat().shotsFired;
+        for (int i = 0; i < 180; ++i) w->tick(guns(true)); // within the mode's 4.4 real seconds of a full-ish meter
+        return int(w->combat().shotsFired - before);
+    };
+    const int normal = shots(false), slowed = shots(true);
+    EXPECT_GE(normal, 8);
+    EXPECT_NEAR(slowed * 2, normal, 2);
+}
+
+// Look input that turns the view's centre onto `at` (a player steering the reticle), per tick.
+static game::vec2 lookAt(const game::World& w, vec3 at) {
+    const auto& c = w.camera();
+    const vec3 now = glm::normalize(c.target - c.position), want = glm::normalize(at - c.position);
+    float dyaw = std::atan2(want.y, want.x) - std::atan2(now.y, now.x);
+    while (dyaw > 3.1415927f) dyaw -= 6.2831853f;
+    while (dyaw < -3.1415927f) dyaw += 6.2831853f;
+    const float dpitch = std::asin(want.z) - std::asin(now.z);
+    return {std::clamp(dyaw * 20.0f, -2.5f, 2.5f), std::clamp(dpitch * 20.0f, -2.5f, 2.5f)};
+}
+
+// Manual (precision) aim, state chart S718 / camera mode 23: Manual Aim without the target lock toggles the close view
+// (distance 632.11) and draws; there is no lock: shots go where the view's centre points and hit what it covers, nothing
+// else; Target Lock or Manual Aim again leaves it.
+TEST(Combat, ManualAimHitsWhatTheReticleCovers) {
+    CollisionMesh m;
+    addFloor(m, -9000, -9000, 9000, 9000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget a, b;
+    a.pos = {2500, -700, 0}, b.pos = {2500, 700, 0}; // both in the soft cone: the lock would take one of them
+    a.hp = b.hp = 1e6f;
+    w->targets.push_back(&a), w->targets.push_back(&b);
+    for (int i = 0; i < 30; ++i) w->tick({});
+    EXPECT_EQ(w->cameraMode(), 1);
+    EXPECT_NEAR(w->cameraDistance(), 1264.22f, 1.0f);
+    Actions press;
+    press.manualAim = true;
+    w->tick(press);
+    ASSERT_TRUE(w->combat().manualAim);
+    for (int i = 0; i < 90; ++i) w->tick({});
+    EXPECT_TRUE(w->combat().drawn);
+    EXPECT_EQ(w->cameraMode(), 23);
+    EXPECT_NEAR(w->cameraDistance(), 632.11f, 2.0f);
+    EXPECT_EQ(w->combat().target, nullptr) << "no soft target in the aim view";
+    const auto aimAt = [&](vec3 at, bool fire, int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            Actions in;
+            in.look = lookAt(*w, at);
+            in.fire = fire;
+            w->tick(in);
+        }
+    };
+    // between the two: nothing is hit
+    aimAt({2500, 0, 250}, false, 120);
+    aimAt({2500, 0, 250}, true, 90);
+    EXPECT_GT(w->combat().shotsFired, 3u);
+    EXPECT_EQ(a.hits, 0);
+    EXPECT_EQ(b.hits, 0);
+    EXPECT_NEAR(w->manualAimPoint().y, 0, 120.0f);
+    // onto b: only b
+    aimAt(b.aimPoint(), false, 120);
+    EXPECT_LT(glm::distance(w->manualAimPoint(), b.aimPoint()), b.r + 20);
+    aimAt(b.aimPoint(), true, 90);
+    EXPECT_GT(b.hits, 3);
+    EXPECT_EQ(a.hits, 0);
+    // onto a: only a from now on
+    const int hitsB = b.hits;
+    aimAt(a.aimPoint(), false, 120);
+    aimAt(a.aimPoint(), true, 90);
+    EXPECT_GT(a.hits, 3);
+    EXPECT_EQ(b.hits, hitsB);
+    // she turned to face the view while standing
+    EXPECT_NEAR(std::atan2(std::sin(w->player().state().yaw - w->camera().yaw), std::cos(w->player().state().yaw - w->camera().yaw)), 0, 0.3f);
+    // she steps in it, she does not run
+    Actions walk;
+    walk.move = {0, 1};
+    const vec3 from = w->player().state().pos;
+    for (int i = 0; i < 60; ++i) w->tick(walk);
+    EXPECT_TRUE(w->combat().manualAim);
+    EXPECT_LT(glm::distance(w->player().state().pos, from), 700.0f);
+    // Target Lock leaves it and locks as usual
+    w->tick(guns(false));
+    EXPECT_FALSE(w->combat().manualAim);
+    for (int i = 0; i < 60; ++i) w->tick(guns(false));
+    EXPECT_TRUE(w->combat().locked);
+    EXPECT_EQ(w->cameraMode(), 1);
+    // with the lock held the button is not the aim view
+    Actions both = guns(false);
+    both.manualAim = true;
+    w->tick(both);
+    EXPECT_FALSE(w->combat().manualAim);
+    // toggle on and off by the button
+    w->tick({}), w->tick(press);
+    EXPECT_TRUE(w->combat().manualAim);
+    w->tick({}), w->tick(press);
+    EXPECT_FALSE(w->combat().manualAim);
+    // not in the air
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 20; ++i) w->tick(jump);
+    ASSERT_NE(w->player().state().state, State::Idle);
+    Actions pressAir = press;
+    w->tick({}), w->tick(pressAir);
+    EXPECT_FALSE(w->combat().manualAim);
+}
+
+// Dual targeting (0x71E490): with the two pistols and a primary target, the best other candidate in front of her is
+// the second target and the left gun fires at it; a one-gun weapon has none.
+TEST(Combat, DualTargetsTakeOneGunEach) {
+    CollisionMesh m;
+    addFloor(m, -9000, -9000, 9000, 9000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget a, b;
+    a.pos = {2000, -300, 0}, b.pos = {2600, 500, 0};
+    a.hp = b.hp = 1e6f;
+    w->targets.push_back(&a), w->targets.push_back(&b);
+    for (int i = 0; i < 20; ++i) w->tick(guns(false));
+    ASSERT_EQ(w->combat().target, &a);
+    EXPECT_EQ(w->combat().second, &b);
+    for (int i = 0; i < 120; ++i) {
+        w->tick(guns(true));
+        for (const auto& s : w->combat().shots) EXPECT_EQ(s.target, s.hand == 1 ? &b : &a);
+    }
+    EXPECT_GT(a.hits, 2);
+    EXPECT_GT(b.hits, 2);
+    b.hp = 0; // the second one dies: both guns on the first
+    const int hitsA = a.hits;
+    for (int i = 0; i < 120; ++i) w->tick(guns(true));
+    EXPECT_EQ(w->combat().second, nullptr);
+    EXPECT_GT(a.hits, hitsA + 4);
+    // the shotgun (one gun): no second target
+    b.hp = 1e6f;
+    w->giveWeapon(game::Weapon::Shotgun, 20);
+    Actions sw = guns(false);
+    sw.weapon = true;
+    w->tick(sw);
+    for (int i = 0; i < 180; ++i) w->tick(guns(false));
+    ASSERT_EQ(w->combat().weapon, game::Weapon::Shotgun);
+    EXPECT_EQ(w->combat().second, nullptr);
 }
 
 TEST(Combat, ReplayWithSwitchingIndependentOfRenderRate) {
@@ -725,8 +974,9 @@ TEST(CombatReal, PoolFallDamageDeathAndPistols) {
     EXPECT_GT(glm::dot(glm::normalize(hand - (s.pos + vec3(0, 0, 418))), toTarget), 0.8f);
 }
 
-// l4_pool's goo is water (surface 2699.3): under water the pistols stay holstered, the speargun draws and fires, and
-// each shot is followed by a reload from the reserve.
+// l4_pool's goo is water (surface 2699.3): under water the pistols draw (combat_water_submerged_equip) and fire with
+// their under-water record (pr_handgunbullet +0x84: 40 / 40 / 20), then the speargun is swapped in
+// (combat_shotgun_equip_submerged), fires, and each spear is followed by a reload from the reserve.
 TEST(CombatReal, PoolSpeargunUnderWater) {
     const char* dir = std::getenv("OU_GAME_DIR");
     if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -739,23 +989,30 @@ TEST(CombatReal, PoolSpeargunUnderWater) {
     w.tick(dive); // surfacing -> under water
     for (int i = 0; i < 10; ++i) w.tick({});
     ASSERT_EQ(w.player().state().state, State::SwimUnder);
-    for (int i = 0; i < 60; ++i) w.tick(guns(true)); // pistols: holstered under water
-    EXPECT_FALSE(w.combat().drawn);
-    EXPECT_EQ(w.combat().shotsFired, 0u);
     game::DummyTarget t;
     t.pos = w.player().state().pos + vec3(900, 0, -250);
     w.targets.push_back(&t);
+    for (int i = 0; i < 60; ++i) w.tick(guns(true)); // pistols under water
+    EXPECT_TRUE(w.combat().drawn);
+    EXPECT_EQ(w.combat().weapon, game::Weapon::Pistols);
+    EXPECT_EQ(w.player().state().state, State::SwimUnder);
+    const uint32_t pistolShots = w.combat().shotsFired;
+    EXPECT_GE(pistolShots, 2u);
+    EXPECT_EQ(t.hits, int(pistolShots));
+    EXPECT_EQ(t.hp, 700 - 40 * int(pistolShots)); // 900 away: inside the short range, the +0x84 record's 40
     w.giveWeapon(game::Weapon::Speargun, 5);
-    Actions sw;
+    Actions sw = guns(true);
     sw.weapon = true;
     w.tick(sw);
-    EXPECT_EQ(w.combat().weapon, game::Weapon::Speargun);
+    for (int i = 0; i < 120 && w.combat().weapon != game::Weapon::Speargun; ++i) w.tick(guns(true)); // the pistols' unequip first
+    ASSERT_EQ(w.combat().weapon, game::Weapon::Speargun);
+    const int hp = t.hp, hits = t.hits;
     for (int i = 0; i < 150; ++i) w.tick(guns(true)); // equip 17/30 s, then shot, reload 31/30 s, shot
     EXPECT_TRUE(w.combat().drawn);
     EXPECT_EQ(w.player().state().state, State::SwimUnder);
-    EXPECT_EQ(w.combat().shotsFired, 2u);
-    EXPECT_EQ(t.hits, 2);
-    EXPECT_EQ(t.hp, 700 - 2 * 550); // under water the +0x84 record: 550 a spear
+    EXPECT_EQ(w.combat().shotsFired - pistolShots, 2u);
+    EXPECT_EQ(t.hits - hits, 2);
+    EXPECT_EQ(t.hp, hp - 2 * 550); // under water the +0x84 record: 550 a spear
     EXPECT_LE(w.combat().reserve[3], 4);
     w.targets.clear();
 }
@@ -1072,4 +1329,172 @@ TEST(Combat, HitReactionThresholds) {
     EXPECT_EQ(game::hitReaction(6, 100), 1);
     EXPECT_EQ(game::hitReaction(6, 250), 2);
     EXPECT_EQ(game::hitReaction(3, 900), 0);
+}
+
+// Script time-scale ramps (gamebase 24 / 23): the value eases as tru.exe 0x78C120 over the given real seconds — 2u^2 in
+// the first half, 1 - 2(1 - u)^2 in the second — and a set (gamebase 2 / 1) lands at once.
+TEST(Combat, ScriptTimeRampEasesInAndOut) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto wp = makeWorld(m, {0, 0, 0});
+    auto& w = *wp;
+    w.tick({});
+    w.setTimeScale(false, 0.4f, 2.0f);
+    w.setTimeScale(true, 0.5f, 2.0f);
+    const auto eased = [](float u) { return u < 0.5f ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u); };
+    for (int i = 1; i <= 120; ++i) {
+        w.tick({});
+        const float e = eased(float(i) / 120.0f);
+        ASSERT_NEAR(w.combat().timeScale, 1 + (0.4f - 1) * e, 2e-3f) << i;
+        ASSERT_NEAR(w.combat().worldScale, 1 + (0.5f - 1) * e, 2e-3f) << i;
+    }
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_FLOAT_EQ(w.combat().timeScale, 0.4f);
+    EXPECT_FLOAT_EQ(w.combat().worldScale, 0.5f);
+    w.setTimeScale(false, 1, -1), w.setTimeScale(true, 1, -1);
+    w.tick({});
+    EXPECT_FLOAT_EQ(w.combat().timeScale, 1);
+    EXPECT_FLOAT_EQ(w.combat().worldScale, 1);
+}
+
+// One-handed pistols from a real ledge (docs/GAMEPLAY.md "One-handed shooting"): l4_pool, hanging from ledge 1253 (as
+// GameReal.PoolDropToHang reaches it by a jump), a real panther on the floor behind her: Target Lock + Fire shoot it
+// with the right-hand pistol from the hang, the left hand stays on the ledge and she keeps hanging.
+TEST(CombatReal, PoolLedgeHangShootsPantherOneHanded) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(loader, "l4_pool", anims, game::Spawn{{-4291, 4225.6f, 3100}, glm::radians(-157.9f)});
+    w.enemies().setBigfile(&bf);
+    const auto& s = w.player().state();
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 80 && s.state != State::Hang; ++i) w.tick(i == 5 ? jump : Actions{});
+    ASSERT_EQ(s.state, State::Hang);
+    ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 1253);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    // the panther: on the floor behind her, 1500 out from the wall
+    const vec3 back = -vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
+    const auto floor = w.collision().raycast(s.pos + back * 1500.0f + vec3(0, 0, 200), {0, 0, -1}, 4000, 0x0F);
+    ASSERT_TRUE(floor);
+    const auto panther = game::ai::loadEnemyType(bf, "cat_panther");
+    auto& cat = w.enemies().add(panther, 990001, floor->point, 0);
+    const float full = cat.health();
+    const vec3 hung = s.pos;
+    bool oneHand = false;
+    for (int i = 0; i < 400 && cat.alive(); ++i) {
+        w.tick(guns(true));
+        ASSERT_EQ(s.state, State::Hang) << i;
+        for (const auto& shot : w.combat().shots) EXPECT_EQ(shot.hand, 0) << "only the right-hand gun fires from a hold";
+        if (w.combat().drawn && s.clip.find("ledgeb") != std::string::npos) oneHand = true;
+    }
+    std::printf("hang shooting: %u shots, panther %.0f -> %.0f, clip %s\n", w.combat().shotsFired, full, cat.health(), s.clip.c_str());
+    EXPECT_GE(w.combat().shotsFired, 3u);
+    EXPECT_LT(cat.health(), full) << "the panther took the shots";
+    EXPECT_EQ(w.combat().weapon, game::Weapon::Pistols);
+    EXPECT_NEAR(glm::distance(s.pos, hung), 0, 1);
+    EXPECT_TRUE(oneHand);
+}
+
+// Adrenaline head shot on a real enemy (docs/GAMEPLAY.md "Head shot"): l4_pool, the meter filled by pistol damage,
+// then a real panther in close range: Grapple starts the move with the clip hosted in the panther's DRM
+// (hosted_enemy_aa_handguns, its events 5 / 4 the window), the pip is steered in, Fire kills it.
+TEST(CombatReal, PoolHeadShotOnPanther) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(loader, "l4_pool", anims);
+    w.enemies().setBigfile(&bf);
+    const auto panther = game::ai::loadEnemyType(bf, "cat_panther");
+    const auto& move = panther->tuning.headShot;
+    ASSERT_TRUE(move.valid());
+    EXPECT_NEAR(move.distance, 316.06f, 0.01f); // list node +0x54: +0x10
+    EXPECT_NEAR(move.blend, 6.0f / 30, 1e-4f);  // +0x14: 6 frames
+    EXPECT_EQ(move.clips[0].name, "hosted_enemy_aa_handguns");
+    EXPECT_GT(move.clips[0].open, 0);
+    EXPECT_LT(move.clips[0].open, move.clips[0].close); // the hosted clip's events 5 / 4
+    {
+        game::DummyTarget t;
+        t.hp = 1e6f;
+        t.pos = {-13385, -600, 4500};
+        w.targets.push_back(&t);
+        for (int i = 0; i < 60 * 20 && w.combat().adrenaline < 1; ++i) w.tick(guns(true));
+        w.targets.clear();
+        for (int i = 0; i < 5; ++i) w.tick({});
+    }
+    ASSERT_EQ(w.combat().adrenaline, 1);
+    ASSERT_TRUE(w.combat().headShotReady);
+    const auto& s = w.player().state();
+    auto& cat = w.enemies().add(panther, 990001, s.pos + vec3(-900, 0, 0), 0);
+    const Actions lock = guns(false);
+    int started = -1;
+    for (int i = 0; i < 240 && started < 0; ++i) { // locked on; Grapple as soon as it is offered
+        Actions a = lock;
+        a.grapple = w.headShotAvailable();
+        w.tick(a);
+        if (w.combat().headShot >= 0) started = i;
+    }
+    ASSERT_GE(started, 0) << "no head shot offered; panther at " << glm::distance(cat.state().pos, s.pos);
+    EXPECT_EQ(w.combat().adrenaline, 0);
+    EXPECT_EQ(s.clip, "cat_panther:hosted_enemy_aa_handguns");
+    EXPECT_EQ(s.grappleUid, 0);
+    EXPECT_NEAR(glm::distance(glm::vec2(cat.state().pos), glm::vec2(s.pos)), move.distance, 2.0f);
+    for (int i = 0; i < 120 && w.combat().slowMo <= 0; ++i) w.tick(lock);
+    ASSERT_GT(w.combat().slowMo, 0) << "the window opens on the clip's event 5";
+    for (int i = 0; i < 200 && glm::length(w.combat().pip) > 0.3f && w.combat().headShot >= 0; ++i) {
+        Actions steer = lock;
+        const auto d = -glm::normalize(w.combat().pip);
+        steer.look = {-d.x * 0.3f, d.y * 0.3f};
+        w.tick(steer);
+    }
+    ASSERT_GE(w.combat().headShot, 0) << "the move was cut short";
+    EXPECT_NEAR(w.combat().timeScale, 0.2f, 0.01f);
+    Actions shoot = lock;
+    shoot.fire = true;
+    w.tick(shoot);
+    EXPECT_FALSE(cat.alive());
+    for (int i = 0; i < 90; ++i) w.tick({});
+    EXPECT_EQ(cat.state().mode, game::ai::Mode::Dead);
+    EXPECT_NE(cat.state().clip.find("adren"), std::string::npos) << cat.state().clip;
+    EXPECT_FLOAT_EQ(w.combat().timeScale, 1);
+    std::printf("head shot: started +%d, window %.2f..%.2f s, death clip %s\n", started, move.clips[0].open, move.clips[0].close, cat.state().clip.c_str());
+}
+
+// Manual aim on a real enemy (docs/GAMEPLAY.md "Manual aim"): l4_pool, a real panther; no lock is taken, the shots go
+// where the view's centre points and hurt it.
+TEST(CombatReal, PoolManualAimHitsPanther) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(loader, "l4_pool", anims);
+    w.enemies().setBigfile(&bf);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto panther = game::ai::loadEnemyType(bf, "cat_panther");
+    auto& cat = w.enemies().add(panther, 990001, w.player().state().pos + vec3(-1500, -600, 0), 0);
+    const float full = cat.health();
+    Actions press;
+    press.manualAim = true;
+    w.tick(press);
+    ASSERT_TRUE(w.combat().manualAim);
+    w.tick({});
+    EXPECT_EQ(w.cameraMode(), 23);
+    int hits = 0;
+    for (int i = 0; i < 600 && cat.alive(); ++i) {
+        Actions a;
+        a.look = lookAt(w, cat.aimPoint());
+        a.fire = i > 30;
+        const float before = cat.health();
+        w.tick(a);
+        EXPECT_FALSE(w.combat().locked);
+        hits += cat.health() < before;
+    }
+    std::printf("manual aim: %u shots, %d hits, panther %.0f -> %.0f\n", w.combat().shotsFired, hits, full, cat.health());
+    EXPECT_GE(hits, 3);
+    EXPECT_LT(cat.health(), full - 60);
 }

@@ -110,3 +110,30 @@ TEST(Hud, GroupsShowOnTriggersAndFadeOut) {
     run(1);
     for (int g = 0; g < ui::Hud::kGroups; ++g) EXPECT_EQ(hud.alpha(ui::Hud::Group(g)), 0.0f);
 }
+
+// Under water without scuba gear the breath meter takes the adrenaline meter's place even while it is full (tru.exe
+// 0x7572F0: HUD element 2 shown); with the tanks, or out of the water, the bar is the adrenaline meter.
+TEST(Hud, BreathBarReplacesAdrenalineUnderWater) {
+    const ui::Art art = hudArt();
+    const auto barHeight = [&](bool breathBar) {
+        ui::Hud hud;
+        ui::HudState s;
+        s.adrenaline = 0.25f, s.breath = 1.0f, s.breathBar = breathBar;
+        hud.update(s, 1.0 / 60); // the first state is not a change
+        s.health = 900;          // HEALTH group in
+        for (int i = 0; i < 60; ++i) hud.update(s, 1.0 / 60);
+        EXPECT_EQ(hud.alpha(ui::Hud::Health), 1.0f);
+        ui::Canvas c(1920, 1080, &art);
+        hud.draw(c);
+        return quad(c.vertices, 1).h; // panel 78, then the bar's fill
+    };
+    const float u = ui::Hud::unit(1080);
+    EXPECT_NEAR(barHeight(false), 44 * 0.25f * u, 0.01f) << "the adrenaline meter";
+    EXPECT_NEAR(barHeight(true), 44 * 1.0f * u, 0.01f) << "the breath meter, full";
+    ui::Hud hud;
+    ui::HudState s;
+    hud.update(s, 1.0 / 60);
+    s.breathBar = true; // going under shows the group though nothing else changed
+    for (int i = 0; i < 6 * 60; ++i) hud.update(s, 1.0 / 60);
+    EXPECT_EQ(hud.alpha(ui::Hud::Health), 1.0f) << "held for as long as she is under water";
+}
