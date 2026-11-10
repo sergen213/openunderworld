@@ -214,6 +214,50 @@ TEST(Game, GravityJumpAndLanding) {
 // tru.exe take-offs under Wine (openunderworld-work/screens/stairs j_*.txt, Instance +0x2A0 per 30 Hz frame):
 // standing 48.04 up (apex 201.6, 0.56 s air); stick 49.97 up + 40.00 along it; running, or the stick behind
 // her (she turns round), 42.53 up + 65.83 forward; the stick to a side jumps that way standing.
+// A free jump and the buttons / stick (tru.exe chart action 511, 0x750040; Player::airBrake): holding Jump changes
+// nothing; the stick pulled back in flight sets the horizontal speed to the take-off's x (1 - 0.6 x how far back past
+// 0.2), straight back 40 %; easing off gives nothing back; the stick kept forward or let go does nothing.
+TEST(Game, JumpHoldNoEffectAndStickBackBrakes) {
+    struct Out { float apex, landX, takeX, h; int air; };
+    const auto fly = [](bool holdJump, float backAt, float back, float releaseAt) {
+        CollisionMesh m;
+        addFloor(m, -20000, -20000, 20000, 20000, 0);
+        auto w = makeWorld(std::move(m), {0, 0, 0});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 40; ++i) w->tick(forward());
+        Actions j = forward();
+        j.jump = true;
+        w->tick(j);
+        for (int i = 0; i < 60 && s.state != State::Jump; ++i) w->tick(holdJump ? j : forward());
+        Out o{0, 0, s.pos.x, 0, 0};
+        for (int i = 0; i < 200 && s.state == State::Jump; ++i, ++o.air) {
+            Actions a = fixedCamera(*w, forward(float(i) >= releaseAt ? 0.0f : float(i) >= backAt ? back : 1.0f), 0);
+            a.jump = holdJump;
+            w->tick(a);
+            o.apex = std::max(o.apex, s.pos.z);
+            if (s.state == State::Jump) o.h = glm::length(glm::vec2(s.vel));
+        }
+        o.landX = s.pos.x;
+        return o;
+    };
+    const float v = 65.83f * 30;
+    const Out tap = fly(false, 1e9f, 0, 1e9f), hold = fly(true, 1e9f, 0, 1e9f);
+    EXPECT_NEAR(tap.h, v, 1);
+    EXPECT_EQ(tap.air, hold.air);
+    EXPECT_FLOAT_EQ(tap.apex, hold.apex);
+    EXPECT_FLOAT_EQ(tap.landX, hold.landX);
+    const Out let = fly(false, 1e9f, 0, 6); // the stick let go in flight: the same arc
+    EXPECT_FLOAT_EQ(let.landX, tap.landX);
+    const Out back = fly(false, 10, -1, 1e9f); // straight back from tick 10
+    EXPECT_NEAR(back.h, 0.4f * v, 1);
+    EXPECT_EQ(back.air, tap.air);
+    EXPECT_FLOAT_EQ(back.apex, tap.apex);
+    EXPECT_NEAR(back.landX - back.takeX, (tap.landX - tap.takeX) * (10 + 0.4f * float(tap.air - 10)) / float(tap.air), 8);
+    const Out eased = fly(false, 10, -1, 14); // back for four ticks, then let go: the speed stays down
+    EXPECT_NEAR(eased.h, 0.4f * v, 1);
+    EXPECT_NEAR(eased.landX, back.landX, 1);
+}
+
 TEST(Game, JumpTakeOffsMatchTruTraces) {
     const auto flight = [](Actions hold, int runTicks, float& vz, float& hspeed, float& yaw, float& apex) {
         CollisionMesh m;
@@ -8109,6 +8153,542 @@ TEST(GameReal, TempleSafetyDropOffThePlatform) {
         EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).x, walk ? -2869.6 : -1226.8, 1);
         EXPECT_LT(s.pos.z, top - 450);
     }
+}
+
+namespace {
+// The synthetic library plus the landing clips (lara.drm lengths and root motion: ng_land_hard 1.1 s in place,
+// ng_land_rolling 808 forward in 0.67 s, ng_running_land_stumble 950 in 1.07 s, ng_running_land 807 in 0.67 s).
+game::AnimLibrary landingAnims() {
+    game::AnimLibrary a = syntheticAnims();
+    a.clips["ng_generic_land_forwards"] = rootClip(22, 0);
+    a.clips["ng_running_land"] = rootClip(20, 40.35f);
+    a.clips["ng_land_hard"] = rootClip(33, 0);
+    a.clips["ng_land_rolling"] = rootClip(20, 40.4f);
+    a.clips["ng_running_land_stumble"] = rootClip(32, 29.7f);
+    return a;
+}
+// A platform `h` over a wide floor; she runs off its +x edge with `air` held once she falls. Returns the world at the
+// tick she lands.
+std::unique_ptr<game::World> landFrom(float h, const Actions& air, bool lateCrouch = true, bool run = true) {
+    CollisionMesh m;
+    addFloor(m, -20000, -20000, 20000, 20000, 0);
+    addBox(m, {-2000, -1000, 0}, {0, 1000, h});
+    m.build();
+    auto w = std::make_unique<game::World>(std::move(m), landingAnims(), game::Spawn{{run ? -1500.0f : -150.0f, 0, h}, 0});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 600 && s.state != State::Fall; ++i) w->tick(forward());
+    EXPECT_EQ(s.state, State::Fall);
+    // Crouch in `air` is pressed 10 ticks before the landing (a press, not a hold: the roll's condition)
+    const float g = w->player().tuning().gravity, dt = 10 / 60.0f;
+    for (int i = 0; i < 600 && s.state == State::Fall; ++i) {
+        Actions a = air;
+        a.drop = air.drop && (!lateCrouch || s.pos.z + s.vel.z * dt - 0.5f * g * dt * dt <= 0);
+        w->tick(a);
+    }
+    EXPECT_NEAR(s.pos.z, 0, 1);
+    EXPECT_NEAR(s.fallHeight, h, 2);
+    return w;
+}
+} // namespace
+
+// Landings as lara.drm's chart dispatches them (S1275): by the fall's height (chart variables 344 = 632.11 stumble,
+// 346 = 1264.22 hard), the stick (running on needs it pushed at run level, not backward) and Crouch held with the
+// stick forward (a roll at any height); no speed test.
+TEST(Game, LandingByFallHeightStickAndCrouch) {
+    const auto clipOf = [](const game::World& w) { return w.player().state().clip; };
+    Actions crouchFwd = forward();
+    crouchFwd.drop = true;
+    Actions crouch;
+    crouch.drop = true;
+    Actions walk = forward();
+    walk.walk = true;
+    {
+        auto w = landFrom(400, forward());
+        EXPECT_EQ(w->player().state().state, State::Run);
+        EXPECT_EQ(clipOf(*w), "ng_running_land");
+    }
+    {
+        auto w = landFrom(400, {});
+        EXPECT_EQ(w->player().state().state, State::Land);
+        EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+    }
+    {
+        auto w = landFrom(400, walk); // the stick at walk level: no running on
+        EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+    }
+    {
+        auto w = landFrom(620, forward());
+        EXPECT_EQ(clipOf(*w), "ng_running_land");
+    }
+    {
+        auto w = landFrom(640, forward()); // 632.11 or more
+        const auto& s = w->player().state();
+        EXPECT_EQ(s.state, State::Run);
+        EXPECT_EQ(clipOf(*w), "ng_running_land_stumble");
+        const float x = s.pos.x;
+        for (int i = 0; i < 64 && s.clip == "ng_running_land_stumble"; ++i) w->tick(forward());
+        EXPECT_NEAR(s.pos.x - x, 870, 40); // its root motion from the request's start frame 3, then the run
+        EXPECT_EQ(s.clip, "ng_run");
+    }
+    {
+        auto w = landFrom(640, {});
+        EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+    }
+    {
+        auto w = landFrom(1250, forward());
+        EXPECT_EQ(clipOf(*w), "ng_running_land_stumble");
+    }
+    for (const bool stick : {false, true}) {
+        auto w = landFrom(1270, stick ? forward() : Actions{}); // 1264.22 or more, whatever the stick
+        const auto& s = w->player().state();
+        EXPECT_EQ(s.state, State::Land);
+        EXPECT_EQ(clipOf(*w), "ng_land_hard");
+        const float x = s.pos.x;
+        Actions j = forward();
+        j.jump = true;
+        w->tick(j); // locked: no jump, no running off
+        for (int i = 0; i < 60; ++i) w->tick(forward());
+        EXPECT_EQ(s.state, State::Land);
+        EXPECT_NEAR(s.pos.x, x, 1);
+        for (int i = 0; i < 10; ++i) w->tick({});
+        EXPECT_EQ(s.state, State::Idle); // 1.1 s
+    }
+    for (const float h : {300.0f, 900.0f, 1270.0f}) {
+        auto w = landFrom(h, crouchFwd); // Crouch held + the stick forward: the roll, before the height tests
+        const auto& s = w->player().state();
+        EXPECT_EQ(s.state, State::Roll) << h;
+        EXPECT_EQ(clipOf(*w), "ng_land_rolling") << h;
+        const float x = s.pos.x;
+        for (int i = 0; i < 60 && s.state == State::Roll; ++i) w->tick(forward());
+        EXPECT_NEAR(s.pos.x - x, 646, 30) << h; // from the request's start frame 4
+        EXPECT_EQ(s.state, State::Run);
+    }
+    {
+        auto w = landFrom(900, crouch); // Crouch without the stick: no roll; the plain landing, then the crouch
+        const auto& s = w->player().state();
+        EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+        for (int i = 0; i < 20; ++i) w->tick(crouch);
+        EXPECT_EQ(s.state, State::Land);
+        for (int i = 0; i < 4; ++i) w->tick(crouch);
+        EXPECT_EQ(s.state, State::Crouch); // 0.36 s in (tru.exe under Wine: 0.35 s)
+    }
+    {
+        // Crouch held all the way down (0.59 s: longer than the buttons' 15 frames) is no roll: tru.exe under Wine
+        // lands in the stumble and crouches 0.15 s into it
+        auto w = landFrom(900, crouchFwd, false);
+        const auto& s = w->player().state();
+        EXPECT_EQ(clipOf(*w), "ng_running_land_stumble");
+        for (int i = 0; i < 7; ++i) w->tick(crouchFwd);
+        EXPECT_EQ(s.state, State::Run);
+        for (int i = 0; i < 2; ++i) w->tick(crouchFwd);
+        EXPECT_EQ(s.state, State::Crouch);
+    }
+}
+
+// The landing clip's group S1276: Jump takes off again at once; Crouch pressed with the stick forward inside 4 frames
+// (chart variable 347) rolls, later Crouch + the stick crouches; the stick to a side leaves the clip after 4 frames.
+TEST(Game, LandingClipJumpRollCrouchAndLeave) {
+    Actions j;
+    j.jump = true;
+    Actions crouchFwd = forward();
+    crouchFwd.drop = true;
+    {
+        auto w = landFrom(400, {});
+        const auto& s = w->player().state();
+        ASSERT_EQ(s.state, State::Land);
+        w->tick({});
+        w->tick(j);
+        EXPECT_EQ(s.state, State::JumpPrep);
+    }
+    {
+        auto w = landFrom(400, {});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 5; ++i) w->tick(forward()); // 6 ticks = 3 frames after the landing
+        ASSERT_EQ(s.state, State::Land) << "the stick forward does not leave the clip";
+        w->tick(crouchFwd);
+        EXPECT_EQ(s.state, State::Roll);
+        EXPECT_EQ(s.clip, "ng_land_rolling");
+    }
+    {
+        auto w = landFrom(400, {});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 9; ++i) w->tick(forward());
+        ASSERT_EQ(s.state, State::Land);
+        w->tick(crouchFwd);
+        EXPECT_EQ(s.state, State::Crouch);
+    }
+    {
+        auto w = landFrom(400, {});
+        const auto& s = w->player().state();
+        Actions side;
+        side.move.x = 1;
+        for (int i = 0; i < 6; ++i) w->tick(fixedCamera(*w, side, 0));
+        EXPECT_EQ(s.state, State::Land);
+        for (int i = 0; i < 4; ++i) w->tick(fixedCamera(*w, side, 0));
+        EXPECT_NE(s.state, State::Land); // after 4 frames she turns / runs off
+    }
+}
+
+// l4_temple, the floor west of block 1155 (z 1722.9; tru.exe's landings were traced here under Wine): the same
+// dispatch with lara.drm's clips.
+TEST(GameReal, TempleLandingsByHeightStickAndCrouch) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto drop = [&](float h, Actions air, std::string* clip, State* st, float* run) {
+        auto w = unitWorld(bf, "l4_temple", {{-3000, -11850, 1722.9f}, 0});
+        const auto& s = w.player().state();
+        game::PlayerState up;
+        up.pos = {-3000, -11850, 1722.9f + h}, up.clip = "ng_idle", up.fallStartZ = up.pos.z;
+        w.restore(up, 0, w.camera().pitch);
+        for (int i = 0; i < 30 && s.state != State::Fall; ++i) w.tick({});
+        ASSERT_EQ(s.state, State::Fall);
+        const float g = w.player().tuning().gravity, t10 = 10 / 60.0f;
+        for (int i = 0; i < 600 && s.state == State::Fall; ++i) {
+            Actions a = air; // Crouch: pressed 10 ticks before the landing
+            a.drop = air.drop && s.pos.z + s.vel.z * t10 - 0.5f * g * t10 * t10 <= 1722.9f;
+            w.tick(a);
+        }
+        EXPECT_NEAR(s.pos.z, 1722.9, 1.5);
+        EXPECT_NEAR(s.fallHeight, h, 3);
+        *clip = s.clip, *st = s.state;
+        const float x = s.pos.x;
+        const std::string first = s.clip;
+        for (int i = 0; i < 200 && s.clip == first; ++i) w.tick(air);
+        *run = s.pos.x - x;
+    };
+    Actions crouchFwd = forward();
+    crouchFwd.drop = true;
+    std::string clip;
+    State st;
+    float run;
+    drop(400, {}, &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_generic_land_forwards");
+    EXPECT_EQ(st, State::Land);
+    EXPECT_NEAR(run, 0, 1);
+    drop(400, forward(), &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_running_land");
+    drop(800, forward(), &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_running_land_stumble");
+    EXPECT_EQ(st, State::Run);
+    EXPECT_NEAR(run, 870, 90); // ng_running_land_stumble's root motion (950, from its start frame 3)
+    drop(800, {}, &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_generic_land_forwards");
+    drop(1400, forward(), &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_land_hard");
+    EXPECT_EQ(st, State::Land);
+    EXPECT_NEAR(run, 0, 1);
+    drop(1000, crouchFwd, &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_land_rolling");
+    EXPECT_EQ(st, State::Roll);
+    EXPECT_NEAR(run, 646, 120); // ng_land_rolling's 808 from its start frame 4
+}
+
+// l4_temple, the runway west of block 1155 (ours x -4200..-1300 at z 1722.9), where tru.exe was traced under Wine
+// (openunderworld-work/gameplaygoal/ctrl2/w1.txt): a running jump with Jump tapped or held, and with the stick let go
+// or pulled back 0.1 s after the take-off. tru.exe: tap and hold the same flight (apex 155.8, 954.7 from its first
+// airborne sample to the landing); the stick let go the same; pulled back, the horizontal speed drops from 65.83 to
+// 26.33 a frame on the next frame and she lands 500.3 from that sample. A jump from the sprint flies the run's arc.
+TEST(GameReal, TempleJumpHoldStickBackAndSprintJump) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    struct Out { float apex = 0, dist = 0, h = 0, launch = 0; std::string from; };
+    const auto fly = [&](bool hold, int stickAfter, float stick, bool sprint) {
+        auto w = unitWorld(bf, "l4_temple", {{-4200, -11850, 1722.9f}, 0});
+        const auto& s = w.player().state();
+        Actions run = forward();
+        run.sprint = sprint;
+        for (int i = 0; i < 55; ++i) w.tick(run);
+        Out o;
+        o.from = s.clip;
+        Actions j = run;
+        j.jump = true;
+        w.tick(j);
+        for (int i = 0; i < 30 && s.state != State::Jump; ++i) w.tick(hold ? j : run);
+        EXPECT_EQ(s.state, State::Jump);
+        const float x0 = s.pos.x, z0 = s.pos.z;
+        o.launch = glm::length(glm::vec2(s.vel));
+        for (int i = 0; i < 120 && s.state == State::Jump; ++i) {
+            Actions a = fixedCamera(w, forward(i >= stickAfter ? stick : 1.0f), 0);
+            a.jump = hold, a.sprint = sprint;
+            w.tick(a);
+            o.apex = std::max(o.apex, s.pos.z - z0);
+            if (s.state == State::Jump) o.h = glm::length(glm::vec2(s.vel));
+        }
+        o.dist = s.pos.x - x0;
+        return o;
+    };
+    const Out tap = fly(false, 1000, 1, false), hold = fly(true, 1000, 1, false);
+    EXPECT_NEAR(tap.launch, 65.83f * 30, 1);
+    EXPECT_NEAR(tap.apex, 155.8f, 6);
+    EXPECT_NEAR(tap.dist, 954.7f + 33, 45); // Wine's first airborne sample is half a frame in
+    EXPECT_FLOAT_EQ(hold.dist, tap.dist);
+    EXPECT_FLOAT_EQ(hold.apex, tap.apex);
+    const Out let = fly(false, 6, 0, false);
+    EXPECT_FLOAT_EQ(let.dist, tap.dist);
+    const Out back = fly(false, 6, -1, false);
+    EXPECT_NEAR(back.h, 26.33f * 30, 2);
+    EXPECT_NEAR(back.dist, 500.3f + 33, 45);
+    EXPECT_FLOAT_EQ(back.apex, tap.apex);
+    const Out sprint = fly(false, 1000, 1, true);
+    EXPECT_EQ(sprint.from, "sprint_loop");
+    EXPECT_NEAR(sprint.launch, 65.83f * 30, 1);
+    EXPECT_NEAR(sprint.apex, tap.apex, 1);
+    EXPECT_NEAR(sprint.dist, tap.dist, 5);
+}
+
+// Hand over hand faster: Interact pressed while shimmying plays one ledgeb_right_hustle (chart S441 / S442: 371 aside in
+// 0.57 s against the shimmy's 196 in 0.70 s), mirrored to the left; pressed again from its frame 8 on it starts over,
+// earlier presses and presses without the stick do nothing; its end is the shimmy again.
+TEST(Game, ShimmyHustleWithInteract) {
+    game::AnimLibrary anims = syntheticAnims();
+    anim::Clip hustle = rootClip(17, 0);
+    for (int i = 0; i < 17; ++i) hustle.tracks[0][anim::TransX].push_back(-371.3f * float(i + 1) / 17);
+    anims.clips["ledgeb_right_hustle"] = hustle;
+    const auto tuning = game::defaultTuning();
+    const float ledgeZ = anims.hangHandOffset.z + tuning.jumpVz * tuning.jumpVz / (2 * tuning.gravity) * 0.6f;
+    CollisionMesh m;
+    addFloor(m, -1000, -3000, 300, 3000, 0);
+    addBox(m, {300, -3000, 0}, {1000, 3000, ledgeZ});
+    m.markup.push_back({1, 7, {{300, -2800, ledgeZ}, {300, 2800, ledgeZ}}});
+    m.build();
+    game::World w(std::move(m), anims, game::Spawn{{300 + anims.hangHandOffset.y - 10, 0, 0}, 0});
+    const auto& s = w.player().state();
+    Actions jump, right, rightE, e, left, leftE;
+    jump.jump = true, right.move.x = 1, rightE.move.x = 1, rightE.interact = true, e.interact = true;
+    left.move.x = -1, leftE.move.x = -1, leftE.interact = true;
+    for (int i = 0; i < 120 && s.state != State::Hang; ++i) w.tick(i < 2 ? jump : Actions{});
+    ASSERT_EQ(s.state, State::Hang);
+    w.tick(e); // no stick: nothing
+    w.tick({});
+    EXPECT_EQ(s.state, State::Hang);
+    EXPECT_EQ(s.clip, "ledgeb_idle");
+    for (int i = 0; i < 30; ++i) w.tick(right);
+    ASSERT_EQ(s.state, State::Shimmy);
+    const float y0 = s.pos.y;
+    w.tick(rightE);
+    EXPECT_EQ(s.clip, "ledgeb_right_hustle");
+    EXPECT_FALSE(s.mirror);
+    for (int i = 0; i < 5; ++i) w.tick(right);
+    const double t5 = s.clipTime;
+    w.tick(rightE); // frame 3: too early to start over
+    EXPECT_GT(s.clipTime, t5);
+    int ticks = 7;
+    for (; ticks < 60 && s.clip == "ledgeb_right_hustle"; ++ticks) w.tick(right);
+    EXPECT_EQ(s.clip, "ledgeb_right");
+    EXPECT_EQ(s.state, State::Shimmy);
+    EXPECT_NEAR(ticks, (17 - 3) * 2, 3);            // from the request's start frame 3 to the clip's end
+    EXPECT_NEAR(y0 - s.pos.y, 371.3f * 14 / 17, 25); // to her right = -Y facing +X
+    // pressed again from frame 8 on: the move starts over
+    w.tick(rightE);
+    ASSERT_EQ(s.clip, "ledgeb_right_hustle");
+    for (int i = 0; i < 12; ++i) w.tick(right); // frame 3 + 6.5
+    const double before = s.clipTime;
+    w.tick(rightE);
+    EXPECT_LT(s.clipTime, before);
+    for (int i = 0; i < 40; ++i) w.tick(right);
+    // to the left: the mirrored clip
+    for (int i = 0; i < 10; ++i) w.tick({});
+    const float y1 = s.pos.y;
+    for (int i = 0; i < 6; ++i) w.tick(left);
+    w.tick(leftE);
+    EXPECT_EQ(s.clip, "ledgeb_right_hustle");
+    EXPECT_TRUE(s.mirror);
+    for (int i = 0; i < 40 && s.clip == "ledgeb_right_hustle"; ++i) w.tick(left);
+    EXPECT_GT(s.pos.y - y1, 300);
+}
+
+// l4_temple ledge 1155 (the west face of the block; tru.exe's hang there was traced under Wine): a second of shimmying
+// against a second of it with Interact tapped, lara.drm's clips.
+TEST(GameReal, TempleShimmyHustle) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    float moved[2];
+    for (const bool hustle : {false, true}) {
+        auto w = unitWorld(bf, "l4_temple", {{-465.9f, -11850.2f, 1698.6f}, 0});
+        const auto& s = w.player().state();
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 20; ++i) w.tick({});
+        for (int i = 0; i < 240 && s.state != State::Hang; ++i) w.tick(i < 6 ? jump : Actions{});
+        ASSERT_EQ(s.state, State::Hang);
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1155);
+        for (int i = 0; i < 60; ++i) w.tick({});
+        Actions right;
+        right.move.x = 1;
+        const float y0 = s.pos.y;
+        bool seen = false;
+        for (int i = 0; i < 60; ++i) {
+            Actions a = fixedCamera(w, right, 0);
+            a.interact = hustle && i % 20 >= 10 && i % 20 < 14; // a tap every third of a second
+            w.tick(a);
+            seen |= s.clip == "ledgeb_right_hustle";
+            ASSERT_TRUE(s.state == State::Shimmy || s.state == State::Hang);
+        }
+        EXPECT_EQ(seen, hustle);
+        moved[hustle] = y0 - s.pos.y;
+    }
+    EXPECT_NEAR(moved[0], 300, 60);  // ledgeb_right: 196 in 0.70 s
+    EXPECT_GT(moved[1], 1.6f * moved[0]); // ledgeb_right_hustle: 371 in 0.57 s
+}
+
+// l7_arctic_sea ladder 2044 (14 rungs under her root): the stick up climbs a rung per ladder_climb_up (110.6 in 0.30 s);
+// with Interact pressed more than four rungs under the top, ladder_climb_up_fast takes four rungs at once (chart
+// S1057); four or fewer under the top the press changes nothing.
+TEST(GameReal, ArcticSeaLadderClimbsFasterWithInteract) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto rungZ = [](int r) { return -17318.5f - 575.221f - 110.619f * float(r); };
+    float rise[2];
+    for (const bool fast : {false, true}) {
+        auto w = unitWorld(bf, "l7_arctic_sea", {{16513.6f - 79 - 110.619f, -47420.7f, rungZ(11)}, 0});
+        const auto& s = w.player().state();
+        for (int i = 0; i < 5 && s.state != State::Ladder; ++i) w.tick(forward());
+        ASSERT_EQ(s.state, State::Ladder);
+        ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 2044);
+        const auto rungOf = [&] { return int(std::lround((-17318.5f - 575.221f - s.pos.z) / 110.619f)); };
+        for (int i = 0; i < 3000 && !(s.clip == "ladder_idle" && rungOf() == 11); ++i)
+            w.tick(s.clip != "ladder_idle" ? Actions{} : rungOf() > 11 ? forward() : forward(-1));
+        ASSERT_EQ(rungOf(), 11);
+        const float z0 = s.pos.z;
+        bool seen = false;
+        for (int i = 0; i < 36; ++i) {
+            Actions a = forward();
+            a.interact = fast && i >= 2 && i < 6;
+            w.tick(a);
+            seen |= s.clip == "ladder_climb_up_fast";
+        }
+        EXPECT_EQ(seen, fast);
+        ASSERT_EQ(s.state, State::Ladder);
+        rise[fast] = s.pos.z - z0;
+        if (!fast) continue;
+        // on up to rung 3 or 4 (a second fast move from rung 7 would end on 3): there the press is an ordinary rung
+        for (int i = 0; i < 600 && !(s.clip == "ladder_idle" && rungOf() <= 4); ++i) w.tick(s.clip != "ladder_idle" ? Actions{} : forward());
+        ASSERT_LE(rungOf(), 4);
+        const int r = rungOf();
+        Actions a = forward();
+        a.interact = true;
+        w.tick(a);
+        EXPECT_EQ(s.clip, "ladder_climb_up");
+        for (int i = 0; i < 30 && s.clip != "ladder_idle"; ++i) w.tick({});
+        EXPECT_EQ(rungOf(), r - 1);
+    }
+    EXPECT_NEAR(rise[0], 3 * 110.619f, 60);       // three rungs in 0.6 s (0.30 s clips from their start frame 3)
+    EXPECT_GT(rise[1], rise[0] + 100);            // four at once in 0.47 s, then on
+}
+
+// l4_temple ledge 1155, pulling up (tru.exe under Wine there, gameplaygoal/ctrl2/w1.txt pull_tap / pull_hold): Jump
+// tapped pulls her up when it is let go (standing 0.82 s after the release, 231 in and 494 up); Jump held past the
+// buttons' 15 frames turns it into the handstand ledgeb_climbupflair (0.50 s after the press, 2.47 s long, the same place).
+TEST(GameReal, TemplePullUpOnReleaseAndHandstandOnHold) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const int held : {9, 240}) { // ticks Jump stays down (Wine: 150 ms / to the end)
+        auto w = unitWorld(bf, "l4_temple", {{-465.9f, -11850.2f, 1698.6f}, 0});
+        const auto& s = w.player().state();
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 20; ++i) w.tick({});
+        for (int i = 0; i < 240 && s.state != State::Hang; ++i) w.tick(i < 6 ? jump : Actions{});
+        ASSERT_EQ(s.state, State::Hang);
+        for (int i = 0; i < 60; ++i) w.tick({});
+        const vec3 hang = s.pos;
+        int start = -1, end = -1;
+        std::string clip;
+        for (int i = 0; i < 300 && end < 0; ++i) {
+            w.tick(i < held ? jump : Actions{});
+            if (start < 0 && s.state == State::ClimbUp) start = i, clip = s.clip;
+            if (start >= 0 && s.state != State::ClimbUp) end = i;
+            if (start < 0) EXPECT_NEAR(glm::distance(s.pos, hang), 0, 1) << "waiting in place";
+        }
+        ASSERT_GE(end, 0);
+        EXPECT_EQ(s.state, State::Idle);
+        EXPECT_NEAR(s.pos.z - hang.z, 493.8f, 4);
+        EXPECT_NEAR(s.pos.x - hang.x, 230, 25); // ours ends up to 19 farther in [I: the hang root's standoff]
+        if (held < 30) {
+            EXPECT_EQ(clip, "ledgeb_climbup_fast");
+            EXPECT_NEAR(start, held, 1);           // on the release
+            EXPECT_NEAR(end - start, 0.82f * 60, 12); // Wine: 0.82 s
+        } else {
+            EXPECT_EQ(clip, "ledgeb_climbupflair");
+            EXPECT_NEAR(start, 30, 2);              // 15 frames
+            EXPECT_NEAR(end - start, 2.47f * 60, 14);
+        }
+    }
+}
+
+// The stick let go while running: ng_running_stop only after 15 frames in the run loop (chart S65 T176, variable 374);
+// earlier, and out of the sprint, she stops on the spot (the group's T40) [tru.exe under Wine: 0 units / 266 units on].
+TEST(Game, RunStopsOnTheSpotOrSlides) {
+    game::AnimLibrary anims = syntheticAnims();
+    anims.clips["ng_running_stop"] = rootClip(17, 13.1f); // 223 in 0.57 s
+    const auto stop = [&](int runTicks, bool sprint, State* after) {
+        CollisionMesh m;
+        addFloor(m, -20000, -20000, 20000, 20000, 0);
+        m.build();
+        game::World w(std::move(m), anims, game::Spawn{{0, 0, 0}, 0});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.sprint = sprint;
+        for (int i = 0; i < runTicks; ++i) w.tick(go);
+        EXPECT_EQ(s.clip, sprint ? "sprint_loop" : "ng_run");
+        const float x = s.pos.x;
+        w.tick({});
+        *after = s.state;
+        for (int i = 0; i < 90; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::Idle);
+        return s.pos.x - x;
+    };
+    State st;
+    EXPECT_NEAR(stop(20, false, &st), 0, 1); // 10 frames into the loop
+    EXPECT_EQ(st, State::Idle);
+    EXPECT_NEAR(stop(29, false, &st), 0, 1);
+    EXPECT_NEAR(stop(40, false, &st), 223 * 13 / 17.0f, 30); // from the request's start frame 4
+    EXPECT_EQ(st, State::Stop);
+    EXPECT_NEAR(stop(120, true, &st), 0, 1); // out of the sprint, however long
+    EXPECT_EQ(st, State::Idle);
+}
+
+// l4_temple runway (tru.exe traced there under Wine, w1.txt run_turn / sprint_turn / run_stop / sprint_stop /
+// sprint_keyup): the run loop turns at 1.755 rad/s and the sprint at 1.835; the sprint runs sprint_loop's 1927 units/s
+// (Wine 1879); letting go early or out of the sprint stops her on the spot, late in the run with ng_running_stop.
+TEST(GameReal, TempleSprintTurnAndStops) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const bool sprint : {false, true}) {
+        auto w = unitWorld(bf, "l4_temple", {{-4200, -11850, 1722.9f}, 0});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.sprint = sprint;
+        for (int i = 0; i < 70; ++i) w.tick(fixedCamera(w, go, 0));
+        ASSERT_EQ(s.clip, sprint ? "sprint_loop" : "ng_run");
+        Actions swing = go;
+        swing.move = {0.70710678f, 0.70710678f}; // 45 degrees to her right
+        const float yaw0 = s.yaw;
+        for (int i = 0; i < 12; ++i) w.tick(fixedCamera(w, swing, 0));
+        EXPECT_NEAR((yaw0 - s.yaw) / 0.2f, sprint ? 1.835f : 1.755f, 0.02f);
+        for (int i = 0; i < 30; ++i) w.tick(fixedCamera(w, swing, 0));
+        EXPECT_NEAR(yaw0 - s.yaw, 0.7854f, 0.01f);
+    }
+    const auto stop = [&](int runTicks, bool sprint) {
+        auto w = unitWorld(bf, "l4_temple", {{-4200, -11850, 1722.9f}, 0});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.sprint = sprint;
+        float speed = 0;
+        for (int i = 0; i < runTicks; ++i) {
+            const float x = s.pos.x;
+            w.tick(go);
+            speed = (s.pos.x - x) * 60;
+        }
+        if (sprint) EXPECT_NEAR(speed, 1927, 40);
+        const float x = s.pos.x;
+        for (int i = 0; i < 90; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::Idle);
+        return s.pos.x - x;
+    };
+    EXPECT_NEAR(stop(40, false), 0, 2);    // still in ng_run_start / the loop's first frames
+    EXPECT_NEAR(stop(70, true), 0, 2);     // out of the sprint
+    EXPECT_NEAR(stop(110, false), 230, 60); // ng_running_stop (Wine: 266)
 }
 
 // The prologue's crossing (docs/matrix/01_prologue.md C01-12): l3_main_hall, from the balcony end facing the burning

@@ -203,8 +203,13 @@ struct Tuning {
     // she turns round) 42.53 up + 65.83 forward. Delays from the press: 359 / 290 / 109 ms (GAMEPLAY.md Numbers).
     float jumpVz = 1441.2f, standMoveJumpVz = 1499.1f, standJumpSpeed = 1200.0f; // units/s
     float runJumpVz = 1275.9f, runJumpSpeed = 1974.9f;                          // units/s
+    // A free jump's brake (Player::airBrake; jump query +0x74 / +0x68 of the ground and hang jump queries [O-data]): the
+    // stick more than 0.2 back of her heading scales the take-off's horizontal velocity, by up to 0.6 straight back.
+    float airBrakeStick = -0.2f, airBrake = 0.6f;
     float standMoveTakeoff = 0.26f; // s into ng_standing_jump a stick jump leaves the ground (0.33 s clip: 359 vs 290 ms)
     float turnRate = 6.0f;                     // rad/s
+    float runTurnRate = 1.755f, sprintTurnRate = 1.835f; // rad/s in the run / sprint loops [O Wine, l4_temple]
+    float runStopFrames = 15.0f; // frames in the run loop before letting go plays ng_running_stop (chart variable 374)
     float grabReach = 60.0f, grabWindow = 40.0f; // hand-to-ledge horizontal / vertical tolerance
     // Grab only while -13 <= zVel <= 9 units/frame * 5.72443 (30 Hz): player data bytes +0x834 / +0x833 (0x759260)
     float grabMinVz = -13 * 5.72443f * 30.0f, grabMaxVz = 9 * 5.72443f * 30.0f; // units/s
@@ -277,6 +282,16 @@ struct Tuning {
     // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
     // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
     float sprintSeconds = 9.7f, sprintResume = 0.9f;
+    // Landings (lara.drm chart S1275, Player::land): a fall of chart variable 344 or more lands in the stumble when the
+    // stick is pushed, 346 or more in the hard landing; Crouch pressed inside variable 347 frames of a landing still
+    // rolls [O-data].
+    float landStumbleFall = 632.111f, landHardFall = 1264.223f, landRollFrames = 4.0f;
+    float landCrouchTime = 0.36f; // s into the plain landing Crouch held (no stick) crouches [O Wine: 0.35..0.61 s; the clip's critical section]
+    // Hand over hand faster with Interact (chart S441 / S442 ledge, S1057 ladder): a press starts the fast move again
+    // from this frame of its clip on (T621 / T624: 8; T1809: chart variable 193 = 10); the ladder's needs more than
+    // chart variable 194 = 4 rungs to the top [O-data].
+    float hustleAgainFrame = 8.0f, ladderFastAgainFrame = 10.0f;
+    int ladderFastRungs = 4;
 };
 Tuning defaultTuning();
 
@@ -386,12 +401,15 @@ struct PlayerState {
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
+    float runTime = 0;    // Run: seconds in the run loop ng_run (the chart's state time of S65)
     // Carrying a portable that encumbers her (PortableDef::encumbers; World sets it every tick): the
     // portable_encumbered_* walk instead of the ground locomotion (Player::encumberedMove, Melee.cpp).
     bool encumbered = false;
     Buttons buttons; // input timing (Player::tick)
     int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
     float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
+    float landTime = 0;   // Land: seconds since she landed (the chart's state time of the landing group S1276)
+    float pullWait = -1;  // Hang: seconds since Jump was pressed with a top to climb onto (chart S439); -1 = not waiting
     // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
     // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
     // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
@@ -406,6 +424,10 @@ struct PlayerState {
     float wallTime = 0;
     vec3 jumpLedge{0};
     bool jumpFromLedge = false;
+    // Player::airBrake: the free jump's horizontal take-off velocity and the stick's forward part against her heading
+    // then (tru.exe chart context +0x430 / +0x420, stored on entering the flight by 0x73ECE0).
+    vec2 jumpVel0{0};
+    float jumpStick0 = 0;
     // Off balance on a balance beam (Player::beam). `build`: 30 Hz frames the stick has been held across the beam
     // (ours [I]: the escalation into the about-to-fall state). `aboutFall`: the about-to-fall state (chart S895 / S896,
     // bbeam_aboutfall_*) runs tru.exe's balance controller (chart context +0x358: enter 0x742330, update 0x742770, exit
@@ -545,6 +567,7 @@ private:
     // HangJump velocity / flight time from here onto the target (after the take-off clip); vz: the take-off vertical
     // speed (units/s; 0 = the hang jump's by its clip)
     void launchHangJump(float vz = 0);
+    void airBrake(vec2 move); // State::Jump: the stick pulled back brakes a free jump (tru.exe 0x750040)
     void assistJump();
     // ground jump query (forward, up a 30 Hz frame; start `up` over the root, +0x2C bit 0x80, cone in radians) meeting a
     // ledge: aim at its hang
@@ -617,6 +640,7 @@ private:
     const AnimLibrary& anims_;
     Tuning t_;
     PlayerState s_;
+    bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;

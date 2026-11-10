@@ -111,8 +111,9 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ng_idle", 4, 4}, {"ng_walk", 4, 1}, {"ng_run_start", 4, 6}, {"ng_run", 4, 4}, {"ng_running_stop", 4, 4},
         {"ng_standing_jump", 6, 6}, {"ng_running_jump_forwards", 2, 1}, {"NG_InAir_Feet_Forward_stage1_standing", 2, 2},
         {"NG_InAir_Feet_Forward_stage1", 5, 1}, {"NG_InAir_Feet_Forward_stage2", 3, 3}, {"NG_InAir_Feet_Forward_stage3", 5, 1},
-        {"ng_generic_land_forwards", 3, 3}, {"ng_running_land", 2, 1}, {"ledgeb_attach_M", 4, 4}, {"ledgeb_idle", 8, 4},
-        {"ledgeb_right", 3, 3}, {"ledgeb_climbup_fast", 6, 6}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
+        {"ng_generic_land_forwards", 3, 3}, {"ng_running_land", 2, 1}, {"ng_land_hard", 2, 2}, {"ng_land_rolling", 4, 4},
+        {"ng_running_land_stumble", 3, 3}, {"ledgeb_attach_M", 4, 4}, {"ledgeb_idle", 8, 4},
+        {"ledgeb_right", 3, 3}, {"ledgeb_right_hustle", 3, 3}, {"ledgeb_climbupflair", 5, 5}, {"ladder_climb_up_fast", 3, 3}, {"ledgeb_climbup_fast", 6, 6}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
         {"swim_climbout", 12, 6}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
         {"swim_surfaceidle", 8, 6}, {"swim_jump_land", 6, 6}, {"swim_submerged_idle", 10, 10},
         // surface stroke (request 881), swim sprint (896, 934) and its exhaustion (880, 921)
@@ -283,6 +284,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     "hpole_perch_Jump_back_Antic", "hpole_perch_Jump_back",
     "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
     "sprint_loop", "ng_sprint_to_exhaust", "ng_run_exhaust", "ng_roll_front_sprinting", // sprint (Player::tick)
+    "ng_land_hard", "ng_land_rolling", "ng_running_land_stumble", // landings by fall height / Crouch (Player::land)
+    "ledgeb_climbupflair", "ledgeb_right_hustle", "ladder_climb_up_fast", // hand over hand faster with Interact (Player::tick Shimmy, Player::ladder)
     "ledgeb_bad_attach_M", "ledgeb_bad_attach_recover", // saving grab (Player::tryGrab)
     "obj_block_grab", "obj_block_idle", "obj_block_release", "obj_block_front", "obj_block_back", // push blocks (Player::grip)
     "thor_engage", "thor_idle", "thor_disengage", "thor_forward", "thor_backward", "thor_left", "thor_right", // push / pull records
@@ -1388,9 +1391,10 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
     add(s.ropeBends), add(s.polePara), add(s.ropeMax);
     add(s.jumpStart), add(s.jumpTime), add(s.jumpAimed), add(s.wallJumps), add(s.wallTime), add(s.jumpLedge), add(s.jumpFromLedge);
+    add(s.jumpVel0), add(s.jumpStick0);
     for (const ButtonTime* b : {&s.buttons.jump, &s.buttons.interact, &s.buttons.drop, &s.buttons.grapple})
         add(b->down), add(b->edge), add(b->time), add(b->buffer);
-    add(s.droppedPole), add(s.fallStall);
+    add(s.droppedPole), add(s.fallStall), add(s.landTime), add(s.pullWait), add(s.runTime);
     const auto& ba = s.balance;
     add(ba.build), add(ba.aboutFall), add(ba.grace), add(ba.unbal), add(ba.bal), add(ba.notImprove), add(ba.full), add(ba.clock);
     add(ba.lastFlip), add(ba.period), add(ba.ref), add(ba.stickYaw), add(ba.blend), add(ba.lean), add(ba.side), add(ba.osc), add(ba.fall);

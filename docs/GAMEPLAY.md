@@ -3775,3 +3775,157 @@ climb and the "Saving grabs [I]" sentence of PLAYER TAILORING above.
   `Game.PoleDropOverSteepGroundIsNotCaughtAgain`, `GameReal.TrapRoomsPoleDropAfterFling`,
   `Game.SafetyDropOffALedgeEdge`, `GameReal.TempleSafetyDropOffThePlatform`; self-tests `saving_grab` (l5_valaskjalf),
   `safety_drop` (l4_temple), `pole_drop_after_fling` (l4_traprooms).
+
+## Controller rules: jumps, landings, ledge extras, sprint (decoded 2026-11)
+
+Sources: the player state chart of lara.drm (`openunderworld-work/hurdles/sc.py`, `gameplaygoal/ctrl2/c.py` - states,
+transitions, the actions a state runs - and `v.py` - the chart variables), tru.exe (`ghidra/exports/decomp_all.c`,
+`gameplaygoal/inputrules/full.asm`), lara.drm clips (`hurdles/clipprobe`) and tru.exe under Wine in l4_temple
+(`gameplaygoal/ctrl2/s1.sh`, traces `w1.txt`; tru = ours + (500.70, 9432.76, -19909.81)). Chart conditions used below:
+0x65..0x68 the timed buttons ("Input rules"), 0x96 / 0x97 / 0x98 an action held / released / pressed (51 Crouch, 52
+Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full), 0x192 its quadrant against her heading
+(410 forward, 411 back, 412 / 413 the sides), 0x14 the state's time in frames, 0x1E the fall so far, 0xC9 the clip done,
+0xCA the clip's critical section; a parameter group of 1000 compares with a chart variable.
+
+### Jumps: the Jump button's hold, the gait, the stick in flight
+
+- **Holding Jump does nothing** [O chart, decomp, Wine]: no transition out of the take-off states (S248 standing, S245 /
+  S247 with the stick, S280 / S281 running, S249 from the sprint) or of the free flight (S287 -> S288 -> S294) tests
+  the Jump button (conds 0x65, 0x96..0x99 with action 52), and the flight's action 510 (table at tru.exe file 0x4B11D4:
+  enter 0x7522A0, tick 0x752410) reads no input. tru.exe under Wine, Jump tapped (60 ms) against held to the landing:
+  standing jump apex 201.5 both, in the air 550 ms both; running jump apex 155.8 both, take-off (65.83, 42.54) a frame
+  both, 954.7 from the first airborne sample to the landing both. The controls page's "a little longer in the air" is
+  not in the PC game.
+- **Gait** [O chart, Wine]: the walk and the light stick take the stick jump (S245, query q43: 40 along + 50 up), the
+  run the running jump (S280 / S281 by the planted foot, query q1: launch 65.83 + 42.54 [Wine]; its record's velocity
+  reads 90.25 + 42.54), the **sprint** S249 (T182 from S59 and its fall-off state S13), whose query q26 has q1's
+  velocity: under Wine a jump from the sprint (state S59 at 1879 units/s) takes off at the same (65.83, 42.54), apex
+  155.8, 954.6 to the landing - it is longer only by the faster run-up and the sprint that resumes 0.15 s after the
+  landing (the landing group's T2108). The roll's jump (T53 -> S251 `ng_rolling_jump_forward`, query q20: 53.83 +
+  53.83) is not ported.
+- **The stick in flight: a brake, nothing else** [O decomp, Wine]: the flight state S287 (and the wall jump's S1292)
+  runs action 511 (enter 0x73ECE0, tick 0x750040) beside 510. Enter stores the horizontal take-off velocity (chart
+  context +0x430) and the stick's forward part against her heading s0 (+0x420). Each frame, when the jump has no
+  markup target (player +0xA64 = 0), the jump query's +0x64 >= 0.05 (0.9 for the ground / hang / pole / ladder jump
+  queries, 0 for the straight DICE leap q27), the stick is off centre, |s - s0| > 0.05 and s < query +0x74 (-0.2; -1
+  for q3 and q19: never):
+  `horizontal velocity = take-off velocity x (1 - clamp((-0.2 - s) / 0.8, 0, 1) x query +0x68 (0.6))`, the vertical
+  speed untouched. Straight back = 40 % of the take-off speed; nothing gives speed back and nothing steers sideways
+  or adds speed. Wine: Back pressed 0.1 s into a running jump: 65.83 -> **26.33** a frame on the next frame, landing
+  500.3 from the first airborne sample instead of 954.7; the stick let go in flight: no change.
+  [U]: 0x750040's two time limits (frames since context +0x444 > query +0x70 = 15 once +0x444 is set - its setter
+  was not found; frames in the air > 2 x Lara data +0x4C (1280.03) / g = 447) are not applied.
+- Ours: `Player::airBrake` (State::Jump with no aimed target; `Tuning::airBrakeStick` / `airBrake`;
+  `PlayerState::jumpVel0` / `jumpStick0`, saved as `controller.airBrake`). Nothing else changed: ours already flew one
+  arc per query whatever the button did, and treated the sprint as a run for the jump.
+- Tests: `Game.JumpHoldNoEffectAndStickBackBrakes`, `GameReal.TempleJumpHoldStickBackAndSprintJump` (the Wine
+  numbers); self-test `jump_brake` (l4_temple).
+
+### Landings
+
+- **Dispatch** [O-data]: every landing passes the chart state S1275, whose transitions are tried in this order:
+  1. T2101 / T2090 / T2102: the swan dive's and the water landings ("Water moves").
+  2. T2100 -> S1283 `ng_land_rolling` (request 677, start frame 4; root 808 forward in 0.67 s): Crouch down (cond
+     0x96, action 51) but not held long (`!0x9B:51`), the stick pushed (cond 0x191 not 401) forward of her heading
+     (0x192 = 410), nothing carried (0x5DD = 0). No height condition: the roll comes at any height, before the height
+     tests. It wants a press shortly before the landing: tru.exe under Wine with Crouch held from 0.7 s before the
+     landing and the stick forward lands in the stumble (S1278) and crouches 0.15 s into it (T2106, S80); ours takes
+     0x9B as the buttons' held-long limit of 15 frames [I].
+  3. T2091 -> S1280 / T2092 -> S1281 `ng_land_hard` (request 39; 1.1 s in place): the fall >= chart variable 345 =
+     **3185.84** / 346 = **1264.22**. The fall is cond 0x1E (tru.exe 0x764B40): z on becoming airborne (player
+     `+0x6DC`) - z, compared with a chart variable (0x783BD0 / 0x782060; variables = the pointer table at lara.drm
+     object data +0x5C290, 400 entries of {type, value}).
+  4. T2118 -> S1278 `ng_running_land_stumble` (request 725, start frame 3; root 950 in 1.07 s): the fall >= variable
+     344 = **632.11**, the stick pushed and not backward (0x192 != 411), no low ceiling.
+  5. T2089 -> S1284 `ng_running_land`: the stick at run level (0x191 not 401 / 402), not backward.
+  6. T2093 -> S1281: a low ceiling (0x1F7) [not ported: ours lands plainly and stands].
+  7. T2094 -> S1279 `ng_generic_land_forwards`.
+  No transition tests her speed (ours used to need 600 units/s to run on). Fall damage starts higher (1280.03,
+  Numbers "Fall damage"): the hard landing from 1264.22 to 1280.03 costs nothing.
+- **While the landing clip plays** (group S1276) [O-data]: Jump pressed takes off again at once (T2112..T2115 into the
+  running / standing jump states, flag 7); Crouch pressed with the stick forward within state time < variable 347 =
+  **4** frames rolls after all (T2107); from 4 frames on, Crouch held with the stick pushed crouches (T2106), Sprint
+  held at full stick sprints (T2108), and the stick pushed anywhere but forward leaves the clip for the ground moves
+  (T2099) - the last three only outside the clip's critical section (cond 0xCA); the clip's end goes back to the ground
+  group (T2097). Crouch held with no stick crouches out of the plain landing once its critical section is over
+  (T2104; Wine: 0.35 s into it after falls of 400 and 800, 0.61 s after 1200; ours `Tuning::landCrouchTime` 0.36 s).
+- Ours (`Player::land`, `State::Land` in `Player::tick`; `Tuning::landStumbleFall` / `landHardFall` /
+  `landRollFrames`, `PlayerState::landTime`): exactly this dispatch, the stick quadrants taken as 45 degrees either
+  side of her heading [I] and the run level as the run's (stick >= 0.5, no Walk). [I]: `ng_land_hard` is treated as
+  critical to its end (no jump, no leaving: 1.1 s), the other landings as never critical - the clips' critical
+  sections are not read. tru.exe under Wine: see the trace
+  list at the end of this section.
+- Tests: `Game.LandingByFallHeightStickAndCrouch`, `Game.LandingClipJumpRollCrouchAndLeave`,
+  `GameReal.TempleLandingsByHeightStickAndCrouch`; self-tests `landing` (l4_temple), `fall_damage` (its 1500 fall now
+  expects `ng_land_hard`).
+
+### Ledge extras: the pull-up's button, the handstand, hand over hand faster, the free hang
+
+- **Pull-up and handstand** [O chart, Wine l4_temple ledge 1155]: Jump pressed in the idle hang with a top to climb
+  onto (clearance 650) enters S439, which waits on the button: let go -> S456, the pull-up (T608; Wine: Jump down 150
+  ms, the climb starts 13 ms after the release and she stands 0.82 s later, 231 in and 494 up = `ledgeb_climbup_fast`
+  played whole); held past the buttons' 15 frames (cond 0x65 mode 0x65), state time >= 10, the stick not back or
+  aside -> S440, the **handstand** `ledgeb_climbupflair` (request 1003; Wine: S440 0.50 s after the press, 2.47 s
+  long, ending 228.5 in and 494 up; free hang: `ledgeu_climbupflair`). With the stick up she is in the lean S435 and
+  Jump pulls up at once (T613 -> S456), held or not: no handstand there (Wine). T558 (request 1002 from its start
+  frame 6, the quick one) is the Jump press straight out of the catch states S530 / S531 / S542 / S548. Pushing the
+  stick ends S456 early into the run (T244: Wine 0.58 s instead of 0.82 s) [not ported].
+  Ours (`PlayerState::pullWait`, `Player::tick` Hang): the wait in the hang's idle pose [I: S439's own pose], the
+  release / the 15-frame hold as above, the pull-up clip whole (it used to start at frame 6 on the press: 0.57 s).
+- **Hand over hand faster with Interact** [O chart, clips, Wine]: a press while the stick shimmies (T581 / T582 from
+  S427 / S432 / S431, not at the ledge's end) plays one `ledgeb_right_hustle` (S441 / S442, request 968, mirrored to
+  the left: 371 aside in 0.57 s against `ledgeb_right`'s 196 in 0.70 s; Wine: 368 in 0.47 s from the press to the
+  ledge's corner); pressed again from the clip's frame 8 on it starts over (T621 / T624, cond 0xD7), else its end
+  returns to the shimmy (T622 / T623). Holding Interact is one press. Ladders: Interact - or Jump (T1814) - with the
+  stick up, more than chart variable 194 = 4 rungs under the top (cond 0x2B3), plays `ladder_climb_up_fast` (S1057:
+  four rungs, 429 up in 0.47 s, against a rung, 110.6, per 0.30 s); again from frame 10 (T1809, variable 193).
+  Pillars the same way (S1197 `pillar_climb_up_fast` with `_init` / `_end`, T1980 / T1981) [not ported: the pole
+  agents' file]. No such transition exists for the free climb (DICE), the ladder downward, or horizontal poles
+  (`HPole_ParaForward_fast` is not reached through cond 0x68). Sprint does nothing on a ledge (Wine).
+  Ours: `Player::tick` Shimmy (`Tuning::hustleAgainFrame`), `Player::ladder` (`ladderFastRungs`,
+  `ladderFastAgainFrame`). Not ported: the hustle's corner clips (`ledgeb_concave / convex_right_phase*_hustle`; ours
+  rounds corners with the ordinary ones).
+- **Free hang** [O chart, decomp; not ported]: lara.drm has a second clip set `ledgeu_*` ("unbraced": idle, right 161
+  in 0.80 s, right_hustle 324, attach_*, drop_antic, climbup_antic / climbupground / climbupcrouch / climbupflair,
+  convex / concave corners, `ledgeb_to_ledgeu` / `ledgeu_to_ledgeb` for a shimmy across the change). The hang states'
+  requests pick the set by cond 0x26C = 691 (tru.exe 0x7622D0: bit 1 = player `+0xED4` == 0): `+0xED4` is the feet's
+  support, set on every attach and shimmy step by 0x75D6C0 / 0x75F2D0 (0 braced, 1 free, 2 not a ledge), for a ledge
+  (MUD 0x40000000) = no wall found by the probe 0x74F480 under the attach point. In the free hang the hang jumps up /
+  aside / back are not offered (T573..T580 need 691; the leans are S434 instead of S435) and climbing up is the
+  `ledgeu` clips. Continue at 0x74F480 (the probe's reach) and `Player::placeOnLedge` (the `ledgeu` hand offset is
+  (-5.2, -145.1, 474.0) against the braced (25, -139, 492)).
+- Tests: `Game.ShimmyHustleWithInteract`, `GameReal.TempleShimmyHustle`,
+  `GameReal.ArcticSeaLadderClimbsFasterWithInteract`, `GameReal.TemplePullUpOnReleaseAndHandstandOnHold`; self-tests
+  `ledge` (step `hustle_left`), `ladder_fast` (l7_arctic_sea).
+
+### Sprint, the run's turn and stop
+
+- **Sprint** [O chart, data, Wine]: S59 is entered by the Sprint press at full stick (T224 from the run's states) or,
+  held, from the run loop S65 (T187, state time >= variable 154 = 0) while CanSprint (cond 0x205 = tru.exe 0x752220);
+  it ends on the release (T184, cond 0x97) into S65 or exhausted into S73. Under Wine the run's start S63 lasts 0.83 s
+  (855 units) whether Sprint is held or not, S65 one frame, then S59 at **1879 units/s** (`sprint_loop`'s root motion:
+  1927; the earlier trace: ~1860). Its moves: the jump S249 (the run's arc, "Jumps" above), the roll S6
+  `ng_roll_front_sprinting` (Wine: 1366 in 0.93 s; the run's S7: 1327 in 0.88 s), the kick S1432, the stair / slope
+  blends (request 740 `ng_sprint_up_stair` / `_down_stair`, not ported), and after a landing the sprint resumes from
+  the landing clip's 4th frame (T2108; Wine 0.15 s). There is no slide under anything and no sprint-only stop.
+  Stamina data [O-data, semantics U]: Lara data +0x520 = 300, +0x524 = 30, +0x528 = 30, +0x52C = 300 (frames; drain
+  0x74A090, refill 0x74A100, the test 0x74FD70); ours keeps the Wine-timed 9.7 s / 0.9 s model.
+- **Turning** [O Wine]: with the stick swung 45 degrees the run loop turns her at **1.755 rad/s** and the sprint at
+  **1.835 rad/s**, linearly, overshooting ~0.03 rad (run: yaw 1.543 -> 0.841 in 0.400 s). Ours: `Tuning::runTurnRate`
+  / `sprintTurnRate` in the loops; the start clips and the walk keep `turnRate` 6 rad/s [I] (the original's start /
+  180 clips S48 / S36 / S61 `ng_running_turn` are not ported).
+- **Stopping** [O chart, Wine]: the stick let go leaves the run loop S65 for S57 `ng_running_stop` (223 on) only
+  after variable 374 = **15 frames** in it (T176); earlier - and from the run's start S63 and the sprint S59 - the
+  group's T40 puts her into S39 at once: she stops on the spot (Wine: W let go 0.32 s into the loop: 0 units further;
+  out of a sprint: 0; 1.2 s into the loop: S57, 266 further). Ours: `PlayerState::runTime`,
+  `Tuning::runStopFrames`; S39's 0.48 s settle clip is the idle blend [I].
+- Tests: `Game.RunStopsOnTheSpotOrSlides`, `GameReal.TempleSprintTurnAndStops`; self-tests `locomotion` (step
+  `run_stop`), `sprint`, `jump_brake`, `landing`.
+
+Wine traces of this section (`gameplaygoal/ctrl2/w1.txt`, 46 runs; `an.py` prints the chart states by index: state
+address = 0x...242D0 + 40 x index): standing / stick / running / sprint jumps tapped and held, the stick let go and
+pulled back in flight; run and sprint stops, rolls, turns; falls of 200..2100 with no key, Forward, Crouch, both
+(plain landing S1279 up to 1200, hard S1281 at 1400, running landing S1284 at 400 and the stumble S1278 at 800 with
+Forward, the crouch 0.35..0.61 s into the plain landing with Crouch held, the stumble then the crouch with Crouch held
+from the start: no roll); the pull-up tapped / held / with Forward; the shimmy with Interact tapped / held / Sprint.
+

@@ -386,13 +386,16 @@ tested behaviour happen.
 
 | scenario | level | what it proves (measured) |
 |---|---|---|
-| `locomotion` | l3_main_bedroom | idle; walk 348 and run 1274 units/s; stopping; standing jump 201.6 high / 0.56 s, stick jump 218.1 / 0.58 s, running jump 157.1 / 0.50 s at 1974.9 units/s [O Wine] |
+| `locomotion` | l3_main_bedroom | idle; walk 348 and run 1274 units/s; stopping on the spot inside the run loop's first 15 frames [O Wine]; standing jump 201.6 high / 0.56 s, stick jump 218.1 / 0.58 s, running jump 157.1 / 0.50 s at 1974.9 units/s [O Wine] |
 | `sprint` | l4_trailstart | sprint_loop 9.7 s, the exhausted clips, ~2.2 s until a 0.9 s second sprint, refill at rest [O Wine] |
 | `fall_damage` | l4_pool | falls of 1000 / 1500 / 2000: air time, landing, 0 / 204.7 / 729.4 damage [O curve] |
+| `jump_brake` | l4_temple | a running jump with Jump tapped / held: the same arc; the stick pulled back in flight: 40 % of the take-off speed [O Wine] |
+| `landing` | l4_temple | landings by the chart's dispatch: plain, running on, the stumble from 632.11, the hard landing from 1264.22, the Crouch + forward roll, a jump out of the landing clip [O chart] |
 | `death_respawn` | l4_pool | checkpoint 5502 touched; a 2600 fall kills; 3 s later she stands at the checkpoint with full health |
-| `ledge` | l3_main_bedroom | standing jump catches ledge 973; shimmy left and right; pull up 496 onto the top |
+| `ledge` | l3_main_bedroom | standing jump catches ledge 973; shimmy left and right; one Interact hustle move (371 in 0.57 s); pull up 496 onto the top |
 | `traversal_chain` | l2_cliffclimb | run -> jump -> hang (911) -> shimmy -> climb up -> run on, as one state chain |
 | `ladder` | l1_ship_sinking_hall | attach from the ground (234), climb up, climb down, step off |
+| `ladder_fast` | l7_arctic_sea | ladder 2044: a rung per ladder_climb_up; Interact + up: ladder_climb_up_fast, four rungs at once, again on a second press [O chart] |
 | `pole` | l4_traprooms | standing jump to pole 1336, swing, fling 1264 to pole 1337 in 23.5 frames [O Wine] |
 | `pole_drop` | l4_traprooms | letting go of pole 1336: detach clip, fall, landing |
 | `melee_kick` | l1_baldrs_tomb | Interact kicks a target dummy once for the kick record's 60 (melee_kick_high); the mid kick at the air |
