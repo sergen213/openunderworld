@@ -395,6 +395,9 @@ tested behaviour happen.
 | `ladder` | l1_ship_sinking_hall | attach from the ground (234), climb up, climb down, step off |
 | `pole` | l4_traprooms | standing jump to pole 1336, swing, fling 1264 to pole 1337 in 23.5 frames [O Wine] |
 | `pole_drop` | l4_traprooms | letting go of pole 1336: detach clip, fall, landing |
+| `melee_kick` | l1_baldrs_tomb | Interact kicks a target dummy once for the kick record's 60 (melee_kick_high); the mid kick at the air |
+| `urn_kick` | l1_baldrs_sideroom | Interact by urn 94 kicks it to pieces; its treasure is picked up |
+| `carry_throw` | l1_baldrs_tomb | weight 220 picked up, carried at a walk, thrown from plate 219 through door 223; weight 218 put down with Crouch |
 | `balance_beam` | l4_temple | beam 1079: walk 140 units/s on its line, jump along it, its far end, losing balance into a ledge catch (1136) |
 | `grapple_swing` | l3_chapel | ring 4744 offered, throw, attach (rope <= 4424.78), swing past the ring, climb / slide the rope 450, jump off, landing |
 | `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, rappel down (rope pays out) and up, kick off |

@@ -103,6 +103,7 @@ struct AnimLibrary {
     std::optional<physics::RagdollDef> ragdoll;
     std::vector<vec3> bind;
 
+    MeleeTuning melee; // Lara's attack records, melee target classes and hit windows (Melee.cpp)
     const anim::Clip* find(std::string_view name) const;
     const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")
     // Mean of the hand bones (55, 80) relative to the root segment in `clip` at `t` (model space, root
@@ -159,6 +160,10 @@ enum class State {
     WallHug, // back to the wall on a narrow ledge shelf (Wall_Hug_* clips; src/game/Traverse.cpp)
     WallJump, // chimney jump: feet on a wall after a jump at it, then the jump back off it (wall_jump_* clips; WallJump.cpp)
     SwimDodge, // under-water evasive dodge: one swim_submerged_dodge_* clip with its root motion (Player::swim)
+    // Close combat and carried objects (src/game/Melee.cpp): Melee = one clip with its root motion and the input locked
+    // (a kick, the thrall fatality, an enemy vault, an evasive roll, a hosted pick-up / put-down / throw / swing), then
+    // Idle; Knocked = thrown off her feet (Hit_Thrown* / hitReact_thrown*, the landing, the get-up).
+    Melee, Knocked,
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -325,6 +330,9 @@ struct PlayerState {
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
+    // Carrying a portable that encumbers her (PortableDef::encumbers; World sets it every tick): the
+    // portable_encumbered_* walk instead of the ground locomotion (Player::encumberedMove, Melee.cpp).
+    bool encumbered = false;
     // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
     // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
     // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
@@ -391,6 +399,13 @@ public:
     // (nothing changes) when she cannot interact or without the clip.
     bool canInteract() const;
     bool use(std::string_view clip, vec3 pos, float yaw);
+    // Close combat / carried objects (Melee.cpp). act: `clip` once in `st` (State::Melee / Knocked) with its root motion
+    // and the input locked, then Idle. launch: airborne at `vel` (units/s) playing `clip` (an evasive jump, thrown by a
+    // blast); she lands as from any fall. setEncumbered: PlayerState::encumbered.
+    void act(std::string_view clip, State st, bool mirror = false);
+    void launch(vec3 vel, std::string_view clip);
+    void step(vec3 delta, float dt); // a ground move by `delta` with her collision (closing on a melee target)
+    void setEncumbered(bool e) { s_.encumbered = e; }
     // Push block grip, every tick: `axis` = the gripped block's push axis (0 = none), `moving` +1 push / -1 pull / 0.
     // Grips (State::Block, obj_block_grab, facing the axis) from the states use() starts in; lets go (obj_block_release).
     void grip(vec3 axis, int moving);
@@ -399,6 +414,8 @@ public:
     int waterAt(vec3 feet) const;
 
 private:
+    void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
+    bool encumberedMove(vec2 move, bool jumpPressed, float dt); // carrying a weight on the ground; false: not handled
     void play(std::string_view clip, bool loop, float rate = 1, bool mirror = false);
     void playMix(std::string_view clip, std::string_view other, float mix); // blend-space request, played once
     vec3 rootLeft() const; // model-space root motion from now to the clip end (blend space included)
@@ -997,6 +1014,22 @@ public:
     int maxReserve(Weapon w) const { return anims_.weapons[size_t(w)].maxReserve[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
     int maxGrenades() const { return anims_.grenade.maxCarried[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
 
+    // ---- close combat and carried objects (Melee.cpp; docs/GAMEPLAY.md "Close combat", "Carried objects") ----
+    const MeleeState& melee() const { return melee_; }
+    // The melee target (targeting slot 5): the nearest living enemy-team target within MeleeTuning::range of her eye and
+    // coneDeg of her facing; `fatality`: slot 6, a regenerating thrall in range. Null: none.
+    Damageable* meleeTarget(bool fatality = false);
+    // Uber sections' impulse triggers 6 / 7 / 8 (0x4D5560: the lengths of the message's three vectors over the
+    // transition's float): `applied` = an impulse applied to object `uid` at a point (a blow, a shot; trigger 6),
+    // `contact` = the speed of a body running into it, units/s (triggers 7 / 8 [I]). Thrown and falling portables call
+    // it with their speed; the bike's ram and Lara's roll can.
+    void impulseObject(int32_t uid, float applied, float contact);
+    // Knock-back (message 0x91) on Lara: thrown off her feet at `vel` (units/s), she lands, lies and gets up
+    // (State::Knocked; jump gets her up at once).
+    void throwLara(vec3 vel);
+    // A portable object's data and Lara's hosted clips with it, loaded on first use (null: not a portable DRM).
+    const PortableDef* portableDef(const std::string& object);
+
     // ---- gadgets (Gadgets.cpp; docs/GAMEPLAY.md "Flashlight", "Grenades") ----
     bool flashlight = false;         // utility light on (Actions::light toggles it); saved
     bool flashlightSpot() const;     // the current unit lights the spot too (else the omni light alone)
@@ -1057,6 +1090,23 @@ private:
     // Thralls broken into chunks (ai::EnemyState::ragdollPhase 4): their pieces as loose bodies (Objects.cpp).
     void chunkPieces(std::vector<physics::Scene::Loose>& out);
     void startChunks(ai::Enemy& e); // a thrall that just broke: its pieces' poses and velocities (Objects.cpp)
+    // Melee.cpp: the carry keys and the input lock of a move, before the player ticks; the moves themselves, after
+    // the tick's interactions (`pressed`: an interact press nothing else took).
+    void meleeInput(Actions& a);
+    void tickMelee(Actions& a, bool pressed, float dt);
+    bool meleeReady() const; // on her feet, alive, out of the water: a move can start
+    bool meleeHit(vec3 at, float radius, const AttackRecord& rec, Damageable* only, int32_t object = 0); // a blow's sphere this tick
+    std::pair<int32_t, float> meleeObject() const; // the breakable in her reach and its top over her feet
+    int32_t meleeId(const Damageable* t) const; // MeleeState::target of a target, and back
+    Damageable* meleeFind(int32_t id) const;
+    void pickUp(script::Object& o);          // carryPortables' pick-up, with the portable's hosted clip
+    void releaseHeld(vec3 vel, bool thrown); // the carried portable becomes a loose body moving at `vel`
+    vec3 handsPoint() const;                 // between her hands (world): where she holds a carried portable
+    vec3 heldPoint() const;                  // the carried portable's place: her hands, stopped by the level
+    void carryCollide(float dt);             // a wall the carried portable reaches holds her off it
+    void tickThrown(float dt);               // thrown / dropped portables: what they hit (enemies, breakables)
+    nlohmann::json serializeMelee() const;
+    void restoreMelee(const nlohmann::json& j);
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     bool carryReady() const;           // standing or swimming: she can pick up / insert / take out a portable
     bool insertHeld(script::Object& held, const Engaged& at); // into the receptacle she engages (Runtime::insertPortable)
@@ -1185,6 +1235,8 @@ private:
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
+    MeleeState melee_;                   // Lara's close-combat / carry move in progress (Melee.cpp)
+    std::map<std::string, std::unique_ptr<PortableDef>> portableDefs_; // by object name (portableDef)
     // Portables in receptacles (insertHeld / placePortables), by portable uid: the receptacle, a pole's horizpole markup
     // in col_ (-1: none yet; rebuildCollision drops it) and the uber receptacle's section (-1: an anim-graph one).
     // Receptacle sliders (joint value <= 0) by receptacle uid. Portables whose placement ran (a removed one stays out

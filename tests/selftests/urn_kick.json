@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "urn_kick",
+  "chapter": "Close combat: Interact by a treasure urn kicks it to pieces; its treasure is then picked up",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/avalon3.html",
+  "note": "l1_baldrs_sideroom: urn 94 (ar_pt_weightbreak_reward, reward 12). Standing in its engagement record (kind 3 [O]: chart state S1301 posts 0x158 to it and starts the kick), Interact kicks at it; the kick's hit (60, class 2) breaks it (uber section 0 -> 2 on any damage, then 1 once fx_smash has played) and state 2 gives birth to the treasure (id 94 | 0x20000000).",
+  "level": "l1_baldrs_sideroom",
+  "spawn": [4686, 4078, 2075, 90],
+  "steps": [
+    {"step": "kick_the_urn",
+     "plan": ["go 4686 4548 25 walk", "face 90", "wait 0.3", "press interact", "wait 2.5"],
+     "duration": 30,
+     "expect": [
+       {"probe": "step.states", "seq": ["melee", "idle"]},
+       {"probe": "object.94.uber.0", "eq": 1, "note": "broken and removed"},
+       {"probe": "weapon.shots_fired", "eq": 0},
+       {"probe": "world.treasures", "eq": 0, "note": "the treasure lies there, not yet taken"}
+     ]},
+    {"step": "take_the_treasure",
+     "plan": ["go 4686 4720 90", "press interact", "wait 1.5"],
+     "duration": 30,
+     "expect": [
+       {"probe": "step.pickups", "has": ["treasure:536871006"]},
+       {"probe": "world.treasures", "eq": 1}
+     ]}
+  ]
+}

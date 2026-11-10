@@ -220,6 +220,7 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
     float top = 0;
     for (const vec3 p : anim::bindPositions(t->skeleton)) top = std::max(top, p.z);
     if (top > t->tuning.radius) t->tuning.height = top; // [I] capsule up to the highest bind-pose bone
+    t->tuning.top = top;
     t->bind = anim::bindPositions(t->skeleton);
     t->ragdoll = physics::loadRagdoll(*drm);
     if (t->ragdoll && std::ranges::any_of(t->ragdoll->bones, [&](const physics::RagdollBone& b) {
@@ -388,6 +389,22 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
     for (const auto& a : t->tuning.attacks)
         for (const auto* c : {&a.clip, &a.shotClip, &a.followClip}) loadClip(*c);
     for (const auto& d : t->tuning.deaths) loadClip(d.clip);
+    // Knock-down / get-up pairs and the vault reaction (Mode::Knocked), by name; Lara's vault clip from this DRM.
+    const auto knock = [&](std::initializer_list<std::pair<const char*, const char*>> pairs) {
+        for (const auto& [fall, up] : pairs)
+            if (loadClip(fall) && loadClip(up)) return EnemyType::KnockClips{fall, up};
+        return EnemyType::KnockClips{};
+    };
+    t->knockFront = knock({{"hitreact_heavy_forward", "get_up_back"}, {"hitreact_heavy_knockdown", "hitreact_heavy_getup"},
+                           {"hitreact_thrown_back", "hitreact_thrown_getup"}, {"stun_start", "stun_end"}});
+    t->knockBack = knock({{"hitreact_heavy_back", "get_up_front"}, {"heavy_hitreact_knockdown_rear", "heavy_hitreact_getup_rear"},
+                          {"hitreact_thrown_forward", "hitreact_thrown_getup"}});
+    for (const char* c : {"hitreact_vault", "hit_react_vault", "damage_vault"}) // soldiers have only the adrenaline vault's
+        if (loadClip(c)) { t->vaultClip = c; break; }
+    if (loadClip("death_permanent")) t->permanentDeath = "death_permanent";
+    if (const auto e = std::find_if(list.begin(), list.end(), [](const anim::AnimEntry& x) { return x.name == "hosted_enemy_vault"; }); e != list.end())
+        for (const auto& sec : drm->sections)
+            if (sec.type == cdc::SectionType::Animation && sec.id == e->animId) { t->laraVault = anim::decodeClip(sec.data); break; }
 
     // Melee damage per blow: the record whose clip is our attack clip (panther simple_attack_static1 -> +0x88, 50);
     // [I] a single melee record otherwise (bat +0x80 attach_bite_loop while we play attack_bite). No record (thralls):
@@ -649,7 +666,7 @@ nlohmann::json toJson(const EnemyState& s) {
 EnemyState stateFromJson(const nlohmann::json& j) {
     EnemyState s;
     const int mode = j.at("mode").get<int>();
-    if (mode < 0 || mode > int(Mode::Investigate)) throw std::runtime_error("enemy mode " + std::to_string(mode));
+    if (mode < 0 || mode > int(Mode::Knocked)) throw std::runtime_error("enemy mode " + std::to_string(mode));
     s.mode = Mode(mode);
     s.pos = vec(j.at("pos")), s.yaw = j.at("yaw"), s.vz = j.at("vz"), s.clip = j.at("clip"), s.clipTime = j.at("clipTime");
     s.loop = j.at("loop"), s.health = j.at("health"), s.modeTime = j.at("modeTime"), s.unseenTime = j.at("unseenTime");

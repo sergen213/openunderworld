@@ -170,6 +170,10 @@ bool differs(const Snapshot& a, const Snapshot& b) {
 
 // Lara put at `pos`: a jump, crossing no trigger plane on the way (Runtime::playerJumped) unless `cross` (a plane
 // gate's own step across). l1_kraken_entrance 748: the move to the head pull crossed plane 1842 in a chapter-started World.
+// A move with a carried object runs its clip (pick-up, put-down, throw: docs/GAMEPLAY.md "Carried objects"): tick it out.
+void finishMove(game::World& w) {
+    for (int i = 0; i < 240 && w.player().state().state == game::State::Melee; ++i) w.tick({});
+}
 void place(game::World& w, vec3 pos, float yaw, bool cross = false) {
     game::PlayerState s;
     s.pos = pos, s.yaw = yaw;
@@ -287,6 +291,7 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
                 place(w, pole->pos + pole->offset + sides[k] * 0.4f, 0);
                 for (int i = 0; i < 10; ++i) tick({});
                 tick(press), tick({});
+                for (int i = 0; i < 240 && w.player().state().state == game::State::Melee; ++i) tick({}); // the pick-up clip
             }
             for (int k = 0; k < 4 && w.insertedIn(id) != uid; ++k) {
                 place(w, at + sides[k], std::atan2(-sides[k].y, -sides[k].x));
@@ -313,18 +318,22 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
                     glm::length(glm::vec2(o.pos + o.offset - at)) > 300.0f)
                     weight = &o;
             if (!weight) return;
-            game::Actions press;
-            press.interact = true;
+            game::Actions press, down;
+            press.interact = true, down.drop = true; // Crouch puts it down (chart input 101)
+            const auto finish = [&] {
+                for (int i = 0; i < 240 && w.player().state().state == game::State::Melee; ++i) tick({});
+            };
             place(w, weight->pos + weight->offset, 0);
             tick(press), tick({});
+            finish();
             // set down her radius (79) + the weight's reach (~147) ahead: on the plate, beside a weight already there
             float side = 0;
             for (const auto& o : w.script().objects())
                 if (&o != weight && o.name == weight->name && glm::length(glm::vec2(o.pos + o.offset - at)) <= 300.0f) side = 110.0f;
             place(w, at - vec3(226, side ? -side : 0.0f, -30), 0);
             tick({});
-            tick(press), tick({});
-            if (w.heldPortable()) { game::Actions down; down.drop = true; tick(down), tick({}); } // the put-down key
+            tick(down), tick({});
+            finish();
             break;
         }
         case Action::Enter: {
@@ -1304,6 +1313,11 @@ TEST(ProgressionReal, AnimGraphRecords) {
     }
 }
 
+namespace {
+std::vector<std::pair<vec3, float>> engageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, int kind);
+bool interactFrom(game::World& w, const std::vector<std::pair<vec3, float>>& spots, const std::function<bool()>& done);
+} // namespace
+
 // l4_traprooms seal 5701: with the seal raised (sticky +268) and the four trap rooms done (sticky int +240 = 4), plates
 // 5717 / 5718 each set their sticky +124 and hear of it in vt 6 (sticky notification), which counts them on the seal
 // (+304) and runs its vt 58: both held opens it (seal sticky +20 of the unit's globals, modifiable +64). Lara stands on
@@ -1323,13 +1337,15 @@ TEST(ProgressionReal, TraproomsSeal) {
     const auto* a = w.script().find(5717);
     const auto* b = w.script().find(5718);
     ASSERT_TRUE(weight && a && b);
-    game::Actions press;
-    press.interact = true;
-    place(w, weight->pos + weight->offset, 0);
-    w.tick(press), w.tick({});
+    game::Actions press, down;
+    press.interact = true, down.drop = true; // Crouch puts it down (chart input 101)
+    // from where its pick-up record engages her, on her feet: the pick-up is a clip
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *weight, 4), [&] { return w.heldPortable() == 5883; }));
     place(w, b->pos - vec3(90, 0, -30), 0);
     w.tick({});
-    w.tick(press), w.tick({});
+    w.tick(down), w.tick({});
+    finishMove(w);
+    ASSERT_EQ(w.heldPortable(), 0);
     for (int i = 0; i < 120; ++i) w.tick({});
     EXPECT_EQ(b->script->fields[124], 1u) << "the weight holds plate 5718";
     EXPECT_EQ(seal->script->fields[304], 1u);
@@ -1598,6 +1614,7 @@ bool interactFrom(game::World& w, const std::vector<std::pair<vec3, float>>& spo
         const auto st = w.player().state().state; // standing, or swimming (World::carryReady)
         if (st != game::State::Idle && st != game::State::SwimTread && st != game::State::SwimSurface && st != game::State::SwimUnder) continue;
         w.tick(use), w.tick({});
+        finishMove(w);
         if (done()) return true;
     }
     return false;
@@ -1644,6 +1661,7 @@ TEST(ProgressionReal, PoleHoleLeverOpensRewardDoor) {
     // Pick the pole up, carry it to the lever and insert it.
     place(w, w.script().find(7190)->pos + vec3(80, 0, 0), glm::pi<float>());
     w.tick({}), w.tick(use), w.tick({});
+    finishMove(w);
     ASSERT_EQ(w.heldPortable(), 7190);
     ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}}, [&] { return w.insertedIn(7190) == 7189; }));
     EXPECT_EQ(graphStateId(w, 7189), 0) << "inserted (transition 1 -> 0)";
@@ -1715,6 +1733,7 @@ TEST(ProgressionReal, BallcourtPoleLeverOpensDoor) {
     place(w, w.script().find(6503)->pos + vec3(80, 0, 0), glm::pi<float>());
     for (int i = 0; i < 5; ++i) w.tick({});
     w.tick(use), w.tick({});
+    finishMove(w);
     ASSERT_EQ(w.heldPortable(), 6503);
     ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}, {lever()->pos + vec3(0, -250, 0), glm::half_pi<float>()},
                                  {lever()->pos + vec3(250, 0, 0), glm::pi<float>()}, {lever()->pos + vec3(-250, 0, 0), 0.0f}},
@@ -1772,6 +1791,7 @@ TEST(ProgressionReal, BallcourtBlockUnderPoleReachesIt) {
     place(w, w.script().find(6503)->pos + vec3(80, 0, 0), glm::pi<float>());
     for (int i = 0; i < 5; ++i) w.tick({});
     w.tick(use), w.tick({});
+    finishMove(w);
     ASSERT_EQ(w.heldPortable(), 6503);
     ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}, {lever()->pos + vec3(0, -250, 0), glm::half_pi<float>()},
                                  {lever()->pos + vec3(250, 0, 0), glm::pi<float>()}, {lever()->pos + vec3(-250, 0, 0), 0.0f}},
@@ -1984,7 +2004,7 @@ TEST(ProgressionReal, UberReceptaclesTakeTheirPortables) {
         }
         for (int i = 0; i < 300; ++i) w.tick({});
         if (c.refused) {
-            EXPECT_FALSE(inserted) << "its record names another portable"; // (each press there set it down instead)
+            EXPECT_FALSE(inserted) << "its record names another portable"; // (each press there swings it instead)
         } else {
             ASSERT_TRUE(inserted);
             EXPECT_EQ(w.heldPortable(), 0);

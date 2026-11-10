@@ -446,6 +446,8 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         }
     };
     loadClips(drm, kLaraClipNames, path, "");
+    loadClips(drm, kMeleeClipNames, path, ""); // close combat / carried objects (Melee.cpp)
+    if (auto t = loadMeleeTuning(bigfile)) lib.melee = *t;
     // Lara's weapon clips live in each weapon's DRM (they animate her skeleton); stats from its data.
     for (int i = 0; i < kWeaponCount; ++i) {
         const std::string object(weaponObject(Weapon(i))), file = "pc-w\\" + object + ".drm";
@@ -566,6 +568,7 @@ void World::tick(const Actions& input) {
         a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = a.draw = false;
         if (combat_.headShot < 0) a.fire = a.aim = false;
     }
+    if (!onBike) meleeInput(a); // a close-combat move's input lock, the carried portable's keys, evasive moves (Melee.cpp)
     // The grapple (virtual button 1) on its press edge: throw at the target, or let go of the rope. tru.exe's keyboard
     // defaults bind Q to both it and Recenter Camera (virtual button 8): 0x487710 binds button i to key 0x80 + DirectInput
     // scan code, buttons 1 and 8 both 0x90 = 0x80 + DIK_Q, as the registry's Input list writes them ("1"="144",
@@ -709,11 +712,18 @@ void World::tick(const Actions& input) {
                 }
         }
     for (const int32_t bike : script_.takeMounts()) mountBike(bike); // larabase 52 from a sleeping handler (l5: 0.6 s)
-    collectPickups(a.interact && !interactHeld_);
-    carryPortables(a.interact && !interactHeld_ && pickedUp_.empty());
+    const bool interactPress = a.interact && !interactHeld_;
+    const int32_t heldBefore = held_;
+    const size_t insertedBefore = inserted_.size();
+    collectPickups(interactPress);
+    carryPortables(interactPress && pickedUp_.empty());
     pushUberJoints(push);
     tickObjects(wdt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
+    // Close combat (Melee.cpp): an interact press that no pickup, portable, switch, block or handle took kicks / swings.
+    if (!onBike)
+        tickMelee(a, interactPress && pickedUp_.empty() && held_ == heldBefore && inserted_.size() == insertedBefore && !script_.used() &&
+                         !script_.holding() && !uberHandle_.uid && uberGrip_ == vec3(0) && player_.state().state != State::GrapplePull, dt);
     vec3 carry = script_.carried();
     if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) { // she follows the pushed body
         const vec3 p = player_.state().pos;

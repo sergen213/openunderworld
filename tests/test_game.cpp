@@ -990,8 +990,10 @@ TEST(GameReal, LaraClipsAndRootMotion) {
     const auto anims = game::loadLaraAnims(bf);
     size_t weaponClips = 0;
     for (int i = 0; i < game::kWeaponCount; ++i) weaponClips += game::weaponClipNames(game::Weapon(i)).size();
-    // + grenade throw + the five switch use clips (use:2441 / 2605 / 2671 / 2608 / 4129)
-    EXPECT_EQ(anims.clips.size(), game::kLaraClipNames.size() + weaponClips + game::kBikeClipNames.size() + 1 + 5);
+    // + the close-combat / carry clips + grenade throw + the five switch use clips (use:2441 / 2605 / 2671 / 2608 / 4129)
+    EXPECT_EQ(anims.clips.size(),
+              game::kLaraClipNames.size() + game::kMeleeClipNames.size() + weaponClips + game::kBikeClipNames.size() + 1 + 5);
+    for (const auto name : game::kMeleeClipNames) EXPECT_TRUE(anims.find(name)) << name;
     EXPECT_TRUE(anims.find("use:2605")) << "obj_pull_lever";
     EXPECT_GE(anims.skeleton.bones.size(), 116u);
     // ng_run: root moves -Y 806.9 units over 19 key intervals, 20 keys per 0.667 s cycle -> ~1274 units/s.
@@ -4305,6 +4307,7 @@ TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
     use.interact = true;
     for (int i = 0; i < 20; ++i) w.tick({});
     w.tick(use), w.tick({});
+    for (int i = 0; i < 240 && w.player().state().state == game::State::Melee; ++i) w.tick({}); // the pick-up clip
     ASSERT_EQ(w.heldPortable(), 6503);
     const auto* lever = w.script().find(6502);
     ASSERT_TRUE(lever);

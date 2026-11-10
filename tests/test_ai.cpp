@@ -2021,3 +2021,111 @@ TEST(AiReal, BallcourtPantherJumpsDownALink) {
     EXPECT_LT(e.position().z, b.z + 150.0f); // down on the ground
     EXPECT_LT(flatDistance(e.position(), to), 600.0f);
 }
+
+// Lara's close combat on the enemies (src/game/Melee.cpp; docs/GAMEPLAY.md "Close combat"). A melee blow (Hit::melee)
+// knocks an enemy off its feet: the fall clip by the side the blow came from, the get-up, then it hunts on; types
+// without the clips stagger. Thralls: the finishing move's class 16 ends a regenerating one for good (viking / mayan:
+// death_permanent) and an adrenaline head shot matches none of their regenerate entries (they carry no flag), so it
+// kills standing and lying thralls alike; bullets, blows and kicks only knock them down.
+TEST(AiReal, MeleeKnockDownsAndThrallFinishers) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto poacher = game::ai::loadEnemyType(bf, "poacher"), tiger = game::ai::loadEnemyType(bf, "tiger"),
+               viking = game::ai::loadEnemyType(bf, "viking_thrall"), yeti = game::ai::loadEnemyType(bf, "yeti_thrall"),
+               mayan = game::ai::loadEnemyType(bf, "mayan_thrall"), panther = game::ai::loadEnemyType(bf, "panther_thrall"),
+               spider = game::ai::loadEnemyType(bf, "small_brown_spider"), naga = game::ai::loadEnemyType(bf, "naga_red");
+    EXPECT_EQ(poacher->knockFront.fall, "hitreact_heavy_forward");
+    EXPECT_EQ(poacher->knockFront.up, "get_up_back");
+    EXPECT_EQ(poacher->knockBack.fall, "hitreact_heavy_back");
+    EXPECT_EQ(poacher->knockBack.up, "get_up_front");
+    EXPECT_EQ(viking->knockFront.fall, "hitreact_heavy_knockdown");
+    EXPECT_EQ(viking->knockBack.fall, "heavy_hitreact_knockdown_rear");
+    EXPECT_EQ(tiger->knockFront.fall, "hitreact_thrown_back");
+    EXPECT_EQ(tiger->knockFront.up, "hitreact_thrown_getup");
+    EXPECT_EQ(naga->knockFront.fall, "stun_start");
+    EXPECT_TRUE(spider->knockFront.fall.empty());
+    EXPECT_EQ(viking->permanentDeath, "death_permanent");
+    EXPECT_EQ(mayan->permanentDeath, "death_permanent");
+    EXPECT_TRUE(poacher->permanentDeath.empty());
+    EXPECT_TRUE(poacher->laraVault && tiger->laraVault && viking->laraVault && naga->laraVault);
+
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    const auto col = built(m);
+    const game::ai::Target far{{4000, 4000, 0}};
+    const auto kick = [](vec3 dir, float damage) {
+        game::Hit h{damage, {}, dir, game::Team::Player};
+        h.damageClass = 2, h.melee = true; // Lara's kick record: 60, class 2
+        return h;
+    };
+    for (const bool behind : {false, true}) { // the enemy faces +x
+        SCOPED_TRACE(behind);
+        game::ai::Enemies es;
+        auto& p = es.add(poacher, 1, {0, 0, 0}, 0);
+        const float full = p.health();
+        p.onHit(kick({behind ? 1.0f : -1.0f, 0, 0}, 60));
+        EXPECT_EQ(p.state().mode, Mode::Knocked);
+        EXPECT_EQ(p.state().clip, behind ? "hitreact_heavy_back" : "hitreact_heavy_forward");
+        EXPECT_FLOAT_EQ(p.health(), full - 60);
+        p.onHit(kick({-1, 0, 0}, 60)); // on the ground: hurt, the fall plays on
+        EXPECT_EQ(p.state().mode, Mode::Knocked);
+        ASSERT_GE(tickUntil(es, col, far, {}, 600, [&] { return p.state().clip == (behind ? "get_up_front" : "get_up_back"); }), 0);
+        const int up = tickUntil(es, col, far, {}, 600, [&] { return p.state().mode != Mode::Knocked; });
+        ASSERT_GE(up, 0);
+        EXPECT_EQ(p.state().mode, Mode::Chase);
+    }
+    { // a spider has no knock-down clip: the kick kills it (2 hit points)
+        game::ai::Enemies es;
+        auto& s = es.add(spider, 1, {0, 0, 0}, 0);
+        s.onHit(kick({-1, 0, 0}, 60));
+        EXPECT_EQ(s.state().mode, Mode::Dead);
+    }
+    for (const auto& type : {viking, mayan, yeti, panther}) {
+        SCOPED_TRACE(type->name);
+        game::ai::Enemies es;
+        // a kick whose damage would kill only knocks it down to regenerate (class 2 is in every thrall's list)
+        auto& a = es.add(type, 1, {0, 0, 0}, 0);
+        a.onHit(kick({-1, 0, 0}, 5000));
+        ASSERT_EQ(a.state().mode, Mode::Down);
+        a.onHit(kick({-1, 0, 0}, 5000)); // absorbed
+        EXPECT_EQ(a.state().mode, Mode::Down);
+        // the finishing move: class 16, 100 damage against its full health: dead for good
+        game::Hit fin{100, {}, {-1, 0, 0}, game::Team::Player};
+        fin.damageClass = game::kFinisherClass;
+        a.onHit(fin);
+        EXPECT_EQ(a.state().mode, Mode::Dead);
+        if (!type->permanentDeath.empty()) { EXPECT_EQ(a.state().clip, "death_permanent"); }
+        for (int i = 0; i < 1500; ++i) es.tick(col, far, {}, kDt);
+        EXPECT_FALSE(a.alive());
+        // class 16 on a standing thrall is just 100 damage
+        auto& b = es.add(type, 2, {1500, 0, 0}, 0);
+        const float full = b.health();
+        b.onHit(fin);
+        EXPECT_TRUE(b.alive());
+        EXPECT_FLOAT_EQ(b.health(), full - 100);
+        // an adrenaline head shot (the hit's +0x6E flag) kills it standing ...
+        game::Hit head = gunHit({-1, 0, 0}, b.health());
+        head.headshot = true;
+        b.onHit(head);
+        EXPECT_EQ(b.state().mode, Mode::Dead);
+        // ... and lying down
+        auto& c = es.add(type, 3, {3000, 0, 0}, 0);
+        c.onHit(gunHit({-1, 0, 0}, 5000));
+        ASSERT_EQ(c.state().mode, Mode::Down);
+        head.damage = c.health();
+        c.onHit(head);
+        EXPECT_EQ(c.state().mode, Mode::Dead);
+    }
+    { // vaulted: cats, nagas and thralls play their vault reaction; soldiers have none
+        game::ai::Enemies es;
+        auto& t = es.add(tiger, 1, {0, 0, 0}, 0);
+        const float full = t.health();
+        EXPECT_TRUE(t.vaulted());
+        EXPECT_EQ(t.state().mode, Mode::Knocked);
+        EXPECT_EQ(t.state().clip, "hitreact_vault");
+        EXPECT_EQ(t.health(), full);
+        ASSERT_GE(tickUntil(es, col, far, {}, 600, [&] { return t.state().mode == Mode::Chase; }), 0);
+        auto& p = es.add(poacher, 2, {1500, 0, 0}, 0);
+        EXPECT_FALSE(p.vaulted());
+    }
+}
