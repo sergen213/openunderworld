@@ -276,6 +276,12 @@ public:
     // A damaging collision primitive of `attacker` touched Lara (tru.exe 0x4923C0 -> 0x7990A0): its script's instance
     // prototype 34 (vt 21) with (attacker, victim, 0, 0) [U: the two query-0xF7 values the engine passes last].
     void contactDamage(int32_t attacker);
+    // A hit of one of Lara's weapons on instance `victim` (tru.exe 0x6C64D0, the weapon's hit: after the hit message
+    // 0x11C to the struck instance, when shooter and struck instance both have a script): the script's instance
+    // prototype 35 (vt 22, 0x799100) with (attacker, victim, damage, damagetype = the hit's damage class, 0x4A4D90).
+    // l7_yggdrasil_end's Natla 8403 counts her hits there. `takesHits`: the object's script overrides that slot.
+    void weaponHit(int32_t victim, float damage, int damageClass);
+    bool takesHits(int32_t uid) const;
     using MultibodyNative = std::function<bool(int32_t uid, uint32_t function, std::span<const vm::Value> args,
                                                uint32_t& result)>;
     void setMultibodyNative(MultibodyNative native) { multibody_ = std::move(native); }

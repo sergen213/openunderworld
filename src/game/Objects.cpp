@@ -185,6 +185,20 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                     for (uint32_t m = 0; m < models.size(); ++m)
                         if (models[m] && models[m] == shared->renderModelId) set->skeletons[m] = shared;
                 }
+                // Looping steps (l7_yggdrasil_end's ar_ani_runestone_orbit_a: A_rotate1 turns its root 44.55 degrees
+                // in 99 frames, B_rotate 75 in 100, C_rotate a whole turn): the root's last key against its first.
+                set->rootStep.resize(set->clips.size());
+                if (const auto sk = set->skeletons.find(0); sk != set->skeletons.end() && !sk->second->bones.empty())
+                    for (size_t c = 0; c < set->clips.size(); ++c) {
+                        const anim::Clip& clip = set->clips[c];
+                        if (clip.keyCount < 2) continue;
+                        const double last = clip.durationSeconds() * (clip.keyCount - 1) / clip.keyCount;
+                        const glm::mat4 a = anim::worldMatrices(*sk->second, anim::sample(clip, *sk->second, 0, false))[0];
+                        const glm::mat4 b = anim::worldMatrices(*sk->second, anim::sample(clip, *sk->second, last, false))[0];
+                        float most = 0;
+                        for (int k = 0; k < 4; ++k) most = std::max(most, glm::length(vec3(a[k]) - vec3(b[k])) * (k < 3 ? 1000.0f : 1.0f));
+                        if (most > 1.0f) set->rootStep[c] = b * glm::inverse(a); // 0.06 degrees or 1 unit
+                    }
                 anims = std::move(set);
             }
             rt.anims = anims;
@@ -212,6 +226,10 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                         sec.held = s[i].at(12), sec.freed = s[i].at(13);
                         const auto at = s[i].at(14).get<std::array<float, 16>>();
                         std::memcpy(&sec.freedAt[0][0], at.data(), sizeof(at));
+                        if (s[i].size() >= 16) { // a stepping loop's root motion (absent: none)
+                            const auto carry = s[i].at(15).get<std::array<float, 16>>();
+                            std::memcpy(&sec.carry[0][0], carry.data(), sizeof(carry));
+                        }
                     }
                     else if (sec.state >= 0 && size_t(sec.state) < it->second->sections[i].stateActions.size())
                         for (const auto& a : it->second->sections[i].stateActions[size_t(sec.state)]) // 0.37 saves: the
@@ -274,6 +292,11 @@ nlohmann::json World::serializeObjects() const {
             std::memcpy(at.data(), &s.freedAt[0][0], sizeof(at));
             sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement, s.clip, s.clipTime, s.rate, s.loop, s.model,
                                 s.held, s.freed, at});
+            if (s.carry != glm::mat4(1)) {
+                std::array<float, 16> carry{};
+                std::memcpy(carry.data(), &s.carry[0][0], sizeof(carry));
+                sections.back().push_back(carry);
+            }
         }
         nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded},
                                                          {"intangible", rt.intangible}, {"grappleOff", rt.grappleOff}};
@@ -456,6 +479,9 @@ float World::uberPlay(int32_t uid, size_t section, uint32_t kind, uint32_t index
         clip = rt.anims->patterns[index].anims[0], rate = rt.anims->patterns[index].rate;
     if (clip < 0 || rate <= 0 || !rt.anims->clips[size_t(clip)].keyCount) return 0;
     auto& s = rt.sections[section];
+    // A section that a stepping loop has moved goes on from where it is: the new clip starts at the pose reached.
+    if (s.clip >= 0 && size_t(s.clip) < rt.anims->rootStep.size() && (s.carry != glm::mat4(1) || (s.loop && rt.anims->rootStep[size_t(s.clip)])))
+        s.carry = s.carry * uberRootAt(uid, int32_t(section), s.clip, s.clipTime) * glm::inverse(uberRootAt(uid, int32_t(section), clip, 0));
     s.clip = clip, s.clipTime = 0, s.rate = rate, s.loop = loop;
     return float(rt.anims->clips[size_t(clip)].durationSeconds()) / rate;
 }
@@ -794,7 +820,19 @@ std::pair<const scene::Skeleton*, std::vector<glm::mat4>> World::uberSectionMatr
     const auto sk = rt->second.anims->skeletons.find(uint32_t(uberSectionModel(uid, section)));
     if (s.clip < 0 || sk == rt->second.anims->skeletons.end()) return {};
     const auto& skeleton = *sk->second;
-    return {&skeleton, anim::worldMatrices(skeleton, anim::sample(rt->second.anims->clips[size_t(s.clip)], skeleton, s.clipTime, s.loop))};
+    const bool stepping = s.loop && rt->second.anims->rootStep[size_t(s.clip)].has_value(); // wraps at its last key (tickUber)
+    auto world = anim::worldMatrices(skeleton, anim::sample(rt->second.anims->clips[size_t(s.clip)], skeleton, s.clipTime, s.loop && !stepping));
+    if (s.carry != glm::mat4(1))
+        for (glm::mat4& m : world) m = s.carry * m;
+    return {&skeleton, std::move(world)};
+}
+
+glm::mat4 World::uberRootAt(int32_t uid, int32_t section, int32_t clip, float t) const {
+    const auto rt = uberRuntime_.find(uid);
+    if (rt == uberRuntime_.end() || !rt->second.anims || clip < 0 || size_t(clip) >= rt->second.anims->clips.size()) return glm::mat4(1);
+    const auto sk = rt->second.anims->skeletons.find(uint32_t(uberSectionModel(uid, section)));
+    if (sk == rt->second.anims->skeletons.end() || sk->second->bones.empty()) return glm::mat4(1);
+    return anim::worldMatrices(*sk->second, anim::sample(rt->second.anims->clips[size_t(clip)], *sk->second, t, false))[0];
 }
 
 std::optional<std::vector<glm::mat4>> World::uberSectionPose(int32_t uid, int32_t section) const {
@@ -1102,8 +1140,17 @@ void World::tickUber(float dt) {
             auto& s = rt.sections[i];
             const auto& sec = data->second->sections[i];
             if (s.clip >= 0 && rt.anims) { // its anim component: a looping clip wraps, one played once holds its last frame
-                const float d = float(rt.anims->clips[size_t(s.clip)].durationSeconds());
+                const anim::Clip& clip = rt.anims->clips[size_t(s.clip)];
+                const float d = float(clip.durationSeconds());
                 s.clipTime += dt * s.rate;
+                // A loop whose root ends away from its start is a step that repeats: it wraps at its last key (which is
+                // the next round's first) and the step stays with the section (`carry`). [O data: the orbit rigs'
+                // rotate clips are 44.55 / 75 / 35.5 / 52.9 / 86.9 degree turns of the root, C_rotate alone a whole
+                // turn; I: tru.exe's root motion for object instances was not decoded.]
+                if (const auto& step = rt.anims->rootStep[size_t(s.clip)]; s.loop && step && d > 0) {
+                    const float period = d * float(clip.keyCount - 1) / float(clip.keyCount);
+                    while (s.clipTime >= period) s.clipTime -= period, s.carry = s.carry * *step;
+                } else
                 s.clipTime = s.loop && d > 0 ? std::fmod(s.clipTime, d) : std::min(s.clipTime, d);
             }
             if (s.transition >= 0) {
@@ -1648,18 +1695,24 @@ void World::syncObjects() {
         const auto anchored = script_.anchor(o.uid);
         const script::Object* host = anchored ? script_.find(anchored->first) : nullptr;
         const physics::ObjectPhysics* own = host ? objectPhysics(o.name) : nullptr;
-        const bool rides = host && (host->spline || host->graph || host->clips) && own && !own->markup.empty(); // [I] traversal geometry only
+        // (an uber host poses the marker by its section's clip: the orbit rigs are uber objects)
+        const bool rides = host && (host->spline || host->graph || host->clips || prepareUber(*host)) && own && !own->markup.empty(); // [I] traversal geometry only
         const auto jaws = uber ? std::nullopt : linkedJaws(objectPhysics(o.name));
         if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable && !rides && !jaws) { // spline movers' collision follows Object::body (pose below)
             // Anim graphs that leave a state on the damage they took (stimulus 0x800 without event ids, posted by
             // Runtime::tickGraph) and do not collide otherwise: their shapes are met by shots only (World::shotRay), at
             // their intro frame [I: l1_kraken_room's chain links hang on platform 27's markers 21 / 20 (uberobjectbase 2
             // + instance 23), which do not move while the links exist].
-            if (o.graph && o.graph->set->graph &&
-                std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return (t.mask & formats::kStimulusEvent) != 0; }))
-                // ObjectBase oflags bit 0x40 [I: set on the links and on the hit-reacting combat crates, clear on the
-                // squib_explosion_detector spheres (38 in l1_kraken_room, 927 units wide), which shots must pass]
-                if (const physics::ObjectPhysics* sp = objectPhysics(o.name); sp && (sp->oflags & 0x40))
+            const bool hitGraph = o.graph && o.graph->set->graph &&
+                std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return (t.mask & formats::kStimulusEvent) != 0; });
+            // ObjectBase oflags bit 0x40 [I: set on the links and on the hit-reacting combat crates, clear on the
+            // squib_explosion_detector spheres (38 in l1_kraken_room, 927 units wide), which shots must pass].
+            // An instance whose script answers weapon hits (instance prototype 35, vt 22: Runtime::weaponHit) is met by
+            // shots where it is now (poseShotOnly: its own frame, anchors followed): l7_yggdrasil_end's Natla 8403 on
+            // her warp points. [I] tru.exe's shot meets the instance's own collision; which flag admits it is not decoded.
+            const bool hitScript = script_.takesHits(o.uid);
+            if (hitGraph || hitScript)
+                if (const physics::ObjectPhysics* sp = objectPhysics(o.name); sp && (hitScript || (sp->oflags & 0x40)))
                     for (int seg = 0; seg < int(sp->segments.size()); ++seg)
                         if (auto shape = physics::solidShape(*sp, seg))
                             shotOnly_.push_back({o.uid, std::move(shape), introModel(o) * sp->segments[seg]}), shotOnlyLocal_.push_back(sp->segments[seg]);
@@ -1762,7 +1815,8 @@ void World::poseShotOnly() {
         const script::Object* o = script_.find(shotOnly_[i].id);
         if (!o) continue;
         glm::mat4 base = introModel(*o);
-        if (const auto a = script_.anchor(o->uid))
+        if (script_.takesHits(o->uid)) base = objectFrame(*o); // where it is drawn: its body, or the anchor chain it rides
+        else if (const auto a = script_.anchor(o->uid))
             if (const script::Object* host = script_.find(a->first))
                 if (const physics::ObjectPhysics* hp = objectPhysics(host->name))
                     for (const auto& m : hp->hmarkers) {
