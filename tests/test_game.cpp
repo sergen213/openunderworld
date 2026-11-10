@@ -251,6 +251,163 @@ TEST(Game, CameraRestAndPitchReturn) {
     EXPECT_NEAR(c.pitch, -0.10f, 0.08f);
 }
 
+namespace {
+// One tick, and how much of its camera yaw turn the forces made: the yaw it ended at minus the yaw read back from
+// where it was (the orbit's desired point = last tick's camera position, caught up on open ground) toward this
+// tick's pivot (World.cpp updateOrbitCamera).
+struct CamTick {
+    float force, off; // the forces' turn; the read-back yaw off her heading (0 = behind her)
+    vec3 move;        // her move this tick
+    float readback;
+};
+CamTick camTick(game::World& w, const Actions& a) {
+    const vec3 before = w.camera().position, from = w.player().state().pos;
+    w.tick(a);
+    const auto& c = w.camera();
+    const float rb = std::atan2(c.target.y - before.y, c.target.x - before.x);
+    return {std::remainder(c.yaw - rb, 6.2831853f), std::remainder(rb - w.player().state().yaw, 6.2831853f),
+            w.player().state().pos - from, rb};
+}
+// tru.exe default yaw force set 11 (generalbank DTP 0x1C): 180 deg/s x curve(|off| / 180 deg) x min(1, 0.02 x |her
+// move per frame across the view|), toward behind her.
+float yawSet11(const CamTick& t, float weight) {
+    static constexpr uint8_t kCurve[64] = {0,   0,   0,   0,   0,   0,   0,   3,   9,   14,  20,  27,  34,  41,  48,  55,
+                                           62,  69,  76,  83,  89,  95,  101, 108, 115, 122, 128, 134, 140, 145, 148, 151,
+                                           152, 151, 149, 144, 139, 132, 125, 117, 109, 101, 94,  88,  82,  75,  68,  61,
+                                           54,  47,  40,  33,  26,  20,  14,  8,   3,   0,   0,   0,   0,   0,   0,   0};
+    const float x = std::abs(t.off) / glm::pi<float>() * 63, k = std::floor(x);
+    const int i = int(k), j = std::min(63, i + 1);
+    const float curve = std::round(float(kCurve[j] - kCurve[i]) * (x - k) + float(kCurve[i])) / 255;
+    const vec3 camX(std::sin(t.readback), -std::cos(t.readback), 0);
+    const float rate = glm::radians(180.0f) * curve * std::min(1.0f, 0.02f * std::abs(glm::dot(t.move, camX))) * weight / 60;
+    return std::clamp(-t.off, -rate, rate);
+}
+} // namespace
+
+// tru.exe camera forces (LaraCameraRewrite 0x5FFB00 -> 0x608B60, weight 0x5FFA90): the default yaw set 11 swings the
+// camera round behind her while she runs across the view, only after 5 s without look input (full at 7 s), never
+// while she stands or while the camera is being turned.
+TEST(Game, CameraSwingsBehindRunningLara) {
+    const auto world = [] {
+        CollisionMesh m;
+        addFloor(m, -30000, -30000, 30000, 30000, 0);
+        return makeWorld(std::move(m), {0, 0, 0});
+    };
+    Actions right;
+    right.move.x = 1; // running to the camera's right: across the view
+    auto w = world();
+    float maxForce = 0;
+    for (int i = 1; i <= 12 * 60; ++i) {
+        const CamTick t = camTick(*w, right);
+        const float weight = std::clamp((float(i) / 60 - 5) / 2, 0.0f, 1.0f);
+        if (i <= 5 * 60) ASSERT_NEAR(t.force, 0, 1e-4) << "tick " << i << ": no force within 5 s of the last look";
+        else ASSERT_NEAR(t.force, yawSet11(t, weight), 2e-4) << "tick " << i << " off " << t.off;
+        if (i > 5 * 60) EXPECT_LE(t.force * t.off, 1e-6f) << "toward behind her";
+        maxForce = std::max(maxForce, std::abs(t.force));
+    }
+    EXPECT_GT(maxForce * 60, glm::radians(20.0f)) << "it swings";
+    // Look input held (a slow pitch turn): the clock stays at 0, no swing.
+    // Look input held (a slow pitch turn): the clock stays at 0, no swing: she runs round the camera, it turns slower.
+    const auto turned = [](game::World& v, const Actions& a) {
+        float sum = 0;
+        for (int i = 0; i < 12 * 60; ++i) {
+            const float y = v.camera().yaw;
+            v.tick(a);
+            if (i >= 5 * 60) sum += std::remainder(v.camera().yaw - y, 6.2831853f);
+        }
+        return std::abs(sum);
+    };
+    Actions lookRight = right;
+    lookRight.look.y = -0.01f;
+    const float swung = turned(*world(), right), dragged = turned(*world(), lookRight);
+    EXPECT_GT(swung, dragged + 0.5f) << "the swing turns the camera after her (" << swung << " vs " << dragged << " rad)";
+    const auto off = [](const game::World& v) { return std::remainder(v.camera().yaw - v.player().state().yaw, 6.2831853f); };
+    // Standing with the camera turned to her side: it stays there.
+    auto still = world();
+    Actions turn;
+    turn.look.x = 2;
+    for (int i = 0; i < 45; ++i) still->tick(turn);
+    const float side = off(*still);
+    ASSERT_GT(std::abs(side), 1.0f);
+    for (int i = 0; i < 12 * 60; ++i) still->tick({});
+    EXPECT_NEAR(off(*still), side, 1e-3) << "no swing while she stands";
+}
+
+// Surface swimming (camera mode 20: no command 0x10, so the default yaw set 11; no pitch set) swings like on foot.
+// tru.exe (Wine, l1_seatop sea, stick held right after a mouse nudge): circling her at 60 deg/s for 5 s, 101 deg/s
+// from 7 s on; the yaw controller (camera +0x8F8) holds set 11 (2 forces, 180 deg/s) and her move 21.97 a frame.
+TEST(Game, CameraSwingsBehindSwimmingLara) {
+    auto w = makeWorld(poolMesh(), {1000, -2000, 0}, glm::pi<float>() / 2);
+    for (int i = 0; i < 120; ++i) w->tick({});
+    ASSERT_EQ(w->player().state().state, State::SwimTread);
+    Actions right;
+    right.move.x = 1;
+    float maxForce = 0;
+    for (int i = 0; i < 9 * 60; ++i) {
+        const CamTick t = camTick(*w, right);
+        if (w->player().state().state != State::SwimSurface || i < 7 * 60) continue;
+        ASSERT_NEAR(t.force, yawSet11(t, 1), 2e-4) << "tick " << i << " off " << t.off;
+        maxForce = std::max(maxForce, std::abs(t.force));
+    }
+    EXPECT_GT(maxForce * 60, glm::radians(10.0f));
+}
+
+// Hanging (camera mode 11, yaw set 15): toward 60 deg off behind her at 10 deg/s x min(1, 20 x her mean move), on the
+// side she shimmies along the ledge (dir 3: the sign of her move along it; [I] the camera looks the way she goes).
+TEST(Game, CameraHangYawForceFollowsShimmy) {
+    const game::AnimLibrary anims = syntheticAnims();
+    const auto tuning = game::defaultTuning();
+    const float ledgeZ = anims.hangHandOffset.z + tuning.jumpVz * tuning.jumpVz / (2 * tuning.gravity) * 0.6f;
+    CollisionMesh m;
+    addFloor(m, -3000, -6000, 300, 6000, 0);
+    addBox(m, {300, -6000, 0}, {1000, 6000, ledgeZ});
+    m.markup.push_back({1, 7, {{300, 5800, ledgeZ}, {300, -5800, ledgeZ}}}); // hanging to its right (-X), as retail ledges
+    auto w = makeWorld(std::move(m), {300 + anims.hangHandOffset.y - 10, 4000, 0});
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 120 && w->player().state().state != State::Hang; ++i) w->tick(i < 2 ? jump : Actions{});
+    ASSERT_EQ(w->player().state().state, State::Hang);
+    // The stick along the ledge (-Y, her right) under the current camera, so she keeps shimmying as the camera turns.
+    const auto along = [&] {
+        const float y = w->camera().yaw;
+        Actions a;
+        a.move = {glm::dot(glm::vec2(0, -1), glm::vec2(std::sin(y), -std::cos(y))), glm::dot(glm::vec2(0, -1), glm::vec2(std::cos(y), std::sin(y)))};
+        return a;
+    };
+    int full = 0;
+    for (int k = 0; k < 12 * 60; ++k) {
+        const CamTick t = camTick(*w, along());
+        const int i = int(w->ticks()); // the look clock runs from the first tick
+        if (k >= 60) ASSERT_EQ(w->player().state().state, State::Shimmy) << "tick " << i;
+        const float gap = std::remainder(glm::radians(-60.0f) - t.off, 6.2831853f);
+        // 10 deg/s x min(1, 20 x her mean move: 294 units/s shimmy = 4.9 a frame) x the look-idle weight
+        const float rate = glm::radians(10.0f) / 60 * std::clamp((float(i) / 60 - 5) / 2, 0.0f, 1.0f);
+        ASSERT_NEAR(t.force, std::clamp(gap, -rate, rate), 3e-4) << "tick " << i << ": toward 60 deg to her right";
+        full += std::abs(t.force) > rate * 0.9f && rate > 0;
+        if (i >= 9 * 60) ASSERT_NEAR(gap, 0, 0.03f) << "tick " << i << ": held 60 deg to the side she shimmies to";
+    }
+    EXPECT_GT(full, 30) << "it turned at the full rate";
+}
+
+TEST(Game, CameraForcesIndependentOfRenderRate) {
+    const auto script = game::InputScript::parse("0 right 1\n0.3 lookx 2\n0.6 lookx 0\n4 forward 1\n6 forward 0\n");
+    auto run = [&](double renderHz) {
+        CollisionMesh m;
+        addFloor(m, -30000, -30000, 30000, 30000, 0);
+        auto w = makeWorld(std::move(m), {0, 0, 0});
+        engine::FrameClock clock(game::kTickSeconds);
+        while (w->ticks() < 660) // 11 s
+            for (int n = clock.advance(1.0 / renderHz); n > 0 && w->ticks() < 660; --n) w->tick(script.at(w->ticks()));
+        return w->camera();
+    };
+    const auto a = run(30), b = run(60), c = run(144);
+    for (const auto& o : {b, c}) {
+        EXPECT_EQ(a.yaw, o.yaw);
+        EXPECT_EQ(a.pitch, o.pitch);
+        EXPECT_EQ(a.position, o.position);
+    }
+}
+
 // tru.exe sprint (Wine, l4_trailstart; screens/controls s_spr / s_rec / s_r4): Shift held while running sprints at
 // ~1860..1930 units/s for 9.5..9.9 s, then runs exhausted; Shift still held: ~2.2 s running, 0.9 s sprinting; 4 s
 // without Shift after exhaustion refill 4.1 s of sprint.
@@ -3280,6 +3437,38 @@ TEST(GameReal, LadderJumpUpToLedge) {
     EXPECT_EQ(s.state, State::Hang);
     EXPECT_EQ(s.clip, "ledgeb_attach_U");
     EXPECT_EQ(w->collision().markup[size_t(s.ledge)].id, 2);
+}
+
+// Ladders (camera mode 10: pitch set 16): stopped at a blocked top after climbing up with the stick still up, the
+// camera pitches up toward 45 deg at 5 deg/s x curve(|stick| = 1) = 5 deg/s.
+TEST(GameReal, CameraLadderPitchesUpAfterClimbingUp) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    CollisionMesh m;
+    addFloor(m, -4000, -4000, 400, 4000, 0);
+    addQuad(m, {400, -4000, 0}, {400, 4000, 0}, {400, 4000, 3000}, {400, -4000, 3000});
+    m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}});
+    auto w = climbWorld(std::move(m), {300, 0, 0});
+    const auto& s = w->player().state();
+    w->tick(forward());
+    ASSERT_EQ(s.state, State::Ladder);
+    vec3 last = s.pos;
+    int still = 0;
+    for (int i = 0; i < 1200 && still < 60; ++i) w->tick(forward()), still = s.pos == last ? still + 1 : 0, last = s.pos;
+    ASSERT_EQ(still, 60) << "stopped at the top";
+    ASSERT_EQ(s.state, State::Ladder);
+    EXPECT_GT(w->camera().pitch, 0.3f) << "pitched up toward 45 deg on the way up";
+    Actions down = forward(); // look down a little: the look clock restarts
+    down.look.y = -2;
+    for (int i = 0; i < 20; ++i) w->tick(down);
+    const float p0 = w->camera().pitch;
+    for (int i = 0; i < 5 * 60; ++i) w->tick(forward());
+    EXPECT_NEAR(w->camera().pitch, p0, 3e-3) << "no force within 5 s of the last look";
+    for (int i = 0; i < int(2.5f * 60); ++i) w->tick(forward()); // past the 7 s ramp
+    const float p1 = w->camera().pitch;
+    ASSERT_LT(p1, glm::radians(45.0f) - 0.1f);
+    for (int i = 0; i < 30; ++i) w->tick(forward());
+    EXPECT_EQ(s.pos, last) << "she held still";
+    EXPECT_NEAR(w->camera().pitch - p1, glm::radians(5.0f) / 2, 2e-3) << "5 deg/s toward 45 deg up";
 }
 
 // Ladder jumps (player chart ladder group: jump + stick left / right T1869 / T1870, neutral T1868, all query q22: 47.41
