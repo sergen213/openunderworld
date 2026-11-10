@@ -23,7 +23,10 @@ struct Face {
     uint32_t v[3] = {};
     uint8_t flags = 0;        // raw +0x0C adjacencyFlags (TRLAU IndexedFace); bit 0x40 = skipped by tru.exe face queries
     uint8_t mask = 0xFF;      // raw +0x0D; tru.exe ANDs it with the query mask (observed 3 on terrain)
-    uint16_t clientFlags = 0; // raw +0x0E; meaning unknown
+    // raw +0x0E. tru.exe's ground check 0x5DCE20 reads it through 0x5D3AF0 [O]: 0x0004 / 0x0040 slide surfaces
+    // (slide kinds 2 / 1), 0x0020 never too steep to stand on, 0x0100 stood on however steep. 0x0080: no wall jump
+    // (game/WallJump.cpp). Other bits unknown.
+    uint16_t clientFlags = 0;
     uint8_t material = 0;     // raw +0x10; meaning unknown (surface/sound type?)
     uint16_t group = 0;       // terrain group index in the unit
 };
@@ -67,6 +70,10 @@ struct Markup {
 // MUD flag bits tru.exe derives from the type (switch 0x5D6F90 | 0x5D70A0).
 uint32_t markupFlags(uint8_t type);
 std::string_view markupTypeName(uint8_t type); // "ledgegrab", ..., "unknown"
+
+inline constexpr uint16_t kClientSlide = 0x0044;      // slope-slide surface (0x04 kind 2, 0x40 kind 1)
+inline constexpr uint16_t kClientNeverSteep = 0x0020; // exempt from the steep-floor test
+inline constexpr uint16_t kClientStandSteep = 0x0100; // stood on although steep
 
 struct Hit {
     float t = 0;      // raycast/closestPoint: distance; sweeps: fraction of `delta` travelled

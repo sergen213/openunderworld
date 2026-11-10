@@ -379,14 +379,29 @@ vec3 Player::slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) c
     return pos;
 }
 
-// A floor hit under `p` supports standing: walkable slope, or a steep sliver/seam with a walkable face
-// within 20 units of its height 60 units to a side (floor bumps; ragnarok_room's 0.6-normal strips).
+// tru.exe 0x5DCE20 on the face under her root [O]: with L = cos(player data +0x100E = 52 deg), U = cos(+0x100C =
+// 28 deg) and the face's client flags (terrain +0x0E through 0x5D3AF0): a slide-flagged face with L <= nz <= U is a
+// slope slide (message 0x1CA; Lara +0x11D0 = kind, +0x11CF, the chart's PSCCF_OnSlopeSlide); any face with 0 < nz < L
+// is too steep (message 0x1C9) unless flagged 0x0020 (never tested, when not slide-flagged) or 0x0100 (stood on).
+// [U] object faces (their flags come from the object: masks 0xA00 / 0x400 / 0x20): taken as unflagged.
+Player::Floor Player::floorKind(const collision::Hit& g) const {
+    const uint16_t cf = g.dynamic < 0 && g.face < col_.faces.size() ? col_.faces[g.face].clientFlags : uint16_t(0);
+    const float nz = g.normal.z;
+    const bool flagged = cf & collision::kClientSlide;
+    if (flagged && nz >= t_.minFloorNormalZ && nz <= t_.slideMaxNormalZ && nz < 1.0f) return Floor::Slide;
+    if ((flagged || !(cf & collision::kClientNeverSteep)) && nz < t_.minFloorNormalZ && !(cf & collision::kClientStandSteep)) return Floor::Steep;
+    return Floor::Stand;
+}
+
+// A floor hit under `p` supports standing: by the original's rule (floorKind), and [I] a too-steep sliver / seam
+// with a standable face within 20 units of its height 60 units to a side (floor bumps; narrow steep strips).
 // ponytail: four fixed probes; a footprint sweep would catch narrower walkable bits.
 bool Player::standable(vec3 p, const collision::Hit& g) const {
-    if (g.normal.z >= t_.minFloorNormalZ) return true;
+    const Floor k = floorKind(g);
+    if (k != Floor::Steep) return k == Floor::Stand;
     for (const vec2 o : {vec2(60, 0), vec2(-60, 0), vec2(0, 60), vec2(0, -60)}) {
         const auto h = col_.groundProbe(vec3(p.x + o.x, p.y + o.y, g.point.z + t_.stepUp), t_.stepUp + 20);
-        if (h && h->normal.z >= t_.minFloorNormalZ && std::abs(h->point.z - g.point.z) <= 20) return true;
+        if (h && h->normal.z >= t_.minFloorNormalZ && floorKind(*h) == Floor::Stand && std::abs(h->point.z - g.point.z) <= 20) return true;
     }
     return false;
 }
@@ -405,7 +420,7 @@ void Player::groundMove(vec3 delta, float dt) {
     if (!g && trySafetyDrop(vel)) return;
     if (g && g->normal.z >= t_.slideMinNormalZ) {
         s_.pos.z = g->point.z;
-        startSlide(vel);
+        startSlide(vel, true);
     } else {
         startFall(vel);
     }
@@ -422,12 +437,19 @@ void Player::startFall(vec3 vel) {
     play("NG_InAir_Feet_Forward_stage3", true);
 }
 
-void Player::startSlide(vec3 vel) {
+// Onto a slide: the chart's ground states take T84 to S804 slope_transitionto on PSCCF_OnSlopeSlide, landings T12 to
+// S802 slope_landfront, both then S801 slope_slidefront (T1701 / T1698) [O-data]. On a too-steep unflagged floor she
+// is falling along it (S812, the same loop).
+void Player::startSlide(vec3 vel, bool fromGround) {
+    const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
+    const bool flagged = g && floorKind(*g) == Floor::Slide;
     s_.state = State::Slide;
-    s_.vel = vec3(xy(vel), 0);
+    s_.vel = flagged && !fromGround ? vec3(0) : vec3(xy(vel), 0); // a landing on a slide face stops her [O-runtime]
     s_.ledge = -1;
     s_.fallStartZ = s_.pos.z;
-    play("slope_slidefront", true);
+    const std::string_view intro = fromGround ? "slope_transitionto" : "slope_landfront";
+    if (flagged && anims_.find(intro)) play(intro, false);
+    else play("slope_slidefront", true);
 }
 
 // Landing: lara.drm's player chart sends every landing through the dispatcher S1275, whose transitions are tried in
@@ -854,7 +876,7 @@ bool Player::tryDropToHang() {
 // stands roped: off an edge on the grapple line she hangs from the rope (chart T1409, the roped ground states are
 // not T114's sources [O-chart]).
 constexpr float kSafetyReach = 150.0f;
-bool Player::trySafetyDrop(vec3 vel) {
+bool Player::trySafetyDrop(vec3 vel, std::string_view clip) {
     if (s_.grappleUid || s_.regrabCooldown > 0 || glm::length(xy(vel)) < 1.0f) return false;
     const vec2 heading = glm::normalize(xy(vel));
     int best = -1;
@@ -871,17 +893,17 @@ bool Player::trySafetyDrop(vec3 vel) {
         best = int(li), bestOn = o, bestSide = side;
     }
     if (best < 0) return false;
-    dropToHang(best, bestOn.seg, bestOn.t, bestSide);
+    dropToHang(best, bestOn.seg, bestOn.t, bestSide, clip);
     return true;
 }
 
-void Player::dropToHang(int ledge, int seg, float t, float side) {
+void Player::dropToHang(int ledge, int seg, float t, float side, std::string_view clip) {
     const float bestSide = side;
     s_.ledge = ledge, s_.ledgeSeg = seg, s_.ledgeT = t, s_.ledgeSide = side;
     const auto [hang, hangYaw] = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, bestSide);
     s_.state = State::DropToHang;
     s_.vel = vec3(0);
-    play("drop_to_ledgeb", false);
+    play(anims_.find(clip) ? clip : std::string_view("drop_to_ledgeb"), false);
     s_.pos = hang, s_.yaw = hangYaw;
     if (const anim::Clip* c = anims_.find(s_.clip)) {
         const double end = c->durationSeconds();
@@ -2267,11 +2289,16 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         }
         break;
     case State::Slide: {
-        // Down the fall line of a floor steeper than minFloorNormalZ, accelerated by gravity along it without friction
-        // or cap (tru.exe, Wine: l3_main_bedroom roof, normal z 0.45: along-slope speed 51 -> 69 -> 91 units per
-        // 30 Hz frame, ~4.7k units/s^2 = g sin 63 deg); jump leaps off forward; a standable floor ends it, nothing
-        // below falls.
+        // Down the fall line of the floor under her root (heading = downhill). On a slide-flagged face
+        // (Floor::Slide) the speed along the slope follows the chart's slide controller (tru.exe 0x73FF50 with the
+        // props of state group S814 [O]): toward 35..45 units per frame by the slope angle 29..51 degrees at
+        // slideAccel / slideDecel; while slope_transitionto plays toward slideEnterSpeed (S818's props; [I] that
+        // the controller runs there). On a too-steep floor (Floor::Steep) gravity along it without friction or cap
+        // (Wine: l3_main_bedroom roof, normal z 0.45: 51 -> 69 -> 91 units per 30 Hz frame, ~4.7k units/s^2 =
+        // g sin 63 deg). Jump leaps off forward [I: slope_jumpF/L/R/U not played]; a standable floor ends it through
+        // slope_slide_stumble_off (S821, T1699), nothing below falls.
         advanceClip(dt);
+        if (s_.clip != "slope_slidefront" && clipDone()) play("slope_slidefront", true);
         s_.fallStartZ = s_.pos.z; // sliding is not falling (no fall damage on the run-out)
         if (jumpPressed) {
             s_.state = State::Jump;
@@ -2280,19 +2307,45 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             break;
         }
         const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
-        if (!g) { startFall(s_.vel); break; }
-        if (standable(s_.pos, *g)) { land(move); break; }
+        if (!g) {
+            if (!trySafetyDrop(s_.vel, "slope_slide_off_to_ledgeb")) startFall(s_.vel);
+            break;
+        }
         const float dl = glm::length(xy(g->normal));
-        if (dl < 1e-4f) { land(move); break; }
+        if (standable(s_.pos, *g) || dl < 1e-4f) {
+            if (anims_.find("slope_slide_stumble_off")) {
+                s_.vel = vec3(0), s_.landTime = 0;
+                s_.state = State::Land;
+                play("slope_slide_stumble_off", false);
+            } else land(move);
+            break;
+        }
         const vec2 dir = xy(g->normal) / dl; // the normal leans downhill
         s_.yaw = yawOf(dir);
-        const float nz = std::max(g->normal.z, 1e-3f), along = std::max(0.0f, glm::dot(xy(s_.vel), dir)) / nz;
-        const float speed = (along + t_.gravity * std::sqrt(1 - nz * nz) * dt) * nz; // horizontal part of the along-slope speed
-        s_.vel = vec3(dir * speed, -speed * std::sqrt(1 - nz * nz) / nz); // z: the descent, carried into a fall
+        const float nz = std::max(g->normal.z, 1e-3f), sn = std::sqrt(std::max(0.0f, 1 - nz * nz));
+        float along; // speed along the slope
+        if (floorKind(*g) == Floor::Slide) {
+            const float f = std::clamp((glm::degrees(std::acos(std::min(nz, 1.0f))) - t_.slideAngleMin) / (t_.slideAngleMax - t_.slideAngleMin), 0.0f, 1.0f);
+            // slope_landfront: at rest for the clip (Wine, l2_junglehub 45-degree face: 0.40 s still, then +1.25 a tick)
+            const float want = s_.clip == "slope_landfront" ? 0.0f
+                               : s_.clip == "slope_transitionto" ? t_.slideEnterSpeed : glm::mix(t_.slideSpeedMin, t_.slideSpeedMax, f);
+            along = glm::length(s_.vel);
+            along += std::clamp(want - along, -t_.slideDecel * dt, t_.slideAccel * dt);
+        } else {
+            along = std::max(0.0f, glm::dot(xy(s_.vel), dir)) / nz + t_.gravity * sn * dt;
+        }
+        const float speed = along * nz; // horizontal part
+        s_.vel = vec3(dir * speed, -along * sn); // z: the descent, carried into a fall
         vec3 p = slide(s_.pos, vec3(xy(s_.vel) * dt, 0), t_.stepUp, true);
         const auto g2 = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown + speed * dt * 3);
         s_.pos = p;
-        if (!g2) { startFall(s_.vel); break; }
+        if (!g2) {
+            // Off the slide's end: an edge that carries a ledge is caught as from any ground state (T1713 -> S534, the
+            // safety drop's attach states [O-chart]; Wine, l2_junglehub: off a 45-degree face she turned and hung);
+            // [I] with slope_slide_off_to_ledgeb (request 1480, which no chart state names).
+            if (!trySafetyDrop(s_.vel, "slope_slide_off_to_ledgeb")) startFall(s_.vel);
+            break;
+        }
         s_.pos.z = g2->point.z;
         break;
     }

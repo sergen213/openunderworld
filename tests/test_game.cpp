@@ -1862,6 +1862,119 @@ TEST(Game, SlideAcceleratesAtGravityAlongSlope) {
     EXPECT_GT(a1, 2738) << "no cap below tru.exe's fastest observed slide (91.3 units/frame)";
 }
 
+// ---- slopes and slides (docs/GAMEPLAY.md "Slopes and slides") ---------------------------------------
+
+// A ramp of normal z `nz` falling toward +x from a flat top at x < 0 to a flat bottom, its faces carrying `flags`
+// (collision client flags, raw +0x0E).
+CollisionMesh rampMesh(float nz, uint16_t flags, float run = 3000) {
+    const float drop = run * std::sqrt(1 - nz * nz) / nz;
+    CollisionMesh m;
+    addFloor(m, -1000, -1000, 0, 1000, drop);
+    const size_t first = m.faces.size();
+    addQuad(m, {0, -1000, drop}, {run, -1000, 0}, {run, 1000, 0}, {0, 1000, drop});
+    for (size_t f = first; f < m.faces.size(); ++f) m.faces[f].clientFlags = flags;
+    addFloor(m, run, -1000, run + 4000, 1000, 0);
+    return m;
+}
+vec3 onRamp(float nz, float x, float run = 3000) { return {x, 0, (run - x) * std::sqrt(1 - nz * nz) / nz}; }
+
+// tru.exe's ground check 0x5DCE20: too steep under cos 52 deg = 0.6157 (unless flagged 0x20 / 0x100), slide-flagged
+// faces (0x04 / 0x40) slid from cos 52 to cos 28 deg = 0.8829. Wine, l2_junglehub: stands on 0x0080 faces of normal z
+// 0.626..0.716 and on 0x0000 0.763, slides on 0x0004 faces of 0.753.
+TEST(Game, SlopeStandsOrSlidesByFlagAndAngle) {
+    struct Row { float nz; uint16_t flags; bool slides; };
+    for (const Row r : {Row{0.626f, 0x0080, false}, {0.63f, 0x0000, false}, {0.716f, 0x0080, false}, {0.60f, 0x0000, true}, {0.60f, 0x0080, true},
+                        {0.45f, 0x0080, true}, {0.63f, 0x0004, true}, {0.753f, 0x0004, true}, {0.87f, 0x0004, true}, {0.753f, 0x0040, true},
+                        {0.90f, 0x0004, false}, {0.974f, 0x0004, false}, {0.50f, 0x00A0, false}, {0.50f, 0x01A0, false}, {0.50f, 0x0100, false},
+                        {0.50f, 0x0024, true}, {0.50f, 0x0104, false}, {0.753f, 0x0124, true}}) {
+        auto w = makeWorld(rampMesh(r.nz, r.flags), onRamp(r.nz, 600));
+        const auto& s = w->player().state();
+        bool slid = false;
+        for (int i = 0; i < 90; ++i) {
+            w->tick({});
+            slid |= s.state == State::Slide;
+        }
+        EXPECT_EQ(slid, r.slides) << r.nz << " flags " << r.flags;
+        if (r.slides) EXPECT_GT(s.pos.x, 700) << r.nz << " flags " << r.flags;
+        else {
+            EXPECT_EQ(s.state, State::Idle) << r.nz << " flags " << r.flags;
+            EXPECT_NEAR(s.pos.x, 600, 1e-3) << r.nz << " flags " << r.flags;
+        }
+    }
+}
+
+// The slide controller (tru.exe 0x73FF50, state group S814): the speed along the fall line approaches 35 units per
+// 30 Hz frame at 29 degrees .. 45 at 51, at 2.5 per frame^2 on 60 Hz ticks (Wine, l2_junglehub 0x0004 faces: +1.25
+// per tick; steady 35.0 at 28.4 degrees, 36.3 at 31.8, 38.3 at 36.2, 40.5 at 41.1, 42.3 at 45.1, 43.8 at 48.3).
+TEST(Game, SlopeSlideSpeedFollowsAngle) {
+    struct Row { float deg, speed; };
+    for (const Row r : {Row{28.36f, 35.0f}, {31.8f, 36.27f}, {36.2f, 38.27f}, {41.14f, 40.52f}, {45.09f, 42.31f}, {48.3f, 43.77f}}) {
+        const float nz = std::cos(glm::radians(r.deg));
+        auto w = makeWorld(rampMesh(nz, 0x0004, 6000), onRamp(nz, 300, 6000));
+        const auto& s = w->player().state();
+        w->tick({});
+        ASSERT_EQ(s.state, State::Slide) << r.deg;
+        for (int i = 0; i < 11; ++i) w->tick({});
+        EXPECT_NEAR(glm::length(s.vel), 11 * 2.5f * 900 / 60, 1.0f) << r.deg; // 11 sliding ticks of 1.25 per frame
+        for (int i = 0; i < 60; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Slide) << r.deg;
+        EXPECT_NEAR(glm::length(s.vel), r.speed * 30, 1.0f) << r.deg;
+        EXPECT_NEAR(-s.vel.z / glm::length(glm::vec2(s.vel)), std::tan(glm::radians(r.deg)), 1e-3) << r.deg;
+        EXPECT_NEAR(s.vel.y, 0, 1e-3);
+        EXPECT_NEAR(s.pos.z, onRamp(nz, s.pos.x, 6000).z, 0.01f) << r.deg;
+    }
+}
+
+// The chart leaves every ground state for the slide on PSCCF_OnSlopeSlide (T84 / T83): a slide face cannot be walked
+// or run up; the same slope without the flag can (normal z 0.75).
+TEST(Game, SlopeSlideFaceCannotBeRunUp) {
+    for (const bool flagged : {true, false}) {
+        const float nz = 0.75f;
+        auto w = makeWorld(rampMesh(nz, flagged ? 0x0004 : 0x0000), {3600, 0, 0}, glm::pi<float>());
+        const auto& s = w->player().state();
+        float top = 0;
+        bool slid = false;
+        for (int i = 0; i < 240; ++i) {
+            w->tick(forward());
+            top = std::max(top, s.pos.z);
+            slid |= s.state == State::Slide;
+        }
+        EXPECT_EQ(slid, flagged);
+        if (flagged) EXPECT_LT(top, 60);
+        else EXPECT_GT(top, 1000);
+    }
+}
+
+// A slide runs out on the flat (standable) ground below and ends there; Jump leaves it with the slide's horizontal
+// velocity.
+TEST(Game, SlopeSlideEndsOnFlatAndJumpLeavesIt) {
+    const float nz = 0.75f;
+    {
+        auto w = makeWorld(rampMesh(nz, 0x0004), onRamp(nz, 2000));
+        const auto& s = w->player().state();
+        bool slid = false;
+        for (int i = 0; i < 300; ++i) {
+            w->tick({});
+            slid |= s.state == State::Slide;
+        }
+        EXPECT_TRUE(slid);
+        EXPECT_EQ(s.state, State::Idle);
+        EXPECT_GT(s.pos.x, 3000);
+        EXPECT_NEAR(s.pos.z, 0, 1e-3);
+    }
+    auto w = makeWorld(rampMesh(nz, 0x0004), onRamp(nz, 300));
+    const auto& s = w->player().state();
+    for (int i = 0; i < 60; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Slide);
+    const float vx = s.vel.x;
+    Actions j;
+    j.jump = true;
+    w->tick(j);
+    EXPECT_EQ(s.state, State::Jump);
+    EXPECT_NEAR(s.vel.x, vx, 40);
+    EXPECT_GT(s.vel.z, 1000);
+}
+
 // ---- swimming (real data) ---------------------------------------------------------------------
 
 // l4_pool: the watervolume intro is linked to the goo surface (ca_goo_pool_watersurface, z 2699.3). Lara
@@ -9178,6 +9291,159 @@ TEST(GameReal, MovingMarkupCogWheelByInput) {
     EXPECT_GT(std::abs(std::remainder(angleOf(s.pos) - a0, 2 * 3.14159265f)), std::abs(turned)) << "put down further round the wheel";
 }
 
+// ---- slopes and slides (real data; docs/GAMEPLAY.md "Slopes and slides") ----------------------------
+
+// l2_junglehub, the ramp series measured in tru.exe under Wine (gameplaygoal/slope/session.sh: Lara put on the
+// centroid of one large open face per client-flag value and normal-z bin, left alone): by tru.exe's ground check
+// 0x5DCE20 she stands on unflagged faces down to cos 52 deg = 0.6157 and on 0x20-flagged ones at any slope, and
+// slides on 0x0004 faces from there to cos 28 deg = 0.8829.
+TEST(GameReal, SlopeJunglehubRampSeries) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto bytes = bf.read("pc-w\\l2_junglehub.drm");
+    ASSERT_TRUE(bytes);
+    const auto col = collision::loadLevelCollision(cdc::parseDrm(std::move(*bytes)));
+    const auto anims = game::loadLaraAnims(bf);
+    struct Row { uint16_t flags; float nz; vec3 at; bool slides; };
+    const Row rows[] = {
+        {0x0000, 0.576f, {-30831.9f, 17762.9f, 9762.7f}, true},  {0x0000, 0.596f, {-33481.7f, 15343.5f, 14398.1f}, true},
+        {0x0000, 0.613f, {-31233.1f, 15398.8f, 11778.9f}, true}, {0x0000, 0.633f, {-20472.0f, 8456.2f, 7846.3f}, false},
+        {0x0000, 0.647f, {-32153.5f, 22399.8f, 12583.3f}, false}, {0x0000, 0.665f, {-6963.9f, 21334.2f, 8699.1f}, false},
+        {0x0080, 0.574f, {-16910.9f, 31411.3f, 11895.3f}, true}, {0x0080, 0.597f, {-5076.5f, 30357.9f, 9683.7f}, true},
+        {0x0080, 0.608f, {-4579.4f, 32375.9f, 12175.0f}, true},  {0x0080, 0.626f, {-4265.9f, 29897.2f, 9581.3f}, false},
+        {0x0080, 0.659f, {-6344.5f, 32898.8f, 13266.2f}, false}, {0x0080, 0.679f, {-15884.5f, 32284.4f, 11642.4f}, false},
+        {0x0004, 0.612f, {-10950.9f, 30200.3f, 9622.4f}, true},  {0x0004, 0.648f, {-25467.6f, 10452.8f, 6640.0f}, true},
+        {0x0004, 0.706f, {-29691.2f, 17582.3f, 8247.6f}, true},  {0x0004, 0.753f, {-9499.8f, 31289.9f, 10806.0f}, true},
+        {0x0004, 0.807f, {-13334.5f, 27854.3f, 7999.4f}, true},  {0x0004, 0.850f, {-9680.7f, 28512.7f, 7895.6f}, true},
+        {0x0004, 0.880f, {-12201.2f, 28203.6f, 7895.6f}, true},  {0x0004, 0.933f, {-14589.9f, 30848.6f, 10134.0f}, false},
+        {0x0004, 0.965f, {-7035.4f, 19594.8f, 6520.7f}, false},  {0x00A0, 0.417f, {-11766.5f, 8508.0f, 5617.6f}, false},
+        {0x00A0, 0.518f, {-16930.1f, 9631.3f, 5927.7f}, false},  {0x00A0, 0.595f, {-10313.4f, 9150.1f, 5623.9f}, false},
+    };
+    for (const Row& r : rows) {
+        const auto g = col.groundProbe(r.at + vec3(0, 0, 50), 100);
+        ASSERT_TRUE(g) << r.nz;
+        ASSERT_EQ(col.faces[g->face].clientFlags, r.flags) << r.nz;
+        ASSERT_NEAR(g->normal.z, r.nz, 0.001f);
+        game::World w(col, anims, game::Spawn{g->point, 0});
+        const auto& s = w.player().state();
+        bool slid = false;
+        for (int i = 0; i < 60; ++i) {
+            w.tick({});
+            slid |= s.state == State::Slide;
+        }
+        EXPECT_EQ(slid, r.slides) << "flags " << r.flags << " nz " << r.nz;
+        if (!r.slides) {
+            EXPECT_EQ(s.state, State::Idle) << "flags " << r.flags << " nz " << r.nz;
+            EXPECT_LT(glm::distance(s.pos, g->point), 1.0f) << "flags " << r.flags << " nz " << r.nz;
+        } else {
+            EXPECT_GT(glm::distance(s.pos, g->point), 150.0f) << "flags " << r.flags << " nz " << r.nz;
+        }
+    }
+}
+
+// l1_kraken_room, the ramp into the lower hall (Niflheim: "slide down the slope"): every face of it carries client
+// flag 0x0004. The flat top is stood on, the 44.6-degree face (normal z 0.712, 1700 long) is slid at 42.1 units per
+// 30 Hz frame (35..45 over 29..51 degrees), the run-out (normal z 0.919 / 0.953: flatter than 28 degrees) ends the
+// slide; she cannot run back up it.
+TEST(GameReal, SlopeKrakenRoomSlide) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l1_kraken_room", {{-9026.4f, -208, 2054.7f}, -glm::half_pi<float>()});
+    const auto& s = w.player().state();
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.z, 2054.7f, 0.5f);
+    for (int i = 0; i < 120 && s.state != State::Slide; ++i) w.tick(fixedCamera(w, forward(), -glm::half_pi<float>()));
+    ASSERT_EQ(s.state, State::Slide);
+    EXPECT_LT(s.pos.y, -560);
+    EXPECT_GT(s.pos.y, -760);
+    EXPECT_EQ(s.clip, "slope_transitionto");
+    float fastest = 0;
+    bool loop = false;
+    for (int i = 0; i < 400 && s.state == State::Slide; ++i) {
+        w.tick({});
+        if (s.state != State::Slide) break;
+        fastest = std::max(fastest, glm::length(s.vel));
+        loop |= s.clip == "slope_slidefront";
+        ASSERT_NEAR(s.pos.x, -9026.4f, 5.0f);
+    }
+    EXPECT_TRUE(loop);
+    const float deg = glm::degrees(std::acos(0.712f));
+    EXPECT_NEAR(fastest, (35.0f + 10.0f * (deg - 29.0f) / 22.0f) * 30.0f, 3.0f);
+    EXPECT_EQ(s.state, State::Land);
+    EXPECT_EQ(s.clip, "slope_slide_stumble_off");
+    EXPECT_LT(s.pos.y, -2360);
+    EXPECT_GT(s.pos.y, -2520);
+    for (int i = 0; i < 240 && s.state != State::Idle; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Idle);
+    EXPECT_EQ(w.health().value(), w.health().max());
+    // back up: the run takes her onto the slide face, which throws her back down
+    float top = s.pos.z;
+    bool slid = false;
+    for (int i = 0; i < 300; ++i) {
+        w.tick(fixedCamera(w, forward(), glm::half_pi<float>()));
+        top = std::max(top, s.pos.z);
+        slid |= s.state == State::Slide;
+    }
+    EXPECT_TRUE(slid);
+    EXPECT_LT(top, 420);
+}
+
+// l7_yggdrasil_hall01, the slope before the eitr pit (Yggdrasil: slide down and jump at its foot): one 0x0004
+// surface of normal z 0.865 (30.1 degrees). Under the angle rule of 0.7 it was stood on; by the flag she slides it
+// at 35.5 units per frame, and Jump leaves the slide with its horizontal speed.
+TEST(GameReal, SlopeYggdrasilHallSlideAndJump) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l7_yggdrasil_hall01", {{-7953, 305.2f, 1103.4f}, 0});
+    const auto& s = w.player().state();
+    w.tick({});
+    ASSERT_EQ(s.state, State::Slide);
+    for (int i = 0; i < 600 && s.pos.x < -6400; ++i) {
+        w.tick({});
+        ASSERT_EQ(s.state, State::Slide) << i;
+    }
+    const float deg = glm::degrees(std::acos(0.865f));
+    EXPECT_NEAR(glm::length(s.vel), (35.0f + 10.0f * (deg - 29.0f) / 22.0f) * 30.0f, 6.0f);
+    const float vx = s.vel.x;
+    Actions j;
+    j.jump = true;
+    w.tick(j);
+    ASSERT_EQ(s.state, State::Jump);
+    EXPECT_NEAR(s.vel.x, vx, 30.0f);
+    for (int i = 0; i < 240 && (s.state == State::Jump || s.state == State::Fall); ++i) w.tick({});
+    EXPECT_GT(s.pos.x, -6003 + 200); // past the foot of the slope (x -6003), 630 from the take-off
+    EXPECT_NEAR(s.pos.z, 0, 1.0f);
+}
+
+// A slide that runs off an edge carrying a ledge ends hanging from it (chart T1713 -> S534, the safety drop's attach
+// states; Wine, l2_junglehub: off the end of a 45-degree 0x0004 face she turned and hung): no fall in between.
+TEST(Game, SlopeSlideOffEndCatchesLedge) {
+    const float nz = 0.75f, run = 1500, drop = run * std::sqrt(1 - nz * nz) / nz;
+    CollisionMesh m;
+    addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+    addFloor(m, -2000, -1000, 3000, 1000, -3000);
+    const size_t first = m.faces.size();
+    addQuad(m, {-run, -1000, drop}, {0, -1000, 0}, {0, 1000, 0}, {-run, 1000, drop});
+    for (size_t f = first; f < m.faces.size(); ++f) m.faces[f].clientFlags = 0x0004;
+    m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+    auto w = makeWorld(std::move(m), {-800, 50, 800 * std::sqrt(1 - nz * nz) / nz});
+    const auto& s = w->player().state();
+    std::set<State> seen;
+    for (int i = 0; i < 600 && s.state != State::Hang; ++i) {
+        w->tick({});
+        seen.insert(s.state);
+    }
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+    EXPECT_TRUE(seen.count(State::Slide));
+    EXPECT_TRUE(seen.count(State::DropToHang));
+    EXPECT_FALSE(seen.count(State::Fall));
+    const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+    EXPECT_NEAR(hands.x, 0, 1e-2);
+    EXPECT_NEAR(hands.z, 0, 1e-2);
+    EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4) << "facing the wall";
+}
+
 // ---- contact hazards (src/game/Hazards.cpp) ---------------------------------------------------------------
 namespace {
 game::HazardShape hazardBox(vec3 at, vec3 size) {
@@ -9235,10 +9501,14 @@ TEST(GameReal, FlameJetBurnsLaraOncePerWindow) {
     std::vector<std::pair<uint64_t, float>> hits; // tick, health after
     uint64_t died = 0;
     std::string clip;
-    for (int i = 0; i < 600 && !died; ++i) {
+    // The jet's travel is watched for the whole 10 s: she is burned within the first second (the rubble before the
+    // first gargoyle is flagged 0x0100, stood on however steep: she runs straight up it into the jet; docs/GAMEPLAY.md
+    // "Slopes and slides") and dies of the second burn before the jet has gone back in.
+    for (int i = 0; i < 600; ++i) {
         w.tick(run);
         for (const auto& s : w.hazards())
             if (s.uid == 5870) lo = std::min(lo, s.world[3].z), hi = std::max(hi, s.world[3].z);
+        if (died) continue;
         for (const auto& hit : w.hazardHits()) {
             EXPECT_EQ(h.name(hit.uid), "ca_ei_flame_trap");
             EXPECT_EQ(hit.damage, 800);
