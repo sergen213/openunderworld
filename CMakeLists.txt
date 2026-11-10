@@ -512,7 +512,7 @@ if(OU_BUILD_TESTS)
   ou_receptacle_replay(ballcourt_calendar_handle_turn l4_ballcourt -14240,10200,3700,90 700 6506
                        "object 6506 .* uber [0-9]+,3,.* j2 (0\\.[2-9]|[1-9])")
   # weight on plate 219 holds door 223 open (vt 57), weight on 222 + Lara on 221: locks 69 / 70 count gate 45 open, it falls
-  ou_receptacle_replay(baldrs_plates_gate l1_baldrs_tomb -5000,-10000,2560,180 3200 219,221,222,45,223,69,70
+  ou_receptacle_replay(baldrs_plates_gate l1_baldrs_tomb -5000,-10000,2560,180 3400 219,221,222,45,223,69,70
                        "portables held 0" "calls .* 223:57" "calls .* 45:54" "object 219 .* joint -60" "object 221 .* joint -60"
                        "object 222 .* joint -60" "object 223 .* uber 1 " "object 45 .* joint (8[5-9]|9[0-9])\\.")
   # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,

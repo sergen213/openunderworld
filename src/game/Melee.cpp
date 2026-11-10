@@ -19,8 +19,9 @@
 //   hosted_throw, event 0x53 -> message 0x1AF -> 0x6B53A0), Interact with the melee target swings it (S1311, slot 10 =
 //   hosted_melee / hosted_melee_front, record 100, class 2). A weight (data +0x18) walks with the
 //   portable_encumbered_* clips (S1316..S1322).
-// [I] The keys of inputs 101 / 102: Crouch and Grenade (the Control Configuration names action 7 "Grenade (throw held
-// object)"; https://tombraiders.net/stella/walks/controls/TR8controls.html).
+// [O] The keys of inputs 101 / 102: Crouch and Grenade. generalbank.drm's action map (DTP 47, GlobalInfo +0x1C, tru.exe
+// 0x480BC0) binds action 101 to its control 1 (virtual button 2, Crouch/Roll) and 102 to control 5 (button 7, which the
+// Control Configuration names "Grenade (throw held object)"); 32 and 99 to control 2 (button 0, Interact).
 #include "game/Game.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
