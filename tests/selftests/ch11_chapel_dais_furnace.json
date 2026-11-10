@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "ch11_chapel_dais_furnace",
+  "chapter": "11 Protected by the Dead: the chapel's dais pad lights the furnace and opens both side gates under Lara's weight (docs/matrix/11_protected_by_the_dead.md C11-16)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/10manor.html",
+  "note": "l3_chapel from checkpoint 4737 beside the dais. Stepping onto pressure plate 4834 (ma_rb_press_plate, sunk 50) lights fire 4818 (graph 1) and starts both round gates 4830 / 4831 opening (uber section 0 leaves 4); stepping off puts the fire out and shuts them again (section 0 back to 4) [O scripts: 4834 vt 54 / 55, 4818 vt 55 / 56, 4830 / 4831 vt 55 / 56]. Keeping it lit with the two stone blocks, the switches and the door are not played here: the chapel's spiders (38 and 7 generators) kill an unarmed walk across the floor within 40 s, the fight comes first.",
+  "level": "l3_chapel",
+  "spawn": [-2438, 3417, -6953, 180],
+  "steps": [
+    {"step": "onto_the_pad", "plan": ["go -2772 1927 30", "wait 2"], "duration": 30,
+     "expect": [{"probe": "object.4834.joint", "max": -40, "note": "the pad is down under her"},
+                {"calls": ["4834:54", "4818:55", "4830:55", "4831:55"]},
+                {"probe": "object.4818.graph", "eq": 1, "note": "the furnace burns"},
+                {"probe": "object.4830.uber.0", "ne": 4},
+                {"probe": "object.4831.uber.0", "ne": 4},
+                {"probe": "player.dead", "eq": false}]},
+    {"step": "off_the_pad", "plan": ["go -3600 1927 60", "wait 3"], "duration": 30,
+     "expect": [{"probe": "object.4834.joint", "near": 0, "tol": 2},
+                {"calls": ["4834:55", "4818:56", "4830:56", "4831:56"]},
+                {"probe": "object.4818.graph", "in": [0, 2], "note": "going out / out"},
+                {"probe": "object.4830.uber.0", "eq": 4},
+                {"probe": "object.4831.uber.0", "eq": 4},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

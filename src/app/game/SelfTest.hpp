@@ -103,6 +103,7 @@ public:
         std::string level;                         // unit name ("l4_pool"), empty with chapter / load
         std::optional<std::array<float, 4>> spawn; // x, y, z (unit frame), yaw degrees
         int chapter = -1;
+        int levelChapter = -1;   // "level_chapter": the chapter a `level` entry plays in (a unit of two chapters: the manor)
         std::string load;        // save slot
         bool cinematics = false; // "cinematics": true plays script cutscenes (default: skipped, their events still run)
     };

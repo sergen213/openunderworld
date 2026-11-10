@@ -1,0 +1,87 @@
+{
+ "version": 1,
+ "name": "ch12_trailstart_lever_gate",
+ "chapter": "12 The Unnamed Days: the small temple's lever with the grapple ring (docs/matrix/12_unnamed_days.md C12-07, C12-08)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/unnamed2.html",
+ "note": "KNOWN GAP (fails at `let_go`). Lever 6695 (ca_ei_lever_grapple_post) from the porch under it (the spot of tests/replays/grapple_pull.txt; the original throws from the window sill above the gate: the climb to it, C12-06, is not played). Ours: the ring is a mounted pull target; Interact held draws the post out on its uber joint (0 -> 1264 within 6 s, section 0: 2 -> 1, section 1: 0 -> 1, script vt 55) and she lets go standing; the joint then stays out, so the gate it drives stays up. The original: she hangs on the rope out of the window, her weight holds the lever down and the gate up, and it falls again once the rope is unloaded (the timed swing into the doorway, C12-08). Missing: the hang mode on this target (weight on the rope instead of a pull), the joint's return when unloaded, the gate object's uid and its fall time [U].",
+ "level": "l4_trailstart",
+ "spawn": [
+  61161,
+  -42611,
+  4948,
+  -11
+ ],
+ "steps": [
+  {
+   "step": "look_up",
+   "input": [
+    "0.1 looky 0.9",
+    "1.1 looky 0"
+   ],
+   "duration": 1.2,
+   "expect": [
+    {
+     "probe": "grapple.offered",
+     "eq": 6695
+    },
+    {
+     "probe": "object.6695.uberjoint.0",
+     "near": 0,
+     "tol": 1
+    }
+   ]
+  },
+  {
+   "step": "throw",
+   "input": [
+    "0 grapple 1",
+    "0.1 grapple 0"
+   ],
+   "duration": 1.3,
+   "expect": [
+    {
+     "probe": "grapple.target",
+     "eq": 6695
+    },
+    {
+     "probe": "grapple.kind",
+     "eq": "mounted"
+    }
+   ]
+  },
+  {
+   "step": "load_the_rope",
+   "input": [
+    "0 interact 1"
+   ],
+   "duration": 4,
+   "expect": [
+    {
+     "calls": [
+      "6695:55"
+     ]
+    },
+    {
+     "probe": "object.6695.uberjoint.0",
+     "min": 300,
+     "note": "the lever comes down under the load"
+    }
+   ]
+  },
+  {
+   "step": "let_go",
+   "duration": 8,
+   "expect": [
+    {
+     "probe": "grapple.attached",
+     "eq": false
+    },
+    {
+     "probe": "object.6695.uberjoint.0",
+     "max": 50,
+     "note": "the original: unloaded, the lever rises and the gate falls again"
+    }
+   ]
+  }
+ ]
+}

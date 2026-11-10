@@ -340,7 +340,7 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
     t.file_ = std::move(file);
     const std::string top = "scenario";
     if (!j.is_object()) bad(top, "the scenario is an object");
-    static const std::set<std::string> kTop = {"version", "name", "chapter", "walkthrough", "level", "spawn", "start_chapter", "load",
+    static const std::set<std::string> kTop = {"version", "name", "chapter", "walkthrough", "level", "spawn", "start_chapter", "level_chapter", "load",
                                                "cinematics", "stop_on_fail", "fixtures", "steps", "note"};
     for (const auto& [key, value] : j.items())
         if (!kTop.contains(key)) bad(top, "unknown key '" + key + "'");
@@ -359,6 +359,12 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
         t.entry_.chapter = j["start_chapter"].get<int>();
         if (t.entry_.chapter < 0 || t.entry_.chapter >= int(game::kChapters.size()))
             bad(top, "'start_chapter' is 0.." + std::to_string(game::kChapters.size() - 1));
+    }
+    if (j.contains("level_chapter")) {
+        if (!j["level_chapter"].is_number_integer() || t.entry_.level.empty()) bad(top, "'level_chapter' wants a chapter index and goes with 'level'");
+        t.entry_.levelChapter = j["level_chapter"].get<int>();
+        if (t.entry_.levelChapter < 0 || t.entry_.levelChapter >= int(game::kChapters.size()))
+            bad(top, "'level_chapter' is 0.." + std::to_string(game::kChapters.size() - 1));
     }
     if (j.contains("spawn")) {
         const auto& s = j["spawn"];
@@ -429,6 +435,7 @@ bool SelfTest::probeKnown(std::string_view name) {
     const std::string_view f = p[2];
     if (p[0] == "object") {
         if (p.size() == 3) return f == "exists" || f == "name" || f == "graph" || f == "joint" || f == "hidden" || f == "dead" || f == "in";
+        if (p.size() == 5) return f == "uberslide" && integer(p[3]) && axisName(p[4]);
         return p.size() == 4 && ((f == "pos" || f == "body") ? axisName(p[3]) : (f == "uber" || f == "uberjoint") && integer(p[3]));
     }
     if (p[0] == "enemy") {
@@ -693,6 +700,10 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
             const auto* jt = w.uberJoint(*id, *n);
             return jt ? num(jt->x) : Value();
         }
+        if (f == "uberslide" && n && p.size() == 5) { // a three-axis joint (the Thor pillars): its body's travel
+            const auto* jt = w.uberJoint3(*id, *n);
+            return jt ? component(jt->x, p[4]) : Value();
+        }
     }
     return {};
 }
@@ -922,6 +933,7 @@ json SelfTest::report() const {
     if (!entry_.level.empty()) entry["level"] = entry_.level;
     if (entry_.spawn) entry["spawn"] = *entry_.spawn;
     if (entry_.chapter >= 0) entry["start_chapter"] = entry_.chapter;
+    if (entry_.levelChapter >= 0) entry["level_chapter"] = entry_.levelChapter;
     if (!entry_.load.empty()) entry["load"] = entry_.load;
     char hash[24];
     std::snprintf(hash, sizeof hash, "%016llx", (unsigned long long)simHash_);

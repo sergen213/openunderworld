@@ -110,9 +110,9 @@
         },
         {
           "probe": "step.horizontal",
-          "min": 950,
-          "max": 1150,
-          "note": "0.9 s from rest, ng_run_start included"
+          "near": 940,
+          "tol": 25,
+          "note": "0.9 s from rest, ng_run_start from its frame 2 (request 716: start 6 - blend 4). tru.exe under Wine: 770 units 0.8 s and ~898 0.9 s after the key, her run state beginning 37..41 ms after it: ~945 [O Wine, docs/REFERENCE_COMPARISON.md M94]"
         }
       ]
     },

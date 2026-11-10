@@ -452,6 +452,8 @@ public:
     // Lara's pull strength (player +0x1240, 1 at birth; larabase 35 = 0x79A270 -> 0x6EE920): scales the speed and the
     // impulse of her push / pull (0x74AC00, 0x73F390; World::pushUberHandle).
     float pullStrength() const { return pullStrength_; }
+    // larabase 19 / 20: the "gauntlet charged" flag (tru.exe global byte 0xECFC88, shader constant 6 of the gear; saved).
+    bool gauntletCharged() const { return gauntletCharged_; }
     // Receptacles: objects whose anim graph takes the insert stimulus 0x20; null otherwise.
     std::shared_ptr<const Object::GraphSet> receptacleGraph(const std::string& name);
     const std::string* objectName(uint16_t id) const { const auto n = objectNames_.find(id); return n == objectNames_.end() ? nullptr : &n->second; }
@@ -657,6 +659,9 @@ private:
     // Resident units (UnitRef::resident) whose unit script waits for the unit itself to load before its startup runs
     // (saved as "deferredUnits").
     std::set<std::string> deferredUnits_;
+    // Units present only as residents (setUnits): tru.exe has not loaded them, so their volumes, planes, switches and
+    // blocks do not see the player (their cinematic objects are still found by uid).
+    std::set<std::string> residentOnly_;
     void startUnitScript(const std::string& unit);
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;
@@ -669,6 +674,7 @@ private:
     bool experienceSet_ = false; // a script set one this tick
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
     std::set<int32_t> cinematicsPlayed_;  // cinematic objects whose stream has ended (cinematic 9 / 10 wait for it; saved)
+    bool gauntletCharged_ = false;        // larabase 19 (saved with the player)
     float pullStrength_ = 1;              // larabase 35 (not saved: a load lets go of the grip)
     uint32_t unitEffect_ = 0;
     std::set<int32_t> grappleOff_; // unit 13 / 12: grapple targets taken from / given back to Lara; saved

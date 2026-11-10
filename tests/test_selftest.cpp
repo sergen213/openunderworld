@@ -191,6 +191,17 @@ TEST(SelfTest, ScenarioChecks) {
         json key = scenario(good);
         key["levle"] = "x";
         rejects(key, "unknown key");
+        json manor = scenario(good); // a unit of two chapters played in the one named
+        manor["level"] = "l3_main_hall", manor["level_chapter"] = 0;
+        const SelfTest prologue = SelfTest::parse(manor);
+        EXPECT_EQ(prologue.entry().levelChapter, 0);
+        EXPECT_EQ(prologue.entry().chapter, -1) << "not a chapter start";
+        EXPECT_EQ(prologue.report().at("entry").at("level_chapter"), 0);
+        manor["level_chapter"] = 99;
+        rejects(manor, "'level_chapter' is 0..");
+        json alone = scenario(good);
+        alone.erase("level"), alone["start_chapter"] = 0, alone["level_chapter"] = 0;
+        rejects(alone, "goes with 'level'");
     }
     // probe names: fixed ones, ids, measurements
     for (const char* p : {"player.state", "player.pos.z", "bike.wheels", "object.6505.joint", "object.6505.uber.2", "object.6505.uberjoint.0",

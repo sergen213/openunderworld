@@ -214,10 +214,15 @@
   {
    "step": "turn_onto_the_second_link",
    "input": [
-    "0 lookx -1",
-    "2.1 lookx 0"
+    "0 lookx -1"
    ],
-   "duration": 2.4,
+   "duration": 4,
+   "note": "the look stick held until the camera is on the link: where the walk before it leaves her heading depends on the run's start by a few degrees",
+   "until": {
+    "probe": "camera.yaw",
+    "near": -159.5,
+    "tol": 0.8
+   },
    "expect": [
     {
      "probe": "combat.manual_aim",
@@ -237,6 +242,7 @@
   {
    "step": "shoot_the_second_link",
    "input": [
+    "0 lookx 0",
     "0 fire 1"
    ],
    "duration": 6,

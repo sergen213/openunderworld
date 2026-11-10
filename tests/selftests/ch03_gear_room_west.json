@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "ch03_gear_room_west",
+  "chapter": "03 Niflheim: the kraken hall's gear room with the support pillar (docs/matrix/03_niflheim.md C03-11, C03-14)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/02niflheim.html",
+  "note": "l1_kraken_room from checkpoint 58 on the switch ledge of the west gear room (gear 32 ms_ani_tentacle_gearr). Switch 57 is tried first: used, but the gears are jammed (32 vt 55, the kraken's pain reaction 33). Down in the lower hall the ring on the support pillar (gear 32's grapple feature) is offered, thrown at and pulled with Interact: the column leaves its watched range and falls (uber section 12 -> 1), the mechanism is free (section 0 -> 2) [O data, ProgressionReal.KrakenGearsPulledByTheGrapple]. She gets down by running off the ledge (a 2055 fall, 599 damage): the walkthrough's way into the lower hall is the slope slide (self-test slide, GameReal.SlopeKrakenRoomSlide). Not played: the way back up to the switch (slope, pole, handholds: C03-12 / C03-13) and the switch's second use.",
+  "level": "l1_kraken_room",
+  "spawn": [-11630, -13481, 2100, 90],
+  "steps": [
+    {"step": "jammed_switch", "plan": ["go -12974 -12900 60", "face 90", "press", "wait 6"], "duration": 60,
+     "expect": [{"visits": ["use"]},
+                {"probe": "step.events", "has": ["use:57>57"]},
+                {"calls": ["32:55"], "note": "the switch's command reaches the jammed gears: they only try"},
+                {"probe": "object.32.uber.12", "eq": 0, "note": "the column stands"}]},
+    {"step": "down_to_the_lower_hall", "plan": ["go -10000 -11500 60", "face -157"], "duration": 60,
+     "expect": [{"probe": "player.pos.z", "near": 0, "tol": 10},
+                {"probe": "step.health_lost", "max": 620, "note": "the 2055 fall off the ledge (not the walkthrough's way down)"},
+                {"probe": "grapple.offered", "eq": 32, "note": "the ring on the pillar"}]},
+    {"step": "throw", "input": ["0.2 grapple 1", "0.3 grapple 0"], "duration": 3, "until": {"probe": "grapple.pulling", "eq": true},
+     "expect": [{"probe": "grapple.target", "eq": 32},
+                {"probe": "grapple.kind", "eq": "mounted"},
+                {"probe": "object.32.uber.12", "eq": 0, "note": "roped only: nothing moves"}]},
+    {"step": "pull", "input": ["0 interact 1"], "duration": 15, "until": {"probe": "grapple.attached", "eq": false},
+     "expect": [{"probe": "grapple.target", "eq": 0, "note": "the pillar is gone from under the ring: she lets go"}]},
+    {"step": "column_falls", "duration": 10,
+     "expect": [{"probe": "object.32.uber.12", "eq": 1, "note": "the column fell on the tentacle"},
+                {"probe": "object.32.uber.0", "eq": 2, "note": "the mechanism is free"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

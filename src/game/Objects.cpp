@@ -230,6 +230,24 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                     joint->speed = e.at(6), joint->force = e.at(7), joint->motor = e.at(8);
                     rt.joints[e.at(0).get<int32_t>()] = *joint;
                 }
+            // Three-axis joints {index, x, v, lo, hi, limited, speed, force, motor (3 each), friction}. Saves before them
+            // (up to 0.44) never simulated one: each stands where its record creates it, at rest.
+            if (const auto j3 = j.find("joints3"); j3 != j.end()) {
+                for (const auto& e : *j3)
+                    if (auto joint = makeUberJoint3(o.uid, e.at(0).get<int32_t>())) {
+                        for (size_t k = 0; k < 3; ++k) {
+                            joint->x[int(k)] = e.at(1).at(k), joint->v[int(k)] = e.at(2).at(k), joint->lo[k] = e.at(3).at(k), joint->hi[k] = e.at(4).at(k);
+                            joint->limited[k] = e.at(5).at(k), joint->speed[k] = e.at(6).at(k), joint->force[k] = e.at(7).at(k), joint->motor[k] = e.at(8).at(k);
+                        }
+                        joint->friction = e.at(9);
+                        rt.joints3[e.at(0).get<int32_t>()] = *joint;
+                    }
+            } else {
+                for (size_t k = 0; k < it->second->joints.size(); ++k)
+                    if (const auto& jt = it->second->joints[k]; jt.type == 7 && jt.bodyB >= 0 && size_t(jt.bodyB) < rt.sections.size() &&
+                                                                 !rt.sections[size_t(jt.bodyB)].removed)
+                        if (auto joint = makeUberJoint3(o.uid, int32_t(k))) rt.joints3[int32_t(k)] = *joint;
+            }
             for (const auto& e : j.value("links", nlohmann::json::array())) rt.links.insert(e.get<int32_t>());
             for (const auto& e : j.value("watches", nlohmann::json::array()))
                 rt.watches.push_back({e.at(0).get<int32_t>(), e.at(1).get<int32_t>(), e.at(2).get<int32_t>(),
@@ -264,6 +282,14 @@ nlohmann::json World::serializeObjects() const {
             joints.push_back({index, jt.x, jt.v, jt.lo, jt.hi, jt.limited, jt.speed, jt.force, jt.motor});
         for (const auto& w : rt.watches) watches.push_back({w.section, w.joint, w.range, w.mode, w.inside});
         e["joints"] = std::move(joints), e["links"] = rt.links, e["watches"] = std::move(watches);
+        // only objects with a type-7 joint record carry the key (other objects' saves are unchanged)
+        if (std::ranges::any_of(uberData_.at(uid)->joints, [](const formats::UberJoint& j) { return j.type == 7; })) {
+            nlohmann::json joints3 = nlohmann::json::array();
+            for (const auto& [index, jt] : rt.joints3)
+                joints3.push_back({index, std::array{jt.x.x, jt.x.y, jt.x.z}, std::array{jt.v.x, jt.v.y, jt.v.z}, std::to_array(jt.lo), std::to_array(jt.hi),
+                                   std::to_array(jt.limited), std::to_array(jt.speed), std::to_array(jt.force), std::to_array(jt.motor), jt.friction});
+            e["joints3"] = std::move(joints3);
+        }
     }
     // The physics scene (src/physics Scene::save, hex): a load continues the simulation bit for bit. Older saves lack it.
     std::string physics;
@@ -310,6 +336,11 @@ void World::restoreObjects(const nlohmann::json& j) {
                     (void)jt.at(5).get<bool>(), (void)jt.at(8).get<bool>();
                 }
                 (void)e.value("links", nlohmann::json::array()).get<std::vector<int32_t>>();
+                for (const auto& jt : e.value("joints3", nlohmann::json::array())) {
+                    (void)jt.at(0).get<int32_t>(), (void)jt.at(9).get<float>();
+                    for (int k : {1, 2, 3, 4, 6, 7}) (void)jt.at(size_t(k)).get<std::array<float, 3>>();
+                    (void)jt.at(5).get<std::array<bool, 3>>(), (void)jt.at(8).get<std::array<bool, 3>>();
+                }
                 for (const auto& w : e.value("watches", nlohmann::json::array())) {
                     for (int k : {0, 1, 2}) (void)w.at(k).get<int32_t>();
                     (void)w.at(3).get<uint32_t>(), (void)w.at(4).get<bool>();
@@ -363,6 +394,7 @@ void World::restoreObjects(const nlohmann::json& j) {
     colliders_.clear(), col_.dynamics.clear();
     physics_.clearHinges();
     syncedObjects_ = ~size_t(0); // prepare the loaded uber objects on the next tick
+    restoredColliders_ = true;   // ... and pose their colliders as the saved world had them
 }
 
 bool World::uberHolds(int32_t uid, const std::vector<formats::UberCondition>& conditions) const {
@@ -444,9 +476,15 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
         uberPlay(uid, section, a.value & 0xFFFF, a.value >> 16, a.type == 3);
         break;
     case 9: // create (0x4D8000; an existing joint stays as it is); links need both joints (0x4D7ED0)
-        if (a.joint < 0 || rt.joints.contains(a.joint) || rt.links.contains(a.joint)) break;
+        if (a.joint < 0 || rt.joints.contains(a.joint) || rt.links.contains(a.joint) || rt.joints3.contains(a.joint)) break;
         if (const auto& j = data.joints[size_t(a.joint)]; j.type == 11) {
             if (rt.joints.contains(j.link1) && rt.joints.contains(j.link2)) rt.links.insert(a.joint);
+        } else if (j.type == 7) { // three axes (engine joint 10, 0x4E0F40)
+            if (auto made = makeUberJoint3(uid, a.joint)) {
+                rt.joints3[a.joint] = *made;
+                if (const int32_t body = j.bodyB; body >= 0 && size_t(body) < rt.sections.size())
+                    rt.sections[size_t(body)].held = true, rt.sections[size_t(body)].freed = false;
+            }
         } else if (auto made = makeUberJoint(uid, a.joint)) {
             rt.joints[a.joint] = *made;
             if (const int32_t body = j.bodyB; body >= 0 && size_t(body) < rt.sections.size())
@@ -458,14 +496,24 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
         const int32_t body = joint != rt.joints.end() && a.joint >= 0 ? data.joints[size_t(a.joint)].bodyB : -1;
         const std::optional<glm::mat4> pose = body >= 0 ? uberSectionBody(uid, body) : std::nullopt;
         const vec3 vel = body >= 0 && !joint->second.hinge ? joint->second.axis * (joint->second.v * 30.0f) : vec3(0); // v: per 30 Hz frame
-        rt.joints.erase(a.joint), rt.links.erase(a.joint);
+        rt.joints.erase(a.joint), rt.links.erase(a.joint), rt.joints3.erase(a.joint);
         if (pose) uberFreeSection(uid, body, *pose, vel);
         break;
     }
     case 12: // limit (0x4D6310 -> 0x4D4510)
+        if (const auto j3 = rt.joints3.find(a.joint); j3 != rt.joints3.end() && p && p->kind == 7) { // 0x4D2960
+            for (size_t k = 0; k < 3; ++k)
+                j3->second.lo[k] = p->v[2 * k], j3->second.hi[k] = p->v[2 * k + 1], j3->second.limited[k] = p->bits >> k & 1;
+            break;
+        }
         if (joint != rt.joints.end() && p) joint->second.lo = p->a * unit, joint->second.hi = p->b * unit, joint->second.limited = p->flag;
         break;
     case 13: // motor (0x4D6350 -> 0x4D2B00 / 0x4D29F0): speed per second -> per frame
+        if (const auto j3 = rt.joints3.find(a.joint); j3 != rt.joints3.end() && p && p->kind == 7) { // 0x4D2E60
+            for (size_t k = 0; k < 3; ++k)
+                j3->second.speed[k] = p->v[2 * k] / 30.0f, j3->second.force[k] = p->v[2 * k + 1], j3->second.motor[k] = p->bits >> k & 1;
+            break;
+        }
         if (joint != rt.joints.end() && p) joint->second.speed = p->a * unit / 30.0f, joint->second.force = p->b, joint->second.motor = p->flag;
         break;
     case 0x14: // watch (0x4D7380 -> 0x49A5C0); ponytail: a repeated registration is kept once
@@ -478,6 +526,11 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
             rt.watches.push_back({int32_t(section), a.joint, a.param, a.value, true});
         break;
     }
+    case 11: // 0x4D86A0 case 0xB: the composite's vt 1 with the action's word [I: its command dispatch 0x4D77A0, the word a
+             // command index]: ar_ei_thor_valgrind_door's section 2 (the lock, opened by the script's command 1), once its
+             // clip ended in state 1, sends command 0, which gives the two leaves their push / pull records (state 1).
+        sendUberCommand(uid, a.value);
+        break;
     case 5: // instance +0x18 |= 0x20000000: collision callbacks skip it (0x48D590, 0x697970) [O]; ours drops its collider
         rt.intangible = true, syncedObjects_ = ~size_t(0);
         break;
@@ -582,6 +635,60 @@ std::optional<physics::Joint1> World::makeUberJoint(int32_t uid, int32_t index) 
     return out;
 }
 
+// A type-7 joint record's body (tru.exe engine joint 10, 0x4E0F40: body B keeps its rotation and translates along the
+// world's axes, each with its limit and motor): the collision and mass of section bodyB's model, with those of the
+// sections hinged or fixed to it ([I] as one body: ma_pu_thor_pillar's joint holds section 1, a 60 kg sphere without a
+// solid primitive, and the pillar proper, section 0 with the collision, turns on a hinge on it; the hinge's turn does
+// not turn the collision in ours). At rest where the object stands.
+std::optional<physics::Joint3> World::makeUberJoint3(int32_t uid, int32_t index) {
+    const auto* o = script_.find(uid);
+    const auto data = uberData_.find(uid);
+    if (!o || data == uberData_.end() || !data->second || index < 0 || size_t(index) >= data->second->joints.size()) return std::nullopt;
+    const auto& u = *data->second;
+    const auto& j = u.joints[size_t(index)];
+    if (j.type != 7 || j.bodyB < 0 || j.bodyA >= 0) return std::nullopt; // [U] on a moving body A: none in the data
+    // Push blocks (script::Kind::Block: ca_pu_block_a, ma_rb_pushblock_training, ...) carry the same joint, but src/script
+    // moves them (Object::offset) on its own grid: no body here until that mover rides the joint.
+    if (o->kind == script::Kind::Block) return std::nullopt;
+    physics::Joint3 out;
+    const auto solid = [](const physics::ObjectPhysics* p) { return p && std::ranges::any_of(p->prims, &physics::Prim::solid); };
+    std::vector<int32_t> sections{j.bodyB};
+    for (const auto& r : u.joints)
+        if ((r.type == 0 || r.type == 8) && r.bodyA == j.bodyB && r.bodyB >= 0) sections.push_back(r.bodyB);
+    for (const int32_t k : sections) {
+        const auto* p = uberSectionPhysics(*o, size_t(k));
+        if (!p) continue;
+        out.mass += physics::massProps(*p).mass;
+        if (!solid(out.physics) && (solid(p) || !out.physics)) out.physics = p;
+    }
+    if (!out.physics) return std::nullopt;
+    out.model = introModel(*o);
+    for (size_t k = 0; k < 3; ++k) {
+        out.lo[k] = j.lo3[k], out.hi[k] = j.hi3[k], out.limited[k] = j.flags3 >> k & 1;
+        out.speed[k] = j.speed3[k] / 30.0f, out.force[k] = j.force3[k], out.motor[k] = j.flags3 >> (3 + k) & 1;
+    }
+    out.friction = j.friction;
+    return out;
+}
+
+// The three-axis joint uber section `section` rides: the one whose body B it is, else (following hinges and fixed
+// joints from their body B to body A) the one holding the section it hangs on; -1 none.
+int32_t World::uberSectionJoint3(int32_t uid, int32_t section) const {
+    const auto rt = uberRuntime_.find(uid);
+    const auto data = uberData_.find(uid);
+    if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second || rt->second.joints3.empty()) return -1;
+    const auto& joints = data->second->joints;
+    for (int depth = 0; depth < 8 && section >= 0; ++depth) {
+        for (const auto& [index, j] : rt->second.joints3)
+            if (joints[size_t(index)].bodyB == section) return index;
+        int32_t next = -1;
+        for (const auto& j : joints)
+            if ((j.type == 0 || j.type == 8) && j.bodyB == section) next = j.bodyA;
+        section = next;
+    }
+    return -1;
+}
+
 // The simulated joint whose body is the section using model 0 (the object's collision), -1 none. Not while the object
 // moves as a carried / free loose body (its script offset then poses it), or is a pressure plate:
 // the l4_traprooms empty thrones' prismatic uber joint 0 is the `multibody` joint their scripts watch (one Havok
@@ -610,8 +717,14 @@ glm::mat4 jointMotion(const physics::Joint1& j) {
 // World motion of model 0 riding its joint (tomb doors, levers, pushed towers).
 std::optional<glm::mat4> World::uberJointPose(int32_t uid) const {
     const int32_t index = uberModelJoint(uid);
-    if (index < 0) return std::nullopt;
-    return jointMotion(uberRuntime_.at(uid).joints.at(index));
+    int32_t slide = -1; // ... and / or the three-axis joint under it (the Thor pillars)
+    if (const auto data = uberData_.find(uid); data != uberData_.end() && data->second)
+        for (size_t k = 0; k < data->second->sections.size(); ++k)
+            if (data->second->sections[k].model == 0) { slide = uberSectionJoint3(uid, int32_t(k)); break; }
+    if (index < 0 && slide < 0) return std::nullopt;
+    glm::mat4 m = index >= 0 ? jointMotion(uberRuntime_.at(uid).joints.at(index)) : glm::mat4(1);
+    if (slide >= 0) m = glm::translate(glm::mat4(1), uberRuntime_.at(uid).joints3.at(slide).x) * m;
+    return m;
 }
 
 // The last joint of section `section` was removed with the section at model-space motion `pose`: a section other than
@@ -658,11 +771,17 @@ std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bo
         const auto& sec = rt->second.sections[size_t(section)]; // a freed section: where its loose body is
         return glm::inverse(introModel(*o)) * physics_.loose(sectionId(uid, size_t(section))).value_or(sec.freedAt);
     }
+    const int32_t slide = uberSectionJoint3(uid, section); // the three-axis joint it rides, itself or through its hinge
+    const glm::mat4 slid = slide >= 0 ? glm::translate(glm::mat4(1), rt->second.joints3.at(slide).x) : glm::mat4(1);
     for (const auto& [index, j] : rt->second.joints)
         if (data->second->joints[size_t(index)].bodyB == section) {
             const glm::mat4 intro = introModel(*o);
-            return glm::inverse(intro) * jointMotion(j) * intro;
+            return glm::inverse(intro) * slid * jointMotion(j) * intro;
         }
+    if (slide >= 0) {
+        const glm::mat4 intro = introModel(*o);
+        return glm::inverse(intro) * slid * intro;
+    }
     return std::nullopt;
 }
 
@@ -734,7 +853,7 @@ void World::useSwitchClip(const script::Object& o) {
 // the push-block speed, whatever its records, brakes or the gear it asks for.
 void World::pushUberJoints(const Actions& a) {
     constexpr float kSpeed = 120; // a hinge's grip point, units per second (Script.cpp kBlockSpeed)
-    uberGrip_ = vec3(0), uberPush_ = {};
+    uberGrip_ = vec3(0), uberPush_ = {}, uberPush3_ = {};
     pushUberHandle(a, kSpeed);
 }
 
@@ -847,6 +966,29 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     const int32_t index = uberSectionJoint(uberHandle_.uid, uberHandle_.section);
     auto rt = uberRuntime_.find(uberHandle_.uid);
     const vec3 fwd = uberHandle_.face != vec3(0) ? uberHandle_.face : vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
+    // A section on a three-axis joint (the Thor pillars: ca_pu_thor_pillar itself, ma_pu_thor_pillar through its hinge)
+    // goes where she pushes or pulls it [O 0x74AC00: the way picked off her facing, as an impulse-bounded velocity on
+    // the object's body; nothing in the PushPull state knows the joint]: forward / back along her facing, left / right
+    // across it, with pushDrive's speed and impulse for the mass on the joint. A motor braking X / Y (ma_pu_thor_pillar
+    // state 1: 28.445 while its hinge turns) takes its bound off the impulse, as the doors' brake does.
+    if (const int32_t slide = rt != uberRuntime_.end() ? uberSectionJoint3(uberHandle_.uid, uberHandle_.section) : -1; slide >= 0) {
+        auto& j = rt->second.joints3.at(slide);
+        uberGrip_ = glm::normalize(vec3(fwd.x, fwd.y, 0));
+        const int way = pushWay(a.move);
+        const vec3 left(-uberGrip_.y, uberGrip_.x, 0);
+        const vec3 want = way == 1 ? uberGrip_ : way == -1 ? -uberGrip_ : way == 2 ? left : way == -2 ? -left : vec3(0);
+        if (way != 0) {
+            float brake = 0;
+            for (size_t k = 0; k < 2; ++k)
+                if (j.motor[k] && j.speed[k] == 0 && j.force[k] > 0) brake = std::max(brake, j.force[k]);
+            const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), brake);
+            if (d.speed <= 0) return true; // held: her strength does not move it
+            j.push = want * (d.speed / 30.0f), j.pushBound = d.impulse;
+            uberPush3_ = {uberHandle_.uid, slide, j.x};
+            uberMoving_ = way;
+        }
+        return true;
+    }
     if (index < 0 || rt == uberRuntime_.end()) {
         uberGrip_ = fwd; // gripped, nothing moves
         return true;
@@ -902,11 +1044,19 @@ void World::uberWatches(int32_t uid) {
     const auto& data = *uberData_.at(uid);
     for (auto& w : rt.watches) {
         const auto j = rt.joints.find(w.joint);
-        if (j == rt.joints.end() || w.mode > 1) continue;
-        const float unit = j->second.hinge ? glm::degrees(1.0f) : 1.0f;
-        const float value = (w.mode == 0 ? j->second.x : j->second.v * 30.0f) * unit;
+        const auto j3 = rt.joints3.find(w.joint);
+        if ((j == rt.joints.end() && j3 == rt.joints3.end()) || w.mode > 1) continue;
         const auto& range = data.params[size_t(w.range)];
-        const bool in = range.a <= value && value < range.b;
+        bool in = false;
+        if (j3 != rt.joints3.end()) { // a kind-7 range {axis, lo, hi}: that axis of the joint (0x48F1D0 / 0x48F3B0 case 10)
+            if (range.kind != 7 || range.axis < 0 || range.axis > 2) continue;
+            const float value = w.mode == 0 ? j3->second.x[range.axis] : j3->second.v[range.axis] * 30.0f;
+            in = range.v[1] <= value && value < range.v[2];
+        } else {
+            const float unit = j->second.hinge ? glm::degrees(1.0f) : 1.0f;
+            const float value = (w.mode == 0 ? j->second.x : j->second.v * 30.0f) * unit;
+            in = range.a <= value && value < range.b;
+        }
         if (in == w.inside) continue;
         w.inside = in;
         const auto& s = rt.sections[size_t(w.section)];
@@ -1261,6 +1411,13 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
         result = uint32_t(int32_t(std::lround(depth)));
         return true;
     }
+    // 54 (0x777E40): the instance is the vehicle Lara is on (her +0xF00, set by the mount 0x741570, cleared by the
+    // dismount 0x731530). l4_trailstart's temple reveal 6677 asks it of bike 5482 before it sets her down beside it.
+    if (type == "larabase" && function == 54) {
+        const Bike* b = ridden();
+        result = b && b->uid == uid;
+        return true;
+    }
     if (type == "larabase") { // 3 (0x777780): Lara is in volume `uid` (her probe box's volume) with its surface over her feet [O Wine: the goo bed kills, the walkways in the same box do not]
         const auto [m, u] = waterVolume(uid);
         const int w = player_.waterAt(player_.state().pos);
@@ -1593,6 +1750,7 @@ void World::syncObjects() {
     syncedPlates_ = lateColliders(script_);
     syncedAnchors_ = script_.anchors().size();
     poseShotOnly();
+    if (restoredColliders_) poseColliders(); // a restored world: where the saved one had them (until its first tickObjects)
     syncHazards();
 }
 
@@ -1684,6 +1842,26 @@ void World::tickObjects(float dt) {
     tickInserted(dt);
     tickJoints(dt);
     collectJointSounds(dt);
+    poseColliders();
+    tickObjectMarkup();
+    tickHazards();
+    if (const auto rideNow = rideBefore ? objectMarkupFrame(ride) : std::nullopt; rideNow && *rideNow != *rideBefore) {
+        player_.rideFrame(*rideNow * glm::inverse(*rideBefore));
+    } else if (under >= 0) {
+        const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
+        if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
+    }
+    restoredColliders_ = false;
+}
+
+// Every collider where its object is now: uber sections by their joints and clips, jaws, hinge bodies, sliding doors,
+// uber joint poses, clip palettes; then the riders. Also run when a restored world makes its colliders (syncObjects):
+// they are born at their intro frame, and the player's tick and the physics step (the kinematic object solids,
+// Scene::setColliders) come before tickObjects poses them (the first tick syncs twice: the prepared uber objects
+// bring late colliders and anchors). A loaded world's first step otherwise moved every posed solid from its saved
+// place back to its intro frame, unlike the game it was saved from (seen once a three-axis joint body made the
+// solids exist in l4_pool: StreamReal.SaveContinuesBitIdentically, ThreeAxisJointAtRestSaveLoad).
+void World::poseColliders() {
     for (size_t i = 0; i < colliders_.size(); ++i) {
         const auto& c = colliders_[i];
         const auto* o = script_.find(c.uid);
@@ -1738,14 +1916,6 @@ void World::tickObjects(float dt) {
             if (const auto palette = o ? script_.pose(*o) : std::nullopt; palette && !palette->empty())
                 col_.dynamics[i].transform = c.intro * (*palette)[std::min<size_t>(c.segment, palette->size() - 1)] * c.frame;
         }
-    }
-    tickObjectMarkup();
-    tickHazards();
-    if (const auto rideNow = rideBefore ? objectMarkupFrame(ride) : std::nullopt; rideNow && *rideNow != *rideBefore) {
-        player_.rideFrame(*rideNow * glm::inverse(*rideBefore));
-    } else if (under >= 0) {
-        const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
-        if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
     }
 }
 
@@ -2366,6 +2536,11 @@ void World::stepPhysics(float dt) {
                 }
         }
     physics_.setJoints(std::move(joints), std::move(links));
+    std::vector<std::pair<uint64_t, physics::Joint3*>> joints3; // the Thor pillars: bodies with their collision
+    std::set<int32_t> heavyIds;
+    for (auto& [uid, rt] : uberRuntime_)
+        for (auto& [index, j] : rt.joints3) joints3.push_back({key(uid, index), &j}), heavyIds.insert(uid);
+    physics_.setJoints3(std::move(joints3));
     // A body the grapple pulled loose that still rides its uber joint (l1 snake head 751 on its rail, held by a
     // counterweight link): the pull drags its watched prismatic joints downhill at the braced pull speed while they are
     // in range [I] (tru.exe: Lara's rope pulls the Havok body); leaving the range, its states drop the link, then the
@@ -2409,7 +2584,7 @@ void World::stepPhysics(float dt) {
     physics_.setTerrain(terrain);
     std::vector<collision::Dynamic> solids; // what loose bodies land on: every collider but their own and the plates'
     for (const auto& d : col_.dynamics)
-        if (!looseIds.contains(d.id) && !plates_.contains(d.id)) solids.push_back(d);
+        if (!looseIds.contains(d.id) && !plates_.contains(d.id) && !heavyIds.contains(d.id)) solids.push_back(d);
     physics_.setColliders(solids);
     physicsWater_.clear(); // buoyancy and currents for loose bodies (Scene::setWater, tru.exe 0x6AD070)
     for (const auto& m : col_.markup)

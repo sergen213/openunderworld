@@ -489,6 +489,10 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
 }
 
 void Runtime::setUnits(const std::vector<UnitRef>& units) {
+    residentOnly_.clear();
+    for (const auto& u : units)
+        if (u.resident && std::none_of(units.begin(), units.end(), [&](const UnitRef& v) { return !v.resident && v.name == u.name; }))
+            residentOnly_.insert(u.name);
     std::erase_if(objects_, [&](const Object& o) {
         if (std::any_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == o.unit; })) return false;
         if (auto s = stateOf(o); !s.is_null()) stash_[std::to_string(o.uid)] = std::move(s); // kept for streaming back
@@ -1156,6 +1160,42 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (lastBike_) mounts_.push_back(lastBike_);
                 return true;
             }
+            // larabase 54 (0x79A4E0 -> 0x777E40): true when the instance in the instanceref argument is the bike 52 last
+            // named (Lara +0xF00, non-null). l5_valgrind's 240_val_gate (7464 vt 58) remembers with it that she rode in
+            // on bike 7229, to put her back on it afterwards.
+            if (!std::strcmp(name, "larabase") && nc.function == 54 && nc.args.size() == 1) {
+                const vm::Value& a = nc.args[0];
+                int32_t bike = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
+                if (a.kind == vm::Value::Kind::Member)
+                    if (const auto holder = resolve(a.uid)) bike = int32_t(holder->fields[a.offset]);
+                nc.result = vm::Value::scalar(bike != 0 && bike == lastBike_);
+                return true;
+            }
+            // larabase 19 / 20 (0x79A0E0 / 0x79A100 -> 0x777A30 / 0x777A40 -> 0x698850 / 0x698860): set / get the global
+            // byte 0xECFC88, "gauntlet charged" (l5_valgrind volume 7511: charged outside the gate's area, not charged
+            // inside it until the gate is open). 0x6A6530 passes it (1 / 0) in the instance's shader constant 6 (the
+            // gear's glow); the player save holds it (0x6F5910 +0xD4). Ours keeps and saves it (Runtime::gauntletCharged);
+            // nothing draws by it yet.
+            if (!std::strcmp(name, "larabase") && nc.function == 19 && nc.args.size() == 1) {
+                gauntletCharged_ = (nc.args[0].bits & 0xFF) != 0;
+                return true;
+            }
+            if (!std::strcmp(name, "larabase") && nc.function == 20 && nc.args.empty()) {
+                nc.result = vm::Value::scalar(gauntletCharged_);
+                return true;
+            }
+            // gamebase 50 (0x7B2BB0 -> 0x779C60): the camera data named by its first argument (a DTP id whose record is
+            // of type 4, 0x54DF80) becomes the data of CameraManager's type-4 camera (vt 0x3C, +0xD0; 0x5E1180), which
+            // the towers' vt 49 then switches to (gamebase 53 (4)) while Lara pushes them. Ours hands the id to the
+            // camera (op 3); the type-4 camera itself is not modelled, so the view stays the gameplay camera's.
+            if (!std::strcmp(name, "gamebase") && nc.function == 50 && !nc.args.empty()) {
+                const vm::Value& a = nc.args[0];
+                uint32_t id = a.bits;
+                if (a.kind == vm::Value::Kind::Member)
+                    if (const auto holder = resolve(a.uid)) id = holder->fields[a.offset];
+                if (camera_ && id != 0xFFFFFFFFu) camera_(3, {}, id, 0);
+                return true;
+            }
             // Thor's gear objects (g_gauntletleft / g_gauntletright / g_belt) Lara carries in her object slots, set by
             // the type 205 equip helpers vt 59-61 that unit/chapter scripts call: larabase 38 (0x777E90: an object of
             // that name is in one of her 15 slots), 37 (0x7161F0: attach it), 42 (0x6F5A10: drop a slot's object). The
@@ -1170,12 +1210,6 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(nc.function == 38 && text != nc.args.end() && playerObjects_.contains(*text->text));
                 return true;
             }
-            // larabase 19 (thunk 0x79A0E0 -> 0x777A30 -> 0x698850): one bool into the global byte 0xECFC88, which only
-            // the material-constant setter 0x6A6530 reads (a 0 / 1 shader parameter: the gauntlet's glow) and the
-            // checkpoint writer 0x6F5910 saves (+0xD4) [O]. The glow is not drawn in ours, so the call has nothing to
-            // do; unbound it stopped the handlers that hand the gear over (l2_maproom cinematic 2624: the left
-            // gauntlet came only with a test fixture).
-            if (!std::strcmp(name, "larabase") && nc.function == 19 && nc.args.size() == 1) return true;
             // cinematic 9 / 10 (thunks 0x797020 / 0x797040 -> 0x4A4C70 / 0x4A4CC0): a latent NtCineSequence on the
             // receiver's stream; its update 0x4ADAA0 first waits until that stream is the one playing, then until the
             // player's time passes the float given (9) or FLT_MAX (10, constant 0x845884): until it has finished [O].
@@ -1649,8 +1683,8 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const Member* m = holder->program ? holder->program->member(holder->typeId, a.offset) : nullptr;
                 return m && m->init ? int32_t(*m->init) : 0;
             };
-            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6) && nc.args.size() == 1) {
-                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force)
+            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6 || nc.function == 54) && nc.args.size() == 1) {
+                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force), 54: a bike
                 uint32_t result = 0;
                 if (target && !water_(target, name, nc.function, {}, result)) return false;
                 nc.result = vm::Value::scalar(result);
@@ -2580,7 +2614,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     Object* useSwitch = nullptr;
     float best = kReach;
     for (auto& o : objects_) {
-        if (o.dead) continue;
+        if (o.dead || residentOnly_.contains(o.unit)) continue; // a resident unit is not loaded: nothing in it meets her
         switch (o.kind) {
         case Kind::Volume: {
             const bool now = inside(o.shape, o.pos, o.rot, p);
@@ -2820,6 +2854,7 @@ nlohmann::json Runtime::serialize() const {
                 fields[std::to_string(offset)] = value;
     j["player"] = {{"hiddenGroups", playerHiddenGroups_}, {"objects", playerObjects_}, {"scriptFields", std::move(fields)}, {"lastBike", lastBike_}};
     j["cinematicsPlayed"] = cinematicsPlayed_;
+    if (gauntletCharged_) j["player"]["gauntletCharged"] = true; // larabase 19 (absent: not charged, as in saves before it)
     // The running script itself (version 1): sleeping threads, unit / global script instances (by unit and type: their
     // uids depend on load order, so a load gives them the saved ones), the objects then alive (a load resumes them rather
     // than constructing them again), clocks, queued messages, the fade. A load's entries still waiting for their unit
@@ -2909,6 +2944,7 @@ void Runtime::restore(const nlohmann::json& j) {
     playerObjects_ = player.value("objects", std::set<std::string>{});
     cinematicsPlayed_ = j.value("cinematicsPlayed", std::set<int32_t>{});
     lastBike_ = player.value("lastBike", 0);
+    gauntletCharged_ = player.value("gauntletCharged", false);
     if (playerScript_) {
         playerScript_->fields = playerScript_->initial;
         if (const auto f = player.find("scriptFields"); f != player.end() && f->is_object())

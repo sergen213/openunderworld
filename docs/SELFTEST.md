@@ -93,6 +93,7 @@ at the top, in a step and in a condition, and ignored.
 | `walkthrough` | URL of the walkthrough page the steps follow (optional; link only, never copy its text) |
 | `level` | unit to enter (`"l4_pool"`; `pc-w\l4_pool.drm` works too), at its `player` intro or at `spawn` |
 | `spawn` | `[x, y, z, yawDeg]` in the unit's frame, with `level`. As `--spawn`: she is put on the floor found up to 1000 below the point |
+| `level_chapter` | with `level`: the chapter index the unit is played in, for units that belong to two chapters (the manor units: `0` = the prologue; without it the chapter is the one in the unit's name, `game::chapterOfUnit`: `l3_*` = 3) |
 | `start_chapter` | `0..8` (`game::kChapters`): start that chapter as New Game / chapter select does (its intro message, gear and loadout) |
 | `load` | save slot name (`$XDG_DATA_HOME/openunderworld/saves/<slot>.ousave`), as `--load` |
 | `cinematics` | `true`: play script cutscenes (default `false`: skipped) |
@@ -126,7 +127,7 @@ happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario
 autopilot"); it reads the World to steer, so it reaches places and objects by coordinates and uids:
 `go X Y [R] [walk]`, `engage UID [X Y] [walk]`, `face YAWDEG`, `press [ACTION]`, `hold ACTION SECONDS`,
 `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world heading, whatever the camera
-does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `ride X Y [R] [THROTTLE] [SPEED]` (on the
+does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [CELL] [UP]` (logs the floor round her as a grid), `ride X Y [R] [THROTTLE] [SPEED]` (on the
 motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED). Coordinates are world frame. With both `plan`
 and `input`, the plan steers and presses and the input lines add to it (a button is down if either holds it; a
 non-zero stick or look rate from `input` wins).
@@ -287,6 +288,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `object.<uid>.joint` | its multibody joint's position (plate units, hinge degrees) |
 | `object.<uid>.uber.<n>` | uber section n's state, -1 while it is in a transition |
 | `object.<uid>.uberjoint.<n>` | simulated uber joint n's position (units; a hinge: radians) |
+| `object.<uid>.uberslide.<n>.x/.y/.z` | three-axis uber joint n's travel from where it was made (the Thor pillars) |
 
 These object probes are what `--report-objects` prints (docs/GAMEPLAY.md); `--report-objects 0 --frames 1` lists every
 script object of a level with its uid.
@@ -409,6 +411,7 @@ tested behaviour happen.
 | `fall_damage` | l4_pool | falls of 1000 / 1500 / 2000: air time, landing, 0 / 204.7 / 729.4 damage [O curve] |
 | `jump_brake` | l4_temple | a running jump with Jump tapped / held: the same arc; the stick pulled back in flight: 40 % of the take-off speed [O Wine] |
 | `landing` | l4_temple | landings by the chart's dispatch: plain, running on, the stumble from 632.11, the hard landing from 1264.22, the Crouch + forward roll, a jump out of the landing clip [O chart] |
+| `jump_timing` | l3_main_bedroom | press to leaving the ground: standing 10 frames, with the stick 8 frames and 128 along the ground, running 2 frames; the stick jump just after the run began; the run's start (303 units in 0.4 s) [O Wine] |
 | `death_respawn` | l4_pool | checkpoint 5502 touched; a 2600 fall kills; 3 s later she stands at the checkpoint with full health |
 | `ledge` | l3_main_bedroom | standing jump catches ledge 973; shimmy left and right; one Interact hustle move (371 in 0.57 s); pull up 496 onto the top |
 | `traversal_chain` | l2_cliffclimb | run -> jump -> hang (911) -> shimmy -> climb up -> run on, as one state chain |
@@ -440,7 +443,6 @@ tested behaviour happen.
 | `moving_markup` | l5_valgrind | by cog wheel 7312's rim (teleport fixture: the gate cinematic's placement is 20 s away on foot) a standing jump catches a passing rim ledge (markup 1614-1617), 2 s carried at 267 units/s with no input, Drop: she falls on at the rim's speed and lands (docs/GAMEPLAY.md "Moving markup") |
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
-| `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
 | `ch07_cliffclimb_boat_to_cliff` | chapter 2 start | section 07's start: yacht cinematic, over the boat's side (safety drop), into the sea, 13.8 km surface swim across the bay, climb out at the low ledge (checkpoint 3831), the run into the rock attaches her to the holds |
 | `ch07_cliffhall_grapple_gap` | l2_cliffhall | from checkpoint 3754 to the pit under ring 3820: thrown at from the ground (rope 2730), a running jump keeps the rope, the swing carries her over the pit; the release onto the far side is not played yet |
 | `ch07_hubhall_statue_hall` | l2_hubhall | section 07's end from checkpoint 3100: up the staircase, stream change to l2_puzzleroom, arrival cinematic 2936, on the lift |
@@ -451,11 +453,31 @@ tested behaviour happen.
 | `ch09_maproom_gauntlet_door` | l2_maproom | from under the shaft: volume 2636 -> cinematic 2624, the scripts hand the left gauntlet over (no fixture), door 2661 gripped and slid open by a left sidestep, through it (spider trigger, checkpoint 2590), the pedestal cinematic 2625, checkpoint 2591 |
 | `ch09_maproom_hub_panel` | l2_maproom | from checkpoint 2591: off the platform edge into a hang, drop-catches down the hub's panel (ledges 673 / 674 / 676 / 678), the ring ledge, the panel gripped with the gauntlet (2667 vt 49 / 50) |
 | `ch09_maproom_hub_turn` | l2_maproom | as `ch09_maproom_hub_panel`, then the hub turned by its panel: forward does nothing, a right sidestep walks the panel round hinge joint 1 to its stop at 41 degrees (0.716 rad; the record sets swap at 20 degrees and she keeps her grip), braked when she lets go |
+| `ch01_bedroom_new_game` | New Game | Prologue leg 1: the corridor onto the debris slab without a jump, wall 973, the stairs, switch 4525 opens house door 4520, down to the bedroom floor (checkpoint 4454) |
+| `ch01_bedroom_ring_door` | l3_main_bedroom (chapter 0) | Prologue leg 2: a roll under the leaning beam (a walk does not pass), onto the flat strip, ring door 4526 grappled and pulled off its slide |
+| `ch01_hall_first_aid` | l3_bedroom_hall (chapter 0) | the first-aid kit 4364 picked up from checkpoint 4342, stored, used by the heal key |
+| `known_gaps/ch01_hall_floor_collapse` (parked) | l3_bedroom_hall (chapter 0) | Prologue leg 3: plane 4375 holds her while floor 4359 collapses and door 4376 is blown off, running jump to ledge 969, pull up, into l3_main_hall (checkpoint 4082). Fails at the pull-up since the take-off timing change: the blown door's outcome depends on the tick she crosses the plane, and the leaf can stay in its frame over the ledge |
+| `ch01_main_hall` | l3_main_hall (chapter 0) | Prologue leg 4: ring 4089 from the west balcony's end, the swing east, the leap onto the east balcony, the safety drop onto ledge 945, Drop 1251 to the floor, plane 4129 -> chapter 1 |
+| `ch02_seatop_dive` | chapter 1 start | off the yacht's stern, dive, the look stick tips the view down, 35 s of sprint swimming on the tanks (breath 1.0 throughout) through the stream change to l1_seafloor |
+| `ch02_serpent_door` | l1_kraken_entrance | the dead switch 748, serpent head 751 pulled onto plate 752, one weight on plate 753 does not hold it, two do, the switch opens gate 743 |
+| `ch03_gear_room_west` | l1_kraken_room | switch 57 jammed; from the lower hall the pillar ring of gear 32 pulled: the column falls, the mechanism is free |
+| `ch03_gear_room_east` | l1_kraken_room | switch 55 jammed; gear 36 pulled out until it locks; the switch runs the mechanism |
+| `ch10_maproom_rope_step_off` | l2_maproom | section 10 (C10-03): wall ring 2595 offered and thrown at from the near bridge stub's corner (rope 3404); roped she walks off the stub: the arc takes her under the pool, the rope is let go and she swims (surface root -9662); the far stub's spiders do not bite a swimmer under them |
+| `ch11_chapel_dais_furnace` | l3_chapel | section 11 (C11-16): onto pressure plate 4834 (joint -50): fire 4818 lit, gates 4830 / 4831 opening; off it: the fire goes out, the gates shut |
+| `ch11_study_gauntlet` | l3_stairhall -> l3_secretchamber | section 11 (C11-24, C11-25): from checkpoint 4699 down the passage into the study: checkpoint 4621, volume 4669, cinematic 4654 (gauntlet), two thralls alive in the room |
+| `ch11_rockhall_switch` | l3_chamberrockhall | section 11 (C11-32): the stone door 4528 stops her; switch 4617 used with Interact opens it; through to checkpoint 4453 |
+| `ch12_trailstart_ride_in` | l4_trailstart | section 12 (C12-03, C12-04): the ride of `bike_ride`, then the upper road: plane 6712 starts reveal 6677, which sets her down beside the bike (larabase 54); mount again, ride into the temple courtyard (volumes 6713, 6703) |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now: `ch09_shrine_shaft_descent` (l2_shrineroom: after the
-statue pull its floor slabs stay solid over the shaft and its ring is still a target; the drop-catches and the mid-fall
-grapple at ring 2673 follow); `pole_drop_after_fling` moved up 2026-11-10.
+registered with ctest. Run them by hand; move one up a directory when it passes. Now (`pole_drop_after_fling` moved up 2026-11-10):
+
+| known gap | level | fails at | cause |
+|---|---|---|---|
+| `ch10_maproom_wall_run` | l2_maproom | `leap` | the roped jump towards wall ring 2595 swings her under the pool's surface (rope 2670, ring 1200 over the bridge, water 870 under it), where the rope is let go: what shortens the original's rope in that jump is not decoded [U]. The later steps (reel to 1500, wall run, back jump to ledge 652, pull up) pass once she is on the wall |
+| `ch12_trailstart_lever_gate` | l4_trailstart | `let_go` | lever 6695 is pulled out by Interact and stays out (joint 1264); the original holds it by her weight on the rope and it returns when unloaded |
+| `ch01_ring_door_walk_through` | l3_main_bedroom | the walk through | the pulled ring door's leaf stays standing in its frame: no way into l3_bedroom_hall (docs/PROGRESSION.md chapter 0) |
+| `ch01_hall_floor_collapse` | l3_bedroom_hall | `pull_up_and_on` | parked 2026-11-10: the blown hall door 4376's outcome depends on the tick she crosses plane 4375; since the take-off timing change the leaf can stay in its frame over ledge 969 |
+| `ch09_shrine_shaft_descent` | l2_shrineroom | after the statue pull | its floor slabs stay solid over the shaft and its ring is still a target; the drop-catches and the mid-fall grapple at ring 2673 follow |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);
@@ -478,5 +500,8 @@ standing jump fails with actual 202.187.
 4. End steps with `until` where the game decides the timing (a grab, a landing, a door), so later steps do not depend
    on tick counts.
 5. Use fixtures only for set-up the walkthrough takes for granted (a weapon, health), never for the thing under test.
+   A chapter leg is named `chNN_<unit or leg>.json` (NN = the section's number in docs/matrix); a unit that belongs
+   to two chapters takes `level_chapter`. `stick` is camera-relative: for a move along a known direction (a roll through
+   a gap, a running jump) use `run YAWDEG ...`.
 6. Save it as `tests/selftests/<chapter>_<what>.json`, re-run CMake, run `ctest -R game_selftest_<name>` in a private
    compositor. A sequence that shows a defect goes to `tests/selftests/known_gaps/` with a `note` describing it.

@@ -205,6 +205,19 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
     for (const auto& k : kRows)
         if (k.name == to) r = k;
     if (from == "ng_run_start" && to == "ng_run") r.blend = 2, r.start = 14; // request 730: ng_run entered mid-stride
+    // tru.exe 0x4428A0 -> 0x441FB0 [O]: the request's clip is started at (start - blend) frames (0x441FB0 `time = start -
+    // blend`), so that it stands at its start frame when the crossfade ends; +0x1A is where the blend ends, not where the
+    // clip begins. Under Wine [O-runtime, docs/REFERENCE_COMPARISON.md]: ng_standing_jump (6 / 6) takes its whole 10
+    // frames, ng_run_start (4 / 6) moves as from its frame 2, ng_running_jump_forwards (2 / 1) takes its 2 frames (a
+    // negative lead cut to 0: the 0x4428A0 branch that starts a fresh crossfade), and the wall jump's clips keep the
+    // negative lead: wall_jump_attach_air (4 / 1, 3 frames) and wall_jump_jump_back (2 / 1, 5 frames) take 6 frames each,
+    // held at their first frame meanwhile (which branch a request takes is [U]; the two cases are as measured). Applied
+    // to the take-off, run start and wall jump clips; the other rows still start at the +0x1A frame [I].
+    struct Lead { std::string_view name; bool hold; };
+    static constexpr Lead kLead[] = {{"ng_standing_jump", false}, {"ng_running_jump_forwards", false}, {"ng_run_start", false},
+                                     {"wall_jump_attach_air", true}, {"wall_jump_jump_back", true}, {"wall_jump_detach_fall", false}};
+    for (const auto& l : kLead)
+        if (l.name == to) r.start = l.hold ? r.start - r.blend : std::max(0, r.start - r.blend);
     return {float(r.blend) / 30.0f, double(r.start) / 30.0};
 }
 
@@ -782,6 +795,11 @@ void World::tick(const Actions& input) {
             carry += j->axis * (j->x - uberPush_.before);
         }
     }
+    if (const auto rt = uberPush3_.uid ? uberRuntime_.find(uberPush3_.uid) : uberRuntime_.end(); rt != uberRuntime_.end())
+        if (const auto j = rt->second.joints3.find(uberPush3_.joint); j != rt->second.joints3.end()) { // ... on her floor
+            const vec3 moved = j->second.x - uberPush3_.before;
+            carry += vec3(moved.x, moved.y, 0);
+        }
     if (carry != vec3(0)) { // Lara follows the block she pushes/pulls
         auto s = player_.state();
         s.pos += carry;
@@ -1498,7 +1516,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.jumpVel0), add(s.jumpStick0);
     for (const ButtonTime* b : {&s.buttons.jump, &s.buttons.interact, &s.buttons.drop, &s.buttons.grapple})
         add(b->down), add(b->edge), add(b->time), add(b->buffer);
-    add(s.droppedPole), add(s.fallStall), add(s.landTime), add(s.pullWait), add(s.runTime);
+    add(s.droppedPole), add(s.fallStall), add(s.landTime), add(s.prepTime), add(s.prepInPlace), add(s.pullWait), add(s.runTime);
     const auto& ba = s.balance;
     add(ba.build), add(ba.aboutFall), add(ba.grace), add(ba.unbal), add(ba.bal), add(ba.notImprove), add(ba.full), add(ba.clock);
     add(ba.lastFlip), add(ba.period), add(ba.ref), add(ba.stickYaw), add(ba.blend), add(ba.lean), add(ba.side), add(ba.osc), add(ba.fall);
