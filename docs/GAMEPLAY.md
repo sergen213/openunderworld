@@ -436,23 +436,31 @@ outfit (the original only reads `+0x294` on a level load).
   (so tanks set each other off). The knock [O decomp]: the area hit 0x69F1E0 (called from 0x6A5C50's record hand-over
   with +4 damage, +6, +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12 elevation) sends instances message 0x91 at knock .. edge
   by distance, heading away from the centre at the elevation, and ends in 0x493170 → 0x492CC0 for the Havok shapes in
-  the radius: an impulse of 0.0004 × the shape's surface area × knock × (1 − distance / radius), capped per shape
-  (body +0x14C × 200 [U]), at the shape's point nearest the centre (0x4DF090), along (shape − centre) raised by half
-  their distance. Ours [I] (`physics::Scene::blast`): grenades change each body's velocity by near .. edge along that
-  raised line; a squib gives the same momentum along the body's heading from the centre at the record's elevation, at
-  the point of the body's bounds nearest the centre. A centre inside the body (the door squib is born at the foot of its
-  own leaf) has no heading: the body goes the way it already moves, else the way its centre of mass lies from the centre.
-  l3_bedroom_hall's leaf 4376 (blown off untouched) is kicked out at the foot and falls into the pit; pushed through its
-  centre of mass it only hopped and stood in its frame (494 wide in a doorway barely wider).
+  the radius: per shape an impulse of the primitive's blast share (HInfo byte, docs/formats/PHYSICS.md) × 0.0004 × its
+  surface area × knock × (1 − distance / radius), capped at the body's mass × 200, at the shape's point nearest the
+  centre (0x4DF090), along (shape − centre) raised by half their distance, unless level collision lies between the two
+  centres. Ours: `physics::Scene::blast` gives loose bodies exactly that per primitive (hinge bodies and ragdolls [I]:
+  one velocity change of knock .. edge along the raised line).
+  **The instance that gave birth to the explosion** [O decomp + runtime]: 0x69F1E0 measures the born object's parent
+  (instance +0x214) from the explosion's own position, so the parent's knock is the full one and its heading that of a
+  zero vector: 0x49EFC0's atan2(−0, −0) = −π, which is world −X whatever the object's rotation. tru.exe under Wine
+  (2026-11-10, `gameplaygoal/prologue/wine/s4.txt`): ring door 4526's leaf, drawn out at 586 units/s² from 0.05 s
+  after Interact (0.2, 6.4, 18.7, 35.9 out at 0.1 s steps) and free at 31.6, has a centre of mass velocity of
+  (−870, 0, +364) units/s two frames after `squib_explode_door` (knock 1000, elevation 0), yaws at −8 rad/s, tips its
+  top toward the room, clears the platform and lands flat 650 from its frame; Lara, on the strip, takes 3 and is thrown
+  down to the bedroom floor. Ours (`World::blast` → `physics::Scene::knock`) [I: the mechanism; the numbers fit the
+  measurement]: the parent's loose body loses its motion and takes mass × knock along world −X at the record's
+  elevation, at the explosion's centre (the birth marker, HInfo marker word +6: for the door 79 behind the leaf,
+  173 off its middle, 530 up), which gives the leaf 1000 units/s, a yaw of 173 × 1000 / (494² / 12) = 8.5 rad/s and
+  the forward tip. l3_bedroom_hall's leaf 4376 (blown off untouched, state 5) goes the same way, toward the pit
+  [U in the original: not measured].
 - **Freed uber sections** [O action 10 removes a joint; I the body's motion]: a non-main section left without a joint
   (13 objects: `ma_uo_bedroom_door`, tentacle gears, the snake head, ship floor panels / grates / console, thor slide
   doors, chain debris, the naga statue) becomes a loose body with its collider, as do sections riding on it; the main
   section uses the object's own loose flag. It starts with the velocity its prismatic joint had when removed (the ring
   door 4526 comes off its slide moving toward the rope's pull). Saved with the section state (not the velocity). Its
-  shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. Open
-  [U]: leaf 4526, pulled 44 out into its frame when freed, is pushed back by the level collision and stays standing in
-  the doorway (`ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` notes it; what clears it in tru.exe is not
-  decoded: nothing in the object's states moves it but the removed joint and the squib).
+  shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. What
+  throws the freed ring door out of its frame is its squib's knock ("Explosion records" above).
 
 ## Hazards
 

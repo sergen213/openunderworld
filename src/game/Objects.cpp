@@ -558,12 +558,12 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
                 vec3 at = vec3(frame[3]);
                 if (const auto* sp = b.marker >= 0 ? uberSectionPhysics(*o, section) : nullptr)
                     for (const auto& m : sp->hmarkers)
-                        if (m.id == b.marker) {
+                        if (m.birthId == b.marker) {
                             const glm::mat4 seg = size_t(m.segment) < sp->segments.size() ? sp->segments[size_t(m.segment)] : glm::mat4(1);
                             at = vec3(frame * seg * glm::vec4(m.pos, 1));
                             break;
                         }
-                birthBlast(b.object, at);
+                birthBlast(b.object, at, sectionId(uid, section));
             }
         }
         break;

@@ -447,7 +447,8 @@ tested behaviour happen.
 | `ch01_bedroom_new_game` | New Game | Prologue leg 1: the corridor onto the debris slab without a jump, wall 973, the stairs, switch 4525 opens house door 4520, down to the bedroom floor (checkpoint 4454) |
 | `ch01_bedroom_ring_door` | l3_main_bedroom (chapter 0) | Prologue leg 2: a roll under the leaning beam (a walk does not pass), onto the flat strip, ring door 4526 grappled and pulled off its slide |
 | `ch01_hall_first_aid` | l3_bedroom_hall (chapter 0) | the first-aid kit 4364 picked up from checkpoint 4342, stored, used by the heal key |
-| `known_gaps/ch01_hall_floor_collapse` (parked) | l3_bedroom_hall (chapter 0) | Prologue leg 3: plane 4375 holds her while floor 4359 collapses and door 4376 is blown off, running jump to ledge 969, pull up, into l3_main_hall (checkpoint 4082). Fails at the pull-up since the take-off timing change: the blown door's outcome depends on the tick she crosses the plane, and the leaf can stay in its frame over the ledge |
+| `ch01_hall_floor_collapse` | l3_bedroom_hall (chapter 0) | Prologue leg 3: plane 4375 holds her while floor 4359 collapses and door 4376 is blown off, running jump to ledge 969, pull up, into l3_main_hall (checkpoint 4082). Fails at the pull-up since the take-off timing change: the blown door's outcome depends on the tick she crosses the plane, and the leaf can stay in its frame over the ledge |
+| `ch01_ring_door_walk_through` | l3_main_bedroom (chapter 0) | Prologue leg 2 to its end: as `ch01_bedroom_ring_door`, then the squib's knock has thrown the freed leaf into the bedroom and Lara off the strip; up onto the platform, through the open doorway into l3_bedroom_hall |
 | `ch01_main_hall` | l3_main_hall (chapter 0) | Prologue leg 4: ring 4089 from the west balcony's end, the swing east, the leap onto the east balcony, the safety drop onto ledge 945, Drop 1251 to the floor, plane 4129 -> chapter 1 |
 | `ch02_seatop_dive` | chapter 1 start | off the yacht's stern, dive, the look stick tips the view down, 35 s of sprint swimming on the tanks (breath 1.0 throughout) through the stream change to l1_seafloor |
 | `ch02_serpent_door` | l1_kraken_entrance | the dead switch 748, serpent head 751 pulled onto plate 752, one weight on plate 753 does not hold it, two do, the switch opens gate 743 |
@@ -466,8 +467,6 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 |---|---|---|---|
 | `ch10_maproom_wall_run` | l2_maproom | `leap` | the roped jump towards wall ring 2595 swings her under the pool's surface (rope 2670, ring 1200 over the bridge, water 870 under it), where the rope is let go: what shortens the original's rope in that jump is not decoded [U]. The later steps (reel to 1500, wall run, back jump to ledge 652, pull up) pass once she is on the wall |
 | `ch12_trailstart_lever_gate` | l4_trailstart | `let_go` | lever 6695 is pulled out by Interact and stays out (joint 1264); the original holds it by her weight on the rope and it returns when unloaded |
-| `ch01_ring_door_walk_through` | l3_main_bedroom | the walk through | the pulled ring door's leaf stays standing in its frame: no way into l3_bedroom_hall (docs/PROGRESSION.md chapter 0) |
-| `ch01_hall_floor_collapse` | l3_bedroom_hall | `pull_up_and_on` | parked 2026-11-10: the blown hall door 4376's outcome depends on the tick she crosses plane 4375; since the take-off timing change the leaf can stay in its frame over ledge 969 |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);
