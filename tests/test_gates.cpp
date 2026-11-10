@@ -2029,6 +2029,30 @@ TEST(ProgressionReal, TraproomSealTakesTheRoomKeys) {
     EXPECT_TRUE(f.contains(156) && f.at(156) != 0) << "vt 49(11, 5): the dark room sticky";
 }
 
+// The four keys of the trap houses (ca_pt_blade / crush / dark / fire_room_key, l4_traprooms 5878-5881) are portables
+// by their physical class (50): they have a pick-up record (kind 4), but their script's native base is `instance`, not
+// portablebase [O data]. Interact inside the
+// record takes each into her hands (World::portableClass; before, the press did nothing), Crouch puts it down again.
+TEST(ProgressionReal, TraproomKeysArePickedUp) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_traprooms");
+    auto& w = *wp;
+    for (const int32_t uid : {5878, 5879, 5880, 5881}) {
+        SCOPED_TRACE(uid);
+        const auto* key = w.script().find(uid);
+        ASSERT_TRUE(key);
+        ASSERT_EQ(w.heldPortable(), 0);
+        ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *key, 4), [&] { return w.heldPortable() == uid; }));
+        game::Actions down;
+        down.drop = true; // Crouch puts it down (chart input 101)
+        w.tick({});
+        w.tick(down), w.tick({});
+        finishMove(w);
+        EXPECT_EQ(w.heldPortable(), 0);
+    }
+}
+
 namespace {
 // Uber objects (docs/GAMEPLAY.md "Inserting a portable", "Thor's gauntlets"): the spots inside section `section`'s
 // records of `kind` (5 receptacles, 1 push / pull; its starting set +0x40 and its states' 0x1D sets; World decides

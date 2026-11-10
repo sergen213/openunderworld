@@ -1307,6 +1307,7 @@ private:
     void restoreMelee(const nlohmann::json& j);
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     bool carryReady() const;           // standing or swimming: she can pick up / insert / take out a portable
+    bool portableClass(const script::Object& o);       // a portable by its physical class 50 (the Xibalba room keys)
     bool insertHeld(script::Object& held, const Engaged& at); // into the receptacle she engages (Runtime::insertPortable)
     bool removeInserted(const Engaged& at); // empty-handed: the inserted portable she engages comes out, held (0x186)
     // + its script reactions; `section` >= 0: an uber receptacle's section (uberInsert)
