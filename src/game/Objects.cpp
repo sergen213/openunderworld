@@ -1278,6 +1278,15 @@ void World::syncObjects() {
                     }
             }
         }
+        // A removed main section (action 28 on the section drawn as the object's own mesh: its instance is gone,
+        // 0x6D5E20 -> 0x4D6480) takes the object's own collision with it: l1_seafloor's eye-door plugs 236-238
+        // (ms_uo_ping_map_eye_puzzle, command 0 -> state 1) leave the doorway when the puzzle is solved.
+        if (const auto rt = uberRuntime_.find(o.uid); uber && rt != uberRuntime_.end()) {
+            size_t main = uber->sections.size();
+            for (size_t k = 0; k < uber->sections.size(); ++k)
+                if (uber->sections[k].model == 0) { main = k; break; }
+            if (main < rt->second.sections.size() && rt->second.sections[main].removed) continue;
+        }
         const physics::ObjectPhysics* physics = objectPhysics(o.name);
         if (!physics) continue;
         const physics::ObjectPhysics& p = *physics;
@@ -1799,6 +1808,10 @@ void World::stepPhysics(float dt) {
             const bool uberOpen = rt != uberRuntime_.end() && rt->second.commanded;
             if (uberOpen)
                 hinge.target = kDoorOpen;
+            else if (const auto pull = hingePull_.find(c.uid); pull != hingePull_.end())
+                hinge.target = pull->second.first, hinge.maxSpeed = pull->second.second;
+            else if (o && pulledHinge(*o))
+                hinge.target.reset(); // no motor in its record: gravity and its limits only
             else if (o && o->kind == script::Kind::Door && o->state != 2 && hinge.hi > glm::radians(2.01f))
                 hinge.target = hinge.hi;
             else
@@ -2213,6 +2226,98 @@ int32_t World::engagedUse(bool pressed) {
     if (held_ || !carryReady()) return 0;
     const Engaged e = engaged();
     return e.record && e.record->kind == 8 && e.section < 0 ? e.uid : 0;
+}
+
+// A class-34 rigid body that is a grapple target (a model feature with kFeatureGrapple) and whose joint record has no
+// motor (l1_baldrs_tomb gate 45, ms_rb_tomb_gate: flags 1 = limit only [O data]): nothing but gravity and the rope turns
+// its hinge. The gate's hinge marker lies at its foot (46.4 in front of its plane, 6.7 up): upright it rests against
+// its lower limit; unlocked (multibody 77: 0..90) it still stands until the rope tips it over.
+bool World::pulledHinge(const script::Object& o) {
+    const auto* p = objectPhysics(o.name);
+    return p && p->physClass == physics::kClassRigidBody && !p->jointMotor.on &&
+           std::ranges::any_of(p->features, [](const auto& f) { return f.mask & physics::kFeatureGrapple; });
+}
+
+// The grapple's pull on a Mounted target (State::GrapplePull, interact held). tru.exe: the rope is a Havok constraint
+// between Lara and the target's body, and her braced pull shortens it; what moves is whatever the body's own joints
+// allow. Ours [I: speed and angle rule]: the simulated joints that move the section carrying the grapple feature (the
+// section showing the feature's model; sections tied to it through joints, e.g. the ring hinged on the kraken room's
+// column -> the column's prismatic joint; when none of those is watched by the state machine, the object's watched
+// joints as well) are driven toward her at the braced pull speed (240 units/s at the rope's end, as pulled blocks and
+// the snake head), each only when the rope has a component along its freedom (more than cos 60 degrees of a prismatic
+// axis; a hinge by the rope's moment about its axis). Limits hold (Joint1::push is a velocity motor inside them); the
+// states' range watches see the motion (trigger 14 / 15) and action 0x1A drops the target, which lets go (World::tick).
+// A class-34 rigid body's hinge (pulledHinge) is drawn toward the limit on her side the same way.
+// l1_kraken_room gear 36 (section 1 slides 0..515, watch 512..537 -> "isAtLimit"), gear 32 (column leaves -15.8..237),
+// l1_baldrs_tomb gate 45. False when nothing can be driven (the target's script pull handler heaves instead).
+bool World::pullGrappled(const Actions& a) {
+    constexpr float kPull = 240.0f, kAlong = 0.5f, kMaxTurn = 2.0f; // units/s; cos 60; rad/s
+    const auto& s = player_.state();
+    if (!a.interact || s.state != State::GrapplePull || !s.grappleUid) return false;
+    const int32_t uid = s.grappleUid;
+    const vec3 hand = s.pos + vec3(0, 0, 400.0f); // Grapple.cpp kHandZ
+    vec3 rope = hand - s.grappleAnchor;
+    if (glm::length(rope) < 1.0f) return false;
+    rope = glm::normalize(rope);
+    const auto* o = script_.find(uid);
+    if (!o) return false;
+    // A rigid-body hinge.
+    if (pulledHinge(*o)) {
+        for (const auto& c : colliders_)
+            if (c.uid == uid && c.hinge >= 0) {
+                const auto& h = physics_.hinges[size_t(c.hinge)];
+                const vec3 arm = s.grappleAnchor - h.worldAnchor;
+                const float moment = glm::dot(glm::cross(arm, rope), h.worldAxis), reach = glm::length(arm - h.worldAxis * glm::dot(arm, h.worldAxis));
+                if (h.hi - h.lo < glm::radians(1.0f) || reach < 1.0f || std::abs(moment) < kAlong * reach) return true; // held by its locks / no moment: braced
+                hingePull_[uid] = {moment > 0 ? h.hi : h.lo, std::min(kMaxTurn, kPull / reach)};
+                return true;
+            }
+        return false;
+    }
+    const auto rt = uberRuntime_.find(uid);
+    const auto data = uberData_.find(uid);
+    if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return false;
+    int model = 0;
+    for (const auto& u : units_)
+        for (const auto& g : u.data.grapples)
+            if (g.uid == uid) model = g.model;
+    const auto& joints = data->second->joints;
+    // Sections tied to the feature's section through joint records (body A / body B), any type.
+    std::set<int32_t> sections;
+    for (size_t i = 0; i < rt->second.sections.size(); ++i)
+        if (!rt->second.sections[i].removed && uberSectionModel(uid, int32_t(i)) == model) { sections.insert(int32_t(i)); break; }
+    if (sections.empty()) return false;
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (const auto& [index, j1] : rt->second.joints) {
+            const auto& j = joints[size_t(index)];
+            if (j.bodyA < 0 || j.bodyB < 0 || sections.contains(j.bodyA) == sections.contains(j.bodyB)) continue;
+            sections.insert(j.bodyA), sections.insert(j.bodyB), grew = true;
+        }
+    }
+    std::set<int32_t> driven;
+    for (const auto& [index, j1] : rt->second.joints)
+        if (joints[size_t(index)].bodyB >= 0 && sections.contains(joints[size_t(index)].bodyB)) driven.insert(index);
+    const auto watched = [&](int32_t index) { return std::ranges::any_of(rt->second.watches, [&](const auto& w) { return w.joint == index; }); };
+    if (std::ranges::none_of(driven, watched))
+        for (const auto& w : rt->second.watches)
+            if (rt->second.joints.contains(w.joint)) driven.insert(w.joint);
+    bool any = false;
+    for (const int32_t index : driven) {
+        auto& j = rt->second.joints.at(index);
+        if (j.hinge) {
+            const vec3 arm = s.grappleAnchor - j.pivot;
+            const float moment = glm::dot(glm::cross(arm, rope), j.axis), reach = glm::length(arm - j.axis * glm::dot(arm, j.axis));
+            if (reach < 1.0f || std::abs(moment) < kAlong * reach) continue;
+            j.push = (moment > 0 ? 1.0f : -1.0f) * std::min(kMaxTurn, kPull / reach) / 30.0f;
+        } else {
+            const float along = glm::dot(rope, j.axis);
+            if (std::abs(along) < kAlong) continue;
+            j.push = (along > 0 ? kPull : -kPull) / 30.0f;
+        }
+        any = true;
+    }
+    return any || !driven.empty(); // braced against it even when the rope has no component along its freedom
 }
 
 } // namespace ou::game

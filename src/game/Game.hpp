@@ -725,6 +725,8 @@ public:
         const physics::Engagement* record = nullptr;
     };
     Engaged engaged();
+    // The rope's pull on the Mounted grapple target she is braced against (Objects.cpp); true while it drives a joint.
+    bool pullGrappled(const Actions& a);
     // The anim-graph object whose "use" record (kind 8) she engages on this interact press, 0 none (Objects.cpp).
     int32_t engagedUse(bool pressed);
     // Where object `uid`'s engagement records are now (world centres of its current sets; uber objects: every section's),
@@ -1188,6 +1190,10 @@ private:
     std::set<std::pair<std::string, uint16_t>> disabledMarkup_; // (unit, markup id)
     const formats::UberObjectData* prepareUber(const script::Object& o);
     std::map<int32_t, float> multibodyLo_, multibodyHi_; // native limits issued before hinges exist
+    // Rigid-body hinges the grapple pulls this tick (pullGrappled): uid -> the limit it is drawn to, rad/s.
+    std::map<int32_t, std::pair<float, float>> hingePull_;
+    // Class-34 rigid bodies with a grapple feature (the tomb gate): their hinge has no motor, the pull moves it.
+    bool pulledHinge(const script::Object& o);
     std::set<int32_t> multibodyLimitOff_; // `multibody` 75: objects whose joint limit is switched off (joint +0x174 bit 2)
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;

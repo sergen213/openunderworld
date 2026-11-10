@@ -2098,55 +2098,173 @@ TEST(ProgressionReal, UberSections) {
     }
 }
 
-// l1_seafloor eye door (exploration scaffold, replaced below).
-TEST(ProgressionReal, EyeDoorExplore) {
-    if (!gameDir() || !std::getenv("OU_EYE_EXPLORE")) GTEST_SKIP();
+namespace {
+// Lara on a floor near grapple target `uid` (its GrappleTarget point), facing it, where a grapple press attaches to it:
+// floors on a ring of radius `lo`..`hi` round the point, lowest first when `below`. Returns the spot, nullopt none.
+std::optional<vec3> grappleFrom(game::World& w, int32_t uid, float lo = 600, float hi = 2400, const std::function<bool(vec3)>& where = nullptr) {
+    std::optional<vec3> target;
+    for (const auto& u : w.units())
+        for (const auto& g : u.data.grapples)
+            if (g.uid == uid) target = g.pos + u.offset;
+    if (!target) return std::nullopt;
+    game::Actions press;
+    press.grapple = true;
+    for (float r = lo; r <= hi; r += 200)
+        for (int k = 0; k < 24; ++k) {
+            const float a = glm::two_pi<float>() * float(k) / 24.0f;
+            const vec3 from = *target + vec3(std::cos(a), std::sin(a), 0) * r;
+            for (float top = target->z + 400; top > target->z - 2600;) {
+                const auto g = w.collision().groundProbe(vec3(from.x, from.y, top), top - (target->z - 2600), 0x0F);
+                if (!g) break;
+                top = g->point.z - 100;
+                if (g->normal.z < 0.9f || (where && !where(g->point))) continue;
+                place(w, g->point + vec3(0, 0, 5), std::atan2(target->y - g->point.y, target->x - g->point.x));
+                for (int i = 0; i < 20; ++i) w.tick({});
+                if (w.player().state().state != game::State::Idle || glm::distance(w.player().state().pos, g->point) > 30) continue;
+                w.tick(press), w.tick({});
+                if (w.player().state().grappleUid == uid) return g->point;
+                if (w.player().state().grappleUid) w.tick(press), w.tick({}); // another target: let go
+            }
+        }
+    return std::nullopt;
+}
+} // namespace
+
+TEST(ProgressionReal, PullExplore) {
+    const char* spec = std::getenv("OU_PULL_EXPLORE"); // unit:uid
+    if (!gameDir() || !spec) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const std::string sp(spec);
+    const int32_t uid = std::stoi(sp.substr(sp.find(':') + 1));
+    auto wp = receptacleWorld(bf, sp.substr(0, sp.find(':')));
+    auto& w = *wp;
+    w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) { if (from == uid || to == uid) std::printf("  call %d -> %d vt %d\n", from, to, vt); };
+    for (const auto& u : w.units())
+        for (const auto& g : u.data.grapples) std::printf("grapple %s %d kind %d model %d at %.0f %.0f %.0f\n", u.data.name.c_str(), g.uid, int(g.kind), g.model, g.pos.x, g.pos.y, g.pos.z);
+    vec3 axis(0), target(0);
+    for (int32_t j = 0; j < 32; ++j) if (const auto* jt = w.uberJoint(uid, j); jt && !jt->hinge) axis = jt->axis, std::printf("joint %d axis %.2f %.2f %.2f pivot %.0f %.0f %.0f\n", j, jt->axis.x, jt->axis.y, jt->axis.z, jt->pivot.x, jt->pivot.y, jt->pivot.z);
+    for (const auto& u : w.units()) for (const auto& g : u.data.grapples) if (g.uid == uid) target = g.pos + u.offset;
+    const auto at = grappleFrom(w, uid, 600, 3000, [&](vec3 p) { return axis == vec3(0) || std::abs(glm::dot(glm::normalize(p + vec3(0, 0, 400) - target), axis)) > 0.8f; });
+    std::printf("attached from %d: %.0f %.0f %.0f state %d\n", at ? 1 : 0, at ? at->x : 0, at ? at->y : 0, at ? at->z : 0, int(w.player().state().state));
+    game::Actions pull;
+    pull.interact = true;
+    for (int i = 0; i < 600; ++i) {
+        w.tick(pull);
+        if (i % 30 == 0) {
+            std::printf("t %d state %d grapple %d joints", i, int(w.player().state().state), w.player().state().grappleUid);
+            for (int32_t j = 0; j < 32; ++j) if (const auto* jt = w.uberJoint(uid, j)) std::printf(" %d:%.1f", j, jt->x);
+            if (const auto* us = w.uberState(uid)) { std::printf(" states"); for (auto v : *us) std::printf(" %u", v); }
+            if (const auto* o = w.script().find(uid); o && o->joint) std::printf(" joint %.1f", o->joint->position);
+            std::printf("\n");
+        }
+    }
+    for (const auto& [key, n] : w.script().failures()) std::printf("failure %d: %s\n", key.first, key.second.c_str());
+}
+
+// l1_seafloor eye door (C02-09 / 11 / 13; ms_ani_eye_puzzle_piece 232 right / 233 left, ms_ani_eye_puzzle_piece_center
+// 231, keys ms_pt_seafloor_key_a 970 / 971): anim-graph objects with a script each [O bytecode / graph data].
+//  - A side piece starts empty (graph state 0, one kind-5 record needing the key): the key Lara swims in with is inserted
+//    (stimulus 0x20 -> state 2; vt 20(2) sets its "has key" sticky +244, shows draw group 7 and saves a checkpoint).
+//  - Lara's use (the piece's kind-8 record; her press reaches the piece she engages, World::engagedUse) turns a keyed
+//    side piece (state 2 -> 3 -> 2, Eye_rotation_right_120) or the centre (0 -> 3 -> 0, rotate_right_120); the scripts
+//    hand the eye draw groups round between the pieces (side vt 19 / 20, centre vt 55-60) and switch the other pieces'
+//    records off while one turns (vt 59 / 60 / 63 / 64 = instance 59, UseEngagementProperties 2 / 1).
+//  - The centre's vt 61 checks its three position stickies (+64, +120, +176): all open eyes -> vt 62 "Eye Puzzle
+//    Solved": modifiable 4 (2) = its "opening" transition (state id 2, opened_idle), the ping maps 236-238, reveal 235.
+// The order below (top once, left once, right twice) solves it from the start state.
+TEST(ProgressionReal, EyeDoorSolvedByItsHandles) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     auto wp = receptacleWorld(bf, "l1_seafloor");
     auto& w = *wp;
-    w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) {
-        if ((from >= 230 && from <= 238) || (to >= 230 && to <= 238) || from == 970 || from == 971) std::printf("  call %d -> %d vt %d\n", from, to, vt);
-    };
-    for (const int32_t uid : {231, 232, 233, 970, 971}) {
-        const auto* o = w.script().find(uid);
-        ASSERT_TRUE(o);
-        std::printf("%d %s pos %.0f %.0f %.0f graph %d state id %d hidden %d\n", uid, o->name.c_str(), o->pos.x, o->pos.y, o->pos.z, o->graph ? 1 : 0,
-                    graphStateId(w, uid), o->hidden);
-        for (int kind : {1, 2, 3, 4, 5, 6, 7, 8}) std::printf("   kind %d spots %zu\n", kind, engageSpots(bf, w, *o, kind).size());
-    }
-    const auto spots = engageSpots(bf, w, *w.script().find(970), 4);
-    for (const auto& [at, yaw] : spots) std::printf("spot %.0f %.0f %.0f\n", at.x, at.y, at.z);
-    const bool got = interactFrom(w, spots, [&] { return w.heldPortable() == 970; });
-    std::printf("picked %d state %d\n", got, int(w.player().state().state));
-    if (got) {
-        const bool in = interactFrom(w, engageSpots(bf, w, *w.script().find(232), 5), [&] { return w.insertedIn(970) == 232; });
-        std::printf("inserted in 232: %d\n", in);
-        if (!in) {
-            const bool in3 = interactFrom(w, engageSpots(bf, w, *w.script().find(233), 5), [&] { return w.insertedIn(970) == 233; });
-            std::printf("inserted in 233: %d\n", in3);
-        }
-    }
-    for (int i = 0; i < 120; ++i) w.tick({});
-    for (const int32_t uid : {231, 232, 233}) std::printf("%d state id %d\n", uid, graphStateId(w, uid));
-    const bool got2 = interactFrom(w, engageSpots(bf, w, *w.script().find(971), 4), [&] { return w.heldPortable() == 971; });
-    const bool in2 = got2 && interactFrom(w, engageSpots(bf, w, *w.script().find(233), 5), [&] { return w.insertedIn(971) == 233; });
-    std::printf("971 picked %d inserted in 233 %d\n", got2, in2);
-    for (int i = 0; i < 120; ++i) w.tick({});
+    std::vector<std::pair<int32_t, int16_t>> calls;
+    w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) { if (from == 231) calls.emplace_back(to, vt); };
+    for (const int32_t uid : {231, 232, 233, 970, 971, 235}) ASSERT_TRUE(w.script().find(uid)) << uid;
+    const auto turning = [&](int32_t uid) { return w.script().find(uid)->graph->transition >= 0; };
+    // Lara at piece `uid`'s use record presses interact; true when it began to turn. Then its turn is waited out.
     const auto use = [&](int32_t uid) {
-        std::printf("-- use %d\n", uid);
-        const int16_t before = graphStateId(w, uid);
-        const bool ok = interactFrom(w, engageSpots(bf, w, *w.script().find(uid), 8), [&] { return graphStateId(w, uid) != before || w.script().find(uid)->graph->transition >= 0; });
-        int t = 0;
-        for (; t < 900; ++t) {
-            w.tick({});
-            if (t > 30 && w.script().find(uid)->graph->transition < 0 && graphStateId(w, uid) == before) break;
-        }
-        std::printf("   used %d, back after %d ticks; states %d %d %d\n", ok, t, graphStateId(w, 231), graphStateId(w, 232), graphStateId(w, 233));
+        const bool began = interactFrom(w, engageSpots(bf, w, *w.script().find(uid), 8), [&] { return turning(uid); });
+        for (int i = 0; i < 600 && (turning(231) || turning(232) || turning(233)); ++i) w.tick({});
+        for (int i = 0; i < 30; ++i) w.tick({});
+        return began;
     };
-    use(231), use(233), use(232), use(232);
+    const auto solved = [&] { return std::ranges::find(calls, std::pair<int32_t, int16_t>{231, 62}) != calls.end(); };
+    EXPECT_EQ(graphStateId(w, 232), 0);
+    EXPECT_EQ(graphStateId(w, 233), 0);
+    EXPECT_FALSE(use(232)) << "no handle in it: nothing to turn";
+    EXPECT_FALSE(w.script().graphAccepts(231, formats::kStimulusInsert)) << "the centre has its handle";
+    // The door is shut: swimming at it from the tower side she stays on this side.
+    const vec3 door = w.script().find(231)->pos;
+    const auto swimThrough = [&] {
+        place(w, door + vec3(-900, 0, -500), 0);
+        game::Actions fwd;
+        fwd.move.y = 1;
+        for (int i = 0; i < 600 && w.currentUnit().data.name == "l1_seafloor"; ++i) w.tick(fwd);
+        return w.player().state().pos.x - door.x;
+    };
+    EXPECT_LT(swimThrough(), 0.0f) << "the shut door stops her";
+    EXPECT_EQ(w.currentUnit().data.name, "l1_seafloor");
+    // First handle: picked up from its pedestal under water (its kind-4 record), swum to the right piece, inserted.
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(970), 4), [&] { return w.heldPortable() == 970; }));
+    const auto st = w.player().state().state;
+    EXPECT_TRUE(st == game::State::SwimUnder || st == game::State::SwimTread) << "carried swimming";
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(232), 5), [&] { return w.insertedIn(970) == 232; }));
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ(graphStateId(w, 232), 2);
+    EXPECT_EQ(w.script().find(232)->script->fields[244], 1u) << "vt 20(2): the piece has its key";
+    // Second handle, from the mound, into the left piece.
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(971), 4), [&] { return w.heldPortable() == 971; }));
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(233), 5), [&] { return w.insertedIn(971) == 233; }));
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ(graphStateId(w, 233), 2);
+    // Top once, left once, right once: not yet; the right piece a second time: solved.
+    ASSERT_TRUE(use(231));
+    ASSERT_TRUE(use(233));
+    ASSERT_TRUE(use(232));
+    EXPECT_FALSE(solved());
+    EXPECT_EQ(graphStateId(w, 231), 0);
+    ASSERT_TRUE(use(232));
     for (int i = 0; i < 900; ++i) w.tick({});
-    for (const int32_t uid : {231, 232, 233}) std::printf("%d state id %d\n", uid, graphStateId(w, uid));
-    for (const int32_t uid : {231, 232, 233})
-        for (const auto& [k, v] : w.script().find(uid)->script->fields) if (k < 260) std::printf("  %d +%u = %u\n", uid, k, v);
-    for (const auto& [key, n] : w.script().failures()) std::printf("failure %d: %s\n", key.first, key.second.c_str());
+    EXPECT_TRUE(solved()) << "centre vt 61 -> vt 62 \"Eye Puzzle Solved\"";
+    EXPECT_EQ(graphStateId(w, 231), 2) << "opened (modifiable 4 (2): the opening transition, opened_idle)";
+    EXPECT_NE(std::ranges::find(calls, std::pair<int32_t, int16_t>{235, 62}), calls.end()) << "the reveal camera";
+    for (const int32_t ping : {236, 237, 238}) EXPECT_NE(std::ranges::find(calls, std::pair<int32_t, int16_t>{ping, 55}), calls.end()) << ping;
+    EXPECT_FALSE(use(232)) << "solved: the pieces' records are off (reveal 235's end, vt 60 / 64)";
+    if (std::getenv("OU_EYE_EXPLORE")) {
+        for (const auto& u : w.units()) { std::printf("unit %s offset %.0f %.0f %.0f portals", u.data.name.c_str(), u.offset.x, u.offset.y, u.offset.z);
+            for (const auto& pt : u.data.portals) std::printf(" %s", pt.toUnit.c_str()); std::printf("\n"); }
+        for (float dz : {-1500.f, -1000.f, -500.f, 0.f, 500.f})
+            for (float dy : {-900.f, -450.f, 0.f, 450.f, 900.f}) {
+                const auto h = w.collision().raycast(door + vec3(-200, dy, dz), vec3(1, 0, 0), 4000.0f);
+                std::printf("ray dy %5.0f dz %5.0f: %s t %.0f dynamic %d id %d\n", dy, dz, h ? "hit" : "free", h ? h->t : 0.0f, h ? h->dynamic : -2,
+                            h && h->dynamic >= 0 ? w.collision().dynamics[size_t(h->dynamic)].id : 0);
+            }
+    }
+    // Through the open door into the flooded corridor: l1_norse_hallway_a.
+    EXPECT_GT(swimThrough(), 0.0f);
+    game::Actions fwd;
+    fwd.move.y = 1;
+    for (int i = 0; i < 1800 && w.currentUnit().data.name == "l1_seafloor"; ++i) w.tick(fwd);
+    EXPECT_EQ(w.currentUnit().data.name, "l1_norse_hallway_a");
+    for (const int32_t uid : {231, 232, 233, 235, 970, 971})
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+
+// Research: every object's rigid-body joint record (limit, motor) and mass: OU_RB_MOTORS=1 (or a name substring).
+TEST(ProgressionReal, RigidBodyMotors) {
+    const char* only = std::getenv("OU_RB_MOTORS");
+    if (!gameDir() || !only) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    for (const auto& [id, name] : formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})) {
+        if (std::string_view(only) != "1" && name.find(only) == std::string::npos) continue;
+        const auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        physics::ObjectPhysics p;
+        try { p = physics::loadObjectPhysics(cdc::parseDrm(std::vector<uint8_t>(*bytes))); } catch (const std::exception&) { continue; }
+        if (p.physClass != physics::kClassRigidBody || !p.jointLimit) continue;
+        std::printf("%-40s mass %7.1f limit %g..%g on %d motor %g bound %g on %d\n", name.c_str(), physics::massProps(p).mass, p.jointLimit->lo,
+                    p.jointLimit->hi, p.jointLimitOn, p.jointMotor.speed, p.jointMotor.bound, p.jointMotor.on);
+    }
 }

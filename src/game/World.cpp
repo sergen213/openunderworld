@@ -606,7 +606,9 @@ void World::tick(const Actions& input) {
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
     player_.setWaveSeconds(double(ticks_) * kTickSeconds);
     if (!onBike) player_.tick(move, a, dt);
+    hingePull_.clear();
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
+    else if (uberGrappleOff(player_.state().grappleUid)) player_.releaseGrapple(false); // its state dropped the target (action 0x1A)
     else if (a.interact)
         if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid)); target) {
             if (target->kind == script::Kind::Block) {
@@ -614,6 +616,7 @@ void World::tick(const Actions& input) {
                 delta.z = 0;
                 if (const float distance = glm::length(delta); distance > 1.0f)
                     target->offset += delta * std::min(240.0f * float(dt), distance) / distance; // [I] braced pull speed
+            } else if (pullGrappled(a)) { // the rope drags the target's own joint (Objects.cpp)
             } else if ((pullT_ += dt) >= 1.0f) { // [I] a one-second heave runs the target's pull handler, then lets go
                 if (script_.grapplePulled(target->uid)) lastPulled_ = target->uid;
                 player_.releaseGrapple(false);
