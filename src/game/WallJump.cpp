@@ -27,21 +27,31 @@ float yawOf(vec2 d) { return std::atan2(d.y, d.x); }
 float wrapAngle(float a) { return std::remainder(a, 2 * kPi); }
 // The pelvis (segment 1, whose position 0x758DD0 casts from) over the root where the library has no skeleton [I].
 constexpr float kPelvis = 300.0f;
-// wall_jump_attach_air is 3 frames and request 1153 enters it at frame 1: two frames onto the wall [O-data].
-constexpr float kAttachSeconds = 2.0f / 30.0f;
+// wall_jump_attach_air is 3 frames and request 1153 (blend 4, start 1) starts it 3 frames before its first (clipBlend):
+// six frames onto the wall [O-data; tru.exe under Wine: 0.200 / 0.216 / 0.200 s, chimney4-wine.txt h1].
+constexpr float kAttachSeconds = 6.0f / 30.0f;
 constexpr float kQueryOut = 79.0139f, kQueryHang = 372.9456f; // q12's target type offsets (+0x8C) [O-data]
 } // namespace
 
-// tru.exe 0x7594C0 returning 2. Its rays (0x4935F0, mask 0x2C19E7) run from the pelvis, raised by +0x824 and then
-// lowered by +0x828, to where 0x758DD0 expects it +0x821 = 3 frames on: along her heading by 3 x |velocity|, and
-// 2.862215 x 3^2 down. A terrain face with client flag 0x80 is no wall for it (0x5D3BA0; 45 % of the faces of the
-// game's units carry it); 0x758F70 wants the wall within 7 degrees of vertical, her horizontal velocity (her heading
-// when she has none) within 45 and her heading within 65 degrees of square to it.
+// tru.exe 0x7594C0 returning 2. Its rays (0x4935F0, mask 0x2C19E7) run from the pelvis (segment 1's position), raised
+// by +0x824 and then lowered by +0x828, to where 0x758DD0 expects it +0x821 = 3 frames on: along her heading by 3 x the
+// length of the vector at player +0xA20, and 2.862215 x 3^2 down. +0xA20 is the velocity the jump was launched with
+// (the launch function before 0x7522A0 stores it and hands it to 0x70E050; the flight's own velocity is +0x2A0), so
+// the reach does not shrink as she slows: 271 for a jump back off a wall (46.81 + 77.27), 192 for the stick jump and
+// the leap off a hang [O]. tru.exe under Wine (chimney4-wine.txt h1): the rebounds take the next wall from 224.1 and
+// 235.5 short of its face (as ours' mesh has it) and not from 247.4, 24..35 less than these rays from over her root
+// reach, while her holds there are 119..131 out of the faces, not 110 [U: both; her pelvis in the flight's clips is
+// within 1 of the root's line here, up to 31 behind it later in NG_InAir_Feet_Forward_stage1]. Ours casts from over
+// the root. A terrain face with client flag 0x80 is no wall for it (0x5D3BA0; 45 % of the
+// faces of the game's units carry it); 0x758F70 wants the wall within 7 degrees of vertical, her horizontal velocity
+// (her heading when she has none) within 45 and her heading within 65 degrees of square to it.
 bool Player::tryWallJump() {
     if (s_.vel.z < t_.wallJumpMinVz || s_.vel.z > t_.wallJumpMaxVz) return false;
     const vec3 f = forward();
     const float n = t_.wallJumpLook, frameG = t_.gravity / 900.0f;
-    const vec3 ahead = f * (n * glm::length(s_.vel) / 30.0f) - vec3(0, 0, 0.5f * frameG * n * n);
+    // the launch velocity: the take-off's horizontal part (airBrake keeps it) and the vertical before gravity
+    const float launch = glm::length(vec3(s_.jumpVel0, s_.vel.z + t_.gravity * s_.jumpTime));
+    const vec3 ahead = f * (n * launch / 30.0f) - vec3(0, 0, 0.5f * frameG * n * n);
     const float len = glm::length(ahead);
     if (len < 1e-3f) return false;
     const vec3 pelvis = s_.pos + vec3(0, 0, anims_.bind.size() > 1 ? anims_.bind[1].z : kPelvis);
@@ -138,7 +148,9 @@ void Player::wallJump(bool jumpPressed, float dt) {
     s_.pos = glm::mix(s_.climbFrom, s_.climbTo, u);
     s_.yaw = wrapAngle(s_.climbYawFrom + wrapAngle(s_.climbYawTo - s_.climbYawFrom) * u);
     advanceClip(dt);
-    if (jumpPressed && int(s_.wallJumps) < t_.wallJumpMax) {
+    // tru.exe under Wine (chimney4-wine.txt h1): a press while she is still drawn onto the wall does nothing, and is
+    // not kept for later (Jump held from 23 ms before the idle began: no jump); the jump comes from the idle [O-runtime].
+    if (jumpPressed && u >= 1 && int(s_.wallJumps) < t_.wallJumpMax) {
         ++s_.wallJumps;
         s_.pos = s_.climbTo, s_.yaw = s_.climbYawTo;
         play("wall_jump_jump_back", false);

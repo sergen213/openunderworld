@@ -215,6 +215,7 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"droppedPole", markupRef(w, p.droppedPole)},
             {"fallStall", p.fallStall},
             {"landTime", p.landTime},
+            {"prepTime", p.prepTime}, {"prepInPlace", p.prepInPlace},
             {"pullWait", p.pullWait},
             {"runTime", p.runTime},
             {"airBrake", {vec2j(p.jumpVel0), p.jumpStick0}},
@@ -259,6 +260,7 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     p.droppedPole = c.contains("droppedPole") ? ref(c.at("droppedPole")) : -1;
     p.fallStall = c.value("fallStall", 0.0f);
     p.landTime = c.value("landTime", 0.0f);
+    p.prepTime = c.value("prepTime", 0.0f), p.prepInPlace = c.value("prepInPlace", false);
     p.pullWait = c.value("pullWait", -1.0f);
     p.runTime = c.value("runTime", 1.0f); // older saves: a run long enough for the running stop
     p.jumpVel0 = game::vec2(p.vel), p.jumpStick0 = 0; // older saves: the flight as it is

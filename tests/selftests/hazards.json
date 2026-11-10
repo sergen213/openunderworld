@@ -4,7 +4,7 @@
   "chapter": "Core mechanics: trap damage (damaging collision primitives)",
   "note": "l4_traprooms (Xibalba's trap houses). Amounts are the primitives' own [O object data, tru.exe 0x48E040 / 0x4923C0]: a flame jet (ca_ei_flame_trap) 800, a crusher jaw's plate (ca_rb_crusher_slim) 12345. A hit starts the 30-frame invulnerability window (lara.drm +0x60). The teleport fixture only moves her between the houses; the walking, the jets' and jaws' clocks and the damage are the game's.",
   "level": "l4_traprooms",
-  "spawn": [14030, -19900, 6360, 90],
+  "spawn": [14030, -19930, 6360, 90],
   "steps": [
     {"step": "into_the_flame_jet", "input": ["0 forward 1"], "duration": 6,
      "until": {"probe": "step.health_lost", "min": 1},

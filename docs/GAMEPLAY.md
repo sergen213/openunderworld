@@ -239,7 +239,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Air integration | `pos += v·t + a·t²/2; v += a·t` | [O] `FUN_005DB370` (Instance +0x2A0 velocity, +0x2B0 acceleration); ported exactly, so results do not depend on the step |
 | Terminal fall speed | none | [O] no clamp of zVel found; we do not clamp |
 | Walk / run speed | root motion: 348 / 1274 units/s | [O] clips above; [O] "ART WARNING: Walk-onto-slope animation covers no distance!" (0x73FE10) shows ground locomotion is animation-driven; [O] physics mode 3 (ground) is not integrated by 0x715340 |
-| Jump take-offs | standing, no stick: **1441.2** up (apex 201.6, 0.56 s air), leaving the ground when `ng_standing_jump` ends (0.33 s); stick held: **1499.1** up + **1200** along the stick, at 0.26 s into the clip; running: **1275.9** up + **1974.9** forward (apex 158, 0.50 s air) after `ng_running_jump_forwards`; the stick behind her (> 1.75 rad from her heading): she turns round and takes the running jump; to a side: the standing stick jump that way (units/s) | [O-runtime] tru.exe under Wine, `wmem trace` of Instance +0x20 position / +0x2A0 velocity (Lara-local, units per 30 Hz frame: 48.04 / 49.97 + 40.00 / 42.53 + 65.83; take-off 359 / 290 / 109 ms after the press, back + jump 121 ms; horizontal speed constant in the air), l3_main_bedroom start, traces openunderworld-work/screens/stairs `j_*.txt`. [I] the 0.26 s take-off point (359 − 290 ms before the clip end) and the 1.75 rad back threshold (our turn-in-place threshold); free leaps (back off a ledge, pole fling without a target, slide jump) reuse these speeds [I] |
+| Jump take-offs | standing, no stick: **1441.2** up (apex 201.6, 0.56 s air), leaving the ground when `ng_standing_jump` ends (its whole 10 frames, 0.33 s: the request starts it at start − blend = 0); stick held at the press (or pushed during the standing take-off: chart S248's T280): **1499.1** up + **1200** along the stick, 8 frames after the press, running on 128 under `ng_run_start`'s root motion meanwhile; running: **1275.9** up + **1974.9** forward (apex 158, 0.50 s air) after `ng_running_jump_forwards` (2 frames); the stick behind her (> 1.75 rad from her heading): she turns round and takes the running jump; to a side: the standing stick jump that way (units/s) | [O-runtime] tru.exe under Wine, `wmem trace` of Instance +0x20 position / +0x2A0 velocity (Lara-local, units per 30 Hz frame: 48.04 / 49.97 + 40.00 / 42.53 + 65.83; take-off 359 / 290 / 109 ms after the press, back + jump 121 ms; horizontal speed constant in the air), l3_main_bedroom start, traces openunderworld-work/screens/stairs `j_*.txt`; docs/REFERENCE_COMPARISON.md M13. [I] the stick jump's run-up taken as the run start's root motion (`Tuning::stickJumpFrames`) and the 1.75 rad back threshold (our turn-in-place threshold); free leaps (back off a ledge, pole fling without a target, slide jump) reuse these speeds [I]. Off a balance beam the stick jump has no run-up [I] |
 | Capsule | radius **79.01**, top **489.2** (height 512) | [O-runtime] tru.exe under Wine, Lara's Havok proxy (instance +0x288) while standing: radius +0x65C = 79.0139, cylinder +0x660 = 189.633 (targets +0x6B0 / +0x6B4 equal: steady), centre 315.4 above the feet (proxy +0x648 vs Instance +0x28), so the capsule spans 141.6..489.2; swimming it is 80 / 228. 0x490E60 steps radius / cylinder towards those targets by ≤ 20 / 40 per frame; 0x7018E0 creates it (`FUN_0049a410(inst, 100.0, …, 28.82, …)`); [U] which data sets the per-state targets. Height [O] player data +0x10 = 512.01 (used as Lara's height: ×0.5 centre, ×0.75 head, capsule test `FUN_007144b0(pos, height, …)`), TRLAU-menu-hook `GeneralAttributes.height` [I name]. Ours: on the ground the capsule's bottom is the step height (110), not 141.6, so the 121-unit hearth stops her one radius short (tru.exe: 38..72 short, pushed to and fro, trace t2); what stops tru.exe there [U] (the proxy's bottom clears it). Walls climbed / hung on keep the root 100 out (`wallOffset`) [I] |
 | Step up / down | **110 / 110** units: the root takes the floor height under it within ±110 (capsule slide starts 110 above the feet), so 97..100-unit stair risers are climbed and descended walking or running without a fall | [O-runtime] tru.exe under Wine (`wmem trace`/`tp`, l3_main_bedroom, unit offset ours + (9622, 333, −2977)): running up the manor staircase (risers 97..100, treads 186) her z jumps by each riser exactly as the root crosses the riser line, at unchanged run speed; the 121-unit hearth edge beside the start stops her ~56 units short. [I] 110 is between the two. [O-runtime] Lara's Havok proxy (instance+0x288) capsule: radius 79.01 (+0x65C), cylinder 189.63 (+0x660), centre 315.4 above the feet (+0x640): its bottom is 141.6 up, so the 121 block is not the capsule; which probe stops her is [U]. Our capsule stays radius 100 [I]. Regression: `GameReal.StairsWalkAndRunUpAndDown` (every riser of seven units' staircases, the bedroom flight up and down, the hearth) |
 | Walkable slope | by face: unflagged faces of normal z ≥ cos 52° = 0.6157 are stood on; faces with client flag 0x0004 / 0x0040 are slid down between 52° and 28° (normal z 0.6157..0.8829) and stood on when flatter; 0x0020 faces are never too steep, 0x0100 faces are stood on however steep. A too-steep face is still stood on when one of four probes 60 units around the root finds a standable face within 20 units of its height (bumps, seams) | [O] tru.exe ground check 0x5DCE20 with lara.drm player data shorts +0x100C = 28, +0x100E = 52 and the face's client flags; [O-runtime] Wine ramp series in l2_junglehub (section "Slopes and slides"). [I] the four-probe exception (ours) |
@@ -2619,14 +2619,18 @@ A's unflagged east face; `openunderworld-work/gameplaygoal/reference/chimney-win
   planted her 45 over the floor until this gate was added (`Game.ChimneyJumpNotFromAStandingJump`).
 - A stick jump (q43: 40.00 + 49.97 a frame) run up to the face: one frame after the take-off she is in the wall
   state, her root **43.2 / 43.6** over the floor, and is drawn in 0.19..0.20 s (6 frames) to **98.5** out of ledge
-  796's line (ours: 39.7 over the floor, 105.6 out, drawn in 2 frames [I: `kAttachSeconds`; the 3-frame clip entered
-  at frame 1 does not explain tru.exe's 6]). Ours used to miss this catch when she took off within a tick's travel of
+  796's line (ours: 47.1 over the floor, 105.6 out, drawn in 6 frames: request 1153, blend 4 / start 1, starts the
+  3-frame clip 3 frames before its first, docs/formats/ANIMATION.md "Transitions"). Ours used to miss this catch when she took off within a tick's travel of
   the wall: the test read her contact-clipped velocity (self-test `chimney_floor_jumps`).
 - No press: the idle state lasts **0.416 s** (12.5 frames; chart variable 208 = 12, so its unit is the 30 Hz frame
   [O]), then `wall_jump_detach_fall` takes 0.267 s (8 frames), her root 32.9 back and down to the floor.
-- A press 58 ms into the idle: the turn state lasts **0.200 s** (6 frames; ours plays the 5-frame clip from its start
-  frame: 0.133 s), then the flight starts 22.8 out and 37.0 up of the wall position at **46.81** out + **77.27** up a
-  frame (first sample 74.48): q12's velocity, as ours.
+- A press 58 ms into the idle: the turn state lasts **0.200 s** (6 frames: request 1156, blend 2 / start 1, starts the
+  5-frame clip a frame before its first; ours the same), then the flight starts 22.8 out and 37.0 up of the wall
+  position at **46.81** out + **77.27** up a frame (first sample 74.48): q12's velocity, as ours. A press while she is
+  still drawn onto the wall does nothing and is not kept (`chimney4-wine.txt` h1); ours the same.
+- The next wall is taken when it comes inside rays 3 x the jump's **launch** speed long (0x758DD0: player +0xA20, the
+  velocity the launch function stored; 271 for a rebound), tested every game frame: 6.0 and 5.5 frames into the
+  rebounds of `chimney4-wine.txt` h1, 360.6 and 338.4 higher (ours 360.6 twice: docs/REFERENCE_COMPARISON.md M06).
 
 The climb itself, ledge 796 to 797 (`chimney4-wine.txt` h1; the hang reached by pinning her 600 over its root, where
 the fall's air grab takes the ledge) [O-runtime]:
@@ -3965,11 +3969,12 @@ No side-by-side comparison with the original game was made.
   Wine (Numbers); traversal reach boxes and the jump-assist radius are inferred; none are in Lara's player data block
   (Numbers) [U]. The grab zVel window, height, crouch height and
   water probe are taken from it.
-- Jump timing differs from the original [O-runtime, docs/REFERENCE_COMPARISON.md]: tru.exe leaves the ground 342..359 ms
-  after the press standing, 273..290 ms with the stick, 70..109 ms running; ours 133 / 67 / 33 ms, because the take-off
-  leaves when its clip ends and `clipBlend` starts `ng_standing_jump` at request frame 6 and
-  `ng_running_jump_forwards` at frame 1. The run start (`ng_run_start` from frame 6) leads tru.exe's by 0.07..0.10 s
-  for the same reason. Not fixed yet: every recorded replay with a jump shifts with it.
+- Jump timing as the original's [O-runtime, docs/REFERENCE_COMPARISON.md M13 / M94]: tru.exe leaves the ground 342..359
+  ms after the key standing, 273..290 ms with the stick, 70..109 ms running (the key reaches it up to 35 ms late); ours
+  333 / 267 / 67 ms. The cause of the earlier 133 / 67 / 33 ms: a request's clip starts at (start − blend) frames
+  (tru.exe 0x441FB0, docs/formats/ANIMATION.md "Transitions"), not at its start frame; `clipBlend` applies that to the
+  take-off, run start (`ng_run_start` from frame 2) and wall jump clips. The other clips still start at their +0x1A
+  frame [I]: each move's timing would shift with the rule and wants its own measurement.
 - The original has no longer jump from a sprint and none from holding Jump on flat ground: a jump out of the sprint
   and one with Jump held 1 s are the running jump's flight (65.83 forward + 42.53 up a frame, 987 long, apex 158.0)
   [O-runtime, `openunderworld-work/jumpfid/sprint.txt`, `hold_run.txt`]; ours does the same.

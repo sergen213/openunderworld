@@ -268,7 +268,8 @@ vec3 Player::advanceClip(float dt) {
     if (!c) return vec3(0);
     const double t0 = s_.clipTime;
     double t1 = t0 + double(s_.clipRate) * dt;
-    if (!s_.loop) t1 = std::clamp(t1, 0.0, c->durationSeconds());
+    // A request's lead (clipBlend: a negative start) holds the clip at its first frame until the time reaches 0.
+    if (!s_.loop) t1 = std::clamp(t1, std::min(t0, 0.0), c->durationSeconds());
     s_.clipTime = t1;
     return rootDelta(anims_, s_, *c, t0, t1);
 }
@@ -2162,10 +2163,17 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (jumpPressed && (s_.state != State::Land || s_.clip != "ng_land_hard")) {
             if (tryHurdle(true) || tryPerch(false)) break; // a low ledge ahead / a perch
             // tru.exe (Wine): the stick behind her turns her round into a running jump; to a side, a standing one.
-            s_.runJump = s_.state == State::Run || (wantsMove && diff > 1.75f);
+            // The take-off state is chosen at the press (chart S246: T283 standing S248 without the stick, else the
+            // stick jump S245 / S247; the run's group S64: T60 / T52 the running jump S281 / S280) [O-data]; a run
+            // that has only just begun still gives the stick jump (Tuning::stickJumpLeadFrames).
+            const bool starting = s_.state == State::Run && s_.clip == "ng_run_start" &&
+                                  s_.clipTime < clipBlend("", "ng_run_start").startSeconds + t_.stickJumpLeadFrames / 30.0f - 1e-4;
+            s_.runJump = (s_.state == State::Run && !starting) || (wantsMove && diff > 1.75f);
             if (s_.runJump && s_.state != State::Run) s_.yaw = target;
-            s_.state = State::JumpPrep; // launch velocity is set when the take-off clip ends
-            play(s_.runJump ? "ng_running_jump_forwards" : "ng_standing_jump", false);
+            s_.state = State::JumpPrep; // launch velocity is set when the take-off ends
+            s_.prepTime = 0, s_.prepInPlace = false;
+            // the stick jump runs on under the run start's root motion until it leaves the ground (JumpPrep)
+            play(s_.runJump ? "ng_running_jump_forwards" : wantsMove ? "ng_run_start" : "ng_standing_jump", false);
             break;
         }
         // Drop (crouch button): at an edge drop to hang, running roll, else crouch while held.
@@ -2389,26 +2397,38 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         }
         break;
     case State::JumpPrep: {
+        // Standing (S248, ng_standing_jump) and running (S280 / S281, ng_running_jump_forwards): the take-off clip from
+        // where its request starts it (clipBlend) to its end = 10 and 2 frames; the stick jump: Tuning::stickJumpFrames.
         const bool running = s_.runJump;
-        const vec3 d = toWorld(advanceClip(dt));
-        if (running) groundMove(d, dt);
+        // S248's T280 [O-data]: the stick pushed during the standing take-off turns it into the stick jump (S245)
+        if (!running && !s_.prepInPlace && wantsMove && s_.clip == "ng_standing_jump") {
+            s_.prepTime = 0;
+            play("ng_run_start", false);
+        }
+        const bool run = !running && s_.clip == "ng_run_start"; // the stick jump's run-up
+        s_.prepTime += dt;
+        if (run && wantsMove) s_.yaw = approachAngle(s_.yaw, target, t_.stickJumpTurn * dt);
+        const vec3 d = rotYaw(run && wantsMove ? target : s_.yaw, advanceClip(dt));
+        if (running || run) groundMove(d, dt);
         if (s_.state != State::JumpPrep) break; // fell off during the take-off
-        if (!clipDone() && (running || !wantsMove || s_.clipTime < t_.standMoveTakeoff)) break; // still crouching
-        const float h = running ? t_.runJumpSpeed : wantsMove ? t_.standJumpSpeed : 0.0f;
-        if (wantsMove && !running) s_.yaw = target;
-        s_.vel = forward() * h + vec3(0, 0, running ? t_.runJumpVz : wantsMove ? t_.standMoveJumpVz : t_.jumpVz);
+        if (run ? s_.prepTime * 30.0f < t_.stickJumpFrames - 1e-3f : !clipDone()) break; // still on the ground
+        // off a balance beam (prepInPlace): no run-up, the stick held at the take-off gives the jump along it [I]
+        const bool stick = run || (!running && s_.prepInPlace && wantsMove);
+        const float h = running ? t_.runJumpSpeed : stick ? t_.standJumpSpeed : 0.0f;
+        if (stick && wantsMove) s_.yaw = target;
+        s_.vel = forward() * h + vec3(0, 0, running ? t_.runJumpVz : stick ? t_.standMoveJumpVz : t_.jumpVz);
         s_.state = State::Jump;
         s_.fallStartZ = s_.pos.z;
         // q26 running, q43 with the stick, q2 standing (lara.drm query table) [O]
         const bool aimed = running    ? aimGroundJump({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f), true)
-                           : wantsMove ? aimGroundJump({40.0f, 50.0f}, 0.0f, false, glm::radians(90.0f))
+                           : stick   ? aimGroundJump({40.0f, 50.0f}, 0.0f, false, glm::radians(90.0f))
                                        : aimGroundJump({0.0f, 48.04f}, 300.0f, true, glm::radians(120.0f));
         const vec3 launch = s_.vel;
         if (!aimed) assistJump();
         s_.jumpAimed = aimed || s_.vel != launch; // a markup target: no wall jump (chart cond 0x262)
         play(running ? "NG_InAir_Feet_Forward_stage1" : "NG_InAir_Feet_Forward_stage1_standing", false);
         if (s_.state == State::HangJump) break; // the running jump's straight rush (aimGroundJump)
-        if (!running && !wantsMove && standJumpToLedge()) break;
+        if (!running && !stick && standJumpToLedge()) break;
         tryPoleLeap();
         break;
     }
@@ -2440,9 +2460,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         else if (s_.state == State::Fall && clipDone()) play("NG_InAir_Feet_Forward_stage3", true); // after a let-go clip
         if (s_.state == State::Jump && s_.clip.starts_with("NG_InAir") && tryPoleLeap()) break;
         {
-            // tru.exe's chart tests the wall jump on its 30 Hz frames: a jump back off a wall (77.27 up a frame)
-            // comes inside the attach's zVel window (<= 9 x 5.72443) on its fifth, 314.8 higher.
-            const float frame = std::floor(s_.jumpTime * 30.0f + 1e-3f);
+            // tru.exe's chart tests the wall jump every game frame (half a 30 Hz frame apart at the 60 Hz of the Wine
+            // traces, as ours' ticks: chimney4-wine.txt h1 takes the walls 6.0 and 5.5 frames into the rebounds). A jump
+            // back off a wall (77.27 up a frame) comes inside the attach's zVel window (<= 9 x 5.72443) 4.5 frames in.
             // 0x7594C0 first asks the jump query in effect (player +0xA84 -> 0x6F1950): flag 0x80 of its +0x2C means no
             // wall jump at all. The queries that carry it are the falls and the jumps launched straight up (q2 the
             // standing jump, q10 hang up, q23 ladder up, q31 DICE up, q35 pole top up, q55 the wall hug's twist), none
@@ -2451,7 +2471,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             if (s_.state == State::Jump && s_.jumpTime == 0 && glm::length(xy(s_.vel)) < 1.0f) s_.jumpAimed = true;
             if (s_.state == State::Jump) airBrake(move);
             if (s_.state == State::Jump) s_.jumpTime += dt;
-            const bool test = s_.state == State::Jump && !s_.jumpAimed && std::floor(s_.jumpTime * 30.0f + 1e-3f) > frame;
+            const bool test = s_.state == State::Jump && !s_.jumpAimed;
             airMove(dt, move);
             if (test && s_.state == State::Jump && tryWallJump()) break;
         }
@@ -2742,6 +2762,7 @@ void Player::beam(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         s_.ledge = -1;
         s_.runJump = false;
         s_.state = State::JumpPrep;
+        s_.prepTime = 0, s_.prepInPlace = true;
         play("ng_standing_jump", false);
         return;
     }
@@ -2842,6 +2863,7 @@ void Player::beamAboutFall(vec2 move, bool jumpPressed, float dt) {
         s_.ledge = -1;
         s_.runJump = false;
         s_.state = State::JumpPrep;
+        s_.prepTime = 0, s_.prepInPlace = true;
         play("ng_standing_jump", false);
         return;
     }

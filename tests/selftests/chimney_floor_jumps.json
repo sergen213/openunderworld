@@ -15,7 +15,7 @@
                 {"probe": "player.grounded", "eq": true}]},
     {"step": "stick_jump_plants_her_feet", "fixtures": [{"teleport": [-12570, 23254, 4418.5, 180]}],
      "input": ["0.5 forward 1", "0.5 jump 1", "0.6 jump 0", "0.9 forward 0"], "duration": 3,
-     "note": "tru.exe under Wine (chimney3-wine.txt j3 / j4): a stick jump (q43) at this face puts her in the wall state one frame after the take-off, her root 43.2 / 43.6 over the floor (ours 47.1: one 30 Hz frame of the 49.97 take-off); with no press she stays 0.62 s (ours 0.47 s: the draw onto the wall is 4 frames shorter) and comes down to the floor.",
+     "note": "tru.exe under Wine (chimney3-wine.txt j3 / j4): a stick jump (q43) at this face puts her in the wall state one frame after the take-off, her root 43.2 / 43.6 over the floor (ours 47.1: one 30 Hz frame of the 49.97 take-off); with no press she stays 0.62 s (ours 0.60 s: 6 frames drawn onto the wall, 12 in the idle) and comes down to the floor. She runs up to the face for the take-off's 8 frames (the stick jump's run-up).",
      "expect": [{"visits": ["jumpprep", "jump", "walljump", "fall", "land", "idle"]},
                 {"clips": ["wall_jump_attach_air", "wall_jump_idle", "wall_jump_detach_fall"]},
                 {"probe": "step.peak_height", "near": 43.4, "tol": 8, "note": "43.2 / 43.6 [O Wine]"},
