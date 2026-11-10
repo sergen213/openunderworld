@@ -3515,6 +3515,45 @@ TEST(Game, GrappleSwingAndRelease) {
     EXPECT_NEAR(s.vel.z, std::max(47.40834f * 30, 0.85f * v.z), 100.0f);
 }
 
+// Hanging on the rope over water: let down until her feet are swimDepth (391) under the surface she lets go of the
+// rope and swims; hanging above the water she keeps the rope.
+TEST(Game, RopeIsLetGoInDeepWater) {
+    for (const float surface : {-3000.0f, 200.0f}) {
+        CollisionMesh m;
+        addFloor(m, -2400, -400, -1200, 400, 0);
+        m.markup.push_back({10, 2, {{-10000, -10000, -100000}, {10000, 10000, surface}}});
+        auto w = makeWorld(std::move(m), {-1600, 0, 0});
+        w->attachGrapple({0, 0, 3000}, 1);
+        for (int i = 0; i < 90 && w->player().state().state != State::GrappleSwing; ++i) w->tick({});
+        ASSERT_EQ(w->player().state().state, State::GrappleSwing) << surface << ": roped on the ledge (wading where it is wet)";
+        for (int i = 0; i < 240 && w->player().state().pos.x < -1260.0f; ++i) w->tick(fixedCamera(*w, forward(), 0));
+        Actions jump = forward();
+        jump.jump = true;
+        w->tick(fixedCamera(*w, jump, 0));
+        Actions down; // Interact + back: the rope is let out to its longest (2863: her feet 263 under the ledge)
+        down.interact = true, down.move = {0, -1};
+        bool swam = false;
+        float lowest = 0;
+        for (int i = 0; i < 900 && !swam; ++i) {
+            w->tick(fixedCamera(*w, down, 0));
+            const auto& st = w->player().state();
+            lowest = std::min(lowest, st.pos.z);
+            swam = st.state == State::SwimSplash || st.state == State::SwimUnder || st.state == State::Surfacing || st.state == State::SwimTread;
+        }
+        const auto& s = w->player().state();
+        if (surface < 0) {
+            EXPECT_FALSE(swam);
+            EXPECT_EQ(s.state, State::GrappleSwing);
+            EXPECT_EQ(s.grappleUid, 1);
+            EXPECT_LT(lowest, -150.0f) << "she did hang under the ledge";
+        } else {
+            EXPECT_TRUE(swam) << game::stateName(s.state) << " z " << s.pos.z;
+            EXPECT_EQ(s.grappleUid, 0) << "the rope is gone";
+            EXPECT_LE(lowest, surface - 391.0f + 1.0f);
+        }
+    }
+}
+
 // The swing law (tru.exe 0x746F60): the stick along her facing (forward, or back once she swings) pushes her the way
 // she is moving, so held it builds the swing up to the 45 degree limit (player data +0xA04), where she is braked;
 // without it, or with the stick across her facing, the swing dies down; from rest the stick back does not start one.

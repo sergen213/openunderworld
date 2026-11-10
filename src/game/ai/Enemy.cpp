@@ -829,6 +829,10 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     // Ground enemies measure Lara flat, centre to centre; flyers from their centre to her head.
     const vec3 head = lara.pos + vec3(0, 0, lara.height * 0.85f), centre = s_.pos + vec3(0, 0, t.height * 0.5f);
     const float dist = flyer ? glm::distance(centre, head) : flatDist(s_.pos, lara.pos);
+    // A blow's own distance [I]: flat while the two bodies' heights overlap, else with the gap between them (a spider
+    // on a bridge does not bite a swimmer 1000 below it; before, the flat distance alone let the blow land).
+    const float gap = std::max({0.0f, lara.pos.z - (s_.pos.z + t.height), s_.pos.z - (lara.pos.z + lara.height)});
+    const float blowDist = flyer ? dist : std::hypot(dist, gap);
     takeoff_.reset();
     if (leapTick(dt)) {
         updatePose(dt, false);
@@ -1012,7 +1016,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
             setMode(Mode::Idle);
         } else if (s_.unseenTime > t.loseTime) { // lost her: searches (ground enemies with a search record), else idle
             setMode(!flyer && type_->search.time > 0 ? Mode::Search : Mode::Idle);
-        } else if (sees && dist <= t.attackRange && facing && s_.cooldown <= 0 && type_->clip(Role::Attack)) {
+        } else if (sees && blowDist <= t.attackRange && facing && s_.cooldown <= 0 && type_->clip(Role::Attack)) {
             s_.melee = -1;
             setMode(Mode::Attack);
         } else if (type_->spit >= 0 && sees && dist > t.attackRange && dist <= kSpitRange && facing && s_.cooldown <= 0 &&
@@ -1049,7 +1053,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         const Attack* rec = s_.melee >= 0 ? &t.attacks[size_t(s_.melee)] : nullptr;
         const bool spit = rec && s_.melee == type_->spit; // reaches as far as it sees
         if (f < t.hitStart) turnTowards(lara.pos, dt);
-        if (!s_.blowLanded && lara.alive && f >= t.hitStart && f <= t.hitEnd && dist <= (spit ? kSpitRange : t.attackReach) &&
+        if (!s_.blowLanded && lara.alive && f >= t.hitStart && f <= t.hitEnd && (spit ? dist <= kSpitRange : blowDist <= t.attackReach) &&
             aimError(lara.pos) <= kBlowCone && (!spit || sees)) {
             s_.blowLanded = true;
             if (hurt) hurt(rec ? rec->damage : t.attackDamage, s_.pos, rec ? (rec->type == 2 ? kDamageHeavy : kDamageLight) : t.attackType);

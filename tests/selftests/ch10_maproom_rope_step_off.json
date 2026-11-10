@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "ch10_maproom_rope_step_off",
+  "chapter": "10 A Puppet No Longer: the flooded room's wall ring from the broken bridge, and what a plain step off does (docs/matrix/10_puppet_no_longer.md C10-03)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/puppet2.html",
+  "note": "l2_maproom from checkpoint 2589 on the near bridge stub. From its south-west corner the wall ring 2595 (sa_ei_grapple_wall on the west wall, 3400 away, 1200 over the bridge) is offered and thrown at. Roped she walks off the stub's west edge: the rope's arc takes her under the pool's surface, where she lets go of the rope and swims (Game.RopeIsLetGoInDeepWater; the depth, swimDepth under the surface, is ours [I]). The spiders of the far stub (2731-2733) do not reach her in the water (Ai.GroundBlowNeedsHerWithinReachInHeight).",
+  "level": "l2_maproom",
+  "spawn": [-20357, 29519, -8794, -90],
+  "steps": [
+    {"step": "corner", "plan": ["go -20450 29000 60", "face -130", "wait 0.5"], "duration": 30,
+     "expect": [{"probe": "grapple.offered", "eq": 2595},
+                {"probe": "world.checkpoint", "eq": 2589}]},
+    {"step": "throw", "input": ["0.1 grapple 1", "0.2 grapple 0"], "duration": 3, "until": {"probe": "grapple.swinging", "eq": true},
+     "expect": [{"probe": "grapple.target", "eq": 2595},
+                {"probe": "grapple.kind", "eq": "wall"},
+                {"probe": "grapple.rope", "near": 3404, "tol": 15}]},
+    {"step": "step_off", "plan": ["run 180 4"], "duration": 12, "until": {"probe": "player.state", "eq": "swimtread"},
+     "expect": [{"visits": ["grappleswing", "swimsplash", "surfacing", "swimtread"]},
+                {"probe": "grapple.attached", "eq": false, "note": "the rope is let go in the water"},
+                {"probe": "grapple.on_wall", "over": "all", "eq": false},
+                {"probe": "water.in", "eq": true},
+                {"probe": "player.pos.z", "near": -9662, "tol": 5, "note": "the pool's surface, 868 under the bridge"},
+                {"probe": "step.health_lost", "eq": 0}]},
+    {"step": "tread", "duration": 6,
+     "expect": [{"probe": "player.state", "over": "all", "eq": "swimtread"},
+                {"probe": "step.health_lost", "eq": 0, "note": "the bridge's spiders cannot bite a swimmer under them"},
+                {"probe": "player.air", "eq": 1}]}
+  ]
+}
