@@ -7079,3 +7079,123 @@ TEST(GameReal, JellyfishStingOnTouch) {
         if (t > 30) expect.push_back(t);
     EXPECT_EQ(again, expect);
 }
+
+// Input timing (game::ButtonTime, tru.exe 0x7607C0): pressed / released for one tick, the time since the change, a
+// hold counted as long past Lara data +0x6E2 = 15 frames (0.5 s), and the press kept for Tuning::pressBuffer.
+TEST(Game, ButtonTimingLayer) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    const auto& b = w->player().state().buttons;
+    const auto& t = w->player().tuning();
+    EXPECT_FALSE(b.interact.down);
+    Actions a;
+    a.interact = a.grapple = true;
+    w->tick(a);
+    EXPECT_TRUE(b.interact.pressed());
+    EXPECT_TRUE(b.grapple.pressed());
+    EXPECT_FALSE(b.jump.pressed());
+    EXPECT_FLOAT_EQ(b.interact.buffer, t.pressBuffer);
+    w->tick(a);
+    EXPECT_TRUE(b.interact.down);
+    EXPECT_FALSE(b.interact.pressed()) << "one tick only";
+    EXPECT_TRUE(b.interact.buffered()) << "one 30 Hz frame = two ticks";
+    w->tick(a);
+    EXPECT_FALSE(b.interact.buffered());
+    for (int i = 0; i < 27; ++i) w->tick(a);
+    EXPECT_NEAR(b.interact.heldFrames(), 14.5, 1e-3);
+    EXPECT_FALSE(b.interact.heldLong(t.holdLongFrames));
+    w->tick(a), w->tick(a);
+    EXPECT_TRUE(b.interact.heldLong(t.holdLongFrames)) << "longer than 15 frames";
+    a.interact = false;
+    w->tick(a);
+    EXPECT_TRUE(b.interact.released());
+    EXPECT_FLOAT_EQ(b.interact.heldFrames(), 0);
+    EXPECT_TRUE(b.grapple.down);
+    w->tick(a);
+    EXPECT_FALSE(b.interact.released());
+    EXPECT_NEAR(b.interact.time, 1 / 60.0f, 1e-6);
+    // the jump and drop edges of the controller come from the layer: one take-off per press
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::JumpPrep);
+    for (int i = 0; i < 240 && w->player().state().state != State::Idle; ++i) w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Idle) << "held: no second jump";
+    for (int i = 0; i < 30; ++i) w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Idle);
+}
+
+// Letting go of a pole with her feet just over a slope too steep to stand on: she is not caught again by the pole she
+// dropped from when the re-grab pause ends (she used to hang on it again ~25 ticks later, l4_traprooms pole 1337), and
+// a fall held up in a notch with no floor under her root ends standing there.
+TEST(Game, PoleDropOverSteepGroundIsNotCaughtAgain) {
+    const auto onGround = [](State st) { return st == State::Idle || st == State::Land || st == State::Walk || st == State::Run; };
+    game::PlayerState h;
+    { // where she hangs on the pole
+        auto w = makeWorld(poleMesh(), {17, 0, 0});
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 120 && w->player().state().state != State::PoleHang; ++i) w->tick(i < 2 ? jump : Actions{});
+        for (int i = 0; i < 60; ++i) w->tick({});
+        h = w->player().state();
+        ASSERT_EQ(h.state, State::PoleHang);
+    }
+    CollisionMesh m = poleMesh();
+    // a ridge along the pole: two faces at 68 degrees meeting 30 under her hanging feet
+    const float top = h.pos.z - 30, x = h.pos.x;
+    addQuad(m, {x - 60, -1500, top - 150}, {x, -1500, top}, {x, 1500, top}, {x - 60, 1500, top - 150});
+    addQuad(m, {x, -1500, top}, {x + 60, -1500, top - 150}, {x + 60, 1500, top - 150}, {x, 1500, top});
+    auto w = makeWorld(std::move(m), {-700, 0, 0});
+    const auto& s = w->player().state();
+    w->restore(h, 0, 0);
+    w->tick({});
+    ASSERT_EQ(s.state, State::PoleHang);
+    const float hangZ = s.pos.z;
+    Actions drop;
+    drop.drop = true;
+    w->tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    EXPECT_EQ(s.droppedPole, 0);
+    bool again = false;
+    for (int i = 0; i < 240 && !onGround(s.state); ++i) w->tick({}), again |= s.state == State::PoleHang;
+    EXPECT_FALSE(again) << "caught again by the pole she let go of";
+    EXPECT_TRUE(onGround(s.state)) << game::stateName(s.state) << " at " << s.pos.x << " z " << s.pos.z;
+    EXPECT_LT(s.pos.z, hangZ - 20);
+    w->tick({});
+    EXPECT_EQ(s.droppedPole, -1);
+}
+
+// l4_traprooms: after the fling 1336 -> 1337 (GameReal.TrapRoomsPoleFling) Drop lets her down: the ground under pole
+// 1337 is a rubble mound 9..25 under her hanging feet, too steep to stand on where she comes down.
+TEST(GameReal, TrapRoomsPoleDropAfterFling) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)});
+    const auto& s = w.player().state();
+    Actions go = forward();
+    go.jump = true;
+    for (int i = 0; i < 120 && s.state != State::PoleHang; ++i) w.tick(i < 20 ? go : Actions{});
+    ASSERT_EQ(s.state, State::PoleHang);
+    for (int i = 0; i < 90; ++i) w.tick(forward());
+    w.tick(go);
+    for (int i = 0; i < 60 && s.state == State::PoleHang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::HangJump);
+    for (int i = 0; i < 120 && s.state == State::HangJump; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::PoleHang);
+    ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 1337);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    const float hangZ = s.pos.z;
+    Actions drop;
+    drop.drop = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    bool again = false;
+    int ticks = 0;
+    const auto onGround = [&] { return s.state == State::Idle || s.state == State::Land || s.state == State::Walk || s.state == State::Run; };
+    for (; ticks < 300 && !onGround(); ++ticks) w.tick({}), again |= s.state == State::PoleHang;
+    EXPECT_FALSE(again) << "caught again by pole 1337";
+    EXPECT_TRUE(onGround()) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    EXPECT_LT(s.pos.z, hangZ - 5);
+    EXPECT_EQ(s.ledge, -1);
+}

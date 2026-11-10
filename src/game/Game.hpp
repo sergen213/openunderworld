@@ -188,6 +188,9 @@ struct Tuning {
     // handed (ledgeb_bad_attach_M) for this long; jump pulls her up (ledgeb_bad_attach_recover), else she falls.
     // DifficultyTable::savingGrabSeconds by Tailoring::savingGrab (World::setTailoring).
     float savingGrabSeconds = 50 / 30.0f;
+    // Input timing (ButtonTime): a press stays usable this long [I: one 30 Hz chart frame; used by the saving grab's
+    // Interact]; a hold counts as long past Lara data +0x6E2 = 15 frames [O].
+    float pressBuffer = 1.0f / 30.0f, holdLongFrames = 15.0f;
     // Water test box (0x710A20): half extents player data shorts +0xC3E (x, y) / +0xC40 (z), centred
     // +0xC42 above the feet; overlapping a water volume puts Lara in it.
     vec3 waterProbeHalf{221.0f, 221.0f, 572.0f};
@@ -252,6 +255,34 @@ struct Tuning {
 Tuning defaultTuning();
 
 enum class GrappleKind : uint8_t { Ceiling, Wall, Post, Mounted };
+
+// One button's timing, as tru.exe's player chart reads an input action (0x7607C0, conditions 0x65..0x6D; the compare
+// modes of its table 0x7609C0): down (> 0), up (< 0), pressed this frame (== 1), released this frame (== -1) and held
+// longer than Lara data +0x6E2 = 15 frames [O]. Ours keeps the time since the last change in seconds, and a press that
+// nothing has acted on yet for Tuning::pressBuffer (`buffer`, ours [I]: tru.exe flags a press for one frame only).
+struct ButtonTime {
+    bool down = false, edge = false; // edge: it changed this tick
+    float time = 0;                  // seconds since it last changed (0 on the edge tick)
+    float buffer = 0;                // seconds left of a press not acted on yet
+    bool pressed() const { return down && edge; }
+    bool released() const { return !down && edge; }
+    float heldFrames() const { return down ? time * 30.0f : 0.0f; } // 30 Hz frames it has been down
+    bool heldLong(float frames) const { return heldFrames() > frames; }
+    bool buffered() const { return buffer > 0; }
+    void take() { buffer = 0; } // the buffered press was acted on
+    void update(bool now, float dt, float window) {
+        edge = now != down;
+        time = edge ? 0.0f : time + dt;
+        down = now;
+        buffer = pressed() ? window : std::max(0.0f, buffer - dt);
+    }
+    void hold() { down = true, edge = false, time = 0, buffer = 0; } // as held: no press edge on the next tick
+};
+// The buttons the player controller times (Player::tick): tru.exe virtual buttons 3 / 0 / 2 / 1.
+struct Buttons {
+    ButtonTime jump, interact, drop, grapple;
+    void hold() { jump.hold(), interact.hold(), drop.hold(), grapple.hold(); }
+};
 
 struct PlayerState {
     State state = State::Idle;
@@ -325,6 +356,9 @@ struct PlayerState {
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
+    Buttons buttons; // input timing (Player::tick)
+    int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
+    float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
     // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
     // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
     // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
@@ -375,7 +409,9 @@ public:
     // The orbit camera's view yaw and look pitch (rad, + = up), set by World each tick: under water the stick's forward
     // share swims along the pitch and the dodges read the stick as on screen (Player::swim).
     void setCamera(float yaw, float pitch) { cameraYaw_ = yaw, cameraPitch_ = pitch; }
-    void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
+    // Load / stream. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks them held
+    // (Buttons::hold) so that a key still down gives no press edge on the next tick.
+    void restore(const PlayerState& s) { s_ = s; }
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
@@ -531,7 +567,7 @@ private:
     const AnimLibrary& anims_;
     Tuning t_;
     PlayerState s_;
-    bool jumpHeld_ = false, dropHeld_ = false;
+    // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;
 };

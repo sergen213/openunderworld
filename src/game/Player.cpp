@@ -450,6 +450,7 @@ bool Player::wading() const {
     return d >= t_.wadeDepth && d < t_.swimDepth;
 }
 
+constexpr float kWedgeStep = 2.0f, kWedgeTime = 0.25f; // units a tick, seconds
 void Player::airMove(float dt, vec2 move) {
     const vec3 prevPos = s_.pos;
     // tru.exe integrator 0x5DB370: pos += v t + a t^2 / 2; v += a t (constant acceleration, exact for any t).
@@ -457,12 +458,14 @@ void Player::airMove(float dt, vec2 move) {
     vec3 d = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt);
     s_.vel.z -= t_.gravity * dt;
     vec3 p = s_.pos;
+    bool propped = false; // something under the capsule this tick
     // Same sweep loop as slide(), but contacts also clip the velocity (ceilings stop the rise, walls the run-up).
     for (int iter = 0; iter < 4 && glm::dot(d, d) > 1e-8f; ++iter) {
         const auto hit = col_.sweepCapsule(p + vec3(0, 0, t_.radius), p + vec3(0, 0, capHeight() - t_.radius), t_.radius, d);
         if (!hit || (hit->t == 0 && glm::dot(d, hit->normal) >= 0)) { p += d; break; }
         const vec3 n = hit->normal;
         p += d * hit->t + n * kSkin;
+        propped |= n.z > 0.2f;
         if (n.z >= t_.slideMinNormalZ && s_.vel.z <= 0) {
             // Floor-like contact: land only with a floor under the root. A capsule resting on an edge's corner
             // has none (walking slowly off a ledge used to alternate Fall/Land there): it slides off instead.
@@ -482,6 +485,10 @@ void Player::airMove(float dt, vec2 move) {
         s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
     }
     s_.pos = p;
+    // Wedged: held up without a floor under her root (a notch between a prop and a slope, l4_traprooms under pole 1337)
+    // and going nowhere for kWedgeTime: she stands where she is [I: tru.exe's own collision response is not ported].
+    s_.fallStall = propped && s_.state == State::Fall && glm::length(p - prevPos) < kWedgeStep ? s_.fallStall + dt : 0.0f;
+    if (s_.fallStall >= kWedgeTime) { s_.fallStall = 0; land(move); return; }
     if (s_.vel.z > 0) return;
     // Falling through a balance beam's line (beams can be thinner than the capsule): stand on it.
     for (const auto& m : col_.markup) {
@@ -573,7 +580,10 @@ bool Player::tryGrabPole(vec3 prevPos) {
     if (s_.regrabCooldown > 0 || s_.vel.z < t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
-        if (!isPole(m)) continue;
+        // Not the pole she just let go of (Drop): l4_traprooms' pole 1337 hangs her feet 9..25 over a rubble mound, where
+        // she would slide in reach of it until the re-grab pause ran out [I: tru.exe's let-go state S522 looks for
+        // what is below her (q44), not for what she left].
+        if (!isPole(m) || int(li) == s_.droppedPole) continue;
         for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
             const vec2 dir = segDir(m, si), n(-dir.y, dir.x);
             const float c = glm::dot(xy(forward()), n);
@@ -1589,7 +1599,9 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (dropPressed && !turning) {
         const bool para = s_.polePara;
         s_.regrabCooldown = 0.4f;
+        const int from = s_.ledge;
         startFall(vec3(0));
+        s_.droppedPole = from;
         play(para ? "Hpole_detach_dropPara" : "Hpole_detach_dropPerp", false);
         return;
     }
@@ -1910,9 +1922,11 @@ void Player::assistJump() {
 }
 
 void Player::tick(vec2 move, const Actions& a, float dt) {
-    const bool jumpPressed = a.jump && !jumpHeld_, dropPressed = a.drop && !dropHeld_;
-    jumpHeld_ = a.jump;
-    dropHeld_ = a.drop;
+    Buttons& b = s_.buttons;
+    b.jump.update(a.jump, dt, t_.pressBuffer), b.interact.update(a.interact, dt, t_.pressBuffer);
+    b.drop.update(a.drop, dt, t_.pressBuffer), b.grapple.update(a.grapple, dt, t_.pressBuffer);
+    const bool jumpPressed = b.jump.pressed(), dropPressed = b.drop.pressed();
+    if (s_.state != State::Fall) s_.droppedPole = -1;
     s_.fallHeight = 0;
     // Sprint stamina (tru.exe under Wine, l4_trailstart; swimming the same, l2_cliffclimb sea): sprinting spends it
     // second for second, anything else but the exhaustion clips refills it as fast.
