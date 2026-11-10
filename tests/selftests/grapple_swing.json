@@ -46,7 +46,7 @@
                 {"probe": "step.drop", "min": 1300}]},
     {"step": "jump_off", "input": ["0.5 jump 1", "0.6 jump 0"], "duration": 5, "until": {"probe": "player.state", "eq": "land"},
      "expect": [{"visits": ["grappleswing", "jump", "land"]},
-                {"clips": ["grapple_rappel_free_jumpoff"]},
+                {"clips": ["grapple_rappel_free_jumpoff", "ng_land_hard"], "note": "the leap off the long rope comes down more than 1264.22 (she loses health): the chart's hard landing (S1275 / S1276), not ng_generic_land_forwards"},
                 {"probe": "grapple.attached", "eq": false},
                 {"probe": "grapple.target", "eq": 0},
                 {"probe": "step.peak_speed", "min": 1800, "note": "the leap off the rope: 63.21 per frame = 1896 units/s along her facing [O +0xA48]"},
