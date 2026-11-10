@@ -647,6 +647,18 @@ void World::tick(const Actions& input) {
     player_.setWaveSeconds(double(ticks_) * kTickSeconds);
     player_.setCamera(cam_.yaw, cam_.pitch);
     const auto playerStart = std::chrono::steady_clock::now();
+    // What carries her as the tick begins (tru.exe 0x7027B0: her markup box's owner instance and the item's segment,
+    // else the instance and segment she stands on) ...
+    const auto freeFlight = [](State s) { return s == State::Jump || s == State::Fall; };
+    struct { int markup = -1, dynamic = -1; int32_t id = 0; glm::mat4 frame{1}; bool held = false; } carrier;
+    if (const State st = player_.state().state; !onBike && !freeFlight(st) && st != State::HangJump && st != State::WallJump) {
+        if (const int m = player_.attachedMarkup(); m >= 0) {
+            if (const auto f = objectMarkupFrame(m)) carrier.markup = m, carrier.frame = *f, carrier.held = true;
+        } else if (const auto g = col_.groundProbe(player_.state().pos + vec3(0, 0, 20), 60); g && g->dynamic >= 0 && st != State::Block) {
+            carrier.dynamic = g->dynamic, carrier.id = col_.dynamics[size_t(g->dynamic)].id;
+            carrier.frame = col_.dynamics[size_t(g->dynamic)].transform, carrier.held = true;
+        }
+    }
     if (!onBike) player_.tick(move, a, dt);
     tickTimes.playerMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - playerStart).count();
     hingePull_.clear();
@@ -735,6 +747,21 @@ void World::tick(const Actions& input) {
     carryPortables(interactPress && pickedUp_.empty());
     pushUberJoints(push);
     tickObjects(wdt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
+    // ... gives her its velocity when this tick took her off it into free flight: her point through the carrier's
+    // frame now x its inverse a frame ago (0x5D75B0), added to her own velocity [O tru.exe: 0x7726D0 adds it to the
+    // launch velocity, 0x714630 wherever her velocity is read]. Not to a leap aimed at markup: its flight is solved
+    // to the target (the solver's input is 0x7694B0's frame velocity [O]; the solved flight is ours [I]).
+    if (carrier.held && freeFlight(player_.state().state) && !player_.state().jumpAimed) {
+        std::optional<glm::mat4> now;
+        if (carrier.markup >= 0) now = objectMarkupFrame(carrier.markup);
+        else if (size_t(carrier.dynamic) < col_.dynamics.size() && col_.dynamics[size_t(carrier.dynamic)].id == carrier.id)
+            now = col_.dynamics[size_t(carrier.dynamic)].transform;
+        if (now && *now != carrier.frame && wdt > 1e-6f) {
+            const vec3 p = player_.state().pos;
+            const vec3 v = (vec3(*now * glm::inverse(carrier.frame) * glm::vec4(p, 1)) - p) / float(wdt);
+            if (glm::length(v) < 6000.0f) player_.addVelocity(v); // [I] a carrier that jumped (removed, re-placed) gives none
+        }
+    }
     interactHeld_ = a.interact;
     // Close combat (Melee.cpp): an interact press that no pickup, portable, switch, block or handle took kicks / swings.
     if (!onBike)
@@ -1389,8 +1416,14 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     auto str = [&](const std::string& s) { bytes(s.data(), s.size()), add(s.size()); };
     const PlayerState& s = player_.state();
     part("player");
-    add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), add(s.ledge);
-    add(s.ledgeT), add(s.water), add(s.climbHold), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
+    // A markup of an object by its owner (uid, item): its index in the merged list depends on when the object was first
+    // placed (streaming, a load), as a save names it; unit markup by its index.
+    const auto markup = [&](int index) {
+        if (const auto o = index >= 0 ? markupOwner(index) : std::nullopt; o && o->first.starts_with('@')) str(o->first), add(o->second);
+        else add(index);
+    };
+    add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), markup(s.ledge);
+    add(s.ledgeT), add(s.water), markup(s.climbHold), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
     add(s.loop), str(s.clipMix), add(s.mix), add(s.mirror), add(s.ledgeSeg), add(s.ledgeSide), add(s.runJump), add(s.regrabCooldown), add(s.savingGrab);
     add(s.flight), add(s.fallStartZ), add(s.fallHeight), add(s.climbStance), add(s.climbWarp), add(s.climbFrom), add(s.climbTo);
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);

@@ -492,6 +492,7 @@ public:
     bool grappleOff(int32_t uid) const { return grappleOff_.contains(uid); } // `unit` 13 dropped its markers (saved)
     // instance 23 with a `uberobjectbase` 2 anchor: object `uid` rides HInfo marker `second` of object `first` (saved);
     // nullopt when it is not anchored. l1_kraken_room's chain links 61 / 62 hang on platform 27's markers 21 / 20.
+    const std::map<int32_t, std::pair<int32_t, int32_t>>& anchors() const { return anchors_; }
     std::optional<std::pair<int32_t, int32_t>> anchor(int32_t uid) const {
         const auto it = anchors_.find(uid);
         return it == anchors_.end() ? std::nullopt : std::optional(it->second);

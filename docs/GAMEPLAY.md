@@ -1100,8 +1100,8 @@ segment, so the block's edges are ordinary ledges that ride its pushes: up again
 `hurdle_ground_attach_mid`), and from the edge she drops to hang or shimmies like on any ledge. Standing on block 6504
 pushed under the inserted pole 6503, a standing jump's pole leap catches the pole (695 over the block's top), and the
 hang slides lever 6502 and raises door 6505 (`ProgressionReal.BallcourtBlockUnderPoleReachesIt`, the replay below).
-[I]: model 0's items only (the current model; uber sections' own models, e.g. hpole bars, add none), objects without a
-collision segment and portables add none (an inserted pole keeps tickInserted's horizpole).
+Every model and segment, objects without collision and the ride: "Moving markup" below. Portables add none (an
+inserted pole keeps tickInserted's horizpole).
 Wine [O, openunderworld-work/poleattach/session6.sh -> s6.txt]: block 6504 at (-16042.5, 3478.8, -11969.6) yaw
 -2.7737 (tru.exe frame); a standing jump with Lara placed 260 from its centre, facing it, squares her to the face
 (heading -1.2029 = the block's yaw + 90°), attaches and ends standing on the top at +409.8 (the ledge 410.8). Walking
@@ -2174,6 +2174,192 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   request names a `rope_` or `vpole_` clip (all 1 502 of lara.drm's requests), no state requests them, no unit has
   rope (11), vertpole (5), zipline (7) or cover (12) markup (all units, 2026-10-18 and 2026-11-06), and lara.drm has no
   zip-line clip at all. The `rope_*` / `vpole_*` animations are leftovers; the only rope is the grapple's.
+
+## Moving markup (ledges, poles, beams and holds that ride objects)
+
+Code: `World::tickObjectMarkup`, `World::tickObjects` (the ride), `World::tick` (the velocity she leaves with),
+`Player::attachedMarkup` / `rideFrame`; data `physics::ObjectPhysics::markup` + `markupSegment`. Tests:
+`Game.MovingMarkup*`, `GameReal.MovingMarkup*`, self-test `moving_markup`, a `StreamReal.SaveContinuesBitIdentically` case.
+
+### The original [O tru.exe, object data]
+
+- **Where moving markup comes from.** Only from object models. A model DTP lists markup items (+0x54 count, +0x58 ->
+  0x5C-byte items: +0x28 flags, +0x2E id, +0x30 s16 **segment**, +0x33 type, +0x58 -> polyline). `0x5D0610` hands the
+  items of an instance's current model to `0x5CE4F0` with the instance as owner: one markup box per item (box +0x0C = the
+  instance, +0x20 = the item), listed on the instance (+0x2D8). It runs at instance creation (`0x5D07E0`), on a model
+  change (`0x5BA480` / `0x5BA650`) and for uber object sections (`0x4D78D0`), which are instances of their own with their
+  own models. The earlier note that `0x5D0610` "parses a global list" was wrong: the level's 0x5C list (Level +0x08) is
+  empty in every unit, and the function is called per instance with that instance's model.
+- **No level markup is tied to an instance.** A unit ("markup2") item's +0x4A is copied to the box's +0x2C, which
+  `0x5C41A0`'s debug text calls the box's introID; it is 0 on every markup item of the 75 units reachable through
+  portals (survey 2026-11-10), and unit boxes have no owner (+0x0C = 0). So a ledge that moves is always an object's.
+- **How it moves.** `0x5C41A0` places a box by its owner's matrix of the item's segment (instance +0x90 + 0x40 x item
+  +0x30): item points are in that segment's space, and the box follows whatever moves the segment — a joint, a clip, a
+  spline, a push — with no per-mover code. Examples: `ar_ani_infinite_chain` has one pole item on each of segments 1-6,
+  all with the same local points; `ar_ani_thor_hammer_*` ledges ride segment 2 of 5, `ca_ani_adren_blades` a ledge and
+  a beam on each blade segment.
+- **How Lara is carried.** She is on a box (player +0xC94), and her place is a position on that box, so she moves with
+  it. Her carrier's velocity is one function, `0x7027B0`: the instance and segment are taken from, in this order, an
+  explicit handle, player +0x610 (+0x618 segment), her markup box (owner +0x0C, segment item +0x30; `0x5BE2F0` first
+  checks the box is enabled and its owner not flagged 0x2 / 0x20000000), player +0x420 (+0x428), and last the instance
+  and segment she stands on (her instance +0x228 / +0x226). `0x5D75B0` then gives (segment matrix now x its inverse one
+  frame ago) applied to her last position, minus that position, per frame. So hanging on moving markup and standing on
+  a moving floor are the same case with a different source of the segment.
+- **Leaving it.** `0x714630` = her velocity (instance +0x2A0) + `0x7027B0`: every reader of "Lara's velocity" gets the
+  carrier's added. `0x7726D0` (a launch from the current jump query, `0x76FFC0`) adds it to the launch velocity
+  (player +0xA40). `0x7694B0` is the same velocity for the jump queries' solver (`0x7296C0`), zeroed when it is no more
+  than 3.1605 units per frame (94.8 units/s). So a jump or a let-go off a moving ledge, pole or platform inherits its
+  velocity.
+- [U] Not decoded: what a held markup's owner feels of her weight (the walkthrough's counterweight column in
+  l4_staircase_xibalba, the snake-head poles of l4_pool and the scales of l2_puzzleroom come down under her; no
+  message or force from the player's markup states to the owner was found yet), the camera's use of the same velocity
+  (`0x5E7EF0`, `0x5FA920`, `0x5FF650`, `0x609830`), and what happens to her on a link of `ar_ani_infinite_chain` when
+  its clip loops (every link segment steps back one spacing, 1264.2).
+
+### Ours
+
+- Every scripted object's model-0 items, and for an uber object the items of each section's current model, are markup
+  in the merged collision after the units' own, keyed `(uid, model x 100 + item)` and named `"@uid"` in saves. Each
+  tick an item is re-placed by its segment under the pose that draws and collides the object: intro x (script pose:
+  body, push offset, clip palette) x the segment's bind frame; a section: intro x its joint's motion x its clip. Before
+  this, items were placed by the object's first collision segment only, so objects without collision (the valgrind
+  pole rings, chains, hammers, weights, runestones), items on other segments and every section model (the retracting
+  `*_ei_hpole_*` bars, the column handhold, the endgame tower's rings) had none or misplaced markup.
+- Queries (grabs, jump targets, pole leaps, beams) read the merged list, so they see the items where they are now.
+- Attached (`Player::attachedMarkup`: hang, shimmy, drop-to-hang, pole, beam, ladder, perch, pillar, climb-up, a
+  targeted leap in flight, a free-climb hold), the change of her item's frame over the tick is applied to her root, her
+  heading (the turn about Z [I: a tilting frame does not pitch or roll her]) and the world-space points of a move in
+  progress (`Player::rideFrame`). A targeted leap therefore flies in its target's frame and arrives on a pole or ledge
+  that moved meanwhile.
+- When a tick takes her from a carrier (the markup she held, else the dynamic collider she stood on) into free flight
+  (jump, fall), the carrier's velocity at her position is added to hers (`World::tick`), except for a leap aimed at
+  markup (solved to its target [I]) and a carrier that jumped more than 6000 units/s (removed or re-placed [I]).
+  Nothing is stored for it: the carrier's frame before and after the tick is compared, so saves need no new field and
+  a save while riding continues bit-identically.
+- Saves name her item `"@uid"` + key as before; a load now puts the attachment back once the scripts and objects are
+  restored (`World::restoreObjectMarkup`: the items exist only when their objects stand as saved). Before, an object
+  ledge was dropped at load and she fell. The state hash (`World::stateParts`) names an object's item by its owner
+  for the same reason: its index in the merged list depends on when the object was first placed. A script's terrain-group switch rebuilds the merged collision and renumbers
+  the objects' items: her ledge, water volume and hold are kept by owner there too. An item that goes away under her
+  (its object hidden, streamed out, its section on another model) lets her go.
+- Real cases (`GameReal.MovingMarkup*`): by input, l5_valgrind cog wheel 7312 (standing jump onto a passing rim
+  ledge, 10 degrees/s, let go at the rim's speed; the self-test `moving_markup` does the same in ou-game); rotating,
+  l7_yggdrasil_end tower 8401's ring handholds; sliding, l5_valaskjalf chain 6939's link poles (174 units/s);
+  counterweight, l4_staircase_upper ramps 6045's column handhold falling 948 on its joint. The last three set her
+  hanging on the item (no floor leads there in ours yet) and use input from there.
+- [I] / open: model 0 of a non-uber object is the model it is born with (script model switches are not followed);
+  her weight does not move what she hangs from except the inserted-pole levers (`tickInserted`); the 94.8 units/s
+  threshold of the jump queries is not applied; the camera does not use the carrier's velocity.
+
+### Movers and other objects that carry markup, per unit [O data: every model of every placed object]
+
+Class 79 = uber object, 34 = rigid body on a joint, 6 = anim-graph object, 30 = breakable (its pieces' items:
+"Breakables"), 50 = portable (carried poles: no markup while loose; inserted: `tickInserted`). Combat crates
+(`sh_ei_combat_crate_*`, a ledge loop each) are left out.
+
+| unit | object, uids | class | items |
+|---|---|---|---|
+| l1_seatop | `ms_uo_yacht` 998 | 79 | 3x ledgegrab (model 0, segment 0) |
+| l2_cliffclimb | `sa_ei_hpole_a` 3837 | 79 | 1x horizpole (model 1, segment 0) |
+| l2_cliffclimb | `sa_uo_cliffclimb_ledge` 3844 | 79 | 1x ledgegrab (model 0, segment 0) |
+| l2_cliffclimb | `ms_uo_yacht` 2566 | 79 | 3x ledgegrab (model 0, segment 0) |
+| l3_bedroom_hall | `ma_rb_pushblock_training` 4363 | 79 | 1x ledgegrab (model 0, segment 0) |
+| l7_yggdrasil_end | `ar_ani_floating_runestone` 8365..8388 (24) | 6 | 1x ledgegrab (model 0, segment 1) |
+| l7_yggdrasil_end | `ar_uo_yggdrasil_endgame_gun` 8401 | 79 | 14x ledgegrab (model 0, segment 1), 12x ledgegrab (model 1, segment 0), 12x ledgegrab (model 2, segment 0), 12x ledgegrab (model 3, segment 0) |
+| l5_valgrind | `ar_pu_cog_wheel_level_1a` 7312 | 79 | 4x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_pu_cog_wheel_level_2b` 7313 | 79 | 4x ledgegrab (model 0, segment 0), 4x ledgegrab (model 1, segment 0), 4x ledgegrab (model 2, segment 0), 4x pole (model 3, segment 0), 12x ledgegrab (model 3, segment 0) |
+| l5_valgrind | `ar_pu_cog_wheel_level_3c` 7314 | 79 | 4x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorb_ringa` 7492 | 79 | 4x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorb_ringd` 7493 | 79 | 4x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorb_ringe` 7494 | 79 | 4x pole (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorb_ringf` 7495 | 79 | 4x pole (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorb_ringg` 7496 | 79 | 4x pole (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorc_ringb` 7497 | 79 | 4x pole (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floora_ringa` 7501 | 79 | 8x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floora_ringb` 7502 | 79 | 8x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floora_ringc` 7503 | 79 | 4x pole (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floora_ringd` 7504 | 79 | 4x pole (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorb_ringb` 7505 | 79 | 8x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorb_ringc` 7506 | 79 | 4x pole (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorc_ringc` 7507 | 79 | 16x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorc_ringa` 7508 | 79 | 16x ledgegrab (model 0, segment 0) |
+| l5_valgrind | `ar_uo_valgrind_column_floorc_ringd` 7509 | 79 | 16x ledgegrab (model 0, segment 0) |
+| l2_junglehub | `sa_ei_hpole_a` 3222, 3223, 3224 | 79 | 1x horizpole (model 1, segment 0) |
+| l1_kraken_room | `ms_ei_hpole_a` 322, 323, 324 | 79 | 1x horizpole (model 1, segment 0) |
+| l1_kraken_room | `ms_ani_sunsphere_plat` 27 | 79 | 3x ledgegrab (model 1, segment 1), 1x ledgegrab (model 1, segment 0) |
+| l1_kraken_room | `ms_ani_tentacle_pillar_b` 34 | 79 | 3x ledgegrab (model 0, segment 0), 1x ledgegrab (model 0, segment 61), 1x pillar (model 0, segment 0), 1x pole (model 0, segment 0) |
+| l1_kraken_room | `ms_ani_tentacle_platform_a` 35 | 79 | 1x ledgegrab (model 0, segment 60), 1x ledgegrab (model 0, segment 61), 1x ledgegrab (model 0, segment 0) |
+| l2_hubhall | `sa_ei_hpole_b` 3102 | 79 | 1x horizpole (model 1, segment 0) |
+| l1_ship_exterior | `ms_uo_yacht` 1552 | 79 | 3x ledgegrab (model 0, segment 0) |
+| l2_maproom | `sa_pt_pole_maproom` 2665 | 50 | 1x pole (model 0, segment 0) |
+| l2_maproom | `sa_uo_thor_bridge_combo` 2667 | 79 | 6x ledgegrab (model 0, segment 0) |
+| l3_secretchamber | `ma_pu_thor_pillar` 4674 | 79 | 1x ledgegrab (model 0, segment 0) |
+| l3_secretchamber | `ma_pt_pole_a` 4686 | 50 | 1x pole (model 0, segment 0) |
+| l4_ballcourt | `ca_pt_pole_a` 6503 | 50 | 1x pole (model 0, segment 0) |
+| l4_ballcourt | `ca_pu_block_a` 6504 | 79 | 1x ledgegrab (model 0, segment 0) |
+| l5_valaskjalf_entryb | `ar_uo_wall_lever` 7188 | 79 | 1x pole (model 1, segment 0) |
+| l5_valaskjalf_entryb | `ar_pt_pole_a` 7190 | 50 | 1x pole (model 0, segment 0) |
+| l5_valaskjalf_entryb | `ar_pu_valaskjalf_entry` 7191 | 79 | 1x ledgegrab (model 0, segment 0) |
+| l2_puzzleroom | `sa_ei_hpole_b` 2829 | 79 | 1x horizpole (model 1, segment 0) |
+| l2_puzzleroom | `sa_pt_pole_a` 2967, 2968 | 50 | 1x pole (model 0, segment 0) |
+| l2_puzzleroom | `sa_rb_pushable_weight` 2971 | 79 | 1x ledgegrab (model 0, segment 0) |
+| l2_puzzleroom | `sa_uo_shiva_left_scale` 2066 | 79 | 2x pole (model 2, segment 0) |
+| l1_kraken_entrance | `ms_ei_hpole_a` 681, 682, 683, 684 | 79 | 1x horizpole (model 1, segment 0) |
+| l4_staircase_upper | `ca_ei_hpole_a` 6047, 6048 | 79 | 1x horizpole (model 1, segment 0) |
+| l4_staircase_upper | `ca_ei_hpole_b` 6049 | 79 | 1x horizpole (model 1, segment 0) |
+| l4_staircase_upper | `ca_rb_hallway_ramps_b` 6045 | 79 | 1x ledgegrab (model 1, segment 0) |
+| l5_valaskjalf | `ar_ani_infinite_chain` 6939..6944 (6) | 79 | 1x pole (model 0, segment 6), 1x pole (model 0, segment 5), 1x pole (model 0, segment 4), 1x pole (model 0, segment 3), 1x pole (model 0, segment 2), 1x pole (model 0, segment 1) |
+| l5_valaskjalf | `ar_ani_thor_hammer_four` 6945 | 6 | 2x ledgegrab (model 0, segment 2) |
+| l5_valaskjalf | `ar_ani_thor_hammer_one` 6946 | 6 | 1x ledgegrab (model 0, segment 2) |
+| l5_valaskjalf | `ar_ani_thor_hammer_three` 6947 | 6 | 1x ledgegrab (model 0, segment 2) |
+| l5_valaskjalf | `ar_ani_thor_hammer_two` 6948 | 6 | 1x ledgegrab (model 0, segment 2) |
+| l5_valaskjalf | `ar_ani_weight_with_ledge` 6953, 6954 | 6 | 2x ledgegrab (model 0, segment 1) |
+| l5_valaskjalf | `ar_ani_weight_without_ledge` 6955, 6956, 6957, 6958 | 6 | 1x ledgegrab (model 0, segment 1) |
+| l5_valaskjalf | `ar_ei_break_braced_corner` 6959 | 30 | 1x ledgegrab (model 0, segment 0) |
+| l5_valaskjalf | `ar_ei_break_braced_ledge` 6960, 6961 | 30 | 1x ledgegrab (model 0, segment 0) |
+| l5_valaskjalf | `ar_ei_breakable_hpole` 6962 | 30 | 1x pole (model 4, segment 0) |
+| l5_valaskjalf | `ar_ei_running_chains` 6972 | 34 | 1x pole (model 0, segment 0) |
+| l5_valaskjalf | `ar_pu_valaskjalf_entry` 6973 | 79 | 1x ledgegrab (model 0, segment 0) |
+| l5_valaskjalf | `ar_rb_hpole_hammer_release` 6979, 6980, 6981 | 34 | 1x pole (model 0, segment 0) |
+| l5_valaskjalf | `ar_rb_hpoles_on_gears` 6982, 6983, 6984 | 34 | 4x pole (model 0, segment 0) |
+| l2_upperhallway | `sa_ei_hpole_b` 1869, 1870, 1871 | 79 | 1x horizpole (model 1, segment 0) |
+| l3_chapel | `ma_ei_hpole_a` 4745 | 79 | 1x pole (model 1, segment 0) |
+| l3_chapel | `ma_ei_hpole_b` 4746, 4747, 4748 | 79 | 1x horizpole (model 1, segment 0) |
+| l3_chapel | `ma_pt_pole_a` 4823 | 50 | 1x pole (model 0, segment 0) |
+| l4_staircase_xibalba | `ca_ei_hpole_a` 6015, 6016 | 79 | 1x horizpole (model 1, segment 0) |
+| l4_staircase_xibalba | `ca_rb_hallway_ramps_b` 6036 | 79 | 1x ledgegrab (model 1, segment 0) |
+| l4_temple | `ca_ei_hpole_a` 4952, 4953 | 79 | 1x horizpole (model 1, segment 0) |
+| l4_temple | `ca_pt_pole_b` 5240, 5241 | 50 | 1x pole (model 0, segment 0) |
+| l2_towerroom | `sa_ei_hpole_b` 1905 | 79 | 1x horizpole (model 1, segment 0) |
+| l4_traprooms | `ca_pu_block_grapple` 5884 | 79 | 1x ledgegrab (model 0, segment 0) |
+| l4_traprooms | `ca_rb_crusher_slim` 5885..5890 (6) | 34 | 1x ledgegrab (model 0, segment 0), 1x ledgegrab (model 1, segment 0) |
+| l4_traprooms | `ca_ani_adren_blades` 5897, 5898 | 79 | 1x ledgegrab (model 0, segment 2), 1x balancebeam (model 0, segment 2), 1x ledgegrab (model 0, segment 1), 1x balancebeam (model 0, segment 1) |
+| l2_towerconnector | `sa_ei_hpole_b` 2035, 2036, 2037 | 79 | 1x horizpole (model 1, segment 0) |
+| l4_pool | `ca_rb_snake_head` 5612 | 79 | 1x pole (model 0, segment 0) |
+| l4_pool | `ca_rb_snake_head_scripted_fx` 5613 | 79 | 1x pole (model 0, segment 0) |
+| l4_pool | `ca_uo_balancebreakb` 5614 | 30 | 1x ledgegrab (model 0, segment 0), 1x balancebeam (model 0, segment 0), 1x ledgegrab (model 3, segment 0) |
+| l4_pool | `ca_uo_ledgebreak` 5615, 5616 | 30 | 1x ledgegrab (model 0, segment 0) |
+| l4_pool | `ca_uo_ledgebreak_u` 5617, 5618, 5619 | 30 | 1x ledgegrab (model 0, segment 0) |
+| l4_pool | `ca_uo_thor_statue_arms` 5620 | 79 | 2x ledgegrab (model 0, segment 0), 1x ledgegrab (model 1, segment 0) |
+| l4_pool | `ca_rb_snake_head_revisit` 5632, 5633 | 79 | 1x pole (model 0, segment 0) |
+
+What moves them [O data / scripts, as far as ours runs them]: the valgrind tower rings 7492-7509 and cog wheels
+7312-7314 turn on uber hinge joints (the rings stand until the tower puzzle starts them; in ours the wheels turn for
+about 9 s after the unit starts and then rest [U: what starts and stops them]; later Lara turns them by their push
+panels); the endgame tower 8401's ring sections turn from the start; `ar_ani_infinite_chain` links run by clip (6939-6942
+a few seconds after the unit starts, 6943 / 6944 from gear 6985); the hammers, weights and `ms_ani_*` kraken pieces by
+anim-graph / uber clips their scripts start; the hallway ramps' column section, the snake heads, crushers and
+`ar_rb_hpole*` on physics joints; push blocks and Thor pillars by Lara. The final level's platforms [O scripts, `OU_PROGRESSION_DUMP`]: the 24 `ar_ani_floating_runestone` 8365-8388 are
+placed in rows far off the arena and are anchored by script (`instance` 8 (marker id) gives an anchor, `instance` 23
+on the stone takes it) to markers 1-6 of the eight `ar_ani_runestone_orbit_a` rigs 8389-8396, three stones a rig, at
+staggered heights round the tower; each stone has one ledge loop on its segment 1 and a player sensor on its marker
+5. The 82 `natla_end_mover` spline movers carry `natla_end` (Natla: 8404's child is 8403), not platforms. Posing
+anchored riders is implemented on agent/GpNatla (`instance` 8 anchors, `World::poseAnchored`); this branch only makes
+a rider that carries markup collide once it is anchored to a spline mover or an animated rig (`World::syncObjects`),
+and its items follow its pose like any other object's. Open after both are merged: the rigs do not turn in ours (a trial here with
+the stones anchored: they sat at their markers, e.g. 8365 at 1948,-3375,11346, for 10 s; the rig is posed by a
+5-bone clip palette whose time does not advance and it has no anim graph in ours [U: what plays its clip]), and the
+rides themselves (C21-01, -10, -19, -20 of docs/matrix/21_out_of_time.md).
 
 ## Chimney jumps (src/game/WallJump.cpp)
 

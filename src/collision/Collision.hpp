@@ -62,6 +62,7 @@ struct Markup {
     uint16_t id = 0;
     std::vector<vec3> points;
     std::optional<CameraRecord> camera; // item +0x64 / +0x68 camera commands: the record command 0x12 selects
+    uint16_t intro = 0; // unit item +0x4A -> MarkUp +0x2C: tru.exe's "introID" of a markup box (0x5C41A0's debug text)
 };
 // MUD flag bits tru.exe derives from the type (switch 0x5D6F90 | 0x5D70A0).
 uint32_t markupFlags(uint8_t type);

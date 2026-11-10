@@ -98,6 +98,10 @@ struct ObjectPhysics {
     // per instance (0x5D0610 -> 0x5CE4F0 with the instance as the markup box's owner, box +0x0C) when the instance's
     // current model has any (0x4D78D0, 0x5BA480, 0x5BA650, 0x5D07E0): push blocks' top-edge ledges, poles, cog rings.
     std::vector<collision::Markup> markup;
+    // Item +0x30 (s16): the model segment each item rides. tru.exe places a markup box by its owner's matrix of that
+    // segment (0x5C41A0: instance +0x90 + 0x40 * item[+0x30]) and takes the velocity Lara inherits on it from the same
+    // matrix now and one frame ago (0x7027B0 -> 0x5D75B0). Parallel to `markup`.
+    std::vector<int16_t> markupSegment;
     // Target features of the model (model DTP +0x5C count, +0x60 -> 0x20-byte records {u16 segment, u16 mask, float3
     // position in that segment's frame}; tru.exe's instance queries 0xDE / 0xDF / 0x14C walk them per model). Mask bit
     // kFeatureGrapple = a grapple point (every `*_ei_grapple_*` anchor has one, and so do the manor's ring door, the

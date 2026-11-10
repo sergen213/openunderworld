@@ -1,0 +1,144 @@
+{
+ "version": 1,
+ "name": "moving_markup",
+ "chapter": "Moving markup (l5_valgrind): a ledge on the rim of the turning cog wheel 7312 caught by a standing jump, ridden round, let go",
+ "note": "docs/GAMEPLAY.md 'Moving markup'. Cog wheel 7312 (ar_pu_cog_wheel_level_1a) carries four ledge items (markup ids 1614-1617) on its rim, 739 over the floor, and turns for about 9 s after the unit starts (267 units/s at her hands' radius). The gate cinematic's placement puts her by the gate on the first tick, 20 s on foot from the wheel, so the teleport fixture stands her by the rim (set-up); the catch, the ride and the let-go are input.",
+ "level": "l5_valgrind",
+ "spawn": [
+  0,
+  3072,
+  180,
+  180
+ ],
+ "steps": [
+  {
+   "step": "start",
+   "duration": 0.3,
+   "expect": [
+    {
+     "probe": "world.unit",
+     "eq": "l5_valgrind"
+    }
+   ]
+  },
+  {
+   "step": "catch_a_passing_ledge",
+   "fixtures": [
+    {
+     "teleport": [
+      1160,
+      -1160,
+      140,
+      135
+     ]
+    }
+   ],
+   "input": [
+    "0.5 jump 1",
+    "0.6 jump 0",
+    "2.0 jump 1",
+    "2.1 jump 0",
+    "3.5 jump 1",
+    "3.6 jump 0",
+    "5.0 jump 1",
+    "5.1 jump 0",
+    "6.5 jump 1",
+    "6.6 jump 0"
+   ],
+   "duration": 8,
+   "until": {
+    "probe": "player.state",
+    "eq": "hang"
+   },
+   "expect": [
+    {
+     "visits": [
+      "jumpprep",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "in": [
+      1614,
+      1615,
+      1616,
+      1617
+     ]
+    },
+    {
+     "probe": "step.height_gain",
+     "min": 150
+    }
+   ]
+  },
+  {
+   "step": "ride",
+   "duration": 2,
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "hang"
+    },
+    {
+     "probe": "player.speed",
+     "over": "min",
+     "min": 200,
+     "note": "carried by the wheel with no input: 267 units/s"
+    },
+    {
+     "probe": "player.speed",
+     "over": "max",
+     "max": 300
+    },
+    {
+     "probe": "player.vspeed",
+     "over": "max",
+     "max": 5
+    },
+    {
+     "probe": "step.horizontal",
+     "min": 400,
+     "note": "2 s on the rim"
+    }
+   ]
+  },
+  {
+   "step": "let_go",
+   "input": [
+    "0.1 drop 1",
+    "0.2 drop 0"
+   ],
+   "duration": 5,
+   "until": {
+    "probe": "player.state",
+    "eq": "idle"
+   },
+   "expect": [
+    {
+     "visits": [
+      "hang",
+      "fall"
+     ]
+    },
+    {
+     "probe": "player.speed",
+     "over": "any",
+     "near": 270,
+     "tol": 15,
+     "note": "falling she keeps the rim's speed (the tick she lets go also steps her 20 off the wall)"
+    },
+    {
+     "probe": "step.horizontal",
+     "min": 60,
+     "note": "she leaves with the rim's velocity: carried on while she falls 240 to the floor"
+    },
+    {
+     "probe": "player.grounded",
+     "eq": true
+    }
+   ]
+  }
+ ]
+}

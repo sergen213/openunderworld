@@ -133,6 +133,7 @@ void decodeMarkup(Unit& u, Pointer level, CollisionMesh& out, std::vector<std::s
         u.need(*item, 0xA4, "markup item");
         Markup mk;
         mk.id = u.at<uint16_t>(*item, 0x48);
+        mk.intro = u.at<uint16_t>(*item, 0x4A);
         mk.type = u.at<uint8_t>(*item, 0x4D);
         const uint32_t n = u.at<uint32_t>(*item, 0x9C);
         if (n) {

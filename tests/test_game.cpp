@@ -8810,3 +8810,369 @@ TEST(GameReal, MainHallSwingToFarBalcony) {
         EXPECT_TRUE(hung) << "off the edge onto the rope";
     }
 }
+
+// ---- Moving markup (docs/GAMEPLAY.md "Moving markup") ---------------------------------------------------------------
+namespace {
+// A scripted object whose model carries one markup item on segment `seg` of `segs` (bind frames: segment k at z = 100 k).
+script::Object markupObject(game::World& w, const std::string& name, int32_t uid, vec3 pos, collision::Markup item, int seg = 0, int segs = 1) {
+    physics::ObjectPhysics p;
+    for (int k = 0; k < segs; ++k) p.segments.push_back(glm::translate(glm::mat4(1), vec3(0, 0, 100.0f * float(k))));
+    p.markup.push_back(std::move(item));
+    p.markupSegment.push_back(int16_t(seg));
+    w.setObjectPhysics(name, std::move(p));
+    script::Object o;
+    o.uid = uid, o.name = name, o.kind = script::Kind::Scripted, o.pos = pos;
+    return o;
+}
+} // namespace
+
+// A ledge on a slider: the item rides the object's body (the pose that would draw and collide it); Lara catches it by an
+// ordinary jump, hangs and shimmies on it while it slides, and a drop leaves her with the slider's velocity.
+TEST(Game, MovingMarkupLedgeOnSlider) {
+    const game::AnimLibrary anims = syntheticAnims();
+    const auto tuning = game::defaultTuning();
+    const float ledgeZ = anims.hangHandOffset.z + tuning.jumpVz * tuning.jumpVz / (2 * tuning.gravity) * 0.6f;
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, 0);
+    auto w = makeWorld(std::move(m), {300 + anims.hangHandOffset.y - 10, 0, 0});
+    // model space: the ledge 300 ahead of the object's origin; segment 1 of 2 (bind 100 up): points are in ITS space
+    w->script().addObject(markupObject(*w, "mm_slider", 9001, {0, 0, 0}, {1, 7, {{300, -800, ledgeZ - 100}, {300, 0, ledgeZ - 100}, {300, 800, ledgeZ - 100}}}, 1, 2), false);
+    const auto& s = w->player().state();
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 120 && s.state != State::Hang; ++i) w->tick(i < 2 ? jump : Actions{});
+    ASSERT_EQ(s.state, State::Hang);
+    ASSERT_EQ(w->markupOwner(s.ledge), (std::pair<std::string, int>{"@9001", 0}));
+    for (int i = 0; i < 30; ++i) w->tick({});
+    const vec3 hung = s.pos;
+    EXPECT_NEAR(handsOf(*w, anims.hangHandOffset).x, 300, 1e-2);
+    EXPECT_NEAR(handsOf(*w, anims.hangHandOffset).z, ledgeZ, 1e-2);
+    // the slider runs along +Y and rises: 300 and 60 units/s
+    const vec3 v(0, 300, 60);
+    float t = 0;
+    const auto slide = [&](const Actions& a) {
+        t += float(game::kTickSeconds);
+        w->script().setBody(9001, glm::translate(glm::mat4(1), v * t));
+        w->tick(a);
+    };
+    for (int i = 0; i < 120; ++i) slide({});
+    EXPECT_EQ(s.state, State::Hang);
+    EXPECT_LT(glm::length(s.pos - (hung + v * t)), 0.05f) << "she rode the ledge";
+    EXPECT_NEAR(handsOf(*w, anims.hangHandOffset).z, ledgeZ + v.z * t, 0.05f);
+    // shimmying on it while it moves: her own motion along the ledge on top of the ride
+    Actions right;
+    right.move.x = 1; // her right, facing +X: -Y
+    const float y0 = s.pos.y - v.y * t;
+    for (int i = 0; i < 60; ++i) slide(right);
+    EXPECT_EQ(s.state, State::Shimmy);
+    EXPECT_NEAR((s.pos.y - v.y * t) - y0, -9.8f * 30, 12.0f);
+    // a drop: she falls with the slider's velocity (tru.exe 0x714630: hers + her frame's)
+    Actions drop;
+    drop.drop = true;
+    slide(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    EXPECT_NEAR(s.vel.y, v.y, 1.0f);
+    EXPECT_NEAR(s.vel.z, v.z, tuning.gravity * float(game::kTickSeconds) + 1.0f);
+    const float dropY = s.pos.y;
+    for (int i = 0; i < 240 && s.state != State::Idle; ++i) slide({});
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_GT(s.pos.y - dropY, 60.0f) << "carried on along the slider's way while she fell";
+}
+
+// A jump off it: the leap back from the hang starts with the slider's velocity added to the leap's own.
+TEST(Game, MovingMarkupJumpOffInheritsVelocity) {
+    const game::AnimLibrary anims = syntheticAnims();
+    const auto tuning = game::defaultTuning();
+    const float ledgeZ = anims.hangHandOffset.z + tuning.jumpVz * tuning.jumpVz / (2 * tuning.gravity) * 0.6f;
+    const auto leap = [&](vec3 v) {
+        CollisionMesh m;
+        addFloor(m, -6000, -6000, 6000, 6000, 0);
+        auto w = makeWorld(std::move(m), {300 + anims.hangHandOffset.y - 10, 0, 0});
+        w->script().addObject(markupObject(*w, "mm_slider", 9001, {0, 0, 0}, {1, 7, {{300, -800, ledgeZ}, {300, 800, ledgeZ}}}), false);
+        const auto& s = w->player().state();
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 120 && s.state != State::Hang; ++i) w->tick(i < 2 ? jump : Actions{});
+        EXPECT_EQ(s.state, State::Hang);
+        float t = 0;
+        const auto slide = [&](const Actions& a) {
+            t += float(game::kTickSeconds);
+            w->script().setBody(9001, glm::translate(glm::mat4(1), v * t));
+            w->tick(a);
+        };
+        for (int i = 0; i < 60; ++i) slide({});
+        Actions back = fixedCamera(*w, forward(-1), 0);
+        for (int i = 0; i < 20; ++i) slide(back); // the lean
+        back.jump = true;
+        for (int i = 0; i < 30 && s.state != State::Jump; ++i) slide(back), back.jump = false;
+        EXPECT_EQ(s.state, State::Jump);
+        return s.vel;
+    };
+    const vec3 still = leap(vec3(0)), moving = leap({0, 300, 0});
+    EXPECT_GT(glm::length(still), 100.0f) << "the leap's own velocity";
+    EXPECT_LT(glm::length((moving - still) - vec3(0, 300, 0)), 1.0f) << "plus the slider's";
+}
+
+// A pole on a hinge: the object turns about a vertical axis 1000 from the pole; hanging, she swings round with it and
+// turns with it, and a drop throws her off along the tangent.
+TEST(Game, MovingMarkupPoleOnHinge) {
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, 0);
+    auto w = makeWorld(std::move(m), {17, 0, 0});
+    // the object's origin (the hinge) at (-1000, 0); the pole across her way at x = 0
+    w->script().addObject(markupObject(*w, "mm_hinge", 9002, {-1000, 0, 0}, {4, 3, {{1000, -500, 800}, {1000, 500, 800}}}), false);
+    const auto& s = w->player().state();
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 120 && s.state != State::PoleHang; ++i) w->tick(i < 2 ? jump : Actions{});
+    ASSERT_EQ(s.state, State::PoleHang);
+    ASSERT_EQ(w->markupOwner(s.ledge), (std::pair<std::string, int>{"@9002", 0}));
+    for (int i = 0; i < 60; ++i) w->tick({});
+    const vec3 pivot(-1000, 0, 0), hung = s.pos;
+    const float yaw0 = s.yaw, rate = glm::radians(30.0f); // per second
+    float angle = 0;
+    const auto turn = [&](const Actions& a) {
+        angle += rate * float(game::kTickSeconds);
+        w->script().setBody(9002, glm::rotate(glm::mat4(1), angle, vec3(0, 0, 1)));
+        w->tick(a);
+    };
+    for (int i = 0; i < 120; ++i) turn({});
+    EXPECT_EQ(s.state, State::PoleHang);
+    const vec3 expect = pivot + vec3(glm::rotate(glm::mat4(1), angle, vec3(0, 0, 1)) * glm::vec4(hung - pivot, 0));
+    EXPECT_LT(glm::length(s.pos - expect), 0.5f) << "she swung round the hinge with the pole (60 degrees)";
+    EXPECT_NEAR(std::remainder(s.yaw - yaw0 - angle, 2 * 3.14159265f), 0, 1e-3f) << "and turned with it";
+    const vec3 hands = handsOf(*w, w->anims().poleHandOffset);
+    const auto& pole = w->collision().markup[size_t(s.ledge)];
+    const vec3 along = glm::normalize(pole.points[1] - pole.points[0]), rel = hands - pole.points[0];
+    EXPECT_LT(glm::length(rel - along * glm::dot(rel, along)), 0.5f) << "her hands on the pole's axis";
+    Actions drop;
+    drop.drop = true;
+    turn(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    const vec3 r = s.pos - pivot, tangent = glm::normalize(vec3(-r.y, r.x, 0));
+    EXPECT_NEAR(glm::dot(s.vel, tangent), rate * glm::length(vec2(r)), 6.0f) << "thrown off along the tangent at omega x r";
+    // a jump back onto it as it comes round: the catch works on the moved pole
+    for (int i = 0; i < 240 && s.state != State::Idle; ++i) turn({});
+    EXPECT_EQ(s.state, State::Idle);
+}
+
+namespace {
+// Lara hanging on object markup `item` of `uid` (World::markupOwner's key), `t` along its first segment: the state a
+// catch leaves her in (her hands on the item's point), set directly where no floor leads to the item.
+bool hangOnObjectMarkup(game::World& w, int32_t uid, int item, float t, bool pole, float yaw = 0, float side = 1) {
+    const int index = w.markupIndex("@" + std::to_string(uid), item);
+    if (index < 0) return false;
+    const auto& m = w.collision().markup[size_t(index)];
+    const vec3 point = m.points[0] + glm::normalize(m.points[1] - m.points[0]) * t;
+    game::PlayerState s = w.player().state();
+    s.state = pole ? State::PoleHang : State::Hang, s.clip = pole ? "HPole_idleHangPerp" : "ledgeb_idle", s.loop = true, s.clipTime = 0;
+    s.ledge = index, s.ledgeSeg = 0, s.ledgeT = t, s.ledgeSide = side, s.polePara = false, s.vel = vec3(0), s.yaw = yaw, s.pos = point;
+    s.water = -1;
+    w.restore(s, yaw, 0);
+    if (pole) { // her hands onto the pole (a ledge hang places itself every tick)
+        s.pos += point - handsOf(w, w.anims().poleHandOffset);
+        w.restore(s, yaw, 0);
+    }
+    return true;
+}
+vec3 markupPoint(const game::World& w, int32_t uid, int item, size_t k = 0) {
+    return w.collision().markup[size_t(w.markupIndex("@" + std::to_string(uid), item))].points[k];
+}
+} // namespace
+
+// Rotating: l7_yggdrasil_end's central tower 8401 (ar_uo_yggdrasil_endgame_gun) turns its handhold rings (uber
+// sections on models 1-3, 12 ledge items each [O data]); a hang on one is carried round the tower, turning with it,
+// and a drop leaves along the tangent.
+TEST(GameReal, MovingMarkupTowerHandholdsTurn) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto unit = game::loadUnitData(bf, "l7_yggdrasil_end");
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l7_yggdrasil_end", game::loadLaraAnims(bf), unit.spawn);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto* tower = w.script().find(8401);
+    ASSERT_TRUE(tower);
+    ASSERT_GE(w.markupIndex("@8401", 100), 0) << "the ring section's model-1 items";
+    EXPECT_EQ(w.collision().markup[size_t(w.markupIndex("@8401", 100))].type, 1);
+    const vec2 axis(tower->pos);
+    const auto angleOf = [&](vec3 p) { return std::atan2(p.y - axis.y, p.x - axis.x); };
+    ASSERT_TRUE(hangOnObjectMarkup(w, 8401, 100, 200, false, 0, -1));
+    const auto& s = w.player().state();
+    for (int i = 0; i < 10; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    const float r0 = glm::length(vec2(s.pos) - axis), a0 = angleOf(s.pos), yaw0 = s.yaw, z0 = s.pos.z;
+    const float ledge0 = angleOf(markupPoint(w, 8401, 100));
+    EXPECT_GT(r0, glm::length(vec2(markupPoint(w, 8401, 100)) - axis) - 30.0f) << "outside the ring, facing the tower";
+    for (int i = 0; i < 180; ++i) {
+        w.tick({});
+        ASSERT_EQ(s.state, State::Hang) << "tick " << i;
+    }
+    const float turned = std::remainder(angleOf(markupPoint(w, 8401, 100)) - ledge0, 2 * 3.14159265f);
+    EXPECT_GT(std::abs(turned), glm::radians(15.0f)) << "the ring turned under her";
+    EXPECT_NEAR(std::remainder(angleOf(s.pos) - a0, 2 * 3.14159265f), turned, 2e-3f) << "she went round with it";
+    EXPECT_NEAR(std::remainder(s.yaw - yaw0, 2 * 3.14159265f), turned, 2e-3f) << "and turned with it";
+    EXPECT_NEAR(glm::length(vec2(s.pos) - axis), r0, 1.0f);
+    EXPECT_NEAR(s.pos.z, z0, 0.5f);
+    const auto& ledge = w.collision().markup[size_t(s.ledge)];
+    const vec3 hands = handsOf(w, w.anims().hangHandOffset), along = glm::normalize(ledge.points[1] - ledge.points[0]);
+    EXPECT_LT(glm::length((hands - ledge.points[0]) - along * glm::dot(hands - ledge.points[0], along)), 1.0f) << "her hands on the handhold";
+    Actions right;
+    right.move.x = 1;
+    w.tick(right); // (the camera is behind her: the stick's right is hers)
+    for (int i = 0; i < 20; ++i) w.tick(right);
+    EXPECT_TRUE(s.state == State::Shimmy || s.state == State::Hang) << game::stateName(s.state);
+    EXPECT_EQ(w.markupOwner(s.ledge), (std::pair<std::string, int>{"@8401", 100}));
+    const float omega = turned / (180.0f * float(game::kTickSeconds));
+    Actions drop;
+    drop.drop = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    const vec2 rr = vec2(s.pos) - axis;
+    const vec2 tangent = glm::normalize(vec2(-rr.y, rr.x));
+    EXPECT_NEAR(glm::dot(vec2(s.vel), tangent), omega * glm::length(rr), 0.05f * std::abs(omega) * glm::length(rr) + 2.0f)
+        << "she leaves with the ring's velocity (omega x r)";
+}
+
+// Sliding: l5_valaskjalf's chain 6939 (ar_ani_infinite_chain: a pole item on each of segments 1-6 [O data]) runs by its
+// clip a few seconds after the unit starts; a hang on a link's pole travels with the link, and a drop keeps its speed.
+TEST(GameReal, MovingMarkupChainPoleSlides) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto unit = game::loadUnitData(bf, "l5_valaskjalf");
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l5_valaskjalf", game::loadLaraAnims(bf), unit.spawn);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_GE(w.markupIndex("@6939", 3), 0);
+    EXPECT_EQ(w.collision().markup[size_t(w.markupIndex("@6939", 3))].type, 4);
+    const vec3 rest = markupPoint(w, 6939, 3);
+    int waited = 0;
+    for (; waited < 900 && glm::length(markupPoint(w, 6939, 3) - rest) < 1.0f; ++waited) w.tick({});
+    ASSERT_LT(waited, 900) << "the chain started";
+    ASSERT_TRUE(hangOnObjectMarkup(w, 6939, 3, 600, true, 1.5707963f));
+    const auto& s = w.player().state();
+    for (int i = 0; i < 5; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::PoleHang);
+    const vec3 lara0 = s.pos, pole0 = markupPoint(w, 6939, 3);
+    for (int i = 0; i < 120; ++i) {
+        w.tick({});
+        ASSERT_EQ(s.state, State::PoleHang) << "tick " << i;
+    }
+    const vec3 moved = markupPoint(w, 6939, 3) - pole0;
+    EXPECT_GT(glm::length(moved), 200.0f) << "the link travelled";
+    EXPECT_LT(glm::length((s.pos - lara0) - moved), 1.0f) << "and she with it";
+    const vec3 before = markupPoint(w, 6939, 3);
+    Actions drop;
+    drop.drop = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    const vec3 speed = (markupPoint(w, 6939, 3) - before) / float(game::kTickSeconds);
+    EXPECT_GT(glm::length(vec2(speed)), 100.0f);
+    EXPECT_LT(glm::length(vec2(s.vel) - vec2(speed)), 0.05f * glm::length(vec2(speed)) + 2.0f) << "she lets go at the chain's speed";
+}
+
+// Counterweight: l4_staircase_upper's ramps 6045 (ca_rb_hallway_ramps_b): the support column's sliding section (uber
+// section 0 on model 1, prismatic joint 0) carries a ledge item, the handhold of the walkthrough's pit 3; command 1 lets
+// the section fall 948 on its joint: hanging on the handhold she goes down with it, and letting go on the way she
+// falls on at its speed. [U] In the original her weight on the handhold is what lowers it; ours needs the command.
+TEST(GameReal, MovingMarkupColumnHandholdLowers) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const auto run = [&](bool letGo) {
+        SCOPED_TRACE(letGo ? "letting go on the way" : "riding to the bottom");
+        game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l4_staircase_upper", anims);
+        w.script().setBigfile(&bf);
+        w.onCinematic = [](const std::string&, bool) {};
+        for (int i = 0; i < 31; ++i) w.tick({});
+        ASSERT_TRUE(w.uberJoint(6045, 0));
+        ASSERT_GE(w.markupIndex("@6045", 100), 0) << "the section's model-1 ledge";
+        ASSERT_TRUE(hangOnObjectMarkup(w, 6045, 100, 150, false));
+        const auto& s = w.player().state();
+        for (int i = 0; i < 10; ++i) w.tick({});
+        ASSERT_EQ(s.state, State::Hang);
+        const float rest = w.uberJoint(6045, 0)->x, z0 = s.pos.z;
+        ASSERT_TRUE(w.sendUberCommand(6045, 1));
+        float last = rest;
+        for (int i = 0; i < 240; ++i) {
+            last = w.uberJoint(6045, 0)->x;
+            if (letGo && last < rest - 250.0f) break;
+            w.tick({});
+            ASSERT_EQ(s.state, State::Hang) << "tick " << i;
+            ASSERT_NEAR(s.pos.z - z0, w.uberJoint(6045, 0)->x - rest, 1.0f) << "tick " << i << ": she goes down with the section";
+        }
+        if (!letGo) {
+            EXPECT_LT(w.uberJoint(6045, 0)->x, rest - 900.0f);
+            return;
+        }
+        Actions drop;
+        drop.drop = true;
+        w.tick(drop);
+        ASSERT_EQ(s.state, State::Fall);
+        const float speed = (w.uberJoint(6045, 0)->x - last) / float(game::kTickSeconds);
+        EXPECT_LT(speed, -200.0f) << "the section is falling";
+        EXPECT_NEAR(s.vel.z, speed, 0.1f * std::abs(speed) + w.player().tuning().gravity * float(game::kTickSeconds));
+    };
+    run(false);
+    run(true);
+}
+
+// By input, l5_valgrind: cog wheel 7312 (ar_pu_cog_wheel_level_1a) at the foot of the tower has four ledge items on its
+// rim, 739 over the floor, and turns for about 9 s after the unit starts. Standing by the rim she jumps when one comes by (a standing jump's ledge leap),
+// hangs, goes round with the wheel, and a drop puts her down further round, still moving.
+TEST(GameReal, MovingMarkupCogWheelByInput) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l5_valgrind", game::loadLaraAnims(bf), game::Spawn{{0, 1620, 200}, -1.5707963f});
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    const auto& s = w.player().state();
+    for (int i = 0; i < 10; ++i) w.tick({}); // (240_val_gate, triggered on the first tick, puts her at the gate)
+    const auto* wheel = w.script().find(7312);
+    ASSERT_TRUE(wheel);
+    const vec2 axis(wheel->pos);
+    { // back by the wheel's rim (the self-test scenario walks there), facing the tower
+        game::PlayerState stand;
+        const auto floor = w.collision().groundProbe(vec3(axis.x, axis.y + 1620, wheel->pos.z + 900), 1500);
+        ASSERT_TRUE(floor);
+        stand.pos = floor->point, stand.yaw = -1.5707963f;
+        w.restore(stand, -1.5707963f, 0);
+        for (int i = 0; i < 10; ++i) w.tick({});
+    }
+    ASSERT_LT(glm::length(vec2(s.pos) - axis), 1800.0f) << "she stands by the wheel: " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    int presses = 0;
+    for (int i = 0; i < 60 * 40 && s.state != State::Hang; ++i) { // a press every 1.5 s until a ledge is in reach
+        Actions a;
+        a.jump = s.state == State::Idle && i % 90 < 4;
+        presses += i % 90 == 0;
+        w.tick(a);
+    }
+    ASSERT_EQ(s.state, State::Hang) << "after " << presses << " jumps at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    const auto owner = w.markupOwner(s.ledge);
+    ASSERT_TRUE(owner);
+    EXPECT_EQ(owner->first, "@7312");
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto angleOf = [&](vec3 p) { return std::atan2(p.y - axis.y, p.x - axis.x); };
+    const float a0 = angleOf(s.pos), ledge0 = angleOf(w.collision().markup[size_t(s.ledge)].points[0]), z0 = s.pos.z;
+    for (int i = 0; i < 180; ++i) {
+        w.tick({});
+        ASSERT_EQ(s.state, State::Hang) << "tick " << i;
+    }
+    const float turned = std::remainder(angleOf(w.collision().markup[size_t(s.ledge)].points[0]) - ledge0, 2 * 3.14159265f);
+    EXPECT_GT(std::abs(turned), glm::radians(10.0f)) << "the wheel turned";
+    EXPECT_NEAR(std::remainder(angleOf(s.pos) - a0, 2 * 3.14159265f), turned, 2e-3f) << "she went round with it";
+    EXPECT_NEAR(s.pos.z, z0, 0.5f);
+    Actions drop;
+    drop.drop = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    const float omega = turned / 3.0f, r = glm::length(vec2(s.pos) - axis);
+    EXPECT_NEAR(glm::length(vec2(s.vel)), std::abs(omega) * r, 0.1f * std::abs(omega) * r + 2.0f) << "let go at the rim's speed";
+    for (int i = 0; i < 240 && s.state != State::Idle; ++i) w.tick({});
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_GT(std::abs(std::remainder(angleOf(s.pos) - a0, 2 * 3.14159265f)), std::abs(turned)) << "put down further round the wheel";
+}

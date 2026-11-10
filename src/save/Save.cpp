@@ -321,6 +321,7 @@ void apply(const SaveGame& save, game::World& world) {
     // restore 0x556E90): one taken mid-fall holds no place to come down on. The chapter-1 start slot of older builds held
     // Lara on l1_cineseatop's set, 166000 units off the yacht, falling through the sky [user report].
     const bool airborne = save.player.state == game::State::Fall || save.player.state == game::State::Jump;
+    bool objectLedge = false;
     if (airborne) {
         world.enterUnit(save.checkpoint ? save.checkpoint->unit : save.unit, std::nullopt, save.checkpoint ? save.checkpoint->id : 0);
     } else {
@@ -329,14 +330,15 @@ void apply(const SaveGame& save, game::World& world) {
         auto markup = [&](const std::string& unit, int index, const char* what) {
             if (unit.empty()) return -1;
             const int i = world.markupIndex(unit, index);
-            // An object's markup ("@uid", World::tickObjectMarkup) exists once its collision is placed: a ledge on it that
-            // is not there yet is dropped (her state handles a missing ledge as at a stream) rather than failing the load.
+            // An object's markup ("@uid", World::tickObjectMarkup) exists once the object stands as saved: a ledge on it
+            // is resolved at the end (World::restoreObjectMarkup).
             if (i < 0 && unit.starts_with('@')) return -1;
             if (i < 0) throw SaveError(std::string(what) + " " + std::to_string(index) + " of " + unit + " is not loaded");
             return i;
         };
         p.ledge = markup(save.ledgeUnit, save.ledgeIndex, "ledge");
-        if (p.ledge < 0 && !save.ledgeUnit.empty() &&
+        objectLedge = save.ledgeUnit.starts_with('@'); // resolved below, once the objects stand as saved
+        if (p.ledge < 0 && !save.ledgeUnit.empty() && !objectLedge &&
             (p.state == game::State::Hang || p.state == game::State::Shimmy || p.state == game::State::ClimbUp || p.state == game::State::PoleHang))
             p.state = game::State::Fall;
         p.water = markup(save.waterUnit, save.waterIndex, "water volume");
@@ -388,6 +390,7 @@ void apply(const SaveGame& save, game::World& world) {
     } catch (const std::runtime_error& e) {
         throw SaveError(e.what());
     }
+    if (objectLedge) world.restoreObjectMarkup(save.ledgeUnit, save.ledgeIndex);
     // The maximum follows the relics among `collected` (World::maxHealth); a save without health loads at full.
     world.syncMaxHealth();
     world.setHealth(save.health ? *save.health : world.health().max());
