@@ -6,6 +6,20 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Added: Thor's gauntlets and belt work as in the original. The heavy stone slide doors and rubble blocks can only
+  be moved while Lara carries the piece of Thor's gear each one asks for: stand at the handle, hold Interact and
+  push, pull or sidestep with the stick. Without the gear nothing happens. (Before, any such object slid when she
+  merely stood next to it.) The pillars that turn on the spot are not movable yet.
+- Added: breakable scenery: floors that give way under Lara and props that break, and explosive fuel tanks: two
+  pistol hits set one off, the blast hurts Lara and enemies nearby and sets off the next tank.
+- Fixed: the prologue's burning floor collapses under Lara and the door ahead is blown off; the ring door is
+  pulled off its slide with the grapple (hold Interact). Known issue: the freed door leaf stays standing in its
+  doorway.
+- Fixed: ladders stood turned a quarter turn in their walls in every level; they now face the right way, so the
+  ladders of the sinking ship and the Arctic sea can be climbed where they are drawn.
+- Fixed: one-way trigger planes fired from the wrong side. Pits and falls that should kill now do, and several
+  scripted events start where the original starts them.
+
 ## [0.43.0] - 2026-11-10
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
