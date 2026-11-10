@@ -52,6 +52,20 @@ TerrainGroup (0x50)
   - The gameplay camera queries mask 2 and skips terrain groups whose TerrainGroupExtra flags have 0x200 (tru.exe
     0x5EB9B0 / 0x5EC360); `loadLevelCollision` clears bit 2 on those groups' faces (survey 2026-10-31: every face
     is mask 3 or 0 otherwise; 76 groups, 21 903 faces). See `collision::kCameraMask`.
+  - Per query class [O disassembly of the ray filter 0x48EF50 (mesh, ray flags), the callback 0x493330 hands to the
+    terrain ray 0x4E8FC0]: the group's TerrainGroupExtra flags F (and the dword after them, G) drop it — always when
+    F & 0x8 or F & 0x20000; F & 0x80000 unless the ray has 0x20000000; then per ray-flag bit: ray 0x10000 / F 0x4000,
+    ray 0x4000 / F 0x300 (the camera, flags 0x302C5981), ray 0x4 / F 0x800, ray 0x8 / F 0x400, ray 0x2000000 /
+    F 0x8000, ray 0x8000 / F 0x2000, ray 0x800000 / F 0x40000 (the sight ray 0xC5AC1983), ray 0x20000 / G 0x2. The
+    player code's rays (0x6E7300, 0x6F3D40, 0x7013F0 and the 0x73xxxx states: 64 call sites) all pass 0x2C19E7 (bit
+    0x4), the enemy code's (0x6155C0 .. 0x674FE0: 26) 0x42C11AB (bit 0x8). So F 0x800 = not the player's, F 0x400 =
+    not the enemies'. Ours: the faces of 0x800 groups are taken out of `collision::kSolidMask`, the default mask of
+    every query (Lara, rope, bike probes), and keep one bit each for the camera and the sight ray where those meet
+    them. Examples: l4_traprooms group 1 (0xE004CF00, 2 faces: a wall across the crusher aisle's entrance, which
+    stopped Lara dead in ours), l1_kraken_entrance group 3 (the same flags, 5667 faces), the 0xE004E800 groups of the
+    l4 units (enemies and camera only). [I] her capsule follows her rays' class; [U] which class rigid bodies and
+    the bike are (the group above lacks only F 0x2000, so the ray class 0x8000 still meets it: the dragged block
+    5884 [I]); Jolt's terrain is still built from every face.
   - l4_pool: mask = 3 on every terrain face, 0xFF on the signal quad; flags low bits vary (0x20..0x3F, plus 0x80) [O];
     clientFlags ∈ {0, 0x04, 0x80, 0xA0, 0x1A0}, material ∈ {1, 17, 27} [O]. Their meanings are [U] (TRL calls the
     fields adjacencyFlags/collisionFlags/clientFlags/materialType; adjacency for +0x0C is [I] at best since bit 0x40 is a skip flag).

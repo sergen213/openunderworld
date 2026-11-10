@@ -341,8 +341,10 @@ TEST(CollisionRealData, CameraSkipsTheTerrainGroupsTruSkips) {
 
 // tru.exe's targeting line of sight (0x713090, ray flags 0xC5AC1983) sees terrain faces with mask bit 1 except in the
 // groups its filter 0x48EF50 skips (TerrainGroupExtra flags 0x8 / 0x20000 / 0x40000 / 0x80000): 24 354 faces in 124
-// groups over the 82 units, e.g. l1_kraken_entrance group 3 (5667 faces). Those lack the sight bit, so a kSightMask
-// ray passes through them while Lara's queries still hit; the unit's other mask-1 faces block the sight ray.
+// groups over the 82 units. l1_kraken_entrance: groups 3 (5667 faces, flags 0xE004CF00), 4 (16, 0xE004E300) and 6 (64,
+// 0xE004CC00). Group 4 is Lara's (no 0x800): its faces lack the sight bit, so a kSightMask ray passes through them
+// while her queries hit. Groups 3 and 6 are flagged 0x800 too (not the player's, test below): no query of ours meets
+// them. The unit's other mask-1 faces block the sight ray.
 TEST(CollisionRealData, SightSkipsTheTerrainGroupsTruSkips) {
     if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
     const Unit u = loadUnit("pc-w\\l1_kraken_entrance.drm");
@@ -352,23 +354,58 @@ TEST(CollisionRealData, SightSkipsTheTerrainGroupsTruSkips) {
         const auto h = u.col.raycast(c + n * 20.0f, -n, 40, mask);
         return h && h->face == i;
     };
-    int skipped = 0, seen = 0, group3 = 0;
+    int skipped = 0, seen = 0, group3 = 0, group4 = 0;
     for (uint32_t i = 0; i < u.col.faces.size(); ++i) {
         const auto& f = u.col.faces[i];
+        if (f.group == 3 || f.group == 6) { // not Lara's nor the sight ray's; group 6 (no 0x300) is still the camera's
+            EXPECT_EQ(f.mask, f.group == 3 ? 0 : collision::kNotPlayerCameraBit) << i;
+            group3 += f.group == 3;
+            continue;
+        }
         if (!(f.mask & 1)) continue;
-        if (f.group == 3) ++group3;
-        EXPECT_EQ(bool(f.mask & 0x04), f.group != 3 && f.group != 4 && f.group != 6) << i; // 3, 4 (16), 6 (64) skipped
-        if (skipped < 200 && f.group == 3 && probe(i, 0xFF)) {
-            EXPECT_FALSE(probe(i, collision::kSightMask)) << i;
-            ++skipped;
-        } else if (seen < 200 && (f.mask & 0x04) && probe(i, 0xFF)) {
+        EXPECT_EQ(bool(f.mask & 0x04), f.group != 4) << i;
+        if (f.group == 4) {
+            ++group4;
+            if (probe(i, collision::kSolidMask)) {
+                EXPECT_FALSE(probe(i, collision::kSightMask)) << i;
+                ++skipped;
+            }
+        } else if (seen < 200 && (f.mask & 0x04) && probe(i, collision::kSolidMask)) {
             EXPECT_TRUE(probe(i, collision::kSightMask)) << i;
             ++seen;
         }
     }
     EXPECT_EQ(group3, 5667);
-    EXPECT_EQ(skipped, 200);
+    EXPECT_EQ(group4, 16);
+    EXPECT_GT(skipped, 4);
     EXPECT_EQ(seen, 200);
+}
+
+// tru.exe's ray filter 0x48EF50 drops terrain groups flagged 0x800 for the player's rays (flags 0x2C19E7: class bit
+// 4). l4_traprooms group 1 (flags 0xE004CF00) is such a wall: two faces across the entrance of the crusher aisle at
+// y -22123.5, between the doorway and the first pair of jaws. A default query (Lara's) passes it; the faces are still
+// loaded. No face a default query can hit lies in such a group anywhere in the unit.
+TEST(CollisionRealData, LaraSkipsTheTerrainGroupsTruSkipsForThePlayer) {
+    if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const Unit u = loadUnit("pc-w\\l4_traprooms.drm");
+    int wall = 0, notPlayers = 0;
+    for (uint32_t i = 0; i < u.col.faces.size(); ++i) {
+        const auto& f = u.col.faces[i];
+        if (f.mask & collision::kSolidMask) continue;
+        ++notPlayers;
+        EXPECT_EQ(f.mask & ~(collision::kNotPlayerCameraBit | collision::kNotPlayerSightBit), 0) << i;
+        const vec3 c = (u.col.vertices[f.v[0]] + u.col.vertices[f.v[1]] + u.col.vertices[f.v[2]]) / 3.0f;
+        if (f.group == 1 && std::abs(c.y + 22123.5f) < 1 && std::abs(c.x - 55) < 1500) ++wall;
+    }
+    EXPECT_GE(wall, 2) << "the aisle's wall is loaded";
+    EXPECT_GT(notPlayers, wall);
+    // From the doorway into the aisle, at chest height and above the jaws: nothing within the first pair's depth.
+    for (const float z : {6500.0f, 7200.0f}) {
+        const auto ray = u.col.raycast({54, -22400, z}, {0, 1, 0}, 600);
+        EXPECT_FALSE(ray) << "y " << ray->point.y << " group " << u.col.faces[ray->face].group;
+    }
+    EXPECT_FALSE(u.col.sweepCapsule({54, -22400, 6440}, {54, -22400, 6760}, 79, {0, 600, 0}));
+    EXPECT_TRUE(u.col.groundProbe({54, -22100, 6500}, 400)) << "the aisle's floor is hers";
 }
 
 TEST(CollisionRealData, PoolCollisionMarkupAndRenderAgreement) {
