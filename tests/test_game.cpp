@@ -9501,10 +9501,14 @@ TEST(GameReal, FlameJetBurnsLaraOncePerWindow) {
     std::vector<std::pair<uint64_t, float>> hits; // tick, health after
     uint64_t died = 0;
     std::string clip;
-    for (int i = 0; i < 600 && !died; ++i) {
+    // The jet's travel is watched for the whole 10 s: she is burned within the first second (the rubble before the
+    // first gargoyle is flagged 0x0100, stood on however steep: she runs straight up it into the jet; docs/GAMEPLAY.md
+    // "Slopes and slides") and dies of the second burn before the jet has gone back in.
+    for (int i = 0; i < 600; ++i) {
         w.tick(run);
         for (const auto& s : w.hazards())
             if (s.uid == 5870) lo = std::min(lo, s.world[3].z), hi = std::max(hi, s.world[3].z);
+        if (died) continue;
         for (const auto& hit : w.hazardHits()) {
             EXPECT_EQ(h.name(hit.uid), "ca_ei_flame_trap");
             EXPECT_EQ(hit.damage, 800);
