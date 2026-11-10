@@ -160,6 +160,27 @@ TEST(Ai, PerceptionConeDistanceAndWalls) {
     EXPECT_TRUE(e.perceives(open, {{1000, 1000 * std::tan(s.eye.yaw - 0.1f), 0}}));
 }
 
+// A ground enemy's blow needs her within its reach in height too: standing 1000 over a Lara it has noticed (a spider on
+// a bridge over a swimmer) it never strikes; with her on its floor at the same flat distance it does.
+TEST(Ai, GroundBlowNeedsHerWithinReachInHeight) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    const auto col = built(m);
+    for (const float below : {0.0f, 1500.0f}) {
+        game::ai::Enemies es;
+        auto& e = es.add(syntheticType(), 1, {0, 0, 0}, 0);
+        const game::ai::Target lara{{150, 0, -below}};
+        Hurt hurt;
+        bool attacked = false;
+        for (hurt.tick = 0; hurt.tick < 600; ++hurt.tick) {
+            es.tick(col, lara, hurt.fn(), kDt);
+            attacked |= e.state().mode == Mode::Attack;
+        }
+        EXPECT_EQ(attacked, below == 0) << below;
+        EXPECT_EQ(!hurt.blows.empty(), below == 0) << below;
+    }
+}
+
 TEST(Ai, NoticesChasesAndAttacksWithHitWindow) {
     CollisionMesh m;
     addFloor(m, -5000, -5000, 5000, 5000, 0);

@@ -1,0 +1,281 @@
+{
+ "version": 1,
+ "name": "ch12_trailstart_ride_in",
+ "chapter": "12 The Unnamed Days: the ride in from the trail over the tunnel's pit and up the road to the small temple, where the reveal sets her down beside the bike (docs/matrix/12_unnamed_days.md C12-03, C12-04)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/11unnamed.html",
+ "note": "l4_trailstart bike 5482 from the chapter's start spot. Trail and pit as self-test bike_ride. Beyond checkpoint 6620 the road climbs east and north (volume 6707), turns back west on the upper road, and plane 6712 has dispatcher 6704 start reveal 6677 (vt 62): it asks larabase 54 (tru.exe 0x777E40: is she on this bike, her +0xF00) of bike 5482 and sets her down beside it, standing [O script; the native was unbound before and the reveal's handler stopped there]. The reveal's camera is skipped here (cinematics off). She mounts again with Interact and rides down into the temple courtyard (volumes 6713, 6703).",
+ "level": "l4_trailstart",
+ "spawn": [
+  37981,
+  -51758,
+  1463,
+  -126.7
+ ],
+ "steps": [
+  {
+   "step": "mount",
+   "input": [
+    "0.3 interact 1",
+    "0.4 interact 0"
+   ],
+   "duration": 3.5,
+   "until": {
+    "probe": "bike.phase",
+    "eq": "ride"
+   },
+   "expect": [
+    {
+     "probe": "bike.uid",
+     "eq": 5482
+    },
+    {
+     "probe": "bike.wheels",
+     "eq": 2
+    }
+   ]
+  },
+  {
+   "step": "trail",
+   "duration": 25,
+   "plan": [
+    "ride 41000 -53900 400 1 3000",
+    "ride 42800 -54000 300 1 2200",
+    "ride 45000 -54000 400 1 2200",
+    "ride 47500 -54100 400 1 2200",
+    "ride 52000 -55300 600 1 3500",
+    "ride 57500 -56100 500 1 3500",
+    "ride 59500 -56150 300 1 2500",
+    "ride 61000 -55900 400 1 2500"
+   ],
+   "expect": [
+    {
+     "probe": "bike.mounted",
+     "over": "all",
+     "eq": true
+    },
+    {
+     "probe": "bike.pos.x",
+     "min": 60500,
+     "note": "inside the stone tunnel"
+    },
+    {
+     "probe": "bike.pos.z",
+     "near": -690,
+     "tol": 40,
+     "note": "on the tunnel floor (-686)"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "pit_jump",
+   "duration": 6,
+   "plan": [
+    "ride 64000 -55680 300",
+    "ride 66000 -55680 200",
+    "ride 68500 -55700 500"
+   ],
+   "expect": [
+    {
+     "probe": "bike.airborne",
+     "over": "any",
+     "eq": true,
+     "note": "off the ramp's lip at x 66100"
+    },
+    {
+     "probe": "bike.wheels",
+     "over": "min",
+     "eq": 0
+    },
+    {
+     "probe": "bike.pos.x",
+     "min": 67900,
+     "note": "beyond the pit's far edge (x 67700)"
+    },
+    {
+     "probe": "bike.pos.z",
+     "min": -1200,
+     "note": "not in the pit (floor -6680)"
+    },
+    {
+     "probe": "bike.mounted",
+     "eq": true
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "checkpoint",
+   "duration": 6,
+   "plan": [
+    "ride 69586 -55062 500 1 1500"
+   ],
+   "expect": [
+    {
+     "probe": "bike.mounted",
+     "eq": true
+    },
+    {
+     "probe": "bike.wheels",
+     "min": 1
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "upper_road",
+   "duration": 40,
+   "plan": [
+    "ride 75280 -53954 600 1 2500",
+    "ride 77400 -51900 500 1 1800",
+    "ride 79700 -50700 400 1 1500",
+    "ride 79300 -49300 400 1 1200",
+    "ride 77500 -47600 500 1 2000",
+    "ride 75000 -46500 500 1 2500",
+    "ride 73000 -45500 500 1 2500"
+   ],
+   "until": {
+    "probe": "bike.mounted",
+    "eq": false
+   },
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "enter:6707>6707",
+      "cross:6712>6712"
+     ]
+    },
+    {
+     "calls": [
+      "6704:64",
+      "6677:62"
+     ]
+    },
+    {
+     "visits": [
+      "vehicle",
+      "idle"
+     ]
+    },
+    {
+     "probe": "player.pos.x",
+     "near": 74560,
+     "tol": 150,
+     "note": "set down on the upper road by the reveal's marker"
+    },
+    {
+     "probe": "player.pos.y",
+     "near": -46330,
+     "tol": 150
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 3431,
+     "tol": 40
+    },
+    {
+     "probe": "step.peak_height",
+     "min": 3900,
+     "note": "the climb from the checkpoint's -454 to the upper road"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "left_standing",
+   "duration": 2,
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "idle"
+    },
+    {
+     "probe": "bike.mounted",
+     "eq": false
+    },
+    {
+     "probe": "bike.mounts",
+     "eq": 1
+    }
+   ]
+  },
+  {
+   "step": "mount_again",
+   "input": [
+    "0.3 interact 1",
+    "0.4 interact 0"
+   ],
+   "duration": 4,
+   "until": {
+    "probe": "bike.phase",
+    "eq": "ride"
+   },
+   "expect": [
+    {
+     "probe": "bike.uid",
+     "eq": 5482
+    },
+    {
+     "probe": "bike.mounts",
+     "eq": 2
+    },
+    {
+     "clips": [
+      "motorcycle:motorcycle_mount_cycle"
+     ]
+    }
+   ]
+  },
+  {
+   "step": "into_the_courtyard",
+   "duration": 20,
+   "plan": [
+    "ride 73000 -45500 500 1 2000",
+    "ride 71300 -44200 500 1 2000",
+    "ride 70200 -41500 500 1 1800"
+   ],
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "enter:6713>6713",
+      "enter:6703>6703"
+     ]
+    },
+    {
+     "probe": "bike.mounted",
+     "over": "all",
+     "eq": true
+    },
+    {
+     "probe": "bike.pos.z",
+     "near": 3231,
+     "tol": 40,
+     "note": "the courtyard floor before the temple"
+    },
+    {
+     "probe": "bike.wheels",
+     "min": 1
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "ch01_bedroom_ring_door",
+  "chapter": "01 Prologue, leg 2 of 4: the bedroom's fallen beams, the pile and the ring door (docs/matrix/01_prologue.md C01-05, C01-06, C01-07)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/00prologue.html",
+  "note": "The leg starts in the bedroom's north-east pocket, not at a checkpoint: the way from the opened house door (ch01_bedroom_new_game) down into this pocket was not found by the survey (see the matrix row C01-05), and checkpoint 4455 lies beyond the beams. A roll (Forward + Crouch) passes under the west end of the leaning beam into the south room, the flat strip by the east wall is walked onto, ring door 4526 is grappled and pulled off its slide (as prologue_ring_door). The walk through the doorway is tests/selftests/known_gaps/ch01_ring_door_walk_through.json: the freed leaf stays standing in its frame.",
+  "level": "l3_main_bedroom",
+  "level_chapter": 0,
+  "spawn": [-8780, -10250, 1640, -90],
+  "steps": [
+    {"step": "under_the_beams", "plan": ["go -8870 -10330 30", "face -90", "stick 1 0 1.2 drop 0.15", "wait 1"], "duration": 30,
+     "expect": [{"visits": ["roll"]},
+                {"clips": ["ng_roll_front"]},
+                {"probe": "player.pos.y", "max": -10430, "note": "south of the leaning beam (its line y -10400): only the roll's low capsule passes, a walk is stopped at y -10313"},
+                {"probe": "player.pos.z", "near": 1592, "tol": 5}]},
+    {"step": "onto_the_pile", "plan": ["go -8700 -10700 60", "go -8480 -10560 50", "face -30"], "duration": 30,
+     "expect": [{"probe": "player.pos.z", "near": 1675.8, "tol": 5, "note": "the flat strip 84 over the bedroom floor"},
+                {"probe": "grapple.offered", "eq": 4526, "note": "the door's ring is in reach from its edge"}]},
+    {"step": "throw", "input": ["0.2 grapple 1", "0.3 grapple 0"], "duration": 3, "until": {"probe": "grapple.pulling", "eq": true},
+     "expect": [{"probe": "grapple.target", "eq": 4526},
+                {"probe": "grapple.kind", "eq": "mounted"},
+                {"probe": "object.4526.uber.1", "eq": 0}]},
+    {"step": "pull", "input": ["0 interact 1", "0 forward -1"], "duration": 4, "until": {"probe": "grapple.attached", "eq": false},
+     "expect": [{"probe": "object.4526.uber.1", "min": 1, "note": "the leaf left its slide's watched range (31.6 out): trigger 15"},
+                {"probe": "grapple.target", "eq": 0}]},
+    {"step": "door_off", "duration": 1.5,
+     "expect": [{"probe": "object.4526.uber.1", "eq": 2},
+                {"probe": "grapple.offered", "eq": 0}]}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "ch14_pool_entry",
+  "chapter": "14 The Midgard Serpent: into the pool room: down the entrance stairs, the thralls cinematic, the first serpent head's pole comes out (docs/matrix/14_midgard_serpent.md C14-40 first half, C14-44's pole)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/13midgard.html",
+  "note": "l4_pool from its player intro at the top of the entrance stairs. On the way down the stairs volume 5568 preloads cinematic 5547 (198_mex_thralls, vt 63) and volume 5626 calls serpent head ca_rb_snake_head 5612's vt 57; at the stair foot volume 5623 plays the cinematic (vt 57), its end takes checkpoint 5508's place and leaves the jaguar thrall 5645 alive on the far side. From the walkway the serpent head's nostril pole is now there to be reached (the object's own markup, a pole 283 long at -2244 .. -2527, 1665, 4096; before vt 57 the unit has no such pole). Recorded as open in the matrix: the thrall never comes round the pool in ours (it stays in patrol / idle 12 thousand units away for 40 s of gunfire), and the way across the first walkway gap to the head was not found (a running jump north from the west walkway's end at y 1900 comes down in the eitr at y 2717).",
+  "level": "l4_pool",
+  "steps": [
+    {"step": "down_the_stairs", "plan": ["go -12944 -267 300", "go -9026 14 300"], "duration": 40,
+     "expect": [{"calls": ["5547:63", "5612:57"], "note": "the cinematic preloaded; the serpent head told"},
+                {"probe": "enemies.alive", "eq": 0},
+                {"probe": "step.drop", "min": 1200, "note": "the stairs: 4741 down to 3403 so far"}]},
+    {"step": "to_the_walkway", "plan": ["go -7438 14 300", "go -6302 -245 300", "wait 2"], "duration": 50,
+     "expect": [{"calls": ["5547:57"], "note": "198_mex_thralls plays"},
+                {"probe": "world.checkpoint", "eq": 5547},
+                {"probe": "player.pos.z", "near": 2844.4, "tol": 3, "note": "the upper walkway"},
+                {"probe": "enemy.5645.alive", "eq": true, "note": "the jaguar thrall"},
+                {"probe": "enemy.5645.type", "eq": "panther_thrall"},
+                {"probe": "step.health_lost", "eq": 0}]}
+  ]
+}

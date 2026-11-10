@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "ch11_rockhall_switch",
+  "chapter": "11 Protected by the Dead: the exit tunnel's switch and the stone door into the burning house (docs/matrix/11_protected_by_the_dead.md C11-32)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/10manor.html",
+  "note": "l3_chamberrockhall from checkpoint 4600 at the tunnel's end. The stone door 4528 (ma_uo_secret_door) is shut: walking at it stops at the door. Switch 4617 (ma_ei_wall_switch_electric) on the wall beside it is used with Interact; the door's section opens and she walks through to checkpoint 4453 behind it, towards l3_main_bedroom [O scripts: ProgressionReal.CriticalGates 4617 -> 4528].",
+  "level": "l3_chamberrockhall",
+  "spawn": [-9758, -12664, 3799, 0],
+  "steps": [
+    {"step": "door_is_shut", "plan": ["run 0 2.5"], "duration": 6,
+     "expect": [{"probe": "object.4528.uber.0", "eq": 0},
+                {"probe": "player.pos.x", "max": -8700, "note": "stopped by the door at x -8622"},
+                {"probe": "world.checkpoint", "eq": 4600}]},
+    {"step": "use_the_switch", "plan": ["go -9401 -12930 40", "face -90", "press", "wait 6"], "duration": 40,
+     "expect": [{"visits": ["use"]},
+                {"probe": "step.events", "has": ["use:4617>4617"]},
+                {"probe": "object.4528.uber.0", "ne": 0, "note": "the door's section left its shut state"}]},
+    {"step": "through_the_door", "plan": ["go -7938 -12746 120"], "duration": 30,
+     "expect": [{"probe": "player.pos.x", "min": -8100, "note": "beyond the door"},
+                {"probe": "world.checkpoint", "eq": 4453},
+                {"probe": "step.teleports", "eq": 0},
+                {"probe": "step.health_lost", "eq": 0}]}
+  ]
+}

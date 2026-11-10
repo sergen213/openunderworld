@@ -1,0 +1,107 @@
+{
+ "version": 1,
+ "name": "ch06_sinking_hall_door",
+ "chapter": "06 Realm of the Dead: the automatic door into the hall that rolls, the first blast (docs/matrix/06_realm_of_the_dead.md C06-03, C06-04 first stage)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/05realm.html",
+ "note": "l1_ship_lower_hallway at checkpoint 1294. Door 1167 belongs to l1_ship_sinking_hall and rides its rolling hallway 1056 (anchored on the hallway's marker by its constructor); volume 1176 opens it. Beyond it the hall's floor is the hallway object's collision. Continues in known_gaps/ch06_hallway_roll.json.",
+ "level": "l1_ship_lower_hallway",
+ "spawn": [
+  2842,
+  7541,
+  100,
+  90
+ ],
+ "steps": [
+  {
+   "step": "into_the_door_volume",
+   "plan": [
+    "go 2842 7100 60",
+    "wait 2"
+   ],
+   "duration": 20,
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "enter:1176>1176",
+      "activate:1176>1167"
+     ],
+     "note": "volume 1176 before the door"
+    },
+    {
+     "calls": [
+      "1167:54"
+     ],
+     "note": "door 1167 vt 54: open"
+    }
+   ]
+  },
+  {
+   "step": "through_the_door",
+   "plan": [
+    "go 2852 7900 60",
+    "go 2852 8500 60"
+   ],
+   "duration": 20,
+   "expect": [
+    {
+     "probe": "world.unit",
+     "eq": "l1_ship_sinking_hall"
+    },
+    {
+     "probe": "player.pos.y",
+     "min": 8400,
+     "note": "beyond the door's leaves (y 8042 .. 8142), which stood shut before the rider fix"
+    },
+    {
+     "probe": "object.1056.name",
+     "eq": "ms_ani_ship_hallway"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "down_the_hall_to_the_first_blast",
+   "plan": [
+    "go 2747 10500 60",
+    "go 2747 12500 80"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "calls": [
+      "1199:62",
+      "1056:55",
+      "1200:62"
+     ],
+     "note": "plane 1201: dispatcher 1199's first stage (blast, shake), hallway 1056's command 1 (the first tilt), dispatcher 1200 (sinking_ship_tilt)"
+    },
+    {
+     "probe": "object.1056.uber.0",
+     "eq": 4,
+     "note": "the hallway's section after its first tilt"
+    },
+    {
+     "probe": "player.pos.z",
+     "max": -400,
+     "note": "she rode the tilting floor down (hall floor at 12 before)"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  }
+ ]
+}

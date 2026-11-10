@@ -93,6 +93,7 @@ at the top, in a step and in a condition, and ignored.
 | `walkthrough` | URL of the walkthrough page the steps follow (optional; link only, never copy its text) |
 | `level` | unit to enter (`"l4_pool"`; `pc-w\l4_pool.drm` works too), at its `player` intro or at `spawn` |
 | `spawn` | `[x, y, z, yawDeg]` in the unit's frame, with `level`. As `--spawn`: she is put on the floor found up to 1000 below the point |
+| `level_chapter` | with `level`: the chapter index the unit is played in, for units that belong to two chapters (the manor units: `0` = the prologue; without it the chapter is the one in the unit's name, `game::chapterOfUnit`: `l3_*` = 3) |
 | `start_chapter` | `0..8` (`game::kChapters`): start that chapter as New Game / chapter select does (its intro message, gear and loadout) |
 | `load` | save slot name (`$XDG_DATA_HOME/openunderworld/saves/<slot>.ousave`), as `--load` |
 | `cinematics` | `true`: play script cutscenes (default `false`: skipped) |
@@ -126,8 +127,11 @@ happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario
 autopilot"); it reads the World to steer, so it reaches places and objects by coordinates and uids:
 `go X Y [R] [walk]`, `engage UID [X Y] [walk]`, `face YAWDEG`, `press [ACTION]`, `hold ACTION SECONDS`,
 `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world heading, whatever the camera
-does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `ride X Y [R] [THROTTLE] [SPEED]` (on the
-motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED). Coordinates are world frame. With both `plan`
+does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [CELL] [UP]` (logs the floor round her as a grid), `ride X Y [R] [THROTTLE] [SPEED] [BRAKESTEER]` (on the
+motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED; while
+braking the stick stays within BRAKESTEER, default 1: brake + stick past half is the power slide, so long descents
+ride with 0.5), `swim X Y Z [R]` (in water: the stick towards the point, Jump / Drop held while it lies above / below
+her, until within R, default 150, in space; 60 s). Coordinates are world frame. With both `plan`
 and `input`, the plan steers and presses and the input lines add to it (a button is down if either holds it; a
 non-zero stick or look rate from `input` wins).
 
@@ -286,7 +290,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `object.<uid>.graph` | its anim-graph state id |
 | `object.<uid>.joint` | its multibody joint's position (plate units, hinge degrees) |
 | `object.<uid>.uber.<n>` | uber section n's state, -1 while it is in a transition |
-| `object.<uid>.uberjoint.<n>` | simulated uber joint n's position |
+| `object.<uid>.uberjoint.<n>` | simulated uber joint n's position (units; a hinge: radians) |
 | `object.<uid>.uberslide.<n>.x/.y/.z` | three-axis uber joint n's travel from where it was made (the Thor pillars) |
 
 These object probes are what `--report-objects` prints (docs/GAMEPLAY.md); `--report-objects 0 --frames 1` lists every
@@ -410,6 +414,7 @@ tested behaviour happen.
 | `fall_damage` | l4_pool | falls of 1000 / 1500 / 2000: air time, landing, 0 / 204.7 / 729.4 damage [O curve] |
 | `jump_brake` | l4_temple | a running jump with Jump tapped / held: the same arc; the stick pulled back in flight: 40 % of the take-off speed [O Wine] |
 | `landing` | l4_temple | landings by the chart's dispatch: plain, running on, the stumble from 632.11, the hard landing from 1264.22, the Crouch + forward roll, a jump out of the landing clip [O chart] |
+| `jump_timing` | l3_main_bedroom | press to leaving the ground: standing 10 frames, with the stick 8 frames and 128 along the ground, running 2 frames; the stick jump just after the run began; the run's start (303 units in 0.4 s) [O Wine] |
 | `death_respawn` | l4_pool | checkpoint 5502 touched; a 2600 fall kills; 3 s later she stands at the checkpoint with full health |
 | `ledge` | l3_main_bedroom | standing jump catches ledge 973; shimmy left and right; one Interact hustle move (371 in 0.57 s); pull up 496 onto the top |
 | `traversal_chain` | l2_cliffclimb | run -> jump -> hang (911) -> shimmy -> climb up -> run on, as one state chain |
@@ -442,11 +447,86 @@ tested behaviour happen.
 | `moving_markup` | l5_valgrind | by cog wheel 7312's rim (teleport fixture: the gate cinematic's placement is 20 s away on foot) a standing jump catches a passing rim ledge (markup 1614-1617), 2 s carried at 267 units/s with no input, Drop: she falls on at the rim's speed and lands (docs/GAMEPLAY.md "Moving markup") |
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
-| `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
+| `ch07_cliffclimb_boat_to_cliff` | chapter 2 start | section 07's start: yacht cinematic, over the boat's side (safety drop), into the sea, 13.8 km surface swim across the bay, climb out at the low ledge (checkpoint 3831), the run into the rock attaches her to the holds |
+| `ch07_cliffhall_grapple_gap` | l2_cliffhall | from checkpoint 3754 to the pit under ring 3820: thrown at from the ground (rope 2730), a running jump keeps the rope, the swing carries her over the pit; the release onto the far side is not played yet |
+| `ch07_hubhall_statue_hall` | l2_hubhall | section 07's end from checkpoint 3100: up the staircase, stream change to l2_puzzleroom, arrival cinematic 2936, on the lift |
+| `ch08_puzzleroom_lift_switch` | l2_puzzleroom | section 08's start on the lift: switch 2961 used with the mechanism held: the jammed reaction, the platform stays |
+| `ch08_puzzleroom_lift_ring` | l2_puzzleroom | from checkpoint 2819: the mechanism's ring 2972 grappled and pulled out (2959 vt 54, 2961 vt 63) |
+| `ch08_puzzleroom_lift_pole` | l2_puzzleroom | from checkpoint 2818: pole 2967 pulled out of hole 2969 and carried (2960 vt 54, 2961 vt 62) |
+| `ch08_shrine_statue_pull` | l2_shrineroom | the naga statue 2794 grappled by its ring and pulled over (uber section 0: 5 -> 2), its script wakes the shaft's spiders |
+| `ch09_maproom_gauntlet_door` | l2_maproom | from under the shaft: volume 2636 -> cinematic 2624, the scripts hand the left gauntlet over (no fixture), door 2661 gripped and slid open by a left sidestep, through it (spider trigger, checkpoint 2590), the pedestal cinematic 2625, checkpoint 2591 |
+| `ch09_maproom_hub_panel` | l2_maproom | from checkpoint 2591: off the platform edge into a hang, drop-catches down the hub's panel (ledges 673 / 674 / 676 / 678), the ring ledge, the panel gripped with the gauntlet (2667 vt 49 / 50) |
+| `ch09_maproom_hub_turn` | l2_maproom | as `ch09_maproom_hub_panel`, then the hub turned by its panel: forward does nothing, a right sidestep walks the panel round hinge joint 1 to its stop at 41 degrees (0.716 rad; the record sets swap at 20 degrees and she keeps her grip), braked when she lets go |
+| `ch01_bedroom_new_game` | New Game | Prologue leg 1: the corridor onto the debris slab without a jump, wall 973, the stairs, switch 4525 opens house door 4520, down to the bedroom floor (checkpoint 4454) |
+| `ch01_bedroom_ring_door` | l3_main_bedroom (chapter 0) | Prologue leg 2: a roll under the leaning beam (a walk does not pass), onto the flat strip, ring door 4526 grappled and pulled off its slide |
+| `ch01_hall_first_aid` | l3_bedroom_hall (chapter 0) | the first-aid kit 4364 picked up from checkpoint 4342, stored, used by the heal key |
+| `known_gaps/ch01_hall_floor_collapse` (parked) | l3_bedroom_hall (chapter 0) | Prologue leg 3: plane 4375 holds her while floor 4359 collapses and door 4376 is blown off, running jump to ledge 969, pull up, into l3_main_hall (checkpoint 4082). Fails at the pull-up since the take-off timing change: the blown door's outcome depends on the tick she crosses the plane, and the leaf can stay in its frame over the ledge |
+| `ch01_main_hall` | l3_main_hall (chapter 0) | Prologue leg 4: ring 4089 from the west balcony's end, the swing east, the leap onto the east balcony, the safety drop onto ledge 945, Drop 1251 to the floor, plane 4129 -> chapter 1 |
+| `ch02_seatop_dive` | chapter 1 start | off the yacht's stern, dive, the look stick tips the view down, 35 s of sprint swimming on the tanks (breath 1.0 throughout) through the stream change to l1_seafloor |
+| `ch02_serpent_door` | l1_kraken_entrance | the dead switch 748, serpent head 751 pulled onto plate 752, one weight on plate 753 does not hold it, two do, the switch opens gate 743 |
+| `ch03_gear_room_west` | l1_kraken_room | switch 57 jammed; from the lower hall the pillar ring of gear 32 pulled: the column falls, the mechanism is free |
+| `ch03_gear_room_east` | l1_kraken_room | switch 55 jammed; gear 36 pulled out until it locks; the switch runs the mechanism |
+| `ch04_pillar_entry` | l1_baldrs_tomb | the Norse Connection's way into the west room: pillar 14 climbed to z 4100, `pillar_jump_forward` along the stick 740 into the wall opening (floor z 3872), the safety drop at its far edge, Drop into the room behind door 223 |
+| `ch04_gate_room` | l1_baldrs_tomb | both weights thrown from pad 219 through door 223, a roll through before it shuts, one weight on pad 222 (the pad rises again, lock 69 back), both (it stays down), gate 45's ring roped, pulled down from pad 221 (joint 91), the rope let go, plane 224 at the gauntlet |
+| `ch04_column_hall` | l1_baldrs_sideroom | the hall of broken columns' first half: pillar 24 -> pillar 23 (948, caught in the air) -> back onto ledge 36, running jump onto perch 26, `perch_jump_forward` to pillar 31, pillar jump onto the floor behind ledge 35 |
+| `ch04_kraken_swing` | l1_kraken_room | upper level: ceiling ring 309 thrown at from the north-east ledge, roped walk to the edge, Jump, 4500 across the pool with Forward held, stepping off onto the west ledge; first-aid kit 319 |
+| `ch05_boarding` | l1_ship_exterior | running jump off the yacht's bow onto the anchor, Forward + Jump from hang to hang up the chain (3400 up, never down), over the rail (boarding plane 1633), first-aid kit 1564 |
+| `ch05_container_deck` | l1_ship_exterior | the boarding, then down the bow stair to the container deck; Target Lock + Fire held while walking aft: mercenary 1652 leaves his patrol, chases and is shot, then 1650 (5 -> 3 alive) |
+| `ch05_below_decks` | l1_ship_exterior | aft doorway: door 1529 by volume 1531, down to door 1530, generator 1537's mercenaries on the second stair (pistols on the lock), door 1491, plane 1465 -> cinematic 1453's events, the hall beyond to the T junction |
+| `ch06_sinking_hall_door` | l1_ship_lower_hallway | volume 1176 opens door 1167 (a rider of the rolling hallway 1056), through it into l1_ship_sinking_hall, plane 1201: the hall's first tilt (1056 command 1), carried down on its floor |
+| `ch06_second_shaft_valves` | l1_ship_sinking_hall | checkpoint 1055: ladder 235 rung to rung, `ladder_jump_up` from its top rungs onto ledge 250 (the grating's edge), the hang's jump up onto the valve wheels (hold 227, 491 up), hold to hold up the first group, the DICE jump up to the second, its weave to the top wheel 209 (root z 11059) |
+| `ch10_maproom_rope_step_off` | l2_maproom | section 10 (C10-03): wall ring 2595 offered and thrown at from the near bridge stub's corner (rope 3404); roped she walks off the stub: the arc takes her under the pool, the rope is let go and she swims (surface root -9662); the far stub's spiders do not bite a swimmer under them |
+| `ch11_chapel_dais_furnace` | l3_chapel | section 11 (C11-16): onto pressure plate 4834 (joint -50): fire 4818 lit, gates 4830 / 4831 opening; off it: the fire goes out, the gates shut |
+| `ch11_study_gauntlet` | l3_stairhall -> l3_secretchamber | section 11 (C11-24, C11-25): from checkpoint 4699 down the passage into the study: checkpoint 4621, volume 4669, cinematic 4654 (gauntlet), two thralls alive in the room |
+| `ch11_rockhall_switch` | l3_chamberrockhall | section 11 (C11-32): the stone door 4528 stops her; switch 4617 used with Interact opens it; through to checkpoint 4453 |
+| `ch12_trailstart_ride_in` | l4_trailstart | section 12 (C12-03, C12-04): the ride of `bike_ride`, then the upper road: plane 6712 starts reveal 6677, which sets her down beside the bike (larabase 54); mount again, ride into the temple courtyard (volumes 6713, 6703) |
+| `ch13_ballcourt_calendar_locked` | l4_ballcourt | Xibalba: at calendar 5477 without the jaguar head a gripped push handle turns nothing (hinge joint 2 stays 0, section 5 waits in state 3) |
+| `ch13_temple_headdress` | l4_temple | Xibalba: from the pit floor's checkpoint 4971 to the altar, the headdress 5228 taken out of its holder 5249 |
+| `ch13_ballcourt_pole_gate` | l4_ballcourt | Xibalba: `puzzle_pole_block_door`'s six steps, then on the pole the turn across it, the swing, the fling to the gate (1550), through the doorway into calendar 2's court (cinematic 6388) |
+| `ch14_traprooms_club_throne` | l4_traprooms | Midgard Serpent: arrival cinematic 5703, club 5883 picked up and set into throne 5891 (section 0: 1 -> 2) |
+| `ch14_traprooms_crusher_house` | l4_traprooms | Midgard Serpent: the rattling house from checkpoint 5787: wait for the first pair of jaws to open, sprint through all six pairs unhurt (1927 units/s), key 5879 taken |
+| `ch14_ragnarok_hall` | l4_ragnarok_room | Midgard Serpent: down the carved hall (cinematic 5675, checkpoint 5669), through the doorway: stream unit l4_pool |
+| `ch14_pool_entry` | l4_pool | Midgard Serpent: down the entrance stairs (5547 preloaded, serpent head 5612 told), 198_mex_thralls at the stair foot, the jaguar thrall alive |
+| `ch15_ragnarok_xibalba_key` | l4_ragnarok_room | Land of the Dead: the Xibalba key 5695 taken out of its holder at the rock fall |
+| `ch15_ragnarok_rubble_block` | l4_ragnarok_room | Land of the Dead: block 5660 refused bare-handed; with the belt gripped and slid 1264 to its joint's limit in 8.3 s |
+| `ch15_ballcourt_exit_switch` | l4_ballcourt | Land of the Dead: exit switch 5469 with the key socket empty opens nothing (reveal 5464 stays in state 0) |
+| `ch16_tunnel_door` | chapter 5 start | Gate of the Dead leg 1: on bike 7229, the tunnel's 66 000 units by `ride` lines (10 230 down, no damage; brake steer 0.5), hand brake, off; Thor door 7400 gripped and walked open to 663.7; back on, through the doorway: plane 7472 -> 235_val_shaft, on foot at its end, the bike waiting on marker 7404, mounted there |
+| `ch16_tower_power` | l5_valgrind | Gate of the Dead leg 3: the power blocks 7498 / 7499 / 7500 carried into cog wheel 7312's niches; the rings 7492-7509 stand until the third is in, then turn 10 degrees/s, neighbours opposite |
+| `ch17_maze_to_relic_door` | l5_valaskjalf_entry | Valhalla: the maze's first half on foot from inside the gate to the relic-room door 7227 (41 000 units, 2530 down), which is shut and stays shut |
+| `ch18_bow_deck` | chapter 6 start | Rituals Old leg 1: Change Weapon once = the secondary, twice = Mjolnir; a bolt; nobody on the bow, the first soldiers once she heads down to the container deck |
+| `ch18_engine_hall_to_cell` | l6_ship_engine_hall | Rituals Old last leg: with the hammer from checkpoint 7557 through the hall firing on the run, volume 7566, plane 7565 -> 270_shp_escape -> chapter 7 in l7_thin_ice, unhurt |
+| `ch19_thin_ice_dive` | chapter 7 start | section 19 (C19-01, C19-02): cinematic 9071 leaves her swimming under the ice in l7_arctic_sea (checkpoint 9094); the unit's constructor sets the puzzle up (wheels 9095 / 9096 vt 62, 9098 / 9103 vt 63); 63 s of diving on the tanks to the front of the building, breath 1.0 throughout (autopilot `swim` lines) |
+| `ch19_arctic_sea_stone_niche` | l7_arctic_sea | section 19 (C19-17, C19-18), swimming: the locked drawbridge wheel 9103 refuses (chains 9114 / 9115 rattle, bridge 9116 stays up); power stone 9273 lifted, carried to niche 9120 and seated (9120 vt 56, rune strip 9137 lit, the unit counts a key); with one stone the wheel still refuses |
+| `ch19_arctic_sea_tower_stone` | l7_arctic_sea | section 19 (C19-13): power stone 9270 lifted off its carving (holder 9276) on the tower's top ledge, carried at a walk, put down |
+| `ch19_helheim01_entry` | l7_helheim01 | section 19 (C19-26): up the stairs into volume 8968, cinematic object 8950, checkpoint 8950; over the entry ledge to its edge over the eitr (a hang) |
+| `ch20_helheim01_portal` | l7_helheim01 → l7_helheim02 | sections 19 / 20 (C19-33, C20-13): the portal ledge: volume 8969, cinematic object 8951 opens door 8956; through it into l7_helheim02 (checkpoint 8884) |
+| `ch20_helheim02_passage` | l7_helheim02 → l7_helheim03 | section 20 (C20-13, C20-14): the passage to its crossing, the east arm's stairs, the slide down the broken stairs into the thrall hall |
+| `ch20_helheim03_hall` | l7_helheim03 → l7_yggdrasil_hall01 | section 20 (C20-14 … C20-17): slide into the corridor, Mjolnir (Weapon twice, Draw), a bolt kills Viking thrall 8777 for good; the run through the hall and down the stairs into volume 8804: cinematic object 8773, checkpoint 8775 |
+| `ch20_yggdrasil_reveal` | l7_yggdrasil → l7_yggdrasil_hall01 | section 20 (C20-17, C20-18): volume 8804 from checkpoint 8792, cinematic object 8773 leaves her at checkpoint 8775; the thralls after it met with the hammer |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now: none (`pole_drop_after_fling`
-moved up 2026-11-10).
+registered with ctest. Run them by hand; move one up a directory when it passes. Now (`pole_drop_after_fling` moved up 2026-11-10):
+
+| known gap | level | fails at | cause |
+|---|---|---|---|
+| `ch10_maproom_wall_run` | l2_maproom | `leap` | the roped jump towards wall ring 2595 swings her under the pool's surface (rope 2670, ring 1200 over the bridge, water 870 under it), where the rope is let go: what shortens the original's rope in that jump is not decoded [U]. The later steps (reel to 1500, wall run, back jump to ledge 652, pull up) pass once she is on the wall |
+| `ch12_trailstart_lever_gate` | l4_trailstart | `let_go` | lever 6695 is pulled out by Interact and stays out (joint 1264); the original holds it by her weight on the rope and it returns when unloaded |
+| `ch01_ring_door_walk_through` | l3_main_bedroom | the walk through | the pulled ring door's leaf stays standing in its frame: no way into l3_bedroom_hall (docs/PROGRESSION.md chapter 0) |
+| `ch01_hall_floor_collapse` | l3_bedroom_hall | `pull_up_and_on` | parked 2026-11-10: the blown hall door 4376's outcome depends on the tick she crosses plane 4375; since the take-off timing change the leaf can stay in its frame over ledge 969 |
+| `ch04_column_hall_perches` | l1_baldrs_sideroom | the jump to perch 30 | ledge 35 -> perch 30 is 1620 away and 134 higher; the running jump comes down on pillar 29. The original's take-off spot is unknown |
+| `ch05_natla_room` | l1_ship_exterior | the way west | from the T junction the west recess is shut; volume 1436 is not reached on foot |
+| `ch06_hallway_roll` | l1_ship_sinking_hall | after plane 1202 | after the hall's second tilt she is stopped on a 45-degree floor against a 100-high step, 3850 short of plane 1203 |
+| `ch06_second_shaft_exit` | l1_ship_sinking_hall | the jump to bar 238 | from the top valve wheel the bar is not reached: the side jump lands hanging on the beam's own ledge 253 |
+| `ch16_tower_base_panel` | l5_valgrind | the panel turn | the tower's base panel 7312 turns from 89 to 26-40 degrees off its solved position and all but stops: dispatcher 7318 vt 62 is never called, no beam, the gate stays locked. Cause not found |
+| `ch17_hammer_chamber` | l5_valaskjalf | the pull-up | from checkpoint 7067 a running jump catches the chamber block's edge 1542, but Forward + Jump plays the jump-up try instead of the pull-up (as on ledge 969 in `ch01_hall_floor_collapse`): volume 6866 is not reached on foot |
+| `ch13_ballcourt_calendar_solve`, `ch15_ballcourt_exit_key` | l4_ballcourt | the key item | key items do not travel between units: a held portable is dropped when its unit streams out and the next units' parked instances are not handed over (docs/matrix/13_xibalba.md, 15_land_of_the_dead.md) |
+| `ch13_temple_block_topple` | l4_temple | the grapple | ring 4951 is not offered from the east ledge; the statue head's mover is unknown |
+| `ch15_pool_rune_block` | l4_pool | the drag | rune block 5609 has no joint record, so nothing drags it |
+| `ch20_helheim01_rune_symbols` | l7_helheim01 | `use_it` | rune symbol 8995 on the entrance frame is not used by Interact from in front of it: the switch use rule ([I], `Runtime::tick`) wants the switch's origin within 250 of her feet in height, and the symbol's is 480 over the ledge. The dispatcher's logic behind the four symbols is decoded (docs/matrix/20_yggdrasil.md C20-02) |
+| `ch20_yggdrasil_hall_slide` | l7_yggdrasil → l7_yggdrasil_hall01 | `slide_and_jump` | the slide down the north arm's slope plays (921 units/s along the ground), but Jump on its last tick flies 906 and comes down in the pit's water at y 9013; the far bank lies beyond y 9221. The launch of a jump out of a slide is [I] (it keeps the slide's horizontal speed) |
+| `ch20_yggdrasil_hall_eitr_pit` | l7_yggdrasil → l7_yggdrasil_hall02 | `in_the_pit` | the pit at that slide's foot is a plain water volume in ours: she treads water unharmed (8 s watched) where the original's eitr kills |
+| `ch21_platform_ride` | l7_yggdrasil_end | `jump_to_a_platform` | the steps of `natla_fight`, then a jump from the entry walkway's end: no floating platform comes within reach (the 24 stones' objects stay at their intro positions; only their drawn bodies ride the orbit rings), she falls 3850 to the lower ring (docs/GAMEPLAY.md "Natla" Open) |
+| `ch09_shrine_shaft_descent` | l2_shrineroom | after the statue pull | its floor slabs stay solid over the shaft and its ring is still a target; the drop-catches and the mid-fall grapple at ring 2673 follow |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);
@@ -469,5 +549,8 @@ standing jump fails with actual 202.187.
 4. End steps with `until` where the game decides the timing (a grab, a landing, a door), so later steps do not depend
    on tick counts.
 5. Use fixtures only for set-up the walkthrough takes for granted (a weapon, health), never for the thing under test.
+   A chapter leg is named `chNN_<unit or leg>.json` (NN = the section's number in docs/matrix); a unit that belongs
+   to two chapters takes `level_chapter`. `stick` is camera-relative: for a move along a known direction (a roll through
+   a gap, a running jump) use `run YAWDEG ...`.
 6. Save it as `tests/selftests/<chapter>_<what>.json`, re-run CMake, run `ctest -R game_selftest_<name>` in a private
    compositor. A sequence that shows a defect goes to `tests/selftests/known_gaps/` with a `note` describing it.

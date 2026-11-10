@@ -576,12 +576,22 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
         // The record she grips is gone with the old set: she lets go ([I] tru.exe's PushPull needs her engaged record in
         // the section's current set, 0x6D5AC0; the pushed-out towers swap theirs as they lock), her script callback
         // (vt 50) before the new state's events (the towers' reveal camera).
-        if (uberHandle_.uid == uid && uberHandle_.section == int32_t(section) && rt.sections[section].engagement != a.engagement) {
-            const int kind = uberHandle_.kind;
-            uberHandle_ = {};
-            script_.engage(uid, -1, kind, false);
+        // [I] A record of her kind on her segment in the new set is the same handle: she keeps her grip (l2_maproom's
+        // hub 2667 swaps sets 408 <-> 396 as it turns through 20 degrees; both hold the panel's record on marker 11).
+        {
+            const bool gripped = uberHandle_.uid == uid && uberHandle_.section == int32_t(section) &&
+                                 rt.sections[section].engagement != a.engagement;
+            rt.sections[section].engagement = a.engagement;
+            const auto* set = gripped ? uberEngagement(uid, section) : nullptr;
+            const bool kept = set && std::ranges::any_of(set->records, [&](const physics::Engagement& r) {
+                return r.kind == uberHandle_.kind && r.segment == uberHandle_.segment;
+            });
+            if (gripped && !kept) {
+                const int kind = uberHandle_.kind;
+                uberHandle_ = {};
+                script_.engage(uid, -1, kind, false);
+            }
         }
-        rt.sections[section].engagement = a.engagement;
         break;
     default: break;
     }
@@ -948,7 +958,8 @@ bool carriesNeeded(std::span<const std::string> needs, const std::string* held, 
 // four ways by its angle off her facing [O 0x6F1450 with lara.drm player data +0xC8C / +0xC90 = 60 / 30 degrees]:
 // within 30 degrees forward, within 15 of straight back, else left / right. [I] Ours measures the angle on the stick
 // itself (tru.exe: the camera-relative stick against her facing) and moves a joint only the way it can go: a joint
-// lying across her facing (the slide doors) by left / right, one along it by forward / back.
+// lying across her facing (the slide doors; a hinge whose tangent at her grip point does: the l2_maproom hub's panel)
+// by left / right, one along it by forward / back.
 // Prismatic joints [O 0x74AC00 / 0x73F390, player data +0xC7C / +0xC80 / +0xC84 / +0xC88]: her target speed is
 // min(23.704 x strength, 2054.36 x strength / M) units a 30 Hz frame and each 1/60 s step's impulse, put on the proxy,
 // is at most min(M x 0.7585, 142.225) x strength, M = the PushPull proxy body's mass, 0.125 (+0xC98) of the object's m
@@ -983,6 +994,7 @@ bool World::pushUberHandle(const Actions& a, float speed) {
         if (e.record && e.section >= 0 && e.record->kind == 1 && o) {
             uberHandle_ = {e.uid, e.section, e.record->kind};
             uberHandle_.gear = !e.record->needs.empty();
+            uberHandle_.segment = e.record->segment;
             const auto* p = e.record->shape == 2 ? uberSectionPhysics(*o, size_t(e.section)) : nullptr;
             if (const auto frame = p ? uberSectionFrame(*o, size_t(e.section)) : std::nullopt) {
                 vec3 out = glm::mat3(recordFrame(*p, *frame, *e.record)) * vec3(std::cos(e.record->heading), std::sin(e.record->heading), 0);
@@ -1033,7 +1045,15 @@ bool World::pushUberHandle(const Actions& a, float speed) {
         return true;
     }
     const vec3 dir = along / rate;
-    const bool across = !j.hinge && std::abs(glm::dot(fwd, dir)) < 0.7071f; // the joint lies across her facing
+    // The joint lies across her facing: a slide door, and a hinge whose record's facing cone turns her to the axis's side
+    // of its handle (l2_maproom's hub panel: she faces the hub's axis, the panel moves sideways). Before, a hinge always took her facing for the
+    // tangent, so the panel's forward / back flipped with the sign of a dot product near 0 and a sidestep did nothing.
+    // [I] Other hinges keep her squared to the tangent (the calendars' push handles, pushed forward): only a cone that
+    // faces her within 15 degrees of square to the tangent makes the hinge a sideways one.
+    const float facing = std::abs(glm::dot(fwd, dir));
+    if (uberHandle_.across < 0) // decided where she grips: carried round a hinge, her facing follows the handle
+        uberHandle_.across = (j.hinge ? uberHandle_.face != vec3(0) && facing < 0.2588f : facing < 0.7071f) ? 1 : 0;
+    const bool across = uberHandle_.across == 1;
     if (across) {
         const vec3 face = fwd - dir * glm::dot(fwd, dir);
         uberGrip_ = glm::normalize(face);
@@ -1435,6 +1455,13 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
                 hit && hit->dynamic >= 0 && col_.dynamics[size_t(hit->dynamic)].id == uid)
                 depth = std::max(depth, r - hit->t);
         result = uint32_t(int32_t(std::lround(depth)));
+        return true;
+    }
+    // 54 (0x777E40): the instance is the vehicle Lara is on (her +0xF00, set by the mount 0x741570, cleared by the
+    // dismount 0x731530). l4_trailstart's temple reveal 6677 asks it of bike 5482 before it sets her down beside it.
+    if (type == "larabase" && function == 54) {
+        const Bike* b = ridden();
+        result = b && b->uid == uid;
         return true;
     }
     if (type == "larabase") { // 3 (0x777780): Lara is in volume `uid` (her probe box's volume) with its surface over her feet [O Wine: the goo bed kills, the walkways in the same box do not]
@@ -1954,6 +1981,17 @@ bool World::carryReady() const {
     return s == State::Idle || s == State::SwimTread || s == State::SwimSurface || s == State::SwimUnder;
 }
 
+// A portable by its class. tru.exe makes an object a portable by its physical class (50: its object data's sets at
+// +0xA8, 0x6B5890); ours told them by the script's native base (portablebase) alone. The four keys of the Xibalba trap
+// houses (ca_pt_blade / crush / dark / fire_room_key, l4_traprooms 5878-5881) have the class and a pick-up record
+// (kind 4), but their script's native base is `instance`, not portablebase [O data]: they were engaged and never
+// picked up.
+bool World::portableClass(const script::Object& o) {
+    if (o.kind != script::Kind::Scripted) return false;
+    const auto* p = objectPhysics(o.name);
+    return p && p->physClass == 50;
+}
+
 void World::carryPortables(bool pressed) {
     const auto& s = player_.state();
     placePortables();
@@ -1974,7 +2012,7 @@ void World::carryPortables(bool pressed) {
     // Her engaged record is a loose portable's pick-up record (kind 4: the poles' sphere r 869 around marker 20, the
     // keys' and gems' around their origin). Portables without records: [I] within 150 / 100 of her root.
     if (engagedNow.record && engagedNow.record->kind == 4 && engagedNow.section < 0)
-        if (auto* o = const_cast<script::Object*>(script_.find(engagedNow.uid)); o && portable(*o) && !inserted_.contains(o->uid)) {
+        if (auto* o = const_cast<script::Object*>(script_.find(engagedNow.uid)); o && (portable(*o) || portableClass(*o)) && !inserted_.contains(o->uid)) {
             pickUp(*o);
             return;
         }

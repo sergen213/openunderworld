@@ -1,0 +1,194 @@
+{
+ "version": 1,
+ "name": "ch04_kraken_swing",
+ "chapter": "04 The Norse Connection: back in the kraken hall on its upper level, the ceiling ring swing across the pool, the first-aid kit beyond (docs/matrix/04_norse_connection.md C04-17, C04-18 first part)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/norse3.html",
+ "note": "l1_kraken_room at checkpoint 76 (the upper level's east side, where the passage from the column hall comes out). Ceiling ring 309 hangs over the pool's middle (23 -4814 7060); it is offered from the north-east ledge. She throws, walks roped to the ledge's west edge, jumps with the rope, swings 4500 across with Forward held and steps off onto the west ledge where the arc meets its floor.",
+ "level": "l1_kraken_room",
+ "spawn": [
+  6317,
+  -8187,
+  4209,
+  180
+ ],
+ "steps": [
+  {
+   "step": "to_the_ledge_by_the_ring",
+   "plan": [
+    "go 5400 -7400 60",
+    "go 5000 -6300 60",
+    "go 4500 -5600 60",
+    "go 3500 -5200 60",
+    "go 3050 -5200 40",
+    "face 180"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "grapple.offered",
+     "eq": 309,
+     "note": "the ceiling ring is the target a press would take"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 4108.6,
+     "tol": 4
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "throw",
+   "input": [
+    "0.2 grapple 1",
+    "0.3 grapple 0"
+   ],
+   "duration": 3,
+   "until": {
+    "probe": "grapple.swinging",
+    "eq": true
+   },
+   "expect": [
+    {
+     "visits": [
+      "grapplethrow",
+      "grappleswing"
+     ]
+    },
+    {
+     "probe": "grapple.target",
+     "eq": 309
+    },
+    {
+     "probe": "grapple.kind",
+     "eq": "ceiling"
+    },
+    {
+     "probe": "grapple.rope",
+     "near": 4007,
+     "tol": 40,
+     "note": "ring to hand"
+    }
+   ]
+  },
+  {
+   "step": "roped_walk_to_the_edge",
+   "plan": [
+    "run 180 1.0"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "probe": "grapple.attached",
+     "over": "all",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.x",
+     "max": 2850
+    }
+   ]
+  },
+  {
+   "step": "jump_and_swing_across",
+   "input": [
+    "0 forward 1",
+    "0.05 jump 1",
+    "0.15 jump 0"
+   ],
+   "duration": 8,
+   "until": [
+    {
+     "probe": "player.grounded",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.x",
+     "max": -1500
+    }
+   ],
+   "expect": [
+    {
+     "visits": [
+      "grappleswing"
+     ]
+    },
+    {
+     "clips": [
+      "grapple_rappel_free_jumpon",
+      "grapple_rappel_free_swing_forward"
+     ]
+    },
+    {
+     "probe": "step.horizontal",
+     "min": 4200,
+     "note": "edge to edge over the kraken's pool"
+    },
+    {
+     "probe": "step.peak_height",
+     "min": 800,
+     "note": "the swing's far end, about 1000 over the ledges"
+    },
+    {
+     "probe": "grapple.attached",
+     "eq": false,
+     "note": "standing on the far ledge the rope is let go"
+    },
+    {
+     "probe": "player.pos.z",
+     "min": 4000,
+     "max": 4120,
+     "note": "the west ledge"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "first_aid_kit",
+   "plan": [
+    "go -3900 -5800 80",
+    "go -4250 -6600 80",
+    "go -5150 -9350 80",
+    "go -6228 -9682 60",
+    "press",
+    "wait 1"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "step.pickups",
+     "has": [
+      "healthpack:319"
+     ]
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 4108.6,
+     "tol": 6
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  }
+ ]
+}

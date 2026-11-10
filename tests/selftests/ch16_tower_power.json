@@ -1,0 +1,240 @@
+{
+ "version": 1,
+ "name": "ch16_tower_power",
+ "chapter": "16 Gate of the Dead: the three carved power blocks carried into the tower's niches start its rings (docs/matrix/16_gate_of_the_dead.md C16-14)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/15gateofdead.html",
+ "note": "l5_valgrind entered at its player intro: the gate cutscene 240_val_gate (7464; not shown) stands her by the gate on the first tick, as after the ride down. The blocks are the portables 7498 / 7499 / 7500 (ar_pt_valgrind_power_gem) lying round the tower's foot; each is picked up with Interact, carried to cog wheel 7312 (ar_pu_cog_wheel_level_1a) and set into the niche the autopilot's engage finds (uber sections 1 / 2 / 3, receptacle records). Before the third is in, the rings 7492-7509 stand (uber hinge joints at 0); with it the wheel's script commands every ring (vt 55) and they turn 10 degrees/s, neighbours in opposite directions [O scripts as ours runs them]. Not played here: the nine thralls of the unit are placed off the route (none comes within reach in this run); the base panel and the tiers (known_gaps/ch16_tower_base_panel).",
+ "level": "l5_valgrind",
+ "spawn": [
+  0,
+  3072,
+  180,
+  180
+ ],
+ "steps": [
+  {
+   "step": "tower_at_rest",
+   "duration": 1,
+   "expect": [
+    {
+     "probe": "world.unit",
+     "eq": "l5_valgrind"
+    },
+    {
+     "probe": "object.7492.uberjoint.0",
+     "eq": 0,
+     "note": "the ring stands"
+    },
+    {
+     "probe": "object.7497.uberjoint.0",
+     "eq": 0,
+     "note": "the ring stands"
+    },
+    {
+     "probe": "object.7501.uberjoint.0",
+     "eq": 0,
+     "note": "the ring stands"
+    },
+    {
+     "probe": "object.7504.uberjoint.0",
+     "eq": 0,
+     "note": "the ring stands"
+    },
+    {
+     "probe": "object.7509.uberjoint.0",
+     "eq": 0,
+     "note": "the ring stands"
+    },
+    {
+     "probe": "object.7312.uber.1",
+     "eq": 0
+    },
+    {
+     "probe": "object.7312.uber.2",
+     "eq": 0
+    },
+    {
+     "probe": "object.7312.uber.3",
+     "eq": 0
+    },
+    {
+     "probe": "object.7334.uber.2",
+     "eq": 0,
+     "note": "the gate's lock"
+    }
+   ]
+  },
+  {
+   "step": "power_block_1",
+   "plan": [
+    "go -200 -2000 150",
+    "engage 7498",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "portable.held",
+     "eq": 0
+    },
+    {
+     "probe": "object.7498.in",
+     "eq": 7312
+    },
+    {
+     "probe": "object.7312.uber.1",
+     "eq": 1,
+     "note": "its niche is filled"
+    },
+    {
+     "probe": "portable.held",
+     "over": "any",
+     "eq": 7498,
+     "note": "carried there"
+    },
+    {
+     "probe": "object.7501.uberjoint.0",
+     "eq": 0,
+     "note": "still at rest"
+    },
+    {
+     "probe": "object.7312.uber.2",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "power_block_2",
+   "plan": [
+    "engage 7499",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "portable.held",
+     "eq": 0
+    },
+    {
+     "probe": "object.7499.in",
+     "eq": 7312
+    },
+    {
+     "probe": "object.7312.uber.2",
+     "eq": 1,
+     "note": "its niche is filled"
+    },
+    {
+     "probe": "portable.held",
+     "over": "any",
+     "eq": 7499,
+     "note": "carried there"
+    },
+    {
+     "probe": "object.7501.uberjoint.0",
+     "eq": 0,
+     "note": "still at rest"
+    },
+    {
+     "probe": "object.7312.uber.3",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "power_block_3",
+   "plan": [
+    "engage 7500",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "portable.held",
+     "eq": 0
+    },
+    {
+     "probe": "object.7500.in",
+     "eq": 7312
+    },
+    {
+     "probe": "object.7312.uber.3",
+     "eq": 1,
+     "note": "its niche is filled"
+    },
+    {
+     "probe": "portable.held",
+     "over": "any",
+     "eq": 7500,
+     "note": "carried there"
+    },
+    {
+     "calls": [
+      "7492:55",
+      "7497:55",
+      "7501:55",
+      "7504:55",
+      "7509:55"
+     ],
+     "note": "the third block starts the rings"
+    }
+   ]
+  },
+  {
+   "step": "rings_turn",
+   "duration": 10,
+   "expect": [
+    {
+     "probe": "object.7492.uberjoint.0",
+     "over": "min",
+     "max": 1.2,
+     "note": "radians; 10 degrees/s"
+    },
+    {
+     "probe": "object.7492.uberjoint.0",
+     "min": 2.0
+    },
+    {
+     "probe": "object.7501.uberjoint.0",
+     "min": 2.0
+    },
+    {
+     "probe": "object.7497.uberjoint.0",
+     "min": 2.0
+    },
+    {
+     "probe": "object.7504.uberjoint.0",
+     "max": -2.0,
+     "note": "this ring turns the other way"
+    },
+    {
+     "probe": "object.7509.uberjoint.0",
+     "max": -2.0
+    },
+    {
+     "probe": "object.7334.uber.2",
+     "eq": 0,
+     "note": "the gate stays locked"
+    }
+   ]
+  }
+ ]
+}

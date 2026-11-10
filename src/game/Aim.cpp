@@ -188,8 +188,8 @@ bool World::startHeadShot() {
     vec3 at = s.pos + dir * (dist - distance);
     // [I] she is not carried through a wall or off her floor: then she plays it where she stands
     const vec3 chest = s.pos + vec3(0, 0, targeting.eyeHeight);
-    if (col_.raycast(chest, glm::normalize(at - s.pos + vec3(1e-4f, 0, 0)), glm::length(at - s.pos) + player_.tuning().radius, 0x0F) ||
-        !col_.raycast(at + vec3(0, 0, 50), {0, 0, -1}, 150.0f, 0x0F))
+    if (col_.raycast(chest, glm::normalize(at - s.pos + vec3(1e-4f, 0, 0)), glm::length(at - s.pos) + player_.tuning().radius, collision::kTerrainMask) ||
+        !col_.raycast(at + vec3(0, 0, 50), {0, 0, -1}, 150.0f, collision::kTerrainMask))
         at = s.pos;
     if (c.headShotClip.empty() || !player_.use(c.headShotClip, at, yaw)) player_.face(yaw);
     if (enemy) enemy->headShotReact(player_.state().pos);

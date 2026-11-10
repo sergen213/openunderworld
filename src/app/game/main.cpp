@@ -1992,7 +1992,7 @@ int main(int argc, char** argv) {
             return 2;
         }
         const auto& en = selfTest->entry();
-        opt.level = en.level, opt.spawn = en.spawn, opt.chapter = en.chapter, opt.loadSlot = en.load;
+        opt.level = en.level, opt.spawn = en.spawn, opt.chapter = en.chapter >= 0 ? en.chapter : en.levelChapter, opt.loadSlot = en.load;
         opt.noCinematics = !en.cinematics, opt.noMovies = true;
         selfTest->trace = opt.selfTestTrace;
         if (opt.selfTestReport.empty()) opt.selfTestReport = opt.selfTest.stem().string() + ".report.json";
@@ -2110,7 +2110,8 @@ int main(int argc, char** argv) {
             if (const int p = t.preset(); p >= 0) t.unknown = p; // a preset sets the fifth level too
             world->setTailoring(t);
         }
-        world->chapter = opt.level.empty() ? std::max(opt.chapter, 0) : std::max(0, ou::game::chapterOfUnit(unit));
+        // --level with --chapter: a unit of two chapters (the manor: prologue and the return) plays in the one named
+        world->chapter = opt.level.empty() ? std::max(opt.chapter, 0) : opt.chapter >= 0 ? opt.chapter : std::max(0, ou::game::chapterOfUnit(unit));
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
         world->script().setPlayerObjects(ou::game::chapterGear(world->chapter)); // a direct chapter start
         world->chapterLoadout(world->chapter);

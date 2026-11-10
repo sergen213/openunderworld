@@ -103,7 +103,19 @@ Transition, 0x34 bytes, tag `0x2776`:
   but scripts read their graph state through the `modifiable` member: its field holds the state id, the intro's at
   birth, then each use moves it along the use transition (`Runtime::switchUsed`, `pickUse`) and `modifiable` 4 to the
   started transition's target; `modifiable` 8 returns it. l5_valaskjalf_entryb lever 7188 opens reward door 7187 only
-  while switch 7192 is not in its state 0 "on" (7192 starts in state 1).
+  while switch 7192 is not in its state 0 "on" (7192 starts in state 1). `modifiable` 7 on a switch sets that id (its
+  own member, whichever of the chain's `modifiable` members the caller reached it by); [I] ours honours it for
+  `ar_ei_switch_oneway` only: l1_kraken_room's scripts put switch 30 into the locked state 2 as well, and with that
+  honoured nothing in ours frees it again (self-test `kraken_kill` and the critical gates stop at the first pull):
+  that lock and its release are not decoded. The one-way switches' graph
+  (`ar_ei_switch_oneway`, `ms_ei_switch_oneway_wall`) [O data]: state 1 "off" —use, transition 0→ state 0 "on" —use,
+  transition 1→ state 1; state 2 —use, transition 2→ state 2: the locked state. The exe passes vt 20 the state id
+  entered (type 3637 vt 20: its "on" id 0 → vt 55, "off" id 1 → vt 54 [O bytecode]); ours still runs vt 20 with a
+  zero argument on every use [I: it has no return transitions, and the chapel's pillar switches are pulled again and
+  again], so an "on" switch used again reads "on" again. A use whose transition leads
+  back into the state it left is a failed try: vt 19 with the transition's id instead (type 3637 vt 19: the on / off
+  reactions vt 57 / 56), no vt 20, and the switch stays free. l7_arctic_sea's drawbridge wheel 9103 is locked this way
+  by its unit script (`modifiable` 7 (2)) until the puzzle is counted (docs/PROGRESSION.md chapter 7 gates).
 - Entering a state starts its clip (looping with flag 2), restarts the timer and calls script vt 20 (instance
   prototype 33, `0x799060`) with the state id. Starting a transition plays its clip once and calls vt 19 (prototype
   32, `0x799020`) with its id; without a clip the target is entered at once.

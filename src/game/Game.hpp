@@ -238,7 +238,13 @@ struct Tuning {
     // A free jump's brake (Player::airBrake; jump query +0x74 / +0x68 of the ground and hang jump queries [O-data]): the
     // stick more than 0.2 back of her heading scales the take-off's horizontal velocity, by up to 0.6 straight back.
     float airBrakeStick = -0.2f, airBrake = 0.6f;
-    float standMoveTakeoff = 0.26f; // s into ng_standing_jump a stick jump leaves the ground (0.33 s clip: 359 vs 290 ms)
+    // The jump with the stick (chart S245 / S247, query q43). tru.exe under Wine [O-runtime, docs/REFERENCE_COMPARISON.md
+    // "Jump timing"]: she leaves the ground 8 frames after the state begins (250..267 ms in three traces), carried along
+    // the stick meanwhile (128 from rest), turning onto it at ~20 rad/s (2.98 rad in 0.15 s, screens/stairs/j_57.txt).
+    // Ours moves her by ng_run_start's root motion (135 in those frames) [I: what S245's request 213 plays is not
+    // decoded]. A Jump within `stickJumpLeadFrames` of the run's start is still this jump, later the running one
+    // (tru.exe: the stick jump 15 ms after her run state began, the running jump 71 ms after it) [I: 2 frames].
+    float stickJumpFrames = 8.0f, stickJumpTurn = 20.0f, stickJumpLeadFrames = 2.0f;
     float turnRate = 6.0f;                     // rad/s
     float runTurnRate = 1.755f, sprintTurnRate = 1.835f; // rad/s in the run / sprint loops [O Wine, l4_temple]
     float runStopFrames = 15.0f; // frames in the run loop before letting go plays ng_running_stop (chart variable 374)
@@ -441,9 +447,11 @@ struct PlayerState {
     int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
     float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
     float landTime = 0;   // Land: seconds since she landed (the chart's state time of the landing group S1276)
+    float prepTime = 0;   // JumpPrep: seconds since the take-off state began
+    bool prepInPlace = false; // JumpPrep off a balance beam: no run-up, the stick is read when the take-off clip ends
     float pullWait = -1;  // Hang: seconds since Jump was pressed with a top to climb onto (chart S439); -1 = not waiting
     // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
-    // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
+    // +0x9C0); jumpTime: seconds of free flight in State::Jump (gives the wall test the launch speed); jumpAimed: the
     // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
     // off a wall since she last stood, hung or fell (tru.exe chart context +0x4EC). wallTime: seconds in State::WallJump.
     // On the wall climbNormal is its outward normal and climbFrom / climbTo / climbYawFrom / climbYawTo the attach blend.
@@ -642,6 +650,7 @@ private:
     bool startDodge(vec2 stick); // under water, target lock held: swim_submerged_dodge_* by the stick (State::SwimDodge)
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
     bool tryClimb(bool fromAir);
+    bool hangJumpToHold(); // Hang: the jump up onto a free-climb hold over the ledge (Climb.cpp)
     bool warpStep(float dt); // the clip carries her climbFrom -> climbTo (climbing, ladder climb-off); true when done
     void climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt);
     // Ladders (markup 9), perches (13), pillars (15), src/game/Traverse.cpp. climbNormal = outward from the wall.
@@ -1329,6 +1338,7 @@ private:
     void restoreMelee(const nlohmann::json& j);
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     bool carryReady() const;           // standing or swimming: she can pick up / insert / take out a portable
+    bool portableClass(const script::Object& o);       // a portable by its physical class 50 (the Xibalba room keys)
     bool insertHeld(script::Object& held, const Engaged& at); // into the receptacle she engages (Runtime::insertPortable)
     bool removeInserted(const Engaged& at); // empty-handed: the inserted portable she engages comes out, held (0x186)
     // + its script reactions; `section` >= 0: an uber receptacle's section (uberInsert)
@@ -1643,8 +1653,8 @@ private:
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
     // The push / pull record Lara grips; `face`: the way she faces while gripping it (0: her own facing, World::pushUberHandle)
     // `hold`: on a three-axis joint, where she stood from the joint's position when she gripped it.
-    // `gear`: the record asks for objects she carries (Thor's gear).
-    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; std::optional<vec3> hold; bool gear = false; } uberHandle_;
+    // `gear`: the record asks for objects she carries (Thor's gear). `across`: decided at the grip.
+    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; std::optional<vec3> hold; bool gear = false; int32_t segment = -1; int8_t across = -1; } uberHandle_;
     physics::Joint3* uberSlide(int32_t uid); // the three-axis joint the object's model 0 rides (push blocks, Thor pillars), null none
     uint32_t pushCameraData_ = 0xFFFFFFFFu; // gamebase 50: DTP id given to CameraManager's type-4 camera (0x779C60)
     int uberMoving_ = 0; // this tick, gripping it: the way her stick moves it (1 forward, -1 back, 2 left, -2 right; 0 not)
@@ -1711,6 +1721,9 @@ private:
     void driveBike(Bike& b, const Actions& a, float dt); // rider input for the next physics step
     std::vector<physics::Scene::Vehicle> bikeVehicles(); // the ridden bike for physics_ (stepPhysics)
     void readBikes(float dt);                      // after the step: bike pose, landing, ramming; Lara on it
+    void placeBike(int32_t uid, int32_t target, int32_t marker); // instance 26 on a parked bike: onto an object / its marker
+    std::optional<std::array<int32_t, 3>> bikePlace_; // a placement of the bike she sits on, waiting for her to be taken off it
+    uint64_t bikePlaceTick_ = 0;
     void settleBike(Bike& b);                      // height and pitch from its wheels' ground contacts
     void ramEnemies(Bike& b);
     vec3 bikeOffset(const Bike& b) const;          // its unit's stream offset (0 when not loaded)

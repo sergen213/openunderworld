@@ -1,0 +1,340 @@
+{
+ "version": 1,
+ "name": "ch16_tunnel_door",
+ "chapter": "16 Gate of the Dead: the tunnel ride from the chapter start, the Thor slide door, the shaft cutscene (docs/matrix/16_gate_of_the_dead.md C16-01, C16-03, C16-04, C16-05)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/15gateofdead.html",
+ "note": "Chapter 5 as chapter select starts it: after 230_val_intro she sits on bike 7229 in l5_valgrind_tunnel. The autopilot's ride lines follow the tunnel's centre line (66 000 units, 10 200 down, found on the unit's collision) with the raw stick; the stick stays inside half while braking (brake + stick past half is the power slide, which spins the bike on the slope). [I] the brakes do not hold the bike on this slope in ours: with the brake held it still gains speed on the steeper stretches (4000 units/s at the hairpin), so the ride is fast; the original's ride is not traced. In the hall the hand brake (Jump) stops it, Interact gets off. Door 7400 (ar_ei_thor_slide_door, needs g_gauntletleft, which the chapter's gear has): Interact grips it inside its record's half cylinders (r 711) and turns her along its slide (yaw -90), Forward walks the leaf 663.7 to its limit in 2.9 s (thor_forward; [U] the original's stance and side: docs/GAMEPLAY.md Thor's gauntlets). Back on the bike, through the doorway: plane 7472 starts 235_val_shaft (7403; not shown here, its events and placement run), whose end stands her on foot and, because she rode in, the bike on marker 7404 beside her (7403 vt 58 / vt 60 [O bytecode], VehicleReal.ShaftCinematicStandsTheBikeOnItsMarker): she gets on it there.",
+ "start_chapter": 5,
+ "steps": [
+  {
+   "step": "on_the_bike",
+   "duration": 3,
+   "until": {
+    "probe": "bike.phase",
+    "eq": "ride"
+   },
+   "expect": [
+    {
+     "probe": "bike.uid",
+     "eq": 7229,
+     "note": "230_val_intro's end handler seats her (larabase 52)"
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l5_valgrind_tunnel"
+    },
+    {
+     "probe": "world.chapter",
+     "eq": 5
+    }
+   ]
+  },
+  {
+   "step": "ride_the_tunnel",
+   "plan": [
+    "ride -35992 -3843 800 0.3 1300 0.5",
+    "ride -36992 -4021 800 0.3 1300 0.5",
+    "ride -37992 -4110 800 0.3 1300 0.5",
+    "ride -38992 -4221 800 0.3 1300 0.5",
+    "ride -39992 -4266 800 0.3 1300 0.5",
+    "ride -40992 -4354 800 0.3 1300 0.5",
+    "ride -41992 -4643 800 0.3 1300 0.5",
+    "ride -42992 -4999 800 0.3 1300 0.5",
+    "ride -43992 -5221 800 0.3 1300 0.5",
+    "ride -44992 -5266 800 0.3 1300 0.5",
+    "ride -45992 -5266 800 0.3 1300 0.5",
+    "ride -46992 -5266 800 0.3 1300 0.5",
+    "ride -47992 -5266 800 0.3 1300 0.5",
+    "ride -48992 -5266 800 0.3 1300 0.5",
+    "ride -49992 -5243 800 0.3 1300 0.5",
+    "ride -50992 -4999 800 0.3 1300 0.5",
+    "ride -51992 -4532 800 0.3 1300 0.5",
+    "ride -52992 -4110 800 0.3 1300 0.5",
+    "ride -53992 -3710 800 0.3 1300 0.5",
+    "ride -54992 -3377 800 0.3 1300 0.5",
+    "ride -55992 -3177 800 0.3 1300 0.5",
+    "ride -56992 -3066 800 0.3 1300 0.5",
+    "ride -57992 -3199 800 0.3 1300 0.5",
+    "ride -58992 -3866 800 0.3 1300 0.5",
+    "ride -59770 -4666 800 0.3 1300 0.5",
+    "ride -60415 -5466 800 0.3 1300 0.5",
+    "ride -60926 -6466 800 0.3 1300 0.5",
+    "ride -61148 -7466 800 0.3 1300 0.5",
+    "ride -61192 -8466 800 0.3 1300 0.5",
+    "ride -61192 -9466 800 0.3 1300 0.5",
+    "ride -61192 -10466 800 0.3 1300 0.5",
+    "ride -60970 -11466 800 0.3 1300 0.5",
+    "ride -60392 -12266 800 0.3 1300 0.5",
+    "ride -59592 -13066 800 0.3 1300 0.5",
+    "ride -58792 -13799 800 0.3 1300 0.5",
+    "ride -57792 -14488 800 0.3 1300 0.5",
+    "ride -56792 -14954 800 0.3 1300 0.5",
+    "ride -55792 -15354 800 0.3 1300 0.5",
+    "ride -54792 -15688 800 0.3 1300 0.5",
+    "ride -53792 -15932 800 0.3 1300 0.5",
+    "ride -52792 -16132 800 0.3 1300 0.5",
+    "ride -51792 -16243 800 0.3 1300 0.5",
+    "ride -50792 -16266 800 0.3 1300 0.5",
+    "ride -49792 -16266 800 0.3 1300 0.5",
+    "ride -48792 -16266 800 0.3 1300 0.5",
+    "ride -47792 -16266 800 0.3 1300 0.5",
+    "ride -46792 -16266 800 0.3 1300 0.5",
+    "ride -45792 -16266 800 0.3 1300 0.5",
+    "ride -44792 -16266 800 0.3 1300 0.5",
+    "ride -43792 -16266 800 0.3 1300 0.5",
+    "ride -42792 -16266 800 0.3 1300 0.5",
+    "ride -41792 -16266 800 0.3 1300 0.5",
+    "ride -40792 -16243 800 0.3 1300 0.5",
+    "ride -39792 -16132 800 0.3 1300 0.5",
+    "ride -38792 -15999 800 0.3 500 0.5",
+    "ride -37792 -15821 800 0.3 500 0.5",
+    "ride -36992 -15466 800 0.3 500 0.5",
+    "hold jump 2.5",
+    "wait 0.5"
+   ],
+   "duration": 90,
+   "expect": [
+    {
+     "probe": "bike.mounted",
+     "over": "all",
+     "eq": true
+    },
+    {
+     "probe": "bike.uid",
+     "eq": 7229
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.drop",
+     "min": 10000,
+     "note": "the tunnel falls 10 230 from the start to the door hall"
+    },
+    {
+     "probe": "bike.pos.x",
+     "near": -37468,
+     "tol": 500,
+     "note": "in the hall before the carved door"
+    },
+    {
+     "probe": "bike.pos.z",
+     "near": -14902,
+     "tol": 40
+    },
+    {
+     "probe": "bike.speed",
+     "near": 0,
+     "tol": 20,
+     "note": "stopped by the hand brake"
+    },
+    {
+     "probe": "step.events",
+     "has": [
+      "enter:7380>7380"
+     ],
+     "note": "the volume that preloads the shaft cutscene"
+    },
+    {
+     "probe": "object.7400.uberjoint.1",
+     "eq": 0,
+     "note": "the door is shut"
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l5_valgrind_tunnel"
+    }
+   ]
+  },
+  {
+   "step": "dismount",
+   "input": [
+    "0.2 interact 1",
+    "0.3 interact 0"
+   ],
+   "duration": 4,
+   "until": {
+    "probe": "player.state",
+    "eq": "idle"
+   },
+   "expect": [
+    {
+     "clips": [
+      "motorcycle:motorcycle_dismount_cycle",
+      "ng_idle"
+     ]
+    },
+    {
+     "probe": "bike.mounted",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "slide_the_door",
+   "plan": [
+    "go -33700 -14500 150",
+    "engage 7400 walk",
+    "push 1 0 3.4",
+    "wait 0.5"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "visits": [
+      "block"
+     ]
+    },
+    {
+     "clips": [
+      "thor_engage",
+      "thor_forward"
+     ]
+    },
+    {
+     "calls": [
+      "7400:49",
+      "7400:50"
+     ],
+     "note": "gripped (pull strength 15), let go"
+    },
+    {
+     "probe": "object.7400.uberjoint.1",
+     "min": 655,
+     "note": "open to its limit 663.7"
+    },
+    {
+     "probe": "object.7400.uber.0",
+     "eq": 2,
+     "note": "braked again: it stays open"
+    },
+    {
+     "probe": "step.horizontal",
+     "min": 600,
+     "note": "she walks with the leaf"
+    }
+   ]
+  },
+  {
+   "step": "back_on_the_bike",
+   "plan": [
+    "go -37564 -15483 30",
+    "press",
+    "wait 3"
+   ],
+   "duration": 40,
+   "until": {
+    "probe": "bike.phase",
+    "eq": "ride"
+   },
+   "expect": [
+    {
+     "probe": "bike.uid",
+     "eq": 7229
+    },
+    {
+     "clips": [
+      "motorcycle:motorcycle_mount_cycle"
+     ]
+    }
+   ]
+  },
+  {
+   "step": "through_the_doorway",
+   "plan": [
+    "ride -34800 -14700 400 0.5 900 0.5",
+    "ride -33300 -14420 300 0.5 900 0.5",
+    "ride -32000 -14480 300 0.5 900 0.5",
+    "ride -30540 -14523 500 0.5 900 0.5"
+   ],
+   "duration": 40,
+   "until": [
+    {
+     "probe": "world.checkpoint",
+     "eq": 7403
+    },
+    {
+     "probe": "bike.mounted",
+     "eq": false
+    }
+   ],
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "cross:7472>7472",
+      "activate:7472>7403",
+      "cinematicend:7403>7403",
+      "checkpoint:7403>7403"
+     ]
+    },
+    {
+     "calls": [
+      "7403:58",
+      "7403:60"
+     ],
+     "note": "235_val_shaft's start and end handlers"
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l5_valgrind"
+    },
+    {
+     "probe": "player.state",
+     "eq": "idle",
+     "note": "the cutscene's end stands her on foot"
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -31476,
+     "tol": 150
+    },
+    {
+     "probe": "object.7400.uberjoint.1",
+     "min": 655
+    }
+   ]
+  },
+  {
+   "step": "bike_waits_at_the_marker",
+   "plan": [
+    "go -29500 -14600 150",
+    "go -27572 -14737 60",
+    "press",
+    "wait 3"
+   ],
+   "duration": 60,
+   "until": {
+    "probe": "bike.phase",
+    "eq": "ride"
+   },
+   "expect": [
+    {
+     "probe": "bike.uid",
+     "eq": 7229
+    },
+    {
+     "probe": "bike.pos.x",
+     "near": -27729,
+     "tol": 80,
+     "note": "marker object 7404"
+    },
+    {
+     "probe": "bike.pos.y",
+     "near": -14791,
+     "tol": 80
+    },
+    {
+     "probe": "bike.wheels",
+     "min": 1,
+     "note": "on the ramp under the marker"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  }
+ ]
+}

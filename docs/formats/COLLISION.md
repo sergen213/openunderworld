@@ -52,12 +52,30 @@ TerrainGroup (0x50)
   - The gameplay camera queries mask 2 and skips terrain groups whose TerrainGroupExtra flags have 0x200 (tru.exe
     0x5EB9B0 / 0x5EC360); `loadLevelCollision` clears bit 2 on those groups' faces (survey 2026-10-31: every face
     is mask 3 or 0 otherwise; 76 groups, 21 903 faces). See `collision::kCameraMask`.
-  - l4_pool: mask = 3 on every terrain face, 0xFF on the signal quad; flags low bits vary (0x20..0x3F, plus 0x80) [O];
-    clientFlags ∈ {0, 0x04, 0x80, 0xA0, 0x1A0}, material ∈ {1, 17, 27} [O]. Their meanings are [U] (TRL calls the
-    fields adjacencyFlags/collisionFlags/clientFlags/materialType; adjacency for +0x0C is [I] at best since bit 0x40 is a skip flag).
-    Bits 0x01..0x3F are set on 99.5-100 % of wall faces in every unit surveyed (2026-10-29), so they do not mark
-    climbable rock (free-climb surfaces are markup types 16–20, GAMEPLAY.md "Free climbing") [O].
-  - Face and BIH sections are 3 resp. 2 bytes shorter than count × stride: the last element is stored without
+  - Per query class [O disassembly of the ray filter 0x48EF50 (mesh, ray flags), the callback 0x493330 hands to the
+    terrain ray 0x4E8FC0]: the group's TerrainGroupExtra flags F (and the dword after them, G) drop it — always when
+    F & 0x8 or F & 0x20000; F & 0x80000 unless the ray has 0x20000000; then per ray-flag bit: ray 0x10000 / F 0x4000,
+    ray 0x4000 / F 0x300 (the camera, flags 0x302C5981), ray 0x4 / F 0x800, ray 0x8 / F 0x400, ray 0x2000000 /
+    F 0x8000, ray 0x8000 / F 0x2000, ray 0x800000 / F 0x40000 (the sight ray 0xC5AC1983), ray 0x20000 / G 0x2. The
+    player code's rays (0x6E7300, 0x6F3D40, 0x7013F0 and the 0x73xxxx states: 64 call sites) all pass 0x2C19E7 (bit
+    0x4), the enemy code's (0x6155C0 .. 0x674FE0: 26) 0x42C11AB (bit 0x8). So F 0x800 = not the player's rays, F 0x400
+    = not the enemies'. Which class Lara's capsule and ground check are is not decoded [U]; two facts bound it:
+    l4_traprooms group 1 (0xE004CF00: both bits; 2 faces, a wall across the crusher aisle's doorway, which stopped her
+    dead in ours) cannot be hers, and l2_junglehub group 2 (0xE005FB00: 0x800 without 0x400) is: under Wine she stands
+    on its steep 0xA0 face (`GameReal.SlopeJunglehubRampSeries`). Ours [I]: the faces of groups with both bits
+    (`(F & 0xC00) == 0xC00`) are taken out of `collision::kSolidMask`, the default mask of every query (Lara, rope,
+    bike probes), and keep one bit each for the camera and the sight ray where those meet them
+    (`CollisionRealData.LaraSkipsTheTerrainGroupsTruSkipsForThePlayer`; also l1_kraken_entrance group 3, the same
+    flags, 5667 faces). **Open:** groups flagged 0x800 alone are still hers in every query, though tru.exe's own
+    player rays skip them: l4_pool group 3 (0xE004E800, 14 faces 8.5 over rock 1253's top and ~180 out past its face:
+    the reason our ledge class test calls that rock no hurdle and she stands 9 over the ledge she climbed), the wall
+    behind l2_puzzleroom's wall-hug ledge 476 (groups 12 / 13 / 22). Taking them out of her probe rays only (hurdle
+    class 0x73DFF0, wall hug 0x74B920, ledge tests) needs a per-query mask in `Player` and changes
+    `GameReal.PoolRockGrabNotHurdle`, `PoolDropToHang`, `PuzzleRoomWallHug`, `CombatReal.PoolLedgeHang...` (tried
+    2026-11-10 with the whole group removed: those four and the junglehub series failed). [U] which class rigid
+    bodies and the bike are (the crusher wall lacks only F 0x2000: the ray class 0x8000 still meets it, [I] the
+    dragged block 5884's stop); Jolt's terrain is still built from every face.
+- Face and BIH sections are 3 resp. 2 bytes shorter than count × stride: the last element is stored without
     its padding [O]. Hence material is read as u8 and node bytes 0x0E–0x0F are padding [I].
 - Winding: floor faces whose CCW normal points up match the render floors (see agreement below) much better than
   down-facing ones (83 % vs 47 % within 16 units in l4_pool), so [I] CCW = outward/open side. Queries are double-sided.

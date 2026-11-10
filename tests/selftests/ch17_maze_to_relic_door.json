@@ -1,0 +1,129 @@
+{
+ "version": 1,
+ "name": "ch17_maze_to_relic_door",
+ "chapter": "17 Valhalla: the maze's first half on foot, from inside the Valgrind gate to the shut relic-room door (docs/matrix/17_valhalla.md C17-05 .. C17-09)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/16valhalla.html",
+ "note": "l5_valaskjalf_entry at its player intro inside the gate (7334 is 2900 behind her). The autopilot walks the halls' route found on the unit's collision (the first hall, the ramp, the T-junction, corner 3, the ramp down to area 4) to the big stone door 7227 (ar_uo_reward_door), which is shut and stays shut: it opens only from the pole lever in the other maze half (C17-24) or its inside switch. Observation, not a requirement: none of the unit's thralls comes for her on this route in ours (15 alive, the nearest 7800 away at the door); the page meets one in the first hall and two at corner 3 [U: their placement / senses against the original]. Not played: the bike, the treasures, the fights, the timed runs.",
+ "level": "l5_valaskjalf_entry",
+ "steps": [
+  {
+   "step": "through_the_halls",
+   "plan": [
+    "go -49 5009 200",
+    "go -49 4109 200",
+    "go -49 3209 200",
+    "go -49 2309 200",
+    "go -49 1409 200",
+    "go -49 509 200",
+    "go -49 -391 200",
+    "go -49 -1291 200",
+    "go -49 -2191 200",
+    "go -49 -3091 200",
+    "go -49 -3991 200",
+    "go -49 -4891 200",
+    "go -49 -5791 200",
+    "go -49 -6691 200",
+    "go -49 -7591 200",
+    "go 101 -8491 200",
+    "go 851 -9241 200",
+    "go 1601 -9941 200",
+    "go 2501 -9991 200",
+    "go 3401 -9991 200",
+    "go 4301 -9991 200",
+    "go 5201 -9991 200",
+    "go 6101 -9991 200",
+    "go 6851 -10441 200",
+    "go 7601 -11191 200",
+    "go 8351 -11941 200",
+    "go 8951 -12691 200",
+    "go 8951 -13591 200",
+    "go 8951 -14491 200",
+    "go 8951 -15391 200",
+    "go 9101 -16291 200",
+    "go 9101 -17191 200",
+    "go 9701 -17941 200",
+    "go 9851 -18841 200",
+    "go 9851 -19741 200",
+    "go 9851 -20641 200",
+    "go 9851 -21541 200",
+    "go 9901 -22441 200",
+    "go 10601 -23191 200",
+    "go 11251 -23941 200",
+    "go 11801 -24791 200",
+    "go 12701 -24991 200",
+    "go 13601 -24991 200",
+    "go 14501 -24991 200",
+    "go 15401 -24991 200",
+    "go 16301 -24991 200",
+    "go 17201 -24991 200",
+    "go 18101 -24991 200"
+   ],
+   "duration": 200,
+   "expect": [
+    {
+     "probe": "player.pos.x",
+     "near": 17970,
+     "tol": 400,
+     "note": "before the door (18722)"
+    },
+    {
+     "probe": "player.pos.y",
+     "near": -24990,
+     "tol": 400
+    },
+    {
+     "probe": "player.pos.z",
+     "near": -2500,
+     "tol": 30,
+     "note": "2530 below the gate hall"
+    },
+    {
+     "probe": "step.moved",
+     "min": 40000
+    },
+    {
+     "probe": "player.dead",
+     "over": "all",
+     "eq": false
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l5_valaskjalf_entry"
+    },
+    {
+     "probe": "object.7227.uber.0",
+     "eq": 0,
+     "note": "shut"
+    },
+    {
+     "probe": "object.7227.body.z",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "the_door_stays_shut",
+   "plan": [
+    "run 0 3",
+    "press",
+    "wait 2"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "probe": "object.7227.uber.0",
+     "eq": 0
+    },
+    {
+     "probe": "object.7227.body.z",
+     "eq": 0
+    },
+    {
+     "probe": "player.pos.x",
+     "max": 18700,
+     "note": "she does not pass it"
+    }
+   ]
+  }
+ ]
+}

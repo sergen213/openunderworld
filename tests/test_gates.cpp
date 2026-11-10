@@ -1495,6 +1495,46 @@ TEST(ProgressionReal, NatlaFightByInput) {
     }
 }
 
+// l7_arctic_sea's unit script sets its puzzle up in its constructor [O bytecode]: statue wheels 9095 / 9096 free
+// (vt 62), 9098 not (vt 63), the drawbridge wheel 9103 locked (vt 63 = modifiable 7 (2): graph state 2). The constructor
+// first asks for Lara's unit (instance 27 on the player) and stopped there before. A use of the locked wheel takes
+// the graph's use transition 2 back into state 2: vt 19 (2) posts "reaction=interactFail" (the chains rattle, vt 55)
+// and the drawbridge 9116 stays up. The unit frees the wheel with vt 62 (modifiable 7 (1)) once it has counted four
+// stones and four swords; freed, the same use enters state 0: vt 20 (0) posts "state=on" and the bridge comes down.
+// Played by input, swimming from checkpoint 9112; only the unit's own call that frees the wheel is made by the test.
+TEST(ProgressionReal, ArcticSeaDrawbridgeWheelLockedUntilFreed) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l7_arctic_sea", game::loadLaraAnims(bf),
+                  game::Spawn{{5667.6f, -35588.5f, -23576.4f}, -glm::half_pi<float>()});
+    w.script().setBigfile(&bf);
+    std::vector<std::pair<int32_t, int16_t>> calls;
+    w.script().onCall = [&](int32_t, int32_t to, int16_t vt) { calls.emplace_back(to, vt); };
+    const auto called = [&](int32_t to, int16_t vt) { return std::ranges::find(calls, std::pair{to, vt}) != calls.end(); };
+    uint64_t tick = 0;
+    const auto play = [&](const std::string& plan, float seconds) {
+        auto ap = app::Autopilot::parse(plan);
+        for (int i = 0; i < int(seconds * 60) && !ap.done() && !ap.failed(); ++i, ++tick) w.tick(ap.step(tick, w));
+        EXPECT_TRUE(ap.done() && !ap.failed()) << plan << ": " << ap.failure();
+    };
+    // (the constructor's calls 9095 / 9096 vt 62, 9098 / 9103 vt 63 ran when the World was made: self-test
+    // ch19_thin_ice_dive lists them; here the lock shows in what the wheel does)
+    play("wait 1\n", 2);
+    ASSERT_TRUE(w.uberState(9116));
+    const auto up = *w.uberState(9116);
+    calls.clear();
+    play("swim 5680 -35950 -24100 150\npress\nwait 8\n", 40);
+    EXPECT_TRUE(called(9114, 55) && called(9115, 55)) << "the failed try rattles both chains";
+    EXPECT_FALSE(called(9116, 55));
+    EXPECT_EQ(*w.uberState(9116), up) << "the drawbridge stays up";
+    w.script().call(9103, 62); // the unit's vt 24 at four stones and four swords
+    calls.clear();
+    play("wait 1\npress\nwait 8\n", 12);
+    EXPECT_TRUE(called(9116, 55)) << "freed, the wheel lowers the bridge";
+    EXPECT_TRUE(called(9114, 56) && called(9115, 56));
+    EXPECT_NE(*w.uberState(9116), up);
+}
+
 // The ending (chapter 7 -> the epilogue) from l7_yggdrasil_end: playEnding.
 TEST(ProgressionReal, EndgameCredits) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -2075,6 +2115,30 @@ TEST(ProgressionReal, TraproomSealTakesTheRoomKeys) {
     EXPECT_TRUE(f.contains(156) && f.at(156) != 0) << "vt 49(11, 5): the dark room sticky";
 }
 
+// The four keys of the trap houses (ca_pt_blade / crush / dark / fire_room_key, l4_traprooms 5878-5881) are portables
+// by their physical class (50): they have a pick-up record (kind 4), but their script's native base is `instance`, not
+// portablebase [O data]. Interact inside the
+// record takes each into her hands (World::portableClass; before, the press did nothing), Crouch puts it down again.
+TEST(ProgressionReal, TraproomKeysArePickedUp) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_traprooms");
+    auto& w = *wp;
+    for (const int32_t uid : {5878, 5879, 5880, 5881}) {
+        SCOPED_TRACE(uid);
+        const auto* key = w.script().find(uid);
+        ASSERT_TRUE(key);
+        ASSERT_EQ(w.heldPortable(), 0);
+        ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *key, 4), [&] { return w.heldPortable() == uid; }));
+        game::Actions down;
+        down.drop = true; // Crouch puts it down (chart input 101)
+        w.tick({});
+        w.tick(down), w.tick({});
+        finishMove(w);
+        EXPECT_EQ(w.heldPortable(), 0);
+    }
+}
+
 namespace {
 // Uber objects (docs/GAMEPLAY.md "Inserting a portable", "Thor's gauntlets"): the spots inside section `section`'s
 // records of `kind` (5 receptacles, 1 push / pull; its starting set +0x40 and its states' 0x1D sets; World decides
@@ -2373,6 +2437,72 @@ TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
         EXPECT_NEAR(w.uberJoint(c.uid, c.joint)->x, open, 2.0f) << "it stays where she left it";
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, c.uid) << key.second;
     }
+}
+
+// l2_maproom (C09-04): Lara crossing volume 2636 activates cinematic 2624 (095_tha_powerup); the volume's handler
+// then waits for the cutscene's end (cinematic 10, a latent NtCineSequence: tru.exe 0x4A4CC0 / 0x4ADAA0) and only
+// then has Lara's equip helper give her g_gauntletleft (larabase 37); the cinematic's own handlers switch the
+// gauntlet's glow (larabase 19, the flag 0x698850 sets). Both natives were unbound: the handlers stopped there and
+// the gauntlet never came by play.
+TEST(ProgressionReal, MaproomCinematicGivesTheLeftGauntlet) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_maproom");
+    auto& w = *wp;
+    EXPECT_FALSE(w.script().playerObjects().contains("g_gauntletleft")) << "not hers before the cutscene";
+    const auto* v = w.script().find(2636);
+    ASSERT_TRUE(v);
+    place(w, v->pos, 0, true);
+    bool activated = false;
+    int given = -1;
+    for (int i = 0; i < 120; ++i) {
+        w.tick({});
+        for (const auto& e : w.script().events()) activated |= e.kind == script::EventKind::Activate && e.target == 2624;
+        if (given < 0 && w.script().playerObjects().contains("g_gauntletleft")) given = i;
+        if (!activated) EXPECT_LT(given, 0) << "the gauntlet came before the cutscene, tick " << i;
+    }
+    EXPECT_TRUE(activated) << "volume 2636 plays cinematic 2624";
+    EXPECT_GE(given, 0) << "the left gauntlet after the cutscene";
+    for (const auto& [key, n] : w.script().failures()) {
+        EXPECT_NE(key.first, 2636) << key.second;
+        EXPECT_NE(key.first, 2624) << key.second;
+    }
+}
+
+// l2_maproom's hub (C09-09): the Thor bridge 2667 (walkway, hub and wall: uber section 1) turns on hinge joint 1 about
+// the hub's axis. On the broken ring ledge under the round platform Lara faces the carved panel (handle marker 11,
+// record set 408, needs g_gauntletleft): Interact grips it (vt 49: section 0 state 3 takes joint 1's brake motor off,
+// section 1 state 1 limits the joint to 1..41 degrees), a sidestep to her right walks the panel round to the limit
+// and carries her with it; forward / back do not turn it (the panel moves across her facing).
+TEST(ProgressionReal, MaproomHubTurnsByItsPanel) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_maproom");
+    auto& w = *wp;
+    w.script().setPlayerObjects({"g_gauntletleft"});
+    place(w, {-20239.4f, 37936.7f, -12006.6f}, glm::radians(90.0f));
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().state, game::State::Idle);
+    ASSERT_TRUE(w.uberJoint(2667, 1));
+    const float rest = w.uberJoint(2667, 1)->x;
+    game::Actions grip;
+    grip.interact = true;
+    for (int i = 0; i < 45; ++i) w.tick(grip);
+    ASSERT_EQ(w.player().state().state, game::State::Block) << "gripped with the gauntlet";
+    game::Actions forward = grip;
+    forward.move = {0, 1};
+    for (int i = 0; i < 120; ++i) w.tick(forward);
+    EXPECT_NEAR(w.uberJoint(2667, 1)->x, rest, glm::radians(1.5f)) << "forward does not turn the hub";
+    const vec3 from = w.player().state().pos;
+    game::Actions right = grip;
+    right.move = {1, 0};
+    for (int i = 0; i < 600; ++i) w.tick(right);
+    EXPECT_NEAR(glm::degrees(w.uberJoint(2667, 1)->x), 41.0f, 1.5f) << "round to the limit of section 1's state 1";
+    EXPECT_GT(glm::length(vec2(w.player().state().pos - from)), 900.0f) << "she walks round with the panel";
+    EXPECT_NEAR(glm::length(vec2(w.player().state().pos) - vec2(w.uberJoint(2667, 1)->pivot)),
+                glm::length(vec2(from) - vec2(w.uberJoint(2667, 1)->pivot)), 30.0f) << "on a circle about the hub's axis";
+    for (int i = 0; i < 90; ++i) w.tick({});
+    EXPECT_NEAR(glm::degrees(w.uberJoint(2667, 1)->x), 41.0f, 2.5f) << "let go: braked where she left it";
 }
 
 namespace {
@@ -3331,4 +3461,39 @@ TEST(ProgressionReal, KrakenLinkEarlyShot) {
     std::printf("early shot: link 61 %.0f above her, aim point came within %.0f, link dead %d, 27 sections %u %u %u, shots %u\n",
                 centre(61)->z - w.player().state().pos.z, nearest, int(w.script().find(61)->dead), (*w.uberState(27))[0], (*w.uberState(27))[2],
                 (*w.uberState(27))[3], w.combat().shotsFired);
+}
+
+// l1_ship_sinking_hall door 1167 (sh_ei_shiphall_door) rides the rolling hallway 1056 (its constructor anchors it on the
+// hallway's marker: uberobjectbase 2 + instance 23). Volume 1176 in front of it opens it (vt 72 -> 1167 vt 54) like
+// every ship door: its leaves' collision moves with the opening clip although it is a rider.
+TEST(ProgressionReal, ShipSinkingHallDoorOpensOnItsHallway) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_ship_lower_hallway", game::loadLaraAnims(bf),
+                  game::Spawn{{2842, 7541, 20}, glm::half_pi<float>()});
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    const auto collision = [&] {
+        std::vector<glm::mat4> out;
+        for (const auto& d : w.collision().dynamics)
+            if (d.id == 1167) out.push_back(d.transform);
+        return out;
+    };
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto closed = collision();
+    ASSERT_FALSE(closed.empty());
+    const auto* o = w.script().find(1167);
+    ASSERT_TRUE(o);
+    ASSERT_TRUE(w.script().anchor(1167)) << "a rider of hallway 1056";
+    EXPECT_EQ(w.script().anchor(1167)->first, 1056);
+    game::Actions back;
+    back.move = {0, -1}; // the camera stands behind her (north): the stick back runs her south into volume 1176
+    float most = 0;
+    for (int i = 0; i < 400; ++i) {
+        w.tick(i < 40 ? back : game::Actions{});
+        const auto now = collision();
+        for (size_t k = 0; k < now.size() && k < closed.size(); ++k) most = std::max(most, glm::length(vec3(now[k][3]) - vec3(closed[k][3])));
+    }
+    EXPECT_EQ(o->state, 2) << "open";
+    EXPECT_GT(most, 100.0f) << "the leaves' collision moved with the opening clip";
 }

@@ -1,0 +1,175 @@
+{
+ "version": 1,
+ "name": "ch04_pillar_entry",
+ "chapter": "04 The Norse Connection: up the corner column and through the wall opening into the west room (docs/matrix/04_norse_connection.md C04-01)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/03norse.html",
+ "note": "l1_baldrs_tomb at checkpoint 72 in the gate room. Pillar 14 stands in the south-west alcove (axis -3163 -11375, z 2481..4745); the opening in the west wall has its floor at z 3872, 740 from the column. She goes round to the column's west side, climbs to z ~4100, jumps with the stick toward the wall (pillar_jump_forward, q48: 55.63 out + 28.45 up a 30 Hz frame [O]) into the opening, runs on to its far edge, is caught by the safety drop (drop_to_ledgeb) and lets go into the west room behind door 223.",
+ "level": "l1_baldrs_tomb",
+ "spawn": [
+  -9,
+  -10306,
+  2628,
+  180
+ ],
+ "steps": [
+  {
+   "step": "onto_the_column",
+   "plan": [
+    "go -2800 -11374 60",
+    "go -3163 -11700 50",
+    "go -3560 -11650 50",
+    "go -3560 -11374 40",
+    "run 0 1.2"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "pillar"
+    },
+    {
+     "clips": [
+      "pillar_attach_ground"
+     ]
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -3163,
+     "tol": 3,
+     "note": "her root on the shaft's axis"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "climb",
+   "input": [
+    "0 forward 1"
+   ],
+   "duration": 8,
+   "until": {
+    "probe": "player.pos.z",
+    "min": 4090
+   },
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "pillar"
+    },
+    {
+     "clips": [
+      "pillar_climb_up"
+     ]
+    },
+    {
+     "probe": "step.height_gain",
+     "min": 1300
+    }
+   ]
+  },
+  {
+   "step": "jump_into_the_opening",
+   "plan": [
+    "wait 0.7",
+    "run 180 0.3 jump 0",
+    "wait 2"
+   ],
+   "duration": 5,
+   "expect": [
+    {
+     "visits": [
+      "pillar",
+      "jump",
+      "land"
+     ]
+    },
+    {
+     "clips": [
+      "pillar_jump_forward"
+     ]
+    },
+    {
+     "probe": "player.pos.x",
+     "max": -3950,
+     "note": "inside the wall opening (x -4263 .. -3963)"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 3872,
+     "tol": 6,
+     "note": "the opening's floor"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "to_the_far_edge",
+   "plan": [
+    "run 180 3"
+   ],
+   "duration": 5,
+   "until": {
+    "probe": "player.clip",
+    "eq": "ledgeb_idle"
+   },
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "droptohang",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.pos.x",
+     "max": -4400,
+     "note": "hanging over the west room"
+    }
+   ]
+  },
+  {
+   "step": "drop_into_the_west_room",
+   "input": [
+    "0.2 drop 1",
+    "0.3 drop 0"
+   ],
+   "duration": 4,
+   "until": {
+    "probe": "player.grounded",
+    "eq": true
+   },
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "near": 2528.4,
+     "tol": 4,
+     "note": "the west room's floor"
+    },
+    {
+     "probe": "player.pos.x",
+     "max": -4400,
+     "note": "west of door 223 (x -4109), which is shut"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  }
+ ]
+}

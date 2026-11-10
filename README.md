@@ -67,6 +67,7 @@ Details, optional parts (AMD FSR, Qt launcher) and the viewer: [docs/BUILDING.md
 - [docs/GAMEPLAY.md](docs/GAMEPLAY.md): `ou-game` options, controls, Lara's moves, combat, enemies.
 - [docs/PROGRESSION.md](docs/PROGRESSION.md): chapter routes and which puzzles and gates work.
 - [docs/REFERENCE_COMPARISON.md](docs/REFERENCE_COMPARISON.md): each mechanic measured against the original game, with numbers and sources.
+- [docs/GAMEPLAY_DEVELOPMENT_REPORT.md](docs/GAMEPLAY_DEVELOPMENT_REPORT.md): where the gameplay reconstruction stands: what is built, what is verified against the original, chapter coverage, what is missing.
 - [docs/SAVES.md](docs/SAVES.md): save files.
 - [docs/RENDERING.md](docs/RENDERING.md): OpenGL and Vulkan renderers, ray tracing, FSR.
 - [docs/UPDATES.md](docs/UPDATES.md): signed updates and AppImage self-update.

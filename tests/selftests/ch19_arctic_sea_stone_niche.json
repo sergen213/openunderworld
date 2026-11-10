@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "ch19_arctic_sea_stone_niche",
+  "chapter": "19 Helheim: the locked drawbridge wheel, a power stone seated in its niche (docs/matrix/19_helheim.md C19-17, C19-18)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/18helheim.html",
+  "note": "l7_arctic_sea from checkpoint 9112 in front of the building, swimming throughout. The wheel 9103 (ar_ei_switch_oneway) is locked by the unit script until four stones and four swords are counted (its graph state 2): Interact at it is a failed try (use transition 2 back into state 2 -> vt 19 (2) -> 'reaction=interactFail': the chains 9114 / 9115 rattle, vt 55) and the drawbridge 9116 stays up. Power stone 9273 lies by the right-hand pair of niches: Interact lifts it, carried swimming to niche 9120, Interact seats it (9120 vt 56, rune strip 9137 vt 55 lit, the unit counts a key: vt 24, checkpoint 9112 vt 57). One stone does not free the wheel.",
+  "level": "l7_arctic_sea",
+  "spawn": [5667.6, -35588.5, -23576.4, -90],
+  "steps": [
+    {"step": "the_wheel_is_locked", "plan": ["swim 5680 -35950 -24100 150", "press", "wait 6"], "duration": 40,
+     "expect": [{"probe": "step.events", "has": ["use:9103>9103"]},
+                {"calls": ["9114:55", "9115:55"], "note": "the failed try: the chains rattle"},
+                {"probe": "object.9116.uber.0", "over": "all", "eq": 0, "note": "the drawbridge does not move"},
+                {"probe": "player.swimming", "over": "all", "eq": true}]},
+    {"step": "lift_the_stone", "plan": ["swim 8500 -37200 -23900 300", "swim 11086 -40150 -24100 150", "press", "wait 2"], "duration": 90,
+     "expect": [{"probe": "portable.held", "eq": 9273},
+                {"probe": "player.swimming", "eq": true}]},
+    {"step": "seat_it", "plan": ["engage 9120", "press", "wait 5"], "duration": 40,
+     "expect": [{"probe": "portable.held", "eq": 0},
+                {"probe": "portable.9273.in", "eq": 9120},
+                {"calls": ["9120:56", "9137:55", "-2:24", "9112:57"]},
+                {"probe": "object.9120.uber.0", "eq": 1},
+                {"probe": "object.9137.uber.0", "eq": 1, "note": "its rune strip lit"}]},
+    {"step": "one_stone_frees_nothing", "plan": ["swim 8500 -37200 -23900 300", "swim 5680 -35950 -24100 150", "press", "wait 6"], "duration": 90,
+     "expect": [{"probe": "step.events", "has": ["use:9103>9103"]},
+                {"probe": "object.9116.uber.0", "over": "all", "eq": 0},
+                {"probe": "step.health_lost", "max": 400, "note": "the sharks may reach her"}]}
+  ]
+}

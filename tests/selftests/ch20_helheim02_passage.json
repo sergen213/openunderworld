@@ -1,0 +1,88 @@
+{
+ "version": 1,
+ "name": "ch20_helheim02_passage",
+ "chapter": "20 Yggdrasil: the passage and the slide down the broken stairs (docs/matrix/20_yggdrasil.md C20-13, C20-14)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html",
+ "note": "l7_helheim02 from checkpoint 8884 behind the portal. The passage runs south to a crossing, the way on is its east arm: stairs down, then the broken stairs south, which she slides (no way back) into l7_helheim03's hall where the Viking thralls wait.",
+ "level": "l7_helheim02",
+ "spawn": [
+  -10.9,
+  11928.7,
+  1896.3,
+  -90
+ ],
+ "steps": [
+  {
+   "step": "to_the_crossing_and_east",
+   "plan": [
+    "go 300 7800 150",
+    "go 3200 7800 150",
+    "go 6976 7700 250"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "player.grounded",
+     "eq": true
+    },
+    {
+     "probe": "step.height_gain",
+     "max": -1000,
+     "note": "down the east arm's stairs"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "slide_the_broken_stairs",
+   "plan": [
+    "run -90 6"
+   ],
+   "duration": 12,
+   "until": [
+    {
+     "probe": "player.pos.z",
+     "max": -600
+    },
+    {
+     "probe": "player.state",
+     "in": [
+      "idle",
+      "run",
+      "stop",
+      "land"
+     ]
+    }
+   ],
+   "expect": [
+    {
+     "visits": [
+      "slide"
+     ]
+    },
+    {
+     "probe": "step.events",
+     "has": [
+      "cross:8860>8860"
+     ]
+    },
+    {
+     "probe": "enemies.alive",
+     "min": 4,
+     "note": "the thralls of the hall below"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l7_helheim03"
+    }
+   ]
+  }
+ ]
+}

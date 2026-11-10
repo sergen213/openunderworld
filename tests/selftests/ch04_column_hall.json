@@ -1,0 +1,311 @@
+{
+ "version": 1,
+ "name": "ch04_column_hall",
+ "chapter": "04 The Norse Connection: the hall of broken columns, first half (docs/matrix/04_norse_connection.md C04-13, C04-14)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/norse2.html",
+ "note": "l1_baldrs_sideroom from checkpoint 91: the column hall is this unit's north half (pillars 15..33 in two rows x 4902 / 6798, upper floor at z 4029.6). Pillar jumps go along the stick (the camera direction on the page); her flight starts outside the shaft. Continues in known_gaps/ch04_column_hall_perches.json.",
+ "level": "l1_baldrs_sideroom",
+ "spawn": [
+  2053,
+  1990,
+  2075,
+  90
+ ],
+ "steps": [
+  {
+   "step": "to_the_first_column",
+   "plan": [
+    "go 4686 4078 100",
+    "go 5900 5300 100",
+    "go 6400 6400 100",
+    "go 6400 7300 60",
+    "go 6798 7300 40",
+    "run -90 1.2"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "pillar"
+    },
+    {
+     "clips": [
+      "pillar_attach_ground"
+     ]
+    },
+    {
+     "probe": "player.pos.y",
+     "near": 6951,
+     "tol": 3,
+     "note": "pillar 24, the first on the right"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "climb_it",
+   "input": [
+    "0 forward 1"
+   ],
+   "duration": 8,
+   "until": {
+    "probe": "player.pos.z",
+    "min": 3120
+   },
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "pillar"
+    },
+    {
+     "clips": [
+      "pillar_climb_up"
+     ]
+    }
+   ]
+  },
+  {
+   "step": "jump_to_the_broken_column",
+   "plan": [
+    "wait 0.7",
+    "run 90 0.3 jump 0",
+    "wait 1.5"
+   ],
+   "duration": 5,
+   "expect": [
+    {
+     "visits": [
+      "pillar",
+      "jump",
+      "pillar"
+     ]
+    },
+    {
+     "clips": [
+      "pillar_jump_forward",
+      "pillar_attach_M"
+     ]
+    },
+    {
+     "probe": "player.pos.y",
+     "near": 7899,
+     "tol": 3,
+     "note": "pillar 23, 948 on; its shaft starts 944 over the floor"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "climb_over_the_ledge",
+   "input": [
+    "0 forward 1"
+   ],
+   "duration": 8,
+   "until": {
+    "probe": "player.pos.z",
+    "min": 4250
+   },
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "pillar"
+    }
+   ]
+  },
+  {
+   "step": "jump_back_onto_the_ledge",
+   "plan": [
+    "wait 0.7",
+    "run -90 0.3 jump 0",
+    "wait 2"
+   ],
+   "duration": 5,
+   "expect": [
+    {
+     "visits": [
+      "pillar",
+      "jump",
+      "land"
+     ]
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 4029.6,
+     "tol": 4,
+     "note": "the upper floor behind ledge 36, over the first column"
+    },
+    {
+     "probe": "player.pos.y",
+     "max": 7500
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "cross_the_ledge",
+   "plan": [
+    "go 6300 6400 60",
+    "go 5900 5850 60",
+    "go 4902 5700 40",
+    "face 90"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "near": 4029.6,
+     "tol": 4
+    },
+    {
+     "probe": "player.grounded",
+     "over": "all",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "running_jump_to_the_perch",
+   "plan": [
+    "run 90 1.0 jump 0.15",
+    "wait 2"
+   ],
+   "duration": 8,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "jumpprep",
+      "jump",
+      "perch"
+     ]
+    },
+    {
+     "probe": "player.clip",
+     "eq": "perch_idle"
+    },
+    {
+     "probe": "player.pos.y",
+     "near": 6945,
+     "tol": 15,
+     "note": "perch 26 on the broken column's top, 940 from the ledge's edge"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "perch_to_the_next_column",
+   "plan": [
+    "face 90",
+    "wait 0.6",
+    "run 90 0.3 jump 0",
+    "wait 2"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "visits": [
+      "perch",
+      "jump",
+      "pillar"
+     ]
+    },
+    {
+     "clips": [
+      "perch_jump_forward",
+      "pillar_attach_M"
+     ]
+    },
+    {
+     "probe": "player.pos.y",
+     "near": 7899,
+     "tol": 3,
+     "note": "pillar 31"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "climb_a_little",
+   "input": [
+    "0 forward 1"
+   ],
+   "duration": 8,
+   "until": {
+    "probe": "player.pos.z",
+    "min": 4300
+   },
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "pillar"
+    }
+   ]
+  },
+  {
+   "step": "jump_to_the_broken_ledge",
+   "plan": [
+    "wait 0.7",
+    "run 90 0.3 jump 0",
+    "wait 2"
+   ],
+   "duration": 8,
+   "expect": [
+    {
+     "visits": [
+      "pillar",
+      "jump",
+      "land"
+     ]
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 4029.6,
+     "tol": 4,
+     "note": "the floor behind ledge 35; pillar 33 stands under it and is not caught through it"
+    },
+    {
+     "probe": "player.pos.y",
+     "min": 8500
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  }
+ ]
+}

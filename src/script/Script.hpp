@@ -425,6 +425,9 @@ public:
     void cinematicEvent(int32_t uid, uint32_t id);
     // Bikes larabase 52 mounted Lara on (0x777DD0 posts INSTANCE message 0x85 to the bike and to her), oldest first.
     std::vector<int32_t> takeMounts() { return std::exchange(mounts_, {}); }
+    // `instance` 26 on an instance other than Lara: {receiver uid, target object uid, its marker id or -1}, oldest first.
+    // The World places what it simulates itself (a parked motorcycle, World::placeBike).
+    std::vector<std::array<int32_t, 3>> takePlacements() { return std::exchange(placements_, {}); }
     // Lara pulled grapple target `uid` (an uber grapple target, script type 3565's subclasses). They override slots
     // 55..60 with handlers that send their uberobjectcommand members (levers 59/60, shiva arms 55/56, uber walls and
     // the naga statue 56/57, the snake head 57) [O]; which slot the exe calls on a pull is [I]: the first overridden
@@ -582,7 +585,12 @@ private:
     bool graphStimulus(int32_t uid, uint32_t mask, float value);
     bool graphPost(int32_t uid, uint32_t mask, float amount, float value);
     bool graphUse(int32_t uid, float value);
-    void switchUsed(Object& o);
+    struct SwitchUse {
+        int32_t state = -1;      // the graph state id the switch holds after the use (-1: it keeps none)
+        int32_t transition = -1; // the use transition's id (vt 19's argument)
+        bool stayed = false;     // that transition led back into the state it left: a failed try
+    };
+    SwitchUse switchUsed(Object& o);
     uint32_t graphSeed_ = 0; // tru.exe DAT_00A038E0 (0x48CA30), drawn among several eligible transitions; saved
     void tickGraph(int32_t uid);
     // `graphOnly`: also an object without a skeleton (its graph, no clips; cached apart).
@@ -654,12 +662,16 @@ private:
     // Resident units (UnitRef::resident) whose unit script waits for the unit itself to load before its startup runs
     // (saved as "deferredUnits").
     std::set<std::string> deferredUnits_;
+    // Units present only as residents (setUnits): tru.exe has not loaded them, so their volumes, planes, switches and
+    // blocks do not see the player (their cinematic objects are still found by uid).
+    std::set<std::string> residentOnly_;
     void startUnitScript(const std::string& unit);
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;
     std::optional<std::pair<uint32_t, std::optional<uint32_t>>> playerUnit_; // setPlayerUnit
     void notifyPlayerUnit(int32_t uid);
     std::optional<std::pair<int32_t, int32_t>> teleport_;
+    std::vector<std::array<int32_t, 3>> placements_; // takePlacements
     uint64_t visibilityVersion_ = 0;
     uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
     Experience experience_;

@@ -106,7 +106,8 @@ std::optional<Kind> classify(const std::string& n) {
     if (endsWith(n, "triggervolume") || n == "soundvolume") return Kind::Volume;
     if (n == "triggerplane") return Kind::Plane;
     if (contains(n, "cheat")) return std::nullopt;
-    if (contains(n, "switch") || contains(n, "lever")) return Kind::Switch;
+    // "swich": l7_helheim01's fourth rune symbol is spelled ar_uo_rune_wall_swich_a in the object list [O data].
+    if (contains(n, "switch") || contains(n, "swich") || contains(n, "lever")) return Kind::Switch;
     if (contains(n, "door") || contains(n, "gate")) return Kind::Door;
     return std::nullopt;
 }
@@ -486,6 +487,10 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
 }
 
 void Runtime::setUnits(const std::vector<UnitRef>& units) {
+    residentOnly_.clear();
+    for (const auto& u : units)
+        if (u.resident && std::none_of(units.begin(), units.end(), [&](const UnitRef& v) { return !v.resident && v.name == u.name; }))
+            residentOnly_.insert(u.name);
     std::erase_if(objects_, [&](const Object& o) {
         if (std::any_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == o.unit; })) return false;
         if (auto s = stateOf(o); !s.is_null()) stash_[std::to_string(o.uid)] = std::move(s); // kept for streaming back
@@ -1011,8 +1016,21 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
     case EventKind::In: vt = kVtOnIn; break;
     case EventKind::Out: vt = kVtOnOut; break;
     case EventKind::Cross: vt = kVtPlaneCross; break;
-    case EventKind::Use:
-        if (o.kind == Kind::Switch) switchUsed(o);
+    case EventKind::Use: {
+        const SwitchUse use = o.kind == Kind::Switch ? switchUsed(o) : SwitchUse{};
+        if (use.stayed) {
+            // A use that leaves the switch in its state (the locked state 2 of the one-way switches, transition 2 back
+            // into it) is a failed try: the exe starts the transition (vt 19 with its id; the l7_arctic_sea drawbridge
+            // wheel 9103's vt 19 (2) posts "reaction=interactFail") and the state is not entered anew. The switch
+            // stays free for another try.
+            o.state = 0, o.t = 0;
+            const vm::Value arg = vm::Value::scalar(uint32_t(use.transition));
+            run(o.uid, 19, std::span(&arg, 1));
+            return;
+        }
+        // [I] vt 20 keeps running with a zero argument (the "on" id) whatever state id the use arrived at: ours has no
+        // return transitions (the shadow pillars' switches are pulled again and again and each pull must read "on"),
+        // so the id the exe would pass (type 3637 vt 20: 0 -> vt 55, 1 -> vt 54) is not passed on yet.
         vt = kVtSwitchUsed;
         // Switch bases (e.g. 3637) receive the state change in vt 20 and dispatch the used state to vt 55; a script that
         // overrides vt 20 below the vt 55 definer handles the use there with state 0 (l2 elevator switch 10112: vt20(0)
@@ -1024,6 +1042,7 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 if (has(20)) { vt = 20; break; }
             }
         break;
+    }
     case EventKind::Start: vt = -2; break; // StartObject enters state 0 (Program::startup)
     case EventKind::Main: vt = -3; break;  // function 2 is the object's main/polling script
     case EventKind::CinematicEnd: vt = -1; break; // non-virtual post-stream helper
@@ -1152,16 +1171,20 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (lastBike_) mounts_.push_back(lastBike_);
                 return true;
             }
-            // larabase 54 (0x79A4E0 -> 0x777E40): true when the instance in the instanceref argument is the bike 52 last
-            // named (Lara +0xF00, non-null). l5_valgrind's 240_val_gate (7464 vt 58) remembers with it that she rode in
-            // on bike 7229, to put her back on it afterwards.
+            // larabase 54 (0x79A4E0 -> 0x777E40): true when the instance in the instanceref argument is her vehicle
+            // (Lara +0xF00, non-null): the bike 52 last named here, else the one the world says she rides (the world
+            // binding below; one binding answered alone before, so l4_trailstart's reveal 6677 never set her down beside
+            // bike 5482). l5_valgrind's 240_val_gate (7464 vt 58) remembers with it that she rode in on bike 7229, to put
+            // her back on it afterwards.
             if (!std::strcmp(name, "larabase") && nc.function == 54 && nc.args.size() == 1) {
                 const vm::Value& a = nc.args[0];
                 int32_t bike = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
                 if (a.kind == vm::Value::Kind::Member)
                     if (const auto holder = resolve(a.uid)) bike = int32_t(holder->fields[a.offset]);
-                nc.result = vm::Value::scalar(bike != 0 && bike == lastBike_);
-                return true;
+                if (!water_ || (bike != 0 && bike == lastBike_)) {
+                    nc.result = vm::Value::scalar(bike != 0 && bike == lastBike_);
+                    return true;
+                }
             }
             // larabase 19 / 20 (0x79A0E0 / 0x79A100 -> 0x777A30 / 0x777A40 -> 0x698850 / 0x698860): set / get the global
             // byte 0xECFC88, "gauntlet charged" (l5_valgrind volume 7511: charged outside the gate's area, not charged
@@ -1200,6 +1223,23 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (nc.function == 37 && text != nc.args.end()) playerObjects_.insert(*text->text);
                 if (nc.function == 42) std::erase_if(playerObjects_, [](const std::string& o) { return o.starts_with("g_"); });
                 nc.result = vm::Value::scalar(nc.function == 38 && text != nc.args.end() && playerObjects_.contains(*text->text));
+                return true;
+            }
+            // cinematic 9 / 10 (thunks 0x797020 / 0x797040 -> 0x4A4C70 / 0x4A4CC0): a latent NtCineSequence on the
+            // receiver's stream; its update 0x4ADAA0 first waits until that stream is the one playing, then until the
+            // player's time passes the float given (9) or FLT_MAX (10, constant 0x845884): until it has finished [O].
+            // Ours plays (or skips) a cutscene at the end of the tick that activated it (World::checkLevelEnd), so
+            // the call blocks through the tick of an activation and returns from the next on [I: a time inside the
+            // stream (9) is not told apart from its end]; a receiver not activated this tick does not block (ours
+            // has nothing later to wait for: l4_trailstart's reveal 6677 calls it on a stream that is never ended
+            // here, and waiting stopped it before it set her down). l2_maproom volume 2636 waits so for cinematic
+            // 2624 before it hands the left gauntlet over.
+            if (!std::strcmp(name, "cinematic") && ((nc.function == 9 && nc.args.size() == 1) || (nc.function == 10 && nc.args.empty())) &&
+                (nc.receiver.kind == vm::Value::Kind::Member || nc.receiver.kind == vm::Value::Kind::Object)) {
+                const int32_t uid = nc.receiver.uid;
+                nc.wait = std::any_of(events_.begin(), events_.end(), [&](const Event& e) {
+                    return e.kind == EventKind::Activate && e.target == uid && e.tick == tick_;
+                });
                 return true;
             }
             // microphone (bind 0x7AC8A0): the audio listener's placement between camera and Lara (1/2 two floats ->
@@ -1557,6 +1597,21 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance: an anim-graph object (handler
             // 0x6B4440) enters the state with that id at once (state list query 0xE6, 0x6A5660); other receivers [U].
             if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) {
+                // A switch keeps its graph state as the id in this member (switchUsed): the unit scripts lock and free
+                // their wheels with it (l7_arctic_sea's constructor: 9103 vt 63 -> 7 (2), free again by vt 62 -> 7 (1)
+                // once four stones and four swords are counted). A pulled switch whose new state can be used is free.
+                // [I] Honoured for the Arctic Sea's wheels only (`ar_ei_switch_oneway`), whose lock and release are decoded and
+                // played. Elsewhere scripts put switches into state 2 too (l1_kraken_room switch 30) and nothing in ours frees
+                // them again yet: honouring it there stops self-test kraken_kill and the critical gates at the first pull.
+                if (Object* o = findMut(self->uid); o && o->kind == Kind::Switch && !o->graph && o->name == "ar_ei_switch_oneway") {
+                    if (const auto set = graphSet(o->name); set && set->graph)
+                        if (const int state = set->graph->stateById(int32_t(nc.args[0].bits)); state >= 0) {
+                            // (its own member, whichever of the chain's `modifiable` members the caller reached it by)
+                            self->fields[modifiableMember(*self).value_or(off)] = nc.args[0].bits;
+                            if (o->state == 2 && set->graph->pickUse(state, formats::kStimulusUse, 0, graphSeed_) >= 0) o->state = 0, o->t = 0;
+                        }
+                    return true;
+                }
                 if (const Object* o = find(self->uid); o && o->graph && o->graph->set->graph)
                     if (const int state = o->graph->set->graph->stateById(int32_t(nc.args[0].bits)); state >= 0) graphEnter(self->uid, state);
                 return true;
@@ -1589,6 +1644,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             if (!std::strcmp(name, "instance") && (nc.function == 0 || nc.function == 1)) return true; // debug print
             if (!std::strcmp(name, "instanceref") && nc.function == 9 && nc.args.size() == 2) { // SetProperty
                 self->properties[(uint64_t(off) << 32) | nc.args[0].bits] = nc.args[1].bits & 0xFF;
+                return true;
+            }
+            // instanceref 10 (thunk 0x799B30, between SetProperty 9 and GetProperty 12): one float to the referenced
+            // instance, result unread. Seen only with the god-ray strength beside `unit` 15 of the same value
+            // (l7_arctic_sea's constructor and vt 13: 0.8 to dispatcher 9089, whose own thread feeds `unit` 15) [U: what the
+            // receiver does with it]; ours keeps nothing and runs on, so the constructor reaches its puzzle set-up.
+            if (!std::strcmp(name, "instanceref") && nc.function == 10 && nc.args.size() == 1) {
+                nc.result = vm::Value::scalar(0);
                 return true;
             }
             if (!std::strcmp(name, "instanceref") && (nc.function == 12 || nc.function == 15) && nc.args.size() == 1) {
@@ -1658,8 +1721,8 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const Member* m = holder->program ? holder->program->member(holder->typeId, a.offset) : nullptr;
                 return m && m->init ? int32_t(*m->init) : 0;
             };
-            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6) && nc.args.size() == 1) {
-                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force)
+            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6 || nc.function == 54) && nc.args.size() == 1) {
+                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force), 54: a bike
                 uint32_t result = 0;
                 if (target && !water_(target, name, nc.function, {}, result)) return false;
                 nc.result = vm::Value::scalar(result);
@@ -1904,6 +1967,12 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 // GetUnit (thunk 0x7B2C20 -> 0x4B06F0): a 12-byte unitref of the instance's unit (+0xE0). Ours: the
                 // unit's ordinal + 1 as an identity (mercs pass it to enemybase 23 [U: what the AI does with it]).
                 const Object* object = findMut(self->uid);
+                // Lara's (l7_arctic_sea's constructor asks whether she came from the unit before): her stream unit
+                // id, what unitref 0 compares; 0 before the World has told us.
+                if (!object && self == playerScript_) {
+                    nc.result = vm::Value::scalar(playerUnit_ ? playerUnit_->first : 0);
+                    return true;
+                }
                 if (!object) return false;
                 auto unit = std::find(cameraUnits_.begin(), cameraUnits_.end(), object->unit);
                 if (unit == cameraUnits_.end()) unit = cameraUnits_.insert(unit, object->unit);
@@ -1964,6 +2033,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const uint32_t b = nc.args[0].bits;
                 teleport_ = {nc.args[0].uid, b & kAnchorBit ? int32_t(b & 0xFFFF) : -1};
                 return true;
+            }
+            // The same call on another instance is queued for the World (takePlacements), which places what it simulates
+            // itself: l5_valgrind's 235_val_shaft end handler (7403 vt 60) stands bike 7229 on marker object 7404 when she
+            // rode through the plane [O bytecode]. The receiver's script result stays the generic one below.
+            if (!std::strcmp(name, "instance") && nc.function == 26 && nc.args.size() == 1 && self != playerScript_ &&
+                nc.args[0].kind == vm::Value::Kind::Object && find(nc.args[0].uid)) {
+                const uint32_t b = nc.args[0].bits;
+                placements_.push_back({self->uid, nc.args[0].uid, b & kAnchorBit ? int32_t(b & 0xFFFF) : -1});
             }
             // uberobjectbase 2 (0x79D090 -> 0x4AB800): a ModelMarkerAnchor (0x4D3110) on section `args[0]` at HInfo
             // marker id `args[1]` (0x4D4820 -> 0x46DF20); instance 26 / 23 take it. Ours: the object, tagged with the
@@ -2324,16 +2401,20 @@ bool Runtime::graphUse(int32_t uid, float value) {
 }
 
 // A switch's use moves the state id its modifiable member holds (Runtime::addUnit) along that state's use transition
-// (0x6B4090, AnimGraph::pickUse); a null target stays. No callbacks: the Use event dispatches the switch's handlers.
-void Runtime::switchUsed(Object& o) {
+// (0x6B4090, AnimGraph::pickUse); a null target stays. No callbacks: the Use event dispatches the switch's handlers
+// with what this returns: the state id now held, and whether the transition taken led back into the same state.
+Runtime::SwitchUse Runtime::switchUsed(Object& o) {
     const auto off = o.script ? modifiableMember(*o.script) : std::nullopt;
     const auto set = off ? graphSet(o.name) : nullptr;
-    if (!set || !set->graph) return;
+    if (!set || !set->graph) return {};
     const auto& G = *set->graph;
     uint32_t& id = o.script->fields[*off];
     const int state = G.stateById(int32_t(id));
     const int ti = state >= 0 ? G.pickUse(state, formats::kStimulusUse, 0, graphSeed_) : -1;
-    if (ti >= 0 && G.transitions[size_t(ti)].target >= 0) id = uint32_t(int32_t(G.states[size_t(G.transitions[size_t(ti)].target)].index));
+    if (ti < 0) return {};
+    const int target = G.transitions[size_t(ti)].target;
+    if (target >= 0) id = uint32_t(int32_t(G.states[size_t(target)].index));
+    return {int32_t(id), G.transitions[size_t(ti)].index, target < 0 || target == state};
 }
 
 // 0x6B4440 message 0x11C: the event mask (+0xA8, the state's transitions' damage classes; cleared while one runs)
@@ -2590,7 +2671,7 @@ void Runtime::tick(const TickInput& in) {
     Object* useSwitch = nullptr;
     float best = kReach;
     for (auto& o : objects_) {
-        if (o.dead) continue;
+        if (o.dead || residentOnly_.contains(o.unit)) continue; // a resident unit is not loaded: nothing in it meets her
         switch (o.kind) {
         case Kind::Volume: {
             const bool now = inside(o.shape, o.pos, o.rot, p);
@@ -2695,17 +2776,26 @@ std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
         for (auto& m : out) m = rigid * m;
         return out;
     }
-    if (rigid != glm::mat4(1)) return std::vector<glm::mat4>{rigid};
+    // A rider (instance 23: its body is its host's marker frame, World::poseAnchored) still plays its own clip under
+    // that frame: l1_ship_sinking_hall door 1167 opens on the rolling hallway 1056. Other rigid motions replace the clip.
+    const bool rider = anchors_.contains(o.uid);
+    if (rigid != glm::mat4(1) && !rider) return std::vector<glm::mat4>{rigid};
+    const auto under = [&](std::optional<std::vector<glm::mat4>> clip) -> std::optional<std::vector<glm::mat4>> {
+        if (rigid == glm::mat4(1)) return clip;
+        if (!clip) return std::vector<glm::mat4>{rigid};
+        for (auto& m : *clip) m = rigid * m;
+        return clip;
+    };
     if (o.graph) {
         const auto& g = *o.graph;
-        if (g.clip < 0 || size_t(g.clip) >= g.set->clips.size() || !g.set->clips[size_t(g.clip)].keyCount) return std::nullopt;
+        if (g.clip < 0 || size_t(g.clip) >= g.set->clips.size() || !g.set->clips[size_t(g.clip)].keyCount) return under(std::nullopt);
         const auto& sk = *g.set->skeleton;
-        return anim::skinPalette(sk, anim::worldMatrices(sk, anim::sample(g.set->clips[size_t(g.clip)], sk, g.t, g.loop)));
+        return under(anim::skinPalette(sk, anim::worldMatrices(sk, anim::sample(g.set->clips[size_t(g.clip)], sk, g.t, g.loop))));
     }
-    if (!o.clips || !o.skeleton || o.state == 0) return std::nullopt;
+    if (!o.clips || !o.skeleton || o.state == 0) return under(std::nullopt);
     const auto& clip = (*o.clips)[o.state == 1 ? 0 : 1];
     const auto world = anim::worldMatrices(*o.skeleton, anim::sample(clip, *o.skeleton, o.t, o.state == 2));
-    return anim::skinPalette(*o.skeleton, world);
+    return under(anim::skinPalette(*o.skeleton, world));
 }
 
 void Runtime::setBody(int32_t uid, const glm::mat4& model) {

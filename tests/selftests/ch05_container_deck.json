@@ -1,0 +1,337 @@
+{
+ "version": 1,
+ "name": "ch05_container_deck",
+ "chapter": "05 God of Thunder: aboard, down to the container deck, the first two mercenaries (docs/matrix/05_god_of_thunder.md C05-01 .. C05-05)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/04thunder.html",
+ "note": "l1_ship_exterior from its player intro: the deck's first squad exists only once she has crossed the boarding plane 1633, so this leg boards as ch05_boarding does and goes on: down the bow stair to the container deck (z 3809), pistols drawn, Target Lock + Fire held while she walks aft along the starboard side. Mercenary 1652 leaves his patrol, comes for her and is shot; 1650 next. Three of the five stay alive further aft / on the upper deck: the rest of the deck fights (C05-08 .. C05-15) is not played here.",
+ "level": "l1_ship_exterior",
+ "spawn": [
+  6928.8,
+  22415,
+  1900,
+  -168.2
+ ],
+ "steps": [
+  {
+   "step": "onto_the_yacht",
+   "duration": 2,
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "near": 1745.1,
+     "tol": 2,
+     "note": "the yacht's deck"
+    },
+    {
+     "probe": "world.checkpoint",
+     "eq": 1554
+    }
+   ]
+  },
+  {
+   "step": "jump_to_the_anchor",
+   "plan": [
+    "run -168.2 1.6 jump 0.8"
+   ],
+   "duration": 4,
+   "until": {
+    "probe": "player.state",
+    "eq": "hang"
+   },
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "jumpprep",
+      "hangjump",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.pos.x",
+     "near": 5540,
+     "tol": 40,
+     "note": "on the hull at the anchor"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "up_the_chain",
+   "input": [
+    "0 forward 1",
+    "0 jump 1",
+    "0.07 jump 0",
+    "1 forward 1",
+    "1 jump 1",
+    "1.07 jump 0",
+    "2 forward 1",
+    "2 jump 1",
+    "2.07 jump 0",
+    "3 forward 1",
+    "3 jump 1",
+    "3.07 jump 0",
+    "4 forward 1",
+    "4 jump 1",
+    "4.07 jump 0",
+    "5 forward 1",
+    "5 jump 1",
+    "5.07 jump 0",
+    "6 forward 1",
+    "6 jump 1",
+    "6.07 jump 0",
+    "7 forward 1",
+    "7 jump 1",
+    "7.07 jump 0",
+    "8 forward 1",
+    "8 jump 1",
+    "8.07 jump 0",
+    "9 forward 1",
+    "9 jump 1",
+    "9.07 jump 0",
+    "10 forward 1",
+    "10 jump 1",
+    "10.07 jump 0",
+    "11 forward 1",
+    "11 jump 1",
+    "11.07 jump 0",
+    "12 forward 1",
+    "12 jump 1",
+    "12.07 jump 0"
+   ],
+   "duration": 14,
+   "until": [
+    {
+     "probe": "player.pos.z",
+     "min": 5000
+    },
+    {
+     "probe": "player.grounded",
+     "eq": true
+    }
+   ],
+   "expect": [
+    {
+     "clips": [
+      "ledgeb_jump_up",
+      "ledgeb_attach_U",
+      "ledgeb_jump_up",
+      "ledgeb_attach_U",
+      "ledgeb_jump_up",
+      "ledgeb_attach_U",
+      "ledgeb_climbup_fast"
+     ]
+    },
+    {
+     "probe": "step.height_gain",
+     "min": 3400,
+     "note": "from the anchor to the rail"
+    },
+    {
+     "probe": "step.drop",
+     "max": 5,
+     "note": "never down"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "step.events",
+     "has": [
+      "cross:1633>1633"
+     ],
+     "note": "the boarding plane at the rail"
+    }
+   ]
+  },
+  {
+   "step": "first_aid_kit",
+   "plan": [
+    "go 3941 21769 60",
+    "press",
+    "wait 1"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "probe": "step.pickups",
+     "has": [
+      "healthpack:1564"
+     ]
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 5073.4,
+     "tol": 4,
+     "note": "the tanker's deck"
+    },
+    {
+     "probe": "world.checkpoint",
+     "eq": 1555
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    },
+    {
+     "probe": "enemies.alive",
+     "eq": 5,
+     "note": "crossing the boarding plane woke the forward squad (dispatcher 1645): five mercenaries, the nearest (1652) patrolling 8000 aft"
+    }
+   ]
+  },
+  {
+   "step": "down_to_the_container_deck",
+   "plan": [
+    "go 4400 21650 60",
+    "go 4400 21250 60",
+    "go 1600 21200 80",
+    "go 900 21200 60",
+    "go 0 20900 60",
+    "go 0 20300 80"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "near": 3809.2,
+     "tol": 4,
+     "note": "the container deck, 1264 under the bow deck, by the stair"
+    },
+    {
+     "probe": "enemy.1652.mode",
+     "eq": "patrol",
+     "note": "not seen yet"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "draw_and_advance",
+   "plan": [
+    "go 3000 20300 100",
+    "go 3300 18600 100",
+    "wait 12"
+   ],
+   "input": [
+    "0.1 draw 1",
+    "0.2 draw 0",
+    "0.4 aim 1",
+    "0.4 fire 1"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "weapon.drawn",
+     "eq": true
+    },
+    {
+     "probe": "enemy.1652.mode",
+     "in": [
+      "investigate",
+      "alert",
+      "chase",
+      "attack"
+     ],
+     "note": "the patrolling mercenary noticed her and left his path"
+    },
+    {
+     "probe": "enemies.alive",
+     "eq": 5
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "first_mercenary",
+   "plan": [
+    "go 3300 16500 100",
+    "wait 12"
+   ],
+   "input": [
+    "0 aim 1",
+    "0 fire 1"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "enemy.1652.mode",
+     "over": "any",
+     "eq": "chase",
+     "note": "he came for her"
+    },
+    {
+     "probe": "enemy.1652.alive",
+     "eq": false,
+     "note": "shot with the pistols on the lock"
+    },
+    {
+     "probe": "combat.locked",
+     "over": "any",
+     "eq": true
+    },
+    {
+     "probe": "enemies.alive",
+     "eq": 4
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "second_mercenary",
+   "plan": [
+    "go 3300 14500 100",
+    "wait 15"
+   ],
+   "input": [
+    "0 aim 1",
+    "0 fire 1"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "enemy.1650.alive",
+     "eq": false
+    },
+    {
+     "probe": "enemies.alive",
+     "eq": 3
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 20
+    },
+    {
+     "probe": "player.health",
+     "min": 400,
+     "note": "alive with most of her health (ours: no hit taken)"
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  }
+ ]
+}

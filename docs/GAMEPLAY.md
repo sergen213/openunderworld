@@ -239,7 +239,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Air integration | `pos += v·t + a·t²/2; v += a·t` | [O] `FUN_005DB370` (Instance +0x2A0 velocity, +0x2B0 acceleration); ported exactly, so results do not depend on the step |
 | Terminal fall speed | none | [O] no clamp of zVel found; we do not clamp |
 | Walk / run speed | root motion: 348 / 1274 units/s | [O] clips above; [O] "ART WARNING: Walk-onto-slope animation covers no distance!" (0x73FE10) shows ground locomotion is animation-driven; [O] physics mode 3 (ground) is not integrated by 0x715340 |
-| Jump take-offs | standing, no stick: **1441.2** up (apex 201.6, 0.56 s air), leaving the ground when `ng_standing_jump` ends (0.33 s); stick held: **1499.1** up + **1200** along the stick, at 0.26 s into the clip; running: **1275.9** up + **1974.9** forward (apex 158, 0.50 s air) after `ng_running_jump_forwards`; the stick behind her (> 1.75 rad from her heading): she turns round and takes the running jump; to a side: the standing stick jump that way (units/s) | [O-runtime] tru.exe under Wine, `wmem trace` of Instance +0x20 position / +0x2A0 velocity (Lara-local, units per 30 Hz frame: 48.04 / 49.97 + 40.00 / 42.53 + 65.83; take-off 359 / 290 / 109 ms after the press, back + jump 121 ms; horizontal speed constant in the air), l3_main_bedroom start, traces openunderworld-work/screens/stairs `j_*.txt`. [I] the 0.26 s take-off point (359 − 290 ms before the clip end) and the 1.75 rad back threshold (our turn-in-place threshold); free leaps (back off a ledge, pole fling without a target, slide jump) reuse these speeds [I] |
+| Jump take-offs | standing, no stick: **1441.2** up (apex 201.6, 0.56 s air), leaving the ground when `ng_standing_jump` ends (its whole 10 frames, 0.33 s: the request starts it at start − blend = 0); stick held at the press (or pushed during the standing take-off: chart S248's T280): **1499.1** up + **1200** along the stick, 8 frames after the press, running on 128 under `ng_run_start`'s root motion meanwhile; running: **1275.9** up + **1974.9** forward (apex 158, 0.50 s air) after `ng_running_jump_forwards` (2 frames); the stick behind her (> 1.75 rad from her heading): she turns round and takes the running jump; to a side: the standing stick jump that way (units/s) | [O-runtime] tru.exe under Wine, `wmem trace` of Instance +0x20 position / +0x2A0 velocity (Lara-local, units per 30 Hz frame: 48.04 / 49.97 + 40.00 / 42.53 + 65.83; take-off 359 / 290 / 109 ms after the press, back + jump 121 ms; horizontal speed constant in the air), l3_main_bedroom start, traces openunderworld-work/screens/stairs `j_*.txt`; docs/REFERENCE_COMPARISON.md M13. [I] the stick jump's run-up taken as the run start's root motion (`Tuning::stickJumpFrames`) and the 1.75 rad back threshold (our turn-in-place threshold); free leaps (back off a ledge, pole fling without a target, slide jump) reuse these speeds [I]. Off a balance beam the stick jump has no run-up [I] |
 | Capsule | radius **79.01**, top **489.2** (height 512) | [O-runtime] tru.exe under Wine, Lara's Havok proxy (instance +0x288) while standing: radius +0x65C = 79.0139, cylinder +0x660 = 189.633 (targets +0x6B0 / +0x6B4 equal: steady), centre 315.4 above the feet (proxy +0x648 vs Instance +0x28), so the capsule spans 141.6..489.2; swimming it is 80 / 228. 0x490E60 steps radius / cylinder towards those targets by ≤ 20 / 40 per frame; 0x7018E0 creates it (`FUN_0049a410(inst, 100.0, …, 28.82, …)`); [U] which data sets the per-state targets. Height [O] player data +0x10 = 512.01 (used as Lara's height: ×0.5 centre, ×0.75 head, capsule test `FUN_007144b0(pos, height, …)`), TRLAU-menu-hook `GeneralAttributes.height` [I name]. Ours: on the ground the capsule's bottom is the step height (110), not 141.6, so the 121-unit hearth stops her one radius short (tru.exe: 38..72 short, pushed to and fro, trace t2); what stops tru.exe there [U] (the proxy's bottom clears it). Walls climbed / hung on keep the root 100 out (`wallOffset`) [I] |
 | Step up / down | **110 / 110** units: the root takes the floor height under it within ±110 (capsule slide starts 110 above the feet), so 97..100-unit stair risers are climbed and descended walking or running without a fall | [O-runtime] tru.exe under Wine (`wmem trace`/`tp`, l3_main_bedroom, unit offset ours + (9622, 333, −2977)): running up the manor staircase (risers 97..100, treads 186) her z jumps by each riser exactly as the root crosses the riser line, at unchanged run speed; the 121-unit hearth edge beside the start stops her ~56 units short. [I] 110 is between the two. [O-runtime] Lara's Havok proxy (instance+0x288) capsule: radius 79.01 (+0x65C), cylinder 189.63 (+0x660), centre 315.4 above the feet (+0x640): its bottom is 141.6 up, so the 121 block is not the capsule; which probe stops her is [U]. Our capsule stays radius 100 [I]. Regression: `GameReal.StairsWalkAndRunUpAndDown` (every riser of seven units' staircases, the bedroom flight up and down, the hearth) |
 | Walkable slope | by face: unflagged faces of normal z ≥ cos 52° = 0.6157 are stood on; faces with client flag 0x0004 / 0x0040 are slid down between 52° and 28° (normal z 0.6157..0.8829) and stood on when flatter; 0x0020 faces are never too steep, 0x0100 faces are stood on however steep. A too-steep face is still stood on when one of four probes 60 units around the root finds a standable face within 20 units of its height (bumps, seams) | [O] tru.exe ground check 0x5DCE20 with lara.drm player data shorts +0x100C = 28, +0x100E = 52 and the face's client flags; [O-runtime] Wine ramp series in l2_junglehub (section "Slopes and slides"). [I] the four-probe exception (ours) |
@@ -847,7 +847,11 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   registered in the table at `0xDA2024`) and scripts; what switches them on entering the water is not found [U].
   Ours (`World::laraHiddenGroups`): wetsuits hide 2 always and 1 unless Lara swims [I: the switch point]; 3 follows the
   scripts' mask.
-- [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic, volume 9628 takes it
+- [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic (intro 2636: it
+  activates cinematic 2624, waits for its end with `cinematic` 10 - a latent NtCineSequence, tru.exe 0x4A4CC0 /
+  0x4ADAA0 - and then calls the equip helper; the cinematic's handlers set the gauntlet's glow flag with `larabase`
+  19, 0x777A30 -> 0x698850; both natives are bound since 2026-11-10, before that the gauntlet never came by play:
+  `ProgressionReal.MaproomCinematicGivesTheLeftGauntlet`, self-test `ch09_maproom_gauntlet_door`), volume 9628 takes it
   back; l3_secretchamber cinematic 4654 gives the right one at its end (vt 60), 4655 takes it at its start (vt 58);
   l5_startsnow's chapter-start cinematic 7530 takes both at its start and gives both at its end (also sets story
   progress 5 via globals type 5 fn 4); l7_helheim01 8950 does the same. `g_belt`: the chapter setup scripts' `globals
@@ -1002,9 +1006,19 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   is driven once when it is made (`Scene::Impl::makeJoint3`), before the recorded state is read back. Not changed: after a stream (no restore) the remade colliders stand at their intro frames until
   `tickObjects` poses them later in that tick, as before (posing them at once moved the
   `baldrs_plates_gate` replay's route). [I] a hinged door's collider is posed from its body, which holds the saved swing only after the first step.
-- **Open**: `ca_pu_thor_debris` 5609 (above); the pillars' hinge turn and rune glow; l2_maproom's hub and wall drag
-  (C09-09 / -11) are not surveyed; the speed's M (the proxy's mass, 0.125 x the object's [I]) and the hold / toggle
-  need a Wine trace. That measurement was not obtained: two sessions were run for it
+- **l2_maproom's hub** (C09-09): `sa_uo_thor_bridge_combo` 2667's section 1 (walkway, hub and wall) turns on hinge joint
+  1; its records (kind 1, g_gauntletleft) sit on handle markers 11 (the hub panel, set 408) and 12 / 13 (the wall, set
+  396 from state 18); section 0's states 2 / 3 switch joint 1's brake motor (9.99e6) on / off and the script's vt 49 /
+  50 command them (vt 49 also puts section 1 through state 1: joint limit 1 .. 41 degrees). Ours: she grips the panel
+  facing the hub's axis, so the panel moves across her facing: the sidestep drives the hinge (`pushUberHandle`: a
+  hinge whose tangent at her grip point lies across her facing is driven by left / right, as the slide doors; before
+  2026-11-10 only forward / back did, with an arbitrary sign), 120 units/s at her grip point [I], to the stop at 41
+  degrees; she is carried round the axis; the record-set swap 408 -> 396 at 20 degrees keeps her grip because the new
+  set holds her record (same kind, same segment [I]). `ProgressionReal.MaproomHubTurnsByItsPanel`, self-tests
+  `ch09_maproom_hub_panel` / `ch09_maproom_hub_turn`.
+- **Open**: `ca_pu_thor_debris` 5609 (above); the pillars' hinge turn and rune glow; l2_maproom's wall drag
+  (C09-11) and the hub's later alignments are not played; the speed's M (the proxy's mass, 0.125 x the object's [I])
+  and the hold / toggle need a Wine trace. That measurement was not obtained: two sessions were run for it
   (`openunderworld-work/gameplaygoal/gauntlets/wine_door.sh`: new game, level change to l5_startsnow for the gear,
   door 7400's spot from ours, Interact + each direction key) and neither gave a reading (in the first the level
   change did not happen within 200 s: Lara stayed at the prologue's start).
@@ -1313,7 +1327,12 @@ released; `press` picks up / inserts, `press drop` puts a carried object down, `
 with a `wait` for its clip), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
 heading; ACTION pressed AT seconds in: running jumps), `push FORWARD RIGHT SECONDS [ACTION]` (ACTION, default interact,
 held throughout, the raw stick from the 6th tick: push blocks grip, then move along the block axis nearest her facing
-while the stick's forward is over 0.5), `wait SECONDS`, `near R` (logs the markup polylines within R: poles, ledges).
+while the stick's forward is over 0.5), `wait SECONDS`, `near R` (logs the markup polylines within R: poles, ledges),
+`map R [CELL] [UP]` (logs the floor within R as a character grid, north up: one cell per CELL (100) units, the floor found
+under UP (300) over her feet as its height against them in hundreds: `.` level, `1`..`9` above, `a`..`i` below, `z` deeper,
+blank none, `#` a wall within half a cell 150 over that floor: finding a route for a plan), `swim X Y Z [R]` (in water:
+the stick towards the point, Jump / Drop held while it lies more than R / 2 above / below her, until within R (150) of
+it in space; the stick's share shrinks as the point comes to lie over / under her).
 It logs where each engagement, press, push and run ended. `--no-cinematics` leaves script cinematics
 unshown (their events, Lara's placement at the stream's tails and the chapter change still run): a spawn inside a
 level-start cinematic's trigger volume (l4_traprooms 195_mex_lords, l5_valgrind 240_val_gate) is placed at the
@@ -1834,6 +1853,12 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   Before 2026-10-29 we treated faces with flags bits 0x01..0x20 as climbable; that byte is the
   `adjacencyFlags` of TRLAU's IndexedFace and is set on ~99.5-100 % of all walls, so Lara could climb
   every wall (survey of l3_main_bedroom, l4_pool, l4_ballcourt, l2_hubhall, l3_main_hall, l5_startsnow).
+- From a ledge hang up onto holds (`Player::hangJumpToHold`, `GameReal.HangJumpUpOntoAFreeClimbHold`): with no ledge over
+  her the hang's Jump (stick up or neutral) takes a hold of her wall whose root point lies within the up-jump query q10's
+  rise — 75.85² / (2 × 5.72443) = **502.5** over the ledge point [O lara.drm] — and within one grid step (158) aside
+  [I: tru.exe's test of hold boxes against q10 is not decoded; l1_ship_sinking_hall's lowest valve wheel 227 has its
+  root point 491 over the grating's edge 250, the only way up both escape shafts]. `ledgeb_jump_up` carries her onto the
+  hold [I: clip]. Self-test `ch06_second_shaft_valves`.
 - Hold to hold [O]: Lara's root is always at a hold — point 0 − 158.025 z (tru.exe 0x707C60) — or travelling between
   two. The holds lie on a 158-unit grid (l2_cliffclimb columns at z 614, 772, 932, 1058, 1217, 1377, …) and every
   `DICE_<from>_to_<to>_<dir>` clip's root motion is one grid step in Lara's frame (`DICE_B_to_B_Up` (0, 157),
@@ -2057,6 +2082,12 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     +0x9B4.. 53.73 sideways + 53.73 up) is not implemented.
   - The jump-offs let the rope go [I: their chart states S321 / S406 are outside the rope states; a kept rope would
     re-enter the hang by T291].
+- Water under the rope: hanging or on a wall with her feet `swimDepth` (391) under a water surface she lets go of the
+  rope and swims (`Game.RopeIsLetGoInDeepWater`, self-test `ch10_maproom_rope_step_off`; the walkthrough of l2_maproom's
+  flooded room has a plain step off the bridge end in the pool without the rope; the depth is ours [I]). Before, she
+  ran the wall under water. Open: the roped jump towards l2_maproom's ring 2595 ends in the pool in ours and on the
+  wall in the original (known gap `ch10_maproom_wall_run`; the rope's length during `grapple_rappel_free_jumpon` on a
+  wall anchor is not decoded [U]); a throw in the air stops her in the air for the throw clip (1 s) [defect].
 - Swing law [O tru.exe 0x746F60, player data +0x8D8..+0xA3C; all per 30 Hz frame]. The original swings a rigid body
   ("[GrappleRope] User Body": sphere radius 30, mass +0x8D8 = 55, damping +0x8DC = 0.022) on the rope; ours is a point
   pendulum (hand = root + 400 [I]) under the same forces, gravity 5.72443 [I: Lara's own].
@@ -2355,7 +2386,14 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   112° `pillar_jump_right`, to 155° `pillar_jump_back_45R` (left mirrored; which side mirrors is [I]), else or no stick
   `pillar_jump_back`; she leaves along the stick (no stick: straight out) at query q48's **55.63** out + **28.45** up a
   30 Hz frame [O] (Wine: 55.8 out). Ctrl = `pillar_detach_drop`.
-  The climb limits (top − 341.8, foot + 193) are [I].
+  The climb limits (top − 341.8, foot + 193) are [I]. The flight starts outside the shaft [I]: her root is on the
+  axis, inside a solid column's collision, so the jump first moves her out along its direction to just beyond the
+  shaft's surface (rays from 300 out back to the axis at foot / waist / head height; l1_baldrs_sideroom's columns:
+  149 + her radius) — where tru.exe's take-off clip carries her, not measured. Before 2026-11-10 the sweep began inside
+  the column and she dropped back onto it (`GameReal.PillarJumpLeavesASolidShaft`: l1_baldrs_tomb pillar 14 into the
+  wall opening). A pillar whose top lies under the floor she stands on or is over is not caught [I] (pillar 33 carries
+  the floor behind ledge 35 and pulled her through it; `Game.PillarUnderAFloorIsNotCaughtFromTheAir`). Self-tests
+  `ch04_pillar_entry`, `ch04_column_hall`.
 - Perches: from the air or a standing jump next to the segment (`perch_attach_air/_ground`), balance with
   `perch_idle`; the stick turns her on the spot (`perch_turn_right_45` / `_90` / `_180`, requests 668–670; to the left
   the same clips mirrored, 671–673 [O]; bands < 67.5° / < 135° / beyond [I]); Ctrl on a pillar's top perch =
@@ -2726,14 +2764,18 @@ A's unflagged east face; `openunderworld-work/gameplaygoal/reference/chimney-win
   planted her 45 over the floor until this gate was added (`Game.ChimneyJumpNotFromAStandingJump`).
 - A stick jump (q43: 40.00 + 49.97 a frame) run up to the face: one frame after the take-off she is in the wall
   state, her root **43.2 / 43.6** over the floor, and is drawn in 0.19..0.20 s (6 frames) to **98.5** out of ledge
-  796's line (ours: 39.7 over the floor, 105.6 out, drawn in 2 frames [I: `kAttachSeconds`; the 3-frame clip entered
-  at frame 1 does not explain tru.exe's 6]). Ours used to miss this catch when she took off within a tick's travel of
+  796's line (ours: 47.1 over the floor, 105.6 out, drawn in 6 frames: request 1153, blend 4 / start 1, starts the
+  3-frame clip 3 frames before its first, docs/formats/ANIMATION.md "Transitions"). Ours used to miss this catch when she took off within a tick's travel of
   the wall: the test read her contact-clipped velocity (self-test `chimney_floor_jumps`).
 - No press: the idle state lasts **0.416 s** (12.5 frames; chart variable 208 = 12, so its unit is the 30 Hz frame
   [O]), then `wall_jump_detach_fall` takes 0.267 s (8 frames), her root 32.9 back and down to the floor.
-- A press 58 ms into the idle: the turn state lasts **0.200 s** (6 frames; ours plays the 5-frame clip from its start
-  frame: 0.133 s), then the flight starts 22.8 out and 37.0 up of the wall position at **46.81** out + **77.27** up a
-  frame (first sample 74.48): q12's velocity, as ours.
+- A press 58 ms into the idle: the turn state lasts **0.200 s** (6 frames: request 1156, blend 2 / start 1, starts the
+  5-frame clip a frame before its first; ours the same), then the flight starts 22.8 out and 37.0 up of the wall
+  position at **46.81** out + **77.27** up a frame (first sample 74.48): q12's velocity, as ours. A press while she is
+  still drawn onto the wall does nothing and is not kept (`chimney4-wine.txt` h1); ours the same.
+- The next wall is taken when it comes inside rays 3 x the jump's **launch** speed long (0x758DD0: player +0xA20, the
+  velocity the launch function stored; 271 for a rebound), tested every game frame: 6.0 and 5.5 frames into the
+  rebounds of `chimney4-wine.txt` h1, 360.6 and 338.4 higher (ours 360.6 twice: docs/REFERENCE_COMPARISON.md M06).
 
 The climb itself, ledge 796 to 797 (`chimney4-wine.txt` h1; the hang reached by pinning her 600 over its root, where
 the fall's air grab takes the ledge) [O-runtime]:
@@ -2878,6 +2920,15 @@ faces, Jump at 0.7 s, A / D / S / W held); tru.exe did not come up / did not loa
 
 ## Motorcycle (src/game/Vehicle.*)
 
+- Script queries of the ride [O]: larabase 52 (0x777DD0) puts her on the bike named, 53 (0x777E10) posts the mount
+  again to her vehicle (+0xF00), 54 (0x777E40) answers whether the instance named is the vehicle she is on (+0xF00 is
+  set by the mount 0x741570 and cleared by the dismount 0x731530). l4_trailstart's temple reveal (plane 6712 ->
+  dispatcher 6704 vt 64 -> reveal 6677 vt 62) asks 54 of bike 5482 and then sets her down beside it on the upper road
+  (self-test `ch12_trailstart_ride_in`, ctest `game_selftest_ch12_trailstart_ride_in`: in ou-game she is off the bike
+  2 s after the plane, standing where it stopped; with the native unbound the handler stopped and she rode on. A bare
+  `game::World` without ou-game's loop does not show the set-down, so there is no gtest of it [open: which layer
+  ends the ride]).
+
 Lara mounts the bike with E (interact) next to its left side, rides it with the move stick (forward = throttle, back =
 brake, and reverse once it stands and the brake has been held 7 frames; left/right = steer; raw stick, not
 camera-relative), hand-brakes with Space / pad South (the jump action: tru.exe's "Vehicle Brake", button 22) and gets off
@@ -2895,6 +2946,20 @@ Evidence:
   (657) in `l4_trailstart` 6699 and `l5_valgrind_tunnel` 6715; `co_motorcycle` (641, a cinematic copy) in
   `l4_ballcourt` 6403 and `l7_thin_ice` 9078. No Thailand (l2) unit places a bike. `UnitData::vehicles` keeps the
   `motorcycle` intros; spawners and cinematic copies are not instantiated [U: the spawner's script for revisits].
+- Placed by script [O bytecode]: `instance` 26 (0x4A4140: the receiver takes its argument's transform) with a bike as
+  the receiver. l5_valgrind's 235_val_shaft (cinematic object 7403, plane 7472 behind the tunnel's Thor door): its
+  start handler (vt 58) asks `larabase` 54 whether she rode in on 7229 and keeps the answer in a member, hides the
+  bike for the cutscene (`instance` 60) and kills volume 7380; its end handler (vt 60) shows it again and, when she
+  rode in, takes marker object 7404's transform (`instance` 4) and places the bike there, beside where the cutscene's
+  header tail stands her on foot. Ours: `script::Runtime::takePlacements` -> `World::placeBike`: the parked bike at
+  the object (or its marker), heading as an intro there, on the ground found under the point ([I] up to 1000 down:
+  7404 hangs 230 over the ramp and the original's vehicle body falls onto its wheels). World sends both cinematic
+  events when the stream starts, so the end handler runs while she still sits on the bike: the placement then waits
+  until the stream's end takes her off it (`World::tickVehicles`; her own dismount drops it; [I] at most 120 s).
+  `VehicleReal.ShaftCinematicStandsTheBikeOnItsMarker`; by input in the self-test `ch16_tunnel_door`. Other
+  receivers of `instance` 26 (not Lara, not a bike) are still not moved [U]. `larabase` 53 in the start handler posts
+  message 0x85 to the bike alone (0x777E10); ours treats 53 as "mount" (l4_ballcourt's use), which changes nothing
+  here because she sits on it [U: what the bike does with 0x85 while ridden].
 - Classes [V-exe] RTTI `Bike : Vehicle` (vtables 0x861974 / 0x861A18; 0x886064 / 0x8860E4 are their RTTI locators), `VehicleCamera`, `NtMotor_ScriptType`; state-chart
   conditions `PSCCF_Vehicle_SteerDirection/StuntDirection/IdlePose/DismountClearance/State`. 0x6AB960 creates the Bike
   (0x790 bytes, ctor 0x78EDA0) when the instance's vehicle data (+0x50 = ObjectBase +0xC8) has `+8 == 1`, with the tuning
@@ -3179,7 +3244,9 @@ Ours:
   Ours (`World::engaged`, `insertHeld`, `removeInserted`, `placePortables`, `tickInserted`): carrying, interact inserts
   into the receptacle she engages when its record is kind 5 and its graph takes 0x20 now (or it is an uber section).
   Empty-handed, interact on an inserted portable's kind-4 record takes it out; on a loose one's picks it up (portables
-  without kind-4 records: within 150 / 100 [I]). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
+  without kind-4 records: within 150 / 100 [I]). A portable is told by its script's native base (`portablebase`) or by its physical class 50
+  (`World::portableClass`: the four keys of the Xibalba trap houses, l4_traprooms 5878-5881, have a kind-4 record and a script whose
+  native base is `instance` [O data]; before, Interact at them did nothing). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
   poles; a receptacle whose script watches its joint slides down it under Lara hanging there (300 units/s to -600 [I]);
   `multibody` 78 on it answers that slide in units: GetJointValue (0x4A9BB0 -> 0x4A5D90) reads a cylindrical joint's
   (type 2) limit 1 as its linear position (0x4DA460, no conversion; limit 2 is its angle in degrees, a hinge's limit 1
@@ -3318,6 +3385,10 @@ shark_blueshark 500, merc 450, mayan_thrall 350, shark_greenland 800, yeti_thral
 Distances in the data are multiples of 31.6056 (316.056 units = 1 m, consistent with the hair constants).
 
 ### Behaviour (ours) and numbers
+
+A ground enemy's melee distance is flat while its body and Lara's overlap in height, else it includes the gap between
+them [I]: the attack starts and the blow lands only inside that (`Ai.GroundBlowNeedsHerWithinReachInHeight`; before,
+l2_maproom's bridge spiders bit a swimmer 870 under them).
 
 Modes idle → alert (0.4 s, turn) → chase → attack (one blow in the hit window) / fire → reload → chase; hit
 reaction; death; spawning (generator clip). Perception uses the decoded senses (the combat record once out of idle):
@@ -4067,11 +4138,12 @@ No side-by-side comparison with the original game was made.
   Wine (Numbers); traversal reach boxes and the jump-assist radius are inferred; none are in Lara's player data block
   (Numbers) [U]. The grab zVel window, height, crouch height and
   water probe are taken from it.
-- Jump timing differs from the original [O-runtime, docs/REFERENCE_COMPARISON.md]: tru.exe leaves the ground 342..359 ms
-  after the press standing, 273..290 ms with the stick, 70..109 ms running; ours 133 / 67 / 33 ms, because the take-off
-  leaves when its clip ends and `clipBlend` starts `ng_standing_jump` at request frame 6 and
-  `ng_running_jump_forwards` at frame 1. The run start (`ng_run_start` from frame 6) leads tru.exe's by 0.07..0.10 s
-  for the same reason. Not fixed yet: every recorded replay with a jump shifts with it.
+- Jump timing as the original's [O-runtime, docs/REFERENCE_COMPARISON.md M13 / M94]: tru.exe leaves the ground 342..359
+  ms after the key standing, 273..290 ms with the stick, 70..109 ms running (the key reaches it up to 35 ms late); ours
+  333 / 267 / 67 ms. The cause of the earlier 133 / 67 / 33 ms: a request's clip starts at (start − blend) frames
+  (tru.exe 0x441FB0, docs/formats/ANIMATION.md "Transitions"), not at its start frame; `clipBlend` applies that to the
+  take-off, run start (`ng_run_start` from frame 2) and wall jump clips. The other clips still start at their +0x1A
+  frame [I]: each move's timing would shift with the rule and wants its own measurement.
 - The original has no longer jump from a sprint and none from holding Jump on flat ground: a jump out of the sprint
   and one with Jump held 1 s are the running jump's flight (65.83 forward + 42.53 up a frame, 987 long, apex 158.0)
   [O-runtime, `openunderworld-work/jumpfid/sprint.txt`, `hold_run.txt`]; ours does the same.
