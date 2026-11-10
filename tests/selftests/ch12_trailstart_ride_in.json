@@ -169,19 +169,19 @@
     },
     {
      "probe": "player.pos.x",
-     "near": 74560,
-     "tol": 150,
-     "note": "set down on the upper road by the reveal's marker"
+     "near": 74229,
+     "tol": 5,
+     "note": "set down on reveal object 6678 (74229, -45889, 3417: instance 26 on Lara); the bike goes to 6677, 269 beside her. The numbers before (74560, -46330) were where the bike happened to be: the ride kept her on its seat over the teleport"
     },
     {
      "probe": "player.pos.y",
-     "near": -46330,
-     "tol": 150
+     "near": -45889,
+     "tol": 5
     },
     {
      "probe": "player.pos.z",
-     "near": 3431,
-     "tol": 40
+     "near": 3478,
+     "tol": 10
     },
     {
      "probe": "step.peak_height",
@@ -215,11 +215,12 @@
   },
   {
    "step": "mount_again",
-   "input": [
-    "0.3 interact 1",
-    "0.4 interact 0"
+   "plan": [
+    "go 73968 -45954 80",
+    "press interact",
+    "wait 3.5"
    ],
-   "duration": 4,
+   "duration": 20,
    "until": {
     "probe": "bike.phase",
     "eq": "ride"
