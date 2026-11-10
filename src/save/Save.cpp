@@ -195,6 +195,7 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"buttons", {{b.jump.down, b.jump.edge, b.jump.time, b.jump.buffer}, {b.interact.down, b.interact.edge, b.interact.time, b.interact.buffer}, {b.drop.down, b.drop.edge, b.drop.time, b.drop.buffer}, {b.grapple.down, b.grapple.edge, b.grapple.time, b.grapple.buffer}}},
             {"droppedPole", markupRef(w, p.droppedPole)},
             {"fallStall", p.fallStall},
+            {"landTime", p.landTime},
             {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
             {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends, p.ropeMax}},
@@ -235,6 +236,7 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     }
     p.droppedPole = c.contains("droppedPole") ? ref(c.at("droppedPole")) : -1;
     p.fallStall = c.value("fallStall", 0.0f);
+    p.landTime = c.value("landTime", 0.0f);
     const auto& cl = c.at("climb");
     p.climbHold = ref(cl.at(0)), p.climbStance = cl.at(1), p.climbWarp = cl.at(2), p.climbNormal = vec(cl.at(3));
     p.climbFrom = vec(cl.at(4)), p.climbTo = vec(cl.at(5)), p.climbYawFrom = cl.at(6), p.climbYawTo = cl.at(7);

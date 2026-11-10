@@ -7526,3 +7526,204 @@ TEST(GameReal, TempleSafetyDropOffThePlatform) {
         EXPECT_LT(s.pos.z, top - 450);
     }
 }
+
+namespace {
+// The synthetic library plus the landing clips (lara.drm lengths and root motion: ng_land_hard 1.1 s in place,
+// ng_land_rolling 808 forward in 0.67 s, ng_running_land_stumble 950 in 1.07 s, ng_running_land 807 in 0.67 s).
+game::AnimLibrary landingAnims() {
+    game::AnimLibrary a = syntheticAnims();
+    a.clips["ng_generic_land_forwards"] = rootClip(22, 0);
+    a.clips["ng_running_land"] = rootClip(20, 40.35f);
+    a.clips["ng_land_hard"] = rootClip(33, 0);
+    a.clips["ng_land_rolling"] = rootClip(20, 40.4f);
+    a.clips["ng_running_land_stumble"] = rootClip(32, 29.7f);
+    return a;
+}
+// A platform `h` over a wide floor; she runs off its +x edge with `air` held once she falls. Returns the world at the
+// tick she lands.
+std::unique_ptr<game::World> landFrom(float h, const Actions& air, bool run = true) {
+    CollisionMesh m;
+    addFloor(m, -20000, -20000, 20000, 20000, 0);
+    addBox(m, {-2000, -1000, 0}, {0, 1000, h});
+    m.build();
+    auto w = std::make_unique<game::World>(std::move(m), landingAnims(), game::Spawn{{run ? -1500.0f : -150.0f, 0, h}, 0});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 600 && s.state != State::Fall; ++i) w->tick(forward());
+    EXPECT_EQ(s.state, State::Fall);
+    for (int i = 0; i < 600 && s.state == State::Fall; ++i) w->tick(air);
+    EXPECT_NEAR(s.pos.z, 0, 1);
+    EXPECT_NEAR(s.fallHeight, h, 2);
+    return w;
+}
+} // namespace
+
+// Landings as lara.drm's chart dispatches them (S1275): by the fall's height (chart variables 344 = 632.11 stumble,
+// 346 = 1264.22 hard), the stick (running on needs it pushed at run level, not backward) and Crouch held with the
+// stick forward (a roll at any height); no speed test.
+TEST(Game, LandingByFallHeightStickAndCrouch) {
+    const auto clipOf = [](const game::World& w) { return w.player().state().clip; };
+    Actions crouchFwd = forward();
+    crouchFwd.drop = true;
+    Actions crouch;
+    crouch.drop = true;
+    Actions walk = forward();
+    walk.walk = true;
+    {
+        auto w = landFrom(400, forward());
+        EXPECT_EQ(w->player().state().state, State::Run);
+        EXPECT_EQ(clipOf(*w), "ng_running_land");
+    }
+    {
+        auto w = landFrom(400, {});
+        EXPECT_EQ(w->player().state().state, State::Land);
+        EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+    }
+    {
+        auto w = landFrom(400, walk); // the stick at walk level: no running on
+        EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+    }
+    {
+        auto w = landFrom(620, forward());
+        EXPECT_EQ(clipOf(*w), "ng_running_land");
+    }
+    {
+        auto w = landFrom(640, forward()); // 632.11 or more
+        const auto& s = w->player().state();
+        EXPECT_EQ(s.state, State::Run);
+        EXPECT_EQ(clipOf(*w), "ng_running_land_stumble");
+        const float x = s.pos.x;
+        for (int i = 0; i < 64 && s.clip == "ng_running_land_stumble"; ++i) w->tick(forward());
+        EXPECT_NEAR(s.pos.x - x, 870, 40); // its root motion from the request's start frame 3, then the run
+        EXPECT_EQ(s.clip, "ng_run");
+    }
+    {
+        auto w = landFrom(640, {});
+        EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+    }
+    {
+        auto w = landFrom(1250, forward());
+        EXPECT_EQ(clipOf(*w), "ng_running_land_stumble");
+    }
+    for (const bool stick : {false, true}) {
+        auto w = landFrom(1270, stick ? forward() : Actions{}); // 1264.22 or more, whatever the stick
+        const auto& s = w->player().state();
+        EXPECT_EQ(s.state, State::Land);
+        EXPECT_EQ(clipOf(*w), "ng_land_hard");
+        const float x = s.pos.x;
+        Actions j = forward();
+        j.jump = true;
+        w->tick(j); // locked: no jump, no running off
+        for (int i = 0; i < 60; ++i) w->tick(forward());
+        EXPECT_EQ(s.state, State::Land);
+        EXPECT_NEAR(s.pos.x, x, 1);
+        for (int i = 0; i < 10; ++i) w->tick({});
+        EXPECT_EQ(s.state, State::Idle); // 1.1 s
+    }
+    for (const float h : {300.0f, 900.0f, 1270.0f}) {
+        auto w = landFrom(h, crouchFwd); // Crouch held + the stick forward: the roll, before the height tests
+        const auto& s = w->player().state();
+        EXPECT_EQ(s.state, State::Roll) << h;
+        EXPECT_EQ(clipOf(*w), "ng_land_rolling") << h;
+        const float x = s.pos.x;
+        for (int i = 0; i < 60 && s.state == State::Roll; ++i) w->tick(forward());
+        EXPECT_NEAR(s.pos.x - x, 646, 30) << h; // from the request's start frame 4
+        EXPECT_EQ(s.state, State::Run);
+    }
+    {
+        auto w = landFrom(900, crouch); // Crouch without the stick: no roll
+        EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+    }
+}
+
+// The landing clip's group S1276: Jump takes off again at once; Crouch pressed with the stick forward inside 4 frames
+// (chart variable 347) rolls, later Crouch + the stick crouches; the stick to a side leaves the clip after 4 frames.
+TEST(Game, LandingClipJumpRollCrouchAndLeave) {
+    Actions j;
+    j.jump = true;
+    Actions crouchFwd = forward();
+    crouchFwd.drop = true;
+    {
+        auto w = landFrom(400, {});
+        const auto& s = w->player().state();
+        ASSERT_EQ(s.state, State::Land);
+        w->tick({});
+        w->tick(j);
+        EXPECT_EQ(s.state, State::JumpPrep);
+    }
+    {
+        auto w = landFrom(400, {});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 5; ++i) w->tick(forward()); // 6 ticks = 3 frames after the landing
+        ASSERT_EQ(s.state, State::Land) << "the stick forward does not leave the clip";
+        w->tick(crouchFwd);
+        EXPECT_EQ(s.state, State::Roll);
+        EXPECT_EQ(s.clip, "ng_land_rolling");
+    }
+    {
+        auto w = landFrom(400, {});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 9; ++i) w->tick(forward());
+        ASSERT_EQ(s.state, State::Land);
+        w->tick(crouchFwd);
+        EXPECT_EQ(s.state, State::Crouch);
+    }
+    {
+        auto w = landFrom(400, {});
+        const auto& s = w->player().state();
+        Actions side;
+        side.move.x = 1;
+        for (int i = 0; i < 6; ++i) w->tick(fixedCamera(*w, side, 0));
+        EXPECT_EQ(s.state, State::Land);
+        for (int i = 0; i < 4; ++i) w->tick(fixedCamera(*w, side, 0));
+        EXPECT_NE(s.state, State::Land); // after 4 frames she turns / runs off
+    }
+}
+
+// l4_temple, the floor west of block 1155 (z 1722.9; tru.exe's landings were traced here under Wine): the same
+// dispatch with lara.drm's clips.
+TEST(GameReal, TempleLandingsByHeightStickAndCrouch) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto drop = [&](float h, Actions air, std::string* clip, State* st, float* run) {
+        auto w = unitWorld(bf, "l4_temple", {{-3000, -11850, 1722.9f}, 0});
+        const auto& s = w.player().state();
+        game::PlayerState up;
+        up.pos = {-3000, -11850, 1722.9f + h}, up.clip = "ng_idle", up.fallStartZ = up.pos.z;
+        w.restore(up, 0, w.camera().pitch);
+        for (int i = 0; i < 30 && s.state != State::Fall; ++i) w.tick({});
+        ASSERT_EQ(s.state, State::Fall);
+        for (int i = 0; i < 600 && s.state == State::Fall; ++i) w.tick(air);
+        EXPECT_NEAR(s.pos.z, 1722.9, 1.5);
+        EXPECT_NEAR(s.fallHeight, h, 3);
+        *clip = s.clip, *st = s.state;
+        const float x = s.pos.x;
+        const std::string first = s.clip;
+        for (int i = 0; i < 200 && s.clip == first; ++i) w.tick(air);
+        *run = s.pos.x - x;
+    };
+    Actions crouchFwd = forward();
+    crouchFwd.drop = true;
+    std::string clip;
+    State st;
+    float run;
+    drop(400, {}, &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_generic_land_forwards");
+    EXPECT_EQ(st, State::Land);
+    EXPECT_NEAR(run, 0, 1);
+    drop(400, forward(), &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_running_land");
+    drop(800, forward(), &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_running_land_stumble");
+    EXPECT_EQ(st, State::Run);
+    EXPECT_NEAR(run, 870, 90); // ng_running_land_stumble's root motion (950, from its start frame 3)
+    drop(800, {}, &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_generic_land_forwards");
+    drop(1400, forward(), &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_land_hard");
+    EXPECT_EQ(st, State::Land);
+    EXPECT_NEAR(run, 0, 1);
+    drop(1000, crouchFwd, &clip, &st, &run);
+    EXPECT_EQ(clip, "ng_land_rolling");
+    EXPECT_EQ(st, State::Roll);
+    EXPECT_NEAR(run, 646, 120); // ng_land_rolling's 808 from its start frame 4
+}

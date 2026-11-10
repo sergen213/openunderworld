@@ -258,6 +258,10 @@ struct Tuning {
     // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
     // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
     float sprintSeconds = 9.7f, sprintResume = 0.9f;
+    // Landings (lara.drm chart S1275, Player::land): a fall of chart variable 344 or more lands in the stumble when the
+    // stick is pushed, 346 or more in the hard landing; Crouch pressed inside variable 347 frames of a landing still
+    // rolls [O-data].
+    float landStumbleFall = 632.111f, landHardFall = 1264.223f, landRollFrames = 4.0f;
 };
 Tuning defaultTuning();
 
@@ -369,6 +373,7 @@ struct PlayerState {
     Buttons buttons; // input timing (Player::tick)
     int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
     float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
+    float landTime = 0;   // Land: seconds since she landed (the chart's state time of the landing group S1276)
     // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
     // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
     // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
@@ -589,6 +594,7 @@ private:
     const AnimLibrary& anims_;
     Tuning t_;
     PlayerState s_;
+    bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;

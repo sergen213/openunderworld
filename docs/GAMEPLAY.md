@@ -3588,3 +3588,48 @@ climb and the "Saving grabs [I]" sentence of PLAYER TAILORING above.
   `Game.PoleDropOverSteepGroundIsNotCaughtAgain`, `GameReal.TrapRoomsPoleDropAfterFling`,
   `Game.SafetyDropOffALedgeEdge`, `GameReal.TempleSafetyDropOffThePlatform`; self-tests `saving_grab` (l5_valaskjalf),
   `safety_drop` (l4_temple), `pole_drop_after_fling` (l4_traprooms).
+
+## Controller rules: jumps, landings, ledge extras, sprint (decoded 2026-11)
+
+Sources: the player state chart of lara.drm (`openunderworld-work/hurdles/sc.py`, `gameplaygoal/ctrl2/c.py` - states,
+transitions, the actions a state runs - and `v.py` - the chart variables), tru.exe (`ghidra/exports/decomp_all.c`,
+`gameplaygoal/inputrules/full.asm`), lara.drm clips (`hurdles/clipprobe`) and tru.exe under Wine in l4_temple
+(`gameplaygoal/ctrl2/s1.sh`, traces `w1.txt`; tru = ours + (500.70, 9432.76, -19909.81)). Chart conditions used below:
+0x65..0x68 the timed buttons ("Input rules"), 0x96 / 0x97 / 0x98 an action held / released / pressed (51 Crouch, 52
+Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full), 0x192 its quadrant against her heading
+(410 forward, 411 back, 412 / 413 the sides), 0x14 the state's time in frames, 0x1E the fall so far, 0xC9 the clip done,
+0xCA the clip's critical section; a parameter group of 1000 compares with a chart variable.
+
+### Landings
+
+- **Dispatch** [O-data]: every landing passes the chart state S1275, whose transitions are tried in this order:
+  1. T2101 / T2090 / T2102: the swan dive's and the water landings ("Water moves").
+  2. T2100 -> S1283 `ng_land_rolling` (request 677, start frame 4; root 808 forward in 0.67 s): Crouch held (cond
+     0x96, action 51), the stick pushed (cond 0x191 not 401) forward of her heading (0x192 = 410), nothing carried
+     (0x5DD = 0), `!0x9B:51` [U]. No height condition: the roll comes at any height, before the height tests.
+  3. T2091 -> S1280 / T2092 -> S1281 `ng_land_hard` (request 39; 1.1 s in place): the fall >= chart variable 345 =
+     **3185.84** / 346 = **1264.22**. The fall is cond 0x1E (tru.exe 0x764B40): z on becoming airborne (player
+     `+0x6DC`) - z, compared with a chart variable (0x783BD0 / 0x782060; variables = the pointer table at lara.drm
+     object data +0x5C290, 400 entries of {type, value}).
+  4. T2118 -> S1278 `ng_running_land_stumble` (request 725, start frame 3; root 950 in 1.07 s): the fall >= variable
+     344 = **632.11**, the stick pushed and not backward (0x192 != 411), no low ceiling.
+  5. T2089 -> S1284 `ng_running_land`: the stick at run level (0x191 not 401 / 402), not backward.
+  6. T2093 -> S1281: a low ceiling (0x1F7) [not ported: ours lands plainly and stands].
+  7. T2094 -> S1279 `ng_generic_land_forwards`.
+  No transition tests her speed (ours used to need 600 units/s to run on). Fall damage starts higher (1280.03,
+  Numbers "Fall damage"): the hard landing from 1264.22 to 1280.03 costs nothing.
+- **While the landing clip plays** (group S1276) [O-data]: Jump pressed takes off again at once (T2112..T2115 into the
+  running / standing jump states, flag 7); Crouch pressed with the stick forward within state time < variable 347 =
+  **4** frames rolls after all (T2107); from 4 frames on, Crouch held with the stick pushed crouches (T2106), Sprint
+  held at full stick sprints (T2108), and the stick pushed anywhere but forward leaves the clip for the ground moves
+  (T2099) - the last three only outside the clip's critical section (cond 0xCA); the clip's end goes back to the ground
+  group (T2097).
+- Ours (`Player::land`, `State::Land` in `Player::tick`; `Tuning::landStumbleFall` / `landHardFall` /
+  `landRollFrames`, `PlayerState::landTime`): exactly this dispatch, the stick quadrants taken as 45 degrees either
+  side of her heading [I] and the run level as the run's (stick >= 0.5, no Walk). [I]: `ng_land_hard` is treated as
+  critical to its end (no jump, no leaving: 1.1 s), the other landings as never critical - the clips' critical
+  sections are not read. tru.exe under Wine: see the trace
+  list at the end of this section.
+- Tests: `Game.LandingByFallHeightStickAndCrouch`, `Game.LandingClipJumpRollCrouchAndLeave`,
+  `GameReal.TempleLandingsByHeightStickAndCrouch`; self-tests `landing` (l4_temple), `fall_damage` (its 1500 fall now
+  expects `ng_land_hard`).

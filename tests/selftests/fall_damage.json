@@ -15,7 +15,7 @@
                 {"probe": "player.grounded", "eq": true}]},
     {"step": "fall_1500", "fixtures": [{"teleport": [-14885.4, -42.6, 6221.2, 0]}], "duration": 3,
      "expect": [{"visits": ["idle", "fall", "land", "idle"]},
-                {"clips": ["ng_generic_land_forwards", "ng_idle"]},
+                {"clips": ["ng_land_hard", "ng_idle"], "note": "1264.22 or more: the hard landing"},
                 {"probe": "step.drop", "near": 1500, "tol": 2},
                 {"probe": "step.health_lost", "near": 204.7, "tol": 3, "note": "(1500 - 1280.03) / 537.29 x 500"},
                 {"probe": "step.air_time", "near": 0.763, "tol": 0.04},

@@ -402,6 +402,9 @@ void Player::groundMove(vec3 delta, float dt) {
     }
 }
 
+// The chart's stick quadrants against her heading (cond 0x192: 410 forward, 411 back, 412 / 413 the sides) [I: 45 degrees]
+constexpr float kStickQuadrant = 0.70710678f;
+
 void Player::startFall(vec3 vel) {
     s_.state = State::Fall;
     s_.vel = vel;
@@ -418,10 +421,18 @@ void Player::startSlide(vec3 vel) {
     play("slope_slidefront", true);
 }
 
+// Landing: lara.drm's player chart sends every landing through the dispatcher S1275, whose transitions are tried in
+// this order [O-data; the fall = z on becoming airborne (player +0x6DC) - z, cond 0x1E = tru.exe 0x764B40]:
+// - T2100: Crouch held (cond 0x96, action 51) with the stick pushed forward of her heading (0x191 not neutral, 0x192 =
+//   410), nothing carried -> S1283 `ng_land_rolling` (a roll: 808 forward in 0.67 s), at any height;
+// - T2091 / T2092: a fall of chart variable 345 = 3185.84 / 346 = 1264.22 or more -> S1280 / S1281 `ng_land_hard`;
+// - T2118: variable 344 = 632.11 or more with the stick pushed, not backward -> S1278 `ng_running_land_stumble`;
+// - T2089: the stick pushed at run level (0x191 not 401 / 402), not backward -> S1284 `ng_running_land`;
+// - T2094: else S1279 `ng_generic_land_forwards`.
+// No transition tests her speed. While the landing clip plays (group S1276): Player::tick, State::Land.
 void Player::land(vec2 move) {
     s_.fallHeight = s_.fallStartZ - s_.pos.z;
     if (tryBeam("bbeam_jumpland", true)) return;
-    const float speed = glm::length(xy(s_.vel));
     // Out of a swan dive she tucks and rolls: ng_swan_land (request 66; root 591 forward in 11 frames), in wading water
     // swim_land_swan_wading (843). The fall counts as any other (Combat: Health::fall on fallHeight).
     if (swanClip(s_.clip) && anims_.find("ng_swan_land")) {
@@ -431,10 +442,23 @@ void Player::land(vec2 move) {
         return;
     }
     s_.vel = vec3(0);
+    s_.landTime = 0;
+    const float mag = glm::length(move);
+    const float along = mag > 0.1f ? glm::dot(move, xy(forward())) / mag : 0.0f; // the stick against her heading
+    const bool pushed = mag > 0.1f, ahead = pushed && along > kStickQuadrant, back = pushed && along < -kStickQuadrant;
     if (wading() && anims_.find("swim_land_wading")) { // into class-0x100 water
         s_.state = State::Land;
         play("swim_land_wading", false);
-    } else if (speed > 600.0f && glm::length(move) > 0.5f) {
+    } else if (s_.buttons.drop.down && ahead && !s_.encumbered && anims_.find("ng_land_rolling")) {
+        s_.state = State::Roll;
+        play("ng_land_rolling", false);
+    } else if (s_.fallHeight >= t_.landHardFall && anims_.find("ng_land_hard")) {
+        s_.state = State::Land;
+        play("ng_land_hard", false);
+    } else if (s_.fallHeight >= t_.landStumbleFall && pushed && !back && anims_.find("ng_running_land_stumble")) {
+        s_.state = State::Run;
+        play("ng_running_land_stumble", false);
+    } else if (pushed && !back && mag >= 0.5f && !walk_) {
         s_.state = State::Run;
         play("ng_running_land", false);
     } else {
@@ -1974,6 +1998,7 @@ void Player::assistJump() {
 
 void Player::tick(vec2 move, const Actions& a, float dt) {
     Buttons& b = s_.buttons;
+    walk_ = a.walk;
     b.jump.update(a.jump, dt, t_.pressBuffer), b.interact.update(a.interact, dt, t_.pressBuffer);
     b.drop.update(a.drop, dt, t_.pressBuffer), b.grapple.update(a.grapple, dt, t_.pressBuffer);
     const bool jumpPressed = b.jump.pressed(), dropPressed = b.drop.pressed();
@@ -2009,7 +2034,32 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (enterWater()) break; // standing in water deeper than swimDepth
         if (encumberedMove(move, jumpPressed, dt)) break; // carrying a weight (Melee.cpp)
         const float diff = std::abs(wrapAngle(target - s_.yaw));
-        if (jumpPressed && s_.state != State::Land) {
+        if (s_.state == State::Land) {
+            // The landing group S1276 while its clip plays [O-data]: Jump takes off again at once (T2112..T2115, into
+            // the running / standing jump states); Crouch pressed with the stick forward inside chart variable 347 = 4
+            // frames rolls after all (T2107); from then on Crouch held with the stick pushed crouches (T2106), Sprint held
+            // at full stick sprints (T2108) and the stick pushed anywhere but forward leaves the clip for the ground moves
+            // (T2099) unless the clip is in a critical section [I: ng_land_hard taken as critical to its end, for the jump
+            // too].
+            s_.landTime += dt;
+            const bool hard = s_.clip == "ng_land_hard", late = s_.landTime * 30.0f >= t_.landRollFrames;
+            const float along = wantsMove ? glm::dot(move, xy(forward())) / glm::length(move) : 0.0f;
+            if (dropPressed && !late && along > kStickQuadrant && !s_.encumbered && anims_.find("ng_land_rolling")) {
+                s_.state = State::Roll;
+                play("ng_land_rolling", false);
+                break;
+            }
+            if (!hard && late && a.drop && wantsMove) {
+                s_.state = State::Crouch;
+                play("crouch_idleToCrouch", false);
+                break;
+            }
+            if (!hard && late && wantsMove && !wantsWalk && a.sprint && s_.sprintUsed <= t_.sprintSeconds - t_.sprintResume) {
+                s_.state = State::Run; // T2108: Sprint held at full stick
+                play("sprint_loop", true);
+            } else if (!hard && late && wantsMove && along <= kStickQuadrant) s_.state = State::Idle;
+        }
+        if (jumpPressed && (s_.state != State::Land || s_.clip != "ng_land_hard")) {
             if (tryHurdle(true) || tryPerch(false)) break; // a low ledge ahead / a perch
             // tru.exe (Wine): the stick behind her turns her round into a running jump; to a side, a standing one.
             s_.runJump = s_.state == State::Run || (wantsMove && diff > 1.75f);
@@ -2073,7 +2123,8 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 if (clipDone()) play("ng_run", true);
             } else if (a.sprint && s_.sprintUsed <= t_.sprintSeconds - t_.sprintResume && (s_.clip == "ng_run" || clipDone()))
                 play("sprint_loop", true);
-            else if ((s_.clip == "ng_run_start" || s_.clip == "ng_running_land") && clipDone()) play("ng_run", true);
+            else if ((s_.clip == "ng_run_start" || s_.clip == "ng_running_land" || s_.clip == "ng_running_land_stumble") && clipDone())
+                play("ng_run", true);
             break;
         case State::Stop:
             if (wantsMove && !wantsWalk) { s_.state = State::Run; play("ng_run", true); }

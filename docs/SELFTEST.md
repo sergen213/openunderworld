@@ -389,6 +389,7 @@ tested behaviour happen.
 | `locomotion` | l3_main_bedroom | idle; walk 348 and run 1274 units/s; stopping; standing jump 201.6 high / 0.56 s, stick jump 218.1 / 0.58 s, running jump 157.1 / 0.50 s at 1974.9 units/s [O Wine] |
 | `sprint` | l4_trailstart | sprint_loop 9.7 s, the exhausted clips, ~2.2 s until a 0.9 s second sprint, refill at rest [O Wine] |
 | `fall_damage` | l4_pool | falls of 1000 / 1500 / 2000: air time, landing, 0 / 204.7 / 729.4 damage [O curve] |
+| `landing` | l4_temple | landings by the chart's dispatch: plain, running on, the stumble from 632.11, the hard landing from 1264.22, the Crouch + forward roll, a jump out of the landing clip [O chart] |
 | `death_respawn` | l4_pool | checkpoint 5502 touched; a 2600 fall kills; 3 s later she stands at the checkpoint with full health |
 | `ledge` | l3_main_bedroom | standing jump catches ledge 973; shimmy left and right; pull up 496 onto the top |
 | `traversal_chain` | l2_cliffclimb | run -> jump -> hang (911) -> shimmy -> climb up -> run on, as one state chain |
