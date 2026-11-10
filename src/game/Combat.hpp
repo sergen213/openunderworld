@@ -311,20 +311,50 @@ struct CombatState {
     int ragdollPhase = 0;
     std::vector<glm::mat4> ragdoll;
     bool drawHeld = false, switchHeld = false, weaponHeld = false, healHeld = false, interactHeld = false, fireHeld = false;
+    bool manualHeld = false, aimHeld = false; // Manual Aim / Target Lock held last tick (press edges)
     float healCooldown = 0;   // seconds until the next health pack (g_healthpack data +0xEA: 60 frames)
     int healthPacksUsed = 0;  // count, for logs
-    // Adrenaline (Lara data, 0x6F28C0 / 0x6F2930 / 0x718BD0): meter += the damage she deals (message 0xD9, 0x63AD50),
-    // up to +0x2D0 = 500; it drains +0x2D4 = 20 per second, +0x2D8 = 225 in adrenaline mode. With the meter not empty
-    // and a hard lock, interact toggles the mode (world time -> +0x31C = 0.5 over +0x2CC = 10 frames, 0x7189C0; back to
-    // 1 when it ends, 0x718AD0). Full meter + lock + close + interact opens the head-shot window instead (time -> +0x2C8 =
-    // 0.2, the accurate-aim events 5 / 4, 0x715020 / 0x718EA0), in which the move stick steers the pip into the reticle
-    // and fire kills.
+    // Adrenaline (Lara data; docs/GAMEPLAY.md "Adrenaline (decoded)"). Meter += the damage she deals (message 0xD9,
+    // 0x63AD50 -> 0x6F28C0), up to +0x2D0 = 500; it drains +0x2D4 = 20 per second, +0x2D8 = 225 in adrenaline mode
+    // (0x6F2930). Reaching the max latches `headShotReady` (weapon controller flag 0x400000, 0x6E6630): the meter then
+    // neither gains nor drains until it is spent.
+    // - Focused fire (adrenaline mode, flag 0x8000000): Manual Aim pressed with a hard lock and the meter not empty
+    //   (0x718BD0: input action 37 = virtual button 9; not with Mjolnir) toggles it; starting it gives the head shot up
+    //   (0x7189C0 -> 0x6E6670 clears the latch, the meter stays and drains); the game's time scale ramps to +0x31C = 0.5
+    //   over +0x2CC = 10 frames and back to 1 when it ends (0x718AD0): the meter empty, the lock gone, or the press.
+    // - Head shot: the Grapple button with the latch set and a hard-locked enemy close by (state chart T1404: action 46 =
+    //   virtual button 1; condition 0x21A = the latch). 0x71D4F0: she is carried to `headShotDistance` from the enemy
+    //   over `headShotBlend` (the enemy's record), plays the enemy's hosted clip for her weapon and the enemy its
+    //   reaction; the meter empties. The clip's event 5 opens the aim (time -> +0x2C8 = 0.2, 0x715020), its event 4 ends
+    //   it (0x718EA0). In between the look input steers the pip into the reticle and fire kills.
     float adrenaline = 0;     // meter 0..1 (x 500)
     bool adrenalineMode = false;
+    bool headShotReady = false; // the meter reached its max (flag 0x400000): the Grapple button starts the head shot
+    // The head shot move in progress: real seconds since it began, -1 none; the enemy's clip she plays ("<enemy>:<clip>"
+    // in the animation library), its length and the aim window [open, close) (events 5 / 4), all in clip seconds.
+    float headShot = -1;
+    std::string headShotClip;
+    float headShotLength = 0, headShotOpen = 0, headShotClose = 0;
+    bool headShotRequest = false; // World::tick: this tick's Grapple press starts it (the grapple is not thrown)
     float slowMo = 0;         // real seconds left of the head-shot window; 0 = closed
     glm::vec2 pip{0};         // pip offset from the reticle, reticle radii (inside 1 = on target)
-    float timeScale = 1;      // world (enemy) time scale; adrenaline slows it, Lara keeps real time (tru.exe 0x622418)
-    float timeTarget = 1, timeRate = 0; // the ramp in progress (0x78C160): toward timeTarget at timeRate per second
+    // tru.exe's two time scales (game loop 0x5DA1C0; ramps 0x78C160 read by 0x78C4E0): `timeScale` = 0xE7F1D4, every
+    // update's time step (adrenaline 0x715020 / 0x7189C0, scripts' gamebase 2 / 24); `worldScale` = 0xE7F1A0 (gamebase
+    // 23), which Lara's own update divides back out (0x622418): the world slows, she does not.
+    struct TimeRamp { // {target, seconds, from, start}: value = from + (target - from) x ease(elapsed / seconds)
+        float target = 1, seconds = -1, from = 1, elapsed = 0; // seconds < 0: idle (0x78C4E0 sets -1 when done)
+        float step(float value, float dt);                     // advances by real time; returns the new value
+        void start(float to, float over, float now) { target = to, seconds = over, from = now, elapsed = 0; }
+    };
+    float timeScale = 1, worldScale = 1;
+    TimeRamp timeRamp, worldRamp;
+    // Manual (precision) aim: the over-the-shoulder view (camera mode 23), toggled by Manual Aim on her feet without a
+    // target lock (state chart T55 / T1887 / T1886); fire goes where the reticle (the view's centre) points.
+    bool manualAim = false;
+    // Dual targeting (0x71E490): with a two-gun weapon and a primary target, the left gun takes a second target (the
+    // best other candidate) when there is one; `secondHold` = seconds it has been held (kept `Lara data +0x286` frames).
+    Damageable* second = nullptr;
+    float secondHold = 0;
     std::vector<Projectile> projectiles;
 };
 
@@ -395,6 +425,7 @@ struct AdrenalineTuning {
     float modeScale = 0.5f;       // +0x31C world time scale in adrenaline mode (0x7189C0)
     float headShotScale = 0.2f;   // +0x2C8 world time scale while aiming the head shot (0x715020)
     float ease = 10 / 30.0f;      // +0x2CC frames for each time-scale ramp (x 33.33 ms, 0x78C160)
+    float secondTargetHold = 1000 / 30.0f; // +0x286 u16 frames a second (dual) target is kept before another may take over
 };
 std::optional<AdrenalineTuning> loadAdrenalineTuning(const cdc::BigfileSet& bigfile); // nullopt: lara.drm missing
 

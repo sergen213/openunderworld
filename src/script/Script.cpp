@@ -1350,7 +1350,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // animated 1 on an object without clips (no skeleton) plays nothing.
             if (!std::strcmp(name, "animated")) { nc.result = vm::Value::scalar(0); return true; }
             if (!std::strcmp(name, "clock") && nc.receiver.kind == vm::Value::Kind::Member) {
-                Clock& c = clocks_[(uint64_t(uint32_t(self->uid)) << 32) | off]; // tru.exe 0x4A3450..0x4A34F0, update 0x4A3960
+                // tru.exe 0x4A3450..0x4A34F0, update 0x4A3960. A clock's alarm (+0x14) starts as its member's second
+                // init value [I: the adrenaline trackers' time-out clock {0, 6.0} is started without a SetAlarm and
+                // must not fire at once; the first value would be the repeat flag +0x19, 0 in every clock seen].
+                const uint64_t clockKey = (uint64_t(uint32_t(self->uid)) << 32) | off;
+                if (!clocks_.contains(clockKey))
+                    if (const Member* m = program->member(self->typeId, off); m && m->init2) clocks_[clockKey].alarm = std::bit_cast<float>(uint32_t(*m->init2));
+                Clock& c = clocks_[clockKey];
                 switch (nc.function) {
                 case 0: if (c.state != 2) c = {2, 0, c.alarm, false}; return true;  // Start
                 case 1: c.state = 0; return true;                                    // Stop
@@ -1479,8 +1485,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(mine == nc.args[0].bits);
                 return true;
             }
-            // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance; its receivers are [U].
-            if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) return true;
+            // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance: an anim-graph object (handler
+            // 0x6B4440) enters the state with that id at once (state list query 0xE6, 0x6A5660); other receivers [U].
+            if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) {
+                if (const Object* o = find(self->uid); o && o->graph && o->graph->set->graph)
+                    if (const int state = o->graph->set->graph->stateById(int32_t(nc.args[0].bits)); state >= 0) graphEnter(self->uid, state);
+                return true;
+            }
             // uigamedata 1 (0x60D630) always returns 0; 14 (0x77BBF0) sets a global UI byte no gameplay reads [U].
             if (!std::strcmp(name, "uigamedata") && nc.function == 1 && nc.args.empty()) {
                 nc.result = vm::Value::scalar(0);
@@ -1586,12 +1597,41 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(result);
                 return true;
             }
-            if (!std::strcmp(name, "playersensor") && nc.function == 2) return true; // void native sensor interface call
-            if (!std::strcmp(name, "playersensor") && (nc.function == 0 || nc.function == 1)) {
-                // SetEnabled / IsEnabled: byte +0xF of the sensor (thunks 0x7ACE40 / 0x7ACE60); what the sensor senses [U].
-                if (nc.function == 0 && nc.args.size() == 1) { field() = nc.args[0].bits & 0xFF; return true; }
-                if (nc.function == 1 && nc.args.empty()) { nc.result = vm::Value::scalar(field() & 0xFF); return true; }
-                return false;
+            if (!std::strcmp(name, "playersensor") && nc.receiver.kind == vm::Value::Kind::Member) {
+                // bind 0x7ACDD0.. [O]: 0 SetEnabled / 1 IsEnabled (byte +0xF, thunks 0x7ACE40 / 0x7ACE60), 2 attach to an
+                // anchor (0x4A3420 -> sensor +0x18: an instance or a uberobjectbase 2 marker anchor), 3 the same sensor.
+                // The enable byte starts as the member's init (word 1 byte 3); a sensor that was never attached never
+                // fires (0x7799F0 tests +0x18).
+                const Member* m = program->member(self->typeId, off);
+                const uint64_t key = (uint64_t(uint32_t(self->uid)) << 32) | off;
+                const bool initial = !m || !m->init2 || (*m->init2 >> 24 & 0xFF) != 0;
+                const auto it = sensors_.find(key);
+                switch (nc.function) {
+                case 0:
+                    if (nc.args.size() != 1) return false;
+                    field() = nc.args[0].bits & 0xFF;
+                    if (it != sensors_.end()) it->second.enabled = nc.args[0].bits & 0xFF;
+                    else if (bool(nc.args[0].bits & 0xFF) != initial) sensors_[key].enabled = nc.args[0].bits & 0xFF;
+                    return true;
+                case 1:
+                    if (!nc.args.empty()) return false;
+                    nc.result = vm::Value::scalar(it != sensors_.end() ? it->second.enabled : initial);
+                    return true;
+                case 2: {
+                    if (nc.args.size() != 1) return true; // no anchor argument: nothing to attach
+                    Sensor& sn = sensors_.try_emplace(key, Sensor{0, -1, initial, false}).first->second;
+                    const vm::Value& a = nc.args[0];
+                    sn.anchor = a.kind == vm::Value::Kind::Object ? a.uid : uidOf(a);
+                    sn.marker = a.kind == vm::Value::Kind::Object && (a.bits & kAnchorBit) ? int32_t(a.bits & 0xFFFF) : -1;
+                    return true;
+                }
+                case 3:
+                    if (nc.args.size() != 1) return false;
+                    nc.result = vm::Value::scalar(nc.args[0].kind == vm::Value::Kind::Member && nc.args[0].uid == self->uid &&
+                                                  nc.args[0].offset == off);
+                    return true;
+                default: return false;
+                }
             }
             if (!std::strcmp(name, "spline")) {
                 Object* object = findMut(self->uid);
@@ -1605,8 +1645,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             // instance 21 (bool, 0x4A3FD0: clears/sets instance +0x1C flag 0x100), 18 (bool, 0x4A3F50: toggles the
-            // instance's +0x2D8 component via 0x5B5A60 / 0x5B5AB0) and 23 (calls vt +0x18 of a native object
-            // argument, 0x4A41D0): no modelled system reads them [U: their effect].
+            // instance's +0x2D8 component via 0x5B5A60 / 0x5B5AB0): no modelled system reads them [U: their effect].
+            // 23 (0x4A41D0) calls vt +0x18 of its native object argument with the instance: given a `uberobjectbase` 2
+            // marker anchor (0x4D3110 ModelMarkerAnchor) the instance rides that marker from then on (anchor()); other
+            // arguments [U].
+            if (!std::strcmp(name, "instance") && nc.function == 23 && nc.args.size() == 1 && nc.args[0].kind == vm::Value::Kind::Object &&
+                (nc.args[0].bits & kAnchorBit) && find(nc.args[0].uid))
+                anchors_[self->uid] = {nc.args[0].uid, int32_t(nc.args[0].bits & 0xFFFF)};
             if (!std::strcmp(name, "instance") && (nc.function == 18 || nc.function == 21 || nc.function == 23) &&
                 nc.args.size() == 1)
                 return true;
@@ -1636,13 +1681,17 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // gamebase 30 (0x7761B0 -> 0x60F5B0): bool clears/sets game flag 0x4000 of 0xE7F0B4 and UI element 0xC
             // (0x655280); reveal scripts call it with true after their camera [U: what the flag gates].
             if (!std::strcmp(name, "gamebase") && nc.function == 30 && nc.args.size() == 1) return true;
-            // gamebase 2 / 24 set / ramp (target, seconds) the global time scale 0xE7F1D4, 23 ramps the second one
-            // 0xE7F1A0 (0x4A3DD0, 0x776090, 0x776030 -> ramp records read by 0x78C4E0); the game loop multiplies
-            // timeMult by both (reveal planes call 24(0, 0), adrenaline trackers 2). Ours keep one fixed
-            // tick rate [U: not applied; our adrenaline window is Combat.cpp's].
-            if (!std::strcmp(name, "gamebase") && ((nc.function == 2 && nc.args.size() == 1) ||
-                                                   ((nc.function == 23 || nc.function == 24) && nc.args.size() == 2)))
+            // gamebase 2 / 24 set / ramp (target, seconds) the global time scale 0xE7F1D4, 1 / 23 the second one 0xE7F1A0
+            // (0x4A3DD0 / 0x776090, 0x4A3DC0 [I: 1 by its pairing with 2 in every script that restores both] /
+            // 0x776030 -> ramp records read by 0x78C4E0); the game loop multiplies timeMult by both and Lara's update
+            // divides the second back out. The adrenaline trackers ramp both (situational adrenaline) and set them
+            // back to 1; World applies them (CombatState::timeScale / worldScale).
+            if (!std::strcmp(name, "gamebase") && (((nc.function == 1 || nc.function == 2) && nc.args.size() == 1) ||
+                                                   ((nc.function == 23 || nc.function == 24) && nc.args.size() == 2))) {
+                const auto f = [](const vm::Value& v) { return std::bit_cast<float>(v.bits); };
+                if (time_) time_(nc.function == 1 || nc.function == 23, f(nc.args[0]), nc.args.size() == 2 ? std::max(0.0f, f(nc.args[1])) : -1.0f);
                 return true;
+            }
             if (!std::strcmp(name, "cameraspline") && nc.function == 0 && nc.args.size() == 1) { // equal (0x775790)
                 nc.result = vm::Value::scalar(cameraSplineValue(nc.receiver) == cameraSplineValue(nc.args[0]));
                 return true;
@@ -2198,7 +2247,7 @@ bool Runtime::graphHit(int32_t uid, uint32_t damageClass, float damage) {
 void Runtime::tickGraph(int32_t uid) {
     Object* o = findMut(uid);
     if (!o || !o->graph) return;
-    if (o->graph->clip >= 0) o->graph->t += kDt;
+    if (o->graph->clip >= 0) o->graph->t += dt_;
     if (!o->graph->set->graph) return;
     if (const float d = std::exchange(o->graph->damage, 0.0f); d > 0) {
         graphPost(uid, formats::kStimulusEvent, d, d);
@@ -2212,7 +2261,7 @@ void Runtime::tickGraph(int32_t uid) {
         if (done) graphEnter(uid, target < 0 ? g.state : target);
         return;
     }
-    const float step = float(kDt * 30);
+    const float step = float(dt_ * 30);
     g.frames += step;
     graphPost(uid, formats::kStimulusTimer, step, g.frames);
 }
@@ -2226,7 +2275,7 @@ void Runtime::tickSpline(Object& o) {
     auto& s = *o.spline;
     if (!s.playing) return;
     const float end = s.path->end(), prev = s.t;
-    float t = prev + float(s.dir) * float(kDt) * 30.0f;
+    float t = prev + float(s.dir) * float(dt_) * 30.0f;
     if (s.toKey && (s.dir > 0 ? prev <= s.target && s.target <= t : t <= s.target && s.target <= prev)) {
         t = s.target, s.playing = s.toKey = false;
     } else {
@@ -2332,6 +2381,38 @@ std::string Runtime::helpCondition() const {
     return {};
 }
 
+// NtPlayerSensor update (0x77A020): each enabled sensor tests Lara's root against its anchor (0x7799F0: distance^2 <=
+// radius^2, the radius straight from the member's init, in world units) and calls the owner's vt 14 (0x798430: sensor,
+// inside) on entering when its onEnter byte is set and on leaving when onExit is; a oneShot sensor disables itself as
+// it fires (0x779950). [I] tru.exe tests a sensor every other frame; ours every tick.
+void Runtime::tickSensors(vec3 lara) {
+    if (!anchorAt_ || sensors_.empty()) return;
+    std::vector<std::pair<uint64_t, bool>> fired;
+    for (auto& [key, sn] : sensors_) {
+        const int32_t uid = int32_t(uint32_t(key >> 32));
+        const auto self = instance(uid);
+        if (!self || !self->program || !sn.enabled || !sn.anchor) continue;
+        const Member* m = self->program->member(self->typeId, uint32_t(key));
+        if (!m || m->init.value_or(0) != 0) continue;
+        const auto at = anchorAt_(sn.anchor, sn.marker);
+        if (!at) continue;
+        const float r = std::bit_cast<float>(m->initWords[1]);
+        const vec3 d = lara - *at;
+        const bool now = glm::dot(d, d) <= r * r;
+        const uint32_t flags = m->init2.value_or(0);
+        if (now != sn.inside && (now ? flags & 0xFF : flags >> 8 & 0xFF)) {
+            if (flags >> 16 & 0xFF) sn.enabled = false;
+            fired.emplace_back(key, now);
+        }
+        sn.inside = now;
+    }
+    for (const auto& [key, now] : fired) {
+        vm::Value args[2] = {{}, vm::Value::scalar(now)};
+        args[0].kind = vm::Value::Kind::Member, args[0].uid = int32_t(uint32_t(key >> 32)), args[0].offset = uint32_t(key);
+        run(args[0].uid, 14, args);
+    }
+}
+
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     events_.clear();
     ++tick_;
@@ -2365,17 +2446,18 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     // it) and calls its owner's corebase prototype-25 slot with the clock (0x7961A0; NsCoreBase bind 0x7B3920).
     std::vector<uint64_t> alarms;
     for (auto& [key, c] : clocks_)
-        if (c.state == 2 && (c.elapsed += float(kDt)) >= c.alarm && !c.fired) c.fired = true, alarms.push_back(key);
+        if (c.state == 2 && (c.elapsed += float(dt_)) >= c.alarm && !c.fired) c.fired = true, alarms.push_back(key);
     for (const uint64_t key : alarms) {
         vm::Value clock;
         clock.kind = vm::Value::Kind::Member, clock.uid = int32_t(key >> 32), clock.offset = uint32_t(key);
         callback(clock.uid, "corebase", 25, std::span(&clock, 1));
     }
+    tickSensors(in.pos);
     fade_ = fade_ < fadeTarget_ ? std::min(fadeTarget_, fade_ + fadeStep_) : std::max(fadeTarget_, fade_ - fadeStep_);
     for (size_t i = 0; i < threads_.size(); ++i) { // copy: adopt may add or end threads
         const auto [uid, thread] = threads_[i];
         if (!instance(uid)) continue; // owner unloaded: dropped below
-        if (!thread->tick(float(kDt))) recordFailure(uid, find(uid) ? find(uid)->name : "unit script", *thread);
+        if (!thread->tick(float(dt_))) recordFailure(uid, find(uid) ? find(uid)->name : "unit script", *thread);
         adopt(thread);
     }
     std::erase_if(threads_, [&](const auto& t) { return !t.second->active() || !instance(t.first); });
@@ -2384,13 +2466,13 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         if (o.graph) tickGraph(o.uid);
         for (size_t i = 0; i < o.fibers.size(); ++i) { // copy: a STATE may end the object's threads
             const auto fiber = o.fibers[i];
-            if (!fiber->tick(float(kDt))) recordFailure(o.uid, o.name, *fiber);
+            if (!fiber->tick(float(dt_))) recordFailure(o.uid, o.name, *fiber);
             adopt(fiber);
         }
         std::erase_if(o.fibers, [](const auto& m) { return !m->active(); });
         if (o.machine && o.machine->active()) {
             const auto machine = o.machine;
-            if (!machine->tick(float(kDt))) recordFailure(o.uid, o.name, *machine);
+            if (!machine->tick(float(dt_))) recordFailure(o.uid, o.name, *machine);
             adopt(machine);
         }
         if (o.mainPending && (!o.machine || !o.machine->active())) fire(EventKind::Main, o);
@@ -2427,18 +2509,24 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             break;
         case Kind::Switch:
         case Kind::Door:
-            if (o.state == 1 && (o.t += kDt) >= (*o.clips)[0].durationSeconds()) {
+            if (o.state == 1 && (o.t += dt_) >= (*o.clips)[0].durationSeconds()) {
                 o.state = 2, o.t = 0;
                 if (o.kind == Kind::Switch) fire(EventKind::Use, o);
             } else if (o.state == 2) {
-                o.t += kDt;
+                o.t += dt_;
                 // A resetting switch returns to idle after its delay (resetAfter) and can be used again.
                 if (o.kind == Kind::Switch && o.resetAfter >= 0 && o.t >= o.resetAfter)
                     o.state = 0, o.t = 0;
             }
             // Receptacles have no use engagement (only kind-5 insert records): l4_ballcourt pole lever 6502 waits for its pole.
             if (o.kind == Kind::Switch && o.state == 0 && pressed && !receptacleGraph(o.name)) {
-                const float d = glm::length(vec2(o.pos - in.pos));
+                // Reach is measured from the switch or from where she stands to use it (useDistance along its local
+                // horizontal axes, World::useSwitchClip), whichever is nearer [I]: a wall switch's own collision
+                // keeps her farther from its origin than kReach (l1_kraken_room 30: 217 with her back to the hall).
+                float d = glm::length(vec2(o.pos - in.pos));
+                const float stand = o.useDistance > 20 && o.useDistance < 500 ? o.useDistance : 135.0f;
+                const vec2 lx(std::cos(o.rot.z), std::sin(o.rot.z)), ly(-lx.y, lx.x);
+                for (const vec2 at : {lx * stand, -lx * stand, ly * stand, -ly * stand}) d = std::min(d, glm::length(vec2(o.pos) + at - vec2(in.pos)));
                 if (d < best && std::abs(o.pos.z - in.pos.z) < kReachHeight) best = d, useSwitch = &o;
             }
             break;
@@ -2457,7 +2545,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             gripAxis_ = axis;
             if (std::abs(in.move.y) <= 0.5f) break;
             if (in.move.y < 0) axis = -axis;
-            const float step = float(kBlockSpeed * kDt);
+            const float step = float(kBlockSpeed * dt_);
             // Terrain only (mask 0x0F): the block's own collision box is a dynamic of the same mesh (src/physics).
             if (col && col->raycast(c + vec3(0, 0, 20), axis, glm::dot(o.half, glm::abs(axis)) + step, 0x0F)) break;
             if (col && in.move.y < 0 && col->raycast(in.pos + vec3(0, 0, 100), axis, 100 + step, 0x0F)) break;
@@ -2675,15 +2763,18 @@ nlohmann::json Runtime::serialize() const {
     for (const auto& [uid, m] : savedThreads_) threads.push_back({uid, m});
     for (const auto& [key, c] : clocks_) clocks.push_back({int32_t(uint32_t(key >> 32)), uint32_t(key), c.state, c.elapsed, c.alarm, c.fired});
     for (const auto& m : messages_) messages.push_back({m.channel, m.id, m.payload, m.sender});
+    nlohmann::json sensors = nlohmann::json::array();
+    for (const auto& [key, sn] : sensors_)
+        sensors.push_back({int32_t(uint32_t(key >> 32)), uint32_t(key), sn.anchor, sn.marker, sn.enabled, sn.inside});
     nlohmann::json playerUnit = nullptr;
     if (playerUnit_) playerUnit = {playerUnit_->first, playerUnit_->second ? nlohmann::json(*playerUnit_->second) : nlohmann::json(nullptr)};
     j["runtime"] = {{"version", 1}, {"aux", std::move(aux)}, {"player", playerScript_ ? playerScript_->uid : 0},
                     {"nextAux", nextAuxiliaryUid_}, {"live", live}, {"machines", std::move(machines)}, {"threads", std::move(threads)},
-                    {"clocks", std::move(clocks)}, {"messages", std::move(messages)}, {"tick", tick_}, {"playerUnit", playerUnit},
+                    {"clocks", std::move(clocks)}, {"sensors", std::move(sensors)}, {"messages", std::move(messages)}, {"tick", tick_}, {"playerUnit", playerUnit},
                     {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
                     {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
                     {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}},
-                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}, {"born", born_}};
+                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}, {"born", born_}, {"anchors", anchors_}};
     return j;
 }
 
@@ -2747,7 +2838,7 @@ void Runtime::restore(const nlohmann::json& j) {
             restoreRuntime(runtime);
         } catch (const std::exception& e) { // a bad block: threads start afresh, as for older saves
             savedAux_.clear(), savedMachines_.clear(), savedLive_.clear(), savedThreads_.clear();
-            threads_.clear(), clocks_.clear(), messages_.clear();
+            threads_.clear(), clocks_.clear(), sensors_.clear(), messages_.clear();
             for (auto& o : objects_) o.machine.reset(), o.fibers.clear();
             std::fprintf(stderr, "script: saved runtime state not restored: %s\n", e.what());
         }
@@ -2799,6 +2890,11 @@ void Runtime::restoreRuntime(const nlohmann::json& r) {
     for (const auto& c : r.at("clocks"))
         clocks_[uint64_t(uint32_t(c.at(0).get<int32_t>())) << 32 | c.at(1).get<uint32_t>()] =
             Clock{c.at(2).get<int>(), c.at(3).get<float>(), c.at(4).get<float>(), c.at(5).get<bool>()};
+    sensors_.clear();
+    if (const auto sn = r.find("sensors"); sn != r.end())
+        for (const auto& c : *sn)
+            sensors_[uint64_t(uint32_t(c.at(0).get<int32_t>())) << 32 | c.at(1).get<uint32_t>()] =
+                Sensor{c.at(2).get<int32_t>(), c.at(3).get<int32_t>(), c.at(4).get<bool>(), c.at(5).get<bool>()};
     for (const auto& m : r.at("messages"))
         messages_.push_back({m.at(0).get<uint32_t>(), m.at(1).get<uint32_t>(), m.at(2).get<std::string>(), m.at(3).get<int32_t>()});
     tick_ = r.at("tick");
@@ -2816,6 +2912,7 @@ void Runtime::restoreRuntime(const nlohmann::json& r) {
         weather_ = {it->at(0).get<int32_t>(), it->at(1).get<int32_t>(), it->at(2).get<int32_t>(), it->at(3).get<int32_t>()};
     deferredUnits_ = r.value("deferredUnits", std::set<std::string>{});
     grappleOff_ = r.value("grappleOff", std::set<int32_t>{}); // older saves have none
+    anchors_ = r.value("anchors", std::map<int32_t, std::pair<int32_t, int32_t>>{});
 }
 
 } // namespace ou::script

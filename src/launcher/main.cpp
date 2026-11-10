@@ -567,7 +567,7 @@ private:
             {"forward", "Forward"}, {"back", "Back"}, {"left", "Left"}, {"right", "Right"}, {"walk", "Walk (hold)"},
             {"sprint", "Sprint (hold; swim faster)"}, {"jump", "Jump"}, {"drop", "Crouch / roll / drop"},
             {"interact", "Interact"}, {"draw", "Draw / holster"}, {"fire", "Fire weapon"},
-            {"aim", "Target lock (draws)"}, {"switch", "Change target"}, {"weapon", "Change weapon"},
+            {"aim", "Target lock (draws)"}, {"switch", "Change target"}, {"manual_aim", "Manual aim / focused fire"}, {"weapon", "Change weapon"},
             {"heal", "Use health pack"}, {"grapple", "Grapple"}, {"save", "Quick save"}, {"load", "Quick load"},
             {"hint", "Hint"}, {"answer", "Answer"}, {"pda", "PDA"}, {"light", "Utility light"}, {"grenade", "Grenade / throw"},
             {"recenter", "Recenter camera"}, {"camera", "Field camera"}, {"pause", "Pause"}, {"menu_up", "Menu up"},

@@ -1,0 +1,168 @@
+{
+ "version": 1,
+ "name": "swim_moves",
+ "chapter": "Swimming moves: turn on the spot at the surface, dive, evasive dodges under water, guns under water",
+ "walkthrough": "https://tombraiders.net/stella/walks/controls/TR8controls.html",
+ "note": "l1_seatop sea. Clips and root motion [O lara.drm]: swim_surface_idle_turn_90 (request 832, 15 frames); swim_submerged_dodge_up 883.4 up in 30 frames (878), _dodge_down 881.2 down in 20 (864); the lock (aim) held and a crouch press dodge [O chart S185 -> S167]. Every weapon draws and fires under water [I].",
+ "level": "l1_seatop",
+ "spawn": [
+  -15000,
+  -3775,
+  2000,
+  -40
+ ],
+ "steps": [
+  {
+   "step": "drop_in",
+   "duration": 4,
+   "until": {
+    "probe": "player.state",
+    "eq": "swimtread"
+   },
+   "expect": [
+    {
+     "probe": "water.in",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "turn_on_the_spot",
+   "input": [
+    "0 right 1"
+   ],
+   "duration": 0.3,
+   "expect": [
+    {
+     "clips": [
+      "swim_surface_idle_turn_90"
+     ]
+    },
+    {
+     "probe": "step.horizontal",
+     "max": 60,
+     "note": "the quarter turn does not move her"
+    }
+   ]
+  },
+  {
+   "step": "dive",
+   "input": [
+    "0.5 drop 1"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "visits": [
+      "swimdive",
+      "swimunder"
+     ]
+    },
+    {
+     "probe": "step.drop",
+     "min": 1500
+    }
+   ]
+  },
+  {
+   "step": "settle",
+   "duration": 1,
+   "expect": [
+    {
+     "probe": "player.clip",
+     "eq": "swim_submerged_idle"
+    }
+   ]
+  },
+  {
+   "step": "dodge_up",
+   "input": [
+    "0 aim 1",
+    "0.1 drop 1",
+    "0.2 drop 0"
+   ],
+   "duration": 1.6,
+   "expect": [
+    {
+     "visits": [
+      "swimunder",
+      "swimdodge",
+      "swimunder"
+     ]
+    },
+    {
+     "clips": [
+      "swim_submerged_dodge_up",
+      "swim_submerged_idle"
+     ]
+    },
+    {
+     "probe": "step.height_gain",
+     "near": 883.4,
+     "tol": 2
+    },
+    {
+     "probe": "step.horizontal",
+     "max": 5
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "dodge_down",
+   "input": [
+    "0 aim 1",
+    "0 forward -1",
+    "0.05 drop 1",
+    "0.15 drop 0"
+   ],
+   "duration": 0.75,
+   "expect": [
+    {
+     "clips": [
+      "swim_submerged_dodge_down"
+     ]
+    },
+    {
+     "probe": "step.height_gain",
+     "near": -881.2,
+     "tol": 8
+    }
+   ]
+  },
+  {
+   "step": "guns_under_water",
+   "input": [
+    "0 fire 1"
+   ],
+   "duration": 2.5,
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "swimunder"
+    },
+    {
+     "probe": "weapon.current",
+     "eq": "pistols"
+    },
+    {
+     "probe": "weapon.drawn",
+     "eq": true
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 2
+    },
+    {
+     "probe": "player.air",
+     "eq": 1,
+     "note": "the wetsuit's tanks"
+    }
+   ]
+  }
+ ]
+}

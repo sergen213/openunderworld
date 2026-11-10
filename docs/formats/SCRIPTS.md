@@ -345,7 +345,11 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
   11/12 loop count, 13 loop / 14 loop-count / 16 ping-pong over a clip, 15 once, 17/18 clip flag, 19-21 key ranges
   whose enter/leave calls vt 40 / 41 (type 3 functions 53/54, 0x7120B0) with (spline, id, direction). Path decode
   and per-frame update: LEVELS.md "Spline movers".
-- [O] `playersensor` 0/1 Set/Get its enable byte (+0xF); `instance` 18/21/23, `modifiable` 1, `unitref` 2,
+- [O] `playersensor` (NtPlayerSensorInst; bind 0x7ACDD0..): 0 / 1 Set / Get its enable byte (+0xF), 2 attach to an
+  anchor (0x4A3420 -> +0x18: an instance or a `uberobjectbase` 2 marker anchor), 3 same sensor. Member init {u32 0, u8
+  onEnter, u8 onExit, u8 oneShot, u8 enabled, float radius}; the update 0x77A020 tests Lara's root against the anchor
+  (0x7799F0) and calls the owner's vt 14 (sensor, inside) through 0x779950 / 0x798430. Ours: `Runtime::tickSensors`
+  (GAMEPLAY.md "Water moves": the jellyfish). `instance` 18/21/23, `modifiable` 1, `unitref` 2,
   `larabase` 25/27/29/55 are accepted (effects [U]); 56 disables Lara's stick while a reveal camera plays
   (GAMEPLAY.md "Cameras").
 
@@ -397,3 +401,23 @@ closing-door animations, Lara's interaction clips.
   --input-script bedroom.txt` with `0.5 interact 1` / `0.6 interact 0`: tick 31 the switch starts pulling, tick
   144 `use 4525 → activate 4520 (ma_ei_house_door)` and `→ 4086 (untracked; an intro of another unit)`; the door swings open (screenshots
   before/after viewed).
+
+## Time scale (`gamebase` 1 / 2 / 23 / 24, clocks on scaled time)
+
+- `gamebase` 2 (target) sets and 24 (target, seconds) ramps the **global** scale 0xE7F1D4 (0x4A3DD0 / 0x776090, ramp
+  record 0x8ABE94); 1 / 23 do the same for the **world** scale 0xE7F1A0 (0x4A3DC0 / 0x776030, record 0x8ABEB4) [O; 1 is
+  [I] by its pairing with 2 in every script that restores both]. The game loop multiplies timeMult by both; Lara's update
+  divides the world scale back out (0x622418). Ramps ease as 0x78C120 (2u² / 1 − 2(1 − u)²) over real seconds [I: ramp
+  clock]. Ours: `Runtime::TimeNative` → `World::setTimeScale` → `CombatState::timeScale / worldScale` (saved); values
+  clamped to 0.01..4 [I].
+- Script time: clocks, fiber waits and object clips advance by the tick × global × world scale
+  (`Runtime::setTimeScale`) [I: the clock update 0x4A3960 takes its caller's dt; only on scaled time do the trackers'
+  numbers make sense, below].
+- A `clock` member's alarm starts as the member's second init value [I] (first = repeat flag +0x19, 0 in all seen).
+- Adrenaline trackers (base script 3583; l1_kraken_room 50 / 51 = scripts 3525 / 3533): start (vt 55) calls
+  `24(m92, m100)` and `23(m96 / m92, m100)`; the base's members are 0.4 / 0.2 / 2 s, the kraken instances override them to
+  0.4 / 0.0148 (51) or 0.0164 (50) / 0 s — global 0.4, world 0.037, at once. The fail clock (+180, alarm m176 = 0.15 s
+  for 51) ends it after 0.15 / 0.0148 ≈ 10 s real; time-out clock +168 = 6 s. Stop (vt 58): `2(1)`, `1(1)`. Success
+  (vt 57) branches to state 1: wait m172, then `2(1)`, `1(1)`.
+- Tests: `ProgressionReal.KrakenTentacleSlowMotionByItsScript` (plane 37 → tracker 51: 0.4 / 0.037 for 560 ticks, back to
+  1), `Combat.ScriptTimeRampEasesInAndOut`, `Combat.TimeScaleSlowsLaraWithTheWorld`.

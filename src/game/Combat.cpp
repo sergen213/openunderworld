@@ -135,12 +135,36 @@ bool bikeWeapon(Weapon w) { return w == Weapon::Pistols || w == Weapon::Uzi; }
 // hanging free, without it feet on a wall): one gun in the right hand, the other holds the rope; a 5 x 3 grid of
 // one-handed aims named by direction, F / FR / R / RB / B, rows U / (none) / D [O names]. Column yaws by those names
 // (0, -45, -90, -135, -180) and rows +-45 [I]; aims to her left clamp as on the bike (_switchhands unused [U]).
-bool onRope(State s) { return s == State::GrappleSwing || s == State::GrappleRappel; }
+//
+// Hanging and climbing (wp_handgun / wp_uzi only [O data]): the same one-handed 5 x 3 grids exist per hold, named
+// combat_pistol_<set>_1haim[U|D]{F,FR,R,RB,B} with their own draw / holster / reload clips: ledgeb (ledge hang, also
+// ledgebconvex / ledgebconcave / ledgeu* for corners and free hangs: not used [I]), DICE (free climbing), Ladder, hpole
+// (horizontal pole), pillar. She draws the right gun, the left hand keeps the hold; no other weapon has such clips, so
+// they stay holstered there. Columns / rows as on the rope [I].
+struct OneHand {
+    std::string_view prefix, equip, unequip; // clip = "combat_pistol_" + prefix + name
+};
+std::optional<OneHand> oneHandSet(State s) {
+    switch (s) {
+    case State::GrappleRappel: return OneHand{"grapple_rappel_", "equip", "unequip"};
+    case State::GrappleSwing: return OneHand{"grapple_rappel_free_", "equip", "unequip"};
+    case State::Hang: case State::Shimmy: return OneHand{"ledgeb_", "drawguns", "holster"};
+    case State::Climb: return OneHand{"DICE_", "equip", "unequip"};
+    case State::Ladder: return OneHand{"Ladder_", "equip", "unequip"};
+    case State::PoleHang: return OneHand{"hpole_", "equip", "unequip"};
+    case State::Pillar: return OneHand{"pillar_", "drawguns", "holster"};
+    default: return std::nullopt;
+    }
+}
+constexpr State kOneHandStates[] = {State::GrappleSwing, State::GrappleRappel, State::Hang, State::Climb, State::Ladder, State::PoleHang, State::Pillar};
+bool onRope(State s) { return oneHandSet(s).has_value(); } // one gun, one hand on the rope / hold
 constexpr std::string_view kRopeCols[5] = {"B", "RB", "R", "FR", "F"};
 const float kRopeColYaw[] = {-180 * kDeg, -135 * kDeg, -90 * kDeg, -45 * kDeg, 0};
 constexpr float kRopeUp = 45 * kDeg, kRopeDown = 45 * kDeg;
 std::string ropeClip(State s, std::string_view name) {
-    return std::string(s == State::GrappleRappel ? "combat_pistol_grapple_rappel_" : "combat_pistol_grapple_rappel_free_") + std::string(name);
+    const auto set = oneHandSet(s);
+    const std::string_view n = !set ? name : name == "equip" ? set->equip : name == "unequip" ? set->unequip : name;
+    return "combat_pistol_" + std::string(set ? set->prefix : std::string_view("grapple_rappel_free_")) + std::string(n);
 }
 std::string ropeCell(State s, int row, int col) { return ropeClip(s, std::string(row == 0 ? "1haimU" : row == 2 ? "1haimD" : "1haim") + std::string(kRopeCols[col])); }
 
@@ -155,6 +179,20 @@ Handling handling(const AnimLibrary& lib, const PlayerState& s, Weapon w) {
     if (s.water >= 0 && w == Weapon::Speargun)
         return {std::string(in.equipClip) + "_submerged", std::string(in.unequipClip) + "_submerged", "combat_speargun_reload_submerged",
                 kSubEquip, kSubUnequip, in.reload};
+    if (s.water >= 0) {
+        // Every other wp_* DRM has Lara's combat_water_submerged_* and combat_water_surface_* equip / unequip clips
+        // (the pistols and uzi a reload of each too) [O data]; their own lengths. Treading / surface strokes use the
+        // surface set [I: by the names].
+        const bool surface = s.state == State::SwimTread || s.state == State::SwimSurface;
+        const std::string set = surface ? "combat_water_surface_" : "combat_water_submerged_";
+        const auto pick = [&](const char* part, std::string_view fallbackClip, float fallback) -> std::pair<std::string, float> {
+            if (const anim::Clip* k = lib.weaponClip(w, set + part)) return {set + part, float(k->durationSeconds())};
+            return {std::string(fallbackClip), fallback};
+        };
+        const auto e = pick("equip", in.equipClip, in.equip), u = pick("unequip", in.unequipClip, in.unequip),
+                   r = pick("reload", in.reloadClip, in.reload);
+        return {e.first, u.first, r.first, e.second, u.second, r.second};
+    }
     if (s.state == State::Vehicle && bikeWeapon(w)) {
         const auto len = [&](std::string_view n, float fallback) {
             const anim::Clip* k = lib.weaponClip(w, n);
@@ -178,15 +216,21 @@ Handling handling(const AnimLibrary& lib, const PlayerState& s, Weapon w) {
 // Health packs (g_healthpack data; use = gadget fnC 0x6CBB20): heal +0xF0 = 640 through 0x6F4EF0 (clamped to max),
 // cooldown +0xEA = 60 frames [I 30 Hz]; no full-health check in the exe.
 constexpr float kHealthPackHeal = 640.0f, kHealthPackCooldown = 2.0f;
-// Adrenaline numbers: AdrenalineTuning (Lara data). The head-shot window's length and the pip are [I].
-constexpr float kSlowWindow = 3.0f;  // real seconds to steer the pip in and fire
-constexpr float kPipStart = 2.5f, kPipSpeed = 2.0f; // pip start distance / stick speed, reticle radii (per second)
+// Adrenaline numbers: AdrenalineTuning (Lara data) and the enemy's HeadShotMove; the pip is [I] (Aim.cpp).
 
-bool swimHit(State s) { return s == State::SwimUnder || s == State::Surfacing || s == State::SwimDive || s == State::Hit; }
-// Guns out on the ground (and in a hit reaction); under water only the speargun and Mjolnir (its swim_submerge attack
-// clips) [U whether the exe allows more].
-bool canShoot(const PlayerState& s, Weapon w) {
-    if (s.water >= 0) return (w == Weapon::Speargun || w == Weapon::ThorHammer) && swimHit(s.state);
+bool swimHit(State s) { return s == State::SwimUnder || s == State::Surfacing || s == State::SwimDive || s == State::SwimDodge || s == State::Hit; }
+// Guns out on the ground (and in a hit reaction) and in the water. tru.exe's weapon stats carry no under-water flag
+// (S+0x88: 0x80 infinite, 0x40, 0x20 dual, 0x08 two-handed) and every wp_* DRM has Lara's submerged and surface equip /
+// unequip clips, a `fire_submerged` gun clip and (bullets) an under-water damage record (ammo +0x84) [O data]; the
+// chart has under-water aim sets for one-handed guns, two-handed guns and Mjolnir (requests 924 / 926 / 925). So every
+// weapon can be drawn and fired while swimming [I: no refusal found in the exe; the walkthrough calls the spear gun
+// the best under-water choice, not the only one]. Not during the surface dive, the entry splash or the climb out.
+bool swimArmed(State s) {
+    return s == State::SwimUnder || s == State::Surfacing || s == State::SwimTread || s == State::SwimSurface || s == State::SwimDodge ||
+           s == State::Hit;
+}
+bool canShoot(const PlayerState& s, Weapon) {
+    if (s.water >= 0) return swimArmed(s.state);
     switch (s.state) {
     case State::Idle: case State::Walk: case State::Run: case State::Stop: case State::Turn: case State::Land:
     case State::JumpPrep: case State::Jump: case State::Fall: case State::Hit: return true;
@@ -449,7 +493,7 @@ const std::vector<std::string_view>& weaponClipNames(Weapon w) {
                 for (int r = 0; r < 3; ++r)
                     for (int c = 0; c < 5; ++c) o.push_back(bikeCell(r, c));
                 o.insert(o.end(), {"combat_pistol_motorcycle_arm", "combat_pistol_motorcycle_disarm", "combat_pistol_motorcycle_reload"});
-                for (const State st : {State::GrappleSwing, State::GrappleRappel}) {
+                for (const State st : kOneHandStates) {
                     for (int r = 0; r < 3; ++r)
                         for (int c = 0; c < 5; ++c) o.push_back(ropeCell(st, r, c));
                     for (const char* n : {"equip", "unequip", "reload"}) o.push_back(ropeClip(st, n));
@@ -457,6 +501,11 @@ const std::vector<std::string_view>& weaponClipNames(Weapon w) {
             }
             if (Weapon(i) == Weapon::Speargun)
                 o.insert(o.end(), {"combat_shotgun_equip_submerged", "combat_shotgun_unequip_submerged", "combat_speargun_reload_submerged"});
+            else { // Lara's in-water handling clips (handling())
+                o.insert(o.end(), {"combat_water_submerged_equip", "combat_water_submerged_unequip", "combat_water_surface_equip",
+                                   "combat_water_surface_unequip"});
+                if (!wi.rifle && Weapon(i) != Weapon::ThorHammer) o.insert(o.end(), {"combat_water_submerged_reload", "combat_water_surface_reload"});
+            }
             for (const auto& s : o) out[size_t(i)].push_back(s);
         }
         return out;
@@ -487,8 +536,9 @@ std::optional<AdrenalineTuning> loadAdrenalineTuning(const cdc::BigfileSet& bf) 
     if (!l) return std::nullopt;
     const auto max = l->at<float>(0x2D0), drain = l->at<float>(0x2D4), mode = l->at<float>(0x2D8), modeScale = l->at<float>(0x31C),
                shot = l->at<float>(0x2C8), ease = l->at<float>(0x2CC);
-    if (!max || !drain || !mode || !modeScale || !shot || !ease || !(*max > 0)) return std::nullopt;
-    return AdrenalineTuning{*max, *drain, *mode, *modeScale, *shot, std::round(*ease) / 30.0f};
+    const auto hold = l->at<uint16_t>(0x286);
+    if (!max || !drain || !mode || !modeScale || !shot || !ease || !hold || !(*max > 0)) return std::nullopt;
+    return AdrenalineTuning{*max, *drain, *mode, *modeScale, *shot, std::round(*ease) / 30.0f, float(*hold) / 30.0f};
 }
 
 std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view object) {
@@ -658,7 +708,9 @@ int hitReaction(int damageClass, float damage) {
 
 void World::damageLara(float amount, vec3 from, int type) {
     const int react = hitReaction(type, amount);
-    if (!health_.damage(amount, type) || health_.dead() || !react) return;
+    const bool hurt = health_.damage(amount, type);
+    if (hurt) endHeadShot(); // 0x71F1D0 message 0x11C -> 0x718FD0: a hit on her ends the move
+    if (!hurt || health_.dead() || !react) return;
     const PlayerState& s = player_.state();
     const bool swim = s.water >= 0;
     if (swim ? !(swimHit(s.state) || s.state == State::SwimTread || s.state == State::SwimSurface)
@@ -781,9 +833,11 @@ nlohmann::json World::serializeCombat() const {
         guns[std::string(weaponName(Weapon(i)))] = {{"clip", {c.clip[i][0], c.clip[i][1]}}, {"reserve", c.reserve[i]}};
     // In hand: the draw, aim, lock, cooldowns, recoil clocks and the spread generator, so a load continues mid-fight
     // exactly (the target by enemy uid). Older saves load holstered.
-    int32_t target = 0;
-    for (const auto& e : enemies_.all())
+    int32_t target = 0, second = 0;
+    for (const auto& e : enemies_.all()) {
         if (static_cast<const Damageable*>(e.get()) == c.target) target = e->uid();
+        if (static_cast<const Damageable*>(e.get()) == c.second) second = e->uid();
+    }
     nlohmann::json ragdoll = nlohmann::json::array();
     for (const glm::mat4& m : c.ragdoll) ragdoll.push_back(std::vector<float>(&m[0][0], &m[0][0] + 16));
     const nlohmann::json state = {
@@ -794,7 +848,11 @@ nlohmann::json World::serializeCombat() const {
         {"shotsFired", c.shotsFired}, {"rng", c.rng}, {"deathTime", c.deathTime}, {"ragdollPhase", c.ragdollPhase}, {"ragdoll", ragdoll},
         {"held", {c.drawHeld, c.switchHeld, c.weaponHeld, c.healHeld, c.interactHeld, c.fireHeld}}, {"healCooldown", c.healCooldown},
         {"healthPacksUsed", c.healthPacksUsed}, {"slowMo", c.slowMo}, {"pip", {c.pip.x, c.pip.y}}, {"timeScale", c.timeScale},
-        {"adrenalineMode", c.adrenalineMode}, {"timeRamp", {c.timeTarget, c.timeRate}}, {"projectiles", [&] {
+        {"adrenalineMode", c.adrenalineMode}, {"worldScale", c.worldScale},
+        {"ramps", {c.timeRamp.target, c.timeRamp.seconds, c.timeRamp.from, c.timeRamp.elapsed, c.worldRamp.target, c.worldRamp.seconds,
+                   c.worldRamp.from, c.worldRamp.elapsed}},
+        {"headShotReady", c.headShotReady}, {"headShot", {c.headShot, c.headShotClip, c.headShotLength, c.headShotOpen, c.headShotClose}},
+        {"manualAim", c.manualAim}, {"heldAim", {c.manualHeld, c.aimHeld}}, {"second", {second, c.secondHold}}, {"projectiles", [&] {
              nlohmann::json a = nlohmann::json::array();
              for (const Projectile& p : c.projectiles)
                  a.push_back({{p.from.x, p.from.y, p.from.z}, {p.pos.x, p.pos.y, p.pos.z}, {p.vel.x, p.vel.y, p.vel.z}, p.gravity,
@@ -859,7 +917,31 @@ void World::restoreCombat(const nlohmann::json& j) {
             d.healCooldown = s->at("healCooldown"), d.healthPacksUsed = s->at("healthPacksUsed"), d.slowMo = s->at("slowMo");
             d.pip = {s->at("pip").at(0).get<float>(), s->at("pip").at(1).get<float>()}, d.timeScale = s->at("timeScale");
             d.adrenalineMode = s->value("adrenalineMode", false);
-            if (const auto r = s->find("timeRamp"); r != s->end()) d.timeTarget = r->at(0), d.timeRate = r->at(1);
+            d.worldScale = s->value("worldScale", 1.0f);
+            if (const auto r = s->find("ramps"); r != s->end()) { // older saves: no ramp in progress
+                d.timeRamp = {r->at(0), r->at(1), r->at(2), r->at(3)};
+                d.worldRamp = {r->at(4), r->at(5), r->at(6), r->at(7)};
+            } else if (d.timeScale != 1) {
+                d.timeRamp.start(1, anims_.adrenaline.ease, d.timeScale);
+            }
+            d.headShotReady = s->value("headShotReady", false);
+            if (const auto h = s->find("headShot"); h != s->end()) {
+                d.headShot = h->at(0), d.headShotClip = h->at(1).get<std::string>();
+                d.headShotLength = h->at(2), d.headShotOpen = h->at(3), d.headShotClose = h->at(4);
+                // her clip of the move lives in the enemy's DRM ("<enemy>:<clip>", World::startHeadShot)
+                if (const auto colon = d.headShotClip.find(':'); colon != std::string::npos)
+                    for (const auto& e : enemies_.all())
+                        if (const auto k = e->type().clips.find(d.headShotClip.substr(colon + 1));
+                            e->type().name == d.headShotClip.substr(0, colon) && k != e->type().clips.end())
+                            anims_.clips.try_emplace(d.headShotClip, k->second);
+            }
+            d.manualAim = s->value("manualAim", false);
+            if (const auto h = s->find("heldAim"); h != s->end()) d.manualHeld = h->at(0), d.aimHeld = h->at(1);
+            if (const auto h = s->find("second"); h != s->end()) {
+                for (const auto& e : enemies_.all())
+                    if (e->uid() == h->at(0).get<int32_t>() && h->at(0).get<int32_t>()) d.second = e.get();
+                d.secondHold = h->at(1);
+            }
             d.projectiles.clear();
             for (const auto& p : s->value("projectiles", nlohmann::json::array())) {
                 const auto v = [&](int i) { return vec3(p.at(i).at(0).get<float>(), p.at(i).at(1).get<float>(), p.at(i).at(2).get<float>()); };
@@ -1020,22 +1102,22 @@ float rnd(uint64_t& rng) {
 }
 } // namespace
 
+// 0x6F28C0: nothing is added while the head shot is latched; reaching the max latches it (0x6E6630) unless she is in
+// adrenaline mode.
 void World::gainAdrenaline(float dealt) {
-    if (dealt > 0) combat_.adrenaline = std::min(1.0f, combat_.adrenaline + std::round(dealt) / anims_.adrenaline.max);
+    CombatState& c = combat_;
+    if (!(dealt > 0) || c.headShotReady) return;
+    c.adrenaline = std::min(1.0f, c.adrenaline + std::round(dealt) / anims_.adrenaline.max);
+    if (c.adrenaline >= 1 && !c.adrenalineMode) c.headShotReady = true;
 }
 
 bool World::strike(Weapon wpn, vec3 from, vec3 dir, float len, float dist0, bool wet, Shot& shot) {
     const WeaponDef& w = anims_.weapons[size_t(wpn)];
-    float best = len;
-    bool hitAny = false;
-    int32_t object = 0; // the dynamic collider (script object) it hit
-    if (const auto g = col_.raycast(from, dir, best))
-        best = g->t, hitAny = true, object = g->dynamic >= 0 ? col_.dynamics[size_t(g->dynamic)].id : 0;
-    Damageable* struck = nullptr;
-    for (Damageable* t : targets) {
-        if (!t || !t->alive() || t->team() == Team::Player) continue;
-        if (const auto d = rayCapsule(from, dir, t->position(), t->radius(), t->height(), best)) best = *d, struck = t, hitAny = true;
-    }
+    const RayHit ray = shotRay(from, dir, len);
+    const float best = ray.t;
+    const bool hitAny = ray.hit;
+    const int32_t object = ray.object; // the script object it hit (a collider's, or a shot-only shape's)
+    Damageable* const struck = ray.target;
     shot.to = from + dir * best, shot.hit = hitAny, shot.target = struck;
     const float damage = w.damageAt(dist0 + best, wet);
     if (struck) {
@@ -1060,7 +1142,8 @@ void World::fire(int hand) {
     const WeaponDef& w = anims_.weapons[size_t(c.weapon)];
     const glm::mat4 gun = gunMatrix(hand);
     const vec3 from(gun * w.muzzle[3]);
-    vec3 aim = c.aimPoint - from;
+    // dual targeting (0x7035F0): the left gun's shots go to the second target while she has one
+    vec3 aim = (hand == 1 && c.second ? c.second->aimPoint() : c.aimPoint) - from;
     if (glm::length(aim) < 1) aim = vec3(std::cos(player_.state().yaw), std::sin(player_.state().yaw), 0);
     aim = glm::normalize(aim);
     const vec3 right = glm::normalize(glm::cross(aim, vec3(0, 0, 1)) + vec3(1e-6f, 0, 0));
@@ -1154,9 +1237,10 @@ void World::tickCombat(const Actions& a, float dt) {
     health_.tick(dt);
     const bool drawPressed = a.draw && !c.drawHeld, switchPressed = a.switchTarget && !c.switchHeld,
                weaponPressed = a.weapon && !c.weaponHeld, healPressed = a.heal && !c.healHeld,
-               interactPressed = a.interact && !c.interactHeld, firePressed = a.fire && !c.fireHeld;
+               interactPressed = a.interact && !c.interactHeld, firePressed = a.fire && !c.fireHeld,
+               manualPressed = a.manualAim && !c.manualHeld, aimPressed = a.aim && !c.aimHeld;
     c.drawHeld = a.draw, c.switchHeld = a.switchTarget, c.weaponHeld = a.weapon, c.healHeld = a.heal;
-    c.interactHeld = a.interact, c.fireHeld = a.fire;
+    c.interactHeld = a.interact, c.fireHeld = a.fire, c.manualHeld = a.manualAim, c.aimHeld = a.aim;
     // health pack: the carried count is World::found[2] (picked-up packs)
     c.healCooldown = std::max(0.0f, c.healCooldown - dt);
     if (healPressed && c.healCooldown <= 0 && found[2] > 0 && !health_.dead()) {
@@ -1165,13 +1249,14 @@ void World::tickCombat(const Actions& a, float dt) {
         c.healCooldown = kHealthPackCooldown;
         ++c.healthPacksUsed;
     }
-    // adrenaline: the meter drains (0x6F2930), the mode ends with it; world time ramps to the window's / mode's scale
+    // adrenaline: the meter drains by her (scaled) time unless the head shot is latched (0x6F2930)
     const AdrenalineTuning& at = anims_.adrenaline;
-    if (c.adrenaline > 0) c.adrenaline = std::max(0.0f, c.adrenaline - (c.adrenalineMode ? at.modeDrain : at.drain) / at.max * dt);
-    if (c.adrenaline <= 0 && c.slowMo <= 0) c.adrenalineMode = false;
-    const float timeTarget = c.slowMo > 0 ? at.headShotScale : c.adrenalineMode ? at.modeScale : 1.0f;
-    if (timeTarget != c.timeTarget) c.timeTarget = timeTarget, c.timeRate = std::abs(timeTarget - c.timeScale) / at.ease;
-    c.timeScale = approach(c.timeScale, c.timeTarget, c.timeRate * dt);
+    if (c.adrenaline > 0 && !c.headShotReady)
+        c.adrenaline = std::max(0.0f, c.adrenaline - (c.adrenalineMode ? at.modeDrain : at.drain) / at.max * dt);
+    // 0x718AD0: adrenaline mode ends, the time scale ramps back
+    const auto endMode = [&] {
+        if (c.adrenalineMode) c.adrenalineMode = false, c.timeRamp.start(1, at.ease, c.timeScale);
+    };
     if (s.state == State::Dead) {
         c.deathTime += dt;
         if (c.deathTime >= kDeathFade) respawn(); // the wipe is black (DeathState_Process 0x75AF90)
@@ -1180,8 +1265,13 @@ void World::tickCombat(const Actions& a, float dt) {
     if (health_.dead() && !airborne(s.state)) { // [I] dies on the ground; fatal falls die on landing
         // out of breath (0x755230: periodic damage, death type 8) under water: death_drown [I: the type-8 clip]
         const bool drowned = health_.lastType() == kDamagePeriodic && s.water >= 0;
-        player_.die(drowned ? "death_drown" : health_.lastType() == kDamageAbsolute ? "death_fall_normal" : "death_toknee");
+        // a fatal landing out of a swan dive: death_fall_swan (lara.drm request 104) [I: by the name]
+        const bool swan = s.clip == "ng_swan_land" && anims_.find("death_fall_swan");
+        player_.die(drowned ? "death_drown" : health_.lastType() == kDamageAbsolute ? (swan ? "death_fall_swan" : "death_fall_normal") : "death_toknee");
+        endMode(), endHeadShot();
         CombatState d; // holstered; the weapons and their rounds are kept [I]
+        d.timeScale = c.timeScale, d.worldScale = c.worldScale, d.timeRamp = c.timeRamp, d.worldRamp = c.worldRamp;
+        d.manualHeld = c.manualHeld, d.aimHeld = c.aimHeld;
         d.weapon = d.want = c.weapon, d.previous = c.previous, d.secondary = c.secondary;
         std::copy(&c.clip[0][0], &c.clip[0][0] + 2 * kWeaponCount, &d.clip[0][0]);
         std::copy(c.reserve, c.reserve + kWeaponCount, d.reserve);
@@ -1196,8 +1286,11 @@ void World::tickCombat(const Actions& a, float dt) {
     // On the bike (riding, not mounting / dismounting) and on the rope (swinging, on a wall) only the pistols and the
     // uzi come out, one gun (Vehicle.cpp, Grapple.cpp)
     const bool bike = s.state == State::Vehicle, rope = onRope(s.state), oneHand = bike || rope;
-    const auto allowed = [&](Weapon wpn) { return bike ? ridingBike() && bikeWeapon(wpn) : rope ? bikeWeapon(wpn) : canShoot(s, wpn); };
-    if (weaponPressed && c.slowMo <= 0) {
+    const auto allowed = [&](Weapon wpn) {
+        if (c.headShot >= 0) return true; // the move's clip holds the gun (State::Use)
+        return bike ? ridingBike() && bikeWeapon(wpn) : rope ? bikeWeapon(wpn) : canShoot(s, wpn);
+    };
+    if (weaponPressed && c.headShot < 0) {
         Weapon cycle[3] = {Weapon::Pistols};
         int n = 1;
         if (c.secondary != Weapon::Pistols && (!oneHand || bikeWeapon(c.secondary))) cycle[n++] = c.secondary;
@@ -1220,6 +1313,7 @@ void World::tickCombat(const Actions& a, float dt) {
     else if (c.redraw) c.drawn = true, c.redraw = false;
     else if (drawPressed) c.drawn = !c.drawn;
     else if ((a.fire || a.aim) && !c.drawn) c.drawn = true; // target lock draws (manual), fire too [I]
+    tickManualAim(a, manualPressed, aimPressed); // may draw
     const auto wi = size_t(c.weapon);
     const WeaponDef& w = anims_.weapons[wi];
     const WeaponInfo& in = info(c.weapon);
@@ -1235,15 +1329,19 @@ void World::tickCombat(const Actions& a, float dt) {
     if (!c.drawn || !known || !c.target->alive() ||
         glm::length(c.target->aimPoint() - s.pos) > targeting.lockRange) // [I] the lock drops past the tier range
         c.target = nullptr, c.locked = false;
-    if (!c.target) c.slowMo = 0; // the window needs its target
+    if (!c.target && c.slowMo > 0) c.slowMo = 0, c.timeRamp.start(1, at.ease, c.timeScale); // the aim needs its target
     if (!c.drawn) {
-        c.hammer = {};
+        c.hammer = {}, c.second = nullptr;
+        endMode();
+        if (c.headShot >= 0) tickHeadShot(a, false, 0, dt); // the move still plays out
         return;
     }
 
-    // targeting: aim held = hard lock (kept, switchable), else the soft target in front of Lara; the adrenaline
-    // window keeps its target
-    if (c.slowMo > 0) {
+    // targeting: aim held = hard lock (kept, switchable), else the soft target in front of Lara; the head shot keeps
+    // its target; manual aim has none (the view's centre ray, below)
+    if (c.headShot >= 0) {
+    } else if (c.manualAim) {
+        c.target = nullptr, c.locked = false;
     } else if (a.aim) {
         if (!c.locked || !c.target) {
             const auto cand = candidates(true);
@@ -1261,13 +1359,15 @@ void World::tickCombat(const Actions& a, float dt) {
     }
     if (c.target) {
         c.aimPoint = c.target->aimPoint();
+    } else if (c.manualAim) { // what the reticle covers
+        c.aimPoint = manualAimPoint();
     } else { // free aim: the camera's view ray (DAT_00fadb58+0x800 free-aim point)
         const vec3 d = glm::normalize(cam_.target - cam_.position);
         const auto hit = col_.raycast(cam_.position, d, w.maxRange);
         c.aimPoint = cam_.position + d * (hit ? hit->t : w.maxRange);
     }
     const vec3 v = c.aimPoint - (s.pos + vec3(0, 0, kShoulderHeight));
-    if (c.locked && (s.state == State::Idle || s.state == State::Turn)) // [I] standing: turn to face the lock
+    if ((c.locked || c.manualAim) && (s.state == State::Idle || s.state == State::Turn)) // [I] standing: turn to face the lock / the view
         player_.face(s.yaw + std::clamp(wrapAngle(std::atan2(v.y, v.x) - s.yaw), -player_.tuning().turnRate * dt,
                                         player_.tuning().turnRate * dt));
     const bool hammer = c.weapon == Weapon::ThorHammer;
@@ -1284,9 +1384,20 @@ void World::tickCombat(const Actions& a, float dt) {
         c.aim = {std::clamp(yaw, yawLo, yawHi), hammer ? 0.0f : std::clamp(pitch, -gridDown(in.rifle), gridUp(in.rifle))};
     }
 
-    if (!c.locked && c.slowMo <= 0) c.adrenalineMode = false; // 0x718BD0: the mode needs her lock (flag 0x400)
+    tickSecondTarget(dual, dt);
+    // 0x718BD0, each frame: with the meter not empty, a hard lock (flag 0x400), no head shot under way (0x200000) and
+    // not Mjolnir [I: the exe's weapon id 3], Manual Aim (input action 37) toggles adrenaline mode; without them the
+    // mode ends. Starting it (0x7189C0) gives the latched head shot up (0x6E6670: the latch only, in the mode).
+    if (c.adrenaline <= 0 || !c.locked || c.headShot >= 0 || hammer) endMode();
+    else if (manualPressed && c.adrenalineMode) endMode();
+    else if (manualPressed) c.adrenalineMode = true, c.headShotReady = false, c.timeRamp.start(at.modeScale, at.ease, c.timeScale);
     const int hand = dual ? c.hand : 0;
-    if (hammer) { // Mjolnir: swings and ground pounds play out; no adrenaline head shot [I]
+    if (c.headShotRequest && c.headShot < 0) startHeadShot(); // World::tick saw the Grapple press (headShotAvailable)
+    if (c.headShot >= 0) { // the move: no ordinary shots; in its aim window fire is the head shot
+        tickHeadShot(a, firePressed, hand, dt);
+        return;
+    }
+    if (hammer) { // Mjolnir: swings and ground pounds play out
         HammerAction& h = c.hammer;
         if (!h.clip.empty()) {
             h.prevT = h.t, h.t += dt;
@@ -1307,32 +1418,7 @@ void World::tickCombat(const Actions& a, float dt) {
         }
         return;
     }
-    if (c.slowMo > 0) { // adrenaline window: the stick steers the pip; fire with it in the reticle = head shot
-        c.pip += a.move * (kPipSpeed * dt);
-        c.slowMo = std::max(0.0f, c.slowMo - dt);
-        if (firePressed) {
-            if (glm::length(c.pip) <= 1) { // Hit::headshot, damage = the target's remaining health
-                const vec3 from = muzzle(hand), to = c.target->aimPoint();
-                const Shot shot{from, to, hand, true, c.target, c.target->health(), gunMatrix(hand)};
-                Hit hit{shot.damage, to, glm::normalize(to - from + vec3(1e-6f, 0, 0)), Team::Player, true};
-                hit.damageClass = anims_.weapons[size_t(c.weapon)].hitClass, hit.damageType = anims_.weapons[size_t(c.weapon)].hitType;
-                c.target->onHit(hit);
-                c.shots.push_back(shot);
-                c.sinceShot[hand] = 0;
-                ++c.shotsFired;
-            }
-            c.slowMo = 0; // one shot per window [I]
-        }
-        if (c.slowMo <= 0) c.adrenaline = 0, c.adrenalineMode = false; // spent
-    } else if (interactPressed && c.adrenalineMode && c.locked && c.target && c.drawT >= 1 && // in the mode, close [I]
-               glm::length(c.target->aimPoint() - (s.pos + vec3(0, 0, targeting.eyeHeight))) <= targeting.closeRange) {
-        // "full meter, lock on, get close and press X" (locals 1333/1334); close = the close lock tier [I]
-        const float ang = (rnd(c.rng) + 0.5f) * 2 * kPi;
-        c.slowMo = kSlowWindow;
-        c.pip = kPipStart * vec2(std::cos(ang), std::sin(ang));
-    } else if (interactPressed && c.locked && c.target && c.drawT >= 1 && (c.adrenalineMode || c.adrenaline > 0)) {
-        c.adrenalineMode = !c.adrenalineMode; // 0x718BD0 toggles it (0x7189C0 / 0x718AD0); interact as the button [I]
-    } else if (a.fire && c.drawT >= 1 && c.reload <= 0 && c.cooldown <= 0) {
+    if (a.fire && c.drawT >= 1 && c.reload <= 0 && c.cooldown <= 0) {
         const bool canReload = w.infinite || c.reserve[wi] > 0;
         if (c.clip[wi][hand] <= 0) {
             if (canReload) c.reload = hd.reload;

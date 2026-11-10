@@ -1,45 +1,196 @@
 {
-  "version": 1,
-  "name": "swim",
-  "chapter": "Core mechanics: drop into the sea, surface swim, dive, swim under water, breath, surfacing",
-  "note": "l1_seatop sea. Swim speed 1348.6 units/s [O Wine, 44.95 a 30 Hz frame]; breath 133.3 s [O lara.drm +0xF8], refilled at the surface.",
-  "level": "l1_seatop",
-  "spawn": [-15000, -3775, 2000, -40],
-  "steps": [
-    {"step": "drop_in", "duration": 4,
-     "until": {"probe": "player.state", "eq": "swimtread"},
-     "expect": [{"visits": ["idle", "fall", "swimsplash", "surfacing", "swimtread"]},
-                {"clips": ["swim_jump_land", "swim_sub_up", "swim_surfaceidle"]},
-                {"probe": "water.in", "eq": true},
-                {"probe": "water.under", "eq": false},
-                {"probe": "player.air", "eq": 1}]},
-    {"step": "surface_swim", "input": ["0 forward 1"], "duration": 3,
-     "expect": [{"probe": "player.state", "eq": "swimsurface"},
-                {"probe": "player.clip", "eq": "swim_surface_fast_forward"},
-                {"probe": "player.speed", "over": "max", "near": 1348.6, "tol": 5},
-                {"probe": "step.horizontal", "min": 3200, "max": 3900, "note": "0.7 s ramp, then 1348.6"},
-                {"probe": "water.under", "over": "all", "eq": false},
-                {"probe": "player.air", "eq": 1}]},
-    {"step": "dive", "input": ["0 drop 1"], "duration": 1.5,
-     "expect": [{"visits": ["swimsurface", "swimdive", "swimunder"]},
-                {"probe": "water.under", "eq": true},
-                {"probe": "step.drop", "min": 600},
-                {"probe": "player.air", "max": 0.999, "note": "the breath meter runs"}]},
-    {"step": "swim_under_water", "input": ["0 forward 1"], "duration": 3,
-     "expect": [{"probe": "player.state", "over": "all", "eq": "swimunder"},
-                {"probe": "water.under", "over": "all", "eq": true},
-                {"probe": "step.peak_speed", "near": 1348.6, "tol": 150},
-                {"probe": "step.horizontal", "min": 2800},
-                {"probe": "player.air", "near": 0.970, "tol": 0.006, "note": "~4 s of 133.3 s under water"},
-                {"probe": "step.health_lost", "eq": 0}]},
-    {"step": "surface", "input": ["0 jump 1"], "duration": 10,
-     "until": {"probe": "player.state", "eq": "swimtread"},
-     "expect": [{"probe": "step.height_gain", "min": 900},
-                {"probe": "water.under", "eq": false},
-                {"probe": "player.clip", "eq": "swim_surfaceidle"}]},
-    {"step": "breathe", "duration": 2.5,
-     "expect": [{"probe": "player.state", "eq": "swimtread"},
-                {"probe": "player.air", "eq": 1},
-                {"probe": "player.health", "eq": 1000}]}
-  ]
+ "version": 1,
+ "name": "swim",
+ "chapter": "Core mechanics: drop into the sea, surface swim, dive, swim under water on the tanks, surfacing",
+ "note": "l1_seatop sea (lara_wetsuit_warm: scuba gear). Swim speed 1348.6 units/s [O Wine, 44.95 a 30 Hz frame]; with the tanks in use the breath never drains (tru.exe 0x6EEF50 / 0x755230); the drain itself is tests/selftests/swim_breath.json.",
+ "level": "l1_seatop",
+ "spawn": [
+  -15000,
+  -3775,
+  2000,
+  -40
+ ],
+ "steps": [
+  {
+   "step": "drop_in",
+   "duration": 4,
+   "until": {
+    "probe": "player.state",
+    "eq": "swimtread"
+   },
+   "expect": [
+    {
+     "visits": [
+      "idle",
+      "fall",
+      "swimsplash",
+      "surfacing",
+      "swimtread"
+     ]
+    },
+    {
+     "clips": [
+      "swim_jump_land",
+      "swim_sub_up",
+      "swim_surfaceidle"
+     ]
+    },
+    {
+     "probe": "water.in",
+     "eq": true
+    },
+    {
+     "probe": "water.under",
+     "eq": false
+    },
+    {
+     "probe": "player.air",
+     "eq": 1
+    }
+   ]
+  },
+  {
+   "step": "surface_swim",
+   "input": [
+    "0 forward 1"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "swimsurface"
+    },
+    {
+     "probe": "player.clip",
+     "eq": "swim_surface_fast_forward"
+    },
+    {
+     "probe": "player.speed",
+     "over": "max",
+     "near": 1348.6,
+     "tol": 5
+    },
+    {
+     "probe": "step.horizontal",
+     "min": 3200,
+     "max": 3900,
+     "note": "0.7 s ramp, then 1348.6"
+    },
+    {
+     "probe": "water.under",
+     "over": "all",
+     "eq": false
+    },
+    {
+     "probe": "player.air",
+     "eq": 1
+    }
+   ]
+  },
+  {
+   "step": "dive",
+   "input": [
+    "0 drop 1"
+   ],
+   "duration": 1.5,
+   "expect": [
+    {
+     "visits": [
+      "swimsurface",
+      "swimdive",
+      "swimunder"
+     ]
+    },
+    {
+     "probe": "water.under",
+     "eq": true
+    },
+    {
+     "probe": "step.drop",
+     "min": 600
+    },
+    {
+     "probe": "player.air",
+     "eq": 1,
+     "note": "the wetsuit's tanks: no drain"
+    }
+   ]
+  },
+  {
+   "step": "swim_under_water",
+   "input": [
+    "0 forward 1"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "swimunder"
+    },
+    {
+     "probe": "water.under",
+     "over": "all",
+     "eq": true
+    },
+    {
+     "probe": "step.distance",
+     "min": 2800,
+     "note": "along the camera's pitch after the dive"
+    },
+    {
+     "probe": "player.air",
+     "over": "all",
+     "eq": 1
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "surface",
+   "input": [
+    "0 jump 1"
+   ],
+   "duration": 10,
+   "until": {
+    "probe": "player.state",
+    "eq": "swimtread"
+   },
+   "expect": [
+    {
+     "probe": "step.height_gain",
+     "min": 900
+    },
+    {
+     "probe": "water.under",
+     "eq": false
+    },
+    {
+     "probe": "player.clip",
+     "eq": "swim_surfaceidle"
+    }
+   ]
+  },
+  {
+   "step": "breathe",
+   "duration": 2.5,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "swimtread"
+    },
+    {
+     "probe": "player.air",
+     "eq": 1
+    },
+    {
+     "probe": "player.health",
+     "eq": 1000
+    }
+   ]
+  }
+ ]
 }

@@ -28,6 +28,27 @@ How to read it:
   several chapters is one reusable implementation (named there), never per-level code.
 
 
+## Status changes since the baseline
+
+The chapter sections below record the state at v0.41.0 (the audit baseline). These mechanics have landed since; the
+rows that name them move as stated until the per-row refresh of the chapter files:
+
+| Since | Mechanic (reusable implementation) | Rows it changes | New status | Evidence |
+|---|---|---|---|---|
+| 0.42.0 | Chimney / wall jump (`src/game/WallJump.cpp`; M06) | every row listing the chimney jump as missing: C03-22, C05-09, C07-24, C07-37, C07-54, C07-56, C08-05, C08-32, C08-36, C08-44, C14-04, C14-14, C14-27, C14-49, C15-18, C17-28, C17-35, C17-38, C17-53, C17-60, C17-67, the two of section 21 | IMPLEMENTED at l2_junglehub 796 → 797, l5_valaskjalf 1512 → 1510, l2_towerroom 418 → 417; IMPLEMENTED BUT UNVERIFIED elsewhere (not measured against tru.exe yet) | `Game.ChimneyJump*`, `GameReal.JunglehubChimneyJumpClimbsColumns`, `GameReal.ValaskjalfChimneyJumpTakesAllFive` |
+| 0.42.0 | Treasure urns and the reward table (M63, M64) | "Collectibles" of every chapter; all "jar treasure not collectable" rows | IMPLEMENTED (urns broken by shots; totals 26 / 30 / 13 / 50 / 30 / 0 / 30 and 6 relics from the game's own table); kick / bike breaking still NOT IMPLEMENTED | `ChaptersReal.RewardSurveyMatchesTheRewardTable`, `PickupsReal.*`, `game_selftest_treasure_urn` |
+| 0.42.0 | Relic effect: max health + heal (M73) | C04-20, C09 relic, C11 relic 3, C15-05, C17 relic, C20 relic | IMPLEMENTED | `Pickups.RelicRaisesMaxHealthAndHeals`, `PickupsReal.RelicRaisesMaxHealthAndHeals` |
+| 0.42.0 | Manual (precision) aim (M28) | C03-21, C08-40, C12 panthers, C13, C18-05 | IMPLEMENTED in l1_kraken_room and l4_pool; elsewhere IMPLEMENTED BUT UNVERIFIED | `Combat.ManualAimHitsWhatTheReticleCovers`, `ProgressionReal.KrakenChainLinksByManualAim`, `game_selftest_manual_aim` |
+| 0.42.0 | Kraken kill by shooting the chain links | C03-21 | IMPLEMENTED | `ProgressionReal.KrakenChainLinksByManualAim`, `game_selftest_kraken_kill` |
+| 0.42.0 | Situational adrenaline: script time scales (M36) | C03-35, C06-05, C08-14, C14 razor house, C17 bridge slide, C21 dodge events | IMPLEMENTED on l1_kraken_room's script; the other sequences IMPLEMENTED BUT UNVERIFIED (their objects are still open) | `ProgressionReal.KrakenTentacleSlowMotionByItsScript`, `Combat.ScriptTimeRampEasesInAndOut` |
+| 0.42.0 | Adrenaline head shot / focused fire inputs, dual targets | head-shot and focused-fire rows of sections 7, 8, 12-14 | IMPLEMENTED (head shot on a real panther); enemy vault still NOT IMPLEMENTED | `Combat.HeadShotConditionsMissAndInterrupt`, `CombatReal` head-shot test in l4_pool, `game_selftest_adrenaline` |
+| 0.42.0 | One-handed shooting while hanging / climbing (M32) | C07, C08-33, C14, C17 rows | IMPLEMENTED at l4_pool ledge 1253; elsewhere IMPLEMENTED BUT UNVERIFIED | real-level test in `tests/test_combat.cpp` (pistols from ledge 1253 on a panther) |
+| 0.42.0 | Scuba / breath rule (M85) | C02-02, C02-04, section 19 dive | IMPLEMENTED in l1_seafloor; l7_arctic_sea IMPLEMENTED BUT UNVERIFIED | `GameReal.SeafloorScubaSwimKeepsTheBreath`, `GameReal.ThailandDiveDrownsAtTheBreathTime` |
+| 0.42.0 | Weapons in the water, under-water dodge | C02-06, C02-08 | IMPLEMENTED | `GameReal.SeafloorSpearKillsShark`, `GameReal.SwimDodgesMoveAsTheirClips`, `game_selftest_swim_moves` |
+| 0.42.0 | Jellyfish | C02 hazard rows | IMPLEMENTED | `GameReal.JellyfishStingOnTouch` |
+| 0.42.0 | Swan dive | C03-23, C05-10, C07-19 | IMPLEMENTED at the l2_cliffclimb cliff; the other spots IMPLEMENTED BUT UNVERIFIED | `GameReal.CliffSwanDiveIntoTheSea`, `game_selftest_swan_dive` |
+| 0.42.0 | Player sensors (script vt 14) | prerequisite of the gauntlet rows (M60); those stay NOT IMPLEMENTED until the heavy movers exist | — | `docs/formats/SCRIPTS.md` "playersensor" |
+
 ## 01. Prologue: No Illusions (Prologue - Croft Manor)
 
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/00prologue.html (no sub-pages; two inline screenshots)

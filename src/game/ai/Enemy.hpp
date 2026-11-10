@@ -94,6 +94,22 @@ struct Regenerate {
     std::vector<Kill> kills; // count +0x64, 0xC-byte entries at +0x68
 };
 
+// Lara's adrenaline head shot on this enemy (list node +0x54 record; tru.exe 0x6255D0 answers her queries 0x165 /
+// 0x166 / 0x167 from it, 0x71D4F0 starts the move): +0xC the clip she plays (an anim request of the enemy's object: the
+// `hosted_enemy_aa_<weapon>` clips of its DRM, by her weapon [I: by name]), +0x10 how far from it she is put, +0x14 over
+// how many frames. `open` / `close`: the hosted clip's events 5 / 4 (0x716F30 -> 0x715020 / 0x718EA0: the aim window),
+// seconds; < 0 without the event. `reaction`: the enemy's own clip for the move (message 0xBE) [I: by name].
+struct HeadShotMove {
+    struct Clip {
+        std::string name; // "" = the DRM has none for this weapon kind
+        float open = -1, close = -1;
+    };
+    float distance = 0, blend = 0; // units, seconds
+    std::array<Clip, 4> clips;     // handguns (pistols, uzi), shotgun (and speargun), rifle (and tranquilizer), hammer
+    std::string reaction;
+    bool valid() const { return distance > 0; }
+};
+
 // Numbers per enemy type. Provenance ([O] observed / [I] inferred) in docs/GAMEPLAY.md "Enemies".
 struct EnemyTuning {
     float radius = 94.8167f;       // body capsule radius; [O] enemy data +0x2C (0.3 m of 316.056 units)
@@ -122,6 +138,7 @@ struct EnemyTuning {
     Regenerate regenerate;
     float deathImpulse = 0;        // death record +0x4C (thralls 2000 for their chunks; soldiers, cats 0)
     float deathTimer = 4.0f;       // death record s16 +0x1C (120 counts): a ragdoll refused (6 live) is retried this late
+    HeadShotMove headShot;         // list node +0x54: Lara's adrenaline head shot on this enemy
 };
 
 // Weighted animation list entry (tru.exe 0x60F450: list +0x0C count, 0xC-byte entries at +0x10 {clip ref, u32
@@ -425,6 +442,9 @@ public:
     // Enemies each tick.
     std::span<const formats::PlannerNode> nodes;
     const NavMesh* nav = nullptr;
+    // Lara's adrenaline head shot begins on it (message 0xBE, 0x623F50): it turns to her and plays its reaction clip,
+    // held in the hit state until the clip ends.
+    void headShotReact(vec3 lara);
     void alert(vec3 at);              // a squad mate saw Lara at `at` (idle / patrolling / searching / returning: turns, then hunts)
     void hear(vec3 at);               // a disturbance (Lara's shot) at `at`: investigates it when calm (EnemyBehavior_Investigate)
     // Patrol paths from the intro data (world frame; [0] its own, [n] enemybase 22 alternatives) and their order
