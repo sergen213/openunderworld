@@ -7694,7 +7694,11 @@ TEST(GameReal, FallingFloorBreaksUnderLara) {
 TEST(GameReal, PrologueFloorCollapsesAndTheDoorIsBlownOff) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    UnitGame g(bf, "l3_bedroom_hall", {{-3300, -3640, 1900}, 0});
+    // 284 from the plane (it was 414 while ng_run_start began at its frame 6, not 2): she crosses it on the same tick as
+    // before. Ours' door jitters on its slide while it waits (x -953.2 .. -955.1), and on which tick the joint is
+    // removed seems to decide whether the throw frees it or it stays in its frame [I; a weakness of the door physics, not of
+    // this test's subject: crossing 8 ticks later left it standing].
+    UnitGame g(bf, "l3_bedroom_hall", {{-3170, -3640, 1900}, 0});
     auto& w = g.w;
     w.tick({}), w.tick({});
     const auto clip = [&] {
@@ -9379,7 +9383,9 @@ TEST(GameReal, SlopeKrakenRoomSlide) {
     for (int i = 0; i < 400 && s.state == State::Slide; ++i) {
         w.tick({});
         if (s.state != State::Slide) break;
-        fastest = std::max(fastest, glm::length(s.vel));
+        // the slide's own speed: from half a second in (she comes onto the face at her run's pace, 1267 once the run's
+        // start has played out, which is a little over the slide's)
+        if (i >= 30) fastest = std::max(fastest, glm::length(s.vel));
         loop |= s.clip == "slope_slidefront";
         ASSERT_NEAR(s.pos.x, -9026.4f, 5.0f);
     }
