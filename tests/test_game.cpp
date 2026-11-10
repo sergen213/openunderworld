@@ -4393,6 +4393,35 @@ TEST(GameReal, PillarJumpLeavesASolidShaft) {
     EXPECT_NEAR(s.pos.z, 3872, 6);
 }
 
+// The jump up from a ledge hang onto free-climb holds (l1_ship_sinking_hall, the second escape shaft: from the
+// grating's edge, ledge 250 at z 8215, to the valve wheels): no ledge lies over her, the lowest wheel's root point
+// (hold 227: point 0 - 158.025 = z 8706) is 491 up, inside the up-jump query's rise of 502.5 (q10). Stick up + Jump
+// carries her onto it; before, she only leaned.
+TEST(GameReal, HangJumpUpOntoAFreeClimbHold) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l1_ship_sinking_hall", {{-4814, -1406, 7800}, glm::half_pi<float>()}); // in the air under the edge
+    const auto& s = w.player().state();
+    for (int i = 0; i < 180 && s.clip != "ledgeb_idle"; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    ASSERT_EQ(s.clip, "ledgeb_idle");
+    ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 250);
+    Actions up = worldStick(w, {0, 1}); // into the wall = up
+    for (int i = 0; i < 6; ++i) w.tick(up);
+    up.jump = true;
+    for (int i = 0; i < 6; ++i) w.tick(up);
+    EXPECT_EQ(s.state, State::Climb);
+    EXPECT_EQ(s.clip, "ledgeb_jump_up");
+    for (int i = 0; i < 120 && !s.clip.starts_with("DICE_"); ++i) w.tick({});
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ(s.state, State::Climb);
+    ASSERT_GE(s.climbHold, 0);
+    EXPECT_EQ(w.collision().markup[size_t(s.climbHold)].id, 227);
+    EXPECT_NEAR(s.pos.z, 8864 - 158.025f, 3.0f);
+    EXPECT_NEAR(s.pos.x, -4824, 3.0f);
+    EXPECT_FALSE(w.health().dead());
+}
+
 // A pillar whose top lies under the floor she is over is not caught from the air (l1_baldrs_sideroom: pillar 33
 // carries the floor behind ledge 35; a jump onto that floor passed within reach of its axis and was pulled down
 // through the floor onto the shaft). Without the floor the same jump catches the pillar.

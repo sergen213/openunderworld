@@ -2588,6 +2588,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             else if (kind == 0 && tryHangToBeam()) {
             } else if (startHangJump(kind)) {
                 if (fromLean) play("ledgeb_jump_right_from_antic", false, 1, kind == -1);
+            } else if (kind == 0 && hangJumpToHold()) { // no ledge over her, but a free-climb hold in the up-jump's reach
             } else if (kind != 0) { // nothing there: a free leap, launched when the take-off clip ends (State::Jump)
                 const vec2 dir = kind == 2 ? -xy(forward()) : glm::vec2(right * float(kind));
                 s_.vel = vec3(dir * (kind == 2 ? t_.hangLeapBack : t_.hangLeapSide), t_.hangLeapVz);

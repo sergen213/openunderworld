@@ -1,0 +1,318 @@
+{
+ "version": 1,
+ "name": "ch06_second_shaft_exit",
+ "chapter": "06 Realm of the Dead: from the top wheel to the bar, the beam and the exit ledges (docs/matrix/06_realm_of_the_dead.md C06-10 end, C06-11, C06-12)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/realm3.html",
+ "note": "KNOWN GAP (2026-11-10). After ch06_second_shaft_valves's steps she is on hold 209 (root -4236 -1237 11059). The page goes on onto a straight bar, shimmies left over the beam and drops onto it. Bar 238's near end (-4551 -1264 11377) is 315 to the left and 318 over her root: no hold lies between, the DICE jump up (q31) is not under it and the DICE side jump (q28: 70.80 aside + 34.77 up a frame) does not rise that far: it meets the beam's own side ledge 253 instead, 800 lower, where she is caught one-handed (ledgeb_bad_attach_M; Interact recovers) and can shimmy the beam's length hanging. Which move reaches the bar in the original is not known (no Wine trace); the three up-jumps beyond the beam (ledges 239 at z 11456, 237 at z 12100: 644 apart, more than q10's 502.5) are not played. The last step fails today (player.ledge is 253).",
+ "level": "l1_ship_sinking_hall",
+ "spawn": [
+  -417,
+  -908,
+  6159,
+  180
+ ],
+ "steps": [
+  {
+   "step": "to_the_ladder",
+   "plan": [
+    "go -3000 -1700 80",
+    "go -4819 -1500 50",
+    "run 90 1.5"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "ladder"
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 235,
+     "note": "the ladder on the second shaft's wall y = -1247, climbed from -Y"
+    },
+    {
+     "clips": [
+      "ladder_attach_ground_bottom"
+     ]
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "climb_to_its_top",
+   "plan": [
+    "run 90 20"
+   ],
+   "duration": 25,
+   "until": {
+    "probe": "player.pos.z",
+    "min": 6900
+   },
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "ladder"
+    },
+    {
+     "clips": [
+      "ladder_climb_up"
+     ]
+    },
+    {
+     "probe": "step.height_gain",
+     "min": 400
+    }
+   ]
+  },
+  {
+   "step": "jump_up_to_the_grating",
+   "plan": [
+    "wait 0.8",
+    "run 90 0.4 jump 0.1",
+    "wait 2"
+   ],
+   "duration": 6,
+   "expect": [
+    {
+     "visits": [
+      "ladder",
+      "hangjump",
+      "hang"
+     ]
+    },
+    {
+     "clips": [
+      "ladder_jump_up",
+      "ledgeb_attach_U",
+      "ledgeb_idle"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 250,
+     "note": "the grating's upper edge (z 8215)"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 7720,
+     "tol": 8
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "jump_up_to_the_valve_wheels",
+   "plan": [
+    "run 90 0.4 jump 0.1",
+    "wait 2"
+   ],
+   "duration": 6,
+   "expect": [
+    {
+     "visits": [
+      "hang",
+      "climb"
+     ]
+    },
+    {
+     "clips": [
+      "ledgeb_jump_up"
+     ]
+    },
+    {
+     "probe": "player.pos.z",
+     "min": 8700,
+     "note": "on the lowest wheels (hold 227's root point at z 8706, 491 over the grating's edge: inside the up-jump's 502.5)"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "first_wheel_group",
+   "input": [
+    "0.20 forward 1",
+    "0.20 right 1",
+    "1.40 forward 0",
+    "1.40 right 0",
+    "1.70 forward 1",
+    "1.70 right 0",
+    "2.90 forward 0",
+    "2.90 right 0",
+    "3.20 forward 1",
+    "3.20 right 0",
+    "4.40 forward 0",
+    "4.40 right 0",
+    "4.70 forward 1",
+    "4.70 right 1",
+    "5.90 forward 0",
+    "5.90 right 0",
+    "6.20 forward 0",
+    "6.20 right 1",
+    "7.40 forward 0",
+    "7.40 right 0",
+    "7.70 forward 1",
+    "7.70 right 1",
+    "8.90 forward 0",
+    "8.90 right 0",
+    "9.20 forward 1",
+    "9.20 right 0",
+    "10.40 forward 0",
+    "10.40 right 0",
+    "10.70 forward 1",
+    "10.70 right 0",
+    "11.90 forward 0",
+    "11.90 right 0"
+   ],
+   "duration": 12.7,
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "climb"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 9722,
+     "tol": 8,
+     "note": "hold 231, the group's top (point 0 at z 9879)"
+    },
+    {
+     "probe": "step.height_gain",
+     "min": 850
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -4289,
+     "tol": 8
+    }
+   ]
+  },
+  {
+   "step": "jump_up_to_the_next_group",
+   "input": [
+    "0.1 forward 1",
+    "0.3 jump 1",
+    "0.4 jump 0",
+    "1.5 forward 0"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "clips": [
+      "DICE_R_jump_up",
+      "DICE_B_air_attach_M"
+     ]
+    },
+    {
+     "probe": "player.state",
+     "eq": "climb"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 10390.6,
+     "tol": 8,
+     "note": "hold 212 (point 0 at z 10548)"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "second_wheel_group",
+   "input": [
+    "0.20 forward 1",
+    "0.20 right 1",
+    "1.40 forward 0",
+    "1.40 right 0",
+    "1.70 forward 1",
+    "1.70 right -1",
+    "2.90 forward 0",
+    "2.90 right 0",
+    "3.20 forward 1",
+    "3.20 right -1",
+    "4.40 forward 0",
+    "4.40 right 0",
+    "4.70 forward 1",
+    "4.70 right 1",
+    "5.90 forward 0",
+    "5.90 right 0",
+    "6.20 forward 1",
+    "6.20 right -1",
+    "7.40 forward 0",
+    "7.40 right 0"
+   ],
+   "duration": 8.2,
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "climb"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 11059.4,
+     "tol": 8,
+     "note": "hold 209, the top wheel on the left"
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -4236,
+     "tol": 8
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "onto_the_bar",
+   "input": [
+    "0.1 right -1",
+    "0.3 jump 1",
+    "0.4 jump 0",
+    "0.8 right 0"
+   ],
+   "duration": 3,
+   "until": {
+    "probe": "player.state",
+    "eq": "hang"
+   },
+   "expect": [
+    {
+     "probe": "player.ledge",
+     "eq": 238,
+     "note": "the straight bar over the wheels (z 11377, x -5586 .. -4551)"
+    }
+   ]
+  }
+ ]
+}

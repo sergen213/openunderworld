@@ -448,14 +448,14 @@ tested behaviour happen.
 | `ch05_container_deck` | l1_ship_exterior | the boarding, then down the bow stair to the container deck; Target Lock + Fire held while walking aft: mercenary 1652 leaves his patrol, chases and is shot, then 1650 (5 -> 3 alive) |
 | `ch05_below_decks` | l1_ship_exterior | aft doorway: door 1529 by volume 1531, down to door 1530, generator 1537's mercenaries on the second stair (pistols on the lock), door 1491, plane 1465 -> cinematic 1453's events, the hall beyond to the T junction |
 | `ch06_sinking_hall_door` | l1_ship_lower_hallway | volume 1176 opens door 1167 (a rider of the rolling hallway 1056), through it into l1_ship_sinking_hall, plane 1201: the hall's first tilt (1056 command 1), carried down on its floor |
-| `ch06_second_shaft_ladder` | l1_ship_sinking_hall | checkpoint 1055: ladder 235 rung to rung, `ladder_jump_up` from its top rungs onto ledge 250 (the grating's edge) |
+| `ch06_second_shaft_valves` | l1_ship_sinking_hall | checkpoint 1055: ladder 235 rung to rung, `ladder_jump_up` from its top rungs onto ledge 250 (the grating's edge), the hang's jump up onto the valve wheels (hold 227, 491 up), hold to hold up the first group, the DICE jump up to the second, its weave to the top wheel 209 (root z 11059) |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today (their last step)
 and are not registered with ctest. Run them by hand; move one up a directory when it passes. Now (2026-11-10; each
 file's `note` says what happens and where): `ch04_column_hall_perches` (ledge 35 -> perch 30: 1620 away, the running
 jump comes down on pillar 29), `ch05_natla_room` (from the T junction the west recess is shut; volume 1436 is not
 reached on foot), `ch06_hallway_roll` (after the hall's second tilt she is stopped 3850 short of plane 1203),
-`ch06_second_shaft_valves` (no jump from the hang on ledge 250 onto the valve wheels' free-climb holds).
+`ch06_second_shaft_exit` (from the top valve wheel the bar 238 is not reached: the side jump lands hanging on the beam's own ledge 253).
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

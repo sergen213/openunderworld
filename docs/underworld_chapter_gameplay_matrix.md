@@ -286,13 +286,13 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | New journal entries (Amanda, Natla); final cinematic (Amanda escapes, gauntlet recovered) → Thailand | IMPLEMENTED | volume 1082 preloads 1005, plane 1074 moves Lara into l1_cine_ship_sinking, whose end requests l2_cliffclimb (PROGRESSION.md); `ProgressionReal.CriticalGates` (1074), `ChaptersReal.MediterraneanEndingRunsThroughTriggerScript`, `GameReal.ScriptedChapterEndChainsStartNextChapter`, `Menus.PdaJournal` |
 | Automated tests | Existing: `GameReal.ShipSinkingHallLadder`, `ProgressionReal.BreakPipeSwitchesItsModel`, `ProgressionReal.CriticalGates` (1074), `ChaptersReal.MediterraneanEndingRunsThroughTriggerScript`, `GameReal.ScriptedChapterEndChainsStartNextChapter`, `StreamReal.SaveContinuesBitIdentically` (l1_ship_sinking_hall), `CineReal.ChapterEndCinematics` | Required: situational-adrenaline run, both shaft climbs end to end, hold ↔ ladder transfers, bar → beam drop, ship-roll state | — |
 
-Requirement rows: 14 in [docs/matrix/06_realm_of_the_dead.md](matrix/06_realm_of_the_dead.md) — PARTIALLY IMPLEMENTED 5, IMPLEMENTED 4, IMPLEMENTED BUT UNVERIFIED 4, NOT IMPLEMENTED 1.
+Requirement rows: 14 in [docs/matrix/06_realm_of_the_dead.md](matrix/06_realm_of_the_dead.md) — IMPLEMENTED 5, PARTIALLY IMPLEMENTED 5, IMPLEMENTED BUT UNVERIFIED 3, NOT IMPLEMENTED 1.
 
 Open in this chapter:
 
 - C06-05 situational adrenaline (scripted slow motion with Lara at real time) and the burning barrels: NOT IMPLEMENTED; it is on the critical path.
 - C06-04 ship roll: hallway 1056's first two stages run by input; she is stopped before plane 1203 (known gap scenario); the cause is not found.
-- C06-09: no jump from a ledge hang onto free-climb holds (known gap scenario): both shafts depend on it.
+- C06-10: from the top valve wheel the bar 238 is not reached (known gap scenario); C06-11 / C06-12 follow it.
 - C06-06..C06-10 valve-wheel / ladder shafts: hold ↔ ladder and ledge ↔ hold transfers are undocumented; stacked ladders (q88) are "not done"; only a floor attach to ladder 234 is tested. Whether the valve wheels are free-climb holds (markup 16-20) or ledges in this unit has not been surveyed.
 - C06-11 hang → beam drop untested in this unit.
 - No test walks from the Natla room to plane 1074.
