@@ -1892,6 +1892,12 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     +0x9B4.. 53.73 sideways + 53.73 up) is not implemented.
   - The jump-offs let the rope go [I: their chart states S321 / S406 are outside the rope states; a kept rope would
     re-enter the hang by T291].
+- Water under the rope: hanging or on a wall with her feet `swimDepth` (391) under a water surface she lets go of the
+  rope and swims (`Game.RopeIsLetGoInDeepWater`, self-test `ch10_maproom_rope_step_off`; the walkthrough of l2_maproom's
+  flooded room has a plain step off the bridge end in the pool without the rope; the depth is ours [I]). Before, she
+  ran the wall under water. Open: the roped jump towards l2_maproom's ring 2595 ends in the pool in ours and on the
+  wall in the original (known gap `ch10_maproom_wall_run`; the rope's length during `grapple_rappel_free_jumpon` on a
+  wall anchor is not decoded [U]); a throw in the air stops her in the air for the throw clip (1 s) [defect].
 - Swing law [O tru.exe 0x746F60, player data +0x8D8..+0xA3C; all per 30 Hz frame]. The original swings a rigid body
   ("[GrappleRope] User Body": sphere radius 30, mass +0x8D8 = 55, damping +0x8DC = 0.022) on the rope; ours is a point
   pendulum (hand = root + 400 [I]) under the same forces, gravity 5.72443 [I: Lara's own].
@@ -2713,6 +2719,15 @@ faces, Jump at 0.7 s, A / D / S / W held); tru.exe did not come up / did not loa
 
 ## Motorcycle (src/game/Vehicle.*)
 
+- Script queries of the ride [O]: larabase 52 (0x777DD0) puts her on the bike named, 53 (0x777E10) posts the mount
+  again to her vehicle (+0xF00), 54 (0x777E40) answers whether the instance named is the vehicle she is on (+0xF00 is
+  set by the mount 0x741570 and cleared by the dismount 0x731530). l4_trailstart's temple reveal (plane 6712 ->
+  dispatcher 6704 vt 64 -> reveal 6677 vt 62) asks 54 of bike 5482 and then sets her down beside it on the upper road
+  (self-test `ch12_trailstart_ride_in`, ctest `game_selftest_ch12_trailstart_ride_in`: in ou-game she is off the bike
+  2 s after the plane, standing where it stopped; with the native unbound the handler stopped and she rode on. A bare
+  `game::World` without ou-game's loop does not show the set-down, so there is no gtest of it [open: which layer
+  ends the ride]).
+
 Lara mounts the bike with E (interact) next to its left side, rides it with the move stick (forward = throttle, back =
 brake, and reverse once it stands and the brake has been held 7 frames; left/right = steer; raw stick, not
 camera-relative), hand-brakes with Space / pad South (the jump action: tru.exe's "Vehicle Brake", button 22) and gets off
@@ -3158,6 +3173,10 @@ shark_blueshark 500, merc 450, mayan_thrall 350, shark_greenland 800, yeti_thral
 Distances in the data are multiples of 31.6056 (316.056 units = 1 m, consistent with the hair constants).
 
 ### Behaviour (ours) and numbers
+
+A ground enemy's melee distance is flat while its body and Lara's overlap in height, else it includes the gap between
+them [I]: the attack starts and the blow lands only inside that (`Ai.GroundBlowNeedsHerWithinReachInHeight`; before,
+l2_maproom's bridge spiders bit a swimmer 870 under them).
 
 Modes idle → alert (0.4 s, turn) → chase → attack (one blow in the hit window) / fire → reload → chase; hit
 reaction; death; spawning (generator clip). Perception uses the decoded senses (the combat record once out of idle):

@@ -441,10 +441,19 @@ tested behaviour happen.
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
+| `ch10_maproom_rope_step_off` | l2_maproom | section 10 (C10-03): wall ring 2595 offered and thrown at from the near bridge stub's corner (rope 3404); roped she walks off the stub: the arc takes her under the pool, the rope is let go and she swims (surface root -9662); the far stub's spiders do not bite a swimmer under them |
+| `ch11_chapel_dais_furnace` | l3_chapel | section 11 (C11-16): onto pressure plate 4834 (joint -50): fire 4818 lit, gates 4830 / 4831 opening; off it: the fire goes out, the gates shut |
+| `ch11_study_gauntlet` | l3_stairhall -> l3_secretchamber | section 11 (C11-24, C11-25): from checkpoint 4699 down the passage into the study: checkpoint 4621, volume 4669, cinematic 4654 (gauntlet), two thralls alive in the room |
+| `ch11_rockhall_switch` | l3_chamberrockhall | section 11 (C11-32): the stone door 4528 stops her; switch 4617 used with Interact opens it; through to checkpoint 4453 |
+| `ch12_trailstart_ride_in` | l4_trailstart | section 12 (C12-03, C12-04): the ride of `bike_ride`, then the upper road: plane 6712 starts reveal 6677, which sets her down beside the bike (larabase 54); mount again, ride into the temple courtyard (volumes 6713, 6703) |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now: none (`pole_drop_after_fling`
-moved up 2026-11-10).
+registered with ctest. Run them by hand; move one up a directory when it passes. Now (`pole_drop_after_fling` moved up 2026-11-10):
+
+| known gap | level | fails at | cause |
+|---|---|---|---|
+| `ch10_maproom_wall_run` | l2_maproom | `leap` | the roped jump towards wall ring 2595 swings her under the pool's surface (rope 2670, ring 1200 over the bridge, water 870 under it), where the rope is let go: what shortens the original's rope in that jump is not decoded [U]. The later steps (reel to 1500, wall run, back jump to ledge 652, pull up) pass once she is on the wall |
+| `ch12_trailstart_lever_gate` | l4_trailstart | `let_go` | lever 6695 is pulled out by Interact and stays out (joint 1264); the original holds it by her weight on the rope and it returns when unloaded |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

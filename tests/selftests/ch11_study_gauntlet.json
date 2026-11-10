@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "ch11_study_gauntlet",
+  "chapter": "11 Protected by the Dead: from the dark stair hall into Richard Croft's study: the tape cinematic that gives the second gauntlet, and the two thralls (docs/matrix/11_protected_by_the_dead.md C11-24, C11-25)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/10manor.html",
+  "note": "l3_stairhall from checkpoint 4699 at the hall's west end. She runs west down the passage into l3_secretchamber (checkpoint 4621 at its door); volume 4669 preloads and volume 4666 plays cinematic 4654 (skipped here: its events and placement run), which leaves her in the study with the right gauntlet [O script, ProgressionReal sweep 4666 -> 4654]. The two panther thralls of the study are alive in the room.",
+  "level": "l3_stairhall",
+  "spawn": [-18390, 1902, -3793, 180],
+  "steps": [
+    {"step": "down_the_passage", "plan": ["go -19288 1904 150", "go -22000 1900 300", "go -25000 1900 300", "go -27500 1900 300"], "duration": 60,
+     "until": {"probe": "step.calls", "has": ["4654:57"]},
+     "expect": [{"probe": "world.unit", "eq": "l3_secretchamber"},
+                {"probe": "world.checkpoint", "eq": 4621},
+                {"probe": "step.events", "has": ["enter:4669>4669"]},
+                {"calls": ["4654:57"]},
+                {"probe": "step.health_lost", "eq": 0}]},
+    {"step": "in_the_study", "duration": 4,
+     "expect": [{"probe": "player.grounded", "eq": true},
+                {"probe": "player.pos.x", "max": -27000, "note": "in the study"},
+                {"probe": "enemies.alive", "eq": 2, "note": "the two thralls"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}
