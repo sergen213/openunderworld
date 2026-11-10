@@ -245,13 +245,33 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     // tru.exe 0x5DE2B0: the level loads Lara as the object named by its settings DTP (GAMEPLAY.md "Outfits").
     if (const auto p = names.find(unit.playerObjectId); unit.playerObjectId && p != names.end()) u.playerObject = p->second;
     if (const auto p = names.find(unit.weatherObjectId); unit.weatherObjectId && p != names.end()) u.weatherObject = p->second;
+    // The reward table index of a reward intro (treasure, urn, relic): intro data +0x30 [O: every one of the 185 has
+    // its own, 1..205, and the table lists it in a treasure or relic group; health packs carry no data]. The born
+    // treasure records it through its parent (0x4D3B50 hands the urn's intro to the birth, message 0x1E8).
+    const auto rewardIndex = [&](const formats::Intro& in) -> uint16_t {
+        if (!in.data || in.data->section >= drm->sections.size()) return 0;
+        const auto& d = drm->sections[in.data->section].data;
+        uint32_t v = 0;
+        if (size_t(in.data->offset) + 0x34 <= d.size()) std::memcpy(&v, d.data() + in.data->offset + 0x30, 4);
+        return v < 2048 ? uint16_t(v) : uint16_t(0);
+    };
+    // What the reward urns give birth to when they break (formats::birthIntros): a treasure at the urn's marker.
+    std::map<int32_t, const formats::Intro*> byUid;
+    for (const auto& in : unit.intros) byUid[in.uniqueId] = &in;
+    for (auto& b : formats::birthIntros(bigfile, unit, names)) {
+        const auto n = names.find(b.intro.objectId);
+        const auto parent = byUid.find(b.parent);
+        if (const auto k = n != names.end() ? pickupKind(n->second) : std::nullopt; k && parent != byUid.end())
+            u.pickups.push_back({b.intro.uniqueId, *k, v3(b.intro.position), b.parent, rewardIndex(*parent->second)});
+        u.births.push_back(std::move(b));
+    }
     for (const auto& in : unit.intros) {
         u.markers.push_back({in.uniqueId, in.marker, v3(in.position)});
         const auto n = names.find(in.objectId);
         if (n == names.end()) continue;
         if (n->second == "checkpoint" || n->second == "invis_checkpoint")
             u.checkpoints.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2}); // heading as findSpawn
-        if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position)});
+        if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position), 0, rewardIndex(in)});
         if (ammoWeapon(n->second)) u.weaponPickups.push_back({in.uniqueId, n->second, v3(in.position)});
         if (n->second == "motorcycle") u.vehicles.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2});
         if (n->second.starts_with("bend_"))
@@ -545,6 +565,10 @@ void World::startChapter(int n) {
     chapter = n;
     startUnit_ = unit, startSpawn_.reset();
     checkpoint_.reset();
+    // tru.exe 0x71FFE0 message 0x23 -> 0x7198D0 [O]: a level start gives Lara the unit's loadout (level settings
+    // +0x2B4 -> DTP: weapons and gadgets); no unit's lists g_healthpack, so she starts every level without packs.
+    found[size_t(PickupKind::HealthPack)] = 0;
+    health_.raiseMax(maxHealth()); // the relics kept (Treasure Hunt) or given up (New Game)
     health_.reset(); // [I] a chapter starts at full health, as a respawn (tru.exe 0x700060)
     script_.setPlayerObjects(chapterGear(n));
     chapterLoadout(n);
@@ -572,6 +596,7 @@ void World::collectPickups(bool pressed) {
     const auto nearer = [&](vec3 w, int32_t id) {
         const float d = glm::length(vec2(p - w));
         if (!(d < bestD && std::abs(p.z - w.z) < kPickupHeight && !collected.contains(id))) return false;
+        if (formats::isBornUid(id) && !born.contains(id)) return false; // still inside its urn
         bestD = d, bestPos = w;
         return true;
     };
@@ -581,8 +606,11 @@ void World::collectPickups(bool pressed) {
         return w && combat_.reserve[size_t(*w)] < maxReserve(*w) ? w : std::nullopt;
     };
     for (const auto& u : units_) {
-        for (const auto& k : u.data.pickups)
+        for (const auto& k : u.data.pickups) {
+            // 0x6F5E70: a health pack is taken only while she carries fewer than the most she can
+            if (k.kind == PickupKind::HealthPack && found[size_t(PickupKind::HealthPack)] >= kHealthPackMax) continue;
             if (nearer(k.pos + u.offset, k.id)) best = &k, ammoId = 0;
+        }
         for (const auto& k : u.data.weaponPickups)
             if (const auto w = room(k.object); w && nearer(k.pos + u.offset, k.id)) best = nullptr, ammoId = k.id, ammo = *w;
     }
@@ -605,7 +633,13 @@ void World::collectPickups(bool pressed) {
     }
     collected.insert(best->id);
     ++found[size_t(best->kind)];
-    pickedUp_.push_back({best->id, best->kind, bestPos});
+    pickedUp_.push_back({best->id, best->kind, bestPos, best->parent, best->reward});
+    if (best->kind == PickupKind::Relic) {
+        // tru.exe 0x5DB6A0 [O]: the maximum rises with the count (health as it is), then the relic heals 300, to no more
+        // than the new maximum + 50; health over the maximum decays (Health::tick).
+        health_.raiseMax(maxHealth());
+        health_.heal(std::max(0.0f, std::min(kRelicHeal, health_.max() + kRelicHeadroom - health_.value())), true);
+    }
 }
 
 void World::checkLevelEnd() {

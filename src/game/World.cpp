@@ -173,6 +173,8 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"Wall_Hug_Shimmy_to_Concave_left_90", 4, 4}, {"Wall_Hug_Shimmy_to_Concave_left_110", 4, 4},
         {"Wall_Hug_Shimmy_to_Convex_left_70", 4, 4}, {"Wall_Hug_Shimmy_to_Convex_left_90", 4, 4},
         {"Wall_Hug_Shimmy_to_Convex_left_110", 4, 4}, {"Wall_Hug_Drop_to_Water", 4, 4}, {"bbeam_somersault_forward", 5, 5},
+        // chimney jumps: requests 1153, 1155, 1156, 1157 (WallJump.cpp)
+        {"wall_jump_attach_air", 4, 1}, {"wall_jump_idle", 1, 1}, {"wall_jump_jump_back", 2, 1}, {"wall_jump_detach_fall", 3, 3},
         // DICE bad attach: requests 256 / 255 / 254 (B), 226 / 224 / 225 (LW), 231 / 229 / 230 (R), 280 / 281 / 282 (Rw),
         // 228 / 227 (L)
         {"DICE_B_air_attach_bad_start", 5, 5}, {"DICE_B_air_attach_bad_loop", 1, 1}, {"DICE_B_air_attach_bad_end", 5, 5},
@@ -377,6 +379,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "Wall_Hug_jump_left", "Wall_hug_Jump_Up_Twist", "Wall_Hug_Shimmy_to_Concave_left_70", "Wall_Hug_Shimmy_to_Concave_left_90",
     "Wall_Hug_Shimmy_to_Concave_left_110", "Wall_Hug_Shimmy_to_Convex_left_70", "Wall_Hug_Shimmy_to_Convex_left_90",
     "Wall_Hug_Shimmy_to_Convex_left_110", "Wall_Hug_Drop_to_Water", "bbeam_somersault_forward",
+    "wall_jump_attach_air", "wall_jump_idle", "wall_jump_jump_back", "wall_jump_detach_fall", // chimney jumps (WallJump.cpp)
     "grapple_pull_up_light_begin", "grapple_pull_mid_light_begin", "grapple_pull_down_light_begin",
     "grapple_pull_up_heavy_begin", "grapple_pull_mid_heavy_begin", "grapple_pull_down_heavy_begin",
     "grapple_pull_up_light", "grapple_pull_mid_light", "grapple_pull_down_light",
@@ -1342,6 +1345,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.flight), add(s.fallStartZ), add(s.fallHeight), add(s.climbStance), add(s.climbWarp), add(s.climbFrom), add(s.climbTo);
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
     add(s.ropeBends), add(s.polePara), add(s.ropeMax);
+    add(s.jumpStart), add(s.jumpTime), add(s.jumpAimed), add(s.wallJumps), add(s.wallTime), add(s.jumpLedge), add(s.jumpFromLedge);
     const auto& ba = s.balance;
     add(ba.build), add(ba.aboutFall), add(ba.grace), add(ba.unbal), add(ba.bal), add(ba.notImprove), add(ba.full), add(ba.clock);
     add(ba.lastFlip), add(ba.period), add(ba.ref), add(ba.stickYaw), add(ba.blend), add(ba.lean), add(ba.side), add(ba.osc), add(ba.fall);

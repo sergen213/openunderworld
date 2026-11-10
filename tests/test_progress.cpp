@@ -980,7 +980,7 @@ TEST(ChaptersReal, RewardTableMatchesUnits) {
             }
         }
     }
-    EXPECT_EQ(game::chapterRewards(2).treasures.size(), 22u);
+    EXPECT_EQ(game::chapterRewards(2).treasures.size(), 30u); // 22 lying in the world + 8 in urns
     EXPECT_EQ(game::chapterRewards(0).relic, 0);
     EXPECT_EQ(&game::chapterRewards(8), &game::chapterRewards(7));
 }
@@ -1106,4 +1106,441 @@ TEST(WaterColor, ConfigUnitChapterPreset) {
     EXPECT_NEAR(glm::dot(glm::vec3(lagoon[1]), glm::vec3(0.2126f, 0.7152f, 0.0722f)), 1.0f, 1e-5f);
     EXPECT_GT(lagoon[1].b, lagoon[1].r); // blue-green, not grey
     for (int i = 0; i < 3; ++i) EXPECT_LT(lagoon[2][i], lagoon[0][i]);
+}
+
+// ---- collectibles: the reward table, treasure urns, relics, health packs (GAMEPLAY.md "Collectibles") ----------
+
+namespace {
+
+// "urnroom": a treasure inside urn 700 and a health pack; "relicroom": the Mediterranean's relic (id 321) beside Lara.
+game::UnitData rewardUnit(const std::string& name) {
+    game::UnitData u = unit("plain");
+    u.name = name;
+    if (name == "urnroom")
+        u.pickups = {{formats::bornUid(700), game::PickupKind::Treasure, {100, 0, 0}, 700, 12}, {701, game::PickupKind::HealthPack, {0, 1500, 0}}};
+    if (name == "relicroom") u.pickups = {{game::chapterRewards(1).relic, game::PickupKind::Relic, {100, 0, 0}, 0, 10}};
+    return u;
+}
+
+bool press(game::World& w) {
+    w.tick(interact(false));
+    w.tick(interact(true));
+    return !w.pickedUp().empty();
+}
+
+void placeLara(game::World& w, vec3 pos) {
+    game::PlayerState s;
+    s.pos = pos;
+    w.restore(s, 0, -0.25f);
+    w.script().playerJumped();
+}
+
+std::vector<std::string> unitNames(const cdc::BigfileSet& bf) {
+    const auto ul = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    if (!ul) return {};
+    const std::string text(ul->begin(), ul->end());
+    std::vector<std::string> units;
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (!line.empty()) units.push_back(line.substr(line.rfind('\\') + 1));
+    }
+    return units;
+}
+
+} // namespace
+
+TEST(Pickups, SpawnedArtifactIsATreasureAndBornIdsRoundTrip) {
+    EXPECT_EQ(game::pickupKind("tp_rw_artifact_spawned"), game::PickupKind::Treasure);
+    EXPECT_EQ(game::pickupKind("ar_pt_weightbreak_reward"), std::nullopt); // the urn itself is no pickup
+    EXPECT_TRUE(formats::birthParent("sa_pt_weightbreak_reward"));
+    EXPECT_FALSE(formats::birthParent("sa_pt_weightbreak_b"));
+    const int32_t id = formats::bornUid(9197);
+    EXPECT_TRUE(formats::isBornUid(id));
+    EXPECT_FALSE(formats::isBornUid(9197));
+    EXPECT_EQ(formats::bornParent(id), 9197);
+}
+
+// The static per-chapter lists: 179 treasures (101 of them in urns) and 6 relics, no id twice.
+TEST(Pickups, ChapterRewardTotals) {
+    const size_t treasures[] = {0, 26, 30, 13, 50, 30, 0, 30};
+    std::set<int32_t> seen;
+    size_t total = 0, relics = 0, urns = 0;
+    for (int ch = 0; ch <= 7; ++ch) {
+        const auto& r = game::chapterRewards(ch);
+        EXPECT_EQ(r.treasures.size(), treasures[ch]) << ch;
+        EXPECT_EQ(r.relic != 0, treasures[ch] != 0) << ch;
+        total += r.treasures.size(), relics += r.relic != 0;
+        if (r.relic) EXPECT_TRUE(seen.insert(r.relic).second);
+        for (const int32_t id : r.treasures) {
+            EXPECT_TRUE(seen.insert(id).second) << id;
+            urns += formats::isBornUid(id);
+        }
+    }
+    EXPECT_EQ(total, 179u);
+    EXPECT_EQ(relics, size_t(game::kRelicCount));
+    EXPECT_EQ(urns, 101u);
+}
+
+// A treasure inside an urn: out of reach until the urn gave birth to it (World::born), then picked up like any other;
+// `born` is saved.
+TEST(Pickups, BornTreasureWaitsForItsUrn) {
+    game::World w(rewardUnit, "urnroom", idleAnims());
+    const int32_t id = formats::bornUid(700);
+    EXPECT_FALSE(w.introduced(id));
+    EXPECT_FALSE(press(w)) << "still inside its urn";
+    const uint64_t before = w.bornVersion();
+    w.born.insert(id);
+    EXPECT_NE(w.bornVersion(), before);
+    EXPECT_TRUE(w.introduced(id));
+
+    const auto bytes = save::serialize(save::capture(w)); // mid-way: out of the urn, not yet taken
+    game::World w2(rewardUnit, "urnroom", idleAnims());
+    save::apply(save::parse(bytes), w2);
+    EXPECT_EQ(w2.born, std::set<int32_t>{id});
+    EXPECT_TRUE(w2.collected.empty());
+    ASSERT_TRUE(press(w2));
+    EXPECT_EQ(w2.pickedUp()[0].id, id);
+    EXPECT_EQ(w2.pickedUp()[0].parent, 700);
+    EXPECT_EQ(w2.pickedUp()[0].reward, 12);
+    EXPECT_EQ(w2.found[0], 1);
+    EXPECT_FALSE(press(w2));
+
+    const auto after = save::parse(save::serialize(save::capture(w2)));
+    EXPECT_EQ(after.born, std::set<int32_t>{id});
+    EXPECT_EQ(after.collected, std::set<int32_t>{id});
+    EXPECT_EQ(save::serialize(after), save::serialize(save::capture(w2)));
+    // a chapter start keeps both, like the urns' own state
+    w2.startChapter(1);
+    EXPECT_EQ(w2.born, std::set<int32_t>{id});
+    EXPECT_EQ(w2.collected, std::set<int32_t>{id});
+}
+
+// tru.exe 0x5DB6A0 / 0x6E7990: a relic raises the maximum by a sixth of the base at once, health as it is, then heals
+// 300, to no more than the new maximum + 50; the excess decays. PLAYER TAILORING's health level multiplies it.
+TEST(Pickups, RelicRaisesMaxHealthAndHeals) {
+    {
+        game::World w(rewardUnit, "relicroom", idleAnims());
+        EXPECT_EQ(w.health().max(), 1000);
+        w.setHealth(500);
+        ASSERT_TRUE(press(w));
+        EXPECT_EQ(w.relicsFound(), 1);
+        EXPECT_NEAR(w.health().max(), 1000.0f * 7 / 6, 1e-2);
+        EXPECT_NEAR(w.health().value(), 800, 1e-2);
+
+        const auto bytes = save::serialize(save::capture(w));
+        game::World w2(rewardUnit, "urnroom", idleAnims());
+        save::apply(save::parse(bytes), w2);
+        EXPECT_NEAR(w2.health().max(), 1000.0f * 7 / 6, 1e-2);
+        EXPECT_NEAR(w2.health().value(), 800, 1e-2);
+        // tailoring composes: easy = the table's 1.3 (idleAnims' default DifficultyTable), health keeps its fraction
+        auto t = w2.tailoring();
+        t.laraHealth = 0;
+        w2.setTailoring(t);
+        EXPECT_NEAR(w2.health().max(), 1300.0f * 7 / 6, 1e-2);
+        EXPECT_NEAR(w2.health().value(), 800 * 1.3f, 1e-1);
+        // a new game gives the relics up: the chapter starts at the base maximum, full
+        w2.collected.clear(), w2.found = {};
+        w2.startChapter(1);
+        EXPECT_NEAR(w2.health().max(), 1300, 1e-2);
+        EXPECT_NEAR(w2.health().value(), 1300, 1e-2);
+    }
+    {
+        game::World w(rewardUnit, "relicroom", idleAnims()); // at full health: 50 over the new maximum, decaying to it
+        ASSERT_TRUE(press(w));
+        EXPECT_NEAR(w.health().value(), 1000.0f * 7 / 6 + 50, 0.5f); // less the tick's decay
+        for (int i = 0; i < 60 * 40; ++i) w.tick({});
+        EXPECT_NEAR(w.health().value(), 1000.0f * 7 / 6, 1e-2);
+    }
+}
+
+// g_healthpack data: at most 100 carried (0x6F5E70 leaves the pack when full); a level start gives the unit's
+// loadout, which has no packs (0x7198D0).
+TEST(Pickups, HealthPacksCapAndLevelStart) {
+    game::World w(rewardUnit, "urnroom", idleAnims());
+    w.found[2] = game::kHealthPackMax;
+    placeLara(w, {0, 1500, 0});
+    EXPECT_FALSE(press(w));
+    w.found[2] = game::kHealthPackMax - 1;
+    ASSERT_TRUE(press(w));
+    EXPECT_EQ(w.pickedUp()[0].kind, game::PickupKind::HealthPack);
+    EXPECT_EQ(w.found[2], game::kHealthPackMax);
+    w.startChapter(2);
+    EXPECT_EQ(w.found[2], 0);
+}
+
+// The game's own reward table (generalbank.drm) against every unit: each treasure, urn and relic intro carries a table
+// index of the right category, each index is placed exactly once, and the per-chapter lists (game::chapterRewards, the
+// PDA's AREA INFO totals) are the table's groups in index order.
+TEST(ChaptersReal, RewardSurveyMatchesTheRewardTable) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto table = game::loadRewardTable(bf);
+    ASSERT_TRUE(table);
+    EXPECT_EQ(table->types.size(), 206u);
+    EXPECT_EQ(table->total(game::kRewardTreasures), 179);
+    EXPECT_EQ(table->total(game::kRewardRelics), game::kRelicCount);
+    EXPECT_EQ(table->total(0), 20); // 59..78: in the table, placed nowhere
+    const int treasures[] = {0, 26, 30, 13, 50, 30, 0, 30}; // reward type = kChapters index
+    for (int ch = 1; ch <= 7; ++ch) {
+        EXPECT_EQ(table->total(game::kRewardTreasures, ch), treasures[ch]) << ch;
+        EXPECT_EQ(table->total(game::kRewardRelics, ch), treasures[ch] ? 1 : 0) << ch;
+    }
+    EXPECT_EQ(table->heal, (std::array<float, 3>{0, 0, game::kRelicHeal}));
+    EXPECT_EQ(table->headroom, (std::array<float, 3>{0, 0, game::kRelicHeadroom}));
+    std::map<uint32_t, int> category;
+    for (const auto& g : table->groups)
+        for (const uint32_t r : g.rewards) EXPECT_TRUE(category.emplace(r, g.category).second) << r;
+
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    std::map<int, std::map<uint16_t, int32_t>> placed; // chapter -> reward index -> pickup id
+    std::map<int, int32_t> relic;
+    std::map<int, int> packs;
+    std::set<uint16_t> indices;
+    int urns = 0, plainUrns = 0;
+    for (const auto& name : unitNames(bf)) {
+        const int ch = game::chapterOfUnit(name);
+        if (ch < 1 || ch > 7 || !bf.read("pc-w\\" + name + ".drm")) continue;
+        SCOPED_TRACE(name);
+        const auto u = game::loadUnitData(bf, name);
+        std::map<int32_t, std::string> intro;
+        for (const auto& in : formats::parseUnit(*u.drm).intros)
+            if (const auto n = names.find(in.objectId); n != names.end()) {
+                intro[in.uniqueId] = n->second;
+                plainUrns += n->second.find("_pt_weightbreak") != std::string::npos && !formats::birthParent(n->second);
+            }
+        EXPECT_EQ(u.births.size(), size_t(std::count_if(intro.begin(), intro.end(), [](const auto& kv) { return formats::birthParent(kv.second); })));
+        for (const auto& b : u.births) {
+            EXPECT_EQ(names.at(b.intro.objectId), "tp_rw_artifact_spawned");
+            EXPECT_TRUE(formats::dormant(b.intro));
+            // the urn's birth marker: 79.01 over its base (HInfo marker 0 of model 0), upright urns
+            const vec3 urn = introPos(u, b.parent), at(b.intro.position[0], b.intro.position[1], b.intro.position[2]);
+            EXPECT_NEAR(glm::length(at - urn), 79.0125f, 0.01f) << b.parent;
+        }
+        for (const auto& p : u.pickups) {
+            if (p.kind == game::PickupKind::HealthPack) { ++packs[ch]; EXPECT_EQ(p.reward, 0); continue; }
+            ASSERT_TRUE(category.contains(p.reward)) << p.id;
+            EXPECT_EQ(category[p.reward], p.kind == game::PickupKind::Relic ? game::kRewardRelics : game::kRewardTreasures) << p.id;
+            EXPECT_EQ(table->types[p.reward], ch) << p.id;
+            EXPECT_TRUE(indices.insert(p.reward).second) << "reward " << p.reward << " placed twice";
+            if (p.parent) {
+                ++urns;
+                EXPECT_EQ(p.id, formats::bornUid(p.parent));
+                EXPECT_TRUE(formats::birthParent(intro[p.parent])) << intro[p.parent];
+            } else {
+                EXPECT_FALSE(formats::isBornUid(p.id));
+            }
+            if (p.kind == game::PickupKind::Relic) relic[ch] = p.id;
+            else placed[ch][p.reward] = p.id;
+        }
+    }
+    EXPECT_EQ(indices.size(), 185u);
+    EXPECT_EQ(urns, 101);
+    EXPECT_EQ(plainUrns, 32 + 48 + 41 + 78 + 50); // the urns without a treasure (GAMEPLAY.md "Breakables")
+    for (int ch = 0; ch <= 7; ++ch) {
+        std::vector<int32_t> ids;
+        for (const auto& [index, id] : placed[ch]) ids.push_back(id);
+        EXPECT_EQ(game::chapterRewards(ch).treasures, ids) << ch;
+        EXPECT_EQ(game::chapterRewards(ch).relic, relic[ch]) << ch;
+    }
+    EXPECT_EQ(packs, (std::map<int, int>{{1, 10}, {2, 19}, {3, 5}, {4, 22}, {5, 17}, {6, 3}, {7, 18}}));
+}
+
+namespace {
+
+// Breaks treasure urn `urn` of `unitName` (any hit: the urn's transition 0 -> 2 on trigger 17 with parameter 0), saves
+// with the treasure lying there, loads, collects it and saves again.
+void urnGivesItsTreasure(const char* unitName, int chapter, int32_t urn, uint16_t reward) {
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    const auto make = [&] {
+        auto w = std::make_unique<game::World>(load, unitName, anims);
+        w->script().setBigfile(&bf);
+        w->onCinematic = [](const std::string&, bool) {};
+        w->chapter = chapter;
+        return w;
+    };
+    auto w = make();
+    for (int i = 0; i < 30; ++i) w->tick({});
+    const int32_t id = formats::bornUid(urn);
+    const auto& pickups = w->currentUnit().data.pickups;
+    const auto pk = std::find_if(pickups.begin(), pickups.end(), [&](const auto& p) { return p.id == id; });
+    ASSERT_NE(pk, pickups.end());
+    EXPECT_EQ(pk->parent, urn);
+    EXPECT_EQ(pk->reward, reward);
+    const auto& list = game::chapterRewards(chapter).treasures;
+    EXPECT_NE(std::find(list.begin(), list.end(), id), list.end());
+    const vec3 at = pk->pos + w->currentUnit().offset;
+    ASSERT_TRUE(w->uberState(urn));
+    EXPECT_EQ((*w->uberState(urn))[0], 0u);
+
+    placeLara(*w, at + vec3(0, 0, 100)); // on the urn
+    EXPECT_FALSE(press(*w)) << "the treasure is inside the whole urn";
+    EXPECT_TRUE(w->born.empty());
+    w->damageObject(urn, 1, 0); // the hit message every cause sends (0x11C): a bullet's, a kick's, the pound's
+    w->tick({});
+    EXPECT_EQ((*w->uberState(urn))[0], 2u);
+    EXPECT_EQ(w->born, std::set<int32_t>{id}) << "state 2's action 0x13";
+    EXPECT_TRUE(w->introduced(id));
+    for (int i = 0; i < 70; ++i) w->tick({});
+    EXPECT_TRUE(w->removedObjects().contains(urn));
+    EXPECT_TRUE(w->collected.empty());
+    const auto mid = save::serialize(save::capture(*w));
+
+    auto w2 = make();
+    save::apply(save::parse(mid), *w2);
+    for (int i = 0; i < 5; ++i) w2->tick({});
+    EXPECT_EQ(w2->born, std::set<int32_t>{id});
+    EXPECT_TRUE(w2->removedObjects().contains(urn));
+    placeLara(*w2, at);
+    for (int i = 0; i < 20; ++i) w2->tick({}); // she settles where the urn stood
+    EXPECT_LT(glm::length(glm::vec2(w2->player().state().pos - at)), game::kPickupRadius);
+    ASSERT_TRUE(press(*w2));
+    EXPECT_EQ(w2->pickedUp()[0].id, id);
+    EXPECT_EQ(w2->pickedUp()[0].kind, game::PickupKind::Treasure);
+    EXPECT_EQ(w2->found[0], 1);
+    EXPECT_TRUE(w2->collected.contains(id));
+    for (int i = 0; i < 90; ++i) w2->tick({}); // the pickup clip plays out
+    EXPECT_FALSE(press(*w2));
+
+    auto w3 = make();
+    save::apply(save::parse(save::serialize(save::capture(*w2))), *w3);
+    EXPECT_TRUE(w3->collected.contains(id));
+    EXPECT_EQ(w3->born, std::set<int32_t>{id});
+    EXPECT_EQ(w3->found[0], 1);
+    placeLara(*w3, at);
+    EXPECT_FALSE(press(*w3));
+}
+
+} // namespace
+
+TEST(PickupsReal, MediterraneanUrnGivesItsTreasure) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    urnGivesItsTreasure("l1_baldrs_sideroom", 1, 94, 12);
+}
+
+TEST(PickupsReal, ThailandUrnGivesItsTreasure) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    urnGivesItsTreasure("l2_towerroom", 2, 1909, 53);
+}
+
+// Streaming the urn's unit out and in keeps the broken urn and the treasure lying there.
+TEST(PickupsReal, BornTreasureSurvivesStreaming) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    game::World w(load, "l1_baldrs_sideroom", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 30; ++i) w.tick({});
+    w.damageObject(94, 1, 0);
+    for (int i = 0; i < 80; ++i) w.tick({});
+    const int32_t id = formats::bornUid(94);
+    ASSERT_TRUE(w.born.contains(id));
+    const auto spawn = w.currentUnit().data.spawn;
+    w.enterUnit("l1_seatop", std::nullopt); // another level part: the side room is gone
+    for (int i = 0; i < 10; ++i) w.tick({});
+    EXPECT_TRUE(std::ranges::none_of(w.units(), [](const auto& u) { return u.data.name == "l1_baldrs_sideroom"; }));
+    EXPECT_TRUE(w.born.contains(id));
+    w.enterUnit("l1_baldrs_sideroom", spawn);
+    for (int i = 0; i < 10; ++i) w.tick({});
+    ASSERT_TRUE(w.uberState(94));
+    EXPECT_EQ((*w.uberState(94))[0], 1u) << "still broken";
+    EXPECT_TRUE(w.removedObjects().contains(94));
+    const auto& pickups = w.currentUnit().data.pickups;
+    const auto pk = std::find_if(pickups.begin(), pickups.end(), [&](const auto& p) { return p.id == id; });
+    ASSERT_NE(pk, pickups.end());
+    placeLara(w, pk->pos + w.currentUnit().offset);
+    for (int i = 0; i < 20; ++i) w.tick({});
+    ASSERT_TRUE(press(w));
+    EXPECT_EQ(w.pickedUp()[0].id, id);
+}
+
+// The Mediterranean's relic (l1_kraken_room 321) in the real unit: maximum and health as the exe's reward path.
+TEST(PickupsReal, RelicRaisesMaxHealthAndHeals) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    game::World w(load, "l1_kraken_room", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    w.chapter = 1;
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto& pickups = w.currentUnit().data.pickups;
+    const auto pk = std::find_if(pickups.begin(), pickups.end(), [](const auto& p) { return p.kind == game::PickupKind::Relic; });
+    ASSERT_NE(pk, pickups.end());
+    EXPECT_EQ(pk->id, game::chapterRewards(1).relic);
+    EXPECT_EQ(pk->reward, 10);
+    const float base = w.health().max();
+    EXPECT_EQ(base, 1000); // Lara's data x the table's medium level
+    placeLara(w, pk->pos + w.currentUnit().offset);
+    w.setHealth(400);
+    ASSERT_TRUE(press(w));
+    EXPECT_EQ(w.pickedUp()[0].kind, game::PickupKind::Relic);
+    EXPECT_EQ(w.found[1], 1);
+    EXPECT_NEAR(w.health().max(), base * 7 / 6, 1e-2);
+    EXPECT_NEAR(w.health().value(), 700, 1.0f); // + 300 (a tick's regeneration at most on top)
+    game::World w2(load, "l1_kraken_room", anims);
+    w2.script().setBigfile(&bf);
+    w2.onCinematic = [](const std::string&, bool) {};
+    save::apply(save::parse(save::serialize(save::capture(w))), w2);
+    EXPECT_NEAR(w2.health().max(), base * 7 / 6, 1e-2);
+    EXPECT_NEAR(w2.health().value(), w.health().value(), 1e-3);
+}
+
+// The level scene carries each urn's treasure as a dormant intro of ours (shown once World::introduced).
+TEST(PickupsReal, BornTreasureIsInTheLevelScene) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto sc = formats::loadLevelScene(bf, "pc-w\\l1_baldrs_sideroom.drm");
+    for (const int32_t urn : {94, 95}) {
+        const std::string tag = " @dormant @intro " + std::to_string(formats::bornUid(urn));
+        const auto n = std::count_if(sc.meshes.begin(), sc.meshes.end(), [&](const auto& m) { return m.origin.ends_with(tag); });
+        EXPECT_GT(n, 0) << urn;
+    }
+}
+
+// Every object DRM's uber data: state action 0x13 (formats::UberBirth) occurs on the treasure urns, which give birth to
+// tp_rw_artifact_spawned at HInfo marker 0 of model 0, and on props that leave debris or effects (the ship's ms_uo_*
+// cases -> *_spawned, the exploding barrel, the tentacle gears' squibs, revisit_motorcycle_spawner); nothing else gives
+// birth to a pickup, so formats::birthParent's name test covers them all.
+TEST(ObjectsReal, OnlyRewardUrnsGiveBirthToPickups) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    std::map<std::string, std::vector<std::string>> births;
+    for (const auto& [id, name] : names) {
+        const auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        std::optional<formats::UberObjectData> uber;
+        try { uber = formats::loadUberObject(cdc::parseDrm(*bytes)); } catch (const cdc::FormatError&) {}
+        if (!uber) continue;
+        for (const auto& b : uber->births) {
+            const auto n = names.find(b.object);
+            births[name].push_back(n != names.end() ? n->second : "?");
+            if (formats::birthParent(name)) {
+                EXPECT_EQ(b.model, 0) << name;
+                EXPECT_EQ(b.marker, 0) << name;
+            }
+        }
+    }
+    int urns = 0;
+    for (const auto& [name, born] : births) {
+        const bool pickup = std::ranges::any_of(born, [](const auto& n) { return game::pickupKind(n).has_value(); });
+        EXPECT_EQ(pickup, formats::birthParent(name)) << name;
+        if (!formats::birthParent(name)) continue;
+        ++urns;
+        EXPECT_EQ(born, std::vector<std::string>{"tp_rw_artifact_spawned"}) << name;
+    }
+    EXPECT_EQ(urns, 4); // ar_ (l1 / l5 / l7 share it), sa_, ma_, ca_
+    EXPECT_TRUE(births.contains("sh_ei_exploading_barrel"));
 }

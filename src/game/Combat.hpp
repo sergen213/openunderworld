@@ -150,6 +150,8 @@ public:
         if (m == t_.max || !(m > 0)) return;
         value_ *= m / t_.max, regenBase_ *= m / t_.max, t_.max = m;
     }
+    // A relic changed the maximum (0x6E7990 reads the relic count live): health stays what it is.
+    void raiseMax(float m) { if (m > 0) t_.max = m; }
 
 private:
     void hurt(float amount, int type); // common tail of damage()/fall()

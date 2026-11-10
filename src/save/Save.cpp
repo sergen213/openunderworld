@@ -62,6 +62,7 @@ json toJson(const SaveGame& s) {
         {"runtime", s.runtime},
         {"checkpoint", cp},
         {"collected", s.collected},
+        {"born", s.born},
         {"chapter", s.chapter},
         {"found", s.found},
         {"grenades", s.grenades ? json(*s.grenades) : json(nullptr)},
@@ -129,6 +130,7 @@ SaveGame fromJson(const json& j) {
     if (const auto c = j.find("checkpoint"); c != j.end() && !c->is_null())
         s.checkpoint = game::CheckpointRef{c->at("unit").get<std::string>(), c->at("id").get<int32_t>()};
     s.collected = j.value("collected", std::set<int32_t>{});
+    s.born = j.value("born", std::set<int32_t>{});
     s.chapter = j.value("chapter", std::max(0, game::chapterOfUnit(s.unit)));
     s.found = j.value("found", std::array<int, 3>{});
     if (const auto g = j.find("grenades"); g != j.end() && !g->is_null()) s.grenades = std::max(0, g->get<int>());
@@ -192,6 +194,8 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
             {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends, p.ropeMax}},
             {"sprintUsed", p.sprintUsed}, {"polePara", p.polePara},
+            {"wallJump", {vec(p.jumpStart - offset), p.jumpTime, p.jumpAimed, p.wallJumps, p.wallTime,
+                          vec(p.jumpFromLedge ? p.jumpLedge - offset : game::vec3(0)), p.jumpFromLedge}},
             {"balance", {p.balance.build, p.balance.aboutFall, p.balance.grace, p.balance.unbal, p.balance.bal, p.balance.notImprove,
                          p.balance.full, p.balance.clock, p.balance.lastFlip, p.balance.period, p.balance.ref, p.balance.stickYaw,
                          p.balance.blend, p.balance.lean, p.balance.side, p.balance.osc, p.balance.fall}}};
@@ -231,6 +235,13 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     p.ropeMax = g.size() > 5 ? g.at(5).get<float>() : 0.0f; // older saves: g_grapple's rope
     p.sprintUsed = c.at("sprintUsed");
     p.polePara = c.value("polePara", false); // older saves: the perpendicular hang
+    p.jumpStart = p.pos, p.jumpTime = 0, p.jumpAimed = false, p.wallJumps = 0, p.wallTime = 0; // older saves: no chimney jump
+    p.jumpLedge = game::vec3(0), p.jumpFromLedge = false;
+    if (const auto wj = c.find("wallJump"); wj != c.end()) {
+        if (!wj->is_array() || wj->size() != 7) throw SaveError("bad wallJump " + wj->dump());
+        p.jumpStart = vec(wj->at(0)), p.jumpTime = wj->at(1), p.jumpAimed = wj->at(2), p.wallJumps = wj->at(3).get<uint8_t>();
+        p.wallTime = wj->at(4), p.jumpLedge = vec(wj->at(5)), p.jumpFromLedge = wj->at(6);
+    }
     p.balance = {}; // older saves: steady on a beam
     if (const auto b = c.find("balance"); b != c.end()) {
         if (!b->is_array() || b->size() != 17) throw SaveError("bad balance " + b->dump());
@@ -260,6 +271,7 @@ SaveGame capture(const game::World& world) {
     s.runtime = world.serializeRuntime();
     s.checkpoint = world.checkpoint();
     s.collected = world.collected;
+    s.born = world.born;
     s.chapter = world.chapter;
     s.found = world.found;
     s.grenades = world.grenades, s.flashlight = world.flashlight, s.treasureHunt = world.treasureHunt;
@@ -314,6 +326,7 @@ void apply(const SaveGame& save, game::World& world) {
     }
     world.setCheckpoint(save.checkpoint);
     world.collected = save.collected;
+    world.born = save.born;
     world.chapter = save.chapter;
     world.found = save.found;
     if (save.grenades) world.grenades = *save.grenades;
@@ -349,7 +362,9 @@ void apply(const SaveGame& save, game::World& world) {
     } catch (const std::runtime_error& e) {
         throw SaveError(e.what());
     }
-    if (save.health) world.setHealth(*save.health);
+    // The maximum follows the relics among `collected` (World::maxHealth); a save without health loads at full.
+    world.syncMaxHealth();
+    world.setHealth(save.health ? *save.health : world.health().max());
 }
 
 std::string serialize(const SaveGame& save) {

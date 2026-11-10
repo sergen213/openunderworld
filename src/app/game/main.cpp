@@ -848,6 +848,7 @@ struct StreamedScene {
     uint64_t fixtureKey = 0;                           // EffectsView::fixtureKey when they were taken
     BikeIndices bikeIndices;
     uint64_t version = ~0ull, enemyVersion = ~0ull, lightsVersion = ~0ull, visibilityVersion = ~0ull;
+    uint64_t bornVersion = ~0ull; // World::bornVersion(): treasures out of their broken urns
     uint32_t hiddenGroups = 0; // World::laraHiddenGroups() the scene was built with
     std::string laraOutfit; // pc-w\<laraOutfit>.drm is in `lara` and rigs the world's pose skeleton
 
@@ -968,7 +969,7 @@ struct StreamedScene {
                 if (const auto at = src.origin.rfind(" @intro "); at != std::string::npos) {
                     const int32_t uid = std::atoi(src.origin.c_str() + at + 8);
                     if (enemyIntros.contains(uid) || hiddenIntros.contains(uid)) continue;
-                    if (src.origin.find(" @dormant ") != std::string::npos && !w.script().born(uid)) continue; // not introduced
+                    if (src.origin.find(" @dormant ") != std::string::npos && !w.introduced(uid)) continue; // not introduced
                 }
                 float transform[16];
                 std::copy_n(src.transform, 16, transform);
@@ -1083,6 +1084,7 @@ struct StreamedScene {
         enemyVersion = w.enemies().version();
         lightsVersion = w.lightsVersion();
         visibilityVersion = w.script().visibilityVersion();
+        bornVersion = w.bornVersion();
         return out;
     }
 };
@@ -1267,6 +1269,9 @@ struct EffectsView {
             for (const auto& in : parsed.intros)
                 if (ou::formats::dormant(in) && !w.script().born(in.uniqueId)) dormantIntros[in.uniqueId] = {u.data.name, in};
                 else start(u, in);
+            for (const auto& b : u.data.births) // the treasures in its reward urns: there once an urn broke
+                if (!w.introduced(b.intro.uniqueId)) dormantIntros[b.intro.uniqueId] = {u.data.name, b.intro};
+                else start(u, b.intro);
             // Unit FX point sets (fires, heat haze without an object): owners 0x40000000 | set id [I: ids beside intros'].
             for (const auto& ps : library->pointSets(*u.data.drm, u.data.name, &warnings)) {
                 const int32_t owner = 0x40000000 | ps.id;
@@ -1276,7 +1281,7 @@ struct EffectsView {
         // Dormant intros a script has born since (a scene rebuild follows each birth: visibilityVersion).
         for (auto it = dormantIntros.begin(); it != dormantIntros.end();) {
             const auto u = std::ranges::find_if(w.units(), [&](const auto& x) { return x.data.name == it->second.first; });
-            if (!w.script().born(it->first) || u == w.units().end()) { ++it; continue; }
+            if (!w.introduced(it->first) || u == w.units().end()) { ++it; continue; }
             start(*u, it->second.second);
             it = dormantIntros.erase(it);
         }
@@ -3228,6 +3233,7 @@ int main(int argc, char** argv) {
         streamed.syncParts(*renderer); // decoded units go to the GPU ahead of their join
         if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion ||
             world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion ||
+            world->bornVersion() != streamed.bornVersion ||
             world->laraHiddenGroups() != streamed.hiddenGroups || effects.fixtureKey() != streamed.fixtureKey) {
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {

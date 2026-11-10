@@ -929,10 +929,23 @@ void World::restoreCombat(const nlohmann::json& j) {
     combat_ = c;
 }
 
+int World::relicsFound() const {
+    int n = 0;
+    for (int ch = 1; ch <= 7; ++ch)
+        if (const int32_t r = chapterRewards(ch).relic; r && collected.contains(r)) ++n;
+    return n;
+}
+
+// 0x6E7990: GlobalInfo difficulty table[level] +8 x Lara data +0x44 x (0x5D6170: found[relics] / total[relics] + 1).
+float World::maxHealth() const {
+    return HealthTuning{}.max * anims_.difficulty.healthScale[size_t(std::clamp(tailoring_.laraHealth, 0, 2))] *
+           (1.0f + float(relicsFound()) / float(kRelicCount));
+}
+
 void World::setTailoring(const Tailoring& t) {
     tailoring_ = t;
     const auto level = [](int v) { return size_t(std::clamp(v, 0, 2)); };
-    health_.setMax(HealthTuning{}.max * anims_.difficulty.healthScale[level(t.laraHealth)]);
+    health_.setMax(maxHealth());
     enemies_.setHealthLevel(int(level(t.enemyHealth)));
     player_.setSavingGrabSeconds(anims_.difficulty.savingGrabSeconds[level(t.savingGrab)]);
     for (int i = 0; i < kWeaponCount; ++i) // a smaller capacity drops what no longer fits

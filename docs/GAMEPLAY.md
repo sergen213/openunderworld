@@ -400,14 +400,107 @@ outfit (the original only reads `+0x294` on a level load).
 - Ours (`World::damageObject`): Lara's bullets / bolts on an uber object's collider and the pound's rings; action 5
   drops the collider, action 28 marks the section removed and the game hides the object's meshes when model 0's section
   is gone (`World::removedObjects`); transition clips with flag 1 run their events (`objectClips`). Health, removal and
-  collision state are saved (`StreamReal.MjolnirHitBreaksUrnAndItStaysBroken`). [U] the urn rewards
-  (`*_weightbreak_reward`) are separate intros, untouched.
+  collision state are saved (`StreamReal.MjolnirHitBreaksUrnAndItStaysBroken`). The treasure urns
+  (`*_pt_weightbreak_reward`) are the same machine plus a birth action: "Collectibles" below.
 - [O] Class-30 breakables (0x6D3160; `ca_uo_ledgebreak*`, `ar_ei_break_braced_*`, `ar_ei_breakable_hpole`,
   `ar_rb_falling_floor_straight`, `ca_rb_breakable_temple_floor`): record +0x10 hits (3), +0x18 / +0x1C pieces
   (0x20 each, spawned as instances), +0x28 / +0x34 break conditions (0x1C: flags, two floats, damage-class list). 0x11C
   counts a hit when the class is listed (0x69BFC0; only the temple floor lists one: 6, explosions) or by flags 0x400
   (class 6) / 0x800.. (classes 0-2 from Lara); the others break on Lara's contact (message 0x2B, 0x69C0A0). None lists
   Mjolnir's class 13. Not implemented.
+
+## Collectibles
+
+Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `formats::birthIntros`
+(`src/formats/Births.cpp`), `World::collectPickups` (`src/game/Stream.cpp`), `World::uberAction` case 0x13,
+`World::maxHealth`. Player-visible counts checked against https://tombraiders.net/stella/walks/TR8walk/rewards.html.
+
+- **The reward table** [O]: generalbank.drm's DTP 36, named by GlobalInfo `+0x194` (`*0xE7EE50`; loaded on first use,
+  0x5D5F80 builds the totals). `+0` reward count 206 (index 0 unused), `+4` -> rewards of 8 bytes {u16 type}, `+0x10`
+  13 groups, `+0x14` -> groups of 0x10 bytes {category, found (runtime), count, -> reward indices}, `+0x58` float[3]
+  health given per category (0, 0, 300), `+0x64` float[3] headroom (0, 0, 50). Category 1 = treasures, 2 = relics,
+  0 = twenty rewards (59..78) no unit places. A reward's type is its area and equals our chapter index: 1
+  Mediterranean, 2 Thailand, 3 Croft Manor, 4 Mexico, 5 Jan Mayen, 7 Arctic Sea; types 1..7 add into type 0 (the
+  0x5D5F80 / 0x5DB6A0 switch; 8..13 -> 14, 0 and 14 -> 15 are unused levels of the same tree). The script type
+  `rewardsystem` (NtRewardSystem, 9 natives 0x79C0E0..) reads it for the PDA: 0x5D60A0 "is reward n collected",
+  0x5D60D0 found[category][type], 0x5D6120 total[category][type], 0x5D6380 "group complete". `game::loadRewardTable`
+  reads it; `ChaptersReal.RewardSurveyMatchesTheRewardTable`.
+- **Totals** [O table = units]: every treasure / urn / relic intro carries its reward index in its intro data `+0x30`
+  (185 intros, indices 1..205, each once). Per area, treasures (lying in the world + in urns) and relics:
+
+  | area (reward type) | treasures | lying | in urns | relic (intro) | health packs |
+  |---|---|---|---|---|---|
+  | Mediterranean Sea (1) | 26 | 10 | 16 | l1_kraken_room 321 | 10 |
+  | Coastal Thailand (2) | 30 | 22 | 8 | l2_maproom 2588 | 19 |
+  | Croft Manor (3) | 13 | 7 | 6 | l3_chapel 4757 | 5 |
+  | Southern Mexico (4) | 50 | 10 | 40 | l4_pool 5496 | 22 |
+  | Jan Mayen Island (5) | 30 | 10 | 20 | l5_valaskjalf_entry 7280 | 17 |
+  | Andaman Sea (-) | 0 | 0 | 0 | - | 3 |
+  | Arctic Sea (7) | 30 | 19 | 11 | l7_helheim01 8936 | 18 |
+  | all | **179** | 78 | 101 | **6** | 94 |
+
+  These are the walkthrough's per-area totals (26 / 30 / 13 / 50 / 30 / 0 / 30) with no difference. `game::chapterRewards`
+  lists them per chapter in table order (the PDA's AREA INFO and TREASURES rows, the EXTRAS "every treasure" / "every
+  relic" unlocks); a treasure in an urn is listed by its born id.
+- **Treasure urns** [O]: `*_pt_weightbreak_reward` (ar_ in l1 / l5 / l7, sa_, ma_, ca_) is the plain urn's uber machine
+  (health 30, 0 -> 2 on any hit / impulse, "Breakables") with one more state-2 action: 0x13 (0x4D86A0 -> 0x4D3B50) gives
+  birth to the record's object {u16 object 103 `tp_rw_artifact_spawned`, s8 model 0, i32 marker 0, no messages} with
+  INSTANCE_BirthObjectNoParent at the section's HInfo marker (0x4705B0; the urn models' only one: id 0 at (0, 0,
+  79.01)), then posts it message 0x1E8 with the urn. The born artifact's script (type 3664 over the artifact's 3671)
+  differs from a placed artifact's only in the clip its birth plays (animation 10 of its list, a 100-byte still clip,
+  against 8) and its sound's delay (0.5 against 0.2): it appears in place, nothing flies. Other users of action 0x13
+  leave debris or effects (ship props `ms_uo_*` -> `*_spawned`, the exploding barrel, tentacle gear squibs,
+  `revisit_motorcycle_spawner`): `ObjectsReal.OnlyRewardUrnsGiveBirthToPickups`.
+- Ours: `formats::birthIntros` describes each urn's treasure as a dormant intro of object 103 at the marker, id
+  `formats::bornUid(urn)` (urn id | 0x20000000 [ours]); `loadUnitData` makes it a `Pickup` with `parent` = the urn and the
+  urn's reward index [I: 0x4D3B50 hands the urn's intro to the birth; the index is the urn's]. `World::uberAction`
+  0x13 puts the id into `World::born` when the urn enters state 2, whatever sent the hit (`World::damageObject`: bullets,
+  the pound, any other caller). From then on it is a pickup like a placed treasure; before, interact finds nothing
+  there. The level scene carries its meshes tagged ` @dormant @intro <id>` and ou-game shows them and starts its
+  effects once `World::introduced(id)` (scene rebuild on `World::bornVersion`). `born` is saved (docs/SAVES.md) and
+  lives as long as the urns' uber state (a load replaces both). Streaming the unit out and in
+  keeps both the broken urn and the treasure. Tests: `Pickups.BornTreasureWaitsForItsUrn`,
+  `PickupsReal.{Mediterranean,Thailand}UrnGivesItsTreasure` (l1_baldrs_sideroom 94 = reward 12, l2_towerroom 1909 =
+  reward 53: break, save with the treasure lying there, load, collect, save), `PickupsReal.BornTreasureSurvivesStreaming`,
+  `PickupsReal.BornTreasureIsInTheLevelScene`; self-test `tests/selftests/treasure_urn.json`.
+- **Collecting** (0x5DB6A0) [O]: sets bit n of the saved 2048-bit set (game state `+0x3ED90`), counts
+  found[category][type] up the type tree (`+0x3EE90`), then for the group's category: heal = table `+0x58`[category],
+  capped so that health <= maximum + `+0x64`[category], through 0x6F4EF0(amount, overheal = 1). Treasures give
+  nothing (0 / 0). [I] the reach: interact within 200 units / 250 up or down of the item (`kPickupRadius`; the reward
+  scripts use a `playersensor`, its size is not decoded) and the HUD line format.
+- **First-pickup popups** [O, not shown in ours]: the reward base script 3674 opens a `uipopupmgr` popup once per
+  game (a global stickybool): title locals 1287 "Rewards", text 1286 "The number of Treasures and Relics found so far
+  is tracked in the PDA"; the health pack script 3924 uses 1291 / 1292 the same way. Ours shows the HUD line
+  `TREASURES|RELICS|HEALTH PACKS  <count>` (1251 / 1252 / 1274) [I format].
+- **Relics** [O]: Lara's maximum health is `difficulty table[level] +8 x Lara data +0x44 x (1 + found[relics] /
+  total[relics])` (0x6E7990 -> 0x5D6170), read live: each relic adds a sixth of the base, all six double it. The
+  pickup does not rescale health; it then heals 300, to no more than the new maximum + 50 (so a relic taken at full
+  health leaves her 50 over, which decays as after a health pack). The game also adds 50 to a float at game state
+  `+0x3EF90` per relic; no reader was found. The walkthrough's "heals fully" is the visible effect in most cases; the
+  exe's numbers are used. Ours: `World::maxHealth` (base x PLAYER TAILORING level x (1 + `relicsFound()` / 6)),
+  `Health::raiseMax` on the pickup, on a load (`World::syncMaxHealth`) and at a chapter start; `World::setTailoring`
+  rescales as before (0x6F5160 keeps the fraction on a level change only). Tests: `Pickups.RelicRaisesMaxHealthAndHeals`,
+  `PickupsReal.RelicRaisesMaxHealthAndHeals` (l1_kraken_room 321: 400 of 1000 -> 700 of 1166.7).
+- **Health packs** [O]: g_healthpack data `+0xE8` = 1 per pickup, `+0xE2 / +0xE4 / +0xE6` = 100 carried at every AMMO
+  level; 0x6F5E70 takes a pack only while she carries fewer (`kHealthPackMax`). A level start (player message 0x23,
+  0x71FFE0 -> 0x7198D0) gives the unit's loadout: level settings `+0x2B4` -> {DTP id, alternate DTP id}, each DTP {->
+  u16 weapon objects, count, -> u16 gadget objects, count}:
+
+  | units | weapons | gadgets |
+  |---|---|---|
+  | l1 (DTP 3451) | wp_handgun, wp_speargun | g_binoculars, g_grapple, g_grenade_thrower, g_pda, g_personal_light, g_divinggear, g_lighter |
+  | l2 (8214) | wp_handgun, wp_uzi | binoculars .. personal_light, g_lighter |
+  | l3, prologue (11546) | wp_handgun, wp_shotgun | the same |
+  | l4 (13122) | wp_handgun, wp_tranq | the same |
+  | l5 (16172) | wp_handgun, wp_uzi | the same + g_gauntletleft, g_gauntletright, g_belt |
+  | l6 (7013) | wp_handgun, wp_thorhammer, wp_assault_rifle | binoculars .. personal_light, gauntlets, belt |
+  | l7 (18578) | wp_handgun, wp_thorhammer, wp_speargun | binoculars .. personal_light, g_divinggear, g_tanks, belt, gauntlets |
+  | alternate, every unit (838) | wp_handgun, wp_uzi | binoculars .. personal_light, g_lighter, g_tanks |
+
+  No list has g_healthpack, so Lara starts each level with none (the walkthrough's note that the inventory resets per
+  level). Ours: `World::startChapter` zeroes the carried count. [U] the other branch of message 0x23 (game state `+0x390`
+  set: 0x715EF0 rebuilds the saved slots and ammunition fractions): when it is taken was not traced.
+  `Pickups.HealthPacksCapAndLevelStart`.
 
 ## Thor's gear (draw groups)
 
@@ -1483,6 +1576,110 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   rope (11), vertpole (5), zipline (7) or cover (12) markup (all units, 2026-10-18 and 2026-11-06), and lara.drm has no
   zip-line clip at all. The `rope_*` / `vpole_*` animations are leftovers; the only rope is the grapple's.
 
+## Chimney jumps (src/game/WallJump.cpp)
+
+A free jump that meets a wall plants Lara's feet on it; a jump press there turns her round and leaps back off it, higher,
+toward whatever is behind her. Between two facing walls that climbs a shaft, and the last leap ends on a ledge. The
+controls page of Stella's walkthrough describes the move
+(https://tombraiders.net/stella/walks/controls/TR8controls.html, "Chimney Jump / Wall Jump"), its Coastal Thailand
+pages the first place that needs it (https://tombraiders.net/stella/walks/TR8walk/details/remnants8.html).
+
+**The original** (lara.drm player state chart and player data; tru.exe 1.1.0.0; dump script
+openunderworld-work/gameplaygoal/wj.py, disassembly openunderworld-work/gameplaygoal/chimney/*.asm):
+
+- States [O-data]: S1291 `wall_jump_attach_air` (request 1153, 3 frames, entered at frame 1), S1294 `wall_jump_idle`
+  (1155, loop), S1295 `wall_jump_jump_back` (1156, 5 frames, a half turn of the root and no translation), S1296
+  `wall_jump_detach_fall` (1157, 8 frames, root 33.7 back and 154.4 down), all under S1290; S1292
+  `wall_jump_anticipate` (1154) and S1293 (the plain wall collision) beside them.
+- Into it [O-data]: T2348 from S288 (the parent of every free jump's flight: S289 sends all jump take-offs, from the
+  ground, a hang, a ladder, a pole or a wall, on to S294 / S306 under it), S293 and S1292, when the jump has no markup
+  target (cond 0x262 kind 600 = 0) and `PSCCF_WallJumpAttach` holds (cond 0x203, 0x7633E0: 0x7594C0 returns 2). T2349
+  goes to S1292 on `PSCCF_WallJumpAnticipate` (0x20B, 0x763330 -> 0x759260), T2350 to S1293 on `PSCCF_WallJumpCollide`
+  (0x217, 0x763490: 0x7594C0 returns 1) once 5 frames into the state (cond 0x14).
+- The wall test 0x7594C0 [O] (player data = lara.drm object data, offsets from its start):
+  - She is not attached to markup with flag 0x80.
+  - 0x758DD0: the pelvis (segment 1) now and N frames on, N = byte +0x821 = **3** (the anticipate test uses byte
+    +0x820 = 0, a ray of no length): along her heading by N x |velocity| (a frame's), and 2.862215 x N^2 down.
+  - Ray 1 (0x4935F0, mask 0x2C19E7) between the two points raised by int +0x824 = **63**; ray 2 lowered by int +0x828 =
+    **-158**. Both must hit terrain or an object (hit kinds 3 / 5); no hit on ray 1 = 0 (no wall).
+  - 0x5D3BA0 refuses a terrain face whose client flags (face +0x0E) have **0x80**, and an object whose data byte +0x30
+    has 0x10. 372 023 of the 814 628 collision faces of the 70 units carry the flag (all of l1_ship_lower_hallway,
+    17 % of l2_cliffclimb), so the level builders chose the walls she may kick off.
+  - 0x758F70: the wall's normal at most byte +0x831 = **7** degrees off horizontal (|n.z| <= sin 7); her horizontal
+    velocity (her heading when she has none) within byte +0x830 = **45** degrees of square into the wall; her heading
+    within byte +0x832 = **65** degrees of it.
+  - zVel between -byte +0x834 (**13**) x 5.72443 and byte +0x833 (**9**) x 5.72443 a frame (-2232.5 .. 1545.6 units/s).
+  - 0x7591E0: no floor within int +0x82C = **31** under her root.
+  - 0x758B00: ray 2's hit within float +0x838 = **951.33** (horizontally) of player state +0x9C0, the jump query's
+    +0x40 [I: taken as where the jump began].
+  - All true = 2: the wall's normal goes to player state +0x5D0 and ray 2's hit to +0x5E0. A wall met that fails a later
+    test = 1 (collide).
+- On the wall [O]: S1291's anim target 0xEB (property 410, action 230 -> 0x758BB0) is ray 2's hit + int +0x83C = **110**
+  along the normal at her own height, facing the wall. Its clip done (cond 0xC9) -> S1294; there state time >= chart
+  variable 208 = **12** -> S1296 -> the fall S1006 (jump query q44). From S1291 and S1294 T2352: the jump button (cond
+  0x98 value 136, the pressed bit) and `PSCCF_WallJumpAllowed` (0x21C, 0x7660D0: chart context +0x4EC < byte +0x843 =
+  **5**) -> S1295.
+- The jump back [O-data]: S1295 has property 917, so action 917 (0x75E350) adds 1 to +0x4EC; its exit function
+  (0x75E390) zeroes it. The action is listed by S287 (the jump flights), S289, S1290 and S1292, so the count runs
+  through a chain of wall jumps and ends with it [I: that an action common to both states is not exited between them].
+  S1295's jump query is **q12** (property 541; run on entry, property 479 = 597): velocity **46.81** along direction
+  source 0x13 (the wall normal at +0x5D0, 0x724F.. switch) + **77.27** up a 30 Hz frame under gravity 5.72443, start
+  79.01 out, cone 90 degrees, +0x28 20, flags 0x1850, class record 0x2A9EC (the hang / ladder one), ledge target types
+  1 at the start and 3 **372.95** over it (the hands of the wall pose are 370..377 over the root). Its clip done ->
+  S289, which flies her onto what the query met or lets her fly free.
+- Timing that follows [I]: off the wall she rises 77.27 a frame, more than the attach allows (51.52), for 4.5 frames,
+  and the collide transition waits for frame 5: a rebound in a shaft too narrow to fly in still gains 77.27 x 5 -
+  2.862 x 25 = **314.8** before her feet are on the other wall. The time unit of cond 0x14 is taken as 30 Hz frames
+  for that reason [I].
+
+**Ours** (State::WallJump; `Player::tryWallJump`, `wallJump`, `wallJumpQuery`): the test above, literally, on the 30 Hz
+frames of a State::Jump flight that was not aimed at markup (`jumpAimed`: `aimGroundJump` / `assistJump` found a
+target), with collision rays for 0x4935F0 and the bind pose's segment 1 height for the pelvis [I] (300 without a
+skeleton). On the wall she is drawn to the 110 standoff over two frames, turned to face it, and holds her height:
+nothing moves her up but the jumps. A jump press (edge) while `wallJumps` < 5 plays wall_jump_jump_back; when it ends
+she faces away from the wall and either flies onto the ledge `ledgeOnArc(q12)` met (State::HangJump, the existing ledge
+catch) or leaps free at q12's velocity (State::Jump: the existing air movement, ledge grabs and landings, and the next
+wall). 14 frames without a press: wall_jump_detach_fall and State::Fall. `wallJumps` clears whenever she is not
+jumping. Two limits on q12's ledge targets are ours [I], both needed for l2_junglehub's columns to play as the
+walkthrough describes them: not the ledge the jumps began on (`jumpLedge`; tru.exe keeps the markup she was attached
+to through the jump, player state +0xA84, and its chart has a `JumpTargetSameAsAttached` condition), and not a ledge
+hidden from the arc's start by solid geometry (`JumpQuery::sight`: the query's 316 capsule reaches through the 320
+thick column to ledge 804 on its far side). Saves carry the state (`controller.wallJump`; a save in the air still
+resumes at its checkpoint, as before). Not ported [U]: wall_jump_anticipate (its test's ray has no length with the
+data as shipped), the wall-collision state S1293, objects' refusal bit (data byte +0x30 & 0x10: every dynamic counts
+as a wall).
+
+**Where the game uses it** [O-data geometry; the first also by the walkthrough]:
+
+- l2_junglehub, the streambed's square columns (320 x 320): ledge 796 on column A's east face (x = -12659, z 6349),
+  ledge 797 round the same column 1248 higher, column B's face 638 behind her (x ~ -12021). Ours: the leap back off
+  the hang holds on B 138 over the hang's root height, the jump back on A 435 higher, the next on B 435 higher again,
+  and from there q12 meets 797: four jumps, the count the walkthrough gives.
+- l5_valaskjalf (Jan Mayen): ledge 1512 (5057, -79645, -13429) to ledge 1510 on the same wall 1893 higher, the facing
+  wall 822 away: the leap back and five wall jumps (~520 each), all the count allows.
+- l2_towerroom: ledge 418 (308, 14792, 3645) to ledge 417, 553 higher: one kick off the wall 603 behind her.
+- Found by openunderworld-work/gameplaygoal/chimney/scan.cpp (a ledge hang with an unflagged facing wall 300..950 behind
+  it and the next ledge out of an up-jump's reach) but not climbed this way by ours (reached otherwise, or not at
+  all; not looked into [U]): l2_cliffclimb 940, l2_towerroom 420, l4_temple 1157, l4_traprooms 1367, l5_valaskjalf
+  1558 and 1515, l7_arctic_sea 2073, l7_yggdrasil_end 1860, l1_ship_exterior 365.
+
+**Tests**: `Game.ChimneyJumpGainsHeightEachRebound` (walls 700 apart: ~487 a rebound, 110 out, no teleport),
+`Game.ChimneyJumpNeedsThePress` (14 frames, then the fall), `Game.ChimneyJumpFallsAfterFiveInARow`,
+`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`,
+`Game.ChimneyJumpSaveLoadContinuesIdentically`, `GameReal.JunglehubChimneyJumpClimbsColumns`,
+`GameReal.ValaskjalfChimneyJumpTakesAllFive` (and l2_towerroom's kick), `StreamReal.SaveContinuesBitIdentically`
+(its l2_junglehub case: saved on column B mid-climb, bit for bit).
+
+Open [U]: not measured in tru.exe under Wine: whether a standing jump beside an unflagged wall really plants her on it
+45 over the floor (ours does, by the chart), the hold time in seconds, the attach heights, whether the count ends a climb
+at five; the camera on the wall (the jump camera is kept). Three Wine sessions (2026-11-10,
+openunderworld-work/gameplaygoal/chimney/session.sh, wine1-*.txt) teleported her to our unit-frame coordinates and
+fell through: after `wmem goto <unit>` tru.exe's world is our unit frame + (its start - our spawn): l4_ballcourt
++ (5881.23, -10787.23, -15435.90), l2_junglehub + (8558.23, -19414.44, -18073.17). session2.sh there has the corrected
+coordinates (the l4_ballcourt corridor at ours -17544, 6342, 2841.5 for the count; l2_junglehub's streambed between
+the columns, where column B's base carries flag 0x80 up to 800 over the floor and its upper part does not) and
+ours1..3.txt our controller's traces of the same inputs to compare with; it was not run.
+
 ## Rail slides (src/game/Traverse.cpp)
 
 - Type-8 markup attaches from the ground or air after ledges, poles, ladders, perches and rock faces. Lara follows the
@@ -2213,8 +2410,8 @@ damage type +0x63C):
   The exe does not check full health: a pack used at full health is spent. Ours: `Actions::heal` (H, pad d-pad up:
   locals 1291 "Press U+1808 to use a health pack", U+1808 = d-pad up [I TR7 button order]; script `heal`); the carried
   count is `World::found[2]` (picked-up `ca_rw_shard` packs, saved) and drops by one per use. Lara has no use clip
-  [O]: g_healthpack.drm's `use` (1.03 s) animates the pack object, so nothing plays on her. Max carried 100 (+0xE2..E6)
-  and +1 per pickup (+0xE8) are not enforced (Progression counts pickups).
+  [O]: g_healthpack.drm's `use` (1.03 s) animates the pack object, so nothing plays on her. Max carried 100 (+0xE2..E6),
+  +1 per pickup (+0xE8) and the empty start of every level: "Collectibles".
 - Death: at health ≤ 0 on the ground, `death_fall_normal` (fall) or `death_toknee` (other damage) plays [I]; DeathState
   (0x75AA50) fades the screen to black over 90 frames (wipe 10; `World::screenFade`) and respawns when it is black
   (0x75AF90 -> 0x6F55A0 checkpoint reload, 3 s) [O]. The weapons, clips and reserves are kept [I].
@@ -2633,12 +2830,12 @@ rotation when a unit is offset (only min / max / centre move): l7_arctic_sea's b
 Stowed weapons are placed from the data as the original (speargun across her back in ch1, the rifle in ch6; weapon
 data +0xB9 names Lara's stow marker, "Combat").
 
-**Pickups** [O names/counts, I roles]: `*_rw_artifact` (7..22 per chapter) = treasures, `*_rw_treasure` (one per
-chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot
+**Pickups** (the reward table, urn treasures, relic and health-pack rules: "Collectibles") [O names, roles from the
+reward table]: `*_rw_artifact` = treasures lying in the world, `*_rw_treasure` (one per chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot
 natives). All share base script 3674 (playersensor, "popUpTitleMessageChannel", hint_14). Ours: interact press within
 200 units horizontally / 250 vertically of the reward intro picks up the nearest one [I]; it joins `World::collected`,
 `World::found` counts it, the mesh is hidden and the HUD shows `TREASURES|RELICS|HEALTH PACKS` (1251/1252/1274) with the
-count [I format]. Saved (docs/SAVES.md). Health packs are not yet usable (Combat).
+count [I format]. Saved (docs/SAVES.md).
 
 **Menus** [O layout/art/strings from tru.exe captures, I where marked]: the main menu is the original's
 `ScriptMainMenu` screen (cdc script UI `uimainmenu`, generalbank.drm script 8; the scripts themselves are not

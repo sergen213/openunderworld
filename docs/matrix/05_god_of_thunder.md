@@ -1,0 +1,67 @@
+## 05. God of Thunder (Level 1 - Mediterranean Sea, part 4)
+Walkthrough: https://tombraiders.net/stella/walks/TR8walk/04thunder.html
+Sub-pages read: details/swandive.html (Swan Diver II spot on the upper deck), bugnotes.html (nothing for this section)
+Our units: l1_ship_exterior → l1_ship_upper_hallway_a / _b → l1_ship_upper_hallway → l1_ship_engine_hall → l1_ship_natla_room (chapter 1 route, ship part up to the Natla cinematic)
+
+Reading notes: statuses use the session vocabulary. "Passing" means the test is in the v0.41.0 suite (675 pass per
+RULES.md); this agent ran no tests. A status is chapter-specific: a mechanic tested only in another unit is
+`IMPLEMENTED BUT UNVERIFIED` here and the generic test is named as "mechanic test". [O]/[I]/[U] as in the repo docs.
+Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
+
+| Category | Required information | Status | Evidence / tests |
+|---|---|---|---|
+| Chapter | Board the ship by its anchor, fight across the container deck, upper deck, helipad and aft deck (19 mercenaries on the page), go below to the engine room and the Natla room | PARTIALLY IMPLEMENTED | enemies and doors tested; boarding climb and the fights as a route are not |
+| Movement | Run, strafe under fire, stairs, cover behind crates | IMPLEMENTED BUT UNVERIFIED | no Lara-movement test in the ship units |
+| Traversal | Jump from the boat to the anchor, climb anchor and chain, four ledge jumps to the deck; container stack by chimney jump or by box steps; jumps across containers | PARTIALLY IMPLEMENTED | chimney jump NOT IMPLEMENTED; anchor / chain markup not surveyed (no unit has rope / vertical-pole markup, GAMEPLAY.md "Ladders…" survey note, so it must be ledges or holds) |
+| Physics | Exploding fuel tanks (blast damage to enemies and Lara), crates shot to pieces, sticky grenades, enemy ragdolls | PARTIALLY IMPLEMENTED | crates: `ProgressionReal.CombatCrateBreaksOnHit`; ragdolls: `GameReal.KilledPoacherRagdollIndependentOfRenderRate` (mechanic); barrel explosion objects "not modelled: no blast damage" (GAMEPLAY.md "Breakables") |
+| Grapple | n/a on the page | n/a | — |
+| Animation | Two-gun / rifle aim grids, hit reactions, mercenary cover, bark and death sets, kick and jump-kick | PARTIALLY IMPLEMENTED | `Combat.HitReactionPlaysAndReturns`, `AiReal.DecodedSensesAttacksDeaths`; Lara kick clips unused |
+| Combat | Weapon choice in the PDA, target lock that holds through cover, re-lock to change target, strafing, kick (Interact) and running jump-kick knock-downs, grenades, shootable fuel tanks, enemies using cover, patrolling and flanking | PARTIALLY IMPLEMENTED | `AiReal.MercsGuardZonesCoverAndAlert`, `AiReal.MercPatrolsSearchesAndReturns`, `AiReal.ShipNavGraphFlankAndInvestigate` (all l1_ship_exterior), ctest replay `merc_squad`; `Combat.LockOnSelectionAndSwitch`, `Combat.PistolsLockFireAndHit`, `CombatReal.RifleAndTranquilizerClips` (mechanic); no Lara melee |
+| Swimming | Optional swan dive off the upper deck into the sea | NOT IMPLEMENTED | swan dive absent; sea volume exists (`StreamReal.OpenSeaWater`) |
+| Vehicle | n/a | n/a | — |
+| Objects | First-aid kits ×5, fuel tanks, breakable crates, cable spool, automatic ship doors, rifles dropped by mercenaries | PARTIALLY IMPLEMENTED | doors: volumes 1531 / 1492 / 1465 / 1436 "pass (1531 in suite)" (PROGRESSION.md); rifle ammo from bodies (`AiReal.MercsGuardZonesCoverAndAlert`) |
+| Puzzles | n/a | n/a | — |
+| Hazards | Gunfire, own grenades sticking nearby, tank explosions, fall into the sea | PARTIALLY IMPLEMENTED | grenade self-damage: `Gadgets.GrenadeKillsDummyAndHurtsLara`; tank blast missing |
+| Collectibles | Page header: health 5, treasures 0, relics 0 | IMPLEMENTED BUT UNVERIFIED | health packs are `*_rw_shard` intros; positions in the ship units not asserted |
+| Progression | Engine-room cinematic (fuel pipe explosion, sprinklers), Natla cinematic, then the escape section | IMPLEMENTED | cinematics 1453 / 1288 via volumes 1465 / 1436 (PROGRESSION.md), `CineReal.NatlaSubtitlesCameraAndVoiceLines` |
+| Automated tests | Existing: `AiReal.MercsGuardZonesCoverAndAlert`, `AiReal.MercPatrolsSearchesAndReturns`, `AiReal.ShipNavGraphFlankAndInvestigate`, `AiReal.DeathTimerAndThrallChunks` (ship data), `ProgressionReal.CombatCrateBreaksOnHit`, `ProgressionReal.CriticalGates` (1531 → 1529), `CineReal.NatlaSubtitlesCameraAndVoiceLines`, `StreamReal.SaveContinuesBitIdentically` (l1_ship_exterior), ctest `game_replay_merc_squad` | Required: anchor boarding climb, deck fight with counts, tank explosion damage, kick / jump-kick, container climb, door chain down to the Natla room | — |
+
+### Requirements
+| ID | Where in the chapter (own words, in route order) | Mechanic(s) exercised | Our unit / object uid / gate if identifiable | Status | Evidence | Visual reference |
+|---|---|---|---|---|---|---|
+| C05-01 | From the deck of Lara's boat jump to the big ship's anchor, climb onto the chain, climb it to the top, then four jumps up from ledge to ledge to the deck | jump → grab on an object's ledge, climbing a chain (hold / ledge sequence), hang jumps up (q10) ×4, climb-up | l1_ship_exterior hull (markup not surveyed) | unknown (IMPLEMENTED BUT UNVERIFIED at best) | hang jump up: mechanic test `Game.HangJumpsUpRightAndBack`; what markup the anchor and chain carry is not documented; no test | — |
+| C05-02 | First-aid kit on the deck ahead | health pickup | `*_rw_shard` | IMPLEMENTED BUT UNVERIFIED | mechanic test `Pickups.InteractCollectsNearestOnceAndSaves` | — |
+| C05-03 | Before the fight choose a stronger secondary in the PDA (the page prefers the assault rifle); Change Weapon swaps pistols / secondary | PDA weapon selection, weapon cycle, per-weapon ammo | — | IMPLEMENTED | `Menus.PdaWeaponsInventoryAndSonar`, `Combat.WeaponSwitchKeepsRoundsAndReloadsFromReserve`, `CombatReal.RifleAndTranquilizerClips`; `wp_akrifle` pickups in l1 (GAMEPLAY.md "Combat") | — |
+| C05-04 | Container deck: three mercenaries patrol the lower deck, a fourth watches from the upper deck; the first can be shot with pistols from behind the starting crates | enemy patrols on planner paths, sight cones, cover use by Lara (line of fire blocked), ranged bursts | l1_ship_exterior `merc` ×9, `merc_deux` ×3, 8 generator intros | IMPLEMENTED (AI); encounter layout IMPLEMENTED BUT UNVERIFIED | `AiReal.MercPatrolsSearchesAndReturns`, `AiReal.MercsGuardZonesCoverAndAlert` (guard zones, cover nodes, squad alert), `Ai.RangedFireNeedsLineOfSight`, `Ai.ShotsStopAtWalls`; the page's group sizes are not asserted | — |
+| C05-05 | Keep distance and strafe while firing | strafing with lock-on, dodge by movement | — | IMPLEMENTED BUT UNVERIFIED | mechanic tests `Combat.PistolsLockFireAndHit`, `Combat.LockOnSelectionAndSwitch` | — |
+| C05-06 | Close combat: Interact kicks an enemy off his feet; running at him and pressing Interact gives a flying kick; shoot him while down | Lara melee kick, jump-kick, enemy knock-down state | — | NOT IMPLEMENTED | no Lara melee in src/game/Combat.cpp (only enemy melee and the hammer pound); enemy "Down" mode exists for thralls only | — |
+| C05-07 | Small fuel tanks blow up when shot and hurt whoever stands near; mercenaries can do the same to Lara | shootable explosive, radial damage to enemies and player, enemy use | `sh_ei_exploading_barrel` (health 50, trigger 18) | PARTIALLY IMPLEMENTED | break + `fx_boom` only: "explosion objects, not modelled: no blast damage" (GAMEPLAY.md "Breakables") | — |
+| C05-08 | From the right side (facing the stern) use the cable spool as cover and pick off the upper-deck guard with pistols | cover geometry, long-range pistol damage falloff 40 / 30 / 20 [O] | l1_ship_exterior | IMPLEMENTED BUT UNVERIFIED | `CombatReal.WeaponData` [O values] | screenshots/thunder1.jpg |
+| C05-09 | Up to the upper deck: chimney jump between two stacked containers, or climb the shorter boxes by the spool and jump across the container tops; first-aid kit there | chimney jump (alternative), hurdles, running jumps, pickup | l1_ship_exterior | PARTIALLY IMPLEMENTED | box route: hurdle / jump mechanics; chimney jump NOT IMPLEMENTED | screenshots/thunder2.jpg |
+| C05-10 | Optional: swan dive from the white life-jacket bin on the upper deck into the sea | swan dive | l1_ship_exterior | NOT IMPLEMENTED | — | screenshots/swandive3.jpg, swandive4.jpg |
+| C05-11 | Upper deck corridors: one mercenary behind crates on the right, two on the left; a grenade can take them, but it sticks to whatever it hits, including a wall beside Lara | sticky grenade (stick, timer, radius 1100, 1000 → 200 damage [O]) | l1_ship_exterior | IMPLEMENTED BUT UNVERIFIED | mechanic test `Gadgets.GrenadeKillsDummyAndHurtsLara`, replay `pool_gadgets` (l4) | — |
+| C05-12 | Helipad: seven mercenaries in three groups (3 + 2 + 2); side-corridor crates give cover until they are shot apart | squad fights, destructible cover | combat crate 1670 (`sh_ei_combat_crate_a`) and siblings | IMPLEMENTED (crate rule); fight IMPLEMENTED BUT UNVERIFIED | `ProgressionReal.CombatCrateBreaksOnHit` (pistol class 0 does nothing; classes 13 / 4 break it) | — |
+| C05-13 | Target Lock keeps the aim on one man even behind cover; to change target release, turn the camera to another and lock again | hard lock persistence, re-lock by camera | — | IMPLEMENTED BUT UNVERIFIED | mechanic test `Combat.LockOnSelectionAndSwitch` (tiers by camera angle [I]) | — |
+| C05-14 | Two first-aid kits: on the deck with the big round vent near the right stairs, and by the crates beside the second helicopter | pickups | l1_ship_exterior | IMPLEMENTED BUT UNVERIFIED | — | — |
+| C05-15 | Aft deck below the helipad by either stair: three mercenaries (one inside the doorway); first-aid kit by the doors | fight, pickup | l1_ship_exterior | IMPLEMENTED BUT UNVERIFIED | ctest replay `merc_squad` spawns on "the aft deck below the bridge" (merc 1650) | — |
+| C05-16 | Through the doorway and down the stairs; the door at the bottom opens by itself | trigger volume → ship door | volume 1531 → door 1529 (l1_ship_upper_hallway_a) | IMPLEMENTED | `ProgressionReal.CriticalGates` | — |
+| C05-17 | Two enemies in the room on the right (soften with a grenade) | generator-spawned mercenaries indoors | `merc_generator_run` in the upper hallways | IMPLEMENTED BUT UNVERIFIED | generators: `AiReal.PoolGeneratorSpawnsThrall` (mechanic, l4) | — |
+| C05-18 | Further down, the next stair door also opens by itself; on to the engine room: cinematic (ambush, fuel pipe explodes, chain reaction) | volumes → doors, cinematic | volumes 1492, 1465 → cinematic 1453 (l1_ship_upper_hallway / engine_hall) | IMPLEMENTED | PROGRESSION.md row "volumes 1531, 1492, 1465, 1436: pass" | — |
+| C05-19 | After it the sprinklers run and an abandon-ship announcement plays; follow the hall, left at the T (right is a dead end) | scripted effects / voice line, walk | l1_ship_engine_hall | IMPLEMENTED BUT UNVERIFIED | script `sound` lines and effects exist generally (ROADMAP "Sound events: Partial") | — |
+| C05-20 | Looking into the next room starts the long Natla cinematic; the section ends when she is lifted out | volume → cinematic | volume 1436 → cinematic 1288 (l1_ship_natla_room) | IMPLEMENTED | PROGRESSION.md; `CineReal.NatlaSubtitlesCameraAndVoiceLines` (camera ≤ 8.9 units / 1.04° per frame [O]) | — |
+
+### Gaps
+- C05-01 boarding by anchor and chain: markup and behaviour unknown, no test; it is the only way onto the ship.
+- C05-06 Lara melee (kick, jump-kick, knock-down): NOT IMPLEMENTED.
+- C05-07 fuel-tank explosions deal no damage.
+- C05-09 chimney jump alternative missing (box route should still work, untested).
+- C05-10 swan dive missing.
+- Encounter composition per deck (4 / 3 / 7 / 3 / 2 on the page) is not asserted against our spawns and generators.
+- No test moves Lara through the ship: all AI tests place her.
+
+### Proposed self-test scenarios
+1. `thunder_boarding` — l1_cineseatop / l1_ship_exterior at the boat (spawn to be surveyed). Input: jump to the anchor, climb, four up-jumps. Assert: grab on the anchor's markup, monotone height gain, standing on the deck, first-aid kit collectible.
+2. `thunder_container_deck_fight` — l1_ship_exterior deck start. Input: lock + fire at the nearest merc from cover, advance, strafe. Assert: four mercs engaged in this area, they bark / take cover, deaths ragdoll, Lara's damage taken only with line of fire.
+3. `thunder_fuel_tank` — l1_ship_exterior at a tank with the `--target` dummy or a merc beside it. Input: shoot the tank. Assert: tank removed, dummy / merc and (when close) Lara take radial damage (values to be decoded from the explosion object).
+4. `thunder_melee` — l1_ship_exterior, merc at arm's length. Input: interact (kick); run + interact (jump-kick). Assert: kick clip, merc enters a knocked-down mode and gets up, damage as decoded.
+5. `thunder_below_decks` — l1_ship_exterior aft door. Input: walk down both stairs to the T, left. Assert: doors 1529 etc. open on approach, cinematics 1453 then 1288 requested in order, unit sequence upper_hallway_a → … → natla_room.

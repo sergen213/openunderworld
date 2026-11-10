@@ -220,7 +220,7 @@ endif()
 
 # ---- ou_formats: PCD9 textures, render models, terrain -> ou::scene; ou-asset CLI ----------
 add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/formats/Scene.cpp src/formats/Level.cpp
-            src/formats/Shader.cpp src/formats/Uber.cpp src/formats/AnimGraph.cpp)
+            src/formats/Shader.cpp src/formats/Uber.cpp src/formats/AnimGraph.cpp src/formats/Births.cpp)
 target_link_libraries(ou_formats PUBLIC ou_cdc ou_anim)
 add_executable(ou-asset tools/ou-asset/main.cpp)
 target_link_libraries(ou-asset PRIVATE ou_formats)
@@ -394,7 +394,7 @@ endif()
 
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp src/game/Aim.cpp
-  src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/ai/Nav.cpp src/game/Progress.cpp
+  src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/WallJump.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/ai/Nav.cpp src/game/Progress.cpp
   src/game/Vehicle.cpp src/game/Weather.cpp src/game/Gadgets.cpp src/game/Camera.cpp src/game/Bend.cpp src/game/Feedback.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine ou_input glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----

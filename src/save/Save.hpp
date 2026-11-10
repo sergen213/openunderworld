@@ -35,6 +35,7 @@ struct SaveGame {
     nlohmann::json runtime; // World::serializeRuntime() (orbit camera lag, hair, scripts' player unit); null (older saves) = seeded afresh
     std::optional<game::CheckpointRef> checkpoint;
     std::set<int32_t> collected; // World::collected (pickup intro ids)
+    std::set<int32_t> born;      // World::born (treasures out of their broken urns)
     int chapter = 0; // game::kChapters index; saves without it: chapterOfUnit(unit), else 0
     std::array<int, 3> found{}; // World::found (per PickupKind)
     std::optional<int> grenades; // World::grenades; missing (older saves) = left as it is
