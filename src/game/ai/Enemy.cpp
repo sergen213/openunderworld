@@ -547,11 +547,12 @@ bool Enemy::crawl(const collision::CollisionMesh& col, const Target& lara, float
 
 vec3 Enemy::up() const { return tiltMatrix(s_.tilt) * vec3(0, 0, 1); }
 
-// 0x67F040: an entry {class (-1 any), type (0 any), flag} matching the hit message's +0x50 / +0x64 / +0x6E.
-// ponytail: flag bit 0 compared with false (our hits never set +0x6E).
+// 0x67F040: an entry {class (-1 any), type (0 any), flag} matching the hit message's +0x50 / +0x64 / +0x6E. The +0x6E
+// byte is the head shot's (0x620380 hands it to 0x613B40, which answers death category 3 for it): no thrall's entry
+// has the flag, so an adrenaline head shot matches none and kills.
 bool Enemy::getsUp(const Hit& hit) const {
     for (const auto& k : type_->tuning.regenerate.kills)
-        if ((k.source == -1 || k.source == hit.damageClass) && (k.type == 0 || k.type == hit.damageType) && !k.flag) return true;
+        if ((k.source == -1 || k.source == hit.damageClass) && (k.type == 0 || k.type == hit.damageType) && k.flag == hit.headshot) return true;
     return false;
 }
 

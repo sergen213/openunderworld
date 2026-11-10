@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "name": "carry_throw",
+  "chapter": "Carried objects: pick up a carved weight, walk with it, throw it through a door from its press plate (the Norse Connection's west room), put the other one down",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/norse1.html",
+  "note": "l1_baldrs_tomb (matrix requirement C04-03): weights 220 / 218 (ms_pt_weight_c), press plate 219, door 223 at x = -4109. Interact picks a weight up with its hosted_pickup clip (hosted:2467; in her hands at frame 17), she walks with the portable_encumbered clips, Grenade throws it (hosted_throw = hosted:2468, released at frame 27: 1612 units/s forward and up [O tru.exe 0x6B53A0, portable data]) from the plate's door-side edge through the doorway, Crouch puts one down (hosted_putdown = hosted:2469, released at frame 20).",
+  "level": "l1_baldrs_tomb",
+  "spawn": [-5000, -10000, 2560, 180],
+  "steps": [
+    {"step": "pick_up",
+     "plan": ["engage 220 walk", "press", "wait 2"],
+     "duration": 40,
+     "expect": [
+       {"clips": ["hosted:2467", "portable_encumbered_idle"]},
+       {"probe": "portable.held", "eq": 220},
+       {"probe": "player.state", "eq": "idle"}
+     ]},
+    {"step": "carry_onto_the_plate",
+     "plan": ["go -5453 -10404 30 walk", "face 0", "wait 1"],
+     "duration": 60,
+     "expect": [
+       {"clips": ["portable_encumbered_walk"]},
+       {"probe": "player.speed", "over": "max", "max": 600, "note": "the encumbered walk, never a run"},
+       {"probe": "portable.held", "eq": 220},
+       {"probe": "object.219.joint", "max": -30, "note": "she stands on the plate"}
+     ]},
+    {"step": "throw_through_the_door",
+     "input": ["0.1 grenade 1", "0.2 grenade 0"],
+     "duration": 12,
+     "expect": [
+       {"clips": ["hosted:2468", "ng_idle"]},
+       {"probe": "portable.held", "eq": 0},
+       {"probe": "weapon.grenades", "eq": 6, "note": "the key threw the weight, not a grenade"},
+       {"probe": "object.220.pos.z", "over": "max", "min": 3000, "note": "the lob's apex, 470 over the floor"},
+       {"probe": "object.220.pos.x", "min": -4000, "note": "beyond door 223"}
+     ]},
+    {"step": "put_the_other_one_down",
+     "plan": ["engage 218 walk", "press", "wait 2", "press drop", "wait 2"],
+     "duration": 60,
+     "expect": [
+       {"clips": ["hosted:2467", "portable_encumbered_idle", "hosted:2469", "ng_idle"]},
+       {"probe": "portable.held", "eq": 0},
+       {"probe": "player.state", "eq": "idle"}
+     ]}
+  ]
+}
