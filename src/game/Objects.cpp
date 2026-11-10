@@ -1484,17 +1484,22 @@ void World::syncObjects() {
                 if (const auto a = angles.find(o.uid); a != angles.end()) physics_.setAngle(hinge, a->second);
             }
         }
+        // Jaws stand where their joint is from the start (a loaded game's are open: nothing may meet them at the bind
+        // pose before tickObjects poses them).
+        const float travel = jaws && o.joint ? o.joint->position : 0.0f;
+        const glm::mat4 slid0 = jaws ? glm::translate(glm::mat4(1), (*jaws)[0] * travel) : glm::mat4(1);
         for (int seg = 0; seg < int(p.segments.size()); ++seg)
             if (auto shape = physics::solidShape(p, seg)) {
-                col_.dynamics.push_back({o.uid, std::move(shape), intro * p.segments[seg]});
+                col_.dynamics.push_back({o.uid, std::move(shape), intro * slid0 * p.segments[seg]});
                 colliders_.push_back({o.uid, seg, hinge, intro, p.segments[seg]});
             }
         if (jaws) { // the second body: model 1 on the other joint
             jaws_[o.uid] = *jaws;
+            const glm::mat4 slid1 = glm::translate(glm::mat4(1), (*jaws)[1] * travel);
             if (const physics::ObjectPhysics* second = modelPhysics(o.name, 1))
                 for (int seg = 0; seg < int(second->segments.size()); ++seg)
                     if (auto shape = physics::solidShape(*second, seg)) {
-                        col_.dynamics.push_back({o.uid, std::move(shape), intro * second->segments[seg]});
+                        col_.dynamics.push_back({o.uid, std::move(shape), intro * slid1 * second->segments[seg]});
                         colliders_.push_back({o.uid, seg, -1, intro, second->segments[seg], -1, 1});
                     }
         }
