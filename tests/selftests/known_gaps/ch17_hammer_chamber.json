@@ -3,7 +3,7 @@
  "name": "ch17_hammer_chamber",
  "chapter": "17 Valhalla (known gap): from the last checkpoint up the central steps into the hammer chamber: Mjolnir, then the Andaman Sea (docs/matrix/17_valhalla.md C17-70)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/16valhalla.html",
- "note": "l5_valaskjalf at checkpoint 7067 on the wide ledge beyond the fourth hammer. The original goes up the central steps into the chamber, where volumes 6872 / 6866 start 250_val_hammer (6846), whose end gives wp_thorhammer and starts chapter 6. In ours the floor (z -8217) runs level to the chamber block's face at y -93708; the block's top is 800 over the floor and its edge is the ledge band 1542 (z -7427): no steps in the unit's collision [U: an object, or the original's steps are these 800]. A running jump catches the band. DEFECT: Forward + Jump there plays the jump-up try (ledgeb_idle_to_jump_up_antic) instead of the pull-up, so she never stands on the block and 6866 is not entered on foot. The same refusal fails game_selftest_ch01_hall_floor_collapse (ledge 969) on int/0.42.0 since its merges (gameplaygoal/int-ctest-046.log), while the `ledge` scenario's pull-up works: a regression of the climb-up from a hang, not of this unit. ProgressionReal.CriticalGates passes 6866 by placing her in the volume.",
+ "note": "l5_valaskjalf at checkpoint 7067 on the wide ledge beyond the fourth hammer. The original goes up the central steps into the chamber, where volumes 6872 / 6866 start 250_val_hammer (6846), whose end gives wp_thorhammer and starts chapter 6. In ours the floor (z -8217) runs level to the chamber block's face at y -93708; the block's top is 800 over the floor and its edge is the ledge band 1542 (z -7427): no steps in the unit's collision [U: an object, or the original's steps are these 800]. A running jump catches the band. Forward + Jump there plays the jump-up try (ledgeb_idle_to_jump_up_antic), not the pull-up, and by the original's rule: the block's top is the steps' ramp, rising 1 in 2 (normal z 0.89) from the band itself to y -95350 and beyond, so the surface 139 over the top lies 69.5 over the ledge, outside the -30 .. 40 that tru.exe 0x72BAE0 accepts (Player::hangClearance class 1; the chart's pull-ups T608 / T613 need class 2 = 650, and S439 has no way on for class 1). The same ramp with its foot on the floor would start at y -92128, 21 from the checkpoint: GAP [U]: the 790 of steps between the checkpoint floor and the band are not in the unit's terrain collision (one group there, the flat floor) and no object stands there (only volumes 6866 / 6872 and the checkpoint); where the original's lower steps come from is not found, so 6866 is not entered on foot. Not the cause of game_selftest_ch01_hall_floor_collapse (there the blown door leaf rests on ledge 969's top). ProgressionReal.CriticalGates passes 6866 by placing her in the volume.",
  "level": "l5_valaskjalf",
  "spawn": [
   5373,
@@ -72,7 +72,7 @@
      "clips": [
       "ledgeb_climbup_fast"
      ],
-     "note": "DEFECT: the jump-up try plays instead"
+     "note": "GAP: no pull-up onto the ramp (clearance class 1); the lower steps are missing"
     },
     {
      "probe": "step.events",
