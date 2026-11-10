@@ -460,6 +460,7 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
     playerScript_.reset();
     playerHiddenGroups_ = playerGearGroups_ = 0;
     playerObjects_.clear();
+    pullStrength_ = 1;
     if (!bigfile_) return;
     const auto bytes = bigfile_->read("pc-w\\lara.drm");
     if (!bytes) return;
@@ -1137,6 +1138,19 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (lastBike_) mounts_.push_back(lastBike_);
                 return true;
             }
+            // larabase 54 (0x777E40): whether the instanceref argument is that bike (Lara +0xF00). l5_valgrind's
+            // 240_val_gate (7464 vt 58) asks before it plays, to put her back on bike 7229 afterwards (53).
+            if (!std::strcmp(name, "larabase") && nc.function == 54 && nc.args.size() == 1) {
+                const vm::Value& a = nc.args[0];
+                int32_t bike = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
+                if (a.kind == vm::Value::Kind::Member)
+                    if (const auto holder = resolve(a.uid)) bike = int32_t(holder->fields[a.offset]);
+                nc.result = vm::Value::scalar(lastBike_ != 0 && bike == lastBike_);
+                return true;
+            }
+            // larabase 19 (bool): "Setting Gauntlet to be charged" (trigger volumes by the Thor mechanisms: l2_maproom
+            // 2636, l5_valgrind 7511 vt 70 / 71) [U: what it changes on her; nothing in ours].
+            if (!std::strcmp(name, "larabase") && nc.function == 19 && nc.args.size() == 1) return true;
             // Thor's gear objects (g_gauntletleft / g_gauntletright / g_belt) Lara carries in her object slots, set by
             // the type 205 equip helpers vt 59-61 that unit/chapter scripts call: larabase 38 (0x777E90: an object of
             // that name is in one of her 15 slots), 37 (0x7161F0: attach it), 42 (0x6F5A10: drop a slot's object). The
@@ -1696,6 +1710,10 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(r);
                 return nc.function == 43 || r;
             }
+            // gamebase 50 (cameraanchor, cameraref): the l7 Thor towers' vt 49 gives their push camera its anchor before
+            // gamebase 53 (4) switches to it; vt 50 switches back, 53 (1) [U: that camera is not modelled, ours keeps
+            // the gameplay camera].
+            if (!std::strcmp(name, "gamebase") && nc.function == 50) return true;
             // gamebase 30 (0x7761B0 -> 0x60F5B0): bool clears/sets game flag 0x4000 of 0xE7F0B4 and UI element 0xC
             // (0x655280); reveal scripts call it with true after their camera [U: what the flag gates].
             if (!std::strcmp(name, "gamebase") && nc.function == 30 && nc.args.size() == 1) return true;
@@ -1732,9 +1750,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             }
             // 31 (0x7975F0 -> 0x776EF0) posts INSTANCE message 0xC (!arg) to Lara; 61 (0x79A590 -> 0x778060) copies a global
             // clock into Lara +0x6DC and zeroes +0x6E0. The endgame warps (340 / 342 end handlers) run them [U: no effect on ours].
-            // 35 (0x79A270 -> 0x777DA0 -> 0x6EE920) stores its float in player +0x1240; the calendars' vt 54 runs it [U: what
-            // reads it].
-            if (!std::strcmp(name, "larabase") && (((nc.function == 31 || nc.function == 35) && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
+            // 35 (0x79A270 -> 0x777DA0 -> 0x6EE920) stores its float in player +0x1240, her pull strength (0x74AC00 /
+            // 0x73F390 read it): the calendars' vt 54 and the Thor mechanisms' vt 49 / 50 run it.
+            if (!std::strcmp(name, "larabase") && nc.function == 35 && nc.args.size() == 1) { // her pull strength (Script.hpp)
+                pullStrength_ = std::bit_cast<float>(nc.args[0].bits);
+                return true;
+            }
+            if (!std::strcmp(name, "larabase") && ((nc.function == 31 && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
                 return true;
             // uitext 57 (0x7A6D10 -> 0x4C32E0): returns member +0x210 of the text's lazily created widget (a localized
             // string handle) [U]; we have no widget, so null. uigamedata 106 (0x7A14F0 -> 0x77C8B0) stores that string as
@@ -2216,6 +2238,11 @@ bool Runtime::removePortable(int32_t portable, int32_t receptacle, int32_t segme
     const bool started = graphStimulus(receptacle, formats::kStimulusRemove, -1.0f);
     graphStimulus(portable, formats::kStimulusRemove, -1.0f);
     return started;
+}
+
+void Runtime::engage(int32_t uid, int32_t segment, int32_t kind, bool on) {
+    const vm::Value args[] = {vm::Value::scalar(uint32_t(segment)), vm::Value::scalar(uint32_t(kind))};
+    callback(uid, "instance", on ? 67 : 68, args);
 }
 
 bool Runtime::graphAccepts(int32_t uid, uint32_t mask) const {

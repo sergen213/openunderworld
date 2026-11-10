@@ -436,6 +436,14 @@ public:
     // posts 0x186 to its receptacle (0x6C2530: vt 49(segment, 5), graph stimulus 0x40), takes the removal stimulus 0x40
     // itself and is carried (as the pick-up 0x17B: 0x6A6A20, 0x69AA50(1)).
     bool removePortable(int32_t portable, int32_t receptacle, int32_t segment = -1);
+    // Lara's push / pull grip on an object (her PushPull state's entry 0x73F4D0 -> 0x701310, exit -> 0x701350): after
+    // INSTANCE message 0x158 / 0x14F (the uber section's triggers 20 / 21, World) the object's script runs instance
+    // prototype 67 = vt 49 / 68 = vt 50 (0x799900 / 0x799950) with (the engagement record's segment, its kind). The Thor
+    // mechanisms' base type 9744 sets her pull strength there (larabase 35) and resets it to 1.
+    void engage(int32_t uid, int32_t segment, int32_t kind, bool on);
+    // Lara's pull strength (player +0x1240, 1 at birth; larabase 35 = 0x79A270 -> 0x6EE920): scales the speed and the
+    // impulse of her push / pull (0x74AC00, 0x73F390; World::pushUberHandle).
+    float pullStrength() const { return pullStrength_; }
     // Receptacles: objects whose anim graph takes the insert stimulus 0x20; null otherwise.
     std::shared_ptr<const Object::GraphSet> receptacleGraph(const std::string& name);
     const std::string* objectName(uint16_t id) const { const auto n = objectNames_.find(id); return n == objectNames_.end() ? nullptr : &n->second; }
@@ -635,6 +643,7 @@ private:
     uint64_t visibilityVersion_ = 0;
     uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
+    float pullStrength_ = 1;              // larabase 35 (not saved: a load lets go of the grip)
     uint32_t unitEffect_ = 0;
     std::set<int32_t> grappleOff_; // unit 13 / 12: grapple targets taken from / given back to Lara; saved
     std::map<int32_t, std::pair<int32_t, int32_t>> anchors_; // anchor(): object -> {object, marker id}; saved
