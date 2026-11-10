@@ -271,6 +271,7 @@ speeds units/s; 3.1605 units = 1 cm. "Unavailable" probes report `null` and fail
 | `object.<uid>.joint` | its multibody joint's position (plate units, hinge degrees) |
 | `object.<uid>.uber.<n>` | uber section n's state, -1 while it is in a transition |
 | `object.<uid>.uberjoint.<n>` | simulated uber joint n's position |
+| `object.<uid>.uberslide.<n>.x/.y/.z` | three-axis uber joint n's travel from where it was made (the Thor pillars) |
 
 These object probes are what `--report-objects` prints (docs/GAMEPLAY.md); `--report-objects 0 --frames 1` lists every
 script object of a level with its uid.

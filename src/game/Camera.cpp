@@ -132,6 +132,7 @@ const std::string& World::cameraUnit() const { return splineCam_ ? splineCam_->u
 bool World::cameraNative(int op, const std::string& unit, uint32_t index, uint32_t value) {
     if (op == 0) return startSplineCamera(unit, index, value);
     if (op == 2) return (splineCam_ ? kAutoSplineCamera : 1u) == index;
+    if (op == 3) return pushCameraData_ = index, true; // gamebase 50: the type-4 camera's data (not modelled: Script.cpp)
     // op 1, CameraManager +0x50 (0x5EDFC0): switching to the AutoSplineCamera keeps the spline autosplinecamera 0
     // started (ours plays from there [I]: the exe updates it only while current); any other type leaves it.
     if (index != kAutoSplineCamera && splineCam_) splineCam_->ended = true;

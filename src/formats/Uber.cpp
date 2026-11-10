@@ -63,7 +63,14 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
     const auto obPointers = cdc::sectionPointers(drm, uint32_t(*base)); // joint sounds may live in another section
     const auto param = [&](uint32_t o) {
         if (const auto it = paramAt.find(o); it != paramAt.end()) return it->second;
-        out.params.push_back({at<uint8_t>(ob, o), at<float>(ob, o + 4), at<float>(ob, o + 8), at<uint8_t>(ob, o + 12) != 0});
+        UberParam r{at<uint8_t>(ob, o), at<float>(ob, o + 4), at<float>(ob, o + 8), at<uint8_t>(ob, o + 12) != 0};
+        if (r.kind == 7) {
+            r.axis = at<int32_t>(ob, o + 4);
+            // a range record ends at +0x10: read the longer limit / motor layout only where the section has it
+            for (uint32_t k = 0; k < 6 && size_t(o) + 8 + 4 * k <= ob.data.size(); ++k) r.v[k] = at<float>(ob, o + 4 + 4 * k);
+            if (size_t(o) + 0x1D <= ob.data.size()) r.bits = at<uint8_t>(ob, o + 0x1C);
+        }
+        out.params.push_back(r);
         return paramAt[o] = int32_t(out.params.size() - 1);
     };
     std::function<int32_t(uint32_t)> joint = [&](uint32_t o) -> int32_t {
@@ -82,6 +89,14 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
             j.lo = at<float>(ob, o + 0x2C), j.hi = at<float>(ob, o + 0x30);
             j.speed = at<float>(ob, o + 0x34), j.force = at<float>(ob, o + 0x38);
             j.flags = at<uint8_t>(ob, o + 0x3C);
+            if (j.type == 7) {
+                for (uint32_t k = 0; k < 3; ++k) {
+                    j.lo3[k] = at<float>(ob, o + 0x2C + 8 * k), j.hi3[k] = at<float>(ob, o + 0x30 + 8 * k);
+                    j.speed3[k] = at<float>(ob, o + 0x44 + 8 * k), j.force3[k] = at<float>(ob, o + 0x48 + 8 * k);
+                }
+                j.flags3 = at<uint8_t>(ob, o + 0x5C);
+                j.friction = at<float>(ob, o + 0x18), j.unknown1C = at<float>(ob, o + 0x1C), j.unknown28 = at<uint8_t>(ob, o + 0x28);
+            }
             if (const auto s = obPointers.find(o + 0x10); s != obPointers.end()) j.sound = s->second;
             j.soundAt = uint8_t(at<uint32_t>(ob, o + 0x24));
             if (j.bodyA < -1 || j.bodyA >= int32_t(ns) || j.bodyB < -1 || j.bodyB >= int32_t(ns))

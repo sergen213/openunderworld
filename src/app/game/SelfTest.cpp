@@ -425,6 +425,7 @@ bool SelfTest::probeKnown(std::string_view name) {
     const std::string_view f = p[2];
     if (p[0] == "object") {
         if (p.size() == 3) return f == "exists" || f == "name" || f == "graph" || f == "joint" || f == "hidden" || f == "dead" || f == "in";
+        if (p.size() == 5) return f == "uberslide" && integer(p[3]) && axisName(p[4]);
         return p.size() == 4 && ((f == "pos" || f == "body") ? axisName(p[3]) : (f == "uber" || f == "uberjoint") && integer(p[3]));
     }
     if (p[0] == "enemy") {
@@ -667,6 +668,10 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "uberjoint" && n) {
             const auto* jt = w.uberJoint(*id, *n);
             return jt ? num(jt->x) : Value();
+        }
+        if (f == "uberslide" && n && p.size() == 5) { // a three-axis joint (the Thor pillars): its body's travel
+            const auto* jt = w.uberJoint3(*id, *n);
+            return jt ? component(jt->x, p[4]) : Value();
         }
     }
     return {};
