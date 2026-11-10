@@ -3197,7 +3197,10 @@ Ours:
   run, then 15 s), the throne is also a press plate (`multibody` joint, ranges -150..-90 "in position" / -30..10) that
   the tied weight bears down on: its prismatic uber joint 0 (world → section 0, created in state 0) is that joint, so
   the plate's body poses the throne's model and collision (`World::uberModelJoint` skips plates; the unweighted uber
-  joint used to hold the drawn throne up while only the plate sank [I: one Havok constraint in tru.exe]).
+  joint used to hold the drawn throne up while only the plate sank [I: one Havok constraint in tru.exe]); the
+  section's frame (`World::uberSectionFrame`: its records and the attach marker the scepter's weight presses at)
+  rides the plate too, not the uber joint: with the uber joint's frame the weight stayed at the top, its ray lost
+  the plate 63 units down and the throne hung at -62.9.
   `ar_pu_cog_wheel_level_1a` failed to load before (two unused transition slots -1 -> -1);
   `ca_uo_thor_statue_arms` (l4_pool) has no engagement set: not a receptacle. l7_arctic_sea's statue arms, gem holes and
   thor gears lie under water: Lara carries, inserts and takes out portables swimming too (records there are spheres
