@@ -1441,10 +1441,11 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   | rappel up / down | 34.77 / 44.25 per frame | 1043.0 / 1327.4 units/s |
 
   A Wine trace of player +0x2A0 on this ring (period, growth per pass, the rope length the hang starts with, the
-  roped walk's speed) is prepared but was not obtained: `openunderworld-work/gameplaygoal/grapin/wine2.sh` (camera
-  calibration by mouse, then walk-off, jumps, held Forward, no stick, Interact climb, jump-off; its output would be
-  `wine2.txt`). Open until then [U]: the time base of the brakes and of the body damping (ours: per frame), gravity on
-  the rope body, the "no ground" distance, the roped walk speed.
+  roped walk's speed) was attempted twice and not obtained: teleported to the balcony (unit offset from the ring's
+  instance position: tru = ours + (1583.83, 1911.31, -1939.58)) she falls through the world after the first camera
+  calibration run. Scripts and notes: `openunderworld-work/gameplaygoal/grapin/` (`wine2.sh`, `an.py`, `NOTES.md`).
+  Open until then [U]: the time base of the brakes and of the body damping (ours: per frame), gravity on the rope
+  body, the "no ground" distance, the roped walk speed, whether the jump-offs let the rope go.
 - Landing from the rope [I]: swinging down onto a floor (> 300 u/s down) off a taut rope, or coming down just over a
   floor out at the end of the arc (more than 0.3 x the free rope from under the pivot), she lets go standing; landing
   her own jump with the rope slack keeps it.
