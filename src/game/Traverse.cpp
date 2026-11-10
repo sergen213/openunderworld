@@ -747,17 +747,127 @@ void Player::startHangToWallHug() {
     play("bbeam_flip_foward", false);
 }
 
+namespace {
+// Corners [O: lara.drm chart S1236 / S1237 T2076 / T2078 / T2079 / T2081; tru.exe 0x764AA0 -> 0x733E00 (the angle,
+// radians x 57.29578) compared by 0x783BD0 (mode 1: >=, mode 2: <=)]: while shimmying with the stick held, a corner
+// angle of 70..110 plays Wall_Hug_Shimmy_to_Concave_left_* (request 1400), 250..290 Wall_Hug_Shimmy_to_Convex_left_*
+// (1399); the right-hand shimmy's transitions carry flag 2 (mirrored [I]). Ours measures the angle on the wall side
+// between the segment she leaves and the one she goes onto (a straight line 180, a 90 degree inside corner 90, an
+// outside one 270) [I: 0x733E00 takes it from the lookahead's point, 0x74BCF0 not decoded].
+constexpr float kConcaveLo = 70.0f, kConcaveHi = 110.0f, kConvexLo = 250.0f, kConvexHi = 290.0f;
+// The clip of the request's three (blended by the angle in the original) nearest to the corner: concave _70 / _90 /
+// _110 at that angle, convex at 360 minus it (Convex_left_70 turns 55 degrees, _110 35: a 290 / 250 corner) [O: clip
+// root yaws; I: nearest instead of blended].
+std::string cornerClip(float angle) {
+    const bool concave = angle < 180.0f;
+    const float a = concave ? angle : 360.0f - angle;
+    const int n = a < 80.0f ? 70 : a > 100.0f ? 110 : 90;
+    return std::string(concave ? "Wall_Hug_Shimmy_to_Concave_left_" : "Wall_Hug_Shimmy_to_Convex_left_") + std::to_string(n);
+}
+// Jumps off the wall hug [O: lara.drm chart S1232 T2070 / T2066 / T2067 -> S272 Wall_Hug_Jump_Forward (1416), S273
+// Wall_Hug_jump_left (1410), S274 the same with property 201 (mirrored: right); all under S275, whose jump query is
+// q68 (prop 541): from the attach point (+0xCA0, +0xCC 1) 63.21 out along the jump, 74.32 that way + 42.54 up a 30 Hz
+// frame, cone 90, +0x28 20, +0x2C 0x1850 (the ledge classes), class record 0x2A9EC, target types 1 from that start
+// and 3 from 505.7 over it (+0x8C); then S289 flies her onto what it met. Jump with the stick neutral or back
+// (T2060: not MoveDir 410 / 412 / 413) -> S1261 (query q55, prop 546: straight up 50.82 a frame from the attach
+// point, frames 1..17, cone 180, +0x28 -1, +0x2C 0x38A0 (coming down), record 0x2A9EC, types 1 / 3 at 0 / 505.7)
+// -> S1258 Wall_hug_Jump_Up_Twist (1403: up 63, a 150 degree turn) -> S1256 in the air onto the target; with none
+// (T2056, JumpTargetSameAsAttached 0) S1257 bbeam_somersault_forward (161, property 425 = 0: no root motion [I]) back
+// to Wall_Hug_Idle.] Ours: the stick's dominant axis relative to her picks the way [I: MoveDir 426 / 427 / 428].
+constexpr float kHugQueryOut = 63.21f, kHugQueryHang = 505.7f, kTwistFrames = 17.0f;
+// Drop to water [O: chart T2069 c66:1 (input 0x32) + c32d:1 -> S1270 Wall_Hug_Drop_to_Water (1377, mirrored) -> S1012
+// (the fall); c32d = tru.exe 0x7420D0: a ray from 15 (+0x72C) over her root and 47.41 (+0x730) in front of it down
+// 632.11 (+0x734) whose first hit is water]. c66 as the drop button is [I].
+constexpr float kDropProbeUp = 15.0f, kDropProbeOut = 47.408f, kDropProbeDown = 632.111f;
+} // namespace
+
+// The decoded jump queries off the wall hug from the attach point (the ledge point she is at): way 0 forward (out
+// from the wall), +1 left, -1 right (q68), 2 the twist up (q55).
+Player::JumpQuery Player::wallHugQuery(int way) const {
+    const auto& m = col_.markup[size_t(s_.ledge)];
+    const vec3 at = ledgePoint(m, s_.ledgeSeg, s_.ledgeT);
+    const vec2 f = xy(forward()), left = xy(rotYaw(s_.yaw, vec3(1, 0, 0)));
+    JumpQuery q;
+    q.base = at, q.attach = 1, q.record = JumpRecord::HangLadder;
+    if (way == 2) {
+        q.start = q.root = at, q.hang = at + vec3(0, 0, kHugQueryHang);
+        q.v = vec3(0, 0, 50.82f), q.dir = f, q.cone = kPi, q.frames = kTwistFrames, q.minDist = -1, q.falling = true;
+        return q;
+    }
+    const vec2 dir = way == 0 ? f : left * float(way);
+    q.start = q.root = at + vec3(dir * kHugQueryOut, 0), q.hang = q.start + vec3(0, 0, kHugQueryHang);
+    q.v = vec3(dir * (t_.wallHugJumpOut / 30.0f), t_.wallHugJumpVz / 30.0f), q.dir = dir, q.cone = glm::radians(90.0f);
+    q.classify = true;
+    return q;
+}
+
+void Player::wallHugJump(vec2 move) {
+    const float mag = glm::length(move);
+    const vec2 f = xy(forward()), left = xy(rotYaw(s_.yaw, vec3(1, 0, 0)));
+    const float fw = mag > 0.5f ? glm::dot(move, f) / mag : 0.0f, lf = mag > 0.5f ? glm::dot(move, left) / mag : 0.0f;
+    const int way = std::abs(lf) > 0.5f && std::abs(lf) >= fw ? (lf > 0 ? 1 : -1) : fw > 0.5f ? 0 : 2;
+    const JumpTarget j = ledgeOnArc(wallHugQuery(way));
+    if (way == 2 && j.markup < 0) { // nothing to catch: the somersault on the spot
+        play("bbeam_somersault_forward", false);
+        return;
+    }
+    s_.fallStartZ = s_.pos.z;
+    s_.regrabCooldown = 0.3f;
+    play(way == 2 ? "Wall_hug_Jump_Up_Twist" : way == 0 ? "Wall_Hug_Jump_Forward" : "Wall_Hug_jump_left", false, 1, way == -1);
+    if (j.markup >= 0) { // the take-off clip (root motion, turn), then the flight aimed at its hang (State::HangJump)
+        s_.ledge = j.markup, s_.ledgeSeg = j.seg, s_.ledgeT = j.t, s_.ledgeSide = j.side, s_.polePara = false;
+        s_.state = State::HangJump;
+        s_.vel = vec3(0);
+        return;
+    }
+    // the free leap at q68's launch after the take-off clip (State::Jump)
+    const vec2 dir = way == 0 ? f : left * float(way);
+    s_.ledge = -1;
+    s_.state = State::Jump;
+    s_.vel = vec3(dir * t_.wallHugJumpOut, t_.wallHugJumpVz);
+}
+
+// Water within the drop probe's reach under the point in front of her, the probe meeting nothing solid first.
+bool Player::wallHugWaterBelow() const {
+    const vec3 p = s_.pos + forward() * kDropProbeOut + vec3(0, 0, kDropProbeUp);
+    float surf = -1e30f;
+    for (const auto& w : col_.markup) {
+        if (w.type != 10 || w.points.size() < 2) continue;
+        const float z = waterSurface(w, xy(p), waveSeconds_);
+        if (z <= p.z && z >= p.z - kDropProbeDown && z > surf && insideWater(w, vec3(xy(p), z - 1.0f))) surf = z;
+    }
+    return surf > -1e29f && !col_.raycast(p, vec3(0, 0, -1), p.z - surf);
+}
+
 // Back to the wall on a shelf: shuffle along it (Wall_Hug_Shimmy_Left, request 1402; to the right mirrored [I: the
-// chart's two shimmy states differ only in property 201]), walk off where the shelf ends (Wall_Hug_Walk_Off, 1378,
-// mirrored) [O], jump forward off it (Wall_Hug_Jump_Forward, 1416; a stick jump's take-off speeds [I]). Corners
-// (Shimmy_to_Concave / _Convex, 1399 / 1400), the side and twist jumps and the drop to water are not done.
-void Player::wallHug(vec2 move, bool jumpPressed, float dt) {
+// chart's two shimmy states differ only in property 201]), round its corners, walk off where the shelf ends
+// (Wall_Hug_Walk_Off, 1378, mirrored) [O], jump (wallHugJump), drop into water below.
+void Player::wallHug(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size()) { startFall(s_.vel); return; }
     const auto& m = col_.markup[size_t(s_.ledge)];
     const std::string clip = s_.clip;
+    const float mag = glm::length(move);
+    const float left = mag > 0.5f ? glm::dot(move, xy(rotYaw(s_.yaw, vec3(1, 0, 0)))) / mag : 0.0f; // model +X = her left
     if (clip == "bbeam_walk_turn180" || clip == "bbeam_flip_foward") {
         if (!warpStep(dt)) return;
         play("Wall_Hug_Idle", true);
+    } else if (clip.starts_with("Wall_Hug_Shimmy_to_")) { // round a corner: the clip carries her onto the next segment
+        if (!warpStep(dt)) return;
+        if (std::abs(left) > 0.5f) play("Wall_Hug_Shimmy_Left", true, 1, left < 0);
+        else play("Wall_Hug_Idle", true);
+        return;
+    } else if (clip == "bbeam_somersault_forward") {
+        advanceClip(dt);
+        if (!clipDone()) return;
+        play("Wall_Hug_Idle", true);
+        return;
+    } else if (clip == "Wall_Hug_Drop_to_Water") {
+        s_.pos += advanceRoot(dt);
+        if (!clipDone()) return;
+        s_.ledge = -1;
+        s_.regrabCooldown = 0.4f;
+        startFall(vec3(0));
+        return;
     } else if (clip == "Wall_Hug_Walk_Off") {
         s_.pos += advanceRoot(dt);
         if (!clipDone()) return;
@@ -765,29 +875,23 @@ void Player::wallHug(vec2 move, bool jumpPressed, float dt) {
         s_.ledge = -1;
         play("ng_idle", true);
         return;
-    } else if (clip == "Wall_Hug_Jump_Forward") {
-        advanceClip(dt);
-        if (!clipDone()) return;
-        s_.ledge = -1;
-        s_.state = State::Jump;
-        s_.vel = forward() * t_.standJumpSpeed + vec3(0, 0, t_.standMoveJumpVz);
-        s_.fallStartZ = s_.pos.z;
-        s_.regrabCooldown = 0.3f;
-        play("NG_InAir_Feet_Forward_stage1_standing", false);
-        return;
     }
     if (jumpPressed) {
-        play("Wall_Hug_Jump_Forward", false);
+        wallHugJump(move);
         return;
     }
-    const float mag = glm::length(move);
-    const float left = mag > 0.5f ? glm::dot(move, xy(rotYaw(s_.yaw, vec3(1, 0, 0)))) / mag : 0.0f; // model +X = her left
+    if (dropPressed && wallHugWaterBelow()) {
+        play("Wall_Hug_Drop_to_Water", false, 1, true);
+        return;
+    }
     if (std::abs(left) > 0.5f) {
         play("Wall_Hug_Shimmy_Left", true, 1, left < 0);
         const vec3 d = rotYaw(s_.yaw, advanceClip(dt));
+        const float ds = glm::dot(xy(d), ledgeDir(m, s_.ledgeSeg));
+        if (wallHugCorner(ds)) return;
         int seg = s_.ledgeSeg;
         float t = s_.ledgeT;
-        if (ledgeMove(m, seg, t, glm::dot(xy(d), ledgeDir(m, seg))) || !shelfAt(s_.ledge, seg, t)) {
+        if (ledgeMove(m, seg, t, ds) || !shelfAt(s_.ledge, seg, t)) {
             s_.regrabCooldown = 0.5f;
             play("Wall_Hug_Walk_Off", false, 1, left > 0); // it walks off to her right
             return;
@@ -801,6 +905,42 @@ void Player::wallHug(vec2 move, bool jumpPressed, float dt) {
     const vec3 shelf(-dir.y, dir.x, 0);
     s_.pos = ledgePoint(m, s_.ledgeSeg, s_.ledgeT) + shelf * kShelfDepth;
     s_.yaw = yawOf(-xy(shelf));
+}
+
+// Shimmying `ds` along the segment toward a joint whose corner angle lies in a band: the corner clip from where her
+// path round it starts. Her stand line (kShelfDepth in from each segment) turns at the point D tan(phi / 2) before
+// the joint (phi the turn toward the wall, D = kShelfDepth); the clip carries her from s before that point on the
+// segment she leaves to s past it on the next, s such that the chord between them is the clip's own travel [I: the
+// clip's root motion is off in the original (property 425 = 0) and the lookahead's trigger point is not decoded].
+bool Player::wallHugCorner(float ds) {
+    const auto& m = col_.markup[size_t(s_.ledge)];
+    const bool fwd = ds > 0;
+    const int segA = s_.ledgeSeg, segB = fwd ? segA + 1 : segA - 1;
+    if (ds == 0 || segB < 0 || size_t(segB) + 1 >= m.points.size()) return false;
+    const float lenA = ledgeLen(m, segA), lenB = ledgeLen(m, segB);
+    if (lenA < 1.0f || lenB < 1.0f) return false;
+    const vec2 ta = ledgeDir(m, segA) * (fwd ? 1.0f : -1.0f), tb = ledgeDir(m, segB) * (fwd ? 1.0f : -1.0f);
+    // the turn toward the wall: the wall lies left of p[i] -> p[i+1], so right of her travel when going backward
+    const float phi = std::atan2(ta.x * tb.y - ta.y * tb.x, glm::dot(ta, tb)) * (fwd ? 1.0f : -1.0f);
+    const float angle = 180.0f + glm::degrees(phi);
+    if (!((angle >= kConcaveLo && angle <= kConcaveHi) || (angle >= kConvexLo && angle <= kConvexHi))) return false;
+    const std::string clip = cornerClip(angle);
+    const float chord = glm::length(xy(clipMove(anims_, clip)));
+    const float turn = kShelfDepth * std::tan(0.5f * phi), s = chord / (2.0f * std::cos(0.5f * std::abs(phi)));
+    const float startA = std::clamp(-turn - s, -lenA, 0.0f); // from the joint along her travel (<= 0: before it)
+    const float endB = std::clamp(turn + s, 0.0f, lenB);      // past the joint on the next segment
+    const float toJoint = fwd ? lenA - s_.ledgeT : s_.ledgeT;
+    if (toJoint - std::abs(ds) > -startA) return false; // not there yet
+    const float tB = fwd ? endB : lenB - endB;
+    if (!shelfAt(s_.ledge, segB, tB)) return false;
+    const vec2 dB = ledgeDir(m, segB);
+    const vec3 shelfB(-dB.y, dB.x, 0);
+    s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw;
+    s_.climbTo = ledgePoint(m, segB, tB) + shelfB * kShelfDepth;
+    s_.climbYawTo = s_.yaw + wrapAngle(yawOf(-xy(shelfB)) - s_.yaw);
+    s_.ledgeSeg = segB, s_.ledgeT = tB;
+    play(clip, false, 1, !fwd);
+    return true;
 }
 
 namespace {

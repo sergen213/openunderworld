@@ -219,6 +219,9 @@ struct Tuning {
     // Jumps off a ladder to the side or back (lara.drm query q22, the ladder jump group's): 47.41 that way + 60.05 up
     // (units per 30 Hz frame x 30).
     float ladderJumpOut = 47.41f * 30, ladderJumpVz = 60.05f * 30;
+    // Jumps off the wall hug (lara.drm query q68, the in-air group S275's: 74.32 that way + 42.54 up a 30 Hz frame) and
+    // its twist jump up (q55: 50.82 straight up), x 30 (Traverse.cpp Player::wallHugJump).
+    float wallHugJumpOut = 74.32f * 30, wallHugJumpVz = 42.54f * 30, wallHugTwistVz = 50.82f * 30;
     // Sprint (Shift / LB held while running; tru.exe under Wine, l4_trailstart): sprint_loop for 9.5..9.9 s, then
     // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
     // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
@@ -464,7 +467,11 @@ private:
     bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
     bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
     void startHangToWallHug();                        // up onto it from the hang (clearance class 8)
-    void wallHug(vec2 move, bool jumpPressed, float dt);
+    void wallHug(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    bool wallHugCorner(float ds);           // shimmying ds along the shelf onto a corner: the corner clip round it
+    JumpQuery wallHugQuery(int way) const;  // q68 forward (0) / left (1) / right (-1), q55 the twist up (2)
+    void wallHugJump(vec2 move);            // Wall_Hug_Jump_Forward / _jump_left / Wall_hug_Jump_Up_Twist (or the somersault)
+    bool wallHugWaterBelow() const;         // tru.exe 0x7420D0: water under the point in front of her (drop to water)
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);
     void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp

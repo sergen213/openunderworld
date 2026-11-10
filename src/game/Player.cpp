@@ -154,10 +154,11 @@ vec3 jumpVelocity(vec3 delta, float time, float g) { return vec3(xy(delta), delt
 
 bool swimSprintClip(std::string_view c) { return c == "swim_surface_sprint_forward" || c == "swim_submerged_sprint"; }
 bool swimExhaustedClip(std::string_view c) { return c == "swim_surface_exhausted" || c == "swim_submerged_exhausted"; }
-// Take-off clips of hang leaps whose root motion (and turn) plays before the launch.
+// Take-off clips of hang leaps whose root motion (and turn) plays before the launch (the wall-hug ones: lara.drm
+// S272 / S273 / S274 / S1258, Traverse.cpp Player::wallHugJump).
 bool hangTakeOff(std::string_view c) {
     return c == "ledgeb_jump_back" || c == "ledgeb_jump_right" || c == "ledgeb_jump_right_from_antic" || c == "ladder_jump_left" ||
-           c == "ladder_jump_right";
+           c == "ladder_jump_right" || c == "Wall_Hug_Jump_Forward" || c == "Wall_Hug_jump_left" || c == "Wall_hug_Jump_Up_Twist";
 }
 
 } // namespace
@@ -1536,7 +1537,9 @@ void Player::launchHangJump(float vz) {
                      : s_.clip == "ledgeb_jump_up"   ? t_.hangJumpUpVz
                      : s_.clip == "ledgeb_jump_back" ? t_.hangJumpBackVz
                      : s_.clip.starts_with("ledgeb_jump_right") ? t_.hangJumpSideVz
-                     : s_.clip.starts_with("ladder_jump_")      ? t_.ladderJumpVz : 0.0f;
+                     : s_.clip.starts_with("ladder_jump_")      ? t_.ladderJumpVz
+                     : s_.clip == "Wall_hug_Jump_Up_Twist"      ? t_.wallHugTwistVz
+                     : s_.clip.starts_with("Wall_Hug_")         ? t_.wallHugJumpVz : 0.0f;
     float time = -1;
     vz = vq;
     if (const float disc = vq * vq - 2 * g * delta.z; vq > 0 && disc >= 0)
@@ -2081,7 +2084,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         else perch(move, jumpPressed, dropPressed, dt);
         break;
     case State::WallHug:
-        wallHug(move, jumpPressed, dt);
+        wallHug(move, jumpPressed, dropPressed, dt);
         break;
     case State::GrappleThrow:
     case State::GrapplePull:
@@ -2159,7 +2162,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (col_.markup[size_t(s_.ledge)].type == 9) { catchLadder(); break; } // a ladder jump onto a ladder
         const bool pole = isPole(col_.markup[size_t(s_.ledge)]);
         const std::string_view attach = pole ? (s_.polePara ? "Hpole_para_attach_S" : "Hpole_perp_attach_M")
-                                        : s_.clip.ends_with("jump_up")   ? "ledgeb_attach_U" // also DICE_<s>_jump_up (Climb.cpp)
+                                        : s_.clip.ends_with("jump_up") || s_.clip == "Wall_hug_Jump_Up_Twist" ? "ledgeb_attach_U" // also DICE_<s>_jump_up (Climb.cpp)
                                         : s_.clip == "ledgeb_jump_back" || s_.clip == "ladder_jump_back" ? "ledgeb_attach_F"
                                                                          : "ledgeb_attach_S";
         s_.vel = vec3(0);
