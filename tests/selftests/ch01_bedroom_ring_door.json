@@ -3,7 +3,7 @@
   "name": "ch01_bedroom_ring_door",
   "chapter": "01 Prologue, leg 2 of 4: the bedroom's fallen beams, the pile and the ring door (docs/matrix/01_prologue.md C01-05, C01-06, C01-07)",
   "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/00prologue.html",
-  "note": "The leg starts in the bedroom's north-east pocket, not at a checkpoint: the way from the opened house door (ch01_bedroom_new_game) down into this pocket was not found by the survey (see the matrix row C01-05), and checkpoint 4455 lies beyond the beams. A roll (Forward + Crouch) passes under the west end of the leaning beam into the south room, the flat strip by the east wall is walked onto, ring door 4526 is grappled and pulled off its slide (as prologue_ring_door). The walk through the doorway is tests/selftests/known_gaps/ch01_ring_door_walk_through.json: the freed leaf stays standing in its frame.",
+  "note": "The leg starts in the bedroom's north-east pocket, not at a checkpoint: the way from the opened house door (ch01_bedroom_new_game) down into this pocket was not found by the survey (see the matrix row C01-05), and checkpoint 4455 lies beyond the beams. A roll (Forward + Crouch) passes under the west end of the leaning beam into the south room, the flat strip by the east wall is walked onto, ring door 4526 is grappled and pulled off its slide (as prologue_ring_door). The walk through the doorway is ch01_ring_door_walk_through.",
   "level": "l3_main_bedroom",
   "level_chapter": 0,
   "spawn": [-8780, -10250, 1640, -90],

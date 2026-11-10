@@ -7915,11 +7915,9 @@ TEST(GameReal, ResidentCinematicUnitVolumesDoNotMeetLara) {
 TEST(GameReal, PrologueFloorCollapsesAndTheDoorIsBlownOff) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    // 284 from the plane (it was 414 while ng_run_start began at its frame 6, not 2): she crosses it on the same tick as
-    // before. Ours' door jitters on its slide while it waits (x -953.2 .. -955.1), and on which tick the joint is
-    // removed seems to decide whether the throw frees it or it stays in its frame [I; a weakness of the door physics, not of
-    // this test's subject: crossing 8 ticks later left it standing].
-    UnitGame g(bf, "l3_bedroom_hall", {{-3170, -3640, 1900}, 0});
+    // 414 from the plane. The blown door's outcome no longer depends on the tick she crosses it: the leaf takes its
+    // squib's knock toward world -X (docs/GAMEPLAY.md "Explosion records"), into the pit.
+    UnitGame g(bf, "l3_bedroom_hall", {{-3300, -3640, 1900}, 0});
     auto& w = g.w;
     w.tick({}), w.tick({});
     const auto clip = [&] {

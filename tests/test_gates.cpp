@@ -2961,9 +2961,17 @@ TEST(ProgressionReal, PrologueRingDoorPulledOffByTheGrapple) {
     EXPECT_LE(off, 20);
     EXPECT_EQ(w.player().state().grappleUid, 0) << "the door is off its slide: no target any more, she lets go";
     for (int i = 0; i < 180; ++i) w.tick({}), exploded |= !w.explosions().empty();
-    // Open [U]: the freed leaf (494 wide) stays standing in its frame: pulled 44 out it is pushed back by the level's
-    // collision and the squib's kick does not get it through (shut() is still true here); in l3_bedroom_hall the same
-    // leaf, blown off untouched, falls into the pit (GameReal.PrologueFloorCollapsesAndTheDoorIsBlownOff).
+    // The squib's knock on the leaf that gave birth to it (tru.exe under Wine: 1000 units/s toward world -X, the leaf
+    // tumbles out of the corridor and lands in the bedroom; docs/GAMEPLAY.md "Explosion records"): leaf and ring are
+    // out of the frame and the doorway is open.
+    EXPECT_FALSE(shut()) << "the doorway is open";
+    int bodies = 0;
+    for (const auto& d : w.collision().dynamics)
+        if (d.id == 4526) {
+            ++bodies;
+            EXPECT_LT(d.transform[3].x, w.script().find(4526)->pos.x - 150) << "thrown into the room";
+        }
+    EXPECT_EQ(bodies, 2) << "the leaf and its ring";
     EXPECT_EQ((*w.uberState(4526))[1], 2u) << "trigger 15 (out of its range) -> state 1, 0.2 s -> state 2";
     EXPECT_FALSE(w.uberJoint(4526, 1)) << "the slide is removed";
     EXPECT_TRUE(exploded) << "squib_explode_door";

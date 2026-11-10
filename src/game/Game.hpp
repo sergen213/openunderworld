@@ -977,7 +977,7 @@ public:
     const std::vector<HazardShape>& hazards() const { return hazards_; }
     const std::vector<HazardHit>& hazardHits() const { return hazardHits_; }
     // An explosion record's area hit at `at` (0x69F1E0): targets, Lara, damageable objects, loose bodies.
-    void blast(vec3 at, const ExplosionRecord& x);
+    void blast(vec3 at, const ExplosionRecord& x, int32_t parent = 0);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
@@ -1368,12 +1368,12 @@ private:
     nlohmann::json serializeBreakables() const;
     void restoreBreakables(const nlohmann::json& j);
     std::map<std::string, std::optional<ExplosionRecord>> explosionData_; // by object name
-    struct PendingBlast { vec3 at{0}; ExplosionRecord record; int ticks = 0; };
+    struct PendingBlast { vec3 at{0}; ExplosionRecord record; int ticks = 0; int32_t parent = 0; };
     std::map<std::string, std::optional<ObjectWeaponDef>> objectWeapons_; // by weapon object name
     std::vector<HostileShot> hostile_;     // saved ("hostile" of the combat block, only while any flies)
     std::vector<vec3> hostileBlasts_;      // where they went off this tick
     std::vector<PendingBlast> pendingBlasts_;                             // born squibs going off (tickBlasts)
-    void birthBlast(uint16_t object, vec3 at);
+    void birthBlast(uint16_t object, vec3 at, int32_t parent);
     void tickBlasts();
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
     std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
