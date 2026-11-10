@@ -185,6 +185,24 @@ struct Joint1 {
     float push = 0;             // next step only: velocity per frame imposed from outside (Lara pushing), over gravity and motors
     float pushBound = 0;        // the push's impulse bound per 1/60 s step, as `force` (<= 0: unbounded)
 };
+// Three-axis translational joint of a body against the world (tru.exe engine joint 10, 0x4E0F40: uber joint type 7,
+// the Thor pillars; docs/formats/PHYSICS.md "Uber joints"): the body keeps its rotation and moves along the world's
+// X / Y / Z, each axis with its own limit and motor. Simulated by Scene as a translation-only Jolt body with the
+// object's collision (it rests on the terrain and the colliders under gravity) on a SixDOF constraint.
+// Units as Joint1's: positions in units from where it was made, velocities per 30 Hz frame.
+struct Joint3 {
+    vec3 x{0}, v{0};
+    float mass = 0;                         // 0: the collision primitives'
+    const ObjectPhysics* physics = nullptr; // its collision
+    mat4 model{1};                          // model -> world at x = 0
+    float lo[3] = {}, hi[3] = {};
+    bool limited[3] = {};
+    float speed[3] = {}, force[3] = {};     // motors: target velocity per frame, impulse bound per 1/60 s step (<= 0: unbounded)
+    bool motor[3] = {};
+    float friction = 0;                     // joint friction per axis, as a motor bound [I units]
+    vec3 push{0};                           // next step only: velocity per frame imposed on X / Y (Lara pushing)
+    float pushBound = 0;                    // its impulse bound per 1/60 s step (<= 0: unbounded)
+};
 // Gravity, units per 30 Hz frame^2 (Lara's, tru.exe 5.72443).
 inline constexpr float kJointGravity = 5.72443f;
 
@@ -277,6 +295,10 @@ public:
     // back (the pointers are used by that step only). Links: follower = ratio * driver in game units (hinge radians).
     struct JointLink { uint64_t driver = 0, follower = 0; float ratio = 0; };
     void setJoints(std::vector<std::pair<uint64_t, Joint1*>> joints, std::vector<JointLink> links);
+
+    // Three-axis joints for the next step, keyed by the caller as setJoints' (a key not passed is dropped; a new one, or
+    // one whose x / v changed outside the simulation, is placed there). step() writes x and v back and clears the push.
+    void setJoints3(std::vector<std::pair<uint64_t, Joint3*>> joints);
 
     // Loose rigid bodies (shape, mass and inertia from the object's primitives), keyed by the caller. A new key starts
     // at `model` (model -> world) moving at `vel` (units/s) / `angVel` (rad/s, world); existing ones keep simulating

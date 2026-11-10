@@ -777,6 +777,11 @@ void World::tick(const Actions& input) {
             carry += j->axis * (j->x - uberPush_.before);
         }
     }
+    if (const auto rt = uberPush3_.uid ? uberRuntime_.find(uberPush3_.uid) : uberRuntime_.end(); rt != uberRuntime_.end())
+        if (const auto j = rt->second.joints3.find(uberPush3_.joint); j != rt->second.joints3.end()) { // ... on her floor
+            const vec3 moved = j->second.x - uberPush3_.before;
+            carry += vec3(moved.x, moved.y, 0);
+        }
     if (carry != vec3(0)) { // Lara follows the block she pushes/pulls
         auto s = player_.state();
         s.pos += carry;

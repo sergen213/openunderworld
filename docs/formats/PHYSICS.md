@@ -24,7 +24,7 @@ Labels: **[O]** observed in game data or our tru.exe decompile (GOG 1.1.0.0 VAs)
   cylinder + hemispheres (`0x4E9230`). Invalid mass properties fall back to 666 [O]. `massProps` ports these.
 - [O] Joints (`0x4D4240`, "physics: invalid joint type %d"): types **1 revolute, 2 cylindrical, 3 prismatic,
   4 planar, 8 universal** (the `Revolute/Prismatic/Cylindrical/Universal/Planar…: Joint must be of type …` checks,
-  `0x4A6810`…), plus 5, 9, 10, 11, 12 [U]; link joints (gear ratios) exist. Script angles are degrees
+  `0x4A6810`…), 10 three translations (uber type 7, below), plus 5, 9, 11, 12 [U]; link joints (gear ratios) exist. Script angles are degrees
   (`× 57.2958`), speeds degrees per 30 Hz frame (`× 1718.87`).
 - [O] Scripts drive them through the native type **`multibody`** (script 3566, 94 natives registered by
   `0x7B2CF0`): 2 = enable physics on the atoms (`0x4A6F70`), 77 = set joint limit (joint, limit 1..3, lo, hi;
@@ -135,6 +135,24 @@ type 2, is [I].
     222 joints (78 hinges, 42 prismatic, 92 fixed, 3 type 5, 7 type 7; 61 with a body A), links 0 → 0 ×9, 2 → 0 ×6,
     2 → 2 ×8 (l4 grapple post 6695: prismatic 1264 × 0.75 = 948, the second prismatic's limit); every hinge limit lies
     within ±180°.
+  - [O] Type 7 (engine joint 10, constructor 0x4E0F40 with the frame's position only; ma_pu_thor_pillar,
+    ca_pu_thor_pillar and five more): body B keeps its rotation (three constrained rows, joint +0x179 = 3) and
+    translates along the three axes of body A's frame, the world's X / Y / Z without one; position and velocity per
+    axis by 0x48F1D0 / 0x48F3B0 case 10 (0x4E1FB0 / 0x4E1FD0; velocities x 30 per second). Record: +0x18 friction, set
+    for all three axes (joint +0x120.., 0x4D1860), +0x1C [U] (at most 1, 0x4E1E60), +0x28 bits 0 / 1 [U] (joint +0x174
+    bits 0 / 0x1000), +0x2C three limits {lo, hi}, +0x44 three motors {speed per second, bound}, +0x5C bits 0-2 limit
+    on, 3-5 motor on (0x4D24C0 / 0x4D2550). Kind-7 records: a limit is three {lo, hi} at +4 with bits 0-2 at +0x1C
+    (0x4D2960), a motor three {speed, bound} at +4 with bits at +0x1C (0x4D2E60), a range {axis 0..2 at +4, lo +8, hi
+    +0xC} (0x4D11E0; the watch reads that axis). Ours: `formats::UberJoint::lo3` .., `UberParam::v / bits / axis`,
+    `physics::Joint3` (Scene::setJoints3: a translation-only Jolt body with the section's solid primitives, enhanced
+    internal edge removal so its boxes do not catch on the terrain's triangle seams, on a SixDOF constraint whose
+    translation axes carry the limits, velocity motors and friction; layer of its own: terrain, colliders, loose
+    bodies, vehicles, not Lara's proxy), `World::makeUberJoint3`; saved (`joints3`, and its body in the scene state as
+    `f<key>`). `Physics.ThreeAxisJointRestsSlidesStopsAndDrops`, `ProgressionReal.ThorPillarsSlideOnTheirPlane`.
+  - [O] State entry action 11 (0x4D86A0 case 0xB): the composite's vt 1 with the action's word; [I] its command
+    dispatch (0x4D77A0) with a command index (ar_ei_thor_valgrind_door: section 2's state 1 sends command 0, which
+    gives the leaves their records). Action 8 sets the section instance's hidden draw groups (+0x23C = the word's
+    target) [O]; not applied in ours.
   - [O] Limit / motor / range records {u8 kind, a, b, u8 flag} (0x4D11E0): limit lo, hi, on; motor speed, bound, on;
     range lo, hi. Watch check (0x4937A0, every instance update): value = mode 0 position (prismatic units, hinge
     degrees), 1 velocity per second; `inside` starts true, so a watch registered outside its range reports leaving on

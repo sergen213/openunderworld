@@ -1020,6 +1020,58 @@ TEST(StreamReal, UberJointSaveLoad) {
     EXPECT_EQ(fresh.serializeObjects(), expect);
 }
 
+// Three-axis uber joints (the Thor pillars, docs/formats/PHYSICS.md "Uber joints" type 7) save and load: l3_secretchamber's
+// serpent pillar 4674, saved while Lara pushes it (moving, in contact with the floor), comes to rest bit for bit after a
+// load. A save from before these joints were simulated (no `joints3`, no scene state) loads with the pillar where its
+// record creates it.
+TEST(StreamReal, ThreeAxisJointSaveLoad) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    const auto make = [&] {
+        auto w = std::make_unique<game::World>(load, "l3_secretchamber", anims, game::Spawn{{-26322, -420, -1800}, 1.5707964f});
+        w->script().setBigfile(&bf);
+        w->onCinematic = [](const std::string&, bool) {};
+        return w;
+    };
+    auto wp = make();
+    auto& w = *wp;
+    w.script().setPlayerObjects({"g_gauntletright"});
+    for (int i = 0; i < 90; ++i) w.tick({});
+    game::Actions push;
+    push.interact = true;
+    for (int i = 0; i < 60; ++i) w.tick(push); // grips (thor_engage)
+    push.move = {0, 1};
+    for (int i = 0; i < 90; ++i) w.tick(push);
+    const auto* j = w.uberJoint3(4674, 1);
+    ASSERT_TRUE(j);
+    ASSERT_GT(glm::length(j->x), 40.0f) << "pushed";
+    ASSERT_GT(glm::length(j->v), 1.0f) << "moving when saved";
+    const auto bytes = save::serialize(save::capture(w));
+    const auto old = w.serializeObjects();
+    for (int i = 0; i < 120; ++i) w.tick({});
+    const auto expect = w.serializeObjects();
+    EXPECT_TRUE(expect.at("uber").at("4674").contains("joints3"));
+    EXPECT_LT(glm::length(j->v), 0.05f) << "at rest";
+
+    auto fresh = make();
+    save::apply(save::parse(bytes), *fresh);
+    for (int i = 0; i < 120; ++i) fresh->tick({});
+    EXPECT_EQ(fresh->serializeObjects(), expect);
+
+    auto before = make(); // a 0.44 save: the uber state without the joint, no physics scene
+    nlohmann::json state = old;
+    state.at("uber").at("4674").erase("joints3");
+    state.erase("physics");
+    for (int i = 0; i < 30; ++i) before->tick({});
+    before->restoreObjects(state);
+    for (int i = 0; i < 120; ++i) before->tick({});
+    const auto* migrated = before->uberJoint3(4674, 1);
+    ASSERT_TRUE(migrated) << "made at rest where its record creates it";
+    EXPECT_LT(glm::length(migrated->x), 25.0f) << "settled on the crypt floor (its collision reaches 17 under it)";
+}
+
 // Ragdolls save and load mid-fall: l4_ballcourt poacher 6540 (born and killed by the scripts as Lara crosses plane 6546)
 // slides off its ledge as a ragdoll; a save while it falls restores its bodies (IDs, velocities, contacts) and its enemy
 // state, so the fall and the settled pose come out bit for bit, for every corpse (6540-6542) and the whole world (uber

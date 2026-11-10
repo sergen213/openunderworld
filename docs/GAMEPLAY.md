@@ -808,7 +808,7 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   | `sa_ei_thor_slide_door` (l2_maproom 2661, 2662), `ar_ei_thor_slide_door` (l5_valgrind_tunnel 7400) | section 1, set 540: two half-cylinders r 711 on handle markers 11 / 12, cone 90 +- 90 | g_gauntletleft | 15 |
   | `ma_pu_thor_pillar` (l3_secretchamber 4674) | section 0: sphere r 948 | g_gauntletright | 3 |
   | `ca_pu_thor_pillar` 5610, `ca_pu_thor_debris` 5609 (l4_pool), `ca_pu_thor_block_rubble` (l4_ragnarok_room 5660) | section 0: cylinder r 790 / sphere r 948 | g_belt | 4 / 4 / 10 |
-  | `ar_ei_thor_valgrind_door` (l5_valgrind 7334) | sections 0 / 1, sets 464 / 476 given by their state 1 | none | 8 |
+  | `ar_ei_thor_valgrind_door` (l5_valgrind 7334) | sections 0 / 1 (the two leaves), sets 464 / 476 given by their state 1 | none | 8 |
   | `ar_pu_thor_tower_short / _tall` (l7_yggdrasil_end 8398-8400) | section 0: cylinder r 790, h 4740 | none | 5.5 |
 
   All are class-79 uber objects ("heavy" = their mass: doors 1005 / 1015, rubble 1000, pool pillar 500, towers 175 /
@@ -823,7 +823,7 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   strength**, 1 at birth; debug text "Overriding Lara pull strength to =") = its member +12 (table above) and vt 50
   with 1; the slide doors add uber command 0 / 1: braked state 2 (motor 0 speed, 3.16e6) <-> free state 1 (no motor);
   the rubble block does the same by triggers 20 / 21; the towers' vt 49 / 50 also switch a push camera (gamebase 50 +
-  53 (4), back 53 (1); gamebase 50 is unbound in ours, so the towers' vt 49 stops there after setting the strength).
+  53 (4), back 53 (1); "Natives" below).
   Ours: `script::Runtime::engage`, `pullStrength()`.
 - **The move** [O 0x74AC00 / 0x73F390 / 0x6F1450, lara.drm player data]: every frame the stick picks one of four ways
   by its angle off her facing: forward within 30 deg (+0xC8C = 60), back within 15 deg of straight back (+0xC90 =
@@ -848,12 +848,57 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   l4_ragnarok_room rubble block 5660 (C15-12) 2054 units in 12.7 s; the l7 towers by their record
   (`ProgressionReal.EndgameCredits`, from floors inside it; before, the test pushed them while she swam). Synthetic:
   `Game.ThorGauntletsMoveHeavyObjects`; self-test `tests/selftests/gauntlet_move.json`.
-- **Open**: l5_valgrind gate 7334 (its section never reaches state 1 in ours: vt 55 after `240_val_gate`; `larabase`
-  54 = "is that her bike" 0x777E40 and 19 = "gauntlet charged" [U effect] stop volume 7511's and cinematic 7464's
-  handlers: decoded, not bound, because binding them lets handlers elsewhere run on into cinematics untested here);
-  `ma_pu_thor_pillar`, `ca_pu_thor_pillar` ride joint type 7 (planar, limit / motor records of kind 7) and
-  `ca_pu_thor_debris` has no joint (a free body): neither is simulated, so C11-28 and C15-03 stay open; l2_maproom's hub
-  and wall drag (C09-09 / -11) are not surveyed; the speed's M and the hold / toggle need a Wine trace.
+- **The pillars' joint** [O data + tru.exe]: `ma_pu_thor_pillar` and `ca_pu_thor_pillar` ride uber joint type 7 =
+  engine joint 10 (0x4D1040; constructor 0x4E0F40 takes only the anchor): body B keeps its rotation (three constrained
+  rows) and is free along the world's X / Y / Z, each axis with its own limit, motor and friction (record: limits
+  +0x2C, motors +0x44, bits +0x5C, friction +0x18; limit / motor / range records of kind 7: docs/formats/PHYSICS.md
+  "Uber joints"). Not a plane: the pillar stands on the floor by its own collision under gravity. Both records have
+  no limit and no motor (friction 1e-7). Ours: `physics::Joint3` / `Scene::setJoints3` (a translation-only Jolt body
+  with the section's solid primitives on a SixDOF constraint, resting on the terrain and the colliders; it does not
+  meet Lara's 55 kg proxy), `World::makeUberJoint3`, saved as `joints3` (saves before it: the joint at rest where its
+  record creates it). `World::pushUberHandle` pushes a section on such a joint where she pushes: forward / back
+  along her facing, left / right across it [O 0x74AC00 picks the way off her facing; the PushPull state knows no
+  joint], with `pushDrive`'s speed and impulse for the mass on the joint; she is carried with it over her floor.
+  - `ca_pu_thor_pillar` 5610 (l4_pool, C15-03; 500 kg, belt, strength 4): section 0 watches the joint's Z in
+    -31.6 .. 31605.6 (range record {axis 2, lo, hi}); leaving it (the pillar dropped) takes it from state 1 / 2 through
+    5 / 4 and back, whose events 1 / 0 (once) run the script's vt 54: the pool's sticky flag (globals +2832) and the
+    globals' vt 22. State 6 (script command 1, a pool already solved) locks Y at 1434.89 with a Y motor of 158 units/s:
+    the groove runs +Y and the hollow is 1434.89 from the start. By input (the pool drained as chapter 14 leaves it):
+    gripped from behind and pushed forward it slides 94.8 units/s (4 x 23.704), drops into the hollow after 14.6 s
+    (Z -79) and stays (`ProgressionReal.ThorPillarsSlideOnTheirPlane`). [U] actions 8 of its states 1 / 2 set the
+    instance's hidden draw groups (+0x23C, 0x4D86A0 case 8: the rune glow); +0x28 bit 0 of its joint record.
+  - `ma_pu_thor_pillar` 4674 (l3_secretchamber, C11-28 / -29; right gauntlet, strength 3): the joint holds section 1 (a
+    60 kg sphere without a solid primitive); the pillar proper (section 0, 150 kg, the collision and the record) turns
+    on hinge joint 0 on it. Section 1 watches the hinge's speed: while it turns faster than 1 deg/s (state 1) the
+    joint's X / Y motors brake with 28.445, else they are off (state 2). Ours: one body with section 0's collision and
+    both masses (210 kg) on the joint; [I] the hinge's turn does not turn the collision (nothing in ours torques it).
+    By input: dragged 71 units/s (3 x 23.704) forward and sideways over the crypt floor, refused without the gauntlet
+    (the same test; self-test `tests/selftests/gauntlet_pillar.json`). Where it must stand for C11-28 / -29 (between
+    the stair-top pillars, beside the cage) is the player's choice: nothing in the data watches its position.
+  - `ca_pu_thor_debris` 5609 has no joint record at all (states 1 / 2 only set draw groups): [U] how its body is made
+    (a free rigid body by its class); not simulated, so it cannot be moved.
+- **Valgrind gate 7334** [O data + scripts] (C17-04): three sections: the leaves 0 / 1 on linked prismatic joints
+  (limit 0..663.7) and the lock, section 2. Dispatcher 7318's vt 62 ("Valgrind column in solved position", reported by
+  the four cog wheels 7312-7315) calls the gate's vt 55: uber command 1 = section 2's transition (trigger 2) with its
+  opening clip; its state 1 has action 11 (0x4D86A0 case 0xB: the composite's vt 1 with the action's word, [I] its
+  command dispatch) = command 0: sections 0 / 1 -> state 1 (action 0x1D: their record sets 464 / 476) -> state 3
+  (motor 0, bound 31605: braked). Gripping (vt 49: strength 8, command 2) frees the leaf (state 2), letting go (vt 50:
+  command 3) brakes it. Volume 7511 in front of it does not open anything: it starts cinematic 7464 (240_val_gate)
+  once with an autosave and sets `larabase` 19. Ours: action 11 bound (`World::uberAction`); with vt 62 run, the gate
+  slides its 663.7 units in 5.3 s by input (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`); before, no grip.
+  The cog-wheel puzzle itself (C17-01..03) is not played by input in that test.
+- **Natives** [O]: `larabase` 19 / 20 (0x79A0E0 / 0x79A100 -> 0x698850 / 0x698860) set / get the global byte 0xECFC88,
+  "gauntlet charged": 0x6A6530 passes it as 1 / 0 in the instances' shader constant 6 (the gear's glow) and the player
+  save holds it (0x6F5910 +0xD4); volume 7511 clears it inside the gate's area while the gate is shut and sets it on
+  leaving. Ours: `script::Runtime::gauntletCharged`, saved (`player.gauntletCharged`); [U] nothing draws by it yet.
+  `larabase` 54 (0x79A4E0 -> 0x777E40): the instance is the bike `larabase` 52 last named (Lara +0xF00): 7464's vt 58
+  remembers with it that she rode in. `gamebase` 50 (0x7B2BB0 -> 0x779C60): a type-4 camera record (DTP id) becomes
+  the data of CameraManager's type-4 camera, which the towers' vt 49 then switches to (`gamebase` 53 (4)); ours hands
+  the id on (`World::cameraNative` op 3) and the towers' handlers run to their end; [U] the type-4 camera itself
+  is not modelled (the view stays the gameplay camera's).
+- **Open**: `ca_pu_thor_debris` 5609 (above); the pillars' hinge turn and rune glow; l2_maproom's hub and wall drag
+  (C09-09 / -11) are not surveyed; the speed's M (the proxy's mass, 0.125 x the object's [I]) and the hold / toggle
+  need a Wine trace: none was made (a session needs Lara to carry the gear in tru.exe, which no harness tool gives).
 
 ## Natla (l7_yggdrasil_end, the final fight)
 
