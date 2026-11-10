@@ -48,7 +48,7 @@
   {
    "step": "dive",
    "input": [
-    "0 drop 1"
+    "0.5 drop 1"
    ],
    "duration": 3,
    "expect": [
