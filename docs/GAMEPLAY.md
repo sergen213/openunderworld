@@ -980,18 +980,22 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   the data of CameraManager's type-4 camera, which the towers' vt 49 then switches to (`gamebase` 53 (4)); ours hands
   the id on (`World::cameraNative` op 3) and the towers' handlers run to their end; [U] the type-4 camera itself
   is not modelled (the view stays the gameplay camera's).
-- **Open (saves)**: `StreamReal.SaveContinuesBitIdentically`'s three l4_pool cases (2, 8, 20) fail since pillar 5610
-  has a body: one tick after a load the hash of fx object 5596 (anchored to the pillar's marker, `instance` 23)
-  differs, and the scene's recorded Jolt state differs in the pillar's three cached contact manifolds, while the
-  pillar's position and velocity stay bit-identical every tick (`StreamReal.ThreeAxisJointAtRestSaveLoad`; a save
-  taken while a pillar moves continues bit for bit in every field, `StreamReal.ThreeAxisJointSaveLoad`). Not found:
-  why a resting three-axis body's manifolds are rebuilt differently after `Scene::restore` (letting it sleep and
-  preparing the uber objects inside `World::restoreObjects` did not change it).
+- **Saves**: a three-axis joint's body makes the scene's object solids exist (kinematic bodies of the object
+  colliders, `Scene::setColliders`, only while something can land on them). A loaded world made its colliders at
+  their intro frames and stepped the scene before `tickObjects` posed them, so its first step moved every posed solid
+  (l4_pool: uber sections turned or moved by their joints) back to its intro frame, unlike the game it was saved
+  from: `StreamReal.SaveContinuesBitIdentically`'s l4_pool cases differed one tick after the load (the solids woken
+  and moving, fx object 5596). After a restore `World::syncObjects` now poses the colliders it makes
+  (`World::poseColliders`); `StreamReal.ThreeAxisJointAtRestSaveLoad` compares the whole state with the recorded
+  Jolt scene. Not changed: after a stream (no restore) the remade colliders stand at their intro frames until
+  `tickObjects` poses them later in that tick, as before (posing them at once moved the
+  `baldrs_plates_gate` replay's route). [I] a hinged door's collider is posed from its body, which holds the saved swing only after the first step.
 - **Open**: `ca_pu_thor_debris` 5609 (above); the pillars' hinge turn and rune glow; l2_maproom's hub and wall drag
   (C09-09 / -11) are not surveyed; the speed's M (the proxy's mass, 0.125 x the object's [I]) and the hold / toggle
-  need a Wine trace: two sessions were run for it (`openunderworld-work/gameplaygoal/gauntlets/wine_door.sh`: new game,
-  level change to l5_startsnow for the gear, door 7400's spot from ours, Interact + each direction key); in the first
-  the level change did not happen within 200 s (Lara stayed at the prologue's start), so nothing was measured.
+  need a Wine trace. That measurement was not obtained: two sessions were run for it
+  (`openunderworld-work/gameplaygoal/gauntlets/wine_door.sh`: new game, level change to l5_startsnow for the gear,
+  door 7400's spot from ours, Interact + each direction key) and neither gave a reading (in the first the level
+  change did not happen within 200 s: Lara stayed at the prologue's start).
 
 ## Push and pull objects
 

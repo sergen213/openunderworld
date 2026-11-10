@@ -1262,6 +1262,7 @@ private:
     void crossPortals(vec3 from, vec3 to);
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
+    void poseColliders();        // every collider's transform from its object's state now (syncObjects, tickObjects)
     void tickJoints(float dt); // script multibody joints: positions and range watches (Objects.cpp)
     // A class-34 joint's limit as tickJoints applies it: the body's joint limit, `multibody` 77 / 75 overrides (degrees).
     std::pair<float, float> scriptJointLimit(const script::Object& o);
@@ -1480,6 +1481,7 @@ private:
     uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
     std::vector<script::UnitRef> unitRefs() const; // loaded units + cinematic objects, for script_/enemies_ setUnits
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
+    bool restoredColliders_ = false;    // since restoreObjects, until tickObjects ran: syncObjects poses the colliders it makes
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
     MeleeState melee_;                   // Lara's close-combat / carry move in progress (Melee.cpp)

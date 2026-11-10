@@ -150,7 +150,8 @@ type 2, is [I].
     bodies, vehicles, not Lara's proxy; it sleeps once it rests and a push or a running motor wakes it),
     `World::makeUberJoint3` (the push blocks too: docs/GAMEPLAY.md "Push and pull objects"); saved (`joints3`, and its body in the scene state as `f<key>`). `Physics.ThreeAxisJointRestsSlidesStopsAndDrops`, `ProgressionReal.ThorPillarsSlideOnTheirPlane`,
     `StreamReal.ThreeAxisJointSaveLoad` (saved moving: the whole state continues bit for bit; a save without
-    `joints3`), `StreamReal.ThreeAxisJointAtRestSaveLoad` (saved settling: position and velocity bit for bit each tick).
+    `joints3`), `StreamReal.ThreeAxisJointAtRestSaveLoad` (saved settling: the whole state with the recorded scene
+    continues bit for bit; the object solids are posed when made, `World::poseColliders`).
   - [O] State entry action 11 (0x4D86A0 case 0xB): the composite's vt 1 with the action's word; [I] its command
     dispatch (0x4D77A0) with a command index (ar_ei_thor_valgrind_door: section 2's state 1 sends command 0, which
     gives the leaves their records). Action 8 sets the section instance's hidden draw groups (+0x23C = the word's
