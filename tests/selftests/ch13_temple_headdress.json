@@ -13,12 +13,13 @@
                 {"probe": "object.5228.in", "eq": 5249, "note": "on the altar, in its holder"},
                 {"probe": "portable.held", "eq": 0}]},
     {"step": "take_the_headdress", "plan": ["engage 5228 walk", "press", "wait 3"], "duration": 40,
-     "expect": [{"probe": "portable.held", "eq": 5228},
+     "expect": [{"probe": "object.5228.stowed", "eq": true, "note": "a key item: the pick-up clip puts it away (event 0x52)"},
+                {"probe": "portable.held", "eq": 0},
                 {"probe": "object.5228.in", "eq": 0, "note": "out of the holder"},
                 {"probe": "step.teleports", "eq": 0},
                 {"probe": "step.horizontal", "min": 60, "max": 400, "note": "walked from the checkpoint to the altar"}]},
     {"step": "carry_it", "plan": ["go -4918 -10224 80 walk"], "duration": 20,
-     "expect": [{"probe": "portable.held", "eq": 5228, "note": "still in her hands back at the checkpoint"},
+     "expect": [{"probe": "object.5228.stowed", "eq": true, "note": "still with her back at the checkpoint"},
                 {"probe": "player.dead", "eq": false}]}
   ]
 }

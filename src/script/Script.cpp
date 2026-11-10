@@ -493,11 +493,21 @@ void Runtime::setUnits(const std::vector<UnitRef>& units) {
     for (const auto& u : units)
         if (u.resident && std::none_of(units.begin(), units.end(), [&](const UnitRef& v) { return !v.resident && v.name == u.name; }))
             residentOnly_.insert(u.name);
+    if (std::any_of(units.begin(), units.end(), [&](const UnitRef& u) { return !u.resident && u.name == carriedUnit_; }))
+        for (const int32_t uid : withLara_) // with Lara: into her unit rather than out with the one they were in
+            if (Object* o = findMut(uid); o && o->unit != carriedUnit_) rehome(*o, carriedUnit_);
     std::erase_if(objects_, [&](const Object& o) {
         if (std::any_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == o.unit; })) return false;
         if (auto s = stateOf(o); !s.is_null()) stash_[std::to_string(o.uid)] = std::move(s); // kept for streaming back
+        if (const auto a = away_.find(o.uid); a != away_.end()) { // where it lay in the frame of the unit it leaves with
+            const auto home = unitRefs_.find(o.unit);
+            a->second.at = o.pos + o.offset - (home == unitRefs_.end() ? vec3(0) : home->second.offset);
+        }
         return true;
     });
+    unitRefs_.clear();
+    for (const auto& u : units)
+        if (!u.resident) unitRefs_.insert_or_assign(u.name, u);
     for (auto it = unitScripts_.begin(); it != unitScripts_.end();) { // streamed out: the unit script ends with its unit
         if (std::any_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == it->first; })) { ++it; continue; }
         if (const auto a = auxiliary_.find(it->second); a != auxiliary_.end()) {
@@ -509,11 +519,125 @@ void Runtime::setUnits(const std::vector<UnitRef>& units) {
     std::erase_if(units_, [&](const std::string& n) { return std::none_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == n; }); });
     std::erase_if(dormant_, [&](const auto& kv) { return !units_.contains(kv.second.unit.name); });
     for (const auto& u : units)
-        if (!units_.contains(u.name) && std::none_of(objects_.begin(), objects_.end(), [&](const Object& o) { return o.unit == u.name; })) addUnit(u);
+        if (!units_.contains(u.name) &&
+            std::none_of(objects_.begin(), objects_.end(), [&](const Object& o) { return o.unit == u.name && !away_.contains(o.uid); }))
+            addUnit(u); // (an instance that came there with Lara is not the unit's own)
     introduceBorn(true);
+    for (const auto& [uid, a] : std::map<int32_t, Away>(away_))
+        if (!find(uid)) materialize(uid, a);
     attachSavedThreads();
     for (const auto& u : units)
         if (!u.resident && deferredUnits_.erase(u.name)) startUnitScript(u.name);
+}
+
+void Runtime::travel(int32_t uid, const std::string& unit) {
+    Object* o = findMut(uid);
+    if (o && o->unit != unit && unitRefs_.contains(unit)) rehome(*o, unit);
+}
+
+void Runtime::rehome(Object& o, const std::string& unit) {
+    const auto a = away_.find(o.uid);
+    const std::string birth = a == away_.end() ? o.unit : a->second.birth;
+    if (birth == unit) {
+        if (a != away_.end()) away_.erase(a); // home again
+    } else {
+        away_[o.uid] = {birth, unit, vec3(0)};
+    }
+    o.unit = unit;
+}
+
+void Runtime::setCarried(std::vector<int32_t> uids, const std::string& unit) {
+    withLara_ = std::move(uids), carriedUnit_ = unit;
+    for (const int32_t uid : withLara_) travel(uid, unit);
+}
+
+std::shared_ptr<const cdc::Drm> Runtime::birthDrm(const std::string& unit) {
+    if (const auto u = unitRefs_.find(unit); u != unitRefs_.end() && u->second.drm) return u->second.drm;
+    if (awayDrm_.first == unit && awayDrm_.second) return awayDrm_.second;
+    auto bytes = bigfile_ ? bigfile_->read("pc-w\\" + unit + ".drm") : std::nullopt;
+    if (!bytes) return nullptr;
+    awayDrm_ = {unit, std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*bytes)))};
+    return awayDrm_.second;
+}
+
+std::vector<int32_t> Runtime::summon(const std::string& object, const std::string& birth, const std::string& unit) {
+    std::vector<int32_t> out;
+    if (!bigfile_ || unitRefs_.contains(birth) || !unitRefs_.contains(unit)) return out;
+    try {
+        const auto drm = birthDrm(birth);
+        if (!drm) return out;
+        if (objectNames_.empty()) {
+            const auto list = bigfile_->read("\\tr8\\pc-w\\objectlist.txt");
+            if (!list) return out;
+            objectNames_ = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+        }
+        for (const auto& in : formats::parseUnit(*drm).intros) {
+            const auto n = objectNames_.find(in.objectId);
+            if (n == objectNames_.end() || n->second != object || find(in.uniqueId) || away_.contains(in.uniqueId)) continue;
+            const Away a{birth, unit, vec3(in.position[0], in.position[1], in.position[2])};
+            away_[in.uniqueId] = a;
+            if (materialize(in.uniqueId, a)) out.push_back(in.uniqueId);
+            else away_.erase(in.uniqueId);
+        }
+    } catch (const FormatError&) {
+    }
+    return out;
+}
+
+void Runtime::setHidden(int32_t uid, bool hidden) {
+    if (Object* o = findMut(uid); o && o->hidden != hidden) o->hidden = hidden, ++visibilityVersion_;
+}
+
+// The object of an instance that lives in a loaded unit other than its birth unit (it streamed out with that unit, or
+// a save holds it there): made from its intro, which is in its birth unit's DRM (the loaded one, else read again), with
+// its stashed state, where it lay.
+bool Runtime::materialize(int32_t uid, const Away& a) {
+    const auto home = unitRefs_.find(a.unit);
+    if (home == unitRefs_.end() || !bigfile_) return false;
+    UnitRef birth{a.birth, nullptr, vec3(0)};
+    std::shared_ptr<vm::Program> program;
+    if (const auto b = unitRefs_.find(a.birth); b != unitRefs_.end()) {
+        birth.drm = b->second.drm;
+        for (const auto& o : objects_)
+            if (o.unit == a.birth && o.script && o.script->program && o.script->program->unit == a.birth) {
+                program = o.script->program;
+                break;
+            }
+    }
+    try {
+        if (!birth.drm) birth.drm = birthDrm(a.birth);
+        if (!birth.drm) return false;
+        if (!program) {
+            std::vector<ScriptType> types;
+            for (uint32_t i = 0; i < birth.drm->sections.size(); ++i)
+                if (birth.drm->sections[i].type == cdc::SectionType::Script) types.push_back(parseScriptType(*birth.drm, i));
+            program = std::make_shared<vm::Program>(std::move(types));
+            program->unit = a.birth;
+        }
+        if (objectNames_.empty()) {
+            const auto list = bigfile_->read("\\tr8\\pc-w\\objectlist.txt");
+            if (!list) return false;
+            objectNames_ = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+        }
+        const auto unit = formats::parseUnit(*birth.drm);
+        const auto in = std::ranges::find_if(unit.intros, [&](const formats::Intro& i) { return i.uniqueId == uid; });
+        if (in == unit.intros.end()) return false;
+        materializing_ = true;
+        introduce(birth, program, *in, false);
+        materializing_ = false;
+    } catch (const FormatError&) {
+        materializing_ = false;
+        return false;
+    }
+    Object* o = findMut(uid);
+    if (!o) return false;
+    o->unit = a.unit;
+    o->offset = home->second.offset + a.at - o->pos;
+    if (!resume(*o)) { // streamed back in during play: its constructor runs, as every object's of that unit
+        fire(EventKind::Start, *o);
+        if (Object* again = findMut(uid)) again->mainPending = true, fire(EventKind::Main, *again);
+    }
+    return true;
 }
 
 void Runtime::addUnit(const UnitRef& u) {
@@ -576,6 +700,9 @@ void Runtime::addUnit(const UnitRef& u) {
 void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& program, const formats::Intro& in, bool start) {
     const auto n = objectNames_.find(in.objectId);
     if (n == objectNames_.end()) return;
+    // An instance that left this unit is alive elsewhere, or saved with the unit it is in (tru.exe's Birth wants it
+    // "not alive", 0x5B3950): its birth unit does not introduce it again.
+    if (!materializing_ && away_.contains(in.uniqueId)) return;
     auto kind = classify(n->second);
     // The native base decides plane vs volume, not the object name: l3_main_hall "triggervolume" intros 4128 / 4129
     // run triggerplane scripts (3529 -> triggerplanebase) whose vt 54 is the crossing handler [O bytecode].
@@ -2972,6 +3099,16 @@ nlohmann::json Runtime::serialize() const {
                     {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
                     {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}},
                     {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}, {"born", born_}, {"anchors", anchors_}};
+    if (!away_.empty()) { // instances away from their birth unit; the loaded ones where they are now
+        nlohmann::json away = nlohmann::json::array();
+        for (const auto& [uid, a] : away_) {
+            vec3 at = a.at;
+            if (const Object* o = find(uid))
+                if (const auto home = unitRefs_.find(o->unit); home != unitRefs_.end()) at = o->pos + o->offset - home->second.offset;
+            away.push_back({uid, a.birth, a.unit, at.x, at.y, at.z});
+        }
+        j["runtime"]["away"] = std::move(away);
+    }
     return j;
 }
 
@@ -3023,6 +3160,46 @@ void Runtime::restore(const nlohmann::json& j) {
         std::erase_if(objects_, [&](const Object& o) { return dormant_.contains(o.uid); });
         born_ = std::move(born), ++visibilityVersion_;
     }
+    // Instances away from their birth unit as saved: the ones living in a loaded unit are made after the runtime
+    // block (resumed there), the others wait for their unit.
+    {
+        std::map<int32_t, Away> away;
+        if (const auto a = runtime.find("away"); a != runtime.end() && a->is_array())
+            for (const auto& e : *a)
+                if (e.is_array() && e.size() == 6 && e[0].is_number_integer() && e[1].is_string() && e[2].is_string() && e[3].is_number() &&
+                    e[4].is_number() && e[5].is_number())
+                    away[e[0].get<int32_t>()] = {e[1].get<std::string>(), e[2].get<std::string>(), vec3(e[3].get<float>(), e[4].get<float>(), e[5].get<float>())};
+        // objects that were away in the world being replaced and are not in the save: back at their birth
+        std::vector<int32_t> home;
+        for (const auto& [uid, a] : away_)
+            if (!away.contains(uid)) home.push_back(uid);
+        const size_t before = objects_.size();
+        std::erase_if(objects_, [&](const Object& o) {
+            if (const auto a = away.find(o.uid); a != away.end()) return true; // made again below, where the save has it
+            return std::ranges::find(home, o.uid) != home.end();
+        });
+        if (objects_.size() != before) ++visibilityVersion_;
+        away_ = std::move(away);
+        for (const int32_t uid : home) // their birth unit's intro again (its saved state follows in the loop below)
+            for (const auto& [name, u] : unitRefs_) {
+                if (find(uid)) break;
+                if (!u.drm) continue;
+                const auto unit = formats::parseUnit(*u.drm);
+                const auto in = std::ranges::find_if(unit.intros, [&](const formats::Intro& i) { return i.uniqueId == uid; });
+                if (in == unit.intros.end()) continue;
+                std::shared_ptr<vm::Program> program;
+                for (const auto& o : objects_)
+                    if (o.unit == name && o.script && o.script->program && o.script->program->unit == name) {
+                        program = o.script->program;
+                        break;
+                    }
+                if (!program) continue;
+                const auto key = std::to_string(uid); // addObject takes the stashed state: the loop below applies it
+                const nlohmann::json kept = stash_.contains(key) ? stash_[key] : nlohmann::json(nullptr);
+                introduce(u, program, *in, false);
+                if (!kept.is_null()) stash_[key] = kept;
+            }
+    }
     for (auto& o : objects_) {
         const auto key = std::to_string(o.uid);
         applyState(o, stash_.contains(key) ? &stash_[key] : nullptr);
@@ -3041,6 +3218,8 @@ void Runtime::restore(const nlohmann::json& j) {
             std::fprintf(stderr, "script: saved runtime state not restored: %s\n", e.what());
         }
     }
+    for (const auto& [uid, a] : std::map<int32_t, Away>(away_))
+        if (!find(uid)) materialize(uid, a);
 }
 
 void Runtime::restoreRuntime(const nlohmann::json& r) {

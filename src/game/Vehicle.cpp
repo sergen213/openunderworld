@@ -241,6 +241,14 @@ std::optional<glm::mat4> World::bikeMatrix(int32_t uid, double alpha) const {
     return player_.modelMatrix(p, b.prevYaw + wrap(b.yaw - b.prevYaw) * a, glm::mix(b.prevPitch, b.pitch, a), glm::mix(b.prevRoll, b.roll, a));
 }
 
+std::optional<vec3> World::bikeMountSpot(int32_t uid) const {
+    const auto it = bikes_.find(uid);
+    const anim::Clip* mount = anims_.find(kMount);
+    if (it == bikes_.end() || !mount || it->second.phase != BikePhase::Parked || !bikeMatrix(uid, 1)) return std::nullopt;
+    const double end = mount->durationSeconds();
+    return it->second.pos + bikeOffset(it->second) + rotYaw(it->second.yaw, rotZ(-clipYaw(*mount, end), -rootTranslation(*mount, end, false)));
+}
+
 void World::syncVehicles() {
     for (const auto& u : units_)
         for (const auto& v : u.data.vehicles)
@@ -253,6 +261,46 @@ void World::syncVehicles() {
             }
     // A level load moved the stream (units at new offsets): no interpolation from the old frame.
     for (auto& [uid, b] : bikes_) b.prevPos = b.pos + bikeOffset(b), b.prevYaw = b.yaw, b.prevPitch = b.pitch, b.prevRoll = b.roll;
+}
+
+// The motorcycle is one instance per chapter that goes where she rides it. tru.exe [O]: its intro is in the chapter's
+// first units only (l4_trailstart 5482; l5_startsnow 7528, l5_valgrind_tunnel 7229), an instance's unit is instance
+// +0xE0 (set by 0x5B3A20 when it crosses a stream portal, 0x5D2AA0), a save holds every instance with the unit it is
+// in, and the l4 units she rides through name `motorcycle` among their DRM's object dependencies without placing one
+// (l4_trailtube, l4_ballcourt, l4_templepath, l4_temple, l4_staircase_upper / _xibalba / _mictlan, l4_traprooms): a
+// game loaded there gives the bike its object. Their scripts address it by its uid (l4_traprooms' arrival cinematic
+// 5703 stands it on marker 5704 with instance 26 and puts her back on it with larabase 53; l4_ballcourt's 190_mex
+// end 6389 remounts; volume 5481 tracks it; l4_ragnarok_room 5671 / 5681 and l5_valgrind 7403 / 7464 ask larabase 54).
+// Ours: the Bike re-homes to her unit while she rides (tickVehicles) and its script instance lives where the bike is
+// (syncBikeObjects -> script::Runtime::travel), so those scripts find it after its birth unit streamed out.
+// A level load that is not a save's (--level, a self-test's level, a respawn before the first checkpoint save) into
+// one of those units has no bike to restore, and where the player would have left it is not knowable. [I] Ours then
+// has the chapter's bike exist unplaced (not drawn, not solid, not mountable; its script instance in her unit) until a
+// script of the unit places it (instance 26: l4_traprooms' arrival stands it on marker 5704, where she mounts it with
+// Interact) or puts her on it (larabase 52: under her).
+void World::bikeEntry() {
+    const LoadedUnit& cur = currentUnit();
+    if (!bikes_.empty() || !cur.data.drm || std::ranges::find(cur.data.drm->dependencies, "motorcycle") == cur.data.drm->dependencies.end()) return;
+    const int ch = chapterOfUnit(cur.data.name);
+    if (ch < 0 || ch >= int(kChapters.size())) return;
+    const std::string birth(kChapters[size_t(ch)].unit);
+    if (std::ranges::any_of(units_, [&](const LoadedUnit& u) { return u.data.name == birth; })) return;
+    for (const int32_t uid : script_.summon("motorcycle", birth, cur.data.name)) {
+        Bike b;
+        b.uid = uid; // b.unit empty: unplaced
+        bikes_.emplace(uid, std::move(b));
+    }
+}
+
+void World::syncBikeObjects() {
+    for (const auto& [uid, b] : bikes_) {
+        const bool here = std::ranges::any_of(units_, [&](const LoadedUnit& u) { return u.data.name == b.unit; });
+        if (here) script_.travel(uid, b.unit);
+        auto* o = const_cast<script::Object*>(script_.find(uid)); // World owns object motion
+        if (!o) continue;
+        if (here) o->offset = b.pos + bikeOffset(b) - o->pos;
+        else if (b.unit.empty()) o->offset = vec3(0, 0, -1e6f) - o->pos; // unplaced: nowhere a volume could find it
+    }
 }
 
 // `instance` 26 with a motorcycle as its receiver (0x4A4140 places the instance at its argument's transform): the parked
@@ -275,6 +323,7 @@ void World::placeBike(int32_t uid, int32_t target, int32_t marker) {
         riding_ = 0;
     }
     Bike& b = it->second;
+    b.unit = currentUnit().data.name; // it stands in her unit now (it may come from one that streamed out, or from nowhere: bikeEntry)
     vec3 at = o->pos;
     float yaw = o->rot.z - kPi / 2;
     if (const auto m = marker >= 0 ? markerFrame(*o, marker) : std::nullopt) at = vec3((*m)[3]), yaw = std::atan2(-(*m)[1].y, -(*m)[1].x);
@@ -291,6 +340,12 @@ void World::placeBike(int32_t uid, int32_t target, int32_t marker) {
 // and ch5 starts after their intro cinematics); the bike's unit becomes the current one (l5_valgrind_tunnel's 7229).
 void World::mountBike(int32_t uid) {
     const auto it = bikes_.find(uid);
+    if (it != bikes_.end() && it->second.unit.empty() && !units_.empty()) { // unplaced (bikeEntry): under her, as she sits on it
+        Bike& b = it->second;
+        b.unit = currentUnit().data.name;
+        b.pos = player_.state().pos - bikeOffset(b), b.yaw = player_.state().yaw;
+        settleBike(b);
+    }
     if (it == bikes_.end() || !bikeMatrix(uid, 1)) {
         warnings.push_back("mount: bike " + std::to_string(uid) + " not loaded");
         return;
@@ -525,12 +580,11 @@ bool World::tickVehicles(const Actions& a, float dt) {
         const anim::Clip* mount = anims_.find(kMount);
         if (!mount) return false;
         // Mount spot: where motorcycle_mount_cycle starts relative to the seat it ends on (Lara's root = the bike's).
-        const double end = mount->durationSeconds();
-        const vec3 spot = rotZ(-clipYaw(*mount, end), -rootTranslation(*mount, end, false));
         float best = t.mountReach;
         for (auto& [uid, b] : bikes_) {
-            if (b.phase != BikePhase::Parked || !bikeMatrix(uid, 1)) continue;
-            const vec3 at = b.pos + bikeOffset(b) + rotYaw(b.yaw, spot);
+            const auto spot = bikeMountSpot(uid);
+            if (!spot) continue;
+            const vec3 at = *spot;
             const float d = glm::length(vec2(at - s.pos));
             if (d < best && std::abs(at.z - s.pos.z) < 150.0f) best = d, it = bikes_.find(uid);
         }

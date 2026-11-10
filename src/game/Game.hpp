@@ -909,6 +909,8 @@ public:
     // Uber objects whose model-0 section was removed (action 28: broken urns, exploded barrels); drawn no more.
     std::set<int32_t> removedObjects() const;
     int32_t heldPortable() const { return held_; } // the portable Lara carries, 0 none
+    // The key items stowed on her (at most 8: Lara's slots, tru.exe 0x6E7DC0), oldest first.
+    const std::vector<int32_t>& stowedPortables() const { return stowed_; }
     // The receptacle portable `uid` is inserted in, 0 none (docs/GAMEPLAY.md "Inserting a portable").
     int32_t insertedIn(int32_t uid) const { const auto it = inserted_.find(uid); return it == inserted_.end() ? 0 : it->second.receptacle; }
     // Lara's query points (tru.exe 0x719520 / 0x715DD0, [O] Wine): her feet + z0, + step, + 2 x step, z0 = sensor shape
@@ -1261,6 +1263,9 @@ public:
     // not loaded.
     std::optional<glm::mat4> bikeMatrix(int32_t uid, double alpha) const;
     const Bike* ridden() const; // the bike Lara is mounting, riding or leaving; null on foot
+    // Where Interact gets her onto parked bike `uid` (world): the start of motorcycle_mount_cycle beside it; nullopt
+    // when it is not there to mount.
+    std::optional<vec3> bikeMountSpot(int32_t uid) const;
     int bikeMounts = 0;         // mounts so far (ou-game starts l4_laras_new_bike on the first)
     nlohmann::json serializeVehicles() const;
     void restoreVehicles(const nlohmann::json& j); // throws std::runtime_error on a malformed state
@@ -1510,6 +1515,10 @@ private:
     bool restoredColliders_ = false;    // since restoreObjects, until tickObjects ran: syncObjects poses the colliders it makes
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
+    std::vector<int32_t> stowed_;        // key items stowed on her (stow / unstow, Objects.cpp); saved
+    bool stow(int32_t uid);              // message 0x1A9: out of her hands, hidden, with her
+    bool insertStowed(const Engaged& at); // empty-handed at a receptacle naming a stowed key: 0x188, then 0x165
+    void carryAlong();                   // what she holds or has stowed changes unit with her (script::Runtime::travel)
     MeleeState melee_;                   // Lara's close-combat / carry move in progress (Melee.cpp)
     std::map<std::string, std::unique_ptr<PortableDef>> portableDefs_; // by object name (portableDef)
     // Portables in receptacles (insertHeld / placePortables), by portable uid: the receptacle, a pole's horizpole markup
@@ -1704,6 +1713,9 @@ private:
     void driveBike(Bike& b, const Actions& a, float dt); // rider input for the next physics step
     std::vector<physics::Scene::Vehicle> bikeVehicles(); // the ridden bike for physics_ (stepPhysics)
     void readBikes(float dt);                      // after the step: bike pose, landing, ramming; Lara on it
+    void bikeEntry();       // a level load into a unit the motorcycle travels to: it is there (Vehicle.cpp)
+    void syncBikeObjects(); // the bikes' script instances live where their bikes are
+    bool bikeEntryDue_ = false;
     void placeBike(int32_t uid, int32_t target, int32_t marker); // instance 26 on a parked bike: onto an object / its marker
     std::optional<std::array<int32_t, 3>> bikePlace_; // a placement of the bike she sits on, waiting for her to be taken off it
     uint64_t bikePlaceTick_ = 0;

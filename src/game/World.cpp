@@ -656,11 +656,13 @@ void World::tick(const Actions& input) {
     // Freshly loaded units (a chapter start) get their scripted objects and colliders before Lara moves, so she
     // starts on l2_cliffclimb's yacht deck rather than in the sea under it.
     if (!units_.empty() && scriptUnits_ != unitsVersion_) {
+        carryAlong();
         const auto refs = unitRefs();
         script_.setUnits(refs);
         enemies_.setUnits(refs);
         scriptUnits_ = unitsVersion_;
     }
+    if (!units_.empty() && std::exchange(bikeEntryDue_, false)) bikeEntry();
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
     player_.setWaveSeconds(double(ticks_) * kTickSeconds);
     player_.setCamera(cam_.yaw, cam_.pitch);
@@ -701,6 +703,7 @@ void World::tick(const Actions& input) {
         recordReveal();
     }
     if (!units_.empty() && scriptUnits_ != unitsVersion_) { // scripted objects follow the loaded units
+        carryAlong();
         const auto refs = unitRefs();
         script_.setUnits(refs);
         enemies_.setUnits(refs);
@@ -764,6 +767,7 @@ void World::tick(const Actions& input) {
     const size_t insertedBefore = inserted_.size();
     collectPickups(interactPress);
     carryPortables(interactPress && pickedUp_.empty());
+    syncBikeObjects();
     pushUberJoints(push);
     tickObjects(wdt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     // ... gives her its velocity when this tick took her off it into free flight: her point through the carrier's
@@ -1565,6 +1569,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
         for (const auto& w : rt.watches) add(w.section), add(w.joint), add(w.range), add(w.mode), add(w.inside);
     }
     part("held"), add(held_);
+    for (const int32_t uid : stowed_) part("stowed " + std::to_string(uid)), add(uid);
     for (const auto& [uid, in] : inserted_) part("inserted " + std::to_string(uid)), add(uid), add(in.receptacle);
     for (const auto& [uid, x] : slides_) part("slide " + std::to_string(uid)), add(uid), add(x);
     for (const int32_t uid : placed_) part("placed " + std::to_string(uid)), add(uid);

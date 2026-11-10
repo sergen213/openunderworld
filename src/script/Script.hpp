@@ -415,6 +415,27 @@ public:
     int32_t unitScriptUid(const std::string& unit) const;
     // Keeps objects of units still present, adds new units, drops missing ones. Throws cdc::FormatError.
     void setUnits(const std::vector<UnitRef>& units);
+    // Instances that left their birth unit. tru.exe keeps an instance's unit in instance +0xE0: 0x5B3A20 sets it, and
+    // the unit of every instance attached to it (the child list +0x218 / +0x21C), and attaching (0x5B4DE0: a portable
+    // in Lara's hands or stowed on her, messages 0x17B / 0x1A9) gives the child its parent's unit. So what Lara
+    // carries changes unit with her and is not removed with the unit it was born in; put down or inserted elsewhere it
+    // lives (and is saved) with that unit. Ours: `travel` re-homes object `uid` into the loaded unit `unit`; from then
+    // on it leaves and returns with that unit (re-created from its birth unit's intro, whose DRM is read again when
+    // that unit is not loaded), and its birth unit no longer introduces it. Saved ("away").
+    struct Away {
+        std::string birth, unit; // the intro's unit; the unit it lives in now
+        vec3 at{0};              // where it lay in `unit`'s frame when that unit streamed out
+    };
+    void travel(int32_t uid, const std::string& unit);
+    // What Lara carries (in her hands or stowed) and the unit she is in: they travel there now when it is loaded, and
+    // at the next setUnits when the unit they are in leaves while hers stays or arrives.
+    void setCarried(std::vector<int32_t> uids, const std::string& unit);
+    const std::map<int32_t, Away>& away() const { return away_; }
+    // The instances of object `object` whose intros are in unit `birth` (not loaded), made to live in the loaded unit
+    // `unit`: what a level load finds there of a chapter's travelling instance (the motorcycle; World::bikeEntry).
+    // Returns their uids; none when `birth` is loaded or they are known already.
+    std::vector<int32_t> summon(const std::string& object, const std::string& birth, const std::string& unit);
+    void setHidden(int32_t uid, bool hidden); // the instance's draw flag (instance 12 / 60; a stowed portable, message 0x1A9)
     void addObject(Object o, bool start = true); // setUnits and tests; applies pending restored state
     void endCinematic(int32_t uid); // run the object's non-virtual post-stream helper
     // Message channels: messagechannel Send (tru.exe 0x4A2E70 -> 0x5D0670) posts {id, payload} to the channel's
@@ -562,6 +583,15 @@ private:
     // Dormant intros introduced (any unit), in birth order; saved as "born". Their objects follow every unit's own
     // (setUnits / restore create them last, in this order), as when they were born during play.
     std::vector<int32_t> born_;
+    std::map<int32_t, Away> away_;
+    std::map<std::string, UnitRef> unitRefs_; // the loaded units as setUnits last had them (offsets, DRMs)
+    bool materializing_ = false;
+    std::pair<std::string, std::shared_ptr<const cdc::Drm>> awayDrm_; // the last birth unit read for an away instance
+    std::shared_ptr<const cdc::Drm> birthDrm(const std::string& unit); // the loaded unit's, else read (null: missing)
+    std::vector<int32_t> withLara_; // setCarried (not saved: the World gives it every tick)
+    std::string carriedUnit_;
+    void rehome(Object& o, const std::string& unit);
+    bool materialize(int32_t uid, const Away& a); // an away instance's object, when the unit it lives in is loaded
     std::vector<int32_t> births_; // birth(): created at the end of the tick
     void restoreRuntime(const nlohmann::json& r); // restore(): the "runtime" block (threads, unit scripts, clocks); throws
     // A load's running scripts wait here for their objects / unit scripts, which a load creates later (setUnits):

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "ch14_traprooms_bike_arrival",
+  "chapter": "14 The Midgard Serpent: the motorcycle in the statue room after the arrival cinematic; mounted there and ridden off (docs/matrix/14_midgard_serpent.md C14-06, C14-07)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/13midgard.html",
+  "note": "l4_traprooms entered inside the arrival cinematic's volume, as ch14_traprooms_club_throne. The motorcycle is one instance for the chapter, born in l4_trailstart (5482) and ridden from unit to unit; l4_traprooms names `motorcycle` among its DRM's object dependencies without placing one [O data], so a game loaded here has it. A level load that is not a save's has no place for it: it exists unplaced (World::bikeEntry [I]) until the arrival cinematic 5703's handlers stand it on marker 5704 with instance 26 [O bytecode], which finds it only because its script instance lives in her unit (script::Runtime::travel / away). She walks to its mount spot, Interact gets her on, and the throttle rides it across the hall. In a play-through she rides in and the cinematic's larabase 53 puts her back on it; here she arrived on foot (Lara's vehicle pointer is empty), so 53 does nothing and she mounts by hand.",
+  "level": "l4_traprooms",
+  "spawn": [7400, -34900, 4440, -135],
+  "steps": [
+    {"step": "arrival", "duration": 4,
+     "expect": [{"calls": ["5703:57"], "note": "the arrival cinematic played"},
+                {"probe": "bike.count", "eq": 1},
+                {"probe": "object.5482.name", "eq": "motorcycle"},
+                {"probe": "object.5482.unit", "eq": "l4_traprooms", "note": "the bike's instance lives in her unit, not in l4_trailstart"},
+                {"probe": "object.5482.pos.x", "near": 12378.8, "tol": 5, "note": "on marker 5704 (12378.8, -32703.9)"},
+                {"probe": "object.5482.pos.y", "near": -32703.9, "tol": 5},
+                {"probe": "bike.mounted", "eq": false}]},
+    {"step": "mount", "plan": ["engage 5482", "press", "wait 4"], "duration": 60,
+     "expect": [{"probe": "bike.mounted", "eq": true},
+                {"probe": "bike.uid", "eq": 5482},
+                {"probe": "bike.phase", "eq": "ride"},
+                {"visits": ["vehicle"]},
+                {"probe": "step.teleports", "eq": 0}]},
+    {"step": "ride", "plan": ["hold forward 2", "wait 1"], "duration": 10,
+     "expect": [{"probe": "bike.speed", "over": "max", "min": 2000, "note": "measured 4077 units/s after 2 s of throttle"},
+                {"probe": "player.pos.x", "max": 9000, "note": "started at 12 384; measured 3716"},
+                {"probe": "object.5482.unit", "eq": "l4_traprooms"}]}
+  ]
+}

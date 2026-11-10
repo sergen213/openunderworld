@@ -823,6 +823,9 @@ void World::tickMelee(Actions& a, bool pressed, float dt) {
             m.landed = true;
             if (o && !held_ && !inserted_.contains(o->uid)) held_ = o->uid, o->loose = false;
         }
+        // a key item: the clip's event 0x52 (message 0x1A9) puts it away
+        if (const auto away = def ? def->frame("hosted_pickup", 0x52) : std::nullopt; away && m.landed && o && held_ == o->uid && frame >= float(*away))
+            stow(o->uid);
         break;
     }
     case MeleeState::Move::PutDown: {

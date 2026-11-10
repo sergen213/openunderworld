@@ -115,7 +115,7 @@ const std::set<std::string_view>& fixedProbes() {
         "camera.pos.z",
         "world.unit", "world.units", "world.chapter", "world.checkpoint", "world.checkpoint_unit", "world.ticks", "world.treasures",
         "world.relics", "world.health_packs", "world.streaming", "world.autosaves", "world.flashlight", "world.screen_fade",
-        "portable.held", "enemies.count", "enemies.alive", "enemies.nearest", "enemies.nearest_uid"};
+        "portable.held", "portable.stowed", "enemies.count", "enemies.alive", "enemies.nearest", "enemies.nearest_uid"};
     return k;
 }
 } // namespace
@@ -381,9 +381,9 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
         if (!list.is_array()) bad(where, "'fixtures' wants an array");
         std::vector<json> out;
         for (const auto& f : list) {
-            static const std::set<std::string> kFixtures = {"weapon", "ammo", "health", "adrenaline", "give", "target", "kill", "tailoring", "teleport", "camera"};
+            static const std::set<std::string> kFixtures = {"weapon", "ammo", "health", "adrenaline", "give", "target", "kill", "tailoring", "teleport", "camera", "level"};
             if (!f.is_object() || f.size() != 1 || !kFixtures.contains(f.begin().key()))
-                bad(where, "a fixture is an object with one of weapon, ammo, health, adrenaline, give, target, kill, tailoring, teleport, camera");
+                bad(where, "a fixture is an object with one of weapon, ammo, health, adrenaline, give, target, kill, tailoring, teleport, camera, level");
             out.push_back(f);
         }
         return out;
@@ -434,7 +434,7 @@ bool SelfTest::probeKnown(std::string_view name) {
     if (p.size() < 3 || !integer(p[1])) return false;
     const std::string_view f = p[2];
     if (p[0] == "object") {
-        if (p.size() == 3) return f == "exists" || f == "name" || f == "graph" || f == "joint" || f == "hidden" || f == "dead" || f == "in";
+        if (p.size() == 3) return f == "exists" || f == "name" || f == "graph" || f == "joint" || f == "hidden" || f == "dead" || f == "in" || f == "stowed" || f == "unit";
         if (p.size() == 5) return f == "uberslide" && integer(p[3]) && axisName(p[4]);
         return p.size() == 4 && ((f == "pos" || f == "body") ? axisName(p[3]) : (f == "uber" || f == "uberjoint") && integer(p[3]));
     }
@@ -640,6 +640,7 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         return {};
     }
     if (name == "portable.held") return num(w.heldPortable());
+    if (name == "portable.stowed") return num(w.stowedPortables().size()); // key items stowed on her
     if (p[0] == "enemies") {
         int alive = 0, nearestUid = 0;
         float nearest = -1;
@@ -686,6 +687,8 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "hidden") return o->hidden;
         if (f == "dead") return o->dead;
         if (f == "in") return num(w.insertedIn(*id));
+        if (f == "stowed") return std::ranges::find(w.stowedPortables(), *id) != w.stowedPortables().end();
+        if (f == "unit") return o->unit; // the unit the instance lives in (it travels with Lara while she carries it)
         if (f == "pos") return component(o->pos + o->offset, p[3]);
         if (f == "body") return component(glm::vec3(o->body[3]), p[3]); // a door's / slider's own motion from rest
         if (f == "graph") return o->graph && o->graph->set->graph ? num(o->graph->set->graph->states[size_t(o->graph->state)].index) : Value();
@@ -754,6 +757,18 @@ void SelfTest::applyFixture(game::World& w, const json& f, const std::string& st
         w.targets.push_back(&d);
     } else if (key == "kill") {
         w.kill();
+    } else if (key == "level") {
+        // level ["unit", checkpoint]: a level load at that unit's checkpoint (World::enterUnit, as a respawn or a
+        // loaded game makes one), the game's state kept: it stands for a way between two units that the scenario
+        // does not play. What she carries goes with her; her health is kept.
+        if (!v.is_array() || v.size() != 2 || !v[0].is_string() || !v[1].is_number_integer()) bad(where, "wants [\"unit\", checkpoint id]");
+        const float health = w.health().value();
+        try {
+            w.enterUnit(v[0].get<std::string>(), std::nullopt, v[1].get<int32_t>());
+        } catch (const std::exception& e) {
+            bad(where, e.what());
+        }
+        w.setHealth(health);
     } else if (key == "tailoring") {
         if (!v.is_number_integer() || v.get<int>() < 0 || v.get<int>() > 2) bad(where, "wants a PLAYER TAILORING level 0..2");
         w.setTailoring(game::Tailoring::preset(v.get<int>()));

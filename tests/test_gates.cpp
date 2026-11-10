@@ -1347,6 +1347,10 @@ TEST(ProgressionReal, AnimGraphRecords) {
 namespace {
 std::vector<std::pair<vec3, float>> engageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, int kind);
 bool interactFrom(game::World& w, const std::vector<std::pair<vec3, float>>& spots, const std::function<bool()>& done);
+// She has portable `uid`: in her hands, or stowed (the key items, whose pick-up clip puts them away: World::stow).
+bool carries(const game::World& w, int32_t uid) {
+    return w.heldPortable() == uid || std::ranges::find(w.stowedPortables(), uid) != w.stowedPortables().end();
+}
 } // namespace
 
 // l4_traprooms seal 5701: with the seal raised (sticky +268) and the four trap rooms done (sticky int +240 = 4), plates
@@ -2031,11 +2035,11 @@ TEST(ProgressionReal, ReceptaclesTakeTheirPortables) {
         if (c.from) {
             ASSERT_EQ(w.insertedIn(c.portable), c.from) << "placed";
             EXPECT_FALSE(w.script().graphAccepts(c.from, formats::kStimulusInsert)) << "full";
-            ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return w.heldPortable() == c.portable; }));
+            ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return carries(w, c.portable); }));
             EXPECT_EQ(w.insertedIn(c.portable), 0);
             EXPECT_EQ(graphStateId(w, c.from), c.fromAfter) << "removal: stimulus 0x40";
         } else {
-            ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return w.heldPortable() == c.portable; })) << "picked up";
+            ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return carries(w, c.portable); })) << "picked up";
         }
         if (c.into) {
             const auto* rec = w.script().find(c.into);
@@ -2071,26 +2075,101 @@ TEST(ProgressionReal, TraproomSealTakesTheRoomKeys) {
 
 // The four keys of the trap houses (ca_pt_blade / crush / dark / fire_room_key, l4_traprooms 5878-5881) are portables
 // by their physical class (50): they have a pick-up record (kind 4), but their script's native base is `instance`, not
-// portablebase [O data]. Interact inside the
-// record takes each into her hands (World::portableClass; before, the press did nothing), Crouch puts it down again.
+// portablebase [O data]. Interact inside the record takes each (World::portableClass). They are key items: the pick-up
+// clip's event 0x52 (frame 50, after 0x4E at 26) stows what she just took [O clip data, tru.exe 0x6B5890 message
+// 0x1A9], so her hands are free for the next and all four are with her at the end, none drawn. (Before, the
+// test put each down again with Crouch: the keys have no put-down clip, and tru.exe never leaves one in her hands.)
 TEST(ProgressionReal, TraproomKeysArePickedUp) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     auto wp = receptacleWorld(bf, "l4_traprooms");
     auto& w = *wp;
+    std::vector<int32_t> have;
     for (const int32_t uid : {5878, 5879, 5880, 5881}) {
         SCOPED_TRACE(uid);
         const auto* key = w.script().find(uid);
         ASSERT_TRUE(key);
         ASSERT_EQ(w.heldPortable(), 0);
-        ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *key, 4), [&] { return w.heldPortable() == uid; }));
+        ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *key, 4), [&] { return carries(w, uid); }));
+        for (int i = 0; i < 30; ++i) w.tick({});
+        have.push_back(uid);
+        EXPECT_EQ(w.heldPortable(), 0) << "stowed, not in her hands";
+        EXPECT_EQ(w.stowedPortables(), have);
+        EXPECT_TRUE(w.script().find(uid)->hidden) << "a stowed key is not drawn";
         game::Actions down;
-        down.drop = true; // Crouch puts it down (chart input 101)
-        w.tick({});
+        down.drop = true; // Crouch: nothing to put down
         w.tick(down), w.tick({});
         finishMove(w);
-        EXPECT_EQ(w.heldPortable(), 0);
+        EXPECT_EQ(w.stowedPortables(), have);
     }
+}
+
+// A key item goes with Lara from unit to unit and into its receptacle (docs/GAMEPLAY.md "Key items"): the Xibalba key
+// 5695 is taken out of its holder in l4_ragnarok_room (stowed), her way back to the exit is five units long (level
+// loads stand for the ride here: the instance must survive its birth unit leaving, as tru.exe's does, attached to
+// her: 0x5B4DE0 / 0x5B3A20), a save on the way keeps it, and at keyhole 6501 in l4_ballcourt one Interact takes it
+// out and sets it in (message 0x188, then 0x165): the keyhole's vt 20(1) enables switch 5469 (vt 62), whose pull
+// reopens the way out (reveal 5464 vt 54).
+TEST(ProgressionReal, StowedKeyTravelsToItsKeyhole) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_ragnarok_room");
+    auto& w = *wp;
+    const auto* key = w.script().find(5695);
+    ASSERT_TRUE(key);
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *key, 4), [&] { return carries(w, 5695); }));
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(w.stowedPortables(), std::vector<int32_t>{5695});
+    EXPECT_EQ(w.insertedIn(5695), 0);
+    EXPECT_TRUE(w.script().away().empty()) << "still in its birth unit";
+
+    w.enterUnit("l4_traprooms", std::nullopt, 5787); // a unit that does not border l4_ragnarok_room
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_FALSE(std::ranges::any_of(w.units(), [](const auto& u) { return u.data.name == "l4_ragnarok_room"; }));
+    key = w.script().find(5695);
+    ASSERT_TRUE(key) << "the stowed key did not leave with its birth unit";
+    EXPECT_EQ(key->unit, "l4_traprooms");
+    ASSERT_TRUE(w.script().away().contains(5695));
+    EXPECT_EQ(w.script().away().at(5695).birth, "l4_ragnarok_room");
+    EXPECT_LT(glm::distance(key->pos + key->offset, w.player().state().pos), 1.0f) << "with her";
+
+    // a save here, loaded into a fresh game: the key comes back stowed, made from its birth unit's intro
+    const auto bytes = save::serialize(save::capture(w));
+    auto lp = receptacleWorld(bf, "l4_pool");
+    auto& l = *lp;
+    ASSERT_NO_THROW(save::apply(save::parse(bytes), l));
+    for (int i = 0; i < 30; ++i) l.tick({});
+    ASSERT_EQ(l.stowedPortables(), std::vector<int32_t>{5695});
+    const auto* again = l.script().find(5695);
+    ASSERT_TRUE(again);
+    EXPECT_EQ(again->unit, "l4_traprooms");
+    EXPECT_EQ(again->name, "ca_pt_key_xibalba_exit");
+    EXPECT_TRUE(again->hidden);
+
+    l.enterUnit("l4_ballcourt", std::nullopt, 6122);
+    for (int i = 0; i < 30; ++i) l.tick({});
+    std::vector<std::pair<int32_t, int16_t>> calls;
+    l.script().onCall = [&](int32_t, int32_t to, int16_t vt) { calls.emplace_back(to, vt); };
+    const auto* hole = l.script().find(6501);
+    ASSERT_TRUE(hole);
+    ASSERT_TRUE(l.script().find(5695)) << "stowed " << l.stowedPortables().size() << " away " << l.script().away().size()
+                                       << (l.script().away().contains(5695) ? " in " + l.script().away().at(5695).unit : std::string());
+    EXPECT_EQ(l.script().find(5695)->unit, "l4_ballcourt");
+    ASSERT_TRUE(interactFrom(l, engageSpots(bf, l, *hole, 5), [&] { return l.insertedIn(5695) == 6501; })) << "Interact at the keyhole";
+    EXPECT_TRUE(l.stowedPortables().empty());
+    EXPECT_EQ(l.heldPortable(), 0);
+    EXPECT_FALSE(l.script().find(5695)->hidden);
+    for (int i = 0; i < 60; ++i) l.tick({});
+    EXPECT_NE(std::ranges::find(calls, std::pair<int32_t, int16_t>{5469, 62}), calls.end()) << "6501 vt 20(1): the switch is live";
+    // it stays in the keyhole when l4_ballcourt streams out and comes back
+    l.enterUnit("l4_pool", std::nullopt, 0);
+    for (int i = 0; i < 30; ++i) l.tick({});
+    EXPECT_FALSE(l.script().find(5695));
+    l.enterUnit("l4_ballcourt", std::nullopt, 6122);
+    for (int i = 0; i < 30; ++i) l.tick({});
+    ASSERT_TRUE(l.script().find(5695));
+    EXPECT_EQ(l.insertedIn(5695), 6501);
+    EXPECT_EQ(l.script().find(5695)->unit, "l4_ballcourt");
 }
 
 namespace {
@@ -2165,7 +2244,7 @@ TEST(ProgressionReal, UberReceptaclesTakeTheirPortables) {
         }
         if (c.receptacle == 9099) w.sendUberCommand(9099, 3);
         for (int i = 0; i < 5; ++i) w.tick({});
-        ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return w.heldPortable() == c.portable; })) << "picked up";
+        ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return carries(w, c.portable); })) << "picked up";
         ASSERT_FALSE(uberEngageSpots(bf, w, *rec, c.section).empty()) << "a kind-5 record";
         calls.clear();
         // The spots where the record is now (the valgrind cog wheels turn under their motor: about 10 degrees a second)
