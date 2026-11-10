@@ -1554,7 +1554,7 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   `_equip / _unequip / _reload` (wp_handgun / wp_uzi; `_free` hanging free). Column yaws 0 / -45 / -90 / -135 / -180
   and rows +-45 by the names [I]; aims to her left clamp (`_switchhands` unused) [U].
 - Q / pad X (`Actions::grapple`, virtual button 1) throws (`grapple_rappel_free_jumpon`) and attaches; Q again or
-  Ctrl/C releases. Space jumps off with the swing's momentum (`grapple_rappel_free_jumpoff`). tru.exe's keyboard
+  Ctrl/C releases. Space: see "Rope inputs" below. tru.exe's keyboard
   defaults put Recenter Camera (button 8) on Q too [O: 0x487710 binds button i to key 0x80 + DirectInput scan code,
   buttons 1 and 8 both 0x90 = 0x80 + DIK_Q 0x10; the registry Input list holds "1"="144" and "8"="144"]; a press that
   throws or releases the grapple does not also recenter, a press with no target offered recenters (`World::tick`)
@@ -1567,11 +1567,72 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   hand and this one gets a bend where it first touched, 7.90125 off the surface, none within 15.8 of another
   (0x6A50B0). Segments are tested shortened by min(9.48, 0.45 x length) at each end (0x6B2CC0). Ours: one ray per
   segment instead of the 4.74-radius sphere casts, the touch point by bisection [I]. Saved in `player.controller`.
-- Swing (ours [I], no exe numbers): gravity + stick pumping (500 u/s²), a rope constraint at hand = root + 400
-  round the pivot (outward radial velocity removed), light air drag. `grapple_rappel_free_swing_forward/backward` by
-  travel direction, `grapple_rappel_idle` otherwise. E ascends the rope, Shift descends (300 u/s [I]). Swinging down
-  onto a floor (> 300 u/s down), or coming down just over a floor out at the end of the arc (more than 0.3 × the free
-  rope from under the pivot), lands her: she lets go standing [I].
+- Rope inputs [O state chart + tru.exe 0x746F60 / 0x745FA0; input actions 44 / 48 = Interact, 47 / 52 = Jump, 46 =
+  Grapple (generalbank DTP 0x2F)]. On the rope the stick is read in its own frame (the pad's angle and deflection,
+  input +0x10 / +0x18; dead below 0.35, player data +0x9C8 / +0x920), not the camera's:
+  - On the ground with the rope in hand she is in the ordinary ground set (chart S705, `grapple_idle` S722): she walks
+    and the rope's length is her distance (0x6A47E0), up to the target's longest. Walking off an edge under the anchor
+    she hangs on it (T1409). **Jump keeps the rope**: at an edge `grapple_rappel_free_jumpon` (T1407), else the
+    ordinary jump (S752 -> S753 `combat_jumpf_inair_grapple_attached`), which becomes the hang on its way down with no
+    ground under her (T1387 / T291) — the rope she hangs on is as long as her distance then. Ours: one launch (the
+    stick jump's 40.00 along + 49.97 up per frame, or the standing jump's), walk 300 units/s, "no ground" = none
+    within 316 under her feet [I].
+  - Hanging free (S381): **Interact held + forward / back climbs / slides** (S391 -> S395 `grapple_rappel_free_ascend`
+    / S392 -> S396 `_descend`; stick within 1 - sin 32.5 deg of the axis; 23.70 up / 41.09 down units per frame x the
+    stick, +0x9E4 / +0x9E8; not while swung out past 40 deg, +0x9EC; rope 553.1..longest). Without Interact the stick
+    forward / back drives the swing (below). Not swinging, **left / right turns her** on the rope (S413..S416
+    `grapple_rappel_free_rotate_left/right`, 3.5 deg per frame eased in over 50 frames, +0x9F4 / +0x9FC). **Jump leaps
+    off** (S406, `grapple_rappel_free_jumpoff`): along her facing max(63.21, 0.45 x her horizontal speed), up max(47.41,
+    0.85 x her vertical speed) per frame (0x73C640 case 734, +0xA48..+0xA54); Crouch lets go; Grapple again lets go.
+  - Feet on a wall (S311): **Interact held + forward / back** climbs / descends (34.77 / 44.25 per frame x the stick,
+    +0x924 / +0x928, where the stick is more up / down than sideways); without Interact left / right runs along the
+    wall. **Jump leaps off the wall** (T379 -> S320): the stick left / right -> `grapple_rappel_jumpoff_left/right`
+    (she turns that way: 45.83 along the wall + 44.25 up per frame, +0x994 / +0x998), else `grapple_rappel_jumpoff_back`
+    (53.73 out + 44.25 up, +0x9A4 / +0x9A8). [I] ours turns her at once and reads left / right as the stick's 90
+    degree sectors. Jump with the stick back during a wall run (T424 -> S324 `grapple_rappel_jumpoff_back_dynamic_*`,
+    +0x9B4.. 53.73 sideways + 53.73 up) is not implemented.
+  - The jump-offs let the rope go [I: their chart states S321 / S406 are outside the rope states; a kept rope would
+    re-enter the hang by T291].
+- Swing law [O tru.exe 0x746F60, player data +0x8D8..+0xA3C; all per 30 Hz frame]. The original swings a rigid body
+  ("[GrappleRope] User Body": sphere radius 30, mass +0x8D8 = 55, damping +0x8DC = 0.022) on the rope; ours is a point
+  pendulum (hand = root + 400 [I]) under the same forces, gravity 5.72443 [I: Lara's own].
+  - The swing is driven while the stick is along her facing — |cos| of its angle over 1 - sin 12.5 deg = 0.784,
+    forward or back — and for 10 frames after it left (+0x9D8); from rest only forward starts it; the stick held back
+    for 150 frames (+0x9DC) stops it. Interact held never drives.
+  - Driven, a force along her facing pushes her **the way she is moving** (forward while she swings forward or hangs
+    still, backward while she swings back): mass x stick x the table value by the rope's free length (0 -> 948.2 ->
+    2844.5 -> longest, +0x8E4 / +0x8E8): forward 3.003..3.161 / 3.003..3.161 / 4.267..4.425, backward 3.003 / 3.319..3.477
+    / 4.425..4.741 units per frame^2 (+0xA10..+0xA3C; gravity is 5.72). So holding Forward builds the swing every pass;
+    there is no phase to hit — the phase is taken from her motion.
+  - Past 45 deg from straight down (+0xA04), going outward: no drive, and a brake force of 2.5 x her velocity (+0xA08).
+    Motion across her facing is braked (3.5, +0xA0C). Not driven and going outward: a brake of 1.0 x velocity (+0x9E0).
+    Speed cap 379.27 per frame (+0xA00). Her facing stays while she swings.
+  - Ours matches these numbers (`Grapple.cpp` constants); [I]: the brakes and the body damping as per-frame rates over
+    the body's mass, the start of a swing from rest going forward, the point pendulum.
+- Swing, original vs ours (l3_main_hall ring 4089, the prologue's crossing; ours `GameReal.MainHallSwingToFarBalcony`,
+  self-test `prologue_hall_swing`):
+
+  | | original [O data / code; not yet measured in the running game] | ours (measured) |
+  |---|---|---|
+  | rope she hangs on after the jump off the balcony edge (2614 from the edge) | her distance when the jump comes down with no ground under her (T1387) | 2170 ("no ground" = none within 316 [I]) |
+  | drive, rope 2170 | 3.003 + 0.158 x (2170 - 948) / 1896 = 3.10 units/frame^2 forward, 3.42 backward, x stick | the same |
+  | swing period, rope 2170 | [U] | 3.67 s (220 ticks) |
+  | far end of the first swing, Forward held | [U] | x -1686, z 1993 (107 ticks after the jump; 53 deg) |
+  | swing held with Forward (steady) | no drive past 45 deg going out, brake 2.5 x v / 55 per frame | ends at 56 deg (x -1755 / +1871, z 2090 / 2140) |
+  | no stick | brake 1.0 x v / 55 per frame going out, body damping 0.022 | dies down within ~3 s (self-test `grapple_swing`: peak speed 1214 -> 80 units/s) |
+  | leap off (Jump) | 63.21 forward, 47.41 up per frame (or 0.45 / 0.85 of her speed) | 1896.3 / 1422.3 units/s; lands at x -3014 on the far balcony (z 1727) |
+  | rope climb / slide (Interact + forward / back) | 23.70 / 41.09 per frame | 711.1 / 1232.6 units/s (self-test: 711.1 in 1 s) |
+  | rappel up / down | 34.77 / 44.25 per frame | 1043.0 / 1327.4 units/s |
+
+  A Wine trace of player +0x2A0 on this ring (period, growth per pass, the rope length the hang starts with, the
+  roped walk's speed) was attempted twice and not obtained: teleported to the balcony (unit offset from the ring's
+  instance position: tru = ours + (1583.83, 1911.31, -1939.58)) she falls through the world after the first camera
+  calibration run. Scripts and notes: `openunderworld-work/gameplaygoal/grapin/` (`wine2.sh`, `an.py`, `NOTES.md`).
+  Open until then [U]: the time base of the brakes and of the body damping (ours: per frame), gravity on the rope
+  body, the "no ground" distance, the roped walk speed, whether the jump-offs let the rope go.
+- Landing from the rope [I]: swinging down onto a floor (> 300 u/s down) off a taut rope, or coming down just over a
+  floor out at the end of the arc (more than 0.3 x the free rope from under the pivot), she lets go standing; landing
+  her own jump with the rope slack keeps it.
 - Overhangs [O PlayerSC_Grapple::OverhangDetected 0x73AB70, player data +0x980..+0xA44]: climbing down a wall, nothing
   within 553.1 into it at 110.6 below her feet -> `grapple_rappel_overhang_descend_begin`, `_descend` into a free swing
   (S379 -> S378); climbing the rope with a wall within 63.2 at 316.1 over her root (60..120 degrees from up) whose lip
@@ -1581,15 +1642,19 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   (`script::Runtime::grapplePulled`: the first overridden void slot 55..60 that does more than return — levers 59/60,
   shiva arms 55/56, snake head 57 [O]; which slot tru.exe calls on a pull is [I]),
   then she lets go standing; `World::lastPulled()` reports the target.
-- Rappel (`State::GrappleRappel`) [I]: a swing into a wall (|normal.z| ≤ 0.35) puts her feet on it,
-  `grapple_rappel_wall_land(_left/_right)` by sideways speed, facing the wall. Stick into the wall shortens the
-  rope (up, `grapple_rappel_up(_left/_right_45)`), away lengthens it (down, `grapple_rappel_down…`); gravity keeps
-  the pendulum in the wall plane; she follows wall steps up to 150 deep, else swings free again. Jump kicks off
-  (700 out, 200 up) into a swing, drop lets go; descending onto a floor ends it standing. Body angle: the rappel clips
-  carry it (feet on the wall, body out along the rope; viewed, below).
-- Wall run [I]: on the wall, a sideways stick runs along it (`grapple_rappel_left/right`, `grapple_rappel_walk_*`
-  below 0.6 deflection): the feet push her along the wall up to 700 u/s (2500 u/s², never braking), so she runs the
-  rope's arc down past the point below the anchor and up the other side. From the ground: roped to a Wall anchor, on
+- Rappel (`State::GrappleRappel`): a swing into a wall (|normal.z| <= 0.35) puts her feet on it,
+  `grapple_rappel_wall_land(_left/_right)` by sideways speed, facing the wall [I]. Inputs and rates as above [O]:
+  Interact + forward shortens the rope (`grapple_rappel_up(_left/_right_45)`), + back lengthens it
+  (`grapple_rappel_down…`); gravity keeps the pendulum in the wall plane; she follows wall steps up to 150 deep, else
+  swings free again; set onto a spot the taut rope does not reach she is moved along the wall toward the pivot.
+  Jump leaps off, drop lets go; descending onto a floor ends it standing. Body angle: the rappel clips carry it.
+- Wall run: on the wall, a sideways stick (no Interact) runs along it (`grapple_rappel_left/right`,
+  `grapple_rappel_walk_*` below 0.6 deflection [I]). Drive [O tru.exe 0x745FA0]: a force along the wall of mass x
+  stick x 1.896..2.528 / 3.161..3.951 / 5.531..6.321 units per frame^2 by rope length (+0x95C..+0x970, the lengths as
+  the swing's), not past 55 deg from under the pivot (+0x944), where going outward she is braked (2.5, +0x948); speed
+  cap 97.98 per frame (+0x940). So she runs the rope's arc down past the point below the anchor and up the other
+  side. Not decoded: the reversal rule (+0x94C / +0x950 / +0x954, flags 0x4000 / 0x8000 / 0x40000), the idle brake
+  (+0x92C / +0x930) and the body damping it switches (0.02 / 0.05) [U]. From the ground: roped to a Wall anchor, on
   a floor with the anchor's wall (the surface closest to the anchor) within 400 of her capsule, a stick along that
   wall toward the point below the anchor plays `ng_ground_to_wallrun_left/right` and starts the run (700 u/s, 350
   up); while that clip plays or she runs downhill along a floor the rope reels in its slack. Use sites [O]: the Wall
@@ -1605,7 +1670,10 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   `Game.GrappleWallRunFromGround`, `GameReal.PoolGrappleTargetAndSwing`, `GameReal.MountedGrapplePullsBlockWithoutSwinging`,
   `GameReal.GrapplePullsUberTargets` (replay `tests/replays/grapple_pull.txt` at l4_trailstart lever 6695,
   l2_puzzleroom shiva 2982), `ProgressionReal.GrappleHandlesSwivel`, `GameReal.KrakenRoomRappel` (replay
-  `tests/replays/kraken_rappel.txt`: swing onto 326's wall, rappel down 460 and up 590, kick off),
+  `tests/replays/kraken_rappel.txt`: swing onto 326's wall, Interact + back / forward down and up, Jump leaps back off
+  the wall), `Game.GrappleSwingDrive`, `Game.GrappleJumpIntoGapKeepsRope`, `Game.GrappleRopeClimbNeedsInteract`,
+  `Game.GrappleRappelInputsAndWallJump`, `GameReal.MainHallSwingToFarBalcony`; self-tests `prologue_hall_swing`,
+  `grapple_swing`, `rappel`, `wall_run`,
   `GameReal.ValaskjalfWallRun` (ledge → wall run 370 down through the arc → far ledge, standing). Replay
   `tests/replays/valaskjalf_wallrun.txt` plays the wall run in ou-game.
 - Viewed (2026-10-29, GL + Vulkan identical): l1_kraken_room rappel at tick 300 from the side
