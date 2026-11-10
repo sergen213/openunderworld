@@ -3065,7 +3065,9 @@ Ours (`World::respawn`, `World::serializeCheckpoint` / `restoreCheckpointSave`, 
   at the end of the tick in which a checkpoint was activated (the script event of `checkpointbase` 3, every time; or
   Lara within 250 / 400 units of a checkpoint intro not yet active [I]), in which a treasure or relic was collected
   with a checkpoint active, and at the end of a level's first tick (the level start). Never of a dead Lara.
-- Death: the clip plays, the screen fades for 90 frames (`kDeathFade`), then `respawn()`: the clock goes back, the
+- Death: the clip plays, the screen fades for 90 frames (`kDeathFade`), then `respawn()` when the next tick starts
+  (between ticks, as the original's game loop does it; the restore replaces the units and the physics scene, and
+  with the scene the object colliders and hinges of the world before it, `World::restoreObjects`): the clock goes back, the
   checkpoint's unit loads afresh (`enterUnit`), the save is restored, Lara stands on the checkpoint intro (or the
   start spawn) with full health, full air and empty hands (the weapon state of her hands - draw, lock, reload,
   cooldowns - is not restored; her secondary, clips, reserves and meter are). The camera starts behind her. ou-game
