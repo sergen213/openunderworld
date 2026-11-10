@@ -49,6 +49,23 @@ rows that name them move as stated until the per-row refresh of the chapter file
 | 0.42.0 | Swan dive | C03-23, C05-10, C07-19 | IMPLEMENTED at the l2_cliffclimb cliff; the other spots IMPLEMENTED BUT UNVERIFIED | `GameReal.CliffSwanDiveIntoTheSea`, `game_selftest_swan_dive` |
 | 0.42.0 | Player sensors (script vt 14) | prerequisite of the gauntlet rows (M60); those stay NOT IMPLEMENTED until the heavy movers exist | — | `docs/formats/SCRIPTS.md` "playersensor" |
 
+| 0.43.0 | Close combat and carried objects (kicks, fatality, vault, urn kicks; Interact pick up / Crouch put down / Grenade throw; M33, M34, M52) | melee / kick-the-urn / carry-and-throw rows of every chapter | IMPLEMENTED where a chapter leg or real test plays it (l1_baldrs_tomb, l4_traprooms, l5_valgrind), else IMPLEMENTED BUT UNVERIFIED | `CombatReal.FatalityEndsADownedThrall`, `CombatReal.KickBreaksAnUrn`, self-tests `melee_kick`, `urn_kick`, `carry_throw`, `ch04_gate_room` |
+| 0.43.0 | Pressure plates by weight, use records, grapple pulls on the object's joint (Mediterranean puzzles) | C02-09 / 11 / 13, C02-30, C03-11 / 16, C04-06 / 07 / 08 | see the rows (chapter legs `ch02_serpent_door`, `ch03_gear_room_*`, `ch04_gate_room`) | `ProgressionReal.TombGateNeedsBothBlocksAndThePull`, replay `baldrs_plates_gate` |
+| 0.43.0 | Saving grab (fall height + Interact), safety drop, input timing | every "saving grab" / "safety" row | IMPLEMENTED BUT UNVERIFIED outside l4_temple (measured there under Wine) | `GameReal.ValaskjalfDropDownSavingGrabs`, self-tests `saving_grab`, `safety_drop` |
+| 0.43.0 | Grapple inputs (roped walk, jump keeping the rope, rope climb / turn, swing drive) | grapple swing / rappel / wall-run rows | IMPLEMENTED where a leg plays it (`ch01_main_hall`, `ch04_kraken_swing`, `ch07_cliffhall_grapple_gap`), else IMPLEMENTED BUT UNVERIFIED; the swing is not measured in the original | self-tests `prologue_hall_swing`, `grapple_swing`, `rappel`, `wall_run` |
+| 0.44.0 | Thor's gear: heavy mechanisms need the gauntlets / belt, push / pull on the joint (M60) | the gauntlet rows: C09-05, C11-28 / 29, C15-03, C15-12, C16-04, C17-04, C21 towers | see the rows (legs `ch09_maproom_gauntlet_door`, `ch15_ragnarok_rubble_block`, `ch16_tunnel_door`) | `ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, `ProgressionReal.ThorPillarsSlideOnTheirPlane` |
+| 0.44.0 | Breakables, explosions, plane side, ladder frame | C01-07 / 11, C05-07, ladder rows of C06 and C19 | see the rows | `GameReal.PrologueFloorCollapsesAndTheDoorIsBlownOff`, `GameReal.FuelTankExplosionHurtsLaraAndAMercenary` |
+| 0.44.0 | Landings, jump brake, pull-up / handstand, Interact hustle, run / sprint turn and stop | controller rows of every chapter | IMPLEMENTED BUT UNVERIFIED outside l4_temple (measured there under Wine) | self-tests `landing`, `jump_brake`, `ladder_fast` |
+| 0.45.0 | Checkpoint restore on death, level-start loadout, Player Tailoring (M75) | "Save / checkpoint" rows of every chapter | IMPLEMENTED (restore), per-chapter checkpoints unverified | `StreamReal.DeathRestoresTheCheckpointSave`, self-test `checkpoint_respawn` |
+| 0.45.0 | Trap hazards (damaging collision primitives, trap scripts) | hazard rows: C08, C13, C14 houses, C17 hammers, C19 / C20 eitr (the eitr pit of l7_yggdrasil_hall is still plain water: C20-19) | IMPLEMENTED where a leg plays it (`ch14_traprooms_crusher_house`), else IMPLEMENTED BUT UNVERIFIED | self-test `hazards` |
+| 0.45.0 | Markup on moving objects (M76, M78) | moving-platform / rotating-handhold rows | IMPLEMENTED for the l5_valgrind wheel, l5_valaskjalf chain, l4_staircase column, l7 tower; her weight on a held item not modelled | `GameReal.MovingMarkup*`, self-test `moving_markup` |
+| 0.45.0 | Natla's fireballs, anchors, arena pool | C21 rows | PARTIALLY IMPLEMENTED: the fight is not playable past the entry walkway (C21-01) | `CombatReal.NatlaFireballsBlastThrowAndBurn`, self-test `natla_fight` |
+| 0.45.0 | Motorcycle fitted to the original (brake on Jump, launch, reverse, standing start) | bike rows of C12, C13-C15, C16 | IMPLEMENTED for the l4_trailstart ride and the l5 tunnel (`ch12_trailstart_ride_in`, `ch16_tunnel_door`); no bike after other level entries | `VehicleReal.*`, self-test `bike_ride` |
+| 0.46.0 | Slopes by face flag and the slide controller | slide rows: C03-09, C20-19 and every "slope" row | IMPLEMENTED BUT UNVERIFIED outside l2_junglehub / l1_kraken_room (measured under Wine at l2_junglehub) | `GameReal.SlopeJunglehubRampSeries`, self-test `slide` |
+| 0.46.0 | Take-off timing, chimney rebound height | jump rows; chimney rows | VERIFIED AGAINST ORIGINAL at l2_junglehub / l3 stairs traces; elsewhere as before | docs/REFERENCE_COMPARISON.md, self-test `jump_timing` |
+| 0.46.0 | Limb locks and look-at | animation rows | IMPLEMENTED (decoded, not measured live) | `GameReal.Ik*`, self-tests `ik_pose`, `ik_feet` |
+| 0.46.0+ | Chapter walkthrough legs (`tests/selftests/chNN_*.json`) | the rows named in each chapter file's "Chapter self-tests by input" section | per row | ctest `game_selftest_ch*`; blocked legs under `tests/selftests/known_gaps` |
+
 ## 01. Prologue: No Illusions (Prologue - Croft Manor)
 
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/00prologue.html (no sub-pages; two inline screenshots)
@@ -77,7 +94,7 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | Checkpoints / autosave, manual saves, subtitles option, helper buttons / training text; chapter end plane 4129 → cinematic 4106 (010) → chapter 1 | IMPLEMENTED (chapter end, saves); helper buttons PARTIALLY IMPLEMENTED | `ProgressionReal.CriticalGates` (4129), `ChaptersReal.CroftManorEndingRunsBothCinematics` (chapter 3 revisit), `Stream.CheckpointAndRespawn`, `Save.*`; HELPER BUTTONS "stored only" except the grapple prompt (GAMEPLAY.md "Menus") |
 | Automated tests | Existing: `StreamReal.PrologueCorridorToStaircase`, `GameReal.BedroomJumpsMatchTruTraces`, `GameReal.HangJumpLeans`, `GameReal.HangLeapsMatchTruTraces`, `GameReal.MainHallRingByItsOwnRange`, `GameReal.SharedQThrowsTheGrappleNotTheCamera`, `GameReal.MainHallPoleFlingLandsOnPlatform`, `GameReal.RunningJumpReachAndRush`, `ProgressionReal.CriticalGates` (4525, 4363, 4129), ctest `game_replay_*` none for this chapter | Required: bedroom-hall roll + ring-door pull, molding chain, chest climb, floor-collapse jump, main-hall swing landing, end-to-end prologue self-test | — |
 
-Requirement rows: 16 in [docs/matrix/01_prologue.md](matrix/01_prologue.md) — IMPLEMENTED 10, VERIFIED AGAINST ORIGINAL 3, IMPLEMENTED BUT UNVERIFIED 2, PARTIALLY IMPLEMENTED 1.
+Requirement rows: 16 in [docs/matrix/01_prologue.md](matrix/01_prologue.md) — IMPLEMENTED 11, VERIFIED AGAINST ORIGINAL 3, IMPLEMENTED BUT UNVERIFIED 2.
 
 Open in this chapter:
 
@@ -310,7 +327,7 @@ The page labels its treasures "1/26 … 10/26" in the header note but numbers th
 
 | Category | Required information | Status | Evidence / tests |
 |---|---|---|---|
-| Chapter | Boat start in a bay with sharks, sea-cliff free climb, jungle path with a pole gap and a grapple gap, ruined colonnade with two chimney jumps, streambed tiger fight, courtyard tiger fight, temple pit with beams, arrival at the Shiva / Kali hall | PARTIALLY IMPLEMENTED | cliff climb verified; chimney jumps (mandatory, three places) NOT IMPLEMENTED; fights and colonnade untested |
+| Chapter | Boat start in a bay with sharks, sea-cliff free climb, jungle path with a pole gap and a grapple gap, ruined colonnade with two chimney jumps, streambed tiger fight, courtyard tiger fight, temple pit with beams, arrival at the Shiva / Kali hall | PARTIALLY IMPLEMENTED | start (boat, bay, ledge, holds) and the arrival in the statue hall played by input (`ch07_cliffclimb_boat_to_cliff`, `ch07_hubhall_statue_hall`); cliff climb verified; chimney jumps exist (tested from the streambed hang in l2_junglehub); the path, colonnade, streambed, fights and temple pit between them are not played by input |
 | Movement | Run, sprint from tigers, crouch under roots / branches, long running jumps with a landing roll, slope slides | IMPLEMENTED (sprint, jumps VERIFIED AGAINST ORIGINAL elsewhere); landing roll NOT IMPLEMENTED | `Game.SprintStaminaMatchesTru`, `GameReal.JunglehubRunningJumpReachesHigherLedge` (l2_junglehub), `GameReal.JunglehubVaultOver`; no roll-on-landing code in Player.cpp |
 | Traversal | Free-climb holds with gap and up jumps, man-made ledges, column-to-column back jumps, corner shimmies, narrow-ledge stand + sidestep + lean jump, slide → pole, pole-top stand, pole-to-pole, drop onto a pole, perches, pillar, projecting beams, chimney jump from the ground and from a hang, single wall kick, jump extension by holding Jump, swan dive | PARTIALLY IMPLEMENTED | free climb: `GameReal.CliffclimbDiceJumps`, `GameReal.CliffclimbStances`, `GameReal.CliffclimbObstaclesAndLedgeGrabs`, `GameReal.ClimbOnlyAtHolds`, `GameReal.ClimbBadAttach`, `GameReal.CliffclimbIndependentOfRenderRate`; the rest are mechanic tests from other units; chimney / wall kick / swan dive absent |
 | Physics | Fall damage on the long drop to treasure 4, water landings, tigers pushing Lara down | IMPLEMENTED (fall curve [O]) | `Combat.FallDamageThresholds`; knock-down by enemies: heavy hit reactions (`Combat.HitReactionThresholds`) |
@@ -326,11 +343,11 @@ The page labels its treasures "1/26 … 10/26" in the header note but numbers th
 | Progression | Opening cinematic, outfit and weapon choice before the level (full game), tiger cutscenes, training-text hints, closing cinematic (Bhogavati carvings) | PARTIALLY IMPLEMENTED | `ChaptersReal.StartUnitsAndLevelEnds` (l2_cliffclimb start), `ScriptRealData.CliffclimbVolumeShowsTutorialPopup` (hint_15 → string 1326, volume 4040); outfit choice exists only as our EXTRAS OUTFITS (ROADMAP "Lara outfits": the original's choice screen not reproduced) |
 | Automated tests | Existing (in these units): `GameReal.CliffclimbObstaclesAndLedgeGrabs`, `GameReal.CliffclimbDiceJumps`, `GameReal.CliffclimbStances`, `GameReal.CliffclimbIndependentOfRenderRate`, `GameReal.CliffclimbCameraRecord`, `GameReal.ClimbBadAttach`, `GameReal.ClimbOnlyAtHolds`, `GameReal.JunglehubRunningJumpReachesHigherLedge`, `GameReal.JunglehubVaultOver`, `AiReal.SharksSpawnSwimBiteAndDie`, `AiReal.SpidersClingDropAndBite`, `AiReal.EnemyIntrosResolveToSkinnedEnemyTypes`, `ScriptRealData.CliffclimbVolumeShowsTutorialPopup`, `StreamReal.CliffhallBHubhallPair`, `StreamReal.YachtRenderedSeaBelowDeck`, `GameReal.TerrainGroupNativeUpdatesMergedCollision` (l2_hubhall), ctest `game_replay_spider_drop` | Required: three chimney / wall-kick spots, colonnade chains, slide → pole → pole top, tiger fights, hang shooting, jar treasures, temple-pit beams, grapple gap | — |
 
-Requirement rows: 57 in [docs/matrix/07_remnants.md](matrix/07_remnants.md) — IMPLEMENTED BUT UNVERIFIED 33, PARTIALLY IMPLEMENTED 14, NOT IMPLEMENTED 6, IMPLEMENTED 3, VERIFIED AGAINST ORIGINAL 1.
+Requirement rows: 57 in [docs/matrix/07_remnants.md](matrix/07_remnants.md) — IMPLEMENTED BUT UNVERIFIED 32, PARTIALLY IMPLEMENTED 16, IMPLEMENTED 7, VERIFIED AGAINST ORIGINAL 1, NOT IMPLEMENTED 1.
 
 Open in this chapter:
 
-- Chimney / wall jump (C07-24, C07-37, C07-54, C07-56): NOT IMPLEMENTED and mandatory three times in this section; this is the largest blocker for a walkable Thailand start (being worked on in this wave by another agent).
+- Chimney / wall jump (C07-24, C07-37, C07-54, C07-56): implemented since 0.42.0 (`src/game/WallJump.cpp`); tested in this section from the streambed hang (C07-37) and at the first wall contact from the floor; the alcove climb (C07-24) and the hubhall wall kick (C07-54) are not played.
 - Jar treasures 5, 6, 8, 10 (and 8 of Thailand's 30 overall) cannot be collected; no Interact smash.
 - Lara melee (kick, stomp on spiders, vault off a tiger): NOT IMPLEMENTED.
 - Shooting one-handed from a ledge hang / while climbing: NOT IMPLEMENTED.
@@ -367,7 +384,7 @@ Abbreviations: GP = docs/GAMEPLAY.md, PR = docs/PROGRESSION.md, Mnn = row of `B_
 | Progression | Lift drop → rappel → rune hall → gems → gates → pits → pagoda → pit → courtyard mid level → both arms → statues → floor lowers → yard → statue pull opens the shaft | PARTIALLY IMPLEMENTED | Gates table PR ch 2 (2961, 2971, 2982 / 2983, chest volumes 2137 / 2138, handle volumes 2038 / 2039 / 2045): pass; the gem gates, floor lowering and statue pull have no gate test |
 | Automated tests | Existing: `ProgressionReal.CriticalGates` (l2_puzzleroom 2961, 2982), `CriticalPathPerChapter` ch 2, `GameReal.GrapplePullsUberTargets`, `GameReal.ElevatorCarriesPlayer`, `GameReal.PuzzleRoomWallHug`, `ProgressionReal.GrappleHandlesSwivel`, `ReceptaclesTakeTheirPortables`, `UberReceptaclesTakeTheirPortables`, `AiReal.NagasClingDropBiteSpitAndDie`, replays `puzzleroom_pole_remove`, `naga_drop`. Required: the scenarios below + a walked route per unit | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 64 in [docs/matrix/08_bhogavati.md](matrix/08_bhogavati.md) — IMPLEMENTED BUT UNVERIFIED 39, PARTIALLY IMPLEMENTED 12, NOT IMPLEMENTED 8, IMPLEMENTED 5.
+Requirement rows: 64 in [docs/matrix/08_bhogavati.md](matrix/08_bhogavati.md) — IMPLEMENTED BUT UNVERIFIED 38, PARTIALLY IMPLEMENTED 12, IMPLEMENTED 7, NOT IMPLEMENTED 7.
 
 Open in this chapter:
 
@@ -392,7 +409,7 @@ Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" =
 
 | Category | Required information | Status | Evidence / tests |
 |---|---|---|---|
-| Chapter | Part 3 of 4; from the shaft opened by the fallen statue to the exit doorway of the Thor room, where the gauntlet stops working. 0 health items, no key items | PARTIALLY IMPLEMENTED | Units load and their cinematic volumes pass; the gauntlet mechanics that make up the whole chapter are not implemented |
+| Chapter | Part 3 of 4; from the shaft opened by the fallen statue to the exit doorway of the Thor room, where the gauntlet stops working. 0 health items, no key items | PARTIALLY IMPLEMENTED | By input: cutscene + gauntlet, the carved door slid open, the walk to the pedestal, the descent down the hub panel and the first turn of the hub (`ch09_maproom_gauntlet_door`, `ch09_maproom_hub_panel`, `ch09_maproom_hub_turn`). Blocked: the way in through the shaft (statue slabs stay solid: known gap). Not played: wall runs, wall drag, the alignments, the relic, the exit |
 | Movement | Walk / run on walkways, jump gaps in the ring ledge near the hub | IMPLEMENTED BUT UNVERIFIED | M13 generic; no test in l2_maproom |
 | Traversal | Descent by three drop-catches (one needs a saving grab), drop-catches down the hub's carved panel, climbing the panel back up, hanging from the walkway side | IMPLEMENTED BUT UNVERIFIED | M03, M04, M01 generic |
 | Physics | Rope swing with full pay-out; the hub, walkway and movable wall turn as one body about the room's axis | NOT IMPLEMENTED | no evidence of the rotating structure (sweep l2_maproom shows only volumes) |
@@ -401,18 +418,18 @@ Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" =
 | Combat | Small spider swarms ×2 (shaft mouth, behind the door), one bat flock | IMPLEMENTED BUT UNVERIFIED | `AiReal.SpidersClingDropAndBite` (l3 / l4 units), `AiReal.NagasClingDropBiteSpitAndDie` touches l2_maproom intros; no encounter test |
 | Swimming | n/a | n/a | — |
 | Vehicle | n/a | n/a | — |
-| Objects | Gauntlet-moved door, hub panel (grab and walk to rotate), movable wall segment with grapple rings on both faces, pedestal, ceiling and wall rings | NOT IMPLEMENTED | M60: GP "Thor's gear" "player sensors (vt 14) never fire"; Thor doors / pillars script 9744 not driven |
-| Puzzles | Rotate the hub to (a) uncover a cache, (b) line the walkway up with a side ledge (treasure), (c) with the exit, (d) half-way for the relic ledge — using the panel at hub level and the wall at the rim | NOT IMPLEMENTED | as Objects |
+| Objects | Gauntlet-moved door, hub panel (grab and walk to rotate), movable wall segment with grapple rings on both faces, pedestal, ceiling and wall rings | PARTIALLY IMPLEMENTED | door 2661 slides with the gauntlet (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, `ch09_maproom_gauntlet_door`); the hub turns by its panel (`ProgressionReal.MaproomHubTurnsByItsPanel`, `ch09_maproom_hub_turn`); wall drag, rings on the moving wall: not exercised |
+| Puzzles | Rotate the hub to (a) uncover a cache, (b) line the walkway up with a side ledge (treasure), (c) with the exit, (d) half-way for the relic ledge — using the panel at hub level and the wall at the rim | PARTIALLY IMPLEMENTED | (a) the first turn by the panel is played (41 degrees); the cache pickup and alignments (b) .. (d) are not played |
 | Hazards | Fatal fall into the pit under the shaft and round the hub | IMPLEMENTED BUT UNVERIFIED | M65 generic |
 | Collectibles | 3 treasures (26/30 - 28/30), 1 relic (2/6; raises max health and heals) | PARTIALLY IMPLEMENTED | relic id 2588 is in l2_maproom (`ChaptersReal.RewardTableMatchesUnits`); pickup rule [I]; relic health bonus: no evidence; treasures 27 / 28 and the relic are unreachable without M60 |
 | Progression | Shaft → gauntlet cinematic → slide the door → Thor room cinematic (map, pedestal inscription) → align the walkway with the exit → leave (gauntlet fades cinematic) | PARTIALLY IMPLEMENTED | sweep l2_maproom: 2636 → 2624 (cinematic, larabase 19), 2637 / 2638 → 2667 + 2625 / 2626, 2669 → 2666, 2698 → 2667 PASS; PR gates "l2_maproom volumes 2637/2638 → thor bridge 2667 + cinematics: pass" |
 | Automated tests | Existing: sweep volumes above, `ProgressionReal.GrappleHandlesSwivel` (2595), `ChaptersReal.RewardTableMatchesUnits` (l2_maproom), `ScriptRealData.ThorGearDrawGroups`, `StreamReal.ChapterThorGear`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 18 in [docs/matrix/09_ancient_world.md](matrix/09_ancient_world.md) — IMPLEMENTED BUT UNVERIFIED 9, NOT IMPLEMENTED 6, IMPLEMENTED 2, PARTIALLY IMPLEMENTED 1.
+Requirement rows: 18 in [docs/matrix/09_ancient_world.md](matrix/09_ancient_world.md) — IMPLEMENTED 6, IMPLEMENTED BUT UNVERIFIED 6, NOT IMPLEMENTED 4, PARTIALLY IMPLEMENTED 2.
 
 Open in this chapter:
 
-- **Gauntlet-powered movers (M60)** are the chapter: door slide (C09-05, critical), hub rotation by panel (C09-09, -14), wall drag (C09-11, -16). NOT IMPLEMENTED: the player-sensor callbacks (vt 14) that enable them never fire and no object motion exists for them. Without C09-05 the room cannot be entered by play; without C09-14 the exit is not reachable by the original route.
+- **Gauntlet-powered movers (M60)**: the door slide (C09-05) works by play since 0.44.0; the hub rotation by panel (C09-09) works by play since this pass; the wall drag (C09-11, -16) and the alignments (C09-14) are not played. Without C09-14 the exit is not reachable by the original route.
 - **Rotating walkway / hub / wall as one rigid assembly** (collision, ledges and grapple rings moving with it): no evidence. GP "Grapple" marks 2676's attached instance [U].
 - **Wall run in l2_maproom** (three uses, two with a mid-air throw after a drop): generic code only, numbers [I], no test in this unit; rope-length adjustment to a target height is unverified.
 - **Mid-fall grapple catch** (C09-03, -15) untested anywhere (M21).
@@ -560,9 +577,9 @@ Abbreviations as in `08_bhogavati.md`. Screenshot base: https://tombraiders.net/
 | Hazards | Spike pits on the roads (poacher traps), deep pit in the temple, slippery ledges, crossfire | IMPLEMENTED BUT UNVERIFIED | M65 generic; spike-pit kill volumes unverified |
 | Collectibles | 19 treasures (10/50 - 28/50), nearly all in jars (17 is loose in bushes; 19 and 23 on pillar tops in jars); 0 relics | NOT IMPLEMENTED | jar rewards untouched (M63); chapter-4 loose artifacts in ours: 10 for all four Mexico sections |
 | Progression | Calendar 1 → ball-court blocks move → road with pits → crossroads → (ball-court treasures) → arch → temple front fight → climb in → rappel → topple block → descend → headdress → climb out → door hole → second road → calendar 2 → gate opens → timed ride → ramp → cinematic | PARTIALLY IMPLEMENTED | PR gates ch 4: 6502 / 6504 "pass", receptacles "pass"; 5247 → 5236 "what moves the statue head is [U]"; reveal 5464 opens only in `ProgressionReal.TempleRevealReopens` (from switch 5469, i.e. the later exit) |
-| Automated tests | Existing: `ProgressionReal.CalendarPushHandlesTurnTheRing`, `BallcourtPoleLeverOpensDoor`, `BallcourtBlockUnderPoleReachesIt`, `UberReceptaclesTakeTheirPortables`, `ReceptaclesTakeTheirPortables`, `TempleRevealReopens`, `CriticalGates` (l4_ballcourt 6502 Hang → 6505), `GameReal.BallcourtLeverDrivesDoorJoint`, `BallcourtLeverIgnoresAUse`, `BallcourtDormantIntrosBornByScripts`, the l4_temple traversal tests above, `AiReal.*` on l4_ballcourt, replays `ballcourt_calendar_handle_turn`, `ballcourt_pole_lever_block`, `ballcourt_door_lever`, `ballcourt_door_blocked`, `poacher_firefight`, `panther_fight`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
+| Automated tests | Existing: `ProgressionReal.CalendarPushHandlesTurnTheRing`, `BallcourtPoleLeverOpensDoor`, `BallcourtBlockUnderPoleReachesIt`, `UberReceptaclesTakeTheirPortables`, `ReceptaclesTakeTheirPortables`, `TempleRevealReopens`, `CriticalGates` (l4_ballcourt 6502 Hang → 6505), `GameReal.BallcourtLeverDrivesDoorJoint`, `BallcourtLeverIgnoresAUse`, `BallcourtDormantIntrosBornByScripts`, the l4_temple traversal tests above, `AiReal.*` on l4_ballcourt, replays `ballcourt_calendar_handle_turn`, `ballcourt_pole_lever_block`, `ballcourt_door_lever`, `ballcourt_door_blocked`, `poacher_firefight`, `panther_fight`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left **2026-11-10 (chapter self-tests):** chapter self-tests: `ch13_ballcourt_calendar_locked`, `ch13_temple_headdress`, `ch13_ballcourt_pole_gate`; known gaps `ch13_ballcourt_calendar_solve`, `ch13_temple_block_topple` (table below). |
 
-Requirement rows: 44 in [docs/matrix/13_xibalba.md](matrix/13_xibalba.md) — IMPLEMENTED BUT UNVERIFIED 26, PARTIALLY IMPLEMENTED 10, IMPLEMENTED 6, NOT IMPLEMENTED 2.
+Requirement rows: 44 in [docs/matrix/13_xibalba.md](matrix/13_xibalba.md) — IMPLEMENTED BUT UNVERIFIED 24, PARTIALLY IMPLEMENTED 13, IMPLEMENTED 5, NOT IMPLEMENTED 2.
 
 Open in this chapter:
 
@@ -600,9 +617,9 @@ Abbreviations as in `08_bhogavati.md`. Screenshot base: https://tombraiders.net/
 | Hazards | Spike pits; crushers; flame jets (floor, wall, low wall); spear rows; swinging blades; deadly poison pool and stream cracks; brittle handholds; cracking beam; fall damage from alcoves; thrall spit | PARTIALLY IMPLEMENTED | poison [O Wine] (M66); crushers [I / U] (M67); flames, spears, blades (M68, M69), brittle holds / beam (M70): not implemented or no evidence |
 | Collectibles | 20 treasures (29/50 - 48/50): 12 in jars (29, 30, 33, 34, 35, 37, 39, 43, 44, 45, 46, 47), 8 loose (31, 32, 36, 38, 40, 41, 42, 48); 0 relics | PARTIALLY IMPLEMENTED | ours, chapter 4: loose artifacts {5488, 5489, 5490, 5770-5776} (`game::chapterRewards(4)`): seven 577x ids fit the seven loose trap-room treasures [I]; jar treasures not collectable (M63); treasure 40 needs a sprint jump (M14) |
 | Progression | Entrance → hallway pits → statue room (door shuts) → 4 houses → table → pads → tunnel → key → carved hall cinematics → pool upper → middle → lower → screw → belt cinematic (next section: Land of the Dead, the way back) | PARTIALLY IMPLEMENTED | PR gates ch 4 rows for l4_staircase_upper / xibalba, l4_traprooms, l4_pool: "pass"; my per-unit sweep disagrees on door 5702 (above); `StreamReal.PoolToRagnarokOnFootThenSaveLoad`, replay `pool_to_ragnarok` (streaming on foot) |
-| Automated tests | Existing: `ProgressionReal.TraproomsSeal`, `TraproomSealTakesTheRoomKeys`, `HallwayRampsJoint`, `LoweredRampSectionCarriesLara`, `UberReceptaclesTakeTheirPortables`, `ReceptaclesTakeTheirPortables`, `AnimGraphRecords`, `CriticalGates` (l4_traprooms 5884), the six `GameReal.TrapRooms*` pole tests, `GameReal.PoleTraversalIndependentOfRenderRate`, `MountedGrapplePullsBlockWithoutSwinging`, `PushBlockIndependentOfRenderRate`, `ScriptedWaterLevelMoves`, the l4_pool set (`PoolGrappleTargetAndSwing`, `PoolDropToHang`, `PoolSwimReplay`, `PoolRunReplayStaysOnFloor`, `AiReal.PoolGeneratorSpawnsThrall`, `CombatReal.Pool*`, `StreamReal.SaveContinuesBitIdentically`), replays `traprooms_throne_insert`, `pool_to_ragnarok`, `pool_gadgets`, `pool_pickup`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
+| Automated tests | Existing: `ProgressionReal.TraproomsSeal`, `TraproomSealTakesTheRoomKeys`, `HallwayRampsJoint`, `LoweredRampSectionCarriesLara`, `UberReceptaclesTakeTheirPortables`, `ReceptaclesTakeTheirPortables`, `AnimGraphRecords`, `CriticalGates` (l4_traprooms 5884), the six `GameReal.TrapRooms*` pole tests, `GameReal.PoleTraversalIndependentOfRenderRate`, `MountedGrapplePullsBlockWithoutSwinging`, `PushBlockIndependentOfRenderRate`, `ScriptedWaterLevelMoves`, the l4_pool set (`PoolGrappleTargetAndSwing`, `PoolDropToHang`, `PoolSwimReplay`, `PoolRunReplayStaysOnFloor`, `AiReal.PoolGeneratorSpawnsThrall`, `CombatReal.Pool*`, `StreamReal.SaveContinuesBitIdentically`), replays `traprooms_throne_insert`, `pool_to_ragnarok`, `pool_gadgets`, `pool_pickup`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left **2026-11-10 (chapter self-tests):** chapter self-tests: `ch14_traprooms_club_throne`, `ch14_traprooms_crusher_house`, `ch14_ragnarok_hall`, `ch14_pool_entry` (table below); gtests `ProgressionReal.TraproomKeysArePickedUp`, `CollisionRealData.LaraSkipsTheTerrainGroupsTruSkipsForThePlayer`. |
 
-Requirement rows: 57 in [docs/matrix/14_midgard_serpent.md](matrix/14_midgard_serpent.md) — IMPLEMENTED BUT UNVERIFIED 26, PARTIALLY IMPLEMENTED 15, NOT IMPLEMENTED 9, IMPLEMENTED 6, VERIFIED AGAINST ORIGINAL 1.
+Requirement rows: 57 in [docs/matrix/14_midgard_serpent.md](matrix/14_midgard_serpent.md) — IMPLEMENTED BUT UNVERIFIED 25, PARTIALLY IMPLEMENTED 15, NOT IMPLEMENTED 9, IMPLEMENTED 7, VERIFIED AGAINST ORIGINAL 1.
 
 Open in this chapter:
 
@@ -642,9 +659,9 @@ Abbreviations as in `08_bhogavati.md`: GP = docs/GAMEPLAY.md, PR = docs/PROGRESS
 | Hazards | Eitr: falling stream in the statue doorway, rising pool (timed escape), slip off the statue arm (heavy fall damage); spike / deep pits on the ride; crumbled beam gap; the original's inventory-loss bug is not a mechanic | PARTIALLY IMPLEMENTED | pool kill [O Wine] (GP "Water": 5608 polls larabase 3; `StreamReal.SaveContinuesBitIdentically` goo case); falling eitr stream as a hazard: no evidence; pits generic M65 |
 | Collectibles | 2 treasures (49/50, 50/50), 1 relic (4/6), 0 health | PARTIALLY IMPLEMENTED | relic 5496 + treasures 5488-5490 are loose reward intros of chapter 4 (`game::chapterRewards(4)`: 10 treasures + 1 relic vs 50 + 1 on the pages; `ChaptersReal.PickupsAndMusic` picks up in l4_pool); whether 49 / 50 are among them and reachable only after the block pull is unknown; relic health bonus missing (M64) |
 | Progression | Pool floor → screw up → pillar → statue arm → relic → pillars → slab touch → chin ring → flood → block → rocks → upper walkway → rune block → stairs → cave-in 1 (key) → bike → cave-in 2 block → statue room → pits 1-2 → poles / column → pit 3 → key + switch → doorway pit → cinematic | PARTIALLY IMPLEMENTED | gates PR ch 4: l4_pool volumes 5566 / 5624 / 5626 pass, staircase 6046 / 6076 / 6078 pass, ballcourt 5469 + 6410 + 5468 pass; relic set-up, flood escape, key insert, ramp-by-weight not asserted |
-| Automated tests | Existing: `GameReal.PoolGrappleTargetAndSwing`, `GameReal.ScriptedWaterLevelsRun`, `AiReal.PoolGeneratorSpawnsThrall`, `ChaptersReal.PickupsAndMusic`, `ProgressionReal.HallwayRampsJoint`, `LoweredRampSectionCarriesLara`, `TempleRevealReopens`, `CriticalGates` / `CriticalPathPerChapter` (ch 4), `StreamReal.PoolToRagnarokOnFootThenSaveLoad`, `GameReal.StairsWalkAndRunUpAndDown` (l4_staircase_mictlan), replay `pool_to_ragnarok`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
+| Automated tests | Existing: `GameReal.PoolGrappleTargetAndSwing`, `GameReal.ScriptedWaterLevelsRun`, `AiReal.PoolGeneratorSpawnsThrall`, `ChaptersReal.PickupsAndMusic`, `ProgressionReal.HallwayRampsJoint`, `LoweredRampSectionCarriesLara`, `TempleRevealReopens`, `CriticalGates` / `CriticalPathPerChapter` (ch 4), `StreamReal.PoolToRagnarokOnFootThenSaveLoad`, `GameReal.StairsWalkAndRunUpAndDown` (l4_staircase_mictlan), replay `pool_to_ragnarok`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left **2026-11-10 (chapter self-tests):** chapter self-tests: `ch15_ragnarok_xibalba_key`, `ch15_ragnarok_rubble_block`, `ch15_ballcourt_exit_switch`; known gaps `ch15_pool_rune_block`, `ch15_ballcourt_exit_key` (table below). |
 
-Requirement rows: 21 in [docs/matrix/15_land_of_the_dead.md](matrix/15_land_of_the_dead.md) — IMPLEMENTED BUT UNVERIFIED 13, PARTIALLY IMPLEMENTED 5, NOT IMPLEMENTED 3.
+Requirement rows: 21 in [docs/matrix/15_land_of_the_dead.md](matrix/15_land_of_the_dead.md) — IMPLEMENTED BUT UNVERIFIED 11, PARTIALLY IMPLEMENTED 6, NOT IMPLEMENTED 3, IMPLEMENTED 1.
 
 Open in this chapter:
 
@@ -804,7 +821,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | Dive → statues L1, L2 → broken statue treasure → gears → statue R3 → [trench] → left tower (stone 1) → corridor to the front room (stone 2) → outside (stone 3, seat two) → [side treasures] → right tower (stone 4) → seat two → wheel → drawbridge → flooded maze → stairs → cinematic → pool room → islands → portal → cinematic | PARTIALLY IMPLEMENTED | PR gates ch 7: "l7_arctic_sea switch 9103 (use) → drawbridge 9116: pass"; "l7_helheim01 rune switches 8993-8995 → dispatcher 8997: not asserted"; sweep l7_helheim01: volumes 8968 → 8950, 8969 → 8951 PASS |
 | Automated tests | Existing: `StreamReal.ChapterStartIntros`, `StreamReal.OpenSeaWater`, `AiReal.SharksSpawnSwimBiteAndDie`, `FxReal.UnderwaterSettings`, `GameReal.ArcticSeaLadderSideJumpOntoBeam`, `GameReal.LadderSideJumpsReachAndBack`, `ProgressionReal.LoweredDrawbridgeIsSolid`, `ReceptaclesTakeTheirPortables`, `UberReceptaclesTakeTheirPortables`, `CriticalGates` (9103), `ChaptersReal.RewardTableMatchesUnits`, `StreamReal.ChapterThorGear`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 33 in [docs/matrix/19_helheim.md](matrix/19_helheim.md) — IMPLEMENTED BUT UNVERIFIED 18, IMPLEMENTED 8, PARTIALLY IMPLEMENTED 4, NOT IMPLEMENTED 2, VERIFIED AGAINST ORIGINAL 1.
+Requirement rows: 33 in [docs/matrix/19_helheim.md](matrix/19_helheim.md) — IMPLEMENTED BUT UNVERIFIED 18, IMPLEMENTED 10, NOT IMPLEMENTED 2, PARTIALLY IMPLEMENTED 2, VERIFIED AGAINST ORIGINAL 1.
 
 Open in this chapter:
 
@@ -844,7 +861,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | [treasure 30, health] → [relic run] → portal → hall, health → stair slide (one-way) → 4 Vikings → wave hall → health → stairs → waterfall cinematic → 2 Vikings → yeti → health → slide + pit jump → yeti → device room walkway → cinematic | PARTIALLY IMPLEMENTED | PR gates ch 7 "l7_yggdrasil(_end) volumes 8804, 8303 / 8312, 8323-8329 → cinematics 8773 / 8261, spline mover 8404: pass" |
 | Automated tests | Existing: replay `mjolnir_thralls`, `GameReal.KilledThrallBreaksIntoChunks`, `StreamReal.MjolnirHitBreaksUrnAndItStaysBroken` (l7_yggdrasil_hall01), `StreamReal.SaveContinuesBitIdentically`, `AiReal.ThrallsGetUpUnlessMjolnir`, `ProgressionReal.CriticalPathPerChapter` (ch 7), `CineReal.EveryStreamPlaysWithItsActors`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 21 in [docs/matrix/20_yggdrasil.md](matrix/20_yggdrasil.md) — IMPLEMENTED BUT UNVERIFIED 9, NOT IMPLEMENTED 5, PARTIALLY IMPLEMENTED 4, IMPLEMENTED 3.
+Requirement rows: 21 in [docs/matrix/20_yggdrasil.md](matrix/20_yggdrasil.md) — IMPLEMENTED BUT UNVERIFIED 8, PARTIALLY IMPLEMENTED 6, NOT IMPLEMENTED 4, IMPLEMENTED 3.
 
 Open in this chapter:
 
@@ -871,7 +888,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Physics | Platforms on circular splines at several heights and speeds; buttresses collapsing into new platforms; fireball knock-back; rising water in the finale | PARTIALLY IMPLEMENTED | spline movers [tests above]; water level script: `GameReal.ScriptedWaterLevelsRun` (l7_yggdrasil_end 8309: SetLevelToMarker at load); knock-back none |
 | Grapple | Ring on the reddish middle ledge: rappel down, pay out, swing forward, release onto the lower ledge. Ring on the red upper wall: (a) plain swing across a gap, (b) climb the rope, wall run, jump right to a ledge | IMPLEMENTED BUT UNVERIFIED | wall anchor 8165 listed for l7_yggdrasil_end (GP "Grapple"); rappel / swing / wall run generic (`GameReal.KrakenRoomRappel`, `GameReal.ValaskjalfWallRun`); nothing tested here; wall-run jump into a ledge grab (M24) untested |
 | Animation | Panel push (Thor strength), node smash with the hammer, dodge poses in slow motion, platform balance, final cinematics | PARTIALLY IMPLEMENTED | push clips on uber prismatic joints "(l7 Thor towers) use the same clips facing the joint axis" (GP "Interactions"); mount break is anim-graph stimulus 1 → state 3 (PR); a hammer-strike clip for it: unknown |
-| Combat | Yeti thralls spawning from the pool and from waterfalls on every level (lower level: continuous; upper: 1 + 2 + 1); Natla hovering and throwing fireballs (small damage, strong push, burning floor patches), invulnerable; Mjolnir throughout | PARTIALLY IMPLEMENTED | yeti + Mjolnir generic (replay `mjolnir_thralls`); fireballs: the trigger volumes' calls into the fireball objects stop at an unbound native (sweep: 8323 / 8324 / 8325 / 8327 / 8329 → +8404, fireballs 8246 / 8234 / 8233 / 8236 / 8237 "[native weaponbase fn 0]"); no fireball code in `src/game` |
+| Combat | Yeti thralls spawning from the pool and from waterfalls on every level (lower level: continuous; upper: 1 + 2 + 1); Natla hovering and throwing fireballs (small damage, strong push, burning floor patches), invulnerable; Mjolnir throughout | PARTIALLY IMPLEMENTED | yeti + Mjolnir generic (replay `mjolnir_thralls`); fireballs thrown, blast, knock and burning patches: `CombatReal.NatlaFireballWeaponsDecoded`, `CombatReal.NatlaFireballsBlastThrowAndBurn`; Natla is not invulnerable to Mjolnir in the data: her hit callback (script vt 22, damage class 13 only) is counted by the lower ring's manager, whose phase ends at the third hit: `CombatReal.NatlaCountsMjolnirHits` (manual aim + fire by input; GP "Natla"); a level start on the lower ring: `GameReal.SwimLosesItsSurfaceAndFalls`, self-test `natla_lower_ring`; the timed dodges and the yeti counts on the rings are not played |
 | Swimming | n/a on the route (the pool is a hazard) | n/a | — |
 | Vehicle | n/a | n/a | — |
 | Objects | Floating platform rings (two heights on the route + a top ring), 2 grapple rings, 3 rune panels in alcoves, 3 power nodes behind the buttress supports, an alcove that only exists after its panel is pushed, moving handhold rings on the tower, sloping buttress | PARTIALLY IMPLEMENTED | towers 8398-8400 and mounts 8362-8364 tested (`EndgameCredits`); mover 8404 tested; the rest (other 81 movers, tower handhold rings, alcove reveal) untested |
@@ -881,11 +898,11 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | Health → platform ride → ring ledge → rappel to the lower level → panel 1 → panel 2 → chimney climb to the middle → node 1 (cinematic) → platform ride → alcove chimney → free climb + dodge 1 → upper level → yetis → ring swing → panel 3 → rope climb + wall run → checkpoint → platform → node 2 (cinematic: Amanda) → two platform rings → tower handholds + dodge 2 → moving handhold ride → buttress slide → node 3 → final cinematics → Tibet → credits → Treasure Hunt | PARTIALLY IMPLEMENTED | PR gates ch 7 last row "pass (`ProgressionReal.EndgameCredits`, played…)"; opt-in `CriticalPathInOrder` ends with the same `playEnding` |
 | Automated tests | Existing: `ProgressionReal.EndgameCredits`, `ProgressionReal.CriticalPathInOrder` (opt-in), `GameReal.SplineMoverCarriesLara`, `SplineMoverFollowsItsPath`, `SplineMoverIndependentOfRenderRate`, `GameReal.ElevatorUberCommandCreatesMovingCollision`, `GameReal.ScriptedWaterLevelsRun`, `GameReal.ScriptedWaterLevelMoves`, `Game.WaterFlowPullsTowardTheSink`, `GameReal.SwimWaterDataDecoded`, `CineReal.NatlaSubtitlesCameraAndVoiceLines`, `Menus.MainCentreTreasureHuntAndRevisit`, `Progress.ProfileAndTreasureHuntSave`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 25 in [docs/matrix/21_out_of_time.md](matrix/21_out_of_time.md) — NOT IMPLEMENTED 8, IMPLEMENTED 8, IMPLEMENTED BUT UNVERIFIED 5, PARTIALLY IMPLEMENTED 4.
+Requirement rows: 25 in [docs/matrix/21_out_of_time.md](matrix/21_out_of_time.md) — IMPLEMENTED 9, NOT IMPLEMENTED 8, IMPLEMENTED BUT UNVERIFIED 5, PARTIALLY IMPLEMENTED 3.
 
 Open in this chapter:
 
-- **Natla's fireballs (M88)**: not launched (unbound `weaponbase` fn 0), no projectile, knock-back or burning-floor code. They are the fight's only threat besides the yetis, and both timed dodge events hang on them.
+- **Natla's fireballs (M88)**: thrown, with blast, knock-down and burning patches (GP "Natla"); the two timed dodge events (slow balls at 1500 units/s, 3000 on a direct hit) are scripted but not played by input.
 - **Situational adrenaline (M36)** ×2: no time-scale support.
 - **Chimney jump (M06)** ×2 on the critical path (lower → middle, middle → upper).
 - **Moving markup (M76)**: grabbing platform edges, platform-to-platform grabs, the handhold rings on the central tower — no evidence; only standing on a mover is tested.
@@ -899,28 +916,28 @@ Open in this chapter:
 
 | Chapter | Rows | VERIFIED AGAINST ORIGINAL | IMPLEMENTED | IMPLEMENTED BUT UNVERIFIED | PARTIALLY IMPLEMENTED | NOT IMPLEMENTED | unknown / n/a |
 |---|---|---|---|---|---|---|---|
-| 01. Prologue: No Illusions (Prologue - Croft Manor) | 16 | 3 | 10 | 2 | 1 | 0 | 0 |
+| 01. Prologue: No Illusions (Prologue - Croft Manor) | 16 | 3 | 11 | 2 | 0 | 0 | 0 |
 | 02. The Path to Avalon (Level 1 - Mediterranean Sea, part 1) | 32 | 0 | 8 | 15 | 6 | 3 | 0 |
 | 03. Niflheim (Level 1 - Mediterranean Sea, part 2) | 36 | 1 | 8 | 16 | 6 | 4 | 1 |
-| 04. The Norse Connection (Level 1 - Mediterranean Sea, part 3) | 25 | 0 | 2 | 16 | 5 | 1 | 1 |
-| 05. God of Thunder (Level 1 - Mediterranean Sea, part 4) | 20 | 0 | 6 | 10 | 2 | 2 | 0 |
-| 06. Realm of the Dead (Level 1 - Mediterranean Sea, part 5) | 14 | 0 | 3 | 5 | 4 | 1 | 1 |
-| 07. The Remnants (Level 2 - Coastal Thailand, part 1) | 57 | 1 | 3 | 33 | 14 | 6 | 0 |
-| 08. Bhogavati (Level 2 - Coastal Thailand, part 2) | 64 | 0 | 5 | 39 | 12 | 8 | 0 |
-| 09. The Ancient World (Level 2 - Coastal Thailand, part 3) | 18 | 0 | 2 | 9 | 1 | 6 | 0 |
-| 10. A Puppet No Longer (Level 2 - Coastal Thailand, part 4) | 12 | 0 | 2 | 9 | 0 | 1 | 0 |
+| 04. The Norse Connection (Level 1 - Mediterranean Sea, part 3) | 25 | 0 | 10 | 10 | 4 | 0 | 1 |
+| 05. God of Thunder (Level 1 - Mediterranean Sea, part 4) | 20 | 0 | 7 | 7 | 4 | 2 | 0 |
+| 06. Realm of the Dead (Level 1 - Mediterranean Sea, part 5) | 14 | 0 | 5 | 3 | 5 | 1 | 0 |
+| 07. The Remnants (Level 2 - Coastal Thailand, part 1) | 57 | 1 | 7 | 32 | 16 | 1 | 0 |
+| 08. Bhogavati (Level 2 - Coastal Thailand, part 2) | 64 | 0 | 7 | 38 | 12 | 7 | 0 |
+| 09. The Ancient World (Level 2 - Coastal Thailand, part 3) | 18 | 0 | 6 | 6 | 2 | 4 | 0 |
+| 10. A Puppet No Longer (Level 2 - Coastal Thailand, part 4) | 12 | 0 | 2 | 6 | 3 | 1 | 0 |
 | 11. Protected by the Dead (Level 3 - Croft Manor) | 36 | 0 | 14 | 11 | 7 | 4 | 0 |
-| 12. The Unnamed Days (Level 4 - Southern Mexico, part 1) | 19 | 0 | 1 | 8 | 5 | 5 | 0 |
-| 13. Xibalba (Level 4 - Southern Mexico, part 2) | 44 | 0 | 6 | 26 | 10 | 2 | 0 |
-| 14. The Midgard Serpent (Level 4 - Southern Mexico, part 3) | 57 | 1 | 6 | 26 | 15 | 9 | 0 |
-| 15. Land of the Dead (Level 4 - Southern Mexico, part 4) | 21 | 0 | 0 | 13 | 5 | 3 | 0 |
-| 16. Gate of the Dead (Level 5 - Jan Mayen Island, part 1) | 23 | 1 | 2 | 9 | 3 | 8 | 0 |
-| 17. Valhalla (Level 5 - Jan Mayen Island, part 2) | 70 | 0 | 6 | 23 | 21 | 20 | 0 |
+| 12. The Unnamed Days (Level 4 - Southern Mexico, part 1) | 19 | 0 | 3 | 6 | 5 | 5 | 0 |
+| 13. Xibalba (Level 4 - Southern Mexico, part 2) | 44 | 0 | 5 | 24 | 13 | 2 | 0 |
+| 14. The Midgard Serpent (Level 4 - Southern Mexico, part 3) | 57 | 1 | 7 | 25 | 15 | 9 | 0 |
+| 15. Land of the Dead (Level 4 - Southern Mexico, part 4) | 21 | 0 | 1 | 11 | 6 | 3 | 0 |
+| 16. Gate of the Dead (Level 5 - Jan Mayen Island, part 1) | 23 | 1 | 4 | 7 | 4 | 7 | 0 |
+| 17. Valhalla (Level 5 - Jan Mayen Island, part 2) | 70 | 0 | 5 | 22 | 23 | 20 | 0 |
 | 18. Rituals Old (Level 6 - Andaman Sea) | 18 | 1 | 3 | 9 | 3 | 2 | 0 |
-| 19. Helheim (Level 7 - Arctic Sea, part 1) | 33 | 1 | 8 | 18 | 4 | 2 | 0 |
-| 20. Yggdrasil (Level 7 - Arctic Sea, part 2) | 21 | 0 | 3 | 9 | 4 | 5 | 0 |
-| 21. Out of Time (Level 7 - Arctic Sea, part 3) | 25 | 0 | 8 | 5 | 4 | 8 | 0 |
-| **All 21** | **661** | **9** | **106** | **311** | **132** | **100** | **3** |
+| 19. Helheim (Level 7 - Arctic Sea, part 1) | 33 | 1 | 10 | 18 | 2 | 2 | 0 |
+| 20. Yggdrasil (Level 7 - Arctic Sea, part 2) | 21 | 0 | 3 | 8 | 6 | 4 | 0 |
+| 21. Out of Time (Level 7 - Arctic Sea, part 3) | 25 | 0 | 9 | 5 | 3 | 8 | 0 |
+| **All 21** | **661** | **9** | **135** | **281** | **145** | **89** | **2** |
 
 (The first status named in a row counts; rows that split a status between two parts count under the first.)
 
