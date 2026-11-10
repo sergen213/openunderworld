@@ -1088,14 +1088,11 @@ TEST(GameReal, PoolRunReplayStaysOnFloor) {
     EXPECT_LT(moved, 1.05 * expected);
 }
 
-// l4_pool ledge markup id 1253 (rock ledge at z 3562, lower floor 523 below, rock top walkable). The rock top Lara
-// stands on lies at the ledge's own height, 3562.5. The 14 faces 8.5 over it, reaching ~180 out past the rock's face,
-// are terrain group 3 (TerrainGroupExtra 0xE004E800: the enemies' and the camera's, not the player's: tru.exe's ray
-// filter 0x48EF50, docs/formats/COLLISION.md). While they were part of her collision the ledge class test (0x728650)
-// met them 94.8 out from the ledge point and called the rock no hurdle (this test was PoolRockGrabNotHurdle: a jump
-// grabbed the ledge, a second climbed up, and she stood 9 over the ledge she had climbed). With the rock's own face
-// under the line a standing jump at it is the high hurdle: attached and pulled up onto the top.
-TEST(GameReal, PoolRockIsHurdledOntoItsTop) {
+// l4_pool ledge markup id 1253 (rock ledge at z 3562, lower floor 523 below, rock top walkable; the line sits up to ~180
+// back from the rock face): the ledge class test measures the floor 94.8 out from the ledge point (tru.exe 0x728650),
+// which is the rock top here, so it is no hurdle (pulling her up 523 squared to the line sank her into the rock): a
+// standing jump grabs it and a second jump climbs onto the top.
+TEST(GameReal, PoolRockGrabNotHurdle) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     auto bytes = bf.read("pc-w\\l4_pool.drm");
@@ -1108,13 +1105,14 @@ TEST(GameReal, PoolRockIsHurdledOntoItsTop) {
     const auto& s = w.player().state();
     std::vector<std::string> clips;
     for (int i = 0; i < 200; ++i) {
-        w.tick(i == 5 ? jump : Actions{});
+        w.tick(i == 5 || i == 90 ? jump : Actions{});
         if (clips.empty() || clips.back() != s.clip) clips.push_back(s.clip);
     }
-    EXPECT_TRUE(std::find(clips.begin(), clips.end(), "hurdle_ground_attach_high_150") != clips.end()) << ::testing::PrintToString(clips);
-    EXPECT_TRUE(std::find(clips.begin(), clips.end(), "hurdle_onto") != clips.end()) << ::testing::PrintToString(clips);
+    EXPECT_TRUE(std::find(clips.begin(), clips.end(), "ledgeb_attach_M") != clips.end()) << ::testing::PrintToString(clips);
+    EXPECT_TRUE(std::find(clips.begin(), clips.end(), "ledgeb_climbup_fast") != clips.end()) << ::testing::PrintToString(clips);
+    EXPECT_TRUE(std::none_of(clips.begin(), clips.end(), [](const std::string& c) { return c.starts_with("hurdle_"); }));
     EXPECT_EQ(s.state, State::Idle);
-    EXPECT_NEAR(s.pos.z, 3562.5f, 1); // rock top = the ledge's height
+    EXPECT_NEAR(s.pos.z, 3571, 1); // rock top
 }
 
 // Animation pops: per-tick change of the bones' model-space orientations over a scripted run / walk / stop /
@@ -2245,7 +2243,7 @@ TEST(GameReal, TempleLedgeJumpsUpAndBack) {
     run({{-3300, -10900, -2800}, glm::radians(90.0f)}, 1207, forward(-1), 1208, 3);
 }
 
-// l4_pool rock ledge 1253 (hands z 3562; PoolRockIsHurdledOntoItsTop's spawn): hurdled onto the rock top, drop
+// l4_pool rock ledge 1253 (hands z 3562; PoolRockGrabNotHurdle's spawn): grabbed and climbed onto the rock top, drop
 // (crouch button) goes back down into the hang on 1253.
 TEST(GameReal, PoolDropToHang) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -2255,9 +2253,9 @@ TEST(GameReal, PoolDropToHang) {
     jump.jump = true;
     auto w = unitWorld(bf, "l4_pool", spawn);
     const auto& s = w.player().state();
-    for (int i = 0; i < 200; ++i) w.tick(i == 5 ? jump : Actions{}); // the hurdle onto the top
+    for (int i = 0; i < 200; ++i) w.tick(i == 5 || i == 90 ? jump : Actions{}); // grab, climb onto the top
     ASSERT_EQ(s.state, State::Idle);
-    EXPECT_NEAR(s.pos.z, 3562.5f, 1); // the rock top, at the ledge's height (not the enemies' / camera's faces 8.5 over it)
+    EXPECT_NEAR(s.pos.z, 3571, 1);
     Actions drop;
     drop.drop = true;
     w.tick(drop);

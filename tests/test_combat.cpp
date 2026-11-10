@@ -1460,7 +1460,7 @@ TEST(Combat, ScriptTimeRampEasesInAndOut) {
 }
 
 // One-handed pistols from a real ledge (docs/GAMEPLAY.md "One-handed shooting"): l4_pool, hanging from ledge 1253 (as
-// GameReal.PoolDropToHang reaches it: the hurdle onto the rock, then Crouch at its edge), a real panther on the floor behind her: Target Lock + Fire shoot it
+// GameReal.PoolDropToHang reaches it by a jump), a real panther on the floor behind her: Target Lock + Fire shoot it
 // with the right-hand pistol from the hang, the left hand stays on the ledge and she keeps hanging.
 TEST(CombatReal, PoolLedgeHangShootsPantherOneHanded) {
     const char* dir = std::getenv("OU_GAME_DIR");
@@ -1473,12 +1473,7 @@ TEST(CombatReal, PoolLedgeHangShootsPantherOneHanded) {
     const auto& s = w.player().state();
     Actions jump;
     jump.jump = true;
-    for (int i = 0; i < 200; ++i) w.tick(i == 5 ? jump : Actions{}); // hurdled onto the rock top
-    ASSERT_EQ(s.state, State::Idle);
-    Actions down;
-    down.drop = true;
-    w.tick(down);
-    for (int i = 0; i < 120 && s.state != State::Hang; ++i) w.tick({});
+    for (int i = 0; i < 80 && s.state != State::Hang; ++i) w.tick(i == 5 ? jump : Actions{});
     ASSERT_EQ(s.state, State::Hang);
     ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 1253);
     for (int i = 0; i < 30; ++i) w.tick({});
