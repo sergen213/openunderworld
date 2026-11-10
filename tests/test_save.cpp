@@ -1139,6 +1139,25 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              return a;
          }},
         {"l2_cliffclimb", game::Spawn{{-34749.2f, -14716.0f, 71.3f}, 2.35f}, 60, 300, idle},
+        // Moving markup: hanging on a handhold of l7_yggdrasil_end's turning tower 8401 (ring section, model 1), saved
+        // while it carries her round; she lets go 140 ticks after the load and leaves with the ring's velocity.
+        {"l7_yggdrasil_end", game::Spawn{{-29036, 0, 7383}, 0}, 60, 300, [](uint64_t t) {
+             game::Actions a;
+             a.drop = t == 230;
+             return a;
+         }, [](game::World& w) {
+             for (int i = 0; i < 30; ++i) w.tick({});
+             const int index = w.markupIndex("@8401", 100);
+             if (index < 0) return;
+             game::PlayerState s = w.player().state();
+             s.state = State::Hang, s.clip = "ledgeb_idle", s.loop = true, s.clipTime = 0;
+             s.ledge = index, s.ledgeSeg = 0, s.ledgeT = 200, s.ledgeSide = -1, s.vel = game::vec3(0);
+             s.pos = w.collision().markup[size_t(index)].points[0];
+             w.restore(s, 0, 0);
+         }, [](const game::World& w) {
+             const auto owner = w.markupOwner(w.player().state().ledge);
+             return w.player().state().state == State::Hang && owner && owner->first == "@8401";
+         }},
         // Hanging on l4_temple ledge 1187 (a standing jump), then shimmying along it.
         {"l4_temple", game::Spawn{{-8771.2f, -9922.7f, 2600}, 0}, 85, 240, [](uint64_t t) {
              game::Actions a;

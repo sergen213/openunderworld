@@ -437,6 +437,13 @@ public:
     const PlayerState& state() const { return s_; }
     const Tuning& tuning() const { return t_; }
     void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
+    // Moving markup (docs/GAMEPLAY.md "Moving markup"). attachedMarkup: the markup she is on or flying to (hanging,
+    // shimmying, on a pole, beam, ladder, perch or pillar, climbing up, a targeted leap; free climbing: her hold), -1
+    // none. rideFrame: that markup's frame moved by `d` this tick: her root, heading and the world-space points of
+    // her move in progress go with it. addVelocity: World::tick, when she leaves what carried her into free flight.
+    int attachedMarkup() const;
+    void rideFrame(const glm::mat4& d);
+    void addVelocity(vec3 v) { s_.vel += v; }
     void letGo() { startFall(vec3(0)); } // what she held or stood on is gone (a breakable broke): she falls from here
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
@@ -990,7 +997,13 @@ public:
     std::function<void(int next)> onLevelChange;
     const std::vector<Pickup>& pickedUp() const { return pickedUp_; } // last tick (world-frame positions)
 
+    // An object's physical data by name for worlds without a bigfile (tools, synthetic levels); with one it is read
+    // from the object's DRM on first use.
+    void setObjectPhysics(const std::string& name, physics::ObjectPhysics p) {
+        objectPhysics_[name] = std::make_shared<const physics::ObjectPhysics>(std::move(p));
+    }
     // Save/load helpers. Markup index <-> (unit, index in that unit); -1 / nullopt when not loaded.
+    void restoreObjectMarkup(const std::string& owner, int item); // her attachment to an object's item, after a load (Objects.cpp)
     std::optional<std::pair<std::string, int>> markupOwner(int index) const;
     int markupIndex(const std::string& unit, int local) const;
     // Replaces Lara's state (world frame) and the camera orbit; no interpolation across the jump.
@@ -1204,6 +1217,10 @@ private:
     // Objects' model markup (physics::ObjectPhysics::markup) in col_, placed by the object's collider each tick: ledges
     // on push blocks, cog rings, breakable ledges move with their instance (tru.exe markup boxes owned by the instance).
     void tickObjectMarkup();
+    void poseUberModels(); // each uber object's own mesh under its section's clip (Object::animPose)
+    // (uid, item) of the object markup at col_ index `index`; its frame as tickObjectMarkup last placed it.
+    std::optional<glm::mat4> objectMarkupFrame(int index) const;
+    const physics::ObjectPhysics* modelPhysics(const script::Object& o, uint32_t model); // its model `model` (uber sections)
     // Breakables.cpp
     struct Breakable { std::string unit, object; glm::mat4 frame{1}; std::shared_ptr<const BreakableData> data; };
     struct BreakableState { BreakPhase phase = BreakPhase::Whole; int hits = 0, action = -1; float timer = 0, away = 0; };
@@ -1358,6 +1375,9 @@ private:
     // (uid, item) -> its markup in col_ (tickObjectMarkup; rebuildCollision re-adds them after the units' markup).
     // markupOwner names them "@uid" so Lara's ledge survives a rebuild and a save.
     std::map<std::pair<int32_t, int>, int> objectMarkup_;
+    // The world frame of the model segment each object markup rides, as last placed (tickObjectMarkup): Lara on one
+    // is carried by its change (tickObjects). Not saved: one tick's motion.
+    std::map<std::pair<int32_t, int>, glm::mat4> objectMarkupFrame_;
     std::map<int32_t, float> slides_;
     // Rigid doors on a cylindrical joint (marker kind 2, l4_ballcourt 6505): position along the joint (units, World::
     // tickObjects), held within the `multibody` 77 limit 1 (kept in multibodyLo_ / Hi_ like the hinges' radians).

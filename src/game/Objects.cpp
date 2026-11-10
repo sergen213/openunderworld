@@ -1048,7 +1048,15 @@ void World::bindTerrain() {
             return true;
         }
         if (function != 2 || args.size() != 1 || !addressed->data.col.setTerrainGroupEnabled(model, args[0].bits != 0)) return false;
+        // The rebuild renumbers the objects' markup (units first, then objects in list order): her markup by its owner.
+        const auto ledgeOwner = markupOwner(player_.state().ledge), waterOwner = markupOwner(player_.state().water),
+                   holdOwner = markupOwner(player_.state().climbHold);
         rebuildCollision();
+        PlayerState s = player_.state();
+        s.ledge = ledgeOwner ? markupIndex(ledgeOwner->first, ledgeOwner->second) : -1;
+        s.water = waterOwner ? markupIndex(waterOwner->first, waterOwner->second) : -1;
+        s.climbHold = holdOwner ? markupIndex(holdOwner->first, holdOwner->second) : -1;
+        player_.restore(s);
         return true;
     });
 }
@@ -1503,17 +1511,8 @@ void World::poseShotOnly() {
     }
 }
 
-void World::tickObjects(float dt) {
-    tickBreakables(dt); // contacts, waits and breaks first: a break drops its colliders before anything queries them
-    // Objects came or went, or the merged collision was rebuilt (streaming drops its dynamics).
-    if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
-        lateColliders(script_) != syncedPlates_)
-        syncObjects();
-    tickUber(dt);
-    if (!shotOnly_.empty()) poseShotOnly();
-    // The section drawn as model 0 (the object's own mesh, its collision segments) under its clip: doors, gates,
-    // elevators and drawbridges open / travel by their transition's anim reference (ms_ani_tombdoor doors_opening,
-    // sa_uo_elevator_adrenaline falling), the bones carrying their collision segments.
+// The section drawn as model 0 (the object's own mesh, its collision segments and markup) under its clip.
+void World::poseUberModels() {
     for (const auto& [uid, rt] : uberRuntime_) {
         const auto data = uberData_.find(uid);
         if (data == uberData_.end() || !data->second) continue;
@@ -1525,11 +1524,48 @@ void World::tickObjects(float dt) {
             }
         if (const auto* o = script_.find(uid); o && o->animPose != palette) script_.setAnimPose(uid, std::move(palette));
     }
+}
+
+// After a load (save::apply, once the scripts and the objects are restored): the objects' markup as their restored
+// state places it -- a save names her object ledge "@uid" + item, and the items exist only once their objects stand --
+// and her saved attachment to one put back. No such item: she falls, as when a unit with her ledge streams out.
+void World::restoreObjectMarkup(const std::string& owner, int item) {
+    if (!units_.empty() && scriptUnits_ != unitsVersion_) { // the loaded units' scripted objects, as the first tick would
+        const auto refs = unitRefs();
+        script_.setUnits(refs);
+        enemies_.setUnits(refs);
+        scriptUnits_ = unitsVersion_;
+    }
+    for (const auto& o : std::vector<script::Object>(script_.objects())) prepareUber(o); // applies the restored uber state
+    poseUberModels();
+    tickObjectMarkup();
+    PlayerState s = player_.state();
+    s.ledge = markupIndex(owner, item);
+    if (s.ledge < 0 && (s.state == State::Hang || s.state == State::Shimmy || s.state == State::ClimbUp || s.state == State::PoleHang))
+        s.state = State::Fall;
+    player_.restore(s);
+}
+
+void World::tickObjects(float dt) {
+    tickBreakables(dt); // contacts, waits and breaks first: a break drops its colliders before anything queries them
+    // Objects came or went, or the merged collision was rebuilt (streaming drops its dynamics).
+    if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
+        lateColliders(script_) != syncedPlates_)
+        syncObjects();
+    tickUber(dt);
+    if (!shotOnly_.empty()) poseShotOnly();
+    // The section drawn as model 0 (the object's own mesh, its collision segments) under its clip: doors, gates,
+    // elevators and drawbridges open / travel by their transition's anim reference (ms_ani_tombdoor doors_opening,
+    // sa_uo_elevator_adrenaline falling), the bones carrying their collision segments.
+    poseUberModels();
     // Lara rides the dynamic she stands on (platforms, a door swinging under her); gripping a block, its push carries her.
     const vec3 feet = player_.state().pos;
     const auto ground = col_.groundProbe(feet + vec3(0, 0, 20), 60);
     const int under = ground && player_.state().state != State::Block ? ground->dynamic : -1;
     const glm::mat4 before = under >= 0 ? col_.dynamics[under].transform : glm::mat4(1);
+    // ... and the markup she is on (a ledge, pole, beam, ladder, hold of an object: tickObjectMarkup), by its frame.
+    const int ride = player_.attachedMarkup();
+    const std::optional<glm::mat4> rideBefore = ride >= 0 ? objectMarkupFrame(ride) : std::nullopt;
     tickInserted(dt);
     tickJoints(dt);
     collectJointSounds(dt);
@@ -1572,7 +1608,9 @@ void World::tickObjects(float dt) {
         col_.dynamics[i].transform = c.intro * model * c.frame;
     }
     tickObjectMarkup();
-    if (under >= 0) {
+    if (const auto rideNow = rideBefore ? objectMarkupFrame(ride) : std::nullopt; rideNow && *rideNow != *rideBefore) {
+        player_.rideFrame(*rideNow * glm::inverse(*rideBefore));
+    } else if (under >= 0) {
         const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
         if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
     }
@@ -1704,13 +1742,18 @@ bool World::engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, c
 // Uber section `section`'s model physics (each section an instance of its object's model `model`), null none.
 const physics::ObjectPhysics* World::uberSectionPhysics(const script::Object& o, size_t section) {
     const auto* data = prepareUber(o);
+    return data && section < data->sections.size() ? modelPhysics(o, data->sections[section].model) : nullptr;
+}
+
+const physics::ObjectPhysics* World::modelPhysics(const script::Object& o, uint32_t model) {
+    if (!prepareUber(o)) return nullptr;
     const auto drm = objectDrms_.find(o.name);
-    if (!data || section >= data->sections.size() || drm == objectDrms_.end() || !drm->second) return nullptr;
-    auto mp = modelPhysics_.find({o.name, data->sections[section].model});
+    if (drm == objectDrms_.end() || !drm->second) return nullptr;
+    auto mp = modelPhysics_.find({o.name, model});
     if (mp == modelPhysics_.end()) {
         std::shared_ptr<const physics::ObjectPhysics> p;
-        try { p = std::make_shared<physics::ObjectPhysics>(physics::loadObjectPhysics(*drm->second, data->sections[section].model)); } catch (const cdc::FormatError&) {}
-        mp = modelPhysics_.emplace(std::pair{o.name, data->sections[section].model}, std::move(p)).first;
+        try { p = std::make_shared<physics::ObjectPhysics>(physics::loadObjectPhysics(*drm->second, model)); } catch (const cdc::FormatError&) {}
+        mp = modelPhysics_.emplace(std::pair{o.name, model}, std::move(p)).first;
     }
     return mp->second.get();
 }
@@ -1958,32 +2001,86 @@ void World::tickInserted(float dt) {
 
 // tru.exe adds the markup items of an instance's current model as markup boxes it owns (0x5D0610 -> 0x5CE4F0: box +0x0C =
 // the instance, +0x20 = the item, flags from the type; instance +0x2D8 lists them) for every instance whose model has
-// any, and the boxes follow the instance. ca_pu_block_a (l4_ballcourt 6504): one ledgegrab loop round its top
-// (+-189.6, 410.8 up, counter-clockwise from above, so the hang side is outside) [O data]: Lara hurdles onto the block
-// and hangs from its edges like any ledge. Ours: model 0's items [I: the current model], placed by the object's first
-// collision segment (its model frame: intro x motion) so they ride pushes, joints and clips; objects without collision
-// segments and portables (their inserted poles: tickInserted) add none [I].
+// any (callers: instance creation 0x5D07E0, model changes 0x5BA480 / 0x5BA650, uber sections 0x4D78D0), and a box sits
+// in the frame of its owner's segment item +0x30 (0x5C41A0: instance +0x90 + 0x40 x segment, the segment's world matrix;
+// item points are in that segment's space), so it follows whatever moves the segment: a joint, a clip, a spline, a
+// push. No unit markup is tied to an instance (unit item +0x4A, the box's "introID", is 0 in every unit) [O data].
+// ca_pu_block_a (l4_ballcourt 6504): one ledgegrab loop round its top (+-189.6, 410.8 up, counter-clockwise from above,
+// so the hang side is outside): Lara hurdles onto the block and hangs from its edges like any ledge.
+// Ours: per scripted object the items of its model 0 [I: the model it is born with; `instance` model switches are not
+// followed] and, for an uber object, of every section's current model (state action 1), each placed by its segment
+// under the pose that draws and collides it (script pose: body, push offset, clip palette; a section: its joint and
+// clip). Items are keyed (uid, model x 100 + item) -- model 0's by their index, as saves made before name them.
+// Portables add none (an inserted pole: tickInserted), class-30 breakables add their pieces' (tickBreakableMarkup).
 void World::tickObjectMarkup() {
-    std::set<int32_t> seen;
-    for (size_t i = 0; i < colliders_.size() && i < col_.dynamics.size(); ++i) {
-        const auto& c = colliders_[i];
-        if (c.section >= 0 || !seen.insert(c.uid).second) continue;
-        const auto* o = script_.find(c.uid);
-        const auto* p = o ? objectPhysics(o->name) : nullptr;
-        if (!p || p->markup.empty() || p->physClass == 50 || p->physClass == kClassBreakable) continue; // breakables: their pieces' (below)
-        const glm::mat4 frame = col_.dynamics[i].transform * glm::inverse(c.frame);
-        for (int k = 0; k < int(p->markup.size()); ++k) {
-            collision::Markup m = p->markup[size_t(k)];
+    std::set<std::pair<int32_t, int>> seen;
+    const auto place = [&](const script::Object& o, const physics::ObjectPhysics& p, int model, const glm::mat4& base,
+                           const std::vector<glm::mat4>* palette) {
+        for (int k = 0; k < int(p.markup.size()) && k < 100; ++k) {
+            const int item = size_t(k) < p.markupSegment.size() ? p.markupSegment[size_t(k)] : 0;
+            const size_t seg = size_t(std::clamp<int>(item, 0, std::max<int>(0, int(p.segments.size()) - 1)));
+            glm::mat4 frame = base;
+            if (palette && !palette->empty()) frame = frame * (*palette)[std::min(seg, palette->size() - 1)];
+            if (seg < p.segments.size()) frame = frame * p.segments[seg];
+            collision::Markup m = p.markup[size_t(k)];
             for (vec3& q : m.points) q = vec3(frame * glm::vec4(q, 1));
-            if (o->hidden || o->dead) m.type = 0; // "none"
-            auto [it, added] = objectMarkup_.try_emplace({c.uid, k}, int(col_.markup.size()));
+            if (o.hidden || o.dead) m.type = 0; // "none"
+            const std::pair<int32_t, int> key{o.uid, model * 100 + k};
+            seen.insert(key);
+            objectMarkupFrame_[key] = frame;
+            auto [it, added] = objectMarkup_.try_emplace(key, int(col_.markup.size()));
             if (added) col_.markup.push_back(std::move(m));
             else col_.markup[size_t(it->second)].points = std::move(m.points), col_.markup[size_t(it->second)].type = m.type;
         }
+    };
+    for (const auto& o : script_.objects()) {
+        if (o.kind == script::Kind::Volume || o.kind == script::Kind::Plane) continue; // triggers: no model
+        const auto* p = objectPhysics(o.name);
+        if (!p || p->physClass == 50 || p->physClass == kClassBreakable) continue;
+        const auto rt = uberRuntime_.find(o.uid);
+        const auto data = uberData_.find(o.uid);
+        const bool uber = rt != uberRuntime_.end() && data != uberData_.end() && data->second;
+        if (uber && rt->second.intangible) continue;
+        const glm::mat4 intro = introModel(o);
+        size_t main = 0;
+        bool mainGone = false;
+        if (uber) {
+            main = data->second->sections.size();
+            for (size_t k = 0; k < data->second->sections.size(); ++k)
+                if (data->second->sections[k].model == 0) { main = k; break; }
+            mainGone = main < rt->second.sections.size() && rt->second.sections[main].removed;
+            for (size_t k = 0; k < data->second->sections.size() && k < rt->second.sections.size(); ++k) {
+                const int32_t model = uberSectionModel(o.uid, int32_t(k));
+                if (k == main || model <= 0) continue; // the object's own mesh: below
+                const auto* sp = modelPhysics(o, uint32_t(model));
+                if (!sp || sp->markup.empty()) continue;
+                bool removed = false;
+                const glm::mat4 body = uberSectionBody(o.uid, int32_t(k), &removed).value_or(glm::mat4(1));
+                if (removed) continue;
+                const auto palette = uberSectionPose(o.uid, int32_t(k));
+                place(o, *sp, model, intro * body, palette ? &*palette : nullptr);
+            }
+        }
+        if (p->markup.empty() || mainGone) continue;
+        const auto palette = script_.pose(o);
+        place(o, *p, 0, intro, palette ? &*palette : nullptr);
     }
-    for (const auto& [key, index] : objectMarkup_) // gone (streamed out, intangible); breakable pieces' items: below
-        if (key.second < 1000 && !seen.contains(key.first) && size_t(index) < col_.markup.size()) col_.markup[size_t(index)].type = 0;
+    const int held = player_.attachedMarkup();
+    for (const auto& [key, index] : objectMarkup_) { // gone (streamed out, intangible, another model); breakable pieces' items: below
+        if (key.second >= 1000 || size_t(index) >= col_.markup.size()) continue;
+        if (!seen.contains(key)) col_.markup[size_t(index)].type = 0;
+        if (index == held && col_.markup[size_t(index)].type == 0) player_.letGo(); // what she held is gone: she falls (as off a broken breakable)
+    }
     tickBreakableMarkup();
+}
+
+std::optional<glm::mat4> World::objectMarkupFrame(int index) const {
+    for (const auto& [key, i] : objectMarkup_)
+        if (i == index) {
+            const auto f = objectMarkupFrame_.find(key);
+            return f == objectMarkupFrame_.end() ? std::nullopt : std::optional<glm::mat4>(f->second);
+        }
+    return std::nullopt;
 }
 
 // One physics step on the fixed tick (Jolt, src/physics): rigid-body doors and levers on their hinges, the uber

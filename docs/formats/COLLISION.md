@@ -147,13 +147,16 @@ have a count of 0 in all 82 units [O]. Objects bring their own, per model [O]: F
 +0x58 items — to FUN_005CE4F0 with the instance as each markup box's owner (box +0x0C; the instance's list +0x2D8,
 mask 0xFFFFFFFF). Every instance whose current model has items gets them (callers 0x4D78D0 uber objects, 0x5BA480 /
 0x5BA650 model changes, 0x5D07E0 instance creation). Item layout: +0x28 u32 flags (0 = from the type byte), +0x2E u16
-id, +0x33 u8 type (the types above), +0x34 position, +0x40 box, +0x58 → polyline (points in model space, moving with
+id, +0x30 s16 segment (the box sits in that segment's matrix, 0x5C41A0), +0x33 u8 type (the types above), +0x34
+position, +0x40 box, +0x58 → polyline (points in that segment's space, moving with
 the instance). Survey (2026-11-07, every object DRM): 83 models of 77 objects, all flags 0 — ledgegrab loops round the
 tops of push blocks (`ca_pu_block_a` ±189.6 at 410.8, `ma_rb_pushblock_training`, `sa_rb_pushable_weight`,
 `ar_pu_valaskjalf_entry` ±205.4 at 410.9, `ca_pu_block_grapple`), breakable ledges, cog wheels and the valgrind column
 rings, Thor's hammers, `sh_ei_combat_crate_a`; poles (type 4 / 6) on the portable poles, hpoles, chains, snake heads.
 Loops run counter-clockwise seen from above, so their hang side (right of the direction) is outside. Ours:
-`physics::ObjectPhysics::markup` (model 0), placed each tick by `World::tickObjectMarkup`.
+`physics::ObjectPhysics::markup` / `markupSegment` (every model), placed each tick by `World::tickObjectMarkup`
+(GAMEPLAY.md "Moving markup"). Unit items: +0x4A is the box's "introID" (MarkUp +0x2C), 0 in every unit: no unit
+markup belongs to an instance.
 
 ### Camera records [O]
 
@@ -230,4 +233,4 @@ Survey of all 82 unit DRMs (throwaway tool over `loadLevelCollision` + `formats:
   per-unit group enable bits; ray, sweep and closest-point queries skip disabled groups. The l2_hubhall trigger
   plane 2571 disables model 5 and enables model 1 in `GameReal.TerrainGroupNativeUpdatesMergedCollision`.
 - [U] Moving terrain groups: which instance drives them, and their runtime transforms.
-- [U] Object-DRM markup and per-instance collision (not decoded).
+- Object-DRM markup: decoded (above, GAMEPLAY.md "Moving markup"). [U] per-instance collision of non-solid segments.

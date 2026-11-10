@@ -229,6 +229,7 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
             k.type = type, k.id = at<uint16_t>(*m, q + 0x2E);
             for (uint32_t j = 0; j < n; ++j) k.points.push_back(vec(*m, *pl + 0x10 + 0x10 * j));
             o.markup.push_back(std::move(k));
+            o.markupSegment.push_back(at<int16_t>(*m, q + 0x30));
         }
     const uint32_t nft = m->data.size() >= 0x64 ? at<uint32_t>(*m, 0x5C) : 0;
     if (const auto ft = nft ? cdc::internalPointer(*m, 0x60) : std::nullopt; ft && nft < 256 && *ft + 0x20 * size_t(nft) <= m->data.size())

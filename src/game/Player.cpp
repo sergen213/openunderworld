@@ -1982,6 +1982,35 @@ void Player::assistJump() {
     if (bestTime > 0) s_.vel = vec3((xy(target) - xy(s_.pos)) / bestTime, vz);
 }
 
+// Moving markup: the states that hold her on (or fly her to) a markup item.
+int Player::attachedMarkup() const {
+    switch (s_.state) {
+    case State::Hang: case State::Shimmy: case State::DropToHang: case State::PoleHang: case State::Beam:
+    case State::Ladder: case State::Perch: case State::Pillar: case State::ClimbUp: case State::HangJump:
+        return s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size() ? s_.ledge : -1;
+    case State::Climb: return s_.climbHold >= 0 && size_t(s_.climbHold) < col_.markup.size() ? s_.climbHold : -1;
+    default: return -1;
+    }
+}
+
+// tru.exe keeps her on a markup box through the box itself, which follows its owner's segment matrix (0x5C41A0); ours
+// stores world-space state, so the frame's motion is applied to it: root, heading (the motion's turn about Z; a
+// tilting frame does not pitch or roll her [I]) and the points and directions of a corner / hold-to-hold / hurdle
+// move in progress.
+void Player::rideFrame(const glm::mat4& d) {
+    const glm::mat3 r(d);
+    const vec3 f = r * forward();
+    const float turn = glm::length(xy(f)) > 1e-4f ? wrapAngle(std::atan2(f.y, f.x) - s_.yaw) : 0.0f;
+    const auto point = [&](vec3& p) { if (p != vec3(0)) p = vec3(d * glm::vec4(p, 1)); };
+    s_.pos = vec3(d * glm::vec4(s_.pos, 1));
+    s_.yaw = wrapAngle(s_.yaw + turn);
+    point(s_.climbFrom), point(s_.climbTo), point(s_.hurdle.edge), point(s_.jumpLedge);
+    s_.climbYawFrom += turn, s_.climbYawTo += turn;
+    s_.climbNormal = r * s_.climbNormal;
+    s_.hurdle.out = glm::vec2(r * vec3(s_.hurdle.out, 0));
+    if (s_.state == State::HangJump) s_.vel = r * s_.vel; // the leap flies in its target's frame
+}
+
 void Player::tick(vec2 move, const Actions& a, float dt) {
     Buttons& b = s_.buttons;
     b.jump.update(a.jump, dt, t_.pressBuffer), b.interact.update(a.interact, dt, t_.pressBuffer);
