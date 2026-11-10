@@ -337,6 +337,10 @@ void World::restoreObjects(const nlohmann::json& j) {
     // The saved scene's IDs and recorded state (applied once its bodies exist again); older saves: loose bodies start
     // again from their saved offset and rotation.
     if (physicsState.empty() || !physics_.restore(physicsState)) physics_.setLoose({});
+    // The colliders of the world before the restore name hinges of the scene it replaced (Scene::restore drops them):
+    // syncObjects must not read their swing as it does for doors that stay loaded across a stream.
+    colliders_.clear(), col_.dynamics.clear();
+    physics_.clearHinges();
     syncedObjects_ = ~size_t(0); // prepare the loaded uber objects on the next tick
 }
 

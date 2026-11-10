@@ -78,9 +78,10 @@ Missing mechanics the campaign needs (each is on some chapter's critical path):
 
 Works but differs from the original (inputs and rules): grapple jump-in / leap-off / rope inputs and swing pumping;
 saving grab key and trigger; safety drop needs a key; climb-out of water; Interact speed-up of climbing absent; no
-hold-time input layer; head shot opens below a full meter; guns fire on timers, not on the clips' fire events; respawn
-drops the loadout and does not roll the world back to the checkpoint; push blocks are kinematic at an inferred speed;
-plates accept one block where the original needs two; several gates open by themselves.
+hold-time input layer; head shot opens below a full meter; guns fire on timers, not on the clips' fire events; push
+blocks are kinematic at an inferred speed; plates accept one block where the original needs two; several gates open by
+themselves. (At the audit a respawn dropped the loadout and did not roll the world back: since then a death restores
+the checkpoint save, `docs/GAMEPLAY.md` "Checkpoints and respawn".)
 
 Architecture and quality: no inverse kinematics or contact placement; sub-states keyed on clip-name strings; `World`
 is one class across seven files; duplicated push and ballistic code; per-tick allocations in `candidates` /
@@ -103,7 +104,8 @@ numbers, then architecture. Each line names the reusable system, not a level.
 5. Manual aim, combat camera, head-shot and focused-fire rules, scripted slow motion, hang shooting.
 6. Water rules (scuba, weapons, dodge, swan dive, jellyfish, scripted levels).
 7. Thor's gauntlets and player sensors; moving markup and rideable machinery; campaign hazards.
-8. Checkpoint restore and loadout on respawn; chapter start reserves; pre-level choices; PDA truths.
+8. Checkpoint restore and loadout on respawn (done: the checkpoint save, the level-start loadout, player tailoring;
+   `docs/GAMEPLAY.md` "Checkpoints and respawn", "Loadout"); chapter start reserves; pre-level choices; PDA truths.
 9. Controller inputs and timing (saving grab, jump control, speed-up, safety drop, handstand, free hang), beam and
    pole extras, grapple inputs / swing dynamics / cable physics, bike verification against the original.
 10. Per-chapter puzzle and encounter fidelity (prologue .. Out of Time), each proven by input in its units.

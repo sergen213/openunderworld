@@ -420,6 +420,7 @@ bool SelfTest::probeKnown(std::string_view name) {
     if (fixedProbes().contains(name)) return true;
     const auto p = split(name);
     if (p[0] == "step") return std::ranges::find(selftest::measurementNames(), name.substr(std::min<size_t>(5, name.size()))) != selftest::measurementNames().end();
+    if (p.size() == 3 && p[0] == "weapon" && game::weaponByName(std::string(p[1]))) return p[2] == "clip" || p[2] == "reserve";
     if (p.size() < 3 || !integer(p[1])) return false;
     const std::string_view f = p[2];
     if (p[0] == "object") {
@@ -472,6 +473,12 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
     }
     if (p[0] == "weapon") {
         const auto& c = w.combat();
+        if (p.size() == 3) { // weapon.<name>.clip / .reserve: that weapon's, in hand or not
+            const auto named = game::weaponByName(std::string(p[1]));
+            if (!named) return {};
+            const auto n = size_t(*named);
+            return p[2] == "clip" ? num(c.clip[n][0] + c.clip[n][1]) : num(c.reserve[n]);
+        }
         const auto i = size_t(c.weapon);
         const std::string_view f = p[1];
         if (f == "current") return str(game::weaponName(c.weapon));

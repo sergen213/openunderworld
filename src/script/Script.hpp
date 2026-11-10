@@ -488,6 +488,19 @@ public:
     uint32_t playerHiddenGroups() const { return playerHiddenGroups_; }
     const std::set<std::string>& playerObjects() const { return playerObjects_; } // carried gear (g_belt, ...)
     void setPlayerObjects(std::set<std::string> objects) { playerObjects_ = std::move(objects); } // chapter starts
+    // The experience-adjustment settings the scripts read and set (`uiexperienceadjustmentmenu`, tru.exe game state
+    // +0x3EF94..+0x3EFB1): the PLAYER TAILORING preset last picked and its five levels 0..2 (enemy health, ammunition,
+    // Lara's health, saving grabs, the fifth), training text and the +0x3EFB0 toggle. World keeps them current
+    // (setTailoring / setHints); a script's change is handed back once by takeExperience().
+    struct Experience {
+        int preset = 1;
+        std::array<int, 5> levels{1, 1, 1, 1, 1};
+        bool trainingText = true, metaIcons = true;
+        bool operator==(const Experience&) const = default;
+    };
+    const Experience& experience() const { return experience_; }
+    void setExperience(const Experience& e) { experience_ = e; }
+    std::optional<Experience> takeExperience() { return std::exchange(experienceSet_, false) ? std::optional(experience_) : std::nullopt; }
     uint32_t unitEffect() const { return unitEffect_; }
     bool grappleOff(int32_t uid) const { return grappleOff_.contains(uid); } // `unit` 13 dropped its markers (saved)
     // instance 23 with a `uberobjectbase` 2 anchor: object `uid` rides HInfo marker `second` of object `first` (saved);
@@ -649,6 +662,8 @@ private:
     std::optional<std::pair<int32_t, int32_t>> teleport_;
     uint64_t visibilityVersion_ = 0;
     uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
+    Experience experience_;
+    bool experienceSet_ = false; // a script set one this tick
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
     float pullStrength_ = 1;              // larabase 35 (not saved: a load lets go of the grip)
     uint32_t unitEffect_ = 0;

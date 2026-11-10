@@ -25,8 +25,8 @@ constexpr float kPi = 3.14159265f;
 // [I] The game crosses portals when the instance's collision hits the unit's signal faces (0x5D2CA0 ->
 // 0x5D2AA0); we test Lara's path at mid-body height against the portal quad's plane and bounds.
 constexpr float kPortalProbeHeight = 250.0f, kPortalMargin = 50.0f;
-// [I] Checkpoint activation is scripted (checkpoint.drm scripts, not decoded): touching = feet within
-// this cylinder around the checkpoint intro.
+// Checkpoints activate by script (checkpointbase 3 -> tru.exe message 0x196 / 1, World::touchCheckpoints). [I] Beside
+// that, touching one activates it: feet within this cylinder around the checkpoint intro.
 constexpr float kCheckpointRadius = 250.0f, kCheckpointHeight = 400.0f;
 
 vec3 v3(const float* f) { return {f[0], f[1], f[2]}; }
@@ -446,20 +446,79 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     updatePose(0, true);
 }
 
+// tru.exe [O]: DeathState's wipe done -> 0x6F55A0 sets game flag 0x80000 -> the game loop (0x5DAB40 case 6) calls
+// "Restore Game" 0x557130: the committed save buffer is copied back over the working one, the script variable
+// tables (0x5558A0) and the game state (0x556E90: clock, inventory, outfit, reverb) come back and the level loads
+// again, every instance born from its saved block; 0x5D40C0 puts Lara on the checkpoint's intro and message 0x2A
+// (0x700060) gives her full health.
 void World::respawn() {
-    if (units_.empty()) { // single-mesh world: back to its spawn
+    // The secondary, clips, reserves and the meter stay; the hands are empty (a born player holds nothing).
+    const auto holster = [&] {
+        CombatState c;
+        c.secondary = combat_.secondary, c.adrenaline = combat_.adrenaline, c.rng = combat_.rng;
+        c.healthPacksUsed = combat_.healthPacksUsed;
+        std::memcpy(c.clip, combat_.clip, sizeof c.clip);
+        std::memcpy(c.reserve, combat_.reserve, sizeof c.reserve);
+        c.spread = anims_.weapons[0].spreadDeg;
+        combat_ = c;
+    };
+    if (units_.empty()) { // single-mesh world: back to its spawn, nothing to restore
         player_.spawn(startSpawn_->pos, startSpawn_->yaw);
         prev_ = player_.state();
         updatePose(0, true);
-    } else if (checkpoint_) {
-        enterUnit(checkpoint_->unit, std::nullopt, checkpoint_->id);
+        holster();
+        enemies_.reset();
     } else {
-        enterUnit(startUnit_, startSpawn_);
+        const nlohmann::json save = checkpointSave_; // a copy: the restore below must not read what it replaces
+        if (save.is_object()) setTicks(save.at("ticks").get<uint64_t>()); // before enterUnit, as a load (save::apply)
+        if (checkpoint_) enterUnit(checkpoint_->unit, std::nullopt, checkpoint_->id);
+        else enterUnit(startUnit_, startSpawn_);
+        if (save.is_object()) {
+            restoreCheckpointSave(save);
+        } else { // she died within the first tick: nothing was saved yet
+            holster();
+            enemies_.reset();
+        }
     }
-    health_.reset(); // tru.exe 0x700060 on the restored player
+    health_.reset(); // tru.exe 0x700060 on the born player
     air_ = 1.0f, submerged_ = false;
-    combat_ = {};
-    enemies_.reset();
+    checkpointDue_ = false;
+    ++respawns_;
+}
+
+nlohmann::json World::serializeCheckpoint() const {
+    nlohmann::json runtime = serializeRuntime();
+    for (const char* lara : {"camera", "hair", "air", "submerged", "anim", "aimTime", "bones"}) runtime.erase(lara);
+    return {{"ticks", ticks_},           {"collected", collected},       {"born", born},
+            {"found", found},            {"grenades", grenades},         {"flashlight", flashlight},
+            {"script", script_.serialize()}, {"enemies", enemies_.serialize()}, {"vehicles", serializeVehicles()},
+            {"combat", serializeCombat()},   {"objects", serializeObjects()},   {"runtime", std::move(runtime)}};
+}
+
+void World::restoreCheckpointSave(const nlohmann::json& save) {
+    collected = save.at("collected").get<std::set<int32_t>>();
+    born = save.at("born").get<std::set<int32_t>>();
+    found = save.at("found").get<std::array<int, 3>>();
+    grenades = save.at("grenades").get<int>();
+    flashlight = save.at("flashlight").get<bool>();
+    script_.restore(save.at("script"));
+    script_.playerJumped(); // she is at the intro now: no plane crossings across the jump
+    restoreEnemies(save.at("enemies"));
+    restoreVehicles(save.at("vehicles"));
+    // Weapons, clips, reserves and the meter as saved; what her hands were doing then (draw, lock, reload, cooldowns)
+    // and the health clocks are not: she is born again (restoreCombat without them holsters).
+    nlohmann::json combat = save.at("combat");
+    const int packsUsed = combat_.healthPacksUsed; // a count for logs: not rolled back
+    combat.erase("state"), combat.erase("healthClocks");
+    combat["weapon"] = weaponName(Weapon::Pistols);
+    restoreCombat(combat);
+    combat_.healthPacksUsed = packsUsed;
+    restoreObjects(save.at("objects"));
+    const nlohmann::json& runtime = save.at("runtime");
+    restoreWorldRuntime(runtime);
+    // The scripts were saved knowing her unit: only another unit is news to them (World::tick), not a level load.
+    playerUnit_ = runtime.at("playerUnit").get<std::string>();
+    syncMaxHealth(); // the relics among `collected`
 }
 
 // tru.exe STREAM_LevelLoadAdjacentUnits (0x5D2940) keeps the portal neighbours of the player's unit loaded; a newly
@@ -601,6 +660,8 @@ void World::crossPortals(vec3 from, vec3 to) {
 }
 
 void World::touchCheckpoints() {
+    if (const auto e = script_.takeExperience()) // a script set a PLAYER TAILORING level (uiexperienceadjustmentmenu 6..10)
+        if (const Tailoring t{e->levels[0], e->levels[1], e->levels[2], e->levels[3], e->levels[4]}; t != tailoring_) setTailoring(t);
     for (const auto& e : script_.events()) {
         if (e.kind == script::EventKind::Autosave) ++autosaveRequests_;
         if (e.kind == script::EventKind::Wetness) e.target ? wetness_.soak() : wetness_.reset();
@@ -611,6 +672,7 @@ void World::touchCheckpoints() {
                     checkpoint_ = next;
                     enemies_.checkpoint();
                 }
+                checkpointDue_ = true; // tru.exe 0x196 / 1: every activation saves (0x5570F0), the active one's too
             }
     }
     const vec3 p = player_.state().pos;
@@ -621,23 +683,25 @@ void World::touchCheckpoints() {
                 checkpoint_ != CheckpointRef{u.data.name, c.id}) {
                 checkpoint_ = CheckpointRef{u.data.name, c.id};
                 enemies_.checkpoint();
+                checkpointDue_ = true;
             }
         }
 }
 
-void World::startChapter(int n) {
+void World::startChapter(int n, std::optional<Weapon> chosen) {
     const auto unit = std::string(kChapters.at(size_t(n)).unit);
     enterUnit(unit, std::nullopt); // throws before anything changes
     chapter = n;
     startUnit_ = unit, startSpawn_.reset();
     checkpoint_.reset();
+    checkpointSave_ = nullptr, checkpointDue_ = false; // the level start is saved when its first tick ends
     // tru.exe 0x71FFE0 message 0x23 -> 0x7198D0 [O]: a level start gives Lara the unit's loadout (level settings
     // +0x2B4 -> DTP: weapons and gadgets); no unit's lists g_healthpack, so she starts every level without packs.
     found[size_t(PickupKind::HealthPack)] = 0;
     health_.raiseMax(maxHealth()); // the relics kept (Treasure Hunt) or given up (New Game)
     health_.reset(); // [I] a chapter starts at full health, as a respawn (tru.exe 0x700060)
     script_.setPlayerObjects(chapterGear(n));
-    chapterLoadout(n);
+    chapterLoadout(n, chosen);
     announceChapter();
 }
 
@@ -700,6 +764,9 @@ void World::collectPickups(bool pressed) {
     collected.insert(best->id);
     ++found[size_t(best->kind)];
     pickedUp_.push_back({best->id, best->kind, bestPos, best->parent, best->reward});
+    // tru.exe 0x5DB6A0 [O]: a reward's first collection posts the active checkpoint its activation (0x196 / 1) again,
+    // which saves the game as it is now: what she has found stays found after a death.
+    if (checkpoint_ && best->kind != PickupKind::HealthPack) checkpointDue_ = true;
     if (best->kind == PickupKind::Relic) {
         // tru.exe 0x5DB6A0 [O]: the maximum rises with the count (health as it is), then the relic heals 300, to no more
         // than the new maximum + 50; health over the maximum decays (Health::tick).
