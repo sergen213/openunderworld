@@ -431,13 +431,28 @@ outfit (the original only reads `+0x294` on a level load).
 - **Explosion records** [O layout from data; I field meanings beyond damage / radius]: tag 0x2775 at an object's
   physical record +0x70: +4 damage, +6 damage at the edge [I], +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12
   cone angle. `squib_exploding_barrel` 800 / 800, radius 948, knock 500 / 250; `squib_explode_door` 5 / 2, radius 1896,
-  knock 1000 / 400. An uber action-19 birth of such an object blasts at the section's marker one tick later
+  knock 1000 / 400, angle 30. An uber action-19 birth of such an object blasts at the section's marker one tick later
   (`World::birthBlast` / `tickBlasts` / `blast`): damage class 4 to Lara, enemies and damageable objects in the radius
-  (so tanks set each other off), knock as units / s away from the centre [I, as the grenade].
+  (so tanks set each other off). The knock [O decomp]: the area hit 0x69F1E0 (called from 0x6A5C50's record hand-over
+  with +4 damage, +6, +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12 elevation) sends instances message 0x91 at knock .. edge
+  by distance, heading away from the centre at the elevation, and ends in 0x493170 → 0x492CC0 for the Havok shapes in
+  the radius: an impulse of 0.0004 × the shape's surface area × knock × (1 − distance / radius), capped per shape
+  (body +0x14C × 200 [U]), at the shape's point nearest the centre (0x4DF090), along (shape − centre) raised by half
+  their distance. Ours [I] (`physics::Scene::blast`): grenades change each body's velocity by near .. edge along that
+  raised line; a squib gives the same momentum along the body's heading from the centre at the record's elevation, at
+  the point of the body's bounds nearest the centre. A centre inside the body (the door squib is born at the foot of its
+  own leaf) has no heading: the body goes the way it already moves, else the way its centre of mass lies from the centre.
+  l3_bedroom_hall's leaf 4376 (blown off untouched) is kicked out at the foot and falls into the pit; pushed through its
+  centre of mass it only hopped and stood in its frame (494 wide in a doorway barely wider).
 - **Freed uber sections** [O action 10 removes a joint; I the body's motion]: a non-main section left without a joint
   (13 objects: `ma_uo_bedroom_door`, tentacle gears, the snake head, ship floor panels / grates / console, thor slide
   doors, chain debris, the naga statue) becomes a loose body with its collider, as do sections riding on it; the main
-  section uses the object's own loose flag. Saved with the section state.
+  section uses the object's own loose flag. It starts with the velocity its prismatic joint had when removed (the ring
+  door 4526 comes off its slide moving toward the rope's pull). Saved with the section state (not the velocity). Its
+  shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. Open
+  [U]: leaf 4526, pulled 44 out into its frame when freed, is pushed back by the level collision and stays standing in
+  the doorway (`ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` notes it; what clears it in tru.exe is not
+  decoded: nothing in the object's states moves it but the removed joint and the squib).
 
 ## Close combat
 
@@ -904,8 +919,8 @@ downstream reaction as tru.exe's scripts define it (`--report-objects`; PROGRESS
 
 | replay | spawn | what happens | asserted reaction |
 |---|---|---|---|
-| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematic: 6556.5,-33459.7) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) | throne section 0 state 2, its press plate in "in position" (-150..-90), seal 5701 vt 54 |
-| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | power gem 7498 carried 33 m to cog wheel 7312, set into section 1 while the wheel turns | cog wheel section 1 state 0 -> 1 |
+| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematics leave her at 8101.6,-32185.8) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) | throne section 0 state 2, its press plate in "in position" (-150..-90), seal 5701 vt 54 |
+| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | round the central column (waypoints) to power gem 7498, carried to cog wheel 7312, set into section 1 while the wheel turns | cog wheel section 1 state 0 -> 1 |
 | `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 | lever graph 1 -> 0 and its slider watch (a joint) |
 | `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 | elevator 2960 vt 54 (graph 0 -> 1), switch 2961 vt 62 |
 | `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole; a jump onto the block (its ledge loop), a standing jump from its top to the pole | lever graph 0 -> 1, its slider at -600 under her hang (state polehang), block under the pole, door 6505 raised 1200 |

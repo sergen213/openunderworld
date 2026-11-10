@@ -1052,12 +1052,41 @@ void Scene::Impl::buoyancy(float dt) {
     }
 }
 
-void Scene::blast(vec3 at, float radius, float near, float edge) {
+// A blast's push on the bodies in its radius. tru.exe has two rules [O]: 0x493170 -> 0x492CC0 gives each Havok shape an
+// impulse (0.0004 x its surface area x the knock x (1 - distance / radius), capped per shape) at its point nearest the
+// centre (0x4DF090), along (shape - centre) raised by half their distance (+Z; level with the blast: 26.6 degrees up);
+// and the area hit 0x69F1E0 knocks instances (message 0x91) at knock .. edge by their distance, heading away from the
+// centre, at the explosion record's elevation. Ours [I]: one velocity change per body of near .. edge units/s over the
+// radius along the raised line, at its centre of mass. With an `elevation` (degrees, an explosion record's: the squibs)
+// the same momentum goes along the body's heading from the centre at that elevation, as the instances', and at the
+// point of the body's bounds nearest the centre, as the shapes': squib_explode_door goes off at the foot of its own door
+// leaf and kicks the foot out of the snug doorway, where a push through the centre of mass only hops the leaf and leaves
+// it standing in its frame. A centre inside the body's bounds has no heading to it: the body goes the way it already
+// moves (the leaf pulled off its slide by the rope, toward Lara), else the way its centre of mass lies from the centre
+// (the leaf blown off untouched in l3_bedroom_hall: 30 units toward the hallway [O data], into the pit).
+void Scene::blast(vec3 at, float radius, float near, float edge, float elevation) {
     const auto push = [&](JPH::BodyID id) {
         const vec3 p = G(impl_->bi->GetCenterOfMassPosition(id)) * kUnitsPerMetre, d = p - at;
         const float l = glm::length(d);
         if (l >= radius) return;
-        impl_->bi->AddLinearVelocity(id, Jm((l > 1e-3f ? d / l : vec3(0, 0, 1)) * glm::mix(near, edge, l / radius)));
+        const float speed = glm::mix(near, edge, l / radius);
+        const float flat = glm::length(glm::vec2(d));
+        if (elevation < 0 || flat <= 1e-3f) {
+            impl_->bi->AddLinearVelocity(id, Jm((l > 1e-3f ? glm::normalize(d + vec3(0, 0, 0.5f * l)) : vec3(0, 0, 1)) * speed));
+            return;
+        }
+        float invMass = 0;
+        {
+            JPH::BodyLockRead lock(impl_->sys.GetBodyLockInterfaceNoLock(), id);
+            if (lock.Succeeded() && lock.GetBody().IsDynamic()) invMass = lock.GetBody().GetMotionProperties()->GetInverseMass();
+        }
+        if (invMass <= 0) return;
+        const JPH::AABox box = impl_->bi->GetTransformedShape(id).GetWorldSpaceBounds();
+        glm::vec2 heading = glm::vec2(d) / flat;
+        if (const glm::vec2 v(G(impl_->bi->GetLinearVelocity(id)) * kUnitsPerMetre); box.Contains(Jm(at)) && glm::length(v) > 1.0f)
+            heading = glm::normalize(v);
+        const vec3 dir(heading * std::cos(glm::radians(elevation)), std::sin(glm::radians(elevation)));
+        impl_->bi->AddImpulse(id, Jm(dir * speed) / invMass, JPH::RVec3(box.GetClosestPoint(Jm(at))));
     };
     for (size_t i = 0; i < bodies.size(); ++i)
         if (bodies[i].invMass > 0) push(impl_->hingeBodies[i]);

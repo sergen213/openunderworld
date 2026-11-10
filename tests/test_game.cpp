@@ -7526,9 +7526,11 @@ TEST(GameReal, PrologueFloorCollapsesAndTheDoorIsBlownOff) {
     for (int i = 0; i < 120 && w.player().state().state != State::Hang; ++i) w.tick(forward());
     ASSERT_EQ(w.player().state().state, State::Hang);
     EXPECT_EQ(w.collision().markup[size_t(w.player().state().ledge)].id, 969);
-    Actions press;
-    press.jump = true;
-    w.tick({}), w.tick(press), w.tick({}); // the saving grab's recovery
+    if (w.player().state().savingGrab > 0) { // a catch from high enough is a saving grab: Interact recovers it
+        Actions press;
+        press.interact = true;
+        w.tick({}), w.tick(press), w.tick({});
+    }
     for (int i = 0; i < 150 && w.player().state().clip != "ledgeb_idle"; ++i) w.tick({});
     ASSERT_EQ(w.player().state().clip, "ledgeb_idle");
     for (int i = 0; i < 6; ++i) w.tick(forward());

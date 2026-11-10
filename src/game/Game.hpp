@@ -1221,7 +1221,7 @@ private:
     bool uberInsert(int32_t uid, size_t section, bool inserted);
     bool uberTrigger(int32_t uid, size_t section, uint32_t trigger, uint32_t param); // 0x6D4790 / 0x6D4810
     int32_t uberSectionJoint(int32_t uid, int32_t section) const; // the simulated joint moving the section, -1 none
-    void uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose); // its last joint went: a loose body
+    void uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose, vec3 vel = vec3(0)); // its last joint went: a loose body
     bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles): grip, push, let go
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
@@ -1399,6 +1399,9 @@ private:
         // (model -> world), as ma_uo_bedroom_door's leaf once pulled or blown off its hinge. Saved.
         bool held = false, freed = false;
         glm::mat4 freedAt{1};
+        // The velocity the removed joint had (units/s, world): the body starts with it (a prismatic joint's slide; the
+        // ring door comes off its slide moving toward the rope's pull). Only its first step reads it: not saved.
+        vec3 freedVel{0};
     };
     std::map<std::pair<std::string, int32_t>, std::optional<physics::EngagementSet>> uberEngagements_; // (object, offset)
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };

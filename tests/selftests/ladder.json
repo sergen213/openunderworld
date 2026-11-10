@@ -2,9 +2,9 @@
   "version": 1,
   "name": "ladder",
   "chapter": "Core mechanics: ladder attach from the ground, climb up, climb down, step off",
-  "note": "l1_ship_sinking_hall ladder 234 (GameReal.ShipSinkingHallLadder).",
+  "note": "l1_ship_sinking_hall ladder 234 (GameReal.ShipSinkingHallLadder): it lies in its valve wall's plane (y = 29) and is climbed from the wall's open side, -Y.",
   "level": "l1_ship_sinking_hall",
-  "spawn": [1550, 29, 1000, 180],
+  "spawn": [1480, -120, 960, 90],
   "steps": [
     {"step": "attach", "input": ["0 forward 1"], "duration": 2,
      "until": {"probe": "player.state", "eq": "ladder"},

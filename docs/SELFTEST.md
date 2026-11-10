@@ -401,6 +401,7 @@ tested behaviour happen.
 | `balance_beam` | l4_temple | beam 1079: walk 140 units/s on its line, jump along it, its far end, losing balance into a ledge catch (1136) |
 | `grapple_swing` | l3_chapel | ring 4744 offered, throw, attach, Jump into the gap keeps the rope (hangs on 3632), no stick: the swing dies down, Forward held: it builds (peak height > 1000), Interact + forward / back climbs 711 / slides to 4400, jump off (1896 units/s), landing |
 | `prologue_hall_swing` | l3_main_hall | ring 4089 from the balcony: roped walk to the edge, Jump with the rope, swing over the burning staircase, leap off onto the far balcony (x < -2150, z 1716) |
+| `prologue_ring_door` | l3_main_bedroom | ring door 4526: throw onto its ring (mounted target), the stick alone walks her back roped and moves nothing, Interact held draws the leaf along its slide until it leaves the watched range (uber section 1: 0 -> 1 -> 2), the ring is no target and she lets go |
 | `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, the stick alone leaves the rope, Interact + back / forward rappels down / up (1327 / 1043 units/s), Jump leaps back off the wall and lets go |
 | `wall_run` | l5_valaskjalf | wall anchor 6750: camera behind her, right runs onto the wall and through the rope's arc over the pit, stepping onto the far ledge, rope let go |
 | `swim` | l1_seatop | drop into the sea, surface swim 1348.6 units/s, dive, under water (on the wetsuit's tanks the breath stays full), surfacing |

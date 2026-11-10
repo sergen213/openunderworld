@@ -386,8 +386,9 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
         // The section body the joint held: without another joint it is free and falls (uberFreeSection).
         const int32_t body = joint != rt.joints.end() && a.joint >= 0 ? data.joints[size_t(a.joint)].bodyB : -1;
         const std::optional<glm::mat4> pose = body >= 0 ? uberSectionBody(uid, body) : std::nullopt;
+        const vec3 vel = body >= 0 && !joint->second.hinge ? joint->second.axis * (joint->second.v * 30.0f) : vec3(0); // v: per 30 Hz frame
         rt.joints.erase(a.joint), rt.links.erase(a.joint);
-        if (pose) uberFreeSection(uid, body, *pose);
+        if (pose) uberFreeSection(uid, body, *pose, vel);
         break;
     }
     case 12: // limit (0x4D6310 -> 0x4D4510)
@@ -526,7 +527,7 @@ std::optional<glm::mat4> World::uberJointPose(int32_t uid) const {
 
 // The last joint of section `section` was removed with the section at model-space motion `pose`: a section other than
 // the object's own (its first on model 0, which Object::loose covers) that has collision becomes a loose body there.
-void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose) {
+void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose, vec3 vel) {
     auto& rt = uberRuntime_.at(uid);
     const auto& data = *uberData_.at(uid);
     const auto* o = script_.find(uid);
@@ -538,6 +539,7 @@ void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose)
         if (data.sections[k].model == 0) { main = k; break; }
     if (size_t(section) == main || !uberSectionPhysics(*o, size_t(section))) return;
     rt.sections[size_t(section)].freed = true, rt.sections[size_t(section)].freedAt = introModel(*o) * pose;
+    rt.sections[size_t(section)].freedVel = vel;
     // What hangs on it goes with it [I: as bodies of their own; tru.exe keeps their joints to the falling body]: the
     // bedroom door's ring (section 0, hinge 0 on the door) falls when the door leaves its slide.
     std::vector<std::pair<int32_t, int32_t>> riders; // joint, its body
@@ -550,7 +552,7 @@ void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose)
             if (auto* own = const_cast<script::Object*>(o); !own->loose) // World owns object motion
                 own->body = at.value_or(glm::mat4(1)), own->loose = true, syncedObjects_ = ~size_t(0);
         } else if (at) {
-            uberFreeSection(uid, body, *at);
+            uberFreeSection(uid, body, *at, vel);
         }
     }
 }
@@ -2101,7 +2103,11 @@ void World::stepPhysics(float dt) {
     for (const auto& [uid, rt] : uberRuntime_) // uber sections their last joint let go of (uberFreeSection)
         for (size_t k = 0; k < rt.sections.size(); ++k)
             if (const auto* o = rt.sections[k].freed && !rt.sections[k].removed ? script_.find(uid) : nullptr)
-                if (const auto* sp = uberSectionPhysics(*o, k)) loose.push_back({sectionId(uid, k), sp, rt.sections[k].freedAt}), looseIds.insert(uid);
+                if (const auto* sp = uberSectionPhysics(*o, k)) {
+                    loose.push_back({sectionId(uid, k), sp, rt.sections[k].freedAt});
+                    loose.back().vel = rt.sections[k].freedVel; // read when the body is made
+                    looseIds.insert(uid);
+                }
     physics_.setLoose(loose);
     const auto bikes = bikeVehicles();
     physics_.setVehicles(bikes); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result

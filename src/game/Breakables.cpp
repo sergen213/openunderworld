@@ -337,7 +337,7 @@ void World::blast(vec3 at, const ExplosionRecord& x) {
     for (const auto& [uid, b] : breakables_)
         if (glm::distance(at, vec3(b.frame[3])) < x.radius) struck.push_back(uid);
     for (const int32_t uid : struck) hitBreakable(uid, kDamageClassBlast, false);
-    physics_.blast(at, x.radius, x.knock, x.knockEdge);
+    physics_.blast(at, x.radius, x.knock, x.knockEdge, x.angle);
 }
 
 // Uber state action 0x13 gave birth to objectlist id `object` at `at`: an effect object with an explosion record goes

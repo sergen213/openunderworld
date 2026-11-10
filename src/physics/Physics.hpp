@@ -311,8 +311,9 @@ public:
     void setWater(std::span<const Water> water);
 
     // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge, loose
-    // and ragdoll bodies.
-    void blast(vec3 at, float radius, float near, float edge);
+    // and ragdoll bodies, along the line from `at` raised by half the distance; `elevation` >= 0 (degrees): along the
+    // body's heading from `at` at that elevation (Physics.cpp).
+    void blast(vec3 at, float radius, float near, float edge, float elevation = -1);
     // Vehicles, keyed by the caller. A new key starts at `model` (model -> world) at rest; existing ones keep simulating
     // with this step's `drive`, moved by `shift` (the caller's frame moved) and given `kick` (units/s, a hop or a hit);
     // missing keys are dropped. Their terrain is setTerrain's and setColliders'.

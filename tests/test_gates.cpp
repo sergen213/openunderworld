@@ -2106,6 +2106,21 @@ TEST(ProgressionReal, UberSections) {
     for (const auto& pr : phys.prims)
         std::printf("prim kind %d segment %d mass %d head %02x %02x %02x %02x pos %g %g %g size %g %g %g radius %g length %g\n", int(pr.kind), pr.segment, pr.mass,
                     pr.head[0], pr.head[1], pr.head[2], pr.head[3], pr.pos.x, pr.pos.y, pr.pos.z, pr.size.x, pr.size.y, pr.size.z, pr.radius, pr.length);
+    for (uint32_t m = 1; m < 32; ++m) { // the other models' (uber sections are instances of them)
+        physics::ObjectPhysics other;
+        try { other = physics::loadObjectPhysics(drm, m); } catch (const std::exception&) { break; }
+        if (other.prims.empty() && other.segments.empty()) break;
+        for (const auto& pr : other.prims)
+            std::printf("model %u prim kind %d segment %d mass %d head %02x %02x %02x %02x pos %g %g %g size %g %g %g radius %g length %g\n", m, int(pr.kind),
+                        pr.segment, pr.mass, pr.head[0], pr.head[1], pr.head[2], pr.head[3], pr.pos.x, pr.pos.y, pr.pos.z, pr.size.x, pr.size.y, pr.size.z,
+                        pr.radius, pr.length);
+        for (const auto& hm : other.hmarkers)
+            std::printf("model %u hmarker %u segment %d pos %g %g %g\n", m, hm.id, hm.segment, hm.pos.x, hm.pos.y, hm.pos.z);
+    }
+    for (const auto& hm : phys.hmarkers) std::printf("hmarker %u segment %d pos %g %g %g\n", hm.id, hm.segment, hm.pos.x, hm.pos.y, hm.pos.z);
+    if (const auto ub = formats::loadUberObject(drm))
+        for (size_t b = 0; b < ub->births.size(); ++b)
+            std::printf("birth %zu: object %u model %d marker %d\n", b, ub->births[b].object, ub->births[b].model, ub->births[b].marker);
     for (const auto& set : phys.engagements)
         for (const auto& r : set.records)
             std::printf("engagement set %d: kind %d shape %d segment %d centre %g %g %g r %g h %g\n", set.id, r.kind, r.shape, r.segment, r.centre.x,
@@ -2337,6 +2352,88 @@ TEST(ProgressionReal, TombGateNeedsBothBlocksAndThePull) {
     EXPECT_LT(glm::length(vec2(w.player().state().pos - p221)), 150.0f) << "she stood on the pad throughout";
     for (const int32_t uid : {45, 69, 70, 221, 222})
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+
+// Prologue ring door (C01-07; l3_main_bedroom 4526, ma_uo_bedroom_door) [O data]: the ring is model 0's grapple feature
+// (section 0, hinge 0 on the door), the door section 1 on slide 1 (limit 0..316 toward the room, watched over -47.4 ..
+// 31.6); the slide leaving that range is trigger 15 -> state 1, which removes the joint (the door is a loose body, its
+// ring with it) and bears squib_explode_door; 0.2 s later state 2. By input: the grapple key throws onto the ring, roped
+// she walks back without moving it, Interact held (stick back) draws the door along its slide (World::pullGrappled)
+// until it comes off 31.6 out; she lets go, the squib throws the leaf out of the doorway.
+TEST(ProgressionReal, PrologueRingDoorPulledOffByTheGrapple) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l3_main_bedroom");
+    auto& w = *wp;
+    for (int i = 0; i < 60; ++i) w.tick({});
+    ASSERT_TRUE(w.script().find(4526) && w.uberState(4526));
+    ASSERT_GE(w.uberState(4526)->size(), 2u);
+    EXPECT_EQ((*w.uberState(4526))[1], 0u);
+    vec3 ring(0);
+    for (const auto& u : w.units())
+        for (const auto& g : u.data.grapples)
+            if (g.uid == 4526) {
+                ring = g.pos + u.offset;
+                EXPECT_EQ(g.kind, game::GrappleKind::Mounted);
+                EXPECT_EQ(g.model, 0);
+            }
+    const auto* slide = w.uberJoint(4526, 1);
+    ASSERT_TRUE(slide && !slide->hinge);
+    const vec3 axis = slide->axis;
+    // Squarely in front of the door, on the side its slide leads to.
+    const auto spot = grappleFrom(w, 4526, 600, 2400, [&](vec3 p) { return glm::dot(glm::normalize(p + vec3(0, 0, 400) - ring), axis) > 0.8f; });
+    ASSERT_TRUE(spot) << "the ring is a grapple target from the room";
+    const vec3 through = glm::normalize(vec3(axis.x, axis.y, 0));
+    // The doorway, seen along the door's own line from the room side at the leaf's half height.
+    const vec3 eye = vec3(ring.x, ring.y, w.script().find(4526)->pos.z + 400) + through * 300.0f;
+    const auto shut = [&] {
+        const auto h = w.collision().raycast(eye, -through, 500);
+        return h && h->dynamic >= 0;
+    };
+    EXPECT_TRUE(shut()) << "the door shuts the doorway";
+    for (int i = 0; i < 40; ++i) w.tick({}); // the throw
+    ASSERT_EQ(w.player().state().state, game::State::GrapplePull);
+    ASSERT_EQ(w.player().state().grappleUid, 4526);
+    EXPECT_LT(std::abs(w.uberJoint(4526, 1)->x), 2.0f) << "roped only: the door stands";
+    const vec3 from = w.player().state().pos;
+    {
+        game::Actions back; // the stick alone walks her back on the rope
+        const float cy = w.camera().yaw;
+        back.move = vec2(through.x * std::sin(cy) - through.y * std::cos(cy), through.x * std::cos(cy) + through.y * std::sin(cy));
+        for (int i = 0; i < 20; ++i) w.tick(back);
+    }
+    EXPECT_GT(glm::dot(w.player().state().pos - from, through), 60.0f) << "walked back, roped";
+    ASSERT_EQ(w.player().state().grappleUid, 4526);
+    EXPECT_LT(std::abs(w.uberJoint(4526, 1)->x), 2.0f) << "no Interact: the door stands";
+    game::Actions pull; // Interact held, the stick back (away from the door, camera-relative)
+    pull.interact = true;
+    {
+        const float cy = w.camera().yaw;
+        pull.move = vec2(through.x * std::sin(cy) - through.y * std::cos(cy), through.x * std::cos(cy) + through.y * std::sin(cy));
+    }
+    float farthest = 0;
+    bool exploded = false;
+    int off = -1;
+    for (int i = 0; i < 300 && w.player().state().grappleUid; ++i) {
+        w.tick(pull);
+        if (const auto* j = w.uberJoint(4526, 1)) farthest = std::max(farthest, j->x);
+        exploded |= !w.explosions().empty();
+        if (off < 0 && (*w.uberState(4526))[1] == 1u) off = i;
+    }
+    EXPECT_GT(farthest, 25.0f) << "drawn along its slide";
+    EXPECT_GE(off, 5) << "31.6 out at 240 units/s (4 a 30 Hz frame)";
+    EXPECT_LE(off, 20);
+    EXPECT_EQ(w.player().state().grappleUid, 0) << "the door is off its slide: no target any more, she lets go";
+    for (int i = 0; i < 180; ++i) w.tick({}), exploded |= !w.explosions().empty();
+    // Open [U]: the freed leaf (494 wide) stays standing in its frame: pulled 44 out it is pushed back by the level's
+    // collision and the squib's kick does not get it through (shut() is still true here); in l3_bedroom_hall the same
+    // leaf, blown off untouched, falls into the pit (GameReal.PrologueFloorCollapsesAndTheDoorIsBlownOff).
+    EXPECT_EQ((*w.uberState(4526))[1], 2u) << "trigger 15 (out of its range) -> state 1, 0.2 s -> state 2";
+    EXPECT_FALSE(w.uberJoint(4526, 1)) << "the slide is removed";
+    EXPECT_TRUE(exploded) << "squib_explode_door";
+    EXPECT_FALSE(w.health().dead());
+    EXPECT_FALSE(w.grappleTarget() && w.grappleTarget()->uid == 4526) << "the fallen ring is no target";
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 4526) << key.second;
 }
 
 // l1_seafloor eye door (C02-09 / 11 / 13; ms_ani_eye_puzzle_piece 232 right / 233 left, ms_ani_eye_puzzle_piece_center
