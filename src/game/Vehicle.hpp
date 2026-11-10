@@ -41,6 +41,13 @@ struct BikeTuning {
     float rpm[3] = {1000, 10000, 18000}, torque[3] = {30, 20, 20};
     float reverseSpeed = 1877.6f;   // +0x74 15 mph, reverse ratio +0x6C 4 against gear +0x54 6: rpm top at 10 mph
     float gearRatio = 6, reverseRatio = 4, reverseTorque = 20; // +0x54, +0x6C; +0xBC N m in reverse (0x791D10)
+    // Reverse (0x790E40 state 3 -> 2): standing with only the brake held, the reverse gear engages once a frame counter
+    // passes +0x1F8 (6 frames at 30 Hz): 7 frames.
+    float reverseDelay = 7 / 30.f;
+    // Launch / speed burst (0x793680 flag bits 23 / 22, 0x791D10): throttle with the brake or hand brake held revs the
+    // engine from +0x88 to +0x8C rpm over +0x1C4 s (the charge); letting the brake go with the throttle still held
+    // drives for +0x1C0 s with the torque read at the revved rpm, times +0x0C x (charge / +0x1C4).
+    float launchRpm[2] = {3000, 18000}, launchCharge = 0.3f, launchTime = 0.1f, launchTorque = 10;
     float springHz = 1.8f, springDamping = 0.35f; // +0xA4 / +0xA8, times each wheel's +0x18 (0x792900)
     float forceRaise = 0.7f;        // +0x28: wheel forces act 0.7 x (attach -> contact) above the contact (0x792900)
     struct Wheel {                  // vehicle data +0x90 list (0x28 bytes) + the model's HInfo
@@ -81,8 +88,7 @@ struct BikeTuning {
     // [I] Jolt's tyres let the data's stunt pushes spin the bike round several times a second (the exe's wheel
     // constraints and donut anchor body hold it): the spin is capped in a power slide / donut.
     float stuntYawRate = 2.5f;      // rad/s
-    // [I] (no hop in the record or 0x790E40's states):
-    float hopSpeed = 1100;                           // jump: vertical velocity added, units/s
+    // [I]:
     float mountReach = 250, dismountSpeed = 200;     // units, units/s
     float ramSpeed = 800, ramDamage = 0.5f;          // units/s; health per unit/s of speed
     float wheelbase() const { return frontAxle.y < rearAxle.y ? rearAxle.y - frontAxle.y : frontAxle.y - rearAxle.y; }
@@ -109,14 +115,16 @@ struct Bike {
     glm::vec3 vel{0};     // body velocity, units/s
     bool air = false;     // no wheel on the ground
     float airStartZ = 0;  // world z at take-off (fall damage)
-    float hopT = -1, landT = -1; // seconds since the hop / the landing, -1 = none
+    float airT = -1, landT = -1; // seconds since the take-off / the landing, -1 = none
     float brakeT = 0;     // seconds the brakes have been on (BikeTuning::brakeRamp)
     float rpm = 0, throttle = 0; // engine, as of the last step
+    float launchCharge = 0, launchT = -1, launchRpm = 0; // s revved (+0x43C); s since the launch (+0x778), -1 none; its rpm (+0x770)
+    float reverseT = 0;   // seconds the brake has been held at a standstill (BikeTuning::reverseDelay)
     BikeStunt stunt = BikeStunt::None;
     float stuntT = 0;     // seconds in the stunt (burnout: the charge)
     int8_t stuntDir = 0;  // power slide / donut: +1 left, -1 right
     physics::VehicleDrive drive; // input for the next physics step
-    glm::vec3 kick{0};    // velocity added in the next physics step (hop, ram)
+    glm::vec3 kick{0};    // velocity added in the next physics step (ram)
     std::optional<glm::vec3> simWorld; // world origin after the last physics step; nullopt: no Jolt body (parked, new)
     BikePhase phase = BikePhase::Parked;
     double t = 0;         // seconds into the mount / dismount clip

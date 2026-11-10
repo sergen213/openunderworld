@@ -276,7 +276,7 @@ const std::vector<std::string_view>& selftest::measurementNames() {
     static const std::vector<std::string_view> k = {
         "start.x", "start.y", "start.z", "end.x", "end.y", "end.z", "moved", "distance", "horizontal", "height_gain", "peak_height", "drop",
         "peak_speed", "peak_rise_speed", "peak_fall_speed", "air_time", "air_ticks", "ticks", "seconds", "teleports", "health_start",
-        "health_end", "health_min", "health_lost", "states", "clips", "calls", "events", "pickups"};
+        "health_end", "health_min", "health_lost", "states", "clips", "calls", "events", "pickups", "hazards"};
     return k;
 }
 
@@ -306,6 +306,7 @@ Value Measurements::get(std::string_view n) const {
     if (n == "calls") return calls;
     if (n == "events") return events;
     if (n == "pickups") return pickups;
+    if (n == "hazards") return hazards;
     return {};
 }
 
@@ -420,6 +421,7 @@ bool SelfTest::probeKnown(std::string_view name) {
     if (fixedProbes().contains(name)) return true;
     const auto p = split(name);
     if (p[0] == "step") return std::ranges::find(selftest::measurementNames(), name.substr(std::min<size_t>(5, name.size()))) != selftest::measurementNames().end();
+    if (p.size() == 3 && p[0] == "weapon" && game::weaponByName(std::string(p[1]))) return p[2] == "clip" || p[2] == "reserve";
     if (p.size() < 3 || !integer(p[1])) return false;
     const std::string_view f = p[2];
     if (p[0] == "object") {
@@ -472,6 +474,12 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
     }
     if (p[0] == "weapon") {
         const auto& c = w.combat();
+        if (p.size() == 3) { // weapon.<name>.clip / .reserve: that weapon's, in hand or not
+            const auto named = game::weaponByName(std::string(p[1]));
+            if (!named) return {};
+            const auto n = size_t(*named);
+            return p[2] == "clip" ? num(c.clip[n][0] + c.clip[n][1]) : num(c.reserve[n]);
+        }
         const auto i = size_t(c.weapon);
         const std::string_view f = p[1];
         if (f == "current") return str(game::weaponName(c.weapon));
@@ -799,6 +807,10 @@ void SelfTest::observe(game::World& w) {
     for (const auto& e : w.script().events())
         m_.note(m_.events, std::string(script::eventName(e.kind)) + ":" + std::to_string(e.source) + ">" + std::to_string(e.target));
     for (const auto& pk : w.pickedUp()) m_.note(m_.pickups, std::string(game::pickupKindName(pk.kind)) + ":" + std::to_string(pk.id));
+    for (const auto& hit : w.hazardHits()) { // every hit, repeats included
+        const auto* o = w.script().find(hit.uid);
+        m_.hazards.push_back((o ? o->name : std::to_string(hit.uid)) + ":" + std::to_string(int(hit.damage)));
+    }
     for (auto& t : trackers_)
         if (t.condition().over != Over::End) t.sample(probe(w, t.condition().probe));
     if (trace)

@@ -218,7 +218,37 @@ TEST(Save, MigratesVersion1) {
     EXPECT_TRUE(s.collected.empty());
     EXPECT_TRUE(s.script.empty());
     // and it is written back as the current version
-    EXPECT_EQ(save::serialize(s).rfind("OUSAVE 2 ", 0), 0u);
+    EXPECT_EQ(save::serialize(s).rfind("OUSAVE 3 ", 0), 0u);
+}
+
+// Version 2 (up to 0.42) had no checkpoint save: it loads with none, and the state its first tick ends with becomes
+// what a death restores; written back it is version 3 with that save inside.
+TEST(Save, MigratesVersion2) {
+    game::World w(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    for (int i = 0; i < 5; ++i) w.tick({});
+    w.collected = {3};
+    auto v3 = save::capture(w);
+    ASSERT_TRUE(v3.checkpointSave.is_object());
+    const std::string current = save::serialize(v3);
+    // the same body as version 2 wrote it: no "checkpointSave" key
+    auto body = nlohmann::json::parse(current.substr(current.find('\n') + 1));
+    body.erase("checkpointSave");
+    const auto old = save::parse(withHeader(2, body.dump(1)));
+    EXPECT_TRUE(old.checkpointSave.is_null());
+    EXPECT_EQ(old.collected, (std::set<int32_t>{3}));
+    game::World l(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    save::apply(old, l);
+    EXPECT_TRUE(l.checkpointSave().is_null());
+    l.tick({});
+    ASSERT_TRUE(l.checkpointSave().is_object());
+    EXPECT_EQ(l.checkpointSave().at("collected"), nlohmann::json(std::set<int32_t>{3}));
+    const std::string again = save::serialize(save::capture(l));
+    EXPECT_EQ(again.rfind("OUSAVE 3 ", 0), 0u);
+    EXPECT_EQ(save::serialize(save::parse(again)), again);
+    // a malformed checkpoint save is rejected at the load, not at the death that would read it
+    body["checkpointSave"] = {{"ticks", 5}};
+    EXPECT_THROW(save::parse(withHeader(3, body.dump(1))), save::SaveError);
+    EXPECT_THROW(save::parse(withHeader(4, body.dump(1))), save::SaveError); // a newer version is never guessed
 }
 
 TEST(Save, SlotNames) {
@@ -307,6 +337,80 @@ TEST(Stream, CheckpointAndRespawn) {
     w.respawn(); // no checkpoint: start unit + start spawn
     EXPECT_EQ(w.currentUnit().data.name, "a");
     EXPECT_EQ(w.player().state().pos, vec3(1500, 0, 0));
+}
+
+// A death restores the checkpoint save (tru.exe "Restore Game" 0x557130): the world as it was when the checkpoint was
+// activated - what was collected, the grenades, the light, the weapons with their rounds, the clock - with Lara on the
+// checkpoint at full health and her hands empty. Before any checkpoint it is the level start that comes back. The save
+// travels in a save game bit for bit.
+TEST(Stream, DeathRestoresTheCheckpointSave) {
+    game::World w(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    const auto uzi = size_t(game::Weapon::Uzi), shotgun = size_t(game::Weapon::Shotgun);
+    EXPECT_TRUE(w.checkpointSave().is_null());
+    w.giveWeapon(game::Weapon::Uzi, 50);
+    w.tick({});
+    ASSERT_TRUE(w.checkpointSave().is_object()) << "the level start is saved when its first tick ends";
+    EXPECT_EQ(w.checkpointSave().at("ticks"), 1u);
+    const int grenades0 = w.grenades;
+    ASSERT_GT(grenades0, 1);
+    // before the checkpoint
+    w.collected = {3}, w.found = {1, 0, 2}, w.grenades = grenades0 - 1, w.flashlight = true;
+    for (int i = 0; i < 200 && !w.checkpoint(); ++i) w.tick(forward());
+    ASSERT_TRUE(w.checkpoint());
+    const uint64_t at = w.ticks();
+    EXPECT_EQ(w.checkpointSave().at("ticks"), at);
+    const auto atCheckpoint = w.checkpointSave();
+    // after it
+    w.collected.insert(4), w.found = {2, 1, 0}, w.grenades = 0, w.flashlight = false;
+    w.giveWeapon(game::Weapon::Shotgun, 5);
+    w.damageLara(400, vec3(0), game::kDamageAbsolute);
+    for (int i = 0; i < 30; ++i) w.tick(forward());
+    EXPECT_EQ(w.checkpointSave(), atCheckpoint) << "nothing saves between checkpoints";
+    EXPECT_LT(w.health().value(), w.health().max());
+    const auto bytes = save::serialize(save::capture(w)); // a save game taken after the checkpoint
+    EXPECT_EQ(save::serialize(save::parse(bytes)), bytes);
+
+    const auto expectRestored = [&](game::World& x, const char* what) {
+        EXPECT_EQ(x.currentUnit().data.name, "b") << what;
+        EXPECT_EQ(x.player().state().pos, vec3(11500, 6000, 500)) << what;
+        EXPECT_EQ(x.collected, (std::set<int32_t>{3})) << what;
+        EXPECT_EQ(x.found, (std::array<int, 3>{1, 0, 2})) << what;
+        EXPECT_EQ(x.grenades, grenades0 - 1) << what;
+        EXPECT_TRUE(x.flashlight) << what;
+        EXPECT_EQ(x.combat().secondary, game::Weapon::Uzi) << what;
+        EXPECT_EQ(x.combat().reserve[uzi], 50) << what;
+        EXPECT_EQ(x.combat().reserve[shotgun], 0) << what;
+        EXPECT_EQ(x.combat().weapon, game::Weapon::Pistols) << what;
+        EXPECT_FALSE(x.combat().drawn) << what;
+        EXPECT_EQ(x.health().value(), x.health().max()) << what;
+        EXPECT_EQ(x.ticks(), at) << what;
+        EXPECT_EQ(x.checkpoint(), (game::CheckpointRef{"b", 77})) << what;
+        EXPECT_EQ(x.checkpointSave(), atCheckpoint) << what << ": it can be restored again";
+    };
+    w.respawn();
+    expectRestored(w, "death");
+    w.collected.insert(9);
+    w.respawn();
+    expectRestored(w, "second death");
+
+    game::World l(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    save::apply(save::parse(bytes), l);
+    EXPECT_EQ(l.collected, (std::set<int32_t>{3, 4})) << "the load itself is the later state";
+    EXPECT_EQ(l.combat().reserve[shotgun], 5);
+    l.respawn();
+    expectRestored(l, "death after a load");
+
+    // No checkpoint: the level start's save, at the start spawn.
+    game::World s(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    s.tick({});
+    s.collected = {8}, s.grenades = 0;
+    for (int i = 0; i < 20; ++i) s.tick(forward());
+    s.respawn();
+    EXPECT_EQ(s.currentUnit().data.name, "a");
+    EXPECT_EQ(s.player().state().pos, vec3(1500, 0, 0));
+    EXPECT_TRUE(s.collected.empty());
+    EXPECT_EQ(s.grenades, grenades0);
+    EXPECT_EQ(s.ticks(), 1u);
 }
 
 TEST(Stream, MissingNeighbourIsAWarning) {
@@ -1020,6 +1124,171 @@ TEST(StreamReal, UberJointSaveLoad) {
     EXPECT_EQ(fresh.serializeObjects(), expect);
 }
 
+// A death restores the checkpoint save (Stream.DeathRestoresTheCheckpointSave) on a real level, l3_chapel: with
+// checkpoint 4738 active Lara pulls switch 4819, which turns the shadow
+// pillars (uber 4837), spends rounds and takes a hit; her death puts the pillars, the switch's script and her rounds
+// back as the checkpoint saved them, and the switch works again afterwards. A treasure collected after the checkpoint
+// saves again (0x5DB6A0), so the pillars it found turned stay turned.
+TEST(StreamReal, DeathRestoresTheCheckpointSave) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    game::World w(load, "l3_chapel", anims);
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    w.startChapter(3);
+    w.enterUnit("l3_chapel", std::nullopt);
+    for (int i = 0; i < 300; ++i) w.tick({});
+    const auto place = [&](vec3 pos) {
+        game::PlayerState s;
+        s.pos = pos;
+        w.restore(s, 0, -0.25f);
+    };
+    const auto checkpointPos = [&]() -> std::optional<vec3> {
+        for (const auto& u : w.units())
+            for (const auto& c : u.data.checkpoints)
+                if (c.id == 4738) return c.pos + u.offset;
+        return std::nullopt;
+    };
+    ASSERT_TRUE(checkpointPos());
+    place(*checkpointPos());
+    for (int i = 0; i < 5; ++i) w.tick({});
+    ASSERT_EQ(w.checkpoint(), (game::CheckpointRef{"l3_chapel", 4738}));
+    const auto atCheckpoint = w.checkpointSave();
+    ASSERT_TRUE(atCheckpoint.is_object());
+    EXPECT_EQ(atCheckpoint.at("ticks"), w.ticks() - 4) << "saved at the end of the tick that activated it";
+    ASSERT_TRUE(w.uberState(4837));
+    const auto pillars0 = *w.uberState(4837);
+    const auto shotgun = size_t(game::Weapon::Shotgun);
+    const int reserve0 = w.combat().reserve[shotgun];
+    ASSERT_GT(reserve0, 5);
+
+    game::Actions use;
+    use.interact = true;
+    const auto pull = [&] {
+        const auto* sw = w.script().find(4819);
+        ASSERT_TRUE(sw);
+        place(sw->pos);
+        for (int i = 0; i < 10; ++i) w.tick(use);
+        for (int i = 0; i < 300; ++i) w.tick({});
+    };
+    pull();
+    const auto pillars1 = *w.uberState(4837);
+    ASSERT_NE(pillars1, pillars0) << "the switch turned a pillar";
+    w.giveWeapon(game::Weapon::Shotgun, 5);
+    w.damageLara(300, vec3(0), game::kDamageAbsolute);
+    w.tick({});
+    EXPECT_EQ(w.checkpointSave(), atCheckpoint);
+    const auto bytes = save::serialize(save::capture(w));
+    EXPECT_EQ(save::serialize(save::parse(bytes)), bytes) << "bit-exact with the checkpoint save inside";
+
+    const auto die = [&](game::World& x) { // ticks from the death to the respawn
+        for (int i = 0; i < 200 && !x.health().dead(); ++i) x.kill(), x.tick({}); // once the hit's invulnerability window is over
+        int ticks = 1;
+        for (; ticks < 400 && (x.player().state().state == game::State::Dead || x.health().dead()); ++ticks) x.tick({});
+        return ticks;
+    };
+    const uint64_t at = atCheckpoint.at("ticks").get<uint64_t>();
+    const int fade = die(w);
+    EXPECT_NEAR(fade, 181, 2) << "the 90-frame wipe (DeathState 0x75AF90)";
+    EXPECT_EQ(w.ticks(), at + 1) << "the clock is the checkpoint's again";
+    EXPECT_LT(glm::distance(w.player().state().pos, *checkpointPos()), 60.0f);
+    EXPECT_EQ(w.health().value(), w.health().max());
+    EXPECT_EQ(w.combat().reserve[shotgun], reserve0);
+    while (w.ticks() < at + 4) w.tick({}); // the clock the first pull started at
+    ASSERT_TRUE(w.uberState(4837));
+    EXPECT_EQ(*w.uberState(4837), pillars0) << "the pillars are back";
+    pull();
+    EXPECT_EQ(*w.uberState(4837), pillars1) << "and the switch works as the first time";
+
+    // The save game taken after the pull: its load has the pillars turned, its death the checkpoint's world.
+    game::World l(load, "l3_chapel", anims);
+    l.script().setBigfile(&bf);
+    l.enemies().setBigfile(&bf);
+    l.onCinematic = [](const std::string&, bool) {};
+    save::apply(save::parse(bytes), l);
+    for (int i = 0; i < 20; ++i) l.tick({});
+    EXPECT_EQ(*l.uberState(4837), pillars1);
+    EXPECT_EQ(l.combat().reserve[shotgun], 5);
+    die(l);
+    for (int i = 0; i < 30; ++i) l.tick({});
+    EXPECT_EQ(*l.uberState(4837), pillars0);
+    EXPECT_EQ(l.combat().reserve[shotgun], reserve0);
+
+    // A reward collected with the checkpoint active saves again: Lara still respawns on the checkpoint, the world is
+    // the pickup's.
+    std::optional<int32_t> treasure; // any treasure of the loaded units lying in the open
+    vec3 treasureAt{0};
+    for (const auto& u : w.units())
+        for (const auto& k : u.data.pickups)
+            if (k.kind == game::PickupKind::Treasure && !formats::isBornUid(k.id) && !treasure) treasure = k.id, treasureAt = k.pos + u.offset;
+    ASSERT_TRUE(treasure);
+    const int32_t id = *treasure;
+    place(treasureAt);
+    for (int i = 0; i < 5 && !w.collected.contains(id); ++i) w.tick(use);
+    ASSERT_TRUE(w.collected.contains(id));
+    w.tick({});
+    EXPECT_TRUE(w.checkpointSave().at("collected").get<std::set<int32_t>>().contains(id));
+    die(w);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_TRUE(w.collected.contains(id));
+    EXPECT_EQ(*w.uberState(4837), pillars1);
+    EXPECT_LT(glm::distance(glm::vec2(w.player().state().pos), glm::vec2(*checkpointPos())), 60.0f);
+}
+
+// A restore replaces the physics scene (physics::Scene::restore drops every hinge), so the colliders of the world
+// before it must go with it: syncObjects reads the swing of the doors it had (World::colliders_ -> Scene::angle) and
+// threw vector::at on the first tick after a death, or after a save loaded into a running world, in any unit with a
+// hinged door or lever (l4_trailstart has them). Also after streaming on to the neighbour unit and dying there.
+TEST(StreamReal, RestoreWithHingedDoorsLoaded) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    game::World w(load, "l4_trailstart", anims);
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    w.startChapter(4);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const size_t hinges = w.physics().hinges.size();
+    ASSERT_GT(hinges, 0u) << "the unit has hinged doors";
+    const auto die = [&] {
+        const int before = w.respawns();
+        for (int i = 0; i < 200 && !w.health().dead(); ++i) w.kill(), w.tick({});
+        for (int i = 0; i < 400 && w.respawns() == before; ++i) w.tick({});
+        EXPECT_EQ(w.respawns(), before + 1);
+        for (int i = 0; i < 30; ++i) w.tick({});
+    };
+    die();
+    EXPECT_EQ(w.physics().hinges.size(), hinges) << "the doors hang on their hinges again";
+
+    // A save game loaded into the running world.
+    const auto bytes = save::serialize(save::capture(w));
+    for (int i = 0; i < 10; ++i) w.tick({});
+    save::apply(save::parse(bytes), w);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_EQ(w.physics().hinges.size(), hinges);
+
+    // Streamed on: Lara stands in the neighbour unit (its joints and doors exist now), dies and is restored into the
+    // checkpoint save's unit.
+    ASSERT_FALSE(w.currentUnit().data.portals.empty());
+    const std::string next = w.currentUnit().data.portals[0].toUnit;
+    const game::LoadedUnit* n = nullptr;
+    for (const auto& u : w.units())
+        if (u.data.name == next) n = &u;
+    ASSERT_TRUE(n && n->data.spawn);
+    game::PlayerState s;
+    s.pos = n->data.spawn->pos + n->offset;
+    w.restore(s, 0, -0.25f);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    die();
+    EXPECT_EQ(w.currentUnit().data.name, "l4_trailstart");
+    EXPECT_EQ(w.physics().hinges.size(), hinges);
+}
+
 // Ragdolls save and load mid-fall: l4_ballcourt poacher 6540 (born and killed by the scripts as Lara crosses plane 6546)
 // slides off its ledge as a ragdoll; a save while it falls restores its bodies (IDs, velocities, contacts) and its enemy
 // state, so the fall and the settled pose come out bit for bit, for every corpse (6540-6542) and the whole world (uber
@@ -1125,6 +1394,13 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
     const Case cases[] = {
         {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle, // born by plane 6546, its scripts kill poachers, ragdolls fall
          [](game::World& w) { w.script().call(6546, 54); }},
+        // Between l4_traprooms' second crusher pair as it slams shut: saved while the jaws move, 4 ticks before the plate
+        // on jaw 5886 kills her (a solid hazard hurts only while it moves: where it stood a tick ago is saved).
+        {"l4_traprooms", game::Spawn{{55, -18100, 6400}, -1.5707963f}, 192, 120, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t >= 111 && t < 186 ? 1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return !w.health().dead() && !w.hazards().empty(); }},
         // (dual targeting, 0x71E490: with two mercs in range each pistol takes its own, so the first falls later than under one lock)
         {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 1400, [](uint64_t t) { // runs at the mercs, locked on, firing
              game::Actions a;

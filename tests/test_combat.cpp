@@ -2,10 +2,15 @@
 #include "game/Game.hpp"
 
 #include "cdc/Cdc.hpp"
+#include "config/Config.hpp"
 #include "engine/FrameClock.hpp"
 #include "formats/Formats.hpp"
 
 #include <gtest/gtest.h>
+
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
 
 #include "app/game/Autopilot.hpp"
 
@@ -873,6 +878,7 @@ TEST(CombatReal, WeaponData) {
         EXPECT_EQ(p->ammo, def.ammo);
         EXPECT_EQ(p->ammoSlot, def.ammoSlot);
         EXPECT_EQ(p->maxReserve, def.maxReserve);
+        EXPECT_EQ(p->startReserve, def.startReserve);
         EXPECT_EQ(p->clip, def.clip);
         EXPECT_EQ(p->pellets, def.pellets);
         EXPECT_EQ(p->infinite, def.infinite);
@@ -1071,6 +1077,99 @@ TEST(Tailoring, PresetsScaleHealthAndCapacity) {
     game::Tailoring custom;
     custom.ammo = 0;
     EXPECT_EQ(custom.preset(), -1);
+}
+
+// The scripts read the PLAYER TAILORING levels and the hint toggles (uiexperienceadjustmentmenu 11..18): they follow the
+// World's; the preset is the last one picked. The config keeps the four levels (default 1 each, the original's).
+TEST(Tailoring, ScriptsAndConfigSeeTheLevels) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    const auto& e = w->script().experience();
+    EXPECT_EQ(e.levels, (std::array<int, 5>{1, 1, 1, 1, 1}));
+    EXPECT_EQ(e.preset, 1);
+    EXPECT_TRUE(e.trainingText && e.metaIcons);
+    w->setTailoring(game::Tailoring::preset(2));
+    EXPECT_EQ(e.levels, (std::array<int, 5>{2, 2, 2, 2, 2}));
+    EXPECT_EQ(e.preset, 2);
+    game::Tailoring custom = game::Tailoring::preset(2);
+    custom.enemyHealth = 0, custom.savingGrab = 1;
+    w->setTailoring(custom);
+    EXPECT_EQ(e.levels, (std::array<int, 5>{0, 2, 2, 1, 2}));
+    EXPECT_EQ(e.preset, 2) << "a single level changed: the preset picked stays";
+    w->setHints(false, true);
+    EXPECT_FALSE(e.trainingText);
+    EXPECT_TRUE(e.metaIcons);
+
+    const auto dir = std::filesystem::temp_directory_path() / ("ou_tailoring_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    config::Config c;
+    EXPECT_EQ(c.game.tailoring, (std::array<int, 4>{1, 1, 1, 1}));
+    c.game.tailoring = {0, 2, 1, 2};
+    config::save(dir / "config.json", c);
+    EXPECT_EQ(config::load(dir / "config.json").game.tailoring, (std::array<int, 4>{0, 2, 1, 2}));
+    { std::ofstream(dir / "config.json") << R"({"game": {"tailoring": [1, 3, 1, 1]}})"; }
+    EXPECT_THROW(config::load(dir / "config.json"), std::runtime_error);
+    { std::ofstream(dir / "config.json") << R"({"game": {"sfx_volume": 3}})"; }
+    EXPECT_EQ(config::load(dir / "config.json").game.tailoring, (std::array<int, 4>{1, 1, 1, 1})) << "older configs: the defaults";
+    std::filesystem::remove_all(dir);
+}
+
+// A level start's loadout (tru.exe 0x7198D0 -> 0x6F57F0(1)): the level list's secondary, or the one chosen for a level
+// started from the menu in its place; every secondary a full clip and its start amount at the AMMUNITION CAPACITY level
+// (the data's start table equals its maximum table); holstered.
+TEST(Combat, LevelStartLoadout) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    using game::Weapon;
+    const Weapon expect[] = {Weapon::Shotgun, Weapon::Speargun, Weapon::Uzi, Weapon::Shotgun, Weapon::Tranquilizer,
+                             Weapon::Uzi, Weapon::AssaultRifle, Weapon::Speargun};
+    for (int ch = 0; ch < 8; ++ch) {
+        w->chapterLoadout(ch);
+        EXPECT_EQ(w->combat().secondary, expect[ch]) << ch;
+        EXPECT_EQ(w->combat().weapon, Weapon::Pistols) << ch;
+        EXPECT_FALSE(w->combat().drawn) << ch;
+    }
+    const int start[3][5] = {{400, 90, 40, 300, 25}, {240, 72, 25, 210, 15}, {160, 42, 15, 120, 10}}; // uzi, shotgun, spear, rifle, tranq
+    const Weapon guns[] = {Weapon::Uzi, Weapon::Shotgun, Weapon::Speargun, Weapon::AssaultRifle, Weapon::Tranquilizer};
+    for (int level = 0; level < 3; ++level) {
+        w->setTailoring(game::Tailoring::preset(level));
+        w->chapterLoadout(4);
+        for (int g = 0; g < 5; ++g) {
+            const auto i = size_t(guns[g]);
+            EXPECT_EQ(w->combat().reserve[i], start[level][g]) << level << " " << g;
+            EXPECT_EQ(w->combat().reserve[i], w->anims().weapons[i].startReserve[size_t(level)]);
+            EXPECT_EQ(w->combat().clip[i][0], w->anims().weapons[i].clip);
+        }
+    }
+    w->chapterLoadout(4, Weapon::AssaultRifle); // chosen on the menu's weapon page
+    EXPECT_EQ(w->combat().secondary, Weapon::AssaultRifle);
+    w->chapterLoadout(4, Weapon::Pistols); // not a secondary: the level's own
+    EXPECT_EQ(w->combat().secondary, Weapon::Tranquilizer);
+    w->chapterLoadout(4, Weapon::ThorHammer);
+    EXPECT_EQ(w->combat().secondary, Weapon::Tranquilizer);
+}
+
+// A death in a world without units (no checkpoint save to restore) keeps the secondary, its rounds and the meter; her
+// hands are empty and her health full.
+TEST(Combat, RespawnKeepsTheLoadout) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    w->giveWeapon(game::Weapon::Shotgun, 17);
+    Actions draw;
+    draw.draw = true;
+    w->tick(draw);
+    for (int i = 0; i < 60; ++i) w->tick({});
+    ASSERT_TRUE(w->combat().drawn);
+    w->damageLara(300, {}, game::kDamageAbsolute);
+    w->respawn();
+    EXPECT_EQ(w->combat().secondary, game::Weapon::Shotgun);
+    EXPECT_EQ(w->combat().reserve[size_t(game::Weapon::Shotgun)], 17);
+    EXPECT_EQ(w->combat().clip[size_t(game::Weapon::Shotgun)][0], w->anims().weapons[size_t(game::Weapon::Shotgun)].clip);
+    EXPECT_FALSE(w->combat().drawn);
+    EXPECT_EQ(w->health().value(), w->health().max());
 }
 
 // A grenade thrown at a locked dummy 800 ahead sticks to it, goes off after the fuse, kills it and hurts Lara.
@@ -2419,4 +2518,23 @@ TEST(CombatReal, NatlaFireballsBlastThrowAndBurn) {
     // the pool 8309 lies at its marker 8680 during the fight (its constructor's `marker` locals), far under the rings
     for (const auto& m : w.collision().markup)
         if (m.type == 10 && m.id == 8309) EXPECT_LT(m.points[1].z, -10000.0f);
+}
+
+// Damaging collision posts its amount as a hit of class 6 (tru.exe 0x5D4C60 -> message 0x11C -> 0x6F5030): priority 4,
+// so a second touch inside the 30-frame window is ignored and a touch of 12345 (hammers, crusher plates) is death.
+TEST(Combat, ContactDamageClassWindowAndKill) {
+    game::Health h;
+    EXPECT_TRUE(h.damage(400, game::kDamageContact)); // a grinder
+    EXPECT_EQ(h.value(), 600);
+    for (int i = 0; i < 59; ++i) {
+        h.tick(1.0f / 60);
+        EXPECT_FALSE(h.damage(400, game::kDamageContact)) << i;
+    }
+    EXPECT_FALSE(h.damage(100, game::kDamageLight)) << "an enemy's light blow ranks below it";
+    h.tick(2.0f / 60);
+    EXPECT_TRUE(h.damage(400, game::kDamageContact));
+    EXPECT_EQ(h.value(), 200);
+    h.tick(1.1f);
+    EXPECT_TRUE(h.damage(12345, game::kDamageContact));
+    EXPECT_TRUE(h.dead());
 }

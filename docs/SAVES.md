@@ -34,7 +34,7 @@ by the next save.
 Reading (`save::readFile`) parses the slot. If the slot is missing or invalid, it falls back to the `.bak` file and
 reports it: `ou-game` logs `(from .bak)`. If both are bad, the error names both failures.
 
-## Format (version 2)
+## Format (version 3)
 
 A text header line, then a JSON object:
 
@@ -75,6 +75,7 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `runtime` | object or null | `World::serializeRuntime()`: `camera` (orbit camera position, target, angles, `up` and `fov`, `focus` and `orbit` = its lag, desired point, distance, mode blend, look-idle clock, last moves, level-camera hint as (unit, markup index); `spline` = a playing reveal camera: its unit, spline index, script value, camera and target tracks [state, resume, pause, time, u, node, position in the spline unit's frame, next key event], ended / notified / held, FOV blend; `blendOut` and `blendFrom` = the blend back to the orbit camera), `hair` (Lara's hair particles: current, previous, animated positions), `anim` (her crossfade layers: clip names, times, fades), `aimTime`, `bones` (her pose, which the next tick's camera reads), `playerUnit` (the unit the scripts were last told she is in: no level-load callbacks again), `air`, `submerged`, `hingeLimits` (multibody 77 limits per object); missing/null (older saves) = seeded as `World::restore` does (no spline camera) |
 | `combat` | object or null | `World::serializeCombat()`: `weapon`, `secondary`, `guns` (clips, reserves), `adrenaline`, and `state` (draw, aim, lock target as enemy uid, cooldowns, reload, recoil clocks, spread RNG, held buttons, head-shot window); missing `state` (older saves) = holstered |
 | `checkpoint` | null or `{unit, id}` | last checkpoint: intro unique id in `unit` |
+| `checkpointSave` | object or null | `World::checkpointSave()`: the world a death restores ("Checkpoints and respawn"): `ticks`, `collected`, `born`, `found`, `grenades`, `flashlight`, and `script`, `enemies`, `vehicles`, `combat`, `objects` as the fields of the same names, `runtime` = the world's part of `runtime` (`playerUnit`, `hingeLimits`, `limitsOff`, `water`). A malformed one is rejected at the load. null = none yet: the state the first tick after the load ends with becomes it |
 | `collected` | [int] | intro unique ids of picked-up rewards (a treasure from an urn: `formats::bornUid(urn)`) (`World::collected`, src/game/Progress.hpp) |
 | `born` | [int] | treasures out of their broken urns (`World::born`; ids as in `collected`); missing = none |
 | `chapter` | int | `game::kChapters` index; missing (older saves) = the unit's `l<N>_` prefix, else 0 |
@@ -86,7 +87,7 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `script` | object | `script::Runtime::serialize()` (src/script): per-intro trigger/switch/door/block state (anim-graph clocks included), opaque here. Its `runtime` block (version 1) holds the running scripts: `aux` (unit / global script instances by (unit, type): uid, fields, strings, properties), `player` (Lara's script uid), `nextAux`, `live` (intros alive when saved), `machines` (per intro: the suspended VM thread and sleeping fibers as frames of object uid, function owner type + index, pc, locals, stack; `mainPending`; constructor-made setup: joint ranges, Lara tracking, spline ranges), `threads` (unit scripts' threads by uid), `clocks`, queued `messages`, `tick`, `playerUnit`, the screen fade, control / UI flags, the last plane-crossing position. A load gives the unit scripts their saved uids and resumes live intros and unit scripts when their unit loads, without running their constructors or startup again; missing (older saves) = threads start afresh |
 | `enemies` | object or null | `ai::Enemies::serialize()`: `states` (intro uid → full enemy state in its unit's frame: mode, pos, yaw, clip + time, health, AI timers, aim RNG; generator spawns under their generator's uid; loaded and streamed-out enemies), `firedGenerators`, `deadAtCheckpoint`, `guards` (intro uid → guard zones `[record, node, inner, outer]`; older saves: none until the intro scripts' constructors set them); states also hold the cover node and its cooldown (modes 14 return, 15 cover, 16 crawl); missing/null (older saves) = enemies left as they are |
 | `vehicles` | object or null | `World::serializeVehicles()`: `riding` (uid of the bike Lara is on, 0 = none), `mounts`, `bikes` (per motorcycle intro uid: `unit` and `pos` in that unit's frame, `yaw`, `pitch`, `roll`, `speed`, `steer`, `wheel`, `rearWheel`, `air`, `stunt` (0 none, 1 burnout, 2 power slide, 3 donut), `stuntT`, `stuntDir`, `vel`, `airStartZ`, `kick`, `brakeT`, `hopT`, `landT`, `phase` parked/mount/ride/dismount, `t`); missing/null (older saves) = bikes left as they are, missing newer fields = 0. The ridden bike's Jolt body is in `objects.physics` (key `v<uid>`). Lara on a bike is `player.state` `vehicle` (GAMEPLAY.md "Motorcycle") |
-| `objects` | object or null | `World::serializeObjects()`: `uber` (per uber object uid: `sections` [state, transition, seconds, transition length] (older saves have a fifth entry, ignored), `fired` once-events mask, `commanded`, `intangible` (action 5), `grappleOff` (action 0x1A, not a grapple target; missing = false), `motion` [t, active], `joints` [joint index, position, velocity per frame, limit lo, hi, limit on, motor speed per frame, bound, motor on], `links` (created link joints), `watches` [section, joint, range, mode, inside]), `held` (uid of the portable Lara carries, 0 = none), `physics` {`version` 1, `state` hex of `physics::Scene::save`: body IDs by entity, constraint zeros, Jolt's recorded state; a load continues the simulation bit for bit, docs/formats/PHYSICS.md "Saves"; missing = the scene is rebuilt from the objects}; missing/null (older saves) = uber objects start in their default states. Objects not streamed in since a load keep their saved entry |
+| `objects` | object or null | `World::serializeObjects()`: `uber` (per uber object uid: `sections` [state, transition, seconds, transition length] (older saves have a fifth entry, ignored), `fired` once-events mask, `commanded`, `intangible` (action 5), `grappleOff` (action 0x1A, not a grapple target; missing = false), `motion` [t, active], `joints` [joint index, position, velocity per frame, limit lo, hi, limit on, motor speed per frame, bound, motor on], `links` (created link joints), `watches` [section, joint, range, mode, inside]), `held` (uid of the portable Lara carries, 0 = none), `physics` {`version` 1, `state` hex of `physics::Scene::save`: body IDs by entity, constraint zeros, Jolt's recorded state; a load continues the simulation bit for bit, docs/formats/PHYSICS.md "Saves"; missing = the scene is rebuilt from the objects}; missing/null (older saves) = uber objects start in their default states. Objects not streamed in since a load keep their saved entry; `hazards` (only where the loaded units have damaging collision primitives: [uid, n-th primitive of that object, x, y, z] = where each stood a tick ago, so a solid one's "it moves" test gives the same hit on the same tick after a load; absent = at rest) |
 
 Ledge and water indices are stored as (unit, index within that unit), not as indices into the merged collision mesh.
 That index depends on which units happen to be loaded and in what order.
@@ -98,15 +99,18 @@ Numbers are written with round-trip precision. Float state is restored bit-exact
 - **1** — the development draft format. It was never released; it is kept as the migration test case.
   - Fields: `unit`, `player.{state,pos,yaw}`, and `checkpoint` as a bare intro id of the save's unit.
   - No camera, items or script.
-- **2** — current.
+- **2** — up to 0.42: no `checkpointSave` (a death kept the world as it was and reset Lara's weapons).
+- **3** — current.
 
-`parse()` migrates 1 → 2:
+`parse()` migrates 1 → 2 → 3:
 
 - `checkpoint: <id>` becomes `{unit: <save unit>, id}`;
-- missing fields take defaults (camera behind Lara, no items, empty script state).
+- missing fields take defaults (camera behind Lara, no items, empty script state);
+- 2 → 3: `checkpointSave` is null, so the game as it is one tick after the load is what the next death restores
+  (Lara still respawns on the saved checkpoint).
 
 Saves are always written as the current version. Newer versions are rejected, never guessed.
-`Save.MigratesVersion1` loads a hand-written v1 file.
+`Save.MigratesVersion1` loads a hand-written v1 file, `Save.MigratesVersion2` a version-2 body.
 
 ## Load
 
@@ -158,21 +162,21 @@ as copies (a string member written after the save no longer aliases them); the W
   checks the save version ("Wrong version for save").
 - [O] The checkpoint object's birth (`0x6B0040`) compares its intro id with the stored checkpoint id to show the
   activated state.
-- [U] What activates a checkpoint. `checkpoint.drm` carries 50+ Script sections and its render model has no drawable
-  batches; the trigger logic is in those scripts, which are not decoded.
-- [I] Ours: `UnitData::checkpoints` holds every `checkpoint` / `invis_checkpoint` intro: unique id, position, and
-  heading = rotation z − 90° (as the player intro). When Lara's feet come within 250 units horizontally and 400
-  vertically of one, `World::checkpoint()` becomes {unit, id}. l4_pool has 12 checkpoints and l4_ragnarok_room 2.
-- `World::respawn()` (death) calls `enterUnit(checkpoint unit)` and places Lara at the checkpoint intro, or at the
-  start unit's spawn if no checkpoint was touched, at full health. Death comes from Combat (health ≤ 0 on the
-  ground); `ou-game --die SECONDS` forces it.
-- [I] Enemies are reset with it (`ai::Enemies::reset`): when a new checkpoint is touched the enemies dead at that
-  moment are remembered (`Enemies::checkpoint`); on respawn those stay dead and every other enemy returns to its
-  placement at full health, generator spawns are removed and their generators re-armed. tru.exe restores the
-  checkpoint save (`0x556E90`), which holds per-intro instance state; that path was not traced, so which enemies the
-  original keeps dead is inferred. Our saves hold every enemy's state and the dead-at-checkpoint set, so a load
-  restores enemies exactly; whether the original's save keeps mid-fight state (rather than checkpoint state) is
-  not traced [U].
+- [O] What activates a checkpoint: message 0x196 / 1 from the script native `checkpointbase` 3; the activation saves
+  the whole game (`0x5570F0`), as do a reward's first collection and the level start. The full decode is in
+  docs/GAMEPLAY.md "Checkpoints and respawn".
+- Ours: `UnitData::checkpoints` holds every `checkpoint` / `invis_checkpoint` intro: unique id, position, and
+  heading = rotation z − 90° (as the player intro). The script event, or [I] Lara's feet within 250 units
+  horizontally and 400 vertically of one, makes `World::checkpoint()` {unit, id} and takes the checkpoint save
+  (`World::checkpointSave()`) when that tick ends. l4_pool has 12 checkpoints and l4_ragnarok_room 2.
+- `World::respawn()` (death, after the 90-frame wipe) sets the clock back, calls `enterUnit(checkpoint unit)`,
+  restores the checkpoint save (scripts with music / reverb, enemies, vehicles, weapons and rounds, objects and
+  physics, water levels, `collected` / `born` / `found`, grenades, the light) and places Lara at the checkpoint
+  intro, or at the start unit's spawn with the level start's save if no checkpoint was touched, at full health.
+  Death comes from Combat (health ≤ 0 on the ground); `ou-game --die SECONDS` forces it.
+- Enemies come back exactly as the checkpoint save holds them (`World::restoreEnemies`): dead ones stay dead,
+  the others are where and how they were at that moment, generator spawns included. (`ai::Enemies::reset` with its
+  dead-at-checkpoint set remains for a World without units.)
 
 ## ou-game
 

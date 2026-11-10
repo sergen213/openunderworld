@@ -558,6 +558,7 @@ void World::restoreEnemies(const nlohmann::json& j) {
 }
 
 void World::tick(const Actions& input) {
+    if (std::exchange(respawnDue_, false)) respawn(); // the death wipe ended last tick (Combat.cpp)
     joinStreams(false); // background neighbour loads due this tick (Stream.cpp)
     prev_ = player_.state();
     prevCam_ = cam_;
@@ -810,6 +811,10 @@ void World::tick(const Actions& input) {
     updatePose(dt, false);
     rumble.tick(real), cameraShake.tick(real); // output only (Feedback.hpp): 0x4817B0, 0x5F3390
     ++ticks_;
+    // The checkpoint save (tru.exe 0x5570F0), taken between ticks as a save game is: a checkpoint activated or a
+    // reward collected this tick, or none yet (the level start, 0x5D40C0). Never of a dead Lara.
+    if (!units_.empty() && (checkpointDue_ || checkpointSave_.is_null()) && !health_.dead() && player_.state().state != State::Dead)
+        checkpointSave_ = serializeCheckpoint(), checkpointDue_ = false;
     if (!units_.empty()) checkLevelEnd(); // last: a chapter change re-spawns Lara (enterUnit)
 }
 
