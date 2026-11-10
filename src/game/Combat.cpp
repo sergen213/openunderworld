@@ -978,6 +978,7 @@ std::optional<GrappleTarget> World::grappleTarget() const {
     for (const auto& u : units_)
         for (const auto& g : u.data.grapples) {
             if (script_.grappleOff(g.uid) || uberGrappleOff(g.uid)) continue; // `unit` 13 took its markers / uber action 0x1A
+            if (g.model > 0 && !uberShowsModel(g.uid, g.model)) continue;     // the feature's model is not an instance now
             GrappleTarget t = g;
             t.pos += u.offset;
             const vec3 v = t.pos - eye;

@@ -550,6 +550,7 @@ struct GrappleTarget {
     vec3 pos{0};
     GrappleKind kind = GrappleKind::Ceiling;
     float range = 0, rope = 0;
+    int model = 0; // the object model carrying the grapple feature: offered while a section shows it (uber objects)
 };
 // A `checkpoint` / `invis_checkpoint` intro: respawn transform in its unit's frame (tru.exe 0x5D40C0).
 struct Checkpoint {
@@ -744,6 +745,17 @@ public:
     bool uberGrappleOff(int32_t uid) const {
         const auto it = uberRuntime_.find(uid);
         return it != uberRuntime_.end() && it->second.grappleOff;
+    }
+    // Does a live section of uber object `uid` draw object model `model` now? True for objects without uber data (yet):
+    // their models are not sections. A grapple feature on model > 0 is a target only then (tru.exe walks the features of
+    // the section instances' current models, query 0x14C).
+    bool uberShowsModel(int32_t uid, int32_t model) const {
+        const auto rt = uberRuntime_.find(uid);
+        const auto data = uberData_.find(uid);
+        if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return true;
+        for (size_t i = 0; i < rt->second.sections.size(); ++i)
+            if (!rt->second.sections[i].removed && uberSectionModel(uid, int32_t(i)) == model) return true;
+        return false;
     }
     // Hit message 0x11C on an uber object's sections (0x6D4690): shots, Mjolnir's bolts, the ground pound.
     void damageObject(int32_t uid, float damage, int damageClass);
