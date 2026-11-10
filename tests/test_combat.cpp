@@ -1348,3 +1348,145 @@ TEST(Combat, ScriptTimeRampEasesInAndOut) {
     EXPECT_FLOAT_EQ(w.combat().timeScale, 1);
     EXPECT_FLOAT_EQ(w.combat().worldScale, 1);
 }
+
+// One-handed pistols from a real ledge (docs/GAMEPLAY.md "One-handed shooting"): l4_pool, hanging from ledge 1253 (as
+// GameReal.PoolDropToHang reaches it by a jump), a real panther on the floor behind her: Target Lock + Fire shoot it
+// with the right-hand pistol from the hang, the left hand stays on the ledge and she keeps hanging.
+TEST(CombatReal, PoolLedgeHangShootsPantherOneHanded) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(loader, "l4_pool", anims, game::Spawn{{-4291, 4225.6f, 3100}, glm::radians(-157.9f)});
+    w.enemies().setBigfile(&bf);
+    const auto& s = w.player().state();
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 80 && s.state != State::Hang; ++i) w.tick(i == 5 ? jump : Actions{});
+    ASSERT_EQ(s.state, State::Hang);
+    ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 1253);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    // the panther: on the floor behind her, 1500 out from the wall
+    const vec3 back = -vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
+    const auto floor = w.collision().raycast(s.pos + back * 1500.0f + vec3(0, 0, 200), {0, 0, -1}, 4000, 0x0F);
+    ASSERT_TRUE(floor);
+    const auto panther = game::ai::loadEnemyType(bf, "cat_panther");
+    auto& cat = w.enemies().add(panther, 990001, floor->point, 0);
+    const float full = cat.health();
+    const vec3 hung = s.pos;
+    bool oneHand = false;
+    for (int i = 0; i < 400 && cat.alive(); ++i) {
+        w.tick(guns(true));
+        ASSERT_EQ(s.state, State::Hang) << i;
+        for (const auto& shot : w.combat().shots) EXPECT_EQ(shot.hand, 0) << "only the right-hand gun fires from a hold";
+        if (w.combat().drawn && s.clip.find("ledgeb") != std::string::npos) oneHand = true;
+    }
+    std::printf("hang shooting: %u shots, panther %.0f -> %.0f, clip %s\n", w.combat().shotsFired, full, cat.health(), s.clip.c_str());
+    EXPECT_GE(w.combat().shotsFired, 3u);
+    EXPECT_LT(cat.health(), full) << "the panther took the shots";
+    EXPECT_EQ(w.combat().weapon, game::Weapon::Pistols);
+    EXPECT_NEAR(glm::distance(s.pos, hung), 0, 1);
+    EXPECT_TRUE(oneHand);
+}
+
+// Adrenaline head shot on a real enemy (docs/GAMEPLAY.md "Head shot"): l4_pool, the meter filled by pistol damage,
+// then a real panther in close range: Grapple starts the move with the clip hosted in the panther's DRM
+// (hosted_enemy_aa_handguns, its events 5 / 4 the window), the pip is steered in, Fire kills it.
+TEST(CombatReal, PoolHeadShotOnPanther) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(loader, "l4_pool", anims);
+    w.enemies().setBigfile(&bf);
+    const auto panther = game::ai::loadEnemyType(bf, "cat_panther");
+    const auto& move = panther->tuning.headShot;
+    ASSERT_TRUE(move.valid());
+    EXPECT_NEAR(move.distance, 316.06f, 0.01f); // list node +0x54: +0x10
+    EXPECT_NEAR(move.blend, 6.0f / 30, 1e-4f);  // +0x14: 6 frames
+    EXPECT_EQ(move.clips[0].name, "hosted_enemy_aa_handguns");
+    EXPECT_GT(move.clips[0].open, 0);
+    EXPECT_LT(move.clips[0].open, move.clips[0].close); // the hosted clip's events 5 / 4
+    {
+        game::DummyTarget t;
+        t.hp = 1e6f;
+        t.pos = {-13385, -600, 4500};
+        w.targets.push_back(&t);
+        for (int i = 0; i < 60 * 20 && w.combat().adrenaline < 1; ++i) w.tick(guns(true));
+        w.targets.clear();
+        for (int i = 0; i < 5; ++i) w.tick({});
+    }
+    ASSERT_EQ(w.combat().adrenaline, 1);
+    ASSERT_TRUE(w.combat().headShotReady);
+    const auto& s = w.player().state();
+    auto& cat = w.enemies().add(panther, 990001, s.pos + vec3(-900, 0, 0), 0);
+    const Actions lock = guns(false);
+    int started = -1;
+    for (int i = 0; i < 240 && started < 0; ++i) { // locked on; Grapple as soon as it is offered
+        Actions a = lock;
+        a.grapple = w.headShotAvailable();
+        w.tick(a);
+        if (w.combat().headShot >= 0) started = i;
+    }
+    ASSERT_GE(started, 0) << "no head shot offered; panther at " << glm::distance(cat.state().pos, s.pos);
+    EXPECT_EQ(w.combat().adrenaline, 0);
+    EXPECT_EQ(s.clip, "cat_panther:hosted_enemy_aa_handguns");
+    EXPECT_EQ(s.grappleUid, 0);
+    EXPECT_NEAR(glm::distance(glm::vec2(cat.state().pos), glm::vec2(s.pos)), move.distance, 2.0f);
+    for (int i = 0; i < 120 && w.combat().slowMo <= 0; ++i) w.tick(lock);
+    ASSERT_GT(w.combat().slowMo, 0) << "the window opens on the clip's event 5";
+    for (int i = 0; i < 200 && glm::length(w.combat().pip) > 0.3f && w.combat().headShot >= 0; ++i) {
+        Actions steer = lock;
+        const auto d = -glm::normalize(w.combat().pip);
+        steer.look = {-d.x * 0.3f, d.y * 0.3f};
+        w.tick(steer);
+    }
+    ASSERT_GE(w.combat().headShot, 0) << "the move was cut short";
+    EXPECT_NEAR(w.combat().timeScale, 0.2f, 0.01f);
+    Actions shoot = lock;
+    shoot.fire = true;
+    w.tick(shoot);
+    EXPECT_FALSE(cat.alive());
+    for (int i = 0; i < 90; ++i) w.tick({});
+    EXPECT_EQ(cat.state().mode, game::ai::Mode::Dead);
+    EXPECT_NE(cat.state().clip.find("adren"), std::string::npos) << cat.state().clip;
+    EXPECT_FLOAT_EQ(w.combat().timeScale, 1);
+    std::printf("head shot: started +%d, window %.2f..%.2f s, death clip %s\n", started, move.clips[0].open, move.clips[0].close, cat.state().clip.c_str());
+}
+
+// Manual aim on a real enemy (docs/GAMEPLAY.md "Manual aim"): l4_pool, a real panther; no lock is taken, the shots go
+// where the view's centre points and hurt it.
+TEST(CombatReal, PoolManualAimHitsPanther) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(loader, "l4_pool", anims);
+    w.enemies().setBigfile(&bf);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto panther = game::ai::loadEnemyType(bf, "cat_panther");
+    auto& cat = w.enemies().add(panther, 990001, w.player().state().pos + vec3(-1500, -600, 0), 0);
+    const float full = cat.health();
+    Actions press;
+    press.manualAim = true;
+    w.tick(press);
+    ASSERT_TRUE(w.combat().manualAim);
+    w.tick({});
+    EXPECT_EQ(w.cameraMode(), 23);
+    int hits = 0;
+    for (int i = 0; i < 600 && cat.alive(); ++i) {
+        Actions a;
+        a.look = lookAt(w, cat.aimPoint());
+        a.fire = i > 30;
+        const float before = cat.health();
+        w.tick(a);
+        EXPECT_FALSE(w.combat().locked);
+        hits += cat.health() < before;
+    }
+    std::printf("manual aim: %u shots, %d hits, panther %.0f -> %.0f\n", w.combat().shotsFired, hits, full, cat.health());
+    EXPECT_GE(hits, 3);
+    EXPECT_LT(cat.health(), full - 60);
+}
