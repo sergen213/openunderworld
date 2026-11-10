@@ -6605,6 +6605,31 @@ TEST(Game, ChimneyJumpRefusesFlaggedWall) {
     EXPECT_NE(w->player().state().state, State::WallJump);
 }
 
+// tru.exe 0x7594C0 refuses the wall jump while the jump query in effect carries flag 0x80 (+0x2C): the standing jump's
+// q2 does. Under Wine a standing jump 111 from an unflagged wall (l2_junglehub, column A) is a plain jump, apex 201.6.
+TEST(Game, ChimneyJumpNotFromAStandingJump) {
+    auto w = makeWorld(shaftMesh(), {290, 0, 0}); // 110 from wall A, facing it
+    const auto& s = w->player().state();
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    float top = 0;
+    bool airborne = false;
+    for (int i = 0; i < 150; ++i) {
+        w->tick({});
+        ASSERT_NE(s.state, State::WallJump) << "tick " << i;
+        airborne = airborne || s.state == State::Jump;
+        top = std::max(top, s.pos.z);
+    }
+    EXPECT_TRUE(airborne);
+    EXPECT_NEAR(top, 201.6f, 1.0f);
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.x, 290, 0.5f) << "she came down where she stood";
+    // the same shaft with the stick into the wall: the stick jump's query (q43) has no such flag
+    auto w2 = makeWorld(shaftMesh(), {100, 0, 0});
+    EXPECT_TRUE(jumpAtWall(*w2));
+}
+
 // Saved on the wall mid-chimney and restored into a fresh world, the climb goes on tick for tick as it does unsaved.
 TEST(Game, ChimneyJumpSaveLoadContinuesIdentically) {
     auto w = makeWorld(shaftMesh(), {0, 0, 0});

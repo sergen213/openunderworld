@@ -2252,6 +2252,12 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             // tru.exe's chart tests the wall jump on its 30 Hz frames: a jump back off a wall (77.27 up a frame)
             // comes inside the attach's zVel window (<= 9 x 5.72443) on its fifth, 314.8 higher.
             const float frame = std::floor(s_.jumpTime * 30.0f + 1e-3f);
+            // 0x7594C0 first asks the jump query in effect (player +0xA84 -> 0x6F1950): flag 0x80 of its +0x2C means no
+            // wall jump at all. The queries that carry it are the falls and the jumps launched straight up (q2 the
+            // standing jump, q10 hang up, q23 ladder up, q31 DICE up, q35 pole top up, q55 the wall hug's twist), none
+            // of the ones with a horizontal launch [O-data]; tru.exe under Wine: a standing jump 111 from l2_junglehub's
+            // unflagged column face is a plain 201.6 jump [O-runtime, docs/REFERENCE_COMPARISON.md].
+            if (s_.state == State::Jump && s_.jumpTime == 0 && glm::length(xy(s_.vel)) < 1.0f) s_.jumpAimed = true;
             if (s_.state == State::Jump) s_.jumpTime += dt;
             const bool test = s_.state == State::Jump && !s_.jumpAimed && std::floor(s_.jumpTime * 30.0f + 1e-3f) > frame;
             airMove(dt, move);
