@@ -8315,3 +8315,83 @@ TEST(GameReal, CrusherJawsOpenCloseAndKill) {
     EXPECT_TRUE(w.health().dead());
     EXPECT_LT(gap(5886), 2 * 79.01f + 80) << "closed on her";
 }
+
+// l5_valaskjalf: the roller sets (ar_ei_grinders: three rollers of 400 each, overlap volumes) on the walkway of the
+// second hammer row. Running into them costs 400 a touch, once per invulnerability window.
+TEST(GameReal, RollersCost400ATouch) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    HazardWorld h("l5_valaskjalf", game::Spawn{{-6200, -75221, -6900}, 0.0f});
+    game::World& w = h.w;
+    for (int i = 0; i < 20; ++i) w.tick({});
+    EXPECT_EQ(w.health().value(), 1000);
+    Actions run;
+    run.move = {0, 1};
+    std::vector<uint64_t> hits;
+    for (int i = 0; i < 400 && !w.health().dead(); ++i) {
+        w.tick(run);
+        for (const auto& hit : w.hazardHits()) {
+            EXPECT_EQ(h.name(hit.uid), "ar_ei_grinders");
+            EXPECT_EQ(hit.damage, 400);
+            hits.push_back(w.ticks());
+            if (hits.size() == 1) EXPECT_NEAR(w.health().value(), 600, 0.5);
+        }
+    }
+    ASSERT_EQ(hits.size(), 3u) << "400 + 400 + 400 of 1000 (she regenerates only up to 250)";
+    EXPECT_GE(hits[1] - hits[0], 60u);
+    EXPECT_GE(hits[2] - hits[1], 60u);
+    EXPECT_TRUE(w.health().dead());
+}
+
+// A solid damaging primitive at rest does not hurt: the crusher pairs stand closed (their plates of 12345 between the
+// jaws) until volume 5905's clocks run, and the spear rows of the blade house stand out of the floor. Lara is put
+// against a resting spear row (ca_ani_adren_spears, 1000 on its tips) by her spawn and stays alive; l4_traprooms has
+// 3 spear rows and 2 blade pairs.
+TEST(GameReal, RestingSolidHazardsDoNotHurt) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    HazardWorld h("l4_traprooms", game::Spawn{{14560, -43300, 6400}, glm::radians(-90.0f)});
+    game::World& w = h.w;
+    w.tick({});
+    int spears = 0, blades = 0;
+    for (const auto& s : w.hazards()) {
+        const std::string name = h.name(s.uid);
+        if (name == "ca_ani_adren_spears") {
+            ++spears;
+            EXPECT_EQ(s.damage, 1000);
+            EXPECT_FALSE(s.sensor);
+        } else if (name == "ca_ani_adren_blades") {
+            ++blades;
+            EXPECT_EQ(s.damage, 1000);
+        } else if (name == "ca_ei_flame_trap") {
+            EXPECT_TRUE(s.sensor);
+        }
+    }
+    EXPECT_EQ(spears, 3);
+    EXPECT_EQ(blades, 4);
+    // Up against the first row's tips once the row stands (its joint drives it out of the floor in the first second):
+    // lifted to their height she touches them (the capsule test), they do not move.
+    for (int i = 0; i < 120; ++i) w.tick({});
+    ASSERT_EQ(w.health().value(), 1000);
+    const auto row = std::find_if(w.hazards().begin(), w.hazards().end(), [](const auto& s) { return s.uid == 5894; });
+    ASSERT_NE(row, w.hazards().end());
+    game::PlayerState at = w.player().state();
+    at.pos = vec3(row->world[3]) + vec3(0, 60, -250);
+    w.restore(at, at.yaw, 0);
+    const vec3 a = at.pos + vec3(0, 0, 79), b = at.pos + vec3(0, 0, 410);
+    EXPECT_LT(game::hazardDistance(*row, a, b), 79.01f) << "her capsule reaches the tips";
+    const float z = row->world[3].z;
+    w.tick({});
+    EXPECT_NEAR(row->world[3].z, z, 0.01) << "at rest";
+    EXPECT_TRUE(w.hazardHits().empty());
+    EXPECT_EQ(w.health().value(), 1000);
+}
+
+// l3_main_hall (the burning manor): a firetriggervolume's script burns 300 through the `health` native when Lara is
+// in it (then again each time its burn sound ends: the app's sound clock, not run here).
+TEST(GameReal, FireVolumeBurns300) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    HazardWorld h("l3_main_hall", game::Spawn{{1113.6f, 256, 260}, 0.0f});
+    game::World& w = h.w;
+    float lowest = 1000;
+    for (int i = 0; i < 30; ++i) w.tick({}), lowest = std::min(lowest, w.health().value());
+    EXPECT_NEAR(lowest, 700, 0.5);
+}

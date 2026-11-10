@@ -13,6 +13,15 @@
 // hammers, the crusher jaws, the falling snake head), 1000 the Xibalba blades and spears, 800 the flame jets, 500 the
 // kraken's tentacles and Valaskjalf's weights, 400 the grinders, 9999 the sinking ship's barrel run.
 //
+// Two ways in [O]: the handlers of overlap pairs (0x4928C0 / 0x492980) call 0x4923C0 for every overlap; the rigid
+// contact handler (0x496220, pair categories 1-1 and 11-1) only when one of the pair's contact points moves at 5 or
+// more (v.v >= 25.0), then posts the collision message 0x3B, and Lara's handler of 0x3B (0x75A020) calls 0x4923C0. [I]
+// which primitives take which way: those whose flag bytes 2-3 are not 0 (the flame jets, the roller sets, the weights'
+// under-plates, the ship's barrel run, the squib spheres) are overlap volumes; the others (crusher and door plates,
+// blades, spears, tentacles, the hammer) are solid collision and hurt only while they move at 5 units a second or
+// more [I: the unit, and that her own movement into a resting one does not count: the gate of Baldr's tomb is one
+// 2000 plate she walks up to; open: a Wine check of a walk into it].
+//
 // Ours: each primitive is posed with its segment (the collider's transform where the segment collides, else the uber
 // section's joint and clip, else the anim graph's pose) and tested against Lara's capsule. [I] kContactSkin: a solid
 // primitive keeps her capsule out, so touching counts from that far off its surface.
@@ -23,10 +32,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace ou::game {
 
 namespace {
+constexpr float kContactSpeed = 5.0f; // [O] 0x496220: 25.0 = its square; units a second [I]
 constexpr float kContactSkin = 6.0f; // [I] units; the controller rests about a skin width off solid collision
 
 glm::mat4 introModel(const script::Object& o) { // T * Rx * Ry * Rz, as the intros (formats::introMatrix)
@@ -107,6 +118,7 @@ void World::syncHazards() {
             h.size = prim.size, h.radius = prim.radius, h.length = prim.length, h.damage = float(prim.damage);
             h.local = glm::translate(glm::mat4(1), prim.pos) * glm::mat4_cast(prim.rot);
             h.bind = size_t(prim.segment) < p.segments.size() ? p.segments[size_t(prim.segment)] : glm::mat4(1);
+            h.sensor = prim.head[2] != 0 || prim.head[3] != 0;
             h.collider = -1;
             for (size_t i = 0; i < colliders_.size(); ++i)
                 if (colliders_[i].uid == o.uid && colliders_[i].segment == prim.segment && colliders_[i].section == section && colliders_[i].jaw == 0) h.collider = int(i);
@@ -140,6 +152,8 @@ void World::tickHazards() {
     for (HazardShape& h : hazards_) {
         const script::Object* o = script_.find(h.uid);
         h.active = false;
+        const vec3 before = h.last;
+        const bool placed = std::exchange(h.placed, false);
         if (!o || o->dead || o->hidden) continue; // Kill / hide: instance flag +0x1C & 0x100 [I: the same flag]
         if (h.collider >= 0 && size_t(h.collider) < colliders_.size() && size_t(h.collider) < col_.dynamics.size() &&
             colliders_[size_t(h.collider)].uid == h.uid) {
@@ -162,8 +176,10 @@ void World::tickHazards() {
             h.world = glm::translate(glm::mat4(1), o->offset) * introModel(*o) * model * h.bind * h.local;
         }
         h.active = true;
+        h.last = vec3(h.world[3]), h.placed = true;
         if (health_.dead() || h.uid == struck) continue;
         if (hazardDistance(h, a, b) > r + kContactSkin) continue;
+        if (!h.sensor && (!placed || glm::length(h.last - before) < kContactSpeed * float(kTickSeconds))) continue; // resting
         struck = h.uid;
         // [I] the script hears of the touches that hurt her: tru.exe calls it from every contact callback, whose rate
         // while she stays in touch is not known; the scripts' impact sounds would otherwise restart every tick.

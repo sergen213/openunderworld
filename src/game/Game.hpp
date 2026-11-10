@@ -750,6 +750,9 @@ struct HazardShape {
     vec3 size{0};      // box: full side lengths
     float radius = 0, length = 0;
     float damage = 0;  // what a touch costs (12345: dead)
+    bool sensor = false;         // flag bytes 2-3 not 0: an overlap volume (flames, rollers); else solid collision
+    vec3 last{0};                // its centre a tick ago (solid ones hurt only while they move)
+    bool placed = false;         // `last` is set
     glm::mat4 local{1}, bind{1}; // in its segment; the segment's bind frame in the model
     int collider = -1;           // index of the collider carrying its segment, -1 none
     glm::mat4 world{1};
