@@ -210,8 +210,10 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
     axis is: [U], ours root to the top's far end).
   - Cancel: stick back (condition 0x192 MoveDir 411) during the attach → S961 (request 149 / 148 / 147).
   Ours (`Player::tryHurdle`, `tryHurdleDown`, `hurdleClass`): the above, measured from the face under the ledge line
-  instead of the line (l4_pool rock 1253's sits up to ~180 back from the face: its floor 94.8 out is the rock top, so it
-  is no hurdle at all — a standing jump grabs it, as `GameReal.PoolRockGrabNotHurdle`). [U]: query 96's reach (ours:
+  instead of the line. (l4_pool rock 1253 used to be the exception: 14 faces 8.5 over the rock top, reaching ~180 out past
+  its face, made the class test call it no hurdle. They are terrain group 3, the enemies' and the camera's, not the player's
+  (docs/formats/COLLISION.md, per query class); without them a standing jump there is the high hurdle onto the top at the
+  ledge's own height 3562.5, `GameReal.PoolRockIsHurdledOntoItsTop`.) [U]: query 96's reach (ours:
   the root within radius + 40 of the face, radius + 120 jumping) — the query sweep is v·t + ½gt² over 40 frames with v
   from her velocity scaled by player +0x6E4 (DiceJumps), not measured yet; the far-ledge search radius of query 100.
 - [O] The air clips have no root motion: flight is physics-driven (below). There is no `ledgeb_left` or
@@ -1228,7 +1230,8 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 - Climb-up: `ledgeb_climbup_fast` starts at its request start frame (6). Lara's root is first moved so the clip's hands
   at that time lie on the ledge (x/y) and its root at the clip end lands on the ledge height (z = hand height − rise
   from the start time to the end); then the full 3-D root motion plays (no collision) and the end snaps to the floor.
-  On ledge 1253 the remaining snap is 8.7 units, the rock top sitting 9 above the ledge markup (it was ~150 before).
+  On ledge 1253 the remaining snap is 8.7 units, the rock top sitting 9 above the ledge markup (it was ~150 before). (2026-11-10: those 9 units were faces of a terrain group that is not the player's, docs/formats/COLLISION.md; the rock top she
+  stands on now is at the ledge's height.)
 - Which way up from the hang (jump, stick neutral or up) is the hang's clearance class, tru.exe 0x74E290 (run on the
   attached ledgegrab in its segment frame by 0x76D010, kept in player data +0xEDC, read by the chart's
   `PSCCF_Markup_ClearanceResult`) with lara.drm's player data [O: decomp]: a ray 252 above the ledge from 100 on her
