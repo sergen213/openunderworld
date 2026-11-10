@@ -3126,7 +3126,9 @@ Ours:
   Ours (`World::engaged`, `insertHeld`, `removeInserted`, `placePortables`, `tickInserted`): carrying, interact inserts
   into the receptacle she engages when its record is kind 5 and its graph takes 0x20 now (or it is an uber section).
   Empty-handed, interact on an inserted portable's kind-4 record takes it out; on a loose one's picks it up (portables
-  without kind-4 records: within 150 / 100 [I]). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
+  without kind-4 records: within 150 / 100 [I]). A portable is told by its script's native base (`portablebase`) or by its physical class 50
+  (`World::portableClass`: the four keys of the Xibalba trap houses, l4_traprooms 5878-5881, have a kind-4 record and a script whose
+  native base is `instance` [O data]; before, Interact at them did nothing). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
   poles; a receptacle whose script watches its joint slides down it under Lara hanging there (300 units/s to -600 [I]);
   `multibody` 78 on it answers that slide in units: GetJointValue (0x4A9BB0 -> 0x4A5D90) reads a cylindrical joint's
   (type 2) limit 1 as its linear position (0x4DA460, no conversion; limit 2 is its angle in degrees, a hinge's limit 1

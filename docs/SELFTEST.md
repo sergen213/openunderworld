@@ -469,6 +469,16 @@ tested behaviour happen.
 | `ch11_study_gauntlet` | l3_stairhall -> l3_secretchamber | section 11 (C11-24, C11-25): from checkpoint 4699 down the passage into the study: checkpoint 4621, volume 4669, cinematic 4654 (gauntlet), two thralls alive in the room |
 | `ch11_rockhall_switch` | l3_chamberrockhall | section 11 (C11-32): the stone door 4528 stops her; switch 4617 used with Interact opens it; through to checkpoint 4453 |
 | `ch12_trailstart_ride_in` | l4_trailstart | section 12 (C12-03, C12-04): the ride of `bike_ride`, then the upper road: plane 6712 starts reveal 6677, which sets her down beside the bike (larabase 54); mount again, ride into the temple courtyard (volumes 6713, 6703) |
+| `ch13_ballcourt_calendar_locked` | l4_ballcourt | Xibalba: at calendar 5477 without the jaguar head a gripped push handle turns nothing (hinge joint 2 stays 0, section 5 waits in state 3) |
+| `ch13_temple_headdress` | l4_temple | Xibalba: from the pit floor's checkpoint 4971 to the altar, the headdress 5228 taken out of its holder 5249 |
+| `ch13_ballcourt_pole_gate` | l4_ballcourt | Xibalba: `puzzle_pole_block_door`'s six steps, then on the pole the turn across it, the swing, the fling to the gate (1550), through the doorway into calendar 2's court (cinematic 6388) |
+| `ch14_traprooms_club_throne` | l4_traprooms | Midgard Serpent: arrival cinematic 5703, club 5883 picked up and set into throne 5891 (section 0: 1 -> 2) |
+| `ch14_traprooms_crusher_house` | l4_traprooms | Midgard Serpent: the rattling house from checkpoint 5787: wait for the first pair of jaws to open, sprint through all six pairs unhurt (1927 units/s), key 5879 taken |
+| `ch14_ragnarok_hall` | l4_ragnarok_room | Midgard Serpent: down the carved hall (cinematic 5675, checkpoint 5669), through the doorway: stream unit l4_pool |
+| `ch14_pool_entry` | l4_pool | Midgard Serpent: down the entrance stairs (5547 preloaded, serpent head 5612 told), 198_mex_thralls at the stair foot, the jaguar thrall alive |
+| `ch15_ragnarok_xibalba_key` | l4_ragnarok_room | Land of the Dead: the Xibalba key 5695 taken out of its holder at the rock fall |
+| `ch15_ragnarok_rubble_block` | l4_ragnarok_room | Land of the Dead: block 5660 refused bare-handed; with the belt gripped and slid 1264 to its joint's limit in 8.3 s |
+| `ch15_ballcourt_exit_switch` | l4_ballcourt | Land of the Dead: exit switch 5469 with the key socket empty opens nothing (reveal 5464 stays in state 0) |
 | `ch16_tunnel_door` | chapter 5 start | Gate of the Dead leg 1: on bike 7229, the tunnel's 66 000 units by `ride` lines (10 230 down, no damage; brake steer 0.5), hand brake, off; Thor door 7400 gripped and walked open to 663.7; back on, through the doorway: plane 7472 -> 235_val_shaft, on foot at its end, the bike waiting on marker 7404, mounted there |
 | `ch16_tower_power` | l5_valgrind | Gate of the Dead leg 3: the power blocks 7498 / 7499 / 7500 carried into cog wheel 7312's niches; the rings 7492-7509 stand until the third is in, then turn 10 degrees/s, neighbours opposite |
 | `ch17_maze_to_relic_door` | l5_valaskjalf_entry | Valhalla: the maze's first half on foot from inside the gate to the relic-room door 7227 (41 000 units, 2530 down), which is shut and stays shut |
@@ -490,6 +500,9 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | `ch06_second_shaft_exit` | l1_ship_sinking_hall | the jump to bar 238 | from the top valve wheel the bar is not reached: the side jump lands hanging on the beam's own ledge 253 |
 | `ch16_tower_base_panel` | l5_valgrind | the panel turn | the tower's base panel 7312 turns from 89 to 26-40 degrees off its solved position and all but stops: dispatcher 7318 vt 62 is never called, no beam, the gate stays locked. Cause not found |
 | `ch17_hammer_chamber` | l5_valaskjalf | the pull-up | from checkpoint 7067 a running jump catches the chamber block's edge 1542, but Forward + Jump plays the jump-up try instead of the pull-up (as on ledge 969 in `ch01_hall_floor_collapse`): volume 6866 is not reached on foot |
+| `ch13_ballcourt_calendar_solve`, `ch15_ballcourt_exit_key` | l4_ballcourt | the key item | key items do not travel between units: a held portable is dropped when its unit streams out and the next units' parked instances are not handed over (docs/matrix/13_xibalba.md, 15_land_of_the_dead.md) |
+| `ch13_temple_block_topple` | l4_temple | the grapple | ring 4951 is not offered from the east ledge; the statue head's mover is unknown |
+| `ch15_pool_rune_block` | l4_pool | the drag | rune block 5609 has no joint record, so nothing drags it |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

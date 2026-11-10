@@ -1912,6 +1912,17 @@ bool World::carryReady() const {
     return s == State::Idle || s == State::SwimTread || s == State::SwimSurface || s == State::SwimUnder;
 }
 
+// A portable by its class. tru.exe makes an object a portable by its physical class (50: its object data's sets at
+// +0xA8, 0x6B5890); ours told them by the script's native base (portablebase) alone. The four keys of the Xibalba trap
+// houses (ca_pt_blade / crush / dark / fire_room_key, l4_traprooms 5878-5881) have the class and a pick-up record
+// (kind 4), but their script's native base is `instance`, not portablebase [O data]: they were engaged and never
+// picked up.
+bool World::portableClass(const script::Object& o) {
+    if (o.kind != script::Kind::Scripted) return false;
+    const auto* p = objectPhysics(o.name);
+    return p && p->physClass == 50;
+}
+
 void World::carryPortables(bool pressed) {
     const auto& s = player_.state();
     placePortables();
@@ -1932,7 +1943,7 @@ void World::carryPortables(bool pressed) {
     // Her engaged record is a loose portable's pick-up record (kind 4: the poles' sphere r 869 around marker 20, the
     // keys' and gems' around their origin). Portables without records: [I] within 150 / 100 of her root.
     if (engagedNow.record && engagedNow.record->kind == 4 && engagedNow.section < 0)
-        if (auto* o = const_cast<script::Object*>(script_.find(engagedNow.uid)); o && portable(*o) && !inserted_.contains(o->uid)) {
+        if (auto* o = const_cast<script::Object*>(script_.find(engagedNow.uid)); o && (portable(*o) || portableClass(*o)) && !inserted_.contains(o->uid)) {
             pickUp(*o);
             return;
         }

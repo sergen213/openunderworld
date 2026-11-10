@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "ch15_ballcourt_exit_switch",
+  "chapter": "15 Land of the Dead: the exit switch of the Xibalba entrance room does nothing while its key socket is empty (docs/matrix/15_land_of_the_dead.md C15-20, first half; C14-01)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/14landofdead.html",
+  "note": "l4_ballcourt, the room under the ball court with the spike pit, from its checkpoint 6122. Wall switch ca_ei_switch_wall_autoreset 5469 opens the temple reveal 5464 (anim graph 0 -> 3 -> 5 -> 6 -> 7, ProgressionReal.TempleRevealReopens) only once key 5695 sits in socket 6501 (the socket's sticky, set by the insert). Here Lara comes without the key, as on the way in (C14-01) and as a Land of the Dead player who left the key behind: Interact at the switch changes nothing. The second half (the key set in, the switch pulled, the exit open) is tests/selftests/known_gaps/ch15_ballcourt_exit_key.json.",
+  "level": "l4_ballcourt",
+  "spawn": [-7504, 24446, -2060, 0],
+  "steps": [
+    {"step": "at_the_checkpoint", "duration": 1,
+     "expect": [{"probe": "world.checkpoint", "eq": 6122},
+                {"probe": "object.5469.name", "eq": "ca_ei_switch_wall_autoreset"},
+                {"probe": "object.6501.name", "eq": "ca_pt_keyhole_xibalba_exit"},
+                {"probe": "object.5464.graph", "eq": 0, "note": "the exit is shut"}]},
+    {"step": "switch_without_the_key", "plan": ["engage 5469 walk", "press", "wait 4"], "duration": 40,
+     "expect": [{"probe": "object.5464.graph", "over": "max", "eq": 0, "note": "the reveal stays in its closed state"},
+                {"probe": "object.6501.graph", "eq": 0, "note": "socket empty"},
+                {"probe": "portable.held", "eq": 0},
+                {"probe": "step.teleports", "eq": 0}]}
+  ]
+}

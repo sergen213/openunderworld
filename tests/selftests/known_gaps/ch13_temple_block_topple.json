@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "ch13_temple_block_topple",
+  "chapter": "13 Xibalba: the carved block pulled off its pillar with the rope, through the floor (docs/matrix/13_xibalba.md C13-22)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/xibalba8.html",
+  "note": "KNOWN GAP (fails at the first step). l4_temple's upper floor, east ledge (markup 1167, x -2869, z 3686; checkpoint 4976). The section's only way down to the headdress: from this ledge the rope is thrown onto ring ca_ei_grapple_post 4951 (-7392, -13906, 3889), Lara walks along the ledge until the rope bends on the statue head ca_rb_statue_head_temple 5236 (-4982, -13307, 3591, on the pillar between ledge and ring), and Interact tugs it off: it falls through ca_rb_breakable_temple_floor 5234 (a class-30 breakable). In ours: (1) the ring is not offered anywhere on this ledge (grapple.offered 0 at y -14386 .. -11724, facing it, 4.6 thousand units away: it is offered from the west floor's edge at x -8725, 1.5 thousand away; which of range, cone or line of sight refuses is not found); (2) docs/PROGRESSION.md: what moves the statue head is [U] (plane 5247 -> 5236, 5234 runs its handlers and changes nothing); a rope bend that drags a rigid body is not modelled. The steps say what has to happen.",
+  "level": "l4_temple",
+  "spawn": [-2175, -13636, 3750, 180],
+  "steps": [
+    {"step": "ring_offered_from_the_ledge", "plan": ["go -2790 -14380 60", "face 180", "wait 0.7"], "duration": 25,
+     "expect": [{"probe": "world.checkpoint", "eq": 4976},
+                {"probe": "grapple.offered", "eq": 4951}]},
+    {"step": "throw", "input": ["0.2 grapple 1", "0.3 grapple 0"], "duration": 3,
+     "expect": [{"probe": "grapple.target", "eq": 4951}]},
+    {"step": "walk_until_the_rope_bends", "plan": ["run 90 2.5"], "duration": 6,
+     "expect": [{"probe": "grapple.attached", "eq": true},
+                {"probe": "grapple.bends", "min": 1, "note": "round the statue head"}]},
+    {"step": "tug", "input": ["0 interact 1", "0.2 interact 0", "0.5 interact 1", "0.7 interact 0", "1 interact 1", "1.2 interact 0", "1.5 interact 1", "1.7 interact 0",
+                              "2 interact 1", "2.2 interact 0", "2.5 interact 1", "2.7 interact 0", "3 interact 1", "3.2 interact 0", "3.5 interact 1", "3.7 interact 0"],
+     "duration": 10,
+     "expect": [{"probe": "object.5236.pos.z", "max": 1700, "note": "the head left its pillar (3591) and went down through the floor (1652)"},
+                {"probe": "object.5234.dead", "eq": true, "note": "the floor piece is broken"}]}
+  ]
+}
