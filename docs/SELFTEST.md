@@ -441,10 +441,20 @@ tested behaviour happen.
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
+| `ch07_cliffclimb_boat_to_cliff` | chapter 2 start | section 07's start: yacht cinematic, over the boat's side (safety drop), into the sea, 13.8 km surface swim across the bay, climb out at the low ledge (checkpoint 3831), the run into the rock attaches her to the holds |
+| `ch07_hubhall_statue_hall` | l2_hubhall | section 07's end from checkpoint 3100: up the staircase, stream change to l2_puzzleroom, arrival cinematic 2936, on the lift |
+| `ch08_puzzleroom_lift_switch` | l2_puzzleroom | section 08's start on the lift: switch 2961 used with the mechanism held: the jammed reaction, the platform stays |
+| `ch08_puzzleroom_lift_ring` | l2_puzzleroom | from checkpoint 2819: the mechanism's ring 2972 grappled and pulled out (2959 vt 54, 2961 vt 63) |
+| `ch08_puzzleroom_lift_pole` | l2_puzzleroom | from checkpoint 2818: pole 2967 pulled out of hole 2969 and carried (2960 vt 54, 2961 vt 62) |
+| `ch08_shrine_statue_pull` | l2_shrineroom | the naga statue 2794 grappled by its ring and pulled over (uber section 0: 5 -> 2), its script wakes the shaft's spiders |
+| `ch09_maproom_gauntlet_door` | l2_maproom | from under the shaft: volume 2636 -> cinematic 2624, the scripts hand the left gauntlet over (no fixture), door 2661 gripped and slid open by a left sidestep, through it (spider trigger, checkpoint 2590), the pedestal cinematic 2625, checkpoint 2591 |
+| `ch09_maproom_hub_panel` | l2_maproom | from checkpoint 2591: off the platform edge into a hang, drop-catches down the hub's panel (ledges 673 / 674 / 676 / 678), the ring ledge, the panel gripped with the gauntlet (2667 vt 49 / 50) |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now: none (`pole_drop_after_fling`
-moved up 2026-11-10).
+registered with ctest. Run them by hand; move one up a directory when it passes. Now: `ch09_shrine_shaft_descent` (l2_shrineroom: after the
+statue pull its floor slabs stay solid over the shaft and its ring is still a target; the drop-catches and the mid-fall
+grapple at ring 2673 follow) and `ch09_maproom_hub_turn` (l2_maproom: the hub's panel is gripped but hinge joint 1 of
+bridge 2667 does not turn); `pole_drop_after_fling` moved up 2026-11-10.
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

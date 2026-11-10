@@ -310,7 +310,7 @@ The page labels its treasures "1/26 … 10/26" in the header note but numbers th
 
 | Category | Required information | Status | Evidence / tests |
 |---|---|---|---|
-| Chapter | Boat start in a bay with sharks, sea-cliff free climb, jungle path with a pole gap and a grapple gap, ruined colonnade with two chimney jumps, streambed tiger fight, courtyard tiger fight, temple pit with beams, arrival at the Shiva / Kali hall | PARTIALLY IMPLEMENTED | cliff climb verified; chimney jumps (mandatory, three places) NOT IMPLEMENTED; fights and colonnade untested |
+| Chapter | Boat start in a bay with sharks, sea-cliff free climb, jungle path with a pole gap and a grapple gap, ruined colonnade with two chimney jumps, streambed tiger fight, courtyard tiger fight, temple pit with beams, arrival at the Shiva / Kali hall | PARTIALLY IMPLEMENTED | start (boat, bay, ledge, holds) and the arrival in the statue hall played by input (`ch07_cliffclimb_boat_to_cliff`, `ch07_hubhall_statue_hall`); cliff climb verified; chimney jumps exist (tested from the streambed hang in l2_junglehub); the path, colonnade, streambed, fights and temple pit between them are not played by input |
 | Movement | Run, sprint from tigers, crouch under roots / branches, long running jumps with a landing roll, slope slides | IMPLEMENTED (sprint, jumps VERIFIED AGAINST ORIGINAL elsewhere); landing roll NOT IMPLEMENTED | `Game.SprintStaminaMatchesTru`, `GameReal.JunglehubRunningJumpReachesHigherLedge` (l2_junglehub), `GameReal.JunglehubVaultOver`; no roll-on-landing code in Player.cpp |
 | Traversal | Free-climb holds with gap and up jumps, man-made ledges, column-to-column back jumps, corner shimmies, narrow-ledge stand + sidestep + lean jump, slide → pole, pole-top stand, pole-to-pole, drop onto a pole, perches, pillar, projecting beams, chimney jump from the ground and from a hang, single wall kick, jump extension by holding Jump, swan dive | PARTIALLY IMPLEMENTED | free climb: `GameReal.CliffclimbDiceJumps`, `GameReal.CliffclimbStances`, `GameReal.CliffclimbObstaclesAndLedgeGrabs`, `GameReal.ClimbOnlyAtHolds`, `GameReal.ClimbBadAttach`, `GameReal.CliffclimbIndependentOfRenderRate`; the rest are mechanic tests from other units; chimney / wall kick / swan dive absent |
 | Physics | Fall damage on the long drop to treasure 4, water landings, tigers pushing Lara down | IMPLEMENTED (fall curve [O]) | `Combat.FallDamageThresholds`; knock-down by enemies: heavy hit reactions (`Combat.HitReactionThresholds`) |
@@ -326,11 +326,11 @@ The page labels its treasures "1/26 … 10/26" in the header note but numbers th
 | Progression | Opening cinematic, outfit and weapon choice before the level (full game), tiger cutscenes, training-text hints, closing cinematic (Bhogavati carvings) | PARTIALLY IMPLEMENTED | `ChaptersReal.StartUnitsAndLevelEnds` (l2_cliffclimb start), `ScriptRealData.CliffclimbVolumeShowsTutorialPopup` (hint_15 → string 1326, volume 4040); outfit choice exists only as our EXTRAS OUTFITS (ROADMAP "Lara outfits": the original's choice screen not reproduced) |
 | Automated tests | Existing (in these units): `GameReal.CliffclimbObstaclesAndLedgeGrabs`, `GameReal.CliffclimbDiceJumps`, `GameReal.CliffclimbStances`, `GameReal.CliffclimbIndependentOfRenderRate`, `GameReal.CliffclimbCameraRecord`, `GameReal.ClimbBadAttach`, `GameReal.ClimbOnlyAtHolds`, `GameReal.JunglehubRunningJumpReachesHigherLedge`, `GameReal.JunglehubVaultOver`, `AiReal.SharksSpawnSwimBiteAndDie`, `AiReal.SpidersClingDropAndBite`, `AiReal.EnemyIntrosResolveToSkinnedEnemyTypes`, `ScriptRealData.CliffclimbVolumeShowsTutorialPopup`, `StreamReal.CliffhallBHubhallPair`, `StreamReal.YachtRenderedSeaBelowDeck`, `GameReal.TerrainGroupNativeUpdatesMergedCollision` (l2_hubhall), ctest `game_replay_spider_drop` | Required: three chimney / wall-kick spots, colonnade chains, slide → pole → pole top, tiger fights, hang shooting, jar treasures, temple-pit beams, grapple gap | — |
 
-Requirement rows: 57 in [docs/matrix/07_remnants.md](matrix/07_remnants.md) — IMPLEMENTED BUT UNVERIFIED 33, PARTIALLY IMPLEMENTED 14, NOT IMPLEMENTED 6, IMPLEMENTED 3, VERIFIED AGAINST ORIGINAL 1.
+Requirement rows: 57 in [docs/matrix/07_remnants.md](matrix/07_remnants.md) — IMPLEMENTED BUT UNVERIFIED 33, PARTIALLY IMPLEMENTED 15, IMPLEMENTED 7, VERIFIED AGAINST ORIGINAL 1, NOT IMPLEMENTED 1.
 
 Open in this chapter:
 
-- Chimney / wall jump (C07-24, C07-37, C07-54, C07-56): NOT IMPLEMENTED and mandatory three times in this section; this is the largest blocker for a walkable Thailand start (being worked on in this wave by another agent).
+- Chimney / wall jump (C07-24, C07-37, C07-54, C07-56): implemented since 0.42.0 (`src/game/WallJump.cpp`); tested in this section from the streambed hang (C07-37) and at the first wall contact from the floor; the alcove climb (C07-24) and the hubhall wall kick (C07-54) are not played.
 - Jar treasures 5, 6, 8, 10 (and 8 of Thailand's 30 overall) cannot be collected; no Interact smash.
 - Lara melee (kick, stomp on spiders, vault off a tiger): NOT IMPLEMENTED.
 - Shooting one-handed from a ledge hang / while climbing: NOT IMPLEMENTED.
@@ -367,7 +367,7 @@ Abbreviations: GP = docs/GAMEPLAY.md, PR = docs/PROGRESSION.md, Mnn = row of `B_
 | Progression | Lift drop → rappel → rune hall → gems → gates → pits → pagoda → pit → courtyard mid level → both arms → statues → floor lowers → yard → statue pull opens the shaft | PARTIALLY IMPLEMENTED | Gates table PR ch 2 (2961, 2971, 2982 / 2983, chest volumes 2137 / 2138, handle volumes 2038 / 2039 / 2045): pass; the gem gates, floor lowering and statue pull have no gate test |
 | Automated tests | Existing: `ProgressionReal.CriticalGates` (l2_puzzleroom 2961, 2982), `CriticalPathPerChapter` ch 2, `GameReal.GrapplePullsUberTargets`, `GameReal.ElevatorCarriesPlayer`, `GameReal.PuzzleRoomWallHug`, `ProgressionReal.GrappleHandlesSwivel`, `ReceptaclesTakeTheirPortables`, `UberReceptaclesTakeTheirPortables`, `AiReal.NagasClingDropBiteSpitAndDie`, replays `puzzleroom_pole_remove`, `naga_drop`. Required: the scenarios below + a walked route per unit | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 64 in [docs/matrix/08_bhogavati.md](matrix/08_bhogavati.md) — IMPLEMENTED BUT UNVERIFIED 39, PARTIALLY IMPLEMENTED 12, NOT IMPLEMENTED 8, IMPLEMENTED 5.
+Requirement rows: 64 in [docs/matrix/08_bhogavati.md](matrix/08_bhogavati.md) — IMPLEMENTED BUT UNVERIFIED 38, PARTIALLY IMPLEMENTED 12, IMPLEMENTED 7, NOT IMPLEMENTED 7.
 
 Open in this chapter:
 
@@ -392,7 +392,7 @@ Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" =
 
 | Category | Required information | Status | Evidence / tests |
 |---|---|---|---|
-| Chapter | Part 3 of 4; from the shaft opened by the fallen statue to the exit doorway of the Thor room, where the gauntlet stops working. 0 health items, no key items | PARTIALLY IMPLEMENTED | Units load and their cinematic volumes pass; the gauntlet mechanics that make up the whole chapter are not implemented |
+| Chapter | Part 3 of 4; from the shaft opened by the fallen statue to the exit doorway of the Thor room, where the gauntlet stops working. 0 health items, no key items | PARTIALLY IMPLEMENTED | By input: cutscene + gauntlet, the carved door slid open, the walk to the pedestal, the descent down the hub panel and the grip on it (`ch09_maproom_gauntlet_door`, `ch09_maproom_hub_panel`). Blocked: the way in through the shaft (statue slabs stay solid) and every turn of the hub (known gaps) |
 | Movement | Walk / run on walkways, jump gaps in the ring ledge near the hub | IMPLEMENTED BUT UNVERIFIED | M13 generic; no test in l2_maproom |
 | Traversal | Descent by three drop-catches (one needs a saving grab), drop-catches down the hub's carved panel, climbing the panel back up, hanging from the walkway side | IMPLEMENTED BUT UNVERIFIED | M03, M04, M01 generic |
 | Physics | Rope swing with full pay-out; the hub, walkway and movable wall turn as one body about the room's axis | NOT IMPLEMENTED | no evidence of the rotating structure (sweep l2_maproom shows only volumes) |
@@ -401,18 +401,18 @@ Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" =
 | Combat | Small spider swarms ×2 (shaft mouth, behind the door), one bat flock | IMPLEMENTED BUT UNVERIFIED | `AiReal.SpidersClingDropAndBite` (l3 / l4 units), `AiReal.NagasClingDropBiteSpitAndDie` touches l2_maproom intros; no encounter test |
 | Swimming | n/a | n/a | — |
 | Vehicle | n/a | n/a | — |
-| Objects | Gauntlet-moved door, hub panel (grab and walk to rotate), movable wall segment with grapple rings on both faces, pedestal, ceiling and wall rings | NOT IMPLEMENTED | M60: GP "Thor's gear" "player sensors (vt 14) never fire"; Thor doors / pillars script 9744 not driven |
-| Puzzles | Rotate the hub to (a) uncover a cache, (b) line the walkway up with a side ledge (treasure), (c) with the exit, (d) half-way for the relic ledge — using the panel at hub level and the wall at the rim | NOT IMPLEMENTED | as Objects |
+| Objects | Gauntlet-moved door, hub panel (grab and walk to rotate), movable wall segment with grapple rings on both faces, pedestal, ceiling and wall rings | PARTIALLY IMPLEMENTED | door 2661 slides with the gauntlet (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, `ch09_maproom_gauntlet_door`); hub panel gripped but the hub hinge (2667 joint 1) does not turn (`known_gaps/ch09_maproom_hub_turn`); wall drag, rings on the moving wall: not exercised |
+| Puzzles | Rotate the hub to (a) uncover a cache, (b) line the walkway up with a side ledge (treasure), (c) with the exit, (d) half-way for the relic ledge — using the panel at hub level and the wall at the rim | NOT IMPLEMENTED | all four alignments need the hub to turn: blocked (C09-09) |
 | Hazards | Fatal fall into the pit under the shaft and round the hub | IMPLEMENTED BUT UNVERIFIED | M65 generic |
 | Collectibles | 3 treasures (26/30 - 28/30), 1 relic (2/6; raises max health and heals) | PARTIALLY IMPLEMENTED | relic id 2588 is in l2_maproom (`ChaptersReal.RewardTableMatchesUnits`); pickup rule [I]; relic health bonus: no evidence; treasures 27 / 28 and the relic are unreachable without M60 |
 | Progression | Shaft → gauntlet cinematic → slide the door → Thor room cinematic (map, pedestal inscription) → align the walkway with the exit → leave (gauntlet fades cinematic) | PARTIALLY IMPLEMENTED | sweep l2_maproom: 2636 → 2624 (cinematic, larabase 19), 2637 / 2638 → 2667 + 2625 / 2626, 2669 → 2666, 2698 → 2667 PASS; PR gates "l2_maproom volumes 2637/2638 → thor bridge 2667 + cinematics: pass" |
 | Automated tests | Existing: sweep volumes above, `ProgressionReal.GrappleHandlesSwivel` (2595), `ChaptersReal.RewardTableMatchesUnits` (l2_maproom), `ScriptRealData.ThorGearDrawGroups`, `StreamReal.ChapterThorGear`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 18 in [docs/matrix/09_ancient_world.md](matrix/09_ancient_world.md) — IMPLEMENTED BUT UNVERIFIED 9, NOT IMPLEMENTED 6, IMPLEMENTED 2, PARTIALLY IMPLEMENTED 1.
+Requirement rows: 18 in [docs/matrix/09_ancient_world.md](matrix/09_ancient_world.md) — IMPLEMENTED BUT UNVERIFIED 6, IMPLEMENTED 5, NOT IMPLEMENTED 4, PARTIALLY IMPLEMENTED 3.
 
 Open in this chapter:
 
-- **Gauntlet-powered movers (M60)** are the chapter: door slide (C09-05, critical), hub rotation by panel (C09-09, -14), wall drag (C09-11, -16). NOT IMPLEMENTED: the player-sensor callbacks (vt 14) that enable them never fire and no object motion exists for them. Without C09-05 the room cannot be entered by play; without C09-14 the exit is not reachable by the original route.
+- **Gauntlet-powered movers (M60)**: the door slide (C09-05) works by play since 0.44.0; the hub rotation by panel (C09-09, -14) and the wall drag (C09-11, -16) are gripped but do not move (hinge joint 1 of bridge 2667; see the blockers below). Without C09-14 the exit is not reachable by the original route.
 - **Rotating walkway / hub / wall as one rigid assembly** (collision, ledges and grapple rings moving with it): no evidence. GP "Grapple" marks 2676's attached instance [U].
 - **Wall run in l2_maproom** (three uses, two with a mid-air throw after a drop): generic code only, numbers [I], no test in this unit; rope-length adjustment to a target height is unverified.
 - **Mid-fall grapple catch** (C09-03, -15) untested anywhere (M21).
