@@ -9427,3 +9427,27 @@ TEST(GameReal, IkPassesAreCheap) {
     EXPECT_LT(feet, 1.0);
     EXPECT_LT(hands, 1.0);
 }
+
+// The foot locks' gate (tru.exe 0x6EFD60: an instance under her feet): on the unit's terrain World runs no foot pass,
+// level or sloped; without a ledge or a target the other passes stay off too. (The object-floor side needs a placed
+// object: self-test ik_feet, l1_baldrs_tomb's press plate.)
+TEST(Game, IkPassesStayOffOnTerrain) {
+    CollisionMesh col;
+    addFloor(col, -5000, -5000, 5000, 5000, 0);
+    const uint32_t v0 = uint32_t(col.vertices.size()); // a 15-degree ramp from x = 1000
+    const float rise = 2000 * std::tan(glm::radians(15.0f));
+    col.vertices.insert(col.vertices.end(), {{1000, -500, 0}, {3000, -500, rise}, {3000, 500, rise}, {1000, 500, 0}});
+    col.faces.push_back({{v0, v0 + 1, v0 + 2}});
+    col.faces.push_back({{v0, v0 + 2, v0 + 3}});
+    col.build();
+    game::World w(std::move(col), syntheticAnims(), {{2000, 0, 400}, 0});
+    for (int i = 0; i < 30; ++i) {
+        w.tick({});
+        EXPECT_FALSE(w.ik().feet);
+        EXPECT_FALSE(w.ik().hands);
+        EXPECT_FALSE(w.ik().look);
+        EXPECT_EQ(w.ik().secondArm, 0);
+    }
+    EXPECT_EQ(w.player().state().state, game::State::Idle);
+    EXPECT_NEAR(w.player().state().pos.z, 1000 * std::tan(glm::radians(15.0f)), 2.0f); // standing on the ramp
+}

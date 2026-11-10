@@ -4496,8 +4496,9 @@ read from code and data, and what the code was not followed far enough to say is
   (lowered with it on an uneven object floor).
 - Cost (`GameReal.IkPassesAreCheap`, Release, one core, 153 bones): feet + pelvis + head + second arm together
   **0.015 ms** a tick, the hands **0.005 ms** (a 60 Hz tick is 16.7 ms).
-- Probes: `ik.*` and `pose.bone.<segment>.x|y|z` (docs/SELFTEST.md); scenarios `ik_pose` (head limits on a target,
-  hands on ledge 973's line in l3_main_bedroom, shimmy without locks) and `ik_feet` (l1_baldrs_tomb: no foot pass
+- Probes: `ik.*` and `pose.bone.<segment>.x|y|z` (docs/SELFTEST.md); scenarios `ik_pose` (hands on ledge 973's line
+  in l3_main_bedroom: the clip alone leaves them 1.5 / 13.4 units off the sloping line, the lock under 0.01; the
+  shimmy without locks; head limits on a target) and `ik_feet` (l1_baldrs_tomb: no foot pass
   on terrain, both feet planted on press plate 219).
 - Tests: `Anim.RotateBoneModelTurnsTheSubtreeAboutTheBone`, `Anim.TwoBoneIk*` (synthetic leg);
   `GameReal.IkTuningDecodesTheLimbLocks`, `GameReal.IkFeetFollowASlopeAndStairs` (ng_idle and ng_run on a 20° slope:
@@ -4505,7 +4506,8 @@ read from code and data, and what the code was not followed far enough to say is
   untouched; a 40-unit stair: left foot 40 down, pelvis 40 down, right foot in place; level floor: pose bit-identical),
   `GameReal.IkHandsLockToTheLedgeLine` (a ledge 8 units off and 8° turned: both hands within 0.1 of the line, not
   moved along it; the 20-unit end gap), `GameReal.IkHeadLooksAtATargetWithinItsLimits`,
-  `GameReal.IkLeftArmGoesToTheSecondTarget`.
+  `GameReal.IkLeftArmGoesToTheSecondTarget`, `Game.IkPassesStayOffOnTerrain` (the gate in `World`: no foot pass on
+  a terrain ramp).
 
 ### Differences and open points
 
@@ -4520,5 +4522,6 @@ read from code and data, and what the code was not followed far enough to say is
 | per-arm aim | one aimer per arm (0x7035F0) | grid for both arms + shoulder swing of the left to the second target |
 | anim support events 0x34..0x38, the +0xF18 support-foot root | drive the lock phase and part of the root motion | not decoded |
 
-No screenshot comparison against the original was made for these passes (the poses are checked by the tests' and the
-self-tests' numbers).
+Render sanity (viewed, kept privately in the work dir `gameplaygoal/ik/`): `hang.png` (ledge 973, tick 200: both hands
+on the ledge) and `look.png` (pistols drawn on a dummy up to her left: head turned to it). No comparison against the
+original's frames was made for these passes.
