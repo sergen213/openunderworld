@@ -1453,10 +1453,10 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
         w->onCinematic = nullptr;
         return w;
     };
-    // Steers the camera-relative stick at a world point; true once within 120.
-    const auto toward = [](game::World& w, glm::vec2 at, float stick = 1) {
+    // Steers the camera-relative stick at a world point; true once within `reach` (120).
+    const auto toward = [](game::World& w, glm::vec2 at, float stick = 1, float reach = 120) {
         const glm::vec2 d = at - glm::vec2(w.player().state().pos);
-        if (glm::length(d) < 120) return true;
+        if (glm::length(d) < reach) return true;
         const float cy = w.camera().yaw;
         game::Actions a;
         a.move = stick * glm::vec2(glm::dot(glm::normalize(d), glm::vec2(std::sin(cy), -std::cos(cy))),
@@ -1484,10 +1484,12 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
     EXPECT_TRUE(hurdled);
     EXPECT_LE(climbTicks, 20); // 0.3 s
     EXPECT_NEAR(s.pos.z, 336, 8) << "on the slab";
-    // Across it, off its far side, over the rubble to the high wall.
-    for (const glm::vec2 at : {glm::vec2(-4700, -300), {-6000, -300}, {-7300, -300}, {-8050, -2000}, {-8100, -3600}, {-8300, -4100},
-                               {-8300, -4380}, {-8470, -4330}})
-        for (int t = 0; t < 600 && !toward(*w, at); ++t) ASSERT_NE(s.state, game::State::Dead);
+    // Across it, off its far side, over the rubble to the high wall. The run loop turns at 1.755 rad/s (a circle of some
+    // 700 units at the run's speed), so she comes round the last corner wide, along the wall (y -4385) on the 137-high
+    // step, and the rubble's top (225 and rising from x -8370) lies a stride further in: the last point is met at 100.
+    for (const glm::vec3 at : {glm::vec3(-4700, -300, 120), {-6000, -300, 120}, {-7300, -300, 120}, {-8050, -2000, 120},
+                               {-8100, -3600, 120}, {-8300, -4100, 120}, {-8300, -4380, 120}, {-8470, -4330, 100}})
+        for (int t = 0; t < 600 && !toward(*w, glm::vec2(at), 1, at.z); ++t) ASSERT_NE(s.state, game::State::Dead);
     EXPECT_NEAR(s.pos.z, 230, 15) << "on the rubble";
     game::Actions face; // a light stick turns her to the wall (-y)
     face.move = 0.2f * glm::vec2(glm::dot(glm::vec2(0, -1), glm::vec2(std::sin(w->camera().yaw), -std::cos(w->camera().yaw))),
