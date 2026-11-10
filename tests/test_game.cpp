@@ -8031,3 +8031,78 @@ TEST(GameReal, TemplePullUpOnReleaseAndHandstandOnHold) {
         }
     }
 }
+
+// The stick let go while running: ng_running_stop only after 15 frames in the run loop (chart S65 T176, variable 374);
+// earlier, and out of the sprint, she stops on the spot (the group's T40) [tru.exe under Wine: 0 units / 266 units on].
+TEST(Game, RunStopsOnTheSpotOrSlides) {
+    game::AnimLibrary anims = syntheticAnims();
+    anims.clips["ng_running_stop"] = rootClip(17, 13.1f); // 223 in 0.57 s
+    const auto stop = [&](int runTicks, bool sprint, State* after) {
+        CollisionMesh m;
+        addFloor(m, -20000, -20000, 20000, 20000, 0);
+        m.build();
+        game::World w(std::move(m), anims, game::Spawn{{0, 0, 0}, 0});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.sprint = sprint;
+        for (int i = 0; i < runTicks; ++i) w.tick(go);
+        EXPECT_EQ(s.clip, sprint ? "sprint_loop" : "ng_run");
+        const float x = s.pos.x;
+        w.tick({});
+        *after = s.state;
+        for (int i = 0; i < 90; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::Idle);
+        return s.pos.x - x;
+    };
+    State st;
+    EXPECT_NEAR(stop(20, false, &st), 0, 1); // 10 frames into the loop
+    EXPECT_EQ(st, State::Idle);
+    EXPECT_NEAR(stop(29, false, &st), 0, 1);
+    EXPECT_NEAR(stop(40, false, &st), 223 * 13 / 17.0f, 30); // from the request's start frame 4
+    EXPECT_EQ(st, State::Stop);
+    EXPECT_NEAR(stop(120, true, &st), 0, 1); // out of the sprint, however long
+    EXPECT_EQ(st, State::Idle);
+}
+
+// l4_temple runway (tru.exe traced there under Wine, w1.txt run_turn / sprint_turn / run_stop / sprint_stop /
+// sprint_keyup): the run loop turns at 1.755 rad/s and the sprint at 1.835; the sprint runs sprint_loop's 1927 units/s
+// (Wine 1879); letting go early or out of the sprint stops her on the spot, late in the run with ng_running_stop.
+TEST(GameReal, TempleSprintTurnAndStops) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const bool sprint : {false, true}) {
+        auto w = unitWorld(bf, "l4_temple", {{-4200, -11850, 1722.9f}, 0});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.sprint = sprint;
+        for (int i = 0; i < 70; ++i) w.tick(fixedCamera(w, go, 0));
+        ASSERT_EQ(s.clip, sprint ? "sprint_loop" : "ng_run");
+        Actions swing = go;
+        swing.move = {0.70710678f, 0.70710678f}; // 45 degrees to her right
+        const float yaw0 = s.yaw;
+        for (int i = 0; i < 12; ++i) w.tick(fixedCamera(w, swing, 0));
+        EXPECT_NEAR((yaw0 - s.yaw) / 0.2f, sprint ? 1.835f : 1.755f, 0.02f);
+        for (int i = 0; i < 30; ++i) w.tick(fixedCamera(w, swing, 0));
+        EXPECT_NEAR(yaw0 - s.yaw, 0.7854f, 0.01f);
+    }
+    const auto stop = [&](int runTicks, bool sprint) {
+        auto w = unitWorld(bf, "l4_temple", {{-4200, -11850, 1722.9f}, 0});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.sprint = sprint;
+        float speed = 0;
+        for (int i = 0; i < runTicks; ++i) {
+            const float x = s.pos.x;
+            w.tick(go);
+            speed = (s.pos.x - x) * 60;
+        }
+        if (sprint) EXPECT_NEAR(speed, 1927, 40);
+        const float x = s.pos.x;
+        for (int i = 0; i < 90; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::Idle);
+        return s.pos.x - x;
+    };
+    EXPECT_NEAR(stop(40, false), 0, 2);    // still in ng_run_start / the loop's first frames
+    EXPECT_NEAR(stop(70, true), 0, 2);     // out of the sprint
+    EXPECT_NEAR(stop(110, false), 230, 60); // ng_running_stop (Wine: 266)
+}

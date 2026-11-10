@@ -2150,8 +2150,18 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             else if (!wantsWalk) { s_.state = State::Run; play("ng_run", true); }
             break;
         case State::Run:
-            s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
-            if (!wantsMove) { s_.state = State::Stop; play("ng_running_stop", false); }
+            // The run and sprint loops steer at a fixed rate (tru.exe under Wine, l4_temple, the stick swung 45 degrees:
+            // 1.755 rad/s running, 1.835 sprinting, linear, a slight overshoot); the start clips keep ours [I].
+            s_.yaw = approachAngle(s_.yaw, target, (s_.clip == "ng_run" ? t_.runTurnRate : s_.clip == "sprint_loop" ? t_.sprintTurnRate : t_.turnRate) * dt);
+            s_.runTime = s_.clip == "ng_run" ? s_.runTime + dt : 0.0f;
+            // The stick let go: the run loop S65 goes to S57 `ng_running_stop` (223 on) only after chart variable 374 = 15
+            // frames in it (T176); before that, and from the run's start S63 and the sprint S59, the group's T40 stops
+            // her on the spot (S39) [O-data; Wine: W let go 0.32 s into the loop, and out of a sprint: not a unit
+            // further; 1.2 s into the loop: 266 further]. [I]: S39's settle clip (0.48 s in place) is ours' idle blend.
+            if (!wantsMove && !(s_.clip == "ng_run" && s_.runTime * 30.0f >= t_.runStopFrames) && anims_.find("ng_running_stop")) {
+                s_.state = State::Idle;
+                play("ng_idle", true);
+            } else if (!wantsMove) { s_.state = State::Stop; play("ng_running_stop", false); }
             else if (wantsWalk) { s_.state = State::Walk; play("ng_walk", true); }
             else if (s_.clip == "sprint_loop") { // sprint_loop root motion 1927 units/s (tru.exe: ~1860 on a curve)
                 if (s_.sprintUsed >= t_.sprintSeconds) play("ng_sprint_to_exhaust", false);

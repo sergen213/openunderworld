@@ -4,50 +4,307 @@
   "chapter": "Core mechanics: idle, walk, run, stopping, standing / stick / running jumps",
   "note": "l3_main_bedroom start, where tru.exe's jump take-offs were traced under Wine (docs/GAMEPLAY.md Numbers, GameReal.BedroomJumpsMatchTruTraces). The teleport fixtures put her back at the start between runs.",
   "level": "l3_main_bedroom",
-  "spawn": [-4264.2, 5958.0, 86.6, -90],
+  "spawn": [
+    -4264.2,
+    5958.0,
+    86.6,
+    -90
+  ],
   "steps": [
-    {"step": "idle", "duration": 1.0,
-     "expect": [{"probe": "player.state", "over": "all", "eq": "idle"},
-                {"probe": "player.grounded", "eq": true},
-                {"probe": "step.moved", "max": 1}]},
-    {"step": "walk", "input": ["0 forward 1", "0 walk 1"], "duration": 2.0,
-     "expect": [{"probe": "player.state", "eq": "walk"},
-                {"probe": "player.clip", "eq": "ng_walk"},
-                {"probe": "player.speed", "near": 348, "tol": 6, "note": "ng_walk root motion [O]"},
-                {"probe": "step.horizontal", "min": 600, "max": 720}]},
-    {"step": "walk_stop", "duration": 1.5,
-     "expect": [{"probe": "player.state", "eq": "idle"}, {"probe": "player.speed", "eq": 0}]},
-    {"step": "run", "fixtures": [{"teleport": [-4264.2, 5958.0, 86.6, -90]}], "input": ["0 forward 1"], "duration": 0.9,
-     "expect": [{"visits": ["idle", "run"]},
-                {"clips": ["ng_run_start", "ng_run"]},
-                {"probe": "player.speed", "near": 1274, "tol": 6, "note": "ng_run root motion [O]"},
-                {"probe": "step.horizontal", "min": 950, "max": 1150, "note": "0.9 s from rest, ng_run_start included"}]},
-    {"step": "run_stop", "duration": 1.5,
-     "expect": [{"visits": ["run", "stop", "idle"]},
-                {"clips": ["ng_running_stop", "ng_idle"]},
-                {"probe": "player.speed", "eq": 0},
-                {"probe": "step.horizontal", "min": 120, "max": 250, "note": "ng_running_stop carries her on"}]},
-    {"step": "standing_jump", "fixtures": [{"teleport": [-4264.2, 5958.0, 86.6, -90]}],
-     "input": ["0.5 jump 1", "0.6 jump 0"], "duration": 2.5,
-     "expect": [{"visits": ["idle", "jumpprep", "jump", "land", "idle"]},
-                {"probe": "step.peak_height", "near": 201.6, "tol": 3, "note": "48.04 up a 30 Hz frame [O Wine]"},
-                {"probe": "step.air_time", "near": 0.56, "tol": 0.03},
-                {"probe": "step.horizontal", "max": 2},
-                {"probe": "player.grounded", "eq": true}]},
-    {"step": "stick_jump", "fixtures": [{"teleport": [-4264.2, 5958.0, 86.6, -90]}],
-     "input": ["0.5 forward 1", "0.5 jump 1", "0.6 jump 0", "1.6 forward 0"], "duration": 3,
-     "expect": [{"visits": ["idle", "jumpprep", "jump", "run"]},
-                {"probe": "step.peak_height", "near": 218.1, "tol": 3, "note": "49.97 up + 40.00 along the stick [O Wine]"},
-                {"probe": "step.air_time", "near": 0.58, "tol": 0.03},
-                {"probe": "player.state", "eq": "idle"}]},
-    {"step": "run_up", "fixtures": [{"teleport": [-4264.2, 5958.0, 86.6, -90]}], "input": ["0.5 forward 1"], "duration": 1.4,
-     "expect": [{"probe": "player.state", "eq": "run"}, {"probe": "player.speed", "near": 1274, "tol": 6}]},
-    {"step": "running_jump", "input": ["0 forward 1", "0 jump 1", "0.1 jump 0", "1.0 forward 0"], "duration": 2.5,
-     "expect": [{"visits": ["run", "jumpprep", "jump", "run", "stop", "idle"]},
-                {"clips": ["ng_running_jump_forwards", "ng_running_land"]},
-                {"probe": "step.peak_height", "near": 157.1, "tol": 3, "note": "42.53 up + 65.83 forward [O Wine]"},
-                {"probe": "step.air_time", "near": 0.50, "tol": 0.03},
-                {"probe": "step.peak_speed", "near": 1974.9, "tol": 10},
-                {"probe": "player.grounded", "eq": true}]}
+    {
+      "step": "idle",
+      "duration": 1.0,
+      "expect": [
+        {
+          "probe": "player.state",
+          "over": "all",
+          "eq": "idle"
+        },
+        {
+          "probe": "player.grounded",
+          "eq": true
+        },
+        {
+          "probe": "step.moved",
+          "max": 1
+        }
+      ]
+    },
+    {
+      "step": "walk",
+      "input": [
+        "0 forward 1",
+        "0 walk 1"
+      ],
+      "duration": 2.0,
+      "expect": [
+        {
+          "probe": "player.state",
+          "eq": "walk"
+        },
+        {
+          "probe": "player.clip",
+          "eq": "ng_walk"
+        },
+        {
+          "probe": "player.speed",
+          "near": 348,
+          "tol": 6,
+          "note": "ng_walk root motion [O]"
+        },
+        {
+          "probe": "step.horizontal",
+          "min": 600,
+          "max": 720
+        }
+      ]
+    },
+    {
+      "step": "walk_stop",
+      "duration": 1.5,
+      "expect": [
+        {
+          "probe": "player.state",
+          "eq": "idle"
+        },
+        {
+          "probe": "player.speed",
+          "eq": 0
+        }
+      ]
+    },
+    {
+      "step": "run",
+      "fixtures": [
+        {
+          "teleport": [
+            -4264.2,
+            5958.0,
+            86.6,
+            -90
+          ]
+        }
+      ],
+      "input": [
+        "0 forward 1"
+      ],
+      "duration": 0.9,
+      "expect": [
+        {
+          "visits": [
+            "idle",
+            "run"
+          ]
+        },
+        {
+          "clips": [
+            "ng_run_start",
+            "ng_run"
+          ]
+        },
+        {
+          "probe": "player.speed",
+          "near": 1274,
+          "tol": 6,
+          "note": "ng_run root motion [O]"
+        },
+        {
+          "probe": "step.horizontal",
+          "min": 950,
+          "max": 1150,
+          "note": "0.9 s from rest, ng_run_start included"
+        }
+      ]
+    },
+    {
+      "step": "run_stop",
+      "duration": 1.5,
+      "expect": [
+        {
+          "visits": [
+            "run",
+            "idle"
+          ]
+        },
+        {
+          "probe": "player.speed",
+          "eq": 0
+        },
+        {
+          "probe": "step.horizontal",
+          "max": 30,
+          "note": "let go inside the run loop's first 15 frames: she stops on the spot (chart S64 T40; ng_running_stop only later, T176) [O Wine]"
+        }
+      ]
+    },
+    {
+      "step": "standing_jump",
+      "fixtures": [
+        {
+          "teleport": [
+            -4264.2,
+            5958.0,
+            86.6,
+            -90
+          ]
+        }
+      ],
+      "input": [
+        "0.5 jump 1",
+        "0.6 jump 0"
+      ],
+      "duration": 2.5,
+      "expect": [
+        {
+          "visits": [
+            "idle",
+            "jumpprep",
+            "jump",
+            "land",
+            "idle"
+          ]
+        },
+        {
+          "probe": "step.peak_height",
+          "near": 201.6,
+          "tol": 3,
+          "note": "48.04 up a 30 Hz frame [O Wine]"
+        },
+        {
+          "probe": "step.air_time",
+          "near": 0.56,
+          "tol": 0.03
+        },
+        {
+          "probe": "step.horizontal",
+          "max": 2
+        },
+        {
+          "probe": "player.grounded",
+          "eq": true
+        }
+      ]
+    },
+    {
+      "step": "stick_jump",
+      "fixtures": [
+        {
+          "teleport": [
+            -4264.2,
+            5958.0,
+            86.6,
+            -90
+          ]
+        }
+      ],
+      "input": [
+        "0.5 forward 1",
+        "0.5 jump 1",
+        "0.6 jump 0",
+        "1.6 forward 0"
+      ],
+      "duration": 3,
+      "expect": [
+        {
+          "visits": [
+            "idle",
+            "jumpprep",
+            "jump",
+            "run"
+          ]
+        },
+        {
+          "probe": "step.peak_height",
+          "near": 218.1,
+          "tol": 3,
+          "note": "49.97 up + 40.00 along the stick [O Wine]"
+        },
+        {
+          "probe": "step.air_time",
+          "near": 0.58,
+          "tol": 0.03
+        },
+        {
+          "probe": "player.state",
+          "eq": "idle"
+        }
+      ]
+    },
+    {
+      "step": "run_up",
+      "fixtures": [
+        {
+          "teleport": [
+            -4264.2,
+            5958.0,
+            86.6,
+            -90
+          ]
+        }
+      ],
+      "input": [
+        "0.5 forward 1"
+      ],
+      "duration": 1.4,
+      "expect": [
+        {
+          "probe": "player.state",
+          "eq": "run"
+        },
+        {
+          "probe": "player.speed",
+          "near": 1274,
+          "tol": 6
+        }
+      ]
+    },
+    {
+      "step": "running_jump",
+      "input": [
+        "0 forward 1",
+        "0 jump 1",
+        "0.1 jump 0",
+        "1.0 forward 0"
+      ],
+      "duration": 2.5,
+      "expect": [
+        {
+          "visits": [
+            "run",
+            "jumpprep",
+            "jump",
+            "run",
+            "stop",
+            "idle"
+          ]
+        },
+        {
+          "clips": [
+            "ng_running_jump_forwards",
+            "ng_running_land"
+          ]
+        },
+        {
+          "probe": "step.peak_height",
+          "near": 157.1,
+          "tol": 3,
+          "note": "42.53 up + 65.83 forward [O Wine]"
+        },
+        {
+          "probe": "step.air_time",
+          "near": 0.5,
+          "tol": 0.03
+        },
+        {
+          "probe": "step.peak_speed",
+          "near": 1974.9,
+          "tol": 10
+        },
+        {
+          "probe": "player.grounded",
+          "eq": true
+        }
+      ]
+    }
   ]
 }

@@ -189,6 +189,8 @@ struct Tuning {
     float airBrakeStick = -0.2f, airBrake = 0.6f;
     float standMoveTakeoff = 0.26f; // s into ng_standing_jump a stick jump leaves the ground (0.33 s clip: 359 vs 290 ms)
     float turnRate = 6.0f;                     // rad/s
+    float runTurnRate = 1.755f, sprintTurnRate = 1.835f; // rad/s in the run / sprint loops [O Wine, l4_temple]
+    float runStopFrames = 15.0f; // frames in the run loop before letting go plays ng_running_stop (chart variable 374)
     float grabReach = 60.0f, grabWindow = 40.0f; // hand-to-ledge horizontal / vertical tolerance
     // Grab only while -13 <= zVel <= 9 units/frame * 5.72443 (30 Hz): player data bytes +0x834 / +0x833 (0x759260)
     float grabMinVz = -13 * 5.72443f * 30.0f, grabMaxVz = 9 * 5.72443f * 30.0f; // units/s
@@ -376,6 +378,7 @@ struct PlayerState {
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
+    float runTime = 0;    // Run: seconds in the run loop ng_run (the chart's state time of S65)
     // Carrying a portable that encumbers her (PortableDef::encumbers; World sets it every tick): the
     // portable_encumbered_* walk instead of the ground locomotion (Player::encumberedMove, Melee.cpp).
     bool encumbered = false;

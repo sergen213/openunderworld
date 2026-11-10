@@ -3711,6 +3711,30 @@ Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full),
   `GameReal.ArcticSeaLadderClimbsFasterWithInteract`, `GameReal.TemplePullUpOnReleaseAndHandstandOnHold`; self-tests
   `ledge` (step `hustle_left`), `ladder_fast` (l7_arctic_sea).
 
+### Sprint, the run's turn and stop
+
+- **Sprint** [O chart, data, Wine]: S59 is entered by the Sprint press at full stick (T224 from the run's states) or,
+  held, from the run loop S65 (T187, state time >= variable 154 = 0) while CanSprint (cond 0x205 = tru.exe 0x752220);
+  it ends on the release (T184, cond 0x97) into S65 or exhausted into S73. Under Wine the run's start S63 lasts 0.83 s
+  (855 units) whether Sprint is held or not, S65 one frame, then S59 at **1879 units/s** (`sprint_loop`'s root motion:
+  1927; the earlier trace: ~1860). Its moves: the jump S249 (the run's arc, "Jumps" above), the roll S6
+  `ng_roll_front_sprinting` (Wine: 1366 in 0.93 s; the run's S7: 1327 in 0.88 s), the kick S1432, the stair / slope
+  blends (request 740 `ng_sprint_up_stair` / `_down_stair`, not ported), and after a landing the sprint resumes from
+  the landing clip's 4th frame (T2108; Wine 0.15 s). There is no slide under anything and no sprint-only stop.
+  Stamina data [O-data, semantics U]: Lara data +0x520 = 300, +0x524 = 30, +0x528 = 30, +0x52C = 300 (frames; drain
+  0x74A090, refill 0x74A100, the test 0x74FD70); ours keeps the Wine-timed 9.7 s / 0.9 s model.
+- **Turning** [O Wine]: with the stick swung 45 degrees the run loop turns her at **1.755 rad/s** and the sprint at
+  **1.835 rad/s**, linearly, overshooting ~0.03 rad (run: yaw 1.543 -> 0.841 in 0.400 s). Ours: `Tuning::runTurnRate`
+  / `sprintTurnRate` in the loops; the start clips and the walk keep `turnRate` 6 rad/s [I] (the original's start /
+  180 clips S48 / S36 / S61 `ng_running_turn` are not ported).
+- **Stopping** [O chart, Wine]: the stick let go leaves the run loop S65 for S57 `ng_running_stop` (223 on) only
+  after variable 374 = **15 frames** in it (T176); earlier - and from the run's start S63 and the sprint S59 - the
+  group's T40 puts her into S39 at once: she stops on the spot (Wine: W let go 0.32 s into the loop: 0 units further;
+  out of a sprint: 0; 1.2 s into the loop: S57, 266 further). Ours: `PlayerState::runTime`,
+  `Tuning::runStopFrames`; S39's 0.48 s settle clip is the idle blend [I].
+- Tests: `Game.RunStopsOnTheSpotOrSlides`, `GameReal.TempleSprintTurnAndStops`; self-tests `locomotion` (step
+  `run_stop`), `sprint`, `jump_brake`, `landing`.
+
 Wine traces of this section (`gameplaygoal/ctrl2/w1.txt`, 46 runs; `an.py` prints the chart states by index: state
 address = 0x...242D0 + 40 x index): standing / stick / running / sprint jumps tapped and held, the stick let go and
 pulled back in flight; run and sprint stops, rolls, turns; falls of 200..2100 with no key, Forward, Crouch, both
