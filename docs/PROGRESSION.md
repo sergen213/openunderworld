@@ -135,6 +135,9 @@ Portal order from the start unit; level changes not made by portals are named.
 |---|---|---|---|---|
 | 0 | l3_main_bedroom | switch 4525 (use) | house door 4520 opens | pass |
 | 0 | l3_bedroom_hall | push block 4363 (push) | block moves | pass |
+| 0 | l3_bedroom_hall | plane 4375 (cross toward the door, one-sided) | holds Lara 1 s (larabase 56), floor 4359 `collapse` → `idle_collapsed`, door 4376 command → uber state 5: the door leaves its slide, `squib_explode_door` throws it and its ring into the pit; running jump → ledge 969 (saving grab) → l3_main_hall | pass (`GameReal.PrologueFloorCollapsesAndTheDoorIsBlownOff`) |
+| 0 | l3_bedroom_hall | plane 4379 (pit, +Y down) | kills on the fall (health 99999) | pass (fires since the one-sided fix) |
+| 0 | l3_main_bedroom | ring door 4526 `ma_uo_bedroom_door` (grapple pull) | ring = model 0 feature (mask 4) on hinge 0; the door = section 1 on slide 1 (0..316 toward the room), leaving its range (trigger 15) → state 1: joint removed, squib born | target offered (`GrappleKind::Mounted`); the pull itself is agent/GpMedSea's `World::pullGrappled` (not on this branch): open |
 | 0 | l3_main_hall | plane 4129 (cross) | 010 → chapter 1 | pass (fixed) |
 | 1 | l1_seafloor | eye puzzle pieces 231-233 | puzzle reveal | not covered: pieces are physics objects [U interaction] |
 | 1 | l1_kraken_entrance | grooved plates 752/753 (snake head 751 pulled down onto 752, weight 749/750 carried onto 753) | locks of gate 743, oil doors 754/755 | pass |
@@ -144,6 +147,8 @@ Portal order from the start unit; level changes not made by portals are named.
 | 1 | l1_kraken_room | switch 57 (use) | tentacle gear 32 | pass after the column is shot (row below); alone the sweep's FAIL is the "attempt" reaction |
 | 1 | l1_baldrs_tomb | press plates 219/221/222 (stand on; 221 + 222 together: a weight on one) | door 223, gate 45 (locks 69/70 on `multibody` 89 motors) | pass (ou-game replay `game_replay_baldrs_plates_gate`, GAMEPLAY.md "Receptacle replays": weight 220 on plate 219 holds door 223 open — 219 vt 54 → 223 vt 57, stepping off alone runs 219 vt 55 → 223 vt 58 and it shuts — weight 218 on 222 and Lara on 221: all three plates at -60, locks 69 / 70 at -1250, 45 vt 54, the gate falls to ~90°) |
 | 1 | l1_ship_upper_hallway_a/b, upper_hallway, engine_hall | volumes 1531, 1492, 1465, 1436 | ship doors, cinematics 1453 / 1288 | pass (1531 in suite) |
+| 1 | l1_ship_exterior | anchor chain (ledges 372 / 287..293 / 380 / 369 on the hull) | running jump off the yacht's bow, up-jumps hang to hang, over the rail onto the deck | pass (`GameReal.ShipBoardingByTheAnchorChain`) |
+| 1 | l1_ship_exterior | fuel tanks 1602..1630 (`sh_ei_exploading_barrel`, 2 pistol hits) | squib 800 damage within 948 to Lara, enemies, the next tank | pass (`GameReal.FuelTankExplosionHurtsLaraAndAMercenary`) |
 | 1 | l1_ship_sinking_hall | plane 1074 (cross) | 070_med_dive → chapter 2 | pass (fixed) |
 | 2 | l2_puzzleroom | elevator switch 2961, weight 2971 (push), shiva grapples 2982/2983 (pull) | elevator 2973, weight, shiva arms | pass |
 | 2 | l2_towerconnector, l2_norsehub, l2_norsehall | chest volumes 2137/2138; wall-handle volumes 2038 / 2039 / 2045 (2040: state only) | chests; handles 2042 / 2043 switched off / on as grapple targets (uber action 0x1A / 0x19) | pass |

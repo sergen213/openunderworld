@@ -616,7 +616,9 @@ void World::tick(const Actions& input) {
     if (script_.holding() || uberGrip_ != vec3(0)) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
     if (combat_.headShot >= 0) move = vec2(0); // the head shot move plays out (Combat.cpp)
     if (combat_.manualAim) a.walk = true, a.sprint = false; // [I] manual aim: she steps, she does not run
-    if (splineCam_ && !script_.playerControl()) move = vec2(0); // reveal camera with control disabled (larabase 56)
+    // Control disabled by a script (larabase 56): reveal cameras, and scripted moments without one (l3_bedroom_hall plane
+    // 4375 holds her for the second its floor takes to collapse).
+    if (!script_.playerControl()) move = vec2(0);
     if (grappleActs) {
         if (player_.state().grappleUid) releaseGrapple(false);
         else attachGrapple(grappleAt->pos, grappleAt->uid, grappleAt->kind, grappleAt->rope),

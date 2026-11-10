@@ -1103,7 +1103,8 @@ private:
     nlohmann::json serializeBreakables() const;
     void restoreBreakables(const nlohmann::json& j);
     std::map<std::string, std::optional<ExplosionRecord>> explosionData_; // by object name
-    std::vector<std::pair<vec3, ExplosionRecord>> pendingBlasts_;         // born squibs going off on the next tickBlasts
+    struct PendingBlast { vec3 at{0}; ExplosionRecord record; int ticks = 0; };
+    std::vector<PendingBlast> pendingBlasts_;                             // born squibs going off (tickBlasts)
     void birthBlast(uint16_t object, vec3 at);
     void tickBlasts();
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
@@ -1119,6 +1120,7 @@ private:
     bool uberInsert(int32_t uid, size_t section, bool inserted);
     bool uberTrigger(int32_t uid, size_t section, uint32_t trigger, uint32_t param); // 0x6D4790 / 0x6D4810
     int32_t uberSectionJoint(int32_t uid, int32_t section) const; // the simulated joint moving the section, -1 none
+    void uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose); // its last joint went: a loose body
     bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles): grip, push, let go
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
@@ -1285,6 +1287,11 @@ private:
         int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; int32_t engagement = -1;
         int32_t clip = -1; float clipTime = 0, rate = 1; bool loop = false;
         int32_t model = -1;
+        // A section instance is a rigid body its joints hold (0x4D3DA0 / 0x4D8000). `held`: a joint was created on it;
+        // `freed`: its last joint was removed (action 10) while it had one: it falls as a loose body from `freedAt`
+        // (model -> world), as ma_uo_bedroom_door's leaf once pulled or blown off its hinge. Saved.
+        bool held = false, freed = false;
+        glm::mat4 freedAt{1};
     };
     std::map<std::pair<std::string, int32_t>, std::optional<physics::EngagementSet>> uberEngagements_; // (object, offset)
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };

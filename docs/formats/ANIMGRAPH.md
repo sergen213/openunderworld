@@ -26,6 +26,11 @@ Labels: **[O]** observed in game data or our tru.exe decompile (GOG 1.1.0.0 VAs)
 Queries `0xE6` / `0xE7` (`0x6C7A60`) read record `+0x30` / `+0x34`: each is a pointer to a pointer to the first
 state / transition. Records follow each other while their tag holds (`0x6B4B10` walks them the same way).
 
+Record `+0x2C` points at the state an instance starts in [O data: set in all 95 graph objects; in 25 it is not the
+first record: the receptacles' empty state (pole holes, key holes, levers), `ma_ani_foor_collapse`'s `idle` before its
+first record `idle_collapsed`, the artifacts' record 4, `ma_ei_ignitable` 3, …]. `AnimGraph::initial`; ours starts
+intros without intro data there (with data, message 0x23 picks record `data word 15`, 0 = the first, as before).
+
 State, 0x28 bytes, tag `0x2714`:
 
 | Off | Type | Meaning |

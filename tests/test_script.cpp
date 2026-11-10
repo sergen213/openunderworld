@@ -57,9 +57,9 @@ TEST(ScriptShapes, BoxSphereRotationAndPlane) {
     EXPECT_TRUE(crosses(plane, {}, {}, {0, -10, 0}, {0, 10, 0}));
     EXPECT_FALSE(crosses(plane, {}, {}, {0, 10, 0}, {0, 5, 0}));
     EXPECT_FALSE(crosses(plane, {}, {}, {150, 10, 0}, {150, -10, 0})); // outside the rectangle
-    plane.oneSided = true;
-    EXPECT_TRUE(crosses(plane, {}, {}, {0, 10, 0}, {0, -10, 0}));
-    EXPECT_FALSE(crosses(plane, {}, {}, {0, -10, 0}, {0, 10, 0}));
+    plane.oneSided = true; // toward local +Y only (tru.exe 0x5CCC20 -> 0x461640)
+    EXPECT_FALSE(crosses(plane, {}, {}, {0, 10, 0}, {0, -10, 0}));
+    EXPECT_TRUE(crosses(plane, {}, {}, {0, -10, 0}, {0, 10, 0}));
 }
 
 TEST(ScriptRuntime, VolumeEnterExitAndDispatchOrder) {

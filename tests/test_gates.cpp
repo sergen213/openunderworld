@@ -326,9 +326,9 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
                                       glm::rotate(glm::mat4(1), t->rot.z, {0, 0, 1});
                 const vec3 n = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
                 const vec3 base = at - vec3(0, 0, script::kTestPointHeight);
-                place(w, base + n * 300.0f, 0);
+                place(w, base - n * 300.0f, 0); // toward local +Y: the way one-sided planes count (script::crosses)
                 tick({});
-                place(w, base - n * 300.0f, 0, true);
+                place(w, base + n * 300.0f, 0, true);
             } else {
                 place(w, at - vec3(0, 0, script::kTestPointHeight), 0);
             }
@@ -1403,7 +1403,16 @@ TEST(ProgressionReal, HallwayRampsJoint) {
     EXPECT_NEAR(w.uberJoint(6045, 0)->x, -948.167f, 3.0f) << "fell to its lower limit"; // Jolt's limit settles within units
     for (int i = 0; i < 120; ++i) w.tick({});
     EXPECT_EQ((*w.uberState(6045))[1], 2u) << "the ramps tilted";
-    enter(6078);
+    { // plane 6078, toward its local +Y
+        const auto* t = w.script().find(6078);
+        ASSERT_TRUE(t);
+        const glm::mat4 rot = glm::rotate(glm::mat4(1), t->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), t->rot.y, {0, 1, 0}) *
+                              glm::rotate(glm::mat4(1), t->rot.z, {0, 0, 1});
+        const vec3 n = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0))), base = t->pos - vec3(0, 0, script::kTestPointHeight);
+        place(w, base - n * 100.0f, 0);
+        w.tick({});
+        place(w, base + n * 100.0f, 0, true);
+    }
     for (int i = 0; i < 600 && (*w.uberState(6045))[0] != 1; ++i) w.tick({});
     EXPECT_EQ((*w.uberState(6045))[0], 1u);
     EXPECT_GE(w.uberJoint(6045, 0)->x, -31.6056f) << "raised back into its top range";
@@ -2254,7 +2263,9 @@ TEST(ProgressionReal, KrakenTentacleSlowMotionByItsScript) {
     const vec3 n = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
     const vec3 base = t->pos - vec3(0, 0, script::kTestPointHeight);
     game::PlayerState s = w.player().state();
-    for (const vec3 p : {base + n * 300.0f, base - n * 300.0f}) { // she crosses the plane
+    // She crosses the plane toward its local +Y (up through the platform's top, as when she pulls up onto it); the first
+    // step is taken twice: the room's opening cinematic moves her after the first tick.
+    for (const vec3 p : {base - n * 300.0f, base - n * 300.0f, base + n * 300.0f}) {
         s.pos = p;
         w.restore(s, 0, 0);
         w.tick({});

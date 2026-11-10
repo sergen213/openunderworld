@@ -54,9 +54,10 @@ std::optional<BreakableData> loadBreakable(const cdc::Drm& object);
 
 // Explosion record (tag 0x2775) of an effect object ("squib"): tru.exe's anim-graph records point at it (+0x18) and
 // hand it to the area hit 0x69F1E0 when they start (0x6A5C50): every instance within `radius` of the squib takes
-// `damage` (message 0x11C, damage class 4) and is thrown at `knock` .. `knockEdge` units per frame [I unit], `angle`
-// degrees up. Record: +4 i16 damage, +6 u16, +8 u16, +0xA u16, +0xC i16 radius, +0xE i16 knock, +0x10 i16 knock at the
-// edge, +0x12 u16 angle. [I] +6 (800 on the barrel's, as its damage) is the damage at the edge.
+// `damage` (message 0x11C, damage class 4) and is thrown (message 0x91) at `knock` .. `knockEdge` (centre .. edge; ours
+// units/s as the grenade's [I unit]), `angle` degrees up. Record: +4 i16 damage, +6 u16, +8 u16, +0xA u16, +0xC i16
+// radius, +0xE i16 knock, +0x10 i16 knock at the edge, +0x12 u16 angle. [I] +6 is the damage at the edge
+// (squib_exploding_barrel 800 / 800 within 948, squib_explode_door 5 / 2 within 1896); +8 / +0xA [U].
 struct ExplosionRecord {
     float damage = 0, edgeDamage = 0, radius = 0, knock = 0, knockEdge = 0, angle = 0;
 };

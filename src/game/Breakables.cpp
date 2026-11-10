@@ -324,7 +324,7 @@ void World::blast(vec3 at, const ExplosionRecord& x) {
         hit.damageClass = kDamageClassBlast;
         vec3 flat(dir.x, dir.y, 0);
         if (glm::dot(flat, flat) > 1e-6f) flat = glm::normalize(flat);
-        hit.knockVel = (flat * out + vec3(0, 0, lift)) * glm::mix(x.knock, x.knockEdge, fall(d)) * 30.0f; // per frame -> per second
+        hit.knockVel = (flat * out + vec3(0, 0, lift)) * glm::mix(x.knock, x.knockEdge, fall(d)); // units/s [I], as the grenade's
         t->onHit(hit);
     }
     const vec3 chest = player_.state().pos + vec3(0, 0, targeting.eyeHeight);
@@ -337,7 +337,7 @@ void World::blast(vec3 at, const ExplosionRecord& x) {
     for (const auto& [uid, b] : breakables_)
         if (glm::distance(at, vec3(b.frame[3])) < x.radius) struck.push_back(uid);
     for (const int32_t uid : struck) hitBreakable(uid, kDamageClassBlast, false);
-    physics_.blast(at, x.radius, x.knock * 30.0f, x.knockEdge * 30.0f);
+    physics_.blast(at, x.radius, x.knock, x.knockEdge);
 }
 
 // Uber state action 0x13 gave birth to objectlist id `object` at `at`: an effect object with an explosion record goes
@@ -354,13 +354,17 @@ void World::birthBlast(uint16_t object, vec3 at) {
                 } catch (const cdc::FormatError& e) { warnings.push_back(*name + ": " + e.what()); }
         it = explosionData_.emplace(*name, rec).first;
     }
-    if (it->second) pendingBlasts_.push_back({at, *it->second});
+    if (it->second) pendingBlasts_.push_back({at, *it->second, 1});
 }
 
+// A born squib goes off at the end of the tick after its birth: bodies the same state's actions set free (a door leaf
+// off its hinge) are in the physics scene by then and take its knock.
 void World::tickBlasts() {
-    const auto due = std::move(pendingBlasts_);
-    pendingBlasts_.clear();
-    for (const auto& [at, rec] : due) blast(at, rec);
+    std::vector<PendingBlast> due;
+    for (auto it = pendingBlasts_.begin(); it != pendingBlasts_.end();)
+        if (it->ticks-- <= 0) due.push_back(*it), it = pendingBlasts_.erase(it);
+        else ++it;
+    for (const auto& b : due) blast(b.at, b.record);
 }
 
 } // namespace ou::game

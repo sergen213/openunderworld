@@ -1175,13 +1175,13 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              if (const auto t = w.grappleTarget()) w.attachGrapple(t->pos, t->uid);
          }, [](const game::World& w) { return w.player().state().state == State::GrappleSwing; }},
         // On l1_ship_sinking_hall's ladder 234, climbing.
-        {"l1_ship_sinking_hall", game::Spawn{{1550, 29, 1000}, 3.1415927f}, 40, 240, [](uint64_t t) {
+        {"l1_ship_sinking_hall", game::Spawn{{1480, -120, 960}, 1.5707963f}, 40, 240, [](uint64_t t) {
              game::Actions a;
              a.move.y = t < 150 ? 1.0f : 0.0f;
              return a;
          }, nullptr, [](const game::World& w) { return w.player().state().state == State::Ladder; }},
         // On l1_ship_sinking_hall's ladder 234 mid-climb: ladder_climb_up carrying her between two rungs.
-        {"l1_ship_sinking_hall", game::Spawn{{1550, 29, 1000}, 3.1415927f}, 50, 240, [](uint64_t t) {
+        {"l1_ship_sinking_hall", game::Spawn{{1480, -120, 960}, 1.5707963f}, 50, 240, [](uint64_t t) {
              game::Actions a;
              a.move.y = t < 150 ? 1.0f : 0.0f;
              return a;
@@ -1334,7 +1334,7 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              const game::vec3 base = t->pos - game::vec3(0, 0, script::kTestPointHeight);
              const game::PlayerState start = w.player().state();
              game::PlayerState s = start;
-             for (const game::vec3 p : {base + n * 300.0f, base - n * 300.0f}) s.pos = p, w.restore(s, 0, 0), w.tick({});
+             for (const game::vec3 p : {base - n * 300.0f, base - n * 300.0f, base + n * 300.0f}) s.pos = p, w.restore(s, 0, 0), w.tick({});
              w.restore(start, 0, 0); // back on the floor: an airborne save resumes at the checkpoint
          }, [](const game::World& w) { return w.splineCameraActive(); }},
     };
