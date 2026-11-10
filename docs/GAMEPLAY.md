@@ -419,7 +419,16 @@ checked against https://tombraiders.net/stella/walks/controls/TR8controls.html. 
 - **Chart** [O lara.drm state chart, player data +0x12508; conditions 0x8B2838, actions 0x8B0A50]: the chart's input
   ids are game actions, not buttons (0x760C40 indexes a 0x30-byte action table): 32 = Interact (melee), 99 = Interact
   (an engaged object), 50 / 51 = Crouch, 52 = Jump, 42 = Sprint, 101 = put a carried object down, 102 = throw it (the
-  weapon chart). Condition 0x7D1 = state property 1002 "melee allowed" (the ground and combat families and the carry
+  weapon chart).
+  - **The action map** [O generalbank.drm DTP 47, named by GlobalInfo +0x1C; tru.exe 0x4868F0 hands it to the mapper
+    0x480BC0]: `+0` 167 bindings of 4 bytes {action id, context, control, second control (0xFF none)}, `+8` 63 controls
+    of 0x18 bytes {u16 kind (0x10xx button, 0x20xx axis), u16 code, u32 hold time in ms, ..., float range}. A control's
+    code under 25 is one of the Control Configuration's virtual buttons ("Controls": 0 Interact, 1 Grapple, 2 Crouch,
+    3 Jump, 4 Target Lock, 5 Shoot, 6 Sprint, 7 Grenade, 9 Manual Aim), above that a raw key (0x81 Esc, 0x148 the
+    arrows). The bindings of the ids above: 32 and 99 -> control 2 (button 0, Interact), 50 / 51 -> control 1 (button
+    2, Crouch), 52 -> control 0 (button 3, Jump), 42 -> control 6 (button 6, Sprint), **101 -> control 1: Crouch puts
+    the carried object down, 102 -> control 5 (button 7): Grenade throws it**. Dump:
+    `openunderworld-work/gameplaygoal/melee/am.cpp` (`am.txt`). Condition 0x7D1 = state property 1002 "melee allowed" (the ground and combat families and the carry
   family S1313); 0x7D3 = the melee target (targeting slot 5, 0x71CAF0(5)) is the combat target; 0x7D8 (0x765810) its
   height class; 0x7DA the fatality target (slot 6); 0x7DB a vault target; 0x591 the kind of the engagement record she
   stands in (0 none); 0x5DD / 0x5DE she holds a portable / one that encumbers her.
@@ -485,12 +494,18 @@ checked against https://tombraiders.net/stella/walks/controls/TR8controls.html. 
   aside or back = `combat_jump<l|r|b>_takeoff`, then a leap of 1200 units/s that way and 900 up [I] playing
   `combat_jump*_inair`; forward and neutral stay the plain jump. No invulnerability rule is decoded.
 - **Knocked down** (`World::throwLara`, `State::Knocked`): a blast's knock (message 0x91; ours: her own grenades)
-  throws her: `Hit_ThrownFront` -> `Hit_LandFront` -> `Hit_getupback` when the blast is in front of her, else
-  `hitReact_thrownBack` -> `hitReact_landBack` -> `Hit_GetupFront` [O clips; I pairing]. She skids with the knock, lies
+  throws her: `hitReact_thrownBack` -> `hitReact_landBack` -> `Hit_getupback` when the blast is in front of her (onto
+  her back), else `Hit_ThrownFront` -> `Hit_LandFront` -> `Hit_GetupFront` (onto her front) [O clips: `Hit_LandFront`'s
+  root moves 215 forwards, `hitReact_landBack`'s 60 backwards; I: which blast picks which]. She skids with the knock, lies
   1 s [I] and gets up; Jump gets her up at once (the controls page). tru.exe's ThrownState and the reaction types 7 / 9 /
   10 / 12 / 15 (0x6EB590 passes those hit classes through) are not traced [U].
+- **Open** [U]: the lying thrall's damage path (0x682680 -> 0x65AC80), `death_drown` in the eitr pool and the pole's
+  `hosted_melee_thrall` (chart S740); tru.exe's ThrownState and its reaction types; any invulnerability of the evasive
+  moves; the interpolation of action 1007 that closes her on the target; soldiers' `hitreact_vault_adren`.
 - Saved with the objects (`melee`: the move, its target, phase and timers; docs/SAVES.md).
-- Tests: `Combat.KickLandsInItsWindow`, `Combat.KnockedDownAndGetsUp`, `Combat.EvasiveRollsAndLeapsUnderLock`,
+- Tests: `Combat.KickLandsInItsWindow`, `Combat.KnockedDownAndGetsUp`,
+  `CombatReal.GrenadeBlastKnocksLaraDownAndSheGetsUp` (l1_baldrs_tomb: her own grenade's blast, the three clips, up
+  again), `Combat.EvasiveRollsAndLeapsUnderLock`,
   `CombatReal.MeleeDataDecodes`, `CombatReal.KickKnocksAPoacherDown` (l4_pool), `CombatReal.StompKillsASpider`,
   `CombatReal.SprintKickAndAirKicks`, `CombatReal.VaultOffAnEnemy` (a tiger), `CombatReal.FatalityEndsADownedThrall`
   (l1_baldrs_tomb: shot down, finished, chunks; the other one rises), `CombatReal.KickBreaksAnUrn` (l1_baldrs_sideroom
@@ -530,27 +545,49 @@ Code: `World::carryPortables` (`src/game/Objects.cpp`: pick-up, insert, removal)
   weapon chart's state S100, held while input 102 is down: its effect on the launch is not decoded; ours always throws
   in full. Ours flies under the scene's gravity for bodies, 5.72443 per frame² [I, PHYSICS.md], so it lands nearer
   than tru.exe's solve assumes (about 1500 units from her on a level floor instead of about 2200).
+- **Inputs** [O the action map, "Close combat"]: Interact picks up, and with it in her hands inserts it into the
+  receptacle she engages (chart input 99); Crouch (input 101) puts it down; Grenade (input 102) throws it; Interact
+  elsewhere swings it (input 32). Before 0.42 ours set it down on Interact: the tests and the `baldrs_plates_gate`
+  replay that did so now press Crouch.
 - **Ours**: Interact picks up (the clip, then in her hands), inserts into an engaged receptacle or else swings it (it
   stays in her hands); **Crouch puts it down** (the clip; without the data at once), **Grenade throws it** (no grenade
   leaves), Jump or a gun key lets go of it with the shove; a weight walks only. The body leaves her hands as a loose
   rigid body (`releaseHeld`: from her hands, moved out along her heading until it clears her proxy capsule) and from then
   on is Jolt's: it collides with the level, the plates and other bodies. While thrown, the first enemy it reaches takes
   the swung-portable record (100, class 2) and goes down [I: the thrown body's own hit numbers are not decoded]. Carried,
-  it sits between her hands (weights, hosted clips) or 60 ahead / 80 up of her root (poles, keys [I]); geometry between
-  her chest and that point stops it, so it is not carried through a wall. Swimming: put down at once, no clips [I].
+  it sits between her hands (weights, hosted clips) or 60 ahead / 80 up of her root (poles, keys [I]). Swimming: put
+  down at once, no clips [I].
+- **Collision while carried** [I: tru.exe keeps the object on her hand markers; what keeps it out of walls there is not
+  traced, U]: the object's thickness is the smallest half extent of its collision box (`PortableDef::thick`; the carved
+  weight's and the poles' from their Havok shapes). A sphere of that radius (at most her own radius less 5, so it
+  starts inside her capsule) swept from her chest to her hands stops at the first wall, door or object
+  (`World::heldPoint`), and, for an encumbering object (the carved weights and the power gems, held out in both hands; the weight's
+  thickness 104; not while she engages a receptacle's record), on her feet a wall
+  of the level within the thickness of her hands pushes her back by the overlap
+  (`World::carryCollide`; objects only stop the sweep, as receptacles are approached with the portable in her hands):
+  she cannot walk a weight into a wall, and it is never posed through one. Not during the
+  pick-up, put-down, throw and swing clips (her hands go to the floor). Let go, it is a Jolt body from that point
+  (`releaseHeld`), moved out along her heading until it clears her proxy capsule.
 - **Breakables by contact** [O 0x4D5560]: the uber sections' triggers 6 / 7 / 8 test the lengths of an impulse
   message's three vectors against the transition's float; vector A is an impulse applied at a point (0x4ECFA0). The urns:
   6 over **0** (any blow), 7 over **379.27**. Ours (`World::impulseObject(uid, applied, contact)`): a let-go or thrown
   portable moving faster than 30 units/s passes its speed as the contact [I: B / C read as a contact speed in units/s]
   to every uber object its bounds reach: a weight thrown or dropped onto an urn breaks it. The bike's ram and Lara's
   roll do not call it yet.
+- **Open** [U]: what keeps a carried object out of walls in tru.exe; the short throw (weapon chart S100); stowing a
+  pole (0x1A9 / 0x188); the insert / remove clips (`hosted_insert`, `hosted_remove`: ours inserts and takes out at
+  once); the swim states' carry clips; whether Lara's own body (a roll, a fall onto it) or the motorcycle posts the
+  impulse message of triggers 6 / 7 / 8 (ours: only let-go and thrown portables and the kick's hit message do); the
+  thrown body's own hit numbers.
 - Walkthrough requirement C04-03 (l1_baldrs_tomb's west room): from press plate 219's door-side edge, facing door 223,
   the thrown weight passes the doorway (x = -4109) in the air and rests beyond it
   (`CombatReal.WeightThrownThroughTheDoor`).
 - Saved with the objects (`held`, `melee`: thrown timers, a pending launch); the loose body is in `objects.physics`.
 - Tests: `CombatReal.WeightPickedUpCarriedAndPutDown`, `CombatReal.WeightThrownThroughTheDoor` (also: a poacher in its
-  way takes 100 and goes down), `CombatReal.ThrownWeightPressesThePlate`, `Combat.ThrowVelocityAsTheExe`; self-test
-  `carry_throw`.
+  way takes 100 and goes down), `CombatReal.ThrownWeightPressesThePlate`, `CombatReal.CarriedWeightCollidesWithTheLevel`
+  (walked at the west room's walls: the weight stays out of them, she is held off, put down there it is a loose body on
+  the floor), `Combat.ThrowVelocityAsTheExe`; the receptacle tests and replays ("Receptacle replays and the autopilot":
+  pick-up by Interact with its clip, put-down by Crouch); self-test `carry_throw`.
 
 ## Collectibles
 
@@ -811,7 +848,8 @@ plan and writes the actions it gave as an input script; the script replays the s
 through its text, the stick is re-aimed every 4 ticks in 0.05 steps from the camera's yaw, as `World::tick` maps it).
 Plan lines: `go X Y [R] [walk]`, `engage UID [X Y] [walk]` (to the nearest of its engagement records,
 `World::engagementCentres`, until `World::engaged` names it), `face YAWDEG`, `press [ACTION]` (6 ticks held, 6
-released), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
+released; `press` picks up / inserts, `press drop` puts a carried object down, `press grenade` throws it: follow each
+with a `wait` for its clip), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
 heading; ACTION pressed AT seconds in: running jumps), `push FORWARD RIGHT SECONDS [ACTION]` (ACTION, default interact,
 held throughout, the raw stick from the 6th tick: push blocks grip, then move along the block axis nearest her facing
 while the stick's forward is over 0.5), `wait SECONDS`, `near R` (logs the markup polylines within R: poles, ledges).
@@ -838,7 +876,7 @@ downstream reaction as tru.exe's scripts define it (`--report-objects`; PROGRESS
 | `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 | lever graph 1 -> 0 and its slider watch (a joint) |
 | `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 | elevator 2960 vt 54 (graph 0 -> 1), switch 2961 vt 62 |
 | `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole; a jump onto the block (its ledge loop), a standing jump from its top to the pole | lever graph 0 -> 1, its slider at -600 under her hang (state polehang), block under the pole, door 6505 raised 1200 |
-| `baldrs_plates_gate` | l1_baldrs_tomb -5000,-10000,2560,180 (west room) | weight 220 set on press plate 219, weight 218 carried through door 223 onto plate 222, Lara stands on plate 221 | plates at -60, door 223 vt 57 (section 1, open), locks 69 / 70 out of range, gate 45 vt 54 and its joint fallen open (~90°) |
+| `baldrs_plates_gate` | l1_baldrs_tomb -5000,-10000,2560,180 (west room) | weight 220 picked up (Interact) and put down (Crouch, `press drop`) on press plate 219, weight 218 carried at the encumbered walk through door 223 and put down on plate 222, Lara stands on plate 221 | plates at -60, door 223 vt 57 (section 1, open), locks 69 / 70 out of range, gate 45 vt 54 and its joint fallen open (~90°) |
 | `ballcourt_calendar_handle_turn` | l4_ballcourt -14240,10200,3700,90 | round calendar 6506's east side, grip a push handle and push 4 s | the ring turned on hinge joint 2 (> 0.2 rad, ~0.56), section 1 back in 3 |
 
 Objects' ledges and poles [O data, tru.exe 0x5D0610 -> 0x5CE4F0]: an instance whose model carries markup items (model

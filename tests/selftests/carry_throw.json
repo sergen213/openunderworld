@@ -20,7 +20,7 @@
      "duration": 60,
      "expect": [
        {"clips": ["portable_encumbered_walk"]},
-       {"probe": "player.speed", "over": "max", "max": 600, "note": "the encumbered walk, never a run"},
+       {"probe": "player.speed", "over": "max", "max": 800, "note": "the encumbered walk (portable_encumbered_walk: 495 units/s over its cycle, 781 at its fastest key), never a run (1274)"},
        {"probe": "portable.held", "eq": 220},
        {"probe": "object.219.joint", "max": -30, "note": "she stands on the plate"}
      ]},
