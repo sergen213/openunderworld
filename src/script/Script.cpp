@@ -1918,6 +1918,21 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result.bits = kAnchorBit | (nc.args[1].bits & 0xFFFF);
                 return true;
             }
+            // instance 8 (thunk 0x798CA0 -> 0x4AB320 -> 0x5BE1A0): a marker anchor on this instance's HInfo marker `args[0]`,
+            // as uberobjectbase 2 makes for a section; instance 23 / 26 and playersensor 2 take it (l7_yggdrasil_end:
+            // each natla_end hangs its fireball weapon on its marker 13).
+            if (!std::strcmp(name, "instance") && nc.function == 8 && nc.args.size() == 1) {
+                nc.result = vm::Value::object(self->uid);
+                nc.result.bits = kAnchorBit | (nc.args[0].bits & 0xFFFF);
+                return true;
+            }
+            // weaponbase 0 (setWeaponNative): Fire at an instance; a null target is skipped (thunk 0x79E2E0).
+            if (!std::strcmp(name, "weaponbase") && nc.function == 0 && nc.args.size() == 1 && weapon_) {
+                const vm::Value& t = nc.args[0];
+                if (t.kind != vm::Value::Kind::Object || !t.uid) return true;
+                weapon_(self->uid, playerScript_ && t.uid == playerScript_->uid ? 0 : t.uid);
+                return true;
+            }
             if (!std::strcmp(name, "instance") &&
                 (nc.function == 4 || nc.function == 5 || nc.function == 6 || nc.function == 7 || nc.function == 8 ||
                  nc.function == 9 || nc.function == 14 || nc.function == 15 || nc.function == 16 || nc.function == 26 || nc.function == 28)) {

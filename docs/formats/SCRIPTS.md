@@ -321,6 +321,13 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
 - [O] A caller that discards a return value pushes no result address (l3_chapel soundvolumes calling
   `globals.member12` vt 19); the VM only consumes an address-kind slot.
 
+- [O] l7_yggdrasil_end (GAMEPLAY.md "Natla"): `instance` 8 (thunk 0x798CA0 → 0x4AB320 → 0x5BE1A0) returns a marker
+  anchor on the instance's own HInfo marker (as `uberobjectbase` 2 does for a section; `instance` 23 hangs the receiver
+  on it: `Runtime::anchors`); `weaponbase` 0 (bind 0x7B69F0, thunk 0x79E2E0 → 0x7784F0) fires the weapon instance at the
+  argument instance's position (`Runtime::setWeaponNative`; a null argument is skipped). `marker` locals start as the
+  intro their record names (watervolumebase 0 / 2 arguments). The 100 000-instruction budget bounds one resume of a
+  thread (`Machine::tick` resets it): polling threads with WAIT / SLEEP run for the level's life.
+
 ### Survey (`OU_SCRIPT_SURVEY=1 ou_game_tests --gtest_filter=GameReal.ScriptSurvey`)
 
 Static: bytecode of every distinct script type of the 82 units, 362 distinct native functions called; opcodes the VM lacks:

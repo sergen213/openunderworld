@@ -615,6 +615,31 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     return def;
 }
 
+std::optional<ObjectWeaponDef> loadObjectWeapon(const cdc::BigfileSet& bf, std::string_view object) {
+    const auto w = objectData(bf, object);
+    if (!w) return std::nullopt;
+    constexpr uint32_t S = 0xE0;
+    const auto ammoId = w->at<int16_t>(S + 0x06);
+    const auto speed = w->at<float>(S + 0x10);
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    if (!ammoId || !speed || !(*speed > 0) || !list) return std::nullopt;
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    const auto ammoName = names.find(uint16_t(*ammoId));
+    if (ammoName == names.end()) return std::nullopt;
+    const auto p = objectData(bf, ammoName->second);
+    if (!p || p->at<int32_t>(0x18) != 2 || p->at<int32_t>(0x44) != 2) return std::nullopt;
+    const auto direct = p->at<float>(0x34), dmg = p->at<float>(0x48), radius = p->at<float>(0x4C), edge = p->at<float>(0x50),
+               angle = p->at<float>(0x54), knock = p->at<float>(0x58), knockEdge = p->at<float>(0x5C);
+    const auto frames = p->at<int32_t>(0x80);
+    if (!direct || !dmg || !radius || !edge || !angle || !knock || !knockEdge || !frames || !(*radius > 0) || *frames <= 0) return std::nullopt;
+    ObjectWeaponDef d;
+    d.object = std::string(object), d.ammo = ammoName->second;
+    d.speed = *speed * 30, d.directDamage = *direct;
+    d.damage = *dmg, d.edgeDamage = *edge, d.radius = *radius, d.knock = *knock, d.knockEdge = *knockEdge, d.angle = *angle;
+    d.life = float(*frames) / 30.0f;
+    return d;
+}
+
 std::optional<GrenadeTuning> loadGrenadeTuning(const cdc::BigfileSet& bf) {
     const auto g = objectData(bf, "g_grenade_thrower"), p = objectData(bf, "pr_grenade");
     if (!g || !p) return std::nullopt;
@@ -859,11 +884,18 @@ nlohmann::json World::serializeCombat() const {
                               p.travelled, weaponName(p.weapon), p.hand, p.wet});
              return a;
          }()}};
-    return {{"weapon", weaponName(c.weapon)}, {"secondary", weaponName(c.secondary)}, {"guns", guns}, {"adrenaline", c.adrenaline},
+    nlohmann::json out = {{"weapon", weaponName(c.weapon)}, {"secondary", weaponName(c.secondary)}, {"guns", guns}, {"adrenaline", c.adrenaline},
             {"state", state}, {"healthClocks", [&] {
                 const auto h = health_.clocks();
                 return nlohmann::json{h.now, h.regenStart, h.regenBase, h.invuln, h.lastType};
             }()}};
+    if (!hostile_.empty()) { // fired weapon objects' projectiles; the key exists only while one flies (older saves: none)
+        nlohmann::json a = nlohmann::json::array();
+        for (const HostileShot& p : hostile_)
+            a.push_back({p.weapon, p.owner, {p.pos.x, p.pos.y, p.pos.z}, {p.vel.x, p.vel.y, p.vel.z}, p.age});
+        out["hostile"] = std::move(a);
+    }
+    return out;
 }
 
 void World::restoreCombat(const nlohmann::json& j) {
@@ -954,6 +986,13 @@ void World::restoreCombat(const nlohmann::json& j) {
         }
     }
     combat_ = c;
+    hostile_.clear();
+    try {
+        for (const auto& p : j.value("hostile", nlohmann::json::array())) {
+            const auto v = [&](int i) { return vec3(p.at(i).at(0).get<float>(), p.at(i).at(1).get<float>(), p.at(i).at(2).get<float>()); };
+            hostile_.push_back({p.at(0).get<std::string>(), p.at(1).get<int32_t>(), v(2), v(3), p.at(4).get<float>()});
+        }
+    } catch (const std::exception&) { hostile_.clear(); }
 }
 
 int World::relicsFound() const {
@@ -1187,6 +1226,72 @@ void World::tickProjectiles(float dt) {
     }
 }
 
+// ---- World: weapon objects fired by script --------------------------------------------------------
+void World::bindWeapons() {
+    script_.setWeaponNative([this](int32_t weapon, int32_t target) { return fireObjectWeapon(weapon, target); });
+}
+
+const ObjectWeaponDef* World::objectWeapon(const std::string& name) {
+    auto it = objectWeapons_.find(name);
+    if (it == objectWeapons_.end()) {
+        std::optional<ObjectWeaponDef> def;
+        if (const auto* bf = script_.bigfile()) try {
+                def = loadObjectWeapon(*bf, name);
+            } catch (const cdc::FormatError& e) { warnings.push_back(name + ": " + e.what()); }
+        it = objectWeapons_.emplace(name, std::move(def)).first;
+    }
+    return it->second ? &*it->second : nullptr;
+}
+
+// Where a script object is now (objectFrame, Objects.cpp: its anchor chain's markers, else its intro and body).
+vec3 World::objectPoint(const script::Object& o) { return vec3(objectFrame(o)[3]); }
+
+bool World::fireObjectWeapon(int32_t weapon, int32_t target) {
+    const script::Object* w = script_.find(weapon);
+    const ObjectWeaponDef* def = w ? objectWeapon(w->name) : nullptr;
+    if (!def) return false;
+    vec3 at;
+    if (!target) at = player_.state().pos; // the instance position: her root (0x7784F0 reads instance +0x20)
+    else if (const script::Object* t = script_.find(target)) at = objectPoint(*t);
+    else return false;
+    const vec3 from = objectPoint(*w);
+    const vec3 d = at - from;
+    const float len = glm::length(d);
+    if (len < 1e-3f) return false;
+    hostile_.push_back({def->object, weapon, from, d / len * def->speed, 0});
+    return true;
+}
+
+// Fired weapon objects' projectiles: a straight flight; the first world face, target or Lara it reaches sets it off
+// (0x6C9670): a direct hit on Lara takes the projectile's own damage first, then the explosion record's area hit
+// (0x69F1E0: damage centre -> edge, the knock throws her off her feet, message 0x91).
+void World::tickHostile(float dt) {
+    for (size_t i = 0; i < hostile_.size();) {
+        HostileShot& p = hostile_[i];
+        const ObjectWeaponDef* def = objectWeapon(p.weapon);
+        if (!def) { hostile_.erase(hostile_.begin() + std::ptrdiff_t(i)); continue; }
+        const vec3 seg = p.vel * dt;
+        const float len = glm::length(seg);
+        const vec3 dir = len > 0 ? seg / len : vec3(0, 0, -1);
+        const RayHit ray = shotRay(p.pos, dir, len);
+        float t = ray.hit ? ray.t : len;
+        const PlayerState& s = player_.state();
+        const auto lara = health_.dead() ? std::nullopt
+                                         : rayCapsule(p.pos, dir, s.pos, player_.tuning().radius, player_.tuning().height, t);
+        const bool direct = lara.has_value();
+        if (direct) t = *lara;
+        p.age += dt;
+        if (!direct && !ray.hit && p.age < def->life) { p.pos += seg, ++i; continue; }
+        const vec3 at = p.pos + dir * t;
+        const bool spent = !direct && !ray.hit;
+        hostile_.erase(hostile_.begin() + std::ptrdiff_t(i));
+        if (spent) continue;
+        if (direct && def->directDamage > 0) damageLara(def->directDamage, at - dir * 10.0f, kDamageHeavy);
+        hostileBlasts_.push_back(at);
+        blast(at, ExplosionRecord{def->damage, def->edgeDamage, def->radius, def->knock, def->knockEdge, def->angle});
+    }
+}
+
 float World::screenFade() const {
     const float death = combat_.deathTime >= 0 ? std::min(1.0f, combat_.deathTime / kDeathFade) : 0.0f;
     return std::max(script_.screenFade(), death);
@@ -1232,6 +1337,8 @@ void World::tickCombat(const Actions& a, float dt) {
     CombatState& c = combat_;
     c.shots.clear();
     tickProjectiles(dt);
+    hostileBlasts_.clear();
+    tickHostile(dt);
     const PlayerState& s = player_.state();
     if (s.fallHeight > 0) health_.fall(s.fallHeight); // landing (tru.exe 0x75D080 -> 0x702FC0)
     health_.tick(dt);

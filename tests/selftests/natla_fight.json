@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "name": "natla_fight",
+ "chapter": "Out of Time: into the arena, the fight's first phase starts",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/20outoftime.html",
+ "note": "l7_yggdrasil_end from the unit's start, input only. The first walkway ends in a ledge (she comes to hang; Drop lets go), a ramp runs down into arena volume 8303: its script plays 320_hel_boss (cinematic object 8261; skipped here, its events and placement run), whose end breaks buttress A, sends the three Thor towers back on their joint motors (uber section 0 -> state 3) and leaves Lara on the middle ring's entry walkway. No zone volume holds her there, so Natla (8403, visible) throws nothing; the pool 8309 lies at its marker far below. The walkway ends over the rings: running on she comes to hang on its edge. The rings themselves (fireballs, patches, yetis) are not reachable by input yet: docs/GAMEPLAY.md \"Natla\".",
+ "level": "l7_yggdrasil_end",
+ "steps": [
+  {
+   "step": "off_the_first_walkway",
+   "plan": [
+    "run 0 3"
+   ],
+   "duration": 6,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "droptohang",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -26743,
+     "tol": 60
+    },
+    {
+     "probe": "player.hanging",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "down_the_ramp_into_the_arena",
+   "plan": [
+    "press drop",
+    "wait 1.5",
+    "run 0 15"
+   ],
+   "duration": 20,
+   "until": {
+    "probe": "player.pos.x",
+    "min": -9000
+   },
+   "expect": [
+    {
+     "calls": [
+      "8261:57"
+     ],
+     "note": "the arena volume plays cinematic object 8261: 320_hel_boss"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "min": 1,
+     "note": "the cinematic's placement"
+    }
+   ]
+  },
+  {
+   "step": "first_phase_starts",
+   "duration": 22,
+   "expect": [
+    {
+     "probe": "object.8398.uber.0",
+     "eq": 3,
+     "note": "the short Thor tower retracted"
+    },
+    {
+     "probe": "object.8399.uber.0",
+     "eq": 3
+    },
+    {
+     "probe": "object.8400.uber.0",
+     "eq": 3
+    },
+    {
+     "probe": "object.8403.hidden",
+     "eq": false
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0,
+     "note": "outside every zone nothing is thrown at her"
+    },
+    {
+     "probe": "step.moved",
+     "max": 400
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 4321,
+     "tol": 30
+    }
+   ]
+  },
+  {
+   "step": "the_walkway_ends_over_the_rings",
+   "plan": [
+    "run 0 3"
+   ],
+   "duration": 6,
+   "expect": [
+    {
+     "probe": "player.hanging",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -6472,
+     "tol": 80
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  }
+ ]
+}

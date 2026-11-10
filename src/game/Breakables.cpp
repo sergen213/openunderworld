@@ -328,7 +328,13 @@ void World::blast(vec3 at, const ExplosionRecord& x) {
         t->onHit(hit);
     }
     const vec3 chest = player_.state().pos + vec3(0, 0, targeting.eyeHeight);
-    if (const float d = glm::distance(at, chest); d < x.radius) damageLara(glm::mix(x.damage, x.edgeDamage, fall(d)), at, kDamageHeavy);
+    if (const float d = glm::distance(at, chest); d < x.radius) {
+        damageLara(glm::mix(x.damage, x.edgeDamage, fall(d)), at, kDamageHeavy);
+        // message 0x91 reaches her as any instance in the radius: thrown off her feet, away from the centre (throwLara)
+        vec3 flat(vec2(chest - at), 0);
+        if (x.knock > 0 && glm::dot(flat, flat) > 1e-6f)
+            throwLara((glm::normalize(flat) * out + vec3(0, 0, lift)) * glm::mix(x.knock, x.knockEdge, fall(d)));
+    }
     std::vector<int32_t> struck;
     for (const auto& o : script_.objects())
         if (glm::distance(at, o.pos + o.offset) < x.radius && uberRuntime_.contains(o.uid)) struck.push_back(o.uid);

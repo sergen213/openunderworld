@@ -1,6 +1,7 @@
 // Progression gates (docs/PROGRESSION.md): per chapter, the critical-path units and the puzzle / switch / uber /
 // door / trigger / cinematic gates between them. Survey (OU_PROGRESSION_SURVEY=1) prints the map from the data;
 // the gate tests teleport Lara next to each gate, perform the original interaction and assert its effect.
+#include "app/game/Autopilot.hpp"
 #include "game/Game.hpp"
 #include "game/Progress.hpp"
 #include "physics/Physics.hpp"
@@ -1386,6 +1387,72 @@ TEST(ProgressionReal, TraproomsSeal) {
     EXPECT_EQ(a->script->fields[124], 1u) << "Lara holds plate 5717";
     EXPECT_EQ(seal->script->fields[304], 2u);
     EXPECT_NE(seal->script->fields, before) << "both held: vt 58 opens the seal";
+}
+
+// The Natla fight by ordinary input (app::Autopilot plans: stick and buttons only, never a relocation), as far as the
+// route can be played today: the entry. From the unit's start she runs east, comes off the first walkway by its ledge
+// (hang, drop), runs down the ramp into arena volume 8303: 320_hel_boss plays, buttress A breaks, the Thor towers
+// retract. On the entry walkway she is outside every zone: Natla throws nothing. Running on, the walkway ends over
+// the rings (she comes to hang on its edge, 3350 over the lower ring).
+// Not played (no input route yet; docs/GAMEPLAY.md "Natla", "Open"): the platform ride and the rope down, the rings
+// under fire (CombatReal.NatlaFireballsBlastThrowAndBurn plays the balls with Lara placed), the towers and mounts
+// (input at each, reached by placement, in EndgameCredits), the timed dodges, the climb to the last mount, the ending.
+TEST(ProgressionReal, NatlaFightByInput) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    const game::UnitLoader load = [&](const std::string& n) {
+        auto& d = cache[n];
+        if (!d.drm) d = game::loadUnitData(bf, n);
+        return d;
+    };
+    const auto anims = game::loadLaraAnims(bf);
+    struct Seen { int fired = 0, blasts = 0; float lowest = 1e9f; bool knocked = false; std::vector<vec3> at; };
+    // Plays `plan` to its end (or `seconds`); false when a plan line failed.
+    const auto play = [&](game::World& w, uint64_t& tick, const std::string& plan, float seconds, Seen& seen,
+                          const std::function<bool()>& until = {}) {
+        auto ap = app::Autopilot::parse(plan);
+        size_t flying = w.hostileShots().size();
+        for (int i = 0; i < int(seconds * 60) && !ap.done() && !ap.failed() && !(until && until()); ++i, ++tick) {
+            w.tick(ap.step(tick, w));
+            if (w.hostileShots().size() > flying) ++seen.fired;
+            flying = w.hostileShots().size();
+            for (const vec3& b : w.hostileBlasts()) ++seen.blasts, seen.at.push_back(b);
+            seen.lowest = std::min(seen.lowest, w.health().value());
+            seen.knocked |= w.player().state().state == game::State::Knocked;
+        }
+        EXPECT_FALSE(ap.failed()) << ap.failure();
+        return !ap.failed();
+    };
+    {
+        game::World w(load, "l7_yggdrasil_end", anims);
+        w.script().setBigfile(&bf);
+        w.enemies().setBigfile(&bf);
+        std::vector<std::string> played;
+        w.onCinematic = [&](const std::string& name, bool) { played.push_back(name); };
+        for (int i = 0; i < 60; ++i) w.tick({});
+        const auto& s = w.player().state();
+        uint64_t tick = 0;
+        Seen seen;
+        ASSERT_TRUE(play(w, tick, "run 0 3\n", 4, seen));
+        EXPECT_EQ(s.state, game::State::Hang) << "the first walkway ends in a ledge";
+        ASSERT_TRUE(play(w, tick, "press drop\nwait 1.5\nrun 0 15\n", 18, seen, [&] { return !played.empty(); }));
+        EXPECT_EQ(played, std::vector<std::string>{"320_hel_boss"});
+        ASSERT_TRUE(play(w, tick, "wait 2\n", 3, seen)); // the cinematic's end: the fight's start
+        const vec3 start = s.pos; // where the cinematic leaves her: the middle ring's entry walkway
+        ASSERT_TRUE(play(w, tick, "wait 20\n", 21, seen));
+        for (const int32_t tower : {8398, 8399, 8400}) { // on their joint motors, some seconds after the fight's start
+            ASSERT_TRUE(w.uberState(tower));
+            EXPECT_EQ((*w.uberState(tower))[0], 3u) << "tower " << tower << " retracted";
+        }
+        EXPECT_EQ(seen.fired, 0) << "outside every zone";
+        EXPECT_LT(glm::distance(s.pos, start), 50.0f);
+        ASSERT_TRUE(play(w, tick, "run 0 3\n", 4, seen));
+        EXPECT_EQ(s.state, game::State::Hang) << "the walkway's end over the rings";
+        EXPECT_GT(s.pos.x, start.x + 1000.0f);
+        EXPECT_EQ(w.health().value(), w.health().max());
+        w.onCinematic = nullptr;
+    }
 }
 
 // The ending (chapter 7 -> the epilogue) from l7_yggdrasil_end: playEnding.
