@@ -603,6 +603,7 @@ struct Scene::Impl {
         pairs.EnableCollision(kLayerSolid, kLayerLoose), pairs.EnableCollision(kLayerLoose, kLayerLoose);
         pairs.EnableCollision(kLayerSolid, kLayerVehicle), pairs.EnableCollision(kLayerLoose, kLayerVehicle);
         pairs.EnableCollision(kLayerPlate, kLayerLoose), pairs.EnableCollision(kLayerPlate, kLayerVehicle);
+        pairs.EnableCollision(kLayerPlate, kLayerHeavy); // a push block weighs on a plate through its contacts
         pairs.EnableCollision(kLayerLara, kLayerLoose);
         broad.emplace(layers, 2, pairs, kLayers);
         sys.Init(4096, 0, 8192, 8192, layers, *broad, pairs);

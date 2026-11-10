@@ -168,7 +168,8 @@ type 2, is [I].
     than per 1/60 s (hallway ramps 395 vs 100 × 5.72, wall lever 319 vs 60 × 5.72, cliffclimb ledge, empty throne,
     windup statue), and only the latter lets them hold their bodies as the states expect. [I] Body A is the world (its
     own joint motion does not carry B); fixed joints (8) therefore pin nothing and are not created; the multi-axis
-    types 5 / 7 (push blocks, scales) are not simulated; watches on them never fire.
+    type 5 (scales) is not simulated; watches on it never fire. Type 7 (the Thor pillars, the push blocks:
+    docs/GAMEPLAY.md "Push and pull objects") is a translation-only body with the object's collision (`Joint3`).
   - Every uber object's sections start in their default state at spawn (each section component exists from the
     instance's creation, 0x4D3DA0), not when a script first touches it: the l7 Thor towers extend on their motors at
     load. Model 0 of an uber object follows the joint of the section that uses it when it has no loose / carried
@@ -187,8 +188,7 @@ type 2, is [I].
   as tru.exe's fallback), starting at rest where it was; it falls, tumbles, slides and stacks on the resident units'
   terrain (one static `MeshShape` per unit, built the first time a loose body exists, dropped when the unit streams
   out) and on every other object collision (`collision().dynamics` as kinematic mesh bodies following their
-  transforms: blocks, doors, other uber bodies; push blocks stay grid / axis driven by the scripts and shove loose bodies
-  as kinematic bodies). Its pose goes back to `Object::offset` (displacement) and `Object::body` (rotation), so its
+  transforms: doors, other uber bodies; push blocks are bodies themselves, on their three-axis joints). Its pose goes back to `Object::offset` (displacement) and `Object::body` (rotation), so its
   collision, rendering and saves follow. Lara's proxy (`Scene::setCharacter`): a 55 kg capsule of her radius and height
   (mass: her ragdoll record, lara ObjectBase +0x7C +4 [O]), translation only and no gravity, velocity-driven each step
   toward her capsule (at most 1000 units/s; more than 60 units away it is moved), colliding only with loose bodies and
@@ -204,8 +204,9 @@ type 2, is [I].
     plate's collision mesh on a prismatic joint along its model Z, limited to [its lowest range, 0], the motor lifting it
     at 120 units/s with the force to hold its own weight (`massProps`, 50 kg without primitive mass [I]) plus 20 kg
     [I]. It collides with loose bodies, vehicles and ragdolls (not the terrain it sits in), so a landed weight presses
-    it through its contacts; Lara (55 kg) and push blocks (their primitives' mass, 666 without) press it under gravity
-    where a ray below them (40 above to 30 below their base) meets it. `World::tickJoints` hands the joint position
+    it through its contacts, and so does a push block (the three-axis joint bodies collide with plates:
+    `Physics.PushBlockWeighsOnAPlate`); Lara (55 kg) presses it under gravity
+    where a ray below her (40 above to 30 below their base) meets it. `World::tickJoints` hands the joint position
     (clamped to the limits) to `Runtime::setJointPosition`, whose ranges run vt 34. Saves: the plate body is a joint
     (`j<uid << 32 | 0xFFFFFFFE>`); a new plate starts at its saved position. [O] A class-34 rigid body's joint record
     (physical data +0x2C; tru.exe 0x6B6440: the joint type is the first model marker's kind, 0 hinge / 2 prismatic, its

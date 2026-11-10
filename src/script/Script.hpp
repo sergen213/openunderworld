@@ -130,7 +130,7 @@ bool inside(const Shape& s, vec3 pos, vec3 rot, vec3 p);
 bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b);
 
 // ---- runtime ------------------------------------------------------------------------------------------
-enum class Kind : uint8_t { Volume, Plane, Switch, Door, Block, Scripted };
+enum class Kind : uint8_t { Volume, Plane, Switch, Door, Scripted };
 enum class EventKind : uint8_t { Enter, FirstIn, In, Out, Cross, Use, Activate, Start, Main, Checkpoint, CinematicEnd,
                                  PlayerMessage, // target = INSTANCE_Post message id sent to Lara
                                  Autosave,      // uisavemenu 5: the scripts request an autosave
@@ -259,8 +259,6 @@ struct UnitRef {
 
 struct TickInput {
     vec3 pos{0};   // Lara's root, world frame
-    float yaw = 0; // facing: forward = (cos yaw, sin yaw, 0) (game::Player::forward)
-    vec2 move{0};  // stick, y = forward
     bool interact = false;
     // The anim-graph object whose "use" engagement record (kind 8) Lara engages on this press (game::World::engaged,
     // tru.exe 0x719520): 0 none, -1 not resolved (Runtime alone: every graph object is used by reach).
@@ -456,7 +454,7 @@ public:
     const std::string* objectName(uint16_t id) const { const auto n = objectNames_.find(id); return n == objectNames_.end() ? nullptr : &n->second; }
     // `uid`'s anim graph has a transition on `mask` out of its current state and none is running.
     bool graphAccepts(int32_t uid, uint32_t mask) const;
-    void tick(const TickInput& in, const collision::CollisionMesh* col = nullptr);
+    void tick(const TickInput& in);
     // Runs `uid`'s override of vtable slot `vt` (no arguments) at the start of the next tick, as an engine callback
     // would: the gate tests call handlers no data path of ours reaches yet.
     void call(int32_t uid, int16_t vt) { calls_.emplace_back(uid, vt); }
@@ -518,9 +516,6 @@ public:
     const Weather& weather() const { return weather_; }
     // globaleffect FadeOut/FadeIn screen wipe: 0 = clear, 1 = black; moves by 1/frames each tick.
     float screenFade() const { return fade_; }
-    bool holding() const { return holding_; }  // last tick: Lara grips a push block (interact held next to it)
-    vec3 carried() const { return carried_; }  // last tick: displacement of the gripped block; move Lara by it
-    vec3 gripAxis() const { return gripAxis_; } // last tick: the gripped block's axis toward it (her facing); 0 = none
     int32_t used() const { return used_; }      // last tick: the switch Lara used (uid), 0 = none
     uint64_t ticks() const { return tick_; }
     // Handler failures since construction: (intro uid, Machine::failure reason) -> count. The survey reads these.
@@ -684,8 +679,7 @@ private:
     void tickSensors(vec3 lara);
     float fade_ = 0, fadeTarget_ = 0, fadeStep_ = 0;
     vec3 lastPos_{0};
-    bool hasLast_ = false, interactHeld_ = false, holding_ = false;
-    vec3 carried_{0}, gripAxis_{0};
+    bool hasLast_ = false, interactHeld_ = false;
     int32_t used_ = 0;
 };
 

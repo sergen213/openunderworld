@@ -389,6 +389,47 @@ TEST(Physics, ThreeAxisJointRestsSlidesStopsAndDrops) {
 // Pressure plates (World::stepPhysics): a plate body on a prismatic joint whose motor lifts it stays up unloaded; a
 // kinematic weight (Lara, 55 kg) over it presses it to its limit and it rises once she leaves; a loose box landing on
 // it presses it by contact. Lara's proxy shoves a loose box she walks into. A scene saved mid-press continues bit for bit.
+// A push block (a body on a three-axis joint) weighs on a pressure plate through its contacts: pushed off the floor's
+// edge onto a plate lying flush with it, the plate gives way under it (its motor holds 20 kg) and carries it at the
+// bottom of its travel; the floor's edge then stands 60 over the plate and keeps the block on it.
+TEST(Physics, PushBlockWeighsOnAPlate) {
+    auto plateMesh = std::make_shared<collision::CollisionMesh>();
+    collision::addBox(*plateMesh, glm::translate(glm::mat4(1), {0, 0, -10}), {400, 400, 20}); // top 0, x -200..200
+    plateMesh->build();
+    const std::vector<collision::Dynamic> meshes{{1, plateMesh, glm::mat4(1)}};
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {1200, 0, -50}), {2000, 2000, 100}); // top 0, x 200..2200
+    floor.build();
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    physics::ObjectPhysics o;
+    o.segments = {glm::mat4(1)};
+    physics::Prim p;
+    p.kind = physics::PrimKind::Box, p.size = {200, 200, 200}, p.pos = {0, 0, 100}, p.mass = 90;
+    o.prims = {p};
+    physics::Joint1 plate;
+    plate.mass = 20, plate.limited = true, plate.lo = -60, plate.hi = 0;
+    plate.motor = true, plate.speed = 4, plate.force = (20 + 20) * physics::kJointGravity * 0.5f;
+    physics::Joint3 block;
+    block.physics = &o, block.model = glm::translate(glm::mat4(1), {600, 0, 1});
+    physics::Scene s;
+    const auto tick = [&] {
+        s.setPlates(std::vector<physics::Scene::Plate>{{1, meshes}}, {}), s.setJoints({{1, &plate}}, {});
+        s.setJoints3({{5, &block}}), s.setTerrain(terrain), s.setLoose({}), s.step(kDt);
+    };
+    for (int i = 0; i < 60; ++i) tick();
+    EXPECT_NEAR(block.x.z, -1, 1.5f) << "on the floor";
+    EXPECT_NEAR(plate.x, 0, 1) << "unloaded: held up";
+    for (int i = 0; i < 600 && block.x.x > -600; ++i) block.push = {-4, 0, 0}, tick(); // 120 units a second toward the plate
+    for (int i = 0; i < 90; ++i) tick();
+    EXPECT_NEAR(plate.x, -60, 2) << "the block's 90 kg press it down";
+    EXPECT_NEAR(block.x.z, -61, 3) << "the block stands on the plate";
+    EXPECT_LT(block.x.x, -480) << "wholly off the floor";
+    for (int i = 0; i < 240; ++i) block.push = {4, 0, 0}, tick();
+    EXPECT_NEAR(block.x.x, -500, 3) << "pushed back, it stops against the floor's edge, 60 over the sunk plate";
+    EXPECT_NEAR(block.x.z, -61, 3);
+    EXPECT_NEAR(plate.x, -60, 2);
+}
+
 TEST(Physics, PlatesWeighedByContactsAndProxyPushesLooseBodies) {
     auto plateMesh = std::make_shared<collision::CollisionMesh>();
     collision::addBox(*plateMesh, glm::translate(glm::mat4(1), {0, 0, -10}), {200, 200, 20});

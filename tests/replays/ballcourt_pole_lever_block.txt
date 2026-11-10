@@ -1,17 +1,18 @@
 # l4_ballcourt: --spawn -20300,14700,3484,-90 --no-cinematics, between pole 6503 and pole lever 6502.
 # Pole 6503 picked up (Interact: its hosted_pickup clip) and inserted into lever 6502 (graph 0 -> 1; STATE 1 adds its
-# multibody 79 watch on the slider), then push block 6504 pushed along its two axes (21 / -69 degrees) until it stands
-# under the pole (x -20078, y 14431).
+# multibody 79 watch on the slider), then push block 6504 (a body on its three-axis joint, gripped by its push / pull
+# record: docs/GAMEPLAY.md "Push and pull objects") pushed at 33.2 units a second along the wall it stands by (1712
+# units) and across the court (390 units) until it stands under the pole (x -20043, y 14453).
 # Then, from where the push left her at the block's face: a jump hurdles onto it (its model's ledge loop, 410.8 up,
 # hurdle_ground_attach_mid), a standing jump on its top leaps to the inserted pole (parallel hang); her weight slides the
 # lever to -600 and door 6505 rises 1200 on its cylindrical joint (twice the drop). The two jumps are hand-appended
 # (1.1 s and 4.6 s after the push's release).
 # Recorded by ou-game --autopilot (docs/GAMEPLAY.md "Receptacle replays"), plan:
 #   engage 6503 walk / press / wait 3 / engage 6502 walk / press / wait 3 / go -21950 14750 60 / go -22350 14650 60 /
-#   go -22260 14266 25 walk / face 0 / push 1 0 15.7 / wait 0.5 / go -20650 15250 40 walk / go -20362 15169 20 walk /
-#   face -69 / push 1 0 5.1 / wait 0.5
-# Re-recorded from the same plan for the pick-up clip (she turns to the pole and bends for it: the earlier recording's
-# camera-relative stick strayed after it).
+#   go -22166 14173 25 walk / face 21 / push 1 0 52.4 / wait 1 / go -20620 14850 40 walk / go -20426 14986 20 walk /
+#   face -58 / push 1 0 12.7 / wait 0.5
+# Re-recorded from the plan for the physical block: she faces the way she pushes (the block's faces no longer turn
+# her), and the pushes last 52.4 s and 12.7 s (15.7 s and 5.1 s at the kinematic stand-in's 120 units a second).
 0.0333 interact 1.00
 0.1333 interact 0.00
 3.2667 forward 0.95
@@ -51,12 +52,12 @@
 9.0333 forward 0.85
 9.0333 right 0.55
 9.1000 right 0.50
-9.2333 forward 0.90
+9.1667 forward 0.90
 9.2333 right 0.45
 9.3000 right 0.40
 9.3667 walk 1.00
 9.4333 forward 0.95
-9.5000 right 0.35
+9.4333 right 0.35
 9.7333 forward 0.00
 9.7333 right 0.00
 9.7333 walk 0.00
@@ -68,72 +69,79 @@
 10.5000 forward 0.00
 10.5000 right 0.00
 10.5000 walk 0.00
-10.5167 forward 0.10
+10.5167 forward -0.05
 10.5167 right -1.00
 10.5167 walk 1.00
-10.5833 forward 0.05
-10.7167 forward 0.00
-10.7833 forward 0.05
-10.9167 forward 0.10
-10.9833 forward 0.15
-11.1167 forward 0.20
-11.1833 forward 0.25
-11.1833 right -0.95
-11.3167 forward 0.30
-11.4500 forward 0.35
-11.5167 forward 0.40
-11.5167 right -0.90
-11.6500 forward 0.45
-11.6833 forward 0.00
-11.6833 right 0.00
-11.6833 walk 0.00
-11.7000 forward -0.80
-11.7000 right -0.60
-11.7000 walk 1.00
-11.7667 forward -0.75
-11.7667 right -0.65
-11.9000 right -0.70
-11.9333 forward 0.00
-11.9333 right 0.00
-11.9333 walk 0.00
-11.9500 interact 1.00
-12.0500 forward 1.00
-27.6500 forward 0.00
-27.6500 interact 0.00
-28.1833 forward -0.90
-28.1833 right -0.45
-28.1833 walk 1.00
-28.6500 right -0.50
-28.7167 forward -0.85
-28.9833 right -0.55
-29.1833 forward -0.80
-29.2500 right -0.60
-29.4333 forward 0.00
-29.4333 right 0.00
-29.4333 walk 0.00
-29.4500 forward 0.90
-29.4500 right -0.40
-29.4500 walk 1.00
-30.0500 forward 0.95
-30.1167 right -0.35
-30.4500 forward 0.90
-30.4500 right -0.40
-30.4667 forward 0.00
-30.4667 right 0.00
-30.4667 walk 0.00
-30.4833 forward 0.80
-30.4833 right 0.65
-30.4833 walk 1.00
-30.5500 forward 0.75
-30.6167 forward 0.80
-30.6667 forward 0.00
-30.6667 right 0.00
-30.6667 walk 0.00
-30.6833 interact 1.00
-30.7833 forward 1.00
-35.7833 forward 0.00
-35.7833 interact 0.00
-36.8833 jump 1.00
-36.9833 jump 0.00
-40.3833 jump 1.00
-40.4833 jump 0.00
+10.5833 forward -0.10
+10.7167 forward -0.15
+10.7833 forward -0.10
+10.9167 forward -0.05
+10.9833 forward -0.00
+11.1167 forward 0.05
+11.1833 forward 0.10
+11.3167 forward 0.15
+11.3833 forward 0.20
+11.5167 forward 0.25
+11.5167 right -0.95
+11.6500 forward 0.30
+11.7167 forward 0.35
+11.8500 forward 0.40
+11.8500 right -0.90
+11.9833 forward 0.45
+12.0333 forward 0.00
+12.0333 right 0.00
+12.0333 walk 0.00
+12.0500 forward -0.90
+12.0500 right -0.45
+12.0500 walk 1.00
+12.1167 right -0.50
+12.1833 forward -0.85
+12.3167 forward 0.00
+12.3167 right 0.00
+12.3167 walk 0.00
+12.3333 interact 1.00
+12.4333 forward 1.00
+64.7333 forward 0.00
+64.7333 interact 0.00
+65.7667 forward -0.80
+65.7667 right -0.60
+65.7667 walk 1.00
+66.3000 forward -0.75
+66.3000 right -0.65
+66.4833 forward 0.00
+66.4833 right 0.00
+66.4833 walk 0.00
+66.5000 forward 0.45
+66.5000 right -0.90
+66.5000 walk 1.00
+66.5667 forward 0.55
+66.5667 right -0.85
+66.6333 forward 0.65
+66.6333 right -0.75
+66.7000 forward 0.70
+66.7000 right -0.70
+66.7667 forward 0.75
+66.8333 forward 0.80
+66.8333 right -0.60
+66.9667 forward 0.85
+66.9667 right -0.55
+67.2333 right -0.50
+67.2500 forward 0.00
+67.2500 right 0.00
+67.2500 walk 0.00
+67.2667 forward 0.65
+67.2667 right 0.75
+67.2667 walk 1.00
+67.3333 right 0.80
+67.4667 forward 0.60
+67.5000 forward 0.00
+67.5000 right 0.00
+67.5000 walk 0.00
+67.5167 interact 1.00
+67.6167 forward 1.00
+80.2167 forward 0.00
+80.2167 interact 0.00
+81.3167 jump 1.00
+81.4167 jump 0.00
+84.8167 jump 1.00
+84.9167 jump 0.00

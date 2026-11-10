@@ -3641,7 +3641,8 @@ int main(int argc, char** argv) {
                     if (!o) { std::fprintf(stderr, "ou-game: object %d absent\n", uid); continue; }
                     std::string s = "ou-game: object " + std::to_string(uid) + " " + o->name;
                     char buf[96];
-                    std::snprintf(buf, sizeof buf, " pos %.1f %.1f %.1f", o->pos.x + o->offset.x, o->pos.y + o->offset.y, o->pos.z + o->offset.z);
+                    const glm::vec3 at = *world->objectOrigin(uid); // with its displacement and its three-axis joint (a pushed block)
+                    std::snprintf(buf, sizeof buf, " pos %.1f %.1f %.1f", at.x, at.y, at.z);
                     s += buf;
                     if (o->graph && o->graph->set->graph) s += " graph " + std::to_string(o->graph->set->graph->states[size_t(o->graph->state)].index);
                     if (o->joint) std::snprintf(buf, sizeof buf, " joint %.1f", o->joint->position), s += buf;

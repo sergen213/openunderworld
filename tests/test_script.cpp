@@ -29,7 +29,7 @@ Object door(int32_t uid) {
     return o;
 }
 // Lara's root: the exe tests root + (0, 0, 200).
-TickInput at(vec3 p) { return {p - vec3(0, 0, kTestPointHeight), 0, {0, 0}, false}; }
+TickInput at(vec3 p) { return {p - vec3(0, 0, kTestPointHeight), false}; }
 
 std::vector<std::pair<EventKind, int32_t>> kinds(const Runtime& r) {
     std::vector<std::pair<EventKind, int32_t>> out;
@@ -82,7 +82,7 @@ TEST(ScriptRuntime, VolumeEnterExitAndDispatchOrder) {
     EXPECT_EQ(kinds(r), (std::vector<std::pair<K, int32_t>>{{K::Enter, 1}, {K::In, 1}, {K::Activate, 11}, {K::Activate, 12}}));
 }
 
-TEST(ScriptRuntime, PlaneCrossSwitchUseAndBlockPush) {
+TEST(ScriptRuntime, PlaneCrossAndSwitchUse) {
     Runtime r;
     Object plane;
     plane.uid = 2, plane.kind = Kind::Plane, plane.shape = {ShapeKind::Plane, {100, 0, 300}, 0, false};
@@ -93,34 +93,20 @@ TEST(ScriptRuntime, PlaneCrossSwitchUseAndBlockPush) {
     sw.uid = 3, sw.kind = Kind::Switch, sw.pos = {1000, 0, 0}, sw.links[kVtSwitchUsed] = {21};
     r.addObject(sw);
     r.addObject(door(21));
-    Object block;
-    block.uid = 4, block.kind = Kind::Block, block.pos = {0, 2000, 0};
-    r.addObject(block);
-
-    r.tick({{0, 50, 0}, 0, {}, false});
-    r.tick({{0, -50, 0}, 0, {}, false});
+    r.tick({{0, 50, 0}, false});
+    r.tick({{0, -50, 0}, false});
     ASSERT_EQ(r.events().size(), 2u);
     EXPECT_EQ(r.events()[0].kind, EventKind::Cross);
     EXPECT_EQ(r.events()[1].target, 20);
 
-    r.tick({{900, 0, 0}, 0, {}, true}); // press near the switch
+    r.tick({{900, 0, 0}, true}); // press near the switch
     ASSERT_EQ(r.events().size(), 2u);
     EXPECT_EQ(r.events()[0].kind, EventKind::Use);
     EXPECT_EQ(r.find(21)->state, 2);
-    r.tick({{900, 0, 0}, 0, {}, true}); // held: no second use
+    r.tick({{900, 0, 0}, true}); // held: no second use
     EXPECT_TRUE(r.events().empty());
     EXPECT_EQ(r.find(3)->state, 2);
 
-    // Facing +Y (yaw 90 deg) next to the block: push moves it along +Y, pull back toward Lara.
-    const TickInput push{{0, 1850, 0}, 1.5707964f, {0, 1}, true};
-    for (int i = 0; i < 60; ++i) r.tick(push);
-    EXPECT_NEAR(r.find(4)->offset.y, 120, 1);
-    EXPECT_EQ(r.find(4)->offset.x, 0);
-    ASSERT_TRUE(r.pose(*r.find(4)));
-    TickInput pull = push;
-    pull.move.y = -1;
-    for (int i = 0; i < 30; ++i) r.tick(pull);
-    EXPECT_NEAR(r.find(4)->offset.y, 60, 1);
 }
 
 TEST(ScriptRuntime, StateRoundTrip) {
@@ -128,7 +114,7 @@ TEST(ScriptRuntime, StateRoundTrip) {
     r.addObject(volume(1, {0, 0, 0}, {100, 100, 100}, {{kVtOnIn, {10}}}));
     r.addObject(door(10));
     Object block;
-    block.uid = 4, block.kind = Kind::Block, block.offset = {1, 2, 3};
+    block.uid = 4, block.kind = Kind::Scripted, block.offset = {1, 2, 3};
     r.addObject(block);
     Object scripted = door(11);
     scripted.script = std::make_shared<vm::Instance>();
@@ -550,9 +536,9 @@ TEST(ScriptRealData, BedroomSwitchOpensHouseDoor) {
     EXPECT_EQ(sw->links.at(kVtSwitchUsed).front(), 4520); // instanceref member init, script 12131
     ASSERT_TRUE(sw->clips && door->clips);
 
-    r.tick({sw->pos, 0, {}, true});
+    r.tick({sw->pos, true});
     EXPECT_EQ(sw->state, 1); // pulling
-    for (int i = 0; i < 600 && door->state != 2; ++i) r.tick({sw->pos, 0, {}, true});
+    for (int i = 0; i < 600 && door->state != 2; ++i) r.tick({sw->pos, true});
     EXPECT_EQ(sw->state, 2);
     EXPECT_GE(door->state, 1);
     ASSERT_TRUE(door->script);
@@ -1058,7 +1044,7 @@ TEST(ScriptRealData, UberCommandDispatchesWithObjectIdentity) {
     r.setUnits({{"l1_kraken_room", std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l1_kraken_room.drm"))), {}}});
     const Object* sw = r.find(498);
     ASSERT_TRUE(sw);
-    for (int i = 0; i < 600; ++i) r.tick({sw->pos, 0, {}, true});
+    for (int i = 0; i < 600; ++i) r.tick({sw->pos, true});
     EXPECT_EQ(sw->state, 2);
     EXPECT_GT(calls, 0u);
 }

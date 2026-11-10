@@ -60,7 +60,6 @@ const char* kindName(script::Kind k) {
     case script::Kind::Plane: return "plane";
     case script::Kind::Switch: return "switch";
     case script::Kind::Door: return "door";
-    case script::Kind::Block: return "block";
     case script::Kind::Scripted: return "scripted";
     }
     return "?";
@@ -184,6 +183,46 @@ void place(game::World& w, vec3 pos, float yaw, bool cross = false) {
 
 std::vector<std::pair<vec3, float>> uberEngageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, size_t section,
                                                     int kind = 5, size_t most = 40);
+// Lara pushes push block `uid` (a body free on the floor: an uber object on a three-axis joint with a push / pull
+// record) by ordinary input until its origin is within `tolerance` (level) of `target`: put clear of it on the side
+// away from the target (its box's half side `side`), facing the target, she grips it (Interact held; her grab clip) and holds the stick forward,
+// lets go on the line's end, and starts again while it is off; `pull`: from the target's side, facing it, the stick
+// held back. False when it did not get there.
+bool pushBlockTo(game::World& w, int32_t uid, float side, vec2 target, float tolerance = 30.0f, bool pull = false, int legs = 6) {
+    const auto origin = [&] { return *w.objectOrigin(uid); };
+    for (int leg = 0; leg < legs; ++leg) {
+        const vec3 c = origin();
+        const vec2 d = target - vec2(c);
+        if (glm::length(d) < tolerance) return true;
+        const vec3 dir(d / glm::length(d), 0);
+        const auto* o = w.script().find(uid); // her capsule clear of the face (or corner) the line leaves by
+        const float turn = std::atan2(dir.y, dir.x) - o->rot.z;
+        vec3 stand = c - dir * ((std::abs(std::cos(turn)) + std::abs(std::sin(turn))) * side + 85.0f) * (pull ? -1.0f : 1.0f);
+        if (const auto floor = w.collision().groundProbe(stand + vec3(0, 0, 200), 600, 0x0F)) stand.z = floor->point.z;
+        place(w, stand, std::atan2(dir.y, dir.x) + (pull ? glm::pi<float>() : 0.0f));
+        for (int i = 0; i < 10; ++i) w.tick({});
+        game::Actions a;
+        a.interact = true;
+        for (int i = 0; i < 90 && !w.player().gripping(); ++i) w.tick(a);
+        if (!w.player().gripping()) {
+            const auto& p = w.player().state();
+            std::printf("pushBlockTo %d: no grip from %.0f %.0f %.0f of it, state %s clip %s\n", uid, p.pos.x - c.x, p.pos.y - c.y, p.pos.z - c.z,
+                        std::string(game::stateName(p.state)).c_str(), p.clip.c_str());
+            return false;
+        }
+        a.move.y = pull ? -1.0f : 1.0f;
+        float best = glm::length(d);
+        for (int i = 0, stalled = 0; i < 3600 && stalled < 120 && w.player().state().state == game::State::Block; ++i) {
+            w.tick(a);
+            const float left = glm::dot(target - vec2(origin()), vec2(dir));
+            if (left <= 0) break;
+            if (left < best - 0.5f) best = left, stalled = 0;
+            else ++stalled;
+        }
+        for (int i = 0; i < 90; ++i) w.tick({});
+    }
+    return glm::length(target - vec2(origin())) < tolerance;
+}
 // Lara grips uber object `uid` by the push / pull record (kind 1) of its section `section`, standing on a floor inside
 // it (an interact press, held), and moves it on its prismatic joint `joint` with the stick: the first of forward,
 // back, left, right that moves it, for up to `ticks` ticks. True when she gripped it.
@@ -269,7 +308,8 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
             for (const float yaw : {0.0f, glm::half_pi<float>(), glm::pi<float>(), -glm::half_pi<float>()}) {
                 const auto* b = w.script().find(uid);
                 const vec3 dir(std::cos(yaw), std::sin(yaw), 0);
-                vec3 p = b->pos + b->offset - dir * (std::abs(glm::dot(b->half, dir)) + 60.0f);
+                const vec3 from = *w.objectOrigin(uid);
+                vec3 p = from - dir * (std::abs(glm::dot(b->half, dir)) + 90.0f);
                 if (const auto floor = w.collision().groundProbe(p + vec3(0, 0, 200), 600, 0x0F)) p.z = floor->point.z;
                 place(w, p, yaw);
                 game::Actions a;
@@ -278,7 +318,7 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
                 a.move.y = 1;
                 for (int i = 0; i < 120; ++i) tick(a);
                 tick({});
-                if (glm::length(w.script().find(uid)->offset) > 50.0f) break;
+                if (glm::length(*w.objectOrigin(uid) - from) > 50.0f) break;
             }
             break;
         }
@@ -641,7 +681,7 @@ TEST(ProgressionReal, GateSweep) {
                                                               std::find(targets.begin(), targets.end(), id) == targets.end())
                                 targets.push_back(id);
                     Action a;
-                    if (o.kind == script::Kind::Block) {
+                    if (w.slide(o.uid)) { // a body free on the floor: push blocks (and the Thor pillars, which ask for the gear)
                         gates.push_back({unit, o.uid, Action::Push, {}});
                         continue;
                     }
@@ -720,7 +760,7 @@ TEST(ProgressionReal, Survey) {
         w.tick({});
         for (const auto& o : w.script().objects()) {
             if (o.unit != name) continue;
-            const bool gate = o.kind == script::Kind::Switch || o.kind == script::Kind::Door || o.kind == script::Kind::Block ||
+            const bool gate = o.kind == script::Kind::Switch || o.kind == script::Kind::Door || o.name.find("_pu_") != std::string::npos ||
                               o.name.find("_uo_") != std::string::npos || o.name.find("lever") != std::string::npos ||
                               o.name.find("plate") != std::string::npos || o.name.find("cinematic") != std::string::npos ||
                               o.name.find("grapple") != std::string::npos || o.name.find("_rb_") != std::string::npos ||
@@ -1880,7 +1920,7 @@ TEST(ProgressionReal, BallcourtBlockUnderPoleReachesIt) {
     ASSERT_TRUE(lever() && block() && w.script().find(6503));
     for (int i = 0; i < 5; ++i) w.tick({});
     const auto blockLedge = [&]() -> const collision::Markup* {
-        const vec3 c = block()->pos + block()->offset;
+        const vec3 c = *w.objectOrigin(6504);
         for (const auto& m : w.collision().markup)
             if (m.type == 1 && m.points.size() == 5 && glm::distance(m.points[0], m.points[4]) < 0.01f &&
                 glm::length(vec2((m.points[0] + m.points[2]) * 0.5f - c)) < 2.0f)
@@ -1907,11 +1947,17 @@ TEST(ProgressionReal, BallcourtBlockUnderPoleReachesIt) {
     for (const auto& m : w.collision().markup)
         if (m.type == 6 && m.points.size() == 2 && glm::distance(m.points[0], lever()->pos) < 1500) mid = (m.points[0] + m.points[1]) * 0.5f;
     ASSERT_GT(mid.z, floorZ + 1000) << "the inserted pole, out of reach from the floor";
-    // The block under the pole (the replay game_replay_ballcourt_pole_lever_block pushes it there): its ledge follows.
-    const_cast<script::Object*>(block())->offset = vec3(vec2(mid) - vec2(block()->pos), 0);
-    w.tick({});
+    // Lara pushes the block under the pole (as the replay game_replay_ballcourt_pole_lever_block does): its ledge follows.
+    // (along the wall it stands by first, the block's 21 degree axis, as the replay; then she pulls it across)
+    const float axis = glm::radians(21.0f), across = glm::radians(-69.0f);
+    const vec2 along(std::cos(axis), std::sin(axis)), side(std::cos(across), std::sin(across)), to = vec2(mid) - vec2(block()->pos);
+    EXPECT_TRUE(pushBlockTo(w, 6504, 174.0f, vec2(block()->pos) + along * glm::dot(to, along), 40.0f));
+    ASSERT_TRUE(pushBlockTo(w, 6504, 174.0f, vec2(mid), 40.0f, true))
+        << "block at " << glm::to_string(*w.objectOrigin(6504) - block()->pos) << " of " << glm::to_string(mid - block()->pos);
+    EXPECT_GT(glm::dot(to, side), 500.0f) << "pulled across the court";
+    EXPECT_NEAR(w.objectOrigin(6504)->z, floorZ, 3.0f) << "on the court's floor";
     ASSERT_TRUE(blockLedge()) << "moved with the block";
-    const vec3 c = block()->pos + block()->offset;
+    const vec3 c = *w.objectOrigin(6504);
     // Standing at the face she pushed it by (heading -69 degrees, one of its axes), a jump: hurdle_ground_attach_mid
     // onto its top (Wine, block 6504: a standing jump 260 from its centre ends on the top, +409.8).
     const auto& s = w.player().state();
@@ -2411,7 +2457,7 @@ TEST(ProgressionReal, ThorPillarsSlideOnTheirPlane) {
         int ticks = 0;
         uint32_t seen = 0; // the transient state its watch sends it to (4 from state 2, 5 from 1; both return at once)
         const auto dropped = [&] {
-            strength = w.script().pullStrength(), ++ticks;
+            strength = std::max(strength, w.script().pullStrength()), ++ticks; // (she lets go as it drops: MustDetach)
             const uint32_t s = (*w.uberState(5610))[0];
             if (s == 4 || s == 5) seen = s;
             return seen != 0;
@@ -2470,6 +2516,54 @@ TEST(ProgressionReal, ThorPillarsSlideOnTheirPlane) {
         EXPECT_LT(std::abs(j->x.z), 20.0f) << "on the crypt floor";
         EXPECT_EQ(w.script().pullStrength(), 1.0f);
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 4674) << key.second;
+    }
+}
+
+// Research (OU_PUSH_SURVEY=1; docs/GAMEPLAY.md "Push and pull objects"): every object of objectlist.txt with a push /
+// pull engagement record (kind 1) on an uber section: its physical class, the masses of its models' primitives, its
+// joint types, the record's shape and the objects it asks Lara to carry.
+TEST(ProgressionReal, PushObjectSurvey) {
+    if (!gameDir() || !std::getenv("OU_PUSH_SURVEY")) GTEST_SKIP() << "OU_GAME_DIR and OU_PUSH_SURVEY not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    for (const auto& [id, name] : names) {
+        const auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        try {
+            const auto drm = cdc::parseDrm(*bytes);
+            const auto u = formats::loadUberObject(drm);
+            if (!u) continue;
+            std::set<int32_t> offsets;
+            for (const auto& sec : u->sections) {
+                if (sec.engagement >= 0) offsets.insert(sec.engagement);
+                for (const auto& acts : sec.stateActions)
+                    for (const auto& a : acts)
+                        if (a.engagement >= 0) offsets.insert(a.engagement);
+            }
+            std::string records;
+            for (const int32_t off : offsets)
+                if (const auto set = physics::loadEngagementSet(drm, uint32_t(off)))
+                    for (const auto& r : set->records)
+                        if (r.kind == 1) {
+                            records += " [shape " + std::to_string(r.shape) + " r " + std::to_string(int(r.radius)) + " needs";
+                            for (const uint16_t n : r.needs) records += " " + (names.contains(n) ? names.at(n) : std::to_string(n));
+                            records += "]";
+                        }
+            if (records.empty()) continue;
+            std::string masses, joints;
+            for (uint32_t m = 0; m < 8; ++m) {
+                physics::ObjectPhysics p;
+                try { p = physics::loadObjectPhysics(drm, m); } catch (const std::exception&) { break; }
+                if (m && p.prims.empty() && p.segments.empty()) break;
+                masses += " " + std::to_string(int(physics::massProps(p).mass));
+                if (!m) masses = "class " + std::to_string(p.physClass) + " masses" + masses;
+            }
+            for (const auto& j : u->joints) joints += " " + std::to_string(j.type) + (j.bodyA < 0 ? "w" : "");
+            std::printf("%-34s %s joints%s records%s\n", name.c_str(), masses.c_str(), joints.c_str(), records.c_str());
+        } catch (const std::exception&) {
+        }
     }
 }
 

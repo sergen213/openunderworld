@@ -145,6 +145,14 @@ inline constexpr float kPushSpeed = 23.704172f, kPushMomentum = 2054.3616f, kPus
 // The way a stick (x right, y forward of her facing) moves what she grips: 1 forward (within 30 degrees), -1 back
 // (within 15 of straight back), 2 left, -2 right; 0 no input.
 int pushWay(vec2 stick);
+// The velocity her stick asks of a free body she grips, in her frame (x right, y forward), length = the stick's (at
+// most 1) [O 0x6F1450 / 0x6F14B0]: straight ahead inside the forward arc, straight back inside the back arc, and in
+// between the forward direction turned toward the stick's side by 180 degrees x (angle - 30) / (165 - 30): a stick
+// square to her facing (90) moves it 80 degrees off forward. 0 without input.
+vec2 pushDirection(vec2 stick);
+// She lets go when her grip point leaves her by more than this [O 0x73F900 "PlayerSC_PushPull::MustDetach", player data
+// +0xCA0 / +0xCA4: 20 cm level, 5 cm in height].
+inline constexpr float kPushDetachLevel = 63.211128f, kPushDetachHeight = 15.802782f;
 // Her push on a sliding body of `mass` with pull strength `strength` (1; the Thor scripts raise it while she grips)
 // against a joint motor holding it with `brake` (impulse per step, 0 none): `speed` units a second = min(23.704 x
 // strength, 2054.36 x strength / (0.125 x mass)) with at most `impulse` = min(mass x 0.7585, 142.225) x strength -
@@ -816,6 +824,11 @@ public:
     // Joints with a sound whose bodies are awake, as of this tick (tickObjects -> collectJointSounds; tru.exe's joint-sound
     // manager 0x4F3540, docs/formats/AUDIO.md §9.16): simulated uber joints and the class-34 rigid bodies' own joints.
     const std::vector<JointSound>& jointSounds() const { return jointSounds_; }
+    // Where scripted object `uid`'s origin stands now: its intro position, moved by its script offset (a fallen or
+    // carried body) and by the three-axis joint its model rides (push blocks, Thor pillars). nullopt: no such object.
+    std::optional<vec3> objectOrigin(int32_t uid) const;
+    // The three-axis joint the object's model 0 rides (a body free on the floor: push blocks, Thor pillars), null none.
+    const physics::Joint3* slide(int32_t uid) const { return const_cast<World*>(this)->uberSlide(uid); }
     // Simulated three-axis joint (type 7: the Thor pillars) `joint` of object `uid`, null when it does not exist.
     const physics::Joint3* uberJoint3(int32_t uid, int32_t joint) const {
         const auto rt = uberRuntime_.find(uid);
@@ -1562,7 +1575,10 @@ private:
     vec3 uberGrip_{0};                     // last tick: Lara grips one (her stick moves it): its axis toward her facing, 0 = none
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
     // The push / pull record Lara grips; `face`: the way she faces while gripping it (0: her own facing, World::pushUberHandle)
-    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; } uberHandle_;
+    // `hold`: on a three-axis joint, where she stood from the joint's position when she gripped it.
+    // `gear`: the record asks for objects she carries (Thor's gear).
+    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; std::optional<vec3> hold; bool gear = false; } uberHandle_;
+    physics::Joint3* uberSlide(int32_t uid); // the three-axis joint the object's model 0 rides (push blocks, Thor pillars), null none
     uint32_t pushCameraData_ = 0xFFFFFFFFu; // gamebase 50: DTP id given to CameraManager's type-4 camera (0x779C60)
     int uberMoving_ = 0; // this tick, gripping it: the way her stick moves it (1 forward, -1 back, 2 left, -2 right; 0 not)
     std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)

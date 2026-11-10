@@ -107,8 +107,9 @@ Jolt as static mesh shapes per streamed unit.
    bodies come from the HInfo spheres / boxes / capsules with the exe's mass and inertia. Hinge and prismatic joints are
    Jolt constraints with the data's limits and motors; the uber-object range watches (triggers 14 / 15) read the
    constraint positions. Loose bodies and grapple-pulled weights tumble and stack. Pressure plates are Jolt bodies on
-   their prismatic joints, weighed by contacts (loose bodies) and by Lara / push blocks standing on them; Lara's
-   velocity-driven proxy shoves loose bodies and ragdolls; push blocks stay grid driven, colliding as kinematic bodies.
+   their prismatic joints, weighed by contacts (loose bodies, push blocks) and by Lara standing on them; Lara's
+   velocity-driven proxy shoves loose bodies and ragdolls; push blocks are bodies on their three-axis joints, pushed and
+   pulled through their push / pull records (docs/GAMEPLAY.md "Push and pull objects").
    Not done: fixed joints and body A motion; the plates' Havok motor numbers [I]. Acceptance met:
    every `ProgressionReal` gate and `game_render_rate_smoke` pass; tests that pinned our own solver numbers were
    rewritten to the data's behaviour.

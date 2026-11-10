@@ -107,14 +107,12 @@ std::optional<Kind> classify(const std::string& n) {
     if (n == "triggerplane") return Kind::Plane;
     if (contains(n, "cheat")) return std::nullopt;
     if (contains(n, "switch") || contains(n, "lever")) return Kind::Switch;
-    if (contains(n, "pu_block") || contains(n, "rb_pushblock") || contains(n, "pushable")) return Kind::Block;
     if (contains(n, "door") || contains(n, "gate")) return Kind::Door;
     return std::nullopt;
 }
 
-constexpr float kReach = 200;          // [I] switch / block use distance (horizontal) from Lara's root
+constexpr float kReach = 200;          // [I] switch use distance (horizontal) from Lara's root
 constexpr float kReachHeight = 250;    // [I]
-constexpr float kBlockSpeed = 120;     // [I] units per second
 constexpr double kDt = 1.0 / 60.0;     // ticks are game::kTickSeconds
 constexpr uint32_t kTriggerMover = 0x100; // ObjectBase oflags: the instance is on the triggers' list (0x5BA810 -> 0x5CF680)
 
@@ -2178,12 +2176,14 @@ uint32_t Runtime::objectFlags(const std::string& name) {
 // (triggervolumebase Add) and every mover (oflags 0x100); one entering / leaving runs its prototype 8 / 9 (vt 56 / 57,
 // 0x79CD00 / 0x79CD40) with the instance, an added one then prototype 16 / 17 (0x5C8A40 -> 0x79CEC0 / 0x79CF10) with
 // reason 1 [I: as Lara's] and the instance. A plane runs prototype 7 (vt 55, 0x79CB60) with each mover crossing it
-// (l4_temple 5247: the falling statue head 5236 breaks floor 5234). [I] An instance's point is its origin plus its
-// displacement (Object::offset); enemies' AI positions are not mirrored here.
+// (l4_temple 5247: the falling statue head 5236 breaks floor 5234). [I] An instance's point is its origin as it is
+// drawn: displaced (Object::offset) and moved by its body (Object::body: a joint, a pushed block); enemies' AI
+// positions are not mirrored here.
 void Runtime::tickTrackedInstances() {
+    const auto origin = [](const Object& o) { return o.pos + o.offset + rotation(o.rot) * vec3(o.body[3]); };
     const auto at = [&](int32_t uid) -> std::optional<vec3> {
         const Object* o = find(uid);
-        return o && !o->dead ? std::optional(o->pos + o->offset) : std::nullopt;
+        return o && !o->dead ? std::optional(origin(*o)) : std::nullopt;
     };
     std::vector<int32_t> movers;
     for (const auto& o : objects_)
@@ -2213,7 +2213,7 @@ void Runtime::tickTrackedInstances() {
         }
     }
     for (const int32_t id : movers)
-        if (Object* m = findMut(id)) m->lastAt = m->pos + m->offset;
+        if (Object* m = findMut(id)) m->lastAt = origin(*m);
 }
 
 // 0x6A5660: the state's clip starts (once, or looping with flag 2; none keeps the pose), its timer and stimulus totals
@@ -2509,7 +2509,7 @@ void Runtime::tickSensors(vec3 lara) {
     }
 }
 
-void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
+void Runtime::tick(const TickInput& in) {
     events_.clear();
     ++tick_;
     for (const auto& [uid, vt] : std::exchange(calls_, {})) run(uid, vt, {});
@@ -2573,10 +2573,9 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         }
         if (o.mainPending && (!o.machine || !o.machine->active())) fire(EventKind::Main, o);
     }
-    holding_ = false, carried_ = gripAxis_ = vec3(0), used_ = 0;
+    used_ = 0;
     const vec3 up(0, 0, kTestPointHeight), p = in.pos + up, prev = (hasLast_ ? lastPos_ : in.pos) + up;
     const bool pressed = in.interact && !interactHeld_;
-    const vec3 fwd(std::cos(in.yaw), std::sin(in.yaw), 0);
 
     Object* useSwitch = nullptr;
     float best = kReach;
@@ -2626,29 +2625,6 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
                 if (d < best && std::abs(o.pos.z - in.pos.z) < kReachHeight) best = d, useSwitch = &o;
             }
             break;
-        case Kind::Block: {
-            if (!in.interact || holding_) break;
-            const vec3 c = o.pos + o.offset;
-            if (glm::length(vec2(c - in.pos)) > kReach + o.half.x || std::abs(c.z - in.pos.z) > kReachHeight) break;
-            holding_ = true; // [I] gripped: World keeps Lara's stick out of the controller
-            // [I] The block's own horizontal axis closest to Lara's facing (its faces; she turns to it, Player::grip): the
-            // stick moves it away (push) or toward her (pull); Lara moves with it. Blocked when the block (push) or Lara
-            // (pull) would run into level collision.
-            const glm::mat3 r = rotation(o.rot);
-            const vec3 ax = glm::normalize(vec3(r[0].x, r[0].y, 0)), ay = glm::normalize(vec3(r[1].x, r[1].y, 0));
-            vec3 axis = std::abs(glm::dot(fwd, ax)) >= std::abs(glm::dot(fwd, ay)) ? ax : ay;
-            if (glm::dot(fwd, axis) < 0) axis = -axis;
-            gripAxis_ = axis;
-            if (std::abs(in.move.y) <= 0.5f) break;
-            if (in.move.y < 0) axis = -axis;
-            const float step = float(kBlockSpeed * dt_);
-            // Terrain only (mask 0x0F): the block's own collision box is a dynamic of the same mesh (src/physics).
-            if (col && col->raycast(c + vec3(0, 0, 20), axis, glm::dot(o.half, glm::abs(axis)) + step, 0x0F)) break;
-            if (col && in.move.y < 0 && col->raycast(in.pos + vec3(0, 0, 100), axis, 100 + step, 0x0F)) break;
-            o.offset += axis * step;
-            carried_ = axis * step;
-            break;
-        }
         case Kind::Scripted:
             // Lara uses an anim-graph object whose state leaves by the use stimulus (buttress mounts; tru.exe messages
             // 0x166 / 0x168 -> 0x6B4090 mask 1) [I: reach as switches', measured from any bone's bind position].
@@ -2701,11 +2677,6 @@ std::vector<vec3> Runtime::usePoints(const Object& o) {
 }
 
 std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
-    if (o.kind == Kind::Block) {
-        if (o.offset == vec3(0)) return std::nullopt;
-        // Meshes are placed with T*R(intro): a world displacement d is R^-1 d in model space.
-        return std::vector<glm::mat4>{glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset)};
-    }
     glm::mat4 rigid = o.body;
     if (o.offset != vec3(0)) // a fallen or carried body: world displacement in model space, as a block
         rigid = glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset) * o.body;
