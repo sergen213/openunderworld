@@ -473,6 +473,10 @@ TEST(Combat, HitReactionPlaysAndReturns) {
     EXPECT_EQ(game::stateName(State::Hit), "hit");
 }
 
+// Adrenaline head shot as decoded (docs/GAMEPLAY.md "Adrenaline (decoded)"): the meter latches at its max (no drain,
+// no gain: 0x6F2930 / 0x6F28C0 with flag 0x400000); the Grapple button with a hard lock on a close enemy starts the move
+// (state chart T1404), which spends the meter (0x6E6670); its aim window slows the game to 0.2 (0x715020); the look
+// input steers the pip; fire with it in the reticle kills; time returns (0x718EA0).
 TEST(Combat, AdrenalineHeadShot) {
     CollisionMesh m;
     addFloor(m, -5000, -5000, 5000, 5000, 0);
@@ -482,26 +486,41 @@ TEST(Combat, AdrenalineHeadShot) {
     w->targets.push_back(&t);
     for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true)); // fill by damage dealt
     ASSERT_EQ(w->combat().adrenaline, 1);
+    EXPECT_TRUE(w->combat().headShotReady);
     EXPECT_GE(5000 - t.hp, 500); // Lara data +0x2D0: 500 damage dealt fills it, plus what drained (20/s) meanwhile
     EXPECT_LE(5000 - t.hp, 700);
-    Actions lock = guns(false), go = guns(false);
-    go.interact = true;
-    w->tick(lock);
-    w->tick(go); // meter + locked + interact: adrenaline mode
-    w->tick(lock);
-    ASSERT_TRUE(w->combat().adrenalineMode);
-    w->tick(go); // in the mode + close + interact: the window opens
-    ASSERT_GT(w->combat().slowMo, 0);
-    for (int i = 0; i < 21; ++i) w->tick(lock);
-    EXPECT_NEAR(w->combat().timeScale, 0.2f, 1e-4); // +0x2C8, eased down in +0x2CC = 10 frames
+    const Actions lock = guns(false);
+    for (int i = 0; i < 300; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().adrenaline, 1) << "a latched meter does not drain";
+    Actions use = lock;
+    use.interact = true; // not the button (ours used it before the decode)
+    w->tick(use), w->tick(lock);
+    EXPECT_LT(w->combat().headShot, 0);
+    EXPECT_TRUE(w->headShotAvailable());
+    Actions go = lock;
+    go.grapple = true;
+    w->tick(go);
+    ASSERT_GE(w->combat().headShot, 0);
+    EXPECT_EQ(w->combat().adrenaline, 0) << "the move spends the meter";
+    EXPECT_FALSE(w->combat().headShotReady);
+    EXPECT_EQ(w->player().state().grappleUid, 0);
+    EXPECT_EQ(w->combat().timeScale, 1);
+    for (int i = 0; i < 60 && w->combat().slowMo <= 0; ++i) w->tick(lock);
+    ASSERT_GT(w->combat().slowMo, 0) << "the aim opens inside the move";
+    for (int i = 0; i < 10; ++i) w->tick(lock); // half of +0x2CC = 10 frames: the ease 0x78C120 is half way
+    EXPECT_NEAR(w->combat().timeScale, 0.6f, 0.02f);
+    for (int i = 0; i < 11; ++i) w->tick(lock);
+    EXPECT_NEAR(w->combat().timeScale, 0.2f, 1e-4); // +0x2C8
     const vec3 at = w->player().state().pos;
-    for (int i = 0; i < 120 && glm::length(w->combat().pip) > 0.3f; ++i) { // steer the pip into the reticle
+    for (int i = 0; i < 120 && glm::length(w->combat().pip) > 0.3f; ++i) { // steer the pip into the reticle by looking
         Actions steer = lock;
-        steer.move = -glm::normalize(w->combat().pip);
+        const auto d = -glm::normalize(w->combat().pip);
+        steer.look = {-d.x * 0.3f, d.y * 0.3f}; // look left = pip left
         w->tick(steer);
     }
-    EXPECT_EQ(w->player().state().pos, at); // the stick steers the pip, not Lara
+    EXPECT_EQ(w->player().state().pos, at);
     ASSERT_LE(glm::length(w->combat().pip), 1);
+    ASSERT_GT(w->combat().slowMo, 0) << "the window lasts while the game runs at 0.2";
     const float hp = t.hp;
     Actions shoot = lock;
     shoot.fire = true;
@@ -513,35 +532,133 @@ TEST(Combat, AdrenalineHeadShot) {
     EXPECT_EQ(w->combat().adrenaline, 0);
     for (int i = 0; i < 21; ++i) w->tick({});
     EXPECT_EQ(w->combat().timeScale, 1); // time scale restored
+    for (int i = 0; i < 240 && w->combat().headShot >= 0; ++i) w->tick({});
+    EXPECT_LT(w->combat().headShot, 0);
 }
 
-// Adrenaline mode (0x718BD0): meter not empty + lock + interact toggles it; world time 0.5 over 10 frames, the meter
-// drains 225 / s, the mode ends with it.
+// The head shot needs the latch and a close lock; a miss (fire with the pip outside) wastes it; a hit on Lara ends it.
+TEST(Combat, HeadShotConditionsMissAndInterrupt) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 9000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget t;
+    t.pos = {3000, 0, 0}, t.hp = 1e6f; // beyond the close range
+    w->targets.push_back(&t);
+    const Actions lock = guns(false);
+    Actions go = lock;
+    go.grapple = true;
+    for (int i = 0; i < 120; ++i) w->tick(guns(true));
+    ASSERT_GT(w->combat().adrenaline, 0);
+    ASSERT_LT(w->combat().adrenaline, 1);
+    w->tick(lock), w->tick(go), w->tick(lock);
+    EXPECT_LT(w->combat().headShot, 0) << "not without a full meter";
+    for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true));
+    ASSERT_TRUE(w->combat().headShotReady);
+    EXPECT_FALSE(w->headShotAvailable()) << "too far";
+    w->tick(lock), w->tick(go), w->tick(lock);
+    EXPECT_LT(w->combat().headShot, 0);
+    t.pos = {900, 0, 0};
+    w->tick(lock), w->tick(go);
+    ASSERT_GE(w->combat().headShot, 0);
+    for (int i = 0; i < 60 && w->combat().slowMo <= 0; ++i) w->tick(lock);
+    ASSERT_GT(w->combat().slowMo, 0);
+    ASSERT_GT(glm::length(w->combat().pip), 1);
+    const float hp = t.hp;
+    Actions shoot = lock;
+    shoot.fire = true;
+    w->tick(shoot);
+    EXPECT_EQ(t.hp, hp) << "the pip was outside the reticle";
+    EXPECT_EQ(w->combat().slowMo, 0);
+    for (int i = 0; i < 300; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().timeScale, 1);
+    EXPECT_LT(w->combat().headShot, 0);
+    // again, interrupted by a blow
+    for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true));
+    ASSERT_TRUE(w->combat().headShotReady);
+    w->tick(lock), w->tick(go);
+    ASSERT_GE(w->combat().headShot, 0);
+    for (int i = 0; i < 60 && w->combat().slowMo <= 0; ++i) w->tick(lock);
+    ASSERT_GT(w->combat().slowMo, 0);
+    w->damageLara(50, {500, 0, 0}, game::kDamageLight);
+    EXPECT_LT(w->combat().headShot, 0);
+    EXPECT_EQ(w->combat().slowMo, 0);
+    for (int i = 0; i < 30; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().timeScale, 1);
+}
+
+// Focused fire = adrenaline mode (0x718BD0): Manual Aim with a hard lock and the meter not empty toggles it; the game's
+// time scale (Lara's too: the ramp is the global one, 0x8ABE94) goes to 0.5 over 10 frames, the meter drains 225 per
+// second of that time, the mode ends with the meter, the lock, or the button; starting it gives a latched head shot up.
 TEST(Combat, AdrenalineModeDrainsAndSlowsTime) {
     CollisionMesh m;
     addFloor(m, -5000, -5000, 5000, 5000, 0);
     auto w = makeWorld(m, {0, 0, 0});
     game::DummyTarget t;
-    t.pos = {3000, 0, 0}, t.hp = 1e6f; // out of the close range: no head shot
+    t.pos = {3000, 0, 0}, t.hp = 1e6f;
     w->targets.push_back(&t);
     for (int i = 0; i < 60 * 6; ++i) w->tick(guns(true));
     const float meter = w->combat().adrenaline;
     ASSERT_GT(meter, 0.5f);
-    Actions lock = guns(false), go = guns(false);
-    go.interact = true;
-    w->tick(lock);
+    ASSERT_LT(meter, 1.0f);
+    Actions lock = guns(false), go = guns(false), use = guns(false);
+    go.manualAim = true, use.interact = true;
+    w->tick(lock), w->tick(use), w->tick(lock);
+    EXPECT_FALSE(w->combat().adrenalineMode) << "interact is not the button";
     w->tick(go);
     ASSERT_TRUE(w->combat().adrenalineMode);
+    EXPECT_FALSE(w->combat().manualAim) << "with the lock held the button is focused fire, not the aim view";
     for (int i = 0; i < 21; ++i) w->tick(lock);
     EXPECT_NEAR(w->combat().timeScale, 0.5f, 1e-4);
     const float before = w->combat().adrenaline;
     for (int i = 0; i < 60; ++i) w->tick(lock);
-    EXPECT_NEAR(before - w->combat().adrenaline, 225.0f / 500.0f, 0.01f);
-    for (int i = 0; i < 60 * 4 && w->combat().adrenalineMode; ++i) w->tick(lock);
+    EXPECT_NEAR(before - w->combat().adrenaline, 225.0f / 500.0f * 0.5f, 0.01f) << "one real second = half a game second";
+    w->tick(go); // the button again: the mode ends
+    EXPECT_FALSE(w->combat().adrenalineMode);
+    for (int i = 0; i < 21; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().timeScale, 1);
+    w->tick(go);
+    ASSERT_TRUE(w->combat().adrenalineMode);
+    for (int i = 0; i < 60 * 8 && w->combat().adrenalineMode; ++i) w->tick(lock);
     EXPECT_FALSE(w->combat().adrenalineMode);
     EXPECT_EQ(w->combat().adrenaline, 0);
     for (int i = 0; i < 21; ++i) w->tick(lock);
     EXPECT_EQ(w->combat().timeScale, 1);
+    // without the lock it ends; a latched meter loses the latch when the mode starts
+    for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true));
+    ASSERT_TRUE(w->combat().headShotReady);
+    w->tick(lock), w->tick(go);
+    ASSERT_TRUE(w->combat().adrenalineMode);
+    EXPECT_FALSE(w->combat().headShotReady);
+    for (int i = 0; i < 30; ++i) w->tick(lock);
+    EXPECT_LT(w->combat().adrenaline, 1);
+    w->tick(guns(false, false));
+    EXPECT_FALSE(w->combat().adrenalineMode);
+}
+
+// Lara fires at the game's pace: in adrenaline mode (time scale 0.5) the pistols' clips, and so their shots, run at half
+// the real rate, exactly as every enemy does.
+TEST(Combat, TimeScaleSlowsLaraWithTheWorld) {
+    const auto shots = [](bool mode) {
+        CollisionMesh m;
+        addFloor(m, -5000, -5000, 5000, 5000, 0);
+        auto w = makeWorld(m, {0, 0, 0});
+        game::DummyTarget t;
+        t.pos = {3000, 0, 0}, t.hp = 1e9f;
+        w->targets.push_back(&t);
+        for (int i = 0; i < 60 * 9; ++i) w->tick(guns(true)); // a well filled meter (not latched)
+        if (mode) {
+            Actions go = guns(true);
+            go.manualAim = true;
+            w->tick(go);
+        }
+        for (int i = 0; i < 30; ++i) w->tick(guns(true)); // the ramp
+        const uint64_t before = w->combat().shotsFired;
+        for (int i = 0; i < 180; ++i) w->tick(guns(true)); // within the mode's 4.4 real seconds of a full-ish meter
+        return int(w->combat().shotsFired - before);
+    };
+    const int normal = shots(false), slowed = shots(true);
+    EXPECT_GE(normal, 8);
+    EXPECT_NEAR(slowed * 2, normal, 2);
 }
 
 TEST(Combat, ReplayWithSwitchingIndependentOfRenderRate) {

@@ -141,7 +141,7 @@ const std::vector<std::string>& bindableActions() {
     static const std::vector<std::string> a = {"forward", "back", "left", "right", "walk", "sprint", "jump", "drop", "interact",
                                                "draw", "fire", "aim", "switch", "weapon", "heal", "grapple", "save", "load", "hint", "answer", "pda",
                                                "light", "grenade", "recenter", "camera", "pause", "menu_up", "menu_down", "menu_left",
-                                               "menu_right", "menu_accept", "menu_back", "menu_delete", "menu_alt"};
+                                               "menu_right", "menu_accept", "menu_back", "menu_delete", "menu_alt", "manual_aim"};
     return a;
 }
 
@@ -160,7 +160,8 @@ InputConfig::InputConfig()
                {"draw", {"X"}},                                // none: target lock draws
                {"fire", {"Mouse Left", "H", "Pad righttrigger"}},  // 5 (RT)
                {"aim", {"Mouse Right", "G", "Pad lefttrigger"}},   // 4 (LT), target lock
-               {"switch", {"Z", "Pad rightstick"}},            // 9 (RS click) is precision aim there
+               {"switch", {}},                                 // none: the original has no change-target button
+               {"manual_aim", {"Z", "Pad rightstick"}},        // 9 (RS click): manual aim; with a lock, focused fire
                {"weapon", {"R", "Pad dpright"}},               // 15
                {"heal", {"V", "Pad dpup"}},                    // 12
                {"grapple", {"Q", "Pad x"}},                    // 1 (X)
@@ -196,6 +197,8 @@ const std::map<std::string, std::vector<std::string>, std::less<>> kOldDefaults 
     {"light", {"L", "Pad dpleft"}}, {"grenade", {"R", "Pad dpdown"}}};
 bool oldDefault(const std::string& action, const std::vector<std::string>& inputs) {
     const auto o = kOldDefaults.find(action);
+    // Before manual aim existed `switch` held its key (Z / right stick click): such a config hands it over.
+    if (action == "switch" && inputs == std::vector<std::string>{"Z", "Pad rightstick"}) return true;
     return (o != kOldDefaults.end() && o->second == inputs) || (action == "pda" && inputs == std::vector<std::string>{"1"});
 }
 } // namespace

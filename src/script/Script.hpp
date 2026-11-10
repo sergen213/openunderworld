@@ -362,6 +362,11 @@ public:
     // (0x776700) is camera type `index` the current one.
     using CameraNative = std::function<bool(int op, const std::string& unit, uint32_t index, uint32_t value)>;
     void setCameraNative(CameraNative native) { camera_ = std::move(native); }
+    // Time scale requests (gamebase 1 / 2 / 23 / 24; docs/formats/SCRIPTS.md "Time scale"): `world` = the scale Lara's
+    // update divides back out (0xE7F1A0: 1 sets it, 0x4A3DC0; 23 ramps it, 0x776030), else every update's (0xE7F1D4: 2
+    // sets, 0x4A3DD0; 24 ramps, 0x776090). seconds < 0: set at once, the ramp in progress untouched.
+    using TimeNative = std::function<void(bool world, float target, float seconds)>;
+    void setTimeNative(TimeNative native) { time_ = std::move(native); }
     // The spline camera finished (0x5E2CA0 -> 0x77A3D0): every dispatcher (NsDispatcherBase, bind 0x7B3E60) runs
     // its prototype-7 slot with the cameraspline value.
     void cameraSplineDone(uint32_t value);
@@ -559,6 +564,7 @@ private:
     AudioState audio_;
     std::vector<std::string> movies_;
     CameraNative camera_;
+    TimeNative time_;
     std::vector<std::string> cameraUnits_; // unit names by cameraspline value high word
     bool playerControl_ = true;
     bool uiFlag_ = false; // uigamedata 17 / 18 (0x77BB70 / 0x77BB90: byte 0xFAE8DB, level changes fade to white when set)

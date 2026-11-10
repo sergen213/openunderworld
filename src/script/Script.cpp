@@ -1636,13 +1636,17 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // gamebase 30 (0x7761B0 -> 0x60F5B0): bool clears/sets game flag 0x4000 of 0xE7F0B4 and UI element 0xC
             // (0x655280); reveal scripts call it with true after their camera [U: what the flag gates].
             if (!std::strcmp(name, "gamebase") && nc.function == 30 && nc.args.size() == 1) return true;
-            // gamebase 2 / 24 set / ramp (target, seconds) the global time scale 0xE7F1D4, 23 ramps the second one
-            // 0xE7F1A0 (0x4A3DD0, 0x776090, 0x776030 -> ramp records read by 0x78C4E0); the game loop multiplies
-            // timeMult by both (reveal planes call 24(0, 0), adrenaline trackers 2). Ours keep one fixed
-            // tick rate [U: not applied; our adrenaline window is Combat.cpp's].
-            if (!std::strcmp(name, "gamebase") && ((nc.function == 2 && nc.args.size() == 1) ||
-                                                   ((nc.function == 23 || nc.function == 24) && nc.args.size() == 2)))
+            // gamebase 2 / 24 set / ramp (target, seconds) the global time scale 0xE7F1D4, 1 / 23 the second one 0xE7F1A0
+            // (0x4A3DD0 / 0x776090, 0x4A3DC0 [I: 1 by its pairing with 2 in every script that restores both] /
+            // 0x776030 -> ramp records read by 0x78C4E0); the game loop multiplies timeMult by both and Lara's update
+            // divides the second back out. The adrenaline trackers ramp both (situational adrenaline) and set them
+            // back to 1; World applies them (CombatState::timeScale / worldScale).
+            if (!std::strcmp(name, "gamebase") && (((nc.function == 1 || nc.function == 2) && nc.args.size() == 1) ||
+                                                   ((nc.function == 23 || nc.function == 24) && nc.args.size() == 2))) {
+                const auto f = [](const vm::Value& v) { return std::bit_cast<float>(v.bits); };
+                if (time_) time_(nc.function == 1 || nc.function == 23, f(nc.args[0]), nc.args.size() == 2 ? std::max(0.0f, f(nc.args[1])) : -1.0f);
                 return true;
+            }
             if (!std::strcmp(name, "cameraspline") && nc.function == 0 && nc.args.size() == 1) { // equal (0x775790)
                 nc.result = vm::Value::scalar(cameraSplineValue(nc.receiver) == cameraSplineValue(nc.args[0]));
                 return true;

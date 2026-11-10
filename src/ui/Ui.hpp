@@ -368,7 +368,7 @@ struct HudState {
 
 // Combat reticle (screen pixels), drawn while a weapon is out.
 struct Reticle {
-    enum class Kind : uint8_t { None, Free, Target, Locked };
+    enum class Kind : uint8_t { None, Free, Target, Locked, Manual }; // Manual: the precision-aim view's small reticle
     Kind kind = Kind::None;
     float x = 0, y = 0;
     bool slowMo = false; // adrenaline head-shot window: ring + pip
@@ -403,6 +403,7 @@ public:
     void draw(Canvas& c) const;
 
     Reticle reticle;                       // set each frame
+    Reticle reticle2;                      // the second (dual) target, kind None when there is none
     std::optional<std::array<float, 2>> grapple; // grapple target marker, screen pixels; set each frame
     // GAME OPTIONS > HELPER BUTTONS shown: the grapple's helper button over that marker, locals.bin 363 (the grapple
     // placeholder U+1800 alone, expanded through Canvas::prompts to the bound key / pad icon); empty: none.

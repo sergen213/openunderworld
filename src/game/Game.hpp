@@ -59,6 +59,9 @@ struct Actions {
     // lock-on (target lock); switchTarget press edge cycles the lock; weapon press edge swaps pistols <-> the
     // secondary; heal press edge uses a health pack. Adrenaline: interact while the meter is full and close to a hard lock.
     bool draw = false, fire = false, aim = false, switchTarget = false, weapon = false, heal = false;
+    // Manual Aim (tru.exe virtual button 9: Z / right stick click; scripts: "manual"): on the press edge, without the
+    // target lock the precision-aim view toggles; with a lock and adrenaline it toggles focused fire (Combat.cpp).
+    bool manualAim = false;
     bool pause = false; // held; ou-game opens the pause menu on the press edge (Esc / pad Start; scripts: "pause")
     bool grapple = false; // held; the grapple reacts to the press edge (Q / pad X; scripts: "grapple")
     bool sprint = false;  // held (Left Shift / pad left shoulder; scripts: "sprint")
@@ -861,6 +864,12 @@ public:
     // saves (after restore(), which heals fully, and restoreCombat, which set the window / regeneration clocks)
     void setHealth(float v) { const auto c = health_.clocks(); health_.set(v); health_.setClocks(c); }
     const CombatState& combat() const { return combat_; }
+    // Script / adrenaline time scale requests (script::Runtime::TimeNative; CombatState::timeScale / worldScale).
+    void setTimeScale(bool world, float target, float seconds);
+    // The Grapple button would start the adrenaline head shot now (meter latched, hard lock, close, on her feet).
+    bool headShotAvailable() const;
+    // Where manual aim points: the first thing the view's centre ray meets within the weapon's range (else its end).
+    vec3 manualAimPoint() const;
     // The screen wipe (1 = black): the scripts' FadeOut / FadeIn, and her death's 3 s fade (DeathState, Combat.cpp).
     float screenFade() const;
     // The upper-body combat clip aimLayer plays now (reload, equip / unequip) and its time; empty name when none.
@@ -988,6 +997,16 @@ private:
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
+    // Aim.cpp: manual aim, the head shot move, dual targeting, shot-only hit shapes, the two time scales.
+    void tickTimeScales(float real);                 // the ramps in progress (0x78C4E0), by real time
+    void tickManualAim(const Actions& a, bool manualPressed, bool aimPressed);
+    void tickSecondTarget(bool dual, float dt);      // 0x71E490
+    bool startHeadShot();                            // 0x71D4F0; false: the target has no move for her
+    void tickHeadShot(const Actions& a, bool firePressed, int hand, float dt);
+    void endHeadShot();                              // 0x718FD0: the aim closes, time returns, the move is over
+    // Nearest hit of a ray on what a shot strikes: world faces and solid objects, living targets, shot-only shapes.
+    struct RayHit { float t = 0; Damageable* target = nullptr; int32_t object = 0; bool hit = false; };
+    RayHit shotRay(vec3 from, vec3 dir, float len) const;
     void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // weapon upper body over `local`
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order
     void fire(int hand);
@@ -1193,6 +1212,9 @@ private:
     // section's joint and clip).
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; };
     std::vector<ObjectCollider> colliders_;
+    // Hit shapes of objects that only shots meet (anim graphs leaving a state on damage whose object does not collide
+    // otherwise: l1_kraken_room's chain links 61 / 62): World::shotRay tests them, nothing else does.
+    std::vector<collision::Dynamic> shotOnly_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     const physics::ObjectPhysics* objectPhysics(const std::string& name); // objectPhysics_, loaded on first use
     std::optional<glm::mat4> markerFrame(const script::Object& o, int id); // HInfo marker `id` of `o` in the world
@@ -1282,7 +1304,8 @@ std::optional<EyeWater> eyeWater(const World& w, vec3 eye, double seconds);
 // (see ou-game), scaled by mouseScale and flipped by invertX / invertY.
 struct Controls {
     enum Action { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple,
-                  Save, Load, Hint, Answer, Pda, Light, Grenade, Recenter, Camera, Pause, MenuUp }; // config::bindableActions() order
+                  Save, Load, Hint, Answer, Pda, Light, Grenade, Recenter, Camera, Pause, MenuUp, // config::bindableActions() order
+                  ManualAim = MenuUp + 8 };                                                     // (after the 8 menu keys)
     std::vector<std::vector<platform::InputRef>> actions; // per config::bindableActions() entry
     float mouseScale = 1.0f;
     bool invertY = false, invertX = false;
@@ -1308,12 +1331,12 @@ struct ControlRow {
     const char* label;
     const char* action; // config::bindableActions() entry
 };
-inline constexpr std::array<ControlRow, 34> kControlRows{{
+inline constexpr std::array<ControlRow, 35> kControlRows{{
     {1038, "", "forward"}, {1039, "", "back"}, {1040, "", "left"}, {1041, "", "right"}, {1042, "", "drop"}, {1043, "", "jump"},
-    {1044, "", "grapple"}, {1045, "", "interact"}, {1046, "", "fire"}, {1047, "", "grenade"}, {1048, "", "switch"},
+    {1044, "", "grapple"}, {1045, "", "interact"}, {1046, "", "fire"}, {1047, "", "grenade"}, {1048, "", "manual_aim"},
     {1049, "", "pause"}, {1050, "", "pda"}, {1051, "", "heal"}, {1052, "", "weapon"}, {1053, "", "walk"}, {1055, "", "light"},
     {1054, "", "camera"}, {1056, "", "aim"}, {1057, "", "sprint"}, {0, "RECENTER CAMERA", "recenter"},
-    {0, "DRAW / HOLSTER", "draw"}, {0, "QUICK SAVE", "save"}, {0, "QUICK LOAD", "load"}, {0, "HINT", "hint"}, {0, "ANSWER", "answer"},
+    {0, "CHANGE TARGET", "switch"}, {0, "DRAW / HOLSTER", "draw"}, {0, "QUICK SAVE", "save"}, {0, "QUICK LOAD", "load"}, {0, "HINT", "hint"}, {0, "ANSWER", "answer"},
     {0, "MENU UP", "menu_up"}, {0, "MENU DOWN", "menu_down"}, {0, "MENU LEFT", "menu_left"}, {0, "MENU RIGHT", "menu_right"},
     {0, "MENU SELECT", "menu_accept"}, {0, "MENU BACK", "menu_back"}, {0, "MENU DELETE", "menu_delete"}, {0, "MENU TASK", "menu_alt"}}};
 // The inputs bound to `action` on one device class (keyboard + mouse, or the pad), as tru.exe's list shows them: names

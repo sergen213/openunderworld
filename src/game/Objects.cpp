@@ -1242,6 +1242,7 @@ void World::syncObjects() {
         if (c.hinge >= 0) angles[c.uid] = physics_.angle(c.hinge);
     colliders_.clear();
     col_.dynamics.clear();
+    shotOnly_.clear();
     physics_.clearHinges(); // uber joints and loose bodies keep simulating
     for (const auto& o : script_.objects()) {
         const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Block || o.kind == script::Kind::Switch;
@@ -1250,7 +1251,18 @@ void World::syncObjects() {
         // Anim graphs with hit-gated transitions (sh_ei_combat_crate_*) collide so Lara's shots reach them (World::fire).
         const bool shootable = o.graph && o.graph->set->graph &&
                                std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return !t.events.empty(); });
-        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable) continue; // spline movers' collision follows Object::body (pose below)
+        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable) { // spline movers' collision follows Object::body (pose below)
+            // Anim graphs that leave a state on the damage they took (stimulus 0x800 without event ids, posted by
+            // Runtime::tickGraph) and do not collide otherwise: their shapes are met by shots only (World::shotRay), at
+            // their intro frame [I: l1_kraken_room's chain links hang on platform 27's markers 21 / 20 (uberobjectbase 2
+            // + instance 23), which do not move while the links exist].
+            if (o.graph && o.graph->set->graph &&
+                std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return (t.mask & formats::kStimulusEvent) != 0; }))
+                if (const physics::ObjectPhysics* sp = objectPhysics(o.name))
+                    for (int seg = 0; seg < int(sp->segments.size()); ++seg)
+                        if (auto shape = physics::solidShape(*sp, seg)) shotOnly_.push_back({o.uid, std::move(shape), introModel(o) * sp->segments[seg]});
+            continue;
+        }
         if (o.kind == script::Kind::Switch && !uber &&
             (!o.script || !o.script->program->mainFunction(o.script->typeId))) continue;
         if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end() && rt->second.intangible) continue;

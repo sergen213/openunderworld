@@ -16,6 +16,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -2040,4 +2041,63 @@ TEST(ProgressionReal, CalendarPushHandlesTurnTheRing) {
     for (int i = 0; i < 180; ++i) w.tick({});
     EXPECT_EQ((*w.uberState(6506))[1], 3u) << "back to waiting";
     for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 6506) << key.second;
+}
+
+// Uber object data of one intro (sections, states, transitions, commands, events, joints): OU_UBER_DUMP="unit:uid".
+// Research aid (the kraken platform's chain links, docs/PROGRESSION.md).
+TEST(ProgressionReal, DumpUber) {
+    const char* spec = std::getenv("OU_UBER_DUMP");
+    if (!gameDir() || !spec) GTEST_SKIP() << "OU_GAME_DIR and OU_UBER_DUMP not set";
+    const cdc::BigfileSet bf(gameDir());
+    const std::string s(spec);
+    const std::string unit = s.substr(0, s.find(':'));
+    const int32_t uid = std::atoi(s.substr(s.find(':') + 1).c_str());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), unit, game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 5; ++i) w.tick({});
+    const auto* o = w.script().find(uid);
+    ASSERT_TRUE(o);
+    const auto drm = cdc::parseDrm(*bf.read("pc-w\\" + o->name + ".drm"));
+    const auto data = formats::loadUberObject(drm);
+    ASSERT_TRUE(data);
+    std::printf("object %d %s at (%.0f %.0f %.0f) class %u\n", uid, o->name.c_str(), o->pos.x, o->pos.y, o->pos.z, data->objectClass);
+    for (size_t i = 0; i < data->sections.size(); ++i) {
+        const auto& sec = data->sections[i];
+        std::printf(" section %zu model %u default %u health %.0f damage %d states %zu\n", i, sec.model, sec.defaultState, sec.health,
+                    int(sec.takesDamage), sec.stateOut.size());
+        for (size_t st = 0; st < sec.stateActions.size(); ++st)
+            for (const auto& a : sec.stateActions[st])
+                std::printf("   state %zu action %u value %u joint %d param %d\n", st, a.type, a.value, a.joint, a.param);
+        for (size_t t = 0; t < sec.transitions.size(); ++t) {
+            const auto& tr = sec.transitions[t];
+            std::printf("   t%zu %u -> %u trigger %u param %u (%g) joint %d range %d anim %d flags %x", t, tr.from, tr.to, tr.trigger, tr.param,
+                        std::bit_cast<float>(tr.param), tr.joint, tr.range, tr.anim, tr.flags);
+            for (const auto& c : tr.conditions) std::printf(" [sec %d kind %u value %u]", c.section, c.kind, c.value);
+            std::printf("\n");
+        }
+    }
+    for (size_t i = 0; i < data->commands.size(); ++i) {
+        std::printf(" command %zu id %u:", i, data->commands[i].id);
+        for (const auto& t : data->commands[i].targets) std::printf(" (sec %d type %u payload %u)", t.section, t.type, t.payload);
+        std::printf("\n");
+    }
+    for (size_t i = 0; i < data->events.size(); ++i) {
+        const auto& e = data->events[i];
+        std::printf(" event %zu: section %d kind %u value %u once %d\n", i, e.section, e.kind, e.value, int(e.once));
+    }
+    for (size_t i = 0; i < data->joints.size(); ++i) {
+        const auto& j = data->joints[i];
+        std::printf(" joint %zu type %u bodies %d %d marker %u/%u limits %g %g motor %g %g flags %x\n", i, j.type, j.bodyA, j.bodyB, j.model,
+                    j.marker, j.lo, j.hi, j.speed, j.force, j.flags);
+    }
+    for (size_t i = 0; i < data->params.size(); ++i)
+        std::printf(" param %zu kind %u a %g b %g flag %d\n", i, data->params[i].kind, data->params[i].a, data->params[i].b, int(data->params[i].flag));
+    if (const auto* st = w.uberState(uid)) {
+        std::printf(" states now:");
+        for (const uint32_t v : *st) std::printf(" %u", v);
+        std::printf("\n");
+    }
+    for (const auto& d : w.collision().dynamics)
+        if (d.id == uid) std::printf(" collider %d\n", d.id);
 }
