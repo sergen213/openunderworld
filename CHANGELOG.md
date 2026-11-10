@@ -18,6 +18,10 @@ Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (G
   wobble (about-to-fall); push towards the beam, or briefly the other way, to recover. If she goes, she falls to the
   side she leans and grabs a ledge beside the beam if there is one (the Croft Manor chapel scaffold, the Mexico
   temple beam), otherwise she drops.
+- Added: wall hugging along narrow shelves now goes round corners, inside and outside, with the original animations.
+  Jump with a direction held to leap forward or sideways to a ledge in reach; jump with no direction to twist round
+  onto a ledge above you, or somersault and land back on the shelf if there is none. Over water, the drop button lets
+  her fall into it.
 - Added: the camera swings back behind Lara like the original's. Five seconds after you last moved the camera
   yourself it starts turning back behind her while she runs or swims across the view (never while she stands still or
   heads straight away), and on ledges and climbing walls it slowly leads the way she shimmies. On ladders it tilts up
