@@ -6,6 +6,34 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-11-10
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: close combat. Interact next to an enemy kicks (low, middle or high by the enemy's height; a moving kick
+  out of a run or a sprint), Interact over a downed thrall finishes it, and Jump with Forward while running at an
+  enemy in a fight vaults over it. Kicks break treasure urns. Explosions now knock Lara off her feet and she gets
+  up again.
+- Changed: carried objects use the original's keys. Interact picks up, inserts or swings; Crouch puts the object
+  down; Grenade throws it. Carrying a stone weight or a power gem slows her to a heavy walk, the object collides
+  with walls instead of passing through them, and a thrown weight flies, lands and can press a plate.
+- Changed: the Mediterranean puzzles work as in the original. Pressure plates need the right weight (one stone
+  block is not enough for the tomb plates, two are; Lara alone presses the pad), the tomb gate needs both blocks on
+  the far plate and a grapple pull from the pad, the sea-floor eye door takes its pieces one at a time, and grapple
+  pulls move the real hinged object (the gate, the kraken gear and pillar) while Interact is held.
+- Changed: grapple controls follow the original. Standing roped, Lara walks freely and Jump leaps into the gap
+  keeping the rope; hanging, hold Interact with Forward / Back to climb or descend the rope and Left / Right to turn;
+  Forward builds the swing on every pass (no timing needed); Jump leaps off, on a wall to the side the stick points
+  or back off it. The prologue's swing across the burning staircase works.
+- Added: saving grab as in the original. A catch after a long drop leaves Lara hanging by one hand; press Interact
+  within about a second and a half to recover, or she falls. Short drops catch firmly. It no longer depends on fall
+  speed, and Jump no longer recovers.
+- Added: safety drop. Walking or running off an edge that has a ledge, Lara turns and catches it by herself.
+- Fixed: dropping from a pole over uneven ground no longer left her sliding against the pole.
+- Fixed: Natla's buttress mounts are used from the place the original marks (the far end of each trunk).
+- For testers: 7 more self-test scenarios (close combat, urn kick, carry and throw, saving grab, safety drop, pole
+  drop, the prologue swing); the grapple swing, rappel and wall run scenarios use the original's inputs.
+
 ## [0.42.0] - 2026-11-10
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
