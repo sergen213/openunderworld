@@ -2458,7 +2458,13 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             }
             // Receptacles have no use engagement (only kind-5 insert records): l4_ballcourt pole lever 6502 waits for its pole.
             if (o.kind == Kind::Switch && o.state == 0 && pressed && !receptacleGraph(o.name)) {
-                const float d = glm::length(vec2(o.pos - in.pos));
+                // Reach is measured from the switch or from where she stands to use it (useDistance along its local
+                // horizontal axes, World::useSwitchClip), whichever is nearer [I]: a wall switch's own collision
+                // keeps her farther from its origin than kReach (l1_kraken_room 30: 217 with her back to the hall).
+                float d = glm::length(vec2(o.pos - in.pos));
+                const float stand = o.useDistance > 20 && o.useDistance < 500 ? o.useDistance : 135.0f;
+                const vec2 lx(std::cos(o.rot.z), std::sin(o.rot.z)), ly(-lx.y, lx.x);
+                for (const vec2 at : {lx * stand, -lx * stand, ly * stand, -ly * stand}) d = std::min(d, glm::length(vec2(o.pos) + at - vec2(in.pos)));
                 if (d < best && std::abs(o.pos.z - in.pos.z) < kReachHeight) best = d, useSwitch = &o;
             }
             break;

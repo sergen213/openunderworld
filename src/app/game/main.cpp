@@ -3421,7 +3421,7 @@ int main(int argc, char** argv) {
             hud.reticle = CombatView::reticle(*world, c, world->fovDeg, w, h);
             hud.reticle2 = {};
             if (const auto* second = world->combat().second; second && world->combat().drawn)
-                if (const auto at = CombatView::toScreen(c, world->fovDeg, w, h, second->aimPoint()))
+                if (const auto at = toScreen(c, world->fovDeg, w, h, second->aimPoint()))
                     hud.reticle2 = {ou::ui::Reticle::Kind::Target, at->x, at->y};
             if (!menus.reticles) hud.reticle = {}, hud.reticle2 = {}; // GAME OPTIONS > COMBAT RETICLES HIDDEN
             hud.grapple.reset();

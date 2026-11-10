@@ -102,7 +102,7 @@ const std::set<std::string_view>& fixedProbes() {
         "weapon.current", "weapon.secondary", "weapon.drawn", "weapon.clip", "weapon.reserve", "weapon.grenades", "weapon.shots_fired",
         "weapon.health_packs_used",
         "combat.has_target", "combat.locked", "combat.target", "combat.target_health", "combat.adrenaline_mode", "combat.headshot_window",
-        "combat.time_scale",
+        "combat.time_scale", "combat.world_scale", "combat.manual_aim", "combat.headshot", "combat.headshot_ready", "combat.second_target",
         "grapple.attached", "grapple.state", "grapple.target", "grapple.offered", "grapple.rope", "grapple.rope_max", "grapple.kind",
         "grapple.bends", "grapple.on_wall", "grapple.rappel", "grapple.wall_run", "grapple.swinging", "grapple.pulling",
         "water.in", "water.under", "water.air",
@@ -500,6 +500,11 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "adrenaline_mode") return c.adrenalineMode;
         if (f == "headshot_window") return c.slowMo > 0;
         if (f == "time_scale") return num(c.timeScale);
+        if (f == "world_scale") return num(c.worldScale);
+        if (f == "manual_aim") return c.manualAim;
+        if (f == "headshot") return c.headShot >= 0;
+        if (f == "headshot_ready") return c.headShotReady;
+        if (f == "second_target") return c.second != nullptr;
         return {};
     }
     if (p[0] == "grapple") {

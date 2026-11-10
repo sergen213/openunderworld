@@ -117,7 +117,7 @@ Exactly one of `level`, `start_chapter`, `load` enters the game.
 `input` is the `--input-script` syntax (`game::InputScript::parse`, `tests/replays/*.txt`): `<seconds> <action>
 [value]`; a value persists until changed; actions `forward`, `right` (stick, -1..1, camera-relative), `walk`, `jump`,
 `drop`, `interact`, `draw`, `fire`, `aim`, `switch`, `weapon`, `heal`, `grapple`, `sprint`, `light`, `grenade`,
-`recenter`, `camera` (0 / 1), `lookx`, `looky` (camera rate, rad/s). Every step starts with all inputs released: a
+`recenter`, `camera` (0 / 1), `manual` (Manual Aim), `lookx`, `looky` (camera rate, rad/s). Every step starts with all inputs released: a
 stick or button held across steps must be given again at `0` (it is not released in between, so no new press edge
 happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario's very first tick is not an edge
 (the game treats buttons as held on its first tick): press at `0.1` or later in the first step.
@@ -215,6 +215,7 @@ speeds units/s; 3.1605 units = 1 cm. "Unavailable" probes report `null` and fail
 | `combat.target` | the target: an enemy's intro uid; `-(n + 1)` for the n-th `target` fixture; 0 none |
 | `combat.target_health` | its health; unavailable without a target |
 | `combat.adrenaline_mode`, `combat.headshot_window`, `combat.time_scale` | adrenaline mode on; the head-shot window open; the world time scale (1 normal) |
+| `combat.manual_aim`, `combat.headshot`, `combat.headshot_ready`, `combat.second_target`, `combat.world_scale` | manual aim view on; the head-shot move running; the meter latched full (head shot offered on Grapple); the left gun has its own target; the scripts' world-only scale |
 | `enemies.count`, `enemies.alive` | enemies of the loaded units; those alive |
 | `enemies.nearest`, `enemies.nearest_uid` | distance to / uid of the nearest living enemy (unavailable / 0 without one) |
 | `enemy.<uid>.exists` `.alive` `.health` `.mode` `.clip` `.type` `.distance` `.pos.x/.y/.z` | one enemy by intro uid; mode is `ai::modeName` (`idle alert chase attack hit dead ...`). All but `exists` are unavailable while it is not spawned |
