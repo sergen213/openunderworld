@@ -1205,11 +1205,8 @@ TEST(StreamReal, ThreeAxisJointAtRestSaveLoad) {
                                                              << jb.v.x << " " << jb.v.y << " " << jb.v.z;
         a->tick({}), b->tick({});
     }
-    auto sa = a->serializeObjects(), sb = b->serializeObjects();
-    // The scene's recorded Jolt state is compared apart: the resting pillar's cached contact manifolds may differ in a
-    // loaded scene while every body moves alike (x and v above, bit for bit).
-    sa.erase("physics"), sb.erase("physics");
-    EXPECT_EQ(sa, sb);
+    EXPECT_EQ(a->stateHash(), b->stateHash());
+    EXPECT_EQ(a->serializeObjects(), b->serializeObjects()) << "the recorded Jolt scene included";
 }
 
 // A death restores the checkpoint save (Stream.DeathRestoresTheCheckpointSave) on a real level, l3_chapel: with

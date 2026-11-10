@@ -394,6 +394,7 @@ void World::restoreObjects(const nlohmann::json& j) {
     colliders_.clear(), col_.dynamics.clear();
     physics_.clearHinges();
     syncedObjects_ = ~size_t(0); // prepare the loaded uber objects on the next tick
+    restoredColliders_ = true;   // ... and pose their colliders as the saved world had them
 }
 
 bool World::uberHolds(int32_t uid, const std::vector<formats::UberCondition>& conditions) const {
@@ -1722,6 +1723,7 @@ void World::syncObjects() {
     syncedPlates_ = lateColliders(script_);
     syncedAnchors_ = script_.anchors().size();
     poseShotOnly();
+    if (restoredColliders_) poseColliders(); // a restored world: where the saved one had them (until its first tickObjects)
     syncHazards();
 }
 
@@ -1813,6 +1815,26 @@ void World::tickObjects(float dt) {
     tickInserted(dt);
     tickJoints(dt);
     collectJointSounds(dt);
+    poseColliders();
+    tickObjectMarkup();
+    tickHazards();
+    if (const auto rideNow = rideBefore ? objectMarkupFrame(ride) : std::nullopt; rideNow && *rideNow != *rideBefore) {
+        player_.rideFrame(*rideNow * glm::inverse(*rideBefore));
+    } else if (under >= 0) {
+        const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
+        if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
+    }
+    restoredColliders_ = false;
+}
+
+// Every collider where its object is now: uber sections by their joints and clips, jaws, hinge bodies, sliding doors,
+// uber joint poses, clip palettes; then the riders. Also run when a restored world makes its colliders (syncObjects):
+// they are born at their intro frame, and the player's tick and the physics step (the kinematic object solids,
+// Scene::setColliders) come before tickObjects poses them (the first tick syncs twice: the prepared uber objects
+// bring late colliders and anchors). A loaded world's first step otherwise moved every posed solid from its saved
+// place back to its intro frame, unlike the game it was saved from (seen once a three-axis joint body made the
+// solids exist in l4_pool: StreamReal.SaveContinuesBitIdentically, ThreeAxisJointAtRestSaveLoad).
+void World::poseColliders() {
     for (size_t i = 0; i < colliders_.size(); ++i) {
         const auto& c = colliders_[i];
         const auto* o = script_.find(c.uid);
@@ -1867,14 +1889,6 @@ void World::tickObjects(float dt) {
             if (const auto palette = o ? script_.pose(*o) : std::nullopt; palette && !palette->empty())
                 col_.dynamics[i].transform = c.intro * (*palette)[std::min<size_t>(c.segment, palette->size() - 1)] * c.frame;
         }
-    }
-    tickObjectMarkup();
-    tickHazards();
-    if (const auto rideNow = rideBefore ? objectMarkupFrame(ride) : std::nullopt; rideNow && *rideNow != *rideBefore) {
-        player_.rideFrame(*rideNow * glm::inverse(*rideBefore));
-    } else if (under >= 0) {
-        const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
-        if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
     }
 }
 
