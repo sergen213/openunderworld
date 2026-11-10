@@ -310,7 +310,14 @@ void World::restoreBreakables(const nlohmann::json& j) {
 // The area hit 0x69F1E0 of an explosion record: every living target and Lara within its radius take the damage
 // (class kDamageClassBlast) and are thrown; objects that take damage (other barrels, crates, breakables) are hit; loose
 // bodies and ragdolls get the knock.
-void World::blast(vec3 at, const ExplosionRecord& x) {
+// `parent`: the loose body (a freed uber section) of the instance that gave birth to the exploding object. 0x69F1E0
+// measures that one instance from the explosion's own position (instance +0x214), so its knock message 0x91 has the
+// full knock and the heading of a zero vector: atan2(-0, -0) = -pi in 0x49EFC0, which is world -X [O decomp]. tru.exe
+// under Wine (2026-11-10, gameplaygoal/prologue/wine/s4.txt): ring door 4526's leaf, 36 out on its slide at 174
+// units/s, has (-870, 0, +364) units/s two frames after its squib (knock 1000, elevation 0) and lands flat 650 from
+// its frame. Ours [I: that the freed body takes the message as its velocity]: the body's velocity becomes the knock
+// along world -X at the record's elevation.
+void World::blast(vec3 at, const ExplosionRecord& x, int32_t parent) {
     explosions_.push_back(at);
     const auto fall = [&](float d) { return std::clamp(d / x.radius, 0.0f, 1.0f); };
     const float lift = std::sin(glm::radians(x.angle)), out = std::cos(glm::radians(x.angle));
@@ -343,12 +350,13 @@ void World::blast(vec3 at, const ExplosionRecord& x) {
     for (const auto& [uid, b] : breakables_)
         if (glm::distance(at, vec3(b.frame[3])) < x.radius) struck.push_back(uid);
     for (const int32_t uid : struck) hitBreakable(uid, kDamageClassBlast, false);
-    physics_.blast(at, x.radius, x.knock, x.knockEdge, x.angle);
+    physics_.blast(at, x.radius, x.knock, x.knockEdge);
+    if (parent && x.knock > 0) physics_.knock(parent, vec3(-out, 0, lift) * x.knock, at);
 }
 
 // Uber state action 0x13 gave birth to objectlist id `object` at `at`: an effect object with an explosion record goes
 // off there on the next tick (its anim graph's first record hands the record to the area hit, 0x6A5C50).
-void World::birthBlast(uint16_t object, vec3 at) {
+void World::birthBlast(uint16_t object, vec3 at, int32_t parent) {
     const std::string* name = script_.objectName(object);
     if (!name) return;
     auto it = explosionData_.find(*name);
@@ -360,7 +368,7 @@ void World::birthBlast(uint16_t object, vec3 at) {
                 } catch (const cdc::FormatError& e) { warnings.push_back(*name + ": " + e.what()); }
         it = explosionData_.emplace(*name, rec).first;
     }
-    if (it->second) pendingBlasts_.push_back({at, *it->second, 1});
+    if (it->second) pendingBlasts_.push_back({at, *it->second, 1, parent});
 }
 
 // A born squib goes off at the end of the tick after its birth: bodies the same state's actions set free (a door leaf
@@ -370,7 +378,7 @@ void World::tickBlasts() {
     for (auto it = pendingBlasts_.begin(); it != pendingBlasts_.end();)
         if (it->ticks-- <= 0) due.push_back(*it), it = pendingBlasts_.erase(it);
         else ++it;
-    for (const auto& b : due) blast(b.at, b.record);
+    for (const auto& b : due) blast(b.at, b.record, b.parent);
 }
 
 } // namespace ou::game

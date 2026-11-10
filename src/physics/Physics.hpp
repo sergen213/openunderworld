@@ -41,6 +41,9 @@ struct Prim {
     // What touching it costs (sphere +0x1C, box +0x3E, capsule +0x32, s16; tru.exe 0x48E040 read by the instance-contact
     // handler 0x4923C0): 0 on almost every primitive, the traps' blades / flames / grinders carry it.
     int16_t damage = 0;
+    // Share of a blast's push the primitive's shape takes, in percent (sphere +0x18, box +0x3A, capsule +0x2E, s8;
+    // tru.exe 0x492CC0: 0 = none at all).
+    int8_t blast = 0;
     bool solid() const { return head[1] & 1; }
 };
 // Model marker (dtp Model +0x38 count, +0x3C list, 0x30 bytes): frame of e.g. a joint [I].
@@ -55,6 +58,9 @@ struct HMarker {
     int segment = 0;
     uint16_t id = 0;
     vec3 pos{0}, rot{0}; // segment frame; Euler radians, R = Rx * Ry * Rz [I] (cdc_Matrix_Build_XYZOrder)
+    // +6: the id uber birth records name (tru.exe 0x4705B0 -> 0x46D7D0 compares this word, where the effect / attach
+    // lookup 0x46DA20 compares +4).
+    uint16_t birthId = 0;
 };
 // Engagement record (0x8C bytes; tru.exe [Engagement] 0x6F3C60 tested by Lara's scan 0x719520): where Lara can interact
 // with an object. The instance answers query 0x53 with its active set {+0 id, +4 -> records, +8 count}.
@@ -345,10 +351,13 @@ public:
     };
     void setWater(std::span<const Water> water);
 
-    // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge, loose
-    // and ragdoll bodies, along the line from `at` raised by half the distance; `elevation` >= 0 (degrees): along the
-    // body's heading from `at` at that elevation (Physics.cpp).
-    void blast(vec3 at, float radius, float near, float edge, float elevation = -1);
+    // Explosion at `at` (Physics.cpp): every primitive of a loose body within `radius` takes tru.exe's shape impulse
+    // from the knock `near`; hinge and ragdoll bodies a velocity change `near` .. `edge` (units/s, linear falloff) along
+    // the line from `at` raised by half the distance.
+    void blast(vec3 at, float radius, float near, float edge);
+    // Loose body `id` is knocked: it loses its motion and takes the impulse mass x `velocity` (units/s) at the world
+    // point `at`, so its centre of mass leaves at `velocity` and it spins by the point's lever. False without that body.
+    bool knock(int32_t id, vec3 velocity, vec3 at);
     // Vehicles, keyed by the caller. A new key starts at `model` (model -> world) at rest; existing ones keep simulating
     // with this step's `drive`, moved by `shift` (the caller's frame moved) and given `kick` (units/s, a hop or a hit);
     // missing keys are dropped. Their terrain is setTerrain's and setColliders'.

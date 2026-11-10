@@ -1228,6 +1228,7 @@ bool World::strike(Weapon wpn, vec3 from, vec3 dir, float len, float dist0, bool
         uberShot(object, dir);
         script_.graphHit(object, uint32_t(w.hitClass), damage);
         damageObject(object, damage, w.hitClass); // breakable uber objects (urns)
+        script_.weaponHit(object, damage, w.hitClass); // its script's hit callback (0x6C64D0 -> 0x799100)
     }
     return hitAny;
 }
@@ -1329,7 +1330,9 @@ void World::tickHostile(float dt) {
         const vec3 seg = p.vel * dt;
         const float len = glm::length(seg);
         const vec3 dir = len > 0 ? seg / len : vec3(0, 0, -1);
-        const RayHit ray = shotRay(p.pos, dir, len);
+        // not what fired it: the weapon object and the instance it hangs on (Natla's own hit shapes)
+        const auto carrier = script_.anchor(p.owner);
+        const RayHit ray = shotRay(p.pos, dir, len, p.owner, carrier ? carrier->first : 0);
         float t = ray.hit ? ray.t : len;
         const PlayerState& s = player_.state();
         const auto lara = health_.dead() ? std::nullopt
