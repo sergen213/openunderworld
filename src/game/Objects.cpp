@@ -1509,13 +1509,24 @@ glm::mat4 markerMatrix(vec3 pos, vec3 rot) {
     return glm::translate(glm::mat4(1), pos) * glm::rotate(glm::mat4(1), rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), rot.y, {0, 1, 0}) *
            glm::rotate(glm::mat4(1), rot.z, {0, 0, 1});
 }
-// An engagement record's frame: its HInfo marker's (0x46DF20) in `p`'s model, posed by `frame`; else `frame`.
-glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e) {
+// An engagement record's frame: its HInfo marker's (0x46DF20 -> 0x46DA20) in `p`'s model, posed by `frame`; else
+// `frame`. [O] 0x46DA20 takes the marker's segment from the instance's current matrices (instance +0x90), so on an
+// anim-graph object the marker rides its clip: `skin` = the clip's skin palette (bind -> now, per segment), null = bind.
+glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin = nullptr) {
     if (e.segment >= 0)
         for (const auto& m : p.hmarkers)
-            if (m.id == e.segment)
-                return frame * (size_t(m.segment) < p.segments.size() ? p.segments[size_t(m.segment)] : glm::mat4(1)) * markerMatrix(m.pos, m.rot);
+            if (m.id == e.segment) {
+                const size_t seg = size_t(m.segment);
+                return frame * (skin && seg < skin->size() ? (*skin)[seg] : glm::mat4(1)) * (seg < p.segments.size() ? p.segments[seg] : glm::mat4(1)) *
+                       markerMatrix(m.pos, m.rot);
+            }
     return frame;
+}
+// The skin palette of an anim-graph object's running clip (Runtime::pose), nullopt in bind pose or under a rigid motion
+// (then `frame` carries it).
+std::optional<std::vector<glm::mat4>> graphSkin(const script::Runtime& rt, const script::Object& o) {
+    if (!o.graph || !o.animPose.empty() || o.body != glm::mat4(1) || o.offset != vec3(0)) return std::nullopt;
+    return rt.pose(o);
 }
 } // namespace
 
@@ -1546,11 +1557,12 @@ std::optional<glm::mat4> World::attachFrame(const script::Object& o, int section
 // shapes ({-125, 160, 250}, {150, 60, 90}) were inactive there: crouching / hanging ones, not used.
 bool World::engages(const script::Object& o, const physics::Engagement& e) {
     const auto* p = objectPhysics(o.name);
-    return p && engagesAt(*p, glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body, e);
+    const auto skin = graphSkin(script_, o);
+    return p && engagesAt(*p, glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body, e, skin ? &*skin : nullptr);
 }
 
-bool World::engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e) {
-    const glm::mat4 inv = glm::inverse(recordFrame(p, frame, e));
+bool World::engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin) {
+    const glm::mat4 inv = glm::inverse(recordFrame(p, frame, e, skin));
     for (int k = 0; k < 3; ++k) {
         const vec3 q = vec3(inv * glm::vec4(player_.state().pos + vec3(0, 0, kEngageZ0 + float(k) * kEngageStep), 1)) - e.centre;
         if (e.shape == 0) {
@@ -1603,9 +1615,10 @@ World::Engaged World::engaged() {
                                        return n && *n == held->name;
                                    }));
     };
-    const auto consider = [&](int32_t uid, int section, const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e) {
-        if (!admits(e) || !engagesAt(p, frame, e)) return false;
-        const vec2 at = vec2(recordFrame(p, frame, e)[3]) - vec2(s.pos);
+    const auto consider = [&](int32_t uid, int section, const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e,
+                              const std::vector<glm::mat4>* skin = nullptr) {
+        if (!admits(e) || !engagesAt(p, frame, e, skin)) return false;
+        const vec2 at = vec2(recordFrame(p, frame, e, skin)[3]) - vec2(s.pos);
         const float most = std::max(glm::dot(at, at), glm::dot(bestAt, bestAt));
         if (!best.uid || score(at, most) < score(bestAt, most)) best = {uid, section, &e}, bestAt = at;
         return true; // the instance's first engaging record, whether it won or not
@@ -1626,11 +1639,12 @@ World::Engaged World::engaged() {
         const auto* p = objectPhysics(o.name);
         if (!p || p->engagements.empty()) continue;
         const glm::mat4 frame = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+        const auto skin = graphSkin(script_, o);
         bool done = false;
         for (const auto& set : p->engagements) {
             if (o.engagement > 0 && set.id != o.engagement) continue;
             for (const auto& e : set.records)
-                if ((done = consider(o.uid, -1, *p, frame, e))) break;
+                if ((done = consider(o.uid, -1, *p, frame, e, skin ? &*skin : nullptr))) break;
             if (done) break;
         }
     }
@@ -1641,8 +1655,8 @@ std::vector<vec3> World::engagementCentres(int32_t uid, int kind) {
     std::vector<vec3> out;
     const auto* o = script_.find(uid);
     if (!o) return out;
-    const auto add = [&](const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e) {
-        if (e.kind && (!kind || e.kind == kind)) out.push_back(vec3(recordFrame(p, frame, e) * glm::vec4(e.centre, 1)));
+    const auto add = [&](const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin = nullptr) {
+        if (e.kind && (!kind || e.kind == kind)) out.push_back(vec3(recordFrame(p, frame, e, skin) * glm::vec4(e.centre, 1)));
     };
     if (const auto* data = prepareUber(*o)) {
         for (size_t i = 0; i < data->sections.size(); ++i) {
@@ -1654,9 +1668,10 @@ std::vector<vec3> World::engagementCentres(int32_t uid, int kind) {
         }
     } else if (const auto* p = objectPhysics(o->name)) {
         const glm::mat4 frame = glm::translate(glm::mat4(1), o->offset) * introModel(*o) * o->body;
+        const auto skin = graphSkin(script_, *o);
         for (const auto& set : p->engagements)
             if (o->engagement <= 0 || set.id == o->engagement)
-                for (const auto& e : set.records) add(*p, frame, e);
+                for (const auto& e : set.records) add(*p, frame, e, skin ? &*skin : nullptr);
     }
     return out;
 }
