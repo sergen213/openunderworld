@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "ch07_hubhall_statue_hall",
+  "chapter": "07 Remnants: the section's end, up the temple staircase into the Shiva / Kali hall (docs/matrix/07_remnants.md C07-57)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/06remnants.html",
+  "note": "l2_hubhall from its last checkpoint 3100, on top of the slope the pole swing of C07-55 lands on. Up the staircase north of it the stream crosses into l2_puzzleroom; plane 2943 at the hall's mouth plays the arrival cinematic 2936, which puts her on the wooden lift (checkpoint 2817, then the cinematic's own checkpoint 2936 with an autosave): where section 08 starts (ch08_puzzleroom_lift_switch). The temple pit, the wall kick and the beams before checkpoint 3100 (C07-51 .. C07-56) are not played by input yet.",
+  "level": "l2_hubhall",
+  "spawn": [-24506, 34834, 7600, 90],
+  "steps": [
+    {"step": "up_the_staircase", "plan": ["go -24506 36500 150", "go -24506 38200 150", "wait 2"], "duration": 60,
+     "expect": [{"probe": "step.events", "seq": ["cross:2943>2943", "activate:2943>2936", "cinematicend:2936>2936", "checkpoint:2817>2817", "checkpoint:2936>2936", "autosave:2936>2936"]},
+                {"calls": ["2936:57"]},
+                {"probe": "world.unit", "eq": "l2_puzzleroom"},
+                {"probe": "world.checkpoint", "eq": 2936},
+                {"probe": "step.height_gain", "near": 606, "tol": 15, "note": "the lift platform is 606 over checkpoint 3100's floor"},
+                {"probe": "step.health_lost", "eq": 0},
+                {"probe": "player.grounded", "eq": true}]}
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "ch08_puzzleroom_lift_pole",
+  "chapter": "08 Bhogavati: the lift mechanism's east side freed by pulling the banded pole out of it (docs/matrix/08_bhogavati.md C08-12)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/07bhogavati.html",
+  "note": "l2_puzzleroom from checkpoint 2818, the upper east ledge. Pole 2967 (sa_pt_pole_a) starts inserted in the mechanism's hole 2969. Walking west its pick-up record reaches her (the autopilot's engage) and Interact pulls it out: she carries it, hole 2969 is empty, and the pole's script frees this side of the lift: elevator part 2960 vt 54, switch 2961 vt 62. Ours takes the pole from the ledge, 1085 from it [I]; the original has her jump up to hang on it first (matrix row C08-12).",
+  "level": "l2_puzzleroom",
+  "spawn": [-16455, 40061, 5600, 180],
+  "steps": [
+    {"step": "to_the_pole", "plan": ["engage 2967 walk"], "duration": 20,
+     "expect": [{"probe": "portable.held", "eq": 0},
+                {"probe": "portable.2967.in", "eq": 2969, "note": "placed in the mechanism from the start"},
+                {"probe": "world.checkpoint", "eq": 2818}]},
+    {"step": "pull_it_out", "plan": ["press", "wait 4"], "duration": 10,
+     "expect": [{"probe": "portable.held", "eq": 2967},
+                {"probe": "portable.2967.in", "eq": 0},
+                {"calls": ["2960:54", "2961:62"], "note": "this side of the lift mechanism is free"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}
