@@ -1165,6 +1165,7 @@ Scene::CharacterMove Scene::moveCharacter(vec3 feet, vec3 velocity, float top, f
     if (walk) {
         JPH::CharacterVirtual::ExtendedUpdateSettings e;
         e.mStickToFloorStepDown = Jm(vec3(0, 0, -c.spec.stepDown));
+        e.mWalkStairsStepForwardTest = c.spec.stepForwardTest * kM;
         // The capsule's round bottom alone rides over an edge up to radius * (1 - maxSlopeCos) high (the contact normal
         // there is still within the slope limit), on top of the stair step: the step is shortened by that, so stepUp
         // is the highest riser climbed (110: the 100-unit stairs yes, the 121-unit hearth edge no).

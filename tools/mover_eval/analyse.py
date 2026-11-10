@@ -6,8 +6,9 @@ MOVERS = ['sweep', 'jolt', 'jolt-capsule']
 def trace(name, m):
     rows = []
     try:
-        for l in open(W + f'{name}.{m}.trace'):
+        for l in open(W + (f'gtest.{m}.{name}' if name in ('stairs', 'hearth') else f'{name}.{m}.trace')):
             t, st, x, y, z = l.split()
+            if rows and int(t) <= rows[-1][0]: break  # a load restarted the tick count: the run up to it
             rows.append((int(t), st, float(x), float(y), float(z)))
     except FileNotFoundError:
         pass
@@ -19,7 +20,7 @@ TRUZ = [-2117.74, -2096.16, -1996.79, -1902.28, -1802.32, -1704.52, -1608.07, -1
 OFF = (9622.0, 333.0, -2977.0)  # tru = ours + OFF
 print('## stairs (l3_main_bedroom, run up): y (our frame) where z reaches each tread, lead before tru.exe\'s jump interval')
 for m in MOVERS:
-    rows = trace('stairs_run', m)
+    rows = trace('stairs', m)
     if not rows: continue
     leads, ticks_per, speed = [], [], []
     for i, (a, b) in enumerate(TRU):
@@ -32,8 +33,8 @@ for m in MOVERS:
         ymid_tru = 0.5 * (a + b) - OFF[1]
         leads.append((first[3] - ymid_tru, done[3] - ymid_tru, done[0] - first[0] + 1))
     ys = [r[3] for r in rows]
-    run = [abs(b[3] - a[3]) for a, b in zip(rows[60:], rows[61:]) if b[1] == 'Run']
-    falls = sum(1 for a, b in zip(rows, rows[1:]) if a[1] != b[1] and b[1] == 'Fall')
+    run = [abs(b[3] - a[3]) for a, b in zip(rows[60:], rows[61:]) if b[1].lower() == 'run']
+    falls = sum(1 for a, b in zip(rows, rows[1:]) if a[1] != b[1] and b[1].lower() == 'fall')
     print(f'{m:13s} final z {rows[-1][4]:.1f} y {rows[-1][3]:.1f} falls {falls} mean |dy|/tick while running {sum(run)/max(len(run),1):.2f} min {min(run) if run else 0:.2f}')
     for i, l in enumerate(leads):
         print(f'   riser {i}: ' + ('not climbed' if l is None else f'starts rising {l[0]:+.1f} units before tru\'s jump, on the tread {l[1]:+.1f}, over {l[2]} tick(s)'))
@@ -50,7 +51,7 @@ for name in ['pool_to_ragnarok', 'save_move_load']:
         d = [((r[2] - base[r[0]][2]) ** 2 + (r[3] - base[r[0]][3]) ** 2 + (r[4] - base[r[0]][4]) ** 2) ** 0.5 for r in rows if r[0] in base]
         dz = [abs(r[4] - base[r[0]][4]) for r in rows if r[0] in base]
         ch = [(a[1], b[1]) for a, b in zip(rows, rows[1:]) if a[1] != b[1]]
-        fl = sum(1 for c in ch if 'Fall' in c or 'Land' in c)
+        fl = sum(1 for c in ch if 'fall' in (c[0].lower(), c[1].lower()) or 'land' in (c[0].lower(), c[1].lower()))
         print(f'{m:13s} ticks {len(rows)} diff mean {sum(d)/max(len(d),1):.2f} max {max(d) if d else 0:.2f} final {d[-1] if d else 0:.2f} |dz| max {max(dz) if dz else 0:.2f}; '
               f'state changes {len(ch)}, into/out of Fall/Land {fl}: ' + ' '.join(f'{a}>{b}' for a, b in ch[:14]))
         for l in open(W + f'{name}.{m}.log'):

@@ -310,6 +310,7 @@ public:
         float maxSlopeCos = 0;          // ground normal z below this is too steep to stand on
         float mass = 0, strength = 28000; // kg; mass * units/s^2 (Jolt's 100 N)
         float padding = 2;              // distance kept from the geometry
+        float stepForwardTest = 42;     // Jolt's second stair test, this far ahead (its default: 0.15 m)
         bool innerEdges = true;         // Jolt's enhanced internal edge removal (mesh seams)
         bool flatBottom = false;        // a cylinder instead of the capsule (crisp riser limit; see PHYSICS.md)
         bool operator==(const CharacterSpec&) const = default;

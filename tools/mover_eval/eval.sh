@@ -1,6 +1,7 @@
 #!/bin/sh
 # Mover evaluation runs (docs/formats/PHYSICS.md "Character controller"): per mover (OU_MOVER=sweep|jolt|jolt-capsule)
-# the ou-game traces analyse.py reads (stairs, hearth, the two replays, tick costs) and the five self-tests. Needs a
+# the traces analyse.py reads (stairs and hearth from GameReal.MoverStairsTrace, the two replays and the tick costs from
+# ou-game), the riser survey and the five self-tests. Needs a
 # build with the evaluation switch (the commit PHYSICS.md names), OU_GAME_DIR and a display: run it inside a private
 # compositor, e.g.
 #   dbus-run-session -- env -u DISPLAY kwin_wayland --virtual --socket ou-mover --exit-with-session tools/mover_eval/eval.sh
@@ -18,8 +19,7 @@ run() { # name mover args...
 }
 mkdir -p $W
 for m in sweep jolt jolt-capsule; do
-  run stairs_run $m "--level 'pc-w\\l3_main_bedroom.drm' --spawn -8000,-5500,900,-90 --input-script $E/fwd.txt --frames 200"
-  run hearth $m "--level 'pc-w\\l3_main_bedroom.drm' --spawn -4264,5958,90,180 --input-script $E/fwd.txt --frames 150"
+  OU_MOVER=$m OU_MOVER_LOG=$W/gtest.$m $WT/build/ou_game_tests --gtest_filter='GameReal.MoverStairsTrace:GameReal.MoverRiserSurvey' > $W/gtest.$m.log 2>&1
   run pool_to_ragnarok $m "--level 'pc-w\\l4_pool.drm' --input-script $WT/tests/replays/pool_to_ragnarok.txt --frames 180"
   run save_move_load $m "--level 'pc-w\\l4_pool.drm' --input-script $WT/tests/replays/save_move_load.txt --frames 240"
   run cost_pool $m "--level 'pc-w\\l4_pool.drm' --input-script $WT/tests/replays/pool_to_ragnarok.txt --frames 600"

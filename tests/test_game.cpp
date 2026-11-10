@@ -5106,6 +5106,28 @@ TEST(GameReal, MoverRiserSurvey) {
     std::printf("riser survey: %d attempts, %d climbed, %d fell or slid, %d not climbed\n", total, up, fell, stuck);
 }
 
+// Mover evaluation: the runs of StairsWalkAndRunUpAndDown in l3_main_bedroom (up the flight, into the hearth) as
+// per-tick traces "tick state x y z" in $OU_MOVER_LOG.stairs / .hearth, for tools/mover_eval/analyse.py.
+TEST(GameReal, MoverStairsTrace) {
+    if (!gameDir() || !std::getenv("OU_MOVER_LOG")) GTEST_SKIP() << "OU_GAME_DIR / OU_MOVER_LOG not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const auto bedroom = collision::loadLevelCollision(cdc::parseDrm(*bf.read("pc-w\\l3_main_bedroom.drm")));
+    const auto run = [&](const char* suffix, vec3 at, float yawDeg, int ticks) {
+        std::FILE* f = std::fopen((std::string(std::getenv("OU_MOVER_LOG")) + suffix).c_str(), "w");
+        ASSERT_TRUE(f);
+        game::World w(collision::CollisionMesh(bedroom), game::AnimLibrary(anims), {at, glm::radians(yawDeg)});
+        for (int t = 1; t <= ticks; ++t) {
+            w.tick(forward());
+            const auto& s = w.player().state();
+            std::fprintf(f, "%d %s %.3f %.3f %.3f\n", t, game::stateName(s.state).data(), s.pos.x, s.pos.y, s.pos.z);
+        }
+        std::fclose(f);
+    };
+    run(".stairs", {-8000, -5500, 900}, -90, 130);
+    run(".hearth", {-4264, 5958, 90}, 180, 120);
+}
+
 TEST(GameReal, StairsWalkAndRunUpAndDown) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
