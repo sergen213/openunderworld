@@ -1485,6 +1485,24 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(mine == nc.args[0].bits);
                 return true;
             }
+            // modifiable 4 (message 0x32: start the transition with that id) on a switch, whose graph ours keeps as the
+            // state id in its modifiable member (switchUsed): the id moves to the transition's target; when that state
+            // can be used again (it leaves by the use stimulus) the switch is free for another pull. The one-way wall
+            // switches' "off reaction" (type 3637 vt 58: modifiable 4 (1)) after a jammed try: l1_kraken_room switch 55,
+            // reset by gear 36's event 1 [O bytecode]. [I] the reaction's clip is not played.
+            if (!std::strcmp(name, "modifiable") && nc.function == 4 && nc.args.size() == 1)
+                if (Object* o = findMut(self->uid); o && o->kind == Kind::Switch && !o->graph) {
+                    const auto set = graphSet(o->name);
+                    if (set && set->graph) {
+                        const auto& G = *set->graph;
+                        if (const int ti = G.transitionById(int32_t(nc.args[0].bits)); ti >= 0 && G.transitions[size_t(ti)].target >= 0) {
+                            const int target = G.transitions[size_t(ti)].target;
+                            field() = uint32_t(int32_t(G.states[size_t(target)].index));
+                            if (G.pickUse(target, formats::kStimulusUse, 0, graphSeed_) >= 0 && o->state == 2) o->state = 0, o->t = 0;
+                        }
+                    }
+                    return true;
+                }
             // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance: an anim-graph object (handler
             // 0x6B4440) enters the state with that id at once (state list query 0xE6, 0x6A5660); other receivers [U].
             if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) {

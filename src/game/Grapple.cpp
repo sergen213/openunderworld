@@ -270,6 +270,28 @@ void Player::grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPre
         }
         if (jumpPressed) { releaseGrapple(true); return; }
         if (dropPressed) { releaseGrapple(false); return; }
+        // Roped to a pull target she still walks (the walkthrough's l1_baldrs_tomb gate: the ring is grappled, she steps
+        // back onto the press plate and only then pulls with Interact): without Interact the stick walks her, the rope
+        // paying out to its longest; Interact braces her and the world pulls the target (World::pullGrappled). [I] walk
+        // speed and clip (the original's roped walk is not traced).
+        if (!a.interact && glm::length(move) > 0.2f) {
+            constexpr float kRopedWalk = 350.0f; // units/s [I]: a walk
+            const vec2 dir = glm::normalize(move);
+            const vec3 next = s_.pos + vec3(dir, 0) * (kRopedWalk * dt);
+            const float longest = maxRope();
+            if (glm::distance(next + vec3(0, 0, kHandZ), s_.grappleAnchor) <= longest) {
+                s_.yaw = std::atan2(dir.y, dir.x);
+                groundMove(vec3(dir, 0) * (kRopedWalk * dt), dt);
+                if (s_.state != State::GrapplePull) { // walked off an edge: the rope is let go
+                    s_.grappleUid = 0, s_.ropeBends = 0;
+                    return;
+                }
+                s_.ropeLength = std::max(s_.ropeLength, glm::distance(s_.pos + vec3(0, 0, kHandZ), s_.grappleAnchor));
+                play("ng_walk", true);
+                advanceClip(dt);
+                return;
+            }
+        }
         s_.vel = vec3(0); // the world moves the mounted object; Lara remains braced [I]
         const float dz = s_.grappleAnchor.z - s_.pos.z;
         play(dz > 400 ? "grapple_pull_up_light" : dz < -400 ? "grapple_pull_down_light" : "grapple_pull_mid_light", true);

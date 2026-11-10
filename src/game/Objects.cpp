@@ -1324,7 +1324,13 @@ void World::syncObjects() {
                 const auto& m = p.markers[0];
                 const glm::mat3 r(glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) *
                                   glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1}));
-                hinge = physics_.addHinge(physics_.addBody(mp, intro), m.pos, r * glm::vec3(1, 0, 0), 0, kDoorOpen + 0.02f);
+                // [O] tru.exe 0x6B6440 (marker kind 0 -> 0x4DF5D0) hands the hinge the marker frame's row 2: its Z axis,
+                // as the uber joints. Used for the rope-pulled gate (ms_rb_tomb_gate: marker (46.4, 6.6, 6.7) rot (-90, 0,
+                // -90) degrees: Z = the model's Y, a level axis along the gate's foot, 46 in front of its plane: it tips
+                // over forwards, 0..90). [I] The motor-driven doors and levers keep the X axis they were tuned with
+                // (their markers are not re-checked against this).
+                const glm::vec3 axis = pulledHinge(o) ? r * glm::vec3(0, 0, 1) : r * glm::vec3(1, 0, 0);
+                hinge = physics_.addHinge(physics_.addBody(mp, intro), m.pos, axis, 0, kDoorOpen + 0.02f);
                 if (const auto lo = multibodyLo_.find(o.uid); lo != multibodyLo_.end()) physics_.hinges[hinge].lo = lo->second;
                 if (const auto hi = multibodyHi_.find(o.uid); hi != multibodyHi_.end()) physics_.hinges[hinge].hi = hi->second;
                 if (multibodyLimitOff_.contains(o.uid)) physics_.hinges[hinge].lo = -glm::pi<float>(), physics_.hinges[hinge].hi = glm::pi<float>();
@@ -1929,7 +1935,12 @@ void World::stepPhysics(float dt) {
     }
     plates_ = std::move(plates);
     for (const auto& [uid, meshes] : plateMeshes) plateBodies.push_back({key(uid, -2), meshes});
-    std::vector<physics::Scene::Weight> weights{{player_.state().pos, kLaraMass}};
+    // Lara's weight on a plate: her object's collision primitives' mass (lara: five primitives, 500 kg [O data; I that
+    // her character body bears on plates with it]); without the object data her ragdoll's 55 kg.
+    float laraWeight = kLaraMass;
+    if (const auto* lp = objectPhysics("lara"))
+        if (const float m = physics::massProps(*lp).mass; m > 0) laraWeight = m;
+    std::vector<physics::Scene::Weight> weights{{player_.state().pos, laraWeight}};
     for (const auto& b : script_.objects()) {
         if (b.kind != script::Kind::Block) continue;
         vec3 lo(1e30f), hi(-1e30f);
