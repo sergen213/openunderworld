@@ -1586,12 +1586,41 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(result);
                 return true;
             }
-            if (!std::strcmp(name, "playersensor") && nc.function == 2) return true; // void native sensor interface call
-            if (!std::strcmp(name, "playersensor") && (nc.function == 0 || nc.function == 1)) {
-                // SetEnabled / IsEnabled: byte +0xF of the sensor (thunks 0x7ACE40 / 0x7ACE60); what the sensor senses [U].
-                if (nc.function == 0 && nc.args.size() == 1) { field() = nc.args[0].bits & 0xFF; return true; }
-                if (nc.function == 1 && nc.args.empty()) { nc.result = vm::Value::scalar(field() & 0xFF); return true; }
-                return false;
+            if (!std::strcmp(name, "playersensor") && nc.receiver.kind == vm::Value::Kind::Member) {
+                // bind 0x7ACDD0.. [O]: 0 SetEnabled / 1 IsEnabled (byte +0xF, thunks 0x7ACE40 / 0x7ACE60), 2 attach to an
+                // anchor (0x4A3420 -> sensor +0x18: an instance or a uberobjectbase 2 marker anchor), 3 the same sensor.
+                // The enable byte starts as the member's init (word 1 byte 3); a sensor that was never attached never
+                // fires (0x7799F0 tests +0x18).
+                const Member* m = program->member(self->typeId, off);
+                const uint64_t key = (uint64_t(uint32_t(self->uid)) << 32) | off;
+                const bool initial = !m || !m->init2 || (*m->init2 >> 24 & 0xFF) != 0;
+                const auto it = sensors_.find(key);
+                switch (nc.function) {
+                case 0:
+                    if (nc.args.size() != 1) return false;
+                    field() = nc.args[0].bits & 0xFF;
+                    if (it != sensors_.end()) it->second.enabled = nc.args[0].bits & 0xFF;
+                    else if (bool(nc.args[0].bits & 0xFF) != initial) sensors_[key].enabled = nc.args[0].bits & 0xFF;
+                    return true;
+                case 1:
+                    if (!nc.args.empty()) return false;
+                    nc.result = vm::Value::scalar(it != sensors_.end() ? it->second.enabled : initial);
+                    return true;
+                case 2: {
+                    if (nc.args.size() != 1) return true; // no anchor argument: nothing to attach
+                    Sensor& sn = sensors_.try_emplace(key, Sensor{0, -1, initial, false}).first->second;
+                    const vm::Value& a = nc.args[0];
+                    sn.anchor = a.kind == vm::Value::Kind::Object ? a.uid : uidOf(a);
+                    sn.marker = a.kind == vm::Value::Kind::Object && (a.bits & kAnchorBit) ? int32_t(a.bits & 0xFFFF) : -1;
+                    return true;
+                }
+                case 3:
+                    if (nc.args.size() != 1) return false;
+                    nc.result = vm::Value::scalar(nc.args[0].kind == vm::Value::Kind::Member && nc.args[0].uid == self->uid &&
+                                                  nc.args[0].offset == off);
+                    return true;
+                default: return false;
+                }
             }
             if (!std::strcmp(name, "spline")) {
                 Object* object = findMut(self->uid);
@@ -2332,6 +2361,38 @@ std::string Runtime::helpCondition() const {
     return {};
 }
 
+// NtPlayerSensor update (0x77A020): each enabled sensor tests Lara's root against its anchor (0x7799F0: distance^2 <=
+// radius^2, the radius straight from the member's init, in world units) and calls the owner's vt 14 (0x798430: sensor,
+// inside) on entering when its onEnter byte is set and on leaving when onExit is; a oneShot sensor disables itself as
+// it fires (0x779950). [I] tru.exe tests a sensor every other frame; ours every tick.
+void Runtime::tickSensors(vec3 lara) {
+    if (!anchorAt_ || sensors_.empty()) return;
+    std::vector<std::pair<uint64_t, bool>> fired;
+    for (auto& [key, sn] : sensors_) {
+        const int32_t uid = int32_t(uint32_t(key >> 32));
+        const auto self = instance(uid);
+        if (!self || !self->program || !sn.enabled || !sn.anchor) continue;
+        const Member* m = self->program->member(self->typeId, uint32_t(key));
+        if (!m || m->init.value_or(0) != 0) continue;
+        const auto at = anchorAt_(sn.anchor, sn.marker);
+        if (!at) continue;
+        const float r = std::bit_cast<float>(m->initWords[1]);
+        const vec3 d = lara - *at;
+        const bool now = glm::dot(d, d) <= r * r;
+        const uint32_t flags = m->init2.value_or(0);
+        if (now != sn.inside && (now ? flags & 0xFF : flags >> 8 & 0xFF)) {
+            if (flags >> 16 & 0xFF) sn.enabled = false;
+            fired.emplace_back(key, now);
+        }
+        sn.inside = now;
+    }
+    for (const auto& [key, now] : fired) {
+        vm::Value args[2] = {{}, vm::Value::scalar(now)};
+        args[0].kind = vm::Value::Kind::Member, args[0].uid = int32_t(uint32_t(key >> 32)), args[0].offset = uint32_t(key);
+        run(args[0].uid, 14, args);
+    }
+}
+
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     events_.clear();
     ++tick_;
@@ -2371,6 +2432,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         clock.kind = vm::Value::Kind::Member, clock.uid = int32_t(key >> 32), clock.offset = uint32_t(key);
         callback(clock.uid, "corebase", 25, std::span(&clock, 1));
     }
+    tickSensors(in.pos);
     fade_ = fade_ < fadeTarget_ ? std::min(fadeTarget_, fade_ + fadeStep_) : std::max(fadeTarget_, fade_ - fadeStep_);
     for (size_t i = 0; i < threads_.size(); ++i) { // copy: adopt may add or end threads
         const auto [uid, thread] = threads_[i];
@@ -2671,11 +2733,14 @@ nlohmann::json Runtime::serialize() const {
     for (const auto& [uid, m] : savedThreads_) threads.push_back({uid, m});
     for (const auto& [key, c] : clocks_) clocks.push_back({int32_t(uint32_t(key >> 32)), uint32_t(key), c.state, c.elapsed, c.alarm, c.fired});
     for (const auto& m : messages_) messages.push_back({m.channel, m.id, m.payload, m.sender});
+    nlohmann::json sensors = nlohmann::json::array();
+    for (const auto& [key, sn] : sensors_)
+        sensors.push_back({int32_t(uint32_t(key >> 32)), uint32_t(key), sn.anchor, sn.marker, sn.enabled, sn.inside});
     nlohmann::json playerUnit = nullptr;
     if (playerUnit_) playerUnit = {playerUnit_->first, playerUnit_->second ? nlohmann::json(*playerUnit_->second) : nlohmann::json(nullptr)};
     j["runtime"] = {{"version", 1}, {"aux", std::move(aux)}, {"player", playerScript_ ? playerScript_->uid : 0},
                     {"nextAux", nextAuxiliaryUid_}, {"live", live}, {"machines", std::move(machines)}, {"threads", std::move(threads)},
-                    {"clocks", std::move(clocks)}, {"messages", std::move(messages)}, {"tick", tick_}, {"playerUnit", playerUnit},
+                    {"clocks", std::move(clocks)}, {"sensors", std::move(sensors)}, {"messages", std::move(messages)}, {"tick", tick_}, {"playerUnit", playerUnit},
                     {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
                     {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
                     {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}},
@@ -2743,7 +2808,7 @@ void Runtime::restore(const nlohmann::json& j) {
             restoreRuntime(runtime);
         } catch (const std::exception& e) { // a bad block: threads start afresh, as for older saves
             savedAux_.clear(), savedMachines_.clear(), savedLive_.clear(), savedThreads_.clear();
-            threads_.clear(), clocks_.clear(), messages_.clear();
+            threads_.clear(), clocks_.clear(), sensors_.clear(), messages_.clear();
             for (auto& o : objects_) o.machine.reset(), o.fibers.clear();
             std::fprintf(stderr, "script: saved runtime state not restored: %s\n", e.what());
         }
@@ -2795,6 +2860,11 @@ void Runtime::restoreRuntime(const nlohmann::json& r) {
     for (const auto& c : r.at("clocks"))
         clocks_[uint64_t(uint32_t(c.at(0).get<int32_t>())) << 32 | c.at(1).get<uint32_t>()] =
             Clock{c.at(2).get<int>(), c.at(3).get<float>(), c.at(4).get<float>(), c.at(5).get<bool>()};
+    sensors_.clear();
+    if (const auto sn = r.find("sensors"); sn != r.end())
+        for (const auto& c : *sn)
+            sensors_[uint64_t(uint32_t(c.at(0).get<int32_t>())) << 32 | c.at(1).get<uint32_t>()] =
+                Sensor{c.at(2).get<int32_t>(), c.at(3).get<int32_t>(), c.at(4).get<bool>(), c.at(5).get<bool>()};
     for (const auto& m : r.at("messages"))
         messages_.push_back({m.at(0).get<uint32_t>(), m.at(1).get<uint32_t>(), m.at(2).get<std::string>(), m.at(3).get<int32_t>()});
     tick_ = r.at("tick");

@@ -155,6 +155,20 @@ Handling handling(const AnimLibrary& lib, const PlayerState& s, Weapon w) {
     if (s.water >= 0 && w == Weapon::Speargun)
         return {std::string(in.equipClip) + "_submerged", std::string(in.unequipClip) + "_submerged", "combat_speargun_reload_submerged",
                 kSubEquip, kSubUnequip, in.reload};
+    if (s.water >= 0) {
+        // Every other wp_* DRM has Lara's combat_water_submerged_* and combat_water_surface_* equip / unequip clips
+        // (the pistols and uzi a reload of each too) [O data]; their own lengths. Treading / surface strokes use the
+        // surface set [I: by the names].
+        const bool surface = s.state == State::SwimTread || s.state == State::SwimSurface;
+        const std::string set = surface ? "combat_water_surface_" : "combat_water_submerged_";
+        const auto pick = [&](const char* part, std::string_view fallbackClip, float fallback) -> std::pair<std::string, float> {
+            if (const anim::Clip* k = lib.weaponClip(w, set + part)) return {set + part, float(k->durationSeconds())};
+            return {std::string(fallbackClip), fallback};
+        };
+        const auto e = pick("equip", in.equipClip, in.equip), u = pick("unequip", in.unequipClip, in.unequip),
+                   r = pick("reload", in.reloadClip, in.reload);
+        return {e.first, u.first, r.first, e.second, u.second, r.second};
+    }
     if (s.state == State::Vehicle && bikeWeapon(w)) {
         const auto len = [&](std::string_view n, float fallback) {
             const anim::Clip* k = lib.weaponClip(w, n);
@@ -182,11 +196,19 @@ constexpr float kHealthPackHeal = 640.0f, kHealthPackCooldown = 2.0f;
 constexpr float kSlowWindow = 3.0f;  // real seconds to steer the pip in and fire
 constexpr float kPipStart = 2.5f, kPipSpeed = 2.0f; // pip start distance / stick speed, reticle radii (per second)
 
-bool swimHit(State s) { return s == State::SwimUnder || s == State::Surfacing || s == State::SwimDive || s == State::Hit; }
-// Guns out on the ground (and in a hit reaction); under water only the speargun and Mjolnir (its swim_submerge attack
-// clips) [U whether the exe allows more].
-bool canShoot(const PlayerState& s, Weapon w) {
-    if (s.water >= 0) return (w == Weapon::Speargun || w == Weapon::ThorHammer) && swimHit(s.state);
+bool swimHit(State s) { return s == State::SwimUnder || s == State::Surfacing || s == State::SwimDive || s == State::SwimDodge || s == State::Hit; }
+// Guns out on the ground (and in a hit reaction) and in the water. tru.exe's weapon stats carry no under-water flag
+// (S+0x88: 0x80 infinite, 0x40, 0x20 dual, 0x08 two-handed) and every wp_* DRM has Lara's submerged and surface equip /
+// unequip clips, a `fire_submerged` gun clip and (bullets) an under-water damage record (ammo +0x84) [O data]; the
+// chart has under-water aim sets for one-handed guns, two-handed guns and Mjolnir (requests 924 / 926 / 925). So every
+// weapon can be drawn and fired while swimming [I: no refusal found in the exe; the walkthrough calls the spear gun
+// the best under-water choice, not the only one]. Not during the surface dive, the entry splash or the climb out.
+bool swimArmed(State s) {
+    return s == State::SwimUnder || s == State::Surfacing || s == State::SwimTread || s == State::SwimSurface || s == State::SwimDodge ||
+           s == State::Hit;
+}
+bool canShoot(const PlayerState& s, Weapon) {
+    if (s.water >= 0) return swimArmed(s.state);
     switch (s.state) {
     case State::Idle: case State::Walk: case State::Run: case State::Stop: case State::Turn: case State::Land:
     case State::JumpPrep: case State::Jump: case State::Fall: case State::Hit: return true;
@@ -457,6 +479,11 @@ const std::vector<std::string_view>& weaponClipNames(Weapon w) {
             }
             if (Weapon(i) == Weapon::Speargun)
                 o.insert(o.end(), {"combat_shotgun_equip_submerged", "combat_shotgun_unequip_submerged", "combat_speargun_reload_submerged"});
+            else { // Lara's in-water handling clips (handling())
+                o.insert(o.end(), {"combat_water_submerged_equip", "combat_water_submerged_unequip", "combat_water_surface_equip",
+                                   "combat_water_surface_unequip"});
+                if (!wi.rifle && Weapon(i) != Weapon::ThorHammer) o.insert(o.end(), {"combat_water_submerged_reload", "combat_water_surface_reload"});
+            }
             for (const auto& s : o) out[size_t(i)].push_back(s);
         }
         return out;
@@ -1179,7 +1206,9 @@ void World::tickCombat(const Actions& a, float dt) {
     if (health_.dead() && !airborne(s.state)) { // [I] dies on the ground; fatal falls die on landing
         // out of breath (0x755230: periodic damage, death type 8) under water: death_drown [I: the type-8 clip]
         const bool drowned = health_.lastType() == kDamagePeriodic && s.water >= 0;
-        player_.die(drowned ? "death_drown" : health_.lastType() == kDamageAbsolute ? "death_fall_normal" : "death_toknee");
+        // a fatal landing out of a swan dive: death_fall_swan (lara.drm request 104) [I: by the name]
+        const bool swan = s.clip == "ng_swan_land" && anims_.find("death_fall_swan");
+        player_.die(drowned ? "death_drown" : health_.lastType() == kDamageAbsolute ? (swan ? "death_fall_swan" : "death_fall_normal") : "death_toknee");
         CombatState d; // holstered; the weapons and their rounds are kept [I]
         d.weapon = d.want = c.weapon, d.previous = c.previous, d.secondary = c.secondary;
         std::copy(&c.clip[0][0], &c.clip[0][0] + 2 * kWeaponCount, &d.clip[0][0]);

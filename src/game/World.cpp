@@ -118,6 +118,12 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         // surface stroke (request 881), swim sprint (896, 934) and its exhaustion (880, 921)
         {"swim_surface_fast_forward", 8, 8}, {"swim_surface_sprint_forward", 8, 8}, {"swim_submerged_sprint", 10, 10},
         {"swim_surface_exhausted", 8, 6}, {"swim_submerged_exhausted", 8, 4},
+        // under-water dodges (requests 863 / 864 / 875-878), swan dive (67 / 69 / 68, landings 66 / 897 / 843)
+        {"swim_submerged_dodge_forward", 5, 1}, {"swim_submerged_dodge_backward", 5, 1}, {"swim_submerged_dodge_side", 5, 1},
+        {"swim_submerged_dodge_up", 5, 1}, {"swim_submerged_dodge_down", 5, 1}, {"ng_inair_swan_stage1", 7, 7},
+        {"ng_inair_swan_stage2", 3, 3}, {"ng_inair_swan_stage3", 1, 1}, {"ng_swan_land", 3, 2}, {"swim_swan_land", 4, 4},
+        {"swim_land_swan_wading", 1, 1}, {"death_fall_swan", 1, 1},
+        {"swim_surface_idle_turn_90", 1, 1}, {"swim_surface_idle_turn_180", 1, 1}, // requests 832 / 833
         // traversal (requests most often used for each clip)
         {"bbeam_walk", 5, 5}, {"bbeam_idle", 6, 6}, {"bbeam_walk_attach", 7, 1}, {"bbeam_jumpland", 5, 5}, {"bbeam_ledgeu_climbup", 1, 10}, {"ledgeb_jumpuptocrouch", 3, 3},
         {"bbeam_flip_foward", 5, 5},
@@ -387,6 +393,11 @@ const std::vector<std::string_view> kLaraClipNames = {
     // surface stroke and swim sprint (Player::swim)
     "swim_surface_sprint_forward", "swim_submerged_sprint", "swim_surface_exhausted", "swim_submerged_exhausted",
     "swim_surface_fast_forward",
+    // under-water evasive dodges, swan dive (Player::swim, Player::tick Jump)
+    "swim_submerged_dodge_forward", "swim_submerged_dodge_backward", "swim_submerged_dodge_side", "swim_submerged_dodge_up",
+    "swim_submerged_dodge_down", "ng_inair_swan_stage1", "ng_inair_swan_stage2", "ng_inair_swan_stage3", "ng_swan_land",
+    "swim_swan_land", "swim_land_swan_wading", "death_fall_swan",
+    "swim_surface_idle_turn_90", "swim_surface_idle_turn_180", // turning on the spot at the surface
 };
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
@@ -605,6 +616,7 @@ void World::tick(const Actions& input) {
     }
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
     player_.setWaveSeconds(double(ticks_) * kTickSeconds);
+    player_.setCamera(cam_.yaw, cam_.pitch);
     if (!onBike) player_.tick(move, a, dt);
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
     else if (a.interact)
@@ -758,7 +770,7 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
         mode = {11, {0, 63.21f, 316.06f}, zones, 1896.3f, false, k90, -k55, k55, true}; break; // record 8, distance 1896.3
     case State::SwimSurface: case State::SwimTread: case State::SwimSplash: // command 8 (-40, 30)
         mode = {20, rec1, zones, 1264.22f, false, kFree, glm::radians(-70.0f), glm::radians(-10.0f)}; break;
-    case State::SwimUnder: case State::SwimDive: case State::Surfacing: // record 41 (no dead zones), command 8 (-5, 80)
+    case State::SwimUnder: case State::SwimDive: case State::Surfacing: case State::SwimDodge: // record 41 (no dead zones), command 8 (-5, 80)
         mode = {19, vec3(0), vec3(0), 1264.22f, false, kFree, glm::radians(-85.0f), glm::radians(75.0f)}; break;
     case State::Ladder: mode = {10, rec1, zones, 1896.3f, false, k90, -k55, k55, true}; break; // distance 1896.3
     case State::Perch: mode = {16, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
@@ -1164,6 +1176,9 @@ void Wetness::tick(float t) {
 // Breath (tru.exe 0x755230): while the head is under water (state-chart variable 0x322; ours: the submerged swim states
 // with root + 150 under the surface [I]) it drains a frame per frame from kAirSeconds; kDrownPeriodSeconds after it runs
 // out Lara takes kDrownDamage x max health (type 3) and the period restarts. Out of it, it refills in kAirRefillSeconds.
+// With scuba gear (World::scuba) it never drains. The drain is multiplied by state-chart property 0x392 (914) of the
+// current state (0x6EEED0; the chart root S0 has 1.0): only the under-water sprint state S159 overrides it, with
+// {3, 1.5} [O lara.drm chart], so sprinting under water spends the breath 1.5 times as fast (88.9 s).
 void World::tickAir(float dt) {
     const PlayerState& ps = player_.state();
     submerged_ = false;
@@ -1171,6 +1186,7 @@ void World::tickAir(float dt) {
         const float surf = waterSurface(col_.markup[size_t(ps.water)], vec2(ps.pos), double(ticks_) * kTickSeconds);
         switch (ps.state) {
         case State::SwimUnder:
+        case State::SwimDodge:
         case State::SwimDive:
         case State::Surfacing:
         case State::SwimSplash: submerged_ = ps.pos.z + 150.0f < surf; break;
@@ -1178,8 +1194,8 @@ void World::tickAir(float dt) {
         }
     }
     if (health_.dead()) { air_ = 1.0f; return; }
-    if (submerged_) {
-        air_ -= dt / kAirSeconds;
+    if (submerged_ && !scuba()) { // 0x6EEF50: with the tanks in use she is treated as out of the water
+        air_ -= dt / kAirSeconds * (ps.clip == "swim_submerged_sprint" ? kAirSprintDrain : 1.0f);
         if (constexpr float period = kDrownPeriodSeconds / kAirSeconds; air_ <= -period) {
             air_ += period;
             damageLara(health_.max() * kDrownDamage, ps.pos, kDamagePeriodic);

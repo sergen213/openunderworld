@@ -780,7 +780,7 @@ struct CombatView {
         const auto& wd = w.anims().weapons[size_t(c.weapon)];
         ou::ui::HudState h;
         h.health = w.health().value(), h.healthMax = w.health().max();
-        h.adrenaline = c.adrenaline, h.breath = w.air();
+        h.adrenaline = c.adrenaline, h.breath = w.air(), h.breathBar = w.breathShown();
         h.weapon = int(c.weapon), h.drawn = c.drawn, h.dual = wd.dual, h.dead = w.player().state().state == ou::game::State::Dead;
         h.clip[0] = c.clip[size_t(c.weapon)][0], h.clip[1] = c.clip[size_t(c.weapon)][1], h.clipSize = wd.clip, h.nextHand = c.hand;
         h.healthPacks = w.found[2];

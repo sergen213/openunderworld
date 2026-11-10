@@ -81,7 +81,7 @@ void Hud::update(const HudState& s, double dt) {
     constexpr float kHold = 3.0f, kIn = 4.0f, kOut = 2.0f; // seconds held after the trigger; fade rates per second
     const int item = s.healthPacks != prev_.healthPacks ? 0 : s.flashlight != prev_.flashlight ? 1 : s.grenades < prev_.grenades ? 3 : s.gearItem;
     const bool trig[kGroups] = {
-        s.drawn || s.health != prev_.health || s.breath < 1 || std::abs(s.adrenaline - prev_.adrenaline) > 1e-4f,
+        s.drawn || s.health != prev_.health || s.breath < 1 || s.breathBar || std::abs(s.adrenaline - prev_.adrenaline) > 1e-4f,
         s.drawn || s.weapon != prev_.weapon || s.clip[0] != prev_.clip[0] || s.clip[1] != prev_.clip[1] || s.grenades != prev_.grenades,
         item >= 0};
     if (item >= 0) lit_ = item;
@@ -110,7 +110,7 @@ void Hud::draw(Canvas& c) const {
 
     if (const float a = alpha_[Health]; a > 0) { // HEALTH: panel, adrenaline/breath bar, health meter, silhouette
         put(c, ox, oy, 78, -5.3f, -3.1f, fade(kWhite, a));
-        const float bar = std::clamp(s_.breath < 1 ? s_.breath : s_.adrenaline, 0.0f, 1.0f); // "adrenaline bar as breathbar"
+        const float bar = std::clamp(s_.breath < 1 || s_.breathBar ? s_.breath : s_.adrenaline, 0.0f, 1.0f); // "adrenaline bar as breathbar"
         const float b0 = 16.0f, b1 = 60.0f; // [V] green fill rows, under bar 77's cap
         c.rect(ox + 14.9f * u, oy + (b1 - (b1 - b0) * bar) * u, 7.4f * u, (b1 - b0) * bar * u, fade(0xFF00FF00u, a));
         put(c, ox, oy, 77, 9.3f, 16.4f, fade(kWhite, a));

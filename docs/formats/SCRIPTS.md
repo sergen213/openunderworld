@@ -345,7 +345,11 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
   11/12 loop count, 13 loop / 14 loop-count / 16 ping-pong over a clip, 15 once, 17/18 clip flag, 19-21 key ranges
   whose enter/leave calls vt 40 / 41 (type 3 functions 53/54, 0x7120B0) with (spline, id, direction). Path decode
   and per-frame update: LEVELS.md "Spline movers".
-- [O] `playersensor` 0/1 Set/Get its enable byte (+0xF); `instance` 18/21/23, `modifiable` 1, `unitref` 2,
+- [O] `playersensor` (NtPlayerSensorInst; bind 0x7ACDD0..): 0 / 1 Set / Get its enable byte (+0xF), 2 attach to an
+  anchor (0x4A3420 -> +0x18: an instance or a `uberobjectbase` 2 marker anchor), 3 same sensor. Member init {u32 0, u8
+  onEnter, u8 onExit, u8 oneShot, u8 enabled, float radius}; the update 0x77A020 tests Lara's root against the anchor
+  (0x7799F0) and calls the owner's vt 14 (sensor, inside) through 0x779950 / 0x798430. Ours: `Runtime::tickSensors`
+  (GAMEPLAY.md "Water moves": the jellyfish). `instance` 18/21/23, `modifiable` 1, `unitref` 2,
   `larabase` 25/27/29/55 are accepted (effects [U]); 56 disables Lara's stick while a reveal camera plays
   (GAMEPLAY.md "Cameras").
 
