@@ -1577,8 +1577,15 @@ as a wall).
 `GameReal.ValaskjalfChimneyJumpTakesAllFive` (and l2_towerroom's kick), `StreamReal.SaveContinuesBitIdentically`
 (its l2_junglehub case: saved on column B mid-climb, bit for bit).
 
-Open [U]: not measured in tru.exe under Wine (attach heights, the hold time in seconds, whether the count really ends
-a climb at five); the camera on the wall (the jump camera is kept).
+Open [U]: not measured in tru.exe under Wine: whether a standing jump beside an unflagged wall really plants her on it
+45 over the floor (ours does, by the chart), the hold time in seconds, the attach heights, whether the count ends a climb
+at five; the camera on the wall (the jump camera is kept). Three Wine sessions (2026-11-10,
+openunderworld-work/gameplaygoal/chimney/session.sh, wine1-*.txt) teleported her to our unit-frame coordinates and
+fell through: after `wmem goto <unit>` tru.exe's world is our unit frame + (its start - our spawn): l4_ballcourt
++ (5881.23, -10787.23, -15435.90), l2_junglehub + (8558.23, -19414.44, -18073.17). session2.sh there has the corrected
+coordinates (the l4_ballcourt corridor at ours -17544, 6342, 2841.5 for the count; l2_junglehub's streambed between
+the columns, where column B's base carries flag 0x80 up to 800 over the floor and its upper part does not) and
+ours1..3.txt our controller's traces of the same inputs to compare with; it was not run.
 
 ## Rail slides (src/game/Traverse.cpp)
 
