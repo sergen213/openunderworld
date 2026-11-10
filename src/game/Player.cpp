@@ -393,6 +393,7 @@ void Player::groundMove(vec3 delta, float dt) {
     }
     s_.pos = p; // walked off an edge, or onto a slope too steep to stand on
     const vec3 vel(xy(delta) / dt, 0);
+    if (!g && trySafetyDrop(vel)) return;
     if (g && g->normal.z >= t_.slideMinNormalZ) {
         s_.pos.z = g->point.z;
         startSlide(vel);
@@ -450,6 +451,7 @@ bool Player::wading() const {
     return d >= t_.wadeDepth && d < t_.swimDepth;
 }
 
+constexpr float kWedgeStep = 2.0f, kWedgeTime = 0.25f; // units a tick, seconds
 void Player::airMove(float dt, vec2 move) {
     const vec3 prevPos = s_.pos;
     // tru.exe integrator 0x5DB370: pos += v t + a t^2 / 2; v += a t (constant acceleration, exact for any t).
@@ -457,12 +459,14 @@ void Player::airMove(float dt, vec2 move) {
     vec3 d = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt);
     s_.vel.z -= t_.gravity * dt;
     vec3 p = s_.pos;
+    bool propped = false; // something under the capsule this tick
     // Same sweep loop as slide(), but contacts also clip the velocity (ceilings stop the rise, walls the run-up).
     for (int iter = 0; iter < 4 && glm::dot(d, d) > 1e-8f; ++iter) {
         const auto hit = col_.sweepCapsule(p + vec3(0, 0, t_.radius), p + vec3(0, 0, capHeight() - t_.radius), t_.radius, d);
         if (!hit || (hit->t == 0 && glm::dot(d, hit->normal) >= 0)) { p += d; break; }
         const vec3 n = hit->normal;
         p += d * hit->t + n * kSkin;
+        propped |= n.z > 0.2f;
         if (n.z >= t_.slideMinNormalZ && s_.vel.z <= 0) {
             // Floor-like contact: land only with a floor under the root. A capsule resting on an edge's corner
             // has none (walking slowly off a ledge used to alternate Fall/Land there): it slides off instead.
@@ -482,6 +486,10 @@ void Player::airMove(float dt, vec2 move) {
         s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
     }
     s_.pos = p;
+    // Wedged: held up without a floor under her root (a notch between a prop and a slope, l4_traprooms under pole 1337)
+    // and going nowhere for kWedgeTime: she stands where she is [I: tru.exe's own collision response is not ported].
+    s_.fallStall = propped && s_.state == State::Fall && glm::length(p - prevPos) < kWedgeStep ? s_.fallStall + dt : 0.0f;
+    if (s_.fallStall >= kWedgeTime) { s_.fallStall = 0; land(move); return; }
     if (s_.vel.z > 0) return;
     // Falling through a balance beam's line (beams can be thinner than the capsule): stand on it.
     for (const auto& m : col_.markup) {
@@ -526,10 +534,24 @@ void Player::airMove(float dt, vec2 move) {
 // with Lara facing the ledge, from grabReach in front of its line to anywhere over it while her root is still on her
 // side: pressed square against the wall under a ledge at its face, the capsule (radius 79) holds the root 79 short of
 // the line and the hands, 141.7 ahead, reach 63 over it (a running jump into l2_cliffclimb's ledge 911 missed it).
+// A catch is a bad attach - the saving grab - when her root comes to rest more than a limit under where the fall or
+// jump began (tru.exe 0x74FDF0, run on every markup attach: player +0x6DC fall start z + 0x6E0 - attach point +0x9F8 +
+// the markup's +0x68 > limit -> player +0xEE8 = 1 [O]; +0x68 read as the root's offset under the attach point [I],
+// which makes it root to root: the game's stacked drop-down ledges are 1304 (l1_ship_sinking_hall 242 -> 241) to 1427
+// (l5_valaskjalf 1488 -> 1485 -> 1484 -> 1483) apart, just over the fall limit). The limit is the +0xC of the fall record (+0xC4) of the jump query in effect (player +0xA84,
+// lara.drm): 711.13 for the ground, hang, pole and ladder jump queries, 1280.03 for the fall states' air grab q44 (and
+// q35 / q46 / q47 / q51 / q64 / q71 / q98 / q106); with no query Lara data +0xC14 = 951.33 [O-data]. A markup whose
+// record has bit 0 of +0x50 set is always a bad attach, and state property 0x1A7 forces either [O; neither is in our
+// markup data: U]. Which query each of our states stands for: State::Jump / HangJump = a jump query, else q44 [I].
+bool Player::badAttach(float attachZ) const { // attachZ: her root at the catch
+    const bool jump = s_.state == State::Jump || s_.state == State::HangJump || s_.state == State::WallJump;
+    return s_.fallStartZ - attachZ > (jump ? t_.badAttachJump : t_.badAttachFall);
+}
+
 bool Player::tryGrab(vec3 prevPos) {
-    // Faster than grabMinVz (up to twice) only a saving grab holds [I]; the vertical window grows to one tick's fall.
+    // Up to twice grabMinVz she still catches [I: tru.exe's limit on a falling catch is not decoded]; the vertical
+    // window grows to one tick's fall.
     if (s_.regrabCooldown > 0 || s_.vel.z < 2 * t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
-    const bool saving = s_.vel.z < t_.grabMinVz;
     const vec3 hand = s_.pos + toWorld(anims_.hangHandOffset), prevHand = prevPos + toWorld(anims_.hangHandOffset);
     const float window = std::max(t_.grabWindow, prevHand.z - hand.z);
     for (size_t li = 0; li < col_.markup.size(); ++li) {
@@ -555,6 +577,7 @@ bool Player::tryGrab(vec3 prevPos) {
             s_.ledgeSeg = int(si);
             s_.ledgeT = u * std::sqrt(len2);
             s_.ledgeSide = side;
+            const bool saving = badAttach(q.z - anims_.hangHandOffset.z);
             s_.vel = vec3(0);
             s_.state = State::Hang;
             s_.savingGrab = saving ? t_.savingGrabSeconds : 0.0f;
@@ -573,7 +596,10 @@ bool Player::tryGrabPole(vec3 prevPos) {
     if (s_.regrabCooldown > 0 || s_.vel.z < t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
-        if (!isPole(m)) continue;
+        // Not the pole she just let go of (Drop): l4_traprooms' pole 1337 hangs her feet 9..25 over a rubble mound, where
+        // she would slide in reach of it until the re-grab pause ran out [I: tru.exe's let-go state S522 looks for
+        // what is below her (q44), not for what she left].
+        if (!isPole(m) || int(li) == s_.droppedPole) continue;
         for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
             const vec2 dir = segDir(m, si), n(-dir.y, dir.x);
             const float c = glm::dot(xy(forward()), n);
@@ -779,7 +805,43 @@ bool Player::tryDropToHang() {
         best = int(li), bestOn = o, bestSide = side;
     }
     if (best < 0) return false;
-    s_.ledge = best, s_.ledgeSeg = bestOn.seg, s_.ledgeT = bestOn.t, s_.ledgeSide = bestSide;
+    dropToHang(best, bestOn.seg, bestOn.t, bestSide);
+    return true;
+}
+
+// The safety drop: stepping, running or rolling off an edge that carries a ledge she turns and hangs from it, no key
+// (lara.drm chart T114 out of the ground states S7 / S8 / S59 / S75 ...: PSCCF_IsFalling, the state's jump target a
+// ledgegrab (cond 0x262 type 610) with result flag 6 and not 7 (0x76F760), its entry not 5 / 7..10 -> S534 -> the
+// attach states S542..S544 of the hang group [O-chart]). tru.exe under Wine, l4_temple ledge 1155: walking and
+// running off the block's edge both end hanging from it ~1.0 s later, no key [O]. [I]: the result flags' geometry is
+// not decoded; ours takes
+// the ledge of tryDropToHang (level with her feet, open below) within kSafetyReach of where she left the ground,
+// on the side she is heading to, and plays the Crouch drop's drop_to_ledgeb.
+constexpr float kSafetyReach = 150.0f;
+bool Player::trySafetyDrop(vec3 vel) {
+    if (s_.regrabCooldown > 0 || glm::length(xy(vel)) < 1.0f) return false;
+    const vec2 heading = glm::normalize(xy(vel));
+    int best = -1;
+    OnLine bestOn;
+    float bestSide = 1;
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 1) continue;
+        const OnLine o = closestOn(m, s_.pos);
+        if (o.seg < 0 || o.dist > kSafetyReach || o.dist >= bestOn.dist || std::abs(o.q.z - s_.pos.z) > 40.0f) continue;
+        const vec2 dir = segDir(m, o.seg), n(-dir.y, dir.x);
+        const float side = glm::dot(heading, n) > 0 ? 1.0f : -1.0f; // hang on the side she is going off
+        if (std::abs(glm::dot(heading, n)) < 0.5f || !openBelow(col_, m, o.seg, o.t, side)) continue;
+        best = int(li), bestOn = o, bestSide = side;
+    }
+    if (best < 0) return false;
+    dropToHang(best, bestOn.seg, bestOn.t, bestSide);
+    return true;
+}
+
+void Player::dropToHang(int ledge, int seg, float t, float side) {
+    const float bestSide = side;
+    s_.ledge = ledge, s_.ledgeSeg = seg, s_.ledgeT = t, s_.ledgeSide = side;
     const auto [hang, hangYaw] = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, bestSide);
     s_.state = State::DropToHang;
     s_.vel = vec3(0);
@@ -791,7 +853,6 @@ bool Player::tryDropToHang() {
         s_.yaw = wrapAngle(base + rootYaw(*c, s_.clipTime, false));
         s_.pos = hang - rotYaw(base, rootTranslation(*c, end, false) - rootTranslation(*c, s_.clipTime, false));
     }
-    return true;
 }
 
 // The hang's clearance class, tru.exe 0x74E290 (run on the attached ledgegrab by 0x76D010 in the segment frame of
@@ -1589,7 +1650,9 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (dropPressed && !turning) {
         const bool para = s_.polePara;
         s_.regrabCooldown = 0.4f;
+        const int from = s_.ledge;
         startFall(vec3(0));
+        s_.droppedPole = from;
         play(para ? "Hpole_detach_dropPara" : "Hpole_detach_dropPerp", false);
         return;
     }
@@ -1910,9 +1973,11 @@ void Player::assistJump() {
 }
 
 void Player::tick(vec2 move, const Actions& a, float dt) {
-    const bool jumpPressed = a.jump && !jumpHeld_, dropPressed = a.drop && !dropHeld_;
-    jumpHeld_ = a.jump;
-    dropHeld_ = a.drop;
+    Buttons& b = s_.buttons;
+    b.jump.update(a.jump, dt, t_.pressBuffer), b.interact.update(a.interact, dt, t_.pressBuffer);
+    b.drop.update(a.drop, dt, t_.pressBuffer), b.grapple.update(a.grapple, dt, t_.pressBuffer);
+    const bool jumpPressed = b.jump.pressed(), dropPressed = b.drop.pressed();
+    if (s_.state != State::Fall) s_.droppedPole = -1;
     s_.fallHeight = 0;
     // Sprint stamina (tru.exe under Wine, l4_trailstart; swimming the same, l2_cliffclimb sea): sprinting spends it
     // second for second, anything else but the exhaustion clips refills it as fast.
@@ -2216,9 +2281,12 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                                         : s_.clip.ends_with("jump_up") || s_.clip == "Wall_hug_Jump_Up_Twist" ? "ledgeb_attach_U" // also DICE_<s>_jump_up (Climb.cpp)
                                         : s_.clip == "ledgeb_jump_back" || s_.clip == "ladder_jump_back" ? "ledgeb_attach_F"
                                                                          : "ledgeb_attach_S";
+        // a ledge far under where the leap began: the saving grab (Player::badAttach)
+        const bool saving = !pole && badAttach(pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT).z - anims_.hangHandOffset.z);
         s_.vel = vec3(0);
         s_.state = pole ? State::PoleHang : State::Hang;
-        play(attach, false);
+        s_.savingGrab = saving ? t_.savingGrabSeconds : 0.0f;
+        play(saving ? "ledgeb_bad_attach_M" : attach, false);
         placeOnLedge();
         break;
     }
@@ -2226,10 +2294,16 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Shimmy: {
         const vec2 right(std::sin(s_.yaw), -std::cos(s_.yaw));
         const float lateral = glm::dot(move, right);
-        if (s_.savingGrab > 0) { // one hand on the ledge: jump pulls up, else she slips off when the time runs out
+        // The saving grab (chart S528 with action 2101: enter 0x75E5C0, exit 0x75E6E0; S565 -> S566 / S567
+        // ledgeb_bad_attach_*): the Interact press pulls her up (input action 75 = virtual button 0, message 0x200004B
+        // -> 0x768C90: result 2 -> T734 / T736, ledgeb_bad_attach_recover); when player timer 2 (the difficulty's frames,
+        // 0x75E5EC; counted down at 0x6EE24E) runs out, message 0x9E -> 0x768CC0: result 3 -> T735, she falls; Crouch
+        // lets go (T553); Jump does nothing [O]. The press may come one chart frame early (ButtonTime::buffer [I]).
+        if (s_.savingGrab > 0) {
             s_.savingGrab = std::max(0.0f, s_.savingGrab - dt);
-            if (jumpPressed) s_.savingGrab = 0, play("ledgeb_bad_attach_recover", false);
-            else if (s_.savingGrab <= 0) {
+            if (b.interact.buffered()) b.interact.take(), s_.savingGrab = 0, play("ledgeb_bad_attach_recover", false);
+            else if (s_.savingGrab <= 0 || dropPressed) {
+                s_.savingGrab = 0;
                 s_.pos -= forward() * 20.0f;
                 s_.regrabCooldown = 0.4f;
                 startFall(vec3(0));

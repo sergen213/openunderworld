@@ -1518,3 +1518,48 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
 }
 
 
+
+// The controller's button timing (game::Buttons: down / edge / time since the change / buffered press) is part of the
+// save: a game saved with Interact held and Jump just pressed continues with the same timing, and a save without the
+// block loads with every button marked held (no press edge on the first tick).
+TEST(Save, ButtonTimingRoundTrip) {
+    game::World w(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    game::Actions a;
+    a.interact = true;
+    for (int i = 0; i < 40; ++i) w.tick(a);
+    a.drop = true;
+    w.tick(a);
+    const game::Buttons b = w.player().state().buttons;
+    EXPECT_TRUE(b.interact.down);
+    EXPECT_FALSE(b.interact.edge);
+    EXPECT_NEAR(b.interact.time, 40 / 60.0f, 1e-4f);
+    EXPECT_TRUE(b.drop.pressed());
+    EXPECT_GT(b.drop.buffer, 0);
+    EXPECT_FALSE(b.jump.down);
+    const auto bytes = save::serialize(save::capture(w));
+    const uint64_t hash = w.stateHash();
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_NE(w.stateHash(), hash);
+    save::apply(save::parse(bytes), w);
+    const game::Buttons r = w.player().state().buttons;
+    for (const auto& [x, y] : {std::pair{&r.jump, &b.jump}, {&r.interact, &b.interact}, {&r.drop, &b.drop}, {&r.grapple, &b.grapple}}) {
+        EXPECT_EQ(x->down, y->down);
+        EXPECT_EQ(x->edge, y->edge);
+        EXPECT_EQ(x->time, y->time);
+        EXPECT_EQ(x->buffer, y->buffer);
+    }
+    EXPECT_EQ(w.stateHash(), hash);
+    const std::string text(bytes.begin(), bytes.end());
+    auto doc = nlohmann::json::parse(text.substr(text.find('\n') + 1));
+    ASSERT_TRUE(doc.at("player").at("controller").contains("buttons"));
+    doc["player"]["controller"].erase("buttons"); // an older save
+    doc["player"]["controller"].erase("droppedPole");
+    doc["player"]["controller"].erase("fallStall");
+    save::apply(save::parse(withHeader(save::kVersion, doc.dump())), w);
+    const game::Buttons& o = w.player().state().buttons;
+    EXPECT_TRUE(o.jump.down && o.interact.down && o.drop.down && o.grapple.down);
+    game::Actions jump;
+    jump.jump = true;
+    w.tick(jump);
+    EXPECT_FALSE(w.player().state().buttons.jump.pressed()) << "held through the load: no press edge";
+}

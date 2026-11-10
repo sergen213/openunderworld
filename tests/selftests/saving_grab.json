@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "name": "saving_grab",
+  "chapter": "Jan Mayen: the drop-down ledges of Valaskjalf",
+  "note": "l5_valaskjalf, the wall y -68172: ledges 1488 -> 1485 -> 1484 -> 1483, each 1387..1427 under the last. A Drop from a hang is caught one handed on the next (her root comes to rest more than 1280.03 under where the fall began: tru.exe 0x74FDF0 with the air grab's fall record); Interact pulls her up (chart S528, message 0x200004B); Jump does nothing; left alone she falls after the 50 frames of the TOMB RAIDER level (GameReal.ValaskjalfDropDownSavingGrabs, Game.SavingGrabByFallHeightAndInteract).",
+  "level": "l5_valaskjalf",
+  "spawn": [
+    5000,
+    -68322,
+    -8660,
+    90
+  ],
+  "steps": [
+    {
+      "step": "catch_the_top_ledge",
+      "duration": 2,
+      "until": [
+        {
+          "probe": "player.state",
+          "eq": "hang"
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 1488
+        }
+      ],
+      "expect": [
+        {
+          "probe": "player.ledge",
+          "eq": 1488
+        },
+        {
+          "probe": "player.saving_grab",
+          "eq": 0,
+          "note": "a short fall: a firm hang"
+        }
+      ]
+    },
+    {
+      "step": "drop_to_the_next",
+      "input": [
+        "0.8 drop 1",
+        "0.9 drop 0"
+      ],
+      "duration": 4,
+      "until": [
+        {
+          "probe": "player.state",
+          "eq": "hang"
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 1485
+        }
+      ],
+      "expect": [
+        {
+          "visits": [
+            "hang",
+            "fall",
+            "hang"
+          ]
+        },
+        {
+          "probe": "player.clip",
+          "eq": "ledgeb_bad_attach_M"
+        },
+        {
+          "probe": "player.saving_grab",
+          "near": 1.667,
+          "tol": 0.02,
+          "note": "50 frames"
+        },
+        {
+          "probe": "step.drop",
+          "near": 1422,
+          "tol": 5
+        }
+      ]
+    },
+    {
+      "step": "interact_pulls_her_up",
+      "input": [
+        "0.5 interact 1",
+        "0.6 interact 0"
+      ],
+      "duration": 3,
+      "expect": [
+        {
+          "clips": [
+            "ledgeb_bad_attach_M",
+            "ledgeb_bad_attach_recover",
+            "ledgeb_idle"
+          ]
+        },
+        {
+          "probe": "player.state",
+          "eq": "hang"
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 1485
+        },
+        {
+          "probe": "player.saving_grab",
+          "eq": 0
+        },
+        {
+          "probe": "step.moved",
+          "max": 40,
+          "note": "she stays on the ledge"
+        }
+      ]
+    },
+    {
+      "step": "drop_again",
+      "input": [
+        "0.2 drop 1",
+        "0.3 drop 0"
+      ],
+      "duration": 4,
+      "until": [
+        {
+          "probe": "player.state",
+          "eq": "hang"
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 1484
+        }
+      ],
+      "expect": [
+        {
+          "probe": "player.clip",
+          "eq": "ledgeb_bad_attach_M"
+        },
+        {
+          "probe": "player.saving_grab",
+          "near": 1.667,
+          "tol": 0.02
+        },
+        {
+          "probe": "step.drop",
+          "near": 1387,
+          "tol": 25
+        }
+      ]
+    },
+    {
+      "step": "jump_does_not_save_her",
+      "input": [
+        "0.4 jump 1",
+        "0.5 jump 0"
+      ],
+      "duration": 3,
+      "until": {
+        "probe": "player.state",
+        "eq": "fall"
+      },
+      "expect": [
+        {
+          "visits": [
+            "hang",
+            "fall"
+          ]
+        },
+        {
+          "probe": "step.seconds",
+          "near": 1.667,
+          "tol": 0.06,
+          "note": "the saving-grab time, then she falls"
+        },
+        {
+          "probe": "player.saving_grab",
+          "eq": 0
+        }
+      ]
+    }
+  ]
+}

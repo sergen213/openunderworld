@@ -3048,9 +3048,11 @@ TEST(GameReal, CliffclimbIndependentOfRenderRate) {
     }
 }
 
-// Caught falling too fast for a firm catch (faster than grabMinVz, up to twice: as a ledge's saving grab [I]) the
-// stance's bad attach holds: DICE_B_air_attach_bad_start onto the hold, its loop for the saving-grab time; jump pulls
-// her back up (DICE_B_air_attach_bad_end, then DICE_B_Idle), else she lets go. A slow fall catches firmly.
+// Caught after coming down more than Tuning::badAttachFall (1280.03: the fall states' air grab q44, tru.exe 0x74FDF0)
+// from where the fall began, the stance's bad attach holds: DICE_B_air_attach_bad_start onto the hold, its loop for the
+// saving-grab time; the Interact press pulls her back up (DICE_B_air_attach_bad_end, then DICE_B_Idle), Jump does not;
+// else she lets go. A shorter fall catches firmly, also one faster than a ledge's firm grab used to allow (1208 down:
+// ours' old rule made that a bad attach, and Jump the recover key).
 TEST(GameReal, ClimbBadAttach) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const auto mesh = [](float z) {
@@ -3062,12 +3064,11 @@ TEST(GameReal, ClimbBadAttach) {
     };
     const vec3 anchor(380, 0, 350 - 158.025f);
     for (const bool pull : {true, false}) {
-        auto w = climbWorld(mesh(350), {300, 0, 1400});
+        auto w = climbWorld(mesh(350), {300, 0, 1700});
         const auto& s = w->player().state();
-        float vz = 0;
-        for (int i = 0; i < 120 && s.state != State::Climb; ++i) vz = s.vel.z, w->tick(forward());
+        for (int i = 0; i < 120 && s.state != State::Climb; ++i) w->tick(forward());
         ASSERT_EQ(s.state, State::Climb);
-        EXPECT_LT(vz, w->player().tuning().grabMinVz);
+        EXPECT_GT(1700 - anchor.z, w->player().tuning().badAttachFall);
         EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_start");
         EXPECT_GT(s.savingGrab, 0);
         for (int i = 0; i < 45; ++i) w->tick({}); // the start clip (0.57 s) carries her onto the hold
@@ -3077,6 +3078,12 @@ TEST(GameReal, ClimbBadAttach) {
             Actions jump;
             jump.jump = true;
             w->tick(jump);
+            w->tick({});
+            EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_loop") << "Jump does not pull her up";
+            EXPECT_GT(s.savingGrab, 0);
+            Actions use;
+            use.interact = true;
+            w->tick(use);
             EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_end");
             for (int i = 0; i < 60; ++i) w->tick({});
             EXPECT_EQ(s.state, State::Climb);
@@ -3084,15 +3091,20 @@ TEST(GameReal, ClimbBadAttach) {
             EXPECT_EQ(s.savingGrab, 0);
             EXPECT_NEAR(glm::distance(s.pos, anchor), 0, 1e-2f);
         } else {
-            for (int i = 0; i < 150 && s.state == State::Climb; ++i) w->tick({});
+            int held = 0;
+            for (; held < 150 && s.state == State::Climb; ++held) w->tick({});
             EXPECT_NE(s.state, State::Climb) << "let go when the saving-grab time ran out";
+            EXPECT_NEAR((45 + held) / 60.0, 50 / 30.0, 0.05) << "50 frames (TOMB RAIDER level) after the catch";
         }
     }
-    auto w = climbWorld(mesh(1350), {300, 0, 1450}); // a short fall onto a high hold
-    for (int i = 0; i < 120 && w->player().state().state != State::Climb; ++i) w->tick(forward());
-    ASSERT_EQ(w->player().state().state, State::Climb);
-    EXPECT_EQ(w->player().state().clip, "DICE_B_air_attach_M");
-    EXPECT_EQ(w->player().state().savingGrab, 0);
+    for (const float from : {1400.0f, 1450.0f}) { // 1208 down (firm now), and a short fall onto a high hold
+        const bool high = from != 1400.0f;
+        auto w = climbWorld(mesh(high ? 1350 : 350), {300, 0, from});
+        for (int i = 0; i < 120 && w->player().state().state != State::Climb; ++i) w->tick(forward());
+        ASSERT_EQ(w->player().state().state, State::Climb) << from;
+        EXPECT_EQ(w->player().state().clip, "DICE_B_air_attach_M") << from;
+        EXPECT_EQ(w->player().state().savingGrab, 0) << from;
+    }
 }
 
 // l2_cliffclimb's hold wall carries a level camera record (type 3, 2 Hermite points, 11 holds, 300 deg/s, force 5 x
@@ -7081,4 +7093,436 @@ TEST(GameReal, JellyfishStingOnTouch) {
     for (const int t : hurtAt)
         if (t > 30) expect.push_back(t);
     EXPECT_EQ(again, expect);
+}
+
+// Input timing (game::ButtonTime, tru.exe 0x7607C0): pressed / released for one tick, the time since the change, a
+// hold counted as long past Lara data +0x6E2 = 15 frames (0.5 s), and the press kept for Tuning::pressBuffer.
+TEST(Game, ButtonTimingLayer) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    const auto& b = w->player().state().buttons;
+    const auto& t = w->player().tuning();
+    EXPECT_FALSE(b.interact.down);
+    Actions a;
+    a.interact = a.grapple = true;
+    w->tick(a);
+    EXPECT_TRUE(b.interact.pressed());
+    EXPECT_TRUE(b.grapple.pressed());
+    EXPECT_FALSE(b.jump.pressed());
+    EXPECT_FLOAT_EQ(b.interact.buffer, t.pressBuffer);
+    w->tick(a);
+    EXPECT_TRUE(b.interact.down);
+    EXPECT_FALSE(b.interact.pressed()) << "one tick only";
+    EXPECT_TRUE(b.interact.buffered()) << "one 30 Hz frame = two ticks";
+    w->tick(a);
+    EXPECT_FALSE(b.interact.buffered());
+    for (int i = 0; i < 27; ++i) w->tick(a);
+    EXPECT_NEAR(b.interact.heldFrames(), 14.5, 1e-3);
+    EXPECT_FALSE(b.interact.heldLong(t.holdLongFrames));
+    w->tick(a), w->tick(a);
+    EXPECT_TRUE(b.interact.heldLong(t.holdLongFrames)) << "longer than 15 frames";
+    a.interact = false;
+    w->tick(a);
+    EXPECT_TRUE(b.interact.released());
+    EXPECT_FLOAT_EQ(b.interact.heldFrames(), 0);
+    EXPECT_TRUE(b.grapple.down);
+    w->tick(a);
+    EXPECT_FALSE(b.interact.released());
+    EXPECT_NEAR(b.interact.time, 1 / 60.0f, 1e-6);
+    // the jump and drop edges of the controller come from the layer: one take-off per press
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::JumpPrep);
+    for (int i = 0; i < 240 && w->player().state().state != State::Idle; ++i) w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Idle) << "held: no second jump";
+    for (int i = 0; i < 30; ++i) w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Idle);
+}
+
+// Letting go of a pole with her feet just over a slope too steep to stand on: she is not caught again by the pole she
+// dropped from when the re-grab pause ends (she used to hang on it again ~25 ticks later, l4_traprooms pole 1337), and
+// a fall held up in a notch with no floor under her root ends standing there.
+TEST(Game, PoleDropOverSteepGroundIsNotCaughtAgain) {
+    const auto onGround = [](State st) { return st == State::Idle || st == State::Land || st == State::Walk || st == State::Run; };
+    game::PlayerState h;
+    { // where she hangs on the pole
+        auto w = makeWorld(poleMesh(), {17, 0, 0});
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 120 && w->player().state().state != State::PoleHang; ++i) w->tick(i < 2 ? jump : Actions{});
+        for (int i = 0; i < 60; ++i) w->tick({});
+        h = w->player().state();
+        ASSERT_EQ(h.state, State::PoleHang);
+    }
+    CollisionMesh m = poleMesh();
+    // a ridge along the pole: two faces at 68 degrees meeting 30 under her hanging feet
+    const float top = h.pos.z - 30, x = h.pos.x;
+    addQuad(m, {x - 60, -1500, top - 150}, {x, -1500, top}, {x, 1500, top}, {x - 60, 1500, top - 150});
+    addQuad(m, {x, -1500, top}, {x + 60, -1500, top - 150}, {x + 60, 1500, top - 150}, {x, 1500, top});
+    auto w = makeWorld(std::move(m), {-700, 0, 0});
+    const auto& s = w->player().state();
+    w->restore(h, 0, 0);
+    w->tick({});
+    ASSERT_EQ(s.state, State::PoleHang);
+    const float hangZ = s.pos.z;
+    Actions drop;
+    drop.drop = true;
+    w->tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    EXPECT_EQ(s.droppedPole, 0);
+    bool again = false;
+    for (int i = 0; i < 240 && !onGround(s.state); ++i) w->tick({}), again |= s.state == State::PoleHang;
+    EXPECT_FALSE(again) << "caught again by the pole she let go of";
+    EXPECT_TRUE(onGround(s.state)) << game::stateName(s.state) << " at " << s.pos.x << " z " << s.pos.z;
+    EXPECT_LT(s.pos.z, hangZ - 20);
+    w->tick({});
+    EXPECT_EQ(s.droppedPole, -1);
+}
+
+// l4_traprooms: after the fling 1336 -> 1337 (GameReal.TrapRoomsPoleFling) Drop lets her down: the ground under pole
+// 1337 is a rubble mound 9..25 under her hanging feet, too steep to stand on where she comes down.
+TEST(GameReal, TrapRoomsPoleDropAfterFling) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)});
+    const auto& s = w.player().state();
+    Actions go = forward();
+    go.jump = true;
+    for (int i = 0; i < 120 && s.state != State::PoleHang; ++i) w.tick(i < 20 ? go : Actions{});
+    ASSERT_EQ(s.state, State::PoleHang);
+    for (int i = 0; i < 90; ++i) w.tick(forward());
+    w.tick(go);
+    for (int i = 0; i < 60 && s.state == State::PoleHang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::HangJump);
+    for (int i = 0; i < 120 && s.state == State::HangJump; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::PoleHang);
+    ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 1337);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    const float hangZ = s.pos.z;
+    Actions drop;
+    drop.drop = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    bool again = false;
+    int ticks = 0;
+    const auto onGround = [&] { return s.state == State::Idle || s.state == State::Land || s.state == State::Walk || s.state == State::Run; };
+    for (; ticks < 300 && !onGround(); ++ticks) w.tick({}), again |= s.state == State::PoleHang;
+    EXPECT_FALSE(again) << "caught again by pole 1337";
+    EXPECT_TRUE(onGround()) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    EXPECT_LT(s.pos.z, hangZ - 5);
+    EXPECT_EQ(s.ledge, -1);
+}
+
+namespace {
+// A wall (face x = 300) with a ledge along its top edge at `ledgeZ`, Lara in the air beside it, hands 10 short of it.
+std::unique_ptr<game::World> ledgeFallWorld(float ledgeZ, float above) {
+    const game::AnimLibrary anims = syntheticAnims();
+    CollisionMesh m;
+    addFloor(m, -1000, -1000, 300, 1000, 0);
+    addBox(m, {300, -1000, 0}, {1000, 1000, ledgeZ});
+    m.markup.push_back({1, 7, {{300, -800, ledgeZ}, {300, 800, ledgeZ}}});
+    return makeWorld(std::move(m), {300 + anims.hangHandOffset.y - 10, 0, ledgeZ - anims.hangHandOffset.z + above}); // `above` her hanging root
+}
+int tickUntil(game::World& w, int max, const Actions& a, auto done) {
+    int n = 0;
+    for (; n < max && !done(); ++n) w.tick(a);
+    return n;
+}
+} // namespace
+
+// The saving grab (tru.exe 0x74FDF0 / chart S528): a ledge that hangs her root more than 1280.03 (the fall states' air
+// grab q44) below where the fall began is a bad attach, a shorter fall a firm hang whatever the speed. She hangs on for
+// the difficulty's time (PLAYER TAILORING: 90 / 50 / 15 frames), then falls; the Interact press pulls her up; Jump does
+// nothing; Crouch lets go. Interact held since before the catch is no press.
+TEST(Game, SavingGrabByFallHeightAndInteract) {
+    const auto hang = [](game::World& w) { return w.player().state().state == State::Hang; };
+    Actions use, jump, drop;
+    use.interact = jump.jump = drop.drop = true;
+    { // 1200 down: firm
+        auto w = ledgeFallWorld(2000, 1200);
+        tickUntil(*w, 240, {}, [&] { return hang(*w); });
+        ASSERT_TRUE(hang(*w));
+        EXPECT_EQ(w->player().state().savingGrab, 0);
+        EXPECT_LT(w->player().state().vel.z, 1) << "caught";
+    }
+    for (int level = 0; level < 3; ++level) { // 1300 down: one hand, for the level's frames
+        auto w = ledgeFallWorld(2000, 1300);
+        w->setTailoring(game::Tailoring::preset(level));
+        const float seconds = std::array{90, 50, 15}[size_t(level)] / 30.0f;
+        EXPECT_FLOAT_EQ(w->player().tuning().savingGrabSeconds, seconds);
+        tickUntil(*w, 240, {}, [&] { return hang(*w); });
+        ASSERT_TRUE(hang(*w));
+        EXPECT_FLOAT_EQ(w->player().state().savingGrab, seconds);
+        const int held = tickUntil(*w, 400, {}, [&] { return !hang(*w); });
+        EXPECT_EQ(w->player().state().state, State::Fall);
+        EXPECT_NEAR(held / 60.0f, seconds, 2 / 60.0f) << level;
+    }
+    { // Jump: nothing. Interact: up. Then a firm hang.
+        auto w = ledgeFallWorld(2000, 1300);
+        const auto& s = w->player().state();
+        tickUntil(*w, 240, {}, [&] { return hang(*w); });
+        ASSERT_GT(s.savingGrab, 0);
+        w->tick(jump);
+        for (int i = 0; i < 10; ++i) w->tick({});
+        ASSERT_TRUE(hang(*w));
+        EXPECT_GT(s.savingGrab, 0) << "Jump does not recover";
+        w->tick(use);
+        EXPECT_EQ(s.savingGrab, 0);
+        EXPECT_EQ(s.clip, "ledgeb_bad_attach_recover");
+        for (int i = 0; i < 200; ++i) w->tick({});
+        EXPECT_TRUE(hang(*w)) << "a firm hang now";
+    }
+    { // Interact held from before the catch: no press, she falls; pressed on the very tick of the catch: it counts
+        auto w = ledgeFallWorld(2000, 1300);
+        tickUntil(*w, 240, use, [&] { return hang(*w); });
+        ASSERT_GT(w->player().state().savingGrab, 0);
+        tickUntil(*w, 400, use, [&] { return !hang(*w); });
+        EXPECT_EQ(w->player().state().state, State::Fall);
+        auto v = ledgeFallWorld(2000, 1300);
+        int n = tickUntil(*v, 240, {}, [&] { return hang(*v); });
+        auto x = ledgeFallWorld(2000, 1300);
+        for (int i = 0; i + 1 < n; ++i) x->tick({});
+        x->tick(use); // the catching tick
+        ASSERT_TRUE(hang(*x));
+        x->tick({});
+        EXPECT_EQ(x->player().state().savingGrab, 0) << "the buffered press";
+    }
+    { // Crouch lets go
+        auto w = ledgeFallWorld(2000, 1300);
+        tickUntil(*w, 240, {}, [&] { return hang(*w); });
+        ASSERT_GT(w->player().state().savingGrab, 0);
+        for (int i = 0; i < 5; ++i) w->tick({});
+        w->tick(drop);
+        EXPECT_EQ(w->player().state().state, State::Fall);
+        EXPECT_EQ(w->player().state().savingGrab, 0);
+    }
+}
+
+// A jump's catch is a saving grab from 711.13 down (the jump queries' fall record): a running jump off a platform onto
+// a ledge that hangs her root 800 under the take-off holds one handed, 650 under firmly.
+TEST(Game, SavingGrabAfterAJumpDown) {
+    for (const float down : {800.0f, 650.0f}) {
+        CollisionMesh m;
+        addBox(m, {-1500, -600, 0}, {0, 600, 2000});
+        addFloor(m, -1500, -1500, 2500, 1500, 0);
+        addBox(m, {1200, -1000, 0}, {2000, 1000, 3200}); // a wall she cannot clear, the ledge on its face
+        const float ledgeZ = 2000 - down + syntheticAnims().hangHandOffset.z; // her hanging root `down` under the take-off
+        m.markup.push_back({1, 7, {{1200, -800, ledgeZ}, {1200, 800, ledgeZ}}});
+        auto w = makeWorld(std::move(m), {-1100, 0, 2000});
+        const auto& s = w->player().state();
+        Actions go = forward();
+        for (int i = 0; i < 30; ++i) w->tick(go);
+        ASSERT_EQ(s.state, State::Run);
+        go.jump = true;
+        w->tick(go), w->tick(go);
+        go.jump = false;
+        bool flew = false;
+        for (int i = 0; i < 300 && s.state != State::Hang; ++i) w->tick(go), flew |= s.state == State::Jump || s.state == State::HangJump;
+        ASSERT_EQ(s.state, State::Hang) << down << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+        EXPECT_TRUE(flew);
+        EXPECT_EQ(s.savingGrab > 0, down > w->player().tuning().badAttachJump) << down << " start " << s.fallStartZ;
+    }
+}
+
+// The real clips: ledgeb_bad_attach_M while she hangs by one hand, ledgeb_bad_attach_recover on Interact, then the idle.
+TEST(GameReal, SavingGrabClips) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    CollisionMesh m;
+    addFloor(m, -1000, -1000, 300, 1000, 0);
+    addBox(m, {300, -1000, 0}, {1000, 1000, 2000});
+    m.markup.push_back({1, 7, {{300, -800, 2000}, {300, 800, 2000}}});
+    auto w = climbWorld(std::move(m), {150, 0, 3300});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 240 && s.state != State::Hang; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+    EXPECT_EQ(s.clip, "ledgeb_bad_attach_M");
+    EXPECT_FLOAT_EQ(s.savingGrab, 50 / 30.0f);
+    const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+    EXPECT_NEAR(hands.x, 300, 1);
+    EXPECT_NEAR(hands.z, 2000, 1);
+    for (int i = 0; i < 30; ++i) w->tick({});
+    Actions use;
+    use.interact = true;
+    w->tick(use);
+    EXPECT_EQ(s.clip, "ledgeb_bad_attach_recover");
+    for (int i = 0; i < 120 && s.clip != "ledgeb_idle"; ++i) w->tick({});
+    EXPECT_EQ(s.clip, "ledgeb_idle");
+    EXPECT_EQ(s.state, State::Hang);
+}
+
+// l5_valaskjalf's drop-down ledges on the wall y -68172: 1488 (z -8217) -> 1485 (1422 under) -> 1484 (1387 under) ->
+// 1483. Each Drop from a hang is caught one handed on the next (more than 1280.03 down): Interact pulls her up; left
+// alone she falls after the 50 frames of the TOMB RAIDER level.
+TEST(GameReal, ValaskjalfDropDownSavingGrabs) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l5_valaskjalf", {{5000, -68172 - 150, -8660}, glm::radians(90.0f)});
+    const auto& s = w.player().state();
+    const auto id = [&] { return s.ledge >= 0 ? int(w.collision().markup[size_t(s.ledge)].id) : -1; };
+    for (int i = 0; i < 120 && s.state != State::Hang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state) << " at " << s.pos.y << " " << s.pos.z;
+    EXPECT_EQ(id(), 1488);
+    EXPECT_EQ(s.savingGrab, 0) << "a short fall: firm";
+    for (int i = 0; i < 60; ++i) w.tick({});
+    const float top = s.pos.z;
+    Actions drop, use;
+    drop.drop = use.interact = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    for (int i = 0; i < 240 && s.state != State::Hang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    EXPECT_EQ(id(), 1485);
+    EXPECT_NEAR(top - s.pos.z, 1422, 3);
+    EXPECT_FLOAT_EQ(s.savingGrab, 50 / 30.0f);
+    EXPECT_EQ(s.clip, "ledgeb_bad_attach_M");
+    for (int i = 0; i < 40; ++i) w.tick({});
+    w.tick(use);
+    EXPECT_EQ(s.clip, "ledgeb_bad_attach_recover");
+    EXPECT_EQ(s.savingGrab, 0);
+    for (int i = 0; i < 150; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    EXPECT_EQ(id(), 1485);
+    w.tick(drop);
+    for (int i = 0; i < 240 && s.state != State::Hang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    EXPECT_EQ(id(), 1484);
+    EXPECT_GT(s.savingGrab, 0);
+    int held = 0;
+    for (; held < 300 && s.state == State::Hang; ++held) w.tick({});
+    EXPECT_EQ(s.state, State::Fall) << "nobody pressed Interact";
+    EXPECT_NEAR(held / 60.0, 50 / 30.0, 0.05);
+}
+
+// Letting go of a ladder (Crouch) and catching it again lower down needs no key (tru.exe's fall states' air grab; no
+// chart transition onto a ladder reads Interact). On a long ladder a catch more than 1280.03 under the let-go is the
+// ladder's bad attach: ladder_attach_air_bad for the saving-grab time, Interact -> ladder_bad_attach_recover and the
+// idle; left alone she falls.
+TEST(GameReal, LadderLetGoCatchesAgainAndBadAttach) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto world = [](float height, float z) {
+        CollisionMesh m;
+        addFloor(m, -2000, -2000, 400, 2000, 0);
+        addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, height}, {400, -2000, height});
+        m.markup.push_back({9, 1, {{400, 0, height}, {400, 0, 0}, {242, 0, 0}}}); // outward -X
+        return climbWorld(std::move(m), {300, 0, z});
+    };
+    Actions drop, use;
+    drop.drop = use.interact = true;
+    { // a short drop: caught again by itself, firmly
+        auto w = world(3000, 1500);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 240 && s.clip != "ladder_idle"; ++i) w->tick({});
+        ASSERT_EQ(s.clip, "ladder_idle") << game::stateName(s.state);
+        const float z0 = s.pos.z;
+        w->tick(drop);
+        ASSERT_EQ(s.state, State::Fall);
+        EXPECT_EQ(s.clip, "ladder_detach_drop");
+        for (int i = 0; i < 240 && s.state != State::Ladder; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Ladder) << "no key needed";
+        EXPECT_EQ(s.clip, "ladder_attach_M");
+        EXPECT_EQ(s.savingGrab, 0);
+        for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+        EXPECT_EQ(s.clip, "ladder_idle");
+        EXPECT_LT(s.pos.z, z0 - 100);
+        EXPECT_GT(s.pos.z, z0 - 700);
+    }
+    for (const bool pull : {true, false}) { // falling past a long ladder's top from 1500 over the catch
+        auto w = world(1200, 2200);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 240 && s.state != State::Ladder; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Ladder) << game::stateName(s.state) << " z " << s.pos.z;
+        EXPECT_GT(s.fallStartZ - s.climbTo.z, w->player().tuning().badAttachFall);
+        EXPECT_EQ(s.clip, "ladder_attach_air_bad");
+        EXPECT_FLOAT_EQ(s.savingGrab, 50 / 30.0f);
+        for (int i = 0; i < 30; ++i) w->tick({});
+        if (pull) {
+            w->tick(use);
+            EXPECT_EQ(s.clip, "ladder_bad_attach_recover");
+            EXPECT_EQ(s.savingGrab, 0);
+            for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+            EXPECT_EQ(s.clip, "ladder_idle");
+            const float r = (1200.0f - 575.221f - s.pos.z) / 110.619f;
+            EXPECT_NEAR(r, std::round(r), 1e-3) << "on a rung";
+        } else {
+            int held = 30;
+            for (; held < 300 && s.state == State::Ladder; ++held) w->tick({});
+            EXPECT_EQ(s.state, State::Fall);
+            EXPECT_NEAR(held / 60.0, 50 / 30.0, 0.05);
+        }
+    }
+}
+
+// The safety drop (lara.drm chart T114: falling out of a ground state with a ledgegrab as the state's target): walking,
+// running or rolling off an edge that carries a ledge she turns and hangs from it without a key (drop_to_ledgeb, as
+// the Crouch drop); an edge without a ledge is a plain fall (Game.RunsOffEdgeFallsAndLands).
+TEST(Game, SafetyDropOffALedgeEdge) {
+    for (const int gait : {0, 1, 2}) { // run, walk, roll
+        CollisionMesh m;
+        addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+        addFloor(m, -2000, -1000, 3000, 1000, -3000);
+        m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+        auto w = makeWorld(std::move(m), {-700, 50, 0});
+        const auto& s = w->player().state();
+        Actions go = forward();
+        go.walk = gait == 1;
+        std::set<State> seen;
+        for (int i = 0; i < 900 && s.state != State::Hang; ++i) {
+            Actions a = go;
+            a.drop = gait == 2 && i == 15; // a roll toward the edge
+            w->tick(a);
+            seen.insert(s.state);
+        }
+        ASSERT_EQ(s.state, State::Hang) << gait << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+        EXPECT_TRUE(seen.count(State::DropToHang)) << gait;
+        EXPECT_FALSE(seen.count(State::Fall)) << gait << ": no fall in between";
+        if (gait == 2) EXPECT_TRUE(seen.count(State::Roll));
+        EXPECT_EQ(s.savingGrab, 0);
+        const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+        EXPECT_NEAR(hands.x, 0, 1e-2) << gait;
+        EXPECT_NEAR(hands.z, 0, 1e-2) << gait;
+        EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4) << "facing the wall";
+        Actions drop;
+        drop.drop = true;
+        w->tick(drop); // and lets go as from any hang
+        EXPECT_EQ(s.state, State::Fall);
+    }
+    { // along the edge, not over it: nothing; off the end of the platform where no ledge is: a fall
+        CollisionMesh m;
+        addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+        addFloor(m, -2000, -3000, 3000, 3000, -3000);
+        m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+        auto w = makeWorld(std::move(m), {-100, -700, 0}, kPi / 2); // facing +Y, 100 inside the ledge's edge
+        const auto& s = w->player().state();
+        std::set<State> seen;
+        for (int i = 0; i < 200 && s.pos.z > -2900; ++i) w->tick(forward()), seen.insert(s.state);
+        EXPECT_FALSE(seen.count(State::DropToHang));
+        EXPECT_TRUE(seen.count(State::Fall)) << "off the platform's far side";
+    }
+}
+
+// l4_temple's high platform (top z 3690) between ledges 1168 (east edge, x -1227) and 1167 (west edge, x -2870):
+// running off the east edge and walking off the west one she turns and hangs from the edge's ledge, no key.
+TEST(GameReal, TempleSafetyDropOffThePlatform) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const bool walk : {false, true}) {
+        auto w = unitWorld(bf, "l4_temple", {{-2000, -13000, 3692}, walk ? kPi : 0.0f});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.walk = walk;
+        std::set<State> seen;
+        const float top = s.pos.z;
+        for (int i = 0; i < 1200 && s.state != State::Hang; ++i) w.tick(go), seen.insert(s.state);
+        ASSERT_EQ(s.state, State::Hang) << walk << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, walk ? 1167 : 1168);
+        EXPECT_TRUE(seen.count(State::DropToHang));
+        EXPECT_FALSE(seen.count(State::Fall));
+        EXPECT_TRUE(seen.count(walk ? State::Walk : State::Run));
+        EXPECT_EQ(s.savingGrab, 0);
+        EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).z, 3686.5, 1);
+        EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).x, walk ? -2869.6 : -1226.8, 1);
+        EXPECT_LT(s.pos.z, top - 450);
+    }
 }

@@ -107,6 +107,7 @@ SaveGame fromJson(const json& j) {
     ps.loop = p.value("loop", true);
     ps.runJump = p.value("runJump", false);
     ps.regrabCooldown = p.value("regrabCooldown", 0.0f);
+    ps.buttons.hold(); // no press edge on the first tick; a controller block restores their timing
     ps.pitch = p.value("pitch", 0.0f);
     ps.fallStartZ = p.value("fallStartZ", ps.pos.z); // older saves: falls count from where she stands
     s.controller = p.value("controller", json(nullptr));
@@ -183,6 +184,7 @@ game::vec2 vec2j(const json& j) { return {j.at(0).get<float>(), j.at(1).get<floa
 
 // player.controller: the PlayerState fields the player block above leaves out. `p` in the world frame.
 json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3 offset) {
+    const game::Buttons& b = p.buttons;
     const auto& h = p.hurdle;
     json bends = json::array();
     for (size_t i = 0; i < p.ropeBends; ++i) bends.push_back({vec(p.ropeBend[i] - offset), p.ropeBendClear[i]});
@@ -190,6 +192,9 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"hurdle", {int(h.next), h.mix, h.alt, h.draw, vec2j(h.drawOff), vec(h.edge - offset), vec2j(h.out), h.h, h.endZ - offset.z,
                         markupRef(w, h.farLedge), h.farSeg, h.farT, h.farSide}},
             {"savingGrab", p.savingGrab}, {"flight", p.flight}, {"fallHeight", p.fallHeight},
+            {"buttons", {{b.jump.down, b.jump.edge, b.jump.time, b.jump.buffer}, {b.interact.down, b.interact.edge, b.interact.time, b.interact.buffer}, {b.drop.down, b.drop.edge, b.drop.time, b.drop.buffer}, {b.grapple.down, b.grapple.edge, b.grapple.time, b.grapple.buffer}}},
+            {"droppedPole", markupRef(w, p.droppedPole)},
+            {"fallStall", p.fallStall},
             {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
             {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends, p.ropeMax}},
@@ -218,6 +223,18 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     d.edge = vec(h.at(5)), d.out = vec2j(h.at(6)), d.h = h.at(7), d.endZ = h.at(8), d.farLedge = ref(h.at(9));
     d.farSeg = h.at(10), d.farT = h.at(11), d.farSide = h.at(12);
     p.savingGrab = c.at("savingGrab"), p.flight = c.at("flight"), p.fallHeight = c.at("fallHeight");
+    p.buttons.hold(); // older saves: as held (no press edge on the first tick)
+    if (const auto bt = c.find("buttons"); bt != c.end()) {
+        if (!bt->is_array() || bt->size() != 4) throw SaveError("bad buttons " + bt->dump());
+        game::ButtonTime* const all[4] = {&p.buttons.jump, &p.buttons.interact, &p.buttons.drop, &p.buttons.grapple};
+        for (size_t i = 0; i < 4; ++i) {
+            const json& e = bt->at(i);
+            if (!e.is_array() || e.size() != 4) throw SaveError("bad buttons " + bt->dump());
+            all[i]->down = e.at(0), all[i]->edge = e.at(1), all[i]->time = e.at(2), all[i]->buffer = e.at(3);
+        }
+    }
+    p.droppedPole = c.contains("droppedPole") ? ref(c.at("droppedPole")) : -1;
+    p.fallStall = c.value("fallStall", 0.0f);
     const auto& cl = c.at("climb");
     p.climbHold = ref(cl.at(0)), p.climbStance = cl.at(1), p.climbWarp = cl.at(2), p.climbNormal = vec(cl.at(3));
     p.climbFrom = vec(cl.at(4)), p.climbTo = vec(cl.at(5)), p.climbYawFrom = cl.at(6), p.climbYawTo = cl.at(7);

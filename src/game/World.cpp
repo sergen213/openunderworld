@@ -152,6 +152,7 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ladder_attach_M", 3, 1}, {"ladder_attach_ground_bottom", 14, 14}, {"ladder_attach_ground_top", 4, 0},
         {"ladder_idle", 3, 3}, {"ladder_climb_up", 3, 3}, {"ladder_climb_down", 3, 3}, {"ladder_detach_ground_top", 3, 1},
         {"ladder_detach_ground_bottom", 3, 1}, {"ladder_detach_drop", 3, 7}, {"ladder_jump_back", 3, 1},
+        {"ladder_attach_air_bad", 3, 1}, {"ladder_bad_attach_recover", 3, 3}, // requests 1162, 1167 (the saving grab)
         // ladder jumps / leans / reaches: requests 1185, 1177, 1182, 1181, 1184, 1183, 1187, 1188, 1186, 1192, 1197, 1198, 1195
         {"ladder_jump_left", 3, 1}, {"ladder_jump_right", 3, 1}, {"ladder_jump_left_prepare", 3, 1},
         {"ladder_jump_left_prepare_untargeted", 6, 6}, {"ladder_jump_right_prepare", 3, 1},
@@ -372,6 +373,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     // ladders / pillars / perches (Traverse.cpp)
     "ladder_attach_M", "ladder_attach_ground_bottom", "ladder_attach_ground_top", "ladder_idle", "ladder_climb_up",
     "ladder_climb_down", "ladder_detach_ground_top", "ladder_detach_ground_bottom", "ladder_detach_drop", "ladder_jump_back",
+    "ladder_attach_air_bad", "ladder_bad_attach_recover",
     "ladder_jump_up", "ladder_jump_up_at_top", "ladder_idle_to_jump_up_prepare", "ladder_jump_up_prepare",
     "ladder_jump_up_prepare_to_idle", "ladder_jump_left", "ladder_jump_right", "ladder_jump_left_prepare",
     "ladder_jump_left_prepare_untargeted", "ladder_jump_right_prepare", "ladder_jump_right_prepare_untargeted",
@@ -1376,6 +1378,9 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
     add(s.ropeBends), add(s.polePara), add(s.ropeMax);
     add(s.jumpStart), add(s.jumpTime), add(s.jumpAimed), add(s.wallJumps), add(s.wallTime), add(s.jumpLedge), add(s.jumpFromLedge);
+    for (const ButtonTime* b : {&s.buttons.jump, &s.buttons.interact, &s.buttons.drop, &s.buttons.grapple})
+        add(b->down), add(b->edge), add(b->time), add(b->buffer);
+    add(s.droppedPole), add(s.fallStall);
     const auto& ba = s.balance;
     add(ba.build), add(ba.aboutFall), add(ba.grace), add(ba.unbal), add(ba.bal), add(ba.notImprove), add(ba.full), add(ba.clock);
     add(ba.lastFlip), add(ba.period), add(ba.ref), add(ba.stickYaw), add(ba.blend), add(ba.lean), add(ba.side), add(ba.osc), add(ba.fall);
