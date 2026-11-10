@@ -3068,7 +3068,11 @@ int main(int argc, char** argv) {
             }
             if (opt.frames && frame > 30 && tickMs.empty()) world->tickTimes = {}; // after the warm-up frames, as frameMs
             const uint64_t tickStart = SDL_GetTicksNS(), unitsBefore = world->unitsVersion();
+            const uint32_t respawnsBefore = world->respawns();
             world->tick(a);
+            // A death restored the checkpoint save: the level reload stops every sound (tru.exe 0x5DAB40 -> 0x593D10) and
+            // the music / reverb are the save's again, as after a load.
+            if (world->respawns() != respawnsBefore) resetAudio("respawn"), resumeAudio("respawn");
             if (selfTest) selfTest->observe(*world);
             if (opt.frames && frame > 30) tickMs.push_back(double(SDL_GetTicksNS() - tickStart) * 1e-6);
             if (world->unitsVersion() != unitsBefore) // streaming cost on the main thread (ROADMAP "Unit streaming")

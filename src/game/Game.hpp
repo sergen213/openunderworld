@@ -892,6 +892,7 @@ public:
     // Death (the black wipe's end, Combat.cpp) = tru.exe "Restore Game" 0x557130: the checkpoint save comes back
     // (restoreCheckpointSave) and Lara is born at the checkpoint's intro, else the start unit's spawn, at full health.
     void respawn();
+    uint32_t respawns() const { return respawns_; } // deaths restored so far (the app resets its audio as after a load)
     const std::optional<CheckpointRef>& checkpoint() const { return checkpoint_; }
     void setCheckpoint(std::optional<CheckpointRef> c) { checkpoint_ = std::move(c); }
     // The checkpoint save (docs/GAMEPLAY.md "Checkpoints and respawn"; tru.exe "Save Game" 0x5570F0): the world as it
@@ -1289,6 +1290,7 @@ private:
     std::string playerUnit_; // unit the scripts were last told Lara is in (Runtime::setPlayerUnit); empty = level load
     std::optional<Spawn> startSpawn_;
     vec3 exteriorOrigin_{0};
+    uint32_t respawns_ = 0;
     std::optional<CheckpointRef> checkpoint_;
     nlohmann::json checkpointSave_; // serializeCheckpoint() of the last checkpoint save
     bool checkpointDue_ = false;    // take it when this tick ends

@@ -470,6 +470,7 @@ void World::respawn() {
     health_.reset(); // tru.exe 0x700060 on the born player
     air_ = 1.0f, submerged_ = false;
     checkpointDue_ = false;
+    ++respawns_;
 }
 
 nlohmann::json World::serializeCheckpoint() const {

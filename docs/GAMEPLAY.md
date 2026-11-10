@@ -2798,7 +2798,9 @@ Ours (`World::respawn`, `World::serializeCheckpoint` / `restoreCheckpointSave`, 
 - Death: the clip plays, the screen fades for 90 frames (`kDeathFade`), then `respawn()`: the clock goes back, the
   checkpoint's unit loads afresh (`enterUnit`), the save is restored, Lara stands on the checkpoint intro (or the
   start spawn) with full health, full air and empty hands (the weapon state of her hands - draw, lock, reload,
-  cooldowns - is not restored; her secondary, clips, reserves and meter are). The camera starts behind her.
+  cooldowns - is not restored; her secondary, clips, reserves and meter are). The camera starts behind her. ou-game
+  stops every sound and resumes the save's music and reverb as after a load (`World::respawns`; the original's level
+  reload stops all sound, `0x5DAB40` -> `0x593D10`).
 - [I] / differences: the PDA map's revealed points are kept (the original's save block holds its map); a bike she
   was riding at the checkpoint comes back at its saved place with Lara on foot beside it; the 210-frame wipe and
   the scripted death requests are not used (no death of ours asks for them).
