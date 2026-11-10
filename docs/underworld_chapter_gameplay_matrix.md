@@ -392,7 +392,7 @@ Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" =
 
 | Category | Required information | Status | Evidence / tests |
 |---|---|---|---|
-| Chapter | Part 3 of 4; from the shaft opened by the fallen statue to the exit doorway of the Thor room, where the gauntlet stops working. 0 health items, no key items | PARTIALLY IMPLEMENTED | By input: cutscene + gauntlet, the carved door slid open, the walk to the pedestal, the descent down the hub panel and the grip on it (`ch09_maproom_gauntlet_door`, `ch09_maproom_hub_panel`). Blocked: the way in through the shaft (statue slabs stay solid) and every turn of the hub (known gaps) |
+| Chapter | Part 3 of 4; from the shaft opened by the fallen statue to the exit doorway of the Thor room, where the gauntlet stops working. 0 health items, no key items | PARTIALLY IMPLEMENTED | By input: cutscene + gauntlet, the carved door slid open, the walk to the pedestal, the descent down the hub panel and the first turn of the hub (`ch09_maproom_gauntlet_door`, `ch09_maproom_hub_panel`, `ch09_maproom_hub_turn`). Blocked: the way in through the shaft (statue slabs stay solid: known gap). Not played: wall runs, wall drag, the alignments, the relic, the exit |
 | Movement | Walk / run on walkways, jump gaps in the ring ledge near the hub | IMPLEMENTED BUT UNVERIFIED | M13 generic; no test in l2_maproom |
 | Traversal | Descent by three drop-catches (one needs a saving grab), drop-catches down the hub's carved panel, climbing the panel back up, hanging from the walkway side | IMPLEMENTED BUT UNVERIFIED | M03, M04, M01 generic |
 | Physics | Rope swing with full pay-out; the hub, walkway and movable wall turn as one body about the room's axis | NOT IMPLEMENTED | no evidence of the rotating structure (sweep l2_maproom shows only volumes) |
@@ -401,18 +401,18 @@ Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" =
 | Combat | Small spider swarms ×2 (shaft mouth, behind the door), one bat flock | IMPLEMENTED BUT UNVERIFIED | `AiReal.SpidersClingDropAndBite` (l3 / l4 units), `AiReal.NagasClingDropBiteSpitAndDie` touches l2_maproom intros; no encounter test |
 | Swimming | n/a | n/a | — |
 | Vehicle | n/a | n/a | — |
-| Objects | Gauntlet-moved door, hub panel (grab and walk to rotate), movable wall segment with grapple rings on both faces, pedestal, ceiling and wall rings | PARTIALLY IMPLEMENTED | door 2661 slides with the gauntlet (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, `ch09_maproom_gauntlet_door`); hub panel gripped but the hub hinge (2667 joint 1) does not turn (`known_gaps/ch09_maproom_hub_turn`); wall drag, rings on the moving wall: not exercised |
-| Puzzles | Rotate the hub to (a) uncover a cache, (b) line the walkway up with a side ledge (treasure), (c) with the exit, (d) half-way for the relic ledge — using the panel at hub level and the wall at the rim | NOT IMPLEMENTED | all four alignments need the hub to turn: blocked (C09-09) |
+| Objects | Gauntlet-moved door, hub panel (grab and walk to rotate), movable wall segment with grapple rings on both faces, pedestal, ceiling and wall rings | PARTIALLY IMPLEMENTED | door 2661 slides with the gauntlet (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, `ch09_maproom_gauntlet_door`); the hub turns by its panel (`ProgressionReal.MaproomHubTurnsByItsPanel`, `ch09_maproom_hub_turn`); wall drag, rings on the moving wall: not exercised |
+| Puzzles | Rotate the hub to (a) uncover a cache, (b) line the walkway up with a side ledge (treasure), (c) with the exit, (d) half-way for the relic ledge — using the panel at hub level and the wall at the rim | PARTIALLY IMPLEMENTED | (a) the first turn by the panel is played (41 degrees); the cache pickup and alignments (b) .. (d) are not played |
 | Hazards | Fatal fall into the pit under the shaft and round the hub | IMPLEMENTED BUT UNVERIFIED | M65 generic |
 | Collectibles | 3 treasures (26/30 - 28/30), 1 relic (2/6; raises max health and heals) | PARTIALLY IMPLEMENTED | relic id 2588 is in l2_maproom (`ChaptersReal.RewardTableMatchesUnits`); pickup rule [I]; relic health bonus: no evidence; treasures 27 / 28 and the relic are unreachable without M60 |
 | Progression | Shaft → gauntlet cinematic → slide the door → Thor room cinematic (map, pedestal inscription) → align the walkway with the exit → leave (gauntlet fades cinematic) | PARTIALLY IMPLEMENTED | sweep l2_maproom: 2636 → 2624 (cinematic, larabase 19), 2637 / 2638 → 2667 + 2625 / 2626, 2669 → 2666, 2698 → 2667 PASS; PR gates "l2_maproom volumes 2637/2638 → thor bridge 2667 + cinematics: pass" |
 | Automated tests | Existing: sweep volumes above, `ProgressionReal.GrappleHandlesSwivel` (2595), `ChaptersReal.RewardTableMatchesUnits` (l2_maproom), `ScriptRealData.ThorGearDrawGroups`, `StreamReal.ChapterThorGear`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 18 in [docs/matrix/09_ancient_world.md](matrix/09_ancient_world.md) — IMPLEMENTED BUT UNVERIFIED 6, IMPLEMENTED 5, NOT IMPLEMENTED 4, PARTIALLY IMPLEMENTED 3.
+Requirement rows: 18 in [docs/matrix/09_ancient_world.md](matrix/09_ancient_world.md) — IMPLEMENTED 6, IMPLEMENTED BUT UNVERIFIED 6, NOT IMPLEMENTED 4, PARTIALLY IMPLEMENTED 2.
 
 Open in this chapter:
 
-- **Gauntlet-powered movers (M60)**: the door slide (C09-05) works by play since 0.44.0; the hub rotation by panel (C09-09, -14) and the wall drag (C09-11, -16) are gripped but do not move (hinge joint 1 of bridge 2667; see the blockers below). Without C09-14 the exit is not reachable by the original route.
+- **Gauntlet-powered movers (M60)**: the door slide (C09-05) works by play since 0.44.0; the hub rotation by panel (C09-09) works by play since this pass; the wall drag (C09-11, -16) and the alignments (C09-14) are not played. Without C09-14 the exit is not reachable by the original route.
 - **Rotating walkway / hub / wall as one rigid assembly** (collision, ledges and grapple rings moving with it): no evidence. GP "Grapple" marks 2676's attached instance [U].
 - **Wall run in l2_maproom** (three uses, two with a mid-air throw after a drop): generic code only, numbers [I], no test in this unit; rope-length adjustment to a target height is unverified.
 - **Mid-fall grapple catch** (C09-03, -15) untested anywhere (M21).

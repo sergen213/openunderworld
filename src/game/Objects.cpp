@@ -518,12 +518,22 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
         // The record she grips is gone with the old set: she lets go ([I] tru.exe's PushPull needs her engaged record in
         // the section's current set, 0x6D5AC0; the pushed-out towers swap theirs as they lock), her script callback
         // (vt 50) before the new state's events (the towers' reveal camera).
-        if (uberHandle_.uid == uid && uberHandle_.section == int32_t(section) && rt.sections[section].engagement != a.engagement) {
-            const int kind = uberHandle_.kind;
-            uberHandle_ = {};
-            script_.engage(uid, -1, kind, false);
+        // [I] A record of her kind on her segment in the new set is the same handle: she keeps her grip (l2_maproom's
+        // hub 2667 swaps sets 408 <-> 396 as it turns through 20 degrees; both hold the panel's record on marker 11).
+        {
+            const bool gripped = uberHandle_.uid == uid && uberHandle_.section == int32_t(section) &&
+                                 rt.sections[section].engagement != a.engagement;
+            rt.sections[section].engagement = a.engagement;
+            const auto* set = gripped ? uberEngagement(uid, section) : nullptr;
+            const bool kept = set && std::ranges::any_of(set->records, [&](const physics::Engagement& r) {
+                return r.kind == uberHandle_.kind && r.segment == uberHandle_.segment;
+            });
+            if (gripped && !kept) {
+                const int kind = uberHandle_.kind;
+                uberHandle_ = {};
+                script_.engage(uid, -1, kind, false);
+            }
         }
-        rt.sections[section].engagement = a.engagement;
         break;
     default: break;
     }
@@ -793,7 +803,8 @@ bool carriesNeeded(std::span<const std::string> needs, const std::string* held, 
 // four ways by its angle off her facing [O 0x6F1450 with lara.drm player data +0xC8C / +0xC90 = 60 / 30 degrees]:
 // within 30 degrees forward, within 15 of straight back, else left / right. [I] Ours measures the angle on the stick
 // itself (tru.exe: the camera-relative stick against her facing) and moves a joint only the way it can go: a joint
-// lying across her facing (the slide doors) by left / right, one along it by forward / back.
+// lying across her facing (the slide doors; a hinge whose tangent at her grip point does: the l2_maproom hub's panel)
+// by left / right, one along it by forward / back.
 // Prismatic joints [O 0x74AC00 / 0x73F390, player data +0xC7C / +0xC80 / +0xC84 / +0xC88]: her target speed is
 // min(23.704 x strength, 2054.36 x strength / M) units a second and each step's impulse is at most
 // min(m x 0.7585, 142.225) x strength; [I] M = the PushPull proxy body's mass, 0.125 (+0xC98) of the object's m (with
@@ -821,6 +832,7 @@ bool World::pushUberHandle(const Actions& a, float speed) {
         const auto* o = e.uid ? script_.find(e.uid) : nullptr;
         if (e.record && e.section >= 0 && e.record->kind == 1 && o && o->kind != script::Kind::Block) { // src/script pushes blocks
             uberHandle_ = {e.uid, e.section, e.record->kind};
+            uberHandle_.segment = e.record->segment;
             const auto* p = e.record->shape == 2 ? uberSectionPhysics(*o, size_t(e.section)) : nullptr;
             if (const auto frame = p ? uberSectionFrame(*o, size_t(e.section)) : std::nullopt) {
                 vec3 out = glm::mat3(recordFrame(*p, *frame, *e.record)) * vec3(std::cos(e.record->heading), std::sin(e.record->heading), 0);
@@ -848,7 +860,10 @@ bool World::pushUberHandle(const Actions& a, float speed) {
         return true;
     }
     const vec3 dir = along / rate;
-    const bool across = !j.hinge && std::abs(glm::dot(fwd, dir)) < 0.7071f; // the joint lies across her facing
+    // The joint lies across her facing: a slide door, and a hinge gripped on the axis's side of its handle (l2_maproom's
+    // hub panel: she faces the hub's axis, the panel moves sideways). Before, a hinge always took her facing for the
+    // tangent, so the panel's forward / back flipped with the sign of a dot product near 0 and a sidestep did nothing.
+    const bool across = std::abs(glm::dot(fwd, dir)) < 0.7071f;
     if (across) {
         const vec3 face = fwd - dir * glm::dot(fwd, dir);
         uberGrip_ = glm::normalize(face);

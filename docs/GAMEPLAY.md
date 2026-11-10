@@ -944,9 +944,13 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   and wall drag (C09-09 / -11): `sa_uo_thor_bridge_combo` 2667's section 1 (walkway, hub and wall) turns on hinge joint
   1; its records (kind 1, g_gauntletleft) sit on handle markers 11 (the hub panel, set 408) and 12 / 13 (the wall, set
   396 from state 18); section 0's states 2 / 3 switch joint 1's brake motor (9.99e6) on / off and the script's vt 49 /
-  50 command them. Ours grips the panel (self-test `ch09_maproom_hub_panel`) but the hinge does not turn
-  (`tests/selftests/known_gaps/ch09_maproom_hub_turn.json`: 0.017 degrees by left / right, 0.1 .. 0.3 by forward / back
-  in 5 s) [U cause: the hinge body against the level's solids, or the hinge's stick mapping]; the speed's M and the hold / toggle need a Wine trace.
+  50 command them (vt 49 also puts section 1 through state 1: joint limit 1 .. 41 degrees). Ours: she grips the panel
+  facing the hub's axis, so the panel moves across her facing: the sidestep drives the hinge (`pushUberHandle`: a
+  hinge whose tangent at her grip point lies across her facing is driven by left / right, as the slide doors; before
+  2026-11-10 only forward / back did, with an arbitrary sign), 120 units/s at her grip point [I], to the stop at 41
+  degrees; she is carried round the axis; the record-set swap 408 -> 396 at 20 degrees keeps her grip because the new
+  set holds her record (same kind, same segment [I]). `ProgressionReal.MaproomHubTurnsByItsPanel`, self-tests
+  `ch09_maproom_hub_panel` / `ch09_maproom_hub_turn`. The wall drag and the later alignments are not played; the speed's M and the hold / toggle need a Wine trace.
 
 ## Natla (l7_yggdrasil_end, the final fight)
 

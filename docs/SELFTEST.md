@@ -286,7 +286,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `object.<uid>.graph` | its anim-graph state id |
 | `object.<uid>.joint` | its multibody joint's position (plate units, hinge degrees) |
 | `object.<uid>.uber.<n>` | uber section n's state, -1 while it is in a transition |
-| `object.<uid>.uberjoint.<n>` | simulated uber joint n's position |
+| `object.<uid>.uberjoint.<n>` | simulated uber joint n's position (units; a hinge: radians) |
 
 These object probes are what `--report-objects` prints (docs/GAMEPLAY.md); `--report-objects 0 --frames 1` lists every
 script object of a level with its uid.
@@ -450,12 +450,12 @@ tested behaviour happen.
 | `ch08_shrine_statue_pull` | l2_shrineroom | the naga statue 2794 grappled by its ring and pulled over (uber section 0: 5 -> 2), its script wakes the shaft's spiders |
 | `ch09_maproom_gauntlet_door` | l2_maproom | from under the shaft: volume 2636 -> cinematic 2624, the scripts hand the left gauntlet over (no fixture), door 2661 gripped and slid open by a left sidestep, through it (spider trigger, checkpoint 2590), the pedestal cinematic 2625, checkpoint 2591 |
 | `ch09_maproom_hub_panel` | l2_maproom | from checkpoint 2591: off the platform edge into a hang, drop-catches down the hub's panel (ledges 673 / 674 / 676 / 678), the ring ledge, the panel gripped with the gauntlet (2667 vt 49 / 50) |
+| `ch09_maproom_hub_turn` | l2_maproom | as `ch09_maproom_hub_panel`, then the hub turned by its panel: forward does nothing, a right sidestep walks the panel round hinge joint 1 to its stop at 41 degrees (0.716 rad; the record sets swap at 20 degrees and she keeps her grip), braked when she lets go |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
 registered with ctest. Run them by hand; move one up a directory when it passes. Now: `ch09_shrine_shaft_descent` (l2_shrineroom: after the
 statue pull its floor slabs stay solid over the shaft and its ring is still a target; the drop-catches and the mid-fall
-grapple at ring 2673 follow) and `ch09_maproom_hub_turn` (l2_maproom: the hub's panel is gripped but hinge joint 1 of
-bridge 2667 does not turn); `pole_drop_after_fling` moved up 2026-11-10.
+grapple at ring 2673 follow); `pole_drop_after_fling` moved up 2026-11-10.
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

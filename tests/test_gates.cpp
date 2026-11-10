@@ -2326,6 +2326,42 @@ TEST(ProgressionReal, MaproomCinematicGivesTheLeftGauntlet) {
     }
 }
 
+// l2_maproom's hub (C09-09): the Thor bridge 2667 (walkway, hub and wall: uber section 1) turns on hinge joint 1 about
+// the hub's axis. On the broken ring ledge under the round platform Lara faces the carved panel (handle marker 11,
+// record set 408, needs g_gauntletleft): Interact grips it (vt 49: section 0 state 3 takes joint 1's brake motor off,
+// section 1 state 1 limits the joint to 1..41 degrees), a sidestep to her right walks the panel round to the limit
+// and carries her with it; forward / back do not turn it (the panel moves across her facing).
+TEST(ProgressionReal, MaproomHubTurnsByItsPanel) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_maproom");
+    auto& w = *wp;
+    w.script().setPlayerObjects({"g_gauntletleft"});
+    place(w, {-20239.4f, 37936.7f, -12006.6f}, glm::radians(90.0f));
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().state, game::State::Idle);
+    ASSERT_TRUE(w.uberJoint(2667, 1));
+    const float rest = w.uberJoint(2667, 1)->x;
+    game::Actions grip;
+    grip.interact = true;
+    for (int i = 0; i < 45; ++i) w.tick(grip);
+    ASSERT_EQ(w.player().state().state, game::State::Block) << "gripped with the gauntlet";
+    game::Actions forward = grip;
+    forward.move = {0, 1};
+    for (int i = 0; i < 120; ++i) w.tick(forward);
+    EXPECT_NEAR(w.uberJoint(2667, 1)->x, rest, glm::radians(1.5f)) << "forward does not turn the hub";
+    const vec3 from = w.player().state().pos;
+    game::Actions right = grip;
+    right.move = {1, 0};
+    for (int i = 0; i < 600; ++i) w.tick(right);
+    EXPECT_NEAR(glm::degrees(w.uberJoint(2667, 1)->x), 41.0f, 1.5f) << "round to the limit of section 1's state 1";
+    EXPECT_GT(glm::length(vec2(w.player().state().pos - from)), 900.0f) << "she walks round with the panel";
+    EXPECT_NEAR(glm::length(vec2(w.player().state().pos) - vec2(w.uberJoint(2667, 1)->pivot)),
+                glm::length(vec2(from) - vec2(w.uberJoint(2667, 1)->pivot)), 30.0f) << "on a circle about the hub's axis";
+    for (int i = 0; i < 90; ++i) w.tick({});
+    EXPECT_NEAR(glm::degrees(w.uberJoint(2667, 1)->x), 41.0f, 2.5f) << "let go: braked where she left it";
+}
+
 // Research: an uber object's decoded sections (states, transitions, entry actions), joints, range / limit / motor
 // records, commands and events: OU_UBER_SECTIONS=<object>.
 TEST(ProgressionReal, UberSections) {
