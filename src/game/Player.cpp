@@ -384,7 +384,6 @@ bool Player::standable(vec3 p, const collision::Hit& g) const {
 
 void Player::groundMove(vec3 delta, float dt) {
     delta.z = 0;
-    if (t_.mover != Mover::Sweep) return groundMoveJolt(delta, dt);
     vec3 p = slide(s_.pos, delta, t_.stepUp, true);
     const auto g = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
     if (g && standable(p, *g)) {
@@ -453,8 +452,36 @@ bool Player::wading() const {
 
 void Player::airMove(float dt, vec2 move) {
     const vec3 prevPos = s_.pos;
-    if (t_.mover != Mover::Sweep ? airMoveJolt(dt, move) : airSweep(dt, move)) return;
-    const vec3 p = s_.pos;
+    // tru.exe integrator 0x5DB370: pos += v t + a t^2 / 2; v += a t (constant acceleration, exact for any t).
+    // No terminal velocity: the exe never clamps zVel.
+    vec3 d = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt);
+    s_.vel.z -= t_.gravity * dt;
+    vec3 p = s_.pos;
+    // Same sweep loop as slide(), but contacts also clip the velocity (ceilings stop the rise, walls the run-up).
+    for (int iter = 0; iter < 4 && glm::dot(d, d) > 1e-8f; ++iter) {
+        const auto hit = col_.sweepCapsule(p + vec3(0, 0, t_.radius), p + vec3(0, 0, capHeight() - t_.radius), t_.radius, d);
+        if (!hit || (hit->t == 0 && glm::dot(d, hit->normal) >= 0)) { p += d; break; }
+        const vec3 n = hit->normal;
+        p += d * hit->t + n * kSkin;
+        if (n.z >= t_.slideMinNormalZ && s_.vel.z <= 0) {
+            // Floor-like contact: land only with a floor under the root. A capsule resting on an edge's corner
+            // has none (walking slowly off a ledge used to alternate Fall/Land there): it slides off instead.
+            if (auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2)) {
+                s_.pos = vec3(p.x, p.y, g->point.z);
+                if (standable(p, *g)) { land(move); return; }
+                if (g->normal.z >= t_.slideMinNormalZ) { startSlide(s_.vel); return; }
+            }
+            if (n.z >= t_.minFloorNormalZ && glm::length(xy(n)) > 1e-4f) {
+                const vec2 out = glm::normalize(xy(n));
+                const float vo = glm::dot(xy(s_.vel), out);
+                if (vo < kEdgePush) s_.vel += vec3(out * (kEdgePush - vo), 0);
+            }
+        }
+        const vec3 rest = d * (1 - hit->t);
+        d = rest - n * std::min(0.0f, glm::dot(rest, n));
+        s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
+    }
+    s_.pos = p;
     if (s_.vel.z > 0) return;
     // Falling through a balance beam's line (beams can be thinner than the capsule): stand on it.
     for (const auto& m : col_.markup) {
@@ -483,51 +510,16 @@ void Player::airMove(float dt, vec2 move) {
         play("hpole_perch_ready", true);
         return;
     }
-    if (t_.mover == Mover::Sweep)
-        if (auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2); g && standable(p, *g)) {
-            s_.pos.z = g->point.z;
-            land(move);
-            return;
-        }
+    if (auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2); g && standable(p, *g)) {
+        s_.pos.z = g->point.z;
+        land(move);
+        return;
+    }
     if (tryGrab(prevPos)) return;
     tryGrabPole(prevPos);
     if (tryLadder(true)) return;
     if (tryPerch(true)) return;
     if (!tryClimb(true)) tryRail(true); // ledges, poles, ladders, perches and rock faces win over a rail
-}
-
-bool Player::airSweep(float dt, vec2 move) {
-    // tru.exe integrator 0x5DB370: pos += v t + a t^2 / 2; v += a t (constant acceleration, exact for any t).
-    // No terminal velocity: the exe never clamps zVel.
-    vec3 d = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt);
-    s_.vel.z -= t_.gravity * dt;
-    vec3 p = s_.pos;
-    // Same sweep loop as slide(), but contacts also clip the velocity (ceilings stop the rise, walls the run-up).
-    for (int iter = 0; iter < 4 && glm::dot(d, d) > 1e-8f; ++iter) {
-        const auto hit = col_.sweepCapsule(p + vec3(0, 0, t_.radius), p + vec3(0, 0, capHeight() - t_.radius), t_.radius, d);
-        if (!hit || (hit->t == 0 && glm::dot(d, hit->normal) >= 0)) { p += d; break; }
-        const vec3 n = hit->normal;
-        p += d * hit->t + n * kSkin;
-        if (n.z >= t_.slideMinNormalZ && s_.vel.z <= 0) {
-            // Floor-like contact: land only with a floor under the root. A capsule resting on an edge's corner
-            // has none (walking slowly off a ledge used to alternate Fall/Land there): it slides off instead.
-            if (auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2)) {
-                s_.pos = vec3(p.x, p.y, g->point.z);
-                if (standable(p, *g)) { land(move); return true; }
-                if (g->normal.z >= t_.slideMinNormalZ) { startSlide(s_.vel); return true; }
-            }
-            if (n.z >= t_.minFloorNormalZ && glm::length(xy(n)) > 1e-4f) {
-                const vec2 out = glm::normalize(xy(n));
-                const float vo = glm::dot(xy(s_.vel), out);
-                if (vo < kEdgePush) s_.vel += vec3(out * (kEdgePush - vo), 0);
-            }
-        }
-        const vec3 rest = d * (1 - hit->t);
-        d = rest - n * std::min(0.0f, glm::dot(rest, n));
-        s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
-    }
-    s_.pos = p;
-    return false;
 }
 
 // Ledge grab: markup type 1 ("ledgegrab") polylines. The hands (hang pose) must pass the ledge height while falling,
@@ -1918,7 +1910,6 @@ void Player::assistJump() {
 }
 
 void Player::tick(vec2 move, const Actions& a, float dt) {
-    moverSynced_ = false;
     const bool jumpPressed = a.jump && !jumpHeld_, dropPressed = a.drop && !dropHeld_;
     jumpHeld_ = a.jump;
     dropHeld_ = a.drop;
@@ -2052,7 +2043,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         break;
     }
     case State::Crouch: {
-        const bool headroom = t_.mover != Mover::Sweep ? moverScene(dt).characterFits(s_.pos, t_.capsuleTop) : !col_.sweepCapsule(s_.pos + vec3(0, 0, t_.stepUp + t_.radius), s_.pos + vec3(0, 0, t_.crouchHeight - t_.radius),
+        const bool headroom = !col_.sweepCapsule(s_.pos + vec3(0, 0, t_.stepUp + t_.radius), s_.pos + vec3(0, 0, t_.crouchHeight - t_.radius),
                                                  t_.radius, vec3(0, 0, t_.capsuleTop - t_.crouchHeight));
         if (!a.drop && headroom) { s_.state = State::Idle; play("ng_idle", true); break; }
         if (wantsMove) {
@@ -2084,7 +2075,6 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             play("NG_InAir_Feet_Forward_stage1", false);
             break;
         }
-        if (t_.mover != Mover::Sweep) { slideJolt(move, dt); break; }
         const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
         if (!g) { startFall(s_.vel); break; }
         if (standable(s_.pos, *g)) { land(move); break; }

@@ -2008,7 +2008,13 @@ void World::stepPhysics(float dt) {
     // Lara's proxy shoves loose bodies and ragdolls she walks into (by her mass); not while she rides or lies dead.
     const physics::Scene::Character lara{player_.state().pos, player_.tuning().radius, player_.tuning().height, kLaraMass};
     physics_.setCharacter(bikes.empty() && player_.state().state != State::Dead ? &lara : nullptr);
-    physicsSolids(looseIds);
+    std::vector<physics::Scene::Terrain> terrain;
+    for (const auto& u : units_) terrain.push_back({u.data.name, &u.data.col, u.offset});
+    physics_.setTerrain(terrain);
+    std::vector<collision::Dynamic> solids; // what loose bodies land on: every collider but their own and the plates'
+    for (const auto& d : col_.dynamics)
+        if (!looseIds.contains(d.id) && !plates_.contains(d.id)) solids.push_back(d);
+    physics_.setColliders(solids);
     physicsWater_.clear(); // buoyancy and currents for loose bodies (Scene::setWater, tru.exe 0x6AD070)
     for (const auto& m : col_.markup)
         if (m.type == 10 && m.points.size() > kWaterIds)
@@ -2027,19 +2033,6 @@ void World::stepPhysics(float dt) {
     for (auto& [uid, rt] : uberRuntime_)
         if (const auto d = uberData_.find(uid); d != uberData_.end() && d->second) uberWatches(uid);
     readBikes(dt);
-}
-
-// The physics scene's terrain (each resident unit's own mesh) and its kinematic colliders: what loose bodies land on,
-// every collider but their own and the plates'. With the Jolt mover a world without units walks on its one mesh.
-void World::physicsSolids(const std::set<int32_t>& looseIds) {
-    std::vector<physics::Scene::Terrain> terrain;
-    for (const auto& u : units_) terrain.push_back({u.data.name, &u.data.col, u.offset});
-    if (units_.empty() && player_.tuning().mover != Mover::Sweep) terrain.push_back({"", &col_, vec3(0)});
-    physics_.setTerrain(terrain);
-    std::vector<collision::Dynamic> solids;
-    for (const auto& d : col_.dynamics)
-        if (!looseIds.contains(d.id) && !plates_.contains(d.id)) solids.push_back(d);
-    physics_.setColliders(solids);
 }
 
 // Dead enemies' ragdolls (physics::Scene::setRagdolls, ai::EnemyState::ragdollPhase): a starting one (1) gets bodies at

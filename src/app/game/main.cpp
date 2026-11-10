@@ -187,7 +187,6 @@ bool parseArgs(int argc, char** argv, Options& o) {
         }
         if (a == "--game-dir") o.gameDir = v;
         else if (a == "--level") o.level = v;
-        else if (a == "--mover") setenv("OU_MOVER", v, 1); // sweep | jolt | jolt-capsule (PHYSICS.md "Character controller")
         else if (a == "--chapter") o.chapter = std::atoi(v);
         else if (a == "--lang") o.game.language = v;
         else if (a == "--music-wav") o.musicWav = v;
@@ -3054,12 +3053,6 @@ int main(int argc, char** argv) {
             if (opt.frames && frame > 30 && tickMs.empty()) world->tickTimes = {}; // after the warm-up frames, as frameMs
             const uint64_t tickStart = SDL_GetTicksNS(), unitsBefore = world->unitsVersion();
             world->tick(a);
-            static std::FILE* const moverLog = std::getenv("OU_MOVER_LOG") ? std::fopen(std::getenv("OU_MOVER_LOG"), "w") : nullptr;
-            if (moverLog) {
-                const auto& ps = world->player().state(); // the mover evaluation's per-tick trace (PHYSICS.md "Character controller")
-                std::fprintf(moverLog, "%llu %s %.3f %.3f %.3f\n", (unsigned long long)world->ticks(), ou::game::stateName(ps.state).data(), ps.pos.x, ps.pos.y, ps.pos.z);
-                std::fflush(moverLog);
-            }
             if (selfTest) selfTest->observe(*world);
             if (opt.frames && frame > 30) tickMs.push_back(double(SDL_GetTicksNS() - tickStart) * 1e-6);
             if (world->unitsVersion() != unitsBefore) // streaming cost on the main thread (ROADMAP "Unit streaming")
