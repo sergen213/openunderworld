@@ -2555,13 +2555,16 @@ not by one normal-z threshold (decoded 2026-11-10; before that ours stood from n
     goes through the air states and the ordinary ledge catch [O: no state requests 1480; U: where 1480 is used].
 - **Slide speed** (controller `0x73FF50`, props of group S814; lara.drm tuning data): target speed along the fall
   line (direction (n x z) x n of the floor normal, `0x7308B0`) = prop 0x204 .. 0x205 = **35 .. 45 units per 30 Hz
-  frame** (1050 .. 1350 units/s) interpolated over the slope angle 28° .. 52° (mode prop 0x209 = 0x194); approached at
-  prop 0x1FE = 5 (speeding up) / 0x1FF = 10 (slowing) units per frame², both multiplied by the frame's time
-  multiplier and applied as an acceleration: at 60 Hz 2.5 / 5 per frame² (2250 / 4500 units/s²) [O-runtime: +1.25
-  per 60 Hz tick]; the rate depends on the frame rate in the original. Slide kind 1 scales speed and rate by player
-  data floats +0x1010 / +0x1014 (both 1.0). During `slope_transitionto` (group S818) the props are 1.0 / 1.0.
-  Steering props of S814 (0x1F5..0x1F8 = ±45 / ±135, 0x23B = 45, 0x259 = 140) do not enter the velocity: the
-  controller always drives along the fall line [O]; what they turn (her facing) is [U].
+  frame** (1050 .. 1350 units/s) interpolated over the slope angle (mode prop 0x209 = 0x194); approached at prop
+  0x1FE = 5 (speeding up) / 0x1FF = 10 (slowing) units per frame², both multiplied by the frame's time multiplier and
+  applied as an acceleration: at 60 Hz 2.5 / 5 per frame² (2250 / 4500 units/s²) [O-runtime: +1.25 per 60 Hz tick];
+  the rate depends on the frame rate in the original. The angle range: the controller's defaults are the player
+  data's 28 / 52 (overridable by props 0x192 / 0x193, which no state of the group carries), but the measured steady
+  speeds fit **29° .. 51°** (table below, within 0.03 units per frame over twelve faces) and not 28 .. 52 (up to 0.35
+  off) [O-runtime; U: where the 29 / 51 come from]. Slide kind 1 scales speed and rate by player data floats +0x1010
+  / +0x1014 (both 1.0). During `slope_transitionto` (group S818) the props are 1.0 / 1.0. Steering props of S814
+  (0x1F5..0x1F8 = ±45 / ±135, 0x23B = 45, 0x259 = 140) do not enter the velocity: the controller always drives along
+  the fall line [O]; what they turn (her facing) is [U].
 - **Too-steep floors** are not this controller: she is in the falling physics on the surface, gravity along the
   slope without cap (Wine, l3_main_bedroom roof, normal z 0.45: 51 -> 69 -> 91 units per frame, g sin 63°).
 
@@ -2573,16 +2576,44 @@ not by one normal-z threshold (decoded 2026-11-10; before that ours stood from n
 - `standable`: Stand; a Steep hit still counts when a standable face lies within 20 units of its height 60 units to a
   side ([I] ours: floor bumps and narrow steep strips; the original has no such test but passes a 20-unit strip in
   one frame). A Slide face is never standable.
-- State::Slide: on a Slide face the speed along the slope follows the controller (35..45 per frame by angle, 2250 up
-  / 4500 down units/s² at our 60 Hz tick); entered from the ground `slope_transitionto` plays first and the target
-  is 1 unit per frame while it does ([O] props; [I] that the controller runs during it), from the air
-  `slope_landfront`; then the `slope_slidefront` loop. On a Steep floor g sin(theta) without cap as before (down to
-  normal z 0.3 [I]; steeper is fallen past). A standable floor ends the slide through `slope_slide_stumble_off`
-  (State::Land, root motion); no floor: a fall with the slide velocity.
-- Jump during a slide: the slide's horizontal velocity + the standing jump's 1441 up [I]; the four `slope_jump*`
-  clips and their take-off numbers (group S822: props 0x21F, 0x259 = 30, 0x1DF) are not decoded.
+- State::Slide: on a Slide face the speed along the slope follows the controller (35..45 per frame over 29..51°, 2250 up
+  / 4500 down units/s² at our 60 Hz tick). Entered from the ground `slope_transitionto` plays first and the target
+  is 1 unit per frame while it does ([O] props of S818; [I] that the controller runs during it); a landing on a slide
+  face stops her and `slope_landfront` plays at rest ([O-runtime] 0.40 s still, below); then the `slope_slidefront`
+  loop. On a Steep floor g sin(theta) without cap as before (down to normal z 0.3 [I]; steeper is fallen past).
+- A standable floor ends the slide through `slope_slide_stumble_off` (State::Land, root motion). Off the end into the
+  air: an edge that carries a ledge is caught as by the safety drop (`trySafetyDrop`, chart T1713 -> S534 -> the hang
+  attach states; [I] played with `slope_slide_off_to_ledgeb`), else a fall with the slide velocity.
+- Jump during a slide: the slide's horizontal velocity + the standing jump's 1441 up [I]. The chart's
+  `slope_jumpF` / `U` / `L` / `R` run jump queries q3 / q39 / q40 / q41 (prop 541; the slide itself q42), whose
+  launch numbers are not decoded.
 - Not done: `ng_stepback` at the entry with the stick uphill, the S817 side run, facing changes during the slide,
-  slide flags on object collision.
+  the `slope_jump*` clips and queries, slide flags on object collision.
+
+### Measured under Wine [O-runtime]
+
+l2_junglehub, tru.exe = ours + (8558.23, -19414.44, -18073.17); Lara put 15 over a face and left alone, traced at
+60 Hz (`pt trace`: position, velocity in units per 30 Hz frame, chart state); each sample looked up in our collision
+mesh for the face under her. Traces and tools: `openunderworld-work/gameplaygoal/charvirtual/` (`slope-wine2.txt`, the
+first series) and `openunderworld-work/gameplaygoal/slope/` (`session.sh` / `session2.sh`, `wine.txt` / `wine2.txt`,
+`find_ramps2.cpp`, `analyse.py`).
+
+| Face: client flags, normal z (angle) | tru.exe | Rule |
+|---|---|---|
+| 0x0000: 0.633, 0.647, 0.665, 0.763; 0x0080: 0.626, 0.659, 0.679, 0.703, 0.716; 0x00A0: 0.974, 1.000 | stands at rest (2.5 .. 3 s) | not slide-flagged, normal z >= 0.6157 |
+| 0x0004: 0.933, 0.965 | stands at rest | slide-flagged but flatter than 28° (normal z > 0.8829) |
+| 0x0004: 0.880 (28.4°), two faces | slides, steady **35.0** units per frame | slide (under 28° it would stand); speed clamped at the 29° end |
+| 0x0004: 0.860 (30.7°) / 0.850 (31.8°) / 0.828 (34.1°) / 0.807 (36.2°) / 0.799 (37.0°) | slides, steady **35.8 / 36.3 / 37.3 / 38.3 / 38.6** | 35 + 10 (angle - 29) / 22 = 35.76 / 36.27 / 37.32 / 38.27 / 38.64 |
+| 0x0004: 0.765 (40.1°) / 0.753 (41.1°) / 0.741 (42.2°) / 0.714 (44.4°) / 0.706 (45.1°) / 0.665 (48.3°) | slides, steady **40.0 / 40.5 / 41.0 / 42.0 / 42.3 / 43.8** | 40.05 / 40.52 / 41.00 / 42.00 / 42.31 / 43.77 |
+| 0x0004 0.706: a landing on it | at rest 0.40 s in the landing state, then +1.25 per 60 Hz tick from 0 to 42.3, held | `slope_landfront`, then the controller |
+| 0x0004: 0.388, 0.470, 0.595, 0.599 (reached from a slide above) | the slide state ends; she accelerates along it without cap (56 -> 140 units per frame) in the falling states | too steep (< 0.6157); the slide flag does not cap it |
+| 0x0080: 0.45 (l3_main_bedroom roof), 0.245 .. 0.366 | falls along it, g sin(theta), no cap | too steep |
+| the lower edge of the 0.706 face (a ledge) | off the edge she turns (7.5° a tick) while dropping and ends attached (a teleport does not move her until Crouch lets go) | slide end -> ledge catch |
+| the lower edge of a 0.880 face (no ledge) | 0.1 s in a slide-off state, then the fall | slide end -> fall |
+
+Not obtained: an unflagged face between normal z 0.60 and 0.6157 that she stayed on (the two tried dropped her onto
+neighbours), 0x0020 faces steeper than 52° (the 0x00A0 trials fell through terrain not yet solid in that part of
+the unit), keys during a slide (below).
 
 ## Rail slides (src/game/Traverse.cpp)
 

@@ -1903,11 +1903,11 @@ TEST(Game, SlopeStandsOrSlidesByFlagAndAngle) {
 }
 
 // The slide controller (tru.exe 0x73FF50, state group S814): the speed along the fall line approaches 35 units per
-// 30 Hz frame at 28 degrees .. 45 at 52, at 2.5 per frame^2 on 60 Hz ticks (Wine, l2_junglehub 0x0004 face of
-// 41.2 degrees: +1.25 per tick up to 40.5 per frame = 1215 units/s, held).
+// 30 Hz frame at 29 degrees .. 45 at 51, at 2.5 per frame^2 on 60 Hz ticks (Wine, l2_junglehub 0x0004 faces: +1.25
+// per tick; steady 35.0 at 28.4 degrees, 36.3 at 31.8, 38.3 at 36.2, 40.5 at 41.1, 42.3 at 45.1, 43.8 at 48.3).
 TEST(Game, SlopeSlideSpeedFollowsAngle) {
     struct Row { float deg, speed; };
-    for (const Row r : {Row{30.0f, 35.0f + 10.0f * 2 / 24}, {41.2f, 40.5f}, {50.0f, 35.0f + 10.0f * 22 / 24}}) {
+    for (const Row r : {Row{28.36f, 35.0f}, {31.8f, 36.27f}, {36.2f, 38.27f}, {41.14f, 40.52f}, {45.09f, 42.31f}, {48.3f, 43.77f}}) {
         const float nz = std::cos(glm::radians(r.deg));
         auto w = makeWorld(rampMesh(nz, 0x0004, 6000), onRamp(nz, 300, 6000));
         const auto& s = w->player().state();
@@ -1917,7 +1917,7 @@ TEST(Game, SlopeSlideSpeedFollowsAngle) {
         EXPECT_NEAR(glm::length(s.vel), 11 * 2.5f * 900 / 60, 1.0f) << r.deg; // 11 sliding ticks of 1.25 per frame
         for (int i = 0; i < 60; ++i) w->tick({});
         ASSERT_EQ(s.state, State::Slide) << r.deg;
-        EXPECT_NEAR(glm::length(s.vel), r.speed * 30, 0.5f) << r.deg;
+        EXPECT_NEAR(glm::length(s.vel), r.speed * 30, 1.0f) << r.deg;
         EXPECT_NEAR(-s.vel.z / glm::length(glm::vec2(s.vel)), std::tan(glm::radians(r.deg)), 1e-3) << r.deg;
         EXPECT_NEAR(s.vel.y, 0, 1e-3);
         EXPECT_NEAR(s.pos.z, onRamp(nz, s.pos.x, 6000).z, 0.01f) << r.deg;
@@ -9341,8 +9341,8 @@ TEST(GameReal, SlopeJunglehubRampSeries) {
 }
 
 // l1_kraken_room, the ramp into the lower hall (Niflheim: "slide down the slope"): every face of it carries client
-// flag 0x0004. The flat top is stood on, the 44.6-degree face (normal z 0.712, 1700 long) is slid at 41.9 units per
-// 30 Hz frame (35..45 over 28..52 degrees), the run-out (normal z 0.919 / 0.953: flatter than 28 degrees) ends the
+// flag 0x0004. The flat top is stood on, the 44.6-degree face (normal z 0.712, 1700 long) is slid at 42.1 units per
+// 30 Hz frame (35..45 over 29..51 degrees), the run-out (normal z 0.919 / 0.953: flatter than 28 degrees) ends the
 // slide; she cannot run back up it.
 TEST(GameReal, SlopeKrakenRoomSlide) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -9368,7 +9368,7 @@ TEST(GameReal, SlopeKrakenRoomSlide) {
     }
     EXPECT_TRUE(loop);
     const float deg = glm::degrees(std::acos(0.712f));
-    EXPECT_NEAR(fastest, (35.0f + 10.0f * (deg - 28.0f) / 24.0f) * 30.0f, 3.0f);
+    EXPECT_NEAR(fastest, (35.0f + 10.0f * (deg - 29.0f) / 22.0f) * 30.0f, 3.0f);
     EXPECT_EQ(s.state, State::Land);
     EXPECT_EQ(s.clip, "slope_slide_stumble_off");
     EXPECT_LT(s.pos.y, -2360);
@@ -9390,7 +9390,7 @@ TEST(GameReal, SlopeKrakenRoomSlide) {
 
 // l7_yggdrasil_hall01, the slope before the eitr pit (Yggdrasil: slide down and jump at its foot): one 0x0004
 // surface of normal z 0.865 (30.1 degrees). Under the angle rule of 0.7 it was stood on; by the flag she slides it
-// at 35.9 units per frame, and Jump leaves the slide with its horizontal speed.
+// at 35.5 units per frame, and Jump leaves the slide with its horizontal speed.
 TEST(GameReal, SlopeYggdrasilHallSlideAndJump) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -9403,7 +9403,7 @@ TEST(GameReal, SlopeYggdrasilHallSlideAndJump) {
         ASSERT_EQ(s.state, State::Slide) << i;
     }
     const float deg = glm::degrees(std::acos(0.865f));
-    EXPECT_NEAR(glm::length(s.vel), (35.0f + 10.0f * (deg - 28.0f) / 24.0f) * 30.0f, 6.0f);
+    EXPECT_NEAR(glm::length(s.vel), (35.0f + 10.0f * (deg - 29.0f) / 22.0f) * 30.0f, 6.0f);
     const float vx = s.vel.x;
     Actions j;
     j.jump = true;
@@ -9413,4 +9413,32 @@ TEST(GameReal, SlopeYggdrasilHallSlideAndJump) {
     for (int i = 0; i < 240 && (s.state == State::Jump || s.state == State::Fall); ++i) w.tick({});
     EXPECT_GT(s.pos.x, -6003 + 200); // past the foot of the slope (x -6003), 630 from the take-off
     EXPECT_NEAR(s.pos.z, 0, 1.0f);
+}
+
+// A slide that runs off an edge carrying a ledge ends hanging from it (chart T1713 -> S534, the safety drop's attach
+// states; Wine, l2_junglehub: off the end of a 45-degree 0x0004 face she turned and hung): no fall in between.
+TEST(Game, SlopeSlideOffEndCatchesLedge) {
+    const float nz = 0.75f, run = 1500, drop = run * std::sqrt(1 - nz * nz) / nz;
+    CollisionMesh m;
+    addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+    addFloor(m, -2000, -1000, 3000, 1000, -3000);
+    const size_t first = m.faces.size();
+    addQuad(m, {-run, -1000, drop}, {0, -1000, 0}, {0, 1000, 0}, {-run, 1000, drop});
+    for (size_t f = first; f < m.faces.size(); ++f) m.faces[f].clientFlags = 0x0004;
+    m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+    auto w = makeWorld(std::move(m), {-800, 50, 800 * std::sqrt(1 - nz * nz) / nz});
+    const auto& s = w->player().state();
+    std::set<State> seen;
+    for (int i = 0; i < 600 && s.state != State::Hang; ++i) {
+        w->tick({});
+        seen.insert(s.state);
+    }
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+    EXPECT_TRUE(seen.count(State::Slide));
+    EXPECT_TRUE(seen.count(State::DropToHang));
+    EXPECT_FALSE(seen.count(State::Fall));
+    const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+    EXPECT_NEAR(hands.x, 0, 1e-2);
+    EXPECT_NEAR(hands.z, 0, 1e-2);
+    EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4) << "facing the wall";
 }

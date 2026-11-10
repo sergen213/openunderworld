@@ -134,6 +134,7 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"hpole_perp_fling", 1, 1}, {"crouch_Idle", 6, 6}, {"crouch_idleToCrouch", 4, 6}, {"Crouch_Front", 6, 3},
         {"ng_roll_front", 3, 1}, {"slope_slidefront", 6, 1},
         {"slope_transitionto", 8, 10}, {"slope_landfront", 3, 3}, {"slope_slide_stumble_off", 2, 1}, // requests 1491 / 1488 / 1492
+        {"slope_slide_off_to_ledgeb", 3, 3}, // request 1480
         {"bbeam_idle_wobble_fwd", 3, 3}, // request 158
         // off balance (Player::beamAboutFall / startBeamFall): requests 177, 187 / 190, 186 / 188
         {"bbeam_aboutfall_center", 6, 6}, {"bbeam_fall_left", 5, 2}, {"bbeam_fall_right", 5, 2},
@@ -284,7 +285,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "hpole_perch_Jump_right", "hpole_perch_Jump_left", "hpole_perch_Jump_forward_Antic", "hpole_perch_Jump_forward",
     "hpole_perch_Jump_back_Antic", "hpole_perch_Jump_back",
     "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
-    "slope_transitionto", "slope_landfront", "slope_slide_stumble_off", // slides (Player.cpp State::Slide)
+    "slope_transitionto", "slope_landfront", "slope_slide_stumble_off", "slope_slide_off_to_ledgeb", // slides (Player.cpp State::Slide)
     "sprint_loop", "ng_sprint_to_exhaust", "ng_run_exhaust", "ng_roll_front_sprinting", // sprint (Player::tick)
     "ng_land_hard", "ng_land_rolling", "ng_running_land_stumble", // landings by fall height / Crouch (Player::land)
     "ledgeb_climbupflair", "ledgeb_right_hustle", "ladder_climb_up_fast", // hand over hand faster with Interact (Player::tick Shimmy, Player::ladder)

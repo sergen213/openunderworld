@@ -202,9 +202,12 @@ struct Tuning {
     float minFloorNormalZ = 0.61566148f;       // cos 52 deg
     float slideMaxNormalZ = 0.88294759f;       // cos 28 deg
     // Slide speed on flagged faces [O: state group S814 props 0x204 / 0x205 / 0x1FE / 0x1FF, controller 0x73FF50]:
-    // along the fall line, 35 units per 30 Hz frame at 28 degrees to 45 at 52, approached at 5 (up) / 10 (down) per
-    // frame^2 x the frame's time multiplier: at 60 Hz 2.5 / 5 (Wine, l2_junglehub: +1.25 per 60 Hz tick).
+    // along the fall line, 35 units per 30 Hz frame up to 45 by the slope angle, approached at 5 (up) / 10 (down) per
+    // frame^2 x the frame's time multiplier: at 60 Hz 2.5 / 5 (Wine, l2_junglehub: +1.25 per 60 Hz tick). The angle
+    // range is 29..51 degrees [O-runtime: twelve 0x0004 faces of 28.4..48.3 degrees fit it within 0.03 units per
+    // frame; the controller's defaults read 28 / 52 from the player data, U why they differ].
     float slideSpeedMin = 35.0f * 30.0f, slideSpeedMax = 45.0f * 30.0f;
+    float slideAngleMin = 29.0f, slideAngleMax = 51.0f; // degrees
     float slideAccel = 2.5f * 900.0f, slideDecel = 5.0f * 900.0f;
     float slideEnterSpeed = 1.0f * 30.0f;      // while slope_transitionto plays (S818 props 0x204 = 0x205 = 1)
     float gravity = 5.72443f * 900.0f;         // units/s^2 (tru.exe: 5.72443 units per 30 Hz frame^2)
@@ -545,8 +548,8 @@ private:
     bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
-    bool trySafetyDrop(vec3 vel); // off an edge that carries a ledge: hang from it
-    void dropToHang(int ledge, int seg, float t, float side);
+    bool trySafetyDrop(vec3 vel, std::string_view clip = "drop_to_ledgeb"); // off an edge that carries a ledge: hang from it
+    void dropToHang(int ledge, int seg, float t, float side, std::string_view clip = "drop_to_ledgeb");
     bool badAttach(float attachZ) const; // a catch that rests her root at this height is a saving grab
     int hangClearance() const; // tru.exe 0x74E290's class: 2 climb up, 5 crouching, 8 wall-hug shelf, 1 none
     bool tryHangToBeam();      // hanging beside a balance beam: bbeam_ledgeu_climbup onto it
