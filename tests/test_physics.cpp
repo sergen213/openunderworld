@@ -360,12 +360,19 @@ TEST(Physics, ThreeAxisJointRestsSlidesStopsAndDrops) {
     for (int i = 0; i < 60; ++i) tick(a, j);
     const float rest = j.x.x;
     EXPECT_NEAR(j.v.x, 0, 0.01f) << "the floor's friction stops it";
-    for (int i = 0; i < 60; ++i) j.push = {4, 3, 0}, j.pushBound = 100, tick(a, j); // under the friction's 286 a step
-    EXPECT_NEAR(j.x.x, rest, 1) << "too weak a push";
+    // Her push takes the floor's friction off the body (286 a step here; tru.exe's block gains speed by her bound
+    // alone, docs/GAMEPLAY.md "Push and pull objects"): 0.2 a step along what is missing of (4, 3); Y is locked, so
+    // its 3 stay missing and X gets the smaller share. (Before: a push under the friction did not move it.)
+    for (int i = 0; i < 60; ++i) j.push = {4, 3, 0}, j.pushBound = 100, tick(a, j);
+    EXPECT_NEAR(j.x.x, rest + 85, 5) << "a bounded push gains speed by its bound a step, not at once (60 x 2 = 120)";
     EXPECT_EQ(j.push, vec3(0)) << "a push lasts one step";
-    j.limited[0] = true, j.lo[0] = -10, j.hi[0] = 150;
+    for (int i = 0; i < 30; ++i) j.grip = true, j.pushBound = 569, tick(a, j); // held: no velocity asked, 1.14 a step off it
+    EXPECT_NEAR(j.v.x, 0, 0.01f) << "her grip stops it";
+    EXPECT_FALSE(j.grip) << "a grip lasts one step";
+    const float held = j.x.x;
+    j.limited[0] = true, j.lo[0] = held - 160, j.hi[0] = held + 30;
     for (int i = 0; i < 20; ++i) j.push = {4, 3, 0}, j.pushBound = 569, tick(a, j);
-    EXPECT_GT(j.x.x, rest + 20);
+    EXPECT_GT(j.x.x, held + 20);
     const std::string saved = a.save(); // mid-push
     physics::Joint3 copy = j;
     physics::Scene b;
@@ -377,7 +384,7 @@ TEST(Physics, ThreeAxisJointRestsSlidesStopsAndDrops) {
     EXPECT_EQ(std::memcmp(&j.x, &copy.x, sizeof j.x), 0);
     EXPECT_EQ(std::memcmp(&j.v, &copy.v, sizeof j.v), 0);
     EXPECT_EQ(a.save(), b.save());
-    EXPECT_NEAR(j.x.x, 150, 1) << "held at its limit";
+    EXPECT_NEAR(j.x.x, held + 30, 1) << "held at its limit";
     EXPECT_NEAR(j.x.y, 0, 0.5f) << "the locked axis";
     j.limited[0] = false;
     for (int i = 0; i < 400 && j.x.x < 1300; ++i) j.push = {6, 0, 0}, j.pushBound = 569, tick(a, j);

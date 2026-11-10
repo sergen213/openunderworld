@@ -2467,7 +2467,10 @@ TEST(ProgressionReal, ThorPillarsSlideOnTheirPlane) {
         for (int i = 0; i < 120; ++i) w.tick({});
         std::printf("l4_pool 5610: at %.1f %.1f %.1f after %.2f s, state %u seen\n", j->x.x, j->x.y, j->x.z, float(ticks) / 60.0f, seen);
         EXPECT_TRUE(seen == 4 || seen == 5) << "its Z watch: dropped into the hollow";
-        EXPECT_NEAR(float(ticks) / 60.0f, 1434.89f / (4 * game::kPushSpeed), 2.5f) << "at 4 x 23.704 units a second";
+        // Her strength 4: 4 x 0.7585 / 9 units a frame gained a step = 607 units/s^2 (docs/GAMEPLAY.md "Push and pull
+        // objects": the law fitted to the trace of block 6504), after the 0.85 s of thor_engage. Re-pinned from the
+        // 15.1 s of the constant 4 x 23.704 units a second; the pillar itself was never measured in tru.exe.
+        EXPECT_NEAR(float(ticks) / 60.0f, 0.85f + std::sqrt(2 * 1434.89f / (4 * game::kPushImpulsePerMass / 9 * 1800)), 0.4f);
         EXPECT_NEAR(j->x.y, 1434.89f, 250.0f) << "the hollow at the groove's end";
         EXPECT_LT(j->x.z, -31.6f);
         EXPECT_NEAR(j->x.x, start.x, 60.0f) << "along the groove";

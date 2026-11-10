@@ -148,7 +148,7 @@ vec3 rootTranslation(const anim::Clip& clip, double t, bool loop);
 inline constexpr float kCameraRestPitch = -0.0225f; // tru.exe's rest pitch of the orbit camera (CameraState::pitch)
 // Lara's push / pull of a gripped object (her PushPull state; docs/GAMEPLAY.md "Thor's gauntlets"). lara.drm player
 // data +0xC7C / +0xC80 / +0xC84 / +0xC88 / +0xC8C / +0xC90 / +0xC98 [O; tru.exe 0x74AC00, 0x73F390, 0x6F1450]: speed
-// per unit of pull strength (units a second), its momentum cap, the impulse per step per unit of mass and its cap, the
+// per unit of pull strength (units a 30 Hz frame), its momentum cap, the impulse per step per unit of mass and its cap, the
 // stick arcs (degrees) that mean forward / back, the PushPull proxy's share of the object's mass.
 inline constexpr float kPushSpeed = 23.704172f, kPushMomentum = 2054.3616f, kPushImpulsePerMass = 0.75853348f,
                        kPushImpulse = 142.22504f, kPushForwardArc = 60.0f, kPushBackArc = 30.0f, kPushProxyMass = 0.125f;
@@ -164,9 +164,10 @@ vec2 pushDirection(vec2 stick);
 // +0xCA0 / +0xCA4: 20 cm level, 5 cm in height].
 inline constexpr float kPushDetachLevel = 63.211128f, kPushDetachHeight = 15.802782f;
 // Her push on a sliding body of `mass` with pull strength `strength` (1; the Thor scripts raise it while she grips)
-// against a joint motor holding it with `brake` (impulse per step, 0 none): `speed` units a second = min(23.704 x
-// strength, 2054.36 x strength / (0.125 x mass)) with at most `impulse` = min(mass x 0.7585, 142.225) x strength -
-// brake per step; speed 0: it does not move.
+// against a joint motor holding it with `brake` (impulse per step, 0 none): the velocity asked is `speed` units a
+// 30 Hz frame = min(23.704 x strength, 2054.36 x strength / M), M = 0.125 x mass (the proxy), gained with at most
+// `impulse` a 1/60 s step on the object = min(M x 0.7585, 142.225) x strength x mass / (mass + M), less the brake's
+// share [I]; speed 0: it does not move (min(mass x 0.7585, 142.225) x strength <= brake [I]).
 struct PushDrive { float speed = 0, impulse = 0; };
 PushDrive pushDrive(float mass, float strength, float brake);
 // An engagement record naming objects (`needs`) admits Lara only with one of them in her hands (`held`) or, empty-

@@ -911,11 +911,17 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   Ours: `script::Runtime::engage`, `pullStrength()`.
 - **The move** [O 0x74AC00 / 0x73F390 / 0x6F1450, lara.drm player data]: every frame the stick picks one of four ways
   by its angle off her facing: forward within 30 deg (+0xC8C = 60), back within 15 deg of straight back (+0xC90 =
-  30), else left / right; the target speed is `min(23.704 (+0xC7C) x strength, 2054.36 (+0xC80) x strength / M)` and
-  the impulse applied per step is a quarter of the velocity error x mass, at most `min(m x 0.7585 (+0xC84), 142.225
-  (+0xC88)) x strength`. [I] M = the proxy's mass = 0.125 (+0xC98) x the object's (with the object's own mass the
-  doors would crawl at 31 units/s; with the proxy's: doors 245 units/s, Valgrind gate 130, rubble 164, towers 130, the
-  manor pillar 71) - not measured under Wine. Clips [O lara.drm 1659-1665]: `thor_engage` (15 frames), `thor_idle`,
+  30), else left / right; the velocity asked is `min(23.704 (+0xC7C) x strength, 2054.36 (+0xC80) x strength / M)`
+  and the impulse applied per step, on the proxy, is a quarter of the velocity error x M, at most `min(M x 0.7585
+  (+0xC84), 142.225 (+0xC88)) x strength`, M = the proxy's mass = 0.125 (+0xC98) x the object's. The units as "Push
+  and pull objects" fits them to the Wine trace of block 6504 [I, fitted]: velocities per 30 Hz frame, the bound per
+  1/60 s step, the proxy and the object moving as one: the object gains `strength x 0.7585 / 9` units a frame each
+  step (strength x 152 units/s^2) while the bound holds, so the mechanisms are acceleration-limited and never reach
+  the velocity asked on their short travels (doors: 245 units a frame). None of the mechanisms was measured under
+  Wine. [I] kept from before the trace: whether she moves a braked joint at all is decided by the bound on the
+  object's own mass against the brake (the towers' 474 between strength 3.5 and 5.5 x 132.7), and a weaker brake
+  leaves her that share of her impulse; without the stick she asks for no velocity with the same bound, except on a
+  joint whose script motor is running. Clips [O lara.drm 1659-1665]: `thor_engage` (15 frames), `thor_idle`,
   `thor_forward / _backward / _left / _right` (root motion 406-582 units/s, not applied), `thor_disengage`; [I] that
   they are the PushPull state's clips (the calendar handles use them too now).
   Ours (`World::pushUberHandle`, `game::pushWay`, `game::pushDrive`): Interact pressed inside the record and held
@@ -928,8 +934,9 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   [U] whether the original toggles on a press instead of holding; the proxy constraint; hinge joints keep the old
   120 units/s at her grip point.
 - **Results** (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, each refused without its gear): l2_maproom door
-  2661 (C09-05) and l5_valgrind_tunnel door 7400 (C16-04) slide their 663.7 units in 2.9 s by sidestepping; the
-  l4_ragnarok_room rubble block 5660 (C15-12) 2054 units in 12.7 s; the l7 towers by their record
+  2661 (C09-05) and l5_valgrind_tunnel door 7400 (C16-04) slide their 663.7 units in 1.3 s by sidestepping (the
+  grab included; 2.9 s under the earlier constant-speed reading); the l4_ragnarok_room rubble block 5660 (C15-12)
+  2054 units in 2.1 s (12.7 s before); the l7 towers by their record
   (`ProgressionReal.EndgameCredits`, from floors inside it; before, the test pushed them while she swam). Synthetic:
   `Game.ThorGauntletsMoveHeavyObjects`; self-test `tests/selftests/gauntlet_move.json`.
 - **The pillars' joint** [O data + tru.exe]: `ma_pu_thor_pillar` and `ca_pu_thor_pillar` ride uber joint type 7 =
@@ -969,7 +976,7 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   (motor 0, bound 31605: braked). Gripping (vt 49: strength 8, command 2) frees the leaf (state 2), letting go (vt 50:
   command 3) brakes it. Volume 7511 in front of it does not open anything: it starts cinematic 7464 (240_val_gate)
   once with an autosave and sets `larabase` 19. Ours: action 11 bound (`World::uberAction`); with vt 62 run, the gate
-  slides its 663.7 units in 5.3 s by input (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`); before, no grip.
+  slides its 663.7 units in 1.7 s by input (5.3 s under the earlier reading) (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`); before, no grip.
   The cog-wheel puzzle itself (C17-01..03) is not played by input in that test.
 - **Natives** [O]: `larabase` 19 / 20 (0x79A0E0 / 0x79A100 -> 0x698850 / 0x698860) set / get the global byte 0xECFC88,
   "gauntlet charged": 0x6A6530 passes it as 1 / 0 in the instances' shader constant 6 (the gear's glow) and the player
@@ -987,7 +994,12 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   from: `StreamReal.SaveContinuesBitIdentically`'s l4_pool cases differed one tick after the load (the solids woken
   and moving, fx object 5596). After a restore `World::syncObjects` now poses the colliders it makes
   (`World::poseColliders`); `StreamReal.ThreeAxisJointAtRestSaveLoad` compares the whole state with the recorded
-  Jolt scene. Not changed: after a stream (no restore) the remade colliders stand at their intro frames until
+  Jolt scene. With push blocks in more units two more causes showed (found on the l4_traprooms cases of
+  `StreamReal.SaveContinuesBitIdentically`; the l2_puzzleroom case passes with them too): the posing has to come after the uber models' clip poses and the
+  hazards' jaws are made (`Object::animPose` and `jaws_` are not saved: blades 5897 / 5898 stood at their intro frames
+  for a step), and a three-axis joint's constraint lost its recorded warm-start impulses when the first drive after
+  the restore changed its free / fixed axes (Jolt's `SixDOFConstraint::SetTranslationLimits` clears them): the joint
+  is driven once when it is made (`Scene::Impl::makeJoint3`), before the recorded state is read back. Not changed: after a stream (no restore) the remade colliders stand at their intro frames until
   `tickObjects` poses them later in that tick, as before (posing them at once moved the
   `baldrs_plates_gate` replay's route). [I] a hinged door's collider is posed from its body, which holds the saved swing only after the first step.
 - **Open**: `ca_pu_thor_debris` 5609 (above); the pillars' hinge turn and rune glow; l2_maproom's hub and wall drag
@@ -1033,8 +1045,7 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   facing pushes straight ahead, one within 15 degrees of straight back pulls straight back, and in between the
   velocity is her forward direction turned toward the stick's side by 180 x (angle - 30) / (165 - 30) degrees: a stick
   square to her moves the body 80 degrees off forward. Its length is the stick's times the speed, min(23.704 (+0xC7C)
-  x strength, 2054.36 (+0xC80) x strength / mass): 33.2 for 6504, in ours units a second [I, as "Thor's gauntlets";
-  the Wine trace below says units a frame, with the impulse bound setting the pace].
+  x strength, 2054.36 (+0xC80) x strength / M): 33.2 for 6504, units a 30 Hz frame [I, fitted to the trace below].
   Letting go [O 0x73F900 "PlayerSC_PushPull::MustDetach"]: the state ends when the proxy is more than 63.2 (+0xCA0,
   20 cm) level or 15.8 (+0xCA4, 5 cm) in height from its anchor on the body, when their relative speed passes +0xCB4
   (0.3) or their headings part (+0xCA8 / +0xCAC / +0xCB0 = 10 / 25 / 25 degrees) [U the last two: not implemented].
@@ -1043,7 +1054,9 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   offset moved 120 units a second along the block's two axes, stopped by one terrain ray) are gone. The block is the
   body of its three-axis joint on the physics scene (Jolt: its box, translation only, gravity, the floor's friction;
   `Scene::setJoints3`), gripped by its record like every push / pull object: Interact pressed inside the record and
-  held, `obj_block_grab`, then the stick drives the body with the velocity and impulse above along / across HER facing
+  held, `obj_block_grab`, then the stick drives the body with the velocity and impulse above (one bound for the
+  vector, `Scene::driveJoint3`: an impulse on the body each step, a quarter of the error shared with the proxy = 1 / 36
+  of it, at most 1 / 9 of 0.7585 x strength units a frame) along / across HER facing
   (she is not turned to the block's faces any more), `obj_block_front / _back / _left / _right` while it moves,
   `obj_block_idle` while it does not, `obj_block_release` when the key is let go [I which clip set: the obj_block set
   on a free body whose record asks for no gear, the thor set otherwise; the code choosing is not found]. It collides
@@ -1070,19 +1083,26 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   units of the push her heading and path turn 21 degrees within 0.4 s (the block turning on its hinge as it meets the
   wall it stands by [I]) and she stays gripped. The parent instance of the block (`pole dump 6504`) never moves: the
   sections are instances of their own, so the block's own speed was read from her (she is bound to it).
-  **This contradicts ours**: ours moves the block at a constant 33.2 units a second from the first step. The trace
-  fits the decoded law with other units [I, fitted]: velocities per 30 Hz frame (target 23.704 x 1.4 = 33.2 units a
-  frame = 995 units a second, never reached within the trace) and the impulse bound taken on the PROXY's mass
-  (0.125 x 90 kg x 0.7585 x 1.4 = 11.9 per 1/60 s step on 90 .. 101 kg = 0.118 .. 0.133 units a frame per step = 212 ..
-  239 units/s^2; measured 200 .. 255), with next to no floor friction (the motion is impulse-limited both ways; the
-  blocks' state 3 "locked" brake is what stops one let go [I]). The Thor mechanisms use the same two functions, so
-  their speeds ("Thor's gauntlets": 245 / 130 / 164 units a second, [I] never measured) are in doubt the same way.
-- **Not done** [U / I]: the measured law (acceleration-limited, per-frame speed, proxy mass, the lock on letting go;
-  it needs the bodies' floor friction and a zero-velocity hold while she grips without input, in `Scene`'s three-axis
-  joints, and the same decision for the Thor mechanisms, whose tests pin today's speeds); the block's turn about its
-  hinge (pushed off centre or along a wall the original's box turns and state 1 brakes it; ours keeps its heading, so
-  the brake never comes on by itself); the proxy constraint and the two other MustDetach conditions; the stick is read
-  raw, not against the camera; whether the key must stay held (trial b, a tapped key, was not placed correctly).
+  **The law as ours has it now** [I, fitted; the decoded functions with these units]: velocities are per 30 Hz frame
+  (asked: 23.704 x 1.4 = 33.2 units a frame = 995 units a second, not reached within the trace), the impulse and its
+  bound are the PROXY's (0x73F390 reads the mass of the body it pushes: M = 0.125 x 90 kg) per 1/60 s step, and the
+  proxy is bound to the block, so the pair gains M x 0.7585 x 1.4 / (m + M) = 0.118 units a frame each step =
+  **212 units/s^2** (measured 190 .. 255; `GameReal.PushBlockGainsSpeedAsTheOriginal`: 231 units after 1.47 s pushed,
+  477 after 2.18 s pulled, within 10 %). The floor takes nothing while she pushes or holds it (the body's friction
+  is 0 in `Scene` then; the motion is impulse-limited both ways) [I]; let go, the floor's friction is back. Without the stick the velocity asked is zero with the same bound (0x74AC00 runs every
+  frame of the state). Let go, the block is at rest within the second (`GameReal.PushBlockIndependentOfRenderRate`;
+  [I] by the brake of its locked state 3 and the floor's friction).
+  What the trace does not settle [I / U]: whose mass 0x4D8C70 returns at the proxy's creation (90 kg, the block's two
+  sections, fits; 30 or 60 would give 76 or 147 units/s^2); whether the bound is per rendered frame (the trace ran at
+  60 Hz); how a brake or a joint's friction counts against her (the towers' and doors' thresholds above are the
+  earlier reading on the object's own mass); the quick stop with the stick let go while gripped (trial c: 171 -> 44
+  units a second in 0.15 s, faster than the bound's 212 units/s^2; the block was turning then, so its state 1 brake,
+  31.6 a step = 632 units/s^2 on 90 kg, may be what stopped it); the 21 degree turn at the wall.
+- **Not done** [U / I]: the block's turn about its hinge (pushed off centre or along a wall the original's box turns
+  and state 1 brakes it; ours keeps its heading, so the brake never comes on by itself); the proxy constraint and the
+  two other MustDetach conditions; the stick is read raw, not against the camera; whether the key must stay held
+  (trial b, a tapped key, was not placed correctly); she keeps `obj_block_idle` while a block she holds without the
+  stick still slides.
 
 ## Natla (l7_yggdrasil_end, the final fight)
 

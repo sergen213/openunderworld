@@ -1147,7 +1147,7 @@ TEST(StreamReal, ThreeAxisJointSaveLoad) {
     push.interact = true;
     for (int i = 0; i < 60; ++i) w.tick(push); // grips (thor_engage)
     push.move = {0, 1};
-    for (int i = 0; i < 90; ++i) w.tick(push);
+    for (int i = 0; i < 30; ++i) w.tick(push); // gaining 0.2528 units a frame each step (her strength 3): 59 units on
     const auto* j = w.uberJoint3(4674, 1);
     ASSERT_TRUE(j);
     ASSERT_GT(glm::length(j->x), 40.0f) << "pushed";

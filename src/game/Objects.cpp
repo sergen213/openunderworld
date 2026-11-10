@@ -920,9 +920,15 @@ vec2 pushDirection(vec2 stick) {
 }
 
 PushDrive pushDrive(float mass, float strength, float brake) {
-    const float impulse = std::min(mass * kPushImpulsePerMass, kPushImpulse) * strength;
-    if (mass <= 0 || impulse <= brake) return {};
-    return {std::min(kPushSpeed * strength, kPushMomentum * strength / (kPushProxyMass * mass)), impulse - brake};
+    // [I] whether she moves it at all: the bound on the object's own mass against the brake (the towers' 474 between
+    // 3.5 x 132.7 and 5.5 x 132.7), as before the trace.
+    const float full = std::min(mass * kPushImpulsePerMass, kPushImpulse) * strength;
+    if (mass <= 0 || full <= brake) return {};
+    // 0x73F390 puts the impulse on the PROXY body with the proxy's mass in the bound; the proxy is bound to the object,
+    // so the two move together: the object's share is m / (m + M) of it (1 / 9 of m x 0.7585 x strength a step).
+    const float proxy = kPushProxyMass * mass;
+    const float impulse = std::min(proxy * kPushImpulsePerMass, kPushImpulse) * strength * mass / (mass + proxy);
+    return {std::min(kPushSpeed * strength, kPushMomentum * strength / proxy), impulse * (full - brake) / full};
 }
 
 bool carriesNeeded(std::span<const std::string> needs, const std::string* held, const std::set<std::string>& carried) {
@@ -944,11 +950,11 @@ bool carriesNeeded(std::span<const std::string> needs, const std::string* held, 
 // itself (tru.exe: the camera-relative stick against her facing) and moves a joint only the way it can go: a joint
 // lying across her facing (the slide doors) by left / right, one along it by forward / back.
 // Prismatic joints [O 0x74AC00 / 0x73F390, player data +0xC7C / +0xC80 / +0xC84 / +0xC88]: her target speed is
-// min(23.704 x strength, 2054.36 x strength / M) units a second and each step's impulse is at most
-// min(m x 0.7585, 142.225) x strength; [I] M = the PushPull proxy body's mass, 0.125 (+0xC98) of the object's m (with
-// m itself the doors would crawl at 30 units a second); [I] a joint motor holding still with at least that impulse (the
-// braked doors, 3.16e6) keeps the joint where it is, a weaker one (the retracted towers' 474 against 5.5 x 132.7) is
-// overcome by the difference. Hinges: [I] her grip point moves at `speed` (the push-block speed), unbounded.
+// min(23.704 x strength, 2054.36 x strength / M) units a 30 Hz frame and each 1/60 s step's impulse, put on the proxy,
+// is at most min(M x 0.7585, 142.225) x strength, M = the PushPull proxy body's mass, 0.125 (+0xC98) of the object's m
+// [I fitted to the Wine trace of block 6504, docs/GAMEPLAY.md "Push and pull objects": a constant 212 units/s^2];
+// [I] a joint motor holding still with at least m x 0.7585 x strength (the braked doors, 3.16e6) keeps the joint where
+// it is, a weaker one (the retracted towers' 474 against 5.5 x 132.7) leaves her that share of her impulse. Hinges: [I] her grip point moves at `speed` (the push-block speed), unbounded.
 // She faces the object's side she grips (Player::grip, the thor_* clips): [I] a record with a facing cone (shape 2: the
 // slide doors' handles) turns her against the cone's heading, toward the handle; others keep her own facing, squared
 // to the joint. [I] The PushPull proxy body (0x7358E0 "PushPull Proxy") is not simulated, nor the record kind 3
@@ -1001,17 +1007,17 @@ bool World::pushUberHandle(const Actions& a, float speed) {
         uberGrip_ = glm::normalize(vec3(fwd.x, fwd.y, 0));
         if (!uberHandle_.hold) uberHandle_.hold = s.pos - j.x;
         const vec2 dir = pushDirection(a.move);
-        if (dir != vec2(0)) {
-            const vec3 right(uberGrip_.y, -uberGrip_.x, 0);
-            float brake = 0;
-            for (size_t k = 0; k < 2; ++k)
-                if (j.motor[k] && j.speed[k] == 0 && j.force[k] > 0) brake = std::max(brake, j.force[k]);
-            const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), brake);
-            if (d.speed <= 0) return true; // held: her strength does not move it
-            j.push = (uberGrip_ * dir.y + right * dir.x) * (d.speed / 30.0f), j.pushBound = d.impulse;
-            uberPush3_ = {uberHandle_.uid, slide, j.x};
-            uberMoving_ = std::abs(dir.y) >= std::abs(dir.x) ? (dir.y > 0 ? 1 : -1) : dir.x < 0 ? 2 : -2;
-        }
+        const vec3 right(uberGrip_.y, -uberGrip_.x, 0);
+        float brake = 0;
+        for (size_t k = 0; k < 2; ++k)
+            if (j.motor[k] && j.speed[k] == 0 && j.force[k] > 0) brake = std::max(brake, j.force[k]);
+        const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), brake); // (no joint friction while she grips [I])
+        if (d.speed <= 0) return true; // held: her strength does not move it
+        // 0x74AC00 runs every frame of the state: without the stick the velocity asked is zero, with the same bound.
+        j.grip = true, j.push = (uberGrip_ * dir.y + right * dir.x) * d.speed, j.pushBound = d.impulse;
+        j.pushGain = 0.25f * kPushProxyMass / (1 + kPushProxyMass); // a quarter of the error on the proxy, shared with the object
+        uberPush3_ = {uberHandle_.uid, slide, j.x};
+        if (dir != vec2(0)) uberMoving_ = std::abs(dir.y) >= std::abs(dir.x) ? (dir.y > 0 ? 1 : -1) : dir.x < 0 ? 2 : -2;
         return true;
     }
     if (index < 0 || rt == uberRuntime_.end()) {
@@ -1038,18 +1044,21 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     const vec3 left(-uberGrip_.y, uberGrip_.x, 0);
     const vec3 want = way == 1 ? uberGrip_ : way == -1 ? -uberGrip_ : way == 2 ? left : way == -2 ? -left : vec3(0);
     const float drive = glm::dot(want, dir); // +-1 along the joint, 0 where it cannot go
-    if (std::abs(drive) > 0.7071f) {
-        const float sign = drive > 0 ? 1.0f : -1.0f;
-        if (j.hinge) {
-            j.push = sign * speed / rate / 30.0f;
-        } else {
-            const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), j.motor && j.force > 0 ? j.force : 0.0f);
-            if (d.speed <= 0) return true; // held: her strength does not move it
-            j.push = sign * d.speed / 30.0f, j.pushBound = d.impulse;
-        }
-        uberPush_ = {uberHandle_.uid, index, j.x};
-        uberMoving_ = way;
+    const bool driven = std::abs(drive) > 0.7071f;
+    const float sign = drive > 0 ? 1.0f : -1.0f;
+    if (j.hinge) {
+        if (!driven) return true;
+        j.push = sign * speed / rate / 30.0f;
+    } else {
+        const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), j.motor && j.force > 0 ? j.force : 0.0f);
+        if (d.speed <= 0) return true; // held: her strength does not move it
+        // Without the stick she asks for no velocity with the same bound (0x74AC00 every frame); [I] not against a
+        // script motor that is running (the towers' retraction): that has the joint while she does not push.
+        if (!driven && j.motor) return true;
+        j.grip = true, j.push = driven ? sign * d.speed : 0.0f, j.pushBound = d.impulse;
     }
+    uberPush_ = {uberHandle_.uid, index, j.x};
+    if (driven) uberMoving_ = way;
     return true;
 }
 
@@ -1760,8 +1769,11 @@ void World::syncObjects() {
     syncedPlates_ = lateColliders(script_);
     syncedAnchors_ = script_.anchors().size();
     poseShotOnly();
-    if (restoredColliders_) poseColliders(); // a restored world: where the saved one had them (until its first tickObjects)
     syncHazards();
+    // A restored world: where the saved one had them (until its first tickObjects). After syncHazards: the crusher
+    // jaws are posed by what it makes, and after the uber models' clip poses (Object::animPose is not saved:
+    // l4_traprooms' blades 5897 / 5898 stood at their intro frames for the first step).
+    if (restoredColliders_) poseUberModels(), poseColliders();
 }
 
 // An anchored object (script::Runtime::anchor) sits in the frame of its host's HInfo marker: the marker's segment as
