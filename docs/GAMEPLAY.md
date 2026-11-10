@@ -748,6 +748,68 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   (probe of 12 chapter units: no equip call), so the gear stays hidden outside a volume with carried objects. The
   cinematic base type 3523's gear events 10-21 are never sent (no retail stream has events).
 
+## Thor's gauntlets (heavy mechanisms)
+
+- **Owning them** [O]: the gear is three objects in Lara's 15 object slots (`g_gauntletleft` 57, `g_gauntletright` 58,
+  `g_belt` 56; larabase 37 gives, 38 tests, 42 drops: "Thor's gear" above; ours `script::Runtime::playerObjects`,
+  saved, `game::chapterGear`). No global flag: what asks for them is the **engagement record** of each mechanism.
+- **The requirement** [O data + tru.exe]: a push / pull record (kind 1) lists object ids at `+0x6C / +0x70`
+  (`physics::Engagement::needs`). 0x6F3C60 admits Lara to a record with a list only if 0x6F3BB0 finds one of the
+  objects: the portable in her hands (`+0x858`), else her weapon slots (0x6E7E10), else her 15 object slots. Records
+  (dump `OU_UBER_SECTIONS=<object>`, now with the needs and every section set):
+
+  | object (units) | record | needs | script strength |
+  |---|---|---|---|
+  | `sa_ei_thor_slide_door` (l2_maproom 2661, 2662), `ar_ei_thor_slide_door` (l5_valgrind_tunnel 7400) | section 1, set 540: two half-cylinders r 711 on handle markers 11 / 12, cone 90 +- 90 | g_gauntletleft | 15 |
+  | `ma_pu_thor_pillar` (l3_secretchamber 4674) | section 0: sphere r 948 | g_gauntletright | 3 |
+  | `ca_pu_thor_pillar` 5610, `ca_pu_thor_debris` 5609 (l4_pool), `ca_pu_thor_block_rubble` (l4_ragnarok_room 5660) | section 0: cylinder r 790 / sphere r 948 | g_belt | 4 / 4 / 10 |
+  | `ar_ei_thor_valgrind_door` (l5_valgrind 7334) | sections 0 / 1, sets 464 / 476 given by their state 1 | none | 8 |
+  | `ar_pu_thor_tower_short / _tall` (l7_yggdrasil_end 8398-8400) | section 0: cylinder r 790, h 4740 | none | 5.5 |
+
+  All are class-79 uber objects ("heavy" = their mass: doors 1005 / 1015, rubble 1000, pool pillar 500, towers 175 /
+  224, manor pillar 150). Ours: `World::engaged` admits a record through `game::carriesNeeded` (held portable, else
+  `playerObjects`). Before: a record with a list never admitted an empty-handed Lara, so the Thor records were dead, and
+  `World::pushUberJoints` instead gripped ANY uber object riding a level prismatic joint from within 120 units of its
+  collision and slid it at 120 units/s whatever its record, gear or brake (even while she swam): removed.
+- **Engaging** [O]: Interact inside the record puts her in the PushPull state; its entry 0x73F4D0 builds the "PushPull
+  Proxy" body, posts message 0x158 to the object (uber trigger 20) and calls its script's vt 49 (0x701310 -> 0x799900,
+  prototype 67) with (record segment, kind); leaving posts 0x14F (trigger 21) and calls vt 50 (0x701350 -> 0x799950,
+  68). The Thor base script (type 9744) answers vt 49 with `larabase` 35 (0x79A270 -> player `+0x1240`, **her pull
+  strength**, 1 at birth; debug text "Overriding Lara pull strength to =") = its member +12 (table above) and vt 50
+  with 1; the slide doors add uber command 0 / 1: braked state 2 (motor 0 speed, 3.16e6) <-> free state 1 (no motor);
+  the rubble block does the same by triggers 20 / 21; the towers' vt 49 / 50 also switch a push camera (gamebase 50 +
+  53 (4), back 53 (1); gamebase 50 is unbound in ours, so the towers' vt 49 stops there after setting the strength).
+  Ours: `script::Runtime::engage`, `pullStrength()`.
+- **The move** [O 0x74AC00 / 0x73F390 / 0x6F1450, lara.drm player data]: every frame the stick picks one of four ways
+  by its angle off her facing: forward within 30 deg (+0xC8C = 60), back within 15 deg of straight back (+0xC90 =
+  30), else left / right; the target speed is `min(23.704 (+0xC7C) x strength, 2054.36 (+0xC80) x strength / M)` and
+  the impulse applied per step is a quarter of the velocity error x mass, at most `min(m x 0.7585 (+0xC84), 142.225
+  (+0xC88)) x strength`. [I] M = the proxy's mass = 0.125 (+0xC98) x the object's (with the object's own mass the
+  doors would crawl at 31 units/s; with the proxy's: doors 245 units/s, Valgrind gate 130, rubble 164, towers 130, the
+  manor pillar 71) - not measured under Wine. Clips [O lara.drm 1659-1665]: `thor_engage` (15 frames), `thor_idle`,
+  `thor_forward / _backward / _left / _right` (root motion 406-582 units/s, not applied), `thor_disengage`; [I] that
+  they are the PushPull state's clips (the calendar handles use them too now).
+  Ours (`World::pushUberHandle`, `game::pushWay`, `game::pushDrive`): Interact pressed inside the record and held
+  grips, the stick (measured on the stick itself [I]) drives the prismatic joint that moves the section - a joint
+  across her facing (the doors: she faces the handle, against the record's cone) by left / right, one along it by
+  forward / back - as a velocity motor bounded by the impulse; a joint motor braking with at least that impulse keeps
+  it still (the doors outside state 1), a weaker one is overcome by the difference (the retracted towers' 474 / 632
+  against 5.5 x 132.7 / 142.2); she is carried with it. When the section swaps its record set (the towers locking,
+  action 0x1D) she lets go and vt 50 runs before the new state's events. A press a switch took grips nothing.
+  [U] whether the original toggles on a press instead of holding; the proxy constraint; hinge joints keep the old
+  120 units/s at her grip point.
+- **Results** (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, each refused without its gear): l2_maproom door
+  2661 (C09-05) and l5_valgrind_tunnel door 7400 (C16-04) slide their 663.7 units in 2.9 s by sidestepping; the
+  l4_ragnarok_room rubble block 5660 (C15-12) 2054 units in 12.7 s; the l7 towers by their record
+  (`ProgressionReal.EndgameCredits`, from floors inside it; before, the test pushed them while she swam). Synthetic:
+  `Game.ThorGauntletsMoveHeavyObjects`; self-test `tests/selftests/gauntlet_move.json`.
+- **Open**: l5_valgrind gate 7334 (its section never reaches state 1 in ours: vt 55 after `240_val_gate`; `larabase`
+  54 = "is that her bike" 0x777E40 and 19 = "gauntlet charged" [U effect] stop volume 7511's and cinematic 7464's
+  handlers: decoded, not bound, because binding them lets handlers elsewhere run on into cinematics untested here);
+  `ma_pu_thor_pillar`, `ca_pu_thor_pillar` ride joint type 7 (planar, limit / motor records of kind 7) and
+  `ca_pu_thor_debris` has no joint (a free body): neither is simulated, so C11-28 and C15-03 stay open; l2_maproom's hub
+  and wall drag (C09-09 / -11) are not surveyed; the speed's M and the hold / toggle need a Wine trace.
+
 ## Controls
 
 - Bindings live in `config.json` under `controls` (`bindings`: action → list of inputs; `mouse_sensitivity` 0.1..10,

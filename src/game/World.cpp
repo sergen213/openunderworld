@@ -285,6 +285,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "sprint_loop", "ng_sprint_to_exhaust", "ng_run_exhaust", "ng_roll_front_sprinting", // sprint (Player::tick)
     "ledgeb_bad_attach_M", "ledgeb_bad_attach_recover", // saving grab (Player::tryGrab)
     "obj_block_grab", "obj_block_idle", "obj_block_release", "obj_block_front", "obj_block_back", // push blocks (Player::grip)
+    "thor_engage", "thor_idle", "thor_disengage", "thor_forward", "thor_backward", "thor_left", "thor_right", // push / pull records
     "gear_weapon_pickup", "gear_weapon_pickup_crouch", // pickups (World::collectPickups)
     "death_fall_normal", "death_toknee", "death_drown", // combat (Combat.cpp)
     "wading_idle", "wading_walk", "swim_to_wade", "swim_land_wading", // wading (Player: water class 0x100)
@@ -745,7 +746,10 @@ void World::tick(const Actions& input) {
         player_.restore(s);
     }
     const vec3 grip = script_.gripAxis() != vec3(0) ? script_.gripAxis() : uberGrip_;
-    if (!onBike) player_.grip(grip, carry == vec3(0) ? 0 : glm::dot(carry, grip) > 0 ? 1 : -1);
+    if (!onBike) {
+        const bool handle = uberHandle_.uid != 0; // a push / pull record: her PushPull state's clips
+        player_.grip(grip, handle ? (carry == vec3(0) ? 0 : uberMoving_) : carry == vec3(0) ? 0 : glm::dot(carry, grip) > 0 ? 1 : -1, handle);
+    }
     enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height, player_.tuning().radius, player_.state().water >= 0},
                   [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, wdt);
     syncRagdolls(false); // bodies for this tick's starting ragdolls, so a save between ticks holds them

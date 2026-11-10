@@ -460,6 +460,7 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
     playerScript_.reset();
     playerHiddenGroups_ = playerGearGroups_ = 0;
     playerObjects_.clear();
+    pullStrength_ = 1;
     if (!bigfile_) return;
     const auto bytes = bigfile_->read("pc-w\\lara.drm");
     if (!bytes) return;
@@ -1732,9 +1733,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             }
             // 31 (0x7975F0 -> 0x776EF0) posts INSTANCE message 0xC (!arg) to Lara; 61 (0x79A590 -> 0x778060) copies a global
             // clock into Lara +0x6DC and zeroes +0x6E0. The endgame warps (340 / 342 end handlers) run them [U: no effect on ours].
-            // 35 (0x79A270 -> 0x777DA0 -> 0x6EE920) stores its float in player +0x1240; the calendars' vt 54 runs it [U: what
-            // reads it].
-            if (!std::strcmp(name, "larabase") && (((nc.function == 31 || nc.function == 35) && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
+            // 35 (0x79A270 -> 0x777DA0 -> 0x6EE920) stores its float in player +0x1240, her pull strength (0x74AC00 /
+            // 0x73F390 read it): the calendars' vt 54 and the Thor mechanisms' vt 49 / 50 run it.
+            if (!std::strcmp(name, "larabase") && nc.function == 35 && nc.args.size() == 1) { // her pull strength (Script.hpp)
+                pullStrength_ = std::bit_cast<float>(nc.args[0].bits);
+                return true;
+            }
+            if (!std::strcmp(name, "larabase") && ((nc.function == 31 && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
                 return true;
             // uitext 57 (0x7A6D10 -> 0x4C32E0): returns member +0x210 of the text's lazily created widget (a localized
             // string handle) [U]; we have no widget, so null. uigamedata 106 (0x7A14F0 -> 0x77C8B0) stores that string as
@@ -2216,6 +2221,11 @@ bool Runtime::removePortable(int32_t portable, int32_t receptacle, int32_t segme
     const bool started = graphStimulus(receptacle, formats::kStimulusRemove, -1.0f);
     graphStimulus(portable, formats::kStimulusRemove, -1.0f);
     return started;
+}
+
+void Runtime::engage(int32_t uid, int32_t segment, int32_t kind, bool on) {
+    const vm::Value args[] = {vm::Value::scalar(uint32_t(segment)), vm::Value::scalar(uint32_t(kind))};
+    callback(uid, "instance", on ? 67 : 68, args);
 }
 
 bool Runtime::graphAccepts(int32_t uid, uint32_t mask) const {

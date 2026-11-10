@@ -7671,6 +7671,66 @@ TEST(GameReal, LadderLetGoCatchesAgainAndBadAttach) {
     }
 }
 
+// Thor's gauntlets (docs/GAMEPLAY.md "Thor's gauntlets"), the rules without game data: a push / pull record naming gear
+// admits Lara only while she carries it (tru.exe 0x6F3BB0); her push on a heavy slider is refused while its joint
+// motor brakes harder than her strength pushes and moves it at min(23.704 s, 2054.36 s / (0.125 m)) units a second
+// once the mechanism's script has raised her pull strength and freed it (0x74AC00 / 0x73F390); the stick's four ways.
+TEST(Game, ThorGauntletsMoveHeavyObjects) {
+    const std::string gear[] = {"g_gauntletleft"}, pole = "ca_pt_pole_a", gauntlet = "g_gauntletleft";
+    EXPECT_TRUE(game::carriesNeeded({}, nullptr, {}));
+    EXPECT_FALSE(game::carriesNeeded(gear, nullptr, {})) << "bare hands";
+    EXPECT_FALSE(game::carriesNeeded(gear, nullptr, {"g_gauntletright", "g_belt"}));
+    EXPECT_TRUE(game::carriesNeeded(gear, nullptr, {"g_gauntletleft"})) << "worn";
+    EXPECT_FALSE(game::carriesNeeded(gear, &pole, {"g_gauntletleft"})) << "her hands hold something else";
+    EXPECT_TRUE(game::carriesNeeded(gear, &gauntlet, {}));
+
+    EXPECT_EQ(game::pushWay({0, 0}), 0);
+    EXPECT_EQ(game::pushWay({0, 1}), 1);
+    EXPECT_EQ(game::pushWay({0.45f, 0.9f}), 1) << "26.6 degrees off forward";
+    EXPECT_EQ(game::pushWay({0.6f, 0.8f}), -2) << "36.9 degrees: right";
+    EXPECT_EQ(game::pushWay({-1, 0}), 2);
+    EXPECT_EQ(game::pushWay({-0.5f, -0.87f}), 2) << "150 degrees: still left";
+    EXPECT_EQ(game::pushWay({0.2f, -0.98f}), -1) << "168 degrees: back";
+
+    // A slide door: mass 1005, its braked state's motor holds with 3.16e6 a step, its script's strength is 15.
+    const float mass = 1005, brake = 3.16056e6f;
+    EXPECT_EQ(game::pushDrive(mass, 1, brake).speed, 0.0f);
+    EXPECT_EQ(game::pushDrive(mass, 15, brake).speed, 0.0f) << "braked: not even with the gauntlets";
+    const game::PushDrive door = game::pushDrive(mass, 15, 0);
+    EXPECT_NEAR(door.speed, 2054.3616f * 15 / (0.125f * mass), 0.01f);
+    EXPECT_NEAR(door.impulse, 142.22504f * 15, 0.01f);
+    // The endgame towers: mass 175, retracted they brake with 474.08; the script's 5.5 overcomes it, 3.5 would not.
+    EXPECT_EQ(game::pushDrive(175, 3.5f, 474.083f).speed, 0.0f);
+    const game::PushDrive tower = game::pushDrive(175, 5.5f, 474.083f);
+    EXPECT_NEAR(tower.speed, 23.704172f * 5.5f, 0.01f);
+    EXPECT_NEAR(tower.impulse, 175 * 0.75853348f * 5.5f - 474.083f, 0.01f);
+
+    // On the simulated joint: braked and pushed with bare strength it stays; freed and pushed with the gauntlets it
+    // slides to its limit at that speed.
+    physics::Scene scene;
+    physics::Joint1 j;
+    j.mass = mass, j.axis = {1, 0, 0}, j.pivot = {0, 0, 100}, j.limited = true, j.lo = 0, j.hi = 663.717f;
+    j.motor = true, j.speed = 0, j.force = brake;
+    const auto push = [&](float strength, int ticks) {
+        int n = 0;
+        for (; n < ticks && j.x < j.hi - 2; ++n) {
+            const game::PushDrive d = game::pushDrive(j.mass, strength, j.motor ? j.force : 0.0f);
+            if (d.speed > 0) j.push = d.speed / 30.0f, j.pushBound = d.impulse;
+            scene.setJoints({{1, &j}}, {}), scene.step(1.0f / 60.0f);
+        }
+        return n;
+    };
+    push(1, 120);
+    EXPECT_NEAR(j.x, 0.0f, 0.5f) << "refused";
+    j.motor = false; // its script's command frees it as she grips
+    const int ticks = push(15, 600);
+    EXPECT_GT(j.x, j.hi - 2.5f) << "open";
+    EXPECT_NEAR(float(ticks) / 60.0f, j.hi / door.speed, 0.5f) << "at the push speed";
+    j.motor = true; // let go: braked again
+    for (int i = 0; i < 60; ++i) scene.setJoints({{1, &j}}, {}), scene.step(1.0f / 60.0f);
+    EXPECT_GT(j.x, j.hi - 5.0f) << "it stays open";
+}
+
 // The safety drop (lara.drm chart T114: falling out of a ground state with a ledgegrab as the state's target): walking,
 // running or rolling off an edge that carries a ledge she turns and hangs from it without a key (drop_to_ledgeb, as
 // the Crouch drop); an edge without a ledge is a plain fall (Game.RunsOffEdgeFallsAndLands).

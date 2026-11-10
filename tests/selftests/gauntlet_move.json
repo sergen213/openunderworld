@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "name": "gauntlet_move",
+  "chapter": "Ancient World (l2_maproom): the carved Thor door 2661 cannot be gripped bare-handed; with the left gauntlet Interact grips its handle and a sidestep slides it open",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/ancient1.html",
+  "note": "docs/GAMEPLAY.md Thor's gauntlets (matrix requirement C09-05). sa_ei_thor_slide_door 2661: its push / pull record (uber section 1, kind 1) names g_gauntletleft [O data, tru.exe 0x6F3BB0]; gripping runs its script's vt 49 (pull strength 15, uber command 0: braked state 2 -> free state 1), the stick's left / right slides both halves on their linked prismatic joints (limit 663.7) at 245 units/s, letting go brakes it again (state 2). The first step holds Interact and the stick both ways without the gauntlet: nothing may move.",
+  "level": "l2_maproom",
+  "spawn": [-20226, 53634, -8830, 90],
+  "steps": [
+    {"step": "refused_bare_handed",
+     "plan": ["wait 1.5", "push 0 1 2", "push 0 -1 2", "wait 0.5"],
+     "duration": 20,
+     "expect": [
+       {"probe": "object.2661.uberjoint.1", "over": "max", "max": 1, "note": "the door did not move"},
+       {"probe": "object.2661.uberjoint.1", "over": "min", "min": -1},
+       {"probe": "object.2661.uber.0", "eq": 2, "note": "still braked"},
+       {"probe": "player.state", "eq": "idle"}
+     ]},
+    {"step": "grip_and_slide",
+     "fixtures": [{"give": "g_gauntletleft"}],
+     "plan": ["engage 2661 walk", "push 0 1 4.5", "wait 0.2"],
+     "duration": 40,
+     "until": {"probe": "object.2661.uberjoint.1", "min": 655},
+     "expect": [
+       {"visits": ["block"]},
+       {"clips": ["thor_engage"]},
+       {"probe": "object.2661.uberjoint.1", "min": 655, "note": "open to its limit 663.7"}
+     ]},
+    {"step": "let_go",
+     "plan": ["wait 2"],
+     "duration": 10,
+     "expect": [
+       {"probe": "object.2661.uberjoint.1", "min": 655, "note": "it stays open"},
+       {"probe": "object.2661.uber.0", "eq": 2, "note": "braked again (vt 50: command 1)"},
+       {"probe": "player.state", "eq": "idle"}
+     ]}
+  ]
+}

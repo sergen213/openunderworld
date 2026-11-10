@@ -327,24 +327,33 @@ bool Player::use(std::string_view clip, vec3 pos, float yaw) {
 
 // [O] lara.drm requests 60 obj_block_grab, 61 obj_block_idle, 62 / 58 obj_block_front/left/right/back, 1452
 // obj_block_release; the clips have no root motion. [I] front = pushing, back = pulling; the sideways clips are unused.
-void Player::grip(vec3 axis, int moving) {
+// [O] lara.drm animations 1659-1665 thor_idle / _engage (15 frames) / _disengage (9) / _backward / _forward / _left /
+// _right: their root motion (406-582 units a second) is not applied, the pushed object carries her (World::tick); [I]
+// they are her PushPull state's clips (the chart's requests are not decoded), played at their own rate.
+void Player::grip(vec3 axis, int moving, bool thor) {
+    thor = thor && anims_.find("thor_engage") && anims_.find("thor_idle");
+    const char* const grab = thor ? "thor_engage" : "obj_block_grab";
     if (s_.state != State::Block) {
-        if (axis == vec3(0) || !canInteract() || !anims_.find("obj_block_grab")) return;
+        if (axis == vec3(0) || !canInteract() || !anims_.find(grab)) return;
         s_.state = State::Block;
         s_.vel = vec3(0), s_.yaw = std::atan2(axis.y, axis.x);
         s_.clip.clear(), s_.clipMix.clear(), s_.mix = 0;
-        play("obj_block_grab", false);
+        play(grab, false);
         return;
     }
     if (axis == vec3(0)) { // let go
+        const bool wasThor = s_.clip.starts_with("thor_");
         s_.state = State::Use;
         s_.clip.clear();
-        play("obj_block_release", false);
+        play(wasThor && anims_.find("thor_disengage") ? "thor_disengage" : "obj_block_release", false);
         return;
     }
     s_.yaw = std::atan2(axis.y, axis.x);
-    if (s_.clip == "obj_block_grab" && !clipDone()) return;
-    play(moving > 0 ? "obj_block_front" : moving < 0 ? "obj_block_back" : "obj_block_idle", true);
+    if (s_.clip == grab && !clipDone()) return;
+    if (thor)
+        play(moving == 1 ? "thor_forward" : moving == -1 ? "thor_backward" : moving == 2 ? "thor_left" : moving == -2 ? "thor_right" : "thor_idle", true);
+    else
+        play(moving > 0 ? "obj_block_front" : moving < 0 ? "obj_block_back" : "obj_block_idle", true);
 }
 
 // Collide-and-slide of a capsule [pos + bottom + r, pos + height - r]. `horizontalNormals` flattens
