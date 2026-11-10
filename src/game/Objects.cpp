@@ -200,7 +200,7 @@ nlohmann::json World::serializeObjects() const {
     }
     for (const auto& [uid, x] : slides_) slides.push_back({uid, x});
     return {{"uber", std::move(uber)}, {"held", held_}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
-            {"insertedSections", std::move(insertedSections)}, {"placed", placed_},
+            {"insertedSections", std::move(insertedSections)}, {"placed", placed_}, {"breakables", serializeBreakables()},
             {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
 }
 
@@ -247,6 +247,7 @@ void World::restoreObjects(const nlohmann::json& j) {
                 if (const auto it = inserted.find(e.at(0).get<int32_t>()); it != inserted.end()) it->second.section = e.at(1).get<int>();
             for (const auto& e : j.value("slides", nlohmann::json::array())) slides[e.at(0).get<int32_t>()] = e.at(1).get<float>();
             placed = j.value("placed", std::set<int32_t>{});
+            restoreBreakables(j.value("breakables", nlohmann::json::array())); // older saves: every breakable whole
             if (const auto p = j.find("physics"); p != j.end() && p->value("version", 0) == 1) {
                 const std::string hex = p->at("state").get<std::string>();
                 if (hex.size() % 2) throw std::runtime_error("odd physics state");
@@ -262,6 +263,8 @@ void World::restoreObjects(const nlohmann::json& j) {
         } catch (const std::logic_error& e) {
             throw std::runtime_error(std::string("objects: ") + e.what());
         }
+    } else {
+        restoreBreakables({});
     }
     uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberEvents_.clear(), plates_.clear();
     uberSaved_ = std::move(saved);
@@ -398,7 +401,13 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
         break;
     case 0x13: // 0x4D3B50: gives birth to the record's object at the section's marker (formats::UberBirth). Ours: the
                // treasure of a reward urn (UnitData::births; a pickup from now on), whatever broke the urn.
-        if (a.birth >= 0) born.insert(formats::bornUid(uid, size_t(a.birth)));
+        if (a.birth >= 0) {
+            born.insert(formats::bornUid(uid, size_t(a.birth)));
+            // An effect object with an explosion record (sh_ei_exploading_barrel -> squib_exploding_barrel) goes off
+            // where it is born [I: at the object's origin; the record's marker is not placed].
+            if (const auto* o = script_.find(uid); o && size_t(a.birth) < data.births.size())
+                birthBlast(data.births[size_t(a.birth)].object, o->pos + o->offset);
+        }
         break;
     case 0x1D: // 0x6D5EC0: section +0xD4 = the action's set, where Lara engages the section (query 0x53, 0x6D59C0)
         rt.sections[section].engagement = a.engagement;
@@ -823,6 +832,7 @@ void World::uberShot(int32_t uid, vec3 dir) {
 // hit message reaches every instance the area hits (0x69F1E0) or the bullet (World::fire) strike. [I] every section of
 // the object takes it (the urns and barrels have one).
 void World::damageObject(int32_t uid, float damage, int damageClass) {
+    if (hitBreakable(uid, damageClass, true)) return; // class 30: its hit count (0x6D3160)
     const auto rt = uberRuntime_.find(uid);
     const auto data = uberData_.find(uid);
     if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return;
@@ -1306,11 +1316,13 @@ void World::syncObjects() {
                 colliders_.push_back({o.uid, seg, hinge, intro, p.segments[seg]});
             }
     }
+    breakableColliders(); // class-30 breakables: their pieces' collision while whole (Breakables.cpp)
     syncedObjects_ = script_.objects().size();
     syncedPlates_ = lateColliders(script_);
 }
 
 void World::tickObjects(float dt) {
+    tickBreakables(dt); // contacts, waits and breaks first: a break drops its colliders before anything queries them
     // Objects came or went, or the merged collision was rebuilt (streaming drops its dynamics).
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
         lateColliders(script_) != syncedPlates_)
@@ -1771,7 +1783,7 @@ void World::tickObjectMarkup() {
         if (c.section >= 0 || !seen.insert(c.uid).second) continue;
         const auto* o = script_.find(c.uid);
         const auto* p = o ? objectPhysics(o->name) : nullptr;
-        if (!p || p->markup.empty() || p->physClass == 50) continue;
+        if (!p || p->markup.empty() || p->physClass == 50 || p->physClass == kClassBreakable) continue; // breakables: their pieces' (below)
         const glm::mat4 frame = col_.dynamics[i].transform * glm::inverse(c.frame);
         for (int k = 0; k < int(p->markup.size()); ++k) {
             collision::Markup m = p->markup[size_t(k)];
@@ -1782,8 +1794,9 @@ void World::tickObjectMarkup() {
             else col_.markup[size_t(it->second)].points = std::move(m.points), col_.markup[size_t(it->second)].type = m.type;
         }
     }
-    for (const auto& [key, index] : objectMarkup_) // gone (streamed out, intangible)
-        if (!seen.contains(key.first) && size_t(index) < col_.markup.size()) col_.markup[size_t(index)].type = 0;
+    for (const auto& [key, index] : objectMarkup_) // gone (streamed out, intangible); breakable pieces' items: below
+        if (key.second < 1000 && !seen.contains(key.first) && size_t(index) < col_.markup.size()) col_.markup[size_t(index)].type = 0;
+    tickBreakableMarkup();
 }
 
 // One physics step on the fixed tick (Jolt, src/physics): rigid-body doors and levers on their hinges, the uber
@@ -1926,6 +1939,7 @@ void World::stepPhysics(float dt) {
         looseIds.insert(o.uid);
     }
     chunkPieces(loose);
+    breakableLoose(loose); // broken class-30 objects' pieces (Breakables.cpp)
     physics_.setLoose(loose);
     const auto bikes = bikeVehicles();
     physics_.setVehicles(bikes); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result

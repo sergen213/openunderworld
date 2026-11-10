@@ -707,6 +707,7 @@ void World::tick(const Actions& input) {
     tickCombat(a, dt); // after the camera: free aim follows it
     if (!combat_.shots.empty()) enemies_.disturb(player_.state().pos); // her shots: disturbance message 0xBF (0x6FFFC0)
     tickGadgets(a, dt); // flashlight, grenades (Gadgets.cpp)
+    tickBlasts();       // born squibs' explosion records (Breakables.cpp): after tickGadgets cleared this tick's explosions
     tickWaterStates(dt); // scripted water levels (0x6C10D0), before Lara's breath reads the surface
     tickAir(dt);
     // Swimming soaks every region (tru.exe under Wine: mask 0x7F while she swims); out of the water the mask is clear
