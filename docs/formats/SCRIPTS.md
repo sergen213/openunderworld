@@ -272,8 +272,10 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
 - [O] Function local records (+0x0C, DataMember like members, DXHR `cdc::Function::m_locals`) carry initial values;
   ours applies those of `symbol` locals (property names, e.g. 10814). PUSHL32 of a local holding a string keeps it a
   string (unit hint handlers compare/store their argument). `instanceref` natives accept a ref held as an object value
-  (`instance` 14/15 return the intro id, 0x4AB400). `uiexperienceadjustmentmenu` 0–18 read 0 (fns 13–18 read the
-  options block [0xC59264]+0x3EF94..; no such menu in ours) [I]. [O] The exe's CALL2/CALL3 (cases 0x66/0x67 of
+  (`instance` 14/15 return the intro id, 0x4AB400). `uiexperienceadjustmentmenu` [O registration 0x7AEDE0]: 4..10 set
+  and 11..17 read training text, the +0x3EFB0 toggle and the five PLAYER TAILORING levels, 18 reads the preset; ours
+  serves them from `script::Runtime::Experience` (docs/GAMEPLAY.md "Player tailoring"); 0..3 (the menu screen) read 0.
+  [O] The exe's CALL2/CALL3 (cases 0x66/0x67 of
   0x57CE50) look the callee up by vtable slot (virtual on `this`); ours keeps them direct because the virtual form
   stops l3 switch 4525 at a null CALL5 (test BedroomSwitchOpensHouseDoor) [U].
 - cdcEngineDXHR/cdcScript/ByteCodeEnum.h supplies the opcode numbering; no interpreter exists in the research

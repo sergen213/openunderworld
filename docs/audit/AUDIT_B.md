@@ -30,9 +30,9 @@ Headline findings (details in the rows and the worklist):
    enemy vault, no knock-down of Lara, no dual targeting, and shooting from a ledge / ladder / pole is refused.
 3. The reward table holds 78 treasures and 6 relics; the original has 179 and 6. The 101 missing treasures are the ones
    released by breakable urns / jars, whose rewards are never spawned. Relics have no effect on health.
-4. `World::respawn()` clears `combat_` (Str:375): after a death Lara has lost the chapter's secondary weapon and every
-   reserve round. The respawn also does not roll scripts, pickups or objects back to the checkpoint as tru.exe's
-   checkpoint restore (0x556E90) does.
+4. FIXED (agent/GpSystems, 0.43): `World::respawn()` cleared `combat_` and did not roll scripts, pickups or objects
+   back to the checkpoint. It now restores the checkpoint save as tru.exe's "Restore Game" 0x557130 does
+   (docs/GAMEPLAY.md "Checkpoints and respawn").
 5. The adrenaline head shot opens from adrenaline mode with any meter level (Cmb:1313); the documented rule is a full
    meter. The pip / window numbers are [I].
 6. Breakables break only from bullets, bolts and the ground pound: contact triggers 6 / 7 / 8 (kick, roll, bike, falls)
@@ -383,7 +383,7 @@ Gaps:
 | Underwater weapon behavior | partial | PARTIALLY IMPLEMENTED | Cmb:188 `canShoot`: speargun and Mjolnir only | `CombatReal.PoolSpeargunUnderWater`, `FxReal.GunFireBubblesOnlyUnderWater` | [U] which weapons the exe allows (every wp_* has `fire_submerged` clips) | Decide from the exe; rifle already has wet damage numbers [O] |
 | Weapon animation | implemented + works | IMPLEMENTED | Cmb:1350 `aimLayer`, `combatLayerClip` | `CombatReal.RifleAndTranquilizerClips`, `GameReal.GrappleShootsOnTheRope` | [O clips] / blend [I] | — |
 | Weapon switching transitions | implemented + works | IMPLEMENTED | `drawT` over equip / unequip clips; gun mount on events 0x74 / 0x76-0x78 (Cmb:679) | `Combat.WeaponSwitchKeepsRoundsAndReloadsFromReserve` | [O events] | — |
-| Original ammunition / inventory rules | works but differs from original | PARTIALLY IMPLEMENTED | `chapterLoadout` (full reserve at chapter start), `maxReserve` by tailoring | `Tailoring.PresetsScaleHealthAndCapacity`, `StreamReal.ChapterThorGear` | max [O]; start amounts +0x848 / +0x85C / +0x852 decoded but unused [I: full] | Use the start-amount tables (0x6EE930); respawn clears everything (§14) |
+| Original ammunition / inventory rules | implemented + works | IMPLEMENTED | `chapterLoadout` (start amount per capacity level, the chosen secondary), `maxReserve` by tailoring | `Combat.LevelStartLoadout`, `CombatReal.WeaponData`, `Tailoring.PresetsScaleHealthAndCapacity`, `StreamReal.ChapterThorGear` | start [O +0x848 / +0x85C / +0x852 = the maximum tables], max [O]; clips full [I] | — (GAMEPLAY.md "Loadout") |
 | No manual reload | implemented + works | IMPLEMENTED | no reload action in `Actions` | — | — | — |
 | No invented ammunition pickups | works but differs from original | IMPLEMENTED BUT UNVERIFIED | Str:563 `collectPickups`: weapon intros [O 0x70E530 -> 0x6F5E70]; dead armed enemies' bodies [I] | `Pickups.InteractCollectsNearestOnceAndSaves` | amount "one clip" [I: property 0x55 not decoded] | The enemy-body rule is ours: check whether tru.exe births a wp_akrifle instance on a poacher's death (then it is the same 0x70E530 path) or drop it |
 
@@ -576,11 +576,11 @@ length; the exe fires on the clip's event 0x75).
 | Health packs | partial | PARTIALLY IMPLEMENTED | Cmb:1147 (640 heal, 2 s cooldown); count = `found[2]` | `Combat.HealthPacks` | heal / cooldown [O] | Max carried 100 not enforced; enemy health-pack drops (difficulty +0x10) absent; GP "Pickups" still says "not yet usable" (docs behind code) |
 | Adrenaline meter | implemented + works | VERIFIED AGAINST ORIGINAL (numbers) | `gainAdrenaline`, drain | `Combat.AdrenalineModeDrainsAndSlowsTime`, `CombatReal.DecodedCombatNumbers` | [O] | §8 |
 | Underwater breath meter | implemented + works | VERIFIED AGAINST ORIGINAL (numbers) | W:1164 `tickAir` | `Game.WaterAirDrainsRefillsAndDrowns` | [O 0x755230]; "head under" test [I] | breath sounds not played |
-| Death and respawning | incorrect | IMPLEMENTED | Cmb:1166, Str:363 `respawn` | `Combat.FallDamageDeathAndRespawn`, `Stream.CheckpointAndRespawn`; self-test `death_respawn` (int/0.42.0) | fade 90 frames [O 0x75AF90]; death clip choice [I] | `combat_ = {}` at Str:375 drops the secondary weapon, clips and reserves (and adrenaline); grenades, flashlight, health packs are not restored either way. No test checks the loadout after a respawn |
-| Checkpoints | works but differs from original | IMPLEMENTED | Str:517 `touchCheckpoints`: script event or within 250 / 400 of the intro | `Stream.CheckpointAndRespawn`, `ScriptRuntime.CheckpointNativeEmitsCheckpoint`, `Ai.ResetOnRespawnKeepsCheckpointDead` | activation radius [I]; checkpoint.drm's scripts not decoded [U] | — |
+| Death and respawning | implemented + works | IMPLEMENTED | Combat.cpp death, Stream.cpp `respawn` | `Combat.FallDamageDeathAndRespawn`, `Combat.RespawnKeepsTheLoadout`, `Stream.DeathRestoresTheCheckpointSave`, `StreamReal.DeathRestoresTheCheckpointSave`; self-tests `death_respawn`, `checkpoint_respawn` | fade 90 frames [O 0x75AA50 / 0x75AF90]; restore [O 0x557130]; death clip choice [I]; the 210-frame type-1 wipe unused [U which deaths] | — |
+| Checkpoints | implemented + works | IMPLEMENTED | Stream.cpp `touchCheckpoints`: script event (every activation saves) or within 250 / 400 of the intro; a reward pickup saves again | `Stream.CheckpointAndRespawn`, `Stream.DeathRestoresTheCheckpointSave`, `ScriptRuntime.CheckpointNativeEmitsCheckpoint` | activation [O message 0x196, 0x5570F0, 0x5DB6A0]; the touch radius [I] | — |
 | Saving and loading | implemented + works | IMPLEMENTED | `src/save`, `World::serialize*` | `Save.*`, `StreamReal.SaveContinuesBitIdentically`, `StreamReal.UberStateSaveLoad`, `VehicleReal.SaveRestoreMidRide` | own format; airborne save resumes at the checkpoint as tru.exe [O] | Original `.sav` import not done (not asked) |
 | Weapon inventory | implemented + works | IMPLEMENTED | `CombatState::secondary`, hammer slot | `Menus.PdaWeaponsInventoryAndSonar`, `Combat.MjolnirCycleSwingAndGroundPound` | [O data +0xDC, 0x704930] | — |
-| Ammunition | works but differs from original | PARTIALLY IMPLEMENTED | reserves, `maxReserve` | `Combat.AmmoClipsAndReload`, `Tailoring.PresetsScaleHealthAndCapacity` | max [O]; start amounts unused [I] | §8 |
+| Ammunition | implemented + works | IMPLEMENTED | reserves, `maxReserve`, `startReserve` | `Combat.AmmoClipsAndReload`, `Combat.LevelStartLoadout`, `Tailoring.PresetsScaleHealthAndCapacity` | max and start [O] | — |
 | PDA | implemented + works | IMPLEMENTED | `src/ui/Ui.*` `Screen::Pda*` | `Menus.PauseSlotsAndPda`, `MenusReal.RawImagesAndPdaArt` | layout [V captures] | — |
 | Sonar map | works but differs from original | IMPLEMENTED | `src/ui/Pda.*`, `recordReveal` (Str:554) | `PdaReal.SonarMapFrameRevealAndModels` | reveal every 1000 units [I]; the exe marks PDAMap reveal volumes (0x6E33D0), not decoded | — |
 | Area information | incorrect | PARTIALLY IMPLEMENTED | `chapterRewards`, `fillPda` (main.cpp:2471) | `ChaptersReal.RewardTableMatchesUnits`, `Menus.PauseSlotsAndPda` | table = loose reward intros [O] | Treasure totals are 10 / 22 / 7 / 10 / 10 / 0 / 19 instead of the original's per-area totals (jar treasures missing) |
@@ -599,7 +599,7 @@ length; the exe fires on the clip's event 0x75).
 | Recovery and damage behaviour match | implemented + works | VERIFIED AGAINST ORIGINAL | `Health` | above | [O] | enemy damage multiplier fixed at entry 1 [O] |
 | Relics affect maximum health | missing | NOT IMPLEMENTED | `Health::heal(amount, overheal)` exists; `collectPickups` never calls it | — | [O] overheal up to 1.4 x max decaying over 900 frames only "from the reward path 0x5DB6A0" (GP "Combat") | Decode 0x5DB6A0 and the reward base script 3674 / 3924 (what a relic and a treasure give), then apply it |
 | Level-specific inventory / ammunition rules | partial | PARTIALLY IMPLEMENTED | `chapterSecondary`, `chapterGear` | `StreamReal.ChapterThorGear`, `StreamReal.ChapterStartIntros` | deps [O], defaults [I] | — |
-| Checkpoints restore the correct state | works but differs from original | PARTIALLY IMPLEMENTED | respawn = reload units at the checkpoint, full health, enemies reset to the dead-at-checkpoint set | `Ai.ResetOnRespawnKeepsCheckpointDead` | [I] | tru.exe restores the checkpoint save (0x556E90): scripts / objects / pickups / ammo of that moment. Ours keeps everything done after the checkpoint (solved puzzles, collected items) and wipes combat state |
+| Checkpoints restore the correct state | implemented + works | IMPLEMENTED | respawn = the checkpoint save restored (`World::serializeCheckpoint` / `restoreCheckpointSave`): clock, scripts, enemies, vehicles, weapons and rounds, objects and physics, water, pickups; saved in save games (version 3) | `Stream.DeathRestoresTheCheckpointSave`, `StreamReal.DeathRestoresTheCheckpointSave`, `Save.MigratesVersion2` | [O 0x5570F0 / 0x557130 / 0x556E90]; PDA map reveal kept [I] | — |
 | Death returns to the saved checkpoint | implemented + works | IMPLEMENTED | Str:368 | `Stream.CheckpointAndRespawn` | [O] | — |
 | 179 treasures / 6 relics documented and obtainable | incorrect | PARTIALLY IMPLEMENTED | — | — | — | see "Collectibles" |
 | No Wii / PS2 mechanics | implemented + works | IMPLEMENTED | PC data only | — | — | — |
@@ -778,12 +778,10 @@ classification column):
 Order: what blocks the campaign or loses player state first, then missing mechanics the walkthrough needs, then
 fidelity of numbers, then architecture.
 
-- **P1 Respawn keeps the loadout and restores the checkpoint state.** `World::respawn` (Str:363-377): `combat_ = {}`
-  drops the secondary and every round. Minimum: keep weapons / reserves as at death or re-apply the checkpoint's;
-  proper: snapshot at checkpoint activation (the save body already holds everything: `save::capture`) and `apply` it
-  on death, as tru.exe 0x556E90 "MAIN checkpoint restore". Truth: 0x556E90 / 0x5570F0 (what the checkpoint save
-  holds). Test: extend `Stream.CheckpointAndRespawn` + self-test `death_respawn` with weapon, reserve, collected and
-  object-state probes.
+- **P1 DONE (agent/GpSystems).** Respawn restores the checkpoint save (taken at checkpoint activation, at a reward
+  pickup with a checkpoint active and at the level start), as tru.exe 0x5570F0 / 0x557130; the loadout is the
+  save's. docs/GAMEPLAY.md "Checkpoints and respawn"; `Stream.DeathRestoresTheCheckpointSave`,
+  `StreamReal.DeathRestoresTheCheckpointSave`, self-test `checkpoint_respawn`.
 - **P2 Urn / jar rewards and the 179-treasure total.** Decode the urn -> reward link and spawn the reward when an urn
   breaks (`World::damageObject`, Obj:821, state 2 action; new pickup instances in `UnitData::pickups`); rebuild
   `chapterRewards` from the survey; assert 179 / 6. Truth: `*_pt_weightbreak*` intro data and

@@ -519,6 +519,27 @@ TEST(Menus, MainCentreTreasureHuntAndRevisit) {
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Revisit);
     EXPECT_EQ(m.revisitChapter(), 2);
     EXPECT_EQ(m.screen(), ui::Screen::None);
+    EXPECT_EQ(m.revisitWeapon(), -1) << "no secondaries listed: the level's own";
+    // With the PDA's secondaries the chapter opens the weapon choice; the weapon picked starts it.
+    m.pda.weapons = {{.weapon = 1, .name = 76}, {.weapon = 2, .name = 77}, {.weapon = 4, .name = 78}};
+    m.open(ui::Screen::Pda);
+    for (int i = 0; i < 4; ++i) m.input(ui::Nav::Down);
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::Revisit);
+    for (int i = 0; i < 3; ++i) m.input(ui::Nav::Down);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    ASSERT_EQ(m.screen(), ui::Screen::RevisitWeapon);
+    EXPECT_EQ(m.revisitChapter(), 4);
+    ASSERT_EQ(m.items().size(), 3u);
+    EXPECT_EQ(m.items()[2].stringId, 78);
+    m.input(ui::Nav::Back);
+    EXPECT_EQ(m.screen(), ui::Screen::Revisit) << "back to the chapters";
+    m.input(ui::Nav::Accept);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Revisit);
+    EXPECT_EQ(m.revisitChapter(), 4);
+    EXPECT_EQ(m.revisitWeapon(), 4);
+    EXPECT_EQ(m.screen(), ui::Screen::None);
 }
 
 // EXTRAS [O extras captures]: the mirrored category ring, a category's rows (LOCKED until unlocked), the preview image,

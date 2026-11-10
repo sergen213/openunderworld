@@ -1579,11 +1579,22 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::object(auxiliary(program, m->argTypeId)->uid);
                 return true;
             }
-            // Experience-adjustment settings (registration 0x7AEDE0; fns 13-18 read the options block at
-            // [0xC59264]+0x3EF94..0x3EFAC, e.g. fn 17 -> +0x3EFAC that unit Run() compares with 2 "master
-            // survivalist"). We have no such menu: every setting reads 0 [I: the defaults].
+            // Experience-adjustment settings (registration 0x7AEDE0, thunks 0x7A06B0..0x7A07F0 -> 0x77BA80..0x77BB60) [O]:
+            // 4 SetTrainingText (+0x3EFB1), 5 set +0x3EFB0, 6 EnemyHP (+0x3EF98), 7 AmmoAdj (+0x3EF9C), 8 PlayerHP
+            // (+0x3EFA4), 9 SavingGrabAdj (+0x3EFA8), 10 the fifth (+0x3EFAC); 11..17 read them in that order, 18 the
+            // preset (+0x3EF94). Levels above 2 are refused (0x6E75A0..). Unit Run() scripts compare 17 with 2.
+            // 0..3 [U] (the menu's own entries; ours is src/ui) read 0.
             if (!std::strcmp(name, "uiexperienceadjustmentmenu")) {
-                nc.result = vm::Value::scalar(0);
+                Experience& e = experience_;
+                const uint32_t fn = nc.function, arg = nc.args.empty() ? 0 : nc.args[0].bits;
+                uint32_t result = 0;
+                if (fn == 4 || fn == 5) (fn == 4 ? e.trainingText : e.metaIcons) = arg != 0, experienceSet_ = true;
+                else if (fn >= 6 && fn <= 10 && !nc.args.empty() && arg < 3) e.levels[fn - 6] = int(arg), experienceSet_ = true;
+                else if (fn == 11) result = e.trainingText;
+                else if (fn == 12) result = e.metaIcons;
+                else if (fn >= 13 && fn <= 17) result = uint32_t(e.levels[fn - 13]);
+                else if (fn == 18) result = uint32_t(e.preset);
+                nc.result = vm::Value::scalar(result);
                 return true;
             }
             if (!std::strcmp(name, "checkpointbase") && nc.function == 3 && nc.args.empty()) {

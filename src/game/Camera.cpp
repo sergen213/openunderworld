@@ -329,6 +329,21 @@ nlohmann::json World::serializeRuntime() const {
              }()}};
 }
 
+// The world's part of serializeRuntime (a load and a checkpoint restore): scripted water levels and hinge limits.
+void World::restoreWorldRuntime(const nlohmann::json& j) {
+    const auto v = [](const nlohmann::json& a) { return vec3(a.at(0).get<float>(), a.at(1).get<float>(), a.at(2).get<float>()); };
+    auto lo = j.at("hingeLimits").at(0).get<std::map<int32_t, float>>(), hi = j.at("hingeLimits").at(1).get<std::map<int32_t, float>>();
+    waterStates_.clear(); // scripted water levels (older saves: none)
+    for (const auto& e : j.value("water", nlohmann::json::array()))
+        waterStates_[e.at(0).get<int32_t>()] = {e.at(1).get<float>(), e.at(2).get<float>(), e.at(3).get<float>(), e.at(4).get<int16_t>(),
+                                                e.at(5).get<int16_t>(), e.at(6).get<float>(), v(e.at(7)), v(e.at(8))};
+    for (const auto& [uid, s] : waterStates_)
+        if (const auto [m, u] = waterVolume(uid); m) applyWaterState(*m, u->offset);
+    multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
+    multibodyLimitOff_ = j.value("limitsOff", std::set<int32_t>{}); // older saves: every limit on
+    syncedObjects_ = ~size_t(0);
+}
+
 void World::restoreRuntime(const nlohmann::json& j) {
     if (!j.is_object()) return;
     try {
@@ -372,15 +387,7 @@ void World::restoreRuntime(const nlohmann::json& j) {
         const double aimTime = j.at("aimTime");
         const auto bones = j.at("bones").get<std::vector<float>>();
         air_ = air, submerged_ = submerged;
-        waterStates_.clear(); // scripted water levels (older saves: none)
-        for (const auto& e : j.value("water", nlohmann::json::array()))
-            waterStates_[e.at(0).get<int32_t>()] = {e.at(1).get<float>(), e.at(2).get<float>(), e.at(3).get<float>(), e.at(4).get<int16_t>(),
-                                                    e.at(5).get<int16_t>(), e.at(6).get<float>(), v(e.at(7)), v(e.at(8))};
-        for (const auto& [uid, s] : waterStates_)
-            if (const auto [m, u] = waterVolume(uid); m) applyWaterState(*m, u->offset);
-        multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
-        multibodyLimitOff_ = j.value("limitsOff", std::set<int32_t>{}); // older saves: every limit on
-        syncedObjects_ = ~size_t(0);
+        restoreWorldRuntime(j);
         focus_ = focus, orbit_ = o, cam_ = prevCam_ = c;
         playerUnit_ = playerUnit; // the scripts heard of this unit already: no level-load vt 13 again (World::tick)
         hair_.setState(hair);

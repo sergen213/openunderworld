@@ -280,6 +280,9 @@ Config load(const fs::path& path) {
                                       std::pair{"helper_buttons", &c.game.helperButtons}, std::pair{"training_text", &c.game.trainingText}})
                 *field = g->value(key, *field);
             c.game.language = g->value("language", c.game.language);
+            c.game.tailoring = g->value("tailoring", c.game.tailoring);
+            for (const int level : c.game.tailoring)
+                if (level < 0 || level > 2) throw std::runtime_error("game.tailoring levels must be 0..2");
         }
     } catch (const std::exception& e) {
         throw std::runtime_error(path.string() + ": " + e.what());
@@ -325,7 +328,7 @@ void save(const fs::path& path, const Config& c) {
                      {"look_stick", c.controls.lookStick}, {"bindings", c.controls.bindings}};
     j["game"] = {{"sfx_volume", c.game.sfxVolume}, {"music_volume", c.game.musicVolume}, {"cinematic_volume", c.game.cinematicVolume},
                  {"subtitles", c.game.subtitles}, {"reticles", c.game.reticles}, {"helper_buttons", c.game.helperButtons},
-                 {"training_text", c.game.trainingText}, {"language", c.game.language}};
+                 {"training_text", c.game.trainingText}, {"language", c.game.language}, {"tailoring", c.game.tailoring}};
     if (path.has_parent_path()) fs::create_directories(path.parent_path());
     fs::path tmp = path;
     tmp += ".tmp";
