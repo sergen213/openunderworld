@@ -343,8 +343,8 @@ TEST(CollisionRealData, CameraSkipsTheTerrainGroupsTruSkips) {
 // groups its filter 0x48EF50 skips (TerrainGroupExtra flags 0x8 / 0x20000 / 0x40000 / 0x80000): 24 354 faces in 124
 // groups over the 82 units. l1_kraken_entrance: groups 3 (5667 faces, flags 0xE004CF00), 4 (16, 0xE004E300) and 6 (64,
 // 0xE004CC00). Group 4 is Lara's (no 0x800): its faces lack the sight bit, so a kSightMask ray passes through them
-// while her queries hit. Groups 3 and 6 are flagged 0x800 too (not the player's, test below): no query of ours meets
-// them. The unit's other mask-1 faces block the sight ray.
+// while her queries hit. Groups 3 and 6 are flagged 0x400 and 0x800 too (no character's, test below): Lara's queries
+// do not meet them. The unit's other mask-1 faces block the sight ray.
 TEST(CollisionRealData, SightSkipsTheTerrainGroupsTruSkips) {
     if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
     const Unit u = loadUnit("pc-w\\l1_kraken_entrance.drm");
@@ -382,9 +382,10 @@ TEST(CollisionRealData, SightSkipsTheTerrainGroupsTruSkips) {
 }
 
 // tru.exe's ray filter 0x48EF50 drops terrain groups flagged 0x800 for the player's rays (flags 0x2C19E7: class bit
-// 4). l4_traprooms group 1 (flags 0xE004CF00) is such a wall: two faces across the entrance of the crusher aisle at
-// y -22123.5, between the doorway and the first pair of jaws. A default query (Lara's) passes it; the faces are still
-// loaded. No face a default query can hit lies in such a group anywhere in the unit.
+// 4) and those flagged 0x400 for the enemies'. A group with both is no character's; ours takes it out of Lara's
+// collision (collision::kSolidMask; groups with 0x800 alone stay hers: docs/formats/COLLISION.md). l4_traprooms group 1
+// (flags 0xE004CF00) is such a wall: two faces across the entrance of the crusher aisle at y -22123.5, between the
+// doorway and the first pair of jaws. A default query (Lara's) passes it; the faces are still loaded.
 TEST(CollisionRealData, LaraSkipsTheTerrainGroupsTruSkipsForThePlayer) {
     if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
     const Unit u = loadUnit("pc-w\\l4_traprooms.drm");

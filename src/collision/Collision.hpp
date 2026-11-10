@@ -40,17 +40,21 @@ inline bool queryable(const Face& f, uint8_t mask) { return !(f.flags & 0x40) &&
 // oflags bit 0x02 (0x5E94C0 / 0x5E91D0 / 0x5E8940), which physics::solidShape marks with bit 0x20.
 // ponytail: the rays' extra 0x100-only skip (5 groups with faces, e.g. l2_norsehub 2) is not modelled.
 inline constexpr uint8_t kCameraMask = 0xA2;
-// Terrain groups that are no collision for the player. tru.exe's ray filter 0x48EF50 (terrain group, ray flags) drops
-// a group by its TerrainGroupExtra flags per query class: flag 0x800 for rays with class bit 0x4, 0x400 for bit 0x8,
+// Terrain groups that are no collision for Lara. tru.exe's ray filter 0x48EF50 (terrain group, ray flags) drops a
+// group by its TerrainGroupExtra flags per query class: flag 0x800 for rays with class bit 0x4, 0x400 for bit 0x8,
 // 0x300 for bit 0x4000 (the camera, above), 0x40000 for bit 0x800000 (the sight ray, below), ... [O disassembly].
-// Every ray of the player code (0x6E7300, 0x6F3D40, 0x7013F0, 0x73xxxx: 64 call sites) passes flags 0x2C19E7, which
-// have bit 0x4; the enemies' (0x61xxxx..0x67xxxx: 0x42C11AB) have bit 0x8. So a group flagged 0x800 is not there for
-// Lara (l4_traprooms group 1, flags 0xE004CF00: a wall across the entrance of the crusher aisle that only the 0x2000
-// class meets; the 0xE004E800 groups of the l4 units: walls for the enemies and the camera). loadLevelCollision takes
-// those groups' faces out of kSolidMask, the default mask of every query (Lara, her rope, the bike's probes), and
-// leaves them the two bits below for the camera and the sight ray where those classes meet them.
-// [I] that her capsule's sweeps follow her rays' class; [U] the classes of rigid bodies and of the bike (Jolt still
-// builds its terrain from every face).
+// Every ray of the player code (0x6E7300, 0x6F3D40, 0x7013F0, 0x73xxxx, the hurdle and wall-hug tests 0x73DFF0 /
+// 0x74B920: 64 call sites) passes flags 0x2C19E7, which have bit 0x4; the enemy code's (0x61xxxx..0x67xxxx:
+// 0x42C11AB) have bit 0x8. Which class her capsule and ground check are is not decoded [U]. Two facts bound it:
+// l4_traprooms group 1 (0xE004CF00: 0x400 and 0x800, two faces across the crusher aisle's doorway) cannot be hers,
+// or the rattling house could not be entered; l2_junglehub group 2 (0xE005FB00: 0x800 without 0x400) is hers: under
+// Wine she stands on its face at -11766.5, 8508, 5617.6 (GameReal.SlopeJunglehubRampSeries). So [I]: a group flagged
+// with both bits, no character's by either ray class, is not Lara's collision; loadLevelCollision takes those
+// groups' faces out of kSolidMask, the default mask of every query (Lara, her rope, the bike's probes), and leaves
+// them the two bits below for the camera and the sight ray where those classes meet them. Groups flagged 0x800
+// alone stay hers although her own probe rays skip them in tru.exe (l4_pool group 3 over rock 1253, the wall behind
+// l2_puzzleroom ledge 476: open, COLLISION.md). [U] the classes of rigid bodies and of the bike (Jolt still builds
+// its terrain from every face).
 inline constexpr uint8_t kSolidMask = 0x77;
 inline constexpr uint8_t kNotPlayerCameraBit = 0x80, kNotPlayerSightBit = 0x08;
 inline constexpr uint8_t kTerrainMask = 0x07; // Lara's terrain faces only (no objects: physics::kObjectMask 0x10)

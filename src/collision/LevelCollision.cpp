@@ -217,7 +217,7 @@ CollisionMesh loadLevelCollision(const cdc::Drm& drm, std::vector<std::string>* 
                 out.groupEnabled_[g] = (flags & 4) == 0 || (flags & 8) == 0;
                 cameraIgnores = flags & 0x200;
                 sightIgnores = flags & 0xE0008; // the targeting ray's filter (kSightMask)
-                playerIgnores = flags & 0x800;  // the player's rays (flags 0x2C19E7, class bit 4) skip these (kSolidMask)
+                playerIgnores = (flags & 0xC00) == 0xC00; // neither the player's rays (0x800) nor the enemies' (0x400): kSolidMask
                 if (models && extra->section == models->section)
                     for (uint32_t m = 0; m < numModels; ++m)
                         if (extra->offset == models->offset + 0x30 * m) {
