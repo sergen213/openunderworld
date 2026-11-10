@@ -215,13 +215,15 @@ struct VehicleSpec {
 // yawTorque (N m about the body's up, + turns left) and sideForce (N along the body's left) at the centre of mass;
 // push: force (N, model axes) at wheel pushWheel's contact (its attachment when off the ground); pinWheel: that wheel's
 // contact point is held still horizontally (the body's velocity is corrected before the step); maxYawRate (rad/s, 0 =
-// none): the spin about the world's up is clamped to it before the step.
+// none): the spin about the world's up is clamped to it before the step. rpm (> 0): the engine torque is read at this
+// rpm instead of the wheels' (still none once the wheels pass the top rpm); torqueScale multiplies it.
 struct VehicleDrive {
     float forward = 0, right = 0, brake = 0, handBrake = 0;
     bool reverse = false;
     float lean = 0, yawTorque = 0, sideForce = 0, maxYawRate = 0;
     int pushWheel = -1, pinWheel = -1;
     vec3 push{0};
+    float rpm = 0, torqueScale = 1;
 };
 struct VehicleState {
     mat4 model{1};       // model -> world

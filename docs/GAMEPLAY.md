@@ -2183,9 +2183,11 @@ ours1..3.txt our controller's traces of the same inputs to compare with; it was 
 ## Motorcycle (src/game/Vehicle.*)
 
 Lara mounts the bike with E (interact) next to its left side, rides it with the move stick (forward = throttle, back =
-brake then reverse, left/right = steer; raw stick, not camera-relative), hand-brakes with Left Ctrl / pad East (drop),
-hops with Space and gets off with E once it is almost stopped. Throttle + hand brake revs a burnout; add the stick
-(standing) for a donut; hand brake or brake with the stick over above 15 mph slides the rear out (power slide).
+brake, and reverse once it stands and the brake has been held 7 frames; left/right = steer; raw stick, not
+camera-relative), hand-brakes with Space / pad South (the jump action: tru.exe's "Vehicle Brake", button 22) and gets off
+with E once it is almost stopped. There is no hop. Throttle + hand brake revs a burnout and charges the launch: letting
+the brake go with the throttle held shoves the bike off (the "fast start" / speed burst); add the stick (standing) for a
+donut; hand brake or brake with the stick over above 15 mph slides the rear out (power slide).
 While she is on it, `World::tick` skips `Player::tick`, drives her from the bike and masks move, jump, drop, use and the
 grapple; the weapon keys stay live (see "Weapons on the bike" below); the camera pulls back and swings behind the moving
 bike. No new bindable actions.
@@ -2197,7 +2199,7 @@ Evidence:
   (657) in `l4_trailstart` 6699 and `l5_valgrind_tunnel` 6715; `co_motorcycle` (641, a cinematic copy) in
   `l4_ballcourt` 6403 and `l7_thin_ice` 9078. No Thailand (l2) unit places a bike. `UnitData::vehicles` keeps the
   `motorcycle` intros; spawners and cinematic copies are not instantiated [U: the spawner's script for revisits].
-- Classes [V-exe] RTTI `Bike : Vehicle` (vtables 0x886064 / 0x8860E4), `VehicleCamera`, `NtMotor_ScriptType`; state-chart
+- Classes [V-exe] RTTI `Bike : Vehicle` (vtables 0x861974 / 0x861A18; 0x886064 / 0x8860E4 are their RTTI locators), `VehicleCamera`, `NtMotor_ScriptType`; state-chart
   conditions `PSCCF_Vehicle_SteerDirection/StuntDirection/IdlePose/DismountClearance/State`. 0x6AB960 creates the Bike
   (0x790 bytes, ctor 0x78EDA0) when the instance's vehicle data (+0x50 = ObjectBase +0xC8) has `+8 == 1`, with the tuning
   record `+0x10`; 0x793680 is its per-frame update (throttle, steering, gear/torque 0x791D10, Havok wheel forces 0x792900,

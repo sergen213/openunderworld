@@ -1,15 +1,18 @@
-// Lara's motorcycle (src/game/Vehicle.*): intros, decoded tuning, mount / ride / hop / dismount replay, saves.
+// Lara's motorcycle (src/game/Vehicle.*): intros, decoded tuning, mount / ride / dismount replay, saves.
 #include "game/Game.hpp"
 #include "save/Save.hpp"
 #include "engine/FrameClock.hpp"
+#include "app/game/Autopilot.hpp"
 
 #include "cdc/Cdc.hpp"
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <tuple>
 
 using namespace ou;
@@ -83,7 +86,7 @@ TEST(VehicleReal, BikeIntrosTuningAndClips) {
     for (const auto n : game::kBikeClipNames) EXPECT_NE(anims.find("motorcycle:" + std::string(n)), nullptr) << n;
 }
 
-// tests/replays/bike_ride.txt: mount, accelerate up the trail, steer, hop, brake and dismount, in l4_trailstart.
+// tests/replays/bike_ride.txt: mount, accelerate up the trail, steer, brake and dismount, in l4_trailstart.
 TEST(VehicleReal, TrailstartRideReplay) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -226,7 +229,7 @@ TEST(VehicleReal, RideIndependentOfRenderRate) {
     auto run = [&](double renderHz) {
         game::World w(loader(bf), "l4_trailstart", anims, kMountSpot);
         engine::FrameClock clock(game::kTickSeconds);
-        while (w.ticks() < 300) // through the curve and the hop
+        while (w.ticks() < 300) // through the curve
             for (int n = clock.advance(1.0 / renderHz); n > 0 && w.ticks() < 300; --n) w.tick(replay.at(w.ticks()));
         const auto& b = w.bikes().at(5482);
         return std::tuple(b.pos, b.yaw, b.speed, w.player().state().pos);
@@ -239,6 +242,37 @@ TEST(VehicleReal, RideIndependentOfRenderRate) {
 
 namespace {
 // Mounts bike 5482 (interact at 0.3 s; riding from about 1.2 s), then `rest` of an input script; per-tick callback.
+// The autopilot plan of tests/selftests/bike_ride.json (after its mount step); `upTo`: only its first plan steps.
+std::string firstRidePlan(int upTo = 99) {
+    std::string plan = "wait 0.3\npress interact\nwait 3\n";
+    std::ifstream f(OU_SOURCE_DIR "/tests/selftests/bike_ride.json");
+    int n = 0;
+    for (const auto& step : nlohmann::json::parse(f).at("steps")) {
+        if (!step.contains("plan") || n++ >= upTo) continue;
+        for (const auto& line : step["plan"]) plan += line.get<std::string>() + "\n";
+    }
+    return plan;
+}
+
+// The bike ridden by the scenario's plan onto the level floor of the stone tunnel (z -686) and stopped there with the
+// Vehicle Brake; then `input` (times from 0) for `seconds`, `each(tick, bike, world)` per tick.
+template <class F> void inTunnel(const cdc::BigfileSet& bf, const game::AnimLibrary& anims, const std::string& input, double seconds, F&& each) {
+    game::World w(loader(bf), "l4_trailstart", anims, kMountSpot);
+    auto pilot = app::Autopilot::parse(firstRidePlan(1) + "hold jump 3\n");
+    uint64_t i = 0;
+    for (; i < 60 * 60 && !pilot.done(); ++i) w.tick(pilot.step(i, w));
+    ASSERT_FALSE(pilot.failed()) << pilot.failure();
+    ASSERT_NE(w.ridden(), nullptr);
+    ASSERT_LT(std::abs(w.ridden()->speed), 5);
+    const auto script = game::InputScript::parse(input);
+    for (uint64_t k = 0; k < uint64_t(seconds * 60) && w.ridden(); ++k) {
+        w.tick(script.at(k));
+        if (std::getenv("OU_VEHICLE_TRACE") && k % 3 == 0)
+            std::printf("t %.2f v %6.0f air %d x %.0f z %.0f stunt %d\n", double(k) / 60, w.ridden()->speed, w.ridden()->air, w.player().state().pos.x, w.player().state().pos.z, int(w.ridden()->stunt));
+        each(k, *w.ridden(), w);
+    }
+}
+
 template <class F> void ride(const cdc::BigfileSet& bf, const game::AnimLibrary& anims, const std::string& rest, double seconds, F&& each) {
     game::World w(loader(bf), "l4_trailstart", anims, kMountSpot);
     const auto script = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n" + rest);
@@ -281,25 +315,37 @@ TEST(VehicleReal, LeanFollowsSteeringAtSpeed) {
     EXPECT_LT(maxRoll, anims.bike.leanMax + 0.1f);
 }
 
-// Air control (0x793680, no wheel down): steering during a hop yaws the bike towards the stick, the same each run.
+// Air control (0x793680, no wheel down): steering while the bike flies off the tunnel's ramp over the pit yaws it towards
+// the stick, the same each run. (Rewritten: it used the Space hop, which the original does not have.)
 TEST(VehicleReal, AirControlTurnsMidJump) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     const auto anims = game::loadLaraAnims(bf);
-    const auto jump = [&](const char* steer) {
-        float yaw = 0;
-        bool air = false;
-        ride(bf, anims, std::string("1.3 forward 1\n2.6 jump 1\n2.7 jump 0\n") + steer, 3.1, [&](uint64_t i, const game::Bike& b, const game::World&) {
-            if (i == 172) air = b.air; // mid-hop
-            if (i == 185) yaw = b.yaw;
-        });
-        EXPECT_TRUE(air);
-        return yaw;
+    const auto jump = [&](float steer) {
+        game::World w(loader(bf), "l4_trailstart", anims, kMountSpot);
+        auto pilot = app::Autopilot::parse(firstRidePlan(1) + "ride 64000 -55680 300\nride 65700 -55680 200\n"); // to the ramp
+        uint64_t i = 0;
+        for (; i < 60 * 60 && !pilot.done(); ++i) w.tick(pilot.step(i, w));
+        EXPECT_FALSE(pilot.failed()) << pilot.failure();
+        game::Actions a;
+        a.move = {0, 1};
+        int air = 0;
+        float yaw0 = 0, yaw = 0;
+        for (int k = 0; k < 60 && w.ridden(); ++k) { // straight on off the lip, then the stick while no wheel is down
+            const game::Bike& b = *w.ridden();
+            if (w.player().state().pos.x > 67600) break; // still over the pit
+            if (b.air && air++ == 0) yaw0 = b.yaw;
+            a.move.x = b.air ? steer : 0.0f;
+            yaw = b.yaw;
+            w.tick(a);
+        }
+        EXPECT_GE(air, 8);
+        return std::remainder(yaw - yaw0, 2 * 3.14159265f);
     };
-    const float none = jump(""), left = jump("2.7 right -1\n"), again = jump("2.7 right -1\n"), right = jump("2.7 right 1\n");
-    std::printf("bike air control: yaw %.4f none, %.4f left, %.4f right\n", none, left, right);
-    EXPECT_GT(left - none, 0.05f);
-    EXPECT_LT(right - none, -0.05f);
+    const float none = jump(0), left = jump(-1), again = jump(-1), right = jump(1);
+    std::printf("bike air control over the pit: yaw %+.4f none, %+.4f left, %+.4f right over the pit\n", none, left, right);
+    EXPECT_GT(left - none, 0.01f);
+    EXPECT_LT(right - none, -0.01f);
     EXPECT_EQ(left, again);
 }
 
@@ -312,7 +358,7 @@ TEST(VehicleReal, DonutAndPowerSlide) {
     float turned = 0, prevYaw = 0, roll = 0;
     int donut = 0;
     game::vec3 start{0}, farthest{0};
-    ride(bf, anims, "1.5 forward 1\n1.5 drop 1\n1.5 right -1\n", 4.5, [&](uint64_t i, const game::Bike& b, const game::World& w) {
+    ride(bf, anims, "1.5 forward 1\n1.5 jump 1\n1.5 right -1\n", 4.5, [&](uint64_t i, const game::Bike& b, const game::World& w) {
         if (i == 89) start = b.pos, prevYaw = b.yaw;
         if (i < 90) return;
         turned += std::remainder(b.yaw - prevYaw, 2 * 3.14159265f), prevYaw = b.yaw;
@@ -331,10 +377,91 @@ TEST(VehicleReal, DonutAndPowerSlide) {
 
     int slide = 0;
     float slideRoll = 0;
-    ride(bf, anims, "1.3 forward 1\n2.6 forward 0\n2.6 drop 1\n2.6 right -1\n", 3.4, [&](uint64_t, const game::Bike& b, const game::World&) {
+    ride(bf, anims, "1.3 forward 1\n2.6 forward 0\n2.6 jump 1\n2.6 right -1\n", 3.4, [&](uint64_t, const game::Bike& b, const game::World&) {
         if (b.stunt == game::BikeStunt::PowerSlide) ++slide, slideRoll = b.roll;
     });
     std::printf("bike power slide: %d ticks, roll %.3f\n", slide, slideRoll);
     EXPECT_GT(slide, 20);
     EXPECT_GT(slideRoll, 0.05f);
+}
+
+// Launch (tru.exe 0x793680 flag bits 23 / 22, 0x791D10; record +0x0C 10, +0x1C0 0.1 s, +0x1C4 0.3 s): revving against
+// the hand brake and letting it go with the throttle held shoves the bike off with ten times the engine torque for a
+// tenth of a second; without the throttle the charge is dropped.
+TEST(VehicleReal, LaunchBoostAfterRevvingAgainstTheBrake) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const auto speedAt = [&](const std::string& input, uint64_t tick) {
+        float v = 0, held = 0;
+        inTunnel(bf, anims, input, 1.5, [&](uint64_t i, const game::Bike& b, const game::World&) {
+            if (i == 25) held = std::abs(b.speed); // revving: the brake holds it
+            if (i == tick) v = b.speed;
+        });
+        EXPECT_LT(held, 60);
+        return v;
+    };
+    const uint64_t at = 30 + 12; // 0.2 s after the brake is let go at 0.5 s
+    const float plain = speedAt("0.5 forward 1\n", at);
+    const float launched = speedAt("0.0 forward 1\n0.0 jump 1\n0.5 jump 0\n", at);
+    const float dropped = speedAt("0.0 forward 1\n0.0 jump 1\n0.4 forward 0\n0.5 jump 0\n0.5 forward 1\n", at);
+    std::printf("bike launch: %.0f units/s 0.2 s after the launch, %.0f from a plain start, %.0f after a dropped charge\n", launched, plain, dropped);
+    EXPECT_GT(launched, plain + 1200); // the burst: about 0.1 s x 9 x the engine's push more
+    EXPECT_NEAR(dropped, plain, 150);
+}
+
+// Reverse (0x790E40 state 3 -> 2, record +0x1F8 6 frames; +0x74 / +0x6C: top rpm at 10 mph): standing, the brake has to
+// be held for 7 frames before the reverse gear takes; it then backs up to about 10 mph and no faster on level ground.
+TEST(VehicleReal, ReverseAfterTheBrakeIsHeld) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    bool early = false;
+    float back = 0;
+    inTunnel(bf, anims, "0.0 forward -1\n", 3.0, [&](uint64_t i, const game::Bike& b, const game::World&) {
+        if (i <= 13) early |= b.drive.reverse; // 7 frames at 30 Hz = 14 ticks
+        if (i == 16) EXPECT_TRUE(b.drive.reverse);
+        back = std::min(back, b.speed);
+    });
+    std::printf("bike reverse: fastest %.0f units/s\n", back);
+    EXPECT_FALSE(early);
+    EXPECT_NEAR(back, -10.0f * 125.2f, 0.12f * 1252); // 10 mph on the level
+}
+
+// The first ride of Southern Mexico by autopilot input (the plan lines of the self-test scenario
+// tests/selftests/bike_ride.json): from where the chapter leaves her bike on the trail, over the stair hump between the two
+// pillars, down the valley, into the stone tunnel and off its ramp over the pit, to the checkpoint beyond.
+TEST(VehicleReal, FirstRideOverThePitByAutopilot) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(loader(bf), "l4_trailstart", game::loadLaraAnims(bf), kMountSpot);
+    auto pilot = app::Autopilot::parse(firstRidePlan());
+    float takeOff = 0, landX = 0, airStartX = 0, top = 0;
+    int airTicks = 0;
+    bool overPit = false;
+    uint64_t i = 0;
+    for (; i < 60 * 60 && !pilot.done(); ++i) {
+        w.tick(pilot.step(i, w));
+        const auto* b = w.ridden();
+        if (!b) continue;
+        const game::vec3 p = w.player().state().pos;
+        top = std::max(top, b->speed);
+        // the pit: its near edge (the ramp's lip) at x 66100, the far edge at x 67700, 6000 deep
+        if (b->air && !overPit && p.x > 65900 && p.x < 67200) overPit = true, takeOff = b->speed, airStartX = p.x;
+        if (overPit && landX == 0) {
+            if (b->air) ++airTicks;
+            else landX = p.x;
+        }
+        if (std::getenv("OU_VEHICLE_TRACE") && i % 6 == 0)
+            std::printf("tick %4llu v %5.0f air %d pos %.0f %.0f %.0f pitch %.2f\n", (unsigned long long)i, b->speed, b->air, p.x, p.y, p.z, b->pitch);
+    }
+    std::printf("first ride: %s after %.1f s, top %.0f units/s; pit: take-off %.0f units/s at x %.0f, %d ticks in the air, down at x %.0f\n",
+                pilot.failed() ? pilot.failure().c_str() : "done", double(i) / 60, top, takeOff, airStartX, airTicks, landX);
+    EXPECT_FALSE(pilot.failed()) << pilot.failure();
+    ASSERT_NE(w.ridden(), nullptr);
+    EXPECT_TRUE(overPit);
+    EXPECT_GT(landX, 67700);                 // beyond the far edge
+    EXPECT_GT(w.player().state().pos.z, -1200); // not in the pit
+    EXPECT_FLOAT_EQ(w.health().value(), w.health().max());
+    EXPECT_LT(glm::length(game::vec2(w.player().state().pos) - game::vec2(69586, -55062)), 700); // checkpoint 6620
 }
