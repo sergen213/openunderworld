@@ -1238,6 +1238,57 @@ TEST(StreamReal, DeathRestoresTheCheckpointSave) {
     EXPECT_LT(glm::distance(glm::vec2(w.player().state().pos), glm::vec2(*checkpointPos())), 60.0f);
 }
 
+// A restore replaces the physics scene (physics::Scene::restore drops every hinge), so the colliders of the world
+// before it must go with it: syncObjects reads the swing of the doors it had (World::colliders_ -> Scene::angle) and
+// threw vector::at on the first tick after a death, or after a save loaded into a running world, in any unit with a
+// hinged door or lever (l4_trailstart has them). Also after streaming on to the neighbour unit and dying there.
+TEST(StreamReal, RestoreWithHingedDoorsLoaded) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    game::World w(load, "l4_trailstart", anims);
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    w.startChapter(4);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const size_t hinges = w.physics().hinges.size();
+    ASSERT_GT(hinges, 0u) << "the unit has hinged doors";
+    const auto die = [&] {
+        const int before = w.respawns();
+        for (int i = 0; i < 200 && !w.health().dead(); ++i) w.kill(), w.tick({});
+        for (int i = 0; i < 400 && w.respawns() == before; ++i) w.tick({});
+        EXPECT_EQ(w.respawns(), before + 1);
+        for (int i = 0; i < 30; ++i) w.tick({});
+    };
+    die();
+    EXPECT_EQ(w.physics().hinges.size(), hinges) << "the doors hang on their hinges again";
+
+    // A save game loaded into the running world.
+    const auto bytes = save::serialize(save::capture(w));
+    for (int i = 0; i < 10; ++i) w.tick({});
+    save::apply(save::parse(bytes), w);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_EQ(w.physics().hinges.size(), hinges);
+
+    // Streamed on: Lara stands in the neighbour unit (its joints and doors exist now), dies and is restored into the
+    // checkpoint save's unit.
+    ASSERT_FALSE(w.currentUnit().data.portals.empty());
+    const std::string next = w.currentUnit().data.portals[0].toUnit;
+    const game::LoadedUnit* n = nullptr;
+    for (const auto& u : w.units())
+        if (u.data.name == next) n = &u;
+    ASSERT_TRUE(n && n->data.spawn);
+    game::PlayerState s;
+    s.pos = n->data.spawn->pos + n->offset;
+    w.restore(s, 0, -0.25f);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    die();
+    EXPECT_EQ(w.currentUnit().data.name, "l4_trailstart");
+    EXPECT_EQ(w.physics().hinges.size(), hinges);
+}
+
 // Ragdolls save and load mid-fall: l4_ballcourt poacher 6540 (born and killed by the scripts as Lara crosses plane 6546)
 // slides off its ledge as a ragdoll; a save while it falls restores its bodies (IDs, velocities, contacts) and its enemy
 // state, so the fall and the settled pose come out bit for bit, for every corpse (6540-6542) and the whole world (uber
