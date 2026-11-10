@@ -928,7 +928,8 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   written before 0.12 (Shift walk, Alt sprint, …) gets these defaults for every action still on its old default;
   rebound actions are kept.
 - Sprint (Tuning in Game.hpp; tru.exe under Wine, l4_trailstart, `openunderworld-work/screens/controls/s_*.txt`):
-  sprint held while running plays `sprint_loop` (root motion 1927 units/s; tru ~1860 on a curve) for 9.7 s of
+  sprint held while running plays `sprint_loop` (root motion 1927 units/s; tru.exe 1851..1939, mean 1915, on the
+  straight of the l3_main_bedroom corridor, `openunderworld-work/jumpfid/sprint.txt`; ~1860 on a curve) for 9.7 s of
   stamina (measured 9.5..9.9), then `ng_sprint_to_exhaust` + `ng_run_exhaust` (no refill while they play) and `ng_run`.
   Stamina refills a second per second of anything else; a sprint starts again once 0.9 s is back (held throughout:
   ~2.2 s running, 0.9 s sprinting; 4 s without it after exhaustion: 4.1 s). Crouch while sprinting rolls with
@@ -1739,6 +1740,11 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   roped walk's speed) was attempted twice and not obtained: teleported to the balcony (unit offset from the ring's
   instance position: tru = ours + (1583.83, 1911.31, -1939.58)) she falls through the world after the first camera
   calibration run. Scripts and notes: `openunderworld-work/gameplaygoal/grapin/` (`wine2.sh`, `an.py`, `NOTES.md`).
+  Three more sessions (2026-11-10, `openunderworld-work/gameplaygoal/reference/failed/`) did not get her onto a rope
+  either: on this balcony she is 277 lower a second after being set down and then gone (the game restarts the
+  prologue, which is why the earlier sessions' later teleports fell through the world), and in l3_chapel the unit
+  opens with a scripted sequence that owns her. docs/REFERENCE_COMPARISON.md "Grapple" has ours' measured swing on
+  both rings and, under "Unmeasured", the session to run next.
   Open until then [U]: the time base of the brakes and of the body damping (ours: per frame), gravity on the rope
   body, the "no ground" distance, the roped walk speed, whether the jump-offs let the rope go.
 - Landing from the rope [I]: swinging down onto a floor (> 300 u/s down) off a taut rope, or coming down just over a
@@ -2089,7 +2095,15 @@ openunderworld-work/gameplaygoal/wj.py, disassembly openunderworld-work/gameplay
   goes to S1292 on `PSCCF_WallJumpAnticipate` (0x20B, 0x763330 -> 0x759260), T2350 to S1293 on `PSCCF_WallJumpCollide`
   (0x217, 0x763490: 0x7594C0 returns 1) once 5 frames into the state (cond 0x14).
 - The wall test 0x7594C0 [O] (player data = lara.drm object data, offsets from its start):
-  - She is not attached to markup with flag 0x80.
+  - The jump query in effect (player +0xA84 -> 0x6F1950) must not carry flag 0x80 in its +0x2C word, else the test
+    returns 0 at once. The queries that carry it [O-data, lara.drm]: q2 (the standing jump), q10 (hang jump up), q23
+    (ladder jump up), q31 (DICE jump up), q35 (pole-top jump up), q55 (the wall hug's twist jump), q13, q36, and the
+    falls / drops (q44..q47, q49, q62, q64, q65, q72, q92, q93, q104, q106): the jumps launched straight up and the
+    falls. q43 (stick jump), q26 (running jump), q9 / q7 / q8 (hang jumps back / sideways), q22 (ladder), q33 / q34
+    (pole) and q12 (the wall jump itself) do not. tru.exe under Wine [O-runtime]: a standing jump 111 from l2_junglehub's
+    unflagged column face, facing it, is a plain jump (apex 201.6, 0.55 s; three runs,
+    `openunderworld-work/gameplaygoal/reference/chimney-wine2.txt` ja / jb / jc). An earlier reading of this gate as
+    "not attached to markup with flag 0x80" was wrong.
   - 0x758DD0: the pelvis (segment 1) now and N frames on, N = byte +0x821 = **3** (the anticipate test uses byte
     +0x820 = 0, a ray of no length): along her heading by N x |velocity| (a frame's), and 2.862215 x N^2 down.
   - Ray 1 (0x4935F0, mask 0x2C19E7) between the two points raised by int +0x824 = **63**; ray 2 lowered by int +0x828 =
@@ -2126,7 +2140,10 @@ openunderworld-work/gameplaygoal/wj.py, disassembly openunderworld-work/gameplay
 
 **Ours** (State::WallJump; `Player::tryWallJump`, `wallJump`, `wallJumpQuery`): the test above, literally, on the 30 Hz
 frames of a State::Jump flight that was not aimed at markup (`jumpAimed`: `aimGroundJump` / `assistJump` found a
-target), with collision rays for 0x4935F0 and the bind pose's segment 1 height for the pelvis [I] (300 without a
+target) and was not launched straight up (the flag-0x80 jump queries q2 / q10 / q23 / q31 / q35 / q55 all launch with
+no horizontal speed, so ours tests the launch's horizontal speed [I: two straight-up queries, q27 (50.57 up) and
+q110 (80.15 up), lack the flag; ours refuses the wall jump for them as well]), with collision rays for 0x4935F0 and
+the bind pose's segment 1 height for the pelvis [I] (300 without a
 skeleton). On the wall she is drawn to the 110 standoff over two frames, turned to face it, and holds her height:
 nothing moves her up but the jumps. A jump press (edge) while `wallJumps` < 5 plays wall_jump_jump_back; when it ends
 she faces away from the wall and either flies onto the ledge `ledgeOnArc(q12)` met (State::HangJump, the existing ledge
@@ -2157,20 +2174,56 @@ as a wall).
 
 **Tests**: `Game.ChimneyJumpGainsHeightEachRebound` (walls 700 apart: ~487 a rebound, 110 out, no teleport),
 `Game.ChimneyJumpNeedsThePress` (14 frames, then the fall), `Game.ChimneyJumpFallsAfterFiveInARow`,
-`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`,
+`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`, `Game.ChimneyJumpNotFromAStandingJump`,
+self-test `chimney_floor_jumps`,
 `Game.ChimneyJumpSaveLoadContinuesIdentically`, `GameReal.JunglehubChimneyJumpClimbsColumns`,
 `GameReal.ValaskjalfChimneyJumpTakesAllFive` (and l2_towerroom's kick), `StreamReal.SaveContinuesBitIdentically`
 (its l2_junglehub case: saved on column B mid-climb, bit for bit).
 
-Open [U]: not measured in tru.exe under Wine: whether a standing jump beside an unflagged wall really plants her on it
-45 over the floor (ours does, by the chart), the hold time in seconds, the attach heights, whether the count ends a climb
-at five; the camera on the wall (the jump camera is kept). Three Wine sessions (2026-11-10,
-openunderworld-work/gameplaygoal/chimney/session.sh, wine1-*.txt) teleported her to our unit-frame coordinates and
-fell through: after `wmem goto <unit>` tru.exe's world is our unit frame + (its start - our spawn): l4_ballcourt
-+ (5881.23, -10787.23, -15435.90), l2_junglehub + (8558.23, -19414.44, -18073.17). session2.sh there has the corrected
-coordinates (the l4_ballcourt corridor at ours -17544, 6342, 2841.5 for the count; l2_junglehub's streambed between
-the columns, where column B's base carries flag 0x80 up to 800 over the floor and its upper part does not) and
-ours1..3.txt our controller's traces of the same inputs to compare with; it was not run.
+**Measured in tru.exe under Wine** (2026-11-10, l2_junglehub, the streambed floor between the columns, facing column
+A's unflagged east face; `openunderworld-work/gameplaygoal/reference/chimney-wine2.txt` ja / jb / jc,
+`chimney3-wine.txt` j3 / j4, scripts `session6.sh`; docs/REFERENCE_COMPARISON.md M06) [O-runtime]:
+
+- A standing jump 111 from the face: a plain jump (apex 201.6), three runs: no wall jump (q2's flag 0x80, above). Ours
+  planted her 45 over the floor until this gate was added (`Game.ChimneyJumpNotFromAStandingJump`).
+- A stick jump (q43: 40.00 + 49.97 a frame) run up to the face: one frame after the take-off she is in the wall
+  state, her root **43.2 / 43.6** over the floor, and is drawn in 0.19..0.20 s (6 frames) to **98.5** out of ledge
+  796's line (ours: 39.7 over the floor, 105.6 out, drawn in 2 frames [I: `kAttachSeconds`; the 3-frame clip entered
+  at frame 1 does not explain tru.exe's 6]). Ours used to miss this catch when she took off within a tick's travel of
+  the wall: the test read her contact-clipped velocity (self-test `chimney_floor_jumps`).
+- No press: the idle state lasts **0.416 s** (12.5 frames; chart variable 208 = 12, so its unit is the 30 Hz frame
+  [O]), then `wall_jump_detach_fall` takes 0.267 s (8 frames), her root 32.9 back and down to the floor.
+- A press 58 ms into the idle: the turn state lasts **0.200 s** (6 frames; ours plays the 5-frame clip from its start
+  frame: 0.133 s), then the flight starts 22.8 out and 37.0 up of the wall position at **46.81** out + **77.27** up a
+  frame (first sample 74.48): q12's velocity, as ours.
+
+The climb itself, ledge 796 to 797 (`chimney4-wine.txt` h1; the hang reached by pinning her 600 over its root, where
+the fall's air grab takes the ledge) [O-runtime]:
+
+- Hang root z 5855.5 (ours 5855.2). Back + Jump: she leaves 407 ms after the press at **53.73** out + **34.77** up a
+  frame, the free leap's speeds, and is in the wall state on column B 0.149 s later, **130.6** over the hang's root
+  (ours 138), drawn to her hold in 0.2 s.
+- Each jump press: the 0.2 s turn, the flight at 46.81 + 77.27, and the wall state again **0.183..0.200 s** into the
+  flight: on the 5th frame, the first with zVel inside the window (the timing inferred above holds), while she is
+  still 105..115 short of her hold, to which she is drawn level in 0.2 s. Holds at +130.6 (B), +491.2 (A), +829.6
+  (B): **360.6** and **338.4** a rebound. From the third hold the jump is re-aimed (first sample 36.32 out + 67.06 up
+  a frame) onto ledge 797: hanging 1247.5 higher 3.17 s after the first press. Four jumps, as ours.
+- **Ours differs**: its rays (3 frames x speed from the pelvis) reach the facing column only on the 8th frame, so she
+  arrives at the wall itself and has risen **435** a rebound (holds at +138, +573, +1008;
+  `GameReal.JunglehubChimneyJumpClimbsColumns` asserts that 435). What lets tru.exe take the wall from ~110 farther out
+  is not decoded [U]: the vector at player state +0xA20 that 0x758DD0 scales may be the jump's launch velocity
+  (90.3 a frame for q12, not the current 69.6), and 0x4935F0 may cast with a radius.
+- No press after the leap back (h3): 0.200 s of draw, **0.404 s** idle, `wall_jump_detach_fall` 0.259 s (32.6 back,
+  149.4 down), then the fall.
+- Five in a row (h2: from the hang on 797, where the walls give no more height, a press every 150 ms): the leap back
+  and **five** jumps back; on the wall after the fifth the presses do nothing, she holds 0.416 s, drops and catches
+  797 again. The count is tru.exe's, as ours (`wallJumpMax`).
+
+Open [U]: the look-ahead above; the camera on the wall (the jump camera is kept); l5_valaskjalf's climb that needs
+all five; of the nine further shaft candidates above none was tried. Coordinates for such sessions: after
+`wmem goto <unit>` tru.exe's world is our unit frame + (its start - our `player` intro): l4_ballcourt + (5881.21,
+-10787.21, -15435.93), l2_junglehub + (8558.2, -19414.5, -18073.1); only the first `goto` of a session can be relied
+on (docs/REFERENCE_COMPARISON.md "Method").
 
 ## Rail slides (src/game/Traverse.cpp)
 
@@ -3217,6 +3270,14 @@ No side-by-side comparison with the original game was made.
   Wine (Numbers); traversal reach boxes and the jump-assist radius are inferred; none are in Lara's player data block
   (Numbers) [U]. The grab zVel window, height, crouch height and
   water probe are taken from it.
+- Jump timing differs from the original [O-runtime, docs/REFERENCE_COMPARISON.md]: tru.exe leaves the ground 342..359 ms
+  after the press standing, 273..290 ms with the stick, 70..109 ms running; ours 133 / 67 / 33 ms, because the take-off
+  leaves when its clip ends and `clipBlend` starts `ng_standing_jump` at request frame 6 and
+  `ng_running_jump_forwards` at frame 1. The run start (`ng_run_start` from frame 6) leads tru.exe's by 0.07..0.10 s
+  for the same reason. Not fixed yet: every recorded replay with a jump shifts with it.
+- The original has no longer jump from a sprint and none from holding Jump on flat ground: a jump out of the sprint
+  and one with Jump held 1 s are the running jump's flight (65.83 forward + 42.53 up a frame, 987 long, apex 158.0)
+  [O-runtime, `openunderworld-work/jumpfid/sprint.txt`, `hold_run.txt`]; ours does the same.
 - Swimming: breath, scuba, dodges, swan dive, surface turns, the automatic climb out and jellyfish are in ("Water
   moves"); its "Open" line lists what is left. Scripted water levels run ("Scripted levels"). Ripple/caustic
   parameters are ours [I].
@@ -3233,7 +3294,7 @@ No side-by-side comparison with the original game was made.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
   see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
   model, ledge-grapple transitions, exe rappel speeds (ours are [I]).
-- Missing: sprint on stairs / slopes (`ng_sprint_up` / `_down`), sprint jumps and beam sprint,
+- Missing: sprint on stairs / slopes (`ng_sprint_up` / `_down`), beam sprint,
   state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenade crouch / perch / under-water
   placing, the
   assault rifle / tranquilizer / Thor's hammer, projectile flight for the speargun (hitscan), mirrored side hit
