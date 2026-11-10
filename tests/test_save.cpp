@@ -1305,6 +1305,23 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
          [](const game::World& w) { return brokenThrall(w) && !brokenThrall(w)->state().pieceVel.empty(); }},
         {"l7_yggdrasil_hall01", game::Spawn{{1000, 0, 0}, 1.5707963f}, 0, 240, idle, [](game::World& w) { breakThrall(w, 20); },
          [](const game::World& w) { return brokenThrall(w) && brokenThrall(w)->state().pieces.size() == 14; }},
+        // l2_junglehub's chimney (WallJump.cpp): on column B's face after the leap back off ledge 796; a jump press
+        // five ticks after the load leaps on to column A, where she lets go.
+        {"l2_junglehub", game::Spawn{{-12400, 23250, 5900}, 3.1415927f}, 70, 240, [](uint64_t t) {
+             game::Actions a;
+             if (t == 30) a.move.y = -1;
+             a.jump = t == 30 || t == 75;
+             return a;
+         }, [](game::World& w) {
+             const auto& mk = w.collision().markup;
+             for (size_t i = 0; i < mk.size(); ++i)
+                 if (mk[i].type == 1 && mk[i].id == 796) {
+                     game::PlayerState s = w.player().state();
+                     s.state = State::Hang, s.clip = "ledgeb_idle", s.loop = true, s.clipTime = 0;
+                     s.ledge = int(i), s.ledgeSeg = 1, s.ledgeT = 140, s.ledgeSide = -1, s.vel = game::vec3(0);
+                     w.restore(s, 3.1415927f, -0.25f);
+                 }
+         }, [](const game::World& w) { return w.player().state().state == State::WallJump; }},
         // A reveal camera playing: l1_kraken_room plane 37 starts camera spline 9 (GameReal.RevealCameraPlaysUnitSpline).
         {"l1_kraken_room", std::nullopt, 60, 300, idle, [](game::World& w) {
              w.tick({});
