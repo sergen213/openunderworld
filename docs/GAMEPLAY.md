@@ -2696,8 +2696,12 @@ first series) and `openunderworld-work/gameplaygoal/slope/` (`session.sh` / `ses
 | the lower edge of a 0.880 face (no ledge) | 0.1 s in a slide-off state, then the fall | slide end -> fall |
 
 Not obtained: an unflagged face between normal z 0.60 and 0.6157 that she stayed on (the two tried dropped her onto
-neighbours), 0x0020 faces steeper than 52° (the 0x00A0 trials fell through terrain not yet solid in that part of
-the unit), keys during a slide (below).
+neighbours), 0x0020 / 0x0100 faces steeper than 52° (the 0x00A0 trials fell through terrain not yet solid in that
+part of the unit; ours follows the decompiled test), and everything with keys during a slide: the jump off it
+(`slope_jump*`, queries q3 / q39..q41), the stick across and against the slide, the entry from a walk
+(`slope_transitionto`) and its `ng_stepback`. The keyed session is prepared
+(`openunderworld-work/gameplaygoal/slope/session3.sh`: the 2.5 s steady slide over the 0.765 / 0.769 / 0.668 / 0.746
+faces, Jump at 0.7 s, A / D / S / W held); tru.exe did not come up / did not load the unit in its two runs.
 
 ## Rail slides (src/game/Traverse.cpp)
 
