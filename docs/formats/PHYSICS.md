@@ -483,6 +483,10 @@ face under her in every hit (`collision::Hit::face`), so the rule is a change to
 once the two limits are bracketed (a second ramp series between 0.45 and 0.626 on 0x0080 / 0x0000 faces, and on
 0x0004 faces above 0.753).
 
+Settled 2026-11-10 (docs/GAMEPLAY.md "Slopes and slides"): the rule is tru.exe's ground check 0x5DCE20: slide-flagged
+faces (client 0x0004 / 0x0040) are slid between 52 and 28 degrees (normal z 0.6157..0.8829), any face under cos 52
+degrees is too steep unless flagged 0x0020 / 0x0100; `Player::floorKind` implements it.
+
 ### Reproduce
 
 `/usr/bin/git worktree add <dir> 84eb0be`, configure and build `ou_physics_tests ou_game_tests ou_gates_tests

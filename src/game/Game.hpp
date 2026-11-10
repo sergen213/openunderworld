@@ -196,7 +196,17 @@ struct Tuning {
     // Ground snap window. tru.exe (Wine, l3_main_bedroom): Lara runs up the 97..100-unit stair risers with the
     // root snapping to each step top; the 121-unit hearth edge blocks her. 110 lies between (GAMEPLAY.md Numbers).
     float stepUp = 110.0f, stepDown = 110.0f;
-    float minFloorNormalZ = 0.7f;              // steeper = wall (~45.6 deg)
+    // The floor rule of tru.exe's ground check 0x5DCE20 [O] (docs/GAMEPLAY.md "Slopes and slides"): a floor face
+    // steeper than lara.drm player data short +0x100E = 52 degrees (normal z < cos 52) is too steep to stand on; a face
+    // with a slide flag (collision::kClientSlide) is slid down from player data short +0x100C = 28 degrees to 52.
+    float minFloorNormalZ = 0.61566148f;       // cos 52 deg
+    float slideMaxNormalZ = 0.88294759f;       // cos 28 deg
+    // Slide speed on flagged faces [O: state group S814 props 0x204 / 0x205 / 0x1FE / 0x1FF, controller 0x73FF50]:
+    // along the fall line, 35 units per 30 Hz frame at 28 degrees to 45 at 52, approached at 5 (up) / 10 (down) per
+    // frame^2 x the frame's time multiplier: at 60 Hz 2.5 / 5 (Wine, l2_junglehub: +1.25 per 60 Hz tick).
+    float slideSpeedMin = 35.0f * 30.0f, slideSpeedMax = 45.0f * 30.0f;
+    float slideAccel = 2.5f * 900.0f, slideDecel = 5.0f * 900.0f;
+    float slideEnterSpeed = 1.0f * 30.0f;      // while slope_transitionto plays (S818 props 0x204 = 0x205 = 1)
     float gravity = 5.72443f * 900.0f;         // units/s^2 (tru.exe: 5.72443 units per 30 Hz frame^2)
     // Jump take-offs measured in tru.exe under Wine (Instance +0x2A0 velocity, units per 30 Hz frame x 30):
     // standing 48.04 up; standing with the stick 49.97 up + 40.00 along it; running (or the stick behind her:
@@ -242,7 +252,7 @@ struct Tuning {
     // player+0x8E0 top + the 0x69DA80 waves - 44.1 at rms < 1 in both states).
     float swimSurfaceDepth = 44.1f;
     float crouchHeight = 260.0f; // capsule while crouched/rolling: player data +0x14
-    float slideMinNormalZ = 0.3f; // floors between this and minFloorNormalZ are slid down
+    float slideMinNormalZ = 0.3f; // [I] too-steep floors down to this are slid down (g sin theta), steeper ones fallen past
     float beamAttach = 30.0f;   // root within this of a balance beam (x/y, and z) gets on it
     float poleReach = 60.0f;    // hands to pole axis, horizontal
     // Pole hands (pole pose) may be this far above the axis when caught: Hpole_perp_attach_M starts with the hands
@@ -522,12 +532,14 @@ private:
     vec3 forward() const;
     vec3 toWorld(vec3 model) const; // model-space vector -> world, by yaw
     float capHeight() const;        // capsule height (crouched or standing)
+    enum class Floor { Stand, Slide, Steep };
+    Floor floorKind(const collision::Hit& g) const;        // tru.exe 0x5DCE20's verdict on the face under her
     bool standable(vec3 p, const collision::Hit& g) const; // floor hit under p supports standing
     void groundMove(vec3 delta, float dt);
     void airMove(float dt, vec2 move);
     vec3 slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) const;
     void startFall(vec3 vel);
-    void startSlide(vec3 vel);
+    void startSlide(vec3 vel, bool fromGround = false);
     bool tryGrab(vec3 prevPos);
     bool tryGrabPole(vec3 prevPos);
     bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
