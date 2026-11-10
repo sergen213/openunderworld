@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "sprint",
+  "chapter": "Core mechanics: sprint, exhaustion, recovery",
+  "note": "l4_trailstart, where tru.exe's sprint was timed under Wine: sprint_loop for 9.5..9.9 s, then ng_sprint_to_exhaust + ng_run_exhaust, ~2.2 s until the next 0.9 s sprint with Shift held (docs/GAMEPLAY.md Tuning::sprintSeconds). The trail bends: she slides along its walls, which does not change the stamina clock.",
+  "level": "l4_trailstart",
+  "spawn": [37981, -51758, 1463, -126.7],
+  "steps": [
+    {"step": "start_sprinting", "input": ["0 forward 1", "0.5 sprint 1"], "duration": 3,
+     "until": {"probe": "player.clip", "eq": "sprint_loop"},
+     "expect": [{"clips": ["ng_run_start", "sprint_loop"]}, {"probe": "player.sprint_left", "min": 9.0}]},
+    {"step": "sprint_until_exhausted", "input": ["0 forward 1", "0 sprint 1"], "duration": 12,
+     "until": {"probe": "player.clip", "eq": "ng_sprint_to_exhaust"},
+     "expect": [{"probe": "step.seconds", "near": 9.7, "tol": 0.25, "note": "9.5..9.9 s [O Wine]"},
+                {"probe": "step.peak_speed", "near": 1927, "tol": 25, "note": "sprint_loop root motion"},
+                {"probe": "player.sprint_left", "max": 0.05}]},
+    {"step": "exhausted", "input": ["0 forward 1", "0 sprint 1"], "duration": 4,
+     "until": {"probe": "player.clip", "eq": "sprint_loop"},
+     "expect": [{"clips": ["ng_sprint_to_exhaust", "ng_run_exhaust", "ng_run", "sprint_loop"]},
+                {"probe": "step.seconds", "near": 2.2, "tol": 0.25, "note": "~2.2 s running [O Wine]"}]},
+    {"step": "second_sprint", "input": ["0 forward 1", "0 sprint 1"], "duration": 3,
+     "until": {"probe": "player.clip", "eq": "ng_sprint_to_exhaust"},
+     "expect": [{"probe": "step.seconds", "near": 0.9, "tol": 0.1, "note": "0.9 s refilled [O Wine]"}]},
+    {"step": "rest", "duration": 5,
+     "expect": [{"probe": "player.state", "eq": "idle"},
+                {"probe": "player.sprint_left", "min": 3.5, "max": 5.5, "note": "refill 1 s per second once the exhausted clips end"}]}
+  ]
+}

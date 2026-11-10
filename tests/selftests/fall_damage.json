@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "fall_damage",
+  "chapter": "Core mechanics: falling, landing, fall damage",
+  "note": "l4_pool start plateau. The teleport fixtures only lift her; the falls, landings and damage are the game's. Curve [O lara.drm +0x4C..+0x54, tru.exe 0x6F1790]: 0 up to 1280.03, linear to 500 at 1817.32, to 1000 at 2215.55.",
+  "level": "l4_pool",
+  "steps": [
+    {"step": "stand", "duration": 0.2,
+     "expect": [{"probe": "player.pos.z", "near": 4721.2, "tol": 1}, {"probe": "player.health", "eq": 1000}]},
+    {"step": "fall_1000", "fixtures": [{"teleport": [-14885.4, -42.6, 5721.2, 0]}], "duration": 3,
+     "expect": [{"visits": ["idle", "fall", "land", "idle"]},
+                {"probe": "step.drop", "near": 1000, "tol": 2},
+                {"probe": "step.health_lost", "eq": 0, "note": "under 1280.03: no damage"},
+                {"probe": "step.air_time", "near": 0.62, "tol": 0.04, "note": "sqrt(2 x 1000 / 5151.99)"},
+                {"probe": "player.grounded", "eq": true}]},
+    {"step": "fall_1500", "fixtures": [{"teleport": [-14885.4, -42.6, 6221.2, 0]}], "duration": 3,
+     "expect": [{"visits": ["idle", "fall", "land", "idle"]},
+                {"clips": ["ng_generic_land_forwards", "ng_idle"]},
+                {"probe": "step.drop", "near": 1500, "tol": 2},
+                {"probe": "step.health_lost", "near": 204.7, "tol": 3, "note": "(1500 - 1280.03) / 537.29 x 500"},
+                {"probe": "step.air_time", "near": 0.763, "tol": 0.04},
+                {"probe": "step.peak_fall_speed", "near": 3890, "tol": 120, "note": "sqrt(2 g h) = 3931, sampled per tick"},
+                {"probe": "player.health", "near": 795.3, "tol": 3}]},
+    {"step": "fall_2000", "fixtures": [{"health": 1000}, {"teleport": [-14885.4, -42.6, 6721.2, 0]}], "duration": 3,
+     "expect": [{"visits": ["fall", "land"]},
+                {"probe": "step.health_lost", "near": 729.4, "tol": 4, "note": "500 + (2000 - 1817.32) / 398.23 x 500"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

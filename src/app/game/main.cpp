@@ -25,6 +25,7 @@
 
 #include "app/game/Graphics.hpp"
 #include "app/game/Autopilot.hpp"
+#include "app/game/SelfTest.hpp"
 #include "app/game/Cinematic.hpp"
 #include "app/game/Sound.hpp"
 #include "anim/Anim.hpp"
@@ -70,6 +71,9 @@ struct Options {
     int waterDebug = 0; // Enhanced water debug view (render::kWaterDebugViews; F7 cycles)
     std::filesystem::path screenshot, inputScript;
     std::filesystem::path autopilot, recordScript; // --autopilot PLAN --record-script OUT (app/game/Autopilot.hpp)
+    // --self-test FILE.json [--self-test-report OUT.json] [--self-test-trace]: a gameplay scenario (docs/SELFTEST.md)
+    std::filesystem::path selfTest, selfTestReport;
+    bool selfTestTrace = false;
     std::filesystem::path recordInput, replayInput; // --record-input / --replay-input FILE: device events (platform::EventLog)
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script / --replay-input
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
@@ -103,6 +107,8 @@ void usage() {
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer auto|opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--autopilot PLAN --record-script OUT] [--render-hz HZ]\n"
                  "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
+                 "               [--self-test FILE.json [--self-test-report OUT.json] [--self-test-trace]] (a gameplay scenario, docs/SELFTEST.md;\n"
+                 "                exit 0: every step passed, 1: a step failed, 2: malformed scenario)\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-cinematics] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
                  "               [--report-objects UID,...] (with --frames: the script calls to / from them and their state at exit; 0 = every object)\n"
@@ -168,6 +174,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--no-movies") { o.noMovies = true; continue; }
         if (a == "--no-cinematics") { o.noCinematics = true; continue; }
         if (a == "--draw-last") { o.drawLast = true; continue; }
+        if (a == "--self-test-trace") { o.selfTestTrace = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         const char* v = argv[++i];
@@ -192,6 +199,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--input-script") o.inputScript = v;
         else if (a == "--autopilot") o.autopilot = v;
+        else if (a == "--self-test") o.selfTest = v;
+        else if (a == "--self-test-report") o.selfTestReport = v;
         else if (a == "--report-objects") {
             for (const char* p = v; *p;) {
                 char* end = nullptr;
@@ -263,6 +272,11 @@ bool parseArgs(int argc, char** argv, Options& o) {
     if (!o.autopilot.empty() && (!o.inputScript.empty() || !o.replayInput.empty())) { std::fprintf(stderr, "--autopilot excludes --input-script / --replay-input\n"); return false; }
     if ((!o.inputScript.empty() || !o.replayInput.empty() || !o.autopilot.empty()) && o.renderHz == 0) o.renderHz = 60;
     if (!o.inputScript.empty() && !o.replayInput.empty()) { std::fprintf(stderr, "--input-script and --replay-input exclude each other\n"); return false; }
+    if (!o.selfTest.empty() && (!o.inputScript.empty() || !o.replayInput.empty() || !o.autopilot.empty() || o.frames || !o.cine.empty())) {
+        std::fprintf(stderr, "--self-test excludes --input-script / --replay-input / --autopilot / --frames / --cine\n");
+        return false;
+    }
+    if (!o.selfTest.empty() && o.renderHz == 0) o.renderHz = 60;
     return true;
 }
 
@@ -1963,6 +1977,22 @@ private:
 int main(int argc, char** argv) {
     Options opt;
     if (!parseArgs(argc, argv, opt)) { usage(); return 2; }
+    // --self-test: the scenario names how the game is entered; a malformed one ends the run before anything loads.
+    std::optional<ou::app::SelfTest> selfTest;
+    if (!opt.selfTest.empty()) {
+        try {
+            selfTest = ou::app::SelfTest::load(opt.selfTest);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: %s\n", e.what());
+            return 2;
+        }
+        const auto& en = selfTest->entry();
+        opt.level = en.level, opt.spawn = en.spawn, opt.chapter = en.chapter, opt.loadSlot = en.load;
+        opt.noCinematics = !en.cinematics, opt.noMovies = true;
+        selfTest->trace = opt.selfTestTrace;
+        if (opt.selfTestReport.empty()) opt.selfTestReport = opt.selfTest.stem().string() + ".report.json";
+    }
+    int exitCode = 0;
     const bool menuStart = opt.level.empty() && opt.chapter < 0 && opt.loadSlot.empty() && opt.cine.empty();
 
     // ---- load: simulation data first (no window needed to fail early) ----
@@ -2851,7 +2881,15 @@ int main(int argc, char** argv) {
         streamed.version = ~0ull; // re-upload the game scene
     };
 
-    const bool interactive = !script && !replay && !autopilot;
+    const bool interactive = !script && !replay && !autopilot && !selfTest;
+    if (selfTest) {
+        try {
+            selfTest->attach(*world);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: %s\n", e.what());
+            return 2;
+        }
+    }
     SDL_SetWindowRelativeMouseMode(window.get(), interactive && !menuStart);
     ou::platform::DeviceState devices;
     std::map<SDL_JoystickID, ou::platform::GamepadPtr> pads; // every connected gamepad stays open (SDL sends only their events)
@@ -2953,9 +2991,11 @@ int main(int argc, char** argv) {
         for (int n = clock.advance(dt); n > 0 && running; --n) {
             if (replay)
                 while (const auto ev = replay->next(appTicks)) handleInput(*ev);
-            ou::game::Actions a = script      ? script->at(appTicks)
+            ou::game::Actions a = selfTest    ? selfTest->actions(*world)
+                                  : script    ? script->at(appTicks)
                                   : autopilot ? autopilot->step(appTicks, *world)
                                               : ou::game::readDevices(opt.controls, devices);
+            if (selfTest) mouse = glm::vec2(0); // the desktop's pointer is no part of a scenario
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)
@@ -2976,6 +3016,7 @@ int main(int argc, char** argv) {
                     sonarCam.fly({-a.move.x, a.move.y, rise}, float(ou::game::kTickSeconds));
                 }
                 menuHeld = a, held = a;
+                if (selfTest) selfTest->paused();
                 mouse = glm::vec2(0);
                 continue;
             }
@@ -3007,6 +3048,7 @@ int main(int argc, char** argv) {
             if (opt.frames && frame > 30 && tickMs.empty()) world->tickTimes = {}; // after the warm-up frames, as frameMs
             const uint64_t tickStart = SDL_GetTicksNS(), unitsBefore = world->unitsVersion();
             world->tick(a);
+            if (selfTest) selfTest->observe(*world);
             if (opt.frames && frame > 30) tickMs.push_back(double(SDL_GetTicksNS() - tickStart) * 1e-6);
             if (world->unitsVersion() != unitsBefore) // streaming cost on the main thread (ROADMAP "Unit streaming")
                 std::fprintf(stderr, "ou-game: tick %llu stream world %.2f ms\n", (unsigned long long)world->ticks(),
@@ -3224,7 +3266,17 @@ int main(int argc, char** argv) {
 
         // --draw-last: the frame pacing and ticks are those of the render rate, the drawing is skipped (simulation never
         // reads it; ctest game_render_rate_smoke under ASan).
-        if (opt.drawLast && opt.frames && frame + 1 < opt.frames) {
+        if (selfTest && selfTest->done()) { // the report, the verdict on stdout, the exit code
+            const auto report = selfTest->report();
+            std::fputs(selfTest->summary().c_str(), stdout);
+            std::ofstream out(opt.selfTestReport);
+            out << report.dump(2) << "\n";
+            if (!out) std::fprintf(stderr, "ou-game: cannot write %s\n", opt.selfTestReport.string().c_str());
+            else std::fprintf(stderr, "ou-game: self-test report %s\n", opt.selfTestReport.string().c_str());
+            exitCode = selfTest->passed() && out ? 0 : 1;
+            break;
+        }
+        if (opt.drawLast && (selfTest || (opt.frames && frame + 1 < opt.frames))) {
             ++frame;
             continue;
         }
@@ -3610,5 +3662,5 @@ int main(int argc, char** argv) {
         else std::fprintf(stderr, "ou-game: wrote %s (%.2f s)\n", opt.musicWav.string().c_str(), double(wav.size() / 2) / mixer.outputRate());
     }
     renderer->shutdown();
-    return 0;
+    return exitCode;
 }

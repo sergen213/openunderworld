@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "name": "pole_drop",
+  "chapter": "Core mechanics: letting go of a horizontal pole, fall and landing",
+  "note": "l4_traprooms pole 1336: Hpole_detach_dropPerp, then a fall to the floor under it.",
+  "level": "l4_traprooms",
+  "spawn": [
+    14300,
+    -21200,
+    6400,
+    90
+  ],
+  "steps": [
+    {
+      "step": "jump_to_pole",
+      "input": [
+        "0.2 forward 1",
+        "0.2 jump 1",
+        "0.53 forward 0",
+        "0.53 jump 0"
+      ],
+      "duration": 2.5,
+      "until": {
+        "probe": "player.clip",
+        "eq": "HPole_idleHangPerp"
+      },
+      "expect": [
+        {
+          "probe": "player.state",
+          "eq": "polehang"
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 1336
+        }
+      ]
+    },
+    {
+      "step": "drop",
+      "input": [
+        "0.5 drop 1",
+        "0.6 drop 0"
+      ],
+      "duration": 4,
+      "until": {
+        "probe": "player.grounded",
+        "eq": true
+      },
+      "expect": [
+        {
+          "visits": [
+            "polehang",
+            "fall",
+            "land"
+          ]
+        },
+        {
+          "clips": [
+            "Hpole_detach_dropPerp"
+          ]
+        },
+        {
+          "probe": "player.ledge",
+          "eq": -1
+        },
+        {
+          "probe": "step.drop",
+          "min": 100
+        },
+        {
+          "probe": "player.pos.z",
+          "near": 6358.3,
+          "tol": 3,
+          "note": "the floor she jumped from"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "death_respawn",
+  "chapter": "Core mechanics: checkpoint, death, respawn at the checkpoint",
+  "note": "l4_pool: walk onto checkpoint 5502, walk away, a 2600-unit fall kills (over 2215.55), the screen fades and she is back at the checkpoint with full health.",
+  "level": "l4_pool",
+  "steps": [
+    {"step": "touch_checkpoint", "plan": ["go -15550 -288 60"], "duration": 10,
+     "expect": [{"probe": "world.checkpoint", "eq": 5502}, {"probe": "world.checkpoint_unit", "eq": "l4_pool"}]},
+    {"step": "walk_away", "plan": ["go -14885 -43 60"], "duration": 10,
+     "expect": [{"probe": "world.checkpoint", "eq": 5502}, {"probe": "step.horizontal", "min": 500}]},
+    {"step": "fatal_fall", "fixtures": [{"teleport": [-14885.4, -42.6, 7321.2, 0]}], "duration": 5,
+     "until": {"probe": "player.state", "eq": "dead"},
+     "expect": [{"visits": ["idle", "fall", "dead"]},
+                {"probe": "step.drop", "near": 2600, "tol": 2},
+                {"probe": "player.health", "max": 0},
+                {"probe": "player.clip", "eq": "death_fall_normal"}]},
+    {"step": "respawn", "duration": 8,
+     "until": {"probe": "player.state", "eq": "idle"},
+     "expect": [{"probe": "step.teleports", "eq": 1},
+                {"probe": "step.seconds", "near": 3.0, "tol": 0.3, "note": "the death fade (DeathState 0x75AF90)"},
+                {"probe": "player.health", "eq": 1000},
+                {"probe": "player.pos.x", "near": -15550, "tol": 5},
+                {"probe": "player.pos.y", "near": -288, "tol": 5},
+                {"probe": "player.pos.z", "near": 4721.2, "tol": 2},
+                {"probe": "world.checkpoint", "eq": 5502}]}
+  ]
+}

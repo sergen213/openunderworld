@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "traversal_chain",
+  "chapter": "Core mechanics: animation state chain run -> jump -> hang -> shimmy -> climb up -> run",
+  "note": "l2_cliffclimb shore plateau, wall 911 (614 high; GameReal.CliffclimbObstaclesAndLedgeGrabs). The plateau's small spiders bite meanwhile: health is not part of this test.",
+  "level": "l2_cliffclimb",
+  "spawn": [-28734, -1318, 3300, 107.3],
+  "steps": [
+    {"step": "run_jump_grab", "input": ["0 forward 1", "0.42 jump 1", "0.52 jump 0", "0.9 forward 0"], "duration": 3,
+     "until": {"probe": "player.clip", "eq": "ledgeb_idle"},
+     "expect": [{"visits": ["idle", "run", "jumpprep", "jump", "hang"]},
+                {"clips": ["ng_run_start", "ng_running_jump_forwards", "ledgeb_attach_M", "ledgeb_idle"]},
+                {"probe": "player.ledge", "eq": 911}]},
+    {"step": "shimmy", "input": ["0 right 1"], "duration": 0.6,
+     "expect": [{"probe": "player.state", "eq": "shimmy"}, {"probe": "player.ledge", "eq": 911}, {"probe": "step.horizontal", "min": 100}]},
+    {"step": "hang_still", "duration": 0.5, "expect": [{"probe": "player.state", "eq": "hang"}]},
+    {"step": "climb_up", "input": ["0.1 jump 1", "0.2 jump 0"], "duration": 4,
+     "until": {"probe": "player.state", "eq": "idle"},
+     "expect": [{"visits": ["hang", "climbup", "idle"]},
+                {"probe": "player.pos.z", "near": 3807, "tol": 5, "note": "the wall's top (GameReal test)"},
+                {"probe": "player.grounded", "eq": true}]},
+    {"step": "run_on", "input": ["0 forward 1"], "duration": 1,
+     "expect": [{"probe": "player.state", "eq": "run"},
+                {"probe": "player.speed", "near": 1274, "tol": 40},
+                {"probe": "step.horizontal", "min": 1000}]}
+  ]
+}

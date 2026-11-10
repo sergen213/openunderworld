@@ -839,6 +839,10 @@ public:
     const GrapplePress& grapplePress() const { return grapplePress_; }
     // The yaw (rad) the orbit camera's forces turned it by this tick (World.cpp updateOrbitCamera; ou-game logs it).
     float cameraSwing() const { return cameraSwing_; }
+    // The orbit camera's mode (tru.exe CameraManager +0x54: 1 on foot, 4 free climb, 11 hang, 19 / 20 under water /
+    // surface; -1 before its first update) and its current distance from the pivot (ou-game --self-test probes).
+    int cameraMode() const { return orbit_.mode; }
+    float cameraDistance() const { return orbit_.dist; }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
     float air() const { return std::max(0.0f, air_); }

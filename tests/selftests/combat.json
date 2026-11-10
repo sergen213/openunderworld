@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "combat",
+  "chapter": "Core mechanics: draw, target lock, pistol fire kills enemies and damages a target, adrenaline gain",
+  "note": "l2_cliffclimb shore plateau: its small spiders (2 hp) come at Lara; a target dummy (700 hp, fixture) stands 1000 units ahead. Pistols [O wp_handgun / pr_handgunbullet]: 40 damage at the muzzle falling to 30 at 4000, both guns alternate.",
+  "level": "l2_cliffclimb",
+  "spawn": [-28734, -1318, 3300, 107.3],
+  "fixtures": [{"target": [-28734, -318, 3183]}],
+  "steps": [
+    {"step": "draw_and_lock", "input": ["0 draw 1", "0.1 draw 0", "0.2 aim 1"], "duration": 0.8,
+     "expect": [{"probe": "weapon.drawn", "eq": true},
+                {"probe": "weapon.current", "eq": "pistols"},
+                {"probe": "combat.locked", "eq": true},
+                {"probe": "combat.target", "ne": 0},
+                {"probe": "enemies.alive", "min": 7},
+                {"probe": "weapon.shots_fired", "eq": 0}]},
+    {"step": "fire", "input": ["0 aim 1", "0 fire 1"], "duration": 6,
+     "expect": [{"probe": "weapon.shots_fired", "min": 12},
+                {"probe": "enemies.alive", "max": 4, "note": "three spiders shot dead"},
+                {"probe": "enemy.4035.alive", "eq": false},
+                {"probe": "target.0.hits", "min": 8},
+                {"probe": "target.0.health", "min": 60, "max": 460, "note": "8..16 hits of 30..40"},
+                {"probe": "player.adrenaline", "min": 0.5, "note": "the meter fills by damage dealt (500 = full)"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

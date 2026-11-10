@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "ladder",
+  "chapter": "Core mechanics: ladder attach from the ground, climb up, climb down, step off",
+  "note": "l1_ship_sinking_hall ladder 234 (GameReal.ShipSinkingHallLadder).",
+  "level": "l1_ship_sinking_hall",
+  "spawn": [1550, 29, 1000, 180],
+  "steps": [
+    {"step": "attach", "input": ["0 forward 1"], "duration": 2,
+     "until": {"probe": "player.state", "eq": "ladder"},
+     "expect": [{"probe": "player.ledge", "eq": 234}, {"probe": "player.clip", "eq": "ladder_attach_ground_bottom"}]},
+    {"step": "climb_up", "input": ["0 forward 1"], "duration": 1.6,
+     "expect": [{"probe": "player.state", "over": "all", "eq": "ladder"},
+                {"clips": ["ladder_attach_ground_bottom", "ladder_climb_up"]},
+                {"probe": "step.height_gain", "min": 150, "max": 300},
+                {"probe": "player.ledge", "eq": 234}]},
+    {"step": "climb_down", "input": ["0 forward -1"], "duration": 3,
+     "until": {"probe": "player.grounded", "eq": true},
+     "expect": [{"clips": ["ladder_climb_down", "ladder_detach_ground_bottom", "ng_idle"]},
+                {"probe": "step.drop", "min": 150},
+                {"probe": "player.pos.z", "near": 937.8, "tol": 3, "note": "the floor she steps off onto"},
+                {"probe": "player.ledge", "eq": -1},
+                {"probe": "player.state", "eq": "idle"}]}
+  ]
+}

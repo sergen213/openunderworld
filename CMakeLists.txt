@@ -407,10 +407,11 @@ target_link_libraries(ou_game PUBLIC ou_physics)
 # ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
 add_library(ou_ui STATIC src/ui/Ui.cpp src/ui/Hud.cpp src/ui/Art.cpp src/ui/Pda.cpp)
 target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale ou_formats)
-add_executable(ou-game src/app/game/main.cpp src/app/game/Autopilot.cpp src/app/game/Cinematic.cpp src/app/game/Sound.cpp)
+add_executable(ou-game src/app/game/main.cpp src/app/game/Autopilot.cpp src/app/game/SelfTest.cpp src/app/game/Cinematic.cpp src/app/game/Sound.cpp)
 target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio ou_fx)
 if(OU_BUILD_TESTS)
-  add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp tests/test_feedback.cpp)
+  add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp tests/test_feedback.cpp tests/test_selftest.cpp
+                 src/app/game/SelfTest.cpp src/app/game/Autopilot.cpp)
   target_link_libraries(ou_game_tests PRIVATE ou_game GTest::gtest_main)
   target_compile_definitions(ou_game_tests PRIVATE OU_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   gtest_discover_tests(ou_game_tests DISCOVERY_TIMEOUT 30)
@@ -469,6 +470,25 @@ if(OU_BUILD_TESTS)
       [ $ok = 1 ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays/${name}.txt ${unit} ${spawn} ${frames} ${report} ${ARGN})
     set_tests_properties(game_replay_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
   endfunction()
+  # Gameplay self-tests (docs/SELFTEST.md): ou-game --self-test tests/selftests/<name>.json enters the scenario's level,
+  # runs its steps at fixed 60 Hz ticks and exits 0 only when every step's expectations held against the World's own
+  # state; the report goes to <build>/selftest/<name>.report.json. 77 = skipped (no OU_GAME_DIR or display).
+  file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/selftest)
+  function(ou_self_test name)
+    add_test(NAME game_selftest_${name} COMMAND sh -c [=[
+      [ -n "$OU_GAME_DIR" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || exit 77
+      "$0" --game-dir "$OU_GAME_DIR" --renderer opengl --self-test "$1" --self-test-report "$2" \
+        --no-audio --no-movies --no-overlay --draw-last --sync-loads --width 160 --height 120 2>"$2.log"
+      code=$?
+      [ $code = 0 ] || grep -E 'self-test|error' "$2.log" | tail -n 40
+      exit $code]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/selftests/${name}.json ${CMAKE_BINARY_DIR}/selftest/${name}.report.json)
+    set_tests_properties(game_selftest_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+  endfunction()
+  file(GLOB OU_SELF_TESTS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/selftests/*.json)
+  foreach(scenario ${OU_SELF_TESTS})
+    get_filename_component(name ${scenario} NAME_WE)
+    ou_self_test(${name})
+  endforeach()
   # throne 5891: the weight bears its press plate into "in position" (-150..-90) -> seal 5701 vt 54
   ou_receptacle_replay(traprooms_throne_insert l4_traprooms 7400,-34900,4440,-135 900 5883,5891,5701
                        "portables held 0 inserted .*5883>5891" "calls .* 5701:54( |$)" "object 5891 .* joint -(1[0-4][0-9]|150|9[0-9])\\.[0-9] uber 2 ")

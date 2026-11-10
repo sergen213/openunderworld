@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "wall_run",
+  "chapter": "Core mechanics: grapple wall run across a pit and landing on the far ledge",
+  "note": "l5_valaskjalf wall anchor 6750 (tests/replays/valaskjalf_wallrun.txt, GameReal.ValaskjalfWallRun). The plan line runs her along a world heading (180 = -x) whatever the camera does.",
+  "level": "l5_valaskjalf",
+  "spawn": [6981, -91555, -11378, -90],
+  "steps": [
+    {"step": "look_at_anchor", "input": ["0.1 lookx -1.5", "0.1 looky 0.9", "1.1 lookx 0", "1.1 looky 0"], "duration": 1.1,
+     "expect": [{"probe": "grapple.offered", "eq": 6750}]},
+    {"step": "throw", "input": ["0 grapple 1", "0.1 grapple 0"], "duration": 1.1,
+     "expect": [{"probe": "grapple.attached", "eq": true},
+                {"probe": "grapple.target", "eq": 6750},
+                {"probe": "grapple.kind", "eq": "wall"},
+                {"probe": "grapple.rope", "near": 2519.4, "tol": 10}]},
+    {"step": "wall_run", "plan": ["run 180 3.8"], "duration": 5,
+     "expect": [{"visits": ["grappleswing", "grapplerappel"]},
+                {"clips": ["ng_ground_to_wallrun_right", "grapple_rappel_right"]},
+                {"probe": "grapple.wall_run", "over": "any", "eq": true},
+                {"probe": "step.drop", "min": 300, "note": "down through the rope's arc over the pit"},
+                {"probe": "player.pos.x", "max": 4200, "note": "the far ledge ends at x 4150"},
+                {"probe": "player.pos.z", "near": -11378, "tol": 5},
+                {"probe": "grapple.attached", "eq": false},
+                {"probe": "player.grounded", "eq": true},
+                {"probe": "step.health_lost", "eq": 0}]}
+  ]
+}

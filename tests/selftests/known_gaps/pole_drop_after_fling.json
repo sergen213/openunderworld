@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "name": "pole_drop_after_fling",
+  "chapter": "Known gap: letting go of pole 1337 after a fling onto it",
+  "note": "l4_traprooms: after the fling 1336 -> 1337, drop plays Hpole_detach_dropPerp and she starts to fall, but ~25 ticks later the pole catch takes her back onto pole 1337 (94 units along it), so she never reaches the floor; from pole 1336 the same press drops her (tests/selftests/pole_drop.json). Fails today (2026-11-10); move to tests/selftests/ once it passes.",
+  "level": "l4_traprooms",
+  "spawn": [
+    14300,
+    -21200,
+    6400,
+    90
+  ],
+  "steps": [
+    {
+      "step": "jump_to_pole",
+      "input": [
+        "0.2 forward 1",
+        "0.2 jump 1",
+        "0.53 forward 0",
+        "0.53 jump 0"
+      ],
+      "duration": 2.5,
+      "until": {
+        "probe": "player.state",
+        "eq": "polehang"
+      },
+      "expect": [
+        {
+          "visits": [
+            "idle",
+            "jumpprep",
+            "jump",
+            "polehang"
+          ]
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 1336
+        },
+        {
+          "probe": "player.clip",
+          "eq": "Hpole_perp_attach_M"
+        }
+      ]
+    },
+    {
+      "step": "swing",
+      "input": [
+        "0 forward 1"
+      ],
+      "duration": 1.5,
+      "expect": [
+        {
+          "probe": "player.state",
+          "eq": "polehang"
+        },
+        {
+          "clips": [
+            "Hpole_perp_attach_M",
+            "HPole_StartSwing"
+          ]
+        },
+        {
+          "probe": "step.moved",
+          "max": 1,
+          "note": "the hang point stays on the pole"
+        }
+      ]
+    },
+    {
+      "step": "fling",
+      "input": [
+        "0 forward 1",
+        "0 jump 1",
+        "0.03 forward 0",
+        "0.03 jump 0"
+      ],
+      "duration": 3,
+      "until": [
+        {
+          "probe": "player.state",
+          "eq": "polehang"
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 1337
+        }
+      ],
+      "expect": [
+        {
+          "visits": [
+            "polehang",
+            "hangjump",
+            "polehang"
+          ]
+        },
+        {
+          "clips": [
+            "hpole_perp_fling",
+            "Hpole_perp_attach_M"
+          ]
+        },
+        {
+          "probe": "step.air_time",
+          "near": 0.783,
+          "tol": 0.05,
+          "note": "23.5 / 30 s [O Wine]"
+        },
+        {
+          "probe": "step.horizontal",
+          "near": 1264,
+          "tol": 8,
+          "note": "pole to pole"
+        },
+        {
+          "probe": "step.peak_height",
+          "min": 100,
+          "note": "a high arc (q33: 52.10 up a frame)"
+        }
+      ]
+    },
+    {
+      "step": "drop",
+      "input": [
+        "1.5 drop 1",
+        "1.6 drop 0"
+      ],
+      "duration": 5,
+      "until": {
+        "probe": "player.grounded",
+        "eq": true
+      },
+      "expect": [
+        {
+          "visits": [
+            "polehang",
+            "fall",
+            "land"
+          ]
+        },
+        {
+          "probe": "player.ledge",
+          "eq": -1
+        },
+        {
+          "probe": "step.drop",
+          "min": 100
+        }
+      ]
+    }
+  ]
+}

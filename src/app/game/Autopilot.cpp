@@ -18,8 +18,16 @@ uint64_t ticks(const std::string& seconds) { return uint64_t(std::llround(std::s
 Autopilot Autopilot::load(const std::filesystem::path& plan, std::filesystem::path out) {
     std::ifstream f(plan);
     if (!f) throw std::runtime_error("cannot read autopilot plan " + plan.string());
-    Autopilot p;
+    std::stringstream ss;
+    ss << f.rdbuf();
+    Autopilot p = parse(ss.str());
     p.out_ = std::move(out);
+    return p;
+}
+
+Autopilot Autopilot::parse(std::string_view plan) {
+    std::istringstream f{std::string(plan)};
+    Autopilot p;
     std::string line;
     for (int no = 1; std::getline(f, line); ++no) {
         if (const auto hash = line.find('#'); hash != std::string::npos) line.resize(hash);
@@ -55,7 +63,7 @@ void Autopilot::set(uint64_t tick, const std::string& action, float value, game:
 void Autopilot::next(uint64_t tick, const char* why) {
     if (why) std::fprintf(stderr, "ou-game: autopilot plan line %d (%s) failed at tick %llu: %s\n", steps_[step_].line,
                           steps_[step_].op.c_str(), (unsigned long long)tick, why);
-    if (why) step_ = steps_.size();
+    if (why) failed_ = true, failure_ = "line " + std::to_string(steps_[step_].line) + " (" + steps_[step_].op + "): " + why, step_ = steps_.size();
     else ++step_;
     started_ = reported_ = false;
 }
@@ -193,6 +201,7 @@ void Autopilot::finish(uint64_t tick) {
     game::Actions a;
     for (auto& [action, value] : std::map(held_))
         if (value != 0) set(tick, action, 0, a);
+    if (out_.empty()) return; // parse(): a plan run in place
     std::ofstream f(out_);
     f << script_;
     std::fprintf(stderr, "ou-game: autopilot wrote %s (%zu bytes, %zu of %zu steps)\n", out_.string().c_str(), script_.size(),

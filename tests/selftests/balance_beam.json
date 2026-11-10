@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "balance_beam",
+  "chapter": "Core mechanics: balance beam walk, jump along it, losing balance into a ledge catch",
+  "note": "l4_temple beam 1079 (GameReal.TempleBalanceBeamWalkAndJump); off balance she falls off sideways and catches ledge 1136 (0x742330 / 0x742770 balance controller, q64).",
+  "level": "l4_temple",
+  "spawn": [-5500, -8099, 3100, 0],
+  "steps": [
+    {"step": "on_the_beam", "duration": 0.2,
+     "expect": [{"probe": "player.state", "eq": "beam"}, {"probe": "player.ledge", "eq": 1079}]},
+    {"step": "walk", "input": ["0 forward 0.3"], "duration": 5,
+     "expect": [{"probe": "player.state", "over": "all", "eq": "beam"},
+                {"probe": "player.pos.y", "over": "all", "near": -8099, "tol": 1},
+                {"probe": "player.pos.z", "over": "all", "near": 3061, "tol": 1},
+                {"probe": "step.horizontal", "near": 700, "tol": 60, "note": "bbeam_walk: 140 units/s (501 per 3.57 s cycle)"}]},
+    {"step": "jump", "input": ["0 forward 0.3", "0 jump 1", "0.1 jump 0"], "duration": 1.2,
+     "expect": [{"visits": ["beam", "jumpprep", "jump", "beam"]},
+                {"clips": ["ng_standing_jump", "bbeam_jumpland"]},
+                {"probe": "step.horizontal", "min": 300},
+                {"probe": "player.pos.y", "near": -8099, "tol": 1},
+                {"probe": "player.ledge", "eq": 1079}]},
+    {"step": "walk_to_the_end", "input": ["0 forward 0.3"], "duration": 2.5,
+     "expect": [{"probe": "player.state", "eq": "beam"},
+                {"probe": "player.pos.x", "near": -3986, "tol": 2, "note": "stops at the beam's far end"}]},
+    {"step": "lose_balance", "input": ["0 right 1"], "duration": 5,
+     "until": {"probe": "player.state", "eq": "hang"},
+     "expect": [{"visits": ["beam", "hang"]},
+                {"probe": "step.clips", "has": ["bbeam_aboutfall_center", "ledgeb_idle"], "note": "then bbeam_fall_left / _right by the side she tips to"},
+                {"probe": "player.ledge", "eq": 1136},
+                {"probe": "step.drop", "min": 300}]}
+  ]
+}
