@@ -30,6 +30,8 @@ glm::mat4 introModel(const script::Object& o) { // T * Rx * Ry * Rz, as the intr
 // Scene keys beside the intro uids: Lara's ragdoll; chunk piece k of enemy `uid` as a loose body.
 constexpr int32_t kLaraRagdoll = -1;
 int32_t pieceId(int32_t uid, size_t k) { return -(uid * 64 + int32_t(k) + 1); }
+// ... and section k of uber object `uid` as a loose body (uberFreeSection); uber objects have no chunk pieces.
+int32_t sectionId(int32_t uid, size_t k) { return pieceId(uid, k); }
 
 } // namespace
 
@@ -142,6 +144,11 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                     sec.clip = s[i].at(7), sec.clipTime = s[i].at(8), sec.rate = s[i].at(9), sec.loop = s[i].at(10);
                     if (!rt.anims || sec.clip >= int32_t(rt.anims->clips.size())) sec.clip = -1;
                     if (s[i].size() >= 12) sec.model = s[i].at(11);
+                    if (s[i].size() >= 15) { // 0.43: freed sections
+                        sec.held = s[i].at(12), sec.freed = s[i].at(13);
+                        const auto at = s[i].at(14).get<std::array<float, 16>>();
+                        std::memcpy(&sec.freedAt[0][0], at.data(), sizeof(at));
+                    }
                     else if (sec.state >= 0 && size_t(sec.state) < it->second->sections[i].stateActions.size())
                         for (const auto& a : it->second->sections[i].stateActions[size_t(sec.state)]) // 0.37 saves: the
                             if (a.type == 1) uberAction(o.uid, i, a);                                     // state's model
@@ -180,7 +187,12 @@ nlohmann::json World::serializeObjects() const {
         if (const auto d = uberData_.find(uid); d == uberData_.end() || !d->second) continue;
         nlohmann::json sections = nlohmann::json::array();
         for (const auto& s : rt.sections)
-            sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement, s.clip, s.clipTime, s.rate, s.loop, s.model});
+        {
+            std::array<float, 16> at{};
+            std::memcpy(at.data(), &s.freedAt[0][0], sizeof(at));
+            sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement, s.clip, s.clipTime, s.rate, s.loop, s.model,
+                                s.held, s.freed, at});
+        }
         nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded},
                                                          {"intangible", rt.intangible}, {"grappleOff", rt.grappleOff}};
         nlohmann::json joints = nlohmann::json::array(), watches = nlohmann::json::array();
@@ -200,7 +212,7 @@ nlohmann::json World::serializeObjects() const {
     }
     for (const auto& [uid, x] : slides_) slides.push_back({uid, x});
     return {{"uber", std::move(uber)}, {"held", held_}, {"melee", serializeMelee()}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
-            {"insertedSections", std::move(insertedSections)}, {"placed", placed_},
+            {"insertedSections", std::move(insertedSections)}, {"placed", placed_}, {"breakables", serializeBreakables()},
             {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
 }
 
@@ -247,6 +259,7 @@ void World::restoreObjects(const nlohmann::json& j) {
                 if (const auto it = inserted.find(e.at(0).get<int32_t>()); it != inserted.end()) it->second.section = e.at(1).get<int>();
             for (const auto& e : j.value("slides", nlohmann::json::array())) slides[e.at(0).get<int32_t>()] = e.at(1).get<float>();
             placed = j.value("placed", std::set<int32_t>{});
+            restoreBreakables(j.value("breakables", nlohmann::json::array())); // older saves: every breakable whole
             if (const auto p = j.find("physics"); p != j.end() && p->value("version", 0) == 1) {
                 const std::string hex = p->at("state").get<std::string>();
                 if (hex.size() % 2) throw std::runtime_error("odd physics state");
@@ -262,6 +275,8 @@ void World::restoreObjects(const nlohmann::json& j) {
         } catch (const std::logic_error& e) {
             throw std::runtime_error(std::string("objects: ") + e.what());
         }
+    } else {
+        restoreBreakables({});
     }
     uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberEvents_.clear(), plates_.clear();
     uberSaved_ = std::move(saved);
@@ -363,11 +378,19 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
             if (rt.joints.contains(j.link1) && rt.joints.contains(j.link2)) rt.links.insert(a.joint);
         } else if (auto made = makeUberJoint(uid, a.joint)) {
             rt.joints[a.joint] = *made;
+            if (const int32_t body = j.bodyB; body >= 0 && size_t(body) < rt.sections.size())
+                rt.sections[size_t(body)].held = true, rt.sections[size_t(body)].freed = false;
         }
         break;
-    case 10: // remove (0x4D6220): its watches go quiet (0x4937A0 skips missing joints)
+    case 10: { // remove (0x4D6220): its watches go quiet (0x4937A0 skips missing joints)
+        // The section body the joint held: without another joint it is free and falls (uberFreeSection).
+        const int32_t body = joint != rt.joints.end() && a.joint >= 0 ? data.joints[size_t(a.joint)].bodyB : -1;
+        const std::optional<glm::mat4> pose = body >= 0 ? uberSectionBody(uid, body) : std::nullopt;
+        const vec3 vel = body >= 0 && !joint->second.hinge ? joint->second.axis * (joint->second.v * 30.0f) : vec3(0); // v: per 30 Hz frame
         rt.joints.erase(a.joint), rt.links.erase(a.joint);
+        if (pose) uberFreeSection(uid, body, *pose, vel);
         break;
+    }
     case 12: // limit (0x4D6310 -> 0x4D4510)
         if (joint != rt.joints.end() && p) joint->second.lo = p->a * unit, joint->second.hi = p->b * unit, joint->second.limited = p->flag;
         break;
@@ -399,7 +422,26 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
         break;
     case 0x13: // 0x4D3B50: gives birth to the record's object at the section's marker (formats::UberBirth). Ours: the
                // treasure of a reward urn (UnitData::births; a pickup from now on), whatever broke the urn.
-        if (a.birth >= 0) born.insert(formats::bornUid(uid, size_t(a.birth)));
+        if (a.birth >= 0) {
+            born.insert(formats::bornUid(uid, size_t(a.birth)));
+            // An effect object with an explosion record (sh_ei_exploading_barrel -> squib_exploding_barrel,
+            // ma_uo_bedroom_door -> squib_explode_door) goes off where it is born: the section instance's HInfo marker
+            // (0x4705B0), else the instance's origin.
+            if (const auto* o = script_.find(uid); o && size_t(a.birth) < data.births.size()) {
+                const auto& b = data.births[size_t(a.birth)];
+                glm::mat4 frame = introModel(*o) * uberSectionBody(uid, int32_t(section)).value_or(glm::mat4(1));
+                frame[3] += glm::vec4(o->offset, 0);
+                vec3 at = vec3(frame[3]);
+                if (const auto* sp = b.marker >= 0 ? uberSectionPhysics(*o, section) : nullptr)
+                    for (const auto& m : sp->hmarkers)
+                        if (m.id == b.marker) {
+                            const glm::mat4 seg = size_t(m.segment) < sp->segments.size() ? sp->segments[size_t(m.segment)] : glm::mat4(1);
+                            at = vec3(frame * seg * glm::vec4(m.pos, 1));
+                            break;
+                        }
+                birthBlast(b.object, at);
+            }
+        }
         break;
     case 0x1D: // 0x6D5EC0: section +0xD4 = the action's set, where Lara engages the section (query 0x53, 0x6D59C0)
         // The record she grips is gone with the old set: she lets go ([I] tru.exe's PushPull needs her engaged record in
@@ -491,6 +533,38 @@ std::optional<glm::mat4> World::uberJointPose(int32_t uid) const {
     return jointMotion(uberRuntime_.at(uid).joints.at(index));
 }
 
+// The last joint of section `section` was removed with the section at model-space motion `pose`: a section other than
+// the object's own (its first on model 0, which Object::loose covers) that has collision becomes a loose body there.
+void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose, vec3 vel) {
+    auto& rt = uberRuntime_.at(uid);
+    const auto& data = *uberData_.at(uid);
+    const auto* o = script_.find(uid);
+    if (!o || section < 0 || size_t(section) >= rt.sections.size() || !rt.sections[size_t(section)].held) return;
+    for (const auto& [index, j] : rt.joints)
+        if (data.joints[size_t(index)].bodyB == section) return; // still held
+    size_t main = data.sections.size();
+    for (size_t k = 0; k < data.sections.size(); ++k)
+        if (data.sections[k].model == 0) { main = k; break; }
+    if (size_t(section) == main || !uberSectionPhysics(*o, size_t(section))) return;
+    rt.sections[size_t(section)].freed = true, rt.sections[size_t(section)].freedAt = introModel(*o) * pose;
+    rt.sections[size_t(section)].freedVel = vel;
+    // What hangs on it goes with it [I: as bodies of their own; tru.exe keeps their joints to the falling body]: the
+    // bedroom door's ring (section 0, hinge 0 on the door) falls when the door leaves its slide.
+    std::vector<std::pair<int32_t, int32_t>> riders; // joint, its body
+    for (const auto& [index, j] : rt.joints)
+        if (data.joints[size_t(index)].bodyA == section) riders.push_back({index, data.joints[size_t(index)].bodyB});
+    for (const auto& [index, body] : riders) {
+        const std::optional<glm::mat4> at = uberSectionBody(uid, body);
+        rt.joints.erase(index);
+        if (size_t(body) == main) {
+            if (auto* own = const_cast<script::Object*>(o); !own->loose) // World owns object motion
+                own->body = at.value_or(glm::mat4(1)), own->loose = true, syncedObjects_ = ~size_t(0);
+        } else if (at) {
+            uberFreeSection(uid, body, *at, vel);
+        }
+    }
+}
+
 // [I] A joint whose other body is a moving section (ms_rb_grapple_snake_head joint 2) is posed as if that body stood.
 std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bool* removed) const {
     const auto rt = uberRuntime_.find(uid);
@@ -499,6 +573,10 @@ std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bo
     if (removed) *removed = rt != uberRuntime_.end() && section >= 0 && size_t(section) < rt->second.sections.size() &&
                             rt->second.sections[size_t(section)].removed;
     if (!o || rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return std::nullopt;
+    if (section >= 0 && size_t(section) < rt->second.sections.size() && rt->second.sections[size_t(section)].freed) {
+        const auto& sec = rt->second.sections[size_t(section)]; // a freed section: where its loose body is
+        return glm::inverse(introModel(*o)) * physics_.loose(sectionId(uid, size_t(section))).value_or(sec.freedAt);
+    }
     for (const auto& [index, j] : rt->second.joints)
         if (data->second->joints[size_t(index)].bodyB == section) {
             const glm::mat4 intro = introModel(*o);
@@ -867,6 +945,7 @@ void World::uberShot(int32_t uid, vec3 dir) {
 // hit message reaches every instance the area hits (0x69F1E0) or the bullet (World::fire) strike. [I] every section of
 // the object takes it (the urns and barrels have one).
 void World::damageObject(int32_t uid, float damage, int damageClass) {
+    if (hitBreakable(uid, damageClass, true)) return; // class 30: its hit count (0x6D3160)
     const auto rt = uberRuntime_.find(uid);
     const auto data = uberData_.find(uid);
     if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return;
@@ -1388,6 +1467,7 @@ void World::syncObjects() {
                 colliders_.push_back({o.uid, seg, hinge, intro, p.segments[seg]});
             }
     }
+    breakableColliders(); // class-30 breakables: their pieces' collision while whole (Breakables.cpp)
     syncedObjects_ = script_.objects().size();
     syncedPlates_ = lateColliders(script_);
     poseShotOnly();
@@ -1424,6 +1504,7 @@ void World::poseShotOnly() {
 }
 
 void World::tickObjects(float dt) {
+    tickBreakables(dt); // contacts, waits and breaks first: a break drops its colliders before anything queries them
     // Objects came or went, or the merged collision was rebuilt (streaming drops its dynamics).
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
         lateColliders(script_) != syncedPlates_)
@@ -1889,7 +1970,7 @@ void World::tickObjectMarkup() {
         if (c.section >= 0 || !seen.insert(c.uid).second) continue;
         const auto* o = script_.find(c.uid);
         const auto* p = o ? objectPhysics(o->name) : nullptr;
-        if (!p || p->markup.empty() || p->physClass == 50) continue;
+        if (!p || p->markup.empty() || p->physClass == 50 || p->physClass == kClassBreakable) continue; // breakables: their pieces' (below)
         const glm::mat4 frame = col_.dynamics[i].transform * glm::inverse(c.frame);
         for (int k = 0; k < int(p->markup.size()); ++k) {
             collision::Markup m = p->markup[size_t(k)];
@@ -1900,8 +1981,9 @@ void World::tickObjectMarkup() {
             else col_.markup[size_t(it->second)].points = std::move(m.points), col_.markup[size_t(it->second)].type = m.type;
         }
     }
-    for (const auto& [key, index] : objectMarkup_) // gone (streamed out, intangible)
-        if (!seen.contains(key.first) && size_t(index) < col_.markup.size()) col_.markup[size_t(index)].type = 0;
+    for (const auto& [key, index] : objectMarkup_) // gone (streamed out, intangible); breakable pieces' items: below
+        if (key.second < 1000 && !seen.contains(key.first) && size_t(index) < col_.markup.size()) col_.markup[size_t(index)].type = 0;
+    tickBreakableMarkup();
 }
 
 // One physics step on the fixed tick (Jolt, src/physics): rigid-body doors and levers on their hinges, the uber
@@ -2064,6 +2146,15 @@ void World::stepPhysics(float dt) {
     }
     melee_.launch.clear();
     chunkPieces(loose);
+    breakableLoose(loose); // broken class-30 objects' pieces (Breakables.cpp)
+    for (const auto& [uid, rt] : uberRuntime_) // uber sections their last joint let go of (uberFreeSection)
+        for (size_t k = 0; k < rt.sections.size(); ++k)
+            if (const auto* o = rt.sections[k].freed && !rt.sections[k].removed ? script_.find(uid) : nullptr)
+                if (const auto* sp = uberSectionPhysics(*o, k)) {
+                    loose.push_back({sectionId(uid, k), sp, rt.sections[k].freedAt});
+                    loose.back().vel = rt.sections[k].freedVel; // read when the body is made
+                    looseIds.insert(uid);
+                }
     physics_.setLoose(loose);
     const auto bikes = bikeVehicles();
     physics_.setVehicles(bikes); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result

@@ -395,8 +395,8 @@ outfit (the original only reads `+0x294` on a level load).
   actions 5 (instance +0x18 |= 0x20000000: collision callbacks skip it, 0x48D590 / 0x697970) and 29 (section +0xD4 = 0);
   2 → 1 always, playing `fx_smash` (1 s, effects only) to its end; state 1 action 28 (0x6D5D90 -> 0x6D54F0: the
   section's removal record, all of them one fade over 0 s, then 0x6D5E20 removes the instance). `sh_ei_exploading_barrel`
-  (health 50): 0 → 2 on trigger 18, state 2 = 5 + two action-19 births (explosion objects, not modelled: no blast
-  damage), `fx_boom` (3 s), removed.
+  (health 50): 0 → 2 on trigger 18, state 2 = 5 + two action-19 births (`squib_exploding_barrel`: "Explosion records" below),
+  `fx_boom` (3 s), removed.
 - Ours (`World::damageObject`): Lara's bullets / bolts on an uber object's collider and the pound's rings; action 5
   drops the collider, action 28 marks the section removed and the game hides the object's meshes when model 0's section
   is gone (`World::removedObjects`); transition clips with flag 1 run their events (`objectClips`). Health, removal and
@@ -407,7 +407,52 @@ outfit (the original only reads `+0x294` on a level load).
   (0x20 each, spawned as instances), +0x28 / +0x34 break conditions (0x1C: flags, two floats, damage-class list). 0x11C
   counts a hit when the class is listed (0x69BFC0; only the temple floor lists one: 6, explosions) or by flags 0x400
   (class 6) / 0x800.. (classes 0-2 from Lara); the others break on Lara's contact (message 0x2B, 0x69C0A0). None lists
-  Mjolnir's class 13. Not implemented.
+  Mjolnir's class 13. Implemented: "Class-30 breakables" below.
+- **Class-30 breakables** (`src/game/Breakables.*`, `UnitData::breakables`). Record [O data, all 9 objects]: +0x10 hits
+  (3 everywhere), +0x18 / +0x1C pieces (model byte +0x0A), +0x28 / +0x34 conditions (0x1C: flags, speed, spin, class
+  list, +0x14 flags2, +0x18 action), action: +0 id, +2 type, +8 flags, +0x1C delay in 30 Hz frames, +0x20 shake, +0x38
+  grace. Lara's contact kinds by condition flag [O flags / I which contact]: 0x08 standing on it, 0x40 hanging from its
+  ledge, 0x20 on its pole, flags2 bit 0 on its beam; 0x200 + class list = damage of that class (temple floor: 6).
+  Contact starts the action's clock (the piece shakes), at its end the piece's collider and markup go, its pieces fall
+  as loose bodies and Lara lets go (`Player::letGo`). Survey (`GameReal.BreakableSurvey`, `OU_BREAKABLE_SURVEY=1`):
+
+  | object | condition | delay (frames) | instances |
+  |---|---|---|---|
+  | `ar_rb_falling_floor_straight` | stand 0x08 | 23 | l5_valaskjalf 6975 |
+  | `ca_uo_ledgebreak`, `_u` | hang 0x40 | 120 | l4_pool 5614..5619, l4_temple 5234 |
+  | `ca_uo_balancebreakb` | hang 0x40 | 370 | (no intro in the campaign units surveyed) |
+  | `ar_ei_break_braced_ledge` / `_corner` | hang 0x40 | 105 / 160 | l5_valaskjalf 6959..6962 |
+  | `ar_ei_breakable_hpole` | pole 0x20 | 176 | (none in the surveyed units) |
+  | `ca_rb_breakable_temple_floor` | damage class 6 (0x200) | action type 1 | (none in the surveyed units) |
+
+  [I]: which of the two condition lists applies when, the piece impulses (they drop under gravity), hits (3) is not
+  counted for contact breaks. Saved ("breakables"). `GameReal.FallingFloorBreaksUnderLara`: l5 6975 breaks 46 ticks
+  after she steps on it walking north, she catches ledge 1551; the jump across works too.
+- **Explosion records** [O layout from data; I field meanings beyond damage / radius]: tag 0x2775 at an object's
+  physical record +0x70: +4 damage, +6 damage at the edge [I], +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12
+  cone angle. `squib_exploding_barrel` 800 / 800, radius 948, knock 500 / 250; `squib_explode_door` 5 / 2, radius 1896,
+  knock 1000 / 400, angle 30. An uber action-19 birth of such an object blasts at the section's marker one tick later
+  (`World::birthBlast` / `tickBlasts` / `blast`): damage class 4 to Lara, enemies and damageable objects in the radius
+  (so tanks set each other off). The knock [O decomp]: the area hit 0x69F1E0 (called from 0x6A5C50's record hand-over
+  with +4 damage, +6, +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12 elevation) sends instances message 0x91 at knock .. edge
+  by distance, heading away from the centre at the elevation, and ends in 0x493170 → 0x492CC0 for the Havok shapes in
+  the radius: an impulse of 0.0004 × the shape's surface area × knock × (1 − distance / radius), capped per shape
+  (body +0x14C × 200 [U]), at the shape's point nearest the centre (0x4DF090), along (shape − centre) raised by half
+  their distance. Ours [I] (`physics::Scene::blast`): grenades change each body's velocity by near .. edge along that
+  raised line; a squib gives the same momentum along the body's heading from the centre at the record's elevation, at
+  the point of the body's bounds nearest the centre. A centre inside the body (the door squib is born at the foot of its
+  own leaf) has no heading: the body goes the way it already moves, else the way its centre of mass lies from the centre.
+  l3_bedroom_hall's leaf 4376 (blown off untouched) is kicked out at the foot and falls into the pit; pushed through its
+  centre of mass it only hopped and stood in its frame (494 wide in a doorway barely wider).
+- **Freed uber sections** [O action 10 removes a joint; I the body's motion]: a non-main section left without a joint
+  (13 objects: `ma_uo_bedroom_door`, tentacle gears, the snake head, ship floor panels / grates / console, thor slide
+  doors, chain debris, the naga statue) becomes a loose body with its collider, as do sections riding on it; the main
+  section uses the object's own loose flag. It starts with the velocity its prismatic joint had when removed (the ring
+  door 4526 comes off its slide moving toward the rope's pull). Saved with the section state (not the velocity). Its
+  shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. Open
+  [U]: leaf 4526, pulled 44 out into its frame when freed, is pushed back by the level collision and stays standing in
+  the doorway (`ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` notes it; what clears it in tru.exe is not
+  decoded: nothing in the object's states moves it but the removed joint and the squib).
 
 ## Close combat
 
@@ -936,8 +981,8 @@ downstream reaction as tru.exe's scripts define it (`--report-objects`; PROGRESS
 
 | replay | spawn | what happens | asserted reaction |
 |---|---|---|---|
-| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematic: 6556.5,-33459.7) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) | throne section 0 state 2, its press plate in "in position" (-150..-90), seal 5701 vt 54 |
-| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | power gem 7498 carried 33 m to cog wheel 7312, set into section 1 while the wheel turns | cog wheel section 1 state 0 -> 1 |
+| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematics leave her at 8101.6,-32185.8) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) | throne section 0 state 2, its press plate in "in position" (-150..-90), seal 5701 vt 54 |
+| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | round the central column (waypoints) to power gem 7498, carried to cog wheel 7312, set into section 1 while the wheel turns | cog wheel section 1 state 0 -> 1 |
 | `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 | lever graph 1 -> 0 and its slider watch (a joint) |
 | `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 | elevator 2960 vt 54 (graph 0 -> 1), switch 2961 vt 62 |
 | `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole; a jump onto the block (its ledge loop), a standing jump from its top to the pole | lever graph 0 -> 1, its slider at -600 under her hang (state polehang), block under the pole, door 6505 raised 1200 |
@@ -1559,6 +1604,10 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 
 ## Grapple (src/game/Grapple.cpp)
 
+- Feature targets [O data]: an object's physics record lists model features; mask bit 4 marks a grapple point
+  (`physics::ObjectPhysics::features`, `kFeatureGrapple`). Uber objects and class-34 rigid bodies with one are offered
+  as `GrappleKind::Mounted` targets at the feature's bone while its model is shown (`World::uberShowsModel`):
+  `ma_uo_bedroom_door`'s ring (l3_main_bedroom 4526) among them.
 - Targets [O]: intros named `*_ei_grapple_*` (`ca_ei_grapple_post`, `sa_ei_grapple_ceiling(_invisible)`,
   `ma_ei_grapple_ceiling`, `ca_ei_grapple_wall_a`, `tp_ei_grapple_wall`, `ar_ei_grapple_wall`, …; not
   `fx_grapple_bling_*`), collected per unit into `UnitData::grapples`. Kind: Mounted (a pull target) when the intro's
@@ -1748,14 +1797,19 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 
 ## Ladders, pillars, perches, wall hug (src/game/Traverse.cpp)
 
-- Markup [O]: ladders (9) have points `{top, bottom, bottom + outward hint}`, pillars (15) `{top, bottom}`; perches
+- Markup [O]: ladders (9) have points `{top, bottom, the bottom's other corner}` (see "Ladder frame" below), pillars (15) `{top, bottom}`; perches
   (13) are a short segment; 13 of the 29 pillars carry a perch on their top (within 9 units; survey of all units,
   2026-11-06). `climbNormal` holds the outward direction. Clips are those of lara.drm's anim requests for them
   (ladder 1158–1198, pillar 616–646, perch 647–676), with their fades and start frames; the `lad_*` set (requests
   1199–1212, the same animations) is not used.
+- Ladder frame [O data, corrected in 0.42]: the third point is not an outward hint: `points[2] − points[1]` runs
+  across the ladder (158..243) and the wall faces `width × up`. Rays in the units: l1_ship_sinking_hall 234 / 236 lie
+  in the valve wall y = 29 and 235 in y = −1247, open toward −Y; l7_arctic_sea 2044 / 2045 (width −X) and 2046 / 2047
+  (width +X) face each other across their chamber. Ours had the width as outward, so every real ladder stood turned
+  90° in its wall's plane (which is also why the Wine teleport below never attached). `ladderOut`, `rungPos`.
 - Ladder rungs [O]: tru.exe 0x734B70 / 0x72B920 / 0x74DCD0 (`LadderRungAlignAnimTarget`) with lara.drm player data:
-  rung r's root lies **575.221** (+0x784) + r × **110.619** (+0x770) below the top point and half the outward hint +
-  **110.619** (−(+0x778)) out from the line; rungs run 0 .. trunc(trunc(length) / 110.619) + 1 − **6** (byte +0x774),
+  rung r's root lies **575.221** (+0x784) + r × **110.619** (+0x770) below the top point, half the ladder's width along it and
+  **110.619** (−(+0x778)) out from the wall; rungs run 0 .. trunc(trunc(length) / 110.619) + 1 − **6** (byte +0x774),
   the lowest putting her feet at the bottom point (l1_ship_sinking_hall 234: 933.6 vs 940). Every climb clip
   (`ladder_climb_up` 98.4 / `_down` −89.9 of root motion) carries her from one rung to the next (scaled to 110.619, as
   the align target corrects it); attaches end on a rung (from the floor the lowest, `ladder_attach_ground_bottom`; from
@@ -1793,8 +1847,8 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   reach / settle clips hand over 311 + the 30 box]. On the lowest rung the chart steps off only on LookaheadResult 640
   and leans back on 642 (S1086 → S1088): ours leans (`ladder_idle_to_jump_back_antic`, `ladder_jump_back_prepare`,
   released `ladder_jump_back_antic_to_idle`) when no floor is where `ladder_detach_ground_bottom` ends [I: 640 = floor].
-  Real spot: l7_arctic_sea ladder 2044 hangs over a pit, balance beam 2042 (between ledges 2065 / 2066) crossing 853 to
-  its left at z −18899: rungs ~9..12 jump onto the beam. Not measured under Wine [U]: teleporting into that chamber
+  Real spot: l7_arctic_sea ladder 2044 hangs over a pit, balance beam 2042 (between ledges 2065 / 2066) crossing 853 out
+  from its wall (behind her) at z −18899: rungs ~9..12 jump back onto the beam (`GameReal.ArcticSeaLadderJumpBackOntoBeam`). Not measured under Wine [U]: teleporting into that chamber
   works (tru = ours − Level+0x80 = (5610.33, −22439.56, −19571.3)), but she did not attach to the ladder from a
   teleported fall; side-by-side ladders (reach) exist in no unit (stacked ones: l1_ship_sinking_hall 28 / 30, reached up
   by q88 S1095, not done).

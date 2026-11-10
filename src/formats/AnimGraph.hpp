@@ -37,6 +37,7 @@ struct AnimGraphTransition { // 0x34-byte record, tag 0x2776
 struct AnimGraph {
     std::vector<AnimGraphState> states;
     std::vector<AnimGraphTransition> transitions;
+    int initial = 0;                      // record +0x2C: the state (index into `states`) an instance starts in
     int stateById(int32_t id) const;      // -1 if none
     int transitionById(int32_t id) const; // -1 if none
 

@@ -146,6 +146,11 @@ std::optional<AnimGraph> loadAnimGraph(const cdc::Drm& drm) {
         g.states.push_back(std::move(s));
     }
     assignIds(g.states), assignIds(g.transitions);
+    // Record +0x2C -> the state an instance starts in (set in all 95 graph objects; 25 start in another than the first:
+    // the receptacles' empty state, ma_ani_foor_collapse's `idle` before its `idle_collapsed`, the artifacts, ...).
+    if (const auto start = cdc::internalPointer(ob, *rec + 0x2C))
+        for (size_t i = 0; i < states.size(); ++i)
+            if (states[i] == *start) g.initial = int(i);
     return g;
 }
 

@@ -312,7 +312,11 @@ bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b) {
     if (s.kind != ShapeKind::Plane) return false;
     const glm::mat3 rt = glm::transpose(rotation(rot));
     const vec3 la = rt * (a - pos), lb = rt * (b - pos);
-    if (s.oneSided ? !(la.y > 0 && lb.y <= 0) : !((la.y > 0) != (lb.y > 0))) return false;
+    // One-sided (data +0x44 != 0): tru.exe tests the segment as it is against the quad's triangles (v0 (-x, -z), v1 (x, -z),
+    // v2 (x, z); 0x461640 culls by -(dir . (v1 - v0) x (v2 - v0)) > 0, the normal being local -Y), so only a move toward
+    // local +Y counts [O decomp 0x5CCC20; data: l3_bedroom_hall 4375 faces the hallway she comes along, l3_main_hall 4129
+    // lies flat and fires as she drops through it, l1_ship_sinking_hall 1074 as she climbs up through it].
+    if (s.oneSided ? !(la.y <= 0 && lb.y > 0) : !((la.y > 0) != (lb.y > 0))) return false;
     if (la.y == lb.y) return false;
     const vec3 h = la + (lb - la) * (la.y / (la.y - lb.y));
     return std::abs(h.x) <= s.half.x && std::abs(h.z) <= s.half.z;
@@ -718,7 +722,9 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
         auto set = uses ? graphSet(o.name) : nullptr;
         const auto receptacle = receptacleGraph(o.name);
         if (receptacle && !(set && set->graph)) set = receptacle;
-        int initial = 0;
+        // An intro without data starts in the graph's own start state (record +0x2C; l3_bedroom_hall floor 4359: `idle`,
+        // not its first record `idle_collapsed`); with data, message 0x23 picks the record below.
+        int initial = set && set->graph && !in.data ? set->graph->initial : 0;
         if (set && set->graph && in.data) {
             const auto& d = u.drm->sections.at(in.data->section).data;
             int32_t first = 0;

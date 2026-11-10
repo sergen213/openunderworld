@@ -89,7 +89,13 @@ player every frame:
 - **Plane** test `0x5CCC20`: a rectangle in the plane's local XZ plane, half size `data+0x34` × `data+0x3C`
   (`+0x38` = 100, unused), crossed by the segment from the previous to the current test point (two triangle
   tests, `0x461640`). `data+0x44 == 0` flips the segment when it runs along the normal, i.e. both directions
-  count; otherwise one-sided [O]. Which side counts for one-sided planes [I]: we count local +Y → −Y.
+  count; otherwise one-sided [O]. One-sided planes count a move toward local **+Y** only [O]: the quad's triangles are
+  (−x, −z), (x, −z), (x, z) / …, `0x461640` takes `n = (v1 − v0) × (v2 − v0)` (local −Y) and needs `−(dir · n) > 0`.
+  Data agrees: l3_bedroom_hall 4375 (rot z −90°, +Y = +X) faces the hallway Lara comes along, l3_main_hall 4129 (rot x
+  −90°, +Y = −Z) fires as she drops from the balcony, l1_ship_sinking_hall 1074 (+Y = +Z) as she climbs up through it,
+  l1_kraken_room 37 (+Y = +Z) as she pulls up onto its platform, the pit kill planes (l3_bedroom_hall 4379,
+  l5_valaskjalf 6755 / 7034: +Y points down) as she falls. Until 0.42 ours counted −Y (inferred), so kill planes never
+  fired on a fall and the gate tests crossed backwards.
 - [O] On enter/leave the exe calls the volume script's virtual functions at the slots read from the native
   type's prototypes 6 and 7 (`0x7B63A0`, `0x79CC80`/`0x79CCC0`). The base script 3484 (triggervolume.drm)
   overrides them as vt 54 **Enter**: `if !firstIn.Get(): firstIn.Set(true); OnFirstIn()`; `inside = 1`; `OnIn()`
@@ -366,7 +372,7 @@ handlers without a stop (`GameReal.ScriptedChapterEndChainsStartNextChapter`).
 | Piece | Status |
 |---|---|
 | Volume box/sphere test, +200 test point, enter/exit, FirstIn once, dispatch order Enter → FirstIn → its calls → In → its calls; Exit → Out → its calls | [O] as above |
-| Plane crossing | [O] geometry; [I] side of one-sided planes, vt 54 |
+| Plane crossing | [O] geometry and the side of one-sided planes (toward local +Y); [I] vt 54 |
 | Handler execution | [O] actual SCMD handler + nested calls; [I] static instanceref-target activation only as fallback |
 | Object classes by objectlist name: `*triggervolume`, `triggerplane`, `*switch*`/`*lever*` (not cheat buttons), `*pu_block*`/`*rb_pushblock*`/`*pushable*`, `*door*`/`*gate*`; every other scripted intro uses `Kind::Scripted`, including cinematic objects | [I] specialized behavior classes by name; [O] all scripted intros instantiate and run available handlers |
 | Switch: E / pad West within 200 units (±250 z) of the switch intro → plays `active_pulling`, then fires Use (vt 55 targets) and holds `active_idle` | [I] distances, timing; Lara plays no `obj_pull_lever` |

@@ -87,6 +87,7 @@ struct GrappleObject {
     bool pullable = false; // an uber object whose state machine watches a joint (trigger 14 / 15), or a class-34 rigid body
     bool anchor = false;   // an uber object that watches none: something to swing on
 };
+std::map<std::string, int> objectClasses; // physClass by object name, filled by grappleObject (under cacheMutex)
 std::shared_ptr<const GrappleObject> grappleObject(const cdc::BigfileSet& bigfile, const std::string& name) {
     const std::lock_guard lock(cacheMutex);
     static std::map<std::string, std::shared_ptr<const GrappleObject>> cache;
@@ -95,6 +96,7 @@ std::shared_ptr<const GrappleObject> grappleObject(const cdc::BigfileSet& bigfil
     if (auto b = bigfile.read("pc-w\\" + name + ".drm")) try {
             auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*b)));
             const size_t models = formats::objectRenderModels(*drm).size();
+            objectClasses[name] = physics::loadObjectPhysics(*drm, 0).physClass;
             for (uint32_t m = 0; m < models && !g; ++m) {
                 const physics::ObjectPhysics p = physics::loadObjectPhysics(*drm, m);
                 for (const auto& f : p.features) {
@@ -119,6 +121,12 @@ std::shared_ptr<const GrappleObject> grappleObject(const cdc::BigfileSet& bigfil
             }
         } catch (const cdc::FormatError&) { g.reset(); }
     return cache[name] = g;
+}
+// Is object `name` a class-30 breakable (game/Breakables.hpp)? After grappleObject(name).
+bool breakableObject(const std::string& name) {
+    const std::lock_guard lock(cacheMutex);
+    const auto it = objectClasses.find(name);
+    return it != objectClasses.end() && it->second == kClassBreakable;
 }
 } // namespace
 
@@ -355,6 +363,11 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
                     std::memcpy(&t.range, &d[o + 8], 4), std::memcpy(&t.rope, &d[o + 12], 4);
             }
             u.grapples.push_back(t);
+        }
+        if (!n->second.starts_with("fx_") && !formats::dormant(in) && breakableObject(n->second)) {
+            float im[16];
+            formats::introMatrix(in, im);
+            u.breakables.push_back({in.uniqueId, n->second, glm::make_mat4(im)});
         }
         if (!in.scriptId) continue;
         const auto strings = scriptStrings(*drm, in.scriptId);

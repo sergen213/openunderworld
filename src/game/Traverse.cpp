@@ -1,6 +1,6 @@
 // Ladders (markup 9), pillars (15) and perches (13) with the clips of lara.drm's anim requests for them: ladder_*
-// 1158-1198, pillar_* 616-646, perch_* 647-676 [O]. Layout observed: ladder points = {top, bottom, bottom + outward
-// hint}, pillar points = {top, bottom}; perches are a short segment, 13 of the 29 pillars with one on their top
+// 1158-1198, pillar_* 616-646, perch_* 647-676 [O]. Layout observed: ladder points = {top, bottom, the bottom's other
+// corner (ladderOut)}, pillar points = {top, bottom}; perches are a short segment, 13 of the 29 pillars with one on their top
 // (docs/GAMEPLAY.md "Ladders, pillars and perches").
 #include "game/Game.hpp"
 
@@ -30,7 +30,7 @@ vec3 clipMove(const AnimLibrary& a, std::string_view clip) {
 
 // Ladder rungs from lara.drm's player data, as tru.exe places Lara on them (0x734B70 rung count, 0x72B920 current
 // rung, 0x74DCD0 the LadderRungAlignAnimTarget) [O]: rung r's root lies kRungTop + r * kRungSpacing below the top
-// point, half the outward hint plus kLadderBack out from the line; rungs 0 .. trunc(trunc(length) / spacing) + 1 -
+// point, half the ladder's width along it plus kLadderBack out from the wall; rungs 0 .. trunc(trunc(length) / spacing) + 1 -
 // kRungMargin (the lowest one has her feet at the bottom point: l1_ship_sinking_hall 234, 933.6 vs 940).
 constexpr float kRungSpacing = 110.619f; // +0x770 (35 x 3.1605)
 constexpr float kRungTop = 575.221f;     // +0x784 (ladder_detach_ground_top rises 575.4 onto the top)
@@ -48,8 +48,16 @@ vec3 rungPos(const collision::Markup& m, int r, vec3 out) {
 int rungAt(const collision::Markup& m, float z) {
     return std::clamp(int(std::floor((m.points[0].z - z - kRungTop) / kRungSpacing + 0.5f)), 0, lowestRung(m));
 }
-// A ladder's outward direction (from its third point, the outward hint); zero without one.
-vec3 ladderOut(const collision::Markup& m) { return m.points.size() >= 3 ? unitXY(m.points[2] - m.points[1], vec3(0)) : vec3(0); }
+// A ladder's outward direction; zero without a third point. The third point is the bottom's other corner: points[2] -
+// points[1] runs across the ladder (158 .. 243 wide in the seven real ladders) and the wall faces (width x up) [O data:
+// l1_ship_sinking_hall 234 / 236 / 235 lie in their valve walls' planes (y = 29, -1247) whose open side is -Y; l7_arctic_sea's
+// 2044 / 2045 (wall y = -47421, width -X) and 2046 / 2047 (wall y = -45082, width +X) face each other across their
+// chamber]. The rungs' middle is half the width from the line (rungPos).
+vec3 ladderOut(const collision::Markup& m) {
+    if (m.points.size() < 3) return vec3(0);
+    const vec3 w = m.points[2] - m.points[1];
+    return unitXY(vec3(w.y, -w.x, 0), vec3(0));
+}
 
 // Pillars: the root on the axis, the clips holding her body round the shaft (tru.exe under Wine, l4_temple 1189 / 1194:
 // Lara's instance stays on the axis while on a pillar) [O]; she attaches within kPillarReach of it [I]; from the floor
@@ -97,13 +105,14 @@ bool Player::tryLadder(bool fromAir) {
         const auto& m = col_.markup[i];
         if ((m.type != 9 && m.type != 15) || m.points.size() < 2) continue;
         const vec3 top = m.points[0], bottom = m.points[1];
-        vec3 out = m.points.size() >= 3 ? unitXY(m.points[2] - bottom, vec3(0)) : unitXY(s_.pos - top, vec3(0));
+        vec3 out = m.points.size() >= 3 ? ladderOut(m) : unitXY(s_.pos - top, vec3(0));
         if (glm::length(out) < 0.5f) out = unitXY(s_.pos - top, vec3(1, 0, 0));
         if (m.type == 9) {
             const vec3 rung0 = rungPos(m, 0, out);
-            const float fromLine = glm::dot(xy(s_.pos - top), xy(out));
+            const vec3 mid = top + (m.points.size() >= 3 ? vec3(xy(m.points[2] - bottom) * 0.5f, 0) : vec3(0)); // the top's middle
+            const float fromLine = glm::dot(xy(s_.pos - mid), xy(out));
             const bool atTop = !fromAir && std::abs(s_.pos.z - top.z) < 120.0f && glm::dot(fwd, out) > 0.7f && fromLine < 0 &&
-                               fromLine > -250.0f && std::abs(glm::dot(xy(s_.pos - top), vec2(-out.y, out.x))) < 100.0f;
+                               fromLine > -250.0f && std::abs(glm::dot(xy(s_.pos - mid), vec2(-out.y, out.x))) < 100.0f;
             const bool facing = glm::dot(fwd, -out) >= 0.5f && s_.pos.z >= bottom.z - 100.0f && s_.pos.z <= rung0.z + 200.0f &&
                                 glm::length(xy(s_.pos - rung0)) <= 220.0f;
             if (!atTop && !facing) continue;

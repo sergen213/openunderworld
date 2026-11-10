@@ -11,6 +11,7 @@
 #include "formats/Formats.hpp"
 #include "formats/Uber.hpp"
 #include "game/Bend.hpp"
+#include "game/Breakables.hpp"
 #include "game/Combat.hpp"
 #include "game/Progress.hpp"
 #include "game/Water.hpp"
@@ -436,6 +437,7 @@ public:
     const PlayerState& state() const { return s_; }
     const Tuning& tuning() const { return t_; }
     void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
+    void letGo() { startFall(vec3(0)); } // what she held or stood on is gone (a breakable broke): she falls from here
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
     // The orbit camera's view yaw and look pitch (rad, + = up), set by World each tick: under water the stick's forward
@@ -684,6 +686,9 @@ struct UnitData {
     // markers through them (tru.exe 0x69D690 / 0x7781D0 / 0x6AC340 mode 3; World::bindWater).
     struct IntroMarker { int32_t uid = 0; uint16_t marker = 0; vec3 pos{0}; };
     std::vector<IntroMarker> markers;
+    // Class-30 breakable intros (game/Breakables.hpp: falling floors, breaking ledges, braced doors): intro matrix, unit frame.
+    struct BreakableIntro { int32_t uid = 0; std::string object; glm::mat4 frame{1}; };
+    std::vector<BreakableIntro> breakables;
     // Render payload a UnitLoader may decode off the main thread (ou-game: formats::loadLevelScene); null = none.
     std::shared_ptr<const scene::SceneData> scene;
 };
@@ -858,6 +863,20 @@ public:
     }
     // Hit message 0x11C on an uber object's sections (0x6D4690): shots, Mjolnir's bolts, the ground pound.
     void damageObject(int32_t uid, float damage, int damageClass);
+    // Class-30 breakables of the loaded units (Breakables.cpp, docs/GAMEPLAY.md "Breakables"): whole they collide and
+    // carry markup as their piece models; Lara's contact (standing on one, hanging from its ledge, on its pole or beam)
+    // or enough hits of a listed damage class start the record's action: the break, at once or after its delay; then
+    // every piece is a loose rigid body and the collision and markup are gone. `breakablePieces`: each piece's model
+    // and world frame now (the app draws them; `shake` = the jitter amplitude while it waits). `breakBreakable`: the
+    // script message 0x2C (break by action id). `brokenNow`: those that broke this tick.
+    enum class BreakPhase : uint8_t { Whole, Waiting, Broken };
+    struct BreakablePiece { int32_t uid = 0; int piece = 0, model = 0; glm::mat4 world{1}; BreakPhase phase = BreakPhase::Whole; vec3 shake{0}; glm::mat4 frame{1}; };
+    std::vector<BreakablePiece> breakablePieces() const;
+    std::optional<BreakPhase> breakablePhase(int32_t uid) const; // nullopt: not a breakable of the loaded units
+    bool breakBreakable(int32_t uid, int actionId);
+    const std::vector<int32_t>& brokenNow() const { return broken_; }
+    // An explosion record's area hit at `at` (0x69F1E0): targets, Lara, damageable objects, loose bodies.
+    void blast(vec3 at, const ExplosionRecord& x);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
@@ -1185,6 +1204,30 @@ private:
     // Objects' model markup (physics::ObjectPhysics::markup) in col_, placed by the object's collider each tick: ledges
     // on push blocks, cog rings, breakable ledges move with their instance (tru.exe markup boxes owned by the instance).
     void tickObjectMarkup();
+    // Breakables.cpp
+    struct Breakable { std::string unit, object; glm::mat4 frame{1}; std::shared_ptr<const BreakableData> data; };
+    struct BreakableState { BreakPhase phase = BreakPhase::Whole; int hits = 0, action = -1; float timer = 0, away = 0; };
+    std::map<int32_t, Breakable> breakables_;           // of the loaded units, world frame
+    std::map<int32_t, BreakableState> breakableStates_; // saved; kept while their unit is streamed out
+    std::map<std::string, std::shared_ptr<const BreakableData>> breakableData_; // by object name; null = not class 30
+    uint64_t breakableUnits_ = ~uint64_t(0);            // unitsVersion_ breakables_ was bound to
+    std::vector<int32_t> broken_;
+    void bindBreakables();
+    void breakableColliders();   // syncObjects: the whole ones' piece collision
+    void tickBreakableMarkup();  // tickObjectMarkup: their pieces' markup
+    void tickBreakables(float dt);
+    void breakableLoose(std::vector<physics::Scene::Loose>& out) const; // stepPhysics: the broken ones' pieces
+    void startBreak(int32_t uid, int action);
+    void breakNow(int32_t uid);
+    bool hitBreakable(int32_t uid, int damageClass, bool fromLara); // true: `uid` is a breakable (it took the message)
+    int32_t breakableOfMarkup(int markup) const;                    // the breakable owning col_.markup[markup], 0 none
+    nlohmann::json serializeBreakables() const;
+    void restoreBreakables(const nlohmann::json& j);
+    std::map<std::string, std::optional<ExplosionRecord>> explosionData_; // by object name
+    struct PendingBlast { vec3 at{0}; ExplosionRecord record; int ticks = 0; };
+    std::vector<PendingBlast> pendingBlasts_;                             // born squibs going off (tickBlasts)
+    void birthBlast(uint16_t object, vec3 at);
+    void tickBlasts();
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
     std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
     bool engages(const script::Object& o, const physics::Engagement& e); // Lara inside the record's shape
@@ -1199,6 +1242,7 @@ private:
     bool uberInsert(int32_t uid, size_t section, bool inserted);
     bool uberTrigger(int32_t uid, size_t section, uint32_t trigger, uint32_t param); // 0x6D4790 / 0x6D4810
     int32_t uberSectionJoint(int32_t uid, int32_t section) const; // the simulated joint moving the section, -1 none
+    void uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose, vec3 vel = vec3(0)); // its last joint went: a loose body
     bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles, Thor mechanisms): grip, push, let go
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
@@ -1371,6 +1415,14 @@ private:
         int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; int32_t engagement = -1;
         int32_t clip = -1; float clipTime = 0, rate = 1; bool loop = false;
         int32_t model = -1;
+        // A section instance is a rigid body its joints hold (0x4D3DA0 / 0x4D8000). `held`: a joint was created on it;
+        // `freed`: its last joint was removed (action 10) while it had one: it falls as a loose body from `freedAt`
+        // (model -> world), as ma_uo_bedroom_door's leaf once pulled or blown off its hinge. Saved.
+        bool held = false, freed = false;
+        glm::mat4 freedAt{1};
+        // The velocity the removed joint had (units/s, world): the body starts with it (a prismatic joint's slide; the
+        // ring door comes off its slide moving toward the rope's pull). Only its first step reads it: not saved.
+        vec3 freedVel{0};
     };
     std::map<std::pair<std::string, int32_t>, std::optional<physics::EngagementSet>> uberEngagements_; // (object, offset)
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };

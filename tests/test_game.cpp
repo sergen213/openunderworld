@@ -3795,8 +3795,9 @@ TEST(GameReal, KrakenRoomRappel) {
         w.tick(replay.at(i));
         const auto& s = w.player().state();
         if (std::getenv("OU_GRAPPLE_TRACE") && i % 15 == 0)
-            std::printf("tick %3llu %s %s pos %.0f %.0f %.0f uid %d rope %.0f\n", (unsigned long long)i,
-                        std::string(game::stateName(s.state)).c_str(), s.clip.c_str(), s.pos.x, s.pos.y, s.pos.z, s.grappleUid, s.ropeLength);
+            std::printf("tick %3llu %s %s pos %.0f %.0f %.0f uid %d rope %.0f control %d\n", (unsigned long long)i,
+                        std::string(game::stateName(s.state)).c_str(), s.clip.c_str(), s.pos.x, s.pos.y, s.pos.z, s.grappleUid, s.ropeLength,
+                        int(w.script().playerControl()));
         leapt |= s.state == State::Jump && s.clip == "grapple_rappel_jumpoff_back" && s.grappleUid == 0;
         if (s.state != State::GrappleRappel) continue;
         EXPECT_EQ(s.grappleUid, 326);
@@ -3840,7 +3841,7 @@ TEST(GameReal, LadderRungsClimbOffTop) {
     CollisionMesh m;
     addFloor(m, -2000, -2000, 400, 2000, 0);
     addFloor(m, 400, -2000, 2000, 2000, 1200);
-    m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}}); // outward -X, toward Lara
+    m.markup.push_back({9, 1, {{400, 79, 1200}, {400, 79, 0}, {400, -79, 0}}}); // 158 wide across Y: the wall faces -X, toward Lara
     auto w = climbWorld(std::move(m), {300, 0, 0});
     const auto& s = w->player().state();
     w->tick(forward());
@@ -3850,7 +3851,8 @@ TEST(GameReal, LadderRungsClimbOffTop) {
     for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
     ASSERT_EQ(s.clip, "ladder_idle");
     EXPECT_NEAR(s.pos.z, rungZ(5), 1e-3) << "lowest rung: trunc(1200 / 110.619) + 1 - 6";
-    EXPECT_NEAR(s.pos.x, 400 - 79 - 110.619f, 1e-3) << "half the hint + 110.619 out from the line";
+    EXPECT_NEAR(s.pos.x, 400 - 110.619f, 1e-3) << "110.619 out from the wall";
+    EXPECT_NEAR(s.pos.y, 0, 1e-3) << "on the middle of its width";
     std::set<int> rungs; // where each climb clip started: the rung the one before ended on
     for (int i = 0; i < 900 && s.state == State::Ladder; ++i) {
         w->tick(forward());
@@ -3863,7 +3865,7 @@ TEST(GameReal, LadderRungsClimbOffTop) {
     EXPECT_EQ(rungs, (std::set<int>{0, 1, 2, 3, 4, 5}));
     EXPECT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 1200.0f, 1.0f);
-    EXPECT_NEAR(s.pos.x, 400 - 79 - 110.619f + 216.4f, 1.0f);
+    EXPECT_NEAR(s.pos.x, 400 - 110.619f + 216.4f, 1.0f);
 }
 
 // Ladder jump up (chart T1871, q23 80.15 up a frame): the top blocked by the wall going on up (the 297 sweep over the top
@@ -3874,7 +3876,7 @@ TEST(GameReal, LadderJumpUpToLedge) {
     CollisionMesh m;
     addFloor(m, -2000, -2000, 400, 2000, 0);
     addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 3000}, {400, -2000, 3000}); // the wall, facing -X
-    m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}});
+    m.markup.push_back({9, 1, {{400, 79, 1200}, {400, 79, 0}, {400, -79, 0}}});
     m.markup.push_back({1, 2, {{400, 1000, 1700}, {400, -1000, 1700}}}); // hanging to its right (-X), as retail ledges
     auto w = climbWorld(std::move(m), {300, 0, 0});
     const auto& s = w->player().state();
@@ -3901,7 +3903,7 @@ TEST(GameReal, CameraLadderPitchesUpAfterClimbingUp) {
     CollisionMesh m;
     addFloor(m, -4000, -4000, 400, 4000, 0);
     addQuad(m, {400, -4000, 0}, {400, 4000, 0}, {400, 4000, 3000}, {400, -4000, 3000});
-    m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}});
+    m.markup.push_back({9, 1, {{400, 79, 1200}, {400, 79, 0}, {400, -79, 0}}});
     auto w = climbWorld(std::move(m), {300, 0, 0});
     const auto& s = w->player().state();
     w->tick(forward());
@@ -3980,8 +3982,8 @@ TEST(GameReal, LadderSideJumpsReachAndBack) {
         CollisionMesh m;
         if (floor) addFloor(m, -2000, -2000, 400, 2000, 0);
         else addFloor(m, -3000, -2000, -2000, 2000, -2000); // nothing under the ladders: a pit
-        m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}});
-        m.markup.push_back({9, 2, {{400, -apart, 1200}, {400, -apart, 0}, {242, -apart, 0}}});
+        m.markup.push_back({9, 1, {{400, 79, 1200}, {400, 79, 0}, {400, -79, 0}}});
+        m.markup.push_back({9, 2, {{400, 79 - apart, 1200}, {400, 79 - apart, 0}, {400, -79 - apart, 0}}});
         return m;
     };
     {
@@ -4004,7 +4006,7 @@ TEST(GameReal, LadderSideJumpsReachAndBack) {
         for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
         ASSERT_EQ(s.clip, "ladder_idle");
         EXPECT_NEAR(s.pos.y, -900, 1e-2);
-        EXPECT_NEAR(s.pos.x, 400 - 79 - 110.619f, 1e-2);
+        EXPECT_NEAR(s.pos.x, 400 - 110.619f, 1e-2);
         const float r = (1200.0f - 575.221f - s.pos.z) / 110.619f;
         EXPECT_NEAR(r, std::round(r), 1e-3) << "on a rung";
         EXPECT_NEAR(std::remainder(s.yaw, 6.2831853f), 0, 1e-3) << "facing the ladder again";
@@ -4031,7 +4033,7 @@ TEST(GameReal, LadderSideJumpsReachAndBack) {
         EXPECT_EQ(s.clip, "ladder_reach_left");
     }
     {
-        auto w = climbWorld(twoLadders(5000, false), {400 - 79 - 110.619f, 0, rungZ(5)});
+        auto w = climbWorld(twoLadders(5000, false), {400 - 110.619f, 0, rungZ(5)});
         const auto& s = w->player().state();
         w->tick(forward()); // in the air at the lowest rung: air attach
         for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
@@ -4054,15 +4056,15 @@ TEST(GameReal, LadderSideJumpsReachAndBack) {
     }
 }
 
-// l7_arctic_sea ladder 2044 hangs over a pit with balance beam 2042 crossing 853 to its left at z -18899: from its
-// middle rungs jump with the stick left leaps (ladder_jump_left, q22) onto the beam; holding the stick left first leans
-// into the jump (ladder_jump_left_prepare: a target that way).
-TEST(GameReal, ArcticSeaLadderSideJumpOntoBeam) {
+// l7_arctic_sea ladder 2044 (wall y = -47421 facing +Y, 158 wide toward -X) hangs over a pit with balance beam 2042
+// crossing 853 out from its wall at z -18899: from its middle rungs a jump back (ladder_jump_back, q22) leaps onto the
+// beam behind her.
+TEST(GameReal, ArcticSeaLadderJumpBackOntoBeam) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     const auto rungZ = [](int r) { return -17318.5f - 575.221f - 110.619f * float(r); };
     for (const int rung : {11}) {
-        auto w = unitWorld(bf, "l7_arctic_sea", {{16513.6f - 79 - 110.619f, -47420.7f, rungZ(rung)}, 0});
+        auto w = unitWorld(bf, "l7_arctic_sea", {{16513.6f - 79, -47420.7f + 110.619f, rungZ(rung)}, glm::radians(-90.0f)});
         const auto& s = w.player().state();
         for (int i = 0; i < 5 && s.state != State::Ladder; ++i) w.tick(forward());
         ASSERT_EQ(s.state, State::Ladder);
@@ -4071,14 +4073,12 @@ TEST(GameReal, ArcticSeaLadderSideJumpOntoBeam) {
         for (int i = 0; i < 3000 && !(s.clip == "ladder_idle" && rungOf() == rung); ++i)
             w.tick(s.clip != "ladder_idle" ? Actions{} : rungOf() > rung ? forward() : forward(-1));
         ASSERT_NEAR(s.pos.z, rungZ(rung), 0.1) << "float precision at z -19000";
-        w.tick(worldStick(w, {0, 1}));
-        EXPECT_EQ(s.clip, "ladder_jump_left_prepare") << rung;
-        Actions jump = worldStick(w, {0, 1});
+        EXPECT_NEAR(s.pos.y, -47420.7f + 110.619f, 1.0f) << "110.619 out from the wall";
+        Actions jump;
         jump.jump = true;
         w.tick(jump);
-        EXPECT_EQ(s.clip, "ladder_jump_left") << rung;
-        EXPECT_EQ(s.state, State::Jump) << rung;
-        for (int i = 0; i < 120 && s.state == State::Jump; ++i) w.tick({});
+        EXPECT_EQ(s.clip, "ladder_jump_back") << rung;
+        for (int i = 0; i < 180 && s.state != State::Beam && s.state != State::Fall; ++i) w.tick({});
         EXPECT_EQ(s.state, State::Beam);
         const auto* beam = markupById(w, 14, 2042);
         ASSERT_TRUE(beam);
@@ -4310,10 +4310,16 @@ TEST(Game, RailSlideAirAttachAndEndDetach) {
 TEST(GameReal, ShipSinkingHallLadder) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    auto w = unitWorld(bf, "l1_ship_sinking_hall", {{1550, 29, 1000}, glm::radians(180.0f)});
-    for (int i = 0; i < 10 && w.player().state().state != State::Ladder; ++i) w.tick(forward());
+    // Ladder 234 lies in the valve wall's plane (y = 29, open side -Y), 158 wide from x 1401: she comes onto it out of
+    // the air in front of it (the shaft has no floor), on the middle of its width, 110.619 out from the wall, facing it.
+    auto w = unitWorld(bf, "l1_ship_sinking_hall", {{1480, -120, 1100}, glm::radians(90.0f)});
+    for (int i = 0; i < 20 && w.player().state().state != State::Ladder; ++i) w.tick(forward());
     ASSERT_EQ(w.player().state().state, State::Ladder);
     EXPECT_EQ(w.collision().markup[size_t(w.player().state().ledge)].id, 234);
+    for (int i = 0; i < 120 && w.player().state().clip != "ladder_idle"; ++i) w.tick({});
+    EXPECT_NEAR(w.player().state().pos.x, 1401 + 79, 1.0f);
+    EXPECT_NEAR(w.player().state().pos.y, 29 - 110.619f, 1.0f);
+    EXPECT_NEAR(glm::degrees(w.player().state().yaw), 90.0f, 1.0f) << "facing the wall (+Y)";
 }
 
 TEST(GameReal, TerrainGroupNativeUpdatesMergedCollision) {
@@ -4329,7 +4335,7 @@ TEST(GameReal, TerrainGroupNativeUpdatesMergedCollision) {
                           glm::rotate(glm::mat4(1), plane->rot.y, {0, 1, 0}) *
                           glm::rotate(glm::mat4(1), plane->rot.z, {0, 0, 1});
     const vec3 normal = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
-    const vec3 before = plane->pos + normal * 1000.0f, after = plane->pos - normal * 1000.0f;
+    const vec3 before = plane->pos - normal * 1000.0f, after = plane->pos + normal * 1000.0f; // toward local +Y
     w.script().tick({before, 0, {}, false}, &w.collision());
     w.script().tick({after, 0, {}, false}, &w.collision());
     EXPECT_EQ(w.collision().terrainGroupEnabled(5), false);
@@ -4711,7 +4717,7 @@ TEST(GameReal, ScriptedChapterEndChainsStartNextChapter) {
         const vec3 n = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
         const vec3 base = t->pos - vec3(0, 0, script::kTestPointHeight);
         game::PlayerState s = w.player().state();
-        for (const vec3 p : t->kind == script::Kind::Plane ? std::vector<vec3>{base + n * 300.0f, base - n * 300.0f}
+        for (const vec3 p : t->kind == script::Kind::Plane ? std::vector<vec3>{base - n * 300.0f, base + n * 300.0f}
                                                            : std::vector<vec3>{base + vec3(5000, 0, 0), base}) {
             s.pos = p;
             w.restore(s, 0, 0);
@@ -4744,7 +4750,8 @@ TEST(GameReal, RevealCameraPlaysUnitSpline) {
     const vec3 base = t->pos - vec3(0, 0, script::kTestPointHeight);
     game::PlayerState s = w.player().state();
     int started = -1;
-    for (const vec3 p : {base + n * 300.0f, base - n * 300.0f}) {
+    // up through the plane (its local +Y); the first step twice: the room's opening cinematic moves her after one tick
+    for (const vec3 p : {base - n * 300.0f, base - n * 300.0f, base + n * 300.0f}) {
         s.pos = p;
         w.restore(s, 0, 0);
         w.tick({});
@@ -7312,6 +7319,306 @@ TEST(GameReal, JellyfishStingOnTouch) {
     EXPECT_EQ(again, expect);
 }
 
+// ---- class-30 breakables, the prologue's collapsing floor (docs/GAMEPLAY.md "Breakables") ----------------------
+
+// Breakable records [O data]: ar_rb_falling_floor_straight breaks 23 frames after Lara stands on it (condition flag 8),
+// the ledges after 105 / 120 frames of hanging (0x40), the pole after 176 on it (0x20); the temple floor takes 3 hits of
+// damage class 6.
+TEST(GameReal, BreakableRecords) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto load = [&](const char* name) { return game::loadBreakable(cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm"))); };
+    const auto floor = load("ar_rb_falling_floor_straight");
+    ASSERT_TRUE(floor);
+    EXPECT_EQ(floor->hits, 3);
+    ASSERT_EQ(floor->pieces.size(), 4u);
+    ASSERT_EQ(floor->conditions.size(), 1u);
+    EXPECT_EQ(floor->conditions[0].flags, 0x08u);
+    ASSERT_EQ(floor->conditions[0].action, 0);
+    EXPECT_EQ(floor->actions[0].type, 2);
+    EXPECT_FLOAT_EQ(floor->actions[0].delay, 23);
+    EXPECT_EQ(floor->actions[0].shake, vec3(4, 4, 10));
+    for (const auto& p : floor->pieces) EXPECT_FALSE(p.physics.prims.empty());
+    const auto ledge = load("ar_ei_break_braced_ledge");
+    ASSERT_TRUE(ledge);
+    EXPECT_EQ(ledge->conditions[0].flags, 0x40u);
+    EXPECT_FLOAT_EQ(ledge->actions[0].delay, 105);
+    EXPECT_TRUE(ledge->actions[0].flags & 0x10);
+    size_t markup = 0;
+    for (const auto& p : ledge->pieces) markup += p.physics.markup.size();
+    EXPECT_EQ(markup, 1u) << "the ledge she hangs from is a piece's";
+    const auto pole = load("ar_ei_breakable_hpole");
+    ASSERT_TRUE(pole);
+    EXPECT_EQ(pole->conditions[0].flags, 0x20u);
+    EXPECT_FLOAT_EQ(pole->actions[0].delay, 176);
+    const auto temple = load("ca_rb_breakable_temple_floor");
+    ASSERT_TRUE(temple);
+    EXPECT_EQ(temple->conditions[0].flags, 0x200u);
+    EXPECT_EQ(temple->conditions[0].classes, std::vector<int32_t>{6});
+    EXPECT_FALSE(load("ma_uo_bedroom_door")) << "an uber object";
+    // The barrel's squib: 800 damage within 948, thrown at 500 .. 250; the bedroom door's: 5 .. 2 within 1896.
+    const auto squib = game::loadExplosion(cdc::parseDrm(*bf.read("pc-w\\squib_exploding_barrel.drm")));
+    ASSERT_TRUE(squib);
+    EXPECT_FLOAT_EQ(squib->damage, 800);
+    EXPECT_FLOAT_EQ(squib->edgeDamage, 800);
+    EXPECT_FLOAT_EQ(squib->radius, 948);
+    EXPECT_FLOAT_EQ(squib->knock, 500);
+    EXPECT_FLOAT_EQ(squib->knockEdge, 250);
+    EXPECT_FLOAT_EQ(squib->angle, 30);
+    const auto door = game::loadExplosion(cdc::parseDrm(*bf.read("pc-w\\squib_explode_door.drm")));
+    ASSERT_TRUE(door);
+    EXPECT_FLOAT_EQ(door->damage, 5);
+    EXPECT_FLOAT_EQ(door->radius, 1896);
+    EXPECT_FLOAT_EQ(door->knock, 1000);
+    EXPECT_FALSE(game::loadExplosion(cdc::parseDrm(*bf.read("pc-w\\squib_basic_explode.drm")))) << "no damage: effects only";
+}
+
+// Every unit's class-30 intros (the table in docs/GAMEPLAY.md "Breakables").
+TEST(GameReal, BreakableSurvey) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list);
+    const std::string text(list->begin(), list->end());
+    std::map<std::string, std::map<std::string, std::vector<int32_t>>> found; // unit -> object -> uids
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        const std::string name = line.substr(line.rfind('\\') + 1);
+        if (name.empty() || !bf.read("pc-w\\" + name + ".drm")) continue;
+        game::UnitData u;
+        try { u = game::loadUnitData(bf, name); } catch (const std::exception&) { continue; }
+        for (const auto& b : u.breakables) found[name][b.object].push_back(b.uid);
+    }
+    if (std::getenv("OU_BREAKABLE_SURVEY"))
+        for (const auto& [unit, objects] : found)
+            for (const auto& [object, uids] : objects) {
+                std::printf("%s %s:", unit.c_str(), object.c_str());
+                for (const int32_t id : uids) std::printf(" %d", id);
+                std::printf("\n");
+            }
+    ASSERT_EQ(found.size(), 3u) << "l4_pool, l4_temple, l5_valaskjalf";
+    EXPECT_EQ(found["l4_pool"]["ca_uo_ledgebreak"], (std::vector<int32_t>{5615, 5616}));
+    EXPECT_EQ(found["l4_pool"]["ca_uo_ledgebreak_u"], (std::vector<int32_t>{5617, 5618, 5619}));
+    EXPECT_EQ(found["l4_pool"]["ca_uo_balancebreakb"], (std::vector<int32_t>{5614}));
+    EXPECT_EQ(found["l4_temple"]["ca_rb_breakable_temple_floor"], (std::vector<int32_t>{5234}));
+    EXPECT_EQ(found["l5_valaskjalf"]["ar_rb_falling_floor_straight"], (std::vector<int32_t>{6975}));
+    EXPECT_EQ(found["l5_valaskjalf"]["ar_ei_break_braced_ledge"], (std::vector<int32_t>{6960, 6961}));
+    EXPECT_EQ(found["l5_valaskjalf"]["ar_ei_break_braced_corner"], (std::vector<int32_t>{6959}));
+    EXPECT_EQ(found["l5_valaskjalf"]["ar_ei_breakable_hpole"], (std::vector<int32_t>{6962}));
+}
+
+// l5_valaskjalf's falling floor 6975 bridges a pit between ledges 1549 (south) and 1551 (north); the route goes north
+// (the tilted one-sided kill plane 7034 under it cuts the walkway south of it for anyone walking back). Lara runs onto
+// it: it holds for its 23 frames, then its four pieces fall as rigid bodies and she falls with them, catching the far
+// edge. With a jump from its start she is over before it goes.
+TEST(GameReal, FallingFloorBreaksUnderLara) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const game::Spawn south{{3476, -73450, -11300}, glm::radians(90.0f)};
+    UnitGame g(bf, "l5_valaskjalf", south);
+    auto& w = g.w;
+    w.tick({}), w.tick({});
+    ASSERT_EQ(w.breakablePhase(6975), game::World::BreakPhase::Whole);
+    const auto on = w.collision().groundProbe(vec3(3476, -72698, -11300), 400);
+    ASSERT_TRUE(on && on->dynamic >= 0) << "the floor is its pieces' collision";
+    EXPECT_EQ(w.collision().dynamics[size_t(on->dynamic)].id, 6975);
+    EXPECT_NEAR(on->point.z, -11378.4f, 1.0f);
+    int stepped = -1, broke = -1;
+    for (int i = 0; i < 200 && broke < 0; ++i) {
+        w.tick(forward());
+        if (stepped < 0 && w.breakablePhase(6975) == game::World::BreakPhase::Waiting) stepped = i;
+        if (!w.brokenNow().empty()) broke = i;
+    }
+    ASSERT_GE(stepped, 0) << "her weight starts it";
+    ASSERT_GE(broke, 0);
+    EXPECT_EQ(broke - stepped, 46) << "23 frames (record action +0x1C)";
+    EXPECT_EQ(w.brokenNow(), std::vector<int32_t>{6975});
+    w.tick(forward());
+    EXPECT_EQ(w.player().state().state, State::Fall) << "nothing under her";
+    EXPECT_FALSE(w.collision().groundProbe(vec3(3476, -72698, -11300), 400)) << "its collision is gone";
+    bool caught = false;
+    for (int i = 0; i < 180; ++i) {
+        w.tick(forward());
+        caught |= w.player().state().state == State::Hang;
+    }
+    ASSERT_TRUE(caught) << "the far edge";
+    EXPECT_EQ(w.collision().markup[size_t(w.player().state().ledge)].id, 1551);
+    EXPECT_FALSE(w.health().dead());
+    int fallen = 0;
+    for (const auto& p : w.breakablePieces())
+        if (p.uid == 6975) {
+            EXPECT_EQ(p.phase, game::World::BreakPhase::Broken);
+            fallen += p.world[3].z < -13000.0f;
+        }
+    EXPECT_EQ(fallen, 4) << "the pieces lie in the pit";
+    // it stays broken across a save
+    const auto saved = w.serializeObjects();
+    UnitGame l(bf, "l5_valaskjalf", south);
+    l.w.restoreObjects(saved);
+    l.w.tick({}), l.w.tick({});
+    EXPECT_EQ(l.w.breakablePhase(6975), game::World::BreakPhase::Broken);
+    EXPECT_FALSE(l.w.collision().groundProbe(vec3(3476, -72698, -11300), 400));
+    EXPECT_EQ(l.w.breakablePhase(6960), game::World::BreakPhase::Whole);
+    // a running jump from its near edge clears it
+    UnitGame j(bf, "l5_valaskjalf", south);
+    j.w.tick({}), j.w.tick({});
+    for (int i = 0; i < 12; ++i) j.w.tick(forward());
+    Actions jump = forward();
+    jump.jump = true;
+    for (int i = 0; i < 4; ++i) j.w.tick(jump);
+    for (int i = 0; i < 150; ++i) j.w.tick(forward());
+    EXPECT_GT(j.w.player().state().pos.y, -72000);
+    EXPECT_NEAR(j.w.player().state().pos.z, -11377.8f, 2.0f);
+    EXPECT_FALSE(j.w.health().dead());
+}
+
+// Prologue, l3_bedroom_hall -> l3_main_hall (walkthrough: "the floor collapses ... take a running jump across"):
+// one-sided plane 4375 fires as she runs toward the door (local +Y), holds her for a second (larabase 56) while floor
+// 4359 plays `collapse` (from `idle`, its graph's start state, into `idle_collapsed`) and sends door 4376 its command:
+// the door leaves its slide (uber state 5: joint removed, squib_explode_door born) and is thrown into the pit with its
+// ring. A running jump then reaches the far edge (ledge 969, a saving grab), and she climbs up and walks into the hall.
+TEST(GameReal, PrologueFloorCollapsesAndTheDoorIsBlownOff) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame g(bf, "l3_bedroom_hall", {{-3300, -3640, 1900}, 0});
+    auto& w = g.w;
+    w.tick({}), w.tick({});
+    const auto clip = [&] {
+        const auto* o = w.script().find(4359);
+        return o && o->graph && o->graph->clip >= 0 ? o->graph->set->names[size_t(o->graph->clip)] : std::string();
+    };
+    EXPECT_EQ(clip(), "idle") << "the floor is whole";
+    ASSERT_TRUE(w.uberState(4376));
+    EXPECT_EQ((*w.uberState(4376))[1], 0u);
+    int crossed = -1;
+    for (int i = 0; i < 90 && crossed < 0; ++i) {
+        w.tick(forward());
+        for (const auto& e : w.script().events())
+            if (e.kind == script::EventKind::Cross && e.source == 4375) crossed = i;
+    }
+    ASSERT_GE(crossed, 0) << "toward local +Y";
+    EXPECT_NEAR(w.player().state().pos.x, -2886, 60);
+    bool collapsing = false, exploded = false;
+    float farthest = -1e9f;
+    for (int i = 0; i < 400 && (i < 150 || clip() == "collapse"); ++i) {
+        w.tick(i < 55 ? forward() : Actions{}); // the stick does nothing for the first second
+        collapsing |= clip() == "collapse";
+        exploded |= !w.explosions().empty();
+        if (i < 55) farthest = std::max(farthest, w.player().state().pos.x);
+    }
+    EXPECT_LT(farthest, -2600) << "held while it collapses";
+    EXPECT_TRUE(collapsing);
+    EXPECT_EQ(clip(), "idle_collapsed");
+    EXPECT_EQ((*w.uberState(4376))[1], 5u);
+    EXPECT_TRUE(exploded) << "squib_explode_door";
+    for (const auto& d : w.collision().dynamics)
+        if (d.id == 4376) EXPECT_LT(d.transform[3].z, 600) << "door and ring lie in the pit";
+    EXPECT_FALSE(w.collision().raycast(vec3(-1400, -3675, 1995), vec3(1, 0, 0), 1000)) << "the doorway is open";
+    // the run-up and the jump over the pit (1250 wide, 1700 deep)
+    for (int i = 0; i < 120 && w.player().state().pos.x < -2440; ++i) w.tick(forward());
+    ASSERT_GE(w.player().state().pos.x, -2440);
+    Actions jump = forward();
+    jump.jump = true;
+    for (int i = 0; i < 4; ++i) w.tick(jump);
+    for (int i = 0; i < 120 && w.player().state().state != State::Hang; ++i) w.tick(forward());
+    ASSERT_EQ(w.player().state().state, State::Hang);
+    EXPECT_EQ(w.collision().markup[size_t(w.player().state().ledge)].id, 969);
+    if (w.player().state().savingGrab > 0) { // a catch from high enough is a saving grab: Interact recovers it
+        Actions press;
+        press.interact = true;
+        w.tick({}), w.tick(press), w.tick({});
+    }
+    for (int i = 0; i < 150 && w.player().state().clip != "ledgeb_idle"; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().clip, "ledgeb_idle");
+    for (int i = 0; i < 6; ++i) w.tick(forward());
+    for (int i = 0; i < 6; ++i) w.tick(jump);
+    for (int i = 0; i < 300 && w.currentUnit().data.name != "l3_main_hall"; ++i) w.tick(forward());
+    EXPECT_EQ(w.currentUnit().data.name, "l3_main_hall");
+    EXPECT_GT(w.player().state().pos.z, 1700);
+    EXPECT_FALSE(w.health().dead());
+}
+
+// ---- the ship (docs/GAMEPLAY.md "Breakables" explosions, PROGRESSION.md chapter 1) ---------------------------------
+
+// Boarding (walkthrough: from the boat to the anchor, up the chain, onto the deck): the anchor and the chain are stacked
+// ledges on the hull's collision (the anchor's 189 wide at z 2393, the chain's links 64 wide every 237 up to 4275, two
+// wider ones at 4517 / 4733 and the deck's edge 369 at 5426). A running jump off the yacht's bow catches the anchor,
+// jumps up from hang to hang carry her to the rail and over it onto the deck.
+TEST(GameReal, ShipBoardingByTheAnchorChain) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame g(bf, "l1_ship_exterior", {{6928.8f, 22415.0f, 1900}, glm::radians(-168.2f)}); // the unit's player intro
+    auto& w = g.w;
+    const auto& s = w.player().state();
+    for (int i = 0; i < 180 && !(i > 2 && s.state == State::Idle && s.pos.z < 1760); ++i) w.tick({});
+    ASSERT_NEAR(s.pos.z, 1745.1f, 2.0f) << "on the yacht's deck";
+    for (int i = 0; i < 48; ++i) w.tick(forward());
+    Actions jump = forward();
+    jump.jump = true;
+    for (int i = 0; i < 4; ++i) w.tick(jump);
+    for (int i = 0; i < 90 && s.state != State::Hang; ++i) w.tick(forward());
+    ASSERT_EQ(s.state, State::Hang) << "the anchor";
+    const auto ledgeZ = [&] { return w.collision().markup[size_t(s.ledge)].points[0].z; };
+    EXPECT_NEAR(w.collision().markup[size_t(s.ledge)].points[0].x, 5400, 20);
+    EXPECT_LE(ledgeZ(), 2620) << "the anchor (2393) or the chain's first link (2616)";
+    float top = ledgeZ();
+    int jumps = 0;
+    for (; jumps < 14 && s.pos.z < 5000; ++jumps) { // stick up + jump: the next hang, the shelf at 4733, over the rail
+        for (int i = 0; i < 4; ++i) w.tick(jump);
+        for (int i = 0; i < 56; ++i) w.tick(forward());
+        if (s.state == State::Hang) {
+            EXPECT_GE(ledgeZ(), top) << "never down";
+            top = ledgeZ();
+        }
+        EXPECT_NE(s.state, State::Dead);
+    }
+    EXPECT_LE(jumps, 12);
+    for (int i = 0; i < 240 && !(s.state == State::Run && s.pos.z > 5000 && s.pos.z < 5100); ++i) w.tick(forward());
+    EXPECT_NEAR(s.pos.z, 5075.9f, 6.0f) << "on the ship's deck";
+    EXPECT_LT(s.pos.x, 5200);
+    EXPECT_FALSE(w.health().dead());
+}
+
+// Fuel tanks (sh_ei_exploading_barrel, health 50, uber trigger 18): two pistol hits blow one up; its squib
+// (squib_exploding_barrel: 800 damage within 948, damage class 4) hurts Lara and a mercenary standing by, and sets off
+// the tank next to it.
+TEST(GameReal, FuelTankExplosionHurtsLaraAndAMercenary) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame g(bf, "l1_ship_exterior", {{4800, 18144.2f, 3900}, 0}, true); // tanks 1603 / 1604 stand at x 5496.6, 240 apart
+    auto& w = g.w;
+    w.tick({}), w.tick({});
+    ASSERT_TRUE(w.uberState(1603) && w.uberState(1604));
+    const auto type = game::ai::loadEnemyType(bf, "merc");
+    auto& merc = w.enemies().add(type, 990001, vec3(5496.6f, 18700, 3809.2f), 0); // 556 from tank 1603
+    const float mercHealth = merc.health();
+    ASSERT_GT(mercHealth, 0);
+    Actions look;
+    look.look.y = -0.5f; // the free-aim ray is the camera's: tip it down onto the tank
+    for (int i = 0; i < 30; ++i) w.tick(look);
+    const float before = w.health().value();
+    Actions fire;
+    fire.fire = true;
+    int exploded = 0, first = -1;
+    std::vector<vec3> at;
+    for (int i = 0; i < 300 && exploded < 2; ++i) {
+        w.tick(first < 0 ? fire : Actions{});
+        for (const vec3& e : w.explosions()) at.push_back(e), ++exploded;
+        if (exploded && first < 0) first = i;
+    }
+    ASSERT_EQ(exploded, 2) << "the second tank goes off from the first";
+    EXPECT_NEAR(at[0].y, 18144.2f, 1.0f);
+    EXPECT_NEAR(at[1].y, 17903.7f, 1.0f);
+    EXPECT_LT(w.health().value(), before - 500) << "696 from the first tank: 800 a blast";
+    EXPECT_LT(merc.health(), mercHealth) << "the mercenary beside it";
+    for (int i = 0; i < 240; ++i) w.tick({});
+    EXPECT_TRUE(w.removedObjects().contains(1603));
+    EXPECT_TRUE(w.removedObjects().contains(1604));
+}
+
 // Input timing (game::ButtonTime, tru.exe 0x7607C0): pressed / released for one tick, the time since the change, a
 // hold counted as long past Lara data +0x6E2 = 15 frames (0.5 s), and the press kept for Tuning::pressBuffer.
 TEST(Game, ButtonTimingLayer) {
@@ -7622,7 +7929,7 @@ TEST(GameReal, LadderLetGoCatchesAgainAndBadAttach) {
         CollisionMesh m;
         addFloor(m, -2000, -2000, 400, 2000, 0);
         addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, height}, {400, -2000, height});
-        m.markup.push_back({9, 1, {{400, 0, height}, {400, 0, 0}, {242, 0, 0}}}); // outward -X
+        m.markup.push_back({9, 1, {{400, 79, height}, {400, 79, 0}, {400, -79, 0}}}); // 158 wide across Y: the wall faces -X
         return climbWorld(std::move(m), {300, 0, z});
     };
     Actions drop, use;
