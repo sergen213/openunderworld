@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "ch01_hall_first_aid",
+  "chapter": "01 Prologue: the bedroom hall's first-aid kit (docs/matrix/01_prologue.md C01-08)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/00prologue.html",
+  "note": "l3_bedroom_hall played as chapter 0 from checkpoint 4342 (just inside the ring door): the first-aid kit 4364 on the floor is walked to and picked up with Interact. Hurt beforehand by a fixture, the heal key then uses it.",
+  "level": "l3_bedroom_hall",
+  "level_chapter": 0,
+  "spawn": [-6954, -11152, 1800, 0],
+  "fixtures": [{"health": 400}],
+  "steps": [
+    {"step": "pick_up", "plan": ["go -6102 -11433 60", "press", "wait 2"], "duration": 30,
+     "expect": [{"probe": "step.pickups", "has": ["healthpack:4364"]},
+                {"clips": ["gear_weapon_pickup"]},
+                {"probe": "world.health_packs", "eq": 1},
+                {"probe": "player.health", "eq": 400, "note": "stored, not used"}]},
+    {"step": "heal", "input": ["0.1 heal 1", "0.2 heal 0"], "duration": 2,
+     "expect": [{"probe": "weapon.health_packs_used", "eq": 1},
+                {"probe": "player.health", "min": 1000, "note": "a pack restores 640 [O]"}]}
+  ]
+}

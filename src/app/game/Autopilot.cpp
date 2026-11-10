@@ -38,7 +38,7 @@ Autopilot Autopilot::parse(std::string_view plan) {
         for (std::string w; ls >> w;) s.args.push_back(w);
         static const std::vector<std::pair<std::string, size_t>> kOps = {{"go", 2}, {"engage", 1}, {"face", 1}, {"press", 0},
                                                                          {"hold", 2}, {"stick", 3}, {"run", 2}, {"push", 3}, {"wait", 1}, {"near", 1},
-                                                                         {"ride", 2}};
+                                                                         {"ride", 2}, {"map", 1}};
         const auto it = std::ranges::find(kOps, s.op, &std::pair<std::string, size_t>::first);
         if (it == kOps.end() || s.args.size() < it->second)
             throw std::runtime_error("autopilot plan line " + std::to_string(no) + ": unknown step or missing arguments");
@@ -188,6 +188,32 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
                 for (const auto& p : m.points) pts += " (" + std::to_string(int(p.x)) + " " + std::to_string(int(p.y)) + " " + std::to_string(int(p.z)) + ")";
                 std::fprintf(stderr, "ou-game: autopilot markup %d %s:%s\n", m.id, std::string(collision::markupTypeName(m.type)).c_str(), pts.c_str());
             }
+        next(tick, nullptr);
+    } else if (s.op == "map") { // map R [CELL] [UP]: log the floor round Lara as a character grid (finding a route for a plan)
+        // One row per CELL (default 100) of y, north (+y) first, x growing to the right. A cell is the floor found under
+        // UP (default 300) over her feet: '.' within 50 of her level, '1'..'9' / 'a'..'i' = that many hundreds above /
+        // below (rounded), 'z' deeper, ' ' none within 2500; '#' = a wall within half a cell at 150 over that floor.
+        const float r = std::stof(s.args[0]), cell = s.args.size() > 1 ? std::stof(s.args[1]) : 100.0f, up = s.args.size() > 2 ? std::stof(s.args[2]) : 300.0f;
+        const int n = int(r / cell);
+        std::fprintf(stderr, "ou-game: autopilot map centre %.0f %.0f %.0f cell %.0f (x %.0f..%.0f, y %.0f..%.0f)\n", lara.pos.x, lara.pos.y, lara.pos.z, cell,
+                     lara.pos.x - n * cell, lara.pos.x + n * cell, lara.pos.y + n * cell, lara.pos.y - n * cell);
+        for (int j = n; j >= -n; --j) {
+            std::string row;
+            for (int i = -n; i <= n; ++i) {
+                const glm::vec3 from(lara.pos.x + i * cell, lara.pos.y + j * cell, lara.pos.z + up);
+                const auto floor = w.collision().raycast(from, {0, 0, -1}, 2500 + up);
+                char c = ' ';
+                if (floor) {
+                    const float d = floor->point.z - lara.pos.z;
+                    const int h = int(std::lround(std::abs(d) / 100));
+                    c = std::abs(d) < 50 ? '.' : d > 0 ? char('0' + std::min(h, 9)) : h > 9 ? 'z' : char('a' + h - 1);
+                    for (const glm::vec3 dir : {glm::vec3(1, 0, 0), {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}})
+                        if (w.collision().raycast(floor->point + glm::vec3(0, 0, 150), dir, cell / 2)) c = '#';
+                }
+                row += i == 0 && j == 0 ? '@' : c;
+            }
+            std::fprintf(stderr, "ou-game: autopilot map %7.0f %s\n", lara.pos.y + j * cell, row.c_str());
+        }
         next(tick, nullptr);
     } else if (s.op == "ride") { // ride X Y [R] [THROTTLE] [SPEED]: steer the ridden bike to (X, Y) with the raw stick
         const game::Bike* b = w.ridden();

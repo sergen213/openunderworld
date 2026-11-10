@@ -1206,7 +1206,10 @@ released; `press` picks up / inserts, `press drop` puts a carried object down, `
 with a `wait` for its clip), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
 heading; ACTION pressed AT seconds in: running jumps), `push FORWARD RIGHT SECONDS [ACTION]` (ACTION, default interact,
 held throughout, the raw stick from the 6th tick: push blocks grip, then move along the block axis nearest her facing
-while the stick's forward is over 0.5), `wait SECONDS`, `near R` (logs the markup polylines within R: poles, ledges).
+while the stick's forward is over 0.5), `wait SECONDS`, `near R` (logs the markup polylines within R: poles, ledges),
+`map R [CELL] [UP]` (logs the floor within R as a character grid, north up: one cell per CELL (100) units, the floor found
+under UP (300) over her feet as its height against them in hundreds: `.` level, `1`..`9` above, `a`..`i` below, `z` deeper,
+blank none, `#` a wall within half a cell 150 over that floor: finding a route for a plan).
 It logs where each engagement, press, push and run ended. `--no-cinematics` leaves script cinematics
 unshown (their events, Lara's placement at the stream's tails and the chapter change still run): a spawn inside a
 level-start cinematic's trigger volume (l4_traprooms 195_mex_lords, l5_valgrind 240_val_gate) is placed at the
