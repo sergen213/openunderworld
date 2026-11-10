@@ -83,7 +83,7 @@ const anim::Clip* EnemyType::clip(Role r) const {
 std::string_view modeName(Mode m) {
     static constexpr std::string_view k[] = {"idle", "alert", "chase", "attack", "hit", "dead", "spawning", "fire", "reload", "sleep",
                                              "cling", "drop", "down", "rise", "return", "cover", "crawl", "patrol", "search",
-                                             "flank", "dodge", "investigate"};
+                                             "flank", "dodge", "investigate", "knocked"};
     return size_t(m) < std::size(k) ? k[size_t(m)] : "unknown";
 }
 
@@ -181,6 +181,7 @@ void Enemy::setMode(Mode m) {
         break;
     }
     case Mode::Rise: s_.unseenTime = 0, playClip(type_->tuning.regenerate.up, false); break; // hunts on afterwards
+    case Mode::Knocked: break; // onHit / vaulted picked the clip
     case Mode::Return: play(Role::Walk, true); break;
     case Mode::Cover: play(Role::Run, true); break;
     case Mode::Crawl: play(Role::Run, true); break;
@@ -591,7 +592,14 @@ void Enemy::onHit(const Hit& hit) {
     s_.unseenTime = 0;
     if (s_.mode == Mode::Down || s_.mode == Mode::Rise) { // 0x682490: hits it would get up from are absorbed
         if (getsUp(hit)) return;
-        if ((s_.health -= hit.damage) <= 0) die(hit); // anything else (Mjolnir) hurts the full-health body
+        // Anything else (Mjolnir) hurts the full-health body. Lara's finishing move (hit class 16, her fatality attack
+        // record) ends it whatever its health [I: the regenerating body's damage path 0x682680 -> 0x65AC80 is not traced;
+        // 0x613B40 gives a death in the RegenerateDeath state its own category].
+        if (hit.damageClass == kFinisherClass || (s_.health -= hit.damage) <= 0) {
+            s_.health = std::min(s_.health, 0.0f);
+            die(hit);
+            if (type_->clips.count(type_->permanentDeath)) playClip(type_->permanentDeath, false);
+        }
         return;
     }
     if (hit.tranq && type_->sleeps) { // darts dose the animal instead of hurting it; asleep at its health [I]
@@ -610,8 +618,16 @@ void Enemy::onHit(const Hit& hit) {
         // [I] mid-jump: no reaction, it lands first
     } else if (s_.mode == Mode::Cling || s_.mode == Mode::Crawl) {
         setMode(Mode::Drop); // [I] shot on the wall: lets go
+    } else if (hit.melee && s_.mode != Mode::Knocked && s_.mode != Mode::Sleep && s_.mode != Mode::Spawning) {
+        // Lara's blow knocks it off its feet: the fall clip by the side it came from, then the get-up. Types without the
+        // clips stagger.
+        const float rel = wrapAngle(std::atan2(-hit.dir.y, -hit.dir.x) - s_.yaw); // bearing to the attacker
+        const auto& k = std::abs(rel) <= kPi / 2 || type_->knockBack.fall.empty() ? type_->knockFront : type_->knockBack;
+        s_.damageSinceReaction = 0;
+        if (k.fall.empty()) setMode(Mode::Hit);
+        else setMode(Mode::Knocked), playClip(k.fall, false);
     } else if (hit.knock || (type_->tuning.staggerDamage > 0 && s_.damageSinceReaction >= type_->tuning.staggerDamage &&
-                             s_.mode != Mode::Hit)) {
+                             s_.mode != Mode::Hit && s_.mode != Mode::Knocked)) {
         // [I] stagger 0 (thralls, spiders, sharks): no reaction (thralls have additive hitreact_*_add clips; a full
         // one per pistol round pushed them back for good); a reaction plays out, hits during it add up
         s_.damageSinceReaction = 0;
@@ -655,6 +671,15 @@ void Enemy::die(const Hit& hit) {
             s_.ragdollAt = float(d->min + (d->max > d->min ? int(lcg(s_.rng) % uint32_t(d->max - d->min)) : 0)) * kCount;
             return;
         }
+}
+
+bool Enemy::vaulted() {
+    if (!alive() || type_->vaultClip.empty() || s_.leap || s_.mode == Mode::Cling || s_.mode == Mode::Crawl || s_.mode == Mode::Down ||
+        s_.mode == Mode::Rise || s_.mode == Mode::Sleep || s_.mode == Mode::Spawning)
+        return false;
+    setMode(Mode::Knocked);
+    playClip(type_->vaultClip, false);
+    return true;
 }
 
 int Enemy::readyFire() const {
@@ -829,6 +854,14 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         delta = vec3(0);
         if (clipDone()) setMode(Mode::Chase);
         break;
+    case Mode::Knocked: { // the fall clip with its root motion, then the get-up, then it hunts on
+        if (!clipDone()) break;
+        const auto& t = *type_;
+        const std::string& up = s_.clip == t.knockFront.fall ? t.knockFront.up : s_.clip == t.knockBack.fall ? t.knockBack.up : std::string();
+        if (!up.empty() && s_.clip != up) playClip(up, false);
+        else s_.unseenTime = 0, setMode(Mode::Chase);
+        break;
+    }
     case Mode::Spawning:
         if (clipDone()) setMode(Mode::Chase);
         break;

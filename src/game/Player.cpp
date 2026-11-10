@@ -170,7 +170,7 @@ std::string_view stateName(State s) {
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
                                              "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
                                              "grappleswing", "hit", "railslide", "grapplepull", "vehicle", "grapplerappel",
-                                             "use", "block", "wallhug"};
+                                             "use", "block", "wallhug", "melee", "knocked"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -1915,6 +1915,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Turn:
     case State::Land: {
         if (enterWater()) break; // standing in water deeper than swimDepth
+        if (encumberedMove(move, jumpPressed, dt)) break; // carrying a weight (Melee.cpp)
         const float diff = std::abs(wrapAngle(target - s_.yaw));
         if (jumpPressed && s_.state != State::Land) {
             if (tryHurdle(true) || tryPerch(false)) break; // a low ledge ahead / a perch
@@ -2337,6 +2338,10 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         advanceClip(dt);
         break;
     case State::Vehicle: // World drives her from the bike (Vehicle.cpp) and does not tick the player
+        break;
+    case State::Melee: // close combat / carried-object clips (Melee.cpp)
+    case State::Knocked:
+        actTick(dt);
         break;
     case State::Use: // in place, input locked (the interaction clips have no root motion)
         advanceClip(dt);

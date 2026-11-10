@@ -199,7 +199,7 @@ nlohmann::json World::serializeObjects() const {
         if (in.section >= 0) insertedSections.push_back({uid, in.section});
     }
     for (const auto& [uid, x] : slides_) slides.push_back({uid, x});
-    return {{"uber", std::move(uber)}, {"held", held_}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
+    return {{"uber", std::move(uber)}, {"held", held_}, {"melee", serializeMelee()}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
             {"insertedSections", std::move(insertedSections)}, {"placed", placed_},
             {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
 }
@@ -266,6 +266,7 @@ void World::restoreObjects(const nlohmann::json& j) {
     uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberEvents_.clear(), plates_.clear();
     uberSaved_ = std::move(saved);
     held_ = held;
+    restoreMelee(j.is_object() ? j.value("melee", nlohmann::json(nullptr)) : nlohmann::json(nullptr));
     inserted_ = std::move(inserted);
     slides_ = std::move(slides);
     // Saves from before placements: what is inserted now was placed (or Lara put it there).
@@ -1383,12 +1384,14 @@ void World::tickObjects(float dt) {
     }
 }
 
-// Portable objects (heavy weights, poles, keys, gems): interact next to one picks it up, she carries it in front of her
-// chest, interact again inserts it into a receptacle she engages (insertHeld) or sets it down in front of her feet, where
-// it falls as a loose body (it weighs on pressure plates). Empty-handed, interact takes an inserted portable she engages
-// back out (removeInserted). Standing, or swimming: l7_arctic_sea's statue arms, gem holes and thor gears lie under
-// water (engagement spheres of radius 632-948 there [O data]; tru.exe's swim states' carry clips are not traced [I]).
-// [I] No carry clips or walk-speed change; the script's vt 20 pick-up callback (sets its "touched" sticky) is not sent.
+// Portable objects (heavy weights, poles, keys, gems): interact next to one picks it up (World::pickUp: its
+// hosted_pickup clip), she carries it (heldPoint; a weight with the portable_encumbered_* walk), interact again inserts
+// it into a receptacle she engages (insertHeld). Crouch puts it down, Grenade throws it, Interact elsewhere swings it,
+// a jump or drawing a gun lets go of it (World::meleeInput / tickMelee, Melee.cpp): it becomes a loose body from her
+// hands (it weighs on pressure plates). Empty-handed, interact takes an inserted portable she engages back out
+// (removeInserted). Standing, or swimming: l7_arctic_sea's statue arms, gem holes and thor gears lie under water
+// (engagement spheres of radius 632-948 there [O data]; tru.exe's swim states' carry clips are not traced [I]).
+// [I] The script's vt 20 pick-up callback (sets its "touched" sticky) is not sent.
 bool World::carryReady() const {
     const State s = player_.state().state;
     return s == State::Idle || s == State::SwimTread || s == State::SwimSurface || s == State::SwimUnder;
@@ -1396,31 +1399,15 @@ bool World::carryReady() const {
 
 void World::carryPortables(bool pressed) {
     const auto& s = player_.state();
-    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
     placePortables();
     auto* held = held_ ? const_cast<script::Object*>(script_.find(held_)) : nullptr; // World owns object motion
     if (held_ && !held) held_ = 0;
     const Engaged engagedNow = pressed && carryReady() ? engaged() : Engaged{};
     if (held && pressed && insertHeld(*held, engagedNow)) return;
-    if (held && pressed) {
-        // Its collision's base 40 units above her feet (as carried, the base may sit lower than its origin), clear of
-        // her proxy capsule (a set-down inside it was shoved away and rolled off a plate): it falls from there onto what
-        // is below (a raised plate top included).
-        float base = 0, reach = 0;
-        for (const auto& d : col_.dynamics)
-            if (d.id == held->uid)
-                for (const vec3& v : d.shape->vertices) base = std::min(base, vec3(d.transform * glm::vec4(v, 1)).z - (held->pos.z + held->offset.z));
-        if (const auto* p = objectPhysics(held->name))
-            for (int seg = 0; seg < int(p->segments.size()); ++seg)
-                if (const auto shape = physics::solidShape(*p, seg))
-                    for (const vec3& v : shape->vertices) reach = std::max(reach, glm::length(vec2(p->segments[seg] * glm::vec4(v, 1))));
-        held->offset = s.pos + fwd * std::max(90.0f, player_.tuning().radius + reach) + vec3(0, 0, 40 - base) - held->pos;
-        held->loose = true;
-        held_ = 0;
-        return;
-    }
+    // Putting it down (Crouch), throwing it (Grenade) and swinging it (Interact with nothing to insert it into) are
+    // World::meleeInput / tickMelee (Melee.cpp, releaseHeld): it leaves her hands as a loose body.
     if (held) {
-        held->offset = s.pos + fwd * 60.0f + vec3(0, 0, 80) - held->pos;
+        held->offset = heldPoint() - held->pos;
         held->body = glm::mat4(1);
         return;
     }
@@ -1430,8 +1417,7 @@ void World::carryPortables(bool pressed) {
     // keys' and gems' around their origin). Portables without records: [I] within 150 / 100 of her root.
     if (engagedNow.record && engagedNow.record->kind == 4 && engagedNow.section < 0)
         if (auto* o = const_cast<script::Object*>(script_.find(engagedNow.uid)); o && portable(*o) && !inserted_.contains(o->uid)) {
-            held_ = o->uid;
-            o->loose = false;
+            pickUp(*o);
             return;
         }
     for (const auto& o : script_.objects()) {
@@ -1441,8 +1427,7 @@ void World::carryPortables(bool pressed) {
             continue;
         const vec3 at = o.pos + o.offset;
         if (glm::length(vec2(at - s.pos)) < 150.0f && std::abs(at.z - s.pos.z) < 100.0f) {
-            held_ = o.uid;
-            const_cast<script::Object&>(o).loose = false;
+            pickUp(const_cast<script::Object&>(o));
             return;
         }
     }
@@ -1923,8 +1908,10 @@ void World::stepPhysics(float dt) {
             continue;
         }
         loose.push_back({o.uid, objectPhysics(o.name), glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body});
+        if (const auto v = melee_.launch.find(o.uid); v != melee_.launch.end()) loose.back().vel = v->second; // thrown / let go
         looseIds.insert(o.uid);
     }
+    melee_.launch.clear();
     chunkPieces(loose);
     physics_.setLoose(loose);
     const auto bikes = bikeVehicles();

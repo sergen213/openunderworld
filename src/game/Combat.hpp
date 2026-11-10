@@ -56,7 +56,13 @@ struct Hit {
     // projectiles (pr_spear, pr_tranquilizerdart: 0x6C9670) class 4, type 0; 0 / 0 raw (the bike's ram, 0x6AE240).
     // Thralls pick get-up or death by them (ai::Regenerate::kills).
     int damageClass = 0, damageType = 0;
+    // Lara's close combat (a kick, a swung or thrown object; Melee.cpp): knocks an enemy off its feet when it has the
+    // clips (ai::Mode::Knocked) whatever the damage.
+    bool melee = false;
 };
+// The hit class of Lara's finishing move (her fatality attack record, lara.drm; MeleeTuning::fatality): it ends a
+// regenerating thrall (ai::Enemy::onHit).
+inline constexpr int kFinisherClass = 16;
 // Lara's reaction to an accepted hit (0x6EB590 by the message's damage class): 2 heavy (state value +0x208), 1 light
 // (+0x204); class 6 by damage: >= Lara data +0x64 (250) heavy, >= +0x66 (100) light; 0 none.
 inline constexpr float kHeavyHit = 250.0f, kLightHit = 100.0f;
@@ -397,5 +403,87 @@ struct AdrenalineTuning {
     float ease = 10 / 30.0f;      // +0x2CC frames for each time-scale ramp (x 33.33 ms, 0x78C160)
 };
 std::optional<AdrenalineTuning> loadAdrenalineTuning(const cdc::BigfileSet& bigfile); // nullopt: lara.drm missing
+
+// ---- close combat and carried objects (Melee.cpp; docs/GAMEPLAY.md "Close combat", "Carried objects") ----
+// An attack record of Lara's player data (0x28 bytes: +1 hit effect id, +4 damage, +0xC hit class, +0x20 / +0x24 rings):
+// state property 1005 of her chart states names the one in force (weapon controller +0xC4), and the hit message 0x11C
+// carries its damage and class (0x6E6840 / the limb contacts opened by animation events 0xE .. 0xD).
+struct AttackRecord {
+    float damage = 0;
+    int hitClass = 0;
+    bool operator==(const AttackRecord&) const = default;
+};
+// Lara's melee numbers [O lara.drm]: the chart states' attack records (S1426 the kicks, S1432 the sprint kick, S737 the
+// thrall fatality, S1311 a swung portable, S736 the enemy vault), the melee target height classes (player data +0x2B4 /
+// +0x2B8 / +0x2BC: the target's top over her feet, 0x765810), the melee / fatality targeting slots (+0x474 / +0x478:
+// 3D distance from her eye <= 640, the melee one also within 90 degrees [I: criterion 5 read as the horizontal angle
+// from her facing]) and each clip's hit window from its animation events (0xE opens limb `param`, 0xD closes it; 0x6D
+// = the fatality's blow), in 30 Hz frames.
+struct MeleeTuning {
+    AttackRecord kick{60, 2}, sprintKick{3, 2}, fatality{100, kFinisherClass}, swing{100, 2}, vault{0, 1};
+    float low = 63.211128f, mid = 316.05563f, high = 537.29456f; // 0.2 / 1 / 1.7 m
+    float range = 640.0f, coneDeg = 90.0f;
+    struct Window { int open = 0, close = 0; bool operator==(const Window&) const = default; };
+    std::map<std::string, Window, std::less<>> windows{{"melee_kick_low", {4, 10}},  {"melee_kick_mid", {4, 10}},
+                                                       {"melee_kick_high", {3, 13}}, {"melee_kick_highest", {5, 10}},
+                                                       {"melee_kick_move", {6, 11}}, {"melee_thrall_fatality", {23, 23}}};
+    Window window(std::string_view clip) const {
+        const auto it = windows.find(clip);
+        return it == windows.end() ? Window{} : it->second;
+    }
+};
+// Decodes them from pc-w\lara.drm (the state chart at player data +0x12508, the event lists); nullopt without it.
+std::optional<MeleeTuning> loadMeleeTuning(const cdc::BigfileSet& bigfile);
+// Lara's clips Melee.cpp plays (lara.drm; loadLaraAnims loads them beside kLaraClipNames).
+extern const std::vector<std::string_view> kMeleeClipNames;
+
+// A carryable object's (`portablebase`) data [O object data, ObjectBase +0xC8; tru.exe 0x6B5890 / 0x6B53A0]:
+// +0x18 it encumbers her (the carved weights: the portable_encumbered_* walk; poles and keys do not), the throw: +0x34
+// near distance, +0x38 the aim point's distance ahead, +0x3C / +0x40 the horizontal launch speed for a near / far aim
+// point in units per 30 Hz frame (the vertical one is capped at the far value); +0x44.. the same with a combat target.
+// Lara's clips with it live in its DRM ("hosted_*": pick-up, put-down, throw, melee; they animate her skeleton), kept
+// in the AnimLibrary as "hosted:<animation id>"; `events`: their command events {command, 30 Hz frame} (0x4E attach,
+// 0x4F let go, 0x53 throw, 0xE / 0xD the swing's hit window).
+struct PortableDef {
+    bool encumbers = false;
+    float nearDist = 632.111f, aimDist = 2528.45f, nearSpeed = 53.7295f, speed = 53.7295f;
+    float lockNearDist = 632.111f, lockAimDist = 2528.45f, lockNearSpeed = 53.7295f, lockSpeed = 53.7295f;
+    std::map<std::string, std::string, std::less<>> hosted; // "hosted_throw" -> "hosted:2468"
+    std::map<std::string, std::vector<std::pair<int, int>>, std::less<>> events;
+    const std::string* clip(std::string_view name) const {
+        const auto it = hosted.find(name);
+        return it == hosted.end() ? nullptr : &it->second;
+    }
+    std::optional<int> frame(std::string_view name, int command) const {
+        if (const auto it = events.find(name); it != events.end())
+            for (const auto& [c, f] : it->second)
+                if (c == command) return f;
+        return std::nullopt;
+    }
+};
+// The launch velocity (units/s) of a thrown portable as tru.exe 0x6B53A0 -> 0x6A7510 -> 0x6A6F40 solves it: from
+// `origin` at the aim point `aim`, the horizontal speed `speed` (units per 30 Hz frame), gravity 3 per frame^2 in the
+// solve, the vertical speed capped at `cap` (units per frame).
+glm::vec3 throwVelocity(glm::vec3 origin, glm::vec3 aim, float speed, float cap);
+
+// Lara's close-combat / carry action in progress (World::tickMelee), saved with the objects.
+struct MeleeState {
+    enum class Move : uint8_t { None, Kick, Fatality, Swing, Vault, Evade, PickUp, PutDown, Throw, Knocked };
+    Move move = Move::None;
+    int32_t target = 0;    // World::meleeId of the target (kick, swing, fatality, vault) / the portable's uid (pick-up)
+    int32_t object = 0;    // Kick: the breakable she kicks at (uber object uid)
+    bool landed = false;   // the blow / the release happened
+    bool sprint = false;   // Kick: the sprint kick (its own attack record)
+    int phase = 0;         // Knocked: 0 thrown, 1 landing, 2 getting up; Evade: 0 take-off / roll, 1 in the air
+    glm::vec3 vel{0};      // Knocked / Evade: the launch velocity
+    float timer = 0;       // Knocked: seconds she has lain
+    bool swallowInteract = false; // the interact press started a move: the key reads released until it is let go
+    bool dropHeld = false, grenadeHeld = false, jumpHeld = false, fireHeld = false; // press edges of the carry keys
+    // Thrown portables in flight (tru.exe portable +0x84: now + 1500 ms): uid -> seconds left as a weapon; `launch`:
+    // the velocity a portable leaves her hands with on the next physics step (units/s).
+    std::map<int32_t, float> thrown;
+    std::map<int32_t, glm::vec3> launch;
+    std::map<int32_t, glm::vec3> lastPos; // thrown / dropped bodies' positions last tick (their speed at a contact)
+};
 
 } // namespace ou::game

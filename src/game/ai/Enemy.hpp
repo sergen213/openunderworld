@@ -103,6 +103,7 @@ struct EnemyTuning {
     std::array<float, 3> healthLevels{};
     float healthAt(int level) const { return level >= 0 && level < 3 && healthLevels[size_t(level)] > 0 ? healthLevels[size_t(level)] : health; }
     float staggerDamage = 0;       // damage that plays a hit reaction (accumulated since the last one); 0 never [I]
+    float top = 0;                 // its highest bind-pose bone over its feet: Lara's melee height class of it [I]; 0 unknown
     Senses senses, combatSenses;   // idle / once alerted
     float attackRange = 474.08f;   // starts an attack when Lara is this close (centre to centre)
     float attackReach = 632.11f;   // a blow lands if Lara is inside this during the hit window
@@ -202,6 +203,18 @@ struct EnemyType {
     bool sleeps = false;     // has sleepClips: tranquilizer darts put it to sleep (cats, nagas)
     std::array<std::string, 3> sleepClips; // start, loop, wake: sleep_start/_loop/_end or tranq_sleep_start/_loop, rest_to_idle [I]
     std::string fallClip, landClip; // dropping off a wall (Mode::Drop): fall_loop / falling_loop, jump_end / fall_land_front
+    // Knocked off its feet by Lara's melee (Mode::Knocked): the fall and get-up clips when the blow comes from its
+    // front / its back, by name [O clips, I which blow plays which]: soldiers hitreact_heavy_forward / _back + get_up_front
+    // / _back, thralls hitreact_heavy_knockdown + hitreact_heavy_getup (rear: heavy_hitreact_knockdown_rear + ..._getup_rear),
+    // cats hitreact_thrown_forward / _back + hitreact_thrown_getup, nagas stun_start + stun_end. Empty: it only staggers.
+    struct KnockClips { std::string fall, up; };
+    KnockClips knockFront, knockBack;
+    std::string vaultClip;      // its reaction to Lara vaulting off it: hitreact_vault / hit_react_vault / damage_vault (cats, nagas,
+                                // thralls, the tarantula; soldiers have none: not vaulted [I])
+    std::string permanentDeath; // thralls: death_permanent, the death of a body that will not get up again
+    // Lara's clip of the vault, carried by this enemy's DRM (hosted_enemy_vault: it animates her skeleton; the death
+    // record's flag-7 entry names it for soldiers and nagas).
+    std::optional<anim::Clip> laraVault;
     // NavPower links (docs/GAMEPLAY.md "Nav links"): behaviour-list node +0x14C u8[16] -> the PathSpec
     // linkUsageFlags (0x662EC0; cats bit 2, soldiers bit 1, small spiders bit 0, others none), and the take-off /
     // in-air / landing clips per jump kind: up (the landing higher), down, across [I] (within kLinkLevel).
@@ -249,8 +262,10 @@ bool isEnemyObject(const cdc::BigfileSet& bigfile, const std::string& name);
 // its patrol or post (EnemyBehavior_Search / SearchStart / SearchToLastKnownPos / SearchIdle / SearchToPossiblePos).
 // Flank: running to a planner node chosen around Lara (EnemyBehavior_Flank). Dodge: a sidestep (EnemyBehavior_Sidestep).
 // Investigate: walking to a disturbance (EnemyBehavior_Investigate*).
+// Knocked: off its feet from Lara's melee (a kick, a swung or thrown object): the knock-down clip, then the get-up clip
+// (EnemyType::knockFront / knockBack), or the vault reaction (EnemyType::vaultClip) once; then it hunts on.
 enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep, Cling, Drop, Down, Rise, Return, Cover, Crawl,
-                  Patrol, Search, Flank, Dodge, Investigate };
+                  Patrol, Search, Flank, Dodge, Investigate, Knocked };
 std::string_view modeName(Mode m);
 
 // What enemies hunt: Lara's feet and whether she can still be hurt.
@@ -413,6 +428,10 @@ public:
     float health() const override { return s_.health; }
     Team team() const override { return Team::Enemy; }
     void onHit(const Hit& hit) override;
+    // Lara vaults off it (her chart state S736): it plays vaultClip (false: it has none, or it cannot react now).
+    bool vaulted();
+    // Lying down to regenerate (a thrall's Mode::Down, or getting up from it): Lara's finishing move can end it.
+    bool regenerating() const { return s_.mode == Mode::Down || s_.mode == Mode::Rise; }
 
     int32_t uid() const { return uid_; }
     const EnemyType& type() const { return *type_; }
