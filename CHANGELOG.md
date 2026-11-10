@@ -18,6 +18,11 @@ Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (G
   wobble (about-to-fall); push towards the beam, or briefly the other way, to recover. If she goes, she falls to the
   side she leans and grabs a ledge beside the beam if there is one (the Croft Manor chapel scaffold, the Mexico
   temple beam), otherwise she drops.
+- Added: the camera swings back behind Lara like the original's. Five seconds after you last moved the camera
+  yourself it starts turning back behind her while she runs or swims across the view (never while she stands still or
+  heads straight away), and on ledges and climbing walls it slowly leads the way she shimmies. On ladders it tilts up
+  while she climbs up and down while she climbs down. Speeds and delays are the original's (checked side by side under
+  Wine). Recenter Camera still snaps it behind her at once.
 
 ## [0.40.1] - 2026-11-08
 
