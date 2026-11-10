@@ -135,6 +135,9 @@ bool Player::tryLadder(bool fromAir) {
         if (glm::dot(fwd, -out) < 0.5f) continue;
         if (s_.pos.z < bottom.z - 100.0f || s_.pos.z > top.z + 200.0f) continue;
         if (glm::length(xy(s_.pos - top)) > kPillarReach) continue;
+        // On, or in the air over, a floor that lies above the pillar's top (a column carrying a ledge:
+        // l1_baldrs_sideroom pillar 33 under ledge 35): the pillar is under that floor, not in reach [I].
+        if (s_.pos.z > top.z && (!fromAir || col_.groundProbe(s_.pos + vec3(0, 0, 10.0f), s_.pos.z - top.z + 10.0f))) continue;
         s_.ledge = int(i);
         s_.climbNormal = out;
         s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw, s_.climbYawTo = yawOf(-xy(out));
@@ -533,6 +536,18 @@ void Player::pillar(vec2 move, vec2 stick, bool jumpPressed, bool dropPressed, f
         const float a = glm::degrees(std::atan2(xy(out).x * dir.y - xy(out).y * dir.x, glm::dot(xy(out), dir)));
         const float deg = std::abs(a);
         const bool back = mag <= 0.5f || deg > 155.0f;
+        // Her root is on the shaft's axis while the clips hold her body outside it (above). The flight starts outside
+        // a solid shaft, where tru.exe's take-off clip has carried her [I: the distance is found on the collision:
+        // rays from kPillarClear out back toward the axis at foot / waist / head height meet the shaft's surface on
+        // the jump's side; her capsule starts just beyond it]. Without it the flight's sweep begins inside the column
+        // and she drops back onto it (l1_baldrs_tomb pillar 14, l1_baldrs_sideroom's columns).
+        constexpr float kPillarClear = 300.0f;
+        const vec3 along(dir, 0);
+        float clear = 0;
+        for (const float h : {t_.radius, capHeight() * 0.5f, capHeight() - t_.radius})
+            if (const auto hit = col_.raycast(s_.pos + vec3(0, 0, h) + along * kPillarClear, -along, kPillarClear))
+                clear = std::max(clear, kPillarClear - hit->t + t_.radius + 1.0f);
+        s_.pos += along * clear;
         s_.ledge = -1;
         s_.state = State::Jump;
         s_.vel = vec3(dir * kPillarJumpSpeed, kPillarJumpVz);

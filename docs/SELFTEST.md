@@ -453,6 +453,15 @@ tested behaviour happen.
 | `ch02_serpent_door` | l1_kraken_entrance | the dead switch 748, serpent head 751 pulled onto plate 752, one weight on plate 753 does not hold it, two do, the switch opens gate 743 |
 | `ch03_gear_room_west` | l1_kraken_room | switch 57 jammed; from the lower hall the pillar ring of gear 32 pulled: the column falls, the mechanism is free |
 | `ch03_gear_room_east` | l1_kraken_room | switch 55 jammed; gear 36 pulled out until it locks; the switch runs the mechanism |
+| `ch04_pillar_entry` | l1_baldrs_tomb | the Norse Connection's way into the west room: pillar 14 climbed to z 4100, `pillar_jump_forward` along the stick 740 into the wall opening (floor z 3872), the safety drop at its far edge, Drop into the room behind door 223 |
+| `ch04_gate_room` | l1_baldrs_tomb | both weights thrown from pad 219 through door 223, a roll through before it shuts, one weight on pad 222 (the pad rises again, lock 69 back), both (it stays down), gate 45's ring roped, pulled down from pad 221 (joint 91), the rope let go, plane 224 at the gauntlet |
+| `ch04_column_hall` | l1_baldrs_sideroom | the hall of broken columns' first half: pillar 24 -> pillar 23 (948, caught in the air) -> back onto ledge 36, running jump onto perch 26, `perch_jump_forward` to pillar 31, pillar jump onto the floor behind ledge 35 |
+| `ch04_kraken_swing` | l1_kraken_room | upper level: ceiling ring 309 thrown at from the north-east ledge, roped walk to the edge, Jump, 4500 across the pool with Forward held, stepping off onto the west ledge; first-aid kit 319 |
+| `ch05_boarding` | l1_ship_exterior | running jump off the yacht's bow onto the anchor, Forward + Jump from hang to hang up the chain (3400 up, never down), over the rail (boarding plane 1633), first-aid kit 1564 |
+| `ch05_container_deck` | l1_ship_exterior | the boarding, then down the bow stair to the container deck; Target Lock + Fire held while walking aft: mercenary 1652 leaves his patrol, chases and is shot, then 1650 (5 -> 3 alive) |
+| `ch05_below_decks` | l1_ship_exterior | aft doorway: door 1529 by volume 1531, down to door 1530, generator 1537's mercenaries on the second stair (pistols on the lock), door 1491, plane 1465 -> cinematic 1453's events, the hall beyond to the T junction |
+| `ch06_sinking_hall_door` | l1_ship_lower_hallway | volume 1176 opens door 1167 (a rider of the rolling hallway 1056), through it into l1_ship_sinking_hall, plane 1201: the hall's first tilt (1056 command 1), carried down on its floor |
+| `ch06_second_shaft_valves` | l1_ship_sinking_hall | checkpoint 1055: ladder 235 rung to rung, `ladder_jump_up` from its top rungs onto ledge 250 (the grating's edge), the hang's jump up onto the valve wheels (hold 227, 491 up), hold to hold up the first group, the DICE jump up to the second, its weave to the top wheel 209 (root z 11059) |
 | `ch10_maproom_rope_step_off` | l2_maproom | section 10 (C10-03): wall ring 2595 offered and thrown at from the near bridge stub's corner (rope 3404); roped she walks off the stub: the arc takes her under the pool, the rope is let go and she swims (surface root -9662); the far stub's spiders do not bite a swimmer under them |
 | `ch11_chapel_dais_furnace` | l3_chapel | section 11 (C11-16): onto pressure plate 4834 (joint -50): fire 4818 lit, gates 4830 / 4831 opening; off it: the fire goes out, the gates shut |
 | `ch11_study_gauntlet` | l3_stairhall -> l3_secretchamber | section 11 (C11-24, C11-25): from checkpoint 4699 down the passage into the study: checkpoint 4621, volume 4669, cinematic 4654 (gauntlet), two thralls alive in the room |
@@ -468,6 +477,10 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | `ch12_trailstart_lever_gate` | l4_trailstart | `let_go` | lever 6695 is pulled out by Interact and stays out (joint 1264); the original holds it by her weight on the rope and it returns when unloaded |
 | `ch01_ring_door_walk_through` | l3_main_bedroom | the walk through | the pulled ring door's leaf stays standing in its frame: no way into l3_bedroom_hall (docs/PROGRESSION.md chapter 0) |
 | `ch01_hall_floor_collapse` | l3_bedroom_hall | `pull_up_and_on` | parked 2026-11-10: the blown hall door 4376's outcome depends on the tick she crosses plane 4375; since the take-off timing change the leaf can stay in its frame over ledge 969 |
+| `ch04_column_hall_perches` | l1_baldrs_sideroom | the jump to perch 30 | ledge 35 -> perch 30 is 1620 away and 134 higher; the running jump comes down on pillar 29. The original's take-off spot is unknown |
+| `ch05_natla_room` | l1_ship_exterior | the way west | from the T junction the west recess is shut; volume 1436 is not reached on foot |
+| `ch06_hallway_roll` | l1_ship_sinking_hall | after plane 1202 | after the hall's second tilt she is stopped on a 45-degree floor against a 100-high step, 3850 short of plane 1203 |
+| `ch06_second_shaft_exit` | l1_ship_sinking_hall | the jump to bar 238 | from the top valve wheel the bar is not reached: the side jump lands hanging on the beam's own ledge 253 |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

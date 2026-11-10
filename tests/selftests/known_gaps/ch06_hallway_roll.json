@@ -1,0 +1,154 @@
+{
+ "version": 1,
+ "name": "ch06_hallway_roll",
+ "chapter": "06 Realm of the Dead: the ship heels over, the sliding cases, toward the barrel run (docs/matrix/06_realm_of_the_dead.md C06-04, C06-05)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/05realm.html",
+ "note": "KNOWN GAP (2026-11-10). After ch06_sinking_hall_door's steps she walks on down the hall: plane 1202 runs dispatcher 1199's second stage (hallway 1056 command 2, cases 1177..1219 vt 55, barrel 1168 vt 55), then she is stopped at lower-hallway frame (1176 15942 -2029) = sinking hall (-2617 -3537 -2029), on a floor that slopes 45 degrees across the hall, by a 100-high step / wall at x 1076 of that frame, 3850 short of plane 1203. The hallway's later poses (the hall on its side), Lara riding it through the roll (script 6310 of intro 1076 'WARP ATTACH' to 1056; dispatcher 1200's larabase 56 / 59 calls), the sliding cases as bodies and the barrel run (adrenaline tracker 1077, ms_ani_ship_adren_trap) are not verified; which of them stops her is not yet known. The last step fails today.",
+ "level": "l1_ship_lower_hallway",
+ "spawn": [
+  2842,
+  7541,
+  100,
+  90
+ ],
+ "steps": [
+  {
+   "step": "into_the_door_volume",
+   "plan": [
+    "go 2842 7100 60",
+    "wait 2"
+   ],
+   "duration": 20,
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "enter:1176>1176",
+      "activate:1176>1167"
+     ],
+     "note": "volume 1176 before the door"
+    },
+    {
+     "calls": [
+      "1167:54"
+     ],
+     "note": "door 1167 vt 54: open"
+    }
+   ]
+  },
+  {
+   "step": "through_the_door",
+   "plan": [
+    "go 2852 7900 60",
+    "go 2852 8500 60"
+   ],
+   "duration": 20,
+   "expect": [
+    {
+     "probe": "world.unit",
+     "eq": "l1_ship_sinking_hall"
+    },
+    {
+     "probe": "player.pos.y",
+     "min": 8400,
+     "note": "beyond the door's leaves (y 8042 .. 8142), which stood shut before the rider fix"
+    },
+    {
+     "probe": "object.1056.name",
+     "eq": "ms_ani_ship_hallway"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "down_the_hall_to_the_first_blast",
+   "plan": [
+    "go 2747 10500 60",
+    "go 2747 12500 80"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "calls": [
+      "1199:62",
+      "1056:55",
+      "1200:62"
+     ],
+     "note": "plane 1201: dispatcher 1199's first stage (blast, shake), hallway 1056's command 1 (the first tilt), dispatcher 1200 (sinking_ship_tilt)"
+    },
+    {
+     "probe": "object.1056.uber.0",
+     "eq": 4,
+     "note": "the hallway's section after its first tilt"
+    },
+    {
+     "probe": "player.pos.z",
+     "max": -400,
+     "note": "she rode the tilting floor down (hall floor at 12 before)"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "past_the_second_blast",
+   "plan": [
+    "go 2747 14500 80",
+    "go 2700 15300 80",
+    "wait 6",
+    "go 1500 15700 80",
+    "go 1182 15930 60",
+    "wait 2"
+   ],
+   "duration": 90,
+   "expect": [
+    {
+     "calls": [
+      "1199:63",
+      "1056:56",
+      "1168:55"
+     ],
+     "note": "plane 1202: stage two, the hallway's command 2 (uber.0 -> 1), the equipment cases and barrel 1168 started"
+    },
+    {
+     "probe": "object.1056.uber.0",
+     "eq": 1
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "on_to_the_barrel_run",
+   "plan": [
+    "go 0 15900 80",
+    "go -2675 16003 80"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "cross:1203>1203"
+     ],
+     "note": "plane 1203 (sinking_hall -6468 -3476 -1420), the third stage before the adrenaline run (planes 1079 / 1084, tracker 1077)"
+    }
+   ]
+  }
+ ]
+}

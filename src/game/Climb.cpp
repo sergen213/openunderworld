@@ -181,6 +181,48 @@ bool Player::tryClimb(bool fromAir) {
     return true;
 }
 
+// The jump up from a ledge hang onto a free-climb hold (l1_ship_sinking_hall: from the grating's edge, ledge 250, to
+// the valve wheels; both escape shafts need it). The hang's up-jump query q10 lifts the attach point
+// 75.85^2 / (2 x 5.72443) = 502.5 over the ledge [O lara.drm]; a hold on her wall counts as met when its root point
+// (point 0 - 158.025, where tru.exe 0x707C60 places her [O]) lies within that rise and within one hold-grid step
+// (158.025) aside [I: how tru.exe tests hold boxes against q10 is not decoded; the ship's lowest wheel 227 has its
+// root point 491 over the grating's edge, 11 under the apex]. The jump-up clip carries her onto the hold (warpStep)
+// [I: the clip tru.exe plays for this move is not decoded].
+bool Player::hangJumpToHold() {
+    if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size() || col_.markup[size_t(s_.ledge)].points.size() < 2) return false;
+    const auto& ledge = col_.markup[size_t(s_.ledge)];
+    // the ledge point she hangs from: the nearest of her segment to her root
+    const size_t si = std::min(size_t(std::max(s_.ledgeSeg, 0)), ledge.points.size() - 2);
+    const vec3 p0 = ledge.points[si], p1 = ledge.points[si + 1];
+    const float len2 = glm::dot(xy(p1 - p0), xy(p1 - p0));
+    const vec3 at = glm::mix(p0, p1, len2 > 1e-4f ? std::clamp(glm::dot(xy(s_.pos - p0), xy(p1 - p0)) / len2, 0.0f, 1.0f) : 0.0f);
+    const vec3 f = forward(), r(std::sin(s_.yaw), -std::cos(s_.yaw), 0);
+    constexpr float kApex = 75.85f * 75.85f / (2.0f * 5.72443f), kAside = 158.025f, kDepth = 120.0f;
+    int32_t best = -1;
+    float bestDist = 1e9f;
+    for (size_t i = 0; i < col_.markup.size(); ++i) {
+        const auto& m = col_.markup[i];
+        if (!isHold(m)) continue;
+        const vec3 d = holdAnchor(m) - at;
+        if (d.z <= 0 || d.z > kApex || std::abs(glm::dot(d, r)) > kAside || std::abs(glm::dot(d, f)) > kDepth) continue;
+        if (glm::dot(holdNormal(m, -f), -f) < 0.5f) continue; // a hold of the wall she faces
+        if (const float dist = glm::length(d); dist < bestDist) best = int32_t(i), bestDist = dist;
+    }
+    if (best < 0) return false;
+    const auto& m = col_.markup[size_t(best)];
+    s_.climbHold = best;
+    s_.climbStance = uint8_t(m.type - 16);
+    s_.climbNormal = holdNormal(m, -f);
+    s_.vel = vec3(0);
+    s_.ledge = -1;
+    s_.state = State::Climb;
+    s_.climbWarp = true;
+    s_.climbFrom = s_.pos, s_.climbTo = holdAnchor(m);
+    s_.climbYawFrom = s_.yaw, s_.climbYawTo = yawOf(xy(-s_.climbNormal));
+    play("ledgeb_jump_up", false);
+    return true;
+}
+
 // The playing clip carries Lara from climbFrom to climbTo: its root motion, in the frame she started in (heading
 // climbYawFrom), scaled per axis to the actual offset (the residual eased in where the clip has no such motion); the
 // heading turns to climbYawTo with it (corners). True once the clip is done (she is at climbTo).

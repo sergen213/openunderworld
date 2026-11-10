@@ -641,6 +641,7 @@ private:
     bool startDodge(vec2 stick); // under water, target lock held: swim_submerged_dodge_* by the stick (State::SwimDodge)
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
     bool tryClimb(bool fromAir);
+    bool hangJumpToHold(); // Hang: the jump up onto a free-climb hold over the ledge (Climb.cpp)
     bool warpStep(float dt); // the clip carries her climbFrom -> climbTo (climbing, ladder climb-off); true when done
     void climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt);
     // Ladders (markup 9), perches (13), pillars (15), src/game/Traverse.cpp. climbNormal = outward from the wall.

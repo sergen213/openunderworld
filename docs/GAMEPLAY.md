@@ -1730,6 +1730,12 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   Before 2026-10-29 we treated faces with flags bits 0x01..0x20 as climbable; that byte is the
   `adjacencyFlags` of TRLAU's IndexedFace and is set on ~99.5-100 % of all walls, so Lara could climb
   every wall (survey of l3_main_bedroom, l4_pool, l4_ballcourt, l2_hubhall, l3_main_hall, l5_startsnow).
+- From a ledge hang up onto holds (`Player::hangJumpToHold`, `GameReal.HangJumpUpOntoAFreeClimbHold`): with no ledge over
+  her the hang's Jump (stick up or neutral) takes a hold of her wall whose root point lies within the up-jump query q10's
+  rise — 75.85² / (2 × 5.72443) = **502.5** over the ledge point [O lara.drm] — and within one grid step (158) aside
+  [I: tru.exe's test of hold boxes against q10 is not decoded; l1_ship_sinking_hall's lowest valve wheel 227 has its
+  root point 491 over the grating's edge 250, the only way up both escape shafts]. `ledgeb_jump_up` carries her onto the
+  hold [I: clip]. Self-test `ch06_second_shaft_valves`.
 - Hold to hold [O]: Lara's root is always at a hold — point 0 − 158.025 z (tru.exe 0x707C60) — or travelling between
   two. The holds lie on a 158-unit grid (l2_cliffclimb columns at z 614, 772, 932, 1058, 1217, 1377, …) and every
   `DICE_<from>_to_<to>_<dir>` clip's root motion is one grid step in Lara's frame (`DICE_B_to_B_Up` (0, 157),
@@ -2257,7 +2263,14 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   112° `pillar_jump_right`, to 155° `pillar_jump_back_45R` (left mirrored; which side mirrors is [I]), else or no stick
   `pillar_jump_back`; she leaves along the stick (no stick: straight out) at query q48's **55.63** out + **28.45** up a
   30 Hz frame [O] (Wine: 55.8 out). Ctrl = `pillar_detach_drop`.
-  The climb limits (top − 341.8, foot + 193) are [I].
+  The climb limits (top − 341.8, foot + 193) are [I]. The flight starts outside the shaft [I]: her root is on the
+  axis, inside a solid column's collision, so the jump first moves her out along its direction to just beyond the
+  shaft's surface (rays from 300 out back to the axis at foot / waist / head height; l1_baldrs_sideroom's columns:
+  149 + her radius) — where tru.exe's take-off clip carries her, not measured. Before 2026-11-10 the sweep began inside
+  the column and she dropped back onto it (`GameReal.PillarJumpLeavesASolidShaft`: l1_baldrs_tomb pillar 14 into the
+  wall opening). A pillar whose top lies under the floor she stands on or is over is not caught [I] (pillar 33 carries
+  the floor behind ledge 35 and pulled her through it; `Game.PillarUnderAFloorIsNotCaughtFromTheAir`). Self-tests
+  `ch04_pillar_entry`, `ch04_column_hall`.
 - Perches: from the air or a standing jump next to the segment (`perch_attach_air/_ground`), balance with
   `perch_idle`; the stick turns her on the spot (`perch_turn_right_45` / `_90` / `_180`, requests 668–670; to the left
   the same clips mirrored, 671–673 [O]; bands < 67.5° / < 135° / beyond [I]); Ctrl on a pillar's top perch =

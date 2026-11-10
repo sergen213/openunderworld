@@ -1,0 +1,255 @@
+{
+ "version": 1,
+ "name": "ch04_gate_room",
+ "chapter": "04 The Norse Connection: the west room's two blocks, the gauntlet gate, the gauntlet (docs/matrix/04_norse_connection.md C04-02 .. C04-09)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/03norse.html",
+ "note": "l1_baldrs_tomb, entered in the west room behind door 223 (the room the pillar jump of C04-01 drops into). Both carved weights (220, 218) are thrown through door 223 from its press plate 219, she rolls through before it shuts, both weights go on gate pad 222 (lock 69), she ropes gate 45's ring, backs onto pad 221 (lock 70) and pulls the gate down with Interact. The plan is the one replay baldrs_plates_gate was recorded from.",
+ "level": "l1_baldrs_tomb",
+ "spawn": [
+  -5000,
+  -10000,
+  2560,
+  180
+ ],
+ "steps": [
+  {
+   "step": "throw_first_block",
+   "plan": [
+    "engage 220 walk",
+    "press",
+    "wait 2",
+    "go -5453 -10404 30 walk",
+    "face 0",
+    "wait 2",
+    "press grenade",
+    "wait 3"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "clips": [
+      "hosted:2467",
+      "portable_encumbered_walk",
+      "hosted:2468"
+     ]
+    },
+    {
+     "probe": "object.219.joint",
+     "over": "min",
+     "max": -30,
+     "note": "pad 219 sank under her"
+    },
+    {
+     "probe": "object.220.pos.x",
+     "min": -4000,
+     "note": "the weight lies beyond door 223 (x -4109)"
+    },
+    {
+     "probe": "portable.held",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "throw_second_block",
+   "plan": [
+    "engage 218 walk",
+    "press",
+    "wait 2",
+    "go -5453 -10404 30 walk",
+    "face 0",
+    "wait 2",
+    "press grenade",
+    "wait 3"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "clips": [
+      "hosted:2467",
+      "hosted:2468"
+     ]
+    },
+    {
+     "probe": "object.218.pos.x",
+     "min": -4000
+    },
+    {
+     "probe": "player.pos.x",
+     "max": -4200,
+     "note": "she is still in the west room"
+    }
+   ]
+  },
+  {
+   "step": "roll_through_the_door",
+   "plan": [
+    "run 0 1.6 drop 1.2"
+   ],
+   "duration": 10,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "roll"
+     ]
+    },
+    {
+     "probe": "player.pos.x",
+     "min": -4000,
+     "note": "east of door 223"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "calls": [
+      "223:58"
+     ],
+     "note": "plate 219 released: the door shuts behind her"
+    }
+   ]
+  },
+  {
+   "step": "first_block_on_the_gate_pad",
+   "plan": [
+    "engage 220 walk",
+    "press",
+    "wait 2",
+    "go -3300 -10680 60 walk",
+    "go -2800 -10500 60 walk",
+    "go 1056 -10371 30 walk",
+    "face 0",
+    "press drop",
+    "wait 3",
+    "go 300 -10900 60",
+    "wait 4"
+   ],
+   "duration": 90,
+   "expect": [
+    {
+     "probe": "portable.held",
+     "eq": 0
+    },
+    {
+     "probe": "object.222.joint",
+     "over": "min",
+     "max": -30,
+     "note": "the pad sank while she stood on it with the weight"
+    },
+    {
+     "probe": "object.222.joint",
+     "min": -30,
+     "note": "one 30 kg weight alone does not hold pad 222 down: it has risen again"
+    },
+    {
+     "probe": "object.69.body.z",
+     "min": -50,
+     "note": "and lock 69 is back in the gate"
+    }
+   ]
+  },
+  {
+   "step": "second_block_on_the_gate_pad",
+   "plan": [
+    "engage 218 walk",
+    "press",
+    "wait 2",
+    "go 1056 -10031 30 walk",
+    "face 0",
+    "press drop",
+    "wait 3",
+    "go 5 -11700 40 walk",
+    "wait 4"
+   ],
+   "duration": 90,
+   "expect": [
+    {
+     "probe": "object.222.joint",
+     "max": -30,
+     "note": "pad 222 stays down under both weights with Lara off it"
+    },
+    {
+     "probe": "object.45.joint",
+     "max": 5,
+     "note": "the gate still stands"
+    }
+   ]
+  },
+  {
+   "step": "rope_the_gate_and_pull",
+   "plan": [
+    "face -90",
+    "hold looky 1.0",
+    "press grapple",
+    "wait 1",
+    "go -1301 -10201 30",
+    "wait 2",
+    "hold interact 8",
+    "wait 2"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "grapple.target",
+     "over": "any",
+     "eq": 45
+    },
+    {
+     "probe": "object.221.joint",
+     "over": "min",
+     "max": -30,
+     "note": "she stood on pad 221"
+    },
+    {
+     "probe": "object.45.joint",
+     "min": 80,
+     "note": "gate 45 pulled down on its hinge (limit 0..90 once both locks are out)"
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "to_the_gauntlet",
+   "plan": [
+    "press drop",
+    "wait 1",
+    "go 0 -12600 80",
+    "go 0 -14300 150",
+    "wait 3"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "grapple.attached",
+     "eq": false,
+     "note": "Drop lets the rope go"
+    },
+    {
+     "probe": "step.events",
+     "has": [
+      "cross:224>224"
+     ],
+     "note": "plane 224 before the gauntlet: the script hands over to cinematic 160 (050_med_thor; skipped here) and dispatcher 43"
+    },
+    {
+     "probe": "player.pos.y",
+     "max": -14000,
+     "note": "through the gateway, at the gauntlet's plinth (64 at y -14616)"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  }
+ ]
+}

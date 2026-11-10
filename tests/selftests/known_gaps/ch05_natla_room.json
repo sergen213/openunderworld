@@ -1,0 +1,209 @@
+{
+ "version": 1,
+ "name": "ch05_natla_room",
+ "chapter": "05 God of Thunder: left at the T to the Natla room's window (docs/matrix/05_god_of_thunder.md C05-19, C05-20)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/04thunder.html",
+ "note": "KNOWN GAP (2026-11-10). After ch05_below_decks's steps she stands at the T (-3870 -8100 17). The left-hand (west) recess ends at a wall or shut door at (-4845 -7911): she cannot go on north there. The right-hand ramp leads down to the engine floor (z -299), where volume 1437 is entered (1288 vt 63) but volume 1436, 790 higher, is not; a 100-high bump with sliding sides at x -2472 .. -2272, y -4900 and a 300-high block at (-3300 -7676) close the other ways. What shuts the west passage (an unopened door of l1_ship_engine_hall / l1_ship_natla_room, or missing streaming of the Natla room) is not yet known. `ProgressionReal` passes volume 1436 by placing her in it. The last step fails today.",
+ "level": "l1_ship_exterior",
+ "spawn": [
+  0,
+  -16929,
+  2640,
+  90
+ ],
+ "steps": [
+  {
+   "step": "through_the_aft_door_and_down",
+   "plan": [
+    "go 0 -15150 80",
+    "go -1500 -15100 80",
+    "go -1550 -13700 80",
+    "go -1576 -11100 80",
+    "go -1601 -10300 80"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "activate:1531>1529",
+      "activate:1536>1537"
+     ],
+     "note": "volume 1531 opens door 1529; volume 1536 inside starts the mercenary generator 1537"
+    },
+    {
+     "calls": [
+      "1529:54"
+     ]
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l1_ship_upper_hallway_b"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 1281,
+     "tol": 6,
+     "note": "one deck down (the aft deck is at 2545), through door 1530"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "fight_down_the_second_stair",
+   "plan": [
+    "go -1500 -9300 80",
+    "go 700 -9300 80",
+    "go 1300 -9800 60",
+    "go 1300 -12900 80",
+    "go 1700 -13900 80"
+   ],
+   "input": [
+    "0.1 draw 1",
+    "0.2 draw 0",
+    "0.4 aim 1",
+    "0.4 fire 1"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "activate:1492>1491"
+     ],
+     "note": "the stair door at the bottom opens by its volume"
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 4,
+     "note": "pistols on the lock while she runs"
+    },
+    {
+     "probe": "enemies.count",
+     "min": 2,
+     "note": "the generator's mercenaries"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 17,
+     "tol": 6,
+     "note": "the lower deck"
+    },
+    {
+     "probe": "step.health_lost",
+     "max": 600
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "into_the_engine_room",
+   "plan": [
+    "go 1700 -14900 80",
+    "go 1700 -16000 80",
+    "go 530 -16800 80",
+    "go 530 -17100 80"
+   ],
+   "duration": 40,
+   "until": {
+    "probe": "step.events",
+    "has": [
+     "cinematicend:1453>1453"
+    ]
+   },
+   "expect": [
+    {
+     "probe": "step.events",
+     "seq": [
+      "activate:1493>1491",
+      "cross:1465>1465",
+      "activate:1465>1453",
+      "cinematicend:1453>1453"
+     ],
+     "note": "plane 1465 plays cinematic 1453 (055_med_merc: the ambush and the fuel pipe; skipped here, its events run)"
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l1_ship_upper_hallway"
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "along_the_hall_to_the_t",
+   "plan": [
+    "wait 2",
+    "go -3044 -14100 60",
+    "go -3870 -14000 80",
+    "go -3870 -13000 80",
+    "go -3870 -10200 80",
+    "go -3870 -8100 80"
+   ],
+   "duration": 80,
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "checkpoint:1453>1453"
+     ],
+     "note": "the cinematic's end placed her in the hall beyond the engine room and saved"
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l1_ship_engine_hall"
+    },
+    {
+     "probe": "player.pos.y",
+     "min": -8200
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 17,
+     "tol": 6
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "left_at_the_t",
+   "plan": [
+    "go -4822 -7950 60",
+    "go -4822 -6800 80"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "enter:1436>1436"
+     ],
+     "note": "volume 1436 (engine_hall -2595 -3769 491) starts cinematic 1288, 060_med_natla"
+    }
+   ]
+  }
+ ]
+}
