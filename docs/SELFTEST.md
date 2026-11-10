@@ -93,6 +93,7 @@ at the top, in a step and in a condition, and ignored.
 | `walkthrough` | URL of the walkthrough page the steps follow (optional; link only, never copy its text) |
 | `level` | unit to enter (`"l4_pool"`; `pc-w\l4_pool.drm` works too), at its `player` intro or at `spawn` |
 | `spawn` | `[x, y, z, yawDeg]` in the unit's frame, with `level`. As `--spawn`: she is put on the floor found up to 1000 below the point |
+| `level_chapter` | with `level`: the chapter index the unit is played in, for units that belong to two chapters (the manor units: `0` = the prologue; without it the chapter is the one in the unit's name, `game::chapterOfUnit`: `l3_*` = 3) |
 | `start_chapter` | `0..8` (`game::kChapters`): start that chapter as New Game / chapter select does (its intro message, gear and loadout) |
 | `load` | save slot name (`$XDG_DATA_HOME/openunderworld/saves/<slot>.ousave`), as `--load` |
 | `cinematics` | `true`: play script cutscenes (default `false`: skipped) |
