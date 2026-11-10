@@ -706,23 +706,24 @@ int hitReaction(int damageClass, float damage) {
     return 0;
 }
 
-void World::damageLara(float amount, vec3 from, int type) {
+bool World::damageLara(float amount, vec3 from, int type) {
     const int react = hitReaction(type, amount);
     const bool hurt = health_.damage(amount, type);
     if (hurt) endHeadShot(); // 0x71F1D0 message 0x11C -> 0x718FD0: a hit on her ends the move
-    if (!hurt || health_.dead() || !react) return;
+    if (!hurt || health_.dead() || !react) return hurt;
     const PlayerState& s = player_.state();
     const bool swim = s.water >= 0;
     if (swim ? !(swimHit(s.state) || s.state == State::SwimTread || s.state == State::SwimSurface)
              : !(s.state == State::Idle || s.state == State::Walk || s.state == State::Run || s.state == State::Stop ||
                  s.state == State::Turn || s.state == State::Land || s.state == State::Hit))
-        return;
+        return hurt;
     const float rel = wrapAngle(std::atan2(from.y - s.pos.y, from.x - s.pos.x) - s.yaw), a = std::abs(rel);
     const int dir = a <= 45 * kDeg ? 0 : a >= 135 * kDeg ? 1 : 2;
     static constexpr std::string_view kLight[] = {"hit_light_front", "hit_light_back", "hit_light_side"};
     static constexpr std::string_view kHeavy[] = {"hit_mediumfront", "hit_mediumback", "hit_mediumright"};
     // 0x6EB320: the anim graph's mirror flag 0x20 is set when the attacker's angle from her heading is positive (her left)
     player_.hitReact(std::string(react == 2 ? kHeavy[dir] : kLight[dir]) + (swim ? "_swim" : ""), rel > 0);
+    return hurt;
 }
 
 void World::kill() { health_.damage(health_.value(), kDamageKill); }

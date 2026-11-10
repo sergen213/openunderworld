@@ -76,6 +76,24 @@ bool portable(const script::Object& o) {
 
 // Scripted objects that gain collision after their constructor / a pull: pressure plates and loose rigid bodies.
 bool lateCollider(const script::Object& o) { return (o.joint && o.joint->prismatic) || o.loose; }
+// Two bodies of one rigid-body object closing on each other: a class-34 object whose model carries two prismatic
+// joint markers (kind 2) and a link marker (kind 11, +0x24 = the joint it copies) — ca_rb_crusher_slim, the Xibalba
+// crush room's six jaw pairs [O data: model 0 = the jaw on marker 0's side with the 12345 kill plate on its face, model
+// 1 = its mirror image on marker 1's side; bind pose = closed, 68 units apart; joint limit 0..900]. Each body slides
+// along its marker's Z axis (as the single-marker bodies, tickJoints) by the joint position. [I] that the instance
+// builds one body per model and that the link keeps both at the same travel (0x6B6440 not traced for kind 11).
+std::optional<std::array<vec3, 2>> linkedJaws(const physics::ObjectPhysics* p) {
+    if (!p || p->physClass != physics::kClassRigidBody || std::ranges::count(p->markers, 2u, &physics::Marker::kind) != 2 ||
+        std::ranges::count(p->markers, 11u, &physics::Marker::kind) != 1)
+        return std::nullopt;
+    std::array<vec3, 2> axes{};
+    size_t k = 0;
+    for (const auto& m : p->markers)
+        if (m.kind == 2)
+            axes[k++] = vec3((glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) *
+                              glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1}))[2]);
+    return axes;
+}
 size_t lateColliders(const script::Runtime& rt) {
     return size_t(std::count_if(rt.objects().begin(), rt.objects().end(), lateCollider));
 }
@@ -1377,6 +1395,7 @@ void World::syncObjects() {
         if (c.hinge >= 0) angles[c.uid] = physics_.angle(c.hinge);
     colliders_.clear();
     col_.dynamics.clear();
+    jaws_.clear();
     shotOnly_.clear(), shotOnlyLocal_.clear();
     physics_.clearHinges(); // uber joints and loose bodies keep simulating
     for (const auto& o : script_.objects()) {
@@ -1386,7 +1405,8 @@ void World::syncObjects() {
         // Anim graphs with hit-gated transitions (sh_ei_combat_crate_*) collide so Lara's shots reach them (World::fire).
         const bool shootable = o.graph && o.graph->set->graph &&
                                std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return !t.events.empty(); });
-        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable) { // spline movers' collision follows Object::body (pose below)
+        const auto jaws = uber ? std::nullopt : linkedJaws(objectPhysics(o.name));
+        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable && !jaws) { // spline movers' collision follows Object::body (pose below)
             // Anim graphs that leave a state on the damage they took (stimulus 0x800 without event ids, posted by
             // Runtime::tickGraph) and do not collide otherwise: their shapes are met by shots only (World::shotRay), at
             // their intro frame [I: l1_kraken_room's chain links hang on platform 27's markers 21 / 20 (uberobjectbase 2
@@ -1466,11 +1486,21 @@ void World::syncObjects() {
                 col_.dynamics.push_back({o.uid, std::move(shape), intro * p.segments[seg]});
                 colliders_.push_back({o.uid, seg, hinge, intro, p.segments[seg]});
             }
+        if (jaws) { // the second body: model 1 on the other joint
+            jaws_[o.uid] = *jaws;
+            if (const physics::ObjectPhysics* second = modelPhysics(o.name, 1))
+                for (int seg = 0; seg < int(second->segments.size()); ++seg)
+                    if (auto shape = physics::solidShape(*second, seg)) {
+                        col_.dynamics.push_back({o.uid, std::move(shape), intro * second->segments[seg]});
+                        colliders_.push_back({o.uid, seg, -1, intro, second->segments[seg], -1, 1});
+                    }
+        }
     }
     breakableColliders(); // class-30 breakables: their pieces' collision while whole (Breakables.cpp)
     syncedObjects_ = script_.objects().size();
     syncedPlates_ = lateColliders(script_);
     poseShotOnly();
+    syncHazards();
 }
 
 // An anchored object (script::Runtime::anchor) sits in the frame of its host's HInfo marker: the marker's segment as
@@ -1547,7 +1577,10 @@ void World::tickObjects(float dt) {
             continue;
         }
         glm::mat4 model(1); // model-space rigid motion of the segment
-        if (c.hinge >= 0) {
+        if (const auto jw = jaws_.find(c.uid); jw != jaws_.end()) {
+            model = glm::translate(glm::mat4(1), jw->second[size_t(c.jaw)] * (o->joint ? o->joint->position : 0.0f));
+            if (c.jaw == 0) script_.setBody(c.uid, model);
+        } else if (c.hinge >= 0) {
             model = glm::inverse(c.intro) * physics_.bodies[physics_.hinges[c.hinge].body].model();
             script_.setBody(c.uid, model);
         } else if (const auto* op = objectPhysics(o->name);
@@ -1572,6 +1605,7 @@ void World::tickObjects(float dt) {
         col_.dynamics[i].transform = c.intro * model * c.frame;
     }
     tickObjectMarkup();
+    tickHazards();
     if (under >= 0) {
         const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
         if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
@@ -1702,6 +1736,19 @@ bool World::engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, c
 }
 
 // Uber section `section`'s model physics (each section an instance of its object's model `model`), null none.
+const physics::ObjectPhysics* World::modelPhysics(const std::string& name, uint32_t model) {
+    auto mp = modelPhysics_.find({name, model});
+    if (mp == modelPhysics_.end()) {
+        std::shared_ptr<const physics::ObjectPhysics> p;
+        if (const auto* bf = script_.bigfile())
+            if (auto bytes = bf->read("pc-w\\" + name + ".drm")) try {
+                    p = std::make_shared<physics::ObjectPhysics>(physics::loadObjectPhysics(cdc::parseDrm(std::move(*bytes)), model));
+                } catch (const cdc::FormatError&) {}
+        mp = modelPhysics_.emplace(std::pair{name, model}, std::move(p)).first;
+    }
+    return mp->second.get();
+}
+
 const physics::ObjectPhysics* World::uberSectionPhysics(const script::Object& o, size_t section) {
     const auto* data = prepareUber(o);
     const auto drm = objectDrms_.find(o.name);

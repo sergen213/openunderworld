@@ -38,6 +38,9 @@ struct Prim {
     float radius = 0;       // sphere, capsule
     float length = 0;       // capsule, along its local Z [I]
     uint16_t id = 0, mass = 0;
+    // What touching it costs (sphere +0x1C, box +0x3E, capsule +0x32, s16; tru.exe 0x48E040 read by the instance-contact
+    // handler 0x4923C0): 0 on almost every primitive, the traps' blades / flames / grinders carry it.
+    int16_t damage = 0;
     bool solid() const { return head[1] & 1; }
 };
 // Model marker (dtp Model +0x38 count, +0x3C list, 0x30 bytes): frame of e.g. a joint [I].

@@ -944,6 +944,12 @@ void Runtime::callback(int32_t uid, const char* base, size_t prototype, std::spa
         }
 }
 
+void Runtime::contactDamage(int32_t attacker) {
+    if (!playerScript_) return;
+    const std::array args{vm::Value::object(attacker), vm::Value::object(playerScript_->uid), vm::Value::scalar(0), vm::Value::scalar(0)};
+    callback(attacker, "instance", 34, args);
+}
+
 void Runtime::run(int32_t uid, int16_t vt, std::span<const vm::Value> args) {
     const auto self = instance(uid);
     if (!self || !self->program) return;

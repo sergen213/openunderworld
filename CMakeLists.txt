@@ -403,7 +403,7 @@ add_library(ou_save STATIC src/save/Save.cpp)
 target_include_directories(ou_save PUBLIC src)
 target_link_libraries(ou_save PUBLIC ou_game nlohmann_json::nlohmann_json PRIVATE ou_config ZLIB::ZLIB)
 # ou_game's object collision + physics doors (src/game/Objects.cpp, src/physics)
-target_sources(ou_game PRIVATE src/game/Objects.cpp src/game/Breakables.cpp)
+target_sources(ou_game PRIVATE src/game/Objects.cpp src/game/Breakables.cpp src/game/Hazards.cpp)
 target_link_libraries(ou_game PUBLIC ou_physics)
 # ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
 add_library(ou_ui STATIC src/ui/Ui.cpp src/ui/Hud.cpp src/ui/Art.cpp src/ui/Pda.cpp)

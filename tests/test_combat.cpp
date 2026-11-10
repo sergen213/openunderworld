@@ -2284,3 +2284,22 @@ TEST(CombatReal, ThrownWeightPressesThePlate) {
     EXPECT_LT(nearest, 300.0f) << "it came down on the plate";
     EXPECT_LT(pressed, -1.0f) << "and pressed it down";
 }
+
+// Damaging collision posts its amount as a hit of class 6 (tru.exe 0x5D4C60 -> message 0x11C -> 0x6F5030): priority 4,
+// so a second touch inside the 30-frame window is ignored and a touch of 12345 (hammers, crusher plates) is death.
+TEST(Combat, ContactDamageClassWindowAndKill) {
+    game::Health h;
+    EXPECT_TRUE(h.damage(400, game::kDamageContact)); // a grinder
+    EXPECT_EQ(h.value(), 600);
+    for (int i = 0; i < 59; ++i) {
+        h.tick(1.0f / 60);
+        EXPECT_FALSE(h.damage(400, game::kDamageContact)) << i;
+    }
+    EXPECT_FALSE(h.damage(100, game::kDamageLight)) << "an enemy's light blow ranks below it";
+    h.tick(2.0f / 60);
+    EXPECT_TRUE(h.damage(400, game::kDamageContact));
+    EXPECT_EQ(h.value(), 200);
+    h.tick(1.1f);
+    EXPECT_TRUE(h.damage(12345, game::kDamageContact));
+    EXPECT_TRUE(h.dead());
+}
