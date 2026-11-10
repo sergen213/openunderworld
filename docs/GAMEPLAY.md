@@ -690,10 +690,55 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   `bbeam_walk_turn180` turns her round by its root rotation. At an end: another beam ending within 60 takes over (she
   turns onto it), a standable floor 80 beyond is stepped onto (Walk; 0.5 s before a beam can catch her again), else she
   stops. Jump = standing jump (the assist below puts the landing back on the line), drop = falls off to her right [I].
-  Off balance [I: the stick rule; `PSCCF_MoveDirUnbalanced` not decoded]: walking with the stick more than 0.3 across
-  the beam plays `bbeam_walk`'s blend space (lara.drm request 192) fully toward `bbeam_unbalance_walk_right` /
-  `_left` (same root motion, 501 per 3.57 s cycle), standing with it more than 0.5 across `bbeam_idle_wobble_fwd`
-  (request 158). She never falls off from it (`bbeam_aboutfall_*`, `bbeam_fall_*` unused).
+  Off balance [I: the walk's stick rule]: walking with the stick more than 0.3 across the beam plays `bbeam_walk`'s
+  blend space (lara.drm request 192) fully toward `bbeam_unbalance_walk_right` / `_left` (same root motion, 501 per
+  3.57 s cycle), standing with it more than 0.5 across `bbeam_idle_wobble_fwd` (request 158).
+  About to fall, falling off, the catch (2026-11-09, `Player::beamAboutFall` / `startBeamFall`):
+  - Chart [O-data] (lara.drm player chart, openunderworld-work/hurdles/sc.py): beam root S873 (action 572: the beam
+    heading, 0x76DCD0 / 0x7326B0 / 0x732500), walking S934, standing S876 / S921, idle S949. S897 dispatches on
+    `PSCCF_MoveDirUnbalanced` (cond 0x199, 0x761780 → 0x7868F0: the sign of the controller angle chart context +0x390,
+    hysteresis = property 0x1FB degrees; value 412 = positive = left, 413 = right) to the about-to-fall states S896 /
+    S895 (request 177: `bbeam_aboutfall_center` / `_left` / `_right`, loops of 1.2 s without root motion). The fall
+    flag is cond 0x200 (byte +0x3BD = balance controller +0x65, 0x764C30). From about to fall: flag + side → S893 / S890
+    (`bbeam_fall_left` / `_right`, requests 187 / 190); flag clear → back to the beam (S935 with the stick, S919
+    without); jump → the beam jumps. From walking (S934) the flag drops her straight off (T1578 / T1579); it enters
+    S897 on kind-1000 conditions (T1597 / T1602 / T1604) not decoded [U]. From idle (S949) she falls only on a
+    scripted wobbly beam (cond 0x294: an object spawned on entry, 0x75E5C0 → 0x70CC50, reports state 3).
+  - Balance controller [O] (chart context +0x358; action 301: enter 0x742330, update 0x742770 every frame, exit
+    0x72A5E0; slots: the action node's f1 runs on entry 0x785A30, f4 every tick 0x7857D0, f3 on exit 0x7859A0). Tuning
+    by state property 0x209 through 0x72A430: walk (0x193) objdata +0xE98 = sway ±50° at 0.5..1°/frame, tolerance 10°,
+    fall angle 180°, limits 2 frames, a 1000-frame grace when entered without property 912 (objdata +0xE94 bit 0
+    clear) — it never sets the fall flag; about to fall (0x191) +0xF88 = no sway, tolerance 15°, fall angle 100°,
+    wiggle smoothing 0.35 / period 10 frames / penalty 1, grace 20, not improving 30, unbalanced 45, recovery 2,
+    full lean 10 frames, flags 3. Every 30 Hz frame: error = stick heading − (beam heading + sway), the last stick
+    heading held while the stick is released (+0x5C); |error| ≤ tolerance: balanced time; beyond: weight
+    (|error| − tolerance) / (fall angle − tolerance), to the stick's side (left negative), unbalanced time, and with
+    flag 2 the stick swung to the other side counts as balanced (the side holds). The fall flag needs a full lean
+    (|+0x44| ≥ 0.99, objdata +0xE94 bit 3) held 10 frames while the stick is pushed, then: |error| > fall angle, not
+    improving > 30 frames, or unbalanced > 45 frames. Balanced > 2 frames after leaning: recovered (flag, side and
+    times cleared). Quick stick flips (mean period < 10 frames) narrow the tolerance and the limits by
+    (10 − period) / 10. Lean target = 2·weight + 2·unbalanced time·side (objdata +0xE78 / +0xE7C) [O]; ours divides the
+    time by 30 frames and moves the lean 0.1 a frame (the record's +0x28) [I: the spring 0x7431F1..0x7437D5 not
+    reproduced].
+  - Falling off [O]: the fall states' action 416 (0x76D4D0) runs query 64 (0.32 out + 0.32 up a frame, falling,
+    gravity 5.72443, cone 90°, from frame 1) from her root moved 47.4075 to the fall side (property 912: 452 = +90°,
+    453 = −90°); a ledge (flag 610) → `bbeam_fall_<side>` then the ledge hang (S526 / S527, under the hang superstate
+    S556), none → `bbeam_fall_<side>_no_ledge` then the fall (S894 → S1012). Clips [O]: `bbeam_fall_left` 0.33 s, root
+    172 to her left and 486 down, a quarter turn to face the beam, ending in the ledge hang pose (hands 146.6 in front,
+    i.e. 25.6 off the line, 12.9 over it: l3_chapel's scaffold beams have ledge loops 31.6 each side); `_no_ledge` the
+    same off-step facing on (458 down); right: 193 aside, 491 / 458 down.
+  - Ours: the stick held more than 30° off the line for 45 frames (90 ticks) tips her into about to fall [I: the walk's
+    entry conditions are not decoded]; there the controller above runs on the +0xF88 tuning [O]; recovered → the beam
+    idle [I: the chart leaves on the flag being clear, which it is from entry]; the fall side = her lean (toward the
+    stick) [I: the factor of +0x38 not traced]. The catch: a ledge (markup 1) whose hang faces the fall side with
+    room under it, inside the ledge capsule round q64's arc within 10 frames and 200 of her [I: q64's class record
+    0x31C40 not decoded; the wall-side test would refuse a fall from the top]; `bbeam_fall_<side>` carries her onto
+    its hang (`warpStep`), then `ledgeb_idle`. No ledge: the `_no_ledge` clip's root motion (stopping on a floor met),
+    then the fall with its last speed (0.2 s before a beam can catch her). Drop on the beam still steps off to her right
+    [I] (`bbeam_drop_*`, S888 / S899 not ported). Saved in `player.controller.balance`.
+  `Game.BeamOffBalanceEscalatesToFallAndCatchesLedge`, `Game.BeamOffBalanceCounterStickRecovers`,
+  `Game.BeamFallWithoutLedgeDrops`, `Game.BeamFallIndependentOfRenderRate`, `GameReal.BeamFallsCatchScaffoldLedge` (l3_chapel
+  beam 1031 off both sides onto loop 1009; l4_temple beam 1079 to her right onto ledge 1085, 31.6 off its line).
 - Jump assist: at take-off a ledge (1) met by the take-off state's jump query arc (q2 / q43 / q26, 158+ over her root)
   re-aims the flight onto its hang pose by the hit frame, and the air grab catches it (running: a close catch is a
   straight 11-tick rush onto the hang, a far one an arc arriving at its top, the reach 1233; "Running jump reach");
@@ -2455,7 +2500,7 @@ No side-by-side comparison with the original game was made.
   (parallel hang, hand over hand, turns, phased swing stops), wall hug on shelves and rail slides (8) work (see their
   sections); ropes, vertical poles and zip lines do not exist in TRU ("Ladders, pillars, perches, wall hug"). Still
   missing: wall-hug corners and jumps, pole-to-perch / pole-to-ledge (`hpole_para_to_perch`, `hpole_perch_*`),
-  balance wobble, beam sprint/catch, `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
+  beam sprint, the beam drops (`bbeam_drop_*`), `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
   the bad-attach / wrestle clips of poles, ladders and pillars. Root motion of the jump, attach and fling clips is not applied (the flight is
   ballistic), so their poses can sit off the computed path.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;

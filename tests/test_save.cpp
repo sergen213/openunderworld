@@ -1271,6 +1271,12 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              a.move.y = 0.3f;
              return a;
          }, nullptr, [](const game::World& w) { return w.player().state().state == State::Beam; }},
+        // ... about to fall off it (the stick held to her right), saved mid-lean; after the load she falls onto ledge 1085.
+        {"l4_temple", game::Spawn{{-5500, -8099, 3100}, 0}, 280, 300, [](uint64_t t) {
+             game::Actions a;
+             a.move.x = t >= 130 ? 1.0f : 0.0f; // landed and settled first
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().balance.aboutFall && w.player().state().balance.unbal > 0; }},
         // Swimming in l2_cliffclimb's open sea (l4_pool's goo kills her).
         {"l2_cliffclimb", game::Spawn{{-31000, -10000, -500}, 0}, 30, 300, [](uint64_t t) {
              game::Actions a;

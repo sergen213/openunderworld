@@ -300,6 +300,22 @@ struct PlayerState {
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
+    // Off balance on a balance beam (Player::beam). `build`: 30 Hz frames the stick has been held across the beam
+    // (ours [I]: the escalation into the about-to-fall state). `aboutFall`: the about-to-fall state (chart S895 / S896,
+    // bbeam_aboutfall_*) runs tru.exe's balance controller (chart context +0x358: enter 0x742330, update 0x742770, exit
+    // 0x72A5E0; lara.drm objdata +0xF88 tuning), all in 30 Hz frames: grace (+0x24), unbalanced (+0x1C) / balanced
+    // (+0x20) / not-improving (+0x28) / full-lean (+0x18) times, its clock (+0xC), the stick-wiggle filter (last
+    // flip +0x54, mean period +0x58, last direction +0x68 and its stick angle +0x50), the held stick heading (+0x5C),
+    // the signed lean `blend` (+0x44, < 0 = left) and its target weight `lean`, the side (+0x60: 1 left, 2 right) and the
+    // fall flag (+0x65, condition 0x200).
+    struct Balance {
+        float build = 0;
+        bool aboutFall = false;
+        float grace = 0, unbal = 0, bal = 0, notImprove = 0, full = 0, clock = 0, lastFlip = 0, period = 0;
+        float ref = 0, stickYaw = 0, blend = 0, lean = 0;
+        int8_t side = 0, osc = 0;
+        bool fall = false;
+    } balance;
 };
 
 // The rope's pivot (its last bend, else the anchor) and its length from the anchor to the pivot along the bends.
@@ -417,6 +433,11 @@ private:
     void poleFling(float dirSign = 1); // the leap off a pole once the fling clip has played; -1: backwards (pole-top jump back)
     void poleTop(vec2 move, bool jumpPressed, bool dropPressed, float dt); // State::Perch on a pole (markup 4 / 6)
     void beam(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    // Balance beam off balance (Player.cpp): the about-to-fall state's balance controller, falling off to the left / right
+    // (catching a ledge on that side or not), and the falling-off clips (true while one plays).
+    void beamAboutFall(vec2 move, bool jumpPressed, float dt);
+    void startBeamFall(bool left);
+    bool beamFalling(float dt);
     float surfaceZ() const;
     bool enterWater(); // from the ground or the air; false if not in deep enough water
     bool wading() const; // on her feet in water of class 0x100 (wadeDepth..swimDepth deep, tru.exe 0x5D3860)

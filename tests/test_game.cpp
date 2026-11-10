@@ -97,6 +97,22 @@ game::AnimLibrary syntheticAnims() {
     }
     a.clips["drop_to_ledgeb"] = drop;
     a.clips["swim_surface_exhausted"] = rootClip(41, 0); // 1.367 s
+    // off balance on a beam: the about-to-fall loop (no root motion) and the falls off it (lara.drm: 172 to her left /
+    // 193 to her right, 486 / 491 down in 0.33 s; the no-ledge ones 458 down)
+    a.clips["bbeam_aboutfall_center"] = rootClip(18, 0);
+    a.clips["bbeam_aboutfall_left"] = rootClip(18, 0);
+    a.clips["bbeam_aboutfall_right"] = rootClip(18, 0);
+    for (const auto& [name, x, z] : {std::tuple{"bbeam_fall_left", 172.2f, -486.0f}, {"bbeam_fall_right", -192.7f, -490.9f},
+                                     {"bbeam_fall_left_no_ledge", 172.2f, -458.3f}, {"bbeam_fall_right_no_ledge", -192.7f, -458.3f}}) {
+        anim::Clip f = rootClip(5, 0);
+        f.tracks[0][anim::TransY].clear();
+        for (int i = 0; i < 5; ++i) {
+            const float u = float(i) / 4;
+            f.tracks[0][anim::TransX].push_back(x * u);
+            f.tracks[0][anim::TransZ].push_back(z * u);
+        }
+        a.clips[name] = f;
+    }
     return a;
 }
 
@@ -1185,6 +1201,128 @@ TEST(Game, BeamUnbalanceAndWobble) {
     EXPECT_EQ(s.clip, "bbeam_idle");
 }
 
+namespace {
+// A beam along +X over a pit (floor 2000 down), optionally with a ledge along its left (+Y) edge 31.6 off the line as
+// on l3_chapel's scaffolds; Lara landed on it facing +X.
+std::unique_ptr<game::World> beamOverPit(bool ledge) {
+    CollisionMesh m;
+    addFloor(m, -2000, -1000, 3000, 1000, -2000);
+    m.markup.push_back({14, 9, {{0, 0, 0}, {2400, 0, 0}}});
+    if (ledge) m.markup.push_back({1, 10, {{2400, 31.6f, 0}, {0, 31.6f, 0}}}); // hangs to its right: +Y
+    auto w = makeWorld(std::move(m), {600, 0, 400});
+    for (int i = 0; i < 120 && w->player().state().state != State::Beam; ++i) w->tick({});
+    for (int i = 0; i < 120; ++i) w->tick({}); // the landing clip
+    return w;
+}
+void pushStick(game::World& w, game::vec2 stick) { // camera fixed along +X: stick up = +X, right = -Y
+    Actions a;
+    a.move = stick;
+    w.tick(fixedCamera(w, a, 0));
+}
+} // namespace
+
+// The stick held across the beam tips her into the about-to-fall state after 45 frames (90 ticks: fixed 60 Hz ticks of
+// tru.exe's 30 Hz frames); held there, the balance controller (lara.drm objdata +0xF88) leans her fully that way after
+// its 20-frame grace and drops her off: with a ledge on that side she falls onto its hang (bbeam_fall_left, then the
+// hang idle facing the beam, hands on the ledge).
+TEST(Game, BeamOffBalanceEscalatesToFallAndCatchesLedge) {
+    auto w = beamOverPit(true);
+    const auto& s = w->player().state();
+    ASSERT_EQ(s.state, State::Beam);
+    const vec3 on = s.pos;
+    int tip = -1, fall = -1;
+    for (int i = 0; i < 600 && s.state == State::Beam && fall < 0; ++i) {
+        pushStick(*w, {-1, 0}); // to her left (+Y)
+        if (tip < 0 && s.balance.aboutFall) tip = i + 1;
+        if (fall < 0 && s.clip == "bbeam_fall_left") fall = i + 1;
+        if (fall < 0) {
+            ASSERT_EQ(glm::length(game::vec2(s.pos - on)), 0) << i << ": pinned to the beam";
+        }
+    }
+    EXPECT_EQ(tip, 90) << "45 frames held across";
+    ASSERT_GT(fall, 0);
+    EXPECT_GE(fall - tip, 2 * 20 + 2 * 10) << "the grace, then a full lean held 10 frames";
+    EXPECT_LE(fall - tip, 2 * (20 + 46)) << "the unbalanced limit";
+    EXPECT_FALSE(s.balance.aboutFall);
+    for (int i = 0; i < 60 && s.state == State::Beam; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    EXPECT_EQ(s.ledge, 1);
+    EXPECT_EQ(s.clip, "ledgeb_idle");
+    EXPECT_NEAR(std::sin(s.yaw), -1, 1e-4) << "facing the beam";
+    EXPECT_GT(s.pos.y, 31.6f) << "hanging off its left side";
+}
+
+// Counter-stick: back along her heading (within the 15-degree tolerance) or over to the other side (the side lock) for
+// more than 2 frames recovers her; she stays on the beam.
+TEST(Game, BeamOffBalanceCounterStickRecovers) {
+    for (const game::vec2 counter : {game::vec2(0, 1), game::vec2(1, 0)}) {
+        auto w = beamOverPit(false);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 90; ++i) pushStick(*w, {-1, 0});
+        ASSERT_TRUE(s.balance.aboutFall);
+        for (int i = 0; i < 50; ++i) pushStick(*w, {-1, 0}); // past the grace, leaning left
+        ASSERT_TRUE(s.balance.aboutFall);
+        EXPECT_EQ(s.balance.side, 1);
+        EXPECT_LT(s.balance.blend, 0) << "leaning to her left";
+        EXPECT_EQ(s.clip, "bbeam_aboutfall_center");
+        EXPECT_EQ(s.clipMix, "bbeam_aboutfall_left");
+        int recovered = -1;
+        for (int i = 0; i < 20 && recovered < 0; ++i) {
+            pushStick(*w, counter);
+            if (!s.balance.aboutFall) recovered = i + 1;
+        }
+        EXPECT_EQ(recovered, 5) << counter.x << ": balanced for more than 2 frames (2.5 frames = 5 ticks)";
+        EXPECT_EQ(s.state, State::Beam);
+        for (int i = 0; i < 30; ++i) w->tick({});
+        EXPECT_EQ(s.state, State::Beam);
+        EXPECT_EQ(s.clip, "bbeam_idle");
+    }
+}
+
+// Without a ledge to catch she falls off with bbeam_fall_right_no_ledge (to her right) and drops to the floor; the
+// fall height counts from the fall state's entry after that clip (tru.exe player +0x6DC, set on FallState entry).
+TEST(Game, BeamFallWithoutLedgeDrops) {
+    auto w = beamOverPit(true); // the ledge is on her left: falling right finds none
+    const auto& s = w->player().state();
+    bool noLedge = false;
+    float fell = 0;
+    for (int i = 0; i < 900 && !noLedge; ++i) {
+        pushStick(*w, {1, 0});
+        noLedge = s.clip == "bbeam_fall_right_no_ledge";
+    }
+    ASSERT_TRUE(noLedge);
+    for (int i = 0; i < 600 && s.state != State::Idle && s.state != State::Land && s.state != State::Dead; ++i) {
+        w->tick({});
+        if (s.fallHeight > 0) fell = s.fallHeight;
+    }
+    EXPECT_LT(s.pos.y, -150) << "off its right side";
+    EXPECT_NEAR(s.pos.z, -2000, 1);
+    EXPECT_GT(fell, 2000 - 458.3f) << "the clip's drop is not counted";
+    EXPECT_LT(fell, 2000 - 300);
+}
+
+// The escalation runs in fixed 60 Hz ticks: rendered at 30, 60 or 144 Hz the same input tips, leans and drops her off on
+// the same tick, onto the same hang.
+TEST(Game, BeamFallIndependentOfRenderRate) {
+    auto run = [](double renderHz) {
+        auto w = beamOverPit(true);
+        engine::FrameClock clock(game::kTickSeconds);
+        const uint64_t t0 = w->ticks();
+        uint64_t fellAt = 0;
+        while (w->ticks() < t0 + 400)
+            for (int n = clock.advance(1.0 / renderHz); n > 0 && w->ticks() < t0 + 400; --n) {
+                pushStick(*w, {-1, 0});
+                if (!fellAt && w->player().state().clip == "bbeam_fall_left") fellAt = w->ticks() - t0;
+            }
+        return std::tuple{w->player().state().pos, w->player().state().state, fellAt};
+    };
+    const auto a = run(30), b = run(60), c = run(144);
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(a, c);
+    EXPECT_GT(std::get<2>(a), 0u);
+    EXPECT_EQ(std::get<1>(a), State::Hang);
+}
+
 // Falling through a beam's line (no collision needed) lands on it; fallHeight reports the drop.
 TEST(Game, FallingOntoBeamCatchesIt) {
     CollisionMesh m;
@@ -1661,6 +1799,56 @@ TEST(GameReal, ChapelHangClimbsOntoBalanceBeam) {
         EXPECT_EQ(s.clip, "bbeam_idle");
         EXPECT_NEAR(s.pos.y, hangY, 150); // up where she hung (her hands 105 behind her root along the beam)
     }
+}
+
+// Falling off l3_chapel's scaffold beam 1031 (ledge loop 1009 round it, 31.6 each side): the stick held to one side
+// tips her into about to fall, then off that side onto the loop's ledge there, hanging facing the beam
+// (bbeam_fall_left / _right); l4_temple's beam 1079 likewise onto ledge 1085 along its right side.
+TEST(GameReal, BeamFallsCatchScaffoldLedge) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l3_chapel", {{4800, 4500, -6700}, 0});
+    const auto& s = w.player().state();
+    const int ledge = markupIndex(w, 1009), beam = markupIndex(w, 1031);
+    ASSERT_GE(ledge, 0);
+    ASSERT_GE(beam, 0);
+    const float facing = -1.5707963f; // along the beam's points: -y
+    for (const auto& [stickX, clip, seg, wallX] : {std::tuple{-1.0f, "bbeam_fall_left", 0, 4740.6f}, {1.0f, "bbeam_fall_right", 2, 4677.4f}}) {
+        game::PlayerState b;
+        b.state = State::Beam, b.ledge = beam, b.ledgeSeg = 0, b.ledgeT = 400, b.ledgeSide = 1, b.clip = "bbeam_idle";
+        b.pos = game::vec3(4708.6f, 4994.8f - 400, -6163.0f), b.yaw = facing;
+        w.restore(b, facing, -0.25f);
+        bool fell = false;
+        for (int i = 0; i < 600 && s.state == State::Beam; ++i) {
+            Actions a;
+            a.move = {stickX, 0};
+            w.tick(fixedCamera(w, a, facing));
+            fell |= s.clip == clip;
+        }
+        EXPECT_TRUE(fell) << clip;
+        ASSERT_EQ(s.state, State::Hang) << clip << " " << game::stateName(s.state);
+        EXPECT_EQ(s.ledge, ledge);
+        EXPECT_EQ(s.ledgeSeg, seg);
+        EXPECT_GT(std::cos(s.yaw) * (seg == 0 ? -1.0f : 1.0f), 0.99f) << "facing the beam";
+        EXPECT_GT((s.pos.x - wallX) * (seg == 0 ? 1.0f : -1.0f), 100) << "hanging outside the scaffold";
+    }
+    auto t = unitWorld(bf, "l4_temple", {{-5500, -8099, 3100}, 0});
+    const auto& ts = t.player().state();
+    t.tick({});
+    ASSERT_EQ(ts.state, State::Beam);
+    for (int i = 0; i < 120; ++i) t.tick({});
+    bool fell = false;
+    for (int i = 0; i < 600 && ts.state == State::Beam; ++i) {
+        Actions a;
+        a.move = {1, 0};
+        t.tick(fixedCamera(t, a, 0));
+        fell |= ts.clip == "bbeam_fall_right";
+    }
+    EXPECT_TRUE(fell);
+    ASSERT_EQ(ts.state, State::Hang) << game::stateName(ts.state);
+    EXPECT_EQ(t.collision().markup[size_t(ts.ledge)].id, 1085);
+    EXPECT_GT(std::sin(ts.yaw), 0.99f) << "facing the beam (+y)";
+    EXPECT_LT(ts.pos.y, -8099 - 100) << "off its right side (-y)";
 }
 
 // Ledge to ledge (l4_temple): grab 1187 from a standing jump, jump up 528 to 1162; hanging on 1207, jump back across
