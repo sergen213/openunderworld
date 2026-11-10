@@ -130,7 +130,8 @@ autopilot"); it reads the World to steer, so it reaches places and objects by co
 does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [CELL] [UP]` (logs the floor round her as a grid), `ride X Y [R] [THROTTLE] [SPEED] [BRAKESTEER]` (on the
 motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED; while
 braking the stick stays within BRAKESTEER, default 1: brake + stick past half is the power slide, so long descents
-ride with 0.5). Coordinates are world frame. With both `plan`
+ride with 0.5), `swim X Y Z [R]` (in water: the stick towards the point, Jump / Drop held while it lies above / below
+her, until within R, default 150, in space; 60 s). Coordinates are world frame. With both `plan`
 and `input`, the plan steers and presses and the input lines add to it (a button is down if either holds it; a
 non-zero stick or look rate from `input` wins).
 
@@ -484,6 +485,14 @@ tested behaviour happen.
 | `ch17_maze_to_relic_door` | l5_valaskjalf_entry | Valhalla: the maze's first half on foot from inside the gate to the relic-room door 7227 (41 000 units, 2530 down), which is shut and stays shut |
 | `ch18_bow_deck` | chapter 6 start | Rituals Old leg 1: Change Weapon once = the secondary, twice = Mjolnir; a bolt; nobody on the bow, the first soldiers once she heads down to the container deck |
 | `ch18_engine_hall_to_cell` | l6_ship_engine_hall | Rituals Old last leg: with the hammer from checkpoint 7557 through the hall firing on the run, volume 7566, plane 7565 -> 270_shp_escape -> chapter 7 in l7_thin_ice, unhurt |
+| `ch19_thin_ice_dive` | chapter 7 start | section 19 (C19-01, C19-02): cinematic 9071 leaves her swimming under the ice in l7_arctic_sea (checkpoint 9094); the unit's constructor sets the puzzle up (wheels 9095 / 9096 vt 62, 9098 / 9103 vt 63); 63 s of diving on the tanks to the front of the building, breath 1.0 throughout (autopilot `swim` lines) |
+| `ch19_arctic_sea_stone_niche` | l7_arctic_sea | section 19 (C19-17, C19-18), swimming: the locked drawbridge wheel 9103 refuses (chains 9114 / 9115 rattle, bridge 9116 stays up); power stone 9273 lifted, carried to niche 9120 and seated (9120 vt 56, rune strip 9137 lit, the unit counts a key); with one stone the wheel still refuses |
+| `ch19_arctic_sea_tower_stone` | l7_arctic_sea | section 19 (C19-13): power stone 9270 lifted off its carving (holder 9276) on the tower's top ledge, carried at a walk, put down |
+| `ch19_helheim01_entry` | l7_helheim01 | section 19 (C19-26): up the stairs into volume 8968, cinematic object 8950, checkpoint 8950; over the entry ledge to its edge over the eitr (a hang) |
+| `ch20_helheim01_portal` | l7_helheim01 → l7_helheim02 | sections 19 / 20 (C19-33, C20-13): the portal ledge: volume 8969, cinematic object 8951 opens door 8956; through it into l7_helheim02 (checkpoint 8884) |
+| `ch20_helheim02_passage` | l7_helheim02 → l7_helheim03 | section 20 (C20-13, C20-14): the passage to its crossing, the east arm's stairs, the slide down the broken stairs into the thrall hall |
+| `ch20_helheim03_hall` | l7_helheim03 → l7_yggdrasil_hall01 | section 20 (C20-14 … C20-17): slide into the corridor, Mjolnir (Weapon twice, Draw), a bolt kills Viking thrall 8777 for good; the run through the hall and down the stairs into volume 8804: cinematic object 8773, checkpoint 8775 |
+| `ch20_yggdrasil_reveal` | l7_yggdrasil → l7_yggdrasil_hall01 | section 20 (C20-17, C20-18): volume 8804 from checkpoint 8792, cinematic object 8773 leaves her at checkpoint 8775; the thralls after it met with the hammer |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
 registered with ctest. Run them by hand; move one up a directory when it passes. Now (`pole_drop_after_fling` moved up 2026-11-10):
@@ -503,6 +512,10 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | `ch13_ballcourt_calendar_solve`, `ch15_ballcourt_exit_key` | l4_ballcourt | the key item | key items do not travel between units: a held portable is dropped when its unit streams out and the next units' parked instances are not handed over (docs/matrix/13_xibalba.md, 15_land_of_the_dead.md) |
 | `ch13_temple_block_topple` | l4_temple | the grapple | ring 4951 is not offered from the east ledge; the statue head's mover is unknown |
 | `ch15_pool_rune_block` | l4_pool | the drag | rune block 5609 has no joint record, so nothing drags it |
+| `ch20_helheim01_rune_symbols` | l7_helheim01 | `use_it` | rune symbol 8995 on the entrance frame is not used by Interact from in front of it: the switch use rule ([I], `Runtime::tick`) wants the switch's origin within 250 of her feet in height, and the symbol's is 480 over the ledge. The dispatcher's logic behind the four symbols is decoded (docs/matrix/20_yggdrasil.md C20-02) |
+| `ch20_yggdrasil_hall_slide` | l7_yggdrasil → l7_yggdrasil_hall01 | `slide_and_jump` | the slide down the north arm's slope plays (921 units/s along the ground), but Jump on its last tick flies 906 and comes down in the pit's water at y 9013; the far bank lies beyond y 9221. The launch of a jump out of a slide is [I] (it keeps the slide's horizontal speed) |
+| `ch20_yggdrasil_hall_eitr_pit` | l7_yggdrasil → l7_yggdrasil_hall02 | `in_the_pit` | the pit at that slide's foot is a plain water volume in ours: she treads water unharmed (8 s watched) where the original's eitr kills |
+| `ch21_platform_ride` | l7_yggdrasil_end | `jump_to_a_platform` | the steps of `natla_fight`, then a jump from the entry walkway's end: no floating platform comes within reach (the 24 stones' objects stay at their intro positions; only their drawn bodies ride the orbit rings), she falls 3850 to the lower ring (docs/GAMEPLAY.md "Natla" Open) |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

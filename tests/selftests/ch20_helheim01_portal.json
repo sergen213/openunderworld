@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "ch20_helheim01_portal",
+ "chapter": "19 Helheim / 20 Yggdrasil: the portal ledge and on into the passage (docs/matrix/19_helheim.md C19-33, 20_yggdrasil.md C20-13)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html",
+ "note": "l7_helheim01 on the far (portal) ledge, where the pool crossing ends (the crossing itself is not played: docs/matrix/19_helheim.md). Walking at the portal enters volume 8969: cinematic object 8951 plays (skipped; its events run: door 8956 vt 55, checkpoint 8951) and leaves her before the opened door. On through it and down the passage into l7_helheim02 (checkpoint 8884). The exit's rune symbol 8996 stands apart on the wall top east of the ledge and is not reached from here.",
+ "level": "l7_helheim01",
+ "spawn": [
+  0,
+  -19000,
+  2400,
+  -90
+ ],
+ "steps": [
+  {
+   "step": "at_the_portal",
+   "plan": [
+    "run -90 5"
+   ],
+   "duration": 10,
+   "until": {
+    "probe": "world.checkpoint",
+    "eq": 8951
+   },
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "activate:8969>8951",
+      "cinematicend:8951>8951"
+     ]
+    },
+    {
+     "calls": [
+      "8951:57",
+      "8956:55"
+     ]
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "into_the_passage",
+   "plan": [
+    "go 0 -29000 150",
+    "go 0 -31600 150"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "world.unit",
+     "eq": "l7_helheim02"
+    },
+    {
+     "probe": "world.checkpoint",
+     "eq": 8884
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  }
+ ]
+}

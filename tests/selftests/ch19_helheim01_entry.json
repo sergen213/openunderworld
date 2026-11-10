@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "ch19_helheim01_entry",
+  "chapter": "19 Helheim: out of the flooded maze into the pool room (docs/matrix/19_helheim.md C19-26, C19-27)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/18helheim.html",
+  "note": "l7_helheim01 from the head of the stairs that leave the flooded halls (the unit's north end; its first checkpoint 8939 lies beyond the cinematic). Walking in crosses volumes 8970 (preload) and 8968: cinematic object 8950 plays (skipped here; its events run: the tank is dropped, checkpoint) and she walks on over the entry ledge to its edge over the eitr, where the run ends in a hang from the edge (the lower ledge and the islands lie below).",
+  "level": "l7_helheim01",
+  "spawn": [-111, 3000, 1756, -90],
+  "steps": [
+    {"step": "up_the_stairs", "plan": ["run -90 8"], "duration": 12, "until": {"probe": "world.checkpoint", "eq": 8950},
+     "expect": [{"probe": "step.events", "has": ["activate:8968>8950", "cinematicend:8950>8950"]},
+                {"calls": ["8950:57"]},
+                {"probe": "step.health_lost", "eq": 0}]},
+    {"step": "over_the_entry_ledge", "plan": ["go 0 -2500 80", "go 0 -7400 80"], "duration": 40,
+     "expect": [{"probe": "player.grounded", "eq": true},
+                {"probe": "player.pos.z", "near": 2021, "tol": 20},
+                {"probe": "object.8998.uber.0", "eq": 0, "note": "the eitr fall in front of the relic alcove runs"},
+                {"probe": "step.teleports", "eq": 0}]},
+    {"step": "the_edge_over_the_eitr", "plan": ["run -90 2"], "duration": 5,
+     "expect": [{"visits": ["run", "droptohang", "hang"]},
+                {"probe": "player.hanging", "eq": true},
+                {"probe": "step.health_lost", "eq": 0}]}
+  ]
+}

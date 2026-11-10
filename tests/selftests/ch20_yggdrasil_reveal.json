@@ -1,0 +1,126 @@
+{
+ "version": 1,
+ "name": "ch20_yggdrasil_reveal",
+ "chapter": "20 Yggdrasil: the waterfall room's cinematic and the thralls after it (docs/matrix/20_yggdrasil.md C20-17, C20-18)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html",
+ "note": "l7_yggdrasil from checkpoint 8792 at the foot of the stairs, Mjolnir carried (fixture: chapter 7's loadout). The spawn stands in volume 8804: cinematic object 8773 plays (skipped; its events and placement run) and leaves her in l7_yggdrasil_hall01 at checkpoint 8775. The thralls that come after it (Vikings 8833 / 8834 and yeti 8831 up the north arm of the next crossing) are met from the crossing with the hammer: Weapon twice, Draw, lock, Fire held: all three die for good, none reaches her.",
+ "level": "l7_yggdrasil",
+ "spawn": [
+  -0.1,
+  2932.2,
+  39.2,
+  -90
+ ],
+ "fixtures": [
+  {
+   "weapon": "thorhammer"
+  }
+ ],
+ "steps": [
+  {
+   "step": "the_reveal",
+   "duration": 8,
+   "until": {
+    "probe": "world.checkpoint",
+    "eq": 8775
+   },
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "activate:8804>8773",
+      "cinematicend:8773>8773"
+     ]
+    },
+    {
+     "calls": [
+      "8773:57"
+     ]
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l7_yggdrasil_hall01"
+    },
+    {
+     "probe": "step.teleports",
+     "min": 1,
+     "note": "the cinematic's placement"
+    },
+    {
+     "probe": "enemies.alive",
+     "min": 3
+    }
+   ]
+  },
+  {
+   "step": "to_the_junction",
+   "plan": [
+    "go 13800 300 150",
+    "face 90"
+   ],
+   "input": [
+    "0.2 weapon 1",
+    "0.3 weapon 0",
+    "0.6 weapon 1",
+    "0.7 weapon 0",
+    "1.0 draw 1",
+    "1.1 draw 0"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "probe": "weapon.current",
+     "eq": "thorhammer"
+    },
+    {
+     "probe": "weapon.drawn",
+     "eq": true
+    },
+    {
+     "probe": "enemy.8833.alive",
+     "eq": true
+    },
+    {
+     "probe": "enemy.8831.alive",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "bolts",
+   "input": [
+    "0 aim 1",
+    "0.3 fire 1"
+   ],
+   "duration": 14,
+   "expect": [
+    {
+     "probe": "combat.locked",
+     "over": "any",
+     "eq": true
+    },
+    {
+     "probe": "enemy.8833.alive",
+     "eq": false
+    },
+    {
+     "probe": "enemy.8834.alive",
+     "eq": false
+    },
+    {
+     "probe": "enemy.8831.alive",
+     "eq": false,
+     "note": "the yeti: two bolts on Normal (replay mjolnir_thralls)"
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 4
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  }
+ ]
+}

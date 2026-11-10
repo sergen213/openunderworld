@@ -1455,6 +1455,46 @@ TEST(ProgressionReal, NatlaFightByInput) {
     }
 }
 
+// l7_arctic_sea's unit script sets its puzzle up in its constructor [O bytecode]: statue wheels 9095 / 9096 free
+// (vt 62), 9098 not (vt 63), the drawbridge wheel 9103 locked (vt 63 = modifiable 7 (2): graph state 2). The constructor
+// first asks for Lara's unit (instance 27 on the player) and stopped there before. A use of the locked wheel takes
+// the graph's use transition 2 back into state 2: vt 19 (2) posts "reaction=interactFail" (the chains rattle, vt 55)
+// and the drawbridge 9116 stays up. The unit frees the wheel with vt 62 (modifiable 7 (1)) once it has counted four
+// stones and four swords; freed, the same use enters state 0: vt 20 (0) posts "state=on" and the bridge comes down.
+// Played by input, swimming from checkpoint 9112; only the unit's own call that frees the wheel is made by the test.
+TEST(ProgressionReal, ArcticSeaDrawbridgeWheelLockedUntilFreed) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l7_arctic_sea", game::loadLaraAnims(bf),
+                  game::Spawn{{5667.6f, -35588.5f, -23576.4f}, -glm::half_pi<float>()});
+    w.script().setBigfile(&bf);
+    std::vector<std::pair<int32_t, int16_t>> calls;
+    w.script().onCall = [&](int32_t, int32_t to, int16_t vt) { calls.emplace_back(to, vt); };
+    const auto called = [&](int32_t to, int16_t vt) { return std::ranges::find(calls, std::pair{to, vt}) != calls.end(); };
+    uint64_t tick = 0;
+    const auto play = [&](const std::string& plan, float seconds) {
+        auto ap = app::Autopilot::parse(plan);
+        for (int i = 0; i < int(seconds * 60) && !ap.done() && !ap.failed(); ++i, ++tick) w.tick(ap.step(tick, w));
+        EXPECT_TRUE(ap.done() && !ap.failed()) << plan << ": " << ap.failure();
+    };
+    // (the constructor's calls 9095 / 9096 vt 62, 9098 / 9103 vt 63 ran when the World was made: self-test
+    // ch19_thin_ice_dive lists them; here the lock shows in what the wheel does)
+    play("wait 1\n", 2);
+    ASSERT_TRUE(w.uberState(9116));
+    const auto up = *w.uberState(9116);
+    calls.clear();
+    play("swim 5680 -35950 -24100 150\npress\nwait 8\n", 40);
+    EXPECT_TRUE(called(9114, 55) && called(9115, 55)) << "the failed try rattles both chains";
+    EXPECT_FALSE(called(9116, 55));
+    EXPECT_EQ(*w.uberState(9116), up) << "the drawbridge stays up";
+    w.script().call(9103, 62); // the unit's vt 24 at four stones and four swords
+    calls.clear();
+    play("wait 1\npress\nwait 8\n", 12);
+    EXPECT_TRUE(called(9116, 55)) << "freed, the wheel lowers the bridge";
+    EXPECT_TRUE(called(9114, 56) && called(9115, 56));
+    EXPECT_NE(*w.uberState(9116), up);
+}
+
 // The ending (chapter 7 -> the epilogue) from l7_yggdrasil_end: playEnding.
 TEST(ProgressionReal, EndgameCredits) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

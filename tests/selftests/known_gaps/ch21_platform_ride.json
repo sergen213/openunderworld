@@ -1,0 +1,151 @@
+{
+ "version": 1,
+ "name": "ch21_platform_ride",
+ "chapter": "21 Out of Time: from the entry walkway onto a floating platform (docs/matrix/21_out_of_time.md C21-01)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/20outoftime.html",
+ "note": "Known gap. l7_yggdrasil_end from the unit's start by input: the steps of natla_fight (ledge, ramp, arena volume 8303, 320_hel_boss, the towers retract), then the middle ring's entry walkway to its end. The original's way on is a floating platform (ar_ani_floating_runestone 8365-8388, three on the markers of each orbit ring 8389-8396) that comes past the walkway's end: a jump catches its edge, she rides it to the ledge with the ring and ropes down. Ours: no platform comes within reach of the walkway's end (the autopilot's `near 3000` there lists no markup at all, and the stones' objects stay at their intro positions under the map: only their drawn bodies follow the rings), so the jump from the end falls 3850 to the lower ring and kills her. Fails at jump_to_a_platform. Blockers: docs/GAMEPLAY.md \"Natla\" Open (the way from the entry walkway to the rings).",
+ "level": "l7_yggdrasil_end",
+ "steps": [
+  {
+   "step": "off_the_first_walkway",
+   "plan": [
+    "run 0 3"
+   ],
+   "duration": 6,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "droptohang",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -26743,
+     "tol": 60
+    },
+    {
+     "probe": "player.hanging",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "down_the_ramp_into_the_arena",
+   "plan": [
+    "press drop",
+    "wait 1.5",
+    "run 0 15"
+   ],
+   "duration": 20,
+   "until": {
+    "probe": "player.pos.x",
+    "min": -9000
+   },
+   "expect": [
+    {
+     "calls": [
+      "8261:57"
+     ],
+     "note": "the arena volume plays cinematic object 8261: 320_hel_boss"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "min": 1,
+     "note": "the cinematic's placement"
+    }
+   ]
+  },
+  {
+   "step": "first_phase_starts",
+   "duration": 22,
+   "expect": [
+    {
+     "probe": "object.8398.uber.0",
+     "eq": 3,
+     "note": "the short Thor tower retracted"
+    },
+    {
+     "probe": "object.8399.uber.0",
+     "eq": 3
+    },
+    {
+     "probe": "object.8400.uber.0",
+     "eq": 3
+    },
+    {
+     "probe": "object.8403.hidden",
+     "eq": false
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0,
+     "note": "outside every zone nothing is thrown at her"
+    },
+    {
+     "probe": "step.moved",
+     "max": 400
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 4321,
+     "tol": 30
+    }
+   ]
+  },
+  {
+   "step": "the_walkway_ends_over_the_rings",
+   "plan": [
+    "run 0 3"
+   ],
+   "duration": 6,
+   "expect": [
+    {
+     "probe": "player.hanging",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -6472,
+     "tol": 80
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "jump_to_a_platform",
+   "input": [
+    "0 forward 1",
+    "0.1 jump 1",
+    "0.3 jump 0",
+    "1.0 jump 1",
+    "1.2 jump 0"
+   ],
+   "duration": 8,
+   "expect": [
+    {
+     "probe": "player.dead",
+     "eq": false,
+     "note": "a platform takes her"
+    },
+    {
+     "probe": "player.pos.z",
+     "min": 3000,
+     "note": "still at the middle ring's height: on a stone or hanging from its edge"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  }
+ ]
+}
