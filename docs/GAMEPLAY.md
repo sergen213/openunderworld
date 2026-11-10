@@ -41,7 +41,7 @@ F9 quickload, docs/SAVES.md), `lookx`, `looky` (camera rate, rad/s). A value hol
 until changed; an event at `t` applies from tick `round(t · 60)`. With `--input-script` each rendered frame advances
 `1/--render-hz` seconds (default 60), so `--frames N` screenshots are reproducible. At the end, `--frames` prints
 `frame time mean / p95 / max` (wall time per frame) and `tick time mean / median / p95` (`World::tick` CPU time) with
-its script runtime and physics step means, all after 30 warm-up frames; with `--no-vsync` they compare builds.
+its script runtime, physics step and `Player::tick` means, all after 30 warm-up frames; with `--no-vsync` they compare builds.
 
 Audio (`ou_audio`, docs/formats/AUDIO.md; `--no-audio` turns it off): lara.drm Wave sections are registered and the
 unit's music stream `pc-w\music\<unit>_mus_01\<unit>_mus_01.mul` loops (all stems at gain 1; [I] the naming is seen
@@ -242,7 +242,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Jump take-offs | standing, no stick: **1441.2** up (apex 201.6, 0.56 s air), leaving the ground when `ng_standing_jump` ends (0.33 s); stick held: **1499.1** up + **1200** along the stick, at 0.26 s into the clip; running: **1275.9** up + **1974.9** forward (apex 158, 0.50 s air) after `ng_running_jump_forwards`; the stick behind her (> 1.75 rad from her heading): she turns round and takes the running jump; to a side: the standing stick jump that way (units/s) | [O-runtime] tru.exe under Wine, `wmem trace` of Instance +0x20 position / +0x2A0 velocity (Lara-local, units per 30 Hz frame: 48.04 / 49.97 + 40.00 / 42.53 + 65.83; take-off 359 / 290 / 109 ms after the press, back + jump 121 ms; horizontal speed constant in the air), l3_main_bedroom start, traces openunderworld-work/screens/stairs `j_*.txt`. [I] the 0.26 s take-off point (359 − 290 ms before the clip end) and the 1.75 rad back threshold (our turn-in-place threshold); free leaps (back off a ledge, pole fling without a target, slide jump) reuse these speeds [I] |
 | Capsule | radius **79.01**, top **489.2** (height 512) | [O-runtime] tru.exe under Wine, Lara's Havok proxy (instance +0x288) while standing: radius +0x65C = 79.0139, cylinder +0x660 = 189.633 (targets +0x6B0 / +0x6B4 equal: steady), centre 315.4 above the feet (proxy +0x648 vs Instance +0x28), so the capsule spans 141.6..489.2; swimming it is 80 / 228. 0x490E60 steps radius / cylinder towards those targets by ≤ 20 / 40 per frame; 0x7018E0 creates it (`FUN_0049a410(inst, 100.0, …, 28.82, …)`); [U] which data sets the per-state targets. Height [O] player data +0x10 = 512.01 (used as Lara's height: ×0.5 centre, ×0.75 head, capsule test `FUN_007144b0(pos, height, …)`), TRLAU-menu-hook `GeneralAttributes.height` [I name]. Ours: on the ground the capsule's bottom is the step height (110), not 141.6, so the 121-unit hearth stops her one radius short (tru.exe: 38..72 short, pushed to and fro, trace t2); what stops tru.exe there [U] (the proxy's bottom clears it). Walls climbed / hung on keep the root 100 out (`wallOffset`) [I] |
 | Step up / down | **110 / 110** units: the root takes the floor height under it within ±110 (capsule slide starts 110 above the feet), so 97..100-unit stair risers are climbed and descended walking or running without a fall | [O-runtime] tru.exe under Wine (`wmem trace`/`tp`, l3_main_bedroom, unit offset ours + (9622, 333, −2977)): running up the manor staircase (risers 97..100, treads 186) her z jumps by each riser exactly as the root crosses the riser line, at unchanged run speed; the 121-unit hearth edge beside the start stops her ~56 units short. [I] 110 is between the two. [O-runtime] Lara's Havok proxy (instance+0x288) capsule: radius 79.01 (+0x65C), cylinder 189.63 (+0x660), centre 315.4 above the feet (+0x640): its bottom is 141.6 up, so the 121 block is not the capsule; which probe stops her is [U]. Our capsule stays radius 100 [I]. Regression: `GameReal.StairsWalkAndRunUpAndDown` (every riser of seven units' staircases, the bedroom flight up and down, the hearth) |
-| Walkable slope | normal z ≥ 0.7 (≈ 45.6°); a steeper face is still stood on when one of four probes 60 units around the root finds a walkable face within 20 units of its height (bumps, seams: l4_ragnarok_room's 0.6-normal floor strips) | [I] ours |
+| Walkable slope | normal z ≥ 0.7 (≈ 45.6°); a steeper face is still stood on when one of four probes 60 units around the root finds a walkable face within 20 units of its height (bumps, seams: l4_ragnarok_room's 0.6-normal floor strips) | [I] ours. [O-runtime] tru.exe under Wine (l2_junglehub ramp series, docs/formats/PHYSICS.md "Walkable slope limit under Wine"): she stands at rest on faces of normal z 0.626..0.716 (client flag 0x0080) and slides on faces of 0.523..0.753 that carry client flag 0x0004, so the original's rule is per face flag, with a limit below 0.626 for unflagged faces; ours is not yet changed |
 | Slide | floors with 0.3 ≤ normal z < 0.7 under an unsupported root: down the fall line, accelerated by gravity along the slope (g·sinθ), no friction, no cap; the descent rate is carried into a fall | [O-runtime] tru.exe under Wine (l3_main_bedroom roof, normal z 0.45, trace slide1.txt): velocity along the slope (vz/vxy = 1.97 = tan 63.3°), speed 51.0 → 69.0 → 91.3 units per 30 Hz frame over 0.25 s = ~4.7k units/s² against g·sin 63.3° = 4601; no cap up to 2738 units/s. [I] the 0.3 lower bound; [O] the exe has `SlopeSlideState` / `SkiSlopeSlideState` / `SlideState` (RTTI) whose virtuals are all the empty 0x7987B0: the state chart drives them |
 | Edge slide-off | a capsule resting on an edge corner (floor-like contact, no floor under the root) gets ≥ 200 units/s outwards | [I] ours (fixes the Fall/Land alternation walking slowly off a ledge) |
 | Crouch capsule height | **260** | [O] player data +0x14 |
@@ -792,6 +792,68 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
 - Player sensors (vt 14) fire since 2026-11-10 ("Water moves"). Not done: the per-chapter equip scripts do not run in our runtime yet
   (probe of 12 chapter units: no equip call), so the gear stays hidden outside a volume with carried objects. The
   cinematic base type 3523's gear events 10-21 are never sent (no retail stream has events).
+
+## Thor's gauntlets (heavy mechanisms)
+
+- **Owning them** [O]: the gear is three objects in Lara's 15 object slots (`g_gauntletleft` 57, `g_gauntletright` 58,
+  `g_belt` 56; larabase 37 gives, 38 tests, 42 drops: "Thor's gear" above; ours `script::Runtime::playerObjects`,
+  saved, `game::chapterGear`). No global flag: what asks for them is the **engagement record** of each mechanism.
+- **The requirement** [O data + tru.exe]: a push / pull record (kind 1) lists object ids at `+0x6C / +0x70`
+  (`physics::Engagement::needs`). 0x6F3C60 admits Lara to a record with a list only if 0x6F3BB0 finds one of the
+  objects: the portable in her hands (`+0x858`), else her weapon slots (0x6E7E10), else her 15 object slots. Records
+  (dump `OU_UBER_SECTIONS=<object>`, now with the needs and every section set):
+
+  | object (units) | record | needs | script strength |
+  |---|---|---|---|
+  | `sa_ei_thor_slide_door` (l2_maproom 2661, 2662), `ar_ei_thor_slide_door` (l5_valgrind_tunnel 7400) | section 1, set 540: two half-cylinders r 711 on handle markers 11 / 12, cone 90 +- 90 | g_gauntletleft | 15 |
+  | `ma_pu_thor_pillar` (l3_secretchamber 4674) | section 0: sphere r 948 | g_gauntletright | 3 |
+  | `ca_pu_thor_pillar` 5610, `ca_pu_thor_debris` 5609 (l4_pool), `ca_pu_thor_block_rubble` (l4_ragnarok_room 5660) | section 0: cylinder r 790 / sphere r 948 | g_belt | 4 / 4 / 10 |
+  | `ar_ei_thor_valgrind_door` (l5_valgrind 7334) | sections 0 / 1, sets 464 / 476 given by their state 1 | none | 8 |
+  | `ar_pu_thor_tower_short / _tall` (l7_yggdrasil_end 8398-8400) | section 0: cylinder r 790, h 4740 | none | 5.5 |
+
+  All are class-79 uber objects ("heavy" = their mass: doors 1005 / 1015, rubble 1000, pool pillar 500, towers 175 /
+  224, manor pillar 150). Ours: `World::engaged` admits a record through `game::carriesNeeded` (held portable, else
+  `playerObjects`). Before: a record with a list never admitted an empty-handed Lara, so the Thor records were dead, and
+  `World::pushUberJoints` instead gripped ANY uber object riding a level prismatic joint from within 120 units of its
+  collision and slid it at 120 units/s whatever its record, gear or brake (even while she swam): removed.
+- **Engaging** [O]: Interact inside the record puts her in the PushPull state; its entry 0x73F4D0 builds the "PushPull
+  Proxy" body, posts message 0x158 to the object (uber trigger 20) and calls its script's vt 49 (0x701310 -> 0x799900,
+  prototype 67) with (record segment, kind); leaving posts 0x14F (trigger 21) and calls vt 50 (0x701350 -> 0x799950,
+  68). The Thor base script (type 9744) answers vt 49 with `larabase` 35 (0x79A270 -> player `+0x1240`, **her pull
+  strength**, 1 at birth; debug text "Overriding Lara pull strength to =") = its member +12 (table above) and vt 50
+  with 1; the slide doors add uber command 0 / 1: braked state 2 (motor 0 speed, 3.16e6) <-> free state 1 (no motor);
+  the rubble block does the same by triggers 20 / 21; the towers' vt 49 / 50 also switch a push camera (gamebase 50 +
+  53 (4), back 53 (1); gamebase 50 is unbound in ours, so the towers' vt 49 stops there after setting the strength).
+  Ours: `script::Runtime::engage`, `pullStrength()`.
+- **The move** [O 0x74AC00 / 0x73F390 / 0x6F1450, lara.drm player data]: every frame the stick picks one of four ways
+  by its angle off her facing: forward within 30 deg (+0xC8C = 60), back within 15 deg of straight back (+0xC90 =
+  30), else left / right; the target speed is `min(23.704 (+0xC7C) x strength, 2054.36 (+0xC80) x strength / M)` and
+  the impulse applied per step is a quarter of the velocity error x mass, at most `min(m x 0.7585 (+0xC84), 142.225
+  (+0xC88)) x strength`. [I] M = the proxy's mass = 0.125 (+0xC98) x the object's (with the object's own mass the
+  doors would crawl at 31 units/s; with the proxy's: doors 245 units/s, Valgrind gate 130, rubble 164, towers 130, the
+  manor pillar 71) - not measured under Wine. Clips [O lara.drm 1659-1665]: `thor_engage` (15 frames), `thor_idle`,
+  `thor_forward / _backward / _left / _right` (root motion 406-582 units/s, not applied), `thor_disengage`; [I] that
+  they are the PushPull state's clips (the calendar handles use them too now).
+  Ours (`World::pushUberHandle`, `game::pushWay`, `game::pushDrive`): Interact pressed inside the record and held
+  grips, the stick (measured on the stick itself [I]) drives the prismatic joint that moves the section - a joint
+  across her facing (the doors: she faces the handle, against the record's cone) by left / right, one along it by
+  forward / back - as a velocity motor bounded by the impulse; a joint motor braking with at least that impulse keeps
+  it still (the doors outside state 1), a weaker one is overcome by the difference (the retracted towers' 474 / 632
+  against 5.5 x 132.7 / 142.2); she is carried with it. When the section swaps its record set (the towers locking,
+  action 0x1D) she lets go and vt 50 runs before the new state's events. A press a switch took grips nothing.
+  [U] whether the original toggles on a press instead of holding; the proxy constraint; hinge joints keep the old
+  120 units/s at her grip point.
+- **Results** (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, each refused without its gear): l2_maproom door
+  2661 (C09-05) and l5_valgrind_tunnel door 7400 (C16-04) slide their 663.7 units in 2.9 s by sidestepping; the
+  l4_ragnarok_room rubble block 5660 (C15-12) 2054 units in 12.7 s; the l7 towers by their record
+  (`ProgressionReal.EndgameCredits`, from floors inside it; before, the test pushed them while she swam). Synthetic:
+  `Game.ThorGauntletsMoveHeavyObjects`; self-test `tests/selftests/gauntlet_move.json`.
+- **Open**: l5_valgrind gate 7334 (its section never reaches state 1 in ours: vt 55 after `240_val_gate`; `larabase`
+  54 = "is that her bike" 0x777E40 and 19 = "gauntlet charged" [U effect] stop volume 7511's and cinematic 7464's
+  handlers: decoded, not bound, because binding them lets handlers elsewhere run on into cinematics untested here);
+  `ma_pu_thor_pillar`, `ca_pu_thor_pillar` ride joint type 7 (planar, limit / motor records of kind 7) and
+  `ca_pu_thor_debris` has no joint (a free body): neither is simulated, so C11-28 and C15-03 stay open; l2_maproom's hub
+  and wall drag (C09-09 / -11) are not surveyed; the speed's M and the hold / toggle need a Wine trace.
 
 ## Controls
 

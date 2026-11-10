@@ -33,6 +33,9 @@ Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (G
 - Fixed: Natla's buttress mounts are used from the place the original marks (the far end of each trunk).
 - For testers: 7 more self-test scenarios (close combat, urn kick, carry and throw, saving grab, safety drop, pole
   drop, the prologue swing); the grapple swing, rappel and wall run scenarios use the original's inputs.
+- Documented: the evaluation of Jolt's character controller for Lara's movement (docs/formats/PHYSICS.md
+  "Character controller"). Measured against the original on stairs, step heights, slopes, replays and saves, Lara's
+  own mover stays: it matches the original's traces and the Jolt controller did not.
 
 ## [0.42.0] - 2026-11-10
 

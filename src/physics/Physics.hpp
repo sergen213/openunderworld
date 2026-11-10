@@ -179,6 +179,7 @@ struct Joint1 {
     float speed = 0, force = 0; // motor: target velocity per frame, impulse bound per 1/60 s step (<= 0: unbounded)
     bool motor = false;
     float push = 0;             // next step only: velocity per frame imposed from outside (Lara pushing), over gravity and motors
+    float pushBound = 0;        // the push's impulse bound per 1/60 s step, as `force` (<= 0: unbounded)
 };
 // Gravity, units per 30 Hz frame^2 (Lara's, tru.exe 5.72443).
 inline constexpr float kJointGravity = 5.72443f;

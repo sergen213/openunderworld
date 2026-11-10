@@ -719,7 +719,8 @@ struct Scene::Impl {
         const auto state = j.push != 0 || (j.motor && !motorOff) ? JPH::EMotorState::Velocity : JPH::EMotorState::Off;
         const float target = (j.push != 0 ? j.push : j.speed) * kFrame * lin;
         // impulse per 1/60 s step (mass * units per frame) -> force (N) / torque (N m); unbounded: <= 0, massless, pushed
-        const float bound = j.push != 0 || j.force <= 0 || j.mass <= 0 ? FLT_MAX : j.force * kFrame * kSolver * kM * (j.hinge ? kM : 1.0f);
+        const float impulse = j.push != 0 ? j.pushBound : j.force;
+        const float bound = impulse <= 0 || j.mass <= 0 ? FLT_MAX : impulse * kFrame * kSolver * kM * (j.hinge ? kM : 1.0f);
         limits(*e.ax, j.limited, j.lo * lin, j.hi * lin);
         if (j.hinge) {
             auto* h = e.ax->h();
@@ -1294,7 +1295,7 @@ void Scene::step(float dt) {
             j.x = e.ax->q() * kUnitsPerMetre;
             j.v = glm::dot(G(m.bi->GetLinearVelocity(e.body)), j.axis) * kUnitsPerMetre / kFrame;
         }
-        j.push = 0;
+        j.push = 0, j.pushBound = 0;
         e.x = j.x, e.v = j.v, e.live = nullptr;
     }
 }

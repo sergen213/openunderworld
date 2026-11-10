@@ -136,6 +136,24 @@ vec3 rootTranslation(const anim::Clip& clip, double t, bool loop);
 
 // ---- player -----------------------------------------------------------------------------------
 inline constexpr float kCameraRestPitch = -0.0225f; // tru.exe's rest pitch of the orbit camera (CameraState::pitch)
+// Lara's push / pull of a gripped object (her PushPull state; docs/GAMEPLAY.md "Thor's gauntlets"). lara.drm player
+// data +0xC7C / +0xC80 / +0xC84 / +0xC88 / +0xC8C / +0xC90 / +0xC98 [O; tru.exe 0x74AC00, 0x73F390, 0x6F1450]: speed
+// per unit of pull strength (units a second), its momentum cap, the impulse per step per unit of mass and its cap, the
+// stick arcs (degrees) that mean forward / back, the PushPull proxy's share of the object's mass.
+inline constexpr float kPushSpeed = 23.704172f, kPushMomentum = 2054.3616f, kPushImpulsePerMass = 0.75853348f,
+                       kPushImpulse = 142.22504f, kPushForwardArc = 60.0f, kPushBackArc = 30.0f, kPushProxyMass = 0.125f;
+// The way a stick (x right, y forward of her facing) moves what she grips: 1 forward (within 30 degrees), -1 back
+// (within 15 of straight back), 2 left, -2 right; 0 no input.
+int pushWay(vec2 stick);
+// Her push on a sliding body of `mass` with pull strength `strength` (1; the Thor scripts raise it while she grips)
+// against a joint motor holding it with `brake` (impulse per step, 0 none): `speed` units a second = min(23.704 x
+// strength, 2054.36 x strength / (0.125 x mass)) with at most `impulse` = min(mass x 0.7585, 142.225) x strength -
+// brake per step; speed 0: it does not move.
+struct PushDrive { float speed = 0, impulse = 0; };
+PushDrive pushDrive(float mass, float strength, float brake);
+// An engagement record naming objects (`needs`) admits Lara only with one of them in her hands (`held`) or, empty-
+// handed, among the objects she carries (tru.exe 0x6F3BB0: Thor's gauntlets and belt on the heavy mechanisms).
+bool carriesNeeded(std::span<const std::string> needs, const std::string* held, const std::set<std::string>& carried);
 enum class State {
     Idle, Walk, Run, Stop, Turn, JumpPrep, Jump, Fall, Land, Hang, Shimmy, ClimbUp,
     // water (tru.exe player states SwimSplashDownState, SwimTreadState, SwimState, SwimDiveInState,
@@ -450,10 +468,13 @@ public:
     void launch(vec3 vel, std::string_view clip);
     void step(vec3 delta, float dt); // a ground move by `delta` with her collision (closing on a melee target)
     void setEncumbered(bool e) { s_.encumbered = e; }
-    // Push block grip, every tick: `axis` = the gripped block's push axis (0 = none), `moving` +1 push / -1 pull / 0.
-    // Grips (State::Block, obj_block_grab, facing the axis) from the states use() starts in; lets go (obj_block_release).
-    void grip(vec3 axis, int moving);
-    bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab"; } // grab clip done
+    // Push block grip, every tick: `axis` = the gripped block's push axis (0 = none), `moving` +1 push / -1 pull / 0,
+    // +2 / -2 sidestepping left / right (thor only). Grips (State::Block, facing the axis) from the states use() starts
+    // in; lets go. Clips: obj_block_grab / _idle / _front / _back / _release; `thor` (her PushPull state on a push /
+    // pull record: Thor's gauntlets, the calendar handles) thor_engage / _idle / _forward / _backward / _left / _right /
+    // _disengage.
+    void grip(vec3 axis, int moving, bool thor = false);
+    bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab" && s_.clip != "thor_engage"; } // grab clip done
     // Water: the volume overlapping the water probe box at `feet` (index into the collision markup), else -1.
     int waterAt(vec3 feet) const;
 
@@ -731,8 +752,8 @@ public:
     World& operator=(const World&) = delete;
 
     void tick(const Actions& a); // one kTickSeconds step; keeps the previous state for interpolation
-    // CPU time accumulated by tick() in the script runtime and the physics step (ou-game --frames reports the means).
-    struct TickTimes { double scriptMs = 0, physicsMs = 0; } tickTimes;
+    // CPU time accumulated by tick() in Player::tick, the script runtime and the physics step (ou-game --frames reports the means).
+    struct TickTimes { double scriptMs = 0, physicsMs = 0, playerMs = 0; } tickTimes; // playerMs: Player::tick (her mover)
 
     const collision::CollisionMesh& collision() const { return col_; }
     const AnimLibrary& anims() const { return anims_; }
@@ -1222,7 +1243,7 @@ private:
     bool uberTrigger(int32_t uid, size_t section, uint32_t trigger, uint32_t param); // 0x6D4790 / 0x6D4810
     int32_t uberSectionJoint(int32_t uid, int32_t section) const; // the simulated joint moving the section, -1 none
     void uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose, vec3 vel = vec3(0)); // its last joint went: a loose body
-    bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles): grip, push, let go
+    bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles, Thor mechanisms): grip, push, let go
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
@@ -1446,7 +1467,9 @@ private:
     void useSwitchClip(const script::Object& o); // Lara plays the switch's use clip, aligned to it (Objects.cpp)
     vec3 uberGrip_{0};                     // last tick: Lara grips one (her stick moves it): its axis toward her facing, 0 = none
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
-    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; } uberHandle_; // the push / pull record Lara grips
+    // The push / pull record Lara grips; `face`: the way she faces while gripping it (0: her own facing, World::pushUberHandle)
+    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; } uberHandle_;
+    int uberMoving_ = 0; // this tick, gripping it: the way her stick moves it (1 forward, -1 back, 2 left, -2 right; 0 not)
     std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)
     std::map<int32_t, nlohmann::json> uberSaved_; // restored uber state of objects not prepared since (prepareUber applies it)
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;

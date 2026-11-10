@@ -181,25 +181,42 @@ void place(game::World& w, vec3 pos, float yaw, bool cross = false) {
     if (!cross) w.script().playerJumped();
 }
 
-// Lara grips uber object `uid` (its model 0 riding a level prismatic joint, index `joint`) from behind and pushes it
-// along the joint's +axis for `ticks` ticks (World::pushUberJoints).
-void pushUber(game::World& w, int32_t uid, int32_t joint, int ticks) {
-    const auto* j = w.uberJoint(uid, joint);
-    ASSERT_TRUE(j);
-    vec3 lo(1e30f), hi(-1e30f);
-    for (const auto& d : w.collision().dynamics)
-        if (d.id == uid)
-            for (const vec3& v : d.shape->vertices) lo = glm::min(lo, vec3(d.transform * glm::vec4(v, 1))), hi = glm::max(hi, vec3(d.transform * glm::vec4(v, 1)));
-    ASSERT_LT(lo.x, hi.x) << uid << " has collision";
-    const vec3 axis = j->axis, c = (lo + hi) * 0.5f;
-    vec3 at = c - axis * (glm::dot(hi - lo, glm::abs(axis)) * 0.5f + 60.0f);
-    at.z = lo.z;
-    if (const auto floor = w.collision().groundProbe(at + vec3(0, 0, 300), 1000, 0x0F)) at.z = floor->point.z;
-    place(w, at, std::atan2(axis.y, axis.x));
-    game::Actions push;
-    push.interact = true, push.move.y = 1;
-    for (int i = 0; i < ticks; ++i) w.tick(push);
-    w.tick({});
+std::vector<std::pair<vec3, float>> uberEngageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, size_t section,
+                                                    int kind = 5, size_t most = 40);
+// Lara grips uber object `uid` by the push / pull record (kind 1) of its section `section`, standing on a floor inside
+// it (an interact press, held), and moves it on its prismatic joint `joint` with the stick: the first of forward,
+// back, left, right that moves it, for up to `ticks` ticks. True when she gripped it.
+bool pushUber(const cdc::BigfileSet& bf, game::World& w, int32_t uid, size_t section, int32_t joint, int ticks) {
+    const auto* o = w.script().find(uid);
+    if (!o || !w.uberJoint(uid, joint)) return false;
+    auto spots = uberEngageSpots(bf, w, *o, section, 1, 2000); // the towers' record reaches over floors she cannot stand on
+    if (spots.size() > 60) { // every n-th, nearest first
+        const size_t n = spots.size() / 60;
+        for (size_t i = 0; i * n < spots.size(); ++i) spots[i] = spots[i * n];
+        spots.resize(60);
+    }
+    game::Actions grip;
+    grip.interact = true;
+    for (const auto& [at, yaw] : spots) {
+        place(w, at, yaw);
+        for (int i = 0; i < 20; ++i) w.tick({});
+        if (w.player().state().state != game::State::Idle) continue;
+        w.tick(grip), w.tick(grip);
+        if (w.player().state().state != game::State::Block) {
+            w.tick({}), w.tick({});
+            continue;
+        }
+        const float x0 = w.uberJoint(uid, joint)->x;
+        const glm::vec2 ways[] = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}};
+        game::Actions push = grip;
+        for (int i = 0, k = 0; i < ticks; ++i) {
+            if (i % 150 == 0 && k < 4 && std::abs(w.uberJoint(uid, joint)->x - x0) < 50) push.move = ways[k++]; // 50: more than the slack at a limit
+            w.tick(push);
+        }
+        w.tick({});
+        return true;
+    }
+    return false;
 }
 
 // Runs one gate in `w` (its unit loaded or streamed): the earlier steps, the interaction, then 600 ticks.
@@ -504,7 +521,7 @@ const std::vector<Case>& criticalGates() {
 // "AllButtressesBroken_BreakGun" -> 340_hel_endgame; its end warps Lara to l7_monastery (instance 26 on 8138) and plays
 // 342_hel_endgame, whose end makes the end game save (uisavemenu 6) and plays the credits movie (unlockablemovie 3):
 // ou-game's ending. Played as in the game: no handler is called directly.
-void playEnding(game::World& w) {
+void playEnding(const cdc::BigfileSet& bf, game::World& w) {
     std::vector<std::string> played;
     w.onCinematic = [&](const std::string& name, bool levelEnd) {
         played.push_back(name);
@@ -532,10 +549,10 @@ void playEnding(game::World& w) {
     for (const int32_t tower : {8398, 8399, 8400}) {
         ASSERT_TRUE(w.uberState(tower));
         EXPECT_EQ((*w.uberState(tower))[0], 3u) << "tower " << tower << " retracted";
-        pushUber(w, tower, 0, 12 * 60);
+        EXPECT_TRUE(pushUber(bf, w, tower, 0, 0, 20 * 60)) << "tower " << tower << " gripped";
         EXPECT_EQ((*w.uberState(tower))[0], 2u) << "tower " << tower << " pushed out";
     }
-    run(120);
+    run(600); // the last tower's reveal camera (about 7 s from its lock) is over
     const auto graphState = [&](int32_t uid) {
         const auto* o = w.script().find(uid);
         return o && o->graph && o->graph->set->graph ? int(o->graph->set->graph->states[size_t(o->graph->state)].index) : -1;
@@ -874,7 +891,7 @@ TEST(ProgressionReal, CriticalPathInOrder) {
     for (int chapter = 0; chapter <= 6; ++chapter) runRoute(w, chapter);
     ASSERT_EQ(w.chapter, 7);
     w.enterUnit("l7_yggdrasil_end", std::nullopt);
-    playEnding(w);
+    playEnding(bf, w);
 }
 
 // Chapter 6's ship hall doors (l6_ship_upper_hallway_a/b) have no script, so their volumes' door calls do nothing (the
@@ -1379,7 +1396,7 @@ TEST(ProgressionReal, EndgameCredits) {
     game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l7_yggdrasil_end", anims);
     w.script().setBigfile(&bf);
     w.chapter = 7;
-    playEnding(w);
+    playEnding(bf, w);
 }
 
 // l1_kraken_room: switch 57 only turns tentacle gear 32 once the column (its section 12) is shot down: the bullet's
@@ -1569,7 +1586,7 @@ glm::mat4 engagementFrame(const physics::ObjectPhysics& p, const script::Object&
 // Floors where Lara standing has a query point (World::kEngageZ0 + 0 / 1 / 2 x kEngageStep above her feet) inside one of
 // `records` of `kind` (in `p`'s model posed by `base`), nearest the record's centre first, facing it.
 std::vector<std::pair<vec3, float>> engageSpotsIn(const game::World& w, const physics::ObjectPhysics& p, const glm::mat4& base,
-                                                  const std::vector<physics::Engagement>& records, int kind) {
+                                                  const std::vector<physics::Engagement>& records, int kind, size_t most = 40) {
     std::vector<std::tuple<float, vec3, float>> found;
     for (const auto& e : records) {
         if (e.kind != kind) continue;
@@ -1607,7 +1624,7 @@ std::vector<std::pair<vec3, float>> engageSpotsIn(const game::World& w, const ph
     }
     std::ranges::sort(found, {}, [](const auto& t) { return std::get<0>(t); });
     std::vector<std::pair<vec3, float>> out;
-    for (const auto& [d, at, yaw] : found) if (out.size() < 40) out.push_back({at, yaw});
+    for (const auto& [d, at, yaw] : found) if (out.size() < most) out.push_back({at, yaw});
     for (const auto& e : records) // last: swimming there (l7_arctic_sea, under water), her middle at the record's centre
         if (e.kind == kind) {
             glm::mat4 f = base;
@@ -1945,10 +1962,12 @@ TEST(ProgressionReal, TraproomSealTakesTheRoomKeys) {
     EXPECT_TRUE(f.contains(156) && f.at(156) != 0) << "vt 49(11, 5): the dark room sticky";
 }
 
-// Uber receptacles (no anim graph; docs/GAMEPLAY.md "Inserting a portable"): the spots inside section `section`'s kind-5
-// records (its starting set +0x40 and its states' 0x1D sets; World decides which one is current), in the section
-// model's frame as its joint has it now.
-std::vector<std::pair<vec3, float>> uberEngageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, size_t section) {
+namespace {
+// Uber objects (docs/GAMEPLAY.md "Inserting a portable", "Thor's gauntlets"): the spots inside section `section`'s
+// records of `kind` (5 receptacles, 1 push / pull; its starting set +0x40 and its states' 0x1D sets; World decides
+// which one is current), in the section model's frame as its joint has it now.
+std::vector<std::pair<vec3, float>> uberEngageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, size_t section,
+                                                    int kind, size_t most) {
     const auto drm = cdc::parseDrm(*bf.read("pc-w\\" + o.name + ".drm"));
     const auto u = formats::loadUberObject(drm);
     if (!u || section >= u->sections.size()) return {};
@@ -1963,8 +1982,9 @@ std::vector<std::pair<vec3, float>> uberEngageSpots(const cdc::BigfileSet& bf, c
             records.insert(records.end(), r->records.begin(), r->records.end());
     const auto p = physics::loadObjectPhysics(drm, sec.model);
     const auto body = w.uberSectionBody(o.uid, int32_t(section)); // as the section's joint has it now (the cog wheels turn)
-    return engageSpotsIn(w, p, engagementFrame(p, o, -1) * (body ? *body : glm::mat4(1)), records, 5);
+    return engageSpotsIn(w, p, engagementFrame(p, o, -1) * (body ? *body : glm::mat4(1)), records, kind, most);
 }
+} // namespace
 
 // tru.exe: the portable posts 0x165 to the section Lara engages (query 0x53 -> its engagement set: the section record's
 // +0x40, then state actions 0x1D, UberObjectSection_TR8 0x6D5EC0); the section (0x6D5AC0 -> 0x6D4890) starts its
@@ -2094,6 +2114,121 @@ TEST(ProgressionReal, CalendarPushHandlesTurnTheRing) {
     for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 6506) << key.second;
 }
 
+namespace {
+struct ThorCase {
+    const char* unit;
+    int32_t uid;
+    size_t section; // the section with the push / pull record
+    int32_t joint;  // the prismatic joint moving it
+    const char* gear; // the object its record names ("" none)
+    float strength;   // her pull strength while she grips it (its script's vt 49)
+    float travel;     // it slides at least this far
+    int32_t volume;   // entered first (0 none)
+};
+struct ThorPush {
+    bool gripped = false;
+    float strength = 0, travel = 0, seconds = 0, lara = 0;
+    std::string clip;
+};
+// Lara at each spot inside `c`'s kind-1 records presses and holds interact; gripping, she tries the stick each way and
+// keeps the way that moves the joint until it stops; then lets go.
+ThorPush thorPush(const cdc::BigfileSet& bf, game::World& w, const ThorCase& c) {
+    ThorPush out;
+    const auto* o = w.script().find(c.uid);
+    auto spots = uberEngageSpots(bf, w, *o, c.section, 1);
+    spots.resize(std::min<size_t>(spots.size(), 12));
+    game::Actions grip;
+    grip.interact = true;
+    for (const auto& [at, yaw] : spots) {
+        place(w, at, yaw);
+        for (int i = 0; i < 20; ++i) w.tick({});
+        if (w.player().state().state != game::State::Idle) continue;
+        w.tick(grip), w.tick(grip);
+        if (w.player().state().state != game::State::Block) {
+            w.tick({}), w.tick({});
+            continue;
+        }
+        out.gripped = true, out.strength = w.script().pullStrength();
+        for (int i = 0; i < 40; ++i) w.tick(grip); // thor_engage
+        const vec3 from = w.player().state().pos;
+        for (const glm::vec2 way : {glm::vec2(-1, 0), glm::vec2(1, 0), glm::vec2(0, 1), glm::vec2(0, -1)}) {
+            game::Actions push = grip;
+            push.move = way;
+            const float x0 = w.uberJoint(c.uid, c.joint)->x;
+            float last = x0;
+            int ticks = 0, still = 0;
+            for (; ticks < 3600 && still < 45; ++ticks) {
+                w.tick(push);
+                const float x = w.uberJoint(c.uid, c.joint)->x;
+                still = std::abs(x - last) < 0.01f ? still + 1 : 0, last = x;
+                if (std::abs(x - x0) > 5 && out.clip.empty()) out.clip = w.player().state().clip;
+            }
+            if (std::abs(last - x0) > out.travel) out.travel = std::abs(last - x0), out.seconds = float(ticks - still) / 60.0f;
+            if (out.travel > 5) break;
+        }
+        out.lara = glm::length(glm::vec2(w.player().state().pos - from));
+        w.tick({}), w.tick({});
+        return out;
+    }
+    return out;
+}
+} // namespace
+
+// Thor's gauntlets (docs/GAMEPLAY.md "Thor's gauntlets"): the heavy mechanisms' push / pull records (kind 1) name the
+// gear object Lara must carry (0x6F3BB0: g_gauntletleft on the slide doors, g_belt on the Mexican blocks); gripping one
+// runs its script's vt 49 (her pull strength: 15 doors, 10 the rubble block, 8 the Valgrind gate; the doors' uber
+// command 0 frees their braked joint), the stick slides it on its prismatic joint with her, letting go runs vt 50
+// (strength 1, braked again). Without the gear interact does not grip.
+TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const ThorCase cases[] = {
+        {"l2_maproom", 2661, 1, 1, "g_gauntletleft", 15, 600, 0},         // C09-05: the carved door into the Thor room
+        {"l5_valgrind_tunnel", 7400, 1, 1, "g_gauntletleft", 15, 600, 0}, // C16-04: the tunnel's slide door
+        {"l4_ragnarok_room", 5660, 0, 0, "g_belt", 10, 500, 0},           // C15-12: the rubble block
+        // l5_valgrind's gate 7334 (C17-04, strength 8, no gear named) is not here: its records are set by its state 1,
+        // which its vt 55 (the end of 240_val_gate, from volume 7511) commands; in ours the section stays in state 0.
+    };
+    const char* only = std::getenv("OU_THOR_CASE");
+    for (const auto& c : cases) {
+        if (only && std::atoi(only) != c.uid) continue;
+        SCOPED_TRACE(std::string(c.unit) + " " + std::to_string(c.uid));
+        auto wp = receptacleWorld(bf, c.unit);
+        auto& w = *wp;
+        const auto* o = w.script().find(c.uid);
+        ASSERT_TRUE(o && w.uberState(c.uid));
+        if (c.volume) {
+            const auto* v = w.script().find(c.volume);
+            ASSERT_TRUE(v);
+            place(w, v->pos, 0, true);
+            for (int i = 0; i < 600; ++i) w.tick({});
+        }
+        for (int i = 0; i < 90; ++i) w.tick({});
+        ASSERT_TRUE(w.uberJoint(c.uid, c.joint));
+        const float closed = w.uberJoint(c.uid, c.joint)->x;
+        if (*c.gear) {
+            w.script().setPlayerObjects({});
+            const ThorPush bare = thorPush(bf, w, c);
+            EXPECT_FALSE(bare.gripped) << "no grip without " << c.gear;
+            EXPECT_NEAR(w.uberJoint(c.uid, c.joint)->x, closed, 1.0f);
+            w.script().setPlayerObjects({c.gear});
+        }
+        const ThorPush p = thorPush(bf, w, c);
+        ASSERT_TRUE(p.gripped) << "section state " << (*w.uberState(c.uid))[c.section] << ", "
+                               << uberEngageSpots(bf, w, *o, c.section, 1).size() << " spots";
+        EXPECT_EQ(p.strength, c.strength) << "vt 49: larabase 35";
+        EXPECT_GT(p.travel, c.travel) << "it slides";
+        EXPECT_GT(p.lara, c.travel * 0.8f) << "she moves with it";
+        EXPECT_TRUE(p.clip.starts_with("thor_")) << p.clip;
+        EXPECT_EQ(w.script().pullStrength(), 1.0f) << "vt 50";
+        std::printf("%s %d: slid %.1f in %.2f s (%s)\n", c.unit, c.uid, p.travel, p.seconds, p.clip.c_str());
+        const float open = w.uberJoint(c.uid, c.joint)->x;
+        for (int i = 0; i < 180; ++i) w.tick({});
+        EXPECT_NEAR(w.uberJoint(c.uid, c.joint)->x, open, 2.0f) << "it stays where she left it";
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, c.uid) << key.second;
+    }
+}
+
 // Research: an uber object's decoded sections (states, transitions, entry actions), joints, range / limit / motor
 // records, commands and events: OU_UBER_SECTIONS=<object>.
 TEST(ProgressionReal, UberSections) {
@@ -2121,12 +2256,31 @@ TEST(ProgressionReal, UberSections) {
     if (const auto ub = formats::loadUberObject(drm))
         for (size_t b = 0; b < ub->births.size(); ++b)
             std::printf("birth %zu: object %u model %d marker %d\n", b, ub->births[b].object, ub->births[b].model, ub->births[b].marker);
-    for (const auto& set : phys.engagements)
-        for (const auto& r : set.records)
-            std::printf("engagement set %d: kind %d shape %d segment %d centre %g %g %g r %g h %g\n", set.id, r.kind, r.shape, r.segment, r.centre.x,
-                        r.centre.y, r.centre.z, r.radius, r.height);
+    std::map<uint16_t, std::string> objectNames;
+    if (const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt"))
+        objectNames = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    const auto printSet = [&](const char* what, const physics::EngagementSet& set) {
+        for (const auto& r : set.records) {
+            std::printf("%s set %d: kind %d shape %d segment %d centre %g %g %g r %g h %g heading %g half %g needs", what, set.id, r.kind, r.shape,
+                        r.segment, r.centre.x, r.centre.y, r.centre.z, r.radius, r.height, glm::degrees(r.heading), glm::degrees(r.half));
+            for (const uint16_t id : r.needs) std::printf(" %u=%s", id, objectNames.contains(id) ? objectNames[id].c_str() : "?");
+            std::printf("\n");
+        }
+    };
+    for (const auto& set : phys.engagements) printSet("engagement", set);
     const auto u = formats::loadUberObject(drm);
     if (!u) return;
+    {
+        std::set<int32_t> offsets;
+        for (const auto& sec : u->sections) {
+            if (sec.engagement >= 0) offsets.insert(sec.engagement);
+            for (const auto& acts : sec.stateActions)
+                for (const auto& a : acts)
+                    if (a.engagement >= 0) offsets.insert(a.engagement);
+        }
+        for (const int32_t off : offsets)
+            if (const auto set = physics::loadEngagementSet(drm, uint32_t(off))) printSet(("uber engagement @" + std::to_string(off)).c_str(), *set);
+    }
     for (size_t s = 0; s < u->sections.size(); ++s) {
         const auto& sec = u->sections[s];
         std::printf("section %zu model %u default %u health %g dmg %d engagement %d attach %d\n", s, sec.model, sec.defaultState, sec.health,

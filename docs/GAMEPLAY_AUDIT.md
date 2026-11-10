@@ -85,8 +85,8 @@ plates accept one block where the original needs two; several gates open by them
 Architecture and quality: no inverse kinematics or contact placement; sub-states keyed on clip-name strings; `World`
 is one class across seven files; duplicated push and ballistic code; per-tick allocations in `candidates` /
 `stepPhysics`; inferred constants scattered as `constexpr`; `GAMEPLAY.md` "Deviations" and `ROADMAP.md` list as
-missing things the code has. CharacterVirtual had never been evaluated as Lara's mover (plan in AUDIT_B; result in
-`docs/formats/PHYSICS.md` "Character controller" once done).
+missing things the code has. CharacterVirtual had never been evaluated as Lara's mover (plan in AUDIT_B); it has been since: result and
+decision (the sweep mover stays) in `docs/formats/PHYSICS.md` "Character controller".
 
 Tests: mechanics are well covered on synthetic geometry and at single real spots; almost no traversal chain, fight
 or puzzle was played by input in its own chapter. No original-vs-ours table existed (`docs/REFERENCE_COMPARISON.md`).
@@ -107,7 +107,8 @@ numbers, then architecture. Each line names the reusable system, not a level.
 9. Controller inputs and timing (saving grab, jump control, speed-up, safety drop, handstand, free hang), beam and
    pole extras, grapple inputs / swing dynamics / cable physics, bike verification against the original.
 10. Per-chapter puzzle and encounter fidelity (prologue .. Out of Time), each proven by input in its units.
-11. CharacterVirtual evaluation; push blocks and world constants on Jolt; IK / contact placement.
+11. Push blocks and world constants on Jolt; IK / contact placement. (CharacterVirtual evaluation: done,
+    `docs/formats/PHYSICS.md` "Character controller".)
 12. Reference comparison table with Wine traces for every remaining [I] number.
 13. Refactors (state machine as data, `World` split, allocations) and doc corrections.
 
