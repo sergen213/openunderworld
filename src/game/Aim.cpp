@@ -70,7 +70,7 @@ void World::setTimeScale(bool world, float target, float seconds) {
 }
 
 // ---- shots --------------------------------------------------------------------------------------
-World::RayHit World::shotRay(vec3 from, vec3 dir, float len) const {
+World::RayHit World::shotRay(vec3 from, vec3 dir, float len, int32_t skip, int32_t skip2) const {
     RayHit r{len};
     if (const auto g = col_.raycast(from, dir, r.t))
         r.t = g->t, r.hit = true, r.object = g->dynamic >= 0 ? col_.dynamics[size_t(g->dynamic)].id : 0;
@@ -80,7 +80,7 @@ World::RayHit World::shotRay(vec3 from, vec3 dir, float len) const {
     }
     for (const auto& d : shotOnly_) {
         const script::Object* o = script_.find(d.id);
-        if (!o || o->dead || o->hidden || !d.shape) continue;
+        if (!o || o->dead || o->hidden || !d.shape || d.id == skip || d.id == skip2) continue;
         const glm::mat4 inv = glm::inverse(d.transform); // rigid: lengths are kept
         if (const auto h = d.shape->raycast(vec3(inv * glm::vec4(from, 1)), glm::mat3(inv) * dir, r.t)) r = {h->t, nullptr, d.id, true};
     }

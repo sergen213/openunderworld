@@ -195,9 +195,12 @@ bool Machine::push(Instance& object, const Function& f, std::span<const Value> a
             fr.locals[l.offset] = Value::object(int32_t(*l.init));
             continue;
         }
-        if (!symbol && !music) continue;
+        // `damagetype` locals are constants a hit's damage class is compared with (damagetype 0): the base script of
+        // l7_yggdrasil_end's Natla holds 13, Mjolnir's class, in her hit callback (vt 22).
+        const bool damage = l.init && !std::strcmp(type, "damagetype");
+        if (!symbol && !music && !damage) continue;
         if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
-        fr.locals[l.offset] = Value::scalar(symbol ? *l.init : l.init2.value_or(0));
+        fr.locals[l.offset] = Value::scalar(symbol || damage ? *l.init : l.init2.value_or(0));
         if (music) fr.locals[l.offset].text = &l.initText;
     }
     for (size_t i = 0; i < args.size(); ++i) { // locals are addressed by byte offset; arguments start at 0

@@ -6026,6 +6026,93 @@ TEST(GameReal, ScriptedWaterLevelsRun) {
     }
 }
 
+// A water level that drops away from under her (tru.exe 0x5D3860: class 0x400, dry, once her root is over the
+// surface): l7_yggdrasil_end's finale pool 8309 fills its box up to z 2869.5 in the data, and its constructor sets it to
+// marker 8680 (z -11116.5) at once. A level start on the lower ring (z 474.1) is inside that box on the first tick:
+// she is swimming for that tick, then the water is gone and she falls to the ring she was put on; the goo volumes'
+// kill poll (larabase 3) never finds her in a volume.
+TEST(GameReal, SwimLosesItsSurfaceAndFalls) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    game::World w(game::UnitLoader([&](const std::string& name) {
+                      auto& d = cache[name];
+                      if (!d.drm) d = game::loadUnitData(bf, name);
+                      return d;
+                  }),
+                  "l7_yggdrasil_end", game::loadLaraAnims(bf), game::Spawn{{-4535.7f, -3818.6f, 600.0f}, 0});
+    w.script().setBigfile(&bf);
+    const auto& s = w.player().state();
+    w.tick({});
+    EXPECT_GE(s.water, 0) << "inside pool 8309's box before its constructor ran";
+    bool fell = false;
+    for (int i = 0; i < 120; ++i) {
+        w.tick({});
+        fell |= s.state == State::Fall;
+        ASSERT_GT(s.pos.z, 400.0f) << "tick " << i << ": she must not ride the surface down";
+    }
+    EXPECT_TRUE(fell);
+    EXPECT_EQ(s.water, -1);
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.z, 474.1f, 1.0f) << "on the lower ring";
+    EXPECT_EQ(w.health().value(), w.health().max()) << "no goo death, no fall damage";
+}
+
+// The final level's floating stones go round [O data, I root motion]: the orbit rigs' rotate clips turn the rig's root
+// bone by a part of a circle (A_rotate1 44.55 degrees in 99 frames, B_rotate 75, D_rotate1 35.5 ...) and are looped, so
+// each round goes on from where the last ended: 13.5 degrees a second for rig 8389 after buttress A broke, without a
+// step back at the clip's wrap. The stones (anchored to the rig's markers) collide there and their ledge loops ride
+// with them.
+TEST(GameReal, OrbitRigsCarryTheRunestonesRound) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    game::World w(game::UnitLoader([&](const std::string& name) {
+                      auto& d = cache[name];
+                      if (!d.drm) d = game::loadUnitData(bf, name);
+                      return d;
+                  }),
+                  "l7_yggdrasil_end", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    vec3 at = w.script().find(8303)->pos; // the arena volume: 320_hel_boss, whose end breaks buttress A (8360 vt 62)
+    if (const auto floor = w.collision().groundProbe(at + vec3(0, 0, 300), 3000, 0x0F)) at.z = floor->point.z;
+    game::PlayerState placed;
+    placed.pos = at;
+    w.restore(placed, 0, -0.25f);
+    w.script().playerJumped();
+    for (int i = 0; i < 60 * 105; ++i) w.tick({});
+    const auto stone = [&](int32_t uid) -> std::optional<vec3> {
+        for (const auto& d : w.collision().dynamics)
+            if (d.id == uid) return vec3(d.transform[3]);
+        return std::nullopt;
+    };
+    for (const int32_t uid : {8368, 8369, 8370}) { // rig 8389's three; 8365-8367 ride 8392 above
+        ASSERT_TRUE(stone(uid)) << uid << " collides";
+        const vec3 start = *stone(uid);
+        vec3 last = start;
+        float turned = 0, most = 0;
+        for (int i = 0; i < 60 * 10; ++i) {
+            w.tick({});
+            const vec3 now = *stone(uid);
+            float step = std::atan2(now.y, now.x) - std::atan2(last.y, last.x);
+            step -= 2 * glm::pi<float>() * std::round(step / (2 * glm::pi<float>()));
+            turned += step, most = std::max(most, std::abs(step));
+            EXPECT_NEAR(glm::length(vec2(now)), glm::length(vec2(start)), 2.0f) << "a circle about the tower";
+            EXPECT_NEAR(now.z, start.z, 60.0f) << "level but for its bob";
+            last = now;
+        }
+        EXPECT_NEAR(glm::degrees(turned), 135.0f, 2.0f) << uid << ": 44.55 degrees per 3.3 s loop, three loops in 10 s";
+        EXPECT_LT(glm::degrees(most), 0.5f) << uid << ": no step back when the clip wraps (0.225 degrees a tick)";
+    }
+    // the stones' ledge loops are where the stones are
+    const vec3 s8368 = *stone(8368);
+    bool ledge = false;
+    for (const auto& m : w.collision().markup)
+        ledge |= m.type == 1 && m.points.size() == 5 && glm::distance(vec2(m.points[0]), vec2(s8368)) < 1500.0f && std::abs(m.points[0].z - s8368.z) < 600.0f;
+    EXPECT_TRUE(ledge);
+}
+
 // SetLevel (watervolumebase 1, 0x7782D0 -> 0x1B4 mode 2): depth and speed in script lengths (x 3.1605 + 0.5, ints): 100
 // -> 316 over the volume's bottom, 10 -> 32 units per 30 Hz frame; the surface moves there (0x6C10D0), GetDepth reads
 // it back x 0.3164, and a save carries the moving level on bit for bit.
@@ -7915,11 +8002,9 @@ TEST(GameReal, ResidentCinematicUnitVolumesDoNotMeetLara) {
 TEST(GameReal, PrologueFloorCollapsesAndTheDoorIsBlownOff) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    // 284 from the plane (it was 414 while ng_run_start began at its frame 6, not 2): she crosses it on the same tick as
-    // before. Ours' door jitters on its slide while it waits (x -953.2 .. -955.1), and on which tick the joint is
-    // removed seems to decide whether the throw frees it or it stays in its frame [I; a weakness of the door physics, not of
-    // this test's subject: crossing 8 ticks later left it standing].
-    UnitGame g(bf, "l3_bedroom_hall", {{-3170, -3640, 1900}, 0});
+    // 414 from the plane. The blown door's outcome no longer depends on the tick she crosses it: the leaf takes its
+    // squib's knock toward world -X (docs/GAMEPLAY.md "Explosion records"), into the pit.
+    UnitGame g(bf, "l3_bedroom_hall", {{-3300, -3640, 1900}, 0});
     auto& w = g.w;
     w.tick({}), w.tick({});
     const auto clip = [&] {

@@ -19,8 +19,8 @@ template <typename T> T at(const cdc::Section& s, size_t off) {
 }
 
 // Model-space position of HInfo marker `id` of object model `model` (dtp Model +4 segment count, +0xC segments of
-// 0x40 bytes: pivot +0x20, parent +0x38, HInfo +0x3C; HInfo slot 2 = markers of 0x20 bytes: +4 u16 id, +8 position;
-// tru.exe 0x46DA20). The pivots are summed down the parents as physics::loadObjectPhysics does.
+// 0x40 bytes: pivot +0x20, parent +0x38, HInfo +0x3C; HInfo slot 2 = markers of 0x20 bytes: +6 u16 the id births
+// name, +8 position; tru.exe 0x4705B0 -> 0x46D7D0). The pivots are summed down the parents as physics::loadObjectPhysics does.
 std::optional<glm::vec3> hinfoMarker(const cdc::Drm& d, uint32_t model, int32_t id) {
     const auto base = objectBaseSection(d);
     if (!base) return std::nullopt;
@@ -48,7 +48,7 @@ std::optional<glm::vec3> hinfoMarker(const cdc::Drm& d, uint32_t model, int32_t 
             const auto p = cdc::internalPointer(m, *h + 20);
             if (!p || n > 4096) continue;
             for (uint32_t i = 0; i < n; ++i)
-                if (const uint32_t o = *p + 0x20 * i; at<uint16_t>(m, o + 4) == id)
+                if (const uint32_t o = *p + 0x20 * i; at<uint16_t>(m, o + 6) == id)
                     return origin.back() + glm::vec3(at<float>(m, o + 8), at<float>(m, o + 12), at<float>(m, o + 16));
         }
         break;
