@@ -7391,3 +7391,62 @@ TEST(GameReal, ValaskjalfDropDownSavingGrabs) {
     EXPECT_EQ(s.state, State::Fall) << "nobody pressed Interact";
     EXPECT_NEAR(held / 60.0, 50 / 30.0, 0.05);
 }
+
+// Letting go of a ladder (Crouch) and catching it again lower down needs no key (tru.exe's fall states' air grab; no
+// chart transition onto a ladder reads Interact). On a long ladder a catch more than 1280.03 under the let-go is the
+// ladder's bad attach: ladder_attach_air_bad for the saving-grab time, Interact -> ladder_bad_attach_recover and the
+// idle; left alone she falls.
+TEST(GameReal, LadderLetGoCatchesAgainAndBadAttach) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto world = [](float height, float z) {
+        CollisionMesh m;
+        addFloor(m, -2000, -2000, 400, 2000, 0);
+        addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, height}, {400, -2000, height});
+        m.markup.push_back({9, 1, {{400, 0, height}, {400, 0, 0}, {242, 0, 0}}}); // outward -X
+        return climbWorld(std::move(m), {300, 0, z});
+    };
+    Actions drop, use;
+    drop.drop = use.interact = true;
+    { // a short drop: caught again by itself, firmly
+        auto w = world(3000, 1500);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 240 && s.clip != "ladder_idle"; ++i) w->tick({});
+        ASSERT_EQ(s.clip, "ladder_idle") << game::stateName(s.state);
+        const float z0 = s.pos.z;
+        w->tick(drop);
+        ASSERT_EQ(s.state, State::Fall);
+        EXPECT_EQ(s.clip, "ladder_detach_drop");
+        for (int i = 0; i < 240 && s.state != State::Ladder; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Ladder) << "no key needed";
+        EXPECT_EQ(s.clip, "ladder_attach_M");
+        EXPECT_EQ(s.savingGrab, 0);
+        for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+        EXPECT_EQ(s.clip, "ladder_idle");
+        EXPECT_LT(s.pos.z, z0 - 100);
+        EXPECT_GT(s.pos.z, z0 - 700);
+    }
+    for (const bool pull : {true, false}) { // falling past a long ladder's top from 1500 over the catch
+        auto w = world(1200, 2200);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 240 && s.state != State::Ladder; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Ladder) << game::stateName(s.state) << " z " << s.pos.z;
+        EXPECT_GT(s.fallStartZ - s.climbTo.z, w->player().tuning().badAttachFall);
+        EXPECT_EQ(s.clip, "ladder_attach_air_bad");
+        EXPECT_FLOAT_EQ(s.savingGrab, 50 / 30.0f);
+        for (int i = 0; i < 30; ++i) w->tick({});
+        if (pull) {
+            w->tick(use);
+            EXPECT_EQ(s.clip, "ladder_bad_attach_recover");
+            EXPECT_EQ(s.savingGrab, 0);
+            for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+            EXPECT_EQ(s.clip, "ladder_idle");
+            const float r = (1200.0f - 575.221f - s.pos.z) / 110.619f;
+            EXPECT_NEAR(r, std::round(r), 1e-3) << "on a rung";
+        } else {
+            int held = 30;
+            for (; held < 300 && s.state == State::Ladder; ++held) w->tick({});
+            EXPECT_EQ(s.state, State::Fall);
+            EXPECT_NEAR(held / 60.0, 50 / 30.0, 0.05);
+        }
+    }
+}
