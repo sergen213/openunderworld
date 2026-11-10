@@ -140,6 +140,23 @@ inline bool dormant(const Intro& in) { return in.flags[2] & 0x82; }
 inline bool introHidden(const Intro& in) { return in.flags[2] & 0x10; }
 inline constexpr uint16_t kMarkerObjectId = 0xFFFA;
 
+// Objects born by an uber intro's state action 0x13 (formats::UberBirth, tru.exe 0x4D3B50: the treasure inside a reward
+// urn `*_pt_weightbreak_reward`, born when the urn breaks). Each is described as a dormant intro of the born object at
+// the parent's birth marker, with the parent's rotation (the markers in the data are not rotated) and no scale; its
+// unique id is ours: the parent's with kBornUidBit and the birth's index (the original numbers birthed instances
+// itself; intro ids stay below 20000).
+inline constexpr int32_t kBornUidBit = 0x20000000;
+inline constexpr int32_t bornUid(int32_t parent, size_t birth = 0) { return parent | kBornUidBit | int32_t(birth << 24); }
+inline constexpr int32_t bornParent(int32_t uid) { return uid & 0x00FFFFFF; }
+inline constexpr bool isBornUid(int32_t uid) { return uid > 0 && (uid & kBornUidBit); }
+// Objects whose births are followed [O survey of every object DRM's uber data: the reward urns are the only objects
+// that give birth to a pickup; the others (formats::UberBirth) leave debris or effects].
+inline bool birthParent(std::string_view objectName) { return objectName.ends_with("_pt_weightbreak_reward"); }
+struct BirthIntro {
+    int32_t parent = 0; // the urn's intro id
+    Intro intro;
+};
+
 // Instanced static mesh ("IMF") placement from the unit's cell group data: 0x70-byte record.
 struct ImfPlacement {
     float matrix[16];  // column-major model matrix (stored D3D row-major, row 3 = translation)
@@ -322,6 +339,8 @@ inline constexpr uint32_t kObjectNoInstanceDraw = 0x40000000;
 
 // Column-major T * Rx * Ry * Rz * S, as tru.exe builds instance matrices.
 void introMatrix(const Intro& in, float out[16]);
+// The births of `unit`'s birthParent() intros, in intro order (reads each parent object's DRM once).
+std::vector<BirthIntro> birthIntros(const cdc::BigfileSet& bigfile, const Unit& unit, const std::map<uint16_t, std::string>& names);
 
 // Whole level: unit terrain, stream-group DRM terrain, IMF placements and intro instances
 // (model 0 of each object, placed with the intro transform). Objects hidden at birth

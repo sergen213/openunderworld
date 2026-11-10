@@ -256,7 +256,12 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
         std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::vector<scene::MeshData>>> models;
     };
     std::map<uint16_t, ObjectMeshes> objects;
-    for (const auto& in : u.intros) {
+    // The treasures the reward urns give birth to when broken (formats::birthIntros): dormant intros of ours, placed
+    // like the unit's own (ou-game shows them once born, World::introduced).
+    std::vector<Intro> intros = u.intros;
+    if (listBytes)
+        for (auto& b : birthIntros(bigfile, u, objectNames)) intros.push_back(std::move(b.intro));
+    for (const auto& in : intros) {
         if (!listBytes || in.objectId == kMarkerObjectId) continue;
         // Dormant intros (formats::dormant) exist only once a script or cinematic introduces them: placed, tagged
         // " @dormant" (ou-game hides them until then, script::Runtime::born; the viewer drops them).

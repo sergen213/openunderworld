@@ -400,14 +400,107 @@ outfit (the original only reads `+0x294` on a level load).
 - Ours (`World::damageObject`): Lara's bullets / bolts on an uber object's collider and the pound's rings; action 5
   drops the collider, action 28 marks the section removed and the game hides the object's meshes when model 0's section
   is gone (`World::removedObjects`); transition clips with flag 1 run their events (`objectClips`). Health, removal and
-  collision state are saved (`StreamReal.MjolnirHitBreaksUrnAndItStaysBroken`). [U] the urn rewards
-  (`*_weightbreak_reward`) are separate intros, untouched.
+  collision state are saved (`StreamReal.MjolnirHitBreaksUrnAndItStaysBroken`). The treasure urns
+  (`*_pt_weightbreak_reward`) are the same machine plus a birth action: "Collectibles" below.
 - [O] Class-30 breakables (0x6D3160; `ca_uo_ledgebreak*`, `ar_ei_break_braced_*`, `ar_ei_breakable_hpole`,
   `ar_rb_falling_floor_straight`, `ca_rb_breakable_temple_floor`): record +0x10 hits (3), +0x18 / +0x1C pieces
   (0x20 each, spawned as instances), +0x28 / +0x34 break conditions (0x1C: flags, two floats, damage-class list). 0x11C
   counts a hit when the class is listed (0x69BFC0; only the temple floor lists one: 6, explosions) or by flags 0x400
   (class 6) / 0x800.. (classes 0-2 from Lara); the others break on Lara's contact (message 0x2B, 0x69C0A0). None lists
   Mjolnir's class 13. Not implemented.
+
+## Collectibles
+
+Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `formats::birthIntros`
+(`src/formats/Births.cpp`), `World::collectPickups` (`src/game/Stream.cpp`), `World::uberAction` case 0x13,
+`World::maxHealth`. Player-visible counts checked against https://tombraiders.net/stella/walks/TR8walk/rewards.html.
+
+- **The reward table** [O]: generalbank.drm's DTP 36, named by GlobalInfo `+0x194` (`*0xE7EE50`; loaded on first use,
+  0x5D5F80 builds the totals). `+0` reward count 206 (index 0 unused), `+4` -> rewards of 8 bytes {u16 type}, `+0x10`
+  13 groups, `+0x14` -> groups of 0x10 bytes {category, found (runtime), count, -> reward indices}, `+0x58` float[3]
+  health given per category (0, 0, 300), `+0x64` float[3] headroom (0, 0, 50). Category 1 = treasures, 2 = relics,
+  0 = twenty rewards (59..78) no unit places. A reward's type is its area and equals our chapter index: 1
+  Mediterranean, 2 Thailand, 3 Croft Manor, 4 Mexico, 5 Jan Mayen, 7 Arctic Sea; types 1..7 add into type 0 (the
+  0x5D5F80 / 0x5DB6A0 switch; 8..13 -> 14, 0 and 14 -> 15 are unused levels of the same tree). The script type
+  `rewardsystem` (NtRewardSystem, 9 natives 0x79C0E0..) reads it for the PDA: 0x5D60A0 "is reward n collected",
+  0x5D60D0 found[category][type], 0x5D6120 total[category][type], 0x5D6380 "group complete". `game::loadRewardTable`
+  reads it; `ChaptersReal.RewardSurveyMatchesTheRewardTable`.
+- **Totals** [O table = units]: every treasure / urn / relic intro carries its reward index in its intro data `+0x30`
+  (185 intros, indices 1..205, each once). Per area, treasures (lying in the world + in urns) and relics:
+
+  | area (reward type) | treasures | lying | in urns | relic (intro) | health packs |
+  |---|---|---|---|---|---|
+  | Mediterranean Sea (1) | 26 | 10 | 16 | l1_kraken_room 321 | 10 |
+  | Coastal Thailand (2) | 30 | 22 | 8 | l2_maproom 2588 | 19 |
+  | Croft Manor (3) | 13 | 7 | 6 | l3_chapel 4757 | 5 |
+  | Southern Mexico (4) | 50 | 10 | 40 | l4_pool 5496 | 22 |
+  | Jan Mayen Island (5) | 30 | 10 | 20 | l5_valaskjalf_entry 7280 | 17 |
+  | Andaman Sea (-) | 0 | 0 | 0 | - | 3 |
+  | Arctic Sea (7) | 30 | 19 | 11 | l7_helheim01 8936 | 18 |
+  | all | **179** | 78 | 101 | **6** | 94 |
+
+  These are the walkthrough's per-area totals (26 / 30 / 13 / 50 / 30 / 0 / 30) with no difference. `game::chapterRewards`
+  lists them per chapter in table order (the PDA's AREA INFO and TREASURES rows, the EXTRAS "every treasure" / "every
+  relic" unlocks); a treasure in an urn is listed by its born id.
+- **Treasure urns** [O]: `*_pt_weightbreak_reward` (ar_ in l1 / l5 / l7, sa_, ma_, ca_) is the plain urn's uber machine
+  (health 30, 0 -> 2 on any hit / impulse, "Breakables") with one more state-2 action: 0x13 (0x4D86A0 -> 0x4D3B50) gives
+  birth to the record's object {u16 object 103 `tp_rw_artifact_spawned`, s8 model 0, i32 marker 0, no messages} with
+  INSTANCE_BirthObjectNoParent at the section's HInfo marker (0x4705B0; the urn models' only one: id 0 at (0, 0,
+  79.01)), then posts it message 0x1E8 with the urn. The born artifact's script (type 3664 over the artifact's 3671)
+  differs from a placed artifact's only in the clip its birth plays (animation 10 of its list, a 100-byte still clip,
+  against 8) and its sound's delay (0.5 against 0.2): it appears in place, nothing flies. Other users of action 0x13
+  leave debris or effects (ship props `ms_uo_*` -> `*_spawned`, the exploding barrel, tentacle gear squibs,
+  `revisit_motorcycle_spawner`): `ObjectsReal.OnlyRewardUrnsGiveBirthToPickups`.
+- Ours: `formats::birthIntros` describes each urn's treasure as a dormant intro of object 103 at the marker, id
+  `formats::bornUid(urn)` (urn id | 0x20000000 [ours]); `loadUnitData` makes it a `Pickup` with `parent` = the urn and the
+  urn's reward index [I: 0x4D3B50 hands the urn's intro to the birth; the index is the urn's]. `World::uberAction`
+  0x13 puts the id into `World::born` when the urn enters state 2, whatever sent the hit (`World::damageObject`: bullets,
+  the pound, any other caller). From then on it is a pickup like a placed treasure; before, interact finds nothing
+  there. The level scene carries its meshes tagged ` @dormant @intro <id>` and ou-game shows them and starts its
+  effects once `World::introduced(id)` (scene rebuild on `World::bornVersion`). `born` is saved (docs/SAVES.md) and
+  lives as long as the urns' uber state (a load replaces both). Streaming the unit out and in
+  keeps both the broken urn and the treasure. Tests: `Pickups.BornTreasureWaitsForItsUrn`,
+  `PickupsReal.{Mediterranean,Thailand}UrnGivesItsTreasure` (l1_baldrs_sideroom 94 = reward 12, l2_towerroom 1909 =
+  reward 53: break, save with the treasure lying there, load, collect, save), `PickupsReal.BornTreasureSurvivesStreaming`,
+  `PickupsReal.BornTreasureIsInTheLevelScene`; self-test `tests/selftests/treasure_urn.json`.
+- **Collecting** (0x5DB6A0) [O]: sets bit n of the saved 2048-bit set (game state `+0x3ED90`), counts
+  found[category][type] up the type tree (`+0x3EE90`), then for the group's category: heal = table `+0x58`[category],
+  capped so that health <= maximum + `+0x64`[category], through 0x6F4EF0(amount, overheal = 1). Treasures give
+  nothing (0 / 0). [I] the reach: interact within 200 units / 250 up or down of the item (`kPickupRadius`; the reward
+  scripts use a `playersensor`, its size is not decoded) and the HUD line format.
+- **First-pickup popups** [O, not shown in ours]: the reward base script 3674 opens a `uipopupmgr` popup once per
+  game (a global stickybool): title locals 1287 "Rewards", text 1286 "The number of Treasures and Relics found so far
+  is tracked in the PDA"; the health pack script 3924 uses 1291 / 1292 the same way. Ours shows the HUD line
+  `TREASURES|RELICS|HEALTH PACKS  <count>` (1251 / 1252 / 1274) [I format].
+- **Relics** [O]: Lara's maximum health is `difficulty table[level] +8 x Lara data +0x44 x (1 + found[relics] /
+  total[relics])` (0x6E7990 -> 0x5D6170), read live: each relic adds a sixth of the base, all six double it. The
+  pickup does not rescale health; it then heals 300, to no more than the new maximum + 50 (so a relic taken at full
+  health leaves her 50 over, which decays as after a health pack). The game also adds 50 to a float at game state
+  `+0x3EF90` per relic; no reader was found. The walkthrough's "heals fully" is the visible effect in most cases; the
+  exe's numbers are used. Ours: `World::maxHealth` (base x PLAYER TAILORING level x (1 + `relicsFound()` / 6)),
+  `Health::raiseMax` on the pickup, on a load (`World::syncMaxHealth`) and at a chapter start; `World::setTailoring`
+  rescales as before (0x6F5160 keeps the fraction on a level change only). Tests: `Pickups.RelicRaisesMaxHealthAndHeals`,
+  `PickupsReal.RelicRaisesMaxHealthAndHeals` (l1_kraken_room 321: 400 of 1000 -> 700 of 1166.7).
+- **Health packs** [O]: g_healthpack data `+0xE8` = 1 per pickup, `+0xE2 / +0xE4 / +0xE6` = 100 carried at every AMMO
+  level; 0x6F5E70 takes a pack only while she carries fewer (`kHealthPackMax`). A level start (player message 0x23,
+  0x71FFE0 -> 0x7198D0) gives the unit's loadout: level settings `+0x2B4` -> {DTP id, alternate DTP id}, each DTP {->
+  u16 weapon objects, count, -> u16 gadget objects, count}:
+
+  | units | weapons | gadgets |
+  |---|---|---|
+  | l1 (DTP 3451) | wp_handgun, wp_speargun | g_binoculars, g_grapple, g_grenade_thrower, g_pda, g_personal_light, g_divinggear, g_lighter |
+  | l2 (8214) | wp_handgun, wp_uzi | binoculars .. personal_light, g_lighter |
+  | l3, prologue (11546) | wp_handgun, wp_shotgun | the same |
+  | l4 (13122) | wp_handgun, wp_tranq | the same |
+  | l5 (16172) | wp_handgun, wp_uzi | the same + g_gauntletleft, g_gauntletright, g_belt |
+  | l6 (7013) | wp_handgun, wp_thorhammer, wp_assault_rifle | binoculars .. personal_light, gauntlets, belt |
+  | l7 (18578) | wp_handgun, wp_thorhammer, wp_speargun | binoculars .. personal_light, g_divinggear, g_tanks, belt, gauntlets |
+  | alternate, every unit (838) | wp_handgun, wp_uzi | binoculars .. personal_light, g_lighter, g_tanks |
+
+  No list has g_healthpack, so Lara starts each level with none (the walkthrough's note that the inventory resets per
+  level). Ours: `World::startChapter` zeroes the carried count. [U] the other branch of message 0x23 (game state `+0x390`
+  set: 0x715EF0 rebuilds the saved slots and ammunition fractions): when it is taken was not traced.
+  `Pickups.HealthPacksCapAndLevelStart`.
 
 ## Thor's gear (draw groups)
 
@@ -2213,8 +2306,8 @@ damage type +0x63C):
   The exe does not check full health: a pack used at full health is spent. Ours: `Actions::heal` (H, pad d-pad up:
   locals 1291 "Press U+1808 to use a health pack", U+1808 = d-pad up [I TR7 button order]; script `heal`); the carried
   count is `World::found[2]` (picked-up `ca_rw_shard` packs, saved) and drops by one per use. Lara has no use clip
-  [O]: g_healthpack.drm's `use` (1.03 s) animates the pack object, so nothing plays on her. Max carried 100 (+0xE2..E6)
-  and +1 per pickup (+0xE8) are not enforced (Progression counts pickups).
+  [O]: g_healthpack.drm's `use` (1.03 s) animates the pack object, so nothing plays on her. Max carried 100 (+0xE2..E6),
+  +1 per pickup (+0xE8) and the empty start of every level: "Collectibles".
 - Death: at health ≤ 0 on the ground, `death_fall_normal` (fall) or `death_toknee` (other damage) plays [I]; DeathState
   (0x75AA50) fades the screen to black over 90 frames (wipe 10; `World::screenFade`) and respawns when it is black
   (0x75AF90 -> 0x6F55A0 checkpoint reload, 3 s) [O]. The weapons, clips and reserves are kept [I].
@@ -2633,12 +2726,12 @@ rotation when a unit is offset (only min / max / centre move): l7_arctic_sea's b
 Stowed weapons are placed from the data as the original (speargun across her back in ch1, the rifle in ch6; weapon
 data +0xB9 names Lara's stow marker, "Combat").
 
-**Pickups** [O names/counts, I roles]: `*_rw_artifact` (7..22 per chapter) = treasures, `*_rw_treasure` (one per
-chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot
+**Pickups** (the reward table, urn treasures, relic and health-pack rules: "Collectibles") [O names, roles from the
+reward table]: `*_rw_artifact` = treasures lying in the world, `*_rw_treasure` (one per chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot
 natives). All share base script 3674 (playersensor, "popUpTitleMessageChannel", hint_14). Ours: interact press within
 200 units horizontally / 250 vertically of the reward intro picks up the nearest one [I]; it joins `World::collected`,
 `World::found` counts it, the mesh is hidden and the HUD shows `TREASURES|RELICS|HEALTH PACKS` (1251/1252/1274) with the
-count [I format]. Saved (docs/SAVES.md). Health packs are not yet usable (Combat).
+count [I format]. Saved (docs/SAVES.md).
 
 **Menus** [O layout/art/strings from tru.exe captures, I where marked]: the main menu is the original's
 `ScriptMainMenu` screen (cdc script UI `uimainmenu`, generalbank.drm script 8; the scripts themselves are not

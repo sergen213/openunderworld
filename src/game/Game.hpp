@@ -535,6 +535,7 @@ struct UnitData {
     // units (level ends); the unit's own track "<name>_mus_01" when it exists, else empty [I: played only while no
     // script `music` request has started a track; AUDIO.md §9.4].
     std::vector<Pickup> pickups;
+    std::vector<formats::BirthIntro> births; // formats::birthIntros: what its reward urns give birth to (unit frame)
     std::vector<WeaponPickup> weaponPickups; // intros of ammoWeapon() objects
     std::map<int32_t, std::vector<std::string>> chapterLinks;
     std::string music;
@@ -769,7 +770,23 @@ public:
     // Autosaves the scripts requested (uisavemenu 5, after cinematics); the app autosaves when it changes.
     uint32_t autosaveRequests() const { return autosaveRequests_; }
     std::set<int32_t> collected; // intro ids of picked-up items (Pickup::id); saved
-    std::array<int, 3> found{};  // pickups collected per PickupKind (PDA counts); saved
+    std::array<int, 3> found{};  // treasures and relics collected (PDA counts), health packs carried; saved
+    // Born treasures (Pickup::id of pickups with a parent): their urn broke (uber state action 0x13, World::uberAction),
+    // whatever broke it. One lies at the urn's marker until collected; saved with the urns' uber state and kept as long
+    // (a load replaces both).
+    std::set<int32_t> born;
+    // An intro of the loaded units is in the world: a script or cinematic introduced it (script::Runtime::born) or its
+    // urn gave birth to it. bornVersion changes with `born` (the app rebuilds its scene, as for visibilityVersion).
+    bool introduced(int32_t uid) const { return formats::isBornUid(uid) ? born.contains(uid) : script_.born(uid); }
+    uint64_t bornVersion() const {
+        uint64_t v = born.size();
+        for (const int32_t id : born) v = v * 1099511628211ull + uint32_t(id);
+        return v;
+    }
+    // Lara's maximum health now: the data's x PLAYER TAILORING's health level x (1 + relics collected / 6)
+    // (tru.exe 0x6E7990; Progress.hpp kRelicCount).
+    float maxHealth() const;
+    int relicsFound() const;
     int chapter = 0;             // kChapters index being played; saved
     bool treasureHunt = false;   // Treasure Hunt (after the ending: revisiting chapters for what is left); saved
     // Pad rumble and camera shake (game/Feedback.hpp): stepped each tick, read only by the app (motors, render camera).
@@ -859,6 +876,7 @@ public:
     void kill();                                                      // message 4: damage = current health
     const Health& health() const { return health_; }
     // saves (after restore(), which heals fully, and restoreCombat, which set the window / regeneration clocks)
+    void syncMaxHealth() { health_.raiseMax(maxHealth()); } // after `collected` changed outside a pickup (loads)
     void setHealth(float v) { const auto c = health_.clocks(); health_.set(v); health_.setClocks(c); }
     const CombatState& combat() const { return combat_; }
     // The screen wipe (1 = black): the scripts' FadeOut / FadeIn, and her death's 3 s fade (DeathState, Combat.cpp).

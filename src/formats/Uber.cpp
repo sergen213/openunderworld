@@ -50,6 +50,7 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
     const uint32_t rec = *p;
     UberObjectData out;
     out.objectClass = objectClass;
+    auto& births = out.births;
     const uint32_t ns = at<uint32_t>(ob, rec + 8), nc = at<uint32_t>(ob, rec + 0x10), ne = at<uint32_t>(ob, rec + 0x18);
     const uint32_t sections = ns ? ptr(ob, rec + 0x0C) : 0, commands = nc ? ptr(ob, rec + 0x14) : 0,
                    events = ne ? ptr(ob, rec + 0x1C) : 0;
@@ -153,6 +154,9 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
                         a.joint = joint(*p2), a.param = param(*p3);
                     } else if (a.type == 0x1D && p1) {
                         a.engagement = int32_t(*p1);
+                    } else if (a.type == 0x13 && p1 && size_t(*p1) + 8 <= ob.data.size()) {
+                        a.birth = int32_t(births.size());
+                        births.push_back({at<uint16_t>(ob, *p1), at<int8_t>(ob, *p1 + 2), at<int32_t>(ob, *p1 + 4)});
                     }
                     actions.push_back(a);
                 }
