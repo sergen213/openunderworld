@@ -829,6 +829,8 @@ fidelity of numbers, then architecture.
   mode.
 - **P16 Hazard inventory with a test each.** Crusher force stand-in (Obj:1017 [I]); list blades / darts / fire / eitr
   from the matrix files, bind their script natives, one `ProgressionReal` or self-test per kind.
+  Done in part (after 0.43.0): inventory and rules in docs/GAMEPLAY.md "Hazards"; damaging collision primitives implemented
+  (flame jets, crusher pairs, rollers played by input; `game_selftest_hazards`). Open: see the end of that section.
 - **P17 Tests the goal names that have nothing today** (after the mechanics exist): sprint jump, ledge saving grab,
   grapple swing landing on a destination, bike gap jump + continue, bike wall crash, respawn loadout, relic effect,
   urn treasure, focused fire and head shot on a real enemy, walkthrough sequences from chapter starts by input.

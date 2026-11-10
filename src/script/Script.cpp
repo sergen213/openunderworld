@@ -1129,9 +1129,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 weather_.lightningMin = int32_t(nc.args[0].bits), weather_.lightningMax = int32_t(nc.args[1].bits);
                 return true;
             }
-            if (!std::strcmp(name, "larabase") && (nc.function == 59 || nc.function == 60) && nc.args.empty()) {
-                // INSTANCE_Post(player, 0x1D5 | 0x1D6, 0) (0x778020 / 0x778040); the message's meaning is [U].
-                events_.push_back({EventKind::PlayerMessage, source, nc.function == 59 ? 0x1D5 : 0x1D6, tick_});
+            if (!std::strcmp(name, "larabase") && (nc.function == 58 || nc.function == 59 || nc.function == 60) && nc.args.empty()) {
+                // INSTANCE_Post(player, 0x1D4 | 0x1D5 | 0x1D6, 0) (0x778000 / 0x778020 / 0x778040); the messages' meaning
+                // is [U]. 0x1D4 comes from l5_valgrind's steam columns (fx_steam_val_column vt 14) just before they take
+                // 250 health: [I] the scald that makes her let go; ours only records it.
+                events_.push_back({EventKind::PlayerMessage, source, int32_t(0x1D4 + nc.function - 58), tick_});
                 return true;
             }
             // larabase 52 (thunk 0x79A4B0 -> 0x777DD0): INSTANCE_Post 0x85 to the bike in the instanceref argument and to

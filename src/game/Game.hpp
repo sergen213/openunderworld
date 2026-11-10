@@ -1241,6 +1241,11 @@ private:
     void breakableColliders();   // syncObjects: the whole ones' piece collision
     void tickBreakableMarkup();  // tickObjectMarkup: their pieces' markup
     void tickBreakables(float dt);
+    // Where each damaging primitive stood a tick ago (what "it moves" is measured from): saved, so a loaded game hits
+    // on the same tick as the one that ran on.
+    nlohmann::json serializeHazards() const;
+    void restoreHazards(const nlohmann::json& j);
+    std::map<std::pair<int32_t, int>, vec3> hazardRestored_; // (uid, its n-th primitive) -> centre, until the next sync
     void syncHazards();  // Hazards.cpp: the loaded objects' damaging collision primitives
     void tickHazards();  // pose them; one touching Lara's capsule hits her (tru.exe 0x4923C0)
     std::vector<HazardShape> hazards_;

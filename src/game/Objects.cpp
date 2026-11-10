@@ -229,9 +229,11 @@ nlohmann::json World::serializeObjects() const {
         if (in.section >= 0) insertedSections.push_back({uid, in.section});
     }
     for (const auto& [uid, x] : slides_) slides.push_back({uid, x});
-    return {{"uber", std::move(uber)}, {"held", held_}, {"melee", serializeMelee()}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
-            {"insertedSections", std::move(insertedSections)}, {"placed", placed_}, {"breakables", serializeBreakables()},
-            {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
+    nlohmann::json out = {{"uber", std::move(uber)}, {"held", held_}, {"melee", serializeMelee()}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
+                          {"insertedSections", std::move(insertedSections)}, {"placed", placed_}, {"breakables", serializeBreakables()},
+                          {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
+    if (auto hazards = serializeHazards(); !hazards.empty()) out["hazards"] = std::move(hazards); // only where there are any
+    return out;
 }
 
 void World::restoreObjects(const nlohmann::json& j) {
@@ -278,6 +280,7 @@ void World::restoreObjects(const nlohmann::json& j) {
             for (const auto& e : j.value("slides", nlohmann::json::array())) slides[e.at(0).get<int32_t>()] = e.at(1).get<float>();
             placed = j.value("placed", std::set<int32_t>{});
             restoreBreakables(j.value("breakables", nlohmann::json::array())); // older saves: every breakable whole
+            restoreHazards(j.value("hazards", nlohmann::json::array()));       // older saves: their first tick counts as at rest
             if (const auto p = j.find("physics"); p != j.end() && p->value("version", 0) == 1) {
                 const std::string hex = p->at("state").get<std::string>();
                 if (hex.size() % 2) throw std::runtime_error("odd physics state");

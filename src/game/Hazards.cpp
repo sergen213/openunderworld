@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <utility>
 
 namespace ou::game {
@@ -108,7 +109,31 @@ float hazardDistance(const HazardShape& h, vec3 a, vec3 b) {
 }
 
 // The damaging primitives of the loaded objects (after syncObjects: the colliders are known).
+nlohmann::json World::serializeHazards() const {
+    nlohmann::json out = nlohmann::json::array();
+    std::map<int32_t, int> nth;
+    for (const HazardShape& h : hazards_) {
+        const int k = nth[h.uid]++;
+        if (h.placed) out.push_back({h.uid, k, h.last.x, h.last.y, h.last.z});
+    }
+    return out;
+}
+
+void World::restoreHazards(const nlohmann::json& j) {
+    hazardRestored_.clear();
+    for (const auto& e : j)
+        hazardRestored_[{e.at(0).get<int32_t>(), e.at(1).get<int>()}] = vec3(e.at(2).get<float>(), e.at(3).get<float>(), e.at(4).get<float>());
+    hazards_.clear(), hazardObjects_ = ~size_t(0);
+}
+
 void World::syncHazards() {
+    {
+        std::map<int32_t, int> nth; // a rebuilt list (units came or went) keeps what it knew
+        for (const HazardShape& h : hazards_) {
+            const int k = nth[h.uid]++;
+            if (h.placed) hazardRestored_.try_emplace({h.uid, k}, h.last);
+        }
+    }
     hazards_.clear();
     const auto add = [&](const script::Object& o, const physics::ObjectPhysics& p, int section) {
         for (const physics::Prim& prim : p.prims) {
@@ -138,6 +163,10 @@ void World::syncHazards() {
         }
         if (const physics::ObjectPhysics* p = objectPhysics(o.name)) add(o, *p, -1);
     }
+    std::map<int32_t, int> nth;
+    for (HazardShape& h : hazards_)
+        if (const auto it = hazardRestored_.find({h.uid, nth[h.uid]++}); it != hazardRestored_.end()) h.last = it->second, h.placed = true;
+    hazardRestored_.clear();
     hazardObjects_ = script_.objects().size();
 }
 
