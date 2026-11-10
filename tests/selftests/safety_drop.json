@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "name": "safety_drop",
+  "chapter": "Southern Mexico: the temple's high platform",
+  "note": "l4_temple, the platform between ledges 1167 and 1168 (top z 3690, ledge lines z 3686.5): running off its east edge she turns and hangs from ledge 1168 without a key (lara.drm chart T114: falling out of a ground state with a ledgegrab as the state's target -> the hang group's attach), then Drop lets her down onto the floor 746 under the edge (GameReal.TempleSafetyDropOffThePlatform, Game.SafetyDropOffALedgeEdge).",
+  "level": "l4_temple",
+  "spawn": [
+    -2000,
+    -13000,
+    3692,
+    0
+  ],
+  "steps": [
+    {
+      "step": "run_off_the_edge",
+      "input": [
+        "0.2 forward 1"
+      ],
+      "duration": 4,
+      "until": {
+        "probe": "player.state",
+        "eq": "hang"
+      },
+      "expect": [
+        {
+          "visits": [
+            "idle",
+            "run",
+            "droptohang",
+            "hang"
+          ]
+        },
+        {
+          "clips": [
+            "ng_run_start",
+            "drop_to_ledgeb",
+            "ledgeb_idle"
+          ]
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 1168
+        },
+        {
+          "probe": "player.saving_grab",
+          "eq": 0
+        },
+        {
+          "probe": "step.drop",
+          "near": 499.4,
+          "tol": 4,
+          "note": "her root from the platform to the hang"
+        },
+        {
+          "probe": "step.health_lost",
+          "eq": 0
+        }
+      ]
+    },
+    {
+      "step": "let_go",
+      "input": [
+        "0.5 drop 1",
+        "0.6 drop 0"
+      ],
+      "duration": 4,
+      "until": {
+        "probe": "player.grounded",
+        "eq": true
+      },
+      "expect": [
+        {
+          "visits": [
+            "hang",
+            "fall",
+            "land"
+          ]
+        },
+        {
+          "probe": "player.ledge",
+          "eq": -1
+        },
+        {
+          "probe": "step.drop",
+          "near": 250.8,
+          "tol": 4
+        },
+        {
+          "probe": "step.health_lost",
+          "eq": 0
+        }
+      ]
+    }
+  ]
+}

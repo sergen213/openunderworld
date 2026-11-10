@@ -393,6 +393,7 @@ void Player::groundMove(vec3 delta, float dt) {
     }
     s_.pos = p; // walked off an edge, or onto a slope too steep to stand on
     const vec3 vel(xy(delta) / dt, 0);
+    if (!g && trySafetyDrop(vel)) return;
     if (g && g->normal.z >= t_.slideMinNormalZ) {
         s_.pos.z = g->point.z;
         startSlide(vel);
@@ -804,7 +805,43 @@ bool Player::tryDropToHang() {
         best = int(li), bestOn = o, bestSide = side;
     }
     if (best < 0) return false;
-    s_.ledge = best, s_.ledgeSeg = bestOn.seg, s_.ledgeT = bestOn.t, s_.ledgeSide = bestSide;
+    dropToHang(best, bestOn.seg, bestOn.t, bestSide);
+    return true;
+}
+
+// The safety drop: stepping, running or rolling off an edge that carries a ledge she turns and hangs from it, no key
+// (lara.drm chart T114 out of the ground states S7 / S8 / S59 / S75 ...: PSCCF_IsFalling, the state's jump target a
+// ledgegrab (cond 0x262 type 610) with result flag 6 and not 7 (0x76F760), its entry not 5 / 7..10 -> S534 -> the
+// attach states S542..S544 of the hang group [O-chart]). tru.exe under Wine, l4_temple ledge 1155: walking and
+// running off the block's edge both end hanging from it ~1.0 s later, no key [O]. [I]: the result flags' geometry is
+// not decoded; ours takes
+// the ledge of tryDropToHang (level with her feet, open below) within kSafetyReach of where she left the ground,
+// on the side she is heading to, and plays the Crouch drop's drop_to_ledgeb.
+constexpr float kSafetyReach = 150.0f;
+bool Player::trySafetyDrop(vec3 vel) {
+    if (s_.regrabCooldown > 0 || glm::length(xy(vel)) < 1.0f) return false;
+    const vec2 heading = glm::normalize(xy(vel));
+    int best = -1;
+    OnLine bestOn;
+    float bestSide = 1;
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 1) continue;
+        const OnLine o = closestOn(m, s_.pos);
+        if (o.seg < 0 || o.dist > kSafetyReach || o.dist >= bestOn.dist || std::abs(o.q.z - s_.pos.z) > 40.0f) continue;
+        const vec2 dir = segDir(m, o.seg), n(-dir.y, dir.x);
+        const float side = glm::dot(heading, n) > 0 ? 1.0f : -1.0f; // hang on the side she is going off
+        if (std::abs(glm::dot(heading, n)) < 0.5f || !openBelow(col_, m, o.seg, o.t, side)) continue;
+        best = int(li), bestOn = o, bestSide = side;
+    }
+    if (best < 0) return false;
+    dropToHang(best, bestOn.seg, bestOn.t, bestSide);
+    return true;
+}
+
+void Player::dropToHang(int ledge, int seg, float t, float side) {
+    const float bestSide = side;
+    s_.ledge = ledge, s_.ledgeSeg = seg, s_.ledgeT = t, s_.ledgeSide = side;
     const auto [hang, hangYaw] = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, bestSide);
     s_.state = State::DropToHang;
     s_.vel = vec3(0);
@@ -816,7 +853,6 @@ bool Player::tryDropToHang() {
         s_.yaw = wrapAngle(base + rootYaw(*c, s_.clipTime, false));
         s_.pos = hang - rotYaw(base, rootTranslation(*c, end, false) - rootTranslation(*c, s_.clipTime, false));
     }
-    return true;
 }
 
 // The hang's clearance class, tru.exe 0x74E290 (run on the attached ledgegrab by 0x76D010 in the segment frame of

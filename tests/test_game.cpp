@@ -7450,3 +7450,76 @@ TEST(GameReal, LadderLetGoCatchesAgainAndBadAttach) {
         }
     }
 }
+
+// The safety drop (lara.drm chart T114: falling out of a ground state with a ledgegrab as the state's target): walking,
+// running or rolling off an edge that carries a ledge she turns and hangs from it without a key (drop_to_ledgeb, as
+// the Crouch drop); an edge without a ledge is a plain fall (Game.RunsOffEdgeFallsAndLands).
+TEST(Game, SafetyDropOffALedgeEdge) {
+    for (const int gait : {0, 1, 2}) { // run, walk, roll
+        CollisionMesh m;
+        addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+        addFloor(m, -2000, -1000, 3000, 1000, -3000);
+        m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+        auto w = makeWorld(std::move(m), {-700, 50, 0});
+        const auto& s = w->player().state();
+        Actions go = forward();
+        go.walk = gait == 1;
+        std::set<State> seen;
+        for (int i = 0; i < 900 && s.state != State::Hang; ++i) {
+            Actions a = go;
+            a.drop = gait == 2 && i == 15; // a roll toward the edge
+            w->tick(a);
+            seen.insert(s.state);
+        }
+        ASSERT_EQ(s.state, State::Hang) << gait << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+        EXPECT_TRUE(seen.count(State::DropToHang)) << gait;
+        EXPECT_FALSE(seen.count(State::Fall)) << gait << ": no fall in between";
+        if (gait == 2) EXPECT_TRUE(seen.count(State::Roll));
+        EXPECT_EQ(s.savingGrab, 0);
+        const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+        EXPECT_NEAR(hands.x, 0, 1e-2) << gait;
+        EXPECT_NEAR(hands.z, 0, 1e-2) << gait;
+        EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4) << "facing the wall";
+        Actions drop;
+        drop.drop = true;
+        w->tick(drop); // and lets go as from any hang
+        EXPECT_EQ(s.state, State::Fall);
+    }
+    { // along the edge, not over it: nothing; off the end of the platform where no ledge is: a fall
+        CollisionMesh m;
+        addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+        addFloor(m, -2000, -3000, 3000, 3000, -3000);
+        m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+        auto w = makeWorld(std::move(m), {-100, -700, 0}, kPi / 2); // facing +Y, 100 inside the ledge's edge
+        const auto& s = w->player().state();
+        std::set<State> seen;
+        for (int i = 0; i < 200 && s.pos.z > -2900; ++i) w->tick(forward()), seen.insert(s.state);
+        EXPECT_FALSE(seen.count(State::DropToHang));
+        EXPECT_TRUE(seen.count(State::Fall)) << "off the platform's far side";
+    }
+}
+
+// l4_temple's high platform (top z 3690) between ledges 1168 (east edge, x -1227) and 1167 (west edge, x -2870):
+// running off the east edge and walking off the west one she turns and hangs from the edge's ledge, no key.
+TEST(GameReal, TempleSafetyDropOffThePlatform) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const bool walk : {false, true}) {
+        auto w = unitWorld(bf, "l4_temple", {{-2000, -13000, 3692}, walk ? kPi : 0.0f});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.walk = walk;
+        std::set<State> seen;
+        const float top = s.pos.z;
+        for (int i = 0; i < 1200 && s.state != State::Hang; ++i) w.tick(go), seen.insert(s.state);
+        ASSERT_EQ(s.state, State::Hang) << walk << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, walk ? 1167 : 1168);
+        EXPECT_TRUE(seen.count(State::DropToHang));
+        EXPECT_FALSE(seen.count(State::Fall));
+        EXPECT_TRUE(seen.count(walk ? State::Walk : State::Run));
+        EXPECT_EQ(s.savingGrab, 0);
+        EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).z, 3686.5, 1);
+        EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).x, walk ? -2869.6 : -1226.8, 1);
+        EXPECT_LT(s.pos.z, top - 450);
+    }
+}

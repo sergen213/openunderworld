@@ -3319,6 +3319,14 @@ climb and the "Saving grabs [I]" sentence of PLAYER TAILORING above.
     (`tryLadder`). The markup flag is not in our markup data [U]; poles (`Hpole_*_bad_attach_*`), perches
     (`perch_attach_air_bad_recover`) and wall hug have their own bad-attach clips, not played yet. The catch itself
     still needs `vel.z >= 2 x grabMinVz` [I: tru.exe's limit on a falling catch is not decoded].
+  - tru.exe under Wine [O] (l4_temple ledge 1155, Lara pinned in the air beside it for 1.3 s, then let go;
+    `gameplaygoal/inputrules/session2.sh`, `wine2.txt`): with her root 600 / 850 / 1100 over the hang's root she ends in
+    the firm hang; 1350 / 1600 over it she is held in a lower pose (root 149 under the hang's, states 0x0D9DA070 /
+    0x0D9DEF58) for 1.70 s from the catch and then falls to the floor: the limit lies in (1100, 1350], root to root, as
+    the decoded 1280.03 of q44; 50 frames = 1.67 s. The air grab takes the ledge from afar while she is still pinned
+    (caught with the ledge 1106 under her root, q44's kind-31 value; not 1406 under it) - ours still catches when the
+    hands pass the ledge (`tryGrab`, [I]). The Interact press was not exercised under Wine (the scripted press came
+    after the fall): it rests on the decode below.
   - While it lasts (chart S528, action 2101 = table 0x4B0F40: enter `0x75E5C0`, exit `0x75E6E0`): the HUD shows button
     icon Lara data `+0x70C` = 52 (`0x70CC50`; ours has no prompt yet), player timer 2 (`+0x74C`) is set to the
     difficulty table's `+0x14` at the PLAYER TAILORING level (`0x75E5EC` -> `0x6E7740`: **90 / 50 / 15 frames**; plus
@@ -3333,11 +3341,31 @@ climb and the "Saving grabs [I]" sentence of PLAYER TAILORING above.
   Interact; the catch lower down is the air grab's, automatic as ours (`regrabCooldown` 0.3 s [I]). The key the
   controls page mentions is the saving grab of a bad catch (S1117 / S1118 `ladder_attach_air_bad`), implemented as
   above. [U]: whether tru.exe flags every catch of the ladder she just left (the markup flag / a state property).
+- **Safety drop** [O-chart]: transition T114 leaves the ground states (S7 the roll, S8, S59, S75 and the gear states
+  S708 / S727 / S730 / S733 / S743) for S534 of the hang group - whose T748..T750 pick the attach state S542 / S543 / S544
+  - on: `PSCCF_IsFalling` (0x762C60: instance flag 0x80000, she has left the ground), the state's jump target a
+  ledgegrab (cond 0x262, type 610), result flag 6 set and 7 clear (0x76F760: the bit set at query result +0x140), the
+  target's entry (player `+0xA80`) not 5 / 7 / 8 / 9 / 10, cond 0x2BE = 0. No button and no gait condition: walking,
+  running or rolling off an edge that carries a ledge she hangs from it by herself. T235 / T236 are the same for a
+  ladder under the edge (`ladder_run_off_grab` / `ladder_attach_ground_top`, not implemented). T112 (`edge_stop`,
+  request 54) stops her at an edge instead when the stick is pushed, cond 0x1EA (0x764FD0, a move-set value) = 2 and
+  there is no target: not implemented [U: what sets 0x1EA]. Crouch at an edge stays the keyed drop (T777, query q46).
+  tru.exe under Wine [O] (l4_temple block ledge 1155, west edge; `openunderworld-work/gameplaygoal/inputrules/
+  session2.sh`, `wine2.txt`): from standing on the top 70 inside the edge, **walking** (Walk + the stick) she reaches the
+  edge line 0.57 s later and without a key goes straight into the hang (root 158 out and 491 down in ~1.0 s =
+  `drop_to_ledgeb`'s 31 frames, then the hang state of a jump's catch); **running** she overshoots the line by 82
+  with her feet still at the top's height (one state for ~0.08 s), is taken back to the edge and down into the same
+  hang (hang pose reached ~1.2 s after the line).
+  Ours (`Player::trySafetyDrop` from `groundMove` when the ground is gone): the nearest ledge level with her feet
+  (±40), within 150 of where she left the ground, crossed at more than 30 degrees, open below on the side she is
+  heading to; `drop_to_ledgeb` as the Crouch drop [I: the result flags' geometry and the attach states' requests
+  ("MOD" requests 16 / 17 / 21) are not decoded].
 - **Pole drop** (ours): after Drop the pole she let go of is not caught again in that fall (`PlayerState::droppedPole`),
   and a fall propped up in place with no floor under her root for 0.25 s ends standing (`fallStall`) [I]. l4_traprooms
   pole 1337 hangs her feet 9..25 over a rubble mound: she comes down 27 beside it.
 - Tests: `Game.ButtonTimingLayer`, `Save.ButtonTimingRoundTrip`, `Game.SavingGrabByFallHeightAndInteract`,
   `Game.SavingGrabAfterAJumpDown`, `GameReal.SavingGrabClips`, `GameReal.ValaskjalfDropDownSavingGrabs`,
   `GameReal.ClimbBadAttach` (rewritten), `GameReal.LadderLetGoCatchesAgainAndBadAttach`,
-  `Game.PoleDropOverSteepGroundIsNotCaughtAgain`, `GameReal.TrapRoomsPoleDropAfterFling`; self-tests `saving_grab`
-  (l5_valaskjalf), `pole_drop_after_fling` (l4_traprooms).
+  `Game.PoleDropOverSteepGroundIsNotCaughtAgain`, `GameReal.TrapRoomsPoleDropAfterFling`,
+  `Game.SafetyDropOffALedgeEdge`, `GameReal.TempleSafetyDropOffThePlatform`; self-tests `saving_grab` (l5_valaskjalf),
+  `safety_drop` (l4_temple), `pole_drop_after_fling` (l4_traprooms).
