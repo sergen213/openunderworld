@@ -265,6 +265,12 @@ struct Tuning {
     // stick is pushed, 346 or more in the hard landing; Crouch pressed inside variable 347 frames of a landing still
     // rolls [O-data].
     float landStumbleFall = 632.111f, landHardFall = 1264.223f, landRollFrames = 4.0f;
+    float landCrouchTime = 0.36f; // s into the plain landing Crouch held (no stick) crouches [O Wine: 0.35..0.61 s; the clip's critical section]
+    // Hand over hand faster with Interact (chart S441 / S442 ledge, S1057 ladder): a press starts the fast move again
+    // from this frame of its clip on (T621 / T624: 8; T1809: chart variable 193 = 10); the ladder's needs more than
+    // chart variable 194 = 4 rungs to the top [O-data].
+    float hustleAgainFrame = 8.0f, ladderFastAgainFrame = 10.0f;
+    int ladderFastRungs = 4;
 };
 Tuning defaultTuning();
 

@@ -3638,9 +3638,12 @@ Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full),
 
 - **Dispatch** [O-data]: every landing passes the chart state S1275, whose transitions are tried in this order:
   1. T2101 / T2090 / T2102: the swan dive's and the water landings ("Water moves").
-  2. T2100 -> S1283 `ng_land_rolling` (request 677, start frame 4; root 808 forward in 0.67 s): Crouch held (cond
-     0x96, action 51), the stick pushed (cond 0x191 not 401) forward of her heading (0x192 = 410), nothing carried
-     (0x5DD = 0), `!0x9B:51` [U]. No height condition: the roll comes at any height, before the height tests.
+  2. T2100 -> S1283 `ng_land_rolling` (request 677, start frame 4; root 808 forward in 0.67 s): Crouch down (cond
+     0x96, action 51) but not held long (`!0x9B:51`), the stick pushed (cond 0x191 not 401) forward of her heading
+     (0x192 = 410), nothing carried (0x5DD = 0). No height condition: the roll comes at any height, before the height
+     tests. It wants a press shortly before the landing: tru.exe under Wine with Crouch held from 0.7 s before the
+     landing and the stick forward lands in the stumble (S1278) and crouches 0.15 s into it (T2106, S80); ours takes
+     0x9B as the buttons' held-long limit of 15 frames [I].
   3. T2091 -> S1280 / T2092 -> S1281 `ng_land_hard` (request 39; 1.1 s in place): the fall >= chart variable 345 =
      **3185.84** / 346 = **1264.22**. The fall is cond 0x1E (tru.exe 0x764B40): z on becoming airborne (player
      `+0x6DC`) - z, compared with a chart variable (0x783BD0 / 0x782060; variables = the pointer table at lara.drm
@@ -3657,7 +3660,8 @@ Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full),
   **4** frames rolls after all (T2107); from 4 frames on, Crouch held with the stick pushed crouches (T2106), Sprint
   held at full stick sprints (T2108), and the stick pushed anywhere but forward leaves the clip for the ground moves
   (T2099) - the last three only outside the clip's critical section (cond 0xCA); the clip's end goes back to the ground
-  group (T2097).
+  group (T2097). Crouch held with no stick crouches out of the plain landing once its critical section is over
+  (T2104; Wine: 0.35 s into it after falls of 400 and 800, 0.61 s after 1200; ours `Tuning::landCrouchTime` 0.36 s).
 - Ours (`Player::land`, `State::Land` in `Player::tick`; `Tuning::landStumbleFall` / `landHardFall` /
   `landRollFrames`, `PlayerState::landTime`): exactly this dispatch, the stick quadrants taken as 45 degrees either
   side of her heading [I] and the run level as the run's (stick >= 0.5, no Walk). [I]: `ng_land_hard` is treated as

@@ -423,8 +423,10 @@ void Player::startSlide(vec3 vel) {
 
 // Landing: lara.drm's player chart sends every landing through the dispatcher S1275, whose transitions are tried in
 // this order [O-data; the fall = z on becoming airborne (player +0x6DC) - z, cond 0x1E = tru.exe 0x764B40]:
-// - T2100: Crouch held (cond 0x96, action 51) with the stick pushed forward of her heading (0x191 not neutral, 0x192 =
-//   410), nothing carried -> S1283 `ng_land_rolling` (a roll: 808 forward in 0.67 s), at any height;
+// - T2100: Crouch down (cond 0x96, action 51) but not held long (not cond 0x9B: tru.exe under Wine, Crouch held from
+//   0.7 s before the landing with the stick forward lands in the stumble and then crouches; [I] the limit is the
+//   buttons' 15 frames), the stick pushed forward of her heading (0x191 not neutral, 0x192 = 410), nothing carried ->
+//   S1283 `ng_land_rolling` (a roll: 808 forward in 0.67 s), at any height;
 // - T2091 / T2092: a fall of chart variable 345 = 3185.84 / 346 = 1264.22 or more -> S1280 / S1281 `ng_land_hard`;
 // - T2118: variable 344 = 632.11 or more with the stick pushed, not backward -> S1278 `ng_running_land_stumble`;
 // - T2089: the stick pushed at run level (0x191 not 401 / 402), not backward -> S1284 `ng_running_land`;
@@ -449,7 +451,7 @@ void Player::land(vec2 move) {
     if (wading() && anims_.find("swim_land_wading")) { // into class-0x100 water
         s_.state = State::Land;
         play("swim_land_wading", false);
-    } else if (s_.buttons.drop.down && ahead && !s_.encumbered && anims_.find("ng_land_rolling")) {
+    } else if (s_.buttons.drop.down && !s_.buttons.drop.heldLong(t_.holdLongFrames) && ahead && !s_.encumbered && anims_.find("ng_land_rolling")) {
         s_.state = State::Roll;
         play("ng_land_rolling", false);
     } else if (s_.fallHeight >= t_.landHardFall && anims_.find("ng_land_hard")) {
@@ -2075,7 +2077,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 play("ng_land_rolling", false);
                 break;
             }
-            if (!hard && late && a.drop && wantsMove) {
+            if (!hard && a.drop && (wantsMove ? late : s_.landTime >= t_.landCrouchTime)) {
                 s_.state = State::Crouch;
                 play("crouch_idleToCrouch", false);
                 break;
@@ -2084,6 +2086,16 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 s_.state = State::Run; // T2108: Sprint held at full stick
                 play("sprint_loop", true);
             } else if (!hard && late && wantsMove && along <= kStickQuadrant) s_.state = State::Idle;
+        }
+        if (s_.state == State::Run && (s_.clip == "ng_running_land" || s_.clip == "ng_running_land_stumble")) {
+            // the running landings are in the same group: Crouch held from its 4th frame on crouches (T2106; Wine: 0.15 s
+            // into the stumble)
+            s_.landTime += dt;
+            if (a.drop && !dropPressed && s_.landTime * 30.0f >= t_.landRollFrames) {
+                s_.state = State::Crouch;
+                play("crouch_idleToCrouch", false);
+                break;
+            }
         }
         if (jumpPressed && (s_.state != State::Land || s_.clip != "ng_land_hard")) {
             if (tryHurdle(true) || tryPerch(false)) break; // a low ledge ahead / a perch

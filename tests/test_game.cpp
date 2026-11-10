@@ -7585,7 +7585,7 @@ game::AnimLibrary landingAnims() {
 }
 // A platform `h` over a wide floor; she runs off its +x edge with `air` held once she falls. Returns the world at the
 // tick she lands.
-std::unique_ptr<game::World> landFrom(float h, const Actions& air, bool run = true) {
+std::unique_ptr<game::World> landFrom(float h, const Actions& air, bool lateCrouch = true, bool run = true) {
     CollisionMesh m;
     addFloor(m, -20000, -20000, 20000, 20000, 0);
     addBox(m, {-2000, -1000, 0}, {0, 1000, h});
@@ -7594,7 +7594,13 @@ std::unique_ptr<game::World> landFrom(float h, const Actions& air, bool run = tr
     const auto& s = w->player().state();
     for (int i = 0; i < 600 && s.state != State::Fall; ++i) w->tick(forward());
     EXPECT_EQ(s.state, State::Fall);
-    for (int i = 0; i < 600 && s.state == State::Fall; ++i) w->tick(air);
+    // Crouch in `air` is pressed 10 ticks before the landing (a press, not a hold: the roll's condition)
+    const float g = w->player().tuning().gravity, dt = 10 / 60.0f;
+    for (int i = 0; i < 600 && s.state == State::Fall; ++i) {
+        Actions a = air;
+        a.drop = air.drop && (!lateCrouch || s.pos.z + s.vel.z * dt - 0.5f * g * dt * dt <= 0);
+        w->tick(a);
+    }
     EXPECT_NEAR(s.pos.z, 0, 1);
     EXPECT_NEAR(s.fallHeight, h, 2);
     return w;
@@ -7736,7 +7742,12 @@ TEST(GameReal, TempleLandingsByHeightStickAndCrouch) {
         w.restore(up, 0, w.camera().pitch);
         for (int i = 0; i < 30 && s.state != State::Fall; ++i) w.tick({});
         ASSERT_EQ(s.state, State::Fall);
-        for (int i = 0; i < 600 && s.state == State::Fall; ++i) w.tick(air);
+        const float g = w.player().tuning().gravity, t10 = 10 / 60.0f;
+        for (int i = 0; i < 600 && s.state == State::Fall; ++i) {
+            Actions a = air; // Crouch: pressed 10 ticks before the landing
+            a.drop = air.drop && s.pos.z + s.vel.z * t10 - 0.5f * g * t10 * t10 <= 1722.9f;
+            w.tick(a);
+        }
         EXPECT_NEAR(s.pos.z, 1722.9, 1.5);
         EXPECT_NEAR(s.fallHeight, h, 3);
         *clip = s.clip, *st = s.state;
