@@ -1138,19 +1138,6 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (lastBike_) mounts_.push_back(lastBike_);
                 return true;
             }
-            // larabase 54 (0x777E40): whether the instanceref argument is that bike (Lara +0xF00). l5_valgrind's
-            // 240_val_gate (7464 vt 58) asks before it plays, to put her back on bike 7229 afterwards (53).
-            if (!std::strcmp(name, "larabase") && nc.function == 54 && nc.args.size() == 1) {
-                const vm::Value& a = nc.args[0];
-                int32_t bike = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
-                if (a.kind == vm::Value::Kind::Member)
-                    if (const auto holder = resolve(a.uid)) bike = int32_t(holder->fields[a.offset]);
-                nc.result = vm::Value::scalar(lastBike_ != 0 && bike == lastBike_);
-                return true;
-            }
-            // larabase 19 (bool): "Setting Gauntlet to be charged" (trigger volumes by the Thor mechanisms: l2_maproom
-            // 2636, l5_valgrind 7511 vt 70 / 71) [U: what it changes on her; nothing in ours].
-            if (!std::strcmp(name, "larabase") && nc.function == 19 && nc.args.size() == 1) return true;
             // Thor's gear objects (g_gauntletleft / g_gauntletright / g_belt) Lara carries in her object slots, set by
             // the type 205 equip helpers vt 59-61 that unit/chapter scripts call: larabase 38 (0x777E90: an object of
             // that name is in one of her 15 slots), 37 (0x7161F0: attach it), 42 (0x6F5A10: drop a slot's object). The
@@ -1710,10 +1697,6 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(r);
                 return nc.function == 43 || r;
             }
-            // gamebase 50 (cameraanchor, cameraref): the l7 Thor towers' vt 49 gives their push camera its anchor before
-            // gamebase 53 (4) switches to it; vt 50 switches back, 53 (1) [U: that camera is not modelled, ours keeps
-            // the gameplay camera].
-            if (!std::strcmp(name, "gamebase") && nc.function == 50) return true;
             // gamebase 30 (0x7761B0 -> 0x60F5B0): bool clears/sets game flag 0x4000 of 0xE7F0B4 and UI element 0xC
             // (0x655280); reveal scripts call it with true after their camera [U: what the flag gates].
             if (!std::strcmp(name, "gamebase") && nc.function == 30 && nc.args.size() == 1) return true;

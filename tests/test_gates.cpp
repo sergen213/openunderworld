@@ -2397,7 +2397,10 @@ TEST(ProgressionReal, TombGateNeedsBothBlocksAndThePull) {
         place(w, at, 0);
         run(20);
         w.tick(press), w.tick({});
-        if (w.heldPortable()) w.tick(drop), w.tick({}); // the put-down key
+        // Nothing takes it there, so the press swings it (docs/GAMEPLAY.md "Carried objects"; before, the press gripped a
+        // nearby uber joint by proximity instead: World::pushUberJoints): the put-down key after the swing.
+        finishMove(w);
+        if (w.heldPortable()) w.tick(drop), w.tick({});
         run(240);
         ASSERT_EQ(w.heldPortable(), 0);
     };
