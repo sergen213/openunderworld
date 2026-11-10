@@ -144,7 +144,11 @@ void World::explode(vec3 at) {
         t->onHit(hit);
     }
     const vec3 chest = player_.state().pos + vec3(0, 0, targeting.eyeHeight);
-    if (const float d = glm::distance(at, chest); d < g.radius) damageLara(glm::mix(g.damage, g.edgeDamage, falloff(d)), at, kDamageHeavy);
+    if (const float d = glm::distance(at, chest); d < g.radius) {
+        damageLara(glm::mix(g.damage, g.edgeDamage, falloff(d)), at, kDamageHeavy);
+        // the blast's knock (message 0x91) throws her off her feet (World::throwLara, Melee.cpp)
+        if (d > 1e-3f) throwLara((chest - at) / d * glm::mix(g.impulse, g.edgeImpulse, falloff(d)));
+    }
     physics_.blast(at, g.radius, g.impulse, g.edgeImpulse);
 }
 

@@ -395,7 +395,8 @@ endif()
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp src/game/Aim.cpp
   src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/WallJump.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/ai/Nav.cpp src/game/Progress.cpp
-  src/game/Vehicle.cpp src/game/Weather.cpp src/game/Gadgets.cpp src/game/Camera.cpp src/game/Bend.cpp src/game/Feedback.cpp)
+  src/game/Vehicle.cpp src/game/Weather.cpp src/game/Gadgets.cpp src/game/Camera.cpp src/game/Bend.cpp src/game/Feedback.cpp
+  src/game/Melee.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine ou_input glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)
@@ -510,10 +511,17 @@ if(OU_BUILD_TESTS)
   # calendar 6506: a push handle gripped and pushed turns the ring (hinge joint 2), section 1 back to waiting (3)
   ou_receptacle_replay(ballcourt_calendar_handle_turn l4_ballcourt -14240,10200,3700,90 700 6506
                        "object 6506 .* uber [0-9]+,3,.* j2 (0\\.[2-9]|[1-9])")
-  # weight on plate 219 holds door 223 open (vt 57), weight on 222 + Lara on 221: locks 69 / 70 count gate 45 open, it falls
-  ou_receptacle_replay(baldrs_plates_gate l1_baldrs_tomb -5000,-10000,2560,180 3200 219,221,222,45,223,69,70
-                       "portables held 0" "calls .* 223:57" "calls .* 45:54" "object 219 .* joint -60" "object 221 .* joint -60"
-                       "object 222 .* joint -60" "object 223 .* uber 1 " "object 45 .* joint (8[5-9]|9[0-9])\\.")
+  # The tomb's full solution by ordinary input (the replay's header): both weights thrown through door 223 from plate
+  # 219 (219 vt 54 / 55 -> 223 vt 57 / 58), the roll through it, both put down on plate 222, gate 45's ring grappled
+  # and pulled from plate 221: both plates at their pressed joint (-50), locks 69 / 70 out (-1250), the gate pulled
+  # open on its hinge (>= 85 degrees; 45 vt 54), the weights lying on plate 222.
+  ou_receptacle_replay(baldrs_plates_gate l1_baldrs_tomb -5000,-10000,2560,180 5800 219,221,222,45,223,69,70,218,220
+                       "portables held 0" "calls .* 219:54 223:57" "calls .* 219:55 223:58" "calls .* 45:54"
+                       "object 221 .* joint -(4[5-9]|50)\\.[0-9]" "object 222 .* joint -(4[5-9]|50)\\.[0-9]"
+                       "object 69 .* joint -12[0-9]{2}\\.[0-9]" "object 70 .* joint -12[0-9]{2}\\.[0-9]"
+                       "object 45 .* joint (8[5-9]|9[0-9])\\.[0-9]"
+                       "object 218 .* pos 1[0-5][0-9]{2}\\.[0-9] -(9[89]|10[0-5])[0-9]{2}\\."
+                       "object 220 .* pos 1[0-5][0-9]{2}\\.[0-9] -(9[89]|10[0-5])[0-9]{2}\\.")
   # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,
   # docs/RENDERING.md "Ray tracing"); 77 = skipped (no OU_GAME_DIR, display or ray-query device).
   add_test(NAME game_vulkan_rt_smoke COMMAND sh -c [=[

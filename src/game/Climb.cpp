@@ -130,10 +130,9 @@ float sweepHit(const collision::Markup& m, vec3 here, vec3 right, vec2 v, float 
 // clip then carries her to.
 bool Player::tryClimb(bool fromAir) {
     if (s_.regrabCooldown > 0) return false;
-    // Faster than a firm ledge grab (up to twice) only a bad attach holds, as a ledge's saving grab [I: tru.exe's DICE
-    // bad-attach condition is not traced]; faster still she falls past.
+    // Up to twice a ledge grab's fall speed she still catches, as a ledge [I]; a bad attach by the height she came down
+    // (Player::badAttach: tru.exe 0x74FDF0 runs on every markup attach [O]).
     if (fromAir && s_.vel.z < 2 * t_.grabMinVz) return false;
-    const bool bad = fromAir && s_.vel.z < t_.grabMinVz;
     if (fromAir) { // a ledge in grab range wins: do not preempt the arc onto it
         const vec3 hand = s_.pos + toWorld(anims_.hangHandOffset);
         for (const auto& m : col_.markup) {
@@ -167,6 +166,7 @@ bool Player::tryClimb(bool fromAir) {
     }
     if (best < 0) return false;
     const auto& m = col_.markup[size_t(best)];
+    const bool bad = fromAir && badAttach(holdAnchor(m).z);
     s_.climbHold = best;
     s_.climbStance = uint8_t(m.type - 16);
     s_.climbNormal = holdNormal(m, h->normal);
@@ -240,6 +240,31 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
         play(stanceClip(s_.climbStance, "air_attach"), false);
         return;
     }
+    // Bad attach: the Interact press pulls her back up to the idle pose (the bad end clip, then the idle); else she
+    // lets go when the saving-grab time (difficulty "TIME FOR SAVING GRABS") runs out, or on Crouch (the ledge's rule,
+    // Player::tick State::Hang: tru.exe's saving-grab action is shared by the bad-attach states [O]). The time runs
+    // from the catch, through the start clip.
+    if (s_.savingGrab > 0) {
+        s_.savingGrab = std::max(0.0f, s_.savingGrab - dt);
+        if (s_.buttons.interact.buffered()) {
+            s_.buttons.interact.take();
+            s_.savingGrab = 0;
+            s_.climbWarp = true;
+            s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw; // climbTo / climbYawTo: the hold, as the attach set them
+            play(badClip(s_.climbStance, "end"), false);
+            return;
+        }
+        if (s_.savingGrab <= 0 || dropPressed) {
+            const vec3 out = s_.climbNormal;
+            s_.savingGrab = 0;
+            s_.climbHold = -1;
+            s_.regrabCooldown = 0.4f;
+            play(stanceClip(s_.climbStance, "drop"), false);
+            startFall(out * 150.0f);
+            return;
+        }
+        if (!s_.climbWarp) { advanceClip(dt); return; } // hanging low on the hold: nothing else to do
+    }
     // Attach / transition / step-off clips carry her to their target (warpStep); the idle / reach / antic
     // clips have no root motion: she stays at her hold.
     bool arrived = false;
@@ -264,24 +289,6 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
 
     const vec3 n = s_.climbNormal;
     const uint8_t stance = s_.climbStance;
-    // Bad attach: jump pulls her back up to the idle pose (the bad end clip, then the idle); else she lets go when
-    // the saving-grab time (difficulty "TIME FOR SAVING GRABS") runs out.
-    if (s_.savingGrab > 0) {
-        s_.savingGrab = std::max(0.0f, s_.savingGrab - dt);
-        if (jumpPressed) {
-            s_.savingGrab = 0;
-            s_.climbWarp = true;
-            s_.climbFrom = s_.climbTo = s_.pos;
-            s_.climbYawFrom = s_.climbYawTo = s_.yaw;
-            play(badClip(stance, "end"), false);
-        } else if (s_.savingGrab <= 0) {
-            s_.climbHold = -1;
-            s_.regrabCooldown = 0.4f;
-            play(stanceClip(stance, "drop"), false);
-            startFall(n * 150.0f);
-        }
-        return;
-    }
     // `stick`: the raw stick (x right, y up the rock), whichever way the camera looks.
     const vec3 right = glm::normalize(glm::cross(-n, vec3(0, 0, 1)));
     const vec2 dir = stick;

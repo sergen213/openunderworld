@@ -7,9 +7,12 @@
 
 #include <gtest/gtest.h>
 
+#include "app/game/Autopilot.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <set>
 
@@ -1497,4 +1500,787 @@ TEST(CombatReal, PoolManualAimHitsPanther) {
     std::printf("manual aim: %u shots, %d hits, panther %.0f -> %.0f\n", w.combat().shotsFired, hits, full, cat.health());
     EXPECT_GE(hits, 3);
     EXPECT_LT(cat.health(), full - 60);
+}
+
+// ---- close combat and carried objects (src/game/Melee.cpp; docs/GAMEPLAY.md "Close combat", "Carried objects") ----
+namespace {
+Actions press(bool game::Actions::*key, game::vec2 move = {0, 0}) {
+    Actions a;
+    a.*key = true, a.move = move;
+    return a;
+}
+} // namespace
+
+// lara.drm's melee numbers decode to the defaults: the chart states' attack records, the target height classes, the
+// melee slot and the hit windows of the kick clips.
+TEST(CombatReal, MeleeDataDecodes) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto t = game::loadMeleeTuning(bf);
+    ASSERT_TRUE(t);
+    const game::MeleeTuning def;
+    EXPECT_EQ(t->kick, (game::AttackRecord{60, 2}));
+    EXPECT_EQ(t->sprintKick, (game::AttackRecord{3, 2}));
+    EXPECT_EQ(t->fatality, (game::AttackRecord{100, game::kFinisherClass}));
+    EXPECT_EQ(t->swing, (game::AttackRecord{100, 2}));
+    EXPECT_EQ(t->vault, (game::AttackRecord{0, 1}));
+    EXPECT_FLOAT_EQ(t->low, def.low); // 63.21 / 316.06 / 537.29: 0.2 / 1 / 1.7 m
+    EXPECT_FLOAT_EQ(t->mid, def.mid);
+    EXPECT_FLOAT_EQ(t->high, def.high);
+    EXPECT_NEAR(t->mid, 316.056f, 0.01f);
+    EXPECT_EQ(t->range, 640.0f);
+    EXPECT_EQ(t->coneDeg, 90.0f);
+    EXPECT_EQ(t->windows, def.windows);
+    EXPECT_EQ(t->window("melee_kick_high"), (game::MeleeTuning::Window{3, 13}));
+    EXPECT_EQ(t->window("melee_thrall_fatality"), (game::MeleeTuning::Window{23, 23}));
+    const auto anims = game::loadLaraAnims(bf);
+    for (const auto n : game::kMeleeClipNames) EXPECT_TRUE(anims.find(n)) << n;
+    EXPECT_EQ(anims.melee.kick, def.kick);
+}
+
+// Interact next to a poacher kicks him (by his height: the highest kick), the blow lands in the clip's hit window for
+// the kick record's 60 and knocks him off his feet; he gets up and fights on. Interact with nothing there kicks the air.
+TEST(CombatReal, KickKnocksAPoacherDown) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(loader, "l4_pool", anims);
+    const auto poacher = game::ai::loadEnemyType(bf, "poacher");
+    ASSERT_FALSE(poacher->knockFront.fall.empty());
+    const vec3 lara = w.player().state().pos;
+    const float yaw = w.player().state().yaw;
+    const vec3 fwd(std::cos(yaw), std::sin(yaw), 0);
+    auto& e = w.enemies().add(poacher, 990001, lara + fwd * 330.0f, yaw + 3.14159f);
+    const float full = e.health();
+    for (int i = 0; i < 3; ++i) w.tick({});
+    ASSERT_EQ(w.meleeTarget(), &e);
+    w.tick(press(&Actions::interact));
+    EXPECT_EQ(w.player().state().state, State::Melee);
+    // by his top over her feet: under 537.3 the high kick, else the highest
+    const float top = e.position().z - w.player().state().pos.z + poacher->tuning.top;
+    EXPECT_GT(top, anims.melee.mid);
+    const std::string kick = top < anims.melee.high ? "melee_kick_high" : "melee_kick_highest";
+    EXPECT_EQ(w.player().state().clip, kick) << top;
+    EXPECT_EQ(w.melee().move, game::MeleeState::Move::Kick);
+    int hitTick = -1, knocked = -1, up = -1, idle = -1;
+    std::string fall;
+    for (int i = 1; i < 60 * 8 && up < 0; ++i) {
+        w.tick({});
+        if (hitTick < 0 && e.health() < full) hitTick = i;
+        if (knocked < 0 && e.state().mode == game::ai::Mode::Knocked) knocked = i, fall = e.state().clip;
+        if (knocked >= 0 && e.state().mode != game::ai::Mode::Knocked) up = i;
+        if (idle < 0 && w.player().state().state == State::Idle) idle = i;
+    }
+    // inside the clip's hit window (30 Hz frames; 60 Hz ticks)
+    const auto win = anims.melee.window(kick);
+    EXPECT_GE(hitTick, 2 * win.open - 1) << kick;
+    EXPECT_LE(hitTick, 2 * win.close + 3);
+    EXPECT_FLOAT_EQ(e.health(), full - 60.0f);
+    EXPECT_EQ(knocked, hitTick);
+    EXPECT_EQ(fall, poacher->knockFront.fall);
+    EXPECT_GT(up, knocked + 30) << "the fall and the get-up clips";
+    EXPECT_TRUE(e.alive());
+    EXPECT_GT(idle, 30);
+    EXPECT_LE(idle, 70) << "the kick clips last 0.93 / 1.03 s";
+}
+
+namespace {
+vec3 introPos(const cdc::BigfileSet& bf, const std::string& unit, int32_t uid) {
+    for (const auto& in : formats::parseUnit(*game::loadUnitData(bf, unit).drm).intros)
+        if (in.uniqueId == uid) return {in.position[0], in.position[1], in.position[2]};
+    return vec3(0);
+}
+vec3 objectPos(const game::World& w, int32_t uid) {
+    const auto* o = w.script().find(uid);
+    return o ? o->pos + o->offset : vec3(0);
+}
+// Ticks `n` times with `a`, then releases the keys for one tick.
+void hold(game::World& w, Actions a, int n) {
+    for (int i = 0; i < n; ++i) w.tick(a);
+    w.tick({});
+}
+
+// Runs an autopilot plan (app/game/Autopilot.hpp: ordinary inputs) to its end; `each` after every tick.
+bool runPlan(game::World& w, const std::string& plan, const std::function<void()>& each = {}) {
+    auto pilot = app::Autopilot::parse(plan);
+    const uint64_t start = w.ticks();
+    while (!pilot.done() && w.ticks() - start < 60 * 120) {
+        w.tick(pilot.step(w.ticks() - start, w));
+        if (each) each();
+    }
+    EXPECT_FALSE(pilot.failed()) << pilot.failure();
+    return pilot.done() && !pilot.failed();
+}
+
+// A synthetic library with the melee / knock-down clips as still clips of the originals' lengths (30 Hz keys).
+std::unique_ptr<game::World> meleeWorld(std::initializer_list<std::pair<const char*, int>> clips) {
+    CollisionMesh m;
+    addFloor(m, -4000, -4000, 4000, 4000, 0);
+    m.build();
+    game::AnimLibrary a;
+    a.skeleton.bones.resize(1);
+    anim::Clip still;
+    still.keyCount = 20, still.timePerKey = 100, still.tracks.resize(1);
+    a.clips["ng_idle"] = still;
+    a.clips["ng_run"] = still;
+    for (const auto& [name, keys] : clips) {
+        anim::Clip c = still;
+        c.keyCount = keys;
+        a.clips[name] = c;
+    }
+    return std::make_unique<game::World>(std::move(m), std::move(a), game::Spawn{{0, 0, 0}, 0});
+}
+} // namespace
+
+// Synthetic: interact by a target kicks it by its height class; the kick record's 60 lands once, inside the clip's hit
+// window, and only on a target within her reach. With nothing there she kicks the air; without the clips nothing happens.
+TEST(Combat, KickLandsInItsWindow) {
+    auto w = meleeWorld({{"melee_kick_low", 21}, {"melee_kick_mid", 36}, {"melee_kick_high", 28}, {"melee_kick_highest", 31}, {"melee_kick_move", 21}});
+    game::DummyTarget t, far, low;
+    t.pos = {260, 0, 0};       // 500 tall: the high class (316..537)
+    far.pos = {0, 3000, 0};
+    low.pos = {0, -3000, 0}, low.h = 50; // under 63.2: the low kick
+    w->targets = {&t, &far, &low};
+    for (int i = 0; i < 3; ++i) w->tick({});
+    EXPECT_EQ(w->meleeTarget(), &t);
+    w->tick(press(&Actions::interact));
+    ASSERT_EQ(w->player().state().state, State::Melee);
+    EXPECT_EQ(w->player().state().clip, "melee_kick_high");
+    int hit = -1, idle = -1;
+    for (int i = 1; i < 90; ++i) {
+        w->tick(press(&Actions::interact)); // held: one press, one kick
+        if (hit < 0 && t.hits) hit = i;
+        if (idle < 0 && w->player().state().state == State::Idle) idle = i;
+    }
+    EXPECT_GE(hit, 5); // frames 3..13 at 30 Hz
+    EXPECT_LE(hit, 27);
+    EXPECT_EQ(t.hits, 1);
+    EXPECT_FLOAT_EQ(t.hp, 700.0f - 60.0f);
+    EXPECT_EQ(far.hits, 0);
+    EXPECT_NEAR(idle, 56, 3); // 28 keys
+    EXPECT_EQ(w->player().state().state, State::Idle) << "the held key does not kick again";
+    // out of reach (the melee slot's 640 from her eye; her leg reaches 190 beyond the capsules): the kick misses
+    t.pos = {560, 0, 0};
+    w->tick({});
+    ASSERT_EQ(w->meleeTarget(), &t);
+    hold(*w, press(&Actions::interact), 2);
+    EXPECT_EQ(w->player().state().state, State::Melee);
+    for (int i = 0; i < 90; ++i) w->tick({});
+    EXPECT_EQ(t.hits, 1) << "she closes 1200 units/s for 0.1 s before the window: still out of reach";
+    // nothing in the slot: the mid kick at the air
+    t.pos = {5000, 0, 0};
+    w->tick({});
+    EXPECT_EQ(w->meleeTarget(), nullptr);
+    hold(*w, press(&Actions::interact), 2);
+    EXPECT_EQ(w->player().state().clip, "melee_kick_mid");
+    for (int i = 0; i < 90; ++i) w->tick({});
+    EXPECT_EQ(w->player().state().state, State::Idle);
+    EXPECT_EQ(t.hits + far.hits + low.hits, 1);
+    // a low target: the low kick
+    low.pos = {200, 0, 0};
+    w->tick({});
+    hold(*w, press(&Actions::interact), 2);
+    EXPECT_EQ(w->player().state().clip, "melee_kick_low");
+    for (int i = 0; i < 60; ++i) w->tick({});
+    EXPECT_EQ(low.hits, 1);
+    // a library without the clips: interact is no kick
+    auto plain = makeWorld([] { CollisionMesh m; addFloor(m, -1000, -1000, 1000, 1000, 0); return m; }(), {0, 0, 0});
+    hold(*plain, press(&Actions::interact), 2);
+    EXPECT_EQ(plain->player().state().state, State::Idle);
+}
+
+// The launch of a thrown portable as tru.exe 0x6A6F40 solves it: the horizontal speed fixed, the flight time from the
+// distance, gravity 3 per frame^2, the vertical speed capped.
+TEST(Combat, ThrowVelocityAsTheExe) {
+    const game::PortableDef d; // the carved weights' numbers
+    EXPECT_FLOAT_EQ(d.aimDist, 2528.45f);
+    EXPECT_FLOAT_EQ(d.speed, 53.7295f);
+    // a far aim point (8 m ahead, 358 down): 47.06 frames, 1.5 x 47.06 - 7.6 = 63 > the cap: capped at the speed
+    const vec3 far = game::throwVelocity({0, 0, 358}, {2528.45f, 0, 0}, d.speed, d.speed);
+    EXPECT_NEAR(far.x, 53.7295f * 30, 0.01f);
+    EXPECT_EQ(far.y, 0);
+    EXPECT_NEAR(far.z, 53.7295f * 30, 0.01f);
+    // a near one (a wall 300 ahead, level): 5.58 frames, up 1.5 x 5.58 a frame
+    const vec3 nearV = game::throwVelocity({0, 0, 358}, {0, 300, 358}, d.nearSpeed, d.speed);
+    EXPECT_NEAR(nearV.y, 53.7295f * 30, 0.01f);
+    EXPECT_NEAR(nearV.z, 1.5f * (300 / 53.7295f) * 30, 0.01f);
+}
+
+// Thrown off her feet (World::throwLara, the blast of a grenade): the thrown clip skidding with the knock, the landing,
+// lying, the get-up; jump while she lies gets her up at once; the input is locked meanwhile.
+TEST(Combat, KnockedDownAndGetsUp) {
+    const auto clips = {std::pair{"Hit_ThrownFront", 11}, std::pair{"Hit_LandFront", 12}, std::pair{"Hit_getupback", 14},
+                        std::pair{"hitReact_thrownBack", 11}, std::pair{"hitReact_landBack", 8}, std::pair{"Hit_GetupFront", 13}};
+    const auto run = [&](vec3 vel, bool tapJump) {
+        auto w = meleeWorld(clips);
+        for (int i = 0; i < 3; ++i) w->tick({});
+        w->throwLara(vel);
+        EXPECT_EQ(w->player().state().state, State::Knocked);
+        std::vector<std::string> seen{w->player().state().clip};
+        int up = -1;
+        Actions run;
+        run.move = {0, 1};
+        for (int i = 0; i < 400 && up < 0; ++i) {
+            Actions a = run; // the stick does nothing while she is down
+            a.jump = tapJump && i % 10 < 5;
+            w->tick(a);
+            if (w->player().state().clip != seen.back()) seen.push_back(w->player().state().clip);
+            if (w->player().state().state != State::Knocked) up = i;
+        }
+        return std::tuple{seen, up, w->player().state().pos};
+    };
+    // a blast in front of her (she faces +x): thrown onto her back (the clips' root motion in lara.drm: the back landing
+    // moves her backwards, the front landing forwards; CombatReal.GrenadeBlastKnocksLaraDownAndSheGetsUp)
+    const auto [front, upFront, posFront] = run({-600, 0, 0}, false);
+    EXPECT_EQ(front[0], "hitReact_thrownBack");
+    EXPECT_EQ(front[1], "hitReact_landBack");
+    EXPECT_EQ(front[2], "Hit_getupback");
+    EXPECT_LT(posFront.x, -50.0f) << "skidded away from the blast";
+    EXPECT_GT(posFront.x, -400.0f);
+    EXPECT_NEAR(upFront, 22 + 16 + 60 + 28, 6) << "thrown 11 keys, landing 8, lying 1 s, get-up 14";
+    const auto [back, upBack, posBack] = run({600, 0, 0}, true); // from behind: onto her front
+    EXPECT_EQ(back[0], "Hit_ThrownFront");
+    EXPECT_EQ(back[1], "Hit_LandFront");
+    EXPECT_EQ(back[2], "Hit_GetupFront");
+    EXPECT_NEAR(upBack, 22 + 24 + 26, 12) << "jump gets her up without the wait";
+    EXPECT_GT(posBack.x, 50.0f);
+}
+
+// Target lock + crouch with the stick: the evasive roll that way; + jump with the stick aside or back: the evasive leap.
+TEST(Combat, EvasiveRollsAndLeapsUnderLock) {
+    const auto clips = {std::pair{"combat_rollfront", 11}, std::pair{"combat_rollback", 13}, std::pair{"combat_rollleft", 12},
+                        std::pair{"combat_rollright", 12}, std::pair{"combat_jumpl_takeoff", 6}, std::pair{"combat_jumpl_inair", 10},
+                        std::pair{"combat_jumpr_takeoff", 6}, std::pair{"combat_jumpr_inair", 10}, std::pair{"combat_jumpb_takeoff", 6},
+                        std::pair{"combat_jumpb_inair", 10}};
+    const auto move = [&](game::vec2 stick, bool game::Actions::*key, bool lock) {
+        auto w = meleeWorld(clips);
+        game::DummyTarget t;
+        t.pos = {1500, 0, 0};
+        w->targets = {&t};
+        for (int i = 0; i < 30; ++i) w->tick(guns(false, lock));
+        EXPECT_EQ(w->combat().locked, lock);
+        Actions a = guns(false, lock);
+        a.move = stick, a.*key = true;
+        w->tick(a);
+        const std::string clip = w->player().state().clip;
+        const State st = w->player().state().state;
+        a.*key = false, a.move = {0, 0};
+        float peak = 0;
+        for (int i = 0; i < 120; ++i) w->tick(a), peak = std::max(peak, w->player().state().pos.z);
+        w->targets.clear();
+        return std::tuple{clip, st, w->player().state().pos, peak};
+    };
+    // she faces +x (the camera behind her): stick right = -y
+    EXPECT_EQ(std::get<0>(move({-1, 0}, &Actions::drop, true)), "combat_rollleft");
+    EXPECT_EQ(std::get<0>(move({1, 0}, &Actions::drop, true)), "combat_rollright");
+    EXPECT_EQ(std::get<0>(move({0, 1}, &Actions::drop, true)), "combat_rollfront");
+    EXPECT_EQ(std::get<0>(move({0, -1}, &Actions::drop, true)), "combat_rollback");
+    EXPECT_EQ(std::get<1>(move({-1, 0}, &Actions::drop, true)), State::Melee);
+    EXPECT_NE(std::get<1>(move({-1, 0}, &Actions::drop, false)), State::Melee) << "no lock: the plain crouch";
+    const auto [clip, st, pos, peak] = move({-1, 0}, &Actions::jump, true);
+    EXPECT_EQ(clip, "combat_jumpl_takeoff");
+    EXPECT_GT(pos.y, 300.0f) << "leapt to her left";
+    EXPECT_GT(peak, 50.0f);
+    EXPECT_NEAR(pos.z, 0, 1);
+    EXPECT_LT(std::get<2>(move({1, 0}, &Actions::jump, true)).y, -300.0f);
+    EXPECT_LT(std::get<2>(move({0, -1}, &Actions::jump, true)).x, -300.0f);
+    EXPECT_NE(std::get<0>(move({0, 1}, &Actions::jump, true)), "combat_jumpb_takeoff") << "forward: the plain jump";
+}
+
+// A spider under her foot: the kick class of a target under 63.2 is the low kick (the stomp), and its 60 kills it.
+TEST(CombatReal, StompKillsASpider) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l4_pool", game::loadLaraAnims(bf));
+    const auto spider = game::ai::loadEnemyType(bf, "small_brown_spider");
+    EXPECT_GT(spider->tuning.top, 0);
+    EXPECT_LT(spider->tuning.top, game::MeleeTuning{}.low) << "a small spider's back is under the low class";
+    const auto& s = w.player().state();
+    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
+    auto& e = w.enemies().add(spider, 990001, s.pos + fwd * 230.0f, s.yaw + 3.14159f);
+    for (int i = 0; i < 2; ++i) w.tick({});
+    ASSERT_EQ(w.meleeTarget(), &e);
+    hold(w, press(&Actions::interact), 2);
+    EXPECT_EQ(w.player().state().clip, "melee_kick_low");
+    for (int i = 0; i < 60 && e.alive(); ++i) w.tick({});
+    EXPECT_FALSE(e.alive());
+    EXPECT_EQ(e.state().mode, game::ai::Mode::Dead);
+}
+
+// From the sprint, interact is the flying kick (melee_kick_move) with its own record: 3 damage, and the target goes
+// down all the same. Standing with nothing near: the mid kick at the air; running: the moving kick.
+TEST(CombatReal, SprintKickAndAirKicks) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(loader, "l1_baldrs_tomb", anims, game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    for (int i = 0; i < 30; ++i) w.tick({});
+    hold(w, press(&Actions::interact), 2);
+    EXPECT_EQ(w.player().state().clip, "melee_kick_mid");
+    for (int i = 0; i < 90; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().state, State::Idle);
+    Actions run;
+    run.move = {0, 1};
+    for (int i = 0; i < 40; ++i) w.tick(run);
+    ASSERT_EQ(w.player().state().state, State::Run);
+    Actions kick = run;
+    kick.interact = true;
+    w.tick(kick);
+    EXPECT_EQ(w.player().state().clip, "melee_kick_move");
+    EXPECT_FALSE(w.melee().sprint);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().state, State::Idle);
+    // the sprint kick into a poacher (a fresh run down the room)
+    game::World w2(loader, "l1_baldrs_tomb", anims, game::Spawn{{-6900, -10000, 2560}, 0});
+    for (int i = 0; i < 20; ++i) w2.tick({});
+    const auto poacher = game::ai::loadEnemyType(bf, "poacher");
+    Actions sprint = run;
+    sprint.sprint = true;
+    int n = 0;
+    while (w2.player().state().clip != "sprint_loop" && ++n < 200) w2.tick(sprint);
+    ASSERT_EQ(w2.player().state().clip, "sprint_loop");
+    const auto& s = w2.player().state();
+    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
+    auto& e = w2.enemies().add(poacher, 990001, s.pos + fwd * 520.0f, s.yaw + 3.14159f);
+    const float full = e.health();
+    kick = sprint, kick.interact = true;
+    w2.tick(kick);
+    EXPECT_EQ(w2.player().state().clip, "melee_kick_move");
+    EXPECT_TRUE(w2.melee().sprint);
+    bool knocked = false;
+    for (int i = 0; i < 50; ++i) w2.tick({}), knocked |= e.state().mode == game::ai::Mode::Knocked;
+    EXPECT_FLOAT_EQ(e.health(), full - anims.melee.sprintKick.damage); // 3
+    EXPECT_TRUE(knocked);
+}
+
+// Running at the locked melee target, jump vaults off it: her clip is the enemy's hosted_enemy_vault, it plays its
+// vault reaction and takes no damage (the vault record: 0). A tiger; soldiers have no plain vault reaction.
+TEST(CombatReal, VaultOffAnEnemy) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    const auto tiger = game::ai::loadEnemyType(bf, "tiger");
+    ASSERT_TRUE(tiger->laraVault);
+    EXPECT_EQ(tiger->vaultClip, "hitreact_vault");
+    EXPECT_TRUE(game::ai::loadEnemyType(bf, "poacher")->vaultClip.empty());
+    EXPECT_EQ(game::ai::loadEnemyType(bf, "naga_red")->vaultClip, "hit_react_vault");
+    for (int i = 0; i < 10; ++i) w.tick({});
+    const auto& s = w.player().state();
+    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
+    auto& e = w.enemies().add(tiger, 990001, s.pos + fwd * 1500.0f, s.yaw + 3.14159f);
+    const float full = e.health();
+    Actions run = guns(false, true); // target lock held
+    run.move = {0, 1};
+    int n = 0;
+    while (!(w.meleeTarget() == &e && w.player().state().state == State::Run && w.combat().locked) && ++n < 300) w.tick(run);
+    ASSERT_EQ(w.meleeTarget(), &e);
+    ASSERT_TRUE(w.combat().locked);
+    ASSERT_EQ(w.player().state().state, State::Run);
+    Actions jump = run;
+    jump.jump = true;
+    w.tick(jump);
+    EXPECT_EQ(w.player().state().state, State::Melee);
+    EXPECT_EQ(w.player().state().clip, "vault:tiger");
+    EXPECT_EQ(w.melee().move, game::MeleeState::Move::Vault);
+    EXPECT_EQ(e.state().mode, game::ai::Mode::Knocked);
+    EXPECT_EQ(e.state().clip, tiger->vaultClip);
+    EXPECT_GE(e.health(), full - 1.0f);
+    for (int i = 0; i < 200 && w.player().state().state == State::Melee; ++i) w.tick({});
+    EXPECT_NE(w.player().state().state, State::Melee);
+}
+
+// A thrall shot down lies to regenerate; interact beside it is the finishing move (melee_thrall_fatality): its blow at
+// frame 23 ends the thrall for good (it breaks into its chunks). One left alone gets up again at full health.
+TEST(CombatReal, FatalityEndsADownedThrall) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    const auto viking = game::ai::loadEnemyType(bf, "viking_thrall");
+    ASSERT_TRUE(viking->regenerates());
+    EXPECT_EQ(viking->permanentDeath, "death_permanent");
+    for (int i = 0; i < 10; ++i) w.tick({});
+    const auto& s = w.player().state();
+    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0), left(-fwd.y, fwd.x, 0);
+    auto& a = w.enemies().add(viking, 990001, s.pos + fwd * 900.0f, s.yaw + 3.14159f);
+    auto& b = w.enemies().add(viking, 990002, s.pos - fwd * 1500.0f + left * 800.0f, s.yaw);
+    // the far one: knocked down by a lethal pistol round (set-up); the near one: shot down with the pistols
+    game::Hit bullet{b.health(), b.aimPoint(), -fwd, game::Team::Player};
+    bullet.damageClass = 0, bullet.damageType = 1;
+    b.onHit(bullet);
+    ASSERT_EQ(b.state().mode, game::ai::Mode::Down);
+    int n = 0;
+    while (a.state().mode != game::ai::Mode::Down && ++n < 60 * 20) w.tick(guns(true));
+    ASSERT_EQ(a.state().mode, game::ai::Mode::Down) << "the pistols only knock it down";
+    EXPECT_TRUE(a.alive());
+    // walk up to it and finish it
+    n = 0;
+    Actions walk;
+    walk.move = {0, 1};
+    while (w.meleeTarget(true) != &a && ++n < 600) w.tick(walk);
+    ASSERT_EQ(w.meleeTarget(true), &a) << "the fatality slot: a regenerating thrall within 640";
+    EXPECT_EQ(w.meleeTarget(), nullptr) << "not a kick target";
+    hold(w, press(&Actions::interact), 2);
+    EXPECT_EQ(w.player().state().clip, "melee_thrall_fatality");
+    EXPECT_EQ(w.melee().move, game::MeleeState::Move::Fatality);
+    int dead = -1;
+    for (int i = 3; i < 90 && dead < 0; ++i) {
+        w.tick({});
+        if (!a.alive()) dead = i;
+    }
+    EXPECT_NEAR(dead, 46, 3) << "event 0x6D at frame 23";
+    EXPECT_EQ(a.state().mode, game::ai::Mode::Dead);
+    bool chunks = false;
+    for (int i = 0; i < 60 * 17; ++i) {
+        w.tick({});
+        chunks |= a.state().ragdollPhase == 4;
+    }
+    EXPECT_TRUE(chunks) << "the dead thrall breaks into its chunks";
+    EXPECT_FALSE(a.alive()) << "it stays dead past the 15 s it would have lain";
+    EXPECT_TRUE(b.alive());
+    EXPECT_NE(b.state().mode, game::ai::Mode::Down) << "the other one got up again";
+    EXPECT_FLOAT_EQ(b.health(), viking->tuning.health);
+}
+
+// l1_baldrs_tomb: her own grenade stuck to a target half its radius ahead goes off within its radius of her: the blast's knock
+// throws her off her feet in the real unit (the thrown clip, the landing), she lies and gets up again, alive, on the
+// room's floor; the stick does nothing meanwhile.
+TEST(CombatReal, GrenadeBlastKnocksLaraDownAndSheGetsUp) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    for (int i = 0; i < 10; ++i) w.tick({});
+    const auto& s = w.player().state();
+    const float floorZ = s.pos.z;
+    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0), start = s.pos;
+    const auto& g = w.anims().grenade;
+    game::DummyTarget e; // a still target for the grenade to stick to
+    e.pos = s.pos + fwd * (0.5f * g.radius);
+    w.targets.push_back(&e);
+    struct Drop { game::World& w; ~Drop() { w.targets.clear(); } } drop{w};
+    int n = 0;
+    while (!(w.combat().locked && w.combat().target == &e) && ++n < 120) w.tick(guns(false));
+    ASSERT_EQ(w.combat().target, &e);
+    Actions throwIt = guns(false);
+    throwIt.grenade = true;
+    w.tick(throwIt);
+    int knocked = -1, exploded = -1;
+    float blast = -1;
+    for (int i = 0; i < 600 && knocked < 0; ++i) {
+        w.tick(guns(false));
+        if (exploded < 0 && !w.explosions().empty()) exploded = i, blast = glm::distance(w.explosions()[0], s.pos);
+        if (s.state == State::Knocked) knocked = i;
+    }
+    ASSERT_GE(exploded, 0) << "her grenade went off";
+    ASSERT_GE(knocked, 0) << "the blast threw her: " << blast << " from her, radius " << g.radius << ", state "
+                          << game::stateName(s.state) << " health " << w.health().value();
+    EXPECT_EQ(s.clip, "hitReact_thrownBack") << "the blast in front of her throws her back";
+    EXPECT_GT(w.health().value(), 0.0f);
+    std::vector<std::string> seen{s.clip};
+    Actions run;
+    run.move = {0, 1};
+    int up = -1;
+    for (int i = 0; i < 600 && up < 0; ++i) {
+        w.tick(run);
+        if (s.clip != seen.back()) seen.push_back(s.clip);
+        if (s.state != State::Knocked) up = i;
+    }
+    ASSERT_GE(up, 0) << "she got up";
+    ASSERT_GE(seen.size(), 3u);
+    EXPECT_EQ(seen[1], "hitReact_landBack");
+    EXPECT_EQ(seen[2], "Hit_getupback");
+    EXPECT_GT(up, 90) << "thrown, landed, lay a second, got up";
+    EXPECT_GT(glm::dot(start - s.pos, fwd), 30.0f) << "skidded away from the blast";
+    EXPECT_NEAR(s.pos.z, floorZ, 5.0f);
+    for (int i = 0; i < 30; ++i) w.tick(run);
+    EXPECT_TRUE(s.state == State::Run || s.state == State::Walk) << "on her feet again: the stick moves her";
+}
+
+// l1_baldrs_sideroom: interact by treasure urn 94 kicks it; the kick's hit breaks it (its uber section 0 -> 2 on any
+// damage) and it gives birth to its treasure. A contact slower than its 379.3 does not break an urn, a faster one does.
+TEST(CombatReal, KickBreaksAnUrn) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l1_baldrs_sideroom", game::loadLaraAnims(bf), game::Spawn{{4686, 4078, 2075}, 1.5708f});
+    w.script().setBigfile(&bf);
+    for (int i = 0; i < 20; ++i) w.tick({});
+    const vec3 urn = objectPos(w, 94);
+    ASSERT_TRUE(w.uberState(94));
+    EXPECT_EQ((*w.uberState(94))[0], 0u);
+    ASSERT_TRUE(runPlan(w, "go " + std::to_string(urn.x) + " " + std::to_string(urn.y - 230) + " 25 walk\nface 90\nwait 0.5\n"));
+    w.impulseObject(94, 0, 300.0f); // a body touching it slowly: under its trigger 7's 379.27
+    w.tick({});
+    EXPECT_EQ((*w.uberState(94))[0], 0u);
+    hold(w, press(&Actions::interact), 2);
+    ASSERT_EQ(w.player().state().state, State::Melee);
+    EXPECT_TRUE(w.player().state().clip.starts_with("melee_kick_")) << w.player().state().clip;
+    bool broke = false;
+    for (int i = 0; i < 120; ++i) {
+        w.tick({});
+        broke |= (*w.uberState(94))[0] != 0u;
+    }
+    EXPECT_TRUE(broke);
+    EXPECT_TRUE(w.born.contains(94 | 0x20000000)) << "its treasure";
+    // a body running into an urn faster than 379.27 breaks it (a thrown or falling weight)
+    game::World w2(loader, "l1_baldrs_sideroom", game::loadLaraAnims(bf), game::Spawn{{4686, 4078, 2075}, 1.5708f});
+    w2.script().setBigfile(&bf);
+    for (int i = 0; i < 20; ++i) w2.tick({});
+    ASSERT_TRUE(w2.uberState(94));
+    w2.impulseObject(94, 0, 400.0f);
+    w2.tick({});
+    EXPECT_NE((*w2.uberState(94))[0], 0u);
+}
+
+// l1_baldrs_tomb: the carried weight collides with the level. Walked at each wall of the west room in turn, the weight
+// (a sphere of its thickness round its origin) never enters a wall and nothing lies between her chest and it; the wall
+// holds her off farther than her own radius would. Put down against the wall it is a loose rigid body from her hands,
+// resting on the floor, outside the wall.
+TEST(CombatReal, CarriedWeightCollidesWithTheLevel) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    w.script().setBigfile(&bf);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto* def = w.portableDef("ms_pt_weight_c");
+    ASSERT_TRUE(def);
+    EXPECT_NEAR(def->thick, 104.0f, 1.0f) << "the smallest half extent of its collision box";
+    EXPECT_LT(def->thick, 200.0f);
+    ASSERT_TRUE(runPlan(w, "engage 220 walk\npress\nwait 2\n"));
+    ASSERT_EQ(w.heldPortable(), 220);
+    const auto& s = w.player().state();
+    const float floorZ = s.pos.z;
+    const auto wallNear = [&](vec3 p, float r) { // distance to the nearest wall face within r, else r
+        const auto hit = w.collision().closestPoint(p, r, collision::kSightMask);
+        return hit && std::abs(hit->normal.z) < 0.7f ? hit->t : r;
+    };
+    int walls = 0;
+    for (const int deg : {180, 90, 270}) {
+        const float yaw = glm::radians(float(deg));
+        const vec3 dir(std::cos(yaw), std::sin(yaw), 0);
+        const auto wall = w.collision().raycast(s.pos + vec3(0, 0, 250), dir, 4000, collision::kSightMask);
+        if (!wall || std::abs(wall->normal.z) > 0.3f) continue;
+        ++walls;
+        float least = 1e9f;
+        bool blocked = false;
+        ASSERT_TRUE(runPlan(w, "run " + std::to_string(deg) + " " + std::to_string(wall->t / 250.0f + 3.0f) + "\n", [&] {
+            if (w.heldPortable() != 220) return;
+            const vec3 at = objectPos(w, 220);
+            least = std::min(least, wallNear(at, def->thick));
+            const vec3 chest = s.pos + vec3(0, 0, std::max(at.z - s.pos.z, 250.0f));
+            if (const float len = glm::length(at - chest); len > 1.0f)
+                blocked |= w.collision().raycast(chest, (at - chest) / len, len, collision::kSightMask).has_value();
+        }));
+        ASSERT_EQ(w.heldPortable(), 220);
+        EXPECT_GT(least, def->thick - 12.0f) << "heading " << deg << ": the weight stayed out of the wall";
+        EXPECT_FALSE(blocked) << "heading " << deg << ": nothing between her and the weight";
+        const auto ahead = w.collision().raycast(s.pos + vec3(0, 0, 250), dir, 1000, collision::kSightMask);
+        ASSERT_TRUE(ahead) << "she walked up to the wall";
+        EXPECT_GT(ahead->t, w.player().tuning().radius + 20.0f) << "heading " << deg << ": held off by the weight";
+        EXPECT_LT(ahead->t, 500.0f);
+    }
+    EXPECT_GE(walls, 2);
+    // put down against the last wall: a loose body from her hands
+    hold(w, press(&Actions::drop), 2);
+    for (int i = 0; i < 240; ++i) w.tick({});
+    EXPECT_EQ(w.heldPortable(), 0);
+    const auto* o = w.script().find(220);
+    ASSERT_TRUE(o && o->loose);
+    ASSERT_TRUE(w.physics().loose(220)) << "a rigid body in the scene";
+    const vec3 rest = objectPos(w, 220);
+    EXPECT_LT(rest.z, floorZ + 200.0f) << "on the floor";
+    EXPECT_GT(rest.z, floorZ - 20.0f);
+    EXPECT_GT(wallNear(rest + vec3(0, 0, def->thick), def->thick * 0.5f), def->thick * 0.5f - 1.0f) << "not in the wall";
+    EXPECT_LT(glm::length(glm::vec2(rest - s.pos)), 500.0f) << "by her";
+}
+
+// l1_baldrs_tomb (walkthrough requirement C04-03): the carved weight 220. Interact picks it up (its hosted_pickup clip:
+// in her hands from the clip's event), she walks with the portable_encumbered clips, Interact elsewhere swings it and
+// keeps it, Crouch puts it down (hosted_putdown) on press plate 219, where it lies as a loose body.
+TEST(CombatReal, WeightPickedUpCarriedAndPutDown) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    w.script().setBigfile(&bf);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto* def = w.portableDef("ms_pt_weight_c");
+    ASSERT_TRUE(def);
+    EXPECT_TRUE(def->encumbers);
+    EXPECT_EQ(def->frame("hosted_pickup", 0x4E), 17);
+    EXPECT_EQ(def->frame("hosted_putdown", 0x4F), 20);
+    EXPECT_EQ(def->frame("hosted_throw", 0x53), 27);
+    EXPECT_NEAR(def->aimDist, 2528.45f, 0.01f); // 8 m
+    EXPECT_NEAR(def->speed, 53.7295f, 0.0001f);
+    EXPECT_NEAR(def->nearDist, 632.111f, 0.01f);
+    const auto* pole = w.portableDef("ar_pt_pole_a");
+    ASSERT_TRUE(pole);
+    EXPECT_FALSE(pole->encumbers);
+    EXPECT_NEAR(pole->aimDist, 1264.22f, 0.01f);
+    EXPECT_EQ(w.portableDef("lara"), nullptr);
+    ASSERT_TRUE(runPlan(w, "engage 220 walk\n"));
+    const vec3 rest = objectPos(w, 220);
+    w.tick(press(&Actions::interact));
+    EXPECT_EQ(w.player().state().state, State::Melee);
+    EXPECT_EQ(w.player().state().clip, *def->clip("hosted_pickup"));
+    int took = -1;
+    for (int i = 1; i < 120; ++i) {
+        w.tick({});
+        if (took < 0 && w.heldPortable() == 220) took = i;
+        if (took < 0) { EXPECT_EQ(objectPos(w, 220), rest) << "on the floor until her hands take it"; }
+    }
+    EXPECT_NEAR(took, 34, 2) << "event 0x4E at frame 17";
+    EXPECT_EQ(w.player().state().state, State::Idle);
+    EXPECT_EQ(w.player().state().clip, "portable_encumbered_idle");
+    EXPECT_GT(objectPos(w, 220).z, w.player().state().pos.z + 200) << "in her hands";
+    // the encumbered walk: slower than a run, whatever the stick
+    Actions run;
+    run.move = {0, 1}, run.sprint = true;
+    const vec3 from = w.player().state().pos;
+    for (int i = 0; i < 120; ++i) w.tick(run);
+    EXPECT_EQ(w.player().state().clip, "portable_encumbered_walk");
+    const float speed = glm::distance(from, w.player().state().pos) / 2.0f;
+    EXPECT_GT(speed, 150.0f);
+    EXPECT_LT(speed, 600.0f) << speed;
+    for (int i = 0; i < 60; ++i) w.tick({});
+    // Interact with nothing to insert it into swings it; it stays in her hands
+    hold(w, press(&Actions::interact), 2);
+    EXPECT_EQ(w.player().state().clip, *def->clip("hosted_melee"));
+    EXPECT_EQ(w.melee().move, game::MeleeState::Move::Swing);
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_EQ(w.heldPortable(), 220);
+    // onto plate 219, Crouch puts it down
+    const vec3 plate = introPos(bf, "l1_baldrs_tomb", 219);
+    ASSERT_TRUE(runPlan(w, "go " + std::to_string(plate.x - 120) + " " + std::to_string(plate.y) + " 30 walk\nface 0\nwait 0.5\n"));
+    ASSERT_EQ(w.heldPortable(), 220);
+    w.tick(press(&Actions::drop));
+    EXPECT_EQ(w.player().state().clip, *def->clip("hosted_putdown"));
+    int down = -1;
+    for (int i = 1; i < 120; ++i) {
+        w.tick({});
+        if (down < 0 && !w.heldPortable()) down = i;
+    }
+    EXPECT_NEAR(down, 40, 2) << "event 0x4F at frame 20";
+    EXPECT_EQ(w.player().state().state, State::Idle);
+    EXPECT_EQ(w.player().state().clip, "ng_idle");
+    // she walks off the plate: the weight stays where she put it
+    ASSERT_TRUE(runPlan(w, "go -5000 -10000 60\nwait 3\n"));
+    EXPECT_LT(glm::distance(game::vec2(objectPos(w, 220)), game::vec2(plate)), 260.0f) << "it lies on the plate";
+    EXPECT_LT(objectPos(w, 220).z, w.player().state().pos.z + 150.0f) << "down from her hands";
+}
+
+// C04-03: standing on plate 219's door-side edge with the weight (the plate holds door 223 open only while loaded),
+// Grenade throws it (hosted_throw: it leaves her hands on event 0x53 at frame 27) on its arc through the doorway; it
+// lands beyond the door and comes to rest by physics. A poacher in its way takes the swung-portable record's 100 and
+// goes down.
+TEST(CombatReal, WeightThrownThroughTheDoor) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const vec3 plate = introPos(bf, "l1_baldrs_tomb", 219), doorAt = introPos(bf, "l1_baldrs_tomb", 223);
+    const auto poacher = game::ai::loadEnemyType(bf, "poacher");
+    for (const bool enemy : {false, true}) {
+        game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+        w.script().setBigfile(&bf);
+        for (int i = 0; i < 30; ++i) w.tick({});
+        ASSERT_TRUE(runPlan(w, "engage 220 walk\npress\nwait 2\ngo " + std::to_string(plate.x + 150) + " " + std::to_string(plate.y) + " 30 walk\nface 0\nwait 1\n"));
+        ASSERT_EQ(w.heldPortable(), 220);
+        const auto* p = w.script().find(219);
+        ASSERT_TRUE(p && p->joint);
+        ASSERT_LT(p->joint->position, -30.0f) << "she stands on the plate";
+        const vec3 lara = w.player().state().pos;
+        const int grenades = w.grenades;
+        w.tick(press(&Actions::grenade));
+        EXPECT_EQ(w.player().state().state, State::Melee);
+        EXPECT_EQ(w.player().state().clip, *w.portableDef("ms_pt_weight_c")->clip("hosted_throw"));
+        int released = -1, crossed = -1;
+        float apex = -1e9f, health = 0;
+        game::ai::Enemy* e = nullptr;
+        bool knocked = false;
+        vec3 last(0);
+        int still = 0;
+        std::optional<State> afterThrow; // her state where the throw clip ends (later the knocked-down poacher gets up and shoots)
+        for (int i = 1; i < 60 * 30 && still < 60; ++i) {
+            w.tick({});
+            const vec3 o = objectPos(w, 220);
+            if (released < 0 && !w.heldPortable()) {
+                released = i;
+                EXPECT_TRUE(w.melee().thrown.contains(220));
+                if (enemy) { // in its way, 1000 ahead of her: the arc passes at his chest
+                    e = &w.enemies().add(poacher, 990001, vec3(lara.x + 1000, o.y, lara.z), 3.14159f);
+                    health = e->health();
+                }
+            }
+            if (released < 0) continue;
+            if (!afterThrow && w.player().state().state != State::Melee) afterThrow = w.player().state().state;
+            apex = std::max(apex, o.z);
+            if (crossed < 0 && o.x > doorAt.x) crossed = i;
+            if (e) knocked |= e->state().mode == game::ai::Mode::Knocked;
+            still = glm::distance(o, last) < 0.5f ? still + 1 : 0;
+            last = o;
+        }
+        // The weight lies still on its cube soon after it lands: her throw clip may still be running.
+        for (int i = 0; i < 240 && !afterThrow; ++i) {
+            w.tick({});
+            if (w.player().state().state != State::Melee) afterThrow = w.player().state().state;
+        }
+        ASSERT_TRUE(afterThrow) << "the throw clip ends";
+        EXPECT_NEAR(released, 54, 2) << "event 0x53 at frame 27";
+        EXPECT_EQ(w.grenades, grenades) << "the key throws the weight, not a grenade";
+        EXPECT_GT(apex, lara.z + 500.0f) << "a lob";
+        EXPECT_EQ(*afterThrow, State::Idle);
+        EXPECT_TRUE(w.melee().thrown.empty()) << "a weapon for 1.5 s";
+        if (!enemy) {
+            EXPECT_GT(crossed, released) << "through the doorway";
+            EXPECT_GT(last.x, doorAt.x + 100.0f) << "it rests beyond door 223";
+            EXPECT_LT(last.z, lara.z + 250.0f) << "on the floor";
+        } else {
+            ASSERT_TRUE(e);
+            EXPECT_FLOAT_EQ(e->health(), health - 100.0f);
+            EXPECT_TRUE(knocked);
+        }
+    }
+}
+
+// A weight thrown onto press plate 219 from across the room presses it by its own weight (nobody stands on it).
+TEST(CombatReal, ThrownWeightPressesThePlate) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const vec3 plate = introPos(bf, "l1_baldrs_tomb", 219);
+    game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    w.script().setBigfile(&bf);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_TRUE(runPlan(w, "engage 220 walk\npress\nwait 2\ngo " + std::to_string(plate.x - 1300) + " " + std::to_string(plate.y) + " 30 walk\nface 0\nwait 1\n"));
+    ASSERT_EQ(w.heldPortable(), 220);
+    const auto* p = w.script().find(219);
+    ASSERT_TRUE(p && p->joint);
+    ASSERT_EQ(p->joint->position, 0.0f);
+    w.tick(press(&Actions::grenade));
+    float pressed = 0, nearest = 1e9f;
+    for (int i = 0; i < 60 * 12; ++i) {
+        w.tick({});
+        pressed = std::min(pressed, p->joint->position);
+        nearest = std::min(nearest, glm::distance(game::vec2(objectPos(w, 220)), game::vec2(plate)));
+    }
+    EXPECT_LT(nearest, 300.0f) << "it came down on the plate";
+    EXPECT_LT(pressed, -1.0f) << "and pressed it down";
 }

@@ -244,6 +244,10 @@ struct Object {
     // hosted_push_button, else interact; game::AnimLibrary keeps them as "use:<id>"), 0 = none.
     uint32_t laraClip = 0;
     float useDistance = 0; // Switches: where Lara stands to use it, units in front of it (engagement record +0x44 [I]); 0 = unknown
+    // The object carries "use" engagement records (kind 8; set by game::World): Lara's use reaches it only through the
+    // record she engages (TickInput::engagedUse), not by reach. l1_seafloor's eye pieces 231-233 stand side by side and
+    // their script switches each one's records off while another turns (instance 59, UseEngagementProperties).
+    bool useRecords = false;
 };
 
 struct UnitRef {
@@ -258,6 +262,9 @@ struct TickInput {
     float yaw = 0; // facing: forward = (cos yaw, sin yaw, 0) (game::Player::forward)
     vec2 move{0};  // stick, y = forward
     bool interact = false;
+    // The anim-graph object whose "use" engagement record (kind 8) Lara engages on this press (game::World::engaged,
+    // tru.exe 0x719520): 0 none, -1 not resolved (Runtime alone: every graph object is used by reach).
+    int32_t engagedUse = -1;
 };
 
 class Runtime {

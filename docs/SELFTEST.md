@@ -395,10 +395,14 @@ tested behaviour happen.
 | `ladder` | l1_ship_sinking_hall | attach from the ground (234), climb up, climb down, step off |
 | `pole` | l4_traprooms | standing jump to pole 1336, swing, fling 1264 to pole 1337 in 23.5 frames [O Wine] |
 | `pole_drop` | l4_traprooms | letting go of pole 1336: detach clip, fall, landing |
+| `melee_kick` | l1_baldrs_tomb | Interact kicks a target dummy once for the kick record's 60 (melee_kick_high); the mid kick at the air |
+| `urn_kick` | l1_baldrs_sideroom | Interact by urn 94 kicks it to pieces; its treasure is picked up |
+| `carry_throw` | l1_baldrs_tomb | weight 220 picked up, carried at a walk, thrown from plate 219 through door 223; weight 218 put down with Crouch |
 | `balance_beam` | l4_temple | beam 1079: walk 140 units/s on its line, jump along it, its far end, losing balance into a ledge catch (1136) |
-| `grapple_swing` | l3_chapel | ring 4744 offered, throw, attach (rope <= 4424.78), swing past the ring, climb / slide the rope 450, jump off, landing |
-| `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, rappel down (rope pays out) and up, kick off |
-| `wall_run` | l5_valaskjalf | wall anchor 6750: wall run through the rope's arc over the pit, landing on the far ledge, rope let go |
+| `grapple_swing` | l3_chapel | ring 4744 offered, throw, attach, Jump into the gap keeps the rope (hangs on 3632), no stick: the swing dies down, Forward held: it builds (peak height > 1000), Interact + forward / back climbs 711 / slides to 4400, jump off (1896 units/s), landing |
+| `prologue_hall_swing` | l3_main_hall | ring 4089 from the balcony: roped walk to the edge, Jump with the rope, swing over the burning staircase, leap off onto the far balcony (x < -2150, z 1716) |
+| `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, the stick alone leaves the rope, Interact + back / forward rappels down / up (1327 / 1043 units/s), Jump leaps back off the wall and lets go |
+| `wall_run` | l5_valaskjalf | wall anchor 6750: camera behind her, right runs onto the wall and through the rope's arc over the pit, stepping onto the far ledge, rope let go |
 | `swim` | l1_seatop | drop into the sea, surface swim 1348.6 units/s, dive, under water (on the wetsuit's tanks the breath stays full), surfacing |
 | `swim_breath` | l2_cliffclimb | no tanks: the breath drains under the river, 1.5 times as fast sprinting, the meter refills in 2 s at the surface |
 | `swim_moves` | l1_seatop | surface turn on the spot, dive, under-water dodges up / down by their clips, pistols drawn and fired under water |
@@ -406,10 +410,14 @@ tested behaviour happen.
 | `puzzle_pole_block_door` | l4_ballcourt | pole 6503 into lever 6502 (graph 0 -> 1), push block 6504 under it (two pushes), up onto the block, jump to the pole: lever joint slides, door 6505 rises |
 | `combat` | l2_cliffclimb | draw, hard lock, pistols kill three spiders and hit a 700 hp target dummy 8+ times, adrenaline fills |
 | `motorcycle` | l4_trailstart | mount bike 5482, accelerate (wheels on the ground), steer left, hop (both wheels off, then down), brake to a stop, dismount |
+| `pole_drop_after_fling` | l4_traprooms | the fling 1336 -> 1337, then Drop: `Hpole_detach_dropPerp`, down 27 beside the rubble mound under the pole, standing within 1.2 s (not caught again by pole 1337) |
+| `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
+| `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
+| `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now: `pole_drop_after_fling` (after
-the fling onto l4_traprooms pole 1337 a drop is caught again by the same pole).
+registered with ctest. Run them by hand; move one up a directory when it passes. Now: none (`pole_drop_after_fling`
+moved up 2026-11-10).
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

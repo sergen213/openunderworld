@@ -11,6 +11,8 @@
 #include "formats/Uber.hpp"
 #include "script/Vm.hpp"
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/string_cast.hpp>
 #include <gtest/gtest.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -168,6 +170,10 @@ bool differs(const Snapshot& a, const Snapshot& b) {
 
 // Lara put at `pos`: a jump, crossing no trigger plane on the way (Runtime::playerJumped) unless `cross` (a plane
 // gate's own step across). l1_kraken_entrance 748: the move to the head pull crossed plane 1842 in a chapter-started World.
+// A move with a carried object runs its clip (pick-up, put-down, throw: docs/GAMEPLAY.md "Carried objects"): tick it out.
+void finishMove(game::World& w) {
+    for (int i = 0; i < 240 && w.player().state().state == game::State::Melee; ++i) w.tick({});
+}
 void place(game::World& w, vec3 pos, float yaw, bool cross = false) {
     game::PlayerState s;
     s.pos = pos, s.yaw = yaw;
@@ -285,6 +291,7 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
                 place(w, pole->pos + pole->offset + sides[k] * 0.4f, 0);
                 for (int i = 0; i < 10; ++i) tick({});
                 tick(press), tick({});
+                for (int i = 0; i < 240 && w.player().state().state == game::State::Melee; ++i) tick({}); // the pick-up clip
             }
             for (int k = 0; k < 4 && w.insertedIn(id) != uid; ++k) {
                 place(w, at + sides[k], std::atan2(-sides[k].y, -sides[k].x));
@@ -311,13 +318,22 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
                     glm::length(glm::vec2(o.pos + o.offset - at)) > 300.0f)
                     weight = &o;
             if (!weight) return;
-            game::Actions press;
-            press.interact = true;
+            game::Actions press, down;
+            press.interact = true, down.drop = true; // Crouch puts it down (chart input 101)
+            const auto finish = [&] {
+                for (int i = 0; i < 240 && w.player().state().state == game::State::Melee; ++i) tick({});
+            };
             place(w, weight->pos + weight->offset, 0);
             tick(press), tick({});
-            place(w, at - vec3(226, 0, -30), 0); // set down her radius (79) + the weight's reach (~147) ahead: on the plate
+            finish();
+            // set down her radius (79) + the weight's reach (~147) ahead: on the plate, beside a weight already there
+            float side = 0;
+            for (const auto& o : w.script().objects())
+                if (&o != weight && o.name == weight->name && glm::length(glm::vec2(o.pos + o.offset - at)) <= 300.0f) side = 110.0f;
+            place(w, at - vec3(226, side ? -side : 0.0f, -30), 0);
             tick({});
-            tick(press), tick({});
+            tick(down), tick({});
+            finish();
             break;
         }
         case Action::Enter: {
@@ -446,11 +462,13 @@ const std::vector<Case>& criticalGates() {
         {0, {"l3_main_bedroom", 4525, Action::Use, {4520}}},             // wall switch -> house door
         {0, {"l3_bedroom_hall", 4363, Action::Push, {}}},                // training push block
         {0, {"l3_main_hall", 4129, Action::Enter, {4106}, 1}},           // prologue end: cinematic 010 -> chapter 1
-        {1, {"l1_kraken_entrance", 748, Action::Use, {743}, -1, {{751, Action::Pull}, {753, Action::Weigh}}}}, // both locks
+        // both locks: the pulled snake head on plate 752, both weights on plate 753 (one 30 kg weight does not press it)
+        {1, {"l1_kraken_entrance", 748, Action::Use, {743}, -1, {{751, Action::Pull}, {753, Action::Weigh}, {753, Action::Weigh}}}},
         {1, {"l1_kraken_room", 498, Action::Use, {497}}},                // switch -> tomb door
         {1, {"l1_baldrs_tomb", 219, Action::Step, {223}}},               // press plate -> door
-        // locks 69 / 70 (multibody 89) hold gate 45 until both plates are down: a weight on 222, Lara on 221
-        {1, {"l1_baldrs_tomb", 221, Action::Step, {45}, -1, {{222, Action::Weigh}}}},
+        // Lara on plate 221 draws lock 70 back (multibody 89; tru.exe under Wine: the plate at -51, the lock 1254 down).
+        // Gate 45 needs both weights on 222 as well and the grapple pull: TombGateNeedsBothBlocksAndThePull.
+        {1, {"l1_baldrs_tomb", 221, Action::Step, {70}}},
         {1, {"l1_kraken_room", 30, Action::Use, {27}}},                  // switch -> sun-sphere platform
         {1, {"l1_ship_upper_hallway_a", 1531, Action::Enter, {1529}}},   // volume -> ship hall door
         {1, {"l1_ship_sinking_hall", 1074, Action::Enter, {}, 2}},       // teleport into l1_cine_ship_sinking -> 070
@@ -522,19 +540,32 @@ void playEnding(game::World& w) {
         const auto* o = w.script().find(uid);
         return o && o->graph && o->graph->set->graph ? int(o->graph->set->graph->states[size_t(o->graph->state)].index) : -1;
     };
-    // B, C, D: Lara uses each locked mount at its outer end (bone 2, 8041 units out from the intro on the trunk;
-    // stimulus 1: transition 3 "break" -> state 3; vt 20 sends buttress_mount_broken and the mount's vt 54 tells
-    // dispatcher 8360). Each reveal camera runs ~7 s.
+    // B, C, D: Lara uses each locked mount at its node: the mount's one engagement record [O ar_ani_buttress_mount: kind
+    // 8, a sphere of r 474.1 at HInfo marker 13], 686 units beyond the end bone (bone 2, 8041 units out from the intro
+    // on the trunk) and so ~8727 from the trunk. Her press reaches the mount only inside that record (World::engagedUse):
+    // at the end bone it does nothing. Stimulus 1: transition 3 "break" -> state 3; vt 20 sends buttress_mount_broken
+    // and the mount's vt 54 tells dispatcher 8360. Each reveal camera runs ~7 s.
+    game::Actions use;
+    use.interact = true;
     for (const int32_t mount : {8362, 8363, 8364}) {
         const auto* m = w.script().find(mount);
         ASSERT_TRUE(m && m->graph);
         EXPECT_EQ(graphState(mount), 2) << "mount " << mount << " locked";
         const auto points = script::Runtime::usePoints(*m);
         ASSERT_EQ(points.size(), 3u);
-        EXPECT_GT(glm::length(glm::vec2(points[2] - m->pos)), 8000.0f) << "used at its end, not on the trunk";
+        const auto centres = w.engagementCentres(mount, 8);
+        ASSERT_EQ(centres.size(), 1u) << "mount " << mount << " has one use record";
+        EXPECT_GT(glm::length(glm::vec2(centres[0] - m->pos)), 8500.0f) << "used at its node, not on the trunk";
+        EXPECT_GT(glm::length(glm::vec2(centres[0] - points[2])), 600.0f) << "beyond the end bone";
         place(w, points[2], 0);
-        game::Actions use;
-        use.interact = true;
+        EXPECT_NE(w.engaged().uid, mount) << "the end bone is outside the record";
+        w.tick(use);
+        run(30);
+        EXPECT_EQ(graphState(mount), 2) << "mount " << mount << " out of reach";
+        vec3 at = centres[0];
+        if (const auto floor = w.collision().groundProbe(at + vec3(0, 0, 300), 1000, 0x0F)) at.z = floor->point.z;
+        place(w, at, 0);
+        EXPECT_EQ(w.engaged().uid, mount) << "inside the record";
         w.tick(use);
         run(1200);
         EXPECT_EQ(graphState(mount), 3) << "mount " << mount << " broken";
@@ -1295,6 +1326,11 @@ TEST(ProgressionReal, AnimGraphRecords) {
     }
 }
 
+namespace {
+std::vector<std::pair<vec3, float>> engageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, int kind);
+bool interactFrom(game::World& w, const std::vector<std::pair<vec3, float>>& spots, const std::function<bool()>& done);
+} // namespace
+
 // l4_traprooms seal 5701: with the seal raised (sticky +268) and the four trap rooms done (sticky int +240 = 4), plates
 // 5717 / 5718 each set their sticky +124 and hear of it in vt 6 (sticky notification), which counts them on the seal
 // (+304) and runs its vt 58: both held opens it (seal sticky +20 of the unit's globals, modifiable +64). Lara stands on
@@ -1314,13 +1350,15 @@ TEST(ProgressionReal, TraproomsSeal) {
     const auto* a = w.script().find(5717);
     const auto* b = w.script().find(5718);
     ASSERT_TRUE(weight && a && b);
-    game::Actions press;
-    press.interact = true;
-    place(w, weight->pos + weight->offset, 0);
-    w.tick(press), w.tick({});
+    game::Actions press, down;
+    press.interact = true, down.drop = true; // Crouch puts it down (chart input 101)
+    // from where its pick-up record engages her, on her feet: the pick-up is a clip
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *weight, 4), [&] { return w.heldPortable() == 5883; }));
     place(w, b->pos - vec3(90, 0, -30), 0);
     w.tick({});
-    w.tick(press), w.tick({});
+    w.tick(down), w.tick({});
+    finishMove(w);
+    ASSERT_EQ(w.heldPortable(), 0);
     for (int i = 0; i < 120; ++i) w.tick({});
     EXPECT_EQ(b->script->fields[124], 1u) << "the weight holds plate 5718";
     EXPECT_EQ(seal->script->fields[304], 1u);
@@ -1598,6 +1636,7 @@ bool interactFrom(game::World& w, const std::vector<std::pair<vec3, float>>& spo
         const auto st = w.player().state().state; // standing, or swimming (World::carryReady)
         if (st != game::State::Idle && st != game::State::SwimTread && st != game::State::SwimSurface && st != game::State::SwimUnder) continue;
         w.tick(use), w.tick({});
+        finishMove(w);
         if (done()) return true;
     }
     return false;
@@ -1644,6 +1683,7 @@ TEST(ProgressionReal, PoleHoleLeverOpensRewardDoor) {
     // Pick the pole up, carry it to the lever and insert it.
     place(w, w.script().find(7190)->pos + vec3(80, 0, 0), glm::pi<float>());
     w.tick({}), w.tick(use), w.tick({});
+    finishMove(w);
     ASSERT_EQ(w.heldPortable(), 7190);
     ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}}, [&] { return w.insertedIn(7190) == 7189; }));
     EXPECT_EQ(graphStateId(w, 7189), 0) << "inserted (transition 1 -> 0)";
@@ -1715,6 +1755,7 @@ TEST(ProgressionReal, BallcourtPoleLeverOpensDoor) {
     place(w, w.script().find(6503)->pos + vec3(80, 0, 0), glm::pi<float>());
     for (int i = 0; i < 5; ++i) w.tick({});
     w.tick(use), w.tick({});
+    finishMove(w);
     ASSERT_EQ(w.heldPortable(), 6503);
     ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}, {lever()->pos + vec3(0, -250, 0), glm::half_pi<float>()},
                                  {lever()->pos + vec3(250, 0, 0), glm::pi<float>()}, {lever()->pos + vec3(-250, 0, 0), 0.0f}},
@@ -1772,6 +1813,7 @@ TEST(ProgressionReal, BallcourtBlockUnderPoleReachesIt) {
     place(w, w.script().find(6503)->pos + vec3(80, 0, 0), glm::pi<float>());
     for (int i = 0; i < 5; ++i) w.tick({});
     w.tick(use), w.tick({});
+    finishMove(w);
     ASSERT_EQ(w.heldPortable(), 6503);
     ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}, {lever()->pos + vec3(0, -250, 0), glm::half_pi<float>()},
                                  {lever()->pos + vec3(250, 0, 0), glm::pi<float>()}, {lever()->pos + vec3(-250, 0, 0), 0.0f}},
@@ -1984,7 +2026,7 @@ TEST(ProgressionReal, UberReceptaclesTakeTheirPortables) {
         }
         for (int i = 0; i < 300; ++i) w.tick({});
         if (c.refused) {
-            EXPECT_FALSE(inserted) << "its record names another portable"; // (each press there set it down instead)
+            EXPECT_FALSE(inserted) << "its record names another portable"; // (each press there swings it instead)
         } else {
             ASSERT_TRUE(inserted);
             EXPECT_EQ(w.heldPortable(), 0);
@@ -2050,6 +2092,349 @@ TEST(ProgressionReal, CalendarPushHandlesTurnTheRing) {
     for (int i = 0; i < 180; ++i) w.tick({});
     EXPECT_EQ((*w.uberState(6506))[1], 3u) << "back to waiting";
     for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 6506) << key.second;
+}
+
+// Research: an uber object's decoded sections (states, transitions, entry actions), joints, range / limit / motor
+// records, commands and events: OU_UBER_SECTIONS=<object>.
+TEST(ProgressionReal, UberSections) {
+    const char* name = std::getenv("OU_UBER_SECTIONS");
+    if (!gameDir() || !name) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const auto drm = cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm"));
+    const auto phys = physics::loadObjectPhysics(drm);
+    std::printf("class %d mass %g prims %zu\n", phys.physClass, physics::massProps(phys).mass, phys.prims.size());
+    for (const auto& pr : phys.prims)
+        std::printf("prim kind %d segment %d mass %d head %02x %02x %02x %02x pos %g %g %g size %g %g %g radius %g length %g\n", int(pr.kind), pr.segment, pr.mass,
+                    pr.head[0], pr.head[1], pr.head[2], pr.head[3], pr.pos.x, pr.pos.y, pr.pos.z, pr.size.x, pr.size.y, pr.size.z, pr.radius, pr.length);
+    for (const auto& set : phys.engagements)
+        for (const auto& r : set.records)
+            std::printf("engagement set %d: kind %d shape %d segment %d centre %g %g %g r %g h %g\n", set.id, r.kind, r.shape, r.segment, r.centre.x,
+                        r.centre.y, r.centre.z, r.radius, r.height);
+    const auto u = formats::loadUberObject(drm);
+    if (!u) return;
+    for (size_t s = 0; s < u->sections.size(); ++s) {
+        const auto& sec = u->sections[s];
+        std::printf("section %zu model %u default %u health %g dmg %d engagement %d attach %d\n", s, sec.model, sec.defaultState, sec.health,
+                    sec.takesDamage, sec.engagement, sec.attachMarker);
+        for (size_t st = 0; st < sec.stateActions.size(); ++st) {
+            std::printf("  state %zu:", st);
+            for (const auto& a : sec.stateActions[st]) std::printf(" [%u v%u j%d p%d e%d]", a.type, a.value, a.joint, a.param, a.engagement);
+            std::printf("\n");
+        }
+        for (size_t t = 0; t < sec.transitions.size(); ++t) {
+            const auto& tr = sec.transitions[t];
+            std::printf("  tr %zu: %u -> %u trigger %u param %u (%g) joint %d range %d anim %d kind %u flags %x", t, tr.from, tr.to, tr.trigger, tr.param,
+                        std::bit_cast<float>(tr.param), tr.joint, tr.range, tr.anim, tr.animKind, tr.flags);
+            for (const auto& c : tr.conditions) std::printf(" cond(s%d k%u v%u)", c.section, c.kind, c.value);
+            std::printf("\n");
+        }
+    }
+    for (size_t j = 0; j < u->joints.size(); ++j) {
+        const auto& jt = u->joints[j];
+        std::printf("joint %zu type %u A %d B %d model %u marker %u limit %g..%g motor %g bound %g flags %x link %d %d ratio %g\n", j, jt.type, jt.bodyA,
+                    jt.bodyB, jt.model, jt.marker, jt.lo, jt.hi, jt.speed, jt.force, jt.flags, jt.link1, jt.link2, jt.ratio);
+    }
+    for (size_t p = 0; p < u->params.size(); ++p)
+        std::printf("param %zu kind %u a %g b %g flag %d\n", p, u->params[p].kind, u->params[p].a, u->params[p].b, u->params[p].flag);
+    for (const auto& c : u->commands) {
+        std::printf("command %u:", c.id);
+        for (const auto& t : c.targets) std::printf(" (s%d type %u payload %u)", t.section, t.type, t.payload);
+        std::printf("\n");
+    }
+    for (size_t e = 0; e < u->events.size(); ++e) {
+        const auto& ev = u->events[e];
+        std::printf("event %zu: section %d kind %u value %u once %d", e, ev.section, ev.kind, ev.value, ev.once);
+        for (const auto& l : ev.conditions) {
+            std::printf(" {");
+            for (const auto& c : l) std::printf(" s%d k%u v%u", c.section, c.kind, c.value);
+            std::printf(" }");
+        }
+        std::printf("\n");
+    }
+}
+
+namespace {
+// Lara on a floor near grapple target `uid` (its GrappleTarget point), facing it, where a grapple press attaches to it:
+// floors on a ring of radius `lo`..`hi` round the point, lowest first when `below`. Returns the spot, nullopt none.
+std::optional<vec3> grappleFrom(game::World& w, int32_t uid, float lo = 600, float hi = 2400, const std::function<bool(vec3)>& where = nullptr) {
+    std::optional<vec3> target;
+    for (const auto& u : w.units())
+        for (const auto& g : u.data.grapples)
+            if (g.uid == uid) target = g.pos + u.offset;
+    if (!target) return std::nullopt;
+    game::Actions press;
+    press.grapple = true;
+    for (float r = lo; r <= hi; r += 200)
+        for (int k = 0; k < 24; ++k) {
+            const float a = glm::two_pi<float>() * float(k) / 24.0f;
+            const vec3 from = *target + vec3(std::cos(a), std::sin(a), 0) * r;
+            for (float top = target->z + 400; top > target->z - 2600;) {
+                const auto g = w.collision().groundProbe(vec3(from.x, from.y, top), top - (target->z - 2600), 0x0F);
+                if (!g) break;
+                top = g->point.z - 100;
+                if (g->normal.z < 0.9f || (where && !where(g->point))) continue;
+                place(w, g->point + vec3(0, 0, 5), std::atan2(target->y - g->point.y, target->x - g->point.x));
+                for (int i = 0; i < 20; ++i) w.tick({});
+                if (w.player().state().state != game::State::Idle || glm::distance(w.player().state().pos, g->point) > 30) continue;
+                w.tick(press), w.tick({});
+                if (w.player().state().grappleUid == uid) return g->point;
+                if (w.player().state().grappleUid) w.tick(press), w.tick({}); // another target: let go
+            }
+        }
+    return std::nullopt;
+}
+} // namespace
+
+// l1_kraken_room gear rooms (C03-11 / C03-16). Both gears are grapple targets by a model feature (mask 4): gear 36
+// (ms_ani_tentacle_gearl) on model 1 = section 1, the recessed gear on a prismatic joint (limit 0..515, a 15.8 brake),
+// whose watch 512..537 sends trigger 14 (state 2, then 1: locked at 512..518, action 0x1A no target; event 0 = the
+// script's "isAtLimit"); gear 32 (ms_ani_tentacle_gearr) on model 12 = section 1, the ring hinged on the column
+// (section 12, a braked prismatic joint watched -15.8..237: leaving it is trigger 15, the column falls) [O data].
+// Before the pull each room's switch only tries (section 0: state 0 -> 1 -> 7 -> 0 / 0 -> 7 -> 1 -> 0, the jammed
+// clip); pulled with the grapple (interact held, the rope along the joint), the switch runs the mechanism.
+TEST(ProgressionReal, KrakenGearsPulledByTheGrapple) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    struct Case { int32_t gear, sw; size_t pulled; uint32_t pulledState; };
+    for (const Case c : {Case{36, 55, 1, 1}, Case{32, 57, 12, 1}}) {
+        SCOPED_TRACE("gear " + std::to_string(c.gear));
+        auto wp = receptacleWorld(bf, "l1_kraken_room");
+        auto& w = *wp;
+        for (int i = 0; i < 60; ++i) w.tick({});
+        ASSERT_TRUE(w.uberState(c.gear) && w.script().find(c.sw));
+        const auto use = [&] {
+            place(w, w.script().find(c.sw)->pos, 0);
+            game::Actions a;
+            a.interact = true;
+            for (int i = 0; i < 10; ++i) w.tick(a);
+            std::set<uint32_t> seen;
+            for (int i = 0; i < 900; ++i) w.tick({}), seen.insert((*w.uberState(c.gear))[0]);
+            return seen;
+        };
+        const auto rest = *w.uberState(c.gear);
+        use();
+        EXPECT_EQ(*w.uberState(c.gear), rest) << "jammed: the switch only tries";
+        // The pull: from a floor where the rope runs along the pulled joint (the page's "face it squarely").
+        vec3 axis(0), target(0);
+        for (int32_t j = 0; j < 32; ++j)
+            if (const auto* jt = w.uberJoint(c.gear, j); jt && !jt->hinge) axis = jt->axis;
+        for (const auto& u : w.units())
+            for (const auto& g : u.data.grapples)
+                if (g.uid == c.gear) {
+                    target = g.pos + u.offset;
+                    EXPECT_EQ(g.kind, game::GrappleKind::Mounted);
+                }
+        ASSERT_NE(axis, vec3(0));
+        ASSERT_TRUE(grappleFrom(w, c.gear, 600, 3000, [&](vec3 p) { return std::abs(glm::dot(glm::normalize(p + vec3(0, 0, 400) - target), axis)) > 0.8f; }));
+        game::Actions pull;
+        pull.interact = true;
+        for (int i = 0; i < 40; ++i) w.tick({}); // the throw; no interact: nothing moves
+        EXPECT_EQ(*w.uberState(c.gear), rest);
+        EXPECT_EQ(w.player().state().grappleUid, c.gear);
+        for (int i = 0; i < 600 && w.player().state().grappleUid; ++i) w.tick(pull);
+        EXPECT_EQ(w.player().state().grappleUid, 0) << "pulled out: no target any more (action 0x1A / its section gone), she lets go";
+        for (int i = 0; i < 600; ++i) w.tick({});
+        EXPECT_EQ((*w.uberState(c.gear))[c.pulled], c.pulledState);
+        EXPECT_EQ((*w.uberState(c.gear))[0], 2u) << "section 0: freed (its condition on the pulled section)";
+        EXPECT_EQ(w.script().find(c.sw)->state, 0) << "the switch is free again after its jammed try (off reaction, vt 58)";
+        const auto seen = use();
+        EXPECT_TRUE(seen.contains(8u)) << "the switch's command runs the mechanism (2 -> 8 -> ...)";
+        EXPECT_NE((*w.uberState(c.gear))[0], 2u);
+        for (const int32_t uid : {c.gear, c.sw})
+            for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+    }
+}
+
+// l1_baldrs_tomb gate puzzle (C04-06 / 07 / 08). Press plates [O data]: ms_rb_press_plate's joint record limit -50..0,
+// motor +40 / s with bound 400 on a 100 kg body: it carries 39.7 kg more than itself. One ms_pt_weight_c (30 kg) does
+// not press plate 222, both (60 kg) do; Lara presses 221. Then locks 69 / 70 are out and gate 45 (ms_rb_tomb_gate: a
+// limit-only hinge, a grapple feature at its top ring) is free 0..90 (multibody 77) but stands until the rope pulls it
+// over: grappled from pad 221, interact held.
+TEST(ProgressionReal, TombGateNeedsBothBlocksAndThePull) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l1_baldrs_tomb");
+    auto& w = *wp;
+    const auto obj = [&](int32_t uid) { return w.script().find(uid); };
+    for (const int32_t uid : {45, 69, 70, 218, 220, 221, 222}) ASSERT_TRUE(obj(uid)) << uid;
+    const auto joint = [&](int32_t uid) { return obj(uid)->joint ? obj(uid)->joint->position : 0.0f; };
+    game::Actions press, drop;
+    press.interact = true, drop.drop = true;
+    const auto run = [&](int n) { for (int i = 0; i < n; ++i) w.tick({}); };
+    // Picked up where it lies (Interact: the hosted_pickup clip, 1.5 s), put down at `at` (Crouch, chart input 101:
+    // hosted_putdown lets go at frame 20; Interact with a weight in her hands would swing it).
+    const auto carryTo = [&](int32_t weight, vec3 at) {
+        ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *obj(weight), 4), [&] { return w.heldPortable() == weight; })) << weight;
+        run(150);
+        ASSERT_EQ(w.heldPortable(), weight) << "in her hands after the pick-up clip";
+        place(w, at, 0);
+        run(20);
+        w.tick(drop), w.tick({});
+        run(240);
+        ASSERT_EQ(w.heldPortable(), 0) << "put down";
+    };
+    const vec3 p221 = obj(221)->pos, p222 = obj(222)->pos;
+    const vec3 away = p221 + vec3(600, 900, 60);
+    // One block on 222: the plate stays up.
+    carryTo(218, p222 + vec3(-226, -110, 30));
+    place(w, away, 0);
+    run(240);
+    EXPECT_LT(glm::length(vec2(obj(218)->pos + obj(218)->offset - p222)), 250.0f) << "the block lies on the plate";
+    EXPECT_GT(joint(222), -30.0f) << "30 kg: not pressed";
+    // ... and Lara on 221: her plate sinks, the gate stays locked; the rope cannot move it.
+    const vec3 ring = obj(45)->pos + vec3(0, 0, 1036);
+    const float toGate = std::atan2(ring.y - p221.y, ring.x - p221.x);
+    place(w, p221 + vec3(0, 0, 30), toGate);
+    run(300);
+    EXPECT_LE(joint(221), -40.0f) << "Lara presses a plate";
+    EXPECT_LT(std::abs(joint(45)), 2.0f);
+    game::Actions q;
+    q.grapple = true;
+    // The ring is grappled from in front of the gate; roped to it she walks back onto pad 221 (stick, no interact).
+    const auto ropeToPad = [&] {
+        ASSERT_TRUE(grappleFrom(w, 45, 600, 2400, [&](vec3 p) { return p.y > obj(45)->pos.y + 200; })) << "the gate's ring is a grapple target";
+        run(60);
+        ASSERT_EQ(w.player().state().state, game::State::GrapplePull);
+        for (int i = 0; i < 900 && glm::length(vec2(w.player().state().pos - p221)) > 40.0f; ++i) {
+            game::Actions walk; // camera-relative stick toward the pad
+            const vec2 d = glm::normalize(vec2(p221 - w.player().state().pos));
+            const float cy = w.camera().yaw;
+            walk.move = vec2(d.x * std::sin(cy) - d.y * std::cos(cy), d.x * std::cos(cy) + d.y * std::sin(cy));
+            w.tick(walk);
+        }
+        ASSERT_LT(glm::length(vec2(w.player().state().pos - p221)), 60.0f) << "walked back onto the pad, roped";
+        ASSERT_EQ(w.player().state().grappleUid, 45);
+        run(120);
+    };
+    ropeToPad();
+    if (HasFatalFailure()) return;
+    EXPECT_LE(joint(221), -40.0f);
+    for (int i = 0; i < 300; ++i) w.tick(press);
+    EXPECT_LT(std::abs(joint(45)), 2.0f) << "locked: the pull does nothing";
+    if (w.player().state().grappleUid) w.tick(q), w.tick({});
+    run(30);
+    // Both blocks on 222: pressed.
+    carryTo(220, p222 + vec3(-226, 110, 30));
+    place(w, away, 0);
+    run(240);
+    EXPECT_LE(joint(222), -40.0f) << "60 kg: pressed; blocks at " << glm::to_string(obj(218)->pos + obj(218)->offset - p222) << " "
+                                  << glm::to_string(obj(220)->pos + obj(220)->offset - p222);
+    // Lara on 221: both locks out, the gate free, still standing.
+    place(w, p221 + vec3(0, 0, 30), toGate);
+    run(480);
+    EXPECT_LE(joint(221), -40.0f);
+    EXPECT_LE(joint(69), -1200.0f);
+    EXPECT_LE(joint(70), -1200.0f);
+    EXPECT_LT(std::abs(joint(45)), 5.0f) << "unlocked, it stands until it is pulled";
+    // The pull from the pad.
+    ropeToPad();
+    if (HasFatalFailure()) return;
+    EXPECT_LE(joint(221), -40.0f) << "still on the pad";
+    EXPECT_LT(std::abs(joint(45)), 5.0f);
+    for (int i = 0; i < 600 && joint(45) < 80.0f; ++i) w.tick(press);
+    run(120);
+    EXPECT_GE(joint(45), 80.0f) << "pulled down";
+    EXPECT_LT(glm::length(vec2(w.player().state().pos - p221)), 150.0f) << "she stood on the pad throughout";
+    for (const int32_t uid : {45, 69, 70, 221, 222})
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+
+// l1_seafloor eye door (C02-09 / 11 / 13; ms_ani_eye_puzzle_piece 232 right / 233 left, ms_ani_eye_puzzle_piece_center
+// 231, keys ms_pt_seafloor_key_a 970 / 971): anim-graph objects with a script each [O bytecode / graph data].
+//  - A side piece starts empty (graph state 0, one kind-5 record needing the key): the key Lara swims in with is inserted
+//    (stimulus 0x20 -> state 2; vt 20(2) sets its "has key" sticky +244, shows draw group 7 and saves a checkpoint).
+//  - Lara's use (the piece's kind-8 record; her press reaches the piece she engages, World::engagedUse) turns a keyed
+//    side piece (state 2 -> 3 -> 2, Eye_rotation_right_120) or the centre (0 -> 3 -> 0, rotate_right_120); the scripts
+//    hand the eye draw groups round between the pieces (side vt 19 / 20, centre vt 55-60) and switch the other pieces'
+//    records off while one turns (vt 59 / 60 / 63 / 64 = instance 59, UseEngagementProperties 2 / 1).
+//  - The centre's vt 61 checks its three position stickies (+64, +120, +176): all open eyes -> vt 62 "Eye Puzzle
+//    Solved": modifiable 4 (2) = its "opening" transition (state id 2, opened_idle), the ping maps 236-238, reveal 235.
+// The order below (top once, left once, right twice) solves it from the start state.
+TEST(ProgressionReal, EyeDoorSolvedByItsHandles) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l1_seafloor");
+    auto& w = *wp;
+    std::vector<std::pair<int32_t, int16_t>> calls;
+    w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) { if (from == 231) calls.emplace_back(to, vt); };
+    for (const int32_t uid : {231, 232, 233, 970, 971, 235}) ASSERT_TRUE(w.script().find(uid)) << uid;
+    const auto turning = [&](int32_t uid) { return w.script().find(uid)->graph->transition >= 0; };
+    // Lara at piece `uid`'s use record presses interact; true when it began to turn. Then its turn is waited out.
+    const auto use = [&](int32_t uid) {
+        const bool began = interactFrom(w, engageSpots(bf, w, *w.script().find(uid), 8), [&] { return turning(uid); });
+        for (int i = 0; i < 600 && (turning(231) || turning(232) || turning(233)); ++i) w.tick({});
+        for (int i = 0; i < 30; ++i) w.tick({});
+        return began;
+    };
+    const auto solved = [&] { return std::ranges::find(calls, std::pair<int32_t, int16_t>{231, 62}) != calls.end(); };
+    EXPECT_EQ(graphStateId(w, 232), 0);
+    EXPECT_EQ(graphStateId(w, 233), 0);
+    EXPECT_FALSE(use(232)) << "no handle in it: nothing to turn";
+    EXPECT_FALSE(w.script().graphAccepts(231, formats::kStimulusInsert)) << "the centre has its handle";
+    // The door is shut: swimming at it from the tower side she stays on this side.
+    const vec3 door = w.script().find(231)->pos;
+    const auto swimThrough = [&] {
+        place(w, door + vec3(-900, 0, -500), 0);
+        game::Actions fwd;
+        fwd.move.y = 1;
+        for (int i = 0; i < 600 && w.currentUnit().data.name == "l1_seafloor"; ++i) w.tick(fwd);
+        return w.player().state().pos.x - door.x;
+    };
+    EXPECT_LT(swimThrough(), 0.0f) << "the shut door stops her";
+    EXPECT_EQ(w.currentUnit().data.name, "l1_seafloor");
+    // First handle: picked up from its pedestal under water (its kind-4 record), swum to the right piece, inserted.
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(970), 4), [&] { return w.heldPortable() == 970; }));
+    const auto st = w.player().state().state;
+    EXPECT_TRUE(st == game::State::SwimUnder || st == game::State::SwimTread) << "carried swimming";
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(232), 5), [&] { return w.insertedIn(970) == 232; }));
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ(graphStateId(w, 232), 2);
+    EXPECT_EQ(w.script().find(232)->script->fields[244], 1u) << "vt 20(2): the piece has its key";
+    // Second handle, from the mound, into the left piece.
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(971), 4), [&] { return w.heldPortable() == 971; }));
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(233), 5), [&] { return w.insertedIn(971) == 233; }));
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ(graphStateId(w, 233), 2);
+    // Top once, left once, right once: not yet; the right piece a second time: solved.
+    ASSERT_TRUE(use(231));
+    ASSERT_TRUE(use(233));
+    ASSERT_TRUE(use(232));
+    EXPECT_FALSE(solved());
+    EXPECT_EQ(graphStateId(w, 231), 0);
+    ASSERT_TRUE(use(232));
+    for (int i = 0; i < 900; ++i) w.tick({});
+    EXPECT_TRUE(solved()) << "centre vt 61 -> vt 62 \"Eye Puzzle Solved\"";
+    EXPECT_EQ(graphStateId(w, 231), 2) << "opened (modifiable 4 (2): the opening transition, opened_idle)";
+    EXPECT_NE(std::ranges::find(calls, std::pair<int32_t, int16_t>{235, 62}), calls.end()) << "the reveal camera";
+    for (const int32_t ping : {236, 237, 238}) EXPECT_NE(std::ranges::find(calls, std::pair<int32_t, int16_t>{ping, 55}), calls.end()) << ping;
+    EXPECT_FALSE(use(232)) << "solved: the pieces' records are off (reveal 235's end, vt 60 / 64)";
+    // Through the open door into the flooded corridor: l1_norse_hallway_a.
+    EXPECT_GT(swimThrough(), 0.0f);
+    game::Actions fwd;
+    fwd.move.y = 1;
+    for (int i = 0; i < 1800 && w.currentUnit().data.name == "l1_seafloor"; ++i) w.tick(fwd);
+    EXPECT_EQ(w.currentUnit().data.name, "l1_norse_hallway_a");
+    for (const int32_t uid : {231, 232, 233, 235, 970, 971})
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+
+// Research: every object's rigid-body joint record (limit, motor) and mass: OU_RB_MOTORS=1 (or a name substring).
+TEST(ProgressionReal, RigidBodyMotors) {
+    const char* only = std::getenv("OU_RB_MOTORS");
+    if (!gameDir() || !only) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    for (const auto& [id, name] : formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})) {
+        if (std::string_view(only) != "1" && name.find(only) == std::string::npos) continue;
+        const auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        physics::ObjectPhysics p;
+        try { p = physics::loadObjectPhysics(cdc::parseDrm(std::vector<uint8_t>(*bytes))); } catch (const std::exception&) { continue; }
+        if (p.physClass != physics::kClassRigidBody || !p.jointLimit) continue;
+        std::printf("%-40s mass %7.1f limit %g..%g on %d motor %g bound %g on %d\n", name.c_str(), physics::massProps(p).mass, p.jointLimit->lo,
+                    p.jointLimit->hi, p.jointLimitOn, p.jointMotor.speed, p.jointMotor.bound, p.jointMotor.on);
+    }
 }
 
 // Uber object data of one intro (sections, states, transitions, commands, events, joints): OU_UBER_DUMP="unit:uid".

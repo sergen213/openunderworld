@@ -123,9 +123,13 @@ bool Player::tryLadder(bool fromAir) {
             // ladder_attach_ground_top turns her half round the way its root does (-180) [O]
             s_.climbYawTo = atTop ? s_.yaw + wrapAngle(yawOf(-xy(out)) - s_.yaw - 0.01f) : yawOf(-xy(out));
             if (atTop && s_.climbYawTo > s_.yaw) s_.climbYawTo -= 2 * kPi;
+            // Caught too far under where the fall began: the ladder's bad attach (Player::badAttach; chart S1117 / S1118
+            // ladder_attach_air_bad, the states whose property 0x1F2 raises the bad-attach flag [O]).
+            const bool bad = fromAir && badAttach(s_.climbTo.z);
             s_.vel = vec3(0);
             s_.state = State::Ladder;
-            play(atTop ? "ladder_attach_ground_top" : fromAir ? "ladder_attach_M" : "ladder_attach_ground_bottom", false);
+            s_.savingGrab = bad ? t_.savingGrabSeconds : 0.0f;
+            play(atTop ? "ladder_attach_ground_top" : bad ? "ladder_attach_air_bad" : fromAir ? "ladder_attach_M" : "ladder_attach_ground_bottom", false);
             return true;
         }
         if (glm::dot(fwd, -out) < 0.5f) continue;
@@ -311,7 +315,29 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const auto& m = col_.markup[size_t(s_.ledge)];
     const vec3 out = s_.climbNormal;
     const std::string clip = s_.clip;
-    if (clip == "ladder_attach_M" || clip == "ladder_attach_ground_bottom" || clip == "ladder_attach_ground_top" ||
+    // Letting go (Crouch: T1823, ladder_detach_drop with query q22, then the fall S1006) and catching the ladder again
+    // lower down needs no key in tru.exe: the fall states' air grab takes it, as ours [O: no chart transition onto a
+    // ladder reads Interact]. Interact comes in when that catch is a bad attach: S1117 / S1118 hold her on
+    // ladder_attach_air_bad under the saving-grab action; the Interact press -> T1829 ladder_bad_attach_recover, the
+    // time running out -> T1830, the fall; Crouch lets go (T1820) [O].
+    if (s_.savingGrab > 0) {
+        s_.savingGrab = std::max(0.0f, s_.savingGrab - dt);
+        if (s_.buttons.interact.buffered()) {
+            s_.buttons.interact.take();
+            s_.savingGrab = 0;
+            s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw;
+            play("ladder_bad_attach_recover", false);
+        } else if (s_.savingGrab <= 0 || dropPressed) {
+            s_.savingGrab = 0;
+            s_.regrabCooldown = 0.3f;
+            startFall(out * 100.0f);
+            play("ladder_detach_drop", false);
+        } else if (!clipDone()) {
+            warpStep(dt);
+        }
+        return;
+    }
+    if (clip == "ladder_bad_attach_recover" || clip == "ladder_attach_M" || clip == "ladder_attach_ground_bottom" || clip == "ladder_attach_ground_top" ||
         clip == "ladder_climb_up" || clip == "ladder_climb_down" || clip == "ladder_detach_ground_top" ||
         clip == "ladder_detach_ground_bottom" || clip == "ladder_jump_up_at_top" || clip == "ladder_settle_left" ||
         clip == "ladder_settle_right") {

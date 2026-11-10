@@ -1,8 +1,8 @@
 {
   "version": 1,
   "name": "pole_drop_after_fling",
-  "chapter": "Known gap: letting go of pole 1337 after a fling onto it",
-  "note": "l4_traprooms: after the fling 1336 -> 1337, drop plays Hpole_detach_dropPerp and she starts to fall, but ~25 ticks later the pole catch takes her back onto pole 1337 (94 units along it), so she never reaches the floor; from pole 1336 the same press drops her (tests/selftests/pole_drop.json). Fails today (2026-11-10); move to tests/selftests/ once it passes.",
+  "chapter": "Southern Mexico: letting go of pole 1337 after a fling onto it",
+  "note": "l4_traprooms: the fling 1336 -> 1337 (tests/selftests/pole.json), then Drop. Under pole 1337 lies a rubble mound: her hanging feet are 9..25 over ground too steep to stand on, so she comes down beside it (27 under the hang) instead of the long drop from pole 1336 (tests/selftests/pole_drop.json). She used to be caught again by pole 1337 about 25 ticks after letting go (GameReal.TrapRoomsPoleDropAfterFling, Game.PoleDropOverSteepGroundIsNotCaughtAgain).",
   "level": "l4_traprooms",
   "spawn": [
     14300,
@@ -139,12 +139,25 @@
           ]
         },
         {
+          "clips": [
+            "Hpole_detach_dropPerp",
+            "ng_generic_land_forwards"
+          ]
+        },
+        {
           "probe": "player.ledge",
           "eq": -1
         },
         {
           "probe": "step.drop",
-          "min": 100
+          "near": 27,
+          "tol": 12,
+          "note": "onto the mound's foot, measured"
+        },
+        {
+          "probe": "step.air_time",
+          "max": 1.2,
+          "note": "0.77 s measured: not held in the air beside the pole"
         }
       ]
     }

@@ -152,6 +152,7 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ladder_attach_M", 3, 1}, {"ladder_attach_ground_bottom", 14, 14}, {"ladder_attach_ground_top", 4, 0},
         {"ladder_idle", 3, 3}, {"ladder_climb_up", 3, 3}, {"ladder_climb_down", 3, 3}, {"ladder_detach_ground_top", 3, 1},
         {"ladder_detach_ground_bottom", 3, 1}, {"ladder_detach_drop", 3, 7}, {"ladder_jump_back", 3, 1},
+        {"ladder_attach_air_bad", 3, 1}, {"ladder_bad_attach_recover", 3, 3}, // requests 1162, 1167 (the saving grab)
         // ladder jumps / leans / reaches: requests 1185, 1177, 1182, 1181, 1184, 1183, 1187, 1188, 1186, 1192, 1197, 1198, 1195
         {"ladder_jump_left", 3, 1}, {"ladder_jump_right", 3, 1}, {"ladder_jump_left_prepare", 3, 1},
         {"ladder_jump_left_prepare_untargeted", 6, 6}, {"ladder_jump_right_prepare", 3, 1},
@@ -363,7 +364,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     // grapple (Grapple.cpp)
     "grapple_rappel_free_jumpon", "grapple_rappel_idle", "grapple_rappel_free_swing_forward",
     "grapple_rappel_free_swing_backward", "grapple_rappel_free_ascend", "grapple_rappel_free_descend",
-    "grapple_rappel_free_jumpoff",
+    "grapple_rappel_free_jumpoff", "grapple_rappel_jumpoff_left", "grapple_rappel_jumpoff_right", "grapple_rappel_jumpoff_back",
+    "grapple_rappel_free_rotate_left", "grapple_rappel_free_rotate_right",
     "grapple_rappel_wall_land", "grapple_rappel_wall_land_left", "grapple_rappel_wall_land_right", "grapple_rappel_up",
     "grapple_rappel_up_left_45", "grapple_rappel_up_right_45", "grapple_rappel_down", "grapple_rappel_down_left_45",
     "grapple_rappel_down_right_45", "ng_ground_to_wallrun_left", "ng_ground_to_wallrun_right", "grapple_rappel_left",
@@ -372,6 +374,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     // ladders / pillars / perches (Traverse.cpp)
     "ladder_attach_M", "ladder_attach_ground_bottom", "ladder_attach_ground_top", "ladder_idle", "ladder_climb_up",
     "ladder_climb_down", "ladder_detach_ground_top", "ladder_detach_ground_bottom", "ladder_detach_drop", "ladder_jump_back",
+    "ladder_attach_air_bad", "ladder_bad_attach_recover",
     "ladder_jump_up", "ladder_jump_up_at_top", "ladder_idle_to_jump_up_prepare", "ladder_jump_up_prepare",
     "ladder_jump_up_prepare_to_idle", "ladder_jump_left", "ladder_jump_right", "ladder_jump_left_prepare",
     "ladder_jump_left_prepare_untargeted", "ladder_jump_right_prepare", "ladder_jump_right_prepare_untargeted",
@@ -446,6 +449,8 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         }
     };
     loadClips(drm, kLaraClipNames, path, "");
+    loadClips(drm, kMeleeClipNames, path, ""); // close combat / carried objects (Melee.cpp)
+    if (auto t = loadMeleeTuning(bigfile)) lib.melee = *t;
     // Lara's weapon clips live in each weapon's DRM (they animate her skeleton); stats from its data.
     for (int i = 0; i < kWeaponCount; ++i) {
         const std::string object(weaponObject(Weapon(i))), file = "pc-w\\" + object + ".drm";
@@ -566,6 +571,7 @@ void World::tick(const Actions& input) {
         a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = a.draw = false;
         if (combat_.headShot < 0) a.fire = a.aim = false;
     }
+    if (!onBike) meleeInput(a); // a close-combat move's input lock, the carried portable's keys, evasive moves (Melee.cpp)
     // The grapple (virtual button 1) on its press edge: throw at the target, or let go of the rope. tru.exe's keyboard
     // defaults bind Q to both it and Recenter Camera (virtual button 8): 0x487710 binds button i to key 0x80 + DirectInput
     // scan code, buttons 1 and 8 both 0x90 = 0x80 + DIK_Q, as the registry's Input list writes them ("1"="144",
@@ -636,7 +642,9 @@ void World::tick(const Actions& input) {
     player_.setWaveSeconds(double(ticks_) * kTickSeconds);
     player_.setCamera(cam_.yaw, cam_.pitch);
     if (!onBike) player_.tick(move, a, dt);
+    hingePull_.clear();
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
+    else if (uberGrappleOff(player_.state().grappleUid)) player_.releaseGrapple(false); // its state dropped the target (action 0x1A)
     else if (a.interact)
         if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid)); target) {
             if (target->kind == script::Kind::Block) {
@@ -644,6 +652,7 @@ void World::tick(const Actions& input) {
                 delta.z = 0;
                 if (const float distance = glm::length(delta); distance > 1.0f)
                     target->offset += delta * std::min(240.0f * float(dt), distance) / distance; // [I] braced pull speed
+            } else if (pullGrappled(a)) { // the rope drags the target's own joint (Objects.cpp)
             } else if ((pullT_ += dt) >= 1.0f) { // [I] a one-second heave runs the target's pull handler, then lets go
                 if (script_.grapplePulled(target->uid)) lastPulled_ = target->uid;
                 player_.releaseGrapple(false);
@@ -676,7 +685,7 @@ void World::tick(const Actions& input) {
     if (grabbing && anims_.find("obj_block_grab")) push.move = vec2(0);
     const auto scriptStart = std::chrono::steady_clock::now();
     script_.setTimeScale(combat_.timeScale * combat_.worldScale);
-    script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact}, &col_);
+    script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact, engagedUse(a.interact && !interactHeld_)}, &col_);
     tickTimes.scriptMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - scriptStart).count();
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.
@@ -708,11 +717,18 @@ void World::tick(const Actions& input) {
                 }
         }
     for (const int32_t bike : script_.takeMounts()) mountBike(bike); // larabase 52 from a sleeping handler (l5: 0.6 s)
-    collectPickups(a.interact && !interactHeld_);
-    carryPortables(a.interact && !interactHeld_ && pickedUp_.empty());
+    const bool interactPress = a.interact && !interactHeld_;
+    const int32_t heldBefore = held_;
+    const size_t insertedBefore = inserted_.size();
+    collectPickups(interactPress);
+    carryPortables(interactPress && pickedUp_.empty());
     pushUberJoints(push);
     tickObjects(wdt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
+    // Close combat (Melee.cpp): an interact press that no pickup, portable, switch, block or handle took kicks / swings.
+    if (!onBike)
+        tickMelee(a, interactPress && pickedUp_.empty() && held_ == heldBefore && inserted_.size() == insertedBefore && !script_.used() &&
+                         !script_.holding() && !uberHandle_.uid && uberGrip_ == vec3(0) && player_.state().state != State::GrapplePull, dt);
     vec3 carry = script_.carried();
     if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) { // she follows the pushed body
         const vec3 p = player_.state().pos;
@@ -1366,6 +1382,9 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
     add(s.ropeBends), add(s.polePara), add(s.ropeMax);
     add(s.jumpStart), add(s.jumpTime), add(s.jumpAimed), add(s.wallJumps), add(s.wallTime), add(s.jumpLedge), add(s.jumpFromLedge);
+    for (const ButtonTime* b : {&s.buttons.jump, &s.buttons.interact, &s.buttons.drop, &s.buttons.grapple})
+        add(b->down), add(b->edge), add(b->time), add(b->buffer);
+    add(s.droppedPole), add(s.fallStall);
     const auto& ba = s.balance;
     add(ba.build), add(ba.aboutFall), add(ba.grace), add(ba.unbal), add(ba.bal), add(ba.notImprove), add(ba.full), add(ba.clock);
     add(ba.lastFlip), add(ba.period), add(ba.ref), add(ba.stickYaw), add(ba.blend), add(ba.lean), add(ba.side), add(ba.osc), add(ba.fall);

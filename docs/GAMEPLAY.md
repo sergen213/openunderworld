@@ -388,8 +388,8 @@ outfit (the original only reads `+0x294` on a level load).
 - [O] Uber sections take hit message 0x11C (UberObjectSection_TR8 0x6D4690) when section record +0x52 bit 0 is set:
   health (+0xDC, from record +0x3C) −= damage, floored at 0; an idle section in a state starts its first transition of
   trigger 17 (damage > param float) or 19 (damage class == param); trigger 18 (0x6D49D0) fires when health <= param +
-  0.001. Triggers 6 / 7 / 8 are contact impulses (0x4D5560: 7 = impulse above param) — not simulated, so urns do not
-  break from falls or the bike.
+  0.001. Triggers 6 / 7 / 8 are impulses (0x4D5560; "Carried objects": thrown and falling portables pass theirs on, a
+  kick delivers the hit message; the bike and falls of Lara herself do not yet).
 - [O] Users (survey of all class-79 objects): the urns `*_pt_weightbreak(_b)` (l1 32, l2 48, l4 41, l5 78, l7 50) and
   l3's `ma_ei_breakable_b..v`: health 30, 0 → 2 on trigger 17 param 0 (any hit), 7 (impulse > 379.3) or 6; state 2
   actions 5 (instance +0x18 |= 0x20000000: collision callbacks skip it, 0x48D590 / 0x697970) and 29 (section +0xD4 = 0);
@@ -438,6 +438,189 @@ outfit (the original only reads `+0x294` on a level load).
   (13 objects: `ma_uo_bedroom_door`, tentacle gears, the snake head, ship floor panels / grates / console, thor slide
   doors, chain debris, the naga statue) becomes a loose body with its collider, as do sections riding on it; the main
   section uses the object's own loose flag. Saved with the section state.
+
+## Close combat
+
+Code: `src/game/Melee.cpp` (`World::meleeInput` before the player ticks, `World::tickMelee` after the tick's
+interactions, `Player::actTick`), enemy reactions in `src/game/ai/Enemy.cpp` (`Mode::Knocked`). Player-visible rules
+checked against https://tombraiders.net/stella/walks/controls/TR8controls.html. Decode notes:
+`openunderworld-work/gameplaygoal/melee/` (chart dumps `m1.py`..`m6.py` over hurdles/sc.py, event probe `ev.cpp`).
+
+- **Chart** [O lara.drm state chart, player data +0x12508; conditions 0x8B2838, actions 0x8B0A50]: the chart's input
+  ids are game actions, not buttons (0x760C40 indexes a 0x30-byte action table): 32 = Interact (melee), 99 = Interact
+  (an engaged object), 50 / 51 = Crouch, 52 = Jump, 42 = Sprint, 101 = put a carried object down, 102 = throw it (the
+  weapon chart).
+  - **The action map** [O generalbank.drm DTP 47, named by GlobalInfo +0x1C; tru.exe 0x4868F0 hands it to the mapper
+    0x480BC0]: `+0` 167 bindings of 4 bytes {action id, context, control, second control (0xFF none)}, `+8` 63 controls
+    of 0x18 bytes {u16 kind (0x10xx button, 0x20xx axis), u16 code, u32 hold time in ms, ..., float range}. A control's
+    code under 25 is one of the Control Configuration's virtual buttons ("Controls": 0 Interact, 1 Grapple, 2 Crouch,
+    3 Jump, 4 Target Lock, 5 Shoot, 6 Sprint, 7 Grenade, 9 Manual Aim), above that a raw key (0x81 Esc, 0x148 the
+    arrows). The bindings of the ids above: 32 and 99 -> control 2 (button 0, Interact), 50 / 51 -> control 1 (button
+    2, Crouch), 52 -> control 0 (button 3, Jump), 42 -> control 6 (button 6, Sprint), **101 -> control 1: Crouch puts
+    the carried object down, 102 -> control 5 (button 7): Grenade throws it**. Dump:
+    `openunderworld-work/gameplaygoal/melee/am.cpp` (`am.txt`). Condition 0x7D1 = state property 1002 "melee allowed" (the ground and combat families and the carry
+  family S1313); 0x7D3 = the melee target (targeting slot 5, 0x71CAF0(5)) is the combat target; 0x7D8 (0x765810) its
+  height class; 0x7DA the fatality target (slot 6); 0x7DB a vault target; 0x591 the kind of the engagement record she
+  stands in (0 none); 0x5DD / 0x5DE she holds a portable / one that encumbers her.
+  - T36 (Interact + 0x7D1 + 0x7D3) -> S1422 -> by 0x7D8: S1429 `melee_kick_low`, S1430 `_mid`, S1428 `_high`, S1431
+    `_highest`. T38 (Interact + 0x7D1 + 0x591 = 0) -> S1423: `melee_kick_move` while the stick runs her forward
+    (S1424), else `melee_kick_mid`. S59 (the sprint) T177 -> S1432 `melee_kick_move`.
+  - T1347 (Interact + 0x7DA) -> S741 -> S738 `melee_thrall_fatality` (holding a pole: S740, the pole's
+    `hosted_melee_thrall`).
+  - T1405 (S724, the combat run: Jump + stick forward + 0x7D1 + 0x7DB, not encumbered) -> S736, the enemy vault.
+  - T1355 (S746: Crouch + stick, in combat) -> S744 -> `combat_rollfront` / `_back` / the side rolls by the stick's
+    quadrant relative to her (condition 0x193 = 414..417); T1367 (Jump, in combat) -> S751 -> `combat_jump<f|b|U>_takeoff`
+    and the side leaps.
+  - Kind-3 engagement records (the urns): S1390 T2306 -> S1301, whose action 1406 (0x72C790) posts 0x158 to the object
+    and starts the kick (0x71EF60). `Phys_kick_low` / `_high` (requests 13 / 64) have no caller state [O].
+- **Attack records** [O player data, 0x28 bytes: +1 hit effect id, +4 damage, +0xC hit class, +0x20 / +0x24 rings;
+  state property 1005 (type 27) names the one in force, weapon controller +0xC4]:
+
+  | state | move | damage | class |
+  |---|---|---|---|
+  | S1426 (parent of every kick) | kicks | **60** | 2 |
+  | S1432 | the sprint kick | **3** | 2 |
+  | S737 | thrall fatality | **100** | 16 |
+  | S1311 | a swung portable | **100** | 2 |
+  | S736 | enemy vault | **0** | 1 |
+  | S788 / S795 / S796 | Mjolnir's pound (see "Weapons") | 120 | 13 |
+
+  `loadMeleeTuning` reads them through the chart (`CombatReal.MeleeDataDecodes`).
+- **Targets** [O]: slot 5 (+0x474) = within **640** of her eye (3D) and **90°** [I: criterion type 5 read as the
+  horizontal angle from her facing]; slot 6 (+0x478) = within 640 and criterion 0xE [I: a regenerating thrall]. Height
+  class (0x765810): the target's top over her feet (target z - her z + its query 0xD4) under **63.21** low, under
+  **316.06** mid, under **537.29** high, else highest (+0x2B4 / +0x2B8 / +0x2BC = 0.2 / 1 / 1.7 m). Ours: the top is the
+  enemy's highest bind-pose bone (`EnemyTuning::top`) [I].
+- **Hit windows** [O clip events, 30 Hz frames; 0x716F30 cases 0xE / 0xD post 0x8F / 0x94 with the limb to Lara and to
+  the portable she holds: the limb's contacts deliver the record]: low 4..10 (0.70 s clip), mid 4..10 (1.20 s), high
+  3..13 (0.93 s), highest 5..10 (1.03 s), move 6..11 (0.70 s); weight swing `hosted_melee` 10..20, pole swing
+  `hosted_melee_front` 3..14. The fatality's blow is event 0x6D at frame **23** (0x6E6840: message 0x11C straight to
+  the target with the record's damage and class, no contact test); `combat_killing_stomp` carries the same events but
+  no chart state plays it [O].
+- **Ours**: Interact (a press no pickup, portable, switch, block or handle took) starts the move; the input is locked
+  for the clip (`State::Melee`, root motion). She turns to the target and closes on it at 1200 units/s until the window
+  opens [I: tru.exe interpolates her onto a point by the target, action 1007]. In the window her leading foot (the
+  lower of each side's bind-pose bones, the one farther forward) is a sphere of radius 70 [I]: every enemy capsule it
+  touches, and the target she kicked at if the gap between the two capsules is within 190 [I: her leg], take the
+  record once. Breakables: an uber object's collider in the sphere, or the kind-3 object she engages (else one within
+  reach [I]), takes the hit message (`World::damageObject`: the urns break on any damage); she kicks by its top.
+- **Enemies** (`Hit::melee`): knocked off their feet (`ai::Mode::Knocked`): the fall clip by the side the blow came
+  from, then the get-up [O clips, I pairing]: soldiers `hitreact_heavy_forward` + `get_up_back` (from behind
+  `hitreact_heavy_back` + `get_up_front`), viking / mayan / yeti thralls `hitreact_heavy_knockdown` +
+  `hitreact_heavy_getup` (rear: `heavy_hitreact_knockdown_rear` + `heavy_hitreact_getup_rear`), cats
+  `hitreact_thrown_back` / `_forward` + `hitreact_thrown_getup`, nagas `stun_start` + `stun_end`; types without them
+  (spiders, bats) stagger. A small spider (2 hit points, top under 63.2) dies to the low kick: the stomp.
+- **Thralls** [O 0x67F040 / 0x620380 / 0x613B40]: bullets, kicks and explosions (viking / mayan) only put them down to
+  regenerate ("Enemies"). The finishing move's class 16 is in no regenerate list; ours: it ends a regenerating thrall
+  whatever its health [I: the lying body's damage path 0x682680 -> 0x65AC80 is not traced], with `death_permanent`
+  (viking / mayan), then its chunks. An adrenaline head shot is the hit's +0x6E flag, which no thrall's entry carries,
+  so it kills standing and lying thralls [O] (`Enemy::getsUp`). Not done: `death_drown` in the eitr pool, the pole's
+  `hosted_melee_thrall`.
+- **Enemy vault**: with the target locked, running at the melee target, Jump: her clip is the enemy's own
+  `hosted_enemy_vault` (in its DRM, it animates her; kept as `vault:<type>`), the enemy plays `hitreact_vault` /
+  `hit_react_vault` / `damage_vault` and takes the record's 0. Soldiers have only `hitreact_vault_adren` (the
+  adrenaline head shot's vault): not vaulted [I].
+- **Evasive moves**: target lock + Crouch with the stick = `combat_roll<front|back|left|right>`; + Jump with the stick
+  aside or back = `combat_jump<l|r|b>_takeoff`, then a leap of 1200 units/s that way and 900 up [I] playing
+  `combat_jump*_inair`; forward and neutral stay the plain jump. No invulnerability rule is decoded.
+- **Knocked down** (`World::throwLara`, `State::Knocked`): a blast's knock (message 0x91; ours: her own grenades)
+  throws her: `hitReact_thrownBack` -> `hitReact_landBack` -> `Hit_getupback` when the blast is in front of her (onto
+  her back), else `Hit_ThrownFront` -> `Hit_LandFront` -> `Hit_GetupFront` (onto her front) [O clips: `Hit_LandFront`'s
+  root moves 215 forwards, `hitReact_landBack`'s 60 backwards; I: which blast picks which]. She skids with the knock, lies
+  1 s [I] and gets up; Jump gets her up at once (the controls page). tru.exe's ThrownState and the reaction types 7 / 9 /
+  10 / 12 / 15 (0x6EB590 passes those hit classes through) are not traced [U].
+- **Open** [U]: the lying thrall's damage path (0x682680 -> 0x65AC80), `death_drown` in the eitr pool and the pole's
+  `hosted_melee_thrall` (chart S740); tru.exe's ThrownState and its reaction types; any invulnerability of the evasive
+  moves; the interpolation of action 1007 that closes her on the target; soldiers' `hitreact_vault_adren`.
+- Saved with the objects (`melee`: the move, its target, phase and timers; docs/SAVES.md).
+- Tests: `Combat.KickLandsInItsWindow`, `Combat.KnockedDownAndGetsUp`,
+  `CombatReal.GrenadeBlastKnocksLaraDownAndSheGetsUp` (l1_baldrs_tomb: her own grenade's blast, the three clips, up
+  again), `Combat.EvasiveRollsAndLeapsUnderLock`,
+  `CombatReal.MeleeDataDecodes`, `CombatReal.KickKnocksAPoacherDown` (l4_pool), `CombatReal.StompKillsASpider`,
+  `CombatReal.SprintKickAndAirKicks`, `CombatReal.VaultOffAnEnemy` (a tiger), `CombatReal.FatalityEndsADownedThrall`
+  (l1_baldrs_tomb: shot down, finished, chunks; the other one rises), `CombatReal.KickBreaksAnUrn` (l1_baldrs_sideroom
+  94), `AiReal.MeleeKnockDownsAndThrallFinishers`; self-tests `melee_kick`, `urn_kick`.
+
+## Carried objects
+
+Code: `World::carryPortables` (`src/game/Objects.cpp`: pick-up, insert, removal), `src/game/Melee.cpp` (`portableDef`,
+`pickUp`, `heldPoint`, `releaseHeld`, `tickThrown`, `throwVelocity`, `Player::encumberedMove`).
+
+- **Portable data** [O object data, ObjectBase +0xC8, magic 0xB00B]: +0x18 it encumbers her; the throw (0x6B53A0):
+  +0x34 near distance, +0x38 aim distance, +0x3C / +0x40 horizontal launch speed for a near / far aim point (units per
+  30 Hz frame), +0x44..+0x50 the same with a combat target.
+
+  | object | encumbers | near / aim | speed near / far | with a target |
+  |---|---|---|---|---|
+  | `ms_pt_weight_c` (the carved weights) | yes | 632.1 / **2528.4** (2 / 8 m) | 53.73 / **53.73** | the same |
+  | `ar_pt_pole_a` (poles) | no | 237.0 / 1264.2 | 25.28 / 56.89 | 316.1 / 1896.3, 37.93 / 69.53 |
+
+- **Lara's clips with a portable live in its DRM** [O]: `hosted_pickup` (weights 1.5 s, event 0x4E at frame 17 -> message
+  0x17B: in her hands; poles frame 14), `hosted_putdown` (event 0x4F at frame 20 / 8 -> 0x156 with parameter 1),
+  `hosted_throw` (event 0x53 at frame 27 / 14 -> 0x1AF), `hosted_melee` / `hosted_melee_front`, `hosted_insert` (0x4D
+  at frame 48), `hosted_remove` (0x50 at 18), `hosted_idle`, the swim variants; the chart plays them by slot (state
+  property 213 type 33: 4 put down, 5 throw, 6 pick up, 7 insert, 8 remove, 10 swing, 13 thrall fatality). Keys have
+  no put-down / throw / swing clips (`obj_store`). Loaded on first use as `hosted:<animation id>`
+  (`World::portableDef`). The weights' walk is lara.drm's `portable_encumbered_idle` / `_idle_to_walk` / `_walk` /
+  `_walk_to_idle` (chart S1316..S1322; the `_turn45` / `_turn90` clips are not used).
+- **Messages** [O 0x6B5890]: 0x156 = let go: the body takes her velocity, with parameter 0 plus 300 [I unit: units/s]
+  along her heading; 0x1AF = thrown: velocity from 0x6B53A0, and it is a weapon for **1500 ms**; 0x1A9 / 0x188 stow /
+  unstow (not done).
+- **The throw** [O 0x6B53A0 -> 0x6A7510 -> 0x6A6F40]: from 0.7 of her height over her feet (0x6EFC40) at the point
+  `aim distance` along her heading (with a combat target: the target), stopped at the first thing in the way (0x6F2530);
+  the horizontal speed is the data's (the near one when that point is closer than `near`), the flight time the distance
+  over it, the vertical speed what reaches the point under gravity **3 per frame²**, replaced by the horizontal speed
+  when it exceeds the far speed. A weight thrown down a room leaves at 1612 units/s forward and 1612 up.
+  `game::throwVelocity` (`Combat.ThrowVelocityAsTheExe`). [U] A short press throwing shorter (the walkthrough) is the
+  weapon chart's state S100, held while input 102 is down: its effect on the launch is not decoded; ours always throws
+  in full. Ours flies under the scene's gravity for bodies, 5.72443 per frame² [I, PHYSICS.md], so it lands nearer
+  than tru.exe's solve assumes (about 1500 units from her on a level floor instead of about 2200). Landed, a weight
+  lies on its cube: its loose body is made of the primitives tru.exe gives shapes that rest on the world
+  (`looseShape`, PHYSICS.md "HInfo" flag bytes), not of its r 104 sphere, on which it used to roll some 20 m and off
+  the press plates (`game_replay_baldrs_plates_gate`: thrown from plate 219 it comes to rest ~2100 units on).
+- **Inputs** [O the action map, "Close combat"]: Interact picks up, and with it in her hands inserts it into the
+  receptacle she engages (chart input 99); Crouch (input 101) puts it down; Grenade (input 102) throws it; Interact
+  elsewhere swings it (input 32). Before 0.42 ours set it down on Interact: the tests and the `baldrs_plates_gate`
+  replay that did so now press Crouch.
+- **Ours**: Interact picks up (the clip, then in her hands), inserts into an engaged receptacle or else swings it (it
+  stays in her hands); **Crouch puts it down** (the clip; without the data at once), **Grenade throws it** (no grenade
+  leaves), Jump or a gun key lets go of it with the shove; a weight walks only. The body leaves her hands as a loose
+  rigid body (`releaseHeld`: from her hands, moved out along her heading until it clears her proxy capsule) and from then
+  on is Jolt's: it collides with the level, the plates and other bodies. While thrown, the first enemy it reaches takes
+  the swung-portable record (100, class 2) and goes down [I: the thrown body's own hit numbers are not decoded]. Carried,
+  it sits between her hands (weights, hosted clips) or 60 ahead / 80 up of her root (poles, keys [I]). Swimming: put
+  down at once, no clips [I].
+- **Collision while carried** [I: tru.exe keeps the object on her hand markers; what keeps it out of walls there is not
+  traced, U]: the object's thickness is the smallest half extent of its collision box (`PortableDef::thick`; the carved
+  weight's and the poles' from their Havok shapes). A sphere of that radius (at most her own radius less 5, so it
+  starts inside her capsule) swept from her chest to her hands stops at the first wall, door or object
+  (`World::heldPoint`), and, for an encumbering object (the carved weights and the power gems, held out in both hands; the weight's
+  thickness 104; not while she engages a receptacle's record), on her feet a wall
+  of the level within the thickness of her hands pushes her back by the overlap
+  (`World::carryCollide`; objects only stop the sweep, as receptacles are approached with the portable in her hands):
+  she cannot walk a weight into a wall, and it is never posed through one. Not during the
+  pick-up, put-down, throw and swing clips (her hands go to the floor). Let go, it is a Jolt body from that point
+  (`releaseHeld`), moved out along her heading until it clears her proxy capsule.
+- **Breakables by contact** [O 0x4D5560]: the uber sections' triggers 6 / 7 / 8 test the lengths of an impulse
+  message's three vectors against the transition's float; vector A is an impulse applied at a point (0x4ECFA0). The urns:
+  6 over **0** (any blow), 7 over **379.27**. Ours (`World::impulseObject(uid, applied, contact)`): a let-go or thrown
+  portable moving faster than 30 units/s passes its speed as the contact [I: B / C read as a contact speed in units/s]
+  to every uber object its bounds reach: a weight thrown or dropped onto an urn breaks it. The bike's ram and Lara's
+  roll do not call it yet.
+- **Open** [U]: what keeps a carried object out of walls in tru.exe; the short throw (weapon chart S100); stowing a
+  pole (0x1A9 / 0x188); the insert / remove clips (`hosted_insert`, `hosted_remove`: ours inserts and takes out at
+  once); the swim states' carry clips; whether Lara's own body (a roll, a fall onto it) or the motorcycle posts the
+  impulse message of triggers 6 / 7 / 8 (ours: only let-go and thrown portables and the kick's hit message do); the
+  thrown body's own hit numbers.
+- Walkthrough requirement C04-03 (l1_baldrs_tomb's west room): from press plate 219's door-side edge, facing door 223,
+  the thrown weight passes the doorway (x = -4109) in the air and rests beyond it
+  (`CombatReal.WeightThrownThroughTheDoor`).
+- Saved with the objects (`held`, `melee`: thrown timers, a pending launch); the loose body is in `objects.physics`.
+- Tests: `CombatReal.WeightPickedUpCarriedAndPutDown`, `CombatReal.WeightThrownThroughTheDoor` (also: a poacher in its
+  way takes 100 and goes down), `CombatReal.ThrownWeightPressesThePlate`, `CombatReal.CarriedWeightCollidesWithTheLevel`
+  (walked at the west room's walls: the weight stays out of them, she is held off, put down there it is a loose body on
+  the floor), `Combat.ThrowVelocityAsTheExe`; the receptacle tests and replays ("Receptacle replays and the autopilot":
+  pick-up by Interact with its clip, put-down by Crouch); self-test `carry_throw`.
 
 ## Collectibles
 
@@ -644,12 +827,12 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   | button | original name | key | pad | ours |
   |---|---|---|---|---|
   | 19 / 18 / 17 / 16 | Up / Down / Left / Right | W S A D, arrows | left stick | forward / back / left / right |
-  | 2 | Crouch/Roll (drop, dive) | Left Ctrl | B | drop |
+  | 2 | Crouch/Roll (drop, dive) | Left Ctrl | B | drop (carrying a portable: puts it down; target lock + stick: evasive roll) |
   | 3 | Jump | Space | A | jump |
   | 1 | Grapple | Q | X | grapple |
-  | 0 | Interact | E | Y | interact |
+  | 0 | Interact | E | Y | interact (nothing to interact with / a melee target: the kick, "Close combat") |
   | 5 | Shoot | H, mouse left | RT | fire |
-  | 7 | Grenade (throw held object) | Caps Lock | RB | grenade |
+  | 7 | Grenade (throw held object) | Caps Lock | RB | grenade (carrying a portable: throws it, "Carried objects") |
   | 9 | Manual Aim | Z | right stick click | switch (change target; no manual aim yet) |
   | 10 | Pause | Esc | Start | pause |
   | 11 | Access PDA | Tab | Back | pda |
@@ -698,7 +881,8 @@ plan and writes the actions it gave as an input script; the script replays the s
 through its text, the stick is re-aimed every 4 ticks in 0.05 steps from the camera's yaw, as `World::tick` maps it).
 Plan lines: `go X Y [R] [walk]`, `engage UID [X Y] [walk]` (to the nearest of its engagement records,
 `World::engagementCentres`, until `World::engaged` names it), `face YAWDEG`, `press [ACTION]` (6 ticks held, 6
-released), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
+released; `press` picks up / inserts, `press drop` puts a carried object down, `press grenade` throws it: follow each
+with a `wait` for its clip), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
 heading; ACTION pressed AT seconds in: running jumps), `push FORWARD RIGHT SECONDS [ACTION]` (ACTION, default interact,
 held throughout, the raw stick from the 6th tick: push blocks grip, then move along the block axis nearest her facing
 while the stick's forward is over 0.5), `wait SECONDS`, `near R` (logs the markup polylines within R: poles, ledges).
@@ -725,7 +909,7 @@ downstream reaction as tru.exe's scripts define it (`--report-objects`; PROGRESS
 | `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 | lever graph 1 -> 0 and its slider watch (a joint) |
 | `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 | elevator 2960 vt 54 (graph 0 -> 1), switch 2961 vt 62 |
 | `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole; a jump onto the block (its ledge loop), a standing jump from its top to the pole | lever graph 0 -> 1, its slider at -600 under her hang (state polehang), block under the pole, door 6505 raised 1200 |
-| `baldrs_plates_gate` | l1_baldrs_tomb -5000,-10000,2560,180 (west room) | weight 220 set on press plate 219, weight 218 carried through door 223 onto plate 222, Lara stands on plate 221 | plates at -60, door 223 vt 57 (section 1, open), locks 69 / 70 out of range, gate 45 vt 54 and its joint fallen open (~90°) |
+| `baldrs_plates_gate` | l1_baldrs_tomb -5000,-10000,2560,180 (west room) | the room's full solution: weights 220 and 218 picked up (Interact), carried onto press plate 219 (door 223 opens while she stands on it) and thrown through the door (Grenade, `press grenade`), a running roll through the door before it shuts, both weights put down (Crouch, `press drop`) side by side on plate 222, gate 45's ring grappled from in front, she walks back roped onto plate 221 and holds Interact | plates 221 / 222 at their pressed joint (-50), door 223 vt 57 / 58, locks 69 / 70 out (-1250), gate 45 vt 54 and its joint pulled open (>= 85°, 91), the weights lying on plate 222 |
 | `ballcourt_calendar_handle_turn` | l4_ballcourt -14240,10200,3700,90 | round calendar 6506's east side, grip a push handle and push 4 s | the ring turned on hinge joint 2 (> 0.2 rad, ~0.56), section 1 back in 3 |
 
 Objects' ledges and poles [O data, tru.exe 0x5D0610 -> 0x5CE4F0]: an instance whose model carries markup items (model
@@ -1404,7 +1588,7 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   `_equip / _unequip / _reload` (wp_handgun / wp_uzi; `_free` hanging free). Column yaws 0 / -45 / -90 / -135 / -180
   and rows +-45 by the names [I]; aims to her left clamp (`_switchhands` unused) [U].
 - Q / pad X (`Actions::grapple`, virtual button 1) throws (`grapple_rappel_free_jumpon`) and attaches; Q again or
-  Ctrl/C releases. Space jumps off with the swing's momentum (`grapple_rappel_free_jumpoff`). tru.exe's keyboard
+  Ctrl/C releases. Space: see "Rope inputs" below. tru.exe's keyboard
   defaults put Recenter Camera (button 8) on Q too [O: 0x487710 binds button i to key 0x80 + DirectInput scan code,
   buttons 1 and 8 both 0x90 = 0x80 + DIK_Q 0x10; the registry Input list holds "1"="144" and "8"="144"]; a press that
   throws or releases the grapple does not also recenter, a press with no target offered recenters (`World::tick`)
@@ -1417,11 +1601,72 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   hand and this one gets a bend where it first touched, 7.90125 off the surface, none within 15.8 of another
   (0x6A50B0). Segments are tested shortened by min(9.48, 0.45 x length) at each end (0x6B2CC0). Ours: one ray per
   segment instead of the 4.74-radius sphere casts, the touch point by bisection [I]. Saved in `player.controller`.
-- Swing (ours [I], no exe numbers): gravity + stick pumping (500 u/s²), a rope constraint at hand = root + 400
-  round the pivot (outward radial velocity removed), light air drag. `grapple_rappel_free_swing_forward/backward` by
-  travel direction, `grapple_rappel_idle` otherwise. E ascends the rope, Shift descends (300 u/s [I]). Swinging down
-  onto a floor (> 300 u/s down), or coming down just over a floor out at the end of the arc (more than 0.3 × the free
-  rope from under the pivot), lands her: she lets go standing [I].
+- Rope inputs [O state chart + tru.exe 0x746F60 / 0x745FA0; input actions 44 / 48 = Interact, 47 / 52 = Jump, 46 =
+  Grapple (generalbank DTP 0x2F)]. On the rope the stick is read in its own frame (the pad's angle and deflection,
+  input +0x10 / +0x18; dead below 0.35, player data +0x9C8 / +0x920), not the camera's:
+  - On the ground with the rope in hand she is in the ordinary ground set (chart S705, `grapple_idle` S722): she walks
+    and the rope's length is her distance (0x6A47E0), up to the target's longest. Walking off an edge under the anchor
+    she hangs on it (T1409). **Jump keeps the rope**: at an edge `grapple_rappel_free_jumpon` (T1407), else the
+    ordinary jump (S752 -> S753 `combat_jumpf_inair_grapple_attached`), which becomes the hang on its way down with no
+    ground under her (T1387 / T291) — the rope she hangs on is as long as her distance then. Ours: one launch (the
+    stick jump's 40.00 along + 49.97 up per frame, or the standing jump's), walk 300 units/s, "no ground" = none
+    within 316 under her feet [I].
+  - Hanging free (S381): **Interact held + forward / back climbs / slides** (S391 -> S395 `grapple_rappel_free_ascend`
+    / S392 -> S396 `_descend`; stick within 1 - sin 32.5 deg of the axis; 23.70 up / 41.09 down units per frame x the
+    stick, +0x9E4 / +0x9E8; not while swung out past 40 deg, +0x9EC; rope 553.1..longest). Without Interact the stick
+    forward / back drives the swing (below). Not swinging, **left / right turns her** on the rope (S413..S416
+    `grapple_rappel_free_rotate_left/right`, 3.5 deg per frame eased in over 50 frames, +0x9F4 / +0x9FC). **Jump leaps
+    off** (S406, `grapple_rappel_free_jumpoff`): along her facing max(63.21, 0.45 x her horizontal speed), up max(47.41,
+    0.85 x her vertical speed) per frame (0x73C640 case 734, +0xA48..+0xA54); Crouch lets go; Grapple again lets go.
+  - Feet on a wall (S311): **Interact held + forward / back** climbs / descends (34.77 / 44.25 per frame x the stick,
+    +0x924 / +0x928, where the stick is more up / down than sideways); without Interact left / right runs along the
+    wall. **Jump leaps off the wall** (T379 -> S320): the stick left / right -> `grapple_rappel_jumpoff_left/right`
+    (she turns that way: 45.83 along the wall + 44.25 up per frame, +0x994 / +0x998), else `grapple_rappel_jumpoff_back`
+    (53.73 out + 44.25 up, +0x9A4 / +0x9A8). [I] ours turns her at once and reads left / right as the stick's 90
+    degree sectors. Jump with the stick back during a wall run (T424 -> S324 `grapple_rappel_jumpoff_back_dynamic_*`,
+    +0x9B4.. 53.73 sideways + 53.73 up) is not implemented.
+  - The jump-offs let the rope go [I: their chart states S321 / S406 are outside the rope states; a kept rope would
+    re-enter the hang by T291].
+- Swing law [O tru.exe 0x746F60, player data +0x8D8..+0xA3C; all per 30 Hz frame]. The original swings a rigid body
+  ("[GrappleRope] User Body": sphere radius 30, mass +0x8D8 = 55, damping +0x8DC = 0.022) on the rope; ours is a point
+  pendulum (hand = root + 400 [I]) under the same forces, gravity 5.72443 [I: Lara's own].
+  - The swing is driven while the stick is along her facing — |cos| of its angle over 1 - sin 12.5 deg = 0.784,
+    forward or back — and for 10 frames after it left (+0x9D8); from rest only forward starts it; the stick held back
+    for 150 frames (+0x9DC) stops it. Interact held never drives.
+  - Driven, a force along her facing pushes her **the way she is moving** (forward while she swings forward or hangs
+    still, backward while she swings back): mass x stick x the table value by the rope's free length (0 -> 948.2 ->
+    2844.5 -> longest, +0x8E4 / +0x8E8): forward 3.003..3.161 / 3.003..3.161 / 4.267..4.425, backward 3.003 / 3.319..3.477
+    / 4.425..4.741 units per frame^2 (+0xA10..+0xA3C; gravity is 5.72). So holding Forward builds the swing every pass;
+    there is no phase to hit — the phase is taken from her motion.
+  - Past 45 deg from straight down (+0xA04), going outward: no drive, and a brake force of 2.5 x her velocity (+0xA08).
+    Motion across her facing is braked (3.5, +0xA0C). Not driven and going outward: a brake of 1.0 x velocity (+0x9E0).
+    Speed cap 379.27 per frame (+0xA00). Her facing stays while she swings.
+  - Ours matches these numbers (`Grapple.cpp` constants); [I]: the brakes and the body damping as per-frame rates over
+    the body's mass, the start of a swing from rest going forward, the point pendulum.
+- Swing, original vs ours (l3_main_hall ring 4089, the prologue's crossing; ours `GameReal.MainHallSwingToFarBalcony`,
+  self-test `prologue_hall_swing`):
+
+  | | original [O data / code; not yet measured in the running game] | ours (measured) |
+  |---|---|---|
+  | rope she hangs on after the jump off the balcony edge (2614 from the edge) | her distance when the jump comes down with no ground under her (T1387) | 2170 ("no ground" = none within 316 [I]) |
+  | drive, rope 2170 | 3.003 + 0.158 x (2170 - 948) / 1896 = 3.10 units/frame^2 forward, 3.42 backward, x stick | the same |
+  | swing period, rope 2170 | [U] | 3.67 s (220 ticks) |
+  | far end of the first swing, Forward held | [U] | x -1686, z 1993 (107 ticks after the jump; 53 deg) |
+  | swing held with Forward (steady) | no drive past 45 deg going out, brake 2.5 x v / 55 per frame | ends at 56 deg (x -1755 / +1871, z 2090 / 2140) |
+  | no stick | brake 1.0 x v / 55 per frame going out, body damping 0.022 | dies down within ~3 s (self-test `grapple_swing`: peak speed 1214 -> 80 units/s) |
+  | leap off (Jump) | 63.21 forward, 47.41 up per frame (or 0.45 / 0.85 of her speed) | 1896.3 / 1422.3 units/s; lands at x -3014 on the far balcony (z 1727) |
+  | rope climb / slide (Interact + forward / back) | 23.70 / 41.09 per frame | 711.1 / 1232.6 units/s (self-test: 711.1 in 1 s) |
+  | rappel up / down | 34.77 / 44.25 per frame | 1043.0 / 1327.4 units/s |
+
+  A Wine trace of player +0x2A0 on this ring (period, growth per pass, the rope length the hang starts with, the
+  roped walk's speed) was attempted twice and not obtained: teleported to the balcony (unit offset from the ring's
+  instance position: tru = ours + (1583.83, 1911.31, -1939.58)) she falls through the world after the first camera
+  calibration run. Scripts and notes: `openunderworld-work/gameplaygoal/grapin/` (`wine2.sh`, `an.py`, `NOTES.md`).
+  Open until then [U]: the time base of the brakes and of the body damping (ours: per frame), gravity on the rope
+  body, the "no ground" distance, the roped walk speed, whether the jump-offs let the rope go.
+- Landing from the rope [I]: swinging down onto a floor (> 300 u/s down) off a taut rope, or coming down just over a
+  floor out at the end of the arc (more than 0.3 x the free rope from under the pivot), she lets go standing; landing
+  her own jump with the rope slack keeps it.
 - Overhangs [O PlayerSC_Grapple::OverhangDetected 0x73AB70, player data +0x980..+0xA44]: climbing down a wall, nothing
   within 553.1 into it at 110.6 below her feet -> `grapple_rappel_overhang_descend_begin`, `_descend` into a free swing
   (S379 -> S378); climbing the rope with a wall within 63.2 at 316.1 over her root (60..120 degrees from up) whose lip
@@ -1431,15 +1676,19 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   (`script::Runtime::grapplePulled`: the first overridden void slot 55..60 that does more than return — levers 59/60,
   shiva arms 55/56, snake head 57 [O]; which slot tru.exe calls on a pull is [I]),
   then she lets go standing; `World::lastPulled()` reports the target.
-- Rappel (`State::GrappleRappel`) [I]: a swing into a wall (|normal.z| ≤ 0.35) puts her feet on it,
-  `grapple_rappel_wall_land(_left/_right)` by sideways speed, facing the wall. Stick into the wall shortens the
-  rope (up, `grapple_rappel_up(_left/_right_45)`), away lengthens it (down, `grapple_rappel_down…`); gravity keeps
-  the pendulum in the wall plane; she follows wall steps up to 150 deep, else swings free again. Jump kicks off
-  (700 out, 200 up) into a swing, drop lets go; descending onto a floor ends it standing. Body angle: the rappel clips
-  carry it (feet on the wall, body out along the rope; viewed, below).
-- Wall run [I]: on the wall, a sideways stick runs along it (`grapple_rappel_left/right`, `grapple_rappel_walk_*`
-  below 0.6 deflection): the feet push her along the wall up to 700 u/s (2500 u/s², never braking), so she runs the
-  rope's arc down past the point below the anchor and up the other side. From the ground: roped to a Wall anchor, on
+- Rappel (`State::GrappleRappel`): a swing into a wall (|normal.z| <= 0.35) puts her feet on it,
+  `grapple_rappel_wall_land(_left/_right)` by sideways speed, facing the wall [I]. Inputs and rates as above [O]:
+  Interact + forward shortens the rope (`grapple_rappel_up(_left/_right_45)`), + back lengthens it
+  (`grapple_rappel_down…`); gravity keeps the pendulum in the wall plane; she follows wall steps up to 150 deep, else
+  swings free again; set onto a spot the taut rope does not reach she is moved along the wall toward the pivot.
+  Jump leaps off, drop lets go; descending onto a floor ends it standing. Body angle: the rappel clips carry it.
+- Wall run: on the wall, a sideways stick (no Interact) runs along it (`grapple_rappel_left/right`,
+  `grapple_rappel_walk_*` below 0.6 deflection [I]). Drive [O tru.exe 0x745FA0]: a force along the wall of mass x
+  stick x 1.896..2.528 / 3.161..3.951 / 5.531..6.321 units per frame^2 by rope length (+0x95C..+0x970, the lengths as
+  the swing's), not past 55 deg from under the pivot (+0x944), where going outward she is braked (2.5, +0x948); speed
+  cap 97.98 per frame (+0x940). So she runs the rope's arc down past the point below the anchor and up the other
+  side. Not decoded: the reversal rule (+0x94C / +0x950 / +0x954, flags 0x4000 / 0x8000 / 0x40000), the idle brake
+  (+0x92C / +0x930) and the body damping it switches (0.02 / 0.05) [U]. From the ground: roped to a Wall anchor, on
   a floor with the anchor's wall (the surface closest to the anchor) within 400 of her capsule, a stick along that
   wall toward the point below the anchor plays `ng_ground_to_wallrun_left/right` and starts the run (700 u/s, 350
   up); while that clip plays or she runs downhill along a floor the rope reels in its slack. Use sites [O]: the Wall
@@ -1455,7 +1704,10 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   `Game.GrappleWallRunFromGround`, `GameReal.PoolGrappleTargetAndSwing`, `GameReal.MountedGrapplePullsBlockWithoutSwinging`,
   `GameReal.GrapplePullsUberTargets` (replay `tests/replays/grapple_pull.txt` at l4_trailstart lever 6695,
   l2_puzzleroom shiva 2982), `ProgressionReal.GrappleHandlesSwivel`, `GameReal.KrakenRoomRappel` (replay
-  `tests/replays/kraken_rappel.txt`: swing onto 326's wall, rappel down 460 and up 590, kick off),
+  `tests/replays/kraken_rappel.txt`: swing onto 326's wall, Interact + back / forward down and up, Jump leaps back off
+  the wall), `Game.GrappleSwingDrive`, `Game.GrappleJumpIntoGapKeepsRope`, `Game.GrappleRopeClimbNeedsInteract`,
+  `Game.GrappleRappelInputsAndWallJump`, `GameReal.MainHallSwingToFarBalcony`; self-tests `prologue_hall_swing`,
+  `grapple_swing`, `rappel`, `wall_run`,
   `GameReal.ValaskjalfWallRun` (ledge → wall run 370 down through the arc → far ledge, standing). Replay
   `tests/replays/valaskjalf_wallrun.txt` plays the wall run in ou-game.
 - Viewed (2026-10-29, GL + Vulkan identical): l1_kraken_room rappel at tick 300 from the side
@@ -2132,8 +2384,8 @@ Ours:
   weighs on a press plate under it as a push block does (its primitives' mass). The uber events of the arms and
   calendars run their scripts; [U] what the cog wheels' and statue arms' filled sections open further (the cog wheels'
   and arms' later states wait for the other sections / their own joint watches; not traced to a gate).
-  Saved (objects `inserted`, `insertedSections`, `slides`, `placed`; uber sections carry their set). Not done: an
-  insert clip (none in lara.drm), the lever's Havok slide numbers (no Wine measurement), l2_maproom's track slide, the
+  Saved (objects `inserted`, `insertedSections`, `slides`, `placed`; uber sections carry their set). Not done: the
+  insert / remove clips (`hosted_insert` / `hosted_remove` in the portable DRMs, "Carried objects"), the lever's Havok slide numbers (no Wine measurement), l2_maproom's track slide, the
   uber transitions' condition check (0x4D0E10) on insert.
 
 Test: `GameReal.LaraPlaysInteractionClips` (switch 4525: State::Use with `use:2605` at `useDistance` while the use
@@ -3322,3 +3574,127 @@ Sources: generalbank DTP 0x2F (input action → virtual button map, GlobalInfo +
 - **Dual targets and damage**: with two enemies in the soft set each pistol takes its own, so one enemy falls later than
   under a single lock (`StreamReal.SaveContinuesBitIdentically`'s l1_ship_exterior fight runs 1400 ticks for it). The
   gate on weapon-controller flags 0x9000 / bit 27 in 0x71E490 is not decoded [U].
+
+## Mediterranean puzzles (l1_seafloor, l1_kraken_entrance, l1_kraken_room, l1_baldrs_tomb)
+
+Walkthrough rows: gameplay matrix C02-09 / 11 / 13, C02-30, C03-11 / 16, C04-06 / 07 / 08.
+
+- Eye door [O bytecode, graph data]: `ms_ani_eye_puzzle_piece` 232 (right) / 233 (left) and `_center` 231 are
+  anim-graph objects. A side piece starts empty (state 0, a kind-5 record needing `ms_pt_seafloor_key_a`); the key,
+  picked up and carried while swimming, is inserted (stimulus 0x20 -> state 2; vt 20(2): "has key" sticky +244, draw
+  group 7, checkpoint). Each piece has one kind-8 ("use") record: Lara's use reaches the piece she engages
+  (`World::engagedUse` -> `TickInput::engagedUse`; before, the nearest object in reach took it), turning it 120
+  degrees (side 2 -> 3 -> 2, centre 0 -> 3 -> 0). The scripts hand the eye draw groups round and switch the other
+  pieces' records off during a turn (instance 59). Centre vt 61: its position stickies +64 / +120 / +176 all set -> vt
+  62 "Eye Puzzle Solved" (modifiable 4 (2) = the opening clip; plugs 236-238 `ms_uo_ping_map_eye_puzzle` command 0 ->
+  state 1, action 28: their collision leaves the doorway; reveal 235). From the start state: centre once, left once,
+  right twice. `ProgressionReal.EyeDoorSolvedByItsHandles` (to l1_norse_hallway_a). [I] no handle-turn clip on Lara.
+- Press plates: docs/formats/PHYSICS.md "Pressure plates" (joint record; one weight does not press, two do).
+- Grapple pulls on joints (`World::pullGrappled`; only targets collected by their model feature: the gears, the tomb
+  gate — the `*_grapple*`-named pull targets keep the one-second script heave [I]): with Interact held, the simulated joints
+  that move the section carrying the grapple feature are driven toward her at 240 units/s at the rope's end [I], each
+  only when the rope has a component along its freedom (prismatic: more than cos 60 degrees along the axis; hinge: by
+  the rope's moment). The states' range watches do the rest; action 0x1A (no target) lets go. [O data] gear 36: feature
+  on model 1 = section 1, prismatic, limit 0..515, watch 512..537 -> trigger 14 -> locked at 512..518; gear 32: feature
+  on model 12 = the ring (section 1) hinged on the column (section 12), whose braked prismatic joint leaves -15.8..237:
+  trigger 15, it falls. Before its pull each room's one-way switch only tries; the gear's event calls the switch's off
+  reaction (type 3637 vt 58: modifiable 4 (1)), which frees it for another pull (`Runtime`: the switch's state id moves
+  along that transition). The bullet on the column (`World::uberShot`, [I] impulse) still works; whether tru.exe's
+  bullets move it is [U]. `ProgressionReal.KrakenGearsPulledByTheGrapple`.
+- Roped walk [I]: attached to a pull target and without Interact, the stick walks Lara (350 units/s, rope paid out to
+  its longest); Interact braces her and pulls (Grapple.cpp). The page's gate solution needs it: the ring is grappled
+  near the gate, she steps back onto the pad, then pulls.
+- Tomb gate 45 [O data]: `ms_rb_tomb_gate` is a class-34 hinge with a limit and no motor (record flags 1) and a
+  grapple feature 1036 up; its hinge marker lies at its foot (46.4 in front of its plane), axis = the marker's Z (level,
+  along the foot): unlocked (script: multibody 77 0..90 once both locks left their range) it stands against its lower
+  limit until the rope tips it over (`World::pulledHinge`; before, a door motor swung it open about the marker's X as
+  soon as the locks were out). [O Wine, l1_baldrs_tomb] Lara on plate 221: plate -51, lock 70 down 1254 at 300
+  units/s, back when she leaves; with one lock out the gate does not move. [U] The both-locks-out case (does it stand
+  without a pull) was not reached under Wine: the harness's pick-up key press did not take the weights.
+  `ProgressionReal.TombGateNeedsBothBlocksAndThePull`.
+
+## Input rules: button timing, saving grab, ladder catch, pole drop (decoded 2026-11)
+
+Sources: the player state chart of lara.drm (`openunderworld-work/hurdles/sc.py`, `gameplaygoal/inputrules/q.py`),
+tru.exe (`ghidra/exports/decomp_all.c`, `hurdles/cond_decomp.c`, a full disassembly), lara.drm object data, generalbank
+DTP 0x2F (`gameplaygoal/aim/inputmap.py`). This section supersedes the "Bad attach [I: trigger]" paragraph of the free
+climb and the "Saving grabs [I]" sentence of PLAYER TAILORING above.
+
+- **Button timing** [O]: the chart reads an input action through `0x7607C0` (conditions 0x65..0x6D, one per action:
+  0x65 = action 52 Jump, 0x66 = 50 Crouch, 0x67 = 42 Sprint, 0x68 = 99 Interact, 0x6B = 25 Manual Aim, ...). The
+  value is 1 on the frame of the press (action flag 0x10), frames held + 1 while down (flag 0x04; milliseconds x 30 /
+  1000, at least 1), -1 on the frame of the release (flag 0x20), -1 - frames while up; the condition's parameter picks
+  the compare (table 0x7609C0): 0 = up (< 0), 1 = down (> 0), 2 = released (== -1), 3 = pressed (== 1), 0x65 = held
+  longer than Lara data +0x6E2 = **15 frames**. Conditions 0x96..0x99 test one action's flags directly (0x98 = pressed).
+  Ours: `game::ButtonTime` / `Buttons` in `PlayerState` for jump, interact, drop, grapple (down, edge, seconds since
+  the change, `heldFrames()`, `heldLong(15)`), updated first thing in `Player::tick`, saved (`controller.buttons`,
+  older saves load them as held) and part of the state hash. A press also stays usable for `Tuning::pressBuffer` =
+  one 30 Hz frame (`buffered()` / `take()`) [I: tru.exe flags a press for one frame; ours ticks twice a frame, and the
+  saving grab's catch and press can fall on the same tick]. Not decoded [U]: what transition flag 7 does (on most
+  button transitions out of clips with a critical section).
+- **Saving grab** [O]:
+  - Trigger: `0x74FDF0` runs on every markup attach. Bad attach (player `+0xEE8` = 1) when the attached markup's record
+    has bit 0 of `+0x50`, or when `fall start z (+0x6DC) + (+0x6E0) - attach point z (+0x9F8) + markup +0x68 > limit`.
+    The limit is float `+0xC` of the fall record (`+0xC4`: the three fall-damage heights, then this) of the jump query
+    in effect (player `+0xA84`, looked up by `0x6F1950`): **711.13** for the ground, hang, DICE, pole and ladder jump
+    queries (q2, q7..q10, q22, q23, q26, q28..q34, q43, ...), **1280.03** for q35, q44 (the air grab of the fall
+    states), q46, q47, q51, q64, q71, q98, q106; with no query Lara data `+0xC14` = **951.33**. State property 0x1A7
+    forces the flag either way and property 0x1F2 raises it (the bad-attach clip states S566 / S567, S1117 / S1118).
+    [I]: `+0x68` is the root's offset under the attach point, so the height is root to root: the game's stacked
+    drop-down ledges are 1304 (l1_ship_sinking_hall 242 -> 241), 1387..1427 (l5_valaskjalf 1488 -> 1485 -> 1484 ->
+    1483) and 1501 / 1738 (l3_chapel) apart, all just over the fall limit, and ordinary catches stay under it. Ours
+    (`Player::badAttach`): `State::Jump` / `HangJump` / `WallJump` = 711.13, anything else 1280.03 [I: our states for
+    the query in effect]; ledges (`tryGrab`, a `HangJump` onto a ledge), DICE holds (`tryClimb`), ladders
+    (`tryLadder`). The markup flag is not in our markup data [U]; poles (`Hpole_*_bad_attach_*`), perches
+    (`perch_attach_air_bad_recover`) and wall hug have their own bad-attach clips, not played yet. The catch itself
+    still needs `vel.z >= 2 x grabMinVz` [I: tru.exe's limit on a falling catch is not decoded].
+  - tru.exe under Wine [O] (l4_temple ledge 1155, Lara pinned in the air beside it for 1.3 s, then let go;
+    `gameplaygoal/inputrules/session2.sh`, `wine2.txt`): with her root 600 / 850 / 1100 over the hang's root she ends in
+    the firm hang; 1350 / 1600 over it she is held in a lower pose (root 149 under the hang's, states 0x0D9DA070 /
+    0x0D9DEF58) for 1.70 s from the catch and then falls to the floor: the limit lies in (1100, 1350], root to root, as
+    the decoded 1280.03 of q44; 50 frames = 1.67 s. The air grab takes the ledge from afar while she is still pinned
+    (caught with the ledge 1106 under her root, q44's kind-31 value; not 1406 under it) - ours still catches when the
+    hands pass the ledge (`tryGrab`, [I]). The Interact press was not exercised under Wine (the scripted press came
+    after the fall): it rests on the decode below.
+  - While it lasts (chart S528, action 2101 = table 0x4B0F40: enter `0x75E5C0`, exit `0x75E6E0`): the HUD shows button
+    icon Lara data `+0x70C` = 52 (`0x70CC50`; ours has no prompt yet), player timer 2 (`+0x74C`) is set to the
+    difficulty table's `+0x14` at the PLAYER TAILORING level (`0x75E5EC` -> `0x6E7740`: **90 / 50 / 15 frames**; plus
+    data `+0x2E0` while player `+0x504` -> `+0x50` is set [U]) and counted down every frame (`0x6EE24E`).
+  - **Interact** recovers: input action 75 (virtual button 0) arrives as message `0x200004B` in `0x76FC30` ->
+    `0x768C90` sets the result 2 -> T734 / T736 (ledge: `ledgeb_bad_attach_recover`; ladder T1829:
+    `ladder_bad_attach_recover`). The timer's expiry message `0x9E` (index 2) -> `0x768CC0` sets 3 -> T735 / T1830: she
+    falls. Crouch pressed (action 135) -> T553: she lets go. **Jump does nothing.** Ours: `savingGrab` seconds, counted
+    from the catch (through a hold's start clip too), `Buttons::interact` buffered press.
+- **Ladder: letting go and catching again** [O]: Crouch on a ladder (T1823 / T1820, cond 0x66) plays
+  `ladder_detach_drop` (S1079, jump query q22) and falls (S1006, air grab q44). No chart transition onto a ladder reads
+  Interact; the catch lower down is the air grab's, automatic as ours (`regrabCooldown` 0.3 s [I]). The key the
+  controls page mentions is the saving grab of a bad catch (S1117 / S1118 `ladder_attach_air_bad`), implemented as
+  above. [U]: whether tru.exe flags every catch of the ladder she just left (the markup flag / a state property).
+- **Safety drop** [O-chart]: transition T114 leaves the ground states (S7 the roll, S8, S59, S75 and the gear states
+  S708 / S727 / S730 / S733 / S743) for S534 of the hang group - whose T748..T750 pick the attach state S542 / S543 / S544
+  - on: `PSCCF_IsFalling` (0x762C60: instance flag 0x80000, she has left the ground), the state's jump target a
+  ledgegrab (cond 0x262, type 610), result flag 6 set and 7 clear (0x76F760: the bit set at query result +0x140), the
+  target's entry (player `+0xA80`) not 5 / 7 / 8 / 9 / 10, cond 0x2BE = 0. No button and no gait condition: walking,
+  running or rolling off an edge that carries a ledge she hangs from it by herself. T235 / T236 are the same for a
+  ladder under the edge (`ladder_run_off_grab` / `ladder_attach_ground_top`, not implemented). T112 (`edge_stop`,
+  request 54) stops her at an edge instead when the stick is pushed, cond 0x1EA (0x764FD0, a move-set value) = 2 and
+  there is no target: not implemented [U: what sets 0x1EA]. Crouch at an edge stays the keyed drop (T777, query q46).
+  tru.exe under Wine [O] (l4_temple block ledge 1155, west edge; `openunderworld-work/gameplaygoal/inputrules/
+  session2.sh`, `wine2.txt`): from standing on the top 70 inside the edge, **walking** (Walk + the stick) she reaches the
+  edge line 0.57 s later and without a key goes straight into the hang (root 158 out and 491 down in ~1.0 s =
+  `drop_to_ledgeb`'s 31 frames, then the hang state of a jump's catch); **running** she overshoots the line by 82
+  with her feet still at the top's height (one state for ~0.08 s), is taken back to the edge and down into the same
+  hang (hang pose reached ~1.2 s after the line).
+  Ours (`Player::trySafetyDrop` from `groundMove` when the ground is gone): the nearest ledge level with her feet
+  (±40), within 150 of where she left the ground, crossed at more than 30 degrees, open below on the side she is
+  heading to; `drop_to_ledgeb` as the Crouch drop [I: the result flags' geometry and the attach states' requests
+  ("MOD" requests 16 / 17 / 21) are not decoded].
+- **Pole drop** (ours): after Drop the pole she let go of is not caught again in that fall (`PlayerState::droppedPole`),
+  and a fall propped up in place with no floor under her root for 0.25 s ends standing (`fallStall`) [I]. l4_traprooms
+  pole 1337 hangs her feet 9..25 over a rubble mound: she comes down 27 beside it.
+- Tests: `Game.ButtonTimingLayer`, `Save.ButtonTimingRoundTrip`, `Game.SavingGrabByFallHeightAndInteract`,
+  `Game.SavingGrabAfterAJumpDown`, `GameReal.SavingGrabClips`, `GameReal.ValaskjalfDropDownSavingGrabs`,
+  `GameReal.ClimbBadAttach` (rewritten), `GameReal.LadderLetGoCatchesAgainAndBadAttach`,
+  `Game.PoleDropOverSteepGroundIsNotCaughtAgain`, `GameReal.TrapRoomsPoleDropAfterFling`,
+  `Game.SafetyDropOffALedgeEdge`, `GameReal.TempleSafetyDropOffThePlatform`; self-tests `saving_grab` (l5_valaskjalf),
+  `safety_drop` (l4_temple), `pole_drop_after_fling` (l4_traprooms).

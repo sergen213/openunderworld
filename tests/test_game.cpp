@@ -990,8 +990,10 @@ TEST(GameReal, LaraClipsAndRootMotion) {
     const auto anims = game::loadLaraAnims(bf);
     size_t weaponClips = 0;
     for (int i = 0; i < game::kWeaponCount; ++i) weaponClips += game::weaponClipNames(game::Weapon(i)).size();
-    // + grenade throw + the five switch use clips (use:2441 / 2605 / 2671 / 2608 / 4129)
-    EXPECT_EQ(anims.clips.size(), game::kLaraClipNames.size() + weaponClips + game::kBikeClipNames.size() + 1 + 5);
+    // + the close-combat / carry clips + grenade throw + the five switch use clips (use:2441 / 2605 / 2671 / 2608 / 4129)
+    EXPECT_EQ(anims.clips.size(),
+              game::kLaraClipNames.size() + game::kMeleeClipNames.size() + weaponClips + game::kBikeClipNames.size() + 1 + 5);
+    for (const auto name : game::kMeleeClipNames) EXPECT_TRUE(anims.find(name)) << name;
     EXPECT_TRUE(anims.find("use:2605")) << "obj_pull_lever";
     EXPECT_GE(anims.skeleton.bones.size(), 116u);
     // ng_run: root moves -Y 806.9 units over 19 key intervals, 20 keys per 0.667 s cycle -> ~1274 units/s.
@@ -3046,9 +3048,11 @@ TEST(GameReal, CliffclimbIndependentOfRenderRate) {
     }
 }
 
-// Caught falling too fast for a firm catch (faster than grabMinVz, up to twice: as a ledge's saving grab [I]) the
-// stance's bad attach holds: DICE_B_air_attach_bad_start onto the hold, its loop for the saving-grab time; jump pulls
-// her back up (DICE_B_air_attach_bad_end, then DICE_B_Idle), else she lets go. A slow fall catches firmly.
+// Caught after coming down more than Tuning::badAttachFall (1280.03: the fall states' air grab q44, tru.exe 0x74FDF0)
+// from where the fall began, the stance's bad attach holds: DICE_B_air_attach_bad_start onto the hold, its loop for the
+// saving-grab time; the Interact press pulls her back up (DICE_B_air_attach_bad_end, then DICE_B_Idle), Jump does not;
+// else she lets go. A shorter fall catches firmly, also one faster than a ledge's firm grab used to allow (1208 down:
+// ours' old rule made that a bad attach, and Jump the recover key).
 TEST(GameReal, ClimbBadAttach) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const auto mesh = [](float z) {
@@ -3060,12 +3064,11 @@ TEST(GameReal, ClimbBadAttach) {
     };
     const vec3 anchor(380, 0, 350 - 158.025f);
     for (const bool pull : {true, false}) {
-        auto w = climbWorld(mesh(350), {300, 0, 1400});
+        auto w = climbWorld(mesh(350), {300, 0, 1700});
         const auto& s = w->player().state();
-        float vz = 0;
-        for (int i = 0; i < 120 && s.state != State::Climb; ++i) vz = s.vel.z, w->tick(forward());
+        for (int i = 0; i < 120 && s.state != State::Climb; ++i) w->tick(forward());
         ASSERT_EQ(s.state, State::Climb);
-        EXPECT_LT(vz, w->player().tuning().grabMinVz);
+        EXPECT_GT(1700 - anchor.z, w->player().tuning().badAttachFall);
         EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_start");
         EXPECT_GT(s.savingGrab, 0);
         for (int i = 0; i < 45; ++i) w->tick({}); // the start clip (0.57 s) carries her onto the hold
@@ -3075,6 +3078,12 @@ TEST(GameReal, ClimbBadAttach) {
             Actions jump;
             jump.jump = true;
             w->tick(jump);
+            w->tick({});
+            EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_loop") << "Jump does not pull her up";
+            EXPECT_GT(s.savingGrab, 0);
+            Actions use;
+            use.interact = true;
+            w->tick(use);
             EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_end");
             for (int i = 0; i < 60; ++i) w->tick({});
             EXPECT_EQ(s.state, State::Climb);
@@ -3082,15 +3091,20 @@ TEST(GameReal, ClimbBadAttach) {
             EXPECT_EQ(s.savingGrab, 0);
             EXPECT_NEAR(glm::distance(s.pos, anchor), 0, 1e-2f);
         } else {
-            for (int i = 0; i < 150 && s.state == State::Climb; ++i) w->tick({});
+            int held = 0;
+            for (; held < 150 && s.state == State::Climb; ++held) w->tick({});
             EXPECT_NE(s.state, State::Climb) << "let go when the saving-grab time ran out";
+            EXPECT_NEAR((45 + held) / 60.0, 50 / 30.0, 0.05) << "50 frames (TOMB RAIDER level) after the catch";
         }
     }
-    auto w = climbWorld(mesh(1350), {300, 0, 1450}); // a short fall onto a high hold
-    for (int i = 0; i < 120 && w->player().state().state != State::Climb; ++i) w->tick(forward());
-    ASSERT_EQ(w->player().state().state, State::Climb);
-    EXPECT_EQ(w->player().state().clip, "DICE_B_air_attach_M");
-    EXPECT_EQ(w->player().state().savingGrab, 0);
+    for (const float from : {1400.0f, 1450.0f}) { // 1208 down (firm now), and a short fall onto a high hold
+        const bool high = from != 1400.0f;
+        auto w = climbWorld(mesh(high ? 1350 : 350), {300, 0, from});
+        for (int i = 0; i < 120 && w->player().state().state != State::Climb; ++i) w->tick(forward());
+        ASSERT_EQ(w->player().state().state, State::Climb) << from;
+        EXPECT_EQ(w->player().state().clip, "DICE_B_air_attach_M") << from;
+        EXPECT_EQ(w->player().state().savingGrab, 0) << from;
+    }
 }
 
 // l2_cliffclimb's hold wall carries a level camera record (type 3, 2 Hermite points, 11 holds, 300 deg/s, force 5 x
@@ -3270,26 +3284,240 @@ TEST(GameReal, ClimbOnlyAtHolds) {
 }
 
 // ---- grapple (src/game/Grapple) ----
-TEST(Game, GrappleSwingAndRelease) {
+// Rope inputs and the swing law (src/game/Grapple.cpp, docs/GAMEPLAY.md "Grapple"). The stage: a ledge under a
+// ceiling anchor 3000 up and 1200 out over the gap beyond its +X edge. Roped she walks to the edge and off it onto
+// the rope (25 degrees from straight down there).
+namespace {
+std::unique_ptr<game::World> ropeStage(vec3 spawn = {-1600, 0, 0}) {
     CollisionMesh m;
-    addFloor(m, -2000, -2000, 2000, 2000, 0);
-    auto w = makeWorld(std::move(m), {0, 0, 0});
+    addFloor(m, -2400, -400, -1200, 400, 0);
+    auto w = makeWorld(std::move(m), spawn);
     w->attachGrapple({0, 0, 3000}, 1);
-    ASSERT_EQ(w->player().state().state, State::GrappleThrow);
-    for (int i = 0; i < 90; ++i) w->tick({});
-    ASSERT_EQ(w->player().state().state, State::GrappleSwing);
-    const float len = w->player().state().ropeLength;
-    EXPECT_GT(len, 2000.0f);
+    for (int i = 0; i < 90 && w->player().state().state != State::GrappleSwing; ++i) w->tick({});
+    return w;
+}
+// Walks to the ledge's +X edge and jumps into the gap with the rope (the rope she then hangs on is shorter than from
+// the edge, so no swing brings her back onto the ledge); true once she hangs.
+bool jumpIntoGap(game::World& w) {
+    for (int i = 0; i < 240 && w.player().state().pos.x < -1260.0f; ++i) w.tick(fixedCamera(w, forward(), 0));
+    Actions jump = forward();
+    jump.jump = true;
+    w.tick(fixedCamera(w, jump, 0));
     for (int i = 0; i < 120; ++i) {
-        w->tick(forward()); // pumping must never stretch the rope
-        const glm::vec3 hand = w->player().state().pos + glm::vec3(0, 0, 400);
-        EXPECT_LE(glm::distance(hand, w->player().state().grappleAnchor), len + 1.0f) << "tick " << i;
+        w.tick(fixedCamera(w, {}, 0));
+        const auto& s = w.player().state();
+        if (s.state != State::GrappleSwing || s.grappleUid != 1) return false;
+        if (s.clip != "grapple_rappel_free_jumpon") return true;
     }
+    return false;
+}
+// The rope's angle from straight down, degrees.
+float ropeAngle(const game::World& w) {
+    const auto& s = w.player().state();
+    const vec3 r = s.pos + vec3(0, 0, 400) - s.grappleAnchor;
+    return glm::degrees(std::acos(std::clamp(-r.z / glm::length(r), -1.0f, 1.0f)));
+}
+// Largest rope angle over `ticks` of `a` held.
+float swingPeak(game::World& w, const Actions& a, int ticks) {
+    float peak = 0;
+    for (int i = 0; i < ticks; ++i) w.tick(a), peak = std::max(peak, ropeAngle(w)); // on the rope the stick is read in its own frame
+    return peak;
+}
+} // namespace
+
+// Roped on the ground the rope follows her (tru.exe 0x6A47E0: not hanging, its length is the distance); off the edge she
+// hangs on it; the driven swing never stretches it; Jump leaps off along her facing with tru.exe's launch (player data
+// +0xA48 63.21 forward, +0xA4C 47.41 up per frame, or 0.45 / 0.85 of her speed where that is more) and lets go.
+TEST(Game, GrappleSwingAndRelease) {
+    auto w = ropeStage();
+    ASSERT_EQ(w->player().state().state, State::GrappleSwing);
+    EXPECT_NEAR(w->player().state().ropeLength, std::sqrt(1600.0f * 1600 + 2600.0f * 2600), 1.0f);
+    for (int i = 0; i < 30; ++i) w->tick(fixedCamera(*w, forward(), 0));
+    EXPECT_EQ(w->player().state().clip, "ng_walk");
+    EXPECT_NEAR(w->player().state().pos.x, -1450.0f, 1.0f) << "300 units/s";
+    EXPECT_NEAR(w->player().state().ropeLength, glm::distance(w->player().state().pos + vec3(0, 0, 400), vec3(0, 0, 3000)), 0.5f);
+    ASSERT_TRUE(jumpIntoGap(*w));
+    const float len = w->player().state().ropeLength;
+    EXPECT_LT(len, 2700.0f) << "the rope followed her jump: shorter than from the edge (2863)";
+    for (int i = 0; i < 240; ++i) {
+        w->tick(forward()); // driving the swing must never stretch the rope
+        const glm::vec3 hand = w->player().state().pos + glm::vec3(0, 0, 400);
+        ASSERT_LE(glm::distance(hand, w->player().state().grappleAnchor), len + 1.0f) << "tick " << i;
+    }
+    EXPECT_EQ(w->player().state().state, State::GrappleSwing);
+    const vec3 v = w->player().state().vel;
+    Actions jump;
+    jump.jump = true;
+    w->tick(fixedCamera(*w, jump, 0));
+    const auto& s = w->player().state();
+    EXPECT_EQ(s.state, State::Jump);
+    EXPECT_EQ(s.grappleUid, 0);
+    EXPECT_EQ(s.clip, "grapple_rappel_free_jumpoff");
+    EXPECT_NEAR(s.vel.x, std::max(63.21113f * 30, 0.45f * glm::length(vec2(v))), 30.0f) << "along her facing (+X)";
+    EXPECT_NEAR(s.vel.z, std::max(47.40834f * 30, 0.85f * v.z), 100.0f);
+}
+
+// The swing law (tru.exe 0x746F60): the stick along her facing (forward, or back once she swings) pushes her the way
+// she is moving, so held it builds the swing up to the 45 degree limit (player data +0xA04), where she is braked;
+// without it, or with the stick across her facing, the swing dies down; from rest the stick back does not start one.
+TEST(Game, GrappleSwingDrive) {
+    { // no stick: the walk-off's small swing only decays
+        auto w = ropeStage();
+        ASSERT_TRUE(jumpIntoGap(*w));
+        const float first = swingPeak(*w, {}, 240), later = swingPeak(*w, {}, 240);
+        EXPECT_LT(later, first - 0.5f) << "braked going outward (+0x9E0)";
+    }
+    { // forward held: every swing higher, up to the limit
+        auto w = ropeStage();
+        ASSERT_TRUE(jumpIntoGap(*w));
+        float peak = 0, last = 0;
+        int grew = 0;
+        for (int k = 0; k < 6; ++k) {
+            peak = swingPeak(*w, forward(), 120);
+            grew += peak > last + 1.0f;
+            last = peak;
+        }
+        std::printf("driven swing: peak %.1f deg after 12 s, grew in %d of 6 two-second windows\n", peak, grew);
+        EXPECT_GE(grew, 2);
+        EXPECT_GT(peak, 40.0f);
+        EXPECT_LT(swingPeak(*w, forward(), 480), 60.0f) << "braked beyond 45 degrees (+0xA04 / +0xA08)";
+        EXPECT_EQ(w->player().state().state, State::GrappleSwing);
+        // the stick back keeps driving a swing that is under way (for +0x9DC = 150 frames) ...
+        EXPECT_GT(swingPeak(*w, forward(-1), 120), 35.0f);
+        // ... then stops driving it: it dies down
+        swingPeak(*w, forward(-1), 600);
+        EXPECT_LT(swingPeak(*w, forward(-1), 300), 35.0f);
+    }
+    { // hanging still, the stick back starts nothing; forward does
+        auto w = ropeStage();
+        ASSERT_TRUE(jumpIntoGap(*w));
+        swingPeak(*w, {}, 3600);
+        const float rest = swingPeak(*w, {}, 240);
+        EXPECT_LT(swingPeak(*w, forward(-1), 240), rest + 1.0f);
+        EXPECT_GT(swingPeak(*w, forward(), 240), rest + 10.0f);
+    }
+}
+
+// Jump while standing roped keeps the rope (state chart T1407 / S752 -> S753 -> S380): she jumps into the gap and
+// hangs; the jump on the spot lands her roped again.
+TEST(Game, GrappleJumpIntoGapKeepsRope) {
+    auto w = ropeStage({-1300, 0, 0});
+    ASSERT_EQ(w->player().state().state, State::GrappleSwing);
+    Actions jump = forward();
+    jump.jump = true;
+    w->tick(fixedCamera(*w, jump, 0));
+    EXPECT_EQ(w->player().state().clip, "grapple_rappel_free_jumpon");
+    float top = 0;
+    for (int i = 0; i < 180; ++i) {
+        w->tick(fixedCamera(*w, {}, 0));
+        const auto& s = w->player().state();
+        ASSERT_EQ(s.state, State::GrappleSwing) << "tick " << i;
+        ASSERT_EQ(s.grappleUid, 1) << "the rope is kept, tick " << i;
+        top = std::max(top, s.pos.z);
+    }
+    EXPECT_GT(top, 150.0f) << "a jump";
+    EXPECT_GT(w->player().state().pos.x, -1200.0f) << "hanging in the gap";
+    EXPECT_NE(w->player().state().clip, "grapple_rappel_free_jumpon");
+    EXPECT_LT(w->player().state().ropeLength, 2700.0f);
+
+    auto v = ropeStage();
+    Actions up;
+    up.jump = true;
+    v->tick(up);
+    top = 0;
+    for (int i = 0; i < 120; ++i) v->tick({}), top = std::max(top, v->player().state().pos.z);
+    EXPECT_GT(top, 150.0f);
+    EXPECT_NEAR(v->player().state().pos.z, 0.0f, 1.0f);
+    EXPECT_EQ(v->player().state().state, State::GrappleSwing);
+    EXPECT_EQ(v->player().state().grappleUid, 1) << "landed with the rope in hand";
+}
+
+// Rope climbing (tru.exe 0x746F60, chart S391 -> S395 / S392): Interact held + forward climbs at +0x9E4 = 23.70 per
+// frame, + back slides down at +0x9E8 = 41.09 per frame; neither Interact nor the stick alone moves the rope. Left /
+// right turns her on the rope (+0x9F4 = 3.5 degrees per frame once eased in).
+TEST(Game, GrappleRopeClimbNeedsInteract) {
+    auto w = ropeStage();
+    ASSERT_TRUE(jumpIntoGap(*w));
+    swingPeak(*w, {}, 1800); // let the swing die down
+    const auto rope = [&] { return w->player().state().ropeLength; };
+    const float len = rope();
+    Actions e;
+    e.interact = true;
+    for (int i = 0; i < 60; ++i) w->tick(e);
+    EXPECT_EQ(rope(), len) << "Interact alone";
+    Actions up = forward();
+    up.interact = true;
+    for (int i = 0; i < 60; ++i) w->tick(up);
+    EXPECT_NEAR(len - rope(), 23.70417f * 30, 2.0f);
+    EXPECT_EQ(w->player().state().clip, "grapple_rappel_free_ascend");
+    Actions down = forward(-1);
+    down.interact = true;
+    for (int i = 0; i < 30; ++i) w->tick(down);
+    EXPECT_NEAR(rope(), len - 23.70417f * 30 + 41.08723f * 15, 2.0f);
+    EXPECT_EQ(w->player().state().clip, "grapple_rappel_free_descend");
+    const float yaw = w->player().state().yaw;
+    Actions left;
+    left.move.x = -1;
+    for (int i = 0; i < 60; ++i) w->tick(left);
+    EXPECT_NEAR(glm::degrees(w->player().state().yaw - yaw), 26.0f, 2.0f) << "turning left, eased in over 50 frames toward 105 degrees/s";
+    for (int i = 0; i < 60; ++i) w->tick(left);
+    EXPECT_NEAR(glm::degrees(w->player().state().yaw - yaw), 122.5f, 3.0f);
+    EXPECT_NEAR(rope(), len - 23.70417f * 30 + 41.08723f * 15, 2.0f);
+}
+
+// On a wall (tru.exe 0x745FA0, chart T379 -> S320): the rope moves only with Interact held (+0x924 = 34.77 up, +0x928
+// = 44.25 down per frame); Jump leaps off it and lets go: to the side the stick is held (+0x994 = 45.83 along the wall,
+// +0x998 = 44.25 up per frame), else back off the wall (+0x9A4 = 53.73 out, +0x9A8 = 44.25 up).
+TEST(Game, GrappleRappelInputsAndWallJump) {
+    const auto onWall = [] {
+        CollisionMesh m;
+        addFloor(m, -3000, -3000, 500, 3000, -3000);
+        addBox(m, {500, -3000, -3000}, {800, 3000, 3000}); // wall face x = 500, facing -X
+        auto w = makeWorld(std::move(m), {-300, 0, 0}, 0);
+        w->attachGrapple({480, 0, 1500}, 1, game::GrappleKind::Wall);
+        for (int i = 0; i < 300 && w->player().state().state != State::GrappleRappel; ++i) w->tick({});
+        for (int i = 0; i < 120; ++i) w->tick({});
+        return w;
+    };
+    auto w = onWall();
+    ASSERT_EQ(w->player().state().state, State::GrappleRappel);
+    const float len = w->player().state().ropeLength;
+    for (int i = 0; i < 60; ++i) w->tick(forward(-1));
+    EXPECT_EQ(w->player().state().ropeLength, len) << "the stick alone does not pay the rope out";
+    Actions down = forward(-1);
+    down.interact = true;
+    for (int i = 0; i < 30; ++i) w->tick(down);
+    EXPECT_NEAR(w->player().state().ropeLength, len + 44.24779f * 15, 2.0f);
+    EXPECT_TRUE(w->player().state().clip.starts_with("grapple_rappel_down")) << w->player().state().clip;
+    Actions up = forward();
+    up.interact = true;
+    for (int i = 0; i < 30; ++i) w->tick(up);
+    EXPECT_NEAR(w->player().state().ropeLength, len + 44.24779f * 15 - 34.76612f * 15, 2.0f);
+    ASSERT_EQ(w->player().state().state, State::GrappleRappel);
     Actions jump;
     jump.jump = true;
     w->tick(jump);
-    EXPECT_EQ(w->player().state().state, State::Jump);
-    EXPECT_EQ(w->player().state().grappleUid, 0);
+    {
+        const auto& s = w->player().state();
+        EXPECT_EQ(s.state, State::Jump);
+        EXPECT_EQ(s.grappleUid, 0) << "the rope is let go";
+        EXPECT_NEAR(s.vel.x, -53.72946f * 30, 1.0f) << "back off the wall";
+        EXPECT_NEAR(s.vel.y, 0.0f, 1.0f);
+        EXPECT_NEAR(s.vel.z, 44.24779f * 30, 100.0f);
+    }
+    for (const float side : {-1.0f, 1.0f}) { // stick left / right (facing the wall along +X: left = +Y)
+        auto v = onWall();
+        ASSERT_EQ(v->player().state().state, State::GrappleRappel);
+        Actions j;
+        j.move.x = side, j.jump = true;
+        v->tick(j);
+        const auto& s = v->player().state();
+        EXPECT_EQ(s.state, State::Jump);
+        EXPECT_EQ(s.grappleUid, 0);
+        EXPECT_NEAR(s.vel.y, -side * 45.82807f * 30, 1.0f) << "along the wall to the stick's side";
+        EXPECT_NEAR(s.vel.x, 0.0f, 1.0f);
+        EXPECT_NEAR(s.vel.z, 44.24779f * 30, 100.0f);
+    }
 }
 
 // The rope bends round geometry as tru.exe's (Player::wrapRope, 0x6C5490): swinging under a beam below the anchor, the
@@ -3475,7 +3703,8 @@ TEST(GameReal, ValaskjalfWallRun) {
             EXPECT_EQ(t->uid, 6750);
             EXPECT_EQ(t->kind, game::GrappleKind::Wall);
         }
-        w.tick(fixedCamera(w, replay.at(i), -1.5707963f));
+        // the camera behind her until she is on the wall; on the rope the stick is read in its own frame
+        w.tick(started && w.player().state().grappleUid ? replay.at(i) : fixedCamera(w, replay.at(i), -1.5707963f));
         const auto& s = w.player().state();
         if (std::getenv("OU_GRAPPLE_TRACE") && i % 10 == 0)
             std::printf("tick %3llu %s %s pos %.0f %.0f %.0f vel %.0f %.0f %.0f rope %.0f\n", (unsigned long long)i,
@@ -3552,7 +3781,7 @@ TEST(GameReal, GrapplePullsUberTargets) {
 }
 
 // l1_kraken_room wall anchor 326: jump-on from the ledge east of it, swing onto its wall (grapple_rappel_wall_land*),
-// rappel down and back up with the stick, kick off (jump) into a swing. tests/replays/kraken_rappel.txt plays it.
+// rappel down and back up (Interact held + the stick), Jump leaps back off the wall. tests/replays/kraken_rappel.txt plays it.
 TEST(GameReal, KrakenRoomRappel) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -3560,14 +3789,16 @@ TEST(GameReal, KrakenRoomRappel) {
                   "l1_kraken_room", game::loadLaraAnims(bf), game::Spawn{{-2204, -15106, 2212}, 3.1415927f});
     w.script().setBigfile(&bf);
     const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/kraken_rappel.txt");
-    bool landed = false, down = false, up = false;
+    bool landed = false, down = false, up = false, leapt = false;
     float zLanded = 0, zLow = 1e9f, zHigh = -1e9f;
     for (uint64_t i = 0; i < 8 * 60; ++i) {
         w.tick(replay.at(i));
         const auto& s = w.player().state();
         if (std::getenv("OU_GRAPPLE_TRACE") && i % 15 == 0)
-            std::printf("tick %3llu %s %s pos %.0f %.0f %.0f uid %d rope %.0f\n", (unsigned long long)i,
-                        std::string(game::stateName(s.state)).c_str(), s.clip.c_str(), s.pos.x, s.pos.y, s.pos.z, s.grappleUid, s.ropeLength);
+            std::printf("tick %3llu %s %s pos %.0f %.0f %.0f uid %d rope %.0f control %d\n", (unsigned long long)i,
+                        std::string(game::stateName(s.state)).c_str(), s.clip.c_str(), s.pos.x, s.pos.y, s.pos.z, s.grappleUid, s.ropeLength,
+                        int(w.script().playerControl()));
+        leapt |= s.state == State::Jump && s.clip == "grapple_rappel_jumpoff_back" && s.grappleUid == 0;
         if (s.state != State::GrappleRappel) continue;
         EXPECT_EQ(s.grappleUid, 326);
         if (!landed) landed = true, zLanded = s.pos.z;
@@ -3583,7 +3814,8 @@ TEST(GameReal, KrakenRoomRappel) {
     EXPECT_TRUE(landed && down && up);
     EXPECT_LT(zLow, zLanded - 200.0f);
     EXPECT_GT(zHigh, zLow + 200.0f);
-    EXPECT_EQ(w.player().state().state, State::GrappleSwing) << "kicked off the wall";
+    EXPECT_TRUE(leapt) << "Jump: the leap back off the wall (grapple_rappel_jumpoff_back), the rope let go";
+    EXPECT_EQ(w.player().state().grappleUid, 0);
 }
 
 // ---- ladders / pillars / perches / wall hug (src/game/Traverse) ----
@@ -4310,6 +4542,7 @@ TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
     use.interact = true;
     for (int i = 0; i < 20; ++i) w.tick({});
     w.tick(use), w.tick({});
+    for (int i = 0; i < 240 && w.player().state().state == game::State::Melee; ++i) w.tick({}); // the pick-up clip
     ASSERT_EQ(w.heldPortable(), 6503);
     const auto* lever = w.script().find(6502);
     ASSERT_TRUE(lever);
@@ -7382,4 +7615,519 @@ TEST(GameReal, FuelTankExplosionHurtsLaraAndAMercenary) {
     for (int i = 0; i < 240; ++i) w.tick({});
     EXPECT_TRUE(w.removedObjects().contains(1603));
     EXPECT_TRUE(w.removedObjects().contains(1604));
+}
+
+// Input timing (game::ButtonTime, tru.exe 0x7607C0): pressed / released for one tick, the time since the change, a
+// hold counted as long past Lara data +0x6E2 = 15 frames (0.5 s), and the press kept for Tuning::pressBuffer.
+TEST(Game, ButtonTimingLayer) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    const auto& b = w->player().state().buttons;
+    const auto& t = w->player().tuning();
+    EXPECT_FALSE(b.interact.down);
+    Actions a;
+    a.interact = a.grapple = true;
+    w->tick(a);
+    EXPECT_TRUE(b.interact.pressed());
+    EXPECT_TRUE(b.grapple.pressed());
+    EXPECT_FALSE(b.jump.pressed());
+    EXPECT_FLOAT_EQ(b.interact.buffer, t.pressBuffer);
+    w->tick(a);
+    EXPECT_TRUE(b.interact.down);
+    EXPECT_FALSE(b.interact.pressed()) << "one tick only";
+    EXPECT_TRUE(b.interact.buffered()) << "one 30 Hz frame = two ticks";
+    w->tick(a);
+    EXPECT_FALSE(b.interact.buffered());
+    for (int i = 0; i < 27; ++i) w->tick(a);
+    EXPECT_NEAR(b.interact.heldFrames(), 14.5, 1e-3);
+    EXPECT_FALSE(b.interact.heldLong(t.holdLongFrames));
+    w->tick(a), w->tick(a);
+    EXPECT_TRUE(b.interact.heldLong(t.holdLongFrames)) << "longer than 15 frames";
+    a.interact = false;
+    w->tick(a);
+    EXPECT_TRUE(b.interact.released());
+    EXPECT_FLOAT_EQ(b.interact.heldFrames(), 0);
+    EXPECT_TRUE(b.grapple.down);
+    w->tick(a);
+    EXPECT_FALSE(b.interact.released());
+    EXPECT_NEAR(b.interact.time, 1 / 60.0f, 1e-6);
+    // the jump and drop edges of the controller come from the layer: one take-off per press
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::JumpPrep);
+    for (int i = 0; i < 240 && w->player().state().state != State::Idle; ++i) w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Idle) << "held: no second jump";
+    for (int i = 0; i < 30; ++i) w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Idle);
+}
+
+// Letting go of a pole with her feet just over a slope too steep to stand on: she is not caught again by the pole she
+// dropped from when the re-grab pause ends (she used to hang on it again ~25 ticks later, l4_traprooms pole 1337), and
+// a fall held up in a notch with no floor under her root ends standing there.
+TEST(Game, PoleDropOverSteepGroundIsNotCaughtAgain) {
+    const auto onGround = [](State st) { return st == State::Idle || st == State::Land || st == State::Walk || st == State::Run; };
+    game::PlayerState h;
+    { // where she hangs on the pole
+        auto w = makeWorld(poleMesh(), {17, 0, 0});
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 120 && w->player().state().state != State::PoleHang; ++i) w->tick(i < 2 ? jump : Actions{});
+        for (int i = 0; i < 60; ++i) w->tick({});
+        h = w->player().state();
+        ASSERT_EQ(h.state, State::PoleHang);
+    }
+    CollisionMesh m = poleMesh();
+    // a ridge along the pole: two faces at 68 degrees meeting 30 under her hanging feet
+    const float top = h.pos.z - 30, x = h.pos.x;
+    addQuad(m, {x - 60, -1500, top - 150}, {x, -1500, top}, {x, 1500, top}, {x - 60, 1500, top - 150});
+    addQuad(m, {x, -1500, top}, {x + 60, -1500, top - 150}, {x + 60, 1500, top - 150}, {x, 1500, top});
+    auto w = makeWorld(std::move(m), {-700, 0, 0});
+    const auto& s = w->player().state();
+    w->restore(h, 0, 0);
+    w->tick({});
+    ASSERT_EQ(s.state, State::PoleHang);
+    const float hangZ = s.pos.z;
+    Actions drop;
+    drop.drop = true;
+    w->tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    EXPECT_EQ(s.droppedPole, 0);
+    bool again = false;
+    for (int i = 0; i < 240 && !onGround(s.state); ++i) w->tick({}), again |= s.state == State::PoleHang;
+    EXPECT_FALSE(again) << "caught again by the pole she let go of";
+    EXPECT_TRUE(onGround(s.state)) << game::stateName(s.state) << " at " << s.pos.x << " z " << s.pos.z;
+    EXPECT_LT(s.pos.z, hangZ - 20);
+    w->tick({});
+    EXPECT_EQ(s.droppedPole, -1);
+}
+
+// l4_traprooms: after the fling 1336 -> 1337 (GameReal.TrapRoomsPoleFling) Drop lets her down: the ground under pole
+// 1337 is a rubble mound 9..25 under her hanging feet, too steep to stand on where she comes down.
+TEST(GameReal, TrapRoomsPoleDropAfterFling) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)});
+    const auto& s = w.player().state();
+    Actions go = forward();
+    go.jump = true;
+    for (int i = 0; i < 120 && s.state != State::PoleHang; ++i) w.tick(i < 20 ? go : Actions{});
+    ASSERT_EQ(s.state, State::PoleHang);
+    for (int i = 0; i < 90; ++i) w.tick(forward());
+    w.tick(go);
+    for (int i = 0; i < 60 && s.state == State::PoleHang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::HangJump);
+    for (int i = 0; i < 120 && s.state == State::HangJump; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::PoleHang);
+    ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 1337);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    const float hangZ = s.pos.z;
+    Actions drop;
+    drop.drop = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    bool again = false;
+    int ticks = 0;
+    const auto onGround = [&] { return s.state == State::Idle || s.state == State::Land || s.state == State::Walk || s.state == State::Run; };
+    for (; ticks < 300 && !onGround(); ++ticks) w.tick({}), again |= s.state == State::PoleHang;
+    EXPECT_FALSE(again) << "caught again by pole 1337";
+    EXPECT_TRUE(onGround()) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    EXPECT_LT(s.pos.z, hangZ - 5);
+    EXPECT_EQ(s.ledge, -1);
+}
+
+namespace {
+// A wall (face x = 300) with a ledge along its top edge at `ledgeZ`, Lara in the air beside it, hands 10 short of it.
+std::unique_ptr<game::World> ledgeFallWorld(float ledgeZ, float above) {
+    const game::AnimLibrary anims = syntheticAnims();
+    CollisionMesh m;
+    addFloor(m, -1000, -1000, 300, 1000, 0);
+    addBox(m, {300, -1000, 0}, {1000, 1000, ledgeZ});
+    m.markup.push_back({1, 7, {{300, -800, ledgeZ}, {300, 800, ledgeZ}}});
+    return makeWorld(std::move(m), {300 + anims.hangHandOffset.y - 10, 0, ledgeZ - anims.hangHandOffset.z + above}); // `above` her hanging root
+}
+int tickUntil(game::World& w, int max, const Actions& a, auto done) {
+    int n = 0;
+    for (; n < max && !done(); ++n) w.tick(a);
+    return n;
+}
+} // namespace
+
+// The saving grab (tru.exe 0x74FDF0 / chart S528): a ledge that hangs her root more than 1280.03 (the fall states' air
+// grab q44) below where the fall began is a bad attach, a shorter fall a firm hang whatever the speed. She hangs on for
+// the difficulty's time (PLAYER TAILORING: 90 / 50 / 15 frames), then falls; the Interact press pulls her up; Jump does
+// nothing; Crouch lets go. Interact held since before the catch is no press.
+TEST(Game, SavingGrabByFallHeightAndInteract) {
+    const auto hang = [](game::World& w) { return w.player().state().state == State::Hang; };
+    Actions use, jump, drop;
+    use.interact = jump.jump = drop.drop = true;
+    { // 1200 down: firm
+        auto w = ledgeFallWorld(2000, 1200);
+        tickUntil(*w, 240, {}, [&] { return hang(*w); });
+        ASSERT_TRUE(hang(*w));
+        EXPECT_EQ(w->player().state().savingGrab, 0);
+        EXPECT_LT(w->player().state().vel.z, 1) << "caught";
+    }
+    for (int level = 0; level < 3; ++level) { // 1300 down: one hand, for the level's frames
+        auto w = ledgeFallWorld(2000, 1300);
+        w->setTailoring(game::Tailoring::preset(level));
+        const float seconds = std::array{90, 50, 15}[size_t(level)] / 30.0f;
+        EXPECT_FLOAT_EQ(w->player().tuning().savingGrabSeconds, seconds);
+        tickUntil(*w, 240, {}, [&] { return hang(*w); });
+        ASSERT_TRUE(hang(*w));
+        EXPECT_FLOAT_EQ(w->player().state().savingGrab, seconds);
+        const int held = tickUntil(*w, 400, {}, [&] { return !hang(*w); });
+        EXPECT_EQ(w->player().state().state, State::Fall);
+        EXPECT_NEAR(held / 60.0f, seconds, 2 / 60.0f) << level;
+    }
+    { // Jump: nothing. Interact: up. Then a firm hang.
+        auto w = ledgeFallWorld(2000, 1300);
+        const auto& s = w->player().state();
+        tickUntil(*w, 240, {}, [&] { return hang(*w); });
+        ASSERT_GT(s.savingGrab, 0);
+        w->tick(jump);
+        for (int i = 0; i < 10; ++i) w->tick({});
+        ASSERT_TRUE(hang(*w));
+        EXPECT_GT(s.savingGrab, 0) << "Jump does not recover";
+        w->tick(use);
+        EXPECT_EQ(s.savingGrab, 0);
+        EXPECT_EQ(s.clip, "ledgeb_bad_attach_recover");
+        for (int i = 0; i < 200; ++i) w->tick({});
+        EXPECT_TRUE(hang(*w)) << "a firm hang now";
+    }
+    { // Interact held from before the catch: no press, she falls; pressed on the very tick of the catch: it counts
+        auto w = ledgeFallWorld(2000, 1300);
+        tickUntil(*w, 240, use, [&] { return hang(*w); });
+        ASSERT_GT(w->player().state().savingGrab, 0);
+        tickUntil(*w, 400, use, [&] { return !hang(*w); });
+        EXPECT_EQ(w->player().state().state, State::Fall);
+        auto v = ledgeFallWorld(2000, 1300);
+        int n = tickUntil(*v, 240, {}, [&] { return hang(*v); });
+        auto x = ledgeFallWorld(2000, 1300);
+        for (int i = 0; i + 1 < n; ++i) x->tick({});
+        x->tick(use); // the catching tick
+        ASSERT_TRUE(hang(*x));
+        x->tick({});
+        EXPECT_EQ(x->player().state().savingGrab, 0) << "the buffered press";
+    }
+    { // Crouch lets go
+        auto w = ledgeFallWorld(2000, 1300);
+        tickUntil(*w, 240, {}, [&] { return hang(*w); });
+        ASSERT_GT(w->player().state().savingGrab, 0);
+        for (int i = 0; i < 5; ++i) w->tick({});
+        w->tick(drop);
+        EXPECT_EQ(w->player().state().state, State::Fall);
+        EXPECT_EQ(w->player().state().savingGrab, 0);
+    }
+}
+
+// A jump's catch is a saving grab from 711.13 down (the jump queries' fall record): a running jump off a platform onto
+// a ledge that hangs her root 800 under the take-off holds one handed, 650 under firmly.
+TEST(Game, SavingGrabAfterAJumpDown) {
+    for (const float down : {800.0f, 650.0f}) {
+        CollisionMesh m;
+        addBox(m, {-1500, -600, 0}, {0, 600, 2000});
+        addFloor(m, -1500, -1500, 2500, 1500, 0);
+        addBox(m, {1200, -1000, 0}, {2000, 1000, 3200}); // a wall she cannot clear, the ledge on its face
+        const float ledgeZ = 2000 - down + syntheticAnims().hangHandOffset.z; // her hanging root `down` under the take-off
+        m.markup.push_back({1, 7, {{1200, -800, ledgeZ}, {1200, 800, ledgeZ}}});
+        auto w = makeWorld(std::move(m), {-1100, 0, 2000});
+        const auto& s = w->player().state();
+        Actions go = forward();
+        for (int i = 0; i < 30; ++i) w->tick(go);
+        ASSERT_EQ(s.state, State::Run);
+        go.jump = true;
+        w->tick(go), w->tick(go);
+        go.jump = false;
+        bool flew = false;
+        for (int i = 0; i < 300 && s.state != State::Hang; ++i) w->tick(go), flew |= s.state == State::Jump || s.state == State::HangJump;
+        ASSERT_EQ(s.state, State::Hang) << down << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+        EXPECT_TRUE(flew);
+        EXPECT_EQ(s.savingGrab > 0, down > w->player().tuning().badAttachJump) << down << " start " << s.fallStartZ;
+    }
+}
+
+// The real clips: ledgeb_bad_attach_M while she hangs by one hand, ledgeb_bad_attach_recover on Interact, then the idle.
+TEST(GameReal, SavingGrabClips) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    CollisionMesh m;
+    addFloor(m, -1000, -1000, 300, 1000, 0);
+    addBox(m, {300, -1000, 0}, {1000, 1000, 2000});
+    m.markup.push_back({1, 7, {{300, -800, 2000}, {300, 800, 2000}}});
+    auto w = climbWorld(std::move(m), {150, 0, 3300});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 240 && s.state != State::Hang; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+    EXPECT_EQ(s.clip, "ledgeb_bad_attach_M");
+    EXPECT_FLOAT_EQ(s.savingGrab, 50 / 30.0f);
+    const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+    EXPECT_NEAR(hands.x, 300, 1);
+    EXPECT_NEAR(hands.z, 2000, 1);
+    for (int i = 0; i < 30; ++i) w->tick({});
+    Actions use;
+    use.interact = true;
+    w->tick(use);
+    EXPECT_EQ(s.clip, "ledgeb_bad_attach_recover");
+    for (int i = 0; i < 120 && s.clip != "ledgeb_idle"; ++i) w->tick({});
+    EXPECT_EQ(s.clip, "ledgeb_idle");
+    EXPECT_EQ(s.state, State::Hang);
+}
+
+// l5_valaskjalf's drop-down ledges on the wall y -68172: 1488 (z -8217) -> 1485 (1422 under) -> 1484 (1387 under) ->
+// 1483. Each Drop from a hang is caught one handed on the next (more than 1280.03 down): Interact pulls her up; left
+// alone she falls after the 50 frames of the TOMB RAIDER level.
+TEST(GameReal, ValaskjalfDropDownSavingGrabs) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l5_valaskjalf", {{5000, -68172 - 150, -8660}, glm::radians(90.0f)});
+    const auto& s = w.player().state();
+    const auto id = [&] { return s.ledge >= 0 ? int(w.collision().markup[size_t(s.ledge)].id) : -1; };
+    for (int i = 0; i < 120 && s.state != State::Hang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state) << " at " << s.pos.y << " " << s.pos.z;
+    EXPECT_EQ(id(), 1488);
+    EXPECT_EQ(s.savingGrab, 0) << "a short fall: firm";
+    for (int i = 0; i < 60; ++i) w.tick({});
+    const float top = s.pos.z;
+    Actions drop, use;
+    drop.drop = use.interact = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Fall);
+    for (int i = 0; i < 240 && s.state != State::Hang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    EXPECT_EQ(id(), 1485);
+    EXPECT_NEAR(top - s.pos.z, 1422, 3);
+    EXPECT_FLOAT_EQ(s.savingGrab, 50 / 30.0f);
+    EXPECT_EQ(s.clip, "ledgeb_bad_attach_M");
+    for (int i = 0; i < 40; ++i) w.tick({});
+    w.tick(use);
+    EXPECT_EQ(s.clip, "ledgeb_bad_attach_recover");
+    EXPECT_EQ(s.savingGrab, 0);
+    for (int i = 0; i < 150; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    EXPECT_EQ(id(), 1485);
+    w.tick(drop);
+    for (int i = 0; i < 240 && s.state != State::Hang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Hang);
+    EXPECT_EQ(id(), 1484);
+    EXPECT_GT(s.savingGrab, 0);
+    int held = 0;
+    for (; held < 300 && s.state == State::Hang; ++held) w.tick({});
+    EXPECT_EQ(s.state, State::Fall) << "nobody pressed Interact";
+    EXPECT_NEAR(held / 60.0, 50 / 30.0, 0.05);
+}
+
+// Letting go of a ladder (Crouch) and catching it again lower down needs no key (tru.exe's fall states' air grab; no
+// chart transition onto a ladder reads Interact). On a long ladder a catch more than 1280.03 under the let-go is the
+// ladder's bad attach: ladder_attach_air_bad for the saving-grab time, Interact -> ladder_bad_attach_recover and the
+// idle; left alone she falls.
+TEST(GameReal, LadderLetGoCatchesAgainAndBadAttach) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto world = [](float height, float z) {
+        CollisionMesh m;
+        addFloor(m, -2000, -2000, 400, 2000, 0);
+        addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, height}, {400, -2000, height});
+        m.markup.push_back({9, 1, {{400, 79, height}, {400, 79, 0}, {400, -79, 0}}}); // 158 wide across Y: the wall faces -X
+        return climbWorld(std::move(m), {300, 0, z});
+    };
+    Actions drop, use;
+    drop.drop = use.interact = true;
+    { // a short drop: caught again by itself, firmly
+        auto w = world(3000, 1500);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 240 && s.clip != "ladder_idle"; ++i) w->tick({});
+        ASSERT_EQ(s.clip, "ladder_idle") << game::stateName(s.state);
+        const float z0 = s.pos.z;
+        w->tick(drop);
+        ASSERT_EQ(s.state, State::Fall);
+        EXPECT_EQ(s.clip, "ladder_detach_drop");
+        for (int i = 0; i < 240 && s.state != State::Ladder; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Ladder) << "no key needed";
+        EXPECT_EQ(s.clip, "ladder_attach_M");
+        EXPECT_EQ(s.savingGrab, 0);
+        for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+        EXPECT_EQ(s.clip, "ladder_idle");
+        EXPECT_LT(s.pos.z, z0 - 100);
+        EXPECT_GT(s.pos.z, z0 - 700);
+    }
+    for (const bool pull : {true, false}) { // falling past a long ladder's top from 1500 over the catch
+        auto w = world(1200, 2200);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 240 && s.state != State::Ladder; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Ladder) << game::stateName(s.state) << " z " << s.pos.z;
+        EXPECT_GT(s.fallStartZ - s.climbTo.z, w->player().tuning().badAttachFall);
+        EXPECT_EQ(s.clip, "ladder_attach_air_bad");
+        EXPECT_FLOAT_EQ(s.savingGrab, 50 / 30.0f);
+        for (int i = 0; i < 30; ++i) w->tick({});
+        if (pull) {
+            w->tick(use);
+            EXPECT_EQ(s.clip, "ladder_bad_attach_recover");
+            EXPECT_EQ(s.savingGrab, 0);
+            for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+            EXPECT_EQ(s.clip, "ladder_idle");
+            const float r = (1200.0f - 575.221f - s.pos.z) / 110.619f;
+            EXPECT_NEAR(r, std::round(r), 1e-3) << "on a rung";
+        } else {
+            int held = 30;
+            for (; held < 300 && s.state == State::Ladder; ++held) w->tick({});
+            EXPECT_EQ(s.state, State::Fall);
+            EXPECT_NEAR(held / 60.0, 50 / 30.0, 0.05);
+        }
+    }
+}
+
+// The safety drop (lara.drm chart T114: falling out of a ground state with a ledgegrab as the state's target): walking,
+// running or rolling off an edge that carries a ledge she turns and hangs from it without a key (drop_to_ledgeb, as
+// the Crouch drop); an edge without a ledge is a plain fall (Game.RunsOffEdgeFallsAndLands).
+TEST(Game, SafetyDropOffALedgeEdge) {
+    for (const int gait : {0, 1, 2}) { // run, walk, roll
+        CollisionMesh m;
+        addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+        addFloor(m, -2000, -1000, 3000, 1000, -3000);
+        m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+        auto w = makeWorld(std::move(m), {-700, 50, 0});
+        const auto& s = w->player().state();
+        Actions go = forward();
+        go.walk = gait == 1;
+        std::set<State> seen;
+        for (int i = 0; i < 900 && s.state != State::Hang; ++i) {
+            Actions a = go;
+            a.drop = gait == 2 && i == 15; // a roll toward the edge
+            w->tick(a);
+            seen.insert(s.state);
+        }
+        ASSERT_EQ(s.state, State::Hang) << gait << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+        EXPECT_TRUE(seen.count(State::DropToHang)) << gait;
+        EXPECT_FALSE(seen.count(State::Fall)) << gait << ": no fall in between";
+        if (gait == 2) EXPECT_TRUE(seen.count(State::Roll));
+        EXPECT_EQ(s.savingGrab, 0);
+        const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+        EXPECT_NEAR(hands.x, 0, 1e-2) << gait;
+        EXPECT_NEAR(hands.z, 0, 1e-2) << gait;
+        EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4) << "facing the wall";
+        Actions drop;
+        drop.drop = true;
+        w->tick(drop); // and lets go as from any hang
+        EXPECT_EQ(s.state, State::Fall);
+    }
+    { // along the edge, not over it: nothing; off the end of the platform where no ledge is: a fall
+        CollisionMesh m;
+        addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+        addFloor(m, -2000, -3000, 3000, 3000, -3000);
+        m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+        auto w = makeWorld(std::move(m), {-100, -700, 0}, kPi / 2); // facing +Y, 100 inside the ledge's edge
+        const auto& s = w->player().state();
+        std::set<State> seen;
+        for (int i = 0; i < 200 && s.pos.z > -2900; ++i) w->tick(forward()), seen.insert(s.state);
+        EXPECT_FALSE(seen.count(State::DropToHang));
+        EXPECT_TRUE(seen.count(State::Fall)) << "off the platform's far side";
+    }
+}
+
+// l4_temple's high platform (top z 3690) between ledges 1168 (east edge, x -1227) and 1167 (west edge, x -2870):
+// running off the east edge and walking off the west one she turns and hangs from the edge's ledge, no key.
+TEST(GameReal, TempleSafetyDropOffThePlatform) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const bool walk : {false, true}) {
+        auto w = unitWorld(bf, "l4_temple", {{-2000, -13000, 3692}, walk ? kPi : 0.0f});
+        const auto& s = w.player().state();
+        Actions go = forward();
+        go.walk = walk;
+        std::set<State> seen;
+        const float top = s.pos.z;
+        for (int i = 0; i < 1200 && s.state != State::Hang; ++i) w.tick(go), seen.insert(s.state);
+        ASSERT_EQ(s.state, State::Hang) << walk << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, walk ? 1167 : 1168);
+        EXPECT_TRUE(seen.count(State::DropToHang));
+        EXPECT_FALSE(seen.count(State::Fall));
+        EXPECT_TRUE(seen.count(walk ? State::Walk : State::Run));
+        EXPECT_EQ(s.savingGrab, 0);
+        EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).z, 3686.5, 1);
+        EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).x, walk ? -2869.6 : -1226.8, 1);
+        EXPECT_LT(s.pos.z, top - 450);
+    }
+}
+
+// The prologue's crossing (docs/matrix/01_prologue.md C01-12): l3_main_hall, from the balcony end facing the burning
+// staircase the ceiling ring 4089 is grappled; roped she walks to the balcony's edge (the rope following her), jumps
+// into the gap keeping the rope, hangs once the jump comes down clear of the stairs, swings across with Forward held
+// (tru.exe's swing drive) and at the far end Jump leaps off onto the far balcony (floor z 1716, its edge at x -2150).
+// Walking off the edge instead (no jump) the rope is as long as from the edge and drags her down the stairs: she
+// still keeps the rope while she stands (the defect: three ticks into that swing she stood with the rope let go).
+TEST(GameReal, MainHallSwingToFarBalcony) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const float west = 3.1415927f;
+    const auto start = [&] {
+        auto w = std::make_unique<game::World>(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }),
+                                               "l3_main_hall", game::loadLaraAnims(bf), game::Spawn{{2441, 3912, 1709}, west});
+        w->script().setBigfile(&bf);
+        for (int i = 0; i < 12; ++i) w->tick({});
+        Actions throwIt;
+        throwIt.grapple = true;
+        w->tick(throwIt);
+        for (int i = 0; i < 60; ++i) w->tick({});
+        return w;
+    };
+    {
+        auto w = start();
+        ASSERT_EQ(w->player().state().grappleUid, 4089);
+        // roped walk over the balcony's step (35 up at x 2250) to its edge: the rope stays in her hand
+        for (int i = 0; i < 600 && w->player().state().pos.x > 2180.0f; ++i) {
+            w->tick(fixedCamera(*w, forward(), west));
+            ASSERT_EQ(w->player().state().grappleUid, 4089) << "tick " << i << " at x " << w->player().state().pos.x;
+            ASSERT_EQ(w->player().state().state, State::GrappleSwing);
+        }
+        EXPECT_NEAR(w->player().state().pos.z, 1744.7f, 2.0f);
+        EXPECT_NEAR(w->player().state().ropeLength, glm::distance(w->player().state().pos + vec3(0, 0, 400), vec3(41.0f, 3912.2f, 3706.3f)), 1.0f);
+        Actions jump = forward();
+        jump.jump = true;
+        w->tick(fixedCamera(*w, jump, west));
+        EXPECT_EQ(w->player().state().clip, "grapple_rappel_free_jumpon");
+        // Forward held: across under the ring to the far end of the first swing
+        float low = 1e9f;
+        int t = 0;
+        for (; t < 300; ++t) {
+            w->tick(forward());
+            const auto& s = w->player().state();
+            ASSERT_EQ(s.state, State::GrappleSwing) << "tick " << t << " at " << s.pos.x << " " << s.pos.z;
+            ASSERT_EQ(s.grappleUid, 4089);
+            low = std::min(low, s.pos.z);
+            if (s.pos.x < -1300.0f && s.vel.x > -400.0f) break;
+        }
+        const auto apex = w->player().state();
+        std::printf("main hall swing: rope %.0f, lowest z %.0f, far end %.0f %.0f %.0f after %d ticks\n", apex.ropeLength, low, apex.pos.x,
+                    apex.pos.y, apex.pos.z, t);
+        EXPECT_LT(apex.ropeLength, 2300.0f) << "the rope she hangs on is her distance when the jump came down, not the edge's 2614";
+        EXPECT_GT(low, 1000.0f) << "clear of the staircase and the hall floor (540)";
+        EXPECT_GT(apex.pos.z, 1716.0f) << "over the far balcony's level";
+        Actions off;
+        off.jump = true;
+        w->tick(off);
+        EXPECT_EQ(w->player().state().state, State::Jump);
+        EXPECT_EQ(w->player().state().grappleUid, 0);
+        EXPECT_NEAR(w->player().state().vel.x, -63.21113f * 30, 5.0f) << "the leap off the rope, along her facing";
+        const float health = w->health().value();
+        for (int i = 0; i < 240 && (w->player().state().state == State::Jump || w->player().state().state == State::Fall); ++i) w->tick({});
+        for (int i = 0; i < 60; ++i) w->tick({});
+        const auto& s = w->player().state();
+        std::printf("main hall swing: lands at %.0f %.0f %.0f (%s)\n", s.pos.x, s.pos.y, s.pos.z, std::string(game::stateName(s.state)).c_str());
+        EXPECT_LT(s.pos.x, -2150.0f) << "on the far balcony";
+        EXPECT_NEAR(s.pos.z, 1716.0f, 15.0f);
+        EXPECT_EQ(w->health().value(), health);
+    }
+    {
+        auto w = start();
+        bool hung = false;
+        for (int i = 0; i < 150; ++i) {
+            w->tick(fixedCamera(*w, forward(), west));
+            const auto& s = w->player().state();
+            hung |= s.clip.starts_with("grapple_rappel_free_swing");
+            if (s.pos.x > 2000.0f) {
+                ASSERT_EQ(s.grappleUid, 4089) << "walking off the balcony she is on the rope, tick " << i << " at x " << s.pos.x;
+            }
+        }
+        EXPECT_TRUE(hung) << "off the edge onto the rope";
+    }
 }

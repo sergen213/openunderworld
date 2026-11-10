@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "melee_kick",
+  "chapter": "Close combat: Interact kicks the melee target by its height, the blow lands once in the clip's hit window; with nothing near she kicks the air",
+  "walkthrough": "https://tombraiders.net/stella/walks/controls/TR8controls.html",
+  "note": "l1_baldrs_tomb's west room. A target dummy (700 hp, 500 tall) stands 320 ahead of Lara: inside the melee slot (640 from her eye, 90 degrees) and in the high class (316..537 over her feet), so Interact plays melee_kick_high; the kick record's 60 [O lara.drm chart state S1426] lands once between the clip's events 0xE (frame 3) and 0xD (frame 13). Turned away from it (the dummy behind her, outside the cone) Interact is the mid kick at the air.",
+  "level": "l1_baldrs_tomb",
+  "spawn": [-5000, -10000, 2560, 180],
+  "fixtures": [{"target": [-5320, -10000, 2528]}],
+  "steps": [
+    {"step": "kick_the_target",
+     "input": ["0.3 interact 1", "0.4 interact 0"],
+     "duration": 2.0,
+     "expect": [
+       {"clips": ["melee_kick_high", "ng_idle"]},
+       {"visits": ["idle", "melee", "idle"]},
+       {"probe": "target.0.hits", "eq": 1},
+       {"probe": "target.0.health", "eq": 640, "note": "700 - the kick record's 60"},
+       {"probe": "player.state", "eq": "idle"}
+     ]},
+    {"step": "kick_the_air",
+     "fixtures": [{"teleport": [-4700, -10000, 2560, 0]}],
+     "input": ["0.5 interact 1", "0.6 interact 0"],
+     "duration": 2.5,
+     "expect": [
+       {"clips": ["melee_kick_mid", "ng_idle"]},
+       {"probe": "target.0.hits", "eq": 1, "note": "behind her: not struck"},
+       {"probe": "player.state", "eq": "idle"}
+     ]}
+  ]
+}

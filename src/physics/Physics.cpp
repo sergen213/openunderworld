@@ -171,6 +171,7 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
                 // +0x34 flags (bits 0-2 the axes' limits on), +0x61 sound position, +0x64 sound (0x6B6440).
                 if (*r + 0x68 <= ob.data.size()) {
                     o.jointLimitOn = at<uint32_t>(ob, *r + 0x34) & 1;
+                    o.jointMotor = {at<float>(ob, *r + 0x1C), at<float>(ob, *r + 0x20), (at<uint32_t>(ob, *r + 0x34) & 8) != 0};
                     o.jointSoundAt = at<uint8_t>(ob, *r + 0x61);
                     const auto ps = cdc::sectionPointers(d, uint32_t(*base));
                     if (const auto s = ps.find(*r + 0x64); s != ps.end()) o.jointSound = s->second;
@@ -456,8 +457,16 @@ JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, const 
 // the flag bit we call solid gates Lara's collision only [I]), in its centre-of-mass frame; no primitives: a 20-unit
 // ball resting on the model origin.
 JPH::RefConst<JPH::Shape> looseShape(const ObjectPhysics& o, vec3 com) {
+    // [O] tru.exe 0x48E710 makes a Havok shape of a primitive only with flag bit 0x100 (Prim::solid), and of a sphere
+    // only when its third flag byte is not 2 (the motorcycle's wheel spheres). [I] Flag byte 0 bit 0x40 marks shapes that
+    // do not rest on the world: ms_pt_weight_c's 0x40 sphere (r 104 round its 126-unit cube, flag 0x10) reaches 40 units
+    // under the base its intros stand on [O data], so the weight lies on its cube and does not roll; the same byte is on
+    // the poles' end sphere and the snake head's handle capsules. A body left without any shape keeps them all.
+    const auto lands = [](const Prim& p) { return p.solid() && !(p.head[0] & 0x40) && !(p.kind == PrimKind::Sphere && p.head[2] == 2); };
+    const bool any = std::ranges::any_of(o.prims, lands);
     JPH::StaticCompoundShapeSettings c;
     for (const Prim& p : o.prims) {
+        if (any && !lands(p)) continue;
         const mat4 seg = p.segment < int(o.segments.size()) ? o.segments[size_t(p.segment)] : mat4(1);
         const mat4 f = seg * glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot);
         quat r = glm::normalize(glm::quat_cast(mat3(f)));

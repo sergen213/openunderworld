@@ -429,7 +429,9 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     units_.push_back(std::move(base));
     current_ = 0;
     playerUnit_.clear(); // a level load: the unit scripts get vt 13 (World::tick)
-    player_.restore(PlayerState{}); // the old ledge index means nothing in the new stream
+    PlayerState fresh; // the old ledge index means nothing in the new stream
+    fresh.buttons.hold(); // a key still down gives no press edge on the first tick
+    player_.restore(fresh);
     streamAround(0, true);
     joinStreams(true); // a level load waits for the neighbours
     player_.spawn(spawn->pos, spawn->yaw);

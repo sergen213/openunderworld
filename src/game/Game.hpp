@@ -104,6 +104,7 @@ struct AnimLibrary {
     std::optional<physics::RagdollDef> ragdoll;
     std::vector<vec3> bind;
 
+    MeleeTuning melee; // Lara's attack records, melee target classes and hit windows (Melee.cpp)
     const anim::Clip* find(std::string_view name) const;
     const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")
     // Mean of the hand bones (55, 80) relative to the root segment in `clip` at `t` (model space, root
@@ -160,6 +161,10 @@ enum class State {
     WallHug, // back to the wall on a narrow ledge shelf (Wall_Hug_* clips; src/game/Traverse.cpp)
     WallJump, // chimney jump: feet on a wall after a jump at it, then the jump back off it (wall_jump_* clips; WallJump.cpp)
     SwimDodge, // under-water evasive dodge: one swim_submerged_dodge_* clip with its root motion (Player::swim)
+    // Close combat and carried objects (src/game/Melee.cpp): Melee = one clip with its root motion and the input locked
+    // (a kick, the thrall fatality, an enemy vault, an evasive roll, a hosted pick-up / put-down / throw / swing), then
+    // Idle; Knocked = thrown off her feet (Hit_Thrown* / hitReact_thrown*, the landing, the get-up).
+    Melee, Knocked,
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -185,10 +190,15 @@ struct Tuning {
     float grabReach = 60.0f, grabWindow = 40.0f; // hand-to-ledge horizontal / vertical tolerance
     // Grab only while -13 <= zVel <= 9 units/frame * 5.72443 (30 Hz): player data bytes +0x834 / +0x833 (0x759260)
     float grabMinVz = -13 * 5.72443f * 30.0f, grabMaxVz = 9 * 5.72443f * 30.0f; // units/s
-    // Saving grab ("TIME FOR SAVING GRABS"): a ledge caught while falling up to twice as fast as grabMinVz [I] is held one
-    // handed (ledgeb_bad_attach_M) for this long; jump pulls her up (ledgeb_bad_attach_recover), else she falls.
+    // Saving grab ("TIME FOR SAVING GRABS"): a ledge or hold caught after coming down more than badAttachJump (a jump)
+    // / badAttachFall (a fall) from where the flight began (Player::badAttach) is held one handed (ledgeb_bad_attach_M)
+    // for this long; Interact pulls her up (ledgeb_bad_attach_recover), else she falls.
     // DifficultyTable::savingGrabSeconds by Tailoring::savingGrab (World::setTailoring).
     float savingGrabSeconds = 50 / 30.0f;
+    float badAttachJump = 711.13f, badAttachFall = 1280.03f; // lara.drm jump query records +0xC4 -> +0xC [O-data]
+    // Input timing (ButtonTime): a press stays usable this long [I: one 30 Hz chart frame; used by the saving grab's
+    // Interact]; a hold counts as long past Lara data +0x6E2 = 15 frames [O].
+    float pressBuffer = 1.0f / 30.0f, holdLongFrames = 15.0f;
     // Water test box (0x710A20): half extents player data shorts +0xC3E (x, y) / +0xC40 (z), centred
     // +0xC42 above the feet; overlapping a water volume puts Lara in it.
     vec3 waterProbeHalf{221.0f, 221.0f, 572.0f};
@@ -254,6 +264,34 @@ Tuning defaultTuning();
 
 enum class GrappleKind : uint8_t { Ceiling, Wall, Post, Mounted };
 
+// One button's timing, as tru.exe's player chart reads an input action (0x7607C0, conditions 0x65..0x6D; the compare
+// modes of its table 0x7609C0): down (> 0), up (< 0), pressed this frame (== 1), released this frame (== -1) and held
+// longer than Lara data +0x6E2 = 15 frames [O]. Ours keeps the time since the last change in seconds, and a press that
+// nothing has acted on yet for Tuning::pressBuffer (`buffer`, ours [I]: tru.exe flags a press for one frame only).
+struct ButtonTime {
+    bool down = false, edge = false; // edge: it changed this tick
+    float time = 0;                  // seconds since it last changed (0 on the edge tick)
+    float buffer = 0;                // seconds left of a press not acted on yet
+    bool pressed() const { return down && edge; }
+    bool released() const { return !down && edge; }
+    float heldFrames() const { return down ? time * 30.0f : 0.0f; } // 30 Hz frames it has been down
+    bool heldLong(float frames) const { return heldFrames() > frames; }
+    bool buffered() const { return buffer > 0; }
+    void take() { buffer = 0; } // the buffered press was acted on
+    void update(bool now, float dt, float window) {
+        edge = now != down;
+        time = edge ? 0.0f : time + dt;
+        down = now;
+        buffer = pressed() ? window : std::max(0.0f, buffer - dt);
+    }
+    void hold() { down = true, edge = false, time = 0, buffer = 0; } // as held: no press edge on the next tick
+};
+// The buttons the player controller times (Player::tick): tru.exe virtual buttons 3 / 0 / 2 / 1.
+struct Buttons {
+    ButtonTime jump, interact, drop, grapple;
+    void hold() { jump.hold(), interact.hold(), drop.hold(), grapple.hold(); }
+};
+
 struct PlayerState {
     State state = State::Idle;
     vec3 pos{0};    // root = feet; swimming: the swim clips' root (water surface while treading, body centre under water)
@@ -317,6 +355,10 @@ struct PlayerState {
     // along the rope: anchor -> bends -> hand. The rope wraps round geometry as the original's (Grapple.cpp
     // wrapRope): ropeBend[0..ropeBends) are its bends from the anchor side (the last one is the pivot she swings on),
     // ropeBendClear[i] the ticks bend i's straight-through path has been clear (it slides off 15 more per tick).
+    // Hanging free (State::GrappleSwing) the swing drive keeps its timers in fields the rope states do not use
+    // otherwise: `flight` = seconds the drive stays on after the stick left her facing's axis (tru.exe 0xFAE3E4 /
+    // 0xFAE3E8 against player data +0x9D8), `savingGrab` = seconds the stick has been held back (0xFAE3E0, +0x9DC),
+    // `wallTime` = seconds she has been turning on the rope (0xFAE3D8, +0x9FC).
     int32_t grappleUid = 0;
     vec3 grappleAnchor{0};
     float ropeLength = 0;
@@ -326,6 +368,12 @@ struct PlayerState {
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
+    // Carrying a portable that encumbers her (PortableDef::encumbers; World sets it every tick): the
+    // portable_encumbered_* walk instead of the ground locomotion (Player::encumberedMove, Melee.cpp).
+    bool encumbered = false;
+    Buttons buttons; // input timing (Player::tick)
+    int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
+    float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
     // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
     // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
     // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
@@ -377,7 +425,9 @@ public:
     // The orbit camera's view yaw and look pitch (rad, + = up), set by World each tick: under water the stick's forward
     // share swims along the pitch and the dodges read the stick as on screen (Player::swim).
     void setCamera(float yaw, float pitch) { cameraYaw_ = yaw, cameraPitch_ = pitch; }
-    void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
+    // Load / stream. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks them held
+    // (Buttons::hold) so that a key still down gives no press edge on the next tick.
+    void restore(const PlayerState& s) { s_ = s; }
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
@@ -393,6 +443,13 @@ public:
     // (nothing changes) when she cannot interact or without the clip.
     bool canInteract() const;
     bool use(std::string_view clip, vec3 pos, float yaw);
+    // Close combat / carried objects (Melee.cpp). act: `clip` once in `st` (State::Melee / Knocked) with its root motion
+    // and the input locked, then Idle. launch: airborne at `vel` (units/s) playing `clip` (an evasive jump, thrown by a
+    // blast); she lands as from any fall. setEncumbered: PlayerState::encumbered.
+    void act(std::string_view clip, State st, bool mirror = false);
+    void launch(vec3 vel, std::string_view clip);
+    void step(vec3 delta, float dt); // a ground move by `delta` with her collision (closing on a melee target)
+    void setEncumbered(bool e) { s_.encumbered = e; }
     // Push block grip, every tick: `axis` = the gripped block's push axis (0 = none), `moving` +1 push / -1 pull / 0.
     // Grips (State::Block, obj_block_grab, facing the axis) from the states use() starts in; lets go (obj_block_release).
     void grip(vec3 axis, int moving);
@@ -401,6 +458,8 @@ public:
     int waterAt(vec3 feet) const;
 
 private:
+    void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
+    bool encumberedMove(vec2 move, bool jumpPressed, float dt); // carrying a weight on the ground; false: not handled
     void play(std::string_view clip, bool loop, float rate = 1, bool mirror = false);
     void playMix(std::string_view clip, std::string_view other, float mix); // blend-space request, played once
     vec3 rootLeft() const; // model-space root motion from now to the clip end (blend space included)
@@ -421,6 +480,9 @@ private:
     bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
+    bool trySafetyDrop(vec3 vel); // off an edge that carries a ledge: hang from it
+    void dropToHang(int ledge, int seg, float t, float side);
+    bool badAttach(float attachZ) const; // a catch that rests her root at this height is a saving grab
     int hangClearance() const; // tru.exe 0x74E290's class: 2 climb up, 5 crouching, 8 wall-hug shelf, 1 none
     bool tryHangToBeam();      // hanging beside a balance beam: bbeam_ledgeu_climbup onto it
     bool tryHurdle(bool jumped); // onto / over a ledge from the ground (State::ClimbUp, hurdle_* clips)
@@ -523,9 +585,10 @@ private:
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);
     void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp
-    void rappel(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    void rappel(vec2 move, bool climb, bool jumpPressed, bool dropPressed, float dt);
     void rappelOnto(const collision::Hit& wall, vec3 vel, std::string_view clip);
     void standUp(); // let go of the rope, standing
+    void jumpOffRope(vec2 move); // Jump on the rope: the leap off it (hanging free: along her facing; on a wall: by the stick)
     void wrapRope(vec3 oldHand, vec3 hand); // bends the rope round geometry / straightens it (Grapple.cpp)
     void land(vec2 move);
 
@@ -533,7 +596,7 @@ private:
     const AnimLibrary& anims_;
     Tuning t_;
     PlayerState s_;
-    bool jumpHeld_ = false, dropHeld_ = false;
+    // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;
 };
@@ -741,6 +804,10 @@ public:
         const physics::Engagement* record = nullptr;
     };
     Engaged engaged();
+    // The rope's pull on the Mounted grapple target she is braced against (Objects.cpp); true while it drives a joint.
+    bool pullGrappled(const Actions& a);
+    // The anim-graph object whose "use" record (kind 8) she engages on this interact press, 0 none (Objects.cpp).
+    int32_t engagedUse(bool pressed);
     // Where object `uid`'s engagement records are now (world centres of its current sets; uber objects: every section's),
     // kind 0 = any live record. ou-game --autopilot steers Lara to them (app/game/Autopilot.hpp).
     std::vector<vec3> engagementCentres(int32_t uid, int kind = 0);
@@ -1012,6 +1079,22 @@ public:
     int maxReserve(Weapon w) const { return anims_.weapons[size_t(w)].maxReserve[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
     int maxGrenades() const { return anims_.grenade.maxCarried[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
 
+    // ---- close combat and carried objects (Melee.cpp; docs/GAMEPLAY.md "Close combat", "Carried objects") ----
+    const MeleeState& melee() const { return melee_; }
+    // The melee target (targeting slot 5): the nearest living enemy-team target within MeleeTuning::range of her eye and
+    // coneDeg of her facing; `fatality`: slot 6, a regenerating thrall in range. Null: none.
+    Damageable* meleeTarget(bool fatality = false);
+    // Uber sections' impulse triggers 6 / 7 / 8 (0x4D5560: the lengths of the message's three vectors over the
+    // transition's float): `applied` = an impulse applied to object `uid` at a point (a blow, a shot; trigger 6),
+    // `contact` = the speed of a body running into it, units/s (triggers 7 / 8 [I]). Thrown and falling portables call
+    // it with their speed; the bike's ram and Lara's roll can.
+    void impulseObject(int32_t uid, float applied, float contact);
+    // Knock-back (message 0x91) on Lara: thrown off her feet at `vel` (units/s), she lands, lies and gets up
+    // (State::Knocked; jump gets her up at once).
+    void throwLara(vec3 vel);
+    // A portable object's data and Lara's hosted clips with it, loaded on first use (null: not a portable DRM).
+    const PortableDef* portableDef(const std::string& object);
+
     // ---- gadgets (Gadgets.cpp; docs/GAMEPLAY.md "Flashlight", "Grenades") ----
     bool flashlight = false;         // utility light on (Actions::light toggles it); saved
     bool flashlightSpot() const;     // the current unit lights the spot too (else the omni light alone)
@@ -1072,6 +1155,23 @@ private:
     // Thralls broken into chunks (ai::EnemyState::ragdollPhase 4): their pieces as loose bodies (Objects.cpp).
     void chunkPieces(std::vector<physics::Scene::Loose>& out);
     void startChunks(ai::Enemy& e); // a thrall that just broke: its pieces' poses and velocities (Objects.cpp)
+    // Melee.cpp: the carry keys and the input lock of a move, before the player ticks; the moves themselves, after
+    // the tick's interactions (`pressed`: an interact press nothing else took).
+    void meleeInput(Actions& a);
+    void tickMelee(Actions& a, bool pressed, float dt);
+    bool meleeReady() const; // on her feet, alive, out of the water: a move can start
+    bool meleeHit(vec3 at, float radius, const AttackRecord& rec, Damageable* only, int32_t object = 0); // a blow's sphere this tick
+    std::pair<int32_t, float> meleeObject() const; // the breakable in her reach and its top over her feet
+    int32_t meleeId(const Damageable* t) const; // MeleeState::target of a target, and back
+    Damageable* meleeFind(int32_t id) const;
+    void pickUp(script::Object& o);          // carryPortables' pick-up, with the portable's hosted clip
+    void releaseHeld(vec3 vel, bool thrown); // the carried portable becomes a loose body moving at `vel`
+    vec3 handsPoint() const;                 // between her hands (world): where she holds a carried portable
+    vec3 heldPoint() const;                  // the carried portable's place: her hands, stopped by the level
+    void carryCollide(float dt);             // a wall the carried portable reaches holds her off it
+    void tickThrown(float dt);               // thrown / dropped portables: what they hit (enemies, breakables)
+    nlohmann::json serializeMelee() const;
+    void restoreMelee(const nlohmann::json& j);
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     bool carryReady() const;           // standing or swimming: she can pick up / insert / take out a portable
     bool insertHeld(script::Object& held, const Engaged& at); // into the receptacle she engages (Runtime::insertPortable)
@@ -1110,8 +1210,9 @@ private:
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
     std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
     bool engages(const script::Object& o, const physics::Engagement& e); // Lara inside the record's shape
-    // ... of the record, `p`'s HInfo marker (its segment) in `frame` (the instance's world frame).
-    bool engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e);
+    // ... of the record, `p`'s HInfo marker (its segment) in `frame` (the instance's world frame), the segment posed by
+    // `skin` (an anim-graph object's running clip, null = bind).
+    bool engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin = nullptr);
     // Uber receptacles: section `section`'s engagement set now (UberSectionState::engagement; null none), its world frame
     // and its model's physics; a portable in / out of it starts its insert / removal transition (0x6D4890).
     const physics::EngagementSet* uberEngagement(int32_t uid, size_t section);
@@ -1225,6 +1326,8 @@ private:
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
+    MeleeState melee_;                   // Lara's close-combat / carry move in progress (Melee.cpp)
+    std::map<std::string, std::unique_ptr<PortableDef>> portableDefs_; // by object name (portableDef)
     // Portables in receptacles (insertHeld / placePortables), by portable uid: the receptacle, a pole's horizpole markup
     // in col_ (-1: none yet; rebuildCollision drops it) and the uber receptacle's section (-1: an anim-graph one).
     // Receptacle sliders (joint value <= 0) by receptacle uid. Portables whose placement ran (a removed one stays out
@@ -1268,6 +1371,10 @@ private:
     std::set<std::pair<std::string, uint16_t>> disabledMarkup_; // (unit, markup id)
     const formats::UberObjectData* prepareUber(const script::Object& o);
     std::map<int32_t, float> multibodyLo_, multibodyHi_; // native limits issued before hinges exist
+    // Rigid-body hinges the grapple pulls this tick (pullGrappled): uid -> the limit it is drawn to, rad/s.
+    std::map<int32_t, std::pair<float, float>> hingePull_;
+    // Class-34 rigid bodies with a grapple feature (the tomb gate): their hinge has no motor, the pull moves it.
+    bool pulledHinge(const script::Object& o);
     std::set<int32_t> multibodyLimitOff_; // `multibody` 75: objects whose joint limit is switched off (joint +0x174 bit 2)
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
