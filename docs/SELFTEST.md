@@ -442,6 +442,7 @@ tested behaviour happen.
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
 | `ch07_cliffclimb_boat_to_cliff` | chapter 2 start | section 07's start: yacht cinematic, over the boat's side (safety drop), into the sea, 13.8 km surface swim across the bay, climb out at the low ledge (checkpoint 3831), the run into the rock attaches her to the holds |
+| `ch07_cliffhall_grapple_gap` | l2_cliffhall | from checkpoint 3754 to the pit under ring 3820: thrown at from the ground (rope 2730), a running jump keeps the rope, the swing carries her over the pit; the release onto the far side is not played yet |
 | `ch07_hubhall_statue_hall` | l2_hubhall | section 07's end from checkpoint 3100: up the staircase, stream change to l2_puzzleroom, arrival cinematic 2936, on the lift |
 | `ch08_puzzleroom_lift_switch` | l2_puzzleroom | section 08's start on the lift: switch 2961 used with the mechanism held: the jammed reaction, the platform stays |
 | `ch08_puzzleroom_lift_ring` | l2_puzzleroom | from checkpoint 2819: the mechanism's ring 2972 grappled and pulled out (2959 vt 54, 2961 vt 63) |
