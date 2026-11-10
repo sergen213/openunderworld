@@ -544,6 +544,41 @@ std::optional<AdrenalineTuning> loadAdrenalineTuning(const cdc::BigfileSet& bf) 
     return AdrenalineTuning{*max, *drain, *mode, *modeScale, *shot, std::round(*ease) / 30.0f, float(*hold) / 30.0f};
 }
 
+// Limb locks and the head look-at numbers of the player object data (Ik.hpp has the layout and the evidence).
+std::optional<IkTuning> loadIkTuning(const cdc::BigfileSet& bf) {
+    const auto l = objectData(bf, "lara");
+    if (!l) return std::nullopt;
+    const auto count = l->at<uint16_t>(0x5C8);
+    const auto ptrs = cdc::sectionPointers(l->drm, l->section);
+    const auto list = ptrs.find(l->offset + 0x5CC);
+    if (!count || !*count || *count > 256 || list == ptrs.end() || list->second.section != l->section) return std::nullopt;
+    const auto& d = l->drm.sections[l->section].data;
+    if (size_t(list->second.offset) + size_t(*count) * 0x4C > d.size()) return std::nullopt;
+    IkTuning t;
+    t.locks.clear();
+    for (uint32_t i = 0; i < *count; ++i) {
+        const std::span<const uint8_t> r(d.data() + list->second.offset + i * 0x4C, 0x4C);
+        LimbLock k;
+        k.chain = rd<uint32_t>(r, 0x00), k.type = rd<uint32_t>(r, 0x04), k.group = rd<uint32_t>(r, 0x08);
+        k.limb = rd<uint16_t>(r, 0x0C), k.limb2 = rd<uint16_t>(r, 0x0E);
+        k.up = rd<float>(r, 0x14), k.down = rd<float>(r, 0x18);
+        k.offset = {rd<float>(r, 0x1C), rd<float>(r, 0x20), rd<float>(r, 0x24)};
+        k.framesIn = rd<uint32_t>(r, 0x28) & 0xFF, k.framesOut = rd<uint32_t>(r, 0x2C) & 0xFF;
+        k.ignoreSegment = rd<int16_t>(r, 0x34), k.segment = rd<int16_t>(r, 0x36);
+        k.flags = rd<uint32_t>(r, 0x40);
+        t.locks.push_back(k);
+    }
+    const auto head = l->at<int32_t>(0x1B0), neck = l->at<int32_t>(0x1A8), pelvis = l->at<int32_t>(0x168);
+    const auto yaw = l->at<float>(0xCD4), pitch = l->at<float>(0xCD8), restart = l->at<float>(0xB68), gap = l->at<float>(0xCC8);
+    const auto frames = l->at<int16_t>(0xB6C);
+    if (!head || !neck || !pelvis || !yaw || !pitch || !restart || !gap || !frames || *head <= 0 || *neck <= 0 || !(*yaw > 0) || !(*pitch > 0))
+        return std::nullopt;
+    t.head = *head, t.neck = *neck, t.pelvis = *pelvis;
+    t.lookYaw = glm::radians(*yaw), t.lookPitch = glm::radians(*pitch), t.lookRestart = glm::radians(*restart);
+    t.lookFrames = float(*frames), t.lookSightGap = *gap;
+    return t;
+}
+
 std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view object) {
     const auto w = objectData(bf, object);
     if (!w) return std::nullopt;

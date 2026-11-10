@@ -13,6 +13,7 @@
 #include "game/Bend.hpp"
 #include "game/Breakables.hpp"
 #include "game/Combat.hpp"
+#include "game/Ik.hpp"
 #include "game/Progress.hpp"
 #include "game/Water.hpp"
 #include "game/Feedback.hpp"
@@ -96,6 +97,7 @@ struct AnimLibrary {
     GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
     GrappleTuning grapple; // g_grapple data (loadGrappleTuning): throw range, rope limits, bend pool
     AdrenalineTuning adrenaline; // Lara data +0x2C8..+0x31C (loadAdrenalineTuning): meter, drains, time scales
+    IkTuning ik; // Lara data +0x5C8 limb locks, head look-at limits (loadIkTuning; Ik.hpp)
     DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
     // Lara's HInfo markers (lara.drm model): id -> (segment, frame in it, R = Rx * Ry * Rz); weapons mount there.
     std::map<int, std::pair<int, glm::mat4>> markers;
@@ -110,6 +112,14 @@ struct AnimLibrary {
     // Mean of the hand bones (55, 80) relative to the root segment in `clip` at `t` (model space, root
     // translation removed); nullopt without a full skeleton.
     std::optional<vec3> handsAt(const anim::Clip& clip, double t) const;
+};
+// World::ik(): the limb-lock passes of one tick (docs/GAMEPLAY.md "Animation layers and IK").
+struct IkReport {
+    bool feet = false, hands = false, look = false; // the pass ran (its gate held)
+    FootPlant plant;                    // feet: floors found, what is left of the error, the pelvis drop
+    std::array<float, 2> handBefore{}, handAfter{}; // left / right hand's distance from the ledge line, units
+    glm::vec2 lookAngles{0};            // head yaw (+ = left) / pitch (+ = up) off the neck, radians
+    float secondArm = 0;                // dual targeting: the angle her left arm was swung to the second target, radians
 };
 // Names the controller requests; loadLaraAnims loads exactly these.
 extern const std::vector<std::string_view> kLaraClipNames;
@@ -983,6 +993,10 @@ public:
     // Lara's model-space bone matrices (crossfaded clips + simulated hair), blended between the last two
     // ticks; skin with anim::skinPalette and place with Player::modelMatrix(interpolated(alpha)).
     std::vector<glm::mat4> pose(double alpha) const;
+    // What the limb locks and the head look-at did on the last tick, and a bone's origin in the world then (tests,
+    // self-test probes `ik.*` / `pose.bone.*`); nullopt for a bone the skeleton has not.
+    const IkReport& ik() const { return ik_; }
+    std::optional<vec3> boneWorld(int bone) const;
 
     // Streaming (empty units() for the single-mesh constructor).
     const std::vector<LoadedUnit>& units() const { return units_; }
@@ -1638,6 +1652,9 @@ private:
     void tickGadgets(const Actions& a, float dt);
     void explode(vec3 at);
     void throwLayer(std::vector<anim::LocalTransform>& local) const; // throw clip over the upper body
+    // Feet on the object she stands on, hands on the ledge she hangs from, head to her target (Ik.cpp passes; World.cpp)
+    void limbLocks(std::vector<anim::LocalTransform>& local, std::vector<glm::mat4>& bones);
+    IkReport ik_; // what the passes did this tick (derived from the state: not saved, not hashed)
     std::vector<Grenade> grenades_;
     std::vector<vec3> explosions_;
     bool lightHeld_ = true, grenadeHeld_ = true; // no press edge on the first tick

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace ou::anim {
 
@@ -132,6 +133,24 @@ private:
     std::vector<Layer> layers_; // oldest first
     mutable std::vector<uint32_t> twins_; // mirrorBones, built on first use
 };
+
+// ---- inverse kinematics and limb locks (docs/GAMEPLAY.md "Animation layers and IK") ----------------
+// All of it works on a local pose and its model-space matrices (`world` = worldMatrices(skeleton, local)); both are
+// kept in step. Pure functions of their inputs: the same pose and targets give the same result.
+//
+// Turns `bone` by `delta` (a rotation in model space about the bone's own origin); its subtree follows.
+void rotateBoneModel(const scene::Skeleton& skeleton, std::span<LocalTransform> local, std::span<glm::mat4> world,
+                     uint32_t bone, const glm::quat& delta);
+// Moves `bone` (and its subtree) by `delta` in model space.
+void translateBoneModel(const scene::Skeleton& skeleton, std::span<LocalTransform> local, std::span<glm::mat4> world,
+                        uint32_t bone, glm::vec3 delta);
+// Two-bone chain `end` <- its parent <- its grandparent (foot / shin / thigh, hand / forearm / upper arm): brings
+// `end`'s origin to `target` (model space) by bending the middle joint in the plane it is bent in and swinging the
+// upper bone; a target out of reach is met along its direction at full stretch (0.999 of the chain). `weight` moves
+// only that fraction of the way. `end` keeps its model-space orientation. False (pose untouched) when `end` has no
+// grandparent or the chain is degenerate.
+bool solveTwoBone(const scene::Skeleton& skeleton, std::span<LocalTransform> local, std::span<glm::mat4> world,
+                  uint32_t end, glm::vec3 target, float weight = 1.0f);
 
 // ---- hair (render-model cloth chains, docs/formats/ANIMATION.md "Hair") ----------------------------
 struct HairRig {

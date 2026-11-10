@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -9643,4 +9644,278 @@ TEST(GameReal, FireVolumeBurns300) {
     float lowest = 1000;
     for (int i = 0; i < 30; ++i) w.tick({}), lowest = std::min(lowest, w.health().value());
     EXPECT_NEAR(lowest, 700, 0.5);
+}
+
+// ---- limb locks and the head look-at (src/game/Ik.cpp; docs/GAMEPLAY.md "Animation layers and IK") ----
+namespace {
+struct IkPose {
+    game::AnimLibrary anims;
+    std::vector<anim::LocalTransform> local;
+    std::vector<glm::mat4> world;
+    IkPose(const cdc::BigfileSet& bf, std::string_view clip, double t = 0) : anims(game::loadLaraAnims(bf)) {
+        const anim::Clip* c = anims.find(clip);
+        if (!c) throw std::runtime_error("no clip " + std::string(clip));
+        local = anim::sample(*c, anims.skeleton, t, true);
+        local[0] = {{0, 0, 0}, {1, 1, 1}, glm::vec3(anims.skeleton.bones[0].pivot[0], anims.skeleton.bones[0].pivot[1], anims.skeleton.bones[0].pivot[2])}; // root motion is in the model matrix
+        world = anim::worldMatrices(anims.skeleton, local);
+    }
+    glm::vec3 bone(int b) const { return glm::vec3(world[size_t(b)][3]); }
+};
+void expectNear(glm::vec3 a, glm::vec3 b, float eps) {
+    EXPECT_NEAR(a.x, b.x, eps);
+    EXPECT_NEAR(a.y, b.y, eps);
+    EXPECT_NEAR(a.z, b.z, eps);
+}
+} // namespace
+
+// lara.drm object data +0x5C8 / +0x5CC: the 30 limb-lock records tru.exe builds its GenericLimbLockControllers from
+// (0x6EFDA0 -> 0x445160), and the head look-at numbers 0x6FD080 reads.
+TEST(GameReal, IkTuningDecodesTheLimbLocks) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto t = game::loadIkTuning(bf);
+    ASSERT_TRUE(t);
+    ASSERT_EQ(t->locks.size(), 30u);
+    const game::LimbLock& l = t->locks[13]; // the floor under the left foot
+    EXPECT_EQ(l.chain, 12u); EXPECT_EQ(l.type, 1u); EXPECT_EQ(l.limb, 0x30); EXPECT_EQ(l.segment, 6); EXPECT_EQ(l.flags, 0x1Fu);
+    EXPECT_NEAR(l.up, 158.025f, 0.01f); EXPECT_NEAR(l.down, 158.025f, 0.01f); EXPECT_NEAR(l.offset.z, 26.864f, 0.01f);
+    EXPECT_EQ(l.framesIn, 2u); EXPECT_EQ(l.framesOut, 3u);
+    EXPECT_EQ(t->locks[15].limb, 0x31); EXPECT_EQ(t->locks[15].segment, 11); EXPECT_EQ(t->locks[15].type, 1u);
+    EXPECT_EQ(t->locks[4].type, 7u); EXPECT_EQ(t->locks[4].limb, 0x40); EXPECT_EQ(t->locks[7].type, 7u); EXPECT_EQ(t->locks[7].limb, 0x41);
+    EXPECT_EQ(t->lock(1, 0x30), &t->locks[13]); EXPECT_EQ(t->lock(7, 0x41), &t->locks[7]);
+    // the bike's four (type 9) and the wading four (type 0xB) exist too
+    EXPECT_EQ(std::ranges::count(t->locks, 9u, &game::LimbLock::type), 4); EXPECT_EQ(std::ranges::count(t->locks, 11u, &game::LimbLock::type), 4);
+    EXPECT_EQ(t->head, 17); EXPECT_EQ(t->neck, 16); EXPECT_EQ(t->pelvis, 1);
+    EXPECT_NEAR(glm::degrees(t->lookYaw), 60, 1e-3); EXPECT_NEAR(glm::degrees(t->lookPitch), 15, 1e-3);
+    EXPECT_NEAR(glm::degrees(t->lookRestart), 30, 1e-3); EXPECT_EQ(t->lookFrames, 3); EXPECT_NEAR(t->lookSightGap, 60, 1e-3);
+    // the built-in records are the file's
+    const game::IkTuning d;
+    for (const auto& k : d.locks) {
+        const game::LimbLock* f = t->lock(k.type, k.limb);
+        ASSERT_TRUE(f);
+        EXPECT_EQ(f->chain, k.chain); EXPECT_EQ(f->segment, k.segment); EXPECT_EQ(f->flags, k.flags); EXPECT_EQ(f->limb2, k.limb2);
+        EXPECT_NEAR(f->up, k.up, 0.01f); EXPECT_NEAR(f->offset.z, k.offset.z, 0.01f);
+    }
+    // the effectors end three-segment limbs: foot <- shin <- thigh under the pelvis, hand <- forearm <- upper arm
+    const auto anims = game::loadLaraAnims(bf);
+    const auto& b = anims.skeleton.bones;
+    EXPECT_EQ(b[6].parent, 5); EXPECT_EQ(b[5].parent, 4); EXPECT_EQ(b[11].parent, 10); EXPECT_EQ(b[10].parent, 9);
+    int up = 4;
+    while (up > 1) up = b[size_t(up)].parent;
+    EXPECT_EQ(up, 1); // the legs hang from the pelvis
+    EXPECT_GT(anims.bind[6].x, 0); EXPECT_LT(anims.bind[11].x, 0);   // 0x30 = her left (+X)
+    EXPECT_GT(anims.bind[55].x, 0); EXPECT_LT(anims.bind[80].x, 0);
+    EXPECT_NEAR(anims.bind[6].z, l.offset.z, 5.0f); // the ankle stands about the record's offset over the floor (bind 30.6)
+}
+
+// Feet on a 20-degree slope and on stair treads: each ankle keeps the clip's height, now over the floor under it;
+// the pelvis comes down for the lower foot; the root bone (the controller's) does not move.
+TEST(GameReal, IkFeetFollowASlopeAndStairs) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const char* clip : {"ng_idle", "ng_run"}) {
+        for (const double time : {0.0, 0.2, 0.45}) {
+            // a slope falling to her left (+X) at 20 degrees, through her root
+            const float k = std::tan(glm::radians(20.0f));
+            CollisionMesh slope;
+            const uint32_t v0 = uint32_t(slope.vertices.size());
+            slope.vertices.insert(slope.vertices.end(), {{-2000, -2000, 2000 * k}, {2000, -2000, -2000 * k}, {2000, 2000, -2000 * k}, {-2000, 2000, 2000 * k}});
+            slope.faces.push_back({{v0, v0 + 1, v0 + 2}}), slope.faces.push_back({{v0, v0 + 2, v0 + 3}});
+            slope.build();
+            IkPose p(bf, clip, time);
+            const game::IkTuning& t = p.anims.ik;
+            const glm::mat4 root = p.world[0];
+            const IkPose clipPose = p;
+            const glm::vec3 ankle[2] = {p.bone(6), p.bone(11)};
+            const auto r = game::plantFeet(p.anims.skeleton, p.local, p.world, glm::mat4(1), slope, t, 0.7f);
+            const bool idle = std::string_view(clip) == "ng_idle";
+            ASSERT_TRUE(idle ? r.planted[0] && r.planted[1] : r.planted[0] || r.planted[1]) << clip << ' ' << time;
+            EXPECT_EQ(p.world[0], root);
+            for (int f = 0; f < 2; ++f) {
+                if (!r.planted[size_t(f)]) continue; // a foot the run has lifted out of the probe: the clip's
+                const int b = f ? 11 : 6;
+                const glm::vec3 a = p.bone(b);
+                EXPECT_LT(std::abs(r.error[size_t(f)]), 1.0f) << clip << ' ' << time << " foot " << f;
+                EXPECT_NEAR(a.x, ankle[f].x, 0.5f);
+                EXPECT_NEAR(a.y, ankle[f].y, 0.5f);
+                if (ankle[f].z - (-ankle[f].x * k) > 79) continue; // lifted: held part of the way only
+                // over the slope by the clip's height (plus the tilted sole's room), straight under where the clip had it
+                const float room = 26.864f * (1 / std::cos(glm::radians(20.0f)) - 1);
+                EXPECT_NEAR(a.z - (-a.x * k), ankle[f].z + room, 1.0f) << clip << ' ' << time << " foot " << f;
+                // the sole turned with the slope
+                const glm::vec3 was = glm::normalize(glm::vec3(clipPose.world[size_t(b)][2]));
+                const glm::vec3 want = glm::angleAxis(glm::radians(20.0f), glm::vec3(0, 1, 0)) * was;
+                EXPECT_GT(glm::dot(glm::normalize(glm::vec3(p.world[size_t(b)][2])), want), std::cos(glm::radians(1.0f))) << clip << ' ' << f;
+            }
+            if (idle) EXPECT_GT(r.pelvis, 1.0f); // her left foot is downhill
+            const auto again = anim::worldMatrices(p.anims.skeleton, p.local);
+            for (size_t i = 0; i < again.size(); ++i) ASSERT_LT(glm::distance(glm::vec3(again[i][3]), glm::vec3(p.world[i][3])), 0.05f) << i;
+        }
+    }
+    // stairs across her: the tread under her left foot 40 lower than the one under her right (and her root)
+    CollisionMesh stairs;
+    addFloor(stairs, 0, -2000, 2000, 2000, -40);
+    addFloor(stairs, -2000, -2000, 0, 2000, 0);
+    stairs.build();
+    IkPose p(bf, "ng_idle");
+    const glm::vec3 l = p.bone(6), r = p.bone(11);
+    ASSERT_GT(l.x, 5); ASSERT_LT(r.x, -5);
+    const auto res = game::plantFeet(p.anims.skeleton, p.local, p.world, glm::mat4(1), stairs, p.anims.ik, 0.7f);
+    EXPECT_NEAR(p.bone(6).z, l.z - 40, 0.5f); EXPECT_NEAR(p.bone(11).z, r.z, 0.5f);
+    EXPECT_NEAR(res.pelvis, 40, 1e-3f);
+    EXPECT_NEAR(p.bone(1).z, IkPose(bf, "ng_idle").bone(1).z - 40, 1e-2f);
+    // level ground under both: nothing changes; a wall-steep floor or none: the foot is left to the clip
+    CollisionMesh flat;
+    addFloor(flat, -2000, -2000, 2000, 2000, 0);
+    flat.build();
+    IkPose q(bf, "ng_idle");
+    const auto before = q.local;
+    const auto level = game::plantFeet(q.anims.skeleton, q.local, q.world, glm::mat4(1), flat, q.anims.ik, 0.7f);
+    EXPECT_TRUE(level.planted[0] && level.planted[1]); EXPECT_EQ(level.pelvis, 0);
+    for (size_t i = 0; i < before.size(); ++i) ASSERT_EQ(before[i].rot, q.local[i].rot) << i;
+    CollisionMesh none;
+    addFloor(none, -2000, -2000, 2000, 2000, -400);
+    none.build();
+    const auto air = game::plantFeet(q.anims.skeleton, q.local, q.world, glm::mat4(1), none, q.anims.ik, 0.7f);
+    EXPECT_FALSE(air.planted[0] || air.planted[1]);
+}
+
+// Hands on the ledge line: the hang pose over a ledge that is not where the clip's hands are (off by a few units,
+// turned a few degrees): both hands end on the line, where they were along it.
+TEST(GameReal, IkHandsLockToTheLedgeLine) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    IkPose p(bf, "ledgeb_idle");
+    const glm::vec3 mid = (p.bone(55) + p.bone(80)) * 0.5f + glm::vec3(0, 6, -5);
+    const glm::vec3 along = glm::normalize(glm::vec3(std::cos(glm::radians(8.0f)), std::sin(glm::radians(8.0f)), 0.05f));
+    const std::vector<glm::vec3> line{mid - along * 300.0f, mid + along * 100.0f, mid + along * 300.0f};
+    const glm::vec3 l = p.bone(55), r = p.bone(80);
+    const auto before = game::lockHands(p.anims.skeleton, p.local, p.world, glm::mat4(1), line, p.anims.ik);
+    EXPECT_GT(before[0], 3.0f); EXPECT_GT(before[1], 3.0f);
+    const auto after = game::lockHands(p.anims.skeleton, p.local, p.world, glm::mat4(1), line, p.anims.ik, 0);
+    EXPECT_LT(after[0], 0.1f); EXPECT_LT(after[1], 0.1f);
+    EXPECT_NEAR(glm::dot(p.bone(55) - l, along), 0, 0.1f); EXPECT_NEAR(glm::dot(p.bone(80) - r, along), 0, 0.1f);
+    // a ledge ending by her hand: the hand stays the end gap inside it
+    IkPose q(bf, "ledgeb_idle");
+    const glm::vec3 x(1, 0, 0), m2 = (q.bone(55) + q.bone(80)) * 0.5f;
+    const std::vector<glm::vec3> shortLine{m2 - x * 300.0f, glm::vec3(q.bone(55).x + 5, m2.y, m2.z)};
+    game::lockHands(q.anims.skeleton, q.local, q.world, glm::mat4(1), shortLine, q.anims.ik);
+    EXPECT_NEAR(q.bone(55).x, shortLine[1].x - 20, 0.1f);
+}
+
+// Head to a target: full turn inside the limits (60 degrees aside, 15 up / down of the neck), clamped outside.
+TEST(GameReal, IkHeadLooksAtATargetWithinItsLimits) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto facing = [](const IkPose& p) { return glm::normalize(glm::mat3(p.world[17]) * glm::vec3(0, -1, 0)); };
+    const auto dir = [](float yawDeg, float pitchDeg) {
+        const float y = glm::radians(yawDeg), q = glm::radians(pitchDeg);
+        return glm::vec3(std::sin(y) * std::cos(q), -std::cos(y) * std::cos(q), std::sin(q));
+    };
+    const IkPose rest(bf, "ng_idle");
+    const glm::vec3 nf = glm::normalize(glm::mat3(rest.world[16]) * glm::vec3(0, -1, 0));
+    const float neckYaw = glm::degrees(std::atan2(nf.x, -nf.y)), neckPitch = glm::degrees(std::asin(nf.z));
+    struct Case { float yaw, pitch, wantYaw, wantPitch; };
+    for (const Case c : {Case{40, 5, 40, 5}, {-50, -10, -50, -10}, {150, 0, 60, 0}, {-100, 0, -60, 0}, {0, 70, 0, 15}, {20, -60, 20, -15}}) {
+        IkPose p(bf, "ng_idle");
+        const glm::vec3 head = p.bone(17), neck = p.bone(16);
+        const glm::vec3 target = head + dir(neckYaw + c.yaw, neckPitch + c.pitch) * 5000.0f;
+        const glm::vec2 a = game::lookAt(p.anims.skeleton, p.local, p.world, glm::mat4(1), target, p.anims.ik);
+        EXPECT_NEAR(glm::degrees(a.x), c.wantYaw, 0.5f) << c.yaw << ' ' << c.pitch;
+        EXPECT_NEAR(glm::degrees(a.y), c.wantPitch, 0.5f) << c.yaw << ' ' << c.pitch;
+        const glm::vec3 f = facing(p), want = dir(neckYaw + c.wantYaw, neckPitch + c.wantPitch);
+        EXPECT_GT(glm::dot(f, want), std::cos(glm::radians(1.0f))) << c.yaw << ' ' << c.pitch;
+        expectNear(p.bone(17), head, 1e-3f), expectNear(p.bone(16), neck, 1e-3f); // only the head turns
+    }
+    // half weight: half the turn
+    IkPose p(bf, "ng_idle");
+    const glm::vec3 f0 = facing(p);
+    game::lookAt(p.anims.skeleton, p.local, p.world, glm::mat4(1), p.bone(17) + dir(neckYaw + 40, neckPitch) * 5000.0f, p.anims.ik, 0.5f);
+    EXPECT_NEAR(glm::degrees(std::acos(glm::dot(facing(p), f0))), glm::degrees(std::acos(glm::dot(dir(neckYaw + 40, neckPitch), f0))) / 2, 1.0f);
+}
+
+// Dual targeting: her left arm swings from the primary target to the second one at the shoulder (at most the limit);
+// the right arm and the body stay.
+TEST(GameReal, IkLeftArmGoesToTheSecondTarget) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    IkPose p(bf, "ng_idle");
+    const auto& b = p.anims.skeleton.bones;
+    const int hand = p.anims.ik.hand[0], upper = b[size_t(b[size_t(hand)].parent)].parent;
+    const auto turn = [](const glm::mat4& m) { return glm::quat_cast(glm::mat3(glm::normalize(glm::vec3(m[0])), glm::normalize(glm::vec3(m[1])), glm::normalize(glm::vec3(m[2])))); };
+    const glm::vec3 shoulder = p.bone(upper), right = p.bone(80);
+    const glm::quat was = turn(p.world[size_t(upper)]);
+    const glm::vec3 first = shoulder + glm::vec3(0, -3000, 0), second = shoulder + glm::vec3(1500, -2598, 300); // 30 degrees to her left, a little up
+    const float want = std::acos(glm::dot(glm::normalize(first - shoulder), glm::normalize(second - shoulder)));
+    EXPECT_NEAR(game::aimArm(p.anims.skeleton, p.local, p.world, glm::mat4(1), hand, first, second, 1.6f), want, 1e-4f);
+    // what pointed at the first target from the shoulder now points at the second
+    const glm::quat delta = turn(p.world[size_t(upper)]) * glm::inverse(was);
+    expectNear(delta * glm::normalize(first - shoulder), glm::normalize(second - shoulder), 1e-3f);
+    expectNear(p.bone(upper), shoulder, 1e-3f);
+    expectNear(p.bone(80), right, 1e-3f);
+    EXPECT_GT(glm::distance(p.bone(hand), IkPose(bf, "ng_idle").bone(hand)), 1.0f);
+    // the limit, and half weight
+    IkPose q(bf, "ng_idle");
+    EXPECT_NEAR(game::aimArm(q.anims.skeleton, q.local, q.world, glm::mat4(1), hand, first, shoulder + glm::vec3(0, 3000, 0), 1.2f, 0.5f), 1.2f, 1e-5f);
+    EXPECT_NEAR(glm::angle(glm::normalize(turn(q.world[size_t(upper)]) * glm::inverse(was))), 0.6f, 1e-3f);
+}
+
+// The cost of all the passes on Lara's skeleton (reported in docs/GAMEPLAY.md): well under a tenth of a 60 Hz tick.
+TEST(GameReal, IkPassesAreCheap) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const float k = std::tan(glm::radians(20.0f));
+    CollisionMesh slope;
+    slope.vertices = {{-2000, -2000, 2000 * k}, {2000, -2000, -2000 * k}, {2000, 2000, -2000 * k}, {-2000, 2000, 2000 * k}};
+    slope.faces.push_back({{0, 1, 2}});
+    slope.faces.push_back({{0, 2, 3}});
+    slope.build();
+    const IkPose base(bf, "ng_idle");
+    const IkPose hang(bf, "ledgeb_idle");
+    const glm::vec3 mid = (hang.bone(55) + hang.bone(80)) * 0.5f + glm::vec3(0, 6, -5);
+    const std::vector<glm::vec3> line{mid - glm::vec3(300, 0, 0), mid + glm::vec3(300, 0, 0)};
+    const int n = 2000;
+    std::vector<anim::LocalTransform> local;
+    std::vector<glm::mat4> world;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < n; ++i) {
+        local = base.local, world = base.world;
+        game::plantFeet(base.anims.skeleton, local, world, glm::mat4(1), slope, base.anims.ik, 0.7f);
+        game::lookAt(base.anims.skeleton, local, world, glm::mat4(1), {800, -3000, 700}, base.anims.ik);
+        game::aimArm(base.anims.skeleton, local, world, glm::mat4(1), 55, {0, -3000, 400}, {1500, -2600, 400}, 1.57f);
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    for (int i = 0; i < n; ++i) {
+        local = hang.local, world = hang.world;
+        game::lockHands(hang.anims.skeleton, local, world, glm::mat4(1), line, hang.anims.ik);
+    }
+    const auto t2 = std::chrono::steady_clock::now();
+    const double feet = std::chrono::duration<double, std::milli>(t1 - t0).count() / n, hands = std::chrono::duration<double, std::milli>(t2 - t1).count() / n;
+    std::printf("IK cost per tick: feet + pelvis + head + second arm %.4f ms, hands %.4f ms (%zu bones)\n", feet, hands, base.local.size());
+    EXPECT_LT(feet, 1.0);
+    EXPECT_LT(hands, 1.0);
+}
+
+// The foot locks' gate (tru.exe 0x6EFD60: an instance under her feet): on the unit's terrain World runs no foot pass,
+// level or sloped; without a ledge or a target the other passes stay off too. (The object-floor side needs a placed
+// object: self-test ik_feet, l1_baldrs_tomb's press plate.)
+TEST(Game, IkPassesStayOffOnTerrain) {
+    CollisionMesh col;
+    addFloor(col, -5000, -5000, 5000, 5000, 0);
+    const uint32_t v0 = uint32_t(col.vertices.size()); // a 15-degree ramp from x = 1000
+    const float rise = 2000 * std::tan(glm::radians(15.0f));
+    col.vertices.insert(col.vertices.end(), {{1000, -500, 0}, {3000, -500, rise}, {3000, 500, rise}, {1000, 500, 0}});
+    col.faces.push_back({{v0, v0 + 1, v0 + 2}});
+    col.faces.push_back({{v0, v0 + 2, v0 + 3}});
+    col.build();
+    game::World w(std::move(col), syntheticAnims(), {{2000, 0, 400}, 0});
+    for (int i = 0; i < 30; ++i) {
+        w.tick({});
+        EXPECT_FALSE(w.ik().feet);
+        EXPECT_FALSE(w.ik().hands);
+        EXPECT_FALSE(w.ik().look);
+        EXPECT_EQ(w.ik().secondArm, 0);
+    }
+    EXPECT_EQ(w.player().state().state, game::State::Idle);
+    EXPECT_NEAR(w.player().state().pos.z, 1000 * std::tan(glm::radians(15.0f)), 2.0f); // standing on the ramp
 }
