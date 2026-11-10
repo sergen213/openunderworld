@@ -12,6 +12,9 @@
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
 #include <Jolt/Physics/Collision/CastResult.h>
@@ -23,6 +26,7 @@
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -453,6 +457,59 @@ JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, const 
     return t.empty() ? nullptr : made(JPH::MeshShapeSettings(std::move(v), std::move(t)));
 }
 
+// What the character controller's queries may hit, as the collision BVH filters its faces (Scene::CharacterSpec): a
+// unit's terrain for the controller is a compound of one mesh per terrain group, each tagged with a GroupRef, plus one
+// mesh of the faces no BVH query returns (flag 0x40, mask 0), tagged kNoQuery; other bodies fall on all of them.
+struct GroupRef { const collision::CollisionMesh* mesh = nullptr; uint32_t group = 0; };
+const GroupRef kNoQuery;
+struct CharacterShapeFilter final : JPH::ShapeFilter {
+    bool ShouldCollide(const JPH::Shape* s, const JPH::SubShapeID&) const override {
+        const auto* g = reinterpret_cast<const GroupRef*>(s->GetUserData());
+        return !g || (g->mesh && g->mesh->groupEnabled(g->group));
+    }
+    bool ShouldCollide(const JPH::Shape*, const JPH::SubShapeID&, const JPH::Shape* s, const JPH::SubShapeID& id) const override {
+        return ShouldCollide(s, id);
+    }
+};
+struct CharacterLayerFilter final : JPH::ObjectLayerFilter {
+    bool ShouldCollide(JPH::ObjectLayer l) const override { return l == kLayerSolid || l == kLayerLoose || l == kLayerPlate; }
+};
+
+JPH::RefConst<JPH::Shape> groupedTerrain(const collision::CollisionMesh& mesh, vec3 offset, std::vector<std::unique_ptr<GroupRef>>& refs) {
+    std::map<int64_t, std::vector<uint32_t>> buckets; // terrain group, or -1: the faces no query returns
+    for (uint32_t i = 0; i < mesh.faces.size(); ++i) {
+        const auto& f = mesh.faces[i];
+        buckets[collision::queryable(f, 0xFF) ? int64_t(f.group) : -1].push_back(i);
+    }
+    refs.clear();
+    JPH::StaticCompoundShapeSettings c;
+    std::vector<uint32_t> remap(mesh.vertices.size(), UINT32_MAX);
+    for (const auto& [group, faces] : buckets) {
+        JPH::VertexList v;
+        JPH::IndexedTriangleList t;
+        t.reserve(faces.size());
+        std::vector<uint32_t> touched;
+        for (const uint32_t fi : faces) {
+            uint32_t idx[3];
+            for (int k = 0; k < 3; ++k) {
+                const uint32_t vi = mesh.faces[fi].v[k];
+                if (remap[vi] == UINT32_MAX) {
+                    const vec3 q = (mesh.vertices[vi] + offset) * kM;
+                    remap[vi] = uint32_t(v.size()), v.push_back({q.x, q.y, q.z}), touched.push_back(vi);
+                }
+                idx[k] = remap[vi];
+            }
+            t.push_back({idx[0], idx[1], idx[2]});
+        }
+        for (const uint32_t vi : touched) remap[vi] = UINT32_MAX;
+        JPH::Ref<JPH::MeshShapeSettings> s = new JPH::MeshShapeSettings(std::move(v), std::move(t));
+        if (group < 0) s->mUserData = reinterpret_cast<uint64_t>(&kNoQuery);
+        else refs.push_back(std::make_unique<GroupRef>(GroupRef{&mesh, uint32_t(group)})), s->mUserData = reinterpret_cast<uint64_t>(refs.back().get());
+        c.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), s);
+    }
+    return c.mSubShapes.empty() ? nullptr : made(c);
+}
+
 // A loose body's collision: every primitive of its model, as tru.exe builds the rigid body from all of them (0x497270;
 // the flag bit we call solid gates Lara's collision only [I]), in its centre-of-mass frame; no primitives: a 20-unit
 // ball resting on the model origin.
@@ -513,7 +570,8 @@ struct Scene::Impl {
     std::vector<LooseE> loose;
     struct VehicleE { int32_t id; const VehicleSpec* spec; JPH::BodyID body; vec3 com; JPH::Ref<JPH::VehicleConstraint> c; VehicleDrive drive; vec3 shift, kick; };
     std::vector<VehicleE> vehicles;
-    struct TerrainE { Terrain t; JPH::RefConst<JPH::Shape> shape; JPH::BodyID body; bool built = false; };
+    struct TerrainE { Terrain t; JPH::RefConst<JPH::Shape> shape; JPH::BodyID body; bool built = false;
+                      bool grouped = false; std::vector<std::unique_ptr<GroupRef>> groups; };
     std::vector<TerrainE> terrain;
     struct ProxyE { std::shared_ptr<const collision::CollisionMesh> shape; mat4 transform; JPH::BodyID body; };
     std::vector<ProxyE> proxies;
@@ -523,6 +581,37 @@ struct Scene::Impl {
     std::vector<Water> water;             // Scene::setWater
     void buoyancy(float dt);
     JPH::BodyID lara;                     // its proxy body (key "a")
+    // The character controller (Scene::setController): `last` is where its last move ended in game units (a move from
+    // anywhere else is a teleport), `top` its capsule's.
+    struct ControllerE { CharacterSpec spec; JPH::Ref<JPH::CharacterVirtual> cv; float top = 0; vec3 last{0}; bool placed = false; };
+    std::optional<ControllerE> controller;
+    std::string pendingCharacter; // a restored controller state, until the controller exists
+    JPH::RefConst<JPH::Shape> capsule(float radius, float top) const {
+        const float r = std::max(radius, 1.0f), half = std::max(0.5f * top - r, 1.0f);
+        if (controller && controller->spec.flatBottom)
+            return new JPH::RotatedTranslatedShape(Jm(vec3(0, 0, 0.5f * top)), J(glm::angleAxis(1.5707964f, vec3(1, 0, 0))),
+                                                   new JPH::CylinderShape(0.5f * top * kM, r * kM, 2.0f * kM));
+        return new JPH::RotatedTranslatedShape(Jm(vec3(0, 0, half + r)), J(glm::angleAxis(1.5707964f, vec3(1, 0, 0))),
+                                               new JPH::CapsuleShape(half * kM, r * kM));
+    }
+    std::string saveCharacter() const {
+        if (!controller) return {};
+        JPH::StateRecorderImpl r;
+        r.Write(controller->top), r.Write(controller->last.x), r.Write(controller->last.y), r.Write(controller->last.z), r.Write(controller->placed);
+        controller->cv->SaveState(r);
+        return r.GetData();
+    }
+    void restoreCharacter() {
+        if (!controller || pendingCharacter.empty()) return;
+        ControllerE& c = *controller;
+        JPH::StateRecorderImpl r;
+        r.WriteBytes(pendingCharacter.data(), pendingCharacter.size());
+        float top = 0;
+        r.Read(top), r.Read(c.last.x), r.Read(c.last.y), r.Read(c.last.z), r.Read(c.placed);
+        if (top != c.top) c.cv->SetShape(capsule(c.spec.radius, top), FLT_MAX, {}, CharacterLayerFilter(), {}, CharacterShapeFilter(), temp), c.top = top;
+        c.cv->RestoreState(r);
+        pendingCharacter.clear();
+    }
 
     // Body IDs are ours, not Jolt's allocation order: the lowest free index (sequence 0), or the ID a restored state
     // gives the body's key (Scene::restore), so a loaded scene has the bodies, IDs and constraint order it was saved
@@ -730,12 +819,17 @@ struct Scene::Impl {
         return nullptr;
     }
     // Terrain and object solids exist only while something can land on them.
-    bool landing() const { return !loose.empty() || !vehicles.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid); }
+    bool landing() const { return controller || !loose.empty() || !vehicles.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid); }
     void createSolids() {
         const bool active = landing();
         for (auto& t : terrain) {
             if (!active) { remove(t.body); continue; }
-            if (!t.built) t.shape = meshShape(*t.t.mesh, glm::translate(mat4(1), t.t.offset)), t.built = true;
+            if (!t.built || t.grouped != controller.has_value()) {
+                remove(t.body);
+                t.grouped = controller.has_value(), t.built = true;
+                if (t.grouped) t.shape = groupedTerrain(*t.t.mesh, t.t.offset, t.groups);
+                else t.groups.clear(), t.shape = meshShape(*t.t.mesh, glm::translate(mat4(1), t.t.offset));
+            }
             if (t.shape && t.body.IsInvalid())
                 t.body = add(JPH::BodyCreationSettings(t.shape, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static,
                                                        kLayerSolid), "t" + t.t.name, JPH::EActivation::DontActivate);
@@ -752,7 +846,7 @@ struct Scene::Impl {
                 p.body = add(s, "p" + std::to_string(i), JPH::EActivation::Activate);
             }
         }
-        const bool pushes = character && (!loose.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid));
+        const bool pushes = character && !controller && (!loose.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid));
         if (!pushes) remove(lara);
         else if (lara.IsInvalid()) {
             const Character& c = *character;
@@ -982,11 +1076,12 @@ void Scene::setTerrain(std::span<const Terrain> units) {
     for (const auto& u : units) {
         const auto it = std::ranges::find_if(m.terrain, [&](const Impl::TerrainE& e) { return e.t.name == u.name && e.t.offset == u.offset && e.t.mesh == u.mesh; });
         if (it != m.terrain.end()) next.push_back(std::move(*it)), it->t.mesh = nullptr;
-        else next.push_back({u, nullptr, {}, false});
+        else next.push_back({u, nullptr, {}, false, false, {}});
     }
     for (auto& e : m.terrain)
         if (e.t.mesh) m.remove(e.body);
     m.terrain = std::move(next);
+    if (m.controller) m.createSolids();
 }
 
 void Scene::setColliders(std::span<const collision::Dynamic> dynamics) {
@@ -1000,6 +1095,7 @@ void Scene::setColliders(std::span<const collision::Dynamic> dynamics) {
     }
     for (auto& p : m.proxies) m.remove(p.body);
     m.proxies = std::move(next);
+    if (m.controller) m.createSolids();
 }
 
 void Scene::setPlates(std::span<const Plate> plates, std::span<const Weight> weights) {
@@ -1012,6 +1108,93 @@ void Scene::setPlates(std::span<const Plate> plates, std::span<const Weight> wei
 void Scene::setCharacter(const Character* c) {
     if (c) impl_->character = *c;
     else impl_->character.reset();
+}
+
+void Scene::setController(const CharacterSpec* spec) {
+    Impl& m = *impl_;
+    if (!spec) { m.controller.reset(); return; }
+    if (m.controller && m.controller->spec == *spec) return;
+    JPH::CharacterVirtualSettings s;
+    s.mUp = JPH::Vec3::sAxisZ();
+    s.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisZ(), -spec->radius * kM); // the lower hemisphere supports
+    s.mMaxSlopeAngle = std::acos(std::clamp(spec->maxSlopeCos, 0.0f, 1.0f));
+    s.mEnhancedInternalEdgeRemoval = spec->innerEdges;
+    s.mMass = std::max(spec->mass, 1.0f), s.mMaxStrength = spec->strength * kM;
+    s.mCharacterPadding = spec->padding * kM;
+    s.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces; // the BVH's queries are double-sided
+    Impl::ControllerE c;
+    c.spec = *spec, c.top = spec->top;
+    if (m.controller) c.last = m.controller->last; // not placed: the next move teleports there
+    m.controller = std::move(c);
+    s.mShape = m.capsule(spec->radius, spec->top);
+    if (spec->flatBottom) s.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisZ(), -10.0f * kM); // its bottom rim supports
+    m.controller->cv = new JPH::CharacterVirtual(&s, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), &m.sys);
+    m.restoreCharacter();
+    m.createSolids();
+}
+
+Scene::CharacterMove Scene::moveCharacter(vec3 feet, vec3 velocity, float top, float dt, bool walk) {
+    Impl& m = *impl_;
+    m.createSolids(); // a restored scene's bodies, before its first step
+    Impl::ControllerE& c = m.controller.value();
+    JPH::CharacterVirtual& cv = *c.cv;
+    const CharacterLayerFilter layers;
+    const CharacterShapeFilter faces;
+    const JPH::BroadPhaseLayerFilter broad;
+    const JPH::BodyFilter bodies;
+    bool moved = false;
+    if (!c.placed || feet != c.last) cv.SetPosition(Jm(feet)), c.placed = moved = true;
+    if (top != c.top) cv.SetShape(m.capsule(c.spec.radius, top), FLT_MAX, broad, layers, bodies, faces, m.temp), c.top = top, moved = true;
+    if (moved) cv.RefreshContacts(broad, layers, bodies, faces, m.temp);
+    const JPH::RVec3 from = cv.GetPosition();
+    cv.SetLinearVelocity(Jm(velocity));
+    if (walk) {
+        JPH::CharacterVirtual::ExtendedUpdateSettings e;
+        e.mStickToFloorStepDown = Jm(vec3(0, 0, -c.spec.stepDown));
+        // The capsule's round bottom alone rides over an edge up to radius * (1 - maxSlopeCos) high (the contact normal
+        // there is still within the slope limit), on top of the stair step: the step is shortened by that, so stepUp
+        // is the highest riser climbed (110: the 100-unit stairs yes, the 121-unit hearth edge no).
+        e.mWalkStairsStepUp = Jm(vec3(0, 0, c.spec.flatBottom ? c.spec.stepUp : std::max(c.spec.stepUp - c.spec.radius * (1 - c.spec.maxSlopeCos), 1.0f)));
+        cv.ExtendedUpdate(dt, m.sys.GetGravity(), e, broad, layers, bodies, faces, m.temp);
+    } else {
+        cv.Update(dt, m.sys.GetGravity(), broad, layers, bodies, faces, m.temp);
+    }
+    CharacterMove r;
+    r.pos = c.last = G(JPH::Vec3(cv.GetPosition())) * kUnitsPerMetre;
+    r.velocity = G(JPH::Vec3(cv.GetPosition() - from)) * (kUnitsPerMetre / dt); // Jolt does not write the solved velocity back
+    switch (cv.GetGroundState()) {
+    case JPH::CharacterBase::EGroundState::OnGround: r.ground = Ground::OnGround; break;
+    case JPH::CharacterBase::EGroundState::OnSteepGround: r.ground = Ground::Steep; break;
+    case JPH::CharacterBase::EGroundState::NotSupported: r.ground = Ground::Unsupported; break;
+    case JPH::CharacterBase::EGroundState::InAir: r.ground = Ground::Air; break;
+    }
+    if (r.ground != Ground::Air) {
+        r.groundNormal = G(cv.GetGroundNormal());
+        r.groundPoint = G(JPH::Vec3(cv.GetGroundPosition())) * kUnitsPerMetre;
+        r.groundVelocity = G(cv.GetGroundVelocity()) * kUnitsPerMetre;
+    }
+    for (const auto& k : cv.GetActiveContacts()) {
+        if (!k.mHadCollision || k.mWasDiscarded) continue;
+        const vec3 n = G(k.mContactNormal);
+        r.contacts.push_back(n);
+        if (cv.IsSlopeTooSteep(k.mSurfaceNormal) && n.x * velocity.x + n.y * velocity.y < 0) r.hitWall = true;
+    }
+    return r;
+}
+
+bool Scene::characterFits(vec3 feet, float top) const {
+    const Impl& m = *impl_;
+    const auto shape = m.capsule(m.controller.value().spec.radius, top);
+    struct Deepest final : JPH::CollideShapeCollector {
+        void AddHit(const JPH::CollideShapeResult& h) override { depth = std::max(depth, h.mPenetrationDepth); }
+        float depth = 0;
+    } hit;
+    JPH::CollideShapeSettings cs;
+    cs.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces;
+    const JPH::RVec3 at = Jm(feet);
+    m.sys.GetNarrowPhaseQueryNoLock().CollideShape(shape, JPH::Vec3::sOne(), JPH::RMat44::sTranslation(at + shape->GetCenterOfMass()), cs, at, hit,
+                                                   {}, CharacterLayerFilter(), {}, CharacterShapeFilter());
+    return hit.depth <= 1.0f * kM;
 }
 
 void Scene::setWater(std::span<const Water> water) { impl_->water.assign(water.begin(), water.end()); }
@@ -1262,8 +1445,9 @@ void Scene::step(float dt) {
     }
 }
 
-// Layout (version 1): body count, {key, Jolt BodyID}; constraint zero count, {key, ref}; constraint count; then
-// PhysicsSystem::SaveState(All): global, bodies, contact cache, constraints (our link rows record their warm start).
+// Layout (version 2): body count, {key, Jolt BodyID}; constraint zero count, {key, ref}; constraint count; the
+// character controller's state (byte count, bytes; version 1 has none); then PhysicsSystem::SaveState(All): global,
+// bodies, contact cache, constraints (our link rows record their warm start).
 std::string Scene::save() const {
     const Impl& m = *impl_;
     JPH::StateRecorderImpl r;
@@ -1282,12 +1466,13 @@ std::string Scene::save() const {
     for (size_t i = 0; i < m.proxies.size(); ++i)
         if (!m.proxies[i].body.IsInvalid()) ids.push_back({"p" + std::to_string(i), m.proxies[i].body});
     if (!m.lara.IsInvalid()) ids.push_back({"a", m.lara});
-    r.Write(uint32_t(1));
+    r.Write(uint32_t(2));
     r.Write(uint32_t(ids.size()));
     for (const auto& [key, id] : ids) str(key), r.Write(id.GetIndexAndSequenceNumber());
     r.Write(uint32_t(refs.size()));
     for (const auto& [key, ref] : refs) str(key), r.Write(ref);
     r.Write(uint32_t(m.ordered().size()));
+    str(m.saveCharacter());
     m.sys.SaveState(r, JPH::EStateRecorderState::All);
     return r.GetData();
 }
@@ -1304,7 +1489,7 @@ bool Scene::restore(std::string_view state) {
     for (auto& p : m.proxies) m.remove(p.body);
     m.remove(m.lara);
     m.links.clear(), m.joints.clear(), m.loose.clear(), m.vehicles.clear(), m.proxies.clear(), m.ragdolls.clear();
-    m.pending.reset(), m.pendingIds.clear(), m.reserved.clear(), m.pendingRefs.clear();
+    m.pending.reset(), m.pendingIds.clear(), m.reserved.clear(), m.pendingRefs.clear(), m.pendingCharacter.clear();
     auto r = std::make_unique<JPH::StateRecorderImpl>();
     r->WriteBytes(state.data(), state.size());
     const auto str = [&] {
@@ -1316,7 +1501,7 @@ bool Scene::restore(std::string_view state) {
     };
     uint32_t version = 0, count = 0;
     r->Read(version), r->Read(count);
-    if (version != 1 || r->IsFailed()) return false;
+    if ((version != 1 && version != 2) || r->IsFailed()) return false;
     for (uint32_t i = 0; i < count && !r->IsFailed(); ++i) {
         const std::string key = str();
         uint32_t raw = 0;
@@ -1331,8 +1516,10 @@ bool Scene::restore(std::string_view state) {
         r->Read(m.pendingRefs[key]);
     }
     r->Read(m.pendingConstraints);
+    if (version >= 2) m.pendingCharacter = str();
     if (r->IsFailed()) return m.pendingIds.clear(), m.reserved.clear(), m.pendingRefs.clear(), false;
     m.pending = std::move(r);
+    m.restoreCharacter();
     return true;
 }
 

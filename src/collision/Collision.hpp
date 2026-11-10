@@ -114,6 +114,8 @@ public:
     std::optional<uint32_t> terrainGroupForModel(uint32_t modelIndex) const;
     std::optional<bool> terrainGroupEnabled(uint32_t modelIndex) const;
     bool setTerrainGroupEnabled(uint32_t modelIndex, bool enabled);
+    // Terrain group index (Face::group) is enabled; groups without a record always are.
+    bool groupEnabled(uint32_t group) const { return group >= groupEnabled_.size() || groupEnabled_[group]; }
 
     // Merged mesh of several built meshes (World streaming: one per loaded unit) without rebuilding a BVH over all of
     // them: appendPart adds `part`'s vertices moved by `offset`, its faces and terrain groups, and its own BVH (bounds

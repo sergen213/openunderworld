@@ -298,6 +298,38 @@ public:
     // while there are loose bodies or ragdolls, and touches nothing else.
     struct Character { vec3 feet{0}; float radius = 0, height = 0, mass = 0; };
     void setCharacter(const Character* c);
+    // Lara's character controller (a Jolt CharacterVirtual; docs/formats/PHYSICS.md "Character controller"): a capsule
+    // of `radius` standing on her feet up to `top`, slid along what the collision BVH's unmasked queries hit: terrain
+    // faces without flag 0x40 and with a mask, of enabled terrain groups (read live from each unit's mesh), the
+    // colliders, plates and loose bodies (which it pushes with `mass` kg and at most `strength` N). While a spec is set
+    // the terrain and collider bodies exist always (and from setTerrain / setColliders on, not from the next step), and
+    // the proxy of setCharacter is not built. Null: none.
+    struct CharacterSpec {
+        float radius = 0, top = 0;
+        float stepUp = 0, stepDown = 0; // stairs climbed / floor followed down while walking
+        float maxSlopeCos = 0;          // ground normal z below this is too steep to stand on
+        float mass = 0, strength = 28000; // kg; mass * units/s^2 (Jolt's 100 N)
+        float padding = 2;              // distance kept from the geometry
+        bool innerEdges = true;         // Jolt's enhanced internal edge removal (mesh seams)
+        bool flatBottom = false;        // a cylinder instead of the capsule (crisp riser limit; see PHYSICS.md)
+        bool operator==(const CharacterSpec&) const = default;
+    };
+    void setController(const CharacterSpec* spec);
+    enum class Ground { OnGround, Steep, Unsupported, Air }; // Jolt's EGroundState
+    struct CharacterMove {
+        vec3 pos{0};      // feet
+        vec3 velocity{0}; // what the contacts left of the requested velocity, units/s
+        Ground ground = Ground::Air;
+        vec3 groundNormal{0}, groundPoint{0}, groundVelocity{0};
+        bool hitWall = false;      // a too-steep contact opposed the horizontal move
+        std::vector<vec3> contacts; // normals of the contacts that collided, facing her
+    };
+    // One update of the controller standing at `feet` (where the last move left it, or anywhere: a teleport) with its
+    // capsule up to `top`, moving at `velocity` for `dt`. `walk`: Jolt's ExtendedUpdate (stair stepping by stepUp,
+    // sticking to the floor within stepDown); else the plain update (air). Reads the bodies as the last step left them.
+    CharacterMove moveCharacter(vec3 feet, vec3 velocity, float top, float dt, bool walk);
+    // The capsule up to `top` at `feet` penetrates nothing by more than a unit.
+    bool characterFits(vec3 feet, float top) const;
     // Water for the next steps (tru.exe 0x6AD070 per water volume): a yaw-rotated box (centre, half extents, (cos, sin)
     // of its yaw) with its surface z; `flow` (user data, point) -> the current's velocity in units/s, null = still.
     // Loose bodies in it get buoyancy at water density 1000 kg/m^3 and drag 0.5 / 0.01 (0x69D350's defaults).
