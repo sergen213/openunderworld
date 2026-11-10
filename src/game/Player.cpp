@@ -13,6 +13,9 @@ namespace ou::game {
 namespace {
 
 constexpr float kPi = 3.14159265f;
+// Surface swim turning: at most this / her speed rad/s (tru.exe under Wine, l1_seatop sea: 117.5 deg/s while she lags
+// the stick at full swim speed 1348.6 = 2765 units/s^2; faster when slow) [O-runtime; the 1 / speed form [I]].
+constexpr float kSwimTurnAccel = 2765.0f;
 // Poles, tru.exe under Wine (2026-11-06, docs/GAMEPLAY.md "Poles"): the catch hands over to the idle
 // hang after kPoleAttachIdle; a fling leaves the pole kPoleFlingDelay after the press (0.64 s twice, 0.31 / 0.81 s
 // without a target: [I] the phase rule); q33's take-off (73.72 forward, 52.10 up a 30 Hz frame, lara.drm query
@@ -2549,8 +2552,9 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         if (jumpPressed && tryClimbOut()) break;
         if (dropPressed) { s_.state = State::SwimDive; s_.pitch = 0; play("swim_surfacedive", false); break; }
         float speed = 1;
+        const float horiz = glm::length(xy(s_.vel));
         if (wantsMove) {
-            s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
+            s_.yaw = approachAngle(s_.yaw, target, std::min(t_.turnRate, kSwimTurnAccel / std::max(horiz, 1.0f)) * dt);
             // tru.exe has one SwimState for surface and under water; the surface strokes are its surface blends (stroke).
             s_.state = State::SwimSurface;
             speed = stroke(true);
@@ -2559,7 +2563,12 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
             play("swim_surfaceidle", true);
         }
         advanceClip(dt);
-        swimTowards(forward(), s_.state == State::SwimSurface ? mag * speed : 0.0f);
+        // The velocity steers toward her heading x the wished speed as a vector, at swimAccel (swimDecel when slowing).
+        const vec3 want = forward() * (t_.swimSpeed * (s_.state == State::SwimSurface ? mag * speed : 0.0f));
+        const vec3 gap = want - s_.vel;
+        const float step = (glm::length(want) >= horiz ? t_.swimAccel : t_.swimDecel) * dt, len = glm::length(gap);
+        s_.vel = len <= step ? want : s_.vel + gap * (step / len);
+        s_.pos = swimSlide(s_.pos, (s_.vel + waterFlow(col_.markup[size_t(s_.water)], s_.pos)) * dt);
         s_.pos.z = surf;
         // Shallow water: stand on the floor.
         if (auto floor = col_.groundProbe(s_.pos, t_.swimDepth); floor && floor->normal.z >= t_.minFloorNormalZ) standUp(floor->point.z);
