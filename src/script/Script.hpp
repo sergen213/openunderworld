@@ -367,6 +367,10 @@ public:
     // sets, 0x4A3DD0; 24 ramps, 0x776090). seconds < 0: set at once, the ramp in progress untouched.
     using TimeNative = std::function<void(bool world, float target, float seconds)>;
     void setTimeNative(TimeNative native) { time_ = std::move(native); }
+    // The world's time scale for this tick (global x world scale, World::tickTimeScales): clocks, fiber waits and
+    // object clips advance by the scaled tick [I: tru.exe's clock update 0x4A3960 takes the caller's dt; the
+    // adrenaline trackers' 0.15 s fail clocks last ~10 s at their 0.0148 scale only on scaled time].
+    void setTimeScale(float scale) { dt_ = scale / 60.0; }
     // The spline camera finished (0x5E2CA0 -> 0x77A3D0): every dispatcher (NsDispatcherBase, bind 0x7B3E60) runs
     // its prototype-7 slot with the cameraspline value.
     void cameraSplineDone(uint32_t value);
@@ -571,6 +575,7 @@ private:
     std::vector<std::string> movies_;
     CameraNative camera_;
     TimeNative time_;
+    double dt_ = 1.0 / 60.0;
     std::vector<std::string> cameraUnits_; // unit names by cameraspline value high word
     bool playerControl_ = true;
     bool uiFlag_ = false; // uigamedata 17 / 18 (0x77BB70 / 0x77BB90: byte 0xFAE8DB, level changes fade to white when set)

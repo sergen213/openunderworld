@@ -1322,3 +1322,29 @@ TEST(Combat, HitReactionThresholds) {
     EXPECT_EQ(game::hitReaction(6, 250), 2);
     EXPECT_EQ(game::hitReaction(3, 900), 0);
 }
+
+// Script time-scale ramps (gamebase 24 / 23): the value eases as tru.exe 0x78C120 over the given real seconds — 2u^2 in
+// the first half, 1 - 2(1 - u)^2 in the second — and a set (gamebase 2 / 1) lands at once.
+TEST(Combat, ScriptTimeRampEasesInAndOut) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto wp = makeWorld(m, {0, 0, 0});
+    auto& w = *wp;
+    w.tick({});
+    w.setTimeScale(false, 0.4f, 2.0f);
+    w.setTimeScale(true, 0.5f, 2.0f);
+    const auto eased = [](float u) { return u < 0.5f ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u); };
+    for (int i = 1; i <= 120; ++i) {
+        w.tick({});
+        const float e = eased(float(i) / 120.0f);
+        ASSERT_NEAR(w.combat().timeScale, 1 + (0.4f - 1) * e, 2e-3f) << i;
+        ASSERT_NEAR(w.combat().worldScale, 1 + (0.5f - 1) * e, 2e-3f) << i;
+    }
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_FLOAT_EQ(w.combat().timeScale, 0.4f);
+    EXPECT_FLOAT_EQ(w.combat().worldScale, 0.5f);
+    w.setTimeScale(false, 1, -1), w.setTimeScale(true, 1, -1);
+    w.tick({});
+    EXPECT_FLOAT_EQ(w.combat().timeScale, 1);
+    EXPECT_FLOAT_EQ(w.combat().worldScale, 1);
+}

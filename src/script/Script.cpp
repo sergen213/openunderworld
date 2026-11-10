@@ -1350,7 +1350,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // animated 1 on an object without clips (no skeleton) plays nothing.
             if (!std::strcmp(name, "animated")) { nc.result = vm::Value::scalar(0); return true; }
             if (!std::strcmp(name, "clock") && nc.receiver.kind == vm::Value::Kind::Member) {
-                Clock& c = clocks_[(uint64_t(uint32_t(self->uid)) << 32) | off]; // tru.exe 0x4A3450..0x4A34F0, update 0x4A3960
+                // tru.exe 0x4A3450..0x4A34F0, update 0x4A3960. A clock's alarm (+0x14) starts as its member's second
+                // init value [I: the adrenaline trackers' time-out clock {0, 6.0} is started without a SetAlarm and
+                // must not fire at once; the first value would be the repeat flag +0x19, 0 in every clock seen].
+                const uint64_t clockKey = (uint64_t(uint32_t(self->uid)) << 32) | off;
+                if (!clocks_.contains(clockKey))
+                    if (const Member* m = program->member(self->typeId, off); m && m->init2) clocks_[clockKey].alarm = std::bit_cast<float>(uint32_t(*m->init2));
+                Clock& c = clocks_[clockKey];
                 switch (nc.function) {
                 case 0: if (c.state != 2) c = {2, 0, c.alarm, false}; return true;  // Start
                 case 1: c.state = 0; return true;                                    // Stop
@@ -2207,7 +2213,7 @@ bool Runtime::graphHit(int32_t uid, uint32_t damageClass, float damage) {
 void Runtime::tickGraph(int32_t uid) {
     Object* o = findMut(uid);
     if (!o || !o->graph) return;
-    if (o->graph->clip >= 0) o->graph->t += kDt;
+    if (o->graph->clip >= 0) o->graph->t += dt_;
     if (!o->graph->set->graph) return;
     if (const float d = std::exchange(o->graph->damage, 0.0f); d > 0) {
         graphPost(uid, formats::kStimulusEvent, d, d);
@@ -2221,7 +2227,7 @@ void Runtime::tickGraph(int32_t uid) {
         if (done) graphEnter(uid, target < 0 ? g.state : target);
         return;
     }
-    const float step = float(kDt * 30);
+    const float step = float(dt_ * 30);
     g.frames += step;
     graphPost(uid, formats::kStimulusTimer, step, g.frames);
 }
@@ -2235,7 +2241,7 @@ void Runtime::tickSpline(Object& o) {
     auto& s = *o.spline;
     if (!s.playing) return;
     const float end = s.path->end(), prev = s.t;
-    float t = prev + float(s.dir) * float(kDt) * 30.0f;
+    float t = prev + float(s.dir) * float(dt_) * 30.0f;
     if (s.toKey && (s.dir > 0 ? prev <= s.target && s.target <= t : t <= s.target && s.target <= prev)) {
         t = s.target, s.playing = s.toKey = false;
     } else {
@@ -2374,7 +2380,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     // it) and calls its owner's corebase prototype-25 slot with the clock (0x7961A0; NsCoreBase bind 0x7B3920).
     std::vector<uint64_t> alarms;
     for (auto& [key, c] : clocks_)
-        if (c.state == 2 && (c.elapsed += float(kDt)) >= c.alarm && !c.fired) c.fired = true, alarms.push_back(key);
+        if (c.state == 2 && (c.elapsed += float(dt_)) >= c.alarm && !c.fired) c.fired = true, alarms.push_back(key);
     for (const uint64_t key : alarms) {
         vm::Value clock;
         clock.kind = vm::Value::Kind::Member, clock.uid = int32_t(key >> 32), clock.offset = uint32_t(key);
@@ -2384,7 +2390,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     for (size_t i = 0; i < threads_.size(); ++i) { // copy: adopt may add or end threads
         const auto [uid, thread] = threads_[i];
         if (!instance(uid)) continue; // owner unloaded: dropped below
-        if (!thread->tick(float(kDt))) recordFailure(uid, find(uid) ? find(uid)->name : "unit script", *thread);
+        if (!thread->tick(float(dt_))) recordFailure(uid, find(uid) ? find(uid)->name : "unit script", *thread);
         adopt(thread);
     }
     std::erase_if(threads_, [&](const auto& t) { return !t.second->active() || !instance(t.first); });
@@ -2393,13 +2399,13 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         if (o.graph) tickGraph(o.uid);
         for (size_t i = 0; i < o.fibers.size(); ++i) { // copy: a STATE may end the object's threads
             const auto fiber = o.fibers[i];
-            if (!fiber->tick(float(kDt))) recordFailure(o.uid, o.name, *fiber);
+            if (!fiber->tick(float(dt_))) recordFailure(o.uid, o.name, *fiber);
             adopt(fiber);
         }
         std::erase_if(o.fibers, [](const auto& m) { return !m->active(); });
         if (o.machine && o.machine->active()) {
             const auto machine = o.machine;
-            if (!machine->tick(float(kDt))) recordFailure(o.uid, o.name, *machine);
+            if (!machine->tick(float(dt_))) recordFailure(o.uid, o.name, *machine);
             adopt(machine);
         }
         if (o.mainPending && (!o.machine || !o.machine->active())) fire(EventKind::Main, o);
@@ -2436,11 +2442,11 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             break;
         case Kind::Switch:
         case Kind::Door:
-            if (o.state == 1 && (o.t += kDt) >= (*o.clips)[0].durationSeconds()) {
+            if (o.state == 1 && (o.t += dt_) >= (*o.clips)[0].durationSeconds()) {
                 o.state = 2, o.t = 0;
                 if (o.kind == Kind::Switch) fire(EventKind::Use, o);
             } else if (o.state == 2) {
-                o.t += kDt;
+                o.t += dt_;
                 // A resetting switch returns to idle after its delay (resetAfter) and can be used again.
                 if (o.kind == Kind::Switch && o.resetAfter >= 0 && o.t >= o.resetAfter)
                     o.state = 0, o.t = 0;
@@ -2466,7 +2472,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             gripAxis_ = axis;
             if (std::abs(in.move.y) <= 0.5f) break;
             if (in.move.y < 0) axis = -axis;
-            const float step = float(kBlockSpeed * kDt);
+            const float step = float(kBlockSpeed * dt_);
             // Terrain only (mask 0x0F): the block's own collision box is a dynamic of the same mesh (src/physics).
             if (col && col->raycast(c + vec3(0, 0, 20), axis, glm::dot(o.half, glm::abs(axis)) + step, 0x0F)) break;
             if (col && in.move.y < 0 && col->raycast(in.pos + vec3(0, 0, 100), axis, 100 + step, 0x0F)) break;

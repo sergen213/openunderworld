@@ -2235,3 +2235,50 @@ TEST(ProgressionReal, KrakenChainLinksByManualAim) {
     }
     EXPECT_TRUE(std::ranges::find(cinematics, "049_med_kraken_death") != cinematics.end()) << "the platform's script starts the kraken's death";
 }
+
+// Situational adrenaline on its real script (docs/formats/SCRIPTS.md "Time scale"): l1_kraken_room plane 37 plays reveal
+// 53, then starts adrenaline_tracker 51 (script 3533, base 3583): gamebase 24 (0.4, 0 s) and 23 (0.0148 / 0.4, 0 s) —
+// the global scale 0.4 and the world scale 0.037, so the tentacle's world runs at 0.0148 and Lara at 0.4. The tracker's
+// fail clock (+180, alarm = member +176 = 0.15 s of scaled script time, about 10 s real) ends it: gamebase 2 (1), 1 (1).
+TEST(ProgressionReal, KrakenTentacleSlowMotionByItsScript) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_kraken_room", anims);
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto* t = w.script().find(37);
+    ASSERT_TRUE(t && t->kind == script::Kind::Plane);
+    const glm::mat4 rot = glm::rotate(glm::mat4(1), t->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), t->rot.y, {0, 1, 0}) *
+                          glm::rotate(glm::mat4(1), t->rot.z, {0, 0, 1});
+    const vec3 n = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
+    const vec3 base = t->pos - vec3(0, 0, script::kTestPointHeight);
+    game::PlayerState s = w.player().state();
+    for (const vec3 p : {base + n * 300.0f, base - n * 300.0f}) { // she crosses the plane
+        s.pos = p;
+        w.restore(s, 0, 0);
+        w.tick({});
+    }
+    EXPECT_FLOAT_EQ(w.combat().timeScale, 1);
+    int start = -1, end = -1;
+    for (int i = 0; i < 60 * 40 && end < 0; ++i) {
+        w.tick({});
+        const auto& c = w.combat();
+        if (start < 0 && c.timeScale < 1) {
+            start = i;
+            EXPECT_FLOAT_EQ(c.timeScale, 0.4f) << "set at once: the tracker's ramp time (member +100) is 0";
+            EXPECT_NEAR(c.worldScale, 0.0148f / 0.4f, 0.001f);
+        } else if (start >= 0 && c.timeScale == 1 && c.worldScale == 1)
+            end = i;
+        else if (start >= 0) {
+            EXPECT_FLOAT_EQ(c.timeScale, 0.4f);
+            EXPECT_NEAR(c.worldScale, 0.037f, 0.001f);
+        }
+    }
+    ASSERT_GE(start, 0) << "the tracker never slowed time";
+    ASSERT_GE(end, 0) << "time never came back";
+    // the fail clock: 0.15 s of script time at 0.4 x 0.037
+    EXPECT_NEAR(float(end - start) / 60, 0.15f / 0.0148f, 1.0f);
+    for (const auto& [key, count] : w.script().failures()) EXPECT_NE(key.first, 51) << key.second;
+    std::printf("tentacle slow motion: from tick %d for %d ticks\n", start, end - start);
+}

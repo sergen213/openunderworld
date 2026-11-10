@@ -3135,9 +3135,8 @@ Sources: generalbank DTP 0x2F (input action → virtual button map, GlobalInfo +
   change-target key.
 - **Time scales** [O]: `gamebase` 24 / 2 ramp / set the global scale (record 0x8ABE94), 23 / 1 the world scale
   (0xE7F1A0, record 0x8ABEB4, divided out of Lara's update at 0x622418); ease 0x78C120. `World::tick` splits real / Lara
-  / world dt. [U]: on the real l1_kraken_room tracker (script base 3583, start `24(0.4, 2)`, `23(0.2/0.4, 2)`) the
-  natives are reached but our argument decode gives wrong values and the scale returns to 1 at once — open, no real
-  test yet.
+  / world dt. Real script: docs/formats/SCRIPTS.md "Time scale"
+  (`ProgressionReal.KrakenTentacleSlowMotionByItsScript`).
 - **Firing cadence** [O]: every fire clip carries event 0x75 on frame 0, so "shot at clip start, cooldown = clip
   length" equals the original's event-driven shot.
 - **One-handed shooting** [I mapping]: hang / shimmy (`ledgeb_`), free climb (`DICE_`), ladder, pole hang, pillar use the
