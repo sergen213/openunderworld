@@ -510,10 +510,14 @@ if(OU_BUILD_TESTS)
   # calendar 6506: a push handle gripped and pushed turns the ring (hinge joint 2), section 1 back to waiting (3)
   ou_receptacle_replay(ballcourt_calendar_handle_turn l4_ballcourt -14240,10200,3700,90 700 6506
                        "object 6506 .* uber [0-9]+,3,.* j2 (0\\.[2-9]|[1-9])")
-  # weight on plate 219 holds door 223 open (vt 57), weight on 222 + Lara on 221: locks 69 / 70 count gate 45 open, it falls
+  # The old one-block-per-plate input under the decoded plate motor (docs/formats/PHYSICS.md "Pressure plates"): door 223
+  # opens only while Lara stands on plate 219 (219 vt 54 -> 223 vt 57) and shuts when she leaves the block there alone
+  # (vt 55 -> vt 58); one 30 kg block presses neither 219 nor 222, the locks stay in and gate 45 stays shut. To be
+  # re-recorded as the full solution (both blocks thrown through door 223, both on 222, the gate pulled from pad 221)
+  # once the carried-object throw is integrated; ProgressionReal.TombGateNeedsBothBlocksAndThePull covers the gate.
   ou_receptacle_replay(baldrs_plates_gate l1_baldrs_tomb -5000,-10000,2560,180 3200 219,221,222,45,223,69,70
-                       "portables held 0" "calls .* 223:57" "calls .* 45:54" "object 219 .* joint -60" "object 221 .* joint -60"
-                       "object 222 .* joint -60" "object 223 .* uber 1 " "object 45 .* joint (8[5-9]|9[0-9])\\.")
+                       "portables held 0" "calls .* 219:54 223:57" "calls .* 219:55 223:58" "object 219 .* joint 0\\.0"
+                       "object 222 .* joint 0\\.0" "object 223 .* uber 4 " "object 69 .* joint 0\\.0" "object 45 .* joint -?0\\.0")
   # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,
   # docs/RENDERING.md "Ray tracing"); 77 = skipped (no OU_GAME_DIR, display or ray-query device).
   add_test(NAME game_vulkan_rt_smoke COMMAND sh -c [=[

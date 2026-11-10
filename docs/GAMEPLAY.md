@@ -3299,7 +3299,8 @@ Walkthrough rows: gameplay matrix C02-09 / 11 / 13, C02-30, C03-11 / 16, C04-06 
   state 1, action 28: their collision leaves the doorway; reveal 235). From the start state: centre once, left once,
   right twice. `ProgressionReal.EyeDoorSolvedByItsHandles` (to l1_norse_hallway_a). [I] no handle-turn clip on Lara.
 - Press plates: docs/formats/PHYSICS.md "Pressure plates" (joint record; one weight does not press, two do).
-- Grapple pulls on joints (`World::pullGrappled`): roped to a Mounted target with Interact held, the simulated joints
+- Grapple pulls on joints (`World::pullGrappled`; only targets collected by their model feature: the gears, the tomb
+  gate — the `*_grapple*`-named pull targets keep the one-second script heave [I]): with Interact held, the simulated joints
   that move the section carrying the grapple feature are driven toward her at 240 units/s at the rope's end [I], each
   only when the rope has a component along its freedom (prismatic: more than cos 60 degrees along the axis; hinge: by
   the rope's moment). The states' range watches do the rest; action 0x1A (no target) lets go. [O data] gear 36: feature
