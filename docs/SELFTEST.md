@@ -203,6 +203,21 @@ speeds units/s; 3.1605 units = 1 cm. "Unavailable" probes report `null` and fail
 | `player.ledge` | markup id of the ledge / pole / beam / ladder she is attached to (a hang jump: its target), -1 none |
 | `player.fall_height` | the fall's height on the tick she lands, else 0 |
 
+### Pose: limb locks, head look-at, bones
+
+The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation layers and IK").
+
+| probe | value |
+|---|---|
+| `ik.feet`, `ik.hands`, `ik.look` | the pass ran: on her feet on an object floor; hanging in `ledgeb_idle`; a combat target with the weapon out |
+| `ik.foot_planted.l` `.r` | the probe found a floor for that foot (and the clip has not lifted it out of reach) |
+| `ik.foot_error.l` `.r` | the ankle's height after the pass minus the height the pass wanted, units; unavailable when not planted |
+| `ik.pelvis` | how far the pelvis was lowered for the lower foot, units |
+| `ik.hand_before.l` `.r`, `ik.hand_error.l` `.r` | the hand's distance from the ledge's polyline before / after the pass; unavailable when not hanging |
+| `ik.look_yaw`, `ik.look_pitch` | the head's turn off the neck (+ = her left / up), within 60 / 15; unavailable without a target |
+| `ik.second_arm` | degrees her left arm was swung to a second target (0 without one) |
+| `pose.bone.<segment>.x` `.y` `.z` | the origin of that bone of Lara's skeleton in the world (6 / 11 ankles, 55 / 80 hands, 17 head, 1 pelvis) |
+
 ### Weapons and combat
 
 | probe | value |
