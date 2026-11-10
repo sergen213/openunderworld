@@ -6,6 +6,35 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-11-10
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Changed: slopes follow the original's rule, measured in the original. What decides is the face's own marking,
+  not one angle: marked slide faces between 28 and 52 degrees are slid down (they cannot be walked up), unmarked
+  faces are stood on up to 52 degrees, anything steeper is fallen along. Slides run at the original's speed, end
+  in a stumble on the ground or a ledge catch at an edge. Some slopes that could be stood on before now slide (for
+  example before the eitr pit in the Yggdrasil hall), and some rubble that slid can now be walked.
+- Changed: jumps take off when the original's do. A standing jump leaves the ground a third of a second after the
+  press, a jump with the stick held takes a short run-up first (and lands where the original's lands), a running
+  jump is nearly immediate. Runs start a touch later, as in the original. Pole-to-pole and replay timings moved
+  with it.
+- Changed: chimney jumps rise by the original's amount per rebound (about 360 units, was 435) and Lara stays on the
+  wall for the original's time; a press while she is still being drawn onto the wall does nothing.
+- Added: Thor's free-standing pillars. The manor pillar (right gauntlet) and the Xibalba pool pillar (belt) slide
+  in any direction when pushed or pulled; the pool pillar drops into its hollow. The Valgrind gate opens once the
+  four cog wheels are solved and then slides with the gauntlets.
+- Added: Lara's limb locks as in the original: her hands close on the ledge line while she hangs, her feet settle
+  on moving platforms and plates, her head follows the enemy she targets, and with two targets the left arm aims
+  at the second. (The original has no foot placement on ordinary slopes or stairs, so neither have we.)
+- Fixed: fire and trigger volumes of three cutscene areas reached into unrelated levels and hurt Lara there (300
+  health per visit on a platform in the kraken's entrance).
+- Fixed: after loading a save, moving scenery could jump for one tick in rooms with Thor's pillars.
+- For testers: the first chapter walkthrough scenarios (`ch01_*`, `ch02_*`, `ch03_*`: eight legs of the prologue
+  and the Mediterranean played by input), plus `slide`, `jump_timing`, `gauntlet_pillar`, `ik_pose`, `ik_feet`.
+  Legs that cannot be played yet are kept under `tests/selftests/known_gaps` with the reason noted (two prologue
+  legs today: the ring door's leaf and the blown hall door can stay standing in their frames).
+
 ## [0.45.0] - 2026-11-10
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
