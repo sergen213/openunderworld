@@ -4363,6 +4363,57 @@ TEST(GameReal, PillarJumpsByStickAngle) {
     }
 }
 
+// A pillar jump out of a solid column (l1_baldrs_tomb pillar 14, the Norse Connection's way into the west room): her
+// root is on the shaft's axis, inside the column's collision; the flight starts outside the shaft on the jump's side
+// and carries her the 740 into the opening in the west wall (floor z 3872). Before, the sweep began inside the column
+// and she fell back onto it.
+TEST(GameReal, PillarJumpLeavesASolidShaft) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l1_baldrs_tomb", {{-3560, -11374, 2600}, 0});
+    const auto& s = w.player().state();
+    for (int i = 0; i < 120 && s.state != State::Pillar; ++i) w.tick(forward());
+    ASSERT_EQ(s.state, State::Pillar);
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 14);
+    for (int i = 0; i < 600 && s.pos.z < 4090; ++i) w.tick(worldStick(w, {1, 0}));
+    ASSERT_GE(s.pos.z, 4090);
+    for (int i = 0; i < 120 && s.clip != "pillar_idle"; ++i) w.tick({});
+    ASSERT_EQ(s.clip, "pillar_idle");
+    EXPECT_NEAR(s.pos.x, -3162.5f, 2.0f) << "on the axis";
+    Actions j = worldStick(w, {-1, 0});
+    j.jump = true;
+    w.tick(j);
+    ASSERT_EQ(s.state, State::Jump);
+    EXPECT_LT(s.pos.x, -3162.5f - 100) << "outside the shaft, on the jump's side";
+    EXPECT_GT(s.pos.x, -3162.5f - 300);
+    EXPECT_NEAR(glm::length(vec2(s.vel)), 55.63f * 30, 1);
+    for (int i = 0; i < 180 && s.state != State::Idle; ++i) w.tick({});
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_LT(s.pos.x, -3950) << "in the wall opening";
+    EXPECT_NEAR(s.pos.z, 3872, 6);
+}
+
+// A pillar whose top lies under the floor she is over is not caught from the air (l1_baldrs_sideroom: pillar 33
+// carries the floor behind ledge 35; a jump onto that floor passed within reach of its axis and was pulled down
+// through the floor onto the shaft). Without the floor the same jump catches the pillar.
+TEST(Game, PillarUnderAFloorIsNotCaughtFromTheAir) {
+    for (const bool platform : {true, false}) {
+        CollisionMesh m;
+        addFloor(m, -2000, -2000, 2000, 2000, 0);
+        if (platform) addFloor(m, 100, -400, 900, 400, 1000);
+        m.markup.push_back({15, 1, {{400, 0, 900}, {400, 0, 0}}});
+        auto w = makeWorld(std::move(m), {250, 0, 1050}); // in the air 150 from the axis, facing it, 150 over its top
+        const auto& s = w->player().state();
+        bool caught = false;
+        for (int i = 0; i < 20; ++i) {
+            w->tick(forward());
+            caught = caught || s.state == State::Pillar;
+        }
+        EXPECT_EQ(caught, !platform) << platform;
+        if (platform) EXPECT_NEAR(s.pos.z, 1000, 1) << "on the floor over the pillar";
+    }
+}
+
 TEST(Game, PerchAttachAndJumpOff) {
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);

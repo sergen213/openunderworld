@@ -2688,17 +2688,26 @@ std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
         for (auto& m : out) m = rigid * m;
         return out;
     }
-    if (rigid != glm::mat4(1)) return std::vector<glm::mat4>{rigid};
+    // A rider (instance 23: its body is its host's marker frame, World::poseAnchored) still plays its own clip under
+    // that frame: l1_ship_sinking_hall door 1167 opens on the rolling hallway 1056. Other rigid motions replace the clip.
+    const bool rider = anchors_.contains(o.uid);
+    if (rigid != glm::mat4(1) && !rider) return std::vector<glm::mat4>{rigid};
+    const auto under = [&](std::optional<std::vector<glm::mat4>> clip) -> std::optional<std::vector<glm::mat4>> {
+        if (rigid == glm::mat4(1)) return clip;
+        if (!clip) return std::vector<glm::mat4>{rigid};
+        for (auto& m : *clip) m = rigid * m;
+        return clip;
+    };
     if (o.graph) {
         const auto& g = *o.graph;
-        if (g.clip < 0 || size_t(g.clip) >= g.set->clips.size() || !g.set->clips[size_t(g.clip)].keyCount) return std::nullopt;
+        if (g.clip < 0 || size_t(g.clip) >= g.set->clips.size() || !g.set->clips[size_t(g.clip)].keyCount) return under(std::nullopt);
         const auto& sk = *g.set->skeleton;
-        return anim::skinPalette(sk, anim::worldMatrices(sk, anim::sample(g.set->clips[size_t(g.clip)], sk, g.t, g.loop)));
+        return under(anim::skinPalette(sk, anim::worldMatrices(sk, anim::sample(g.set->clips[size_t(g.clip)], sk, g.t, g.loop))));
     }
-    if (!o.clips || !o.skeleton || o.state == 0) return std::nullopt;
+    if (!o.clips || !o.skeleton || o.state == 0) return under(std::nullopt);
     const auto& clip = (*o.clips)[o.state == 1 ? 0 : 1];
     const auto world = anim::worldMatrices(*o.skeleton, anim::sample(clip, *o.skeleton, o.t, o.state == 2));
-    return anim::skinPalette(*o.skeleton, world);
+    return under(anim::skinPalette(*o.skeleton, world));
 }
 
 void Runtime::setBody(int32_t uid, const glm::mat4& model) {

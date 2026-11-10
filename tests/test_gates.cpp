@@ -3050,3 +3050,38 @@ TEST(ProgressionReal, KrakenLinkEarlyShot) {
                 centre(61)->z - w.player().state().pos.z, nearest, int(w.script().find(61)->dead), (*w.uberState(27))[0], (*w.uberState(27))[2],
                 (*w.uberState(27))[3], w.combat().shotsFired);
 }
+
+// l1_ship_sinking_hall door 1167 (sh_ei_shiphall_door) rides the rolling hallway 1056 (its constructor anchors it on the
+// hallway's marker: uberobjectbase 2 + instance 23). Volume 1176 in front of it opens it (vt 72 -> 1167 vt 54) like
+// every ship door: its leaves' collision moves with the opening clip although it is a rider.
+TEST(ProgressionReal, ShipSinkingHallDoorOpensOnItsHallway) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_ship_lower_hallway", game::loadLaraAnims(bf),
+                  game::Spawn{{2842, 7541, 20}, glm::half_pi<float>()});
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    const auto collision = [&] {
+        std::vector<glm::mat4> out;
+        for (const auto& d : w.collision().dynamics)
+            if (d.id == 1167) out.push_back(d.transform);
+        return out;
+    };
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto closed = collision();
+    ASSERT_FALSE(closed.empty());
+    const auto* o = w.script().find(1167);
+    ASSERT_TRUE(o);
+    ASSERT_TRUE(w.script().anchor(1167)) << "a rider of hallway 1056";
+    EXPECT_EQ(w.script().anchor(1167)->first, 1056);
+    game::Actions back;
+    back.move = {0, -1}; // the camera stands behind her (north): the stick back runs her south into volume 1176
+    float most = 0;
+    for (int i = 0; i < 400; ++i) {
+        w.tick(i < 40 ? back : game::Actions{});
+        const auto now = collision();
+        for (size_t k = 0; k < now.size() && k < closed.size(); ++k) most = std::max(most, glm::length(vec3(now[k][3]) - vec3(closed[k][3])));
+    }
+    EXPECT_EQ(o->state, 2) << "open";
+    EXPECT_GT(most, 100.0f) << "the leaves' collision moved with the opening clip";
+}
