@@ -479,6 +479,33 @@ TEST(Game, SwimSpeedMatchesTru) {
     EXPECT_NEAR(glm::length(s.vel), 21.6f * 30, 150) << "0.2 s after the release";
 }
 
+// tru.exe surface swim turning (Wine, l1_seatop sea, camfollow-wine/turn1.txt): with the stick swung round she turns at
+// 117.5 deg/s at full swim speed (2765 / speed rad/s), and her velocity is steered after her heading as a vector at the
+// swim acceleration, so it lags the heading in a turn and dips in speed.
+TEST(Game, SwimTurnLagsLikeTru) {
+    auto w = makeWorld(poolMesh(), {1000, -2500, 0}, glm::pi<float>() / 2);
+    const auto& s = w->player().state();
+    for (int i = 0; i < 120; ++i) w->tick({});
+    for (int i = 0; i < 90; ++i) w->tick(forward());
+    ASSERT_EQ(s.state, State::SwimSurface);
+    ASSERT_NEAR(glm::length(s.vel), 1348.6f, 1);
+    float lag = 0, slowest = 1e9f;
+    for (int i = 0; i < 60; ++i) {
+        Actions turn; // the stick toward world +x under the current camera
+        const float cy = w->camera().yaw;
+        turn.move = {std::sin(cy), std::cos(cy)};
+        const float y0 = s.yaw, v0 = glm::length(glm::vec2(s.vel));
+        w->tick(turn);
+        const float turned = std::abs(std::remainder(s.yaw - y0, 6.2831853f)) * 60;
+        if (std::abs(std::remainder(s.yaw, 6.2831853f)) > 0.05f) EXPECT_NEAR(turned, 2765.0f / v0, 1e-3f) << "tick " << i;
+        lag = std::max(lag, std::abs(std::remainder(std::atan2(s.vel.y, s.vel.x) - s.yaw, 6.2831853f)));
+        slowest = std::min(slowest, glm::length(glm::vec2(s.vel)));
+    }
+    EXPECT_GT(lag, glm::radians(6.0f)) << "the velocity lags her heading";
+    EXPECT_LT(slowest, 1340.0f) << "and dips in speed through the turn";
+    EXPECT_NEAR(std::remainder(s.yaw, 6.2831853f), 0, 1e-3f) << "facing +x";
+}
+
 // tru.exe swim sprint (Wine, l2_cliffclimb sea, player +0x2A0 velocity; openunderworld-work/scratch/swimsprint): Shift
 // held swims 53.94 units per 30 Hz frame at the surface and under water (1.2 x 44.95) for ~9.95 s, then normal speed;
 // Shift still held: 2.13 s at normal speed, 0.95 s sprinting.
@@ -3657,6 +3684,47 @@ TEST(GameReal, CameraLadderPitchesUpAfterClimbingUp) {
     for (int i = 0; i < 30; ++i) w->tick(forward());
     EXPECT_EQ(s.pos, last) << "she held still";
     EXPECT_NEAR(w->camera().pitch - p1, glm::radians(5.0f) / 2, 2e-3) << "5 deg/s toward 45 deg up";
+}
+
+// tru.exe (Wine, l1_seatop sea, camfollow-wine/swim_right.txt): swimming in a circle with the stick held right, the
+// camera that dropped in at 37 deg above her levels out (29.5 / 23.1 / 18.5 / 12.5 deg at 2 / 3 / 4 / 6 s) to the
+// surface-swim limit -10 deg (camera mode 20, command 8: -40 +- 30) and stays within -70..-10: her velocity lags her
+// heading through the turn, so she drifts away from the camera. It used to steepen toward -70 deg (her velocity
+// turned with her heading at once and the pivot, 43 ahead of her root, swung toward the camera). At 30 / 60 / 144 Hz
+// rendering the camera is the same.
+TEST(GameReal, SeaCircleCameraLevelsOut) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const auto run = [&](double renderHz, std::vector<float>* pitches) {
+        game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l1_seatop", anims,
+                      game::Spawn{{-15000, -3775, 2000}, glm::radians(-40.0f)});
+        engine::FrameClock clock(game::kTickSeconds);
+        Actions right;
+        right.move.x = 1;
+        while (w.ticks() < 480 + 12 * 60) // drop in and settle (8 s: look clock past 7 s), then 12 s round
+            for (int n = clock.advance(1.0 / renderHz); n > 0 && w.ticks() < 480 + 12 * 60; --n) {
+                w.tick(w.ticks() < 480 ? Actions{} : right);
+                if (pitches && w.ticks() > 480) pitches->push_back(w.camera().pitch);
+            }
+        EXPECT_EQ(w.player().state().state, State::SwimSurface);
+        return w.camera();
+    };
+    std::vector<float> p;
+    const auto a = run(60, &p);
+    ASSERT_LT(p.front(), glm::radians(-35.0f)) << "dropped in looking down";
+    for (size_t i = 0; i < p.size(); ++i) {
+        EXPECT_GE(p[i], glm::radians(-70.0f) - 1e-4f) << "tick " << i;
+        EXPECT_LE(p[i], glm::radians(-10.0f) + 1e-4f) << "tick " << i;
+    }
+    EXPECT_GT(p[4 * 60], glm::radians(-24.0f)) << "levelled out within 4 s (tru.exe 18.5 deg)";
+    EXPECT_GT(*std::min_element(p.begin() + 7 * 60, p.end()), glm::radians(-22.0f)) << "and stays near the -10 deg limit";
+    for (const double hz : {30.0, 144.0}) {
+        const auto o = run(hz, nullptr);
+        EXPECT_EQ(a.pitch, o.pitch) << hz;
+        EXPECT_EQ(a.yaw, o.yaw) << hz;
+        EXPECT_EQ(a.position, o.position) << hz;
+    }
 }
 
 // Ladder jumps (player chart ladder group: jump + stick left / right T1869 / T1870, neutral T1868, all query q22: 47.41
