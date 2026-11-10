@@ -190,7 +190,8 @@ bool Player::warpStep(float dt) {
     const double dur = c ? c->durationSeconds() : 0;
     const float u = dur > 0 ? float(std::clamp(s_.clipTime / dur, 0.0, 1.0)) : 1.0f, ease = u * u * (3 - 2 * u);
     const vec3 want = unrotYaw(s_.climbYawFrom, s_.climbTo - s_.climbFrom);
-    const vec3 end = c ? rootAt(*c, dur) : vec3(0), now = c ? rootAt(*c, s_.clipTime) : vec3(0);
+    vec3 end = c ? rootAt(*c, dur) : vec3(0), now = c ? rootAt(*c, s_.clipTime) : vec3(0);
+    if (s_.mirror) end.x = -end.x, now.x = -now.x; // a mirrored request's root x negated (tru.exe 0x441FB0, rootDelta)
     vec3 p;
     for (int a = 0; a < 3; ++a) {
         const float r = std::abs(end[a]) > 20.0f ? want[a] / end[a] : 0.0f;

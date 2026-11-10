@@ -5309,6 +5309,243 @@ TEST(GameReal, PuzzleRoomWallHug) {
     EXPECT_NE(s.state, State::WallHug);
 }
 
+namespace {
+constexpr float kHugDepth = 88.496f; // tru.exe player data +0x71C: she stands this far in from the ledge line [I]
+// Lara placed in the wall hug on markup `li`, segment `seg`, `t` along it (Wall_Hug_Idle, back to the wall).
+void placeHug(game::World& w, int li, int seg, float t) {
+    const auto& m = w.collision().markup[size_t(li)];
+    const vec3 a = m.points[size_t(seg)], b = m.points[size_t(seg) + 1];
+    const vec2 d = glm::normalize(vec2(b - a)), shelf(-d.y, d.x);
+    game::PlayerState st = w.player().state();
+    st.state = State::WallHug, st.ledge = li, st.ledgeSeg = seg, st.ledgeT = t, st.vel = vec3(0);
+    st.pos = glm::mix(a, b, t / glm::length(vec2(b - a))) + vec3(shelf * kHugDepth, 0);
+    st.yaw = std::atan2(-shelf.y, -shelf.x), st.clip = "Wall_Hug_Idle", st.loop = true, st.clipTime = 0;
+    w.restore(st, st.yaw, -0.25f);
+}
+vec2 segDirOf(const game::World& w, int li, int seg) {
+    const auto& m = w.collision().markup[size_t(li)];
+    return glm::normalize(vec2(m.points[size_t(seg) + 1] - m.points[size_t(seg)]));
+}
+// Shimmying toward a joint with the stick along `way`: the corner clip that starts there and where it leaves her.
+struct CornerRun { std::string clip; bool mirror = false; int seg = -1; float yawTurn = 0; float offLine = 1e9f; };
+CornerRun shimmyRound(game::World& w, vec2 way) {
+    const auto& s = w.player().state();
+    const float yaw0 = s.yaw;
+    CornerRun r;
+    for (int i = 0; i < 900 && s.state == State::WallHug && !s.clip.starts_with("Wall_Hug_Shimmy_to_"); ++i) w.tick(worldStick(w, way));
+    r.clip = s.clip, r.mirror = s.mirror;
+    for (int i = 0; i < 120 && s.clip.starts_with("Wall_Hug_Shimmy_to_"); ++i) w.tick(worldStick(w, way));
+    r.seg = s.ledgeSeg;
+    r.yawTurn = glm::degrees(std::remainder(s.yaw - yaw0, 6.2831853f));
+    const auto& m = w.collision().markup[size_t(s.ledge)];
+    const vec3 a = m.points[size_t(s.ledgeSeg)], b = m.points[size_t(s.ledgeSeg) + 1];
+    const vec2 d = glm::normalize(vec2(b - a)), shelf(-d.y, d.x);
+    r.offLine = std::abs(glm::dot(vec2(s.pos - a), shelf) - kHugDepth);
+    return r;
+}
+} // namespace
+
+// Wall-hug corners (lara.drm chart S1236 / S1237: corner angle 70..110 -> Wall_Hug_Shimmy_to_Concave_left_*, 250..290
+// -> _Convex_left_*, the right-hand shimmy mirrored): l7_arctic_sea shelf 2054 turns 90 degrees into its wall (an
+// inside corner), l5_valaskjalf 1494 runs round the outside of a block. Shimmying onto the joint plays the corner
+// clip, which carries her onto the next segment's stand line turned a quarter round; back the other way the same
+// clip mirrored.
+TEST(GameReal, WallHugRoundsConcaveAndConvexCorners) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    {
+        auto w = unitWorld(bf, "l7_arctic_sea", {{0, 0, 0}, 0});
+        const int li = markupIndex(w, 2054);
+        ASSERT_GE(li, 0);
+        const float len0 = glm::length(vec2(w.collision().markup[size_t(li)].points[1] - w.collision().markup[size_t(li)].points[0]));
+        placeHug(w, li, 0, len0 - 150);
+        const CornerRun in = shimmyRound(w, segDirOf(w, li, 0));
+        EXPECT_EQ(in.clip, "Wall_Hug_Shimmy_to_Concave_left_90");
+        EXPECT_FALSE(in.mirror);
+        EXPECT_EQ(in.seg, 1);
+        EXPECT_NEAR(in.yawTurn, -90, 0.5) << "turned a quarter round, away from the wall that now runs across";
+        EXPECT_LT(in.offLine, 1.0f) << "on the next segment's stand line";
+        const auto& s = w.player().state();
+        EXPECT_EQ(s.state, State::WallHug);
+        const float t1 = s.ledgeT;
+        for (int i = 0; i < 60; ++i) w.tick(worldStick(w, segDirOf(w, li, 1)));
+        EXPECT_GT(s.ledgeT, t1 + 50) << "shuffling on along the new segment";
+        placeHug(w, li, 1, 150); // back the other way: the same corner mirrored
+        const CornerRun back = shimmyRound(w, -segDirOf(w, li, 1));
+        EXPECT_EQ(back.clip, "Wall_Hug_Shimmy_to_Concave_left_90");
+        EXPECT_TRUE(back.mirror);
+        EXPECT_EQ(back.seg, 0);
+        EXPECT_NEAR(back.yawTurn, 90, 0.5);
+        EXPECT_LT(back.offLine, 1.0f);
+    }
+    {
+        auto w = unitWorld(bf, "l5_valaskjalf", {{0, 0, 0}, 0});
+        const int li = markupIndex(w, 1494);
+        ASSERT_GE(li, 0);
+        const auto& m = w.collision().markup[size_t(li)];
+        placeHug(w, li, 0, glm::length(vec2(m.points[1] - m.points[0])) - 400);
+        const CornerRun out = shimmyRound(w, segDirOf(w, li, 0));
+        EXPECT_EQ(out.clip, "Wall_Hug_Shimmy_to_Convex_left_90");
+        EXPECT_FALSE(out.mirror);
+        EXPECT_EQ(out.seg, 1);
+        EXPECT_NEAR(out.yawTurn, 90, 0.5) << "round the outside of the block";
+        EXPECT_LT(out.offLine, 1.0f);
+        EXPECT_EQ(w.player().state().state, State::WallHug);
+        placeHug(w, li, 2, 400);
+        const CornerRun back = shimmyRound(w, -segDirOf(w, li, 2));
+        EXPECT_EQ(back.clip, "Wall_Hug_Shimmy_to_Convex_left_90");
+        EXPECT_TRUE(back.mirror);
+        EXPECT_EQ(back.seg, 1);
+        EXPECT_NEAR(back.yawTurn, -90, 0.5);
+    }
+}
+
+namespace {
+// A shelf against a wall: ledge 0 along +x at z 0 (its top, the left side, is the floor before a wall 95 in), the
+// floor everywhere at z 0 but `lipOnly` (only a strip 60..95 in: nothing under the point 47 in front of her). Real
+// lara.drm clips.
+game::World hugWorld(const cdc::BigfileSet& bf, std::vector<collision::Markup> extra, bool lipOnly = false,
+                     std::vector<std::pair<vec3, vec3>> boxes = {}) {
+    CollisionMesh m;
+    if (lipOnly) addFloor(m, -1200, 60, 1200, 95, 0);
+    else addFloor(m, -4000, -4000, 4000, 4000, 0);
+    addBox(m, {-1200, 95, 0}, {1200, 600, 600});
+    for (const auto& [lo, hi] : boxes) addBox(m, lo, hi);
+    m.markup.push_back({1, 9000, {{-1000, 0, 0}, {0, 0, 0}}});
+    for (auto& e : extra) m.markup.push_back(std::move(e));
+    m.build();
+    return game::World(std::move(m), game::loadLaraAnims(bf), {{-500, 88.5f, 0}, 0});
+}
+} // namespace
+
+// Jumps off the wall hug by their decoded queries (lara.drm S275's q68: 74.32 that way + 42.54 up a 30 Hz frame from
+// 63.21 out of the attach point; S1261's q55: 50.82 straight up, frames 1..17, coming down; both class record
+// 0x2A9EC): to the side onto a ledge q68 meets (Wall_Hug_jump_left, mirrored to the right, its take-off, then the
+// flight onto the hang), the twist up onto the ledge on top of her wall (Wall_hug_Jump_Up_Twist), and with nothing
+// above the somersault on the spot back into the hug. Forward with nothing in reach: the free leap at q68's launch.
+TEST(GameReal, WallHugSideAndTwistJumpsByTheirQueries) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    Actions jump;
+    jump.jump = true;
+    {   // a block 700..1700 along x, its near edge (x 700, top 300) a ledge hanging toward her
+        auto w = hugWorld(bf, {{1, 9001, {{700, 95, 300}, {700, -400, 300}}}}, false, {{{700, -400, 0}, {1700, 95, 300}}});
+        placeHug(w, 0, 0, 700);
+        const auto& s = w.player().state();
+        w.tick({});
+        const vec2 left(1, 0); // she faces -y: her left is +x
+        w.tick(worldStick(w, left, jump));
+        EXPECT_EQ(s.clip, "Wall_Hug_jump_left");
+        EXPECT_FALSE(s.mirror);
+        ASSERT_EQ(s.state, State::HangJump);
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 9001) << "the ledge q68 met";
+        for (int i = 0; i < 240 && s.state == State::HangJump; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::Hang);
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 9001);
+        EXPECT_TRUE(s.pos.x > 450 && s.pos.x < 700) << s.pos.x << ": hanging in front of the block's face (x 700)";
+    }
+    {   // the same to the right: nothing there, the free leap at q68's launch after the mirrored take-off
+        auto w = hugWorld(bf, {});
+        placeHug(w, 0, 0, 500);
+        const auto& s = w.player().state();
+        w.tick({});
+        w.tick(worldStick(w, {-1, 0}, jump));
+        EXPECT_EQ(s.clip, "Wall_Hug_jump_left");
+        EXPECT_TRUE(s.mirror);
+        EXPECT_EQ(s.state, State::Jump);
+        for (int i = 0; i < 60 && s.clip == "Wall_Hug_jump_left"; ++i) w.tick({});
+        w.tick({});
+        EXPECT_NEAR(s.vel.x, -74.32f * 30, 1) << "q68's sideways launch";
+    }
+    {   // the twist up onto the ledge along the top of her wall (z 600, hanging toward her)
+        auto w = hugWorld(bf, {{1, 9002, {{-1200, 95, 600}, {1200, 95, 600}}}});
+        placeHug(w, 0, 0, 500);
+        const auto& s = w.player().state();
+        w.tick({});
+        w.tick(jump);
+        EXPECT_EQ(s.clip, "Wall_hug_Jump_Up_Twist");
+        ASSERT_EQ(s.state, State::HangJump);
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 9002);
+        for (int i = 0; i < 240 && s.state == State::HangJump; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::Hang);
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 9002);
+        EXPECT_NEAR(glm::dot(vec2(std::cos(s.yaw), std::sin(s.yaw)), vec2(0, 1)), 1, 0.05) << "turned round to the wall";
+    }
+    {   // nothing above: the somersault on the spot, back to Wall_Hug_Idle
+        auto w = hugWorld(bf, {});
+        placeHug(w, 0, 0, 500);
+        const auto& s = w.player().state();
+        const vec3 at = s.pos;
+        w.tick({});
+        w.tick(jump);
+        EXPECT_EQ(s.clip, "bbeam_somersault_forward");
+        for (int i = 0; i < 120 && s.clip != "Wall_Hug_Idle"; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::WallHug);
+        EXPECT_EQ(s.clip, "Wall_Hug_Idle");
+        EXPECT_LT(glm::distance(s.pos, at), 1.0f);
+    }
+}
+
+// Drop to water (chart T2069 -> S1270 Wall_Hug_Drop_to_Water; tru.exe 0x7420D0: the ray from 15 over her root and
+// 47.41 in front of it down 632.11 must meet water first): over a lip with water 300 below she drops in; where the
+// ray meets the shelf's floor the drop does nothing.
+TEST(GameReal, WallHugDropToWater) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    Actions drop;
+    drop.drop = true;
+    {
+        auto w = hugWorld(bf, {{10, 9100, {{-3000, -3000, -2000}, {3000, 3000, -300}}}}, true);
+        placeHug(w, 0, 0, 500);
+        const auto& s = w.player().state();
+        w.tick({});
+        w.tick(drop);
+        EXPECT_EQ(s.clip, "Wall_Hug_Drop_to_Water");
+        const auto swimming = [&] { return s.state >= State::SwimSplash && s.state <= State::SwimClimbOut; };
+        for (int i = 0; i < 300 && !swimming(); ++i) w.tick({});
+        EXPECT_TRUE(swimming()) << game::stateName(s.state);
+    }
+    {
+        auto w = hugWorld(bf, {{10, 9100, {{-3000, -3000, -2000}, {3000, 3000, -300}}}});
+        placeHug(w, 0, 0, 500);
+        const auto& s = w.player().state();
+        w.tick({});
+        w.tick(drop);
+        EXPECT_EQ(s.state, State::WallHug);
+        EXPECT_NE(s.clip, "Wall_Hug_Drop_to_Water");
+    }
+}
+
+// The wall-hug corner and twist at 30 / 60 / 144 Hz render rates end in the same state.
+TEST(GameReal, WallHugIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto run = [&](double renderHz) {
+        auto w = unitWorld(bf, "l5_valaskjalf", {{0, 0, 0}, 0});
+        const int li = markupIndex(w, 1494);
+        const auto& m = w.collision().markup[size_t(li)];
+        placeHug(w, li, 0, glm::length(vec2(m.points[1] - m.points[0])) - 400);
+        const vec2 d0 = segDirOf(w, li, 0);
+        engine::FrameClock clock(game::kTickSeconds);
+        const uint64_t t0 = w.ticks();
+        while (w.ticks() < t0 + 400)
+            for (int n = clock.advance(1.0 / renderHz); n > 0 && w.ticks() < t0 + 400; --n) {
+                const uint64_t t = w.ticks() - t0;
+                Actions a = t < 250 ? worldStick(w, d0) : Actions{};
+                a.jump = t == 300;
+                w.tick(a);
+            }
+        return std::pair{w.player().state(), w.stateHash()};
+    };
+    const auto a = run(30), b = run(60), c = run(144);
+    for (const auto& o : {b, c}) {
+        EXPECT_EQ(a.first.pos, o.first.pos);
+        EXPECT_EQ(a.first.clip, o.first.clip);
+        EXPECT_EQ(a.second, o.second);
+    }
+    EXPECT_EQ(a.first.ledgeSeg, 1);
+}
+
 // The new traversal at 30 / 60 / 144 Hz render rates ends in the same state (pole: parallel turn, hand over hand,
 // swing and stop; then a fling).
 TEST(GameReal, PoleTraversalIndependentOfRenderRate) {

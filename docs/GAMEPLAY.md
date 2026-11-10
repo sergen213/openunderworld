@@ -1385,12 +1385,51 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   behind it. 92 of the 1 227 ledgegrab markups in 26 units have such stretches. Walking along the stick onto one within
   30 / 200 of it (query 96's rule): `bbeam_walk_turn180` (request 193) turns her back to the wall, `Wall_Hug_Idle`;
   sideways `Wall_Hug_Shimmy_Left` (mirrored to the right [I]); where the shelf ends `Wall_Hug_Walk_Off` (mirrored);
-  Space = `Wall_Hug_Jump_Forward`. She stands 88.496 in from the line [I]. Not done: corners
-  (`Wall_Hug_Shimmy_to_Concave/Convex_*`), side / twist jumps, drop to water, the swim climb-out onto a shelf.
+  She stands 88.496 in from the line [I]. Not done: the swim climb-out onto a shelf (`swim_climbout_to_wallhug`), the
+  jump-landing attach and its bad-attach clips (`bbeam_idle_adjust_fwd` → `Wall_Hug_attach_bad_*`), the stick-forward
+  / back wobble states (S1233 / S1234), combat in the hug (S1272).
+- Wall-hug corners [O: chart S1236 / S1237 T2076 / T2078 / T2079 / T2081; tru.exe 0x764AA0 → 0x733E00, radians ×
+  57.29578, compared by 0x783BD0 (mode 1 ≥, mode 2 ≤)]: shimmying with the stick held onto a corner of 70..110 plays
+  `Wall_Hug_Shimmy_to_Concave_left_<70|90|110>` (request 1400), of 250..290 `Wall_Hug_Shimmy_to_Convex_left_*`
+  (1399); the right-hand shimmy's transitions carry flag 2 (mirrored [I]). The clips turn the root only 45° (±0.61 /
+  0.79 / 0.96 rad for 110 / 90 / 70) and move it ~100 sideways; their states set property 425 = 0 [I: root motion
+  off] and go on to `bbeam_idle_adjust_fwd` (156 / 157, property 1102 = 22; [U] which clip that resolves to, ours
+  skips it). Ours: the angle on the wall side between the segment she leaves and the next (inside corner 90, outside
+  270) [I: 0x733E00 measures it from the 0x74BCF0 lookahead's point, not decoded]; her stand line turns D·tan(φ/2)
+  before the joint (D = 88.496, φ the turn toward the wall), the corner starts s before that point and ends s past it
+  on the next segment, s making the chord the clip's own travel (≈73 for 90°) [I], the clip carrying her between
+  them (`warpStep`) and the heading turning a quarter round; the clip of the three nearest the angle (concave at it,
+  convex at 360 − it) [I: the original blends them]. Corners outside both bands are passed through as before [I].
+  Survey (`openunderworld-work/wallhug2/corners.cpp`, 97 units): concave hug corners on l7_arctic_sea 2054–2062,
+  convex ones on l5_valaskjalf (1494, 1502, 1516, …) and l4_traprooms 1364–1377.
+- Wall-hug jumps [O: chart S1232 T2070 / T2066 / T2067 (MoveDir 426 / 428 / 427) → S272 `Wall_Hug_Jump_Forward`
+  (1416), S273 `Wall_Hug_jump_left` (1410), S274 the same with property 201 (right, mirrored); all under S275 whose
+  jump query (prop 541) is **q68**: from the attach point (+0xCC 1) 63.21 out along the jump, **74.32** that way +
+  **42.54** up a 30 Hz frame, cone 90°, +0x28 20, +0x2C 0x1850 (ledge classes), class record 0x2A9EC, target types 1
+  at that start / 3 from 505.7 over it (+0x8C); S289 then flies her onto what it met. Jump with the stick neutral or
+  back (T2060: not MoveDir 410 / 412 / 413) → S1261 (prop 546 = **q55**: **50.82** straight up from the attach point,
+  frames 1..17, cone 180°, +0x28 −1, +0x2C 0x38A0 (coming down), record 0x2A9EC) → S1258 `Wall_hug_Jump_Up_Twist`
+  (1403: rises 63, turns 150°) → S1256 in the air onto the target; with no target (T2056, JumpTargetSameAsAttached 0
+  [I: read as "none"]) S1257 `bbeam_somersault_forward` (161, property 425 = 0) back to `Wall_Hug_Idle`.] Ours
+  (`Player::wallHugJump`, Traverse.cpp): the stick's dominant axis relative to her picks forward / left / right /
+  twist [I: MoveDir's mapping]; `ledgeOnArc` runs q68 / q55 from the ledge point she is at (the attach point [I]);
+  with a ledge met the take-off clip plays with its root motion and turn, then `launchHangJump` aims the flight at
+  its hang (take-off vertical speed q68's 42.54 / q55's 50.82 a frame), `ledgeb_attach_S` (twist: `_U`); else the
+  free leap at q68's launch after the clip, or the somersault on the spot for the twist. Beams, ladders and other
+  shelves as q68 targets (S289's other classes) are [U].
+- Wall-hug drop to water [O: chart T2069 c66:1 (input action 0x32) + c32d:1 → S1270 `Wall_Hug_Drop_to_Water` (1377,
+  mirrored; 214 forward, 188 down of root motion) → S1012, the fall; from the swim group S1326 → S1327 → S101 swim;
+  c32d = tru.exe 0x7420D0: a ray from **15** (+0x72C) over her root and **47.41** (+0x730) in front of it down
+  **632.11** (+0x734) whose first hit is water]. Ours: the drop button (c66 [I]), our water volumes against a terrain
+  ray; standing 88.496 in [I], the probe lies 41 in from the line, over the shelf's own floor wherever that floor
+  runs the full depth, so it fires only over a narrower lip (and only l2_cliffclimb 936 sits within reach of water at
+  all, FINDINGS) [U: her real stand depth, which decides this].
 - Tests `GameReal.LadderRungsClimbOffTop`, `GameReal.LadderSideJumpsReachAndBack`, `GameReal.ArcticSeaLadderSideJumpOntoBeam`,
   `GameReal.HangShimmyRoundCorners`, `GameReal.PillarAttachRoundUpSlideOff`, `Game.PerchAttachAndJumpOff`,
   `GameReal.ShipSinkingHallLadder`, `GameReal.TemplePerchTurnsAndPillarTop` (l4_temple perch 1190 on pillar 1191),
-  `GameReal.PuzzleRoomWallHug` (l2_puzzleroom shelf 476), `GameReal.TrapRoomsPoleParallelHandOverHandAndTurns`,
+  `GameReal.PuzzleRoomWallHug` (l2_puzzleroom shelf 476), `GameReal.WallHugRoundsConcaveAndConvexCorners`,
+  `GameReal.WallHugSideAndTwistJumpsByTheirQueries`, `GameReal.WallHugDropToWater`, `GameReal.WallHugIndependentOfRenderRate`,
+  `GameReal.TrapRoomsPoleParallelHandOverHandAndTurns`,
   `GameReal.TrapRoomsPoleSwingStops`, `GameReal.PoleTraversalIndependentOfRenderRate`; saves mid-climb, mid-hand-over-hand,
   mid-swing, mid-turn on a perch, mid-way onto a pillar and mid-shuffle in `StreamReal.SaveContinuesBitIdentically`.
   Object-DRM markup does not exist in this data (COLLISION.md), so all traversal markup comes from the units.
@@ -2454,7 +2493,7 @@ No side-by-side comparison with the original game was made.
   bad-attach/wrestle clips. Ladders (9, rung to rung), perches (13, turning), pillars (15, onto top perches), poles
   (parallel hang, hand over hand, turns, phased swing stops), wall hug on shelves and rail slides (8) work (see their
   sections); ropes, vertical poles and zip lines do not exist in TRU ("Ladders, pillars, perches, wall hug"). Still
-  missing: wall-hug corners and jumps, pole-to-perch / pole-to-ledge (`hpole_para_to_perch`, `hpole_perch_*`),
+  missing: the wall-hug swim climb-out and jump-landing attach, pole-to-perch / pole-to-ledge (`hpole_para_to_perch`, `hpole_perch_*`),
   balance wobble, beam sprint/catch, `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
   the bad-attach / wrestle clips of poles, ladders and pillars. Root motion of the jump, attach and fling clips is not applied (the flight is
   ballistic), so their poses can sit off the computed path.

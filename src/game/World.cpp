@@ -89,8 +89,12 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"perch_idle", 6, 6}, {"perch_attach_air", 2, 8}, {"perch_attach_ground", 3, 1}, {"perch_detach_drop", 5, 1},
         {"perch_jump_forward", 3, 3}, {"perch_jump_up", 3, 3}, {"perch_turn_right_45", 3, 3}, {"perch_turn_right_90", 5, 5},
         {"perch_turn_right_180", 3, 3},
-        // wall hug: requests 1421, 1402, 1378, 1416
+        // wall hug: requests 1421, 1402, 1378, 1416, 1410, 1403, 1400 / 1399 (corners), 1377, 161
         {"Wall_Hug_Idle", 4, 4}, {"Wall_Hug_Shimmy_Left", 4, 4}, {"Wall_Hug_Walk_Off", 4, 4}, {"Wall_Hug_Jump_Forward", 4, 4},
+        {"Wall_Hug_jump_left", 4, 4}, {"Wall_hug_Jump_Up_Twist", 4, 4}, {"Wall_Hug_Shimmy_to_Concave_left_70", 4, 4},
+        {"Wall_Hug_Shimmy_to_Concave_left_90", 4, 4}, {"Wall_Hug_Shimmy_to_Concave_left_110", 4, 4},
+        {"Wall_Hug_Shimmy_to_Convex_left_70", 4, 4}, {"Wall_Hug_Shimmy_to_Convex_left_90", 4, 4},
+        {"Wall_Hug_Shimmy_to_Convex_left_110", 4, 4}, {"Wall_Hug_Drop_to_Water", 4, 4}, {"bbeam_somersault_forward", 5, 5},
         // DICE bad attach: requests 256 / 255 / 254 (B), 226 / 224 / 225 (LW), 231 / 229 / 230 (R), 280 / 281 / 282 (Rw),
         // 228 / 227 (L)
         {"DICE_B_air_attach_bad_start", 5, 5}, {"DICE_B_air_attach_bad_loop", 1, 1}, {"DICE_B_air_attach_bad_end", 5, 5},
@@ -290,6 +294,9 @@ const std::vector<std::string_view> kLaraClipNames = {
     "pillar_detach_drop", "pillar_jump_back", "pillar_jump_forward", "pillar_jump_right", "pillar_jump_back_45R", "perch_attach_air", "perch_attach_ground", "perch_idle", "perch_jump_forward",
     "perch_jump_up", "perch_detach_drop", "perch_turn_right_45", "perch_turn_right_90", "perch_turn_right_180",
     "Wall_Hug_Idle", "Wall_Hug_Shimmy_Left", "Wall_Hug_Walk_Off", "Wall_Hug_Jump_Forward", // wall hug (Traverse.cpp)
+    "Wall_Hug_jump_left", "Wall_hug_Jump_Up_Twist", "Wall_Hug_Shimmy_to_Concave_left_70", "Wall_Hug_Shimmy_to_Concave_left_90",
+    "Wall_Hug_Shimmy_to_Concave_left_110", "Wall_Hug_Shimmy_to_Convex_left_70", "Wall_Hug_Shimmy_to_Convex_left_90",
+    "Wall_Hug_Shimmy_to_Convex_left_110", "Wall_Hug_Drop_to_Water", "bbeam_somersault_forward",
     "grapple_pull_up_light_begin", "grapple_pull_mid_light_begin", "grapple_pull_down_light_begin",
     "grapple_pull_up_heavy_begin", "grapple_pull_mid_heavy_begin", "grapple_pull_down_heavy_begin",
     "grapple_pull_up_light", "grapple_pull_mid_light", "grapple_pull_down_light",
