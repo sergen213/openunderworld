@@ -196,6 +196,11 @@ Portal order from the start unit; level changes not made by portals are named.
 - [O] Plane vs volume follows the script's native base (`triggerplanebase` / `triggervolumebase`), not the object
   name: l3_main_hall "triggervolume" intros 4128/4129 run plane scripts whose vt 54 is the crossing handler. Before,
   the prologue end 4129 never ran and the prologue could only end through 4137 → chapter 4.
+- The resident cinematic units (`World::registerCinematicUnits`: l1_cine_ship_sinking, l3_mansion_exterior_afterburn,
+  l6_ship_natla_room) are registered for their cinematics only; tru.exe has not loaded them, so their volumes, planes,
+  switches and blocks do not meet Lara (`Runtime::residentOnly_`). Before, l3_mansion_exterior_afterburn's fire volumes
+  4080 / 4081 lay over l1_kraken_entrance's switch platform and cost 300 health a visit
+  (`GameReal.ResidentCinematicUnitVolumesDoNotMeetLara`, self-test `ch02_serpent_door`).
 - [O] Cinematic vt 63 only preloads (3523 fn 8 → state 2 = fn 13 creates the stream and waits); only vt 57 plays.
   The old rule counted preload volumes (1082, 4137, 7566) as level ends. `cinematic` 0/2 (Create / IsCreated) bound.
 - [O] `health` 3 = INSTANCE_Post(5, n) = heal (0x4A5180); `unlockable` 1/2 (extras) passive.

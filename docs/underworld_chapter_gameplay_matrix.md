@@ -46,7 +46,6 @@ rows that name them move as stated until the per-row refresh of the chapter file
 | 0.42.0 | Scuba / breath rule (M85) | C02-02, C02-04, section 19 dive | IMPLEMENTED in l1_seafloor; l7_arctic_sea IMPLEMENTED BUT UNVERIFIED | `GameReal.SeafloorScubaSwimKeepsTheBreath`, `GameReal.ThailandDiveDrownsAtTheBreathTime` |
 | 0.42.0 | Weapons in the water, under-water dodge | C02-06, C02-08 | IMPLEMENTED | `GameReal.SeafloorSpearKillsShark`, `GameReal.SwimDodgesMoveAsTheirClips`, `game_selftest_swim_moves` |
 | 0.42.0 | Jellyfish | C02 hazard rows | IMPLEMENTED | `GameReal.JellyfishStingOnTouch` |
-| after 0.43.0 | Trap damage: damaging collision primitives (M67, M68, M69, M79; `src/game/Hazards.cpp`) | C14 trap-house rows (flame jets, crushers, spear rows, blades), C17 rollers / weights / hammer blow, C03-07 tentacle swats, C06-05 barrel run, closing doors | IMPLEMENTED for flame jets, crusher pairs and rollers (played); the others IMPLEMENTED BUT UNVERIFIED (same system, their amounts from the data); steam (M77): script runs, UNVERIFIED | `GameReal.FlameJetBurnsLaraOncePerWindow`, `GameReal.CrusherJawsOpenCloseAndKill`, `GameReal.RollersCost400ATouch`, `GameReal.RestingSolidHazardsDoNotHurt`, `GameReal.FireVolumeBurns300`, `Combat.ContactDamageClassWindowAndKill`, `game_selftest_hazards`; docs/GAMEPLAY.md "Hazards" |
 | 0.42.0 | Swan dive | C03-23, C05-10, C07-19 | IMPLEMENTED at the l2_cliffclimb cliff; the other spots IMPLEMENTED BUT UNVERIFIED | `GameReal.CliffSwanDiveIntoTheSea`, `game_selftest_swan_dive` |
 | 0.42.0 | Player sensors (script vt 14) | prerequisite of the gauntlet rows (M60); those stay NOT IMPLEMENTED until the heavy movers exist | — | `docs/formats/SCRIPTS.md` "playersensor" |
 
@@ -78,7 +77,7 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | Checkpoints / autosave, manual saves, subtitles option, helper buttons / training text; chapter end plane 4129 → cinematic 4106 (010) → chapter 1 | IMPLEMENTED (chapter end, saves); helper buttons PARTIALLY IMPLEMENTED | `ProgressionReal.CriticalGates` (4129), `ChaptersReal.CroftManorEndingRunsBothCinematics` (chapter 3 revisit), `Stream.CheckpointAndRespawn`, `Save.*`; HELPER BUTTONS "stored only" except the grapple prompt (GAMEPLAY.md "Menus") |
 | Automated tests | Existing: `StreamReal.PrologueCorridorToStaircase`, `GameReal.BedroomJumpsMatchTruTraces`, `GameReal.HangJumpLeans`, `GameReal.HangLeapsMatchTruTraces`, `GameReal.MainHallRingByItsOwnRange`, `GameReal.SharedQThrowsTheGrappleNotTheCamera`, `GameReal.MainHallPoleFlingLandsOnPlatform`, `GameReal.RunningJumpReachAndRush`, `ProgressionReal.CriticalGates` (4525, 4363, 4129), ctest `game_replay_*` none for this chapter | Required: bedroom-hall roll + ring-door pull, molding chain, chest climb, floor-collapse jump, main-hall swing landing, end-to-end prologue self-test | — |
 
-Requirement rows: 16 in [docs/matrix/01_prologue.md](matrix/01_prologue.md) — IMPLEMENTED BUT UNVERIFIED 8, IMPLEMENTED 5, VERIFIED AGAINST ORIGINAL 3.
+Requirement rows: 16 in [docs/matrix/01_prologue.md](matrix/01_prologue.md) — IMPLEMENTED 10, VERIFIED AGAINST ORIGINAL 3, IMPLEMENTED BUT UNVERIFIED 2, PARTIALLY IMPLEMENTED 1.
 
 Open in this chapter:
 
@@ -119,7 +118,7 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | Journal entry unlock, checkpoint behind the eye door, reveal cinematic 696 and gate 743 at the end | IMPLEMENTED (696 / 743); journal IMPLEMENTED | `ProgressionReal.CriticalGates`, `Menus.PdaJournal` |
 | Automated tests | Existing: `AiReal.SharksSpawnSwimBiteAndDie`, `GameReal.SeafloorKelpSwaysInTheUnitWind`, `ScriptRealData.SeafloorVolumeSetsHelpCondition`, `Pickups.InteractCollectsNearestOnceAndSaves` (l1_seatop data), `ProgressionReal.CriticalGates` (748), `StreamReal.Yacht*`, `OriginalShading.KrakenHeadIrradianceMatchesOriginal` | Required: eye-door solve, swim-carry + insert, jar smash + reward, treasure-10 ledge / pole chain, plate threshold (one block must not hold pad 753), jellyfish damage, underwater pistols | — |
 
-Requirement rows: 32 in [docs/matrix/02_path_to_avalon.md](matrix/02_path_to_avalon.md) — IMPLEMENTED BUT UNVERIFIED 15, PARTIALLY IMPLEMENTED 7, IMPLEMENTED 6, NOT IMPLEMENTED 3, unknown / n/a 1.
+Requirement rows: 32 in [docs/matrix/02_path_to_avalon.md](matrix/02_path_to_avalon.md) — IMPLEMENTED BUT UNVERIFIED 15, IMPLEMENTED 8, PARTIALLY IMPLEMENTED 6, NOT IMPLEMENTED 3.
 
 Open in this chapter:
 
@@ -161,7 +160,7 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | Kraken intro cinematic + reveal camera, kill cutscene, door 497, Thor-statue cinematic on entering the tomb | IMPLEMENTED (reveal, 497); kill cutscene unknown | `GameReal.RevealCameraPlaysUnitSpline` (plane 37 → reveal 53), `ProgressionReal.TombDoorOpensByItsSectionClip` |
 | Automated tests | Existing: `ProgressionReal.CriticalGates` (498 → 497, 30 → 27), `ProgressionReal.KrakenColumnShot`, `ProgressionReal.KrakenRoomSectionsLoopTheirIdles`, `ProgressionReal.TombDoorOpensByItsSectionClip`, `GameReal.KrakenRoomRappel`, `GameReal.RevealCameraPlaysUnitSpline`, `GameReal.ClimbOnlyAtHolds`, `GameReal.StairsWalkAndRunUpAndDown`, `StreamReal.SaveContinuesBitIdentically` (l1_kraken_room) | Required: ordered kraken sequence, chain shots, grapple pulls, chimney jump, swan dive, pit handhold jumps, climb wall, beam + walkover, tentacle damage | — |
 
-Requirement rows: 36 in [docs/matrix/03_niflheim.md](matrix/03_niflheim.md) — IMPLEMENTED BUT UNVERIFIED 17, PARTIALLY IMPLEMENTED 9, IMPLEMENTED 5, NOT IMPLEMENTED 4, unknown / n/a 1.
+Requirement rows: 36 in [docs/matrix/03_niflheim.md](matrix/03_niflheim.md) — IMPLEMENTED BUT UNVERIFIED 16, IMPLEMENTED 8, PARTIALLY IMPLEMENTED 6, NOT IMPLEMENTED 4, VERIFIED AGAINST ORIGINAL 1, unknown / n/a 1.
 
 Open in this chapter:
 
@@ -839,7 +838,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | [treasure 30, health] → [relic run] → portal → hall, health → stair slide (one-way) → 4 Vikings → wave hall → health → stairs → waterfall cinematic → 2 Vikings → yeti → health → slide + pit jump → yeti → device room walkway → cinematic | PARTIALLY IMPLEMENTED | PR gates ch 7 "l7_yggdrasil(_end) volumes 8804, 8303 / 8312, 8323-8329 → cinematics 8773 / 8261, spline mover 8404: pass" |
 | Automated tests | Existing: replay `mjolnir_thralls`, `GameReal.KilledThrallBreaksIntoChunks`, `StreamReal.MjolnirHitBreaksUrnAndItStaysBroken` (l7_yggdrasil_hall01), `StreamReal.SaveContinuesBitIdentically`, `AiReal.ThrallsGetUpUnlessMjolnir`, `ProgressionReal.CriticalPathPerChapter` (ch 7), `CineReal.EveryStreamPlaysWithItsActors`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 21 in [docs/matrix/20_yggdrasil.md](matrix/20_yggdrasil.md) — IMPLEMENTED BUT UNVERIFIED 10, NOT IMPLEMENTED 5, PARTIALLY IMPLEMENTED 4, IMPLEMENTED 2.
+Requirement rows: 21 in [docs/matrix/20_yggdrasil.md](matrix/20_yggdrasil.md) — IMPLEMENTED BUT UNVERIFIED 9, NOT IMPLEMENTED 5, PARTIALLY IMPLEMENTED 4, IMPLEMENTED 3.
 
 Open in this chapter:
 
@@ -894,9 +893,9 @@ Open in this chapter:
 
 | Chapter | Rows | VERIFIED AGAINST ORIGINAL | IMPLEMENTED | IMPLEMENTED BUT UNVERIFIED | PARTIALLY IMPLEMENTED | NOT IMPLEMENTED | unknown / n/a |
 |---|---|---|---|---|---|---|---|
-| 01. Prologue: No Illusions (Prologue - Croft Manor) | 16 | 3 | 5 | 8 | 0 | 0 | 0 |
-| 02. The Path to Avalon (Level 1 - Mediterranean Sea, part 1) | 32 | 0 | 6 | 15 | 7 | 3 | 1 |
-| 03. Niflheim (Level 1 - Mediterranean Sea, part 2) | 36 | 0 | 5 | 17 | 9 | 4 | 1 |
+| 01. Prologue: No Illusions (Prologue - Croft Manor) | 16 | 3 | 10 | 2 | 1 | 0 | 0 |
+| 02. The Path to Avalon (Level 1 - Mediterranean Sea, part 1) | 32 | 0 | 8 | 15 | 6 | 3 | 0 |
+| 03. Niflheim (Level 1 - Mediterranean Sea, part 2) | 36 | 1 | 8 | 16 | 6 | 4 | 1 |
 | 04. The Norse Connection (Level 1 - Mediterranean Sea, part 3) | 25 | 0 | 2 | 16 | 5 | 1 | 1 |
 | 05. God of Thunder (Level 1 - Mediterranean Sea, part 4) | 20 | 0 | 6 | 10 | 2 | 2 | 0 |
 | 06. Realm of the Dead (Level 1 - Mediterranean Sea, part 5) | 14 | 0 | 3 | 5 | 4 | 1 | 1 |
@@ -913,9 +912,9 @@ Open in this chapter:
 | 17. Valhalla (Level 5 - Jan Mayen Island, part 2) | 70 | 0 | 6 | 23 | 21 | 20 | 0 |
 | 18. Rituals Old (Level 6 - Andaman Sea) | 18 | 1 | 3 | 9 | 3 | 2 | 0 |
 | 19. Helheim (Level 7 - Arctic Sea, part 1) | 33 | 1 | 8 | 18 | 4 | 2 | 0 |
-| 20. Yggdrasil (Level 7 - Arctic Sea, part 2) | 21 | 0 | 2 | 10 | 4 | 5 | 0 |
+| 20. Yggdrasil (Level 7 - Arctic Sea, part 2) | 21 | 0 | 3 | 9 | 4 | 5 | 0 |
 | 21. Out of Time (Level 7 - Arctic Sea, part 3) | 25 | 0 | 8 | 5 | 4 | 8 | 0 |
-| **All 21** | **661** | **8** | **95** | **319** | **135** | **100** | **4** |
+| **All 21** | **661** | **9** | **106** | **311** | **132** | **100** | **3** |
 
 (The first status named in a row counts; rows that split a status between two parts count under the first.)
 

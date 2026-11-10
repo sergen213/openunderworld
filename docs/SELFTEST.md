@@ -127,7 +127,7 @@ happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario
 autopilot"); it reads the World to steer, so it reaches places and objects by coordinates and uids:
 `go X Y [R] [walk]`, `engage UID [X Y] [walk]`, `face YAWDEG`, `press [ACTION]`, `hold ACTION SECONDS`,
 `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world heading, whatever the camera
-does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `ride X Y [R] [THROTTLE] [SPEED]` (on the
+does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [CELL] [UP]` (logs the floor round her as a grid), `ride X Y [R] [THROTTLE] [SPEED]` (on the
 motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED). Coordinates are world frame. With both `plan`
 and `input`, the plan steers and presses and the input lines add to it (a button is down if either holds it; a
 non-zero stick or look rate from `input` wins).
@@ -426,10 +426,19 @@ tested behaviour happen.
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
+| `ch01_bedroom_new_game` | New Game | Prologue leg 1: the corridor onto the debris slab without a jump, wall 973, the stairs, switch 4525 opens house door 4520, down to the bedroom floor (checkpoint 4454) |
+| `ch01_bedroom_ring_door` | l3_main_bedroom (chapter 0) | Prologue leg 2: a roll under the leaning beam (a walk does not pass), onto the flat strip, ring door 4526 grappled and pulled off its slide |
+| `ch01_hall_first_aid` | l3_bedroom_hall (chapter 0) | the first-aid kit 4364 picked up from checkpoint 4342, stored, used by the heal key |
+| `ch01_hall_floor_collapse` | l3_bedroom_hall (chapter 0) | Prologue leg 3: plane 4375 holds her while floor 4359 collapses and door 4376 is blown off, running jump to ledge 969, pull up, into l3_main_hall (checkpoint 4082) |
+| `ch01_main_hall` | l3_main_hall (chapter 0) | Prologue leg 4: ring 4089 from the west balcony's end, the swing east, the leap onto the east balcony, the safety drop onto ledge 945, Drop 1251 to the floor, plane 4129 -> chapter 1 |
+| `ch02_seatop_dive` | chapter 1 start | off the yacht's stern, dive, the look stick tips the view down, 35 s of sprint swimming on the tanks (breath 1.0 throughout) through the stream change to l1_seafloor |
+| `ch02_serpent_door` | l1_kraken_entrance | the dead switch 748, serpent head 751 pulled onto plate 752, one weight on plate 753 does not hold it, two do, the switch opens gate 743 |
+| `ch03_gear_room_west` | l1_kraken_room | switch 57 jammed; from the lower hall the pillar ring of gear 32 pulled: the column falls, the mechanism is free |
+| `ch03_gear_room_east` | l1_kraken_room | switch 55 jammed; gear 36 pulled out until it locks; the switch runs the mechanism |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now: none (`pole_drop_after_fling`
-moved up 2026-11-10).
+registered with ctest. Run them by hand; move one up a directory when it passes. Now: `ch01_ring_door_walk_through` (the pulled
+ring door's leaf stays standing in its frame: no way into l3_bedroom_hall; docs/PROGRESSION.md chapter 0).
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);
@@ -452,5 +461,8 @@ standing jump fails with actual 202.187.
 4. End steps with `until` where the game decides the timing (a grab, a landing, a door), so later steps do not depend
    on tick counts.
 5. Use fixtures only for set-up the walkthrough takes for granted (a weapon, health), never for the thing under test.
+   A chapter leg is named `chNN_<unit or leg>.json` (NN = the section's number in docs/matrix); a unit that belongs
+   to two chapters takes `level_chapter`. `stick` is camera-relative: for a move along a known direction (a roll through
+   a gap, a running jump) use `run YAWDEG ...`.
 6. Save it as `tests/selftests/<chapter>_<what>.json`, re-run CMake, run `ctest -R game_selftest_<name>` in a private
    compositor. A sequence that shows a defect goes to `tests/selftests/known_gaps/` with a `note` describing it.
