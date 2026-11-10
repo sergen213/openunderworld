@@ -540,19 +540,32 @@ void playEnding(game::World& w) {
         const auto* o = w.script().find(uid);
         return o && o->graph && o->graph->set->graph ? int(o->graph->set->graph->states[size_t(o->graph->state)].index) : -1;
     };
-    // B, C, D: Lara uses each locked mount at its outer end (bone 2, 8041 units out from the intro on the trunk;
-    // stimulus 1: transition 3 "break" -> state 3; vt 20 sends buttress_mount_broken and the mount's vt 54 tells
-    // dispatcher 8360). Each reveal camera runs ~7 s.
+    // B, C, D: Lara uses each locked mount at its node: the mount's one engagement record [O ar_ani_buttress_mount: kind
+    // 8, a sphere of r 474.1 at HInfo marker 13], 686 units beyond the end bone (bone 2, 8041 units out from the intro
+    // on the trunk) and so ~8727 from the trunk. Her press reaches the mount only inside that record (World::engagedUse):
+    // at the end bone it does nothing. Stimulus 1: transition 3 "break" -> state 3; vt 20 sends buttress_mount_broken
+    // and the mount's vt 54 tells dispatcher 8360. Each reveal camera runs ~7 s.
+    game::Actions use;
+    use.interact = true;
     for (const int32_t mount : {8362, 8363, 8364}) {
         const auto* m = w.script().find(mount);
         ASSERT_TRUE(m && m->graph);
         EXPECT_EQ(graphState(mount), 2) << "mount " << mount << " locked";
         const auto points = script::Runtime::usePoints(*m);
         ASSERT_EQ(points.size(), 3u);
-        EXPECT_GT(glm::length(glm::vec2(points[2] - m->pos)), 8000.0f) << "used at its end, not on the trunk";
+        const auto centres = w.engagementCentres(mount, 8);
+        ASSERT_EQ(centres.size(), 1u) << "mount " << mount << " has one use record";
+        EXPECT_GT(glm::length(glm::vec2(centres[0] - m->pos)), 8500.0f) << "used at its node, not on the trunk";
+        EXPECT_GT(glm::length(glm::vec2(centres[0] - points[2])), 600.0f) << "beyond the end bone";
         place(w, points[2], 0);
-        game::Actions use;
-        use.interact = true;
+        EXPECT_NE(w.engaged().uid, mount) << "the end bone is outside the record";
+        w.tick(use);
+        run(30);
+        EXPECT_EQ(graphState(mount), 2) << "mount " << mount << " out of reach";
+        vec3 at = centres[0];
+        if (const auto floor = w.collision().groundProbe(at + vec3(0, 0, 300), 1000, 0x0F)) at.z = floor->point.z;
+        place(w, at, 0);
+        EXPECT_EQ(w.engaged().uid, mount) << "inside the record";
         w.tick(use);
         run(1200);
         EXPECT_EQ(graphState(mount), 3) << "mount " << mount << " broken";
@@ -2081,6 +2094,9 @@ TEST(ProgressionReal, UberSections) {
     const auto drm = cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm"));
     const auto phys = physics::loadObjectPhysics(drm);
     std::printf("class %d mass %g prims %zu\n", phys.physClass, physics::massProps(phys).mass, phys.prims.size());
+    for (const auto& pr : phys.prims)
+        std::printf("prim kind %d segment %d mass %d head %02x %02x %02x %02x pos %g %g %g size %g %g %g radius %g length %g\n", int(pr.kind), pr.segment, pr.mass,
+                    pr.head[0], pr.head[1], pr.head[2], pr.head[3], pr.pos.x, pr.pos.y, pr.pos.z, pr.size.x, pr.size.y, pr.size.z, pr.radius, pr.length);
     for (const auto& set : phys.engagements)
         for (const auto& r : set.records)
             std::printf("engagement set %d: kind %d shape %d segment %d centre %g %g %g r %g h %g\n", set.id, r.kind, r.shape, r.segment, r.centre.x,
@@ -2236,15 +2252,17 @@ TEST(ProgressionReal, TombGateNeedsBothBlocksAndThePull) {
     game::Actions press, drop;
     press.interact = true, drop.drop = true;
     const auto run = [&](int n) { for (int i = 0; i < n; ++i) w.tick({}); };
-    const auto carryTo = [&](int32_t weight, vec3 at) { // picked up where it lies, set down at `at`
+    // Picked up where it lies (Interact: the hosted_pickup clip, 1.5 s), put down at `at` (Crouch, chart input 101:
+    // hosted_putdown lets go at frame 20; Interact with a weight in her hands would swing it).
+    const auto carryTo = [&](int32_t weight, vec3 at) {
         ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *obj(weight), 4), [&] { return w.heldPortable() == weight; })) << weight;
         run(150);
+        ASSERT_EQ(w.heldPortable(), weight) << "in her hands after the pick-up clip";
         place(w, at, 0);
         run(20);
-        w.tick(press), w.tick({});
-        if (w.heldPortable()) w.tick(drop), w.tick({}); // the put-down key
+        w.tick(drop), w.tick({});
         run(240);
-        ASSERT_EQ(w.heldPortable(), 0);
+        ASSERT_EQ(w.heldPortable(), 0) << "put down";
     };
     const vec3 p221 = obj(221)->pos, p222 = obj(222)->pos;
     const vec3 away = p221 + vec3(600, 900, 60);

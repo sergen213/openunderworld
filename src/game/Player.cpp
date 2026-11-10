@@ -840,12 +840,13 @@ bool Player::tryDropToHang() {
 // ledgegrab (cond 0x262 type 610) with result flag 6 and not 7 (0x76F760), its entry not 5 / 7..10 -> S534 -> the
 // attach states S542..S544 of the hang group [O-chart]). tru.exe under Wine, l4_temple ledge 1155: walking and
 // running off the block's edge both end hanging from it ~1.0 s later, no key [O]. [I]: the result flags' geometry is
-// not decoded; ours takes
-// the ledge of tryDropToHang (level with her feet, open below) within kSafetyReach of where she left the ground,
-// on the side she is heading to, and plays the Crouch drop's drop_to_ledgeb.
+// not decoded; ours takes the ledge of tryDropToHang (level with her feet, open below) within kSafetyReach of where
+// she left the ground, on the side she is heading to, and plays the Crouch drop's drop_to_ledgeb. Not while she
+// stands roped: off an edge on the grapple line she hangs from the rope (chart T1409, the roped ground states are
+// not T114's sources [O-chart]).
 constexpr float kSafetyReach = 150.0f;
 bool Player::trySafetyDrop(vec3 vel) {
-    if (s_.regrabCooldown > 0 || glm::length(xy(vel)) < 1.0f) return false;
+    if (s_.grappleUid || s_.regrabCooldown > 0 || glm::length(xy(vel)) < 1.0f) return false;
     const vec2 heading = glm::normalize(xy(vel));
     int best = -1;
     OnLine bestOn;

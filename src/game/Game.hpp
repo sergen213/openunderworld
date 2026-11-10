@@ -369,6 +369,10 @@ struct PlayerState {
     // along the rope: anchor -> bends -> hand. The rope wraps round geometry as the original's (Grapple.cpp
     // wrapRope): ropeBend[0..ropeBends) are its bends from the anchor side (the last one is the pivot she swings on),
     // ropeBendClear[i] the ticks bend i's straight-through path has been clear (it slides off 15 more per tick).
+    // Hanging free (State::GrappleSwing) the swing drive keeps its timers in fields the rope states do not use
+    // otherwise: `flight` = seconds the drive stays on after the stick left her facing's axis (tru.exe 0xFAE3E4 /
+    // 0xFAE3E8 against player data +0x9D8), `savingGrab` = seconds the stick has been held back (0xFAE3E0, +0x9DC),
+    // `wallTime` = seconds she has been turning on the rope (0xFAE3D8, +0x9FC).
     int32_t grappleUid = 0;
     vec3 grappleAnchor{0};
     float ropeLength = 0;
@@ -602,9 +606,10 @@ private:
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);
     void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp
-    void rappel(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    void rappel(vec2 move, bool climb, bool jumpPressed, bool dropPressed, float dt);
     void rappelOnto(const collision::Hit& wall, vec3 vel, std::string_view clip);
     void standUp(); // let go of the rope, standing
+    void jumpOffRope(vec2 move); // Jump on the rope: the leap off it (hanging free: along her facing; on a wall: by the stick)
     void wrapRope(vec3 oldHand, vec3 hand); // bends the rope round geometry / straightens it (Grapple.cpp)
     void land(vec2 move);
 
@@ -745,8 +750,8 @@ public:
     World& operator=(const World&) = delete;
 
     void tick(const Actions& a); // one kTickSeconds step; keeps the previous state for interpolation
-    // CPU time accumulated by tick() in the script runtime and the physics step (ou-game --frames reports the means).
-    struct TickTimes { double scriptMs = 0, physicsMs = 0; } tickTimes;
+    // CPU time accumulated by tick() in Player::tick, the script runtime and the physics step (ou-game --frames reports the means).
+    struct TickTimes { double scriptMs = 0, physicsMs = 0, playerMs = 0; } tickTimes; // playerMs: Player::tick (her mover)
 
     const collision::CollisionMesh& collision() const { return col_; }
     const AnimLibrary& anims() const { return anims_; }
@@ -1186,8 +1191,9 @@ private:
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
     std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
     bool engages(const script::Object& o, const physics::Engagement& e); // Lara inside the record's shape
-    // ... of the record, `p`'s HInfo marker (its segment) in `frame` (the instance's world frame).
-    bool engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e);
+    // ... of the record, `p`'s HInfo marker (its segment) in `frame` (the instance's world frame), the segment posed by
+    // `skin` (an anim-graph object's running clip, null = bind).
+    bool engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin = nullptr);
     // Uber receptacles: section `section`'s engagement set now (UberSectionState::engagement; null none), its world frame
     // and its model's physics; a portable in / out of it starts its insert / removal transition (0x6D4890).
     const physics::EngagementSet* uberEngagement(int32_t uid, size_t section);

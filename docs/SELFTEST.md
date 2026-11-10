@@ -402,9 +402,10 @@ tested behaviour happen.
 | `urn_kick` | l1_baldrs_sideroom | Interact by urn 94 kicks it to pieces; its treasure is picked up |
 | `carry_throw` | l1_baldrs_tomb | weight 220 picked up, carried at a walk, thrown from plate 219 through door 223; weight 218 put down with Crouch |
 | `balance_beam` | l4_temple | beam 1079: walk 140 units/s on its line, jump along it, its far end, losing balance into a ledge catch (1136) |
-| `grapple_swing` | l3_chapel | ring 4744 offered, throw, attach (rope <= 4424.78), swing past the ring, climb / slide the rope 450, jump off, landing |
-| `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, rappel down (rope pays out) and up, kick off |
-| `wall_run` | l5_valaskjalf | wall anchor 6750: wall run through the rope's arc over the pit, landing on the far ledge, rope let go |
+| `grapple_swing` | l3_chapel | ring 4744 offered, throw, attach, Jump into the gap keeps the rope (hangs on 3632), no stick: the swing dies down, Forward held: it builds (peak height > 1000), Interact + forward / back climbs 711 / slides to 4400, jump off (1896 units/s), landing |
+| `prologue_hall_swing` | l3_main_hall | ring 4089 from the balcony: roped walk to the edge, Jump with the rope, swing over the burning staircase, leap off onto the far balcony (x < -2150, z 1716) |
+| `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, the stick alone leaves the rope, Interact + back / forward rappels down / up (1327 / 1043 units/s), Jump leaps back off the wall and lets go |
+| `wall_run` | l5_valaskjalf | wall anchor 6750: camera behind her, right runs onto the wall and through the rope's arc over the pit, stepping onto the far ledge, rope let go |
 | `swim` | l1_seatop | drop into the sea, surface swim 1348.6 units/s, dive, under water (on the wetsuit's tanks the breath stays full), surfacing |
 | `swim_breath` | l2_cliffclimb | no tanks: the breath drains under the river, 1.5 times as fast sprinting, the meter refills in 2 s at the surface |
 | `swim_moves` | l1_seatop | surface turn on the spot, dive, under-water dodges up / down by their clips, pistols drawn and fired under water |

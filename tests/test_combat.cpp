@@ -2216,6 +2216,7 @@ TEST(CombatReal, WeightThrownThroughTheDoor) {
         bool knocked = false;
         vec3 last(0);
         int still = 0;
+        std::optional<State> afterThrow; // her state where the throw clip ends (later the knocked-down poacher gets up and shoots)
         for (int i = 1; i < 60 * 30 && still < 60; ++i) {
             w.tick({});
             const vec3 o = objectPos(w, 220);
@@ -2228,16 +2229,23 @@ TEST(CombatReal, WeightThrownThroughTheDoor) {
                 }
             }
             if (released < 0) continue;
+            if (!afterThrow && w.player().state().state != State::Melee) afterThrow = w.player().state().state;
             apex = std::max(apex, o.z);
             if (crossed < 0 && o.x > doorAt.x) crossed = i;
             if (e) knocked |= e->state().mode == game::ai::Mode::Knocked;
             still = glm::distance(o, last) < 0.5f ? still + 1 : 0;
             last = o;
         }
+        // The weight lies still on its cube soon after it lands: her throw clip may still be running.
+        for (int i = 0; i < 240 && !afterThrow; ++i) {
+            w.tick({});
+            if (w.player().state().state != State::Melee) afterThrow = w.player().state().state;
+        }
+        ASSERT_TRUE(afterThrow) << "the throw clip ends";
         EXPECT_NEAR(released, 54, 2) << "event 0x53 at frame 27";
         EXPECT_EQ(w.grenades, grenades) << "the key throws the weight, not a grenade";
         EXPECT_GT(apex, lara.z + 500.0f) << "a lob";
-        EXPECT_EQ(w.player().state().state, State::Idle);
+        EXPECT_EQ(*afterThrow, State::Idle);
         EXPECT_TRUE(w.melee().thrown.empty()) << "a weapon for 1.5 s";
         if (!enemy) {
             EXPECT_GT(crossed, released) << "through the doorway";
