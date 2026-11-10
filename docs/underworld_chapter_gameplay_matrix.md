@@ -682,7 +682,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | Cinematic → tunnel → slide door → shaft cutscene → ramp → gate cinematic + 4 thralls → blocks → base panel → climb 1 → panel → climb 2 → panel → climb 3 (steam) → panel → section ends | PARTIALLY IMPLEMENTED | PR gates ch 5: "l5_valgrind volumes 7471 / 7511 → door 7334, cinematic 7464: pass" (a volume opens 7334 in the sweep, with no lock condition asserted); plane 7472 → 7403 PASS; plane 7439 → gems 7498-7500 "condition" |
 | Automated tests | Existing: `StreamReal.ChapterStartIntros`, `VehicleReal.BikeIntrosTuningAndClips`, `ProgressionReal.UberReceptaclesTakeTheirPortables` (l5_valgrind 7498 → 7312), replay `valgrind_cog_gem_insert`, `AiReal.ThrallsGetUpUnlessMjolnir`, `CriticalPathPerChapter` ch 5, `GameReal.UnitWeatherSurvey`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 23 in [docs/matrix/16_gate_of_the_dead.md](matrix/16_gate_of_the_dead.md) — IMPLEMENTED BUT UNVERIFIED 9, NOT IMPLEMENTED 8, PARTIALLY IMPLEMENTED 3, IMPLEMENTED 2, VERIFIED AGAINST ORIGINAL 1.
+Requirement rows: 23 in [docs/matrix/16_gate_of_the_dead.md](matrix/16_gate_of_the_dead.md) — IMPLEMENTED BUT UNVERIFIED 7, NOT IMPLEMENTED 7, IMPLEMENTED 4, PARTIALLY IMPLEMENTED 4, VERIFIED AGAINST ORIGINAL 1.
 
 Open in this chapter:
 
@@ -695,6 +695,8 @@ Open in this chapter:
 - Thrall ranged spit: no decoded attack record ("Thralls: none").
 - Five of six treasures are in jars (M63); shiny-jar hint missing.
 - Start-of-level outfit / weapon choice (M75).
+- **Base panel stalls (C16-15)**: by input the base turns from 89 to 26-40 degrees off and stops; "solved" is never reported (`tests/selftests/known_gaps/ch16_tower_base_panel.json`). Until it does, no beam, no gate; the tier wheels need the ring climbs.
+- Chapter self-tests written: `ch16_tunnel_door` (C16-01, -03, -04, -05), `ch16_tower_power` (C16-14). Not played: the spiral ramp ride (C16-08: a 201 000-unit route exists on the unit's collision; the bike over-speeds on slopes, see C16-03), the gate fight, the tiers.
 
 ## 17. Valhalla (Level 5 - Jan Mayen Island, part 2)
 
@@ -721,7 +723,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | Tower descent → gate → maze (areas 1-9) → [timed door 10 / treasure 21] → [timed door 11 / relic] → chimney out at 12 → hammer room entrance → adrenaline slide → columns → room 1 → room 2 (weights, chain) → rollers → hammer 2 → rollers → room 3 (free gear) → weight climb → rollers → hammer 3 → room 4 → slide / columns → [room 5 → 6] → wall run → room 7 (yeti) → chain against the flow → rollers → hammer 4 → collapsing walkway → Mjolnir | PARTIALLY IMPLEMENTED | PR gates ch 5 rows (7228, 7188, 7189, 7025-7030, 7010, 6866); `CriticalPathPerChapter` ch 5 |
 | Automated tests | Existing: `ProgressionReal.CriticalGates` (7228, 7188, 7010, 6866), `PoleHoleLeverOpensRewardDoor`, `ValaskjalfChainsDetach`, `GameReal.ValaskjalfWallRun`, `ValaskjalfRailSlideTraversesAndDetaches`, `WallHugRoundsConcaveAndConvexCorners`, `AiReal.ThrallsGetUpUnlessMjolnir`, `CineReal.ChapterEndCinematics`, `ChaptersReal.StartUnitsAndLevelEnds`, replays `valaskjalf_wallrun`, `valaskjalf_pole_lever_insert`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 70 in [docs/matrix/17_valhalla.md](matrix/17_valhalla.md) — IMPLEMENTED BUT UNVERIFIED 23, PARTIALLY IMPLEMENTED 21, NOT IMPLEMENTED 20, IMPLEMENTED 6.
+Requirement rows: 70 in [docs/matrix/17_valhalla.md](matrix/17_valhalla.md) — PARTIALLY IMPLEMENTED 23, IMPLEMENTED BUT UNVERIFIED 22, NOT IMPLEMENTED 20, IMPLEMENTED 5.
 
 Open in this chapter:
 
@@ -736,6 +738,8 @@ Open in this chapter:
 - **One-handed pistols while hanging (M32)**; saving grab after long jumps (M04) unverified; wall-run jump into a ledge grab (M24) untested.
 - **Gate 7334** opens from a volume in the sweep; the Thor slide by Lara is not modelled.
 - Collectibles: 10 loose treasures for the whole chapter vs 30; the jar treasures are missing.
+- **Hammer chamber not reached by input (C17-70)**: the pull-up onto the chamber block is refused (`tests/selftests/known_gaps/ch17_hammer_chamber.json`), the climb-up regression that also fails `game_selftest_ch01_hall_floor_collapse` on int/0.42.0.
+- Chapter self-tests written: `ch17_maze_to_relic_door` (C17-06, -09). l5_valaskjalf_entryb: no walkable way on the unit's collision from checkpoint 7172 to the pole levers 7188 / 7189 (nearest point 2950 short: the rock-slab ramps need jumps or the bike); the timed runs and the hammer room's rooms 1-7 are not played.
 
 ## 18. Rituals Old (Level 6 - Andaman Sea)
 
@@ -772,6 +776,7 @@ Open in this chapter:
 - **Stern / hallway doors** stand open in ours by a bytecode reading; the page says they open on approach. Needs a Wine check.
 - Blast knock-back throwing bodies overboard: ground-pound knock values decoded but unused.
 - No traversal or combat test loads l6_ship_exterior beyond the chapter-start check; chimney alternative (M06) missing; outfit choice (M75).
+- Chapter self-tests written: `ch18_bow_deck` (C18-01, -02, -03, -07), `ch18_engine_hall_to_cell` (C18-17, -18). Not played: the container-deck fight and climb, the upper deck, helipad and stern (the autopilot does not fight; an unfought walk dies on the container deck and is stopped on the upper deck at (4660, 2868)), the hallways between the stern doors and the engine hall.
 
 ## 19. Helheim (Level 7 - Arctic Sea, part 1)
 

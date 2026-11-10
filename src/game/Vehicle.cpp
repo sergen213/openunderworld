@@ -255,6 +255,38 @@ void World::syncVehicles() {
     for (auto& [uid, b] : bikes_) b.prevPos = b.pos + bikeOffset(b), b.prevYaw = b.yaw, b.prevPitch = b.pitch, b.prevRoll = b.roll;
 }
 
+// `instance` 26 with a motorcycle as its receiver (0x4A4140 places the instance at its argument's transform): the parked
+// bike stands at the target object, or at its marker, heading as an intro there would (the frame's -Y, as findSpawn),
+// on the ground under it. l5_valgrind's 235_val_shaft end handler (7403 vt 60) moves bike 7229 to marker object 7404
+// beside where the cutscene leaves Lara, when she rode through its plane [O bytecode]. While she sits on it the
+// placement waits until something other than her own dismount takes her off it (the cutscene's end).
+void World::placeBike(int32_t uid, int32_t target, int32_t marker) {
+    const auto it = bikes_.find(uid);
+    const auto* o = script_.find(target);
+    if (it == bikes_.end() || !o) return;
+    if (riding_ == uid) {
+        // She sits on it: the handler ran with the cutscene's start (World sends both cinematic events at once), and
+        // the stream's end stands her on foot a little later. The placement waits for that (tickVehicles), not longer
+        // than the cutscene can take [I: 120 s].
+        if (player_.state().state == State::Vehicle) {
+            bikePlace_ = {uid, target, marker}, bikePlaceTick_ = ticks_;
+            return;
+        }
+        riding_ = 0;
+    }
+    Bike& b = it->second;
+    vec3 at = o->pos;
+    float yaw = o->rot.z - kPi / 2;
+    if (const auto m = marker >= 0 ? markerFrame(*o, marker) : std::nullopt) at = vec3((*m)[3]), yaw = std::atan2(-(*m)[1].y, -(*m)[1].x);
+    // The marker may hang over the floor (7404: 230 over it); the original's vehicle body falls onto its wheels. Ours
+    // parks it on the ground found under the point [I: up to 1000 down].
+    if (const auto h = col_.groundProbe(at + vec3(0, 0, 160), 1160); h && h->normal.z >= 0.5f) at.z = h->point.z;
+    b.pos = at - bikeOffset(b), b.yaw = yaw, b.pitch = b.roll = 0;
+    b.phase = BikePhase::Parked, b.speed = 0, b.steer = 0, b.vel = vec3(0), b.air = false, b.simWorld.reset();
+    settleBike(b);
+    b.prevPos = b.pos + bikeOffset(b), b.prevYaw = b.yaw, b.prevPitch = b.pitch, b.prevRoll = b.roll;
+}
+
 // larabase 52 (0x777DD0 posts message 0x85 to the bike and to Lara): she sits on it at once, riding (the original's ch4
 // and ch5 starts after their intro cinematics); the bike's unit becomes the current one (l5_valgrind_tunnel's 7229).
 void World::mountBike(int32_t uid) {
@@ -478,9 +510,11 @@ bool World::tickVehicles(const Actions& a, float dt) {
         b.prevWheel = b.wheel, b.prevRearWheel = b.rearWheel;
     const BikeTuning& t = anims_.bike;
     auto it = bikes_.find(riding_);
-    if (riding_ && (it == bikes_.end() || player_.state().state != State::Vehicle)) { // died, respawned, loaded
+    if (riding_ && (it == bikes_.end() || player_.state().state != State::Vehicle)) { // died, respawned, loaded, a cutscene's end
         if (it != bikes_.end()) it->second.phase = BikePhase::Parked, it->second.speed = 0, it->second.air = false;
-        riding_ = 0;
+        const int32_t was = std::exchange(riding_, 0);
+        if (const auto p = std::exchange(bikePlace_, std::nullopt); p && (*p)[0] == was && ticks_ - bikePlaceTick_ < 120 * 60)
+            placeBike((*p)[0], (*p)[1], (*p)[2]); // instance 26 on the bike while she sat on it
         return false;
     }
     PlayerState s = player_.state();
@@ -532,7 +566,7 @@ bool World::tickVehicles(const Actions& a, float dt) {
     case BikePhase::Ride: {
         driveBike(b, a, dt); // input; the step and Lara's seat follow in stepPhysics / readBikes
         if (interactPressed && !b.air && std::abs(b.speed) < t.dismountSpeed)
-            b.phase = BikePhase::Dismount, b.t = 0, b.speed = 0, b.vel = vec3(0), b.roll = b.prevRoll = 0, b.stunt = BikeStunt::None;
+            b.phase = BikePhase::Dismount, b.t = 0, b.speed = 0, b.vel = vec3(0), b.roll = b.prevRoll = 0, b.stunt = BikeStunt::None, bikePlace_.reset();
         s.pos = b.pos + bikeOffset(b), s.yaw = b.yaw, s.pitch = b.pitch, s.roll = b.roll;
         const float v = b.speed, steer = a.move.x;
         const double next = s.clipTime + dt;

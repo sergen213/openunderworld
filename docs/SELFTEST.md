@@ -127,8 +127,10 @@ happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario
 autopilot"); it reads the World to steer, so it reaches places and objects by coordinates and uids:
 `go X Y [R] [walk]`, `engage UID [X Y] [walk]`, `face YAWDEG`, `press [ACTION]`, `hold ACTION SECONDS`,
 `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world heading, whatever the camera
-does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [CELL] [UP]` (logs the floor round her as a grid), `ride X Y [R] [THROTTLE] [SPEED]` (on the
-motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED). Coordinates are world frame. With both `plan`
+does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [CELL] [UP]` (logs the floor round her as a grid), `ride X Y [R] [THROTTLE] [SPEED] [BRAKESTEER]` (on the
+motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED; while
+braking the stick stays within BRAKESTEER, default 1: brake + stick past half is the power slide, so long descents
+ride with 0.5). Coordinates are world frame. With both `plan`
 and `input`, the plan steers and presses and the input lines add to it (a button is down if either holds it; a
 non-zero stick or look rate from `input` wins).
 
@@ -453,10 +455,19 @@ tested behaviour happen.
 | `ch02_serpent_door` | l1_kraken_entrance | the dead switch 748, serpent head 751 pulled onto plate 752, one weight on plate 753 does not hold it, two do, the switch opens gate 743 |
 | `ch03_gear_room_west` | l1_kraken_room | switch 57 jammed; from the lower hall the pillar ring of gear 32 pulled: the column falls, the mechanism is free |
 | `ch03_gear_room_east` | l1_kraken_room | switch 55 jammed; gear 36 pulled out until it locks; the switch runs the mechanism |
+| `ch16_tunnel_door` | chapter 5 start | Gate of the Dead leg 1: on bike 7229, the tunnel's 66 000 units by `ride` lines (10 230 down, no damage; brake steer 0.5), hand brake, off; Thor door 7400 gripped and walked open to 663.7; back on, through the doorway: plane 7472 -> 235_val_shaft, on foot at its end, the bike waiting on marker 7404, mounted there |
+| `ch16_tower_power` | l5_valgrind | Gate of the Dead leg 3: the power blocks 7498 / 7499 / 7500 carried into cog wheel 7312's niches; the rings 7492-7509 stand until the third is in, then turn 10 degrees/s, neighbours opposite |
+| `ch17_maze_to_relic_door` | l5_valaskjalf_entry | Valhalla: the maze's first half on foot from inside the gate to the relic-room door 7227 (41 000 units, 2530 down), which is shut and stays shut |
+| `ch18_bow_deck` | chapter 6 start | Rituals Old leg 1: Change Weapon once = the secondary, twice = Mjolnir; a bolt; nobody on the bow, the first soldiers once she heads down to the container deck |
+| `ch18_engine_hall_to_cell` | l6_ship_engine_hall | Rituals Old last leg: with the hammer from checkpoint 7557 through the hall firing on the run, volume 7566, plane 7565 -> 270_shp_escape -> chapter 7 in l7_thin_ice, unhurt |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
 registered with ctest. Run them by hand; move one up a directory when it passes. Now: `ch01_ring_door_walk_through` (the pulled
-ring door's leaf stays standing in its frame: no way into l3_bedroom_hall; docs/PROGRESSION.md chapter 0).
+ring door's leaf stays standing in its frame: no way into l3_bedroom_hall; docs/PROGRESSION.md chapter 0),
+`ch16_tower_base_panel` (the tower's base panel 7312 turns from 89 to 26-40 degrees off its solved position and all but
+stops: no beam, the gate stays locked), `ch17_hammer_chamber` (from checkpoint 7067 a running jump catches
+the chamber block's edge 1542, but Forward + Jump plays the jump-up try instead of the pull-up, as on ledge 969 in
+`ch01_hall_floor_collapse` on int/0.42.0: volume 6866 is not reached on foot).
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

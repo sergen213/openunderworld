@@ -1,0 +1,145 @@
+{
+ "version": 1,
+ "name": "ch18_bow_deck",
+ "chapter": "18 Rituals Old: the bow deck from the chapter start: Mjolnir by Change Weapon, a bolt, down the stairs where the first soldiers appear (docs/matrix/18_rituals_old.md C18-01, C18-02, C18-03, C18-07)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/17andaman.html",
+ "note": "Chapter 6 as chapter select starts it: 260_ship_intro (7652; not shown) warps her onto the bow of l6_ship_exterior. Change Weapon cycles pistols -> secondary -> hammer [O tru.exe 0x704930]. No enemy exists while she stays on the bow; going down the stairs towards the container deck brings the first soldiers (generators). The fights and the container climb are not played here: the autopilot does not fight, and walking on to the container deck without fighting the soldiers kill her within seconds (a draft run: 1037 health lost by (359, 17542)).",
+ "start_chapter": 6,
+ "steps": [
+  {
+   "step": "on_the_bow",
+   "duration": 1.5,
+   "expect": [
+    {
+     "probe": "world.unit",
+     "eq": "l6_ship_exterior"
+    },
+    {
+     "probe": "world.chapter",
+     "eq": 6
+    },
+    {
+     "probe": "weapon.current",
+     "eq": "pistols"
+    },
+    {
+     "probe": "enemies.count",
+     "eq": 0
+    },
+    {
+     "probe": "world.checkpoint",
+     "eq": 7652
+    }
+   ]
+  },
+  {
+   "step": "change_weapon_once",
+   "input": [
+    "0.2 weapon 1",
+    "0.3 weapon 0"
+   ],
+   "duration": 1.2,
+   "expect": [
+    {
+     "probe": "weapon.current",
+     "ne": "pistols"
+    },
+    {
+     "probe": "weapon.current",
+     "ne": "thorhammer",
+     "note": "the secondary first"
+    }
+   ]
+  },
+  {
+   "step": "change_weapon_twice",
+   "input": [
+    "0.2 weapon 1",
+    "0.3 weapon 0"
+   ],
+   "duration": 1.2,
+   "expect": [
+    {
+     "probe": "weapon.current",
+     "eq": "thorhammer"
+    }
+   ]
+  },
+  {
+   "step": "a_bolt",
+   "input": [
+    "0.2 draw 1",
+    "0.3 draw 0",
+    "1.5 fire 1",
+    "1.6 fire 0"
+   ],
+   "duration": 3.5,
+   "expect": [
+    {
+     "probe": "weapon.drawn",
+     "eq": true
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 1
+    },
+    {
+     "probe": "enemies.count",
+     "eq": 0,
+     "note": "nobody yet"
+    }
+   ]
+  },
+  {
+   "step": "down_the_stairs",
+   "plan": [
+    "go 4249 21702 150",
+    "go 3656 21161 150",
+    "go 2956 21161 150",
+    "go 2256 21161 150",
+    "go 1556 21161 150",
+    "go 956 20761 150",
+    "go 556 20061 150",
+    "go 356 19361 150",
+    "go 356 18661 150",
+    "go 356 17961 150"
+   ],
+   "duration": 60,
+   "until": {
+    "probe": "enemies.count",
+    "min": 1
+   },
+   "expect": [
+    {
+     "probe": "enemies.count",
+     "over": "min",
+     "eq": 0
+    },
+    {
+     "probe": "enemies.count",
+     "min": 1
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    },
+    {
+     "probe": "player.pos.x",
+     "min": -99999
+    },
+    {
+     "probe": "player.pos.y",
+     "min": -99999
+    },
+    {
+     "probe": "step.health_lost",
+     "min": -1
+    },
+    {
+     "probe": "step.moved",
+     "min": 300
+    }
+   ]
+  }
+ ]
+}

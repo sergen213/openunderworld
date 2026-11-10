@@ -1,0 +1,167 @@
+{
+ "version": 1,
+ "name": "ch18_engine_hall_to_cell",
+ "chapter": "18 Rituals Old: below decks from the engine hall's checkpoint past its soldiers to Natla's cell (docs/matrix/18_rituals_old.md C18-17, C18-18)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/17andaman.html",
+ "note": "l6_ship_engine_hall at its player intro (checkpoint 7557). The weapon fixture gives the chapter's hammer (a unit entry has the default loadout); Change Weapon twice takes it in hand. She runs the hall's route (engine room, the crate corner, the short stairs, left at the T) firing bolts on the run (Fire every 0.6 s: a bolt goes at the nearest target or straight ahead) and crosses volume 7566 (preloads the cell's stream) and plane 7565: 270_shp_escape (1387; not shown), then chapter 7 starts in l7_thin_ice. Two soldiers are placed in the unit and volume 7569 arms a generator; none of them stops her (no health lost in this run). Not asserted: who the bolts hit, the generators' rules (C18-08).",
+ "level": "l6_ship_engine_hall",
+ "fixtures": [
+  {
+   "weapon": "thorhammer"
+  }
+ ],
+ "steps": [
+  {
+   "step": "hammer_in_hand",
+   "input": [
+    "0.2 weapon 1",
+    "0.3 weapon 0",
+    "1.2 weapon 1",
+    "1.3 weapon 0",
+    "2.2 draw 1",
+    "2.3 draw 0"
+   ],
+   "duration": 3.5,
+   "expect": [
+    {
+     "probe": "weapon.current",
+     "eq": "thorhammer"
+    },
+    {
+     "probe": "weapon.drawn",
+     "eq": true
+    },
+    {
+     "probe": "enemies.count",
+     "eq": 2,
+     "note": "the two placed soldiers"
+    },
+    {
+     "probe": "world.checkpoint",
+     "eq": 7557
+    },
+    {
+     "probe": "world.chapter",
+     "eq": 6
+    }
+   ]
+  },
+  {
+   "step": "through_the_hall_to_the_cell",
+   "plan": [
+    "go -2575 -9472 150",
+    "go -2375 -8872 150",
+    "go -1875 -8406 150",
+    "go -1275 -8372 150",
+    "go -775 -8072 150",
+    "go -375 -7572 150",
+    "go -375 -6972 150",
+    "go -375 -6372 150",
+    "go -375 -5772 150",
+    "go -375 -5172 150",
+    "go -575 -4572 150",
+    "go -1075 -4272 150",
+    "go -1675 -4006 150",
+    "go -2275 -3939 150",
+    "go -2525 -3722 150",
+    "go -2624 -3300 150"
+   ],
+   "input": [
+    "0.6 fire 1",
+    "0.7 fire 0",
+    "1.2 fire 1",
+    "1.3 fire 0",
+    "1.8 fire 1",
+    "1.9 fire 0",
+    "2.4 fire 1",
+    "2.5 fire 0",
+    "3.0 fire 1",
+    "3.1 fire 0",
+    "3.6 fire 1",
+    "3.7 fire 0",
+    "4.2 fire 1",
+    "4.3 fire 0",
+    "4.8 fire 1",
+    "4.9 fire 0",
+    "5.4 fire 1",
+    "5.5 fire 0",
+    "6.0 fire 1",
+    "6.1 fire 0",
+    "6.6 fire 1",
+    "6.7 fire 0",
+    "7.2 fire 1",
+    "7.3 fire 0",
+    "7.8 fire 1",
+    "7.9 fire 0",
+    "8.4 fire 1",
+    "8.5 fire 0",
+    "9.0 fire 1",
+    "9.1 fire 0",
+    "9.6 fire 1",
+    "9.7 fire 0",
+    "10.2 fire 1",
+    "10.3 fire 0",
+    "10.8 fire 1",
+    "10.9 fire 0",
+    "11.4 fire 1",
+    "11.5 fire 0",
+    "12.0 fire 1",
+    "12.1 fire 0",
+    "12.6 fire 1",
+    "12.7 fire 0",
+    "13.2 fire 1",
+    "13.3 fire 0",
+    "13.8 fire 1",
+    "13.9 fire 0",
+    "14.4 fire 1",
+    "14.5 fire 0",
+    "15.0 fire 1",
+    "15.1 fire 0"
+   ],
+   "duration": 60,
+   "until": {
+    "probe": "world.chapter",
+    "eq": 7
+   },
+   "expect": [
+    {
+     "probe": "step.events",
+     "seq": [
+      "enter:7569>7569",
+      "enter:7566>7566",
+      "cross:7565>7565",
+      "activate:7565>1387"
+     ]
+    },
+    {
+     "calls": [
+      "1387:58",
+      "1387:60"
+     ],
+     "note": "the cell cutscene's handlers"
+    },
+    {
+     "probe": "world.chapter",
+     "eq": 7
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l7_thin_ice"
+    },
+    {
+     "probe": "player.dead",
+     "over": "all",
+     "eq": false
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 5
+    },
+    {
+     "probe": "step.health_lost",
+     "max": 999
+    }
+   ]
+  }
+ ]
+}

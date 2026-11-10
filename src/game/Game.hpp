@@ -1702,6 +1702,9 @@ private:
     void driveBike(Bike& b, const Actions& a, float dt); // rider input for the next physics step
     std::vector<physics::Scene::Vehicle> bikeVehicles(); // the ridden bike for physics_ (stepPhysics)
     void readBikes(float dt);                      // after the step: bike pose, landing, ramming; Lara on it
+    void placeBike(int32_t uid, int32_t target, int32_t marker); // instance 26 on a parked bike: onto an object / its marker
+    std::optional<std::array<int32_t, 3>> bikePlace_; // a placement of the bike she sits on, waiting for her to be taken off it
+    uint64_t bikePlaceTick_ = 0;
     void settleBike(Bike& b);                      // height and pitch from its wheels' ground contacts
     void ramEnemies(Bike& b);
     vec3 bikeOffset(const Bike& b) const;          // its unit's stream offset (0 when not loaded)

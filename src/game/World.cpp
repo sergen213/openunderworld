@@ -757,6 +757,7 @@ void World::tick(const Actions& input) {
                     break;
                 }
         }
+    for (const auto& [uid, target, marker] : script_.takePlacements()) placeBike(uid, target, marker); // instance 26 on a bike
     for (const int32_t bike : script_.takeMounts()) mountBike(bike); // larabase 52 from a sleeping handler (l5: 0.6 s)
     const bool interactPress = a.interact && !interactHeld_;
     const int32_t heldBefore = held_;
