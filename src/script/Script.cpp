@@ -9,6 +9,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -1270,7 +1271,8 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             if (!std::strcmp(name, "music") && nc.function >= 1 && nc.function <= 3) {
-                MusicRequest r{self ? self->uid : 0, nc.function, {}, -1, nc.args.empty() ? 0.0f : std::bit_cast<float>(nc.args[0].bits)};
+                MusicRequest r{self ? self->uid : 0, nc.function, {}, -1, nc.args.empty() ? 0.0f : std::bit_cast<float>(nc.args[0].bits),
+                               nc.function == 2 && nc.args.size() > 1 ? std::bit_cast<float>(nc.args[1].bits) : 0.0f};
                 if (self && self->program && nc.receiver.kind == vm::Value::Kind::Member) {
                     if (const Member* m = self->program->member(self->typeId, nc.receiver.offset)) {
                         if (nc.function != 3) r.track = m->initText;
@@ -2597,17 +2599,27 @@ std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> Runtime::debugLines() co
 
 void Runtime::AudioState::apply(const MusicRequest& r) {
     if (r.function == 3) {
-        if (r.slot < 0 || r.slot == slot) track.clear();
-    } else if (!r.track.empty() && r.track != track) {
-        track = r.track, slot = std::max(0, r.slot);
+        if (r.slot < 0) slots.fill({});
+        else if (size_t(r.slot) < slots.size()) slots[size_t(r.slot)] = {};
+        return;
     }
+    if (r.track.empty() || r.slot >= int32_t(slots.size())) return;
+    Slot& s = slots[size_t(std::max(0, r.slot))];
+    if (r.function == 2) s = {r.track, true};
+    else if (!std::equal(s.track.begin(), s.track.end(), r.track.begin(), r.track.end(),
+                         [](char a, char b) { return std::tolower(uint8_t(a)) == std::tolower(uint8_t(b)); }))
+        s = {r.track, false}; // a Load of the slot's own track leaves it as it is (0x593EB0)
 }
 
 nlohmann::json Runtime::serialize() const {
     nlohmann::json j = stash_;
     j["gameValues"] = gameValues_;
     j["graphSeed"] = graphSeed_;
-    j["audio"] = {{"track", audio_.track}, {"slot", audio_.slot}, {"reverbUnit", audio_.reverbUnit},
+    nlohmann::json music = nlohmann::json::array();
+    for (size_t i = 0; i < audio_.slots.size(); ++i)
+        if (!audio_.slots[i].track.empty())
+            music.push_back({{"slot", i}, {"track", audio_.slots[i].track}, {"playing", audio_.slots[i].playing}});
+    j["audio"] = {{"music", std::move(music)}, {"reverbUnit", audio_.reverbUnit},
                   {"reverbAt", {audio_.reverbAt.section, audio_.reverbAt.offset}}};
     for (const auto& o : objects_) {
         if (auto s = stateOf(o); !s.is_null()) j[std::to_string(o.uid)] = std::move(s);
@@ -2684,7 +2696,14 @@ void Runtime::restore(const nlohmann::json& j) {
     stash_.erase("graphSeed");
     audio_ = {};
     if (const auto a = stash_.find("audio"); a != stash_.end() && a->is_object()) {
-        audio_.track = a->value("track", std::string()), audio_.slot = a->value("slot", 0);
+        audio_.slots.fill({});
+        if (const auto m = a->find("music"); m != a->end() && m->is_array()) {
+            for (const auto& e : *m)
+                if (const int slot = e.value("slot", -1); slot >= 0 && size_t(slot) < audio_.slots.size())
+                    audio_.slots[size_t(slot)] = {e.value("track", std::string()), e.value("playing", true)};
+        } else if (const int slot = a->value("slot", 0); slot >= 0 && size_t(slot) < audio_.slots.size()) {
+            audio_.slots[size_t(slot)] = {a->value("track", std::string()), true}; // older saves: one playing track
+        }
         audio_.reverbUnit = a->value("reverbUnit", std::string());
         if (const auto at = a->value("reverbAt", std::array<uint32_t, 2>{}); !audio_.reverbUnit.empty())
             audio_.reverbAt = {at[0], at[1]};

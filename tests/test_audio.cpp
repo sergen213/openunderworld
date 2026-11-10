@@ -1,4 +1,5 @@
 #include "audio/Mixer.hpp"
+#include "audio/MusicPlayer.hpp"
 #include "audio/SoundPlex.hpp"
 
 #include <SDL3/SDL.h>
@@ -545,28 +546,43 @@ TEST(Mixer, WorldPauseHoldsAndStopWorldEndsWorldVoicesOnly) {
     EXPECT_TRUE(m.playing(menu));
 }
 
-TEST(Mixer, MusicCrossfadeAndStems) {
+TEST(Mixer, MusicVoicesMasterRampAndStems) {
     Mixer m(1000);
-    m.playMusic(constant(2, {16384, 0}, 100000, 1000), 0);
-    m.playMusic(constant(2, {0, 16384}, 100000, 1000), 0.1f); // 100 output frames
+    const auto a = m.playMusic(constant(2, {16384, 0}, 100000, 1000));
+    const auto b = m.playMusic(constant(2, {0, 16384}, 100000, 1000), 0); // a second voice, silent
+    m.setMusic(b, 1, {}, 0.1f); // ramps over 100 output frames
+    m.setMusic(a, 0, {}, 0.1f);
     auto o = run(m, 50);
-    EXPECT_NEAR(o[2 * 49], 0.25f, 0.01f);  // old track half faded out
+    EXPECT_NEAR(o[2 * 49], 0.25f, 0.01f); // half way
     EXPECT_NEAR(o[2 * 49 + 1], 0.25f, 0.01f);
     run(m, 100);
-    EXPECT_EQ(m.activeVoices(), 1u);
+    EXPECT_EQ(m.activeVoices(), 2u); // a silent music voice stays (its slot decides)
     o = run(m, 2);
     EXPECT_NEAR(o[0], 0, 1e-6);
     EXPECT_NEAR(o[1], 0.5f, 1e-4);
+    m.stop(a), m.stop(b);
 
     auto four = std::make_shared<Pcm>(*constant(4, {16384, 16384, 8192, 8192}, 1000, 1000));
-    m.playMusic(four, 0, {0, 1}); // stem 0 muted, stem 1 (channels 2,3) on
+    const auto v = m.playMusic(four, 1, {0, 1}); // stem 0 muted, stem 1 (channels 2,3) on
     o = run(m, 2);
     EXPECT_NEAR(o[0], 0.25f, 1e-4);
-    m.setMusicStemGains({1, 0});
+    m.setMusic(v, 1, {1, 0});
     o = run(m, 2);
     EXPECT_NEAR(o[0], 0.5f, 1e-4);
-    m.stopMusic(0);
+    m.stop(v);
     EXPECT_EQ(m.activeVoices(), 0u);
+}
+
+// A music voice's position is its playback clock: every loop pass counted (tru.exe's music clock reads the stream
+// counter, which runs on through the .mul loop — Wine, AUDIO.md §5.3).
+TEST(Mixer, PositionCountsLoopPasses) {
+    Mixer m(1000);
+    auto p = std::make_shared<Pcm>(*constant(2, {100, 100}, 100, 1000));
+    p->loopStart = 0;
+    const auto v = m.playMusic(p);
+    run(m, 250);
+    ASSERT_TRUE(m.position(v));
+    EXPECT_NEAR(*m.position(v), 0.25, 1e-9);
 }
 
 TEST(Mixer, PlaysThroughSdlDummyDevice) {
@@ -1196,4 +1212,146 @@ TEST(SoundPlayer, BusyFollowsGameTimeNotTheMixer) {
     sp.stop(loop);
     EXPECT_FALSE(sp.busy(loop));
     EXPECT_FALSE(sp.busy(0));
+}
+
+// 0x595250 reads the stream's play position: a position behind the last one holds the clock and gives a frame time
+// of 0 (the guard; in play the counter runs on through the .mul loop).
+TEST(Mus, StreamClockHoldsWhenThePositionGoesBack) {
+    const auto f = parseMus(makeMus());
+    MusSequencer q(f);
+    std::array<uint8_t, 256> vars{};
+    const float vol = 64 / 127.0f;
+    EXPECT_TRUE(q.updateAt(0, vars));
+    EXPECT_TRUE(q.updateAt(0.25, vars)); // 250 ms of stream: the fade to 1 over 1 s ramps a quarter
+    EXPECT_NEAR(q.stemGains()[0], vol * 0.25f, 1e-6);
+    EXPECT_EQ(q.ticks(), 240u);          // beat 0.5 at 120 BPM
+    EXPECT_FALSE(q.updateAt(0.1, vars)); // behind: clock and fades hold
+    EXPECT_EQ(q.ticks(), 240u);
+    EXPECT_NEAR(q.stemGains()[0], vol * 0.25f, 1e-6);
+    EXPECT_FALSE(q.updateAt(0.2499, vars));
+    EXPECT_TRUE(q.updateAt(0.5, vars)); // past the held position: +250 ms
+    EXPECT_EQ(q.ticks(), 480u);
+    EXPECT_NEAR(q.stemGains()[0], vol * (0.25f + 0.75f * 0.25f), 1e-6);
+}
+
+namespace {
+// A player over a 1 kHz mixer whose tracks are constant stereo tones: "left" on the left channel, others on the right.
+struct PlayerRig {
+    Mixer mixer{1000};
+    std::vector<std::string> loads, lines;
+    MusicPlayer player{mixer,
+                       [this](const std::string& name) -> std::optional<MusicPlayer::Track> {
+                           loads.push_back(name);
+                           if (name == "missing") return std::nullopt;
+                           return MusicPlayer::Track{constant(2, name == "left" ? std::vector<int16_t>{16384, 0} : std::vector<int16_t>{0, 16384},
+                                                              100000, 1000)};
+                       },
+                       [this](const std::string& l) { lines.push_back(l); }};
+    std::array<uint8_t, 256> vars{};
+    // n game ticks of 1/60 s, each followed by its 1000/60 output frames; returns the last frame.
+    std::array<float, 2> ticks(int n) {
+        std::array<float, 2> last{};
+        for (int i = 0; i < n; ++i) {
+            player.update(1 / 60.0f, vars);
+            const auto o = run(mixer, 16);
+            last = {o[30], o[31]};
+        }
+        return last;
+    }
+};
+} // namespace
+
+// The scripts' crossfade (pool_to_ragnarok tick 101: Play l4_staircase_upper_mus_01 in slot 1, Stop slot 0 over 3 s):
+// two slots, two voices, each master linear over its own fade (0x58ADE0), the old slot freed when its fade ends.
+TEST(MusicPlayer, TwoSlotsCrossfadeWithTheirOwnFades) {
+    PlayerRig r;
+    r.player.play(0, "left", 0, 0);
+    r.ticks(1);
+    EXPECT_NEAR(r.player.slot(0).master, 1, 1e-4);
+    r.player.play(1, "right", 0, 2); // fade in 2 s (60 frames)
+    r.player.stop(0, 3);             // fade out 3 s (90 frames)
+    EXPECT_TRUE(r.player.slot(0).fadingOut);
+    auto o = r.ticks(60); // 1 s
+    EXPECT_NEAR(r.player.slot(0).master, 2 / 3.0f, 1e-3);
+    EXPECT_NEAR(r.player.slot(1).master, 0.5f, 1e-3);
+    EXPECT_NEAR(o[0], 0.5f * 2 / 3.0f, 0.01f); // both audible: the overlap
+    EXPECT_NEAR(o[1], 0.5f * 0.5f, 0.01f);
+    o = r.ticks(60); // 2 s
+    EXPECT_NEAR(r.player.slot(1).master, 1, 1e-4);
+    EXPECT_NEAR(r.player.slot(0).master, 1 / 3.0f, 1e-3);
+    r.ticks(62); // 3 s and the frame 0x594D10 frees the slot in
+    EXPECT_TRUE(r.player.slot(0).track.empty());
+    EXPECT_EQ(r.mixer.activeVoices(), 1u);
+    o = r.ticks(1);
+    EXPECT_NEAR(o[0], 0, 1e-6);
+    EXPECT_NEAR(o[1], 0.5f, 1e-4);
+    EXPECT_EQ(r.loads, (std::vector<std::string>{"left", "right"}));
+}
+
+// A request for the track a slot holds leaves it playing where it is (0x593EB0 compares the names, case-insensitive).
+TEST(MusicPlayer, SameTrackRequestDoesNotRestart) {
+    PlayerRig r;
+    r.player.play(2, "left", 0, 1);
+    r.ticks(60);
+    const auto voice = r.player.slot(2).voice;
+    const double at = *r.mixer.position(voice);
+    r.player.play(2, "LEFT", 4, 4);
+    r.player.load(2, "left", 4);
+    r.ticks(30);
+    EXPECT_EQ(r.player.slot(2).voice, voice);
+    EXPECT_NEAR(*r.mixer.position(voice), at + 0.48, 0.02);
+    EXPECT_NEAR(r.player.slot(2).master, 1, 1e-4);
+    EXPECT_EQ(r.loads.size(), 1u);
+}
+
+// One slot holds one track: a new one waits for the playing one's fade-out, then loads and fades in (0x594D10
+// requests the pending name once the slot is free).
+TEST(MusicPlayer, NewTrackInTheSameSlotFollowsTheFadeOut) {
+    PlayerRig r;
+    r.player.play(0, "left", 0, 0);
+    r.ticks(1);
+    r.player.play(0, "right", 1, 0.5f);
+    EXPECT_EQ(r.player.slot(0).pending, "right");
+    r.ticks(30);
+    EXPECT_NEAR(r.player.slot(0).master, 0.5f, 1e-3);
+    EXPECT_EQ(r.mixer.activeVoices(), 1u);
+    r.ticks(31); // fade done, the slot freed
+    EXPECT_EQ(r.mixer.activeVoices(), 0u);
+    r.ticks(1); // the pending track loads
+    EXPECT_EQ(r.player.slot(0).track, "right");
+    r.ticks(14); // fade in 0.5 s
+    EXPECT_NEAR(r.player.slot(0).master, 0.5f, 0.04f);
+    r.ticks(16);
+    EXPECT_NEAR(r.player.slot(0).master, 1, 1e-4);
+}
+
+// Load (native 1) loads silently; Play of the same track starts it. A Play during the fade-out of a Stop fades it back
+// in without a restart. A stop with no fade (or of a track not playing) frees the slot at once.
+TEST(MusicPlayer, LoadThenPlayAndFadeBackIn) {
+    PlayerRig r;
+    r.player.load(1, "left", 0);
+    r.ticks(5);
+    EXPECT_EQ(r.player.slot(1).track, "left");
+    EXPECT_FALSE(r.player.slot(1).playing);
+    EXPECT_EQ(r.mixer.activeVoices(), 0u);
+    r.player.play(1, "left", 0, 1);
+    r.ticks(60);
+    EXPECT_NEAR(r.player.slot(1).master, 1, 1e-4);
+    const auto voice = r.player.slot(1).voice;
+    r.player.stop(1, 2);
+    r.ticks(30);
+    EXPECT_NEAR(r.player.slot(1).master, 0.75f, 1e-3);
+    r.player.play(1, "left", 0, 1); // back up over 1 s from 0.75
+    r.ticks(30);
+    EXPECT_NEAR(r.player.slot(1).master, 0.875f, 1e-3);
+    EXPECT_EQ(r.player.slot(1).voice, voice);
+    r.player.stop(1, 0);
+    EXPECT_EQ(r.mixer.activeVoices(), 0u);
+    r.ticks(1);
+    EXPECT_TRUE(r.player.idle());
+    r.player.play(3, "missing", 0, 0); // cannot load: reported once, not retried
+    r.ticks(3);
+    EXPECT_EQ(std::count(r.loads.begin(), r.loads.end(), "missing"), 1);
+    r.player.reset();
+    EXPECT_TRUE(r.player.idle());
 }

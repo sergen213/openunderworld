@@ -225,38 +225,48 @@ TEST(ScriptRuntime, StringFieldsRoundTrip) {
     EXPECT_EQ(object->script->properties.at((8ull << 32) | 7), 1u);
 }
 
-// The music request and reverb a load does not ask for again (Runtime::AudioState): one voice as ou-game's Music, saved.
+// The music requests and reverb a load does not ask for again (Runtime::AudioState): per music slot, the track the
+// requests leave there (Load = loaded, Play = playing), saved.
 TEST(ScriptRuntime, AudioStateFollowsMusicRequestsAndRoundTrips) {
     using Request = Runtime::MusicRequest;
+    using Slot = Runtime::AudioState::Slot;
     Runtime::AudioState a;
-    a.apply(Request{0, 2, "l4_ballcourt_mus_01", 0, 2});
-    EXPECT_EQ(a.track, "l4_ballcourt_mus_01");
-    a.apply(Request{0, 1, "l1_intro", 7, 0}); // another slot takes over
-    EXPECT_EQ(a.track, "l1_intro");
-    EXPECT_EQ(a.slot, 7);
-    a.apply(Request{0, 3, {}, 0, 3}); // a stop in another slot leaves it
-    EXPECT_EQ(a.track, "l1_intro");
-    a.apply(Request{0, 3, {}, 7, 3});
-    EXPECT_TRUE(a.track.empty());
-    a.apply(Request{0, 1, "l1_seatop_mus_01", -1, 0}); // unknown slot: 0; a stop with an unknown slot clears it
-    EXPECT_EQ(a.slot, 0);
-    a.apply(Request{0, 3, {}, -1, 3});
-    EXPECT_TRUE(a.track.empty());
+    a.apply(Request{0, 2, "l4_ballcourt_mus_01", 0, 2, 0});
+    EXPECT_EQ(a.slots[0], (Slot{"l4_ballcourt_mus_01", true}));
+    a.apply(Request{0, 1, "l1_intro", 7, 0, 0}); // another slot: both kept
+    EXPECT_EQ(a.slots[7], (Slot{"l1_intro", false}));
+    EXPECT_EQ(a.slots[0].track, "l4_ballcourt_mus_01");
+    a.apply(Request{0, 2, "l1_intro", 7, 0, 3}); // Play of the loaded track
+    EXPECT_TRUE(a.slots[7].playing);
+    a.apply(Request{0, 1, "L1_INTRO", 7, 0, 0}); // a Load of the slot's own track leaves it playing
+    EXPECT_TRUE(a.slots[7].playing);
+    a.apply(Request{0, 3, {}, 0, 3, 0}); // a stop in one slot leaves the other
+    EXPECT_TRUE(a.slots[0].track.empty());
+    EXPECT_EQ(a.slots[7].track, "l1_intro");
+    a.apply(Request{0, 1, "l1_seatop_mus_01", -1, 0, 0}); // unknown slot: 0; a stop with an unknown slot clears all
+    EXPECT_EQ(a.slots[0].track, "l1_seatop_mus_01");
+    a.apply(Request{0, 3, {}, -1, 3, 0});
+    EXPECT_TRUE(a.slots[0].track.empty() && a.slots[7].track.empty());
 
     Runtime r;
-    r.restore({{"audio", {{"track", "l3_bedroom_mus_01"}, {"slot", 1}, {"reverbUnit", "l4_trailstart"}, {"reverbAt", {3, 128}}}}});
+    r.restore({{"audio", {{"music", {{{"slot", 1}, {"track", "l3_bedroom_mus_01"}, {"playing", true}},
+                                     {{"slot", 6}, {"track", "l3_main_hall_mus_02"}, {"playing", false}}}},
+                          {"reverbUnit", "l4_trailstart"}, {"reverbAt", {3, 128}}}}});
     Runtime restored;
     restored.restore(r.serialize());
     const auto& s = restored.audioState();
-    EXPECT_EQ(s.track, "l3_bedroom_mus_01");
-    EXPECT_EQ(s.slot, 1);
+    EXPECT_EQ(s.slots[1], (Slot{"l3_bedroom_mus_01", true}));
+    EXPECT_EQ(s.slots[6], (Slot{"l3_main_hall_mus_02", false}));
+    EXPECT_TRUE(s.slots[0].track.empty());
     EXPECT_EQ(s.reverbUnit, "l4_trailstart");
     EXPECT_EQ(s.reverbAt.section, 3u);
     EXPECT_EQ(s.reverbAt.offset, 128u);
     restored.stopAudio(); // leaving play
-    EXPECT_TRUE(restored.audioState().track.empty() && restored.audioState().reverbUnit.empty());
+    EXPECT_TRUE(restored.audioState().slots[1].track.empty() && restored.audioState().reverbUnit.empty());
+    restored.restore({{"audio", {{"track", "l3_bedroom_mus_01"}, {"slot", 1}}}}); // an older save: one playing track
+    EXPECT_EQ(restored.audioState().slots[1], (Slot{"l3_bedroom_mus_01", true}));
     restored.restore(nlohmann::json::object()); // older saves / a chapter start: nothing
-    EXPECT_TRUE(restored.audioState().track.empty());
+    EXPECT_TRUE(restored.audioState().slots[1].track.empty());
 }
 
 // ---- Bytecode VM --------------------------------------------------------------------------------------
@@ -1186,8 +1196,8 @@ TEST(ScriptRealData, SeafloorVolumeSetsHelpCondition) {
     EXPECT_EQ(r.helpCondition(), "hint_05");
 }
 
-// Entering soundvolume 5674 (l4_ragnarok_room) runs unit script 14147 vt 25: `music` 2 requests
-// l4_staircase_upper_mus_01 in slot 1 and stops slot 0 from a music local; music variable 0x7D = 8 (AUDIO.md §9.4).
+// Entering soundvolume 5674 (l4_ragnarok_room) runs unit script 14147 vt 25: `music` 2 plays
+// l4_staircase_upper_mus_01 in slot 1 (fade in 2 s) and `music` 3 stops slot 0 (3 s) from a music local; music variable 0x7D = 8 (AUDIO.md §9.4).
 TEST(ScriptRealData, RagnarokVolumeRequestsStaircaseMusic) {
     const char* g = std::getenv("OU_GAME_DIR");
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -1207,8 +1217,11 @@ TEST(ScriptRealData, RagnarokVolumeRequestsStaircaseMusic) {
     EXPECT_EQ(req[0].function, 2u);
     EXPECT_EQ(req[0].track, "l4_staircase_upper_mus_01");
     EXPECT_EQ(req[0].slot, 1);
+    EXPECT_FLOAT_EQ(req[0].fadeOut, 0); // Play(fade-out 0 s, fade-in 2 s): the crossfade's new half
+    EXPECT_FLOAT_EQ(req[0].fadeIn, 2);
     EXPECT_EQ(req[1].function, 3u);
     EXPECT_EQ(req[1].slot, 0);
+    EXPECT_FLOAT_EQ(req[1].fadeOut, 3); // Stop(3 s): the old half
     EXPECT_EQ(r.gameValues()[0x7D], 8);
 }
 

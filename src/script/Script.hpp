@@ -308,26 +308,33 @@ public:
     using FeedbackNative = std::function<bool(bool shake, uint64_t key, const Member& m, uint32_t value, uint32_t function,
                                               std::span<const vm::Value> args, uint32_t& result)>;
     void setFeedbackNative(FeedbackNative native) { feedback_ = std::move(native); }
-    // `music` natives (bind 0x7ACB40) on a value {char* track, i32 slot}: 1 Play(fade s) (0x5942F0), 2 Play(fade s,
-    // fade-out s) (0x594320), 3 Stop(fade s): the slot fades out (0x593EB0 with a null name). Slot = music player
-    // 0xCC5260 + slot * 0x528 (AUDIO.md §9.4). Queued in call order; the music player takes them each tick.
+    // `music` natives (bind 0x7ACB40, thunks 0x79B990/0x79B9B0/0x79B9D0 -> 0x4AA420/0x4AA450/0x4AA490) on a value
+    // {char* track, i32 slot}: 1 Load(fade-out s) (0x5942F0: loads the track, the slot's playing one fades out first),
+    // 2 Play(fade-out s, fade-in s) (0x594320), 3 Stop(fade-out s) (0x594320 with a null name). Slot = music player
+    // 0xCC5260 + slot * 0x528 (8 slots; AUDIO.md §9.9). Queued in call order; the music player takes them each tick.
     struct MusicRequest {
         int32_t owner = 0;
         uint32_t function = 0;
         std::string track;  // empty for 3
         int32_t slot = -1;  // -1: the value is not known (a local whose initial value is not decoded)
-        float fade = 0;     // args[0], seconds
+        float fadeOut = 0;  // args[0], seconds
+        float fadeIn = 0;   // 2: args[1], seconds
     };
     std::vector<MusicRequest> takeMusicRequests() { return std::exchange(musicRequests_, {}); }
     // What the scripts set up for the sound that a load does not ask for again: ours resumes objects without running
-    // their constructors and keeps Lara's trigger-volume membership, so the music request and the `reverb` of the volume
-    // she stands in do not come again, where tru.exe rebuilds the level on a load and its scripts ask anew [I] (its
-    // save's music name, +0x278, is only ever the empty name 0x5DF760 sets: 0x5B21D0 is its one writer [O]). Saved
-    // ("audio"); ou-game applies it after a load. The music follows ou-game's one-voice Music: a play request in any slot
-    // takes over, a stop clears it in the slot of the track or with an unknown slot (-1).
+    // their constructors and keeps Lara's trigger-volume membership, so the music requests and the `reverb` of the
+    // volume she stands in do not come again, where tru.exe rebuilds the level on a load and its scripts ask anew [I]
+    // (its save's music name, +0x278, is only ever the empty name 0x5DF760 sets: 0x5B21D0 is its one writer [O]).
+    // Saved ("audio"); ou-game applies it after a load. Per music slot, the track the requests leave there (fades
+    // aside, audio::MusicPlayer): Load = loaded, Play = playing, Stop = none; a stop with an unknown slot (-1) clears
+    // every slot, other requests with an unknown slot go to slot 0 [I].
     struct AudioState {
-        std::string track; // empty: no music requested
-        int32_t slot = 0;
+        struct Slot {
+            std::string track; // empty: none
+            bool playing = false;
+            bool operator==(const Slot&) const = default;
+        };
+        std::array<Slot, 8> slots{};
         std::string reverbUnit; // the last `reverb` 1 (empty: none): its settings in this unit's DRM at reverbAt
         cdc::Pointer reverbAt{};
         void apply(const MusicRequest& r);

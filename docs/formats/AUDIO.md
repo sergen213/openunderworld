@@ -324,7 +324,13 @@ Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494
   slot +0x20 = `(ms << 16) / (60000 × 256 / BPM)`. `0x5950A0` makes ticks = `slot +0x20 × PPQN >> 8`. So the
   scripts run on 120 BPM beats of played music, not on the sequence tempo (100 BPM). A position that went
   backwards leaves the clock and frame time unchanged. Without a stream, beats += dt × 1000 / (tempo / 1000),
-  ticks = beats × PPQN.
+  ticks = beats × PPQN. The frame time (+0x30) is zeroed after every update (0x595250's tail), and the whole update is
+  skipped while 0xCCDE88 is set (the pause, 0x5874B0 / 0x5874D0): clocks, fades and scripts hold.
+  - **The counter runs on through the `.mul` loop** [O, Wine 2026-11-09, `openunderworld-work/musicwine`]: new game →
+    l3_main_bedroom, player slot 0 = `l3_bedroom_mus_01` (88.002 s, 6 ch, 44 098 Hz), Mus slot 0 at 0xCCA9A0
+    (+0x18 ms) read every ~3 s for 384 s: 40 852 → 424 737 ms, monotonic, 0.999 × wall time, through 4 loops; master
+    +0x38 = 1. So the clock keeps counting played samples and the backwards guard never fires in play (the zeroing of
+    the channel counters in 0x596010 belongs to its stream-switch path [I]).
 - The scripts are polling state machines. In 72 of 75 files every delta is 0. Example
   `l4_pool_mus_01`: reset `var[0x7F]`, `var[0x0E]`, `var[0x0F]` to 0, set both stem volumes to
   0x28, fade both to 0 at once, then labels L0–L8 = intensity level `var[0x7D]`. Each level first
@@ -354,12 +360,13 @@ Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494
     (`0x594870`), and get/set/add/subtract helpers `0x4A3E00`/`10`/`30`/`50` [I: script natives].
   - No engine code writes `0x7D` with a constant index: the intensity level comes from scripts — soundvolume
     scripts set it with `gamebase` 5 when Lara enters (384 volumes, values 0–19; §9.4).
-- **`MusSequencer`** models the stream clock (with game time standing in for the stream position), variable
+- **`MusSequencer`** models the stream clock (`updateAt`: the Mixer voice's played position, loops counted; `update`
+  adds seconds for offline renders), variable
   ops, branches, gotos, loops (0x2E–0x30), operand substitution (0x41–0x43), end of track and stem
   volume/fade/mute ramp/tempo (0x32–0x44, 0x48, 0x50, 0x51, 0x60, 0x62, 0x64–0x66, 0x68, 0x69). Channel, slot
   and pan commands are ignored (absent from retail; stem pan only reaches mono stems). `section()` is the
   label of the latest taken jump: ou-game logs its changes as `music <name> beat B: section Ln (vars …)`.
-  Callers feed `stemGains()` to `Mixer::setMusicStemGains` each frame. `ou-audio mus <game> <name> --dump`
+  `audio::MusicPlayer` feeds `stemGains()` and the slot master to `Mixer::setMusic` each tick (§9.9). `ou-audio mus <game> <name> --dump`
   lists a script; `-o out.wav --set T:VAR=VALUE` renders the stems with variable changes and prints the
   section changes with their beat.
 
@@ -383,8 +390,9 @@ Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494
     rolloff, `min / clamp(d, min, max)`; `setAttenuation(fn)` overrides it. Pan comes from
     `dot(dir, cross(forward, up))`.
   - Mono uses equal-power pan, multichannel uses balance. Resampling is linear.
-  - Voice and music: `playVoice(pcm)`; `playMusic(pcm, fadeSeconds, stemGains)` crossfades with the
-    current track; `setMusicStemGains`, `stopMusic(fade)`.
+  - Voice and music: `playVoice(pcm)`; `playMusic(pcm, gain, stemGains)` starts a looping Music-bus voice and
+    returns its id; `setMusic(id, gain, stemGains, rampSeconds)` ramps its master; `position(id)` counts every loop
+    pass. `audio::MusicPlayer` (§9.9) owns one per playing slot.
   - Control: `stop(id, fade)`, `setVolume`, `setPosition`, `setPitch`, `setBusVolume`.
 - **Deviations from the original** [I]
   - FMOD DSPs: only the types retail data uses (lowpass / highpass / parametric EQ as RBJ biquads) and a Freeverb-style
@@ -585,16 +593,68 @@ Lara. Replay bike_ride: tick 66 `bike engine start`, rpm 4252 / 7224 / 8822 at t
 
 ### 9.9 Music requests, cinematics [V-exe]
 
-`music` natives (bind 0x7ACB40) work on a value `{char* track, i32 slot}`: 1 Play(fade s) (0x5942F0), 2 Play(fade s,
-fade-out s) (0x594320), 3 Stop(fade s) — 0x593EB0 with a null name fades that slot out. Slot = player 0xCC5260 + slot ×
-0x528. `music` locals start at their initial value (Vm), `script::Runtime::takeMusicRequests` hands them to ou-game's
-Music (one voice: a request crossfades, a stop fades only the slot holding the playing track). Unit music follows the
+`music` natives (bind 0x7ACB40; thunks 0x79B990 / 0x79B9B0 / 0x79B9D0 → 0x4AA420 / 0x4AA450 / 0x4AA490) work on a
+value `{char* track, i32 slot}`; each float argument is seconds × 30.0 (double at 0x8439B8) truncated by `_ftol` (0x814D20)
+into 30 Hz frames, and every fade length is frames × 0.033333335 s:
+
+| fn | Script call | Exe | 0x593EB0(name, fade-out, fade-in, play) |
+|---|---|---|---|
+| 1 | Load(fade-out s) | 0x5942F0 | (track, out, 0, 0) |
+| 2 | Play(fade-out s, fade-in s) | 0x594320 | (track, out, in, 1) |
+| 3 | Stop(fade-out s) | 0x594320 | (null, out, 0, 1) |
+
+The player has **8 slots** at 0xCC5260 + slot × 0x528 (loop end 0xCC80C4) [V-exe], each tied to a Mus slot (+0x51C →
+0xCCA9A0 + n × 0x178, 8 of them, end 0xCCB560). Player slot fields: +0x000 loaded track name, +0x100 pending name,
++0x200/+0x300/+0x400 `.mus` / `.sam` / `.mul` paths, +0x500 pending play flag, +0x501 abort load, +0x502 fading out,
++0x503 keep loaded after the fade, +0x504, +0x505 play (started, or start when loaded; 0x58BD50 stores the request's
+flag), +0x506 start the stream when ready, +0x508 loading flags, +0x50C fade-in frames, +0x514/+0x518 load buffers,
++0x51C Mus slot, +0x520 stream, +0x524 loader. Mus slot master: +0x38 gain, +0x3C seconds left, +0x40 target, +0x44
+end-in-done flag, +0x35 done. Retail scripts use slots 0, 1, 2, 6, 7 (logged requests: fn 1 in slots 0/1/7, fn 2 in
+0/1/2/6/7, fn 3 in 0/1); Load is always followed by Play of the same track (`l2_cliffclimb_mus_02` slot 1,
+`l2_waters_of_thailand` slot 7).
+
+- **0x593EB0** (request), names compared with `__stricmp`:
+  - Same track as the slot's: if it is fading out, a Load sets +0x503 (the fade finishes, the track stays loaded but
+    stopped); a Play fades the master back to 1 over the fade-in (0x589370; 0 frames: at once) and drops the pending
+    name. A Play of a loaded, unstarted track starts it (0x591BE0 restarts the sequence, master 0, then the fade-in;
+    with a stream the start waits for it, +0x506). Otherwise nothing: **a request for the playing track never
+    restarts it**.
+  - Another track: becomes pending (+0x100, +0x500, +0x50C). If the slot plays a track and fade-out > 0, the master
+    fades to 0 over the fade-out (+0x44 = 1, +0x502 = 1) and the request ends there; otherwise the old track is freed
+    (0x5939F0 → 0x593950) and the new one loaded (0x58BD50: name copied to +0x000, +0x505 = play). **Within one slot
+    the new track only loads after the old one has faded out** — no overlap.
+  - Stop: with fade-out < 1 frame, or a track not playing (or loading), the slot is freed at once; else the master fades
+    to 0 (unless a fade-out already runs) and the pending name is dropped.
+- **0x594D10** (per slot, each frame, unless loading): when the master fade is done (+0x35) the slot frees its track
+  (0x593950: stream stopped at once; 0x583CA0 clears the name, the paths and +0x501..+0x506 but not the pending name)
+  or, with +0x503, stays loaded and stopped (ours stops the voice; a later Play restarts it as the exe restarts the
+  sequence and stream [I]); a stream waiting to start (+0x506)
+  starts with the fade-in; a finished stream frees the slot. With nothing loaded the name clears; then, if not fading,
+  a pending name that differs from the slot's is requested again as (pending, 0, +0x50C, +0x500) — the next frame after
+  the fade-out ended.
+- **Master fade 0x58ADE0** (in 0x595250, game frame time): while |left| > 0.01 s, master += (target − master) / left ×
+  dt and left −= dt, or master = target when left ≤ dt; a fade with +0x44 sets +0x35 once left < 0.01 s. Linear.
+  0x5864E0 then sets each stem's stream volume to fade × volume × mute × master.
+- **A crossfade is two slots**: e.g. pool_to_ragnarok tick 101 Play `l4_staircase_upper_mus_01` in slot 1 and Stop slot 0
+  over 3 s; both play, each with its own fade. A level change, load or quit frees every slot at once and drops pending
+  names (0x593D10 → 0x593BE0). The pause (0x5874B0, 0xCCDE88) holds the whole music update; the music voices are held
+  with the Music bus (§9.11).
+- **Ours** (`audio::MusicPlayer`, `src/audio/MusicPlayer.*`): the 8 slots with these rules, one Mixer voice per started
+  track (`Mixer::playMusic` / `setMusic`: master ramped linearly over each tick, stem gains from the slot's
+  MusSequencer clocked by the voice's played position, §5.3). Loads are synchronous, so the exe's frames of loading
+  (+0x508) and stream start (+0x506) take no time [I]. Script requests (`script::Runtime::takeMusicRequests`) go to it as
+  Load / Play / Stop in their slot (unknown slot −1: slot 0, a Stop with −1 stops every slot [I]); ou-game logs each
+  request, every slot change (`music slot N plays|loads|fades out|faded out …`), section changes per slot and, twice a
+  second while a fade runs, `music masters: slot N <track> <gain> (in|out) …`. The save's `audio.music` keeps per slot
+  the track the requests left there and whether it plays (`Runtime::AudioState`); a load replays them (Play with a 2 s
+  fade-in, or Load) [I: the exe's scripts ask again].
+Unit music follows the
 scripts: tru.exe has no unit-change switch [V-exe]. Besides the natives, only 0x5B21D0 starts music (slot 0, 2 s fade):
 at a level load (0x5DE040, 0x5DE3E0) with the name the save game keeps at +0x278 (copied from 0xD98F64, which only
 0x5B21D0 itself writes; 0x5DF760 hands it the empty name at every level change, so it stays empty: §9.11 "Loads and the
 music"), and in 0x5B22A0 when the sound it waits for ends. Every unit
 with its own `<unit>_mus_01` names it in its own DRM (31 units, survey of the `*_mus_NN` strings) [V-data]: its scripts
-request it. Ours: `<unit>_mus_01` also plays when Lara enters a unit while nothing plays [I]. Replay pool_to_ragnarok [O]: tick 1
+request it. Ours: `<unit>_mus_01` also plays (slot 0, 1 s fade-in) when Lara enters a unit while no slot holds a track [I]. Replay pool_to_ragnarok [O]: tick 1
 l4_pool_mus_01; tick 101 soundvolume 5674 vt 58 -> unit script 14147 vt 25 -> `l4_staircase_upper_mus_01` (slot 1), stop
 slot 0 (3 s), 0x7D 0 -> 8 — the original switches there, not on the unit change. l1_ship_lower_hallway: tick 1
 `l1_ship_engine_room_mus_01` (slot 1). 0x7B / 0x0D writers were not reached in a replay. Natives on a null receiver are
@@ -615,7 +675,7 @@ FDY squad mate down, SWP lost her; GAMEPLAY.md "Mercs") start a random DTP of th
   GameGlobals vt 0 plays its sound member +380 = generalbank DTP 78: Assignment → Envelope (param 0: 1 → 0 over 1.05 s)
   → stream `music\tomb_raider_underworld_main_theme` (`pc-w\audio\streams\…mul`, 213.6 s stereo, loop start 0).
   `stopTitleMusic` comes from scripts 6 (constructor), 60 (attract-mode timer), 110 ("Unmuting audio during a movie")
-  and 121 (intro movie). Ours: `Music::title` on the Music bus whenever the main menu opens; it stops with a 1.05 s fade
+  and 121 (intro movie). Ours: `Music::title`, its own Music-bus voice (not a music player slot), whenever the main menu opens; it stops with a 1.05 s fade
   [I: the envelope as the release curve] when a game starts or a movie plays.
 - **Menu movie sound.** The frontend (0x5DAE20) loops `medsea_loop.bik` through the movie player 0x4A12B0, Bink audio on
   (track 0: 44.1 kHz stereo sea ambience, about −25 dBFS). Its volume (0x4A0F20 `BinkSetVolume`) is sound category 25 of
@@ -644,9 +704,11 @@ FDY squad mate down, SWP lost her; GAMEPLAY.md "Mercs") start a random DTP of th
   name, so the field is always empty and a load's music comes from the rebuilt level's scripts [O, asm: writers of
   0xD98F64, callers of 0x5B21D0 / 0x5B2230]. Ours resumes objects without their constructors and keeps Lara's
   trigger-volume membership, so those requests (and the soundvolume's `reverb`) would not come again: the runtime keeps
-  the last music request (one voice, as `Music`) and the last `reverb` 1 as `script::Runtime::AudioState`, saved under
-  `"audio"`, and ou-game replays both after a load (`... , saved request`; `GameSound::resume`) [I: the same result as
-  the original's scripts asking again]. Older saves: the unit's own track. Test
+  per music slot the track the requests left there and whether it plays (§9.9), and the last `reverb` 1 as
+  `script::Runtime::AudioState`, saved under `"audio"` (`music`: `[{slot, track, playing}]`), and ou-game replays both
+  after a load (`music slot N <track> (…, saved request)`; `GameSound::resume`) [I: the same result as the original's
+  scripts asking again]. Saves with the older `{track, slot}` load as that track playing in that slot; saves without
+  either: the unit's own track. Test
   `ScriptRuntime.AudioStateFollowsMusicRequestsAndRoundTrips`.
 - **Transitions captured** (ours: ou-game under an invisible KWin, `--music-wav`, input scripts; logs and WAVs in
   `openunderworld-work/audiocarry`; the original's side from the decomp above):
@@ -663,6 +725,13 @@ FDY squad mate down, SWP lost her; GAMEPLAY.md "Mercs") start a random DTP of th
     Before: l3_main_hall's music (fading 3 s by its own stop request), its script sounds and its reverb ran on into
     l1_seatop. Ours starts l1_seatop's own track at the unit change before the scripts ask (the [I] unit fallback of
     §9.9; the original stays silent until then — here under the muted 030_med_yacht cutscene).
+  - slot crossfade (`openunderworld-work/musicslots`: `--level 'pc-w\l4_pool.drm' --input-script
+    tests/replays/pool_to_ragnarok.txt --frames 400 --music-wav`, 2026-11-09) [O, log + WAV RMS]: tick 1 Play
+    l4_pool_mus_01 slot 0 (fade in 2 s; the unit fallback no longer fires once a script asked in that tick); tick 101
+    Play l4_staircase_upper_mus_01 slot 1 (in 2 s) and Stop slot 0 (3 s) — the second Stop of slot 0 in that tick is a
+    no-op; masters slot 0 0.741 / 0.602 / 0.463 / 0.324 / 0.185 / 0.046 (out, linear from 0.84 where its fade-in had
+    got to) against slot 1 0.167 / 0.417 / 0.667 / 0.917 / 1 (in) at ticks 120–270; slot 0 freed at tick 281; 0.5 s RMS
+    0.058 → 0.116 as the staircase stems rise. Both sequencers walk their own sections when 0x7D goes 0 → 8.
   - `--load` of a chapter-4 save made at the chapter start (`ch4save` → `ch4load`): saved request and reverb back [O, log].
   Not covered: death and respawn at a checkpoint (whether tru.exe reloads the level there) [U].
 - **Menu sounds.** The uiscreen scripts play their `sound` members (Play, type 71 +0xD4) on input. Script 130: vt 36/37

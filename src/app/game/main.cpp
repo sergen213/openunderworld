@@ -30,6 +30,7 @@
 #include "anim/Anim.hpp"
 #include "audio/Audio.hpp"
 #include "audio/Mixer.hpp"
+#include "audio/MusicPlayer.hpp"
 #include "cdc/Cdc.hpp"
 #include "cine/Cine.hpp"
 #include "collision/Collision.hpp"
@@ -1769,86 +1770,73 @@ bool quickLoad(ou::game::World& w, const std::string& slot) {
     }
 }
 
-// Music (docs/formats/AUDIO.md §5, GAMEPLAY.md "Music"): one track at a time, pc-w\music\<name>\<name>.mul
-// streamed with the stem gains its .mus script computes (audio::MusSequencer). Scripts request tracks with `music`
-// natives (script::Runtime::MusicRequest: unit scripts called from soundvolumes, cinematics); the exe has two slots
-// (0xCC5260 + slot * 0x528) that fade independently, ours one voice: a request in another slot crossfades, a stop
-// fades out only the slot that holds the playing track. Without any request the unit's own "<unit>_mus_01" plays [I].
-// The music variables are the script runtime's gamebase values (tru.exe keeps one array, 0xCCB560, for scripts and
-// the sequencer; AUDIO.md §5.3, §9.4).
+// Music (docs/formats/AUDIO.md §5, §9.9, GAMEPLAY.md "Music"): tru.exe's music player, 8 slots that each stream one
+// pc-w\music\<name>\<name>.mul with the stem gains its .mus script computes and fade on their own (audio::MusicPlayer).
+// Scripts request tracks with `music` natives (script::Runtime::MusicRequest: unit scripts called from soundvolumes,
+// cinematics); a crossfade is a Play in one slot and a Stop in another. Without any request the unit's own
+// "<unit>_mus_01" plays in slot 0 [I]. The music variables are the script runtime's gamebase values (tru.exe keeps one
+// array, 0xCCB560, for scripts and the sequencer; AUDIO.md §5.3, §9.4). The main menu's title music is a SoundPlex
+// stream, not the music player: its own voice.
 struct Music {
-    std::string current;
-    int slot = 0; // the slot the playing track was requested in
-    std::unique_ptr<ou::audio::MusFile> mus; // the sequencer keeps a reference to it
-    std::unique_ptr<ou::audio::MusSequencer> seq;
-    std::array<uint8_t, 256>* vars = nullptr; // world->script().gameValues()
-    int section = -2; // last logged MusSequencer::section()
+    std::unique_ptr<ou::audio::MusicPlayer> player;
+    uint64_t tick = 0; // log context
+    ou::audio::VoiceId titleVoice = 0;
 
-    bool play(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer, const std::string& name, const std::string& why, uint64_t tick,
-              float fade = 2, int inSlot = 0) {
-        if (name.empty() || name == current) return false;
-        slot = inSlot;
-        const std::string base = "pc-w\\music\\" + name + "\\" + name;
-        try {
-            auto mul = bf.read(base + ".mul");
-            if (!mul) throw ou::cdc::FormatError(base + ".mul not in bigfile");
-            auto pcm = std::make_shared<ou::audio::Pcm>(ou::audio::decodeMul(*mul).pcm);
-            seq.reset(), mus.reset();
-            if (auto m = bf.read(base + ".mus")) {
-                mus = std::make_unique<ou::audio::MusFile>(ou::audio::parseMus(*m));
-                seq = std::make_unique<ou::audio::MusSequencer>(*mus);
-                seq->update(0, *vars);
-                section = -2;
+    void attach(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer) {
+        auto load = [&bf](const std::string& name) -> std::optional<ou::audio::MusicPlayer::Track> {
+            const std::string base = "pc-w\\music\\" + name + "\\" + name;
+            try {
+                auto mul = bf.read(base + ".mul");
+                if (!mul) throw ou::cdc::FormatError(base + ".mul not in bigfile");
+                ou::audio::MusicPlayer::Track t{std::make_shared<ou::audio::Pcm>(ou::audio::decodeMul(*mul).pcm), nullptr};
+                if (auto m = bf.read(base + ".mus")) t.mus = std::make_shared<ou::audio::MusFile>(ou::audio::parseMus(*m));
+                else std::fprintf(stderr, "ou-game: music %s: no .mus\n", name.c_str());
+                return t;
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "ou-game: music %s: %s\n", name.c_str(), e.what());
+                return std::nullopt;
             }
-            mixer.playMusic(std::move(pcm), current.empty() ? 1.0f : fade, seq ? seq->stemGains() : std::vector<float>{});
-            std::fprintf(stderr, "ou-game: tick %llu music %s (%s)%s\n", (unsigned long long)tick, name.c_str(), why.c_str(),
-                         seq ? "" : " no .mus");
-            current = name;
-            return true;
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "ou-game: music %s: %s\n", name.c_str(), e.what());
-            current = name; // do not retry every tick
-            return false;
-        }
+        };
+        player = std::make_unique<ou::audio::MusicPlayer>(mixer, load, [this](const std::string& line) {
+            std::fprintf(stderr, "ou-game: tick %llu %s\n", (unsigned long long)tick, line.c_str());
+        });
     }
-    void stop(ou::audio::Mixer& mixer, float fade, const std::string& why, uint64_t tick, int inSlot = -1) {
-        if (current.empty() || (inSlot >= 0 && inSlot != slot)) return;
-        mixer.stopMusic(fade);
-        std::fprintf(stderr, "ou-game: tick %llu music %s stops (%s, %.1f s fade)\n", (unsigned long long)tick, current.c_str(), why.c_str(), fade);
-        current.clear(), seq.reset(), mus.reset();
+    // The track of the first slot that plays one ("" if none), for the status line.
+    std::string current() const {
+        for (int i = 0; player && i < ou::audio::MusicPlayer::kSlots; ++i)
+            if (const auto v = player->slot(i); v.playing && !v.track.empty()) return v.track;
+        return {};
+    }
+    void update(float dt, std::array<uint8_t, 256>& vars, uint64_t t) {
+        tick = t;
+        if (player) player->update(dt, vars);
+    }
+    void reset(const std::string& why, uint64_t t) {
+        tick = t;
+        if (!player || player->idle()) return;
+        std::fprintf(stderr, "ou-game: tick %llu music stops (%s)\n", (unsigned long long)t, why.c_str());
+        player->reset();
     }
     // The main menu's title music: ScriptMainMenu (generalbank script 8 vt 2) sends GameGlobals (script 5 vt 0)
     // "startTitleMusic", which plays generalbank DTP 78 = Assignment -> Envelope -> stream
     // music\tomb_raider_underworld_main_theme (213.6 s, loops from frame 0); "stopTitleMusic" (game screen, attract mode,
     // movies: scripts 6 / 60 / 110 / 121) stops it through the envelope's 1.05 s 1 -> 0 curve [I: release curve].
-    static constexpr std::string_view kTitle = "title";
-    void title(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer, uint64_t tick) {
-        if (current == kTitle) return;
+    void title(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer, uint64_t t) {
+        if (mixer.playing(titleVoice)) return;
         const std::string path = "pc-w\\audio\\streams\\music\\tomb_raider_underworld_main_theme.mul";
         try {
             auto mul = bf.read(path);
             if (!mul) throw ou::cdc::FormatError(path + " not in bigfile");
-            seq.reset(), mus.reset();
-            mixer.playMusic(std::make_shared<ou::audio::Pcm>(ou::audio::decodeMul(*mul).pcm), 0);
-            std::fprintf(stderr, "ou-game: tick %llu music title (main menu)\n", (unsigned long long)tick);
+            titleVoice = mixer.playMusic(std::make_shared<ou::audio::Pcm>(ou::audio::decodeMul(*mul).pcm));
+            std::fprintf(stderr, "ou-game: tick %llu music title (main menu)\n", (unsigned long long)t);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: title music: %s\n", e.what());
         }
-        current = kTitle, slot = 0; // also on failure: do not retry every time the menu opens
     }
-    // Section changes are the musical transitions (the script jumped to another label); logged with the music beat.
-    void tick(ou::audio::Mixer& mixer, float dt, uint64_t tick) {
-        if (!seq) return;
-        seq->update(dt, *vars);
-        mixer.setMusicStemGains(seq->stemGains());
-        if (seq->section() == section) return;
-        section = seq->section();
-        const auto& v = *vars;
-        std::string gains;
-        for (float g : seq->stemGains()) gains += ' ' + std::to_string(g).substr(0, 5);
-        std::fprintf(stderr, "ou-game: tick %llu music %s beat %.2f: section L%d (vars 7B=%u 7C=%u 7D=%u 0D=%u), stem gains%s\n",
-                     (unsigned long long)tick, current.c_str(), seq->beats(), section, v[0x7B], v[0x7C], v[0x7D], v[0x0D],
-                     gains.c_str());
+    void stopTitle(ou::audio::Mixer& mixer, float fade, const char* why, uint64_t t) {
+        if (!mixer.playing(titleVoice)) return;
+        mixer.stop(titleVoice, fade), titleVoice = 0;
+        std::fprintf(stderr, "ou-game: tick %llu music title stops (%s, %.2f s fade)\n", (unsigned long long)t, why, fade);
     }
 };
 
@@ -2142,7 +2130,6 @@ int main(int argc, char** argv) {
     // ---- audio (ou_audio): music per unit / sound volume; sound events (GameSound) ----
     ou::audio::Mixer mixer; // after SdlInit: closes its device before SDL_Quit
     Music music;
-    music.vars = &world->script().gameValues();
     std::optional<ou::app::GameSound> sound; // sfxmarkers, script sounds, drowning, voice subtitles
     std::vector<float> wav; // --music-wav capture
     bool audioOn = false;
@@ -2152,6 +2139,7 @@ int main(int argc, char** argv) {
             audioOn = !opt.musicWav.empty() || mixer.openDevice();
             if (!audioOn) std::fprintf(stderr, "ou-game: no audio device (%s)\n", SDL_GetError());
             std::fprintf(stderr, "ou-game: audio %s\n", !opt.musicWav.empty() ? "to WAV" : audioOn ? "on" : "off");
+            if (audioOn) music.attach(*bigfile, mixer);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: audio: %s\n", e.what());
         }
@@ -2223,6 +2211,7 @@ int main(int argc, char** argv) {
     const auto dieTick = opt.die >= 0 ? uint64_t(std::llround(opt.die / ou::game::kTickSeconds)) : ~0ull;
     ou::game::Actions held, menuHeld; // previous tick's actions: save/load/pause and menu input react to press edges
     std::string unitName;             // music follows the current unit
+    bool unitEntered = false;         // unitName changed this tick (the unit's own music if no slot holds one)
     int bikeMounts = 0;                                    // World::bikeMounts seen (first mount: bike music)
     std::string bikePhase = "parked";                      // ridden bike phase seen, for logs
     std::vector<ou::scene::Vertex> bikeScratch;
@@ -2391,7 +2380,7 @@ int main(int argc, char** argv) {
     auto menuAudio = [&](bool on, const char* why) {
         if (!audioOn) return;
         if (!on) {
-            if (music.current == Music::kTitle) music.stop(mixer, 1.05f, why, world->ticks());
+            music.stopTitle(mixer, 1.05f, why, world->ticks());
             mixer.stop(menuAmbience), menuAmbience = 0;
             return;
         }
@@ -2409,19 +2398,27 @@ int main(int argc, char** argv) {
     auto resetAudio = [&](const char* why) {
         world->script().stopAudio();
         if (!audioOn) return;
-        music.stop(mixer, 0, why, world->ticks());
+        music.reset(why, world->ticks());
         if (sound) sound->reset();
         mixer.stopWorld();
         unitName.clear();
         std::fprintf(stderr, "ou-game: tick %llu audio reset (%s): %zu voices left\n", (unsigned long long)world->ticks(), why,
                      mixer.activeVoices());
     };
-    // After a load: what the scripts had set up and do not ask for again in ours (script::Runtime::AudioState): their
-    // last music request and the reverb of the volume Lara stands in. Without a request the unit's own track plays [I].
+    // After a load: what the scripts had set up and do not ask for again in ours (script::Runtime::AudioState): the
+    // tracks their music requests left in the slots (playing ones fade in over 2 s [I]) and the reverb of the volume
+    // Lara stands in. Without a request the unit's own track plays [I].
     auto resumeAudio = [&](const char* why) {
         if (!audioOn) return;
         const auto& a = world->script().audioState();
-        music.play(*bigfile, mixer, a.track, std::string(why) + ", saved request", world->ticks(), 2, a.slot);
+        music.tick = world->ticks();
+        for (int i = 0; i < int(a.slots.size()); ++i)
+            if (const auto& m = a.slots[size_t(i)]; !m.track.empty() && music.player) {
+                std::fprintf(stderr, "ou-game: tick %llu music slot %d %s (%s, saved request)\n", (unsigned long long)world->ticks(), i,
+                             m.track.c_str(), why);
+                if (m.playing) music.player->play(i, m.track, 0, 2);
+                else music.player->load(i, m.track, 0);
+            }
         if (sound) sound->resume(*world);
     };
     auto loadGame = [&](const std::string& slot, const char* why) {
@@ -3054,7 +3051,7 @@ int main(int argc, char** argv) {
             }
             if (world->bikeMounts != bikeMounts) { // [I] Mexico: l4_laras_new_bike starts on the first mount
                 if (bikeMounts == 0 && audioOn && world->currentUnit().data.name.starts_with("l4_"))
-                    music.play(*bigfile, mixer, "l4_laras_new_bike", "bike", world->ticks());
+                    if (music.player) music.tick = world->ticks(), music.player->play(0, "l4_laras_new_bike", 2, 2);
                 bikeMounts = world->bikeMounts;
             }
             const auto tick = (unsigned long long)world->ticks();
@@ -3104,18 +3101,32 @@ int main(int argc, char** argv) {
             if (world->currentUnit().data.name != unitName) {
                 unitName = world->currentUnit().data.name;
                 logUnits();
-                if (audioOn && music.current.empty()) music.play(*bigfile, mixer, world->currentUnit().data.music, "unit " + unitName, tick);
+                unitEntered = true;
             }
-            if (audioOn) music.tick(mixer, float(ou::game::kTickSeconds), tick);
             for (const auto& r : world->script().takeMusicRequests()) { // script `music` natives
                 const auto* o = world->script().find(r.owner);
-                const std::string why = "script " + (o ? o->name : std::string("unit")) + " " + std::to_string(r.owner) + " music " +
-                                        std::to_string(r.function) + " slot " + std::to_string(r.slot);
-                const float fade = r.fade > 0 && r.fade < 120 ? r.fade : 0.05f;
-                if (!audioOn) std::fprintf(stderr, "ou-game: tick %llu music request %s (%s)\n", tick, r.function == 3 ? "stop" : r.track.c_str(), why.c_str());
-                else if (r.function == 3) music.stop(mixer, fade, why, tick, r.slot);
-                else music.play(*bigfile, mixer, r.track, why, tick, fade, std::max(0, r.slot));
+                std::fprintf(stderr, "ou-game: tick %llu music request %s %s slot %d fade out %.2f%s (script %s %d)\n", tick,
+                             r.function == 1 ? "load" : r.function == 2 ? "play" : "stop", r.function == 3 ? "-" : r.track.c_str(), r.slot,
+                             r.fadeOut, r.function == 2 ? (" in " + std::to_string(r.fadeIn).substr(0, 4)).c_str() : "",
+                             o ? o->name.c_str() : "unit", r.owner);
+                if (!audioOn || !music.player) continue;
+                music.tick = tick;
+                const int slot = std::max(0, r.slot);
+                if (r.function == 3 && r.slot < 0)
+                    for (int i = 0; i < ou::audio::MusicPlayer::kSlots; ++i) music.player->stop(i, r.fadeOut); // [I]
+                else if (r.function == 3) music.player->stop(slot, r.fadeOut);
+                else if (r.function == 2) music.player->play(slot, r.track, r.fadeOut, r.fadeIn);
+                else music.player->load(slot, r.track, r.fadeOut);
             }
+            // A unit entered with no track in any slot after its scripts' requests: its own track [I].
+            if (std::exchange(unitEntered, false) && audioOn && music.player && music.player->idle() &&
+                !world->currentUnit().data.music.empty()) {
+                music.tick = tick;
+                std::fprintf(stderr, "ou-game: tick %llu music %s (unit %s, no request)\n", tick, world->currentUnit().data.music.c_str(),
+                             unitName.c_str());
+                music.player->play(0, world->currentUnit().data.music, 0, 1);
+            }
+            if (audioOn) music.update(float(ou::game::kTickSeconds), world->script().gameValues(), tick);
             if (sound) sound->tick(*world);
             hud.tick(ou::game::kTickSeconds);
             hud.update(CombatView::hudState(*world), ou::game::kTickSeconds);
@@ -3281,7 +3292,7 @@ int main(int argc, char** argv) {
             lines.push_back(fmt("unit %s (%zu loaded) | checkpoint %d | chapter %d | found %d/%d/%d | music %s",
                                 world->currentUnit().data.name.c_str(), world->units().size(), world->checkpoint() ? world->checkpoint()->id : 0,
                                 world->chapter, world->found[0], world->found[1], world->found[2],
-                                music.current.empty() ? "-" : music.current.c_str()));
+                                music.current().empty() ? "-" : music.current().c_str()));
             const ou::game::ai::Enemy* near = nullptr; // nearest living enemy
             for (const auto& e : world->enemies().all())
                 if (e->alive() && (!near || glm::distance(e->position(), s.pos) < glm::distance(near->position(), s.pos))) near = e.get();

@@ -1,6 +1,6 @@
 // Software mixer on an SDL3 audio stream: sound registry (DRM Wave sections by section id),
 // voices with volume / pan / pitch / loop, 3D attenuation + panning from a listener, buses,
-// and a music slot with crossfades and per-stem gains (.mul music = stereo stem pairs).
+// and music voices with a master gain and per-stem gains (.mul music = stereo stem pairs).
 // mix() is renderer-style pure code; openDevice() attaches it to the default playback device.
 #pragma once
 
@@ -76,17 +76,19 @@ public:
     VoiceId playVoice(std::shared_ptr<const Pcm> pcm, float volume = 1);
     void stop(VoiceId v, float fadeSeconds = 0);
     bool playing(VoiceId v) const;
-    // Seconds of the voice's source played so far (its playback clock), nullopt once it ended.
+    // Seconds of the voice's source played so far, every loop pass counted (its playback clock: what tru.exe's music
+    // clock 0x595250 reads from the stream, Wine-measured not to restart at the .mul loop), nullopt once it ended.
     std::optional<double> position(VoiceId v) const;
     void setVolume(VoiceId v, float volume);
     void setPosition(VoiceId v, glm::vec3 position);
     void setPitch(VoiceId v, float pitch);
 
-    // ---- music: one slot; a new track crossfades with the current one ----
-    // stemGains: per stereo pair (channels 2k, 2k+1); missing entries = 1.
-    void playMusic(std::shared_ptr<const Pcm> pcm, float fadeSeconds = 2, std::vector<float> stemGains = {});
-    void setMusicStemGains(std::vector<float> stemGains);
-    void stopMusic(float fadeSeconds = 2);
+    // ---- music: a world voice on Bus::Music per playing track (audio::MusicPlayer drives one per slot) ----
+    // Loops from Pcm::loopStart when it has one. gain: the voice's master (the exe's Mus slot +0x38); stemGains: per
+    // stereo pair (channels 2k, 2k+1), missing entries = 1. setMusic ramps the master linearly over rampSeconds (the
+    // caller's tick, so per-tick gain steps do not click) and sets the stem gains at once. stop() ends it.
+    VoiceId playMusic(std::shared_ptr<const Pcm> pcm, float gain = 1, std::vector<float> stemGains = {});
+    void setMusic(VoiceId v, float gain, std::vector<float> stemGains, float rampSeconds = 0);
 
     // The pause menu / PDA: world voices of the Sfx and Music buses hold their position and stay silent (tru.exe
     // 0x5874B0 pauses the sound categories globalsoundinfo lists: music, sfx, movie; the voice category is not in the
@@ -109,6 +111,7 @@ private:
         std::shared_ptr<const Pcm> pcm;
         PlayParams params;
         double pos = 0, step = 1; // source frames
+        double played = 0;        // source frames advanced, every loop pass counted (position())
         float fade = 1, fadeTarget = 1, fadeStep = 0; // per output frame
         bool stopAtSilence = false, done = false;
         std::vector<float> stemGains{};
@@ -124,7 +127,7 @@ private:
     mutable std::mutex mutex_;
     std::vector<Voice> voices_;
     std::unordered_map<uint32_t, std::shared_ptr<const Pcm>> sounds_;
-    VoiceId nextId_ = 1, music_ = 0;
+    VoiceId nextId_ = 1;
     Listener listener_;
     float bus_[size_t(Bus::Count)] = {1, 1, 1};
     bool worldPaused_ = false;

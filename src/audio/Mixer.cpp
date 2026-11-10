@@ -132,6 +132,7 @@ void Mixer::mix(float* out, size_t frames) {
                 }
             }
             v.pos += v.step;
+            v.played += v.step;
         }
         for (auto& d : v.dsp) d->process(o, frames);
         for (size_t i = 0; i < frames * 2; ++i) out[i] += o[i];
@@ -230,7 +231,7 @@ std::optional<double> Mixer::position(VoiceId id) const {
     std::lock_guard lock(mutex_);
     const Voice* v = find(id);
     if (!v || !v->pcm || !v->pcm->sampleRate) return std::nullopt;
-    return v->pos / v->pcm->sampleRate;
+    return v->played / v->pcm->sampleRate;
 }
 
 void Mixer::setVolume(VoiceId id, float volume) {
@@ -248,23 +249,17 @@ void Mixer::setPitch(VoiceId id, float pitch) {
     if (Voice* v = find(id)) v->params.pitch = pitch;
 }
 
-void Mixer::playMusic(std::shared_ptr<const Pcm> pcm, float fadeSeconds, std::vector<float> stemGains) {
+VoiceId Mixer::playMusic(std::shared_ptr<const Pcm> pcm, float gain, std::vector<float> stemGains) {
     std::lock_guard lock(mutex_);
-    if (Voice* old = find(music_)) fadeTo(*old, 0, fadeSeconds, true);
     const bool loop = pcm && pcm->loopStart >= 0;
-    music_ = start(std::move(pcm), PlayParams{.loop = loop, .bus = Bus::Music}, fadeSeconds);
-    if (Voice* v = find(music_)) v->stemGains = std::move(stemGains);
+    const VoiceId id = start(std::move(pcm), PlayParams{.loop = loop, .bus = Bus::Music}, 0);
+    if (Voice* v = find(id)) v->fade = v->fadeTarget = gain, v->stemGains = std::move(stemGains);
+    return id;
 }
 
-void Mixer::setMusicStemGains(std::vector<float> stemGains) {
+void Mixer::setMusic(VoiceId id, float gain, std::vector<float> stemGains, float rampSeconds) {
     std::lock_guard lock(mutex_);
-    if (Voice* v = find(music_)) v->stemGains = std::move(stemGains);
-}
-
-void Mixer::stopMusic(float fadeSeconds) {
-    std::lock_guard lock(mutex_);
-    if (Voice* v = find(music_)) fadeTo(*v, 0, fadeSeconds, true);
-    music_ = 0;
+    if (Voice* v = find(id)) fadeTo(*v, gain, rampSeconds, false), v->stemGains = std::move(stemGains);
 }
 
 void Mixer::setWorldPaused(bool paused) {
@@ -276,7 +271,6 @@ void Mixer::stopWorld(float fadeSeconds) {
     std::lock_guard lock(mutex_);
     for (Voice& v : voices_)
         if (v.params.world && !v.done) fadeTo(v, 0, worldPaused_ ? 0 : fadeSeconds, true); // a held voice cannot fade
-    if (const Voice* m = find(music_); !m || m->params.world) music_ = 0;
 }
 
 void Mixer::setListener(const Listener& l) {

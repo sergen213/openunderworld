@@ -190,6 +190,27 @@ MusSequencer::MusSequencer(const MusFile& f, size_t sequence)
       fades_(f.stems.size()) {}
 
 void MusSequencer::update(float seconds, std::span<uint8_t, 256> v) {
+    seconds_ += seconds;
+    step(seconds, uint64_t(seconds_ * 1000.0 + 1e-6), v);
+}
+
+bool MusSequencer::updateAt(double streamSeconds, std::span<uint8_t, 256> v) {
+    // 0x595250: whole milliseconds of the stream's play position (0x595E00: channel 0's sample counter minus half the
+    // buffer, at stem 0's rate). The counter runs on through the .mul loop (Wine: l3_bedroom_mus_01, 88.0 s, clock
+    // 40.9 -> 424.7 s over 384 s of play [O]). A position behind the last one leaves the clock where it was and makes
+    // the frame time 0, so fades and the clock hold until the position passes the held one again.
+    const auto ms = uint64_t(std::max(streamSeconds, 0.0) * 1000.0 + 1e-6);
+    if (ms < ms_) {
+        step(0, ms_, v);
+        return false;
+    }
+    const float frame = float(ms - ms_) * 0.001f;
+    ms_ = ms;
+    step(frame, ms, v);
+    return true;
+}
+
+void MusSequencer::step(float seconds, uint64_t ms, std::span<uint8_t, 256> v) {
     for (size_t i = 0; i < stems_.size(); ++i) { // 0x5891B0
         Fade& fd = fades_[i];
         if (fd.on) {
@@ -210,11 +231,8 @@ void MusSequencer::update(float seconds, std::span<uint8_t, 256> v) {
     // Clock with the .mul attached (normal play, 0x593B70): 0x595250 converts the stream position to whole
     // milliseconds, then to 8.8 fixed-point beats at the file's BPM (header 0x20): (ms << 16) / (60000 * 256 / bpm);
     // 0x5950A0 makes ticks = beats88 * PPQN >> 8. The sequence tempo (QSMa +4) only clocks a slot without a stream.
-    // ponytail: `seconds` stands in for the stream's played time (the exe reads the FMOD sample position).
-    seconds_ += seconds;
-    const auto ms = uint64_t(seconds_ * 1000.0 + 1e-6);
     now_ = f_.bpm && f_.bpm <= 60000u * 256u ? (ms << 16) / (60000u * 256u / f_.bpm) * seq_.ppqn >> 8
-                                             : uint64_t(seconds_ * 1000.0 / (seq_.tempo / 1000) * seq_.ppqn);
+                                             : uint64_t(double(ms) / (seq_.tempo / 1000) * seq_.ppqn);
     const uint64_t now = now_;
 
     for (size_t t = 0; t < tracks_.size(); ++t) {

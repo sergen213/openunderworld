@@ -271,7 +271,7 @@ int renderMus(const cdc::BigfileSet& bf, const std::string& name, const std::vec
     std::array<uint8_t, 256> vars{};
     audio::Mixer mixer;
     sq.update(0, vars);
-    mixer.playMusic(std::make_shared<const audio::Pcm>(audio::decodeMul(*mulBytes).pcm), 0, sq.stemGains());
+    const audio::VoiceId voice = mixer.playMusic(std::make_shared<const audio::Pcm>(audio::decodeMul(*mulBytes).pcm), 1, sq.stemGains());
     const size_t total = size_t((seconds > 0 ? seconds : 30) * mixer.outputRate()), block = 480;
     audio::Pcm pcm{.sampleRate = mixer.outputRate(), .channels = 2};
     std::vector<float> buf(block * 2);
@@ -283,8 +283,8 @@ int renderMus(const cdc::BigfileSet& bf, const std::string& name, const std::vec
                 std::printf("%8.3f s  beat %7.2f  var 0x%02X %u -> %u\n", t, sq.beats(), c.var, vars[c.var], c.value);
                 vars[c.var] = c.value;
             }
-        sq.update(float(block) / mixer.outputRate(), vars);
-        mixer.setMusicStemGains(sq.stemGains());
+        sq.updateAt(mixer.position(voice).value_or(0), vars); // the stream clock: the .mul's play position (0x595250)
+        mixer.setMusic(voice, 1, sq.stemGains());
         if (sq.section() != section) {
             section = sq.section();
             std::printf("%8.3f s  beat %7.2f  section L%d, stem gains", t, sq.beats(), section);
@@ -411,7 +411,7 @@ int main(int argc, char** argv) {
             if (!mixer.openDevice()) throw std::runtime_error(std::string("SDL audio: ") + SDL_GetError());
             const double len = double(p->frames()) / p->sampleRate;
             const double limit = seconds > 0 ? std::min(seconds, len) : len;
-            if (p->channels > 2) mixer.playMusic(p, 0); // stem pairs mixed per header gains
+            if (p->channels > 2) mixer.playMusic(p); // stem pairs mixed per header gains
             else mixer.play(p);
             const auto t0 = std::chrono::steady_clock::now();
             auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); };

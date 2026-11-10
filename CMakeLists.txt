@@ -273,7 +273,7 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_audio: IMA ADPCM, FSB4, Wave sections, .mul streams; SDL3 mixer; ou-audio CLI (docs/formats/AUDIO.md) ----
-add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Dsp.cpp src/audio/Mixer.cpp src/audio/Mus.cpp src/audio/SoundPlex.cpp)
+add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Dsp.cpp src/audio/Mixer.cpp src/audio/Mus.cpp src/audio/MusicPlayer.cpp src/audio/SoundPlex.cpp)
 target_link_libraries(ou_audio PUBLIC ou_cdc glm::glm PRIVATE SDL3::SDL3)
 add_executable(ou-audio tools/ou-audio/main.cpp)
 target_link_libraries(ou-audio PRIVATE ou_audio SDL3::SDL3)

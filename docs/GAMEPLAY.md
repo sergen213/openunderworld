@@ -2813,9 +2813,13 @@ template-matching the generalbank textures against `hud_weapon_1080/_768` and `h
 Tests `tests/test_hud.cpp`: `Hud.SpaceKeepsTheSafeMarginAtEveryAspect` (16:9, 4:3, 21:9, 32:9, 5:4),
 `Hud.HealthColourBands`, `Hud.GroupsShowOnTriggersAndFadeOut`.
 
-**Music** (docs/formats/AUDIO.md §5): one track, `pc-w\music\<name>\<name>.mul` with its `.mus` sequencer setting the
-stem gains every tick (variables all 0: writers of e.g. 0x7D are [U]). The track changes (2 s crossfade) when the current
-unit has a `<unit>_mus_01` track [I naming] and when Lara enters a volume whose intro script names a track
+**Music** (docs/formats/AUDIO.md §5, §9.9): tru.exe's music player, 8 slots that each hold one track
+(`pc-w\music\<name>\<name>.mul` with its `.mus` sequencer setting the stem gains every tick, clocked by the stream's
+played samples) and fade on their own: a script crossfade is a Play in one slot with its fade-in and a Stop of another
+with its fade-out (pool_to_ragnarok tick 101: 2 s in / 3 s out, both audible); a new track in the same slot waits for
+the old one's fade-out; a request for the playing track never restarts it. The unit's `<unit>_mus_01` plays (slot 0)
+when Lara enters a unit and no slot holds a track [I naming], and scripts request tracks when Lara enters a volume whose
+intro script names one
 (184 `soundvolume`, 24 `soundtriggervolume` intros; soundvolume derives from triggervolumebase, soundvolume.drm 3485 →
 3516 → 3515 [O]). [O] `--chapter 1 --music-wav`: tick 1 l1_seatop_mus_01 (unit), tick 100 l1_seafloor_mus_01 (Lara fell
 into l1_seafloor), tick 105 l1_seatop_mus_01 (volume 927), tick 181 l4_pool_mus_01 after a quickload; 0.5 s RMS

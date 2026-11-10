@@ -157,7 +157,12 @@ public:
     // music variables (exe byte array 0xCCB560). A taken jump ends that track's frame, so scripts
     // poll their variables once per update. The clock is the exe's stream clock (0x595250): `seconds`
     // of the attached .mul played, in beats of `MusFile::bpm`, ticks = beats * PPQN.
+    // `seconds` of play added to the clock (offline rendering, tests).
     void update(float seconds, std::span<uint8_t, 256> vars);
+    // The same with the attached stream's play position (seconds of the .mul played, loops counted) as the clock,
+    // as 0x595250 reads it: the frame time is the whole-millisecond advance; a position behind the last one holds
+    // the clock and gives a frame time of 0. False when it held.
+    bool updateAt(double streamSeconds, std::span<uint8_t, 256> vars);
     std::vector<float> stemGains() const; // per stem: volume * fade * mute (0x5864E0)
     bool finished() const;                // every track hit meta 0x44
     uint64_t ticks() const { return now_; }
@@ -180,7 +185,9 @@ private:
     std::vector<Track> tracks_;
     std::vector<MusStem> stems_;
     std::vector<Fade> fades_;
-    double seconds_ = 0;
+    void step(float seconds, uint64_t ms, std::span<uint8_t, 256> vars);
+    double seconds_ = 0; // update()'s accumulated play time
+    uint64_t ms_ = 0;    // updateAt()'s last stream position, whole ms (Mus slot +0x18)
     uint64_t now_ = 0;
     int section_ = -1;
 };
