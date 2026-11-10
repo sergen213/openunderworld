@@ -191,7 +191,10 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
             {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends, p.ropeMax}},
-            {"sprintUsed", p.sprintUsed}, {"polePara", p.polePara}};
+            {"sprintUsed", p.sprintUsed}, {"polePara", p.polePara},
+            {"balance", {p.balance.build, p.balance.aboutFall, p.balance.grace, p.balance.unbal, p.balance.bal, p.balance.notImprove,
+                         p.balance.full, p.balance.clock, p.balance.lastFlip, p.balance.period, p.balance.ref, p.balance.stickYaw,
+                         p.balance.blend, p.balance.lean, p.balance.side, p.balance.osc, p.balance.fall}}};
 }
 
 // Into `p` (the save's unit at offset 0, as apply loads it). Throws json / SaveError on a malformed block.
@@ -228,6 +231,14 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     p.ropeMax = g.size() > 5 ? g.at(5).get<float>() : 0.0f; // older saves: g_grapple's rope
     p.sprintUsed = c.at("sprintUsed");
     p.polePara = c.value("polePara", false); // older saves: the perpendicular hang
+    p.balance = {}; // older saves: steady on a beam
+    if (const auto b = c.find("balance"); b != c.end()) {
+        if (!b->is_array() || b->size() != 17) throw SaveError("bad balance " + b->dump());
+        auto& d = p.balance;
+        d.build = b->at(0), d.aboutFall = b->at(1), d.grace = b->at(2), d.unbal = b->at(3), d.bal = b->at(4), d.notImprove = b->at(5);
+        d.full = b->at(6), d.clock = b->at(7), d.lastFlip = b->at(8), d.period = b->at(9), d.ref = b->at(10), d.stickYaw = b->at(11);
+        d.blend = b->at(12), d.lean = b->at(13), d.side = b->at(14).get<int8_t>(), d.osc = b->at(15).get<int8_t>(), d.fall = b->at(16);
+    }
 }
 
 } // namespace

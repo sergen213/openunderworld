@@ -25,6 +25,26 @@ constexpr float kPerpToParaRate = 1.5f / 0.30f;
 constexpr float kPoleTopRise = 19.0f, kPoleTopLand = 40.0f;
 constexpr float kSkin = 1.0f;       // gap kept to surfaces after a sweep, units
 constexpr float kEdgePush = 200.0f; // units/s: a capsule resting on an edge corner slides off at least this fast [I]
+// Balance beams off balance (docs/GAMEPLAY.md "Balance beams"). The about-to-fall states' balance tuning [O]: lara.drm
+// objdata +0xF88 (the record 0x72A430 picks for state property 0x209 = 0x191, chart S895 / S896): tolerance 15 and fall
+// angle 100 degrees, wiggle filter (smoothing 0.35, period 10 frames, penalty 1), grace 20 frames, not-improving 30,
+// unbalanced 45, recovery 2 and full-lean 10 frames, flags 3 (bit 0: re-aim the sway on recovery, bit 1: the side
+// holds once leaning); its sway rates are 0 (no sway). Objdata +0xE94 bit 3 is set: the fall flag needs a full lean.
+// Lean target = 2 x the weight + 2 x the unbalanced time (objdata +0xE78 / +0xE7C = 2, 2) [O]; ours divides that time
+// by 30 frames and moves the lean 0.1 a frame (the record's +0x28) [I: the exe's spring 0x7431F1..0x7437D5 is not
+// reproduced]. Frames are tru.exe's 30 Hz ones (gameTracker_timeMult).
+struct BalanceTuning {
+    float tol, fall, smooth, period, penalty, grace, notImprove, unbal, recover, full, leanRate, leanTime;
+    bool sideLock;
+};
+constexpr BalanceTuning kAboutFall{0.2617994f, 1.7453293f, 0.35f, 10, 1, 20, 30, 45, 2, 10, 0.1f, 30, true};
+constexpr float kBeamTipFrames = 45; // ours [I]: the stick held across the beam this long tips her (the record's 45)
+// Falling off: tru.exe's fall states (S890 / S893, action 416 = 0x76D4D0) run query 64 from her root moved 47.4075
+// to the fall side (prop 912 = 452: +90 degrees, 453: -90) [O]; q64: 0.32 out + 0.32 up a frame, falling, gravity
+// 5.72443, cone 90 degrees, from frame 1 [O-data]; a ledge (markup flag 610) found -> bbeam_fall_<side> then the
+// ledge hang (S526 / S527), none -> bbeam_fall_<side>_no_ledge then the fall (S894 -> S1012) [O-data].
+constexpr float kBeamFallOffset = 47.4075f, kBeamFallQueryV = 0.32f;
+constexpr float kBeamCatchFrames = 10, kBeamCatchReach = 200; // ours [I]: catches the clip can carry her to
 
 float wrapAngle(float a) {
     a = std::fmod(a + kPi, 2 * kPi);
@@ -716,6 +736,7 @@ bool Player::tryBeam(std::string_view clip, bool anyHeading) {
         s_.yaw = yawOf(dir * s_.ledgeSide);
         s_.vel = vec3(0);
         s_.state = State::Beam;
+        s_.balance = {};
         play(clip, false);
         return true;
     }
@@ -817,6 +838,7 @@ bool Player::tryHangToBeam() {
             s_.yaw = yaw;
             s_.vel = vec3(0);
             s_.state = State::Beam;
+            s_.balance = {};
             play("bbeam_ledgeu_climbup", false);
             return true;
         }
@@ -2323,14 +2345,21 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
 // Balance beam: the stick along the walking direction walks (bbeam_walk root motion projected on the line),
 // against it turns round (bbeam_walk_turn180); joints of the polyline are followed. At an end: another beam
 // starting there takes over, a floor beyond is stepped onto, else she stops. Jump = standing jump (assisted
-// back onto the beam), drop = falls off to her right [I].
+// back onto the beam), drop = falls off to her right [I]. The stick held across the beam tips her into the
+// about-to-fall state (beamAboutFall), which can end in a fall off it (startBeamFall).
 void Player::beam(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
+    if (beamFalling(dt)) return;
     const auto& m = col_.markup[size_t(s_.ledge)];
     if (s_.clip == "bbeam_ledgeu_climbup" && !clipDone()) { // up from the hang (tryHangToBeam): no root motion, no input
         advanceClip(dt);
         return;
     }
+    if (s_.balance.aboutFall) {
+        beamAboutFall(move, jumpPressed, dt);
+        return;
+    }
     if (jumpPressed) {
+        s_.balance = {};
         s_.ledge = -1;
         s_.runJump = false;
         s_.state = State::JumpPrep;
@@ -2344,6 +2373,7 @@ void Player::beam(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         return;
     }
     if (s_.clip == "bbeam_walk_turn180") {
+        s_.balance.build = 0;
         if (!clipDone()) advanceRoot(dt);
         if (!clipDone()) return;
         s_.ledgeSide = -s_.ledgeSide;
@@ -2352,14 +2382,29 @@ void Player::beam(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const vec2 dir = segDir(m, s_.ledgeSeg) * s_.ledgeSide;
     const float along = glm::length(move) > 0.1f ? glm::dot(glm::normalize(move), dir) : 0.0f;
     if (along < -0.5f) {
+        s_.balance.build = 0;
         play("bbeam_walk_turn180", false);
         return;
     }
-    // Off balance with the stick across the beam [I: the weight and the threshold; tru.exe's PSCCF_MoveDirUnbalanced
-    // condition is not decoded]: walking blends in bbeam_unbalance_walk_left / _right (lara.drm anim request 192: the
-    // walk's blend space with them [O]); standing she wobbles (bbeam_idle_wobble_fwd, requests 158 / 159 [O]).
+    // Off balance with the stick across the beam [I: the weight and the threshold]: walking blends in
+    // bbeam_unbalance_walk_left / _right (lara.drm anim request 192: the walk's blend space with them [O]); standing she
+    // wobbles (bbeam_idle_wobble_fwd, requests 158 / 159 [O]). Held across like that (beyond 30 degrees off the line) for
+    // kBeamTipFrames she tips into the about-to-fall state [I: tru.exe's walk enters it (chart S934 -> S897) on
+    // conditions of kind 1000 that are not decoded; its walk balance tuning (objdata +0xE98: a fall angle of 180
+    // degrees) never sets the fall flag].
     const float side = glm::length(move) > 0.1f ? glm::dot(glm::normalize(move), vec2(dir.y, -dir.x)) : 0.0f;
     const bool landing = (s_.clip == "bbeam_walk_attach" || s_.clip == "bbeam_jumpland") && !clipDone();
+    s_.balance.build = !landing && std::abs(side) > 0.5f ? s_.balance.build + dt * 30.0f : 0.0f;
+    if (s_.balance.build >= kBeamTipFrames) {
+        auto& b = s_.balance;
+        b = {};
+        b.aboutFall = true;
+        b.grace = kAboutFall.grace;
+        b.period = (2.0f - kAboutFall.smooth) * kAboutFall.period; // 0x742330: +0x58 = (2 - rec[7]) * rec[8]
+        b.stickYaw = yawOf(move);
+        play("bbeam_aboutfall_center", true);
+        return;
+    }
     if (along > 0.3f) {
         play("bbeam_walk", true);
         s_.clipMix = std::abs(side) > 0.3f ? (side > 0 ? "bbeam_unbalance_walk_right" : "bbeam_unbalance_walk_left") : "";
@@ -2396,6 +2441,188 @@ void Player::beam(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         return;
     }
     play("bbeam_idle", true);
+}
+
+// About to fall (chart S895 / S896, bbeam_aboutfall_center blended with _left / _right: request 177 [O]): tru.exe's
+// balance controller update 0x742770 on the about-to-fall tuning (kAboutFall), in 30 Hz frames [O]. Its error is the
+// stick's heading against hers (the record has no sway); with the stick released the last stick heading holds
+// (+0x5C). Within the tolerance she is balanced; beyond it the weight (error - tolerance) / (fall angle - tolerance)
+// leans her to that side (stick to her left: left), the unbalanced time runs and, with the side lock (flag 2), the stick
+// swung over to the other side counts as balanced. Balanced for more than kAboutFall.recover frames after leaning she
+// has recovered [O], and goes back to the beam idle (ours: the chart leaves on the fall flag clear, which it is from
+// entry [I]). The fall flag: a full lean (|lean| >= 0.99, held kAboutFall.full frames while the stick is pushed) and
+// then the error past the fall angle, not improving for more than kAboutFall.notImprove frames, or leaning longer than
+// kAboutFall.unbal frames [O]; she falls to her side (startBeamFall). A quick stick wiggle (flips less than
+// kAboutFall.period frames apart on average) narrows the tolerance and shortens the limits [O]. Jump = the beam's jump
+// (T1540 / T1541 [O-data]).
+void Player::beamAboutFall(vec2 move, bool jumpPressed, float dt) {
+    auto& b = s_.balance;
+    const BalanceTuning& k = kAboutFall;
+    if (jumpPressed) {
+        s_.balance = {};
+        s_.ledge = -1;
+        s_.runJump = false;
+        s_.state = State::JumpPrep;
+        play("ng_standing_jump", false);
+        return;
+    }
+    const float f = dt * 30.0f, mag = glm::length(move);
+    b.clock += f;
+    const bool grace = b.grace > 0;
+    if (grace) b.grace -= f;
+    else b.notImprove += f;
+    if (mag > 0.1f) b.stickYaw = yawOf(move);
+    const float err = wrapAngle(b.stickYaw - s_.yaw), off = std::abs(err);
+    float lean = 0;
+    int8_t side = 0;
+    bool recovered = false;
+    if (!grace) {
+        if (off < std::abs(b.ref) || b.notImprove < b.unbal) b.notImprove = 0;
+        const float d = wrapAngle(err - b.ref);
+        bool flip = false;
+        if (d < -0.1f) flip = b.osc == 1, b.osc = 2, b.ref = err;
+        else if (d > 0.1f) flip = b.osc == 2, b.osc = 1, b.ref = err;
+        const float since = b.clock - b.lastFlip;
+        if (flip) b.period = b.period * k.smooth + (1 - k.smooth) * since, b.lastFlip = b.clock;
+        float tol = k.tol, fall = k.fall, unbalLimit = k.unbal, fullLimit = k.full;
+        if (b.period < k.period && since < k.period) {
+            const float pen = (k.period - b.period) / k.period * k.penalty;
+            unbalLimit *= 1 - pen, fullLimit *= 1 - pen;
+            tol = std::clamp(tol - pen, k.tol * 0.25f, k.tol);
+            fall = std::clamp(fall - pen, tol, k.fall);
+        }
+        if (off <= tol) {
+            b.bal += f;
+        } else {
+            lean = std::clamp((off - tol) / (fall > tol ? fall - tol : kPi), 0.0f, 1.0f);
+            if (err > tol) side = 1, lean = -lean;
+            else if (err < -tol) side = 2;
+            if (k.sideLock && fall > off && b.side != 0 && side != b.side) lean = 0, b.bal += f, side = b.side;
+            else b.bal = 0;
+            b.unbal += f;
+            const bool partial = std::abs(b.blend) < 0.99f;
+            bool held = true;
+            if (!partial) {
+                b.full += f;
+                if (mag > 0.1f && b.full < fullLimit) held = false;
+            }
+            if (fall < off || k.notImprove < b.notImprove || unbalLimit < b.unbal) b.fall = !partial && held;
+        }
+    } else {
+        b.bal += f;
+    }
+    if (b.bal > 0) {
+        if (b.bal > k.recover && b.unbal > 0) b.unbal = 0, b.side = 0, b.full = 0, b.fall = false, recovered = true;
+        b.notImprove = 0;
+    }
+    if (side != 0) b.side = side;
+    b.lean = lean;
+    const float sign = lean < 0 ? -1.0f : lean > 0 ? 1.0f : 0.0f;
+    const float target = std::clamp(2 * lean + 2 * sign * b.unbal / k.leanTime, -1.0f, 1.0f);
+    b.blend += std::clamp(target - b.blend, -k.leanRate * f, k.leanRate * f);
+    if (b.fall) {
+        startBeamFall(b.side == 1 || (b.side == 0 && b.blend < 0));
+        return;
+    }
+    if (recovered) {
+        s_.balance = {};
+        play("bbeam_idle", true);
+        return;
+    }
+    play("bbeam_aboutfall_center", true);
+    s_.clipMix = b.blend < 0 ? "bbeam_aboutfall_left" : "bbeam_aboutfall_right";
+    s_.mix = anims_.find(s_.clipMix) ? std::abs(b.blend) : 0.0f;
+    advanceClip(dt);
+}
+
+// Falling off a beam to her left / right: query 64 from her root moved kBeamFallOffset to that side (falling, cone 90
+// degrees about the side, the ledges' capsule round its arc [O]) looks for a ledge (markup 1) to catch: one whose hang
+// faces that side with room under it, met within kBeamCatchFrames and kBeamCatchReach of her [I: q64's class record
+// 0x31C40 is not decoded; ours: the hang on her side instead of the wall-side test, which a fall from the top refuses].
+// Caught: bbeam_fall_<side> (0.33 s; ends in the ledge hang pose facing the beam, the hands 146.6 in front of the root,
+// 25.6 to her side of the line and 12.9 over it [O: clip]) carries her onto the hang, then the hang idle; none:
+// bbeam_fall_<side>_no_ledge (172 aside, 458 down, facing on) then the fall.
+void Player::startBeamFall(bool left) {
+    const vec2 fw = xy(forward()), out = left ? vec2(-fw.y, fw.x) : vec2(fw.y, -fw.x);
+    const vec3 start = s_.pos + vec3(out * kBeamFallOffset, 0), v(out * kBeamFallQueryV, kBeamFallQueryV);
+    int bestLi = -1, bestSeg = 0;
+    float bestT = 0, bestSide = 1, bestFrame = 1e9f;
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 1) continue;
+        for (size_t si = 0; si + 1 < m.points.size(); ++si) {
+            const vec3 p0 = m.points[si], p1 = m.points[si + 1];
+            const float len = glm::length(p1 - p0);
+            if (len < 1e-3f) continue;
+            const vec2 sd = segDir(m, int(si)), n(-sd.y, sd.x);
+            const float side = glm::dot(n, out) >= 0 ? 1.0f : -1.0f;
+            for (float t = 1.001f; t <= kBeamCatchFrames && t < bestFrame; t += 0.25f) {
+                const vec3 a = start + v * t - vec3(0, 0, 0.5f * kQueryG * t * t);
+                const vec3 c = a - vec3(out * kCapsuleBack, kCapsuleDown);
+                const float along = std::clamp(glm::dot(c - p0, p1 - p0) / len, 0.0f, len);
+                const vec3 h = p0 + (p1 - p0) * (along / len);
+                constexpr float hh = 0.5f * kCapsuleHeight;
+                const float d = h.z > c.z + hh ? glm::distance(h, c + vec3(0, 0, hh))
+                                : h.z < c.z - hh ? glm::distance(h, c - vec3(0, 0, hh))
+                                                 : glm::length(xy(h - c));
+                if (d > kCapsuleRadius) continue;
+                const vec2 to = xy(h - s_.pos);
+                if (glm::dot(to, out) < -10.0f || glm::length(to) > kBeamCatchReach || h.z > s_.pos.z + 50.0f) break;
+                if (!openBelow(col_, m, int(si), along, side)) break;
+                bestLi = int(li), bestSeg = int(si), bestT = along, bestSide = side, bestFrame = t;
+                break;
+            }
+        }
+    }
+    s_.balance = {};
+    s_.vel = vec3(0);
+    s_.fallStartZ = s_.pos.z;
+    s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw;
+    if (bestLi >= 0) {
+        s_.ledge = bestLi, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide, s_.polePara = false;
+        const auto [hang, hangYaw] = attachPose(bestLi, bestSeg, bestT, bestSide);
+        s_.climbTo = hang, s_.climbYawTo = s_.yaw + wrapAngle(hangYaw - s_.yaw);
+        play(left ? "bbeam_fall_left" : "bbeam_fall_right", false);
+    } else {
+        s_.ledge = -1;
+        s_.climbTo = s_.pos, s_.climbYawTo = s_.yaw;
+        play(left ? "bbeam_fall_left_no_ledge" : "bbeam_fall_right_no_ledge", false);
+        if (const anim::Clip* c = anims_.find(s_.clip)) // the request starts past frame 0: no jump at the start
+            s_.climbFrom -= rotYaw(s_.yaw, rootTranslation(*c, s_.clipTime, false) - rootTranslation(*c, 0, false));
+    }
+}
+
+bool Player::beamFalling(float dt) {
+    if (s_.clip == "bbeam_fall_left" || s_.clip == "bbeam_fall_right") {
+        if (warpStep(dt)) {
+            s_.state = State::Hang;
+            s_.savingGrab = 0;
+            play("ledgeb_idle", true);
+            placeOnLedge();
+        }
+        return true;
+    }
+    if (s_.clip != "bbeam_fall_left_no_ledge" && s_.clip != "bbeam_fall_right_no_ledge") return false;
+    // its root motion off the beam (no collision but the floor under her), then the fall with the clip's last speed
+    const anim::Clip* c = anims_.find(s_.clip);
+    advanceClip(dt);
+    const auto root = [&](double t) { return c ? rootTranslation(*c, t, false) - rootTranslation(*c, 0, false) : vec3(0); };
+    const vec3 prev = s_.pos;
+    s_.pos = s_.climbFrom + rotYaw(s_.climbYawFrom, root(s_.clipTime));
+    if (prev.z > s_.pos.z) {
+        if (const auto g = col_.groundProbe(vec3(xy(s_.pos), prev.z + 1), prev.z - s_.pos.z + 1)) {
+            s_.pos.z = g->point.z;
+            s_.vel = vec3(0);
+            land(vec2(0));
+            return true;
+        }
+    }
+    if (!clipDone()) return true;
+    const double end = c ? c->durationSeconds() : 0;
+    const vec3 last = c ? (root(end) - root(std::max(0.0, end - 1.0 / 30))) * 30.0f : vec3(0);
+    s_.regrabCooldown = 0.2f; // ours [I]: not back onto the beam she fell off
+    startFall(rotYaw(s_.climbYawFrom, last));
+    return true;
 }
 
 // ---- water ----------------------------------------------------------------------------------

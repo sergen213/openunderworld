@@ -52,6 +52,9 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"hpole_perp_fling", 1, 1}, {"crouch_Idle", 6, 6}, {"crouch_idleToCrouch", 4, 6}, {"Crouch_Front", 6, 3},
         {"ng_roll_front", 3, 1}, {"slope_slidefront", 6, 1},
         {"bbeam_idle_wobble_fwd", 3, 3}, // request 158
+        // off balance (Player::beamAboutFall / startBeamFall): requests 177, 187 / 190, 186 / 188
+        {"bbeam_aboutfall_center", 6, 6}, {"bbeam_fall_left", 5, 2}, {"bbeam_fall_right", 5, 2},
+        {"bbeam_fall_left_no_ledge", 5, 2}, {"bbeam_fall_right_no_ledge", 5, 2},
         // poles: requests 194, 1337, 1351 / 1350 / 1352 / 1349, 1338 / 1343 / 1340 / 1341, 1309, 1333 / 1332 / 1331, 1330,
         // 1329, 1361 / 1362
         {"hpole_IdleHangPara", 4, 4}, {"Hpole_para_attach_S", 1, 1}, {"Hpole_PerptoPara", 6, 6}, {"Hpole_ParatoPerp", 3, 3},
@@ -170,6 +173,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     "bbeam_walk", "bbeam_idle", "bbeam_walk_attach", "bbeam_jumpland", "bbeam_walk_turn180", "drop_to_ledgeb",
     "bbeam_ledgeu_climbup", "ledgeb_jumpuptocrouch", "bbeam_flip_foward", // from the hang by its clearance (Player.cpp State::Hang)
     "bbeam_unbalance_walk_left", "bbeam_unbalance_walk_right", "bbeam_idle_wobble_fwd", // off balance (Player::beam)
+    "bbeam_aboutfall_center", "bbeam_aboutfall_left", "bbeam_aboutfall_right", "bbeam_fall_left", "bbeam_fall_right",
+    "bbeam_fall_left_no_ledge", "bbeam_fall_right_no_ledge", // about to fall, falling off (Player::beamAboutFall)
     "ledgeb_jump_up", "ledgeb_jump_back", "ledgeb_jump_right", "ledgeb_attach_U", "ledgeb_attach_S", "ledgeb_attach_F",
     // leaning into a hang jump (Player.cpp State::Hang)
     "ledgeb_idle_to_jump_up_antic", "ledgeb_jump_up_antic", "ledgeb_jump_up_antic_to_idle", "ledgeb_idle_to_jump_right_antic",
@@ -1161,6 +1166,9 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.flight), add(s.fallStartZ), add(s.fallHeight), add(s.climbStance), add(s.climbWarp), add(s.climbFrom), add(s.climbTo);
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
     add(s.ropeBends), add(s.polePara), add(s.ropeMax);
+    const auto& ba = s.balance;
+    add(ba.build), add(ba.aboutFall), add(ba.grace), add(ba.unbal), add(ba.bal), add(ba.notImprove), add(ba.full), add(ba.clock);
+    add(ba.lastFlip), add(ba.period), add(ba.ref), add(ba.stickYaw), add(ba.blend), add(ba.lean), add(ba.side), add(ba.osc), add(ba.fall);
     for (size_t i = 0; i < s.ropeBends; ++i) add(s.ropeBend[i]), add(s.ropeBendClear[i]);
     const auto& hu = s.hurdle;
     add(hu.next), add(hu.mix), add(hu.alt), add(hu.draw), add(hu.drawOff), add(hu.edge), add(hu.out), add(hu.h), add(hu.endZ);
