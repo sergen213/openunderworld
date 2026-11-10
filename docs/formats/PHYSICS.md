@@ -299,6 +299,202 @@ type 2, is [I].
   state; the drive reads only the saved contact bodies, so a load continues bit for bit
   (`Physics.VehicleDrivesBrakesAndSavesBitIdentically`, `VehicleReal.SaveRestoreMidRide`).
 
+## Character controller
+
+Decision (2026-11-10, gameplay goal §4, plan in docs/audit/AUDIT_B.md "CharacterVirtual evaluation plan"): **Lara keeps
+her own mover** (the capsule sweep on the collision BVH with a ground ray under the root, `src/game/Player.cpp`
+`slide` / `groundMove` / `airMove`). Jolt's `CharacterVirtual` was built in as a second, complete mover, run through
+the comparison tests and measured against the Wine traces; it fails 8 of the 26 comparison tests in either shape
+tried and is further from tru.exe than the sweep mover on every traced case. The Jolt mover and its switch were
+removed again; everything below is reproducible from commit `84eb0be` of branch `agent/GpCharVirtual` ("Reproduce").
+
+### What tru.exe does [O]
+
+Lara's body in the level is a Havok proxy capsule on her instance (+0x288: radius +0x65C 79.01, cylinder +0x660
+189.63, centre +0x640 315.4 above the feet; built by 0x7018E0, resized by 0x490E60). Its bottom is 141.6 above her
+feet: it does not rest on the floor. The root takes the floor height under it: running up the manor staircase (Wine
+trace `screens/stairs/t4.txt`, risers 94.5..109.7) her z changes by a whole riser between two 16 ms samples as the
+root crosses the riser line, at unchanged run speed; the 121-unit hearth edge stops her 38..72 short; on a floor of
+normal z 0.45 she slides at g sin(theta). So the original is "a floating capsule that walls push sideways + the floor
+height under the root", which is the sweep mover's scheme (capsule bottom lifted by `stepUp` 110, ground ray).
+
+### What was built for the evaluation
+
+- `physics::Scene::setController(CharacterSpec)` / `moveCharacter(feet, velocity, top, dt, walk)` /
+  `characterFits(feet, top)`: one `JPH::CharacterVirtual` (up +Z, mass 55 kg, max slope acos 0.7, padding 2 units,
+  back faces collide as the BVH's double-sided queries, enhanced internal edge removal on), `ExtendedUpdate` for
+  walking (stick to floor 110, stairs 110) and `Update` in the air; its state in `Scene::save` (layout version 2).
+- Collision filtering as the BVH: while a controller exists the terrain of every resident unit and the kinematic
+  object colliders are always present (they were built only while a loose body could land on them). Jolt 5.6 calls a
+  `ShapeFilter` per sub-shape, not per triangle of a `MeshShape`, so a unit's terrain became a `StaticCompoundShape`
+  of one mesh per terrain group (user data -> unit mesh + group; the filter reads `CollisionMesh::groupEnabled` live,
+  so the script native that toggles a group needs no rebuild) plus one mesh of the faces no BVH query returns (flag
+  0x40, mask 0), which the character skips and loose bodies still land on. Layers: Solid, Loose, Plate.
+- `Player`: `Tuning::mover` (`OU_MOVER=sweep|jolt|jolt-capsule`, `ou-game --mover`) switched `groundMove`, the air
+  step, the slope slide and the crouch headroom test to the controller (`src/game/Mover.cpp`): velocity = clip root
+  delta / dt without smoothing, tilted along the ground face so the horizontal speed holds on slopes; in the air our
+  0x5DB370 integration with Jolt's contacts clipping the velocity. The state chart, markup queries, jump solver,
+  swimming and the rope stayed Player's. World fed the scene before the player tick; the dynamic proxy capsule
+  (`setCharacter`) was not built with a controller.
+- Two shapes: `jolt-capsule` = the plan's capsule (radius 79.01, top 489.2, bottom on the feet); `jolt` = a cylinder
+  of the same radius and top, added when the capsule could not hold the 110 / 121 riser rule (below).
+
+### The aspects investigated
+
+| Aspect | CharacterVirtual (measured) | Against the sweep mover / tru.exe |
+|---|---|---|
+| Collision handling | Collide + cast against the Jolt broad phase, constraint solve over the contact planes (5 collision / 15 constraint iterations). Walls stop and slide her; no tunnelling seen | Equal to the 4-iteration sweep for walls. Rests a 0.05..0.25-unit tolerance above the floor (tests pin the root to the floor to 1e-3) |
+| Character movement | Takes a velocity; the solved velocity is not written back (`GetLinearVelocity` returns the input): the achieved one is displacement / dt | Root-motion drive works (delta / dt); the air integrator stays exact; jump take-offs and apex unchanged (`Game.JumpTakeOffsMatchTruTraces`, `GameReal.BedroomJumpsMatchTruTraces` pass) |
+| Sliding | Wall slide keeps the tangential speed (300 along, 0 into: `Physics.CharacterSlidesAlongWall`); steep ground is reported (`OnSteepGround`), the slide itself (g sin(theta), no cap) stays ours | Equal (`Game.SlideAcceleratesAtGravityAlongSlope`, `Game.SlidesDownSteepSlope` pass up to the hover tolerance) |
+| Ground interaction | Ground = the contact of the shape's bottom with the most upward normal; needs the shape on the floor | Root height over a ramp: capsule 4.3 / 9.0 / 20.3 / 31.5 units at normal z 0.95 / 0.90 / 0.80 / 0.72, cylinder 25.5 / 37.7 / 58.8 / 75.8 (r tan(theta): its uphill rim); sweep mover and tru.exe 0 (floor under the root) |
+| Slope handling | `mMaxSlopeAngle`; `ExtendedUpdate` cancels velocity toward steep contacts. Without tilting the velocity along the ground Jolt takes the slope's share off the speed uphill (cos^2: 0.49 at the limit); with the tilt 1274 of 1274 units/s at every walkable slope. The tilt must use the face normal: the contact normal at a step's edge leans and launched her off 50-unit ledges | Steep slivers and bevels count as steep ground: `Game.RunsOverSteepSliverWithoutFalling` (the l4_ragnarok_room 0.6-normal strips) fails with the cylinder (blocked) and the capsule alternates Run / Fall on the real strips (13 changes in 180 ticks, sweep 0) |
+| Stair stepping | `WalkStairs` steps up, forward, down when a steep contact blocks. Capsule: the round bottom also rides up an edge by itself, risers past the step height are climbed depending on which triangle the down-cast reports at the edge (table "Riser limit"), each riser takes 4..10 ticks at reduced speed and starts 62..196 units before the riser line. Cylinder: crisp limit (108 climbed, 121 blocked) in one tick, 60..84 units before the riser line (its radius) | tru.exe: at the riser line, one sample. Sweep: within one tick's travel of tru's line (-21..+8 units). Riser survey (346 walk / run attempts in 7 units): sweep 346, cylinder 336, capsule 332 |
+| Collision filtering | Object layer filter + the per-group compound and a `ShapeFilter` (above) | Equal: `GameReal.TerrainGroupNativeUpdatesMergedCollision` passes on both; mask-0 faces skipped (`Physics.CharacterCrouchShapeAndFaceMask`) |
+| Moving platforms | A kinematic collider under her gives `GetGroundVelocity`; rising platforms lift her, `StickToFloor` follows them down; standing still she needs the ground velocity added by the caller or she is left behind | World's `carry` kept (no double carry: the ground velocity was not added). `GameReal.ElevatorCarriesPlayer`, `GameReal.SplineMoverCarriesLara` pass; `ProgressionReal.LoweredRampSectionCarriesLara` fails with the cylinder (root 40.8 above the tilted ramp) |
+| Update ordering in `World::tick` | The controller updates inside `Player::tick`, before scripts, objects and the physics step, reading the bodies as the last step left them (kinematic colliders one tick behind, as the BVH's dynamics are for the sweep mover); the terrain / collider lists have to be synced before the player tick as well as before the step | Works; costs a second sync per tick. A loaded game must rebuild controller, terrain and colliders before the first save: `StreamReal.SaveContinuesBitIdentically` reports differences in 5 of 14 scenarios (physics state of a load without a tick; one uber object one tick after the load) |
+| Shape handling | `SetShape` (crouch 260) with the penetration test as `characterFits`: blocked standing under a 300-unit slab, passes crouched, cannot stand up there | Equal (`Game.CrouchUnderSlabAndRoll` passes) |
+| Inner edges on mesh seams | Enhanced internal edge removal works inside one body. Between two units' bodies it does not apply: the doorway l4_pool -> l4_ragnarok_room (the next unit's floor starts 19.5 higher, no riser face) stops the cylinder for good (the edge of a horizontal face is not a "steep" contact, so `WalkStairs` is never tried; independent of the forward test 42 / 90 / 170, padding 0.5 / 2 / 5.6, edge removal on / off); the capsule rolls over it losing 15 units and overshooting 2.6 in z | Sweep: steps at the seam in one tick (replay `pool_to_ragnarok` tick 104). The cylinder also rises 1.7 units crossing the far edge of a 50-unit box |
+| Impulses on dynamic bodies | Contacts with dynamic bodies push them by `mMass` / `mMaxStrength` inside the character update: a 50 kg box moved 201 units in 2 s of walking at 348 units/s, she 456 of 696 (`Physics.CharacterPushesLooseBody`); a 60-unit box is a stair to her and she walks over it | Replaces the dynamic proxy capsule of `setCharacter`; no original numbers exist for either ([U]: tru.exe's proxy mass and push are not traced) |
+
+### Measurements
+
+Comparison tests (the plan's list; P pass, F fail, T = fails only an assertion that pins the root to the floor
+within 1e-3 while the controller rests 0.05..0.25 above it):
+
+| Test | sweep | jolt (cylinder) | jolt-capsule |
+|---|---|---|---|
+| `Game.WalkingIntoWallSlides` | P | T (z 0.09) | T (z 0.12) |
+| `Game.StepsUpAndDownSmallLedgesButNotWalls` | P | F (z 51.7 on the 50-unit box) | T |
+| `GameReal.StairsWalkAndRunUpAndDown` | P | F (first: l4_staircase_mictlan) | F (first: l3_main_hall; climbs the hearth) |
+| `Game.RunsOverSteepSliverWithoutFalling` | P | F (blocked at x 219) | P |
+| `Game.WalkingSlowlyOffEdgeFallsOnce` | P | P | P |
+| `Game.RunsOffEdgeFallsAndLands` | P | P | T (z 0.24) |
+| `Game.SlidesDownSteepSlope` | P | P | T (z 0.09) |
+| `Game.SlideAcceleratesAtGravityAlongSlope` | P | P | P |
+| `Game.GravityJumpAndLanding`, `Game.JumpTakeOffsMatchTruTraces`, `GameReal.BedroomJumpsMatchTruTraces` | P | P | P |
+| `Game.CrouchUnderSlabAndRoll` | P | P | P |
+| `GameReal.PoolRunReplayStaysOnFloor`, `GameReal.PoolRockStepDown` | P | P | P |
+| `GameReal.SplineMoverCarriesLara`, `GameReal.ElevatorCarriesPlayer` | P | P | P |
+| `ProgressionReal.LoweredRampSectionCarriesLara` | P | F (40.8 above the ramp) | P |
+| `Game.SimulationIndependentOfRenderRate`, `GameReal.CliffclimbIndependentOfRenderRate` | P | P | P |
+| `StreamReal.SaveContinuesBitIdentically` | P | F (5 of 14 scenarios) | F (5 of 14) |
+| `Physics.PlatesWeighedByContactsAndProxyPushesLooseBodies` | P | n/a (no proxy; `Physics.CharacterPushesLooseBody` instead) | n/a |
+| self-tests `locomotion`, `ledge`, `fall_damage` | P | P | P |
+| self-test `traversal_chain` | P | F (`run_on` 729 of >= 1000 units) | F (745) |
+| self-test `sprint` | P | F (not exhausted in 12 s; 9.7 expected) | F (same) |
+| Failed of 26 | 0 | 8 (1 T) | 8 (4 T) |
+
+Riser limit (Scene level, `tools/mover_eval/cv_steps.cpp`: floor, a box of height h1, then a riser h2; walking at 348):
+
+| riser h2 | capsule from h1 = 0 | capsule from h1 = 50 | capsule from h1 = 80 / 90 / 100 | cylinder from h1 = 0 / 50 / 100 |
+|---|---|---|---|---|
+| 97, 100 | climbed | — | climbed (from 100) | climbed |
+| 105, 108 | climbed | — | climbed (105 from 100) | climbed (108) |
+| 110 | blocked | — | climbed (from 100) | — |
+| 112 | — | — | climbed (from 100) | blocked from 0, climbed from 50 and 100 |
+| 121 | blocked | blocked | **climbed** | blocked |
+| 130 | — | — | **climbed** (from 100; 300 is blocked) | blocked |
+
+(`mWalkStairsStepUp` had to be 110 - r (1 - 0.7) = 86.3 for the capsule: its round bottom rides the last 23.7 by
+itself. The 121 / 130 climbs happen when the down-cast after the step lands the sphere on the edge and reports the
+top face's normal: she is then "on the ground" on the edge and the plain update rolls her up it. The real hearth is
+such a case: the capsule climbs it and leaves the level.)
+
+Manor staircase against tru.exe (`GameReal.MoverStairsTrace`, risers 1..9 of the Wine trace t4; lead = our y where z
+changes minus the middle of tru's two samples around its jump, + = earlier):
+
+| | tru.exe | sweep | jolt (cylinder) | jolt-capsule |
+|---|---|---|---|---|
+| z change of a riser | one 16 ms sample | 1 tick | 1 tick | 4..10 ticks |
+| lead before tru's riser line | 0 (± 10 sample spacing) | -20.6..+7.8 | +60.3..+84.3 (risers 2..7) | starts +62..+196, on the tread +16..+32 (risers 2..9) |
+| run speed on the flight (units per tick) | 21.2 (unchanged) | 21.23, min 21.23 | 19.87, min 9.93 | 19.96, min 6.85 |
+| Fall states on the flight | 0 | 0 | 4 (top not reached in 130 ticks) | 0 |
+| hearth edge (121): stops short by | 38..72 | 40.8 | 81.3 | climbs it |
+
+Replays (ou-game, per-tick distance to the sweep mover's position; Fall / Land state changes):
+
+| Replay | sweep | jolt (cylinder) | jolt-capsule |
+|---|---|---|---|
+| `pool_to_ragnarok` (180 ticks) | reaches l4_ragnarok_room at tick 104; 0 Fall / Land changes | stuck at the unit seam from tick 100 (x -16352.7): mean 388, final 1712 units behind; never leaves l4_pool | mean 9.7, max 34.1 units (z up to 28.0); 13 Run <-> Fall changes |
+| `save_move_load` (to the load) | saved = loaded line | saved = loaded line (still in l4_pool) | saved in Fall; the loaded line differs ("saved scene not rebuilt alike") |
+
+Cost: `Player::tick` 0.007 / 0.007 / 0.009 ms per tick in l4_pool and 0.011 / 0.010 / 0.007 ms in l2_junglehub (sweep /
+cylinder / capsule; 569 ticks each, `World::tickTimes.playerMs`): no difference that matters. The always-present
+terrain body costs about twice the BVH build per unit at stream-in (l4_pool 6043 faces: BVH 0.8 ms, Jolt 1.8 ms;
+l2_junglehub 15052: 2.1 / 4.2 ms; l4_ragnarok_room 27971: 3.9 / 8.1 ms; the per-group compound costs the same as
+one mesh).
+
+### Decision and reasons
+
+Rule (AUDIT_B): adopt the Jolt mover when all comparison tests pass and the Wine-traced cases are equal or closer
+than today. Neither holds, so the sweep mover stays:
+
+1. tru.exe's body does not stand on the floor (proxy bottom 141.6 up, floor height under the root). CharacterVirtual
+   is built on the opposite model, a shape resting on the ground. Every traced number that depends on it came out
+   further from the original: riser timing (60..196 units early against the sweep mover's ±21), the hearth stop
+   (81.3 short, or climbed; the sweep mover 40.8, tru.exe 38..72), run speed on stairs, the root's height over ramps.
+2. The capsule of the plan cannot keep the 110 / 121 riser rule on mesh edges; the cylinder that can is stopped by
+   unit seams and steep bevels and floats over slopes. Each needs its own geometry-dependent repairs.
+3. To match the original one would lift the shape off the floor and probe the ground under the root with a ray:
+   that is the sweep mover on Jolt queries, with CharacterVirtual's ground state, stair walk and stick-to-floor
+   unused, and a second copy of the level collision (plus filters and streaming) to keep consistent with the BVH that
+   the camera, AI, markup and bullets use.
+4. Adoption would re-record the 28 replays and the self-tests, bump the save format and still leave the failures
+   above; it buys no measured gain (cost equal, wall slide equal, jumps equal).
+
+Limits of the evaluation: knobs tried were the shape (capsule / cylinder), the stair step height, the second stair
+test's distance (42 / 90 / 170), the padding (0.5 / 2 / 5.6) and internal edge removal (on / off); `mMaxStrength`,
+the supporting volume and the predictive distance stayed at their defaults. Not pursued once the rule was decided:
+the cause of 3 of the 5 failing save scenarios (2 are a load saved before the controller's bodies exist), why the
+`sprint` self-test's run takes longer than 9.7 s, the other 26 replays, swimming's sphere sweep (not a candidate: free
+3-D motion without ground).
+
+What Jolt keeps doing: joints, loose bodies, ragdolls, the bike (above). What stays open for the sweep mover is
+listed in docs/GAMEPLAY.md "Numbers"; the walkable slope limit, measured for this evaluation, is the next section.
+
+### Walkable slope limit under Wine (2026-11-10)
+
+Measured before trusting the 0.7 the evaluation was held to (`Tuning::minFloorNormalZ`, [I]). l2_junglehub, tru.exe =
+ours + (8558.23, -19414.44, -18073.17): Lara put 15 units over large open faces of one normal z each
+(`find_ramps`), left alone 3 s, traced (`pt trace`); every sample's position was then looked up in our collision mesh
+(floor within 0.1 of her z: the frames agree) for the face under her. Traces and tools:
+`openunderworld-work/gameplaygoal/charvirtual/` (`slope-wine2.txt`, `slope-session2.sh`, `slope-analyse.py`,
+`probe_normals.cpp`, `client_hist.cpp`).
+
+| Face under her: normal z | Face `clientFlags` (+0x0E) | tru.exe |
+|---|---|---|
+| 0.626, 0.679, 0.703, 0.716 | 0x0080 | stands still for the 3 s (speed 0) |
+| 0.763 | 0x0000 | stands still |
+| 0.974, 1.000 | 0x00A0 | stands still |
+| 0.523 | 0x0004 | slides (153 -> 881 units/s in 0.5 s) |
+| 0.584, 0.595 | 0x0004 | slides (2154 units/s on the 0.595 face) |
+| 0.753 | 0x0004 | slides: 915 units/s horizontally with 800 down (twice, two trials); in one trial she is at rest on it for a sample and moving again 0.5 s later (197, then 915 units/s) |
+| 0.770 | 0x0004 | at rest in the last sample of a trial (not conclusive) |
+| 0.45 (l3_main_bedroom roof, earlier trace slide1.txt) | the unit's faces of normal z 0.3..0.5 are 0x0080 | slides |
+
+[O] So the original's rule is not one normal-z threshold: she stands at rest on faces as steep as normal z 0.626
+(ours slides below 0.7), and she slides on faces of normal z 0.753 that carry client flag 0x0004 (ours stands from
+0.7). [I] Reading: bit 0x0004 marks slide surfaces (l2_junglehub has 120 x 10^6 units^2 of up-facing 0x0004 faces, a
+third of it between normal z 0.5 and 0.8); for faces without it the limit lies between 0.45 (slides, 0x0080) and
+0.626 (stands, 0x0080). [U] the exact limit for unflagged faces, whether a 0x0004 face is slid on at any slope or
+from its own limit (>= 0.753), where tru.exe tests the bit (the slope-slide state's condition), and whether walking
+onto such a face differs from standing on it. Not changed in the code by this evaluation: the sweep mover has the
+face under her in every hit (`collision::Hit::face`), so the rule is a change to `Player::standable` / `groundMove`
+once the two limits are bracketed (a second ramp series between 0.45 and 0.626 on 0x0080 / 0x0000 faces, and on
+0x0004 faces above 0.753).
+
+### Reproduce
+
+`/usr/bin/git worktree add <dir> 84eb0be`, configure and build `ou_physics_tests ou_game_tests ou_gates_tests
+ou_save_tests ou-game`; then per mover (`OU_MOVER=sweep|jolt|jolt-capsule`, `OU_GAME_DIR` set): the gtest filters of
+the table (`ou_game_tests`, `ou_gates_tests`, `ou_save_tests`), `GameReal.MoverRiserSurvey`, and inside a private
+compositor `tools/mover_eval/eval.sh` followed by `tools/mover_eval/analyse.py` (stairs lead, hearth, replay
+distances, state changes, tick costs, the five self-tests). Scene-level tools in `tools/mover_eval/`: `cv_steps.cpp`
+(riser series), `cv_slope.cpp` (speed and root height on ramps), `cv_real.cpp` (a run in real units, `OU_UNIT2` for
+the seam), `cv_cost.cpp` (terrain body build), `find_ramps.cpp` + `slope-session.sh` (the Wine ramp series). The
+Scene API's own tests are `Physics.Character*` in that commit (step 110 / 121, slope limit, wall slide, crouch shape
+and face mask, moving platform, push, save / restore bit-exact).
+
 ## Havok → Jolt
 
 | Havok (tru.exe) | Jolt (ours) | Evidence |

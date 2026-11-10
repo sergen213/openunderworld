@@ -639,7 +639,9 @@ void World::tick(const Actions& input) {
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
     player_.setWaveSeconds(double(ticks_) * kTickSeconds);
     player_.setCamera(cam_.yaw, cam_.pitch);
+    const auto playerStart = std::chrono::steady_clock::now();
     if (!onBike) player_.tick(move, a, dt);
+    tickTimes.playerMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - playerStart).count();
     hingePull_.clear();
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
     else if (uberGrappleOff(player_.state().grappleUid)) player_.releaseGrapple(false); // its state dropped the target (action 0x1A)
