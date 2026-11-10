@@ -94,7 +94,7 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | Checkpoints / autosave, manual saves, subtitles option, helper buttons / training text; chapter end plane 4129 → cinematic 4106 (010) → chapter 1 | IMPLEMENTED (chapter end, saves); helper buttons PARTIALLY IMPLEMENTED | `ProgressionReal.CriticalGates` (4129), `ChaptersReal.CroftManorEndingRunsBothCinematics` (chapter 3 revisit), `Stream.CheckpointAndRespawn`, `Save.*`; HELPER BUTTONS "stored only" except the grapple prompt (GAMEPLAY.md "Menus") |
 | Automated tests | Existing: `StreamReal.PrologueCorridorToStaircase`, `GameReal.BedroomJumpsMatchTruTraces`, `GameReal.HangJumpLeans`, `GameReal.HangLeapsMatchTruTraces`, `GameReal.MainHallRingByItsOwnRange`, `GameReal.SharedQThrowsTheGrappleNotTheCamera`, `GameReal.MainHallPoleFlingLandsOnPlatform`, `GameReal.RunningJumpReachAndRush`, `ProgressionReal.CriticalGates` (4525, 4363, 4129), ctest `game_replay_*` none for this chapter | Required: bedroom-hall roll + ring-door pull, molding chain, chest climb, floor-collapse jump, main-hall swing landing, end-to-end prologue self-test | — |
 
-Requirement rows: 16 in [docs/matrix/01_prologue.md](matrix/01_prologue.md) — IMPLEMENTED 11, VERIFIED AGAINST ORIGINAL 3, IMPLEMENTED BUT UNVERIFIED 2.
+Requirement rows: 16 in [docs/matrix/01_prologue.md](matrix/01_prologue.md) — IMPLEMENTED 10, VERIFIED AGAINST ORIGINAL 3, IMPLEMENTED BUT UNVERIFIED 2, PARTIALLY IMPLEMENTED 1.
 
 Open in this chapter:
 
@@ -888,7 +888,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Physics | Platforms on circular splines at several heights and speeds; buttresses collapsing into new platforms; fireball knock-back; rising water in the finale | PARTIALLY IMPLEMENTED | spline movers [tests above]; water level script: `GameReal.ScriptedWaterLevelsRun` (l7_yggdrasil_end 8309: SetLevelToMarker at load); knock-back none |
 | Grapple | Ring on the reddish middle ledge: rappel down, pay out, swing forward, release onto the lower ledge. Ring on the red upper wall: (a) plain swing across a gap, (b) climb the rope, wall run, jump right to a ledge | IMPLEMENTED BUT UNVERIFIED | wall anchor 8165 listed for l7_yggdrasil_end (GP "Grapple"); rappel / swing / wall run generic (`GameReal.KrakenRoomRappel`, `GameReal.ValaskjalfWallRun`); nothing tested here; wall-run jump into a ledge grab (M24) untested |
 | Animation | Panel push (Thor strength), node smash with the hammer, dodge poses in slow motion, platform balance, final cinematics | PARTIALLY IMPLEMENTED | push clips on uber prismatic joints "(l7 Thor towers) use the same clips facing the joint axis" (GP "Interactions"); mount break is anim-graph stimulus 1 → state 3 (PR); a hammer-strike clip for it: unknown |
-| Combat | Yeti thralls spawning from the pool and from waterfalls on every level (lower level: continuous; upper: 1 + 2 + 1); Natla hovering and throwing fireballs (small damage, strong push, burning floor patches), invulnerable; Mjolnir throughout | PARTIALLY IMPLEMENTED | yeti + Mjolnir generic (replay `mjolnir_thralls`); fireballs thrown, blast, knock and burning patches: `CombatReal.NatlaFireballWeaponsDecoded`, `CombatReal.NatlaFireballsBlastThrowAndBurn`; Natla is not invulnerable to Mjolnir in the data: her hit callback (script vt 22, damage class 13 only) is counted by the lower ring's manager, whose phase ends at the third hit: `CombatReal.NatlaCountsMjolnirHits` (manual aim + fire by input; GP "Natla"); a level start on the lower ring: `GameReal.SwimLosesItsSurfaceAndFalls`, self-test `natla_lower_ring`; the timed dodges and the yeti counts on the rings are not played |
+| Combat | Yeti thralls spawning from the pool and from waterfalls on every level (lower level: continuous; upper: 1 + 2 + 1); Natla hovering and throwing fireballs (small damage, strong push, burning floor patches), invulnerable; Mjolnir throughout | PARTIALLY IMPLEMENTED | yeti + Mjolnir generic (replay `mjolnir_thralls`); fireballs: the trigger volumes' calls into the fireball objects stop at an unbound native (sweep: 8323 / 8324 / 8325 / 8327 / 8329 → +8404, fireballs 8246 / 8234 / 8233 / 8236 / 8237 "[native weaponbase fn 0]"); no fireball code in `src/game` |
 | Swimming | n/a on the route (the pool is a hazard) | n/a | — |
 | Vehicle | n/a | n/a | — |
 | Objects | Floating platform rings (two heights on the route + a top ring), 2 grapple rings, 3 rune panels in alcoves, 3 power nodes behind the buttress supports, an alcove that only exists after its panel is pushed, moving handhold rings on the tower, sloping buttress | PARTIALLY IMPLEMENTED | towers 8398-8400 and mounts 8362-8364 tested (`EndgameCredits`); mover 8404 tested; the rest (other 81 movers, tower handhold rings, alcove reveal) untested |
@@ -898,11 +898,11 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | Health → platform ride → ring ledge → rappel to the lower level → panel 1 → panel 2 → chimney climb to the middle → node 1 (cinematic) → platform ride → alcove chimney → free climb + dodge 1 → upper level → yetis → ring swing → panel 3 → rope climb + wall run → checkpoint → platform → node 2 (cinematic: Amanda) → two platform rings → tower handholds + dodge 2 → moving handhold ride → buttress slide → node 3 → final cinematics → Tibet → credits → Treasure Hunt | PARTIALLY IMPLEMENTED | PR gates ch 7 last row "pass (`ProgressionReal.EndgameCredits`, played…)"; opt-in `CriticalPathInOrder` ends with the same `playEnding` |
 | Automated tests | Existing: `ProgressionReal.EndgameCredits`, `ProgressionReal.CriticalPathInOrder` (opt-in), `GameReal.SplineMoverCarriesLara`, `SplineMoverFollowsItsPath`, `SplineMoverIndependentOfRenderRate`, `GameReal.ElevatorUberCommandCreatesMovingCollision`, `GameReal.ScriptedWaterLevelsRun`, `GameReal.ScriptedWaterLevelMoves`, `Game.WaterFlowPullsTowardTheSink`, `GameReal.SwimWaterDataDecoded`, `CineReal.NatlaSubtitlesCameraAndVoiceLines`, `Menus.MainCentreTreasureHuntAndRevisit`, `Progress.ProfileAndTreasureHuntSave`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 25 in [docs/matrix/21_out_of_time.md](matrix/21_out_of_time.md) — IMPLEMENTED 9, NOT IMPLEMENTED 8, IMPLEMENTED BUT UNVERIFIED 5, PARTIALLY IMPLEMENTED 3.
+Requirement rows: 25 in [docs/matrix/21_out_of_time.md](matrix/21_out_of_time.md) — NOT IMPLEMENTED 9, IMPLEMENTED 8, IMPLEMENTED BUT UNVERIFIED 5, PARTIALLY IMPLEMENTED 3.
 
 Open in this chapter:
 
-- **Natla's fireballs (M88)**: thrown, with blast, knock-down and burning patches (GP "Natla"); the two timed dodge events (slow balls at 1500 units/s, 3000 on a direct hit) are scripted but not played by input.
+- **Natla's fireballs (M88)**: not launched (unbound `weaponbase` fn 0), no projectile, knock-back or burning-floor code. They are the fight's only threat besides the yetis, and both timed dodge events hang on them.
 - **Situational adrenaline (M36)** ×2: no time-scale support.
 - **Chimney jump (M06)** ×2 on the critical path (lower → middle, middle → upper).
 - **Moving markup (M76)**: grabbing platform edges, platform-to-platform grabs, the handhold rings on the central tower — no evidence; only standing on a mover is tested.
@@ -916,7 +916,7 @@ Open in this chapter:
 
 | Chapter | Rows | VERIFIED AGAINST ORIGINAL | IMPLEMENTED | IMPLEMENTED BUT UNVERIFIED | PARTIALLY IMPLEMENTED | NOT IMPLEMENTED | unknown / n/a |
 |---|---|---|---|---|---|---|---|
-| 01. Prologue: No Illusions (Prologue - Croft Manor) | 16 | 3 | 11 | 2 | 0 | 0 | 0 |
+| 01. Prologue: No Illusions (Prologue - Croft Manor) | 16 | 3 | 10 | 2 | 1 | 0 | 0 |
 | 02. The Path to Avalon (Level 1 - Mediterranean Sea, part 1) | 32 | 0 | 8 | 15 | 6 | 3 | 0 |
 | 03. Niflheim (Level 1 - Mediterranean Sea, part 2) | 36 | 1 | 8 | 16 | 6 | 4 | 1 |
 | 04. The Norse Connection (Level 1 - Mediterranean Sea, part 3) | 25 | 0 | 10 | 10 | 4 | 0 | 1 |
@@ -936,8 +936,8 @@ Open in this chapter:
 | 18. Rituals Old (Level 6 - Andaman Sea) | 18 | 1 | 3 | 9 | 3 | 2 | 0 |
 | 19. Helheim (Level 7 - Arctic Sea, part 1) | 33 | 1 | 10 | 18 | 2 | 2 | 0 |
 | 20. Yggdrasil (Level 7 - Arctic Sea, part 2) | 21 | 0 | 3 | 8 | 6 | 4 | 0 |
-| 21. Out of Time (Level 7 - Arctic Sea, part 3) | 25 | 0 | 9 | 5 | 3 | 8 | 0 |
-| **All 21** | **661** | **9** | **135** | **281** | **145** | **89** | **2** |
+| 21. Out of Time (Level 7 - Arctic Sea, part 3) | 25 | 0 | 8 | 5 | 3 | 9 | 0 |
+| **All 21** | **661** | **9** | **133** | **281** | **146** | **90** | **2** |
 
 (The first status named in a row counts; rows that split a status between two parts count under the first.)
 

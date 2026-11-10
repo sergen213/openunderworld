@@ -112,8 +112,8 @@ Each line names where the rules and evidence are. "Wine" = measured in the runni
 ## 7. Chapter coverage
 
 The matrix (`docs/underworld_chapter_gameplay_matrix.md`) holds the status of every requirement row per section:
-661 rows, of which 9 are verified against the original, 135 implemented with a test in that chapter's units, 281
-implemented but unverified there, 145 partial and 89 missing (baseline at v0.41.0: 8 / 95 / 319 / 135 / 100). Rows
+661 rows, of which 9 are verified against the original, 133 implemented with a test in that chapter's units, 281
+implemented but unverified there, 146 partial and 90 missing (baseline at v0.41.0: 8 / 95 / 319 / 135 / 100). Rows
 changed only where a chapter leg or test actually exercised them; the matrix's section "Status changes since the
 baseline" lists the mechanics that landed and the rows they affect.
 
