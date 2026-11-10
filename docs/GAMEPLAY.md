@@ -3671,3 +3671,50 @@ Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full),
 - Tests: `Game.LandingByFallHeightStickAndCrouch`, `Game.LandingClipJumpRollCrouchAndLeave`,
   `GameReal.TempleLandingsByHeightStickAndCrouch`; self-tests `landing` (l4_temple), `fall_damage` (its 1500 fall now
   expects `ng_land_hard`).
+
+### Ledge extras: the pull-up's button, the handstand, hand over hand faster, the free hang
+
+- **Pull-up and handstand** [O chart, Wine l4_temple ledge 1155]: Jump pressed in the idle hang with a top to climb
+  onto (clearance 650) enters S439, which waits on the button: let go -> S456, the pull-up (T608; Wine: Jump down 150
+  ms, the climb starts 13 ms after the release and she stands 0.82 s later, 231 in and 494 up = `ledgeb_climbup_fast`
+  played whole); held past the buttons' 15 frames (cond 0x65 mode 0x65), state time >= 10, the stick not back or
+  aside -> S440, the **handstand** `ledgeb_climbupflair` (request 1003; Wine: S440 0.50 s after the press, 2.47 s
+  long, ending 228.5 in and 494 up; free hang: `ledgeu_climbupflair`). With the stick up she is in the lean S435 and
+  Jump pulls up at once (T613 -> S456), held or not: no handstand there (Wine). T558 (request 1002 from its start
+  frame 6, the quick one) is the Jump press straight out of the catch states S530 / S531 / S542 / S548. Pushing the
+  stick ends S456 early into the run (T244: Wine 0.58 s instead of 0.82 s) [not ported].
+  Ours (`PlayerState::pullWait`, `Player::tick` Hang): the wait in the hang's idle pose [I: S439's own pose], the
+  release / the 15-frame hold as above, the pull-up clip whole (it used to start at frame 6 on the press: 0.57 s).
+- **Hand over hand faster with Interact** [O chart, clips, Wine]: a press while the stick shimmies (T581 / T582 from
+  S427 / S432 / S431, not at the ledge's end) plays one `ledgeb_right_hustle` (S441 / S442, request 968, mirrored to
+  the left: 371 aside in 0.57 s against `ledgeb_right`'s 196 in 0.70 s; Wine: 368 in 0.47 s from the press to the
+  ledge's corner); pressed again from the clip's frame 8 on it starts over (T621 / T624, cond 0xD7), else its end
+  returns to the shimmy (T622 / T623). Holding Interact is one press. Ladders: Interact - or Jump (T1814) - with the
+  stick up, more than chart variable 194 = 4 rungs under the top (cond 0x2B3), plays `ladder_climb_up_fast` (S1057:
+  four rungs, 429 up in 0.47 s, against a rung, 110.6, per 0.30 s); again from frame 10 (T1809, variable 193).
+  Pillars the same way (S1197 `pillar_climb_up_fast` with `_init` / `_end`, T1980 / T1981) [not ported: the pole
+  agents' file]. No such transition exists for the free climb (DICE), the ladder downward, or horizontal poles
+  (`HPole_ParaForward_fast` is not reached through cond 0x68). Sprint does nothing on a ledge (Wine).
+  Ours: `Player::tick` Shimmy (`Tuning::hustleAgainFrame`), `Player::ladder` (`ladderFastRungs`,
+  `ladderFastAgainFrame`). Not ported: the hustle's corner clips (`ledgeb_concave / convex_right_phase*_hustle`; ours
+  rounds corners with the ordinary ones).
+- **Free hang** [O chart, decomp; not ported]: lara.drm has a second clip set `ledgeu_*` ("unbraced": idle, right 161
+  in 0.80 s, right_hustle 324, attach_*, drop_antic, climbup_antic / climbupground / climbupcrouch / climbupflair,
+  convex / concave corners, `ledgeb_to_ledgeu` / `ledgeu_to_ledgeb` for a shimmy across the change). The hang states'
+  requests pick the set by cond 0x26C = 691 (tru.exe 0x7622D0: bit 1 = player `+0xED4` == 0): `+0xED4` is the feet's
+  support, set on every attach and shimmy step by 0x75D6C0 / 0x75F2D0 (0 braced, 1 free, 2 not a ledge), for a ledge
+  (MUD 0x40000000) = no wall found by the probe 0x74F480 under the attach point. In the free hang the hang jumps up /
+  aside / back are not offered (T573..T580 need 691; the leans are S434 instead of S435) and climbing up is the
+  `ledgeu` clips. Continue at 0x74F480 (the probe's reach) and `Player::placeOnLedge` (the `ledgeu` hand offset is
+  (-5.2, -145.1, 474.0) against the braced (25, -139, 492)).
+- Tests: `Game.ShimmyHustleWithInteract`, `GameReal.TempleShimmyHustle`,
+  `GameReal.ArcticSeaLadderClimbsFasterWithInteract`, `GameReal.TemplePullUpOnReleaseAndHandstandOnHold`; self-tests
+  `ledge` (step `hustle_left`), `ladder_fast` (l7_arctic_sea).
+
+Wine traces of this section (`gameplaygoal/ctrl2/w1.txt`, 46 runs; `an.py` prints the chart states by index: state
+address = 0x...242D0 + 40 x index): standing / stick / running / sprint jumps tapped and held, the stick let go and
+pulled back in flight; run and sprint stops, rolls, turns; falls of 200..2100 with no key, Forward, Crouch, both
+(plain landing S1279 up to 1200, hard S1281 at 1400, running landing S1284 at 400 and the stumble S1278 at 800 with
+Forward, the crouch 0.35..0.61 s into the plain landing with Crouch held, the stumble then the crouch with Crouch held
+from the start: no roll); the pull-up tapped / held / with Forward; the shimmy with Interact tapped / held / Sprint.
+

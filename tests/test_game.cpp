@@ -7680,8 +7680,24 @@ TEST(Game, LandingByFallHeightStickAndCrouch) {
         EXPECT_EQ(s.state, State::Run);
     }
     {
-        auto w = landFrom(900, crouch); // Crouch without the stick: no roll
+        auto w = landFrom(900, crouch); // Crouch without the stick: no roll; the plain landing, then the crouch
+        const auto& s = w->player().state();
         EXPECT_EQ(clipOf(*w), "ng_generic_land_forwards");
+        for (int i = 0; i < 20; ++i) w->tick(crouch);
+        EXPECT_EQ(s.state, State::Land);
+        for (int i = 0; i < 4; ++i) w->tick(crouch);
+        EXPECT_EQ(s.state, State::Crouch); // 0.36 s in (tru.exe under Wine: 0.35 s)
+    }
+    {
+        // Crouch held all the way down (0.59 s: longer than the buttons' 15 frames) is no roll: tru.exe under Wine
+        // lands in the stumble and crouches 0.15 s into it
+        auto w = landFrom(900, crouchFwd, false);
+        const auto& s = w->player().state();
+        EXPECT_EQ(clipOf(*w), "ng_running_land_stumble");
+        for (int i = 0; i < 7; ++i) w->tick(crouchFwd);
+        EXPECT_EQ(s.state, State::Run);
+        for (int i = 0; i < 2; ++i) w->tick(crouchFwd);
+        EXPECT_EQ(s.state, State::Crouch);
     }
 }
 
@@ -7834,4 +7850,184 @@ TEST(GameReal, TempleJumpHoldStickBackAndSprintJump) {
     EXPECT_NEAR(sprint.launch, 65.83f * 30, 1);
     EXPECT_NEAR(sprint.apex, tap.apex, 1);
     EXPECT_NEAR(sprint.dist, tap.dist, 5);
+}
+
+// Hand over hand faster: Interact pressed while shimmying plays one ledgeb_right_hustle (chart S441 / S442: 371 aside in
+// 0.57 s against the shimmy's 196 in 0.70 s), mirrored to the left; pressed again from its frame 8 on it starts over,
+// earlier presses and presses without the stick do nothing; its end is the shimmy again.
+TEST(Game, ShimmyHustleWithInteract) {
+    game::AnimLibrary anims = syntheticAnims();
+    anim::Clip hustle = rootClip(17, 0);
+    for (int i = 0; i < 17; ++i) hustle.tracks[0][anim::TransX].push_back(-371.3f * float(i + 1) / 17);
+    anims.clips["ledgeb_right_hustle"] = hustle;
+    const auto tuning = game::defaultTuning();
+    const float ledgeZ = anims.hangHandOffset.z + tuning.jumpVz * tuning.jumpVz / (2 * tuning.gravity) * 0.6f;
+    CollisionMesh m;
+    addFloor(m, -1000, -3000, 300, 3000, 0);
+    addBox(m, {300, -3000, 0}, {1000, 3000, ledgeZ});
+    m.markup.push_back({1, 7, {{300, -2800, ledgeZ}, {300, 2800, ledgeZ}}});
+    m.build();
+    game::World w(std::move(m), anims, game::Spawn{{300 + anims.hangHandOffset.y - 10, 0, 0}, 0});
+    const auto& s = w.player().state();
+    Actions jump, right, rightE, e, left, leftE;
+    jump.jump = true, right.move.x = 1, rightE.move.x = 1, rightE.interact = true, e.interact = true;
+    left.move.x = -1, leftE.move.x = -1, leftE.interact = true;
+    for (int i = 0; i < 120 && s.state != State::Hang; ++i) w.tick(i < 2 ? jump : Actions{});
+    ASSERT_EQ(s.state, State::Hang);
+    w.tick(e); // no stick: nothing
+    w.tick({});
+    EXPECT_EQ(s.state, State::Hang);
+    EXPECT_EQ(s.clip, "ledgeb_idle");
+    for (int i = 0; i < 30; ++i) w.tick(right);
+    ASSERT_EQ(s.state, State::Shimmy);
+    const float y0 = s.pos.y;
+    w.tick(rightE);
+    EXPECT_EQ(s.clip, "ledgeb_right_hustle");
+    EXPECT_FALSE(s.mirror);
+    for (int i = 0; i < 5; ++i) w.tick(right);
+    const double t5 = s.clipTime;
+    w.tick(rightE); // frame 3: too early to start over
+    EXPECT_GT(s.clipTime, t5);
+    int ticks = 7;
+    for (; ticks < 60 && s.clip == "ledgeb_right_hustle"; ++ticks) w.tick(right);
+    EXPECT_EQ(s.clip, "ledgeb_right");
+    EXPECT_EQ(s.state, State::Shimmy);
+    EXPECT_NEAR(ticks, (17 - 3) * 2, 3);            // from the request's start frame 3 to the clip's end
+    EXPECT_NEAR(y0 - s.pos.y, 371.3f * 14 / 17, 25); // to her right = -Y facing +X
+    // pressed again from frame 8 on: the move starts over
+    w.tick(rightE);
+    ASSERT_EQ(s.clip, "ledgeb_right_hustle");
+    for (int i = 0; i < 12; ++i) w.tick(right); // frame 3 + 6.5
+    const double before = s.clipTime;
+    w.tick(rightE);
+    EXPECT_LT(s.clipTime, before);
+    for (int i = 0; i < 40; ++i) w.tick(right);
+    // to the left: the mirrored clip
+    for (int i = 0; i < 10; ++i) w.tick({});
+    const float y1 = s.pos.y;
+    for (int i = 0; i < 6; ++i) w.tick(left);
+    w.tick(leftE);
+    EXPECT_EQ(s.clip, "ledgeb_right_hustle");
+    EXPECT_TRUE(s.mirror);
+    for (int i = 0; i < 40 && s.clip == "ledgeb_right_hustle"; ++i) w.tick(left);
+    EXPECT_GT(s.pos.y - y1, 300);
+}
+
+// l4_temple ledge 1155 (the west face of the block; tru.exe's hang there was traced under Wine): a second of shimmying
+// against a second of it with Interact tapped, lara.drm's clips.
+TEST(GameReal, TempleShimmyHustle) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    float moved[2];
+    for (const bool hustle : {false, true}) {
+        auto w = unitWorld(bf, "l4_temple", {{-465.9f, -11850.2f, 1698.6f}, 0});
+        const auto& s = w.player().state();
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 20; ++i) w.tick({});
+        for (int i = 0; i < 240 && s.state != State::Hang; ++i) w.tick(i < 6 ? jump : Actions{});
+        ASSERT_EQ(s.state, State::Hang);
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1155);
+        for (int i = 0; i < 60; ++i) w.tick({});
+        Actions right;
+        right.move.x = 1;
+        const float y0 = s.pos.y;
+        bool seen = false;
+        for (int i = 0; i < 60; ++i) {
+            Actions a = fixedCamera(w, right, 0);
+            a.interact = hustle && i % 20 >= 10 && i % 20 < 14; // a tap every third of a second
+            w.tick(a);
+            seen |= s.clip == "ledgeb_right_hustle";
+            ASSERT_TRUE(s.state == State::Shimmy || s.state == State::Hang);
+        }
+        EXPECT_EQ(seen, hustle);
+        moved[hustle] = y0 - s.pos.y;
+    }
+    EXPECT_NEAR(moved[0], 300, 60);  // ledgeb_right: 196 in 0.70 s
+    EXPECT_GT(moved[1], 1.6f * moved[0]); // ledgeb_right_hustle: 371 in 0.57 s
+}
+
+// l7_arctic_sea ladder 2044 (14 rungs under her root): the stick up climbs a rung per ladder_climb_up (110.6 in 0.30 s);
+// with Interact pressed more than four rungs under the top, ladder_climb_up_fast takes four rungs at once (chart
+// S1057); four or fewer under the top the press changes nothing.
+TEST(GameReal, ArcticSeaLadderClimbsFasterWithInteract) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto rungZ = [](int r) { return -17318.5f - 575.221f - 110.619f * float(r); };
+    float rise[2];
+    for (const bool fast : {false, true}) {
+        auto w = unitWorld(bf, "l7_arctic_sea", {{16513.6f - 79 - 110.619f, -47420.7f, rungZ(11)}, 0});
+        const auto& s = w.player().state();
+        for (int i = 0; i < 5 && s.state != State::Ladder; ++i) w.tick(forward());
+        ASSERT_EQ(s.state, State::Ladder);
+        ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 2044);
+        const auto rungOf = [&] { return int(std::lround((-17318.5f - 575.221f - s.pos.z) / 110.619f)); };
+        for (int i = 0; i < 3000 && !(s.clip == "ladder_idle" && rungOf() == 11); ++i)
+            w.tick(s.clip != "ladder_idle" ? Actions{} : rungOf() > 11 ? forward() : forward(-1));
+        ASSERT_EQ(rungOf(), 11);
+        const float z0 = s.pos.z;
+        bool seen = false;
+        for (int i = 0; i < 36; ++i) {
+            Actions a = forward();
+            a.interact = fast && i >= 2 && i < 6;
+            w.tick(a);
+            seen |= s.clip == "ladder_climb_up_fast";
+        }
+        EXPECT_EQ(seen, fast);
+        ASSERT_EQ(s.state, State::Ladder);
+        rise[fast] = s.pos.z - z0;
+        if (!fast) continue;
+        // on up to rung 3 or 4 (a second fast move from rung 7 would end on 3): there the press is an ordinary rung
+        for (int i = 0; i < 600 && !(s.clip == "ladder_idle" && rungOf() <= 4); ++i) w.tick(s.clip != "ladder_idle" ? Actions{} : forward());
+        ASSERT_LE(rungOf(), 4);
+        const int r = rungOf();
+        Actions a = forward();
+        a.interact = true;
+        w.tick(a);
+        EXPECT_EQ(s.clip, "ladder_climb_up");
+        for (int i = 0; i < 30 && s.clip != "ladder_idle"; ++i) w.tick({});
+        EXPECT_EQ(rungOf(), r - 1);
+    }
+    EXPECT_NEAR(rise[0], 3 * 110.619f, 60);       // three rungs in 0.6 s (0.30 s clips from their start frame 3)
+    EXPECT_GT(rise[1], rise[0] + 100);            // four at once in 0.47 s, then on
+}
+
+// l4_temple ledge 1155, pulling up (tru.exe under Wine there, gameplaygoal/ctrl2/w1.txt pull_tap / pull_hold): Jump
+// tapped pulls her up when it is let go (standing 0.82 s after the release, 231 in and 494 up); Jump held past the
+// buttons' 15 frames turns it into the handstand ledgeb_climbupflair (0.50 s after the press, 2.47 s long, the same place).
+TEST(GameReal, TemplePullUpOnReleaseAndHandstandOnHold) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const int held : {9, 240}) { // ticks Jump stays down (Wine: 150 ms / to the end)
+        auto w = unitWorld(bf, "l4_temple", {{-465.9f, -11850.2f, 1698.6f}, 0});
+        const auto& s = w.player().state();
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 20; ++i) w.tick({});
+        for (int i = 0; i < 240 && s.state != State::Hang; ++i) w.tick(i < 6 ? jump : Actions{});
+        ASSERT_EQ(s.state, State::Hang);
+        for (int i = 0; i < 60; ++i) w.tick({});
+        const vec3 hang = s.pos;
+        int start = -1, end = -1;
+        std::string clip;
+        for (int i = 0; i < 300 && end < 0; ++i) {
+            w.tick(i < held ? jump : Actions{});
+            if (start < 0 && s.state == State::ClimbUp) start = i, clip = s.clip;
+            if (start >= 0 && s.state != State::ClimbUp) end = i;
+            if (start < 0) EXPECT_NEAR(glm::distance(s.pos, hang), 0, 1) << "waiting in place";
+        }
+        ASSERT_GE(end, 0);
+        EXPECT_EQ(s.state, State::Idle);
+        EXPECT_NEAR(s.pos.z - hang.z, 493.8f, 4);
+        EXPECT_NEAR(s.pos.x - hang.x, 230, 25); // ours ends up to 19 farther in [I: the hang root's standoff]
+        if (held < 30) {
+            EXPECT_EQ(clip, "ledgeb_climbup_fast");
+            EXPECT_NEAR(start, held, 1);           // on the release
+            EXPECT_NEAR(end - start, 0.82f * 60, 12); // Wine: 0.82 s
+        } else {
+            EXPECT_EQ(clip, "ledgeb_climbupflair");
+            EXPECT_NEAR(start, 30, 2);              // 15 frames
+            EXPECT_NEAR(end - start, 2.47f * 60, 14);
+        }
+    }
 }

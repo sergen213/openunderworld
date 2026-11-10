@@ -2027,6 +2027,7 @@ void Player::airBrake(vec2 move) {
 void Player::tick(vec2 move, const Actions& a, float dt) {
     Buttons& b = s_.buttons;
     walk_ = a.walk;
+    if (s_.state != State::Hang) s_.pullWait = -1;
     b.jump.update(a.jump, dt, t_.pressBuffer), b.interact.update(a.interact, dt, t_.pressBuffer);
     b.drop.update(a.drop, dt, t_.pressBuffer), b.grapple.update(a.grapple, dt, t_.pressBuffer);
     const bool jumpPressed = b.jump.pressed(), dropPressed = b.drop.pressed();
@@ -2427,23 +2428,52 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                                      : fw > 0.5f            ? "up" : "";
         const bool leaning = s_.clip.starts_with("ledgeb_idle_to_jump_") ||
                              (s_.clip.starts_with("ledgeb_jump_") && s_.clip.ends_with("_antic") && !s_.clip.ends_with("from_antic"));
+        // A climb-up clip (State::ClimbUp): started where it expects the ledge - its hands (at the start time) on the
+        // ledge in x/y, its root at the clip's end on the ledge top (end - start rise); nothing to snap at the end.
+        // `whole`: from the clip's first frame (the chart's S456 plays ledgeb_climbup_fast whole: 0.82 s under Wine;
+        // its request 1002's start frame 6 is the quick pull-up straight out of a catch, T558).
+        const auto climb = [&](std::string_view clip, bool whole = false) {
+            s_.state = State::ClimbUp;
+            play(clip, false);
+            if (whole) s_.clipTime = 0;
+            const anim::Clip* c = anims_.find(s_.clip);
+            if (const auto h = c ? anims_.handsAt(*c, s_.clipTime) : std::nullopt) {
+                const float rise = rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z;
+                const vec3 hang = anims_.hangHandOffset;
+                s_.pos += toWorld({hang.x - h->x, hang.y - h->y, hang.z - rise});
+            }
+        };
+        // Pulling up (chart S439, entered by the Jump press with a top to climb onto; tru.exe under Wine, l4_temple ledge
+        // 1155): Jump let go -> S456, the pull-up (T608; Wine: it starts 13 ms after the release and she stands 0.82 s
+        // later, 231 in and 494 up); Jump held longer than the buttons' 15 frames, with the stick up or neutral (T567: cond
+        // 0x65 mode 0x65, state time >= 10) -> S440, the handstand `ledgeb_climbupflair` (Wine: 0.50 s after the press,
+        // 2.47 s long, the same 228.5 in and 494 up). Crouch lets go as from any hang. [I]: the waiting pose (ours keeps
+        // the hang's idle).
+        if (s_.pullWait >= 0 && !jumpPressed) {
+            s_.pullWait += dt;
+            const bool flair = b.jump.down && b.jump.heldLong(t_.holdLongFrames) && s_.pullWait * 30.0f >= 10.0f &&
+                               std::abs(lateral) <= 0.5f && fw >= -0.5f;
+            if (!b.jump.down || flair) {
+                s_.pullWait = -1;
+                if (hangClearance() != 2) break; // the top got blocked meanwhile
+                if (flair) climb("ledgeb_climbupflair");
+                else climb("ledgeb_climbup_fast", true);
+                break;
+            }
+            s_.state = State::Hang;
+            play("ledgeb_idle", true);
+            advanceClip(dt);
+            placeOnLedge();
+            break;
+        }
         if (jumpPressed) {
             const int kind = std::abs(lateral) > 0.5f ? (lateral > 0 ? 1 : -1) : fw < -0.5f ? 2 : 0;
             const bool fromLean = leaning && kind != 0 && kind != 2; // the side lean's own take-off
-            const auto climb = [&](std::string_view clip) {
-                s_.state = State::ClimbUp;
-                play(clip, false);
-                // Start where the clip expects the ledge: its hands (at the start time) on the ledge in x/y, and
-                // its root at the clip end on the ledge top (end - start rise); nothing to snap at the end.
-                const anim::Clip* c = anims_.find(s_.clip);
-                if (const auto h = c ? anims_.handsAt(*c, s_.clipTime) : std::nullopt) {
-                    const float rise = rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z;
-                    const vec3 hang = anims_.hangHandOffset;
-                    s_.pos += toWorld({hang.x - h->x, hang.y - h->y, hang.z - rise});
-                }
-            };
             const int cls = kind == 0 ? hangClearance() : 0;
-            if (cls == 2) climb("ledgeb_climbup_fast");
+            // A top to climb onto: Jump pressed goes to the chart's S439, which waits on the button (below).
+            // With the stick up she is in the lean S435, whose Jump press pulls up at once (T613; Wine).
+            if (cls == 2 && fw <= 0.5f && anims_.find("ledgeb_climbupflair")) { s_.pullWait = 0; break; }
+            if (cls == 2) climb("ledgeb_climbup_fast", anims_.find("ledgeb_climbupflair") != nullptr);
             else if (cls == 5) climb("ledgeb_jumpuptocrouch"); // S439 T615 -> S455 -> crouch_Idle [O-data; clip by name I]
             else if (cls == 8) startHangToWallHug();          // S439 T697 -> S1251 bbeam_flip_foward -> Wall_Hug_Idle
             else if (kind == 0 && tryHangToBeam()) {
@@ -2483,7 +2513,21 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             placeOnLedge();
             break;
         }
-        if (std::abs(lateral) > 0.3f) {
+        // Hustle: Interact pressed while the stick shimmies (chart T581 / T582 from the hang's S427 and the shimmy states
+        // S432 / S431, not at the ledge's end) plays one faster hand-over-hand move, S441 / S442 = `ledgeb_right_hustle`
+        // (request 968; 371 aside in 0.57 s against ledgeb_right's 196 in 0.70 s: 654 vs 280 units/s), its mirror to
+        // the left (state property 201 / 202). Pressed again from the clip's frame 8 on (T621 / T624, cond 0xD7) the
+        // move starts over; with no further press the clip's end goes back to the shimmy (T622 / T623) [O-data].
+        const bool hustling = s_.clip == "ledgeb_right_hustle" && !clipDone();
+        if (std::abs(lateral) > 0.3f && b.interact.buffered() && anims_.find("ledgeb_right_hustle") &&
+            (!hustling || s_.clipTime * 30.0 >= t_.hustleAgainFrame)) {
+            b.interact.take();
+            s_.state = State::Shimmy;
+            s_.clip.clear(); // from the request's start frame again
+            play("ledgeb_right_hustle", false, 1.0f, lateral < 0);
+        } else if (hustling) {
+            s_.state = State::Shimmy;
+        } else if (std::abs(lateral) > 0.3f) {
             s_.state = State::Shimmy;
             play("ledgeb_right", true, lateral > 0 ? 1.0f : -1.0f);
         } else {
@@ -2496,7 +2540,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             // joint takes her round it (startHangCorner).
             const float ds = glm::dot(xy(d), segDir(lm, s_.ledgeSeg));
             if (((ds > 0 && s_.ledgeT + ds > segLen(lm, s_.ledgeSeg)) || (ds < 0 && s_.ledgeT + ds < 0)) &&
-                startHangCorner(s_.ledgeSeg, ds, lateral))
+                startHangCorner(s_.ledgeSeg, ds, hustling ? (s_.mirror ? -1.0f : 1.0f) : lateral))
                 break;
             moveAlong(lm, s_.ledgeSeg, s_.ledgeT, ds);
         }

@@ -328,8 +328,26 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         }
         return;
     }
+    // Faster with Interact (chart S1055 -> S1057, T1808; Jump does the same, T1814): the stick up and the press, more than
+    // chart variable 194 = 4 rungs under the top (cond 0x2B3), plays `ladder_climb_up_fast`: four rungs (its root rises
+    // 429 in 0.47 s; ladder_climb_up: one rung, 110.6, in 0.30 s). Pressed again from the clip's frame 10 on (T1809,
+    // chart variable 193) it starts over from where she is; else its end is the rung's idle (T1806) [O-data].
+    const auto fastUp = [&](int from) {
+        s_.buttons.interact.take();
+        s_.climbFrom = s_.pos, s_.climbTo = rungPos(m, from - t_.ladderFastRungs, out), s_.climbYawFrom = s_.yaw, s_.climbYawTo = s_.yaw;
+        s_.clip.clear();
+        play("ladder_climb_up_fast", false);
+    };
+    const bool stickUp = glm::dot(vec3(move, 0), -out) > 0.5f && std::abs(glm::dot(move, vec2(std::sin(s_.yaw), -std::cos(s_.yaw)))) <= 0.5f;
+    // S1055, the state the presses are read in, is the rung-to-rung climb: a press in the middle of a rung goes on fast.
+    if (!clipDone() && stickUp && rungAt(m, s_.pos.z) > t_.ladderFastRungs && anims_.find("ladder_climb_up_fast") &&
+        ((clip == "ladder_climb_up_fast" && s_.buttons.interact.buffered() && s_.clipTime * 30.0 >= t_.ladderFastAgainFrame) ||
+         (clip == "ladder_climb_up" && (jumpPressed || s_.buttons.interact.buffered())))) {
+        fastUp(rungAt(m, s_.pos.z));
+        return;
+    }
     if (clip == "ladder_bad_attach_recover" || clip == "ladder_attach_M" || clip == "ladder_attach_ground_bottom" || clip == "ladder_attach_ground_top" ||
-        clip == "ladder_climb_up" || clip == "ladder_climb_down" || clip == "ladder_detach_ground_top" ||
+        clip == "ladder_climb_up" || clip == "ladder_climb_up_fast" || clip == "ladder_climb_down" || clip == "ladder_detach_ground_top" ||
         clip == "ladder_detach_ground_bottom" || clip == "ladder_jump_up_at_top" || clip == "ladder_settle_left" ||
         clip == "ladder_settle_right") {
         if (!warpStep(dt)) return;
@@ -366,6 +384,10 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const bool sideways = std::abs(lateral) > 0.5f && std::abs(lateral) > std::abs(climb);
     const bool up = !sideways && climb > 0.5f, down = !sideways && climb < -0.5f;
     const int side = lateral > 0 ? 1 : -1;
+    if (up && r > t_.ladderFastRungs && (jumpPressed || s_.buttons.interact.buffered()) && anims_.find("ladder_climb_up_fast")) {
+        fastUp(r);
+        return;
+    }
     if (jumpPressed && up) { // jump up, else nothing (no jump back, T1868)
         if (r > kJumpUpRung || col_.raycast(s_.pos, {0, 0, 1}, kJumpUpHeadroom)) return;
         s_.regrabCooldown = 0.3f;

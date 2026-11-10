@@ -383,6 +383,7 @@ struct PlayerState {
     int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
     float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
     float landTime = 0;   // Land: seconds since she landed (the chart's state time of the landing group S1276)
+    float pullWait = -1;  // Hang: seconds since Jump was pressed with a top to climb onto (chart S439); -1 = not waiting
     // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
     // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
     // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
