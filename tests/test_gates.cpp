@@ -2296,6 +2296,36 @@ TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
     }
 }
 
+// l2_maproom (C09-04): Lara crossing volume 2636 activates cinematic 2624 (095_tha_powerup); the volume's handler
+// then waits for the cutscene's end (cinematic 10, a latent NtCineSequence: tru.exe 0x4A4CC0 / 0x4ADAA0) and only
+// then has Lara's equip helper give her g_gauntletleft (larabase 37); the cinematic's own handlers switch the
+// gauntlet's glow (larabase 19, the flag 0x698850 sets). Both natives were unbound: the handlers stopped there and
+// the gauntlet never came by play.
+TEST(ProgressionReal, MaproomCinematicGivesTheLeftGauntlet) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_maproom");
+    auto& w = *wp;
+    EXPECT_FALSE(w.script().playerObjects().contains("g_gauntletleft")) << "not hers before the cutscene";
+    const auto* v = w.script().find(2636);
+    ASSERT_TRUE(v);
+    place(w, v->pos, 0, true);
+    bool activated = false;
+    int given = -1;
+    for (int i = 0; i < 120; ++i) {
+        w.tick({});
+        for (const auto& e : w.script().events()) activated |= e.kind == script::EventKind::Activate && e.target == 2624;
+        if (given < 0 && w.script().playerObjects().contains("g_gauntletleft")) given = i;
+        if (!activated) EXPECT_LT(given, 0) << "the gauntlet came before the cutscene, tick " << i;
+    }
+    EXPECT_TRUE(activated) << "volume 2636 plays cinematic 2624";
+    EXPECT_GE(given, 0) << "the left gauntlet after the cutscene";
+    for (const auto& [key, n] : w.script().failures()) {
+        EXPECT_NE(key.first, 2636) << key.second;
+        EXPECT_NE(key.first, 2624) << key.second;
+    }
+}
+
 // Research: an uber object's decoded sections (states, transitions, entry actions), joints, range / limit / motor
 // records, commands and events: OU_UBER_SECTIONS=<object>.
 TEST(ProgressionReal, UberSections) {

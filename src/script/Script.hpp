@@ -668,6 +668,7 @@ private:
     Experience experience_;
     bool experienceSet_ = false; // a script set one this tick
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
+    std::set<int32_t> cinematicsPlayed_;  // cinematic objects whose stream has ended (cinematic 9 / 10 wait for it; saved)
     float pullStrength_ = 1;              // larabase 35 (not saved: a load lets go of the grip)
     uint32_t unitEffect_ = 0;
     std::set<int32_t> grappleOff_; // unit 13 / 12: grapple targets taken from / given back to Lara; saved

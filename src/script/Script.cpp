@@ -466,6 +466,7 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
     playerScript_.reset();
     playerHiddenGroups_ = playerGearGroups_ = 0;
     playerObjects_.clear();
+    cinematicsPlayed_.clear();
     pullStrength_ = 1;
     if (!bigfile_) return;
     const auto bytes = bigfile_->read("pc-w\\lara.drm");
@@ -910,6 +911,7 @@ bool Runtime::grapplePulled(int32_t uid) {
 }
 
 void Runtime::endCinematic(int32_t uid) {
+    cinematicsPlayed_.insert(uid);
     if (Object* object = findMut(uid)) fire(EventKind::CinematicEnd, *object);
 }
 
@@ -1166,6 +1168,29 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (nc.function == 37 && text != nc.args.end()) playerObjects_.insert(*text->text);
                 if (nc.function == 42) std::erase_if(playerObjects_, [](const std::string& o) { return o.starts_with("g_"); });
                 nc.result = vm::Value::scalar(nc.function == 38 && text != nc.args.end() && playerObjects_.contains(*text->text));
+                return true;
+            }
+            // larabase 19 (thunk 0x79A0E0 -> 0x777A30 -> 0x698850): one bool into the global byte 0xECFC88, which only
+            // the material-constant setter 0x6A6530 reads (a 0 / 1 shader parameter: the gauntlet's glow) and the
+            // checkpoint writer 0x6F5910 saves (+0xD4) [O]. The glow is not drawn in ours, so the call has nothing to
+            // do; unbound it stopped the handlers that hand the gear over (l2_maproom cinematic 2624: the left
+            // gauntlet came only with a test fixture).
+            if (!std::strcmp(name, "larabase") && nc.function == 19 && nc.args.size() == 1) return true;
+            // cinematic 9 / 10 (thunks 0x797020 / 0x797040 -> 0x4A4C70 / 0x4A4CC0): a latent NtCineSequence on the
+            // receiver's stream; its update 0x4ADAA0 first waits until that stream is the one playing, then until the
+            // player's time passes the float given (9) or FLT_MAX (10, constant 0x845884): until it has finished [O].
+            // Ours plays (or skips) a cutscene at the end of the tick that activated it (World::checkLevelEnd), so
+            // the call blocks until that has happened; a new activation this tick waits for its own end [I: a time
+            // inside the stream (9) is not told apart from its end]. l2_maproom volume 2636 waits so for cinematic
+            // 2624 before it hands the left gauntlet over.
+            if (!std::strcmp(name, "cinematic") && ((nc.function == 9 && nc.args.size() == 1) || (nc.function == 10 && nc.args.empty())) &&
+                (nc.receiver.kind == vm::Value::Kind::Member || nc.receiver.kind == vm::Value::Kind::Object)) {
+                const int32_t uid = nc.receiver.uid;
+                const bool starting = std::any_of(events_.begin(), events_.end(), [&](const Event& e) {
+                    return e.kind == EventKind::Activate && e.target == uid && e.tick == tick_;
+                });
+                if (starting) cinematicsPlayed_.erase(uid);
+                nc.wait = !cinematicsPlayed_.contains(uid);
                 return true;
             }
             // microphone (bind 0x7AC8A0): the audio listener's placement between camera and Lara (1/2 two floats ->
@@ -2794,6 +2819,7 @@ nlohmann::json Runtime::serialize() const {
             if (const auto it = playerScript_->initial.find(offset); it == playerScript_->initial.end() || it->second != value)
                 fields[std::to_string(offset)] = value;
     j["player"] = {{"hiddenGroups", playerHiddenGroups_}, {"objects", playerObjects_}, {"scriptFields", std::move(fields)}, {"lastBike", lastBike_}};
+    j["cinematicsPlayed"] = cinematicsPlayed_;
     // The running script itself (version 1): sleeping threads, unit / global script instances (by unit and type: their
     // uids depend on load order, so a load gives them the saved ones), the objects then alive (a load resumes them rather
     // than constructing them again), clocks, queued messages, the fade. A load's entries still waiting for their unit
@@ -2881,6 +2907,7 @@ void Runtime::restore(const nlohmann::json& j) {
     if (const uint32_t mask = player.value("hiddenGroups", playerGearGroups_); mask != playerHiddenGroups_)
         playerHiddenGroups_ = mask, ++visibilityVersion_;
     playerObjects_ = player.value("objects", std::set<std::string>{});
+    cinematicsPlayed_ = j.value("cinematicsPlayed", std::set<int32_t>{});
     lastBike_ = player.value("lastBike", 0);
     if (playerScript_) {
         playerScript_->fields = playerScript_->initial;
