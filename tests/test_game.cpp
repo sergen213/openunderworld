@@ -8503,8 +8503,8 @@ TEST(GameReal, MovingMarkupColumnHandholdLowers) {
     run(true);
 }
 
-// By input, l5_valgrind: cog wheel 7312 (ar_pu_cog_wheel_level_1a) turns at the foot of the tower with four ledge items
-// on its rim, 739 over the floor. Standing by the rim she jumps when one comes by (a standing jump's ledge leap),
+// By input, l5_valgrind: cog wheel 7312 (ar_pu_cog_wheel_level_1a) at the foot of the tower has four ledge items on its
+// rim, 739 over the floor, and turns for about 9 s after the unit starts. Standing by the rim she jumps when one comes by (a standing jump's ledge leap),
 // hangs, goes round with the wheel, and a drop puts her down further round, still moving.
 TEST(GameReal, MovingMarkupCogWheelByInput) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -8514,7 +8514,7 @@ TEST(GameReal, MovingMarkupCogWheelByInput) {
     w.script().setBigfile(&bf);
     w.onCinematic = [](const std::string&, bool) {};
     const auto& s = w.player().state();
-    for (int i = 0; i < 30; ++i) w.tick({}); // (240_val_gate, triggered on the first tick, puts her at the gate)
+    for (int i = 0; i < 10; ++i) w.tick({}); // (240_val_gate, triggered on the first tick, puts her at the gate)
     const auto* wheel = w.script().find(7312);
     ASSERT_TRUE(wheel);
     const vec2 axis(wheel->pos);
@@ -8524,7 +8524,7 @@ TEST(GameReal, MovingMarkupCogWheelByInput) {
         ASSERT_TRUE(floor);
         stand.pos = floor->point, stand.yaw = -1.5707963f;
         w.restore(stand, -1.5707963f, 0);
-        for (int i = 0; i < 20; ++i) w.tick({});
+        for (int i = 0; i < 10; ++i) w.tick({});
     }
     ASSERT_LT(glm::length(vec2(s.pos) - axis), 1800.0f) << "she stands by the wheel: " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
     int presses = 0;

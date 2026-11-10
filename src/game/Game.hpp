@@ -1499,6 +1499,7 @@ private:
     // section's joint and clip).
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; };
     std::vector<ObjectCollider> colliders_;
+    size_t syncedAnchors_ = 0; // script anchors at the last syncObjects (riders of spline movers collide)
     // Hit shapes of objects that only shots meet (anim graphs leaving a state on damage whose object does not collide
     // otherwise: l1_kraken_room's chain links 61 / 62): World::shotRay tests them, nothing else does.
     std::vector<collision::Dynamic> shotOnly_;

@@ -2136,7 +2136,7 @@ Code: `World::tickObjectMarkup`, `World::tickObjects` (the ride), `World::tick` 
   the objects' items: her ledge, water volume and hold are kept by owner there too. An item that goes away under her
   (its object hidden, streamed out, its section on another model) lets her go.
 - Real cases (`GameReal.MovingMarkup*`): by input, l5_valgrind cog wheel 7312 (standing jump onto a passing rim
-  ledge, 10 degrees/s, let go at the rim's speed; the self-test `moving_markup` walks there from the gate); rotating,
+  ledge, 10 degrees/s, let go at the rim's speed; the self-test `moving_markup` does the same in ou-game); rotating,
   l7_yggdrasil_end tower 8401's ring handholds; sliding, l5_valaskjalf chain 6939's link poles (174 units/s);
   counterweight, l4_staircase_upper ramps 6045's column handhold falling 948 on its joint. The last three set her
   hanging on the item (no floor leads there in ours yet) and use input from there.
@@ -2237,14 +2237,22 @@ Class 79 = uber object, 34 = rigid body on a joint, 6 = anim-graph object, 30 = 
 | l4_pool | `ca_rb_snake_head_revisit` 5632, 5633 | 79 | 1x pole (model 0, segment 0) |
 
 What moves them [O data / scripts, as far as ours runs them]: the valgrind tower rings 7492-7509 and cog wheels
-7312-7314 turn on uber hinge joints (the rings stand until the tower puzzle starts them; the wheels turn from the
-start); the endgame tower 8401's ring sections turn from the start; `ar_ani_infinite_chain` links run by clip (6939-6942
+7312-7314 turn on uber hinge joints (the rings stand until the tower puzzle starts them; in ours the wheels turn for
+about 9 s after the unit starts and then rest [U: what starts and stops them]; later Lara turns them by their push
+panels); the endgame tower 8401's ring sections turn from the start; `ar_ani_infinite_chain` links run by clip (6939-6942
 a few seconds after the unit starts, 6943 / 6944 from gear 6985); the hammers, weights and `ms_ani_*` kraken pieces by
 anim-graph / uber clips their scripts start; the hallway ramps' column section, the snake heads, crushers and
-`ar_rb_hpole*` on physics joints; push blocks and Thor pillars by Lara. [U] `ar_ani_floating_runestone` 8365-8388 stand
-still in ours: the 82 `natla_end_mover` spline movers carry render meshes only and nothing ties a runestone to a
-mover yet (the original's link — an attach native or a parent in the intro — is not found), so the final level's
-platform rides are still open.
+`ar_rb_hpole*` on physics joints; push blocks and Thor pillars by Lara. The final level's platforms [O scripts, `OU_PROGRESSION_DUMP`]: the 24 `ar_ani_floating_runestone` 8365-8388 are
+placed in rows far off the arena and are anchored by script (`instance` 8 (marker id) gives an anchor, `instance` 23
+on the stone takes it) to markers 1-6 of the eight `ar_ani_runestone_orbit_a` rigs 8389-8396, three stones a rig, at
+staggered heights round the tower; each stone has one ledge loop on its segment 1 and a player sensor on its marker
+5. The 82 `natla_end_mover` spline movers carry `natla_end` (Natla: 8404's child is 8403), not platforms. Posing
+anchored riders is implemented on agent/GpNatla (`instance` 8 anchors, `World::poseAnchored`); this branch only makes
+a rider that carries markup collide once it is anchored to a spline mover or an animated rig (`World::syncObjects`),
+and its items follow its pose like any other object's. Open after both are merged: the rigs do not turn in ours (a trial here with
+the stones anchored: they sat at their markers, e.g. 8365 at 1948,-3375,11346, for 10 s; the rig is posed by a
+5-bone clip palette whose time does not advance and it has no anim graph in ours [U: what plays its clip]), and the
+rides themselves (C21-01, -10, -19, -20 of docs/matrix/21_out_of_time.md).
 
 ## Chimney jumps (src/game/WallJump.cpp)
 

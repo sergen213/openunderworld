@@ -1394,7 +1394,13 @@ void World::syncObjects() {
         // Anim graphs with hit-gated transitions (sh_ei_combat_crate_*) collide so Lara's shots reach them (World::fire).
         const bool shootable = o.graph && o.graph->set->graph &&
                                std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return !t.events.empty(); });
-        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable) { // spline movers' collision follows Object::body (pose below)
+        // What is anchored (script::Runtime::anchor) to a spline mover or an animated rig and carries markup collides,
+        // posed by its body: l7_yggdrasil_end's runestones on their orbit rigs (docs/GAMEPLAY.md "Moving markup").
+        const auto anchored = script_.anchor(o.uid);
+        const script::Object* host = anchored ? script_.find(anchored->first) : nullptr;
+        const physics::ObjectPhysics* own = host ? objectPhysics(o.name) : nullptr;
+        const bool rides = host && (host->spline || host->graph || host->clips) && own && !own->markup.empty(); // [I] traversal geometry only
+        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable && !rides) { // spline movers' collision follows Object::body (pose below)
             // Anim graphs that leave a state on the damage they took (stimulus 0x800 without event ids, posted by
             // Runtime::tickGraph) and do not collide otherwise: their shapes are met by shots only (World::shotRay), at
             // their intro frame [I: l1_kraken_room's chain links hang on platform 27's markers 21 / 20 (uberobjectbase 2
@@ -1478,6 +1484,7 @@ void World::syncObjects() {
     breakableColliders(); // class-30 breakables: their pieces' collision while whole (Breakables.cpp)
     syncedObjects_ = script_.objects().size();
     syncedPlates_ = lateColliders(script_);
+    syncedAnchors_ = script_.anchors().size();
     poseShotOnly();
 }
 
@@ -1550,7 +1557,7 @@ void World::tickObjects(float dt) {
     tickBreakables(dt); // contacts, waits and breaks first: a break drops its colliders before anything queries them
     // Objects came or went, or the merged collision was rebuilt (streaming drops its dynamics).
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
-        lateColliders(script_) != syncedPlates_)
+        lateColliders(script_) != syncedPlates_ || script_.anchors().size() != syncedAnchors_)
         syncObjects();
     tickUber(dt);
     if (!shotOnly_.empty()) poseShotOnly();
