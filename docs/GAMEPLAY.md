@@ -1576,6 +1576,110 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   rope (11), vertpole (5), zipline (7) or cover (12) markup (all units, 2026-10-18 and 2026-11-06), and lara.drm has no
   zip-line clip at all. The `rope_*` / `vpole_*` animations are leftovers; the only rope is the grapple's.
 
+## Chimney jumps (src/game/WallJump.cpp)
+
+A free jump that meets a wall plants Lara's feet on it; a jump press there turns her round and leaps back off it, higher,
+toward whatever is behind her. Between two facing walls that climbs a shaft, and the last leap ends on a ledge. The
+controls page of Stella's walkthrough describes the move
+(https://tombraiders.net/stella/walks/controls/TR8controls.html, "Chimney Jump / Wall Jump"), its Coastal Thailand
+pages the first place that needs it (https://tombraiders.net/stella/walks/TR8walk/details/remnants8.html).
+
+**The original** (lara.drm player state chart and player data; tru.exe 1.1.0.0; dump script
+openunderworld-work/gameplaygoal/wj.py, disassembly openunderworld-work/gameplaygoal/chimney/*.asm):
+
+- States [O-data]: S1291 `wall_jump_attach_air` (request 1153, 3 frames, entered at frame 1), S1294 `wall_jump_idle`
+  (1155, loop), S1295 `wall_jump_jump_back` (1156, 5 frames, a half turn of the root and no translation), S1296
+  `wall_jump_detach_fall` (1157, 8 frames, root 33.7 back and 154.4 down), all under S1290; S1292
+  `wall_jump_anticipate` (1154) and S1293 (the plain wall collision) beside them.
+- Into it [O-data]: T2348 from S288 (the parent of every free jump's flight: S289 sends all jump take-offs, from the
+  ground, a hang, a ladder, a pole or a wall, on to S294 / S306 under it), S293 and S1292, when the jump has no markup
+  target (cond 0x262 kind 600 = 0) and `PSCCF_WallJumpAttach` holds (cond 0x203, 0x7633E0: 0x7594C0 returns 2). T2349
+  goes to S1292 on `PSCCF_WallJumpAnticipate` (0x20B, 0x763330 -> 0x759260), T2350 to S1293 on `PSCCF_WallJumpCollide`
+  (0x217, 0x763490: 0x7594C0 returns 1) once 5 frames into the state (cond 0x14).
+- The wall test 0x7594C0 [O] (player data = lara.drm object data, offsets from its start):
+  - She is not attached to markup with flag 0x80.
+  - 0x758DD0: the pelvis (segment 1) now and N frames on, N = byte +0x821 = **3** (the anticipate test uses byte
+    +0x820 = 0, a ray of no length): along her heading by N x |velocity| (a frame's), and 2.862215 x N^2 down.
+  - Ray 1 (0x4935F0, mask 0x2C19E7) between the two points raised by int +0x824 = **63**; ray 2 lowered by int +0x828 =
+    **-158**. Both must hit terrain or an object (hit kinds 3 / 5); no hit on ray 1 = 0 (no wall).
+  - 0x5D3BA0 refuses a terrain face whose client flags (face +0x0E) have **0x80**, and an object whose data byte +0x30
+    has 0x10. 372 023 of the 814 628 collision faces of the 70 units carry the flag (all of l1_ship_lower_hallway,
+    17 % of l2_cliffclimb), so the level builders chose the walls she may kick off.
+  - 0x758F70: the wall's normal at most byte +0x831 = **7** degrees off horizontal (|n.z| <= sin 7); her horizontal
+    velocity (her heading when she has none) within byte +0x830 = **45** degrees of square into the wall; her heading
+    within byte +0x832 = **65** degrees of it.
+  - zVel between -byte +0x834 (**13**) x 5.72443 and byte +0x833 (**9**) x 5.72443 a frame (-2232.5 .. 1545.6 units/s).
+  - 0x7591E0: no floor within int +0x82C = **31** under her root.
+  - 0x758B00: ray 2's hit within float +0x838 = **951.33** (horizontally) of player state +0x9C0, the jump query's
+    +0x40 [I: taken as where the jump began].
+  - All true = 2: the wall's normal goes to player state +0x5D0 and ray 2's hit to +0x5E0. A wall met that fails a later
+    test = 1 (collide).
+- On the wall [O]: S1291's anim target 0xEB (property 410, action 230 -> 0x758BB0) is ray 2's hit + int +0x83C = **110**
+  along the normal at her own height, facing the wall. Its clip done (cond 0xC9) -> S1294; there state time >= chart
+  variable 208 = **12** -> S1296 -> the fall S1006 (jump query q44). From S1291 and S1294 T2352: the jump button (cond
+  0x98 value 136, the pressed bit) and `PSCCF_WallJumpAllowed` (0x21C, 0x7660D0: chart context +0x4EC < byte +0x843 =
+  **5**) -> S1295.
+- The jump back [O-data]: S1295 has property 917, so action 917 (0x75E350) adds 1 to +0x4EC; its exit function
+  (0x75E390) zeroes it. The action is listed by S287 (the jump flights), S289, S1290 and S1292, so the count runs
+  through a chain of wall jumps and ends with it [I: that an action common to both states is not exited between them].
+  S1295's jump query is **q12** (property 541; run on entry, property 479 = 597): velocity **46.81** along direction
+  source 0x13 (the wall normal at +0x5D0, 0x724F.. switch) + **77.27** up a 30 Hz frame under gravity 5.72443, start
+  79.01 out, cone 90 degrees, +0x28 20, flags 0x1850, class record 0x2A9EC (the hang / ladder one), ledge target types
+  1 at the start and 3 **372.95** over it (the hands of the wall pose are 370..377 over the root). Its clip done ->
+  S289, which flies her onto what the query met or lets her fly free.
+- Timing that follows [I]: off the wall she rises 77.27 a frame, more than the attach allows (51.52), for 4.5 frames,
+  and the collide transition waits for frame 5: a rebound in a shaft too narrow to fly in still gains 77.27 x 5 -
+  2.862 x 25 = **314.8** before her feet are on the other wall. The time unit of cond 0x14 is taken as 30 Hz frames
+  for that reason [I].
+
+**Ours** (State::WallJump; `Player::tryWallJump`, `wallJump`, `wallJumpQuery`): the test above, literally, on the 30 Hz
+frames of a State::Jump flight that was not aimed at markup (`jumpAimed`: `aimGroundJump` / `assistJump` found a
+target), with collision rays for 0x4935F0 and the bind pose's segment 1 height for the pelvis [I] (300 without a
+skeleton). On the wall she is drawn to the 110 standoff over two frames, turned to face it, and holds her height:
+nothing moves her up but the jumps. A jump press (edge) while `wallJumps` < 5 plays wall_jump_jump_back; when it ends
+she faces away from the wall and either flies onto the ledge `ledgeOnArc(q12)` met (State::HangJump, the existing ledge
+catch) or leaps free at q12's velocity (State::Jump: the existing air movement, ledge grabs and landings, and the next
+wall). 14 frames without a press: wall_jump_detach_fall and State::Fall. `wallJumps` clears whenever she is not
+jumping. Two limits on q12's ledge targets are ours [I], both needed for l2_junglehub's columns to play as the
+walkthrough describes them: not the ledge the jumps began on (`jumpLedge`; tru.exe keeps the markup she was attached
+to through the jump, player state +0xA84, and its chart has a `JumpTargetSameAsAttached` condition), and not a ledge
+hidden from the arc's start by solid geometry (`JumpQuery::sight`: the query's 316 capsule reaches through the 320
+thick column to ledge 804 on its far side). Saves carry the state (`controller.wallJump`; a save in the air still
+resumes at its checkpoint, as before). Not ported [U]: wall_jump_anticipate (its test's ray has no length with the
+data as shipped), the wall-collision state S1293, objects' refusal bit (data byte +0x30 & 0x10: every dynamic counts
+as a wall).
+
+**Where the game uses it** [O-data geometry; the first also by the walkthrough]:
+
+- l2_junglehub, the streambed's square columns (320 x 320): ledge 796 on column A's east face (x = -12659, z 6349),
+  ledge 797 round the same column 1248 higher, column B's face 638 behind her (x ~ -12021). Ours: the leap back off
+  the hang holds on B 138 over the hang's root height, the jump back on A 435 higher, the next on B 435 higher again,
+  and from there q12 meets 797: four jumps, the count the walkthrough gives.
+- l5_valaskjalf (Jan Mayen): ledge 1512 (5057, -79645, -13429) to ledge 1510 on the same wall 1893 higher, the facing
+  wall 822 away: the leap back and five wall jumps (~520 each), all the count allows.
+- l2_towerroom: ledge 418 (308, 14792, 3645) to ledge 417, 553 higher: one kick off the wall 603 behind her.
+- Found by openunderworld-work/gameplaygoal/chimney/scan.cpp (a ledge hang with an unflagged facing wall 300..950 behind
+  it and the next ledge out of an up-jump's reach) but not climbed this way by ours (reached otherwise, or not at
+  all; not looked into [U]): l2_cliffclimb 940, l2_towerroom 420, l4_temple 1157, l4_traprooms 1367, l5_valaskjalf
+  1558 and 1515, l7_arctic_sea 2073, l7_yggdrasil_end 1860, l1_ship_exterior 365.
+
+**Tests**: `Game.ChimneyJumpGainsHeightEachRebound` (walls 700 apart: ~487 a rebound, 110 out, no teleport),
+`Game.ChimneyJumpNeedsThePress` (14 frames, then the fall), `Game.ChimneyJumpFallsAfterFiveInARow`,
+`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`,
+`Game.ChimneyJumpSaveLoadContinuesIdentically`, `GameReal.JunglehubChimneyJumpClimbsColumns`,
+`GameReal.ValaskjalfChimneyJumpTakesAllFive` (and l2_towerroom's kick), `StreamReal.SaveContinuesBitIdentically`
+(its l2_junglehub case: saved on column B mid-climb, bit for bit).
+
+Open [U]: not measured in tru.exe under Wine: whether a standing jump beside an unflagged wall really plants her on it
+45 over the floor (ours does, by the chart), the hold time in seconds, the attach heights, whether the count ends a climb
+at five; the camera on the wall (the jump camera is kept). Three Wine sessions (2026-11-10,
+openunderworld-work/gameplaygoal/chimney/session.sh, wine1-*.txt) teleported her to our unit-frame coordinates and
+fell through: after `wmem goto <unit>` tru.exe's world is our unit frame + (its start - our spawn): l4_ballcourt
++ (5881.23, -10787.23, -15435.90), l2_junglehub + (8558.23, -19414.44, -18073.17). session2.sh there has the corrected
+coordinates (the l4_ballcourt corridor at ours -17544, 6342, 2841.5 for the count; l2_junglehub's streambed between
+the columns, where column B's base carries flag 0x80 up to 800 over the floor and its upper part does not) and
+ours1..3.txt our controller's traces of the same inputs to compare with; it was not run.
+
 ## Rail slides (src/game/Traverse.cpp)
 
 - Type-8 markup attaches from the ground or air after ledges, poles, ladders, perches and rock faces. Lara follows the

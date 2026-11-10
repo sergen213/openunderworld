@@ -153,6 +153,7 @@ enum class State {
     // block's motion carries her).
     Use, Block,
     WallHug, // back to the wall on a narrow ledge shelf (Wall_Hug_* clips; src/game/Traverse.cpp)
+    WallJump, // chimney jump: feet on a wall after a jump at it, then the jump back off it (wall_jump_* clips; WallJump.cpp)
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -222,6 +223,21 @@ struct Tuning {
     // Jumps off the wall hug (lara.drm query q68, the in-air group S275's: 74.32 that way + 42.54 up a 30 Hz frame) and
     // its twist jump up (q55: 50.82 straight up), x 30 (Traverse.cpp Player::wallHugJump).
     float wallHugJumpOut = 74.32f * 30, wallHugJumpVz = 42.54f * 30, wallHugTwistVz = 50.82f * 30;
+    // Chimney / wall jumps (WallJump.cpp; lara.drm player data +0x820..+0x843 read by tru.exe 0x7594C0 / 0x758F70 /
+    // 0x758BB0 / 0x7660D0 [O]): she plants her feet on a wall her jump meets within `wallJumpLook` 30 Hz frames while
+    // -byte +0x834 x g <= zVel <= byte +0x833 x g (g = 5.72443 a frame); the wall at most +0x831 degrees off vertical,
+    // her velocity within +0x830 and her heading within +0x832 degrees of square to it; two rays from the pelvis, +0x824
+    // over and +0x828 under it, must both meet it; no floor within +0x82C under her; the wall within +0x838 of where the
+    // jump began; she holds on +0x83C out of it. At most byte +0x843 jumps back in a row (chart cond 0x21C). She lets go
+    // after chart variable 208 = 12 frames in wall_jump_idle [O-data; the 30 Hz unit I]. The jump back is query q12:
+    // 46.81 along the wall's normal + 77.27 up a 30 Hz frame.
+    float wallJumpMinVz = -13 * 5.72443f * 30.0f, wallJumpMaxVz = 9 * 5.72443f * 30.0f; // units/s
+    float wallJumpLook = 3.0f, wallJumpHigh = 63.0f, wallJumpLow = -158.0f, wallJumpFloor = 31.0f;
+    float wallJumpSlope = 7.0f, wallJumpVelCone = 45.0f, wallJumpFaceCone = 65.0f; // degrees
+    float wallJumpReach = 951.3275f, wallJumpStandoff = 110.0f;
+    int wallJumpMax = 5;
+    float wallJumpHold = 12.0f / 30.0f;
+    float wallJumpOut = 46.80764f * 30, wallJumpVz = 77.269615f * 30;
     // Sprint (Shift / LB held while running; tru.exe under Wine, l4_trailstart): sprint_loop for 9.5..9.9 s, then
     // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
     // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
@@ -303,6 +319,20 @@ struct PlayerState {
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
+    // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
+    // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
+    // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
+    // off a wall since she last stood, hung or fell (tru.exe chart context +0x4EC). wallTime: seconds in State::WallJump.
+    // On the wall climbNormal is its outward normal and climbFrom / climbTo / climbYawFrom / climbYawTo the attach blend.
+    // jumpLedge (jumpFromLedge): the ledge point she hung at when the jumps began; the wall jumps' query does not go
+    // back to that ledge (tru.exe keeps the markup she was attached to through the jump, player state +0xA84) [I].
+    vec3 jumpStart{0};
+    float jumpTime = 0;
+    bool jumpAimed = false;
+    uint8_t wallJumps = 0;
+    float wallTime = 0;
+    vec3 jumpLedge{0};
+    bool jumpFromLedge = false;
     // Off balance on a balance beam (Player::beam). `build`: 30 Hz frames the stick has been held across the beam
     // (ours [I]: the escalation into the about-to-fall state). `aboutFall`: the about-to-fall state (chart S895 / S896,
     // bbeam_aboutfall_*) runs tru.exe's balance controller (chart context +0x358: enter 0x742330, update 0x742770, exit
@@ -409,6 +439,7 @@ private:
         JumpRecord record = JumpRecord::None;
         int attach = 0;
         float minZ = -1e9f; // ours: ledge points under this do not count
+        bool sight = false; // ours: ledge points hidden from the arc's start by solid geometry do not count (WallJump.cpp)
     };
     // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
     // (`record`) passing one of its class record's entries.
@@ -471,6 +502,11 @@ private:
     bool wallHugCorner(float ds);           // shimmying ds along the shelf onto a corner: the corner clip round it
     JumpQuery wallHugQuery(int way) const;  // q68 forward (0) / left (1) / right (-1), q55 the twist up (2)
     void wallHugJump(vec2 move);            // Wall_Hug_Jump_Forward / _jump_left / Wall_hug_Jump_Up_Twist (or the somersault)
+    // Chimney jumps (src/game/WallJump.cpp): tryWallJump plants her on the wall a free jump is about to meet
+    // (State::WallJump); wallJump holds her there, jumps back on a jump press, lets go otherwise.
+    bool tryWallJump();
+    void wallJump(bool jumpPressed, float dt);
+    JumpQuery wallJumpQuery() const; // q12 from where she holds on
     bool wallHugWaterBelow() const;         // tru.exe 0x7420D0: water under the point in front of her (drop to water)
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);

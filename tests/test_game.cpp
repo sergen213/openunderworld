@@ -6214,3 +6214,292 @@ TEST(GameReal, MainHallRingByItsOwnRange) {
     place({-159, 1712, -38}, 1.5707963f);
     EXPECT_FALSE(w.grappleTarget()) << "~4030 away: out of the ring's own range";
 }
+
+// Chimney jumps (src/game/WallJump.cpp, docs/GAMEPLAY.md "Chimney jumps"). The shaft: two walls facing each other, A at
+// x = 400 and B at x = -300, over a floor.
+namespace {
+CollisionMesh shaftMesh() {
+    CollisionMesh m;
+    addFloor(m, -300, -1000, 400, 1000, 0);
+    addBox(m, {400, -1000, -100}, {1000, 1000, 6000});
+    addBox(m, {-900, -1000, -100}, {-300, 1000, 6000});
+    return m;
+}
+// A jump with the stick forward (+X, toward A) from the floor; ticks until she is on a wall. False if she never is.
+bool jumpAtWall(game::World& w) {
+    Actions a = forward();
+    a.jump = true;
+    w.tick(a);
+    for (int i = 0; i < 180 && w.player().state().state != State::WallJump; ++i) w.tick(forward());
+    return w.player().state().state == State::WallJump;
+}
+// One jump press on the wall, then ticks until she is on a wall again (true), or anywhere else.
+bool rebound(game::World& w, float* maxStep = nullptr) {
+    const auto& s = w.player().state();
+    Actions jump;
+    jump.jump = true;
+    vec3 last = s.pos;
+    const auto step = [&](const Actions& a) {
+        w.tick(a);
+        if (maxStep) *maxStep = std::max(*maxStep, glm::distance(last, s.pos));
+        last = s.pos;
+    };
+    step(jump);
+    for (int i = 0; i < 4 && s.state == State::WallJump; ++i) step({}); // the turn on the wall
+    for (int i = 0; i < 180 && s.state == State::Jump; ++i) step({});
+    return s.state == State::WallJump;
+}
+} // namespace
+
+// A jump at a wall plants her feet on it 110 out, facing it, at the height she reached; each jump press there leaps
+// back off it to the wall behind, higher: from wall to wall 700 apart the jump back (46.81 out + 77.27 up a 30 Hz
+// frame) is caught 3 frames short of the far wall, about 490 higher. No step of it is a teleport.
+TEST(Game, ChimneyJumpGainsHeightEachRebound) {
+    auto w = makeWorld(shaftMesh(), {0, 0, 0});
+    const auto& s = w->player().state();
+    const auto& t = w->player().tuning();
+    ASSERT_TRUE(jumpAtWall(*w)) << game::stateName(s.state);
+    for (int i = 0; i < 6; ++i) w->tick({});
+    EXPECT_NEAR(s.pos.x, 400 - t.wallJumpStandoff, 0.01f);
+    EXPECT_NEAR(std::cos(s.yaw), 1, 1e-4f) << "facing wall A";
+    EXPECT_GT(s.pos.z, 100);
+    EXPECT_LT(s.pos.z, 320) << "a standing jump's height";
+    EXPECT_EQ(s.vel, vec3(0));
+    float z = s.pos.z, maxStep = 0;
+    for (int k = 1; k <= 4; ++k) {
+        ASSERT_TRUE(rebound(*w, &maxStep)) << "rebound " << k << ": " << game::stateName(s.state);
+        for (int i = 0; i < 6; ++i) w->tick({});
+        const bool onB = k % 2 == 1;
+        EXPECT_NEAR(s.pos.x, onB ? -300 + t.wallJumpStandoff : 400 - t.wallJumpStandoff, 0.01f) << "rebound " << k;
+        EXPECT_NEAR(std::cos(s.yaw), onB ? -1 : 1, 1e-4f) << "facing the wall she is on";
+        EXPECT_NEAR(s.pos.z - z, 486.5f, 45.0f) << "rebound " << k << " rose " << s.pos.z - z;
+        EXPECT_EQ(s.wallJumps, k);
+        z = s.pos.z;
+    }
+    EXPECT_GT(z, 1900);
+    EXPECT_LT(maxStep, 60) << "flight and the two-frame draw onto the wall: no jump in position";
+}
+
+// Without the press she holds on for wall_jump_attach_air's two frames and wall_jump_idle's twelve, then lets go and
+// falls to the floor; a press after that does nothing. The press counts from the moment she touches the wall.
+TEST(Game, ChimneyJumpNeedsThePress) {
+    auto w = makeWorld(shaftMesh(), {0, 0, 0});
+    const auto& s = w->player().state();
+    ASSERT_TRUE(jumpAtWall(*w));
+    const float z = s.pos.z;
+    int held = 1;
+    for (; held < 200 && s.state == State::WallJump; ++held) {
+        w->tick({});
+        EXPECT_LE(s.pos.z, z + 0.01f) << "nothing lifts her on the wall";
+    }
+    EXPECT_NEAR(held, 28, 2) << "14 frames at 60 ticks a second";
+    EXPECT_EQ(s.state, State::Fall);
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    EXPECT_EQ(s.state, State::Fall) << "too late";
+    for (int i = 0; i < 240 && s.state == State::Fall; ++i) w->tick({});
+    for (int i = 0; i < 60; ++i) w->tick({});
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.z, 0, 0.01f);
+    EXPECT_EQ(s.wallJumps, 0);
+    // pressed on the very first tick on the wall: the leap
+    auto w2 = makeWorld(shaftMesh(), {0, 0, 0});
+    ASSERT_TRUE(jumpAtWall(*w2));
+    const float z2 = w2->player().state().pos.z;
+    ASSERT_TRUE(rebound(*w2));
+    EXPECT_GT(w2->player().state().pos.z, z2 + 400);
+}
+
+// tru.exe allows five jumps back in a row (player data byte +0x843): on the sixth wall the press does nothing and she
+// drops; standing again, the count starts over.
+TEST(Game, ChimneyJumpFallsAfterFiveInARow) {
+    auto w = makeWorld(shaftMesh(), {0, 0, 0});
+    const auto& s = w->player().state();
+    ASSERT_TRUE(jumpAtWall(*w));
+    for (int k = 1; k <= 5; ++k) ASSERT_TRUE(rebound(*w)) << "rebound " << k;
+    EXPECT_EQ(s.wallJumps, 5);
+    const float top = s.pos.z;
+    EXPECT_GT(top, 2400);
+    Actions jump;
+    jump.jump = true;
+    w->tick({});
+    for (int i = 0; i < 60 && s.state == State::WallJump; ++i) {
+        w->tick(i % 2 ? jump : Actions{}); // pressing all the while
+        EXPECT_LE(s.pos.z, top + 0.01f);
+    }
+    EXPECT_EQ(s.state, State::Fall);
+    EXPECT_EQ(s.wallJumps, 5);
+    for (int i = 0; i < 600 && s.state == State::Fall; ++i) w->tick({});
+    EXPECT_LT(s.pos.z, 1);
+    for (int i = 0; i < 90; ++i) w->tick({});
+    EXPECT_EQ(s.wallJumps, 0);
+}
+
+// The last jump back flies onto the ledge its jump query (q12) meets: she ends hanging from it, hands on its line.
+TEST(Game, ChimneyJumpTopsOutOntoLedge) {
+    CollisionMesh m = shaftMesh();
+    m.markup.push_back({1, 7, {{400, 600, 1500}, {400, -600, 1500}}}); // on wall A, hanging to its right (-X)
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    const auto& s = w->player().state();
+    ASSERT_TRUE(jumpAtWall(*w));
+    int presses = 0;
+    while (presses < 5 && rebound(*w)) ++presses;
+    ++presses;
+    EXPECT_EQ(presses, 2) << "onto B, then from B onto the ledge";
+    for (int i = 0; i < 180 && s.state == State::HangJump; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state);
+    EXPECT_EQ(w->collision().markup[size_t(s.ledge)].id, 7);
+    const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+    EXPECT_NEAR(hands.x, 400, 0.01f);
+    EXPECT_NEAR(hands.z, 1500, 0.01f);
+}
+
+// A wall face tru.exe's test refuses (terrain client flag 0x80, 0x5D3BA0) is no wall to jump off: she never holds on.
+TEST(Game, ChimneyJumpRefusesFlaggedWall) {
+    CollisionMesh m = shaftMesh();
+    for (auto& f : m.faces) f.clientFlags |= 0x80;
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    EXPECT_FALSE(jumpAtWall(*w));
+    EXPECT_NE(w->player().state().state, State::WallJump);
+}
+
+// Saved on the wall mid-chimney and restored into a fresh world, the climb goes on tick for tick as it does unsaved.
+TEST(Game, ChimneyJumpSaveLoadContinuesIdentically) {
+    auto w = makeWorld(shaftMesh(), {0, 0, 0});
+    const auto& s = w->player().state();
+    ASSERT_TRUE(jumpAtWall(*w));
+    ASSERT_TRUE(rebound(*w));
+    w->tick({});
+    ASSERT_EQ(s.state, State::WallJump);
+    EXPECT_EQ(s.wallJumps, 1);
+    auto l = makeWorld(shaftMesh(), {0, 0, 0});
+    l->restore(s, w->camera().yaw, w->camera().pitch);
+    const auto& r = l->player().state();
+    Actions jump;
+    jump.jump = true;
+    int walls = 0;
+    for (int i = 0; i < 400; ++i) {
+        // released, then a press on every wall for the first 240 ticks; none after: the fall
+        const bool press = i < 240 && s.state == State::WallJump && i % 4 == 1;
+        w->tick(press ? jump : Actions{}), l->tick(press ? jump : Actions{});
+        ASSERT_EQ(s.state, r.state) << "tick " << i;
+        ASSERT_EQ(s.pos, r.pos) << "tick " << i;
+        ASSERT_EQ(s.yaw, r.yaw) << "tick " << i;
+        ASSERT_EQ(s.vel, r.vel) << "tick " << i;
+        ASSERT_EQ(s.clip, r.clip) << "tick " << i;
+        ASSERT_EQ(s.clipTime, r.clipTime) << "tick " << i;
+        ASSERT_EQ(s.wallJumps, r.wallJumps) << "tick " << i;
+        ASSERT_EQ(s.wallTime, r.wallTime) << "tick " << i;
+        ASSERT_EQ(s.jumpTime, r.jumpTime) << "tick " << i;
+        ASSERT_EQ(s.jumpStart, r.jumpStart) << "tick " << i;
+        walls = std::max<int>(walls, s.wallJumps);
+    }
+    EXPECT_GE(walls, 3) << "the restored climb went on up the shaft";
+    EXPECT_EQ(s.state, State::Idle);
+}
+
+namespace {
+// A chimney climb in a real unit: hanging on ledge `id`'s segment `seg` (its right side, as retail ledges hang), the
+// stick away from the wall + jump leaps back; then a jump press on every wall she holds on to, until she hangs again.
+struct ChimneyRun {
+    int ledge = -1, jumps = 0; // the ledge she ends on (markup id), the jump presses it took
+    State end = State::Idle;
+    float rise = 0, maxStep = 0;  // her root's gain, the longest step of a tick
+    std::vector<vec3> walls;      // where she held on, wall by wall (z relative to the first hang)
+    bool airborneOnly = true;     // between the hangs she was only ever jumping or on a wall
+};
+ChimneyRun climbChimney(const cdc::BigfileSet& bf, const game::AnimLibrary& anims, const char* unit, int id, int seg) {
+    ChimneyRun r;
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), unit, anims);
+    w.script().setBigfile(&bf);
+    const auto& mk = w.collision().markup;
+    int li = -1;
+    for (size_t i = 0; i < mk.size(); ++i)
+        if (mk[i].type == 1 && mk[i].id == id) li = int(i);
+    if (li < 0 || mk[size_t(li)].points.size() < size_t(seg) + 2) return r;
+    const vec3 a = mk[size_t(li)].points[size_t(seg)], b = mk[size_t(li)].points[size_t(seg) + 1];
+    const vec2 d = glm::normalize(vec2(b - a)), out(d.y, -d.x); // her side: the right of the ledge's direction
+    game::PlayerState st = w.player().state();
+    st.state = State::Hang, st.ledge = li, st.ledgeSeg = seg, st.ledgeT = 0.5f * glm::length(vec2(b - a)), st.ledgeSide = -1;
+    st.clip = "ledgeb_idle", st.loop = true, st.clipTime = 0, st.vel = vec3(0);
+    w.restore(st, std::atan2(-out.y, -out.x), -0.25f);
+    const auto& s = w.player().state();
+    for (int i = 0; i < 30; ++i) w.tick({});
+    if (s.state != State::Hang) return r;
+    const vec3 start = s.pos;
+    vec3 last = s.pos;
+    const auto tick = [&](const Actions& in) {
+        w.tick(in);
+        r.maxStep = std::max(r.maxStep, glm::distance(last, s.pos));
+        last = s.pos;
+    };
+    Actions jump;
+    jump.jump = true;
+    tick(worldStick(w, out, jump));
+    r.jumps = 1;
+    for (int i = 0; i < 1500 && s.state != State::Hang; ++i) {
+        if (s.state == State::WallJump && s.clip == "wall_jump_idle" && s.clipTime > 0.1) {
+            r.walls.push_back(vec3(vec2(s.pos), s.pos.z - start.z));
+            tick(jump);
+            ++r.jumps;
+        } else {
+            tick({});
+        }
+        if (s.state != State::Jump && s.state != State::WallJump && s.state != State::HangJump && s.state != State::Hang) {
+            r.airborneOnly = false;
+            break;
+        }
+    }
+    for (int i = 0; i < 90 && s.state == State::Hang; ++i) w.tick({});
+    r.end = s.state;
+    r.ledge = s.state == State::Hang && s.ledge >= 0 ? int(mk[size_t(s.ledge)].id) : -1;
+    r.rise = s.pos.z - start.z;
+    return r;
+}
+} // namespace
+
+// l2_junglehub (Coastal Thailand, the streambed's square columns): from the hang on ledge 796's east side (column A,
+// x = -12659) the higher ledge 797 on the same column, 1248 up, is out of a jump's reach; column B's face is 638 behind
+// her. The jump back off the hang plants her on B; jump presses there carry her to A, to B and then from B onto 797:
+// four jumps in all, as the original's players count them (Stella's walkthrough, "Climbing Out of the Streambed").
+TEST(GameReal, JunglehubChimneyJumpClimbsColumns) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const ChimneyRun r = climbChimney(bf, game::loadLaraAnims(bf), "l2_junglehub", 796, 1);
+    ASSERT_EQ(r.end, State::Hang) << game::stateName(r.end);
+    EXPECT_TRUE(r.airborneOnly);
+    EXPECT_EQ(r.ledge, 797);
+    EXPECT_EQ(r.jumps, 4) << "the leap off the hang and three off the walls";
+    ASSERT_EQ(r.walls.size(), 3u);
+    for (size_t i = 0; i < 3; ++i) // 110 out of column B's face (x ~ -12021) and of column A's (-12659)
+        EXPECT_NEAR(r.walls[i].x, i % 2 ? -12659 + 110 : -12021 - 110, 6.0f) << "wall " << i;
+    EXPECT_NEAR(r.walls[0].z, 138, 15) << "on B, a little above the hang";
+    EXPECT_NEAR(r.walls[1].z - r.walls[0].z, 435, 20) << "a rebound across the 418 between the holds";
+    EXPECT_NEAR(r.walls[2].z - r.walls[1].z, 435, 20);
+    EXPECT_NEAR(r.rise, 7597 - 6349, 2.0f);
+    EXPECT_LT(r.maxStep, 80) << "no teleport on the way up";
+}
+
+// l5_valaskjalf (Jan Mayen): ledge 1512 to ledge 1510 on the same wall, 1893 up, the facing wall 822 away: the leap
+// back and five wall jumps, all that tru.exe allows in a row (player data byte +0x843), each ~520 higher. And
+// l2_towerroom: from ledge 418 a single kick off the wall 603 behind her reaches ledge 417, 553 up.
+TEST(GameReal, ValaskjalfChimneyJumpTakesAllFive) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const ChimneyRun r = climbChimney(bf, anims, "l5_valaskjalf", 1512, 1);
+    ASSERT_EQ(r.end, State::Hang) << game::stateName(r.end);
+    EXPECT_TRUE(r.airborneOnly);
+    EXPECT_EQ(r.ledge, 1510);
+    EXPECT_EQ(r.jumps, 6);
+    ASSERT_EQ(r.walls.size(), 5u);
+    for (size_t i = 1; i < 5; ++i) EXPECT_GT(r.walls[i].z, r.walls[i - 1].z + 380) << "wall " << i;
+    EXPECT_NEAR(r.rise, 1893, 3.0f);
+    EXPECT_LT(r.maxStep, 80);
+    const ChimneyRun t = climbChimney(bf, anims, "l2_towerroom", 418, 0);
+    ASSERT_EQ(t.end, State::Hang) << game::stateName(t.end);
+    EXPECT_EQ(t.ledge, 417);
+    EXPECT_EQ(t.jumps, 2);
+    EXPECT_NEAR(t.rise, 553, 3.0f);
+}

@@ -170,7 +170,7 @@ std::string_view stateName(State s) {
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
                                              "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
                                              "grappleswing", "hit", "railslide", "grapplepull", "vehicle", "grapplerappel",
-                                             "use", "block", "wallhug"};
+                                             "use", "block", "wallhug", "walljump"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -1378,6 +1378,11 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
         // (0x7296C0) [O: decomp]; ours keeps it for both to time the re-aimed flight (the record path's box test holds
         // at every time, its first hit is the take-off) [I]
         if (h.z < q.minZ || t >= best.frames || (q.falling && q.v.z - kQueryG * t >= 0.05f)) return;
+        if (q.sight) { // a ledge on the far side of what she jumps at is none (a ledge point lies on its wall: 100 short)
+            const vec3 d = h - from;
+            const float len = glm::length(d);
+            if (len > 100.0f && col_.raycast(from, d / len, len - 100.0f)) return;
+        }
         int entry = -1;
         const auto& m = col_.markup[size_t(li)];
         const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
@@ -1903,6 +1908,16 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     else if (s_.clip != "ng_sprint_to_exhaust" && s_.clip != "ng_run_exhaust" && !swimExhaustedClip(s_.clip))
         s_.sprintUsed = std::max(0.0f, s_.sprintUsed - dt);
     s_.regrabCooldown = std::max(0.0f, s_.regrabCooldown - dt);
+    // Chimney jumps (WallJump.cpp): where a jump takes off, and the count of wall jumps in a row, which tru.exe's
+    // chart keeps while the jump group's action 917 stays active (the jump flights and the wall-jump states) [I: read
+    // from the states' action lists].
+    if (s_.state != State::Jump) s_.jumpStart = s_.pos, s_.jumpTime = 0, s_.jumpAimed = false;
+    if (s_.state != State::Jump && s_.state != State::JumpPrep && s_.state != State::HangJump && s_.state != State::WallJump) {
+        s_.wallJumps = 0;
+        const bool hang = (s_.state == State::Hang || s_.state == State::Shimmy) && s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size();
+        s_.jumpFromLedge = hang;
+        s_.jumpLedge = hang ? pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT) : vec3(0);
+    }
     const float mag = std::min(1.0f, glm::length(move));
     const float target = mag > 0.1f ? std::atan2(move.y, move.x) : s_.yaw;
     const bool wantsMove = mag > 0.1f, wantsWalk = a.walk || mag < 0.5f;
@@ -2086,6 +2101,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::WallHug:
         wallHug(move, jumpPressed, dropPressed, dt);
         break;
+    case State::WallJump:
+        wallJump(jumpPressed, dt);
+        break;
     case State::GrappleThrow:
     case State::GrapplePull:
     case State::GrappleSwing:
@@ -2115,7 +2133,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         const bool aimed = running    ? aimGroundJump({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f), true)
                            : wantsMove ? aimGroundJump({40.0f, 50.0f}, 0.0f, false, glm::radians(90.0f))
                                        : aimGroundJump({0.0f, 48.04f}, 300.0f, true, glm::radians(120.0f));
+        const vec3 launch = s_.vel;
         if (!aimed) assistJump();
+        s_.jumpAimed = aimed || s_.vel != launch; // a markup target: no wall jump (chart cond 0x262)
         play(running ? "NG_InAir_Feet_Forward_stage1" : "NG_InAir_Feet_Forward_stage1_standing", false);
         if (s_.state == State::HangJump) break; // the running jump's straight rush (aimGroundJump)
         if (!running && !wantsMove && standJumpToLedge()) break;
@@ -2139,7 +2159,15 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                  s_.clip == "NG_InAir_Feet_Forward_stage2");
         else if (s_.state == State::Fall && clipDone()) play("NG_InAir_Feet_Forward_stage3", true); // after a let-go clip
         if (s_.state == State::Jump && s_.clip.starts_with("NG_InAir") && tryPoleLeap()) break;
-        airMove(dt, move);
+        {
+            // tru.exe's chart tests the wall jump on its 30 Hz frames: a jump back off a wall (77.27 up a frame)
+            // comes inside the attach's zVel window (<= 9 x 5.72443) on its fifth, 314.8 higher.
+            const float frame = std::floor(s_.jumpTime * 30.0f + 1e-3f);
+            if (s_.state == State::Jump) s_.jumpTime += dt;
+            const bool test = s_.state == State::Jump && !s_.jumpAimed && std::floor(s_.jumpTime * 30.0f + 1e-3f) > frame;
+            airMove(dt, move);
+            if (test && s_.state == State::Jump && tryWallJump()) break;
+        }
         if ((s_.state == State::Jump || s_.state == State::Fall) && s_.vel.z <= 0) enterWater();
         break;
     case State::HangJump: {
