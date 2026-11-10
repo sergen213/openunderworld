@@ -860,10 +860,15 @@ bool World::pushUberHandle(const Actions& a, float speed) {
         return true;
     }
     const vec3 dir = along / rate;
-    // The joint lies across her facing: a slide door, and a hinge gripped on the axis's side of its handle (l2_maproom's
-    // hub panel: she faces the hub's axis, the panel moves sideways). Before, a hinge always took her facing for the
+    // The joint lies across her facing: a slide door, and a hinge whose record's facing cone turns her to the axis's side
+    // of its handle (l2_maproom's hub panel: she faces the hub's axis, the panel moves sideways). Before, a hinge always took her facing for the
     // tangent, so the panel's forward / back flipped with the sign of a dot product near 0 and a sidestep did nothing.
-    const bool across = std::abs(glm::dot(fwd, dir)) < 0.7071f;
+    // [I] Other hinges keep her squared to the tangent (the calendars' push handles, pushed forward): only a cone that
+    // faces her within 15 degrees of square to the tangent makes the hinge a sideways one.
+    const float facing = std::abs(glm::dot(fwd, dir));
+    if (uberHandle_.across < 0) // decided where she grips: carried round a hinge, her facing follows the handle
+        uberHandle_.across = (j.hinge ? uberHandle_.face != vec3(0) && facing < 0.2588f : facing < 0.7071f) ? 1 : 0;
+    const bool across = uberHandle_.across == 1;
     if (across) {
         const vec3 face = fwd - dir * glm::dot(fwd, dir);
         uberGrip_ = glm::normalize(face);
