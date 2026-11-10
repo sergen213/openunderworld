@@ -365,7 +365,10 @@ void World::driveBike(Bike& b, const Actions& a, float dt) {
         if (throttle > 0 && !b.air) b.launchT = 0;
         else b.launchCharge = 0;
     }
-    b.reverseT = back > 0 && throttle == 0 && !hand && std::abs(v) < t.stopSpeed ? b.reverseT + dt : 0.0f;
+    // 0x790E40 state 3: the counter runs while only the brake is held at a standstill and is cleared when the reverse
+    // gear takes, so a hold cut short keeps what it counted (Wine: 0.14 s after an earlier brake to a stop, else 0.25 s).
+    if (back > 0 && throttle == 0 && !hand && std::abs(v) < t.stopSpeed) b.reverseT += dt;
+    else if (b.reverseT > t.reverseDelay || throttle > 0 || std::abs(v) >= t.stopSpeed) b.reverseT = 0;
     bool brakes = false;
     switch (b.stunt) {
     case BikeStunt::None:

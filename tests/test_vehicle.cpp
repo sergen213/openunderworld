@@ -258,7 +258,9 @@ std::string firstRidePlan(int upTo = 99) {
 // Vehicle Brake; then `input` (times from 0) for `seconds`, `each(tick, bike, world)` per tick.
 template <class F> void inTunnel(const cdc::BigfileSet& bf, const game::AnimLibrary& anims, const std::string& input, double seconds, F&& each) {
     game::World w(loader(bf), "l4_trailstart", anims, kMountSpot);
-    auto pilot = app::Autopilot::parse(firstRidePlan(1) + "hold jump 3\n");
+    std::string plan = firstRidePlan(1);
+    plan.erase(plan.rfind("ride 61000")); // as the Wine session: slowly to just inside the tunnel, then stop
+    auto pilot = app::Autopilot::parse(plan + "ride 61200 -55963 400 1 600\nhold jump 2\n");
     uint64_t i = 0;
     for (; i < 60 * 60 && !pilot.done(); ++i) w.tick(pilot.step(i, w));
     ASSERT_FALSE(pilot.failed()) << pilot.failure();
@@ -267,8 +269,12 @@ template <class F> void inTunnel(const cdc::BigfileSet& bf, const game::AnimLibr
     const auto script = game::InputScript::parse(input);
     for (uint64_t k = 0; k < uint64_t(seconds * 60) && w.ridden(); ++k) {
         w.tick(script.at(k));
-        if (std::getenv("OU_VEHICLE_TRACE") && k % 3 == 0)
+        if (std::getenv("OU_VEHICLE_TRACE") && k % 3 == 0 && w.ridden())
             std::printf("t %.2f v %6.0f air %d x %.0f z %.0f stunt %d\n", double(k) / 60, w.ridden()->speed, w.ridden()->air, w.player().state().pos.x, w.player().state().pos.z, int(w.ridden()->stunt));
+        if (!w.ridden()) {
+            ADD_FAILURE() << "off the bike at tick " << k << ": " << game::stateName(w.player().state().state) << ", health " << w.health().value();
+            break;
+        }
         each(k, *w.ridden(), w);
     }
 }
@@ -411,21 +417,22 @@ TEST(VehicleReal, LaunchBoostAfterRevvingAgainstTheBrake) {
 }
 
 // Reverse (0x790E40 state 3 -> 2, record +0x1F8 6 frames; +0x74 / +0x6C: top rpm at 10 mph): standing, the brake has to
-// be held for 7 frames before the reverse gear takes; it then backs up to about 10 mph and no faster on level ground.
+// be held for 7 frames before the reverse gear takes (Wine: state 2 0.25 s after S, ref_back.txt); it then backs up to
+// about 10 mph and no faster on level ground.
 TEST(VehicleReal, ReverseAfterTheBrakeIsHeld) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     const auto anims = game::loadLaraAnims(bf);
     bool early = false;
     float back = 0;
-    inTunnel(bf, anims, "0.0 forward -1\n", 3.0, [&](uint64_t i, const game::Bike& b, const game::World&) {
+    inTunnel(bf, anims, "0.0 forward -1\n", 1.0, [&](uint64_t i, const game::Bike& b, const game::World&) {
         if (i <= 13) early |= b.drive.reverse; // 7 frames at 30 Hz = 14 ticks
         if (i == 16) EXPECT_TRUE(b.drive.reverse);
         back = std::min(back, b.speed);
     });
     std::printf("bike reverse: fastest %.0f units/s\n", back);
     EXPECT_FALSE(early);
-    EXPECT_NEAR(back, -10.0f * 125.2f, 0.12f * 1252); // 10 mph on the level
+    EXPECT_NEAR(back, -10.6f * 125.2f, 1.3f * 125.2f); // tru.exe under Wine: -10.3 .. -11 mph (ref_accel, ref_back)
 }
 
 // The first ride of Southern Mexico by autopilot input (the plan lines of the self-test scenario
@@ -464,4 +471,43 @@ TEST(VehicleReal, FirstRideOverThePitByAutopilot) {
     EXPECT_GT(w.player().state().pos.z, -1200); // not in the pit
     EXPECT_FLOAT_EQ(w.health().value(), w.health().max());
     EXPECT_LT(glm::length(game::vec2(w.player().state().pos) - game::vec2(69586, -55062)), 700); // checkpoint 6620
+}
+
+// The manoeuvres traced in tru.exe under Wine (openunderworld-work/gameplaygoal/bike/ref_hand.txt, ref_launch.txt: on the
+// level top of the trail's stair hump) with the same inputs on the level floor of the stone tunnel: throttle 1 s from a
+// standstill, then the Vehicle Brake alone; the launch. The original's numbers carry up to 0.06 s of key latency.
+TEST(VehicleReal, LevelGroundManoeuvresMatchTheOriginal) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const float mph = 125.2f;
+    struct Run { std::vector<float> v, x; };
+    const auto run = [&](const char* name, const std::string& input, double seconds) {
+        Run r;
+        if (std::getenv("OU_VEHICLE_TRACE")) std::printf("== %s\n", name);
+        inTunnel(bf, anims, input, seconds, [&](uint64_t, const game::Bike& b, const game::World& w) {
+            r.v.push_back(b.speed / mph), r.x.push_back(w.player().state().pos.x);
+        });
+        return r;
+    };
+    const auto at = [](const Run& r, double t) { return r.v.at(size_t(t * 60)); };
+    const Run hand = run("hand", "0.5 forward 1\n1.5 forward 0\n1.5 jump 1\n", 4.0);
+    ASSERT_EQ(hand.v.size(), 240u);
+    size_t stop = 90;
+    while (stop + 1 < hand.v.size() && hand.v[stop] > 0.5f) ++stop;
+    std::printf("bike level ground: %.1f / %.1f / %.1f mph 0.33 / 0.73 / 1.0 s after the throttle (tru.exe 7.4 / 15.1 / 19.7); Vehicle Brake from %.1f mph: "
+                "stopped in %.2f s over %.0f units\n", at(hand, 0.83), at(hand, 1.23), at(hand, 1.5), at(hand, 1.5), double(stop) / 60 - 1.5, hand.x[stop] - hand.x[90]);
+    EXPECT_NEAR(at(hand, 0.83), 7.37f, 2.5f);
+    EXPECT_NEAR(at(hand, 1.23), 15.07f, 2.5f);
+    EXPECT_NEAR(at(hand, 1.5), 19.65f, 2.5f);
+    // Open: the original's only Vehicle Brake sample is on the stairs below the hump (about 2600 units/s^2 from the
+    // brake); ours manages about 1100 on the level, so only "it stops" is pinned here (docs/GAMEPLAY.md "Motorcycle").
+    EXPECT_LT(double(stop) / 60 - 1.5, 3.0);
+    const Run launch = run("launch", "0.5 forward 1\n0.5 jump 1\n1.1 jump 0\n1.7 forward -1\n", 3.5);
+    ASSERT_EQ(launch.v.size(), 210u);
+    std::printf("bike level ground launch: %.1f mph while revving, %.1f mph 0.13 s after the brake is let go (tru.exe 17.2), %.1f after 0.5 s (tru.exe 22.2)\n",
+                at(launch, 1.05), at(launch, 1.1 + 0.134), at(launch, 1.6));
+    EXPECT_LT(std::abs(at(launch, 1.05)), 0.3f);
+    EXPECT_NEAR(at(launch, 1.1 + 0.134), 17.19f, 3.0f);
+    EXPECT_NEAR(at(launch, 1.6), 22.19f, 4.0f);
 }

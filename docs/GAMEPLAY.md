@@ -921,7 +921,7 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   | 4 | Target Lock (draws) | G, mouse right | LT | aim |
   | 6 | Sprint (swim faster) | Left Shift | LB | sprint |
   | 8 | Recenter Camera (patch 1.1) | Q | left stick click | recenter |
-  | 23 / 24 / 22 / 21 | Vehicle Gas / Reverse / Brake / Shoot | W / S / Space / H, mouse left | RT / LT / A / RB | stick forward / back; jump hops [I]; no bike shooting yet |
+  | 23 / 24 / 22 / 21 | Vehicle Gas / Reverse / Brake / Shoot | W / S / Space / H, mouse left | RT / LT / A / RB | stick forward / back; the jump action is the Vehicle Brake (no hop: Wine, "Motorcycle"); pistols / uzi shoot |
 
   So Lara runs by default; walking is Alt held (or the stick pushed lightly) and Shift sprints. Ours without an
   original key: draw / holster X (target lock and fire also draw), save / load F5 / F9, hint / answer F2 / F3. A config
@@ -2269,7 +2269,7 @@ Numbers (default tuning record, the wheel definitions, the model):
 | tilt | the body's up stays within 42.5° of the world's | +0x40 [V-data], 0x795080 [V-exe] |
 | lean | the roll servo targets (steer / wheel limit) × min(1, \|v\| / (0.675 × 40 mph)) × 30° into the turn with a wheel down, 0 in the air; 0.1 of the error per 30 Hz frame (3/s) | +0xB0 / +0xB8, 0x793680 (a motor with +0xB4 5000 N·m, target velocity 0.1 / frame × error) [V-exe]; units of the rate and its reference up (the exe blends the wheels' ground normals in above 0.4 steer) [I] |
 | air control | no wheel down: f = (steer / limit) × v / 40 mph; 300 × f N·m about the body's up, 2600 × f N along its side, towards the stick | +0x44 / +0x48, 0x793680 (torque × 280²/30², force × 280/30² into game units) [V-exe]; signs [I] |
-| hand brake | Left Ctrl / pad East: hand brake torque from wheel +0x10 (front 2.8, rear 0.5, as the brakes' units), biting over 0.5 s, no drive | +0x10 / +0x38 / +0x52 bit 2, 0x792900 [V-exe]; the key [I] |
+| hand brake | Space / pad South (the Vehicle Brake, button 22; under Wine Space puts the Bike in state 5 with flag bit 25, no hop): hand brake torque from wheel +0x10 (front 2.8, rear 0.5, as the brakes' units), biting over 0.5 s, no drive | +0x10 / +0x38 / +0x52 bit 2, 0x792900 [V-exe]; the key [O, Wine ref_hand.txt] |
 | burnout (state 7) | throttle + hand brake, stick centred: no drive, hand brake on, the rear wheel spins up to 500 / 286.48 rad per frame (52 rad/s) over 0.2 s; Lara `motorcycle_accelerate_loop` | +0x52 bit 0, +0x34, +0x144, 0x790E40 / 0x793680 [V-exe]; the clip [I] |
 | donut (state 10) | from a standstill (or a burnout) throttle + hand brake + stick past half: hand brake, 6750 N outward on the rear contact (ramped over 10 frames), lean 10° in; the front contact held horizontally, spin capped at 2.5 rad/s; `motorcycle_donut_left/right` | +0xEC / +0xF4 / +0x114, 0x790920 / 0x790E40 [V-exe]; the exe anchors it with a "Donut Anchor Body" (0x78F520, mass ramping to +0x13C 400 at +0x158 90 per frame, pivot ±190, 0, −400 in the body frame) [I: ours pins the front contact; the cap: Jolt's tyres let the push spin it several turns a second] |
 | power slide (state 11) | above 15 mph brake or hand brake + stick past half: the brakes ramp over 4.25 s, the rear contact pushed 1524 N out / 1016 N back / 161 N down for 5 + 10 + 5 frames (in, hold, out), lean 15° in, spin capped at 2.5 rad/s; until the brake or stick is let go or below 2 mph; `motorcycle_power_skid_left/right` | +0xE0 / +0x1B8 / +0x1D4 / +0x1D8 / +0xC4 / +0x1E4 / +0x1EC / +0x1F4 / +0xE4, 0x7918B0 / 0x790E40 [V-exe]; push signs and the cap [I] |
@@ -2277,10 +2277,12 @@ Numbers (default tuning record, the wheel definitions, the model):
 | front wheel limit | 30° at low speed → 10° at top speed, blended over [0.3, 1] × top speed | +0x10 / +0x14 / +0x1C, 0x793680 [V-exe] |
 | steering rate | 95°/s → 75°/s, same blend | +0x18 / +0x1B4, 0x793680 [V-exe] |
 | fall damage | drop ≥ 3792.67: (drop−3792.67)/(4819.85−3792.67)·95; > 4819.85: 95 + clamp(…/(4977.88−4819.85))·1550; in the air ≥ 4977.88: 1650 (lethal), type 8; airborne = no wheel on the ground | +0x184..+0x198, 0x793680 [V-exe] |
-| hop | +1100 units/s up while a wheel touches | [I] (no hop in the record or the states) |
+| launch (speed burst) | throttle with the brake or hand brake held revs from 3000 to 18 000 rpm over 0.3 s (the charge); the brake let go with the throttle held drives 0.1 s with 10 × the torque read at the revved rpm × (charge / 0.3 s); the throttle let go first drops the charge | +0x88 / +0x8C / +0x1C4 / +0x1C0 / +0x0C, 0x793680 flag bits 23 / 22, 0x791D10 [V-exe]; Wine: state 7 flags 0x02800620 while revving, 0x00400600 at the release, 17.2 mph 0.13 s later |
+| reverse | standing with only the brake held, the reverse gear takes after a 30 Hz frame counter passes 6 (7 frames, 0.233 s); a hold cut short keeps its count; top rpm at 10 mph | +0x1F8, 0x790E40 state 3 → 2 [V-exe]; Wine: state 2 0.25 s after S (0.14 s after an earlier brake to a stop), −10.3 .. −11 mph, also backwards up the 33° stairs |
+| hop | none: Space is the Vehicle Brake | 0x790E40 has no such state; Wine ref_hand.txt [O] (ours had an [I] hop until 0.42) |
 | gravity | 5.72443 units per 30 Hz frame² (Lara's) | [V-exe] Lara, [I] for the bike |
 | terrain, ramps, jumps, walls | Jolt: wheel rays and the chassis on the resident units' collision and the object colliders | the original's Havok equivalents [O]; Jolt's contact model [I] |
-| mount / dismount | E within 250 units of the mount spot; off below 200 units/s | [I] |
+| mount / dismount | E within 250 units of the mount spot; off below 200 units/s | [I]; Wine: see the table below |
 | ramming | enemies touched at > 800 units/s take 0.5 health per unit/s, the bike loses 30 % of its velocity, one hit per contact (enemies are not bodies) | [I] |
 | camera | 950 units back (700 on foot), yaw follows the heading at up to 3/s × min(1, v/1500) | [I] (`VehicleCamera` data not decoded) |
 
@@ -2291,23 +2293,62 @@ bike has no body and stands where it was left (sat on its two wheel contacts whe
 starts).
 
 Saves: `vehicles` (docs/SAVES.md) keeps every bike (unit, unit-frame position, heading, pitch, roll, speed, steer, wheel
-spins, air state, brake time, pending kick, hop / landing timers, stunt + its time and direction, phase) and the ridden
+spins, air state, brake time, pending kick, take-off / landing timers, launch charge / time / rpm, reverse counter, stunt + its time and direction, phase) and the ridden
 one; the bike's Jolt body, wheels and contacts are in `objects.physics` (key `v<uid>`); Lara's state `vehicle` + clip
 are in `player`. Lara's model is rolled with the bike (`PlayerState::roll`, `Player::modelMatrix`).
 
 Tests: `VehicleReal.BikeIntrosTuningAndClips` (record, wheel definitions, engine ratio), `VehicleReal.TrailstartRideReplay`
 (replay `tests/replays/bike_ride.txt`: mount, full throttle down the trail to about 4000 units/s, part throttle into
-the left curve up the steps, hop at the top, brake; the bike rolls back off the steep top, the hand brake stops it; dismount; no
-damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide` (bit for bit), `VehicleReal.RideIndependentOfRenderRate`
+the left curve up the steps, brake; the Vehicle Brake holds it; dismount; no damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide` (bit for bit), `VehicleReal.RideIndependentOfRenderRate`
 (30 / 60 / 144 Hz), `VehicleReal.ShootsFromTheBike` (the replay with the pistols drawn and fire held: right-gun hits on
 a dummy ahead on the trail, the curve still steered, holstered after the dismount); `VehicleReal.LeanFollowsSteeringAtSpeed`
-(roll into the stick both ways, Lara rolled with it), `VehicleReal.AirControlTurnsMidJump` (steering mid-hop yaws the bike
-towards the stick, the same each run), `VehicleReal.DonutAndPowerSlide`; `Physics.VehicleDrivesBrakesAndSavesBitIdentically`.
+(roll into the stick both ways, Lara rolled with it), `VehicleReal.AirControlTurnsMidJump` (steering while it flies off the tunnel's ramp over the pit yaws
+the bike towards the stick, the same each run), `VehicleReal.DonutAndPowerSlide`; `Physics.VehicleDrivesBrakesAndSavesBitIdentically`.
+
+Further tests (0.42): `VehicleReal.LaunchBoostAfterRevvingAgainstTheBrake`, `ReverseAfterTheBrakeIsHeld`,
+`LevelGroundManoeuvresMatchTheOriginal` (the Wine numbers below with the same inputs on the tunnel floor) and
+`FirstRideOverThePitByAutopilot`: the plan lines of self-test scenario `bike_ride` (autopilot `ride X Y [R] [THROTTLE]
+[SPEED]`, raw stick) ride bike 5482 from the trail over the stair hump between the two pillars (stairs 33°, x 43000 →
+44200, top z 1842), down the valley, into the stone tunnel (floor −686, x 60200 → 65500) and off its ramp (lip x 66100,
+z −614) over the pit (to x 67700, 6000 deep) to checkpoint 6620: take-off 4985 units/s, 17 ticks without a wheel down,
+down at x 67779, no damage.
+
+### Original vs ours (tru.exe under Wine, 2026-11-10)
+
+Tool `openunderworld-work/gameplaygoal/bike/bt.c` (`bt trace`: keys by SendInput + one line per change of the Bike:
++0x430 signed mph, +0x438 state, +0x4B0 flags, +0x414 wheels on the ground, Lara's instance; `bt ride`: closed-loop
+W / A / D to waypoints). Coordinates: tru.exe = our l4_trailstart frame + (−47917.4, 43431.5, −8576.6). Traces in that
+directory: `wine_a.txt` (chapter start, W 3 s), `ref_hand.txt`, `ref_launch.txt`, `ref_back.txt`, `ref_accel.txt`,
+`ref_dismount.txt`, `ref_mount.txt`, `ref_turn.txt`, `ref_trail.txt` (session `session2.sh`); ours: `ours_level.txt`,
+`oursA.txt`. After a level change the intro cinematic must end by itself before any key: only then is she riding (Bike
+state 3; 0 = no rider). `onfoot/` holds traces taken too early (Lara on foot): not bike data.
+
+| Manoeuvre | Original (measured) | Ours | |
+|---|---|---|---|
+| Standing start, level ground, full throttle | 7.4 mph after 0.33 s, 15.1 after 0.73 s, 19.7 after 1.02 s (stair-hump top; key latency ≤ 0.06 s) | 8.3 / 16.6 / 21.4 mph at the same times without latency (tunnel floor; asserted within 2.5 mph) | match |
+| Chapter start, W held (first up 0.25 rad, then down the trail) | 3.7 / 9.4 / 13.9 / 20.7 / 28.0 / 31.9 mph after 0.28 / 0.66 / 1.06 / 1.46 / 1.86 / 2.06 s | 4.0 / 9.5 / 15.2 / 23.7 / 34.3 / 34.9 after 0.2 / 0.6 / 1.0 / 1.4 / 1.8 / 2.0 s | equal on the climb; ours gains 25–28 mph/s on the descent where the original gains 20 [U: drive only through wheels in contact, or the body's gravity] |
+| Launch (Space + W 0.6 s, Space let go) | 0 mph while revving; 17.2 mph 0.13 s after the release, 22.2 after 0.52 s | 0 mph; 18.4 mph after 0.13 s, 24.9 after 0.5 s (asserted within 3 / 4 mph) | match |
+| Reverse | gear takes 0.25 s after S (7 frames + latency); −11.0 mph 0.28 s later, −10.3 .. −11 steady, −12.5 backing up the stairs | 0.233 s; −10.5 mph on the level (`ReverseAfterTheBrakeIsHeld`) | match; the original reverses up the 33° stairs, ours untested |
+| Vehicle Brake (Space) from 19.7 mph | state 5, flags 0x02000020; 0.3 mph lost in the first 0.13 s (the 0.5 s ramp), 13.2 → 1.8 mph in 0.37 s at the stair foot (0.24 rad uphill): about 2600 units/s² from the brake | from 21.4 mph on the tunnel floor: stopped in 2.48 s over 3735 units, about 1100 units/s² (1440 at full bite from the [I] unit: front 2.8 + rear 0.5 per mass share) | ours brakes about half as hard: the unit of wheel +0x0C / +0x10 is probably per wheel, not per mass share [U, one sloped sample: measure on the tunnel floor before changing `brakeScale`] |
+| Dismount (E, standing) | Bike state 0 at once; Lara on her feet 1.56 s later 199 left of and 52 behind the bike's origin, turned 101° | same clip: 158 left, 52 behind, 90° | 41 units / 11° apart [U: the clip's end pose vs a settle] |
+| Mount (E from that spot) | seated 1.16 s later, Bike state 3 after 1.26 s | reach 250 around (125 left, 180 behind) covers the spot; clip time the same clip's | spot rule [I] |
+| Turning, W + A held on rough ground | yaw rate 1.68 rad/s at 5.9 mph, 0.92 rad/s at 22.4 mph (radius about 1600) | wheel limit 30° → 10° by speed [V-exe]: 22.6° at 22.4 mph = radius 1110 without slip | not compared on equal ground [U] |
+| Stairs (33°) | climbs them at 24 mph with the throttle held (`wine_a.txt`), reverses up them at 10–12 mph | climbs with a run-up; stalls from a slow start | [U], same cause as the descent row |
+
+Not measured (the session time went into the harness): top speed on a long straight, braking distance with S on level
+ground, the pit jump in the original (air time, pitch), crash / wall rules, water depth, shooting, ramming. To continue:
+`start.sh l4_trailstart session2.sh` (it waits for Bike state 3); ride with `bt ride` using more waypoints through the
+stair hump (the closed loop circled at waypoint 2 of `ref_trail.txt`: it needs the passed-the-point rule the autopilot
+`ride` has), stop inside the tunnel, then the level-floor runs of `session2.sh`.
 
 Verification [O] (ou-game, Vulkan, 1280×720, the replay with `--spawn 37981,-51758,1463,-126.7`, invisible KWin;
 screenshots viewed, kept privately): Jolt bike (2026-11-06) frame 200 Lara leaning into the left curve at the foot of
 the steps (2952 units/s at tick 180), 270 in the jump clip going up the left side of the steps, the bike pitched up
 on them; wheels and Lara stay on the bike. Older stand-in frames (2026-10): 40 mount, 420 dismount beside the bike.
+
+Decoded but not built: after the throttle is let go the engine keeps pushing with a torque fading over record +0x1B0
+(7 s; 0x793680 state 4) while every wheel gets a rolling friction (1 − throttle) × +0x1A8 (1.0, the brakes' unit;
+0x792900): ours coasts freely. The pad's Gas / Reverse are the triggers in the original (buttons 23 / 24), ours the stick.
 
 Not done [U/I]: gears beyond the record's one, engine/skid/landing sounds, the launch wheelie (off in the data), the
 both-wheels-on-steep-ground torques of 0x793680 (+0x15C / +0x160 when two wheels hit slopes past the limit), crash
