@@ -847,7 +847,11 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   registered in the table at `0xDA2024`) and scripts; what switches them on entering the water is not found [U].
   Ours (`World::laraHiddenGroups`): wetsuits hide 2 always and 1 unless Lara swims [I: the switch point]; 3 follows the
   scripts' mask.
-- [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic, volume 9628 takes it
+- [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic (intro 2636: it
+  activates cinematic 2624, waits for its end with `cinematic` 10 - a latent NtCineSequence, tru.exe 0x4A4CC0 /
+  0x4ADAA0 - and then calls the equip helper; the cinematic's handlers set the gauntlet's glow flag with `larabase`
+  19, 0x777A30 -> 0x698850; both natives are bound since 2026-11-10, before that the gauntlet never came by play:
+  `ProgressionReal.MaproomCinematicGivesTheLeftGauntlet`, self-test `ch09_maproom_gauntlet_door`), volume 9628 takes it
   back; l3_secretchamber cinematic 4654 gives the right one at its end (vt 60), 4655 takes it at its start (vt 58);
   l5_startsnow's chapter-start cinematic 7530 takes both at its start and gives both at its end (also sets story
   progress 5 via globals type 5 fn 4); l7_helheim01 8950 does the same. `g_belt`: the chapter setup scripts' `globals
@@ -937,7 +941,12 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   handlers: decoded, not bound, because binding them lets handlers elsewhere run on into cinematics untested here);
   `ma_pu_thor_pillar`, `ca_pu_thor_pillar` ride joint type 7 (planar, limit / motor records of kind 7) and
   `ca_pu_thor_debris` has no joint (a free body): neither is simulated, so C11-28 and C15-03 stay open; l2_maproom's hub
-  and wall drag (C09-09 / -11) are not surveyed; the speed's M and the hold / toggle need a Wine trace.
+  and wall drag (C09-09 / -11): `sa_uo_thor_bridge_combo` 2667's section 1 (walkway, hub and wall) turns on hinge joint
+  1; its records (kind 1, g_gauntletleft) sit on handle markers 11 (the hub panel, set 408) and 12 / 13 (the wall, set
+  396 from state 18); section 0's states 2 / 3 switch joint 1's brake motor (9.99e6) on / off and the script's vt 49 /
+  50 command them. Ours grips the panel (self-test `ch09_maproom_hub_panel`) but the hinge does not turn
+  (`tests/selftests/known_gaps/ch09_maproom_hub_turn.json`: 0.017 degrees by left / right, 0.1 .. 0.3 by forward / back
+  in 5 s) [U cause: the hinge body against the level's solids, or the hinge's stick mapping]; the speed's M and the hold / toggle need a Wine trace.
 
 ## Natla (l7_yggdrasil_end, the final fight)
 
