@@ -85,7 +85,7 @@ bool grounded(game::State s) {
     return false;
 }
 bool airborne(game::State s) { return s == game::State::Jump || s == game::State::Fall || s == game::State::HangJump; }
-bool swimming(game::State s) { return s >= game::State::SwimSplash && s <= game::State::SwimClimbOut; }
+bool swimming(game::State s) { return (s >= game::State::SwimSplash && s <= game::State::SwimClimbOut) || s == game::State::SwimDodge; }
 bool roped(game::State s) {
     using S = game::State;
     return s == S::GrappleThrow || s == S::GrappleSwing || s == S::GrapplePull || s == S::GrappleRappel;

@@ -130,6 +130,7 @@ anim::HairParams laraHair();
 vec3 rootTranslation(const anim::Clip& clip, double t, bool loop);
 
 // ---- player -----------------------------------------------------------------------------------
+inline constexpr float kCameraRestPitch = -0.0225f; // tru.exe's rest pitch of the orbit camera (CameraState::pitch)
 enum class State {
     Idle, Walk, Run, Stop, Turn, JumpPrep, Jump, Fall, Land, Hang, Shimmy, ClimbUp,
     // water (tru.exe player states SwimSplashDownState, SwimTreadState, SwimState, SwimDiveInState,
@@ -153,6 +154,7 @@ enum class State {
     // block's motion carries her).
     Use, Block,
     WallHug, // back to the wall on a narrow ledge shelf (Wall_Hug_* clips; src/game/Traverse.cpp)
+    SwimDodge, // under-water evasive dodge: one swim_submerged_dodge_* clip with its root motion (Player::swim)
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -196,6 +198,7 @@ struct Tuning {
     // classes of tru.exe 0x5D3860 (< +0xAC 154: 0x200, < 391: 0x100 wading, then 0x40 surface / 0x20 / 0x10 swimming).
     float swimDepth = 391.0f;
     float wadeDepth = 154.0f;   // +0xAC: water this deep up to swimDepth is waded (class 0x100), shallower walked (0x200)
+    float diveDepth = 948.0f;   // +0xB2: the surface dive needs water this deep (depth class 0x325, tru.exe 0x764340)
     float swimRadius = 100.0f;  // sphere around the swimming root
     // Root under the wave surface treading / swimming at the surface (tru.exe, Wine, l2_cliffclimb sea: z fits
     // player+0x8E0 top + the 0x69DA80 waves - 44.1 at rms < 1 in both states).
@@ -336,6 +339,9 @@ public:
     void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
+    // The orbit camera's view yaw and look pitch (rad, + = up), set by World each tick: under water the stick's forward
+    // share swims along the pitch and the dodges read the stick as on screen (Player::swim).
+    void setCamera(float yaw, float pitch) { cameraYaw_ = yaw, cameraPitch_ = pitch; }
     void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
@@ -446,7 +452,8 @@ private:
     bool wading() const; // on her feet in water of class 0x100 (wadeDepth..swimDepth deep, tru.exe 0x5D3860)
     void swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt);
     vec3 swimSlide(vec3 pos, vec3 delta) const;
-    bool tryClimbOut();
+    bool tryClimbOut(float reach);
+    bool startDodge(vec2 stick); // under water, target lock held: swim_submerged_dodge_* by the stick (State::SwimDodge)
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
     bool tryClimb(bool fromAir);
     bool warpStep(float dt); // the clip carries her climbFrom -> climbTo (climbing, ladder climb-off); true when done
@@ -487,6 +494,7 @@ private:
     PlayerState s_;
     bool jumpHeld_ = false, dropHeld_ = false;
     double waveSeconds_ = 0;
+    float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;
 };
 
 // ---- camera -----------------------------------------------------------------------------------
@@ -847,6 +855,14 @@ public:
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
     float air() const { return std::max(0.0f, air_); }
     bool submerged() const { return submerged_; } // head under water this tick
+    // Scuba gear: tru.exe 0x6EEF50 tests flag 0x4000 (in use) of the gadget in Lara's inventory slot 10; while it is set
+    // 0x755230 takes the not-submerged branch (no drain, no drowning) and 0x7572F0 keeps the breath meter (HUD element
+    // 2) hidden under water. [I] slot 10 is g_tanks and the wetsuit outfits are what switch it on (Wine: the wetsuits'
+    // mask / regulator draw group shows while she swims, laraHiddenGroups; the slot's object was not read live).
+    bool scuba() const { return outfit.starts_with("lara_wetsuit"); }
+    // The breath meter takes the adrenaline meter's place (0x7572F0: element 2 shown, 1 flagged) while she is under
+    // water without scuba gear; ours also until the 2 s refill at the surface is done [I].
+    bool breathShown() const { return (submerged_ && !scuba()) || air_ < 1.0f; }
     // watervolumebase natives on volume `uid` (script::Runtime::WaterNative; World::bindWater): false =
     // the volume is not loaded or the call is not a binding.
     bool waterNative(int32_t uid, std::string_view type, uint32_t function, std::span<const int32_t> args, uint32_t& result);
@@ -1004,6 +1020,7 @@ private:
     // +0xFC = 10 % of max health (damage type 3) every +0xFE = 20 frames (tru.exe 0x755230 / 0x756C40).
     static constexpr float kAirSeconds = 4000 / 30.0f, kAirRefillSeconds = 60 / 30.0f;
     static constexpr float kDrownDamage = 0.10f, kDrownPeriodSeconds = 20 / 30.0f;
+    static constexpr float kAirSprintDrain = 1.5f; // chart property 914 of the under-water sprint state S159
     // Script Activate of a cinematic_object: cinematic event 0, onCinematic, placeAfterCinematic, event 1, the post-stream
     // helper; a level end's -> startChapter(next).
     void checkLevelEnd();

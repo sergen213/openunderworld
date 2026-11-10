@@ -355,6 +355,12 @@ public:
     using WaterNative = std::function<bool(int32_t water, std::string_view type, uint32_t function,
                                            std::span<const int32_t> args, uint32_t& result)>;
     void setWaterNative(WaterNative native) { water_ = std::move(native); }
+    // Player sensors (NtPlayerSensorInst, tru.exe 0x77A120 / update 0x77A020 / test 0x7799F0): a `playersensor` member
+    // {u32 0, u8 onEnter, u8 onExit, u8 oneShot, u8 enabled, float radius} fires its owner's vt 14 (sensor, inside) when
+    // Lara's root comes within / leaves the radius of the anchor it was attached to (function 2). The anchor's world
+    // position: `uid`'s origin, or its HInfo marker `marker` (>= 0; a uberobjectbase 2 ModelMarkerAnchor).
+    using AnchorAt = std::function<std::optional<vec3>(int32_t uid, int32_t marker)>;
+    void setAnchorAt(AnchorAt f) { anchorAt_ = std::move(f); }
     // Spline camera requests. op 0: autosplinecamera 0 (thunk 0x7B37D0 -> 0x7759F0 -> AutoSplineCamera 0x5E26F0)
     // plays camera spline `index` of `unit` (the cameraspline value: {initial data, stream unit of the owner, data
     // word 0}, 0x775760); `value` identifies it to cameraSplineDone. op 1: gamebase 52 (0x7767A0 -> CameraManager
@@ -613,6 +619,10 @@ private:
     int fallbackDepth_ = 0;
     struct Clock { int state = 0; float elapsed = 0, alarm = 0; bool fired = false; }; // state 0 stopped, 1 paused, 2 running
     std::map<uint64_t, Clock> clocks_; // (uid << 32) | member offset
+    struct Sensor { int32_t anchor = 0, marker = -1; bool enabled = true, inside = false; }; // attached sensors only
+    std::map<uint64_t, Sensor> sensors_; // (uid << 32) | member offset; saved
+    AnchorAt anchorAt_;
+    void tickSensors(vec3 lara);
     float fade_ = 0, fadeTarget_ = 0, fadeStep_ = 0;
     vec3 lastPos_{0};
     bool hasLast_ = false, interactHeld_ = false, holding_ = false;

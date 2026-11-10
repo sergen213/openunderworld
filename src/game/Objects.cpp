@@ -1009,6 +1009,14 @@ void World::applyWaterState(collision::Markup& m, vec3 offset) const {
 void World::bindWater() {
     script_.setWaterNative([this](int32_t uid, std::string_view type, uint32_t function, std::span<const int32_t> a,
                                   uint32_t& result) { return waterNative(uid, type, function, a, result); });
+    // Player-sensor anchors (script::Runtime::tickSensors): an object's origin or one of its HInfo markers.
+    script_.setAnchorAt([this](int32_t uid, int32_t marker) -> std::optional<vec3> {
+        const script::Object* o = script_.find(uid);
+        if (!o) return std::nullopt;
+        if (marker >= 0)
+            if (const auto m = markerFrame(*o, marker)) return vec3((*m)[3]);
+        return vec3((glm::translate(glm::mat4(1), o->offset) * introModel(*o))[3]);
+    });
 }
 
 bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, std::span<const int32_t> a, uint32_t& result) {

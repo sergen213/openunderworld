@@ -1,0 +1,133 @@
+{
+ "version": 1,
+ "name": "swim_breath",
+ "chapter": "Swimming without scuba gear: the breath meter drains under water, faster in a sprint, and refills at the surface",
+ "note": "l2_cliffclimb river 2511 (Coastal Thailand, lara_jungle_a: no tanks). Breath 4000 frames = 133.3 s [O lara.drm +0xF8, tru.exe 0x755230], x 1.5 in the under-water sprint [O chart property 914 of S159], refilled in 60 frames [O +0xFA].",
+ "level": "l2_cliffclimb",
+ "spawn": [
+  -21800,
+  10762,
+  -500,
+  0
+ ],
+ "steps": [
+  {
+   "step": "drop_in",
+   "duration": 5,
+   "until": {
+    "probe": "player.state",
+    "eq": "swimtread"
+   },
+   "expect": [
+    {
+     "probe": "water.in",
+     "eq": true
+    },
+    {
+     "probe": "player.air",
+     "eq": 1
+    }
+   ]
+  },
+  {
+   "step": "dive",
+   "input": [
+    "0 drop 1",
+    "0.2 drop 0"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "visits": [
+      "swimdive",
+      "swimunder"
+     ]
+    },
+    {
+     "probe": "water.under",
+     "eq": true
+    },
+    {
+     "probe": "player.air",
+     "max": 0.999
+    }
+   ]
+  },
+  {
+   "step": "hold_breath",
+   "duration": 4,
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "eq": "swimunder"
+    },
+    {
+     "probe": "player.air",
+     "max": 0.96,
+     "min": 0.94
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "sprint_under_water",
+   "input": [
+    "0 forward 1",
+    "0 sprint 1"
+   ],
+   "duration": 4,
+   "expect": [
+    {
+     "probe": "player.clip",
+     "eq": "swim_submerged_sprint"
+    },
+    {
+     "probe": "player.air",
+     "max": 0.916,
+     "min": 0.895,
+     "note": "4 s at 1.5: 0.045"
+    }
+   ]
+  },
+  {
+   "step": "surface",
+   "input": [
+    "0 jump 1"
+   ],
+   "duration": 15,
+   "until": {
+    "probe": "player.state",
+    "eq": "swimtread"
+   },
+   "expect": [
+    {
+     "probe": "water.under",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "breathe",
+   "duration": 2.5,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "swimtread"
+    },
+    {
+     "probe": "player.air",
+     "eq": 1,
+     "note": "full again 60 frames after surfacing"
+    },
+    {
+     "probe": "player.health",
+     "eq": 1000
+    }
+   ]
+  }
+ ]
+}

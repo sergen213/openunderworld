@@ -725,8 +725,9 @@ TEST(CombatReal, PoolFallDamageDeathAndPistols) {
     EXPECT_GT(glm::dot(glm::normalize(hand - (s.pos + vec3(0, 0, 418))), toTarget), 0.8f);
 }
 
-// l4_pool's goo is water (surface 2699.3): under water the pistols stay holstered, the speargun draws and fires, and
-// each shot is followed by a reload from the reserve.
+// l4_pool's goo is water (surface 2699.3): under water the pistols draw (combat_water_submerged_equip) and fire with
+// their under-water record (pr_handgunbullet +0x84: 40 / 40 / 20), then the speargun is swapped in
+// (combat_shotgun_equip_submerged), fires, and each spear is followed by a reload from the reserve.
 TEST(CombatReal, PoolSpeargunUnderWater) {
     const char* dir = std::getenv("OU_GAME_DIR");
     if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -739,23 +740,30 @@ TEST(CombatReal, PoolSpeargunUnderWater) {
     w.tick(dive); // surfacing -> under water
     for (int i = 0; i < 10; ++i) w.tick({});
     ASSERT_EQ(w.player().state().state, State::SwimUnder);
-    for (int i = 0; i < 60; ++i) w.tick(guns(true)); // pistols: holstered under water
-    EXPECT_FALSE(w.combat().drawn);
-    EXPECT_EQ(w.combat().shotsFired, 0u);
     game::DummyTarget t;
     t.pos = w.player().state().pos + vec3(900, 0, -250);
     w.targets.push_back(&t);
+    for (int i = 0; i < 60; ++i) w.tick(guns(true)); // pistols under water
+    EXPECT_TRUE(w.combat().drawn);
+    EXPECT_EQ(w.combat().weapon, game::Weapon::Pistols);
+    EXPECT_EQ(w.player().state().state, State::SwimUnder);
+    const uint32_t pistolShots = w.combat().shotsFired;
+    EXPECT_GE(pistolShots, 2u);
+    EXPECT_EQ(t.hits, int(pistolShots));
+    EXPECT_EQ(t.hp, 700 - 40 * int(pistolShots)); // 900 away: inside the short range, the +0x84 record's 40
     w.giveWeapon(game::Weapon::Speargun, 5);
-    Actions sw;
+    Actions sw = guns(true);
     sw.weapon = true;
     w.tick(sw);
-    EXPECT_EQ(w.combat().weapon, game::Weapon::Speargun);
+    for (int i = 0; i < 120 && w.combat().weapon != game::Weapon::Speargun; ++i) w.tick(guns(true)); // the pistols' unequip first
+    ASSERT_EQ(w.combat().weapon, game::Weapon::Speargun);
+    const int hp = t.hp, hits = t.hits;
     for (int i = 0; i < 150; ++i) w.tick(guns(true)); // equip 17/30 s, then shot, reload 31/30 s, shot
     EXPECT_TRUE(w.combat().drawn);
     EXPECT_EQ(w.player().state().state, State::SwimUnder);
-    EXPECT_EQ(w.combat().shotsFired, 2u);
-    EXPECT_EQ(t.hits, 2);
-    EXPECT_EQ(t.hp, 700 - 2 * 550); // under water the +0x84 record: 550 a spear
+    EXPECT_EQ(w.combat().shotsFired - pistolShots, 2u);
+    EXPECT_EQ(t.hits - hits, 2);
+    EXPECT_EQ(t.hp, hp - 2 * 550); // under water the +0x84 record: 550 a spear
     EXPECT_LE(w.combat().reserve[3], 4);
     w.targets.clear();
 }
