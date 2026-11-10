@@ -441,11 +441,38 @@ the cause of 3 of the 5 failing save scenarios (2 are a load saved before the co
 3-D motion without ground).
 
 What Jolt keeps doing: joints, loose bodies, ragdolls, the bike (above). What stays open for the sweep mover is
-listed in docs/GAMEPLAY.md "Numbers"; the walkable slope limit is in the next paragraph.
+listed in docs/GAMEPLAY.md "Numbers"; the walkable slope limit, measured for this evaluation, is the next section.
 
-Walkable slope limit: still [I] (normal z 0.7, `Tuning::minFloorNormalZ`; known [O]: she slides at 0.45). The ramp
-series to settle it under Wine is prepared in the evaluation commit (`tools/mover_eval/find_ramps.cpp` lists one
-large open face per 0.02 of normal z in l2_junglehub, 0.52..0.88; `slope-session.sh` puts her on each and traces 3 s).
+### Walkable slope limit under Wine (2026-11-10)
+
+Measured before trusting the 0.7 the evaluation was held to (`Tuning::minFloorNormalZ`, [I]). l2_junglehub, tru.exe =
+ours + (8558.23, -19414.44, -18073.17): Lara put 15 units over large open faces of one normal z each
+(`find_ramps`), left alone 3 s, traced (`pt trace`); every sample's position was then looked up in our collision mesh
+(floor within 0.1 of her z: the frames agree) for the face under her. Traces and tools:
+`openunderworld-work/gameplaygoal/charvirtual/` (`slope-wine2.txt`, `slope-session2.sh`, `slope-analyse.py`,
+`probe_normals.cpp`, `client_hist.cpp`).
+
+| Face under her: normal z | Face `clientFlags` (+0x0E) | tru.exe |
+|---|---|---|
+| 0.626, 0.679, 0.703, 0.716 | 0x0080 | stands still for the 3 s (speed 0) |
+| 0.763 | 0x0000 | stands still |
+| 0.974, 1.000 | 0x00A0 | stands still |
+| 0.523 | 0x0004 | slides (153 -> 881 units/s in 0.5 s) |
+| 0.584, 0.595 | 0x0004 | slides (2154 units/s on the 0.595 face) |
+| 0.753 | 0x0004 | slides: 915 units/s horizontally with 800 down (twice, two trials); in one trial she is at rest on it for a sample and moving again 0.5 s later (197, then 915 units/s) |
+| 0.770 | 0x0004 | at rest in the last sample of a trial (not conclusive) |
+| 0.45 (l3_main_bedroom roof, earlier trace slide1.txt) | the unit's faces of normal z 0.3..0.5 are 0x0080 | slides |
+
+[O] So the original's rule is not one normal-z threshold: she stands at rest on faces as steep as normal z 0.626
+(ours slides below 0.7), and she slides on faces of normal z 0.753 that carry client flag 0x0004 (ours stands from
+0.7). [I] Reading: bit 0x0004 marks slide surfaces (l2_junglehub has 120 x 10^6 units^2 of up-facing 0x0004 faces, a
+third of it between normal z 0.5 and 0.8); for faces without it the limit lies between 0.45 (slides, 0x0080) and
+0.626 (stands, 0x0080). [U] the exact limit for unflagged faces, whether a 0x0004 face is slid on at any slope or
+from its own limit (>= 0.753), where tru.exe tests the bit (the slope-slide state's condition), and whether walking
+onto such a face differs from standing on it. Not changed in the code by this evaluation: the sweep mover has the
+face under her in every hit (`collision::Hit::face`), so the rule is a change to `Player::standable` / `groundMove`
+once the two limits are bracketed (a second ramp series between 0.45 and 0.626 on 0x0080 / 0x0000 faces, and on
+0x0004 faces above 0.753).
 
 ### Reproduce
 
