@@ -6,6 +6,8 @@
 #include "cine/Cine.hpp"
 #include "script/Script.hpp"
 
+#include <glm/gtc/type_ptr.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <condition_variable>
@@ -73,6 +75,50 @@ std::shared_ptr<const BendType> bendType(const cdc::BigfileSet& bigfile, const s
     std::shared_ptr<const BendType> t;
     if (auto b = bigfile.read("pc-w\\" + name + ".drm")) try { t = loadBendType(cdc::parseDrm(std::move(*b))); } catch (const cdc::FormatError&) {}
     return cache[name] = t;
+}
+
+// Grapple point of object `name`: the first model feature with mask bit physics::kFeatureGrapple (tru.exe's grapple
+// candidates are these features, 0x7131A0 -> 0x6ECCA0; docs/GAMEPLAY.md "Grapple"), in the object's model space.
+// `drm` is kept for objects that have one (their script types). Cached as isMusic.
+struct GrappleObject {
+    std::shared_ptr<const cdc::Drm> drm;
+    vec3 point{0};
+    int model = 0;
+    bool pullable = false; // an uber object whose state machine watches a joint (trigger 14 / 15), or a class-34 rigid body
+    bool anchor = false;   // an uber object that watches none: something to swing on
+};
+std::shared_ptr<const GrappleObject> grappleObject(const cdc::BigfileSet& bigfile, const std::string& name) {
+    const std::lock_guard lock(cacheMutex);
+    static std::map<std::string, std::shared_ptr<const GrappleObject>> cache;
+    if (const auto it = cache.find(name); it != cache.end()) return it->second;
+    std::shared_ptr<GrappleObject> g;
+    if (auto b = bigfile.read("pc-w\\" + name + ".drm")) try {
+            auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*b)));
+            const size_t models = formats::objectRenderModels(*drm).size();
+            for (uint32_t m = 0; m < models && !g; ++m) {
+                const physics::ObjectPhysics p = physics::loadObjectPhysics(*drm, m);
+                for (const auto& f : p.features) {
+                    if (!(f.mask & physics::kFeatureGrapple)) continue;
+                    g = std::make_shared<GrappleObject>();
+                    const glm::mat4 seg = size_t(f.segment) < p.segments.size() ? p.segments[size_t(f.segment)] : glm::mat4(1);
+                    g->point = vec3(seg * glm::vec4(f.pos, 1)), g->model = int(m);
+                    g->pullable = p.physClass == physics::kClassRigidBody;
+                    break;
+                }
+            }
+            if (g) {
+                std::optional<formats::UberObjectData> uber;
+                try { uber = formats::loadUberObject(*drm); } catch (const cdc::FormatError&) {}
+                if (uber) {
+                    g->anchor = std::ranges::none_of(uber->sections, [](const auto& s) {
+                        return std::ranges::any_of(s.transitions, [](const auto& t) { return t.trigger == 14 || t.trigger == 15; });
+                    });
+                    g->pullable = !g->anchor;
+                }
+                g->drm = std::move(drm);
+            }
+        } catch (const cdc::FormatError&) { g.reset(); }
+    return cache[name] = g;
 }
 } // namespace
 
@@ -277,25 +323,30 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
         if (n->second.starts_with("bend_"))
             if (auto t = bendType(bigfile, n->second))
                 u.bends.push_back({in.uniqueId, v3(in.position), v3(in.rotation), std::move(t)});
-        if (n->second.find("_grapple") != std::string::npos && !n->second.starts_with("fx_")) {
+        if (const auto g = n->second.starts_with("fx_") ? nullptr : grappleObject(bigfile, n->second)) {
             // Pull targets [O data]: their uber state machines react to the pulled joint (a trigger 14 / 15 range watch
             // transition: levers, shiva arms, the snake heads, the grapple block). The class-79 grapple handles
             // (`*_ei_grapple_wall*`, `sa_ei_grapple_mounted`) only swivel on a free hinge (section 0 = model 1 on
             // section 1, +-50 degrees; the naga statue's 0..120): anchors to swing / wall-run on, whatever their script.
-            std::optional<cdc::Drm> objectDrm;
-            if (auto b = bigfile.read("pc-w\\" + n->second + ".drm")) objectDrm = cdc::parseDrm(std::move(*b));
-            std::optional<formats::UberObjectData> uber;
-            if (objectDrm) try { uber = formats::loadUberObject(*objectDrm); } catch (const cdc::FormatError&) {}
-            const bool anchor = uber && std::ranges::none_of(uber->sections, [](const auto& s) {
-                return std::ranges::any_of(s.transitions, [](const auto& t) { return t.trigger == 14 || t.trigger == 15; });
-            });
-            const GrappleKind k = !anchor && in.scriptId && uberScript(*drm, objectDrm ? &*objectDrm : nullptr, in.scriptId)
+            // Objects that are not `*_grapple*` anchors by name (ma_uo_bedroom_door, ms_rb_tomb_gate, the tentacle
+            // gears, ...) are pull targets when they watch a joint or are rigid bodies, else anchors.
+            const bool named = n->second.find("_grapple") != std::string::npos;
+            const bool anchor = g->anchor;
+            const GrappleKind k = !named ? (g->pullable ? GrappleKind::Mounted : GrappleKind::Ceiling)
+                                  : !anchor && in.scriptId && uberScript(*drm, g->drm.get(), in.scriptId)
                                       ? GrappleKind::Mounted
                                   : n->second.find("wall") != std::string::npos ? GrappleKind::Wall
                                   : n->second.find("post") != std::string::npos ? GrappleKind::Post
                                   : n->second.find("ceiling") != std::string::npos || anchor ? GrappleKind::Ceiling
                                                                                              : GrappleKind::Mounted;
-            GrappleTarget t{in.uniqueId, v3(in.position), k};
+            // The target point: the feature (0x6FF040: the instance's origin + its query-0xDB offset). The named
+            // anchors keep their intro origin [I: every rope / swing replay was recorded on it; their features lie
+            // 118..261 along the anchor's axis, the handles' 214 out on the hinged handle].
+            float im[16];
+            formats::introMatrix(in, im);
+            const vec3 at = named ? v3(in.position) : vec3(glm::make_mat4(im) * glm::vec4(g->point, 1));
+            GrappleTarget t{in.uniqueId, at, k};
+            t.model = g->model;
             // its intro data's 0x404 block: flag +4, own throw range +8 and longest rope +12 (0x698A70) [O]
             if (in.data && in.data->section < drm->sections.size()) {
                 const auto& d = drm->sections[in.data->section].data;

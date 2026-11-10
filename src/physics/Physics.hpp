@@ -98,11 +98,18 @@ struct ObjectPhysics {
     // per instance (0x5D0610 -> 0x5CE4F0 with the instance as the markup box's owner, box +0x0C) when the instance's
     // current model has any (0x4D78D0, 0x5BA480, 0x5BA650, 0x5D07E0): push blocks' top-edge ledges, poles, cog rings.
     std::vector<collision::Markup> markup;
+    // Target features of the model (model DTP +0x5C count, +0x60 -> 0x20-byte records {u16 segment, u16 mask, float3
+    // position in that segment's frame}; tru.exe's instance queries 0xDE / 0xDF / 0x14C walk them per model). Mask bit
+    // kFeatureGrapple = a grapple point (every `*_ei_grapple_*` anchor has one, and so do the manor's ring door, the
+    // tomb gate, the snake heads, ...: survey docs/GAMEPLAY.md "Grapple"); enemies carry 0x41 (lock-on points).
+    struct Feature { int segment = 0; uint16_t mask = 0; vec3 pos{0}; };
+    std::vector<Feature> features;
     // Bind-pose model-space frame of a segment field (tru.exe 0x615930): >= 0 a segment, < 0 the HInfo marker -id
     // (0x46DA20) in its segment's frame; nullopt when there is no such segment / marker.
     std::optional<mat4> frame(int field) const;
 };
 inline constexpr int kClassRigidBody = 34; // tru.exe 0x6BA570 (0x6D00E0 dispatch); 28 objects, the "*_rb_*" ones
+inline constexpr uint16_t kFeatureGrapple = 0x4; // ObjectPhysics::Feature::mask
 // Model `model` (ObjectBase +0xA4 list) of an object DRM. Empty without an object section or that model; throws
 // cdc::FormatError on bad layouts.
 ObjectPhysics loadObjectPhysics(const cdc::Drm& object, uint32_t model = 0);
