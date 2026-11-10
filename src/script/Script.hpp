@@ -271,6 +271,9 @@ public:
     void setBigfile(const cdc::BigfileSet* bigfile);
     const cdc::BigfileSet* bigfile() const { return bigfile_; }
     const vm::Instance* playerScript() const { return playerScript_.get(); }
+    // A damaging collision primitive of `attacker` touched Lara (tru.exe 0x4923C0 -> 0x7990A0): its script's instance
+    // prototype 34 (vt 21) with (attacker, victim, 0, 0) [U: the two query-0xF7 values the engine passes last].
+    void contactDamage(int32_t attacker);
     using MultibodyNative = std::function<bool(int32_t uid, uint32_t function, std::span<const vm::Value> args,
                                                uint32_t& result)>;
     void setMultibodyNative(MultibodyNative native) { multibody_ = std::move(native); }

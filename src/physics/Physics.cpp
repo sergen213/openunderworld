@@ -84,20 +84,20 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
         head(o, p);
         p.id = at<uint16_t>(m, o + 4), p.radius = at<uint16_t>(m, o + 6);
         p.pos = {at<int16_t>(m, o + 8), at<int16_t>(m, o + 10), at<int16_t>(m, o + 12)};
-        p.mass = at<uint16_t>(m, o + 0x14);
+        p.mass = at<uint16_t>(m, o + 0x14), p.damage = at<int16_t>(m, o + 0x1C);
     });
     list(1, kBoxStride, [&](uint32_t o, Prim& p) { // type 5
         p.kind = PrimKind::Box;
         p.size = vec(m, o), p.pos = vec(m, o + 0x10), p.rot = quatXyzw(m, o + 0x20);
         head(o + 0x30, p);
-        p.id = at<uint16_t>(m, o + 0x34), p.mass = at<uint16_t>(m, o + 0x36);
+        p.id = at<uint16_t>(m, o + 0x34), p.mass = at<uint16_t>(m, o + 0x36), p.damage = at<int16_t>(m, o + 0x3E);
     });
     list(3, kCapsuleStride, [&](uint32_t o, Prim& p) { // type 10
         p.kind = PrimKind::Capsule;
         p.pos = vec(m, o), p.rot = quatXyzw(m, o + 0x10);
         head(o + 0x20, p);
         p.id = at<uint16_t>(m, o + 0x24), p.radius = at<uint16_t>(m, o + 0x26), p.length = at<uint16_t>(m, o + 0x28);
-        p.mass = at<uint16_t>(m, o + 0x2A);
+        p.mass = at<uint16_t>(m, o + 0x2A), p.damage = at<int16_t>(m, o + 0x32);
     });
     // Slot 2 markers (tru.exe 0x46DA20, HInfo primitive type 8): +4 u16 id, +8 float3 position, +0x14 float3 Euler.
     const uint32_t nm = at<uint32_t>(m, h + 16);
@@ -985,7 +985,7 @@ Scene::Impl::Joint3E Scene::Impl::makeJoint3(uint64_t key, const Joint3& j) {
     s.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationY | JPH::EAllowedDOFs::TranslationZ;
     s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
     s.mMassPropertiesOverride.mMass = mass, s.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
-    s.mAllowSleeping = false, s.mLinearDamping = 0, s.mAngularDamping = 0;
+    s.mAllowSleeping = true, s.mLinearDamping = 0, s.mAngularDamping = 0; // asleep once it rests; driveJoint3 wakes it
     s.mMotionQuality = JPH::EMotionQuality::LinearCast;
     s.mEnhancedInternalEdgeRemoval = true; // a box sliding over the terrain's triangle seams must not catch on them
     e.body = add(s, "f" + std::to_string(key), JPH::EActivation::Activate);
@@ -1015,6 +1015,7 @@ void Scene::Impl::driveJoint3(Joint3E& e, const Joint3& j) {
     }
     e.c->SetTranslationLimits(lo, hi);
     e.c->SetTargetVelocityCS(target);
+    if (!target.IsNearZero(0.0f) && !bi->IsActive(e.body)) bi->ActivateBody(e.body); // a push or a running motor wakes it
 }
 
 void Scene::setJoints3(std::vector<std::pair<uint64_t, Joint3*>> joints) {
@@ -1251,15 +1252,17 @@ void Scene::Impl::drive(const VehicleE& v) {
     const float ratio = v.drive.reverse ? spec.reverseRatio : spec.ratio;
     float omega = 0;
     for (const auto& w : spec.wheels) omega += w.drive * std::abs(speed) / std::max(w.radius * kM, 0.01f);
-    const float rpm = omega * ratio * 60 / (2 * JPH::JPH_PI);
-    if (rpm > spec.maxRpm) return;
+    const float wheelRpm = omega * ratio * 60 / (2 * JPH::JPH_PI);
+    if (wheelRpm > spec.maxRpm) return;
+    // Launch (0x791D10 flag bit 22): the torque is read at the rpm the rider revved up to, not at the wheels'.
+    const float rpm = v.drive.rpm > 0 ? v.drive.rpm : wheelRpm;
     float torque = spec.reverseTorque;
     if (!v.drive.reverse) {
         const float x = std::clamp(rpm, spec.minRpm, spec.maxRpm) / spec.maxRpm * float(spec.torque.size() - 1);
         const size_t i = std::min(size_t(x), spec.torque.size() - 1), j = std::min(i + 1, spec.torque.size() - 1);
         torque = spec.maxTorque * (spec.torque[i] + (spec.torque[j] - spec.torque[i]) * (x - float(i)));
     }
-    torque *= v.drive.forward * ratio * (v.drive.reverse ? -1.0f : 1.0f);
+    torque *= v.drive.forward * v.drive.torqueScale * ratio * (v.drive.reverse ? -1.0f : 1.0f);
     const auto& wheels = v.c->GetWheels();
     for (size_t i = 0; i < wheels.size(); ++i) {
         const auto& w = spec.wheels[i];

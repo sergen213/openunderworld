@@ -361,7 +361,8 @@ nlohmann::json stateOf(const Object& o) {
     }
     if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && !o.dead && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline &&
         (!o.joint || o.joint->position == 0) && !o.loose && o.holds.empty() && (!o.lastAt || *o.lastAt == o.pos + o.offset) &&
-        (!o.graph || (o.graph->state == o.graph->initial && o.graph->transition < 0 && o.graph->frames == 0 && o.graph->t == 0)))
+        (!o.graph || (o.graph->state == o.graph->initial && o.graph->transition < 0 && o.graph->frames == 0 && o.graph->t == 0 &&
+                      (o.graph->set->graph || o.graph->clip < 0)))) // a graphless object's single clip (`animated` 1) just started is state
         return nullptr; // birth state
     nlohmann::json out = {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
             {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"dead", o.dead}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
@@ -399,11 +400,12 @@ void applyState(Object& o, const nlohmann::json* s) {
     if (auto& g = o.graph) { // the intro's state (Runtime::addUnit), or the saved one
         g->state = g->initial, g->transition = -1, g->frames = 0, g->clip = -1, g->t = 0, g->loop = false;
         const auto* G = g->set->graph ? &*g->set->graph : nullptr;
+        // (An object without a graph plays single clips, `animated` 1: its clip and time are saved the same way.)
         if (const auto a = s && s->is_object() ? s->find("graph") : nlohmann::json::const_iterator{}; s && s->is_object() && a != s->end() &&
-            a->is_array() && a->size() == 6 && G) {
+            a->is_array() && a->size() == 6) {
             const int state = (*a)[0], transition = (*a)[1], clip = (*a)[3];
-            if (state >= 0 && size_t(state) < G->states.size()) g->state = state;
-            if (transition >= 0 && size_t(transition) < G->transitions.size()) g->transition = transition;
+            if (G && state >= 0 && size_t(state) < G->states.size()) g->state = state;
+            if (G && transition >= 0 && size_t(transition) < G->transitions.size()) g->transition = transition;
             g->frames = (*a)[2], g->t = (*a)[4], g->loop = (*a)[5];
             if (clip >= 0 && size_t(clip) < g->set->clips.size()) g->clip = clip;
         } else if (G && G->states[size_t(g->state)].anim >= 0) {
@@ -942,6 +944,12 @@ void Runtime::callback(int32_t uid, const char* base, size_t prototype, std::spa
         }
 }
 
+void Runtime::contactDamage(int32_t attacker) {
+    if (!playerScript_) return;
+    const std::array args{vm::Value::object(attacker), vm::Value::object(playerScript_->uid), vm::Value::scalar(0), vm::Value::scalar(0)};
+    callback(attacker, "instance", 34, args);
+}
+
 void Runtime::run(int32_t uid, int16_t vt, std::span<const vm::Value> args) {
     const auto self = instance(uid);
     if (!self || !self->program) return;
@@ -1121,9 +1129,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 weather_.lightningMin = int32_t(nc.args[0].bits), weather_.lightningMax = int32_t(nc.args[1].bits);
                 return true;
             }
-            if (!std::strcmp(name, "larabase") && (nc.function == 59 || nc.function == 60) && nc.args.empty()) {
-                // INSTANCE_Post(player, 0x1D5 | 0x1D6, 0) (0x778020 / 0x778040); the message's meaning is [U].
-                events_.push_back({EventKind::PlayerMessage, source, nc.function == 59 ? 0x1D5 : 0x1D6, tick_});
+            if (!std::strcmp(name, "larabase") && (nc.function == 58 || nc.function == 59 || nc.function == 60) && nc.args.empty()) {
+                // INSTANCE_Post(player, 0x1D4 | 0x1D5 | 0x1D6, 0) (0x778000 / 0x778020 / 0x778040); the messages' meaning
+                // is [U]. 0x1D4 comes from l5_valgrind's steam columns (fx_steam_val_column vt 14) just before they take
+                // 250 health: [I] the scald that makes her let go; ours only records it.
+                events_.push_back({EventKind::PlayerMessage, source, int32_t(0x1D4 + nc.function - 58), tick_});
                 return true;
             }
             // larabase 52 (thunk 0x79A4B0 -> 0x777DD0): INSTANCE_Post 0x85 to the bike in the instanceref argument and to

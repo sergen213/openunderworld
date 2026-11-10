@@ -2484,7 +2484,8 @@ TEST(ProgressionReal, ThorPillarsSlideOnTheirPlane) {
         for (int i = 0; i < 120; ++i) w.tick({});
         const auto* j = w.uberJoint3(4674, 1);
         ASSERT_TRUE(j && w.uberState(4674));
-        EXPECT_LT(glm::length(j->x), 12.0f) << j->x.x << " " << j->x.y << " " << j->x.z;
+        EXPECT_LT(glm::length(vec2(j->x)), 2.0f) << j->x.x << " " << j->x.y;
+        EXPECT_LT(std::abs(j->x.z), 25.0f) << "settled on the crypt floor (its collision reaches 17 under it): " << j->x.z;
         const auto never = [] { return false; };
         w.script().setPlayerObjects({});
         EXPECT_FALSE(gripAndPush(bf, w, 4674, 0, vec3(0), 0, {0, 1}, 120, never)) << "no grip without the right gauntlet";
@@ -2513,7 +2514,7 @@ TEST(ProgressionReal, ThorPillarsSlideOnTheirPlane) {
         EXPECT_GT(forward, 250.0f) << "pushed along her facing (71 units a second with strength 3)";
         EXPECT_GT(side, 250.0f) << "sidestepped across it";
         EXPECT_GT(carried, 200.0f) << "she moves with it";
-        EXPECT_LT(std::abs(j->x.z), 20.0f) << "on the crypt floor";
+        EXPECT_LT(std::abs(j->x.z), 25.0f) << "on the crypt floor";
         EXPECT_EQ(w.script().pullStrength(), 1.0f);
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 4674) << key.second;
     }

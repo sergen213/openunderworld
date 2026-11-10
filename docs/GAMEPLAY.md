@@ -454,6 +454,90 @@ outfit (the original only reads `+0x294` on a level load).
   the doorway (`ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` notes it; what clears it in tru.exe is not
   decoded: nothing in the object's states moves it but the removed joint and the squib).
 
+## Hazards
+
+What hurts Lara apart from enemies, falls and drowning, per kind and unit, with the rule tru.exe applies and what
+ours does. Two mechanisms carry every trap of the game [O]: **damaging collision primitives** (the object data) and
+**script damage** (the `health` natives called by volumes, planes and trap scripts). Survey tools (scratch):
+`openunderworld-work/gameplaygoal/hazards/` (`primsurvey`, `hzsurvey`, `healthsurvey`, `intros_all.txt`).
+
+### Damaging collision primitives (`src/game/Hazards.cpp`)
+
+- **Data** [O]: every HInfo collision primitive of a model carries an s16 amount: sphere `+0x1C`, box `+0x3E`, capsule
+  `+0x32` (the mesh type 13 `+0x62`, not decoded); tru.exe reads it with `0x48E040`. 72 primitives of 30 objects have
+  one (all the others 0): the table below.
+- **Rule** [O]: a collision pair handler that meets such a primitive calls `0x4923C0`: the primitive's owner is the
+  attacker (skipped when its instance flag `+0x1C & 0x100` is set), the other instance the victim. The damage manager
+  (`0x5B2990`, slot `+0x58` = `0x5D4C60`) posts the hit message `0x11C` with the amount and **damage class 6** to the
+  victim (skipped when its flag `+0x14 & 0x20` is set); then the scripts of both instances get instance prototype 34
+  (**vt 21**, `0x7990A0`, arguments attacker, victim and each side's query `0xF7`) and prototype 35 (`0x799100`).
+  Lara takes `0x11C` in `0x6F5030`: class 6 has priority 4, so the touches of the next 30 frames (player data `+0x60`)
+  are ignored; 1000 health at the normal difficulty, so 1000 and more is death at once.
+- **Two ways in** [O]: the overlap handlers (`0x4928C0`, `0x492980`) call `0x4923C0` for every overlap whose two
+  bodies have an owner; the rigid contact handler (`0x496220`, registered for the category pairs 1-1 and 11-1) only
+  when a contact point moves at 5 or more (`v.v >= 25.0`), then posts the collision message `0x3B`, which Lara's
+  handler (`0x75A020`) passes to `0x4923C0`. **[I]** which primitive takes which way: flag bytes 2-3 not 0 (flame
+  jets, rollers, the weights' under-plates, the barrel run, the squib spheres) = an overlap volume that hurts whenever
+  she is in it; 0 = solid collision that hurts only while the primitive moves at 5 units a second or more (the unit
+  and "her own walking into a resting one does not count" are [I]: the door plates are inset in their slabs so a
+  resting door cannot be touched on its plate, but the gate of Baldr's tomb is one 2000 plate she walks up to).
+  Open: a Wine check of a walk into gate 45, and of standing in a jet for several seconds.
+- **vt 21 in the trap scripts** [O bytecode]: every trap compares the victim with the player and plays its impact
+  sound at her (`sound` 3); the Xibalba spear and blade rows also kill their trigger planes (5900 / 5901), wait 1 s
+  and give the weapons back (`larabase` 55); the ship's barrel run adds `health` 1 (5000).
+- **Ours**: `World::syncHazards` collects the primitives of the loaded objects (the object's model and its uber
+  sections' models), `World::tickHazards` poses each with its segment (collider transform, uber section joint + clip,
+  or the anim graph's pose) and tests Lara's capsule (`hazardDistance`; [I] 6 units of skin). A touch that hurts
+  (`World::damageLara`, class `kDamageContact`) is listed in `World::hazardHits()` and calls the attacker's vt 21
+  (`Runtime::contactDamage`; [I] only the touches that hurt, tru.exe calls it from every contact callback). Hit
+  reaction as an enemy blow of that amount (`hit_medium*` from 250). Where each primitive stood a tick ago is saved
+  (object state `hazards`, written only where there are any). Self-test measurement `step.hazards`.
+
+| Object (class) | Units x instances | Amount, primitives [O] | Way [I] | How it is driven [O script / data] | Ours |
+|---|---|---|---|---|---|
+| `ca_ei_flame_trap` (6) | l4_traprooms x13 | 800; box 224 x 745 x 224 on the jet bone | overlap | anim graph: the bone travels 948 out of the nozzle in 0.25 s, script clocks hold it out 3 s and in 3 s (members +28 / +32, phase +36 per intro); message `deact_flames` (the house's key taken) stops them | yes: `GameReal.FlameJetBurnsLaraOncePerWindow`, `game_selftest_hazards` |
+| `ca_rb_crusher_slim` (34) | l4_traprooms x6 | 12345; plate 3 x 588 x 316 on the face of jaw 0 (model 0); model 1 = the mirrored jaw | solid | two prismatic joint markers + a link marker (kind 11), joint 0..900, bind pose closed (68 apart); volume 5905 starts the clocks while Lara is in the house (vt 58 / 59): motor 15 a frame open for 2 s, then -65 shut; a `multibody` 79 watch (-100..20) plays the dust effect; the script also kills (`health` 1, 3000) when `larabase` 6 (contact force) exceeds 30 | yes: both jaws collide and slide (`linkedJaws` [I: one body per model, equal travel]); `GameReal.CrusherJawsOpenCloseAndKill`, self-test; the contact force stays the depth stand-in [I] |
+| `ca_ani_adren_spears` (79) | l4_traprooms x3 | 1000; the tips' box 2632 x 70 x 198 over a 1363 tall shaft box | solid | uber slide joint 0..1106 (out of the floor / ceiling), commands 629 from planes 5900 / 5901 / 5904 | damage yes while they move (`GameReal.RestingSolidHazardsDoNotHurt` for the standing row); the adrenaline sequence itself is the uber scripts', not compared with tru.exe [U] |
+| `ca_ani_adren_blades` (79) | l4_traprooms x2 | 1000; two blade boxes 1264 x 95 x 218 | solid | clips on commands 630 / 631 | as the spears |
+| `ar_ei_grinders` (6), `ar_ei_grinders_two` (6) | l5_valaskjalf x4, x4 | 400; 3 / 2 roller boxes 217 x 1362 x 217 | overlap | anim (rolling) | yes: `GameReal.RollersCost400ATouch`; [U] the rollers are not solid for her in ours (class-6 anim objects do not collide) |
+| `ar_ei_grinders_rb` (79) | l5_valaskjalf x1 | base plate 700; the two rollers (section models 2 / 3) 13331 | solid plate, overlap rollers | uber slide joint 0..1580 + roller hinges (the travelling ceiling set) | damage yes; untested by input |
+| `ar_ani_weight_with_ledge`, `_without_ledge` (6) | l5_valaskjalf x2, x4 | 500; under-plate 289 x 345 x 115 | overlap | animated with their pair (`ar_ani_weight_pair`) | yes (posed by the clip); untested by input |
+| `ar_ani_thor_hammer_two` (6) | l5_valaskjalf x1 | 12345 on all 18 boxes (hammers one / three / four: none) | solid | stimulus 0x10000 from its trigger | yes while it swings; untested by input |
+| `ms_ani_tentacle_hazard_a..d` (79) | l1_kraken_room x4 | 500; four spheres r 567 / 449 / 343 / 218 along the arm | solid | uber clips (swats), removed when the kraken is dead | yes while they swing; untested by input |
+| `ms_ani_tentacle_gearr` (79) | l1_kraken_room x1 | 100; 8 boxes (section models) | solid | uber clips | as above |
+| `squib_explosion_detector` (6) | l1_kraken_room x57 | 200; sphere r 927, flag 5 | overlap | squib spheres under the pool's surface | hurt on overlap [I: whether Lara's pair meets flag-5 spheres at all] |
+| `squib_lara_throwback`, `squib_ma_lara_throwback` (6) | l1_kraken_room x1, l3_main_hall x1 | 200 (sphere r 316), 333 (box 161 x 7826 x 1107) | solid | the scripted blast that throws her | as data |
+| `ms_ani_ship_adren_trap` (6) | l1_ship_sinking_hall x1 | 9999; a plate and four capsules r 101 (the barrels) | overlap | the barrel run's clip; its script adds `health` 1 5000 (vt 21) / 9999 | yes; untested by input |
+| `ms_ani_ship_barrel_a` (79), `ms_ani_explosion_damage_blocker` (6) | l1_ship_sinking_hall x1, x1 | 150 (capsule r 93), 500 (box 4741 x 316 x 4741) | solid | clips | as data |
+| closing doors and falling pieces: `ms_rb_tomb_door` 100, `ms_rb_tomb_gate` 2000, `ms_rb_grapple_snake_head` 12345, `sa_uo_shivas_right_arms` 2000, `sa_uo_naga_statue` 2000, `ma_rb_shadow_door_b` 12345, `ca_ani_temple_reveal` 2000, `ca_rb_wall_hpole_door` 200, `ar_uo_reward_door` 2000 | l1_baldrs_tomb (223, 45), l1_kraken_entrance (751), l2_puzzleroom (2060), l2_shrineroom (2794), l3_chapel (4835), l4_ballcourt (5464, 6505), l5_valaskjalf_entry (7227), l5_valaskjalf_entryb (7187) | a thin plate on the closing edge (reward door: 1207 x 2802 x 125 under the slab; shadow door: 94 x 16 x 2519 between the halves) | solid | their joints / clips | crush = touching the plate while it moves; untested by input |
+
+### Script damage (`health` natives; survey of every intro script calling `health` 1 / 2)
+
+`health` 1 (`0x4A50F0`) posts message 0xD with the amount, `health` 2 (`0x4A50D0` -> `0x5D3C90`) the hit message
+0x11C with amount and type; ours `World::bindScripts` (`setHealthNative`).
+
+| Kind | Units x instances | Rule [O bytecode] | Ours |
+|---|---|---|---|
+| `firetriggervolume` (script 6516) | l3_main_bedroom x14, l3_main_hall x14, l3_bedroom_hall x7, l1_ship_sinking_hall x5, l1_ship_lower_hallway x4, l3_mansion_exterior_afterburn x2 | while Lara is in the volume (vt 70 -> state 1): `health` 2 with member +12 (300), then the burn sound as a sequence (`sound` 1), again when the sound ended; leaving (vt 71) ends it. Its player sensors count on global byte 13 ("fireanim": her arm raised against the heat [I]) | the first 300 at once (`GameReal.FireVolumeBurns300`); the repeats run on the app's sound clock (`GameSound::scriptSoundBusy`), so a World without sound burns once per entry [open]. The constructor stops at the sensor array's length call (op 0x65 without a target: dynamic arrays are not modelled), so "fireanim" never counts [open] |
+| `slowfiretriggervolume`, `deathfiretriggervolume` | l3_main_hall x5, x5 | the same script type; their amounts come from the intro data [U: not dumped] | 300 measured in ours for both [U] |
+| `jellyfish_a` | l1_seafloor x31, l1_norse_hallway_a x12 | 100 every 2 s inside its sensors | yes (`GameReal.JellyfishStingOnTouch`) |
+| `fx_steam_val_column` | l5_valgrind x16 | two player sensors on markers 2101 / 2102 of cog wheel 7314, on during the blast clip; a hit sends player message 0x1D4 (`larabase` 58, `0x778000`; [I] the scald that breaks her grip), takes 250 (`health` 1) and switches the sensors off until the next blast; a dispatcher of the unit takes 350 | `larabase` 58 is bound (the handler ran into it and stopped before the damage); message 0x1D4 has no effect on her yet [U]; untested by input |
+| kill planes, `health` 1 99999 | l5_valaskjalf x4, l3_bedroom_hall x2, l4_staircase_upper x2, l1_baldrsstairs_a, l4_ballcourt, l4_staircase_xibalba, l4_trailstart x1 | pits (the spike pits of the Mexican roads and stairs are these and the volumes below: no spike object exists) | yes (one-sided planes fire toward local +Y since 0.42) |
+| kill volumes, `health` 1 99999 | l4_ballcourt x8 | the road's spike pits | yes |
+| planes `health` 2 2000 / 12345 / 9999 | l3_main_bedroom x6, l3_main_hall x4, l2_maproom x2; l1_ship_sinking_hall x2, l5_valaskjalf x1; l4_pool x1 | fire pits, shafts | yes |
+| volumes `health` 2 2000 / 1000 / 300 | l2_towerconnector x2, l4_traprooms x1, l2_maproom x2 + 1 + 1, l2_hubhall x1 | drops | yes |
+| eitr: volumes `health` 2 12345 (l4_pool x3), 6000 (l7_helheim01 x1), `watervolume` 12345 (l4_pool, l7_yggdrasil_end), l7_yggdrasil_end volumes x66 (amount in a member) | | the pool and its falls (`ca_ani_goo_falls` x6, `ar_uo_goo_fall` x6, `floater_goo` x10 carry no damage of their own) | l4_pool verified against the original (Water); the others run the same natives, untested by input |
+| `sh_ei_exploading_barrel` | l1_ship_exterior x29, l6_ship_exterior x14, engine halls and hallways x13 | explosion records | Breakables |
+
+No object or script of the game deals damage as darts, lava, electricity or poison gas: the electrical boxes are
+switches (`ma_ei_wall_switch_electric`), steam on the ship is effects only (`fx_steam*`), and the campaign's "spikes"
+are kill planes / volumes under the pits.
+
+Open, in order of use on the critical path: the fire volumes' repeat without the app's sound, steam (message 0x1D4, a
+test by input on the tower), the hammer / weights / tentacles / barrel run by input, the crushers' contact force
+(`larabase` 6), collision of class-6 animated traps (rollers), drawing the crusher's second jaw (model 1; the renderer
+draws model 0 with the object's body), a Wine comparison of one hit per kind (amount, window, reaction clip).
+
 ## Close combat
 
 Code: `src/game/Melee.cpp` (`World::meleeInput` before the player ticks, `World::tickMelee` after the tick's
@@ -896,9 +980,18 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   the data of CameraManager's type-4 camera, which the towers' vt 49 then switches to (`gamebase` 53 (4)); ours hands
   the id on (`World::cameraNative` op 3) and the towers' handlers run to their end; [U] the type-4 camera itself
   is not modelled (the view stays the gameplay camera's).
+- **Open (saves)**: `StreamReal.SaveContinuesBitIdentically`'s three l4_pool cases (2, 8, 20) fail since pillar 5610
+  has a body: one tick after a load the hash of fx object 5596 (anchored to the pillar's marker, `instance` 23)
+  differs, and the scene's recorded Jolt state differs in the pillar's three cached contact manifolds, while the
+  pillar's position and velocity stay bit-identical every tick (`StreamReal.ThreeAxisJointAtRestSaveLoad`; a save
+  taken while a pillar moves continues bit for bit in every field, `StreamReal.ThreeAxisJointSaveLoad`). Not found:
+  why a resting three-axis body's manifolds are rebuilt differently after `Scene::restore` (letting it sleep and
+  preparing the uber objects inside `World::restoreObjects` did not change it).
 - **Open**: `ca_pu_thor_debris` 5609 (above); the pillars' hinge turn and rune glow; l2_maproom's hub and wall drag
   (C09-09 / -11) are not surveyed; the speed's M (the proxy's mass, 0.125 x the object's [I]) and the hold / toggle
-  need a Wine trace: none was made (a session needs Lara to carry the gear in tru.exe, which no harness tool gives).
+  need a Wine trace: two sessions were run for it (`openunderworld-work/gameplaygoal/gauntlets/wine_door.sh`: new game,
+  level change to l5_startsnow for the gear, door 7400's spot from ours, Interact + each direction key); in the first
+  the level change did not happen within 200 s (Lara stayed at the prologue's start), so nothing was measured.
 
 ## Push and pull objects
 
@@ -1154,7 +1247,7 @@ Open (the fight is not yet playable from the entry to the credits by input alone
   | 4 | Target Lock (draws) | G, mouse right | LT | aim |
   | 6 | Sprint (swim faster) | Left Shift | LB | sprint |
   | 8 | Recenter Camera (patch 1.1) | Q | left stick click | recenter |
-  | 23 / 24 / 22 / 21 | Vehicle Gas / Reverse / Brake / Shoot | W / S / Space / H, mouse left | RT / LT / A / RB | stick forward / back; jump hops [I]; no bike shooting yet |
+  | 23 / 24 / 22 / 21 | Vehicle Gas / Reverse / Brake / Shoot | W / S / Space / H, mouse left | RT / LT / A / RB | stick forward / back; the jump action is the Vehicle Brake (no hop: Wine, "Motorcycle"); pistols / uzi shoot |
 
   So Lara runs by default; walking is Alt held (or the stick pushed lightly) and Shift sprints. Ours without an
   original key: draw / holster X (target lock and fire also draw), save / load F5 / F9, hint / answer F2 / F3. A config
@@ -2655,9 +2748,11 @@ on (docs/REFERENCE_COMPARISON.md "Method").
 ## Motorcycle (src/game/Vehicle.*)
 
 Lara mounts the bike with E (interact) next to its left side, rides it with the move stick (forward = throttle, back =
-brake then reverse, left/right = steer; raw stick, not camera-relative), hand-brakes with Left Ctrl / pad East (drop),
-hops with Space and gets off with E once it is almost stopped. Throttle + hand brake revs a burnout; add the stick
-(standing) for a donut; hand brake or brake with the stick over above 15 mph slides the rear out (power slide).
+brake, and reverse once it stands and the brake has been held 7 frames; left/right = steer; raw stick, not
+camera-relative), hand-brakes with Space / pad South (the jump action: tru.exe's "Vehicle Brake", button 22) and gets off
+with E once it is almost stopped. There is no hop. Throttle + hand brake revs a burnout and charges the launch: letting
+the brake go with the throttle held shoves the bike off (the "fast start" / speed burst); add the stick (standing) for a
+donut; hand brake or brake with the stick over above 15 mph slides the rear out (power slide).
 While she is on it, `World::tick` skips `Player::tick`, drives her from the bike and masks move, jump, drop, use and the
 grapple; the weapon keys stay live (see "Weapons on the bike" below); the camera pulls back and swings behind the moving
 bike. No new bindable actions.
@@ -2669,7 +2764,7 @@ Evidence:
   (657) in `l4_trailstart` 6699 and `l5_valgrind_tunnel` 6715; `co_motorcycle` (641, a cinematic copy) in
   `l4_ballcourt` 6403 and `l7_thin_ice` 9078. No Thailand (l2) unit places a bike. `UnitData::vehicles` keeps the
   `motorcycle` intros; spawners and cinematic copies are not instantiated [U: the spawner's script for revisits].
-- Classes [V-exe] RTTI `Bike : Vehicle` (vtables 0x886064 / 0x8860E4), `VehicleCamera`, `NtMotor_ScriptType`; state-chart
+- Classes [V-exe] RTTI `Bike : Vehicle` (vtables 0x861974 / 0x861A18; 0x886064 / 0x8860E4 are their RTTI locators), `VehicleCamera`, `NtMotor_ScriptType`; state-chart
   conditions `PSCCF_Vehicle_SteerDirection/StuntDirection/IdlePose/DismountClearance/State`. 0x6AB960 creates the Bike
   (0x790 bytes, ctor 0x78EDA0) when the instance's vehicle data (+0x50 = ObjectBase +0xC8) has `+8 == 1`, with the tuning
   record `+0x10`; 0x793680 is its per-frame update (throttle, steering, gear/torque 0x791D10, Havok wheel forces 0x792900,
@@ -2739,7 +2834,7 @@ Numbers (default tuning record, the wheel definitions, the model):
 | tilt | the body's up stays within 42.5° of the world's | +0x40 [V-data], 0x795080 [V-exe] |
 | lean | the roll servo targets (steer / wheel limit) × min(1, \|v\| / (0.675 × 40 mph)) × 30° into the turn with a wheel down, 0 in the air; 0.1 of the error per 30 Hz frame (3/s) | +0xB0 / +0xB8, 0x793680 (a motor with +0xB4 5000 N·m, target velocity 0.1 / frame × error) [V-exe]; units of the rate and its reference up (the exe blends the wheels' ground normals in above 0.4 steer) [I] |
 | air control | no wheel down: f = (steer / limit) × v / 40 mph; 300 × f N·m about the body's up, 2600 × f N along its side, towards the stick | +0x44 / +0x48, 0x793680 (torque × 280²/30², force × 280/30² into game units) [V-exe]; signs [I] |
-| hand brake | Left Ctrl / pad East: hand brake torque from wheel +0x10 (front 2.8, rear 0.5, as the brakes' units), biting over 0.5 s, no drive | +0x10 / +0x38 / +0x52 bit 2, 0x792900 [V-exe]; the key [I] |
+| hand brake | Space / pad South (the Vehicle Brake, button 22; under Wine Space puts the Bike in state 5 with flag bit 25, no hop): hand brake torque from wheel +0x10 (front 2.8, rear 0.5, as the brakes' units), biting over 0.5 s, no drive | +0x10 / +0x38 / +0x52 bit 2, 0x792900 [V-exe]; the key [O, Wine ref_hand.txt] |
 | burnout (state 7) | throttle + hand brake, stick centred: no drive, hand brake on, the rear wheel spins up to 500 / 286.48 rad per frame (52 rad/s) over 0.2 s; Lara `motorcycle_accelerate_loop` | +0x52 bit 0, +0x34, +0x144, 0x790E40 / 0x793680 [V-exe]; the clip [I] |
 | donut (state 10) | from a standstill (or a burnout) throttle + hand brake + stick past half: hand brake, 6750 N outward on the rear contact (ramped over 10 frames), lean 10° in; the front contact held horizontally, spin capped at 2.5 rad/s; `motorcycle_donut_left/right` | +0xEC / +0xF4 / +0x114, 0x790920 / 0x790E40 [V-exe]; the exe anchors it with a "Donut Anchor Body" (0x78F520, mass ramping to +0x13C 400 at +0x158 90 per frame, pivot ±190, 0, −400 in the body frame) [I: ours pins the front contact; the cap: Jolt's tyres let the push spin it several turns a second] |
 | power slide (state 11) | above 15 mph brake or hand brake + stick past half: the brakes ramp over 4.25 s, the rear contact pushed 1524 N out / 1016 N back / 161 N down for 5 + 10 + 5 frames (in, hold, out), lean 15° in, spin capped at 2.5 rad/s; until the brake or stick is let go or below 2 mph; `motorcycle_power_skid_left/right` | +0xE0 / +0x1B8 / +0x1D4 / +0x1D8 / +0xC4 / +0x1E4 / +0x1EC / +0x1F4 / +0xE4, 0x7918B0 / 0x790E40 [V-exe]; push signs and the cap [I] |
@@ -2747,10 +2842,12 @@ Numbers (default tuning record, the wheel definitions, the model):
 | front wheel limit | 30° at low speed → 10° at top speed, blended over [0.3, 1] × top speed | +0x10 / +0x14 / +0x1C, 0x793680 [V-exe] |
 | steering rate | 95°/s → 75°/s, same blend | +0x18 / +0x1B4, 0x793680 [V-exe] |
 | fall damage | drop ≥ 3792.67: (drop−3792.67)/(4819.85−3792.67)·95; > 4819.85: 95 + clamp(…/(4977.88−4819.85))·1550; in the air ≥ 4977.88: 1650 (lethal), type 8; airborne = no wheel on the ground | +0x184..+0x198, 0x793680 [V-exe] |
-| hop | +1100 units/s up while a wheel touches | [I] (no hop in the record or the states) |
+| launch (speed burst) | throttle with the brake or hand brake held revs from 3000 to 18 000 rpm over 0.3 s (the charge); the brake let go with the throttle held drives 0.1 s with 10 × the torque read at the revved rpm × (charge / 0.3 s); the throttle let go first drops the charge | +0x88 / +0x8C / +0x1C4 / +0x1C0 / +0x0C, 0x793680 flag bits 23 / 22, 0x791D10 [V-exe]; Wine: state 7 flags 0x02800620 while revving, 0x00400600 at the release, 17.2 mph 0.13 s later |
+| reverse | standing with only the brake held, the reverse gear takes after a 30 Hz frame counter passes 6 (7 frames, 0.233 s); a hold cut short keeps its count; top rpm at 10 mph | +0x1F8, 0x790E40 state 3 → 2 [V-exe]; Wine: state 2 0.25 s after S (0.14 s after an earlier brake to a stop), −10.3 .. −11 mph, also backwards up the 33° stairs |
+| hop | none: Space is the Vehicle Brake | 0x790E40 has no such state; Wine ref_hand.txt [O] (ours had an [I] hop until 0.42) |
 | gravity | 5.72443 units per 30 Hz frame² (Lara's) | [V-exe] Lara, [I] for the bike |
 | terrain, ramps, jumps, walls | Jolt: wheel rays and the chassis on the resident units' collision and the object colliders | the original's Havok equivalents [O]; Jolt's contact model [I] |
-| mount / dismount | E within 250 units of the mount spot; off below 200 units/s | [I] |
+| mount / dismount | E within 250 units of the mount spot; off below 200 units/s | [I]; Wine: see the table below |
 | ramming | enemies touched at > 800 units/s take 0.5 health per unit/s, the bike loses 30 % of its velocity, one hit per contact (enemies are not bodies) | [I] |
 | camera | 950 units back (700 on foot), yaw follows the heading at up to 3/s × min(1, v/1500) | [I] (`VehicleCamera` data not decoded) |
 
@@ -2761,23 +2858,62 @@ bike has no body and stands where it was left (sat on its two wheel contacts whe
 starts).
 
 Saves: `vehicles` (docs/SAVES.md) keeps every bike (unit, unit-frame position, heading, pitch, roll, speed, steer, wheel
-spins, air state, brake time, pending kick, hop / landing timers, stunt + its time and direction, phase) and the ridden
+spins, air state, brake time, pending kick, take-off / landing timers, launch charge / time / rpm, reverse counter, stunt + its time and direction, phase) and the ridden
 one; the bike's Jolt body, wheels and contacts are in `objects.physics` (key `v<uid>`); Lara's state `vehicle` + clip
 are in `player`. Lara's model is rolled with the bike (`PlayerState::roll`, `Player::modelMatrix`).
 
 Tests: `VehicleReal.BikeIntrosTuningAndClips` (record, wheel definitions, engine ratio), `VehicleReal.TrailstartRideReplay`
 (replay `tests/replays/bike_ride.txt`: mount, full throttle down the trail to about 4000 units/s, part throttle into
-the left curve up the steps, hop at the top, brake; the bike rolls back off the steep top, the hand brake stops it; dismount; no
-damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide` (bit for bit), `VehicleReal.RideIndependentOfRenderRate`
+the left curve up the steps, brake; the Vehicle Brake holds it; dismount; no damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide` (bit for bit), `VehicleReal.RideIndependentOfRenderRate`
 (30 / 60 / 144 Hz), `VehicleReal.ShootsFromTheBike` (the replay with the pistols drawn and fire held: right-gun hits on
 a dummy ahead on the trail, the curve still steered, holstered after the dismount); `VehicleReal.LeanFollowsSteeringAtSpeed`
-(roll into the stick both ways, Lara rolled with it), `VehicleReal.AirControlTurnsMidJump` (steering mid-hop yaws the bike
-towards the stick, the same each run), `VehicleReal.DonutAndPowerSlide`; `Physics.VehicleDrivesBrakesAndSavesBitIdentically`.
+(roll into the stick both ways, Lara rolled with it), `VehicleReal.AirControlTurnsMidJump` (steering while it flies off the tunnel's ramp over the pit yaws
+the bike towards the stick, the same each run), `VehicleReal.DonutAndPowerSlide`; `Physics.VehicleDrivesBrakesAndSavesBitIdentically`.
+
+Further tests (0.42): `VehicleReal.LaunchBoostAfterRevvingAgainstTheBrake`, `ReverseAfterTheBrakeIsHeld`,
+`LevelGroundManoeuvresMatchTheOriginal` (the Wine numbers below with the same inputs on the tunnel floor) and
+`FirstRideOverThePitByAutopilot`: the plan lines of self-test scenario `bike_ride` (autopilot `ride X Y [R] [THROTTLE]
+[SPEED]`, raw stick) ride bike 5482 from the trail over the stair hump between the two pillars (stairs 33°, x 43000 →
+44200, top z 1842), down the valley, into the stone tunnel (floor −686, x 60200 → 65500) and off its ramp (lip x 66100,
+z −614) over the pit (to x 67700, 6000 deep) to checkpoint 6620: take-off 4985 units/s, 17 ticks without a wheel down,
+down at x 67779, no damage.
+
+### Original vs ours (tru.exe under Wine, 2026-11-10)
+
+Tool `openunderworld-work/gameplaygoal/bike/bt.c` (`bt trace`: keys by SendInput + one line per change of the Bike:
++0x430 signed mph, +0x438 state, +0x4B0 flags, +0x414 wheels on the ground, Lara's instance; `bt ride`: closed-loop
+W / A / D to waypoints). Coordinates: tru.exe = our l4_trailstart frame + (−47917.4, 43431.5, −8576.6). Traces in that
+directory: `wine_a.txt` (chapter start, W 3 s), `ref_hand.txt`, `ref_launch.txt`, `ref_back.txt`, `ref_accel.txt`,
+`ref_dismount.txt`, `ref_mount.txt`, `ref_turn.txt`, `ref_trail.txt` (session `session2.sh`); ours: `ours_level.txt`,
+`oursA.txt`. After a level change the intro cinematic must end by itself before any key: only then is she riding (Bike
+state 3; 0 = no rider). `onfoot/` holds traces taken too early (Lara on foot): not bike data.
+
+| Manoeuvre | Original (measured) | Ours | |
+|---|---|---|---|
+| Standing start, level ground, full throttle | 7.4 mph after 0.33 s, 15.1 after 0.73 s, 19.7 after 1.02 s (stair-hump top; key latency ≤ 0.06 s) | 8.3 / 16.6 / 21.4 mph at the same times without latency (tunnel floor; asserted within 2.5 mph) | match |
+| Chapter start, W held (first up 0.25 rad, then down the trail) | 3.7 / 9.4 / 13.9 / 20.7 / 28.0 / 31.9 mph after 0.28 / 0.66 / 1.06 / 1.46 / 1.86 / 2.06 s | 4.0 / 9.5 / 15.2 / 23.7 / 34.3 / 34.9 after 0.2 / 0.6 / 1.0 / 1.4 / 1.8 / 2.0 s | equal on the climb; ours gains 25–28 mph/s on the descent where the original gains 20 [U: drive only through wheels in contact, or the body's gravity] |
+| Launch (Space + W 0.6 s, Space let go) | 0 mph while revving; 17.2 mph 0.13 s after the release, 22.2 after 0.52 s | 0 mph; 18.4 mph after 0.13 s, 24.9 after 0.5 s (asserted within 3 / 4 mph) | match |
+| Reverse | gear takes 0.25 s after S (7 frames + latency); −11.0 mph 0.28 s later, −10.3 .. −11 steady, −12.5 backing up the stairs | 0.233 s; −10.5 mph on the level (`ReverseAfterTheBrakeIsHeld`) | match; the original reverses up the 33° stairs, ours untested |
+| Vehicle Brake (Space) from 19.7 mph | state 5, flags 0x02000020; 0.3 mph lost in the first 0.13 s (the 0.5 s ramp), 13.2 → 1.8 mph in 0.37 s at the stair foot (0.24 rad uphill): about 2600 units/s² from the brake | from 21.4 mph on the tunnel floor: stopped in 2.48 s over 3735 units, about 1100 units/s² (1440 at full bite from the [I] unit: front 2.8 + rear 0.5 per mass share) | ours brakes about half as hard: the unit of wheel +0x0C / +0x10 is probably per wheel, not per mass share [U, one sloped sample: measure on the tunnel floor before changing `brakeScale`] |
+| Dismount (E, standing) | Bike state 0 at once; Lara on her feet 1.56 s later 199 left of and 52 behind the bike's origin, turned 101° | same clip: 158 left, 52 behind, 90° | 41 units / 11° apart [U: the clip's end pose vs a settle] |
+| Mount (E from that spot) | seated 1.16 s later, Bike state 3 after 1.26 s | reach 250 around (125 left, 180 behind) covers the spot; clip time the same clip's | spot rule [I] |
+| Turning, W + A held on rough ground | yaw rate 1.68 rad/s at 5.9 mph, 0.92 rad/s at 22.4 mph (radius about 1600) | wheel limit 30° → 10° by speed [V-exe]: 22.6° at 22.4 mph = radius 1110 without slip | not compared on equal ground [U] |
+| Stairs (33°) | climbs them at 24 mph with the throttle held (`wine_a.txt`), reverses up them at 10–12 mph | climbs with a run-up; stalls from a slow start | [U], same cause as the descent row |
+
+Not measured (the session time went into the harness): top speed on a long straight, braking distance with S on level
+ground, the pit jump in the original (air time, pitch), crash / wall rules, water depth, shooting, ramming. To continue:
+`start.sh l4_trailstart session2.sh` (it waits for Bike state 3); ride with `bt ride` using more waypoints through the
+stair hump (the closed loop circled at waypoint 2 of `ref_trail.txt`: it needs the passed-the-point rule the autopilot
+`ride` has), stop inside the tunnel, then the level-floor runs of `session2.sh`.
 
 Verification [O] (ou-game, Vulkan, 1280×720, the replay with `--spawn 37981,-51758,1463,-126.7`, invisible KWin;
 screenshots viewed, kept privately): Jolt bike (2026-11-06) frame 200 Lara leaning into the left curve at the foot of
 the steps (2952 units/s at tick 180), 270 in the jump clip going up the left side of the steps, the bike pitched up
 on them; wheels and Lara stay on the bike. Older stand-in frames (2026-10): 40 mount, 420 dismount beside the bike.
+
+Decoded but not built: after the throttle is let go the engine keeps pushing with a torque fading over record +0x1B0
+(7 s; 0x793680 state 4) while every wheel gets a rolling friction (1 − throttle) × +0x1A8 (1.0, the brakes' unit;
+0x792900): ours coasts freely. The pad's Gas / Reverse are the triggers in the original (buttons 23 / 24), ours the stick.
 
 Not done [U/I]: gears beyond the record's one, engine/skid/landing sounds, the launch wheelie (off in the data), the
 both-wheels-on-steep-ground torques of 0x793680 (+0x15C / +0x160 when two wheels hit slopes past the limit), crash

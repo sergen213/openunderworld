@@ -122,6 +122,24 @@ bool portable(const script::Object& o) {
 
 // Scripted objects that gain collision after their constructor / a pull: pressure plates and loose rigid bodies.
 bool lateCollider(const script::Object& o) { return (o.joint && o.joint->prismatic) || o.loose; }
+// Two bodies of one rigid-body object closing on each other: a class-34 object whose model carries two prismatic
+// joint markers (kind 2) and a link marker (kind 11, +0x24 = the joint it copies) — ca_rb_crusher_slim, the Xibalba
+// crush room's six jaw pairs [O data: model 0 = the jaw on marker 0's side with the 12345 kill plate on its face, model
+// 1 = its mirror image on marker 1's side; bind pose = closed, 68 units apart; joint limit 0..900]. Each body slides
+// along its marker's Z axis (as the single-marker bodies, tickJoints) by the joint position. [I] that the instance
+// builds one body per model and that the link keeps both at the same travel (0x6B6440 not traced for kind 11).
+std::optional<std::array<vec3, 2>> linkedJaws(const physics::ObjectPhysics* p) {
+    if (!p || p->physClass != physics::kClassRigidBody || std::ranges::count(p->markers, 2u, &physics::Marker::kind) != 2 ||
+        std::ranges::count(p->markers, 11u, &physics::Marker::kind) != 1)
+        return std::nullopt;
+    std::array<vec3, 2> axes{};
+    size_t k = 0;
+    for (const auto& m : p->markers)
+        if (m.kind == 2)
+            axes[k++] = vec3((glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) *
+                              glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1}))[2]);
+    return axes;
+}
 size_t lateColliders(const script::Runtime& rt) {
     return size_t(std::count_if(rt.objects().begin(), rt.objects().end(), lateCollider));
 }
@@ -288,9 +306,11 @@ nlohmann::json World::serializeObjects() const {
         if (in.section >= 0) insertedSections.push_back({uid, in.section});
     }
     for (const auto& [uid, x] : slides_) slides.push_back({uid, x});
-    return {{"uber", std::move(uber)}, {"held", held_}, {"melee", serializeMelee()}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
-            {"insertedSections", std::move(insertedSections)}, {"placed", placed_}, {"breakables", serializeBreakables()},
-            {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
+    nlohmann::json out = {{"uber", std::move(uber)}, {"held", held_}, {"melee", serializeMelee()}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
+                          {"insertedSections", std::move(insertedSections)}, {"placed", placed_}, {"breakables", serializeBreakables()},
+                          {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
+    if (auto hazards = serializeHazards(); !hazards.empty()) out["hazards"] = std::move(hazards); // only where there are any
+    return out;
 }
 
 void World::restoreObjects(const nlohmann::json& j) {
@@ -342,6 +362,7 @@ void World::restoreObjects(const nlohmann::json& j) {
             for (const auto& e : j.value("slides", nlohmann::json::array())) slides[e.at(0).get<int32_t>()] = e.at(1).get<float>();
             placed = j.value("placed", std::set<int32_t>{});
             restoreBreakables(j.value("breakables", nlohmann::json::array())); // older saves: every breakable whole
+            restoreHazards(j.value("hazards", nlohmann::json::array()));       // older saves: their first tick counts as at rest
             if (const auto p = j.find("physics"); p != j.end() && p->value("version", 0) == 1) {
                 const std::string hex = p->at("state").get<std::string>();
                 if (hex.size() % 2) throw std::runtime_error("odd physics state");
@@ -1621,6 +1642,7 @@ void World::syncObjects() {
         if (c.hinge >= 0) angles[c.uid] = physics_.angle(c.hinge);
     colliders_.clear();
     col_.dynamics.clear();
+    jaws_.clear();
     shotOnly_.clear(), shotOnlyLocal_.clear();
     physics_.clearHinges(); // uber joints and loose bodies keep simulating
     for (const auto& o : script_.objects()) {
@@ -1636,7 +1658,8 @@ void World::syncObjects() {
         const script::Object* host = anchored ? script_.find(anchored->first) : nullptr;
         const physics::ObjectPhysics* own = host ? objectPhysics(o.name) : nullptr;
         const bool rides = host && (host->spline || host->graph || host->clips) && own && !own->markup.empty(); // [I] traversal geometry only
-        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable && !rides) { // spline movers' collision follows Object::body (pose below)
+        const auto jaws = uber ? std::nullopt : linkedJaws(objectPhysics(o.name));
+        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable && !rides && !jaws) { // spline movers' collision follows Object::body (pose below)
             // Anim graphs that leave a state on the damage they took (stimulus 0x800 without event ids, posted by
             // Runtime::tickGraph) and do not collide otherwise: their shapes are met by shots only (World::shotRay), at
             // their intro frame [I: l1_kraken_room's chain links hang on platform 27's markers 21 / 20 (uberobjectbase 2
@@ -1711,17 +1734,32 @@ void World::syncObjects() {
                 if (const auto a = angles.find(o.uid); a != angles.end()) physics_.setAngle(hinge, a->second);
             }
         }
+        // Jaws stand where their joint is from the start (a loaded game's are open: nothing may meet them at the bind
+        // pose before tickObjects poses them).
+        const float travel = jaws && o.joint ? o.joint->position : 0.0f;
+        const glm::mat4 slid0 = jaws ? glm::translate(glm::mat4(1), (*jaws)[0] * travel) : glm::mat4(1);
         for (int seg = 0; seg < int(p.segments.size()); ++seg)
             if (auto shape = physics::solidShape(p, seg)) {
-                col_.dynamics.push_back({o.uid, std::move(shape), intro * p.segments[seg]});
+                col_.dynamics.push_back({o.uid, std::move(shape), intro * slid0 * p.segments[seg]});
                 colliders_.push_back({o.uid, seg, hinge, intro, p.segments[seg]});
             }
+        if (jaws) { // the second body: model 1 on the other joint
+            jaws_[o.uid] = *jaws;
+            const glm::mat4 slid1 = glm::translate(glm::mat4(1), (*jaws)[1] * travel);
+            if (const physics::ObjectPhysics* second = modelPhysics(o.name, 1))
+                for (int seg = 0; seg < int(second->segments.size()); ++seg)
+                    if (auto shape = physics::solidShape(*second, seg)) {
+                        col_.dynamics.push_back({o.uid, std::move(shape), intro * slid1 * second->segments[seg]});
+                        colliders_.push_back({o.uid, seg, -1, intro, second->segments[seg], -1, 1});
+                    }
+        }
     }
     breakableColliders(); // class-30 breakables: their pieces' collision while whole (Breakables.cpp)
     syncedObjects_ = script_.objects().size();
     syncedPlates_ = lateColliders(script_);
     syncedAnchors_ = script_.anchors().size();
     poseShotOnly();
+    syncHazards();
 }
 
 // An anchored object (script::Runtime::anchor) sits in the frame of its host's HInfo marker: the marker's segment as
@@ -1826,7 +1864,10 @@ void World::tickObjects(float dt) {
             continue;
         }
         glm::mat4 model(1); // model-space rigid motion of the segment
-        if (c.hinge >= 0) {
+        if (const auto jw = jaws_.find(c.uid); jw != jaws_.end()) {
+            model = glm::translate(glm::mat4(1), jw->second[size_t(c.jaw)] * (o->joint ? o->joint->position : 0.0f));
+            if (c.jaw == 0) script_.setBody(c.uid, model);
+        } else if (c.hinge >= 0) {
             model = glm::inverse(c.intro) * physics_.bodies[physics_.hinges[c.hinge].body].model();
             script_.setBody(c.uid, model);
         } else if (const auto* op = objectPhysics(o->name);
@@ -1865,6 +1906,7 @@ void World::tickObjects(float dt) {
         }
     }
     tickObjectMarkup();
+    tickHazards();
     if (const auto rideNow = rideBefore ? objectMarkupFrame(ride) : std::nullopt; rideNow && *rideNow != *rideBefore) {
         player_.rideFrame(*rideNow * glm::inverse(*rideBefore));
     } else if (under >= 0) {
@@ -1997,6 +2039,19 @@ bool World::engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, c
 }
 
 // Uber section `section`'s model physics (each section an instance of its object's model `model`), null none.
+const physics::ObjectPhysics* World::modelPhysics(const std::string& name, uint32_t model) {
+    auto mp = modelPhysics_.find({name, model});
+    if (mp == modelPhysics_.end()) {
+        std::shared_ptr<const physics::ObjectPhysics> p;
+        if (const auto* bf = script_.bigfile())
+            if (auto bytes = bf->read("pc-w\\" + name + ".drm")) try {
+                    p = std::make_shared<physics::ObjectPhysics>(physics::loadObjectPhysics(cdc::parseDrm(std::move(*bytes)), model));
+                } catch (const cdc::FormatError&) {}
+        mp = modelPhysics_.emplace(std::pair{name, model}, std::move(p)).first;
+    }
+    return mp->second.get();
+}
+
 const physics::ObjectPhysics* World::uberSectionPhysics(const script::Object& o, size_t section) {
     const auto* data = prepareUber(o);
     return data && section < data->sections.size() ? modelPhysics(o, data->sections[section].model) : nullptr;

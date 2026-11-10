@@ -8,7 +8,7 @@
   "spawn": [-26322, -420, -1800, 90],
   "steps": [
     {"step": "refused_bare_handed",
-     "plan": ["wait 1.5", "push 0 1 2", "wait 0.5"],
+     "plan": ["wait 1.5", "push 1 0 2", "wait 0.5"],
      "duration": 20,
      "expect": [
        {"probe": "object.4674.uberslide.1.y", "over": "max", "max": 2, "note": "the pillar did not move"},
@@ -17,7 +17,7 @@
      ]},
     {"step": "grip_and_push",
      "fixtures": [{"give": "g_gauntletright"}],
-     "plan": ["engage 4674 walk", "push 0 1 4", "wait 0.2"],
+     "plan": ["engage 4674 walk", "push 1 0 4", "wait 0.2"],
      "duration": 40,
      "expect": [
        {"visits": ["block"]},

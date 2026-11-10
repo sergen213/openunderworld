@@ -126,7 +126,8 @@ happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario
 autopilot"); it reads the World to steer, so it reaches places and objects by coordinates and uids:
 `go X Y [R] [walk]`, `engage UID [X Y] [walk]`, `face YAWDEG`, `press [ACTION]`, `hold ACTION SECONDS`,
 `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world heading, whatever the camera
-does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`. Coordinates are world frame. With both `plan`
+does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `ride X Y [R] [THROTTLE] [SPEED]` (on the
+motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED). Coordinates are world frame. With both `plan`
 and `input`, the plan steers and presses and the input lines add to it (a button is down if either holds it; a
 non-zero stick or look rate from `input` wins).
 
@@ -298,6 +299,7 @@ Recorded for every step and written to the report whether or not anything expect
 | `step.calls` | script virtual calls made during the step as `"<callee uid>:<vt>"`, first-call order (`-1` = constructor; negative callees are unit / global scripts) |
 | `step.events` | script events as `"<kind>:<source>><target>"` (`enter`, `in`, `out`, `activate`, ...), first-seen order |
 | `step.pickups` | pickups collected as `"<kind>:<id>"` (`treasure`, `relic`, `healthpack`) |
+| `step.hazards` | contact-hazard hits that hurt her as `"<object name>:<damage>"`, one entry per hit in order (`ca_ei_flame_trap:800`; docs/GAMEPLAY.md "Hazards") |
 
 Speeds are measured from her root's displacement per tick, so clip-end root snaps show up in `peak_*_speed` (a
 climb-up's last tick moves the root ~340 units): prefer `player.speed` at the end of a step, `step.horizontal` and
@@ -417,7 +419,8 @@ tested behaviour happen.
 | `push_block` | l4_ballcourt | push block 6504 gripped by its push / pull record: pushed 7 s along her facing (33.2 units a second, her pull strength 1.4), pulled back, moved sideways (80 degrees off forward); the three-axis joint's travel, her obj_block clips |
 | `gauntlet_move` | l2_maproom | Thor door 2661: Interact + stick bare-handed moves nothing; with `g_gauntletleft` given, Interact grips its handle (`thor_engage`) and a sidestep slides it to its limit 663.7; let go: it stays, braked |
 | `combat` | l2_cliffclimb | draw, hard lock, pistols kill three spiders and hit a 700 hp target dummy 8+ times, adrenaline fills |
-| `motorcycle` | l4_trailstart | mount bike 5482, accelerate (wheels on the ground), steer left, hop (both wheels off, then down), brake to a stop, dismount |
+| `motorcycle` | l4_trailstart | mount bike 5482, accelerate (wheels on the ground), steer left, brake and hold it with the Vehicle Brake (Space), dismount |
+| `bike_ride` | l4_trailstart | Southern Mexico's first ride by autopilot `ride` lines: bike 5482 over the stair hump, down the valley, through the stone tunnel, off its ramp over the pit (no wheel down, landing beyond x 67700, no damage), to checkpoint 6620 |
 | `chimney_floor_jumps` | l2_junglehub | at column A's unflagged face: a standing jump is a plain jump (no wall jump, apex 201.6); a stick jump plants her feet on the wall ~43 over the floor, and with no press she comes down again (both as tru.exe under Wine, docs/REFERENCE_COMPARISON.md M06) |
 | `pole_drop_after_fling` | l4_traprooms | the fling 1336 -> 1337, then Drop: `Hpole_detach_dropPerp`, down 27 beside the rubble mound under the pole, standing within 1.2 s (not caught again by pole 1337) |
 | `moving_markup` | l5_valgrind | by cog wheel 7312's rim (teleport fixture: the gate cinematic's placement is 20 s away on foot) a standing jump catches a passing rim ledge (markup 1614-1617), 2 s carried at 267 units/s with no input, Drop: she falls on at the rim's speed and lands (docs/GAMEPLAY.md "Moving markup") |

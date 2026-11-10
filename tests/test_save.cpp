@@ -1176,6 +1176,42 @@ TEST(StreamReal, ThreeAxisJointSaveLoad) {
     EXPECT_LT(glm::length(migrated->x), 25.0f) << "settled on the crypt floor (its collision reaches 17 under it)";
 }
 
+// ... and l4_pool's rune pillar 5610, settling on the pool floor when saved, continues bit for bit (with the fx object
+// 5596 anchored to it).
+TEST(StreamReal, ThreeAxisJointAtRestSaveLoad) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    const auto make = [&] {
+        auto w = std::make_unique<game::World>(load, "l4_pool", anims, game::Spawn{{-6000, 0, 2900}, 3.1415927f});
+        w->script().setBigfile(&bf);
+        w->onCinematic = [](const std::string&, bool) {};
+        return w;
+    };
+    auto a = make();
+    for (int i = 0; i < 60; ++i) a->tick({});
+    ASSERT_TRUE(a->uberJoint3(5610, 0));
+    const auto bytes = save::serialize(save::capture(*a));
+    auto b = make();
+    save::apply(save::parse(bytes), *b);
+    for (int i = 0; i < 240; ++i) {
+        if (i == 0) a->tick({}), b->tick({}); // the loaded world prepares its uber objects in its first tick
+        ASSERT_TRUE(b->uberJoint3(5610, 0));
+        const auto ja = *a->uberJoint3(5610, 0), jb = *b->uberJoint3(5610, 0);
+        ASSERT_EQ(std::memcmp(&ja.x, &jb.x, sizeof ja.x), 0) << i << " ticks after the load: " << ja.x.x << " " << ja.x.y << " " << ja.x.z << " / "
+                                                             << jb.x.x << " " << jb.x.y << " " << jb.x.z;
+        ASSERT_EQ(std::memcmp(&ja.v, &jb.v, sizeof ja.v), 0) << i << " ticks after the load: v " << ja.v.x << " " << ja.v.y << " " << ja.v.z << " / "
+                                                             << jb.v.x << " " << jb.v.y << " " << jb.v.z;
+        a->tick({}), b->tick({});
+    }
+    auto sa = a->serializeObjects(), sb = b->serializeObjects();
+    // The scene's recorded Jolt state is compared apart: the resting pillar's cached contact manifolds may differ in a
+    // loaded scene while every body moves alike (x and v above, bit for bit).
+    sa.erase("physics"), sb.erase("physics");
+    EXPECT_EQ(sa, sb);
+}
+
 // A save from before push blocks were bodies on the physics scene (up to 0.44: a pushed block's displacement was its
 // script offset, its uber state had no three-axis joint and the scene no body for it) loads with the block standing
 // where that save had pushed it: l4_ballcourt 6504 (docs/GAMEPLAY.md "Push and pull objects").
@@ -1489,6 +1525,13 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
     const Case cases[] = {
         {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle, // born by plane 6546, its scripts kill poachers, ragdolls fall
          [](game::World& w) { w.script().call(6546, 54); }},
+        // Between l4_traprooms' second crusher pair as it slams shut: saved while the jaws move, 4 ticks before the plate
+        // on jaw 5886 kills her (a solid hazard hurts only while it moves: where it stood a tick ago is saved).
+        {"l4_traprooms", game::Spawn{{55, -18100, 6400}, -1.5707963f}, 192, 120, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t >= 111 && t < 186 ? 1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return !w.health().dead() && !w.hazards().empty(); }},
         // (dual targeting, 0x71E490: with two mercs in range each pistol takes its own, so the first falls later than under one lock)
         {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 1400, [](uint64_t t) { // runs at the mercs, locked on, firing
              game::Actions a;
