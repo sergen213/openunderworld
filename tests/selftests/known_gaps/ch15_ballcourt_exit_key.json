@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "ch15_ballcourt_exit_key",
+  "chapter": "15 Land of the Dead: the Xibalba key set into the socket beside the exit switch, the switch pulled, the exit opens (docs/matrix/15_land_of_the_dead.md C15-20)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/14landofdead.html",
+  "note": "KNOWN GAP (fails at key_into_the_socket). l4_ballcourt from checkpoint 6122. The key is picked up in l4_ragnarok_room (5695: tests/selftests/ch15_ragnarok_xibalba_key.json) and used here, five units on. In ours a carried portable is one script object of its own unit: World::carryPortables drops it (held_ = 0) as soon as that unit is streamed out, so the key never arrives. tru.exe keeps key items with Lara: this unit has its own instance of the key (ca_pt_key_xibalba_exit 6500, parked at -4460, 6316, -917 beside the headdress 6498 and the mask 6499 of the calendars, with two portable_warp_attach objects 6513 / 6514 in the unit) [O intro data]; how the unit-local instance is given to her on arrival is not decoded [U] (the engagement test 0x6F3BB0 also accepts an object in her 15 object slots). The give fixture below stands for that hand-over: with the key in her object slots the socket's insert record should admit her empty-handed and the unit's instance 6500 go into socket 6501. Today the insert needs the portable in her hands, so the plan's engage fails. After it: the switch (which does nothing before, ch15_ballcourt_exit_switch) runs temple reveal 5464 through 0 -> 3 -> 5 -> 6 -> 7.",
+  "level": "l4_ballcourt",
+  "spawn": [-7504, 24446, -2060, 0],
+  "fixtures": [{"give": "ca_pt_key_xibalba_exit"}],
+  "steps": [
+    {"step": "key_into_the_socket", "plan": ["engage 6501 walk", "press", "wait 3"], "duration": 40,
+     "expect": [{"probe": "portable.6500.in", "eq": 6501, "note": "the unit's key instance sits in the socket"},
+                {"probe": "object.5464.graph", "eq": 0}]},
+    {"step": "pull_the_switch", "plan": ["engage 5469 walk", "press", "wait 2"], "duration": 40,
+     "expect": [{"calls": ["5464:54"], "note": "ReopenFromXibalba"},
+                {"probe": "object.5464.graph", "over": "max", "min": 3}]},
+    {"step": "exit_open", "duration": 30,
+     "until": {"probe": "object.5464.graph", "eq": 7},
+     "expect": [{"probe": "object.5464.graph", "eq": 7}]}
+  ]
+}

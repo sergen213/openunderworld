@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "ch13_ballcourt_calendar_locked",
+  "chapter": "13 Xibalba: the first calendar's rings do not turn before the jaguar head is on (docs/matrix/13_xibalba.md C13-01, C13-02: the gate's closed side)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/12xibalba.html",
+  "note": "l4_ballcourt from checkpoint 5478 beside calendar ca_uo_calendar_b 5477 (an uber object: section 5 takes the mask, the push handles are kind-1 records of section 1, the ring turns on hinge joint 2). Lara arrives without the mask (its hand-over between units is the gap of tests/selftests/known_gaps/ch13_ballcourt_calendar_solve.json): section 5 waits in state 3; she walks to a push handle, grips it (thor_engage, the PushPull state) and pushes for 4 s: the ring's hinge stays at 0 and section 1 in its locked state 0. On calendar 6506, where the handle section is free from the start, the same push turns the ring 0.56 rad (replay ballcourt_calendar_handle_turn).",
+  "level": "l4_ballcourt",
+  "spawn": [5681, 13292, 3600, -90],
+  "steps": [
+    {"step": "at_the_calendar", "duration": 1,
+     "expect": [{"probe": "world.checkpoint", "eq": 5478},
+                {"probe": "object.5477.name", "eq": "ca_uo_calendar_b"},
+                {"probe": "object.5477.uber.5", "eq": 3, "note": "the jaguar waits for its head"},
+                {"probe": "object.5477.uber.1", "eq": 0}]},
+    {"step": "push_a_handle", "plan": ["engage 5477 walk", "push 1 0 4", "wait 3"], "duration": 60,
+     "expect": [{"visits": ["block"]},
+                {"clips": ["thor_engage"]},
+                {"probe": "object.5477.uberjoint.2", "over": "max", "max": 0.01, "note": "the ring did not turn"},
+                {"probe": "object.5477.uberjoint.2", "over": "min", "min": -0.01},
+                {"probe": "object.5477.uber.1", "eq": 0},
+                {"probe": "object.5477.uber.5", "eq": 3},
+                {"probe": "step.teleports", "eq": 0}]}
+  ]
+}

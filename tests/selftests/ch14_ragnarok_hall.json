@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "ch14_ragnarok_hall",
+  "chapter": "14 The Midgard Serpent: the carved hall: down its stairs, the Ragnarok cinematic, on into the pool room (docs/matrix/14_midgard_serpent.md C14-39)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/13midgard.html",
+  "note": "l4_ragnarok_room, on the stairs above the carved hall (the leg after the second cave-in). Lara runs down through volumes 5684 / 5683: cinematic object 5675 is preloaded (vt 63) and played (vt 57), the hall's checkpoint 5669 is taken, and she runs on through the doorway: the stream unit changes to l4_pool. The same crossing backwards is replay pool_to_ragnarok.",
+  "level": "l4_ragnarok_room",
+  "spawn": [-3600, 2790, -7000, 0],
+  "steps": [
+    {"step": "down_the_hall", "plan": ["go -1100 2820 300", "go 1847 2888 200", "wait 1", "go 2882 2958 150"], "duration": 60,
+     "expect": [{"calls": ["5675:63", "5675:57"], "note": "preloaded, then played"},
+                {"probe": "world.checkpoint", "eq": 5669},
+                {"probe": "world.unit", "eq": "l4_ragnarok_room"},
+                {"probe": "step.health_lost", "eq": 0}]},
+    {"step": "into_the_pool_room", "plan": ["go 5488 2979 300"], "duration": 40,
+     "expect": [{"probe": "world.unit", "eq": "l4_pool"},
+                {"probe": "step.teleports", "eq": 0},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

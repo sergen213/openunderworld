@@ -441,10 +441,22 @@ tested behaviour happen.
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
+| `ch13_ballcourt_calendar_locked` | l4_ballcourt | Xibalba: at calendar 5477 without the jaguar head a gripped push handle turns nothing (hinge joint 2 stays 0, section 5 waits in state 3) |
+| `ch13_temple_headdress` | l4_temple | Xibalba: from the pit floor's checkpoint 4971 to the altar, the headdress 5228 taken out of its holder 5249 |
+| `ch13_ballcourt_pole_gate` | l4_ballcourt | Xibalba: `puzzle_pole_block_door`'s six steps, then on the pole the turn across it, the swing, the fling to the gate (1550), through the doorway into calendar 2's court (cinematic 6388) |
+| `ch14_traprooms_club_throne` | l4_traprooms | Midgard Serpent: arrival cinematic 5703, club 5883 picked up and set into throne 5891 (section 0: 1 -> 2) |
+| `ch14_traprooms_crusher_house` | l4_traprooms | Midgard Serpent: the rattling house from checkpoint 5787: wait for the first pair of jaws to open, sprint through all six pairs unhurt (1927 units/s), key 5879 taken |
+| `ch14_ragnarok_hall` | l4_ragnarok_room | Midgard Serpent: down the carved hall (cinematic 5675, checkpoint 5669), through the doorway: stream unit l4_pool |
+| `ch14_pool_entry` | l4_pool | Midgard Serpent: down the entrance stairs (5547 preloaded, serpent head 5612 told), 198_mex_thralls at the stair foot, the jaguar thrall alive |
+| `ch15_ragnarok_xibalba_key` | l4_ragnarok_room | Land of the Dead: the Xibalba key 5695 taken out of its holder at the rock fall |
+| `ch15_ragnarok_rubble_block` | l4_ragnarok_room | Land of the Dead: block 5660 refused bare-handed; with the belt gripped and slid 1264 to its joint's limit in 8.3 s |
+| `ch15_ballcourt_exit_switch` | l4_ballcourt | Land of the Dead: exit switch 5469 with the key socket empty opens nothing (reveal 5464 stays in state 0) |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now: none (`pole_drop_after_fling`
-moved up 2026-11-10).
+registered with ctest. Run them by hand; move one up a directory when it passes. Sections 13-15 (docs/matrix/13_xibalba.md, 14_midgard_serpent.md,
+15_land_of_the_dead.md give the causes): `ch13_ballcourt_calendar_solve` and `ch15_ballcourt_exit_key` (key items do not
+travel between units), `ch13_temple_block_topple` (the ring is not offered from the ledge; the statue head's mover),
+`ch15_pool_rune_block` (a heavy object without a joint is not dragged). (`pole_drop_after_fling` moved up 2026-11-10.)
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

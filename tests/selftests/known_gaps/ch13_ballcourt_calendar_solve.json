@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "ch13_ballcourt_calendar_solve",
+  "chapter": "13 Xibalba: the first calendar unlocked with the jaguar head and its rings turned (docs/matrix/13_xibalba.md C13-01 .. C13-04)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/12xibalba.html",
+  "note": "KNOWN GAP (fails at head_onto_the_jaguar). l4_ballcourt from checkpoint 5478 beside calendar ca_uo_calendar_b 5477. Its section 5 waits for the mask (state 3; ca_pt_key_mask) and the push handles turn nothing before it is in (tests/selftests/ch13_ballcourt_calendar_locked.json). The mask is carried here from the Unnamed Days section; this unit's own instance 6499 lies parked at -5620, 6422, -917 [O intro data] and nothing brings it to Lara in ours (the same gap as the Xibalba key: tests/selftests/known_gaps/ch15_ballcourt_exit_key.json; the give fixture stands for the hand-over that is not decoded). Expected once that exists: the insert takes section 5 from 3 to 4 (ProgressionReal.UberReceptaclesTakeTheirPortables does it with the mask placed in her hands), then a push on a jaguar handle turns the ring on hinge joint 2 (as replay ballcourt_calendar_handle_turn on calendar 6506). Not written beyond that: the detents of the three rings and the solved state (vt 54 -> the ball court cinematic) have no decoded numbers yet.",
+  "level": "l4_ballcourt",
+  "spawn": [5681, 13292, 3600, -90],
+  "fixtures": [{"give": "ca_pt_key_mask"}],
+  "steps": [
+    {"step": "head_onto_the_jaguar", "plan": ["engage 5477 walk", "press", "wait 4"], "duration": 60,
+     "expect": [{"probe": "object.5477.uber.5", "eq": 4, "note": "the mask is in"},
+                {"probe": "portable.6499.in", "eq": 5477}]},
+    {"step": "jaguar_handle", "plan": ["engage 5477 walk", "push 1 0 4", "wait 3"], "duration": 60,
+     "expect": [{"visits": ["block"]},
+                {"probe": "object.5477.uberjoint.2", "over": "max", "min": 0.2, "note": "the ring turns with her"}]}
+  ]
+}

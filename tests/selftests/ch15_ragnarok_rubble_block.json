@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "ch15_ragnarok_rubble_block",
+  "chapter": "15 Land of the Dead: the carved block at the second cave-in slid aside with Thor's belt (docs/matrix/15_land_of_the_dead.md C15-15)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/14landofdead.html",
+  "note": "l4_ragnarok_room, on the pool side of the rock fall that the way in passed on foot. ca_pu_thor_block_rubble 5660 is an uber object on a prismatic joint; its push / pull record (kind 1) names g_belt [O data, tru.exe 0x6F3BB0], its script's vt 49 sets her pull strength to 10 (docs/GAMEPLAY.md Thor's gauntlets). Bare-handed Interact grips nothing. With the belt (the give fixture: the belt is what section 14 ends with) Interact grips it (thor_engage) and the stick to her left slides it along the rock fall as far as its joint goes (1264.2); she walks with it (8.3 s for the 1264). Not played: the way through the gap it leaves. On foot her walk back from beside the moved block to where it stood stops at x -26801 (not investigated), and the original rides the motorcycle through: no bike can be brought to this unit by a scenario yet (the matrix file's blockers).",
+  "level": "l4_ragnarok_room",
+  "spawn": [-27386, -9955, -2500, -90],
+  "steps": [
+    {"step": "refused_bare_handed", "plan": ["face -90", "push 0 -1 2", "wait 0.5"], "duration": 20,
+     "expect": [{"probe": "object.5660.name", "eq": "ca_pu_thor_block_rubble"},
+                {"probe": "object.5660.uberjoint.0", "over": "max", "max": 1, "note": "it did not move"},
+                {"probe": "object.5660.uberjoint.0", "over": "min", "min": -1},
+                {"probe": "player.state", "eq": "idle", "note": "never in the PushPull state: the stick only walked her aside"}]},
+    {"step": "grip_and_slide", "fixtures": [{"give": "g_belt"}],
+     "plan": ["engage 5660 walk", "push 0 -1 14", "wait 0.2"], "duration": 40,
+     "until": {"probe": "object.5660.uberjoint.0", "min": 1262},
+     "expect": [{"visits": ["block"]},
+                {"clips": ["thor_engage", "thor_left"]},
+                {"probe": "object.5660.uberjoint.0", "near": 1264.2, "tol": 3, "note": "the joint's limit on this side: 1264.2 = 4 m (its whole travel, -790 .. 1264, is the 2054 of ProgressionReal.ThorMechanismsNeedTheGearAndSlide)"},
+                {"probe": "step.horizontal", "min": 1100, "note": "she is carried along with it"},
+                {"probe": "step.seconds", "min": 5, "max": 13, "note": "164 units/s at strength 10 [I: the proxy mass, GAMEPLAY.md]"}]},
+    {"step": "let_go", "plan": ["wait 2"], "duration": 6,
+     "expect": [{"probe": "object.5660.uberjoint.0", "min": 1258, "note": "it stays where she left it"},
+                {"probe": "player.state", "eq": "idle"}]}
+  ]
+}

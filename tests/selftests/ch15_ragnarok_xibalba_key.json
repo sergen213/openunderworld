@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "ch15_ragnarok_xibalba_key",
+  "chapter": "15 Land of the Dead: the Xibalba key picked up at the first cave-in (docs/matrix/15_land_of_the_dead.md C15-14; the same pick-up as C14-38)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/14landofdead.html",
+  "note": "l4_ragnarok_room beside the skeleton at the rock fall. ca_pt_key_xibalba_exit 5695 starts in its holder portable_key_preinsert 5696 [O intro data]; Lara walks to it and Interact takes it into her hands. The key then has to travel to socket 6501 in l4_ballcourt, five units on: that is not playable yet (a carried portable is dropped when its unit is streamed out, World::carryPortables; tests/selftests/known_gaps/ch15_ballcourt_exit_key.json).",
+  "level": "l4_ragnarok_room",
+  "spawn": [-12000, 300, -5600, 0],
+  "steps": [
+    {"step": "key_in_its_holder", "duration": 0.5,
+     "expect": [{"probe": "object.5695.name", "eq": "ca_pt_key_xibalba_exit"},
+                {"probe": "object.5695.in", "eq": 5696},
+                {"probe": "portable.held", "eq": 0}]},
+    {"step": "take_the_key", "plan": ["engage 5695 walk", "press", "wait 3"], "duration": 40,
+     "expect": [{"probe": "portable.held", "eq": 5695},
+                {"probe": "object.5695.in", "eq": 0},
+                {"probe": "step.teleports", "eq": 0}]},
+    {"step": "carry_it", "plan": ["go -12000 300 100 walk"], "duration": 20,
+     "expect": [{"probe": "portable.held", "eq": 5695},
+                {"probe": "world.unit", "eq": "l4_ragnarok_room"}]}
+  ]
+}

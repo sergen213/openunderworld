@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "ch14_traprooms_club_throne",
+  "chapter": "14 The Midgard Serpent: the statue room: arrival, the door shut behind her, the first club put into the seated statue's hand (docs/matrix/14_midgard_serpent.md C14-07, C14-09 first club)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/13midgard.html",
+  "note": "l4_traprooms entered inside the arrival cinematic's volume (195_mex_lords, cinematic object 5703: its end places Lara in the hall and the entry door 5702's script has run). Walked as replay traprooms_throne_insert: to the gold-tipped club ca_pt_scepter_weight 5883 at the seated statue's feet, Interact picks it up, carried to the empty throne ca_rb_empty_throne 5891, Interact sets it in (uber section 0: 1 -> 2). The second statue 5892 still waits (state 1). Not played: the second club 5882 (it lies at 2246, -27040, 6343, at the head of the stairs to the north-west house: the autopilot found no way up from the hall floor, the route has to be surveyed), the table's rise and the four corner statues (C14-09 second half, C14-10).",
+  "level": "l4_traprooms",
+  "spawn": [7400, -34900, 4440, -135],
+  "steps": [
+    {"step": "arrival", "duration": 2,
+     "expect": [{"calls": ["5703:57", "5702:54"], "note": "the arrival cinematic played; the entry door's handler ran"},
+                {"probe": "object.5891.uber.0", "eq": 1, "note": "the throne's hand is empty"},
+                {"probe": "object.5892.uber.0", "eq": 1},
+                {"probe": "portable.held", "eq": 0}]},
+    {"step": "take_the_club", "plan": ["engage 5883 walk", "press", "wait 3"], "duration": 40,
+     "expect": [{"probe": "portable.held", "eq": 5883}]},
+    {"step": "into_the_statues_hand", "plan": ["engage 5891 walk", "press", "wait 5"], "duration": 40,
+     "expect": [{"probe": "portable.held", "eq": 0},
+                {"probe": "portable.5883.in", "eq": 5891},
+                {"probe": "object.5891.uber.0", "eq": 2},
+                {"probe": "object.5892.uber.0", "eq": 1, "note": "the other statue still waits for the second club"},
+                {"probe": "step.teleports", "eq": 0}]}
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "ch13_temple_headdress",
+  "chapter": "13 Xibalba: the stone headdress taken from the altar under the large temple (docs/matrix/13_xibalba.md C13-24)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/12xibalba.html",
+  "note": "l4_temple, the leg that starts at the pit room's checkpoint 4971 (the floor of the shaft the walkthrough climbs down into). The headdress ca_pt_key_headdress 5228 starts inserted in its holder portable_key_preinsert 5249 on the altar [O intro data: placed portable]; Lara walks up to it and Interact takes it out of the holder into her hands. What is not played here: the way down (the statue head pulled through the floor: tests/selftests/known_gaps/ch13_temple_block_topple.json) and the climb out with the headdress.",
+  "level": "l4_temple",
+  "spawn": [-4918, -10224, -1850, 90],
+  "steps": [
+    {"step": "at_the_pit_floor", "duration": 1,
+     "expect": [{"probe": "world.checkpoint", "eq": 4971},
+                {"probe": "object.5228.name", "eq": "ca_pt_key_headdress"},
+                {"probe": "object.5228.in", "eq": 5249, "note": "on the altar, in its holder"},
+                {"probe": "portable.held", "eq": 0}]},
+    {"step": "take_the_headdress", "plan": ["engage 5228 walk", "press", "wait 3"], "duration": 40,
+     "expect": [{"probe": "portable.held", "eq": 5228},
+                {"probe": "object.5228.in", "eq": 0, "note": "out of the holder"},
+                {"probe": "step.teleports", "eq": 0},
+                {"probe": "step.horizontal", "min": 60, "max": 400, "note": "walked from the checkpoint to the altar"}]},
+    {"step": "carry_it", "plan": ["go -4918 -10224 80 walk"], "duration": 20,
+     "expect": [{"probe": "portable.held", "eq": 5228, "note": "still in her hands back at the checkpoint"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

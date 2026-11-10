@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "name": "ch14_traprooms_crusher_house",
+  "chapter": "14 The Midgard Serpent: the rattling house: through the six pairs of crushing blocks at a sprint, the house's key taken (docs/matrix/14_midgard_serpent.md C14-11, C14-12)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/midgard4.html",
+  "note": "l4_traprooms from the house's checkpoint 5787. Volume 5905 runs the jaws' clocks while Lara is in the house (ca_rb_crusher_slim 5890 .. 5885 from the doorway on: each pair opens 900 in 1 s, stands open 1 s, slams shut in under half a second and stays shut for 2 s; the next pair follows 0.18 s later [measured on object.<uid>.joint, ours; the motor speeds are the object data's]). Lara walks up to the first pair, waits until it has shut and starts to open again, and sprints: 3700 units at 1927 units/s, each pair open as she passes, no touch of a jaw's plate (12345). At the far end she takes ca_pt_crush_room_key 5879 from its pedestal. Two defects stood in the way and are fixed with this leg: a wall of terrain group 1 across the doorway that is no collision for the player in tru.exe (docs/formats/COLLISION.md, per query class), and the trap houses' keys not being portables for ours (World::portableClass). Not played: the designed way back (block 5884 dragged into the first pair by its ring, the chimney jumps over the jaws' tops: C14-13, C14-14).",
+  "level": "l4_traprooms",
+  "spawn": [-21, -24068, 6400, 90],
+  "steps": [
+    {"step": "to_the_first_pair", "plan": ["go 55 -22450 15", "face 90"], "duration": 20,
+     "expect": [{"probe": "world.checkpoint", "eq": 5787},
+                {"probe": "object.5890.name", "eq": "ca_rb_crusher_slim"}]},
+    {"step": "wait_until_it_shuts", "duration": 6,
+     "until": {"probe": "object.5890.joint", "max": 0.5},
+     "expect": [{"probe": "object.5890.joint", "max": 0.5}]},
+    {"step": "wait_until_it_opens", "duration": 6,
+     "until": {"probe": "object.5890.joint", "min": 60},
+     "expect": [{"probe": "step.seconds", "min": 1.5, "max": 2.6, "note": "shut for about 2 s"},
+                {"probe": "object.5885.joint", "max": 0.5, "note": "the last pair still shut: the wave runs ahead of her"}]},
+    {"step": "sprint_through", "input": ["0 sprint 1"], "plan": ["run 90 2.4"], "duration": 6,
+     "expect": [{"clips": ["sprint_loop"]},
+                {"probe": "step.peak_speed", "near": 1927, "tol": 25, "note": "sprint_loop root motion [O Wine, self-test sprint]"},
+                {"probe": "player.pos.y", "min": -18500, "note": "past the last pair (5885 at y -18775, 588 deep)"},
+                {"probe": "step.health_lost", "eq": 0},
+                {"probe": "player.dead", "eq": false},
+                {"probe": "step.teleports", "eq": 0}]},
+    {"step": "take_the_key", "plan": ["go 1 -15990 40", "engage 5879 walk", "press", "wait 3"], "duration": 40,
+     "expect": [{"probe": "world.checkpoint", "eq": 5791},
+                {"probe": "portable.held", "eq": 5879},
+                {"probe": "object.5879.name", "eq": "ca_pt_crush_room_key"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

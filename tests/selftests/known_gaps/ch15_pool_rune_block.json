@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "ch15_pool_rune_block",
+  "chapter": "15 Land of the Dead: the rune block in the upper walkway's corner pulled away with Thor's belt, the two treasures behind it (docs/matrix/15_land_of_the_dead.md C15-12)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/14landofdead.html",
+  "note": "KNOWN GAP (fails at pull_the_block). l4_pool from its start: down the entrance stairs (cinematic 5547), along the west walkway to its south-west corner. ca_pu_thor_debris 5609 (-6111, -6112, 2844) stands in the corner in front of treasures ca_rw_artifact 5488 / 5489 (-6045, -6261 and -6074, -6188): its collision keeps Lara out (the walk into the corner stops at y -5716). Its push / pull record (kind 1, a sphere r 948) names g_belt [O data]; the object has no joint: a free body that her pull has to drag (docs/GAMEPLAY.md Thor's gauntlets, Open). Ours moves heavy objects only along a prismatic joint, so Interact grips it (thor_engage) and no stick moves it. The give fixture is the belt section 14 ends with.",
+  "level": "l4_pool",
+  "fixtures": [{"give": "g_belt"}],
+  "steps": [
+    {"step": "to_the_corner", "plan": ["go -12944 -267 300", "go -9026 14 300", "go -7438 14 300", "go -6302 -245 300", "wait 2",
+                                       "go -6200 -2000 200", "go -6200 -4000 200", "go -6100 -5300 150"], "duration": 150,
+     "expect": [{"probe": "object.5609.name", "eq": "ca_pu_thor_debris"},
+                {"probe": "world.treasures", "eq": 0},
+                {"probe": "player.dead", "eq": false}]},
+    {"step": "pull_the_block", "plan": ["engage 5609 walk", "push -1 0 4", "wait 0.5"], "duration": 40,
+     "expect": [{"clips": ["thor_engage"]},
+                {"probe": "object.5609.pos.y", "min": -5800, "note": "dragged at least 300 out of the corner (rest y -6111.8)"}]},
+    {"step": "treasures", "plan": ["go -6074 -6150 60", "press", "wait 2", "go -6045 -6240 60", "press", "wait 2"], "duration": 60,
+     "expect": [{"probe": "world.treasures", "eq": 2}]}
+  ]
+}
