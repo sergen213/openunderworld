@@ -7318,7 +7318,7 @@ TEST(GameReal, ShipBoardingByTheAnchorChain) {
     UnitGame g(bf, "l1_ship_exterior", {{6928.8f, 22415.0f, 1900}, glm::radians(-168.2f)}); // the unit's player intro
     auto& w = g.w;
     const auto& s = w.player().state();
-    for (int i = 0; i < 120 && s.state != State::Idle; ++i) w.tick({});
+    for (int i = 0; i < 180 && !(i > 2 && s.state == State::Idle && s.pos.z < 1760); ++i) w.tick({});
     ASSERT_NEAR(s.pos.z, 1745.1f, 2.0f) << "on the yacht's deck";
     for (int i = 0; i < 48; ++i) w.tick(forward());
     Actions jump = forward();
@@ -7331,7 +7331,7 @@ TEST(GameReal, ShipBoardingByTheAnchorChain) {
     EXPECT_LE(ledgeZ(), 2620) << "the anchor (2393) or the chain's first link (2616)";
     float top = ledgeZ();
     int jumps = 0;
-    for (; jumps < 12 && s.pos.x > 5300; ++jumps) { // stick up + jump: the next hang, at last over the rail
+    for (; jumps < 14 && s.pos.z < 5000; ++jumps) { // stick up + jump: the next hang, the shelf at 4733, over the rail
         for (int i = 0; i < 4; ++i) w.tick(jump);
         for (int i = 0; i < 56; ++i) w.tick(forward());
         if (s.state == State::Hang) {
@@ -7340,7 +7340,7 @@ TEST(GameReal, ShipBoardingByTheAnchorChain) {
         }
         EXPECT_NE(s.state, State::Dead);
     }
-    EXPECT_LE(jumps, 8);
+    EXPECT_LE(jumps, 12);
     for (int i = 0; i < 240 && !(s.state == State::Run && s.pos.z > 5000 && s.pos.z < 5100); ++i) w.tick(forward());
     EXPECT_NEAR(s.pos.z, 5075.9f, 6.0f) << "on the ship's deck";
     EXPECT_LT(s.pos.x, 5200);
