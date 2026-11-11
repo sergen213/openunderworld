@@ -1800,8 +1800,19 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             if (!std::strcmp(name, "instance") && (nc.function == 18 || nc.function == 21 || nc.function == 23) &&
                 nc.args.size() == 1)
                 return true;
-            // modifiable 1 (two floats, 0x4A59F0) posts message 0x30 to the instance like 7 does with 0x2E [U: receivers].
-            if (!std::strcmp(name, "modifiable") && nc.function == 1 && nc.args.size() == 2) return true;
+            // modifiable 1 (two floats, 0x4A59F0) posts message 0x30 {short, short} to the instance like 7 does with 0x2E.
+            // A water volume takes it as its damage (0x6AC340 case 0x30: water record +0xBA amount, +0xBC time left;
+            // World::waterNative "modifiable"): the eitr of l7_helheim01 8937 and the l7_yggdrasil halls' pit 8742,
+            // whose scripts send (6000, 30) once a second. [U] other receivers.
+            if (!std::strcmp(name, "modifiable") && nc.function == 1 && nc.args.size() == 2) {
+                if (const Object* volume = find(self->uid); water_ && volume && volume->name == "watervolume") {
+                    const std::array<int32_t, 2> args{int32_t(std::lround(std::bit_cast<float>(uint32_t(nc.args[0].bits)))),
+                                                      int32_t(std::lround(std::bit_cast<float>(uint32_t(nc.args[1].bits))))};
+                    uint32_t result = 0;
+                    water_(self->uid, name, 1, args, result);
+                }
+                return true;
+            }
             if (!std::strcmp(name, "unitref") && nc.function == 2 && nc.args.empty()) return true; // 0x79C670: returns 0
             if (!std::strcmp(name, "larabase") && (nc.function == 55 || nc.function == 56 || nc.function == 29) &&
                 nc.args.size() == 1) {

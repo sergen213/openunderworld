@@ -1,0 +1,151 @@
+{
+ "version": 1,
+ "name": "ch16_tower_base_panel",
+ "chapter": "16 Gate of the Dead: the tower's base panel walked round until the first beam (docs/matrix/16_gate_of_the_dead.md C16-15)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/gateofdead2.html",
+ "note": "After the three power blocks (as ch16_tower_power) cog wheel 7312's section 0 (push handle, kind-1 record with a facing cone: she faces the tower's axis) is gripped: thor_engage; its script's vt 49 frees the wheel (uber command 1: braked state 2 -> state 1, motor bound 54 940). The sidestep right (thor_right) turns the base on its hinge with her carried round (120 units/s at her radius 1465) from 89 degrees off. Entering the range watch -2..2 degrees the section goes to state 3 (brake 1.33e7 for 1 s: her push no longer turns it) and its event runs the wheel's vt 54 'Wheel in solved position': glyphs 7330 vt 55, beam 7331 vt 55, the unit's vt 27, dispatcher 7318's first sticky flag. 7318's vt 62 ('Valgrind column in solved position') is not called here: its vt 6 waits for all of its flags (every tier's wheel).",
+ "level": "l5_valgrind",
+ "spawn": [
+  0,
+  3072,
+  180,
+  180
+ ],
+ "steps": [
+  {
+   "step": "power_block_1",
+   "plan": [
+    "go -200 -2000 150",
+    "engage 7498",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "object.7312.uber.1",
+     "eq": 1,
+     "note": "its niche is filled"
+    },
+    {
+     "probe": "object.7312.uber.2",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "power_block_2",
+   "plan": [
+    "engage 7499",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "object.7312.uber.2",
+     "eq": 1,
+     "note": "its niche is filled"
+    },
+    {
+     "probe": "object.7312.uber.3",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "power_block_3",
+   "plan": [
+    "engage 7500",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "object.7312.uber.3",
+     "eq": 1,
+     "note": "its niche is filled"
+    }
+   ]
+  },
+  {
+   "step": "turn_the_base_home",
+   "plan": [
+    "engage 7312 walk",
+    "push 0 1 40"
+   ],
+   "duration": 90,
+   "until": {
+    "probe": "object.7312.uber.0",
+    "eq": 3
+   },
+   "expect": [
+    {
+     "clips": [
+      "thor_engage",
+      "thor_right"
+     ]
+    },
+    {
+     "probe": "object.7312.uberjoint.0",
+     "over": "min",
+     "max": -1.4,
+     "note": "radians: the base starts 89 degrees off"
+    },
+    {
+     "probe": "object.7312.uberjoint.0",
+     "near": -0.035,
+     "tol": 0.02,
+     "note": "the range watch -2..2 degrees entered"
+    },
+    {
+     "calls": [
+      "7330:55",
+      "7331:55"
+     ],
+     "note": "'Wheel in solved position': the floor glyphs and the first beam"
+    }
+   ]
+  },
+  {
+   "step": "held_in_place",
+   "plan": [
+    "wait 3"
+   ],
+   "duration": 10,
+   "expect": [
+    {
+     "probe": "object.7312.uberjoint.0",
+     "near": 0,
+     "tol": 0.04,
+     "note": "the solved state's brake held it against her push"
+    },
+    {
+     "probe": "object.7312.uber.0",
+     "eq": 1,
+     "note": "let go inside the solved second (state 3 has no way to the braked state 2): back in the gripped state 1, its 54 940 holding the wheel"
+    },
+    {
+     "probe": "player.state",
+     "eq": "idle"
+    }
+   ]
+  }
+ ]
+}

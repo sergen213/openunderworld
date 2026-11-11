@@ -965,7 +965,7 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     if (!uberHandle_.uid) return false;
     const int32_t index = uberSectionJoint(uberHandle_.uid, uberHandle_.section);
     auto rt = uberRuntime_.find(uberHandle_.uid);
-    const vec3 fwd = uberHandle_.face != vec3(0) ? uberHandle_.face : vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
+    const vec3 fwd0 = uberHandle_.face != vec3(0) ? uberHandle_.face : vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
     // A section on a three-axis joint (the Thor pillars: ca_pu_thor_pillar itself, ma_pu_thor_pillar through its hinge)
     // goes where she pushes or pulls it [O 0x74AC00: the way picked off her facing, as an impulse-bounded velocity on
     // the object's body; nothing in the PushPull state knows the joint]: forward / back along her facing, left / right
@@ -973,7 +973,7 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     // state 1: 28.445 while its hinge turns) takes its bound off the impulse, as the doors' brake does.
     if (const int32_t slide = rt != uberRuntime_.end() ? uberSectionJoint3(uberHandle_.uid, uberHandle_.section) : -1; slide >= 0) {
         auto& j = rt->second.joints3.at(slide);
-        uberGrip_ = glm::normalize(vec3(fwd.x, fwd.y, 0));
+        uberGrip_ = glm::normalize(vec3(fwd0.x, fwd0.y, 0));
         const int way = pushWay(a.move);
         const vec3 left(-uberGrip_.y, uberGrip_.x, 0);
         const vec3 want = way == 1 ? uberGrip_ : way == -1 ? -uberGrip_ : way == 2 ? left : way == -2 ? -left : vec3(0);
@@ -990,10 +990,18 @@ bool World::pushUberHandle(const Actions& a, float speed) {
         return true;
     }
     if (index < 0 || rt == uberRuntime_.end()) {
-        uberGrip_ = fwd; // gripped, nothing moves
+        uberGrip_ = fwd0; // gripped, nothing moves
         return true;
     }
     auto& j = rt->second.joints.at(index);
+    // The handle's facing turns with its hinge: she is carried round and keeps facing it (the facing was the record
+    // cone's at the grip only: a quarter turn on, the cog wheel's "right" fell on the tangent's other side every
+    // other tick and the wheel stood, l5_valgrind 7312 at 11 degrees off its solved position).
+    vec3 fwd = fwd0;
+    if (j.hinge && uberHandle_.face != vec3(0)) {
+        if (!uberHandle_.faceSet) uberHandle_.faceAt = j.x, uberHandle_.faceSet = true;
+        fwd = vec3(glm::rotate(glm::mat4(1), j.x - uberHandle_.faceAt, j.axis) * glm::vec4(uberHandle_.face, 0));
+    }
     vec3 along = j.hinge ? glm::cross(j.axis, s.pos - j.pivot) : j.axis; // her grip point's motion per unit of the joint
     along.z = 0;
     const float rate = glm::length(along);
@@ -1024,6 +1032,11 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     if (std::abs(drive) > 0.7071f) {
         const float sign = drive > 0 ? 1.0f : -1.0f;
         if (j.hinge) {
+            // [I] As the prismatic joints: a motor holding the hinge still with more than her push's moment (the
+            // push impulse bound at her lever arm) keeps it. ar_pu_cog_wheel_level_1a [O data]: gripped (state 1)
+            // 54 940, which she turns (208 000 at the panel's 1465); in the solved position (state 3, range -2..2
+            // degrees entered) 1.33e7 for its second: the wheel stops there.
+            if (j.motor && j.speed == 0 && j.force > 0 && kPushImpulse * script_.pullStrength() * rate <= j.force) return true;
             j.push = sign * speed / rate / 30.0f;
         } else {
             const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), j.motor && j.force > 0 ? j.force : 0.0f);
@@ -1418,6 +1431,12 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
         result = b && b->uid == uid;
         return true;
     }
+    // modifiable 1 on a water volume: message 0x30 (amount, time), below (tickWaterStates).
+    if (type == "modifiable") {
+        if (a.size() == 2 && a[0] > 0 && a[1] > 0) waterDamage_[uid] = {float(a[0]), float(a[1])};
+        else waterDamage_.erase(uid);
+        return true;
+    }
     if (type == "larabase") { // 3 (0x777780): Lara is in volume `uid` (her probe box's volume) with its surface over her feet [O Wine: the goo bed kills, the walkways in the same box do not]
         const auto [m, u] = waterVolume(uid);
         const int w = player_.waterAt(player_.state().pos);
@@ -1495,7 +1514,35 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
 }
 
 // 0x6C10D0: the surface moves rate per 30 Hz frame toward the target, landing on it.
+// Damaging water (the eitr of the Norse underworld) [O 0x6AC340 / 0x6C10D0 / 0x6AD070]: message 0x30 stores an amount
+// (water record +0xBA) and a time (+0xBC), which runs down every frame and clears the amount at 0 [I: in 30 Hz frames;
+// the scripts renew (6000, 30) once a second]; while it stands, every instance the volume holds at or under its
+// surface is sent the hit message 0x11C with that amount each frame (0x6AD070, beside the "in water" stimulus 0x33).
+// Ours: Lara by the test of larabase 3 (her probe box's volume, its surface over her feet) and the enemies inside the
+// volume's box under its surface. 6000 kills at once whatever the difficulty [I: taken unscaled, the message's type 9
+// is not modelled].
 void World::tickWaterStates(float dt) {
+    for (auto it = waterDamage_.begin(); it != waterDamage_.end();) {
+        const int32_t uid = it->first;
+        const float amount = it->second.amount;
+        if ((it->second.frames -= dt * 30.0f) <= 0) it = waterDamage_.erase(it);
+        else ++it;
+        const auto [m, u] = waterVolume(uid);
+        if (!m) continue;
+        const vec3 at = player_.state().pos;
+        const double seconds = double(ticks_) * kTickSeconds;
+        const int w = player_.waterAt(at);
+        if (w >= 0 && &col_.markup[size_t(w)] == m && waterSurface(*m, vec2(at), seconds) > at.z && !health_.dead())
+            damageLara(amount, at, kDamageAbsolute);
+        std::vector<int32_t> hit;
+        for (const auto& e : enemies_.all()) {
+            const vec3 p = e->state().pos;
+            if (p.x >= m->points[0].x && p.x <= m->points[1].x && p.y >= m->points[0].y && p.y <= m->points[1].y && p.z >= m->points[0].z &&
+                p.z < waterSurface(*m, vec2(p), seconds))
+                hit.push_back(e->uid());
+        }
+        for (const int32_t e : hit) enemies_.damage(e, amount);
+    }
     for (auto& [uid, s] : waterStates_) {
         if (s.surface == s.target) continue;
         const float diff = s.target - s.surface, step = s.rate * dt * 30.0f;

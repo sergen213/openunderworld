@@ -313,7 +313,7 @@ nlohmann::json World::serializeRuntime() const {
                   {"held", c->held}, {"fov", {c->fovMode, c->fov, c->fovTo, c->fovFrom, c->fovTime, c->fovDuration}}};
     }
     const auto pose = [&](const CameraState& c) { return nlohmann::json{v(c.position), v(c.target), v(c.up), c.fovDeg}; };
-    return {{"camera", {{"position", v(cam_.position)}, {"target", v(cam_.target)}, {"yaw", cam_.yaw}, {"pitch", cam_.pitch},
+    nlohmann::json out = {{"camera", {{"position", v(cam_.position)}, {"target", v(cam_.target)}, {"yaw", cam_.yaw}, {"pitch", cam_.pitch},
                         {"up", v(cam_.up)}, {"fov", cam_.fovDeg},
                         {"focus", focus_ ? v(*focus_) : nlohmann::json(nullptr)},
                         {"orbit", {v(o.desired), o.dist, o.speed, o.valid, o.yaw, o.pitch, limits(o.from), limits(o.now), o.mode,
@@ -328,6 +328,12 @@ nlohmann::json World::serializeRuntime() const {
                      w.push_back({uid, s.surface, s.target, s.rate, s.source, s.sink, s.strength, v(s.sourceAt), v(s.sinkAt)});
                  return w;
              }()}};
+    if (!waterDamage_.empty()) { // only where a volume is armed: other saves keep their bytes
+        nlohmann::json w = nlohmann::json::array();
+        for (const auto& [uid, d] : waterDamage_) w.push_back({uid, d.amount, d.frames});
+        out["waterDamage"] = std::move(w);
+    }
+    return out;
 }
 
 // The world's part of serializeRuntime (a load and a checkpoint restore): scripted water levels and hinge limits.
@@ -340,6 +346,9 @@ void World::restoreWorldRuntime(const nlohmann::json& j) {
                                                 e.at(5).get<int16_t>(), e.at(6).get<float>(), v(e.at(7)), v(e.at(8))};
     for (const auto& [uid, s] : waterStates_)
         if (const auto [m, u] = waterVolume(uid); m) applyWaterState(*m, u->offset);
+    waterDamage_.clear(); // (the key only where a volume is armed)
+    for (const auto& e : j.value("waterDamage", nlohmann::json::array()))
+        waterDamage_[e.at(0).get<int32_t>()] = {e.at(1).get<float>(), e.at(2).get<float>()};
     multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
     multibodyLimitOff_ = j.value("limitsOff", std::set<int32_t>{}); // older saves: every limit on
     syncedObjects_ = ~size_t(0);
