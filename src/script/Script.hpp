@@ -590,6 +590,10 @@ private:
     // (setUnits / restore create them last, in this order), as when they were born during play.
     std::vector<int32_t> born_;
     std::map<int32_t, Away> away_;
+    // A load's saved object order ("order"): the objects restore and the next setUnits make are put back in it (units'
+    // own first, then born, then away is the load's order, not always the running world's); dropped at the next tick.
+    std::vector<int32_t> savedOrder_;
+    void applySavedOrder();
     std::map<std::string, UnitRef> unitRefs_; // the loaded units as setUnits last had them (offsets, DRMs)
     bool materializing_ = false;
     std::pair<std::string, std::shared_ptr<const cdc::Drm>> awayDrm_; // the last birth unit read for an away instance

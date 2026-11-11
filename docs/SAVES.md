@@ -134,6 +134,9 @@ Instances away from their birth unit (what Lara carried into another unit, in he
 there) are listed in `script.runtime.away` as `[uid, birth unit, unit, x, y, z]` (the place in `unit`'s frame; only
 when there are any, missing = none): a load makes each in the unit it is in from its birth unit's intro (that unit's
 DRM is read when it is not loaded), with its saved state, and its birth unit does not introduce it.
+`script.runtime.order` lists every script object's uid in the running world's order (the order objects update and
+hash in); a load makes units' own objects first, then born intros, then away instances, and then sorts them back into
+this order (objects it does not name stay last in their own order; missing in older saves = the load's order).
 
 The simulation then continues bit for bit. `StreamReal.SaveContinuesBitIdentically` ticks N, saves, loads into a
 fresh World and ticks M more beside the uninterrupted run on `l4_ballcourt` (plane 6546 births the poachers its

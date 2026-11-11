@@ -9,6 +9,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <unordered_map>
 #include <cctype>
 #include <bit>
 #include <cmath>
@@ -525,6 +526,7 @@ void Runtime::setUnits(const std::vector<UnitRef>& units) {
     introduceBorn(true);
     for (const auto& [uid, a] : std::map<int32_t, Away>(away_))
         if (!find(uid)) materialize(uid, a);
+    applySavedOrder(); // right after a load: the objects as the saved world had them
     attachSavedThreads();
     for (const auto& u : units)
         if (!u.resident && deferredUnits_.erase(u.name)) startUnitScript(u.name);
@@ -2763,6 +2765,7 @@ void Runtime::tickSensors(vec3 lara) {
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     events_.clear();
     ++tick_;
+    savedOrder_.clear(); // a load's object order is put back by now (restore, setUnits)
     for (const auto& [uid, vt] : std::exchange(calls_, {})) run(uid, vt, {});
     // Queued messages: the recipients are taken per message (a handler's own Sends wait for the next tick).
     for (auto& msg : std::exchange(messages_, {})) {
@@ -3142,6 +3145,13 @@ nlohmann::json Runtime::serialize() const {
         }
         j["runtime"]["away"] = std::move(away);
     }
+    // The object list's order (update and hash order): a load makes the units' own objects first, then born dormant
+    // intros, then away instances, which need not be the running world's order (the summoned bike's instance before
+    // poachers born later); restore puts them back in this order.
+    std::vector<int32_t> order;
+    order.reserve(objects_.size());
+    for (const auto& o : objects_) order.push_back(o.uid);
+    j["runtime"]["order"] = std::move(order);
     return j;
 }
 
@@ -3253,6 +3263,19 @@ void Runtime::restore(const nlohmann::json& j) {
     }
     for (const auto& [uid, a] : std::map<int32_t, Away>(away_))
         if (!find(uid)) materialize(uid, a);
+    savedOrder_ = runtime.value("order", std::vector<int32_t>{});
+    applySavedOrder(); // and again after the next setUnits, which makes the loaded units' objects
+}
+
+void Runtime::applySavedOrder() {
+    if (savedOrder_.empty()) return;
+    std::unordered_map<int32_t, size_t> rank; // objects the save does not name keep their order, last
+    for (size_t i = 0; i < savedOrder_.size(); ++i) rank.try_emplace(savedOrder_[i], i);
+    const auto at = [&](const Object& o) {
+        const auto it = rank.find(o.uid);
+        return it == rank.end() ? savedOrder_.size() : it->second;
+    };
+    if (!std::ranges::is_sorted(objects_, {}, at)) std::ranges::stable_sort(objects_, {}, at), ++visibilityVersion_;
 }
 
 void Runtime::restoreRuntime(const nlohmann::json& r) {
