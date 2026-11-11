@@ -103,8 +103,15 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             } else if (const auto* o = w.script().find(uid)) {
                 to = glm::vec2(o->pos); // the nearest of its engagement records, where it has them
                 float best = -1;
-                for (const glm::vec3& c : w.engagementCentres(uid))
-                    if (const float d = glm::distance(glm::vec2(c), glm::vec2(lara.pos)); best < 0 || d < best) best = d, to = glm::vec2(c);
+                const auto nearest = [&](int kind) {
+                    for (const glm::vec3& c : w.engagementCentres(uid, kind))
+                        if (const float d = glm::distance(glm::vec2(c), glm::vec2(lara.pos)); best < 0 || d < best) best = d, to = glm::vec2(c);
+                };
+                // Carrying a portable only records of kinds 3, 5 and 7 admit her (World::engaged): the l5_valgrind cog
+                // wheel's push handle (kind 1, section 0) lies nearer the third power block's way in than its niche.
+                if (w.heldPortable())
+                    for (const int kind : {3, 5, 7}) nearest(kind);
+                if (best < 0) nearest(0);
             } else {
                 if (t > 120) next(tick, "no such object"); // the unit's objects appear on its first tick
                 return a;

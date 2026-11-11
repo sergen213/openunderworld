@@ -338,6 +338,7 @@ namespace {
 
 constexpr float kM = 1.0f / kUnitsPerMetre;
 constexpr float kFrame = 30.0f;  // tru.exe joint units are per 30 Hz frame
+constexpr float kJoint3Friction = 0.2f; // a three-axis joint body on the floor: Jolt's default, as it was made before
 constexpr float kSolver = 60.0f; // [I] motor impulse bounds are per 1/60 s solver step (PHYSICS.md "Uber joints")
 enum : JPH::ObjectLayer { kLayerJoint, kLayerSolid, kLayerLoose, kLayerVehicle, kLayerPlate, kLayerLara, kLayerHeavy, kLayers };
 
@@ -530,6 +531,7 @@ struct Scene::Impl {
         vec3 com0{0};       // world centre of mass at x = 0
         vec3 x{0}, v{0};    // as last written back
         Joint3* live = nullptr;
+        float bodyMass = 1; // as the body was made
     };
     std::vector<Joint3E> joints3;
     Joint3E makeJoint3(uint64_t key, const Joint3& j);
@@ -622,6 +624,7 @@ struct Scene::Impl {
         pairs.EnableCollision(kLayerSolid, kLayerLoose), pairs.EnableCollision(kLayerLoose, kLayerLoose);
         pairs.EnableCollision(kLayerSolid, kLayerVehicle), pairs.EnableCollision(kLayerLoose, kLayerVehicle);
         pairs.EnableCollision(kLayerPlate, kLayerLoose), pairs.EnableCollision(kLayerPlate, kLayerVehicle);
+        pairs.EnableCollision(kLayerPlate, kLayerHeavy); // a push block weighs on a plate through its contacts
         pairs.EnableCollision(kLayerLara, kLayerLoose);
         broad.emplace(layers, 2, pairs, kLayers);
         sys.Init(4096, 0, 8192, 8192, layers, *broad, pairs);
@@ -763,10 +766,11 @@ struct Scene::Impl {
     // Limits and motor of a live joint for this step (Jolt units).
     void driveJoint(JointE& e, const Joint1& j, bool motorOff) {
         const float lin = j.hinge ? 1.0f : kM; // per-frame velocity -> rad/s or m/s
-        const auto state = j.push != 0 || (j.motor && !motorOff) ? JPH::EMotorState::Velocity : JPH::EMotorState::Off;
-        const float target = (j.push != 0 ? j.push : j.speed) * kFrame * lin;
+        const bool pushed = j.push != 0 || j.grip;
+        const auto state = pushed || (j.motor && !motorOff) ? JPH::EMotorState::Velocity : JPH::EMotorState::Off;
+        const float target = (pushed ? j.push : j.speed) * kFrame * lin;
         // impulse per 1/60 s step (mass * units per frame) -> force (N) / torque (N m); unbounded: <= 0, massless, pushed
-        const float impulse = j.push != 0 ? j.pushBound : j.force;
+        const float impulse = pushed ? j.pushBound : j.force;
         const float bound = impulse <= 0 || j.mass <= 0 ? FLT_MAX : impulse * kFrame * kSolver * kM * (j.hinge ? kM : 1.0f);
         limits(*e.ax, j.limited, j.lo * lin, j.hi * lin);
         if (j.hinge) {
@@ -997,6 +1001,7 @@ Scene::Impl::Joint3E Scene::Impl::makeJoint3(uint64_t key, const Joint3& j) {
     Joint3E e{key, j.physics, j.model, j.mass, {}, {}, vec3(0), j.x, j.v, nullptr};
     const MassProps mp = j.physics ? massProps(*j.physics) : MassProps{};
     const float mass = j.mass > 0 ? j.mass : mp.mass > 0 ? mp.mass : 666.0f; // tru.exe's fallback mass
+    e.bodyMass = mass;
     e.com0 = vec3(j.model * glm::vec4(mp.com, 1));
     JPH::RefConst<JPH::Shape> shape = j.physics ? looseShape(*j.physics, mp.com) : nullptr;
     if (!shape) shape = new JPH::SphereShape(0.05f);
@@ -1005,6 +1010,7 @@ Scene::Impl::Joint3E Scene::Impl::makeJoint3(uint64_t key, const Joint3& j) {
     s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
     s.mMassPropertiesOverride.mMass = mass, s.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
     s.mAllowSleeping = true, s.mLinearDamping = 0, s.mAngularDamping = 0; // asleep once it rests; driveJoint3 wakes it
+    s.mFriction = kJoint3Friction; // (driveJoint3: none while she pushes it)
     s.mMotionQuality = JPH::EMotionQuality::LinearCast;
     s.mEnhancedInternalEdgeRemoval = true; // a box sliding over the terrain's triangle seams must not catch on them
     e.body = add(s, "f" + std::to_string(key), JPH::EActivation::Activate);
@@ -1015,26 +1021,48 @@ Scene::Impl::Joint3E Scene::Impl::makeJoint3(uint64_t key, const Joint3& j) {
     e.c = static_cast<JPH::SixDOFConstraint*>(bi->CreateConstraint(&c, JPH::BodyID(), e.body));
     sys.AddConstraint(e.c);
     placeJoint3(e, j.x, j.v);
+    // Its limits and motors now, not first in the step: Jolt clears the constraint's warm-start impulses whenever its
+    // sets of free / fixed axes change (SixDOFConstraint::SetTranslationLimits), which in a restored scene came after
+    // the recorded impulses were read back (Scene::restore applies in step, before the drives) and zeroed them.
+    driveJoint3(e, j);
     return e;
 }
 
 // Limits, motors, friction and Lara's push of a live three-axis joint for this step (Jolt units; bounds as driveJoint).
+// Her push [O 0x73F390]: an impulse toward the velocity asked, `pushGain` of the error, at most `pushBound` long (one
+// bound for the vector, not one an axis: a body pushed askew to the axes goes where she pushes it); the X / Y motors
+// and friction are off meanwhile (World::pushUberHandle took the brakes off her bound).
 void Scene::Impl::driveJoint3(Joint3E& e, const Joint3& j) {
     using Axis6 = JPH::SixDOFConstraintSettings::EAxis;
     const auto force = [](float impulse) { return impulse <= 0 ? FLT_MAX : impulse * kFrame * kSolver * kM; };
+    const bool pushed = j.grip || j.push.x != 0 || j.push.y != 0;
     JPH::Vec3 lo = JPH::Vec3::sReplicate(-FLT_MAX), hi = JPH::Vec3::sReplicate(FLT_MAX), target = JPH::Vec3::sZero();
     for (int k = 0; k < 3; ++k) {
         const Axis6 axis = Axis6(Axis6::TranslationX + k);
         if (j.limited[k]) lo.SetComponent(uint32_t(k), std::min(j.lo[k], j.hi[k]) * kM), hi.SetComponent(uint32_t(k), std::max(j.lo[k], j.hi[k]) * kM);
-        const bool pushed = k < 2 && j.push[k] != 0;
-        e.c->GetMotorSettings(axis).SetForceLimit(force(pushed ? j.pushBound : j.force[k]));
-        e.c->SetMotorState(axis, pushed || j.motor[k] ? JPH::EMotorState::Velocity : JPH::EMotorState::Off);
-        target.SetComponent(uint32_t(k), (pushed ? j.push[k] : j.motor[k] ? j.speed[k] : 0.0f) * kFrame * kM);
-        e.c->SetMaxFriction(axis, j.friction > 0 ? force(j.friction) : 0.0f);
+        const bool hers = pushed && k < 2;
+        e.c->GetMotorSettings(axis).SetForceLimit(force(j.force[k]));
+        e.c->SetMotorState(axis, j.motor[k] && !hers ? JPH::EMotorState::Velocity : JPH::EMotorState::Off);
+        target.SetComponent(uint32_t(k), (j.motor[k] && !hers ? j.speed[k] : 0.0f) * kFrame * kM);
+        e.c->SetMaxFriction(axis, j.friction > 0 && !hers ? force(j.friction) : 0.0f);
     }
     e.c->SetTranslationLimits(lo, hi);
     e.c->SetTargetVelocityCS(target);
-    if (!target.IsNearZero(0.0f) && !bi->IsActive(e.body)) bi->ActivateBody(e.body); // a push or a running motor wakes it
+    bool wake = !target.IsNearZero(0.0f); // a running motor wakes it
+    if (pushed) {
+        const vec3 v = G(bi->GetLinearVelocity(e.body)) * kUnitsPerMetre / kFrame; // units a frame
+        glm::vec2 dv = (glm::vec2(j.push) - glm::vec2(v)) * j.pushGain;
+        const float len = glm::length(dv), most = j.pushBound > 0 ? j.pushBound / e.bodyMass : FLT_MAX;
+        if (len > most) dv *= most / len;
+        if (len > 0) {
+            bi->SetLinearVelocity(e.body, Jm((v + vec3(dv, 0)) * kFrame));
+            wake = true;
+        }
+    }
+    // [I] nothing from the floor while she pushes or holds it: tru.exe's block gains speed at exactly her impulse bound,
+    // pushed or pulled (Wine trace, docs/GAMEPLAY.md "Push and pull objects"). Let go, the floor's friction is back.
+    bi->SetFriction(e.body, pushed ? 0.0f : kJoint3Friction);
+    if (wake && !bi->IsActive(e.body)) bi->ActivateBody(e.body);
 }
 
 void Scene::setJoints3(std::vector<std::pair<uint64_t, Joint3*>> joints) {
@@ -1467,7 +1495,7 @@ void Scene::step(float dt) {
             j.x = e.ax->q() * kUnitsPerMetre;
             j.v = glm::dot(G(m.bi->GetLinearVelocity(e.body)), j.axis) * kUnitsPerMetre / kFrame;
         }
-        j.push = 0, j.pushBound = 0;
+        j.push = 0, j.pushBound = 0, j.grip = false;
         e.x = j.x, e.v = j.v, e.live = nullptr;
     }
     for (auto& e : m.joints3) {
@@ -1475,7 +1503,7 @@ void Scene::step(float dt) {
         Joint3& j = *e.live;
         j.x = G(m.bi->GetCenterOfMassPosition(e.body)) * kUnitsPerMetre - e.com0;
         j.v = G(m.bi->GetLinearVelocity(e.body)) * kUnitsPerMetre / kFrame;
-        j.push = vec3(0), j.pushBound = 0;
+        j.push = vec3(0), j.pushBound = 0, j.grip = false, j.pushGain = 1;
         e.x = j.x, e.v = j.v, e.live = nullptr;
     }
 }

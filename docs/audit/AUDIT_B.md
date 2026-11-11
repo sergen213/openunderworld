@@ -482,7 +482,7 @@ length; the exe fires on the clip's event 0x75).
 
 | Requirement | Classification | Status | Code (file:symbol) | Tests | Provenance | What is missing or wrong |
 |---|---|---|---|---|---|---|
-| Use Jolt rigid bodies for movable objects | partial | PARTIALLY IMPLEMENTED | loose bodies, joints, plates: yes; push blocks, carried / inserted portables: no | `Physics.LooseBodiesLandStackAndTumble` | — | Push blocks should become bodies on a planar / slider constraint, or the reason they stay kinematic must be documented from the exe |
+| Use Jolt rigid bodies for movable objects | partial | PARTIALLY IMPLEMENTED | loose bodies, joints, plates: yes; push blocks, carried / inserted portables: no | `Physics.LooseBodiesLandStackAndTumble` | — | Done 2026-11-10: push blocks are the bodies of their three-axis joints (GP "Push and pull objects"); carried / inserted portables remain |
 | Object mass | implemented + works | VERIFIED AGAINST ORIGINAL | `massProps` | `Physics.MassPropsBoxMatchesExeFormula` | [O] | — |
 | Collision shape | implemented + works | IMPLEMENTED | `looseShape` (boxes, capsules, spheres); for Lara's BVH spheres / capsules become bounding boxes (Phy.h `solidShape`) | `PhysicsRealData.AllObjectsParse` | [O prims] | Two different shapes of one object (Jolt exact, BVH boxed) |
 | Friction | works but differs from original | IMPLEMENTED BUT UNVERIFIED | Jolt default; ragdolls 0.6 | — | [I] | Havok friction / restitution unknown (ROADMAP row "Jolt") |
@@ -809,8 +809,10 @@ fidelity of numbers, then architecture.
 - **P9 Portables: carry clips, collision while carried, throw.** Obj:1393-1445: carried object is posed through
   walls and set down by teleport; no throw. Truth: Lara's chart actions 0x4D / 0x50 neighbourhood, `portablebase`
   script (base 3937), lara.drm carry / throw clip names.
-- **P10 Push blocks as constrained bodies (or documented kinematics) with full collision.** Scr:2445-2466: terrain
-  ray only, [I] speed 120. Truth: PushPull state 0x701310 / "PushPull Proxy" 0x7358E0; a Wine trace of block speed.
+- **P10 Push blocks as constrained bodies with full collision.** Done 2026-11-10 (GP "Push and pull objects":
+  bodies on their three-axis joints, gripped by their push / pull records; `script::Kind::Block` removed). Open: the
+  Wine trace of block 6504 shows a constant acceleration of ~225 units/s^2, not ours' constant 33.2 units/s (the
+  fitted law is in that section); the block's turn on its hinge.
 - **P11 CharacterVirtual evaluation** per the plan above (Phy `Scene`, P `slide / groundMove / airMove`), with the
   written selection. Do it before more [I] controller tuning accumulates; measure the original's slope limit first.
 - **P12 Grapple rope: measured dynamics, force on targets, Jolt queries.** G:19-22, 319-327, 378-385 are [I]. Truth:

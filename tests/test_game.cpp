@@ -3914,13 +3914,18 @@ TEST(GameReal, MountedGrapplePullsBlockWithoutSwinging) {
     for (int i = 0; i < 90; ++i) w.tick({});
     EXPECT_NE(w.player().state().state, State::GrappleSwing);
     const auto* block = w.script().find(5884);
-    ASSERT_TRUE(block);
-    const vec3 initial = block->offset;
+    ASSERT_TRUE(block && w.slide(5884)) << "a body on its three-axis joint";
+    const vec3 initial = *w.objectOrigin(5884);
     Actions pull;
     pull.interact = true;
-    for (int i = 0; i < 60; ++i) w.tick(pull);
+    for (int i = 0; i < 180; ++i) w.tick(pull);
     EXPECT_NE(w.player().state().state, State::GrappleSwing);
-    EXPECT_GT(glm::length(block->offset - initial), 100.0f);
+    // The rope drags the body toward her as far as the alcove over the doorway it stands in lets it (the kinematic
+    // stand-in of before slid 240 units a second through whatever was in its way).
+    const vec3 moved = *w.objectOrigin(5884) - initial;
+    EXPECT_GT(glm::length(vec2(moved)), 30.0f);
+    EXPECT_GT(glm::dot(vec2(moved), vec2(w.player().state().pos - initial)), 0.0f) << "toward her";
+    EXPECT_NEAR(glm::length(w.slide(5884)->v), 0, 0.05f) << "held by what it met, at rest";
 }
 
 // Wall run [I]: roped to a wall anchor from a ledge beside its wall, a sideways stick toward the anchor runs onto the
@@ -4690,8 +4695,8 @@ TEST(GameReal, TerrainGroupNativeUpdatesMergedCollision) {
                           glm::rotate(glm::mat4(1), plane->rot.z, {0, 0, 1});
     const vec3 normal = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
     const vec3 before = plane->pos - normal * 1000.0f, after = plane->pos + normal * 1000.0f; // toward local +Y
-    w.script().tick({before, 0, {}, false}, &w.collision());
-    w.script().tick({after, 0, {}, false}, &w.collision());
+    w.script().tick({before, false});
+    w.script().tick({after, false});
     EXPECT_EQ(w.collision().terrainGroupEnabled(5), false);
     EXPECT_EQ(w.collision().terrainGroupEnabled(1), true);
     EXPECT_FALSE(w.lightEnabled("l2_hubhall", 4));
@@ -4856,7 +4861,7 @@ TEST(GameReal, ElevatorCarriesPlayer) {
     ASSERT_NE(it, w.collision().dynamics.end());
     const auto* sw = w.script().find(2961);
     ASSERT_TRUE(sw);
-    for (int i = 0; i < 30; ++i) w.script().tick({sw->pos, 0, {}, true}, &w.collision());
+    for (int i = 0; i < 30; ++i) w.script().tick({sw->pos, true});
     game::PlayerState ride;
     ride.pos = vec3(it->transform[3]) + vec3(0, 0, 500);
     w.restore(ride, 0, 0);
@@ -5012,14 +5017,14 @@ TEST(GameReal, ScriptSurvey) {
         }
         for (const auto& [kind, path] : todo) {
             if (kind == script::Kind::Switch) {
-                for (int i = 0; i < 60; ++i) rt.tick({path.first, 0, {}, i < 30}, &w.collision());
+                for (int i = 0; i < 60; ++i) rt.tick({path.first, i < 30});
             } else if (kind == script::Kind::Volume || kind == script::Kind::Plane) {
-                rt.tick({away, 0, {}, false}, &w.collision());
-                rt.tick({path.first, 0, {}, false}, &w.collision());
-                rt.tick({path.second, 0, {}, false}, &w.collision());
+                rt.tick({away, false});
+                rt.tick({path.first, false});
+                rt.tick({path.second, false});
             }
         }
-        for (int i = 0; i < 300; ++i) rt.tick({away, 0, {}, false}, &w.collision());
+        for (int i = 0; i < 300; ++i) rt.tick({away, false});
         for (const auto& [key, count] : rt.failures()) {
             const auto* o = rt.find(key.first);
             failures[key.second].insert(unit + " " + std::to_string(key.first) + " " + (o ? o->name : std::string("?")));
@@ -5445,7 +5450,7 @@ TEST(GameReal, LaraPlaysInteractionClips) {
         for (const float a : {0.0f, glm::half_pi<float>(), glm::pi<float>(), -glm::half_pi<float>()}) { // each face in turn
             const float yaw = block()->rot.z + a;
             const vec3 dir(std::cos(yaw), std::sin(yaw), 0);
-            vec3 at = block()->pos + block()->offset - dir * 160.0f;
+            vec3 at = *w->objectOrigin(6504) - dir * 265.0f; // clear of its face (half side 174)
             if (const auto floor = w->collision().groundProbe(at + vec3(0, 0, 200), 600, 0x0F)) at.z = floor->point.z;
             game::PlayerState p;
             p.pos = at, p.yaw = yaw;
@@ -5453,11 +5458,11 @@ TEST(GameReal, LaraPlaysInteractionClips) {
             w->tick(use);
             ASSERT_EQ(w->player().state().state, game::State::Block);
             EXPECT_EQ(w->player().state().clip, "obj_block_grab");
-            const vec3 block0 = block()->offset, lara0 = w->player().state().pos;
+            const vec3 block0 = *w->objectOrigin(6504), lara0 = w->player().state().pos;
             game::Actions push = use;
             push.move.y = 1;
             for (int i = 0; i < 150; ++i) w->tick(push);
-            const vec3 moved = block()->offset - block0;
+            const vec3 moved = *w->objectOrigin(6504) - block0;
             if (glm::length(moved) < 50) continue;
             EXPECT_EQ(w->player().state().clip, "obj_block_front");
             const vec3 lara = w->player().state().pos - lara0;
@@ -5574,29 +5579,36 @@ TEST(GameReal, ElevatorUberIndependentOfRenderRate) {
     EXPECT_NE(it->transform, it0->transform) << "the elevator moved";
 }
 
-// l4_traprooms push block 5884: Lara grips it and pushes it along the floor.
+// l4_ballcourt push block 6504: Lara grips it by its push / pull record and pushes it along the wall it stands by (its
+// 21 degree axis); the body on its three-axis joint, her clips and her position are the same at every render rate.
 TEST(GameReal, PushBlockIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    const auto unit = game::loadUnitData(bf, "l4_traprooms");
-    const auto g = std::find_if(unit.grapples.begin(), unit.grapples.end(), [](const auto& t) { return t.uid == 5884; });
-    ASSERT_NE(g, unit.grapples.end());
-    const auto base = worldMaker(bf, "l4_traprooms", game::Spawn{g->pos + vec3(-1000, 0, 0), 0});
+    const auto base = worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0});
+    const float yaw = glm::radians(21.0f);
     const MakeWorld make = [&] {
         auto w = base();
         w->tick({});
-        const auto* block = w->script().find(5884);
         game::PlayerState s;
-        s.pos = block->pos + block->offset - vec3(block->half.x + 60, 0, 0); // west face, facing +X
+        s.pos = *w->objectOrigin(6504) - vec3(std::cos(yaw), std::sin(yaw), 0) * 265.0f; // clear of its west face (half side 174)
         if (const auto floor = w->collision().groundProbe(s.pos + vec3(0, 0, 200), 600, 0x0F)) s.pos.z = floor->point.z;
-        w->restore(s, 0, -0.25f);
+        s.yaw = yaw;
+        w->restore(s, yaw, -0.25f);
         return w;
     };
-    const auto input = game::InputScript::parse("0.2 interact 1\n0.3 forward 1\n2.5 forward 0\n2.6 interact 0\n");
-    const auto w = expectRateIndependent(make, input, 180);
-    const auto* block = w->script().find(5884);
-    ASSERT_TRUE(block);
-    EXPECT_GT(glm::length(block->offset), 100.0f) << "the block was pushed";
+    const auto input = game::InputScript::parse("0.2 interact 1\n0.3 forward 1\n6.5 forward 0\n6.6 interact 0\n");
+    const auto w = expectRateIndependent(make, input, 450);
+    const auto* block = w->script().find(6504);
+    ASSERT_TRUE(block && w->slide(6504));
+    const vec3 moved = *w->objectOrigin(6504) - block->pos;
+    // 0.83 s of grab clip, then gaining 212 units/s^2 (GameReal.PushBlockGainsSpeedAsTheOriginal) up to 33.2 units a
+    // frame, reached after 4.7 s and 2336 units. Re-pinned from the constant 33.2 units a second of the earlier
+    // reading (179 units); [I] the 2505 is ours as it comes out (the law alone gives 3110 for 5.47 s of stick).
+    const float along = glm::dot(moved, vec3(std::cos(yaw), std::sin(yaw), 0));
+    EXPECT_NEAR(along, 2505.0f, 80.0f) << moved.x << " " << moved.y << " " << moved.z;
+    EXPECT_NEAR(glm::length(vec2(moved)), along, 5.0f) << "straight along her facing";
+    EXPECT_NEAR(moved.z, 0, 1.0f) << "on the court's floor";
+    EXPECT_NEAR(glm::length(vec2(w->slide(6504)->v)), 0, 0.01f) << "at rest once she lets go";
 }
 
 // l7_yggdrasil_end: spline mover 8404's path on a solid stone (as GameReal.SplineMoverCarriesLara), Lara riding it.
@@ -8499,10 +8511,47 @@ TEST(GameReal, LadderLetGoCatchesAgainAndBadAttach) {
     }
 }
 
+// The push law against tru.exe (Wine trace of block 6504, openunderworld-work/gameplaygoal/pushblocks/wine2.txt trial a;
+// docs/GAMEPLAY.md "Push and pull objects"): Lara 300 from the block's centre, facing it along its 201 degree axis,
+// Interact held; with the stick forward she and the block gain speed steadily, 231 units in 1.47 s (the original then
+// meets the wall); pulling back from rest 477 units in 2.18 s. Ours within 10 %: the impulse bound of 0x73F390 on the
+// proxy's mass, velocities per 30 Hz frame: 212 units/s^2.
+TEST(GameReal, PushBlockGainsSpeedAsTheOriginal) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto base = worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0});
+    const float yaw = glm::radians(201.0f);
+    const vec3 dir(std::cos(yaw), std::sin(yaw), 0);
+    const auto run = [&](float stick, int ticks) {
+        auto w = base();
+        w->tick({});
+        game::PlayerState s;
+        s.pos = *w->objectOrigin(6504) - dir * 300.0f;
+        if (const auto floor = w->collision().groundProbe(s.pos + vec3(0, 0, 200), 600, 0x0F)) s.pos.z = floor->point.z;
+        s.yaw = yaw;
+        w->restore(s, yaw, -0.25f);
+        game::Actions a;
+        for (int i = 0; i < 12; ++i) w->tick(a);
+        a.interact = true;
+        for (int i = 0; i < 100; ++i) w->tick(a); // the grab clip, then gripped at rest (the original: 1.7 s)
+        EXPECT_EQ(w->player().state().state, game::State::Block);
+        const vec3 block0 = *w->objectOrigin(6504), lara0 = w->player().state().pos;
+        a.move = {0, stick};
+        for (int i = 0; i < ticks; ++i) w->tick(a);
+        const float block = glm::dot(*w->objectOrigin(6504) - block0, dir), lara = glm::dot(w->player().state().pos - lara0, dir);
+        EXPECT_NEAR(lara, block, 20.0f) << "she goes with it";
+        return block;
+    };
+    EXPECT_NEAR(run(1, 88), 231.3f, 23.1f) << "pushed for 1.47 s";
+    EXPECT_NEAR(run(-1, 131), -476.9f, 47.7f) << "pulled for 2.18 s";
+}
+
 // Thor's gauntlets (docs/GAMEPLAY.md "Thor's gauntlets"), the rules without game data: a push / pull record naming gear
 // admits Lara only while she carries it (tru.exe 0x6F3BB0); her push on a heavy slider is refused while its joint
-// motor brakes harder than her strength pushes and moves it at min(23.704 s, 2054.36 s / (0.125 m)) units a second
-// once the mechanism's script has raised her pull strength and freed it (0x74AC00 / 0x73F390); the stick's four ways.
+// motor brakes harder than her strength pushes; once the mechanism's script has raised her pull strength and freed it
+// it gains speed toward min(23.704 s, 2054.36 s / (0.125 m)) units a 30 Hz frame by her impulse bound a step, the
+// proxy's share (0x74AC00 / 0x73F390; the units as the Wine trace of push block 6504 fits them, docs/GAMEPLAY.md
+// "Push and pull objects"); the stick's four ways.
 TEST(Game, ThorGauntletsMoveHeavyObjects) {
     const std::string gear[] = {"g_gauntletleft"}, pole = "ca_pt_pole_a", gauntlet = "g_gauntletleft";
     EXPECT_TRUE(game::carriesNeeded({}, nullptr, {}));
@@ -8526,15 +8575,18 @@ TEST(Game, ThorGauntletsMoveHeavyObjects) {
     EXPECT_EQ(game::pushDrive(mass, 15, brake).speed, 0.0f) << "braked: not even with the gauntlets";
     const game::PushDrive door = game::pushDrive(mass, 15, 0);
     EXPECT_NEAR(door.speed, 2054.3616f * 15 / (0.125f * mass), 0.01f);
-    EXPECT_NEAR(door.impulse, 142.22504f * 15, 0.01f);
+    EXPECT_NEAR(door.impulse, 0.125f * mass * 0.75853348f * 15 * (8.0f / 9.0f), 0.01f) << "the proxy's bound, the object's share";
     // The endgame towers: mass 175, retracted they brake with 474.08; the script's 5.5 overcomes it, 3.5 would not.
     EXPECT_EQ(game::pushDrive(175, 3.5f, 474.083f).speed, 0.0f);
     const game::PushDrive tower = game::pushDrive(175, 5.5f, 474.083f);
     EXPECT_NEAR(tower.speed, 23.704172f * 5.5f, 0.01f);
-    EXPECT_NEAR(tower.impulse, 175 * 0.75853348f * 5.5f - 474.083f, 0.01f);
+    const float full = 175 * 0.75853348f * 5.5f; // against the brake: the bound on its own mass [I]
+    EXPECT_NEAR(tower.impulse, 0.125f * 175 * 0.75853348f * 5.5f * (8.0f / 9.0f) * (full - 474.083f) / full, 0.01f);
 
     // On the simulated joint: braked and pushed with bare strength it stays; freed and pushed with the gauntlets it
-    // slides to its limit at that speed.
+    // gains speed by her impulse a step (1.264 units a frame: 2276 units/s^2) and is at its limit, 663.7 on, after
+    // 0.76 s, long before the speed asked (245 units a frame). Re-pinned from the constant 245 units a second of the
+    // earlier reading; the doors were never measured in tru.exe.
     physics::Scene scene;
     physics::Joint1 j;
     j.mass = mass, j.axis = {1, 0, 0}, j.pivot = {0, 0, 100}, j.limited = true, j.lo = 0, j.hi = 663.717f;
@@ -8543,7 +8595,7 @@ TEST(Game, ThorGauntletsMoveHeavyObjects) {
         int n = 0;
         for (; n < ticks && j.x < j.hi - 2; ++n) {
             const game::PushDrive d = game::pushDrive(j.mass, strength, j.motor ? j.force : 0.0f);
-            if (d.speed > 0) j.push = d.speed / 30.0f, j.pushBound = d.impulse;
+            if (d.speed > 0) j.grip = true, j.push = d.speed, j.pushBound = d.impulse;
             scene.setJoints({{1, &j}}, {}), scene.step(1.0f / 60.0f);
         }
         return n;
@@ -8553,7 +8605,7 @@ TEST(Game, ThorGauntletsMoveHeavyObjects) {
     j.motor = false; // its script's command frees it as she grips
     const int ticks = push(15, 600);
     EXPECT_GT(j.x, j.hi - 2.5f) << "open";
-    EXPECT_NEAR(float(ticks) / 60.0f, j.hi / door.speed, 0.5f) << "at the push speed";
+    EXPECT_NEAR(float(ticks) / 60.0f, std::sqrt(2 * j.hi / (door.impulse / mass * 1800.0f)), 0.1f) << "a constant acceleration";
     j.motor = true; // let go: braked again
     for (int i = 0; i < 60; ++i) scene.setJoints({{1, &j}}, {}), scene.step(1.0f / 60.0f);
     EXPECT_GT(j.x, j.hi - 5.0f) << "it stays open";
