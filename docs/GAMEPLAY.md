@@ -3103,8 +3103,8 @@ Ours:
   `ms_ei_switch_oneway_wall` / `ca_ei_switch_wall_autoreset` r 553.1, 632.1 high from the origin up, cone 95 degrees
   either side of its +X; `ma_ei_switch_wall_chapel` / `ms_ei_resetting_switch` r 790.1; `ma_ei_wall_switch_electric`
   r 553.1, cone 64 degrees about 15 off +X; `ar_ei_switch_oneway` r 632.1, 948.2 high, heading -89). The cone is
-  measured about the record's centre (0x6F3A50; [I] the decompiler lost the atan2 arguments: taken as the cylinder's
-  centre), so she engages a wall switch from in front of it, not standing on its
+  measured about the record's centre [O asm 0x6F3B54-0x6F3B78: atan2(dy, dx) of her point minus the centre, minus the
+  heading, normalised, absolute, against the half angle], so she engages a wall switch from in front of it, not standing on its
   origin. Uber objects named as switches whose sections carry engagement sets (the rune symbols
   `ar_uo_rune_wall_switch_*`, `ar_uo_rune_wall_swich_a`: one section, record r 553.1 / 632.1 high centred 158 under the
   symbol, offered in state 1 only) are used through the section's record: trigger 20 with kind 8 (0x701310 ->

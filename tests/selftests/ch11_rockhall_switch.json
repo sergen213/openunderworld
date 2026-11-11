@@ -11,7 +11,7 @@
      "expect": [{"probe": "object.4528.uber.0", "eq": 0},
                 {"probe": "player.pos.x", "max": -8700, "note": "stopped by the door at x -8622"},
                 {"probe": "world.checkpoint", "eq": 4600}]},
-    {"step": "use_the_switch", "plan": ["go -9401 -12930 40", "face -90", "press", "wait 6"], "duration": 40,
+    {"step": "use_the_switch", "plan": ["go -9551 -13078 40", "face 0", "press", "wait 6"], "note": "in front of the switch (its local +X, world -X: the wall is behind its -X), facing it: inside its use record's cone (64 degrees about 15 off +X, tru.exe 0x6F3A50)", "duration": 40,
      "expect": [{"visits": ["use"]},
                 {"probe": "step.events", "has": ["use:4617>4617"]},
                 {"probe": "object.4528.uber.0", "ne": 0, "note": "the door's section left its shut state"}]},
