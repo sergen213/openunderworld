@@ -958,11 +958,17 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   Ours: `script::Runtime::engage`, `pullStrength()`.
 - **The move** [O 0x74AC00 / 0x73F390 / 0x6F1450, lara.drm player data]: every frame the stick picks one of four ways
   by its angle off her facing: forward within 30 deg (+0xC8C = 60), back within 15 deg of straight back (+0xC90 =
-  30), else left / right; the target speed is `min(23.704 (+0xC7C) x strength, 2054.36 (+0xC80) x strength / M)` and
-  the impulse applied per step is a quarter of the velocity error x mass, at most `min(m x 0.7585 (+0xC84), 142.225
-  (+0xC88)) x strength`. [I] M = the proxy's mass = 0.125 (+0xC98) x the object's (with the object's own mass the
-  doors would crawl at 31 units/s; with the proxy's: doors 245 units/s, Valgrind gate 130, rubble 164, towers 130, the
-  manor pillar 71) - not measured under Wine. Clips [O lara.drm 1659-1665]: `thor_engage` (15 frames), `thor_idle`,
+  30), else left / right; the velocity asked is `min(23.704 (+0xC7C) x strength, 2054.36 (+0xC80) x strength / M)`
+  and the impulse applied per step, on the proxy, is a quarter of the velocity error x M, at most `min(M x 0.7585
+  (+0xC84), 142.225 (+0xC88)) x strength`, M = the proxy's mass = 0.125 (+0xC98) x the object's. The units as "Push
+  and pull objects" fits them to the Wine trace of block 6504 [I, fitted]: velocities per 30 Hz frame, the bound per
+  1/60 s step, the proxy and the object moving as one: the object gains `strength x 0.7585 / 9` units a frame each
+  step (strength x 152 units/s^2) while the bound holds, so the mechanisms are acceleration-limited and never reach
+  the velocity asked on their short travels (doors: 245 units a frame). None of the mechanisms was measured under
+  Wine. [I] kept from before the trace: whether she moves a braked joint at all is decided by the bound on the
+  object's own mass against the brake (the towers' 474 between strength 3.5 and 5.5 x 132.7), and a weaker brake
+  leaves her that share of her impulse; without the stick she asks for no velocity with the same bound, except on a
+  joint whose script motor is running. Clips [O lara.drm 1659-1665]: `thor_engage` (15 frames), `thor_idle`,
   `thor_forward / _backward / _left / _right` (root motion 406-582 units/s, not applied), `thor_disengage`; [I] that
   they are the PushPull state's clips (the calendar handles use them too now).
   Ours (`World::pushUberHandle`, `game::pushWay`, `game::pushDrive`): Interact pressed inside the record and held
@@ -975,8 +981,9 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   [U] whether the original toggles on a press instead of holding; the proxy constraint; hinge joints keep the old
   120 units/s at her grip point.
 - **Results** (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, each refused without its gear): l2_maproom door
-  2661 (C09-05) and l5_valgrind_tunnel door 7400 (C16-04) slide their 663.7 units in 2.9 s by sidestepping; the
-  l4_ragnarok_room rubble block 5660 (C15-12) 2054 units in 12.7 s; the l7 towers by their record
+  2661 (C09-05) and l5_valgrind_tunnel door 7400 (C16-04) slide their 663.7 units in 1.3 s by sidestepping (the
+  grab included; 2.9 s under the earlier constant-speed reading); the l4_ragnarok_room rubble block 5660 (C15-12)
+  2054 units in 2.1 s (12.7 s before); the l7 towers by their record
   (`ProgressionReal.EndgameCredits`, from floors inside it; before, the test pushed them while she swam). Synthetic:
   `Game.ThorGauntletsMoveHeavyObjects`; self-test `tests/selftests/gauntlet_move.json`.
 - **The pillars' joint** [O data + tru.exe]: `ma_pu_thor_pillar` and `ca_pu_thor_pillar` ride uber joint type 7 =
@@ -1016,7 +1023,7 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   (motor 0, bound 31605: braked). Gripping (vt 49: strength 8, command 2) frees the leaf (state 2), letting go (vt 50:
   command 3) brakes it. Volume 7511 in front of it does not open anything: it starts cinematic 7464 (240_val_gate)
   once with an autosave and sets `larabase` 19. Ours: action 11 bound (`World::uberAction`); with vt 62 run, the gate
-  slides its 663.7 units in 5.3 s by input (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`); before, no grip.
+  slides its 663.7 units in 1.7 s by input (5.3 s under the earlier reading) (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`); before, no grip.
   The cog-wheel puzzle itself (C17-01..03) is not played by input in that test.
 - **Natives** [O]: `larabase` 19 / 20 (0x79A0E0 / 0x79A100 -> 0x698850 / 0x698860) set / get the global byte 0xECFC88,
   "gauntlet charged": 0x6A6530 passes it as 1 / 0 in the instances' shader constant 6 (the gear's glow) and the player
@@ -1034,7 +1041,12 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   from: `StreamReal.SaveContinuesBitIdentically`'s l4_pool cases differed one tick after the load (the solids woken
   and moving, fx object 5596). After a restore `World::syncObjects` now poses the colliders it makes
   (`World::poseColliders`); `StreamReal.ThreeAxisJointAtRestSaveLoad` compares the whole state with the recorded
-  Jolt scene. Not changed: after a stream (no restore) the remade colliders stand at their intro frames until
+  Jolt scene. With push blocks in more units two more causes showed (found on the l4_traprooms cases of
+  `StreamReal.SaveContinuesBitIdentically`; the l2_puzzleroom case passes with them too): the posing has to come after the uber models' clip poses and the
+  hazards' jaws are made (`Object::animPose` and `jaws_` are not saved: blades 5897 / 5898 stood at their intro frames
+  for a step), and a three-axis joint's constraint lost its recorded warm-start impulses when the first drive after
+  the restore changed its free / fixed axes (Jolt's `SixDOFConstraint::SetTranslationLimits` clears them): the joint
+  is driven once when it is made (`Scene::Impl::makeJoint3`), before the recorded state is read back. Not changed: after a stream (no restore) the remade colliders stand at their intro frames until
   `tickObjects` poses them later in that tick, as before (posing them at once moved the
   `baldrs_plates_gate` replay's route). [I] a hinged door's collider is posed from its body, which holds the saved swing only after the first step.
 - **l2_maproom's hub** (C09-09): `sa_uo_thor_bridge_combo` 2667's section 1 (walkway, hub and wall) turns on hinge joint
@@ -1053,6 +1065,101 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   (`openunderworld-work/gameplaygoal/gauntlets/wine_door.sh`: new game, level change to l5_startsnow for the gear,
   door 7400's spot from ours, Interact + each direction key) and neither gave a reading (in the first the level
   change did not happen within 200 s: Lara stayed at the prologue's start).
+
+## Push and pull objects
+
+- **Which objects** [O data: `OU_PUSH_SURVEY=1 ou_gates_tests --gtest_filter=ProgressionReal.PushObjectSurvey`, every
+  object with a push / pull record (kind 1) on an uber section]. Five objects carry a record that asks for no gear and
+  stand free on the floor, all built alike: `ca_pu_block_a` (l4_ballcourt 6504; box 348 x 348 x 411, 30 kg),
+  `ma_rb_pushblock_training` (l3_bedroom_hall 4363, the prologue's chest; 479 x 481 x 472, 40 kg),
+  `ar_pu_valaskjalf_entry` (422 x 418 x 415, 40 kg), `ca_pu_block_grapple` (l4_traprooms 5884; 526 x 526 x 511, 40 kg,
+  a third section: its ring plate on a hinge) and `sa_rb_pushable_weight` (l2_puzzleroom 2971, the cage; a 569 cube,
+  800 kg). The other records without gear are mechanisms on joints (the mirrors, the calendars' handles, the cog
+  wheels, the Valgrind gate, the towers: "Thor's gauntlets" above).
+  Each is a class-79 uber object of two sections: section 1 (model 1: a 60 kg sphere of radius 316 without collision)
+  rides a three-axis joint against the world (uber joint type 7 = engine joint 10: free along X / Y / Z, rotation kept;
+  no limits, no motors, friction 1e-6), and section 0 (model 0: the box with the collision and the mass) turns on it by
+  a hinge (type 0) about the vertical through its centre. Section 0 carries the record: a sphere (the two `ca` blocks,
+  the Valaskjalf block: centre 190 up, radius 821.7 = 260 cm) or a cylinder of that radius (chest 316 high, cage 253).
+  Section 1's states: 0 creates the joints and watches the hinge's speed; 2 "free" (the three-axis joint's motors
+  off); 1 "turning", entered while the hinge turns faster than 1.5 degrees a second either way: a brake on X / Y (motor
+  speed 0, bound 31.6; the cage 252.8); 3 "locked" (bound 3160.6), entered by the object's command 0 and left for 2 by
+  trigger 1 with parameter 1.0. `ca_pu_block_grapple` also limits its hinge to +-20 degrees and its Y to -632 .. 3998.
+  So a block is no grid object: it slides anywhere on the floor, turns about its own vertical, falls where the floor
+  ends (Z is free) and is stopped by whatever its box meets. It carries one `ledgegrab` loop round its top edge
+  ("Objects' ledges").
+- **Her strength** [O scripts]: the blocks' scripts answer vt 49 (the PushPull entry, "Thor's gauntlets") with
+  `larabase` 35 as the Thor mechanisms do: `ca_pu_block_a` sets her pull strength to 1.4 (measured in ours while she
+  grips 6504).
+- **The move** [O tru.exe]. The PushPull state is the one of "Thor's gauntlets": entry 0x73F4D0 builds the "PushPull
+  Proxy" body at her feet (half extent +0xC94 = 101.1, mass +0xC98 = 0.125 of a body's [U whose: 0x4D8C70's object],
+  layer flags 0xF / 7) and binds it to the engaged body (0x4E1260 at the record's anchor, +0xC9C = 25 [U]); each frame
+  0x74AC00 turns the stick into a velocity for it and 0x73F390 applies a quarter of the velocity error x mass as an
+  impulse, at most min(mass x 0.7585 (+0xC84), 142.2 (+0xC88)) x strength; 0x74AA40 feeds her clip blend with the
+  proxy's velocity in her frame over +0xC7C and plays the clip at 0.3 (+0xC74) .. 1.2 (+0xC78) of its rate as the
+  speed goes 0 .. 23.7 (+0xC70).
+  The direction [O 0x6F1450 / 0x6F14B0, arcs +0xC8C = 60 / +0xC90 = 30 degrees]: a stick within 30 degrees of her
+  facing pushes straight ahead, one within 15 degrees of straight back pulls straight back, and in between the
+  velocity is her forward direction turned toward the stick's side by 180 x (angle - 30) / (165 - 30) degrees: a stick
+  square to her moves the body 80 degrees off forward. Its length is the stick's times the speed, min(23.704 (+0xC7C)
+  x strength, 2054.36 (+0xC80) x strength / M): 33.2 for 6504, units a 30 Hz frame [I, fitted to the trace below].
+  Letting go [O 0x73F900 "PlayerSC_PushPull::MustDetach"]: the state ends when the proxy is more than 63.2 (+0xCA0,
+  20 cm) level or 15.8 (+0xCA4, 5 cm) in height from its anchor on the body, when their relative speed passes +0xCB4
+  (0.3) or their headings part (+0xCA8 / +0xCAC / +0xCB0 = 10 / 25 / 25 degrees) [U the last two: not implemented].
+- **Ours** (`World::pushUberHandle`, `game::pushDirection`, `game::pushDrive`, `physics::Joint3`): the name rule
+  (`pu_block`, `rb_pushblock`, `pushable` = `script::Kind::Block`) and the kinematic stand-in of src/script (a script
+  offset moved 120 units a second along the block's two axes, stopped by one terrain ray) are gone. The block is the
+  body of its three-axis joint on the physics scene (Jolt: its box, translation only, gravity, the floor's friction;
+  `Scene::setJoints3`), gripped by its record like every push / pull object: Interact pressed inside the record and
+  held, `obj_block_grab`, then the stick drives the body with the velocity and impulse above (one bound for the
+  vector, `Scene::driveJoint3`: an impulse on the body each step, a quarter of the error shared with the proxy = 1 / 36
+  of it, at most 1 / 9 of 0.7585 x strength units a frame) along / across HER facing
+  (she is not turned to the block's faces any more), `obj_block_front / _back / _left / _right` while it moves,
+  `obj_block_idle` while it does not, `obj_block_release` when the key is let go [I which clip set: the obj_block set
+  on a free body whose record asks for no gear, the thor set otherwise; the code choosing is not found]. It collides
+  with the level, the other colliders and the other bodies, so a wall or a step stops it and a block pushed beside a
+  wall only slides along it; past an edge it falls, and she lets go by MustDetach's two distances (measured between
+  her and her grip point [I]). She follows the body with her own collision (`Player::step`), and what she cannot
+  follow the body gives back (a wall behind her on a pull) [I: the original's proxy, which collides as she does, is
+  not a body of ours]. A braked block (states 1 / 3) takes the brake's bound off her impulse. The grapple drags
+  `ca_pu_block_grapple` by the same body: toward her, at most 240 units a second [I], with her push's impulse.
+  A block weighs on a pressure plate through its contacts (`Physics.PushBlockWeighsOnAPlate`: plate layer x the
+  three-axis bodies), Lara stands on it and is carried by it as on any collider, its ledge loop rides it
+  (`World::tickObjectMarkup`), and trigger volumes / planes that track instances see it where it stands
+  (`script::Runtime::tickTrackedInstances`: origin + body motion).
+  Fixed on the way: a section's frame applied the joint motion of model 0 twice (`World::uberSectionFrame`), so a
+  record was left behind by a body moved farther than its radius.
+  Saves: the body is in the scene blob and `joints3` (as the Thor pillars'); a save from before (a block's script
+  offset) loads with the joint at that offset (`World::prepareUber`).
+- **Measured in tru.exe** [O Wine, 2026-11-10: `openunderworld-work/gameplaygoal/pushblocks/wine2.sh`, trace
+  `wine2.txt` trial a; block 6504 in l4_ballcourt, Lara 300 from its centre facing it, Interact held from 0.3 s]:
+  with the stick forward from 2.03 s she goes straight along her facing with a **constant acceleration**: 20.6 units
+  after 0.40 s, 75.4 after 0.80 s, 160.2 after 1.20 s, 231.3 after 1.47 s (d = a t^2 / 2 with a = 215 .. 255 units/s^2;
+  about 300 units a second by then and still gaining); pulling back (stick back from 6.53 s) the same: 113.8 after
+  0.98 s, 270.3 after 1.58 s, 476.9 after 2.18 s (a = 200 .. 237, 370 units a second, no ceiling seen). After 260
+  units of the push her heading and path turn 21 degrees within 0.4 s (the block turning on its hinge as it meets the
+  wall it stands by [I]) and she stays gripped. The parent instance of the block (`pole dump 6504`) never moves: the
+  sections are instances of their own, so the block's own speed was read from her (she is bound to it).
+  **The law as ours has it now** [I, fitted; the decoded functions with these units]: velocities are per 30 Hz frame
+  (asked: 23.704 x 1.4 = 33.2 units a frame = 995 units a second, not reached within the trace), the impulse and its
+  bound are the PROXY's (0x73F390 reads the mass of the body it pushes: M = 0.125 x 90 kg) per 1/60 s step, and the
+  proxy is bound to the block, so the pair gains M x 0.7585 x 1.4 / (m + M) = 0.118 units a frame each step =
+  **212 units/s^2** (measured 190 .. 255; `GameReal.PushBlockGainsSpeedAsTheOriginal`: 231 units after 1.47 s pushed,
+  477 after 2.18 s pulled, within 10 %). The floor takes nothing while she pushes or holds it (the body's friction
+  is 0 in `Scene` then; the motion is impulse-limited both ways) [I]; let go, the floor's friction is back. Without the stick the velocity asked is zero with the same bound (0x74AC00 runs every
+  frame of the state). Let go, the block is at rest within the second (`GameReal.PushBlockIndependentOfRenderRate`;
+  [I] by the brake of its locked state 3 and the floor's friction).
+  What the trace does not settle [I / U]: whose mass 0x4D8C70 returns at the proxy's creation (90 kg, the block's two
+  sections, fits; 30 or 60 would give 76 or 147 units/s^2); whether the bound is per rendered frame (the trace ran at
+  60 Hz); how a brake or a joint's friction counts against her (the towers' and doors' thresholds above are the
+  earlier reading on the object's own mass); the quick stop with the stick let go while gripped (trial c: 171 -> 44
+  units a second in 0.15 s, faster than the bound's 212 units/s^2; the block was turning then, so its state 1 brake,
+  31.6 a step = 632 units/s^2 on 90 kg, may be what stopped it); the 21 degree turn at the wall.
+- **Not done** [U / I]: the block's turn about its hinge (pushed off centre or along a wall the original's box turns
+  and state 1 brakes it; ours keeps its heading, so the brake never comes on by itself); the proxy constraint and the
+  two other MustDetach conditions; the stick is read raw, not against the camera; whether the key must stay held
+  (trial b, a tapped key, was not placed correctly); she keeps `obj_block_idle` while a block she holds without the
+  stick still slides.
 
 ## Natla (l7_yggdrasil_end, the final fight)
 
@@ -1292,7 +1399,8 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
 plan and writes the actions it gave as an input script; the script replays the same ticks (each value round-trips
 through its text, the stick is re-aimed every 4 ticks in 0.05 steps from the camera's yaw, as `World::tick` maps it).
 Plan lines: `go X Y [R] [walk]`, `engage UID [X Y] [walk]` (to the nearest of its engagement records,
-`World::engagementCentres`, until `World::engaged` names it), `face YAWDEG`, `press [ACTION]` (6 ticks held, 6
+`World::engagementCentres`; carrying a portable the nearest of kinds 3 / 5 / 7, the only ones that admit her then;
+until `World::engaged` names it), `face YAWDEG`, `press [ACTION]` (6 ticks held, 6
 released; `press` picks up / inserts, `press drop` puts a carried object down, `press grenade` throws it: follow each
 with a `wait` for its clip), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
 heading; ACTION pressed AT seconds in: running jumps), `push FORWARD RIGHT SECONDS [ACTION]` (ACTION, default interact,
@@ -3143,13 +3251,8 @@ Ours:
   `State::Use` with the input locked (move, jump, drop, interact, grapple, weapons); Idle at its end. The use handler
   still fires when the switch's own clip ends (src/script), inside her clip. Clip-less switches (pole lever 6502) play
   `obj_pushbutton` as she stands (position and heading kept) and fire at once [I].
-- Push blocks: interact held within reach grips (`State::Block`, `obj_block_grab`, turned to the block's own horizontal
-  axis closest to her facing [I: the block's faces; no grid data found]); the block moves only after the grab clip
-  (where she cannot grip — swimming, in the air — the stick moves it at once, as before); pushing plays
-  `obj_block_front`, pulling `obj_block_back`, standing `obj_block_idle` (looped) while the block's motion carries her
-  (no platform carry from it meanwhile); letting go plays `obj_block_release` (State::Use). Uber objects pushed along a
-  level prismatic joint (l7 Thor towers) use the same clips facing the joint axis; uber objects that are also script
-  push blocks (`ca_pu_block_a`) are moved by src/script only (both moved them before).
+- Push blocks: "Push and pull objects" (they are gripped by their push / pull record and moved as bodies on the
+  physics scene; the grab clip plays first, the stick moves the block after it).
 - Pickups: taking an item or ammo plays `gear_weapon_pickup` (crouched: `_crouch`) where she stands, facing it [I].
 - Inserting a portable (pole into a pole hole) [O tru.exe]: carrying a portable, Lara's chart action 0x4D (0x716F30)
   posts INSTANCE message 0x165 with her engaged object (Lara +0x854 +0xA0) to the portable she holds (+0x858). The
@@ -3196,7 +3299,10 @@ Ours:
   run, then 15 s), the throne is also a press plate (`multibody` joint, ranges -150..-90 "in position" / -30..10) that
   the tied weight bears down on: its prismatic uber joint 0 (world → section 0, created in state 0) is that joint, so
   the plate's body poses the throne's model and collision (`World::uberModelJoint` skips plates; the unweighted uber
-  joint used to hold the drawn throne up while only the plate sank [I: one Havok constraint in tru.exe]).
+  joint used to hold the drawn throne up while only the plate sank [I: one Havok constraint in tru.exe]); the
+  section's frame (`World::uberSectionFrame`: its records and the attach marker the scepter's weight presses at)
+  rides the plate too, not the uber joint: with the uber joint's frame the weight stayed at the top, its ray lost
+  the plate 63 units down and the throne hung at -62.9.
   `ar_pu_cog_wheel_level_1a` failed to load before (two unused transition slots -1 -> -1);
   `ca_uo_thor_statue_arms` (l4_pool) has no engagement set: not a receptacle. l7_arctic_sea's statue arms, gem holes and
   thor gears lie under water: Lara carries, inserts and takes out portables swimming too (records there are spheres

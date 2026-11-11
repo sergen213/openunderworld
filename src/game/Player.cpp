@@ -327,7 +327,7 @@ bool Player::use(std::string_view clip, vec3 pos, float yaw) {
 }
 
 // [O] lara.drm requests 60 obj_block_grab, 61 obj_block_idle, 62 / 58 obj_block_front/left/right/back, 1452
-// obj_block_release; the clips have no root motion. [I] front = pushing, back = pulling; the sideways clips are unused.
+// obj_block_release; the clips have no root motion. [I] front = pushing, back = pulling, left / right = sidestepping.
 // [O] lara.drm animations 1659-1665 thor_idle / _engage (15 frames) / _disengage (9) / _backward / _forward / _left /
 // _right: their root motion (406-582 units a second) is not applied, the pushed object carries her (World::tick); [I]
 // they are her PushPull state's clips (the chart's requests are not decoded), played at their own rate.
@@ -353,8 +353,10 @@ void Player::grip(vec3 axis, int moving, bool thor) {
     if (s_.clip == grab && !clipDone()) return;
     if (thor)
         play(moving == 1 ? "thor_forward" : moving == -1 ? "thor_backward" : moving == 2 ? "thor_left" : moving == -2 ? "thor_right" : "thor_idle", true);
-    else
-        play(moving > 0 ? "obj_block_front" : moving < 0 ? "obj_block_back" : "obj_block_idle", true);
+    else {
+        const char* const side = moving == 2 ? "obj_block_left" : "obj_block_right";
+        play(moving == 1 ? "obj_block_front" : moving == -1 ? "obj_block_back" : moving == 0 ? "obj_block_idle" : anims_.find(side) ? side : "obj_block_front", true);
+    }
 }
 
 // Collide-and-slide of a capsule [pos + bottom + r, pos + height - r]. `horizontalNormals` flattens

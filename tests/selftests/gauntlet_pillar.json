@@ -3,7 +3,7 @@
   "name": "gauntlet_pillar",
   "chapter": "Protected by the Dead (l3_secretchamber): the freestanding serpent pillar 4674 cannot be gripped bare-handed; with the right gauntlet Interact grips it and the stick drags it over the crypt floor",
   "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/manor8.html",
-  "note": "docs/GAMEPLAY.md Thor's gauntlets (matrix requirements C11-28 / C11-29). ma_pu_thor_pillar 4674: its push / pull record (uber section 0, a sphere r 948) names g_gauntletright [O data]; the pillar rides a three-axis joint (uber joint type 7 = engine joint 10, tru.exe 0x4E0F40: free along X / Y / Z, rotation kept), so it goes where she pushes it: gripping runs its script's vt 49 (pull strength 3), the stick's forward pushes it along her facing at min(23.704 x 3, 2054.36 x 3 / M) = 71 units/s, letting go leaves it where it is.",
+  "note": "docs/GAMEPLAY.md Thor's gauntlets (matrix requirements C11-28 / C11-29). ma_pu_thor_pillar 4674: its push / pull record (uber section 0, a sphere r 948) names g_gauntletright [O data]; the pillar rides a three-axis joint (uber joint type 7 = engine joint 10, tru.exe 0x4E0F40: free along X / Y / Z, rotation kept), so it goes where she pushes it: gripping runs its script's vt 49 (pull strength 3), the stick pulls it back along her facing, gaining 3 x 0.7585 / 9 units a frame each step (455 units/s^2: docs/GAMEPLAY.md Push and pull objects); letting go leaves it where it is. Pulled, not pushed: 99 units ahead of where she grips it her own collision stops her (she slides aside and the pillar gives back what she cannot follow), which is what had the earlier forward push fall short of its 150 units.",
   "level": "l3_secretchamber",
   "spawn": [-26322, -420, -1800, 90],
   "steps": [
@@ -17,11 +17,11 @@
      ]},
     {"step": "grip_and_push",
      "fixtures": [{"give": "g_gauntletright"}],
-     "plan": ["engage 4674 walk", "push 1 0 4", "wait 0.2"],
+     "plan": ["engage 4674 walk", "push -1 0 1.6", "wait 0.2"],
      "duration": 40,
      "expect": [
        {"visits": ["block"]},
-       {"clips": ["thor_engage", "thor_forward"]},
+       {"clips": ["thor_engage", "thor_backward"]},
        {"probe": "step.distance", "min": 150, "note": "she goes with it"}
      ]},
     {"step": "it_stays",

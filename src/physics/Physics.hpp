@@ -193,6 +193,7 @@ struct Joint1 {
     bool motor = false;
     float push = 0;             // next step only: velocity per frame imposed from outside (Lara pushing), over gravity and motors
     float pushBound = 0;        // the push's impulse bound per 1/60 s step, as `force` (<= 0: unbounded)
+    bool grip = false;          // Lara holds it this step: `push` is its target speed even at 0 (cleared by step)
 };
 // Three-axis translational joint of a body against the world (tru.exe engine joint 10, 0x4E0F40: uber joint type 7,
 // the Thor pillars; docs/formats/PHYSICS.md "Uber joints"): the body keeps its rotation and moves along the world's
@@ -211,6 +212,8 @@ struct Joint3 {
     float friction = 0;                     // joint friction per axis, as a motor bound [I units]
     vec3 push{0};                           // next step only: velocity per frame imposed on X / Y (Lara pushing)
     float pushBound = 0;                    // its impulse bound per 1/60 s step (<= 0: unbounded)
+    bool grip = false;                      // Lara holds it this step: `push` is its X / Y target even at 0
+    float pushGain = 1;                     // the share of the velocity error a step takes before the bound (0x73F390: 0.25 on the proxy)
 };
 // Gravity, units per 30 Hz frame^2 (Lara's, tru.exe 5.72443).
 inline constexpr float kJointGravity = 5.72443f;

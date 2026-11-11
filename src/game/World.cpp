@@ -303,7 +303,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ng_land_hard", "ng_land_rolling", "ng_running_land_stumble", // landings by fall height / Crouch (Player::land)
     "ledgeb_climbupflair", "ledgeb_right_hustle", "ladder_climb_up_fast", // hand over hand faster with Interact (Player::tick Shimmy, Player::ladder)
     "ledgeb_bad_attach_M", "ledgeb_bad_attach_recover", // saving grab (Player::tryGrab)
-    "obj_block_grab", "obj_block_idle", "obj_block_release", "obj_block_front", "obj_block_back", // push blocks (Player::grip)
+    "obj_block_grab", "obj_block_idle", "obj_block_release", "obj_block_front", "obj_block_back", "obj_block_left", "obj_block_right", // push blocks (Player::grip)
     "thor_engage", "thor_idle", "thor_disengage", "thor_forward", "thor_backward", "thor_left", "thor_right", // push / pull records
     "gear_weapon_pickup", "gear_weapon_pickup_crouch", // pickups (World::collectPickups)
     "death_fall_normal", "death_toknee", "death_drown", // combat (Combat.cpp)
@@ -642,7 +642,7 @@ void World::tick(const Actions& input) {
     const vec2 fwd(std::cos(cam_.yaw), std::sin(cam_.yaw)), right(std::sin(cam_.yaw), -std::cos(cam_.yaw));
     vec2 move = right * a.move.x + fwd * a.move.y;
     if (glm::length(move) > 1) move = glm::normalize(move);
-    if (script_.holding() || uberGrip_ != vec3(0)) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
+    if (uberGrip_ != vec3(0)) move = vec2(0); // gripping a push / pull record: the stick moves the object (pushUberHandle)
     if (combat_.headShot >= 0) move = vec2(0); // the head shot move plays out (Combat.cpp)
     if (combat_.manualAim) a.walk = true, a.sprint = false; // [I] manual aim: she steps, she does not run
     // Control disabled by a script (larabase 56): reveal cameras, and scripted moments without one (l3_bedroom_hall plane
@@ -686,11 +686,15 @@ void World::tick(const Actions& input) {
     else if (uberGrappleOff(player_.state().grappleUid)) player_.releaseGrapple(false); // its state dropped the target (action 0x1A)
     else if (a.interact)
         if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid)); target) {
-            if (target->kind == script::Kind::Block) {
-                vec3 delta = player_.state().pos - (target->pos + target->offset);
+            if (auto* slide = uberSlide(target->uid)) { // a body free on the floor (ca_pu_block_grapple): the rope drags it to her
+                vec3 delta = player_.state().pos - (target->pos + slide->x);
                 delta.z = 0;
-                if (const float distance = glm::length(delta); distance > 1.0f)
-                    target->offset += delta * std::min(240.0f * float(dt), distance) / distance; // [I] braced pull speed
+                float brake = 0;
+                for (size_t k = 0; k < 2; ++k)
+                    if (slide->motor[k] && slide->speed[k] == 0 && slide->force[k] > 0) brake = std::max(brake, slide->force[k]);
+                const PushDrive d = pushDrive(std::max(slide->mass, 1.0f), script_.pullStrength(), brake);
+                if (const float distance = glm::length(delta); distance > 1.0f && d.speed > 0) // [I] braced pull speed 240 units/s,
+                    slide->push = delta * (std::min(240.0f * float(dt), distance) / distance / float(dt) / 30.0f), slide->pushBound = d.impulse; // her push's impulse
             } else if (pullGrappled(a)) { // the rope drags the target's own joint (Objects.cpp)
             } else if ((pullT_ += dt) >= 1.0f) { // [I] a one-second heave runs the target's pull handler, then lets go
                 if (script_.grapplePulled(target->uid)) lastPulled_ = target->uid;
@@ -729,7 +733,7 @@ void World::tick(const Actions& input) {
     // is no motion, so it crosses no trigger plane [I] (else the pull-up out of l3_bedroom_hall's pit, ledge 969,
     // "falls" through kill plane 4379 that lies 231 under the ledge top).
     if (player_.takeReseat()) script_.playerJumped();
-    script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact, engagedUse(a.interact && !interactHeld_)}, &col_);
+    script_.tick({player_.state().pos, a.interact, engagedUse(a.interact && !interactHeld_)});
     tickTimes.scriptMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - scriptStart).count();
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.
@@ -789,8 +793,9 @@ void World::tick(const Actions& input) {
     // Close combat (Melee.cpp): an interact press that no pickup, portable, switch, block or handle took kicks / swings.
     if (!onBike)
         tickMelee(a, interactPress && pickedUp_.empty() && held_ == heldBefore && inserted_.size() == insertedBefore && !script_.used() &&
-                         !script_.holding() && !uberHandle_.uid && uberGrip_ == vec3(0) && player_.state().state != State::GrapplePull, dt);
-    vec3 carry = script_.carried();
+                         !uberHandle_.uid && uberGrip_ == vec3(0) && player_.state().state != State::GrapplePull, dt);
+    vec3 carry{0};
+    bool pushed = false; // she moved with what she grips this tick
     if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) { // she follows the pushed body
         const vec3 p = player_.state().pos;
         if (j->hinge) { // around its axis (calendar rings: World::pushUberHandle), on her floor
@@ -802,18 +807,31 @@ void World::tick(const Actions& input) {
     }
     if (const auto rt = uberPush3_.uid ? uberRuntime_.find(uberPush3_.uid) : uberRuntime_.end(); rt != uberRuntime_.end())
         if (const auto j = rt->second.joints3.find(uberPush3_.joint); j != rt->second.joints3.end()) { // ... on her floor
-            const vec3 moved = j->second.x - uberPush3_.before;
-            carry += vec3(moved.x, moved.y, 0);
+            // tru.exe drives a proxy body at her feet that is bound to the object's body and collides as she does
+            // (0x73F4D0 "PushPull Proxy", 0x74AC00); ours drives the object's body, she follows it with her own
+            // collision, and what she could not follow (a wall behind her on a pull) the body gives back [I].
+            const vec3 moved = j->second.x - uberPush3_.before, want(moved.x, moved.y, 0);
+            if (want != vec3(0) && player_.state().state == State::Block) {
+                const vec3 from = player_.state().pos;
+                player_.step(want, float(dt));
+                const vec3 got = player_.state().pos - from;
+                const float asked = glm::length(want), went = glm::dot(got, want) / asked;
+                if (went < 0.75f * asked) j->second.x -= want * (1.0f - std::max(went, 0.0f) / asked), j->second.v.x = j->second.v.y = 0;
+                pushed = true;
+            }
         }
-    if (carry != vec3(0)) { // Lara follows the block she pushes/pulls
+    if (carry != vec3(0)) { // Lara follows the joint she pushes / pulls
         auto s = player_.state();
         s.pos += carry;
         player_.restore(s);
+        pushed = true;
     }
-    const vec3 grip = script_.gripAxis() != vec3(0) ? script_.gripAxis() : uberGrip_;
     if (!onBike) {
-        const bool handle = uberHandle_.uid != 0; // a push / pull record: her PushPull state's clips
-        player_.grip(grip, handle ? (carry == vec3(0) ? 0 : uberMoving_) : carry == vec3(0) ? 0 : glm::dot(carry, grip) > 0 ? 1 : -1, handle);
+        // Her PushPull state's clips [I which set: lara.drm has two, requests 1450-1453 obj_block_* and 1454-1457 thor_*,
+        // and the code picking one is not found]: the obj_block set on a body free on the floor whose
+        // record asks for none of Thor's gear (the push blocks), the thor set on everything else (the gear's pillars, joints).
+        const bool thor = !(uberHandle_.hold && !uberHandle_.gear);
+        player_.grip(uberGrip_, pushed ? uberMoving_ : 0, thor);
     }
     enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height, player_.tuning().radius, player_.state().water >= 0},
                   [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, wdt);

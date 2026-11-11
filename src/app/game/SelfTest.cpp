@@ -689,7 +689,7 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "in") return num(w.insertedIn(*id));
         if (f == "stowed") return std::ranges::find(w.stowedPortables(), *id) != w.stowedPortables().end();
         if (f == "unit") return o->unit; // the unit the instance lives in (it travels with Lara while she carries it)
-        if (f == "pos") return component(o->pos + o->offset, p[3]);
+        if (f == "pos") return component(*w.objectOrigin(*id), p[3]);
         if (f == "body") return component(glm::vec3(o->body[3]), p[3]); // a door's / slider's own motion from rest
         if (f == "graph") return o->graph && o->graph->set->graph ? num(o->graph->set->graph->states[size_t(o->graph->state)].index) : Value();
         if (f == "joint") return o->joint ? num(o->joint->position) : Value();

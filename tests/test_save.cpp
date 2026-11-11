@@ -1147,7 +1147,7 @@ TEST(StreamReal, ThreeAxisJointSaveLoad) {
     push.interact = true;
     for (int i = 0; i < 60; ++i) w.tick(push); // grips (thor_engage)
     push.move = {0, 1};
-    for (int i = 0; i < 90; ++i) w.tick(push);
+    for (int i = 0; i < 30; ++i) w.tick(push); // gaining 0.2528 units a frame each step (her strength 3): 59 units on
     const auto* j = w.uberJoint3(4674, 1);
     ASSERT_TRUE(j);
     ASSERT_GT(glm::length(j->x), 40.0f) << "pushed";
@@ -1207,6 +1207,49 @@ TEST(StreamReal, ThreeAxisJointAtRestSaveLoad) {
     }
     EXPECT_EQ(a->stateHash(), b->stateHash());
     EXPECT_EQ(a->serializeObjects(), b->serializeObjects()) << "the recorded Jolt scene included";
+}
+
+// A save from before push blocks were bodies on the physics scene (up to 0.44: a pushed block's displacement was its
+// script offset, its uber state had no three-axis joint and the scene no body for it) loads with the block standing
+// where that save had pushed it: l4_ballcourt 6504 (docs/GAMEPLAY.md "Push and pull objects").
+TEST(StreamReal, PushBlockOffsetOfOlderSavesBecomesItsJoint) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    const auto make = [&] {
+        auto w = std::make_unique<game::World>(load, "l4_ballcourt", anims, game::Spawn{{-20066, 14150, 3540}, 0});
+        w->script().setBigfile(&bf);
+        w->onCinematic = [](const std::string&, bool) {};
+        return w;
+    };
+    auto old = make();
+    for (int i = 0; i < 30; ++i) old->tick({});
+    const auto* block = old->script().find(6504);
+    ASSERT_TRUE(block && old->slide(6504));
+    const vec3 pushed(std::cos(glm::radians(21.0f)) * 400.0f, std::sin(glm::radians(21.0f)) * 400.0f, 0); // along the wall it stands by
+    const_cast<script::Object*>(block)->offset = pushed;
+    auto saved = save::capture(*old);
+    ASSERT_TRUE(saved.objects.at("uber").at("6504").contains("joints3"));
+    saved.objects.at("uber").at("6504").erase("joints3");
+    saved.objects.erase("physics");
+
+    auto w = make();
+    for (int i = 0; i < 30; ++i) w->tick({});
+    save::apply(save::parse(save::serialize(saved)), *w);
+    for (int i = 0; i < 60; ++i) w->tick({});
+    ASSERT_TRUE(w->slide(6504));
+    EXPECT_LT(glm::length(glm::vec2(w->slide(6504)->x - pushed)), 1.0f) << "the joint stands at the saved offset";
+    EXPECT_NEAR(w->slide(6504)->x.z, 0, 2.0f) << "on the court's floor";
+    EXPECT_EQ(w->script().find(6504)->offset, vec3(0)) << "moved once, not twice";
+    EXPECT_LT(glm::length(*w->objectOrigin(6504) - (w->script().find(6504)->pos + pushed)), 2.0f);
+    for (const auto& d : w->collision().dynamics)
+        if (d.id == 6504) EXPECT_LT(glm::distance(vec3(d.transform[3]), *w->objectOrigin(6504)), 1.0f) << "its collision with it";
+    const auto bytes = save::serialize(save::capture(*w)); // and what it saves now loads to the same world
+    auto again = make();
+    save::apply(save::parse(bytes), *again);
+    for (int i = 0; i < 60; ++i) w->tick({}), again->tick({});
+    EXPECT_EQ(again->serializeObjects(), w->serializeObjects());
 }
 
 // A death restores the checkpoint save (Stream.DeathRestoresTheCheckpointSave) on a real level, l3_chapel: with
