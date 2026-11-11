@@ -1,0 +1,63 @@
+{
+ "version": 1,
+ "name": "ch20_helheim01_rune_symbols",
+ "chapter": "20 Yggdrasil: the rune symbol on the entrance's frame (docs/matrix/20_yggdrasil.md C20-02, C20-08)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html",
+ "note": "l7_helheim01 from checkpoint 8939 on the entry ledge. Rune symbol 8995 (ar_uo_rune_wall_switch_d, an uber object) is on the west pillar of the door frame, 480 over the ledge, in the alcove beside it. Its one section offers a kind-8 'use' record in state 1 (a cylinder of r 553.1 and 632.1 high centred 158 under the symbol, cone 95 degrees about its facing): Interact inside it starts transition 1 -> 0 (trigger 20, kind 8), whose state event runs the script's vt 54 -> vt 55 -> dispatcher 8997 vt 65, which counts the four symbols [O bytecode: vt 63-66 set a flag each, vt 62 stops eitr fall 8998 (vt 56) for the 60 s of its clock once all four are set]. One symbol alone leaves the fall running.",
+ "level": "l7_helheim01",
+ "spawn": [
+  2.7,
+  -416.8,
+  1896.1,
+  -90
+ ],
+ "steps": [
+  {
+   "step": "to_the_symbol",
+   "plan": [
+    "go 0 -2850 80",
+    "go -2400 -2850 80",
+    "go -2400 -2300 80",
+    "go -2010 -2232 40",
+    "face 0"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "player.grounded",
+     "eq": true
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "use_it",
+   "plan": [
+    "press",
+    "wait 5"
+   ],
+   "duration": 10,
+   "expect": [
+    {
+     "calls": [
+      "8997:65"
+     ],
+     "note": "the symbol reports to the dispatcher"
+    },
+    {
+     "probe": "object.8995.uber.0",
+     "eq": 0,
+     "note": "used: its record is withdrawn (action 0x1D)"
+    },
+    {
+     "probe": "object.8998.uber.0",
+     "eq": 0,
+     "note": "one of four: the eitr fall runs on"
+    }
+   ]
+  }
+ ]
+}

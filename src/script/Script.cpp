@@ -2718,6 +2718,13 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             }
             // Receptacles have no use engagement (only kind-5 insert records): l4_ballcourt pole lever 6502 waits for its pole.
             if (o.kind == Kind::Switch && o.state == 0 && pressed && !receptacleGraph(o.name)) {
+                // By the "use" record she engages [O 0x719520 / 0x6F3C60: the record's cylinder and facing cone, three
+                // points of hers; World::engagedUse], whatever is nearer. The reach below is the rule of a Runtime
+                // without a World (TickInput::engagedUse -1) and of switches without a record [I].
+                if (o.useRecords && in.engagedUse >= 0) {
+                    if (in.engagedUse == o.uid) best = -1.0f, useSwitch = &o;
+                    break;
+                }
                 // Reach is measured from the switch or from where she stands to use it (useDistance along its local
                 // horizontal axes, World::useSwitchClip), whichever is nearer [I]: a wall switch's own collision
                 // keeps her farther from its origin than kReach (l1_kraken_room 30: 217 with her back to the hall).

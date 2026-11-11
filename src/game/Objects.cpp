@@ -960,6 +960,13 @@ bool World::pushUberHandle(const Actions& a, float speed) {
             }
             uberTrigger(e.uid, size_t(e.section), 20, uint32_t(e.record->kind));
             script_.engage(e.uid, e.record->segment, e.record->kind, true);
+        } else if (e.record && e.section >= 0 && e.record->kind == 8 && o) {
+            // An uber section's "use" record (the rune symbols ar_uo_rune_wall_switch_*: one section, kind 8, a cylinder
+            // of r 553.1 and 632.1 high centred 158 under the symbol, cone 95 degrees about its facing; offered in state 1
+            // only, action 0x1D). Her use posts 0x158 to the section she engages [O 0x701310 -> 0x6D5AC0]: trigger 20
+            // with the record's kind starts the transition (1 -> 0, its clip), whose state event reaches the script's
+            // vt 54 -> vt 55 ("activated"). [I] her clip: the object's own Lara clip as the class-6 switches'.
+            if (uberTrigger(e.uid, size_t(e.section), 20, 8)) useSwitchClip(*o);
         }
     }
     if (!uberHandle_.uid) return false;
@@ -2895,20 +2902,33 @@ void World::collectJointSounds(float dt) {
 }
 
 // Lara's use of anim-graph objects goes through their "use" engagement records (kind 8: tru.exe 0x719520 picks the
-// record she engages; her use posts 0x166 / 0x168 to that instance, 0x6B4090): objects carrying such records are marked
+// record she engages; her use posts 0x166 / 0x168 to that instance, 0x6B4090), and so does her use of switches (class 6:
+// one kind-8 record in the physical record's default set +0x70; ms_ei_switch_oneway_wall a cylinder of r 553.1 and 632.1
+// high from its origin up, cone 95 degrees about its front): objects carrying such records are marked
 // (script::Object::useRecords) and the one she engages on this press is returned (0 none). Empty-handed only: a held
 // portable admits kinds 3 / 5 / 7 (World::engaged). l1_seafloor eye pieces 231-233 [O data: one kind-8 record each].
 int32_t World::engagedUse(bool pressed) {
     if (!pressed) return 0;
     for (const auto& o : script_.objects()) {
-        if (o.kind != script::Kind::Scripted || !o.graph || o.useRecords) continue;
+        const bool sw = o.kind == script::Kind::Switch;
+        if ((!sw && (o.kind != script::Kind::Scripted || !o.graph)) || o.useRecords) continue;
+        // switches: the class-6 ones by their record (the default set, physics::loadObjectPhysics); an uber object named
+        // as one (the rune symbols) only through its sections' records (pushUberHandle), never by reach
+        if (sw && prepareUber(o)) {
+            const_cast<script::Object&>(o).useRecords = true;
+            continue;
+        }
         const auto* p = objectPhysics(o.name);
         if (p && std::ranges::any_of(p->engagements, [](const auto& set) { return std::ranges::any_of(set.records, [](const auto& e) { return e.kind == 8; }); }))
             const_cast<script::Object&>(o).useRecords = true;
     }
-    if (held_ || !carryReady()) return 0;
+    if (held_) return 0;
     const Engaged e = engaged();
-    return e.record && e.record->kind == 8 && e.section < 0 ? e.uid : 0;
+    if (!e.record || e.record->kind != 8 || e.section >= 0) return 0;
+    // switches as before the records: in whatever state her press comes (walking up, landing, swimming at the Arctic
+    // sea's wheels); the anim-graph objects standing or swimming [I: both]
+    const auto* o = script_.find(e.uid);
+    return (o && o->kind == script::Kind::Switch) || carryReady() ? e.uid : 0;
 }
 
 // A class-34 rigid body that is a grapple target (a model feature with kFeatureGrapple) and whose joint record has no

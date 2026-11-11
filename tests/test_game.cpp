@@ -10172,7 +10172,39 @@ TEST(Game, IkPassesStayOffOnTerrain) {
     EXPECT_NEAR(w.player().state().pos.z, 1000 * std::tan(glm::radians(15.0f)), 2.0f); // standing on the ramp
 }
 
-// ---- the Norse underworld's blockers (the eitr pit) ---------------------------------------------------------------
+// ---- the Norse underworld's blockers (rune symbols, the eitr pit) --------------------------------------------------
+
+// l7_helheim01, rune symbol 8995 (ar_uo_rune_wall_switch_d, an uber object) on the entrance frame's west pillar, 480
+// over the ledge. Its section offers one kind-8 "use" record in state 1 [O data: cylinder r 553.1, 632.1 high, centred
+// 158 under the symbol, cone 95 degrees about its facing]: Interact inside it starts the transition 1 -> 0 (trigger 20
+// with the record's kind, tru.exe 0x701310 -> 0x6D5AC0). The old reach rule (origin within 250 of her feet in height)
+// never used it.
+TEST(GameReal, RuneSymbolIsUsedThroughItsUseRecord) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto state = [](game::World& w) {
+        const auto* s = w.uberState(8995);
+        return s && !s->empty() ? int((*s)[0]) : -2;
+    };
+    const auto press = [&](game::World& w) {
+        for (int i = 0; i < 60; ++i) w.tick({});
+        EXPECT_EQ(state(w), 1) << "offered";
+        Actions a;
+        a.interact = true;
+        w.tick(a);
+        for (int i = 0; i < 240; ++i) w.tick({});
+    };
+    {
+        HazardWorld h("l7_helheim01", game::Spawn{{-2010, -2232, 1900}, 0.0f});
+        press(h.w);
+        EXPECT_EQ(state(h.w), 0) << "used from the ledge in front of it";
+        EXPECT_FALSE(h.w.health().dead());
+    }
+    {
+        HazardWorld h("l7_helheim01", game::Spawn{{2.7f, -416.8f, 1900}, glm::radians(-90.0f)}); // checkpoint 8939: 2600 away
+        press(h.w);
+        EXPECT_EQ(state(h.w), 1) << "out of its record: not used";
+    }
+}
 
 // The pit at the foot of the l7_yggdrasil halls' slide: water volume 8742's script sends its volume message 0x30
 // (6000, 30) once a second (`modifiable` 1, tru.exe 0x4A59F0 -> 0x6AC340: water record +0xBA / +0xBC), and the volume
