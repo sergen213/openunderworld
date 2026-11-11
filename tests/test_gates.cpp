@@ -3583,7 +3583,7 @@ TEST(ProgressionReal, ShipSinkingHallDoorOpensOnItsHallway) {
     back.move = {0, -1}; // the camera stands behind her (north): the stick back runs her south into volume 1176
     float most = 0;
     for (int i = 0; i < 400; ++i) {
-        w.tick(i < 40 ? back : game::Actions{});
+        w.tick(i < 70 ? back : game::Actions{}); // she turns round on the spot first (ng_turn_center, 28 ticks), then runs
         const auto now = collision();
         for (size_t k = 0; k < now.size() && k < closed.size(); ++k) most = std::max(most, glm::length(vec3(now[k][3]) - vec3(closed[k][3])));
     }

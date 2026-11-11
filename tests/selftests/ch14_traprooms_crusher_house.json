@@ -17,7 +17,7 @@
      "until": {"probe": "object.5890.joint", "min": 60},
      "expect": [{"probe": "step.seconds", "min": 1.5, "max": 2.6, "note": "shut for about 2 s"},
                 {"probe": "object.5885.joint", "max": 0.5, "note": "the last pair still shut: the wave runs ahead of her"}]},
-    {"step": "sprint_through", "input": ["0 sprint 1"], "plan": ["run 90 2.4"], "duration": 6,
+    {"step": "sprint_through", "input": ["0 sprint 1"], "plan": ["run 90 2.5"], "duration": 6,
      "expect": [{"clips": ["sprint_loop"]},
                 {"probe": "step.peak_speed", "near": 1927, "tol": 25, "note": "sprint_loop root motion [O Wine, self-test sprint]"},
                 {"probe": "player.pos.y", "min": -18500, "note": "past the last pair (5885 at y -18775, 588 deep)"},

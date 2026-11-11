@@ -31,7 +31,7 @@
   {
    "step": "jump_to_the_anchor",
    "plan": [
-    "run -168.2 1.6 jump 0.8"
+    "run -168.2 1.6 jump 0.95"
    ],
    "duration": 4,
    "until": {
