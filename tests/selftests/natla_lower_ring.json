@@ -1,0 +1,61 @@
+{
+ "version": 1,
+ "name": "natla_lower_ring",
+ "chapter": "Out of Time: a level start on the lower ring",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/20outoftime.html",
+ "note": "l7_yggdrasil_end entered on the lower ring (z 474.1), between the floor targets 8463 and 8464. The finale's pool 8309 fills its box up to z 2869.5 in the data and its constructor sets it to marker 8680 (z -11116.5) at once: on the first tick she is in water, then the surface is gone from over her (tru.exe 0x5D3860: class 0x400 once her root is over the surface) and she falls back onto the ring instead of treading the surface down through the goo volumes, whose poll (larabase 3, a kill) finds nothing. The lower ring's manager then has Natla throw at the floor targets of her zone; 883 units from either she is outside both blasts. docs/GAMEPLAY.md \"Natla\".",
+ "level": "l7_yggdrasil_end",
+ "spawn": [-3867.7, -3241.5, 600.0, 0.0],
+ "steps": [
+  {
+   "step": "the_pool_leaves_her_on_the_ring",
+   "duration": 3,
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "over": "min",
+     "min": 400,
+     "note": "she does not ride the surface down"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 474.1,
+     "tol": 2
+    },
+    {
+     "probe": "player.swimming",
+     "eq": false
+    },
+    {
+     "probe": "player.grounded",
+     "eq": true
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "the_goo_poll_finds_nothing",
+   "duration": 12,
+   "expect": [
+    {
+     "probe": "player.dead",
+     "over": "all",
+     "eq": false
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 474.1,
+     "tol": 2
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0,
+     "note": "between two floor targets: the balls burst 883 away"
+    }
+   ]
+  }
+ ]
+}

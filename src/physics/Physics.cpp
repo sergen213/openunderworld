@@ -16,6 +16,8 @@
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
@@ -84,27 +86,28 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
         head(o, p);
         p.id = at<uint16_t>(m, o + 4), p.radius = at<uint16_t>(m, o + 6);
         p.pos = {at<int16_t>(m, o + 8), at<int16_t>(m, o + 10), at<int16_t>(m, o + 12)};
-        p.mass = at<uint16_t>(m, o + 0x14), p.damage = at<int16_t>(m, o + 0x1C);
+        p.mass = at<uint16_t>(m, o + 0x14), p.damage = at<int16_t>(m, o + 0x1C), p.blast = at<int8_t>(m, o + 0x18);
     });
     list(1, kBoxStride, [&](uint32_t o, Prim& p) { // type 5
         p.kind = PrimKind::Box;
         p.size = vec(m, o), p.pos = vec(m, o + 0x10), p.rot = quatXyzw(m, o + 0x20);
         head(o + 0x30, p);
         p.id = at<uint16_t>(m, o + 0x34), p.mass = at<uint16_t>(m, o + 0x36), p.damage = at<int16_t>(m, o + 0x3E);
+        p.blast = at<int8_t>(m, o + 0x3A);
     });
     list(3, kCapsuleStride, [&](uint32_t o, Prim& p) { // type 10
         p.kind = PrimKind::Capsule;
         p.pos = vec(m, o), p.rot = quatXyzw(m, o + 0x10);
         head(o + 0x20, p);
         p.id = at<uint16_t>(m, o + 0x24), p.radius = at<uint16_t>(m, o + 0x26), p.length = at<uint16_t>(m, o + 0x28);
-        p.mass = at<uint16_t>(m, o + 0x2A), p.damage = at<int16_t>(m, o + 0x32);
+        p.mass = at<uint16_t>(m, o + 0x2A), p.damage = at<int16_t>(m, o + 0x32), p.blast = at<int8_t>(m, o + 0x2E);
     });
     // Slot 2 markers (tru.exe 0x46DA20, HInfo primitive type 8): +4 u16 id, +8 float3 position, +0x14 float3 Euler.
     const uint32_t nm = at<uint32_t>(m, h + 16);
     if (const auto p = cdc::internalPointer(m, h + 20); nm && p && nm <= 4096)
         for (uint32_t i = 0; i < nm; ++i) {
             const uint32_t o = *p + 0x20 * i;
-            markers.push_back({segment, at<uint16_t>(m, o + 4), vec(m, o + 8), vec(m, o + 0x14)});
+            markers.push_back({segment, at<uint16_t>(m, o + 4), vec(m, o + 8), vec(m, o + 0x14), at<uint16_t>(m, o + 6)});
         }
 }
 
@@ -544,7 +547,23 @@ struct Scene::Impl {
     void driveJoint3(Joint3E& e, const Joint3& j);
     std::vector<LinkE> links;
 
-    struct LooseE { int32_t id; JPH::BodyID body; vec3 com; };
+    struct LooseE {
+        int32_t id; JPH::BodyID body; vec3 com; const ObjectPhysics* physics = nullptr;
+        vec3 knockedAt{0}; float clear = 0; // Scene::knock: where, and how far it must get before walls hold it again
+    };
+    // A knocked body (Scene::knock; body user data 1) is held by the level's floors only (contact normal within 26
+    // degrees of vertical [I]) until it is clear of where it was knocked: tru.exe's ring door leaf (494 wide in a
+    // 485 .. 491 corridor, its foot 8 under the sill) yaws 0.6 rad within two frames of its squib and flies out of the
+    // corridor [O runtime]; what lets its Havok body through the walls is not decoded [U]. Jolt holds the same leaf by
+    // the corner it stands in (one contact 35 deep along (0, -0.54, 0.84)).
+    struct Contacts final : JPH::ContactListener {
+        JPH::ValidateResult OnContactValidate(const JPH::Body& a, const JPH::Body& b, JPH::RVec3Arg, const JPH::CollideShapeResult& r) override {
+            const bool knocked = (a.GetUserData() == 1 && b.GetObjectLayer() == kLayerSolid) || (b.GetUserData() == 1 && a.GetObjectLayer() == kLayerSolid);
+            if (!knocked) return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+            const bool floor = std::abs(r.mPenetrationAxis.NormalizedOr(JPH::Vec3::sAxisZ()).GetZ()) >= 0.9f;
+            return floor ? JPH::ValidateResult::AcceptContact : JPH::ValidateResult::RejectContact;
+        }
+    } contacts;
     std::vector<LooseE> loose;
     struct VehicleE { int32_t id; const VehicleSpec* spec; JPH::BodyID body; vec3 com; JPH::Ref<JPH::VehicleConstraint> c; VehicleDrive drive; vec3 shift, kick; };
     std::vector<VehicleE> vehicles;
@@ -612,6 +631,7 @@ struct Scene::Impl {
         pairs.EnableCollision(kLayerLara, kLayerLoose);
         broad.emplace(layers, 2, pairs, kLayers);
         sys.Init(4096, 0, 8192, 8192, layers, *broad, pairs);
+        sys.SetContactListener(&contacts);
         sys.SetGravity(Jm(vec3(0, 0, -kJointGravity * kFrame * kFrame)));
         JPH::PhysicsSettings ps;
         ps.mPenetrationSlop = 1.0f * kM; // resting bodies sink at most a unit (Jolt's 2 cm = 5.6 units shows) [I]
@@ -1048,6 +1068,7 @@ void Scene::setLoose(std::span<const Loose> loose) {
         const auto it = std::ranges::find(m.loose, l.id, &Impl::LooseE::id);
         if (it != m.loose.end()) {
             next.push_back(*it), it->id = INT32_MIN;
+            next.back().physics = l.physics;
             continue;
         }
         if (!l.physics) continue;
@@ -1066,7 +1087,7 @@ void Scene::setLoose(std::span<const Loose> loose) {
         if (mp.mass <= 0) mp.mass = 666, mp.com = vec3(0, 0, 20), mp.inertia = mat3(0.4f * 666 * 20 * 20); // tru.exe's fallback mass [O]
         const quat rot = glm::normalize(glm::quat_cast(mat3(l.model)));
         next.push_back({l.id, m.body(looseShape(*l.physics, mp.com), vec3(l.model * glm::vec4(mp.com, 1)), rot, kLayerLoose, mp.mass,
-                                     mp.inertia, "l" + std::to_string(l.id)), mp.com});
+                                     mp.inertia, "l" + std::to_string(l.id)), mp.com, l.physics});
         if (l.vel != vec3(0) || l.angVel != vec3(0)) m.bi->SetLinearAndAngularVelocity(next.back().body, Jm(l.vel), J(l.angVel));
     }
     for (auto& e : m.loose)
@@ -1151,47 +1172,99 @@ void Scene::Impl::buoyancy(float dt) {
     }
 }
 
-// A blast's push on the bodies in its radius. tru.exe has two rules [O]: 0x493170 -> 0x492CC0 gives each Havok shape an
-// impulse (0.0004 x its surface area x the knock x (1 - distance / radius), capped per shape) at its point nearest the
-// centre (0x4DF090), along (shape - centre) raised by half their distance (+Z; level with the blast: 26.6 degrees up);
-// and the area hit 0x69F1E0 knocks instances (message 0x91) at knock .. edge by their distance, heading away from the
-// centre, at the explosion record's elevation. Ours [I]: one velocity change per body of near .. edge units/s over the
-// radius along the raised line, at its centre of mass. With an `elevation` (degrees, an explosion record's: the squibs)
-// the same momentum goes along the body's heading from the centre at that elevation, as the instances', and at the
-// point of the body's bounds nearest the centre, as the shapes': squib_explode_door goes off at the foot of its own door
-// leaf and kicks the foot out of the snug doorway, where a push through the centre of mass only hops the leaf and leaves
-// it standing in its frame. A centre inside the body's bounds has no heading to it: the body goes the way it already
-// moves (the leaf pulled off its slide by the rope, toward Lara), else the way its centre of mass lies from the centre
-// (the leaf blown off untouched in l3_bedroom_hall: 30 units toward the hallway [O data], into the pit).
-void Scene::blast(vec3 at, float radius, float near, float edge, float elevation) {
-    const auto push = [&](JPH::BodyID id) {
-        const vec3 p = G(impl_->bi->GetCenterOfMassPosition(id)) * kUnitsPerMetre, d = p - at;
-        const float l = glm::length(d);
-        if (l >= radius) return;
-        const float speed = glm::mix(near, edge, l / radius);
-        const float flat = glm::length(glm::vec2(d));
-        if (elevation < 0 || flat <= 1e-3f) {
-            impl_->bi->AddLinearVelocity(id, Jm((l > 1e-3f ? glm::normalize(d + vec3(0, 0, 0.5f * l)) : vec3(0, 0, 1)) * speed));
-            return;
+// A blast's push on the bodies in its radius. tru.exe [O]: the area hit 0x69F1E0 knocks instances (message 0x91) at
+// knock .. edge by their distance, heading away from the centre at the explosion record's elevation, and hands the
+// near knock to 0x493170 -> 0x492CC0 for every Havok shape whose centre is within the radius:
+//   impulse = min(0.0004 x the shape's surface area (0x4D9420) x knock x (1 - distance / radius) x the primitive's
+//                 blast share (Prim::blast percent; 0: none), the body's mass (+0x14C) x 200)
+// at the shape's point nearest the centre (0x4DF090), along (shape centre - blast centre) raised by half their distance
+// (straight up when the two coincide), unless level collision lies between the two centres (0x4E8FC0).
+// Loose bodies take exactly that per primitive. Joint bodies and ragdolls [I]: one velocity change per body of
+// near .. edge units/s over the radius along the raised line, at the centre of mass.
+void Scene::blast(vec3 at, float radius, float near, float edge) {
+    Impl& m = *impl_;
+    const auto blocked = [&](vec3 to) {
+        const JPH::RRayCast ray(Jm(at), Jm(to - at));
+        JPH::RayCastSettings rs;
+        rs.SetBackFaceMode(JPH::EBackFaceMode::CollideWithBackFaces);
+        for (const auto& t : m.terrain) {
+            if (!t.built) continue;
+            JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> hit;
+            m.bi->GetTransformedShape(t.body).CastRay(ray, rs, hit);
+            if (hit.HadHit()) return true;
         }
+        return false;
+    };
+    const auto shapes = [&](const Impl::LooseE& l) {
         float invMass = 0;
         {
-            JPH::BodyLockRead lock(impl_->sys.GetBodyLockInterfaceNoLock(), id);
+            JPH::BodyLockRead lock(m.sys.GetBodyLockInterfaceNoLock(), l.body);
             if (lock.Succeeded() && lock.GetBody().IsDynamic()) invMass = lock.GetBody().GetMotionProperties()->GetInverseMass();
         }
-        if (invMass <= 0) return;
-        const JPH::AABox box = impl_->bi->GetTransformedShape(id).GetWorldSpaceBounds();
-        glm::vec2 heading = glm::vec2(d) / flat;
-        if (const glm::vec2 v(G(impl_->bi->GetLinearVelocity(id)) * kUnitsPerMetre); box.Contains(Jm(at)) && glm::length(v) > 1.0f)
-            heading = glm::normalize(v);
-        const vec3 dir(heading * std::cos(glm::radians(elevation)), std::sin(glm::radians(elevation)));
-        impl_->bi->AddImpulse(id, Jm(dir * speed) / invMass, JPH::RVec3(box.GetClosestPoint(Jm(at))));
+        const auto world = loose(l.id);
+        if (invMass <= 0 || !world) return;
+        const float cap = 200.0f / invMass;
+        for (const Prim& p : l.physics->prims) {
+            if (!p.solid() || p.blast == 0) continue;
+            const mat4 seg = p.segment < int(l.physics->segments.size()) ? l.physics->segments[size_t(p.segment)] : mat4(1);
+            const mat4 f = *world * seg * glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot);
+            const vec3 c(f[3]);
+            vec3 d = c - at;
+            const float dist = glm::length(d);
+            if (dist > radius || dist < 1e-5f || blocked(c)) continue;
+            d.z += 0.5f * dist;
+            const float eps = 6.1035156e-05f;
+            d = std::abs(d.x) < eps && std::abs(d.y) < eps && std::abs(d.z) < eps ? vec3(0, 0, 1) : glm::normalize(d);
+            const vec3 local = glm::transpose(mat3(f)) * (at - c); // the blast centre in the primitive's frame
+            float area = 0;
+            vec3 nearest(0);
+            if (p.kind == PrimKind::Box) {
+                area = 2 * (p.size.x * p.size.y + p.size.y * p.size.z + p.size.z * p.size.x);
+                nearest = glm::clamp(local, -0.5f * p.size, 0.5f * p.size);
+            } else if (p.kind == PrimKind::Sphere) {
+                area = 12.566371f * p.radius * p.radius;
+                nearest = glm::normalize(local) * std::min(p.radius, glm::length(local));
+            } else {
+                area = p.radius * 6.2831855f * (2 * p.radius + p.length);
+                const vec3 axis(0, 0, std::clamp(local.z, -0.5f * p.length, 0.5f * p.length));
+                const vec3 out = local - axis;
+                nearest = axis + (glm::length(out) > p.radius ? glm::normalize(out) * p.radius : out);
+            }
+            const float impulse = std::min(0.01f * float(p.blast) * 0.0004f * area * near * (1 - dist / radius), cap);
+            if (impulse <= 0) continue;
+            m.bi->AddImpulse(l.body, Jm(d * impulse), JPH::RVec3(Jm(c + mat3(f) * nearest)));
+        }
+    };
+    const auto push = [&](JPH::BodyID id) {
+        const vec3 p = G(m.bi->GetCenterOfMassPosition(id)) * kUnitsPerMetre, d = p - at;
+        const float l = glm::length(d);
+        if (l >= radius) return;
+        m.bi->AddLinearVelocity(id, Jm((l > 1e-3f ? glm::normalize(d + vec3(0, 0, 0.5f * l)) : vec3(0, 0, 1)) * glm::mix(near, edge, l / radius)));
     };
     for (size_t i = 0; i < bodies.size(); ++i)
-        if (bodies[i].invMass > 0) push(impl_->hingeBodies[i]);
-    for (const auto& l : impl_->loose) push(l.body);
-    for (const auto& r : impl_->ragdolls)
+        if (bodies[i].invMass > 0) push(m.hingeBodies[i]);
+    for (const auto& l : m.loose)
+        if (l.physics) shapes(l);
+        else push(l.body);
+    for (const auto& r : m.ragdolls)
         for (const auto b : r.bodies) push(b);
+}
+
+bool Scene::knock(int32_t id, vec3 velocity, vec3 at) {
+    const auto it = std::ranges::find(impl_->loose, id, &Impl::LooseE::id);
+    if (it == impl_->loose.end()) return false;
+    float invMass = 0;
+    {
+        JPH::BodyLockRead lock(impl_->sys.GetBodyLockInterfaceNoLock(), it->body);
+        if (lock.Succeeded() && lock.GetBody().IsDynamic()) invMass = lock.GetBody().GetMotionProperties()->GetInverseMass();
+    }
+    if (invMass <= 0) return false;
+    impl_->bi->SetLinearAndAngularVelocity(it->body, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+    impl_->bi->AddImpulse(it->body, Jm(velocity) / invMass, JPH::RVec3(Jm(at)));
+    impl_->bi->SetUserData(it->body, 1);
+    it->knockedAt = G(impl_->bi->GetCenterOfMassPosition(it->body)) * kUnitsPerMetre;
+    it->clear = impl_->bi->GetShape(it->body)->GetLocalBounds().GetExtent().Length() * kUnitsPerMetre;
+    return true;
 }
 
 // ---- vehicles ---------------------------------------------------------------------------------------------------------
@@ -1378,6 +1451,9 @@ void Scene::step(float dt) {
     m.moveProxies(dt);
     m.driveCharacter(dt);
     m.buoyancy(dt);
+    for (auto& l : m.loose) // knocked bodies clear of where they were knocked: the walls hold them again
+        if (l.clear > 0 && glm::distance(G(m.bi->GetCenterOfMassPosition(l.body)) * kUnitsPerMetre, l.knockedAt) > l.clear)
+            m.bi->SetUserData(l.body, 0), l.clear = 0;
     m.reorder();
     m.sys.Update(dt, 1, &m.temp, &m.jobs);
     for (size_t i = 0; i < bodies.size(); ++i) {

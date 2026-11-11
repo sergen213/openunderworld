@@ -112,8 +112,8 @@ Each line names where the rules and evidence are. "Wine" = measured in the runni
 ## 7. Chapter coverage
 
 The matrix (`docs/underworld_chapter_gameplay_matrix.md`) holds the status of every requirement row per section:
-661 rows, of which 9 are verified against the original, 133 implemented with a test in that chapter's units, 281
-implemented but unverified there, 146 partial and 90 missing (baseline at v0.41.0: 8 / 95 / 319 / 135 / 100). Rows
+661 rows, of which 9 are verified against the original, 135 implemented with a test in that chapter's units, 281
+implemented but unverified there, 146 partial and 88 missing (baseline at v0.41.0: 8 / 95 / 319 / 135 / 100). Rows
 changed only where a chapter leg or test actually exercised them; the matrix's section "Status changes since the
 baseline" lists the mechanics that landed and the rows they affect.
 
@@ -123,7 +123,7 @@ end to end yet.** Legs that cannot be played are kept under `tests/selftests/kno
 
 | Section | Legs that pass | What stops the section |
 |---|---|---|
-| 01 Prologue | 4 | The pulled ring door's leaf and the blown hall door's leaf can stay standing in their frames; no input route into the pocket north of the bedroom beams |
+| 01 Prologue | 6 | No input route into the pocket north of the bedroom beams (the second leg starts at a spot that is not a checkpoint); the route costs health in fire volumes the original's route may avoid |
 | 02 Path to Avalon | 2 | The eye door, the flooded corridor and the entrance's ledge / pole chain are not played (the autopilot could not steer under water when they were written) |
 | 03 Niflheim | 2 (+ the kraken kill) | Stair halls, the pit, walkways, the pool and the stairs' climb are not played |
 | 04 The Norse Connection | 4 | The jump to perch 30 in the column hall; the boat at the end |
@@ -143,10 +143,9 @@ end to end yet.** Legs that cannot be played are kept under `tests/selftests/kno
 | 18 Rituals Old | 2 | The deck fights (the autopilot does not fight) |
 | 19 Helheim | 4 | The statue wheels, gears, the other stones, the flooded maze |
 | 20 Yggdrasil | 4 | The rune symbols cannot be used; the slide's jump falls short; the eitr pit is plain water |
-| 21 Out of Time | 0 (+ the arena entry) | No way down from the entry walkway; Natla cannot be hit; the fight's sequence is unplayed |
+| 21 Out of Time | 0 (+ the arena entry and a start on the lower ring) | The jump from the entry walkway onto a passing stone falls short; the fight's sequence (towers, mounts) is unplayed by input. Mjolnir hits do reach Natla's script |
 
-The legs of sections 07-09 and the work on the prologue's doors and on Natla's fight were still being integrated
-when this report was written; `docs/SELFTEST.md` lists what is registered.
+`docs/SELFTEST.md` lists what is registered and every parked leg with its cause.
 
 ## 8. Remaining work
 
@@ -155,7 +154,7 @@ In the order it blocks the campaign:
 1. The blockers of section 7, each recorded with its cause in `docs/SELFTEST.md` (known-gaps table) and in the
    matrix rows. The ones that recur across sections: key items carried between units, the motorcycle after level
    entries, freed door / slab bodies that stay in place, fights by the autopilot (a test-tool gap, not a game gap).
-2. Natla's fight by input past the arena entry.
+2. Natla's fight by input past the arena entry (the platform ride down, the towers and mounts in sequence).
 3. The legs not yet written (most of sections 02, 03, 07-09, 17-19), then joining legs into whole sections.
 4. Push blocks and Thor's mechanisms: the push law is fitted to one block trace; the mechanisms themselves are
    unmeasured.

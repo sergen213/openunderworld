@@ -3190,6 +3190,17 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         if (wading() && anims_.find("swim_to_wade")) s_.state = State::Land, play("swim_to_wade", false); // [I] its use
     };
     const float surf = surfaceZ();
+    // The water left her: tru.exe classes her water every frame (0x5D77E0 -> 0x5D3860) from her volume's surface as it
+    // is now, and the class is 0x400 (dry) as soon as her root is over it (+0x20 = z - surface > 0, +0x24 likewise) [O].
+    // A scripted level that drops away faster than she floats down with it (l7_yggdrasil_end's 8309 is set to its marker
+    // 13 986 below at once by its constructor) therefore leaves her in the air: she falls from where she is [I: the
+    // chart's swim states leave by that class; the fall is the plain one, no clip of its own found].
+    if (s_.state != State::SwimClimbOut && s_.pos.z > surf + t_.swimSurfaceDepth) {
+        s_.water = -1;
+        s_.pitch = 0;
+        startFall(vec3(0));
+        return;
+    }
     // Stroke of a swim that moves: at the surface swim_surface_fast_forward, under water swim_sub; with Shift held the
     // sprint stroke at swimSprintFactor (tru.exe under Wine, l2_cliffclimb sea: 53.94 vs 44.95 units per frame at the
     // surface and under water; request 896 / 934 clips, the surface pose fits swim_surface_sprint_forward). The surface

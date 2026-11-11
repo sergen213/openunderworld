@@ -185,7 +185,7 @@
   {
    "step": "running_jump_to_the_perch",
    "plan": [
-    "run 90 1.0 jump 0.15",
+    "run 90 1.0 jump 0.3",
     "wait 2"
    ],
    "duration": 8,

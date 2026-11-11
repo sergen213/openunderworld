@@ -3,7 +3,7 @@
   "name": "prologue_ring_door",
   "chapter": "Prologue (docs/matrix/01_prologue.md C01-07): the grapple onto the bedroom door's ring, Interact pulls the door off its slide",
   "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/prologue.html",
-  "note": "l3_main_bedroom door 4526 ma_uo_bedroom_door (ProgressionReal.PrologueRingDoorPulledOffByTheGrapple). Uber section 1 = the leaf on slide joint 1, watched over -47.4 .. 31.6 [O data]: leaving the range is trigger 15 -> state 1 (joint removed, squib_explode_door born), 0.2 s later state 2; section 0 (the ring) then drops the grapple target. The pull speed (240 units/s) is ours [I]. Open: the freed leaf stays standing in its frame (docs/PROGRESSION.md).",
+  "note": "l3_main_bedroom door 4526 ma_uo_bedroom_door (ProgressionReal.PrologueRingDoorPulledOffByTheGrapple). Uber section 1 = the leaf on slide joint 1, watched over -47.4 .. 31.6 [O data]: leaving the range is trigger 15 -> state 1 (joint removed, squib_explode_door born), 0.2 s later state 2; section 0 (the ring) then drops the grapple target. The pull speed (240 units/s) is ours [I]. The freed leaf is thrown into the room by its squib's knock (docs/GAMEPLAY.md 'Explosion records').",
   "level": "l3_main_bedroom",
   "spawn": [-8460.2, -10553.2, 1700, -30],
   "steps": [

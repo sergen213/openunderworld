@@ -40,16 +40,23 @@ HInfo = `{u32 count, ptr list}` pairs [O, survey of all 1 057 models]: slot 0 sp
 
 | slot | stride | layout [O] |
 |---|---|---|
-| 0 sphere | 0x24 | `+0` 4 flag bytes, `+4` u16 id, `+6` u16 radius, `+8` s16 x, y, z, `+0x14` u16 mass |
-| 1 box | 0x50 | `+0` float4 **full** side lengths, `+0x10` float4 centre, `+0x20` quaternion x y z w, `+0x30` flag bytes, `+0x34` u16 id, `+0x36` u16 mass |
-| 2 marker | 0x20 | not decoded (Lara's bones) |
-| 3 capsule | 0x40 | `+0` float4 centre, `+0x10` quaternion, `+0x20` flag bytes, `+0x24` u16 id, `+0x26` u16 radius, `+0x28` u16 length, `+0x2A` u16 mass |
+| 0 sphere | 0x24 | `+0` 4 flag bytes, `+4` u16 id, `+6` u16 radius, `+8` s16 x, y, z, `+0x14` u16 mass, `+0x18` s8 blast share (percent), `+0x1C` s16 damage |
+| 1 box | 0x50 | `+0` float4 **full** side lengths, `+0x10` float4 centre, `+0x20` quaternion x y z w, `+0x30` flag bytes, `+0x34` u16 id, `+0x36` u16 mass, `+0x3A` s8 blast share, `+0x3E` s16 damage |
+| 2 marker | 0x20 | `+4` u16 id (effect / attach lookups, `0x46DA20`), `+6` u16 id uber birth records name (`0x4705B0` -> `0x46D7D0`), `+8` float3 position, `+0x14` float3 Euler, in the segment's frame |
+| 3 capsule | 0x40 | `+0` float4 centre, `+0x10` quaternion, `+0x20` flag bytes, `+0x24` u16 id, `+0x26` u16 radius, `+0x28` u16 length, `+0x2A` u16 mass, `+0x2E` s8 blast share, `+0x32` s16 damage |
 
 - Strides from multi-entry lists (pr_spear and motorcycle spheres: 0x24, the second sphere's flag bytes start there;
   an earlier 0x20 misread every sphere after the first; ms_uo_floor_grate_b capsules, door boxes) [O]; field offsets
   from the mass function above [O]. Full box sizes: the door's boxes then fit its render bounds (893 × 295 × 1122)
   [O]; half extents would not.
 - Capsule axis = local Z [I]: the floor grate's four bars only form a square outline that way.
+- Blast share [O] (`0x492CC0`): the percent of an explosion's shape impulse the primitive takes; 0 = none. An
+  explosion gives every Havok shape whose centre is within its radius, unless level collision lies between the two
+  centres (`0x4E8FC0`), `min(share x 0.0004 x surface area (0x4D9420: box 2(xy + yz + zx), sphere 4 pi r^2, capsule
+  2 pi r (2 r + length)) x knock x (1 - distance / radius), body mass (+0x14C, default 666) x 200)` at the shape's
+  point nearest the centre (`0x4DF090`), along (shape centre - explosion) raised by half their distance. Ropes take
+  the same per point mass (`0x4EAF40`). `ma_uo_bedroom_door`: 10 on the leaf's slab and lintel boxes, 0 on its
+  non-solid plank and on the ring; `ms_pt_weight_c` 20 on its cube. Ours: `physics::Scene::blast` on loose bodies.
 - Flag byte 1: `0x11` on doors, keys, switches, blocks; `0x10` on every `bend_*` plant [O]. [I] bit 0 = solid
   for the player (plants only bend). Byte 0 differs per box (door: 0x10, 0x40, 0x50) [U].
   [O] tru.exe `0x48E710` makes a Havok shape of a primitive only with bit 0x100 of the flag u16 (byte 1 bit 0), and of
