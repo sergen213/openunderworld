@@ -552,6 +552,7 @@ struct Scene::Impl {
     struct LooseE {
         int32_t id; JPH::BodyID body; vec3 com; const ObjectPhysics* physics = nullptr;
         vec3 knockedAt{0}; float clear = 0; // Scene::knock: where, and how far it must get before walls hold it again
+        JPH::Ref<JPH::TwoBodyConstraint> hang; int32_t hangOn = 0; // Scene::Loose::hang, made
     };
     // A knocked body (Scene::knock; body user data 1) is held by the level's floors only (contact normal within 26
     // degrees of vertical [I]) until it is clear of where it was knocked: tru.exe's ring door leaf (494 wide in a
@@ -647,6 +648,8 @@ struct Scene::Impl {
         for (auto& e : joints) sys.RemoveConstraint(e.ax->c);
         for (auto& e : joints3) sys.RemoveConstraint(e.c);
         for (auto& a : hingeJoints) sys.RemoveConstraint(a->c);
+        for (auto& l : loose)
+            if (l.hang) sys.RemoveConstraint(l.hang);
     }
     // The constraint of `a` with its zero at coordinate a.ref: built with the body posed there (derived from its pose at
     // 0, so the same everywhere), then the body is put back.
@@ -878,6 +881,8 @@ struct Scene::Impl {
         for (const auto& v : vehicles) all.push_back(v.c.GetPtr());
         for (const auto& r : ragdolls)
             for (const auto& c : r.joints) all.push_back(c.GetPtr());
+        for (const auto& l : loose)
+            if (l.hang) all.push_back(l.hang.GetPtr());
         return all;
     }
     void reorder() {
@@ -1092,6 +1097,7 @@ void Scene::setJoints3(std::vector<std::pair<uint64_t, Joint3*>> joints) {
 void Scene::setLoose(std::span<const Loose> loose) {
     Impl& m = *impl_;
     std::vector<Impl::LooseE> next;
+    std::vector<const Loose*> hangs; // new bodies' hinges, made once every body exists
     for (const auto& l : loose) {
         const auto it = std::ranges::find(m.loose, l.id, &Impl::LooseE::id);
         if (it != m.loose.end()) {
@@ -1099,6 +1105,7 @@ void Scene::setLoose(std::span<const Loose> loose) {
             next.back().physics = l.physics;
             continue;
         }
+        if (l.hang.on && l.physics && !l.rail) hangs.push_back(&l);
         if (!l.physics) continue;
         if (l.rail) { // the joint body becomes the object, colliding, in the frame it has at coordinate 0
             if (auto* e = m.findJoint(l.rail); e && !e->solid) {
@@ -1117,6 +1124,26 @@ void Scene::setLoose(std::span<const Loose> loose) {
         next.push_back({l.id, m.body(looseShape(*l.physics, mp.com), vec3(l.model * glm::vec4(mp.com, 1)), rot, kLayerLoose, mp.mass,
                                      mp.inertia, "l" + std::to_string(l.id)), mp.com, l.physics});
         if (l.vel != vec3(0) || l.angVel != vec3(0)) m.bi->SetLinearAndAngularVelocity(next.back().body, Jm(l.vel), J(l.angVel));
+    }
+    // A hinge goes with either of its bodies.
+    const auto has = [&](int32_t id) { return std::ranges::find(next, id, &Impl::LooseE::id) != next.end(); };
+    for (auto& e : m.loose)
+        if (e.id != INT32_MIN && e.hang) m.sys.RemoveConstraint(e.hang), e.hang = nullptr;
+    for (auto& e : next)
+        if (e.hang && !has(e.hangOn)) m.sys.RemoveConstraint(e.hang), e.hang = nullptr, e.hangOn = 0;
+    for (const Loose* l : hangs) {
+        const auto self = std::ranges::find(next, l->id, &Impl::LooseE::id), on = std::ranges::find(next, l->hang.on, &Impl::LooseE::id);
+        if (self == next.end() || on == next.end() || self->hang) continue;
+        // Both bodies stand as `model` has them (a body made this step) or as simulated (the one it hangs on, made
+        // before): a hinge built in world space keeps that relative pose as angle 0 [I: the section's angle at its
+        // freeing, not its joint coordinate, is 0; the limits are shifted by the caller].
+        JPH::HingeConstraintSettings s;
+        s.mPoint1 = s.mPoint2 = Jm(l->hang.pivot);
+        s.mHingeAxis1 = s.mHingeAxis2 = J(glm::normalize(l->hang.axis));
+        s.mNormalAxis1 = s.mNormalAxis2 = J(perpendicular(glm::normalize(l->hang.axis)));
+        if (l->hang.limited) s.mLimitsMin = std::min(l->hang.lo, 0.0f), s.mLimitsMax = std::max(l->hang.hi, 0.0f);
+        self->hang = m.bi->CreateConstraint(&s, on->body, self->body), self->hangOn = l->hang.on;
+        m.sys.AddConstraint(self->hang);
     }
     for (auto& e : m.loose)
         if (e.id != INT32_MIN) m.remove(e.body);
@@ -1552,7 +1579,10 @@ bool Scene::restore(std::string_view state) {
     for (auto& e : m.joints3) m.dropJoint3(e);
     m.joints3.clear();
     clearHinges();
-    for (auto& l : m.loose) m.remove(l.body);
+    for (auto& l : m.loose) {
+        if (l.hang) m.sys.RemoveConstraint(l.hang);
+        m.remove(l.body);
+    }
     for (auto& v : m.vehicles) m.dropVehicle(v);
     for (auto& r : m.ragdolls) m.dropRagdoll(r);
     for (auto& t : m.terrain) m.remove(t.body);

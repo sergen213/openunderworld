@@ -457,7 +457,12 @@ outfit (the original only reads `+0x294` on a level load).
 - **Freed uber sections** [O action 10 removes a joint; I the body's motion]: a non-main section left without a joint
   (13 objects: `ma_uo_bedroom_door`, tentacle gears, the snake head, ship floor panels / grates / console, thor slide
   doors, chain debris, the naga statue) becomes a loose body with its collider, as do sections riding on it; the main
-  section uses the object's own loose flag. It starts with the velocity its prismatic joint had when removed (the ring
+  section uses the object's own loose flag. A rider's hinge stays [O: action 10, 0x4D6220, removes only the joint it
+  names]: the rider is a loose body of its own hinged to the freed one (`physics::Scene::Loose::hang`, a Jolt hinge
+  between the two bodies, angle 0 and limits about its pose at the freeing; the joint's motor is dropped [I]; saved
+  with the section state). The bedroom door's ring (4376 section 0, the object's model 0, hinge 0 on the leaf) falls
+  into the pit with the leaf; as a free body of its own it caught on the doorway's sill and lay there or in the pit
+  by the slightest change elsewhere in the scene. It starts with the velocity its prismatic joint had when removed (the ring
   door 4526 comes off its slide moving toward the rope's pull). Saved with the section state (not the velocity). Its
   shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. What
   throws the freed ring door out of its frame is its squib's knock ("Explosion records" above).

@@ -230,6 +230,11 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                             const auto carry = s[i].at(15).get<std::array<float, 16>>();
                             std::memcpy(&sec.carry[0][0], carry.data(), sizeof(carry));
                         }
+                        if (s[i].size() >= 17) { // the hinge a freed section hangs by (absent: none)
+                            const auto h = s[i].at(16).get<std::array<float, 10>>();
+                            sec.hangsOn = int32_t(h[0]), sec.hang.pivot = vec3(h[1], h[2], h[3]), sec.hang.axis = vec3(h[4], h[5], h[6]);
+                            sec.hang.lo = h[7], sec.hang.hi = h[8], sec.hang.limited = h[9] != 0;
+                        }
                     }
                     else if (sec.state >= 0 && size_t(sec.state) < it->second->sections[i].stateActions.size())
                         for (const auto& a : it->second->sections[i].stateActions[size_t(sec.state)]) // 0.37 saves: the
@@ -297,11 +302,14 @@ nlohmann::json World::serializeObjects() const {
             std::memcpy(at.data(), &s.freedAt[0][0], sizeof(at));
             sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement, s.clip, s.clipTime, s.rate, s.loop, s.model,
                                 s.held, s.freed, at});
-            if (s.carry != glm::mat4(1)) {
+            if (s.carry != glm::mat4(1) || s.hangsOn >= 0) {
                 std::array<float, 16> carry{};
                 std::memcpy(carry.data(), &s.carry[0][0], sizeof(carry));
                 sections.back().push_back(carry);
             }
+            if (s.hangsOn >= 0)
+                sections.back().push_back(std::array<float, 10>{float(s.hangsOn), s.hang.pivot.x, s.hang.pivot.y, s.hang.pivot.z, s.hang.axis.x,
+                                                                s.hang.axis.y, s.hang.axis.z, s.hang.lo, s.hang.hi, s.hang.limited ? 1.0f : 0.0f});
         }
         nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded},
                                                          {"intangible", rt.intangible}, {"grappleOff", rt.grappleOff}};
@@ -789,19 +797,30 @@ void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose,
     if (size_t(section) == main || !uberSectionPhysics(*o, size_t(section))) return;
     rt.sections[size_t(section)].freed = true, rt.sections[size_t(section)].freedAt = introModel(*o) * pose;
     rt.sections[size_t(section)].freedVel = vel;
-    // What hangs on it goes with it [I: as bodies of their own; tru.exe keeps their joints to the falling body]: the
-    // bedroom door's ring (section 0, hinge 0 on the door) falls when the door leaves its slide.
+    // What hangs on it goes with it: action 10 removes the one joint it names (0x4D6220), so a joint whose body A is
+    // this section stays, now between two free bodies [O decomp]. The bedroom door's ring (section 0, hinge 0 on the
+    // door, the object's main section) falls with the door when it leaves its slide, hinged to it: loose bodies joined by that hinge
+    // (Scene::Loose::hang; its motor is not kept [I]). Before, it fell as a body of its own, which caught on the
+    // l3_bedroom_hall doorway's sill and lay there or in the pit by the slightest change elsewhere in the scene.
     std::vector<std::pair<int32_t, int32_t>> riders; // joint, its body
     for (const auto& [index, j] : rt.joints)
         if (data.joints[size_t(index)].bodyA == section) riders.push_back({index, data.joints[size_t(index)].bodyB});
     for (const auto& [index, body] : riders) {
         const std::optional<glm::mat4> at = uberSectionBody(uid, body);
+        const physics::Joint1 joint = rt.joints.at(index);
         rt.joints.erase(index);
-        if (size_t(body) == main) {
+        bool freed = false;
+        if (size_t(body) == main) { // the object's own loose body (the bedroom door's ring is its model 0)
             if (auto* own = const_cast<script::Object*>(o); !own->loose) // World owns object motion
-                own->body = at.value_or(glm::mat4(1)), own->loose = true, syncedObjects_ = ~size_t(0);
+                own->body = at.value_or(glm::mat4(1)), own->loose = true, syncedObjects_ = ~size_t(0), freed = true;
         } else if (at) {
             uberFreeSection(uid, body, *at, vel);
+            freed = rt.sections[size_t(body)].freed;
+        }
+        if (auto& rider = rt.sections[size_t(body)]; freed && joint.hinge) { // [U] a prismatic rider: none in the data
+            rider.hangsOn = section;
+            // limits about the angle it has now, the hinge's 0 then
+            rider.hang = {0, joint.pivot, joint.axis, joint.lo - joint.x, joint.hi - joint.x, joint.limited};
         }
     }
 }
@@ -2708,6 +2727,15 @@ void World::stepPhysics(float dt) {
     // rail (ms_rb_grapple_snake_head section 1), and it falls free as a loose body from where the rail left it.
     std::vector<physics::Scene::Loose> loose;
     std::set<int32_t> looseIds;
+    const auto hang = [&](int32_t uid, size_t k) { // the hinge uber section k keeps to a freed section (uberFreeSection)
+        physics::Scene::Hang out;
+        const auto rt = uberRuntime_.find(uid);
+        if (rt == uberRuntime_.end() || k >= rt->second.sections.size()) return out;
+        const auto& secs = rt->second.sections;
+        if (const int32_t on = secs[k].hangsOn; on >= 0 && size_t(on) < secs.size() && secs[size_t(on)].freed && !secs[size_t(on)].removed)
+            out = secs[k].hang, out.on = sectionId(uid, size_t(on));
+        return out;
+    };
     for (const auto& o : script_.objects()) {
         if (!o.loose) continue;
         if (uberModelJoint(o.uid) >= 0) {
@@ -2720,6 +2748,9 @@ void World::stepPhysics(float dt) {
             continue;
         }
         loose.push_back({o.uid, objectPhysics(o.name), glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body});
+        if (const auto d = uberData_.find(o.uid); d != uberData_.end() && d->second)
+            for (size_t k = 0; k < d->second->sections.size(); ++k)
+                if (d->second->sections[k].model == 0) loose.back().hang = hang(o.uid, k);
         if (const auto v = melee_.launch.find(o.uid); v != melee_.launch.end()) loose.back().vel = v->second; // thrown / let go
         looseIds.insert(o.uid);
     }
@@ -2732,6 +2763,7 @@ void World::stepPhysics(float dt) {
                 if (const auto* sp = uberSectionPhysics(*o, k)) {
                     loose.push_back({sectionId(uid, k), sp, rt.sections[k].freedAt});
                     loose.back().vel = rt.sections[k].freedVel; // read when the body is made
+                    loose.back().hang = hang(uid, k);
                     looseIds.insert(uid);
                 }
     physics_.setLoose(loose);

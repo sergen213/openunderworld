@@ -319,7 +319,11 @@ public:
     // (`model` and the velocities are ignored); missing keys are dropped.
     // `rail`: the body still rides that joint (setJoints key): the joint's body takes its shape and collides, posed by
     // the joint (`model` = the object's pose at joint coordinate 0); loose(id) is empty then.
-    struct Loose { int32_t id = 0; const ObjectPhysics* physics = nullptr; mat4 model{1}; uint64_t rail = 0; vec3 vel{0}, angVel{0}; };
+    // `hang.on`: the body hangs on loose body `hang.on` (0 none) by a hinge at world `pivot` about world `axis`, both as of
+    // `model` (where its angle is 0), limited to [lo, hi] rad when `limited`: an uber section whose hinge stays on a
+    // freed section (World::uberFreeSection). Made with the later of the two bodies; gone with either.
+    struct Hang { int32_t on = 0; vec3 pivot{0}, axis{0, 0, 1}; float lo = 0, hi = 0; bool limited = false; };
+    struct Loose { int32_t id = 0; const ObjectPhysics* physics = nullptr; mat4 model{1}; uint64_t rail = 0; vec3 vel{0}, angVel{0}; Hang hang; };
     void setLoose(std::span<const Loose> loose);
     std::optional<mat4> loose(int32_t id) const; // model -> world as of the last step
     // What loose bodies land on: resident unit terrain (static meshes, built once a loose body exists) and the moving

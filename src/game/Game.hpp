@@ -1609,6 +1609,10 @@ private:
         // The velocity the removed joint had (units/s, world): the body starts with it (a prismatic joint's slide; the
         // ring door comes off its slide moving toward the rope's pull). Only its first step reads it: not saved.
         vec3 freedVel{0};
+        // Freed with the section its hinge is on (`hangsOn`, -1 none): it keeps that hinge, at world `hang.pivot` /
+        // `hang.axis` as of `freedAt` (Scene::Loose::hang; `hang.on` unused). Saved.
+        int32_t hangsOn = -1;
+        physics::Scene::Hang hang;
     };
     std::map<std::pair<std::string, int32_t>, std::optional<physics::EngagementSet>> uberEngagements_; // (object, offset)
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };
