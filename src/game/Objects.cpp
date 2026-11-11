@@ -2913,9 +2913,17 @@ int32_t World::engagedUse(bool pressed) {
         const bool sw = o.kind == script::Kind::Switch;
         if ((!sw && (o.kind != script::Kind::Scripted || !o.graph)) || o.useRecords) continue;
         // switches: the class-6 ones by their record (the default set, physics::loadObjectPhysics); an uber object named
-        // as one (the rune symbols) only through its sections' records (pushUberHandle), never by reach
-        if (sw && prepareUber(o)) {
-            const_cast<script::Object&>(o).useRecords = true;
+        // as one through its sections' records (pushUberHandle) when any section has engagement records at all (a start
+        // set or a state's set, action 0x1D: the rune symbols). One without any (l5 wall lever 7188 `ar_uo_wall_lever`,
+        // a prismatic handle the original works by her hanging weight [O data: no engagement set in its two sections])
+        // keeps the reach rule of Runtime::tick [I stand-in].
+        if (const auto* data = sw ? prepareUber(o) : nullptr) {
+            const bool records = std::ranges::any_of(data->sections, [](const formats::UberSection& s) {
+                return s.engagement >= 0 || std::ranges::any_of(s.stateActions, [](const auto& acts) {
+                           return std::ranges::any_of(acts, [](const formats::UberAction& a) { return a.engagement >= 0; });
+                       });
+            });
+            if (records) const_cast<script::Object&>(o).useRecords = true;
             continue;
         }
         const auto* p = objectPhysics(o.name);

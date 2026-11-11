@@ -5417,7 +5417,10 @@ TEST(GameReal, LaraPlaysInteractionClips) {
     game::Actions use;
     use.interact = true;
     {
-        const auto w = worldMaker(bf, "l3_main_bedroom", game::Spawn{{-8680, -8279, 1767}, 0})();
+        // 100 in front of switch 4525 (origin (-8680, -8279, 1767), facing -0.177 rad), facing it: its use record's cone
+        // is 64 degrees about 15 degrees off its +X (ma_ei_wall_switch_electric, 0x6F3A50); on its origin she engages
+        // nothing (before the records the reach rule took her there).
+        const auto w = worldMaker(bf, "l3_main_bedroom", game::Spawn{{-8581, -8297, 1767}, 2.965f})();
         w->tick({});
         ASSERT_TRUE(w->script().find(4525));
         w->tick(use);

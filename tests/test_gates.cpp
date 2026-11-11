@@ -259,7 +259,19 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
         const vec3 at = t->pos;
         switch (action) {
         case Action::Use: {
+            // An object with "use" records (kind 8: the class-6 switches' facing cone, 0x6F3A50) is used from in front
+            // of it, as she walks up to it: the first of eight sides 100 out from its origin where she engages it
+            // (World::engaged); others from their origin (the reach rule).
             place(w, at, 0);
+            if (!w.engagementCentres(uid, 8).empty()) {
+                const float yaw = t->rot.z;
+                for (int k = 0; k < 8 && w.engaged().uid != uid; ++k) {
+                    const float a = yaw + float(k) * glm::quarter_pi<float>();
+                    vec3 p = at + vec3(std::cos(a), std::sin(a), 0) * 100.0f;
+                    if (const auto floor = w.collision().groundProbe(p + vec3(0, 0, 200), 600, 0x0F)) p.z = floor->point.z;
+                    place(w, p, a + glm::pi<float>());
+                }
+            }
             game::Actions use;
             use.interact = true;
             for (int i = 0; i < 10; ++i) tick(use);
@@ -1624,7 +1636,10 @@ TEST(ProgressionReal, TempleRevealReopens) {
     ASSERT_TRUE(temple && temple->graph && temple->graph->set->graph && sw);
     EXPECT_EQ(temple->graph->state, 0);
     const auto closed = *w.script().pose(*temple);
-    place(w, sw->pos, 0);
+    // 100 in front of it (its +X, facing 3.09 rad), facing it: inside its use record's cone (ca_ei_switch_wall_autoreset,
+    // 95 degrees about +X, 0x6F3A50), which its origin is not
+    const vec3 front = sw->pos + vec3(std::cos(sw->rot.z), std::sin(sw->rot.z), 0) * 100.0f;
+    place(w, front, sw->rot.z + glm::pi<float>());
     game::Actions use;
     use.interact = true;
     w.tick(use);

@@ -3060,14 +3060,19 @@ Ours:
 - Which switch (since 2026-11-10): the one whose kind-8 record she engages (`World::engaged`, the scan of 0x719520:
   her three points against the record's cylinder and cone), not the nearest within 200 / 250 [I] as before. The
   class-6 switches' record is the default set at physical record +0x70 (`physics::loadObjectPhysics`; in units:
-  `ms_ei_switch_oneway_wall` r 553.1, 632.1 high from the origin up, cone 95 degrees about its front;
-  `ma_ei_switch_wall_chapel` / `ms_ei_resetting_switch` r 790.1; `ar_ei_switch_oneway` r 632.1, 948.2 high, heading
-  -89). Uber objects named as switches (the rune symbols `ar_uo_rune_wall_switch_*`, `ar_uo_rune_wall_swich_a`: one
-  section, record r 553.1 / 632.1 high centred 158 under the symbol, offered in state 1 only) are used through the
-  section's record: trigger 20 with kind 8 (0x701310 -> 0x6D5AC0) starts the transition 1 -> 0 and the state event
-  runs the script (vt 54 -> vt 55). `script::Runtime` alone (no World) keeps the reach rule [I].
-  `PhysicsRealData.SwitchesCarryOneUseRecord`, `GameReal.RuneSymbolIsUsedThroughItsUseRecord`, self-test
-  `ch20_helheim01_rune_symbols`.
+  `ms_ei_switch_oneway_wall` / `ca_ei_switch_wall_autoreset` r 553.1, 632.1 high from the origin up, cone 95 degrees
+  either side of its +X; `ma_ei_switch_wall_chapel` / `ms_ei_resetting_switch` r 790.1; `ma_ei_wall_switch_electric`
+  r 553.1, cone 64 degrees about 15 off +X; `ar_ei_switch_oneway` r 632.1, 948.2 high, heading -89). The cone is
+  measured about the record's centre (0x6F3A50; [I] the decompiler lost the atan2 arguments: taken as the cylinder's
+  centre), so she engages a wall switch from in front of it, not standing on its
+  origin. Uber objects named as switches whose sections carry engagement sets (the rune symbols
+  `ar_uo_rune_wall_switch_*`, `ar_uo_rune_wall_swich_a`: one section, record r 553.1 / 632.1 high centred 158 under the
+  symbol, offered in state 1 only) are used through the section's record: trigger 20 with kind 8 (0x701310 ->
+  0x6D5AC0) starts the transition 1 -> 0 and the state event runs the script (vt 54 -> vt 55). An uber switch without
+  any engagement set (l5 wall lever 7188 `ar_uo_wall_lever`, worked in the original by her hanging weight on its
+  handle) and `script::Runtime` alone (no World) keep the reach rule [I]. Tests: `PhysicsRealData.SwitchesCarryOneUseRecord`,
+  `GameReal.RuneSymbolIsUsedThroughItsUseRecord`, `GameReal.LaraPlaysInteractionClips` (4525 from in front),
+  `ProgressionReal.TempleRevealReopens` (5469), `ProgressionReal.CriticalGates`, self-test `ch20_helheim01_rune_symbols`.
 - Using a switch: Lara's clip = the switch DRM's `obj_pull_lever`, else `obj_pushbutton`
   / `hosted_push_button`, else `interact` [I: by name; `obj_pull_fail` unused]. She is placed `useDistance` (record
   +0x44) in front of it on her side of its local horizontal axis she is most along, facing it, and plays the clip in
