@@ -527,6 +527,7 @@ ours does. Two mechanisms carry every trap of the game [O]: **damaging collision
 | planes `health` 2 2000 / 12345 / 9999 | l3_main_bedroom x6, l3_main_hall x4, l2_maproom x2; l1_ship_sinking_hall x2, l5_valaskjalf x1; l4_pool x1 | fire pits, shafts | yes |
 | volumes `health` 2 2000 / 1000 / 300 | l2_towerconnector x2, l4_traprooms x1, l2_maproom x2 + 1 + 1, l2_hubhall x1 | drops | yes |
 | eitr: volumes `health` 2 12345 (l4_pool x3), 6000 (l7_helheim01 x1), `watervolume` 12345 (l4_pool, l7_yggdrasil_end), l7_yggdrasil_end volumes x66 (amount in a member) | | the pool and its falls (`ca_ani_goo_falls` x6, `ar_uo_goo_fall` x6, `floater_goo` x10 carry no damage of their own) | l4_pool verified against the original (Water); the others run the same natives, untested by input |
+| eitr: damaging water volumes, `modifiable` 1 (6000, 30) sent by the volume's own script once a second = volume message 0x30 [O 0x4A59F0 -> 0x6AC340: water record +0xBA amount, +0xBC time left, run down by 0x6C10D0; 0x6AD070 sends every instance the volume holds at or under its surface the hit 0x11C with the amount each frame] | l7_helheim01 8937, the l7_yggdrasil halls' pit 8742 (l7_yggdrasil_hall02; script types 19504 / 19292, both `super 821`) | the eitr under the Helheim entrance and at the foot of the Yggdrasil hall's slide | yes: `World::tickWaterStates` (Lara by the test of `larabase` 3, enemies inside the volume's box under its surface; time in 30 Hz frames [I]); `GameReal.EitrPitKillsInTheYggdrasilHall`, self-test `ch20_yggdrasil_hall_eitr_pit`. Her death there is the swimmer's ordinary one [U: `death_drown` / a dissolve] |
 | `sh_ei_exploading_barrel` | l1_ship_exterior x29, l6_ship_exterior x14, engine halls and hallways x13 | explosion records | Breakables |
 
 No object or script of the game deals damage as darts, lava, electricity or poison gas: the electrical boxes are
@@ -930,7 +931,19 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   against 5.5 x 132.7 / 142.2); she is carried with it. When the section swaps its record set (the towers locking,
   action 0x1D) she lets go and vt 50 runs before the new state's events. A press a switch took grips nothing.
   [U] whether the original toggles on a press instead of holding; the proxy constraint; hinge joints keep the old
-  120 units/s at her grip point.
+  120 units/s at her grip point. Hinges since 2026-11-10: the handle's facing (the record cone's at the grip) turns
+  with the hinge while she is carried round (before, a quarter turn on the sidestep fell on the tangent's other side
+  every other tick and the wheel stood still), and [I] a motor holding the hinge still with more than her push's
+  moment (142.225 x strength x her lever arm) keeps it, as the prismatic joints' brakes do.
+- **l5_valgrind's tower base** (C16-15): `ar_pu_cog_wheel_level_1a` 7312, section 0 on hinge joint 0 [O data]: state 0
+  -> 5 (motor -10 degrees/s to the range watch -91..-89) -> 2 (brake 1.33e7). The Thor script's vt 49 / vt 50 command
+  it (command 1: 2 -> 1, motor bound 54 940, turned by her 8 x 142.2 at the panel's 1465; command 0: 1 -> 2). In state
+  1 the range watch -2..2 degrees takes it to state 3 (brake 1.33e7 for 1 s, then back to 1): event 1 runs the wheel's
+  vt 54 "Wheel in solved position" (glyphs 7330 vt 55, beam 7331 vt 55, the unit's vt 27, checkpoint, dispatcher 7318's
+  sticky flag +4); leaving the range (state 4, event 0) "Wheel in Unsolved position" takes them back. Dispatcher 7318's
+  vt 62 "Valgrind column in solved position" is called by its vt 6 only when all its sticky flags are set (every
+  tier's wheel), not by the base alone. She faces the tower's axis (the record's cone), so the sidestep turns it: right
+  is the short way from 89 degrees off. Self-test `ch16_tower_base_panel`.
 - **Results** (`ProgressionReal.ThorMechanismsNeedTheGearAndSlide`, each refused without its gear): l2_maproom door
   2661 (C09-05) and l5_valgrind_tunnel door 7400 (C16-04) slide their 663.7 units in 2.9 s by sidestepping; the
   l4_ragnarok_room rubble block 5660 (C15-12) 2054 units in 12.7 s; the l7 towers by their record
@@ -1331,7 +1344,7 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   512). Drop pressed while running: `ng_roll_front` (1364 units/s root motion), then run or idle.
 - Slide: down the fall line of the floor under the root (heading = downhill): on a slide-flagged face at the slide
   controller's speed, on a too-steep floor accelerated by g·sinθ (section "Slopes and slides"); a standable floor ends
-  it through `slope_slide_stumble_off`, no floor below falls, jump leaps off with the slide velocity + the standing jump’s 1441 up.
+  it through `slope_slide_stumble_off`, no floor below falls, jump leaps off by `slope_jumpF`'s query q3 (69.53 forward + 34.77 up a frame).
 - Balance beams (markup 14, MUD BALANCEBEAM): from the ground, the root within 30 of the line (x/y and height, within
   the line's extent) heading along it (cos ≥ 0.7) gets on with `bbeam_walk_attach`; falling through the line from above
   lands on it with `bbeam_jumpland` (any heading). On the beam the root is pinned to the polyline: the stick along the
@@ -2768,11 +2781,19 @@ not by one normal-z threshold (decoded 2026-11-10; before that ours stood from n
 - A standable floor ends the slide through `slope_slide_stumble_off` (State::Land, root motion). Off the end into the
   air: an edge that carries a ledge is caught as by the safety drop (`trySafetyDrop`, chart T1713 -> S534 -> the hang
   attach states; [I] played with `slope_slide_off_to_ledgeb`), else a fall with the slide velocity.
-- Jump during a slide: the slide's horizontal velocity + the standing jump's 1441 up [I]. The chart's
-  `slope_jumpF` / `U` / `L` / `R` run jump queries q3 / q39 / q40 / q41 (prop 541; the slide itself q42), whose
-  launch numbers are not decoded.
+- Jump during a slide [O chart + lara.drm query table; launch `0x7726D0` -> `0x76FFC0`: the state's jump query (prop
+  541), its +8 / +0xC / +0x10 = right / forward / up per 30 Hz frame in her frame; +0x2C bit 3 (the speed scaling of
+  the running jump's q26) is clear on these, and nothing of the slide's velocity is kept]: sliding (S813 / S814, T1703)
+  -> S805 `slope_jumpF`, **q3 = 69.53 forward + 34.77 up** a frame (2086 + 1043 units/s: 845 over level ground, further
+  down a slope's foot); during `slope_transitionto` (S819) by the stick: forward T1704 `slope_jumpF`, left / right
+  T1710 / T1711 `slope_jumpL` / `R`, **q40 / q41 = 48 aside + 30 forward + 53 up**, else T1709 `slope_jumpU`, **q39 =
+  30 forward + 70 up**. Ours (`Player::tick` State::Slide): that launch at the press with the clip ([I] the take-off
+  frame inside the clip is not decoded; the side's sign is by the clip names). On a too-steep floor (not the chart's
+  slide) the old leap stays [I]: her velocity + the standing jump's 1441 up. `Game.SlopeSlideEndsOnFlatAndJumpLeavesIt`,
+  `GameReal.SlopeYggdrasilHallSlideAndJump`, self-test `ch20_yggdrasil_hall_slide`. Not measured under Wine.
 - Not done: `ng_stepback` at the entry with the stick uphill, the S817 side run, facing changes during the slide,
-  the `slope_jump*` clips and queries, slide flags on object collision.
+  the jump queries' ledge targets (q3 / q39..q41 name class records like the other jumps), slide flags on object
+  collision.
 
 ### Measured under Wine [O-runtime]
 
@@ -2798,7 +2819,7 @@ first series) and `openunderworld-work/gameplaygoal/slope/` (`session.sh` / `ses
 Not obtained: an unflagged face between normal z 0.60 and 0.6157 that she stayed on (the two tried dropped her onto
 neighbours), 0x0020 / 0x0100 faces steeper than 52° (the 0x00A0 trials fell through terrain not yet solid in that
 part of the unit; ours follows the decompiled test), and everything with keys during a slide: the jump off it
-(`slope_jump*`, queries q3 / q39..q41), the stick across and against the slide, the entry from a walk
+(`slope_jump*`: its launch is taken from the queries q3 / q39..q41, above), the stick across and against the slide, the entry from a walk
 (`slope_transitionto`) and its `ng_stepback`. The keyed session is prepared
 (`openunderworld-work/gameplaygoal/slope/session3.sh`: the 2.5 s steady slide over the 0.765 / 0.769 / 0.668 / 0.746
 faces, Jump at 0.7 s, A / D / S / W held); tru.exe did not come up / did not load the unit in its two runs.
@@ -3036,7 +3057,18 @@ door / block object; Lara's clips = 113-track animations on her skeleton):
 
 Ours:
 
-- Using a switch (src/script picks it as before): Lara's clip = the switch DRM's `obj_pull_lever`, else `obj_pushbutton`
+- Which switch (since 2026-11-10): the one whose kind-8 record she engages (`World::engaged`, the scan of 0x719520:
+  her three points against the record's cylinder and cone), not the nearest within 200 / 250 [I] as before. The
+  class-6 switches' record is the default set at physical record +0x70 (`physics::loadObjectPhysics`; in units:
+  `ms_ei_switch_oneway_wall` r 553.1, 632.1 high from the origin up, cone 95 degrees about its front;
+  `ma_ei_switch_wall_chapel` / `ms_ei_resetting_switch` r 790.1; `ar_ei_switch_oneway` r 632.1, 948.2 high, heading
+  -89). Uber objects named as switches (the rune symbols `ar_uo_rune_wall_switch_*`, `ar_uo_rune_wall_swich_a`: one
+  section, record r 553.1 / 632.1 high centred 158 under the symbol, offered in state 1 only) are used through the
+  section's record: trigger 20 with kind 8 (0x701310 -> 0x6D5AC0) starts the transition 1 -> 0 and the state event
+  runs the script (vt 54 -> vt 55). `script::Runtime` alone (no World) keeps the reach rule [I].
+  `PhysicsRealData.SwitchesCarryOneUseRecord`, `GameReal.RuneSymbolIsUsedThroughItsUseRecord`, self-test
+  `ch20_helheim01_rune_symbols`.
+- Using a switch: Lara's clip = the switch DRM's `obj_pull_lever`, else `obj_pushbutton`
   / `hosted_push_button`, else `interact` [I: by name; `obj_pull_fail` unused]. She is placed `useDistance` (record
   +0x44) in front of it on her side of its local horizontal axis she is most along, facing it, and plays the clip in
   `State::Use` with the input locked (move, jump, drop, interact, grapple, weapons); Idle at its end. The use handler
@@ -3066,7 +3098,8 @@ Ours:
   13 fire, 14 crusher) — then posts 0x20 / 0x40 to its graph. Portables have no anim graph (their vt 19 / 20 do not
   run); the l2 / l4 poles' vt 57 therefore never runs from an insert.
   Engagement records [O data, 0x6F3C60 / 0x719520]: 0x8C bytes, sets {id, -> records, count} at physical record +0x68
-  (anim-graph objects) / +0xA8 (portables, class 50); +0 kind (4 pick up, 5 insert into, 8 use), +4 the HInfo marker
+  (anim-graph objects; class 6 without a list, the switches: the default set in the record itself at +0x70) / +0xA8
+  (portables, class 50); +0 kind (4 pick up, 5 insert into, 8 use), +4 the HInfo marker
   whose frame they are in (0x46DF20; -1 the instance), +0x10 shape (sphere / cylinder / cylinder + cone), +0x14 centre,
   +0x20 radius, +0x24 height (cm x 3.1605), +0x28 / +0x2C cone heading / half angle (degrees, from +X), +0x6C -> u16
   object ids / +0x70 count: holding a portable, a kind-5 record engages only if she holds one of those objects
