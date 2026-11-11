@@ -195,7 +195,8 @@ type 2, is [I].
 - Loose rigid bodies (`Object::loose`: grapple-pulled `*_rb_grapple*` targets, set-down portables): a dynamic Jolt
   body from all of the object's primitives (box / sphere / capsule; tru.exe builds the rigid body from every one,
   0x497270, the "solid" bit gating Lara only [I]; `massProps` mass and inertia; no primitives: a 20-unit ball, mass 666
-  as tru.exe's fallback), starting at rest where it was; it falls, tumbles, slides and stacks on the resident units'
+  as tru.exe's fallback), starting at rest where it was (a freed uber section's rider: hinged to the freed section's
+  body by a Jolt `HingeConstraint`, `Scene::Loose::hang`, saved in the scene's constraint order after the ragdolls'); it falls, tumbles, slides and stacks on the resident units'
   terrain (one static `MeshShape` per unit, built the first time a loose body exists, dropped when the unit streams
   out) and on every other object collision (`collision().dynamics` as kinematic mesh bodies following their
   transforms: doors, other uber bodies; push blocks are bodies themselves, on their three-axis joints). Its pose goes back to `Object::offset` (displacement) and `Object::body` (rotation), so its
