@@ -2339,6 +2339,43 @@ TEST(ProgressionReal, UberReceptaclesTakeTheirPortables) {
         for (const auto& [key, n] : w.script().failures()) EXPECT_TRUE(key.first != c.receptacle) << key.second;
     }
 }
+
+// The stone headdress goes with Lara from the temple to the second calendar (C13-24 -> C13-39): 5228 is taken out of
+// its holder 5249 on l4_temple's altar and stowed; after the way back (a level load here) one Interact at calendar
+// 6506's square socket takes it out and sets it in: section 0 goes 1 -> 3 -> 2 and the calendar's vt 54 runs, as with
+// l4_ballcourt's own developer copy 6498 in UberReceptaclesTakeTheirPortables.
+TEST(ProgressionReal, StowedHeaddressReachesTheSecondCalendar) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_temple");
+    auto& w = *wp;
+    const auto* head = w.script().find(5228);
+    ASSERT_TRUE(head);
+    ASSERT_EQ(w.insertedIn(5228), 5249);
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *head, 4), [&] { return carries(w, 5228); }));
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(w.stowedPortables(), std::vector<int32_t>{5228});
+    w.enterUnit("l4_ballcourt", std::nullopt, 5479);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_FALSE(std::ranges::any_of(w.units(), [](const auto& u) { return u.data.name == "l4_temple"; }));
+    const auto* rec = w.script().find(6506);
+    ASSERT_TRUE(rec && w.script().find(5228) && w.uberState(6506));
+    EXPECT_EQ(w.script().find(5228)->unit, "l4_ballcourt");
+    std::vector<std::pair<int32_t, int16_t>> calls;
+    w.script().onCall = [&](int32_t, int32_t to, int16_t vt) { calls.emplace_back(to, vt); };
+    bool inserted = false;
+    for (int k = 0; k < 4 && !inserted; ++k) {
+        auto spots = uberEngageSpots(bf, w, *rec, 0);
+        ASSERT_FALSE(spots.empty()) << "a kind-5 record";
+        spots.resize(std::min<size_t>(spots.size(), 5));
+        inserted = interactFrom(w, spots, [&] { return w.insertedIn(5228) == 6506; });
+    }
+    ASSERT_TRUE(inserted) << "Interact at the socket";
+    for (int i = 0; i < 300; ++i) w.tick({});
+    EXPECT_TRUE(w.stowedPortables().empty());
+    EXPECT_EQ((*w.uberState(6506))[0], 2u);
+    EXPECT_NE(std::ranges::find(calls, std::pair<int32_t, int16_t>{6506, 54}), calls.end());
+}
 // Calendar push handles (docs/GAMEPLAY.md "Inserting a portable", kind-1 records): ca_uo_calendar 6506's handles
 // (section 1, set 528) wait in state 3; interact inside one grips it (message 0x158 -> trigger 20 with the record's
 // kind 1: 3 -> 1), the stick turns the ring on its hinge (joint 2) with Lara, letting go (0x14F -> trigger 21: 1 -> 5)

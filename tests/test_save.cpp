@@ -1431,6 +1431,12 @@ TEST(StreamReal, RagdollSaveLoad) {
         EXPECT_EQ(find(*fresh)->state().ragdoll, find(*w)->state().ragdoll) << uid;
     }
     EXPECT_EQ(fresh->stateHash(), w->stateHash());
+    if (fresh->stateHash() != w->stateHash()) { // which subsystem parts differ
+        const auto pa = w->stateParts(), pb = fresh->stateParts();
+        EXPECT_EQ(pa.size(), pb.size());
+        for (size_t i = 0; i < std::min(pa.size(), pb.size()); ++i)
+            if (pa[i] != pb[i]) ADD_FAILURE() << "part " << i << ": " << pa[i].first << " / " << pb[i].first;
+    }
 }
 
 namespace {
