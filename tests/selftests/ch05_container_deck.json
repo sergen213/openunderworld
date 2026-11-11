@@ -3,7 +3,7 @@
  "name": "ch05_container_deck",
  "chapter": "05 God of Thunder: aboard, down to the container deck, the first two mercenaries (docs/matrix/05_god_of_thunder.md C05-01 .. C05-05)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/04thunder.html",
- "note": "l1_ship_exterior from its player intro: the deck's first squad exists only once she has crossed the boarding plane 1633, so this leg boards as ch05_boarding does and goes on: down the bow stair to the container deck (z 3809), pistols drawn, Target Lock + Fire held while she walks aft along the starboard side. Mercenary 1652 leaves his patrol, comes for her and is shot; 1650 next. Three of the five stay alive further aft / on the upper deck: the rest of the deck fights (C05-08 .. C05-15) is not played here.",
+ "note": "l1_ship_exterior from its player intro: the deck's first squad exists only once she has crossed the boarding plane 1633, so this leg boards as ch05_boarding does and goes on: down the bow stair to the container deck (z 3809), pistols drawn, Target Lock + Fire held while she walks aft along the starboard side. Mercenary 1652 leaves his patrol and comes for her as far as his guard zone (enemybase 27: planner node near -6, 16048, radii 1400 / 2800; chases are pulled in at 0.8 of the outer radius); she steps in from the starboard lane to 2600, 16200, inside it, and shoots him; 1650 next. Three of the five stay alive further aft / on the upper deck: the rest of the deck fights (C05-08 .. C05-15) is not played here.",
  "level": "l1_ship_exterior",
  "spawn": [
   6928.8,
@@ -248,7 +248,8 @@
       "chase",
       "attack"
      ],
-     "note": "the patrolling mercenary noticed her and left his path"
+     "note": "the patrolling mercenary noticed her and left his path (during the step: once he has lost her outside his guard zone he goes back to his post, so his mode at the step's end is not the claim)",
+     "over": "any"
     },
     {
      "probe": "enemies.alive",
@@ -264,7 +265,8 @@
    "step": "first_mercenary",
    "plan": [
     "go 3300 16500 100",
-    "wait 12"
+    "go 2600 16200 100",
+    "wait 8"
    ],
    "input": [
     "0 aim 1",
