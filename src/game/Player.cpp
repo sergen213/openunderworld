@@ -2305,15 +2305,39 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         // slideAccel / slideDecel; while slope_transitionto plays toward slideEnterSpeed (S818's props; [I] that
         // the controller runs there). On a too-steep floor (Floor::Steep) gravity along it without friction or cap
         // (Wine: l3_main_bedroom roof, normal z 0.45: 51 -> 69 -> 91 units per 30 Hz frame, ~4.7k units/s^2 =
-        // g sin 63 deg). Jump leaps off forward [I: slope_jumpF/L/R/U not played]; a standable floor ends it through
-        // slope_slide_stumble_off (S821, T1699), nothing below falls.
+        // g sin 63 deg). A standable floor ends it through slope_slide_stumble_off (S821, T1699), nothing below falls.
+        // Jump on a slide face [O chart + lara.drm query table; launch 0x7726D0 -> 0x76FFC0: the state's jump query
+        // (prop 541) +8 / +0xC / +0x10 = right / forward / up per 30 Hz frame in her frame, unscaled (its +0x2C bit 3
+        // is clear), nothing of the slide's velocity kept]: sliding (S813 / S814, T1703) -> S805 slope_jumpF, q3 =
+        // 69.53 forward + 34.77 up a frame; during slope_transitionto (S819) by the stick: forward T1704 slope_jumpF,
+        // left T1710 slope_jumpL q40 = 48 aside + 30 forward + 53 up, right T1711 slope_jumpR q41 (its mirror), else
+        // T1709 slope_jumpU q39 = 30 forward + 70 up. [I] the launch at the press (the clips' take-off frame is not
+        // decoded) and the side's sign by the clip names. On a too-steep floor (not the chart's slide: the original is
+        // in its falling states there) the old leap stays [I]: her velocity + the standing jump's 1441 up.
         advanceClip(dt);
         if (s_.clip != "slope_slidefront" && clipDone()) play("slope_slidefront", true);
         s_.fallStartZ = s_.pos.z; // sliding is not falling (no fall damage on the run-out)
         if (jumpPressed) {
+            const auto here = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
             s_.state = State::Jump;
-            s_.vel = vec3(xy(s_.vel), t_.jumpVz);
-            play("NG_InAir_Feet_Forward_stage1", false);
+            s_.fallStartZ = s_.pos.z;
+            if (here && floorKind(*here) == Floor::Slide) {
+                vec3 q(0.0f, 69.53f, 34.77f); // q3: right, forward, up per frame
+                const char* clip = "slope_jumpF";
+                if (s_.clip == "slope_transitionto") {
+                    const vec2 f = xy(forward());
+                    const float along = wantsMove ? glm::dot(move, f) : 0.0f, left = wantsMove ? move.x * -f.y + move.y * f.x : 0.0f;
+                    if (wantsMove && along >= std::abs(left) && along > 0) q = vec3(0.0f, 69.53f, 34.77f);
+                    else if (wantsMove && std::abs(left) > std::abs(along)) q = vec3(left > 0 ? -48.0f : 48.0f, 30.0f, 53.0f), clip = left > 0 ? "slope_jumpL" : "slope_jumpR";
+                    else q = vec3(0.0f, 30.0f, 70.0f), clip = "slope_jumpU";
+                }
+                const vec3 f = forward(), r(f.y, -f.x, 0);
+                s_.vel = (r * q.x + f * q.y + vec3(0, 0, q.z)) * 30.0f;
+                play(anims_.find(clip) ? clip : "NG_InAir_Feet_Forward_stage1", false);
+            } else {
+                s_.vel = vec3(xy(s_.vel), t_.jumpVz);
+                play("NG_InAir_Feet_Forward_stage1", false);
+            }
             break;
         }
         const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);

@@ -1561,6 +1561,8 @@ private:
         vec3 sourceAt{0}, sinkAt{0};
     };
     std::map<int32_t, WaterState> waterStates_; // by watervolume intro uid
+    struct WaterDamage { float amount = 0, frames = 0; };
+    std::map<int32_t, WaterDamage> waterDamage_; // damaging volumes (message 0x30: the eitr), by watervolume intro uid
     std::vector<physics::Scene::Water> physicsWater_; // stepPhysics: the loaded volumes for buoyancy (reused)
     void bindWater();
     void bindFeedback();
@@ -1664,7 +1666,8 @@ private:
     // The push / pull record Lara grips; `face`: the way she faces while gripping it (0: her own facing, World::pushUberHandle)
     // `hold`: on a three-axis joint, where she stood from the joint's position when she gripped it.
     // `gear`: the record asks for objects she carries (Thor's gear). `across`: decided at the grip.
-    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; std::optional<vec3> hold; bool gear = false; int32_t segment = -1; int8_t across = -1; } uberHandle_;
+    // `faceAt`: the hinge's angle when `face` was taken (the handle's facing turns with its hinge; `faceSet` once taken).
+    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; std::optional<vec3> hold; bool gear = false; int32_t segment = -1; int8_t across = -1; bool faceSet = false; float faceAt = 0; } uberHandle_;
     physics::Joint3* uberSlide(int32_t uid); // the three-axis joint the object's model 0 rides (push blocks, Thor pillars), null none
     uint32_t pushCameraData_ = 0xFFFFFFFFu; // gamebase 50: DTP id given to CameraManager's type-4 camera (0x779C60)
     int uberMoving_ = 0; // this tick, gripping it: the way her stick moves it (1 forward, -1 back, 2 left, -2 right; 0 not)

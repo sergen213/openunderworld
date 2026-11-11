@@ -1041,12 +1041,19 @@ bool World::pushUberHandle(const Actions& a, float speed) {
             }
             uberTrigger(e.uid, size_t(e.section), 20, uint32_t(e.record->kind));
             script_.engage(e.uid, e.record->segment, e.record->kind, true);
+        } else if (e.record && e.section >= 0 && e.record->kind == 8 && o) {
+            // An uber section's "use" record (the rune symbols ar_uo_rune_wall_switch_*: one section, kind 8, a cylinder
+            // of r 553.1 and 632.1 high centred 158 under the symbol, cone 95 degrees about its facing; offered in state 1
+            // only, action 0x1D). Her use posts 0x158 to the section she engages [O 0x701310 -> 0x6D5AC0]: trigger 20
+            // with the record's kind starts the transition (1 -> 0, its clip), whose state event reaches the script's
+            // vt 54 -> vt 55 ("activated"). [I] her clip: the object's own Lara clip as the class-6 switches'.
+            if (uberTrigger(e.uid, size_t(e.section), 20, 8)) useSwitchClip(*o);
         }
     }
     if (!uberHandle_.uid) return false;
     const int32_t index = uberSectionJoint(uberHandle_.uid, uberHandle_.section);
     auto rt = uberRuntime_.find(uberHandle_.uid);
-    const vec3 fwd = uberHandle_.face != vec3(0) ? uberHandle_.face : vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
+    const vec3 fwd0 = uberHandle_.face != vec3(0) ? uberHandle_.face : vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
     // A section on a three-axis joint (the push blocks, the Thor pillars: ca_pu_thor_pillar itself, the others through
     // their hinge) goes where she pushes or pulls it [O 0x74AC00: an impulse-bounded velocity on the object's body,
     // turned off her facing by the stick (pushDirection); nothing in the PushPull state knows the joint], with
@@ -1054,7 +1061,7 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     // while their hinge turns, the blocks' locked state 3) takes its bound off the impulse, as the doors' brake does.
     if (const int32_t slide = rt != uberRuntime_.end() ? uberSectionJoint3(uberHandle_.uid, uberHandle_.section) : -1; slide >= 0) {
         auto& j = rt->second.joints3.at(slide);
-        uberGrip_ = glm::normalize(vec3(fwd.x, fwd.y, 0));
+        uberGrip_ = glm::normalize(vec3(fwd0.x, fwd0.y, 0));
         if (!uberHandle_.hold) uberHandle_.hold = s.pos - j.x;
         const vec2 dir = pushDirection(a.move);
         const vec3 right(uberGrip_.y, -uberGrip_.x, 0);
@@ -1071,10 +1078,18 @@ bool World::pushUberHandle(const Actions& a, float speed) {
         return true;
     }
     if (index < 0 || rt == uberRuntime_.end()) {
-        uberGrip_ = fwd; // gripped, nothing moves
+        uberGrip_ = fwd0; // gripped, nothing moves
         return true;
     }
     auto& j = rt->second.joints.at(index);
+    // The handle's facing turns with its hinge: she is carried round and keeps facing it (the facing was the record
+    // cone's at the grip only: a quarter turn on, the cog wheel's "right" fell on the tangent's other side every
+    // other tick and the wheel stood, l5_valgrind 7312 at 11 degrees off its solved position).
+    vec3 fwd = fwd0;
+    if (j.hinge && uberHandle_.face != vec3(0)) {
+        if (!uberHandle_.faceSet) uberHandle_.faceAt = j.x, uberHandle_.faceSet = true;
+        fwd = vec3(glm::rotate(glm::mat4(1), j.x - uberHandle_.faceAt, j.axis) * glm::vec4(uberHandle_.face, 0));
+    }
     vec3 along = j.hinge ? glm::cross(j.axis, s.pos - j.pivot) : j.axis; // her grip point's motion per unit of the joint
     along.z = 0;
     const float rate = glm::length(along);
@@ -1106,6 +1121,11 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     const float sign = drive > 0 ? 1.0f : -1.0f;
     if (j.hinge) {
         if (!driven) return true;
+        // [I] As the prismatic joints: a motor holding the hinge still with more than her push's moment (the
+        // push impulse bound at her lever arm) keeps it. ar_pu_cog_wheel_level_1a [O data]: gripped (state 1)
+        // 54 940, which she turns (208 000 at the panel's 1465); in the solved position (state 3, range -2..2
+        // degrees entered) 1.33e7 for its second: the wheel stops there.
+        if (j.motor && j.speed == 0 && j.force > 0 && kPushImpulse * script_.pullStrength() * rate <= j.force) return true;
         j.push = sign * speed / rate / 30.0f;
     } else {
         const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), j.motor && j.force > 0 ? j.force : 0.0f);
@@ -1511,6 +1531,12 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
         result = b && b->uid == uid;
         return true;
     }
+    // modifiable 1 on a water volume: message 0x30 (amount, time), below (tickWaterStates).
+    if (type == "modifiable") {
+        if (a.size() == 2 && a[0] > 0 && a[1] > 0) waterDamage_[uid] = {float(a[0]), float(a[1])};
+        else waterDamage_.erase(uid);
+        return true;
+    }
     if (type == "larabase") { // 3 (0x777780): Lara is in volume `uid` (her probe box's volume) with its surface over her feet [O Wine: the goo bed kills, the walkways in the same box do not]
         const auto [m, u] = waterVolume(uid);
         const int w = player_.waterAt(player_.state().pos);
@@ -1588,7 +1614,35 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
 }
 
 // 0x6C10D0: the surface moves rate per 30 Hz frame toward the target, landing on it.
+// Damaging water (the eitr of the Norse underworld) [O 0x6AC340 / 0x6C10D0 / 0x6AD070]: message 0x30 stores an amount
+// (water record +0xBA) and a time (+0xBC), which runs down every frame and clears the amount at 0 [I: in 30 Hz frames;
+// the scripts renew (6000, 30) once a second]; while it stands, every instance the volume holds at or under its
+// surface is sent the hit message 0x11C with that amount each frame (0x6AD070, beside the "in water" stimulus 0x33).
+// Ours: Lara by the test of larabase 3 (her probe box's volume, its surface over her feet) and the enemies inside the
+// volume's box under its surface. 6000 kills at once whatever the difficulty [I: taken unscaled, the message's type 9
+// is not modelled].
 void World::tickWaterStates(float dt) {
+    for (auto it = waterDamage_.begin(); it != waterDamage_.end();) {
+        const int32_t uid = it->first;
+        const float amount = it->second.amount;
+        if ((it->second.frames -= dt * 30.0f) <= 0) it = waterDamage_.erase(it);
+        else ++it;
+        const auto [m, u] = waterVolume(uid);
+        if (!m) continue;
+        const vec3 at = player_.state().pos;
+        const double seconds = double(ticks_) * kTickSeconds;
+        const int w = player_.waterAt(at);
+        if (w >= 0 && &col_.markup[size_t(w)] == m && waterSurface(*m, vec2(at), seconds) > at.z && !health_.dead())
+            damageLara(amount, at, kDamageAbsolute);
+        std::vector<int32_t> hit;
+        for (const auto& e : enemies_.all()) {
+            const vec3 p = e->state().pos;
+            if (p.x >= m->points[0].x && p.x <= m->points[1].x && p.y >= m->points[0].y && p.y <= m->points[1].y && p.z >= m->points[0].z &&
+                p.z < waterSurface(*m, vec2(p), seconds))
+                hit.push_back(e->uid());
+        }
+        for (const int32_t e : hit) enemies_.damage(e, amount);
+    }
     for (auto& [uid, s] : waterStates_) {
         if (s.surface == s.target) continue;
         const float diff = s.target - s.surface, step = s.rate * dt * 30.0f;
@@ -2944,20 +2998,41 @@ void World::collectJointSounds(float dt) {
 }
 
 // Lara's use of anim-graph objects goes through their "use" engagement records (kind 8: tru.exe 0x719520 picks the
-// record she engages; her use posts 0x166 / 0x168 to that instance, 0x6B4090): objects carrying such records are marked
+// record she engages; her use posts 0x166 / 0x168 to that instance, 0x6B4090), and so does her use of switches (class 6:
+// one kind-8 record in the physical record's default set +0x70; ms_ei_switch_oneway_wall a cylinder of r 553.1 and 632.1
+// high from its origin up, cone 95 degrees about its front): objects carrying such records are marked
 // (script::Object::useRecords) and the one she engages on this press is returned (0 none). Empty-handed only: a held
 // portable admits kinds 3 / 5 / 7 (World::engaged). l1_seafloor eye pieces 231-233 [O data: one kind-8 record each].
 int32_t World::engagedUse(bool pressed) {
     if (!pressed) return 0;
     for (const auto& o : script_.objects()) {
-        if (o.kind != script::Kind::Scripted || !o.graph || o.useRecords) continue;
+        const bool sw = o.kind == script::Kind::Switch;
+        if ((!sw && (o.kind != script::Kind::Scripted || !o.graph)) || o.useRecords) continue;
+        // switches: the class-6 ones by their record (the default set, physics::loadObjectPhysics); an uber object named
+        // as one through its sections' records (pushUberHandle) when any section has engagement records at all (a start
+        // set or a state's set, action 0x1D: the rune symbols). One without any (l5 wall lever 7188 `ar_uo_wall_lever`,
+        // a prismatic handle the original works by her hanging weight [O data: no engagement set in its two sections])
+        // keeps the reach rule of Runtime::tick [I stand-in].
+        if (const auto* data = sw ? prepareUber(o) : nullptr) {
+            const bool records = std::ranges::any_of(data->sections, [](const formats::UberSection& s) {
+                return s.engagement >= 0 || std::ranges::any_of(s.stateActions, [](const auto& acts) {
+                           return std::ranges::any_of(acts, [](const formats::UberAction& a) { return a.engagement >= 0; });
+                       });
+            });
+            if (records) const_cast<script::Object&>(o).useRecords = true;
+            continue;
+        }
         const auto* p = objectPhysics(o.name);
         if (p && std::ranges::any_of(p->engagements, [](const auto& set) { return std::ranges::any_of(set.records, [](const auto& e) { return e.kind == 8; }); }))
             const_cast<script::Object&>(o).useRecords = true;
     }
-    if (held_ || !carryReady()) return 0;
+    if (held_) return 0;
     const Engaged e = engaged();
-    return e.record && e.record->kind == 8 && e.section < 0 ? e.uid : 0;
+    if (!e.record || e.record->kind != 8 || e.section >= 0) return 0;
+    // switches as before the records: in whatever state her press comes (walking up, landing, swimming at the Arctic
+    // sea's wheels); the anim-graph objects standing or swimming [I: both]
+    const auto* o = script_.find(e.uid);
+    return (o && o->kind == script::Kind::Switch) || carryReady() ? e.uid : 0;
 }
 
 // A class-34 rigid body that is a grapple target (a model feature with kFeatureGrapple) and whose joint record has no

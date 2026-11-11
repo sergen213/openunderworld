@@ -244,6 +244,8 @@ struct Object {
     // hosted_push_button, else interact; game::AnimLibrary keeps them as "use:<id>"), 0 = none.
     uint32_t laraClip = 0;
     float useDistance = 0; // Switches: where Lara stands to use it, units in front of it (engagement record +0x44 [I]); 0 = unknown
+    // (Switches too: the class-6 switches' default set, and uber objects named as switches, whose sections' records
+    // World::pushUberHandle serves.)
     // The object carries "use" engagement records (kind 8; set by game::World): Lara's use reaches it only through the
     // record she engages (TickInput::engagedUse), not by reach. l1_seafloor's eye pieces 231-233 stand side by side and
     // their script switches each one's records off while another turns (instance 59, UseEngagementProperties).

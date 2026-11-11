@@ -1590,6 +1590,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
         part("water " + std::to_string(uid));
         add(uid), add(w.surface), add(w.target), add(w.rate), add(w.source), add(w.sink), add(w.strength), add(w.sourceAt), add(w.sinkAt);
     }
+    for (const auto& [uid, d] : waterDamage_) part("water damage " + std::to_string(uid)), add(uid), add(d.amount), add(d.frames);
     return out;
 }
 

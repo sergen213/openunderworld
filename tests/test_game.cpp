@@ -2009,8 +2009,7 @@ TEST(Game, SlopeSlideFaceCannotBeRunUp) {
     }
 }
 
-// A slide runs out on the flat (standable) ground below and ends there; Jump leaves it with the slide's horizontal
-// velocity.
+// A slide runs out on the flat (standable) ground below and ends there; Jump leaves it by slope_jumpF's query q3.
 TEST(Game, SlopeSlideEndsOnFlatAndJumpLeavesIt) {
     const float nz = 0.75f;
     {
@@ -2035,8 +2034,10 @@ TEST(Game, SlopeSlideEndsOnFlatAndJumpLeavesIt) {
     j.jump = true;
     w->tick(j);
     EXPECT_EQ(s.state, State::Jump);
-    EXPECT_NEAR(s.vel.x, vx, 40);
-    EXPECT_GT(s.vel.z, 1000);
+    // slope_jumpF's query q3 [O lara.drm]: 69.53 forward + 34.77 up a 30 Hz frame, nothing of the slide's speed
+    EXPECT_GT(2085.9f, vx + 500);
+    EXPECT_NEAR(s.vel.x, 2085.9f, 1.0f);
+    EXPECT_NEAR(s.vel.z, 1043.1f, 1.0f);
 }
 
 // ---- swimming (real data) ---------------------------------------------------------------------
@@ -5421,7 +5422,10 @@ TEST(GameReal, LaraPlaysInteractionClips) {
     game::Actions use;
     use.interact = true;
     {
-        const auto w = worldMaker(bf, "l3_main_bedroom", game::Spawn{{-8680, -8279, 1767}, 0})();
+        // 100 in front of switch 4525 (origin (-8680, -8279, 1767), facing -0.177 rad), facing it: its use record's cone
+        // is 64 degrees about 15 degrees off its +X (ma_ei_wall_switch_electric, 0x6F3A50); on its origin she engages
+        // nothing (before the records the reach rule took her there).
+        const auto w = worldMaker(bf, "l3_main_bedroom", game::Spawn{{-8581, -8297, 1767}, 2.965f})();
         w->tick({});
         ASSERT_TRUE(w->script().find(4525));
         w->tick(use);
@@ -9771,7 +9775,7 @@ TEST(GameReal, SlopeKrakenRoomSlide) {
 
 // l7_yggdrasil_hall01, the slope before the eitr pit (Yggdrasil: slide down and jump at its foot): one 0x0004
 // surface of normal z 0.865 (30.1 degrees). Under the angle rule of 0.7 it was stood on; by the flag she slides it
-// at 35.5 units per frame, and Jump leaves the slide with its horizontal speed.
+// at 35.5 units per frame, and Jump leaves the slide by slope_jumpF's query q3.
 TEST(GameReal, SlopeYggdrasilHallSlideAndJump) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -9790,9 +9794,11 @@ TEST(GameReal, SlopeYggdrasilHallSlideAndJump) {
     j.jump = true;
     w.tick(j);
     ASSERT_EQ(s.state, State::Jump);
-    EXPECT_NEAR(s.vel.x, vx, 30.0f);
+    EXPECT_LT(vx, 1000.0f);
+    EXPECT_NEAR(s.vel.x, 2085.9f, 1.0f); // q3 [O lara.drm]: 69.53 forward + 34.77 up a frame
+    EXPECT_NEAR(s.vel.z, 1043.1f, 1.0f);
     for (int i = 0; i < 240 && (s.state == State::Jump || s.state == State::Fall); ++i) w.tick({});
-    EXPECT_GT(s.pos.x, -6003 + 200); // past the foot of the slope (x -6003), 630 from the take-off
+    EXPECT_NEAR(s.pos.x, -5252, 40); // on the run-out 750 past the foot of the slope (x -6003), 1150 from the take-off
     EXPECT_NEAR(s.pos.z, 0, 1.0f);
 }
 
@@ -10304,4 +10310,61 @@ TEST(Game, IkPassesStayOffOnTerrain) {
     }
     EXPECT_EQ(w.player().state().state, game::State::Idle);
     EXPECT_NEAR(w.player().state().pos.z, 1000 * std::tan(glm::radians(15.0f)), 2.0f); // standing on the ramp
+}
+
+// ---- the Norse underworld's blockers (rune symbols, the eitr pit) --------------------------------------------------
+
+// l7_helheim01, rune symbol 8995 (ar_uo_rune_wall_switch_d, an uber object) on the entrance frame's west pillar, 480
+// over the ledge. Its section offers one kind-8 "use" record in state 1 [O data: cylinder r 553.1, 632.1 high, centred
+// 158 under the symbol, cone 95 degrees about its facing]: Interact inside it starts the transition 1 -> 0 (trigger 20
+// with the record's kind, tru.exe 0x701310 -> 0x6D5AC0). The old reach rule (origin within 250 of her feet in height)
+// never used it.
+TEST(GameReal, RuneSymbolIsUsedThroughItsUseRecord) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto state = [](game::World& w) {
+        const auto* s = w.uberState(8995);
+        return s && !s->empty() ? int((*s)[0]) : -2;
+    };
+    const auto press = [&](game::World& w) {
+        for (int i = 0; i < 60; ++i) w.tick({});
+        EXPECT_EQ(state(w), 1) << "offered";
+        Actions a;
+        a.interact = true;
+        w.tick(a);
+        for (int i = 0; i < 240; ++i) w.tick({});
+    };
+    {
+        HazardWorld h("l7_helheim01", game::Spawn{{-2010, -2232, 1900}, 0.0f});
+        press(h.w);
+        EXPECT_EQ(state(h.w), 0) << "used from the ledge in front of it";
+        EXPECT_FALSE(h.w.health().dead());
+    }
+    {
+        HazardWorld h("l7_helheim01", game::Spawn{{2.7f, -416.8f, 1900}, glm::radians(-90.0f)}); // checkpoint 8939: 2600 away
+        press(h.w);
+        EXPECT_EQ(state(h.w), 1) << "out of its record: not used";
+    }
+}
+
+// The pit at the foot of the l7_yggdrasil halls' slide: water volume 8742's script sends its volume message 0x30
+// (6000, 30) once a second (`modifiable` 1, tru.exe 0x4A59F0 -> 0x6AC340: water record +0xBA / +0xBC), and the volume
+// hits every instance it holds with that amount each frame (0x6AD070): eitr. Before, she trod water there unharmed.
+TEST(GameReal, EitrPitKillsInTheYggdrasilHall) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    HazardWorld h("l7_yggdrasil_hall02", game::Spawn{{-4740.8f, -2597.7f, -2100}, 0.0f}); // 200 over the surface
+    game::World& w = h.w;
+    w.tick({});
+    EXPECT_EQ(w.health().value(), 1000) << "over the pit";
+    bool wet = false;
+    int died = -1;
+    for (int i = 0; i < 600 && died < 0; ++i) {
+        w.tick({});
+        wet |= w.player().state().water >= 0;
+        if (w.health().dead()) died = i;
+    }
+    EXPECT_TRUE(wet);
+    ASSERT_GE(died, 0) << "the eitr kills";
+    EXPECT_GT(died, 5) << "not before she is in it";
+    EXPECT_LT(w.player().state().pos.z, -2250.0f) << "as her feet go under the surface";
+    EXPECT_LT(died, 120);
 }

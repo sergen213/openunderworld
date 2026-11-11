@@ -1,9 +1,9 @@
 {
  "version": 1,
  "name": "ch20_yggdrasil_hall_eitr_pit",
- "chapter": "20 Yggdrasil: the pit at the slide's foot is eitr (docs/matrix/20_yggdrasil.md C20-19)",
+ "chapter": "20 Yggdrasil: the eitr pit at the foot of the hall's slide (docs/matrix/20_yggdrasil.md C20-19)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html",
- "note": "Known gap. As ch20_yggdrasil_hall_slide without the jump: the slide runs off its foot (y 8140) and she drops into the pit. The walkthrough's pit is eitr (instant death, as l4_pool's and l7_yggdrasil_end's pools). Ours: the pit is a plain water volume (surface z -3594 in l7_yggdrasil's frame): she surfaces and treads water unharmed (8 s watched, health 1000; triggervolumes 8752 / 8753 entered, no kill). Fails at in_the_pit. Suspected cause: the unit's kill is a script poll or a property of the volume that ours does not apply here (docs/GAMEPLAY.md \"Hazards\" lists eitr kills only for l4_pool, l7_helheim01 and l7_yggdrasil_end).",
+ "note": "As ch20_yggdrasil_hall_slide without the jump: the slide runs off its foot (y 8140) and she drops into the pit. The pit is water volume 8742 (l7_yggdrasil_hall02), whose script arms the volume's damage once a second (modifiable 1 (6000, 30) = volume message 0x30, tru.exe 0x6AC340; the volume hits every instance it holds with the amount each frame, 0x6AD070): eitr. She dies as her feet go under the surface (z -3594 in l7_yggdrasil's frame).",
  "level": "l7_yggdrasil",
  "spawn": [
   -0.1,
@@ -63,6 +63,10 @@
     "run 90 5.5"
    ],
    "duration": 8,
+   "until": {
+    "probe": "player.dead",
+    "eq": true
+   },
    "expect": [
     {
      "visits": [
@@ -75,17 +79,16 @@
      "probe": "water.in",
      "over": "any",
      "eq": true
-    }
-   ]
-  },
-  {
-   "step": "in_the_pit",
-   "duration": 8,
-   "expect": [
+    },
     {
      "probe": "player.dead",
      "eq": true,
      "note": "eitr kills"
+    },
+    {
+     "probe": "player.pos.z",
+     "max": -3594,
+     "note": "under the pit's surface"
     }
    ]
   }

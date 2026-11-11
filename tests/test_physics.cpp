@@ -637,3 +637,29 @@ TEST(Physics, LooseBodiesFloatOrSinkInWater) {
     EXPECT_LT(z, 500 - 10.0f) << "partly under the surface";
     EXPECT_NEAR((*s.loose(2))[3].z, 0, 5) << "sinks";
 }
+
+// The switches' "use" record [O data]: class 6 without an engagement list keeps its default set in the physical record
+// itself (+0x70 {id -1, -> records, count}): one kind-8 record, a cylinder with a facing cone (tru.exe 0x6F3C60).
+TEST(PhysicsRealData, SwitchesCarryOneUseRecord) {
+    const auto* bf = bigfile();
+    if (!bf) GTEST_SKIP() << "OU_GAME_DIR not set";
+    struct Want { const char* name; float radius, heading, half; };
+    for (const Want& want : {Want{"ms_ei_switch_oneway_wall", 553.1f, 0, 95}, Want{"ma_ei_switch_wall_chapel", 790.1f, 0, 95},
+                             Want{"ma_ei_wall_switch_electric", 553.1f, 15, 64}, Want{"ar_ei_switch_oneway", 632.1f, -89, 93}}) {
+        const auto o = physics::loadObjectPhysics(cdc::parseDrm(*bf->read(std::string("pc-w\\") + want.name + ".drm")));
+        EXPECT_EQ(o.physClass, 6u) << want.name;
+        ASSERT_EQ(o.engagements.size(), 1u) << want.name;
+        EXPECT_EQ(o.engagements[0].id, -1) << want.name;
+        ASSERT_EQ(o.engagements[0].records.size(), 1u) << want.name;
+        const auto& e = o.engagements[0].records[0];
+        EXPECT_EQ(e.kind, 8) << want.name;
+        EXPECT_EQ(e.shape, 2) << want.name;
+        EXPECT_EQ(e.segment, -1) << want.name;
+        EXPECT_NEAR(e.radius, want.radius, 0.1f) << want.name;
+        EXPECT_NEAR(glm::degrees(e.heading), want.heading, 0.01f) << want.name;
+        EXPECT_NEAR(glm::degrees(e.half), want.half, 0.01f) << want.name;
+    }
+    // an anim-graph object keeps its list (+0x68): the default set is not added to it
+    const auto eye = physics::loadObjectPhysics(cdc::parseDrm(*bf->read("pc-w\\ms_ani_eye_puzzle_piece.drm")));
+    EXPECT_FALSE(eye.engagements.empty());
+}

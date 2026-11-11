@@ -371,8 +371,9 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
   anchor (0x4A3420 -> +0x18: an instance or a `uberobjectbase` 2 marker anchor), 3 same sensor. Member init {u32 0, u8
   onEnter, u8 onExit, u8 oneShot, u8 enabled, float radius}; the update 0x77A020 tests Lara's root against the anchor
   (0x7799F0) and calls the owner's vt 14 (sensor, inside) through 0x779950 / 0x798430. Ours: `Runtime::tickSensors`
-  (GAMEPLAY.md "Water moves": the jellyfish). `instance` 18/21/23, `modifiable` 1, `unitref` 2,
-  `larabase` 25/27/29/55 are accepted (effects [U]); 56 disables Lara's stick while a reveal camera plays
+  (GAMEPLAY.md "Water moves": the jellyfish). `instance` 18/21/23, `unitref` 2,
+  `larabase` 25/27/29/55 are accepted (effects [U]); `modifiable` 1 (0x4A59F0: message 0x30 {short, short}) arms a
+  water volume's damage (0x6AC340: amount, time; GAMEPLAY.md "Hazards": the eitr), other receivers [U]; 56 disables Lara's stick while a reveal camera plays
   (GAMEPLAY.md "Cameras").
 
 - [O] Globals (gameglobalsbase type 5) SCRIPT members without initial values (+4/+8/+12/+272/+356/+432/+436 ->

@@ -186,6 +186,12 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
         if (const auto list = cdc::internalPointer(ob, *p + lo); list && *p + lo + 8 <= ob.data.size() && at<uint32_t>(ob, *p + lo + 4) <= 32)
             for (uint32_t i = 0; i < at<uint32_t>(ob, *p + lo + 4); ++i)
                 if (auto set = engagementSetAt(ob, *list + 12 * i)) o.engagements.push_back(std::move(*set));
+        // Class 6 without a list (the switches: *_ei_switch_*, *_ei_wall_switch_*): the default set stored in the
+        // record itself at +0x70 {id -1, -> records, count} — one kind-8 "use" record each [O data, survey of the
+        // switches].
+        if (o.physClass == 6 && o.engagements.empty() && *p + 0x7C <= ob.data.size() && at<uint32_t>(ob, *p + 0x78) >= 1 &&
+            at<uint32_t>(ob, *p + 0x78) <= 32 && cdc::internalPointer(ob, *p + 0x74))
+            if (auto set = engagementSetAt(ob, *p + 0x70); set && !set->records.empty()) o.engagements.push_back(std::move(*set));
         if (o.physClass == 6)
             if (const auto a = cdc::internalPointer(ob, *p + 0x3C); a && *a < ob.data.size()) o.attachMarker = ob.data[*a];
     }
