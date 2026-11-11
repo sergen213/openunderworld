@@ -3147,10 +3147,12 @@ nlohmann::json Runtime::serialize() const {
     }
     // The object list's order (update and hash order): a load makes the units' own objects first, then born dormant
     // intros, then away instances, which need not be the running world's order (the summoned bike's instance before
-    // poachers born later); restore puts them back in this order.
-    std::vector<int32_t> order;
-    order.reserve(objects_.size());
-    for (const auto& o : objects_) order.push_back(o.uid);
+    // poachers born later); restore puts them back in this order. Saved again before the first tick after a load (its
+    // objects may not be made yet): the loaded order, then the objects it does not name.
+    std::vector<int32_t> order = savedOrder_;
+    order.reserve(order.size() + objects_.size());
+    for (const auto& o : objects_)
+        if (savedOrder_.empty() || std::ranges::find(savedOrder_, o.uid) == savedOrder_.end()) order.push_back(o.uid);
     j["runtime"]["order"] = std::move(order);
     return j;
 }
