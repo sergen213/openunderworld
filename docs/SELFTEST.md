@@ -125,7 +125,7 @@ happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario
 
 `plan` is the autopilot's syntax (`src/app/game/Autopilot.hpp`, docs/GAMEPLAY.md "Receptacle replays and the
 autopilot"); it reads the World to steer, so it reaches places and objects by coordinates and uids:
-`go X Y [R] [walk]`, `engage UID [X Y] [walk]`, `face YAWDEG`, `press [ACTION]`, `hold ACTION SECONDS`,
+`go X Y [R] [walk]`, `engage UID [X Y] [walk]` (a parked motorcycle's uid: to its mount spot), `face YAWDEG`, `press [ACTION]`, `hold ACTION SECONDS`,
 `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world heading, whatever the camera
 does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [CELL] [UP]` (logs the floor round her as a grid), `ride X Y [R] [THROTTLE] [SPEED] [BRAKESTEER]` (on the
 motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED; while
@@ -282,7 +282,9 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `world.treasures`, `world.relics`, `world.health_packs` | pickups collected per kind |
 | `world.ticks`, `world.streaming`, `world.autosaves` | the World's tick clock; neighbour loads pending; autosaves the scripts asked for |
 | `world.flashlight`, `world.screen_fade` | the light is on; the screen wipe (1 = black) |
-| `portable.held` | uid of the portable she carries, 0 none |
+| `portable.held` | uid of the portable she carries in her hands, 0 none |
+| `portable.stowed` | how many key items are stowed on her (docs/GAMEPLAY.md "Key items are stowed") |
+| `object.<uid>.stowed`, `object.<uid>.unit` | that object is stowed on her; the unit the instance lives in (it changes unit with her while she carries it; a bike's is the unit it stands in) |
 | `portable.<uid>.in`, `object.<uid>.in` | the receptacle that portable is inserted in, 0 none |
 | `object.<uid>.exists` `.name` `.hidden` `.dead` | a script object by intro uid (objectlist name; instance hidden / killed) |
 | `object.<uid>.pos.x/.y/.z` | its position with its own displacement (a pushed block, a fallen body) |
@@ -352,6 +354,7 @@ tested behaviour happen.
 | `{"kill": true}` | kills her (message 4) |
 | `{"teleport": [x, y, z, yawDeg]}` | puts her there (current unit's frame) standing idle, exactly at z: in the air she falls. The camera goes behind her; health is kept. Same loaded units: for another level use `level` |
 | `{"camera": [yawDeg, pitchDeg]}` | turns the orbit camera |
+| `{"level": ["unit", checkpoint]}` | a level load at that unit's checkpoint with the game's state kept (`World::enterUnit`, as a respawn makes one): stands for a way between two units the scenario does not play. What she carries goes with her; health is kept |
 
 ## Report
 
@@ -486,11 +489,14 @@ tested behaviour happen.
 | `ch13_ballcourt_calendar_locked` | l4_ballcourt | Xibalba: at calendar 5477 without the jaguar head a gripped push handle turns nothing (hinge joint 2 stays 0, section 5 waits in state 3) |
 | `ch13_temple_headdress` | l4_temple | Xibalba: from the pit floor's checkpoint 4971 to the altar, the headdress 5228 taken out of its holder 5249 |
 | `ch13_ballcourt_pole_gate` | l4_ballcourt | Xibalba: `puzzle_pole_block_door`'s six steps, then on the pole the turn across it, the swing, the fling to the gate (1550), through the doorway into calendar 2's court (cinematic 6388) |
+| `ch13_mask_to_calendar` | l4_trailstart → l4_ballcourt | the jaguar head 6604 taken from its pedestal (stowed by the pick-up clip), a level load to checkpoint 5478 (the `level` fixture stands for the ride), set on calendar 5477's jaguar by one Interact (section 5: 3 -> 4 -> 5, vt 54), the jaguar handle then turns the ring |
+| `ch14_traprooms_bike_arrival` | l4_traprooms | Midgard Serpent: the chapter's motorcycle 5482 (born in l4_trailstart) stood on marker 5704 by the arrival cinematic's handlers, its instance living in her unit; walked to, mounted with Interact, ridden across the hall |
 | `ch14_traprooms_club_throne` | l4_traprooms | Midgard Serpent: arrival cinematic 5703, club 5883 picked up and set into throne 5891 (section 0: 1 -> 2) |
 | `ch14_traprooms_crusher_house` | l4_traprooms | Midgard Serpent: the rattling house from checkpoint 5787: wait for the first pair of jaws to open, sprint through all six pairs unhurt (1927 units/s), key 5879 taken |
 | `ch14_ragnarok_hall` | l4_ragnarok_room | Midgard Serpent: down the carved hall (cinematic 5675, checkpoint 5669), through the doorway: stream unit l4_pool |
 | `ch14_pool_entry` | l4_pool | Midgard Serpent: down the entrance stairs (5547 preloaded, serpent head 5612 told), 198_mex_thralls at the stair foot, the jaguar thrall alive |
-| `ch15_ragnarok_xibalba_key` | l4_ragnarok_room | Land of the Dead: the Xibalba key 5695 taken out of its holder at the rock fall |
+| `ch15_ragnarok_xibalba_key` | l4_ragnarok_room | Land of the Dead: the Xibalba key 5695 taken out of its holder at the rock fall and stowed |
+| `ch15_xibalba_key_to_exit` | l4_ragnarok_room → l4_ballcourt | Land of the Dead: the key taken (stowed), a level load to checkpoint 6122 (the `level` fixture stands for the five-unit ride), one Interact at keyhole 6501 sets it in (6501 vt 20 -> switch 5469 vt 62), the switch pulled: reveal 5464 vt 54, open (graph 7) within 200 s |
 | `ch15_ragnarok_rubble_block` | l4_ragnarok_room | Land of the Dead: block 5660 refused bare-handed; with the belt gripped and slid 1264 to its joint's limit in 1.8 s (the fitted push law [I]; 8.3 s under the earlier constant speed) |
 | `ch16_tunnel_door` | chapter 5 start | Gate of the Dead leg 1: on bike 7229, the tunnel's 66 000 units by `ride` lines (10 230 down, no damage; brake steer 0.5), hand brake, off; Thor door 7400 gripped and walked open to 663.7; back on, through the doorway: plane 7472 -> 235_val_shaft, on foot at its end, the bike waiting on marker 7404, mounted there |
 | `ch16_tower_power` | l5_valgrind | Gate of the Dead leg 3: the power blocks 7498 / 7499 / 7500 carried into cog wheel 7312's niches; the rings 7492-7509 stand until the third is in, then turn 10 degrees/s, neighbours opposite |
@@ -522,8 +528,8 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | `ch06_hallway_roll` | l1_ship_sinking_hall | after plane 1202 | after the hall's second tilt she is stopped on a 45-degree floor against a 100-high step, 3850 short of plane 1203 |
 | `ch06_second_shaft_exit` | l1_ship_sinking_hall | the jump to bar 238 | from the top valve wheel the bar is not reached: the side jump lands hanging on the beam's own ledge 253 |
 | `ch17_hammer_chamber` | l5_valaskjalf | the central steps' lower flight | from checkpoint 7067 a running jump catches the chamber block's edge 1542, 790 over the floor; its top is the steps' ramp (1 in 2), 69.5 up at the 139 over the top where tru.exe 0x72BAE0 wants -30 .. 40: clearance class 1, no pull-up by the original's rule (`Game.HangPullUpWinsOverTheJumpUpTarget` pins the classes). The gap is the lower 790 of steps, absent from the unit's collision and objects [U]: volume 6866 is not reached on foot |
-| `ch15_ballcourt_exit_switch` | l4_ballcourt | `switch_without_the_key` | with the socket empty Interact uses exit switch 5469 (through its use record) and reveal 5464 opens: the original keeps the switch locked (modifiable 7 (2), its state code) until the key goes in (keyhole 6501 vt 20 -> 5469 vt 62) [O bytecode]; ours honours a switch's modifiable 7 for `ar_ei_switch_oneway` only, and the key does not reach this unit (`ch15_ballcourt_exit_key`) |
-| `ch13_ballcourt_calendar_solve`, `ch15_ballcourt_exit_key` | l4_ballcourt | the key item | key items do not travel between units: a held portable is dropped when its unit streams out and the next units' parked instances are not handed over (docs/matrix/13_xibalba.md, 15_land_of_the_dead.md) |
+| `ch15_ballcourt_exit_switch` | l4_ballcourt | `switch_without_the_key` | with the socket empty Interact uses exit switch 5469 (through its use record) and reveal 5464 opens: the original keeps the switch locked (modifiable 7 (2), its state code) until the key goes in (keyhole 6501 vt 20 -> 5469 vt 62) [O bytecode]; ours honours a switch's modifiable 7 for `ar_ei_switch_oneway` only. The key itself now reaches the keyhole (`ch15_xibalba_key_to_exit`) |
+| `ch13_ballcourt_calendar_solve` | l4_trailstart → l4_ballcourt | `jaguar_handle` | the mask now arrives and is set on calendar 5477's jaguar (`ch13_mask_to_calendar`; section 5: 3 -> 4 -> 5), but the push handle then gripped turns nothing: no joint of the calendar moves whichever way she pushes. What opens the handle sections once the mask is in is not decoded |
 | `ch13_temple_block_topple` | l4_temple | the grapple | ring 4951 is not offered from the east ledge; the statue head's mover is unknown |
 | `ch15_pool_rune_block` | l4_pool | the drag | rune block 5609 has no joint record, so nothing drags it |
 | `ch21_platform_ride`, `natla_platform_ride` | l7_yggdrasil_end | `jump_to_a_platform` / the grab | the steps of `natla_fight`, then a jump from the entry walkway's end at a floating stone. The stones ride their orbit rigs now (they stood at their intro positions when `ch21_platform_ride` was written; that scenario was not rerun since), but the timed running jump at a passing stone falls short: its ledge is 1240 out and 540 up (docs/GAMEPLAY.md "Natla") |

@@ -300,6 +300,11 @@ Survey (82 units, `scratch/portalsurvey.py`) [O]:
   first match relocates.
 - So every streamed unit is moved into the frame of the unit that was loaded first. Moving into a new unit
   (`0x5B3A20`) only sets the instance's unit id (`instance+0xE0`). It does **not** move coordinates.
+- Attached instances follow [O]: `0x5B3A20` also sets the unit of every instance attached to the one that moved (its
+  child list `+0x218` / `+0x21C`), and attaching (`0x5B4DE0`) gives the child its parent's unit: what Lara holds or
+  has stowed is in her unit, not in the one it was born in. The frame loop `0x5B6DC0` moves instances whose object
+  flags have `+4 & 8` or `+8 & 0x20` (her gear objects) into the player's unit. Ours: `script::Runtime::travel` /
+  `away` (docs/GAMEPLAY.md "What she carries changes unit with her").
 - Crossing: when an instance's collision hits a signal of the unit's signal terrain group, `0x5D2CA0` calls
   `0x5D2AA0` ("Hit stream portal in %s to %s") with the portal index at signal `+0x14`.
   - If the target unit is loaded, the instance moves into it.

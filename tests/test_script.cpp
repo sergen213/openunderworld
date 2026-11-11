@@ -149,14 +149,15 @@ TEST(ScriptRuntime, RestoreBeforeLoadAndStreamOut) {
     EXPECT_TRUE(j.contains("10") && j.contains("99"));
     r.setUnits({}); // every unit streamed out: state kept
     EXPECT_EQ(r.find(10), nullptr);
-    // The object state is kept; only the running-script block changes: 10 is no longer alive (runtime.live) and has no
-    // threads to resume (runtime.machines), so a load of this save constructs it afresh when its unit streams back in,
-    // as streaming it back in would (Runtime::resume).
+    // The object state is kept; only the running-script block changes: 10 is no longer alive (runtime.live), has no
+    // threads to resume (runtime.machines) and is not in the living objects' order (runtime.order), so a load of this
+    // save constructs it afresh when its unit streams back in, as streaming it back in would (Runtime::resume).
     auto after = r.serialize(), before = j;
     EXPECT_TRUE(before.at("runtime").at("live").get<std::set<int32_t>>().contains(10));
     EXPECT_FALSE(after.at("runtime").at("live").get<std::set<int32_t>>().contains(10));
     EXPECT_FALSE(after.at("runtime").at("machines").contains("10"));
-    for (auto* s : {&before, &after}) (*s)["runtime"].erase("live"), (*s)["runtime"].erase("machines");
+    EXPECT_EQ(after.at("runtime").at("order"), nlohmann::json::array());
+    for (auto* s : {&before, &after}) (*s)["runtime"].erase("live"), (*s)["runtime"].erase("machines"), (*s)["runtime"].erase("order");
     EXPECT_EQ(after, before) << nlohmann::json::diff(before, after).dump();
 }
 

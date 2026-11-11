@@ -8,7 +8,19 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 - Added: the Arctic sea's drawbridge wheel is locked until the puzzle frees it; a try rattles the chains and the
   bridge stays up, as in the original.
-- Added: the four keys of the Xibalba trap houses can be picked up and carried.
+- Added: key items (the Xibalba key, the mask, the headdress, the trap house keys, the gems) are stowed when Lara
+  picks them up and travel with her from level to level, as in the original; the Xibalba key can be taken to the
+  keyhole in the ball court's entrance room and set in. Saves keep them.
+- Added: the motorcycle follows Lara: the scripts of the later Xibalba levels find it again, and the trap rooms
+  place it on its marker when she arrives.
+- Added: push blocks slide on the physics scene and move at the speed measured in the original (they speed up
+  over the first second instead of moving at once at a fixed speed); Thor's heavy mechanisms use the same rule.
+- Added: the eitr in the Norse underworld kills, as in the original (the pit below the Yggdrasil hall's slide).
+- Added: rune symbols and wall switches are used through their own use areas, so Lara has to stand in front of
+  them; the Helheim entrance's rune symbols can now be used.
+- Changed: a jump off a slope launches as the original's slope jump does; the Yggdrasil hall's slide jump now
+  clears the pit.
+- Fixed: the tower's base cog wheel in Valgrind stopped turning short of its solved position.
 - Added: the map room's cutscene hands the left gauntlet over when it plays, and the map room's hub turns when
   its panel is pushed sideways with the gauntlet.
 - Added: from a hang, a jump up now takes free-climb holds above the ledge (the ship's second shaft).
@@ -29,9 +41,11 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - Fixed: Lara riding a door or platform could play the wrong animation (the sinking ship's hall door).
 - Fixed: a motorcycle placed by a level's script stood in the air next to its marker; the temple reveal in the
   jungle now sets Lara down from the bike she rides.
-- For testers: chapter walkthrough scenarios now exist for sections 1 to 20 (59 legs played by input, see
+- For testers: chapter walkthrough scenarios now exist for sections 1 to 20, played by input (see
   docs/SELFTEST.md). No section plays from start to end yet; docs/GAMEPLAY_DEVELOPMENT_REPORT.md lists what stops
-  each one. The autopilot can swim to a point and ride with a capped brake steer.
+  each one. Known regression: the exit switch of the ball court's entrance room opens the way without the key
+  (the original locks it until the key is in). The autopilot can swim to a point and ride with a capped brake
+  steer.
 
 ## [0.46.0] - 2026-11-10
 

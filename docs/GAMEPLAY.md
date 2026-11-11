@@ -715,8 +715,43 @@ Code: `World::carryPortables` (`src/game/Objects.cpp`: pick-up, insert, removal)
   portable moving faster than 30 units/s passes its speed as the contact [I: B / C read as a contact speed in units/s]
   to every uber object its bounds reach: a weight thrown or dropped onto an urn breaks it. The bike's ram and Lara's
   roll do not call it yet.
-- **Open** [U]: what keeps a carried object out of walls in tru.exe; the short throw (weapon chart S100); stowing a
-  pole (0x1A9 / 0x188); the insert / remove clips (`hosted_insert`, `hosted_remove`: ours inserts and takes out at
+- **Key items are stowed, not carried** [O]. Lara's clips with the keys (`ca_pt_key_xibalba_exit`, `ca_pt_key_mask`,
+  `ca_pt_key_headdress`, the four `ca_pt_*_room_key`), Thailand's `sa_pt_gem_left` / `_right` and the Arctic Sea's
+  `ar_pt_arcticsea_gem` carry the same events: `hosted_pickup` 0x4E at frame 26 (message 0x17B: into her hands) and
+  **0x52 at frame 50**; `hosted_insert` **0x51 at frame 20** and 0x4D at 42 (the headdress 10 / 30; the swim clips
+  0x4E 20 / 0x52 30 and 0x51 10 / 0x4D 20). Lara's clip-event handler posts the portable **0x1A9 on 0x52** (after
+  0x6E7DC0 put the instance into the first free of her 8 stow slots, player +0x854 +0xF4), **0x188 on 0x51** (0x6E7E90
+  frees the slot), and on 0x4D with empty hands 0x188 + 0x165 (insert) to the stowed instance her engaged record
+  names (+0x114, 0x6E7EE0). The portable (0x6B5890): 0x1A9 = out of her hands (0x69AD30), collision mode 3, state bit
+  2, instance flag 2 (not drawn), attached to the player instance (0x5B4DE0(player, 0, 0, 0, 0)); 0x188 the reverse
+  onto her hand marker (data +0xE); a save's restore (message 0x23) stows and attaches it again. Her engagement test
+  finds a record's named object among the stowed instances when her hands are empty (0x6F3BB0 -> 0x6E7E10, before her
+  15 object slots). The weights, poles, thor gears and the valgrind power gems have no 0x52: they stay in her hands.
+  Ours (`World::stow`, `insertStowed`, `stowedPortables`; `PortableDef::stows` reads the clip's event): at the pick-up
+  clip's 0x52 the key leaves her hands, is hidden and kept at her root; Interact at a receptacle whose record names
+  it takes it out and sets it in. [I] The insert is at once (no `hosted_insert`, as for every portable here); a key
+  that reaches her hands outside the pick-up clip (taken while swimming or without the clip data) is stowed at once.
+  Crouch / Grenade / Jump / drawing a gun do nothing to a stowed key. Saved (`objects.stowed`).
+- **What she carries changes unit with her** [O]. An instance's unit is instance +0xE0; 0x5B3A20 sets it and, down
+  the attach list (+0x218 first child, +0x21C next), the unit of everything attached to it; attaching (0x5B4DE0: a
+  portable on her hand marker or stowed on her) gives the child its parent's unit. (The frame loop 0x5B6DC0 also moves
+  instances whose object flags have +4 & 8 or +8 & 0x20 into the player's unit: `g_grapple`, the gauntlets, the belt;
+  portables and the motorcycle have neither.) So a held or stowed portable is not removed with the unit it was born
+  in, and put down or inserted elsewhere it belongs to (and is saved with) that unit: l4_ballcourt's planes 6515 /
+  6516 send the TEMPLE's poles 5240 / 5241 to `portable_warp_attach` 6514 when thrown out of bounds ("Player threw
+  temple pole 70001 into unsafe area, moving to templepath"). The key copies parked under l4_ballcourt (6498
+  headdress, 6499 mask, 6500 "debug exit key" at z -917) are developer copies, not hand-overs. Ours:
+  `script::Runtime::travel` / `setCarried` re-home the script object into her unit (`World::carryAlong`, every tick
+  and before the units change); from then on it is an *away* instance (`Runtime::away`: birth unit, unit, place): it
+  leaves and returns with the unit it is in (made again from its birth unit's intro, whose DRM is read again when
+  that unit is not loaded: `materialize`), its birth unit no longer introduces it, and saves hold it
+  (`script.runtime.away`). Tests: `ProgressionReal.StowedKeyTravelsToItsKeyhole` (Xibalba key 5695 from
+  l4_ragnarok_room through level loads and a save into keyhole 6501 in l4_ballcourt, switch 5469 live),
+  `TraproomKeysArePickedUp`, self-tests `ch15_xibalba_key_to_exit`, `ch13_mask_to_calendar`. [I / open] The app
+  draws script objects through their unit's scene, so an away object (a weight carried into another unit, a key in a
+  keyhole there) is not drawn outside its birth unit; an object thrown or pushed across a unit border while not
+  carried keeps its old unit; the pick-up callback vt 20 is still not sent.
+- **Open** [U]: what keeps a carried object out of walls in tru.exe; the short throw (weapon chart S100); the insert / remove clips (`hosted_insert`, `hosted_remove`: ours inserts and takes out at
   once); the swim states' carry clips; whether Lara's own body (a roll, a fall onto it) or the motorcycle posts the
   impulse message of triggers 6 / 7 / 8 (ours: only let-go and thrown portables and the kick's hit message do); the
   thrown body's own hit numbers.
@@ -3003,6 +3038,32 @@ bike. No new bindable actions.
 
 Evidence:
 
+- **One bike per chapter, going where she rides it** [O]. Its intro is in the chapter's first units only (below); an
+  instance's unit is instance +0xE0, set when it crosses a stream portal (0x5D2AA0 -> 0x5B3A20), and a save holds
+  every instance with the unit it is in. The l4 units she rides through name `motorcycle` among their DRM's object
+  dependencies without placing one (l4_trailtube, l4_ballcourt, l4_templepath, l4_temple, l4_staircase_upper,
+  l4_staircase_xibalba, l4_staircase_mictlan, l4_traprooms; not l4_pool, l4_ragnarok_room, nor any l5 unit), so a
+  game loaded there can give the saved bike its object. Their scripts address it by uid: l4_traprooms' arrival
+  cinematic 5703 (vt 58 / vt 60: `instance` 26 onto marker-checkpoint 5704, `instance` 60; state 1: larabase 53),
+  volume 5911 (vt 73: `instance` 26 to 5912 while the bike is inside), l4_ballcourt volume 5481 (triggervolumebase 0
+  Add(bike): "bike inside" / "bike outside"), 6389 (190_mex end: larabase 53), l4_ragnarok_room 5671 / 5681 and
+  l5_valgrind 7403 / 7464 (larabase 54), l5_valaskjalf_entry 7232 / _entryb 7194. The bike's own script (13919 ->
+  13593) kills itself (`instance` 10, "Destroy me due to reload") when its level number 4 is below the globals'
+  stickyint +16; `revisit_motorcycle_spawner` then makes another (uber command 657) [not modelled].
+  Ours: the Bike re-homes to her unit while she rides (`tickVehicles`), and its script instance lives where the bike
+  is and moves with it (`World::syncBikeObjects` -> `script::Runtime::travel`, an away instance as a carried
+  portable: "Carrying and close combat"), so those scripts find it after l4_trailstart streamed out (before, its
+  script object left with its birth unit and every such call found nothing). Saved with the bikes and
+  `script.runtime.away`.
+- **A level load that is not a save's** (`--level`, a self-test's `level`, a respawn before the first checkpoint
+  save) into one of the `motorcycle`-dependent units has no bike to restore, and where the player would have left it
+  is not knowable. [I] Ours has the chapter's bike (the `motorcycle` intros of the chapter's start unit:
+  `World::bikeEntry` -> `script::Runtime::summon`) exist unplaced there: not drawn, not solid, not mountable, its
+  script instance in her unit, until a script places it (`instance` 26: l4_traprooms' arrival stands it on marker
+  5704, where Interact mounts it) or puts her on it (larabase 52: under her). `VehicleReal.
+  LevelEntryIntoABikeUnitHasTheBike`, self-test `ch14_traprooms_bike_arrival` (placed, mounted by input, ridden
+  off). Units without such a script (l4_ballcourt, the staircases, ...) give no bike at a bare level load; larabase
+  53 finds no vehicle of hers there (Lara +0xF00 is empty: she arrived on foot).
 - Intros [V-data] (survey of every unit DRM against objectlist.txt): `motorcycle` (object 540) in `l4_trailstart` 5482
   at (38051, -51966, 1463) rot z 0.93, `l5_startsnow` 7528, `l5_valgrind_tunnel` 7229; `revisit_motorcycle_spawner`
   (657) in `l4_trailstart` 6699 and `l5_valgrind_tunnel` 6715; `co_motorcycle` (641, a cinematic copy) in

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "ch13_mask_to_calendar",
+  "chapter": "12 / 13 The Unnamed Days, Xibalba: the jaguar head taken from its pedestal, brought to the first calendar and set on the headless jaguar (docs/matrix/12_unnamed_days.md C12-09, docs/matrix/13_xibalba.md C13-01)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/12xibalba.html",
+  "note": "l4_trailstart in front of the pedestal inside the first temple: ca_pt_key_mask 6604 stands on it, 393 over the floor [O intro data]. Interact takes it; a key item is not carried in her hands: the pick-up clip stows it (hosted_pickup's event 0x52 at frame 50, message 0x1A9 [O]), hidden and with her. The way to the calendar (out of the temple, the ride through l4_trailtube into l4_ballcourt) is not played: the 'level' fixture makes a level load at l4_ballcourt's checkpoint 5478 beside calendar ca_uo_calendar_b 5477 with the game's state kept, which the stowed mask must survive as it survives streaming (it lives in her unit, not in l4_trailstart: script::Runtime::travel). The calendar's section 5 waits for the mask (state 3); at the jaguar in its centre one Interact takes the mask out and sets it on (0x188, 0x165): 3 -> 4 -> 5, the calendar's vt 54 runs. Not played: the temple's lever gate before the pedestal (known gap ch12_trailstart_lever_gate). The handles after it: tests/selftests/known_gaps/ch13_ballcourt_calendar_solve.json.",
+  "level": "l4_trailstart",
+  "spawn": [
+    60250,
+    -41464,
+    5000,
+    0
+  ],
+  "steps": [
+    {"step": "mask_on_its_pedestal", "duration": 1, "expect": [{"probe": "object.6604.name", "eq": "ca_pt_key_mask"}, {"probe": "object.6604.pos.z", "near": 5341.4, "tol": 2}, {"probe": "player.grounded", "eq": true}, {"probe": "portable.stowed", "eq": 0}]},
+    {"step": "take_the_mask", "plan": ["engage 6604 walk", "press", "wait 4"], "duration": 40, "expect": [{"probe": "object.6604.stowed", "eq": true, "note": "put away by the pick-up clip"}, {"probe": "portable.held", "eq": 0}, {"probe": "object.6604.hidden", "eq": true}, {"probe": "step.teleports", "eq": 0}]},
+    {"step": "at_the_calendar", "fixtures": [{"level": ["l4_ballcourt", 5478]}], "duration": 2, "expect": [{"probe": "world.unit", "eq": "l4_ballcourt"}, {"probe": "object.6604.stowed", "eq": true, "note": "it came with her"}, {"probe": "object.6604.unit", "eq": "l4_ballcourt"}, {"probe": "object.5477.uber.5", "eq": 3, "note": "the calendar waits for the mask"}]},
+    {"step": "head_onto_the_jaguar", "plan": ["go 4064 11214 400 walk", "press", "wait 4"], "duration": 60, "expect": [{"probe": "portable.6604.in", "eq": 5477, "note": "her mask sits on the jaguar"}, {"probe": "portable.stowed", "eq": 0}, {"probe": "object.6604.hidden", "eq": false}, {"probe": "object.5477.uber.5", "eq": 5, "note": "3 -> 4 (the insert) -> 5"}, {"calls": ["5477:54"]}, {"probe": "step.teleports", "eq": 0}]}
+  ]
+}

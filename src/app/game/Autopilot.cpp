@@ -98,7 +98,15 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             to = {std::stof(s.args[0]), std::stof(s.args[1])};
         } else {
             uid = std::stoi(s.args[0]);
-            if (s.args.size() >= 3 && s.args[1] != "walk") {
+            if (const auto spot = w.bikeMountSpot(uid)) { // a parked motorcycle: to where Interact mounts it
+                to = glm::vec2(*spot);
+                if (glm::distance(to, glm::vec2(lara.pos)) <= 40.0f) {
+                    centre();
+                    std::fprintf(stderr, "ou-game: autopilot tick %llu at bike %d's mount spot %.1f %.1f\n", (unsigned long long)tick, uid, to.x, to.y);
+                    next(tick, nullptr);
+                    return a;
+                }
+            } else if (s.args.size() >= 3 && s.args[1] != "walk") {
                 to = {std::stof(s.args[1]), std::stof(s.args[2])};
             } else if (const auto* o = w.script().find(uid)) {
                 to = glm::vec2(o->pos); // the nearest of its engagement records, where it has them

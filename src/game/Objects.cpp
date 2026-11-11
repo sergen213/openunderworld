@@ -333,6 +333,7 @@ nlohmann::json World::serializeObjects() const {
                           {"insertedSections", std::move(insertedSections)}, {"placed", placed_}, {"breakables", serializeBreakables()},
                           {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
     if (auto hazards = serializeHazards(); !hazards.empty()) out["hazards"] = std::move(hazards); // only where there are any
+    if (!stowed_.empty()) out["stowed"] = stowed_; // only when she has any
     return out;
 }
 
@@ -407,6 +408,10 @@ void World::restoreObjects(const nlohmann::json& j) {
     uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberEvents_.clear(), plates_.clear();
     uberSaved_ = std::move(saved);
     held_ = held;
+    stowed_.clear();
+    if (const auto st = j.is_object() ? j.find("stowed") : j.end(); j.is_object() && st != j.end() && st->is_array())
+        for (const auto& e : *st)
+            if (e.is_number_integer() && stowed_.size() < 8) stowed_.push_back(e.get<int32_t>());
     restoreMelee(j.is_object() ? j.value("melee", nlohmann::json(nullptr)) : nlohmann::json(nullptr));
     inserted_ = std::move(inserted);
     slides_ = std::move(slides);
@@ -2100,13 +2105,72 @@ bool World::portableClass(const script::Object& o) {
     return p && p->physClass == 50;
 }
 
+// Key items are stowed, not carried [O]. Lara's clips with the keys (ca_pt_key_xibalba_exit, ca_pt_key_mask,
+// ca_pt_key_headdress, the four trap-room keys: the same clips in each DRM) carry two events: hosted_pickup 0x4E at
+// frame 26 (message 0x17B: into her hands) and 0x52 at frame 50; hosted_insert 0x51 at frame 20 and 0x4D at frame 42
+// (the swim clips 0x4E 20 / 0x52 30 and 0x51 10 / 0x4D 20). Lara's event handler (tru.exe 0x7175xx, cases 0x51 / 0x52 /
+// 0x4D) posts the portable 0x1A9 on 0x52, 0x188 on 0x51, and on 0x4D, empty-handed, 0x188 + 0x165 to the stowed
+// portable her engaged record names. The portable (0x6B5890): 0x1A9 = out of her hands (0x69AD30), collision mode 3,
+// state bit 2, instance flag 2 (not drawn), attached to the player instance (0x5B4DE0(player, 0, 0, 0, 0)); 0x188 the
+// reverse, onto her hand marker (data +0xE). Lara keeps the stowed instances in 8 slots (player +0x854 +0xF4, 0x6E7DC0
+// / 0x6E7E90), and her engagement test finds a record's named object there when her hands are empty (0x6F3BB0 ->
+// 0x6E7E10, before her 15 object slots). Attached to her, it changes unit with her (script::Runtime::travel). The
+// weights, poles and gems have no 0x52: they stay in her hands.
+// Ours: the stowed object is hidden and kept at her root; [I] a key that reaches her hands outside the pick-up clip
+// (taken at once while swimming or without the clip data, a restored hand-held key) is stowed at once, and the insert
+// happens at once (hosted_insert is not played, as for every portable here).
+bool World::stow(int32_t uid) {
+    auto* o = const_cast<script::Object*>(script_.find(uid));
+    if (!o || stowed_.size() >= 8 || std::ranges::find(stowed_, uid) != stowed_.end()) return false;
+    if (held_ == uid) held_ = 0;
+    o->loose = false, o->body = glm::mat4(1);
+    o->offset = player_.state().pos - o->pos;
+    stowed_.push_back(uid);
+    script_.setHidden(uid, true);
+    return true;
+}
+
+bool World::insertStowed(const Engaged& at) {
+    if (held_ || !carryReady() || !at.record || at.record->kind != 5 || at.record->needs.empty()) return false;
+    for (const int32_t uid : stowed_) {
+        auto* o = const_cast<script::Object*>(script_.find(uid));
+        if (!o || std::ranges::none_of(at.record->needs, [&](uint16_t id) { const auto* n = script_.objectName(id); return n && *n == o->name; })) continue;
+        const std::vector<int32_t> before = stowed_;
+        std::erase(stowed_, uid);
+        script_.setHidden(uid, false);
+        held_ = uid; // 0x188: in her hands
+        o->offset = heldPoint() - o->pos;
+        if (insertHeld(*o, at)) return true;
+        held_ = 0, stowed_ = before; // the receptacle does not take it now
+        script_.setHidden(uid, true);
+        return false;
+    }
+    return false;
+}
+
+void World::carryAlong() {
+    if (units_.empty()) return;
+    std::vector<int32_t> with = stowed_;
+    if (held_) with.push_back(held_);
+    script_.setCarried(std::move(with), currentUnit().data.name);
+}
+
 void World::carryPortables(bool pressed) {
     const auto& s = player_.state();
     placePortables();
+    carryAlong();
+    std::erase_if(stowed_, [&](int32_t uid) { return !script_.find(uid); });
+    for (const int32_t uid : stowed_) { // with her (0x5B4DE0: attached to the player instance), not drawn
+        auto* o = const_cast<script::Object*>(script_.find(uid));
+        o->offset = s.pos - o->pos, o->body = glm::mat4(1);
+    }
     auto* held = held_ ? const_cast<script::Object*>(script_.find(held_)) : nullptr; // World owns object motion
     if (held_ && !held) held_ = 0;
+    if (held && melee_.move != MeleeState::Move::PickUp)
+        if (const PortableDef* def = portableDef(held->name); def && def->stows() && stow(held->uid)) held = nullptr;
     const Engaged engagedNow = pressed && carryReady() ? engaged() : Engaged{};
     if (held && pressed && insertHeld(*held, engagedNow)) return;
+    if (!held && pressed && insertStowed(engagedNow)) return;
     // Putting it down (Crouch), throwing it (Grenade) and swinging it (Interact with nothing to insert it into) are
     // World::meleeInput / tickMelee (Melee.cpp, releaseHeld): it leaves her hands as a loose body.
     if (held) {
@@ -2268,7 +2332,11 @@ World::Engaged World::engaged() {
         std::vector<std::string> names; // unknown ids name nothing she could carry
         for (const uint16_t id : e.needs)
             if (const auto* n = script_.objectName(id)) names.push_back(*n);
-        return !names.empty() && carriesNeeded(names, held ? &held->name : nullptr, script_.playerObjects());
+        if (names.empty()) return false;
+        if (held) return carriesNeeded(names, &held->name, script_.playerObjects());
+        for (const int32_t uid : stowed_) // 0x6E7E10: a stowed instance of that object
+            if (const auto* o = script_.find(uid); o && std::ranges::find(names, o->name) != names.end()) return true;
+        return carriesNeeded(names, nullptr, script_.playerObjects());
     };
     const auto consider = [&](int32_t uid, int section, const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e,
                               const std::vector<glm::mat4>* skin = nullptr) {
@@ -2279,7 +2347,7 @@ World::Engaged World::engaged() {
         return true; // the instance's first engaging record, whether it won or not
     };
     for (const auto& o : script_.objects()) {
-        if (o.dead || o.hidden || o.uid == held_) continue;
+        if (o.dead || o.hidden || o.uid == held_ || std::ranges::find(stowed_, o.uid) != stowed_.end()) continue;
         if (const auto* data = prepareUber(o)) {
             for (size_t i = 0; i < data->sections.size(); ++i) {
                 const auto* set = uberEngagement(o.uid, i);

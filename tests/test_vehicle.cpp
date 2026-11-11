@@ -576,3 +576,79 @@ TEST(VehicleReal, LevelGroundManoeuvresMatchTheOriginal) {
     EXPECT_NEAR(at(launch, 1.1 + 0.134), 17.19f, 3.0f);
     EXPECT_NEAR(at(launch, 1.6), 22.19f, 4.0f);
 }
+
+// The motorcycle is one instance per chapter that goes where she rides it; l4_traprooms names `motorcycle` among its
+// DRM's object dependencies without placing one, so a game loaded there can give the bike its object [O data]. A level
+// load that is not a save's finds the chapter's bike (l4_trailstart's 5482) unplaced [I], its script instance living
+// in her unit, so the unit's scripts that name it by uid find it: the arrival cinematic 5703's handlers stand it on
+// marker 5704 (instance 26) [O bytecode]. She gets on it there with Interact, and a save keeps both.
+TEST(VehicleReal, LevelEntryIntoABikeUnitHasTheBike) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const float deg = 3.14159265f / 180.0f;
+    game::World w(loader(bf), "l4_traprooms", anims, game::Spawn{{7400, -34900, 4440}, -135 * deg}); // inside 5703's volume
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 240; ++i) w.tick({});
+    ASSERT_EQ(w.bikes().size(), 1u);
+    const auto& b = w.bikes().begin()->second;
+    EXPECT_EQ(b.uid, 5482);
+    EXPECT_EQ(b.unit, "l4_traprooms") << "placed by the arrival cinematic";
+    ASSERT_TRUE(w.bikeMatrix(5482, 1));
+    const glm::vec3 bike((*w.bikeMatrix(5482, 1))[3]);
+    const auto* marker = w.script().find(5704);
+    ASSERT_TRUE(marker);
+    EXPECT_LT(glm::distance(glm::vec2(bike), glm::vec2(marker->pos)), 5.0f);
+    const auto* o = w.script().find(5482);
+    ASSERT_TRUE(o) << "its script instance";
+    EXPECT_EQ(o->unit, "l4_traprooms");
+    EXPECT_EQ(o->name, "motorcycle");
+    ASSERT_TRUE(w.script().away().contains(5482));
+    EXPECT_EQ(w.script().away().at(5482).birth, "l4_trailstart");
+    EXPECT_LT(glm::distance(o->pos + o->offset, bike), 200.0f) << "where the bike is";
+    // onto it by input: Interact from its mount spot, 219 units off its side (found by trying round it)
+    const auto riding = [&] { return w.ridden() && w.ridden()->phase == game::BikePhase::Ride; };
+    for (int k = 0; k < 8 && !riding(); ++k) {
+        const float a = float(k) * 45 * deg;
+        game::PlayerState st;
+        st.pos = bike + glm::vec3(std::cos(a), std::sin(a), 0) * 219.0f;
+        const auto g = w.collision().groundProbe(st.pos + glm::vec3(0, 0, 200), 600);
+        if (!g) continue;
+        st.pos.z = g->point.z, st.yaw = b.yaw, st.clip = "ng_idle", st.fallStartZ = st.pos.z;
+        w.restore(st, b.yaw, w.camera().pitch);
+        for (int i = 0; i < 20; ++i) w.tick({});
+        game::Actions use;
+        use.interact = true;
+        w.tick(use);
+        for (int i = 0; i < 240 && w.ridden() && !riding(); ++i) w.tick({});
+    }
+    ASSERT_TRUE(riding()) << "Interact beside it";
+    const auto save = save::parse(save::serialize(save::capture(w)));
+    game::World l(loader(bf), "l4_pool", anims);
+    l.script().setBigfile(&bf);
+    l.onCinematic = [](const std::string&, bool) {};
+    save::apply(save, l);
+    for (int i = 0; i < 10; ++i) l.tick({}), w.tick({});
+    ASSERT_NE(l.ridden(), nullptr);
+    EXPECT_EQ(l.ridden()->uid, 5482);
+    ASSERT_TRUE(l.script().find(5482));
+    EXPECT_EQ(l.script().find(5482)->unit, "l4_traprooms");
+    EXPECT_EQ(l.bikes().size(), 1u);
+    EXPECT_EQ(l.player().state().pos - l.currentUnit().offset, w.player().state().pos - w.currentUnit().offset);
+    // a unit without a script that places it: the bike exists, nowhere (her last place for it is not knowable)
+    game::World x(loader(bf), "l4_staircase_xibalba", anims, game::Spawn{{26504.4f, 17245.5f, 8217.3f}, 0}); // checkpoint 6020
+    x.script().setBigfile(&bf);
+    x.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 10; ++i) x.tick({});
+    ASSERT_EQ(x.bikes().size(), 1u);
+    EXPECT_TRUE(x.bikes().begin()->second.unit.empty());
+    EXPECT_FALSE(x.bikeMatrix(5482, 1));
+    ASSERT_TRUE(x.script().find(5482));
+    // l4_pool is not a unit the bike goes to (no `motorcycle` dependency): none at all
+    game::World p(loader(bf), "l4_pool", anims);
+    p.script().setBigfile(&bf);
+    p.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 10; ++i) p.tick({});
+    EXPECT_TRUE(p.bikes().empty());
+}

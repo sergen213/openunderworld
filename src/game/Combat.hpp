@@ -513,6 +513,8 @@ struct PortableDef {
         const auto it = hosted.find(name);
         return it == hosted.end() ? nullptr : &it->second;
     }
+    // A key item: its pick-up clip stows it (hosted_pickup's event 0x52 after 0x4E; World::stow).
+    bool stows() const { return frame("hosted_pickup", 0x52).has_value(); }
     std::optional<int> frame(std::string_view name, int command) const {
         if (const auto it = events.find(name); it != events.end())
             for (const auto& [c, f] : it->second)

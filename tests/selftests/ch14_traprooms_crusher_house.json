@@ -26,7 +26,7 @@
                 {"probe": "step.teleports", "eq": 0}]},
     {"step": "take_the_key", "plan": ["go 1 -15990 40", "engage 5879 walk", "press", "wait 3"], "duration": 40,
      "expect": [{"probe": "world.checkpoint", "eq": 5791},
-                {"probe": "portable.held", "eq": 5879},
+                {"probe": "object.5879.stowed", "eq": true, "note": "a key item: put away by the pick-up clip"},
                 {"probe": "object.5879.name", "eq": "ca_pt_crush_room_key"},
                 {"probe": "player.dead", "eq": false}]}
   ]
