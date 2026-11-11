@@ -3,7 +3,7 @@
   "name": "ch15_ragnarok_rubble_block",
   "chapter": "15 Land of the Dead: the carved block at the second cave-in slid aside with Thor's belt (docs/matrix/15_land_of_the_dead.md C15-15)",
   "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/14landofdead.html",
-  "note": "l4_ragnarok_room, on the pool side of the rock fall that the way in passed on foot. ca_pu_thor_block_rubble 5660 is an uber object on a prismatic joint; its push / pull record (kind 1) names g_belt [O data, tru.exe 0x6F3BB0], its script's vt 49 sets her pull strength to 10 (docs/GAMEPLAY.md Thor's gauntlets). Bare-handed Interact grips nothing. With the belt (the give fixture: the belt is what section 14 ends with) Interact grips it (thor_engage) and the stick to her left slides it along the rock fall as far as its joint goes (1264.2); she walks with it (8.3 s for the 1264). Not played: the way through the gap it leaves. On foot her walk back from beside the moved block to where it stood stops at x -26801 (not investigated), and the original rides the motorcycle through: no bike can be brought to this unit by a scenario yet (the matrix file's blockers).",
+  "note": "l4_ragnarok_room, on the pool side of the rock fall that the way in passed on foot. ca_pu_thor_block_rubble 5660 is an uber object on a prismatic joint; its push / pull record (kind 1) names g_belt [O data, tru.exe 0x6F3BB0], its script's vt 49 sets her pull strength to 10 (docs/GAMEPLAY.md Thor's gauntlets). Bare-handed Interact grips nothing. With the belt (the give fixture: the belt is what section 14 ends with) Interact grips it (thor_engage) and the stick to her left slides it along the rock fall as far as its joint goes (1264.2); she walks with it (1.8 s for the 1264, the grab included: the push law fitted to the Wine trace of block 6504 gains strength x 152 units/s^2, docs/GAMEPLAY.md Push and pull objects; 8.3 s under the earlier constant 164 units/s; neither was measured on this block in tru.exe [I]). Not played: the way through the gap it leaves. On foot her walk back from beside the moved block to where it stood stops at x -26801 (not investigated), and the original rides the motorcycle through: no bike can be brought to this unit by a scenario yet (the matrix file's blockers).",
   "level": "l4_ragnarok_room",
   "spawn": [-27386, -9955, -2500, -90],
   "steps": [
@@ -19,7 +19,7 @@
                 {"clips": ["thor_engage", "thor_left"]},
                 {"probe": "object.5660.uberjoint.0", "near": 1264.2, "tol": 3, "note": "the joint's limit on this side: 1264.2 = 4 m (its whole travel, -790 .. 1264, is the 2054 of ProgressionReal.ThorMechanismsNeedTheGearAndSlide)"},
                 {"probe": "step.horizontal", "min": 1100, "note": "she is carried along with it"},
-                {"probe": "step.seconds", "min": 5, "max": 13, "note": "164 units/s at strength 10 [I: the proxy mass, GAMEPLAY.md]"}]},
+                {"probe": "step.seconds", "min": 1.2, "max": 3, "note": "strength 10 x 152 units/s^2 [I: the law fitted to block 6504's trace, GAMEPLAY.md]: 1264 units in about 1.3 s after the 0.5 s grab"}]},
     {"step": "let_go", "plan": ["wait 2"], "duration": 6,
      "expect": [{"probe": "object.5660.uberjoint.0", "min": 1258, "note": "it stays where she left it"},
                 {"probe": "player.state", "eq": "idle"}]}

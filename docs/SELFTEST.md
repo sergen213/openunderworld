@@ -437,6 +437,7 @@ tested behaviour happen.
 | `swim_moves` | l1_seatop | surface turn on the spot, dive, under-water dodges up / down by their clips, pistols drawn and fired under water |
 | `swan_dive` | l2_cliffclimb | running jump + crouch off the cliff top: swan clips, 5900 down into the sea on `swim_swan_land`, no damage |
 | `puzzle_pole_block_door` | l4_ballcourt | pole 6503 into lever 6502 (graph 0 -> 1), push block 6504 under it (two pushes), up onto the block, jump to the pole: lever joint slides, door 6505 rises |
+| `push_block` | l4_ballcourt | push block 6504 gripped by its push / pull record: pushed 7 s along her facing (33.2 units a second, her pull strength 1.4), pulled back, moved sideways (80 degrees off forward); the three-axis joint's travel, her obj_block clips |
 | `gauntlet_move` | l2_maproom | Thor door 2661: Interact + stick bare-handed moves nothing; with `g_gauntletleft` given, Interact grips its handle (`thor_engage`) and a sidestep slides it to its limit 663.7; let go: it stays, braked |
 | `combat` | l2_cliffclimb | draw, hard lock, pistols kill three spiders and hit a 700 hp target dummy 8+ times, adrenaline fills |
 | `motorcycle` | l4_trailstart | mount bike 5482, accelerate (wheels on the ground), steer left, brake and hold it with the Vehicle Brake (Space), dismount |
@@ -490,7 +491,7 @@ tested behaviour happen.
 | `ch14_ragnarok_hall` | l4_ragnarok_room | Midgard Serpent: down the carved hall (cinematic 5675, checkpoint 5669), through the doorway: stream unit l4_pool |
 | `ch14_pool_entry` | l4_pool | Midgard Serpent: down the entrance stairs (5547 preloaded, serpent head 5612 told), 198_mex_thralls at the stair foot, the jaguar thrall alive |
 | `ch15_ragnarok_xibalba_key` | l4_ragnarok_room | Land of the Dead: the Xibalba key 5695 taken out of its holder at the rock fall |
-| `ch15_ragnarok_rubble_block` | l4_ragnarok_room | Land of the Dead: block 5660 refused bare-handed; with the belt gripped and slid 1264 to its joint's limit in 8.3 s |
+| `ch15_ragnarok_rubble_block` | l4_ragnarok_room | Land of the Dead: block 5660 refused bare-handed; with the belt gripped and slid 1264 to its joint's limit in 1.8 s (the fitted push law [I]; 8.3 s under the earlier constant speed) |
 | `ch15_ballcourt_exit_switch` | l4_ballcourt | Land of the Dead: exit switch 5469 with the key socket empty opens nothing (reveal 5464 stays in state 0) |
 | `ch16_tunnel_door` | chapter 5 start | Gate of the Dead leg 1: on bike 7229, the tunnel's 66 000 units by `ride` lines (10 230 down, no damage; brake steer 0.5), hand brake, off; Thor door 7400 gripped and walked open to 663.7; back on, through the doorway: plane 7472 -> 235_val_shaft, on foot at its end, the bike waiting on marker 7404, mounted there |
 | `ch16_tower_power` | l5_valgrind | Gate of the Dead leg 3: the power blocks 7498 / 7499 / 7500 carried into cog wheel 7312's niches; the rings 7492-7509 stand until the third is in, then turn 10 degrees/s, neighbours opposite |

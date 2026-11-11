@@ -390,10 +390,10 @@ handlers without a stop (`GameReal.ScriptedChapterEndChainsStartNextChapter`).
 | Volume box/sphere test, +200 test point, enter/exit, FirstIn once, dispatch order Enter → FirstIn → its calls → In → its calls; Exit → Out → its calls | [O] as above |
 | Plane crossing | [O] geometry and the side of one-sided planes (toward local +Y); [I] vt 54 |
 | Handler execution | [O] actual SCMD handler + nested calls; [I] static instanceref-target activation only as fallback |
-| Object classes by objectlist name: `*triggervolume`, `triggerplane`, `*switch*`/`*lever*` (not cheat buttons), `*pu_block*`/`*rb_pushblock*`/`*pushable*`, `*door*`/`*gate*`; every other scripted intro uses `Kind::Scripted`, including cinematic objects | [I] specialized behavior classes by name; [O] all scripted intros instantiate and run available handlers |
+| Object classes by objectlist name: `*triggervolume`, `triggerplane`, `*switch*`/`*lever*` (not cheat buttons), `*door*`/`*gate*`; every other scripted intro uses `Kind::Scripted`, including cinematic objects | [I] specialized behavior classes by name; [O] all scripted intros instantiate and run available handlers |
 | Switch: E / pad West within 200 units (±250 z) of the switch intro → plays `active_pulling`, then fires Use (vt 55 targets) and holds `active_idle` | [I] distances, timing; Lara plays no `obj_pull_lever` |
 | Door: `modifiable.Set(0)` opens, `Set(1)` closes; opening plays its `*opening*` (else `open`) clip, then holds `*open*idle*`/`*_open` | [I] modifiable mapping and clip choice; closing is immediate (no closing clip yet) |
-| Push block: E held + stick forward/back within reach → moves along the world axis nearest Lara's facing, 120 units/s, stops at collision | [I] the real block snaps to a grid and moves Lara with it (Lara's controller is untouched) |
+| Push blocks are not a script class: uber objects gripped by their push / pull record and moved as physics bodies (docs/GAMEPLAY.md "Push and pull objects") | [O] object data; speeds [I] |
 | Save state | `serialize()`/`restore()` JSON keyed by intro unique id: `state`, `t`, `inside`, `firstIn`, `offset`, `hidden`, `engagement`, plus dirty `scriptFields`, `scriptStrings` and `scriptProperties`; state of units not loaded is kept and applied when they stream in. The 256 `gamebase` global bytes are stored in `gameValues`. |
 
 Not done: collection/array/map opcodes, other thread/PSEQ fibers, most native bindings,

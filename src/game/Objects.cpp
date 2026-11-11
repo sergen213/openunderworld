@@ -265,6 +265,11 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                     if (const auto& jt = it->second->joints[k]; jt.type == 7 && jt.bodyB >= 0 && size_t(jt.bodyB) < rt.sections.size() &&
                                                                  !rt.sections[size_t(jt.bodyB)].removed)
                         if (auto joint = makeUberJoint3(o.uid, int32_t(k))) rt.joints3[int32_t(k)] = *joint;
+                // ... except the push blocks, which those saves moved as a script offset: the joint stands there.
+                if (auto* slide = !o.loose && o.offset != vec3(0) ? uberSlide(o.uid) : nullptr) {
+                    slide->x = o.offset;
+                    if (auto* moved = const_cast<script::Object*>(script_.find(o.uid))) moved->offset = vec3(0);
+                }
             }
             for (const auto& e : j.value("links", nlohmann::json::array())) rt.links.insert(e.get<int32_t>());
             for (const auto& e : j.value("watches", nlohmann::json::array()))
@@ -673,9 +678,6 @@ std::optional<physics::Joint3> World::makeUberJoint3(int32_t uid, int32_t index)
     const auto& u = *data->second;
     const auto& j = u.joints[size_t(index)];
     if (j.type != 7 || j.bodyB < 0 || j.bodyA >= 0) return std::nullopt; // [U] on a moving body A: none in the data
-    // Push blocks (script::Kind::Block: ca_pu_block_a, ma_rb_pushblock_training, ...) carry the same joint, but src/script
-    // moves them (Object::offset) on its own grid: no body here until that mover rides the joint.
-    if (o->kind == script::Kind::Block) return std::nullopt;
     physics::Joint3 out;
     const auto solid = [](const physics::ObjectPhysics* p) { return p && std::ranges::any_of(p->prims, &physics::Prim::solid); };
     std::vector<int32_t> sections{j.bodyB};
@@ -713,6 +715,25 @@ int32_t World::uberSectionJoint3(int32_t uid, int32_t section) const {
         section = next;
     }
     return -1;
+}
+
+std::optional<vec3> World::objectOrigin(int32_t uid) const {
+    const auto* o = script_.find(uid);
+    if (!o) return std::nullopt;
+    const auto* joint = slide(uid);
+    return o->pos + o->offset + (joint ? joint->x : vec3(0));
+}
+
+physics::Joint3* World::uberSlide(int32_t uid) {
+    const auto rt = uberRuntime_.find(uid);
+    const auto data = uberData_.find(uid);
+    if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second || rt->second.joints3.empty()) return nullptr;
+    for (size_t k = 0; k < data->second->sections.size(); ++k)
+        if (data->second->sections[k].model == 0) {
+            const auto j = rt->second.joints3.find(uberSectionJoint3(uid, int32_t(k)));
+            return j == rt->second.joints3.end() ? nullptr : &j->second;
+        }
+    return nullptr;
 }
 
 // The simulated joint whose body is the section using model 0 (the object's collision), -1 none. Not while the object
@@ -890,7 +911,7 @@ void World::useSwitchClip(const script::Object& o) {
 // Before, interact within reach of any uber object riding a level prismatic joint gripped it and the stick moved it at
 // the push-block speed, whatever its records, brakes or the gear it asks for.
 void World::pushUberJoints(const Actions& a) {
-    constexpr float kSpeed = 120; // a hinge's grip point, units per second (Script.cpp kBlockSpeed)
+    constexpr float kSpeed = 120; // a hinge's grip point, units per second [I]
     uberGrip_ = vec3(0), uberPush_ = {}, uberPush3_ = {};
     pushUberHandle(a, kSpeed);
 }
@@ -937,10 +958,25 @@ int pushWay(vec2 stick) {
     return angle < 0.5f * kPushForwardArc ? 1 : angle > 180.0f - 0.5f * kPushBackArc ? -1 : stick.x < 0 ? 2 : -2;
 }
 
+vec2 pushDirection(vec2 stick) {
+    const float length = glm::length(stick);
+    if (length <= 0.5f) return vec2(0);
+    const float angle = glm::degrees(std::atan2(stick.x, stick.y)), off = std::abs(angle); // off forward, + to her right
+    const float fwd = 0.5f * kPushForwardArc, back = 180.0f - 0.5f * kPushBackArc;
+    const float turn = glm::radians(off < fwd ? 0.0f : off > back ? 180.0f : 180.0f * (off - fwd) / (back - fwd));
+    return vec2(std::copysign(std::sin(turn), angle), std::cos(turn)) * std::min(length, 1.0f);
+}
+
 PushDrive pushDrive(float mass, float strength, float brake) {
-    const float impulse = std::min(mass * kPushImpulsePerMass, kPushImpulse) * strength;
-    if (mass <= 0 || impulse <= brake) return {};
-    return {std::min(kPushSpeed * strength, kPushMomentum * strength / (kPushProxyMass * mass)), impulse - brake};
+    // [I] whether she moves it at all: the bound on the object's own mass against the brake (the towers' 474 between
+    // 3.5 x 132.7 and 5.5 x 132.7), as before the trace.
+    const float full = std::min(mass * kPushImpulsePerMass, kPushImpulse) * strength;
+    if (mass <= 0 || full <= brake) return {};
+    // 0x73F390 puts the impulse on the PROXY body with the proxy's mass in the bound; the proxy is bound to the object,
+    // so the two move together: the object's share is m / (m + M) of it (1 / 9 of m x 0.7585 x strength a step).
+    const float proxy = kPushProxyMass * mass;
+    const float impulse = std::min(proxy * kPushImpulsePerMass, kPushImpulse) * strength * mass / (mass + proxy);
+    return {std::min(kPushSpeed * strength, kPushMomentum * strength / proxy), impulse * (full - brake) / full};
 }
 
 bool carriesNeeded(std::span<const std::string> needs, const std::string* held, const std::set<std::string>& carried) {
@@ -963,11 +999,11 @@ bool carriesNeeded(std::span<const std::string> needs, const std::string* held, 
 // lying across her facing (the slide doors; a hinge whose tangent at her grip point does: the l2_maproom hub's panel)
 // by left / right, one along it by forward / back.
 // Prismatic joints [O 0x74AC00 / 0x73F390, player data +0xC7C / +0xC80 / +0xC84 / +0xC88]: her target speed is
-// min(23.704 x strength, 2054.36 x strength / M) units a second and each step's impulse is at most
-// min(m x 0.7585, 142.225) x strength; [I] M = the PushPull proxy body's mass, 0.125 (+0xC98) of the object's m (with
-// m itself the doors would crawl at 30 units a second); [I] a joint motor holding still with at least that impulse (the
-// braked doors, 3.16e6) keeps the joint where it is, a weaker one (the retracted towers' 474 against 5.5 x 132.7) is
-// overcome by the difference. Hinges: [I] her grip point moves at `speed` (the push-block speed), unbounded.
+// min(23.704 x strength, 2054.36 x strength / M) units a 30 Hz frame and each 1/60 s step's impulse, put on the proxy,
+// is at most min(M x 0.7585, 142.225) x strength, M = the PushPull proxy body's mass, 0.125 (+0xC98) of the object's m
+// [I fitted to the Wine trace of block 6504, docs/GAMEPLAY.md "Push and pull objects": a constant 212 units/s^2];
+// [I] a joint motor holding still with at least m x 0.7585 x strength (the braked doors, 3.16e6) keeps the joint where
+// it is, a weaker one (the retracted towers' 474 against 5.5 x 132.7) leaves her that share of her impulse. Hinges: [I] her grip point moves at `speed` (the push-block speed), unbounded.
 // She faces the object's side she grips (Player::grip, the thor_* clips): [I] a record with a facing cone (shape 2: the
 // slide doors' handles) turns her against the cone's heading, toward the handle; others keep her own facing, squared
 // to the joint. [I] The PushPull proxy body (0x7358E0 "PushPull Proxy") is not simulated, nor the record kind 3
@@ -978,17 +1014,24 @@ glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, c
 bool World::pushUberHandle(const Actions& a, float speed) {
     const auto& s = player_.state();
     uberMoving_ = 0;
-    if (uberHandle_.uid && (!a.interact || held_ || (s.state != State::Block && !player_.canInteract()))) {
+    // MustDetach [O 0x73F900]: the body she grips left her grip (it fell off an edge, or was held back while she went on).
+    bool slipped = false;
+    if (const auto* j = uberHandle_.hold ? uberSlide(uberHandle_.uid) : nullptr) {
+        const vec3 d = s.pos - j->x - *uberHandle_.hold;
+        slipped = glm::length(vec2(d)) > kPushDetachLevel || std::abs(d.z) > kPushDetachHeight;
+    }
+    if (uberHandle_.uid && (!a.interact || held_ || slipped || (s.state != State::Block && !player_.canInteract()))) {
         uberTrigger(uberHandle_.uid, size_t(uberHandle_.section), 21, uint32_t(uberHandle_.kind));
         script_.engage(uberHandle_.uid, -1, uberHandle_.kind, false);
         uberHandle_ = {};
     }
     // (a press a switch took this tick, src/script, grips nothing: one press acts on one object)
-    if (!uberHandle_.uid && a.interact && !interactHeld_ && !held_ && !script_.holding() && !script_.used() && player_.canInteract()) {
+    if (!uberHandle_.uid && a.interact && !interactHeld_ && !held_ && !script_.used() && player_.canInteract()) {
         const Engaged e = engaged();
         const auto* o = e.uid ? script_.find(e.uid) : nullptr;
-        if (e.record && e.section >= 0 && e.record->kind == 1 && o && o->kind != script::Kind::Block) { // src/script pushes blocks
+        if (e.record && e.section >= 0 && e.record->kind == 1 && o) {
             uberHandle_ = {e.uid, e.section, e.record->kind};
+            uberHandle_.gear = !e.record->needs.empty();
             uberHandle_.segment = e.record->segment;
             const auto* p = e.record->shape == 2 ? uberSectionPhysics(*o, size_t(e.section)) : nullptr;
             if (const auto frame = p ? uberSectionFrame(*o, size_t(e.section)) : std::nullopt) {
@@ -1004,27 +1047,27 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     const int32_t index = uberSectionJoint(uberHandle_.uid, uberHandle_.section);
     auto rt = uberRuntime_.find(uberHandle_.uid);
     const vec3 fwd = uberHandle_.face != vec3(0) ? uberHandle_.face : vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
-    // A section on a three-axis joint (the Thor pillars: ca_pu_thor_pillar itself, ma_pu_thor_pillar through its hinge)
-    // goes where she pushes or pulls it [O 0x74AC00: the way picked off her facing, as an impulse-bounded velocity on
-    // the object's body; nothing in the PushPull state knows the joint]: forward / back along her facing, left / right
-    // across it, with pushDrive's speed and impulse for the mass on the joint. A motor braking X / Y (ma_pu_thor_pillar
-    // state 1: 28.445 while its hinge turns) takes its bound off the impulse, as the doors' brake does.
+    // A section on a three-axis joint (the push blocks, the Thor pillars: ca_pu_thor_pillar itself, the others through
+    // their hinge) goes where she pushes or pulls it [O 0x74AC00: an impulse-bounded velocity on the object's body,
+    // turned off her facing by the stick (pushDirection); nothing in the PushPull state knows the joint], with
+    // pushDrive's speed and impulse for the mass on the joint. A motor braking X / Y (the blocks' and pillars' state 1
+    // while their hinge turns, the blocks' locked state 3) takes its bound off the impulse, as the doors' brake does.
     if (const int32_t slide = rt != uberRuntime_.end() ? uberSectionJoint3(uberHandle_.uid, uberHandle_.section) : -1; slide >= 0) {
         auto& j = rt->second.joints3.at(slide);
         uberGrip_ = glm::normalize(vec3(fwd.x, fwd.y, 0));
-        const int way = pushWay(a.move);
-        const vec3 left(-uberGrip_.y, uberGrip_.x, 0);
-        const vec3 want = way == 1 ? uberGrip_ : way == -1 ? -uberGrip_ : way == 2 ? left : way == -2 ? -left : vec3(0);
-        if (way != 0) {
-            float brake = 0;
-            for (size_t k = 0; k < 2; ++k)
-                if (j.motor[k] && j.speed[k] == 0 && j.force[k] > 0) brake = std::max(brake, j.force[k]);
-            const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), brake);
-            if (d.speed <= 0) return true; // held: her strength does not move it
-            j.push = want * (d.speed / 30.0f), j.pushBound = d.impulse;
-            uberPush3_ = {uberHandle_.uid, slide, j.x};
-            uberMoving_ = way;
-        }
+        if (!uberHandle_.hold) uberHandle_.hold = s.pos - j.x;
+        const vec2 dir = pushDirection(a.move);
+        const vec3 right(uberGrip_.y, -uberGrip_.x, 0);
+        float brake = 0;
+        for (size_t k = 0; k < 2; ++k)
+            if (j.motor[k] && j.speed[k] == 0 && j.force[k] > 0) brake = std::max(brake, j.force[k]);
+        const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), brake); // (no joint friction while she grips [I])
+        if (d.speed <= 0) return true; // held: her strength does not move it
+        // 0x74AC00 runs every frame of the state: without the stick the velocity asked is zero, with the same bound.
+        j.grip = true, j.push = (uberGrip_ * dir.y + right * dir.x) * d.speed, j.pushBound = d.impulse;
+        j.pushGain = 0.25f * kPushProxyMass / (1 + kPushProxyMass); // a quarter of the error on the proxy, shared with the object
+        uberPush3_ = {uberHandle_.uid, slide, j.x};
+        if (dir != vec2(0)) uberMoving_ = std::abs(dir.y) >= std::abs(dir.x) ? (dir.y > 0 ? 1 : -1) : dir.x < 0 ? 2 : -2;
         return true;
     }
     if (index < 0 || rt == uberRuntime_.end()) {
@@ -1059,18 +1102,21 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     const vec3 left(-uberGrip_.y, uberGrip_.x, 0);
     const vec3 want = way == 1 ? uberGrip_ : way == -1 ? -uberGrip_ : way == 2 ? left : way == -2 ? -left : vec3(0);
     const float drive = glm::dot(want, dir); // +-1 along the joint, 0 where it cannot go
-    if (std::abs(drive) > 0.7071f) {
-        const float sign = drive > 0 ? 1.0f : -1.0f;
-        if (j.hinge) {
-            j.push = sign * speed / rate / 30.0f;
-        } else {
-            const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), j.motor && j.force > 0 ? j.force : 0.0f);
-            if (d.speed <= 0) return true; // held: her strength does not move it
-            j.push = sign * d.speed / 30.0f, j.pushBound = d.impulse;
-        }
-        uberPush_ = {uberHandle_.uid, index, j.x};
-        uberMoving_ = way;
+    const bool driven = std::abs(drive) > 0.7071f;
+    const float sign = drive > 0 ? 1.0f : -1.0f;
+    if (j.hinge) {
+        if (!driven) return true;
+        j.push = sign * speed / rate / 30.0f;
+    } else {
+        const PushDrive d = pushDrive(std::max(j.mass, 1.0f), script_.pullStrength(), j.motor && j.force > 0 ? j.force : 0.0f);
+        if (d.speed <= 0) return true; // held: her strength does not move it
+        // Without the stick she asks for no velocity with the same bound (0x74AC00 every frame); [I] not against a
+        // script motor that is running (the towers' retraction): that has the joint while she does not push.
+        if (!driven && j.motor) return true;
+        j.grip = true, j.push = driven ? sign * d.speed : 0.0f, j.pushBound = d.impulse;
     }
+    uberPush_ = {uberHandle_.uid, index, j.x};
+    if (driven) uberMoving_ = way;
     return true;
 }
 
@@ -1684,7 +1730,7 @@ void World::syncObjects() {
     shotOnly_.clear(), shotOnlyLocal_.clear();
     physics_.clearHinges(); // uber joints and loose bodies keep simulating
     for (const auto& o : script_.objects()) {
-        const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Block || o.kind == script::Kind::Switch;
+        const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Switch;
         // Every uber object runs its section components from spawn (0x4D3DA0), as the l7 Thor towers' joints extend.
         const formats::UberObjectData* uber = prepareUber(o);
         // Anim graphs with hit-gated transitions (sh_ei_combat_crate_*) collide so Lara's shots reach them (World::fire).
@@ -1803,8 +1849,11 @@ void World::syncObjects() {
     syncedPlates_ = lateColliders(script_);
     syncedAnchors_ = script_.anchors().size();
     poseShotOnly();
-    if (restoredColliders_) poseColliders(); // a restored world: where the saved one had them (until its first tickObjects)
     syncHazards();
+    // A restored world: where the saved one had them (until its first tickObjects). After syncHazards: the crusher
+    // jaws are posed by what it makes, and after the uber models' clip poses (Object::animPose is not saved:
+    // l4_traprooms' blades 5897 / 5898 stood at their intro frames for the first step).
+    if (restoredColliders_) poseUberModels(), poseColliders();
 }
 
 // An anchored object (script::Runtime::anchor) sits in the frame of its host's HInfo marker: the marker's segment as
@@ -2230,10 +2279,17 @@ std::vector<vec3> World::engagementCentres(int32_t uid, int kind) {
 
 // Uber section `section` of `o` in the world: the object's frame, moved with the joint carrying the section.
 std::optional<glm::mat4> World::uberSectionFrame(const script::Object& o, size_t section) {
-    if (!prepareUber(o)) return std::nullopt;
-    const glm::mat4 base = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+    const auto* data = prepareUber(o);
+    if (!data) return std::nullopt;
+    // A section moved by a joint has its whole motion in its own body; Object::body (the motion of the object's model 0:
+    // tickObjects) moves the sections that have none. Both at once applied model 0's joint twice, and a block pushed
+    // 1900 units left its record 1900 behind it.
+    const glm::mat4 intro = glm::translate(glm::mat4(1), o.offset) * introModel(o);
+    // A pressure plate's model 0 section (the l4_traprooms empty thrones) is posed by the plate's body, not by its
+    // unweighted uber joint (uberModelJoint): Object::body is its motion, and the scepter set into it rides it down.
+    if (plates_.contains(o.uid) && section < data->sections.size() && data->sections[section].model == 0) return intro * o.body;
     const auto body = uberSectionBody(o.uid, int32_t(section));
-    return body ? base * *body : base;
+    return body ? intro * *body : intro * o.body;
 }
 
 const physics::EngagementSet* World::uberEngagement(int32_t uid, size_t section) {
@@ -2549,20 +2605,6 @@ void World::stepPhysics(float dt) {
     if (const auto* lp = objectPhysics("lara"))
         if (const float m = physics::massProps(*lp).mass; m > 0) laraWeight = m;
     std::vector<physics::Scene::Weight> weights{{player_.state().pos, laraWeight}};
-    for (const auto& b : script_.objects()) {
-        if (b.kind != script::Kind::Block) continue;
-        vec3 lo(1e30f), hi(-1e30f);
-        for (const auto& d : col_.dynamics)
-            if (d.id == b.uid)
-                for (const vec3& v : d.shape->vertices) {
-                    const vec3 q(d.transform * glm::vec4(v, 1));
-                    lo = glm::min(lo, q), hi = glm::max(hi, q);
-                }
-        if (lo.x > hi.x) continue;
-        const auto* p = objectPhysics(b.name);
-        const float mass = p ? physics::massProps(*p).mass : 0.0f;
-        weights.push_back({vec3(0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y), lo.z), mass > 0 ? mass : 666.0f}); // tru.exe's fallback mass
-    }
     // ... and at the receptacle's attach marker, riding its plate (an inserted portable has no collider; an uber plate's
     // body is not posed by its plate joint, so the plate's travel replaces whatever the body holds).
     for (const auto& [uid, in] : inserted_) {
