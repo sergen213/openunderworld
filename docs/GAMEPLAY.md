@@ -1364,7 +1364,8 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
 plan and writes the actions it gave as an input script; the script replays the same ticks (each value round-trips
 through its text, the stick is re-aimed every 4 ticks in 0.05 steps from the camera's yaw, as `World::tick` maps it).
 Plan lines: `go X Y [R] [walk]`, `engage UID [X Y] [walk]` (to the nearest of its engagement records,
-`World::engagementCentres`, until `World::engaged` names it), `face YAWDEG`, `press [ACTION]` (6 ticks held, 6
+`World::engagementCentres`; carrying a portable the nearest of kinds 3 / 5 / 7, the only ones that admit her then;
+until `World::engaged` names it), `face YAWDEG`, `press [ACTION]` (6 ticks held, 6
 released; `press` picks up / inserts, `press drop` puts a carried object down, `press grenade` throws it: follow each
 with a `wait` for its clip), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
 heading; ACTION pressed AT seconds in: running jumps), `push FORWARD RIGHT SECONDS [ACTION]` (ACTION, default interact,
