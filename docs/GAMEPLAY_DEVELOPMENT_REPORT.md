@@ -112,8 +112,8 @@ Each line names where the rules and evidence are. "Wine" = measured in the runni
 ## 7. Chapter coverage
 
 The matrix (`docs/underworld_chapter_gameplay_matrix.md`) holds the status of every requirement row per section:
-661 rows, of which 9 are verified against the original, 135 implemented with a test in that chapter's units, 281
-implemented but unverified there, 146 partial and 88 missing (baseline at v0.41.0: 8 / 95 / 319 / 135 / 100). Rows
+661 rows, of which 9 are verified against the original, 135 implemented with a test in that chapter's units, 282
+implemented but unverified there, 145 partial and 88 missing (baseline at v0.41.0: 8 / 95 / 319 / 135 / 100). Rows
 changed only where a chapter leg or test actually exercised them; the matrix's section "Status changes since the
 baseline" lists the mechanics that landed and the rows they affect.
 
@@ -135,14 +135,14 @@ end to end yet.** Legs that cannot be played are kept under `tests/selftests/kno
 | 10 Puppet No Longer | 1 | The roped leap to the wall ring ends in the pool; pole 2665 does not slide on its track; the tunnel and the boat |
 | 11 Protected by the Dead | 3 | The fights (an unarmed walk dies to the spiders); the serpent pillar leg is not written |
 | 12 The Unnamed Days | 1 | Lever 6695 is not held by her weight on the rope; the temple interior |
-| 13 Xibalba | 3 | Key items do not travel between units; ring 4951 is not offered |
-| 14 The Midgard Serpent | 4 | The pool walkway gap; no motorcycle after a level entry; thrones stop at an unbound native |
-| 15 Land of the Dead | 3 | Rune block 5609 has no joint; the key hand-over between units |
-| 16 Gate of the Dead | 2 | The tower's base panel stalls short of its solved position |
+| 13 Xibalba | 4 | The calendar's push handle turns nothing once the mask is set; ring 4951 is not offered |
+| 14 The Midgard Serpent | 5 | The pool walkway gap; thrones stop at an unbound native; the bike is placed only where a level script places it |
+| 15 Land of the Dead | 3 | Rune block 5609 has no joint; the exit switch is not locked without the key (the key itself now arrives) |
+| 16 Gate of the Dead | 3 | The tower's upper tiers and the gate after the base panel |
 | 17 Valhalla | 1 | The hammer chamber's ledge; the timed lever runs have no walkable route in ours |
 | 18 Rituals Old | 2 | The deck fights (the autopilot does not fight) |
 | 19 Helheim | 4 | The statue wheels, gears, the other stones, the flooded maze |
-| 20 Yggdrasil | 4 | The rune symbols cannot be used; the slide's jump falls short; the eitr pit is plain water |
+| 20 Yggdrasil | 7 | Past the eitr pit and the rune symbols: the hall's later rooms are not played |
 | 21 Out of Time | 0 (+ the arena entry and a start on the lower ring) | The jump from the entry walkway onto a passing stone falls short; the fight's sequence (towers, mounts) is unplayed by input. Mjolnir hits do reach Natla's script |
 
 `docs/SELFTEST.md` lists what is registered and every parked leg with its cause.
@@ -152,8 +152,9 @@ end to end yet.** Legs that cannot be played are kept under `tests/selftests/kno
 In the order it blocks the campaign:
 
 1. The blockers of section 7, each recorded with its cause in `docs/SELFTEST.md` (known-gaps table) and in the
-   matrix rows. The ones that recur across sections: key items carried between units, the motorcycle after level
-   entries, freed door / slab bodies that stay in place, fights by the autopilot (a test-tool gap, not a game gap).
+   matrix rows. The ones that recur across sections: the motorcycle at level entries where no script places it, freed
+   slab bodies that stay in place, switch locks (`modifiable` 7) honoured only for the one-way switches, fights by the
+   autopilot (a test-tool gap, not a game gap). Key items now travel between units (stowed, as in the original).
 2. Natla's fight by input past the arena entry (the platform ride down, the towers and mounts in sequence).
 3. The legs not yet written (most of sections 02, 03, 07-09, 17-19), then joining legs into whole sections.
 4. Push blocks and Thor's mechanisms: the push law is fitted to one block trace; the mechanisms themselves are
@@ -161,4 +162,4 @@ In the order it blocks the campaign:
 5. The motorcycle's brake strength, slopes, coasting, and the unmeasured manoeuvres.
 6. The ship's escape shafts, burning barrels, roll and encounter counts.
 7. The grapple swing measurement, and the other unmeasured rows of the comparison document.
-8. Per-row refresh of the matrix for rows no leg has exercised (281 rows are "implemented but unverified").
+8. Per-row refresh of the matrix for rows no leg has exercised (282 rows are "implemented but unverified").

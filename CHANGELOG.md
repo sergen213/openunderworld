@@ -6,6 +6,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-11-10
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
 - Added: the Arctic sea's drawbridge wheel is locked until the puzzle frees it; a try rattles the chains and the
   bridge stays up, as in the original.
 - Added: key items (the Xibalba key, the mask, the headdress, the trap house keys, the gems) are stowed when Lara

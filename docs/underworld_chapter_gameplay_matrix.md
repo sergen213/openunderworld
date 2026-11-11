@@ -713,7 +713,7 @@ Open in this chapter:
 - Thrall ranged spit: no decoded attack record ("Thralls: none").
 - Five of six treasures are in jars (M63); shiny-jar hint missing.
 - Start-of-level outfit / weapon choice (M75).
-- **Base panel stalls (C16-15)**: by input the base turns from 89 to 26-40 degrees off and stops; "solved" is never reported (`tests/selftests/known_gaps/ch16_tower_base_panel.json`). Until it does, no beam, no gate; the tier wheels need the ring climbs.
+- **Base panel (C16-15)**: plays by input (`ch16_tower_base_panel`): the first beam lights. The gate needs every tier's wheel (dispatcher 7318's flags), and those need the ring climbs.
 - Chapter self-tests written: `ch16_tunnel_door` (C16-01, -03, -04, -05), `ch16_tower_power` (C16-14). Not played: the spiral ramp ride (C16-08: a 201 000-unit route exists on the unit's collision; the bike over-speeds on slopes, see C16-03), the gate fight, the tiers.
 
 ## 17. Valhalla (Level 5 - Jan Mayen Island, part 2)
@@ -861,7 +861,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | [treasure 30, health] → [relic run] → portal → hall, health → stair slide (one-way) → 4 Vikings → wave hall → health → stairs → waterfall cinematic → 2 Vikings → yeti → health → slide + pit jump → yeti → device room walkway → cinematic | PARTIALLY IMPLEMENTED | PR gates ch 7 "l7_yggdrasil(_end) volumes 8804, 8303 / 8312, 8323-8329 → cinematics 8773 / 8261, spline mover 8404: pass" |
 | Automated tests | Existing: replay `mjolnir_thralls`, `GameReal.KilledThrallBreaksIntoChunks`, `StreamReal.MjolnirHitBreaksUrnAndItStaysBroken` (l7_yggdrasil_hall01), `StreamReal.SaveContinuesBitIdentically`, `AiReal.ThrallsGetUpUnlessMjolnir`, `ProgressionReal.CriticalPathPerChapter` (ch 7), `CineReal.EveryStreamPlaysWithItsActors`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 21 in [docs/matrix/20_yggdrasil.md](matrix/20_yggdrasil.md) — IMPLEMENTED BUT UNVERIFIED 8, PARTIALLY IMPLEMENTED 6, NOT IMPLEMENTED 4, IMPLEMENTED 3.
+Requirement rows: 21 in [docs/matrix/20_yggdrasil.md](matrix/20_yggdrasil.md) — IMPLEMENTED BUT UNVERIFIED 9, PARTIALLY IMPLEMENTED 5, NOT IMPLEMENTED 4, IMPLEMENTED 3.
 
 Open in this chapter:
 
@@ -935,9 +935,9 @@ Open in this chapter:
 | 17. Valhalla (Level 5 - Jan Mayen Island, part 2) | 70 | 0 | 5 | 22 | 23 | 20 | 0 |
 | 18. Rituals Old (Level 6 - Andaman Sea) | 18 | 1 | 3 | 9 | 3 | 2 | 0 |
 | 19. Helheim (Level 7 - Arctic Sea, part 1) | 33 | 1 | 10 | 18 | 2 | 2 | 0 |
-| 20. Yggdrasil (Level 7 - Arctic Sea, part 2) | 21 | 0 | 3 | 8 | 6 | 4 | 0 |
+| 20. Yggdrasil (Level 7 - Arctic Sea, part 2) | 21 | 0 | 3 | 9 | 5 | 4 | 0 |
 | 21. Out of Time (Level 7 - Arctic Sea, part 3) | 25 | 0 | 9 | 5 | 4 | 7 | 0 |
-| **All 21** | **661** | **9** | **135** | **281** | **146** | **88** | **2** |
+| **All 21** | **661** | **9** | **135** | **282** | **145** | **88** | **2** |
 
 (The first status named in a row counts; rows that split a status between two parts count under the first.)
 
