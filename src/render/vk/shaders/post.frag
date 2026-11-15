@@ -1,15 +1,18 @@
 #version 460
 // Same as GL kPostFs: optional tone mapping (AgX, or the ACES fit with HDR) and classic FXAA, then the atmosphere / weather and the underwater effect.
 layout(location = 0) in vec2 vUv;
-// fade: FrameOptions::screenFade; tonemap: FrameOptions::tonemap (0 original, 1 agx); particles: 1 = uUwParticles holds
-// this frame's Enhanced under-water particles (render/Water.hpp UwParticlePush), premultiplied over the fogged scene
-layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; float fade; int tonemap; int particles; } pc;
+// fade: FrameOptions::screenFade; tonemap: FrameOptions::tonemap (0 original, 1 agx); uw: bit 0 = uUwParticles holds
+// this frame's Enhanced under-water particles (render/Water.hpp UwParticlePush), premultiplied over the fogged scene;
+// bit 1 = the camera is submerged (render/Water.hpp UwGrade): no tone map, write the linear HDR frame for uw_bloom.frag /
+// uw_grade.frag (abyssal-garden's W_POST), no fade (the grade fades)
+layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; float fade; int tonemap; int uw; } pc;
 layout(set = 0, binding = 0) uniform sampler2D uScene;
 layout(set = 1, binding = 9) uniform sampler2D uUwParticles; // after the shafts' 6-8 (VkRenderer post-water set)
 layout(location = 0) out vec4 oColor;
 #include "shaders/tonemap.glsl"
 vec3 fetch(vec2 uv) {
     vec3 c = textureLod(uScene, uv, 0.0).rgb;
+    if ((pc.uw & 2) != 0) return c; // the under-water composite tone maps (uw_grade.frag tmap)
     if (pc.tonemap != 0) c = ouTonemapAgx(c);
     else if (pc.hdr != 0) c = clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
     return c;
@@ -38,9 +41,14 @@ vec3 fxaa(vec2 uv) {
 void main() {
     vec3 c = pow(ouScreenFilter(pc.fxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / pc.brightness));
     vec3 u = ouUnderwater(ouAtmosphere(c, vUv), vUv);
-    if (pc.particles != 0) {
-        vec4 p = textureLod(uUwParticles, vUv, 0.0);
-        u = pow(pow(u, vec3(2.2)) * (1.0 - p.a) + p.rgb, vec3(1.0 / 2.2)); // linear, as ouUwFog
+    if ((pc.uw & 3) == 0) {
+        oColor = vec4(u * (1.0 - pc.fade), 1.0);
+        return;
     }
-    oColor = vec4(ouUnderwaterGrade(u, vUv) * (1.0 - pc.fade), 1.0);
+    vec3 l = pow(max(u, vec3(0.0)), vec3(2.2)); // linear, as ouUwFog
+    if ((pc.uw & 1) != 0) {
+        vec4 p = textureLod(uUwParticles, vUv, 0.0);
+        l = l * (1.0 - p.a) + p.rgb;
+    }
+    oColor = (pc.uw & 2) != 0 ? vec4(l, 1.0) : vec4(pow(l, vec3(1.0 / 2.2)) * (1.0 - pc.fade), 1.0);
 }

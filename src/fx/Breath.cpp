@@ -10,18 +10,16 @@ float hash01(uint32_t x) { // lowbias32 -> [0, 1)
     x ^= x >> 16, x *= 0x7FEB352Du, x ^= x >> 15, x *= 0x846CA68Bu, x ^= x >> 16;
     return float(x >> 8) / 16777216.0f;
 }
+float smooth(float a, float b, float x) { const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); }
 // [I] breathing: a puff every 3.2 s holding her breath (a diver lets a little out now and then), every 2.4 s on the
-// regulator; 5-8 / 8-12 bubbles 50 ms apart; radii 4-12 units (1.4-4 cm at 290 per metre: an exhale's big bubbles, and
-// still a few pixels from the follow camera ~4 m away); rising at 75-135 units/s (0.26-0.47 m/s, bigger ones faster)
-// after a 0.25 s start-up, drifting up to 20 units/s sideways at first.
+// regulator; 5-8 / 8-12 bubbles 50 ms apart. Each bubble: abyssal-garden world.js's per-bubble attributes (MIT) — size
+// rr(0.025, 0.08) m (the demo's small branch; its 24 % of 0.1-0.3 m vent bubbles would be wider than Lara's head),
+// rise speed rr(1.1, 2.4) (0.6 + 3 size) m/s, wobble rr(0.05, 0.16) m (the shader's sway, uw_bubble.vert) — rising
+// straight up from the mouth (vsBub: a.xyz + h) until 0.2 m under the surface (b.z = -y0 - 0.2), its size
+// a.w (0.55 + 0.7 life) ss(0, 0.03, life) over life = h / b.z.
 constexpr double kPeriod = 3.2, kScubaPeriod = 2.4, kGap = 0.05;
-constexpr float kSpinUp = 0.25f, kDriftTime = 0.4f, kMaxAge = 12.0f;
+constexpr float kMetre = 290.0f; // TRU units per metre (render/Ocean.hpp ocean::kMetre)
 constexpr size_t kMaxLive = 256;
-glm::vec3 position(const glm::vec3& from, glm::vec2 drift, float speed, float age) {
-    const float rise = speed * (age - kSpinUp * (1.0f - std::exp(-age / kSpinUp)));
-    const glm::vec2 side = drift * (kDriftTime * (1.0f - std::exp(-age / kDriftTime)));
-    return from + glm::vec3(side, rise);
-}
 } // namespace
 
 void Breath::tick(double t, const glm::vec3& mouth, bool submerged, bool scuba, float surfaceZ) {
@@ -43,27 +41,25 @@ void Breath::tick(double t, const glm::vec3& mouth, bool submerged, bool scuba, 
                 const uint32_t pj = pk * 31u + uint32_t(j) * 0x85EBCA6Bu;
                 const float a = hash01(pj), b = hash01(pj + 7u), c = hash01(pj + 13u), d = hash01(pj + 29u);
                 const glm::vec3 jitter(8.0f * (b - 0.5f), 8.0f * (c - 0.5f), 4.0f * (d - 0.5f));
-                live_.push_back({mouth + jitter, born, 4.0f + 8.0f * a * a, hash01(pj + 41u), 75.0f + 60.0f * a * (0.5f + 0.5f * d),
-                                 surfaceZ, glm::vec2(c - 0.5f, b - 0.5f) * 40.0f});
+                const float size = 0.025f + 0.055f * a, speed = (1.1f + 1.3f * hash01(pj + 53u)) * (0.6f + size * 3.0f);
+                const glm::vec3 from = mouth + jitter;
+                live_.push_back({from, born, size, hash01(pj + 41u), speed, 0.05f + 0.11f * hash01(pj + 67u),
+                                 (surfaceZ - from.z) / kMetre - 0.2f});
             }
         }
     }
     last_ = t;
-    // Gone at the surface or after kMaxAge; the oldest first when there are too many.
-    std::erase_if(live_, [&](const Live& l) {
-        const float age = float(t - l.born);
-        return age > kMaxAge || position(l.from, l.drift, l.speed, age).z + l.radius >= l.surface;
-    });
+    // Gone 0.2 m under the surface (life 1); the oldest first when there are too many.
+    std::erase_if(live_, [&](const Live& l) { return l.range <= 0.0f || l.speed * float(t - l.born) >= l.range; });
     while (live_.size() > kMaxLive) live_.pop_front();
 }
 
 void Breath::append(double t, std::vector<render::Bubble>& out) const {
     for (const Live& l : live_) {
-        const float age = std::max(0.0f, float(t - l.born));
-        const glm::vec3 p = position(l.from, l.drift, l.speed, age);
-        const float alpha = std::clamp((l.surface - l.radius - p.z) / 60.0f, 0.0f, 1.0f); // thins out under the surface
-        if (alpha <= 0) continue;
-        out.push_back({{p.x, p.y, p.z}, l.radius * std::min(1.0f, 0.6f + age * 4.0f), alpha, l.seed}); // grows as it leaves
+        const float h = l.speed * std::max(0.0f, float(t - l.born)), life = h / l.range;
+        if (life >= 1.0f) continue;
+        const float radius = l.size * (0.55f + 0.7f * life) * smooth(0.0f, 0.03f, life) * kMetre;
+        out.push_back({{l.from.x, l.from.y, l.from.z + h * kMetre}, radius, 1.0f, l.seed, h, l.wobble});
     }
 }
 

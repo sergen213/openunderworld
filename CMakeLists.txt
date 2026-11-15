@@ -72,7 +72,7 @@ target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/
 foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
         underwater.glsl uw_medium.glsl atmosphere.glsl filter.glsl caustics.glsl waves.glsl tonemap.glsl ocean.comp
         uw_particles.glsl uw_light.glsl uw_snow.vert uw_snow.frag uw_bubble.vert uw_bubble.frag
-        uw_shafts_pattern.frag uw_shafts.frag uw_shafts_blur.frag uw_water.frag)
+        uw_shafts_pattern.frag uw_shafts.frag uw_shafts_blur.frag uw_water.frag uw_bloom.frag uw_grade.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${src})
   file(READ ${src} OU_WATER_SRC)
@@ -148,6 +148,15 @@ add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/uw_water.frag.inc
                    COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/uw_water.frag.inc ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_water.frag
                    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_water.frag VERBATIM)
 list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/uw_water.frag.inc)
+# Enhanced under-water composite (render/Water.hpp UwGrade): the bloom chain and the final grade, self-contained,
+# drawn with post.vert.
+foreach(s uw_bloom.frag uw_grade.frag)
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
+  add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
+                     COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
+                     DEPENDS ${src} VERBATIM)
+  list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
+endforeach()
 # post.frag includes shaders/underwater.glsl (+ caustics.glsl, waves.glsl), shaders/atmosphere.glsl, shaders/filter.glsl and
 # shaders/tonemap.glsl.
 set_property(SOURCE ${OU_VK_SPV_DIR}/post.frag.inc APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl

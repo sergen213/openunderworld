@@ -1158,7 +1158,8 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
             if (half > s4) rgba[3] *= 1.0f - (half - s4) / (s5 - s4);
         }
         if (rgba[3] < 0.5f) continue;
-        if (bubbles && d.water == 1 && !d.model() && d.bubble()) { // Enhanced water: shaded as a bubble (render/Water.hpp), alpha 0x80 = 1
+        if (bubbles && d.water == 1 && !d.model() && d.bubble()) { // Enhanced water: shaded as a bubble (render/Water.hpp), alpha 0x80 = 1;
+                                                                    // moved by the effect itself (no shader sway)
             const uint32_t h = (p.id + 1u) * 0x9E3779B9u;
             bubbles->push_back({{p.pos.x, p.pos.y, p.pos.z}, size, std::min(1.0f, rgba[3] / 128.0f), float(h >> 8) / 16777216.0f});
             continue;

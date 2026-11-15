@@ -83,6 +83,12 @@ const char* kShaftSources[3] = { // shaders/uw_shafts_*.frag (render/Water.hpp u
 const char* kAgWaterFrag = // shaders/uw_water.frag (render/Water.hpp agWaterSource)
 #include "uw_water.frag.inc"
     ;
+const char* kUwBloom =
+#include "uw_bloom.frag.inc"
+    ;
+const char* kUwGrade =
+#include "uw_grade.frag.inc"
+    ;
 } // namespace
 
 bool isWaterSurface(std::string_view meshOrigin) { return meshOrigin.find("watersurface") != std::string_view::npos; }
@@ -454,18 +460,27 @@ std::string expandParticleIncludes(const char* source) {
         for (size_t at; (at = s.find(line)) != std::string::npos;) s.replace(at, std::strlen(line), text);
     return expandIncludes(std::move(s));
 }
+float uwSurfaceZ(const WaterBlock& wb) { return wb.detail.w > 0.5f ? wb.volumes[1].z : wb.eye.z; } // = uw_medium ouUwSurfaceZ
 } // namespace
 
-UwParticlePush uwParticlePush(const Camera& camera, const WaterBlock& wb, int height, bool detail) {
+UwParticlePush uwParticlePush(const Camera& camera, const WaterBlock& wb) {
     const glm::vec3 right = camera.right(), up = glm::cross(camera.forward(), right);
-    const float pixel = 2.0f * std::tan(glm::radians(camera.verticalFovDeg) * 0.5f) / float(std::max(height, 1));
-    return {wb.viewProj, wb.eye, glm::vec4(right, pixel), glm::vec4(up, kUwSnowBox),
-            glm::vec4(float(detail ? kUwSnowCount : kUwSnowCount / 2), 0, 0, 0)};
+    return {wb.viewProj, wb.eye, glm::vec4(right, 0), glm::vec4(up, 0),
+            glm::vec4(float(kUwSnowCount), uwSurfaceZ(wb), ocean::kMetre, 0)};
 }
 std::string uwSnowVertexSource(bool) { return expandParticleIncludes(kUwSnowVert); }
 std::string uwSnowFragmentSource(bool) { return expandParticleIncludes(kUwSnowFrag); }
 std::string uwBubbleVertexSource(bool) { return expandParticleIncludes(kUwBubbleVert); }
 std::string uwBubbleFragmentSource(bool) { return expandParticleIncludes(kUwBubbleFrag); }
+
+UwGrade uwGrade(const WaterBlock& wb) {
+    if (wb.fogColor.w <= 0.5f || wb.waterPass[2].x <= 0.0f || wb.detail.w <= 0.5f || wb.eye.z >= wb.volumes[1].z) return {};
+    // main.js: ek = sat((-cam.y - 8) / 26), cam.y = the eye's ag height (shaders/uw_medium.glsl agEye)
+    const float ek = std::clamp(((wb.volumes[1].z - wb.eye.z) / ocean::kMetre - 8.0f) / 26.0f, 0.0f, 1.0f);
+    return {true, 0.62f * (0.6f + 0.4f * ek), std::min(wb.waterPass[2].x, 1.0f)};
+}
+std::string uwBloomSource() { return kUwBloom; }
+std::string uwGradeSource() { return kUwGrade; }
 
 std::string underwaterPostSource(bool vulkan) {
     return expandIncludes(std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere + kFilter);

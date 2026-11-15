@@ -150,7 +150,8 @@ layout(location = 1) uniform int uHdr;
 layout(location = 2) uniform float uBrightness; // display gamma (1 = neutral), as the original's brightness option
 layout(location = 3) uniform float uFade;       // FrameOptions::screenFade (1 = black)
 layout(location = 4) uniform int uTonemap;     // FrameOptions::tonemap: 0 original, 1 agx
-layout(location = 5) uniform int uParticles;  // 1 = uUwParticles holds this frame's under-water particles (Water.hpp)
+layout(location = 5) uniform int uUw; // bit 0: uUwParticles holds this frame's under-water particles; bit 1: submerged,
+                                      // write the linear HDR frame for the under-water composite (Water.hpp UwGrade)
 layout(binding = 0) uniform sampler2D uScene;
 layout(binding = 17) uniform sampler2D uUwParticles; // premultiplied, composited over the fogged scene (13-15 shafts, 16 shadow)
 out vec4 oColor;
@@ -162,6 +163,7 @@ const char* kTonemapGlsl =
 const char* kPostFs = R"(
 vec3 fetch(vec2 uv) {
     vec3 c = textureLod(uScene, uv, 0.0).rgb;
+    if ((uUw & 2) != 0) return c; // the under-water composite tone maps (uw_grade.frag tmap)
     if (uTonemap != 0) c = ouTonemapAgx(c);
     else if (uHdr != 0) c = clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0); // ACES (Narkowicz)
     return c;
@@ -187,11 +189,16 @@ const char* kPostFsMain = R"(
 void main() {
     vec3 c = pow(ouScreenFilter(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / uBrightness));
     vec3 u = ouUnderwater(ouAtmosphere(c, vUv), vUv);
-    if (uParticles != 0) {
-        vec4 p = textureLod(uUwParticles, vUv, 0.0);
-        u = pow(pow(u, vec3(2.2)) * (1.0 - p.a) + p.rgb, vec3(1.0 / 2.2)); // linear, as ouUwFog
+    if ((uUw & 3) == 0) {
+        oColor = vec4(u * (1.0 - uFade), 1.0);
+        return;
     }
-    oColor = vec4(ouUnderwaterGrade(u, vUv) * (1.0 - uFade), 1.0);
+    vec3 l = pow(max(u, vec3(0.0)), vec3(2.2)); // linear, as ouUwFog
+    if ((uUw & 1) != 0) {
+        vec4 p = textureLod(uUwParticles, vUv, 0.0);
+        l = l * (1.0 - p.a) + p.rgb;
+    }
+    oColor = (uUw & 2) != 0 ? vec4(l, 1.0) : vec4(pow(l, vec3(1.0 / 2.2)) * (1.0 - uFade), 1.0);
 })";
 
 
@@ -411,6 +418,12 @@ struct Targets {
     // pattern tile (R16F, kUnderwaterShaftTile^2; unit 15).
     std::array<Texture, 3> shaft;
     std::array<Framebuffer, 3> shaftFbo;
+    // Enhanced under-water composite (render/Water.hpp UwGrade): the post pass's linear frame (render size) and the bloom
+    // chain (W >> (i + 1)), all RGBA16F, linear, clamped.
+    Texture uwHdr;
+    Framebuffer uwHdrFbo;
+    std::array<Texture, kUwBloomLevels> uwBloom;
+    std::array<Framebuffer, kUwBloomLevels> uwBloomFbo;
 };
 
 struct Resources {
@@ -438,6 +451,7 @@ struct Resources {
     Program uwSnowProgram, uwBubbleProgram;
     Buffer uwUbo, uwBubbleVbo;
     VertexArray uwBubbleVao;
+    Program uwBloomProgram, uwGradeProgram; // under-water composite (render/Water.hpp UwGrade)
     Program fxProgram; // original effects
     VertexArray fxVao;
     Buffer fxVbo;
@@ -562,6 +576,11 @@ public:
         for (GLint level = 0; level < kAgWaterLevels; ++level) glClearTexImage(r.agWater.get(), level, GL_RGBA, GL_FLOAT, nullptr);
         r.agWaterFbo = newFramebuffer();
         glNamedFramebufferTexture(r.agWaterFbo.get(), GL_COLOR_ATTACHMENT0, r.agWater.get(), 0);
+        const std::string bloomFs = uwBloomSource(), gradeFs = uwGradeSource();
+        r.uwBloomProgram = linkProgram(kPostVs, bloomFs.c_str(), error);
+        if (!r.uwBloomProgram.get()) return false;
+        r.uwGradeProgram = linkProgram(kPostVs, gradeFs.c_str(), error);
+        if (!r.uwGradeProgram.get()) return false;
         r.waterUbo = newBuffer();
         glNamedBufferStorage(r.waterUbo.get(), sizeof(WaterBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
         { // FFT ocean; a driver that cannot build ocean.comp keeps afl's waves (WaterBlock::ocean[0].x cleared per frame)
@@ -606,7 +625,7 @@ public:
         glVertexArrayVertexBuffer(r.uwBubbleVao.get(), 0, r.uwBubbleVbo.get(), 0, sizeof(Bubble));
         glVertexArrayBindingDivisor(r.uwBubbleVao.get(), 0, 1); // one Bubble per instance
         attrib(r.uwBubbleVao.get(), 0, 4, GL_FLOAT, GL_FALSE, offsetof(Bubble, pos));   // pos + radius
-        attrib(r.uwBubbleVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(Bubble, alpha)); // alpha + seed
+        attrib(r.uwBubbleVao.get(), 1, 4, GL_FLOAT, GL_FALSE, offsetof(Bubble, alpha)); // alpha, seed, rise, wobble
         r.fxProgram = linkProgram(kFxVs, kFxFs, error);
         if (!r.fxProgram.get()) return false;
         r.fxVao = newVertexArray();
@@ -951,10 +970,9 @@ public:
         if (t.msaa > 1)
             glBlitNamedFramebuffer(t.scene.get(), t.resolve.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
                                    GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        // Half-size scene + mips: the screen filters' blur levels, and the Enhanced under-water grade's glow (filter.glsl
-        // ouUnderwaterGrade) while submerged.
+        // Half-size scene + mips: the screen filters' blur levels.
         const ScreenFilter* sf = options.screenFilter && options.screenFilter->active() ? options.screenFilter : nullptr;
-        if (sf || wb.fogColor.w > 0.5f) {
+        if (sf) {
             glBlitNamedFramebuffer(t.msaa > 1 ? t.resolve.get() : t.scene.get(), t.filterFbo.get(), 0, 0, vp.width, vp.height,
                                    0, 0, std::max(1, vp.width / 2), std::max(1, vp.height / 2), GL_COLOR_BUFFER_BIT, GL_LINEAR);
             glGenerateTextureMipmap(t.filterBlur.get());
@@ -980,7 +998,10 @@ public:
                 glDrawArrays(GL_TRIANGLES, 0, 3);
             }
         }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // Submerged in Enhanced water (UwGrade): the post pass writes the linear frame into uwHdr, then the bloom chain and
+        // the grade (abyssal-garden W_BLIT + W_POST) write the default framebuffer.
+        const UwGrade grade = enhancedWater ? uwGrade(wb) : UwGrade{};
+        glBindFramebuffer(GL_FRAMEBUFFER, grade.on ? t.uwHdrFbo.get() : 0);
         glViewport(0, 0, vp.width, vp.height);
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
@@ -990,7 +1011,7 @@ public:
         glUniform1f(2, options.brightness);
         glUniform1f(3, std::clamp(options.screenFade, 0.0f, 1.0f));
         glUniform1i(4, options.tonemap == Tonemap::Agx ? 1 : 0);
-        glUniform1i(5, particles ? 1 : 0);
+        glUniform1i(5, (particles ? 1 : 0) | (grade.on ? 2 : 0));
         glBindTextureUnit(17, r.targets.uwParticles.get()); // the under-water particles (unused unless submerged)
         glBindTextureUnit(0, t.color.get());
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
@@ -1001,6 +1022,7 @@ public:
         glBindTextureUnit(14, t.shaft[1].get());                                  // under-water sun shafts (blurred)
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        if (grade.on) drawUwComposite(vp, grade, std::clamp(options.screenFade, 0.0f, 1.0f));
         if (feedback) { // 0x509630 -> 0x51A2E0: this frame's image (before the HUD) for the next frame's feedback
             glBlitNamedFramebuffer(0, t.feedbackFbo.get(), 0, 0, vp.width, vp.height, 0, 0, std::max(1, vp.width / 2),
                                    std::max(1, vp.height / 2), GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -1172,6 +1194,18 @@ private:
             glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             t.shaftFbo[i] = newFramebuffer();
             glNamedFramebufferTexture(t.shaftFbo[i].get(), GL_COLOR_ATTACHMENT0, t.shaft[i].get(), 0);
+        }
+        for (int i = -1; i < kUwBloomLevels; ++i) { // -1: uwHdr
+            Texture& tex = i < 0 ? t.uwHdr : t.uwBloom[size_t(i)];
+            Framebuffer& fbo = i < 0 ? t.uwHdrFbo : t.uwBloomFbo[size_t(i)];
+            tex = newTexture();
+            glTextureStorage2D(tex.get(), 1, GL_RGBA16F, std::max(1, vp.width >> (i + 1)), std::max(1, vp.height >> (i + 1)));
+            glTextureParameteri(tex.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTextureParameteri(tex.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTextureParameteri(tex.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTextureParameteri(tex.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            fbo = newFramebuffer();
+            glNamedFramebufferTexture(fbo.get(), GL_COLOR_ATTACHMENT0, tex.get(), 0);
         }
     }
 
@@ -1816,13 +1850,42 @@ private:
         glDepthFunc(GL_LESS);
     }
 
+    // Enhanced under-water composite (render/Water.hpp UwGrade), after the post pass wrote uwHdr: abyssal-garden main.js's
+    // bloom chain (down0 uwHdr -> level 0, down level i - 1 -> i, up level i -> i - 1 added), then the grade into the
+    // default framebuffer (units 0 / 1, uniform location 0 = mode, exposure, fade, strength).
+    void drawUwComposite(Viewport vp, const UwGrade& grade, float fade) {
+        Targets& t = res_->targets;
+        auto level = [&](int i) { return glm::ivec2(std::max(1, vp.width >> (i + 1)), std::max(1, vp.height >> (i + 1))); };
+        auto blit = [&](int out, float mode, GLuint input) {
+            const glm::ivec2 s = level(out);
+            glBindFramebuffer(GL_FRAMEBUFFER, t.uwBloomFbo[size_t(out)].get());
+            glViewport(0, 0, s.x, s.y);
+            glBindTextureUnit(0, input);
+            glUniform4f(0, mode, 0.0f, 0.0f, 0.0f);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        };
+        glUseProgram(res_->uwBloomProgram.get());
+        for (int i = 0; i < kUwBloomLevels; ++i) blit(i, i ? 1.0f : 0.0f, i ? t.uwBloom[size_t(i - 1)].get() : t.uwHdr.get());
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE);
+        for (int i = kUwBloomLevels - 1; i > 0; --i) blit(i - 1, 2.0f, t.uwBloom[size_t(i)].get());
+        glDisable(GL_BLEND);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, vp.width, vp.height);
+        glUseProgram(res_->uwGradeProgram.get());
+        glBindTextureUnit(0, t.uwHdr.get());
+        glBindTextureUnit(1, t.uwBloom[0].get());
+        glUniform4f(0, 0.0f, grade.exposure, fade, grade.strength);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+
     // Enhanced under-water particles (render/Water.hpp UwParticlePush): marine snow, then the bubbles, premultiplied into
     // their own target (cleared to 0), depth-tested in the shaders against the opaque depth copy (unit 6, drawWater);
     // the post pass composites the target over the fogged scene.
     void drawUwParticles(const Camera& camera, Viewport vp, const WaterBlock& wb, const FrameOptions& options) {
         Resources& r = *res_;
         Targets& t = r.targets;
-        const UwParticlePush push = uwParticlePush(camera, wb, vp.height, options.waterDetail);
+        const UwParticlePush push = uwParticlePush(camera, wb);
         glNamedBufferSubData(r.uwUbo.get(), 0, sizeof push, &push);
         glBindBufferBase(GL_UNIFORM_BUFFER, 7, r.uwUbo.get());
         const float zero[4] = {0, 0, 0, 0};

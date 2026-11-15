@@ -667,14 +667,11 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   its surface take `ouUwSurfaceLight` before the fog: 60 % sun through h / l.z of water + 40 % hemispherical ambient
   (water hue half-way to white, e^(−1.2 kd h) (0.24 + 0.76 up²)) + walls' side light ((1 − |n.z|) · 0.2 e^(−kd h)) [I
   weights], relative to TRU's own lighting (the translated shaders know no water volumes, so this is applied in the post
-  pass, normal from the depth's derivatives). Everything × the pass strength. Then `ouUnderwaterGrade` (filter.glsl, the
-  post pass's last step, the demo's `W_POST`): glow from the screen-filter blur chain (the renderers now build it while
-  submerged too) at mips 3 and 5, each tap Karis-weighted 1 / (1 + max channel) (firefly-safe), fogged with the pixel's
-  own transmittance / in-scatter, mixed 6 % + 3 % added; vignette 1 − 0.55 r²; luminance S-curve (55 % toward
-  smoothstep), 10 % highlight and 7 % overall desaturation; triangular IGN dither ±1/255 (no bands in the fog
-  gradients). Measured (2026-11-15, RelWithDebInfo, Vulkan, 2560 × 1440, l1_seafloor camera −16229, −726, 9992,
-  OU_VK_PRESENT_STATS): the whole Enhanced post pass (caustics, fog, shafts, rays, grade, blur chain) 0.77 ms vs 0.46 ms
-  with Original water. l1_seafloor horizontal mean sRGB 19 / 62 / 93 (Original 25 / 57 / 74); validation clean.
+  pass, normal from the depth's derivatives). Everything × the pass strength. The frame then goes through the
+  under-water composite ("Under water: marine snow, bubbles and the composite" below) instead of the post pass's tone
+  map. Measured in 0.48.0 (2026-11-15, RelWithDebInfo, Vulkan, 2560 × 1440, l1_seafloor camera −16229, −726, 9992,
+  OU_VK_PRESENT_STATS): the whole Enhanced post pass (caustics, fog, shafts, rays, the old grade, blur chain) 0.77 ms vs
+  0.46 ms with Original water.
 - Sun shafts (ours, Enhanced only; after Noniv's abyssal-garden, MIT, RESEARCH §8.11: its `W_RAYS` / `W_RBLUR` /
   `W_POST` pipeline): three passes before the post pass (`render::underwaterShaftsActive` = `ouShaftsOn`: Enhanced
   water, camera below the nearest surface, sun above the horizon), drawn with the post layout / units, then
@@ -720,41 +717,49 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
 ou-game (`EffectsView::water`) fills `FrameOptions::underwater` and the filter weights from the current unit and logs
 `camera under / out of water`. Test: `FxReal.UnderwaterSettings`.
 
-### Under water: marine snow and bubbles (Enhanced, GL + Vulkan; camera submerged)
+### Under water: marine snow, bubbles and the composite (Enhanced, GL + Vulkan; camera submerged)
 
-Techniques from Noniv/abyssal-garden (MIT, RESEARCH §8.11; none of its content). Only with Enhanced water and the
-camera in a water volume (`WaterBlock::fogColor.w`, `render::uwParticlesOn`); Original water never runs the pass and
-its post output is unchanged (the composite is skipped).
+A literal port of Noniv/abyssal-garden's `vsSnow` / `fsSnow`, `vsBub` / `fsBub`, `W_BLIT` bloom and `W_POST` (MIT,
+RESEARCH §8.11; none of its content), in its "ag space" (metres, y up, the surface of the eye's water volume at y = 0;
+`uw_medium.glsl` `agPos`, `uw_particles.glsl` `uwAg` / `uwWorld`) with the shared medium (`agSunE`, `agAmb`, `agFogIn`;
+the demo's `shadow1` = our sun shadow map). Original water never runs any of it and its post output is unchanged.
 
-- Pass (`render/Water.hpp` `UwParticlePush`; Vulkan `recordUwParticles`, GL `drawUwParticles`): after the scene's
-  effects, into a render-size RGBA16F target cleared to 0, blend ONE / ONE_MINUS_SRC_ALPHA, no depth attachment: the
-  fragment shaders test the opaque depth copy (`uwOccluded`). The post pass composites it after `ouUnderwater` (TRU's
-  water pass has fogged the scene behind it by then): in linear light, c = c (1 − a) + rgb (Vulkan post set 1 binding 9 + push `particles`, GL unit 17 + uniform 5).
-  Each particle fogs itself by its own distance with the fog's medium (`uw_medium.glsl` `ouUwPointFog`: light × T + L),
-  so the look follows `w.optics` and the unit colours exactly as the scene behind it.
-- Marine snow (`uw_snow.vert` / `.frag`): 9000 instanced specks (4500 without water detail) in a 6000-unit box around
-  the eye that wraps with `fract` (no CPU state; seed = hash of the instance index). Drift 64 / 38 / 14 units/s +
-  145-unit wobble (abyssal-garden's 0.22 / 0.13 / 0.05 m/s and 0.5 m, Y-up → Z-up, × 290), radius 3.5–16.5 units,
-  never under ~1.8 pixels across (sub-pixel specks fade by their size instead), faded at the box edge, within
-  60–250 units of the eye and 90–435 units under the surface, twinkle 0.6–1. Light: the sun refracted into the water ×
-  the fog medium's `ouUwSunLight` (e^(−kd · depth / sin(elevation))) × `ouSunShadowVisibility` × 1.6, plus the water's
-  glow looking up from the speck (the medium's in-scatter up to the surface, half desaturated) × 1.1, hue-varied per speck;
-  additive (alpha 0). [I] weights, box, density.
-- Bubbles (`uw_bubble.vert` / `.frag`, one `render::Bubble` per instance, `FrameOptions::bubbles`): the outline wobbles
-  on big ones, an opaque rim and two highlights (sun at their depth × shadow) over a near-transparent body that mirrors
-  the water: the medium's in-scatter looking down at its foot to looking up × 1.5 at its crown, brighter at the rim; sways by two sines of
-  time and seed × radius; at least ~3 pixels across (alpha thinned by area); gone within 30–90 units of the lens.
-  Sources: (1) the effects' under-water-only bubble particles (`ParticleDef::water` 1 drawn with bubble textures only,
-  `ParticleDef::bubble` / `fx::isBubbleTexture`: 147-149, 164, 1103-1105, plus the dot 145 beside them; weapon and
-  grenade bubble trails, Lara's 193 / 194, fx_*bubbles* vents, the current effects' rising bubbles) leave their sprites
-  and come here; the other water-1 defs (silt and smoke clouds, muzzle flashes, debris, the speargun's trail streak,
-  weed) keep their sprites (`fx::System::build`'s `bubbles`, Enhanced water only; Original draws the
-  sprites as before); (2) Lara's breath (`fx::Breath`, ours: no breath-bubble emitter of tru.exe is decoded [U]):
-  while her head is under water, a puff every 3.2 s (2.4 s in the wetsuit) of 5–8 (8–12) bubbles 50 ms apart from the
-  head bone, radius 4–12 units, rising 75–135 units/s after a 0.25 s start with a short sideways drift, gone at the
-  surface; puff times and sizes are hashes of the game time, so a replay draws the same bubbles. [I] numbers.
-- Cost [O] (RX 7900 XTX, 2560 × 1440, Vulkan, OU_VK_PRESENT_STATS "fx" bucket, which now includes the pass):
-  l1_seafloor 0.10 ms, l1_seatop under water 0.09 ms, for the original effects and the particles together.
+- Particle pass (`render/Water.hpp` `UwParticlePush`; Vulkan `recordUwParticles`, GL `drawUwParticles`; Enhanced water,
+  `render::uwParticlesOn`): after the scene's effects, into a render-size RGBA16F target cleared to 0, blend ONE /
+  ONE_MINUS_SRC_ALPHA, no depth attachment: the fragment shaders test the opaque depth copy (`uwOccluded`) and keep
+  only points inside a water volume (`uwSurfaceAt`: TRU's water is bounded volumes, the demo's one open sea). The post
+  pass composites it after `ouUnderwater` in linear light, c = c (1 − a) + rgb (Vulkan post set 1 binding 9 + push
+  `uw` bit 0, GL unit 17 + uniform 5 bit 0).
+- Marine snow (`uw_snow.vert` / `.frag`): 9000 specks (a = hash of the instance index ∈ [0, 1)⁴) in a 44 m box around
+  the eye wrapped with `fract`, drift (0.22, 0.05, 0.13) m/s + 0.5 m wobble, size 0.012 + 0.045 a.w³ m but at least
+  d · 0.0011; fade ss(22, 14.1, d) · ss(0.6, 2.5, d) · min(1, size / (d · 0.0011)) · ss(−0.3, −1.5, y); twinkle
+  0.6 + 0.4 sin(t (1 + 2 a.w) + 100 a.x); colour (sunE · shadow · 0.8 + amb(up) · 0.3) · mix(1, (0.7, 1, 0.9), a.w) ·
+  ss(1, 0.2, r)² · e^(−0.0235 d), at most 8, additive (alpha 0).
+- Bubbles (`uw_bubble.vert` / `.frag`, one `render::Bubble` per instance, `FrameOptions::bubbles`): the demo's sway
+  wob = b.w (0.3 + 0.035 h) on sines of time, seed and height risen h plus 2 b.w slow drift, size × ss(0, −1.2, y);
+  outline wobble on big ones (ss(0.04, 0.22, size)), rim ss(0.55, 0.98, r), two highlights; body mix(fogIn down,
+  1.5 fogIn up over 80 m, ss(−0.5, 0.8, uv.y + 0.4 rim)) (0.5 + 1.2 rim) + sunE (0.25 + 0.75 shadow) · hl · 1.6; alpha
+  disc · sat(0.03 + 0.9 rim³ + hl); own fog T = e^(−0.0235 d) ss(1.2, 3, d): c T + fogIn(eye → bubble) (1 − T), alpha ×
+  mix(0.35, 1, T); premultiplied. Sources: (1) the effects' under-water-only bubble particles (`ParticleDef::water` 1
+  drawn with bubble textures only, `ParticleDef::bubble` / `fx::isBubbleTexture`: 147-149, 164, 1103-1105, plus the dot
+  145 beside them; weapon and grenade bubble trails, Lara's 193 / 194, fx_*bubbles* vents, the current effects' rising
+  bubbles) leave their sprites and come here with their own path and size and no sway (`Bubble::wobble` 0); the other
+  water-1 defs keep their sprites (`fx::System::build`'s `bubbles`, Enhanced water only); (2) Lara's breath
+  (`fx::Breath`; no breath-bubble emitter of tru.exe is decoded [U]): while her head is under water, a puff every
+  3.2 s (2.4 s in the wetsuit) of 5–8 (8–12) bubbles 50 ms apart from the head bone [I], each with the demo's
+  attributes — size rr(0.025, 0.08) m (its small branch: the 24 % of 0.1–0.3 m vent bubbles would be wider than her
+  head), speed rr(1.1, 2.4) (0.6 + 3 size) m/s, wobble rr(0.05, 0.16) m — rising straight up to 0.2 m under the
+  surface, size × (0.55 + 0.7 life) ss(0, 0.03, life); hashes of the game time, so a replay draws the same bubbles.
+- Composite (`render::uwGrade`: Enhanced water, pass strength > 0, the eye under the surface of its volume; Vulkan
+  `recordUwComposite` + `uwGradeLayout_`, GL `drawUwComposite`): the post pass writes the linear frame (no tone map,
+  push / uniform `uw` bit 1) into a render-size RGBA16F target; `uw_bloom.frag` builds main.js's 6-level chain
+  (W >> (i + 1): `fsDown0` Karis-weighted 4 taps clamped to 24, `fsDown` ×5, `fsUp` ×5 added back to level 0);
+  `uw_grade.frag` writes the display frame: c = mix(c, bl, 0.06) + 0.03 bl, × exposure 0.62 (0.6 + 0.4 sat((depth − 8)
+  / 26)) (main.js `m[56]`), vignette 1 − 0.55 |uv − 0.5|², `tmap` (the ACES fit), luminance S-curve (55 % toward
+  smoothstep), highlight (10 % above 0.55) and 7 % desaturation + (0.008, 0.002, 0), gamma 1 / 2.2, IGN dither ±1/255,
+  mixed over the plain encoding by the pass strength, then the screen fade. Vulkan: sets 0 / 1 = one image each
+  (`setLayout_`), push vec4 (bloom mode, exposure, fade, strength), all from `staticPool_`; GL: units 0 / 1, uniform 0.
+  The shafts are in the bloom's source (the demo adds them after its bloom) [I deviation, 6 % / 3 % weights].
 - Tests: `FxReal.EnhancedWaterBubblesLeaveTheSprites`, `FxBreath.DeterministicRisingAndGoneAtTheSurface`.
 
 ### Water detail, debug views (`graphics.water_detail`, `--water-detail`, `--water-debug`, F7)
