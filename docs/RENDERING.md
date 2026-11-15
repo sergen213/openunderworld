@@ -399,9 +399,23 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   gives the horizontal distance to the contact (depth / slope), and flat surfaces just under the water (a hull
   bottom, a shark, Lara's body) or object outlines over a deeper bed count as a metre deeper, so they keep the
   normal reflection instead of showing as pale cutouts.
-  From below: Fresnel on the air side inside the window (refracted ray traced into the scene above, else the sky),
-  total internal reflection outside it (SSR of the water below, else the deep colour); the post pass's under-water
-  fog stops at the surface for what is seen through it (`ouWaterPass`, Enhanced only).
+  From below (technique after abyssal-garden's `W_SURF`, MIT, Noniv; RESEARCH §8.11): Snell's window per pixel from
+  the actual wave normal (FFT ocean / afl / Godot layers + the wave field), its slopes halved [I] (a wind sea's full
+  FFT slopes shatter the disc into scattered patches) and faded with distance (`smoothstep(260 m, 60 m)`), so the window
+  is one rippling disc with a ragged rim. k = 1 − n² (1 − cos²) (cos² of the transmitted angle), window weight
+  `smoothstep(0, 0.22, k)` (soft rim, no seam), Fresnel on the air side `schlick(√k)` weights the transmission. Inside:
+  a bright sky = the unit's surface colour (or the preset's in-scatter hue) at full brightness × 1.3 × daylight
+  (clamp(1.5 × luminance of ambient + sun, 0.08, 1)) × (0.7 + 0.3 up), × a slope term toward the sun azimuth
+  clamp(1 − 2.4 slope, 0.4, 3) (half abyssal-garden's gain: on the 8-bit target the bright side clipped and the dark side
+  read as blotches), + the sun through the refracted ray pow(·, 60) × 1.3 + pow(·, 500) × 12 (abyssal-garden's) × the
+  sun shadow map at the surface; the real above-water scene where it is on screen (refracted ray traced, else the
+  normal-offset pixel within 100 m, faded in at the screen border and from 60 m) replaces the sky. Outside: total
+  internal reflection shows the water's own colour toward the reflected direction (`ouFogToward`: the post pass's fog
+  colour, deep looking down to surface colour looking up, preset hue respected) × 1.15 × (1 + 0.25 μ⁴) toward the sun
+  [I], so the mirrored surround meets the distance fog seamlessly; SSR of the water below over it where on screen.
+  The distance fog is the post pass's (`ouWaterPass`), which stops at the surface for what is seen through it
+  (Enhanced only). [I] constants except where credited. Vulkan draws the surface with culling off (the translated
+  screen-reader draws before it used to leave back-face culling set, and the sea was missing when seen from below).
 - Open seas (meshes with TRU's sea waves bound, `vSea`; l2_cliffclimb, l1 seas, Thailand): the FFT ocean below
   (default); with `--ocean procedural` afl_ext's "Very fast procedural ocean" (MIT) wave function instead: sums of
   `exp(sin − 1)` directional waves, each warping the next by its derivative (drag 0.38), 1 afl unit = 1 m. Fragment

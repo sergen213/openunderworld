@@ -17,7 +17,8 @@
 //   `lastdepth1`, an uninitialised depth, no screen bound for refraction); a traced refraction that leaves the screen
 //   or passes behind a foreground object falls back to the simple depth-scaled normal offset.
 // - Edge foam from the water depth broken by an edge noise, a soft waterline, sun / lamp GGX glints.
-// - From below: Snell's window (Fresnel from the air side) and total internal reflection outside it.
+// - From below: Snell's window from the wave normal with a soft rim, a bright sky + sun glint through it and total
+//   internal reflection of the water's own colour outside it (techniques after abyssal-garden's W_SURF, MIT, Noniv).
 // Open seas (meshes with TRU's sea waves, vSea): the FFT ocean (render/Ocean.hpp: Tessendorf cascades after
 // NeuralSpecOcean, MIT) displaces (water.vert) and bends the normals with the choppy surface's own normal, its folds
 // (Jacobian) foaming as whitecaps; without it (FrameOptions::oceanFft off) afl_ext's "Very fast procedural ocean" waves
@@ -175,14 +176,21 @@ float ggxSpec(vec3 n, vec3 v, vec3 l, float a) {
 // Water colour presets (w.optics[0].w = 1; render::waterOptics, NeuralSpecOcean's palettes) replace the extinction and
 // the in-scatter hue; the unit's deep colour keeps the in-scatter brightness (its luminance), so a dim cave pool stays
 // dim and a sunlit sea bright [I: the decision, RENDERING.md "Water colour"].
-vec3 gSurf, gDeep, gSigma;
+vec3 gSurf, gDeep, gSigma, gSurfG, gDeepG; // gSurfG / gDeepG: the unit's colours as given (gamma)
 float ouLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 void ouWaterLook() {
     bool unit = w.waterPass[1].w > 0.0;
     vec4 sf = unit ? w.waterPass[0] : kSurfaceDefault, dp = unit ? w.waterPass[1] : kDeepDefault;
+    gSurfG = sf.rgb, gDeepG = dp.rgb;
     gSurf = toLinear(sf.rgb), gDeep = toLinear(dp.rgb);
     gSigma = (1.0 - 0.85 * gSurf) * (30.0 / dp.w);
     if (w.optics[0].w > 0.5) gSigma = w.optics[0].rgb, gDeep = w.optics[1].rgb * ouLum(gDeep);
+}
+// The water's colour seen along direction d, linear: the post pass's under-water fog colour (shaders/underwater.glsl
+// ouWaterPass: deep looking down to the surface colour looking up; a preset's hue at that luminance).
+vec3 ouFogToward(vec3 d) {
+    vec3 col = toLinear(mix(gDeepG, gSurfG, clamp(0.5 + 0.5 * d.z, 0.0, 1.0)));
+    return w.optics[0].w > 0.5 ? w.optics[1].rgb * ouLum(col) : col;
 }
 // Water transmittance and in-scatter over `path` units; `down`: how far the seen point lies under the surface, dimming
 // the light that reached it (downwelling: submerged hulls darken with depth). The in-scatter colour is one colour, not
@@ -390,28 +398,66 @@ void main() {
         // Soft waterline (Godot foam_or_fade = fade): the bed shows through the last few units.
         c = mix(toLinear(textureLod(uScene, uv, 0.0).rgb), c, smoothstep(0.0, 6.0, cdepth));
     } else {
-        // ---- from below: Snell's window ----
-        float sin2T = kIor * kIor * (1.0 - cosI * cosI);
-        fresnel = sin2T >= 1.0 ? 1.0 : schlick(sqrt(1.0 - sin2T)); // Fresnel on the air side; TIR outside the window
-        vec3 window = sky;
-        if (fresnel < 1.0) {
-            vec3 td = refract(-v, nf, kIor);
+        // ---- from below: Snell's window (technique after abyssal-garden's W_SURF, MIT, Noniv; RENDERING.md
+        // "Under water") ----
+        // Detail fades with distance (abyssal-garden ss(260 m, 60 m)): far off the surface reads as its mean. The window
+        // sees the slopes halved [I]: a wind sea's full FFT slopes (up to ~0.5) shatter it into scattered patches, where a
+        // diver sees one rippling disc (the eye averages the fine facets the pixel does not).
+        float fl = smoothstep(260.0 * kM, 60.0 * kM, dist);
+        vec2 sb = s * (0.5 * fl);
+        vec3 nb = -normalize(vec3(-sb, 1.0)); // the wave normal facing down, toward the eye
+        float ci = clamp(dot(nb, v), 0.0, 1.0);
+        float k = 1.0 - kIor * kIor * (1.0 - ci * ci); // cos^2 of the transmitted angle; < 0: total internal reflection
+        float win = smoothstep(0.0, 0.22, k);          // the window's soft rim (abyssal-garden's ss(0, .22, k))
+        float ft = schlick(sqrt(max(k, 0.0)));          // Fresnel on the air side of the transmitted ray
+        fresnel = 1.0 - win * (1.0 - ft);               // reflected share (debug view 5)
+        vec3 td = k > 0.0 ? refract(-v, nb, kIor) : vec3(0.0, 0.0, 1.0);
+        // The sky through the window: the water's surface hue made bright (abyssal-garden's sky 1.3 x (.30, .78, 1.0);
+        // here the unit's / preset's colour at full brightness so every sea keeps its own tint) x the daylight, varying
+        // with the wave slope toward the sun (faces tilted to it brighter; abyssal-garden's clamp(1 + 3.8 s, .25, 3), its
+        // slopes 0.8 x ours), + the sun seen through the refracted ray: a wide lobe pow 60 x 1.3 and the disc pow 500 x 12
+        // (abyssal-garden's), shadowed by the sun shadow map at the surface [I: all of it].
+        vec3 hue = w.optics[0].w > 0.5 ? w.optics[1].rgb : gSurf;
+        hue /= max(max(hue.r, max(hue.g, hue.b)), 1e-3);
+        vec2 sunH = length(w.sunDir.xy) > 1e-3 ? normalize(w.sunDir.xy) : vec2(0.6, -0.8);
+        // Half abyssal-garden's gain, floor 0.4 [I]: TRU's FFT sea is steeper than its ripples, and on the 8-bit target
+        // the bright side clips while the dark side stayed, reading as dark blotches inside the window.
+        float bright = clamp(1.0 - 2.4 * fl * dot(s, sunH), 0.4, 3.0);
+        float sdot = max(dot(td, w.sunDir.xyz), 0.0);
+        sunVis = detail && w.sunDir.z > 0.0 ? ouSunShadowVisibility(p) : 1.0;
+        spec = (pow(sdot, 60.0) * 1.3 + pow(sdot, 500.0) * 12.0) * sunVis * w.sunDir.w;
+        vec3 window = hue * (1.3 * clamp(1.5 * ouLum(light), 0.08, 1.0)) * (0.7 + 0.3 * td.z) * bright +
+                      toLinear(min(w.sunColor.rgb, vec3(1.0))) * spec;
+        // The real above-water scene where it lies on screen (a hull, Lara, the shore): traced along the refracted ray,
+        // else the scene at the normal-offset pixel; within 100 m (beyond, the sky dome: the bright sky above stands in),
+        // faded in at the screen border so the trace's ends leave no seam.
+        if (win > 0.0) {
             if (ouTrace(p, td, 60.0 * kM, 3.0 * kM, huv, ht) && ouWorld(huv, textureLod(uDepth, huv, 0.0).r).z > p.z - 2.0) {
-                traced = true;
-                window = toLinear(textureLod(uScene, huv, 0.0).rgb);
-            } else { // simple: the scene at the normal-offset pixel when it lies above the water, else the sky
-                vec2 ruv = uv + s * 0.08;
+                traced = true, conf = ouEdgeFade(huv, 0.08);
+                window = mix(window, toLinear(textureLod(uScene, huv, 0.0).rgb) * (0.6 + 0.4 * bright), conf);
+            } else {
+                vec2 ruv = clamp(uv + sb * 0.08, vec2(0.0), vec2(1.0));
                 float sd = textureLod(uDepth, ruv, 0.0).r;
-                if (sd < 0.999999 && ouWorld(ruv, sd).z > p.z) window = toLinear(textureLod(uScene, ruv, 0.0).rgb);
+                vec3 q = ouWorld(ruv, sd);
+                if (sd < 0.999999 && q.z > p.z && distance(q, p) < 100.0 * kM)
+                    conf = ouEdgeFade(ruv, 0.08) * (1.0 - smoothstep(60.0 * kM, 100.0 * kM, distance(q, p))),
+                    window = mix(window, toLinear(textureLod(uScene, ruv, 0.0).rgb), conf);
             }
         }
-        // Total internal reflection: the water below by SSR, else the deep in-scatter colour.
-        vec3 tir = gDeep * light;
-        if (fresnel > 0.0 && ouTrace(p - vec3(0.0, 0.0, 2.0), r, 30.0 * kM, 2.0 * kM, huv, ht)) {
-            conf = ouEdgeFade(huv, 0.08);
-            tir = mix(tir, ouAbsorb(toLinear(textureLod(uScene, huv, 0.0).rgb), ht, 0.0, light), conf);
+        // Total internal reflection: the water's own in-scatter toward the reflected direction (abyssal-garden's
+        // fogIn(p, R, 300 m) x 1.15): the colour the post pass fogs a view in that direction with (ouWaterPass: deep
+        // looking down, surface colour looking up), so the mirrored surround meets the distance fog without a seam, with
+        // a mild forward-scatter lobe toward the sun (1 + 0.25 mu^4 [I], abyssal-garden's 1.22 + .3 mu^4); the water below
+        // by SSR over it where it is on screen.
+        vec3 rb = reflect(-v, nb);
+        float mu = max(dot(rb, w.sunDir.xyz), 0.0);
+        vec3 tir = ouFogToward(rb) * (1.15 * (1.0 + 0.25 * mu * mu * mu * mu));
+        if (win < 1.0 && ouTrace(p - vec3(0.0, 0.0, 2.0), rb, 30.0 * kM, 2.0 * kM, huv, ht)) {
+            float rc = ouEdgeFade(huv, 0.08) * (1.0 - smoothstep(0.6, 1.0, ht / (30.0 * kM)));
+            tir = mix(tir, ouAbsorb(toLinear(textureLod(uScene, huv, 0.0).rgb), ht, 0.0, light), rc);
+            if (!traced) conf = rc;
         }
-        c = mix(window, tir, fresnel);
+        c = mix(tir, window * (1.0 - ft), win); // abyssal-garden: mix(refl, sky x (1 - fr), win)
     }
 
     vec3 color = toGamma(c);

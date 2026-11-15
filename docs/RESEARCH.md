@@ -564,6 +564,16 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   pre-exposure (1.372 [I]) and the sRGB encode around it, because our scene is display-referred. Copy of the source used:
   openunderworld-work/neuralspecocean-CinemaPostPass.js.
 
+### 8.11 abyssal-garden (MIT) @`a596354`
+
+- **abyssal-garden** by Maksymilian Dendura (Noniv), https://github.com/Noniv/abyssal-garden — MIT, "Copyright (c)
+  2026 Maksymilian Dendura" (full text: `third_party/abyssal-garden/LICENSE`). A WebGPU under-water scene; its techniques
+  (not its content: kelp, ship, mantas, fish) are adapted to TRU's levels. `source/src/shaders.js` `W_SURF` (the water
+  surface seen from below): Snell's window from the per-pixel wave normal with the soft rim `ss(0, .22, k)`, the bright
+  sky through it with the sun lobe `pow(sd, 60) × 1.3 + pow(sd, 500) × 12`, slope-driven brightness, detail faded with
+  distance `ss(260, 60, d)`, total internal reflection showing the water's in-scatter toward the reflected direction
+  (`fogIn`) → `water.frag`'s from-below branch (RENDERING "Water"; colours from the unit / preset, not its `WCOL`).
+
 ---
 
 ## Open questions

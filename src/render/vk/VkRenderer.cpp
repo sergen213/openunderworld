@@ -1292,6 +1292,9 @@ public:
             // Ray-traced reflections: the -DOU_RT variant traces the TLAS (set 2) instead of the SSR march.
             const bool rtWater = rtOn && options.rtReflections && waterRtPipeline_;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rtWater ? waterRtPipeline_ : waterPipeline_);
+            // The surface also reads from below (water.frag's Snell's window); the translated screen draws above leave
+            // their own cull mode set (drawOriginal: back faces for single-sided materials).
+            vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
             if (rtWater) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 2, 1, &rtSet_, 0, nullptr);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 0, 1, &waterSets_[frameIndex_], 0,
                                     nullptr);
