@@ -397,9 +397,12 @@ public:
     bool visuals = true; // false (ou-game --fx off): commands start nothing but instance fades; sequences run for `sound`
     bool cameraUnderwater = false; // tru.exe 0x5EA390 (DAT_00AD7DBC, view +0xEC): gates ParticleDef::water
     // Ours (Enhanced water, camera submerged; ou-game sets the eye's water surface z, else +inf): sprites (particles,
-    // glows) above it are not built. From below they lie behind the surface: tru.exe veils them with its full-screen
-    // water pass (0x6D8C20, >= 0.6 of the water colour); Enhanced draws that surface black outside Snell's window
-    // (water.frag), and a sprite over it showed as a flat pale disc (l1_seatop: a 160 smoke sprite 72 m up).
+    // glows) above it are built only where the eye sees them through Snell's window, the limits water.frag's restore of
+    // the scene above the water uses: the view ray within 48.6 deg of vertical (its refracted ray reaches the air) and
+    // within 60 m, faded out over 45..48.6 deg and 50..60 m (windowVisibility). The rest lie behind the surface: tru.exe
+    // veils them with its full-screen water pass (0x6D8C20, >= 0.6 of the water colour); Enhanced draws that surface black
+    // outside the window (water.frag), and a sprite over it showed as a flat pale disc (l1_seatop: a texture-160 smoke
+    // sprite 72 m up, ~190 m away).
     float spritesBelowZ = 1e30f;
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     void moveOwner(int32_t owner, const glm::vec3& delta); // its emitters' origins (effects carried by a moving instance)

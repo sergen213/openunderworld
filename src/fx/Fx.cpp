@@ -1104,6 +1104,19 @@ void System::tick(const glm::vec3& camera) {
     });
 }
 
+// System::spritesBelowZ: 1 below the surface; above it, how much of a sprite at `pos` the eye sees through Snell's window
+// (0 = behind the surface, culled). TRU units: 290 per metre.
+static float windowVisibility(const glm::vec3& pos, const glm::vec3& eye, float surfaceZ) {
+    if (pos.z <= surfaceZ) return 1.0f;
+    const glm::vec3 d = pos - eye;
+    const float len = glm::length(d);
+    if (len <= 0.0f || d.z <= 0.0f) return 0.0f;
+    const float c = d.z / len; // cos of the angle from vertical
+    const float cone = std::clamp((c - 0.6613f) / (0.7071f - 0.6613f), 0.0f, 1.0f);   // 48.6 .. 45 deg
+    const float range = std::clamp((60.0f * 290.0f - len) / (10.0f * 290.0f), 0.0f, 1.0f); // 60 .. 50 m
+    return cone * range;
+}
+
 void System::build(const render::Camera& camera, float aspect, std::vector<render::FxVertex>& vertices,
                    std::vector<render::FxBatch>& batches, std::vector<render::Bubble>* bubbles) const {
     vertices.clear(), batches.clear();
@@ -1121,7 +1134,8 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         const ParticleDef& d = *p.def;
         const float depth = glm::dot(p.pos - camera.position, fwd);
         if (depth < 16.0f || d.keys.empty() || !waterShows(d)) continue; // 0x54B0A0: 16 <= z; 0x54AEC0 +0xA7
-        if (p.pos.z > spritesBelowZ) continue; // behind the surface from below (spritesBelowZ)
+        const float window = windowVisibility(p.pos, camera.position, spritesBelowZ); // spritesBelowZ
+        if (window <= 0.0f) continue;
         // Neither texture, list nor material: nothing to draw.
         if (!d.model() && !d.texture && d.textures.empty() && d.materials.empty()) continue;
         const float t = std::clamp(float(p.age) / float(p.life), 0.0f, 1.0f);
@@ -1158,6 +1172,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
             if (half > s5) continue;
             if (half > s4) rgba[3] *= 1.0f - (half - s4) / (s5 - s4);
         }
+        rgba[3] *= window;
         if (rgba[3] < 0.5f) continue;
         if (bubbles && d.water == 1 && !d.model() && d.bubble()) { // Enhanced water: shaded as a bubble (render/Water.hpp), alpha 0x80 = 1;
                                                                     // moved by the effect itself (no shader sway)
@@ -1204,7 +1219,8 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
     for (const auto& g : glows_) {
         const GlowDef& d = *g.def;
         if (d.condition == 1) continue; // drawn only while 0x5EA390 (a camera mode [U]) is set: taken as unset
-        if (g.pos.z > spritesBelowZ) continue;
+        const float window = windowVisibility(g.pos, camera.position, spritesBelowZ); // spritesBelowZ
+        if (window <= 0.0f) continue;
         const float depth = glm::dot(g.pos - camera.position, fwd);
         if (depth < 20.0f) continue;
         // Colour: one, or the list cycled with `period` frames per entry, prev -> current lerp (0x548D40) [I: weights].
@@ -1225,6 +1241,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         } else if (g.age < 2 * d.fadeIn) fade = float(g.age) / float(2 * d.fadeIn);
         else if (g.fadeOut >= 0 && d.fadeOut) fade = float(g.fadeOut) / float(2 * d.fadeOut);
         else if (g.left >= 0 && g.left < 2 * d.fadeOut) fade = float(g.left) / float(2 * d.fadeOut);
+        fade *= window;
         if (d.facingMode && d.facingMode != 4 && glm::dot(g.axis, g.axis) > 0) { // 0x52F660 facing threshold
             const float t = glm::dot(glm::normalize(camera.position - g.axisFrom), g.axis) - 1.0f + d.facing;
             if (t <= 0) continue;
