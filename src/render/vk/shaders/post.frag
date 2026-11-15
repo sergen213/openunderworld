@@ -40,7 +40,7 @@ vec3 fxaa(vec2 uv) {
 // Brightness: display gamma after tonemap / FXAA (1 = neutral), as the original game's brightness option.
 void main() {
     vec3 c = pow(ouScreenFilter(pc.fxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / pc.brightness));
-    vec3 u = ouUnderwater(ouAtmosphere(c, vUv), vUv);
+    vec3 u = ouUnderwater(ouAtmosphere(c, vUv), texelFetch(uScene, ivec2(vUv * vec2(textureSize(uScene, 0))), 0).rgb, vUv);
     if ((pc.uw & 3) == 0) {
         oColor = vec4(u * (1.0 - pc.fade), 1.0);
         return;

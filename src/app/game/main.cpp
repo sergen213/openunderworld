@@ -1596,10 +1596,16 @@ struct EffectsView {
             under = xy && h < 0 && eye.z >= lo.z;
             underwater.strength = under ? 1.0f : xy && h >= 0 && h < 600 ? 1.0f - h / 600.0f : 0.0f;
             const float range = uw.env.waterFilterRange[under ? 0 : 1];
+            // Enhanced water submerged: abyssal-garden's medium (post pass ouUwFog, uw_grade.frag) is the whole under-water
+            // look, so TRU's deep / surface water filters (l1 5292: a ColorDOF blur at alpha 0.89 + a bloom of the
+            // blurred scene, l7 859) are not drawn over it: they blurred the frame into soft blotches and added a bloom
+            // of the gamma scene before the medium relit and fogged it (RENDERING.md "Under water"). The unit's own
+            // filter stays off under water as in tru.exe; effect filters still run.
+            const bool enhancedUnder = under && fo.water == ou::render::WaterQuality::Enhanced;
             if (range > 0) { // 0 range: no water filters, the unit's own stays (0x5C78A0)
                 const float ws = 1.0f - std::min(d, range) / range;
-                waterFilters.push_back({uw.filter[1].get(), ws});
-                if (under) waterFilters.push_back({uw.filter[0].get(), 1.0f - ws});
+                if (!enhancedUnder) waterFilters.push_back({uw.filter[1].get(), ws});
+                if (under && !enhancedUnder) waterFilters.push_back({uw.filter[0].get(), 1.0f - ws});
                 ownWeight = under ? 0.0f : 1.0f - ws;
             }
         }
@@ -1626,7 +1632,10 @@ struct EffectsView {
             rays.reset(r), raysUnit = unit.name;
         }
         rays.step(dt);
-        if (under) // 0x6D8C20 draws them only fully under water, with the volume's waves; weight 1 - murk / 0.7 (murk 0)
+        // 0x6D8C20 draws them only fully under water, with the volume's waves; weight 1 - murk / 0.7 (murk 0). Enhanced
+        // water draws abyssal-garden's W_RAYS shafts instead (underwater.glsl agRays): TRU's white columns added over the
+        // fogged gamma frame were a second, pale layer of streaks over the upper half.
+        if (under && fo.water != ou::render::WaterQuality::Enhanced)
             for (const auto& v : fo.waterVolumes)
                 if (eye.x >= v.min[0] && eye.x <= v.max[0] && eye.y >= v.min[1] && eye.y <= v.max[1] && eye.z >= v.min[2] && eye.z <= v.max[2]) {
                     if (rays.rec.follow) rays.rec.origin[0] = lara.x, rays.rec.origin[1] = lara.y;

@@ -47,6 +47,20 @@ vec3 agSunAir() {
     if (w.sunColor.w <= 0.0 || w.sunDir.z <= 0.0) return normalize(vec3(0.27, 1.0, -0.24));
     return agDir(normalize(w.sunDir.xyz));
 }
+// Where the shafts (agRays) look up the sun shadow map, rendered along the sun in air, for a world point q under the
+// surface, so that their shadow volumes follow the light as it travels under water, along agSun like the shafts' own
+// pattern and the caustics (the demo's one sun casts its shadow map along the direction its shafts take). The refracted
+// ray from q meets the surface at ps; the map's verdict for the air line through ps (what blocks the sun above the water:
+// a hull) is read at that line's point at q's depth. Occluders under water are then found along that air line, shifted
+// from the refracted one by up to depth x (cot(air elevation) - cot(refracted)): fine for points in open water, not for
+// lit faces (their own rock would shadow them), so agRelight keeps q. Unchanged above the surface or without a level sun.
+vec3 agShadowPoint(vec3 q) {
+    float s = ouUwSurfaceZ();
+    if (w.sunColor.w <= 0.0 || w.sunDir.z <= 0.0 || q.z >= s) return q;
+    vec3 a = normalize(w.sunDir.xyz), r = agDir(agSun()); // toward the sun: in air, under water (world)
+    vec3 ps = q + r * ((s - q.z) / r.z);
+    return ps - a * ((s - q.z) / a.z);
+}
 vec3 agFogIn(vec3 ro, vec3 rd, float d, float z, vec3 sun) {
     vec3 k = mix(kAgKd, kAgKdf, z);
     vec3 a = agSg(z) - k * rd.y;
@@ -113,7 +127,8 @@ void agSolidLight(vec3 p, vec3 N, vec3 n0, vec3 V, vec3 ca, float sh, out vec3 d
 // The near-surface spatial mean of agCaus (before its 35..100 m fade): 3.2..3.35 over the texture's animation (512^2 W_WATER
 // texels at times 3, 10, 40, 100 s, a and b taps drawn independently; ~65 % of a top sits at the 4.0 clamp) [O, offline].
 const float kAgCausMean = 3.3;
-// A submerged opaque point TRU lit (lin: linear colour) relit as W_SOLID lights rock: lin x L(p) / L_ref + spec x the
+// A submerged opaque point TRU lit (lin: its colour in the demo's HDR, agUnpost below; water.frag from above: linear)
+// relit as W_SOLID lights rock: lin x L(p) / L_ref + spec x the
 // albedo estimate's luminance. L = agSolidLight's diffuse at ag point p (normal n, toward the eye V, caustic ca, sun
 // visibility sh); L_ref = the same normal and visibility at the surface (y = 0) under the mean caustic kAgCausMean. So
 // TRU's colour stands for an average caustic-lit point just under the surface, its own shading, sun shadows and local
@@ -127,6 +142,27 @@ vec3 agRelight(vec3 lin, vec3 p, vec3 n, vec3 V, vec3 ca, float sh) {
     vec3 a = lin / dr;
     return a * dl + sp * dot(a, vec3(0.2126, 0.7152, 0.0722));
 }
+// TRU's frame is display-referred: its lit colours are what a player sees (D3D9 gamma, <= 1, its own lighting already
+// squeezed into that range), while the demo's medium, sky and particles are scene-referred HDR that W_POST exposes and
+// tone maps (uw_grade.frag). Fed in as is, TRU's colours went through exposure (0.37 near the surface) and ACES a second
+// time: 2-4x darker (0.5 -> 0.25 displayed, 0.05 -> 0.012), sunk into the full-strength fog: the flat, hazy frame. So
+// TRU's linear colour is mapped back through the grade's tone map at the reference point (just under the surface:
+// exposure EXPO x 0.6, main.js ek = 0): the HDR value W_POST's exposure + ACES fit turn into that colour. agRelight then
+// imposes the depth falloff and caustics around it, the fog adds over it, and the frame's own exposure + ACES bring a
+// point at the reference back to TRU's colour (before the grade's S-curve and desaturation). White (clamped at 0.98)
+// maps to ~12, the demo's own range (a sun-facing top lit by its caustic plateau: albedo x ~8).
+const float kAgExpoRef = 0.62 * 0.6;
+vec3 agUnpost(vec3 lin) {
+    vec3 y = clamp(lin, 0.0, 0.98);
+    vec3 a = 2.51 - 2.43 * y, b = 0.03 - 0.59 * y; // tmap(x) = y: a x^2 + b x - 0.14 y = 0
+    return (sqrt(b * b + 0.56 * a * y) - b) / (2.0 * a) / kAgExpoRef;
+}
+// The surface seen from below (water.frag, W_SURF) is HDR (the window's sky 0.4..3.9, the glint ~13) but goes through the
+// scene target, 8-bit with graphics.hdr off: written as is it clipped at 1, the bright gaps (1.2, 3, 3.9) turning white
+// (1, 1, 1). So water.frag writes c / (1 + c) (invertible, ~c in the darks, so a pixel the post does not decode reads
+// about right) and ouUwFog decodes it for rays leaving through the surface (precision: ~5 % steps at c = 4).
+vec3 agSurfEncode(vec3 c) { return c / (1.0 + c); }
+vec3 agSurfDecode(vec3 e) { return e / max(1.0 - e, vec3(1.0 / 41.0)); } // agFin's 40 at most
 // fog (S_B) seen from the eye: skylight at most 150 m along the ray (the vol() openness term is 1 here).
 vec3 agFog(vec3 c, vec3 wp, float z) {
     vec3 cam = agEye();

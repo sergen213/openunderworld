@@ -196,6 +196,17 @@ vec3 ouAbsorb(vec3 below, float path, float down, vec3 light) {
     vec3 tr = exp(-gSigma * min(path, 1e5));
     return below * tr * exp(-gSigma * min(down, 1e5)) + gDeep * light * (1.0 - tr);
 }
+// W_SURF's slope at ag point wp (the three uAgWater tiles: 13 m, 4.7 m swapped, 37 m) with explicit gradients gx / gy
+// (metres per pixel), x the distance fade fl; and its Snell's window term k = 1 - 1.33^2 (1 - ci^2) for the view V.
+vec2 agSurfSlope(vec3 wp, vec2 gx, vec2 gy, float fl) {
+    return (textureGrad(uAgWater, wp.xz / 13.0, gx / 13.0, gy / 13.0).ba +
+            textureGrad(uAgWater, wp.zx / 4.7 + 0.2, gx.yx / 4.7, gy.yx / 4.7).ba * 0.7 +
+            textureGrad(uAgWater, wp.xz / 37.0 + 0.6, gx / 37.0, gy / 37.0).ba * 0.8) * fl;
+}
+float agSurfK(vec3 V, vec2 sl) {
+    float ci = agSat(dot(V, normalize(vec3(sl.x * 0.8, 1.0, sl.y * 0.8))));
+    return 1.0 - 1.769 * (1.0 - ci * ci);
+}
 
 void main() {
     vec3 p = vWorld;
@@ -419,12 +430,14 @@ void main() {
         float fl = agSs(260.0, 60.0, length(V));
         V = normalize(V);
         vec2 gx = pdx / kM, gy = pdy / kM;
-        vec2 sl = (textureGrad(uAgWater, wp.xz / 13.0, gx / 13.0, gy / 13.0).ba +
-                   textureGrad(uAgWater, wp.zx / 4.7 + 0.2, gx.yx / 4.7, gy.yx / 4.7).ba * 0.7 +
-                   textureGrad(uAgWater, wp.xz / 37.0 + 0.6, gx / 37.0, gy / 37.0).ba * 0.8) * fl;
+        vec2 sl = agSurfSlope(wp, gx, gy, fl);
         vec3 nb = normalize(vec3(-sl.x * 0.8, -1.0, -sl.y * 0.8));
-        float ci = agSat(dot(V, -nb));
-        float k = 1.0 - 1.769 * (1.0 - ci * ci);
+        float k = agSurfK(V, sl);
+        // k's change to the neighbouring pixels (finite differences: `below` is per fragment, so no fwidth), for the
+        // anti-aliased edge of the black outside the window below.
+        vec3 wx = agPos(p + vec3(pdx, 0.0)), wy = agPos(p + vec3(pdy, 0.0));
+        float dk = abs(agSurfK(normalize(wx - cam), agSurfSlope(wx, gx, gy, fl)) - k) +
+                   abs(agSurfK(normalize(wy - cam), agSurfSlope(wy, gx, gy, fl)) - k);
         float win = agSs(0.0, 0.22, k);
         vec3 rr = refract(V, nb, 1.33);
         float sdot = max(dot(rr, agSunAir()), 0.0);
@@ -435,25 +448,40 @@ void main() {
         // demo's sky inside the window. The refracted ray rr (world: agDir) traced through the opaque scene, else the scene
         // at the slope-offset pixel within 100 m; both faded in at the screen border (and from 60 m) so the trace's ends
         // leave no seam. Same (1 - fr) and slope distortion (the ray bends with the demo's normal); the glint stays on top;
-        // misses keep the demo's sky.
+        // misses keep the demo's sky. With the post's medium on (agUw: Enhanced submerged with a pass), TRU's colour is
+        // display-referred and goes back to the demo's HDR first (agUnpost, as ouUwFog does for the scene).
+        bool agUw = w.fogColor.w > 0.5 && w.waterPass[2].x > 0.0;
         if (win > 0.0 && k > 0.0) {
             vec3 td = agDir(rr);
             if (ouTrace(p, td, 60.0 * kM, 3.0 * kM, huv, ht) && ouWorld(huv, textureLod(uDepth, huv, 0.0).r).z > p.z - 2.0) {
                 traced = true, conf = ouEdgeFade(huv, 0.08);
-                skyC = mix(skyC, toLinear(textureLod(uScene, huv, 0.0).rgb), conf);
+                vec3 sc = toLinear(textureLod(uScene, huv, 0.0).rgb);
+                skyC = mix(skyC, agUw ? agUnpost(sc) : sc, conf);
             } else {
                 vec2 ruv = clamp(uv + sl * 0.03, vec2(0.0), vec2(1.0));
                 float sd = textureLod(uDepth, ruv, 0.0).r;
                 vec3 q = ouWorld(ruv, sd);
                 if (sd < 0.999999 && q.z > p.z && distance(q, p) < 100.0 * kM) {
                     conf = ouEdgeFade(ruv, 0.08) * (1.0 - smoothstep(60.0 * kM, 100.0 * kM, distance(q, p)));
-                    skyC = mix(skyC, toLinear(textureLod(uScene, ruv, 0.0).rgb), conf);
+                    vec3 sc = toLinear(textureLod(uScene, ruv, 0.0).rgb);
+                    skyC = mix(skyC, agUw ? agUnpost(sc) : sc, conf);
                 }
             }
         }
         vec3 skyW = (skyC + vec3(1.0, 0.95, 0.85) * spec) * (1.0 - fr);
         vec3 refl = agFogIn(vec3(wp.x, 0.0, wp.z), reflect(V, nb), 300.0, kAgZone, agSun()) * 1.15; // the demo's quad: y = 0
         c = agFin(mix(refl, skyW, win));
+        // The demo as it renders (measured in the live demo, Chrome WebGPU on this RADV box: bit tests of its W_SURF fs):
+        // where k < 0 (total internal reflection, refract() = 0) its sky term is NaN/Inf, mix(refl, sky, 0) keeps it
+        // and fin() clamps the fogged NaN to 0: the surface outside the window is black and unfogged (only the shafts and
+        // bloom over it): the dark ripples between bright window gaps of its captures. Written as exactly 0 (ouUwFog
+        // keeps it 0); the rest HDR-encoded through the 8-bit target (agSurfEncode, decoded by ouUwFog). The step at k = 0
+        // is spread over one pixel (dk): a hard per-pixel cut staircased every gap's outline (the demo renders at a
+        // dynamic resolution and scales up, which softens it).
+        if (agUw) {
+            float edge = clamp(0.5 + k / max(dk, 1e-5), 0.0, 1.0);
+            c = edge > 0.0 ? agSurfEncode(c) * edge : vec3(0.0);
+        }
         fresnel = 1.0 - win * (1.0 - fr); // reflected share (debug view 5)
         n = -agDir(nb);                    // debug view 1: the demo's normal, world space, up
     }

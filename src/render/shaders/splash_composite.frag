@@ -47,6 +47,9 @@ void main() {
     if (s.r <= kEmpty || s.g <= 0.05) discard;
     float dist = -s.r;
     vec3 pc = surface(p, dist), v = normalize(w.eye.xyz - pc);
+    // Camera submerged (fogColor.w, Enhanced): the droplets fly above the surface, behind it from here; drawn over the
+    // water they showed through its black total internal reflection (water.frag) as a flat pale disc around Lara.
+    if (w.fogColor.w > 0.5 && pc.z > w.eye.z) discard;
     vec3 dx = slope(p, ivec2(1, 0), pc, dist), dy = slope(p, ivec2(0, 1), pc, dist);
     vec3 n = cross(dx, dy);
     n = dot(n, n) > 1e-12 ? normalize(n) : v; // a lone pixel faces the camera
