@@ -495,8 +495,11 @@ std::string uwBubbleFragmentSource(bool) { return expandParticleIncludes(kUwBubb
 
 UwGrade uwGrade(const WaterBlock& wb) {
     if (wb.fogColor.w <= 0.5f || wb.waterPass[2].x <= 0.0f || wb.detail.w <= 0.5f || wb.eye.z >= wb.volumes[1].z) return {};
-    // main.js: ek = sat((-cam.y - 8) / 26), cam.y = the eye's ag height (shaders/uw_medium.glsl agEye)
-    const float ek = std::clamp(((wb.volumes[1].z - wb.eye.z) / ocean::kMetre - 8.0f) / 26.0f, 0.0f, 1.0f);
+    // main.js: ek = sat((-cam.y - 8) / 26), cam.y = the eye's ag height (shaders/uw_medium.glsl agEye), through agLightY [I]
+    // (the light terms' depth, soft past 20 m towards 56 m) as the light it exposes for
+    const float y = std::min(0.0f, (wb.eye.z - wb.volumes[1].z) / ocean::kMetre);
+    const float ly = y >= -20.0f ? y : -20.0f - 36.0f * (1.0f - std::exp((y + 20.0f) / 36.0f));
+    const float ek = std::clamp((-ly - 8.0f) / 26.0f, 0.0f, 1.0f);
     return {true, 0.62f * (0.6f + 0.4f * ek), std::min(wb.waterPass[2].x, 1.0f)};
 }
 std::string uwBloomSource() { return kUwBloom; }

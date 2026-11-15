@@ -733,6 +733,12 @@ Before 2026-11-15 (0.48.0 included), the camera passing −7177 (about 30 m down
 
 Test: `WaterColumn.StackedSeaBoxesStayOneSea`.
 
+Light depth below the demo's range (`agLightY`, [I], ours):
+- The demo's deepest floor is about 56 m down. The l1 bed lies about 139 m under the sea's surface, where the literal exp(kd y) leaves the play area nearly black (the sun at about 0.03 in green).
+- The depth the light terms see is literal down to 20 m, then follows a soft knee toward 56 m: −(20 + 36 (1 − e^(−(d − 20) / 36))), slope 1 at the knee. 61 m reads as 44.5 m and 139 m as 54.7 m.
+- Used by: `agSunE`, `agAmb`, `agSide`, `agFogIn`'s e^(k ro.y), the shaft march's e^(k p.y / sun.y), and `uwGrade`'s exposure depth.
+- Positions stay literal: `agCuv`, the surface plane, fog distance and snow.
+
 ### Under water: marine snow, bubbles and the composite (Enhanced, GL + Vulkan; camera submerged)
 
 A literal port of Noniv/abyssal-garden's `vsSnow` / `fsSnow`, `vsBub` / `fsBub`, `W_BLIT` bloom and `W_POST` (MIT,
