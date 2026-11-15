@@ -611,31 +611,61 @@ TEST(PhysicsRealData, PoacherRagdoll) {
     EXPECT_FALSE(physics::loadRagdoll(cdc::parseDrm(*bf->read("pc-w\\ca_rb_wall_hpole_door.drm"))));
 }
 
-// Buoyancy (Scene::setWater, tru.exe 0x6AD070): a 100-unit box of 10 kg (220 kg/m^3) floats with 22 % of it under the
-// surface; one of 100 kg (2200 kg/m^3) sinks to the floor.
+// Buoyancy (Scene::setWater, tru.exe 0x6AD070 / 0x4DEE60, per primitive by its buoyancy percent): a 100-unit box of
+// 10 kg (220 kg/m^3) floats with 22 % of it under the surface; one of 100 kg (2200 kg/m^3) sinks to the floor, and so
+// does a light one whose primitive has no buoyancy percent (0: no buoyancy at all).
 TEST(Physics, LooseBodiesFloatOrSinkInWater) {
     collision::CollisionMesh floor;
     collision::addBox(floor, glm::translate(glm::mat4(1), {0, 0, -50}), {6000, 6000, 100});
     floor.build();
-    const auto box = [](float mass) {
+    const auto box = [](float mass, int8_t buoyancy) {
         physics::ObjectPhysics o;
         o.segments = {glm::mat4(1)};
         physics::Prim p;
-        p.kind = physics::PrimKind::Box, p.size = {100, 100, 100}, p.pos = {0, 0, 50}, p.mass = mass, p.head[1] = 0x11;
+        p.kind = physics::PrimKind::Box, p.size = {100, 100, 100}, p.pos = {0, 0, 50}, p.mass = mass, p.head[1] = 0x11, p.buoyancy = buoyancy;
         o.prims = {p};
         return o;
     };
-    const physics::ObjectPhysics light = box(10), heavy = box(100);
+    const physics::ObjectPhysics light = box(10, 100), heavy = box(100, 100), dense = box(10, 0);
     physics::Scene s;
     const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
     const std::vector<physics::Scene::Loose> loose{{1, &light, glm::translate(glm::mat4(1), {0, 0, 300})},
-                                                   {2, &heavy, glm::translate(glm::mat4(1), {1000, 0, 300})}};
+                                                   {2, &heavy, glm::translate(glm::mat4(1), {1000, 0, 300})},
+                                                   {3, &dense, glm::translate(glm::mat4(1), {-1000, 0, 300})}};
     const std::vector<physics::Scene::Water> water{{vec3(0, 0, 0), vec3(3000, 3000, 500), {1, 0}, 500.0f}};
     for (int i = 0; i < 20 * 60; ++i) s.setTerrain(terrain), s.setLoose(loose), s.setWater(water), s.step(kDt);
     const float z = (*s.loose(1))[3].z; // bottom face; Jolt's convex radius rounds the box, so not exactly 22 under
     EXPECT_GT(z, 500 - 60.0f) << "floats";
     EXPECT_LT(z, 500 - 10.0f) << "partly under the surface";
     EXPECT_NEAR((*s.loose(2))[3].z, 0, 5) << "sinks";
+    EXPECT_NEAR((*s.loose(3))[3].z, 0, 5) << "no buoyancy percent: sinks";
+}
+
+// A sphere afloat rides the waves under it (the plane at the surface + waves over each primitive's centre, 0x6AD070):
+// half a 210-unit ball of 70 % buoyancy under a swell of 100 units heaves with it, a quarter period behind at most.
+TEST(Physics, FloatingSphereRidesTheWaves) {
+    physics::ObjectPhysics ball;
+    ball.segments = {glm::mat4(1)};
+    physics::Prim p;
+    p.kind = physics::PrimKind::Sphere, p.radius = 210, p.mass = 1000, p.head[1] = 0x11, p.buoyancy = 70;
+    ball.prims = {p};
+    physics::Scene s;
+    const std::vector<physics::Scene::Loose> loose{{1, &ball, glm::mat4(1)}};
+    static constexpr float kAmp = 100, kSpeed = 0.7f;
+    physics::Scene::Water water{vec3(0, 0, -5000), vec3(50000, 50000, 5000), {1, 0}, 0.0f};
+    water.waves = [](const void*, glm::vec2, double t) { return kAmp * (std::cos(kSpeed * float(t)) - 1.0f); };
+    float lo = 1e9f, hi = -1e9f;
+    for (int i = 0; i < 30 * 60; ++i) {
+        water.seconds = i * double(kDt);
+        s.setLoose(loose), s.setWater({&water, 1}), s.step(kDt);
+        if (i < 10 * 60) continue;
+        const float z = (*s.loose(1))[3].z;
+        lo = std::min(lo, z), hi = std::max(hi, z);
+    }
+    EXPECT_GT(hi - lo, 1.5f * kAmp) << "heaves with the swell (2 x 100 crest to trough)";
+    EXPECT_LT(hi - lo, 2.6f * kAmp);
+    EXPECT_LT(hi, 0.0f) << "never above the crest";
+    EXPECT_GT(lo, -2 * kAmp - 210.0f) << "afloat";
 }
 
 // The switches' "use" record [O data]: class 6 without an engagement list keeps its default set in the physical record

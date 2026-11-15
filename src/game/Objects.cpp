@@ -2789,6 +2789,38 @@ void World::stepPhysics(float dt) {
     for (auto& [uid, rt] : uberRuntime_)
         for (auto& [index, j] : rt.joints3) joints3.push_back({key(uid, index), &j}), heavyIds.insert(uid);
     physics_.setJoints3(std::move(joints3));
+    // Floating objects (tru.exe 0x6AD070): a primitive with a buoyancy percent (Prim::buoyancy) inside a volume with
+    // waves enables its body (0x4D8FD0 clears the body's fixed bit), which floats from then on: ms_uo_yacht's section
+    // instance leaves the intro frame (l1_seatop, l2_cliffclimb; Wine: it heaves 250..330 units, rolls and pitches 2..4
+    // degrees, Lara riding its deck). Ours: an object whose body nothing else moves (no joint, hinge, clip, spline or
+    // anchor; an uber object's model-0 section without a joint or clip) turns loose.
+    const auto wavy = [](const collision::Markup& m) {
+        return m.type == 10 && m.points.size() >= 13 && std::ranges::any_of(m.points.begin() + 9, m.points.begin() + 13, [](const vec3& h) { return h.x != 0; });
+    };
+    for (const auto& o : std::ranges::any_of(col_.markup, wavy) ? script_.objects() : std::span<const script::Object>{}) {
+        if (o.loose || o.hidden || o.dead || o.joint || o.spline || o.clips || script_.anchor(o.uid) || o.uid == held_) continue;
+        const physics::ObjectPhysics* phys = objectPhysics(o.name);
+        if (!phys || std::ranges::none_of(phys->prims, [](const physics::Prim& p) { return p.buoyancy > 0; })) continue;
+        if (std::ranges::any_of(colliders_, [&](const ObjectCollider& c) { return c.uid == o.uid && c.hinge >= 0; })) continue;
+        if (const auto data = uberData_.find(o.uid); data != uberData_.end() && data->second) {
+            const auto rt = uberRuntime_.find(o.uid);
+            if (rt == uberRuntime_.end() || !rt->second.joints3.empty()) continue;
+            const auto& secs = data->second->sections;
+            const auto main = std::ranges::find(secs, 0u, &formats::UberSection::model);
+            if (main == secs.end()) continue;
+            const auto k = size_t(main - secs.begin());
+            if (k >= rt->second.sections.size() || rt->second.sections[k].clip >= 0) continue;
+            if (std::ranges::any_of(rt->second.joints, [&](const auto& j) { return data->second->joints[size_t(j.first)].bodyB == int32_t(k); })) continue;
+        }
+        const glm::mat4 model = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+        const bool afloat = std::ranges::any_of(phys->prims, [&](const physics::Prim& p) {
+            if (p.buoyancy <= 0) return false;
+            const glm::mat4 seg = size_t(p.segment) < phys->segments.size() ? phys->segments[size_t(p.segment)] : glm::mat4(1);
+            const vec3 at = vec3(model * seg * glm::vec4(p.pos, 1));
+            return std::ranges::any_of(col_.markup, [&](const collision::Markup& m) { return wavy(m) && insideWater(m, at); });
+        });
+        if (afloat) const_cast<script::Object&>(o).loose = true, syncedObjects_ = ~size_t(0); // World owns object motion
+    }
     // A body the grapple pulled loose that still rides its uber joint (l1 snake head 751 on its rail, held by a
     // counterweight link): the pull drags its watched prismatic joints downhill at the braced pull speed while they are
     // in range [I] (tru.exe: Lara's rope pulls the Havok body); leaving the range, its states drop the link, then the
@@ -2851,7 +2883,9 @@ void World::stepPhysics(float dt) {
     for (const auto& m : col_.markup)
         if (m.type == 10 && m.points.size() > kWaterIds)
             physicsWater_.push_back({m.points[2], m.points[3], vec2(m.points[4]), m.points[1].z,
-                                     [](const void* u, vec3 p) { return waterFlow(*static_cast<const collision::Markup*>(u), p); }, &m});
+                                     [](const void* u, vec3 p) { return waterFlow(*static_cast<const collision::Markup*>(u), p); }, &m,
+                                     [](const void* u, vec2 xy, double t) { return waveHeight(*static_cast<const collision::Markup*>(u), xy, t); },
+                                     double(ticks_) * kTickSeconds});
     physics_.setWater(physicsWater_);
     syncRagdolls(false); // a loaded scene's ragdolls exist before its recorded state applies
     physics_.step(dt);

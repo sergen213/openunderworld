@@ -44,6 +44,11 @@ struct Prim {
     // Share of a blast's push the primitive's shape takes, in percent (sphere +0x18, box +0x3A, capsule +0x2E, s8;
     // tru.exe 0x492CC0: 0 = none at all).
     int8_t blast = 0;
+    // How it floats, in percent (sphere +0x16 / +0x17, box +0x38 / +0x39, capsule +0x2C / +0x2D, s8; tru.exe 0x6AD070
+    // reads them per primitive in a water volume): `buoyancy` scales the water's density and drags, and a buoyant
+    // primitive in a volume with waves enables (un-fixes) its body (0x4D8FD0); `flow` is the share of the current that
+    // carries it.
+    int8_t buoyancy = 0, flow = 0;
     bool solid() const { return head[1] & 1; }
 };
 // Model marker (dtp Model +0x38 count, +0x3C list, 0x30 bytes): frame of e.g. a joint [I].
@@ -344,14 +349,18 @@ public:
     struct Character { vec3 feet{0}; float radius = 0, height = 0, mass = 0; };
     void setCharacter(const Character* c);
     // Water for the next steps (tru.exe 0x6AD070 per water volume): a yaw-rotated box (centre, half extents, (cos, sin)
-    // of its yaw) with its surface z; `flow` (user data, point) -> the current's velocity in units/s, null = still.
-    // Loose bodies in it get buoyancy at water density 1000 kg/m^3 and drag 0.5 / 0.01 (0x69D350's defaults).
+    // of its yaw) with its surface z (the top), raised / lowered at xy by `waves` (user data, xy, `seconds`; null = flat:
+    // game::waveHeight); `flow` (user data, point) -> the current's velocity in units/s, null = still. Every primitive of
+    // a loose body with a buoyancy percent gets the volume's buoyancy and drags at the surface over its own centre
+    // (Physics.cpp, Scene::Impl::buoyancy).
     struct Water {
         vec3 centre{0}, half{0};
         glm::vec2 yaw{1, 0};
         float surface = 0;
         vec3 (*flow)(const void* user, vec3 p) = nullptr;
         const void* user = nullptr;
+        float (*waves)(const void* user, glm::vec2 xy, double seconds) = nullptr;
+        double seconds = 0;
     };
     void setWater(std::span<const Water> water);
 

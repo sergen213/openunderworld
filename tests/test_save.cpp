@@ -808,6 +808,64 @@ TEST(StreamReal, YachtDecksAboveSea) {
     EXPECT_GT(heights.size(), 3u) << "she rides the waves";
 }
 
+// User report (0.49.0 candidate): the yacht floated in the air instead of riding the waves. tru.exe 1.1 under Wine
+// (2026-11-15, section instance +0x20 / +0x30 sampled every 100 ms for 30 / 20 s): ms_uo_yacht floats (0x6AD070: its six
+// 70 % buoyancy spheres in a volume with waves enable its body, then buoy it at the waves over each). l1_seatop: the
+// origin heaves between the volume top - 320 and - 72 (mean - 201), rolls 3.9 / pitches 2.2 degrees at most;
+// l2_cliffclimb: top - 379 .. - 52 (mean - 218), 3.3 / 3.7 degrees. Lara rides the deck, dry. Here: the same order of
+// heave and tilt, the mean waterline within 60 units of the original's, the deck dry with her on it.
+TEST(StreamReal, YachtsFloatOnTheWaves) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    struct Case { int chapter; int32_t yacht; int volume; float mean; };
+    for (const Case c : {Case{1, 998, 1851, -201.1f}, Case{2, 2566, 2563, -218.3f}}) {
+        w.startChapter(c.chapter);
+        for (int i = 0; i < 20 * 60; ++i) w.tick({}); // settled from its intro frame
+        const collision::Markup* sea = nullptr;
+        for (const auto& m : w.collision().markup)
+            if (m.type == 10 && m.id == c.volume) sea = &m;
+        ASSERT_NE(sea, nullptr) << c.chapter;
+        const float top = sea->points[1].z;
+        std::vector<float> zs;
+        float tilt = 0, ride = 0;
+        const auto frame = [&] {
+            const auto* o = w.script().find(c.yacht);
+            EXPECT_TRUE(o && o->loose) << "ch" << c.chapter << ": the yacht floats";
+            if (!o) return glm::mat4(1);
+            glm::mat4 m = glm::translate(glm::mat4(1), o->pos + o->offset);
+            m = glm::rotate(glm::rotate(glm::rotate(m, o->rot.x, {1, 0, 0}), o->rot.y, {0, 1, 0}), o->rot.z, {0, 0, 1});
+            return m * o->body;
+        };
+        const glm::vec3 deck = glm::vec3(glm::inverse(frame()) * glm::vec4(w.player().state().pos, 1));
+        for (int i = 0; i < 30 * 60; ++i) {
+            w.tick({});
+            const glm::mat4 f = frame();
+            zs.push_back(f[3].z - top);
+            tilt = std::max(tilt, glm::degrees(std::acos(std::clamp(f[2].z, -1.0f, 1.0f))));
+            const auto& s = w.player().state();
+            EXPECT_LT(s.water, 0) << "ch" << c.chapter << " tick " << i << ": dry on the deck";
+            ride = std::max(ride, glm::distance(glm::vec3(f * glm::vec4(deck, 1)), s.pos));
+        }
+        const auto [lo, hi] = std::ranges::minmax(zs);
+        float mean = 0;
+        for (const float z : zs) mean += z / float(zs.size());
+        const glm::mat4 f = frame();
+        const auto* o = w.script().find(c.yacht);
+        std::fprintf(stderr, "ch%d yacht at %.1f %.1f %.1f yaw %.1f (intro %.1f %.1f %.1f yaw %.1f), origin - top: %.1f .. %.1f mean %.1f, tilt %.2f deg, "
+                     "Lara off her deck spot %.1f\n", c.chapter, f[3].x, f[3].y, f[3].z, glm::degrees(std::atan2(f[0].y, f[0].x)), o->pos.x, o->pos.y,
+                     o->pos.z, glm::degrees(o->rot.z), lo, hi, mean, tilt, ride);
+        EXPECT_GT(hi - lo, 150.0f) << "ch" << c.chapter << ": heaves with the swell";
+        EXPECT_LT(hi - lo, 450.0f) << "ch" << c.chapter;
+        EXPECT_NEAR(mean, c.mean, 60.0f) << "ch" << c.chapter << ": sits at the original's waterline";
+        EXPECT_GT(tilt, 0.5f) << "ch" << c.chapter << ": rolls / pitches on the waves";
+        EXPECT_LT(tilt, 8.0f) << "ch" << c.chapter;
+        EXPECT_LT(ride, 40.0f) << "ch" << c.chapter << ": she rides the deck";
+    }
+}
+
 // User report (v0.31.0): the follow camera stopped against objects. On l2_cliffclimb's yacht deck (the user's
 // chapter-2 save spot) a held look turn froze: ms_uo_yacht (oflags 0x900004FE, bit 2: the camera collides with it)
 // pulled the turned point in and the collider's swing (0x5EC8F0) swung it straight back each tick. tru.exe turns it

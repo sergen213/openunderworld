@@ -87,13 +87,14 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
         p.id = at<uint16_t>(m, o + 4), p.radius = at<uint16_t>(m, o + 6);
         p.pos = {at<int16_t>(m, o + 8), at<int16_t>(m, o + 10), at<int16_t>(m, o + 12)};
         p.mass = at<uint16_t>(m, o + 0x14), p.damage = at<int16_t>(m, o + 0x1C), p.blast = at<int8_t>(m, o + 0x18);
+        p.buoyancy = at<int8_t>(m, o + 0x16), p.flow = at<int8_t>(m, o + 0x17);
     });
     list(1, kBoxStride, [&](uint32_t o, Prim& p) { // type 5
         p.kind = PrimKind::Box;
         p.size = vec(m, o), p.pos = vec(m, o + 0x10), p.rot = quatXyzw(m, o + 0x20);
         head(o + 0x30, p);
         p.id = at<uint16_t>(m, o + 0x34), p.mass = at<uint16_t>(m, o + 0x36), p.damage = at<int16_t>(m, o + 0x3E);
-        p.blast = at<int8_t>(m, o + 0x3A);
+        p.blast = at<int8_t>(m, o + 0x3A), p.buoyancy = at<int8_t>(m, o + 0x38), p.flow = at<int8_t>(m, o + 0x39);
     });
     list(3, kCapsuleStride, [&](uint32_t o, Prim& p) { // type 10
         p.kind = PrimKind::Capsule;
@@ -101,6 +102,7 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
         head(o + 0x20, p);
         p.id = at<uint16_t>(m, o + 0x24), p.radius = at<uint16_t>(m, o + 0x26), p.length = at<uint16_t>(m, o + 0x28);
         p.mass = at<uint16_t>(m, o + 0x2A), p.damage = at<int16_t>(m, o + 0x32), p.blast = at<int8_t>(m, o + 0x2E);
+        p.buoyancy = at<int8_t>(m, o + 0x2C), p.flow = at<int8_t>(m, o + 0x2D);
     });
     // Slot 2 markers (tru.exe 0x46DA20, HInfo primitive type 8): +4 u16 id, +8 float3 position, +0x14 float3 Euler.
     const uint32_t nm = at<uint32_t>(m, h + 16);
@@ -1199,30 +1201,140 @@ void Scene::setCharacter(const Character* c) {
 
 void Scene::setWater(std::span<const Water> water) { impl_->water.assign(water.begin(), water.end()); }
 
-// tru.exe 0x6AD070: each physics body overlapping a water volume gets Havok buoyancy with the volume's density +0x80
-// (4.5555e-5 kg per unit^3 = 1000 kg/m^3), linear drag +0x84 0.5, angular +0x88 0.01 (scaled per object by its physics
-// property bytes [I: 1]) and the current (0x6ACB60's per-frame vector as the fluid velocity). Jolt's factor is the
-// fluid density over the body's: 1000 x volume / mass.
-void Scene::Impl::buoyancy(float dt) {
+namespace {
+// The part of a primitive under the water plane z = h: its volume (units^3) and centre (units).
+struct Submerged { float volume = 0; vec3 centre{0}; };
+
+// tru.exe 0x4D90D0 (sphere, also the capsule's radius): the cap under the plane, its centroid
+// 3 (2r - d)^2 / (4 (3r - d)) under the centre for the cap depth d.
+Submerged sphereUnder(vec3 c, float r, float h) {
+    const float above = c.z - h;
+    if (above >= r) return {};
+    if (above <= -r) return {4.1887903f * r * r * r, c};
+    const float d = r - above;
+    const float drop = 0.75f * (2 * r - d) * (2 * r - d) / (3 * r - d);
+    return {1.0471976f * (3 * r - d) * d * d, c - vec3(0, 0, drop)};
+}
+
+// One tetrahedron's part under the plane (vertex heights above it in `d`).
+void tetraUnder(const std::array<vec3, 4>& v, const std::array<float, 4>& d, float& volume, vec3& moment) {
+    const auto add = [&](vec3 a, vec3 b, vec3 c, vec3 e) {
+        const float vol = std::abs(glm::dot(b - a, glm::cross(c - a, e - a))) / 6.0f;
+        volume += vol, moment += vol * 0.25f * (a + b + c + e);
+    };
+    const auto cut = [&](int i, int j) { return v[size_t(i)] + (v[size_t(j)] - v[size_t(i)]) * (d[size_t(i)] / (d[size_t(i)] - d[size_t(j)])); };
+    std::array<int, 4> below{}, above{};
+    int nb = 0, na = 0;
+    for (int i = 0; i < 4; ++i) (d[size_t(i)] < 0 ? below[size_t(nb++)] : above[size_t(na++)]) = i;
+    if (nb == 0) return;
+    if (nb == 4) return add(v[0], v[1], v[2], v[3]);
+    if (nb == 1) {
+        const int a = below[0];
+        return add(v[size_t(a)], cut(a, above[0]), cut(a, above[1]), cut(a, above[2]));
+    }
+    if (nb == 3) { // the whole less the corner over the plane
+        const int a = above[0];
+        float cv = 0;
+        vec3 cm{0};
+        const auto corner = [&](vec3 p, vec3 q, vec3 r, vec3 s) { cv = std::abs(glm::dot(q - p, glm::cross(r - p, s - p))) / 6.0f, cm = cv * 0.25f * (p + q + r + s); };
+        corner(v[size_t(a)], cut(a, below[0]), cut(a, below[1]), cut(a, below[2]));
+        float fv = 0;
+        vec3 fm{0};
+        std::swap(volume, fv), std::swap(moment, fm);
+        add(v[0], v[1], v[2], v[3]);
+        std::swap(volume, fv), std::swap(moment, fm);
+        volume += fv - cv, moment += fm - cm;
+        return;
+    }
+    const int a = below[0], b = below[1], c = above[0], e = above[1]; // a wedge: prism a-ac-ae / b-bc-be
+    const vec3 ac = cut(a, c), ae = cut(a, e), bc = cut(b, c), be = cut(b, e);
+    add(v[size_t(a)], ac, ae, v[size_t(b)]);
+    add(v[size_t(b)], ac, ae, be);
+    add(v[size_t(b)], ac, be, bc);
+}
+
+// A box (frame f: centre and axes, full side lengths `size`) under the plane, exact [I: tru.exe's 0x4DDC50 is not
+// decoded].
+Submerged boxUnder(const mat4& f, vec3 size, float h) {
+    std::array<vec3, 8> c;
+    std::array<float, 8> d;
+    int below = 0;
+    for (int i = 0; i < 8; ++i) {
+        const vec3 local = 0.5f * size * vec3(i & 1 ? 1 : -1, i & 2 ? 1 : -1, i & 4 ? 1 : -1);
+        c[size_t(i)] = vec3(f * glm::vec4(local, 1)), d[size_t(i)] = c[size_t(i)].z - h, below += d[size_t(i)] < 0;
+    }
+    if (below == 0) return {};
+    if (below == 8) return {size.x * size.y * size.z, vec3(f[3])};
+    static constexpr int kTetra[6][4] = {{0, 1, 3, 7}, {0, 3, 2, 7}, {0, 2, 6, 7}, {0, 6, 4, 7}, {0, 4, 5, 7}, {0, 5, 1, 7}};
+    float volume = 0;
+    vec3 moment{0};
+    for (const auto& t : kTetra)
+        tetraUnder({c[size_t(t[0])], c[size_t(t[1])], c[size_t(t[2])], c[size_t(t[3])]},
+                   {d[size_t(t[0])], d[size_t(t[1])], d[size_t(t[2])], d[size_t(t[3])]}, volume, moment);
+    return volume > 0 ? Submerged{volume, moment / volume} : Submerged{};
+}
+} // namespace
+
+// tru.exe 0x6AD070, every frame for each water volume, over the Havok shapes in its box: a primitive with a buoyancy
+// percent b (Prim::buoyancy; 0 = none at all) gets 0x4DEE60 with the volume's density +0x80, linear drag +0x84 and
+// angular drag +0x88 each x b / 100 [O: read at l1_seatop and l2_cliffclimb, 4.56e-5 kg per unit^3 (1001 kg/m^3), 0.5,
+// 0.01], the plane at the volume's surface + its waves (0x69DA80) over the primitive's own centre, and the current
+// x the flow percent (0x6ACB60's per-frame vector) as the fluid's velocity. 0x4DEE60 with the submerged volume V (at
+// most the primitive's, Vfull) and its centre C:
+//   force at C  = V density g up + (fluid - body velocity at C) x linear drag x share
+//   torque      = -angular velocity x reach^2 x angular drag x share
+//   share       = body mass / its shape count x V / Vfull; reach = the sphere's radius, the box's diagonal (size +0x50)
+// so a hull's buoyant primitives each ride the waves under them: ms_uo_yacht's six 70 % spheres heave, pitch and roll it.
+void Scene::Impl::buoyancy(float) {
     if (water.empty()) return;
+    constexpr float kDensity = 4.56e-5f, kLinearDrag = 0.5f, kAngularDrag = 0.01f;
+    const float g = sys.GetGravity().Length();
+    const auto shaped = [](const Prim& p) { return p.solid() && !(p.kind == PrimKind::Sphere && p.head[2] == 2); }; // 0x48E710
     for (const auto& l : loose) {
-        const vec3 c = G(bi->GetCenterOfMassPosition(l.body)) * kUnitsPerMetre;
-        for (const Water& w : water) {
-            const vec3 d = c - w.centre;
-            const glm::vec2 local(w.yaw.x * d.x + w.yaw.y * d.y, -w.yaw.y * d.x + w.yaw.x * d.y);
-            if (std::abs(local.x) > w.half.x || std::abs(local.y) > w.half.y || std::abs(d.z) > w.half.z) continue;
-            float volume = 0, invMass = 0;
-            {
-                JPH::BodyLockRead lock(sys.GetBodyLockInterfaceNoLock(), l.body);
-                if (!lock.Succeeded()) break;
-                volume = lock.GetBody().GetShape()->GetVolume(), invMass = lock.GetBody().GetMotionProperties()->GetInverseMass();
+        if (!l.physics || std::ranges::none_of(l.physics->prims, [](const Prim& p) { return p.buoyancy > 0; })) continue;
+        const auto shapes = std::ranges::count_if(l.physics->prims, shaped);
+        float invMass = 0;
+        {
+            JPH::BodyLockRead lock(sys.GetBodyLockInterfaceNoLock(), l.body);
+            if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) continue;
+            invMass = lock.GetBody().GetMotionProperties()->GetInverseMass();
+        }
+        if (invMass <= 0 || shapes == 0) continue;
+        JPH::RVec3 bp;
+        JPH::Quat bq;
+        bi->GetPositionAndRotation(l.body, bp, bq);
+        const vec3 com = G(bi->GetCenterOfMassPosition(l.body)) * kUnitsPerMetre;
+        const mat4 model = glm::translate(mat4(1), G(bp) * kUnitsPerMetre) * glm::mat4_cast(G(bq)) * glm::translate(mat4(1), -l.com);
+        const vec3 v = G(bi->GetLinearVelocity(l.body)), w = G(bi->GetAngularVelocity(l.body));
+        const float perShape = 1.0f / invMass / float(shapes);
+        for (const Prim& p : l.physics->prims) {
+            if (!shaped(p) || p.buoyancy <= 0) continue;
+            const mat4 seg = p.segment < int(l.physics->segments.size()) ? l.physics->segments[size_t(p.segment)] : mat4(1);
+            const mat4 f = model * seg * glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot);
+            const vec3 c = vec3(f[3]);
+            const Water* in = nullptr;
+            for (const Water& wv : water) {
+                const vec3 d = c - wv.centre;
+                const glm::vec2 local(wv.yaw.x * d.x + wv.yaw.y * d.y, -wv.yaw.y * d.x + wv.yaw.x * d.y);
+                if (std::abs(local.x) <= wv.half.x && std::abs(local.y) <= wv.half.y && std::abs(d.z) <= wv.half.z) { in = &wv; break; }
             }
-            const float mass = invMass > 0 ? 1.0f / invMass : 0.0f;
-            if (mass <= 0 || volume <= 0) break;
-            const vec3 fluid = w.flow ? w.flow(w.user, c) / 30.0f : vec3(0);
-            bi->ApplyBuoyancyImpulse(l.body, JPH::RVec3(Jm(vec3(c.x, c.y, w.surface))), JPH::Vec3::sAxisZ(), 1000.0f * volume / mass,
-                                     0.5f, 0.01f, Jm(fluid), sys.GetGravity(), dt);
-            break;
+            if (!in) continue;
+            const float h = in->surface + (in->waves ? in->waves(in->user, glm::vec2(c), in->seconds) : 0.0f);
+            Submerged s;
+            float full = 0, reach = 0;
+            if (p.kind == PrimKind::Box) {
+                s = boxUnder(f, p.size, h), full = p.size.x * p.size.y * p.size.z, reach = glm::length(p.size);
+            } else {
+                s = sphereUnder(c, p.radius, h), reach = p.radius;
+                full = 4.1887903f * p.radius * p.radius * p.radius + (p.kind == PrimKind::Capsule ? 3.1415927f * p.radius * p.radius * p.length : 0.0f);
+            }
+            if (s.volume <= 0 || full <= 0) continue;
+            const float sub = std::min(s.volume, full), scale = float(p.buoyancy) / 100.0f, share = perShape * sub / full;
+            const vec3 at = (s.centre - com) * kM;
+            const vec3 fluid = in->flow && p.flow ? in->flow(in->user, c) / 30.0f * (float(p.flow) / 100.0f) * kM : vec3(0);
+            const vec3 force = vec3(0, 0, sub * kDensity * scale * g) + (fluid - (v + glm::cross(w, at))) * (kLinearDrag * scale * share);
+            bi->AddForce(l.body, J(force), JPH::RVec3(Jm(s.centre)));
+            bi->AddTorque(l.body, J(-w * (reach * kM) * (reach * kM) * (kAngularDrag * scale * share)));
         }
     }
 }
