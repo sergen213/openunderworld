@@ -1,7 +1,7 @@
 // Enhanced under-water medium (ours, camera submerged; RENDERING.md "Under water"). The `ag` section at the end is the
-// literal abyssal-garden port used by the post pass's light and fog (underwater.glsl ouUwFog) and water.frag's bed; the
-// older tuned OuUwMedium API above still serves the sun shafts (ouShaftMarch / ouShaftsComposite), the particles
-// (uw_light.glsl) and the surface's total internal reflection seen from below (water.frag).
+// literal abyssal-garden port used by the post pass's light and fog (underwater.glsl ouUwFog), the particles
+// (uw_light.glsl, uw_snow / uw_bubble) and water.frag (the bed's relight, the surface seen from below: W_SURF); the
+// older tuned OuUwMedium API above still serves only the sun shafts (ouShaftMarch / ouShaftsComposite).
 // OuUwMedium: the analytic medium of abyssal-garden (Noniv, MIT; docs/RESEARCH.md 8.11: shaders.js `fogIn`, `fog`, `sg`,
 // `kd`, `sunE`, `amb`, `side`) on the unit's own colours. Linear light, metres (kM units).
 // Needs the WaterBlock `w`, kM (shaders/waves.glsl) and kIorRgb (shaders/caustics.glsl) declared before it.
@@ -56,26 +56,7 @@ OuUwMedium ouUwEyeMedium() {
     if (h0 > 1e-3) m.kd *= kUwDepthScale * (1.0 - exp(-h0 / kUwDepthScale)) / h0;
     return m;
 }
-// In-scatter along unit rd (z up) over d metres from a point h0 metres under the surface; l: toward the sun under water.
-// fogIn: sigma C e^(-kd h0) (1 - e^(-a d)) / a, a = sigma - kd rd.z (the light grows as the ray rises), x the forward
-// sun glow (1.22 + 0.3 mu^4) / 1.22.
-vec3 ouUwFogIn(OuUwMedium m, vec3 rd, float d, float h0, vec3 l) {
-    vec3 a = m.sigma - m.kd * rd.z;
-    a += vec3(1e-6) * vec3(lessThan(abs(a), vec3(1e-6)));
-    float mu = max(dot(rd, l), 0.0), m2 = mu * mu;
-    return m.scatter * m.sigma * exp(-m.kd * h0) * ((1.0 - exp(-a * d)) / a) * (1.0 + 0.246 * m2 * m2);
-}
 vec3 ouUwSunLight(OuUwMedium m, float h, vec3 l) { return exp(-m.kd * (h / max(l.z, 0.2))); } // sunE alone (shafts)
-// The water between the eye and world point p (per-point form of ouUwFog): transmittance T and in-scatter L (linear),
-// both x the pass strength (w.waterPass[2].x), so p's own light becomes light x T + L.
-void ouUwPointFog(OuUwMedium m, vec3 p, out vec3 T, out vec3 L) {
-    vec3 rd = p - w.eye.xyz;
-    float d = length(rd);
-    rd /= max(d, 1e-3);
-    d /= kM;
-    T = mix(vec3(1.0), exp(-m.sigma * d), w.waterPass[2].x);
-    L = ouUwFogIn(m, rd, d, ouUwEyeDepth(), ouUwSunDir()) * w.waterPass[2].x;
-}
 
 // ---- 1:1 port of abyssal-garden's medium (Noniv, MIT; source/src/shaders.js S_G / S_B, docs/RESEARCH.md 8.11) ----
 // Literal constants and formulas, in the demo's own space ("ag space"): metres, y up, the water surface at y = 0 (points
@@ -110,6 +91,12 @@ float agTime() { return w.eye.w; } // the demo's g.cam.w: seconds
 vec3 agSun() {
     if (w.sunColor.w <= 0.0 || w.sunDir.z <= 0.0) return normalize(vec3(0.27, 1.0, -0.24));
     return agDir(-refract(-normalize(w.sunDir.xyz), vec3(0.0, 0.0, 1.0), 1.0 / 1.333));
+}
+// The same sun above the surface (agSun is its refraction): the air side, where W_SURF's refracted ray rr looks for the
+// glint. Without a level sun the demo's SUN, as agSun (the demo's one g.sun is both).
+vec3 agSunAir() {
+    if (w.sunColor.w <= 0.0 || w.sunDir.z <= 0.0) return normalize(vec3(0.27, 1.0, -0.24));
+    return agDir(normalize(w.sunDir.xyz));
 }
 vec3 agFogIn(vec3 ro, vec3 rd, float d, float z, vec3 sun) {
     vec3 k = mix(kAgKd, kAgKdf, z);

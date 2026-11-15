@@ -17,8 +17,8 @@
 //   `lastdepth1`, an uninitialised depth, no screen bound for refraction); a traced refraction that leaves the screen
 //   or passes behind a foreground object falls back to the simple depth-scaled normal offset.
 // - Edge foam from the water depth broken by an edge noise, a soft waterline, sun / lamp GGX glints.
-// - From below: Snell's window from the wave normal with a soft rim, a bright sky + sun glint through it and total
-//   internal reflection of the water's own colour outside it (techniques after abyssal-garden's W_SURF, MIT, Noniv).
+// - From below (camera submerged): abyssal-garden's W_SURF (MIT, Noniv) literally: Snell's window over its animated
+//   water texture's slopes, the demo sky + sun glint through it and the medium's in-scatter (fogIn) outside it.
 // Open seas (meshes with TRU's sea waves, vSea): the FFT ocean (render/Ocean.hpp: Tessendorf cascades after
 // NeuralSpecOcean, MIT) displaces (water.vert) and bends the normals with the choppy surface's own normal, its folds
 // (Jacobian) foaming as whitecaps; without it (FrameOptions::oceanFft off) afl_ext's "Very fast procedural ocean" waves
@@ -47,13 +47,13 @@ layout(set = 0, binding = 1) uniform sampler2D uScene;
 layout(set = 0, binding = 2) uniform sampler2D uDepth;
 layout(set = 0, binding = 3) uniform sampler2D uRipples;
 layout(set = 0, binding = 4) uniform sampler2DArray uOcean; // the FFT ocean (shaders/ocean.comp)
-layout(set = 0, binding = 5) uniform sampler2D uAgWater; // the animated water texture (render/Water.hpp kAgWaterSize; bed caustics)
+layout(set = 0, binding = 5) uniform sampler2D uAgWater; // the animated water texture (render/Water.hpp kAgWaterSize; bed caustics, slopes from below)
 #else
 layout(binding = 5) uniform sampler2D uScene;
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 7) uniform sampler2D uRipples;
 layout(binding = 12) uniform sampler2DArray uOcean;
-layout(binding = 18) uniform sampler2D uAgWater; // the animated water texture (GlRenderer drawAgWater; bed caustics)
+layout(binding = 18) uniform sampler2D uAgWater; // the animated water texture (GlRenderer drawAgWater; bed caustics, slopes from below)
 #endif
 // Sun shadow map (render/sun.glsl; Vulkan: water layout set 1) for the caustics on the refracted bed.
 #ifdef VULKAN
@@ -62,7 +62,7 @@ layout(binding = 18) uniform sampler2D uAgWater; // the animated water texture (
 #include "sun.glsl"
 #include "shaders/waves.glsl" // the waves (shared with water.vert and the caustics)
 #include "shaders/caustics.glsl"
-#include "shaders/uw_medium.glsl" // the under-water medium (seen from below: the total internal reflection)
+#include "shaders/uw_medium.glsl" // the abyssal-garden medium (the bed's relight; seen from below: W_SURF)
 float ouSunShadowVisibility(vec3 p) { return ouSunVisibility(p, vec3(0.0), true, false); }
 #ifdef VULKAN
 #define OU_NDC_Y(uv) (1.0 - 2.0 * (uv).y)
@@ -405,67 +405,37 @@ void main() {
         // Soft waterline (Godot foam_or_fade = fade): the bed shows through the last few units.
         c = mix(toLinear(textureLod(uScene, uv, 0.0).rgb), c, smoothstep(0.0, 6.0, cdepth));
     } else {
-        // ---- from below: Snell's window (technique after abyssal-garden's W_SURF, MIT, Noniv; RENDERING.md
-        // "Under water") ----
-        // Detail fades with distance (abyssal-garden ss(260 m, 60 m)): far off the surface reads as its mean. The window
-        // sees the slopes halved [I]: a wind sea's full FFT slopes (up to ~0.5) shatter it into scattered patches, where a
-        // diver sees one rippling disc (the eye averages the fine facets the pixel does not).
-        float fl = smoothstep(260.0 * kM, 60.0 * kM, dist);
-        vec2 sb = s * (0.5 * fl);
-        vec3 nb = -normalize(vec3(-sb, 1.0)); // the wave normal facing down, toward the eye
-        float ci = clamp(dot(nb, v), 0.0, 1.0);
-        float k = 1.0 - kIor * kIor * (1.0 - ci * ci); // cos^2 of the transmitted angle; < 0: total internal reflection
-        float win = smoothstep(0.0, 0.22, k);          // the window's soft rim (abyssal-garden's ss(0, .22, k))
-        float ft = schlick(sqrt(max(k, 0.0)));          // Fresnel on the air side of the transmitted ray
-        fresnel = 1.0 - win * (1.0 - ft);               // reflected share (debug view 5)
-        vec3 td = k > 0.0 ? refract(-v, nb, kIor) : vec3(0.0, 0.0, 1.0);
-        // The sky through the window: the water's surface hue made bright (abyssal-garden's sky 1.3 x (.30, .78, 1.0);
-        // here the unit's / preset's colour at full brightness so every sea keeps its own tint) x the daylight, varying
-        // with the wave slope toward the sun (faces tilted to it brighter; abyssal-garden's clamp(1 + 3.8 s, .25, 3), its
-        // slopes 0.8 x ours), + the sun seen through the refracted ray: a wide lobe pow 60 x 1.3 and the disc pow 500 x 12
-        // (abyssal-garden's), shadowed by the sun shadow map at the surface [I: all of it].
-        vec3 hue = w.optics[0].w > 0.5 ? w.optics[1].rgb : gSurf;
-        hue /= max(max(hue.r, max(hue.g, hue.b)), 1e-3);
-        vec2 sunH = length(w.sunDir.xy) > 1e-3 ? normalize(w.sunDir.xy) : vec2(0.6, -0.8);
-        // Half abyssal-garden's gain, floor 0.4 [I]: TRU's FFT sea is steeper than its ripples, and on the 8-bit target
-        // the bright side clips while the dark side stayed, reading as dark blotches inside the window.
-        float bright = clamp(1.0 - 2.4 * fl * dot(s, sunH), 0.4, 3.0);
-        float sdot = max(dot(td, w.sunDir.xyz), 0.0);
-        sunVis = detail && w.sunDir.z > 0.0 ? ouSunShadowVisibility(p) : 1.0;
-        spec = (pow(sdot, 60.0) * 1.3 + pow(sdot, 500.0) * 12.0) * sunVis * w.sunDir.w;
-        vec3 window = hue * (1.3 * clamp(1.5 * ouLum(light), 0.08, 1.0)) * (0.7 + 0.3 * td.z) * bright +
-                      toLinear(min(w.sunColor.rgb, vec3(1.0))) * spec;
-        // The real above-water scene where it lies on screen (a hull, Lara, the shore): traced along the refracted ray,
-        // else the scene at the normal-offset pixel; within 100 m (beyond, the sky dome: the bright sky above stands in),
-        // faded in at the screen border so the trace's ends leave no seam.
-        if (win > 0.0) {
-            if (ouTrace(p, td, 60.0 * kM, 3.0 * kM, huv, ht) && ouWorld(huv, textureLod(uDepth, huv, 0.0).r).z > p.z - 2.0) {
-                traced = true, conf = ouEdgeFade(huv, 0.08);
-                window = mix(window, toLinear(textureLod(uScene, huv, 0.0).rgb) * (0.6 + 0.4 * bright), conf);
-            } else {
-                vec2 ruv = clamp(uv + sb * 0.08, vec2(0.0), vec2(1.0));
-                float sd = textureLod(uDepth, ruv, 0.0).r;
-                vec3 q = ouWorld(ruv, sd);
-                if (sd < 0.999999 && q.z > p.z && distance(q, p) < 100.0 * kM)
-                    conf = ouEdgeFade(ruv, 0.08) * (1.0 - smoothstep(60.0 * kM, 100.0 * kM, distance(q, p))),
-                    window = mix(window, toLinear(textureLod(uScene, ruv, 0.0).rgb), conf);
-            }
-        }
-        // Total internal reflection: the water's own in-scatter toward the reflected direction from the surface
-        // (abyssal-garden's fogIn(p, R, 300 m) x 1.15), from the medium the post pass fogs with (shaders/uw_medium.glsl,
-        // forward sun glow included), so the mirrored surround meets the distance fog without a seam; the water below by
-        // SSR over it where it is on screen, fogged by the same medium over the reflected path.
-        vec3 rb = reflect(-v, nb);
-        OuUwMedium um = ouUwEyeMedium();
-        vec3 ul = ouUwSunDir();
-        vec3 tir = ouUwFogIn(um, rb, 300.0, 0.0, ul) * 1.15;
-        if (win < 1.0 && ouTrace(p - vec3(0.0, 0.0, 2.0), rb, 30.0 * kM, 2.0 * kM, huv, ht)) {
-            float rc = ouEdgeFade(huv, 0.08) * (1.0 - smoothstep(0.6, 1.0, ht / (30.0 * kM)));
-            vec3 hit = toLinear(textureLod(uScene, huv, 0.0).rgb) * exp(-um.sigma * (ht / kM)) + ouUwFogIn(um, rb, ht / kM, 0.0, ul) * 1.15;
-            tir = mix(tir, hit, rc);
-            if (!traced) conf = rc;
-        }
-        c = mix(tir, window * (1.0 - ft), win); // abyssal-garden: mix(refl, sky x (1 - fr), win)
+        // ---- from below: abyssal-garden's W_SURF fs, literally (shaders.js; RENDERING.md "Under water") ----
+        // In ag space (shaders/uw_medium.glsl): V from the eye, the slope s of the three uAgWater tiles (13 m, 4.7 m swapped,
+        // 37 m) faded out by ss(260, 60, d), its normal n facing down (slopes x .8), Snell's window win = ss(0, .22, k)
+        // with k = 1 - 1.33^2 (1 - ci^2), the sky (.30, .78, 1) x 1.3 brighter on faces tilted by s, + the sun seen along
+        // the refracted ray (pow 60 x 1.3 + pow 500 x 12), x (1 - fr), fr = (1 - sqrt k)^5; outside the window the
+        // reflection: fogIn(wp, R, 300 m) x 1.15. Only the demo's slope bends it (1:1: not our FFT / afl / wave-field
+        // normals; the mesh keeps their displacement). The glint takes the sun above the surface (agSunAir: rr is the ray in
+        // the air; agSun, which fogIn takes as the demo does g.sun, is its refraction; the demo's one g.sun is both). The
+        // demo's fog(c, wp) is the post pass's (underwater.glsl ouUwFog: rays through the surface fog up to it and keep
+        // this colour), so not applied here. Explicit gradients: `below` is per fragment.
+        vec3 cam = agEye(), wp = agPos(p), V = wp - cam;
+        float fl = agSs(260.0, 60.0, length(V));
+        V = normalize(V);
+        vec2 gx = pdx / kM, gy = pdy / kM;
+        vec2 sl = (textureGrad(uAgWater, wp.xz / 13.0, gx / 13.0, gy / 13.0).ba +
+                   textureGrad(uAgWater, wp.zx / 4.7 + 0.2, gx.yx / 4.7, gy.yx / 4.7).ba * 0.7 +
+                   textureGrad(uAgWater, wp.xz / 37.0 + 0.6, gx / 37.0, gy / 37.0).ba * 0.8) * fl;
+        vec3 nb = normalize(vec3(-sl.x * 0.8, -1.0, -sl.y * 0.8));
+        float ci = agSat(dot(V, -nb));
+        float k = 1.0 - 1.769 * (1.0 - ci * ci);
+        float win = agSs(0.0, 0.22, k);
+        vec3 rr = refract(V, nb, 1.33);
+        float sdot = max(dot(rr, agSunAir()), 0.0);
+        float fr = pow(1.0 - sqrt(max(k, 0.0)), 5.0);
+        spec = pow(sdot, 60.0) * 1.3 + pow(sdot, 500.0) * 12.0;
+        vec3 skyW = (vec3(0.30, 0.78, 1.0) * 1.3 * clamp(1.0 + 3.8 * (sl.x * 0.6 - sl.y * 0.8), 0.25, 3.0) +
+                     vec3(1.0, 0.95, 0.85) * spec) * (1.0 - fr);
+        vec3 refl = agFogIn(vec3(wp.x, 0.0, wp.z), reflect(V, nb), 300.0, kAgZone, agSun()) * 1.15; // the demo's quad: y = 0
+        c = agFin(mix(refl, skyW, win));
+        fresnel = 1.0 - win * (1.0 - fr); // reflected share (debug view 5)
+        n = -agDir(nb);                    // debug view 1: the demo's normal, world space, up
     }
 
     vec3 color = toGamma(c);
