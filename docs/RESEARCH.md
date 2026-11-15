@@ -568,24 +568,30 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
 
 - **abyssal-garden** by Noniv (Maksymilian Dendura), https://github.com/Noniv/abyssal-garden — MIT, "Copyright (c) 2026
   Maksymilian Dendura" (full text: `third_party/abyssal-garden/LICENSE`). A WebGPU under-water scene; only techniques
-  are ported (none of its content: kelp, ship, animals). From `src/shaders.js` (WGSL): the analytic medium `fogIn` /
-  `fog` (per-channel extinction `sg`, the in-scatter of depth-attenuated light `kd` integrated in closed form along the
-  view ray, forward sun glow 1.22 + 0.3 μ⁴) → `ouUwFog`; `sunE` / `amb` / `side` (sun, hemispherical ambient and wall
-  light falling off with depth) → `ouUwSurfaceLight` (both `src/render/shaders/underwater.glsl`); `W_POST` (vignette,
-  luminance S-curve, desaturation, IGN dither) and the Karis-weighted bloom downsample (`kar`) → `ouUnderwaterGrade`
-  (`src/render/shaders/filter.glsl`). Its constants are used as ratios (KD / SIG); the colours and distances come from
-  TRU's units and the water colour presets; our [I] values are listed in RENDERING "Under water". Clone used:
-  openunderworld-work/research/abyssal-garden.
-- `W_SURF` (the water surface seen from below): Snell's window from the per-pixel wave normal with the soft rim
+  are ported (none of its content: kelp, ship, animals), rescaled to TRU's units (290 per metre, z up) with TRU's own
+  water colours / the water colour presets in place of its fixed `WCOL` / `SIG` constants; our [I] values are listed in
+  RENDERING "Under water". Clone used: openunderworld-work/research/abyssal-garden. Per technique:
+- Fog: from `src/shaders.js` (WGSL) the analytic medium `fogIn` / `fog` (per-channel extinction `sg`, the in-scatter of
+  depth-attenuated light `kd` integrated in closed form along the view ray, forward sun glow 1.22 + 0.3 μ⁴) →
+  `ouUwMedium` / `ouUwFogIn` / `ouUwFog` (`src/render/shaders/underwater.glsl`); `sunE` / `amb` / `side` (sun, hemispherical ambient and wall
+  light falling off with depth) → `ouUwSurfaceLight`; `W_POST` (vignette, luminance S-curve, desaturation, IGN dither)
+  and the Karis-weighted bloom downsample (`kar`) → `ouUnderwaterGrade` (`src/render/shaders/filter.glsl`). Its
+  constants are used as ratios (KD / SIG).
+- Surface (`W_SURF`, the water surface seen from below): Snell's window from the per-pixel wave normal with the soft rim
   `ss(0, .22, k)`, the bright sky through it with the sun lobe `pow(sd, 60) × 1.3 + pow(sd, 500) × 12`, slope-driven
   brightness, detail faded with distance `ss(260, 60, d)`, total internal reflection showing the water's in-scatter
-  toward the reflected direction (`fogIn`) → `water.frag`'s from-below branch (RENDERING "Water"; colours from the unit /
-  preset, not its `WCOL`).
+  toward the reflected direction (`fogIn`) → `water.frag`'s from-below branch (RENDERING "Water").
+- Sun shafts: its volumetric light pipeline from `src/shaders.js` and `src/main.js` — `W_RAYS` (half-resolution march
+  from the eye to min(scene depth, surface, 120 m) in RAYN even steps jittered by interleaved gradient noise, sun shadow
+  map per step, the surface pattern projected along the sun, extinction along the sun path and the view path, a forward
+  phase), `W_RBLUR` (depth-aware 3×3 blur, weights 1 / (0.03 + relative depth difference)) and `W_POST`'s depth-aware
+  bilinear upsample → `ouShaftMarch`, `ouShaftBlur`, `ouShaftsComposite` (`src/render/shaders/underwater.glsl`, passes
+  `uw_shafts*.frag`). Ours takes the pattern from the drawn waves' focusing (`ouCausticFocus`, baked into a tile per
+  frame) instead of its normal texture.
 - Marine snow (`vsSnow` / `fsSnow`: a camera-wrapped instanced speck field with drift, wobble, twinkle, a pixel-size
   floor and depth-attenuated, shadowed sunlight) and bubbles (`vsBub` / `fsBub`: wobbling outline, rim + two highlights,
   lit from above / below by the water's in-scatter, fogged by distance) → `src/render/shaders/uw_snow.*` / `uw_bubble.*`
-  (RENDERING "Under water: marine snow and bubbles"), rescaled to TRU units (290 per metre) with TRU's own water colours
-  and fog in place of its fixed WCOL / SIG constants.
+  (RENDERING "Under water: marine snow and bubbles").
 
 ---
 
