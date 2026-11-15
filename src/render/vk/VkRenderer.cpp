@@ -4276,6 +4276,8 @@ private:
                                                           VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag,
                                                           VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         barriers(cmd, {&toRead, 1});
+    }
+
     // Enhanced under-water sun shafts (render/Water.hpp, shaders/underwater.glsl), before the post pass, which upsamples
     // shaftTargets_[1]: the pattern tile into shaftPattern_, the half-resolution march into [0], its blur into [1]. Each
     // output's old contents are discarded (last read: this frame's previous pass or the last post pass); all three are
