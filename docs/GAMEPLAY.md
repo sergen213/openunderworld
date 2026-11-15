@@ -1675,6 +1675,26 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   1648 and 1245 under the deck at 1728, so both chapter starts are dry. Ours: `findWater` appends the waves to the
   markup (4 × (kx, ky, speed), 4 × (height, 0, 0)); `waterSurface` / `waveHeight` give the surface the player swims on
   (tread rides the waves) and `waveRegisters` the shader's c60–c63 (`StreamReal.YachtDecksAboveSea`).
+- Floating objects [O: decomp; tru.exe under Wine 2026-11-15]: each frame every water volume buoys the Havok
+  primitives in its box (0x6AD070 → 0x4DEE60) by their buoyancy percent (sphere +0x16, box +0x38, capsule +0x2C; 0 =
+  none; flow percent +1 scales the current): plane at the top + the 0x69DA80 waves over the primitive's centre, force
+  = submerged volume (sphere cap 0x4D90D0) × density +0x80 (4.56e-5 kg/unit³) × g up at its centre, plus drag (0.5 /
+  0.01, read live) × mass / shape count × V / Vfull. The engine's velocities are per 30 Hz frame (body +0xA0 linear,
+  +0xB0 angular; read live: +0xA0.z = the centre's rise per 1/30 s) and forces integrate over frames (0x4EFB20), so
+  per second both drags are 30 × the coefficient. A buoyant primitive in a volume with waves enables its body
+  (0x4D8FD0). So the yachts float: ms_uo_yacht's six 70 % hull spheres; its section instance heaves top − 320 .. − 72
+  (l1_seatop, mean − 201) / − 379 .. − 52 (l2_cliffclimb, mean − 218), rolls / pitches 2–4°, Lara riding the deck;
+  the air tank 999 rides the l1 stern. Its body (read live at both levels): mass 4225 (+0x14C), 59 shapes (+0x3C),
+  inertia (+0x00) diag 2.86e9 / 1.84e10 / 2.07e10 kg·unit², linear / angular damping +0x154 / +0x158 0.01 per frame
+  (`v *= 1 − dt × damping` in 0x4EFB20; from the section's physics record +8 / +0xC via 0x48E690, every such record
+  in memory holds 0.01 / 0.01; the body constructor 0x4DD820 leaves 0), deactivation below 1 unit / 0.03 rad per
+  frame for 30 (+0x100..+0x108; 0x6AD070 re-arms it while afloat). After its splash-down transient the l1 yacht
+  holds within ~5 units and turns 0.7° a minute (heading −0.415 .. −0.4275 rad over 57 s). Ours (`physics::Scene`
+  buoyancy per primitive, same mass / inertia from `massProps`; `World::stepPhysics`): an uber object whose model-0
+  section nothing else moves turns loose when afloat or standing on a loose body [I], Lara's push proxy is off while
+  she stands on a loose body (`StreamReal.YachtsFloatOnTheWaves`: ch1 − 317 .. − 75 mean − 184, 103 units / 4° in
+  50 s; ch2 − 379 .. − 54 mean − 228, 6 units / 1°). Jolt's loose-body damping stays its default 0.05 / s, not the
+  record's 0.3 / s [I: records are not parsed]; boxes use an exact clipped volume [I: 0x4DDC50 not decoded].
 - In water: the water probe box overlaps a volume, the feet are below its surface and there is no floor within
   `swimDepth` (400) below the surface. From the air → SwimSplash (plunge velocity damped by drag) → Surfacing (rise at
   swim speed) → SwimTread. From the ground (standing on a deep floor) → Surfacing.

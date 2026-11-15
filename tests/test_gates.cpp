@@ -2850,6 +2850,36 @@ TEST(ProgressionReal, ThorPillarsSlideOnTheirPlane) {
     }
 }
 
+// Research (OU_BUOYANCY_SURVEY=1; docs/GAMEPLAY.md "Floating objects"): every object of objectlist.txt whose models
+// carry a primitive with a buoyancy percent (physics::Prim::buoyancy, tru.exe 0x6AD070): kind, count, percent, flow.
+TEST(ProgressionReal, BuoyancySurvey) {
+    if (!gameDir() || !std::getenv("OU_BUOYANCY_SURVEY")) GTEST_SKIP() << "OU_GAME_DIR and OU_BUOYANCY_SURVEY not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    for (const auto& [id, name] : formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})) {
+        const auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        try {
+            const auto drm = cdc::parseDrm(*bytes);
+            std::map<std::tuple<uint32_t, int, int, int>, int> kinds; // model, kind, buoyancy, flow -> count
+            for (uint32_t m = 0; m < 8; ++m) {
+                physics::ObjectPhysics p;
+                try { p = physics::loadObjectPhysics(drm, m); } catch (const std::exception&) { break; }
+                if (m && p.prims.empty() && p.segments.empty()) break;
+                for (const auto& pr : p.prims)
+                    if (pr.buoyancy || pr.flow) ++kinds[{m, int(pr.kind), pr.buoyancy, pr.flow}];
+            }
+            if (kinds.empty()) continue;
+            std::printf("%-34s", name.c_str());
+            for (const auto& [k, n] : kinds)
+                std::printf(" [model %u kind %d x%d buoyancy %d flow %d]", std::get<0>(k), std::get<1>(k), n, std::get<2>(k), std::get<3>(k));
+            std::printf("\n");
+        } catch (const std::exception&) {
+        }
+    }
+}
+
 // Research (OU_PUSH_SURVEY=1; docs/GAMEPLAY.md "Push and pull objects"): every object of objectlist.txt with a push /
 // pull engagement record (kind 1) on an uber section: its physical class, the masses of its models' primitives, its
 // joint types, the record's shape and the objects it asks Lara to carry.
@@ -2908,8 +2938,9 @@ TEST(ProgressionReal, UberSections) {
     const auto phys = physics::loadObjectPhysics(drm);
     std::printf("class %d mass %g prims %zu\n", phys.physClass, physics::massProps(phys).mass, phys.prims.size());
     for (const auto& pr : phys.prims)
-        std::printf("prim kind %d segment %d mass %d head %02x %02x %02x %02x pos %g %g %g size %g %g %g radius %g length %g\n", int(pr.kind), pr.segment, pr.mass,
-                    pr.head[0], pr.head[1], pr.head[2], pr.head[3], pr.pos.x, pr.pos.y, pr.pos.z, pr.size.x, pr.size.y, pr.size.z, pr.radius, pr.length);
+        std::printf("prim kind %d segment %d mass %d head %02x %02x %02x %02x pos %g %g %g size %g %g %g radius %g length %g buoyancy %d flow %d\n", int(pr.kind),
+                    pr.segment, pr.mass, pr.head[0], pr.head[1], pr.head[2], pr.head[3], pr.pos.x, pr.pos.y, pr.pos.z, pr.size.x, pr.size.y, pr.size.z, pr.radius,
+                    pr.length, pr.buoyancy, pr.flow);
     for (uint32_t m = 1; m < 32; ++m) { // the other models' (uber sections are instances of them)
         physics::ObjectPhysics other;
         try { other = physics::loadObjectPhysics(drm, m); } catch (const std::exception&) { break; }

@@ -51,13 +51,14 @@ const physics::ObjectPhysics* World::objectPhysics(const std::string& name) {
 }
 
 // HInfo marker `id` of an object in the world: intro transform * its segment's bind frame * the marker frame (0x46DF20).
+// A loose body's marker rides its pose (the floating yacht's stern marker 13, where 030_med_yacht's end puts Lara).
 std::optional<glm::mat4> World::markerFrame(const script::Object& o, int id) {
     const physics::ObjectPhysics* p = objectPhysics(o.name);
     if (!p) return std::nullopt;
     for (const auto& m : p->hmarkers)
         if (m.id == id) {
             const glm::mat4 segment = size_t(m.segment) < p->segments.size() ? p->segments[size_t(m.segment)] : glm::mat4(1);
-            return glm::translate(glm::mat4(1), o.offset) * introModel(o) * segment * glm::translate(glm::mat4(1), m.pos) *
+            return glm::translate(glm::mat4(1), o.offset) * introModel(o) * (o.loose ? o.body : glm::mat4(1)) * segment * glm::translate(glm::mat4(1), m.pos) *
                    glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) *
                    glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
         }
@@ -2789,6 +2790,43 @@ void World::stepPhysics(float dt) {
     for (auto& [uid, rt] : uberRuntime_)
         for (auto& [index, j] : rt.joints3) joints3.push_back({key(uid, index), &j}), heavyIds.insert(uid);
     physics_.setJoints3(std::move(joints3));
+    // Floating objects (tru.exe 0x6AD070): a primitive with a buoyancy percent (Prim::buoyancy) inside a volume with
+    // waves enables its body (0x4D8FD0 clears the body's fixed bit), which floats from then on: ms_uo_yacht's section
+    // instance leaves the intro frame (l1_seatop, l2_cliffclimb; Wine: it heaves 250..330 units, rolls and pitches 2..4
+    // degrees, Lara riding its deck). Ours: an object whose body nothing else moves (no joint, hinge, clip, spline or
+    // anchor; an uber object's model-0 section without a joint or clip) turns loose. So does such an object standing on
+    // a loose body [I]: l1_seatop's air tank 999 on the yacht's stern rides the deck in tru.exe (Wine: its section stays
+    // at (1877, 314) in the yacht's frame for minutes); a static tank there held the hull and turned it 35 degrees.
+    const auto wavy = [](const collision::Markup& m) {
+        return m.type == 10 && m.points.size() >= 13 && std::ranges::any_of(m.points.begin() + 9, m.points.begin() + 13, [](const vec3& h) { return h.x != 0; });
+    };
+    for (const auto& o : std::ranges::any_of(col_.markup, wavy) ? script_.objects() : std::span<const script::Object>{}) {
+        if (o.loose || o.hidden || o.dead || o.joint || o.spline || o.clips || script_.anchor(o.uid) || o.uid == held_) continue;
+        const physics::ObjectPhysics* phys = objectPhysics(o.name);
+        if (!phys || phys->prims.empty() || !uberData_.contains(o.uid) || !uberData_.at(o.uid)) continue; // [I] uber sections' Havok bodies only
+        if (std::ranges::any_of(colliders_, [&](const ObjectCollider& c) { return c.uid == o.uid && c.hinge >= 0; })) continue;
+        if (const auto data = uberData_.find(o.uid); data != uberData_.end() && data->second) {
+            const auto rt = uberRuntime_.find(o.uid);
+            if (rt == uberRuntime_.end() || !rt->second.joints3.empty()) continue;
+            const auto& secs = data->second->sections;
+            const auto main = std::ranges::find(secs, 0u, &formats::UberSection::model);
+            if (main == secs.end()) continue;
+            const auto k = size_t(main - secs.begin());
+            if (k >= rt->second.sections.size() || rt->second.sections[k].clip >= 0) continue;
+            if (std::ranges::any_of(rt->second.joints, [&](const auto& j) { return data->second->joints[size_t(j.first)].bodyB == int32_t(k); })) continue;
+        }
+        const glm::mat4 model = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+        const bool afloat = std::ranges::any_of(phys->prims, [&](const physics::Prim& p) {
+            if (p.buoyancy <= 0) return false;
+            const glm::mat4 seg = size_t(p.segment) < phys->segments.size() ? phys->segments[size_t(p.segment)] : glm::mat4(1);
+            const vec3 at = vec3(model * seg * glm::vec4(p.pos, 1));
+            return std::ranges::any_of(col_.markup, [&](const collision::Markup& m) { return wavy(m) && insideWater(m, at); });
+        });
+        const auto under = afloat ? std::nullopt : col_.groundProbe(vec3(model[3]) + vec3(0, 0, 20), 60);
+        const auto* base = under && under->dynamic >= 0 ? script_.find(col_.dynamics[size_t(under->dynamic)].id) : nullptr;
+        if (afloat || (base && base->loose && base->uid != o.uid))
+            const_cast<script::Object&>(o).loose = true, syncedObjects_ = ~size_t(0); // World owns object motion
+    }
     // A body the grapple pulled loose that still rides its uber joint (l1 snake head 751 on its rail, held by a
     // counterweight link): the pull drags its watched prismatic joints downhill at the braced pull speed while they are
     // in range [I] (tru.exe: Lara's rope pulls the Havok body); leaving the range, its states drop the link, then the
@@ -2837,9 +2875,14 @@ void World::stepPhysics(float dt) {
     physics_.setLoose(loose);
     const auto bikes = bikeVehicles();
     physics_.setVehicles(bikes); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result
-    // Lara's proxy shoves loose bodies and ragdolls she walks into (by her mass); not while she rides or lies dead.
+    // Lara's proxy shoves loose bodies and ragdolls she walks into (by her mass); not while she rides or lies dead, nor
+    // while she stands on a loose body: she rides it (tickObjects), and the proxy chasing her across the moving deck
+    // pushed the floating yacht (l2_cliffclimb: 690 units and 57 degrees off in 50 s with it, 77 and 11 without it;
+    // tru.exe under Wine: 3 units and 2 degrees) [I: tru.exe's proxy does not push what she stands on].
     const physics::Scene::Character lara{player_.state().pos, player_.tuning().radius, player_.tuning().height, kLaraMass};
-    physics_.setCharacter(bikes.empty() && player_.state().state != State::Dead ? &lara : nullptr);
+    const auto ground = col_.groundProbe(player_.state().pos + vec3(0, 0, 20), 60);
+    const bool onLoose = ground && ground->dynamic >= 0 && looseIds.contains(col_.dynamics[size_t(ground->dynamic)].id);
+    physics_.setCharacter(bikes.empty() && player_.state().state != State::Dead && !onLoose ? &lara : nullptr);
     std::vector<physics::Scene::Terrain> terrain;
     for (const auto& u : units_) terrain.push_back({u.data.name, &u.data.col, u.offset});
     physics_.setTerrain(terrain);
@@ -2851,7 +2894,9 @@ void World::stepPhysics(float dt) {
     for (const auto& m : col_.markup)
         if (m.type == 10 && m.points.size() > kWaterIds)
             physicsWater_.push_back({m.points[2], m.points[3], vec2(m.points[4]), m.points[1].z,
-                                     [](const void* u, vec3 p) { return waterFlow(*static_cast<const collision::Markup*>(u), p); }, &m});
+                                     [](const void* u, vec3 p) { return waterFlow(*static_cast<const collision::Markup*>(u), p); }, &m,
+                                     [](const void* u, vec2 xy, double t) { return waveHeight(*static_cast<const collision::Markup*>(u), xy, t); },
+                                     double(ticks_) * kTickSeconds});
     physics_.setWater(physicsWater_);
     syncRagdolls(false); // a loaded scene's ragdolls exist before its recorded state applies
     physics_.step(dt);

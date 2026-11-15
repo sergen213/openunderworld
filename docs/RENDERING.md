@@ -479,7 +479,9 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   `ouCausticSlope` adds the cascades' slopes (weights 0.3 swell / 1 gravity / 0.75 chop [I]), `ouCausticHessian`
   differentiates each cascade over at least one of its texels (linear filtering would give flat cells otherwise).
   Visual only: gameplay (buoyancy, the yacht, swimming) keeps tru.exe's c60–c63 waves (`game::waveRegisters`); no CPU
-  code samples the drawn sea. A driver that cannot build `ocean.comp` keeps afl's waves (`WaterBlock::ocean[0].x` 0).
+  code samples the drawn sea. The yachts float on those waves (GAMEPLAY.md "Floating objects"), so their hulls meet
+  the drawn surface, which is centred on them, as in the original [renders of the floating yacht not yet checked].
+  A driver that cannot build `ocean.comp` keeps afl's waves (`WaterBlock::ocean[0].x` 0).
   Bindings: `uOcean` water set 0 binding 4 / post set 1 binding 5 (Vulkan, GENERAL layout), texture unit 12 (GL).
   Log line `ou: FFT ocean: N^2 grid, ...` on the first sea frame and every grid change. [I]: the tuned weights, fades,
   foam gate, depth 100 m and loop length.
