@@ -57,7 +57,9 @@ vec3 ouPresetHue(vec3 gammaCol) { // gamma colour -> the preset hue at its lumin
 #include "shaders/waves.glsl" // kM
 #include "shaders/uw_medium.glsl"
 float ouSunShadowVisibility(vec3 p); // shaders/atmosphere.glsl (after render/sun.glsl in both renderers)
-vec3 ouUwFog(vec3 c, vec2 uv) {
+// raw: the scene texel itself (before FXAA / the screen filters): water.frag writes its from-below colour there encoded
+// (agSurfEncode) and exactly 0 outside Snell's window.
+vec3 ouUwFog(vec3 c, vec3 raw, vec2 uv) {
     float depth = texture(uDepth, uv).r;
     vec3 q = ouWorld(uv, depth, w.invViewProj);
     vec3 n = cross(dFdx(q), dFdy(q)); // before any branch
@@ -67,11 +69,26 @@ vec3 ouUwFog(vec3 c, vec2 uv) {
     float len = sky ? 1e30 : distance(q, w.eye.xyz), surf = ouUwSurfaceZ();
     bool through = rd.z > 1e-4 && w.eye.z < surf && (surf - w.eye.z) / rd.z < len;
     vec3 lin = pow(max(c, vec3(0.0)), vec3(2.2));
-    vec3 cam = agEye(), dir = agDir(rd), lit = lin, p;
-    if (through) p = cam + dir * ((surf - w.eye.z) / rd.z / kM);
-    else if (sky) p = cam + dir * 240.0, lit = vec3(0.0);
+    vec3 cam = agEye(), dir = agDir(rd), lit, p;
+    // Outside Snell's window the demo's surface pixels are 0 and unfogged (water.frag: its sky term is NaN there and fin()
+    // clamps the fogged NaN to 0). Also where the opaque point lies just under the flat surface (within the waves'
+    // reach, 3 m): the displaced water mesh can cover it while the flat-plane test above says it does not. The demo's
+    // terrain hides its black surface at a distance; our open seas would show it meeting the 240 m background (fsB) at
+    // a hard horizon. So the black fades into W_SURF's own fog of it, fog(0, wp) = fogIn, over the distances where its
+    // slopes flatten (fl = ss(260, 60, d)): black as now within 60 m, the fogged surface past 260 m (= the background:
+    // fogIn is saturated by then).
+    if (rd.z > 1e-4 && w.eye.z < surf && all(equal(raw, vec3(0.0))) && (through || q.z > surf - 3.0 * kM)) {
+        p = cam + dir * ((surf - w.eye.z) / rd.z / kM);
+        vec3 fz = agFog(vec3(0.0), p, kAgZone) * (1.0 - agSs(260.0, 60.0, distance(p, cam)));
+        return pow(max(mix(lin, fz, w.waterPass[2].x), vec3(0.0)), vec3(1.0 / 2.2));
+    }
+    if (through) { // the window's HDR colour comes encoded through the 8-bit scene target
+        p = cam + dir * ((surf - w.eye.z) / rd.z / kM);
+        lit = agSurfDecode(lin);
+    } else if (sky) p = cam + dir * 240.0, lit = vec3(0.0);
     else {
         p = agPos(q);
+        lit = agUnpost(lin); // TRU's display colour -> the demo's scene-referred HDR (uw_medium.glsl)
         float ps = -1e30; // the point's own water surface
         for (int i = 0; i < int(w.detail.w); ++i) {
             vec3 lo = w.volumes[2 * i].xyz, hi = w.volumes[2 * i + 1].xyz;
@@ -85,15 +102,15 @@ vec3 ouUwFog(vec3 c, vec2 uv) {
             vec3 f1 = ouWorld(uv + vec2(0.0, w.screen.w), 1.0, w.invViewProj);
             float fp = d * length(normalize(f1 - w.eye.xyz) - normalize(far - w.eye.xyz));
             vec3 ca = w.sunColor.w > 0.0 ? agCausLod(uAgWater, p, d, fp) : vec3(0.33); // no sun: no caustics
-            lit = agRelight(lin, p, agDir(n), -dir, ca, ouSunShadowVisibility(q + n * (0.35 * kM)));
+            lit = agRelight(lit, p, agDir(n), -dir, ca, ouSunShadowVisibility(q + n * (0.35 * kM)));
         }
     }
     vec3 fogged = agFog(lit, p, kAgZone);
     return pow(max(mix(lin, fogged, w.waterPass[2].x), vec3(0.0)), vec3(1.0 / 2.2));
 }
-vec3 ouWaterPass(vec3 c, vec2 uv) {
+vec3 ouWaterPass(vec3 c, vec3 raw, vec2 uv) {
     if (w.waterPass[2].x <= 0.0) return c;
-    if (w.fogColor.w > 0.5) return ouUwFog(c, uv); // Enhanced, submerged
+    if (w.fogColor.w > 0.5) return ouUwFog(c, raw, uv); // Enhanced, submerged
     vec3 far = ouWorld(uv, 1.0, w.invViewProj);
     float up = clamp(0.5 + 0.5 * normalize(far - w.eye.xyz).z, 0.0, 1.0);
     vec3 col = mix(w.waterPass[1].rgb, w.waterPass[0].rgb, up);
@@ -176,7 +193,7 @@ vec4 agRays(ivec2 hp) {
     for (int n = 0; n < int(kAgRayn); ++n) {
         float t = (float(n) + j) * dt;
         vec3 p = ro + rd * t;
-        float vis = ouSunTapVisibility(w.eye.xyz + rw * (t * kM));
+        float vis = ouSunTapVisibility(agShadowPoint(w.eye.xyz + rw * (t * kM))); // along agSun (uw_medium.glsl)
         vec2 q = p.xz - sx.xz * (p.y / sx.y);
         float pat = agSs(0.3, 0.7, textureLod(uAgWater, q / 27.0, 2.5).r) *
                     agSs(0.15, 0.6, textureLod(uAgWater, q.yx / 11.0 + 0.3, 2.0).r);
@@ -201,8 +218,9 @@ vec4 agRaysBlur(ivec2 p) {
         }
     return vec4(acc / ws, c.a);
 }
-vec3 ouUnderwater(vec3 c, vec2 uv) {
-    // the water pass relights and fogs the scene (Enhanced: ouUwFog), then tru.exe's rays add light (0x6D8C20 order);
-    // the Enhanced sun shafts are added by uw_grade.frag
-    return ouRays(ouWaterPass(c, uv), uv);
+// raw: the scene texel at uv before FXAA and the screen filters (ouUwFog reads water.frag's from-below encoding from it).
+vec3 ouUnderwater(vec3 c, vec3 raw, vec2 uv) {
+    // the water pass relights and fogs the scene (Enhanced: ouUwFog), then tru.exe's rays add light (0x6D8C20 order;
+    // Original water only: ou-game leaves them out with Enhanced water); the Enhanced sun shafts are added by uw_grade.frag
+    return ouRays(ouWaterPass(c, raw, uv), uv);
 }

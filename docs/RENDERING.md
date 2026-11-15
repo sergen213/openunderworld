@@ -414,9 +414,20 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   ray in the air) and fogIn; here fogIn takes `agSun` (the level sun refracted, as everywhere under water) and the glint
   `agSunAir` (the same sun unrefracted, its air side), so the disc sits where agSun points from under water; no level
   sun: the demo's SUN for both. The demo's `fog(c, wp)` is the post pass's (`ouUwFog`, below: rays through the surface
-  fog up to it), so the far surface fades into the fog at 185–230 m. Vulkan draws the surface with culling off (the
-  translated screen-reader draws before it used to leave back-face culling set, and the sea was missing when seen from
-  below).
+  fog up to it), so the far surface fades into the fog at 185–230 m. Outside the window (k < 0) the surface is black and
+  unfogged, as the demo actually renders it: measured in the live demo (Chrome WebGPU, this RADV box, bit tests of its
+  W_SURF output) its sky term is NaN/Inf wherever k < 0, `mix(refl, sky, 0)` keeps the NaN and `fin()` clamps the fogged
+  NaN to 0, so its captures show dark ripples between bright window gaps (only shafts and bloom over them); with that
+  term zeroed (win = 0) its surface turns the same uniform pale cyan ours was. Written as exactly 0, the k = 0 step
+  spread over one pixel (k at the neighbouring pixels by finite differences); the post keeps it black and unfogged
+  within 60 m and fades it into W_SURF's own fog of it, fog(0, wp) = fogIn, by 260 m (× 1 − ss(260, 60, d), the
+  demo's slope fade): the demo's terrain hides its black surface at a distance, our open seas showed it meeting the
+  240 m background at a hard horizon. The rest is
+  HDR (sky 0.4–3.9, glint ~13) and the scene target is 8-bit with `graphics.hdr` off: written as c / (1 + c)
+  (`agSurfEncode`), decoded by the post for rays leaving through the surface (before: clipped at 1, the bright gaps
+  turned white). TRU's colours traced inside the window go through `agUnpost` (below) first. Vulkan draws the surface
+  with culling off (the translated screen-reader draws before it used to leave back-face culling set, and the sea was
+  missing when seen from below).
 - Open seas (meshes with TRU's sea waves bound, `vSea`; l2_cliffclimb, l1 seas, Thailand): the FFT ocean below
   (default); with `--ocean procedural` afl_ext's "Very fast procedural ocean" (MIT) wave function instead: sums of
   `exp(sin − 1)` directional waves, each warping the next by its derivative (drag 0.38), 1 afl unit = 1 m. Fragment
@@ -638,14 +649,27 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   TRU's colour stands for an average caustic-lit point just under the surface (its own shading and shadows stay; the
   demo's N.L and shadow cancel instead of applying twice, and the flat reconstructed normal leaves no facets) and the
   demo's depth falloff (red first), caustic contrast (dark cells, bright plateau; 0.33 past 35–100 m ≈ 0.1×), ambient
-  and side light are imposed, HDR (the composite's exposure + ACES compress the peaks). Caustics: `agCausLod` on
+  and side light are imposed, HDR (the composite's exposure + ACES compress the peaks). TRU's colour is display-referred
+  (≤ 1, its lighting already squeezed into that range) and the demo's chain scene-referred, so every TRU pixel goes
+  through `agUnpost` first: the inverse of the grade's exposure (EXPO × 0.6, the near-surface value) + ACES fit, white
+  clamped at 0.98 (→ ~12, the demo's own range for a lit pale top). Fed in as is (until 2026-11-15) TRU's scene was
+  exposed and tone mapped a second time, 2–4× darker (0.5 → 0.25 displayed, 0.05 → 0.012) under a fog sized for the
+  demo: objects sank into a flat, pale haze. Caustics: `agCausLod` on
   `uAgWater` (below) with explicit levels from the pixel footprint (distance × pixel angle ÷ 3.3 m or 6.9 m per 512
   texels): p comes from the depth buffer, whose implicit derivatives spike at silhouettes; no level sun = flat 0.33.
   Then `agFog(c, p)` = c e^(−sg d) ss(230 m, 185 m, d) + fogIn; rays leaving through the surface (looking up from under
-  it) fog up to it and keep what water.frag drew there (W_SURF's `fog(c, wp)`: the Snell's window and total internal
-  reflection, also over sky pixels); other sky pixels are the demo's background (`vsB` / `fsB`): fog(0, eye + dir ·
-  240 m). Everything × the pass strength. The frame then goes through the under-water composite ("Under water: marine
-  snow, bubbles and the composite" below) instead of the post pass's tone map. The older tuned medium is gone.
+  it) fog up to it and keep what water.frag drew there (W_SURF's `fog(c, wp)`: the Snell's window, decoded, also over
+  sky pixels; its exact-0 black stays 0, also where the opaque point lies within 3 m under the flat surface, which the
+  displaced mesh can cover); other sky pixels are the demo's background (`vsB` / `fsB`): fog(0, eye + dir · 240 m).
+  Everything × the pass strength. The frame then goes through the under-water composite ("Under water: marine snow,
+  bubbles and the composite" below) instead of the post pass's tone map. With Enhanced water submerged this medium is
+  the whole look: ou-game draws neither TRU's deep / surface water filters (l1 5292's ColorDOF blur at alpha 0.89 and
+  bloom blurred the frame into soft white blotches) nor TRU's light rays (pale streaks over the fogged frame); the unit's
+  fog set still reaches TRU's shaders (its ranges, 632 m+, lie past agFog's 230 m cut), and nothing above the surface is
+  drawn over it: splash droplets (`splash_composite.frag`) and effect sprites (particles, glows: `fx::System::
+  spritesBelowZ` = the eye's wave surface) are left out; they printed over the black outside the window as flat pale
+  discs (l1_seatop: a texture-160 smoke sprite ~72 m up, ~190 m away; tru.exe veils such sprites with its full-screen
+  pass). The older tuned medium is gone.
 - Animated water texture `uAgWater` (ours, Enhanced only; abyssal-garden `W_WATER` literally, `shaders/uw_water.frag`):
   r = g = caustic (`caus()`: five warped sine iterations), ba = surface slope (the WK sum of 10 travelling waves), time
   = the eye's seconds; 512² RGBA16F, 5 mips box-filtered down (the demo's `fsMip`: VK linear blits, GL
@@ -668,7 +692,10 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
      acc += e^(−sg t + kd p.y / sun.y) · vis · (.012 + 6 pat). Out min(acc · dt · sg · wc · SUNC · ph · 0.54, 20), zl;
      ph = .2 + 2 μ³, wc = WCOL + (.04, .07, .05) (zone 0), 0.54 = main.js `RAYS` (g.mis.y). The demo's mist term
      (1 + 1.2 mist², from its density volume's openness: 0 in open water, rising only beside its rock) has no volume
-     here: mist = 0. The sun is `agSun` (refracted level sun); the shadow map is the sun's in air [I].
+     here: mist = 0. The sun is `agSun` (refracted level sun); the shadow map is the sun's in air, looked up at
+     `agShadowPoint`: the point on the air line through where the refracted ray from p meets the surface, at p's depth,
+     so a hull's shadow volume follows the shafts (before: p itself; the hull's shadow ran along the low air sun, off the
+     shafts, and its silhouette stayed veiled).
   2. Blur (`W_RBLUR`): depth-aware 3×3, weights 1 / (0.03 + |Δz| / z).
   3. Composite (`W_POST`, in `uw_grade.frag`): the post pass stores zl in its linear frame's alpha (`agViewDepth`); the
      grade adds the 4-tap upsample (bilinear weight + 0.02 over 0.02 + |Δz| / z) to the frame before the bloom mix,

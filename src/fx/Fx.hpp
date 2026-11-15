@@ -396,6 +396,11 @@ public:
     std::function<void(const Command&, int32_t owner, glm::vec3 position)> rumble;
     bool visuals = true; // false (ou-game --fx off): commands start nothing but instance fades; sequences run for `sound`
     bool cameraUnderwater = false; // tru.exe 0x5EA390 (DAT_00AD7DBC, view +0xEC): gates ParticleDef::water
+    // Ours (Enhanced water, camera submerged; ou-game sets the eye's water surface z, else +inf): sprites (particles,
+    // glows) above it are not built. From below they lie behind the surface: tru.exe veils them with its full-screen
+    // water pass (0x6D8C20, >= 0.6 of the water colour); Enhanced draws that surface black outside Snell's window
+    // (water.frag), and a sprite over it showed as a flat pale disc (l1_seatop: a 160 smoke sprite 72 m up).
+    float spritesBelowZ = 1e30f;
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     void moveOwner(int32_t owner, const glm::vec3& delta); // its emitters' origins (effects carried by a moving instance)
     bool hasOwner(int32_t owner) const;

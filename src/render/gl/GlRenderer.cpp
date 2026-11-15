@@ -188,7 +188,7 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
 const char* kPostFsMain = R"(
 void main() {
     vec3 c = pow(ouScreenFilter(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / uBrightness));
-    vec3 u = ouUnderwater(ouAtmosphere(c, vUv), vUv);
+    vec3 u = ouUnderwater(ouAtmosphere(c, vUv), texelFetch(uScene, ivec2(vUv * vec2(textureSize(uScene, 0))), 0).rgb, vUv);
     if ((uUw & 3) == 0) {
         oColor = vec4(u * (1.0 - uFade), 1.0);
         return;
