@@ -143,5 +143,16 @@ std::string splashCompositeSource(bool vulkan);
 // (shaders/atmosphere.glsl: height fog, sun shafts, precipitation). Both sample uDepth at uv themselves and return
 // `c` unchanged when their effect is off (Original output stays byte-identical).
 std::string underwaterPostSource(bool vulkan);
+// Enhanced under-water sun shafts (shaders/underwater.glsl, docs/RENDERING.md "Under water"; after abyssal-garden, MIT):
+// three passes before the post pass, drawn with the post layout / units (fullscreen triangle): 0 the surface's focusing
+// into a kUnderwaterShaftTile^2 R16F tile, 1 the half-resolution march (RGBA16F: light + view depth; VK push constant /
+// GL uniform 0 = steps), 2 its depth-aware blur (RGBA16F, half resolution), which the post pass upsamples. VK post set 1
+// bindings 6 (march output), 7 (blur output), 8 (tile); GL units 13, 14, 15.
+inline constexpr int kUnderwaterShaftTile = 512; // = underwater.glsl kShaftTile
+// The passes run this frame (= underwater.glsl ouShaftsOn on the uploaded block); `block` is the frame's WaterBlock.
+bool underwaterShaftsActive(const WaterBlock& block);
+// March steps: 0 with graphics.light_shafts off (the passes still run and add nothing), 32 at atmosphere High, else 20.
+int underwaterShaftSteps(const FrameOptions& options);
+std::string underwaterShaftSource(int pass); // GL fragment source of pass 0, 1 or 2 (includes spliced)
 
 } // namespace ou::render

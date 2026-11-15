@@ -397,11 +397,16 @@ struct Targets {
     Texture reflection;
     Renderbuffer reflectionDepth;
     Framebuffer reflectionFbo;
+    // Enhanced under-water sun shafts (render/Water.hpp): [0] march, [1] blurred (half size, RGBA16F; units 13, 14), [2] the
+    // pattern tile (R16F, kUnderwaterShaftTile^2; unit 15).
+    std::array<Texture, 3> shaft;
+    std::array<Framebuffer, 3> shaftFbo;
 };
 
 struct Resources {
     Program sceneProgram, textProgram, lineProgram, shadowProgram, postProgram;
     Program waterProgram, splashSplatProgram, splashBlurProgram, splashCompositeProgram; // Enhanced water (render/Water.cpp sources)
+    std::array<Program, 3> shaftPrograms; // under-water sun shafts: pattern, march, blur (render/Water.hpp)
     Buffer waterUbo;                     // WaterBlock, UBO binding 4 (water, splash, post)
     Texture ripples;                     // R32F height field, game::WaterSim
     uint64_t rippleVersion = 0;
@@ -520,6 +525,11 @@ public:
         if (!r.splashBlurProgram.get()) return false;
         r.splashCompositeProgram = linkProgram(screenVs.c_str(), compositeFs.c_str(), error);
         if (!r.splashCompositeProgram.get()) return false;
+        for (int i = 0; i < 3; ++i) {
+            const std::string fs = underwaterShaftSource(i);
+            r.shaftPrograms[size_t(i)] = linkProgram(kPostVs, fs.c_str(), error);
+            if (!r.shaftPrograms[size_t(i)].get()) return false;
+        }
         r.waterUbo = newBuffer();
         glNamedBufferStorage(r.waterUbo.get(), sizeof(WaterBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
         { // FFT ocean; a driver that cannot build ocean.comp keeps afl's waves (WaterBlock::ocean[0].x cleared per frame)
@@ -899,6 +909,24 @@ public:
                 glBlitNamedFramebuffer(t.scene.get(), t.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width,
                                        vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
         }
+        if (enhancedWater && underwaterShaftsActive(wb)) { // pattern tile, half-size march, blur (the post pass upsamples)
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+            glBindTextureUnit(6, t.opaqueDepth.get());
+            glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get());
+            glBindTextureUnit(12, r.ocean.get());
+            glBindTextureUnit(13, t.shaft[0].get());
+            glBindTextureUnit(15, t.shaft[2].get());
+            glBindVertexArray(r.emptyVao.get());
+            for (int i : {2, 0, 1}) { // output texture of pattern, march, blur
+                const int sw = i == 2 ? kUnderwaterShaftTile : (vp.width + 1) / 2, sh = i == 2 ? kUnderwaterShaftTile : (vp.height + 1) / 2;
+                glBindFramebuffer(GL_FRAMEBUFFER, t.shaftFbo[size_t(i)].get());
+                glViewport(0, 0, sw, sh);
+                glUseProgram(r.shaftPrograms[size_t(i == 2 ? 0 : i + 1)].get());
+                if (i == 0) glUniform1i(0, underwaterShaftSteps(options));
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+        }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, vp.width, vp.height);
         glDisable(GL_DEPTH_TEST);
@@ -915,6 +943,7 @@ public:
         glBindTextureUnit(11, t.feedback.get());   // the feedback effect's previous frame
         glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get()); // underwater caustics' wave field
         glBindTextureUnit(12, r.ocean.get());                                     // ... and the FFT ocean
+        glBindTextureUnit(14, t.shaft[1].get());                                  // under-water sun shafts (blurred)
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
         if (feedback) { // 0x509630 -> 0x51A2E0: this frame's image (before the HUD) for the next frame's feedback
@@ -1069,6 +1098,18 @@ private:
         t.reflectionFbo = newFramebuffer();
         glNamedFramebufferTexture(t.reflectionFbo.get(), GL_COLOR_ATTACHMENT0, t.reflection.get(), 0);
         glNamedFramebufferRenderbuffer(t.reflectionFbo.get(), GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.reflectionDepth.get());
+        for (size_t i = 0; i < 3; ++i) {
+            const bool tile = i == 2;
+            t.shaft[i] = newTexture();
+            glTextureStorage2D(t.shaft[i].get(), 1, tile ? GL_R16F : GL_RGBA16F, tile ? kUnderwaterShaftTile : (vp.width + 1) / 2,
+                               tile ? kUnderwaterShaftTile : (vp.height + 1) / 2);
+            glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_MIN_FILTER, tile ? GL_LINEAR : GL_NEAREST);
+            glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_MAG_FILTER, tile ? GL_LINEAR : GL_NEAREST);
+            glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            t.shaftFbo[i] = newFramebuffer();
+            glNamedFramebufferTexture(t.shaftFbo[i].get(), GL_COLOR_ATTACHMENT0, t.shaft[i].get(), 0);
+        }
     }
 
     // Opaque: depth write, LESS. Blended (the original's translucent pass 0x5066A0): no depth

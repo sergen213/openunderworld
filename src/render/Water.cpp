@@ -52,6 +52,13 @@ const char* kCaustics =
 const char* kWaves =
 #include "waves.glsl.inc"
     ;
+const char* kShaftSources[3] = { // shaders/uw_shafts_*.frag (render/Water.hpp underwaterShaftSource)
+#include "uw_shafts_pattern.frag.inc"
+    ,
+#include "uw_shafts.frag.inc"
+    ,
+#include "uw_shafts_blur.frag.inc"
+};
 } // namespace
 
 bool isWaterSurface(std::string_view meshOrigin) { return meshOrigin.find("watersurface") != std::string_view::npos; }
@@ -412,6 +419,22 @@ std::string splashCompositeSource(bool vulkan) { return withVersion(kSplashCompo
 
 std::string underwaterPostSource(bool vulkan) {
     return expandIncludes(std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere + kFilter);
+}
+
+bool underwaterShaftsActive(const WaterBlock& b) {
+    return b.fogColor.w > 0.5f && b.sunColor.w > 0.0f && b.sunDir.z >= 0.05f && b.detail.w > 0.5f && b.eye.z < b.volumes[1].z;
+}
+
+int underwaterShaftSteps(const FrameOptions& options) {
+    return !options.lightShafts ? 0 : options.atmosphere == Atmosphere::High ? 32 : 20; // [I]
+}
+
+std::string underwaterShaftSource(int pass) {
+    std::string s = kShaftSources[std::clamp(pass, 0, 2)];
+    for (const auto& [line, text] : {std::pair{"#include \"shaders/underwater.glsl\"", kUnderwater},
+                                     std::pair{"#include \"shaders/atmosphere.glsl\"", kAtmosphere}})
+        if (const size_t at = s.find(line); at != std::string::npos) s.replace(at, std::strlen(line), text);
+    return expandIncludes(std::move(s));
 }
 
 } // namespace ou::render

@@ -512,7 +512,7 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   fold branch's deficit, ~−20 %); with a water colour preset (below) the line contrast also fades per channel by the
   downwelling e^(−Kd · path) (red first: deep caustics turn blue-green). Post-pass bindings: `seaWaves` and `optics`
   end the Water block; `uRipples` is VK post set 1 binding 3 / GL unit 9. `ouCausticFocus` is the cheap variant for
-  the sun shafts (one Hessian, the three focal distances). [I] values; physically
+  the sun shafts' pattern tile (one Hessian, the three focal distances). [I] values; physically
   caustics vanish within ~10–20 m, TRU's sea floors lie 100+ m down.
 - Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
   3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
@@ -568,7 +568,7 @@ replaces the extinction (σ) and the in-scatter / under-water fog hue; the unit'
 luminance), so a dim cave pool stays dim and a sunlit sea bright, and the pass still runs only where the unit has one
 (its strength and the eye's base haze kept). Surface (`water.frag` `ouWaterLook`: absorption, in-scatter, the deep
 colour of total internal reflection), under water (`underwater.glsl` `ouWaterPass`: fog 1 − (1 − haze) e^(−σ ·
-view depth) per channel at the preset hue; `ouShafts`: σ and the cap colour) and caustics (Kd) all switch together.
+view depth) per channel at the preset hue; the sun shafts: σ and the cap colour) and caustics (Kd) all switch together.
 `original` = the unit's colours exactly as before (optics all zero); Original water never reads `optics` (it is only
 filled with Enhanced water), so it stays byte-identical.
 
@@ -632,21 +632,33 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   1 − murk / 0.7, beam drawn, rays drawn: out = rays · c132.w · c132.y + beam · c132.z).
 - Interior ray records (`+0x84` bit 0 clear; l1 ship halls, l2 Norse halls / puzzle room / map room, l4 ballcourt) [O,
   not drawn]: window light boxes (0x6D83C0) drawn above water only by 0x6D9660 into 50 × 50, blurred, composited.
-- Sun shafts (ours, Enhanced only): `ouShafts` (underwater.glsl, after the full-screen pass, before `ouRays`): the
-  volumetric continuation of the caustics. The view ray (to the scene, the surface or 4000 units) is marched in 4
-  steps packed toward the eye (t = len · u²); each step traces back along the refracted sun to its surface entry point
-  and takes `ouCausticFocus` there (caustics.glsl: the focusing of the same waves that light the bed, per colour, blurred by
-  0.005 · depth as the bed plus 2.5 % of the step, one afl iteration), so the streaks meet the bright lines on the floor and move with the
-  waves. Streak = smoothstep(1.15, 2.2, focus) × slow wave groups (`ouShaftGroups`, ~3000-unit patches, 0..1; steps between groups skip the focus): many
-  thin parallel streaks converging toward the sun. In-scatter × `ouSunShadowVisibility` (3×3 PCF: soft occluder
-  volumes; a 1-tap test showed shadow-map texel blocks; a shadowed step skips the focus, the costly part) ×
-  e^(−σ (depth / l.z + distance)) per channel, σ = water.frag's `ouWaterLook` extinction (or a water colour preset's; red first: blue-green, fading
-  with depth; l1_seafloor's 95 m leave none) × HG(0.7) · 4π × 4e-3 × the sun colour × `sunColor.w`, then soft-clamped,
-  cap · (1 − e^(−s / cap)) with cap = 0.3 × the unit's surface water colour (a preset's hue at its luminance), so looking into the sun never saturates.
-  No per-pixel jitter: the four pixels of each 2×2 quad march at interleaved quarter-step offsets and share the mean
-  (`ouQuadMean`, fine derivatives): 16 depth slices without bands and no screen-space pattern (the old static IGN
-  jitter + hard shadow tap left a 1-pixel checker under plants that FSR kept). [I] values. Cost (post pass, which runs at the render resolution before FSR; 3840 × 2160 FSR quality = 2560 ×
-  1440, ch2 reef, OU_VK_PRESENT_STATS): 1.50 ms looking away from the sun, 1.53 ms toward it (8 steps: 3.65 / 3.73 ms).
+- Sun shafts (ours, Enhanced only; after Noniv's abyssal-garden, MIT, RESEARCH §8.11: its `W_RAYS` / `W_RBLUR` /
+  `W_POST` pipeline): three passes before the post pass (`render::underwaterShaftsActive` = `ouShaftsOn`: Enhanced
+  water, camera below the nearest surface, sun above the horizon), drawn with the post layout / units, then
+  `ouShaftsComposite` in the post pass (after the full-screen pass, before `ouRays`). All in `underwater.glsl`; passes
+  `shaders/uw_shafts_pattern.frag`, `uw_shafts.frag`, `uw_shafts_blur.frag`; VK post set 1 bindings 6-8, GL units 13-15.
+  1. Pattern tile (`ouShaftPatternTexel`, R16F, 512² texels of 48 units = 24576 units, snapped to texels around the
+     camera's refracted-sun entry point so it does not swim): the drawn waves' focusing `ouCausticFocus` (caustics.glsl:
+     the waves that light the bed, the FFT ocean, Lara's ripples) at a 2000-unit focal depth, blurred by one texel,
+     smoothstep(1.0, 1.9) × slow wave groups (`ouShaftGroups`, ~3000-unit patches): the focused light entering each
+     spot of the surface.
+  2. March (`ouShaftMarch`, half the render resolution, RGBA16F = in-scattered light + linear view depth): the view ray
+     from the eye to the scene, the nearest surface, 12000 units or 5 green extinction lengths, in N even steps
+     (`render::underwaterShaftSteps`: 20, 32 at atmosphere `high`, 0 with `light_shafts` off) jittered per pixel by
+     interleaved gradient noise. Each step traces back along the refracted sun to its surface entry point and takes
+     the tile there: in-scatter (0.12 + 1.6 · tile) × the sun shadow map (one tap, `ouSunTapVisibility`: the occluders'
+     shadow volumes) × e^(−σ (depth / l.z + distance)) per channel, σ = water.frag's `ouWaterLook`
+     extinction (or a water colour preset's; red first: blue-green, fading with depth); × σ_g × 1.0 (scattering /
+     extinction) × mix(1, 4π HG(0.75), 0.8) × the sun colour × `sunColor.w`.
+  3. Blur (`ouShaftBlur`): depth-aware 3×3 at half resolution, weights 1 / (0.03 + |Δz| / z) (hides the jitter).
+  Composite: depth-aware bilinear upsample (bilinear weight + 0.02 over 0.02 + |Δz| / z: no halo at depth edges), then
+  soft-clamped cap · (1 − e^(−s / cap)), cap = 0.5 × the unit's surface water colour (a preset's hue at its luminance),
+  so looking into the sun never saturates. Replaces the earlier 4-step in-post `ouShafts` (thin hatched streaks, no
+  visible shadow volumes). The shadow map is the sun's in air (the shafts' pattern follows the refracted sun) [I].
+  [I] values. Cost [O] (RX 7900 XTX, RADV, l1_seatop looking toward the sun, OU_VK_PRESENT_STATS "uw shafts"): 0.19 ms
+  at 1280 × 692, 0.33 ms at 2560 × 1412 native, 0.30 ms at 2560 × 1412 FSR quality (render 1707 × 941). Views:
+  l1_seatop `--spawn -15000,-3775,2000,-40 --camera -21000,-3500,-1800,-15000,-3800,0` (rays and the rock),
+  `--camera -19500,-4000,-2500,-17500,-4000,500` (the yacht's shadow volume).
 - Fog [O]: below the surface the render settings' water fog set (`+0x1C` colour, `+0x4C` near, `+0x48` far, 0 = the far
   plane, 0x5C1F50) replaces the unit fog, and the filters' fog blocks (`+0x2FA4`: enable, colour, near, far) take over
   as far as their weights go (0x512D60 / 0x514D90). l1: filter 5292 (near = far = 379267, black); l7: 859 (63211).

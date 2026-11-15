@@ -564,6 +564,20 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   pre-exposure (1.372 [I]) and the sRGB encode around it, because our scene is display-referred. Copy of the source used:
   openunderworld-work/neuralspecocean-CinemaPostPass.js.
 
+### 8.11 abyssal-garden under-water look (MIT) @`a596354`
+
+- **abyssal-garden** by Noniv (Maksymilian Dendura), https://github.com/Noniv/abyssal-garden — MIT, "Copyright (c) 2026
+  Maksymilian Dendura" (full text: `third_party/abyssal-garden/LICENSE`). A WebGPU under-water scene; only techniques
+  are ported (none of its content: kelp, ship, animals). Sun shafts: its volumetric light pipeline from `src/shaders.js`
+  (WGSL) and `src/main.js` — `W_RAYS` (half-resolution march from the eye to min(scene depth, surface, 120 m) in RAYN
+  even steps jittered by interleaved gradient noise, sun shadow map per step, the surface pattern projected along the
+  sun, extinction along the sun path and the view path, a forward phase), `W_RBLUR` (depth-aware 3×3 blur, weights
+  1 / (0.03 + relative depth difference)) and `W_POST`'s depth-aware bilinear upsample → `ouShaftMarch`, `ouShaftBlur`,
+  `ouShaftsComposite` (`src/render/shaders/underwater.glsl`, passes `uw_shafts*.frag`). Ours takes the pattern from the
+  drawn waves' focusing (`ouCausticFocus`, baked into a tile per frame) instead of its normal texture, TRU's units for
+  distances (×100, z up) and the water colour presets / unit colours for the medium; our [I] values are listed in
+  RENDERING "Under water". Clone used: openunderworld-work/research/abyssal-garden.
+
 ---
 
 ## Open questions

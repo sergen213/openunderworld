@@ -98,68 +98,149 @@ vec3 ouRays(vec3 c, vec2 uv) {
     float r = mix(mix(ouRayTexel(i), ouRayTexel(i + ivec2(1, 0)), f.x), mix(ouRayTexel(i + ivec2(0, 1)), ouRayTexel(i + ivec2(1, 1)), f.x), f.y);
     return c + r * w.waterPass[2].y;
 }
-// Enhanced (ours, RENDERING.md "Under water"): sun shafts as the volumetric continuation of the caustics. Each step
-// along the view ray traces back along the refracted sun to where it entered the surface and takes the focusing of
-// the same waves there (caustics.glsl ouCausticFocus, as the bed's caustics: the streaks meet the bright lines on the
-// floor and move with the waves; per colour, so they carry its chromatic fringes), blurred by the sun disk (0.005 x
-// depth, as the bed) and 2.5% of the step (one afl iteration): many thin parallel streaks under the
-// focusing crests (smoothstep(1.15, 2.2, focus)), coming and going in slow wave groups (ouShaftGroups). In-scatter:
-// HG 0.7 (strongest toward the sun), 3x3-PCF sun shadow (soft occluder volumes, not texel blocks), attenuated per
-// channel by the unit's extinction (water.frag ouWaterLook: red goes first; a water colour preset's own) over the sun's path below the surface and
-// the view path (blue-green, fading with depth), then soft-clamped under 0.3 x the water colour so looking into the
-// sun never saturates. 4 steps over up to 4000 units packed toward the eye (t ~ u^2), steps between groups or in
-// shadow skipping the focus (~1.5 ms at 2560 x 1440); the four pixels of each 2x2 quad march at interleaved quarter offsets and share their mean (ouQuadMean): 16 depth slices
-// without bands and no screen-space dither left (a static per-pixel jitter was the black checker FSR kept).
+// Enhanced (ours, RENDERING.md "Under water"): volumetric sun shafts, the pipeline of Noniv's abyssal-garden (MIT;
+// docs/RESEARCH.md; its shaders.js W_RAYS, W_RBLUR and W_POST's upsample) on TRU's water. Three passes before the post
+// pass, only while ouShaftsOn():
+// 1. ouShaftPatternTexel: the focusing of the drawn waves (caustics.glsl ouCausticFocus, as the caustics on the bed)
+//    baked once per frame into a kShaftTile^2 tile of the surface around the camera's sun entry point (kShaftTexel
+//    units a texel, snapped to texels so it does not swim), times slow wave groups (ouShaftGroups): the light that
+//    enters each spot of the surface.
+// 2. ouShaftMarch (half resolution): the view ray from the eye to the scene, the nearest surface or kShaftRange (and
+//    at most 5 green extinction lengths) in `steps` even steps jittered per pixel by interleaved gradient noise; each
+//    step traces back along the refracted sun to its surface entry point, takes the tile there, the sun shadow map
+//    (one tap: the occluders' shadow volumes) and the extinction e^(-sigma (sun path under water + view distance)) per
+//    channel; HG phase toward the sun. Out: rgb + linear view depth of the scene there.
+// 3. ouShaftBlur: depth-aware 3x3 blur at half resolution (hides the jitter).
+// The post pass adds them (ouShaftsComposite: depth-aware bilinear upsample, then soft-clamped under the water colour).
+#ifdef VULKAN
+layout(set = 1, binding = 6) uniform sampler2D uShaftsRaw;    // pass 2's output (the blur's input)
+layout(set = 1, binding = 7) uniform sampler2D uShafts;       // pass 3's output (the post composite)
+layout(set = 1, binding = 8) uniform sampler2D uShaftPattern; // pass 1's tile (the march)
+#else
+layout(binding = 13) uniform sampler2D uShaftsRaw;
+layout(binding = 14) uniform sampler2D uShafts;
+layout(binding = 15) uniform sampler2D uShaftPattern;
+#endif
 float ouPhase(float cosT, float g);
+float ouSunTapVisibility(vec3 p);
+const float kShaftTexel = 48.0;       // [I] tile texel (world units): streaks ~0.5..2 m across
+const int kShaftTile = 512;           // tile texels per side (render::kUnderwaterShaftTile): 24576 units
+const float kShaftRange = 12000.0;    // [I] longest march (abyssal-garden's 120 m)
+const float kShaftFocusDepth = 2000.0; // [I] depth whose focal length the tile's focusing takes
+const float kShaftBase = 0.12;        // [I] in-scatter of the unfocused light (the soft glow; abyssal-garden 0.012)
+const float kShaftStreak = 1.6;       // [I] in-scatter added by the focused light (the streaks)
+const float kShaftScatter = 1.0;      // [I] scattering coefficient / green extinction
+const float kShaftCap = 0.5;          // [I] soft clamp under this x the water colour: never a saturated blob
+// Shafts this frame: Enhanced water (fogColor.w), the camera below the nearest surface, a sun above the horizon.
+// Mirrors render::underwaterShaftsActive (Water.cpp), which records the passes.
+bool ouShaftsOn() {
+    return w.fogColor.w > 0.5 && w.sunColor.w > 0.0 && w.sunDir.z >= 0.05 && w.detail.w > 0.5 && w.eye.z < w.volumes[1].z;
+}
+vec3 ouShaftSun() { return -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / kIorRgb.g); } // toward the sun, under water
+// Extinction per unit (linear, per channel) and the surface water colour (linear): water.frag ouWaterLook's from the
+// unit's water pass, or a water colour preset's (red goes first: blue-green shafts fading with depth).
+void ouShaftMedium(out vec3 sigma, out vec3 surfaceCol) {
+    bool unit = w.waterPass[1].w > 0.0;
+    vec3 sf = unit ? w.waterPass[0].rgb : vec3(0.447, 0.780, 0.792);
+    sigma = (1.0 - 0.85 * pow(sf, vec3(2.2))) * (30.0 / (unit ? w.waterPass[1].w : 100000.0));
+    if (w.optics[0].w > 0.5) sigma = w.optics[0].rgb, sf = ouPresetHue(sf); // water colour preset
+    surfaceCol = max(sf, vec3(1e-3));
+}
+// The tile's world-space corner (both the pattern pass and the march compute it the same way from the block).
+vec2 ouShaftTileOrigin(vec3 l) {
+    vec2 c = w.eye.xy + l.xy * ((w.volumes[1].z - w.eye.z) / l.z);
+    return floor(c / kShaftTexel) * kShaftTexel - 0.5 * float(kShaftTile) * kShaftTexel;
+}
 // Wave groups: the swell focuses in patches ~10 m across (3000 units) that drift and come and go: streaks 0..1.
 float ouShaftGroups(vec2 e, float t) {
     float m = sin(dot(e, vec2(0.0021, 0.0009)) + 0.23 * t) * sin(dot(e, vec2(-0.0008, 0.0019)) - 0.17 * t);
     m += 0.5 * sin(dot(e, vec2(0.0013, -0.0027)) + 0.31 * t);
-    return smoothstep(-0.45, 0.9, m);
+    return smoothstep(-0.6, 0.9, m);
 }
-// Mean over the 2x2 pixel quad via fine derivatives (uniform control flow only; helper lanes take part).
-vec3 ouQuadMean(vec3 v, ivec2 px) {
-    vec3 dx = dFdxFine(v);
-    vec3 row = v + (px.x == 0 ? dx : -dx) * 0.5;
-    vec3 dy = dFdyFine(row);
-    return row + (px.y == 0 ? dy : -dy) * 0.5;
+// Pass 1, tile texel `px`: the focused light entering the surface there, 0..1.
+float ouShaftPatternTexel(ivec2 px) {
+    vec2 e = ouShaftTileOrigin(ouShaftSun()) + (vec2(px) + 0.5) * kShaftTexel;
+    float g = ouShaftGroups(e, w.eye.w);
+    if (g <= 0.0) return 0.0;
+    float f = ouCausticFocus(e, kShaftFocusDepth, kShaftTexel, 1).g;
+    return smoothstep(1.0, 1.9, f) * g;
 }
-vec3 ouShafts(vec3 c, vec2 uv) {
-    if (w.fogColor.w < 0.5 || w.sunColor.w <= 0.0 || w.sunDir.z < 0.05 || w.detail.w < 0.5) return c;
-    vec3 q = ouWorld(uv, texture(uDepth, uv).r, w.invViewProj);
+float ouIgn(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); } // Jimenez 2014
+// Linear view depth of the opaque scene at full-resolution pixel `fp` (the bilateral weights' key), at most 1e6.
+float ouViewDepth(ivec2 fp) {
+    vec2 uv = (vec2(fp) + 0.5) / vec2(textureSize(uDepth, 0));
+    vec3 q = ouWorld(uv, texelFetch(uDepth, fp, 0).r, w.invViewProj);
+    return min((w.viewProj * vec4(q, 1.0)).w, 1e6);
+}
+// Pass 2, half-resolution pixel `hp` (its full-resolution pixel 2 hp): in-scattered sun light (rgb) + view depth.
+vec4 ouShaftMarch(ivec2 hp, int steps) {
+    ivec2 fp = min(hp * 2, textureSize(uDepth, 0) - 1);
+    vec2 uv = (vec2(fp) + 0.5) / vec2(textureSize(uDepth, 0));
+    vec3 q = ouWorld(uv, texelFetch(uDepth, fp, 0).r, w.invViewProj);
+    float viewZ = min((w.viewProj * vec4(q, 1.0)).w, 1e6);
     vec3 dir = q - w.eye.xyz;
     float len = length(dir);
     dir /= max(len, 1e-3);
     float surf = w.volumes[1].z;
-    if (w.eye.z >= surf) return c;
     if (dir.z > 1e-4) len = min(len, (surf - w.eye.z) / dir.z);
-    len = min(len, 4000.0);
-    vec3 l = -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / kIorRgb.g); // toward the sun, under water
-    bool unit = w.waterPass[1].w > 0.0; // ouWaterLook's extinction per unit length, linear colour
-    vec3 sf = unit ? w.waterPass[0].rgb : vec3(0.447, 0.780, 0.792);
-    vec3 sigma = (1.0 - 0.85 * pow(sf, vec3(2.2))) * (30.0 / (unit ? w.waterPass[1].w : 100000.0));
-    if (w.optics[0].w > 0.5) sigma = w.optics[0].rgb, sf = max(ouPresetHue(sf), vec3(1e-3)); // water colour preset
-    const int steps = 4;
-    ivec2 px = ivec2(gl_FragCoord.xy) & 1;
-    float o = (float(px.x + 2 * px.y) + 0.5) * 0.25; // this pixel's quarter of each step (2x2 interleave)
-    vec3 lit = vec3(0.0);
+    vec3 sigma, sf;
+    ouShaftMedium(sigma, sf);
+    len = max(min(len, min(kShaftRange, 5.0 / max(sigma.g, 1e-7))), 0.0);
+    vec3 l = ouShaftSun();
+    vec2 org = ouShaftTileOrigin(l);
+    float span = kShaftTexel * float(kShaftTile);
+    float dt = len / float(max(steps, 1)), j = ouIgn(vec2(hp) + 0.5);
+    vec3 acc = vec3(0.0);
     for (int i = 0; i < steps; ++i) {
-        float u = (float(i) + o) / float(steps), t = len * u * u, dt = len * 2.0 * u / float(steps);
+        float t = (float(i) + j) * dt;
         vec3 p = w.eye.xyz + dir * t;
-        float h = max(surf - p.z, 1.0), sunPath = h / l.z;
-        vec2 e = p.xy + l.xy * sunPath; // surface entry point
-        float g = ouShaftGroups(e, w.eye.w), v = g > 0.0 ? ouSunShadowVisibility(p) : 0.0;
-        if (v <= 0.01) continue; // between wave groups or in shadow: skip the focus (the costly part)
-        vec3 b = smoothstep(vec3(1.15), vec3(2.2), ouCausticFocus(e, h, 0.005 * h + 0.025 * dt, 1)) * g;
-        lit += exp(-sigma * (sunPath + t)) * (b * v * dt);
+        float sunPath = max(surf - p.z, 0.0) / l.z;
+        vec2 tc = (p.xy + l.xy * sunPath - org) / span;
+        vec2 edge = min(tc, 1.0 - tc);
+        float pat = textureLod(uShaftPattern, tc, 0.0).r * smoothstep(0.0, 0.06, min(edge.x, edge.y));
+        acc += exp(-sigma * (sunPath + t)) * (ouSunTapVisibility(p) * (kShaftBase + kShaftStreak * pat));
     }
-    lit = ouQuadMean(lit, px); // the quad's four interleaved marches: 64 steps' worth, no dither left
-    const float kShaftStrength = 0.5; // scales both in-scatter and cap: exactly halves the shafts (was 1.0)
-    vec3 s = w.sunColor.rgb * w.sunColor.w * lit * (kShaftStrength * 4.0e-3 * 12.566371 * ouPhase(dot(dir, l), 0.7));
-    vec3 cap = kShaftStrength * 0.3 * sf; // soft clamp under the water's own colour: streaks, never a saturated blob
-    return c + cap * (1.0 - exp(-s / cap));
+    float ph = mix(1.0, 12.566371 * ouPhase(dot(dir, l), 0.75), 0.8); // x 4 pi: isotropic = 1
+    return vec4(w.sunColor.rgb * w.sunColor.w * acc * (dt * kShaftScatter * sigma.g * ph), viewZ);
+}
+// Pass 3: depth-aware 3x3 blur of pass 2 (abyssal-garden W_RBLUR's weights 1 / (0.03 + relative depth difference)).
+vec4 ouShaftBlur(ivec2 p) {
+    ivec2 mx = textureSize(uShaftsRaw, 0) - 1;
+    vec4 c = texelFetch(uShaftsRaw, p, 0);
+    vec3 acc = vec3(0.0);
+    float ws = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            vec4 r = texelFetch(uShaftsRaw, clamp(p + ivec2(x, y), ivec2(0), mx), 0);
+            float k = 1.0 / (0.03 + abs(r.a - c.a) / max(c.a, 1.0));
+            acc += r.rgb * k, ws += k;
+        }
+    return vec4(acc / ws, c.a);
+}
+// Post pass: the blurred shafts upsampled to this pixel (bilinear weights x depth similarity, W_POST), soft-clamped
+// cap (1 - e^(-s / cap)) under kShaftCap x the water colour, added.
+vec3 ouShaftsComposite(vec3 c) {
+    if (!ouShaftsOn()) return c;
+    ivec2 px = ivec2(gl_FragCoord.xy);
+    float zf = ouViewDepth(min(px, textureSize(uDepth, 0) - 1));
+    vec2 h = (gl_FragCoord.xy - 0.5) * 0.5; // half-resolution texel k holds full pixel 2k
+    vec2 b = floor(h), f = h - b;
+    ivec2 bi = ivec2(b), mx = textureSize(uShafts, 0) - 1;
+    vec3 acc = vec3(0.0);
+    float ws = 0.0;
+    for (int k = 0; k < 4; ++k) {
+        ivec2 o = ivec2(k & 1, k >> 1);
+        vec4 r = texelFetch(uShafts, clamp(bi + o, ivec2(0), mx), 0);
+        float bw = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+        float wk = (bw + 0.02) / (0.02 + abs(r.a - zf) / max(zf, 1.0));
+        acc += r.rgb * wk, ws += wk;
+    }
+    vec3 sigma, sf;
+    ouShaftMedium(sigma, sf);
+    vec3 cap = kShaftCap * sf;
+    return c + cap * (1.0 - exp(-max(acc / ws, vec3(0.0)) / cap));
 }
 vec3 ouUnderwater(vec3 c, vec2 uv) {
     // caustics light the scene, the water pass fogs it, then the shafts' and tru.exe's rays add light (0x6D8C20 order)
-    return ouRays(ouShafts(ouWaterPass(ouCaustics(c, uv), uv), uv), uv);
+    return ouRays(ouShaftsComposite(ouWaterPass(ouCaustics(c, uv), uv)), uv);
 }
