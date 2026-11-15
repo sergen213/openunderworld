@@ -1588,13 +1588,16 @@ struct EffectsView {
         underwater = {};
         system.spritesBelowZ = 1e30f;
         // tru.exe 0x5EA200: only the water Lara is in, against its wave surface at the eye (the l2 yacht deck lies inside
-        // the sea's box, under its top, but above the waves: no water look there).
+        // the sea's box, under its top, but above the waves: no water look there); render::eyeUnderWater: no bottom test
+        // while water holds the eye, so l1's sea (l1_seatop's box down to -7177 over l1_seafloor's) stays under water down
+        // to the bed instead of losing the whole look 30 m down.
         if (const auto ew = ou::game::eyeWater(w, eye, double(w.ticks()) * ou::game::kTickSeconds)) {
             const auto& m = w.collision().markup[size_t(ew->markup)];
             const glm::vec3 lo = m.points[0], hi = m.points[1];
-            const float h = eye.z - ew->surface, d = std::abs(h);
             const bool xy = eye.x >= lo.x && eye.x <= hi.x && eye.y >= lo.y && eye.y <= hi.y;
-            under = xy && h < 0 && eye.z >= lo.z;
+            const auto eu = ou::render::eyeUnderWater(eye, lo, hi, ew->surface, fo.waterVolumes);
+            const float h = eu.height, d = std::abs(h);
+            under = eu.under;
             underwater.strength = under ? 1.0f : xy && h >= 0 && h < 600 ? 1.0f - h / 600.0f : 0.0f;
             const float range = uw.env.waterFilterRange[under ? 0 : 1];
             // Enhanced water submerged: abyssal-garden's medium (post pass ouUwFog, uw_grade.frag) is the whole under-water

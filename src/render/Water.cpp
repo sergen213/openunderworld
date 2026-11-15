@@ -115,6 +115,25 @@ bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes
     return false;
 }
 
+float waterColumnTop(glm::vec3 p, float top, std::span<const WaterVolume> volumes) {
+    for (bool raised = true; raised;) { // each pass climbs strictly higher: ends within volumes.size() passes
+        raised = false;
+        for (const auto& v : volumes)
+            if (p.x >= v.min[0] && p.x <= v.max[0] && p.y >= v.min[1] && p.y <= v.max[1] && top >= v.min[2] && top < v.max[2])
+                top = v.max[2], raised = true;
+    }
+    return top;
+}
+
+EyeUnder eyeUnderWater(glm::vec3 eye, glm::vec3 lo, glm::vec3 hi, float surface, std::span<const WaterVolume> volumes) {
+    Camera c;
+    c.position = eye;
+    const bool inWater = cameraUnderwater(c, volumes);
+    const bool xy = eye.x >= lo.x && eye.x <= hi.x && eye.y >= lo.y && eye.y <= hi.y;
+    const float h = eye.z - (inWater ? waterColumnTop(eye, surface, volumes) : surface);
+    return {h < 0 && ((xy && eye.z >= lo.z) || inWater), h};
+}
+
 namespace {
 // NeuralSpecOcean demo.js WATER_PALETTES (absorption, scatter; their keys emerald, maldives, pacific, jade, nordic),
 // verbatim; clear: pure water (Pope & Fry 1997: 0.34 / 0.0565 / 0.0092 per m at 650 / 550 / 450 nm), scatter [I] a
@@ -235,18 +254,25 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
 
     const glm::vec3 eye = camera.position;
     // Water volumes, nearest first (box distance): the atmosphere ends its rays on their surfaces (the Enhanced
-    // water pass does not write depth) and the debug view marks them.
+    // water pass does not write depth) and the debug view marks them. Slot 0 is the eye's volume, whose top (volumes[1].z
+    // = ouUwSurfaceZ: the under-water medium's surface, its depth, exposure and shaft / snow plane) is the sea's surface
+    // over the eye (waterColumnTop): of the boxes holding the eye the one reaching highest, raised through boxes stacked
+    // over it. Nearest by box distance alone, the eye diving out of l1_seatop's box (bottom -7177) into l1_seafloor's
+    // (top -6295) took the lower box's top: its depth snapped from ~30 m to ~3 m.
     std::vector<std::pair<float, const WaterVolume*>> vols;
     for (const auto& v : options.waterVolumes) {
         const glm::vec3 lo(v.min[0], v.min[1], v.min[2]), hi(v.max[0], v.max[1], v.max[2]);
         vols.push_back({glm::distance(glm::clamp(eye, lo, hi), eye), &v});
     }
     std::sort(vols.begin(), vols.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (size_t i = 1; i < vols.size() && vols[i].first == 0.0f; ++i) // several hold the eye: the highest first
+        if (vols[i].second->max[2] > vols[0].second->max[2]) std::swap(vols[0], vols[i]);
     const size_t nv = std::min<size_t>(vols.size(), 8);
     for (size_t i = 0; i < nv; ++i) {
         w.volumes[2 * i] = {vols[i].second->min[0], vols[i].second->min[1], vols[i].second->min[2], 0};
         w.volumes[2 * i + 1] = {vols[i].second->max[0], vols[i].second->max[1], vols[i].second->max[2], 0};
     }
+    if (nv && vols[0].first == 0.0f) w.volumes[1].z = waterColumnTop(eye, vols[0].second->max[2], options.waterVolumes);
     const float debug = float(std::clamp(options.waterDebug, 0, kWaterDebugViews - 1));
     w.detail = {options.waterDetail ? 1.0f : 0.0f, debug, 0.12f * 290.0f, float(nv)}; // z: Godot heightstrength 0.12 m
     if (options.waterDetail) { // the four lamps nearest the camera, reflected by the water [I radius cut]
@@ -469,8 +495,11 @@ std::string uwBubbleFragmentSource(bool) { return expandParticleIncludes(kUwBubb
 
 UwGrade uwGrade(const WaterBlock& wb) {
     if (wb.fogColor.w <= 0.5f || wb.waterPass[2].x <= 0.0f || wb.detail.w <= 0.5f || wb.eye.z >= wb.volumes[1].z) return {};
-    // main.js: ek = sat((-cam.y - 8) / 26), cam.y = the eye's ag height (shaders/uw_medium.glsl agEye)
-    const float ek = std::clamp(((wb.volumes[1].z - wb.eye.z) / ocean::kMetre - 8.0f) / 26.0f, 0.0f, 1.0f);
+    // main.js: ek = sat((-cam.y - 8) / 26), cam.y = the eye's ag height (shaders/uw_medium.glsl agEye), through agLightY [I]
+    // (the light terms' depth, soft past 20 m towards 56 m) as the light it exposes for
+    const float y = std::min(0.0f, (wb.eye.z - wb.volumes[1].z) / ocean::kMetre);
+    const float ly = y >= -20.0f ? y : -20.0f - 36.0f * (1.0f - std::exp((y + 20.0f) / 36.0f));
+    const float ek = std::clamp((-ly - 8.0f) / 26.0f, 0.0f, 1.0f);
     return {true, 0.62f * (0.6f + 0.4f * ek), std::min(wb.waterPass[2].x, 1.0f)};
 }
 std::string uwBloomSource() { return kUwBloom; }

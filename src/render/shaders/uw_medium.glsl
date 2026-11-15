@@ -28,6 +28,12 @@ float agIgn(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.
 float agHs(float x) { return fract(sin(x * 127.1) * 43758.5453); }
 vec3 agKd(float z) { return mix(kAgKd, kAgKdz, z); }
 vec3 agSg(float z) { return mix(kAgSig, vec3(0.034, 0.026, 0.022), z); }
+// [I] ours, not the demo's: the depth the light terms see (sun, ambient, side light, the fog's in-scatter, the shafts),
+// adapted for depths below the demo's range. Its deepest floor lies ~56 m down; TRU's seas go deeper (the l1 bed is
+// ~139 m under the surface), where the literal exp(kd y) leaves a play area nearly black (sun ~0.03 in green). Literal
+// down to 20 m, then a soft knee (slope 1 at the knee) towards 56 m: 61 m -> 44.5 m, 139 m -> 54.7 m. Positions (agCuv,
+// the surface plane, fog distance, snow) stay literal. Ag metres; unchanged above -20 m (and above the surface).
+float agLightY(float y) { return y >= -20.0 ? y : -20.0 - 36.0 * (1.0 - exp((y + 20.0) / 36.0)); }
 // World (TRU units, z up) -> ag space, the surface of the eye's water volume (ouUwSurfaceZ) at y = 0.
 vec3 agPos(vec3 p) { return vec3(p.x, p.z - ouUwSurfaceZ(), p.y) / kM; }
 vec3 agDir(vec3 d) { return vec3(d.x, d.z, d.y); }
@@ -67,7 +73,7 @@ vec3 agFogIn(vec3 ro, vec3 rd, float d, float z, vec3 sun) {
     vec3 I = (1.0 - exp(-a * d)) / a;
     float mu = max(dot(rd, sun), 0.0);
     float m2 = mu * mu;
-    return mix(kAgWcol, kAgPcol, z) * agSg(z) * exp(k * ro.y) * I * (1.22 + 0.3 * m2 * m2);
+    return mix(kAgWcol, kAgPcol, z) * agSg(z) * exp(k * agLightY(ro.y)) * I * (1.22 + 0.3 * m2 * m2);
 }
 vec3 agFin(vec3 c) { return min(max(c, vec3(0.0)), vec3(40.0)); }
 // cuv / caus / caus2 (S_B): the caustic texture projected along the sun onto the point.
@@ -99,15 +105,15 @@ vec3 agCausLod(sampler2D tW, vec3 p, float d, float fp) {
     vec3 c = min(pow(a, vec3(2.3)) * 5.0 * (0.45 + b * 1.3), vec3(4.0));
     return mix(c, vec3(0.33), agSs(35.0, 100.0, d));
 }
-vec3 agSunE(float y, float z) { return kAgSunc * exp(agKd(z) * (min(y, 0.0) / agSun().y)) * (0.5 + 0.5 * agSat(-y / 30.0)); }
+vec3 agSunE(float y, float z) { return kAgSunc * exp(agKd(z) * (agLightY(min(y, 0.0)) / agSun().y)) * (0.5 + 0.5 * agSat(-y / 30.0)); }
 vec3 agAmb(vec3 p, vec3 n, float sky, float z) {
     float up = n.y * 0.5 + 0.5;
-    return mix(vec3(0.22, 0.60, 0.80), vec3(0.34, 0.56, 0.82), z) * exp(agKd(z) * min(p.y, 0.0) * 1.2) * (0.3 + 0.7 * sky) *
+    return mix(vec3(0.22, 0.60, 0.80), vec3(0.34, 0.56, 0.82), z) * exp(agKd(z) * agLightY(min(p.y, 0.0)) * 1.2) * (0.3 + 0.7 * sky) *
                (0.24 + 0.76 * up * up) * 1.3 * (0.55 + 0.45 * agSat(-p.y / 30.0)) +
            vec3(0.003, 0.010, 0.016);
 }
 vec3 agSide(vec3 p, vec3 n, float open, float z) {
-    return mix(kAgWcol, kAgPcol, z) * exp(agKd(z) * min(p.y, 0.0)) * open * (1.0 - abs(n.y)) * 0.7;
+    return mix(kAgWcol, kAgPcol, z) * exp(agKd(z) * agLightY(min(p.y, 0.0))) * open * (1.0 - abs(n.y)) * 0.7;
 }
 // W_SOLID fs light on rock (mat <= 1: gloss 0.1) at ag point p: N the shading normal, n0 the geometric one, V toward the
 // eye, ca = agCaus, sh = the sun visibility (shadow9). diffuse = dl + am (the demo multiplies it by the albedo: c = alb x

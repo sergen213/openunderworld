@@ -197,7 +197,7 @@ vec4 agRays(ivec2 hp) {
         vec2 q = p.xz - sx.xz * (p.y / sx.y);
         float pat = agSs(0.3, 0.7, textureLod(uAgWater, q / 27.0, 2.5).r) *
                     agSs(0.15, 0.6, textureLod(uAgWater, q.yx / 11.0 + 0.3, 2.0).r);
-        acc += exp(-sgz * t + k * (p.y / sx.y)) * (vis * (0.012 + pat * 6.0));
+        acc += exp(-sgz * t + k * (agLightY(p.y) / sx.y)) * (vis * (0.012 + pat * 6.0)); // agLightY [I]: uw_medium.glsl
     }
     float mu = max(dot(rd, sx), 0.0);
     float ph = mix(0.2 + 2.0 * mu * mu * mu, 0.8, kAgZone);

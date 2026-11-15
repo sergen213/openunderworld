@@ -95,6 +95,16 @@ inline constexpr float kWaterClarity = 4.0f; // [I] game visibility: real ocean 
 std::array<glm::vec4, 3> waterOptics(WaterColor c);
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes);
+// The sea surface over a point in the water: `top` (the surface of the volume holding p) raised through every volume
+// stacked over it, i.e. whose box holds the point (p.xy, top) and reaches higher. A sea split into stacked boxes (l1_seatop
+// z -7177..1400 over l1_seafloor -48412..-6295, separate units) is one water column up to its highest surface.
+float waterColumnTop(glm::vec3 p, float top, std::span<const WaterVolume> volumes);
+// tru.exe 0x5EA200's "camera under water" for the water Lara is in (box lo..hi, wave surface `surface` at the eye): the
+// eye's height over that water's surface (the whole column's, waterColumnTop, when the eye is in water) and whether it
+// is under it. The exe has no bottom test; ours keeps one where no water holds the eye (a room or cave under a water box
+// stays dry), so a sea in stacked boxes stays under water below its upper box.
+struct EyeUnder { bool under = false; float height = 0; };
+EyeUnder eyeUnderWater(glm::vec3 eye, glm::vec3 lo, glm::vec3 hi, float surface, std::span<const WaterVolume> volumes);
 WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewProj, const scene::Environment& env,
                       const FrameOptions& options);
 

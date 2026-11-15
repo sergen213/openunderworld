@@ -721,6 +721,30 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
 ou-game (`EffectsView::water`) fills `FrameOptions::underwater` and the filter weights from the current unit and logs
 `camera under / out of water`. Test: `FxReal.UnderwaterSettings`.
 
+Stacked seas (`render::eyeUnderWater`, `render::waterColumnTop`). The l1 sea is two boxes in two units:
+- l1_seatop spans z −7177..1400; l1_seafloor spans −48412..−6295, below it.
+- Lara keeps the seatop box as her water while she dives.
+
+What 0x5EA200 compares, and what we add:
+- 0x5EA200 compares the camera with her water's surface only. It has no bottom test.
+- Our test: the eye is under water when it is below that surface and either inside her box or inside any water box. A room or cave under a water box (no water holds the eye) stays dry.
+- The surface is the whole column's: it is raised through boxes stacked over the eye.
+
+The water block takes the same surface:
+- Slot 0 of `volumes` is the eye's volume: the highest of the boxes holding the eye.
+- Its top `volumes[1].z` (= `ouUwSurfaceZ`, the medium's surface) is raised the same way.
+- So the depth, exposure, sun falloff and shaft / snow plane change smoothly through the boxes' overlap.
+
+Before 2026-11-15 (0.48.0 included), the camera passing −7177 (about 30 m down) turned the whole look off down to the bed, in both qualities. Taking the nearest box's top would also have snapped the medium's depth from 30 m to 3 m.
+
+Test: `WaterColumn.StackedSeaBoxesStayOneSea`.
+
+Light depth below the demo's range (`agLightY`, [I], ours):
+- The demo's deepest floor is about 56 m down. The l1 bed lies about 139 m under the sea's surface, where the literal exp(kd y) leaves the play area nearly black (the sun at about 0.03 in green).
+- The depth the light terms see is literal down to 20 m, then follows a soft knee toward 56 m: −(20 + 36 (1 − e^(−(d − 20) / 36))), slope 1 at the knee. 61 m reads as 44.5 m and 139 m as 54.7 m.
+- Used by: `agSunE`, `agAmb`, `agSide`, `agFogIn`'s e^(k ro.y), the shaft march's e^(k p.y / sun.y), and `uwGrade`'s exposure depth.
+- Positions stay literal: `agCuv`, the surface plane, fog distance and snow.
+
 ### Under water: marine snow, bubbles and the composite (Enhanced, GL + Vulkan; camera submerged)
 
 A literal port of Noniv/abyssal-garden's `vsSnow` / `fsSnow`, `vsBub` / `fsBub`, `W_BLIT` bloom and `W_POST` (MIT,
