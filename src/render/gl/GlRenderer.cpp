@@ -153,7 +153,7 @@ layout(location = 4) uniform int uTonemap;     // FrameOptions::tonemap: 0 origi
 layout(location = 5) uniform int uUw; // bit 0: uUwParticles holds this frame's under-water particles; bit 1: submerged,
                                       // write the linear HDR frame for the under-water composite (Water.hpp UwGrade)
 layout(binding = 0) uniform sampler2D uScene;
-layout(binding = 17) uniform sampler2D uUwParticles; // premultiplied, composited over the fogged scene (13-15 shafts, 16 shadow)
+layout(binding = 17) uniform sampler2D uUwParticles; // premultiplied, composited over the fogged scene (13-14 shafts, 16 shadow)
 out vec4 oColor;
 )";
 const char* kTonemapGlsl =
@@ -198,7 +198,8 @@ void main() {
         vec4 p = textureLod(uUwParticles, vUv, 0.0);
         l = l * (1.0 - p.a) + p.rgb;
     }
-    oColor = (uUw & 2) != 0 ? vec4(l, 1.0) : vec4(pow(l, vec3(1.0 / 2.2)) * (1.0 - uFade), 1.0);
+    // the composite: alpha = view depth in metres (uw_grade.frag's shaft upsample)
+    oColor = (uUw & 2) != 0 ? vec4(l, agViewDepth(ivec2(gl_FragCoord.xy))) : vec4(pow(l, vec3(1.0 / 2.2)) * (1.0 - uFade), 1.0);
 })";
 
 
@@ -414,10 +415,9 @@ struct Targets {
     Texture reflection;
     Renderbuffer reflectionDepth;
     Framebuffer reflectionFbo;
-    // Enhanced under-water sun shafts (render/Water.hpp): [0] march, [1] blurred (half size, RGBA16F; units 13, 14), [2] the
-    // pattern tile (R16F, kUnderwaterShaftTile^2; unit 15).
-    std::array<Texture, 3> shaft;
-    std::array<Framebuffer, 3> shaftFbo;
+    // Enhanced under-water sun shafts (render/Water.hpp): [0] march, [1] blurred (half size, RGBA16F; units 13, 14).
+    std::array<Texture, 2> shaft;
+    std::array<Framebuffer, 2> shaftFbo;
     // Enhanced under-water composite (render/Water.hpp UwGrade): the post pass's linear frame (render size) and the bloom
     // chain (W >> (i + 1)), all RGBA16F, linear, clamped.
     Texture uwHdr;
@@ -429,7 +429,7 @@ struct Targets {
 struct Resources {
     Program sceneProgram, textProgram, lineProgram, shadowProgram, postProgram;
     Program waterProgram, splashSplatProgram, splashBlurProgram, splashCompositeProgram; // Enhanced water (render/Water.cpp sources)
-    std::array<Program, 3> shaftPrograms; // under-water sun shafts: pattern, march, blur (render/Water.hpp)
+    std::array<Program, 2> shaftPrograms; // under-water sun shafts: march, blur (render/Water.hpp)
     // Enhanced water's animated water texture (render/Water.hpp kAgWaterSize; abyssal-garden W_WATER): RGBA16F with
     // kAgWaterLevels mips, unit 18 (`uAgWater`: post, water, shafts, particles); program = shaders/uw_water.frag.
     Program agWaterProgram;
@@ -558,7 +558,7 @@ public:
         if (!r.splashBlurProgram.get()) return false;
         r.splashCompositeProgram = linkProgram(screenVs.c_str(), compositeFs.c_str(), error);
         if (!r.splashCompositeProgram.get()) return false;
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 2; ++i) {
             const std::string fs = underwaterShaftSource(i);
             r.shaftPrograms[size_t(i)] = linkProgram(kPostVs, fs.c_str(), error);
             if (!r.shaftPrograms[size_t(i)].get()) return false;
@@ -980,27 +980,25 @@ public:
                 glBlitNamedFramebuffer(t.scene.get(), t.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width,
                                        vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
         }
-        if (enhancedWater && underwaterShaftsActive(wb)) { // pattern tile, half-size march, blur (the post pass upsamples)
+        // Submerged in Enhanced water (UwGrade): the post pass writes the linear frame into uwHdr, then the bloom chain and
+        // the grade (abyssal-garden W_BLIT + W_POST) write the default framebuffer; the grade adds the shafts.
+        const UwGrade grade = enhancedWater ? uwGrade(wb) : UwGrade{};
+        const bool shafts = grade.on && options.lightShafts && underwaterShaftsActive(wb);
+        if (shafts) { // half-size march, blur (uw_grade.frag upsamples)
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_CULL_FACE);
             glBindTextureUnit(6, t.opaqueDepth.get());
             glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get());
             glBindTextureUnit(12, r.ocean.get());
             glBindTextureUnit(13, t.shaft[0].get());
-            glBindTextureUnit(15, t.shaft[2].get());
             glBindVertexArray(r.emptyVao.get());
-            for (int i : {2, 0, 1}) { // output texture of pattern, march, blur
-                const int sw = i == 2 ? kUnderwaterShaftTile : (vp.width + 1) / 2, sh = i == 2 ? kUnderwaterShaftTile : (vp.height + 1) / 2;
-                glBindFramebuffer(GL_FRAMEBUFFER, t.shaftFbo[size_t(i)].get());
-                glViewport(0, 0, sw, sh);
-                glUseProgram(r.shaftPrograms[size_t(i == 2 ? 0 : i + 1)].get());
-                if (i == 0) glUniform1i(0, underwaterShaftSteps(options));
+            glViewport(0, 0, (vp.width + 1) / 2, (vp.height + 1) / 2);
+            for (size_t i = 0; i < 2; ++i) { // output texture of march, blur
+                glBindFramebuffer(GL_FRAMEBUFFER, t.shaftFbo[i].get());
+                glUseProgram(r.shaftPrograms[i].get());
                 glDrawArrays(GL_TRIANGLES, 0, 3);
             }
         }
-        // Submerged in Enhanced water (UwGrade): the post pass writes the linear frame into uwHdr, then the bloom chain and
-        // the grade (abyssal-garden W_BLIT + W_POST) write the default framebuffer.
-        const UwGrade grade = enhancedWater ? uwGrade(wb) : UwGrade{};
         glBindFramebuffer(GL_FRAMEBUFFER, grade.on ? t.uwHdrFbo.get() : 0);
         glViewport(0, 0, vp.width, vp.height);
         glDisable(GL_DEPTH_TEST);
@@ -1019,10 +1017,9 @@ public:
         glBindTextureUnit(11, t.feedback.get());   // the feedback effect's previous frame
         glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get()); // underwater caustics' wave field
         glBindTextureUnit(12, r.ocean.get());                                     // ... and the FFT ocean
-        glBindTextureUnit(14, t.shaft[1].get());                                  // under-water sun shafts (blurred)
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        if (grade.on) drawUwComposite(vp, grade, std::clamp(options.screenFade, 0.0f, 1.0f));
+        if (grade.on) drawUwComposite(vp, grade, shafts, std::clamp(options.screenFade, 0.0f, 1.0f));
         if (feedback) { // 0x509630 -> 0x51A2E0: this frame's image (before the HUD) for the next frame's feedback
             glBlitNamedFramebuffer(0, t.feedbackFbo.get(), 0, 0, vp.width, vp.height, 0, 0, std::max(1, vp.width / 2),
                                    std::max(1, vp.height / 2), GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -1183,13 +1180,11 @@ private:
         t.reflectionFbo = newFramebuffer();
         glNamedFramebufferTexture(t.reflectionFbo.get(), GL_COLOR_ATTACHMENT0, t.reflection.get(), 0);
         glNamedFramebufferRenderbuffer(t.reflectionFbo.get(), GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.reflectionDepth.get());
-        for (size_t i = 0; i < 3; ++i) {
-            const bool tile = i == 2;
+        for (size_t i = 0; i < 2; ++i) {
             t.shaft[i] = newTexture();
-            glTextureStorage2D(t.shaft[i].get(), 1, tile ? GL_R16F : GL_RGBA16F, tile ? kUnderwaterShaftTile : (vp.width + 1) / 2,
-                               tile ? kUnderwaterShaftTile : (vp.height + 1) / 2);
-            glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_MIN_FILTER, tile ? GL_LINEAR : GL_NEAREST);
-            glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_MAG_FILTER, tile ? GL_LINEAR : GL_NEAREST);
+            glTextureStorage2D(t.shaft[i].get(), 1, GL_RGBA16F, (vp.width + 1) / 2, (vp.height + 1) / 2);
+            glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTextureParameteri(t.shaft[i].get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             t.shaftFbo[i] = newFramebuffer();
@@ -1852,8 +1847,9 @@ private:
 
     // Enhanced under-water composite (render/Water.hpp UwGrade), after the post pass wrote uwHdr: abyssal-garden main.js's
     // bloom chain (down0 uwHdr -> level 0, down level i - 1 -> i, up level i -> i - 1 added), then the grade into the
-    // default framebuffer (units 0 / 1, uniform location 0 = mode, exposure, fade, strength).
-    void drawUwComposite(Viewport vp, const UwGrade& grade, float fade) {
+    // default framebuffer (units 0 / 1 + 14 the blurred shafts, added when `shafts`; uniform location 0 = mode | shafts
+    // on, exposure, fade, strength).
+    void drawUwComposite(Viewport vp, const UwGrade& grade, bool shafts, float fade) {
         Targets& t = res_->targets;
         auto level = [&](int i) { return glm::ivec2(std::max(1, vp.width >> (i + 1)), std::max(1, vp.height >> (i + 1))); };
         auto blit = [&](int out, float mode, GLuint input) {
@@ -1875,7 +1871,8 @@ private:
         glUseProgram(res_->uwGradeProgram.get());
         glBindTextureUnit(0, t.uwHdr.get());
         glBindTextureUnit(1, t.uwBloom[0].get());
-        glUniform4f(0, 0.0f, grade.exposure, fade, grade.strength);
+        glBindTextureUnit(14, t.shaft[1].get());
+        glUniform4f(0, shafts ? 1.0f : 0.0f, grade.exposure, fade, grade.strength);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
 

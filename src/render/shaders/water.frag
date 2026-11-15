@@ -61,7 +61,6 @@ layout(binding = 18) uniform sampler2D uAgWater; // the animated water texture (
 #endif
 #include "sun.glsl"
 #include "shaders/waves.glsl" // the waves (shared with water.vert and the caustics)
-#include "shaders/caustics.glsl"
 #include "shaders/uw_medium.glsl" // the under-water medium (seen from below: the total internal reflection)
 float ouSunShadowVisibility(vec3 p) { return ouSunVisibility(p, vec3(0.0), true, false); }
 #ifdef VULKAN

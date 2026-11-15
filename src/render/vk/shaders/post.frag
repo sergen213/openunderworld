@@ -4,10 +4,10 @@ layout(location = 0) in vec2 vUv;
 // fade: FrameOptions::screenFade; tonemap: FrameOptions::tonemap (0 original, 1 agx); uw: bit 0 = uUwParticles holds
 // this frame's Enhanced under-water particles (render/Water.hpp UwParticlePush), premultiplied over the fogged scene;
 // bit 1 = the camera is submerged (render/Water.hpp UwGrade): no tone map, write the linear HDR frame for uw_bloom.frag /
-// uw_grade.frag (abyssal-garden's W_POST), no fade (the grade fades)
+// uw_grade.frag (abyssal-garden's W_POST; alpha = the view depth for its shaft upsample), no fade (the grade fades)
 layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; float fade; int tonemap; int uw; } pc;
 layout(set = 0, binding = 0) uniform sampler2D uScene;
-layout(set = 1, binding = 9) uniform sampler2D uUwParticles; // after the shafts' 6-8 (VkRenderer post-water set)
+layout(set = 1, binding = 9) uniform sampler2D uUwParticles; // VkRenderer post-water set (6, 7: the shafts)
 layout(location = 0) out vec4 oColor;
 #include "shaders/tonemap.glsl"
 vec3 fetch(vec2 uv) {
@@ -50,5 +50,6 @@ void main() {
         vec4 p = textureLod(uUwParticles, vUv, 0.0);
         l = l * (1.0 - p.a) + p.rgb;
     }
-    oColor = (pc.uw & 2) != 0 ? vec4(l, 1.0) : vec4(pow(l, vec3(1.0 / 2.2)) * (1.0 - pc.fade), 1.0);
+    // the composite: alpha = view depth in metres (uw_grade.frag's shaft upsample)
+    oColor = (pc.uw & 2) != 0 ? vec4(l, agViewDepth(ivec2(gl_FragCoord.xy))) : vec4(pow(l, vec3(1.0 / 2.2)) * (1.0 - pc.fade), 1.0);
 }

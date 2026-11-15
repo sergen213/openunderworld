@@ -46,9 +46,6 @@ const char* kAtmosphere =
 const char* kFilter =
 #include "filter.glsl.inc"
     ;
-const char* kCaustics =
-#include "caustics.glsl.inc"
-    ;
 const char* kWaves =
 #include "waves.glsl.inc"
     ;
@@ -73,9 +70,7 @@ const char* kUwBubbleVert =
 const char* kUwBubbleFrag =
 #include "uw_bubble.frag.inc"
     ;
-const char* kShaftSources[3] = { // shaders/uw_shafts_*.frag (render/Water.hpp underwaterShaftSource)
-#include "uw_shafts_pattern.frag.inc"
-    ,
+const char* kShaftSources[2] = { // shaders/uw_shafts*.frag (render/Water.hpp underwaterShaftSource)
 #include "uw_shafts.frag.inc"
     ,
 #include "uw_shafts_blur.frag.inc"
@@ -409,10 +404,9 @@ std::string withVersion(const char* source, bool vulkan) {
     return source;
 }
 // GL has no #include: splice the shared files in place of their #include lines (glslc resolves them for Vulkan); every
-// occurrence, in this order, so caustics.glsl's own waves include is spliced too (waves.glsl has an include guard).
+// occurrence (waves.glsl has an include guard).
 std::string expandIncludes(std::string s) {
     const std::pair<const char*, const char*> files[] = {{"#include \"sun.glsl\"", sunGlsl()},
-                                                         {"#include \"shaders/caustics.glsl\"", kCaustics},
                                                          {"#include \"shaders/waves.glsl\"", kWaves},
                                                          {"#include \"shaders/uw_medium.glsl\"", kUwMedium}};
     for (const auto& [line, text] : files)
@@ -490,12 +484,8 @@ bool underwaterShaftsActive(const WaterBlock& b) {
     return b.fogColor.w > 0.5f && b.sunColor.w > 0.0f && b.sunDir.z >= 0.05f && b.detail.w > 0.5f && b.eye.z < b.volumes[1].z;
 }
 
-int underwaterShaftSteps(const FrameOptions& options) {
-    return !options.lightShafts ? 0 : options.atmosphere == Atmosphere::High ? 32 : 20; // [I]
-}
-
 std::string underwaterShaftSource(int pass) {
-    std::string s = kShaftSources[std::clamp(pass, 0, 2)];
+    std::string s = kShaftSources[std::clamp(pass, 0, 1)];
     for (const auto& [line, text] : {std::pair{"#include \"shaders/underwater.glsl\"", kUnderwater},
                                      std::pair{"#include \"shaders/atmosphere.glsl\"", kAtmosphere}})
         if (const size_t at = s.find(line); at != std::string::npos) s.replace(at, std::strlen(line), text);

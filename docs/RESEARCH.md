@@ -506,7 +506,7 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   2026 bgbg108555 and NeuralSpecOcean Contributors"; WebGL2 / three.js demo, no code used: ideas and constants
   re-expressed in our GLSL / C++). Water optics taken from it (RENDERING "Water colour"): the dispersion indices
   n_RGB = (1.331, 1.334, 1.339) and per-colour caustic focal distance d(1 - 1/n) (`TECHNICAL_WHITEPAPER.md` §4.3,
-  chromatic Hessian caustics) in `caustics.glsl`; the five bio-optical water palettes (`source/demo.js`
+  chromatic Hessian caustics) in `caustics.glsl` (removed 2026-11-15); the five bio-optical water palettes (`source/demo.js`
   `WATER_PALETTES`: absorption + scatter colour per metre, which it describes as "calibrated to Morel & Prieur (1977)
   & Jerlov (1976) Case-1/Case-2 spectral IOPs"; its keys emerald, maldives, pacific, jade, nordic = our emerald,
   coral_lagoon, pelagic_cobalt, mineral_jade, subpolar_slate), its surface transmittance exp(-1.16 a path)
@@ -525,7 +525,8 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
 
 ### 8.9 Caustics references (2026-10-30)
 
-`src/render/shaders/caustics.glsl` is written for this project; no third-party caustic code is used.
+`src/render/shaders/caustics.glsl` was written for this project (removed 2026-11-15: the caustics and sun shafts are
+abyssal-garden's texture ports now, §8.11); no third-party caustic code was used.
 - **WebGL Water** by Evan Wallace (2011), https://github.com/evanw/webgl-water — "Copyright 2011 Evan Wallace,
   Released under the MIT license" (source headers; the repo has no LICENSE file). Physics followed: caustic light =
   old area / new area of the refracted beam (its caustics shader rasterises the refracted surface grid). Ours takes
@@ -588,9 +589,9 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   from the eye to min(scene depth, surface, 120 m) in RAYN even steps jittered by interleaved gradient noise, sun shadow
   map per step, the surface pattern projected along the sun, extinction along the sun path and the view path, a forward
   phase), `W_RBLUR` (depth-aware 3×3 blur, weights 1 / (0.03 + relative depth difference)) and `W_POST`'s depth-aware
-  bilinear upsample → `ouShaftMarch`, `ouShaftBlur`, `ouShaftsComposite` (`src/render/shaders/underwater.glsl`, passes
-  `uw_shafts*.frag`). Ours takes the pattern from the drawn waves' focusing (`ouCausticFocus`, baked into a tile per
-  frame) instead of its normal texture.
+  bilinear upsample → `agRays`, `agRaysBlur` (`src/render/shaders/underwater.glsl`, passes `uw_shafts*.frag`) and
+  `uw_grade.frag`, literal ports (RAYN 34, `RAYS` 0.54, its streak pattern from the animated water texture); its
+  density-volume mist term is dropped (no volume: open water's value, 0).
 - Marine snow (`vsSnow` / `fsSnow`: a camera-wrapped instanced speck field with drift, wobble, twinkle, a pixel-size
   floor and depth-attenuated, shadowed sunlight) and bubbles (`vsBub` / `fsBub`: wobbling outline, rim + two highlights,
   lit from above / below by the water's in-scatter, fogged by distance) → `src/render/shaders/uw_snow.*` / `uw_bubble.*`

@@ -54,7 +54,7 @@ vec3 ouPresetHue(vec3 gammaCol) { // gamma colour -> the preset hue at its lumin
 // footprint: p comes from the depth buffer), then fogged: agFog(c, p) = c e^(-sg d) ss(230, 185, d) + fogIn. Rays that
 // leave through the surface (looking up from under it: water.frag's Snell's window, drawn over the sky too) fog up to it
 // and keep that colour (W_SURF's fog(c, wp)); sky pixels are the demo's background (vsB / fsB): fog(0, eye + dir 240 m).
-#include "shaders/caustics.glsl" // the shafts' focusing (ouCausticFocus) and kIorRgb (uw_medium.glsl ouUwSunDir)
+#include "shaders/waves.glsl" // kM
 #include "shaders/uw_medium.glsl"
 float ouSunShadowVisibility(vec3 p); // shaders/atmosphere.glsl (after render/sun.glsl in both renderers)
 vec3 ouUwFog(vec3 c, vec2 uv) {
@@ -121,105 +121,74 @@ vec3 ouRays(vec3 c, vec2 uv) {
     float r = mix(mix(ouRayTexel(i), ouRayTexel(i + ivec2(1, 0)), f.x), mix(ouRayTexel(i + ivec2(0, 1)), ouRayTexel(i + ivec2(1, 1)), f.x), f.y);
     return c + r * w.waterPass[2].y;
 }
-// Enhanced (ours, RENDERING.md "Under water"): volumetric sun shafts, the pipeline of Noniv's abyssal-garden (MIT;
-// docs/RESEARCH.md; its shaders.js W_RAYS, W_RBLUR and W_POST's upsample) on TRU's water. Three passes before the post
-// pass, only while ouShaftsOn():
-// 1. ouShaftPatternTexel: the focusing of the drawn waves (caustics.glsl ouCausticFocus, as the caustics on the bed)
-//    baked once per frame into a kShaftTile^2 tile of the surface around the camera's sun entry point (kShaftTexel
-//    units a texel, snapped to texels so it does not swim), times slow wave groups (ouShaftGroups): the light that
-//    enters each spot of the surface.
-// 2. ouShaftMarch (half resolution): the view ray from the eye to the scene, the nearest surface or kShaftRange (and
-//    at most 5 green extinction lengths) in `steps` even steps jittered per pixel by interleaved gradient noise; each
-//    step traces back along the refracted sun to its surface entry point, takes the tile there, the sun shadow map
-//    (one tap: the occluders' shadow volumes) and the extinction e^(-sigma (sun path under water + view distance)) per
-//    channel; HG phase toward the sun. Out: rgb + linear view depth of the scene there.
-// 3. ouShaftBlur: depth-aware 3x3 blur at half resolution (hides the jitter).
-// The post pass adds them (ouShaftsComposite: depth-aware bilinear upsample, then soft-clamped under the water colour).
+// Enhanced (RENDERING.md "Under water"): volumetric sun shafts, abyssal-garden's (Noniv, MIT; docs/RESEARCH.md 8.11)
+// shaders.js W_RAYS + W_RBLUR literally, in ag space (shaders/uw_medium.glsl), two half-resolution passes before the post
+// pass while ouShaftsOn(); uw_grade.frag adds them with W_POST's depth-aware 4-tap upsample after the bloom chain read the
+// frame (main.js: scene -> rays -> blur -> bloom of the scene -> post). VK post set 1 bindings 6 (march output: the blur's
+// input) and 7 (blurred: the grade's, through its own set 2); GL units 13 and 14.
 #ifdef VULKAN
-layout(set = 1, binding = 6) uniform sampler2D uShaftsRaw;    // pass 2's output (the blur's input)
-layout(set = 1, binding = 7) uniform sampler2D uShafts;       // pass 3's output (the post composite)
-layout(set = 1, binding = 8) uniform sampler2D uShaftPattern; // pass 1's tile (the march)
+layout(set = 1, binding = 6) uniform sampler2D uShaftsRaw;
 #else
 layout(binding = 13) uniform sampler2D uShaftsRaw;
-layout(binding = 14) uniform sampler2D uShafts;
-layout(binding = 15) uniform sampler2D uShaftPattern;
 #endif
-float ouPhase(float cosT, float g);
-float ouSunTapVisibility(vec3 p);
-const float kShaftTexel = 48.0;       // [I] tile texel (world units): streaks ~0.5..2 m across
-const int kShaftTile = 512;           // tile texels per side (render::kUnderwaterShaftTile): 24576 units
-const float kShaftRange = 12000.0;    // [I] longest march (abyssal-garden's 120 m)
-const float kShaftFocusDepth = 2000.0; // [I] depth whose focal length the tile's focusing takes
-const float kShaftBase = 0.12;        // [I] in-scatter of the unfocused light (the soft glow; abyssal-garden 0.012)
-const float kShaftStreak = 1.6;       // [I] in-scatter added by the focused light (the streaks)
-const float kShaftScatter = 1.0;      // [I] scattering coefficient / green extinction
-const float kShaftCap = 0.5;          // [I] soft clamp under this x the water colour: never a saturated blob
+float ouSunTapVisibility(vec3 p); // shaders/atmosphere.glsl
+const float kAgRayn = 34.0;  // quality.js RAYN (high)
+const float kAgRays = 0.54;  // g.mis.y = main.js RAYS
+const float kAgZFar = 6e4;   // view depth of sky pixels, metres: the demo's NEAR / 1e-6 = 1e5 clamped under half float's 65504
 // Shafts this frame: Enhanced water (fogColor.w), the camera below the nearest surface, a sun above the horizon.
 // Mirrors render::underwaterShaftsActive (Water.cpp), which records the passes.
 bool ouShaftsOn() {
     return w.fogColor.w > 0.5 && w.sunColor.w > 0.0 && w.sunDir.z >= 0.05 && w.detail.w > 0.5 && w.eye.z < w.volumes[1].z;
 }
-vec3 ouShaftSun() { return ouUwSunDir(); } // toward the sun, under water (ouShaftsOn: there is one)
-// The tile's world-space corner (both the pattern pass and the march compute it the same way from the block).
-vec2 ouShaftTileOrigin(vec3 l) {
-    vec2 c = w.eye.xy + l.xy * ((w.volumes[1].z - w.eye.z) / l.z);
-    return floor(c / kShaftTexel) * kShaftTexel - 0.5 * float(kShaftTile) * kShaftTexel;
-}
-// Wave groups: the swell focuses in patches ~10 m across (3000 units) that drift and come and go: streaks 0..1.
-float ouShaftGroups(vec2 e, float t) {
-    float m = sin(dot(e, vec2(0.0021, 0.0009)) + 0.23 * t) * sin(dot(e, vec2(-0.0008, 0.0019)) - 0.17 * t);
-    m += 0.5 * sin(dot(e, vec2(0.0013, -0.0027)) + 0.31 * t);
-    return smoothstep(-0.6, 0.9, m);
-}
-// Pass 1, tile texel `px`: the focused light entering the surface there, 0..1.
-float ouShaftPatternTexel(ivec2 px) {
-    vec2 e = ouShaftTileOrigin(ouShaftSun()) + (vec2(px) + 0.5) * kShaftTexel;
-    float g = ouShaftGroups(e, w.eye.w);
-    if (g <= 0.0) return 0.0;
-    float f = ouCausticFocus(e, kShaftFocusDepth, kShaftTexel, 1).g;
-    return smoothstep(1.0, 1.9, f) * g;
-}
-float ouIgn(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); } // Jimenez 2014
-// Linear view depth of the opaque scene at full-resolution pixel `fp` (the bilateral weights' key), at most 1e6.
-float ouViewDepth(ivec2 fp) {
+// The demo's zl = g.fwd.w / depth: linear view depth (metres) of the opaque scene at full-resolution pixel `fp`, sky
+// kAgZFar. The post pass stores it in its linear frame's alpha for uw_grade.frag's upsample.
+float agViewDepth(ivec2 fp) {
+    float d = texelFetch(uDepth, fp, 0).r;
+    if (d >= 0.999999) return kAgZFar;
     vec2 uv = (vec2(fp) + 0.5) / vec2(textureSize(uDepth, 0));
-    vec3 q = ouWorld(uv, texelFetch(uDepth, fp, 0).r, w.invViewProj);
-    return min((w.viewProj * vec4(q, 1.0)).w, 1e6);
+    return min((w.viewProj * vec4(ouWorld(uv, d, w.invViewProj), 1.0)).w / kM, kAgZFar);
 }
-// Pass 2, half-resolution pixel `hp` (its full-resolution pixel 2 hp): in-scattered sun light (rgb) + view depth.
-vec4 ouShaftMarch(ivec2 hp, int steps) {
+// W_RAYS fs at half-resolution pixel `hp` (fc.xy = hp + 0.5): rgb = in-scattered sun light, a = zl. The ray leaves the
+// eye through uv = fc.xy * 2 / full size (our inverse view-projection instead of fwd/right/up x tan), rl = 1 / its
+// forward component (viewProj's w row), tm = min(zl rl, 120 m), cut at the surface (y = 0) for rising rays, RAYN steps
+// jittered by ign(fc.xy). Per step: the sun shadow map (one compare tap: ouSunTapVisibility at the world point, our own
+// bias, for textureSampleCompareLevel(.., s.z - .0006)), the streak pattern ss(.3, .7, tW(q / 27) lod 2.5) x ss(.15, .6,
+// tW(q.yx / 11 + .3) lod 2), q = p.xz - sun.xz p.y / sun.y, weight exp(-sg t + kd p.y / sun.y). The demo's mist term
+// (1 + 1.2 mist^2, mist = sat(1 - (vol(p).r - .5) 3.4): vol().r = its openness, 1 in open water, so mist is 0 there and
+// only rises next to its rock) has no volume here: mist = 0. Zone z = kAgZone (sun.w = 0): ph = .2 + 2 mu^3, wc = WCOL +
+// (.04, .07, .05), (1 - .55 z) = 1.
+vec4 agRays(ivec2 hp) {
+    vec2 fc = vec2(hp) + 0.5;
     ivec2 fp = min(hp * 2, textureSize(uDepth, 0) - 1);
-    vec2 uv = (vec2(fp) + 0.5) / vec2(textureSize(uDepth, 0));
-    vec3 q = ouWorld(uv, texelFetch(uDepth, fp, 0).r, w.invViewProj);
-    float viewZ = min((w.viewProj * vec4(q, 1.0)).w, 1e6);
-    vec3 dir = q - w.eye.xyz;
-    float len = length(dir);
-    dir /= max(len, 1e-3);
-    float surf = w.volumes[1].z;
-    if (dir.z > 1e-4) len = min(len, (surf - w.eye.z) / dir.z);
-    OuUwMedium m = ouUwEyeMedium(); // the fog's medium (shaders/uw_medium.glsl): red goes first, blue-green shafts
-    len = max(min(len, min(kShaftRange, 5.0 * kM / max(m.sigma.g, 1e-7))), 0.0);
-    vec3 l = ouShaftSun();
-    vec2 org = ouShaftTileOrigin(l);
-    float span = kShaftTexel * float(kShaftTile);
-    float dt = len / float(max(steps, 1)), j = ouIgn(vec2(hp) + 0.5);
+    vec2 uv = fc * 2.0 / vec2(textureSize(uDepth, 0));
+    vec3 rw = normalize(ouWorld(uv, 1.0, w.invViewProj) - w.eye.xyz); // world, z up
+    vec3 rd = agDir(rw);
+    float rl = 1.0 / max(dot(vec3(w.viewProj[0][3], w.viewProj[1][3], w.viewProj[2][3]), rw), 1e-6);
+    float zl = agViewDepth(fp);
+    vec3 ro = agEye();
+    float tm = min(zl * rl, 120.0);
+    if (rd.y > 1e-4) tm = min(tm, -ro.y / rd.y);
+    tm = max(tm, 0.0);
+    vec3 sx = agSun(), k = agKd(kAgZone), sgz = agSg(kAgZone);
+    float dt = tm / kAgRayn;
+    float j = agIgn(fc);
     vec3 acc = vec3(0.0);
-    for (int i = 0; i < steps; ++i) {
-        float t = (float(i) + j) * dt;
-        vec3 p = w.eye.xyz + dir * t;
-        float sunPath = max(surf - p.z, 0.0) / l.z;
-        vec2 tc = (p.xy + l.xy * sunPath - org) / span;
-        vec2 edge = min(tc, 1.0 - tc);
-        float pat = textureLod(uShaftPattern, tc, 0.0).r * smoothstep(0.0, 0.06, min(edge.x, edge.y));
-        // the sun's light left at p's depth (ouUwSunLight, as the fog lights the scene) x the view path's extinction
-        acc += ouUwSunLight(m, max(surf - p.z, 0.0) / kM, l) * exp(-m.sigma * (t / kM)) *
-               (ouSunTapVisibility(p) * (kShaftBase + kShaftStreak * pat));
+    for (int n = 0; n < int(kAgRayn); ++n) {
+        float t = (float(n) + j) * dt;
+        vec3 p = ro + rd * t;
+        float vis = ouSunTapVisibility(w.eye.xyz + rw * (t * kM));
+        vec2 q = p.xz - sx.xz * (p.y / sx.y);
+        float pat = agSs(0.3, 0.7, textureLod(uAgWater, q / 27.0, 2.5).r) *
+                    agSs(0.15, 0.6, textureLod(uAgWater, q.yx / 11.0 + 0.3, 2.0).r);
+        acc += exp(-sgz * t + k * (p.y / sx.y)) * (vis * (0.012 + pat * 6.0));
     }
-    float ph = mix(1.0, 12.566371 * ouPhase(dot(dir, l), 0.75), 0.8); // x 4 pi: isotropic = 1
-    return vec4(w.sunColor.rgb * w.sunColor.w * acc * (dt / kM * kShaftScatter * m.sigma.g * ph), viewZ);
+    float mu = max(dot(rd, sx), 0.0);
+    float ph = mix(0.2 + 2.0 * mu * mu * mu, 0.8, kAgZone);
+    vec3 wc = mix(kAgWcol + vec3(0.04, 0.07, 0.05), kAgPcol + vec3(0.28, 0.16, 0.12), kAgZone);
+    return vec4(min(acc * dt * sgz * wc * kAgSunc * ph * kAgRays * (1.0 - 0.55 * kAgZone), vec3(20.0)), zl);
 }
-// Pass 3: depth-aware 3x3 blur of pass 2 (abyssal-garden W_RBLUR's weights 1 / (0.03 + relative depth difference)).
-vec4 ouShaftBlur(ivec2 p) {
+// W_RBLUR: depth-aware 3x3 blur of agRays at half resolution, weights 1 / (.03 + |r.a - c.a| / c.a).
+vec4 agRaysBlur(ivec2 p) {
     ivec2 mx = textureSize(uShaftsRaw, 0) - 1;
     vec4 c = texelFetch(uShaftsRaw, p, 0);
     vec3 acc = vec3(0.0);
@@ -227,34 +196,13 @@ vec4 ouShaftBlur(ivec2 p) {
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x) {
             vec4 r = texelFetch(uShaftsRaw, clamp(p + ivec2(x, y), ivec2(0), mx), 0);
-            float k = 1.0 / (0.03 + abs(r.a - c.a) / max(c.a, 1.0));
-            acc += r.rgb * k, ws += k;
+            float wk = 1.0 / (0.03 + abs(r.a - c.a) / max(c.a, 1e-6));
+            acc += r.rgb * wk, ws += wk;
         }
     return vec4(acc / ws, c.a);
 }
-// Post pass: the blurred shafts upsampled to this pixel (bilinear weights x depth similarity, W_POST), soft-clamped
-// cap (1 - e^(-s / cap)) under kShaftCap x the water colour, added.
-vec3 ouShaftsComposite(vec3 c) {
-    if (!ouShaftsOn()) return c;
-    ivec2 px = ivec2(gl_FragCoord.xy);
-    float zf = ouViewDepth(min(px, textureSize(uDepth, 0) - 1));
-    vec2 h = (gl_FragCoord.xy - 0.5) * 0.5; // half-resolution texel k holds full pixel 2k
-    vec2 b = floor(h), f = h - b;
-    ivec2 bi = ivec2(b), mx = textureSize(uShafts, 0) - 1;
-    vec3 acc = vec3(0.0);
-    float ws = 0.0;
-    for (int k = 0; k < 4; ++k) {
-        ivec2 o = ivec2(k & 1, k >> 1);
-        vec4 r = texelFetch(uShafts, clamp(bi + o, ivec2(0), mx), 0);
-        float bw = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
-        float wk = (bw + 0.02) / (0.02 + abs(r.a - zf) / max(zf, 1.0));
-        acc += r.rgb * wk, ws += wk;
-    }
-    vec3 cap = kShaftCap * pow(ouUwEyeMedium().scatter, vec3(1.0 / 2.2)); // the fog's in-scatter colour, gamma
-    return c + cap * (1.0 - exp(-max(acc / ws, vec3(0.0)) / cap));
-}
 vec3 ouUnderwater(vec3 c, vec2 uv) {
-    // the water pass relights and fogs the scene (Enhanced: ouUwFog), then the shafts' and tru.exe's rays add light
-    // (0x6D8C20 order)
-    return ouRays(ouShaftsComposite(ouWaterPass(c, uv)), uv);
+    // the water pass relights and fogs the scene (Enhanced: ouUwFog), then tru.exe's rays add light (0x6D8C20 order);
+    // the Enhanced sun shafts are added by uw_grade.frag
+    return ouRays(ouWaterPass(c, uv), uv);
 }

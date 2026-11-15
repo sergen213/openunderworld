@@ -1,10 +1,10 @@
 // Enhanced under-water medium (ours, camera submerged; RENDERING.md "Under water"). The `ag` section at the end is the
 // literal abyssal-garden port used by the post pass's light and fog (underwater.glsl ouUwFog) and water.frag's bed; the
-// older tuned OuUwMedium API above still serves the sun shafts (ouShaftMarch / ouShaftsComposite), the particles
-// (uw_light.glsl) and the surface's total internal reflection seen from below (water.frag).
+// older tuned OuUwMedium API above still serves the particles (uw_light.glsl) and the surface's total internal
+// reflection seen from below (water.frag).
 // OuUwMedium: the analytic medium of abyssal-garden (Noniv, MIT; docs/RESEARCH.md 8.11: shaders.js `fogIn`, `fog`, `sg`,
 // `kd`, `sunE`, `amb`, `side`) on the unit's own colours. Linear light, metres (kM units).
-// Needs the WaterBlock `w`, kM (shaders/waves.glsl) and kIorRgb (shaders/caustics.glsl) declared before it.
+// Needs the WaterBlock `w` and kM (shaders/waves.glsl) declared before it.
 #ifndef OU_UW_MEDIUM_GLSL
 #define OU_UW_MEDIUM_GLSL
 struct OuUwMedium { vec3 sigma, kd, scatter, ambient; };
@@ -40,9 +40,10 @@ OuUwMedium ouUwMedium() {
 float ouUwSurfaceZ() { return w.detail.w > 0.5 ? w.volumes[1].z : w.eye.z; }
 // The eye's depth under that surface, metres.
 float ouUwEyeDepth() { return max(ouUwSurfaceZ() - w.eye.z, 0.0) / kM; }
-// Toward the sun under water (refracted at the flat surface), straight up without a sun.
+// Toward the sun under water (refracted at the flat surface, n = 1.334: water's index for green), straight up without
+// a sun.
 vec3 ouUwSunDir() {
-    return w.sunColor.w > 0.0 && w.sunDir.z > 0.0 ? -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / kIorRgb.g)
+    return w.sunColor.w > 0.0 && w.sunDir.z > 0.0 ? -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / 1.334)
                                                    : vec3(0.0, 0.0, 1.0);
 }
 // The medium as seen from this frame's eye: TRU's seas are deep (l1_seafloor: the surface 81 m over the bed);
@@ -65,7 +66,6 @@ vec3 ouUwFogIn(OuUwMedium m, vec3 rd, float d, float h0, vec3 l) {
     float mu = max(dot(rd, l), 0.0), m2 = mu * mu;
     return m.scatter * m.sigma * exp(-m.kd * h0) * ((1.0 - exp(-a * d)) / a) * (1.0 + 0.246 * m2 * m2);
 }
-vec3 ouUwSunLight(OuUwMedium m, float h, vec3 l) { return exp(-m.kd * (h / max(l.z, 0.2))); } // sunE alone (shafts)
 // The water between the eye and world point p (per-point form of ouUwFog): transmittance T and in-scatter L (linear),
 // both x the pass strength (w.waterPass[2].x), so p's own light becomes light x T + L.
 void ouUwPointFog(OuUwMedium m, vec3 p, out vec3 T, out vec3 L) {

@@ -505,8 +505,8 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   `ruv`, ag y = its depth under this pixel's surface) before `ouAbsorb`, only with a level sun; Vulkan binds the sun
   shadow set as the water layout's set 1. They replaced (2026-11-15) our refraction-Hessian caustics, which read as a
   fine crumpled-foil network of constant scale multiplied over every submerged face (aliasing in the distance, cut by
-  face orientation); `ouCausticFocus` (caustics.glsl: 1 / |det(I + c·H)| of the drawn surface's refraction, per colour)
-  still feeds the sun shafts' pattern tile.
+  face orientation); their last user, the old sun shafts' pattern tile, went with the W_RAYS port (caustics.glsl is
+  gone).
 - Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
   3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
 
@@ -561,7 +561,7 @@ replaces the extinction (σ) and the in-scatter / under-water fog hue; the unit'
 luminance), so a dim cave pool stays dim and a sunlit sea bright, and the pass still runs only where the unit has one
 (its strength and the eye's base haze kept). Surface (`water.frag` `ouWaterLook`: absorption, in-scatter, the deep
 colour of total internal reflection), under water (`underwater.glsl` `ouWaterPass`: fog 1 − (1 − haze) e^(−σ ·
-view depth) per channel at the preset hue; the sun shafts: σ and the cap colour) and caustics (Kd) all switch together.
+view depth) per channel at the preset hue) and caustics (Kd) all switch together.
 `original` = the unit's colours exactly as before (optics all zero); Original water never reads `optics` (it is only
 filled with Enhanced water), so it stays byte-identical.
 
@@ -646,8 +646,7 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   reflection, also over sky pixels); other sky pixels are the demo's background (`vsB` / `fsB`): fog(0, eye + dir ·
   240 m). Everything × the pass strength. The frame then goes through the under-water composite ("Under water: marine
   snow, bubbles and the composite" below) instead of the post pass's tone map. The older tuned medium (`ouUwMedium`,
-  `ouUwEyeMedium`, `ouUwFogIn`, `ouUwSunLight`, `ouUwPointFog`) still serves the shafts, the particles and the
-  surface's total internal reflection.
+  `ouUwEyeMedium`, `ouUwFogIn`, `ouUwPointFog`) still serves the particles and the surface's total internal reflection.
 - Animated water texture `uAgWater` (ours, Enhanced only; abyssal-garden `W_WATER` literally, `shaders/uw_water.frag`):
   r = g = caustic (`caus()`: five warped sine iterations), ba = surface slope (the WK sum of 10 travelling waves), time
   = the eye's seconds; 512² RGBA16F, 5 mips box-filtered down (the demo's `fsMip`: VK linear blits, GL
@@ -655,34 +654,30 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   above or below), before the scene (VK `recordAgWater`: own pipeline layout, push float at offset 0) / before the water
   (GL `drawAgWater`). Bound as VK post set 1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts,
   particles).
-- Sun shafts (ours, Enhanced only; after Noniv's abyssal-garden, MIT, RESEARCH §8.11: its `W_RAYS` / `W_RBLUR` /
-  `W_POST` pipeline): three passes before the post pass (`render::underwaterShaftsActive` = `ouShaftsOn`: Enhanced
-  water, camera below the nearest surface, sun above the horizon), drawn with the post layout / units, then
-  `ouShaftsComposite` in the post pass (after the full-screen pass, before `ouRays`). All in `underwater.glsl`; passes
-  `shaders/uw_shafts_pattern.frag`, `uw_shafts.frag`, `uw_shafts_blur.frag`; VK post set 1 bindings 6-8 (the
-  march's step count pushed at offset 24, after post.frag's block), GL units 13-15.
-  1. Pattern tile (`ouShaftPatternTexel`, R16F, 512² texels of 48 units = 24576 units, snapped to texels around the
-     camera's refracted-sun entry point so it does not swim): the drawn waves' focusing `ouCausticFocus` (caustics.glsl:
-     the waves that light the bed, the FFT ocean, Lara's ripples) at a 2000-unit focal depth, blurred by one texel,
-     smoothstep(1.0, 1.9) × slow wave groups (`ouShaftGroups`, ~3000-unit patches): the focused light entering each
-     spot of the surface.
-  2. March (`ouShaftMarch`, half the render resolution, RGBA16F = in-scattered light + linear view depth): the view ray
-     from the eye to the scene, the nearest surface, 12000 units or 5 green extinction lengths, in N even steps
-     (`render::underwaterShaftSteps`: 20, 32 at atmosphere `high`, 0 with `light_shafts` off) jittered per pixel by
-     interleaved gradient noise. Each step traces back along the refracted sun to its surface entry point and takes
-     the tile there: in-scatter (0.12 + 1.6 · tile) × the sun shadow map (one tap, `ouSunTapVisibility`: the occluders'
-     shadow volumes) × the fog medium's sun light at that depth (`ouUwSunLight`, e^(−kd depth / l.z)) ×
-     e^(−σ distance) per channel (`ouUwEyeMedium`: the fog's; red first: blue-green, fading with depth); × σ_g × 1.0
-     (scattering / extinction) × mix(1, 4π HG(0.75), 0.8) × the sun colour × `sunColor.w`.
-  3. Blur (`ouShaftBlur`): depth-aware 3×3 at half resolution, weights 1 / (0.03 + |Δz| / z) (hides the jitter).
-  Composite: depth-aware bilinear upsample (bilinear weight + 0.02 over 0.02 + |Δz| / z: no halo at depth edges), then
-  soft-clamped cap · (1 − e^(−s / cap)), cap = 0.5 × the fog medium's in-scatter colour (gamma),
-  so looking into the sun never saturates. Replaces the earlier 4-step in-post `ouShafts` (thin hatched streaks, no
-  visible shadow volumes). The shadow map is the sun's in air (the shafts' pattern follows the refracted sun) [I].
-  [I] values. Cost [O] (RX 7900 XTX, RADV, l1_seatop looking toward the sun, OU_VK_PRESENT_STATS "uw shafts"): 0.19 ms
-  at 1280 × 692, 0.33 ms at 2560 × 1412 native, 0.30 ms at 2560 × 1412 FSR quality (render 1707 × 941). Views:
-  l1_seatop `--spawn -15000,-3775,2000,-40 --camera -21000,-3500,-1800,-15000,-3800,0` (rays and the rock),
-  `--camera -19500,-4000,-2500,-17500,-4000,500` (the yacht's shadow volume).
+- Sun shafts (Enhanced only; Noniv's abyssal-garden, MIT, RESEARCH §8.11: `W_RAYS`, `W_RBLUR` and `W_POST`'s
+  upsample literally, in ag space): two half-resolution RGBA16F passes before the post pass (`render::underwaterShaftsActive`
+  = `ouShaftsOn`: Enhanced water, camera below the nearest surface, sun above the horizon; recorded only with
+  `light_shafts` on and the under-water composite on), drawn with the post layout / units; `underwater.glsl` `agRays` /
+  `agRaysBlur`, passes `shaders/uw_shafts.frag` / `uw_shafts_blur.frag`. Slots: VK post set 1 binding 6 (march output =
+  the blur's input), 7 (blurred = the grade's, read through `uwGradeLayout_` set 2 = the post-water set; binding 8 is
+  gone), GL units 13 / 14 (14 bound for the grade program).
+  1. March (`W_RAYS` fs): the ray from the eye through the half-res pixel (our inverse view-projection), rl = 1 / its
+     forward component, zl = the scene's linear view depth (metres; sky 6·10⁴, the demo's 10⁵ clamped under half
+     float), tm = min(zl · rl, 120 m), cut at the surface (ag y = 0) for rising rays; RAYN = 34 steps jittered by `ign`;
+     per step the sun shadow map (one compare tap, `ouSunTapVisibility`, our bias for its −0.0006), the streak pattern
+     ss(.3, .7, uAgWater(q / 27) lod 2.5) · ss(.15, .6, uAgWater(q.yx / 11 + .3) lod 2), q = p.xz − sun.xz · p.y / sun.y,
+     acc += e^(−sg t + kd p.y / sun.y) · vis · (.012 + 6 pat). Out min(acc · dt · sg · wc · SUNC · ph · 0.54, 20), zl;
+     ph = .2 + 2 μ³, wc = WCOL + (.04, .07, .05) (zone 0), 0.54 = main.js `RAYS` (g.mis.y). The demo's mist term
+     (1 + 1.2 mist², from its density volume's openness: 0 in open water, rising only beside its rock) has no volume
+     here: mist = 0. The sun is `agSun` (refracted level sun); the shadow map is the sun's in air [I].
+  2. Blur (`W_RBLUR`): depth-aware 3×3, weights 1 / (0.03 + |Δz| / z).
+  3. Composite (`W_POST`, in `uw_grade.frag`): the post pass stores zl in its linear frame's alpha (`agViewDepth`); the
+     grade adds the 4-tap upsample (bilinear weight + 0.02 over 0.02 + |Δz| / z) to the frame before the bloom mix,
+     i.e. after the bloom chain read the frame, as main.js orders scene → rays → blur → bloom → post (push / uniform
+     x = 1 when the passes ran).
+  Replaced (2026-11-15) our tile of the drawn waves' Hessian focus, the tuned medium's sun light and the soft clamp.
+  Views: l7_arctic_sea default spawn; l1_seatop `--spawn -16000,-3000,700,-40 --camera
+  -16500,-3000,-600,-14500,-3000,1800` (toward the sun).
 - Fog [O]: below the surface the render settings' water fog set (`+0x1C` colour, `+0x4C` near, `+0x48` far, 0 = the far
   plane, 0x5C1F50) replaces the unit fog, and the filters' fog blocks (`+0x2FA4`: enable, colour, near, far) take over
   as far as their weights go (0x512D60 / 0x514D90). l1: filter 5292 (near = far = 379267, black); l7: 859 (63211).
@@ -735,14 +730,16 @@ the demo's `shadow1` = our sun shadow map). Original water never runs any of it 
   surface, size × (0.55 + 0.7 life) ss(0, 0.03, life); hashes of the game time, so a replay draws the same bubbles.
 - Composite (`render::uwGrade`: Enhanced water, pass strength > 0, the eye under the surface of its volume; Vulkan
   `recordUwComposite` + `uwGradeLayout_`, GL `drawUwComposite`): the post pass writes the linear frame (no tone map,
-  push / uniform `uw` bit 1) into a render-size RGBA16F target; `uw_bloom.frag` builds main.js's 6-level chain
+  push / uniform `uw` bit 1; alpha = linear view depth in metres) into a render-size RGBA16F target; `uw_bloom.frag` builds main.js's 6-level chain
   (W >> (i + 1): `fsDown0` Karis-weighted 4 taps clamped to 24, `fsDown` ×5, `fsUp` ×5 added back to level 0);
-  `uw_grade.frag` writes the display frame: c = mix(c, bl, 0.06) + 0.03 bl, × exposure 0.62 (0.6 + 0.4 sat((depth − 8)
+  `uw_grade.frag` writes the display frame: c = frame + the sun shafts' depth-aware upsample (above), then
+  c = mix(c, bl, 0.06) + 0.03 bl, × exposure 0.62 (0.6 + 0.4 sat((depth − 8)
   / 26)) (main.js `m[56]`), vignette 1 − 0.55 |uv − 0.5|², `tmap` (the ACES fit), luminance S-curve (55 % toward
   smoothstep), highlight (10 % above 0.55) and 7 % desaturation + (0.008, 0.002, 0), gamma 1 / 2.2, IGN dither ±1/255,
   mixed over the plain encoding by the pass strength, then the screen fade. Vulkan: sets 0 / 1 = one image each
-  (`setLayout_`), push vec4 (bloom mode, exposure, fade, strength), all from `staticPool_`; GL: units 0 / 1, uniform 0.
-  The shafts are in the bloom's source (the demo adds them after its bloom) [I deviation, 6 % / 3 % weights].
+  (`setLayout_`, from `staticPool_`), set 2 = the post-water set (the blurred shafts, binding 7), push vec4 (bloom mode
+  | shafts on, exposure, fade, strength); GL: units 0 / 1 / 14, uniform 0. As in the demo the shafts are not in the
+  bloom's source.
 - Tests: `FxReal.EnhancedWaterBubblesLeaveTheSprites`, `FxBreath.DeterministicRisingAndGoneAtTheSurface`.
 
 ### Water detail, debug views (`graphics.water_detail`, `--water-detail`, `--water-debug`, F7)
