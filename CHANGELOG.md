@@ -13,8 +13,9 @@ Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (G
 Enhanced water under water is now a 1:1 copy of Noniv's abyssal-garden (MIT): its own formulas and constants for the
 water, light, caustics, shafts, particles and final image. Original water is unchanged.
 
-- Changed: new caustics on everything under water (and on the sea bed seen from above): the demo's animated caustic
-  pattern, sharp near the surface, fading to an even glow 35-100 m away. The old caustics looked like crumpled foil.
+- Changed: new caustics on everything under water: the demo's animated caustic pattern, sharp near the surface, fading
+  to an even glow 35-100 m away. The old caustics looked like crumpled foil. Seen from above the water the same
+  pattern lies on shallow sunlit beds, faint under the level's own water colour.
 - Changed: under-water objects are lit like the demo's: sunlight falls off with depth, red goes first, with sky light
   from above and blue-green light on walls. The water is the demo's clear cyan-blue in every level: neither each
   level's own water tint nor the water colour presets apply under water any more (they still colour the water seen
