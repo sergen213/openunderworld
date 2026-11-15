@@ -1,9 +1,11 @@
 // Original particle effects: definition parser, deterministic simulation, sprite batches (docs/formats/EFFECTS.md).
 #include "formats/Formats.hpp"
+#include "fx/Breath.hpp"
 #include "fx/Fx.hpp"
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -939,4 +941,68 @@ TEST(FxReal, GunFireBubblesOnlyUnderWater) {
             EXPECT_TRUE(e.suppressed(2) && e.suppressed(3) && !e.suppressed(1));
         }
     EXPECT_EQ(dust, 3);
+}
+
+// Enhanced water (render/Water.hpp UwParticlePush): System::build hands the under-water-only particles (the handgun's
+// bubble defs 22-26) to the bubble list instead of drawing their sprites; the flash and smoke are not under water anyway.
+TEST(FxReal, EnhancedWaterBubblesLeaveTheSprites) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    fx::Library lib(bf);
+    const auto gun = lib.get("wp_handgun");
+    ASSERT_TRUE(gun);
+    fx::System s;
+    s.cameraUnderwater = true;
+    s.play(gun, *gun->clip("fire_submerged"), glm::mat4(1), -1, 0);
+    render::Camera cam;
+    cam.position = {-500, 0, 0};
+    size_t most = 0;
+    for (int t = 0; t < 12; ++t) {
+        s.tick(cam.position);
+        std::vector<render::FxVertex> v;
+        std::vector<render::FxBatch> b;
+        std::vector<render::Bubble> bubbles;
+        s.build(cam, 16.0f / 9, v, b, &bubbles);
+        for (const auto& x : b) EXPECT_FALSE(x.textureId >= 147 && x.textureId <= 149) << x.textureId; // defs 22 / 23
+        for (const auto& u : bubbles) {
+            EXPECT_GT(u.radius, 0.0f);
+            EXPECT_TRUE(u.alpha > 0.0f && u.alpha <= 1.0f);
+            EXPECT_TRUE(u.seed >= 0.0f && u.seed < 1.0f);
+        }
+        most = std::max(most, bubbles.size());
+    }
+    EXPECT_GT(most, 0u);
+}
+
+// Lara's breath (fx/Breath.hpp, all [I]): puffs only while submerged, the same game time and mouth path give the same
+// bubbles, they rise from the mouth and are gone before the surface; a jump back in time clears them.
+TEST(FxBreath, DeterministicRisingAndGoneAtTheSurface) {
+    const glm::vec3 mouth(100, 200, -1000);
+    auto run = [&](bool submerged, double until) {
+        fx::Breath b;
+        for (double t = 0; t <= until; t += 1.0 / 60) b.tick(t, mouth, submerged, false, 0.0f);
+        std::vector<render::Bubble> out;
+        b.append(until, out);
+        return out;
+    };
+    EXPECT_TRUE(run(false, 8.0).empty());
+    const auto a = run(true, 8.0), c = run(true, 8.0);
+    ASSERT_FALSE(a.empty());
+    ASSERT_EQ(a.size(), c.size());
+    for (size_t i = 0; i < a.size(); ++i) {
+        EXPECT_EQ(std::memcmp(&a[i], &c[i], sizeof a[i]), 0) << i;
+        EXPECT_GT(a[i].pos[2], mouth.z - 10.0f); // above the mouth (jitter +-2)
+        EXPECT_LT(a[i].pos[2] + a[i].radius, 0.0f); // under the surface
+        EXPECT_LT(std::hypot(a[i].pos[0] - mouth.x, a[i].pos[1] - mouth.y), 30.0f);
+    }
+    // 1000 units at <= 135 units/s: every bubble older than ~8 s has reached the surface and left
+    fx::Breath b;
+    for (double t = 0; t <= 2.0; t += 1.0 / 60) b.tick(t, mouth, true, true, 0.0f);
+    for (double t = 2.0; t <= 20.0; t += 1.0 / 60) b.tick(t, mouth, false, true, 0.0f);
+    std::vector<render::Bubble> out;
+    b.append(20.0, out);
+    EXPECT_TRUE(out.empty());
+    for (double t = 0; t <= 4.0; t += 1.0 / 60) b.tick(t, mouth, true, true, 0.0f); // time jumped back: restarts
+    b.append(4.0, out);
+    EXPECT_FALSE(out.empty());
 }
