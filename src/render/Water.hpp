@@ -166,12 +166,13 @@ std::string uwSnowFragmentSource(bool vulkan);
 std::string uwBubbleVertexSource(bool vulkan);
 std::string uwBubbleFragmentSource(bool vulkan);
 // Enhanced under-water composite (docs/RENDERING.md "Under water"; abyssal-garden's W_BLIT bloom + W_POST, MIT): with
-// the eye under the surface of its water volume (`on`), the post pass writes the linear HDR frame (fogged scene, shafts,
-// particles; no tone map; push / uniform `uw` bit 1) into a render-size RGBA16F target, uw_bloom.frag builds the demo's
+// the eye under the surface of its water volume (`on`), the post pass writes the linear HDR frame (fogged scene,
+// particles; alpha = view depth in metres; no tone map; push / uniform `uw` bit 1) into a render-size RGBA16F target, uw_bloom.frag builds the demo's
 // 6-level bloom chain from it (W >> (i + 1); down0, down x5, up x5 additive), and uw_grade.frag writes the display frame
 // (bloom mix, exposure, vignette, ACES fit, S-curve, gamma, dither) instead of the post pass's output. Both fullscreen
-// with the post vertex shader; VK: their own layout (set 0 / set 1: one combined image sampler each, push vec4 =
-// (bloom mode, exposure, screen fade, strength)); GL: units 0 / 1, uniform location 0 = that vec4.
+// with the post vertex shader; VK: their own layout (set 0 / set 1: one combined image sampler each, set 2: the
+// post-water set for the grade's shafts (binding 7), push vec4 = (bloom mode | grade: shafts on, exposure, screen fade,
+// strength)); GL: units 0 / 1 (+ 14 the shafts), uniform location 0 = that vec4.
 struct UwGrade {
     bool on = false;
     float exposure = 1, strength = 0; // main.js m[56] = EXPO (0.6 + 0.4 ek); the pass strength (WaterBlock waterPass[2].x)
@@ -184,17 +185,14 @@ std::string uwGradeSource();
 // (shaders/atmosphere.glsl: height fog, sun shafts, precipitation). Both sample uDepth at uv themselves and return
 // `c` unchanged when their effect is off (Original output stays byte-identical).
 std::string underwaterPostSource(bool vulkan);
-// Enhanced under-water sun shafts (shaders/underwater.glsl, docs/RENDERING.md "Under water"; after abyssal-garden, MIT):
-// three passes before the post pass, drawn with the post layout / units (fullscreen triangle): 0 the surface's focusing
-// into a kUnderwaterShaftTile^2 R16F tile, 1 the half-resolution march (RGBA16F: light + view depth; VK push constant /
-// GL uniform 0 = steps), 2 its depth-aware blur (RGBA16F, half resolution), which the post pass upsamples. VK post set 1
-// bindings 6 (march output), 7 (blur output), 8 (tile); GL units 13, 14, 15.
-inline constexpr int kUnderwaterShaftTile = 512; // = underwater.glsl kShaftTile
+// Enhanced under-water sun shafts (shaders/underwater.glsl agRays / agRaysBlur, docs/RENDERING.md "Under water";
+// abyssal-garden's W_RAYS / W_RBLUR, MIT): two half-resolution RGBA16F passes before the post pass (light + view depth in
+// metres), drawn with the post layout / units (fullscreen triangle): 0 the march (VK post set 1 binding 6 / GL unit 13
+// is its output), 1 its depth-aware blur (binding 7 / unit 14), which uw_grade.frag upsamples and adds (UwGrade; VK:
+// the grade layout's set 2 = the post-water set). Recorded only with graphics.light_shafts on and the composite on.
 // The passes run this frame (= underwater.glsl ouShaftsOn on the uploaded block); `block` is the frame's WaterBlock.
 bool underwaterShaftsActive(const WaterBlock& block);
-// March steps: 0 with graphics.light_shafts off (the passes still run and add nothing), 32 at atmosphere High, else 20.
-int underwaterShaftSteps(const FrameOptions& options);
-std::string underwaterShaftSource(int pass); // GL fragment source of pass 0, 1 or 2 (includes spliced)
+std::string underwaterShaftSource(int pass); // GL fragment source of pass 0 or 1 (includes spliced)
 // Enhanced water's animated water texture (shaders/uw_water.frag: abyssal-garden's W_WATER, r = caustic, ba = surface
 // slope; docs/RENDERING.md "Under water"): kAgWaterSize^2 RGBA16F with kAgWaterLevels mips, repeat / trilinear /
 // anisotropic 8, regenerated every frame Enhanced water is drawn (camera above or below: the bed caustics use it too):

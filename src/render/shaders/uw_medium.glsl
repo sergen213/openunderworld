@@ -1,62 +1,11 @@
 // Enhanced under-water medium (ours, camera submerged; RENDERING.md "Under water"). The `ag` section at the end is the
-// literal abyssal-garden port used by the post pass's light and fog (underwater.glsl ouUwFog), the particles
-// (uw_light.glsl, uw_snow / uw_bubble) and water.frag (the bed's relight, the surface seen from below: W_SURF); the
-// older tuned OuUwMedium API above still serves only the sun shafts (ouShaftMarch / ouShaftsComposite).
-// OuUwMedium: the analytic medium of abyssal-garden (Noniv, MIT; docs/RESEARCH.md 8.11: shaders.js `fogIn`, `fog`, `sg`,
-// `kd`, `sunE`, `amb`, `side`) on the unit's own colours. Linear light, metres (kM units).
-// Needs the WaterBlock `w`, kM (shaders/waves.glsl) and kIorRgb (shaders/caustics.glsl) declared before it.
+// literal abyssal-garden port every under-water effect uses: the post pass's light, fog and sun shafts (underwater.glsl),
+// the particles (uw_light.glsl, uw_snow / uw_bubble) and water.frag (the bed's relight, the surface seen from below).
+// Needs the WaterBlock `w` and kM (shaders/waves.glsl) declared before it.
 #ifndef OU_UW_MEDIUM_GLSL
 #define OU_UW_MEDIUM_GLSL
-struct OuUwMedium { vec3 sigma, kd, scatter, ambient; };
-// sigma: TRU's pass reaches 80 % fog at half its full-fog distance (the mix from the eye alpha to 1); an exponential
-// medium with the same 80 % there gives green ln 5 / (D / 2) [I] (l1: 45000 units = 155 m -> 0.021 / m, abyssal-garden's
-// 0.0235). Other channels by the surface colour: (green / channel)^0.6 [I] (l1: red 2.3x, blue 0.7x green; abyssal-garden
-// 2.5x / 0.83x), so red goes first. kd = sigma x abyssal-garden's KD / SIG (0.97, 1.04, 0.87), its spread between the
-// channels kept at 60 % [I] (TRU's unit colours already carry the depth's blue: the full spread turned l1_seafloor navy).
-// In-scatter colour = the surface colour (the water just under the surface, horizontal view), linear, x 1.25 [I] (the
-// demo's open water reads far brighter than TRU's). A preset (w.optics[0].w): its extinction ratios and in-scatter hue
-// at that colour's luminance (as water.frag ouWaterLook).
-OuUwMedium ouUwMedium() {
-    bool unit = w.waterPass[1].w > 0.0;
-    vec3 s = pow(max(unit ? w.waterPass[0].rgb : vec3(0.447, 0.780, 0.792), vec3(1e-3)), vec3(2.2));
-    float g = 3.2189 / (unit ? w.waterPass[1].w : 100000.0) * kM; // per metre
-    vec3 ratio = clamp(pow(vec3(s.g) / s, vec3(0.6)), vec3(0.5), vec3(4.0));
-    vec3 scatter = s;
-    if (w.optics[0].w > 0.5) {
-        ratio = clamp(w.optics[0].rgb / max(w.optics[0].g, 1e-9), vec3(0.25), vec3(6.0));
-        scatter = w.optics[1].rgb * dot(s, vec3(0.2126, 0.7152, 0.0722));
-    }
-    OuUwMedium m;
-    m.sigma = g * ratio;
-    vec3 kd = m.sigma * vec3(0.97, 1.04, 0.87);
-    m.kd = mix(vec3(dot(kd, vec3(0.2126, 0.7152, 0.0722))), kd, 0.6);
-    m.scatter = scatter * 1.25;
-    // abyssal-garden's ambient is the water colour (0.22, 0.60, 0.80) ~ its WCOL: here the in-scatter hue at luminance 1,
-    // half-way to white [I] (TRU's own lighting already carries the unit's tint).
-    m.ambient = mix(vec3(1.0), scatter / max(dot(scatter, vec3(0.2126, 0.7152, 0.0722)), 1e-4), 0.5);
-    return m;
-}
 // Surface z of the nearest water volume (the eye's own height without one).
 float ouUwSurfaceZ() { return w.detail.w > 0.5 ? w.volumes[1].z : w.eye.z; }
-// The eye's depth under that surface, metres.
-float ouUwEyeDepth() { return max(ouUwSurfaceZ() - w.eye.z, 0.0) / kM; }
-// Toward the sun under water (refracted at the flat surface), straight up without a sun.
-vec3 ouUwSunDir() {
-    return w.sunColor.w > 0.0 && w.sunDir.z > 0.0 ? -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / kIorRgb.g)
-                                                   : vec3(0.0, 0.0, 1.0);
-}
-// The medium as seen from this frame's eye: TRU's seas are deep (l1_seafloor: the surface 81 m over the bed);
-// e^(-kd h) there leaves green at 17 %, red at 2 % (navy black). The light falls off over an effective depth H
-// (1 - e^(-h / H)), H = 30 m [I] (abyssal-garden's deepest floor is ~56 m): kd scaled by Heff / h0 for the whole frame,
-// so the light still grows rising from the eye and every effect sees the same water.
-OuUwMedium ouUwEyeMedium() {
-    OuUwMedium m = ouUwMedium();
-    const float kUwDepthScale = 30.0;
-    float h0 = ouUwEyeDepth();
-    if (h0 > 1e-3) m.kd *= kUwDepthScale * (1.0 - exp(-h0 / kUwDepthScale)) / h0;
-    return m;
-}
-vec3 ouUwSunLight(OuUwMedium m, float h, vec3 l) { return exp(-m.kd * (h / max(l.z, 0.2))); } // sunE alone (shafts)
 
 // ---- 1:1 port of abyssal-garden's medium (Noniv, MIT; source/src/shaders.js S_G / S_B, docs/RESEARCH.md 8.11) ----
 // Literal constants and formulas, in the demo's own space ("ag space"): metres, y up, the water surface at y = 0 (points

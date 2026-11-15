@@ -1,5 +1,5 @@
-// The Enhanced water surface's waves, one source for water.vert (displacement), water.frag (normals) and caustics.glsl
-// (the bed lit through those same waves), so their shapes are identical. Embedded for GL by render/Water.cpp (expands
+// The Enhanced water surface's waves, one source for water.vert (displacement), water.frag (normals) and the post
+// pass (kM), so their shapes are identical. Embedded for GL by render/Water.cpp (expands
 // the #include line), #included by glslc for Vulkan. ouWaves needs the includer's block `w` (ripple, rippleInfo,
 // ocean) and `uRipples` (game::WaveField heights), the ouOcean* functions `uOcean` (the FFT ocean, shaders/ocean.comp).
 // docs/RENDERING.md "Water".

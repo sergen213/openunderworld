@@ -70,9 +70,9 @@ target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/
 
 # Enhanced water / splash / underwater-post GLSL shared by GL (runtime compile) and Vulkan (glslc).
 foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
-        underwater.glsl uw_medium.glsl atmosphere.glsl filter.glsl caustics.glsl waves.glsl tonemap.glsl ocean.comp
+        underwater.glsl uw_medium.glsl atmosphere.glsl filter.glsl waves.glsl tonemap.glsl ocean.comp
         uw_particles.glsl uw_light.glsl uw_snow.vert uw_snow.frag uw_bubble.vert uw_bubble.frag
-        uw_shafts_pattern.frag uw_shafts.frag uw_shafts_blur.frag uw_water.frag uw_bloom.frag uw_grade.frag)
+        uw_shafts.frag uw_shafts_blur.frag uw_water.frag uw_bloom.frag uw_grade.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${src})
   file(READ ${src} OU_WATER_SRC)
@@ -97,7 +97,7 @@ foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.v
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/tonemap.glsl
-                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
@@ -110,36 +110,36 @@ foreach(s fx.vert fx.frag)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
 # Enhanced water + splash (shared GLSL with GL, -DVULKAN=1 selects the descriptor syntax; water.frag includes sun.glsl
-# and shaders/caustics.glsl; water.vert, water.frag and caustics.glsl include shaders/waves.glsl; ocean.comp: the FFT ocean).
+# and shaders/uw_medium.glsl; water.vert and water.frag include shaders/waves.glsl; ocean.comp: the FFT ocean).
 foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
         ocean.comp)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
-                     DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
+                     DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
 # Enhanced under-water particles (render/Water.hpp UwParticlePush): uw_particles.glsl in all; the fragment shaders also
-# include the post pass's underwater.glsl (+ caustics, waves), sun.glsl, atmosphere.glsl and uw_light.glsl.
+# include the post pass's underwater.glsl (+ waves, uw_medium), sun.glsl, atmosphere.glsl and uw_light.glsl.
 foreach(s uw_snow.vert uw_snow.frag uw_bubble.vert uw_bubble.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   set(dir ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders)
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${dir}/uw_particles.glsl ${dir}/uw_light.glsl ${dir}/underwater.glsl
-                             ${dir}/atmosphere.glsl ${dir}/caustics.glsl ${dir}/uw_medium.glsl ${dir}/waves.glsl VERBATIM)
+                             ${dir}/atmosphere.glsl ${dir}/uw_medium.glsl ${dir}/waves.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
-# Enhanced under-water sun shafts (shaders/underwater.glsl ouShaftPatternTexel / ouShaftMarch / ouShaftBlur), drawn with
-# post.vert and the post layout.
-foreach(s uw_shafts_pattern.frag uw_shafts.frag uw_shafts_blur.frag)
+# Enhanced under-water sun shafts (shaders/underwater.glsl agRays / agRaysBlur: abyssal-garden W_RAYS / W_RBLUR), drawn
+# with post.vert and the post layout.
+foreach(s uw_shafts.frag uw_shafts_blur.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl
-                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
@@ -157,11 +157,11 @@ foreach(s uw_bloom.frag uw_grade.frag)
                      DEPENDS ${src} VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
-# post.frag includes shaders/underwater.glsl (+ caustics.glsl, waves.glsl), shaders/atmosphere.glsl, shaders/filter.glsl and
+# post.frag includes shaders/underwater.glsl (+ waves.glsl, uw_medium.glsl), shaders/atmosphere.glsl, shaders/filter.glsl and
 # shaders/tonemap.glsl.
 set_property(SOURCE ${OU_VK_SPV_DIR}/post.frag.inc APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl
              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl
-             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl
+             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl
              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/tonemap.glsl)
 # Ray-traced scene variant (-DOU_RT: ray queries against the scene TLAS); only loaded on RT-capable devices.
 foreach(stage vert frag)
@@ -175,7 +175,7 @@ endforeach()
 add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/water_rt.frag.inc
                    COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -DOU_RT -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/water_rt.frag.inc ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/water.frag
                    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/water.frag ${OU_SUN_GLSL_SRC}
-                           ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
 list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/water_rt.frag.inc)
 # RT AO / GI (rt_indirect.comp): trace, trace from MSAA depth, denoise.
