@@ -417,6 +417,11 @@ struct Resources {
     Program sceneProgram, textProgram, lineProgram, shadowProgram, postProgram;
     Program waterProgram, splashSplatProgram, splashBlurProgram, splashCompositeProgram; // Enhanced water (render/Water.cpp sources)
     std::array<Program, 3> shaftPrograms; // under-water sun shafts: pattern, march, blur (render/Water.hpp)
+    // Enhanced water's animated water texture (render/Water.hpp kAgWaterSize; abyssal-garden W_WATER): RGBA16F with
+    // kAgWaterLevels mips, unit 18 (`uAgWater`: post, water, shafts, particles); program = shaders/uw_water.frag.
+    Program agWaterProgram;
+    Texture agWater;
+    Framebuffer agWaterFbo;
     Buffer waterUbo;                     // WaterBlock, UBO binding 4 (water, splash, post)
     Texture ripples;                     // R32F height field, game::WaterSim
     uint64_t rippleVersion = 0;
@@ -544,6 +549,19 @@ public:
             r.shaftPrograms[size_t(i)] = linkProgram(kPostVs, fs.c_str(), error);
             if (!r.shaftPrograms[size_t(i)].get()) return false;
         }
+        r.agWaterProgram = linkProgram(kPostVs, agWaterSource().c_str(), error);
+        if (!r.agWaterProgram.get()) return false;
+        r.agWater = newTexture();
+        glTextureStorage2D(r.agWater.get(), kAgWaterLevels, GL_RGBA16F, kAgWaterSize, kAgWaterSize);
+        glTextureParameteri(r.agWater.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTextureParameteri(r.agWater.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(r.agWater.get(), GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTextureParameteri(r.agWater.get(), GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTextureParameteri(r.agWater.get(), GL_TEXTURE_MAX_LEVEL, kAgWaterLevels - 1);
+        if (maxAniso_ > 1.0f) glTextureParameterf(r.agWater.get(), GL_TEXTURE_MAX_ANISOTROPY, std::min(maxAniso_, 8.0f)); // the demo's sR
+        for (GLint level = 0; level < kAgWaterLevels; ++level) glClearTexImage(r.agWater.get(), level, GL_RGBA, GL_FLOAT, nullptr);
+        r.agWaterFbo = newFramebuffer();
+        glNamedFramebufferTexture(r.agWaterFbo.get(), GL_COLOR_ATTACHMENT0, r.agWater.get(), 0);
         r.waterUbo = newBuffer();
         glNamedBufferStorage(r.waterUbo.get(), sizeof(WaterBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
         { // FFT ocean; a driver that cannot build ocean.comp keeps afl's waves (WaterBlock::ocean[0].x cleared per frame)
@@ -918,8 +936,10 @@ public:
         scissorFor(UINT32_MAX, vp); // off: blits obey the scissor
         if (originals && !deferred_.empty()) drawScreenReaders(vp);
         setBlend(int(scene::Blend::Opaque));
-        if (enhancedWater) drawWater(camera, vp, options);
-        else if (wb.haze.w > 0.5f || wb.weather.x > 0.5f || wb.waterPass[2].x > 0) // post-pass depth readers
+        if (enhancedWater) {
+            drawAgWater(wb.eye.w);
+            drawWater(camera, vp, options);
+        } else if (wb.haze.w > 0.5f || wb.weather.x > 0.5f || wb.waterPass[2].x > 0) // post-pass depth readers
             glBlitNamedFramebuffer(r.targets.scene.get(), r.targets.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0,
                                    vp.width, vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
         drawFx(camera, vp, viewProj, options);
@@ -1687,6 +1707,21 @@ private:
         for (int l = lod; l < ocean::kLevels - 1; ++l) run(l, l + 1, ocean::Mip, ocean::kMaxN >> (l + 1), false);
     }
 
+    // Enhanced water's animated water texture: uw_water.frag into mip 0 (time = the demo's tm.x), the mips box-filtered
+    // down (the demo's fsMip), bound to unit 18 for the water, the shafts, the particles and the post pass.
+    void drawAgWater(float time) {
+        Resources& r = *res_;
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glBindFramebuffer(GL_FRAMEBUFFER, r.agWaterFbo.get());
+        glViewport(0, 0, kAgWaterSize, kAgWaterSize);
+        glUseProgram(r.agWaterProgram.get());
+        glUniform1f(0, time);
+        glBindVertexArray(r.emptyVao.get());
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glGenerateTextureMipmap(r.agWater.get());
+        glBindTextureUnit(18, r.agWater.get());
+    }
     // Enhanced water: resolve the opaque scene into the copy textures, then draw the water surfaces
     // with refraction/reflection/ripples and the splash droplets on top.
     void drawWater(const Camera& camera, Viewport vp, const FrameOptions& options) {

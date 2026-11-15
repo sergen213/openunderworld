@@ -21,12 +21,14 @@ layout(binding = 4) uniform Water {
 layout(set = 1, binding = 1) uniform sampler2D uDepth;
 layout(set = 1, binding = 3) uniform sampler2D uRipples; // the interactive wave field (caustics)
 layout(set = 1, binding = 5) uniform sampler2DArray uOcean; // the FFT ocean (caustics; shaders/ocean.comp)
+layout(set = 1, binding = 10) uniform sampler2D uAgWater; // the animated water texture (render/Water.hpp kAgWaterSize; VkRenderer recordAgWater)
 #define OU_NDC_Y(uv) (1.0 - 2.0 * (uv).y)
 #define OU_NDC_Z(d) (d)
 #else
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 9) uniform sampler2D uRipples;
 layout(binding = 12) uniform sampler2DArray uOcean;
+layout(binding = 18) uniform sampler2D uAgWater; // the animated water texture (GlRenderer drawAgWater)
 #define OU_NDC_Y(uv) (2.0 * (uv).y - 1.0)
 #define OU_NDC_Z(d) (2.0 * (d) - 1.0)
 #endif
@@ -34,24 +36,6 @@ vec3 ouWorld(vec2 uv, float depth, mat4 invViewProj) {
     vec4 clip = vec4(2.0 * uv.x - 1.0, OU_NDC_Y(uv), OU_NDC_Z(depth), 1.0);
     vec4 p = invViewProj * clip;
     return p.xyz / p.w;
-}
-#include "shaders/caustics.glsl"
-// Caustics on the opaque scene point p (shaders/caustics.glsl), camera under water only: from above, this pass sees the
-// water surface's composite (water.frag puts them on the refracted bed there). Only inside a water volume below its
-// surface; ouSunShadowVisibility is in atmosphere.glsl (after render/sun.glsl in both renderers).
-vec3 ouCaustics(vec3 c, vec2 uv) {
-    float d = texture(uDepth, uv).r;
-    vec3 p = ouWorld(uv, d, w.invViewProj);
-    // derivatives before any branch: the surface normal and the cell footprint
-    vec3 n = cross(dFdx(p), dFdy(p));
-    float footprint = length(fwidth(p.xy)); // world units per pixel
-    if (w.fogColor.w < 0.5 || d >= 0.999999) return c;
-    float surf = -1e30;
-    for (int i = 0; i < int(w.detail.w); ++i) {
-        vec3 lo = w.volumes[2 * i].xyz, hi = w.volumes[2 * i + 1].xyz;
-        if (all(greaterThanEqual(p, lo)) && all(lessThan(p, hi))) { surf = hi.z; break; }
-    }
-    return c * ouCausticLight(p, n, surf - p.z, footprint);
 }
 // tru.exe's under-water pass (0x6D8C20 drawing the unit's water material, PS lib 410 slot 0; RENDERING.md "Under
 // water"), both water qualities: the colour runs from the deep colour (looking down) to the surface colour (looking
@@ -64,48 +48,52 @@ vec3 ouPresetHue(vec3 gammaCol) { // gamma colour -> the preset hue at its lumin
     float lum = dot(pow(max(gammaCol, vec3(0.0)), vec3(2.2)), vec3(0.2126, 0.7152, 0.0722));
     return pow(max(w.optics[1].rgb * lum, vec3(0.0)), vec3(1.0 / 2.2));
 }
-// Enhanced under-water fog (ours, camera submerged: w.fogColor.w; RENDERING.md "Under water"): the shared medium
-// (shaders/uw_medium.glsl) per pixel. Per-channel extinction sigma along the view ray; the in-scatter of light that itself
-// falls off as e^(-kd depth) below the surface, integrated in closed form along the ray (brighter looking up, darker and
-// bluer looking down and deeper down), with the forward sun glow; the opaque scene's light loses red and brightness
-// with its depth under the surface and takes the hemispherical water-coloured ambient. Sets gUwT / gUwL (the pixel's
-// transmittance and in-scatter) for the grade's glow (filter.glsl).
+// Enhanced under-water scene (ours, camera submerged: w.fogColor.w; RENDERING.md "Under water"): abyssal-garden's W_SOLID
+// light and S_B fog (shaders/uw_medium.glsl, ag section) per pixel. An opaque point under its water surface is relit
+// (agRelight: the depth falloff, the uAgWater caustics, ambient and side light; agCausLod with levels from the pixel
+// footprint: p comes from the depth buffer), then fogged: agFog(c, p) = c e^(-sg d) ss(230, 185, d) + fogIn. Rays that
+// leave through the surface (looking up from under it: water.frag's Snell's window, drawn over the sky too) fog up to it
+// and keep that colour (W_SURF's fog(c, wp)); sky pixels are the demo's background (vsB / fsB): fog(0, eye + dir 240 m).
+// Sets gUwT / gUwL (the pixel's transmittance and in-scatter) for the grade's glow (filter.glsl).
+#include "shaders/caustics.glsl" // the shafts' focusing (ouCausticFocus) and kIorRgb (uw_medium.glsl ouUwSunDir)
 #include "shaders/uw_medium.glsl"
+float ouSunShadowVisibility(vec3 p); // shaders/atmosphere.glsl (after render/sun.glsl in both renderers)
 vec3 gUwT = vec3(1.0), gUwL = vec3(0.0);
 vec3 ouUwFog(vec3 c, vec2 uv) {
     float depth = texture(uDepth, uv).r;
     vec3 q = ouWorld(uv, depth, w.invViewProj);
     vec3 n = cross(dFdx(q), dFdy(q)); // before any branch
     bool sky = depth >= 0.999999;
-    if (sky) q = ouWorld(uv, 1.0, w.invViewProj);
-    vec3 rd = q - w.eye.xyz;
-    float len = length(rd);
-    rd /= max(len, 1e-3);
-    if (sky) len = 1e7;
-    float surf = ouUwSurfaceZ();
-    // What lies above the water is seen through the surface (water.frag's Snell's window and total internal reflection,
-    // drawn over the sky too): fog only up to it, and keep that colour; only rays that miss every surface (looking down
-    // into nothing) are pure in-scatter.
-    bool through = rd.z > 1e-4 && w.eye.z < surf;
-    if (through) len = min(len, (surf - w.eye.z) / rd.z);
-    float d = min(len, 1e7) / kM;
-    vec3 l = ouUwSunDir();
-    OuUwMedium m = ouUwEyeMedium();
+    vec3 far = ouWorld(uv, 1.0, w.invViewProj);
+    vec3 rd = normalize((sky ? far : q) - w.eye.xyz);
+    float len = sky ? 1e30 : distance(q, w.eye.xyz), surf = ouUwSurfaceZ();
+    bool through = rd.z > 1e-4 && w.eye.z < surf && (surf - w.eye.z) / rd.z < len;
     vec3 lin = pow(max(c, vec3(0.0)), vec3(2.2));
-    vec3 lit = lin;
-    if (!sky) { // the scene's light under its own water surface
-        float ps = -1e30;
+    vec3 cam = agEye(), dir = agDir(rd), lit = lin, p;
+    if (through) p = cam + dir * ((surf - w.eye.z) / rd.z / kM);
+    else if (sky) p = cam + dir * 240.0, lit = vec3(0.0);
+    else {
+        p = agPos(q);
+        float ps = -1e30; // the point's own water surface
         for (int i = 0; i < int(w.detail.w); ++i) {
             vec3 lo = w.volumes[2 * i].xyz, hi = w.volumes[2 * i + 1].xyz;
             if (all(greaterThanEqual(q, lo)) && all(lessThan(q, hi))) { ps = hi.z; break; }
         }
-        n = dot(n, n) > 0.0 ? normalize(n) : vec3(0.0, 0.0, 1.0);
-        if (dot(n, w.eye.xyz - q) < 0.0) n = -n;
-        if (ps > q.z) lit *= ouUwSurfaceLight(m, n, (ps - q.z) / kM, l);
+        if (ps > q.z) {
+            n = dot(n, n) > 0.0 ? normalize(n) : vec3(0.0, 0.0, 1.0);
+            if (dot(n, w.eye.xyz - q) < 0.0) n = -n;
+            float d = distance(p, cam);
+            // the pixel's footprint: distance x the angle between neighbouring pixels' rays
+            vec3 f1 = ouWorld(uv + vec2(0.0, w.screen.w), 1.0, w.invViewProj);
+            float fp = d * length(normalize(f1 - w.eye.xyz) - normalize(far - w.eye.xyz));
+            vec3 ca = w.sunColor.w > 0.0 ? agCausLod(uAgWater, p, d, fp) : vec3(0.33); // no sun: no caustics
+            lit = agRelight(lin, p, agDir(n), -dir, ca, ouSunShadowVisibility(q + n * (0.35 * kM)));
+        }
     }
-    gUwT = exp(-m.sigma * d);
-    gUwL = ouUwFogIn(m, rd, d, ouUwEyeDepth(), l);
-    vec3 fogged = (sky && !through ? vec3(0.0) : lit * gUwT) + gUwL;
+    float d = distance(p, cam);
+    gUwT = exp(-agSg(kAgZone) * d) * agSs(230.0, 185.0, d);
+    gUwL = agFog(vec3(0.0), p, kAgZone);
+    vec3 fogged = lit * gUwT + gUwL; // = agFog(lit, p, kAgZone)
     gUwT = mix(vec3(1.0), gUwT, w.waterPass[2].x), gUwL *= w.waterPass[2].x;
     return pow(max(mix(lin, fogged, w.waterPass[2].x), vec3(0.0)), vec3(1.0 / 2.2));
 }
@@ -272,6 +260,7 @@ vec3 ouShaftsComposite(vec3 c) {
     return c + cap * (1.0 - exp(-max(acc / ws, vec3(0.0)) / cap));
 }
 vec3 ouUnderwater(vec3 c, vec2 uv) {
-    // caustics light the scene, the water pass fogs it, then the shafts' and tru.exe's rays add light (0x6D8C20 order)
-    return ouRays(ouShaftsComposite(ouWaterPass(ouCaustics(c, uv), uv)), uv);
+    // the water pass relights and fogs the scene (Enhanced: ouUwFog), then the shafts' and tru.exe's rays add light
+    // (0x6D8C20 order)
+    return ouRays(ouShaftsComposite(ouWaterPass(c, uv)), uv);
 }

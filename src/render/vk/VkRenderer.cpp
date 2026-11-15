@@ -105,6 +105,9 @@ const uint32_t kShaftMarchFrag[] = {
 const uint32_t kShaftBlurFrag[] = {
 #include "uw_shafts_blur.frag.inc"
 };
+const uint32_t kAgWaterFrag[] = { // Enhanced water's animated water texture (abyssal-garden W_WATER, render/Water.hpp)
+#include "uw_water.frag.inc"
+};
 const uint32_t kWaterVert[] = { // Enhanced water + splashes (shared GLSL, render/shaders)
 #include "water.vert.inc"
 };
@@ -877,6 +880,7 @@ public:
             if (oceanPipeline_) recordOcean(cmd, options);
             else wb.ocean[0].x = 0.0f; // afl's waves
         }
+        if (enhancedWater) recordAgWater(cmd, wb.eye.w); // uAgWater: this frame's caustics / slopes (water + post read it)
         // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water; translated
         // materials reading the back/depth buffer (the sea, OrigDraw::screen) draw in the second pass from the copies.
         const bool screenReaders = options.originalShaders && !origPrograms_.empty() && !screenSets_.empty();
@@ -1880,15 +1884,17 @@ public:
             destroyScenePipelines();
             destroyFsr();
             for (VkPipeline p : {textPipeline_, shadowPipeline_, pssmPipeline_, postPipeline_, shaftPatternPipeline_,
-                                 shaftMarchPipeline_, shaftBlurPipeline_})
+                                 shaftMarchPipeline_, shaftBlurPipeline_, agWaterPipeline_})
                 vkDestroyPipeline(device_, p, nullptr);
-            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_, fxLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
+            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_, fxLayout_, agWaterLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
             for (auto& m : lineMemory_) m.reset();
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(shadowSetLayout_, VK_NULL_HANDLE), nullptr);
             destroyIndirect();
             vkDestroyDescriptorSetLayout(device_, std::exchange(rtSetLayout_, VK_NULL_HANDLE), nullptr);
-            for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_, biasedSampler_, blurSampler_}) vkDestroySampler(device_, s, nullptr);
+            for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_, biasedSampler_, blurSampler_, agWaterSampler_}) vkDestroySampler(device_, s, nullptr);
+            vkDestroyImageView(device_, std::exchange(agWaterLevel0_, VK_NULL_HANDLE), nullptr);
+            if (agWater_.image) destroyImage(agWater_);
             vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
             vkDestroyCommandPool(device_, uploadPool_, nullptr);
             staticMemory_.reset();
@@ -2921,26 +2927,28 @@ private:
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &textLayout_));
         pl.setLayoutCount = 1;
         pl.pSetLayouts = &setLayout_;
-        // Enhanced water: set 0 = WaterBlock UBO + opaque colour/depth + ripple field + the FFT ocean (uOcean).
-        const VkDescriptorSetLayoutBinding wb[5] = {
+        // Enhanced water: set 0 = WaterBlock UBO + opaque colour/depth + ripple field + the FFT ocean (uOcean) + (5) the
+        // animated water texture (uAgWater: agWater_, recordAgWater; bed caustics).
+        const VkDescriptorSetLayoutBinding wb[6] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // water.vert displaces by it
             {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // ... and by this
+            {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // uAgWater
         };
-        VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 5, wb};
+        VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 6, wb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &wl, nullptr, &waterSetLayout_));
         // Post: set 1 = WaterBlock UBO + opaque depth (underwater, atmosphere, weather) + the screen filters' blur levels
         // (filterBlur_) + the ripple field (caustics) + the feedback effect's previous frame (feedback_) + the FFT ocean
         // (caustics) + the under-water sun shafts' march output, blurred shafts and pattern tile (6, 7, 8: shaftTargets_,
-        // shaftPattern_; recordUnderwaterShafts) + (9) the under-water particles (uwParticles_; recordUwParticles); set 2 =
-        // the sun shadow set (shafts).
-        VkDescriptorSetLayoutBinding pb[10];
-        for (uint32_t b = 0; b < 10; ++b)
+        // shaftPattern_; recordUnderwaterShafts) + (9) the under-water particles (uwParticles_; recordUwParticles) + (10) the
+        // animated water texture (uAgWater: agWater_, recordAgWater; caustics); set 2 = the sun shadow set (shafts).
+        VkDescriptorSetLayoutBinding pb[11];
+        for (uint32_t b = 0; b < 11; ++b)
             pb[b] = {b, b ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                      VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 10, pb};
+        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 11, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
         VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves
         // 1: sun shadow (caustics); 2 (RT devices): the scene TLAS for water_rt.frag's reflections.
@@ -2963,6 +2971,10 @@ private:
         pl.pSetLayouts = postSets;
         pl.pPushConstantRanges = &postPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &postLayout_));
+        // The animated water texture's pass (recordAgWater): no sets, push = the time (uw_water.frag AgWaterPush).
+        const VkPushConstantRange agPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float)};
+        const VkPipelineLayoutCreateInfo agl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &agPush};
+        VK_CHECK(vkCreatePipelineLayout(device_, &agl, nullptr, &agWaterLayout_));
         // Under-water particles (recordUwParticles): the post pass's sets 1-2 (set 0 unused), UwParticlePush.
         VkPushConstantRange uwPush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(UwParticlePush)};
         pl.pPushConstantRanges = &uwPush;
@@ -2993,6 +3005,8 @@ private:
                                              VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
         shaftBlurPipeline_ = createPipeline(kPostVert, kShaftBlurFrag, postLayout_, nullptr, {}, PipelineKind::Post,
                                             VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
+        agWaterPipeline_ = createPipeline(kPostVert, kAgWaterFrag, agWaterLayout_, nullptr, {}, PipelineKind::Post,
+                                          VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
         shadowPipeline_ = createPipeline(kShadowVert, kShadowFrag, sceneLayout_, &kSceneBinding, kShadowAttrs,
                                          PipelineKind::Shadow, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_UNDEFINED, shadowFormat_);
         pssmPipeline_ = createPipeline(kShadowVert, kShadowFrag, sceneLayout_, &kSceneBinding, kShadowAttrs,
@@ -3697,8 +3711,9 @@ private:
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, staticPool_, 1, &setLayout_};
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &postSet_)); // written per swapchain (recreateSwapchain)
 
-        // Enhanced water: one WaterBlock UBO and one water + post-water set (+ 3 liquid splash sets) per frame in flight.
-        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16 * kFramesInFlight},
+        // Enhanced water: one WaterBlock UBO and one water + post-water set (+ 3 liquid splash sets) per frame in flight;
+        // images: water set 5 + post-water set 10 + splash sets 3 x 1.
+        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 18 * kFramesInFlight},
                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5 * kFramesInFlight}};
         VkDescriptorPoolCreateInfo wpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 5 * kFramesInFlight, 2, wps};
         VK_CHECK(vkCreateDescriptorPool(device_, &wpci, nullptr, &waterPool_));
@@ -3713,6 +3728,7 @@ private:
             wai.pSetLayouts = &splashSetLayout_;
             for (VkDescriptorSet& s : splashSets_[i]) VK_CHECK(vkAllocateDescriptorSets(device_, &wai, &s));
         }
+        createAgWater();
         createOcean();
         writeWaterSets();
 
@@ -3911,6 +3927,14 @@ private:
                 w.pImageInfo = &shafts[s];
                 vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
             }
+            const VkDescriptorImageInfo ag{agWaterSampler_, agWater_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            w.dstBinding = 10; // the animated water texture (recordAgWater)
+            w.pImageInfo = &ag;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+            w.dstSet = waterSets_[i];
+            w.dstBinding = 5;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+            w.dstSet = postWaterSets_[i];
             const VkDescriptorImageInfo splat[3] = { // recordSplashFluid pass inputs
                 depth,
                 {fontSampler_, splashTargets_[0].view ? splashTargets_[0].view : white_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -4321,6 +4345,94 @@ private:
                                                               VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
             barriers(cmd, {&toRead, 1});
         }
+    }
+
+    // Enhanced water's animated water texture (render/Water.hpp kAgWaterSize; abyssal-garden W_WATER): kAgWaterLevels
+    // mips of RGBA16F, repeat / trilinear / anisotropic 8, kept SHADER_READ_ONLY between frames; agWaterLevel0_ = the
+    // render target view of mip 0.
+    void createAgWater() {
+        agWater_ = createImage(staticMemory_, VK_FORMAT_R16G16B16A16_SFLOAT, kAgWaterSize, kAgWaterSize, kAgWaterLevels,
+                               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                   VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                               VK_IMAGE_ASPECT_COLOR_BIT);
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = agWater_.image;
+        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VK_CHECK(vkCreateImageView(device_, &vi, nullptr, &agWaterLevel0_));
+        VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+        sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sci.anisotropyEnable = maxAniso_ > 1.0f;
+        sci.maxAnisotropy = std::clamp(maxAniso_, 1.0f, 8.0f); // the demo's sR: maxAnisotropy 8
+        sci.maxLod = VK_LOD_CLAMP_NONE;
+        VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &agWaterSampler_));
+        oneShot([&](VkCommandBuffer cmd) { // a valid sampled layout before the first frame writes it
+            const auto b = imageBarrier(agWater_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                        VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            barriers(cmd, {&b, 1});
+        });
+    }
+    // This frame's water texture, before any render pass: uw_water.frag into mip 0 (the earlier frames' reads by the water
+    // and post fragment shaders done), then each mip blitted (linear: the 2x2 box of the demo's fsMip) from the one above.
+    void recordAgWater(VkCommandBuffer cmd, float time) {
+        constexpr VkPipelineStageFlags2 kOut = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                        kFrag = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, kXfer = VK_PIPELINE_STAGE_2_BLIT_BIT;
+        const auto mips = [](VkImageMemoryBarrier2 b, uint32_t base, uint32_t count) {
+            b.subresourceRange.baseMipLevel = base, b.subresourceRange.levelCount = count;
+            return b;
+        };
+        const VkImageMemoryBarrier2 toWrite[2] = {
+            mips(imageBarrier(agWater_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kFrag, 0, kOut,
+                              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT),
+                 0, 1),
+            mips(imageBarrier(agWater_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kFrag, 0, kXfer,
+                              VK_ACCESS_2_TRANSFER_WRITE_BIT),
+                 1, kAgWaterLevels - 1)};
+        barriers(cmd, toWrite);
+        VkRenderingAttachmentInfo a{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        a.imageView = agWaterLevel0_;
+        a.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        a.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; // the fullscreen triangle writes every texel
+        a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {uint32_t(kAgWaterSize), uint32_t(kAgWaterSize)}};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 1;
+        ri.pColorAttachments = &a;
+        vkCmdBeginRendering(cmd, &ri);
+        const VkViewport vp{0, 0, float(kAgWaterSize), float(kAgWaterSize), 0, 1};
+        vkCmdSetViewport(cmd, 0, 1, &vp);
+        vkCmdSetScissor(cmd, 0, 1, &ri.renderArea);
+        vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, agWaterPipeline_);
+        vkCmdPushConstants(cmd, agWaterLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof time, &time);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRendering(cmd);
+        auto src = mips(imageBarrier(agWater_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                     kOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kXfer, VK_ACCESS_2_TRANSFER_READ_BIT),
+                        0, 1);
+        barriers(cmd, {&src, 1});
+        for (int l = 1; l < kAgWaterLevels; ++l) {
+            const int32_t s = kAgWaterSize >> (l - 1), d = kAgWaterSize >> l;
+            VkImageBlit b{};
+            b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, uint32_t(l - 1), 0, 1};
+            b.srcOffsets[1] = {s, s, 1};
+            b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, uint32_t(l), 0, 1};
+            b.dstOffsets[1] = {d, d, 1};
+            vkCmdBlitImage(cmd, agWater_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, agWater_.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
+            src = mips(imageBarrier(agWater_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, kXfer,
+                                    VK_ACCESS_2_TRANSFER_WRITE_BIT, kXfer, VK_ACCESS_2_TRANSFER_READ_BIT),
+                       uint32_t(l), 1);
+            barriers(cmd, {&src, 1});
+        }
+        const auto toRead = imageBarrier(agWater_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                         kXfer, 0, kFrag, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        barriers(cmd, {&toRead, 1});
     }
 
     // ---- Ray tracing (VK_KHR_acceleration_structure + VK_KHR_ray_query), RENDERING.md "Ray tracing" ----
@@ -5419,6 +5531,12 @@ private:
     VkPipeline shaftPatternPipeline_ = VK_NULL_HANDLE, shaftMarchPipeline_ = VK_NULL_HANDLE, shaftBlurPipeline_ = VK_NULL_HANDLE;
     std::array<GpuImage, 2> shaftTargets_{};
     GpuImage shaftPattern_{};
+    // Enhanced water's animated water texture (createAgWater / recordAgWater; uAgWater: post set 1 binding 10, water set 5).
+    GpuImage agWater_{};
+    VkImageView agWaterLevel0_ = VK_NULL_HANDLE;
+    VkSampler agWaterSampler_ = VK_NULL_HANDLE;
+    VkPipelineLayout agWaterLayout_ = VK_NULL_HANDLE;
+    VkPipeline agWaterPipeline_ = VK_NULL_HANDLE;
     VkDescriptorPool waterPool_ = VK_NULL_HANDLE;
     std::array<Buffer, kFramesInFlight> waterUbo_{}; // WaterBlock, host-coherent
     std::array<VkDescriptorSet, kFramesInFlight> waterSets_{}, postWaterSets_{};

@@ -80,6 +80,9 @@ const char* kShaftSources[3] = { // shaders/uw_shafts_*.frag (render/Water.hpp u
     ,
 #include "uw_shafts_blur.frag.inc"
 };
+const char* kAgWaterFrag = // shaders/uw_water.frag (render/Water.hpp agWaterSource)
+#include "uw_water.frag.inc"
+    ;
 } // namespace
 
 bool isWaterSurface(std::string_view meshOrigin) { return meshOrigin.find("watersurface") != std::string_view::npos; }
@@ -483,5 +486,7 @@ std::string underwaterShaftSource(int pass) {
         if (const size_t at = s.find(line); at != std::string::npos) s.replace(at, std::strlen(line), text);
     return expandIncludes(std::move(s));
 }
+
+std::string agWaterSource() { return kAgWaterFrag; }
 
 } // namespace ou::render

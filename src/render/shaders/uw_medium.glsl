@@ -64,16 +64,7 @@ vec3 ouUwFogIn(OuUwMedium m, vec3 rd, float d, float h0, vec3 l) {
     float mu = max(dot(rd, l), 0.0), m2 = mu * mu;
     return m.scatter * m.sigma * exp(-m.kd * h0) * ((1.0 - exp(-a * d)) / a) * (1.0 + 0.246 * m2 * m2);
 }
-// Light on a submerged point h metres under the surface, unit normal n, relative to the light TRU's shading gave it
-// (1 at the surface for sun-facing tops): sunE (the refracted sun's path h / l.z) 60 % + amb (e^(-1.2 kd h), sky
-// hemisphere (0.24 + 0.76 up^2)) 40 % + side (water colour on walls, e^(-kd h) (1 - |n.z|)) [I weights].
-vec3 ouUwSunLight(OuUwMedium m, float h, vec3 l) { return exp(-m.kd * (h / max(l.z, 0.2))); } // sunE alone
-vec3 ouUwSurfaceLight(OuUwMedium m, vec3 n, float h, vec3 l) {
-    float up = 0.5 + 0.5 * n.z;
-    vec3 amb = m.ambient * exp(-1.2 * m.kd * h) * (0.24 + 0.76 * up * up);
-    vec3 side = m.ambient * exp(-m.kd * h) * ((1.0 - abs(n.z)) * 0.2);
-    return 0.6 * ouUwSunLight(m, h, l) + 0.4 * amb + side;
-}
+vec3 ouUwSunLight(OuUwMedium m, float h, vec3 l) { return exp(-m.kd * (h / max(l.z, 0.2))); } // sunE alone (shafts)
 // The water between the eye and world point p (per-point form of ouUwFog): transmittance T and in-scatter L (linear),
 // both x the pass strength (w.waterPass[2].x), so p's own light becomes light x T + L.
 void ouUwPointFog(OuUwMedium m, vec3 p, out vec3 T, out vec3 L) {
@@ -143,6 +134,20 @@ float agCaus2(sampler2D tW, vec3 p, float d) {
     float c = min(pow(texture(tW, q / 4.1).r, 1.4) * 2.6 * (0.45 + texture(tW, q.yx / 6.9 + 0.37).r * 1.3), 2.6);
     return mix(c, 0.33, agSs(35.0, 100.0, d));
 }
+// agCaus with explicit levels, for points reconstructed from the depth buffer (the post pass): their implicit
+// derivatives spike at depth edges and leave blurred-mip outlines on silhouettes. fp = the pixel's footprint in metres
+// (distance x pixel angle); each tap's level = log2(fp / its texel: 3.3 m / size for the q / 3.3 taps, 6.9 m / size for
+// the q.yx / 6.9 one).
+vec3 agCausLod(sampler2D tW, vec3 p, float d, float fp) {
+    vec2 q = agCuv(p);
+    float n = float(textureSize(tW, 0).x);
+    float la = log2(max(fp * n / 3.3, 1e-6)), lb = log2(max(fp * n / 6.9, 1e-6));
+    vec2 o = vec2(0.004, 0.0025);
+    vec3 a = vec3(textureLod(tW, q / 3.3 + o, la).r, textureLod(tW, q / 3.3, la).r, textureLod(tW, q / 3.3 - o, la).r);
+    float b = textureLod(tW, q.yx / 6.9 + 0.37, lb).r;
+    vec3 c = min(pow(a, vec3(2.3)) * 5.0 * (0.45 + b * 1.3), vec3(4.0));
+    return mix(c, vec3(0.33), agSs(35.0, 100.0, d));
+}
 vec3 agSunE(float y, float z) { return kAgSunc * exp(agKd(z) * (min(y, 0.0) / agSun().y)) * (0.5 + 0.5 * agSat(-y / 30.0)); }
 vec3 agAmb(vec3 p, vec3 n, float sky, float z) {
     float up = n.y * 0.5 + 0.5;
@@ -152,6 +157,38 @@ vec3 agAmb(vec3 p, vec3 n, float sky, float z) {
 }
 vec3 agSide(vec3 p, vec3 n, float open, float z) {
     return mix(kAgWcol, kAgPcol, z) * exp(agKd(z) * min(p.y, 0.0)) * open * (1.0 - abs(n.y)) * 0.7;
+}
+// W_SOLID fs light on rock (mat <= 1: gloss 0.1) at ag point p: N the shading normal, n0 the geometric one, V toward the
+// eye, ca = agCaus, sh = the sun visibility (shadow9). diffuse = dl + am (the demo multiplies it by the albedo: c = alb x
+// (dl + am)), spec = its specular E (0.25 + ca) pow(N.H, mix(10, 70, gloss)) gloss ndl 1.8 (added as is). No vol(): sky
+// openness 1, AO 1, no fluorescence (rock); the environment reflection term is left out.
+void agSolidLight(vec3 p, vec3 N, vec3 n0, vec3 V, vec3 ca, float sh, out vec3 diffuse, out vec3 spec) {
+    const float z = kAgZone, gloss = 0.1;
+    vec3 L = agSun();
+    vec3 E = agSunE(p.y, z) * sh;
+    float ndl = agSat(dot(N, L));
+    vec3 am = agAmb(p, N, 1.0, z) + agSide(p, N, 1.0, z);
+    vec3 dl = E * ndl * (0.10 + mix(vec3(0.33), ca, agSs(0.1, 0.45, dot(n0, L))) * 2.5);
+    diffuse = dl + am;
+    vec3 H = normalize(V + L);
+    spec = E * (0.25 + ca) * pow(agSat(dot(N, H)), mix(10.0, 70.0, gloss)) * gloss * ndl * 1.8;
+}
+// The near-surface spatial mean of agCaus (before its 35..100 m fade): 3.2..3.35 over the texture's animation (512^2 W_WATER
+// texels at times 3, 10, 40, 100 s, a and b taps drawn independently; ~65 % of a top sits at the 4.0 clamp) [O, offline].
+const float kAgCausMean = 3.3;
+// A submerged opaque point TRU lit (lin: linear colour) relit as W_SOLID lights rock: lin x L(p) / L_ref + spec x the
+// albedo estimate's luminance. L = agSolidLight's diffuse at ag point p (normal n, toward the eye V, caustic ca, sun
+// visibility sh); L_ref = the same normal and visibility at the surface (y = 0) under the mean caustic kAgCausMean. So
+// TRU's colour stands for an average caustic-lit point just under the surface, its own shading, sun shadows and local
+// light stay (the demo's N.L and shadow9 cancel instead of applying twice, and the flat-shaded reconstructed normal
+// leaves no facets), and the demo's depth falloff, caustic contrast (lines and dark cells around the mean; 0.33 far
+// away ~0.1x), ambient and side light are imposed. HDR: not clamped (the W_POST exposure + ACES compress the peaks).
+vec3 agRelight(vec3 lin, vec3 p, vec3 n, vec3 V, vec3 ca, float sh) {
+    vec3 dl, sp, dr, sr;
+    agSolidLight(p, n, n, V, ca, sh, dl, sp);
+    agSolidLight(vec3(p.x, 0.0, p.z), n, n, V, vec3(kAgCausMean), sh, dr, sr);
+    vec3 a = lin / dr;
+    return a * dl + sp * dot(a, vec3(0.2126, 0.7152, 0.0722));
 }
 // fog (S_B) seen from the eye: skylight at most 150 m along the ray (the vol() openness term is 1 here).
 vec3 agFog(vec3 c, vec3 wp, float z) {

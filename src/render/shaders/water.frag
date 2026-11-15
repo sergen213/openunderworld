@@ -47,11 +47,13 @@ layout(set = 0, binding = 1) uniform sampler2D uScene;
 layout(set = 0, binding = 2) uniform sampler2D uDepth;
 layout(set = 0, binding = 3) uniform sampler2D uRipples;
 layout(set = 0, binding = 4) uniform sampler2DArray uOcean; // the FFT ocean (shaders/ocean.comp)
+layout(set = 0, binding = 5) uniform sampler2D uAgWater; // the animated water texture (render/Water.hpp kAgWaterSize; bed caustics)
 #else
 layout(binding = 5) uniform sampler2D uScene;
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 7) uniform sampler2D uRipples;
 layout(binding = 12) uniform sampler2DArray uOcean;
+layout(binding = 18) uniform sampler2D uAgWater; // the animated water texture (GlRenderer drawAgWater; bed caustics)
 #endif
 // Sun shadow map (render/sun.glsl; Vulkan: water layout set 1) for the caustics on the refracted bed.
 #ifdef VULKAN
@@ -286,9 +288,20 @@ void main() {
         vec3 rbed = ouWorld(ruv, rsd);
         float down = rsd >= 0.999999 ? 1e5 : max(p.z - rbed.z, 0.0);
         vec3 seen = toLinear(textureLod(uScene, ruv, 0.0).rgb);
-        // Caustics (shaders/caustics.glsl) light the bed before the water absorbs it; the normal and footprint are the
-        // unrefracted bed's (derivatives outside this branch).
-        if (rsd < 0.999999) seen *= ouCausticLight(rbed, bn, down, length(abs(bx.xy) + abs(by.xy)));
+        // The bed's light (sun present): abyssal-garden's W_SOLID, as under water (underwater.glsl ouUwFog): agRelight with
+        // the uAgWater caustics, in ag space under this surface (y = depth below p.z, metres). The normal is the
+        // unrefracted bed's (derivatives outside this branch); the caustic levels come from the pixel footprint (the bed
+        // is reconstructed from the depth buffer: its derivatives spike at edges).
+        if (rsd < 0.999999 && w.sunColor.w > 0.0 && w.sunDir.z > 0.0) {
+            vec3 bnn = dot(bn, bn) > 0.0 ? normalize(bn) : vec3(0.0, 0.0, 1.0);
+            if (dot(bnn, w.eye.xyz - rbed) < 0.0) bnn = -bnn;
+            vec3 bp = vec3(rbed.x, min(rbed.z - p.z, 0.0), rbed.y) / kM;
+            float bd = distance(rbed, w.eye.xyz) / kM;
+            vec3 f0 = ouWorld(uv, 1.0), f1 = ouWorld(uv + vec2(0.0, w.screen.w), 1.0);
+            float fp = bd * length(normalize(f1 - w.eye.xyz) - normalize(f0 - w.eye.xyz));
+            seen = agRelight(seen, bp, agDir(bnn), agDir(normalize(w.eye.xyz - rbed)), agCausLod(uAgWater, bp, bd, fp),
+                             ouSunShadowVisibility(rbed + bnn * (0.35 * kM)));
+        }
         vec3 refr = ouAbsorb(seen, path, down, light);
         // Sea: afl's subsurface scattering, brighter where the wave stands higher (thin crest water lit through).
         if (sea) refr += gDeep * light * (1.6 * seaH * (0.4 + 0.6 * pow(1.0 - cosI, 2.0)));

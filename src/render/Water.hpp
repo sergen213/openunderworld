@@ -182,5 +182,13 @@ bool underwaterShaftsActive(const WaterBlock& block);
 // March steps: 0 with graphics.light_shafts off (the passes still run and add nothing), 32 at atmosphere High, else 20.
 int underwaterShaftSteps(const FrameOptions& options);
 std::string underwaterShaftSource(int pass); // GL fragment source of pass 0, 1 or 2 (includes spliced)
+// Enhanced water's animated water texture (shaders/uw_water.frag: abyssal-garden's W_WATER, r = caustic, ba = surface
+// slope; docs/RENDERING.md "Under water"): kAgWaterSize^2 RGBA16F with kAgWaterLevels mips, repeat / trilinear /
+// anisotropic 8, regenerated every frame Enhanced water is drawn (camera above or below: the bed caustics use it too):
+// a fullscreen triangle into mip 0 (VK push constant / GL uniform 0 = WaterBlock eye.w, the demo's time), then the mips
+// box-filtered down (the demo's fsMip; VK linear blits, GL glGenerateTextureMipmap). Sampled as `uAgWater`: VK post set
+// 1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts, particles).
+inline constexpr int kAgWaterSize = 512, kAgWaterLevels = 5; // = uw_water.frag kAgWaterSize; shaders.js WATER (high)
+std::string agWaterSource(); // GL fragment source
 
 } // namespace ou::render
