@@ -78,7 +78,13 @@ struct ParticleDef {
     uint8_t atlasCols = 0, atlasRows = 0, atlasFrames = 0, atlasFirst = 0; // +0x174..+0x177
     std::vector<ParticleMaterial> materials; // +0x168 / +0x16C (wins over the textures)
     bool model() const { return flags4 & 0x80; } // model particles (casings, debris): drawn as small sprites [I]
+    // Drawn with bubble textures only (fx::isBubbleTexture; Enhanced water hands these to the bubble pass).
+    bool bubble() const;
 };
+// The game's bubble sprite textures (147-149 the bubble sheet, 164 two small bubbles, 1103-1105 bubble blobs; 145, the
+// one-pixel dot the vent and current materials pair with them, counts only beside one of those) [O: texture survey of
+// every ParticleDef with water 1, 2026-11-15].
+bool isBubbleTexture(uint32_t id);
 
 // Class 2 glow (GenericFXObject +0x1C / +0x20, 0x58 bytes): creator tru.exe 0x536B70 -> 0x536070, update 0x535FA0,
 // draw 0x536280 (prim type 0x82, drawn from the 0xAE4D04 list by 0x548BF0). Times in 30 Hz frames.
@@ -401,8 +407,10 @@ public:
     void fadedOwners(std::vector<std::pair<int32_t, float>>& out) const;
     void tick(const glm::vec3& camera); // one 60 Hz game tick
     // Camera-facing sprites (particles and glows), back to front, batched by texture and blend. With `bubbles` (Enhanced
-    // water), the under-water-only sprite particles (ParticleDef::water 1: the bubbles, EFFECTS.md) go there instead, for
-    // the under-water particle pass (render/Water.hpp UwParticlePush); Original water draws them as their sprites.
+    // water), the under-water-only bubble particles (ParticleDef::water 1 drawn with bubble textures only,
+    // ParticleDef::bubble; EFFECTS.md) go there instead, for the under-water particle pass (render/Water.hpp
+    // UwParticlePush); the other under-water-only effects (silt and smoke clouds, flashes, debris, weed) and Original
+    // water keep their sprites.
     void build(const render::Camera& camera, float aspect, std::vector<render::FxVertex>& vertices,
                std::vector<render::FxBatch>& batches, std::vector<render::Bubble>* bubbles = nullptr) const;
     // Live effect lights at their current colour / radius.

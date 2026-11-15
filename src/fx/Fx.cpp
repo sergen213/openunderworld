@@ -15,6 +15,26 @@
 
 namespace ou::fx {
 
+bool isBubbleTexture(uint32_t id) { return (id >= 147 && id <= 149) || id == 164 || (id >= 1103 && id <= 1105); }
+
+bool ParticleDef::bubble() const {
+    bool any = false;
+    auto take = [&](uint32_t t) {
+        if (isBubbleTexture(t)) any = true;
+        return isBubbleTexture(t) || t == 145;
+    };
+    if (!materials.empty()) {
+        for (const auto& m : materials)
+            if (!take(m.texture)) return false;
+    } else if (!textures.empty()) {
+        for (const uint32_t t : textures)
+            if (!take(t)) return false;
+    } else if (!take(texture)) {
+        return false;
+    }
+    return any;
+}
+
 namespace {
 
 template <class T>
@@ -1138,7 +1158,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
             if (half > s4) rgba[3] *= 1.0f - (half - s4) / (s5 - s4);
         }
         if (rgba[3] < 0.5f) continue;
-        if (bubbles && d.water == 1 && !d.model()) { // Enhanced water: shaded as a bubble (render/Water.hpp), alpha 0x80 = 1
+        if (bubbles && d.water == 1 && !d.model() && d.bubble()) { // Enhanced water: shaded as a bubble (render/Water.hpp), alpha 0x80 = 1
             const uint32_t h = (p.id + 1u) * 0x9E3779B9u;
             bubbles->push_back({{p.pos.x, p.pos.y, p.pos.z}, size, std::min(1.0f, rgba[3] / 128.0f), float(h >> 8) / 16777216.0f});
             continue;

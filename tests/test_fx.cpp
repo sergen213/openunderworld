@@ -956,14 +956,19 @@ TEST(FxReal, EnhancedWaterBubblesLeaveTheSprites) {
     s.play(gun, *gun->clip("fire_submerged"), glm::mat4(1), -1, 0);
     render::Camera cam;
     cam.position = {-500, 0, 0};
-    size_t most = 0;
+    size_t most = 0, kept = 0;
     for (int t = 0; t < 12; ++t) {
         s.tick(cam.position);
         std::vector<render::FxVertex> v;
         std::vector<render::FxBatch> b;
         std::vector<render::Bubble> bubbles;
         s.build(cam, 16.0f / 9, v, b, &bubbles);
-        for (const auto& x : b) EXPECT_FALSE(x.textureId >= 147 && x.textureId <= 149) << x.textureId; // defs 22 / 23
+        for (const auto& x : b) {
+            EXPECT_FALSE(x.textureId >= 147 && x.textureId <= 149) << x.textureId; // defs 22 / 23
+            if (x.textureId == 161 || x.textureId == 183 || x.textureId == 165 || x.textureId == 184 || x.textureId == 555 ||
+                x.textureId == 566)
+                ++kept; // def 24's murk, defs 25 / 26's flashes: under-water-only too, but not bubbles
+        }
         for (const auto& u : bubbles) {
             EXPECT_GT(u.radius, 0.0f);
             EXPECT_TRUE(u.alpha > 0.0f && u.alpha <= 1.0f);
@@ -972,6 +977,29 @@ TEST(FxReal, EnhancedWaterBubblesLeaveTheSprites) {
         most = std::max(most, bubbles.size());
     }
     EXPECT_GT(most, 0u);
+    EXPECT_GT(kept, 0u);
+}
+
+// Only the bubble particles go to the bubble pass: of the under-water-only defs (water 1), those drawn with bubble
+// textures alone (fx::isBubbleTexture) are bubbles; silt / smoke clouds, flashes, the speargun's trail streak are not.
+TEST(FxReal, OnlyBubbleTexturedDefsAreBubbles) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    fx::Library lib(bf);
+    struct Want { const char* object; size_t def; bool bubble; };
+    for (const Want& c : {Want{"wp_handgun", 22, true}, Want{"wp_handgun", 23, true}, Want{"wp_handgun", 24, false},
+                          Want{"wp_handgun", 25, false}, Want{"wp_handgun", 26, false}, Want{"wp_speargun", 0, true},
+                          Want{"wp_speargun", 1, false}, Want{"pr_grenade", 33, true}, Want{"pr_grenade", 34, false},
+                          Want{"pr_grenade", 38, false}, Want{"bullet_hit_underwater", 24, false},
+                          Want{"fx_water_bubbles_vent", 0, true}, Want{"fx_bubbles_seafloor_ist", 1, true},
+                          Want{"fx_med_krakenroom_current_ist", 0, true}, Want{"fx_med_krakenroom_current_ist", 1, false},
+                          Want{"fx_med_krakenroom_current_ist", 11, false}, Want{"lara", 193, true}, Want{"lara", 165, false}}) {
+        const auto o = lib.get(c.object);
+        ASSERT_TRUE(o) << c.object;
+        ASSERT_LT(c.def, o->particles.size()) << c.object;
+        EXPECT_EQ(o->particles[c.def].water, 1) << c.object << " " << c.def;
+        EXPECT_EQ(o->particles[c.def].bubble(), c.bubble) << c.object << " " << c.def;
+    }
 }
 
 // Lara's breath (fx/Breath.hpp, all [I]): puffs only while submerged, the same game time and mouth path give the same
@@ -1006,3 +1034,4 @@ TEST(FxBreath, DeterministicRisingAndGoneAtTheSurface) {
     b.append(4.0, out);
     EXPECT_FALSE(out.empty());
 }
+

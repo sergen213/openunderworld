@@ -744,8 +744,11 @@ its post output is unchanged (the composite is skipped).
   on big ones, an opaque rim and two highlights (sun at their depth × shadow) over a near-transparent body that mirrors
   the water: the medium's in-scatter looking down at its foot to looking up × 1.5 at its crown, brighter at the rim; sways by two sines of
   time and seed × radius; at least ~3 pixels across (alpha thinned by area); gone within 30–90 units of the lens.
-  Sources: (1) the effects' under-water-only particles (`ParticleDef::water` 1: weapon trails, fx_bubbles_* vents)
-  leave their sprites and come here (`fx::System::build`'s `bubbles`, Enhanced water only; Original draws the
+  Sources: (1) the effects' under-water-only bubble particles (`ParticleDef::water` 1 drawn with bubble textures only,
+  `ParticleDef::bubble` / `fx::isBubbleTexture`: 147-149, 164, 1103-1105, plus the dot 145 beside them; weapon and
+  grenade bubble trails, Lara's 193 / 194, fx_*bubbles* vents, the current effects' rising bubbles) leave their sprites
+  and come here; the other water-1 defs (silt and smoke clouds, muzzle flashes, debris, the speargun's trail streak,
+  weed) keep their sprites (`fx::System::build`'s `bubbles`, Enhanced water only; Original draws the
   sprites as before); (2) Lara's breath (`fx::Breath`, ours: no breath-bubble emitter of tru.exe is decoded [U]):
   while her head is under water, a puff every 3.2 s (2.4 s in the wetsuit) of 5–8 (8–12) bubbles 50 ms apart from the
   head bone, radius 4–12 units, rising 75–135 units/s after a 0.25 s start with a short sideways drift, gone at the
