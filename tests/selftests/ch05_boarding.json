@@ -17,10 +17,10 @@
    "duration": 2,
    "expect": [
     {
-     "probe": "player.pos.z",
-     "near": 1745.1,
+     "probe": "object.1552.lara.z",
+     "near": 281.3,
      "tol": 2,
-     "note": "the yacht's deck"
+     "note": "the floating yacht's deck, flat at 281.3 in its own frame (1745.1 when it lay static)"
     },
     {
      "probe": "world.checkpoint",

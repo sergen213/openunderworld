@@ -8,7 +8,7 @@
   "steps": [
     {"step": "on_deck", "duration": 3,
      "expect": [{"probe": "player.state", "eq": "idle"},
-                {"probe": "player.pos.z", "near": 2026, "tol": 5},
+                {"probe": "object.998.lara.z", "near": 281.3, "tol": 2, "note": "on the floating yacht's deck, flat at 281.3 in its own frame"},
                 {"probe": "world.unit", "eq": "l1_seatop"},
                 {"probe": "world.checkpoint", "eq": 1000}]},
     {"step": "off_the_stern", "plan": ["run 0 4 jump 0.5"], "duration": 8, "until": {"probe": "player.swimming", "eq": true},

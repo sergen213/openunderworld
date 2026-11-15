@@ -1689,12 +1689,19 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   (`v *= 1 − dt × damping` in 0x4EFB20; from the section's physics record +8 / +0xC via 0x48E690, every such record
   in memory holds 0.01 / 0.01; the body constructor 0x4DD820 leaves 0), deactivation below 1 unit / 0.03 rad per
   frame for 30 (+0x100..+0x108; 0x6AD070 re-arms it while afloat). After its splash-down transient the l1 yacht
-  holds within ~5 units and turns 0.7° a minute (heading −0.415 .. −0.4275 rad over 57 s). Ours (`physics::Scene`
+  holds within ~5 units and turns 0.7° a minute (heading −0.415 .. −0.4275 rad over 57 s). The ship exteriors' yacht
+  floats too (Wine, section instance sampled every 2.6 s for 29 s; the root instance never moves): l1_ship_exterior
+  heaves 19381 .. 19622 about its root's 19472.5, l6_ship_exterior 15520 .. 15856 about 15878, both rolling /
+  pitching up to ~5° and yawing 0.7° in that time. Nothing else in the open-sea units turns loose here (survey of
+  l1_seatop / cineseatop / seafloor / ship exteriors, l2_cliffclimb / cliffhall(_b), l7_arctic_sea: only the
+  ms_uo_yacht instances; the other objects with buoyant primitives are not uber objects). Ours (`physics::Scene`
   buoyancy per primitive, same mass / inertia from `massProps`; `World::stepPhysics`): an uber object whose model-0
-  section nothing else moves turns loose when afloat or standing on a loose body [I], Lara's push proxy is off while
-  she stands on a loose body (`StreamReal.YachtsFloatOnTheWaves`: ch1 − 317 .. − 75 mean − 184, 103 units / 4° in
-  50 s; ch2 − 379 .. − 54 mean − 228, 6 units / 1°). Jolt's loose-body damping stays its default 0.05 / s, not the
-  record's 0.3 / s [I: records are not parsed]; boxes use an exact clipped volume [I: 0x4DDC50 not decoded].
+  section nothing else moves turns loose when afloat or standing on a loose body [I]; while she stands on a loose
+  body Lara's push proxy is a sensor (it stays in the scene, so a save taken off the deck restores onto it with the
+  recorded physics state) (`StreamReal.YachtsFloatOnTheWaves`: ch1 − 317 .. − 75 mean − 184, 103 units / 4° in
+  50 s; ch2 − 379 .. − 54 mean − 228, 6 units / 1°). Deck heights in tests: her root in the yacht's frame
+  (self-test probe `object.<uid>.lara.z`). Jolt's loose-body damping stays its default 0.05 / s, not the record's
+  0.3 / s [I: records are not parsed]; boxes use an exact clipped volume [I: 0x4DDC50 not decoded].
 - In water: the water probe box overlaps a volume, the feet are below its surface and there is no floor within
   `swimDepth` (400) below the surface. From the air → SwimSplash (plunge velocity damped by drag) → Surfacing (rise at
   swim speed) → SwimTread. From the ground (standing on a deep floor) → Surfacing.

@@ -346,7 +346,8 @@ public:
     // Lara's proxy (null: none): a `mass` kg capsule standing on `feet`, velocity-driven to follow her each step
     // (translation only, no gravity), so walking into loose bodies and ragdolls shoves them by mass. It exists only
     // while there are loose bodies or ragdolls, and touches nothing else.
-    struct Character { vec3 feet{0}; float radius = 0, height = 0, mass = 0; };
+    // `pushes` false: the proxy stays (the scene's bodies, and so a recorded state, stay the same) but touches nothing.
+    struct Character { vec3 feet{0}; float radius = 0, height = 0, mass = 0; bool pushes = true; };
     void setCharacter(const Character* c);
     // Water for the next steps (tru.exe 0x6AD070 per water volume): a yaw-rotated box (centre, half extents, (cos, sin)
     // of its yaw) with its surface z (the top), raised / lowered at xy by `waves` (user data, xy, `seconds`; null = flat:

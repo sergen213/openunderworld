@@ -2879,10 +2879,11 @@ void World::stepPhysics(float dt) {
     // while she stands on a loose body: she rides it (tickObjects), and the proxy chasing her across the moving deck
     // pushed the floating yacht (l2_cliffclimb: 690 units and 57 degrees off in 50 s with it, 77 and 11 without it;
     // tru.exe under Wine: 3 units and 2 degrees) [I: tru.exe's proxy does not push what she stands on].
-    const physics::Scene::Character lara{player_.state().pos, player_.tuning().radius, player_.tuning().height, kLaraMass};
+    // The proxy stays there as a sensor then, so a save taken off the deck restores onto it alike.
     const auto ground = col_.groundProbe(player_.state().pos + vec3(0, 0, 20), 60);
     const bool onLoose = ground && ground->dynamic >= 0 && looseIds.contains(col_.dynamics[size_t(ground->dynamic)].id);
-    physics_.setCharacter(bikes.empty() && player_.state().state != State::Dead && !onLoose ? &lara : nullptr);
+    const physics::Scene::Character lara{player_.state().pos, player_.tuning().radius, player_.tuning().height, kLaraMass, !onLoose};
+    physics_.setCharacter(bikes.empty() && player_.state().state != State::Dead ? &lara : nullptr);
     std::vector<physics::Scene::Terrain> terrain;
     for (const auto& u : units_) terrain.push_back({u.data.name, &u.data.col, u.offset});
     physics_.setTerrain(terrain);

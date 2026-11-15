@@ -289,6 +289,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `object.<uid>.exists` `.name` `.hidden` `.dead` | a script object by intro uid (objectlist name; instance hidden / killed) |
 | `object.<uid>.pos.x/.y/.z` | its position with its own displacement (a pushed block, a fallen body) |
 | `object.<uid>.body.x/.y/.z` | the translation of its own rigid motion from rest (doors on their joints, sliders) |
+| `object.<uid>.lara.x/.y/.z` | Lara's root in that object's own frame (intro frame, displacement, loose motion): her height on a floating deck |
 | `object.<uid>.graph` | its anim-graph state id |
 | `object.<uid>.joint` | its multibody joint's position (plate units, hinge degrees) |
 | `object.<uid>.uber.<n>` | uber section n's state, -1 while it is in a transition |

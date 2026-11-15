@@ -808,6 +808,15 @@ TEST(StreamReal, YachtDecksAboveSea) {
     EXPECT_GT(heights.size(), 3u) << "she rides the waves";
 }
 
+// A floating object's frame now: its intro frame, displacement and loose body motion (identity at rest).
+static glm::mat4 yachtFrame(const game::World& w, int32_t uid) {
+    const auto* o = w.script().find(uid);
+    if (!o) return glm::mat4(1);
+    glm::mat4 m = glm::translate(glm::mat4(1), o->pos + o->offset);
+    m = glm::rotate(glm::rotate(glm::rotate(m, o->rot.x, {1, 0, 0}), o->rot.y, {0, 1, 0}), o->rot.z, {0, 0, 1});
+    return m * o->body;
+}
+
 // User report (0.49.0 candidate): the yacht floated in the air instead of riding the waves. tru.exe 1.1 under Wine
 // (2026-11-15, section instance +0x20 / +0x30 sampled every 100 ms for 30 / 20 s): ms_uo_yacht floats (0x6AD070: its six
 // 70 % buoyancy spheres in a volume with waves enable its body, then buoy it at the waves over each). l1_seatop: the
@@ -834,10 +843,7 @@ TEST(StreamReal, YachtsFloatOnTheWaves) {
         const auto frame = [&] {
             const auto* o = w.script().find(c.yacht);
             EXPECT_TRUE(o && o->loose) << "ch" << c.chapter << ": the yacht floats";
-            if (!o) return glm::mat4(1);
-            glm::mat4 m = glm::translate(glm::mat4(1), o->pos + o->offset);
-            m = glm::rotate(glm::rotate(glm::rotate(m, o->rot.x, {1, 0, 0}), o->rot.y, {0, 1, 0}), o->rot.z, {0, 0, 1});
-            return m * o->body;
+            return yachtFrame(w, c.yacht);
         };
         const glm::vec3 deck = glm::vec3(glm::inverse(frame()) * glm::vec4(w.player().state().pos, 1));
         for (int i = 0; i < 30 * 60; ++i) {
@@ -1087,7 +1093,9 @@ TEST(StreamReal, AirborneSaveResumesAtCheckpoint) {
         const auto& s = l->player().state();
         EXPECT_EQ(l->currentUnit().data.name, "l1_seatop") << flow;
         EXPECT_LT(glm::distance(glm::vec2(s.pos), glm::vec2(-18717.0f, -3775.0f)), 300.0f) << flow << ": on the yacht";
-        EXPECT_NEAR(s.pos.z, 2025.6f, 20.0f) << flow << ": standing on the deck";
+        // The yacht floats (StreamReal.YachtsFloatOnTheWaves): its deck is flat at 281.3 in the yacht's own frame
+        // (l1_ship_exterior's static deck: 1745.1 - 1463.8), wherever the waves have it now.
+        EXPECT_NEAR((glm::inverse(yachtFrame(*l, 998)) * glm::vec4(s.pos, 1)).z, 281.3f, 2.0f) << flow << ": standing on the deck";
         EXPECT_EQ(s.state, game::State::Idle) << flow;
         EXPECT_EQ(s.water, -1) << flow;
     }

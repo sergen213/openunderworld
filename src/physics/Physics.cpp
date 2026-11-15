@@ -823,8 +823,8 @@ struct Scene::Impl {
                 p.body = add(s, "p" + std::to_string(i), JPH::EActivation::Activate);
             }
         }
-        const bool pushes = character && (!loose.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid));
-        if (!pushes) remove(lara);
+        const bool proxied = character && (!loose.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid));
+        if (!proxied) remove(lara);
         else if (lara.IsInvalid()) {
             const Character& c = *character;
             const float r = std::max(c.radius, 1.0f), half = std::max(0.5f * c.height - r, 1.0f);
@@ -835,6 +835,10 @@ struct Scene::Impl {
             s.mMassPropertiesOverride.mMass = std::max(c.mass, 1.0f);
             s.mGravityFactor = 0, s.mAllowSleeping = false, s.mLinearDamping = 0;
             lara = add(s, "a", JPH::EActivation::Activate);
+        }
+        if (!lara.IsInvalid()) { // not pushing: a sensor, contacts give no response
+            JPH::BodyLockWrite lock(sys.GetBodyLockInterface(), lara);
+            if (lock.Succeeded()) lock.GetBody().SetIsSensor(!character->pushes);
         }
     }
     // Lara's proxy heads for her capsule this step (a jump of more than 60 units, a spawn or a ledge snap, is a move),
@@ -899,7 +903,9 @@ struct Scene::Impl {
             reorder();
             if (!sys.RestoreState(*pending)) std::fprintf(stderr, "physics: recorded state did not apply\n");
         } else {
-            std::fprintf(stderr, "physics: saved scene not rebuilt alike (%zu bodies missing), state not restored\n", pendingIds.size());
+            std::string missing;
+            for (const auto& [key, id] : pendingIds) missing += " " + key;
+            std::fprintf(stderr, "physics: saved scene not rebuilt alike (%zu bodies missing:%s), state not restored\n", pendingIds.size(), missing.c_str());
         }
         pending.reset(), pendingIds.clear(), reserved.clear(), pendingRefs.clear();
     }
