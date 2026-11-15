@@ -564,6 +564,17 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   pre-exposure (1.372 [I]) and the sRGB encode around it, because our scene is display-referred. Copy of the source used:
   openunderworld-work/neuralspecocean-CinemaPostPass.js.
 
+### 8.11 abyssal-garden under-water techniques (MIT) @`a596354`
+
+- **abyssal-garden** by Noniv (Maksymilian Dendura), https://github.com/Noniv/abyssal-garden — MIT, "Copyright (c) 2026
+  Maksymilian Dendura" (full text: `third_party/abyssal-garden/LICENSE`); a WebGPU under-water scene. Techniques only,
+  none of its content (kelp, wreck, fish, mantas): its marine snow (`source/src/shaders.js` `vsSnow` / `fsSnow`: a
+  camera-wrapped instanced speck field with drift, wobble, twinkle, a pixel-size floor and depth-attenuated, shadowed
+  sunlight) and bubbles (`vsBub` / `fsBub`: wobbling outline, rim + two highlights, lit from above / below by the
+  water's in-scatter, fogged by distance) became `src/render/shaders/uw_snow.*` / `uw_bubble.*` (RENDERING "Under
+  water: marine snow and bubbles"), rescaled to TRU units (290 per metre) with TRU's own water colours and fog in place
+  of its fixed WCOL / SIG constants. Clone used: openunderworld-work/research/abyssal-garden.
+
 ---
 
 ## Open questions

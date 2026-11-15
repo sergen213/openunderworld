@@ -1,6 +1,7 @@
 // Enhanced under-water particles (docs/RENDERING.md "Under water: marine snow and bubbles"): the parameter block shared
-// by uw_snow.* and uw_bubble.*. Techniques adapted from Noniv/abyssal-garden (MIT, shaders.js vsSnow / fsSnow, vsBub /
-// fsBub; third_party/abyssal-garden/LICENSE), rescaled to TRU's Z-up units (290 per metre, as Water.hpp).
+// by uw_snow.* and uw_bubble.*. Techniques adapted from Noniv/abyssal-garden (MIT, "Copyright (c) 2026 Maksymilian
+// Dendura"; shaders.js vsSnow / fsSnow, vsBub / fsBub; third_party/abyssal-garden/LICENSE, docs/RESEARCH.md 8.11),
+// rescaled to TRU's Z-up units (290 per metre, as Water.hpp).
 // Vulkan: push constants (vertex + fragment). GL: UBO binding 7.
 #ifdef VULKAN
 layout(push_constant) uniform UwParticlePush {
