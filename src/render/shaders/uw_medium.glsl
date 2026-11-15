@@ -111,10 +111,13 @@ vec3 agPos(vec3 p) { return vec3(p.x, p.z - ouUwSurfaceZ(), p.y) / kM; }
 vec3 agDir(vec3 d) { return vec3(d.x, d.z, d.y); }
 vec3 agEye() { return agPos(w.eye.xyz); }
 float agTime() { return w.eye.w; } // the demo's g.cam.w: seconds
-// g.sun.xyz: toward the sun, unrefracted (the demo never refracts it); the level's sun when it has one high enough,
-// else the demo's own SUN (0.27, 1, -0.24) normalised.
+// g.sun.xyz: toward the sun under water. The demo's sun is steep (y = 0.94) and unrefracted; a level sun can sit low
+// (z 0.05..0.3 would shear agCuv's projection 3-20x the depth and black out agSunE within metres), so the level sun is
+// refracted at the flat surface (n = 1.333: elevation >= ~41 deg, y >= ~0.66), as the light really travels under water.
+// Without a level sun: the demo's own SUN (0.27, 1, -0.24) normalised.
 vec3 agSun() {
-    return w.sunColor.w > 0.0 && w.sunDir.z > 0.05 ? normalize(agDir(w.sunDir.xyz)) : normalize(vec3(0.27, 1.0, -0.24));
+    if (w.sunColor.w <= 0.0 || w.sunDir.z <= 0.0) return normalize(vec3(0.27, 1.0, -0.24));
+    return agDir(-refract(-normalize(w.sunDir.xyz), vec3(0.0, 0.0, 1.0), 1.0 / 1.333));
 }
 vec3 agFogIn(vec3 ro, vec3 rd, float d, float z, vec3 sun) {
     vec3 k = mix(kAgKd, kAgKdf, z);
