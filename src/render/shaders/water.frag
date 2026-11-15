@@ -430,8 +430,28 @@ void main() {
         float sdot = max(dot(rr, agSunAir()), 0.0);
         float fr = pow(1.0 - sqrt(max(k, 0.0)), 5.0);
         spec = pow(sdot, 60.0) * 1.3 + pow(sdot, 500.0) * 12.0;
-        vec3 skyW = (vec3(0.30, 0.78, 1.0) * 1.3 * clamp(1.0 + 3.8 * (sl.x * 0.6 - sl.y * 0.8), 0.25, 3.0) +
-                     vec3(1.0, 0.95, 0.85) * spec) * (1.0 - fr);
+        vec3 skyC = vec3(0.30, 0.78, 1.0) * 1.3 * clamp(1.0 + 3.8 * (sl.x * 0.6 - sl.y * 0.8), 0.25, 3.0);
+        // Ours (the demo has nothing above its surface): what stands above the water (a hull, the shore, Lara) replaces the
+        // demo's sky inside the window. The refracted ray rr (world: agDir) traced through the opaque scene, else the scene
+        // at the slope-offset pixel within 100 m; both faded in at the screen border (and from 60 m) so the trace's ends
+        // leave no seam. Same (1 - fr) and slope distortion (the ray bends with the demo's normal); the glint stays on top;
+        // misses keep the demo's sky.
+        if (win > 0.0 && k > 0.0) {
+            vec3 td = agDir(rr);
+            if (ouTrace(p, td, 60.0 * kM, 3.0 * kM, huv, ht) && ouWorld(huv, textureLod(uDepth, huv, 0.0).r).z > p.z - 2.0) {
+                traced = true, conf = ouEdgeFade(huv, 0.08);
+                skyC = mix(skyC, toLinear(textureLod(uScene, huv, 0.0).rgb), conf);
+            } else {
+                vec2 ruv = clamp(uv + sl * 0.03, vec2(0.0), vec2(1.0));
+                float sd = textureLod(uDepth, ruv, 0.0).r;
+                vec3 q = ouWorld(ruv, sd);
+                if (sd < 0.999999 && q.z > p.z && distance(q, p) < 100.0 * kM) {
+                    conf = ouEdgeFade(ruv, 0.08) * (1.0 - smoothstep(60.0 * kM, 100.0 * kM, distance(q, p)));
+                    skyC = mix(skyC, toLinear(textureLod(uScene, ruv, 0.0).rgb), conf);
+                }
+            }
+        }
+        vec3 skyW = (skyC + vec3(1.0, 0.95, 0.85) * spec) * (1.0 - fr);
         vec3 refl = agFogIn(vec3(wp.x, 0.0, wp.z), reflect(V, nb), 300.0, kAgZone, agSun()) * 1.15; // the demo's quad: y = 0
         c = agFin(mix(refl, skyW, win));
         fresnel = 1.0 - win * (1.0 - fr); // reflected share (debug view 5)

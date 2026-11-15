@@ -405,8 +405,12 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   (1 − ci²), win = ss(0, .22, k); sky = (.30, .78, 1) × 1.3 × clamp(1 + 3.8 (.6 s.x − .8 s.y), .25, 3) + (1, .95, .85)
   × (pow(sd, 60) × 1.3 + pow(sd, 500) × 12), × (1 − fr), fr = (1 − √k)⁵, sd = the refracted ray · the sun; outside the
   window the reflection fogIn(wp, R, 300 m) × 1.15; c = mix(refl, sky, win). Only the demo's slope bends it (1:1: our
-  FFT / afl / Godot / wave-field normals do not; the mesh keeps their displacement), no above-water scene through the
-  window, no SSR, no shadow on the glint (none in the demo). Sun: the demo has one `g.sun` for both the glint (sd, the
+  FFT / afl / Godot / wave-field normals do not; the mesh keeps their displacement), no SSR, no shadow on the glint
+  (none in the demo). Ours (the demo has nothing above its surface): inside the window what stands above the water (the
+  yacht hull, the shore, Lara) replaces the demo's sky term: the refracted ray traced through the opaque scene (14
+  quadratic steps + 5 refinements, 60 m, hits above the surface only), else the scene at the slope-offset pixel (uv +
+  .03 s) within 100 m; faded in at the screen border and from 60 m; same (1 − fr), glint on top, misses keep the demo's
+  sky (debug view 2: green = traced). Sun: the demo has one `g.sun` for both the glint (sd, the
   ray in the air) and fogIn; here fogIn takes `agSun` (the level sun refracted, as everywhere under water) and the glint
   `agSunAir` (the same sun unrefracted, its air side), so the disc sits where agSun points from under water; no level
   sun: the demo's SUN for both. The demo's `fog(c, wp)` is the post pass's (`ouUwFog`, below: rays through the surface
