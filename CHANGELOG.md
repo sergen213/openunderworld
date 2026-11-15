@@ -36,7 +36,11 @@ water, light, caustics, shafts, particles and final image. Original water is unc
 - Fixed: diving deep in the Mediterranean (and any sea built from stacked water areas), below about 30 m the scene
   lost all its water look and became bright and unlit. The water now stays dark, blue and fogged all the way down,
   in Original and Enhanced water, as in the original game.
-- Fixed: a smoke puff high above the sea showed as a pale disc on the surface when looking up from under water.
+- Fixed: a smoke puff high above the sea showed as a pale disc on the surface when looking up from under water. Effects
+  above the water are still seen through the bright window (splashes, fire within 60 m).
+- Fixed: the yachts in chapters 1 and 2 floated in the air above the sea. They now float in the water as in the
+  original: they rise and fall, roll and pitch on the waves, settle on a heading, and Lara rides the moving deck
+  (the air tank on the chapter-1 stern rides along). Measured in the original under Wine.
 
 ## [0.48.0] - 2026-11-15
 
