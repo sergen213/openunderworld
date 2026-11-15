@@ -667,11 +667,13 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   bubbles and the composite" below) instead of the post pass's tone map. With Enhanced water submerged this medium is
   the whole look: ou-game draws neither TRU's deep / surface water filters (l1 5292's ColorDOF blur at alpha 0.89 and
   bloom blurred the frame into soft white blotches) nor TRU's light rays (pale streaks over the fogged frame); the unit's
-  fog set still reaches TRU's shaders (its ranges, 632 m+, lie past agFog's 230 m cut), and nothing above the surface is
-  drawn over it: splash droplets (`splash_composite.frag`) and effect sprites (particles, glows: `fx::System::
-  spritesBelowZ` = the eye's wave surface) are left out; they printed over the black outside the window as flat pale
-  discs (l1_seatop: a texture-160 smoke sprite ~72 m up, ~190 m away; tru.exe veils such sprites with its full-screen
-  pass). The older tuned medium is gone.
+  fog set still reaches TRU's shaders (its ranges, 632 m+, lie past agFog's 230 m cut), and what flies above the surface
+  (splash droplets, `splash_composite.frag`; effect particles and glows, `fx::System::spritesBelowZ` = the eye's wave
+  surface) is drawn only where the eye sees it through Snell's window, with the limits of water.frag's restore of the
+  scene above: the view ray within 48.6° of vertical and 60 m, faded over 45–48.6° and 50–60 m. Fire, splashes near Lara
+  and the like show through the window; the rest printed over the black outside it as flat pale discs (l1_seatop: a
+  texture-160 smoke sprite ~72 m up, ~190 m away; tru.exe veils such sprites with its full-screen pass). The older
+  tuned medium is gone.
 - Animated water texture `uAgWater` (ours, Enhanced only; abyssal-garden `W_WATER` literally, `shaders/uw_water.frag`):
   r = g = caustic (`caus()`: five warped sine iterations), ba = surface slope (the WK sum of 10 travelling waves), time
   = the eye's seconds; 512² RGBA16F, 5 mips box-filtered down (the demo's `fsMip`: VK linear blits, GL

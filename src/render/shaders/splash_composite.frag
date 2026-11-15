@@ -47,9 +47,17 @@ void main() {
     if (s.r <= kEmpty || s.g <= 0.05) discard;
     float dist = -s.r;
     vec3 pc = surface(p, dist), v = normalize(w.eye.xyz - pc);
-    // Camera submerged (fogColor.w, Enhanced): the droplets fly above the surface, behind it from here; drawn over the
-    // water they showed through its black total internal reflection (water.frag) as a flat pale disc around Lara.
-    if (w.fogColor.w > 0.5 && pc.z > w.eye.z) discard;
+    // Camera submerged (fogColor.w, Enhanced): the droplets fly above the surface, seen only through Snell's window, with
+    // the limits fx::System::spritesBelowZ and water.frag's restore of the scene above use: the view ray within 48.6 deg of
+    // vertical and 60 m (17400 units), faded over 45..48.6 deg and 50..60 m. Outside it they printed over the black total
+    // internal reflection (water.frag) as a flat pale disc around Lara.
+    float vis = 1.0;
+    if (w.fogColor.w > 0.5 && pc.z > w.eye.z) {
+        vec3 d = pc - w.eye.xyz;
+        float len = length(d);
+        vis = clamp((d.z / len - 0.6613) / (0.7071 - 0.6613), 0.0, 1.0) * clamp((17400.0 - len) / 2900.0, 0.0, 1.0);
+        if (vis <= 0.0) discard;
+    }
     vec3 dx = slope(p, ivec2(1, 0), pc, dist), dy = slope(p, ivec2(0, 1), pc, dist);
     vec3 n = cross(dx, dy);
     n = dot(n, n) > 1e-12 ? normalize(n) : v; // a lone pixel faces the camera
@@ -71,5 +79,5 @@ void main() {
     vec3 lin = body * (1.0 - t) * (1.0 - fresnel) + sky * fresnel + spec * toLinear(min(w.sunColor.rgb, vec3(1.0)));
     vec3 c = toGamma(lin * edge / a); // straight colour of the covered part, then premultiplied below
     float fogT = clamp((dist - w.fogRange.x) / max(1.0, w.fogRange.y - w.fogRange.x), 0.0, 1.0);
-    oColor = vec4(mix(c, w.fogColor.rgb, fogT) * a, a);
+    oColor = vec4(mix(c, w.fogColor.rgb, fogT) * a, a) * vis;
 }
