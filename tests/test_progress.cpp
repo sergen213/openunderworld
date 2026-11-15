@@ -1129,6 +1129,47 @@ TEST(WaterColor, ConfigUnitChapterPreset) {
     for (int i = 0; i < 3; ++i) EXPECT_LT(lagoon[2][i], lagoon[0][i]);
 }
 
+// The l1 sea is two stacked water boxes in separate units (l1_seatop z -7177..1400, l1_seafloor -48412..-6295; values
+// from the units as loaded): diving from the surface to the bed the eye stays under water (tru.exe 0x5EA200 compares the
+// camera with Lara's water surface only) and the medium's surface stays the sea's, so its depth, exposure and shaft
+// plane change smoothly through the boxes' overlap instead of the look switching off ~30 m down (0.48.0) or the depth
+// snapping to ~3 m. A room under a water box, holding no water, stays dry.
+TEST(WaterColumn, StackedSeaBoxesStayOneSea) {
+    const std::vector<render::WaterVolume> sea{{{-120310, -121405, -7177}, {116810, 108608, 1400}},
+                                               {{-119115, -104359, -48412}, {142609, 110838, -6295}}};
+    const glm::vec3 lo = {-120310, -121405, -7177}, hi = {116810, 108608, 1400};
+    for (float z : {1000.0f, -6000.0f, -7000.0f, -7200.0f, -20000.0f, -40000.0f}) {
+        const auto e = render::eyeUnderWater({-16000, -3000, z}, lo, hi, 1400.0f, sea);
+        EXPECT_TRUE(e.under) << z;
+        EXPECT_FLOAT_EQ(e.height, z - 1400.0f) << z;
+    }
+    // Lara in the seafloor box (a save at the bed): the eye's surface is still the sea's
+    const auto bed = render::eyeUnderWater({-16000, -3000, -5000}, {-119115, -104359, -48412}, {142609, 110838, -6295}, -6295.0f, sea);
+    EXPECT_TRUE(bed.under);
+    EXPECT_FLOAT_EQ(bed.height, -6400.0f);
+    // a dry room under a pool's box: no water holds the eye
+    const std::vector<render::WaterVolume> pool{{{0, 0, 1000}, {500, 500, 2000}}};
+    EXPECT_FALSE(render::eyeUnderWater({250, 250, 800}, {0, 0, 1000}, {500, 500, 2000}, 2000.0f, pool).under);
+    EXPECT_TRUE(render::eyeUnderWater({250, 250, 1500}, {0, 0, 1000}, {500, 500, 2000}, 2000.0f, pool).under);
+
+    // the water block's eye volume (volumes[1].z = ouUwSurfaceZ) and the composite's exposure through the overlap
+    render::Underwater uw;
+    uw.strength = 1, uw.pass[1][3] = 45000;
+    render::FrameOptions fo;
+    fo.water = render::WaterQuality::Enhanced, fo.waterDetail = true, fo.underwater = &uw, fo.waterVolumes = sea;
+    float lastExposure = 0;
+    for (float z = 1000; z > -40000; z -= 50) {
+        render::Camera cam;
+        cam.position = {-16000, -3000, z};
+        const auto wb = render::waterBlock(cam, {1920, 1080}, glm::mat4(1), {}, fo);
+        ASSERT_EQ(wb.volumes[1].z, 1400.0f) << z;
+        const auto g = render::uwGrade(wb);
+        ASSERT_TRUE(g.on) << z;
+        if (lastExposure > 0) ASSERT_NEAR(g.exposure, lastExposure, 0.002f) << z;
+        lastExposure = g.exposure;
+    }
+}
+
 // ---- collectibles: the reward table, treasure urns, relics, health packs (GAMEPLAY.md "Collectibles") ----------
 
 namespace {
