@@ -40,7 +40,7 @@ void main() {
     vec3 u = ouUnderwater(ouAtmosphere(c, vUv), vUv);
     if (pc.particles != 0) {
         vec4 p = textureLod(uUwParticles, vUv, 0.0);
-        u = u * (1.0 - p.a) + p.rgb;
+        u = pow(pow(u, vec3(2.2)) * (1.0 - p.a) + p.rgb, vec3(1.0 / 2.2)); // linear, as ouUwFog
     }
     oColor = vec4(ouUnderwaterGrade(u, vUv) * (1.0 - pc.fade), 1.0);
 }

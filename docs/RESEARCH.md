@@ -573,7 +573,8 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   RENDERING "Under water". Clone used: openunderworld-work/research/abyssal-garden. Per technique:
 - Fog: from `src/shaders.js` (WGSL) the analytic medium `fogIn` / `fog` (per-channel extinction `sg`, the in-scatter of
   depth-attenuated light `kd` integrated in closed form along the view ray, forward sun glow 1.22 + 0.3 μ⁴) →
-  `ouUwMedium` / `ouUwFogIn` / `ouUwFog` (`src/render/shaders/underwater.glsl`); `sunE` / `amb` / `side` (sun, hemispherical ambient and wall
+  `ouUwMedium` / `ouUwFogIn` (`src/render/shaders/uw_medium.glsl`, shared by the post fog `ouUwFog`, the particles,
+  the surface's total internal reflection and the shafts); `sunE` / `amb` / `side` (sun, hemispherical ambient and wall
   light falling off with depth) → `ouUwSurfaceLight`; `W_POST` (vignette, luminance S-curve, desaturation, IGN dither)
   and the Karis-weighted bloom downsample (`kar`) → `ouUnderwaterGrade` (`src/render/shaders/filter.glsl`). Its
   constants are used as ratios (KD / SIG).

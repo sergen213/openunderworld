@@ -143,7 +143,7 @@ std::string splashCompositeSource(bool vulkan);
 // Noniv/abyssal-garden, MIT): only with the camera submerged (uwParticlesOn), drawn after the scene's effects into a
 // render-size RGBA16F target cleared to 0, blend ONE, ONE_MINUS_SRC_ALPHA (snow: alpha 0 = additive), no depth
 // attachment (the fragment shaders test the opaque depth copy and fog themselves by their own distance as ouWaterPass
-// does); the post pass then composites it over the fogged scene: c = c (1 - a) + rgb (VK post set 1 binding 9 + push
+// does); the post pass then composites it over the fogged scene in linear light: c = c (1 - a) + rgb (VK post set 1 binding 9 + push
 // `particles`; GL unit 17 + uniform location 5).
 //  snow:    uw_snow.vert + uw_snow.frag, no vertex input, 6 vertices x params.x instances (a box of up.w around the eye).
 //  bubbles: uw_bubble.vert + uw_bubble.frag, one Bubble per instance (location 0 vec4 pos + radius, 1 vec2 alpha + seed).

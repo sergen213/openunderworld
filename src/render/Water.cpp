@@ -52,6 +52,9 @@ const char* kCaustics =
 const char* kWaves =
 #include "waves.glsl.inc"
     ;
+const char* kUwMedium =
+#include "uw_medium.glsl.inc"
+    ;
 const char* kUwParticles =
 #include "uw_particles.glsl.inc"
     ;
@@ -401,7 +404,8 @@ std::string withVersion(const char* source, bool vulkan) {
 std::string expandIncludes(std::string s) {
     const std::pair<const char*, const char*> files[] = {{"#include \"sun.glsl\"", sunGlsl()},
                                                          {"#include \"shaders/caustics.glsl\"", kCaustics},
-                                                         {"#include \"shaders/waves.glsl\"", kWaves}};
+                                                         {"#include \"shaders/waves.glsl\"", kWaves},
+                                                         {"#include \"shaders/uw_medium.glsl\"", kUwMedium}};
     for (const auto& [line, text] : files)
         for (size_t at; (at = s.find(line)) != std::string::npos;) s.replace(at, std::strlen(line), text);
     return s;

@@ -410,9 +410,10 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   read as blotches), + the sun through the refracted ray pow(·, 60) × 1.3 + pow(·, 500) × 12 (abyssal-garden's) × the
   sun shadow map at the surface; the real above-water scene where it is on screen (refracted ray traced, else the
   normal-offset pixel within 100 m, faded in at the screen border and from 60 m) replaces the sky. Outside: total
-  internal reflection shows the water's own colour toward the reflected direction (`ouFogToward`: the post pass's fog
-  colour, deep looking down to surface colour looking up, preset hue respected) × 1.15 × (1 + 0.25 μ⁴) toward the sun
-  [I], so the mirrored surround meets the distance fog seamlessly; SSR of the water below over it where on screen.
+  internal reflection shows the water's own in-scatter toward the reflected direction from the surface, from the same
+  medium as the post pass's fog (`shaders/uw_medium.glsl` `ouUwFogIn` over 300 m, forward sun glow included) × 1.15
+  (abyssal-garden's), so the mirrored surround meets the distance fog seamlessly; SSR of the water below over it where
+  on screen, fogged by that medium over the reflected path.
   The distance fog is the post pass's (`ouWaterPass`), which stops at the surface for what is seen through it
   (Enhanced only). [I] constants except where credited. Vulkan draws the surface with culling off (the translated
   screen-reader draws before it used to leave back-face culling set, and the sea was missing when seen from below).
@@ -656,8 +657,12 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   preset gives its extinction ratios and hue (at that colour's luminance). In-scatter along the view ray in closed form:
   C σ e^(−kd h₀) (1 − e^(−a d)) / a, a = σ − kd · dir.z (the light under the surface grows as the ray rises: darker and
   bluer looking down, brighter looking up), × the forward sun glow (1 + 0.246 μ⁴) toward the refracted sun; the view path
-  ends at the scene or the nearest volume's surface (what lies above is water.frag's Snell's window), sky misses take the
-  full in-scatter. Depth: the eye depth h₀ enters as an effective 30 m · (1 − e^(−h₀ / 30 m)) [I] (kd scaled for the whole
+  ends at the scene or the nearest volume's surface, keeping what water.frag drew there (the Snell's window and total
+  internal reflection, also over sky pixels: the 2026-11-15 merge found sky pixels behind the surface replaced by pure
+  in-scatter, so the surface was invisible from below); only rays missing every surface take the full in-scatter. The
+  medium is one shared file, `shaders/uw_medium.glsl` (`ouUwMedium`, `ouUwEyeMedium`, `ouUwFogIn`, `ouUwSunLight`,
+  `ouUwSurfaceLight`, `ouUwPointFog`), used by this fog, the sun shafts, the particles and the surface's total internal
+  reflection. Depth: the eye depth h₀ enters as an effective 30 m · (1 − e^(−h₀ / 30 m)) [I] (kd scaled for the whole
   ray; l1_seafloor's eye is 81 m down, where e^(−kd h) left the water navy-black). Opaque points inside a volume below
   its surface take `ouUwSurfaceLight` before the fog: 60 % sun through h / l.z of water + 40 % hemispherical ambient
   (water hue half-way to white, e^(−1.2 kd h) (0.24 + 0.76 up²)) + walls' side light ((1 − |n.z|) · 0.2 e^(−kd h)) [I
@@ -686,12 +691,12 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
      (`render::underwaterShaftSteps`: 20, 32 at atmosphere `high`, 0 with `light_shafts` off) jittered per pixel by
      interleaved gradient noise. Each step traces back along the refracted sun to its surface entry point and takes
      the tile there: in-scatter (0.12 + 1.6 · tile) × the sun shadow map (one tap, `ouSunTapVisibility`: the occluders'
-     shadow volumes) × e^(−σ (depth / l.z + distance)) per channel, σ = water.frag's `ouWaterLook`
-     extinction (or a water colour preset's; red first: blue-green, fading with depth); × σ_g × 1.0 (scattering /
-     extinction) × mix(1, 4π HG(0.75), 0.8) × the sun colour × `sunColor.w`.
+     shadow volumes) × the fog medium's sun light at that depth (`ouUwSunLight`, e^(−kd depth / l.z)) ×
+     e^(−σ distance) per channel (`ouUwEyeMedium`: the fog's; red first: blue-green, fading with depth); × σ_g × 1.0
+     (scattering / extinction) × mix(1, 4π HG(0.75), 0.8) × the sun colour × `sunColor.w`.
   3. Blur (`ouShaftBlur`): depth-aware 3×3 at half resolution, weights 1 / (0.03 + |Δz| / z) (hides the jitter).
   Composite: depth-aware bilinear upsample (bilinear weight + 0.02 over 0.02 + |Δz| / z: no halo at depth edges), then
-  soft-clamped cap · (1 − e^(−s / cap)), cap = 0.5 × the unit's surface water colour (a preset's hue at its luminance),
+  soft-clamped cap · (1 − e^(−s / cap)), cap = 0.5 × the fog medium's in-scatter colour (gamma),
   so looking into the sun never saturates. Replaces the earlier 4-step in-post `ouShafts` (thin hatched streaks, no
   visible shadow volumes). The shadow map is the sun's in air (the shafts' pattern follows the refracted sun) [I].
   [I] values. Cost [O] (RX 7900 XTX, RADV, l1_seatop looking toward the sun, OU_VK_PRESENT_STATS "uw shafts"): 0.19 ms
@@ -724,21 +729,20 @@ its post output is unchanged (the composite is skipped).
 - Pass (`render/Water.hpp` `UwParticlePush`; Vulkan `recordUwParticles`, GL `drawUwParticles`): after the scene's
   effects, into a render-size RGBA16F target cleared to 0, blend ONE / ONE_MINUS_SRC_ALPHA, no depth attachment: the
   fragment shaders test the opaque depth copy (`uwOccluded`). The post pass composites it after `ouUnderwater` (TRU's
-  water pass has fogged the scene behind it by then): c = c (1 − a) + rgb (Vulkan post set 1 binding 9 + push
-  `particles`, GL unit 17 + uniform 5). Each particle fogs itself by its own distance with `ouWaterPass`'s model
-  (`uw_light.glsl` `uwFogAlpha` / `uwFogColour`: the unit's deep → surface colours and eye alpha, or a water colour
-  preset's per-channel extinction and hue), so the look follows `w.optics` and the unit colours.
+  water pass has fogged the scene behind it by then): in linear light, c = c (1 − a) + rgb (Vulkan post set 1 binding 9 + push `particles`, GL unit 17 + uniform 5).
+  Each particle fogs itself by its own distance with the fog's medium (`uw_medium.glsl` `ouUwPointFog`: light × T + L),
+  so the look follows `w.optics` and the unit colours exactly as the scene behind it.
 - Marine snow (`uw_snow.vert` / `.frag`): 9000 instanced specks (4500 without water detail) in a 6000-unit box around
   the eye that wraps with `fract` (no CPU state; seed = hash of the instance index). Drift 64 / 38 / 14 units/s +
   145-unit wobble (abyssal-garden's 0.22 / 0.13 / 0.05 m/s and 0.5 m, Y-up → Z-up, × 290), radius 3.5–16.5 units,
   never under ~1.8 pixels across (sub-pixel specks fade by their size instead), faded at the box edge, within
   60–250 units of the eye and 90–435 units under the surface, twinkle 0.6–1. Light: the sun refracted into the water ×
-  e^(−Kd · depth / sin(elevation)) (a preset's Kd, else half the unit's view extinction as `ouShafts` derives it) ×
-  `ouSunShadowVisibility` × 1.6, plus the water's glow looking up (half desaturated) × 1.1, hue-varied per speck;
+  the fog medium's `ouUwSunLight` (e^(−kd · depth / sin(elevation))) × `ouSunShadowVisibility` × 1.6, plus the water's
+  glow looking up from the speck (the medium's in-scatter up to the surface, half desaturated) × 1.1, hue-varied per speck;
   additive (alpha 0). [I] weights, box, density.
 - Bubbles (`uw_bubble.vert` / `.frag`, one `render::Bubble` per instance, `FrameOptions::bubbles`): the outline wobbles
   on big ones, an opaque rim and two highlights (sun at their depth × shadow) over a near-transparent body that mirrors
-  the water: deep colour at its foot to surface colour × 1.5 at its crown, brighter at the rim; sways by two sines of
+  the water: the medium's in-scatter looking down at its foot to looking up × 1.5 at its crown, brighter at the rim; sways by two sines of
   time and seed × radius; at least ~3 pixels across (alpha thinned by area); gone within 30–90 units of the lens.
   Sources: (1) the effects' under-water-only particles (`ParticleDef::water` 1: weapon trails, fx_bubbles_* vents)
   leave their sprites and come here (`fx::System::build`'s `bubbles`, Enhanced water only; Original draws the

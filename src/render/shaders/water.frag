@@ -60,6 +60,7 @@ layout(binding = 12) uniform sampler2DArray uOcean;
 #include "sun.glsl"
 #include "shaders/waves.glsl" // the waves (shared with water.vert and the caustics)
 #include "shaders/caustics.glsl"
+#include "shaders/uw_medium.glsl" // the under-water medium (seen from below: the total internal reflection)
 float ouSunShadowVisibility(vec3 p) { return ouSunVisibility(p, vec3(0.0), true, false); }
 #ifdef VULKAN
 #define OU_NDC_Y(uv) (1.0 - 2.0 * (uv).y)
@@ -176,21 +177,14 @@ float ggxSpec(vec3 n, vec3 v, vec3 l, float a) {
 // Water colour presets (w.optics[0].w = 1; render::waterOptics, NeuralSpecOcean's palettes) replace the extinction and
 // the in-scatter hue; the unit's deep colour keeps the in-scatter brightness (its luminance), so a dim cave pool stays
 // dim and a sunlit sea bright [I: the decision, RENDERING.md "Water colour"].
-vec3 gSurf, gDeep, gSigma, gSurfG, gDeepG; // gSurfG / gDeepG: the unit's colours as given (gamma)
+vec3 gSurf, gDeep, gSigma;
 float ouLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 void ouWaterLook() {
     bool unit = w.waterPass[1].w > 0.0;
     vec4 sf = unit ? w.waterPass[0] : kSurfaceDefault, dp = unit ? w.waterPass[1] : kDeepDefault;
-    gSurfG = sf.rgb, gDeepG = dp.rgb;
     gSurf = toLinear(sf.rgb), gDeep = toLinear(dp.rgb);
     gSigma = (1.0 - 0.85 * gSurf) * (30.0 / dp.w);
     if (w.optics[0].w > 0.5) gSigma = w.optics[0].rgb, gDeep = w.optics[1].rgb * ouLum(gDeep);
-}
-// The water's colour seen along direction d, linear: the post pass's under-water fog colour (shaders/underwater.glsl
-// ouWaterPass: deep looking down to the surface colour looking up; a preset's hue at that luminance).
-vec3 ouFogToward(vec3 d) {
-    vec3 col = toLinear(mix(gDeepG, gSurfG, clamp(0.5 + 0.5 * d.z, 0.0, 1.0)));
-    return w.optics[0].w > 0.5 ? w.optics[1].rgb * ouLum(col) : col;
 }
 // Water transmittance and in-scatter over `path` units; `down`: how far the seen point lies under the surface, dimming
 // the light that reached it (downwelling: submerged hulls darken with depth). The in-scatter colour is one colour, not
@@ -444,17 +438,18 @@ void main() {
                     window = mix(window, toLinear(textureLod(uScene, ruv, 0.0).rgb), conf);
             }
         }
-        // Total internal reflection: the water's own in-scatter toward the reflected direction (abyssal-garden's
-        // fogIn(p, R, 300 m) x 1.15): the colour the post pass fogs a view in that direction with (ouWaterPass: deep
-        // looking down, surface colour looking up), so the mirrored surround meets the distance fog without a seam, with
-        // a mild forward-scatter lobe toward the sun (1 + 0.25 mu^4 [I], abyssal-garden's 1.22 + .3 mu^4); the water below
-        // by SSR over it where it is on screen.
+        // Total internal reflection: the water's own in-scatter toward the reflected direction from the surface
+        // (abyssal-garden's fogIn(p, R, 300 m) x 1.15), from the medium the post pass fogs with (shaders/uw_medium.glsl,
+        // forward sun glow included), so the mirrored surround meets the distance fog without a seam; the water below by
+        // SSR over it where it is on screen, fogged by the same medium over the reflected path.
         vec3 rb = reflect(-v, nb);
-        float mu = max(dot(rb, w.sunDir.xyz), 0.0);
-        vec3 tir = ouFogToward(rb) * (1.15 * (1.0 + 0.25 * mu * mu * mu * mu));
+        OuUwMedium um = ouUwEyeMedium();
+        vec3 ul = ouUwSunDir();
+        vec3 tir = ouUwFogIn(um, rb, 300.0, 0.0, ul) * 1.15;
         if (win < 1.0 && ouTrace(p - vec3(0.0, 0.0, 2.0), rb, 30.0 * kM, 2.0 * kM, huv, ht)) {
             float rc = ouEdgeFade(huv, 0.08) * (1.0 - smoothstep(0.6, 1.0, ht / (30.0 * kM)));
-            tir = mix(tir, ouAbsorb(toLinear(textureLod(uScene, huv, 0.0).rgb), ht, 0.0, light), rc);
+            vec3 hit = toLinear(textureLod(uScene, huv, 0.0).rgb) * exp(-um.sigma * (ht / kM)) + ouUwFogIn(um, rb, ht / kM, 0.0, ul) * 1.15;
+            tir = mix(tir, hit, rc);
             if (!traced) conf = rc;
         }
         c = mix(tir, window * (1.0 - ft), win); // abyssal-garden: mix(refl, sky x (1 - fr), win)
