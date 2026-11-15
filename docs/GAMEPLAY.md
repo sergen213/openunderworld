@@ -1675,6 +1675,19 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   1648 and 1245 under the deck at 1728, so both chapter starts are dry. Ours: `findWater` appends the waves to the
   markup (4 × (kx, ky, speed), 4 × (height, 0, 0)); `waterSurface` / `waveHeight` give the surface the player swims on
   (tread rides the waves) and `waveRegisters` the shader's c60–c63 (`StreamReal.YachtDecksAboveSea`).
+- Floating objects [O: decomp; tru.exe under Wine 2026-11-15]: each frame every water volume buoys the Havok
+  primitives in its box (0x6AD070 → 0x4DEE60) by their buoyancy percent (sphere +0x16, box +0x38, capsule +0x2C; 0 =
+  none; flow percent +1 scales the current): plane at the top + the 0x69DA80 waves over the primitive's centre, force
+  = submerged volume (sphere cap 0x4D90D0) × density +0x80 (4.56e-5 kg/unit³) × g up at its centre, plus drag (0.5 /
+  0.01, read live) × mass / shape count × V / Vfull. A buoyant primitive in a volume with waves enables its body
+  (0x4D8FD0). So the yachts float: ms_uo_yacht's six 70 % hull spheres; its section instance heaves top − 320 .. − 72
+  (l1_seatop, mean − 201) / − 379 .. − 52 (l2_cliffclimb, mean − 218), rolls / pitches 2–4°, Lara riding the deck;
+  the air tank 999 rides the l1 stern. Ours (`physics::Scene` buoyancy per primitive; `World::stepPhysics`): an uber
+  object whose model-0 section nothing else moves turns loose when afloat or standing on a loose body [I], Lara's
+  push proxy is off while she stands on a loose body (`StreamReal.YachtsFloatOnTheWaves`: ch1 − 342 .. − 58 mean
+  − 188, ch2 − 368 .. − 72 mean − 229; ch2 drifts 77 units / 11° in 50 s vs the original's 3 / 2°). Open: the ch1
+  yacht still wanders in yaw (100° in 50 s, also with the same forces alone at its spot: roll-pitch coupling barely
+  damped); boxes use an exact clipped volume [I: 0x4DDC50 not decoded].
 - In water: the water probe box overlaps a volume, the feet are below its surface and there is no floor within
   `swimDepth` (400) below the surface. From the air → SwimSplash (plunge velocity damped by drag) → Surfacing (rise at
   swim speed) → SwimTread. From the ground (standing on a deep floor) → Surfacing.
