@@ -22,13 +22,21 @@ water, light, caustics, shafts, particles and final image. Original water is unc
   from above).
 - Changed: the sun shafts are the demo's: half-resolution god rays with its moving streak pattern, blocked by
   geometry, added after the glow as in the demo.
-- Changed: the surface seen from below is the demo's: a bright rippling window to the sky with the sun's glint and a
-  dark reflection of the water outside it. The yacht, the shore and anything above the water still show through the
-  window.
+- Changed: the surface seen from below is the demo's: a bright rippling window to the sky with the sun's glint, and
+  dark water outside it that fades into the blue with distance. The yacht, the shore and anything above the water
+  still show through the window.
 - Changed: marine snow and bubbles are the demo's: 9000 small twinkling specks around you (no more bright cyan blobs
   near the camera), and round rimmed breath bubbles that sway as they rise.
 - Changed: under water the picture goes through the demo's own glow, exposure (slightly brighter deeper down),
   vignette, tone curve and contrast instead of the game's tone map.
+  The game's own under-water blur, bloom and light rays no longer stack on top, so the water is clear and contrasty
+  instead of hazy, and the sun shafts are shadowed along the sun's under-water angle (the yacht cuts dark gaps).
+- Changed: below 20 m the light fades more slowly than in the demo (whose floor is at most 56 m), so the Mediterranean
+  sea bed at 139 m stays readable in teal instead of turning black.
+- Fixed: diving deep in the Mediterranean (and any sea built from stacked water areas), below about 30 m the scene
+  lost all its water look and became bright and unlit. The water now stays dark, blue and fogged all the way down,
+  in Original and Enhanced water, as in the original game.
+- Fixed: a smoke puff high above the sea showed as a pale disc on the surface when looking up from under water.
 
 ## [0.48.0] - 2026-11-15
 
