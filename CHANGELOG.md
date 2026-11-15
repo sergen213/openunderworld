@@ -6,6 +6,29 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-11-15
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+Enhanced water under water is now a 1:1 copy of Noniv's abyssal-garden (MIT): its own formulas and constants for the
+water, light, caustics, shafts, particles and final image. Original water is unchanged.
+
+- Changed: new caustics on everything under water (and on the sea bed seen from above): the demo's animated caustic
+  pattern, sharp near the surface, fading to an even glow 35-100 m away. The old caustics looked like crumpled foil.
+- Changed: under-water objects are lit like the demo's: sunlight falls off with depth, red goes first, with sky light
+  from above and blue-green light on walls. The water is the demo's clear cyan-blue in every level: neither each
+  level's own water tint nor the water colour presets apply under water any more (they still colour the water seen
+  from above).
+- Changed: the sun shafts are the demo's: half-resolution god rays with its moving streak pattern, blocked by
+  geometry, added after the glow as in the demo.
+- Changed: the surface seen from below is the demo's: a bright rippling window to the sky with the sun's glint and a
+  dark reflection of the water outside it. The yacht, the shore and anything above the water still show through the
+  window.
+- Changed: marine snow and bubbles are the demo's: 9000 small twinkling specks around you (no more bright cyan blobs
+  near the camera), and round rimmed breath bubbles that sway as they rise.
+- Changed: under water the picture goes through the demo's own glow, exposure (slightly brighter deeper down),
+  vignette, tone curve and contrast instead of the game's tone map.
+
 ## [0.48.0] - 2026-11-15
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

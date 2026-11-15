@@ -18,7 +18,8 @@
 //   or passes behind a foreground object falls back to the simple depth-scaled normal offset.
 // - Edge foam from the water depth broken by an edge noise, a soft waterline, sun / lamp GGX glints.
 // - From below (camera submerged): abyssal-garden's W_SURF (MIT, Noniv) literally: Snell's window over its animated
-//   water texture's slopes, the demo sky + sun glint through it and the medium's in-scatter (fogIn) outside it.
+//   water texture's slopes, the demo sky + sun glint through it (the scene above the water where the refracted ray
+//   hits it) and the medium's in-scatter (fogIn) outside it.
 // Open seas (meshes with TRU's sea waves, vSea): the FFT ocean (render/Ocean.hpp: Tessendorf cascades after
 // NeuralSpecOcean, MIT) displaces (water.vert) and bends the normals with the choppy surface's own normal, its folds
 // (Jacobian) foaming as whitecaps; without it (FrameOptions::oceanFft off) afl_ext's "Very fast procedural ocean" waves
