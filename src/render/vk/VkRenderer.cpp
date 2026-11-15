@@ -1466,6 +1466,7 @@ public:
             options.fxaa && !fsrOn ? 1 : 0, options.hdr ? 1 : 0, options.brightness, std::clamp(options.screenFade, 0.0f, 1.0f),
             options.tonemap == Tonemap::Agx ? 1 : 0, particles ? 1 : 0};
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeline_);
+        static_assert(sizeof post == kPostPushBytes);
         vkCmdPushConstants(cmd, postLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof post, &post);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 0, 1, &postSet_, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 1, 1, &postWaterSets_[frameIndex_], 0,
@@ -2908,7 +2909,8 @@ private:
         const VkDescriptorSetLayout sceneSets[3] = {setLayout_, shadowSetLayout_, rtSetLayout_};
         VkPushConstantRange scenePush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ScenePush)};
         VkPushConstantRange textPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(float)};
-        VkPushConstantRange postPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 4 * sizeof(int32_t) + 2 * sizeof(float)};
+        // post.frag's Push (6 x 4 bytes) + the shaft march's step count after it (uw_shafts.frag, offset 24: no overlap)
+        VkPushConstantRange postPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, kPostPushBytes + sizeof(int32_t)};
         VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 3u : 2u,
                                       sceneSets, 1, &scenePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &sceneLayout_));
@@ -2932,12 +2934,13 @@ private:
         // Post: set 1 = WaterBlock UBO + opaque depth (underwater, atmosphere, weather) + the screen filters' blur levels
         // (filterBlur_) + the ripple field (caustics) + the feedback effect's previous frame (feedback_) + the FFT ocean
         // (caustics) + the under-water sun shafts' march output, blurred shafts and pattern tile (6, 7, 8: shaftTargets_,
-        // shaftPattern_; recordUnderwaterShafts); set 2 = the sun shadow set (shafts).
-        VkDescriptorSetLayoutBinding pb[9];
-        for (uint32_t b = 0; b < 9; ++b)
+        // shaftPattern_; recordUnderwaterShafts) + (9) the under-water particles (uwParticles_; recordUwParticles); set 2 =
+        // the sun shadow set (shafts).
+        VkDescriptorSetLayoutBinding pb[10];
+        for (uint32_t b = 0; b < 10; ++b)
             pb[b] = {b, b ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                      VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 9, pb};
+        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 10, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
         VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves
         // 1: sun shadow (caustics); 2 (RT devices): the scene TLAS for water_rt.frag's reflections.
@@ -3895,7 +3898,7 @@ private:
             vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
             const VkDescriptorImageInfo uw{fontSampler_, uwParticles_.view ? uwParticles_.view : white_.view,
                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-            w.dstBinding = 7; // the under-water particles (recordUwParticles)
+            w.dstBinding = 9; // the under-water particles (recordUwParticles)
             w.pImageInfo = &uw;
             vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
             const VkDescriptorImageInfo shafts[3] = { // the under-water sun shafts (recordUnderwaterShafts)
@@ -4307,7 +4310,7 @@ private:
             vkCmdSetScissor(cmd, 0, 1, &ri.renderArea);
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            vkCmdPushConstants(cmd, postLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
+            vkCmdPushConstants(cmd, postLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, kPostPushBytes, sizeof push, &push);
             vkCmdDraw(cmd, 3, 1, 0, 0);
             vkCmdEndRendering(cmd);
             const VkImageMemoryBarrier2 toRead = imageBarrier(out->image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -5421,8 +5424,9 @@ private:
     std::array<Buffer, kFramesInFlight> splashBuffers_{};
     std::array<VkDeviceSize, kFramesInFlight> splashCapacity_{};
     // Enhanced under-water particles (recordUwParticles; render/Water.hpp UwParticlePush): premultiplied render-size
-    // target sampled by the post pass (set 1 binding 7), kept SHADER_READ_ONLY between frames; per-frame bubble instances.
+    // target sampled by the post pass (set 1 binding 9), kept SHADER_READ_ONLY between frames; per-frame bubble instances.
     static constexpr VkFormat kUwParticleFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    static constexpr uint32_t kPostPushBytes = 24; // post.frag Push; uw_shafts.frag's steps follow at this offset
     GpuImage uwParticles_;
     VkPipeline uwSnowPipeline_ = VK_NULL_HANDLE, uwBubblePipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout uwLayout_ = VK_NULL_HANDLE;

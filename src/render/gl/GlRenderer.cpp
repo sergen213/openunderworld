@@ -152,7 +152,7 @@ layout(location = 3) uniform float uFade;       // FrameOptions::screenFade (1 =
 layout(location = 4) uniform int uTonemap;     // FrameOptions::tonemap: 0 original, 1 agx
 layout(location = 5) uniform int uParticles;  // 1 = uUwParticles holds this frame's under-water particles (Water.hpp)
 layout(binding = 0) uniform sampler2D uScene;
-layout(binding = 14) uniform sampler2D uUwParticles; // premultiplied, composited over the fogged scene
+layout(binding = 17) uniform sampler2D uUwParticles; // premultiplied, composited over the fogged scene (13-15 shafts, 16 shadow)
 out vec4 oColor;
 )";
 const char* kTonemapGlsl =
@@ -971,7 +971,7 @@ public:
         glUniform1f(3, std::clamp(options.screenFade, 0.0f, 1.0f));
         glUniform1i(4, options.tonemap == Tonemap::Agx ? 1 : 0);
         glUniform1i(5, particles ? 1 : 0);
-        glBindTextureUnit(14, r.targets.uwParticles.get()); // the under-water particles (unused unless submerged)
+        glBindTextureUnit(17, r.targets.uwParticles.get()); // the under-water particles (unused unless submerged)
         glBindTextureUnit(0, t.color.get());
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindTextureUnit(7, t.filterBlur.get());  // screen filters (unused unless one runs)

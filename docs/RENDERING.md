@@ -674,7 +674,8 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   `W_POST` pipeline): three passes before the post pass (`render::underwaterShaftsActive` = `ouShaftsOn`: Enhanced
   water, camera below the nearest surface, sun above the horizon), drawn with the post layout / units, then
   `ouShaftsComposite` in the post pass (after the full-screen pass, before `ouRays`). All in `underwater.glsl`; passes
-  `shaders/uw_shafts_pattern.frag`, `uw_shafts.frag`, `uw_shafts_blur.frag`; VK post set 1 bindings 6-8, GL units 13-15.
+  `shaders/uw_shafts_pattern.frag`, `uw_shafts.frag`, `uw_shafts_blur.frag`; VK post set 1 bindings 6-8 (the
+  march's step count pushed at offset 24, after post.frag's block), GL units 13-15.
   1. Pattern tile (`ouShaftPatternTexel`, R16F, 512² texels of 48 units = 24576 units, snapped to texels around the
      camera's refracted-sun entry point so it does not swim): the drawn waves' focusing `ouCausticFocus` (caustics.glsl:
      the waves that light the bed, the FFT ocean, Lara's ripples) at a 2000-unit focal depth, blurred by one texel,
@@ -723,8 +724,8 @@ its post output is unchanged (the composite is skipped).
 - Pass (`render/Water.hpp` `UwParticlePush`; Vulkan `recordUwParticles`, GL `drawUwParticles`): after the scene's
   effects, into a render-size RGBA16F target cleared to 0, blend ONE / ONE_MINUS_SRC_ALPHA, no depth attachment: the
   fragment shaders test the opaque depth copy (`uwOccluded`). The post pass composites it after `ouUnderwater` (TRU's
-  water pass has fogged the scene behind it by then): c = c (1 − a) + rgb (Vulkan post set 1 binding 7 + push
-  `particles`, GL unit 14 + uniform 5). Each particle fogs itself by its own distance with `ouWaterPass`'s model
+  water pass has fogged the scene behind it by then): c = c (1 − a) + rgb (Vulkan post set 1 binding 9 + push
+  `particles`, GL unit 17 + uniform 5). Each particle fogs itself by its own distance with `ouWaterPass`'s model
   (`uw_light.glsl` `uwFogAlpha` / `uwFogColour`: the unit's deep → surface colours and eye alpha, or a water colour
   preset's per-channel extinction and hue), so the look follows `w.optics` and the unit colours.
 - Marine snow (`uw_snow.vert` / `.frag`): 9000 instanced specks (4500 without water detail) in a 6000-unit box around

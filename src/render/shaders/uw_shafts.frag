@@ -9,7 +9,7 @@ layout(location = 0) out vec4 oShafts;
 #include "sun.glsl"
 #include "shaders/atmosphere.glsl"
 #ifdef VULKAN
-layout(push_constant) uniform UwShafts { int steps; } uws; // within the post layout's fragment push range
+layout(push_constant) uniform UwShafts { layout(offset = 24) int steps; } uws; // after post.frag's Push in the post range
 #define OU_SHAFT_STEPS uws.steps
 #else
 layout(location = 0) uniform int uShaftSteps;

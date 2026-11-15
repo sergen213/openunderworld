@@ -5,7 +5,7 @@ layout(location = 0) in vec2 vUv;
 // this frame's Enhanced under-water particles (render/Water.hpp UwParticlePush), premultiplied over the fogged scene
 layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; float fade; int tonemap; int particles; } pc;
 layout(set = 0, binding = 0) uniform sampler2D uScene;
-layout(set = 1, binding = 7) uniform sampler2D uUwParticles;
+layout(set = 1, binding = 9) uniform sampler2D uUwParticles; // after the shafts' 6-8 (VkRenderer post-water set)
 layout(location = 0) out vec4 oColor;
 #include "shaders/tonemap.glsl"
 vec3 fetch(vec2 uv) {
