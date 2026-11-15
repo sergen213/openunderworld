@@ -575,9 +575,10 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   depth-attenuated light `kd` integrated in closed form along the view ray, forward sun glow 1.22 + 0.3 μ⁴) →
   `ouUwMedium` / `ouUwFogIn` (`src/render/shaders/uw_medium.glsl`, shared by the post fog `ouUwFog`, the particles,
   the surface's total internal reflection and the shafts); `sunE` / `amb` / `side` (sun, hemispherical ambient and wall
-  light falling off with depth) → `ouUwSurfaceLight`; `W_POST` (vignette, luminance S-curve, desaturation, IGN dither)
-  and the Karis-weighted bloom downsample (`kar`) → `ouUnderwaterGrade` (`src/render/shaders/filter.glsl`). Its
-  constants are used as ratios (KD / SIG).
+  light falling off with depth) → `ouUwSurfaceLight`. Its constants are used as ratios (KD / SIG). `W_BLIT`'s bloom chain
+  and `W_POST` (exposure, vignette, ACES fit, luminance S-curve, desaturation, gamma, IGN dither) and the sprites
+  (`vsSnow` / `fsSnow`, `vsBub` / `fsBub`) are ported literally → `src/render/shaders/uw_bloom.frag`, `uw_grade.frag`,
+  `uw_snow.*`, `uw_bubble.*` (RENDERING "Under water: marine snow, bubbles and the composite").
 - Surface (`W_SURF`, the water surface seen from below): Snell's window from the per-pixel wave normal with the soft rim
   `ss(0, .22, k)`, the bright sky through it with the sun lobe `pow(sd, 60) × 1.3 + pow(sd, 500) × 12`, slope-driven
   brightness, detail faded with distance `ss(260, 60, d)`, total internal reflection showing the water's in-scatter

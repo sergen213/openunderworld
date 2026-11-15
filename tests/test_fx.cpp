@@ -1002,8 +1002,9 @@ TEST(FxReal, OnlyBubbleTexturedDefsAreBubbles) {
     }
 }
 
-// Lara's breath (fx/Breath.hpp, all [I]): puffs only while submerged, the same game time and mouth path give the same
-// bubbles, they rise from the mouth and are gone before the surface; a jump back in time clears them.
+// Lara's breath (fx/Breath.hpp; puff clock [I], bubbles abyssal-garden's): puffs only while submerged, the same game time
+// and mouth path give the same bubbles, they rise straight up from the mouth with the demo's wobble and size and are gone
+// before the surface; a jump back in time clears them.
 TEST(FxBreath, DeterministicRisingAndGoneAtTheSurface) {
     const glm::vec3 mouth(100, 200, -1000);
     auto run = [&](bool submerged, double until) {
@@ -1021,9 +1022,12 @@ TEST(FxBreath, DeterministicRisingAndGoneAtTheSurface) {
         EXPECT_EQ(std::memcmp(&a[i], &c[i], sizeof a[i]), 0) << i;
         EXPECT_GT(a[i].pos[2], mouth.z - 10.0f); // above the mouth (jitter +-2)
         EXPECT_LT(a[i].pos[2] + a[i].radius, 0.0f); // under the surface
-        EXPECT_LT(std::hypot(a[i].pos[0] - mouth.x, a[i].pos[1] - mouth.y), 30.0f);
+        EXPECT_LT(std::hypot(a[i].pos[0] - mouth.x, a[i].pos[1] - mouth.y), 10.0f); // jitter +-4; the sway is the shader's
+        EXPECT_TRUE(a[i].wobble >= 0.05f && a[i].wobble <= 0.16f);
+        EXPECT_LE(a[i].radius, 0.08f * 1.25f * 290.0f);
+        EXPECT_NEAR(a[i].rise, (a[i].pos[2] - mouth.z) / 290.0f, 0.02f);
     }
-    // 1000 units at <= 135 units/s: every bubble older than ~8 s has reached the surface and left
+    // 1000 units (3.25 m to life 1) at >= 0.74 m/s: every bubble older than ~4.4 s has reached the surface and left
     fx::Breath b;
     for (double t = 0; t <= 2.0; t += 1.0 / 60) b.tick(t, mouth, true, true, 0.0f);
     for (double t = 2.0; t <= 20.0; t += 1.0 / 60) b.tick(t, mouth, false, true, 0.0f);

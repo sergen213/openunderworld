@@ -67,39 +67,3 @@ vec3 ouScreenFilter(vec3 c, vec2 uv) {
     c = mix(c, w.filters[4].rgb, w.filters[4].w);
     return ouScreenNoise(c, uv);
 }
-// Enhanced under-water grade (ours, camera submerged; abyssal-garden's W_POST, Noniv, MIT: docs/RESEARCH.md; RENDERING.md
-// "Under water"), last in the post pass. Glow: the screen-filter blur chain (uFilterBlur; the renderers build it while
-// submerged too) at mips 3 and 5, each of the 4 bilinear taps Karis-weighted 1 / (1 + max channel) so a lone bright
-// pixel cannot bloom into a square (abyssal-garden's fsDown0 `kar`, firefly-safe), then fogged with this pixel's medium
-// (underwater.glsl gUwT / gUwL: the blurred scene is unfogged) and mixed as the demo, 6 % + 3 % added. Then the vignette
-// 1 - 0.55 r^2, the luminance S-curve (55 % toward smoothstep), 10 % desaturation of the highlights and 7 % overall, and
-// a triangular interleaved-gradient-noise dither of +-1 / 255 before 8-bit quantisation (no bands in the fog gradients).
-// All x the pass strength. Original water never sets the submerged flag: c unchanged.
-vec3 ouUwKaris(vec2 uv, float r) {
-    vec2 t = 0.5 * exp2(r) / vec2(textureSize(uFilterBlur, 0));
-    vec3 s = vec3(0.0);
-    float ws = 0.0;
-    for (int i = 0; i < 4; ++i) {
-        vec2 o = vec2((i & 1) != 0 ? 1.0 : -1.0, (i & 2) != 0 ? 1.0 : -1.0);
-        vec3 v = min(pow(max(textureLod(uFilterBlur, uv + t * o, r).rgb, vec3(0.0)), vec3(2.2)), vec3(24.0));
-        float k = 1.0 / (1.0 + max(v.r, max(v.g, v.b)));
-        s += v * k, ws += k;
-    }
-    return s / ws;
-}
-float ouUwIgn(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
-vec3 ouUnderwaterGrade(vec3 c, vec2 uv) {
-    if (w.fogColor.w < 0.5 || w.waterPass[2].x <= 0.0) return c;
-    vec3 lin = pow(max(c, vec3(0.0)), vec3(2.2));
-    vec3 bl = 0.5 * (ouUwKaris(uv, 3.0) + ouUwKaris(uv, 5.0)) * gUwT + gUwL;
-    vec3 g = mix(lin, bl, 0.06) + bl * 0.03;
-    vec2 q = uv - 0.5;
-    g *= 1.0 - dot(q, q) * 0.55;
-    float l0 = dot(g, vec3(0.2126, 0.7152, 0.0722));
-    float lc = clamp(l0, 0.0, 1.0), l = mix(lc, lc * lc * (3.0 - 2.0 * lc), 0.55);
-    g *= l / max(l0, 1e-4);
-    g = mix(g, vec3(l), smoothstep(0.55, 1.0, l) * 0.1);
-    g = mix(vec3(l), g, 0.93);
-    g = mix(c, pow(max(g, vec3(0.0)), vec3(1.0 / 2.2)), w.waterPass[2].x);
-    return g + (ouUwIgn(gl_FragCoord.xy) + ouUwIgn(gl_FragCoord.xy + 37.0) - 1.0) / 255.0;
-}

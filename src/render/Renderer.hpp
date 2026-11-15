@@ -69,8 +69,9 @@ struct WaterVolume { float min[3], max[3]; float waves[4][4] = {}; };
 // Splash / spray droplet: world position, radius (world units), opacity 0..1; drawn as a camera-facing soft disc.
 struct WaterParticle { float pos[3]; float radius; float alpha; };
 // Under-water bubble for the Enhanced particle pass (render/Water.hpp "under-water particles"): world centre, radius
-// (world units), opacity 0..1, seed 0..1 (its wobble phase; keep it per bubble so the sway is continuous).
-struct Bubble { float pos[3]; float radius; float alpha; float seed; };
+// (world units), opacity 0..1, seed 0..1 (abyssal-garden vsBub b.x: its wobble phase; keep it per bubble so the sway is
+// continuous), height risen (m, the demo's h) and wobble amplitude (m, b.w; 0 = no sway: the effects' own motion).
+struct Bubble { float pos[3]; float radius; float alpha; float seed; float rise = 0; float wobble = 0; };
 // ---- original particle effects (src/fx, docs/formats/EFFECTS.md) ----
 // Camera-facing sprite corner; colour bytes R,G,B,A with 0x80 = 1.0 (shaders scale by 2), drawn tex * colour.
 struct FxVertex { float pos[3]; float uv[2]; uint32_t rgba; };
