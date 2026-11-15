@@ -1285,9 +1285,12 @@ Submerged boxUnder(const mat4& f, vec3 size, float h) {
 //   torque      = -angular velocity x reach^2 x angular drag x share
 //   share       = body mass / its shape count x V / Vfull; reach = the sphere's radius, the box's diagonal (size +0x50)
 // so a hull's buoyant primitives each ride the waves under them: ms_uo_yacht's six 70 % spheres heave, pitch and roll it.
+// The engine's velocities are per 30 Hz frame and the drag force / torque is integrated over frames [O: Wine, the
+// yacht body's +0xA0 vertical speed is its centre's rise per 1/30 s], so per second either drag is kFrame x the
+// coefficient: Jolt's metres / seconds take 15 and 0.3.
 void Scene::Impl::buoyancy(float) {
     if (water.empty()) return;
-    constexpr float kDensity = 4.56e-5f, kLinearDrag = 0.5f, kAngularDrag = 0.01f;
+    constexpr float kDensity = 4.56e-5f, kLinearDrag = 0.5f * kFrame, kAngularDrag = 0.01f * kFrame;
     const float g = sys.GetGravity().Length();
     const auto shaped = [](const Prim& p) { return p.solid() && !(p.kind == PrimKind::Sphere && p.head[2] == 2); }; // 0x48E710
     for (const auto& l : loose) {

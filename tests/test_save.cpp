@@ -830,7 +830,7 @@ TEST(StreamReal, YachtsFloatOnTheWaves) {
         ASSERT_NE(sea, nullptr) << c.chapter;
         const float top = sea->points[1].z;
         std::vector<float> zs;
-        float tilt = 0, ride = 0;
+        float tilt = 0, ride = 0, lateYaw = 0; // lateYaw: 10 s before the end
         const auto frame = [&] {
             const auto* o = w.script().find(c.yacht);
             EXPECT_TRUE(o && o->loose) << "ch" << c.chapter << ": the yacht floats";
@@ -845,6 +845,7 @@ TEST(StreamReal, YachtsFloatOnTheWaves) {
             const glm::mat4 f = frame();
             zs.push_back(f[3].z - top);
             tilt = std::max(tilt, glm::degrees(std::acos(std::clamp(f[2].z, -1.0f, 1.0f))));
+            if (i == 20 * 60) lateYaw = std::atan2(f[0].y, f[0].x);
             const auto& s = w.player().state();
             EXPECT_LT(s.water, 0) << "ch" << c.chapter << " tick " << i << ": dry on the deck";
             ride = std::max(ride, glm::distance(glm::vec3(f * glm::vec4(deck, 1)), s.pos));
@@ -860,11 +861,11 @@ TEST(StreamReal, YachtsFloatOnTheWaves) {
         for (const auto& l : w.script().objects())
             if (l.loose) std::fprintf(stderr, "ch%d loose: %d %s\n", c.chapter, l.uid, l.name.c_str());
         const float drift = glm::length(glm::vec2(f[3]) - glm::vec2(o->pos));
-        const float turn = std::abs(std::remainder(std::atan2(f[0].y, f[0].x) - o->rot.z, 6.2831853f));
-        if (c.chapter == 2) { // ch1 still wanders (open: 1470 units / 100 degrees in 50 s vs Wine's 320 / 12 over minutes)
-            EXPECT_LT(drift, 300.0f) << "ch2: drifts about as little as the original's (Wine: 3 units)";
-            EXPECT_LT(glm::degrees(turn), 20.0f) << "ch2: turns about as little (Wine: 2 degrees)";
-        }
+        const float yaw = std::atan2(f[0].y, f[0].x), turn = std::abs(std::remainder(yaw - o->rot.z, 6.2831853f));
+        // Wine: ch1 ~320 units / 12 degrees after the splash-down, then within ~5 units and 0.7 degrees a minute; ch2 3 / 2.
+        EXPECT_LT(drift, c.chapter == 1 ? 400.0f : 300.0f) << "ch" << c.chapter << ": drifts about as little as the original's";
+        EXPECT_LT(glm::degrees(turn), c.chapter == 1 ? 15.0f : 20.0f) << "ch" << c.chapter << ": turns about as little";
+        EXPECT_LT(glm::degrees(std::abs(std::remainder(yaw - lateYaw, 6.2831853f))), 3.0f) << "ch" << c.chapter << ": its heading settles";
         EXPECT_GT(hi - lo, 150.0f) << "ch" << c.chapter << ": heaves with the swell";
         EXPECT_LT(hi - lo, 450.0f) << "ch" << c.chapter;
         EXPECT_NEAR(mean, c.mean, 60.0f) << "ch" << c.chapter << ": sits at the original's waterline";
