@@ -581,6 +581,11 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   brightness, detail faded with distance `ss(260, 60, d)`, total internal reflection showing the water's in-scatter
   toward the reflected direction (`fogIn`) → `water.frag`'s from-below branch (RENDERING "Water"; colours from the unit /
   preset, not its `WCOL`).
+- Marine snow (`vsSnow` / `fsSnow`: a camera-wrapped instanced speck field with drift, wobble, twinkle, a pixel-size
+  floor and depth-attenuated, shadowed sunlight) and bubbles (`vsBub` / `fsBub`: wobbling outline, rim + two highlights,
+  lit from above / below by the water's in-scatter, fogged by distance) → `src/render/shaders/uw_snow.*` / `uw_bubble.*`
+  (RENDERING "Under water: marine snow and bubbles"), rescaled to TRU units (290 per metre) with TRU's own water colours
+  and fog in place of its fixed WCOL / SIG constants.
 
 ---
 

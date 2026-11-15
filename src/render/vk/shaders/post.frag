@@ -1,9 +1,11 @@
 #version 460
 // Same as GL kPostFs: optional tone mapping (AgX, or the ACES fit with HDR) and classic FXAA, then the atmosphere / weather and the underwater effect.
 layout(location = 0) in vec2 vUv;
-// fade: FrameOptions::screenFade; tonemap: FrameOptions::tonemap (0 original, 1 agx)
-layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; float fade; int tonemap; } pc;
+// fade: FrameOptions::screenFade; tonemap: FrameOptions::tonemap (0 original, 1 agx); particles: 1 = uUwParticles holds
+// this frame's Enhanced under-water particles (render/Water.hpp UwParticlePush), premultiplied over the fogged scene
+layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; float fade; int tonemap; int particles; } pc;
 layout(set = 0, binding = 0) uniform sampler2D uScene;
+layout(set = 1, binding = 7) uniform sampler2D uUwParticles;
 layout(location = 0) out vec4 oColor;
 #include "shaders/tonemap.glsl"
 vec3 fetch(vec2 uv) {
@@ -35,5 +37,10 @@ vec3 fxaa(vec2 uv) {
 // Brightness: display gamma after tonemap / FXAA (1 = neutral), as the original game's brightness option.
 void main() {
     vec3 c = pow(ouScreenFilter(pc.fxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / pc.brightness));
-    oColor = vec4(ouUnderwaterGrade(ouUnderwater(ouAtmosphere(c, vUv), vUv), vUv) * (1.0 - pc.fade), 1.0);
+    vec3 u = ouUnderwater(ouAtmosphere(c, vUv), vUv);
+    if (pc.particles != 0) {
+        vec4 p = textureLod(uUwParticles, vUv, 0.0);
+        u = u * (1.0 - p.a) + p.rgb;
+    }
+    oColor = vec4(ouUnderwaterGrade(u, vUv) * (1.0 - pc.fade), 1.0);
 }

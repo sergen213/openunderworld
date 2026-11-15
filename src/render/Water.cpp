@@ -52,6 +52,24 @@ const char* kCaustics =
 const char* kWaves =
 #include "waves.glsl.inc"
     ;
+const char* kUwParticles =
+#include "uw_particles.glsl.inc"
+    ;
+const char* kUwLight =
+#include "uw_light.glsl.inc"
+    ;
+const char* kUwSnowVert =
+#include "uw_snow.vert.inc"
+    ;
+const char* kUwSnowFrag =
+#include "uw_snow.frag.inc"
+    ;
+const char* kUwBubbleVert =
+#include "uw_bubble.vert.inc"
+    ;
+const char* kUwBubbleFrag =
+#include "uw_bubble.frag.inc"
+    ;
 } // namespace
 
 bool isWaterSurface(std::string_view meshOrigin) { return meshOrigin.find("watersurface") != std::string_view::npos; }
@@ -409,6 +427,31 @@ std::string splashSplatSource(bool vulkan) { return withVersion(kSplashSplat, vu
 std::string splashScreenVertexSource(bool vulkan) { return withVersion(kSplashScreen, vulkan); }
 std::string splashBlurSource(bool vulkan) { return withVersion(kSplashBlur, vulkan); }
 std::string splashCompositeSource(bool vulkan) { return withVersion(kSplashComposite, vulkan); }
+
+namespace {
+// The particle shaders' own includes (the post pass's underwater / atmosphere files and uw_*.glsl), then the shared ones.
+std::string expandParticleIncludes(const char* source) {
+    std::string s = source;
+    const std::pair<const char*, const char*> files[] = {{"#include \"shaders/underwater.glsl\"", kUnderwater},
+                                                         {"#include \"shaders/atmosphere.glsl\"", kAtmosphere},
+                                                         {"#include \"shaders/uw_particles.glsl\"", kUwParticles},
+                                                         {"#include \"shaders/uw_light.glsl\"", kUwLight}};
+    for (const auto& [line, text] : files)
+        for (size_t at; (at = s.find(line)) != std::string::npos;) s.replace(at, std::strlen(line), text);
+    return expandIncludes(std::move(s));
+}
+} // namespace
+
+UwParticlePush uwParticlePush(const Camera& camera, const WaterBlock& wb, int height, bool detail) {
+    const glm::vec3 right = camera.right(), up = glm::cross(camera.forward(), right);
+    const float pixel = 2.0f * std::tan(glm::radians(camera.verticalFovDeg) * 0.5f) / float(std::max(height, 1));
+    return {wb.viewProj, wb.eye, glm::vec4(right, pixel), glm::vec4(up, kUwSnowBox),
+            glm::vec4(float(detail ? kUwSnowCount : kUwSnowCount / 2), 0, 0, 0)};
+}
+std::string uwSnowVertexSource(bool) { return expandParticleIncludes(kUwSnowVert); }
+std::string uwSnowFragmentSource(bool) { return expandParticleIncludes(kUwSnowFrag); }
+std::string uwBubbleVertexSource(bool) { return expandParticleIncludes(kUwBubbleVert); }
+std::string uwBubbleFragmentSource(bool) { return expandParticleIncludes(kUwBubbleFrag); }
 
 std::string underwaterPostSource(bool vulkan) {
     return expandIncludes(std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere + kFilter);

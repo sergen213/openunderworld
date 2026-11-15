@@ -68,6 +68,9 @@ struct WaterRipples {
 struct WaterVolume { float min[3], max[3]; float waves[4][4] = {}; };
 // Splash / spray droplet: world position, radius (world units), opacity 0..1; drawn as a camera-facing soft disc.
 struct WaterParticle { float pos[3]; float radius; float alpha; };
+// Under-water bubble for the Enhanced particle pass (render/Water.hpp "under-water particles"): world centre, radius
+// (world units), opacity 0..1, seed 0..1 (its wobble phase; keep it per bubble so the sway is continuous).
+struct Bubble { float pos[3]; float radius; float alpha; float seed; };
 // ---- original particle effects (src/fx, docs/formats/EFFECTS.md) ----
 // Camera-facing sprite corner; colour bytes R,G,B,A with 0x80 = 1.0 (shaders scale by 2), drawn tex * colour.
 struct FxVertex { float pos[3]; float uv[2]; uint32_t rgba; };
@@ -197,6 +200,8 @@ struct FrameOptions {
     WaterRipples ripples;                          // empty = calm (procedural waves only)
     std::span<const WaterVolume> waterVolumes;     // loaded units' water volumes
     std::span<const WaterParticle> splashes;       // drawn blended after the water surfaces
+    // Enhanced water, camera submerged: the under-water particle pass (marine snow + these bubbles; render/Water.hpp).
+    std::span<const Bubble> bubbles;
     // Moving lights (the flashlight): replace the first size() entries of the uploaded scene's environment lights for
     // this frame. The app reserves those slots in SceneData::environment (same falloff curves, so the attenuation LUT
     // already has their rows); colour 0 = off.

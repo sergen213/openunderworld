@@ -150,7 +150,9 @@ layout(location = 1) uniform int uHdr;
 layout(location = 2) uniform float uBrightness; // display gamma (1 = neutral), as the original's brightness option
 layout(location = 3) uniform float uFade;       // FrameOptions::screenFade (1 = black)
 layout(location = 4) uniform int uTonemap;     // FrameOptions::tonemap: 0 original, 1 agx
+layout(location = 5) uniform int uParticles;  // 1 = uUwParticles holds this frame's under-water particles (Water.hpp)
 layout(binding = 0) uniform sampler2D uScene;
+layout(binding = 14) uniform sampler2D uUwParticles; // premultiplied, composited over the fogged scene
 out vec4 oColor;
 )";
 const char* kTonemapGlsl =
@@ -184,7 +186,12 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
 const char* kPostFsMain = R"(
 void main() {
     vec3 c = pow(ouScreenFilter(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / uBrightness));
-    oColor = vec4(ouUnderwaterGrade(ouUnderwater(ouAtmosphere(c, vUv), vUv), vUv) * (1.0 - uFade), 1.0);
+    vec3 u = ouUnderwater(ouAtmosphere(c, vUv), vUv);
+    if (uParticles != 0) {
+        vec4 p = textureLod(uUwParticles, vUv, 0.0);
+        u = u * (1.0 - p.a) + p.rgb;
+    }
+    oColor = vec4(ouUnderwaterGrade(u, vUv) * (1.0 - uFade), 1.0);
 })";
 
 
@@ -386,6 +393,9 @@ struct Targets {
     // Enhanced water splashes as liquid (render/Water.hpp SplashVertex): RG32F splat target and blur ping-pong.
     std::array<Texture, 2> splash;
     std::array<Framebuffer, 2> splashFbo;
+    // Enhanced under-water particles (render/Water.hpp UwParticlePush): RGBA16F premultiplied, composited by the post pass.
+    Texture uwParticles;
+    Framebuffer uwParticlesFbo;
     // Original screen filters (FrameOptions::screenFilter): the half-size scene and its mip chain (blur levels).
     Texture filterBlur;
     Framebuffer filterFbo;
@@ -414,6 +424,10 @@ struct Resources {
     ocean::Clock oceanClock;
     VertexArray splashVao;
     Buffer splashVbo;
+    // Enhanced under-water particles (render/Water.hpp UwParticlePush): marine snow + bubbles, UBO binding 7.
+    Program uwSnowProgram, uwBubbleProgram;
+    Buffer uwUbo, uwBubbleVbo;
+    VertexArray uwBubbleVao;
     Program fxProgram; // original effects
     VertexArray fxVao;
     Buffer fxVbo;
@@ -551,6 +565,20 @@ public:
         attrib(r.splashVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, pos));
         attrib(r.splashVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, uv));
         attrib(r.splashVao.get(), 2, 1, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, alpha));
+        const std::string uwSnowVs = uwSnowVertexSource(false), uwSnowFs = uwSnowFragmentSource(false),
+                          uwBubbleVs = uwBubbleVertexSource(false), uwBubbleFs = uwBubbleFragmentSource(false);
+        r.uwSnowProgram = linkProgram(uwSnowVs.c_str(), uwSnowFs.c_str(), error);
+        if (!r.uwSnowProgram.get()) return false;
+        r.uwBubbleProgram = linkProgram(uwBubbleVs.c_str(), uwBubbleFs.c_str(), error);
+        if (!r.uwBubbleProgram.get()) return false;
+        r.uwUbo = newBuffer();
+        glNamedBufferStorage(r.uwUbo.get(), sizeof(UwParticlePush), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        r.uwBubbleVao = newVertexArray();
+        r.uwBubbleVbo = newBuffer();
+        glVertexArrayVertexBuffer(r.uwBubbleVao.get(), 0, r.uwBubbleVbo.get(), 0, sizeof(Bubble));
+        glVertexArrayBindingDivisor(r.uwBubbleVao.get(), 0, 1); // one Bubble per instance
+        attrib(r.uwBubbleVao.get(), 0, 4, GL_FLOAT, GL_FALSE, offsetof(Bubble, pos));   // pos + radius
+        attrib(r.uwBubbleVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(Bubble, alpha)); // alpha + seed
         r.fxProgram = linkProgram(kFxVs, kFxFs, error);
         if (!r.fxProgram.get()) return false;
         r.fxVao = newVertexArray();
@@ -886,6 +914,8 @@ public:
                                    vp.width, vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
         drawFx(camera, vp, viewProj, options);
         drawLines(viewProj, options.debugLines);
+        const bool particles = enhancedWater && uwParticlesOn(wb);
+        if (particles) drawUwParticles(camera, vp, wb, options);
 
         Targets& t = r.targets;
         if (t.msaa > 1)
@@ -912,6 +942,8 @@ public:
         glUniform1f(2, options.brightness);
         glUniform1f(3, std::clamp(options.screenFade, 0.0f, 1.0f));
         glUniform1i(4, options.tonemap == Tonemap::Agx ? 1 : 0);
+        glUniform1i(5, particles ? 1 : 0);
+        glBindTextureUnit(14, r.targets.uwParticles.get()); // the under-water particles (unused unless submerged)
         glBindTextureUnit(0, t.color.get());
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindTextureUnit(7, t.filterBlur.get());  // screen filters (unused unless one runs)
@@ -1051,6 +1083,14 @@ private:
             t.splashFbo[i] = newFramebuffer();
             glNamedFramebufferTexture(t.splashFbo[i].get(), GL_COLOR_ATTACHMENT0, t.splash[i].get(), 0);
         }
+        t.uwParticles = newTexture();
+        glTextureStorage2D(t.uwParticles.get(), 1, GL_RGBA16F, vp.width, vp.height);
+        glTextureParameteri(t.uwParticles.get(), GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(t.uwParticles.get(), GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(t.uwParticles.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(t.uwParticles.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        t.uwParticlesFbo = newFramebuffer();
+        glNamedFramebufferTexture(t.uwParticlesFbo.get(), GL_COLOR_ATTACHMENT0, t.uwParticles.get(), 0);
         const int bw = std::max(1, vp.width / 2), bh = std::max(1, vp.height / 2);
         for (auto [tex, fbo] : {std::pair{&t.filterBlur, &t.filterFbo}, std::pair{&t.feedback, &t.feedbackFbo}}) {
             *tex = newTexture();
@@ -1698,6 +1738,38 @@ private:
         }
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);
+    }
+
+    // Enhanced under-water particles (render/Water.hpp UwParticlePush): marine snow, then the bubbles, premultiplied into
+    // their own target (cleared to 0), depth-tested in the shaders against the opaque depth copy (unit 6, drawWater);
+    // the post pass composites the target over the fogged scene.
+    void drawUwParticles(const Camera& camera, Viewport vp, const WaterBlock& wb, const FrameOptions& options) {
+        Resources& r = *res_;
+        Targets& t = r.targets;
+        const UwParticlePush push = uwParticlePush(camera, wb, vp.height, options.waterDetail);
+        glNamedBufferSubData(r.uwUbo.get(), 0, sizeof push, &push);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 7, r.uwUbo.get());
+        const float zero[4] = {0, 0, 0, 0};
+        glClearNamedFramebufferfv(t.uwParticlesFbo.get(), GL_COLOR, 0, zero);
+        glBindFramebuffer(GL_FRAMEBUFFER, t.uwParticlesFbo.get());
+        glViewport(0, 0, vp.width, vp.height);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glBindTextureUnit(6, t.opaqueDepth.get());
+        glUseProgram(r.uwSnowProgram.get());
+        glBindVertexArray(r.emptyVao.get());
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, GLsizei(push.params.x));
+        if (!options.bubbles.empty()) {
+            glNamedBufferData(r.uwBubbleVbo.get(), GLsizeiptr(options.bubbles.size_bytes()), options.bubbles.data(), GL_STREAM_DRAW);
+            glUseProgram(r.uwBubbleProgram.get());
+            glBindVertexArray(r.uwBubbleVao.get());
+            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, GLsizei(options.bubbles.size()));
+        }
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+        glBindFramebuffer(GL_FRAMEBUFFER, t.scene.get());
     }
 
     // Original particle effects: depth-tested, no depth writes, batches in the given (back-to-front) order. Material
