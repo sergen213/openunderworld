@@ -6,6 +6,26 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-11-15
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+A new under-water look for Enhanced water, after the techniques of Noniv's abyssal-garden (MIT). Original water is
+unchanged.
+
+- Changed: the water now fogs like real sea water: it darkens and turns bluer with depth, distant shapes fade into
+  it, and looking up is brighter than looking down. Each level keeps its own water colour, and the water colour
+  presets still apply. Rocks and walls under water lose their red and get dimmer the deeper they are.
+- Changed: new sun shafts: soft god rays fan down from the surface, move with the waves and the caustics on the
+  sea floor, and are blocked by rocks and boats.
+- Added: drifting specks in the water (marine snow), lit by the sun and darkened in shadow, giving a sense of depth.
+- Added: Lara breathes out bubbles while her head is under water; the game's own bubble effects are drawn as round
+  bubbles with bright rims and highlights.
+- Changed: looking up from under water shows a bright, rippling window to the sky with the sun's glint, surrounded
+  by a mirror of the water's own colour.
+- Added: a soft glow, vignette and contrast curve while under water.
+- Fixed: with Vulkan, the water surface was not drawn at all when seen from below.
+
 ## [0.47.0] - 2026-11-10
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
