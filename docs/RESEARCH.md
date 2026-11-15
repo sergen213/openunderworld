@@ -573,9 +573,10 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   RENDERING "Under water". Clone used: openunderworld-work/research/abyssal-garden. Per technique:
 - Fog: from `src/shaders.js` (WGSL) the analytic medium `fogIn` / `fog` (per-channel extinction `sg`, the in-scatter of
   depth-attenuated light `kd` integrated in closed form along the view ray, forward sun glow 1.22 + 0.3 μ⁴) →
-  `ouUwMedium` / `ouUwFogIn` (`src/render/shaders/uw_medium.glsl`, shared by the post fog `ouUwFog`, the particles,
-  the surface's total internal reflection and the shafts); `sunE` / `amb` / `side` (sun, hemispherical ambient and wall
-  light falling off with depth) → `ouUwSurfaceLight`. Its constants are used as ratios (KD / SIG). `W_BLIT`'s bloom chain
+  `ouUwMedium` / `ouUwFogIn` (`src/render/shaders/uw_medium.glsl`, still used by the particles, the surface's total
+  internal reflection and the shafts); `sunE` / `amb` / `side` / `caus`, `W_SOLID`'s light, `fog` and `W_WATER` (the
+  animated caustic / slope texture) are ported literally → the `ag` section of `uw_medium.glsl` (`agRelight`, `agFog`,
+  `agCausLod`) and `uw_water.frag`, used by the post fog `ouUwFog` and water.frag's bed. `W_BLIT`'s bloom chain
   and `W_POST` (exposure, vignette, ACES fit, luminance S-curve, desaturation, gamma, IGN dither) and the sprites
   (`vsSnow` / `fsSnow`, `vsBub` / `fsBub`) are ported literally → `src/render/shaders/uw_bloom.frag`, `uw_grade.frag`,
   `uw_snow.*`, `uw_bubble.*` (RENDERING "Under water: marine snow, bubbles and the composite").

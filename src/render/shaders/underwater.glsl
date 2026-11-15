@@ -54,11 +54,9 @@ vec3 ouPresetHue(vec3 gammaCol) { // gamma colour -> the preset hue at its lumin
 // footprint: p comes from the depth buffer), then fogged: agFog(c, p) = c e^(-sg d) ss(230, 185, d) + fogIn. Rays that
 // leave through the surface (looking up from under it: water.frag's Snell's window, drawn over the sky too) fog up to it
 // and keep that colour (W_SURF's fog(c, wp)); sky pixels are the demo's background (vsB / fsB): fog(0, eye + dir 240 m).
-// Sets gUwT / gUwL (the pixel's transmittance and in-scatter) for the grade's glow (filter.glsl).
 #include "shaders/caustics.glsl" // the shafts' focusing (ouCausticFocus) and kIorRgb (uw_medium.glsl ouUwSunDir)
 #include "shaders/uw_medium.glsl"
 float ouSunShadowVisibility(vec3 p); // shaders/atmosphere.glsl (after render/sun.glsl in both renderers)
-vec3 gUwT = vec3(1.0), gUwL = vec3(0.0);
 vec3 ouUwFog(vec3 c, vec2 uv) {
     float depth = texture(uDepth, uv).r;
     vec3 q = ouWorld(uv, depth, w.invViewProj);
@@ -90,11 +88,7 @@ vec3 ouUwFog(vec3 c, vec2 uv) {
             lit = agRelight(lin, p, agDir(n), -dir, ca, ouSunShadowVisibility(q + n * (0.35 * kM)));
         }
     }
-    float d = distance(p, cam);
-    gUwT = exp(-agSg(kAgZone) * d) * agSs(230.0, 185.0, d);
-    gUwL = agFog(vec3(0.0), p, kAgZone);
-    vec3 fogged = lit * gUwT + gUwL; // = agFog(lit, p, kAgZone)
-    gUwT = mix(vec3(1.0), gUwT, w.waterPass[2].x), gUwL *= w.waterPass[2].x;
+    vec3 fogged = agFog(lit, p, kAgZone);
     return pow(max(mix(lin, fogged, w.waterPass[2].x), vec3(0.0)), vec3(1.0 / 2.2));
 }
 vec3 ouWaterPass(vec3 c, vec2 uv) {

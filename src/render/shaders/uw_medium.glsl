@@ -1,7 +1,8 @@
-// Enhanced under-water medium (ours, camera submerged; RENDERING.md "Under water"): the one fog / light model every
-// under-water effect uses — the post pass's fog (underwater.glsl ouUwFog), the sun shafts (ouShaftMarch /
-// ouShaftsComposite), the particles (uw_light.glsl) and the surface's total internal reflection seen from below
-// (water.frag). Analytic medium of abyssal-garden (Noniv, MIT; docs/RESEARCH.md 8.11: shaders.js `fogIn`, `fog`, `sg`,
+// Enhanced under-water medium (ours, camera submerged; RENDERING.md "Under water"). The `ag` section at the end is the
+// literal abyssal-garden port used by the post pass's light and fog (underwater.glsl ouUwFog) and water.frag's bed; the
+// older tuned OuUwMedium API above still serves the sun shafts (ouShaftMarch / ouShaftsComposite), the particles
+// (uw_light.glsl) and the surface's total internal reflection seen from below (water.frag).
+// OuUwMedium: the analytic medium of abyssal-garden (Noniv, MIT; docs/RESEARCH.md 8.11: shaders.js `fogIn`, `fog`, `sg`,
 // `kd`, `sunE`, `amb`, `side`) on the unit's own colours. Linear light, metres (kM units).
 // Needs the WaterBlock `w`, kM (shaders/waves.glsl) and kIorRgb (shaders/caustics.glsl) declared before it.
 #ifndef OU_UW_MEDIUM_GLSL

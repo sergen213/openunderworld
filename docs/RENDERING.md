@@ -497,38 +497,16 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   distance fog. No screen refraction (it would read the pre-water copy). The three passes run only while droplets exist.
 - Underwater: the original's under-water look ("Under water" below) in both qualities.
 - Caustics (ours, Enhanced only; tru.exe draws none [O: no caustic pass or texture; its UnderWaterRayDrawable is
-  the full-screen pass, the light rays and the flashlight beam, 0x6D8C20; the original captures show none]): `ouCausticLight` in
-  `shaders/caustics.glsl`, one source for both views (glslc `#include`; GL: `render::Water.cpp` splices it in).
-  Under water: `ouCaustics` (`underwater.glsl`, post pass, before the water pass fogs the scene) on every opaque
-  point inside a water volume below its surface. From above: `water.frag` lights the refracted bed sample (at `ruv`,
-  depth under this pixel's surface) before `ouAbsorb`; Vulkan binds the sun shadow set as the water layout's set 1.
-  The pattern is the refraction physics of the drawn surface itself (docs/RESEARCH.md §8.9; Evan Wallace's WebGL
-  Water: light = old area / new area). The waves are one source, `shaders/waves.glsl` (the Godot layers
-  `ouLayerA/B`, afl_ext's `ouSea`, tru.exe's c60–c63 sea waves `ouTruWaveSlope`, the wave field `ouWaves`), shared by
-  `water.vert` (displacement, unchanged), `water.frag` (normals) and the caustics. `ouCausticSlope` is water.frag's
-  normal slope without its distance fades, reweighted: the short waves (Godot layers, halved on seas, and the wave
-  field) × 3, which make a reef's dense network of ~0.3–1 m cells, the long swell (afl with 6 iterations instead of
-  12–36, tru.exe's waves) × 0.3, a shorter effective focal length (at full weight a few long folds metres apart
-  dominated). The swell only counts where `WaterBlock::seaWaves` (`render::waterWaves` at the camera) is non-zero:
-  pools and still water get the layers and the wave field. The light reaching a point entered the surface near E
-  (the flat-water refracted sun ray); it left from s = E − c·slope(E), c = 0.25 × path (1 − 1/1.333; capped at 4000
-  units of path, where one fold branch would darken on average), and the light is 1 / |det(I + c·H(s))| with H from
-  slope differences `blur` apart (the wave field's part: half its own Laplacian, isotropic, taps 1.5 cells apart),
-  per colour with its own focal distance c_λ = path · (1 − 1/n_λ), n_RGB = (1.331, 1.334, 1.339) (water's dispersion,
-  NeuralSpecOcean's whitepaper §4.3, RESEARCH §8.8: red focuses 0.7 % shorter and blue 1.1 % longer than green, a thin
-  fringe on each fold; it replaced a by-eye 2.5 % split), then soft-clamped I·(4/3) / (1 + I/3) (1 stays
-  1, crossing folds saturate toward 4 instead of blowing out). So the lines are the surface's own fold curves and
-  move with its waves, Lara's ripples and splashes. Blur: the sun disk (0.005 × path), ≥ 1.5 px of bed footprint;
-  the Godot layers' octaves finer than it fade (and are skipped). Fold softening 0.025 + 0.5·depth (depth =
-  1 − e^(−h/8000): the ch2 reef at ~2550 units stays crisp, l1_seafloor at ~30 000 units gets a soft broad shimmer).
-  Strength `sunColor.w` 0.8 (0: a unit without sun; the post pass is off and water.frag is not drawn in Original) ×
-  (1 → 0.6 with depth) × the depth buffer's normal facing the refracted sun × the sun shadow map, off past 25–60
-  units of footprint per pixel. Multiplies the lit colour (lines up to about +200 %; the gaps keep half the single
-  fold branch's deficit, ~−20 %); with a water colour preset (below) the line contrast also fades per channel by the
-  downwelling e^(−Kd · path) (red first: deep caustics turn blue-green). Post-pass bindings: `seaWaves` and `optics`
-  end the Water block; `uRipples` is VK post set 1 binding 3 / GL unit 9. `ouCausticFocus` is the cheap variant for
-  the sun shafts' pattern tile (one Hessian, the three focal distances). [I] values; physically
-  caustics vanish within ~10–20 m, TRU's sea floors lie 100+ m down.
+  the full-screen pass, the light rays and the flashlight beam, 0x6D8C20; the original captures show none]):
+  abyssal-garden's texture caustics (`agCaus` / `agCausLod`, shaders/uw_medium.glsl, on the animated water texture
+  `uAgWater`, "Under water" below): the texture projected along the refracted sun (`cuv`) at 3.3 m and 6.9 m tiles, a
+  slight RGB offset, ×5 pow 2.3, clamped at 4, fading to a flat 0.33 between 35 and 100 m, applied by the W_SOLID light
+  (`agRelight`). Under water: the post pass (`ouUwFog`). From above: `water.frag` relights the refracted bed sample (at
+  `ruv`, ag y = its depth under this pixel's surface) before `ouAbsorb`, only with a level sun; Vulkan binds the sun
+  shadow set as the water layout's set 1. They replaced (2026-11-15) our refraction-Hessian caustics, which read as a
+  fine crumpled-foil network of constant scale multiplied over every submerged face (aliasing in the distance, cut by
+  face orientation); `ouCausticFocus` (caustics.glsl: 1 / |det(I + c·H)| of the drawn surface's refraction, per colour)
+  still feeds the sun shafts' pattern tile.
 - Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
   3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
 
@@ -647,31 +625,36 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   1 − murk / 0.7, beam drawn, rays drawn: out = rays · c132.w · c132.y + beam · c132.z).
 - Interior ray records (`+0x84` bit 0 clear; l1 ship halls, l2 Norse halls / puzzle room / map room, l4 ballcourt) [O,
   not drawn]: window light boxes (0x6D83C0) drawn above water only by 0x6D9660 into 50 × 50, blurred, composited.
-- Enhanced fog (ours, camera submerged: the water block's submerged flag, Enhanced only; Original keeps the
-  full-screen pass above): `ouUwFog` (underwater.glsl, called by `ouWaterPass`) replaces the pass's alpha mix with the
-  analytic medium of abyssal-garden (Noniv, MIT; RESEARCH 8.11: `fogIn`, `fog`, `sg`, `kd`, `sunE`, `amb`, `side`),
-  in linear light and metres (kM = 290 units). Medium (`ouUwMedium`) from the unit's own pass colours: green extinction
-  ln 5 / (half the full-fog distance) [I] (the original pass's 80 % point; l1 45000 units → 0.021 / m, the demo's
-  0.0235), the other channels × (surface green / channel)^0.6 [I] (l1: red 2.3×, blue 0.7×), kd = σ × the demo's KD / SIG
-  (0.97, 1.04, 0.87) with 60 % of its channel spread [I], in-scatter colour = the surface colour × 1.25 [I]; a water colour
-  preset gives its extinction ratios and hue (at that colour's luminance). In-scatter along the view ray in closed form:
-  C σ e^(−kd h₀) (1 − e^(−a d)) / a, a = σ − kd · dir.z (the light under the surface grows as the ray rises: darker and
-  bluer looking down, brighter looking up), × the forward sun glow (1 + 0.246 μ⁴) toward the refracted sun; the view path
-  ends at the scene or the nearest volume's surface, keeping what water.frag drew there (the Snell's window and total
-  internal reflection, also over sky pixels: the 2026-11-15 merge found sky pixels behind the surface replaced by pure
-  in-scatter, so the surface was invisible from below); only rays missing every surface take the full in-scatter. The
-  medium is one shared file, `shaders/uw_medium.glsl` (`ouUwMedium`, `ouUwEyeMedium`, `ouUwFogIn`, `ouUwSunLight`,
-  `ouUwSurfaceLight`, `ouUwPointFog`), used by this fog, the sun shafts, the particles and the surface's total internal
-  reflection. Depth: the eye depth h₀ enters as an effective 30 m · (1 − e^(−h₀ / 30 m)) [I] (kd scaled for the whole
-  ray; l1_seafloor's eye is 81 m down, where e^(−kd h) left the water navy-black). Opaque points inside a volume below
-  its surface take `ouUwSurfaceLight` before the fog: 60 % sun through h / l.z of water + 40 % hemispherical ambient
-  (water hue half-way to white, e^(−1.2 kd h) (0.24 + 0.76 up²)) + walls' side light ((1 − |n.z|) · 0.2 e^(−kd h)) [I
-  weights], relative to TRU's own lighting (the translated shaders know no water volumes, so this is applied in the post
-  pass, normal from the depth's derivatives). Everything × the pass strength. The frame then goes through the
-  under-water composite ("Under water: marine snow, bubbles and the composite" below) instead of the post pass's tone
-  map. Measured in 0.48.0 (2026-11-15, RelWithDebInfo, Vulkan, 2560 × 1440, l1_seafloor camera −16229, −726, 9992,
-  OU_VK_PRESENT_STATS): the whole Enhanced post pass (caustics, fog, shafts, rays, the old grade, blur chain) 0.77 ms vs
-  0.46 ms with Original water.
+- Enhanced scene light and fog (ours, camera submerged: the water block's submerged flag, Enhanced only; Original keeps
+  the full-screen pass above): `ouUwFog` (underwater.glsl, called by `ouWaterPass`) is abyssal-garden's `W_SOLID` light
+  and `S_B` fog ported literally (Noniv, MIT; RESEARCH 8.11), the `ag` section of `shaders/uw_medium.glsl`: the demo's
+  space ("ag": metres, y up, the eye's water surface at y = 0), its constants (SIG, KD, WCOL, KDZ, PCOL, SUNC, KDF, zone
+  0) and functions (`agFogIn`, `agFog`, `agSunE`, `agAmb`, `agSide`, `agCaus`). Its density volume (`vol()`) does not
+  exist here: openness 1, no volume AO; `shadow9` = the sun shadow map (`ouSunShadowVisibility`). An opaque point inside
+  a volume below its surface is relit by `agRelight`: TRU's lit colour × L(p) / L_ref + the rock specular (gloss 0.1) ×
+  the albedo estimate's luminance, L = `agSolidLight` (W_SOLID fs: E · ndl · (0.10 + mix(0.33, ca, ss(.1, .45, n·L)) ·
+  2.5) + amb + side, E = sunE · shadow) and L_ref the same normal and visibility at the surface under the mean caustic
+  `kAgCausMean` = 3.3 (the measured near-surface mean of agCaus: ~65 % of a sun-facing top sits at its 4.0 clamp). So
+  TRU's colour stands for an average caustic-lit point just under the surface (its own shading and shadows stay; the
+  demo's N.L and shadow cancel instead of applying twice, and the flat reconstructed normal leaves no facets) and the
+  demo's depth falloff (red first), caustic contrast (dark cells, bright plateau; 0.33 past 35–100 m ≈ 0.1×), ambient
+  and side light are imposed, HDR (the composite's exposure + ACES compress the peaks). Caustics: `agCausLod` on
+  `uAgWater` (below) with explicit levels from the pixel footprint (distance × pixel angle ÷ 3.3 m or 6.9 m per 512
+  texels): p comes from the depth buffer, whose implicit derivatives spike at silhouettes; no level sun = flat 0.33.
+  Then `agFog(c, p)` = c e^(−sg d) ss(230 m, 185 m, d) + fogIn; rays leaving through the surface (looking up from under
+  it) fog up to it and keep what water.frag drew there (W_SURF's `fog(c, wp)`: the Snell's window and total internal
+  reflection, also over sky pixels); other sky pixels are the demo's background (`vsB` / `fsB`): fog(0, eye + dir ·
+  240 m). Everything × the pass strength. The frame then goes through the under-water composite ("Under water: marine
+  snow, bubbles and the composite" below) instead of the post pass's tone map. The older tuned medium (`ouUwMedium`,
+  `ouUwEyeMedium`, `ouUwFogIn`, `ouUwSunLight`, `ouUwPointFog`) still serves the shafts, the particles and the
+  surface's total internal reflection.
+- Animated water texture `uAgWater` (ours, Enhanced only; abyssal-garden `W_WATER` literally, `shaders/uw_water.frag`):
+  r = g = caustic (`caus()`: five warped sine iterations), ba = surface slope (the WK sum of 10 travelling waves), time
+  = the eye's seconds; 512² RGBA16F, 5 mips box-filtered down (the demo's `fsMip`: VK linear blits, GL
+  `glGenerateTextureMipmap`), repeat, trilinear, anisotropic 8; regenerated every frame Enhanced water is drawn (camera
+  above or below), before the scene (VK `recordAgWater`: own pipeline layout, push float at offset 0) / before the water
+  (GL `drawAgWater`). Bound as VK post set 1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts,
+  particles).
 - Sun shafts (ours, Enhanced only; after Noniv's abyssal-garden, MIT, RESEARCH §8.11: its `W_RAYS` / `W_RBLUR` /
   `W_POST` pipeline): three passes before the post pass (`render::underwaterShaftsActive` = `ouShaftsOn`: Enhanced
   water, camera below the nearest surface, sun above the horizon), drawn with the post layout / units, then
