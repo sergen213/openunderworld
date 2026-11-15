@@ -72,9 +72,16 @@ vec3 ouUwFog(vec3 c, vec3 raw, vec2 uv) {
     vec3 cam = agEye(), dir = agDir(rd), lit, p;
     // Outside Snell's window the demo's surface pixels are 0 and unfogged (water.frag: its sky term is NaN there and fin()
     // clamps the fogged NaN to 0). Also where the opaque point lies just under the flat surface (within the waves'
-    // reach, 3 m): the displaced water mesh can cover it while the flat-plane test above says it does not.
-    if (rd.z > 1e-4 && w.eye.z < surf && all(equal(raw, vec3(0.0))) && (through || q.z > surf - 3.0 * kM))
-        return pow(max(lin * (1.0 - w.waterPass[2].x), vec3(0.0)), vec3(1.0 / 2.2));
+    // reach, 3 m): the displaced water mesh can cover it while the flat-plane test above says it does not. The demo's
+    // terrain hides its black surface at a distance; our open seas would show it meeting the 240 m background (fsB) at
+    // a hard horizon. So the black fades into W_SURF's own fog of it, fog(0, wp) = fogIn, over the distances where its
+    // slopes flatten (fl = ss(260, 60, d)): black as now within 60 m, the fogged surface past 260 m (= the background:
+    // fogIn is saturated by then).
+    if (rd.z > 1e-4 && w.eye.z < surf && all(equal(raw, vec3(0.0))) && (through || q.z > surf - 3.0 * kM)) {
+        p = cam + dir * ((surf - w.eye.z) / rd.z / kM);
+        vec3 fz = agFog(vec3(0.0), p, kAgZone) * (1.0 - agSs(260.0, 60.0, distance(p, cam)));
+        return pow(max(mix(lin, fz, w.waterPass[2].x), vec3(0.0)), vec3(1.0 / 2.2));
+    }
     if (through) { // the window's HDR colour comes encoded through the 8-bit scene target
         p = cam + dir * ((surf - w.eye.z) / rd.z / kM);
         lit = agSurfDecode(lin);

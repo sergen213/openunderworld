@@ -1586,6 +1586,7 @@ struct EffectsView {
         bool under = false;
         float ownWeight = 1; // the unit's own filter (0x5C78A0): crossfaded with the water filters near / under water
         underwater = {};
+        system.spritesBelowZ = 1e30f;
         // tru.exe 0x5EA200: only the water Lara is in, against its wave surface at the eye (the l2 yacht deck lies inside
         // the sea's box, under its top, but above the waves: no water look there).
         if (const auto ew = ou::game::eyeWater(w, eye, double(w.ticks()) * ou::game::kTickSeconds)) {
@@ -1608,6 +1609,8 @@ struct EffectsView {
                 if (under && !enhancedUnder) waterFilters.push_back({uw.filter[0].get(), 1.0f - ws});
                 ownWeight = under ? 0.0f : 1.0f - ws;
             }
+            // Enhanced, submerged: sprites above this surface are behind it (fx::System::spritesBelowZ)
+            if (enhancedUnder) system.spritesBelowZ = ew->surface;
         }
         system.cameraUnderwater = under; // particle defs' water side (fx::ParticleDef::water): bubbles only under water
         if (uw.own && ownWeight > 0) waterFilters.push_back({uw.own.get(), ownWeight});

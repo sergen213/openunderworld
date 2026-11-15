@@ -418,8 +418,11 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   unfogged, as the demo actually renders it: measured in the live demo (Chrome WebGPU, this RADV box, bit tests of its
   W_SURF output) its sky term is NaN/Inf wherever k < 0, `mix(refl, sky, 0)` keeps the NaN and `fin()` clamps the fogged
   NaN to 0, so its captures show dark ripples between bright window gaps (only shafts and bloom over them); with that
-  term zeroed (win = 0) its surface turns the same uniform pale cyan ours was. Written as exactly 0 (the post keeps it
-  0, unfogged), the k = 0 step spread over one pixel (k at the neighbouring pixels by finite differences). The rest is
+  term zeroed (win = 0) its surface turns the same uniform pale cyan ours was. Written as exactly 0, the k = 0 step
+  spread over one pixel (k at the neighbouring pixels by finite differences); the post keeps it black and unfogged
+  within 60 m and fades it into W_SURF's own fog of it, fog(0, wp) = fogIn, by 260 m (× 1 − ss(260, 60, d), the
+  demo's slope fade): the demo's terrain hides its black surface at a distance, our open seas showed it meeting the
+  240 m background at a hard horizon. The rest is
   HDR (sky 0.4–3.9, glint ~13) and the scene target is 8-bit with `graphics.hdr` off: written as c / (1 + c)
   (`agSurfEncode`), decoded by the post for rays leaving through the surface (before: clipped at 1, the bright gaps
   turned white). TRU's colours traced inside the window go through `agUnpost` (below) first. Vulkan draws the surface
@@ -662,8 +665,11 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   bubbles and the composite" below) instead of the post pass's tone map. With Enhanced water submerged this medium is
   the whole look: ou-game draws neither TRU's deep / surface water filters (l1 5292's ColorDOF blur at alpha 0.89 and
   bloom blurred the frame into soft white blotches) nor TRU's light rays (pale streaks over the fogged frame); the unit's
-  fog set still reaches TRU's shaders (its ranges, 632 m+, lie past agFog's 230 m cut), and splash droplets above the
-  surface are not composited (they showed through the black outside the window). The older tuned medium is gone.
+  fog set still reaches TRU's shaders (its ranges, 632 m+, lie past agFog's 230 m cut), and nothing above the surface is
+  drawn over it: splash droplets (`splash_composite.frag`) and effect sprites (particles, glows: `fx::System::
+  spritesBelowZ` = the eye's wave surface) are left out; they printed over the black outside the window as flat pale
+  discs (l1_seatop: a texture-160 smoke sprite ~72 m up, ~190 m away; tru.exe veils such sprites with its full-screen
+  pass). The older tuned medium is gone.
 - Animated water texture `uAgWater` (ours, Enhanced only; abyssal-garden `W_WATER` literally, `shaders/uw_water.frag`):
   r = g = caustic (`caus()`: five warped sine iterations), ba = surface slope (the WK sum of 10 travelling waves), time
   = the eye's seconds; 512² RGBA16F, 5 mips box-filtered down (the demo's `fsMip`: VK linear blits, GL

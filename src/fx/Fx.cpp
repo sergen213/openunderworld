@@ -1121,6 +1121,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         const ParticleDef& d = *p.def;
         const float depth = glm::dot(p.pos - camera.position, fwd);
         if (depth < 16.0f || d.keys.empty() || !waterShows(d)) continue; // 0x54B0A0: 16 <= z; 0x54AEC0 +0xA7
+        if (p.pos.z > spritesBelowZ) continue; // behind the surface from below (spritesBelowZ)
         // Neither texture, list nor material: nothing to draw.
         if (!d.model() && !d.texture && d.textures.empty() && d.materials.empty()) continue;
         const float t = std::clamp(float(p.age) / float(p.life), 0.0f, 1.0f);
@@ -1203,6 +1204,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
     for (const auto& g : glows_) {
         const GlowDef& d = *g.def;
         if (d.condition == 1) continue; // drawn only while 0x5EA390 (a camera mode [U]) is set: taken as unset
+        if (g.pos.z > spritesBelowZ) continue;
         const float depth = glm::dot(g.pos - camera.position, fwd);
         if (depth < 20.0f) continue;
         // Colour: one, or the list cycled with `period` frames per entry, prev -> current lerp (0x548D40) [I: weights].
