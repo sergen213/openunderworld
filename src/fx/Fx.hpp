@@ -400,9 +400,11 @@ public:
     // Owners with a fade > 0 (renderers draw their instances with opacity 1 - fade).
     void fadedOwners(std::vector<std::pair<int32_t, float>>& out) const;
     void tick(const glm::vec3& camera); // one 60 Hz game tick
-    // Camera-facing sprites (particles and glows), back to front, batched by texture and blend.
+    // Camera-facing sprites (particles and glows), back to front, batched by texture and blend. With `bubbles` (Enhanced
+    // water), the under-water-only sprite particles (ParticleDef::water 1: the bubbles, EFFECTS.md) go there instead, for
+    // the under-water particle pass (render/Water.hpp UwParticlePush); Original water draws them as their sprites.
     void build(const render::Camera& camera, float aspect, std::vector<render::FxVertex>& vertices,
-               std::vector<render::FxBatch>& batches) const;
+               std::vector<render::FxBatch>& batches, std::vector<render::Bubble>* bubbles = nullptr) const;
     // Live effect lights at their current colour / radius.
     struct LiveLight {
         glm::vec3 pos{0}, dir{0}, colour{0}; // colour: rgb x fades, 1 = full

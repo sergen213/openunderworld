@@ -38,6 +38,7 @@
 #include "config/Config.hpp"
 #include "engine/FrameClock.hpp"
 #include "formats/Formats.hpp"
+#include "fx/Breath.hpp"
 #include "fx/Fx.hpp"
 #include "game/Game.hpp"
 #include "script/Vm.hpp"
@@ -1102,6 +1103,7 @@ struct EffectsView {
     std::map<int32_t, std::pair<std::string, ou::formats::Intro>> dormantIntros; // not born yet: unit, intro (effects at birth)
     std::vector<ou::render::FxVertex> vertices;
     std::vector<ou::render::FxBatch> batches;
+    std::vector<ou::render::Bubble> bubbles; // Enhanced water: the under-water-only particles, shaded as bubbles (frame)
     // Effect lights (class 6, docs/formats/EFFECTS.md "Lights"): fixtures (endless lights born with placed objects)
     // join the scene's environment lights with their DTP falloff; the others (muzzle, impacts) take kLightSlots
     // reserved environment slots, drawn with a linear falloff [I] (the attenuation LUT is built per upload).
@@ -1495,7 +1497,8 @@ struct EffectsView {
     // After water(), with effects on: the running effect filters (and the unit's, waterFilters) for the post pass;
     // their fog blocks join the frame's fog.
     void frame(const ou::render::Camera& cam, float aspect, const ou::game::World& w, ou::render::FrameOptions& fo) {
-        system.build(cam, aspect, vertices, batches);
+        system.build(cam, aspect, vertices, batches, fo.water == ou::render::WaterQuality::Enhanced ? &bubbles : nullptr);
+        if (fo.water != ou::render::WaterQuality::Enhanced) bubbles.clear();
         weatherAspect = aspect;
         if (drawWeather && weatherDef) weather.build(*weatherDef, weatherCamera(cam, aspect), vertices, batches);
         fo.fxVertices = vertices, fo.fxBatches = batches;
@@ -2236,6 +2239,8 @@ int main(int argc, char** argv) {
     std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
     std::vector<ou::render::WaterVolume> waterVolumes;     // loaded units' water boxes, each frame
     std::vector<ou::render::WaterParticle> splashParticles; // game::WaterSim droplets, each frame
+    std::vector<ou::render::Bubble> uwBubbles; // Enhanced water: effect bubbles + Lara's breath, each frame
+    ou::fx::Breath breath;                     // Lara's breath bubbles (fx/Breath.hpp)
     std::vector<ou::render::MeshOpacity> meshOpacity;      // fading instances (class-7 fades), each frame
     // Enhanced weather (graphics.weather): the unit's own rain / snow objects (game::unitWeather), eased out while a
     // roof is above the camera.
@@ -3607,6 +3612,24 @@ int main(int argc, char** argv) {
         // Original: the camera's far plane is the blended unit look's (0x5C7CA0 -> view +0x3C; l4_ballcourt 113 570 [O]).
         if (!mainMenu && fo.unitLook && fo.unitLook->farPlane > 0 && opt.graphics.preset == "original") cam.farZ = fo.unitLook->farPlane;
         if (!mainMenu && opt.gfx.effects) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
+        // Enhanced water: the effects' bubbles and Lara's breath for the under-water particle pass (render/Water.hpp).
+        uwBubbles.clear();
+        if (!mainMenu && fo.water == ou::render::WaterQuality::Enhanced) {
+            if (opt.gfx.effects) uwBubbles = effects.bubbles;
+            const auto mouth = world->boneWorld(world->anims().ik.head);
+            float surface = -1e30f;
+            if (mouth)
+                for (const auto& v : waterVolumes)
+                    if (mouth->x >= v.min[0] && mouth->x <= v.max[0] && mouth->y >= v.min[1] && mouth->y <= v.max[1] &&
+                        mouth->z >= v.min[2] && mouth->z < v.max[2])
+                        surface = std::max(surface, v.max[2]);
+            breath.tick(double(world->ticks()) * ou::game::kTickSeconds, mouth.value_or(glm::vec3(0)),
+                        world->submerged() && mouth.has_value(), world->scuba(), surface);
+            breath.append(waveSeconds, uwBubbles);
+        } else {
+            breath.clear();
+        }
+        fo.bubbles = uwBubbles;
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;
         const auto clips = ou::app::unitClips(*world, streamed.unitMeshes, world->cameraUnit(), cam, float(w) / float(std::max(1, h)));

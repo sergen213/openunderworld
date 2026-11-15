@@ -139,6 +139,34 @@ std::string splashSplatSource(bool vulkan);
 std::string splashScreenVertexSource(bool vulkan);
 std::string splashBlurSource(bool vulkan);
 std::string splashCompositeSource(bool vulkan);
+// Enhanced under-water particles (docs/RENDERING.md "Under water: marine snow and bubbles"; techniques adapted from
+// Noniv/abyssal-garden, MIT): only with the camera submerged (uwParticlesOn), drawn after the scene's effects into a
+// render-size RGBA16F target cleared to 0, blend ONE, ONE_MINUS_SRC_ALPHA (snow: alpha 0 = additive), no depth
+// attachment (the fragment shaders test the opaque depth copy and fog themselves by their own distance as ouWaterPass
+// does); the post pass then composites it over the fogged scene: c = c (1 - a) + rgb (VK post set 1 binding 7 + push
+// `particles`; GL unit 14 + uniform location 5).
+//  snow:    uw_snow.vert + uw_snow.frag, no vertex input, 6 vertices x params.x instances (a box of up.w around the eye).
+//  bubbles: uw_bubble.vert + uw_bubble.frag, one Bubble per instance (location 0 vec4 pos + radius, 1 vec2 alpha + seed).
+// The fragment shaders read the post pass's water set (VK set 1: WaterBlock, opaque depth; GL UBO 4, unit 6) and the
+// sun shadow (VK set 2; GL UBO 3, unit 16); UwParticlePush is VK push constants (vertex + fragment) / GL UBO binding 7.
+struct UwParticlePush {
+    glm::mat4 viewProj; // the backend's (as WaterBlock::viewProj)
+    glm::vec4 eye;      // xyz camera, w time (WaterBlock::eye.w)
+    glm::vec4 right;    // xyz camera right, w world units per pixel at view depth 1
+    glm::vec4 up;       // xyz camera up, w snow box edge
+    glm::vec4 params;   // x snow instances (0 = none)
+};
+static_assert(sizeof(UwParticlePush) == 128); // Vulkan's guaranteed push-constant space
+// Snow box edge [I]: 6000 units (~21 m at 290 per metre) with abyssal-garden's 9000 specks (in its 44 m box): denser
+// near the eye, where a game camera sees them through TRU's thicker water; 4500 without water detail.
+inline constexpr float kUwSnowBox = 6000.0f;
+inline constexpr int kUwSnowCount = 9000;
+inline bool uwParticlesOn(const WaterBlock& wb) { return wb.fogColor.w > 0.5f; } // the backends zero it for Original water
+UwParticlePush uwParticlePush(const Camera& camera, const WaterBlock& wb, int height, bool detail);
+std::string uwSnowVertexSource(bool vulkan);
+std::string uwSnowFragmentSource(bool vulkan);
+std::string uwBubbleVertexSource(bool vulkan);
+std::string uwBubbleFragmentSource(bool vulkan);
 // Post pass: declarations + `vec3 ouUnderwater(vec3 c, vec2 uv)` and `vec3 ouAtmosphere(vec3 c, vec2 uv)`
 // (shaders/atmosphere.glsl: height fog, sun shafts, precipitation). Both sample uDepth at uv themselves and return
 // `c` unchanged when their effect is off (Original output stays byte-identical).

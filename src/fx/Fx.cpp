@@ -1085,8 +1085,9 @@ void System::tick(const glm::vec3& camera) {
 }
 
 void System::build(const render::Camera& camera, float aspect, std::vector<render::FxVertex>& vertices,
-                   std::vector<render::FxBatch>& batches) const {
+                   std::vector<render::FxBatch>& batches, std::vector<render::Bubble>* bubbles) const {
     vertices.clear(), batches.clear();
+    if (bubbles) bubbles->clear();
     struct Sprite { float depth; glm::vec3 c; float hw, hh, rot; uint32_t rgba, tex; float u0, v0, u1, v1; uint8_t blend; float pull;
                     const ParticleMaterial* mat = nullptr;
                     bool quad = false; glm::vec3 q[4]{}; uint32_t corner[4]{}; // quad: world corners + colours (ribbons, bolts)
@@ -1137,6 +1138,11 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
             if (half > s4) rgba[3] *= 1.0f - (half - s4) / (s5 - s4);
         }
         if (rgba[3] < 0.5f) continue;
+        if (bubbles && d.water == 1 && !d.model()) { // Enhanced water: shaded as a bubble (render/Water.hpp), alpha 0x80 = 1
+            const uint32_t h = (p.id + 1u) * 0x9E3779B9u;
+            bubbles->push_back({{p.pos.x, p.pos.y, p.pos.z}, size, std::min(1.0f, rgba[3] / 128.0f), float(h >> 8) / 16777216.0f});
+            continue;
+        }
         // Depth bias (def +0x15E -> emitter +0x10C -> particle +0x28, flag 0x200; 0x54B0E8): z += bias, >= 16. Drawn by
         // scaling the quad about the eye so its screen footprint stays put [I] (0x400 = biased projection depth).
         const float biased = std::max(16.0f, depth + float(d.depthBias));
