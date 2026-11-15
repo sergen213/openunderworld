@@ -564,15 +564,23 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   pre-exposure (1.372 [I]) and the sRGB encode around it, because our scene is display-referred. Copy of the source used:
   openunderworld-work/neuralspecocean-CinemaPostPass.js.
 
-### 8.11 abyssal-garden (MIT) @`a596354`
+### 8.11 abyssal-garden under-water look (MIT) @`a596354`
 
-- **abyssal-garden** by Maksymilian Dendura (Noniv), https://github.com/Noniv/abyssal-garden — MIT, "Copyright (c)
-  2026 Maksymilian Dendura" (full text: `third_party/abyssal-garden/LICENSE`). A WebGPU under-water scene; its techniques
-  (not its content: kelp, ship, mantas, fish) are adapted to TRU's levels. `source/src/shaders.js` `W_SURF` (the water
-  surface seen from below): Snell's window from the per-pixel wave normal with the soft rim `ss(0, .22, k)`, the bright
-  sky through it with the sun lobe `pow(sd, 60) × 1.3 + pow(sd, 500) × 12`, slope-driven brightness, detail faded with
-  distance `ss(260, 60, d)`, total internal reflection showing the water's in-scatter toward the reflected direction
-  (`fogIn`) → `water.frag`'s from-below branch (RENDERING "Water"; colours from the unit / preset, not its `WCOL`).
+- **abyssal-garden** by Noniv (Maksymilian Dendura), https://github.com/Noniv/abyssal-garden — MIT, "Copyright (c) 2026
+  Maksymilian Dendura" (full text: `third_party/abyssal-garden/LICENSE`). A WebGPU under-water scene; only techniques
+  are ported (none of its content: kelp, ship, animals). From `src/shaders.js` (WGSL): the analytic medium `fogIn` /
+  `fog` (per-channel extinction `sg`, the in-scatter of depth-attenuated light `kd` integrated in closed form along the
+  view ray, forward sun glow 1.22 + 0.3 μ⁴) → `ouUwFog`; `sunE` / `amb` / `side` (sun, hemispherical ambient and wall
+  light falling off with depth) → `ouUwSurfaceLight` (both `src/render/shaders/underwater.glsl`); `W_POST` (vignette,
+  luminance S-curve, desaturation, IGN dither) and the Karis-weighted bloom downsample (`kar`) → `ouUnderwaterGrade`
+  (`src/render/shaders/filter.glsl`). Its constants are used as ratios (KD / SIG); the colours and distances come from
+  TRU's units and the water colour presets; our [I] values are listed in RENDERING "Under water". Clone used:
+  openunderworld-work/research/abyssal-garden.
+- `W_SURF` (the water surface seen from below): Snell's window from the per-pixel wave normal with the soft rim
+  `ss(0, .22, k)`, the bright sky through it with the sun lobe `pow(sd, 60) × 1.3 + pow(sd, 500) × 12`, slope-driven
+  brightness, detail faded with distance `ss(260, 60, d)`, total internal reflection showing the water's in-scatter
+  toward the reflected direction (`fogIn`) → `water.frag`'s from-below branch (RENDERING "Water"; colours from the unit /
+  preset, not its `WCOL`).
 
 ---
 

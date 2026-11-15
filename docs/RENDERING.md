@@ -646,6 +646,30 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   1 − murk / 0.7, beam drawn, rays drawn: out = rays · c132.w · c132.y + beam · c132.z).
 - Interior ray records (`+0x84` bit 0 clear; l1 ship halls, l2 Norse halls / puzzle room / map room, l4 ballcourt) [O,
   not drawn]: window light boxes (0x6D83C0) drawn above water only by 0x6D9660 into 50 × 50, blurred, composited.
+- Enhanced fog (ours, camera submerged: the water block's submerged flag, Enhanced only; Original keeps the
+  full-screen pass above): `ouUwFog` (underwater.glsl, called by `ouWaterPass`) replaces the pass's alpha mix with the
+  analytic medium of abyssal-garden (Noniv, MIT; RESEARCH 8.11: `fogIn`, `fog`, `sg`, `kd`, `sunE`, `amb`, `side`),
+  in linear light and metres (kM = 290 units). Medium (`ouUwMedium`) from the unit's own pass colours: green extinction
+  ln 5 / (half the full-fog distance) [I] (the original pass's 80 % point; l1 45000 units → 0.021 / m, the demo's
+  0.0235), the other channels × (surface green / channel)^0.6 [I] (l1: red 2.3×, blue 0.7×), kd = σ × the demo's KD / SIG
+  (0.97, 1.04, 0.87) with 60 % of its channel spread [I], in-scatter colour = the surface colour × 1.25 [I]; a water colour
+  preset gives its extinction ratios and hue (at that colour's luminance). In-scatter along the view ray in closed form:
+  C σ e^(−kd h₀) (1 − e^(−a d)) / a, a = σ − kd · dir.z (the light under the surface grows as the ray rises: darker and
+  bluer looking down, brighter looking up), × the forward sun glow (1 + 0.246 μ⁴) toward the refracted sun; the view path
+  ends at the scene or the nearest volume's surface (what lies above is water.frag's Snell's window), sky misses take the
+  full in-scatter. Depth: the eye depth h₀ enters as an effective 30 m · (1 − e^(−h₀ / 30 m)) [I] (kd scaled for the whole
+  ray; l1_seafloor's eye is 81 m down, where e^(−kd h) left the water navy-black). Opaque points inside a volume below
+  its surface take `ouUwSurfaceLight` before the fog: 60 % sun through h / l.z of water + 40 % hemispherical ambient
+  (water hue half-way to white, e^(−1.2 kd h) (0.24 + 0.76 up²)) + walls' side light ((1 − |n.z|) · 0.2 e^(−kd h)) [I
+  weights], relative to TRU's own lighting (the translated shaders know no water volumes, so this is applied in the post
+  pass, normal from the depth's derivatives). Everything × the pass strength. Then `ouUnderwaterGrade` (filter.glsl, the
+  post pass's last step, the demo's `W_POST`): glow from the screen-filter blur chain (the renderers now build it while
+  submerged too) at mips 3 and 5, each tap Karis-weighted 1 / (1 + max channel) (firefly-safe), fogged with the pixel's
+  own transmittance / in-scatter, mixed 6 % + 3 % added; vignette 1 − 0.55 r²; luminance S-curve (55 % toward
+  smoothstep), 10 % highlight and 7 % overall desaturation; triangular IGN dither ±1/255 (no bands in the fog
+  gradients). Measured (2026-11-15, RelWithDebInfo, Vulkan, 2560 × 1440, l1_seafloor camera −16229, −726, 9992,
+  OU_VK_PRESENT_STATS): the whole Enhanced post pass (caustics, fog, shafts, rays, grade, blur chain) 0.77 ms vs 0.46 ms
+  with Original water. l1_seafloor horizontal mean sRGB 19 / 62 / 93 (Original 25 / 57 / 74); validation clean.
 - Sun shafts (ours, Enhanced only): `ouShafts` (underwater.glsl, after the full-screen pass, before `ouRays`): the
   volumetric continuation of the caustics. The view ray (to the scene, the surface or 4000 units) is marched in 4
   steps packed toward the eye (t = len · u²); each step traces back along the refracted sun to its surface entry point
