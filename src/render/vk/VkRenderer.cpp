@@ -862,6 +862,9 @@ public:
         // Material particles that refract / fade softly sample the same copies (FxBatch::screen).
         const bool fxScreen = std::any_of(options.fxBatches.begin(), options.fxBatches.end(), [](const FxBatch& b) { return b.screen(); });
         const bool filter = options.screenFilter && options.screenFilter->active(); // original screen filters (post)
+        // The half-size scene + mips (recordFilterBlur): the screen filters' blur levels, and the Enhanced under-water
+        // grade's glow (filter.glsl ouUnderwaterGrade) while submerged.
+        const bool blurChain = filter || wb.fogColor.w > 0.5f;
         // PCFeedbackEffect: copies the post output at the end of the frame; its draw needs last frame's copy (+0x3D).
         const bool feedback = filter && options.screenFilter->feedback() && feedbackCopyable_;
         wb.filter[7].w = feedback && hasFeedback_ ? 1.0f : 0.0f;
@@ -1407,11 +1410,11 @@ public:
         // Post pass: resolved scene → swapchain (tonemap / FXAA), then the overlay on top. With FSR the post pass writes
         // fsrInput_ at the render resolution; FSR upscales it into the swapchain image(s), then the overlay.
         const VkImage postTarget = fsrOn ? fsrInput_.image : target;
-        if (filter) recordFilterBlur(cmd, sceneColor_.image, filterBlur_.image); // leaves sceneColor_ TRANSFER_SRC
+        if (blurChain) recordFilterBlur(cmd, sceneColor_.image, filterBlur_.image); // leaves sceneColor_ TRANSFER_SRC
         const VkImageMemoryBarrier2 toPost[] = {
-            imageBarrier(sceneColor_.image, filter ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, filter ? VK_PIPELINE_STAGE_2_BLIT_BIT : kColorOut,
-                         filter ? VK_ACCESS_2_NONE : VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            imageBarrier(sceneColor_.image, blurChain ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, blurChain ? VK_PIPELINE_STAGE_2_BLIT_BIT : kColorOut,
+                         blurChain ? VK_ACCESS_2_NONE : VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                          VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
             // Chained to the acquire semaphore wait (same COLOR_ATTACHMENT_OUTPUT stage); old contents discarded.
             imageBarrier(postTarget, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kColorOut, 0,

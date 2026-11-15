@@ -184,7 +184,7 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
 const char* kPostFsMain = R"(
 void main() {
     vec3 c = pow(ouScreenFilter(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / uBrightness));
-    oColor = vec4(ouUnderwater(ouAtmosphere(c, vUv), vUv) * (1.0 - uFade), 1.0);
+    oColor = vec4(ouUnderwaterGrade(ouUnderwater(ouAtmosphere(c, vUv), vUv), vUv) * (1.0 - uFade), 1.0);
 })";
 
 
@@ -891,11 +891,14 @@ public:
         if (t.msaa > 1)
             glBlitNamedFramebuffer(t.scene.get(), t.resolve.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
                                    GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        if (const ScreenFilter* sf = options.screenFilter; sf && sf->active()) { // half-size scene + mips: the blur levels
+        // Half-size scene + mips: the screen filters' blur levels, and the Enhanced under-water grade's glow (filter.glsl
+        // ouUnderwaterGrade) while submerged.
+        const ScreenFilter* sf = options.screenFilter && options.screenFilter->active() ? options.screenFilter : nullptr;
+        if (sf || wb.fogColor.w > 0.5f) {
             glBlitNamedFramebuffer(t.msaa > 1 ? t.resolve.get() : t.scene.get(), t.filterFbo.get(), 0, 0, vp.width, vp.height,
                                    0, 0, std::max(1, vp.width / 2), std::max(1, vp.height / 2), GL_COLOR_BUFFER_BIT, GL_LINEAR);
             glGenerateTextureMipmap(t.filterBlur.get());
-            if (sf->dof) // the DOF curve reads the scene depth
+            if (sf && sf->dof) // the DOF curve reads the scene depth
                 glBlitNamedFramebuffer(t.scene.get(), t.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width,
                                        vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
         }
