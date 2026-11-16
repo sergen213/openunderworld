@@ -25,7 +25,7 @@ layout(location = 0) out vec2 vUv;
 layout(location = 1) out float vAlpha;
 layout(location = 2) out vec3 vWorld;   // splash_splat.frag: sphere depth (the radius comes from its derivatives)
 layout(location = 3) out float vFoam;   // 0 liquid .. 1 spray
-layout(location = 4) out float vSurface; // the rest surface z of the particle's water (nothing is drawn below it)
+layout(location = 4) out float vSurface; // the surface z under the particle (fluid.comp; nothing is drawn below it)
 const vec2 kCorners[6] = vec2[](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, -1.0), vec2(1.0, 1.0),
                                 vec2(-1.0, 1.0));
 void main() {
@@ -33,7 +33,7 @@ void main() {
     vUv = kCorners[OU_VERTEX_ID];
     vAlpha = clamp(q.x.w / 0.3, 0.0, 1.0);
     vFoam = ouFluidFoam(q.d.w);
-    vSurface = q.v.w;
+    vSurface = q.p.w;
     if (q.x.w <= 0.0) {
         vWorld = vec3(0.0);
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);

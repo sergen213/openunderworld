@@ -3,6 +3,7 @@
 #include "render/Fluid.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 
@@ -81,7 +82,7 @@ Frame Sim::frame(const FrameOptions& o, glm::vec3 eye) {
         g.pos = {c, b.surfaceZ};
         g.vel = {b.carry[0], b.carry[1], b.carry[2], b.radius};
         g.shape = {b.speed, b.up, b.spread, float(b.kind)};
-        g.info = {cursor_, uint32_t(n), b.seed, 0u};
+        g.info = {cursor_, uint32_t(n), b.seed, std::bit_cast<uint32_t>(b.restZ)};
         f.bursts.push_back(g);
         cursor_ = (cursor_ + uint32_t(n)) % uint32_t(kCapacity);
         f.emitted += n;

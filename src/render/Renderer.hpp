@@ -79,9 +79,11 @@ struct WaterField {
 struct WaterVolume { float min[3], max[3]; float waves[4][4] = {}; };
 // A splash of Enhanced water's particle fluid (render/Fluid.hpp emits it on the GPU; game::SplashBurst has the meaning of
 // each field): kind 0 crown, 1 jet, 2 spray; positions world units, speeds units/s; seed varies the particles.
+// surfaceZ: the surface at the impact (pos is measured from it); restZ: the volume's rest surface the waves ride on.
 struct FluidBurst {
     float pos[3], surfaceZ, carry[3], radius, speed, up, spread;
     uint32_t kind, count, seed;
+    float restZ;
 };
 // Under-water bubble for the Enhanced particle pass (render/Water.hpp "under-water particles"): world centre, radius
 // (world units), opacity 0..1, seed 0..1 (abyssal-garden vsBub b.x: its wobble phase; keep it per bubble so the sway is

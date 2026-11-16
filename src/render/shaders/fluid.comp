@@ -19,10 +19,10 @@ layout(local_size_x = 128) in;
 #include "shaders/fluid.glsl"
 
 struct OuFluidBurst {
-    vec4 pos;   // centre xyz, w rest surface z
+    vec4 pos;   // centre xyz, w the surface z at the impact (the CPU's: pos is measured from it)
     vec4 vel;   // carried velocity xyz, w radius
     vec4 shape; // speed, up, spread, kind (0 crown, 1 jet, 2 spray)
-    uvec4 info; // first ring slot, count, seed, 0
+    uvec4 info; // first ring slot, count, seed, the volume's rest surface z (float bits: the surface sums its waves on it)
 };
 struct OuWaveKick { vec4 k; }; // contract C3: world x, world y, amplitude (negative pushes down), sigma
 
@@ -142,10 +142,12 @@ void emit() {
         v = vec3(dir * st, ct) * speed * (0.4 + 0.6 * u3);
     }
     v += B.vel.xyz;
-    x.z += surfaceZ(x.xy, B.pos.w) - B.pos.w; // on the impact's own crater / rim, not under it
+    // On the drawn surface under each particle (its crater / rim, a sea's waves), as high above it as above the CPU's.
+    float rest = uintBitsToFloat(B.info.w), sz = surfaceZ(x.xy, rest);
+    x.z += sz - B.pos.w;
     P[slot].x = vec4(x, 2.2 + 1.2 * u4);
-    P[slot].v = vec4(v, B.pos.w);
-    P[slot].p = vec4(x, 0.0);
+    P[slot].v = vec4(v, rest);
+    P[slot].p = vec4(x, sz);
     P[slot].d = vec4(x, 1.0);
 }
 
@@ -264,8 +266,10 @@ void finalize(uint i) {
     v += PAR.w * xsph / SIM.z;
     v -= LIM.w * dt * coh;
 
-    // The water surface: falling back in, the particle merges (a kick for the interactive field) and is gone.
+    // The water surface: falling back in, the particle merges (a kick for the interactive field) and is gone. Above it,
+    // the surface z under it is kept in p.w (the lambda slot, free until the next step) for splash.vert.
     float rest = P[i].v.w, sz = surfaceZ(p.xy, rest);
+    P[i].p.w = sz;
     if (p.z < sz) {
         if (v.z < -50.0 && x.z >= sz - 0.5 * h) {
             uint k = atomicAdd(kickCount, 1u);

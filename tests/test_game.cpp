@@ -2801,7 +2801,10 @@ TEST(Game, WaterEntrySplashMakesRingsAndBursts) {
     EXPECT_TRUE(crown) << "the entry must throw a crown splash";
     EXPECT_GT(w->water().depth(), 0.0f);
     size_t entries = 0;
-    for (const auto& b : w->water().bursts()) entries += b.kind == game::SplashBurst::Crown;
+    for (const auto& b : w->water().bursts()) {
+        entries += b.kind == game::SplashBurst::Crown;
+        EXPECT_FLOAT_EQ(b.restZ, w->water().surfaceZ()) << "the renderer's waves ride on the volume's rest surface";
+    }
     EXPECT_EQ(entries, 1u) << "one entry, one crown";
 }
 

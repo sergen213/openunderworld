@@ -33,8 +33,9 @@ inline constexpr float kGravity = 5.72443f * 900.0f; // the game's (game::Tuning
 inline constexpr float kKickAmplitude = 0.8f; // C3 kick depth of one particle re-entering at 1000 units/s, units
 inline constexpr float kKickSigma = 24.0f;    // ... and its width, units
 
-// shaders/fluid.glsl OuFluidBurst (std430): pos = centre xyz + surface z; vel = carried velocity xyz + radius;
-// shape = speed, up, spread, kind; info = first ring slot, count, seed, 0.
+// shaders/fluid.glsl OuFluidBurst (std430): pos = centre xyz + the surface z at the impact; vel = carried velocity
+// xyz + radius; shape = speed, up, spread, kind;
+// info = first ring slot, count, seed, rest surface z (float bits).
 struct GpuBurst {
     glm::vec4 pos, vel, shape;
     glm::uvec4 info;

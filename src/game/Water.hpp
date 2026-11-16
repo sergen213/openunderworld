@@ -71,7 +71,7 @@ struct SplashBurst {
     enum Kind : uint8_t { Crown, Jet, Spray };
     Kind kind = Crown;
     vec3 pos{0};        // centre on the surface (spray: the emitter)
-    float surfaceZ = 0; // the rest surface the water falls back into
+    float surfaceZ = 0; // the surface at the impact this tick (a sea's waves included): what `pos` is measured from
     vec3 carry{0};      // velocity every particle inherits (the impactor's horizontal motion), units/s
     float radius = 0;   // crown ring / jet column / spray disc radius, units
     float speed = 0;    // crown, jet: outward launch speed; spray: launch speed (units/s)
@@ -80,6 +80,7 @@ struct SplashBurst {
     int count = 0;      // particles
     float delay = 0;    // seconds after the impact (the jet waits for the cavity to collapse)
     uint64_t serial = 0; // WaterSim numbering: 1, 2, ... in release order
+    float restZ = 0;     // the water volume's rest surface (its box top) the renderer's waves ride on; 0: WaterSim sets it
 };
 // Particle spacing of the fluid, units (render::fluid::kSpacing): the crown's start height keeps it near rest density.
 inline constexpr float kSplashSpacing = 7.0f;
@@ -122,6 +123,7 @@ private:
     void ripple(vec3 p, float strength);
     void release(std::vector<SplashBurst> bursts); // into pending_ (delayed) / bursts_ (now)
     float waterAt(vec2 p) const; // surface z of the water over p, -inf where there is none
+    float restAt(vec2 p) const;  // rest surface (box top) of the water over p, -inf where there is none
 
     WaveWindow window_;
     const World* world_ = nullptr;                    // during tick

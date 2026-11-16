@@ -532,9 +532,9 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
 
 Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the wave field's inputs (window, wall mask, kicks,
-pressure bodies), splash droplets and the water volumes; ou-game fills `FrameOptions::{waterField, waterVolumes,
-splashes}` every frame. `render::WaterBlock` (UBO: camera, inverse view-projection, sun, ambient, fog, wave
-field transform) feeds the water, splash and post shaders.
+pressure bodies), the splash bursts and the water volumes; ou-game fills `FrameOptions::{waterField, waterVolumes,
+fluidBursts}` every frame. `render::WaterBlock` (UBO: camera, inverse view-projection, sun, ambient, fog, wave
+field transform) feeds the water, splash fluid and post shaders.
 
 Backend plumbing: GL blits the scene colour/depth into `opaqueColor/opaqueDepth` after the scene
 pass (MSAA resolve included), then draws water + splashes into the same framebuffer. Vulkan
@@ -600,6 +600,59 @@ the FFT ocean each frame), inputs from `game::WaterSim` (docs/GAMEPLAY.md "Water
 - Cost (1920×1080, RX 7900 XTX / RADV, `OU_VK_PRESENT_STATS=1`, which also brackets the field): 0.069–0.077 ms a
   frame on Vulkan (l4_pool, l1_seatop, l2_cliffclimb), 0.09–0.10 ms on GL (`GL_TIME_ELAPSED`).
 - Original water runs none of it (`waterfield::wanted`).
+
+### Splash fluid
+
+Enhanced water's splashes: the game's splash bursts (`game::SplashBurst`, docs/GAMEPLAY.md "Water": crowns, Worthington
+jets, spray) become particles of a small GPU fluid near the camera, drawn as liquid by screen-space fluid rendering.
+`render/Fluid.{hpp,cpp}` (constants, GPU structs, ring slots, fixed-step clock), `shaders/fluid.comp` + `fluid.glsl`
+(simulation), `splash.vert`, `splash_splat.frag`, `splash_blur.frag`, `splash_composite.frag` (drawing); both backends.
+Ours, from the papers (docs/RESEARCH.md "Splash fluid"); the drawing passes adapt talvinckb/OpenGL-Water-Simulation (MIT).
+
+- Simulation: Position Based Fluids (Macklin & Müller 2013) over a 32768-particle ring pool (new bursts overwrite the
+  oldest slots; ≤ 64 bursts and 16384 particles emitted a frame, bursts beyond 9000 units skipped, thinned to a quarter
+  toward that range). Particle spacing 7 units (2.4 cm), kernel support h = 14 (poly6 density, spiky gradient), fixed
+  1/120 s steps (≤ 3 a frame; time beyond is dropped), 2 density iterations, unilateral density constraint (a free
+  surface does not pull), tensile s_corr against clumping, XSPH viscosity, Akinci cohesion (sheets bead into drops),
+  air drag by density (sheets 0.1/s, lone drops 1.4/s). Neighbours: a hashed linked-list grid of 65536 buckets of h,
+  rebuilt every step. Per frame: Emit (the bursts into their slots), then per step clear grid, Predict, 2 × (Lambda,
+  Delta), Finalize: one 128-thread dispatch each, barriers between. Dead slots exit at once, and with no live particles
+  every pass is skipped: an idle frame costs 0.
+- Surfaces: a particle is emitted on, and dies falling back into, the one summed water surface every Enhanced effect
+  draws (`shaders/water_surface.glsl` `ouSurfaceHeight`: tru.exe's sea waves, the FFT ocean, the interactive wave field)
+  over its volume's rest z (`SplashBurst::restZ`, the box top; the burst's own surface z only places it). Finalize keeps
+  the surface z under each particle in `p.w` for the drawing. The scene collides through the opaque depth copy (a
+  particle that was in front of the visible surface and is now less than 1.5 h behind it is pushed out along its normal,
+  restitution 0.1, friction 0.3).
+- Kicks (contract C3, `uint count; uint pad[3]; vec4 kicks[4096]`, k = world x, y, centre displacement, sigma in TRU
+  units): each particle falling back faster than 50 units/s writes a crater of −0.8 × (speed / 1000, 0.15–2) units,
+  sigma 24. The renderers hand this buffer (`fluidKickBuffer()`) to the wave field as its external kick buffer at
+  creation (`setExternalWaveKicks`); the next frame's field consumes it (count clamped to 4096, reset to 0).
+- Drawing (after the water surfaces, colour copy refreshed so the liquid refracts them): (1) splat: one camera-facing
+  quad per particle slot (vertex pulling, dead slots collapse) into an RGBA32F target cleared to (−1e20, 0, 0, 0) with
+  MAX blending: r = −(distance to the sphere's front), g = thickness through it, b = whiteness, a = 1 (covered); spheres
+  of 1.3 × spacing (lone drops half), faded over their last 0.3 s, rejected behind the opaque depth and below the
+  surface under the particle. (2) a separable bilateral blur, twice, of 2 particle radii in the world (2–24 px), range
+  1.5 radii: covered pixels average over covered taps (a drop keeps its thickness), empty ones grow a tapering fringe
+  that bridges near particles. (3) composite: normals from the blurred depth (one-sided differences on the same
+  surface), refraction of the scene by the thickness along the refracted ray (Pope & Fry absorption), Fresnel
+  reflection of the scene a short way along the reflected ray (screen space; else the sky / fog), sun specular, a rim
+  light at grazing normals, distance fog; coverage from the thickness relative to one particle. Premultiplied over the
+  scene (ONE, ONE_MINUS_SRC_ALPHA). Under water the splash shows only through Snell's window ("Under water").
+- Whiteness (`fluid.glsl` `ouFluidFoam`, from the density ratio ρ/ρ0; a lone particle's own weight is 0.19): lone drops
+  and pairs (< 0.32) are spray, sheets (0.45–0.85) a quarter, the bulk clear; the composite mixes 4 % + 16 % × that of
+  white lit by the scene into the liquid. A crown launched as a two-particle sheet stretches into drops within ~0.1 s
+  at this particle count, so most of a splash draws as clear, rim-lit drops with a light spray haze.
+- Bindings: Vulkan compute set (createFluid) 0 UBO, 1 particles, 2 grid, 3 kicks, 4 this frame's bursts (host
+  visible, per frame in flight), 5 opaque depth, 6 `uRipples`, 7 `uOcean`; splash sets 0 UBO, 1 depth / splat target,
+  2 particles (splash.vert), 3 colour copy (composite). GL: SSBOs 0 particles, 1 grid, 2 kicks, 3 bursts; units 6
+  depth, 7 `uRipples`, 12 `uOcean`, 10 splat target, 5 colour copy; UBO 4. FSR: the splash's reactivity is drawn
+  fullscreen over the blurred splat target (`fsr_splash.frag`, 0.9 × coverage).
+- Cost (1920×1080, RX 7900 XTX / RADV, `OU_VK_PRESENT_STATS=1`, which brackets the simulation and the drawing;
+  averaged over the frames that draw a splash): l4_pool plunge from 3500 (~3500 particles) Vulkan 0.73–0.85 ms
+  (simulation 0.44–0.53, drawing 0.28–0.33), GL 0.49–0.70 ms; l2_cliffclimb sea entry from 1500 (~4300 particles)
+  Vulkan 0.75 ms. Idle: 0.
+- Original water runs none of it.
 
 ### Water colour (Enhanced, GL + Vulkan; `graphics.water_color`, `--water-color`, WATER & SKY > WATER COLOUR)
 
@@ -722,7 +775,7 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   the whole look: ou-game draws neither TRU's deep / surface water filters (l1 5292's ColorDOF blur at alpha 0.89 and
   bloom blurred the frame into soft white blotches) nor TRU's light rays (pale streaks over the fogged frame); the unit's
   fog set still reaches TRU's shaders (its ranges, 632 m+, lie past agFog's 230 m cut), and what flies above the surface
-  (splash droplets, `splash_composite.frag`; effect particles and glows, `fx::System::spritesBelowZ` = the eye's wave
+  (the splash fluid, `splash_composite.frag`; effect particles and glows, `fx::System::spritesBelowZ` = the eye's wave
   surface) is drawn only where the eye sees it through Snell's window, with the limits of water.frag's restore of the
   scene above: the view ray within 48.6° of vertical and 60 m, faded over 45–48.6° and 50–60 m. Fire, splashes near Lara
   and the like show through the window; the rest printed over the reflection outside it as flat pale discs (l1_seatop: a
@@ -995,7 +1048,7 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
   `prevVertices` at the start of the frame, before the new upload lands — no CPU copy, no re-upload) — and
   reactivity (R8, max-blended): blended submeshes that do not write depth 0.9 × alpha (depth writers — blend modes 2-3,
   foliage — have valid history; marked reactive, the cliff plants of l2_cliffclimb shimmered), Enhanced water 0.6, original fx sprites
-  (`fsr_fx.frag`: alpha blend → alpha, additive / subtract → max(rgb · a), multiply → |rgb + a − 1|) and splash droplets
+  (`fsr_fx.frag`: alpha blend → alpha, additive / subtract → max(rgb · a), multiply → |rgb + a − 1|) and the splash fluid
   (`fsr_splash.frag`) 0.9 × their coverage, rain / snow 0.9 × the post pass's precipitation coverage
   (`fsr_weather.frag`, `atmosphere.glsl` `ouPrecipitation`). The reactive draws are skipped when the provider does not
   consume a reactive mask (ffx resource-requirements query; FSR 3.1 takes it as optional input). The upscaler context

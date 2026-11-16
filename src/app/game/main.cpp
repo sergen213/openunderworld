@@ -3615,7 +3615,7 @@ int main(int argc, char** argv) {
                 if (opt.gfx.water && !mainMenu)
                     fluidBursts.push_back({{b.pos.x, b.pos.y, b.pos.z}, b.surfaceZ, {b.carry.x, b.carry.y, b.carry.z}, b.radius,
                                            b.speed, b.up, b.spread, uint32_t(b.kind), uint32_t(b.count),
-                                           uint32_t(b.serial * 2654435761u)});
+                                           uint32_t(b.serial * 2654435761u), b.restZ});
             }
             fluidSerial = bursts.back().serial;
         }

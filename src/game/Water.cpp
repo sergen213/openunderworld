@@ -143,6 +143,14 @@ float WaterSim::waterAt(vec2 p) const {
     return h;
 }
 
+float WaterSim::restAt(vec2 p) const {
+    float h = kNoWater;
+    for (const collision::Markup* m : volumes_)
+        if (p.x >= m->points[0].x && p.x <= m->points[1].x && p.y >= m->points[0].y && p.y <= m->points[1].y)
+            h = std::max(h, m->points[1].z);
+    return h;
+}
+
 void WaterSim::kick(vec2 p, float amplitude, float sigma) {
     if (!active_ || window_.wall(p)) return;
     if (kicks_.size() >= kMaxKicks) { // a flood of kicks within kKeepTicks: the oldest go
@@ -162,6 +170,10 @@ void WaterSim::ripple(vec3 p, float strength) {
 void WaterSim::release(std::vector<SplashBurst> bursts) {
     for (SplashBurst& b : bursts) {
         if (b.count <= 0) continue;
+        if (b.restZ == 0.0f) { // the box top the renderer's surface sums its waves on (else the impact's own surface)
+            const float rest = restAt(vec2(b.pos));
+            b.restZ = rest == kNoWater ? b.surfaceZ : rest;
+        }
         if (b.delay > 0) {
             b.delay += time_; // release time
             pending_.push_back(b);

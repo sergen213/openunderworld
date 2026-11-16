@@ -4,8 +4,8 @@
 #define OU_FLUID_GLSL
 struct OuFluidParticle {
     vec4 x; // xyz position at the step's start (units), w life left (s; <= 0: dead)
-    vec4 v; // xyz velocity (units/s), w the rest surface z of the water it falls back into
-    vec4 p; // xyz predicted position (the solver's), w lambda
+    vec4 v; // xyz velocity (units/s), w the rest surface z of the water it falls back into (its waves ride on it)
+    vec4 p; // xyz predicted position (the solver's), w lambda; after a step / emission the surface z under the particle
     vec4 d; // xyz the solver's other position / the step's final position, w density / rest density (spray < ~0.35)
 };
 const float kOuFluidSpacing = 7.0;                  // render::fluid::kSpacing
