@@ -881,6 +881,67 @@ TEST(StreamReal, YachtsFloatOnTheWaves) {
     }
 }
 
+TEST(StreamReal, YachtTraceDump) {
+    if (!gameDir() || !std::getenv("OU_YACHT_TRACE")) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    struct Case { int chapter; int32_t yacht; int volume; };
+    for (const Case c : {Case{1, 998, 1851}, Case{2, 2566, 2563}}) {
+        w.startChapter(c.chapter);
+        const collision::Markup* sea = nullptr;
+        for (const auto& m : w.collision().markup)
+            if (m.type == 10 && m.id == c.volume) sea = &m;
+        ASSERT_NE(sea, nullptr);
+        const std::string path = std::string(std::getenv("OU_YACHT_TRACE")) + "-ch" + std::to_string(c.chapter) + ".txt";
+        FILE* out = std::fopen(path.c_str(), "w");
+        for (int i = 0; i < 40 * 60; ++i) {
+            w.tick({});
+            const glm::mat4 f = yachtFrame(w, c.yacht);
+            const float roll = glm::degrees(std::asin(std::clamp(f[1].z, -1.0f, 1.0f)));  // local y axis rise
+            const float pitch = glm::degrees(std::asin(std::clamp(f[0].z, -1.0f, 1.0f))); // local x axis rise
+            const double t = double(w.ticks()) * game::kTickSeconds;
+            std::fprintf(out, "%d %.4f %.2f %.2f %.2f %.3f %.3f %.3f %.2f %.2f\n", i, t, f[3].x, f[3].y, f[3].z - sea->points[1].z, roll, pitch,
+                         glm::degrees(std::atan2(f[0].y, f[0].x)), game::waveHeight(*sea, glm::vec2(f[3]), t), w.player().state().pos.z - f[3].z);
+        }
+        std::fclose(out);
+    }
+}
+
+TEST(StreamReal, SeaVsDump) {
+    if (!gameDir() || !std::getenv("OU_YACHT_TRACE")) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const auto scene = formats::loadLevelScene(bf, "pc-w\\l2_cliffclimb.drm");
+    std::unordered_map<uint32_t, const scene::Material*> materials;
+    for (const auto& m : scene.materials) materials[m.id] = &m;
+    std::set<uint64_t> done;
+    for (const auto& mesh : scene.meshes) {
+        if (std::isnan(render::original::reflectionPlaneZ(mesh, glm::make_mat4(mesh.transform), materials))) continue;
+        for (const auto& sub : mesh.submeshes)
+            if (materials.contains(sub.materialId) && render::original::reflectionSamplers(*materials[sub.materialId])) {
+                const glm::mat4 model = glm::make_mat4(mesh.transform);
+                std::set<std::pair<int, int>> near;
+                float minEdge = 1e9f, maxEdge = 0;
+                for (uint32_t i = sub.firstIndex; i + 2 < sub.firstIndex + sub.indexCount; i += 3) {
+                    vec3 p[3];
+                    for (int k = 0; k < 3; ++k) p[k] = vec3(model * glm::vec4(glm::make_vec3(mesh.vertices[mesh.indices[i + k]].position), 1));
+                    if (glm::length(glm::vec2(p[0]) - glm::vec2(-34612.0f, -14793.3f)) > 8000) continue;
+                    for (int k = 0; k < 3; ++k) {
+                        near.insert({int(p[k].x), int(p[k].y)});
+                        const float e = glm::distance(p[k], p[(k + 1) % 3]);
+                        minEdge = std::min(minEdge, e), maxEdge = std::max(maxEdge, e);
+                    }
+                }
+                std::fprintf(stderr, "sea submesh: %zu vertices within 8000 of the ch2 yacht, edges %.0f .. %.0f\n", near.size(), minEdge, maxEdge);
+                for (const auto& sc : scene.shaders)
+                    if (sc.hash == materials[sub.materialId]->vertexShader && done.insert(sc.hash).second)
+                        std::fprintf(stderr, "==== VS %llx\n%s\n", (unsigned long long)sc.hash,
+                                     render::sm3::translate(formats::d3d9::parse(std::span<const uint8_t>(sc.bytecode)), false).source.c_str());
+            }
+    }
+}
+
 // User report (v0.31.0): the follow camera stopped against objects. On l2_cliffclimb's yacht deck (the user's
 // chapter-2 save spot) a held look turn froze: ms_uo_yacht (oflags 0x900004FE, bit 2: the camera collides with it)
 // pulled the turned point in and the collider's swing (0x5EC8F0) swung it straight back each tick. tru.exe turns it
@@ -967,10 +1028,10 @@ TEST(StreamReal, YachtRenderedSeaBelowDeck) {
             for (size_t k = 0; k < vols.size(); ++k)
                 if (std::memcmp(vols[k].waves, ob.waves, sizeof ob.waves) == 0) sea = volMarkup[k];
             ASSERT_NE(sea, nullptr);
-            for (double t = 0; t < 628.4; t += 0.05) { // the VS: z -= sum c63 (1 - cos(x c60 + y c61 + c62))
+            for (double t = 0; t < 628.4; t += 0.05) { // the VS: z -= sum c63 (1 - sin(x c60 + y c61 + c62))
                 const auto r = game::waveRegisters(*sea, t);
                 float z = lowest;
-                for (int i = 0; i < 4; ++i) z -= r[3][i] * (1 - std::cos(s.pos.x * r[0][i] + s.pos.y * r[1][i] + r[2][i]));
+                for (int i = 0; i < 4; ++i) z -= r[3][i] * (1 - std::sin(s.pos.x * r[0][i] + s.pos.y * r[1][i] + r[2][i]));
                 ASSERT_LT(z, s.pos.z - 10) << flow << " drawn sea under the deck at t " << t;
             }
         }

@@ -1667,8 +1667,10 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   + 4; when data +0x4E has bit 1 (l1_seatop, l1_cineseatop, l1_seafloor, l1/l6 ship exteriors, l2_cliffclimb) the
   water component keeps four waves: kx at data +0x70 + 8i, ky at +0x74 + 8i, height = data +0x6C × share at +0x90 + 4i,
   speed (rad/s) at +0xA0 + 4i (l2: kx (1, 5, −14, −16)·10⁻⁴, ky (3, 0, −14, 2)·10⁻⁴, heights (100, 75, 50, 25), speeds
-  (0.7, 1, 0.7, 0.3); l1_seatop heights × 0.885, last speed 2). The surface at (x, y) is the top + Σ heightᵢ (cos(kxᵢ x +
-  kyᵢ y + speedᵢ t) − 1) (0x69DA80, used by 0x6AD010 / 0x6ACFD0 for Lara and floating objects), t = game seconds
+  (0.7, 1, 0.7, 0.3); l1_seatop heights × 0.885, last speed 2). The surface at (x, y) is the top + Σ heightᵢ (sin(kxᵢ x +
+  kyᵢ y + speedᵢ t) − 1) (0x69DA80: CRT sin 0x813680, used by 0x6AD010 / 0x6ACFD0 for Lara and floating objects; the sea
+  program computes the same sin, RENDERING.md "Sea waves"; [O Wine 2026-11-15: Lara's tread z fits the sin surface at
+  rms 0.1 over 13 s, every wave π/2 off with cos], which ours used until 0.49.1), t = game seconds
   (0x6ADB70, 1/30 per frame unit) mod 200π (0x6C10D0); the sea drawable's vertex shader lowers its vertices by the same
   sum (VS InstanceParams 3–6, 0x69DFB0; RENDERING.md "Planar reflection"). The surface is never above the top: the
   l2_cliffclimb sea at the yacht swings between z 53 and −363 (mean −142, the deck is at 71–87) and l1_seatop's between
@@ -1878,7 +1880,7 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   tests each sensor every other frame, ours every tick [I]. Saved with the runtime (`sensors`). Before, sensors never
   fired.
 - **Treading "drift"** (self-test agent: ~450 units/s with no input in l1_seatop): it is vertical, the root riding the
-  four sea waves (surface = top + Σ heightᵢ (cos(..) − 1)); x / y do not move and the volume has no current. tru.exe
+  four sea waves (surface = top + Σ heightᵢ (sin(..) − 1)); x / y do not move and the volume has no current. tru.exe
   does the same [O Wine: Lara's z fits the wave surface − 44.1 at rms < 1 while treading, "Surface" above].
 - Self-tests: `tests/selftests/swim.json` (l1_seatop: on the tanks the breath stays full), `swim_breath.json`
   (l2_cliffclimb river: drain, sprint drain, refill), `swim_moves.json` (surface turn, dive, dodges, guns under

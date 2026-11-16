@@ -1776,7 +1776,7 @@ inline constexpr size_t kWaterSink = 13, kWaterSource = 14, kWaterFlow = 15, kWa
 vec3 waterFlow(const collision::Markup& m, vec3 p);
 // `p` inside water box `m` (a findWater markup) grown by `grow` per axis in the box frame.
 bool insideWater(const collision::Markup& m, vec3 p, vec3 grow = vec3(0));
-// Sea waves of a water volume (tru.exe 0x69DA80): sum_i height_i (cos(kx_i x + ky_i y + speed_i t) - 1), <= 0, with t =
+// Sea waves of a water volume (tru.exe 0x69DA80): sum_i height_i (sin(kx_i x + ky_i y + speed_i t) - 1), <= 0, with t =
 // game seconds mod 200 pi (0x6ADB70, 0x6C10D0); 0 for volumes without waves.
 float waveHeight(const collision::Markup& m, vec2 xy, double seconds);
 // Water surface z of volume `m` at `xy` (top + waveHeight, tru.exe 0x6AD010).

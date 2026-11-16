@@ -46,10 +46,10 @@ void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal;
 #endif
-    // A sea's waves, as its original vertex shader (tru.exe 0x69DFB0): lowered by sum c63 (1 - cos(x c60 + y c61 + c62)).
+    // A sea's waves, as its original vertex shader (tru.exe 0x69DFB0): lowered by sum c63 (1 - sin(x c60 + y c61 + c62)).
     // The gameplay surface follows the same waves (game::waveRegisters).
     float rest = world.z;
-    world.z -= dot(uWaves[3], 1.0 - cos(world.x * uWaves[0] + world.y * uWaves[1] + uWaves[2]));
+    world.z -= dot(uWaves[3], 1.0 - sin(world.x * uWaves[0] + world.y * uWaves[1] + uWaves[2]));
     float t = w.eye.w;
     vSea = any(notEqual(uWaves[3], vec4(0.0))) ? 1.0 : 0.0;
     // Godot's height layers (amplitude detail.z) and on open seas afl_ext's waves (12 iterations, its geometry count) or

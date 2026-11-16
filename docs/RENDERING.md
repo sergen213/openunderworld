@@ -353,7 +353,9 @@ the sea in GL Original and Vulkan Original / Enhanced.
 
 Sea waves (VS InstanceParams 3–6 = c60–c63, `ObjectBlock::waves`): tru.exe's water volume hook 0x69DFB0 sets the
 sea program's x / y wave numbers, phases (speed × game seconds mod 200π) and heights each frame; the program lowers each
-vertex by Σ height (1 − cos(kx x + ky y + phase)) (GAMEPLAY.md "Water"). The game passes them per water volume
+vertex by Σ height (1 − sin(kx x + ky y + phase)) (GAMEPLAY.md "Water"; the l2 sea program reduces a = kx x + ky y + phase
+to u = fract(a / 2π + 0.25) · 2π − π = a − π/2 and evaluates cos u − 1 by its Taylor polynomial, i.e. sin a − 1; ours used
+cos until 0.49.1, so the Original sea and the gameplay waves the yacht floats on were a quarter wave apart). The game passes them per water volume
 (`WaterVolume::waves`, `game::waveRegisters` on the sim clock) and `original::fillWaves` gives them to every draw whose
 bounds centre lies in the volume (only the sea programs read c60–c63). The reflection plane stays at the sea mesh
 (0x5C5B80 takes the drawable's plane, not the waves). Read in tru.exe under Wine at l2_cliffclimb (2026-10-29): water

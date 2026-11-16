@@ -81,10 +81,10 @@ float ouSea(vec2 p, float t, int iterations) {
     return sumOfValues / sumOfWeights;
 }
 // tru.exe's sea waves (its vertex shader 0x69DFB0, render::waterWaves columns c60-c63): the height
-// -sum c63 (1 - cos(x c60 + y c61 + c62)) and here its gradient.
+// -sum c63 (1 - sin(x c60 + y c61 + c62)) and here its gradient.
 vec2 ouTruWaveSlope(vec2 p, mat4 c) {
-    vec4 a = c[3] * sin(p.x * c[0] + p.y * c[1] + c[2]);
-    return -vec2(dot(a, c[0]), dot(a, c[1]));
+    vec4 a = c[3] * cos(p.x * c[0] + p.y * c[1] + c[2]);
+    return vec2(dot(a, c[0]), dot(a, c[1]));
 }
 // ---- FFT ocean (render/Ocean.hpp, shaders/ocean.comp; open seas when w.ocean[0].x = 1, replacing afl_ext's sea and
 // the Godot layers there). uOcean layers per cascade c: 3c (Dx, Dy, h, Jxy), 3c + 1 (dh/dx, dh/dy, Jxx, Jyy),

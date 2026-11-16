@@ -1695,7 +1695,7 @@ float waveHeight(const collision::Markup& m, vec2 xy, double seconds) {
     float h = 0;
     for (int i = 0; i < 4; ++i) {
         const vec3 w = m.points[size_t(5 + i)];
-        h += m.points[size_t(9 + i)].x * (std::cos(w.x * xy.x + w.y * xy.y + w.z * t) - 1.0f);
+        h += m.points[size_t(9 + i)].x * (std::sin(w.x * xy.x + w.y * xy.y + w.z * t) - 1.0f);
     }
     return h;
 }
