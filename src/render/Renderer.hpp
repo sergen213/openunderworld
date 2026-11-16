@@ -52,14 +52,25 @@ enum class WaterQuality : uint8_t { Original, Enhanced };
 // unit's own colours (tru.exe's water pass material), the rest are NeuralSpecOcean's five water palettes plus a clear
 // pool. Same order as config::kWaterColors after its "auto" (index = config value - 1); Auto resolves per chapter.
 enum class WaterColor : uint8_t { Original, Emerald, CoralLagoon, PelagicCobalt, MineralJade, SubpolarSlate, Clear, Auto };
-// Interactive ripple height field on one water surface around Lara (game::WaterSim), sampled by Enhanced water.
-struct WaterRipples {
-    float originX = 0, originY = 0; // world x, y of the corner of texel (0, 0)
-    float cellSize = 0;             // world units per texel; 0 = no field
-    float surfaceZ = 0;             // world z of the surface the field rides on
-    int size = 0;                   // texels per side; heights.size() == size * size, row-major, x fastest
-    std::span<const float> heights; // world units above the rest surface
-    uint64_t version = 0;           // changes whenever heights change; backends re-upload only then
+// Interactive wave field on the water around Lara (render/WaterField.hpp, docs/RENDERING.md "Interactive waves"): the
+// inputs of the GPU simulation, produced by game::WaterSim on the 60 Hz tick (same layouts as game::WaveKick / WaveBody).
+// Kick: world x, y, displacement at the centre (TRU units, negative pushes the water down), width sigma (a zero-volume
+// Mexican hat; shaders/water_surface.glsl contract C3 OuWaveKick). Body: a floating / wading body's surface pressure
+// (Gaussian of width radius, draft = depth of water it pushes away), velocity (units/s) and wall weight 0..1.
+struct WaveKick { float x, y, amplitude, sigma; };
+struct WaveBody { float x, y, radius, draft; float vx, vy, wall, pad; };
+struct WaterField {
+    bool active = false;            // a water volume is near Lara (else the field rests and is not drawn)
+    float originX = 0, originY = 0; // world corner of cell (0, 0); a whole number of mask cells
+    float cellSize = 0;             // world units per cell, waterfield::kN cells per side
+    float surfaceZ = 0;             // world z of the rest surface the field rides on
+    float depth = 0;                // that water's depth (world units): the waves' dispersion depth
+    uint64_t generation = 0;        // a change restarts the field from rest (teleport, another surface)
+    std::span<const WaveKick> kicks;  // made since the previous frame (each consumed once)
+    std::span<const WaveBody> bodies; // the current pressure bodies
+    std::span<const uint8_t> mask;    // maskSize^2 static walls over the window (255 open water, 0 wall), row major
+    int maskSize = 0;                 // waterfield::kN / 2: a mask cell is 2 x 2 field cells
+    uint64_t maskVersion = 0;         // changes with the mask
 };
 // Water volume: world AABB, max[2] = surface z (a sea's: lowered by its waves under the camera this frame; game water
 // markup, type 10). Underwater post and caustics.
@@ -198,7 +209,7 @@ struct FrameOptions {
     Tonemap tonemap = Tonemap::Original; // post pass, before FXAA / screen filters / brightness; the UI is never tone-mapped
     WaterQuality water = WaterQuality::Original;  // ou::config presets choose (Enhanced by default)
     WaterColor waterColor = WaterColor::Original;  // Enhanced only: resolved optical type (never Auto; render::waterColorFor)
-    WaterRipples ripples;                          // empty = calm (procedural waves only)
+    WaterField waterField;                         // inactive = calm (no interactive waves)
     std::span<const WaterVolume> waterVolumes;     // loaded units' water volumes
     std::span<const WaterParticle> splashes;       // drawn blended after the water surfaces
     // Enhanced water, camera submerged: the under-water particle pass (marine snow + these bubbles; render/Water.hpp).

@@ -1,8 +1,9 @@
-// Interactive water: the wave field of Wars and Warriors: Joan of Arc's port (same author, GPLv3; its
-// src/engine/water_waves.{hpp,cpp} and world_view_water.cpp), rescaled to TRU units, plus ballistic splash droplets.
-// Simulated on the fixed 60 Hz game tick, renderer-agnostic (ou-game copies the field into render::FrameOptions;
-// water.frag shades it). Parameters are ours [I], not tru.exe's (its water does not simulate ripples).
-// docs/GAMEPLAY.md "Water", docs/RENDERING.md "Water".
+// Interactive water: what makes waves on the water around Lara, plus ballistic splash droplets. The waves themselves
+// are simulated on the GPU (render/WaterField.hpp, shaders/water_field.comp: a spectral gravity-capillary wave field);
+// this side runs on the fixed 60 Hz game tick and produces the field's inputs: its window (which cells are open water),
+// displacement kicks (splashes, strokes, shots) and the pressure bodies (swimmers, waders, floating debris) whose
+// motion leaves wakes. ou-game passes them through render::FrameOptions::waterField. Parameters are ours [I], not
+// tru.exe's (its water does not simulate waves). docs/GAMEPLAY.md "Water", docs/RENDERING.md "Interactive waves".
 #pragma once
 
 #include <glm/glm.hpp>
@@ -21,57 +22,43 @@ class World;
 using glm::vec2;
 using glm::vec3;
 
-// TRU units per Joan of Arc unit: body heights (Lara ~512, a Joan soldier ~80). Every length, speed and height of
-// the Joan field and shader is multiplied by it; slopes, damping and times are unchanged (water.frag: kScale).
-inline constexpr float kWaterScale = 6.4f;
+// A displacement kick (shaders/water_surface.glsl contract C3 OuWaveKick): world x, y, the displacement at its centre
+// in TRU units (negative pushes the water down) and its width sigma. The field adds a zero-volume Mexican hat
+// amplitude (1 - q) e^-q, q = r^2 / (2 sigma^2): a crater with its rim for a negative kick.
+struct WaveKick { float x, y, amplitude, sigma; };
+// A body floating / wading in the water: a moving surface pressure (Gaussian of width `radius`, depth `draft` of
+// water it pushes away, TRU units) that dips the surface and, moving, trails a Kelvin wake; `wall` (0..1) also makes
+// its core reflect waves (slow bodies: legs, a standing enemy). Velocity in units/s.
+struct WaveBody { float x, y, radius, draft; float vx, vy, wall, pad; };
 
-// A damped 2D wave equation on a kN^2 height field that follows Lara (world x, y; z up). Waves from every kick add up
-// (interfere), reflect off walls - cells the `wet` predicate rejects (shores) and per-step body obstacles (wading
-// legs, swimmers, enemies) - and damp out. Heights are displacements relative to whichever surface a cell lies on.
-// Allocation-free after construction.
-class WaveField {
+// The window of the GPU wave field: kN^2 cells of kCell (a 40 m square) around Lara, scrolled in whole mask cells, and
+// its static walls on a half-resolution mask (kMaskN^2 cells of kMaskCell): no water volume over the cell, or terrain
+// within reach of its rest surface (shores, pool sides, rocks, hulls). Allocation-free after construction.
+class WaveWindow {
 public:
-    static constexpr int kN = 256;
-    static constexpr float kCell = 4.0f * kWaterScale;   // 25.6 units: a 6554-unit window
-    static constexpr float kSpeed = 80.0f * kWaterScale; // units/s
-    static constexpr float kStep = 1.0f / 60.0f;         // fixed substep: c * dt / cell = 0.33, inside CFL (1/sqrt 2)
+    static constexpr int kN = 512;                    // render::waterfield::kN (FFT size)
+    static constexpr float kCell = 290.0f * 40.0f / kN; // 22.66 units = 7.8 cm (shaders/waves.glsl kM: 290 units/m)
+    static constexpr int kMaskN = kN / 2;
+    static constexpr float kMaskCell = 2.0f * kCell;
     using Wet = std::function<bool(vec2)>;
 
-    WaveField();
-    // Scrolls the window by whole cells so `centre` is in its middle; shifted-in cells start at rest and ask `wet`
-    // (open water at that x, y) once.
+    WaveWindow();
+    // Scrolls the window by whole mask cells so `centre` is in its middle; shifted-in mask cells ask `wet` (open water
+    // at that x, y) once. A jump beyond the window re-asks every cell.
     void follow(vec2 centre, const Wet& wet);
-    // Runs the fixed substeps owed after dt seconds; bodies added since the last call are walls for them.
-    void step(float dt);
-    // Displacement kick: `amplitude` down at the centre, a rim up around it (Mexican hat of width sigma: zero volume,
-    // so kicks never raise or lower the mean level). Walls and this step's bodies are not touched; the volume they clip
-    // off is taken evenly off the other cells.
-    void kick(vec2 p, float amplitude, float sigma);
-    // A body in the water moving at `velocity` (units/s) over dt: a wall for the next step() (waves scatter around it)
-    // and, moving, it heaps water up ahead and leaves a trough behind (the wake). Bodies at kSpeed or faster are
-    // ignored (their wake would be a Mach cone; WaterSim rings them per stroke).
-    void wade(vec2 p, vec2 velocity, float dt);
-
-    float height(vec2 p) const; // the cell holding p, 0 outside the window
-    bool wall(vec2 p) const;    // the cell holding p is a static wall (or outside the window)
-    vec2 origin() const { return vec2(corner_) * kCell; }
-    // Empty once nothing kicked for kQuiet seconds (the field has damped to rest).
-    std::span<const float> heights() const;
-    void clear() { placed_ = false, idle_ = kQuiet + 1, bodies_.clear(); }
+    bool wall(vec2 p) const;                                  // the mask cell holding p is a wall (or outside)
+    vec2 origin() const { return vec2(corner_) * kMaskCell; } // world corner of cell (0, 0)
+    std::span<const uint8_t> mask() const { return mask_; }   // kMaskN^2, row major (x fastest): 255 open, 0 wall
+    uint64_t version() const { return version_; }             // changes with the mask
+    bool placed() const { return placed_; }
+    void clear() { placed_ = false; }
 
 private:
-    static constexpr float kQuiet = 8.0f;
-    int cellIndex(vec2 p) const; // -1 outside the window
-    void shift(std::vector<float>& a, int dx, int dy, float fill);
-
-    std::vector<float> h_, prev_; // current and previous substep heights
-    std::vector<float> open_;     // 1 open water, 0 static wall, -1 not asked yet
-    std::vector<float> mask_;     // open_ with the bodies of the current step cut out
-    std::vector<float> scratch_;
-    std::vector<vec3> bodies_; // x, y, radius
-    glm::ivec2 corner_{0};     // window origin in cells
+    std::vector<uint8_t> mask_, scratch_;
+    std::vector<uint8_t> asked_; // 1 = mask_ holds the predicate's answer
+    glm::ivec2 corner_{0};       // window origin in mask cells
     bool placed_ = false;
-    float owed_ = 0.0f, idle_ = kQuiet + 1;
+    uint64_t version_ = 0;
 };
 
 struct SplashDrop {
@@ -88,26 +75,40 @@ public:
     void splash(vec3 pos, float strength = 1.0f);
 
     bool active() const { return active_; } // a water volume is near Lara
-    float originX() const { return field_.origin().x; }
-    float originY() const { return field_.origin().y; }
+    float originX() const { return window_.origin().x; }
+    float originY() const { return window_.origin().y; }
     float surfaceZ() const { return surfaceZ_; } // rest surface of Lara's / the nearest water
-    std::span<const float> heights() const { return active_ ? field_.heights() : std::span<const float>{}; }
-    uint64_t version() const { return version_; }
+    float depth() const { return depth_; }       // that volume's depth (surface - floor), the waves' dispersion depth
+    // Changes whenever the field must restart from rest (reset, another water surface): the renderer clears it.
+    uint64_t generation() const { return generation_; }
+    const WaveWindow& window() const { return window_; }
+    // Kicks of the last kKeepTicks ticks; kicks()[i] has serial kickBase() + i (serials only grow, across resets too),
+    // so each rendered frame takes the ones past the last serial it consumed (several ticks per frame, or none).
+    std::span<const WaveKick> kicks() const { return kicks_; }
+    uint64_t kickBase() const { return kickBase_; }
+    std::span<const WaveBody> bodies() const { return waveBodies_; } // this tick's pressure bodies
     const std::vector<SplashDrop>& drops() const { return drops_; }
-    const WaveField& field() const { return field_; }
+
+    static constexpr int kKeepTicks = 8;
+    static constexpr size_t kMaxKicks = 4096; // the GPU buffer's capacity (shaders/water_surface.glsl C3)
 
 private:
+    void kick(vec2 p, float amplitude, float sigma);
     void ripple(vec3 p, float strength);
     void emit(vec3 pos, int count, float speed, float up, float radius = 9.0f);
     float waterAt(vec2 p) const; // surface z of the water over p, -inf where there is none
 
-    WaveField field_;
+    WaveWindow window_;
     const World* world_ = nullptr;                    // during tick
     std::vector<const collision::Markup*> volumes_; // water markup (type 10) this tick
     double seconds_ = 0;           // sea wave clock of this tick
-    float surfaceZ_ = 0, time_ = 0, bob_ = 0;
+    float surfaceZ_ = 0, depth_ = 0, time_ = 0, bob_ = 0;
+    int chosen_ = -1;              // markup index of the field's water
     bool active_ = false;
-    uint64_t version_ = 0;
+    uint64_t generation_ = 0, tick_ = 0, kickBase_ = 0;
+    std::vector<WaveKick> kicks_;
+    std::vector<uint64_t> kickTicks_; // the tick each kick was made on
+    std::vector<WaveBody> waveBodies_;
     std::vector<SplashDrop> drops_;
     struct Body { vec3 pos; bool alive; float bob; };
     std::map<int32_t, Body> bodies_; // enemies / dynamic bodies last tick

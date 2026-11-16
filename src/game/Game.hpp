@@ -279,6 +279,20 @@ struct Tuning {
     // Root under the wave surface treading / swimming at the surface (tru.exe, Wine, l2_cliffclimb sea: z fits
     // player+0x8E0 top + the 0x69DA80 waves - 44.1 at rms < 1 in both states).
     float swimSurfaceDepth = 44.1f;
+    // Water entry from the air (docs/GAMEPLAY.md "Water entry"; tru.exe under Wine, l2_cliffclimb sea, 2026-11-15,
+    // openunderworld-work/waterentry-wine). She goes in once her root is under the volume's top (0x5D77E0 classes the
+    // depth against the volume's +0x58 top, without the waves), keeps her velocity without gravity, and every 60 Hz
+    // frame it shrinks by 0.875 (= 1 - waterDrag x timeMult, timeMult = 30 dt; all three axes, measured 0.8750) and
+    // moves her by its trapezoid. On top of that the chart's state actions move her root [O 0x8B1550 action table]:
+    // - action 1302 (0x75DC20) pushes her down while she is over the wave surface by at most prop 1307 x timeMult;
+    // - action 1301 (0x76D710) takes her to the wave surface - swimSurfaceDepth, rising at most prop 1307 x timeMult,
+    //   sinking at most player data float +0xEC (-6.5) x 3.1605 / timeMult.
+    // The jump / fall entry (S102 > S104, swim_jump_land) runs both with prop 1307 = 30; the swan-dive entry (S105,
+    // swim_swan_land) only 1302 with 1307 = -100 and no surface target: she sinks swanSink a 30 Hz frame for
+    // swanSinkSeconds [O-runtime: 0.20..0.22 s in two dives; the stop's rule is not decoded], plus the clip's root.
+    // Both clips play from their first frame for their whole length (S104 lasted 1.0995 s, S105 1.033 s).
+    float waterDrag = 0.25f, splashRise = 30.0f, splashSinkCap = 6.5f * 3.1605f, swanSink = 100.0f;
+    float swanSinkSeconds = 0.2f;
     float crouchHeight = 260.0f; // capsule while crouched/rolling: player data +0x14
     float slideMinNormalZ = 0.3f; // [I] too-steep floors down to this are slid down (g sin theta), steeper ones fallen past
     float beamAttach = 30.0f;   // root within this of a balance beam (x/y, and z) gets on it
@@ -645,7 +659,8 @@ private:
     bool enterWater(); // from the ground or the air; false if not in deep enough water
     bool wading() const; // on her feet in water of class 0x100 (wadeDepth..swimDepth deep, tru.exe 0x5D3860)
     void swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt);
-    vec3 swimSlide(vec3 pos, vec3 delta) const;
+    vec3 swimSlide(vec3 pos, vec3 delta, bool clampToSurface = true) const;
+    void waterEntry(float dt); // State::SwimSplash: the entry from the air (Tuning "Water entry")
     bool tryClimbOut(float reach);
     bool startDodge(vec2 stick); // under water, target lock held: swim_submerged_dodge_* by the stick (State::SwimDodge)
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().

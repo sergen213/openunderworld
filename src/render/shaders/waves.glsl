@@ -1,7 +1,7 @@
 // The Enhanced water surface's waves, one source for water.vert (displacement), water.frag (normals) and the post
 // pass (kM), so their shapes are identical. Embedded for GL by render/Water.cpp (expands
-// the #include line), #included by glslc for Vulkan. ouWaves needs the includer's block `w` (ripple, rippleInfo,
-// ocean) and `uRipples` (game::WaveField heights), the ouOcean* functions `uOcean` (the FFT ocean, shaders/ocean.comp).
+// the #include line), #included by glslc for Vulkan. The ouOcean* functions need the includer's block `w` (ocean)
+// and `uOcean` (the FFT ocean, shaders/ocean.comp); shaders/water_surface.glsl sums every source into one surface.
 // docs/RENDERING.md "Water".
 #ifndef OU_WAVES_GLSL
 #define OU_WAVES_GLSL
@@ -81,7 +81,8 @@ float ouSea(vec2 p, float t, int iterations) {
     return sumOfValues / sumOfWeights;
 }
 // tru.exe's sea waves (its vertex shader 0x69DFB0, render::waterWaves columns c60-c63): the height
-// -sum c63 (1 - sin(x c60 + y c61 + c62)) and here its gradient.
+// -sum c63 (1 - sin(x c60 + y c61 + c62)) and its gradient (the one place water shaders evaluate them: water_surface.glsl).
+float ouTruWaveHeight(vec2 p, mat4 c) { return -dot(c[3], 1.0 - sin(p.x * c[0] + p.y * c[1] + c[2])); }
 vec2 ouTruWaveSlope(vec2 p, mat4 c) {
     vec4 a = c[3] * cos(p.x * c[0] + p.y * c[1] + c[2]);
     return vec2(dot(a, c[0]), dot(a, c[1]));
@@ -179,20 +180,5 @@ OuOcean ouOceanSurface(vec2 p, vec2 dx, vec2 dy) {
 vec2 ouOceanNormalSlope(OuOcean o) {
     vec3 n = vec3(o.jxy * o.slope.y - o.slope.x * (1.0 + o.jyy), o.slope.x * o.jxy - (1.0 + o.jxx) * o.slope.y, max(o.J, 0.15));
     return -n.xy / n.z;
-}
-// Interactive waves (game::WaveField): xy the height gradient (taps 1.5 cells apart so the cell-sized checkerboard
-// bodies stamp cancels), z the height, w its Laplacian (negative on crests); faded over the field's outer 4 %.
-vec4 ouWaves(vec2 p) {
-    if (w.rippleInfo.y < 0.5) return vec4(0.0);
-    float inv = 1.0 / (w.ripple.z * w.rippleInfo.x);
-    vec2 uv = (p - w.ripple.xy) * inv;
-    vec2 in2 = min(uv, 1.0 - uv);
-    float fade = smoothstep(0.0, 0.04, min(in2.x, in2.y));
-    if (fade == 0.0) return vec4(0.0);
-    float d = 1.5 * w.ripple.z, du = d * inv;
-    float h = textureLod(uRipples, uv, 0.0).r;
-    float x0 = textureLod(uRipples, uv - vec2(du, 0.0), 0.0).r, x1 = textureLod(uRipples, uv + vec2(du, 0.0), 0.0).r;
-    float y0 = textureLod(uRipples, uv - vec2(0.0, du), 0.0).r, y1 = textureLod(uRipples, uv + vec2(0.0, du), 0.0).r;
-    return fade * vec4(vec2(x1 - x0, y1 - y0) / (2.0 * d), h, (x0 + x1 + y0 + y1 - 4.0 * h) / (d * d));
 }
 #endif

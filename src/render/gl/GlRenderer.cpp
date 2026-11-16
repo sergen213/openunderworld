@@ -1,5 +1,6 @@
 // OpenGL 4.6 core backend (DSA), loaded through libepoxy.
 #include "render/Ocean.hpp"
+#include "render/WaterField.hpp"
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
@@ -188,7 +189,7 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
 const char* kPostFsMain = R"(
 void main() {
     vec3 c = pow(ouScreenFilter(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / uBrightness));
-    vec3 u = ouUnderwater(ouAtmosphere(c, vUv), texelFetch(uScene, ivec2(vUv * vec2(textureSize(uScene, 0))), 0).rgb, vUv);
+    vec3 u = ouUnderwater(ouAtmosphere(c, vUv), vUv);
     if ((uUw & 3) == 0) {
         oColor = vec4(u * (1.0 - uFade), 1.0);
         return;
@@ -438,9 +439,17 @@ struct Resources {
     Texture agWater;
     Framebuffer agWaterFbo;
     Buffer waterUbo;                     // WaterBlock, UBO binding 4 (water, splash, post)
-    Texture ripples;                     // R32F height field, game::WaterSim
-    uint64_t rippleVersion = 0;
-    int rippleSize = 0;
+    // Interactive wave field (render/WaterField.hpp, shaders/water_field.comp): state + FFT scratch (SSBO 0 / 1), this
+    // frame's kicks (SSBO 2, contract C3), the external kick buffer (SSBO 3: fieldExternal, else the zero-count
+    // fieldNoKicks), bodies + wall mask (SSBO 4) and the RGBA16F uRipples (image unit 0; texture units 7 / 9). No program
+    // = no interactive waves.
+    Program fieldProgram;
+    Buffer fieldState, fieldWork, fieldKicks, fieldNoKicks, fieldFrame;
+    Texture ripples;
+    GLuint fieldExternal = 0;
+    waterfield::Stepper fieldStepper;
+    std::unique_ptr<waterfield::KickBuffer> fieldKickData = std::make_unique<waterfield::KickBuffer>();
+    std::unique_ptr<waterfield::FrameBuffer> fieldFrameData = std::make_unique<waterfield::FrameBuffer>();
     // FFT ocean (render/Ocean.hpp, shaders/ocean.comp): h0 spectra (SSBO 0), FFT scratch (SSBO 1), the RGBA16F array
     // uOcean (128^2 at level 0, 64^2 at level 1; image unit 0 / texture unit 12). No program = afl's waves.
     Program oceanProgram;
@@ -609,6 +618,30 @@ public:
             glTextureParameteri(id, GL_TEXTURE_WRAP_T, GL_REPEAT);
             glTextureParameteri(id, GL_TEXTURE_MAX_LEVEL, ocean::kLevels - 1);
             if (maxAniso_ > 1.0f) glTextureParameterf(id, GL_TEXTURE_MAX_ANISOTROPY, std::min(maxAniso_, ocean::kMaxAniso));
+        }
+        { // the interactive wave field; a driver that cannot build water_field.comp draws the water without it
+            std::string fieldError;
+            r.fieldProgram = linkCompute(waterfield::computeSource().c_str(), fieldError);
+            if (!r.fieldProgram.get()) std::fprintf(stderr, "ou: interactive wave field unavailable (%s)\n", fieldError.c_str());
+            const GLsizeiptr cells = GLsizeiptr(waterfield::kN) * waterfield::kN * GLsizeiptr(sizeof(glm::vec2));
+            r.fieldState = newBuffer();
+            glNamedBufferStorage(r.fieldState.get(), cells, nullptr, 0);
+            r.fieldWork = newBuffer();
+            glNamedBufferStorage(r.fieldWork.get(), cells, nullptr, 0);
+            r.fieldKicks = newBuffer();
+            glNamedBufferStorage(r.fieldKicks.get(), sizeof(waterfield::KickBuffer), nullptr, GL_DYNAMIC_STORAGE_BIT);
+            r.fieldNoKicks = newBuffer();
+            const waterfield::KickBuffer none{};
+            glNamedBufferStorage(r.fieldNoKicks.get(), sizeof none, &none, 0);
+            r.fieldFrame = newBuffer();
+            glNamedBufferStorage(r.fieldFrame.get(), sizeof(waterfield::FrameBuffer), nullptr, GL_DYNAMIC_STORAGE_BIT);
+            r.ripples = newTexture();
+            glTextureStorage2D(r.ripples.get(), 1, GL_RGBA16F, waterfield::kN, waterfield::kN);
+            glClearTexImage(r.ripples.get(), 0, GL_RGBA, GL_FLOAT, nullptr);
+            glTextureParameteri(r.ripples.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTextureParameteri(r.ripples.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTextureParameteri(r.ripples.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTextureParameteri(r.ripples.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         }
         r.splashVao = newVertexArray();
         r.splashVbo = newBuffer();
@@ -864,6 +897,7 @@ public:
             if (r.oceanProgram.get()) runOcean(options);
             else wb.ocean[0].x = 0.0f; // afl's waves
         }
+        if (!runWaterField(options, wb)) wb.rippleInfo.y = 0.0f; // the interactive waves (render/WaterField.hpp)
         const bool feedback = options.screenFilter && options.screenFilter->feedback();
         wb.filter[7].w = feedback && r.targets.hasFeedback ? 1.0f : 0.0f; // last frame's copy exists (+0x3D)
         glNamedBufferSubData(r.waterUbo.get(), 0, sizeof wb, &wb);
@@ -992,7 +1026,7 @@ public:
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_CULL_FACE);
             glBindTextureUnit(6, t.opaqueDepth.get());
-            glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get());
+            glBindTextureUnit(9, r.ripples.get());
             glBindTextureUnit(12, r.ocean.get());
             glBindTextureUnit(13, t.shaft[0].get());
             glBindVertexArray(r.emptyVao.get());
@@ -1019,7 +1053,7 @@ public:
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindTextureUnit(7, t.filterBlur.get());  // screen filters (unused unless one runs)
         glBindTextureUnit(11, t.feedback.get());   // the feedback effect's previous frame
-        glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get()); // underwater caustics' wave field
+        glBindTextureUnit(9, r.ripples.get()); // underwater caustics' wave field
         glBindTextureUnit(12, r.ocean.get());                                     // ... and the FFT ocean
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1086,6 +1120,9 @@ public:
                          double(presentTimes_.size() - 2) / s);
         }
         SDL_GL_MakeCurrent(window_, context_);
+        if (fieldTimed_) std::fprintf(stderr, "ou: GPU ms per frame: wave field %.3f (gl, %zu frames)\n", fieldNs_ * 1e-6 / double(fieldTimed_), fieldTimed_);
+        if (fieldQueries_[0]) glDeleteQueries(GLsizei(fieldQueries_.size()), fieldQueries_.data());
+        fieldQueries_ = {};
         parts_.clear();
         res_.reset(); // GL objects must die while the context is current
         SDL_GL_DestroyContext(context_);
@@ -1095,6 +1132,9 @@ public:
 private:
     bool presentStats_ = std::getenv("OU_VK_PRESENT_STATS") != nullptr;
     std::vector<std::chrono::steady_clock::time_point> presentTimes_;
+    std::array<GLuint, 3> fieldQueries_{}; // OU_VK_PRESENT_STATS: the wave field's GPU time (runWaterField)
+    size_t fieldFrame_ = 0, fieldTimed_ = 0;
+    double fieldNs_ = 0.0;
 
     static void attrib(GLuint vao, GLuint index, GLint size, GLenum type, GLboolean norm, size_t offset) {
         glEnableVertexArrayAttrib(vao, index);
@@ -1740,6 +1780,52 @@ private:
         for (int l = lod; l < ocean::kLevels - 1; ++l) run(l, l + 1, ocean::Mip, ocean::kMaxN >> (l + 1), false);
     }
 
+    // The interactive wave field (WaterField.hpp Pass, one dispatch each) after the ocean (rough-sea damping reads
+    // uOcean, unit 12): image unit 0 = uRipples. False: the field rests (or has no program).
+    bool runWaterField(const FrameOptions& o, const WaterBlock& wb) {
+        Resources& r = *res_;
+        std::optional<waterfield::Push> push = r.fieldStepper.frame(o, *r.fieldKickData, *r.fieldFrameData);
+        if (!push || !r.fieldProgram.get()) return false;
+        if (presentStats_ && !fieldQueries_[0]) glCreateQueries(GL_TIME_ELAPSED, GLsizei(fieldQueries_.size()), fieldQueries_.data());
+        const GLuint query = presentStats_ ? fieldQueries_[fieldFrame_ % fieldQueries_.size()] : 0;
+        if (query && fieldFrame_ >= fieldQueries_.size()) { // the result of 3 frames ago
+            GLuint64 ns = 0;
+            glGetQueryObjectui64v(query, GL_QUERY_RESULT, &ns);
+            fieldNs_ += double(ns), ++fieldTimed_;
+        }
+        if (query) glBeginQuery(GL_TIME_ELAPSED, query);
+        waterfield::Push p = *push;
+        if (wb.ocean[0].x > 0.5f) p.cfg.w |= waterfield::kOcean, p.ocean = glm::vec4(glm::vec3(wb.ocean[1]), wb.ocean[0].y);
+        const auto& k = *r.fieldKickData;
+        glNamedBufferSubData(r.fieldKicks.get(), 0, GLsizeiptr(16 + size_t(k.count) * sizeof(WaveKick)), &k);
+        glNamedBufferSubData(r.fieldFrame.get(), 0, sizeof(waterfield::FrameBuffer), r.fieldFrameData.get());
+        glUseProgram(r.fieldProgram.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, r.fieldState.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, r.fieldWork.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, r.fieldKicks.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, r.fieldExternal ? r.fieldExternal : r.fieldNoKicks.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, r.fieldFrame.get());
+        glBindTextureUnit(12, r.ocean.get());
+        glBindImageTexture(0, r.ripples.get(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        glUniform4fv(1, 1, glm::value_ptr(p.par));
+        glUniform4fv(2, 1, glm::value_ptr(p.win));
+        glUniform4fv(3, 1, glm::value_ptr(p.phys));
+        glUniform4fv(4, 1, glm::value_ptr(p.damp));
+        glUniform4fv(5, 1, glm::value_ptr(p.ocean));
+        for (waterfield::Pass pass : waterfield::kPasses) {
+            p.cfg.x = pass;
+            glUniform4iv(0, 1, glm::value_ptr(p.cfg));
+            glDispatchCompute(waterfield::groups(pass), 1, 1);
+            glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
+        }
+        if (query) glEndQuery(GL_TIME_ELAPSED);
+        ++fieldFrame_;
+        return true;
+    }
+    // Contract C3 (b): a GL buffer with the kick layout (`uint count; uint pad[3]; vec4 kicks[4096]`) that the field
+    // consumes each frame it runs (SSBO 3), setting its count back to 0. 0 detaches it.
+    void setExternalWaveKicks(GLuint buffer) { res_->fieldExternal = buffer; }
+
     // Enhanced water's animated water texture: uw_water.frag into mip 0 (time = the demo's tm.x), the caustic mesh added
     // into g only (uw_caustics.*: blend ONE + ONE), the mips box-filtered down (the demo's fsMip), bound to unit 18 for
     // the water, the shafts, the particles and the post pass.
@@ -1770,23 +1856,6 @@ private:
     void drawWater(const Camera& camera, Viewport vp, const FrameOptions& options) {
         Resources& r = *res_;
         Targets& t = r.targets;
-        const auto& rip = options.ripples;
-        if (rip.cellSize > 0 && rip.size > 0 && !rip.heights.empty()) {
-            if (!r.ripples.get() || r.rippleSize != rip.size) {
-                r.ripples = newTexture();
-                glTextureStorage2D(r.ripples.get(), 1, GL_R32F, rip.size, rip.size);
-                glTextureParameteri(r.ripples.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTextureParameteri(r.ripples.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTextureParameteri(r.ripples.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTextureParameteri(r.ripples.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                r.rippleSize = rip.size;
-                r.rippleVersion = 0;
-            }
-            if (r.rippleVersion != rip.version) {
-                glTextureSubImage2D(r.ripples.get(), 0, 0, 0, rip.size, rip.size, GL_RED, GL_FLOAT, rip.heights.data());
-                r.rippleVersion = rip.version;
-            }
-        }
         glBlitNamedFramebuffer(t.scene.get(), t.opaqueColorFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
                                GL_COLOR_BUFFER_BIT, GL_NEAREST);
         glBlitNamedFramebuffer(t.scene.get(), t.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
@@ -1795,7 +1864,7 @@ private:
         glViewport(0, 0, vp.width, vp.height);
         glBindTextureUnit(5, t.opaqueColor.get());
         glBindTextureUnit(6, t.opaqueDepth.get());
-        glBindTextureUnit(7, r.ripples.get() ? r.ripples.get() : r.white.get());
+        glBindTextureUnit(7, r.ripples.get());
         glBindTextureUnit(12, r.ocean.get()); // the FFT ocean (shaders/ocean.comp)
         glUseProgram(r.waterProgram.get());
         glEnable(GL_DEPTH_TEST);

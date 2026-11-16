@@ -1,7 +1,7 @@
 // Enhanced water: shared uniform block and GLSL for both backends (Original water keeps TRU's shaders).
 // The surface look is smallcableboi's Godot water (CC0: Fresnel, scrolling wave layers, absorption, traced / simple
 // refraction, traced SSR, edge foam, Snell's window) with afl_ext's procedural ocean waves (MIT) on open seas, plus the
-// interactive wave field (game::WaveField), splash droplets and the underwater post effect. docs/RENDERING.md "Water".
+// interactive wave field (render/WaterField.hpp), splash droplets and the underwater post effect. docs/RENDERING.md "Water".
 #pragma once
 
 #include "render/Renderer.hpp"
@@ -35,7 +35,7 @@ struct WaterBlock {
     glm::vec4 sunColor;    // rgb, w caustics strength
     glm::vec4 fogColor;    // rgb, w 1 = the camera is submerged (underwater post)
     glm::vec4 fogRange;    // x fog near, y fog far, z ripple normal strength, w reflection strength
-    glm::vec4 ripple;      // origin x, origin y, cell size, surface z
+    glm::vec4 ripple;      // interactive wave field (shaders/water_surface.glsl C1): origin x, origin y, cell size, surface z
     glm::vec4 rippleInfo;  // x grid size, y 1 = a wave field is bound, z/w unused
     glm::vec4 ambient;     // rgb scene ambient (scene::Environment::ambient), w unused
     // ---- v0.10 extras (FrameOptions waterDetail / waterDebug / atmosphere / weather) ----

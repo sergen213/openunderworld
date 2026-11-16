@@ -4,6 +4,7 @@
 #include "render/Water.hpp"
 
 #include "render/Ocean.hpp"
+#include "render/WaterField.hpp"
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 
@@ -48,6 +49,9 @@ const char* kFilter =
     ;
 const char* kWaves =
 #include "waves.glsl.inc"
+    ;
+const char* kWaterSurface =
+#include "water_surface.glsl.inc"
     ;
 const char* kUwMedium =
 #include "uw_medium.glsl.inc"
@@ -241,9 +245,11 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     } else {
         w.filter[5] = {1, 0, 0, 1}, w.filter[7] = {1, 0, 0, 0}; // feedback off: keep the scene
     }
-    const auto& r = options.ripples;
-    w.ripple = {r.originX, r.originY, r.cellSize, r.surfaceZ};
-    w.rippleInfo = {float(r.size), r.cellSize > 0 && r.size > 0 && !r.heights.empty() ? 1.0f : 0.0f, 0, 0};
+    // The interactive wave field (render/WaterField.hpp; shaders/water_surface.glsl C1): the renderer clears
+    // rippleInfo.y when its simulation cannot run.
+    const auto& field = options.waterField;
+    w.ripple = {field.originX, field.originY, field.cellSize, field.surfaceZ};
+    w.rippleInfo = {float(waterfield::kN), waterfield::wanted(options) ? 1.0f : 0.0f, 0, 0};
     w.seaWaves = waterWaves(camera.position, 1.0f, options.waterVolumes); // the sea the caustics look through
     if (ocean::wanted(options)) { // the renderer clears ocean[0].x when its FFT pass cannot run
         const int n = ocean::gridSize(options);
@@ -435,9 +441,11 @@ std::string withVersion(const char* source, bool vulkan) {
     return source;
 }
 // GL has no #include: splice the shared files in place of their #include lines (glslc resolves them for Vulkan); every
-// occurrence (waves.glsl has an include guard).
+// occurrence (waves.glsl and water_surface.glsl have include guards; water_surface.glsl, which includes waves.glsl,
+// expands first).
 std::string expandIncludes(std::string s) {
     const std::pair<const char*, const char*> files[] = {{"#include \"sun.glsl\"", sunGlsl()},
+                                                         {"#include \"shaders/water_surface.glsl\"", kWaterSurface},
                                                          {"#include \"shaders/waves.glsl\"", kWaves},
                                                          {"#include \"shaders/uw_medium.glsl\"", kUwMedium}};
     for (const auto& [line, text] : files)

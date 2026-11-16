@@ -769,7 +769,7 @@ TEST(StreamReal, OpenSeaWater) {
 }
 
 // The open seas' waves (tru.exe 0x69DA80 / 0x69DFB0, GAMEPLAY.md "Water"): the surface is the volume top lowered by
-// sum height x (1 - cos), so the ch1 / ch2 yachts' decks stay above the water at every phase and Lara starts dry; a
+// sum height x (1 - sin), so the ch1 / ch2 yachts' decks stay above the water at every phase and Lara starts dry; a
 // swimmer rides the waves.
 TEST(StreamReal, YachtDecksAboveSea) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

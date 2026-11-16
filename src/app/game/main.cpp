@@ -49,6 +49,7 @@
 #include "render/OriginalShading.hpp"
 #include "render/Renderer.hpp"
 #include "render/Water.hpp"
+#include "render/WaterField.hpp"
 #include "video/Player.hpp"
 #include "video/Movie.hpp"
 #include "ui/Art.hpp"
@@ -2254,6 +2255,12 @@ int main(int argc, char** argv) {
     std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
     std::vector<ou::render::WaterVolume> waterVolumes;     // loaded units' water boxes, each frame
     std::vector<ou::render::WaterParticle> splashParticles; // game::WaterSim droplets, each frame
+    // game::WaterSim's wave inputs for the GPU wave field (render/WaterField.hpp), each frame: the kicks made since the
+    // last frame (serials past waveKickSerial) and the current pressure bodies.
+    std::vector<ou::render::WaveKick> waveKicks;
+    std::vector<ou::render::WaveBody> waveBodies;
+    uint64_t waveKickSerial = 0;
+    uint64_t loggedWaveField = 0; // generation + 1 of the wave field last logged
     std::vector<ou::render::Bubble> uwBubbles; // Enhanced water: effect bubbles + Lara's breath, each frame
     ou::fx::Breath breath;                     // Lara's breath bubbles (fx/Breath.hpp)
     std::vector<ou::render::MeshOpacity> meshOpacity;      // fading instances (class-7 fades), each frame
@@ -3407,7 +3414,7 @@ int main(int argc, char** argv) {
                                     near->type().name.c_str(), near->uid(), std::string(ou::game::ai::modeName(near->state().mode)).c_str(),
                                     near->health(), near->type().tuning.health, glm::distance(near->position(), s.pos)));
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
-            lines.push_back(fmt("water %s | ripples %s | splashes %zu", opt.gfx.water ? "enhanced" : "original",
+            lines.push_back(fmt("water %s | waves %s | splashes %zu", opt.gfx.water ? "enhanced" : "original",
                                 world->water().active() ? "active" : "-", world->water().drops().size()));
             lines.push_back(fmt("effects: %zu emitters | %zu particles | %zu glows | %zu fixture lights | %zu sprite batches",
                                 effects.system.emitterCount(), effects.system.particleCount(), effects.system.glowCount(),
@@ -3565,9 +3572,27 @@ int main(int argc, char** argv) {
                          o[0].r * 290.0f, o[0].g * 290.0f, o[0].b * 290.0f);
         }
         const auto& ws = world->water();
-        if (opt.gfx.water && ws.active())
-            fo.ripples = {ws.originX(), ws.originY(), ou::game::WaveField::kCell, ws.surfaceZ(), ou::game::WaveField::kN,
-                          ws.heights(), ws.version()};
+        { // every kick once, also those of ticks run while the field rested (it then ignores them)
+            static_assert(sizeof(ou::game::WaveKick) == sizeof(ou::render::WaveKick) && sizeof(ou::game::WaveBody) == sizeof(ou::render::WaveBody));
+            static_assert(ou::game::WaveWindow::kN == ou::render::waterfield::kN);
+            const auto kicks = ws.kicks();
+            const size_t from = size_t(std::clamp<uint64_t>(waveKickSerial - std::min(waveKickSerial, ws.kickBase()), 0, kicks.size()));
+            waveKickSerial = ws.kickBase() + kicks.size();
+            waveKicks.clear(), waveBodies.clear();
+            for (size_t i = from; i < kicks.size(); ++i) waveKicks.push_back(std::bit_cast<ou::render::WaveKick>(kicks[i]));
+            for (const auto& b : ws.bodies()) waveBodies.push_back(std::bit_cast<ou::render::WaveBody>(b));
+        }
+        if (opt.gfx.water && ws.active() && !mainMenu) {
+            const auto& win = ws.window();
+            if (ws.generation() + 1 != loggedWaveField) {
+                loggedWaveField = ws.generation() + 1;
+                std::fprintf(stderr, "ou-game: wave field on the surface at z %.1f (depth %.0f) around %.0f, %.0f\n", ws.surfaceZ(),
+                             ws.depth(), ws.originX() + 0.5f * float(ou::game::WaveWindow::kN) * ou::game::WaveWindow::kCell,
+                             ws.originY() + 0.5f * float(ou::game::WaveWindow::kN) * ou::game::WaveWindow::kCell);
+            }
+            fo.waterField = {true, ws.originX(), ws.originY(), ou::game::WaveWindow::kCell, ws.surfaceZ(), ws.depth(),
+                             ws.generation(), waveKicks, waveBodies, win.mask(), ou::game::WaveWindow::kMaskN, win.version()};
+        }
         waterVolumes.clear();
         const double waveSeconds = (double(world->ticks()) + clock.alpha()) * ou::game::kTickSeconds; // the sim's sea clock
         for (const auto& m : world->collision().markup)

@@ -257,6 +257,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `grapple.on_wall` = `grapple.rappel` | feet on the wall on the rope (state grapplerappel) |
 | `grapple.wall_run` | running along the wall: grapplerappel playing `ng_ground_to_wallrun_*` or `grapple_rappel_left/right*` |
 | `water.in`, `water.under`, `water.air` | in a water volume or swimming; head under water; breath 0..1 |
+| `water.depth` | her root under her volume's wave surface (treading: 44.1); unavailable out of the water |
 | `bike.count`, `bike.mounts` | bikes known to the World; mounts so far |
 | `bike.mounted` | Lara is mounting, riding or leaving a bike. The probes below are unavailable when she is not |
 | `bike.uid`, `bike.phase` | its intro uid; `parked mount ride dismount` |
@@ -439,7 +440,8 @@ tested behaviour happen.
 | `swim` | l1_seatop | drop into the sea, surface swim 1348.6 units/s, dive, under water (on the wetsuit's tanks the breath stays full), surfacing |
 | `swim_breath` | l2_cliffclimb | no tanks: the breath drains under the river, 1.5 times as fast sprinting, the meter refills in 2 s at the surface |
 | `swim_moves` | l1_seatop | surface turn on the spot, dive, under-water dodges up / down by their clips, pistols drawn and fired under water |
-| `swan_dive` | l2_cliffclimb | running jump + crouch off the cliff top: swan clips, 5900 down into the sea on `swim_swan_land`, no damage |
+| `swan_dive` | l2_cliffclimb | running jump + crouch off the cliff top: swan clips, 5900 down into the sea on `swim_swan_land`, head first and on down to the submerged swim (more than 1000 under), never a landing, no damage [O Wine] |
+| `water_entry` | l2_cliffclimb | off the yacht's bow: a running jump goes in (`swim_jump_land`), at most 220 under the waves and treading 44.1 under them, no landing; a swan dive goes in head first, far under, ends in the submerged swim [O Wine, docs/GAMEPLAY.md "Water entry"] |
 | `puzzle_pole_block_door` | l4_ballcourt | pole 6503 into lever 6502 (graph 0 -> 1), push block 6504 under it (two pushes), up onto the block, jump to the pole: lever joint slides, door 6505 rises |
 | `push_block` | l4_ballcourt | push block 6504 gripped by its push / pull record: pushed 7 s along her facing (33.2 units a second, her pull strength 1.4), pulled back, moved sideways (80 degrees off forward); the three-axis joint's travel, her obj_block clips |
 | `gauntlet_move` | l2_maproom | Thor door 2661: Interact + stick bare-handed moves nothing; with `g_gauntletleft` given, Interact grips its handle (`thor_engage`) and a sidestep slides it to its limit 663.7; let go: it stays, braked |
