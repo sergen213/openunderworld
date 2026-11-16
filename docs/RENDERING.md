@@ -404,9 +404,9 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   + .6 (× .8), × ss(260 m, 60 m, d); n = normalize(−.8 s.x, −1, −.8 s.y) (facing down); Snell's window k = 1 − 1.769
   (1 − ci²), win = ss(0, .22, k); sky = (.30, .78, 1) × 1.3 × clamp(1 + 3.8 (.6 s.x − .8 s.y), .25, 3) + (1, .95, .85)
   × (pow(sd, 60) × 1.3 + pow(sd, 500) × 12), × (1 − fr), fr = (1 − √k)⁵, sd = the refracted ray · the sun; outside the
-  window the reflection fogIn(wp, R, 300 m) × 1.15; c = mix(refl, sky, win). Only the demo's slope bends it (1:1: our
-  FFT / afl / Godot / wave-field normals do not; the mesh keeps their displacement), no SSR, no shadow on the glint
-  (none in the demo). Ours (the demo has nothing above its surface): inside the window what stands above the water (the
+  window the reflection fogIn(wp, R, 300 m) × 1.15. Only the demo's slope bends it (1:1: our FFT / afl / Godot /
+  wave-field normals do not; the mesh keeps their displacement), no shadow on the glint (none in the demo). Ours (the
+  demo has nothing above its surface): inside the window what stands above the water (the
   yacht hull, the shore, Lara) replaces the demo's sky term: the refracted ray traced through the opaque scene (14
   quadratic steps + 5 refinements, 60 m, hits above the surface only), else the scene at the slope-offset pixel (uv +
   .03 s) within 100 m; faded in at the screen border and from 60 m; same (1 − fr), glint on top, misses keep the demo's
@@ -414,15 +414,18 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   ray in the air) and fogIn; here fogIn takes `agSun` (the level sun refracted, as everywhere under water) and the glint
   `agSunAir` (the same sun unrefracted, its air side), so the disc sits where agSun points from under water; no level
   sun: the demo's SUN for both. The demo's `fog(c, wp)` is the post pass's (`ouUwFog`, below: rays through the surface
-  fog up to it), so the far surface fades into the fog at 185–230 m. Outside the window (k < 0) the surface is black and
-  unfogged, as the demo actually renders it: measured in the live demo (Chrome WebGPU, this RADV box, bit tests of its
-  W_SURF output) its sky term is NaN/Inf wherever k < 0, `mix(refl, sky, 0)` keeps the NaN and `fin()` clamps the fogged
-  NaN to 0, so its captures show dark ripples between bright window gaps (only shafts and bloom over them); with that
-  term zeroed (win = 0) its surface turns the same uniform pale cyan ours was. Written as exactly 0, the k = 0 step
-  spread over one pixel (k at the neighbouring pixels by finite differences); the post keeps it black and unfogged
-  within 60 m and fades it into W_SURF's own fog of it, fog(0, wp) = fogIn, by 260 m (× 1 − ss(260, 60, d), the
-  demo's slope fade): the demo's terrain hides its black surface at a distance, our open seas showed it meeting the
-  240 m background at a hard horizon. The rest is
+  fog up to it), so the far surface fades into the fog at 185–230 m. Outside the window (k ≤ 0) the surface shows the
+  total internal reflection of the water below (ours). The demo itself renders it black (measured in the live demo,
+  Chrome WebGPU, this RADV box: its sky term is NaN/Inf wherever k < 0, `mix(refl, sky, 0)` keeps the NaN and `fin()`
+  clamps it to 0), which was copied until 0.49.1 and read as a black ceiling over every under-water view (user report,
+  l2_cliffclimb; not ray tracing: the from-below branch has no RT path, RT on and off rendered the same black). Real
+  water mirrors itself there, so the reflected ray R carries the medium: the demo's own refl, fogIn(wp, R, 300 m) ×
+  1.15, and with the post's medium on the scene where R meets it on screen (the same 14 + 5 step march, 60 m, hits more
+  than 0.5 m under the surface), TRU's colour through `agUnpost` and `agRelight` (normal from the hit's depth
+  neighbours, the caustics' mean), × e^(−sg L) + fogIn over its length L, faded in at the screen border and from 40 m.
+  Across Snell's angle c = mix(refl, sky + refl × fr, win): the reflection at k ≤ 0, sky × (1 − fr) + reflection × fr
+  inside the window, continuous at k = 0 (fr = 1, win = 0), no dark ring. The post fogs eye → wp over it like the
+  window, so far away it meets the 240 m background without a horizon. All of it is
   HDR (sky 0.4–3.9, glint ~13) and the scene target is 8-bit with `graphics.hdr` off: written as c / (1 + c)
   (`agSurfEncode`), decoded by the post for rays leaving through the surface (before: clipped at 1, the bright gaps
   turned white). TRU's colours traced inside the window go through `agUnpost` (below) first. Vulkan draws the surface
@@ -717,8 +720,9 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   texels): p comes from the depth buffer, whose implicit derivatives spike at silhouettes; no level sun = the mean.
   Then `agFog(c, p)` = c e^(−sg d) ss(230 m, 185 m, d) + fogIn; rays leaving through the surface (looking up from under
   it) fog up to it and keep what water.frag drew there (W_SURF's `fog(c, wp)`: the Snell's window, decoded, also over
-  sky pixels; its exact-0 black stays 0, also where the opaque point lies within 3 m under the flat surface, which the
-  displaced mesh can cover); other sky pixels are the demo's background (`vsB` / `fsB`): fog(0, eye + dir · 240 m).
+  sky pixels; the reflection outside the window likewise; where the opaque point lies within 3 m under the flat surface
+  and the displaced mesh covers it, the encoded surface is relit as an opaque point instead) [I: rare, near the
+  waterline]; other sky pixels are the demo's background (`vsB` / `fsB`): fog(0, eye + dir · 240 m).
   Everything × the pass strength. The frame then goes through the under-water composite ("Under water: marine snow,
   bubbles and the composite" below) instead of the post pass's tone map. With Enhanced water submerged this medium is
   the whole look: ou-game draws neither TRU's deep / surface water filters (l1 5292's ColorDOF blur at alpha 0.89 and
@@ -727,7 +731,7 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   (splash droplets, `splash_composite.frag`; effect particles and glows, `fx::System::spritesBelowZ` = the eye's wave
   surface) is drawn only where the eye sees it through Snell's window, with the limits of water.frag's restore of the
   scene above: the view ray within 48.6° of vertical and 60 m, faded over 45–48.6° and 50–60 m. Fire, splashes near Lara
-  and the like show through the window; the rest printed over the black outside it as flat pale discs (l1_seatop: a
+  and the like show through the window; the rest printed over the reflection outside it as flat pale discs (l1_seatop: a
   texture-160 smoke sprite ~72 m up, ~190 m away; tru.exe veils such sprites with its full-screen pass). The older
   tuned medium is gone.
 - Animated water texture `uAgWater` (ours, Enhanced only; r and ba abyssal-garden's `W_WATER` literally,
