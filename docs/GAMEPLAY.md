@@ -1721,7 +1721,14 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   the CPU, same h0, quantized dispersion and clock as ocean.comp; ~9 units RMS left out; `Ocean.CpuSwellIsTheDrawnHeight`)
   and `FrameOptions::oceanTime` to the sim's sea clock, so `waterSurface` (swimming, buoyancy, the eye's water) is the
   drawn sea and the yacht rides it with Lara dry on deck (`StreamReal.YachtRidesTheDrawnSwell`). Original water, the
-  afl sea and tests keep tru.exe's waves alone (gameplay then depends on the water settings).
+  afl sea and tests keep tru.exe's waves alone (gameplay then depends on the water settings); self-tests too, unless
+  the scenario says `"sea_swell": true` (docs/SELFTEST.md), so Wine-measured bounds hold.
+- The deck stays dry: the swell clipped at the rest plane is all troughs (the mean sea sits lower), so l2_cliffclimb's
+  motorboat heaves its deck between z 78 and 154 (150–159 on the waves alone), under the volume's top 108. Supported
+  by a moving solid (standing on it, or coming down onto it within a step) Lara is not in the water whatever the top
+  or the waves say (`Player::enterWater`); off the edge the entry fires as before. Walking off an edge over a face too
+  steep to slide (the rolled hull's side) is a fall like over nothing, so the safety drop still catches the deck's
+  ledge. tru.exe's decks never sit under the top [I], so it needs neither (self-test `ch07_cliffclimb_boat_swell`).
 - In water: the water probe box overlaps a volume, the feet are below its surface and there is no floor within
   `swimDepth` (400) below the surface. From the air → SwimSplash ("Water entry" below) → SwimTread, or Surfacing (rising
   **900 units/s**, tru.exe's surface group after a deep entry) → SwimTread; the swan dive → SwimUnder. From the ground

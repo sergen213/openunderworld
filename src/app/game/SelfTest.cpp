@@ -342,7 +342,7 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
     const std::string top = "scenario";
     if (!j.is_object()) bad(top, "the scenario is an object");
     static const std::set<std::string> kTop = {"version", "name", "chapter", "walkthrough", "level", "spawn", "start_chapter", "level_chapter", "load",
-                                               "cinematics", "stop_on_fail", "fixtures", "steps", "note"};
+                                               "cinematics", "sea_swell", "stop_on_fail", "fixtures", "steps", "note"};
     for (const auto& [key, value] : j.items())
         if (!kTop.contains(key)) bad(top, "unknown key '" + key + "'");
     if (!j.contains("version") || !j["version"].is_number_integer() || j["version"].get<int>() != 1) bad(top, "'version' must be 1");
@@ -375,9 +375,10 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
     const int entries = int(!t.entry_.level.empty()) + int(t.entry_.chapter >= 0) + int(!t.entry_.load.empty());
     if (entries != 1) bad(top, "exactly one of 'level', 'start_chapter', 'load' enters the game");
     if (t.entry_.spawn && t.entry_.level.empty()) bad(top, "'spawn' goes with 'level'");
-    for (const char* key : {"cinematics", "stop_on_fail"})
+    for (const char* key : {"cinematics", "sea_swell", "stop_on_fail"})
         if (j.contains(key) && !j[key].is_boolean()) bad(top, std::string("'") + key + "' wants true / false");
-    t.entry_.cinematics = j.value("cinematics", false), t.stopOnFail_ = j.value("stop_on_fail", true);
+    t.entry_.cinematics = j.value("cinematics", false), t.entry_.seaSwell = j.value("sea_swell", false);
+    t.stopOnFail_ = j.value("stop_on_fail", true);
     const auto fixtures = [&](const json& list, const std::string& where) {
         if (!list.is_array()) bad(where, "'fixtures' wants an array");
         std::vector<json> out;

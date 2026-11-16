@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "ch07_cliffclimb_boat_swell",
+  "chapter": "07 Remnants: Coastal Thailand's start on the motorboat with the drawn FFT swell in the sim's sea (default play: Enhanced water, FFT ocean)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/06remnants.html",
+  "note": "ch07_cliffclimb_boat_to_cliff's first steps with \"sea_swell\": the boat rides the swell the player sees, its deck heaving (78..154 against a steady 150..159 on tru.exe's waves alone) and dipping under the sea volume's static top (108) and the swell's crests. While she stands or runs on the deck (supported by the floating body) she is not in the water: she runs across it and over the side into the hang on its edge (the safety drop), then Drop lets her into the sea. tru.exe's decks never sit under the static top, so it needs no such rule [I]; docs/GAMEPLAY.md 'Floating objects'.",
+  "start_chapter": 2,
+  "sea_swell": true,
+  "steps": [
+    {"step": "on_the_boat", "duration": 2,
+     "expect": [{"probe": "world.unit", "eq": "l2_cliffclimb"},
+                {"probe": "world.checkpoint", "eq": 3835},
+                {"probe": "player.state", "eq": "idle"},
+                {"probe": "water.in", "eq": false, "over": "all", "note": "the heaving deck keeps her dry"}]},
+    {"step": "over_the_side", "plan": ["go -23835 -3900 150"], "duration": 10,
+     "until": {"probe": "player.clip", "eq": "ledgeb_idle"},
+     "expect": [{"visits": ["run", "droptohang", "hang"]},
+                {"clips": ["drop_to_ledgeb", "ledgeb_idle"]},
+                {"probe": "player.state", "over": "all", "in": ["idle", "turn", "run", "stop", "droptohang", "hang"], "note": "no water entry on the deck"},
+                {"probe": "step.health_lost", "eq": 0}]},
+    {"step": "into_the_sea", "input": ["0.2 drop 1", "0.3 drop 0"], "duration": 4,
+     "expect": [{"visits": ["hang", "fall", "swimsplash", "swimtread"]},
+                {"probe": "player.state", "eq": "swimtread"},
+                {"probe": "water.in", "eq": true},
+                {"probe": "player.swimming", "eq": true}]}
+  ]
+}

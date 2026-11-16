@@ -2032,6 +2032,11 @@ int main(int argc, char** argv) {
         const auto& en = selfTest->entry();
         opt.level = en.level, opt.spawn = en.spawn, opt.chapter = en.chapter >= 0 ? en.chapter : en.levelChapter, opt.loadSlot = en.load;
         opt.noCinematics = !en.cinematics, opt.noMovies = true;
+        // The sim's sea (game::setSeaSwell): tru.exe's waves only unless the scenario opts into the drawn swell, so
+        // Wine-measured bounds hold whatever the config's ocean; opted in, Enhanced water draws the FFT ocean it rides.
+        opt.graphics.ocean = en.seaSwell ? "fft" : "procedural";
+        if (en.seaSwell) opt.graphics.water = "enhanced";
+        opt.gfx = ou::config::resolve(opt.graphics);
         selfTest->trace = opt.selfTestTrace;
         if (opt.selfTestReport.empty()) opt.selfTestReport = opt.selfTest.stem().string() + ".report.json";
     }

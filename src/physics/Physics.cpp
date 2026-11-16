@@ -730,7 +730,10 @@ struct Scene::Impl {
         // Loose bodies: the physics record's damping, 0.01 per 30 Hz frame on both (tru.exe 0x48E690 -> body +0x154 /
         // +0x158, v *= 1 - frames x damping in 0x4EFB20; every record read in memory holds 0.01 / 0.01) = 0.3 / s,
         // Jolt's v *= 1 - dt x damping. Jolt's 0.05 / s default left the floating yachts' heave and roll ringing
-        // longer than the original's after a splash-down.
+        // longer than the original's after a splash-down. The step's dt is in 30 Hz frames (0x492B80: clamped to 2,
+        // 1.1538 = 30 / 26 frames, -> 0x4F1900 -> 0x4F0AB0 -> 0x4EFB20), and bodies without a record take the body
+        // template's 0.01 / 0.01 too (0x4DD820 writes +0x100 / +0x104), so it holds for every loose body: the
+        // tomb's thrown weights land shorter than under Jolt's default (replay baldrs_plates_gate re-recorded).
         if (layer == kLayerLoose) s.mMotionQuality = JPH::EMotionQuality::LinearCast, s.mLinearDamping = s.mAngularDamping = 0.01f * kFrame;
         else s.mLinearDamping = 0, s.mAngularDamping = angularDamping;
         return add(s, key, JPH::EActivation::Activate);

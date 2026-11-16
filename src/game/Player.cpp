@@ -420,13 +420,14 @@ void Player::groundMove(vec3 delta, float dt) {
     }
     s_.pos = p; // walked off an edge, or onto a slope too steep to stand on
     const vec3 vel(xy(delta) / dt, 0);
-    if (!g && trySafetyDrop(vel)) return;
     if (g && g->normal.z >= t_.slideMinNormalZ) {
         s_.pos.z = g->point.z;
         startSlide(vel, true);
-    } else {
-        startFall(vel);
+        return;
     }
+    // Falling (no floor in reach, or only a face too steep to slide: a wall under the edge, as the side of a boat
+    // rolled by the swell) the safety drop catches the edge's ledge (chart T114: PSCCF_IsFalling).
+    if (!trySafetyDrop(vel)) startFall(vel);
 }
 
 // The chart's stick quadrants against her heading (cond 0x192: 410 forward, 411 back, 412 / 413 the sides) [I: 45 degrees]
@@ -3089,6 +3090,14 @@ bool Player::enterWater() {
     // class 0x400 = dry while z - top > 0) against the volume's +0x58 top without the waves [O]; Wine (l2_cliffclimb
     // sea): the entry state S104 / S105 began the frame after her root passed the top, up to 356 over a wave trough.
     if (s_.pos.z > (airborne ? vol.points[1].z : surf)) return false;
+    // Supported by a moving solid (a floating boat's deck: Scene loose bodies are collision dynamics) - standing on it,
+    // or coming down onto it within a step - she is not in the water, whatever the static top or the waves say: the
+    // hull keeps its deck dry. With the drawn swell in the sim's sea (game::setSeaSwell) l2_cliffclimb's motorboat
+    // heaves its deck to 78, under the volume's top 108; tru.exe's decks never sit under the top [I], so it needs no
+    // such rule. Off the deck's edge (no floor under her, or the hull's side) the entry fires as before.
+    if (const auto deck = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + (airborne ? t_.stepDown : 20.0f));
+        deck && deck->dynamic >= 0 && deck->normal.z >= t_.minFloorNormalZ)
+        return false;
     // Shallow (a floor within swimDepth under the surface): walk. Feet already deeper than that are swimming (placed under
     // l7_arctic_sea's ice by 275_hel_explosion, where the probe from the surface would hit the ice).
     if (s_.pos.z > surf - t_.swimDepth)
