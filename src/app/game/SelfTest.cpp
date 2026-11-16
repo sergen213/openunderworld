@@ -108,7 +108,7 @@ const std::set<std::string_view>& fixedProbes() {
         "combat.time_scale", "combat.world_scale", "combat.manual_aim", "combat.headshot", "combat.headshot_ready", "combat.second_target",
         "grapple.attached", "grapple.state", "grapple.target", "grapple.offered", "grapple.rope", "grapple.rope_max", "grapple.kind",
         "grapple.bends", "grapple.on_wall", "grapple.rappel", "grapple.wall_run", "grapple.swinging", "grapple.pulling",
-        "water.in", "water.under", "water.air",
+        "water.in", "water.under", "water.air", "water.depth",
         "bike.count", "bike.mounted", "bike.uid", "bike.phase", "bike.speed", "bike.airborne", "bike.wheels", "bike.steer", "bike.stunt",
         "bike.throttle", "bike.rpm", "bike.yaw", "bike.pitch", "bike.roll", "bike.brake_time", "bike.mounts", "bike.pos.x", "bike.pos.y",
         "bike.pos.z",
@@ -576,6 +576,11 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (p[1] == "in") return swimming(s.state) || s.water >= 0;
         if (p[1] == "under") return w.submerged();
         if (p[1] == "air") return num(w.air());
+        if (p[1] == "depth") { // her root under her volume's wave surface (game::waterSurface), null out of the water
+            const auto& mk = w.collision().markup;
+            if (s.water < 0 || size_t(s.water) >= mk.size()) return {};
+            return num(game::waterSurface(mk[size_t(s.water)], glm::vec2(s.pos), double(w.ticks()) * game::kTickSeconds) - s.pos.z);
+        }
         return {};
     }
     if (p[0] == "bike") {

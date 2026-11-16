@@ -7399,9 +7399,11 @@ TEST(GameReal, SwimDodgesMoveAsTheirClips) {
     EXPECT_EQ(s.state, State::SwimUnder);
 }
 
-// Swan dive: a running jump, crouch while it still rises. Into deep water from any height: swim_swan_land carries her
-// 235 on and 346 down (its root motion from the request's start frame), unhurt. Onto the ground she rolls out of it (ng_swan_land, 591 ahead) and the fall counts as
-// any other: a short drop is free, a long one kills (death_fall_swan).
+// Swan dive: a running jump, crouch while it still rises. Into deep water from any height she goes in head first and
+// keeps going down (tru.exe under Wine, Tuning "Water entry": her velocity shrinks by 0.875 a 60 Hz frame, she sinks
+// 50 more a frame for 12 frames from the second, plus swim_swan_land's root from its first frame), unhurt, and ends
+// under water. Onto the ground she rolls out of it (ng_swan_land, 591 ahead) and the fall counts as any other: a short
+// drop is free, a long one kills (death_fall_swan).
 TEST(GameReal, SwanDiveIntoWaterAndOntoLand) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -7433,14 +7435,31 @@ TEST(GameReal, SwanDiveIntoWaterAndOntoLand) {
         EXPECT_TRUE(stage3) << "stage 1 (25 frames), stage 2 (6), then the stage 3 hold";
         ASSERT_EQ(s.state, State::SwimSplash);
         EXPECT_EQ(s.clip, "swim_swan_land");
-        const vec3 in = s.pos;
-        int n = 0;
-        for (; n < 200 && s.state == State::SwimSplash; ++n) w->tick({});
-        EXPECT_EQ(s.state, State::SwimUnder);
-        // the clip's root motion (268.5 on, 437.7 down over 31 frames) from its request's start frame 4
-        EXPECT_NEAR(s.pos.x - in.x, 235.0f, 2.0f);
-        EXPECT_NEAR(s.pos.z - in.z, -346.1f, 2.0f);
-        EXPECT_NEAR(n, 54, 2) << "27 frames";
+        const auto lib = game::loadLaraAnims(bf);
+        const anim::Clip* clip = lib.find("swim_swan_land");
+        ASSERT_TRUE(clip);
+        const auto rootZ = [&](double t) { return game::rootTranslation(*clip, std::min(t, clip->durationSeconds()), false).z; };
+        const float dt = 1.0f / 60;
+        vec3 p = s.pos, v = s.vel;
+        EXPECT_LT(v.z, -3000.0f) << "a 6000 plunge";
+        w->tick({});
+        EXPECT_EQ(s.state, State::SwimSplash);
+        EXPECT_NEAR(s.pos.z - p.z, v.z * dt, 0.01f) << "the entry state's first frame: her velocity alone";
+        EXPECT_EQ(s.vel, v);
+        int n = 1;
+        for (; n < 200 && s.state == State::SwimSplash; ++n) {
+            p = s.pos, v = s.vel;
+            w->tick({});
+            if (s.state != State::SwimSplash) break;
+            EXPECT_NEAR(s.vel.z, v.z * 0.875f, 1e-3f) << n;
+            EXPECT_NEAR(s.vel.x, v.x * 0.875f, 1e-3f) << n;
+            const float sink = n <= 12 ? -50.0f : 0.0f, trap = (v.z + s.vel.z) * 0.5f * dt;
+            EXPECT_NEAR(s.pos.z - p.z, sink + trap + rootZ((n + 1) / 60.0) - rootZ(n / 60.0), 0.05f) << n;
+            EXPECT_LT(s.pos.z, p.z) << "down all the way, no slam " << n;
+        }
+        EXPECT_EQ(s.state, State::SwimUnder) << "S154, the submerged swim";
+        EXPECT_NEAR(n / 60.0f, 1.033f, 0.02f) << "the whole of swim_swan_land (tru.exe S105: 1.033 s)";
+        EXPECT_GT(-6000 - s.pos.z, 1200.0f) << "deep under the surface";
         EXPECT_EQ(w->health().value(), w->health().max()) << "no fall damage into deep water";
     }
     { // 250 down onto the ground: the roll
@@ -7609,6 +7628,105 @@ TEST(GameReal, SeafloorSpearKillsShark) {
     EXPECT_LE(flights, int(hp / 550.0f) + 2) << "it took the spears its health asks for";
 }
 
+// Falling or jumping into deep water (tru.exe under Wine, l2_cliffclimb sea, openunderworld-work/waterentry-wine; Tuning
+// "Water entry"). She goes in when her root passes the top; the entry state's first frame moves her by her velocity
+// alone, then every frame actions 1302 / 1301 take her toward the rest level (44.1 under the surface: up at most 15 a
+// 60 Hz frame, down at most 41.09) and her velocity, shrinking by 0.875 (all three axes), moves her by its trapezoid.
+// That law fits the Wine traces to 2.4 units (falls from 762, 3000 and 6000 over the top; with tru.exe's 762 entry
+// speed, 94.45 a 30 Hz frame, reached here too). On still water it puts her deepest 177 / 496 / 819 under the surface,
+// then she floats up to the rest level and treads, never above it; she treads at swim_jump_land's end (1.1 s, tru.exe
+// S104: 1.0995 s) or floats on up (Surfacing, 900 units/s) when still under. Before: the plunge kept e^-3t of its speed
+// (a 762 fall went ~930 under) and she shot back up at swim speed.
+TEST(GameReal, WaterEntryDepthAndRiseMatchTru) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto lara = game::loadLaraAnims(bf);
+    const float dt = 1.0f / 60, rest = -44.1f;
+    struct Case { float height, depth; };
+    for (const Case c : {Case{762, 177.2f}, Case{3000, 496.3f}, Case{6000, 819.0f}}) {
+        SCOPED_TRACE(c.height);
+        CollisionMesh m;
+        addFloor(m, -20000, -20000, 20000, 20000, -20000);
+        m.markup.push_back({10, 1, {{-20000, -20000, -20000}, {20000, 20000, 0}}});
+        m.build();
+        game::World w(std::move(m), lara, game::Spawn{{0, 0, -44.1f}, 0});
+        w.tick({});
+        game::PlayerState st = w.player().state();
+        st.state = State::Fall, st.pos = {0, 0, c.height}, st.vel = vec3(0), st.water = -1, st.fallStartZ = c.height;
+        st.clip = "NG_InAir_Feet_Forward_stage3";
+        w.restore(st, 0, -0.25f);
+        const auto& s = w.player().state();
+        int t = 0;
+        for (; t < 600 && s.state == State::Fall; ++t) w.tick({});
+        ASSERT_EQ(s.state, State::SwimSplash);
+        EXPECT_EQ(s.clip, "swim_jump_land");
+        EXPECT_LT(s.pos.z, 0.0f);
+        if (c.height == 762) EXPECT_NEAR(s.vel.z, -94.45f * 30, 10) << "tru.exe's entry speed from that height";
+        vec3 p = s.pos, v = s.vel;
+        w.tick({});
+        EXPECT_NEAR(s.pos.z - p.z, v.z * dt, 0.01f) << "the first frame: her velocity alone";
+        float deepest = s.pos.z, risen = -1e9f;
+        int n = 1;
+        bool reachedRest = false;
+        for (; n < 400 && s.state == State::SwimSplash; ++n) {
+            p = s.pos, v = s.vel;
+            w.tick({});
+            if (s.state != State::SwimSplash) break;
+            EXPECT_NEAR(s.vel.z, v.z * 0.875f, 1e-2f) << n;
+            const float dl = rest - p.z, act = dl >= 0 ? std::min(15.0f, dl) : std::max(dl, -41.0865f);
+            EXPECT_NEAR(s.pos.z - p.z, act + (v.z + s.vel.z) * 0.5f * dt, 0.05f) << n;
+            deepest = std::min(deepest, s.pos.z);
+            reachedRest |= s.pos.z > rest - 1;
+            if (reachedRest) risen = std::max(risen, s.pos.z);
+        }
+        EXPECT_NEAR(-deepest, c.depth, 1.0f) << "deepest under the surface";
+        EXPECT_LE(risen, rest + 0.01f) << "no overshoot above the rest level";
+        EXPECT_NEAR((n + 1) / 60.0f, 1.1f, 0.02f) << "swim_jump_land, whole";
+        EXPECT_EQ(w.health().value(), w.health().max());
+        if (reachedRest) {
+            EXPECT_EQ(s.state, State::SwimTread);
+        } else { // still under after the clip: floats up at 15 a frame (tru.exe surface group S111 after h6000)
+            ASSERT_EQ(s.state, State::Surfacing);
+            EXPECT_EQ(s.clip, "swim_surfaceidle");
+            for (int k = 0; k < 600 && s.state == State::Surfacing; ++k) {
+                const float z0 = s.pos.z;
+                w.tick({});
+                if (s.state == State::Surfacing) EXPECT_NEAR(s.pos.z - z0, 15.0f, 0.01f) << k;
+            }
+            EXPECT_EQ(s.state, State::SwimTread);
+        }
+        for (int k = 0; k < 30; ++k) w.tick({});
+        EXPECT_NEAR(s.pos.z, rest, 0.01f) << "treading at the rest level";
+    }
+    { // a running jump off a deck 300 over the water: the horizontal speed shrinks the same way
+        CollisionMesh m;
+        addFloor(m, -4000, -1000, 0, 1000, 300);
+        addFloor(m, -20000, -20000, 20000, 20000, -20000);
+        m.markup.push_back({10, 1, {{0, -20000, -20000}, {20000, 20000, 0}}});
+        m.build();
+        game::World w(std::move(m), lara, game::Spawn{{-1500, 0, 300}, 0});
+        const auto& s = w.player().state();
+        for (int i = 0; i < 300 && s.pos.x < -260; ++i) w.tick(forward());
+        Actions jump = forward();
+        jump.jump = true;
+        w.tick(jump);
+        for (int i = 0; i < 300 && s.state != State::SwimSplash; ++i) w.tick({});
+        ASSERT_EQ(s.state, State::SwimSplash);
+        w.tick({});
+        float deepest = s.pos.z;
+        for (int i = 0; i < 120 && s.state == State::SwimSplash; ++i) {
+            const vec3 v = s.vel;
+            w.tick({});
+            if (s.state != State::SwimSplash) break;
+            EXPECT_NEAR(s.vel.x, v.x * 0.875f, 1e-2f) << i;
+            deepest = std::min(deepest, s.pos.z);
+        }
+        EXPECT_EQ(s.state, State::SwimTread);
+        EXPECT_GT(deepest, -200.0f) << "a shallow entry (tru.exe off the bow: 66 under the waves)";
+        EXPECT_LT(deepest, rest - 10.0f);
+    }
+}
+
 // l2_cliffclimb: from the cliff top 5950 over the sea a running jump and crouch is a swan dive; she enters the sea on
 // swim_swan_land, unhurt.
 TEST(GameReal, CliffSwanDiveIntoTheSea) {
@@ -7642,8 +7760,10 @@ TEST(GameReal, CliffSwanDiveIntoTheSea) {
     ASSERT_EQ(s.state, State::SwimSplash) << "at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
     EXPECT_EQ(s.clip, "swim_swan_land");
     EXPECT_GT(top - s.pos.z, 5500.0f);
+    const float in = s.pos.z;
     for (int k = 0; k < 200 && s.state == State::SwimSplash; ++k) w.tick({});
-    EXPECT_TRUE(s.state == State::SwimUnder || s.state == State::SwimTread);
+    EXPECT_EQ(s.state, State::SwimUnder) << "head first and on down: the submerged swim, not a landing on the surface";
+    EXPECT_LT(s.pos.z, in - 1000.0f) << "a 5900-unit swan dive goes far under (tru.exe off the 300 bow: 1170 in 1 s)";
     EXPECT_EQ(w.health().value(), w.health().max()) << "a 5900-unit fall into the sea costs nothing";
 }
 

@@ -3082,20 +3082,25 @@ float Player::surfaceZ() const {
 bool Player::enterWater() {
     const int w = waterAt(s_.pos);
     if (w < 0) return false;
-    const float surf = waterSurface(col_.markup[size_t(w)], vec2(s_.pos), waveSeconds_);
-    if (s_.pos.z > surf) return false;
+    const auto& vol = col_.markup[size_t(w)];
+    const float surf = waterSurface(vol, vec2(s_.pos), waveSeconds_);
+    const bool airborne = s_.state == State::Jump || s_.state == State::Fall;
+    // From the air she is in once her root is under the volume's top: tru.exe 0x5D77E0 classes the depth (0x5D3860:
+    // class 0x400 = dry while z - top > 0) against the volume's +0x58 top without the waves [O]; Wine (l2_cliffclimb
+    // sea): the entry state S104 / S105 began the frame after her root passed the top, up to 356 over a wave trough.
+    if (s_.pos.z > (airborne ? vol.points[1].z : surf)) return false;
     // Shallow (a floor within swimDepth under the surface): walk. Feet already deeper than that are swimming (placed under
     // l7_arctic_sea's ice by 275_hel_explosion, where the probe from the surface would hit the ice).
     if (s_.pos.z > surf - t_.swimDepth)
         if (auto floor = col_.groundProbe(vec3(s_.pos.x, s_.pos.y, surf), t_.swimDepth); floor) return false;
-    const bool airborne = s_.state == State::Jump || s_.state == State::Fall;
     s_.water = w;
     s_.pitch = 0;
     s_.ledge = -1;
-    if (airborne) { // keep the plunge velocity; water drag stops it. A swan dive goes in on swim_swan_land's root motion.
+    if (airborne) { // the entry keeps her velocity (waterEntry)
         const bool swan = swanClip(s_.clip) && anims_.find("swim_swan_land");
         s_.state = State::SwimSplash;
         play(swan ? "swim_swan_land" : "swim_jump_land", false);
+        s_.clipTime = 0; // both play from their first frame for their whole length (Tuning "Water entry")
     } else if (s_.pos.z <= surf - t_.swimDepth) { // placed deep (275_hel_explosion's end): stays under, swimming
         s_.vel = vec3(0);
         s_.state = State::SwimUnder;
@@ -3108,8 +3113,9 @@ bool Player::enterWater() {
     return true;
 }
 
-// Sphere (swimRadius) around the swimming root, slid along contacts; never above the water surface.
-vec3 Player::swimSlide(vec3 pos, vec3 delta) const {
+// Sphere (swimRadius) around the swimming root, slid along contacts; never above the water surface unless the entry
+// from the air (waterEntry) asks for it.
+vec3 Player::swimSlide(vec3 pos, vec3 delta, bool clampToSurface) const {
     for (int iter = 0; iter < 4 && glm::dot(delta, delta) > 1e-8f; ++iter) {
         const auto hit = col_.sweepSphere(pos, t_.swimRadius, delta);
         if (!hit || (hit->t == 0 && glm::dot(delta, hit->normal) >= 0)) { pos += delta; break; }
@@ -3117,8 +3123,54 @@ vec3 Player::swimSlide(vec3 pos, vec3 delta) const {
         const vec3 rest = delta * (1 - hit->t);
         delta = rest - hit->normal * std::min(0.0f, glm::dot(rest, hit->normal));
     }
-    pos.z = std::min(pos.z, surfaceZ());
+    if (clampToSurface) pos.z = std::min(pos.z, surfaceZ());
     return pos;
+}
+
+// The entry from the air (tru.exe SwimSplashDownState; Tuning "Water entry", docs/GAMEPLAY.md "Water entry"). Each
+// 60 Hz frame (timeMult tm = 30 dt) the chart's actions move the root first, then her velocity, which shrinks by
+// 1 - waterDrag x tm, moves her by its trapezoid (as the instance integrator 0x5DB370 with that deceleration), then the
+// clip's root motion. Measured in tru.exe under Wine (l2_cliffclimb sea; her root's deepest under the wave surface, the
+// rest level being 44.1 under it): a fall from 762 over the volume's top 119, from 3000 367, from 6000 783; a running
+// jump off the yacht's bow 66; the swan dive off the bow 1170 after 1 s. The jump entry ends after swim_jump_land
+// (1.1 s) treading, or floating up (Surfacing) when still under; the swan dive after swim_swan_land under water (S154,
+// the submerged swim). Touching something under her ends either at once floating up (T895 PSCCF_CheckProxySupport ->
+// S115 [O chart]; Wine: a swan dive onto a rock 300 under went to the surface group and rose).
+void Player::waterEntry(float dt) {
+    const float tm = 30.0f * dt;
+    const float wave = waterSurface(col_.markup[size_t(s_.water)], vec2(s_.pos), waveSeconds_), rest = wave - t_.swimSurfaceDepth;
+    const bool swan = s_.clip == "swim_swan_land";
+    const double t0 = s_.clipTime;
+    if (t0 <= 0) { // the state's first frame moves her by her velocity alone (Wine: v unchanged, no gravity, no actions)
+        advanceClip(dt);
+        s_.clipTime = std::max(s_.clipTime, double(dt)); // (no clip: still past the first frame)
+        s_.pos = swimSlide(s_.pos, s_.vel * dt, false);
+        return;
+    }
+    float z = s_.pos.z;
+    if (swan) { // action 1302 (0x75DC20), S105 prop 1307 = -100, no target: 12 frames from the second (Wine: 12, 13)
+        if (t0 < t_.swanSinkSeconds + 0.5 * dt) z -= t_.swanSink * tm;
+    } else {
+        if (z > wave) z += std::max(wave - z, -t_.splashRise * tm); // action 1302: down to the wave surface
+        const float dl = rest - z;                                   // action 1301 (0x76D710): to the rest level
+        z += dl >= 0 ? std::min(t_.splashRise * tm, dl) : std::max(dl, -t_.splashSinkCap / tm);
+    }
+    const vec3 v0 = s_.vel, v1 = v0 * (1.0f - t_.waterDrag * tm);
+    s_.vel = v1;
+    const vec3 delta = vec3(0, 0, z - s_.pos.z) + (v0 + v1) * (0.5f * dt) + toWorld(advanceClip(dt));
+    const vec3 want = s_.pos + delta;
+    s_.pos = swimSlide(s_.pos, delta, false);
+    if (delta.z < 0 && s_.pos.z > want.z + 1.0f) { // held up by the floor or a rock: float up
+        s_.vel = vec3(0), s_.pitch = 0;
+        s_.state = State::Surfacing;
+        play("swim_surfaceidle", true);
+        return;
+    }
+    if (!clipDone()) return;
+    s_.vel = vec3(0), s_.pitch = 0;
+    const bool under = s_.pos.z < rest - 1;
+    s_.state = swan ? (under ? State::SwimUnder : State::SwimTread) : (under ? State::Surfacing : State::SwimTread);
+    play(s_.state == State::SwimUnder ? "swim_submerged_idle" : "swim_surfaceidle", true);
 }
 
 // At the surface, facing a wall whose top is 50..400 above the water: swim_climbout. Its root rises 172.8
@@ -3197,7 +3249,9 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
     // A scripted level that drops away faster than she floats down with it (l7_yggdrasil_end's 8309 is set to its marker
     // 13 986 below at once by its constructor) therefore leaves her in the air: she falls from where she is [I: the
     // chart's swim states leave by that class; the fall is the plain one, no clip of its own found].
-    if (s_.state != State::SwimClimbOut && s_.pos.z > surf + t_.swimSurfaceDepth) {
+    // The entry from the air begins over the wave surface (up to the volume's top, enterWater) and pushes her down.
+    const float dryAbove = s_.state == State::SwimSplash ? col_.markup[size_t(s_.water)].points[1].z : surf + t_.swimSurfaceDepth;
+    if (s_.state != State::SwimClimbOut && s_.pos.z > dryAbove) {
         s_.water = -1;
         s_.pitch = 0;
         startFall(vec3(0));
@@ -3234,32 +3288,19 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         s_.pos = swimSlide(s_.pos, (s_.vel + waterFlow(col_.markup[size_t(s_.water)], s_.pos)) * dt);
     };
     switch (s_.state) {
-    case State::SwimSplash: { // tru.exe SwimSplashDownState; drag constant [I]
-        if (s_.clip == "swim_swan_land") { // chart S105 (a submerged state): 268.5 forward, 437.7 down in 31 frames [O clip]
-            s_.pos = swimSlide(s_.pos, toWorld(advanceClip(dt)));
-            if (clipDone()) {
-                s_.vel = vec3(0), s_.pitch = 0;
-                s_.state = s_.pos.z < surf - 1 ? State::SwimUnder : State::SwimTread;
-                play(s_.state == State::SwimUnder ? "swim_submerged_idle" : "swim_surfaceidle", true);
-            }
-            break;
-        }
-        advanceClip(dt);
-        s_.vel *= std::exp(-3.0f * dt);
-        s_.pos = swimSlide(s_.pos, s_.vel * dt);
-        if (clipDone() || glm::length(s_.vel) < 50.0f) {
-            s_.vel = vec3(0);
-            s_.state = s_.pos.z < surf - 1 ? State::Surfacing : State::SwimTread;
-            play(s_.state == State::Surfacing ? "swim_sub_up" : "swim_surfaceidle", true);
-        }
+    case State::SwimSplash: // tru.exe SwimSplashDownState: the entry from the air (waterEntry)
+        waterEntry(dt);
         break;
-    }
-    case State::Surfacing: // rise straight up at swim speed; drop takes control under water
+    case State::Surfacing: { // drop takes control under water
+        // Floating up to the surface: action 1301 at the entry's prop 1307 = 30 a 30 Hz frame (tru.exe under Wine: after
+        // a deep entry the surface group S111 rises 15.0 a 60 Hz frame until the root is swimSurfaceDepth under the waves).
         advanceClip(dt);
-        s_.pos = swimSlide(s_.pos, vec3(0, 0, t_.swimSpeed * dt));
-        if (s_.pos.z >= surf) { s_.state = State::SwimTread; play("swim_surfaceidle", true); }
+        const float rise = std::min(t_.splashRise * 30.0f * dt, std::max(0.0f, surf - s_.pos.z));
+        s_.pos = swimSlide(s_.pos, vec3(0, 0, rise));
+        if (s_.pos.z >= surf - 1e-3f) { s_.state = State::SwimTread; play("swim_surfaceidle", true); }
         else if (dropPressed) { s_.state = State::SwimUnder; }
         break;
+    }
     case State::SwimTread:
     case State::SwimSurface: {
         s_.pos.z = surf;
