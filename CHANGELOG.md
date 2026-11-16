@@ -6,6 +6,16 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.50.1] - 2026-11-16
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: the water barely reacted to Lara's dives and falls (Enhanced water). An entry now punches a crater about half
+  a metre deep that collapses, throws the water back up about 20 cm a third of a second later and sends out rings up
+  to 10 cm high that keep spreading for seconds (they were 2-4 cm, with no rebound). Lara swimming no longer acts as
+  a wall in the middle of her own splash, the open crater shows as clear water instead of a white disk, and the
+  finely detailed surface no longer flattens out 12 m from the camera. The splash spray still covers the very centre.
+
 ## [0.50.0] - 2026-11-16
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
