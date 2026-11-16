@@ -1,7 +1,7 @@
 // Enhanced water: shared uniform block and GLSL for both backends (Original water keeps TRU's shaders).
 // The surface look is smallcableboi's Godot water (CC0: Fresnel, scrolling wave layers, absorption, traced / simple
 // refraction, traced SSR, edge foam, Snell's window) with afl_ext's procedural ocean waves (MIT) on open seas, plus the
-// interactive wave field (render/WaterField.hpp), splash droplets and the underwater post effect. docs/RENDERING.md "Water".
+// interactive wave field (render/WaterField.hpp), the splash fluid's passes and the underwater post effect. docs/RENDERING.md "Water".
 #pragma once
 
 #include "render/Renderer.hpp"
@@ -130,20 +130,19 @@ struct UnderwaterRays {
 // Water surface shaders (same mesh vertex layout as the scene pass).
 std::string waterVertexSource(bool vulkan);
 std::string waterFragmentSource(bool vulkan);
-// Splash droplets as liquid (screen-space fluid rendering, docs/RENDERING.md "Water"; technique and shaders adapted
-// from talvinckb/OpenGL-Water-Simulation, MIT). Camera-facing quads expanded on the CPU (SplashVertex), then:
-//  1 splat:     splash.vert + splash_splat.frag -> RG32F target cleared to (kSplashEmpty, 0), blend MAX (factors ONE),
-//               no depth attachment (the shader tests the opaque depth copy: GL unit 6 / VK set 0 binding 1).
+// The splash fluid drawn as liquid (screen-space fluid rendering, docs/RENDERING.md "Splash fluid"; technique and shaders
+// adapted from talvinckb/OpenGL-Water-Simulation, MIT), after render::fluid simulated its particles this frame:
+//  1 splat:     splash.vert + splash_splat.frag, no vertex input, 6 vertices x fluid::kCapacity instances (the particle
+//               pool: GL SSBO binding 0 / VK set 0 binding 2) -> RGBA32F target cleared to (kSplashEmpty, 0, 0, 0),
+//               blend MAX (factors ONE), no depth attachment (the shader tests the opaque depth copy: GL unit 6 / VK
+//               set 0 binding 1).
 //  2 blur:      splash_screen.vert + splash_blur.frag, twice (dir (1,0) then (0,1); GL uniform location 0, VK push
-//               constant vec2), RG32F -> RG32F, no blending. Input: GL unit 10 / VK set 0 binding 1.
+//               constant vec2), RGBA32F -> RGBA32F, no blending. Input: GL unit 10 / VK set 0 binding 1.
 //  3 composite: splash_screen.vert + splash_composite.frag into the scene colour, blend ONE, ONE_MINUS_SRC_ALPHA,
-//               no depth test. Input: GL unit 10 / VK set 0 binding 1.
+//               no depth test. Input: GL unit 10 / VK set 0 binding 1; the refracted scene: the colour copy refreshed
+//               after the water surfaces (GL unit 5 / VK set 0 binding 3).
 // All three read the WaterBlock prefix up to `ambient` (GL UBO binding 4 / VK set 0 binding 0); targets are render-size.
-struct SplashVertex {
-    float pos[3], uv[2], alpha;
-};
 inline constexpr float kSplashEmpty = -1e20f;
-std::vector<SplashVertex> splashVertices(const Camera& camera, std::span<const WaterParticle> splashes);
 std::string splashVertexSource(bool vulkan);
 std::string splashSplatSource(bool vulkan);
 std::string splashScreenVertexSource(bool vulkan);

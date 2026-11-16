@@ -56,7 +56,7 @@ target_include_directories(ou_placeholder PUBLIC src)
 
 # RenderCommon + the D3D9 SM3 -> GLSL translator of the Original Fidelity path (docs/formats/SHADERS.md).
 add_library(ou_render_common STATIC src/render/RenderCommon.cpp src/render/ShaderTranslate.cpp src/render/OriginalShading.cpp
-  src/render/Water.cpp src/render/Ocean.cpp src/render/WaterField.cpp)
+  src/render/Water.cpp src/render/Ocean.cpp src/render/WaterField.cpp src/render/Fluid.cpp)
 target_include_directories(ou_render_common PUBLIC src)
 # libshaderc compiles translated TRU shaders to SPIR-V at load time (Vulkan backend, shader tests).
 pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
@@ -70,7 +70,7 @@ target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/
 
 # Enhanced water / splash / underwater-post GLSL shared by GL (runtime compile) and Vulkan (glslc).
 foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
-        underwater.glsl uw_medium.glsl atmosphere.glsl filter.glsl waves.glsl tonemap.glsl ocean.comp
+        underwater.glsl uw_medium.glsl atmosphere.glsl filter.glsl waves.glsl tonemap.glsl ocean.comp fluid.glsl fluid.comp
         water_surface.glsl water_field.comp uw_particles.glsl uw_light.glsl uw_snow.vert uw_snow.frag uw_bubble.vert uw_bubble.frag
         uw_shafts.frag uw_shafts_blur.frag uw_water.frag uw_caustics.vert uw_caustics.frag uw_bloom.frag uw_grade.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
@@ -109,16 +109,18 @@ foreach(s fx.vert fx.frag)
                      DEPENDS ${src} VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
-# Enhanced water + splash (shared GLSL with GL, -DVULKAN=1 selects the descriptor syntax; water.frag includes sun.glsl
-# and shaders/uw_medium.glsl; water.vert and water.frag include shaders/water_surface.glsl (+ waves.glsl); ocean.comp:
-# the FFT ocean; water_field.comp: the interactive wave field).
+# Enhanced water + splash fluid (shared GLSL with GL, -DVULKAN=1 selects the descriptor syntax; water.frag includes
+# sun.glsl and shaders/uw_medium.glsl; water.vert and water.frag include shaders/water_surface.glsl (+ waves.glsl);
+# ocean.comp: the FFT ocean; water_field.comp: the interactive wave field; fluid.comp, splash.vert and
+# splash_composite.frag include shaders/fluid.glsl, fluid.comp also shaders/water_surface.glsl).
 foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
-        ocean.comp water_field.comp)
+        ocean.comp water_field.comp fluid.comp)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fluid.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/water_surface.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()

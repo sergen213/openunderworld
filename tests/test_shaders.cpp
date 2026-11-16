@@ -2,6 +2,7 @@
 #include "cdc/Cdc.hpp"
 #include "formats/Shader.hpp"
 #include "formats/Formats.hpp"
+#include "render/Fluid.hpp"
 #include "render/OriginalShading.hpp"
 #include "render/Ocean.hpp"
 #include "render/RenderCommon.hpp"
@@ -684,6 +685,102 @@ TEST(UnderwaterRays, DrawsColumnsInView) {
     EXPECT_EQ(*std::max_element(img.begin(), img.end()), 0);
     cam.position.z = 2000;
     EXPECT_FALSE(rays.draw(cam, 16.0f / 9.0f, waves, img));
+}
+
+// ---- the splash fluid (render/Fluid.hpp) ----
+namespace {
+render::FluidBurst fluidBurst(glm::vec3 at, uint32_t count) {
+    return {{at.x, at.y, at.z}, at.z, {0, 0, 0}, 100.0f, 300.0f, 1000.0f, 40.0f, 0u, count, 7u};
+}
+} // namespace
+
+// The PBF kernel constants: a lattice of kSpacing inside the support sums to more than the particle's own poly6 weight;
+// its gradient denominator is positive; the shaders' spacing constant is the C++ one.
+TEST(SplashFluid, KernelConstantsAndShaderSpacing) {
+    EXPECT_GT(render::fluid::restDensity(), 315.0f / (64.0f * 3.14159265f) * 2.0f);
+    EXPECT_GT(render::fluid::latticeGradient(), 0.0f);
+    char spacing[64];
+    std::snprintf(spacing, sizeof spacing, "kOuFluidSpacing = %.1f;", render::fluid::kSpacing);
+    EXPECT_NE(render::fluid::computeSource().find(spacing), std::string::npos) << "shaders/fluid.glsl and Fluid.hpp disagree";
+    EXPECT_EQ(render::fluid::computeSource().find("\n#include"), std::string::npos) << "every include expanded for GL";
+}
+
+// The GL flavours of the splash passes compile (Vulkan builds the same files at build time with glslc).
+TEST(SplashFluid, GlPassSourcesCompile) {
+    std::string err;
+    EXPECT_FALSE(render::sm3::compileSpirv(render::splashVertexSource(false), false, false, err).empty()) << err;
+    EXPECT_FALSE(render::sm3::compileSpirv(render::splashSplatSource(false), true, false, err).empty()) << err;
+    EXPECT_FALSE(render::sm3::compileSpirv(render::splashBlurSource(false), true, false, err).empty()) << err;
+    EXPECT_FALSE(render::sm3::compileSpirv(render::splashCompositeSource(false), true, false, err).empty()) << err;
+}
+
+// The fixed-step clock: game time in kStep steps, at most kMaxSteps a frame (the rest dropped), none while paused; the
+// first frame and a jump of more than a second start over (clear the pool).
+TEST(SplashFluid, ClockRunsFixedSteps) {
+    render::fluid::Sim sim;
+    render::FrameOptions o;
+    o.time = 10.0f;
+    auto f = sim.frame(o, glm::vec3(0));
+    EXPECT_TRUE(f.clear);
+    EXPECT_EQ(f.steps, 0);
+    o.time = 10.0f + 2.5f * render::fluid::kStep;
+    EXPECT_EQ(sim.frame(o, glm::vec3(0)).steps, 2);
+    EXPECT_EQ(sim.frame(o, glm::vec3(0)).steps, 0) << "paused";
+    o.time += 1.6f * render::fluid::kStep; // the half step left over + 1.6
+    EXPECT_EQ(sim.frame(o, glm::vec3(0)).steps, 2);
+    o.time += 0.2f;
+    EXPECT_EQ(sim.frame(o, glm::vec3(0)).steps, render::fluid::kMaxSteps);
+    o.time += 0.5f * render::fluid::kStep;
+    EXPECT_LE(sim.frame(o, glm::vec3(0)).steps, 1) << "the dropped time does not catch up";
+    o.time += 5.0f;
+    f = sim.frame(o, glm::vec3(0));
+    EXPECT_EQ(f.steps, 0);
+    EXPECT_FALSE(f.active);
+}
+
+// Bursts take consecutive ring slots (wrapping), far ones are skipped or thinned, a frame emits at most kMaxPerFrame;
+// the fluid is active for kMaxLife after the last burst, and a later burst clears what an idle pool may still hold.
+TEST(SplashFluid, BurstSlotsAndLifetime) {
+    using render::fluid::kCapacity;
+    render::fluid::Sim sim;
+    render::FrameOptions o;
+    o.time = 1.0f;
+    const glm::vec3 eye(0);
+    const render::FluidBurst bursts[3] = {fluidBurst({100, 0, 0}, 100), fluidBurst({20000, 0, 0}, 100),
+                                          fluidBurst({0.75f * render::fluid::kRange, 0, 0}, 100)};
+    o.fluidBursts = bursts;
+    auto f = sim.frame(o, eye);
+    ASSERT_EQ(f.bursts.size(), 2u);
+    EXPECT_EQ(f.bursts[0].info.x, 0u);
+    EXPECT_EQ(f.bursts[0].info.y, 100u);
+    EXPECT_EQ(f.bursts[1].info.x, 100u);
+    EXPECT_EQ(f.bursts[1].info.y, 50u) << "half the particles at three quarters of the range";
+    EXPECT_EQ(f.emitted, 150);
+    EXPECT_FLOAT_EQ(f.bursts[0].shape.y, 1000.0f);
+    EXPECT_TRUE(f.active);
+    o.fluidBursts = {};
+    for (int i = 0; i < 6; ++i) { // 3 s: still alive
+        o.time += 0.5f;
+        EXPECT_TRUE(sim.frame(o, eye).active) << i;
+    }
+    o.time += 1.0f;
+    EXPECT_FALSE(sim.frame(o, eye).active);
+    const render::FluidBurst huge[2] = {fluidBurst({0, 0, 0}, uint32_t(kCapacity)), fluidBurst({0, 0, 0}, 10)};
+    o.fluidBursts = huge;
+    o.time += 0.1f;
+    f = sim.frame(o, eye);
+    EXPECT_TRUE(f.clear) << "particles of the idle run are cleared";
+    ASSERT_EQ(f.bursts.size(), 1u);
+    EXPECT_EQ(f.emitted, render::fluid::kMaxPerFrame);
+    EXPECT_EQ(f.bursts[0].info.x, 150u);
+    o.time += 0.1f;
+    f = sim.frame(o, eye);
+    EXPECT_FALSE(f.clear);
+    ASSERT_EQ(f.bursts.size(), 1u);
+    EXPECT_EQ(f.bursts[0].info.x, uint32_t(150 + render::fluid::kMaxPerFrame));
+    EXPECT_EQ(f.emitted, render::fluid::kMaxPerFrame);
+    o.time += 0.1f;
+    EXPECT_EQ(sim.frame(o, eye).bursts[0].info.x, 150u) << "the ring wraps";
 }
 
 

@@ -38,6 +38,9 @@ const char* kSplashBlur =
 const char* kSplashComposite =
 #include "splash_composite.frag.inc"
     ;
+const char* kFluid = // shaders/fluid.glsl: the splash fluid's particle layout (render/Fluid.hpp)
+#include "fluid.glsl.inc"
+    ;
 const char* kUnderwater =
 #include "underwater.glsl.inc"
     ;
@@ -447,7 +450,8 @@ std::string expandIncludes(std::string s) {
     const std::pair<const char*, const char*> files[] = {{"#include \"sun.glsl\"", sunGlsl()},
                                                          {"#include \"shaders/water_surface.glsl\"", kWaterSurface},
                                                          {"#include \"shaders/waves.glsl\"", kWaves},
-                                                         {"#include \"shaders/uw_medium.glsl\"", kUwMedium}};
+                                                         {"#include \"shaders/uw_medium.glsl\"", kUwMedium},
+                                                         {"#include \"shaders/fluid.glsl\"", kFluid}};
     for (const auto& [line, text] : files)
         for (size_t at; (at = s.find(line)) != std::string::npos;) s.replace(at, std::strlen(line), text);
     return s;
@@ -457,29 +461,11 @@ std::string expandIncludes(std::string s) {
 std::string waterVertexSource(bool vulkan) { return expandIncludes(withVersion(kWaterVert, vulkan)); }
 std::string waterFragmentSource(bool vulkan) { return expandIncludes(withVersion(kWaterFrag, vulkan)); }
 
-std::vector<SplashVertex> splashVertices(const Camera& camera, std::span<const WaterParticle> splashes) {
-    std::vector<SplashVertex> out;
-    out.reserve(splashes.size() * 6);
-    const glm::vec3 right = camera.right(), up = glm::cross(camera.forward(), right);
-    for (const auto& p : splashes) {
-        if (p.alpha <= 0 || p.radius <= 0) continue;
-        const glm::vec3 c(p.pos[0], p.pos[1], p.pos[2]);
-        const glm::vec3 r = right * p.radius, u = up * p.radius;
-        const glm::vec3 corners[4] = {c - r - u, c + r - u, c + r + u, c - r + u};
-        const float uvs[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
-        for (int i : {0, 1, 2, 0, 2, 3}) {
-            const glm::vec3& q = corners[i];
-            out.push_back({{q.x, q.y, q.z}, {uvs[i][0], uvs[i][1]}, p.alpha});
-        }
-    }
-    return out;
-}
-
-std::string splashVertexSource(bool vulkan) { return withVersion(kSplashVert, vulkan); }
+std::string splashVertexSource(bool vulkan) { return expandIncludes(withVersion(kSplashVert, vulkan)); }
 std::string splashSplatSource(bool vulkan) { return withVersion(kSplashSplat, vulkan); }
 std::string splashScreenVertexSource(bool vulkan) { return withVersion(kSplashScreen, vulkan); }
-std::string splashBlurSource(bool vulkan) { return withVersion(kSplashBlur, vulkan); }
-std::string splashCompositeSource(bool vulkan) { return withVersion(kSplashComposite, vulkan); }
+std::string splashBlurSource(bool vulkan) { return expandIncludes(withVersion(kSplashBlur, vulkan)); }
+std::string splashCompositeSource(bool vulkan) { return expandIncludes(withVersion(kSplashComposite, vulkan)); }
 
 namespace {
 // The particle shaders' own includes (the post pass's underwater / atmosphere files and uw_*.glsl), then the shared ones.

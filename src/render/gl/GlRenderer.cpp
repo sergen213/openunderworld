@@ -1,4 +1,5 @@
 // OpenGL 4.6 core backend (DSA), loaded through libepoxy.
+#include "render/Fluid.hpp"
 #include "render/Ocean.hpp"
 #include "render/WaterField.hpp"
 #include "render/OriginalShading.hpp"
@@ -33,6 +34,7 @@ void delVertexArray(GLuint id) { glDeleteVertexArrays(1, &id); }
 void delProgram(GLuint id) { glDeleteProgram(id); }
 void delFramebuffer(GLuint id) { glDeleteFramebuffers(1, &id); }
 void delRenderbuffer(GLuint id) { glDeleteRenderbuffers(1, &id); }
+void delQuery(GLuint id) { glDeleteQueries(1, &id); }
 
 template <void (*Delete)(GLuint)>
 class GlHandle {
@@ -65,6 +67,7 @@ using VertexArray = GlHandle<delVertexArray>;
 using Program = GlHandle<delProgram>;
 using Framebuffer = GlHandle<delFramebuffer>;
 using Renderbuffer = GlHandle<delRenderbuffer>;
+using Query = GlHandle<delQuery>;
 
 Texture newTexture() { GLuint id = 0; glCreateTextures(GL_TEXTURE_2D, 1, &id); return Texture(id); }
 Buffer newBuffer() { GLuint id = 0; glCreateBuffers(1, &id); return Buffer(id); }
@@ -399,7 +402,7 @@ struct Targets {
     // underwater fog). Blitted after the opaque/blended pass, before the water surfaces draw.
     Texture opaqueColor, opaqueDepth;
     Framebuffer opaqueColorFbo, opaqueDepthFbo;
-    // Enhanced water splashes as liquid (render/Water.hpp SplashVertex): RG32F splat target and blur ping-pong.
+    // Enhanced water's splash fluid as liquid (render/Water.hpp splash passes): RGBA32F splat target and blur ping-pong.
     std::array<Texture, 2> splash;
     std::array<Framebuffer, 2> splashFbo;
     // Enhanced under-water particles (render/Water.hpp UwParticlePush): RGBA16F premultiplied, composited by the post pass.
@@ -456,8 +459,16 @@ struct Resources {
     Buffer oceanSpectrum, oceanWork;
     Texture ocean;
     ocean::Clock oceanClock;
-    VertexArray splashVao;
-    Buffer splashVbo;
+    // The splash fluid (render/Fluid.hpp, shaders/fluid.comp; no program = no fluid): the particle pool (SSBO 0, also
+    // splash.vert's), the neighbour grid (1), the C3 kicks (2) and this frame's bursts (3). OU_VK_PRESENT_STATS: three
+    // timestamps per drawing frame (before its simulation, after it, after its composite), read back next frame.
+    Program fluidProgram;
+    Buffer fluidParticles, fluidGrid, fluidKicks, fluidBursts;
+    fluid::Sim fluidSim;
+    std::array<Query, 3> fluidTimes;
+    bool fluidTimed = false;
+    double fluidSimMs = 0, fluidDrawMs = 0;
+    uint64_t fluidTimedFrames = 0;
     // Enhanced under-water particles (render/Water.hpp UwParticlePush): marine snow + bubbles, UBO binding 7.
     Program uwSnowProgram, uwBubbleProgram;
     Buffer uwUbo, uwBubbleVbo;
@@ -619,6 +630,27 @@ public:
             glTextureParameteri(id, GL_TEXTURE_MAX_LEVEL, ocean::kLevels - 1);
             if (maxAniso_ > 1.0f) glTextureParameterf(id, GL_TEXTURE_MAX_ANISOTROPY, std::min(maxAniso_, ocean::kMaxAniso));
         }
+        { // the splash fluid; a driver that cannot build fluid.comp draws no splashes
+            std::string fluidError;
+            r.fluidProgram = linkCompute(fluid::computeSource().c_str(), fluidError);
+            if (!r.fluidProgram.get()) std::fprintf(stderr, "ou: splash fluid unavailable (%s)\n", fluidError.c_str());
+            const GLuint zero = 0;
+            r.fluidParticles = newBuffer();
+            glNamedBufferStorage(r.fluidParticles.get(), GLsizeiptr(fluid::kParticleBytes), nullptr, GL_DYNAMIC_STORAGE_BIT);
+            glClearNamedBufferData(r.fluidParticles.get(), GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &zero); // all dead
+            r.fluidGrid = newBuffer();
+            glNamedBufferStorage(r.fluidGrid.get(), GLsizeiptr(fluid::kGridBytes), nullptr, GL_DYNAMIC_STORAGE_BIT);
+            r.fluidKicks = newBuffer();
+            glNamedBufferStorage(r.fluidKicks.get(), GLsizeiptr(fluid::kKickBytes), nullptr, GL_DYNAMIC_STORAGE_BIT);
+            glClearNamedBufferData(r.fluidKicks.get(), GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+            r.fluidBursts = newBuffer();
+            glNamedBufferStorage(r.fluidBursts.get(), GLsizeiptr(fluid::kBurstBytes), nullptr, GL_DYNAMIC_STORAGE_BIT);
+            for (Query& q : r.fluidTimes) {
+                GLuint id = 0;
+                glCreateQueries(GL_TIMESTAMP, 1, &id);
+                q = Query(id);
+            }
+        }
         { // the interactive wave field; a driver that cannot build water_field.comp draws the water without it
             std::string fieldError;
             r.fieldProgram = linkCompute(waterfield::computeSource().c_str(), fieldError);
@@ -642,13 +674,9 @@ public:
             glTextureParameteri(r.ripples.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTextureParameteri(r.ripples.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTextureParameteri(r.ripples.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            // contract C3: the splash fluid's particles falling back kick the waves (the next frame's field takes them)
+            if (r.fluidProgram.get()) r.fieldExternal = r.fluidKicks.get();
         }
-        r.splashVao = newVertexArray();
-        r.splashVbo = newBuffer();
-        glVertexArrayVertexBuffer(r.splashVao.get(), 0, r.splashVbo.get(), 0, sizeof(SplashVertex));
-        attrib(r.splashVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, pos));
-        attrib(r.splashVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, uv));
-        attrib(r.splashVao.get(), 2, 1, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, alpha));
         const std::string uwSnowVs = uwSnowVertexSource(false), uwSnowFs = uwSnowFragmentSource(false),
                           uwBubbleVs = uwBubbleVertexSource(false), uwBubbleFs = uwBubbleFragmentSource(false);
         r.uwSnowProgram = linkProgram(uwSnowVs.c_str(), uwSnowFs.c_str(), error);
@@ -1111,6 +1139,11 @@ public:
                (debug_ ? " | KHR_debug" : "");
     }
 
+    // Contract C3: the particles' wave kicks (fluid::kKickBytes, std430 OuWaveKick buffer), written by simulateFluid's
+    // dispatches (count zeroed at their start) and followed by glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT). 0 without
+    // GL resources.
+    GLuint fluidKickBuffer() const { return res_ ? res_->fluidKicks.get() : 0; }
+
     void shutdown() override {
         if (!context_) return;
         // OU_VK_PRESENT_STATS (also GL): presented frames per second after the first (load) frame.
@@ -1118,6 +1151,12 @@ public:
             const double s = std::chrono::duration<double>(presentTimes_.back() - presentTimes_[1]).count();
             std::fprintf(stderr, "ou: presents %zu in %.2f s = %.1f/s (gl)\n", presentTimes_.size() - 2, s,
                          double(presentTimes_.size() - 2) / s);
+        }
+        if (res_ && res_->fluidTimedFrames) {
+            const double n = double(res_->fluidTimedFrames);
+            std::fprintf(stderr, "ou: splash fluid GPU ms per drawing frame (%llu frames, gl): simulation %.3f, drawing %.3f, "
+                         "total %.3f\n", (unsigned long long)res_->fluidTimedFrames, res_->fluidSimMs / n,
+                         res_->fluidDrawMs / n, (res_->fluidSimMs + res_->fluidDrawMs) / n);
         }
         SDL_GL_MakeCurrent(window_, context_);
         if (fieldTimed_) std::fprintf(stderr, "ou: GPU ms per frame: wave field %.3f (gl, %zu frames)\n", fieldNs_ * 1e-6 / double(fieldTimed_), fieldTimed_);
@@ -1187,7 +1226,7 @@ private:
         glNamedFramebufferDrawBuffer(t.opaqueDepthFbo.get(), GL_NONE);
         for (int i = 0; i < 2; ++i) {
             t.splash[i] = newTexture();
-            glTextureStorage2D(t.splash[i].get(), 1, GL_RG32F, vp.width, vp.height);
+            glTextureStorage2D(t.splash[i].get(), 1, GL_RGBA32F, vp.width, vp.height);
             glTextureParameteri(t.splash[i].get(), GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTextureParameteri(t.splash[i].get(), GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTextureParameteri(t.splash[i].get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1886,46 +1925,95 @@ private:
                                    reinterpret_cast<const void*>(uintptr_t(m.submeshes[s].firstIndex) * sizeof(uint32_t)));
         }
         scissorFor(UINT32_MAX, vp);
-        if (!options.splashes.empty()) {
-            const auto verts = splashVertices(camera, options.splashes);
-            if (!verts.empty()) {
-                glNamedBufferData(r.splashVbo.get(), GLsizeiptr(verts.size() * sizeof(SplashVertex)), verts.data(),
-                                  GL_STREAM_DRAW);
-                // 1 splat: max-blend per-droplet depth/thickness, tested against the opaque depth copy (unit 6).
-                glDisable(GL_DEPTH_TEST);
-                const float empty[4] = {kSplashEmpty, 0.0f, 0.0f, 0.0f};
-                glClearNamedFramebufferfv(t.splashFbo[0].get(), GL_COLOR, 0, empty);
-                glBindFramebuffer(GL_FRAMEBUFFER, t.splashFbo[0].get());
-                glUseProgram(r.splashSplatProgram.get());
-                glEnable(GL_BLEND);
-                glBlendEquation(GL_MAX);
-                glBlendFunc(GL_ONE, GL_ONE);
-                glBindVertexArray(r.splashVao.get());
-                glDrawArrays(GL_TRIANGLES, 0, GLsizei(verts.size()));
-                glBlendEquation(GL_FUNC_ADD);
-                glDisable(GL_BLEND);
-                // 2 blur: horizontal into splash[1], vertical back into splash[0].
-                glUseProgram(r.splashBlurProgram.get());
-                glBindVertexArray(r.emptyVao.get());
-                for (int pass = 0; pass < 2; ++pass) {
-                    glBindFramebuffer(GL_FRAMEBUFFER, t.splashFbo[1 - pass].get());
-                    glBindTextureUnit(10, t.splash[pass].get());
-                    glUniform2f(0, pass == 0 ? 1.0f : 0.0f, pass == 0 ? 0.0f : 1.0f);
-                    glDrawArrays(GL_TRIANGLES, 0, 3);
+        const fluid::Frame ff = r.fluidProgram.get() ? r.fluidSim.frame(options, camera.position) : fluid::Frame{};
+        if (ff.active) {
+            if (presentStats_) {
+                if (r.fluidTimed) { // last drawing frame's timestamps (waits for that frame if the GPU is behind)
+                    GLuint64 ts[3];
+                    for (int i = 0; i < 3; ++i) glGetQueryObjectui64v(r.fluidTimes[size_t(i)].get(), GL_QUERY_RESULT, &ts[i]);
+                    r.fluidSimMs += double(ts[1] - ts[0]) * 1e-6, r.fluidDrawMs += double(ts[2] - ts[1]) * 1e-6;
+                    ++r.fluidTimedFrames;
                 }
-                // 3 composite: premultiplied liquid over the scene.
-                glBindFramebuffer(GL_FRAMEBUFFER, t.scene.get());
-                glBindTextureUnit(10, t.splash[0].get());
-                glUseProgram(r.splashCompositeProgram.get());
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-                glDrawArrays(GL_TRIANGLES, 0, 3);
-                glDisable(GL_BLEND);
-                glEnable(GL_DEPTH_TEST);
+                glQueryCounter(r.fluidTimes[0].get(), GL_TIMESTAMP);
             }
+            simulateFluid(ff);
+            if (presentStats_) glQueryCounter(r.fluidTimes[1].get(), GL_TIMESTAMP);
+            // 1 splat: max-blend each particle's depth / thickness / foam, tested against the opaque depth copy (unit 6).
+            glDisable(GL_DEPTH_TEST);
+            const float empty[4] = {kSplashEmpty, 0.0f, 0.0f, 0.0f};
+            glClearNamedFramebufferfv(t.splashFbo[0].get(), GL_COLOR, 0, empty);
+            glBindFramebuffer(GL_FRAMEBUFFER, t.splashFbo[0].get());
+            glUseProgram(r.splashSplatProgram.get());
+            glEnable(GL_BLEND);
+            glBlendEquation(GL_MAX);
+            glBlendFunc(GL_ONE, GL_ONE);
+            glBindVertexArray(r.emptyVao.get());
+            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, fluid::kCapacity); // the pool: SSBO 0 (simulateFluid)
+            glBlendEquation(GL_FUNC_ADD);
+            glDisable(GL_BLEND);
+            // 2 blur: horizontal into splash[1], vertical back into splash[0].
+            glUseProgram(r.splashBlurProgram.get());
+            for (int pass = 0; pass < 2; ++pass) {
+                glBindFramebuffer(GL_FRAMEBUFFER, t.splashFbo[1 - pass].get());
+                glBindTextureUnit(10, t.splash[pass].get());
+                glUniform2f(0, pass == 0 ? 1.0f : 0.0f, pass == 0 ? 0.0f : 1.0f);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+            // 3 composite: premultiplied liquid over the scene, refracting the scene with the water surfaces in it (the
+            // colour copy on unit 5, refreshed).
+            glBlitNamedFramebuffer(t.scene.get(), t.opaqueColorFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width,
+                                   vp.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBindFramebuffer(GL_FRAMEBUFFER, t.scene.get());
+            glBindTextureUnit(10, t.splash[0].get());
+            glUseProgram(r.splashCompositeProgram.get());
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glDisable(GL_BLEND);
+            glEnable(GL_DEPTH_TEST);
+            if (presentStats_) glQueryCounter(r.fluidTimes[2].get(), GL_TIMESTAMP), r.fluidTimed = true;
         }
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);
+    }
+
+    // The splash fluid's simulation for this frame (render/Fluid.hpp, shaders/fluid.comp): zero the C3 kick count, kill
+    // every particle if asked, emit the bursts, then each fixed step: clear the grid's bucket heads, Predict, kIterations
+    // x (Lambda, Delta), Finalize. Reads the opaque depth (unit 6) and ripples (unit 7) drawWater bound; leaves the pool
+    // on SSBO 0 for splash.vert.
+    void simulateFluid(const fluid::Frame& f) {
+        Resources& r = *res_;
+        const GLuint zero = 0, none = 0xFFFFFFFFu;
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+        glClearNamedBufferSubData(r.fluidKicks.get(), GL_R32UI, 0, 4, GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        if (f.clear) glClearNamedBufferData(r.fluidParticles.get(), GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        if (!f.bursts.empty())
+            glNamedBufferSubData(r.fluidBursts.get(), 0, GLsizeiptr(f.bursts.size() * sizeof(fluid::GpuBurst)), f.bursts.data());
+        glUseProgram(r.fluidProgram.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, r.fluidParticles.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, r.fluidGrid.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, r.fluidKicks.get());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, r.fluidBursts.get());
+        auto run = [&](fluid::Pass pass, int source, int threads) {
+            const fluid::Push p = r.fluidSim.push(pass, f, source);
+            glUniform4iv(0, 1, &p.cfg.x);
+            glUniform4fv(1, 1, &p.sim.x);
+            glUniform4fv(2, 1, &p.par.x);
+            glUniform4fv(3, 1, &p.lim.x);
+            glDispatchCompute(GLuint((threads + fluid::kThreads - 1) / fluid::kThreads), 1, 1);
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+        };
+        if (f.emitted) run(fluid::Emit, 0, f.emitted);
+        for (int s = 0; s < f.steps; ++s) {
+            glClearNamedBufferSubData(r.fluidGrid.get(), GL_R32UI, 0, GLsizeiptr(fluid::kHashSize) * 4, GL_RED_INTEGER,
+                                      GL_UNSIGNED_INT, &none);
+            run(fluid::Predict, 0, fluid::kCapacity);
+            for (int it = 0; it < fluid::kIterations; ++it) {
+                run(fluid::Lambda, it & 1, fluid::kCapacity);
+                run(fluid::Delta, it & 1, fluid::kCapacity);
+            }
+            run(fluid::Finalize, 0, fluid::kCapacity);
+        }
     }
 
     // Enhanced under-water composite (render/Water.hpp UwGrade), after the post pass wrote uwHdr: abyssal-garden main.js's

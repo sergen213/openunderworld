@@ -1800,16 +1800,29 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     water volume becomes set, strength from the plunge speed; also landing in it dead) and climbing out; a swimmer
     ringing the water every 0.4 s (strength 0.5) faster than 1 m/s; a standing / treading body's bob every
     1.2–1.5 s (25.6 units over sigma 69 [I]); hitscan rays crossing the surface (`CombatState::shots`) and an enemy
-    dying in the water (strength 1); a dynamic body falling through the surface (0.8); droplets falling back
-    (pinpricks); `World::splashWater` for other impacts;
+    dying in the water (strength 1); a dynamic body falling through the surface (0.8); `World::splashWater` for other
+    impacts (the splash fluid's particles falling back kick the field on the GPU, docs/RENDERING.md "Splash fluid");
   - pressure bodies (`WaveBody`, up to 64): every body with its feet in the water and not under it (Lara, enemies,
     animals, moving dynamics): a Gaussian surface pressure (radius 0.22 m legs / 0.28 m torso, draft 7 cm still plus up
     to 15 cm moving at 1.5 m/s: kicking and pulling churn) that dips the surface and, moving, trails a Kelvin wake;
     slow bodies (under 0.2 m/s, fading out by 1 m/s) also reflect waves off their core.
-  Splash droplets (ours) are ballistic (gravity as Tuning, capped at 256, xorshift RNG) and die on the surface or after
-  0.35–0.75 s. ou-game passes the window, kicks, bodies and droplets through `FrameOptions::{waterField, splashes}` to
-  Enhanced water; Original water does not use them. Parameters are ours [I]. Tests `WaveWindow.*`, `Game.Water*`
-  (and the GPU side's `WaterField.*`, `VulkanRenderer.WaveFieldRunsScrollsAndRests`).
+  - splash bursts (`game::SplashBurst`, ours, [I] tuned by eye): the same events release the water they throw for
+    the renderer's particle fluid (docs/RENDERING.md "Splash fluid"). Lara's entry (once per entry, latched until she
+    is out of the water; only a plunge faster than 300 units/s down throws water) `entryBursts` (e = plunge speed
+    down / 1500, clamped 0.3–3: a crown of 500 + 900 e particles on a ring of 90 + 25 e units, launched up to
+    650 + 420 e units/s and out at 180 + 120 e + 0.15 × her horizontal speed, leaning with her run; a spray cone of
+    150 e; from e 0.7 a Worthington jet of 250 + 350 e particles up to 800 + 350 e units/s, 0.18 + 0.06 e s later,
+    when the cavity collapses). A swan dive (the previous clip `ng_inair_swan*`) enters streamlined: crown radius
+    × 0.6, particles × 0.45, launch × 0.75, then jet × 1.6 particles, × 1.15 speed. Impacts (`impactBursts`,
+    strength s: shots, bodies, dynamics) throw a crown of 120 + 380 s on 30 + 40 s units, a spray and from s 1 a jet
+    0.12 s later; climbing out sheds a wide spray cone, surface strokes a small one every 5 ticks. Delayed bursts
+    wait in WaterSim and are numbered when released (`bursts()`: the last 64, serials 1, 2, ...); each carries the
+    surface at the impact (`surfaceZ`, a sea's waves included) and its volume's rest surface (`restZ`, the box top the
+    renderer's waves ride on). ou-game forwards those newer than the last it saw.
+  ou-game passes the window, kicks and bodies through `FrameOptions::waterField` and the new bursts through
+  `FrameOptions::fluidBursts` to Enhanced water; Original water does not use them. Parameters are ours [I]. Tests
+  `WaveWindow.*`, `Game.Water*` (entry crown once per entry, delayed impact jet, burst scaling with speed and swan
+  dives; and the GPU side's `WaterField.*`, `VulkanRenderer.WaveFieldRunsScrollsAndRests`).
 
 ### Water moves: scuba, breath meter, dodges, swan dive, surface turns, climb out, weapons, jellyfish (2026-11-10)
 

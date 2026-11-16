@@ -2782,15 +2782,15 @@ float strongestKick(const game::WaterSim& ws, uint64_t& from) {
 }
 } // namespace
 
-TEST(Game, WaterEntrySplashMakesRingsAndDrops) {
+TEST(Game, WaterEntrySplashMakesRingsAndBursts) {
     auto w = makeWorld(poolMesh(), {1000, 0, 400});
-    size_t maxDrops = 0;
+    bool crown = false;
     float peak = 0;
     uint64_t serial = 0;
     bool crater = false;
     for (int i = 0; i < 90; ++i) {
         w->tick({});
-        maxDrops = std::max(maxDrops, w->water().drops().size());
+        for (const auto& b : w->water().bursts()) crown |= b.kind == game::SplashBurst::Crown && b.count > 0;
         peak = std::max(peak, strongestKick(w->water(), serial));
         for (const auto& k : w->water().kicks()) crater |= k.amplitude < -20.0f && k.sigma > 30.0f;
     }
@@ -2798,18 +2798,65 @@ TEST(Game, WaterEntrySplashMakesRingsAndDrops) {
     ASSERT_EQ(w->player().state().state, State::SwimTread);
     EXPECT_GT(peak, 20.0f) << "the entry must displace the surface";
     EXPECT_TRUE(crater) << "falling in pushes the water down";
-    EXPECT_GT(maxDrops, 0u) << "the entry must throw droplets";
+    EXPECT_TRUE(crown) << "the entry must throw a crown splash";
     EXPECT_GT(w->water().depth(), 0.0f);
+    size_t entries = 0;
+    for (const auto& b : w->water().bursts()) {
+        entries += b.kind == game::SplashBurst::Crown;
+        EXPECT_FLOAT_EQ(b.restZ, w->water().surfaceZ()) << "the renderer's waves ride on the volume's rest surface";
+    }
+    EXPECT_EQ(entries, 1u) << "one entry, one crown";
 }
 
 TEST(Game, WaterExternalSplash) {
     auto w = makeWorld(poolMesh(), {1000, 0, 400});
     for (int i = 0; i < 90; ++i) w->tick({});
     ASSERT_TRUE(w->water().active());
+    const uint64_t before = w->water().bursts().empty() ? 0 : w->water().bursts().back().serial;
     uint64_t serial = w->water().kickBase() + w->water().kicks().size();
     w->splashWater(w->player().state().pos, 1.5f); // as a shot / falling object impact
     EXPECT_GT(strongestKick(w->water(), serial), 45.0f);
-    EXPECT_FALSE(w->water().drops().empty());
+    ASSERT_FALSE(w->water().bursts().empty());
+    EXPECT_GT(w->water().bursts().back().serial, before);
+    auto jets = [&] {
+        return std::count_if(w->water().bursts().begin(), w->water().bursts().end(),
+                             [&](const game::SplashBurst& b) { return b.kind == game::SplashBurst::Jet && b.serial > before; });
+    };
+    EXPECT_EQ(jets(), 0) << "the jet waits for the crater to collapse";
+    for (int i = 0; i < 12; ++i) w->tick({}); // 0.2 s
+    EXPECT_EQ(jets(), 1);
+}
+
+// The water an entry throws (game::entryBursts): faster entries throw more, higher; only fast ones a jet, after a delay;
+// a swan dive (head first) a smaller crown and a bigger jet.
+TEST(Game, WaterEntryBurstsScaleWithSpeed) {
+    const glm::vec3 at(0, 0, 100);
+    auto find = [](const std::vector<game::SplashBurst>& v, game::SplashBurst::Kind k) -> const game::SplashBurst* {
+        for (const auto& b : v)
+            if (b.kind == k) return &b;
+        return nullptr;
+    };
+    const auto slow = game::entryBursts(at, {0, 0, -400}, false);
+    const auto fast = game::entryBursts(at, {600, 0, -3000}, false);
+    const auto swan = game::entryBursts(at, {600, 0, -3000}, true);
+    const auto *slowCrown = find(slow, game::SplashBurst::Crown), *fastCrown = find(fast, game::SplashBurst::Crown),
+               *swanCrown = find(swan, game::SplashBurst::Crown);
+    ASSERT_TRUE(slowCrown && fastCrown && swanCrown);
+    EXPECT_EQ(find(slow, game::SplashBurst::Jet), nullptr);
+    EXPECT_GT(fastCrown->count, 2 * slowCrown->count);
+    EXPECT_GT(fastCrown->up, slowCrown->up);
+    EXPECT_GT(fastCrown->carry.x, 0.0f) << "the crown leans with her run";
+    EXPECT_FLOAT_EQ(fastCrown->surfaceZ, at.z);
+    const auto *fastJet = find(fast, game::SplashBurst::Jet), *swanJet = find(swan, game::SplashBurst::Jet);
+    ASSERT_TRUE(fastJet && swanJet);
+    EXPECT_GT(fastJet->delay, 0.1f);
+    EXPECT_LT(swanCrown->count, fastCrown->count);
+    EXPECT_LT(swanCrown->radius, fastCrown->radius);
+    EXPECT_GT(swanJet->count, fastJet->count);
+    EXPECT_GT(swanJet->up, fastJet->up);
+    // the sheet starts near the fluid's rest density: count x spacing^2 over ring x 2 layers
+    EXPECT_NEAR(fastCrown->spread * 6.2831853f * fastCrown->radius * 2.0f,
+                float(fastCrown->count) * game::kSplashSpacing * game::kSplashSpacing, 1.0f);
 }
 
 // Kicks are kept for kKeepTicks ticks with growing serials, so a frame after several ticks (or after none) takes each

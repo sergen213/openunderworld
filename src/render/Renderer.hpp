@@ -77,8 +77,14 @@ struct WaterField {
 // waves: the sea's VS InstanceParams 3-6 (c60-c63) this frame, tru.exe 0x69DFB0 (rows: x and y wave numbers, phases,
 // heights; the surface is lowered by sum heights x (1 - sin(x c60 + y c61 + c62))); zero = flat (original::fillWaves).
 struct WaterVolume { float min[3], max[3]; float waves[4][4] = {}; };
-// Splash / spray droplet: world position, radius (world units), opacity 0..1; drawn as a camera-facing soft disc.
-struct WaterParticle { float pos[3]; float radius; float alpha; };
+// A splash of Enhanced water's particle fluid (render/Fluid.hpp emits it on the GPU; game::SplashBurst has the meaning of
+// each field): kind 0 crown, 1 jet, 2 spray; positions world units, speeds units/s; seed varies the particles.
+// surfaceZ: the surface at the impact (pos is measured from it); restZ: the volume's rest surface the waves ride on.
+struct FluidBurst {
+    float pos[3], surfaceZ, carry[3], radius, speed, up, spread;
+    uint32_t kind, count, seed;
+    float restZ;
+};
 // Under-water bubble for the Enhanced particle pass (render/Water.hpp "under-water particles"): world centre, radius
 // (world units), opacity 0..1, seed 0..1 (abyssal-garden vsBub b.x: its wobble phase; keep it per bubble so the sway is
 // continuous), height risen (m, the demo's h) and wobble amplitude (m, b.w; 0 = no sway: the effects' own motion).
@@ -211,7 +217,8 @@ struct FrameOptions {
     WaterColor waterColor = WaterColor::Original;  // Enhanced only: resolved optical type (never Auto; render::waterColorFor)
     WaterField waterField;                         // inactive = calm (no interactive waves)
     std::span<const WaterVolume> waterVolumes;     // loaded units' water volumes
-    std::span<const WaterParticle> splashes;       // drawn blended after the water surfaces
+    // Enhanced water: splashes released since the last frame, simulated and drawn as liquid (render/Fluid.hpp).
+    std::span<const FluidBurst> fluidBursts;
     // Enhanced water, camera submerged: the under-water particle pass (marine snow + these bubbles; render/Water.hpp).
     std::span<const Bubble> bubbles;
     // Moving lights (the flashlight): replace the first size() entries of the uploaded scene's environment lights for

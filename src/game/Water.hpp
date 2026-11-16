@@ -1,9 +1,11 @@
-// Interactive water: what makes waves on the water around Lara, plus ballistic splash droplets. The waves themselves
-// are simulated on the GPU (render/WaterField.hpp, shaders/water_field.comp: a spectral gravity-capillary wave field);
-// this side runs on the fixed 60 Hz game tick and produces the field's inputs: its window (which cells are open water),
-// displacement kicks (splashes, strokes, shots) and the pressure bodies (swimmers, waders, floating debris) whose
-// motion leaves wakes. ou-game passes them through render::FrameOptions::waterField. Parameters are ours [I], not
-// tru.exe's (its water does not simulate waves). docs/GAMEPLAY.md "Water", docs/RENDERING.md "Interactive waves".
+// Interactive water: what makes waves on the water around Lara, plus the splash bursts the Enhanced water's particle
+// fluid throws (render/Fluid.hpp simulates and draws them on the GPU; its particles falling back kick the field). The
+// waves themselves are simulated on the GPU (render/WaterField.hpp, shaders/water_field.comp: a spectral
+// gravity-capillary wave field); this side runs on the fixed 60 Hz game tick and produces the field's inputs: its
+// window (which cells are open water), displacement kicks (splashes, strokes, shots) and the pressure bodies (swimmers,
+// waders, floating debris) whose motion leaves wakes. ou-game passes them through render::FrameOptions::waterField
+// and the bursts through FrameOptions::fluidBursts. Parameters are ours [I], not tru.exe's (its water does not
+// simulate waves). docs/GAMEPLAY.md "Water", docs/RENDERING.md "Interactive waves" / "Splash fluid".
 #pragma once
 
 #include <glm/glm.hpp>
@@ -61,17 +63,38 @@ private:
     uint64_t version_ = 0;
 };
 
-struct SplashDrop {
-    vec3 pos{0}, vel{0};
-    float life = 0, maxLife = 1, radius = 8.0f;
-    float alpha() const { return maxLife > 0 ? life / maxLife : 0.0f; }
+// Water thrown up by an impact: what render::fluid emits on the GPU (shaders/fluid.comp, docs/RENDERING.md "Splash
+// fluid"). Crown: a sheet launched off a ring around the impact (outward at `speed`, up to `up`, the higher part of the
+// sheet faster: it rises as a wall that breaks into droplets); Jet: the column the collapsing cavity throws up the
+// middle (a Worthington jet); Spray: droplets in a cone of half-angle `spread` (radians) around up at `speed`.
+struct SplashBurst {
+    enum Kind : uint8_t { Crown, Jet, Spray };
+    Kind kind = Crown;
+    vec3 pos{0};        // centre on the surface (spray: the emitter)
+    float surfaceZ = 0; // the surface at the impact this tick (a sea's waves included): what `pos` is measured from
+    vec3 carry{0};      // velocity every particle inherits (the impactor's horizontal motion), units/s
+    float radius = 0;   // crown ring / jet column / spray disc radius, units
+    float speed = 0;    // crown, jet: outward launch speed; spray: launch speed (units/s)
+    float up = 0;       // crown, jet: upward launch speed of the fastest particles (units/s)
+    float spread = 0;   // crown, jet: height the sheet / column starts over (units); spray: cone half-angle
+    int count = 0;      // particles
+    float delay = 0;    // seconds after the impact (the jet waits for the cavity to collapse)
+    uint64_t serial = 0; // WaterSim numbering: 1, 2, ... in release order
+    float restZ = 0;     // the water volume's rest surface (its box top) the renderer's waves ride on; 0: WaterSim sets it
 };
+// Particle spacing of the fluid, units (render::fluid::kSpacing): the crown's start height keeps it near rest density.
+inline constexpr float kSplashSpacing = 7.0f;
+// What Lara entering the water throws: `velocity` at the surface (units/s), headFirst = a swan dive (a streamlined
+// entry: a small crown, then a tall jet). Faster entries throw more water higher; slow ones no jet. Deterministic.
+std::vector<SplashBurst> entryBursts(vec3 at, vec3 velocity, bool headFirst);
+// A body, object or shot hitting the water (WaterSim::splash strength: 1 = a projectile / body falling in).
+std::vector<SplashBurst> impactBursts(vec3 at, float strength);
 
 class WaterSim {
 public:
     void reset();
     void tick(const World& world, float dt);
-    // Impact crater + droplets (shots, falling objects); strength 1 = a projectile / body falling in.
+    // Impact crater + splash bursts (shots, falling objects); strength 1 = a projectile / body falling in.
     void splash(vec3 pos, float strength = 1.0f);
 
     bool active() const { return active_; } // a water volume is near Lara
@@ -87,7 +110,10 @@ public:
     std::span<const WaveKick> kicks() const { return kicks_; }
     uint64_t kickBase() const { return kickBase_; }
     std::span<const WaveBody> bodies() const { return waveBodies_; } // this tick's pressure bodies
-    const std::vector<SplashDrop>& drops() const { return drops_; }
+    // The last kBurstKeep bursts released, oldest first (serials increase by 1): a renderer forwards those newer than
+    // the last serial it saw, however many ticks ran between its frames.
+    std::span<const SplashBurst> bursts() const { return bursts_; }
+    static constexpr size_t kBurstKeep = 64;
 
     static constexpr int kKeepTicks = 8;
     static constexpr size_t kMaxKicks = 4096; // the GPU buffer's capacity (shaders/water_surface.glsl C3)
@@ -95,8 +121,9 @@ public:
 private:
     void kick(vec2 p, float amplitude, float sigma);
     void ripple(vec3 p, float strength);
-    void emit(vec3 pos, int count, float speed, float up, float radius = 9.0f);
+    void release(std::vector<SplashBurst> bursts); // into pending_ (delayed) / bursts_ (now)
     float waterAt(vec2 p) const; // surface z of the water over p, -inf where there is none
+    float restAt(vec2 p) const;  // rest surface (box top) of the water over p, -inf where there is none
 
     WaveWindow window_;
     const World* world_ = nullptr;                    // during tick
@@ -109,10 +136,11 @@ private:
     std::vector<WaveKick> kicks_;
     std::vector<uint64_t> kickTicks_; // the tick each kick was made on
     std::vector<WaveBody> waveBodies_;
-    std::vector<SplashDrop> drops_;
+    std::vector<SplashBurst> bursts_, pending_; // released; waiting for their delay (pending: release time in .delay)
+    uint64_t serial_ = 0;
+    bool plunged_ = false; // Lara's entry splash thrown; cleared once she is out of the water
     struct Body { vec3 pos; bool alive; float bob; };
     std::map<int32_t, Body> bodies_; // enemies / dynamic bodies last tick
-    uint32_t rng_ = 0x9E3779B9u;
 };
 
 } // namespace ou::game
