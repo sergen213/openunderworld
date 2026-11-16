@@ -106,6 +106,10 @@ public:
         int levelChapter = -1;   // "level_chapter": the chapter a `level` entry plays in (a unit of two chapters: the manor)
         std::string load;        // save slot
         bool cinematics = false; // "cinematics": true plays script cutscenes (default: skipped, their events still run)
+        // "sea_swell": true keeps the drawn FFT swell in the sim's sea (game::setSeaSwell) as default play has it.
+        // Default false: the run sees tru.exe's own waves only (ou-game draws them with --ocean procedural), so
+        // scenarios measured against tru.exe under Wine keep its numbers whatever the config's ocean.
+        bool seaSwell = false;
     };
     const Entry& entry() const { return entry_; }
     const std::string& name() const { return name_; }

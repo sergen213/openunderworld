@@ -97,6 +97,7 @@ at the top, in a step and in a condition, and ignored.
 | `start_chapter` | `0..8` (`game::kChapters`): start that chapter as New Game / chapter select does (its intro message, gear and loadout) |
 | `load` | save slot name (`$XDG_DATA_HOME/openunderworld/saves/<slot>.ousave`), as `--load` |
 | `cinematics` | `true`: play script cutscenes (default `false`: skipped) |
+| `sea_swell` | `true`: the sim's sea includes the drawn FFT swell as default play has it (Enhanced water, FFT ocean). Default `false`: tru.exe's own waves only (`--ocean procedural`), whatever the config says, so bounds measured against tru.exe under Wine hold |
 | `stop_on_fail` | default `true`: after a failed step the rest are reported `"skipped": true` and not run. `false`: run them all |
 | `fixtures` | set-up applied before the first tick (below) |
 | `steps` | the steps, run in order (required, not empty) |
