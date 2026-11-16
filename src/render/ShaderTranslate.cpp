@@ -201,7 +201,8 @@ public:
             h += "layout(location = 0) out vec4 ouColor;\n";
             // Sun shadow / RT hooks (render/sun.glsl, defined by the backend with OU_SUN): first thing in main and before
             // the alpha test; SunLight colour reads (c212) are scaled by the visibility.
-            h += "#ifdef OU_SUN\nfloat ouSunBegin(bool sunLit);\nvec4 ouSunEnd(vec4 c);\nvoid ouLightsBegin(uint slots, out float vis[6]);\n#endif\n";
+            h += "#ifdef OU_SUN\nfloat ouSunBegin(bool sunLit);\nvec4 ouSunEnd(vec4 c);\nvoid ouLightsBegin(uint slots, out float vis[6]);\n"
+                 "float ouAoBegin();\n#endif\n";
             for (unsigned n = 0; n < std::max(colorOuts_, 1u); ++n) pre += "    vec4 oC" + std::to_string(n) + " = vec4(0.0);\n";
             if (depthOut_) pre += "    vec4 oDepth = vec4(gl_FragCoord.z);\n";
             post += "    ouColor = oC0;\n"
@@ -233,7 +234,11 @@ public:
             body += ind + line + "\n";
             if (in.op == If || in.op == IfC || in.op == Loop || in.op == Rep || in.op == Else) ++depth;
         }
-        if (p_.pixel) { // after the body: statement() set out_.sunLit and lightsLit_
+        if (p_.pixel) { // after the body: statement() set out_.sunLit, lightsLit_ and ambientRead_
+            // Ambient / indirect registers read by the body are scaled by the screen-space AO (render/sun.glsl
+            // ouAoBegin; 1 without OU_SUN or without a map this frame).
+            if (ambientRead_)
+                pre = "#ifdef OU_SUN\n    float ouAoVis = ouAoBegin();\n#else\n    const float ouAoVis = 1.0;\n#endif\n" + pre;
             // Light colours (slot register 4) read by the body are scaled by their local-light shadow visibility
             // (render/sun.glsl ouLightsBegin; 1 without OU_SUN or RT).
             if (lightsLit_)
@@ -253,6 +258,7 @@ private:
     unsigned temps_ = 0, colorOuts_ = 0;
     bool usesA0_ = false, usesAL_ = false, usesP0_ = false, depthOut_ = false, colorFromVertex_ = false;
     mutable unsigned lightsLit_ = 0; // bit s: the PS reads light slot s's colour (constRef)
+    mutable bool ambientRead_ = false; // the PS reads an ambient / indirect register (constRef: scaled by ouAoVis)
 
     std::string constRef(unsigned n) const {
         if (floatDefs_.count(n)) return "c" + std::to_string(n) + "_def";
@@ -288,10 +294,15 @@ private:
         // SunLight colour (slot 6, c208 + 4): times the sun visibility (shadow map / rays) of OU_SUN builds.
         if (n == 212) return out_.sunLit = true, "(ouFrame.ps[212] * ouSunVis)";
         if (n == 77) out_.readsDepth = true; // DepthToW: a depth-buffer reader (original::screenSamplers)
-        // IrradianceState: the object's slot (tru.exe sets c70-c76 per drawable from device +0xFC88, 0x5043D0).
+        // Ambient / indirect light, times the screen-space AO of OU_SUN builds: g_Ambient c15, light-map scale sets
+        // c148 / c149 (the baked static light: TRU's sun and dynamic lights are not in its light maps [I]).
+        if (n == 15 || n == 148 || n == 149) return ambientRead_ = true, "(ouFrame.ps[" + std::to_string(n) + "] * ouAoVis)";
+        // IrradianceState: the object's slot (tru.exe sets c70-c76 per drawable from device +0xFC88, 0x5043D0); probe /
+        // ambient SH = indirect light, times the AO as well.
         if (n >= unsigned(kIrradianceBase) && n < unsigned(kIrradianceBase + kIrradianceRegs))
-            return out_.readsIrradiance = true, "ouFrame.irradiance[min(ouObj.irradiance, " + std::to_string(kIrradianceSlots - 1) +
-                                                    "u) * 7u + " + std::to_string(n - kIrradianceBase) + "u]";
+            return out_.readsIrradiance = true, ambientRead_ = true,
+                   "(ouFrame.irradiance[min(ouObj.irradiance, " + std::to_string(kIrradianceSlots - 1) + "u) * 7u + " +
+                       std::to_string(n - kIrradianceBase) + "u] * ouAoVis)";
         return "ouFrame.ps[" + std::to_string(n) + "]";
     }
 
