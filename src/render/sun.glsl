@@ -1,13 +1,16 @@
 // Sun visibility shared by the generic scene shaders (GL kSceneFs, vk/shaders/scene.frag) and the translated original
 // pixel shaders (ShaderTranslate: SunLight colour c212 * ouSunVis, OU_SUN hooks). docs/RENDERING.md "Sun shadows".
 // Embedded into C++ as sun_glsl.inc (CMake) and #included by glslc. Vulkan: define OU_SHADOW_SET (and OU_RT_SET with
-// OU_RT, after the ray-query extensions) before this; OpenGL: OuShadow is UBO binding 3, the shadow map texture unit 16.
+// OU_RT, after the ray-query extensions) before this; OpenGL: OuShadow is UBO binding 3, the shadow map texture unit 16,
+// the screen-space AO map (ouAoMap) texture unit 17.
 #ifdef OU_SHADOW_SET
 #define OU_SHADOW_UBO layout(std140, set = OU_SHADOW_SET, binding = 1)
 #define OU_SHADOW_TEX layout(set = OU_SHADOW_SET, binding = 0)
+#define OU_AO_TEX layout(set = OU_SHADOW_SET, binding = 4)
 #else
 #define OU_SHADOW_UBO layout(std140, binding = 3)
 #define OU_SHADOW_TEX layout(binding = 16)
+#define OU_AO_TEX layout(binding = 17)
 #endif
 // render::SunShadowBlock (RenderCommon.hpp).
 OU_SHADOW_UBO uniform OuShadow {
@@ -15,10 +18,18 @@ OU_SHADOW_UBO uniform OuShadow {
     vec4 rayBase, rayU, rayV; // fragment world = eye + (rayBase + u rayU + v rayV) / gl_FragCoord.w, uv = fragCoord / size
     vec4 sun;         // xyz unit vector toward the sun; w = 1: sun shadows on (map or rays)
     vec4 eye;         // xyz camera position; w = shadow rays per pixel
-    vec4 screen;      // 1 / width, 1 / height, ray tracing (0 off, 1 shadows, 2 + water reflections), unused
+    vec4 screen;      // 1 / width, 1 / height, ray tracing (0 off, 1 shadows, 2 + water reflections), w = bits: 1 RT AO and
+                      // 2 RT sun GI in ouIndirectMap (OU_RT), 4 screen-space AO in ouAoMap (CORTAO, both renderers)
     uvec4 lights;     // local-light shadow rays: x / y shadow-light bits (light table 0-31 / 32-63), z rays per light (0 off)
 } ouShadow;
 OU_SHADOW_TEX uniform sampler2DShadow ouShadowMap; // atlas: the 3 cascades side by side
+// Screen-space ambient occlusion (CORTAO, RENDERING.md "Ambient occlusion"): render-resolution map, r = visibility of
+// the ambient / indirect light (1 = unoccluded) of the opaque surface at that pixel, same orientation as gl_FragCoord.
+// Read only while screen.w bit 4 is set (the backend bound a valid map this frame).
+OU_AO_TEX uniform sampler2D ouAoMap;
+float ouAo() {
+    return (int(ouShadow.screen.w) & 4) != 0 ? texelFetch(ouAoMap, ivec2(gl_FragCoord.xy), 0).r : 1.0;
+}
 
 // 3x3 PCF in the finest cascade whose tile holds p.
 float ouShadowMapVisibility(vec3 p) {
@@ -272,6 +283,14 @@ float ouSunBegin(bool sunLit) {
 #else
     return sunLit ? ouSunVisibility(ouP, ouN, true, false) : 1.0;
 #endif
+}
+// Screen-space AO factor of a translated program (ShaderTranslate scales its ambient / indirect registers by it: g_Ambient
+// c15, IrradianceState c70-c76, light-map scales c148 / c149; never SunLight or the light slots). Opaque materials
+// (fixedParams.w value 8) of fully opaque, non-reflective instances only: their depth is in the pre-pass the map was built
+// from; blended, additive and fading draws keep 1.
+float ouAoBegin() {
+    int f = int(ouMat.fixedParams.w);
+    return (f & 8) != 0 && (f & 4) == 0 && ouObj.opacity >= 1.0 ? ouAo() : 1.0;
 }
 // Local-light shadows (OU_RT with ouShadow.lights.z rays): visibility of the object's light slots `slots` (bit s: the
 // program reads slot s's colour, which ShaderTranslate scales by vis[s]) from ouP, after ouSunBegin. tru.exe gives its
