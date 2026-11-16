@@ -243,6 +243,9 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_vk_tests PROPERTIES ENVIRONMENT "${OU_VK_TEST_ENV}")
   set_tests_properties(viewer_vulkan_placeholder_screenshot viewer_vulkan_matches_gl viewer_vulkan_matches_gl_enhanced viewer_vulkan_matches_gl_agx PROPERTIES
                        SKIP_RETURN_CODE 77 ENVIRONMENT "${OU_VK_TEST_ENV}")
+  add_executable(ou_anti_lag_tests tests/test_anti_lag.cpp) # marker sequencing vs. Mesa's anti-lag layer; no GPU
+  target_link_libraries(ou_anti_lag_tests PRIVATE ou_render_common GTest::gtest_main)
+  gtest_discover_tests(ou_anti_lag_tests)
   add_executable(ou_shader_tests tests/test_shaders.cpp)
   target_link_libraries(ou_shader_tests PRIVATE ou_render_common GTest::gtest_main)
   gtest_discover_tests(ou_shader_tests DISCOVERY_TIMEOUT 30 PROPERTIES TIMEOUT 1200) # every-shader sweep: ~570 s under ASan
