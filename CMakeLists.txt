@@ -211,6 +211,43 @@ foreach(def OU_TRACE OU_MS OU_DENOISE)
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${name}.comp.inc)
 endforeach()
+# CORTAO ambient occlusion (third_party/cortao, MIT; docs/RENDERING.md "Ambient occlusion"): prepass, main pass (sample
+# count x ray count permutations), filter, our temporal pass; _ms = MSAA pre-pass targets (sample 0).
+set(OU_CORTAO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cortao)
+set(OU_CORTAO_PERMUTATIONS "prepass|" "prepass_ms|-DOU_MS" "filter|" "temporal|")
+foreach(n 8 12 16 32)
+  if(n EQUAL 32)
+    set(rays 32)
+  else()
+    set(rays 16)
+  endif()
+  list(APPEND OU_CORTAO_PERMUTATIONS "main${n}|-DOU_SAMPLES=${n} -DOU_RAYS=${rays}"
+       "main${n}_ms|-DOU_SAMPLES=${n} -DOU_RAYS=${rays} -DOU_MS")
+endforeach()
+foreach(perm ${OU_CORTAO_PERMUTATIONS})
+  string(FIND "${perm}" "|" bar)
+  string(SUBSTRING "${perm}" 0 ${bar} name)
+  math(EXPR bar "${bar} + 1")
+  string(SUBSTRING "${perm}" ${bar} -1 defs)
+  separate_arguments(defs)
+  string(REGEX REPLACE "^(main)[0-9]+.*" "\\1" stage ${name})
+  string(REGEX REPLACE "_ms$" "" stage ${stage})
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/cortao_${stage}.comp)
+  add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/cortao_${name}.comp.inc
+                     COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num ${defs} -I ${OU_CORTAO_DIR}/src/shaders -o ${OU_VK_SPV_DIR}/cortao_${name}.comp.inc ${src}
+                     DEPENDS ${src} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/cortao_common.glsl
+                             ${OU_CORTAO_DIR}/src/shaders/CORTAOBase.h ${OU_CORTAO_DIR}/src/shaders/CORTAOPrepass.h
+                             ${OU_CORTAO_DIR}/src/shaders/CORTAOMainPass.h ${OU_CORTAO_DIR}/src/shaders/CORTAOFilterPass.h VERBATIM)
+  list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/cortao_${name}.comp.inc)
+endforeach()
+# The occluder lookup tables (24x24x16, 16 / 32 rays) as byte arrays.
+foreach(t 24x24x16x16_R16_UINT 24x24x16x32_R32_UINT)
+  set(bin ${OU_CORTAO_DIR}/tables/occluder/${t}.bin)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${bin})
+  file(READ ${bin} hex HEX)
+  string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," hex "${hex}")
+  file(CONFIGURE OUTPUT ${OU_VK_SPV_DIR}/cortao_${t}.inc CONTENT "@hex@" @ONLY)
+endforeach()
 # AMD FSR 3.1.6 upscaling + frame generation (FidelityFX SDK 2.4.0 ffx-api, third_party/fidelityfx-sdk; sets OU_HAS_FSR).
 add_subdirectory(third_party/fidelityfx-sdk)
 add_library(ou_render_vk STATIC src/render/vk/VkRenderer.cpp src/render/vk/VkFsr.cpp ${OU_VK_SPV})

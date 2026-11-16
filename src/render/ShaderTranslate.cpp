@@ -183,6 +183,13 @@ public:
                     post += "    ouVar" + std::to_string(loc) + " = " + value + ";\n";
                 }
             }
+            // Depth pre-pass variant (render/sun.glsl OU_PREPASS): the world normal for the screen-space AO's normal target.
+            h += std::string("#ifdef OU_PREPASS\n") +
+                 (out_.attributes >> kAttrNormal & 1 ? "" : "layout(location = " + std::to_string(kAttrNormal) + ") in vec4 ouAttr" +
+                                                               std::to_string(kAttrNormal) + ";\n") +
+                 "layout(location = 14) out vec3 ouPrepassNormal;\n#endif\n";
+            post += "#ifdef OU_PREPASS\n    ouPrepassNormal = mat3(ouObj.v[4].xyz, ouObj.v[5].xyz, ouObj.v[6].xyz) * ouAttr" +
+                    std::to_string(kAttrNormal) + ".xyz;\n#endif\n";
         } else {
             for (const auto& [n, d] : inputs_) {
                 const int loc = varyingLocation(d->usage, d->usageIndex);
@@ -198,7 +205,8 @@ public:
             // every two-sided cdc shader that reads it negates its normal for vFace >= 0 (`cmp r, vFace, -v, v`), the
             // l1_seatop sea (normals +z, front up) takes its lit, depth-limited refraction branch from above only then.
             if (misc_.count(1)) pre += "    vec4 vFace = vec4(gl_FrontFacing ? -1.0 : 1.0);\n";
-            h += "layout(location = 0) out vec4 ouColor;\n";
+            // The pre-pass variant (OU_PREPASS) writes the normal target at location 0 instead (render/sun.glsl).
+            h += "#ifdef OU_PREPASS\nvec4 ouColor;\n#else\nlayout(location = 0) out vec4 ouColor;\n#endif\n";
             // Sun shadow / RT hooks (render/sun.glsl, defined by the backend with OU_SUN): first thing in main and before
             // the alpha test; SunLight colour reads (c212) are scaled by the visibility.
             h += "#ifdef OU_SUN\nfloat ouSunBegin(bool sunLit);\nvec4 ouSunEnd(vec4 c);\nvoid ouLightsBegin(uint slots, out float vis[6]);\n"

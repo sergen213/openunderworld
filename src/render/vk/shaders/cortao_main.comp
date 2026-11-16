@@ -1,0 +1,51 @@
+#version 460
+// CORTAO main pass (third_party/cortao CORTAOMainPass.h): occlusion only, occluder lookup table. Permutations:
+// -DOU_SAMPLES (CORTAO_SAMPLE_COUNT 8 / 12 / 16 / 32), -DOU_RAYS (16 / 32, the table's), -DOU_MS (MSAA normal target).
+#include "cortao_common.glsl"
+#define CORTAO_SAMPLE_COUNT OU_SAMPLES
+#define CORTAO_RAY_COUNT OU_RAYS
+#define CORTAO_OCCLUDER_LOOKUP_TABLE 1
+#include <CORTAOMainPass.h>
+
+layout(push_constant) uniform Push {
+    CORTAOMainPassParameters parameters;
+    vec4 viewRows[3];
+};
+layout(set = 0, binding = 1) uniform OU_TEX2D normalBuffer;
+layout(set = 0, binding = 3) uniform utexture2D packedData;
+layout(set = 0, binding = 4) uniform utexture3D occluderTable;
+layout(set = 0, binding = 5) uniform sampler borderIntSampler; // nearest, clamp to border (0)
+layout(set = 0, binding = 7) uniform sampler clampSampler;     // nearest, clamp to edge
+layout(set = 0, binding = 8, r8) uniform restrict writeonly image2D rawOcclusion;
+
+cortao_uint cortao_samplePackedData(cortao_float2 uv, cortao_float mip) {
+    return textureLod(usampler2D(packedData, borderIntSampler), uv, mip).r;
+}
+
+cortao_half3 cortao_loadNormal(cortao_int2 p) {
+    vec2 uv = (vec2(p) + 0.5) / vec2(cortao_getResolution(parameters.packedResolution));
+    vec4 u = parameters.unprojectParams;
+    return ouViewNormal(texelFetch(normalBuffer, p, 0).xy, viewRows, vec3(uv * u.xy + u.zw, -1.0));
+}
+
+cortao_uint cortao_sampleOccluderLookupTable(cortao_float3 uvw) {
+    return textureLod(usampler3D(occluderTable, clampSampler), uvw, 0.0).r;
+}
+
+void cortao_writeResult(cortao_int2 p, cortao_half occlusion, cortao_half3 bentNormal, cortao_half3x3 tangentSpaceTransform,
+                        cortao_uint rayBits) {
+    imageStore(rawOcclusion, p, vec4(occlusion, 0.0, 0.0, 0.0));
+}
+
+// Reference implementation's Morton reorder of the 16x16 workgroup (cache coherency).
+uvec2 deinterleave(uint index) {
+    uvec2 p = uvec2(index, index) >> uvec2(0, 1);
+    p &= 0x5555u;
+    p = (p ^ (p >> 1u)) & 0x3333u;
+    p = (p ^ (p >> 2u)) & 0x0f0fu;
+    p = (p ^ (p >> 4u)) & 0x00ffu;
+    return p;
+}
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() { cortao_mainPass(gl_WorkGroupID.xy * gl_WorkGroupSize.xy + deinterleave(gl_LocalInvocationIndex), parameters); }

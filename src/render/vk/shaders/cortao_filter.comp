@@ -1,0 +1,29 @@
+#version 460
+// CORTAO filter pass (third_party/cortao CORTAOFilterPass.h): the large 13-tap, symmetric, depth / normal-aware sparse
+// blur of the main pass's occlusion. Each thread filters a 2x2 block (8x8 groups = 16x16 pixels).
+#include "cortao_common.glsl"
+#define CORTAO_LARGE_FILTER 1
+#define CORTAO_FILTER_SYMMETRY 1
+#include <CORTAOFilterPass.h>
+
+layout(push_constant) uniform Push { CORTAOFilterPassParameters parameters; };
+layout(set = 0, binding = 3) uniform utexture2D packedData;
+layout(set = 0, binding = 5) uniform sampler borderIntSampler;   // nearest, clamp to border (0)
+layout(set = 0, binding = 6) uniform sampler borderFloatSampler; // nearest, clamp to border (0)
+layout(set = 0, binding = 9) uniform texture2D rawOcclusion;
+layout(set = 0, binding = 10, r16f) uniform restrict writeonly image2D filteredOcclusion;
+
+cortao_uint4 cortao_gatherPackedData(cortao_float2 uv, cortao_int2 offset) {
+    return textureGatherOffset(usampler2D(packedData, borderIntSampler), uv, offset);
+}
+
+cortao_half4 cortao_gatherSSAO(cortao_float2 uv, cortao_int2 offset) {
+    return cortao_half4(textureGatherOffset(sampler2D(rawOcclusion, borderFloatSampler), uv, offset));
+}
+
+void cortao_writeFilterOutput(cortao_int2 p, cortao_half ssao) {
+    imageStore(filteredOcclusion, p, vec4(ssao, 0.0, 0.0, 0.0));
+}
+
+layout(local_size_x = 8, local_size_y = 8) in;
+void main() { cortao_filterPass(gl_GlobalInvocationID.xy, parameters); }

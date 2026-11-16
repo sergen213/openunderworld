@@ -628,6 +628,9 @@ void warmSpirv(const scene::SceneData& scene, bool rays) {
             spirv(p.psGlsl.source, true, error);
             spirv(originalPixelSource(p.psGlsl.source, true, false), true, error);
             if (rays) spirv(originalPixelSource(p.psGlsl.source, true, true), true, error);
+            // The depth pre-pass pair (screen-space AO / RT): VkRenderer compiles both for every program.
+            if (!spirv(originalPrepassVertex(p.vsGlsl.source), false, error).empty())
+                spirv(originalPixelSource(p.psGlsl.source, true, false, true), true, error);
         }
     };
     // Half the cores: the render thread keeps the others.

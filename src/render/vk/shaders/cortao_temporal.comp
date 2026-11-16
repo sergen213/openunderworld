@@ -1,0 +1,69 @@
+#version 460
+// CORTAO temporal accumulation (ours; CORTAO leaves temporal filtering to the engine): the filtered occlusion blended
+// into last frame's result reprojected through the depth (bilinear taps that agree with the expected depth only),
+// clamped to the 3x3 neighbourhood's mean +- 1.25 sigma (no ghosting on moving occluders). Writes the map the scene
+// shaders read (render/sun.glsl ouAoMap): r = occlusion, g = view depth (0 = no surface).
+#include "cortao_common.glsl"
+
+layout(push_constant) uniform Push {
+    mat4 reproject; // current view space -> previous frame's clip (Vulkan, jittered as that frame drew)
+    vec4 unproject; // camera ray per texture coordinate (CORTAOMainPassParameters unproject)
+    vec4 size;      // width, height, 1 / width, 1 / height
+    ivec4 cfg;      // x: history valid (the previous frame ran the pass, no camera cut)
+};
+layout(set = 0, binding = 3) uniform utexture2D packedData;
+layout(set = 0, binding = 11) uniform texture2D filteredOcclusion;
+layout(set = 0, binding = 12) uniform texture2D history;
+layout(set = 0, binding = 13, rg16f) uniform restrict writeonly image2D result;
+
+const float kBlend = 0.1;   // new frame's weight with history (~10-frame window, the seed changes every frame)
+const float kDepthTol = 0.03;
+
+float depthAt(ivec2 p) { return uintBitsToFloat(texelFetch(packedData, p, 0).r); }
+
+layout(local_size_x = 8, local_size_y = 8) in;
+void main() {
+    const ivec2 p = ivec2(gl_GlobalInvocationID.xy), res = ivec2(size.xy);
+    if (any(greaterThanEqual(p, res))) return;
+    const float z = depthAt(p);
+    if (z <= 0.0) {
+        imageStore(result, p, vec4(1.0, 0.0, 0.0, 0.0));
+        return;
+    }
+    // Neighbourhood statistics over the surface's own pixels.
+    float sum = 0.0, sum2 = 0.0, n = 0.0;
+    const float cur = texelFetch(filteredOcclusion, p, 0).r;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 q = clamp(p + ivec2(x, y), ivec2(0), res - 1);
+            float d = depthAt(q);
+            if (d <= 0.0 || abs(d - z) > 0.1 * z) continue;
+            float a = texelFetch(filteredOcclusion, q, 0).r;
+            sum += a, sum2 += a * a, n += 1.0;
+        }
+    const float mean = sum / n, sigma = sqrt(max(sum2 / n - mean * mean, 0.0));
+    float ao = cur;
+    if (cfg.x != 0) {
+        vec2 uv = (vec2(p) + 0.5) * size.zw;
+        vec4 prev = reproject * vec4(vec3(uv * unproject.xy + unproject.zw, -1.0) * z, 1.0);
+        if (prev.w > 0.0) {
+            vec2 pp = vec2(0.5 + 0.5 * prev.x / prev.w, 0.5 - 0.5 * prev.y / prev.w) * size.xy - 0.5;
+            ivec2 b = ivec2(floor(pp));
+            vec2 t = pp - vec2(b);
+            float hs = 0.0, hw = 0.0;
+            for (int i = 0; i < 4; ++i) {
+                ivec2 o = ivec2(i & 1, i >> 1), q = b + o;
+                if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, res))) continue;
+                vec2 h = texelFetch(history, q, 0).rg;
+                if (h.g <= 0.0 || abs(h.g - prev.w) > kDepthTol * prev.w) continue;
+                float w = mix(1.0 - t.x, t.x, float(o.x)) * mix(1.0 - t.y, t.y, float(o.y));
+                hs += w * h.r, hw += w;
+            }
+            if (hw > 0.01) {
+                float h = clamp(hs / hw, mean - 1.25 * sigma - 0.01, mean + 1.25 * sigma + 0.01);
+                ao = mix(h, cur, kBlend);
+            }
+        }
+    }
+    imageStore(result, p, vec4(clamp(ao, 0.0, 1.0), min(z, 65000.0), 0.0, 0.0)); // RG16F depth range
+}

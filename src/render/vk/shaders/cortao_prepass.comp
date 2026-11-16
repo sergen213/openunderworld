@@ -1,0 +1,28 @@
+#version 460
+// CORTAO prepass (third_party/cortao CORTAOPrepass.h): linear depth + packed view normal, all mips in one dispatch.
+// -DOU_MS: the MSAA pre-pass targets (sample 0).
+#include "cortao_common.glsl"
+#include <CORTAOPrepass.h>
+
+layout(push_constant) uniform Push {
+    CORTAOPrepassParameters parameters;
+    vec4 viewRows[3]; // world -> view rotation rows
+    vec4 unproject;   // CORTAOMainPassParameters unproject (camera ray per texture coordinate)
+};
+layout(set = 0, binding = 0) uniform OU_TEX2D depthBuffer;
+layout(set = 0, binding = 1) uniform OU_TEX2D normalBuffer;
+layout(set = 0, binding = 2, r32ui) uniform restrict writeonly uimage2D packedMips[8];
+
+cortao_float cortao_loadDepth(cortao_int2 p) { return texelFetch(depthBuffer, p, 0).r; }
+
+cortao_float3 cortao_loadNormal(cortao_int2 p) {
+    vec2 uv = (vec2(p) + 0.5) / vec2(cortao_getResolution(parameters.packedResolution));
+    return ouViewNormal(texelFetch(normalBuffer, p, 0).xy, viewRows, vec3(uv * unproject.xy + unproject.zw, -1.0));
+}
+
+void cortao_writePackedData(cortao_int2 p, cortao_int mip, cortao_uint data) {
+    imageStore(packedMips[mip], p, uvec4(data, 0u, 0u, 0u));
+}
+
+layout(local_size_x = 8, local_size_y = 8) in;
+void main() { cortao_prepass(gl_GlobalInvocationID.xy, parameters); }

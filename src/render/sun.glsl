@@ -27,13 +27,14 @@ OU_SHADOW_TEX uniform sampler2DShadow ouShadowMap; // atlas: the 3 cascades side
 // gl_FragCoord; r = visibility of the ambient / indirect light (1 = unoccluded) of the pre-passed opaque surface at that
 // pixel, g = its view depth (clip w; 0 = no pre-passed surface). A fragment takes r only where its own view depth matches
 // g (2 %): blended, water, exterior and screen-reading draws in front of / behind that surface keep 1, no per-draw flag.
-// Read only while screen.w bit 4 is set (the backend bound a valid map this frame).
+// Read only while screen.w bit 4 is set (the backend bound a valid map this frame); ouAo below.
 OU_AO_TEX uniform sampler2D ouAoMap;
-float ouAo() {
-    if ((int(ouShadow.screen.w) & 4) == 0) return 1.0;
-    vec2 s = texelFetch(ouAoMap, ivec2(gl_FragCoord.xy), 0).rg;
-    float z = 1.0 / gl_FragCoord.w;
-    return s.g > 0.0 && abs(s.g - z) < 0.02 * s.g ? s.r : 1.0;
+// Octahedral encoding of a unit vector (the depth pre-pass's normal target; decoded by the AO passes).
+vec2 ouOctEncode(vec3 n) {
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec2 e = n.xy;
+    if (n.z < 0.0) e = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    return e;
 }
 
 // 3x3 PCF in the finest cascade whose tile holds p.
@@ -246,11 +247,12 @@ float ouSunVisibility(vec3 p, vec3 n, bool lit, bool rays) {
 // bounce light x the receiver's albedo, a = AO factor; geometry .w = view depth (clip w, 0 = no surface).
 layout(set = OU_SHADOW_SET, binding = 2) uniform sampler2D ouIndirectMap;
 layout(set = OU_SHADOW_SET, binding = 3) uniform sampler2D ouIndirectGeom;
-// c x AO + bounce at an opaque, pre-passed fragment (the pass traced from the pre-pass depth): joint-bilateral
+// The pass's sample at an opaque, pre-passed fragment (the pass traced from the pre-pass depth): joint-bilateral
 // upsampling from the 2x2 half-resolution texels around it, weighted by view-depth agreement (none agrees: the closest
-// one in depth, so silhouettes take their own side). screen.w bits 1 (AO) / 2 (GI) clear = the pass did not run: c.
-vec3 ouIndirect(vec3 c) {
-    if ((int(ouShadow.screen.w) & 3) == 0) return c;
+// one in depth, so silhouettes take their own side; none within 5 %: another surface, nothing). rgb bounce, a AO.
+// screen.w bits 1 (AO) / 2 (GI) clear = the pass did not run.
+vec4 ouIndirectSample() {
+    if ((int(ouShadow.screen.w) & 3) == 0) return vec4(0.0, 0.0, 0.0, 1.0);
     float z = 1.0 / gl_FragCoord.w;
     vec2 h = (gl_FragCoord.xy - 0.5) * 0.5;
     ivec2 b = ivec2(floor(h)), last = textureSize(ouIndirectMap, 0) - 1;
@@ -268,22 +270,47 @@ vec3 ouIndirect(vec3 c) {
         wsum += w;
         if (err < bestErr) bestErr = err, best = s;
     }
-    vec4 s = wsum > 1.0e-4 ? sum / wsum : best;
-    return c * s.a + s.rgb;
+    if (bestErr > 0.05) return vec4(0.0, 0.0, 0.0, 1.0);
+    return wsum > 1.0e-4 ? sum / wsum : best;
 }
+// c + the sun bounce (its AO darkens the ambient light through ouAo instead, not c as a whole).
+vec3 ouIndirect(vec3 c) { return (int(ouShadow.screen.w) & 2) != 0 ? c + ouIndirectSample().rgb : c; }
 #endif
+
+// Ambient / indirect light visibility at this fragment: the screen-space AO map (bit 4) or the RT AO (bit 1, OU_RT
+// builds), 1 without either or off the pre-passed opaque surface.
+float ouAo() {
+    if ((int(ouShadow.screen.w) & 4) != 0) {
+        vec2 s = texelFetch(ouAoMap, ivec2(gl_FragCoord.xy), 0).rg;
+        float z = 1.0 / gl_FragCoord.w;
+        return s.g > 0.0 && abs(s.g - z) < 0.02 * s.g ? s.r : 1.0;
+    }
+#ifdef OU_RT
+    if ((int(ouShadow.screen.w) & 1) != 0) return ouIndirectSample().a;
+#endif
+    return 1.0;
+}
 
 #ifdef OU_SUN
 // Translated original pixel shaders: position from gl_FragCoord (exact view depth 1 / gl_FragCoord.w along the camera
 // ray), face normal from its derivatives, both computed first thing in main() (uniform control flow, before texkill).
 vec3 ouP, ouN;
+#ifdef OU_PREPASS
+// Depth pre-pass variant (ShaderTranslate: the VS adds the world normal at location 14, the program's colour stays
+// local): writes the normal target the screen-space AO reads, the octahedral unit world normal facing the viewer
+// (interpolated; the face normal ouN where the mesh has none).
+layout(location = 14) in vec3 ouPrepassNormal;
+layout(location = 0) out vec2 ouPrepassOut;
+#endif
 float ouSunBegin(bool sunLit) {
     vec2 uv = gl_FragCoord.xy * ouShadow.screen.xy;
     ouP = ouShadow.eye.xyz + (ouShadow.rayBase.xyz + uv.x * ouShadow.rayU.xyz + uv.y * ouShadow.rayV.xyz) / gl_FragCoord.w;
     vec3 n = cross(dFdx(ouP), dFdy(ouP));
     ouN = dot(n, n) > 0.0 ? normalize(n) : vec3(0.0, 0.0, 1.0);
     if (dot(ouN, ouShadow.eye.xyz - ouP) < 0.0) ouN = -ouN;
-#ifdef OU_RT
+#if defined(OU_PREPASS)
+    return 1.0;
+#elif defined(OU_RT)
     return sunLit ? ouSunVisibility(ouP, ouN, true, true) : 1.0;
 #else
     return sunLit ? ouSunVisibility(ouP, ouN, true, false) : 1.0;
@@ -292,7 +319,11 @@ float ouSunBegin(bool sunLit) {
 // Screen-space AO factor of a translated program (ShaderTranslate scales its ambient / indirect registers by it: g_Ambient
 // c15, IrradianceState c70-c76, light-map scales c148 / c149; never SunLight or the light slots). ouAo's depth match
 // limits it to the pre-passed opaque surfaces.
+#ifdef OU_PREPASS
+float ouAoBegin() { return 1.0; } // the map is built from this pass
+#else
 float ouAoBegin() { return ouAo(); }
+#endif
 // Local-light shadows (OU_RT with ouShadow.lights.z rays): visibility of the object's light slots `slots` (bit s: the
 // program reads slot s's colour, which ShaderTranslate scales by vis[s]) from ouP, after ouSunBegin. tru.exe gives its
 // shadow lights (DTP +0x144C, scene::Light::shadow) shadow maps in slots 0-2 (0x5042B0); here the first 4 slots of the
@@ -324,6 +355,10 @@ void ouLightsBegin(uint slots, out float vis[6]) {
 // After the program: RT water reflections on materials the backend flags reflective (fixedParams.w bit 2); RT AO /
 // sun bounce on the rest (the ray-traced variant draws only opaque, pre-passed submeshes and reflective ones).
 vec4 ouSunEnd(vec4 c) {
+#ifdef OU_PREPASS
+    vec3 n = dot(ouPrepassNormal, ouPrepassNormal) > 1.0e-6 ? normalize(ouPrepassNormal) : ouN;
+    ouPrepassOut = ouOctEncode(dot(n, ouN) < 0.0 ? -n : n); // the side facing the viewer (two-sided meshes)
+#endif
 #ifdef OU_RT
     if ((int(ouMat.fixedParams.w) & 4) != 0 && ouShadow.screen.z >= 2.0) return ouRtWater(c, ouP, ouN, true, 2.0);
     if ((int(ouMat.fixedParams.w) & 4) == 0) c.rgb = ouIndirect(c.rgb);

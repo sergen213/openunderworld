@@ -191,9 +191,10 @@ const char* sunGlsl() {
         ;
 }
 
-std::string originalPixelSource(const std::string& translated, bool vulkan, bool rt) {
+std::string originalPixelSource(const std::string& translated, bool vulkan, bool rt, bool prepass) {
     std::string head = "#define OU_SUN 1\n";
     if (vulkan) head += "#define OU_SHADOW_SET 2\n";
+    if (prepass) head += "#define OU_PREPASS 1\n";
     if (rt)
         head += "#extension GL_EXT_ray_query : require\n#extension GL_EXT_buffer_reference : require\n"
                 "#extension GL_EXT_nonuniform_qualifier : require\n"
@@ -202,6 +203,12 @@ std::string originalPixelSource(const std::string& translated, bool vulkan, bool
     if (rt && s.starts_with("#version 450")) s.replace(9, 3, "460"); // GL_EXT_ray_query needs GLSL 4.60
     s.insert(s.find('\n') + 1, head); // after #version
     return s + sunGlsl();
+}
+
+std::string originalPrepassVertex(const std::string& translated) {
+    std::string s = translated;
+    s.insert(s.find('\n') + 1, "#define OU_PREPASS 1\n"); // after #version
+    return s;
 }
 
 std::string rtSummary(const RtStatus& s, RayTracing requested, int rays) {

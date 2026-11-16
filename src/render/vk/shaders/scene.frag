@@ -33,9 +33,10 @@ void main() {
     float vis = ouSunVisibility(vWorld, n, pc.lighting != 0 && ndl > 0.0 && c.a >= pc.alphaRef, (pc.rt & 1) != 0);
     if (c.a < pc.alphaRef) discard;
     if (abs(pc.opacity) < 1.0) c.a = (pc.opacity < 0.0 ? 1.0 : c.a) * abs(pc.opacity);
-    if (pc.lighting != 0 && len > 1e-6) c.rgb *= 0.45 + 0.55 * ndl * vis;
+    // Screen-space AO (sun.glsl ouAo: the pre-passed opaque surface at this pixel only) darkens the ambient term only.
+    if (pc.lighting != 0 && len > 1e-6) c.rgb *= 0.45 * ouAo() + 0.55 * ndl * vis;
 #ifdef OU_RT
-    if ((pc.rt & 1) != 0) c.rgb = ouIndirect(c.rgb); // RT AO / sun bounce (opaque, pre-passed draws only)
+    if ((pc.rt & 1) != 0) c.rgb = ouIndirect(c.rgb); // RT sun bounce (opaque, pre-passed draws only; RT AO is in ouAo)
     if ((pc.rt & 2) != 0 && len > 1e-6) c = ouRtWater(c, vWorld, n, pc.lighting != 0, 1.0);
 #endif
     oColor = c;

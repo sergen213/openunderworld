@@ -75,7 +75,11 @@ SunShadow sunShadow(const Camera& camera, Viewport vp, const Bounds& scene, glm:
 // sun.glsl source, and a translated pixel shader (ShaderTranslate) with its OU_SUN hooks wired to it: Vulkan puts
 // OuShadow in set 2 and (`rt`) the ray-tracing set in set 3; GL uses UBO binding 3 / texture unit 16.
 const char* sunGlsl();
-std::string originalPixelSource(const std::string& translated, bool vulkan, bool rt);
+// `prepass`: the depth pre-pass variant (OU_PREPASS, no sun term): writes the octahedral world normal of the screen-space
+// AO's normal target at location 0 instead of the colour (render/sun.glsl); pair it with originalPrepassVertex.
+std::string originalPixelSource(const std::string& translated, bool vulkan, bool rt, bool prepass = false);
+// A translated vertex shader's pre-pass variant (OU_PREPASS): adds the world normal output at location 14.
+std::string originalPrepassVertex(const std::string& translated);
 
 // Draw order: exterior submeshes first (SubMesh::exterior; the renderers clear the depth after them), then opaque
 // submeshes in mesh order, then blended ones back to front by mesh centre distance from `eye` (the original game sorts
