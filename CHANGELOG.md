@@ -6,6 +6,18 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.49.1] - 2026-11-15
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Changed: Enhanced water's caustics on sea beds, rocks and pool floors are now formed the way real ones are: sunlight
+  bent by the moving wavy surface gathers into a network of thin bright lines over dimmer cells. They replace the white
+  sheet with dark blotches. Overall brightness is unchanged. They are soft right under the surface, sharpest a few
+  metres down, and blur into even light from about 10 m (gone by 35 m and 100 m away). Shallow beds seen from above the
+  water show the same lines through the waves. They cost about 0.07 ms per frame.
+- Changed: rock faces turned away from the sun, and sea beds far away, keep their average sunlight under water instead
+  of going dark.
+
 ## [0.49.0] - 2026-11-15
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
