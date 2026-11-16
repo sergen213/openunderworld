@@ -1,25 +1,31 @@
 #version 460
 // Enhanced water's interactive wave field (render/WaterField.hpp, docs/RENDERING.md "Interactive waves"): Tessendorf's
 // eWave (2014, written from the paper) with the full gravity-capillary dispersion on water of finite depth. State per
-// cell: total height h (TRU units above the rest surface, the bodies' dips included) and vertical velocity v (units/s).
+// cell: total height h (TRU units above the rest surface, the bodies' dips included), vertical velocity v (units/s) and
+// whitewater w (0..1, the foam the waves made: bubbles stay at the surface for seconds).
 // Seven passes per frame (cfg.x), one dispatch each:
 //  0 prep (16 x 16 tiles): the window scroll (cell c reads cell c + shift), this frame's kicks (own + external
-//    buffer, culled per tile in batches of 256), u = h - the bodies' hydrostatic dips, packed as u + i v into work.
+//    buffer, culled per tile in batches of 256), u = h - the bodies' hydrostatic dips, packed as u + i v into work;
+//    the scrolled whitewater plus what the sharp kicks churn (drops falling back, strokes: 8 cm of crater makes it
+//    white) into the cell's spare slot (state.w: nothing else reads it before finalize).
 //  1 / 2: forward DFT along rows, then columns (radix-2 Stockham in shared memory, one workgroup per line).
 //  3 propagate: per wave-number pair (k, -k) unpack U, V (both fields are real), advance each mode by its damped
 //    oscillator exactly: omega^2 = (g k + sigma / rho k^3) tanh(k depth), damped e^{-gamma(k) dt}; the mean (k = 0,
 //    which no wave carries) is removed; scaled for the inverse.
 //  4 / 5: inverse DFT along rows, then columns.
 //  6 finalize (tiles): static walls (the mask), slow bodies' cores (both reflect: u = 0), the edge sponge, rough-sea
-//    damping (FFT ocean slope), the steepness limit; h = u + the dips back into the state, and uRipples (h, dh/dx,
-//    dh/dy, v; contract C1 in shaders/water_surface.glsl) for the water shaders. Clears the external kick count.
+//    damping (FFT ocean slope), the steepness limit; whitewater: decays over kFoamLife s, made where a crest breaks
+//    (the share the steepness limit takes), where the water moves vertically faster than 1-2 m/s (a collapsing cavity's
+//    surge) and inside an open cavity (a dip deeper than 0.25 m entrains air); h = u + the dips, v, w back into the
+//    state, and uRipples (h, dh/dx, dh/dy, w; contract C1 in shaders/water_surface.glsl) for the water shaders.
+//    Clears the external kick count.
 // Bodies as moving equilibria: the waves are u = h - dip(bodies); a body that moves shifts its dip under the water,
 // which then oscillates toward the new equilibrium and radiates (the Kelvin wake behind a swimmer). The equilibrium dip
 // of a surface pressure p is -p / (rho g) at every wave number (capillarity aside), so it holds in any depth.
 layout(local_size_x = 256) in;
 struct OuWaveKick { vec4 k; }; // world x, y, centre displacement (TRU units, < 0 pushes down), sigma (TRU units)
 #ifdef VULKAN
-layout(set = 0, binding = 0, std430) buffer State { vec2 state[]; };
+layout(set = 0, binding = 0, std430) buffer State { vec4 state[]; }; // h, v, whitewater, prep -> finalize
 layout(set = 0, binding = 1, std430) buffer Work { vec2 work[]; };
 layout(set = 0, binding = 2, std430) readonly buffer Kicks { uint count; uint pad0, pad1, pad2; OuWaveKick kicks[4096]; } own;
 layout(set = 0, binding = 3, std430) buffer ExtKicks { uint count; uint pad0, pad1, pad2; OuWaveKick kicks[4096]; } ext;
@@ -34,7 +40,7 @@ layout(push_constant) uniform Push { ivec4 cfg; vec4 par; vec4 win; vec4 phys; v
 #define DAMP pc.damp
 #define OCEAN pc.ocean
 #else
-layout(std430, binding = 0) buffer State { vec2 state[]; };
+layout(std430, binding = 0) buffer State { vec4 state[]; };
 layout(std430, binding = 1) buffer Work { vec2 work[]; };
 layout(std430, binding = 2) readonly buffer Kicks { uint count; uint pad0, pad1, pad2; OuWaveKick kicks[4096]; } own;
 layout(std430, binding = 3) buffer ExtKicks { uint count; uint pad0, pad1, pad2; OuWaveKick kicks[4096]; } ext;
@@ -62,6 +68,7 @@ const int N = 512;      // render::waterfield::kN
 const int MASKN = 256;  // kMaskN
 const int TILE = 16;
 const float kPi = 3.14159265358979;
+const float kFoamLife = 1.5; // s: whitewater's e-folding time (the bubbles of a splash surface and burst in seconds) [I]
 
 vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 vec2 conj2(vec2 a) { return vec2(a.x, -a.y); }
@@ -107,9 +114,9 @@ void prep() {
     ivec2 c = tileCell(lo);
     vec2 hi = lo + float(TILE) * WIN.z, p = cellWorld(c);
     ivec2 src = c + CFG.yz;
-    vec2 s = vec2(0.0);
-    if ((CFG.w & 1) == 0 && all(greaterThanEqual(src, ivec2(0))) && all(lessThan(src, ivec2(N)))) s = state[src.y * N + src.x];
-    float h = s.x;
+    vec3 s = vec3(0.0); // (.w is this pass's output slot: never read here)
+    if ((CFG.w & 1) == 0 && all(greaterThanEqual(src, ivec2(0))) && all(lessThan(src, ivec2(N)))) s = state[src.y * N + src.x].xyz;
+    float h = s.x, dk = 0.0, churn = 0.0;
     // Kicks of both buffers in batches of 256: each thread tests one against the tile, the hits apply to every cell.
     uint nOwn = min(own.count, 4096u), total = nOwn + min(ext.count, 4096u);
     for (uint base = 0u; base < total; base += 256u) {
@@ -123,10 +130,16 @@ void prep() {
                 sKick[atomicAdd(sKickCount, 1u)] = k;
         }
         barrier();
-        for (uint j = 0u; j < sKickCount; ++j) h += kickShape(sKick[j], p);
+        for (uint j = 0u; j < sKickCount; ++j) {
+            float k = kickShape(sKick[j], p);
+            dk += k;
+            if (sKick[j].w < 3.0 * WIN.z) churn += k; // sharp impacts churn; a broad, gentle push (a bob) does not
+        }
         barrier();
     }
+    h += dk;
     work[c.y * N + c.x] = vec2(h - bodiesAt(p).x, s.y);
+    state[c.y * N + c.x].w = min(1.0, s.z + clamp(-churn / WIN.w / 0.08, 0.0, 1.0)); // 8 cm of crater: white
 }
 
 // ---- 1 / 2 / 4 / 5: one line of the DFT (radix-2 Stockham, natural order in and out) ----
@@ -189,6 +202,7 @@ void finalize() {
     if (gl_GlobalInvocationID.x == 0u) ext.count = 0u; // consumed (prep ran in the previous dispatch)
     vec2 s = work[c.y * N + c.x];
     vec4 b = bodiesAt(p);
+    float foam = state[c.y * N + c.x].w * exp(-PAR.x / kFoamLife); // prep's scrolled + churned whitewater
     float keep = wallMask(c) * (1.0 - b.w);
     float u = s.x * keep, v = s.y * keep;
     // Sponge: absorbing over the outer kSpongeCells, quadratic ramp.
@@ -204,16 +218,21 @@ void finalize() {
     }
     float e = exp(-rate * PAR.x);
     u *= e, v *= e;
-    // Slope (central differences, walls flat) and the breaking limit.
+    // Slope (central differences, walls flat) and the breaking limit, on the drawn surface h = u + dips: while a cavity
+    // opens, u carries the displaced water as a bump right under the dip (no steep surface: they cancel), which must
+    // radiate rather than break. The waves (u, v) lose the excess.
     vec2 g = vec2(uAt(c + ivec2(1, 0)) - uAt(c - ivec2(1, 0)), uAt(c + ivec2(0, 1)) - uAt(c - ivec2(0, 1))) / (2.0 * WIN.z);
-    float sl = length(g);
+    float sl = length(g + b.yz);
     if (sl > PAR.w) {
         float f = PAR.w / sl;
         u *= f, v *= f, g *= f;
+        foam = max(foam, clamp(3.0 * (1.0 - f), 0.0, 1.0)); // a breaking crest
     }
+    foam = max(foam, max(smoothstep(1.0, 2.0, abs(v) / WIN.w), smoothstep(0.25, 0.5, -b.x / WIN.w)));
+    foam *= wallMask(c);
     float h = u + b.x;
-    state[c.y * N + c.x] = vec2(h, v);
-    imageStore(uField, c, vec4(h, g + b.yz, v));
+    state[c.y * N + c.x] = vec4(h, v, foam, 0.0);
+    imageStore(uField, c, vec4(h, g + b.yz, foam));
 }
 
 void main() {

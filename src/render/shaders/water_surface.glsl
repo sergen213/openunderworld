@@ -9,7 +9,8 @@
 // w.ripple.w the rest surface z the field rides on, w.rippleInfo.x = kN, w.rippleInfo.y = 1 while the field runs.
 //   r  height above the rest surface (TRU units; the waves plus the dips of floating / wading bodies)
 //   g  dh/dx, b dh/dy (unitless)
-//   a  vertical surface velocity dh/dt of the waves (TRU units / s; foam, splash spawning)
+//   a  whitewater 0..1: the foam the waves made (breaking crests, a collapsing cavity's surge and the cavity itself,
+//      drops falling back, strokes), fading over ~1.5 s
 // The field is a perturbation riding on the other waves: its heights add to theirs.
 #ifndef OU_WATER_SURFACE_GLSL
 #define OU_WATER_SURFACE_GLSL
@@ -35,6 +36,27 @@ float ouFieldHeight(vec2 p) {
     vec2 uv = (p - w.ripple.xy) / (w.ripple.z * w.rippleInfo.x);
     vec2 in2 = min(uv, 1.0 - uv);
     return smoothstep(0.0, 0.04, min(in2.x, in2.y)) * textureLod(uRipples, uv, 0.0).r;
+}
+// Its whitewater (0..1; same fade).
+float ouFieldFoam(vec2 p) {
+    if (w.rippleInfo.y < 0.5) return 0.0;
+    vec2 uv = (p - w.ripple.xy) / (w.ripple.z * w.rippleInfo.x);
+    vec2 in2 = min(uv, 1.0 - uv);
+    return smoothstep(0.0, 0.04, min(in2.x, in2.y)) * textureLod(uRipples, uv, 0.0).a;
+}
+// The field's caustics on a lit bed point under the surface at rest height surfaceZ: sunlight refracted by the field's
+// waves focuses under crests and spreads under troughs. For the small slopes of the field the refracted rays land
+// displaced by D (1 - 1/n) grad h (D = the depth under the surface), so the landed area changes by the Jacobian
+// J = 1 + D (1 - 1/n) lap h and the light by 1 / |J| (past the focus the rays cross: still |J|), capped at 4 at the
+// folds; the Laplacian is read where the refracted sun ray through `bed` crossed the surface. Faded to 1 from 10 to
+// 35 m deep (the sun's disc blurs the pattern, as agCausLod's) and with `fade` (the pixel's footprint over the cells).
+float ouFieldCaustic(vec3 bed, float surfaceZ, vec3 sunDir, float fade) {
+    float d = surfaceZ - bed.z;
+    if (w.rippleInfo.y < 0.5 || d <= 0.0 || sunDir.z <= 0.0) return 1.0;
+    vec3 rd = refract(-sunDir, vec3(0.0, 0.0, 1.0), 1.0 / 1.333);
+    vec2 q = bed.xy - rd.xy * (d / max(-rd.z, 0.2));
+    float j = 1.0 + d * (1.0 - 1.0 / 1.333) * ouFieldSample(q).w;
+    return mix(1.0, 1.0 / max(abs(j), 0.25), fade * (1.0 - smoothstep(10.0 * kM, 35.0 * kM, d)));
 }
 
 // The base surface of one water mesh at world p (water.vert's displacement): `waves` = its tru.exe sea waves (columns

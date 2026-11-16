@@ -94,8 +94,9 @@ class WaterSim {
 public:
     void reset();
     void tick(const World& world, float dt);
-    // Impact crater + splash bursts (shots, falling objects); strength 1 = a projectile / body falling in.
-    void splash(vec3 pos, float strength = 1.0f);
+    // Something hitting the water at pos: its open cavity (cavity()) + splash bursts. strength 1 = a projectile / body
+    // falling in (the bursts' size); `size` the impactor's half width and `speed` its entry speed (m, m/s: the cavity).
+    void splash(vec3 pos, float strength = 1.0f, float size = 0.1f, float speed = 6.0f);
 
     bool active() const { return active_; } // a water volume is near Lara
     float originX() const { return window_.origin().x; }
@@ -121,6 +122,9 @@ public:
 private:
     void kick(vec2 p, float amplitude, float sigma);
     void ripple(vec3 p, float strength);
+    // An impact's open cavity (the water a body or a drop of the splash pushes aside): a pressure body of Gaussian
+    // width `size` (m) that opens to `depth` (m) and collapses (cavityShape); its moving dip radiates the ring train.
+    void cavity(vec2 p, float size, float depth);
     void release(std::vector<SplashBurst> bursts); // into pending_ (delayed) / bursts_ (now)
     float waterAt(vec2 p) const; // surface z of the water over p, -inf where there is none
     float restAt(vec2 p) const;  // rest surface (box top) of the water over p, -inf where there is none
@@ -139,6 +143,8 @@ private:
     std::vector<SplashBurst> bursts_, pending_; // released; waiting for their delay (pending: release time in .delay)
     uint64_t serial_ = 0;
     bool plunged_ = false; // Lara's entry splash thrown; cleared once she is out of the water
+    struct Cavity { vec2 p; float start, size, depth; };
+    std::vector<Cavity> cavities_; // open / collapsing (cavityShape > 0)
     struct Body { vec3 pos; bool alive; float bob; };
     std::map<int32_t, Body> bodies_; // enemies / dynamic bodies last tick
 };

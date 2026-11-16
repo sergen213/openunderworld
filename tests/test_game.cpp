@@ -2772,32 +2772,22 @@ TEST(GameReal, StandingJumpBehindLedgeCatchesNothing) {
 // ---- interactive water (src/game/Water: the wave field's inputs; the waves run on the GPU, render/WaterField) ----
 namespace {
 using glm::vec2; // (also for the tests below)
-// The strongest kick (|centre displacement|) made since serial `from`; from = the next serial on return.
-float strongestKick(const game::WaterSim& ws, uint64_t& from) {
-    float m = 0;
-    const auto k = ws.kicks();
-    for (size_t i = from > ws.kickBase() ? size_t(from - ws.kickBase()) : 0; i < k.size(); ++i) m = std::max(m, std::abs(k[i].amplitude));
-    from = ws.kickBase() + k.size();
-    return m;
-}
 } // namespace
 
 TEST(Game, WaterEntrySplashMakesRingsAndBursts) {
     auto w = makeWorld(poolMesh(), {1000, 0, 400});
     bool crown = false;
-    float peak = 0;
-    uint64_t serial = 0;
-    bool crater = false;
+    float cavity = 0;
     for (int i = 0; i < 90; ++i) {
         w->tick({});
         for (const auto& b : w->water().bursts()) crown |= b.kind == game::SplashBurst::Crown && b.count > 0;
-        peak = std::max(peak, strongestKick(w->water(), serial));
-        for (const auto& k : w->water().kicks()) crater |= k.amplitude < -20.0f && k.sigma > 30.0f;
+        for (const auto& b : w->water().bodies())
+            if (b.vx == 0 && b.vy == 0 && b.wall == 0) cavity = std::max(cavity, b.draft);
     }
     ASSERT_TRUE(w->water().active());
     ASSERT_EQ(w->player().state().state, State::SwimTread);
-    EXPECT_GT(peak, 20.0f) << "the entry must displace the surface";
-    EXPECT_TRUE(crater) << "falling in pushes the water down";
+    EXPECT_GT(cavity, 0.3f * 290.0f) << "falling in opens a cavity (a dip the field radiates from as it collapses)";
+    EXPECT_LE(cavity, 0.8f * 290.0f + 0.5f);
     EXPECT_TRUE(crown) << "the entry must throw a crown splash";
     EXPECT_GT(w->water().depth(), 0.0f);
     size_t entries = 0;
@@ -2806,16 +2796,16 @@ TEST(Game, WaterEntrySplashMakesRingsAndBursts) {
         EXPECT_FLOAT_EQ(b.restZ, w->water().surfaceZ()) << "the renderer's waves ride on the volume's rest surface";
     }
     EXPECT_EQ(entries, 1u) << "one entry, one crown";
+    for (int i = 0; i < 60; ++i) w->tick({});
+    for (const auto& b : w->water().bodies()) EXPECT_LT(b.draft, 0.3f * 290.0f) << "the cavity has collapsed after 1 s";
 }
 
 TEST(Game, WaterExternalSplash) {
     auto w = makeWorld(poolMesh(), {1000, 0, 400});
-    for (int i = 0; i < 90; ++i) w->tick({});
+    for (int i = 0; i < 150; ++i) w->tick({}); // the entry's cavity has collapsed
     ASSERT_TRUE(w->water().active());
     const uint64_t before = w->water().bursts().empty() ? 0 : w->water().bursts().back().serial;
-    uint64_t serial = w->water().kickBase() + w->water().kicks().size();
     w->splashWater(w->player().state().pos, 1.5f); // as a shot / falling object impact
-    EXPECT_GT(strongestKick(w->water(), serial), 45.0f);
     ASSERT_FALSE(w->water().bursts().empty());
     EXPECT_GT(w->water().bursts().back().serial, before);
     auto jets = [&] {
@@ -2823,8 +2813,14 @@ TEST(Game, WaterExternalSplash) {
                              [&](const game::SplashBurst& b) { return b.kind == game::SplashBurst::Jet && b.serial > before; });
     };
     EXPECT_EQ(jets(), 0) << "the jet waits for the crater to collapse";
-    for (int i = 0; i < 12; ++i) w->tick({}); // 0.2 s
+    float cavity = 0;
+    for (int i = 0; i < 12; ++i) { // 0.2 s
+        w->tick({});
+        for (const auto& b : w->water().bodies())
+            if (b.vx == 0 && b.vy == 0 && b.wall == 0) cavity = std::max(cavity, b.draft);
+    }
     EXPECT_EQ(jets(), 1);
+    EXPECT_NEAR(cavity, 0.3f * 290.0f, 1.0f) << "a 10 cm impactor opens a cavity 3 x as deep";
 }
 
 // The water an entry throws (game::entryBursts): faster entries throw more, higher; only fast ones a jet, after a delay;
@@ -2863,11 +2859,11 @@ TEST(Game, WaterEntryBurstsScaleWithSpeed) {
 // exactly once.
 TEST(Game, WaterKicksKeepSerials) {
     auto w = makeWorld(poolMesh(), {1000, 0, 400});
-    for (int i = 0; i < 90; ++i) w->tick({});
     const auto& ws = w->water();
-    for (int i = 0; i < 3; ++i) w->splashWater(w->player().state().pos, 1.0f);
+    for (int i = 0; i < 90; ++i) w->tick({});
+    for (int i = 0; i < 200 && ws.kicks().empty(); ++i) w->tick({}); // treading water bobs
+    ASSERT_FALSE(ws.kicks().empty());
     const uint64_t end = ws.kickBase() + ws.kicks().size();
-    EXPECT_GE(ws.kicks().size(), 3u);
     for (int i = 0; i < game::WaterSim::kKeepTicks; ++i) w->tick({});
     EXPECT_GE(ws.kickBase(), end) << "old kicks expire";
     EXPECT_LE(ws.kicks().size(), game::WaterSim::kMaxKicks);

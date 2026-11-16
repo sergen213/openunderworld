@@ -2734,11 +2734,11 @@ private:
     // kick buffer (setExternalWaveKicks; a zero-count dummy until one is given) and uRipples, the rgba16f texture the
     // water shaders read (always GENERAL: water_field.comp's storage image; cleared, unread until a frame ran).
     void createWaterField() {
-        constexpr VkDeviceSize cells = VkDeviceSize(waterfield::kN) * waterfield::kN * sizeof(glm::vec2);
+        constexpr VkDeviceSize cells = VkDeviceSize(waterfield::kN) * waterfield::kN;
         constexpr VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
         constexpr VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-        fieldState_ = createBuffer(staticMemory_, cells, ssbo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        fieldWork_ = createBuffer(staticMemory_, cells, ssbo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        fieldState_ = createBuffer(staticMemory_, cells * sizeof(glm::vec4), ssbo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT); // h, v, whitewater, spare
+        fieldWork_ = createBuffer(staticMemory_, cells * sizeof(glm::vec2), ssbo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         fieldNoKicks_ = createBuffer(staticMemory_, sizeof(waterfield::KickBuffer), ssbo, host);
         std::memset(fieldNoKicks_.mapped, 0, sizeof(waterfield::KickBuffer));
         for (uint32_t i = 0; i < kFramesInFlight; ++i) {

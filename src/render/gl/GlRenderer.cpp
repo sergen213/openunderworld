@@ -655,11 +655,11 @@ public:
             std::string fieldError;
             r.fieldProgram = linkCompute(waterfield::computeSource().c_str(), fieldError);
             if (!r.fieldProgram.get()) std::fprintf(stderr, "ou: interactive wave field unavailable (%s)\n", fieldError.c_str());
-            const GLsizeiptr cells = GLsizeiptr(waterfield::kN) * waterfield::kN * GLsizeiptr(sizeof(glm::vec2));
+            const GLsizeiptr cells = GLsizeiptr(waterfield::kN) * waterfield::kN;
             r.fieldState = newBuffer();
-            glNamedBufferStorage(r.fieldState.get(), cells, nullptr, 0);
+            glNamedBufferStorage(r.fieldState.get(), cells * GLsizeiptr(sizeof(glm::vec4)), nullptr, 0); // h, v, whitewater, spare
             r.fieldWork = newBuffer();
-            glNamedBufferStorage(r.fieldWork.get(), cells, nullptr, 0);
+            glNamedBufferStorage(r.fieldWork.get(), cells * GLsizeiptr(sizeof(glm::vec2)), nullptr, 0);
             r.fieldKicks = newBuffer();
             glNamedBufferStorage(r.fieldKicks.get(), sizeof(waterfield::KickBuffer), nullptr, GL_DYNAMIC_STORAGE_BIT);
             r.fieldNoKicks = newBuffer();
