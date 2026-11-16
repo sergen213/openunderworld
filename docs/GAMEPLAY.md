@@ -1796,8 +1796,9 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     × 0.6, particles × 0.45, launch × 0.75, then jet × 1.6 particles, × 1.15 speed. Impacts (`impactBursts`,
     strength s: shots, bodies, dynamics) throw a crown of 120 + 380 s on 30 + 40 s units, a spray and from s 1 a jet
     0.12 s later; climbing out sheds a wide spray cone, surface strokes a small one every 5 ticks. Delayed bursts
-    wait in WaterSim and are numbered when released (`bursts()`: the last 64, serials 1, 2, ...); ou-game forwards
-    those newer than the last it saw.
+    wait in WaterSim and are numbered when released (`bursts()`: the last 64, serials 1, 2, ...); each carries the
+    surface at the impact (`surfaceZ`, a sea's waves included) and its volume's rest surface (`restZ`, the box top the
+    renderer's waves ride on). ou-game forwards those newer than the last it saw.
   ou-game passes the window, kicks and bodies through `FrameOptions::waterField` and the new bursts through
   `FrameOptions::fluidBursts` to Enhanced water; Original water does not use them. Parameters are ours [I]. Tests
   `WaveWindow.*`, `Game.Water*` (entry crown once per entry, delayed impact jet, burst scaling with speed and swan
