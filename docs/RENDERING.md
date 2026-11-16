@@ -663,7 +663,10 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   TRU's colour stands for an average caustic-lit point just under the surface (its own shading and shadows stay; the
   demo's N.L and shadow cancel instead of applying twice, and the flat reconstructed normal leaves no facets) and the
   demo's depth falloff (red first), caustic contrast (filaments and dim cells around the mean; the mean far and deep), ambient
-  and side light are imposed, HDR (the composite's exposure + ACES compress the peaks). TRU's colour is display-referred
+  and side light are imposed, HDR (the composite's exposure + ACES compress the peaks). A black TRU colour stays black:
+  the black palm kelp of l1 / l2_cliffclimb (2026-11-15 user report, the same with RT off, in GL and with Original
+  water, i.e. not RT or the relight) was its light map read without coordinates (SHADERS.md "Light maps without
+  coordinates"). TRU's colour is display-referred
   (≤ 1, its lighting already squeezed into that range) and the demo's chain scene-referred, so every TRU pixel goes
   through `agUnpost` first: the inverse of the grade's exposure (EXPO × 0.6, the near-surface value) + ACES fit, white
   clamped at 0.98 (→ ~12, the demo's own range for a lit pale top). Fed in as is (until 2026-11-15) TRU's scene was

@@ -11,6 +11,7 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 namespace ou::formats {
 namespace {
@@ -155,6 +156,63 @@ void place(scene::SceneData& sc, const std::vector<scene::MeshData>& meshes, con
     }
 }
 
+// Light maps read without coordinates: class-1 instance textures (light maps, SHADERS.md) are sampled at TEXCOORD1, but
+// some meshes' vertex declarations have none (l1_seafloor's palm kelp and fan coral, l2_flushtunnel's sea fans and
+// seaweed, jungle grass). tru.exe then reads an undeclared vertex input (undefined in D3D9; zero under DXVK): uv (0, 0)
+// for the whole mesh, the bilinear blend of the map's four corner texels. Where one of those is the black padding of a
+// light-map atlas (palm kelp's 1340: atlas patches of the l1 instances), the plant drew black: a silhouette, plain in
+// Enhanced water's clear medium (RENDERING.md "Under water"). Those submeshes read a 1x1 map of the light map's mean
+// instead (texels > 0, padding excluded): the average light baked for that asset. Maps whose corners are lit (the
+// flushtunnel / grass gradients, fan coral's flat map) keep tru.exe's corner read. Id: the source map's |
+// kMeanLightMapBit (deterministic, so units merge by id).
+constexpr uint32_t kMeanLightMapBit = 0x40000000u;
+void meanLightMaps(scene::SceneData& sc) {
+    std::unordered_map<uint32_t, const scene::Material*> materials;
+    for (const auto& m : sc.materials) materials.emplace(m.id, &m);
+    std::unordered_map<uint32_t, size_t> textures;
+    for (size_t i = 0; i < sc.textures.size(); ++i) textures.emplace(sc.textures[i].id, i);
+    std::unordered_map<uint32_t, uint32_t> replaced; // source light map -> its mean map, 0 = kept
+    auto meanOf = [&](uint32_t src) -> uint32_t {
+        if (const auto r = replaced.find(src); r != replaced.end()) return r->second;
+        uint32_t& out = replaced[src];
+        const auto it = textures.find(src);
+        if (it == textures.end() || sc.textures[it->second].cube || sc.textures[it->second].mips.empty()) return out = 0;
+        const scene::TextureData& t = sc.textures[it->second];
+        const uint32_t w = t.mips[0].width, h = t.mips[0].height;
+        const auto rgba = toRgba8(t.format, w, h, t.mips[0].data);
+        if (rgba.size() < size_t(w) * h * 4) return out = 0;
+        auto black = [&](uint32_t x, uint32_t y) { const uint8_t* p = &rgba[(size_t(y) * w + x) * 4]; return (p[0] | p[1] | p[2]) == 0; };
+        if (!black(0, 0) && !black(w - 1, 0) && !black(0, h - 1) && !black(w - 1, h - 1)) return out = 0;
+        uint64_t sum[3] = {}, n = 0;
+        for (size_t p = 0; p < size_t(w) * h * 4; p += 4)
+            if (rgba[p] | rgba[p + 1] | rgba[p + 2]) sum[0] += rgba[p], sum[1] += rgba[p + 1], sum[2] += rgba[p + 2], ++n;
+        if (!n) return out = 0; // an all-black map (global 121) reads black either way
+        scene::TextureData mean;
+        mean.id = src | kMeanLightMapBit;
+        mean.mips.push_back({1, 1, {uint8_t(sum[0] / n), uint8_t(sum[1] / n), uint8_t(sum[2] / n), 255}});
+        mean.origin = t.origin + " (mean)";
+        out = mean.id;
+        textures.emplace(mean.id, sc.textures.size());
+        sc.textures.push_back(std::move(mean));
+        return out;
+    };
+    for (auto& m : sc.meshes) {
+        if (std::any_of(m.vertices.begin(), m.vertices.end(), [](const scene::Vertex& v) { return v.uv1[0] != 0 || v.uv1[1] != 0; }))
+            continue;
+        for (auto& s : m.submeshes) {
+            const auto mat = materials.find(s.materialId);
+            if (mat == materials.end()) continue;
+            const auto& samplers = mat->second->samplers;
+            const auto lm = std::find_if(samplers.begin(), samplers.end(),
+                                         [](const scene::MaterialSampler& t) { return t.source == 2 && t.cls == 1; });
+            if (lm == samplers.end()) continue;
+            const uint32_t src = s.instanceTextures[0] ? s.instanceTextures[0] : lm->textureId;
+            if (src && !(src & kMeanLightMapBit))
+                if (const uint32_t id = meanOf(src)) s.instanceTextures[0] = id;
+        }
+    }
+}
+
 } // namespace
 
 scene::SceneData loadDrmScene(const cdc::BigfileSet& bigfile, std::string_view drmPath, bool withDependencies) {
@@ -186,6 +244,7 @@ scene::SceneData loadDrmScene(const cdc::BigfileSet& bigfile, std::string_view d
     }
     loadMaterials(sc, drms);
     loadTextures(sc, drms);
+    meanLightMaps(sc);
     return sc;
 }
 
@@ -338,6 +397,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
 
     loadMaterials(sc, drms);
     loadTextures(sc, drms);
+    meanLightMaps(sc);
     return sc;
 }
 

@@ -259,6 +259,45 @@ TEST(RealData, ShadowOnlyTerrainGroups) {
     EXPECT_EQ(occluders, 2u);
 }
 
+// Light maps read without TEXCOORD1 (formats::loadLevelScene meanLightMaps): l2_cliffclimb's palm kelp (l1_seafloor
+// IMF, no TEXCOORD1) reads its atlas 1340 at uv (0, 0), black padding, so it gets the atlas's mean map instead; the
+// flushtunnel seaweed bushes (gradient 3176, lit corners) and the kelp with light-map coordinates keep their maps.
+TEST(RealData, LightMapsWithoutCoordinatesReadTheMean) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto sc = formats::loadLevelScene(bf, "pc-w\\l2_cliffclimb.drm");
+    auto texture = [&](uint32_t id) -> const scene::TextureData* {
+        for (const auto& t : sc.textures)
+            if (t.id == id) return &t;
+        return nullptr;
+    };
+    size_t palm = 0, bush = 0, straight = 0;
+    for (const auto& m : sc.meshes)
+        for (const auto& s : m.submeshes) {
+            if (m.origin.find("palmkelpInstGroup") != std::string::npos) {
+                ++palm;
+                ASSERT_EQ(s.instanceTextures[0], 1340u | 0x40000000u);
+                const auto* t = texture(s.instanceTextures[0]);
+                ASSERT_NE(t, nullptr);
+                ASSERT_EQ(t->mips.size(), 1u);
+                const auto& px = t->mips[0].data;
+                EXPECT_GT(px[0] + px[1] + px[2], 3 * 60); // lit, not the padding's black
+            }
+            if (m.origin.find("seaweedbushInstGroup") != std::string::npos) {
+                ++bush;
+                EXPECT_EQ(s.instanceTextures[0] & 0x40000000u, 0u);
+            }
+            if (m.origin.find("pacifickelp_straightInstGroup") != std::string::npos) {
+                ++straight;
+                EXPECT_EQ(s.instanceTextures[0] & 0x40000000u, 0u);
+            }
+        }
+    EXPECT_EQ(palm, 24u);
+    EXPECT_GT(bush, 0u);
+    EXPECT_GT(straight, 0u);
+}
+
 // Batch LOD (batch +0x00 / +0x04, tru.exe 0x50F7C0): viking_thrall's model 14580 holds three LODs of 5 batches each,
 // [0, 3160.56], [3160.56, 4740.83], [4740.83, 3.16e9], measured from the Mesh header +0x10 centre; at any distance the
 // renderers' selection (render::lodShown) draws exactly one of them, also with the model moved (instance matrix).
