@@ -1,6 +1,6 @@
 // See Water.hpp. WaveField is Joan of Arc's water_waves.cpp with lengths x kWaterScale and z up; WaterSim is its
-// world_view_water.cpp (what kicks the field) for TRU's bodies. Droplet randomness is a local xorshift, so a replay
-// produces the same field and droplets.
+// world_view_water.cpp (what kicks the field) for TRU's bodies, plus the splash bursts handed to the renderer's fluid.
+// Everything here is deterministic, so a replay produces the same field and bursts.
 #include "game/Water.hpp"
 
 #include "game/Game.hpp"
@@ -13,8 +13,6 @@ namespace ou::game {
 
 namespace {
 constexpr float S = kWaterScale;
-constexpr float kGravity = 5.72443f * 900.0f; // as Tuning::gravity
-constexpr size_t kMaxDrops = 256;
 constexpr float kNoWater = -std::numeric_limits<float>::infinity();
 
 // Velocity damping (1/s): amplitude falls as exp(-1.25 t), so with the 2D spreading a splash is gone in ~2-3 s and a
@@ -197,12 +195,81 @@ std::span<const float> WaveField::heights() const {
     return h_;
 }
 
+// ---- splash bursts (render::fluid emits them) ----
+
+namespace {
+// A crown's sheet starts kSheetLayers particles thick over `spread`: the start height that puts `count` particles of
+// spacing kSplashSpacing on its ring near rest density (a denser start would burst apart under the fluid's pressure).
+constexpr float kSheetLayers = 2.0f;
+float sheetHeight(int count, float radius) {
+    return float(count) * kSplashSpacing * kSplashSpacing / (6.2831853f * radius * kSheetLayers);
+}
+SplashBurst crown(vec3 at, vec3 carry, float radius, int count, float speed, float up) {
+    SplashBurst b{SplashBurst::Crown, at, at.z, carry, radius, speed, up, sheetHeight(count, radius), count};
+    return b;
+}
+} // namespace
+
+std::vector<SplashBurst> entryBursts(vec3 at, vec3 velocity, bool headFirst) {
+    // e: entry speed in units of a running jump's landing (~1500 units/s down). [I] numbers tuned by eye on l4_pool:
+    // e 1 throws a ~40 cm crown (up 1070 units/s under the game's gravity), e 2 ~75 cm; a swan dive cuts the crown to a
+    // ring around her hands and the cavity behind her feet throws a ~1 m jet (real dives: Worthington jets of ~1 m).
+    const float e = std::clamp(-velocity.z / 1500.0f, 0.3f, 3.0f);
+    const vec3 carry(vec2(velocity) * 0.3f, 0.0f);
+    const float horizontal = glm::length(vec2(velocity));
+    const float shrink = headFirst ? 0.6f : 1.0f, fewer = headFirst ? 0.45f : 1.0f, lower = headFirst ? 0.75f : 1.0f;
+    const float radius = (90.0f + 25.0f * e) * shrink;
+    std::vector<SplashBurst> out;
+    out.push_back(crown(at, carry, radius, int(std::lround((500.0f + 900.0f * e) * fewer)),
+                        (180.0f + 120.0f * e + 0.15f * horizontal) * (headFirst ? 0.8f : 1.0f), (650.0f + 420.0f * e) * lower));
+    SplashBurst spray{SplashBurst::Spray, at, at.z, carry, radius * 0.5f, 700.0f + 300.0f * e, 0.0f, 0.6f,
+                      int(std::lround(150.0f * e * fewer))};
+    out.push_back(spray);
+    if (e >= 0.7f) {
+        SplashBurst jet{SplashBurst::Jet, at, at.z, carry * 0.3f, 22.0f, 60.0f, (800.0f + 350.0f * e) * (headFirst ? 1.15f : 1.0f),
+                        60.0f, int(std::lround((250.0f + 350.0f * e) * (headFirst ? 1.6f : 1.0f)))};
+        jet.delay = 0.18f + 0.06f * e; // the cavity's collapse
+        out.push_back(jet);
+    }
+    return out;
+}
+
+std::vector<SplashBurst> impactBursts(vec3 at, float strength) {
+    const float s = std::clamp(strength, 0.1f, 3.0f);
+    std::vector<SplashBurst> out;
+    out.push_back(crown(at, vec3(0), 30.0f + 40.0f * s, int(std::lround(120.0f + 380.0f * s)), 120.0f + 80.0f * s,
+                        500.0f + 300.0f * s));
+    out.push_back({SplashBurst::Spray, at, at.z, vec3(0), 10.0f + 10.0f * s, 500.0f, 0.0f, 0.5f, int(std::lround(40.0f * s))});
+    if (s >= 1.0f) {
+        SplashBurst jet{SplashBurst::Jet, at, at.z, vec3(0), 12.0f + 6.0f * s, 30.0f, 650.0f + 100.0f * s, 30.0f,
+                        int(std::lround(80.0f * s))};
+        jet.delay = 0.12f;
+        out.push_back(jet);
+    }
+    return out;
+}
+
 // ---- WaterSim: what kicks the field ----
 
 void WaterSim::reset() {
     field_.clear();
-    drops_.clear(), bodies_.clear();
+    bursts_.clear(), pending_.clear(), bodies_.clear();
+    plunged_ = false;
     active_ = false;
+}
+
+void WaterSim::release(std::vector<SplashBurst> bursts) {
+    for (SplashBurst& b : bursts) {
+        if (b.count <= 0) continue;
+        if (b.delay > 0) {
+            b.delay += time_; // release time
+            pending_.push_back(b);
+            continue;
+        }
+        b.serial = ++serial_;
+        bursts_.push_back(b);
+    }
+    if (bursts_.size() > kBurstKeep) bursts_.erase(bursts_.begin(), bursts_.end() - ptrdiff_t(kBurstKeep));
 }
 
 float WaterSim::waterAt(vec2 p) const {
@@ -219,29 +286,12 @@ void WaterSim::ripple(vec3 p, float strength) {
     field_.kick(vec2(p), 7.0f * S * std::pow(strength, 0.7f), (6.0f + 4.0f * strength) * S);
 }
 
-void WaterSim::emit(vec3 pos, int count, float speed, float up, float radius) {
-    auto rnd = [&] { // xorshift32, 0..1
-        rng_ ^= rng_ << 13, rng_ ^= rng_ >> 17, rng_ ^= rng_ << 5;
-        return float(rng_ & 0xFFFFFF) / float(0x1000000);
-    };
-    for (int n = 0; n < count; ++n) {
-        const float a = rnd() * 6.2831853f, s = speed * (0.35f + 0.65f * rnd());
-        SplashDrop d;
-        d.pos = pos;
-        d.vel = {std::cos(a) * s, std::sin(a) * s, up * (0.55f + 0.45f * rnd())};
-        d.maxLife = d.life = 0.35f + 0.4f * rnd();
-        d.radius = radius * (0.7f + 0.6f * rnd());
-        if (drops_.size() < kMaxDrops) drops_.push_back(d);
-        else drops_[rng_ % kMaxDrops] = d;
-    }
-}
-
 void WaterSim::splash(vec3 pos, float strength) {
     if (!active_ || !world_) return;
     const float h = waterAt(vec2(pos));
     if (h == kNoWater || pos.z > h + 100.0f) return; // only at / below the surface
     ripple(vec3(pos.x, pos.y, h), strength);
-    emit(vec3(pos.x, pos.y, h + 10.0f), int(8 + 6 * strength), 220.0f * strength, 550.0f * strength);
+    release(impactBursts(vec3(pos.x, pos.y, h), strength));
 }
 
 void WaterSim::tick(const World& w, float dt) {
@@ -307,19 +357,25 @@ void WaterSim::tick(const World& w, float dt) {
     const float lara = waterAt(vec2(ps.pos));
     if (lara != kNoWater) {
         const vec3 at(ps.pos.x, ps.pos.y, lara);
-        if (ps.state == State::SwimSplash && prev.state != State::SwimSplash) { // diving / falling in
+        // Diving / falling in: the swim states' splash-down, or any fast plunge into a volume (a fatal one into l4_pool's
+        // eitr kills her on contact, with no splash-down state, and throws the water all the same); once per entry.
+        const bool plunge = (ps.state == State::SwimSplash && prev.state != State::SwimSplash) ||
+                            (ps.water >= 0 && prev.water < 0 && prev.vel.z < -300.0f);
+        if (plunge && !plunged_) {
             const float s = std::clamp(glm::length(prev.vel) / 1500.0f, 0.4f, 2.0f);
             ripple(at, s);
-            emit(at + vec3(0, 0, 10), int(10 + 8 * s), 260.0f * s, 700.0f);
+            release(entryBursts(at, prev.vel, prev.clip.starts_with("ng_inair_swan")));
+            plunged_ = true;
         }
-        if (ps.state == State::SwimClimbOut && prev.state != State::SwimClimbOut) {
+        if (ps.state == State::SwimClimbOut && prev.state != State::SwimClimbOut) { // water sheds off her
             ripple(at, 0.6f);
-            emit(at + vec3(0, 0, 40), 6, 120.0f, 300.0f, 7.0f);
+            release({{SplashBurst::Spray, at + vec3(0, 0, 40), lara, vec3(0), 40.0f, 150.0f, 0.0f, 1.2f, 160}});
         }
-        const float speed = dt > 0 ? glm::length(vec2(ps.pos - prev.pos)) / dt : 0.0f;
-        if (ps.state == State::SwimSurface && speed > 200.0f && w.ticks() % 5 == 0) // spray off the strokes
-            emit(at + vec3(0, 0, 8), 1, 60.0f, 120.0f, 6.0f);
+        const vec2 swim = dt > 0 ? vec2(ps.pos - prev.pos) / dt : vec2(0);
+        if (ps.state == State::SwimSurface && glm::length(swim) > 200.0f && w.ticks() % 5 == 0) // spray off the strokes
+            release({{SplashBurst::Spray, at + vec3(0, 0, 8), lara, vec3(swim * 0.5f, 0.0f), 20.0f, 300.0f, 0.0f, 0.7f, 24}});
     }
+    if (ps.water < 0) plunged_ = false;
     // Shots through the surface (hitscan rays of this tick): a projectile falling in.
     for (const Shot& s : w.combat().shots) {
         const float h = waterAt(vec2(s.to));
@@ -350,17 +406,15 @@ void WaterSim::tick(const World& w, float dt) {
     }
     bodies_ = std::move(now);
 
-    // Droplets: ballistic; one falling back into the water leaves a pinprick.
-    for (auto& d : drops_) {
-        d.vel.z -= kGravity * dt;
-        d.pos += d.vel * dt;
-        d.life -= dt;
-        if (d.vel.z < 0 && d.pos.z < surfaceZ_ - 4.0f) {
-            if (d.life > 0) ripple(d.pos, 0.05f);
-            d.life = 0;
-        }
-    }
-    std::erase_if(drops_, [](const SplashDrop& d) { return d.life <= 0; });
+    // Delayed bursts (jets) whose time has come.
+    std::vector<SplashBurst> due;
+    std::erase_if(pending_, [&](SplashBurst& b) {
+        if (b.delay > time_) return false;
+        b.delay = 0;
+        due.push_back(b);
+        return true;
+    });
+    release(std::move(due));
 
     field_.step(dt);
     ++version_;

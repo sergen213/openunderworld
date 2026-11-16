@@ -500,8 +500,21 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
 - **OpenGL-Water-Simulation** by Talvin Ackbaraly (2026), https://github.com/talvinckb/OpenGL-Water-Simulation — MIT
   (full text: `third_party/opengl-water-simulation/LICENSE`). Its screen-space fluid rendering (sphere depth +
   thickness splat, bilateral depth blur, normal reconstruction from depth) is adapted into the splash shaders
-  `splash_splat.frag`, `splash_blur.frag`, `splash_composite.frag`. Its SPH simulation is not used (TRU's water is
-  the deterministic wave field; particle fluid only suits small boxes).
+  `splash_splat.frag`, `splash_blur.frag`, `splash_composite.frag` (extended with a foam channel and refraction). Its
+  SPH simulation is not used (the splash fluid is our own PBF, next entry).
+- **Splash fluid (ours, `render/Fluid.*`, `shaders/fluid.comp`)**, own code from the published algorithms (no code
+  copied): Position Based Fluids — M. Macklin, M. Müller, "Position Based Fluids", ACM TOG 32(4), SIGGRAPH 2013
+  (density constraint, lambda / delta-p iterations, the tensile term s_corr = −k (W/W(Δq))^n, XSPH viscosity); kernels
+  poly6 and spiky gradient from M. Müller, D. Charypar, M. Gross, "Particle-Based Fluid Simulation for Interactive
+  Applications", SCA 2003; the cohesion spline from N. Akinci, G. Akinci, M. Teschner, "Versatile Surface Tension and
+  Adhesion for SPH Fluids", ACM TOG 32(6), SIGGRAPH Asia 2013; the spatial hash's primes from M. Teschner et al.,
+  "Optimized Spatial Hashing for Collision Detection of Deformable Objects", VMV 2003. Splash anatomy (crown sheet,
+  Worthington jet after cavity collapse) after A. M. Worthington, "A Study of Splashes" (1908, public domain) [I: the
+  launch numbers are tuned by eye]. Clear-water absorption in the composite: R. M. Pope, E. S. Fry, Applied Optics
+  36(33), 1997 [I band picks]. Why PBF and not FLIP / APIC: a splash is mostly free-flying sheets and drops in an
+  open, camera-local region with no container, which a grid method would have to cover with a large sparse domain;
+  PBF is particle-only, unconditionally stable at 2 iterations per 1/120 s step and its cost scales with the live
+  particles only (dead slots exit at once), which keeps an idle frame at 0 ms.
 - **NeuralSpecOcean** by Sheng Choi (bgbg108555), https://github.com/bgbg108555/NeuralSpecOcean — MIT ("Copyright (c)
   2026 bgbg108555 and NeuralSpecOcean Contributors"; WebGL2 / three.js demo, no code used: ideas and constants
   re-expressed in our GLSL / C++). Water optics taken from it (RENDERING "Water colour"): the dispersion indices

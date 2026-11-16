@@ -2253,7 +2253,8 @@ int main(int argc, char** argv) {
     auto debugLines = opt.showCollision ? collisionLines(world->collision()) : std::vector<ou::render::DebugLine>{};
     std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
     std::vector<ou::render::WaterVolume> waterVolumes;     // loaded units' water boxes, each frame
-    std::vector<ou::render::WaterParticle> splashParticles; // game::WaterSim droplets, each frame
+    std::vector<ou::render::FluidBurst> fluidBursts; // game::WaterSim splash bursts released since the last frame
+    uint64_t fluidSerial = 0;                        // the newest burst serial handed to the renderer
     std::vector<ou::render::Bubble> uwBubbles; // Enhanced water: effect bubbles + Lara's breath, each frame
     ou::fx::Breath breath;                     // Lara's breath bubbles (fx/Breath.hpp)
     std::vector<ou::render::MeshOpacity> meshOpacity;      // fading instances (class-7 fades), each frame
@@ -3407,8 +3408,8 @@ int main(int argc, char** argv) {
                                     near->type().name.c_str(), near->uid(), std::string(ou::game::ai::modeName(near->state().mode)).c_str(),
                                     near->health(), near->type().tuning.health, glm::distance(near->position(), s.pos)));
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
-            lines.push_back(fmt("water %s | ripples %s | splashes %zu", opt.gfx.water ? "enhanced" : "original",
-                                world->water().active() ? "active" : "-", world->water().drops().size()));
+            lines.push_back(fmt("water %s | ripples %s | splash bursts %llu", opt.gfx.water ? "enhanced" : "original",
+                                world->water().active() ? "active" : "-", (unsigned long long)fluidSerial));
             lines.push_back(fmt("effects: %zu emitters | %zu particles | %zu glows | %zu fixture lights | %zu sprite batches",
                                 effects.system.emitterCount(), effects.system.particleCount(), effects.system.glowCount(),
                                 streamed.fixtureLights.size(), effects.batches.size()));
@@ -3581,10 +3582,19 @@ int main(int argc, char** argv) {
                     for (int k = 0; k < 4; ++k) v.waves[i][k] = r[size_t(i)][k];
             }
         fo.waterVolumes = waterVolumes;
-        splashParticles.clear();
-        if (opt.gfx.water && !mainMenu)
-            for (const auto& d : ws.drops()) splashParticles.push_back({{d.pos.x, d.pos.y, d.pos.z}, d.radius, d.alpha()});
-        fo.splashes = splashParticles;
+        fluidBursts.clear();
+        if (const auto bursts = ws.bursts(); !bursts.empty()) {
+            if (bursts.back().serial < fluidSerial) fluidSerial = 0; // a new world numbers from 1 again
+            for (const auto& b : bursts) {
+                if (b.serial <= fluidSerial) continue;
+                if (opt.gfx.water && !mainMenu)
+                    fluidBursts.push_back({{b.pos.x, b.pos.y, b.pos.z}, b.surfaceZ, {b.carry.x, b.carry.y, b.carry.z}, b.radius,
+                                           b.speed, b.up, b.spread, uint32_t(b.kind), uint32_t(b.count),
+                                           uint32_t(b.serial * 2654435761u)});
+            }
+            fluidSerial = bursts.back().serial;
+        }
+        fo.fluidBursts = fluidBursts;
         objects.opacities(effects.system, meshOpacity);
         fo.meshOpacity = meshOpacity;
         fo.waterDetail = opt.gfx.waterDetail, fo.oceanFft = opt.gfx.oceanFft, fo.waterDebug = opt.waterDebug;

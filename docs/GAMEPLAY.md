@@ -1758,13 +1758,24 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   continuous wake; it rings the water (strength 0.6) every 0.4 s instead [I], leaving flat rings behind it;
   Lara's entry splash (strength from the plunge speed) and climb-out; hitscan rays crossing the surface
   (`CombatState::shots`) and an enemy dying in the water splash as a projectile / body (strength 1); a dynamic body
-  falling through the surface 0.8; droplets falling back leave pinpricks. `World::splashWater` takes other impacts.
-  The field reports empty after 8 quiet seconds (the renderer skips it). Splash droplets (ours) are ballistic
-  (gravity as Tuning, capped at 256, xorshift RNG) and die on the surface or after 0.35–0.75 s. ou-game copies the
-  field, water volumes and droplets into `FrameOptions` for the Enhanced water shader (docs/RENDERING.md "Water": the
-  Godot / afl_ext surface, which layers the field's height and slopes on its own waves); Original water does not use
-  them. The drawn waves are centred on the gameplay surface (the original sea waves) and never rise above the rest plane. Tests `WaveField.*` (Joan's `water_waves_test` in TRU units: superposition,
-  shore reflection, bodies as obstacles, damping, scrolling, wake height) and `Game.Water*`.
+  falling through the surface 0.8; `World::splashWater` takes other impacts.
+  The field reports empty after 8 quiet seconds (the renderer skips it). Splash bursts (ours, `game::SplashBurst`,
+  [I] tuned by eye): the same events release the water they throw for the renderer's particle fluid
+  (docs/RENDERING.md "Splash fluid"): Lara's entry `entryBursts` (e = plunge speed down / 1500, clamped 0.3–3: a
+  crown of 500 + 900 e particles on a ring of 90 + 25 e units, launched up to 650 + 420 e units/s and out at
+  180 + 120 e + 0.15 × her horizontal speed, leaning with her run; a spray cone of 150 e; from e 0.7 a Worthington
+  jet of 250 + 350 e particles up to 800 + 350 e units/s, 0.18 + 0.06 e s later, when the cavity collapses). A swan dive
+  (the previous clip `ng_inair_swan*`) enters streamlined: crown radius × 0.6, particles × 0.45, launch × 0.75, then
+  jet × 1.6 particles, × 1.15 speed. Impacts (`impactBursts`, strength s: shots, bodies, dynamics) throw a crown of
+  120 + 380 s on 30 + 40 s units, a spray and from s 1 a jet 0.12 s later; climbing out sheds a wide spray cone, surface
+  strokes a small one every 5 ticks. Delayed bursts wait in WaterSim and are numbered when released (`bursts()`: the
+  last 64, serials 1, 2, ...); ou-game forwards those newer than the last it saw. ou-game copies the field, water
+  volumes and the new bursts into `FrameOptions` for the Enhanced water (docs/RENDERING.md "Water": the Godot / afl_ext
+  surface, which layers the field's height and slopes on its own waves); Original water does not use them. The drawn
+  waves are centred on the gameplay surface (the original sea waves) and never rise above the rest plane. Tests
+  `WaveField.*` (Joan's `water_waves_test` in TRU units: superposition, shore reflection, bodies as obstacles,
+  damping, scrolling, wake height) and `Game.Water*` (entry crown, delayed impact jet, burst scaling with speed and
+  swan dives).
 
 ### Water moves: scuba, breath meter, dodges, swan dive, surface turns, climb out, weapons, jellyfish (2026-11-10)
 

@@ -1,0 +1,310 @@
+#version 460
+// Enhanced water's splash fluid (render/Fluid.hpp, docs/RENDERING.md "Splash fluid"): Position Based Fluids (Macklin &
+// Mueller 2013, "Position Based Fluids", ACM TOG 32(4)) over the particle pool near the camera, one dispatch per pass
+// (cfg.x), 128 threads per group, kernels in units of the support h (poly6 density, spiky gradient: Mueller et al.
+// 2003). Per fixed step: Predict, kIterations x (Lambda, Delta), Finalize; Emit once per frame before them.
+//  0 emit:     this frame's bursts (cfg.z of them, cfg.w particles in all) into their ring slots.
+//  1 predict:  x = the last step's final position, gravity and air drag on v, p = x + v dt, life; live particles are
+//              linked into the hashed neighbour grid (bucket heads cleared to ~0 by the host before this pass).
+//  2 lambda:   rho_i over the 27 cells around p, C_i = max(rho_i / rho0 - 1, 0) (unilateral: a free surface does not
+//              pull), lambda_i = -C_i / (sum |grad C_i|^2 + eps); rho_i / rho0 kept (spray / foam).
+//  3 delta:    dp_i = sum (lambda_i + lambda_j + s_corr) grad W / rho0, s_corr = -k (W / W(dq))^4 (the paper's tensile
+//              term against clumping), clamped to h / 4; cfg.y 0 reads p and writes d, 1 the reverse.
+//  4 finalize: v = (p - x) / dt, XSPH viscosity and cohesion (Akinci, Akinci & Teschner 2013, "Versatile surface tension
+//              and adhesion for SPH fluids": the spline that pulls neighbours at mid range, so sheets bead into drops);
+//              the water surface (rest z + the interactive ripples: the particle merges, writes a C3 kick, dies) and
+//              the opaque depth (screen-space collision with the scene); the final position into d.
+// Particle positions are world units (z up); the grid hashes cells of h.
+layout(local_size_x = 128) in;
+#include "shaders/fluid.glsl"
+
+struct OuFluidBurst {
+    vec4 pos;   // centre xyz, w rest surface z
+    vec4 vel;   // carried velocity xyz, w radius
+    vec4 shape; // speed, up, spread, kind (0 crown, 1 jet, 2 spray)
+    uvec4 info; // first ring slot, count, seed, 0
+};
+struct OuWaveKick { vec4 k; }; // contract C3: world x, world y, amplitude (negative pushes down), sigma
+
+#ifdef VULKAN
+layout(set = 0, binding = 0) uniform Water {
+#else
+layout(binding = 4) uniform Water {
+#endif
+    mat4 viewProj; mat4 invViewProj;
+    vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
+    vec4 ripple; vec4 rippleInfo; vec4 ambient;
+} w;
+#ifdef VULKAN
+layout(set = 0, binding = 1, std430) buffer Particles { OuFluidParticle P[]; };
+layout(set = 0, binding = 2, std430) buffer Grid { uint head[65536]; uint next[]; };
+layout(set = 0, binding = 3, std430) buffer Kicks { uint kickCount; uint kpad0, kpad1, kpad2; OuWaveKick kicks[4096]; };
+layout(set = 0, binding = 4, std430) readonly buffer Bursts { OuFluidBurst bursts[]; };
+layout(set = 0, binding = 5) uniform sampler2D uDepth;   // opaque scene depth copy
+layout(set = 0, binding = 6) uniform sampler2D uRipples; // the interactive wave field
+layout(push_constant) uniform Push { ivec4 cfg; vec4 sim; vec4 par; vec4 lim; } pc;
+#define CFG pc.cfg
+#define SIM pc.sim
+#define PAR pc.par
+#define LIM pc.lim
+#define OU_UV_Y(ndcY) (0.5 - 0.5 * (ndcY))
+#define OU_NDC_Y(uv) (1.0 - 2.0 * (uv).y)
+#define OU_NDC_Z(d) (d)
+#else
+layout(std430, binding = 0) buffer Particles { OuFluidParticle P[]; };
+layout(std430, binding = 1) buffer Grid { uint head[65536]; uint next[]; };
+layout(std430, binding = 2) buffer Kicks { uint kickCount; uint kpad0, kpad1, kpad2; OuWaveKick kicks[4096]; };
+layout(std430, binding = 3) readonly buffer Bursts { OuFluidBurst bursts[]; };
+layout(binding = 6) uniform sampler2D uDepth;
+layout(binding = 7) uniform sampler2D uRipples;
+layout(location = 0) uniform ivec4 uCfg;
+layout(location = 1) uniform vec4 uSim;
+layout(location = 2) uniform vec4 uPar;
+layout(location = 3) uniform vec4 uLim;
+#define CFG uCfg
+#define SIM uSim
+#define PAR uPar
+#define LIM uLim
+#define OU_UV_Y(ndcY) (0.5 + 0.5 * (ndcY))
+#define OU_NDC_Y(uv) (2.0 * (uv).y - 1.0)
+#define OU_NDC_Z(d) (2.0 * (d) - 1.0)
+#endif
+
+const uint kNone = 0xFFFFFFFFu;
+const uint kHashMask = 65535u;
+const int kMaxKicks = 4096;
+const int kMaxChain = 96;           // links followed per bucket (a hash pile-up cannot stall the pass)
+const float kPi = 3.14159265358979;
+const float kDragBody = 0.1, kDragSpray = 1.4; // air drag, 1/s: a coherent sheet barely slows, fine spray does
+const float kRange = 9000.0;        // render::fluid::kRange
+const float kMaxMove = 0.25;        // solver correction per iteration, in h
+const float kBand = 1.5;            // scene collision: deepest penetration behind the depth buffer taken as a hit, in h
+const float kRestitution = 0.1, kFriction = 0.3;
+
+float poly6(float r2) { return 315.0 / (64.0 * kPi) * (1.0 - r2) * (1.0 - r2) * (1.0 - r2); }
+vec3 spikyGrad(vec3 r, float l) { return -45.0 / kPi * (1.0 - l) * (1.0 - l) * (r / l); }
+// Akinci's cohesion spline (support 1, normalised 32 / pi): repels inside h / 2 at its very core, pulls at mid range.
+float cohesion(float l) {
+    float c = (1.0 - l) * (1.0 - l) * (1.0 - l) * l * l * l;
+    return 32.0 / kPi * (l > 0.5 ? c : 2.0 * c - 1.0 / 64.0);
+}
+
+uint pcg(uint v) {
+    uint s = v * 747796405u + 2891336453u;
+    uint t = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (t >> 22u) ^ t;
+}
+float rnd(inout uint s) { s = pcg(s); return float(s >> 8) * (1.0 / 16777216.0); }
+
+ivec3 cellOf(vec3 p) { return ivec3(floor(p / SIM.y)); }
+uint bucket(ivec3 c) { return (uint(c.x) * 73856093u ^ uint(c.y) * 19349663u ^ uint(c.z) * 83492791u) & kHashMask; }
+vec3 solverPos(uint j, int src) { return src == 0 ? P[j].p.xyz : P[j].d.xyz; }
+
+// The surface a particle falls back into: its water's rest z plus the interactive field there (water.vert's fade).
+// [Integration: point at water_surface.glsl ouSurfaceHeight once it lands, for the FFT ocean as well.]
+float surfaceZ(vec2 xy, float rest) {
+    if (w.rippleInfo.y < 0.5) return rest;
+    vec2 uv = (xy - w.ripple.xy) / (w.ripple.z * w.rippleInfo.x);
+    vec2 in2 = min(uv, 1.0 - uv);
+    if (min(in2.x, in2.y) <= 0.0) return rest;
+    return rest + smoothstep(0.0, 0.04, min(in2.x, in2.y)) * textureLod(uRipples, uv, 0.0).r;
+}
+
+void emit() {
+    uint t = gl_GlobalInvocationID.x;
+    if (t >= uint(CFG.w)) return;
+    uint base = 0u;
+    int b = 0;
+    for (; b < CFG.z; ++b) {
+        uint n = bursts[b].info.y;
+        if (t < base + n) break;
+        base += n;
+    }
+    if (b >= CFG.z) return;
+    OuFluidBurst B = bursts[b];
+    uint k = t - base, slot = (B.info.x + k) % uint(LIM.x);
+    uint s = pcg(B.info.z * 9781u + k * 6271u + 1u);
+    float u0 = rnd(s), u1 = rnd(s), u2 = rnd(s), u3 = rnd(s), u4 = rnd(s);
+    float a = 6.2831853 * u0, R = B.vel.w, speed = B.shape.x, up = B.shape.y, spread = B.shape.z;
+    vec2 dir = vec2(cos(a), sin(a));
+    vec3 x, v;
+    int kind = int(B.shape.w + 0.5);
+    if (kind == 0) { // crown: a sheet two particles thick on the ring; its higher part leaves faster (rises as a wall)
+        float r = R + (u1 - 0.5) * 2.0 * kOuFluidSpacing;
+        x = B.pos.xyz + vec3(dir * r, 2.0 + u2 * spread);
+        v = vec3(dir * speed * (0.8 + 0.4 * u3), up * (0.3 + 0.7 * u2) * (0.9 + 0.2 * u4));
+    } else if (kind == 1) { // jet: a column, its top fastest (it stretches and pinches off into drops)
+        float r = R * sqrt(u1);
+        x = B.pos.xyz + vec3(dir * r, u2 * spread);
+        v = vec3(dir * speed * u3 * (r / max(R, 1.0)), up * (0.45 + 0.55 * u2));
+    } else { // spray: a cone of half-angle `spread` around up
+        float ct = mix(cos(spread), 1.0, u1), st = sqrt(max(1.0 - ct * ct, 0.0));
+        x = B.pos.xyz + vec3(dir * R * sqrt(u2), 2.0);
+        v = vec3(dir * st, ct) * speed * (0.4 + 0.6 * u3);
+    }
+    v += B.vel.xyz;
+    x.z += surfaceZ(x.xy, B.pos.w) - B.pos.w; // on the impact's own crater / rim, not under it
+    P[slot].x = vec4(x, 2.2 + 1.2 * u4);
+    P[slot].v = vec4(v, B.pos.w);
+    P[slot].p = vec4(x, 0.0);
+    P[slot].d = vec4(x, 1.0);
+}
+
+void predict(uint i) {
+    vec4 X = P[i].x;
+    if (X.w <= 0.0) return;
+    vec3 x = P[i].d.xyz, v = P[i].v.xyz;
+    float dt = SIM.x;
+    v.z -= PAR.x * dt;
+    v *= exp(-mix(kDragSpray, kDragBody, clamp(P[i].d.w * 2.0, 0.0, 1.0)) * dt);
+    X.w -= dt;
+    if (X.w <= 0.0 || distance(x, w.eye.xyz) > kRange) {
+        P[i].x = vec4(x, 0.0);
+        return;
+    }
+    vec3 p = x + v * dt;
+    P[i].x = vec4(x, X.w);
+    P[i].v.xyz = v;
+    P[i].p.xyz = p;
+    next[i] = atomicExchange(head[bucket(cellOf(p))], i);
+}
+
+void lambda(uint i, int src) {
+    if (P[i].x.w <= 0.0) return;
+    vec3 pi = solverPos(i, src);
+    ivec3 c0 = cellOf(pi);
+    float rho = 0.0, sum2 = 0.0, rho0 = SIM.z;
+    vec3 gi = vec3(0.0);
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx) {
+                uint j = head[bucket(c0 + ivec3(dx, dy, dz))];
+                for (int n = 0; j != kNone && n < kMaxChain; ++n, j = next[j]) {
+                    vec3 r = (pi - solverPos(j, src)) / SIM.y;
+                    float r2 = dot(r, r);
+                    if (r2 >= 1.0) continue;
+                    rho += poly6(r2);
+                    if (j == i || r2 < 1e-10) continue;
+                    vec3 g = spikyGrad(r, sqrt(r2)) / rho0;
+                    gi += g;
+                    sum2 += dot(g, g);
+                }
+            }
+    float C = max(rho / rho0 - 1.0, 0.0);
+    P[i].p.w = -C / (sum2 + dot(gi, gi) + SIM.w);
+    P[i].d.w = rho / rho0;
+}
+
+void delta(uint i, int src) {
+    if (P[i].x.w <= 0.0) return;
+    vec3 pi = solverPos(i, src);
+    ivec3 c0 = cellOf(pi);
+    float li = P[i].p.w;
+    vec3 dp = vec3(0.0);
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx) {
+                uint j = head[bucket(c0 + ivec3(dx, dy, dz))];
+                for (int n = 0; j != kNone && n < kMaxChain; ++n, j = next[j]) {
+                    if (j == i) continue;
+                    vec3 r = (pi - solverPos(j, src)) / SIM.y;
+                    float r2 = dot(r, r);
+                    if (r2 >= 1.0 || r2 < 1e-10) continue;
+                    float q = poly6(r2) / PAR.z, scorr = -PAR.y * q * q * q * q;
+                    dp += (li + P[j].p.w + scorr) * spikyGrad(r, sqrt(r2));
+                }
+            }
+    dp /= SIM.z;
+    float l = length(dp);
+    if (l > kMaxMove) dp *= kMaxMove / l;
+    vec3 o = pi + dp * SIM.y;
+    if (src == 0) P[i].d.xyz = o;
+    else P[i].p.xyz = o;
+}
+
+// World point the opaque depth shows at pixel q (clamped to the screen); its distance from the eye in .w.
+vec4 scenePoint(ivec2 q) {
+    q = clamp(q, ivec2(0), ivec2(w.screen.xy) - 1);
+    float d = texelFetch(uDepth, q, 0).r;
+    vec2 uv = (vec2(q) + 0.5) * w.screen.zw;
+    vec4 h = w.invViewProj * vec4(2.0 * uv.x - 1.0, OU_NDC_Y(uv), OU_NDC_Z(d), 1.0);
+    vec3 s = h.xyz / h.w;
+    return vec4(s, d >= 0.999999 ? 1e30 : distance(s, w.eye.xyz));
+}
+// The pixel a world point lands on; false off screen / behind the eye.
+bool pixelOf(vec3 p, out ivec2 q) {
+    vec4 c = w.viewProj * vec4(p, 1.0);
+    if (c.w <= 1.0) return false;
+    vec2 ndc = c.xy / c.w;
+    if (any(greaterThan(abs(ndc), vec2(1.0)))) return false;
+    q = ivec2(vec2(0.5 + 0.5 * ndc.x, OU_UV_Y(ndc.y)) * w.screen.xy);
+    return true;
+}
+
+void finalize(uint i) {
+    if (P[i].x.w <= 0.0) return;
+    float dt = SIM.x, h = SIM.y;
+    vec3 x = P[i].x.xyz, p = P[i].p.xyz;
+    vec3 v = (p - x) / dt;
+    ivec3 c0 = cellOf(p);
+    vec3 xsph = vec3(0.0), coh = vec3(0.0);
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx) {
+                uint j = head[bucket(c0 + ivec3(dx, dy, dz))];
+                for (int n = 0; j != kNone && n < kMaxChain; ++n, j = next[j]) {
+                    if (j == i) continue;
+                    vec3 pj = P[j].p.xyz, r = (p - pj) / h;
+                    float r2 = dot(r, r);
+                    if (r2 >= 1.0 || r2 < 1e-10) continue;
+                    float l = sqrt(r2);
+                    xsph += ((pj - P[j].x.xyz) / dt - v) * poly6(r2);
+                    coh += cohesion(l) * (r / l);
+                }
+            }
+    v += PAR.w * xsph / SIM.z;
+    v -= LIM.w * dt * coh;
+
+    // The water surface: falling back in, the particle merges (a kick for the interactive field) and is gone.
+    float rest = P[i].v.w, sz = surfaceZ(p.xy, rest);
+    if (p.z < sz) {
+        if (v.z < -50.0 && x.z >= sz - 0.5 * h) {
+            uint k = atomicAdd(kickCount, 1u);
+            if (k < uint(kMaxKicks)) kicks[k].k = vec4(p.xy, -LIM.y * clamp(-v.z / 1000.0, 0.15, 2.0), LIM.z);
+        }
+        P[i].x.w = 0.0;
+        P[i].d.xyz = p;
+        return;
+    }
+    // The scene, through the opaque depth: a particle that was in front of the visible surface last step and is now
+    // just behind it (less than kBand h: not a silhouette it passed behind) hit it; back out along the surface normal.
+    ivec2 q, qx;
+    if (pixelOf(p, q) && pixelOf(x, qx)) {
+        vec4 s = scenePoint(q), sx = scenePoint(qx);
+        float dp = distance(p, w.eye.xyz);
+        if (dp > s.w && dp - s.w < kBand * h && distance(x, w.eye.xyz) <= sx.w + 0.25 * h) {
+            vec3 n = cross(scenePoint(q + ivec2(1, 0)).xyz - s.xyz, scenePoint(q + ivec2(0, 1)).xyz - s.xyz);
+            n = dot(n, n) > 1e-12 ? normalize(n) : normalize(w.eye.xyz - s.xyz);
+            if (dot(n, w.eye.xyz - s.xyz) < 0.0) n = -n;
+            p = s.xyz + n * (0.25 * h);
+            float vn = dot(v, n);
+            if (vn < 0.0) {
+                vec3 vt = v - vn * n;
+                v = vt * (1.0 - kFriction) - kRestitution * vn * n;
+            }
+        }
+    }
+    P[i].v.xyz = v;
+    P[i].d.xyz = p;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    int pass = CFG.x;
+    if (pass == 0) { emit(); return; }
+    if (i >= uint(LIM.x)) return;
+    if (pass == 1) predict(i);
+    else if (pass == 2) lambda(i, CFG.y);
+    else if (pass == 3) delta(i, CFG.y);
+    else finalize(i);
+}
