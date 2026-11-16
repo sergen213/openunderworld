@@ -1791,11 +1791,20 @@ inline constexpr size_t kWaterSink = 13, kWaterSource = 14, kWaterFlow = 15, kWa
 vec3 waterFlow(const collision::Markup& m, vec3 p);
 // `p` inside water box `m` (a findWater markup) grown by `grow` per axis in the box frame.
 bool insideWater(const collision::Markup& m, vec3 p, vec3 grow = vec3(0));
-// Sea waves of a water volume (tru.exe 0x69DA80): sum_i height_i (cos(kx_i x + ky_i y + speed_i t) - 1), <= 0, with t =
+// Sea waves of a water volume (tru.exe 0x69DA80): sum_i height_i (sin(kx_i x + ky_i y + speed_i t) - 1), <= 0, with t =
 // game seconds mod 200 pi (0x6ADB70, 0x6C10D0); 0 for volumes without waves.
 float waveHeight(const collision::Markup& m, vec2 xy, double seconds);
-// Water surface z of volume `m` at `xy` (top + waveHeight, tru.exe 0x6AD010).
-inline float waterSurface(const collision::Markup& m, vec2 xy, double seconds) { return m.points[1].z + waveHeight(m, xy, seconds); }
+// The drawn sea's swell over tru.exe's waves (ou-game: render::ocean::Swell while Enhanced water draws the FFT ocean, in
+// world units on the sim's sea clock; null = none: Original water, the afl sea, tests). Process-wide (one game per
+// process). With it a sea's surface is the one water.vert draws, waves + swell clipped at the rest plane, for
+// everything (swimming, floating bodies, the eye's water), so a floating deck stays dry (docs/GAMEPLAY.md "Floating
+// objects").
+using SeaSwell = float (*)(const void* user, vec2 xy, double seconds);
+void setSeaSwell(SeaSwell fn, const void* user);
+// The surface's height over the top: waveHeight, plus on a sea the swell set by setSeaSwell (clipped at 0).
+float surfaceHeight(const collision::Markup& m, vec2 xy, double seconds);
+// Water surface z of volume `m` at `xy` (top + surfaceHeight, tru.exe 0x6AD010).
+inline float waterSurface(const collision::Markup& m, vec2 xy, double seconds) { return m.points[1].z + surfaceHeight(m, xy, seconds); }
 // The sea program's VS InstanceParams 3-6 (c60-c63: kx, ky, phase, height per wave; 0x69DFB0); zero without waves.
 std::array<vec4, 4> waveRegisters(const collision::Markup& m, double seconds);
 // The water the camera looks at Lara in (tru.exe 0x5EA200, the under-water pass / fog test): the volume Lara is

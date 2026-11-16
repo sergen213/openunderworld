@@ -1695,9 +1695,26 @@ float waveHeight(const collision::Markup& m, vec2 xy, double seconds) {
     float h = 0;
     for (int i = 0; i < 4; ++i) {
         const vec3 w = m.points[size_t(5 + i)];
-        h += m.points[size_t(9 + i)].x * (std::cos(w.x * xy.x + w.y * xy.y + w.z * t) - 1.0f);
+        h += m.points[size_t(9 + i)].x * (std::sin(w.x * xy.x + w.y * xy.y + w.z * t) - 1.0f);
     }
     return h;
+}
+
+namespace {
+SeaSwell gSeaSwell = nullptr;
+const void* gSeaSwellUser = nullptr;
+} // namespace
+
+void setSeaSwell(SeaSwell fn, const void* user) { gSeaSwell = fn, gSeaSwellUser = user; }
+
+// tru.exe's sea waves, plus on a sea (a waved volume) the drawn swell when ou-game set one, clipped at the rest plane
+// as water.vert clips its crests (shaders/water_surface.glsl ouBaseHeight).
+float surfaceHeight(const collision::Markup& m, vec2 xy, double seconds) {
+    const float h = waveHeight(m, xy, seconds);
+    if (!gSeaSwell || m.points.size() < 13) return h;
+    bool sea = false;
+    for (int i = 0; i < 4; ++i) sea = sea || m.points[size_t(9 + i)].x != 0;
+    return sea ? std::min(h + gSeaSwell(gSeaSwellUser, xy, seconds), 0.0f) : h;
 }
 
 std::array<vec4, 4> waveRegisters(const collision::Markup& m, double seconds) {

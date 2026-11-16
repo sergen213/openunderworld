@@ -47,7 +47,7 @@ void main() {
     vNormal = mat3(uModel) * aNormal;
 #endif
     // The surface (shaders/water_surface.glsl): a sea's waves as its original vertex shader (tru.exe 0x69DFB0: lowered by
-    // sum c63 (1 - cos(x c60 + y c61 + c62)); the gameplay surface follows the same waves, game::waveRegisters), Godot's
+    // sum c63 (1 - sin(x c60 + y c61 + c62)); the gameplay surface follows the same waves, game::waveRegisters), Godot's
     // height layers or on open seas the FFT ocean / afl_ext's waves (visible where the surface mesh has interior
     // vertices; TRU's are mostly coarse), capped at the rest plane, plus the interactive wave field on top.
     vSea = any(notEqual(uWaves[3], vec4(0.0))) ? 1.0 : 0.0;

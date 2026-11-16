@@ -3,6 +3,7 @@
 #include "cdc/Cdc.hpp"
 #include "formats/Formats.hpp"
 #include "render/OriginalShading.hpp"
+#include "render/Ocean.hpp"
 #include "render/ShaderTranslate.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -769,7 +770,7 @@ TEST(StreamReal, OpenSeaWater) {
 }
 
 // The open seas' waves (tru.exe 0x69DA80 / 0x69DFB0, GAMEPLAY.md "Water"): the surface is the volume top lowered by
-// sum height x (1 - cos), so the ch1 / ch2 yachts' decks stay above the water at every phase and Lara starts dry; a
+// sum height x (1 - sin), so the ch1 / ch2 yachts' decks stay above the water at every phase and Lara starts dry; a
 // swimmer rides the waves.
 TEST(StreamReal, YachtDecksAboveSea) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -794,6 +795,8 @@ TEST(StreamReal, YachtDecksAboveSea) {
     }
     auto s = w.player().state(); // ch2: put her into the sea beside the yacht; she surfaces and treads on the waves
     s.pos = glm::vec3(-31000, -10000, -500);
+    for (const auto& m : w.collision().markup) // just under the surface there, whatever the waves' phase
+        if (m.type == 10 && m.id == 2563) s.pos.z = game::waterSurface(m, glm::vec2(s.pos), double(w.ticks()) * game::kTickSeconds) - 60.0f;
     w.restore(s, w.camera().yaw, w.camera().pitch);
     std::set<int> heights;
     for (int i = 0; i < 600; ++i) {
@@ -878,6 +881,133 @@ TEST(StreamReal, YachtsFloatOnTheWaves) {
         EXPECT_GT(tilt, 0.5f) << "ch" << c.chapter << ": rolls / pitches on the waves";
         EXPECT_LT(tilt, 8.0f) << "ch" << c.chapter;
         EXPECT_LT(ride, 40.0f) << "ch" << c.chapter << ": she rides the deck";
+    }
+}
+
+namespace {
+// Heave of a floating yacht's origin over the volume top, per tick, and what bounces in it.
+struct Heave {
+    std::vector<float> z, drawn; // origin - top; the sim's surface (game::surfaceHeight) there
+    float tilt = 0;              // degrees from upright, most
+    int wetTicks = 0;            // ticks Lara counted as in water (after the first second)
+    // 0.4 .. 2 Hz RMS of z[a, b): the hull's own heave / roll ringing (~0.8 Hz), above the sea waves (0.05 .. 0.32 Hz)
+    float band(size_t a, size_t b) const {
+        const size_t n = b - a;
+        double mean = 0;
+        for (size_t i = a; i < b; ++i) mean += z[i] / double(n);
+        double power = 0;
+        for (size_t k = 1; k < n / 2; ++k) {
+            const double f = double(k) * 60.0 / double(n);
+            if (f < 0.4 || f >= 2.0) continue;
+            double re = 0, im = 0;
+            for (size_t i = a; i < b; ++i) {
+                const double ph = 2 * 3.14159265358979 * double(k) * double(i - a) / double(n);
+                re += (z[i] - mean) * std::cos(ph), im -= (z[i] - mean) * std::sin(ph);
+            }
+            power += 2 * (re * re + im * im);
+        }
+        return float(std::sqrt(power) / double(n));
+    }
+    float maxSpeed() const { // units / s
+        float m = 0;
+        for (size_t i = 1; i < z.size(); ++i) m = std::max(m, std::abs(z[i] - z[i - 1]) * 60.0f);
+        return m;
+    }
+    float maxJerk() const { // change of the vertical speed in one tick, units / s
+        float m = 0;
+        for (size_t i = 2; i < z.size(); ++i) m = std::max(m, std::abs(z[i] - 2 * z[i - 1] + z[i - 2]) * 60.0f);
+        return m;
+    }
+};
+Heave traceYacht(game::World& w, int32_t yacht, int volume, int ticks) {
+    Heave h;
+    for (int i = 0; i < ticks; ++i) {
+        w.tick({});
+        const collision::Markup* sea = nullptr; // per tick: a collision rebuild (unit stream) moves the markup
+        for (const auto& m : w.collision().markup)
+            if (m.type == 10 && m.id == volume) sea = &m;
+        if (!sea) return h;
+        const glm::mat4 f = yachtFrame(w, yacht);
+        h.z.push_back(f[3].z - sea->points[1].z);
+        h.drawn.push_back(game::surfaceHeight(*sea, glm::vec2(f[3]), double(w.ticks()) * game::kTickSeconds));
+        h.tilt = std::max(h.tilt, glm::degrees(std::acos(std::clamp(f[2].z, -1.0f, 1.0f))));
+        if (i >= 60 && w.player().state().water >= 0) ++h.wetTicks;
+    }
+    return h;
+}
+} // namespace
+
+// User report (0.49.1): the floating yacht bounces. tru.exe 1.1 under Wine (2026-11-15, the section instance sampled
+// every frame; openunderworld-work/yb): l1_seatop's yacht heaves 239 units peak to peak in 40 s (l2_cliffclimb 339),
+// 0.62 (0.78) x the sin sea waves at its origin, corr 0.989 (0.956); 0.4 .. 2 Hz RMS 4.2 (13.3), 31 in the first 10 s
+// after a load with it already afloat; vertical speed at most 151 (209 later). Ours bounced on every state-less start
+// (chapter starts, unit loads, saves without physics state such as the user's chapter-1 slot): from its intro pose
+// (ch1 54 over the top) it fell ~400 at up to 1000 units / s and rang at 0.8 Hz with +-6 degrees of roll for seconds
+// (0.4 .. 2 Hz RMS 43 / 37 in the first 10 s). Now it starts at its buoyant rest, with the record's damping.
+TEST(StreamReal, YachtsSettleAfloatWithoutBouncing) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto world = [&] {
+        auto w = std::make_unique<game::World>([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom",
+                                               game::loadLaraAnims(bf));
+        w->script().setBigfile(&bf);
+        w->enemies().setBigfile(&bf);
+        return w;
+    };
+    struct Case { int chapter; int32_t yacht; int volume; float p2p; };
+    for (const Case c : {Case{1, 998, 1851, 239.2f}, Case{2, 2566, 2563, 339.4f}}) {
+        auto w = world();
+        w->startChapter(c.chapter);
+        auto stateless = save::capture(*w); // as an older save: no object / physics state
+        stateless.objects = nullptr;
+        const Heave started = traceYacht(*w, c.yacht, c.volume, 40 * 60);
+        auto l = world();
+        save::apply(save::parse(save::serialize(stateless)), *l);
+        const Heave loaded = traceYacht(*l, c.yacht, c.volume, 40 * 60);
+        for (const auto& [flow, h] : {std::pair<const char*, const Heave*>{"chapter start", &started}, {"state-less load", &loaded}}) {
+            ASSERT_EQ(h->z.size(), 2400u) << "ch" << c.chapter << " " << flow;
+            const auto [lo, hi] = std::minmax_element(h->z.begin() + 600, h->z.end());
+            const float first = h->band(0, 600), later = h->band(600, 2400);
+            std::fprintf(stderr, "ch%d %s: heave %.1f .. %.1f, 0.4-2 Hz RMS %.1f / %.1f, speed max %.0f, jerk max %.1f, tilt %.1f\n", c.chapter,
+                         flow, *lo, *hi, first, later, h->maxSpeed(), h->maxJerk(), h->tilt);
+            EXPECT_LT(first, 20.0f) << "ch" << c.chapter << " " << flow << ": no splash-down ringing";
+            EXPECT_LT(later, 18.0f) << "ch" << c.chapter << " " << flow;
+            EXPECT_LT(h->maxSpeed(), 250.0f) << "ch" << c.chapter << " " << flow << ": no fall from the intro pose";
+            EXPECT_LT(h->maxJerk(), 15.0f) << "ch" << c.chapter << " " << flow << ": no vertical speed spikes";
+            EXPECT_NEAR(*hi - *lo, c.p2p, 0.25f * c.p2p) << "ch" << c.chapter << " " << flow << ": heaves as the original";
+            EXPECT_LT(h->tilt, 8.0f) << "ch" << c.chapter << " " << flow;
+        }
+    }
+}
+
+// With Enhanced water's FFT ocean (the user's config) the drawn sea is tru.exe's waves plus the swell (RMS ~137
+// units); the yacht floated on the waves alone, so its waterline wandered against the drawn water. With
+// game::setSeaSwell (ou-game: render::ocean::Swell) the sim's sea is the drawn one: the yacht rides it and Lara on its
+// deck stays dry.
+TEST(StreamReal, YachtRidesTheDrawnSwell) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::setSeaSwell([](const void* u, glm::vec2 p, double t) { return static_cast<const render::ocean::Swell*>(u)->height(p, t); },
+                      &render::ocean::swell(render::ocean::kMaxN));
+    struct Reset { ~Reset() { game::setSeaSwell(nullptr, nullptr); } } reset;
+    struct Case { int chapter; int32_t yacht; int volume; };
+    for (const Case c : {Case{1, 998, 1851}, Case{2, 2566, 2563}}) {
+        game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+        w.script().setBigfile(&bf);
+        w.enemies().setBigfile(&bf);
+        w.startChapter(c.chapter);
+        const Heave h = traceYacht(w, c.yacht, c.volume, 40 * 60);
+        ASSERT_EQ(h.z.size(), 2400u) << c.chapter;
+        double sz = 0, sd = 0, szz = 0, sdd = 0, szd = 0;
+        const double n = 1800;
+        for (size_t i = 600; i < 2400; ++i)
+            sz += h.z[i], sd += h.drawn[i], szz += double(h.z[i]) * h.z[i], sdd += double(h.drawn[i]) * h.drawn[i], szd += double(h.z[i]) * h.drawn[i];
+        const double corr = (szd - sz * sd / n) / std::sqrt((szz - sz * sz / n) * (sdd - sd * sd / n));
+        std::fprintf(stderr, "ch%d with the swell: heave / drawn sea corr %.3f, jerk max %.1f, Lara wet %d ticks\n", c.chapter, corr, h.maxJerk(),
+                     h.wetTicks);
+        EXPECT_GT(corr, 0.9) << "ch" << c.chapter << ": rides the drawn sea";
+        EXPECT_LT(h.maxJerk(), 40.0f) << "ch" << c.chapter;
+        EXPECT_LE(h.wetTicks, c.chapter == 1 ? 12 : 0) << "ch" << c.chapter << ": dry on the deck (ch1: her sea ticks before 997)";
     }
 }
 
@@ -967,10 +1097,10 @@ TEST(StreamReal, YachtRenderedSeaBelowDeck) {
             for (size_t k = 0; k < vols.size(); ++k)
                 if (std::memcmp(vols[k].waves, ob.waves, sizeof ob.waves) == 0) sea = volMarkup[k];
             ASSERT_NE(sea, nullptr);
-            for (double t = 0; t < 628.4; t += 0.05) { // the VS: z -= sum c63 (1 - cos(x c60 + y c61 + c62))
+            for (double t = 0; t < 628.4; t += 0.05) { // the VS: z -= sum c63 (1 - sin(x c60 + y c61 + c62))
                 const auto r = game::waveRegisters(*sea, t);
                 float z = lowest;
-                for (int i = 0; i < 4; ++i) z -= r[3][i] * (1 - std::cos(s.pos.x * r[0][i] + s.pos.y * r[1][i] + r[2][i]));
+                for (int i = 0; i < 4; ++i) z -= r[3][i] * (1 - std::sin(s.pos.x * r[0][i] + s.pos.y * r[1][i] + r[2][i]));
                 ASSERT_LT(z, s.pos.z - 10) << flow << " drawn sea under the deck at t " << t;
             }
         }

@@ -555,6 +555,7 @@ struct Scene::Impl {
         int32_t id; JPH::BodyID body; vec3 com; const ObjectPhysics* physics = nullptr;
         vec3 knockedAt{0}; float clear = 0; // Scene::knock: where, and how far it must get before walls hold it again
         JPH::Ref<JPH::TwoBodyConstraint> hang; int32_t hangOn = 0; // Scene::Loose::hang, made
+        bool settle = true; // made without a state (no velocity given, none restored): buoyancy starts it afloat
     };
     // A knocked body (Scene::knock; body user data 1) is held by the level's floors only (contact normal within 26
     // degrees of vertical [I]) until it is clear of where it was knocked: tru.exe's ring door leaf (494 wide in a
@@ -726,7 +727,11 @@ struct Scene::Impl {
         s.mMassPropertiesOverride.mInertia = JPH::Mat44(JPH::Vec4(i[0][0], i[0][1], i[0][2], 0), JPH::Vec4(i[1][0], i[1][1], i[1][2], 0),
                                                         JPH::Vec4(i[2][0], i[2][1], i[2][2], 0), JPH::Vec4(0, 0, 0, 1));
         s.mAllowSleeping = layer == kLayerLoose;
-        if (layer == kLayerLoose) s.mMotionQuality = JPH::EMotionQuality::LinearCast;
+        // Loose bodies: the physics record's damping, 0.01 per 30 Hz frame on both (tru.exe 0x48E690 -> body +0x154 /
+        // +0x158, v *= 1 - frames x damping in 0x4EFB20; every record read in memory holds 0.01 / 0.01) = 0.3 / s,
+        // Jolt's v *= 1 - dt x damping. Jolt's 0.05 / s default left the floating yachts' heave and roll ringing
+        // longer than the original's after a splash-down.
+        if (layer == kLayerLoose) s.mMotionQuality = JPH::EMotionQuality::LinearCast, s.mLinearDamping = s.mAngularDamping = 0.01f * kFrame;
         else s.mLinearDamping = 0, s.mAngularDamping = angularDamping;
         return add(s, key, JPH::EActivation::Activate);
     }
@@ -908,6 +913,7 @@ struct Scene::Impl {
             std::fprintf(stderr, "physics: saved scene not rebuilt alike (%zu bodies missing:%s), state not restored\n", pendingIds.size(), missing.c_str());
         }
         pending.reset(), pendingIds.clear(), reserved.clear(), pendingRefs.clear();
+        for (auto& l : loose) l.settle = false; // as recorded (or, not rebuilt alike, as they were)
     }
     // ---- vehicles ----
     VehicleE makeVehicle(int32_t id, const VehicleSpec& spec, const mat4& model);
@@ -1131,7 +1137,8 @@ void Scene::setLoose(std::span<const Loose> loose) {
         const quat rot = glm::normalize(glm::quat_cast(mat3(l.model)));
         next.push_back({l.id, m.body(looseShape(*l.physics, mp.com), vec3(l.model * glm::vec4(mp.com, 1)), rot, kLayerLoose, mp.mass,
                                      mp.inertia, "l" + std::to_string(l.id)), mp.com, l.physics});
-        if (l.vel != vec3(0) || l.angVel != vec3(0)) m.bi->SetLinearAndAngularVelocity(next.back().body, Jm(l.vel), J(l.angVel));
+        if (l.vel != vec3(0) || l.angVel != vec3(0))
+            m.bi->SetLinearAndAngularVelocity(next.back().body, Jm(l.vel), J(l.angVel)), next.back().settle = false;
     }
     // A hinge goes with either of its bodies.
     const auto has = [&](int32_t id) { return std::ranges::find(next, id, &Impl::LooseE::id) != next.end(); };
@@ -1299,7 +1306,8 @@ void Scene::Impl::buoyancy(float) {
     constexpr float kDensity = 4.56e-5f, kLinearDrag = 0.5f * kFrame, kAngularDrag = 0.01f * kFrame;
     const float g = sys.GetGravity().Length();
     const auto shaped = [](const Prim& p) { return p.solid() && !(p.kind == PrimKind::Sphere && p.head[2] == 2); }; // 0x48E710
-    for (const auto& l : loose) {
+    for (auto& l : loose) {
+        const bool settle = std::exchange(l.settle, false);
         if (!l.physics || std::ranges::none_of(l.physics->prims, [](const Prim& p) { return p.buoyancy > 0; })) continue;
         const auto shapes = std::ranges::count_if(l.physics->prims, shaped);
         float invMass = 0;
@@ -1312,23 +1320,63 @@ void Scene::Impl::buoyancy(float) {
         JPH::RVec3 bp;
         JPH::Quat bq;
         bi->GetPositionAndRotation(l.body, bp, bq);
+        const auto frameOf = [&](const Prim& p, const mat4& model) {
+            const mat4 seg = p.segment < int(l.physics->segments.size()) ? l.physics->segments[size_t(p.segment)] : mat4(1);
+            return model * seg * glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot);
+        };
+        const auto waterAt = [&](vec3 c) -> const Water* {
+            for (const Water& wv : water) {
+                const vec3 d = c - wv.centre;
+                const glm::vec2 local(wv.yaw.x * d.x + wv.yaw.y * d.y, -wv.yaw.y * d.x + wv.yaw.x * d.y);
+                if (std::abs(local.x) <= wv.half.x && std::abs(local.y) <= wv.half.y && std::abs(d.z) <= wv.half.z) return &wv;
+            }
+            return nullptr;
+        };
+        const auto surfaceAt = [](const Water& in, vec3 c) { return in.surface + (in.waves ? in.waves(in.user, glm::vec2(c), in.seconds) : 0.0f); };
+        if (settle) {
+            // A floating body made without a recorded state (a unit load, an old save) starts at its buoyant rest
+            // under its pose's orientation, instead of dropping from its intro pose and ringing for seconds: tru.exe's
+            // yacht is already afloat, ~60 under its mean and still settling, in the first frame it is drawn after a
+            // load (l1_seatop under Wine: 312 under its intro pose a frame after it, a fall no frame's motion covers)
+            // [I: tru.exe's own placement is not decoded]. The rest: the weight equals the buoyancy (0x4DEE60 with
+            // the volume's density) of the waves under each primitive, the body raised or lowered by dz.
+            const mat4 model0 = glm::translate(mat4(1), G(bp) * kUnitsPerMetre) * glm::mat4_cast(G(bq)) * glm::translate(mat4(1), -l.com);
+            const auto lift = [&](float dz) { // buoyant mass at dz minus the body's
+                double kg = 0;
+                for (const Prim& p : l.physics->prims) {
+                    if (!shaped(p) || p.buoyancy <= 0) continue;
+                    const mat4 f = glm::translate(mat4(1), vec3(0, 0, dz)) * frameOf(p, model0);
+                    const Water* in = waterAt(vec3(f[3]));
+                    if (!in) continue;
+                    const float h = surfaceAt(*in, vec3(f[3]));
+                    float sub, full;
+                    if (p.kind == PrimKind::Box) sub = boxUnder(f, p.size, h).volume, full = p.size.x * p.size.y * p.size.z;
+                    else
+                        sub = sphereUnder(vec3(f[3]), p.radius, h).volume,
+                        full = 4.1887903f * p.radius * p.radius * p.radius + (p.kind == PrimKind::Capsule ? 3.1415927f * p.radius * p.radius * p.length : 0.0f);
+                    kg += double(std::min(sub, full)) * kDensity * (float(p.buoyancy) / 100.0f);
+                }
+                return kg - 1.0 / invMass;
+            };
+            float lo = -4000, hi = 4000; // lift falls as the body rises
+            if (lift(lo) > 0 && lift(hi) < 0) {
+                for (int i = 0; i < 40; ++i) (lift(0.5f * (lo + hi)) > 0 ? lo : hi) = 0.5f * (lo + hi);
+                bp += JPH::RVec3(0, 0, 0.5f * (lo + hi) / kUnitsPerMetre);
+                bi->SetPositionAndRotation(l.body, bp, bq, JPH::EActivation::Activate);
+                bi->SetLinearAndAngularVelocity(l.body, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+            }
+        }
         const vec3 com = G(bi->GetCenterOfMassPosition(l.body)) * kUnitsPerMetre;
         const mat4 model = glm::translate(mat4(1), G(bp) * kUnitsPerMetre) * glm::mat4_cast(G(bq)) * glm::translate(mat4(1), -l.com);
         const vec3 v = G(bi->GetLinearVelocity(l.body)), w = G(bi->GetAngularVelocity(l.body));
         const float perShape = 1.0f / invMass / float(shapes);
         for (const Prim& p : l.physics->prims) {
             if (!shaped(p) || p.buoyancy <= 0) continue;
-            const mat4 seg = p.segment < int(l.physics->segments.size()) ? l.physics->segments[size_t(p.segment)] : mat4(1);
-            const mat4 f = model * seg * glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot);
+            const mat4 f = frameOf(p, model);
             const vec3 c = vec3(f[3]);
-            const Water* in = nullptr;
-            for (const Water& wv : water) {
-                const vec3 d = c - wv.centre;
-                const glm::vec2 local(wv.yaw.x * d.x + wv.yaw.y * d.y, -wv.yaw.y * d.x + wv.yaw.x * d.y);
-                if (std::abs(local.x) <= wv.half.x && std::abs(local.y) <= wv.half.y && std::abs(d.z) <= wv.half.z) { in = &wv; break; }
-            }
+            const Water* in = waterAt(c);
             if (!in) continue;
-            const float h = in->surface + (in->waves ? in->waves(in->user, glm::vec2(c), in->seconds) : 0.0f);
+            const float h = surfaceAt(*in, c);
             Submerged s;
             float full = 0, reach = 0;
             if (p.kind == PrimKind::Box) {

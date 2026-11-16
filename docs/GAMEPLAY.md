@@ -1667,8 +1667,10 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   + 4; when data +0x4E has bit 1 (l1_seatop, l1_cineseatop, l1_seafloor, l1/l6 ship exteriors, l2_cliffclimb) the
   water component keeps four waves: kx at data +0x70 + 8i, ky at +0x74 + 8i, height = data +0x6C × share at +0x90 + 4i,
   speed (rad/s) at +0xA0 + 4i (l2: kx (1, 5, −14, −16)·10⁻⁴, ky (3, 0, −14, 2)·10⁻⁴, heights (100, 75, 50, 25), speeds
-  (0.7, 1, 0.7, 0.3); l1_seatop heights × 0.885, last speed 2). The surface at (x, y) is the top + Σ heightᵢ (cos(kxᵢ x +
-  kyᵢ y + speedᵢ t) − 1) (0x69DA80, used by 0x6AD010 / 0x6ACFD0 for Lara and floating objects), t = game seconds
+  (0.7, 1, 0.7, 0.3); l1_seatop heights × 0.885, last speed 2). The surface at (x, y) is the top + Σ heightᵢ (sin(kxᵢ x +
+  kyᵢ y + speedᵢ t) − 1) (0x69DA80: CRT sin 0x813680, used by 0x6AD010 / 0x6ACFD0 for Lara and floating objects; the sea
+  program computes the same sin, RENDERING.md "Sea waves"; [O Wine 2026-11-15: Lara's tread z fits the sin surface at
+  rms 0.1 over 13 s, every wave π/2 off with cos], which ours used until 0.49.1), t = game seconds
   (0x6ADB70, 1/30 per frame unit) mod 200π (0x6C10D0); the sea drawable's vertex shader lowers its vertices by the same
   sum (VS InstanceParams 3–6, 0x69DFB0; RENDERING.md "Planar reflection"). The surface is never above the top: the
   l2_cliffclimb sea at the yacht swings between z 53 and −363 (mean −142, the deck is at 71–87) and l1_seatop's between
@@ -1700,8 +1702,26 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   body Lara's push proxy is a sensor (it stays in the scene, so a save taken off the deck restores onto it with the
   recorded physics state) (`StreamReal.YachtsFloatOnTheWaves`: ch1 − 317 .. − 75 mean − 184, 103 units / 4° in
   50 s; ch2 − 379 .. − 54 mean − 228, 6 units / 1°). Deck heights in tests: her root in the yacht's frame
-  (self-test probe `object.<uid>.lara.z`). Jolt's loose-body damping stays its default 0.05 / s, not the record's
-  0.3 / s [I: records are not parsed]; boxes use an exact clipped volume [I: 0x4DDC50 not decoded].
+  (self-test probe `object.<uid>.lara.z`). Loose bodies take the record's damping, 0.01 per frame = 0.3 / s linear and
+  angular (Jolt's 0.05 / s default before 0.50); boxes use an exact clipped volume [I: 0x4DDC50 not decoded].
+- Floating motion against tru.exe [O Wine 2026-11-15, every frame, openunderworld-work/yb]: the l1 / l2 yacht origin
+  heaves 239 / 339 peak to peak in 40 s, 0.62 / 0.78 × the (sin) waves at its origin (corr 0.989 / 0.956; with waves at
+  ±2000 units around it a fit leaves 1–3 units, ours alike: 0.60 / 0.26 / 0.29 / −0.02 / −0.13 vs tru 0.62 / 0.26 /
+  0.32 / −0.08 / −0.07 at l2); its own heave / roll mode rings at ~0.8 Hz (0.4–2 Hz RMS 31 in the first 10 s after a
+  load, 4–13 later). In the first frame drawn after a load tru.exe's yacht is already afloat (312 under its intro
+  pose a frame later: no frame's motion covers that) [I: its placement is not decoded]. Ours: a floating body made
+  without a recorded state (chapter starts, unit loads, saves without object state) starts at its buoyant rest under
+  its pose's orientation (physics::Scene buoyancy: weight = Σ buoyancy at dz, bisection) instead of falling from the
+  intro pose (ch1: 54 over the top, a ~400 drop at up to 1000 units / s and ±6° of roll for seconds, the reported
+  "bounce"); ou-game draws loose bodies between their last two ticks (`ScriptedMeshes::pose`)
+  (`StreamReal.YachtsSettleAfloatWithoutBouncing`).
+- The drawn sea in the sim: with Enhanced water's FFT ocean the drawn surface is the waves plus the FFT swell
+  (water.vert: + h − 0.5 σ, clipped at the rest plane; RMS ~137 units), which the waves alone ignored. ou-game sets
+  `game::setSeaSwell` to `render::ocean::Swell` (the 256 strongest wave vectors of the drawn grid's cascades 0 + 1 on
+  the CPU, same h0, quantized dispersion and clock as ocean.comp; ~9 units RMS left out; `Ocean.CpuSwellIsTheDrawnHeight`)
+  and `FrameOptions::oceanTime` to the sim's sea clock, so `waterSurface` (swimming, buoyancy, the eye's water) is the
+  drawn sea and the yacht rides it with Lara dry on deck (`StreamReal.YachtRidesTheDrawnSwell`). Original water, the
+  afl sea and tests keep tru.exe's waves alone (gameplay then depends on the water settings).
 - In water: the water probe box overlaps a volume, the feet are below its surface and there is no floor within
   `swimDepth` (400) below the surface. From the air → SwimSplash ("Water entry" below) → SwimTread, or Surfacing (rising
   **900 units/s**, tru.exe's surface group after a deep entry) → SwimTread; the swan dive → SwimUnder. From the ground
@@ -1903,7 +1923,7 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   tests each sensor every other frame, ours every tick [I]. Saved with the runtime (`sensors`). Before, sensors never
   fired.
 - **Treading "drift"** (self-test agent: ~450 units/s with no input in l1_seatop): it is vertical, the root riding the
-  four sea waves (surface = top + Σ heightᵢ (cos(..) − 1)); x / y do not move and the volume has no current. tru.exe
+  four sea waves (surface = top + Σ heightᵢ (sin(..) − 1)); x / y do not move and the volume has no current. tru.exe
   does the same [O Wine: Lara's z fits the wave surface − 44.1 at rms < 1 while treading, "Surface" above].
 - Self-tests: `tests/selftests/swim.json` (l1_seatop: on the tanks the breath stays full), `swim_breath.json`
   (l2_cliffclimb river: drain, sprint drain, refill), `swim_moves.json` (surface turn, dive, dodges, guns under

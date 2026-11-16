@@ -52,6 +52,32 @@ bool wanted(const FrameOptions& o);
 inline int gridSize(const FrameOptions& o) { return o.waterDetail ? 128 : 64; }
 inline int gridLod(int n) { return n == kMaxN ? 0 : 1; } // the mip level grid n lives in
 
+// The drawn ocean's height on the CPU, for gameplay (floating bodies ride the sea they are drawn on; docs/GAMEPLAY.md
+// "Floating objects"): what water.vert adds to tru.exe's sea waves on an FFT sea, ouOceanHeight(p) - 0.5 kM sigma
+// (before the crest clip at the rest plane), from grid n's spectrum (cascades 0 and 1, the same h0, quantized
+// dispersion and loop time as ocean.comp) summed over its `kSwellModes` most energetic wave vectors at their texel
+// positions. A hull only follows the long waves, which hold nearly all of the height (residualRms: the rest).
+inline constexpr size_t kSwellModes = 256;
+class Swell {
+public:
+    Swell(int n, size_t modes);
+    float height(glm::vec2 p, double seconds) const; // p, result: world units; seconds: the ocean clock (FrameOptions::oceanTime)
+    float residualRms() const { return residual_; }  // world units: the height RMS of the modes left out
+    float rms() const { return rms_; }               // world units: the whole height RMS (both cascades)
+    size_t modes() const { return modes_.size(); }
+
+private:
+    struct Mode {
+        float kx, ky; // rad per world unit
+        float j;      // the frequency in multiples of 2 pi / kLoopSeconds (ocean.comp's quantized dispersion)
+        float ar, ai; // 2 x amplitude x kMetre x h0(k), shifted to the texel grid
+        float br, bi; // the same for conj(h0(-k))
+    };
+    std::vector<Mode> modes_;
+    float offset_ = 0, residual_ = 0, rms_ = 0;
+};
+const Swell& swell(int n); // grid n's (gridSize) with kSwellModes, built once
+
 // Game-time clock of one renderer: the frame's loop time and foam step (cfg.x = Spectrum; the caller sets cfg.x per
 // dispatch). A step back in time, a jump over a second (load, cut) or a grid change restarts the foam (par.y < 0); a
 // repeated time (pause) holds it. So a given frame sequence always gives the same image.
