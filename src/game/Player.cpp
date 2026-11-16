@@ -3094,9 +3094,11 @@ bool Player::enterWater() {
     // or coming down onto it within a step - she is not in the water, whatever the static top or the waves say: the
     // hull keeps its deck dry. With the drawn swell in the sim's sea (game::setSeaSwell) l2_cliffclimb's motorboat
     // heaves its deck to 78, under the volume's top 108; tru.exe's decks never sit under the top [I], so it needs no
-    // such rule. Off the deck's edge (no floor under her, or the hull's side) the entry fires as before.
+    // such rule. Off the deck's edge (no floor under her, or the hull's side) the entry fires as before. Only while her
+    // feet are over the wave surface (which carries the swell the boat rides): a platform or crate sunk or lowered under
+    // it (a flooding ship, a water-level puzzle) is under water, and she swims off it.
     if (const auto deck = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + (airborne ? t_.stepDown : 20.0f));
-        deck && deck->dynamic >= 0 && deck->normal.z >= t_.minFloorNormalZ)
+        s_.pos.z > surf && deck && deck->dynamic >= 0 && deck->normal.z >= t_.minFloorNormalZ)
         return false;
     // Shallow (a floor within swimDepth under the surface): walk. Feet already deeper than that are swimming (placed under
     // l7_arctic_sea's ice by 275_hel_explosion, where the probe from the surface would hit the ice).
