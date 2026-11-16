@@ -92,6 +92,16 @@ PS samplers: 49 933 2D + 1 205 cube declarations. Full opcode / declaration / CT
 | instance textures (classes 1–4) | terrain group +0x10..+0x1C / model primgroup +0x2C..+0x38 indices into the resource texture list; IMF +0x4C..+0x58 overrides. Class 1 = light map (sampled at texcoord1), class 3 = "Setup" blend masks | 0x510780, 0x50EB30, 0x5B5160 [O] |
 | cube samplers | cube maps decoded (TEXTURES.md); missing ones read black | [O] |
 
+Light maps without coordinates (deviation, `formats::loadLevelScene` / `loadDrmScene` → `meanLightMaps`, test
+`RealData.LightMapsWithoutCoordinatesReadTheMean`): some IMF meshes' vertex declarations have no TEXCOORD1 although
+their material reads a class-1 light map there (l1_seafloor palm kelp / fan coral, l2_flushtunnel sea fans and
+seaweed, jungle grass; all of l2_cliffclimb's reused l1 kelp placements carry no IMF light map, so the primgroup's l1
+atlas is read). tru.exe then reads an undeclared vertex input (undefined in D3D9, zero under DXVK [I]): uv (0, 0), the
+blend of the map's four corner texels for the whole mesh. On palm kelp's atlas 1340 that is the black padding, so the
+plant drew black (`ouUwFog` keeps TRU's colour as the albedo × light estimate and could not lift it). Where a corner
+texel is pure black and the map has lit texels, the submesh reads a 1×1 map of the mean of the lit texels instead (id
+= source | 0x40000000); maps with lit corners (flushtunnel / grass gradients, fan coral) keep the corner read.
+
 Not fed yet [U/I]: light shadow maps (slots 0–2; RT traces instead), receiver masks, directional
 SH terms of IrradianceState, lights of object intros and cinematic light rigs, PSSM shadows, per-instance params (zero)
 except the planar reflection (global class 5 + PS InstanceParams 0–2, RENDERING.md "Planar reflection") and the sea
