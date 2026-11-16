@@ -23,7 +23,8 @@ and Lara, the yacht and the sea now agree with each other and with the original 
   entries, a central jet, scaled by how fast Lara hits the water; swan dives throw a thinner crown and a taller jet.
   The drops refract the scene and fall back into the water, where they make small rings. About 0.5-1.2 ms per frame
   while a splash is on screen. The game's own splash effect still adds its white water on top.
-- Changed: foam, white water and whitecaps are white; the Mediterranean's light tinted them yellow-green.
+- Changed: foam, white water and whitecaps are white instead of taking the level's light colour (the Thailand sea's
+  whitecaps were yellowish). The yellow-green seen around Lara in the Mediterranean is her wetsuit through the water.
 - Fixed: jumping or falling into deep water took Lara far too deep before she shot back up. She now slows down as in
   the original game (measured under Wine: 12.5 % speed loss per frame, eased to treading depth 44 units under the
   waves), so a short drop ends treading at the surface.
