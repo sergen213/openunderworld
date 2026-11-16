@@ -56,8 +56,10 @@ target_include_directories(ou_placeholder PUBLIC src)
 
 # RenderCommon + the D3D9 SM3 -> GLSL translator of the Original Fidelity path (docs/formats/SHADERS.md).
 add_library(ou_render_common STATIC src/render/RenderCommon.cpp src/render/ShaderTranslate.cpp src/render/OriginalShading.cpp
-  src/render/Water.cpp src/render/Ocean.cpp src/render/WaterField.cpp src/render/Fluid.cpp)
+  src/render/Water.cpp src/render/Ocean.cpp src/render/WaterField.cpp src/render/Fluid.cpp src/render/Cortao.cpp)
 target_include_directories(ou_render_common PUBLIC src)
+# CORTAO ambient occlusion (third_party/cortao, MIT): CORTAOParameters.h for render/Cortao.cpp only.
+target_include_directories(ou_render_common PRIVATE third_party/cortao/src)
 # libshaderc compiles translated TRU shaders to SPIR-V at load time (Vulkan backend, shader tests).
 pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
 target_link_libraries(ou_render_common PUBLIC SDL3::SDL3 glm::glm ou_formats PRIVATE PkgConfig::SHADERC)
