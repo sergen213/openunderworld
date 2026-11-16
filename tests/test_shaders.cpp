@@ -3,6 +3,7 @@
 #include "formats/Shader.hpp"
 #include "formats/Formats.hpp"
 #include "render/OriginalShading.hpp"
+#include "render/Ocean.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/ShaderTranslate.hpp"
 #include "render/Water.hpp"
@@ -700,6 +701,50 @@ ou::render::FrameOptions fieldFrame(float time, float originX, float originY, ui
     return o;
 }
 } // namespace
+
+// Floating bodies ride the drawn FFT swell (render::ocean::Swell): at cascade 0's texel centres it equals ocean.comp's
+// transform (h(k, t) = h0 e^{i w t} + conj(h0(-k)) e^{-i w t}, quantized w, inverse DFT, x amplitude; cascade 1, whose
+// texels lie elsewhere, as the same Fourier sum between them) minus water.vert's 0.5 sigma centring, here as a plain
+// DFT; the 256 strongest wave vectors leave a small residual.
+TEST(Ocean, CpuSwellIsTheDrawnHeight) {
+    using namespace ou::render::ocean;
+    constexpr double kPi = 3.14159265358979;
+    const auto buffer = spectrumBuffer();
+    for (const int n : {kMaxN, kMaxN / 2}) {
+        const Grid& g = grid(n);
+        const Swell all(n, size_t(2 * n * n)), strong(n, kSwellModes);
+        const float w0 = 2.0f * float(kPi) / kLoopSeconds;
+        float worst = 0, worstStrong = 0;
+        for (const double t : {3.0, 77.25, 1000.5})
+            for (const glm::ivec2 X : {glm::ivec2(0, 0), glm::ivec2(5, 17), glm::ivec2(n - 1, n / 3), glm::ivec2(n / 2, n - 2)}) {
+                const glm::dvec2 pm = (glm::dvec2(X) + 0.5) / double(n) * double(g.length[0]); // metres
+                double h = 0;
+                for (int c = 0; c < 2; ++c)
+                    for (int y = 0; y < n; ++y)
+                        for (int x = 0; x < n; ++x) {
+                            const glm::vec4 s = buffer[spectrumOffset(n) + size_t(c * n * n + y * n + x)];
+                            const glm::vec2 k = glm::vec2(x <= n / 2 ? x : x - n, y <= n / 2 ? y : y - n) * float(2 * kPi / g.length[c]);
+                            const float kl = glm::length(k);
+                            const float w = std::sqrt((9.81f * kl + 0.073f / 1025.0f * kl * kl * kl) * std::tanh(kl * 100.0f));
+                            const double ph = w0 * std::fmod(std::floor(w / w0) * float(std::fmod(t, double(kLoopSeconds))), kLoopSeconds);
+                            const double hr = s.x * std::cos(ph) - s.y * std::sin(ph) + s.z * std::cos(ph) + s.w * std::sin(ph);
+                            const double hi = s.x * std::sin(ph) + s.y * std::cos(ph) - s.z * std::sin(ph) + s.w * std::cos(ph);
+                            const glm::dvec2 at = pm - 0.5 * double(g.length[c]) / n; // texel X at (X + 0.5) / n of the tile
+                            const double a = double(k.x) * at.x + double(k.y) * at.y;
+                            h += g.amplitude[c] * (hr * std::cos(a) - hi * std::sin(a));
+                        }
+                const float drawn = float(h * kMetre) - 0.5f * kMetre * std::sqrt(g.sigma[0] * g.sigma[0] + g.sigma[1] * g.sigma[1]);
+                const glm::vec2 p = glm::vec2(pm * double(kMetre));
+                worst = std::max(worst, std::abs(drawn - all.height(p, t)));
+                worstStrong = std::max(worstStrong, std::abs(drawn - strong.height(p, t)));
+            }
+        std::fprintf(stderr, "ocean grid %d: swell RMS %.1f units, %zu modes leave %.2f units RMS; worst error all modes %.3f, %zu modes %.2f\n",
+                     n, strong.rms(), strong.modes(), strong.residualRms(), worst, strong.modes(), worstStrong);
+        EXPECT_LT(worst, 0.5f) << n << ": the CPU sum is the GPU transform";
+        EXPECT_LT(strong.residualRms(), 0.1f * strong.rms()) << n << ": the strong modes hold the height";
+        EXPECT_GT(strong.rms(), 50.0f) << n;
+    }
+}
 
 // The dispersion relation: deep water omega^2 = g k (phase speed sqrt(g / k): a 10 m swell at 3.95 m/s, a 10 cm ripple
 // at 0.43 m/s plus capillarity), shallow water omega = k sqrt(g h) (the depth bounds the speed), the minimum phase

@@ -2896,7 +2896,7 @@ void World::stepPhysics(float dt) {
         if (m.type == 10 && m.points.size() > kWaterIds)
             physicsWater_.push_back({m.points[2], m.points[3], vec2(m.points[4]), m.points[1].z,
                                      [](const void* u, vec3 p) { return waterFlow(*static_cast<const collision::Markup*>(u), p); }, &m,
-                                     [](const void* u, vec2 xy, double t) { return waveHeight(*static_cast<const collision::Markup*>(u), xy, t); },
+                                     [](const void* u, vec2 xy, double t) { return surfaceHeight(*static_cast<const collision::Markup*>(u), xy, t); },
                                      double(ticks_) * kTickSeconds});
     physics_.setWater(physicsWater_);
     syncRagdolls(false); // a loaded scene's ragdolls exist before its recorded state applies

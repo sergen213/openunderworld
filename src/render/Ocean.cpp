@@ -161,6 +161,68 @@ size_t spectrumOffset(int n) { return n == kMaxN ? 0 : size_t(kCascades) * kMaxN
 
 const Grid& grid(int n) { return built().grids[n == kMaxN ? 0 : 1]; }
 
+// The height ocean.comp's inverse DFT gives texel (X, Y) of cascade c is Re sum_k h(k, t) e^{i 2 pi (kx X + ky Y) / N}
+// (h(k, t) = h0(k) e^{i phi} + conj(h0(-k)) e^{-i phi}, Hermitian in k, so each +-k pair is 2 Re of one term), and
+// water.vert's textureLod finds texel X at u = (X + 0.5) / N of the tile: at world p the phase is k . (p / kMetre -
+// L / 2N). The pairs are taken by their mean height variance 2 (|h0(k)|^2 + |h0(-k)|^2) amplitude^2.
+Swell::Swell(int n, size_t count) {
+    const Built& b = built();
+    const Grid& g = grid(n);
+    const size_t base = spectrumOffset(n);
+    struct Cand { double var; Mode m; };
+    std::vector<Cand> cands;
+    double total = 0;
+    constexpr float kG = 9.81f, kTension = 0.073f / 1025.0f, kDepth = 100.0f; // ocean.comp
+    const float w0 = 2.0f * float(kPi) / kLoopSeconds;
+    for (int c = 0; c < 2; ++c) // swell + gravity: ouOceanHeight's cascades
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                const int sx = x <= n / 2 ? x : x - n, sy = y <= n / 2 ? y : y - n;
+                if (sy < 0 || (sy == 0 && sx <= 0)) continue; // one of each +-k pair (k = 0 holds nothing)
+                const glm::vec4 s = b.buffer[base + size_t(c) * size_t(n) * size_t(n) + size_t(y * n + x)];
+                const double amp = 2.0 * g.amplitude[c] * kMetre;
+                const double var = 2.0 * double(g.amplitude[c]) * g.amplitude[c] * (double(s.x) * s.x + double(s.y) * s.y + double(s.z) * s.z + double(s.w) * s.w);
+                total += var;
+                if (var <= 0) continue;
+                const float kxm = float(sx) * (2.0f * float(kPi) / g.length[c]), kym = float(sy) * (2.0f * float(kPi) / g.length[c]);
+                const float kl = std::sqrt(kxm * kxm + kym * kym);
+                const float w = std::sqrt((kG * kl + kTension * kl * kl * kl) * std::tanh(kl * kDepth));
+                const double shift = -0.5 * double(g.length[c]) / n * (double(kxm) + double(kym)); // texel centres
+                const double cs = std::cos(shift), sn = std::sin(shift);
+                Mode m{kxm / kMetre, kym / kMetre, std::floor(w / w0),
+                       float(amp * (s.x * cs - s.y * sn)), float(amp * (s.x * sn + s.y * cs)),
+                       float(amp * (s.z * cs - s.w * sn)), float(amp * (s.z * sn + s.w * cs))};
+                cands.push_back({var, m});
+            }
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.var > b.var; });
+    double kept = 0;
+    for (size_t i = 0; i < std::min(count, cands.size()); ++i) modes_.push_back(cands[i].m), kept += cands[i].var;
+    rms_ = float(std::sqrt(total) * kMetre);
+    residual_ = float(std::sqrt(std::max(0.0, total - kept)) * kMetre);
+    offset_ = -0.5f * kMetre * std::sqrt(g.sigma[0] * g.sigma[0] + g.sigma[1] * g.sigma[1]); // water.vert's centring
+}
+
+float Swell::height(glm::vec2 p, double seconds) const {
+    double loop = std::fmod(seconds, double(kLoopSeconds));
+    if (loop < 0) loop += kLoopSeconds;
+    const float t = float(loop), w0 = 2.0f * float(kPi) / kLoopSeconds;
+    double h = 0;
+    for (const Mode& m : modes_) {
+        const float ph = w0 * std::fmod(m.j * t, kLoopSeconds); // ocean.comp: w0 mod(j t, kLoop)
+        const float ec = std::cos(ph), es = std::sin(ph);
+        const double a = double(m.kx) * p.x + double(m.ky) * p.y;
+        const double cr = m.ar * ec - m.ai * es + m.br * ec + m.bi * es; // Re / Im of h0 e^{i ph} + conj-part e^{-i ph}
+        const double ci = m.ar * es + m.ai * ec - m.br * es + m.bi * ec;
+        h += cr * std::cos(a) - ci * std::sin(a);
+    }
+    return float(h) + offset_;
+}
+
+const Swell& swell(int n) {
+    static const Swell s128(kMaxN, kSwellModes), s64(kMaxN / 2, kSwellModes);
+    return n == kMaxN ? s128 : s64;
+}
+
 bool wanted(const FrameOptions& o) {
     if (o.water != WaterQuality::Enhanced || !o.oceanFft) return false;
     return std::any_of(o.waterVolumes.begin(), o.waterVolumes.end(), [](const WaterVolume& v) {
@@ -171,7 +233,7 @@ bool wanted(const FrameOptions& o) {
 Push Clock::frame(const FrameOptions& o) {
     const int n = gridSize(o);
     const Grid& g = grid(n);
-    const double t = double(o.time), dt = t - last;
+    const double t = o.oceanTime >= 0 ? o.oceanTime : double(o.time), dt = t - last;
     float foamDt = 0.0f;
     if (last < 0 || dt < 0 || dt > 1.0 || n != lastN) foamDt = -1.0f; // restart
     else foamDt = float(std::min(dt, 0.2));                            // FoamField's dt clamp

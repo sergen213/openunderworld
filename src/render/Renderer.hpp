@@ -249,6 +249,9 @@ struct FrameOptions {
     // view fixed at the level-load spawn: translated by (camera eye - exteriorOrigin), so it follows the camera
     // (game::World::exteriorOrigin; docs/formats/LEVELS.md). nullopt = drawn where it was built (the viewer).
     std::optional<glm::vec3> exteriorOrigin;
+    // The FFT ocean's clock, seconds: the sim's sea clock (game ticks + alpha), so the drawn swell is the one floating
+    // bodies ride (render::ocean::Swell). < 0 = `time`.
+    double oceanTime = -1.0;
 };
 
 // Ray-tracing state for diagnostics and tests.

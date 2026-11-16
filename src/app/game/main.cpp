@@ -49,6 +49,7 @@
 #include "render/OriginalShading.hpp"
 #include "render/Renderer.hpp"
 #include "render/Water.hpp"
+#include "render/Ocean.hpp"
 #include "render/WaterField.hpp"
 #include "video/Player.hpp"
 #include "video/Movie.hpp"
@@ -449,13 +450,31 @@ struct ScriptedMeshes {
             if (const auto it = meshes.find(uid); it != meshes.end() && !hidden.contains(uid))
                 for (const size_t i : it->second) out.push_back({uint32_t(i), 1.0f - f});
     }
+    // Loose bodies (the floating yachts) between their last two ticks' rigid poses at the frame's alpha, as Lara and the
+    // camera are drawn (World::interpolated), so the deck she stands on does not step at 60 Hz under her.
+    struct LooseTicks { uint64_t tick = ~uint64_t(0); glm::mat4 prev{1.0f}, cur{1.0f}; };
+    std::map<int32_t, LooseTicks> looseTicks;
+    static glm::mat4 blendRigid(const glm::mat4& a, const glm::mat4& b, float t) {
+        if (glm::distance(glm::vec3(a[3]), glm::vec3(b[3])) > 500.0f) return b; // a placement, not motion
+        const glm::quat q = glm::slerp(glm::quat_cast(glm::mat3(a)), glm::quat_cast(glm::mat3(b)), t);
+        glm::mat4 m = glm::mat4_cast(q);
+        m[3] = glm::vec4(glm::mix(glm::vec3(a[3]), glm::vec3(b[3]), t), 1.0f);
+        return m;
+    }
     // Only poses that changed upload (a re-upload re-skins on this thread and rebuilds the mesh's BLAS: l4_ballcourt's
     // still-posed objects cost ~1.5 ms a frame).
-    void pose(const ou::script::Runtime& rt, const ou::scene::SceneData& s, ou::render::Renderer& r) {
+    void pose(const ou::script::Runtime& rt, const ou::scene::SceneData& s, ou::render::Renderer& r, uint64_t tick, double alpha) {
         for (const auto& o : rt.objects()) {
             const auto it = meshes.find(o.uid);
             if (it == meshes.end() || switched.contains(o.uid)) continue;
             auto palette = rt.pose(o);
+            if (o.loose && palette && palette->size() == 1) {
+                auto& lt = looseTicks[o.uid];
+                if (lt.tick != tick) lt.prev = lt.tick + 1 == tick ? lt.cur : (*palette)[0], lt.cur = (*palette)[0], lt.tick = tick;
+                (*palette)[0] = blendRigid(lt.prev, lt.cur, float(alpha));
+            } else {
+                looseTicks.erase(o.uid);
+            }
             if (const auto p = posed.find(o.uid); p != posed.end() ? palette && p->second == *palette : !palette) continue;
             for (const size_t i : it->second) {
                 const auto& m = s.meshes[i];
@@ -3097,6 +3116,13 @@ int main(int argc, char** argv) {
             if (opt.frames && frame > 30 && tickMs.empty()) world->tickTimes = {}; // after the warm-up frames, as frameMs
             const uint64_t tickStart = SDL_GetTicksNS(), unitsBefore = world->unitsVersion();
             const uint32_t respawnsBefore = world->respawns();
+            // The sea is the drawn one: the FFT swell rides on tru.exe's waves (render::ocean::Swell, docs/GAMEPLAY.md
+            // "Floating objects"), for floating bodies, swimming and the eye's water alike.
+            if (opt.gfx.water && opt.gfx.oceanFft)
+                ou::game::setSeaSwell([](const void* u, glm::vec2 p, double t) { return static_cast<const ou::render::ocean::Swell*>(u)->height(p, t); },
+                                      &ou::render::ocean::swell(opt.gfx.waterDetail ? ou::render::ocean::kMaxN : ou::render::ocean::kMaxN / 2));
+            else
+                ou::game::setSeaSwell(nullptr, nullptr);
             world->tick(a);
             // A death restored the checkpoint save: the level reload stops every sound (tru.exe 0x5DAB40 -> 0x593D10) and
             // the music / reverb are the save's again, as after a load.
@@ -3345,7 +3371,7 @@ int main(int argc, char** argv) {
                              float(pw) / float(std::max(ph, 1)));
         }
         poseBikes(*world, clock.alpha(), streamed.bikeIndices, scene, *renderer, bikeScratch);
-        objects.pose(world->script(), scene, *renderer);
+        objects.pose(world->script(), scene, *renderer, world->ticks(), clock.alpha());
         plants.pose(*world, scene, *renderer, c.position);
         combat.pose(*world, s, clock.alpha(), scene, streamed.gunIndices, streamed.gunSlots, *renderer);
         gadgets.pose(*world, streamed, scene, *renderer);
@@ -3595,6 +3621,7 @@ int main(int argc, char** argv) {
         }
         waterVolumes.clear();
         const double waveSeconds = (double(world->ticks()) + clock.alpha()) * ou::game::kTickSeconds; // the sim's sea clock
+        fo.oceanTime = waveSeconds; // the swell the sim's sea includes (game::setSeaSwell)
         for (const auto& m : world->collision().markup)
             if (!mainMenu && m.type == 10 && m.points.size() >= 2) {
                 // max z = the surface under the camera: a sea's waves lower it below the box top (water look, fog, caustics)
