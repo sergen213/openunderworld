@@ -43,6 +43,9 @@ enum class Upscaler : uint8_t { Off, Fsr };
 // Global tone mapping of the post pass (docs/RENDERING.md "Tone mapping"). Original = the scene as drawn (FrameOptions::hdr
 // adds the ACES fit); Agx = Oklab gamut compression + hue-constant highlight desaturation + AgX-style display curve.
 enum class Tonemap : uint8_t { Original, Agx };
+// Ambient occlusion (docs/RENDERING.md "Ambient occlusion"). Cortao = CORTAO screen-space ray-traced AO (third_party/cortao,
+// MIT; Vulkan + OpenGL compute), Rt = hardware ray-traced AO (Vulkan RT only; falls back to Cortao without RT).
+enum class AmbientOcclusion : uint8_t { Off, Cortao, Rt };
 
 // ---- water (docs/RENDERING.md "Water") ----
 // Water surface meshes draw with TRU's own shaders (Original) or with our water shading (Enhanced: waves, refraction,
@@ -210,6 +213,8 @@ struct FrameOptions {
     bool rtLights = false; // ray-traced shadows of the point / spot shadow lights (sun.glsl ouLightsBegin; Vulkan RT only)
     bool rtReflections = false; // ray-traced reflections on water (Enhanced: instead of SSR; Original: its water materials)
     bool rtAo = false, rtGi = false; // ray-traced ambient occlusion / one-bounce sun GI (Vulkan RT; RENDERING.md "RT AO / GI")
+    AmbientOcclusion ao = AmbientOcclusion::Off; // replaces rtAo (migration in progress)
+    int aoSamples = 12; // CORTAO_SAMPLE_COUNT permutation: 8 low, 12 medium, 16 high, 32 ultra
     float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
     float screenFade = 0.0f; // scripted screen wipe (globaleffect FadeOut/FadeIn, script::Runtime::screenFade): 1 = black
     Tonemap tonemap = Tonemap::Original; // post pass, before FXAA / screen filters / brightness; the UI is never tone-mapped

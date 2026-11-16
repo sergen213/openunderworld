@@ -1,0 +1,3 @@
+CORTAO reference implementation v1.0.3 (MIT), https://github.com/theagentd/CORTAO
+commit 420b168d88dd6f9276077ba62f3711cac9d7b46c (2026-11-15), vendored unmodified.
+Only the recommended 24x24x16 occluder tables (8/16/32 rays, UINT) are kept; images/ omitted.
