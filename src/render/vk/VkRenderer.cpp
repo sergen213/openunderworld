@@ -8,6 +8,7 @@
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
+#include "render/vk/AntiLag.hpp"
 #include "render/vk/VkFsr.hpp"
 
 #include <algorithm>
@@ -1671,14 +1672,15 @@ public:
     // The pacing runs on a present thread (started with the first generated frame) so the render thread goes on with
     // the next frame instead of sleeping; once it exists every present goes through it, in order.
     void present() override {
-        const bool antiLagMarked = std::exchange(antiLagFrame_, false);
         if (!frameActive_) return;
         frameActive_ = false;
         // Anti-Lag PRESENT marker of the frame whose INPUT beginInput() marked: here on the render thread, once all of
         // the frame's submits are done, not on the present thread. With frame generation the present thread then holds
         // the real image for half an interval behind a generated one; that is display pacing, not this frame's CPU
-        // work, so it must not count, and the generated image (no input of its own) gets no markers.
-        if (antiLagMarked) antiLagMark(VK_ANTI_LAG_STAGE_PRESENT_AMD);
+        // work, so it must not count. A present without its own INPUT (nested loops: cinematics, the loading screen)
+        // gets one here, and a generated image switches Anti-Lag off (src/render/vk/AntiLag.hpp: Mesa's layer crashes
+        // on more presents than INPUTs).
+        if (antiLagUpdate_) antiLag_.beforePresent(generatedIndex_ != UINT32_MAX, std::bind_front(&VkRenderer::antiLagCall, this));
         using Clock = std::chrono::steady_clock;
         const auto ready = Clock::now();
         if (captureDir_) capturePresented();
@@ -1809,21 +1811,19 @@ public:
     // FrameOptions::antiLag; switching it off sends one OFF update, after that nothing is called.
     void beginInput() override {
         if (!antiLagUpdate_) return;
-        if (!antiLagWanted_) {
-            if (std::exchange(antiLagOn_, false)) {
-                const VkAntiLagDataAMD off{VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD, nullptr, VK_ANTI_LAG_MODE_OFF_AMD, 0, nullptr};
-                antiLagUpdate_(device_, &off);
-                std::fprintf(stderr, "ou: AMD Anti-Lag off\n");
-            }
+        const bool was = antiLag_.on();
+        antiLag_.beginInput(antiLagWanted_, fsr_.frameGeneration(), std::bind_front(&VkRenderer::antiLagCall, this));
+        if (!was && antiLag_.on()) std::fprintf(stderr, "ou: AMD Anti-Lag on\n");
+    }
+    void antiLagCall(AntiLagMarkers::Call call, uint64_t frameIndex) {
+        if (call == AntiLagMarkers::Call::Off) {
+            const VkAntiLagDataAMD off{VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD, nullptr, VK_ANTI_LAG_MODE_OFF_AMD, 0, nullptr};
+            antiLagUpdate_(device_, &off);
+            std::fprintf(stderr, "ou: AMD Anti-Lag off%s\n", antiLagWanted_ ? " (frame generation)" : "");
             return;
         }
-        ++antiLagFrameIndex_;
-        antiLagMark(VK_ANTI_LAG_STAGE_INPUT_AMD);
-        if (!std::exchange(antiLagOn_, true)) std::fprintf(stderr, "ou: AMD Anti-Lag on\n");
-        antiLagFrame_ = true;
-    }
-    void antiLagMark(VkAntiLagStageAMD stage) {
-        const VkAntiLagPresentationInfoAMD info{VK_STRUCTURE_TYPE_ANTI_LAG_PRESENTATION_INFO_AMD, nullptr, stage, antiLagFrameIndex_};
+        const VkAntiLagPresentationInfoAMD info{VK_STRUCTURE_TYPE_ANTI_LAG_PRESENTATION_INFO_AMD, nullptr,
+            call == AntiLagMarkers::Call::Input ? VK_ANTI_LAG_STAGE_INPUT_AMD : VK_ANTI_LAG_STAGE_PRESENT_AMD, frameIndex};
         const VkAntiLagDataAMD data{VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD, nullptr, VK_ANTI_LAG_MODE_ON_AMD, 0, &info};
         antiLagUpdate_(device_, &data);
     }
@@ -1851,7 +1851,7 @@ public:
         return "Vulkan " + ver(apiVersion_) + " | " + deviceName_ + " | " + driver_ + " | BC " + (bc_ ? "yes" : "NO") +
                " | aniso " + std::to_string(int(maxAniso_)) + "x | ray queries " +
                (rtStatus_.supported ? "yes" : "no (" + rtStatus_.reason + ")") + " | Anti-Lag " +
-               (!antiLagUpdate_ ? "unavailable" : antiLagOn_ ? "on" : "off") + " | " +
+               (!antiLagUpdate_ ? "unavailable" : antiLag_.on() ? "on" : "off") + " | " +
                (validation_ ? "validation on" : messenger_ ? "debug_utils (no validation layer)" : "no debug_utils");
     }
 
@@ -3083,7 +3083,7 @@ private:
         vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
         antiLagUpdate_ = antiLag.antiLag
             ? reinterpret_cast<PFN_vkAntiLagUpdateAMD>(vkGetDeviceProcAddr(device_, "vkAntiLagUpdateAMD")) : nullptr;
-        antiLagOn_ = antiLagFrame_ = false;
+        antiLag_.reset();
         std::fprintf(stderr, "ou: AMD Anti-Lag %s\n", antiLagUpdate_ ? "available (VK_AMD_anti_lag)" : "unavailable (no VK_AMD_anti_lag)");
         if (rtStatus_.supported) loadRayTracingFunctions();
         staticMemory_.init(device_, gpu_);
@@ -6043,8 +6043,8 @@ private:
     int fsrQuality_ = 1;
     // AMD Anti-Lag (docs/RENDERING.md "Anti-Lag"): null = no VK_AMD_anti_lag on this device.
     PFN_vkAntiLagUpdateAMD antiLagUpdate_ = nullptr;
-    bool antiLagWanted_ = false, antiLagOn_ = false, antiLagFrame_ = false; // setting; ON sent; INPUT marked, PRESENT due
-    uint64_t antiLagFrameIndex_ = 0;
+    bool antiLagWanted_ = false; // the setting (last drawFrame's FrameOptions::antiLag)
+    AntiLagMarkers antiLag_;
     std::array<float, 14> look_{}; // applySettings: the look-changing settings of the last frame
     GpuImage motion_, reactive_, fsrInput_, fsrOutput_, fsrGenerated_;
     VkPipelineLayout fsrMaskLayout_ = VK_NULL_HANDLE, fsrCameraLayout_ = VK_NULL_HANDLE, fsrFxLayout_ = VK_NULL_HANDLE;

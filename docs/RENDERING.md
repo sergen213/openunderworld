@@ -1134,9 +1134,17 @@ device creation whenever available (`ou: AMD Anti-Lag available` on stderr), so 
 calls `vkAntiLagUpdateAMD` after one OFF update. Launcher: Graphics page checkbox; in game: DISPLAY SETTINGS > UPSCALING
 > AMD ANTI-LAG (dim without the extension); F1 shows `Anti-Lag on|off|unavailable` in the renderer line.
 - **Markers**: `Renderer::beginInput()` (INPUT stage) runs in ou-game's loop right before `SDL_PollEvent`, so the layer's
-  wait comes before input is read. PRESENT is sent in `present()` on the render thread after the frame's submits. With
-  frame generation the present thread still paces the real image half an interval behind the generated one; that delay
-  is display pacing, not frame work, so the marker does not wait for it, and generated images get no markers.
+  wait comes before input is read. PRESENT is sent in `present()` on the render thread after the frame's submits.
+  Sequencing lives in `src/render/vk/AntiLag.hpp` (`AntiLagMarkers`, tested by `ou_anti_lag_tests` against a model of
+  the layer).
+- **One INPUT per present**: Mesa's layer counts frames by `vkQueuePresentKHR`, not by markers: while ON every present
+  takes one slot of an 8-frame ring that only an INPUT update frees, and a present into a full ring writes through NULL
+  (SIGSEGV in `anti_lag_QueuePresentKHR`, Mesa 26.2). Present loops nested in one main-loop iteration (in-engine
+  cinematics, the loading screen) never call `beginInput()`, so `present()` sends an INPUT of its own for any present
+  that has none.
+- **Frame generation**: generated images are extra presents with no input of their own (and come from the present
+  thread), so the layer would count two frames per INPUT and time half-frames. Anti-Lag is switched OFF while FSR frame
+  generation is on (`ou: AMD Anti-Lag off (frame generation)`) and back ON when it goes off.
 - The mode follows the previous `drawFrame`'s `FrameOptions::antiLag` (one frame behind a menu toggle). `maxFPS` = 0.
 
 ## Portal clipping (GL + Vulkan; `FrameOptions::unitClips`, RenderCommon `portalClips`)
