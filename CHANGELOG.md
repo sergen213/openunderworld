@@ -6,6 +6,40 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-11-16
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+Water simulation: the interactive waves now run on the GPU with real wave physics, splashes are a real particle fluid,
+and Lara, the yacht and the sea now agree with each other and with the original game.
+
+- Changed: Lara's ripples (Enhanced water) are a GPU wave simulation 40 m around her with real water-wave behaviour:
+  long waves run ahead of short ripples, swimming leaves a V-shaped wake, waves reflect off walls and ride on the
+  ocean swell. Dives, falls, shots, bodies and falling objects open a crater that collapses into rings, and white water
+  forms where the water breaks or churns. Near the camera the water surface is now finely subdivided, so the craters,
+  rings and wakes are real shape, and the short wind chop calms where the water is stirred, as behind a swimmer.
+  About 0.5 ms per frame.
+- Changed: splashes (Enhanced water) are a particle fluid (Position Based Fluids): a crown, droplets and, for fast
+  entries, a central jet, scaled by how fast Lara hits the water; swan dives throw a thinner crown and a taller jet.
+  The drops refract the scene and fall back into the water, where they make small rings. About 0.5-1.2 ms per frame
+  while a splash is on screen. The game's own splash effect still adds its white water on top.
+- Changed: foam, white water and whitecaps are white; the Mediterranean's light tinted them yellow-green.
+- Fixed: jumping or falling into deep water took Lara far too deep before she shot back up. She now slows down as in
+  the original game (measured under Wine: 12.5 % speed loss per frame, eased to treading depth 44 units under the
+  waves), so a short drop ends treading at the surface.
+- Fixed: a swan dive into water slammed Lara onto the surface. She now goes in head first and on into under-water
+  swimming, as in the original; hitting a rock or the floor on the way in floats her up.
+- Fixed: the yacht bounced. The sea waves were a quarter wave out of step with the original game (it uses sine waves,
+  we used cosine), the yacht dropped onto the sea after loading a save without its physics state, it ignored the FFT
+  ocean swell you see, and it was drawn without smoothing between game ticks. It now floats at rest from the first
+  frame, rides the swell you see and rocks as in the original (up and down 231 vs 239 units on l1). With Enhanced water
+  and the FFT ocean, the swell is also part of the water Lara swims in; boat decks stay dry while she stands on them.
+- Changed: loose objects (crates, weights, debris) slow down as in the original game (its physics damping, 0.3/s).
+- Fixed: under water, the surface outside the bright window to the sky was black (copied from the abyssal-garden demo).
+  It now mirrors the water and the scene below, as real water does, with no hard horizon.
+- Fixed: palm kelp under water rendered black: its model has no light-map coordinates, so it read the black padding
+  of its light texture. It now gets the texture's average lighting. Other plants are unchanged.
+
 ## [0.49.2] - 2026-11-16
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
