@@ -14,10 +14,10 @@
 //    which no wave carries) is removed; scaled for the inverse.
 //  4 / 5: inverse DFT along rows, then columns.
 //  6 finalize (tiles): static walls (the mask), slow bodies' cores (both reflect: u = 0), the edge sponge, rough-sea
-//    damping (FFT ocean slope), the steepness limit; whitewater: decays over kFoamLife s, made where a crest breaks
-//    (the share the steepness limit takes), where the water moves vertically faster than 1-2 m/s (a collapsing cavity's
-//    surge) and inside an open cavity (a dip deeper than 0.25 m entrains air); h = u + the dips, v, w back into the
-//    state, and uRipples (h, dh/dx, dh/dy, w; contract C1 in shaders/water_surface.glsl) for the water shaders.
+//    damping (FFT ocean slope), the steepness limit on crests; whitewater: decays over kFoamLife s, made where a crest
+//    breaks (the share the steepness limit takes) and where the water moves vertically faster than 1-2 m/s (a
+//    collapsing crater's surge); h = u + the dips, v, w back into the state, and uRipples (h, dh/dx, dh/dy, w;
+//    contract C1 in shaders/water_surface.glsl) for the water shaders.
 //    Clears the external kick count.
 // Bodies as moving equilibria: the waves are u = h - dip(bodies); a body that moves shifts its dip under the water,
 // which then oscillates toward the new equilibrium and radiates (the Kelvin wake behind a swimmer). The equilibrium dip
@@ -218,17 +218,19 @@ void finalize() {
     }
     float e = exp(-rate * PAR.x);
     u *= e, v *= e;
-    // Slope (central differences, walls flat) and the breaking limit, on the drawn surface h = u + dips: while a cavity
-    // opens, u carries the displaced water as a bump right under the dip (no steep surface: they cancel), which must
-    // radiate rather than break. The waves (u, v) lose the excess.
+    // Slope (central differences, walls flat) and the breaking limit, on the drawn surface h = u + dips: while a body's
+    // dip forms, u carries the displaced water as a bump right under it (no steep surface: they cancel), which must
+    // radiate rather than break. Only crests break (Stokes' limiting wave is a crest angle; a trough or a crater wall
+    // steeper than 30 degrees just falls back under gravity, which is the collapse and rebound the field computes): a
+    // crest cell (u > 0) loses the excess.
     vec2 g = vec2(uAt(c + ivec2(1, 0)) - uAt(c - ivec2(1, 0)), uAt(c + ivec2(0, 1)) - uAt(c - ivec2(0, 1))) / (2.0 * WIN.z);
     float sl = length(g + b.yz);
-    if (sl > PAR.w) {
+    if (sl > PAR.w && u > 0.0) {
         float f = PAR.w / sl;
         u *= f, v *= f, g *= f;
         foam = max(foam, clamp(3.0 * (1.0 - f), 0.0, 1.0)); // a breaking crest
     }
-    foam = max(foam, max(smoothstep(1.0, 2.0, abs(v) / WIN.w), smoothstep(0.25, 0.5, -b.x / WIN.w)));
+    foam = max(foam, smoothstep(1.0, 2.0, abs(v) / WIN.w));
     foam *= wallMask(c);
     float h = u + b.x;
     state[c.y * N + c.x] = vec4(h, v, foam, 0.0);

@@ -2772,22 +2772,34 @@ TEST(GameReal, StandingJumpBehindLedgeCatchesNothing) {
 // ---- interactive water (src/game/Water: the wave field's inputs; the waves run on the GPU, render/WaterField) ----
 namespace {
 using glm::vec2; // (also for the tests below)
+// The crater depth kicked since `seen` (a crater is pushed in over a few ticks, each its share): kicks of sigma `size`.
+float craterKicked(const game::WaterSim& ws, uint64_t& seen, float size) {
+    float sum = 0;
+    for (size_t i = 0; i < ws.kicks().size(); ++i)
+        if (ws.kickBase() + i >= seen && std::abs(ws.kicks()[i].sigma - size) < 0.01f) sum -= ws.kicks()[i].amplitude;
+    seen = ws.kickBase() + ws.kicks().size();
+    return sum;
+}
 } // namespace
 
 TEST(Game, WaterEntrySplashMakesRingsAndBursts) {
     auto w = makeWorld(poolMesh(), {1000, 0, 400});
     bool crown = false;
-    float cavity = 0;
+    float crater = 0;
+    uint64_t seen = 0;
+    int first = -1, last = -1;
     for (int i = 0; i < 90; ++i) {
         w->tick({});
         for (const auto& b : w->water().bursts()) crown |= b.kind == game::SplashBurst::Crown && b.count > 0;
-        for (const auto& b : w->water().bodies())
-            if (b.vx == 0 && b.vy == 0 && b.wall == 0) cavity = std::max(cavity, b.draft);
+        const float k = craterKicked(w->water(), seen, 0.3f * 290.0f);
+        if (k > 0) crater += k, last = i, first = first < 0 ? i : first;
+        for (const auto& b : w->water().bodies()) EXPECT_EQ(b.wall, 0.0f) << "a swimmer floats: no reflecting core";
     }
     ASSERT_TRUE(w->water().active());
     ASSERT_EQ(w->player().state().state, State::SwimTread);
-    EXPECT_GT(cavity, 0.3f * 290.0f) << "falling in opens a cavity (a dip the field radiates from as it collapses)";
-    EXPECT_LE(cavity, 0.8f * 290.0f + 0.5f);
+    // A crater holding Lara's 0.3 m sphere (2 e / 3 x 0.3 m deep), or v x 0.1 s for a slower entry.
+    EXPECT_GT(crater, 0.2f * 290.0f) << "falling in punches a crater (the field collapses it: rebound and rings)";
+    EXPECT_LE(crater, 2.0f * 2.7182818f / 3.0f * 0.3f * 290.0f + 0.5f);
     EXPECT_TRUE(crown) << "the entry must throw a crown splash";
     EXPECT_GT(w->water().depth(), 0.0f);
     size_t entries = 0;
@@ -2796,13 +2808,16 @@ TEST(Game, WaterEntrySplashMakesRingsAndBursts) {
         EXPECT_FLOAT_EQ(b.restZ, w->water().surfaceZ()) << "the renderer's waves ride on the volume's rest surface";
     }
     EXPECT_EQ(entries, 1u) << "one entry, one crown";
-    for (int i = 0; i < 60; ++i) w->tick({});
-    for (const auto& b : w->water().bodies()) EXPECT_LT(b.draft, 0.3f * 290.0f) << "the cavity has collapsed after 1 s";
+    EXPECT_LE(last - first, 6) << "pushed in within 0.1 s";
+    for (int i = 0; i < 60; ++i) {
+        w->tick({});
+        EXPECT_EQ(craterKicked(w->water(), seen, 0.3f * 290.0f), 0.0f) << "the crater is pushed in once";
+    }
 }
 
 TEST(Game, WaterExternalSplash) {
     auto w = makeWorld(poolMesh(), {1000, 0, 400});
-    for (int i = 0; i < 150; ++i) w->tick({}); // the entry's cavity has collapsed
+    for (int i = 0; i < 150; ++i) w->tick({}); // the entry's crater and rings are past
     ASSERT_TRUE(w->water().active());
     const uint64_t before = w->water().bursts().empty() ? 0 : w->water().bursts().back().serial;
     w->splashWater(w->player().state().pos, 1.5f); // as a shot / falling object impact
@@ -2813,14 +2828,14 @@ TEST(Game, WaterExternalSplash) {
                              [&](const game::SplashBurst& b) { return b.kind == game::SplashBurst::Jet && b.serial > before; });
     };
     EXPECT_EQ(jets(), 0) << "the jet waits for the crater to collapse";
-    float cavity = 0;
+    uint64_t seen = w->water().kickBase() + w->water().kicks().size();
+    float crater = 0;
     for (int i = 0; i < 12; ++i) { // 0.2 s
         w->tick({});
-        for (const auto& b : w->water().bodies())
-            if (b.vx == 0 && b.vy == 0 && b.wall == 0) cavity = std::max(cavity, b.draft);
+        crater += craterKicked(w->water(), seen, 0.1f * 290.0f);
     }
     EXPECT_EQ(jets(), 1);
-    EXPECT_NEAR(cavity, 0.3f * 290.0f, 1.0f) << "a 10 cm impactor opens a cavity 3 x as deep";
+    EXPECT_NEAR(crater, 2.0f * 2.7182818f / 3.0f * 0.1f * 290.0f, 0.5f) << "a 10 cm impactor at 6 m/s: a crater holding its sphere";
 }
 
 // The water an entry throws (game::entryBursts): faster entries throw more, higher; only fast ones a jet, after a delay;

@@ -28,20 +28,14 @@ constexpr float kStroke = 0.4f, kStrokeRing = 0.5f, kSwimRing = 1.0f * kM;
 // A standing / treading body's bob: a kick as wide as the body, every 1.2..1.5 s (a ~3-unit ring) [I].
 constexpr float kBob = 25.6f, kBobSigma = 1.4f * kLegs;
 constexpr float kLaraHeight = 512.0f;
-// Impact cavities [I, the scales from real entries; the shape from the linear field's response]: a body entering at v
-// opens a cavity about v x kCavityTime deep (a feet-first entry at 6 m/s: 0.6 m) and as wide as the body, which then
-// collapses; drawn as a pressure body (its dip is not slope limited: the crater shows in full) whose opening and
-// closing hand the field the ring train. Open over kCavityOpen s, held kCavityHold s, collapsing in ~ the free-fall
-// time of its depth (sqrt(depth / g)), at least kCavityClose s.
-constexpr float kCavityTime = 0.1f, kCavityMax = 0.8f, kCavityOpen = 0.08f, kCavityHold = 0.07f, kCavityClose = 0.12f;
-float cavityClose(float depth) { return std::max(kCavityClose, 1.2f * std::sqrt(depth / 9.81f)); }
-// 0..1: how far a cavity of `depth` m is open `t` s after the impact (0 again once it has collapsed).
-float cavityShape(float t, float depth) {
-    if (t < 0) return 0;
-    if (t < kCavityOpen) return t / kCavityOpen;
-    if (t < kCavityOpen + kCavityHold) return 1;
-    return std::max(0.0f, 1.0f - (t - kCavityOpen - kCavityHold) / cavityClose(depth));
-}
+// Impact craters [I: the scale from the impactor; the collapse is the field's own]: a body hitting the water punches a
+// crater whose hole holds the water it pushed aside, the volume of a sphere of its half width s, and whose rim holds
+// the same volume around it: the field's zero-volume Mexican hat kick of width sigma = s, whose crater holds
+// 2 pi s^2 D / e, so D = 2 e s / 3 (Lara feet first, s 0.3 m: a 0.54 m deep hole ~0.6 m wide). A slow impactor only
+// dents the surface: at most v x kCraterTime deep. The crater is pushed in over kCraterOpen s (the body going under);
+// then the field's gravity response alone collapses it, throws the rebound (a central crest ~0.3 s after the impact,
+// where the splash's jet rises) and radiates the ring train.
+constexpr float kCraterTime = 0.1f, kCraterOpen = 0.08f, kCraterDepth = 2.0f * 2.718281828f / 3.0f;
 } // namespace
 
 // ---- WaveWindow ----
@@ -117,7 +111,7 @@ std::vector<SplashBurst> entryBursts(vec3 at, vec3 velocity, bool headFirst) {
     if (e >= 0.7f) {
         SplashBurst jet{SplashBurst::Jet, at, at.z, carry * 0.3f, 22.0f, 60.0f, (800.0f + 350.0f * e) * (headFirst ? 1.15f : 1.0f),
                         60.0f, int(std::lround((250.0f + 350.0f * e) * (headFirst ? 1.6f : 1.0f)))};
-        jet.delay = 0.18f + 0.06f * e; // the cavity's collapse
+        jet.delay = 0.18f + 0.06f * e; // the crater's collapse (the field's rebound crest)
         out.push_back(jet);
     }
     return out;
@@ -144,7 +138,7 @@ void WaterSim::reset() {
     window_.clear();
     bursts_.clear(), pending_.clear(), bodies_.clear(), waveBodies_.clear();
     plunged_ = false;
-    cavities_.clear();
+    craters_.clear();
     kickBase_ += kicks_.size(), kicks_.clear(), kickTicks_.clear();
     if (active_) ++generation_;
     active_ = false, chosen_ = -1;
@@ -200,18 +194,18 @@ void WaterSim::release(std::vector<SplashBurst> bursts) {
     if (bursts_.size() > kBurstKeep) bursts_.erase(bursts_.begin(), bursts_.end() - ptrdiff_t(kBurstKeep));
 }
 
-void WaterSim::cavity(vec2 p, float size, float depth) {
+void WaterSim::crater(vec2 p, float size, float speed) {
+    const float depth = std::min(kCraterDepth * size, speed * kCraterTime);
     if (!active_ || window_.wall(p) || depth <= 0) return;
-    if (cavities_.size() >= 16) cavities_.erase(cavities_.begin());
-    cavities_.push_back({p, time_, size * kM, depth * kM});
+    if (craters_.size() >= 16) craters_.erase(craters_.begin());
+    craters_.push_back({p, time_, size * kM, depth * kM, 0.0f});
 }
 
 void WaterSim::splash(vec3 pos, float strength, float size, float speed) {
     if (!active_ || !world_) return;
     const float h = waterAt(vec2(pos));
     if (h == kNoWater || pos.z > h + 100.0f) return; // only at / below the surface
-    // The cavity: v x kCavityTime deep, at most kCavityMax and 3 x its width (a narrow impactor opens a narrow pit).
-    cavity(vec2(pos), size, std::min({speed * kCavityTime, kCavityMax, 3.0f * size}));
+    crater(vec2(pos), size, speed);
     release(impactBursts(vec3(pos.x, pos.y, h), strength));
 }
 
@@ -279,33 +273,33 @@ void WaterSim::tick(const World& w, float dt) {
 
     // A body with its feet in the water and not under it: a pressure body (its wake); swimming fast, a ring per stroke;
     // standing, a faint bob every 1.2..1.5 s (phased per body so a group does not pulse together).
-    const auto wade = [&](vec3 p, vec3 last, float height, float radius, float& bob, float phase) {
+    // A swimmer floats: she heaves with the surface instead of reflecting it (no wall core).
+    const auto wade = [&](vec3 p, vec3 last, float height, float radius, float& bob, float phase, bool floating) {
         const float h = waterAt(vec2(p));
         if (h == kNoWater || p.z > h + 13.0f || p.z <= h - height) return;
         const vec2 vel = dt > 0 ? vec2(p - last) / dt : vec2(0);
         const float speed = glm::length(vel);
         if (waveBodies_.size() < 64)
             waveBodies_.push_back({p.x, p.y, radius, kDraft + kStrokeDraft * glm::smoothstep(0.0f, kStrokeSpeed, speed), vel.x, vel.y,
-                                   1.0f - glm::smoothstep(kWallSlow, kWallFast, speed), 0.0f});
+                                   floating ? 0.0f : 1.0f - glm::smoothstep(kWallSlow, kWallFast, speed), 0.0f});
         if (speed >= kSwimRing) {
             if (time_ - bob >= kStroke) ripple(vec3(vec2(p), h), kStrokeRing), bob = time_;
         } else if (speed > kWallSlow) bob = time_;
         else if (time_ - bob >= 1.2f + 0.3f * phase) kick(vec2(p), -kBob, kBobSigma), bob = time_;
     };
     const bool swimming = ps.water >= 0;
-    wade(ps.pos, prev.pos, kLaraHeight, swimming ? kTorso : kLegs, bob_, 0.0f);
+    wade(ps.pos, prev.pos, kLaraHeight, swimming ? kTorso : kLegs, bob_, 0.0f, swimming);
     const float lara = waterAt(vec2(ps.pos));
     if (lara != kNoWater) {
         const vec3 at(ps.pos.x, ps.pos.y, lara);
         // Entering the water: the tick her water volume becomes set (diving / falling in; also landing in it dead, as a
         // fatal plunge into l4_pool's eitr does, with no SwimSplash). Once per entry (plunged_ until she is out again);
-        // a plunge (falling faster than 300 units/s) opens a cavity as wide as her (a swan dive's hands and head: a
+        // a plunge (falling faster than 300 units/s) punches a crater as wide as her (a swan dive's hands and head: a
         // narrower one) and throws water, a wade-in just rings it.
         if (ps.water >= 0 && prev.water < 0 && !plunged_) {
             if (prev.vel.z < -300.0f) {
                 const bool swan = prev.clip.starts_with("ng_inair_swan");
-                const float size = swan ? 0.22f : 0.3f;
-                cavity(vec2(at), size, std::min({glm::length(prev.vel) / kM * kCavityTime, kCavityMax, 3.0f * size}));
+                crater(vec2(at), swan ? 0.22f : 0.3f, glm::length(prev.vel) / kM);
                 release(entryBursts(at, prev.vel, swan));
             } else {
                 ripple(at, std::clamp(glm::length(prev.vel) / 1500.0f, 0.4f, 2.0f));
@@ -334,7 +328,7 @@ void WaterSim::tick(const World& w, float dt) {
         const vec3 p = e->position();
         const auto it = bodies_.find(e->uid());
         Body b{p, e->alive(), it == bodies_.end() ? -1e9f : it->second.bob};
-        if (b.alive) wade(p, it == bodies_.end() ? p : it->second.pos, e->height(), kLegs, b.bob, glm::fract(float(e->uid()) * 0.618f));
+        if (b.alive) wade(p, it == bodies_.end() ? p : it->second.pos, e->height(), kLegs, b.bob, glm::fract(float(e->uid()) * 0.618f), false);
         else if (it != bodies_.end() && it->second.alive) splash(p, 1.0f, 0.3f, 4.0f); // a body falling in
         now[e->uid()] = b;
     }
@@ -346,16 +340,19 @@ void WaterSim::tick(const World& w, float dt) {
             const float h = waterAt(vec2(p));
             if (h != kNoWater && it->second.pos.z > h && p.z <= h)
                 splash(vec3(vec2(p), h), 0.8f, 0.25f, dt > 0 ? (it->second.pos.z - p.z) / dt / kM : 4.0f);
-            else if (p != it->second.pos) wade(p, it->second.pos, kLaraHeight, kTorso, b.bob, glm::fract(float(d.id) * 0.618f));
+            else if (p != it->second.pos) wade(p, it->second.pos, kLaraHeight, kTorso, b.bob, glm::fract(float(d.id) * 0.618f), false);
         }
         now[d.id] = b;
     }
     bodies_ = std::move(now);
 
-    // Open cavities: their dips (pressure bodies at rest; no wall: the collapse fills them from the sides).
-    std::erase_if(cavities_, [&](const Cavity& c) { return cavityShape(time_ - c.start, c.depth / kM) <= 0 && time_ > c.start; });
-    for (const Cavity& c : cavities_)
-        if (waveBodies_.size() < 64) waveBodies_.push_back({c.p.x, c.p.y, c.size, c.depth * cavityShape(time_ - c.start, c.depth / kM), 0, 0, 0, 0});
+    // Craters being pushed in: this tick's share of each one's kick (complete after kCraterOpen s).
+    for (Crater& c : craters_) {
+        const float want = std::min(1.0f, (time_ - c.start + dt) / kCraterOpen);
+        kick(c.p, -c.depth * (want - c.done), c.size);
+        c.done = want;
+    }
+    std::erase_if(craters_, [](const Crater& c) { return c.done >= 1.0f; });
 
     // Delayed bursts (jets) whose time has come.
     std::vector<SplashBurst> due;

@@ -1807,26 +1807,30 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     becomes set without a plunge, strength from her speed) and climbing out; a swimmer ringing the water every 0.4 s
     (strength 0.5) faster than 1 m/s; a standing / treading body's bob every 1.2–1.5 s (25.6 units over sigma 69 [I])
     (the splash fluid's particles falling back kick the field on the GPU, docs/RENDERING.md "Splash fluid");
-  - impact cavities (ours [I]: scales from real entries, the shape checked against the linear field's response): a
-    plunge (Lara entering faster than 300 units/s down, also dead), hitscan rays crossing the surface
-    (`CombatState::shots`), an enemy dying in the water, a dynamic body falling through it and `World::splashWater`
-    (`WaterSim::splash(pos, strength, size, speed)`) open a cavity as wide as the impactor (Gaussian width: Lara 0.3 m,
-    a swan dive 0.22 m, a body 0.3 m, a dynamic 0.25 m, a bullet 8 cm) and speed × 0.1 s deep (at most 0.8 m and 3 ×
-    its width: Lara's 4.8 m fall into l2's sea opens the full 0.8 m, a bullet 0.24 m). It opens over 0.08 s, stays
-    0.07 s and collapses in 1.2 √(depth / g) (≥ 0.12 s), as a pressure body at rest: the dip is drawn in full (the
-    field's slope limit does not apply to dips) and its opening and closing hand the field the ring train (a 0.6 m
-    cavity: rings of 5–15 cm from 0.5 to 1.5 m out within the first second, long ones first);
+  - impact craters (ours [I]: the scale from the impactor, the collapse the field's own): a plunge (Lara entering
+    faster than 300 units/s down, also dead), hitscan rays crossing the surface (`CombatState::shots`), an enemy dying
+    in the water, a dynamic body falling through it and `World::splashWater` (`WaterSim::splash(pos, strength, size,
+    speed)`) punch a crater: a zero-volume Mexican hat kick of the impactor's half width s (Lara 0.3 m, a swan dive
+    0.22 m, a body 0.3 m, a dynamic 0.25 m, a bullet 8 cm) whose hole holds the volume of a sphere of radius s and
+    whose rim the same (depth 2 e s / 3: Lara 0.54 m, a swan dive 0.40 m, a bullet 0.14 m), at most speed × 0.1 s
+    deep (a slow impactor only dents), pushed in over 0.08 s (5 ticks, each its share). The field's gravity response
+    then collapses it, throws the rebound crest ~0.3 s after the impact (where the splash's jet rises) and radiates the
+    ring train (measured on the GPU field for Lara's plunges into l2's sea and l4_pool: crater ~50 cm deep and 0.55 m
+    wide, rebound +13–23 cm, rings −10 / +6 cm 0.5–1.5 m out within the first second, 3–6 cm after; docs/RENDERING.md
+    "Interactive waves"). Through 0.50.0 this was a pressure body held open and released on a ramp, which returned no
+    rebound;
   - pressure bodies (`WaveBody`, up to 64): every body with its feet in the water and not under it (Lara, enemies,
     animals, moving dynamics): a Gaussian surface pressure (radius 0.22 m legs / 0.28 m torso, draft 7 cm still plus up
     to 15 cm moving at 1.5 m/s: kicking and pulling churn) that dips the surface and, moving, trails a Kelvin wake;
-    slow bodies (under 0.2 m/s, fading out by 1 m/s) also reflect waves off their core; plus the open cavities.
+    slow wading bodies (under 0.2 m/s, fading out by 1 m/s) also reflect waves off their core; a swimmer floats (she
+    heaves with the surface: no core, which had pinned her own entry crater's centre and killed its rebound).
   - splash bursts (`game::SplashBurst`, ours, [I] tuned by eye): the same events release the water they throw for
     the renderer's particle fluid (docs/RENDERING.md "Splash fluid"). Lara's entry (once per entry, latched until she
     is out of the water; only a plunge faster than 300 units/s down throws water) `entryBursts` (e = plunge speed
     down / 1500, clamped 0.3–3: a crown of 500 + 900 e particles on a ring of 90 + 25 e units, launched up to
     650 + 420 e units/s and out at 180 + 120 e + 0.15 × her horizontal speed, leaning with her run; a spray cone of
     150 e; from e 0.7 a Worthington jet of 250 + 350 e particles up to 800 + 350 e units/s, 0.18 + 0.06 e s later,
-    when the cavity collapses). A swan dive (the previous clip `ng_inair_swan*`) enters streamlined: crown radius
+    when the crater collapses). A swan dive (the previous clip `ng_inair_swan*`) enters streamlined: crown radius
     × 0.6, particles × 0.45, launch × 0.75, then jet × 1.6 particles, × 1.15 speed. Impacts (`impactBursts`,
     strength s: shots, bodies, dynamics) throw a crown of 120 + 380 s on 30 + 40 s units, a spray and from s 1 a jet
     0.12 s later; climbing out sheds a wide spray cone, surface strokes a small one every 5 ticks. Delayed bursts
@@ -1835,7 +1839,8 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     renderer's waves ride on). ou-game forwards those newer than the last it saw.
   ou-game passes the window, kicks and bodies through `FrameOptions::waterField` and the new bursts through
   `FrameOptions::fluidBursts` to Enhanced water; Original water does not use them. Parameters are ours [I]. Tests
-  `WaveWindow.*`, `Game.Water*` (entry cavity and crown once per entry, an impact's cavity and delayed jet, burst
+  `WaveWindow.*`, `Game.Water*` (entry crater and crown once per entry, a swimmer without a wall core, an impact's
+  crater and delayed jet, burst
   scaling with speed and swan dives; and the GPU side's `WaterField.*`, `VulkanRenderer.WaveFieldRunsScrollsAndRests`).
 
 ### Water moves: scuba, breath meter, dodges, swan dive, surface turns, climb out, weapons, jellyfish (2026-11-10)

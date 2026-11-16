@@ -42,7 +42,7 @@ inline constexpr float kTension = 0.073f / 1025.0f; // sigma / rho, m^3/s^2 (as 
 inline constexpr float kBaseDamping = 0.08f, kViscosity = 3e-4f /* m^2/s */, kGridDamping = 6.0f;
 inline constexpr float kSponge = 8.0f, kSpongeCells = 32.0f, kRough = 0.25f;
 // The waves' slope limit: a crest steeper than Stokes' limiting wave (a 120-degree crest, slope tan 30 deg) breaks and
-// loses the excess. The bodies' dips (cavities, a swimmer's trough) are not limited.
+// loses the excess. Troughs (a crater's walls) and the bodies' dips (a swimmer's trough) are not limited.
 inline constexpr float kSteepMax = 0.577f;
 
 // The GPU buffers. Kicks: contract C3 (`uint count; uint pad[3]; vec4 kicks[4096]`), the same layout as the external

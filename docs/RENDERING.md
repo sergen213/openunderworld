@@ -505,7 +505,7 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   mesh's own vertices are displaced and the relief is the per-pixel normals'.
 - Interactive waves (ours, "Interactive waves" below): the field's slopes bend the normals at full weight, its height
   displaces real geometry (tessellated) and lights crests through (seas), crests catch light / troughs darken in proportion to the
-  curvature, its whitewater foams (cavities, breaking crests, drops falling back, strokes) and its caustics light the
+  curvature, its whitewater foams (collapsing craters, breaking crests, drops falling back, strokes) and its caustics light the
   bed. Every effect reads the summed surface through `shaders/water_surface.glsl`.
 - Splash fluid (ours; "Splash fluid" below): the game's splash bursts are particles of a small GPU fluid, drawn as
   refracting liquid by the screen-space fluid passes; particles falling back kick the interactive waves.
@@ -587,22 +587,38 @@ the FFT ocean each frame), inputs from `game::WaterSim` (docs/GAMEPLAY.md "Water
   `uRipples`).
 - Bodies as moving equilibria: a floating body's surface pressure p holds the water at h = −p/(ρg) (at every k, so in
   any depth). The waves are u = h − dip(bodies): a body that moves shifts its dip, the water oscillates toward the new
-  equilibrium and radiates. Slow bodies' cores (and static walls: game::WaveWindow's mask) zero u: reflection.
+  equilibrium and radiates. Slow wading bodies' cores (and static walls: game::WaveWindow's mask) zero u: reflection;
+  a swimmer floats (she heaves with the surface: no core).
+- Impacts (docs/GAMEPLAY.md "Water"): a crater kick, a zero-volume Mexican hat (the hole holds the water the impactor
+  pushed aside, the rim the same volume) pushed in over 0.08 s; the field alone collapses it, throws the rebound crest
+  and radiates the rings. Measured (GPU readback of the state; Lara's 13 m/s plunge into l2_cliffclimb's sea and her
+  10 m/s plunge into l4_pool, which pull the same crater): crater 48–54 cm deep, ~0.55 m wide at half depth, 0.07 s
+  after the impact; rebound crest at the centre +23 cm (sea) / +13.5 cm (pool) 0.27–0.33 s after; rings within the
+  first second 0.5–1.5 m out −10 / +6 cm, still 3–6 cm at 1–3 m after 1 s. The drawn geometry follows the field
+  (debug readback of the tessellated vertices' field displacement against the per-pixel field: ratio 1.08–1.16, the
+  difference the 8-bit encoding and the splash particles over it). Through 0.50.0 an impact was a pressure body held
+  open 0.15 s and released on a ramp over 0.12–0.34 s: the surface lagged the pressure, the ramp returned none of the
+  crater's energy, and the swimmer's reflecting core pinned the crater's centre (u = 0 there: the rebound never rose,
+  the core deleted the displaced water); with the slope limit on troughs as well, a kicked crater lost its rebound
+  (14 → 2.5 cm in the linear model). Readback then: an 87 cm pit pinned to the dip, no rebound (the centre stayed at
+  the swimmer's −7 cm), rings 2–4 cm in the first second; the pit drawn under a solid white disk (whitewater inside any
+  dip deeper than 0.25–0.5 m) for its 0.3 s.
 - Damping (amplitude rates): 0.08/s + 2·3×10⁻⁴ m²/s·k² (short ripples die first, as surface films make them) + 6/s at
   the grid scale (k⁸); an absorbing sponge over the window's outer 32 cells (up to 8/s); where the FFT ocean is steep,
   up to 0.25/s more (its mean square slope s²: 0.25/s × s²/(s² + 0.01); short waves riding a rough sea break up); a
   slope limit of 0.577, Stokes' limiting wave (a 120° crest: a steeper crest breaks and loses the excess), so no input
-  makes the field explode, applied to the drawn surface's slope (u + the dips: while a cavity opens, u carries the
-  displaced water as a bump right under the dip, which must radiate, not break); the dips themselves are not limited
-  (a cavity shows in full). Its waves use the ocean's
+  makes the field explode, applied to crests (u > 0) only — a trough or a crater wall steeper than 30° just falls back
+  under gravity, the collapse and rebound the field computes — and to the drawn surface's slope (u + the dips: while a
+  body's dip forms, u carries the displaced water as a bump right under it, which must radiate, not break); the dips
+  themselves are not limited. Its waves use the ocean's
   gravity and dispersion and add to its surface as a perturbation. (Until 2026-11-15: 0.3/s, 1/s and a 0.35 limit,
   which clipped a splash's crater to half its depth on the frame it was made and damped its rings away within ~2 s
   and ~1 m: the user saw the particles splash on a water body that did not react.)
 - Whitewater (state w, uRipples alpha): the foam the waves make, 0..1, e-folding over 1.5 s [I]: made where a crest
   breaks (3 × the share the slope limit takes), where the water moves vertically faster than 1–2 m/s (a
-  collapsing cavity's surge), inside an open cavity (a dip deeper than 0.25–0.5 m entrains air) and by sharp kicks
-  (narrower than 3 cells: drops falling back, strokes; 8 cm of summed crater depth makes a cell white; a body's broad
-  bob does not churn). It scrolls with the window and stays where it formed.
+  collapsing crater's surge) and by sharp kicks (narrower than 3 cells: drops falling back, strokes; 8 cm of summed
+  crater depth makes a cell white; an impactor's broad crater and a body's bob do not churn: the open crater stays
+  clear water). It scrolls with the window and stays where it formed.
 - Inputs: kicks in the C3 layout (`uint count; uint pad[3]; vec4 kicks[4096]`, k = world x, y, centre displacement
   in TRU units (negative pushes down), sigma), one CPU-filled buffer per frame plus one optional external GPU buffer
   of the same layout (`setExternalWaveKicks` in each renderer; the field resets its count after consuming it), the
@@ -616,8 +632,9 @@ the FFT ocean each frame), inputs from `game::WaterSim` (docs/GAMEPLAY.md "Water
 - Geometry (`shaders/water.tesc` / `water.tese`; GL 4.0 / Vulkan `tessellationShader`, else per vertex): water
   meshes whose bounding sphere reaches into the window (`waterfield::touches`) draw as patches of 3 control points,
   subdivided until an edge is 1.5 field cells (11.7 cm) near the camera or 12 pixels farther away (fractional odd
-  spacing, ≤ 63 per edge), fading to the mesh's own edges over the window's outer 2–10 % and from 12 to 20 m away
-  (the field's few-cm waves are under a few pixels there); triangles outside the view (with a 4 m margin for the
+  spacing, ≤ 63 per edge), fading to the mesh's own edges over the window's outer 2–10 %; the 12-pixel rule alone
+  bounds the far cost (through 0.50.0 the subdivision also faded out from 12 to 20 m, flattening a crater's rings 2–3 m
+  past Lara when the camera was 13 m off); triangles outside the view (with a 4 m margin for the
   displacement) are dropped. Every generated vertex is displaced as water.vert displaces the mesh's own, so the crater,
   its rebound, the ring trains and the wakes stand in the geometry (silhouettes, depth against the bed, refraction /
   reflection rays from the displaced surface), and inside the window the FFT ocean's swell gets the same detail. An

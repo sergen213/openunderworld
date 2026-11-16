@@ -29,9 +29,8 @@ layout(location = 2) out vec2 tUv[];
 layout(location = 3) out vec4 tColor[];
 
 const float kCells = 1.5;      // target edge length near the camera, in field cells (the field's waves span >= 4 cells)
-const float kPixels = 12.0;    // target edge length on screen past the cell-limited range
-// Beyond ~12 m the field's few-cm waves project to under a few pixels: its subdivision fades out to 20 m.
-const float kFadeNear = 12.0 * 290.0, kFadeFar = 20.0 * 290.0;
+const float kPixels = 12.0;    // target edge length on screen past the cell-limited range (it alone bounds the far cost:
+                               // a crater's 20 cm rebound or 5-10 cm rings stay several pixels high across the window)
 const float kMaxLevel = 63.0;  // fractional_odd_spacing's largest level (the spec's minimum maxTessellationGenerationLevel is 64)
 const float kMargin = 4.0 * 290.0; // world units the displacement may move a vertex (TRU waves + FFT ocean + field), view test
 
@@ -50,7 +49,6 @@ float ouEdgeLevel(vec3 a, vec3 b) {
     if (win <= 0.0) return 1.0;
     float d = min(distance(m, w.eye.xyz), min(distance(a, w.eye.xyz), distance(b, w.eye.xyz)));
     float target = max(kCells * w.ripple.z, d * kPixels / w.rippleInfo.z); // world units per segment
-    win *= 1.0 - smoothstep(kFadeNear, kFadeFar, d);
     return mix(1.0, clamp(distance(a, b) / target, 1.0, kMaxLevel), win);
 }
 // Every corner, raised and lowered by the margin, outside the same clip plane (x, y, or behind the eye)?

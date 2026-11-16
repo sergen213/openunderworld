@@ -65,7 +65,7 @@ private:
 
 // Water thrown up by an impact: what render::fluid emits on the GPU (shaders/fluid.comp, docs/RENDERING.md "Splash
 // fluid"). Crown: a sheet launched off a ring around the impact (outward at `speed`, up to `up`, the higher part of the
-// sheet faster: it rises as a wall that breaks into droplets); Jet: the column the collapsing cavity throws up the
+// sheet faster: it rises as a wall that breaks into droplets); Jet: the column the collapsing crater throws up the
 // middle (a Worthington jet); Spray: droplets in a cone of half-angle `spread` (radians) around up at `speed`.
 struct SplashBurst {
     enum Kind : uint8_t { Crown, Jet, Spray };
@@ -78,7 +78,7 @@ struct SplashBurst {
     float up = 0;       // crown, jet: upward launch speed of the fastest particles (units/s)
     float spread = 0;   // crown, jet: height the sheet / column starts over (units); spray: cone half-angle
     int count = 0;      // particles
-    float delay = 0;    // seconds after the impact (the jet waits for the cavity to collapse)
+    float delay = 0;    // seconds after the impact (the jet waits for the crater to collapse)
     uint64_t serial = 0; // WaterSim numbering: 1, 2, ... in release order
     float restZ = 0;     // the water volume's rest surface (its box top) the renderer's waves ride on; 0: WaterSim sets it
 };
@@ -94,8 +94,8 @@ class WaterSim {
 public:
     void reset();
     void tick(const World& world, float dt);
-    // Something hitting the water at pos: its open cavity (cavity()) + splash bursts. strength 1 = a projectile / body
-    // falling in (the bursts' size); `size` the impactor's half width and `speed` its entry speed (m, m/s: the cavity).
+    // Something hitting the water at pos: its crater (crater()) + splash bursts. strength 1 = a projectile / body
+    // falling in (the bursts' size); `size` the impactor's half width and `speed` its entry speed (m, m/s: the crater).
     void splash(vec3 pos, float strength = 1.0f, float size = 0.1f, float speed = 6.0f);
 
     bool active() const { return active_; } // a water volume is near Lara
@@ -122,9 +122,10 @@ public:
 private:
     void kick(vec2 p, float amplitude, float sigma);
     void ripple(vec3 p, float strength);
-    // An impact's open cavity (the water a body or a drop of the splash pushes aside): a pressure body of Gaussian
-    // width `size` (m) that opens to `depth` (m) and collapses (cavityShape); its moving dip radiates the ring train.
-    void cavity(vec2 p, float size, float depth);
+    // An impact's crater: a zero-volume Mexican hat kick (the hole holds the water the impactor pushed aside, its rim
+    // the same volume) of width `size` (m), pushed in over the first ticks; its collapse, rebound and rings are the
+    // field's own response. `speed` (m/s) caps its depth (a slow impactor only dents the surface).
+    void crater(vec2 p, float size, float speed);
     void release(std::vector<SplashBurst> bursts); // into pending_ (delayed) / bursts_ (now)
     float waterAt(vec2 p) const; // surface z of the water over p, -inf where there is none
     float restAt(vec2 p) const;  // rest surface (box top) of the water over p, -inf where there is none
@@ -143,8 +144,8 @@ private:
     std::vector<SplashBurst> bursts_, pending_; // released; waiting for their delay (pending: release time in .delay)
     uint64_t serial_ = 0;
     bool plunged_ = false; // Lara's entry splash thrown; cleared once she is out of the water
-    struct Cavity { vec2 p; float start, size, depth; };
-    std::vector<Cavity> cavities_; // open / collapsing (cavityShape > 0)
+    struct Crater { vec2 p; float start, size, depth, done; }; // world xy, s, units; done: share kicked so far
+    std::vector<Crater> craters_; // being pushed in
     struct Body { vec3 pos; bool alive; float bob; };
     std::map<int32_t, Body> bodies_; // enemies / dynamic bodies last tick
 };
