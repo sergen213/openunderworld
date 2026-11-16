@@ -416,16 +416,16 @@ void main() {
         // Soft waterline (Godot foam_or_fade = fade): the bed shows through the last few units.
         c = mix(toLinear(textureLod(uScene, uv, 0.0).rgb), c, smoothstep(0.0, 6.0, cdepth));
     } else {
-        // ---- from below: abyssal-garden's W_SURF fs, literally (shaders.js; RENDERING.md "Under water") ----
+        // ---- from below: abyssal-garden's W_SURF fs (shaders.js; RENDERING.md "Under water") ----
         // In ag space (shaders/uw_medium.glsl): V from the eye, the slope s of the three uAgWater tiles (13 m, 4.7 m swapped,
         // 37 m) faded out by ss(260, 60, d), its normal n facing down (slopes x .8), Snell's window win = ss(0, .22, k)
         // with k = 1 - 1.33^2 (1 - ci^2), the sky (.30, .78, 1) x 1.3 brighter on faces tilted by s, + the sun seen along
         // the refracted ray (pow 60 x 1.3 + pow 500 x 12), x (1 - fr), fr = (1 - sqrt k)^5; outside the window the
-        // reflection: fogIn(wp, R, 300 m) x 1.15. Only the demo's slope bends it (1:1: not our FFT / afl / wave-field
-        // normals; the mesh keeps their displacement). The glint takes the sun above the surface (agSunAir: rr is the ray in
-        // the air; agSun, which fogIn takes as the demo does g.sun, is its refraction; the demo's one g.sun is both). The
-        // demo's fog(c, wp) is the post pass's (underwater.glsl ouUwFog: rays through the surface fog up to it and keep
-        // this colour), so not applied here. Explicit gradients: `below` is per fragment.
+        // reflection of the water below (total internal reflection; ours, see below). Only the demo's slope bends it (not
+        // our FFT / afl / wave-field normals; the mesh keeps their displacement). The glint takes the sun above the surface
+        // (agSunAir: rr is the ray in the air; agSun, which fogIn takes as the demo does g.sun, is its refraction; the
+        // demo's one g.sun is both). The demo's fog(c, wp) is the post pass's (underwater.glsl ouUwFog: rays through the
+        // surface fog up to it and keep this colour), so not applied here. Explicit gradients: `below` is per fragment.
         vec3 cam = agEye(), wp = agPos(p), V = wp - cam;
         float fl = agSs(260.0, 60.0, length(V));
         V = normalize(V);
@@ -433,11 +433,6 @@ void main() {
         vec2 sl = agSurfSlope(wp, gx, gy, fl);
         vec3 nb = normalize(vec3(-sl.x * 0.8, -1.0, -sl.y * 0.8));
         float k = agSurfK(V, sl);
-        // k's change to the neighbouring pixels (finite differences: `below` is per fragment, so no fwidth), for the
-        // anti-aliased edge of the black outside the window below.
-        vec3 wx = agPos(p + vec3(pdx, 0.0)), wy = agPos(p + vec3(pdy, 0.0));
-        float dk = abs(agSurfK(normalize(wx - cam), agSurfSlope(wx, gx, gy, fl)) - k) +
-                   abs(agSurfK(normalize(wy - cam), agSurfSlope(wy, gx, gy, fl)) - k);
         float win = agSs(0.0, 0.22, k);
         vec3 rr = refract(V, nb, 1.33);
         float sdot = max(dot(rr, agSunAir()), 0.0);
@@ -469,19 +464,44 @@ void main() {
             }
         }
         vec3 skyW = (skyC + vec3(1.0, 0.95, 0.85) * spec) * (1.0 - fr);
-        vec3 refl = agFogIn(vec3(wp.x, 0.0, wp.z), reflect(V, nb), 300.0, kAgZone, agSun()) * 1.15; // the demo's quad: y = 0
-        c = agFin(mix(refl, skyW, win));
-        // The demo as it renders (measured in the live demo, Chrome WebGPU on this RADV box: bit tests of its W_SURF fs):
-        // where k < 0 (total internal reflection, refract() = 0) its sky term is NaN/Inf, mix(refl, sky, 0) keeps it
-        // and fin() clamps the fogged NaN to 0: the surface outside the window is black and unfogged (only the shafts and
-        // bloom over it): the dark ripples between bright window gaps of its captures. Written as exactly 0 (ouUwFog
-        // keeps it 0); the rest HDR-encoded through the 8-bit target (agSurfEncode, decoded by ouUwFog). The step at k = 0
-        // is spread over one pixel (dk): a hard per-pixel cut staircased every gap's outline (the demo renders at a
-        // dynamic resolution and scales up, which softens it).
+        // Ours: the reflection. The demo's sky term is NaN where k < 0 (refract() = 0), so its surface outside the window
+        // renders black (fin() clamps the NaN); real water mirrors itself there (total internal reflection: all of the
+        // light comes from the reflected ray R, down into the water). R's radiance at the surface: the medium's in-scatter
+        // along it (the demo's own refl, fogIn(wp, R, 300 m) x 1.15, from the quad at y = 0), and with the post's medium on
+        // (agUw) the scene where R meets it on screen (traced as the window's refracted ray, 60 m): TRU's colour back to the
+        // demo's HDR (agUnpost), relit as ouUwFog relights it (agRelight: the normal from the hit's depth neighbours, the
+        // caustics' mean: a mirror of a rippled surface blurs the pattern), seen through the water along R (extinction
+        // e^(-sg L) + fogIn over L), faded in at the screen border and from 40 m. The post pass then fogs eye -> wp over
+        // it like the window, so far away it meets the background (fsB) without a horizon. Across Snell's angle the
+        // window's share win carries the remaining reflection fr (Schlick-like (1 - sqrt k)^5, 1 at k = 0): c runs
+        // smoothly from the reflection (k <= 0) to sky x (1 - fr) + reflection x fr inside the window, no dark ring.
+        vec3 R = reflect(V, nb), rs0 = vec3(wp.x, 0.0, wp.z);
+        vec3 refl = agFogIn(rs0, R, 300.0, kAgZone, agSun()) * 1.15;
         if (agUw) {
-            float edge = clamp(0.5 + k / max(dk, 1e-5), 0.0, 1.0);
-            c = edge > 0.0 ? agSurfEncode(c) * edge : vec3(0.0);
+            vec3 rw = agDir(R);
+            vec2 ruv;
+            float rt;
+            if (ouTrace(p, rw, 60.0 * kM, 3.0 * kM, ruv, rt)) {
+                vec3 h = ouWorld(ruv, textureLod(uDepth, ruv, 0.0).r);
+                if (h.z < p.z - 0.5 * kM) { // under the surface (not a hull seen through it)
+                    vec2 px = w.screen.zw;
+                    vec3 hn = cross(ouWorld(ruv + vec2(px.x, 0.0), textureLod(uDepth, ruv + vec2(px.x, 0.0), 0.0).r) - h,
+                                    ouWorld(ruv + vec2(0.0, px.y), textureLod(uDepth, ruv + vec2(0.0, px.y), 0.0).r) - h);
+                    hn = dot(hn, hn) > 0.0 ? normalize(hn) : vec3(0.0, 0.0, 1.0);
+                    if (dot(hn, p - h) < 0.0) hn = -hn;
+                    vec3 hc = agUnpost(toLinear(textureLod(uScene, ruv, 0.0).rgb));
+                    if (w.sunColor.w > 0.0)
+                        hc = agRelight(hc, agPos(h), agDir(hn), -R, vec3(kAgCausMean),
+                                       ouSunShadowVisibility(h + hn * (0.35 * kM)));
+                    float L = rt / kM;
+                    vec3 seen = hc * exp(-agSg(kAgZone) * L) + agFogIn(rs0, R, L, kAgZone, agSun()) * 1.15;
+                    refl = mix(refl, seen, ouEdgeFade(ruv, 0.08) * (1.0 - smoothstep(40.0, 60.0, L)));
+                }
+            }
         }
+        c = agFin(mix(refl, skyW + refl * fr, win));
+        // HDR through the 8-bit target: agSurfEncode, decoded by ouUwFog for rays that leave through the surface.
+        if (agUw) c = agSurfEncode(c);
         fresnel = 1.0 - win * (1.0 - fr); // reflected share (debug view 5)
         n = -agDir(nb);                    // debug view 1: the demo's normal, world space, up
     }
