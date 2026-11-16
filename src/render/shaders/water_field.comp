@@ -1,0 +1,229 @@
+#version 460
+// Enhanced water's interactive wave field (render/WaterField.hpp, docs/RENDERING.md "Interactive waves"): Tessendorf's
+// eWave (2014, written from the paper) with the full gravity-capillary dispersion on water of finite depth. State per
+// cell: total height h (TRU units above the rest surface, the bodies' dips included) and vertical velocity v (units/s).
+// Seven passes per frame (cfg.x), one dispatch each:
+//  0 prep (16 x 16 tiles): the window scroll (cell c reads cell c + shift), this frame's kicks (own + external
+//    buffer, culled per tile in batches of 256), u = h - the bodies' hydrostatic dips, packed as u + i v into work.
+//  1 / 2: forward DFT along rows, then columns (radix-2 Stockham in shared memory, one workgroup per line).
+//  3 propagate: per wave-number pair (k, -k) unpack U, V (both fields are real), advance each mode by its damped
+//    oscillator exactly: omega^2 = (g k + sigma / rho k^3) tanh(k depth), damped e^{-gamma(k) dt}; the mean (k = 0,
+//    which no wave carries) is removed; scaled for the inverse.
+//  4 / 5: inverse DFT along rows, then columns.
+//  6 finalize (tiles): static walls (the mask), slow bodies' cores (both reflect: u = 0), the edge sponge, rough-sea
+//    damping (FFT ocean slope), the steepness limit; h = u + the dips back into the state, and uRipples (h, dh/dx,
+//    dh/dy, v; contract C1 in shaders/water_surface.glsl) for the water shaders. Clears the external kick count.
+// Bodies as moving equilibria: the waves are u = h - dip(bodies); a body that moves shifts its dip under the water,
+// which then oscillates toward the new equilibrium and radiates (the Kelvin wake behind a swimmer). The equilibrium dip
+// of a surface pressure p is -p / (rho g) at every wave number (capillarity aside), so it holds in any depth.
+layout(local_size_x = 256) in;
+struct OuWaveKick { vec4 k; }; // world x, y, centre displacement (TRU units, < 0 pushes down), sigma (TRU units)
+#ifdef VULKAN
+layout(set = 0, binding = 0, std430) buffer State { vec2 state[]; };
+layout(set = 0, binding = 1, std430) buffer Work { vec2 work[]; };
+layout(set = 0, binding = 2, std430) readonly buffer Kicks { uint count; uint pad0, pad1, pad2; OuWaveKick kicks[4096]; } own;
+layout(set = 0, binding = 3, std430) buffer ExtKicks { uint count; uint pad0, pad1, pad2; OuWaveKick kicks[4096]; } ext;
+layout(set = 0, binding = 4, std430) readonly buffer Frame { uint bodyCount; uint fpad0, fpad1, fpad2; vec4 bodies[128]; uint mask[]; } fr;
+layout(set = 0, binding = 5) uniform sampler2DArray uOcean;
+layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D uField;
+layout(push_constant) uniform Push { ivec4 cfg; vec4 par; vec4 win; vec4 phys; vec4 damp; vec4 ocean; } pc;
+#define CFG pc.cfg
+#define PAR pc.par
+#define WIN pc.win
+#define PHYS pc.phys
+#define DAMP pc.damp
+#define OCEAN pc.ocean
+#else
+layout(std430, binding = 0) buffer State { vec2 state[]; };
+layout(std430, binding = 1) buffer Work { vec2 work[]; };
+layout(std430, binding = 2) readonly buffer Kicks { uint count; uint pad0, pad1, pad2; OuWaveKick kicks[4096]; } own;
+layout(std430, binding = 3) buffer ExtKicks { uint count; uint pad0, pad1, pad2; OuWaveKick kicks[4096]; } ext;
+layout(std430, binding = 4) readonly buffer Frame { uint bodyCount; uint fpad0, fpad1, fpad2; vec4 bodies[128]; uint mask[]; } fr;
+layout(binding = 12) uniform sampler2DArray uOcean;
+layout(binding = 0, rgba16f) uniform writeonly image2D uField;
+layout(location = 0) uniform ivec4 uCfg;
+layout(location = 1) uniform vec4 uPar;
+layout(location = 2) uniform vec4 uWin;
+layout(location = 3) uniform vec4 uPhys;
+layout(location = 4) uniform vec4 uDamp;
+layout(location = 5) uniform vec4 uOceanPar;
+#define CFG uCfg
+#define PAR uPar
+#define WIN uWin
+#define PHYS uPhys
+#define DAMP uDamp
+#define OCEAN uOceanPar
+#endif
+// cfg: pass, shift x, y, flags (1 reset, 2 FFT ocean). par: dt (s), depth (m), cell (m), slope limit. win: origin x, y,
+// cell (world units), units per metre. phys: g, sigma / rho, sponge rate, rough-sea rate. damp: base rate, viscosity
+// (m^2/s), grid-scale rate, sponge width (cells). ocean: cascade tiles (world units), uOcean level.
+
+const int N = 512;      // render::waterfield::kN
+const int MASKN = 256;  // kMaskN
+const int TILE = 16;
+const float kPi = 3.14159265358979;
+
+vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+vec2 conj2(vec2 a) { return vec2(a.x, -a.y); }
+
+// ---- cells ----
+ivec2 tileCell(out vec2 tileLo) { // this invocation's cell; tileLo = the tile's world corner
+    ivec2 tile = ivec2(int(gl_WorkGroupID.x) % (N / TILE), int(gl_WorkGroupID.x) / (N / TILE));
+    ivec2 local = ivec2(int(gl_LocalInvocationIndex) % TILE, int(gl_LocalInvocationIndex) / TILE);
+    tileLo = WIN.xy + vec2(tile * TILE) * WIN.z;
+    return tile * TILE + local;
+}
+vec2 cellWorld(ivec2 c) { return WIN.xy + (vec2(c) + 0.5) * WIN.z; }
+float wallMask(ivec2 c) { // 1 open water, 0 a static wall (and outside the window)
+    if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, ivec2(N)))) return 0.0;
+    uint i = uint((c.y >> 1) * MASKN + (c.x >> 1));
+    return float((fr.mask[i >> 2] >> (8u * (i & 3u))) & 255u) / 255.0;
+}
+// The bodies at world p: x the summed hydrostatic dip (height, < 0) with its gradient in yz, w the strongest core
+// wall weight (1 = the cell reflects).
+vec4 bodiesAt(vec2 p) {
+    vec4 r = vec4(0.0);
+    for (uint i = 0u; i < min(fr.bodyCount, 64u); ++i) {
+        vec4 a = fr.bodies[2u * i], b = fr.bodies[2u * i + 1u];
+        vec2 d = p - a.xy;
+        float rr = dot(d, d), s2 = a.z * a.z;
+        if (rr > 16.0 * s2) continue;
+        float g = a.w * exp(-0.5 * rr / s2);
+        r.xyz += vec3(-g, d * (g / s2));
+        r.w = max(r.w, b.z * (1.0 - smoothstep(0.36 * s2, 0.64 * s2, rr))); // the core: 0.6 radius
+    }
+    return r;
+}
+
+// ---- 0 prep ----
+shared vec4 sKick[256];
+shared uint sKickCount;
+float kickShape(vec4 k, vec2 p) {
+    float sig = max(k.w, WIN.z), q = dot(p - k.xy, p - k.xy) / (2.0 * sig * sig);
+    return q > 8.0 ? 0.0 : k.z * (1.0 - q) * exp(-q);
+}
+void prep() {
+    vec2 lo;
+    ivec2 c = tileCell(lo);
+    vec2 hi = lo + float(TILE) * WIN.z, p = cellWorld(c);
+    ivec2 src = c + CFG.yz;
+    vec2 s = vec2(0.0);
+    if ((CFG.w & 1) == 0 && all(greaterThanEqual(src, ivec2(0))) && all(lessThan(src, ivec2(N)))) s = state[src.y * N + src.x];
+    float h = s.x;
+    // Kicks of both buffers in batches of 256: each thread tests one against the tile, the hits apply to every cell.
+    uint nOwn = min(own.count, 4096u), total = nOwn + min(ext.count, 4096u);
+    for (uint base = 0u; base < total; base += 256u) {
+        if (gl_LocalInvocationIndex == 0u) sKickCount = 0u;
+        barrier();
+        uint i = base + gl_LocalInvocationIndex;
+        if (i < total) {
+            vec4 k = i < nOwn ? own.kicks[i].k : ext.kicks[i - nOwn].k;
+            float reach = 4.0 * max(k.w, WIN.z);
+            if (k.z != 0.0 && k.x + reach > lo.x && k.x - reach < hi.x && k.y + reach > lo.y && k.y - reach < hi.y)
+                sKick[atomicAdd(sKickCount, 1u)] = k;
+        }
+        barrier();
+        for (uint j = 0u; j < sKickCount; ++j) h += kickShape(sKick[j], p);
+        barrier();
+    }
+    work[c.y * N + c.x] = vec2(h - bodiesAt(p).x, s.y);
+}
+
+// ---- 1 / 2 / 4 / 5: one line of the DFT (radix-2 Stockham, natural order in and out) ----
+shared vec2 sFft[2][N];
+void fftLine(bool column, float sign) {
+    uint line = gl_WorkGroupID.x, t = gl_LocalInvocationIndex; // t < N / 2
+    uint stride = column ? uint(N) : 1u, base = column ? line : line * uint(N);
+    sFft[0][t] = work[base + t * stride];
+    sFft[0][t + N / 2] = work[base + (t + uint(N / 2)) * stride];
+    barrier();
+    int from = 0;
+    for (uint ns = 1u; ns < uint(N); ns <<= 1) {
+        uint k = t & (ns - 1u);
+        vec2 a = sFft[from][t], b = sFft[from][t + uint(N / 2)];
+        float ang = sign * kPi * float(k) / float(ns);
+        b = cmul(b, vec2(cos(ang), sin(ang)));
+        uint o = (t - k) * 2u + k;
+        sFft[1 - from][o] = a + b;
+        sFft[1 - from][o + ns] = a - b;
+        from = 1 - from;
+        barrier();
+    }
+    work[base + t * stride] = sFft[from][t];
+    work[base + (t + uint(N / 2)) * stride] = sFft[from][t + N / 2];
+}
+
+// ---- 3 propagate ----
+void propagate() {
+    uint idx = gl_GlobalInvocationID.x;
+    int x = int(idx) % N, y = int(idx) / N;
+    uint j = uint(((N - y) & (N - 1)) * N + ((N - x) & (N - 1))); // -k
+    if (j < idx) return; // each pair once (j == idx: the four self-conjugate modes)
+    vec2 Z = work[idx], Zn = work[j];
+    vec2 H = 0.5 * (Z + conj2(Zn)), D = Z - conj2(Zn), V = 0.5 * vec2(D.y, -D.x); // Z = H + i V, Z(-k) = H* + i V*
+    vec2 f = vec2(x <= N / 2 ? x : x - N, y <= N / 2 ? y : y - N);
+    float k = length(f) * (2.0 * kPi / (float(N) * PAR.z));
+    vec2 H1 = vec2(0.0), V1 = vec2(0.0);
+    if (k > 0.0) {
+        float w = sqrt((PHYS.x * k + PHYS.y * k * k * k) * tanh(k * PAR.y));
+        float q = k * PAR.z / kPi, q4 = q * q * q * q;
+        float gamma = DAMP.x + 2.0 * DAMP.y * k * k + DAMP.z * q4 * q4;
+        float e = exp(-gamma * PAR.x), cw = cos(w * PAR.x), sw = sin(w * PAR.x);
+        H1 = e * (H * cw + V * (sw / w));
+        V1 = e * (V * cw - H * (w * sw));
+    }
+    float scale = 1.0 / float(N * N);
+    work[idx] = scale * (H1 + vec2(-V1.y, V1.x));
+    if (j != idx) work[j] = scale * (conj2(H1) + vec2(V1.y, V1.x)); // H1* + i V1*
+}
+
+// ---- 6 finalize ----
+float uAt(ivec2 c) { // the waves' height at a neighbour (0 in walls / outside)
+    c = clamp(c, ivec2(0), ivec2(N - 1));
+    return work[c.y * N + c.x].x * wallMask(c);
+}
+void finalize() {
+    vec2 lo;
+    ivec2 c = tileCell(lo);
+    vec2 p = cellWorld(c);
+    if (gl_GlobalInvocationID.x == 0u) ext.count = 0u; // consumed (prep ran in the previous dispatch)
+    vec2 s = work[c.y * N + c.x];
+    vec4 b = bodiesAt(p);
+    float keep = wallMask(c) * (1.0 - b.w);
+    float u = s.x * keep, v = s.y * keep;
+    // Sponge: absorbing over the outer kSpongeCells, quadratic ramp.
+    float edge = float(min(min(c.x, c.y), min(N - 1 - c.x, N - 1 - c.y)));
+    float ramp = max(1.0 - edge / DAMP.w, 0.0);
+    float rate = PHYS.z * ramp * ramp;
+    // Rough sea: short waves riding a steep FFT ocean break up (its swell + gravity + chop slopes, metres per metre).
+    if ((CFG.w & 2) != 0) {
+        vec2 sl = vec2(0.0);
+        for (int i = 0; i < 3; ++i) sl += textureLod(uOcean, vec3(p / OCEAN[i], float(3 * i + 1)), OCEAN.w).xy;
+        float s2 = dot(sl, sl);
+        rate += PHYS.w * s2 / (s2 + 0.01);
+    }
+    float e = exp(-rate * PAR.x);
+    u *= e, v *= e;
+    // Slope (central differences, walls flat) and the breaking limit.
+    vec2 g = vec2(uAt(c + ivec2(1, 0)) - uAt(c - ivec2(1, 0)), uAt(c + ivec2(0, 1)) - uAt(c - ivec2(0, 1))) / (2.0 * WIN.z);
+    float sl = length(g);
+    if (sl > PAR.w) {
+        float f = PAR.w / sl;
+        u *= f, v *= f, g *= f;
+    }
+    float h = u + b.x;
+    state[c.y * N + c.x] = vec2(h, v);
+    imageStore(uField, c, vec4(h, g + b.yz, v));
+}
+
+void main() {
+    switch (CFG.x) {
+    case 0: prep(); break;
+    case 1: fftLine(false, -1.0); break;
+    case 2: fftLine(true, -1.0); break;
+    case 3: propagate(); break;
+    case 4: fftLine(false, 1.0); break;
+    case 5: fftLine(true, 1.0); break;
+    default: finalize(); break;
+    }
+}

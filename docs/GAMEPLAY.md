@@ -1741,30 +1741,28 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   (0x778430), 4 GetDepth ((surface − bottom) × 0.3164); handler 0x6AC340 sets target +0x5C and rate +0x60 (units per
   frame), 0x6C10D0 moves the surface. l7_yggdrasil_end's 8309 calls 2 at load (GameReal.ScriptSurvey), larabase 3
   (0x777780: Lara's volume +0x8DC is the argument and +0x914 < 0; 0x5D77E0 sets +0x914 = floor under her − surface when she is below the surface, else her z − surface; ours: `World::waterNative` "larabase", her probe box's volume with its surface over her feet [I]) is bound: l4_pool's 5608 polls it every 3 ticks and calls health 2 (12345, 0) on Lara in the goo, a kill. [O] tru.exe under Wine (l4_pool, 2026-11-06; tru = ours + (4003.8, 158, −6637)): 0x710A20 tests her probe box against the volume's own box (instance data +0x34 centre, +0x40..+0x54 extents; no surface-mesh footprint), as `findWater`; +0x914 = −79.5 on the goo bed (floor 2582) and she dies; on the walkways (2844) and rocks (2865) inside the same box +0x914 > 0 and she lives. Ours gives the same outcome at the same eight spots (dies at (0, 0), (−2000, 2000), (−6072, 2898), (3210, 2429); lives at (1884, −3042), (5000, 3000), (−6610, −4845), (−3000, −4000)). A save goes on the same (`StreamReal.SaveContinuesBitIdentically` goo case: saved with the loop sleeping, both runs die in the goo); the earlier "loaded run takes no damage" was a save taken while dead, which loads at full health by design. `GameReal.ScriptedWaterLevelsRun`: the watervolumebase calls of 8209 / 8309 / 5608 run. 8309's instance argument is null in our runtime (an unbound instanceref) and the exe's thunk skips a null one [U: what it names]; `GameReal.ScriptedWaterLevelMoves` drives SetLevel (100, 10 -> 316 units, 32 per frame), GetDepth and a save. Marker ids resolve through the unit's intros (`UnitData::markers`).
-- Interactive surface (`src/game/Water.{hpp,cpp}`, `World::water()`; TRU does not simulate ripples): the wave field of
-  our Wars and Warriors: Joan of Arc port (same author, GPLv3: its `water_waves.cpp` and `world_view_water.cpp`),
-  `game::WaveField`. A damped 2D wave equation (Verlet, fixed 1/60 s substeps, velocity damping 2.5/s, viscosity
-  0.005, a weak spring to rest) on a 256×256 grid that follows Lara in whole cells. Waves interfere, reflect off walls
-  and scatter around bodies: a cell is a static wall when no water volume (markup type 10) covers it or terrain lies
-  within 0.75 cell of its volume's rest surface (shores, rocks, hulls, pool sides; asked once as the cell scrolls in),
-  and each body in the water (Lara, enemies, animals, moving dynamics) is a wall for the next step. Kicks are Mexican
-  hats (zero volume, so the level never creeps). Units: Joan's lengths × `kWaterScale` = 6.4 (body heights: Lara
-  ~512, a Joan soldier ~80), so cells are 25.6 units (a 6554-unit window), wave speed 512 units/s (CFL 0.33 as in
-  Joan), splash crater 45 units deep / 64 wide; slopes, damping and times are Joan's. Sources: a body with its feet
-  in the water and not under it wades (bow mound + stern trough, the wake; standing or treading, a bob every
-  1.2–1.5 s: a kick as wide as the body, 25.6 units over sigma 90 [I], since a narrower one falls inside the body's
-  own cells and leaves no visible ring).
-  A body faster than the waves (swimming Lara, 1349 units/s) would trail a Mach cone, so it is no wall and has no
-  continuous wake; it rings the water (strength 0.6) every 0.4 s instead [I], leaving flat rings behind it;
-  Lara's entry splash (strength from the plunge speed) and climb-out; hitscan rays crossing the surface
-  (`CombatState::shots`) and an enemy dying in the water splash as a projectile / body (strength 1); a dynamic body
-  falling through the surface 0.8; droplets falling back leave pinpricks. `World::splashWater` takes other impacts.
-  The field reports empty after 8 quiet seconds (the renderer skips it). Splash droplets (ours) are ballistic
-  (gravity as Tuning, capped at 256, xorshift RNG) and die on the surface or after 0.35–0.75 s. ou-game copies the
-  field, water volumes and droplets into `FrameOptions` for the Enhanced water shader (docs/RENDERING.md "Water": the
-  Godot / afl_ext surface, which layers the field's height and slopes on its own waves); Original water does not use
-  them. The drawn waves are centred on the gameplay surface (the original sea waves) and never rise above the rest plane. Tests `WaveField.*` (Joan's `water_waves_test` in TRU units: superposition,
-  shore reflection, bodies as obstacles, damping, scrolling, wake height) and `Game.Water*`.
+- Interactive surface (`src/game/Water.{hpp,cpp}`, `World::water()`; TRU does not simulate ripples): the game tick
+  decides what makes waves; the waves themselves run on the GPU (docs/RENDERING.md "Interactive waves": a spectral
+  gravity-capillary wave field, `render/WaterField.hpp`). `game::WaveWindow` is the field's window: 512² cells of
+  22.66 units (7.8 cm; a 40 m square) around Lara, scrolled in whole mask cells, with a 256² static wall mask: a mask
+  cell is a wall when no water volume (markup type 10) covers it or terrain lies within 0.75 mask cell of its volume's
+  rest surface (shores, rocks, hulls, pool sides; asked once as the cell scrolls in). `game::WaterSim` produces, each
+  60 Hz tick:
+  - kicks (`WaveKick`: world x, y, centre displacement, sigma; zero-volume Mexican hats, negative = a crater), kept for
+    8 ticks with growing serials so every rendered frame takes each once: Lara entering the water (the tick her
+    water volume becomes set, strength from the plunge speed; also landing in it dead) and climbing out; a swimmer
+    ringing the water every 0.4 s (strength 0.5) faster than 1 m/s; a standing / treading body's bob every
+    1.2–1.5 s (25.6 units over sigma 69 [I]); hitscan rays crossing the surface (`CombatState::shots`) and an enemy
+    dying in the water (strength 1); a dynamic body falling through the surface (0.8); droplets falling back
+    (pinpricks); `World::splashWater` for other impacts;
+  - pressure bodies (`WaveBody`, up to 64): every body with its feet in the water and not under it (Lara, enemies,
+    animals, moving dynamics): a Gaussian surface pressure (radius 0.22 m legs / 0.28 m torso, draft 7 cm still plus up
+    to 15 cm moving at 1.5 m/s: kicking and pulling churn) that dips the surface and, moving, trails a Kelvin wake;
+    slow bodies (under 0.2 m/s, fading out by 1 m/s) also reflect waves off their core.
+  Splash droplets (ours) are ballistic (gravity as Tuning, capped at 256, xorshift RNG) and die on the surface or after
+  0.35–0.75 s. ou-game passes the window, kicks, bodies and droplets through `FrameOptions::{waterField, splashes}` to
+  Enhanced water; Original water does not use them. Parameters are ours [I]. Tests `WaveWindow.*`, `Game.Water*`
+  (and the GPU side's `WaterField.*`, `VulkanRenderer.WaveFieldRunsScrollsAndRests`).
 
 ### Water moves: scuba, breath meter, dodges, swan dive, surface turns, climb out, weapons, jellyfish (2026-11-10)
 

@@ -494,12 +494,12 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   follows), then the Godot height layers (± 0.06 m; not on FFT seas) and on seas the FFT ocean's swell + gravity
   height (above) or afl's waves (12 iterations, 0.45 m) centred on that
   surface but clamped to the rest plane — the original's own crest bound — so the yacht deck stays above the drawn
-  sea; then the wave field's height. Coarse TRU meshes show it only at their few interior vertices (l1_seatop's sea:
+  sea; then the wave field's height (`ouBaseHeight` + `ouFieldHeight`, shaders/water_surface.glsl). Coarse TRU meshes show it only at their few interior vertices (l1_seatop's sea:
   a regular grid of ~3.5 m quads [measured: triangle-ID debug view over a 1 m grid]), so the drawn relief is the
   per-pixel normals'; the geometry only tilts between those vertices.
-- Interactive waves (ours, `game::WaveField`): bend the normals, displace, light crests / darken troughs in
-  proportion to the curvature (a splash crater is a bright line, a swim-stroke ring a tint) and foam splash craters
-  and sharp crests (the Joan port, docs/RESEARCH.md §8.7).
+- Interactive waves (ours, "Interactive waves" below): the field's slopes bend the normals, its height displaces
+  (water.vert), crests catch light / troughs darken in proportion to the curvature and splash craters and sharp
+  crests foam. Every effect reads the summed surface through `shaders/water_surface.glsl`.
 - Splash droplets (ours, screen-space fluid rendering adapted from talvinckb/OpenGL-Water-Simulation, MIT,
   docs/RESEARCH.md §8.8): each droplet quad (`render::splashVertices`, `splash.vert`) splats a sphere's front
   distance and thickness into an RG32F target with MAX blending, rejected against the opaque depth copy
@@ -523,17 +523,17 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
 - Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
   3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
 
-Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the wave field, splash
-droplets and the water volumes; ou-game fills `FrameOptions::{ripples, waterVolumes, splashes}`
-every frame. `render::WaterBlock` (UBO: camera, inverse view-projection, sun, ambient, fog, wave
+Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the wave field's inputs (window, wall mask, kicks,
+pressure bodies), splash droplets and the water volumes; ou-game fills `FrameOptions::{waterField, waterVolumes,
+splashes}` every frame. `render::WaterBlock` (UBO: camera, inverse view-projection, sun, ambient, fog, wave
 field transform) feeds the water, splash and post shaders.
 
 Backend plumbing: GL blits the scene colour/depth into `opaqueColor/opaqueDepth` after the scene
 pass (MSAA resolve included), then draws water + splashes into the same framebuffer. Vulkan
 splits dynamic rendering into two passes: pass 1 ends with a colour resolve and, with MSAA, a
 `SAMPLE_ZERO` depth resolve; without MSAA the depth is copied. Descriptors: water set 0 =
-UBO + 3 textures, post set 1 = UBO + depth. The ripple field uploads as R32F only when
-`WaterSim::version` changes.
+UBO + 3 textures, post set 1 = UBO + depth. The wave field's texture (`uRipples`) is written on the GPU each frame
+("Interactive waves").
 
 Measured (2026-10-30, ou-game Debug build, Vulkan, 1920x1080, `--preset enhanced`, `OU_VK_PRESENT_STATS=1`, GPU
 "scene" segment incl. the water pass, 370 frames): l2_cliffclimb by the yacht looking down at the sea (water ~80 % of
@@ -544,10 +544,54 @@ fading into the scene fog; l4_pool — Lara treading with rings, refracted pilla
 under the pool — Snell's window showing the cave above, blue total internal reflection around it. l4_pool has no
 wadeable shallows at the spawns tried (Lara treads everywhere).
 
-Limits [I]: SSR misses off-screen geometry (fog fallback; Vulkan RT reflections trace it, "Ray tracing"), the wave field covers a 6554-unit window
-around Lara (fading out at its edge), shore walls are sampled once per cell from the collision at the
+Limits [I]: SSR misses off-screen geometry (fog fallback; Vulkan RT reflections trace it, "Ray tracing"), the wave field covers a 40 m window
+around Lara (absorbed and faded out at its edge), shore walls are sampled once per cell from the collision at the
 volume's rest surface (a sea's waves move the real shoreline), no water flow/buoyancy, no waves in
 ou-viewer (it has no simulation).
+
+### Interactive waves
+
+Enhanced water's waves around Lara: `render/WaterField.{hpp,cpp}`, `shaders/water_field.comp` (both backends, after
+the FFT ocean each frame), inputs from `game::WaterSim` (docs/GAMEPLAY.md "Water"). Ours, written from the papers
+(docs/RESEARCH.md "Interactive waves").
+
+- Method: Tessendorf's eWave (2014). The state is the surface height h and vertical velocity v on 512² cells of
+  7.8 cm (a 40 m window that scrolls with Lara in whole 2-cell steps). Each frame h + i v goes through one complex
+  FFT, every wave number k advances by the exact solution of its damped oscillator with the gravity-capillary
+  dispersion relation of finite depth, ω² = (g k + σ/ρ k³) tanh(k d) (the FFT ocean's constants; d = the water
+  volume's depth, uniform over the window), and comes back. Exact per mode, so it is stable for any frame time and
+  every wavelength runs at its own speed: a splash spreads as the Cauchy–Poisson ring train (long waves leading, ever
+  shorter rings behind), a moving body trails a Kelvin wake whose arms narrow at high Froude numbers, shallow water
+  slows long waves to √(g d). iWave (Tessendorf 2004) approximates the same operator with a truncated convolution
+  kernel (wrong long-wave speeds at a usable radius, ~170 taps a cell); Jeschke & Wojtan's dispersive shallow-water
+  split (2023) and Water Surface Wavelets (2018) also carry currents and per-cell depth, at several times the cost and
+  complexity; eWave is exact for the linear surface waves we draw at ~0.07 ms.
+- Seven compute dispatches a frame (`waterfield::Pass`): prep (16² tiles: scroll the state, add the frame's kicks
+  culled per tile, subtract the bodies' dips), forward FFT rows / columns (radix-2 Stockham, one workgroup of 256 per
+  512-point line in shared memory), propagate (each ±k pair: unpack the two real fields, rotate by ω dt, damp, drop
+  the mean), inverse FFT rows / columns, finalize (walls, sponge, rough-sea damping, steepness limit; write the state
+  and `uRipples`).
+- Bodies as moving equilibria: a floating body's surface pressure p holds the water at h = −p/(ρg) (at every k, so in
+  any depth). The waves are u = h − dip(bodies): a body that moves shifts its dip, the water oscillates toward the new
+  equilibrium and radiates. Slow bodies' cores (and static walls: game::WaveWindow's mask) zero u: reflection.
+- Damping (amplitude rates): 0.3/s + 2·3×10⁻⁴ m²/s·k² (short ripples die first, as surface films make them) + 6/s at
+  the grid scale (k⁸); an absorbing sponge over the window's outer 32 cells (up to 8/s); where the FFT ocean is steep,
+  up to 1/s more (its mean square slope s²: 1/s × s²/(s² + 0.01); short waves riding a rough sea break up); a slope
+  limit of 0.35 (a breaking crest loses the excess), so no input makes the field explode. Its waves use the ocean's
+  gravity and dispersion and add to its surface as a perturbation.
+- Inputs: kicks in the C3 layout (`uint count; uint pad[3]; vec4 kicks[4096]`, k = world x, y, centre displacement
+  in TRU units (negative pushes down), sigma), one CPU-filled buffer per frame plus one optional external GPU buffer
+  of the same layout (`setExternalWaveKicks` in each renderer; the field resets its count after consuming it), the
+  bodies (≤ 64) and the 256² wall mask.
+- Output (`shaders/water_surface.glsl` contract C1): `uRipples`, rgba16f, h (TRU units above the rest surface, dips
+  included), dh/dx, dh/dy, v (units/s); `WaterBlock::ripple` = window corner, cell size, rest surface z;
+  `rippleInfo` = (512, 1 while the field runs). Contract C2: `ouSurfaceHeight(p)` / `ouSurfaceSlope(p)` sum tru.exe's
+  sea waves, the FFT ocean (or afl's waves / Godot's layers) and the field; water.vert displaces with the same
+  `ouBaseHeight` + `ouFieldHeight`, water.frag reads `ouFieldSample` (its FFT normals stay the filtered
+  `ouOceanSurface`).
+- Cost (1920×1080, RX 7900 XTX / RADV, `OU_VK_PRESENT_STATS=1`, which also brackets the field): 0.069–0.077 ms a
+  frame on Vulkan (l4_pool, l1_seatop, l2_cliffclimb), 0.09–0.10 ms on GL (`GL_TIME_ELAPSED`).
+- Original water runs none of it (`waterfield::wanted`).
 
 ### Water colour (Enhanced, GL + Vulkan; `graphics.water_color`, `--water-color`, WATER & SKY > WATER COLOUR)
 

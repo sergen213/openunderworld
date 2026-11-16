@@ -1,6 +1,6 @@
 #version 460
 // Enhanced water surface vertex shader (GL 4.5 / Vulkan 1.3, same mesh layout as the scene pass). water.frag has the
-// technique; the waves are shaders/waves.glsl, shared with water.frag and the caustics.
+// technique; the surface is shaders/water_surface.glsl, shared with water.frag and the other water effects.
 #ifdef VULKAN
 layout(set = 0, binding = 0) uniform Water {
 #else
@@ -36,7 +36,7 @@ layout(location = 2) out vec2 vUv;
 layout(location = 3) out vec4 vColor;
 layout(location = 4) flat out float vSea;
 
-#include "shaders/waves.glsl"
+#include "shaders/water_surface.glsl"
 
 void main() {
 #ifdef VULKAN
@@ -46,31 +46,12 @@ void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal;
 #endif
-    // A sea's waves, as its original vertex shader (tru.exe 0x69DFB0): lowered by sum c63 (1 - cos(x c60 + y c61 + c62)).
-    // The gameplay surface follows the same waves (game::waveRegisters).
-    float rest = world.z;
-    world.z -= dot(uWaves[3], 1.0 - cos(world.x * uWaves[0] + world.y * uWaves[1] + uWaves[2]));
-    float t = w.eye.w;
+    // The surface (shaders/water_surface.glsl): a sea's waves as its original vertex shader (tru.exe 0x69DFB0: lowered by
+    // sum c63 (1 - cos(x c60 + y c61 + c62)); the gameplay surface follows the same waves, game::waveRegisters), Godot's
+    // height layers or on open seas the FFT ocean / afl_ext's waves (visible where the surface mesh has interior
+    // vertices; TRU's are mostly coarse), capped at the rest plane, plus the interactive wave field on top.
     vSea = any(notEqual(uWaves[3], vec4(0.0))) ? 1.0 : 0.0;
-    // Godot's height layers (amplitude detail.z) and on open seas afl_ext's waves (12 iterations, its geometry count) or
-    // the FFT ocean's swell + gravity cascades (render/Ocean.hpp, which then replace the Godot layers too), centred on
-    // that surface (afl's height averages ~0.47; the FFT lowered by half its height RMS [I]) but never above the rest
-    // plane, the original's own crest bound, so the yacht deck and every shore stay above the drawn sea. Visible where
-    // the surface mesh has interior vertices (TRU's are mostly coarse).
-    bool fft = vSea > 0.5 && w.ocean[0].x > 0.5;
-    if (!fft) {
-        float h = 0.5 * (ouFbm(world.xy / kLambdaA + t * vec2(0.10, 0.02), 0.0).x + ouFbm(kWaterRot * world.xy / kLambdaB + t * vec2(-0.04, 0.12), 0.0).x);
-        world.z += w.detail.z * (h - 0.5);
-    }
-    if (fft) world.z += ouOceanHeight(world.xy) - 0.5 * kM * w.ocean[0].w;
-    else if (vSea > 0.5) world.z += kSeaAmp * (ouSea(world.xy, t, 12) - 0.47);
-    world.z = min(world.z, rest);
-    // The interactive wave field's height (game::WaveField), faded over its outer 4 % as in water.frag.
-    if (w.rippleInfo.y > 0.5) {
-        vec2 uv = (world.xy - w.ripple.xy) / (w.ripple.z * w.rippleInfo.x);
-        vec2 in2 = min(uv, 1.0 - uv);
-        world.z += smoothstep(0.0, 0.04, min(in2.x, in2.y)) * textureLod(uRipples, uv, 0.0).r;
-    }
+    world.z += ouBaseHeight(world.xy, uWaves, vSea > 0.5, w.eye.w) + ouFieldHeight(world.xy);
     vWorld = world.xyz;
     vUv = aUv; vColor = aColor;
     gl_Position = w.viewProj * world;
