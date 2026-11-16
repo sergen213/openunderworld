@@ -58,6 +58,25 @@ float ouFieldCaustic(vec3 bed, float surfaceZ, vec3 sunDir, float fade) {
     float j = 1.0 + d * (1.0 - 1.0 / 1.333) * ouFieldSample(q).w;
     return mix(1.0, 1.0 / max(abs(j), 0.25), fade * (1.0 - smoothstep(10.0 * kM, 35.0 * kM, d)));
 }
+// The slick the field's waves leave at p (0..1): a splash's or a stroke's turbulence damps the short wind chop within
+// seconds (the smooth patch behind a boat or a swimmer, a whale's "footprint"), so their rings and wakes ride on calmer
+// water. Read as the field's RMS slope over ~half a metre (eight taps 2.5 and 4 cells out; 1 at RMS 0.04, a few cm
+// high rings) or its whitewater, with its fade.
+float ouFieldSlick(vec2 p) {
+    if (w.rippleInfo.y < 0.5) return 0.0;
+    float inv = 1.0 / (w.ripple.z * w.rippleInfo.x);
+    vec2 uv = (p - w.ripple.xy) * inv;
+    vec2 in2 = min(uv, 1.0 - uv);
+    float fade = smoothstep(0.0, 0.04, min(in2.x, in2.y));
+    if (fade == 0.0) return 0.0;
+    float a = 2.5 * w.ripple.z * inv, b = 2.83 * w.ripple.z * inv, e = 0.0;
+    const vec2 dirs[8] = vec2[8](vec2(1, 0), vec2(-1, 0), vec2(0, 1), vec2(0, -1), vec2(1, 1), vec2(-1, 1), vec2(1, -1), vec2(-1, -1));
+    for (int i = 0; i < 8; ++i) {
+        vec2 g = textureLod(uRipples, uv + dirs[i] * (i < 4 ? a : b), 0.0).gb;
+        e += dot(g, g);
+    }
+    return fade * clamp(max(sqrt(e / 8.0) / 0.04, 1.5 * textureLod(uRipples, uv, 0.0).a), 0.0, 1.0);
+}
 
 // The base surface of one water mesh at world p (water.vert's displacement): `waves` = its tru.exe sea waves (columns
 // c60-c63, zero = flat), `sea` = an open sea (the FFT ocean, or without it afl_ext's waves over Godot's height layers,

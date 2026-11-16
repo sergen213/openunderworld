@@ -220,10 +220,16 @@ void main() {
     // surface instead, or (FFT off) afl_ext's waves on top (36 iterations near, 12 far; difference step >= a pixel;
     // smoothed toward flat with distance as afl does).
     float nfade = 1.0 / (1.0 + dist / (60.0 * kM));
+    // The interactive wave field (render/WaterField.hpp), faded out where a pixel spans several of its cells (it has no
+    // mips: it would alias), and the slick its turbulence leaves on the short wind chop (water_surface.glsl
+    // ouFieldSlick: up to 85 % of the chop's slope gone), which lets its rings and wakes read on a rough sea.
+    float fieldFade = 1.0 - smoothstep(1.5, 6.0, footprint / max(w.ripple.z, 1.0));
+    vec4 wave = ouFieldSample(p.xy) * fieldFade;
+    float chop = 1.0 - 0.85 * fieldFade * ouFieldSlick(p.xy);
     vec2 s;
     float seaH = 0.5, whitecap = 0.0, fresh = 0.0, fine = 0.5;
     if (sea && ouOceanOn()) {
-        OuOcean oc = ouOceanSurface(p.xy, pdx, pdy);
+        OuOcean oc = ouOceanSurface(p.xy, pdx, pdy, chop);
         s = ouOceanNormalSlope(oc);
         seaH = clamp(0.5 + 0.25 * oc.h / max(w.ocean[0].w, 0.05), 0.0, 1.0); // afl's 0..1 crest height [I: +-2 RMS]
         // Whitecaps: a density from where the summed surface folds now (fresh) and the folds' persisted foam (aged,
@@ -234,19 +240,16 @@ void main() {
         fine = clamp((0.9 - oc.fineJ) / 0.3, 0.0, 1.0);
     } else {
         vec3 la = ouLayerA(p.xy, t, footprint), lb = ouLayerB(p.xy, t, footprint);
-        s = 0.5 * (la.yz + lb.yz) * nfade * (sea ? 0.5 : 1.0);
+        s = 0.5 * (la.yz + lb.yz) * nfade * (sea ? 0.5 : 1.0) * chop;
         if (sea) {
             int iters = dist < 25.0 * kM ? 36 : dist < 80.0 * kM ? 24 : 12;
             float eps = max(0.01 * kSeaUnit, footprint);
             seaH = ouSea(p.xy, t, iters);
             vec2 g = vec2(ouSea(p.xy + vec2(eps, 0.0), t, iters) - seaH, ouSea(p.xy + vec2(0.0, eps), t, iters) - seaH) / eps;
-            s += g * kSeaNormalAmp * (1.0 - 0.8 * min(1.0, sqrt(dist / kSeaUnit * 0.01) * 1.1));
+            s += g * (kSeaNormalAmp * chop) * (1.0 - 0.8 * min(1.0, sqrt(dist / kSeaUnit * 0.01) * 1.1));
         }
     }
-    // The interactive wave field (render/WaterField.hpp): its height adds to the other waves', so its slope adds to
-    // theirs at full weight; faded out where a pixel spans several of its cells (it has no mips: it would alias).
-    float fieldFade = 1.0 - smoothstep(1.5, 6.0, footprint / max(w.ripple.z, 1.0));
-    vec4 wave = ouFieldSample(p.xy) * fieldFade;
+    // The field's height adds to the other waves', so its slope adds to theirs at full weight.
     vec2 sUnresolved = s; // the filtered waves' slope: what the reflection lobe stands for (the field is resolved)
     s += wave.xy;
     // Its crests are thin water lit through like the sea's own (afl's subsurface term below, by crest height): the

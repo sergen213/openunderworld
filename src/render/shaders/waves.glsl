@@ -140,13 +140,17 @@ vec4 ouOceanCubic(float layer, vec2 uv, vec2 gx, vec2 gy) {
     return g0.y * (g0.x * textureGrad(uOcean, vec3(h0.x, h0.y, layer), gx, gy) + g1.x * textureGrad(uOcean, vec3(h1.x, h0.y, layer), gx, gy)) +
            g1.y * (g0.x * textureGrad(uOcean, vec3(h0.x, h1.y, layer), gx, gy) + g1.x * textureGrad(uOcean, vec3(h1.x, h1.y, layer), gx, gy));
 }
-OuOcean ouOceanSurface(vec2 p, vec2 dx, vec2 dy) {
+// chop (0..1): how much of the short wind chop survives at p (water.frag: the slick an interactive field's turbulence
+// leaves, water_surface.glsl ouFieldSlick): scales the slopes of the fine copies (waves of ~1 m and less) fully and
+// the 11.3 m tile and its rotated copy (down to the same lengths, but with longer waves too) by 70 % of that.
+OuOcean ouOceanSurface(vec2 p, vec2 dx, vec2 dy, float chop) {
     OuOcean o = OuOcean(vec2(0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0);
+    float chopTile = mix(1.0, chop, 0.7);
     for (int c = 0; c < 3; ++c) {
         float s = 1.0 / w.ocean[1][c];
         vec2 uv = p * s, gx = dx * s, gy = dy * s;
         vec4 a = textureGrad(uOcean, vec3(uv, float(3 * c)), gx, gy), b = textureGrad(uOcean, vec3(uv, float(3 * c + 1)), gx, gy);
-        o.slope += b.xy, o.jxx += b.z, o.jyy += b.w, o.jxy += a.w;
+        o.slope += (c == 2 ? chopTile : 1.0) * b.xy, o.jxx += b.z, o.jyy += b.w, o.jxy += a.w;
         if (c < 2) o.h += a.z;
         float layer = float(3 * c + 2);
         bool magnified = min(length(gx), length(gy)) * w.ocean[0].z < 1.0; // texels wider than the pixel
@@ -154,7 +158,7 @@ OuOcean ouOceanSurface(vec2 p, vec2 dx, vec2 dy) {
         o.foam = max(o.foam, f.x);
         if (c == 2) o.fineJ = f.y;
     }
-    o.slope += 0.6 * ouOceanChopCopy(p, dx, dy, kOceanChopRot, 1.618 * w.ocean[1][2] / kM, vec2(0.0));
+    o.slope += (0.6 * chopTile) * ouOceanChopCopy(p, dx, dy, kOceanChopRot, 1.618 * w.ocean[1][2] / kM, vec2(0.0));
     // NeuralSpecOcean's fine bands, weights relative to the 11.3 m tile here (1 = its 0.58), faded out from 4 to 16 of
     // their texels per pixel as its bands are (Offshore.js nyq3 / nyq4; beyond, their mips only repeat the coarser
     // tiles' scales), the fetches skipped there.
@@ -162,14 +166,15 @@ OuOcean ouOceanSurface(vec2 p, vec2 dx, vec2 dy) {
     float px = max(min(lx, ly), max(lx, ly) / 8.0) / kM; // metres per filtered pixel (up to 8x anisotropic, render::ocean::kMaxAniso)
     float n = w.ocean[0].z;
     float k3 = 1.0 - smoothstep(4.0, 16.0, px * n / 5.53), k4 = 1.0 - smoothstep(4.0, 16.0, px * n / 1.68);
+    float c3 = k3 * chop, c4 = k4 * chop;
     if (k3 > 0.0) {
-        o.slope += (0.534 * k3) * ouOceanChopCopy(p, dx, dy, mat2(0.9205, 0.3907, -0.3907, 0.9205), 3.42, vec2(0.73, 0.67));
-        o.slope += (0.483 * k3) * ouOceanChopCopy(p, dx, dy, mat2(0.6561, -0.7547, 0.7547, 0.6561), 5.53, vec2(0.29, 0.81));
+        o.slope += (0.534 * c3) * ouOceanChopCopy(p, dx, dy, mat2(0.9205, 0.3907, -0.3907, 0.9205), 3.42, vec2(0.73, 0.67));
+        o.slope += (0.483 * c3) * ouOceanChopCopy(p, dx, dy, mat2(0.6561, -0.7547, 0.7547, 0.6561), 5.53, vec2(0.29, 0.81));
         o.fineJ = min(o.fineJ, mix(1.0, ouOceanChopJ(p, dx, dy, mat2(0.9205, 0.3907, -0.3907, 0.9205), 3.42, vec2(0.73, 0.67)), k3));
     }
     if (k4 > 0.0) {
-        o.slope += (0.42 * k4) * ouOceanChopCopy(p, dx, dy, mat2(0.8572, -0.5150, 0.5150, 0.8572), 1.04, vec2(0.31, 0.89));
-        o.slope += (0.42 * k4) * ouOceanChopCopy(p, dx, dy, mat2(0.4848, 0.8746, -0.8746, 0.4848), 1.68, vec2(0.64, 0.22));
+        o.slope += (0.42 * c4) * ouOceanChopCopy(p, dx, dy, mat2(0.8572, -0.5150, 0.5150, 0.8572), 1.04, vec2(0.31, 0.89));
+        o.slope += (0.42 * c4) * ouOceanChopCopy(p, dx, dy, mat2(0.4848, 0.8746, -0.8746, 0.4848), 1.68, vec2(0.64, 0.22));
         o.fineJ = min(o.fineJ, mix(1.0, ouOceanChopJ(p, dx, dy, mat2(0.8572, -0.5150, 0.5150, 0.8572), 1.04, vec2(0.31, 0.89)), k4));
     }
     o.J = (1.0 + o.jxx) * (1.0 + o.jyy) - o.jxy * o.jxy;

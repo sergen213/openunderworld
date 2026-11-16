@@ -843,6 +843,22 @@ TEST(Ocean, CpuSwellIsTheDrawnHeight) {
     }
 }
 
+// The GL flavours of the Enhanced water surface: every include expanded, the tessellated vertex stage selected by its
+// define right after #version, and the vertex / fragment stages compile both ways (Vulkan builds them with glslc;
+// the tessellation stages compile on the GL driver at startup, falling back to per-vertex displacement).
+TEST(WaterSurface, GlSourcesExpandAndCompile) {
+    const std::string tessVs = render::waterVertexSource(false, true), plainVs = render::waterVertexSource(false);
+    for (const std::string& s : {tessVs, plainVs, render::waterTessControlSource(false), render::waterTessEvalSource(false),
+                                 render::waterFragmentSource(false)})
+        EXPECT_EQ(s.find("\n#include"), std::string::npos);
+    EXPECT_EQ(tessVs.find("#define OU_TESS 1\n"), tessVs.find('\n') + 1);
+    EXPECT_EQ(plainVs.find("OU_TESS 1"), std::string::npos);
+    EXPECT_NE(render::waterTessControlSource(false).find("layout(vertices = 3) out;"), std::string::npos);
+    std::string err;
+    EXPECT_FALSE(render::sm3::compileSpirv(tessVs, false, false, err).empty()) << err;
+    EXPECT_FALSE(render::sm3::compileSpirv(plainVs, false, false, err).empty()) << err;
+}
+
 // The dispersion relation: deep water omega^2 = g k (phase speed sqrt(g / k): a 10 m swell at 3.95 m/s, a 10 cm ripple
 // at 0.43 m/s plus capillarity), shallow water omega = k sqrt(g h) (the depth bounds the speed), the minimum phase
 // speed ~0.23 m/s at the 1.7 cm capillary-gravity crossover; damping grows with k.

@@ -36,7 +36,7 @@ struct WaterBlock {
     glm::vec4 fogColor;    // rgb, w 1 = the camera is submerged (underwater post)
     glm::vec4 fogRange;    // x fog near, y fog far, z ripple normal strength, w reflection strength
     glm::vec4 ripple;      // interactive wave field (shaders/water_surface.glsl C1): origin x, origin y, cell size, surface z
-    glm::vec4 rippleInfo;  // x grid size, y 1 = a wave field is bound, z/w unused
+    glm::vec4 rippleInfo;  // x grid size, y 1 = a wave field is bound, z focal length (pixels; water.tesc), w unused
     glm::vec4 ambient;     // rgb scene ambient (scene::Environment::ambient), w unused
     // ---- v0.10 extras (FrameOptions waterDetail / waterDebug / atmosphere / weather) ----
     glm::vec4 detail;      // x 1 = water detail, y debug view, z Godot height-layer amplitude (water.vert), w volume count
@@ -127,8 +127,13 @@ struct UnderwaterRays {
     bool draw(const Camera& camera, float aspect, const float (&waves)[4][4], std::array<uint8_t, 2500>& out);
 };
 
-// Water surface shaders (same mesh vertex layout as the scene pass).
-std::string waterVertexSource(bool vulkan);
+// Water surface shaders (same mesh vertex layout as the scene pass). Tessellated (GL 4.0 / VK tessellationShader;
+// patches of 3 control points): waterVertexSource(vulkan, true) + the control / evaluation stages subdivide the coarse
+// surface meshes inside the interactive field's window so its waves displace real geometry (water.tesc); without,
+// waterVertexSource(vulkan) displaces the mesh's own vertices.
+std::string waterVertexSource(bool vulkan, bool tessellated = false);
+std::string waterTessControlSource(bool vulkan);
+std::string waterTessEvalSource(bool vulkan);
 std::string waterFragmentSource(bool vulkan);
 // The splash fluid drawn as liquid (screen-space fluid rendering, docs/RENDERING.md "Splash fluid"; technique and shaders
 // adapted from talvinckb/OpenGL-Water-Simulation, MIT), after render::fluid simulated its particles this frame:

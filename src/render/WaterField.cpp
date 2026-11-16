@@ -27,6 +27,14 @@ bool wanted(const FrameOptions& o) {
     return o.water == WaterQuality::Enhanced && o.waterField.active && o.waterField.cellSize > 0.0f;
 }
 
+bool touches(const FrameOptions& o, glm::vec3 center, float radius) {
+    if (!wanted(o)) return false;
+    const float size = o.waterField.cellSize * float(kN);
+    const glm::vec2 lo(o.waterField.originX, o.waterField.originY), c(center);
+    const glm::vec2 d = glm::max(glm::max(lo - c, c - (lo + size)), glm::vec2(0.0f)); // sphere centre to the square
+    return glm::dot(d, d) <= radius * radius;
+}
+
 std::optional<Push> Stepper::frame(const FrameOptions& o, KickBuffer& kicks, FrameBuffer& bodies) {
     if (!wanted(o)) {
         active_ = false;

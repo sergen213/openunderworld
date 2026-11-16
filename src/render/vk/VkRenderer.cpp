@@ -123,6 +123,15 @@ const uint32_t kAgCausticFrag[] = {
 const uint32_t kWaterVert[] = { // Enhanced water + splashes (shared GLSL, render/shaders)
 #include "water.vert.inc"
 };
+const uint32_t kWaterTessVert[] = { // water.vert -DOU_TESS: the undisplaced surface for water.tesc / water.tese
+#include "water_tess.vert.inc"
+};
+const uint32_t kWaterTesc[] = {
+#include "water.tesc.inc"
+};
+const uint32_t kWaterTese[] = {
+#include "water.tese.inc"
+};
 const uint32_t kWaterFrag[] = {
 #include "water.frag.inc"
 };
@@ -1349,7 +1358,10 @@ public:
         if (enhancedWater) {
             // Ray-traced reflections: the -DOU_RT variant traces the TLAS (set 2) instead of the SSR march.
             const bool rtWater = rtOn && options.rtReflections && waterRtPipeline_;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rtWater ? waterRtPipeline_ : waterPipeline_);
+            // Meshes reaching into the wave field's window draw tessellated (water.tesc), the rest per vertex.
+            const VkPipeline flat = rtWater ? waterRtPipeline_ : waterPipeline_, tessellated = rtWater ? waterTessRtPipeline_ : waterTessPipeline_;
+            VkPipeline bound = flat;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
             // The surface also reads from below (water.frag's Snell's window); the translated screen draws above leave
             // their own cull mode set (drawOriginal: back faces for single-sided materials).
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
@@ -1361,10 +1373,12 @@ public:
             for (uint32_t mi = 0; mi < meshes_.size(); ++mi) {
                 const GpuMesh& m = meshes_[mi];
                 if (!(m.water || sea_[mi]) || clippedAway(mi)) continue;
+                const VkPipeline want = tessellated && waterfield::touches(options, m.center, m.radius) ? tessellated : flat;
+                if (want != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = want);
                 bindMesh(mi);
                 clipTo(mi);
                 const glm::mat4 wp[2] = {m.model, waterWaves(m.center, m.radius, options.waterVolumes)};
-                vkCmdPushConstants(cmd, waterLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof wp, wp);
+                vkCmdPushConstants(cmd, waterLayout_, waterPushStages(), 0, sizeof wp, wp);
                 for (uint32_t s = 0; s < m.submeshes.size(); ++s)
                     if (waterDraw(mi, s)) vkCmdDrawIndexed(cmd, m.submeshes[s].indexCount, 1, m.submeshes[s].firstIndex, 0, 0);
             }
@@ -2287,6 +2301,8 @@ private:
         vkDestroyPipeline(device_, std::exchange(linePipeline_, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(waterPipeline_, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(waterRtPipeline_, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipeline(device_, std::exchange(waterTessPipeline_, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipeline(device_, std::exchange(waterTessRtPipeline_, VK_NULL_HANDLE), nullptr);
         for (VkPipeline* p : {&splashSplatPipeline_, &splashBlurPipeline_, &splashCompositePipeline_, &uwSnowPipeline_, &uwBubblePipeline_})
             vkDestroyPipeline(device_, std::exchange(*p, VK_NULL_HANDLE), nullptr);
         for (VkPipeline& p : fxPipelines_) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
@@ -3044,6 +3060,9 @@ private:
         f13.shaderDemoteToHelperInvocation = VK_TRUE; // required in 1.3; glslc emits it for `discard` (alpha test)
         VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f13};
         f2.features.textureCompressionBC = supported.textureCompressionBC;
+        // Enhanced water's tessellated surface (water.tesc / water.tese); OU_WATER_NO_TESS for comparisons.
+        waterTess_ = supported.tessellationShader && !std::getenv("OU_WATER_NO_TESS");
+        f2.features.tessellationShader = waterTess_;
         f2.features.samplerAnisotropy = supported.samplerAnisotropy;
         f2.features.shaderInt64 = rtStatus_.supported; // 64-bit buffer addresses in scene_rt.frag
         // FSR (docs/RENDERING.md "FSR"): its compute passes read and write storage images without a declared format.
@@ -3187,12 +3206,14 @@ private:
         pl.pSetLayouts = &setLayout_;
         // Enhanced water: set 0 = WaterBlock UBO + opaque colour/depth + ripple field + the FFT ocean (uOcean) + (5) the
         // animated water texture (uAgWater: agWater_, recordAgWater; bed caustics).
+        // The tessellated surface (waterTess_) displaces in water.tese and reads the block in water.tesc too.
+        const VkShaderStageFlags tess = waterTess_ ? VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT : 0;
         const VkDescriptorSetLayoutBinding wb[6] = {
-            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | tess, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // water.vert displaces by it
-            {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // ... and by this
+            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | tess, nullptr}, // water.vert / .tese displace by it
+            {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | tess, nullptr}, // ... and by this
             {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // uAgWater
         };
         VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 6, wb};
@@ -3211,7 +3232,7 @@ private:
         }
         VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 10, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
-        VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves
+        VkPushConstantRange modelPush{waterPushStages(), 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves (.tese: the waves)
         // 1: sun shadow (caustics); 2 (RT devices): the scene TLAS for water_rt.frag's reflections.
         const VkDescriptorSetLayout waterSets[3] = {waterSetLayout_, shadowSetLayout_, rtSetLayout_};
         VkPipelineLayoutCreateInfo wpl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 3u : 2u, waterSets, 1,
@@ -3335,6 +3356,14 @@ private:
         if (rtPipelines_)
             waterRtPipeline_ = createPipeline(kWaterVert, kWaterRtFrag, waterLayout_, &kSceneBinding, kSceneAttrs, PipelineKind::Water,
                                               samples_, sceneFormat_, depthFormat_);
+        // Tessellated (waterTess_: water.tesc / water.tese subdivide the coarse surface in the wave field's window).
+        if (waterTess_) {
+            waterTessPipeline_ = createPipeline(kWaterTessVert, kWaterFrag, waterLayout_, &kSceneBinding, kSceneAttrs, PipelineKind::Water,
+                                                samples_, sceneFormat_, depthFormat_, kWaterTesc, kWaterTese);
+            if (rtPipelines_)
+                waterTessRtPipeline_ = createPipeline(kWaterTessVert, kWaterRtFrag, waterLayout_, &kSceneBinding, kSceneAttrs,
+                                                      PipelineKind::Water, samples_, sceneFormat_, depthFormat_, kWaterTesc, kWaterTese);
+        }
         // The splash fluid (render/Water.hpp splash passes): splat (MAX-blended) and blur into the RGBA32F targets,
         // composite into the scene's second pass. Without blendable RGBA32F (not required by the spec) there is no fluid.
         VkFormatProperties rgba;
@@ -3370,22 +3399,30 @@ private:
                                              PipelineKind(size_t(PipelineKind::FxAlpha) + b), samples_, sceneFormat_, depthFormat_);
     }
 
-    // `binding` null = no vertex input (fullscreen triangle). colorFormat UNDEFINED = depth-only.
+    // `binding` null = no vertex input (fullscreen triangle). colorFormat UNDEFINED = depth-only. tesc / tese: optional
+    // tessellation stages (both or neither; patch lists of 3 control points).
     VkPipeline createPipeline(std::span<const uint32_t> vs, std::span<const uint32_t> fs, VkPipelineLayout layout,
                               const VkVertexInputBindingDescription* binding,
                               std::span<const VkVertexInputAttributeDescription> attrs, PipelineKind kind,
-                              VkSampleCountFlagBits samples, VkFormat colorFormat, VkFormat depthFormat) {
+                              VkSampleCountFlagBits samples, VkFormat colorFormat, VkFormat depthFormat,
+                              std::span<const uint32_t> tesc = {}, std::span<const uint32_t> tese = {}) {
+        const bool tessellated = !tesc.empty() && !tese.empty();
         VkShaderModule v = shaderModule(vs), f = shaderModule(fs);
-        VkPipelineShaderStageCreateInfo stages[2] = {
+        VkShaderModule tc = tessellated ? shaderModule(tesc) : VK_NULL_HANDLE, te = tessellated ? shaderModule(tese) : VK_NULL_HANDLE;
+        VkPipelineShaderStageCreateInfo stages[4] = {
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, v, "main", nullptr},
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, f, "main", nullptr},
+            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, tc, "main", nullptr},
+            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, te, "main", nullptr},
         };
         VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, nullptr, 0,
                                                 binding ? 1u : 0u, binding, uint32_t(attrs.size()), attrs.data()};
         VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, nullptr, 0,
-                                                  kind == PipelineKind::Lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
-                                                                              : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                                                  tessellated ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST
+                                                  : kind == PipelineKind::Lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
+                                                                                : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
                                                   VK_FALSE};
+        const VkPipelineTessellationStateCreateInfo ts{VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO, nullptr, 0, 3};
         VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, nullptr, 0, 1, nullptr, 1, nullptr};
         VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         rs.polygonMode = VK_POLYGON_MODE_FILL;
@@ -3451,7 +3488,8 @@ private:
         rendering.pColorAttachmentFormats = &colorFormat;
         rendering.depthAttachmentFormat = depthFormat;
         VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
-        ci.stageCount = 2;
+        ci.stageCount = tessellated ? 4 : 2;
+        ci.pTessellationState = tessellated ? &ts : nullptr;
         ci.pStages = stages;
         ci.pVertexInputState = &vi;
         ci.pInputAssemblyState = &ia;
@@ -3466,6 +3504,8 @@ private:
         VkResult r = vkCreateGraphicsPipelines(device_, pipelineCache_, 1, &ci, nullptr, &p);
         vkDestroyShaderModule(device_, v, nullptr);
         vkDestroyShaderModule(device_, f, nullptr);
+        if (tc) vkDestroyShaderModule(device_, tc, nullptr);
+        if (te) vkDestroyShaderModule(device_, te, nullptr);
         check(r, "vkCreateGraphicsPipelines");
         return p;
     }
@@ -5802,6 +5842,10 @@ private:
 
     SDL_Window* window_ = nullptr;
     bool libraryLoaded_ = false, validation_ = false, bc_ = false, vsync_ = true;
+    bool waterTess_ = false; // tessellationShader enabled: the Enhanced water surface is tessellated (water.tesc / .tese)
+    VkShaderStageFlags waterPushStages() const {
+        return VK_SHADER_STAGE_VERTEX_BIT | (waterTess_ ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT : 0);
+    }
     bool swapchainDirty_ = true, frameActive_ = false;
     float maxAniso_ = 1.0f;
     uint32_t apiVersion_ = 0, queueFamily_ = 0, frameIndex_ = 0, imageIndex_ = 0;
@@ -5869,6 +5913,7 @@ private:
     VkPipeline textPipeline_ = VK_NULL_HANDLE, linePipeline_ = VK_NULL_HANDLE, shadowPipeline_ = VK_NULL_HANDLE,
                postPipeline_ = VK_NULL_HANDLE, prepassPipeline_ = VK_NULL_HANDLE;
     VkPipeline waterPipeline_ = VK_NULL_HANDLE, waterRtPipeline_ = VK_NULL_HANDLE;
+    VkPipeline waterTessPipeline_ = VK_NULL_HANDLE, waterTessRtPipeline_ = VK_NULL_HANDLE; // waterTess_: water.tesc / .tese
     VkDescriptorSetLayout waterSetLayout_ = VK_NULL_HANDLE, postWaterSetLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout waterLayout_ = VK_NULL_HANDLE; // water: set 0 = WaterBlock + textures
     // Splash fluid passes (recordSplashFluid): null without blendable RGBA32F. Targets: [0] splat / blurred, [1] blur
