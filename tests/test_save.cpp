@@ -1066,8 +1066,10 @@ TEST(StreamReal, ChapterStartIntros) {
 // User report: "Chapter 1 doesn't spawn Lara at the correct location, she just falls through emptiness". The chapter-1
 // slot (LOAD GAME, written at the chapter start by an older build) held her falling at (-183404, -24577, 10386): on
 // l1_cineseatop's set, outside l1_seatop's sea box. An airborne save resumes at its checkpoint (l1_seatop 1000, the
-// stern), else its unit's spawn: also this build's own chapter-start autosave, taken while 030_med_yacht's tail drops
-// her into the sea before 997 puts her on the stern. Standing / riding saves keep their exact place.
+// stern), else its unit's spawn. Standing / riding saves keep their exact place. This build's own chapter-start
+// autosave is taken as 030_med_yacht's tail has left her at the sea's static top: one tick in she is under it, in the
+// entry from the air (SwimSplash; tru.exe starts S104 once her root is under the volume's +0x58 top, docs/GAMEPLAY.md
+// "Water entry"). That save keeps its place, and 997 then puts her on the stern as in the unsaved game.
 TEST(StreamReal, AirborneSaveResumesAtCheckpoint) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1081,10 +1083,12 @@ TEST(StreamReal, AirborneSaveResumesAtCheckpoint) {
     auto w = world();
     w->startChapter(1);
     for (int i = 0; i < 3; ++i) w->tick({});
-    ASSERT_EQ(w->player().state().state, game::State::Fall) << "the chapter-start autosave tick";
+    ASSERT_EQ(w->player().state().state, game::State::SwimSplash) << "the chapter-start autosave tick";
     const auto early = save::capture(*w);
-    auto stale = early; // the user's slot
+    auto stale = early; // the user's slot: falling, out of the water
+    stale.player.state = game::State::Fall;
     stale.player.pos = vec3(-183403.84f, -24577.49f, 10386.43f), stale.player.vel = vec3(0, 0, -429.3f);
+    stale.waterUnit.clear(), stale.waterIndex = -1, stale.player.water = -1;
     stale.checkpoint = game::CheckpointRef{"l1_seatop", 1000};
     for (const auto& [sg, flow] : {std::pair<const save::SaveGame*, const char*>{&early, "chapter-start autosave"}, {&stale, "older build's slot"}}) {
         auto l = world();
