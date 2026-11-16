@@ -23,12 +23,17 @@ OU_SHADOW_UBO uniform OuShadow {
     uvec4 lights;     // local-light shadow rays: x / y shadow-light bits (light table 0-31 / 32-63), z rays per light (0 off)
 } ouShadow;
 OU_SHADOW_TEX uniform sampler2DShadow ouShadowMap; // atlas: the 3 cascades side by side
-// Screen-space ambient occlusion (CORTAO, RENDERING.md "Ambient occlusion"): render-resolution map, r = visibility of
-// the ambient / indirect light (1 = unoccluded) of the opaque surface at that pixel, same orientation as gl_FragCoord.
+// Screen-space ambient occlusion (CORTAO, RENDERING.md "Ambient occlusion"): render-resolution map, same orientation as
+// gl_FragCoord; r = visibility of the ambient / indirect light (1 = unoccluded) of the pre-passed opaque surface at that
+// pixel, g = its view depth (clip w; 0 = no pre-passed surface). A fragment takes r only where its own view depth matches
+// g (2 %): blended, water, exterior and screen-reading draws in front of / behind that surface keep 1, no per-draw flag.
 // Read only while screen.w bit 4 is set (the backend bound a valid map this frame).
 OU_AO_TEX uniform sampler2D ouAoMap;
 float ouAo() {
-    return (int(ouShadow.screen.w) & 4) != 0 ? texelFetch(ouAoMap, ivec2(gl_FragCoord.xy), 0).r : 1.0;
+    if ((int(ouShadow.screen.w) & 4) == 0) return 1.0;
+    vec2 s = texelFetch(ouAoMap, ivec2(gl_FragCoord.xy), 0).rg;
+    float z = 1.0 / gl_FragCoord.w;
+    return s.g > 0.0 && abs(s.g - z) < 0.02 * s.g ? s.r : 1.0;
 }
 
 // 3x3 PCF in the finest cascade whose tile holds p.
@@ -285,13 +290,9 @@ float ouSunBegin(bool sunLit) {
 #endif
 }
 // Screen-space AO factor of a translated program (ShaderTranslate scales its ambient / indirect registers by it: g_Ambient
-// c15, IrradianceState c70-c76, light-map scales c148 / c149; never SunLight or the light slots). Opaque materials
-// (fixedParams.w value 8) of fully opaque, non-reflective instances only: their depth is in the pre-pass the map was built
-// from; blended, additive and fading draws keep 1.
-float ouAoBegin() {
-    int f = int(ouMat.fixedParams.w);
-    return (f & 8) != 0 && (f & 4) == 0 && ouObj.opacity >= 1.0 ? ouAo() : 1.0;
-}
+// c15, IrradianceState c70-c76, light-map scales c148 / c149; never SunLight or the light slots). ouAo's depth match
+// limits it to the pre-passed opaque surfaces.
+float ouAoBegin() { return ouAo(); }
 // Local-light shadows (OU_RT with ouShadow.lights.z rays): visibility of the object's light slots `slots` (bit s: the
 // program reads slot s's colour, which ShaderTranslate scales by vis[s]) from ouP, after ouSunBegin. tru.exe gives its
 // shadow lights (DTP +0x144C, scene::Light::shadow) shadow maps in slots 0-2 (0x5042B0); here the first 4 slots of the
