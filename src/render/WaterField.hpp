@@ -83,6 +83,9 @@ float damping(float k, float cellMetres);
 
 // Whether the frame runs the field: Enhanced water and an active field.
 bool wanted(const FrameOptions& o);
+// Whether a mesh bounded by the world sphere (center, radius) reaches into the frame's field window: the renderers draw
+// only those water meshes through the tessellated pipeline (water.tesc; elsewhere its factors are 1 anyway).
+bool touches(const FrameOptions& o, glm::vec3 center, float radius);
 
 // Per-renderer frame bookkeeping (CPU, deterministic): window scrolling, restarts and the time step, plus the input
 // buffers' contents. frame() returns the frame's Push (cfg.x set per dispatch by the caller) or nullopt when the field

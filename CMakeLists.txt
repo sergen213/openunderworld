@@ -69,7 +69,7 @@ file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gen/sun_glsl.inc CONTENT "R\"o
 target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
 
 # Enhanced water / splash / underwater-post GLSL shared by GL (runtime compile) and Vulkan (glslc).
-foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
+foreach(s water.vert water.tesc water.tese water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
         underwater.glsl uw_medium.glsl atmosphere.glsl filter.glsl waves.glsl tonemap.glsl ocean.comp fluid.glsl fluid.comp
         water_surface.glsl water_field.comp uw_particles.glsl uw_light.glsl uw_snow.vert uw_snow.frag uw_bubble.vert uw_bubble.frag
         uw_shafts.frag uw_shafts_blur.frag uw_water.frag uw_caustics.vert uw_caustics.frag uw_bloom.frag uw_grade.frag)
@@ -113,8 +113,8 @@ endforeach()
 # sun.glsl and shaders/uw_medium.glsl; water.vert and water.frag include shaders/water_surface.glsl (+ waves.glsl);
 # ocean.comp: the FFT ocean; water_field.comp: the interactive wave field; fluid.comp, splash.vert and
 # splash_composite.frag include shaders/fluid.glsl, fluid.comp also shaders/water_surface.glsl).
-foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
-        ocean.comp water_field.comp fluid.comp)
+foreach(s water.vert water.tesc water.tese water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag
+        splash_composite.frag ocean.comp water_field.comp fluid.comp)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
@@ -190,6 +190,14 @@ add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/water_rt.frag.inc
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_medium.glsl
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
 list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/water_rt.frag.inc)
+# Enhanced water tessellated (devices with tessellationShader): water.vert -DOU_TESS passes the undisplaced surface to
+# water.tesc / water.tese.
+add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/water_tess.vert.inc
+                   COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -DOU_TESS -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/water_tess.vert.inc ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/water.vert
+                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/water.vert
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/water_surface.glsl
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
+list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/water_tess.vert.inc)
 # RT AO / GI (rt_indirect.comp): trace, trace from MSAA depth, denoise.
 foreach(def OU_TRACE OU_MS OU_DENOISE)
   string(REPLACE "OU_TRACE" "rt_indirect" name ${def})

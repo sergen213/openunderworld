@@ -48,10 +48,14 @@ void main() {
 #endif
     // The surface (shaders/water_surface.glsl): a sea's waves as its original vertex shader (tru.exe 0x69DFB0: lowered by
     // sum c63 (1 - sin(x c60 + y c61 + c62)); the gameplay surface follows the same waves, game::waveRegisters), Godot's
-    // height layers or on open seas the FFT ocean / afl_ext's waves (visible where the surface mesh has interior
-    // vertices; TRU's are mostly coarse), capped at the rest plane, plus the interactive wave field on top.
+    // height layers or on open seas the FFT ocean / afl_ext's waves, capped at the rest plane, plus the interactive wave
+    // field on top. TRU's surface meshes are coarse (~3.5 m quads): with OU_TESS (tessellation shaders available) this
+    // stage passes the undisplaced surface on and water.tesc / water.tese subdivide it inside the field's window and
+    // displace every generated vertex; without, the mesh's own vertices are displaced here.
     vSea = any(notEqual(uWaves[3], vec4(0.0))) ? 1.0 : 0.0;
+#ifndef OU_TESS
     world.z += ouBaseHeight(world.xy, uWaves, vSea > 0.5, w.eye.w) + ouFieldHeight(world.xy);
+#endif
     vWorld = world.xyz;
     vUv = aUv; vColor = aColor;
     gl_Position = w.viewProj * world;

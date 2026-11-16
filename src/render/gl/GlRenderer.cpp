@@ -309,17 +309,20 @@ GLuint compileShader(GLenum type, const char* src, std::string& error) {
     return s;
 }
 
-Program linkProgram(const char* vs, const char* fs, std::string& error) {
-    GLuint v = compileShader(GL_VERTEX_SHADER, vs, error);
-    if (!v) return {};
-    GLuint f = compileShader(GL_FRAGMENT_SHADER, fs, error);
-    if (!f) { glDeleteShader(v); return {}; }
+// tcs / tes: optional tessellation stages (both or neither).
+Program linkProgram(const char* vs, const char* fs, std::string& error, const char* tcs = nullptr, const char* tes = nullptr) {
+    std::array<GLuint, 4> s{};
+    const std::pair<GLenum, const char*> stages[4] = {{GL_VERTEX_SHADER, vs}, {GL_FRAGMENT_SHADER, fs},
+                                                      {GL_TESS_CONTROL_SHADER, tcs}, {GL_TESS_EVALUATION_SHADER, tes}};
+    auto release = [&] { for (GLuint x : s) if (x) glDeleteShader(x); };
+    for (size_t i = 0; i < 4; ++i) {
+        if (!stages[i].second) continue;
+        if (!(s[i] = compileShader(stages[i].first, stages[i].second, error))) { release(); return {}; }
+    }
     Program p(glCreateProgram());
-    glAttachShader(p.get(), v);
-    glAttachShader(p.get(), f);
+    for (GLuint x : s) if (x) glAttachShader(p.get(), x);
     glLinkProgram(p.get());
-    glDeleteShader(v);
-    glDeleteShader(f);
+    release();
     GLint ok = 0;
     glGetProgramiv(p.get(), GL_LINK_STATUS, &ok);
     if (!ok) {
@@ -433,6 +436,7 @@ struct Targets {
 struct Resources {
     Program sceneProgram, textProgram, lineProgram, shadowProgram, postProgram;
     Program waterProgram, splashSplatProgram, splashBlurProgram, splashCompositeProgram; // Enhanced water (render/Water.cpp sources)
+    Program waterTessProgram; // water.tesc / water.tese (null: no tessellation): draws GL_PATCHES of 3
     std::array<Program, 2> shaftPrograms; // under-water sun shafts: march, blur (render/Water.hpp)
     // Enhanced water's animated water texture (render/Water.hpp kAgWaterSize; abyssal-garden W_WATER): RGBA16F with
     // kAgWaterLevels mips, unit 18 (`uAgWater`: post, water, shafts, particles); program = shaders/uw_water.frag, then
@@ -568,9 +572,17 @@ public:
                                    kPostFsMain; // sun: shafts
         r.postProgram = linkProgram(kPostVs, postFs.c_str(), error);
         if (!r.postProgram.get()) return false;
+        // Per vertex, and tessellated where the driver builds it (render/Water.hpp: the field's waves as geometry; the
+        // meshes reaching into the field's window; not with OU_WATER_NO_TESS, for comparisons).
         const std::string waterVs = waterVertexSource(false), waterFs = waterFragmentSource(false);
         r.waterProgram = linkProgram(waterVs.c_str(), waterFs.c_str(), error);
         if (!r.waterProgram.get()) return false;
+        if (!std::getenv("OU_WATER_NO_TESS")) {
+            const std::string vs = waterVertexSource(false, true), tcs = waterTessControlSource(false), tes = waterTessEvalSource(false);
+            std::string tessError;
+            r.waterTessProgram = linkProgram(vs.c_str(), waterFs.c_str(), tessError, tcs.c_str(), tes.c_str());
+            if (!r.waterTessProgram.get()) std::fprintf(stderr, "ou: water tessellation unavailable (%s)\n", tessError.c_str());
+        }
         const std::string splashVs = splashVertexSource(false), splatFs = splashSplatSource(false),
                           screenVs = splashScreenVertexSource(false), blurFs = splashBlurSource(false),
                           compositeFs = splashCompositeSource(false);
@@ -1160,8 +1172,12 @@ public:
         }
         SDL_GL_MakeCurrent(window_, context_);
         if (fieldTimed_) std::fprintf(stderr, "ou: GPU ms per frame: wave field %.3f (gl, %zu frames)\n", fieldNs_ * 1e-6 / double(fieldTimed_), fieldTimed_);
+        if (surfaceTimed_)
+            std::fprintf(stderr, "ou: GPU ms per frame: water surface %.3f (gl, %s, %zu frames)\n", surfaceNs_ * 1e-6 / double(surfaceTimed_),
+                         res_ && res_->waterTessProgram.get() ? "tessellated" : "per vertex", surfaceTimed_);
         if (fieldQueries_[0]) glDeleteQueries(GLsizei(fieldQueries_.size()), fieldQueries_.data());
-        fieldQueries_ = {};
+        if (surfaceQueries_[0]) glDeleteQueries(GLsizei(surfaceQueries_.size()), surfaceQueries_.data());
+        fieldQueries_ = {}, surfaceQueries_ = {};
         parts_.clear();
         res_.reset(); // GL objects must die while the context is current
         SDL_GL_DestroyContext(context_);
@@ -1174,6 +1190,9 @@ private:
     std::array<GLuint, 3> fieldQueries_{}; // OU_VK_PRESENT_STATS: the wave field's GPU time (runWaterField)
     size_t fieldFrame_ = 0, fieldTimed_ = 0;
     double fieldNs_ = 0.0;
+    std::array<GLuint, 3> surfaceQueries_{}; // OU_VK_PRESENT_STATS: the Enhanced water surface draws (drawWater)
+    size_t surfaceFrame_ = 0, surfaceTimed_ = 0;
+    double surfaceNs_ = 0.0;
 
     static void attrib(GLuint vao, GLuint index, GLint size, GLenum type, GLboolean norm, size_t offset) {
         glEnableVertexArrayAttrib(vao, index);
@@ -1905,15 +1924,29 @@ private:
         glBindTextureUnit(6, t.opaqueDepth.get());
         glBindTextureUnit(7, r.ripples.get());
         glBindTextureUnit(12, r.ocean.get()); // the FFT ocean (shaders/ocean.comp)
-        glUseProgram(r.waterProgram.get());
+        GLuint program = r.waterProgram.get();
+        glUseProgram(program);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         glDepthMask(GL_FALSE);
         glDisable(GL_BLEND);
         glDisable(GL_CULL_FACE); // the surface must also read from below
+        // OU_VK_PRESENT_STATS: the surface draws' GPU time (the result of 3 frames ago).
+        if (presentStats_ && !surfaceQueries_[0]) glCreateQueries(GL_TIME_ELAPSED, GLsizei(surfaceQueries_.size()), surfaceQueries_.data());
+        const GLuint query = presentStats_ ? surfaceQueries_[surfaceFrame_ % surfaceQueries_.size()] : 0;
+        if (query && surfaceFrame_ >= surfaceQueries_.size()) {
+            GLuint64 ns = 0;
+            glGetQueryObjectui64v(query, GL_QUERY_RESULT, &ns);
+            surfaceNs_ += double(ns), ++surfaceTimed_;
+        }
+        if (query) glBeginQuery(GL_TIME_ELAPSED, query);
+        if (r.waterTessProgram.get()) glPatchParameteri(GL_PATCH_VERTICES, 3);
         for (uint32_t i = 0; i < r.meshes.size(); ++i) {
             const GpuMesh& m = r.meshes[i];
             if (!(m.water || sea_[i]) || clippedAway(i)) continue;
+            // Tessellated where the mesh reaches into the wave field's window (water.tesc), else per vertex.
+            const bool tess = r.waterTessProgram.get() && waterfield::touches(options, m.center, m.radius);
+            if (const GLuint want = tess ? r.waterTessProgram.get() : r.waterProgram.get(); want != program) glUseProgram(program = want);
             scissorFor(i, vp);
             glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(m.model));
             const glm::mat4 waves = waterWaves(m.center, m.radius, options.waterVolumes);
@@ -1921,9 +1954,10 @@ private:
             glBindVertexArray(m.vao.get());
             for (uint32_t s = 0; s < m.submeshes.size(); ++s)
                 if (waterDraw(i, s))
-                    glDrawElements(GL_TRIANGLES, GLsizei(m.submeshes[s].indexCount), GL_UNSIGNED_INT,
+                    glDrawElements(tess ? GL_PATCHES : GL_TRIANGLES, GLsizei(m.submeshes[s].indexCount), GL_UNSIGNED_INT,
                                    reinterpret_cast<const void*>(uintptr_t(m.submeshes[s].firstIndex) * sizeof(uint32_t)));
         }
+        if (query) glEndQuery(GL_TIME_ELAPSED), ++surfaceFrame_;
         scissorFor(UINT32_MAX, vp);
         const fluid::Frame ff = r.fluidProgram.get() ? r.fluidSim.frame(options, camera.position) : fluid::Frame{};
         if (ff.active) {

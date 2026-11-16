@@ -20,6 +20,12 @@ namespace {
 const char* kWaterVert =
 #include "water.vert.inc"
     ;
+const char* kWaterTesc =
+#include "water.tesc.inc"
+    ;
+const char* kWaterTese =
+#include "water.tese.inc"
+    ;
 const char* kWaterFrag =
 #include "water.frag.inc"
     ;
@@ -252,7 +258,9 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     // rippleInfo.y when its simulation cannot run.
     const auto& field = options.waterField;
     w.ripple = {field.originX, field.originY, field.cellSize, field.surfaceZ};
-    w.rippleInfo = {float(waterfield::kN), waterfield::wanted(options) ? 1.0f : 0.0f, 0, 0};
+    // z: the projection's focal length in pixels (water.tesc sizes the surface's subdivision by it).
+    const float focal = 0.5f * float(vp.height) / std::tan(0.5f * glm::radians(camera.verticalFovDeg));
+    w.rippleInfo = {float(waterfield::kN), waterfield::wanted(options) ? 1.0f : 0.0f, focal, 0};
     w.seaWaves = waterWaves(camera.position, 1.0f, options.waterVolumes); // the sea the caustics look through
     if (ocean::wanted(options)) { // the renderer clears ocean[0].x when its FFT pass cannot run
         const int n = ocean::gridSize(options);
@@ -458,7 +466,13 @@ std::string expandIncludes(std::string s) {
 }
 } // namespace
 
-std::string waterVertexSource(bool vulkan) { return expandIncludes(withVersion(kWaterVert, vulkan)); }
+std::string waterVertexSource(bool vulkan, bool tessellated) {
+    std::string s = expandIncludes(withVersion(kWaterVert, vulkan));
+    if (tessellated) s.insert(s.find('\n') + 1, "#define OU_TESS 1\n"); // after #version (glslc: -DOU_TESS)
+    return s;
+}
+std::string waterTessControlSource(bool vulkan) { return withVersion(kWaterTesc, vulkan); }
+std::string waterTessEvalSource(bool vulkan) { return expandIncludes(withVersion(kWaterTese, vulkan)); }
 std::string waterFragmentSource(bool vulkan) { return expandIncludes(withVersion(kWaterFrag, vulkan)); }
 
 std::string splashVertexSource(bool vulkan) { return expandIncludes(withVersion(kSplashVert, vulkan)); }

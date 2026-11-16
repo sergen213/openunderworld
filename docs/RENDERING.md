@@ -499,11 +499,12 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   follows), then the Godot height layers (± 0.06 m; not on FFT seas) and on seas the FFT ocean's swell + gravity
   height (above) or afl's waves (12 iterations, 0.45 m) centred on that
   surface but clamped to the rest plane — the original's own crest bound — so the yacht deck stays above the drawn
-  sea; then the wave field's height (`ouBaseHeight` + `ouFieldHeight`, shaders/water_surface.glsl). Coarse TRU meshes show it only at their few interior vertices (l1_seatop's sea:
-  a regular grid of ~3.5 m quads [measured: triangle-ID debug view over a 1 m grid]), so the drawn relief is the
-  per-pixel normals'; the geometry only tilts between those vertices.
+  sea; then the wave field's height (`ouBaseHeight` + `ouFieldHeight`, shaders/water_surface.glsl). TRU's meshes are
+  coarse (l1_seatop's sea: a regular grid of ~3.5 m quads [measured: triangle-ID debug view over a 1 m grid]), so
+  inside the wave field's window the surface is tessellated ("Interactive waves" below, "Geometry"); elsewhere the
+  mesh's own vertices are displaced and the relief is the per-pixel normals'.
 - Interactive waves (ours, "Interactive waves" below): the field's slopes bend the normals at full weight, its height
-  displaces (water.vert) and lights crests through (seas), crests catch light / troughs darken in proportion to the
+  displaces real geometry (tessellated) and lights crests through (seas), crests catch light / troughs darken in proportion to the
   curvature, its whitewater foams (cavities, breaking crests, drops falling back, strokes) and its caustics light the
   bed. Every effect reads the summed surface through `shaders/water_surface.glsl`.
 - Splash fluid (ours; "Splash fluid" below): the game's splash bursts are particles of a small GPU fluid, drawn as
@@ -609,9 +610,19 @@ the FFT ocean each frame), inputs from `game::WaterSim` (docs/GAMEPLAY.md "Water
 - Output (`shaders/water_surface.glsl` contract C1): `uRipples`, rgba16f, h (TRU units above the rest surface, dips
   included), dh/dx, dh/dy, whitewater (0..1); `WaterBlock::ripple` = window corner, cell size, rest surface z;
   `rippleInfo` = (512, 1 while the field runs). Contract C2: `ouSurfaceHeight(p)` / `ouSurfaceSlope(p)` sum tru.exe's
-  sea waves, the FFT ocean (or afl's waves / Godot's layers) and the field; water.vert displaces with the same
-  `ouBaseHeight` + `ouFieldHeight`, water.frag reads `ouFieldSample` (its FFT normals stay the filtered
+  sea waves, the FFT ocean (or afl's waves / Godot's layers) and the field; water.vert / water.tese displace with the
+  same `ouBaseHeight` + `ouFieldHeight`, water.frag reads `ouFieldSample` (its FFT normals stay the filtered
   `ouOceanSurface`).
+- Geometry (`shaders/water.tesc` / `water.tese`; GL 4.0 / Vulkan `tessellationShader`, else per vertex): water
+  meshes whose bounding sphere reaches into the window (`waterfield::touches`) draw as patches of 3 control points,
+  subdivided until an edge is 1.5 field cells (11.7 cm) near the camera or 12 pixels farther away (fractional odd
+  spacing, ≤ 63 per edge), fading to the mesh's own edges over the window's outer 2–10 % and from 12 to 20 m away
+  (the field's few-cm waves are under a few pixels there); triangles outside the view (with a 4 m margin for the
+  displacement) are dropped. Every generated vertex is displaced as water.vert displaces the mesh's own, so the crater,
+  its rebound, the ring trains and the wakes stand in the geometry (silhouettes, depth against the bed, refraction /
+  reflection rays from the displaced surface), and inside the window the FFT ocean's swell gets the same detail. An
+  edge's level depends only on its two end points (symmetric), and the position math is `precise`, so the triangles
+  sharing an edge split it identically: no cracks. `OU_WATER_NO_TESS=1` draws per vertex, for comparisons.
 - Shading (water.frag): the field's slope adds to the other waves' at full weight (heights add, so slopes do; until
   2026-11-15 it was compressed by 1.2 / (1 + 4 |slope|)), faded out where a pixel spans 1.5–6 field cells (the
   texture has no mips); the RT reflection lobe widens only with the filtered waves' slope (the field is resolved, not
@@ -621,9 +632,15 @@ the FFT ocean each frame), inputs from `game::WaterSim` (docs/GAMEPLAY.md "Water
   `ouUwFog`): for its small slopes the refracted sun lands displaced by D (1 − 1/n) ∇h, so the light changes by
   1 / |1 + D (1 − 1/n) ∇²h| (capped at 4 at the folds), read where the refracted sun ray through the bed point crossed
   the surface, faded from 10 to 35 m deep and by the bed pixel's footprint. Debug view 6 (`--water-debug 6`) shows
-  the field: red its height (±15 cm), green / blue its slope (×2).
+  the field: red its height (±15 cm), green / blue its slope (×2). The slick: where the field has waves (its RMS slope
+  over ~half a metre, 1 at 0.04) or whitewater, the short wind chop is damped by up to 85 % (`ouFieldSlick`; the FFT
+  ocean's fine copies fully, the 11.3 m tile and its rotated copy by 70 % of that, Godot's layers and afl's waves
+  fully) — a splash's and a stroke's turbulence smooths the chop as behind a boat or a swimmer (a whale's
+  "footprint") — so the rings and wakes read on a rough sea instead of drowning in its finer slopes.
 - Cost (1920×1080, RX 7900 XTX / RADV, `OU_VK_PRESENT_STATS=1`, which also brackets the field): 0.069–0.077 ms a
-  frame on Vulkan (l4_pool, l1_seatop, l2_cliffclimb), 0.09–0.10 ms on GL (`GL_TIME_ELAPSED`).
+  frame on Vulkan (l4_pool, l1_seatop, l2_cliffclimb), 0.09–0.10 ms on GL (`GL_TIME_ELAPSED`). The tessellated surface
+  adds 0.36–0.39 ms on Vulkan (the water pass segment) and 0.23–0.33 ms on GL (`water surface`) at l2_cliffclimb's sea
+  entry, against `OU_WATER_NO_TESS=1`; the slick costs nothing measurable.
 - Original water runs none of it (`waterfield::wanted`).
 
 ### Splash fluid
