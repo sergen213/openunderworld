@@ -431,8 +431,10 @@ struct Resources {
     Program waterProgram, splashSplatProgram, splashBlurProgram, splashCompositeProgram; // Enhanced water (render/Water.cpp sources)
     std::array<Program, 2> shaftPrograms; // under-water sun shafts: march, blur (render/Water.hpp)
     // Enhanced water's animated water texture (render/Water.hpp kAgWaterSize; abyssal-garden W_WATER): RGBA16F with
-    // kAgWaterLevels mips, unit 18 (`uAgWater`: post, water, shafts, particles); program = shaders/uw_water.frag.
+    // kAgWaterLevels mips, unit 18 (`uAgWater`: post, water, shafts, particles); program = shaders/uw_water.frag, then
+    // agCausticProgram (shaders/uw_caustics.*) adds the floor caustics into g.
     Program agWaterProgram;
+    Program agCausticProgram;
     Texture agWater;
     Framebuffer agWaterFbo;
     Buffer waterUbo;                     // WaterBlock, UBO binding 4 (water, splash, post)
@@ -565,6 +567,8 @@ public:
         }
         r.agWaterProgram = linkProgram(kPostVs, agWaterSource().c_str(), error);
         if (!r.agWaterProgram.get()) return false;
+        r.agCausticProgram = linkProgram(agCausticSource(true).c_str(), agCausticSource(false).c_str(), error);
+        if (!r.agCausticProgram.get()) return false;
         r.agWater = newTexture();
         glTextureStorage2D(r.agWater.get(), kAgWaterLevels, GL_RGBA16F, kAgWaterSize, kAgWaterSize);
         glTextureParameteri(r.agWater.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -1736,8 +1740,9 @@ private:
         for (int l = lod; l < ocean::kLevels - 1; ++l) run(l, l + 1, ocean::Mip, ocean::kMaxN >> (l + 1), false);
     }
 
-    // Enhanced water's animated water texture: uw_water.frag into mip 0 (time = the demo's tm.x), the mips box-filtered
-    // down (the demo's fsMip), bound to unit 18 for the water, the shafts, the particles and the post pass.
+    // Enhanced water's animated water texture: uw_water.frag into mip 0 (time = the demo's tm.x), the caustic mesh added
+    // into g only (uw_caustics.*: blend ONE + ONE), the mips box-filtered down (the demo's fsMip), bound to unit 18 for
+    // the water, the shafts, the particles and the post pass.
     void drawAgWater(float time) {
         Resources& r = *res_;
         glDisable(GL_DEPTH_TEST);
@@ -1748,6 +1753,15 @@ private:
         glUniform1f(0, time);
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        glUseProgram(r.agCausticProgram.get());
+        glUniform1f(0, time);
+        glColorMask(GL_FALSE, GL_TRUE, GL_FALSE, GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendEquation(GL_FUNC_ADD);
+        glBlendFunc(GL_ONE, GL_ONE);
+        glDrawArrays(GL_TRIANGLES, 0, kAgCausVertices);
+        glDisable(GL_BLEND);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glGenerateTextureMipmap(r.agWater.get());
         glBindTextureUnit(18, r.agWater.get());
     }

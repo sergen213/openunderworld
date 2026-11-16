@@ -203,13 +203,20 @@ std::string underwaterPostSource(bool vulkan);
 // The passes run this frame (= underwater.glsl ouShaftsOn on the uploaded block); `block` is the frame's WaterBlock.
 bool underwaterShaftsActive(const WaterBlock& block);
 std::string underwaterShaftSource(int pass); // GL fragment source of pass 0 or 1 (includes spliced)
-// Enhanced water's animated water texture (shaders/uw_water.frag: abyssal-garden's W_WATER, r = caustic, ba = surface
-// slope; docs/RENDERING.md "Under water"): kAgWaterSize^2 RGBA16F with kAgWaterLevels mips, repeat / trilinear /
-// anisotropic 8, regenerated every frame Enhanced water is drawn (camera above or below: the bed caustics use it too):
-// a fullscreen triangle into mip 0 (VK push constant / GL uniform 0 = WaterBlock eye.w, the demo's time), then the mips
-// box-filtered down (the demo's fsMip; VK linear blits, GL glGenerateTextureMipmap). Sampled as `uAgWater`: VK post set
-// 1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts, particles).
+// Enhanced water's animated water texture (shaders/uw_water.frag: abyssal-garden's W_WATER, r = its caustic (the shafts'
+// pattern), ba = surface slope; g = our floor caustics, shaders/uw_caustics.vert; docs/RENDERING.md "Under water"):
+// kAgWaterSize^2 RGBA16F with kAgWaterLevels mips, repeat / trilinear / anisotropic 8, regenerated every frame Enhanced
+// water is drawn (camera above or below: the bed caustics use it too): a fullscreen triangle into mip 0 (VK push
+// constant / GL uniform 0 = WaterBlock eye.w, the demo's time), then, in the same pass, the caustic mesh
+// (kAgCausVertices from the vertex index, no buffers; same push / uniform) added into g only (blend ONE + ONE), then the
+// mips box-filtered down (the demo's fsMip; VK linear blits, GL glGenerateTextureMipmap). Sampled as `uAgWater`: VK
+// post set 1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts, particles).
 inline constexpr int kAgWaterSize = 512, kAgWaterLevels = 5; // = uw_water.frag kAgWaterSize; shaders.js WATER (high)
+// The caustic mesh: kAgCausCells^2 cells per tile plus a kAgCausMargin-cell border (the largest landing offset), two
+// triangles of 3 vertices per cell (= uw_caustics.vert kCells / kMargin).
+inline constexpr int kAgCausCells = 256, kAgCausMargin = 32;
+inline constexpr int kAgCausVertices = 6 * (kAgCausCells + 2 * kAgCausMargin) * (kAgCausCells + 2 * kAgCausMargin);
 std::string agWaterSource(); // GL fragment source
+std::string agCausticSource(bool vertex); // GL source of shaders/uw_caustics.vert (true) / .frag (false)
 
 } // namespace ou::render

@@ -1,9 +1,11 @@
 #version 460
-// Enhanced water's animated water texture (`uAgWater`, docs/RENDERING.md "Under water"): a literal port of
-// abyssal-garden's W_WATER `fs` (Noniv, MIT; source/src/shaders.js, docs/RESEARCH.md 8.11): r = g = caustic (caus(): five
-// warped sine iterations), ba = surface slope (the WK sum of 10 travelling waves), tiling (repeat sampler). Rendered into
-// mip 0 of the kAgWaterSize^2 RGBA16F texture every frame Enhanced water is drawn (render/Water.hpp agWaterSource), the
-// mips then box-filtered down (the demo's fsMip). Fullscreen triangle (VK post.vert / GL kPostVs).
+// Enhanced water's animated water texture (`uAgWater`, docs/RENDERING.md "Under water"): r and ba a literal port of
+// abyssal-garden's W_WATER `fs` (Noniv, MIT; source/src/shaders.js, docs/RESEARCH.md 8.11): r = its caustic (caus(): five
+// warped sine iterations; only the sun shafts' pattern reads it now), ba = surface slope (the WK sum of 10 travelling
+// waves), tiling (repeat sampler). g (the demo's copy of r) is written 0 here: ours, the floor caustics that
+// uw_caustics.vert then adds into it in the same pass. Rendered into mip 0 of the kAgWaterSize^2 RGBA16F texture every
+// frame Enhanced water is drawn (render/Water.hpp agWaterSource), the mips then box-filtered down (the demo's fsMip).
+// Fullscreen triangle (VK post.vert / GL kPostVs).
 // Time = the demo's tm.x = agTime() (WaterBlock eye.w, seconds): VK push constant / GL uniform location 0.
 #ifdef VULKAN
 layout(push_constant) uniform AgWaterPush { float time; } pc;
@@ -41,5 +43,5 @@ void main() {
         s += k.xy * k.z *
              cos(dot(k.xy, wu) * 6.2831853 + t * (0.5 + 0.35 * sqrt(length(k.xy))) * ((i & 1) == 0 ? 1.0 : -1.0) + float(i) * 1.7);
     }
-    oWater = vec4(c, c, s * 0.06);
+    oWater = vec4(c, 0.0, s * 0.06);
 }

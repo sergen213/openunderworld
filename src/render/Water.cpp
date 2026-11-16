@@ -78,6 +78,11 @@ const char* kShaftSources[2] = { // shaders/uw_shafts*.frag (render/Water.hpp un
 const char* kAgWaterFrag = // shaders/uw_water.frag (render/Water.hpp agWaterSource)
 #include "uw_water.frag.inc"
     ;
+const char* kAgCaustics[2] = { // shaders/uw_caustics.* (render/Water.hpp agCausticSource)
+#include "uw_caustics.vert.inc"
+    ,
+#include "uw_caustics.frag.inc"
+};
 const char* kUwBloom =
 #include "uw_bloom.frag.inc"
     ;
@@ -522,5 +527,6 @@ std::string underwaterShaftSource(int pass) {
 }
 
 std::string agWaterSource() { return kAgWaterFrag; }
+std::string agCausticSource(bool vertex) { return kAgCaustics[vertex ? 0 : 1]; }
 
 } // namespace ou::render

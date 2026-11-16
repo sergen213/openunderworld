@@ -105,6 +105,12 @@ const uint32_t kShaftBlurFrag[] = {
 const uint32_t kAgWaterFrag[] = { // Enhanced water's animated water texture (abyssal-garden W_WATER, render/Water.hpp)
 #include "uw_water.frag.inc"
 };
+const uint32_t kAgCausticVert[] = { // its floor caustics, added into g (shaders/uw_caustics.*, render/Water.hpp)
+#include "uw_caustics.vert.inc"
+};
+const uint32_t kAgCausticFrag[] = {
+#include "uw_caustics.frag.inc"
+};
 const uint32_t kWaterVert[] = { // Enhanced water + splashes (shared GLSL, render/shaders)
 #include "water.vert.inc"
 };
@@ -177,7 +183,8 @@ const uint32_t kFxFrag[] = {
 // Pssm: tru.exe's shadow atlas (original::Pssm): as Shadow with the slope bias as dynamic state (the depth bias is in
 // the split's matrix).
 enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Pssm, Lines, Overlay, Post, Prepass, Water, SplashSplat,
-                          SplashBlur, SplashComposite, FxAlpha, FxAdditive, FxSubtract, FxMultiply }; // Fx*: FxBatch::blend order
+                          SplashBlur, SplashComposite, FxAlpha, FxAdditive, FxSubtract, FxMultiply, // Fx*: FxBatch::blend order
+                          CausticSplat }; // ONE + ONE into G only (uw_caustics.*)
 
 struct LineVertex {
     float pos[3];
@@ -1904,7 +1911,7 @@ public:
             destroyFsr();
             for (VkPipeline p : {textPipeline_, shadowPipeline_, pssmPipeline_, postPipeline_,
                                  shaftMarchPipeline_, shaftBlurPipeline_, uwResolvePipeline_, uwBloomPipeline_, uwBloomUpPipeline_,
-                                 uwGradePipeline_, agWaterPipeline_})
+                                 uwGradePipeline_, agWaterPipeline_, agCausticPipeline_})
                 vkDestroyPipeline(device_, p, nullptr);
             for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_, fxLayout_, uwGradeLayout_, agWaterLayout_})
                 vkDestroyPipelineLayout(device_, l, nullptr);
@@ -2994,8 +3001,9 @@ private:
         pl.pSetLayouts = postSets;
         pl.pPushConstantRanges = &postPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &postLayout_));
-        // The animated water texture's pass (recordAgWater): no sets, push = the time (uw_water.frag AgWaterPush).
-        const VkPushConstantRange agPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float)};
+        // The animated water texture's passes (recordAgWater): no sets, push = the time (uw_water.frag and
+        // uw_caustics.vert AgWaterPush).
+        const VkPushConstantRange agPush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float)};
         const VkPipelineLayoutCreateInfo agl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &agPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &agl, nullptr, &agWaterLayout_));
         // Under-water particles (recordUwParticles): the post pass's sets 1-2 (set 0 unused), UwParticlePush.
@@ -3034,6 +3042,8 @@ private:
                                             VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
         agWaterPipeline_ = createPipeline(kPostVert, kAgWaterFrag, agWaterLayout_, nullptr, {}, PipelineKind::Post,
                                           VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
+        agCausticPipeline_ = createPipeline(kAgCausticVert, kAgCausticFrag, agWaterLayout_, nullptr, {}, PipelineKind::CausticSplat,
+                                            VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
         // Under-water composite (render/Water.hpp UwGrade): post.frag writing the linear frame, the bloom chain (up passes
         // added: Additive with alpha 1), the grade into the post target.
         uwResolvePipeline_ = createPipeline(kPostVert, kPostFrag, postLayout_, nullptr, {}, PipelineKind::Post,
@@ -3194,6 +3204,10 @@ private:
             factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE);
             if (kind == PipelineKind::FxSubtract) blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_REVERSE_SUBTRACT;
         } else if (kind == PipelineKind::FxMultiply) factors(VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_SRC_ALPHA);
+        else if (kind == PipelineKind::CausticSplat) {
+            factors(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE);
+            blend.colorWriteMask = VK_COLOR_COMPONENT_G_BIT;
+        }
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         const bool hasColor = colorFormat != VK_FORMAT_UNDEFINED;
         cb.attachmentCount = hasColor ? 1 : 0;
@@ -4445,8 +4459,10 @@ private:
         vkCmdSetScissor(cmd, 0, 1, &ri.renderArea);
         vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, agWaterPipeline_);
-        vkCmdPushConstants(cmd, agWaterLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof time, &time);
+        vkCmdPushConstants(cmd, agWaterLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof time, &time);
         vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, agCausticPipeline_); // same layout: the push stays
+        vkCmdDraw(cmd, uint32_t(kAgCausVertices), 1, 0, 0);
         vkCmdEndRendering(cmd);
         auto src = mips(imageBarrier(agWater_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                      kOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kXfer, VK_ACCESS_2_TRANSFER_READ_BIT),
@@ -5634,6 +5650,7 @@ private:
     VkSampler agWaterSampler_ = VK_NULL_HANDLE;
     VkPipelineLayout agWaterLayout_ = VK_NULL_HANDLE;
     VkPipeline agWaterPipeline_ = VK_NULL_HANDLE;
+    VkPipeline agCausticPipeline_ = VK_NULL_HANDLE;
     VkDescriptorPool waterPool_ = VK_NULL_HANDLE;
     std::array<Buffer, kFramesInFlight> waterUbo_{}; // WaterBlock, host-coherent
     std::array<VkDescriptorSet, kFramesInFlight> waterSets_{}, postWaterSets_{};

@@ -511,15 +511,26 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
 - Underwater: the original's under-water look ("Under water" below) in both qualities.
 - Caustics (ours, Enhanced only; tru.exe draws none [O: no caustic pass or texture; its UnderWaterRayDrawable is
   the full-screen pass, the light rays and the flashlight beam, 0x6D8C20; the original captures show none]):
-  abyssal-garden's texture caustics (`agCaus` / `agCausLod`, shaders/uw_medium.glsl, on the animated water texture
-  `uAgWater`, "Under water" below): the texture projected along the refracted sun (`cuv`) at 3.3 m and 6.9 m tiles, a
-  slight RGB offset, ×5 pow 2.3, clamped at 4, fading to a flat 0.33 between 35 and 100 m, applied by the W_SOLID light
-  (`agRelight`). Under water: the post pass (`ouUwFog`). From above: `water.frag` relights the refracted bed sample (at
-  `ruv`, ag y = its depth under this pixel's surface) before `ouAbsorb`, only with a level sun; Vulkan binds the sun
-  shadow set as the water layout's set 1. They replaced (2026-11-15) our refraction-Hessian caustics, which read as a
-  fine crumpled-foil network of constant scale multiplied over every submerged face (aliasing in the distance, cut by
-  face orientation); their last user, the old sun shafts' pattern tile, went with the W_RAYS port (caustics.glsl is
-  gone).
+  physically formed caustics (`agCausLod`, shaders/uw_medium.glsl, on the g channel of the animated water texture
+  `uAgWater`, "Under water" below): sunlight refracted by a wavy surface and forward-mapped onto a plane 4 m below it
+  (Evan Wallace's caustic mesh, `shaders/uw_caustics.vert`): a 256² grid over one 6.6 m tile (+ a 32-cell border: the
+  surface is periodic, so the border delivers the wrapped contributions) is displaced by 4 m · (1 − 1/1.333) · ∇h and
+  each triangle adds source area ÷ landed area into g (blend ONE + ONE, colour mask G; gain capped at 64 at folds).
+  Light is conserved: g's mean is 1 (measured 0.990–0.993 on the GPU, the cap and fp16 lose < 1 %), bright filaments
+  over cells at ~0.3–0.5× (median 0.54, 45 % of texels < 0.5). h = 32 travelling waves on the tile's integer wave
+  vectors (wavelengths 0.26–1.09 m, slope amplitude ~ k^−1.6, rms slope 0.12, deep-water dispersion ω = √(g k));
+  `agCausSlope` is the splat's only height source. Sampled projected along the refracted sun (`cuv`), three taps 6 /
+  4 mm apart (dispersion fringe), explicit levels from the pixel footprint; with the depth h under the surface the
+  contrast ramps up from 0 to full by 3 m, the pattern blurs an extra level per doubling of h past 2 m (the sun's disc)
+  and fades to the mean between 10 and 35 m, and to the mean 35–100 m from the eye; scaled by `kAgCausMean` = 3.3 (the
+  old texture's near-surface mean that the W_SOLID balance was tuned at), applied by the W_SOLID light (`agRelight`).
+  Under water: the post pass (`ouUwFog`). From above: `water.frag` relights the refracted bed sample (at `ruv`, ag y =
+  its depth under this pixel's surface) before `ouAbsorb`, only with a level sun; Vulkan binds the sun shadow set as
+  the water layout's set 1. GPU cost of the splat: ~0.07 ms (GL timer query, RX 7900 XTX). History: our
+  refraction-Hessian caustics (a fine crumpled-foil network of constant scale over every submerged face) gave way on
+  2026-11-15 to abyssal-garden's texture caustics (`caus()` in r, ×5 pow 2.3 clamped at 4, 0.33 far away), which left
+  ~57 % of a lit floor on a flat white plateau with dark blobs (user report: "weird, not natural"); those gave way to
+  the mesh above (`agCaus` / `agCaus2` deleted; r is now read only by the sun shafts' pattern).
 - Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
   3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
 
@@ -642,23 +653,24 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   the full-screen pass above): `ouUwFog` (underwater.glsl, called by `ouWaterPass`) is abyssal-garden's `W_SOLID` light
   and `S_B` fog ported literally (Noniv, MIT; RESEARCH 8.11), the `ag` section of `shaders/uw_medium.glsl`: the demo's
   space ("ag": metres, y up, the eye's water surface at y = 0), its constants (SIG, KD, WCOL, KDZ, PCOL, SUNC, KDF, zone
-  0) and functions (`agFogIn`, `agFog`, `agSunE`, `agAmb`, `agSide`, `agCaus`). Its density volume (`vol()`) does not
+  0) and functions (`agFogIn`, `agFog`, `agSunE`, `agAmb`, `agSide`; the caustics, `agCausLod`, are ours). Its density volume (`vol()`) does not
   exist here: openness 1, no volume AO; `shadow9` = the sun shadow map (`ouSunShadowVisibility`). An opaque point inside
   a volume below its surface is relit by `agRelight`: TRU's lit colour × L(p) / L_ref + the rock specular (gloss 0.1) ×
-  the albedo estimate's luminance, L = `agSolidLight` (W_SOLID fs: E · ndl · (0.10 + mix(0.33, ca, ss(.1, .45, n·L)) ·
-  2.5) + amb + side, E = sunE · shadow) and L_ref the same normal and visibility at the surface under the mean caustic
-  `kAgCausMean` = 3.3 (the measured near-surface mean of agCaus: ~65 % of a sun-facing top sits at its 4.0 clamp). So
+  the albedo estimate's luminance, L = `agSolidLight` (W_SOLID fs: E · ndl · (0.10 + mix(M, ca, ss(.1, .45, n·L)) ·
+  2.5) + amb + side, E = sunE · shadow; M = `kAgCausMean`, ours: the demo's 0.33 there darkened faces turned from the
+  sun to a tenth) and L_ref the same normal and visibility at the surface under the mean caustic `kAgCausMean` = 3.3
+  (the old texture caustic's measured near-surface mean, kept as the scale of the new mean-1 map). So
   TRU's colour stands for an average caustic-lit point just under the surface (its own shading and shadows stay; the
   demo's N.L and shadow cancel instead of applying twice, and the flat reconstructed normal leaves no facets) and the
-  demo's depth falloff (red first), caustic contrast (dark cells, bright plateau; 0.33 past 35–100 m ≈ 0.1×), ambient
+  demo's depth falloff (red first), caustic contrast (filaments and dim cells around the mean; the mean far and deep), ambient
   and side light are imposed, HDR (the composite's exposure + ACES compress the peaks). TRU's colour is display-referred
   (≤ 1, its lighting already squeezed into that range) and the demo's chain scene-referred, so every TRU pixel goes
   through `agUnpost` first: the inverse of the grade's exposure (EXPO × 0.6, the near-surface value) + ACES fit, white
   clamped at 0.98 (→ ~12, the demo's own range for a lit pale top). Fed in as is (until 2026-11-15) TRU's scene was
   exposed and tone mapped a second time, 2–4× darker (0.5 → 0.25 displayed, 0.05 → 0.012) under a fog sized for the
   demo: objects sank into a flat, pale haze. Caustics: `agCausLod` on
-  `uAgWater` (below) with explicit levels from the pixel footprint (distance × pixel angle ÷ 3.3 m or 6.9 m per 512
-  texels): p comes from the depth buffer, whose implicit derivatives spike at silhouettes; no level sun = flat 0.33.
+  `uAgWater` (below) with explicit levels from the pixel footprint (distance × pixel angle ÷ 6.6 m per 512
+  texels): p comes from the depth buffer, whose implicit derivatives spike at silhouettes; no level sun = the mean.
   Then `agFog(c, p)` = c e^(−sg d) ss(230 m, 185 m, d) + fogIn; rays leaving through the surface (looking up from under
   it) fog up to it and keep what water.frag drew there (W_SURF's `fog(c, wp)`: the Snell's window, decoded, also over
   sky pixels; its exact-0 black stays 0, also where the opaque point lies within 3 m under the flat surface, which the
@@ -674,13 +686,15 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   and the like show through the window; the rest printed over the black outside it as flat pale discs (l1_seatop: a
   texture-160 smoke sprite ~72 m up, ~190 m away; tru.exe veils such sprites with its full-screen pass). The older
   tuned medium is gone.
-- Animated water texture `uAgWater` (ours, Enhanced only; abyssal-garden `W_WATER` literally, `shaders/uw_water.frag`):
-  r = g = caustic (`caus()`: five warped sine iterations), ba = surface slope (the WK sum of 10 travelling waves), time
-  = the eye's seconds; 512² RGBA16F, 5 mips box-filtered down (the demo's `fsMip`: VK linear blits, GL
-  `glGenerateTextureMipmap`), repeat, trilinear, anisotropic 8; regenerated every frame Enhanced water is drawn (camera
-  above or below), before the scene (VK `recordAgWater`: own pipeline layout, push float at offset 0) / before the water
-  (GL `drawAgWater`). Bound as VK post set 1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts,
-  particles).
+- Animated water texture `uAgWater` (ours, Enhanced only; r and ba abyssal-garden's `W_WATER` literally,
+  `shaders/uw_water.frag`): r = its caustic (`caus()`: five warped sine iterations; read by the sun shafts' pattern),
+  ba = surface slope (the WK sum of 10 travelling waves), g = our floor caustics (written 0 by uw_water.frag, then the
+  caustic mesh of `shaders/uw_caustics.vert` / `.frag` is added into it in the same pass: `render::kAgCausVertices`
+  from the vertex index, no buffers, same push / uniform), time = the eye's seconds; 512² RGBA16F, 5 mips box-filtered
+  down (the demo's `fsMip`: VK linear blits, GL `glGenerateTextureMipmap`), repeat, trilinear, anisotropic 8;
+  regenerated every frame Enhanced water is drawn (camera above or below), before the scene (VK `recordAgWater`: own
+  pipeline layout, push float at offset 0 for both stages) / before the water (GL `drawAgWater`). Bound as VK post set
+  1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts, particles).
 - Sun shafts (Enhanced only; Noniv's abyssal-garden, MIT, RESEARCH §8.11: `W_RAYS`, `W_RBLUR` and `W_POST`'s
   upsample literally, in ag space): two half-resolution RGBA16F passes before the post pass (`render::underwaterShaftsActive`
   = `ouShaftsOn`: Enhanced water, camera below the nearest surface, sun above the horizon; recorded only with

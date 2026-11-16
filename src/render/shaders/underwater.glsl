@@ -101,7 +101,7 @@ vec3 ouUwFog(vec3 c, vec3 raw, vec2 uv) {
             // the pixel's footprint: distance x the angle between neighbouring pixels' rays
             vec3 f1 = ouWorld(uv + vec2(0.0, w.screen.w), 1.0, w.invViewProj);
             float fp = d * length(normalize(f1 - w.eye.xyz) - normalize(far - w.eye.xyz));
-            vec3 ca = w.sunColor.w > 0.0 ? agCausLod(uAgWater, p, d, fp) : vec3(0.33); // no sun: no caustics
+            vec3 ca = w.sunColor.w > 0.0 ? agCausLod(uAgWater, p, d, fp) : vec3(kAgCausMean); // no sun: no pattern
             lit = agRelight(lit, p, agDir(n), -dir, ca, ouSunShadowVisibility(q + n * (0.35 * kM)));
         }
     }

@@ -12,8 +12,8 @@ float ouUwSurfaceZ() { return w.detail.w > 0.5 ? w.volumes[1].z : w.eye.z; }
 // under water have y < 0), x / z horizontal. agPos maps a world point (TRU units, z up) into it; agDir a direction.
 // The demo's zone z (0 = its open blue water, 1 = its purple grotto) is 0 here (kAgZone). Its density volume (vol():
 // .g = sky openness, .r = rock occlusion) does not exist here: openness 1, no volume AO. Every function keeps the
-// demo's name with an `ag` prefix; the sampled animated water texture (W_WATER: r = caustic, ba = surface slope,
-// tiled per metre as in the demo) is passed in as `tW`.
+// demo's name with an `ag` prefix; the sampled animated water texture (W_WATER: r = the demo's caustic, ba = surface
+// slope, tiled per metre as in the demo; g = our floor caustics, agCausLod) is passed in as `tW`.
 const vec3 kAgSig = vec3(0.058, 0.0235, 0.0195);
 const vec3 kAgKd = vec3(0.056, 0.0245, 0.0170);
 const vec3 kAgWcol = vec3(0.16, 0.58, 0.90);
@@ -76,34 +76,30 @@ vec3 agFogIn(vec3 ro, vec3 rd, float d, float z, vec3 sun) {
     return mix(kAgWcol, kAgPcol, z) * agSg(z) * exp(k * agLightY(ro.y)) * I * (1.22 + 0.3 * m2 * m2);
 }
 vec3 agFin(vec3 c) { return min(max(c, vec3(0.0)), vec3(40.0)); }
-// cuv / caus / caus2 (S_B): the caustic texture projected along the sun onto the point.
+// cuv (S_B): the caustic texture projected along the sun onto the point.
 vec2 agCuv(vec3 p) { vec3 s = agSun(); return p.xz - s.xz * (p.y / s.y); }
-vec3 agCaus(sampler2D tW, vec3 p, float d) {
-    vec2 q = agCuv(p);
-    vec2 o = vec2(0.004, 0.0025);
-    vec3 a = vec3(texture(tW, q / 3.3 + o).r, texture(tW, q / 3.3).r, texture(tW, q / 3.3 - o).r);
-    float b = texture(tW, q.yx / 6.9 + 0.37).r;
-    vec3 c = min(pow(a, vec3(2.3)) * 5.0 * (0.45 + b * 1.3), vec3(4.0));
-    return mix(c, vec3(0.33), agSs(35.0, 100.0, d));
-}
-float agCaus2(sampler2D tW, vec3 p, float d) {
-    vec2 q = agCuv(p);
-    float c = min(pow(texture(tW, q / 4.1).r, 1.4) * 2.6 * (0.45 + texture(tW, q.yx / 6.9 + 0.37).r * 1.3), 2.6);
-    return mix(c, 0.33, agSs(35.0, 100.0, d));
-}
-// agCaus with explicit levels, for points reconstructed from the depth buffer (the post pass): their implicit
-// derivatives spike at depth edges and leave blurred-mip outlines on silhouettes. fp = the pixel's footprint in metres
-// (distance x pixel angle); each tap's level = log2(fp / its texel: 3.3 m / size for the q / 3.3 taps, 6.9 m / size for
-// the q.yx / 6.9 one).
+// The floor caustics: ours, not the demo's. Its caus / caus2 (r shaped by pow 2.3, x5, clamped at 4) left ~57 % of a
+// lit floor on a flat white plateau with dark blobs. tW's g channel holds a physically formed map instead
+// (shaders/uw_caustics.vert: sunlight refracted by a wavy surface and forward-mapped 4 m down; light-conserving, mean
+// 1: thin bright filaments over cells at ~0.3-0.5x), projected along the refracted sun onto p (agCuv) and tiled per
+// kAgCausTile = 6.6 m (2x the demo's 3.3 m: no visible repeats). With the depth h = -p.y under the surface: the
+// contrast grows from none at the surface to full at 3 m (the waves focus the light with depth), the pattern blurs by
+// an extra level per doubling of h past 2 m (the sun's 0.5 deg disc spreads each filament by ~0.7 % of the depth: ~0.5
+// texel per metre) and fades to the mean between 10 and 35 m; it is the mean past 35..100 m from the eye. Returned in
+// the demo's units: x kAgCausMean, the old texture's near-surface mean that agSolidLight's sun / ambient balance (and
+// the user's look) was tuned at, so the average light is unchanged. Three taps 6 mm / 4 mm apart: water's dispersion
+// (red refracts least) fringes the filaments by about that much. Explicit levels, for points reconstructed from the
+// depth buffer (their implicit derivatives spike at depth edges and leave blurred-mip outlines on silhouettes): fp =
+// the pixel's footprint in metres (distance x pixel angle), level = log2(fp / texel (kAgCausTile / size)).
+const float kAgCausMean = 3.3, kAgCausTile = 6.6; // = uw_caustics.vert kTile
 vec3 agCausLod(sampler2D tW, vec3 p, float d, float fp) {
-    vec2 q = agCuv(p);
-    float n = float(textureSize(tW, 0).x);
-    float la = log2(max(fp * n / 3.3, 1e-6)), lb = log2(max(fp * n / 6.9, 1e-6));
-    vec2 o = vec2(0.004, 0.0025);
-    vec3 a = vec3(textureLod(tW, q / 3.3 + o, la).r, textureLod(tW, q / 3.3, la).r, textureLod(tW, q / 3.3 - o, la).r);
-    float b = textureLod(tW, q.yx / 6.9 + 0.37, lb).r;
-    vec3 c = min(pow(a, vec3(2.3)) * 5.0 * (0.45 + b * 1.3), vec3(4.0));
-    return mix(c, vec3(0.33), agSs(35.0, 100.0, d));
+    vec2 q = agCuv(p) / kAgCausTile;
+    float h = max(-p.y, 0.0);
+    float l = log2(max(fp * float(textureSize(tW, 0).x) / kAgCausTile, 1e-6)) + log2(max(h * 0.5, 1.0));
+    vec2 o = vec2(0.006, 0.004) / kAgCausTile;
+    vec3 c = vec3(textureLod(tW, q + o, l).g, textureLod(tW, q, l).g, textureLod(tW, q - o, l).g);
+    float k = agSs(0.0, 3.0, h) * (1.0 - agSs(10.0, 35.0, h)) * (1.0 - agSs(35.0, 100.0, d));
+    return kAgCausMean * mix(vec3(1.0), c, k);
 }
 vec3 agSunE(float y, float z) { return kAgSunc * exp(agKd(z) * (agLightY(min(y, 0.0)) / agSun().y)) * (0.5 + 0.5 * agSat(-y / 30.0)); }
 vec3 agAmb(vec3 p, vec3 n, float sky, float z) {
@@ -116,31 +112,30 @@ vec3 agSide(vec3 p, vec3 n, float open, float z) {
     return mix(kAgWcol, kAgPcol, z) * exp(agKd(z) * agLightY(min(p.y, 0.0))) * open * (1.0 - abs(n.y)) * 0.7;
 }
 // W_SOLID fs light on rock (mat <= 1: gloss 0.1) at ag point p: N the shading normal, n0 the geometric one, V toward the
-// eye, ca = agCaus, sh = the sun visibility (shadow9). diffuse = dl + am (the demo multiplies it by the albedo: c = alb x
-// (dl + am)), spec = its specular E (0.25 + ca) pow(N.H, mix(10, 70, gloss)) gloss ndl 1.8 (added as is). No vol(): sky
-// openness 1, AO 1, no fluorescence (rock); the environment reflection term is left out.
+// eye, ca = agCausLod, sh = the sun visibility (shadow9). diffuse = dl + am (the demo multiplies it by the albedo: c = alb
+// x (dl + am)), spec = its specular E (0.25 + ca) pow(N.H, mix(10, 70, gloss)) gloss ndl 1.8 (added as is). No vol():
+// sky openness 1, AO 1, no fluorescence (rock); the environment reflection term is left out. Faces turned from the sun
+// get the caustics' mean (ours: the demo's 0.33 there, a tenth of its mean, darkened them beyond their N.L).
 void agSolidLight(vec3 p, vec3 N, vec3 n0, vec3 V, vec3 ca, float sh, out vec3 diffuse, out vec3 spec) {
     const float z = kAgZone, gloss = 0.1;
     vec3 L = agSun();
     vec3 E = agSunE(p.y, z) * sh;
     float ndl = agSat(dot(N, L));
     vec3 am = agAmb(p, N, 1.0, z) + agSide(p, N, 1.0, z);
-    vec3 dl = E * ndl * (0.10 + mix(vec3(0.33), ca, agSs(0.1, 0.45, dot(n0, L))) * 2.5);
+    vec3 dl = E * ndl * (0.10 + mix(vec3(kAgCausMean), ca, agSs(0.1, 0.45, dot(n0, L))) * 2.5);
     diffuse = dl + am;
     vec3 H = normalize(V + L);
     spec = E * (0.25 + ca) * pow(agSat(dot(N, H)), mix(10.0, 70.0, gloss)) * gloss * ndl * 1.8;
 }
-// The near-surface spatial mean of agCaus (before its 35..100 m fade): 3.2..3.35 over the texture's animation (512^2 W_WATER
-// texels at times 3, 10, 40, 100 s, a and b taps drawn independently; ~65 % of a top sits at the 4.0 clamp) [O, offline].
-const float kAgCausMean = 3.3;
 // A submerged opaque point TRU lit (lin: its colour in the demo's HDR, agUnpost below; water.frag from above: linear)
 // relit as W_SOLID lights rock: lin x L(p) / L_ref + spec x the
 // albedo estimate's luminance. L = agSolidLight's diffuse at ag point p (normal n, toward the eye V, caustic ca, sun
 // visibility sh); L_ref = the same normal and visibility at the surface (y = 0) under the mean caustic kAgCausMean. So
 // TRU's colour stands for an average caustic-lit point just under the surface, its own shading, sun shadows and local
 // light stay (the demo's N.L and shadow9 cancel instead of applying twice, and the flat-shaded reconstructed normal
-// leaves no facets), and the demo's depth falloff, caustic contrast (lines and dark cells around the mean; 0.33 far
-// away ~0.1x), ambient and side light are imposed. HDR: not clamped (the W_POST exposure + ACES compress the peaks).
+// leaves no facets), and the demo's depth falloff, caustic contrast (bright filaments and dim cells around the mean; the
+// mean itself far away and deep), ambient and side light are imposed. HDR: not clamped (the W_POST exposure + ACES
+// compress the peaks).
 vec3 agRelight(vec3 lin, vec3 p, vec3 n, vec3 V, vec3 ca, float sh) {
     vec3 dl, sp, dr, sr;
     agSolidLight(p, n, n, V, ca, sh, dl, sp);
