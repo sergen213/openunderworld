@@ -417,7 +417,10 @@ void main() {
         // Whitewater is fizzier than the shore's lace: the edge noise at a third of its scale, softer edges.
         float churn = ouFieldFoam(p.xy) * fieldFade, ef = ouEdgeNoise(3.0 * p.xy, 1.7 * t);
         foam = max(foam, smoothstep(-0.25, 0.15, churn - (1.0 - ef)) * smoothstep(0.0, 0.3, churn));
-        c = mix(c, light * 0.9, foam * 0.65);
+        // Foam is white (air bubbles scatter every wavelength alike): lit by the light's intensity, keeping only a quarter
+        // of its hue. TRU's level ambient + sun colours are strongly tinted (l1: yellow-green), which painted it.
+        vec3 foamLit = mix(vec3(dot(light, vec3(0.2126, 0.7152, 0.0722))), light, 0.25);
+        c = mix(c, foamLit * 0.9, foam * 0.65);
         // FFT whitecaps: foam where the fine fold pattern beats 1 - density, cut at a pixel-wide edge: thin broken fold
         // lines where the surface only starts to fold or the foam has aged, filled in only at the freshest cores; lit
         // by the sun on the wave's own normal and the ambient, the aged foam thinner (more of the water through).
@@ -426,6 +429,7 @@ void main() {
         float wcArg = fine + 0.3 * smoothstep(0.85, 1.0, whitecap) * e + 0.2 * (e - 0.5) - (1.0 - whitecap) + 0.03, wcAa = max(fwidth(wcArg), 1e-3);
         float wcMask = smoothstep(-wcAa, wcAa, wcArg) * mix(0.35, 1.0, smoothstep(0.0, 0.25, wcArg)) * (0.55 + 0.4 * fresh);
         vec3 wcLit = toLinear(min(w.ambient.rgb + w.sunColor.rgb * (max(dot(n, w.sunDir.xyz), 0.0) * sunVis * w.sunDir.w), vec3(1.0)));
+        wcLit = mix(vec3(dot(wcLit, vec3(0.2126, 0.7152, 0.0722))), wcLit, 0.25); // white, as foamLit
         c = mix(c, wcLit * (0.7 + 0.25 * e), wcMask);
         // Soft waterline (Godot foam_or_fade = fade): the bed shows through the last few units.
         c = mix(toLinear(textureLod(uScene, uv, 0.0).rgb), c, smoothstep(0.0, 6.0, cdepth));
