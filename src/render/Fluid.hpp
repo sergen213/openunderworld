@@ -30,8 +30,11 @@ inline constexpr int kIterations = 2;       // density solver iterations per ste
 inline constexpr float kMaxLife = 3.5f;     // s; fluid.comp gives particles 2.2..3.4
 inline constexpr float kRange = 9000.0f;    // bursts farther from the eye are skipped; particles past it die
 inline constexpr float kGravity = 5.72443f * 900.0f; // the game's (game::Tuning::gravity), units/s^2
-inline constexpr float kKickAmplitude = 0.8f; // C3 kick depth of one particle re-entering at 1000 units/s, units
-inline constexpr float kKickSigma = 24.0f;    // ... and its width, units
+// C3 kick of one particle re-entering at 1000 units/s: its crater depth (units) and width. From the energy: ~10 % of a
+// particle's kinetic energy (a 2.4 cm parcel, 14 g, at 3.4 m/s) as the potential energy of a crater of width sigma,
+// rho g A^2 pi sigma^2 / 2: A ~ 0.9 cm (2.5 units), linear in the speed [I: the 10 %].
+inline constexpr float kKickAmplitude = 2.5f;
+inline constexpr float kKickSigma = 24.0f; // units (the field's cell: the smallest crater it holds)
 
 // shaders/fluid.glsl OuFluidBurst (std430): pos = centre xyz + the surface z at the impact; vel = carried velocity
 // xyz + radius; shape = speed, up, spread, kind;

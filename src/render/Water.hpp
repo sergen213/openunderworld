@@ -67,7 +67,7 @@ struct WaterBlock {
     glm::vec4 ocean[2];
 };
 static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16 + 64 + 3 * 16 + 2 * 16);
-inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
+inline constexpr int kWaterDebugViews = 7; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel, 6 wave field
 
 // Enhanced water colour (docs/RENDERING.md "Water colour"). NeuralSpecOcean's bio-optical palettes (MIT, Sheng Choi;
 // demo.js WATER_PALETTES, "calibrated to Morel & Prieur (1977) & Jerlov (1976) Case-1/Case-2 IOPs"): per-metre RGB

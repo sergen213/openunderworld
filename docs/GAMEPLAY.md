@@ -1796,16 +1796,23 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   rest surface (shores, rocks, hulls, pool sides; asked once as the cell scrolls in). `game::WaterSim` produces, each
   60 Hz tick:
   - kicks (`WaveKick`: world x, y, centre displacement, sigma; zero-volume Mexican hats, negative = a crater), kept for
-    8 ticks with growing serials so every rendered frame takes each once: Lara entering the water (the tick her
-    water volume becomes set, strength from the plunge speed; also landing in it dead) and climbing out; a swimmer
-    ringing the water every 0.4 s (strength 0.5) faster than 1 m/s; a standing / treading body's bob every
-    1.2–1.5 s (25.6 units over sigma 69 [I]); hitscan rays crossing the surface (`CombatState::shots`) and an enemy
-    dying in the water (strength 1); a dynamic body falling through the surface (0.8); `World::splashWater` for other
-    impacts (the splash fluid's particles falling back kick the field on the GPU, docs/RENDERING.md "Splash fluid");
+    8 ticks with growing serials so every rendered frame takes each once: Lara wading in (the tick her water volume
+    becomes set without a plunge, strength from her speed) and climbing out; a swimmer ringing the water every 0.4 s
+    (strength 0.5) faster than 1 m/s; a standing / treading body's bob every 1.2–1.5 s (25.6 units over sigma 69 [I])
+    (the splash fluid's particles falling back kick the field on the GPU, docs/RENDERING.md "Splash fluid");
+  - impact cavities (ours [I]: scales from real entries, the shape checked against the linear field's response): a
+    plunge (Lara entering faster than 300 units/s down, also dead), hitscan rays crossing the surface
+    (`CombatState::shots`), an enemy dying in the water, a dynamic body falling through it and `World::splashWater`
+    (`WaterSim::splash(pos, strength, size, speed)`) open a cavity as wide as the impactor (Gaussian width: Lara 0.3 m,
+    a swan dive 0.22 m, a body 0.3 m, a dynamic 0.25 m, a bullet 8 cm) and speed × 0.1 s deep (at most 0.8 m and 3 ×
+    its width: Lara's 4.8 m fall into l2's sea opens the full 0.8 m, a bullet 0.24 m). It opens over 0.08 s, stays
+    0.07 s and collapses in 1.2 √(depth / g) (≥ 0.12 s), as a pressure body at rest: the dip is drawn in full (the
+    field's slope limit does not apply to dips) and its opening and closing hand the field the ring train (a 0.6 m
+    cavity: rings of 5–15 cm from 0.5 to 1.5 m out within the first second, long ones first);
   - pressure bodies (`WaveBody`, up to 64): every body with its feet in the water and not under it (Lara, enemies,
     animals, moving dynamics): a Gaussian surface pressure (radius 0.22 m legs / 0.28 m torso, draft 7 cm still plus up
     to 15 cm moving at 1.5 m/s: kicking and pulling churn) that dips the surface and, moving, trails a Kelvin wake;
-    slow bodies (under 0.2 m/s, fading out by 1 m/s) also reflect waves off their core.
+    slow bodies (under 0.2 m/s, fading out by 1 m/s) also reflect waves off their core; plus the open cavities.
   - splash bursts (`game::SplashBurst`, ours, [I] tuned by eye): the same events release the water they throw for
     the renderer's particle fluid (docs/RENDERING.md "Splash fluid"). Lara's entry (once per entry, latched until she
     is out of the water; only a plunge faster than 300 units/s down throws water) `entryBursts` (e = plunge speed
@@ -1821,8 +1828,8 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     renderer's waves ride on). ou-game forwards those newer than the last it saw.
   ou-game passes the window, kicks and bodies through `FrameOptions::waterField` and the new bursts through
   `FrameOptions::fluidBursts` to Enhanced water; Original water does not use them. Parameters are ours [I]. Tests
-  `WaveWindow.*`, `Game.Water*` (entry crown once per entry, delayed impact jet, burst scaling with speed and swan
-  dives; and the GPU side's `WaterField.*`, `VulkanRenderer.WaveFieldRunsScrollsAndRests`).
+  `WaveWindow.*`, `Game.Water*` (entry cavity and crown once per entry, an impact's cavity and delayed jet, burst
+  scaling with speed and swan dives; and the GPU side's `WaterField.*`, `VulkanRenderer.WaveFieldRunsScrollsAndRests`).
 
 ### Water moves: scuba, breath meter, dodges, swan dive, surface turns, climb out, weapons, jellyfish (2026-11-10)
 

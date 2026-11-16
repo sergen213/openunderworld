@@ -54,7 +54,7 @@ vec3 ouPresetHue(vec3 gammaCol) { // gamma colour -> the preset hue at its lumin
 // footprint: p comes from the depth buffer), then fogged: agFog(c, p) = c e^(-sg d) ss(230, 185, d) + fogIn. Rays that
 // leave through the surface (looking up from under it: water.frag's Snell's window, drawn over the sky too) fog up to it
 // and keep that colour (W_SURF's fog(c, wp)); sky pixels are the demo's background (vsB / fsB): fog(0, eye + dir 240 m).
-#include "shaders/waves.glsl" // kM
+#include "shaders/water_surface.glsl" // kM, the interactive field (its caustics)
 #include "shaders/uw_medium.glsl"
 float ouSunShadowVisibility(vec3 p); // shaders/atmosphere.glsl (after render/sun.glsl in both renderers)
 // The from-below surface (water.frag) comes encoded in the scene colour (agSurfEncode: the window and, outside it, the
@@ -90,6 +90,8 @@ vec3 ouUwFog(vec3 c, vec2 uv) {
             vec3 f1 = ouWorld(uv + vec2(0.0, w.screen.w), 1.0, w.invViewProj);
             float fp = d * length(normalize(f1 - w.eye.xyz) - normalize(far - w.eye.xyz));
             vec3 ca = w.sunColor.w > 0.0 ? agCausLod(uAgWater, p, d, fp) : vec3(kAgCausMean); // no sun: no pattern
+            // x the interactive field's caustics (water_surface.glsl ouFieldCaustic), as water.frag's bed from above
+            if (w.sunColor.w > 0.0) ca *= ouFieldCaustic(q, ps, w.sunDir.xyz, 1.0 - smoothstep(1.5, 6.0, fp * kM / max(w.ripple.z, 1.0)));
             lit = agRelight(lit, p, agDir(n), -dir, ca, ouSunShadowVisibility(q + n * (0.35 * kM)));
         }
     }

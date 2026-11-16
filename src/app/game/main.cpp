@@ -123,7 +123,7 @@ void usage() {
                  "               [--rt-lights on|off]\n"
                  "               [--rt-reflections on|off] (unset: on with --rt full)\n"
                  "               [--rt-ao on|off] [--rt-gi on|off]\n"
-                 "               [--water original|enhanced] [--water-detail auto|standard|high] [--ocean fft|procedural] [--water-debug 0-5]\n"
+                 "               [--water original|enhanced] [--water-detail auto|standard|high] [--ocean fft|procedural] [--water-debug 0-6]\n"
                  "               [--water-color auto|original|emerald|coral_lagoon|pelagic_cobalt|mineral_jade|subpolar_slate|clear]\n"
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
                  "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"

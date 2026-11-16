@@ -243,8 +243,15 @@ void main() {
             s += g * kSeaNormalAmp * (1.0 - 0.8 * min(1.0, sqrt(dist / kSeaUnit * 0.01) * 1.1));
         }
     }
-    vec4 wave = ouFieldSample(p.xy); // the interactive wave field (render/WaterField.hpp)
-    s += wave.xy * (w.fogRange.z * 1.2 / (1.0 + 4.0 * length(wave.xy)));
+    // The interactive wave field (render/WaterField.hpp): its height adds to the other waves', so its slope adds to
+    // theirs at full weight; faded out where a pixel spans several of its cells (it has no mips: it would alias).
+    float fieldFade = 1.0 - smoothstep(1.5, 6.0, footprint / max(w.ripple.z, 1.0));
+    vec4 wave = ouFieldSample(p.xy) * fieldFade;
+    vec2 sUnresolved = s; // the filtered waves' slope: what the reflection lobe stands for (the field is resolved)
+    s += wave.xy;
+    // Its crests are thin water lit through like the sea's own (afl's subsurface term below, by crest height): the
+    // field's height joins the sea's on the same 0..1 scale (FFT: +-2 RMS; afl: its amplitude).
+    if (sea) seaH = clamp(seaH + wave.z / (ouOceanOn() ? 4.0 * kM * max(w.ocean[0].w, 0.05) : kSeaAmp), 0.0, 1.0);
     vec3 n = normalize(vec3(-s, 1.0)); // a height field's normal: (-dh/dx, -dh/dy, 1)
     bool below = w.eye.z < p.z;        // seen from under the surface
     vec3 nf = below ? -n : n;          // the normal facing the eye
@@ -310,7 +317,11 @@ void main() {
             float bd = distance(rbed, w.eye.xyz) / kM;
             vec3 f0 = ouWorld(uv, 1.0), f1 = ouWorld(uv + vec2(0.0, w.screen.w), 1.0);
             float fp = bd * length(normalize(f1 - w.eye.xyz) - normalize(f0 - w.eye.xyz));
-            seen = agRelight(seen, bp, agDir(bnn), agDir(normalize(w.eye.xyz - rbed)), agCausLod(uAgWater, bp, bd, fp),
+            // x the interactive field's own caustics (water_surface.glsl ouFieldCaustic: a splash's rings and a swimmer's
+            // wake focus the sun on the bed), faded where the bed pixel spans several of the field's cells.
+            float causFade = 1.0 - smoothstep(1.5, 6.0, fp * kM / max(w.ripple.z, 1.0));
+            seen = agRelight(seen, bp, agDir(bnn), agDir(normalize(w.eye.xyz - rbed)),
+                             agCausLod(uAgWater, bp, bd, fp) * ouFieldCaustic(rbed, p.z, w.sunDir.xyz, causFade),
                              ouSunShadowVisibility(rbed + bnn * (0.35 * kM)));
         }
         vec3 refr = ouAbsorb(seen, path, down, light);
@@ -330,7 +341,7 @@ void main() {
         // x waterPass[2].w, fogged by their eye distance like the scene. Both fade to the sky with distance (80 m, twice SSR's 40: rays see further); misses keep the sky.
         // Lobe half-angle [I]: wind sea 0.08 rad (choppier where the FFT slope is steep), calm water 0.02, widening
         // with the normals' distance fade (far waves are averaged, not flat).
-        float rough = (sea ? 0.08 * (1.0 + 2.0 * min(length(s), 1.0)) : 0.02) + 0.04 * (1.0 - nfade);
+        float rough = (sea ? 0.08 * (1.0 + 2.0 * min(length(sUnresolved), 1.0)) : 0.02) + 0.04 * (1.0 - nfade);
         ouRtRough = rough;
         vec3 ro = p + vec3(0.0, 0.0, 2.0);
         vec3 hc, hn;
@@ -398,11 +409,14 @@ void main() {
         float bend = -640.0 * wave.w, crest = sign(bend) * smoothstep(2.0, 20.0, abs(bend)) * shore;
         c = mix(c, crest > 0.0 ? mix(sky, fogLin, 0.5) : c * 0.5, 0.45 * abs(crest));
 
-        // Edge foam (Godot: foam where the edge texture exceeds depth / edge_size) + the wave field's churn.
+        // Edge foam (Godot: foam where the edge texture exceeds depth / edge_size) + the wave field's whitewater (its
+        // density, water_field.comp: breaking crests, a collapsing cavity, drops falling back), a lace that fills in as
+        // the density rises (white where the edge noise beats 1 - density).
         float e = ouEdgeNoise(p.xy, t);
         float foam = smoothstep(-0.05, 0.05, e * e - cdepth / kEdge); // squared: lace, not a solid band
-        float churn = max(smoothstep(25.0, 45.0, abs(wave.z)), smoothstep(0.02, 0.04, -wave.w));
-        foam = max(foam, churn * smoothstep(0.3, 0.7, e));
+        // Whitewater is fizzier than the shore's lace: the edge noise at a third of its scale, softer edges.
+        float churn = ouFieldFoam(p.xy) * fieldFade, ef = ouEdgeNoise(3.0 * p.xy, 1.7 * t);
+        foam = max(foam, smoothstep(-0.25, 0.15, churn - (1.0 - ef)) * smoothstep(0.0, 0.3, churn));
         c = mix(c, light * 0.9, foam * 0.65);
         // FFT whitecaps: foam where the fine fold pattern beats 1 - density, cut at a pixel-wide edge: thin broken fold
         // lines where the surface only starts to fold or the foam has aged, filled in only at the freshest cores; lit
@@ -517,5 +531,6 @@ void main() {
     else if (view == 3) color = mix(vec3(1, 0.15, 0), vec3(0.1, 1, 0.2), conf);                            // SSR hit vs sky
     else if (view == 4) color = vec3(clamp(spec, 0.0, 1.0), clamp(spec, 0.0, 1.0) * sunVis, 1.0 - sunVis); // glint
     else if (view == 5) color = vec3(fresnel);                                                             // Fresnel
+    else if (view == 6) color = clamp(vec3(0.5 + ouFieldHeight(p.xy) / (0.3 * kM), 0.5 + 2.0 * ouFieldSample(p.xy).xy), 0.0, 1.0); // wave field: r height (+-15 cm), gb slope
     oColor = vec4(color, 1.0);
 }

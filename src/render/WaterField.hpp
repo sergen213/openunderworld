@@ -34,13 +34,16 @@ inline constexpr size_t kMaxBodies = 64;
 inline constexpr float kMetre = 290.0f;    // TRU units per metre (shaders/waves.glsl kM)
 inline constexpr float kGravity = 9.81f;   // m/s^2
 inline constexpr float kTension = 0.073f / 1025.0f; // sigma / rho, m^3/s^2 (as shaders/ocean.comp)
-// Damping (amplitude e-folding rates, 1/s) [I]: a base rate (a splash's rings fade over ~3 s and a pool does not fill
-// up with reflections), an effective viscosity on k^2 (short ripples die first, as surface films make them), a steep
-// k^8 term at the grid scale (keeps the cell-sized noise out), the sponge at the window's outer kSpongeCells and the
-// extra rate where the FFT ocean's mean square slope is high (kRough x s^2 / (s^2 + 0.01)).
-inline constexpr float kBaseDamping = 0.3f, kViscosity = 3e-4f /* m^2/s */, kGridDamping = 6.0f;
-inline constexpr float kSponge = 8.0f, kSpongeCells = 32.0f, kRough = 1.0f;
-inline constexpr float kSteepMax = 0.35f; // the waves' slope limit (a breaking crest loses the excess)
+// Damping (amplitude e-folding rates, 1/s) [I]: a small base rate (real metre waves barely lose energy: a splash's rings
+// spread for seconds; it keeps a pool from ringing forever), an effective viscosity on k^2 (short ripples die first, as
+// surface films make them), a steep k^8 term at the grid scale (keeps the cell-sized noise out), the sponge at the
+// window's outer kSpongeCells and the extra rate where the FFT ocean's mean square slope is high
+// (kRough x s^2 / (s^2 + 0.01)).
+inline constexpr float kBaseDamping = 0.08f, kViscosity = 3e-4f /* m^2/s */, kGridDamping = 6.0f;
+inline constexpr float kSponge = 8.0f, kSpongeCells = 32.0f, kRough = 0.25f;
+// The waves' slope limit: a crest steeper than Stokes' limiting wave (a 120-degree crest, slope tan 30 deg) breaks and
+// loses the excess. The bodies' dips (cavities, a swimmer's trough) are not limited.
+inline constexpr float kSteepMax = 0.577f;
 
 // The GPU buffers. Kicks: contract C3 (`uint count; uint pad[3]; vec4 kicks[4096]`), the same layout as the external
 // kick buffer a renderer may be given (setExternalKicks). Frame: the bodies and the wall mask (bytes packed 4 per uint).

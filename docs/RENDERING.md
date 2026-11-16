@@ -502,9 +502,10 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   sea; then the wave field's height (`ouBaseHeight` + `ouFieldHeight`, shaders/water_surface.glsl). Coarse TRU meshes show it only at their few interior vertices (l1_seatop's sea:
   a regular grid of ~3.5 m quads [measured: triangle-ID debug view over a 1 m grid]), so the drawn relief is the
   per-pixel normals'; the geometry only tilts between those vertices.
-- Interactive waves (ours, "Interactive waves" below): the field's slopes bend the normals, its height displaces
-  (water.vert), crests catch light / troughs darken in proportion to the curvature and splash craters and sharp
-  crests foam. Every effect reads the summed surface through `shaders/water_surface.glsl`.
+- Interactive waves (ours, "Interactive waves" below): the field's slopes bend the normals at full weight, its height
+  displaces (water.vert) and lights crests through (seas), crests catch light / troughs darken in proportion to the
+  curvature, its whitewater foams (cavities, breaking crests, drops falling back, strokes) and its caustics light the
+  bed. Every effect reads the summed surface through `shaders/water_surface.glsl`.
 - Splash fluid (ours; "Splash fluid" below): the game's splash bursts are particles of a small GPU fluid, drawn as
   refracting liquid by the screen-space fluid passes; particles falling back kick the interactive waves.
 - Underwater: the original's under-water look ("Under water" below) in both qualities.
@@ -531,7 +532,8 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   ~57 % of a lit floor on a flat white plateau with dark blobs (user report: "weird, not natural"); those gave way to
   the mesh above (`agCaus` / `agCaus2` deleted; r is now read only by the sun shafts' pattern).
 - Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
-  3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
+  3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel, 6 the interactive wave field (red height ±15 cm,
+  green / blue slope × 2).
 
 Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the wave field's inputs (window, wall mask, kicks,
 pressure bodies), the splash bursts and the water volumes; ou-game fills `FrameOptions::{waterField, waterVolumes,
@@ -579,26 +581,47 @@ the FFT ocean each frame), inputs from `game::WaterSim` (docs/GAMEPLAY.md "Water
 - Seven compute dispatches a frame (`waterfield::Pass`): prep (16² tiles: scroll the state, add the frame's kicks
   culled per tile, subtract the bodies' dips), forward FFT rows / columns (radix-2 Stockham, one workgroup of 256 per
   512-point line in shared memory), propagate (each ±k pair: unpack the two real fields, rotate by ω dt, damp, drop
-  the mean), inverse FFT rows / columns, finalize (walls, sponge, rough-sea damping, steepness limit; write the state
-  and `uRipples`).
+  the mean), inverse FFT rows / columns, finalize (walls, sponge, rough-sea damping, steepness limit, whitewater;
+  write the state (h, v, w per cell; prep hands finalize the scrolled whitewater in the spare 4th slot) and
+  `uRipples`).
 - Bodies as moving equilibria: a floating body's surface pressure p holds the water at h = −p/(ρg) (at every k, so in
   any depth). The waves are u = h − dip(bodies): a body that moves shifts its dip, the water oscillates toward the new
   equilibrium and radiates. Slow bodies' cores (and static walls: game::WaveWindow's mask) zero u: reflection.
-- Damping (amplitude rates): 0.3/s + 2·3×10⁻⁴ m²/s·k² (short ripples die first, as surface films make them) + 6/s at
+- Damping (amplitude rates): 0.08/s + 2·3×10⁻⁴ m²/s·k² (short ripples die first, as surface films make them) + 6/s at
   the grid scale (k⁸); an absorbing sponge over the window's outer 32 cells (up to 8/s); where the FFT ocean is steep,
-  up to 1/s more (its mean square slope s²: 1/s × s²/(s² + 0.01); short waves riding a rough sea break up); a slope
-  limit of 0.35 (a breaking crest loses the excess), so no input makes the field explode. Its waves use the ocean's
-  gravity and dispersion and add to its surface as a perturbation.
+  up to 0.25/s more (its mean square slope s²: 0.25/s × s²/(s² + 0.01); short waves riding a rough sea break up); a
+  slope limit of 0.577, Stokes' limiting wave (a 120° crest: a steeper crest breaks and loses the excess), so no input
+  makes the field explode, applied to the drawn surface's slope (u + the dips: while a cavity opens, u carries the
+  displaced water as a bump right under the dip, which must radiate, not break); the dips themselves are not limited
+  (a cavity shows in full). Its waves use the ocean's
+  gravity and dispersion and add to its surface as a perturbation. (Until 2026-11-15: 0.3/s, 1/s and a 0.35 limit,
+  which clipped a splash's crater to half its depth on the frame it was made and damped its rings away within ~2 s
+  and ~1 m: the user saw the particles splash on a water body that did not react.)
+- Whitewater (state w, uRipples alpha): the foam the waves make, 0..1, e-folding over 1.5 s [I]: made where a crest
+  breaks (3 × the share the slope limit takes), where the water moves vertically faster than 1–2 m/s (a
+  collapsing cavity's surge), inside an open cavity (a dip deeper than 0.25–0.5 m entrains air) and by sharp kicks
+  (narrower than 3 cells: drops falling back, strokes; 8 cm of summed crater depth makes a cell white; a body's broad
+  bob does not churn). It scrolls with the window and stays where it formed.
 - Inputs: kicks in the C3 layout (`uint count; uint pad[3]; vec4 kicks[4096]`, k = world x, y, centre displacement
   in TRU units (negative pushes down), sigma), one CPU-filled buffer per frame plus one optional external GPU buffer
   of the same layout (`setExternalWaveKicks` in each renderer; the field resets its count after consuming it), the
   bodies (≤ 64) and the 256² wall mask.
 - Output (`shaders/water_surface.glsl` contract C1): `uRipples`, rgba16f, h (TRU units above the rest surface, dips
-  included), dh/dx, dh/dy, v (units/s); `WaterBlock::ripple` = window corner, cell size, rest surface z;
+  included), dh/dx, dh/dy, whitewater (0..1); `WaterBlock::ripple` = window corner, cell size, rest surface z;
   `rippleInfo` = (512, 1 while the field runs). Contract C2: `ouSurfaceHeight(p)` / `ouSurfaceSlope(p)` sum tru.exe's
   sea waves, the FFT ocean (or afl's waves / Godot's layers) and the field; water.vert displaces with the same
   `ouBaseHeight` + `ouFieldHeight`, water.frag reads `ouFieldSample` (its FFT normals stay the filtered
   `ouOceanSurface`).
+- Shading (water.frag): the field's slope adds to the other waves' at full weight (heights add, so slopes do; until
+  2026-11-15 it was compressed by 1.2 / (1 + 4 |slope|)), faded out where a pixel spans 1.5–6 field cells (the
+  texture has no mips); the RT reflection lobe widens only with the filtered waves' slope (the field is resolved, not
+  roughness); on seas its height joins the crest height of afl's subsurface term (thin crests lit through); its
+  whitewater is a lace that fills in as the density rises (white where the edge noise beats 1 − density); its
+  caustics (`ouFieldCaustic`) multiply the bed's caustic light from above (water.frag) and from below (underwater.glsl
+  `ouUwFog`): for its small slopes the refracted sun lands displaced by D (1 − 1/n) ∇h, so the light changes by
+  1 / |1 + D (1 − 1/n) ∇²h| (capped at 4 at the folds), read where the refracted sun ray through the bed point crossed
+  the surface, faded from 10 to 35 m deep and by the bed pixel's footprint. Debug view 6 (`--water-debug 6`) shows
+  the field: red its height (±15 cm), green / blue its slope (×2).
 - Cost (1920×1080, RX 7900 XTX / RADV, `OU_VK_PRESENT_STATS=1`, which also brackets the field): 0.069–0.077 ms a
   frame on Vulkan (l4_pool, l1_seatop, l2_cliffclimb), 0.09–0.10 ms on GL (`GL_TIME_ELAPSED`).
 - Original water runs none of it (`waterfield::wanted`).
@@ -627,8 +650,9 @@ Ours, from the papers (docs/RESEARCH.md "Splash fluid"); the drawing passes adap
   particle that was in front of the visible surface and is now less than 1.5 h behind it is pushed out along its normal,
   restitution 0.1, friction 0.3).
 - Kicks (contract C3, `uint count; uint pad[3]; vec4 kicks[4096]`, k = world x, y, centre displacement, sigma in TRU
-  units): each particle falling back faster than 50 units/s writes a crater of −0.8 × (speed / 1000, 0.15–2) units,
-  sigma 24. The renderers hand this buffer (`fluidKickBuffer()`) to the wave field as its external kick buffer at
+  units): each particle falling back faster than 50 units/s writes a crater of −2.5 × (speed / 1000, 0.15–2) units,
+  sigma 24 (from the energy: ~10 % of a 2.4 cm parcel's kinetic energy as the crater's potential energy, ρ g A² π σ² / 2
+  [I: the 10 %]; until 2026-11-15 −0.8). The renderers hand this buffer (`fluidKickBuffer()`) to the wave field as its external kick buffer at
   creation (`setExternalWaveKicks`); the next frame's field consumes it (count clamped to 4096, reset to 0).
 - Drawing (after the water surfaces, colour copy refreshed so the liquid refracts them): (1) splat: one camera-facing
   quad per particle slot (vertex pulling, dead slots collapse) into an RGBA32F target cleared to (−1e20, 0, 0, 0) with
@@ -928,7 +952,8 @@ noise. `standard` is the v0.5 water unchanged.
 
 Debug views (`--water-debug N` in ou-game / ou-viewer, F7 cycles in ou-game; `WaterBlock::detail.y`):
 1 wave normals, 2 water mask (magenta, shallow) to depth (blue, deep), 3 SSR hit (green) vs
-environment fallback (red), 4 sun glint (white) and its sun occlusion (blue), 5 Fresnel term.
+environment fallback (red), 4 sun glint (white) and its sun occlusion (blue), 5 Fresnel term, 6 the interactive
+wave field (red its height ±15 cm, green / blue its slope × 2).
 
 Water surface for the atmosphere: the Enhanced water pass does not write depth, so the post pass
 intersects the view ray with the tops of the eight nearest `WaterVolume`s (`WaterBlock::volumes`,
@@ -988,7 +1013,7 @@ Gap list against modern-wow-renderer (read for techniques only, no code; RESEARC
 | Fresnel, depth colour, shore / crest foam | yes | + noise crest foam |
 | Local light reflections on water | none | water detail: 4 nearest lamps |
 | Water mask + surface depth for the atmosphere | none | water volume tops intersected in the post pass |
-| Water diagnostics / highlight views | none | `--water-debug`, F7: 5 views |
+| Water diagnostics / highlight views | none | `--water-debug`, F7: 6 views |
 | Two-layer analytic height fog, HG lobe, rolling noise | none | atmosphere low+ (no noise layer) |
 | Sun shafts (screen-space radial there) | none | shadow-map ray march, medium/high (handles off-screen occluders) |
 | Low-res atmosphere + temporal reprojection, local fog field, contact shadows | none | skipped (full-res single pass is cheap enough; no temporal history) |
