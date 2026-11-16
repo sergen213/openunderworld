@@ -1,7 +1,7 @@
 // Enhanced water: shared uniform block and GLSL for both backends (Original water keeps TRU's shaders).
 // The surface look is smallcableboi's Godot water (CC0: Fresnel, scrolling wave layers, absorption, traced / simple
 // refraction, traced SSR, edge foam, Snell's window) with afl_ext's procedural ocean waves (MIT) on open seas, plus the
-// interactive wave field (game::WaveField), the splash fluid's passes and the underwater post effect. RENDERING.md "Water".
+// interactive wave field (render/WaterField.hpp), the splash fluid's passes and the underwater post effect. docs/RENDERING.md "Water".
 #pragma once
 
 #include "render/Renderer.hpp"
@@ -35,7 +35,7 @@ struct WaterBlock {
     glm::vec4 sunColor;    // rgb, w caustics strength
     glm::vec4 fogColor;    // rgb, w 1 = the camera is submerged (underwater post)
     glm::vec4 fogRange;    // x fog near, y fog far, z ripple normal strength, w reflection strength
-    glm::vec4 ripple;      // origin x, origin y, cell size, surface z
+    glm::vec4 ripple;      // interactive wave field (shaders/water_surface.glsl C1): origin x, origin y, cell size, surface z
     glm::vec4 rippleInfo;  // x grid size, y 1 = a wave field is bound, z/w unused
     glm::vec4 ambient;     // rgb scene ambient (scene::Environment::ambient), w unused
     // ---- v0.10 extras (FrameOptions waterDetail / waterDebug / atmosphere / weather) ----
@@ -202,13 +202,20 @@ std::string underwaterPostSource(bool vulkan);
 // The passes run this frame (= underwater.glsl ouShaftsOn on the uploaded block); `block` is the frame's WaterBlock.
 bool underwaterShaftsActive(const WaterBlock& block);
 std::string underwaterShaftSource(int pass); // GL fragment source of pass 0 or 1 (includes spliced)
-// Enhanced water's animated water texture (shaders/uw_water.frag: abyssal-garden's W_WATER, r = caustic, ba = surface
-// slope; docs/RENDERING.md "Under water"): kAgWaterSize^2 RGBA16F with kAgWaterLevels mips, repeat / trilinear /
-// anisotropic 8, regenerated every frame Enhanced water is drawn (camera above or below: the bed caustics use it too):
-// a fullscreen triangle into mip 0 (VK push constant / GL uniform 0 = WaterBlock eye.w, the demo's time), then the mips
-// box-filtered down (the demo's fsMip; VK linear blits, GL glGenerateTextureMipmap). Sampled as `uAgWater`: VK post set
-// 1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts, particles).
+// Enhanced water's animated water texture (shaders/uw_water.frag: abyssal-garden's W_WATER, r = its caustic (the shafts'
+// pattern), ba = surface slope; g = our floor caustics, shaders/uw_caustics.vert; docs/RENDERING.md "Under water"):
+// kAgWaterSize^2 RGBA16F with kAgWaterLevels mips, repeat / trilinear / anisotropic 8, regenerated every frame Enhanced
+// water is drawn (camera above or below: the bed caustics use it too): a fullscreen triangle into mip 0 (VK push
+// constant / GL uniform 0 = WaterBlock eye.w, the demo's time), then, in the same pass, the caustic mesh
+// (kAgCausVertices from the vertex index, no buffers; same push / uniform) added into g only (blend ONE + ONE), then the
+// mips box-filtered down (the demo's fsMip; VK linear blits, GL glGenerateTextureMipmap). Sampled as `uAgWater`: VK
+// post set 1 binding 10 and water set 0 binding 5; GL unit 18 (post, water, shafts, particles).
 inline constexpr int kAgWaterSize = 512, kAgWaterLevels = 5; // = uw_water.frag kAgWaterSize; shaders.js WATER (high)
+// The caustic mesh: kAgCausCells^2 cells per tile plus a kAgCausMargin-cell border (the largest landing offset), two
+// triangles of 3 vertices per cell (= uw_caustics.vert kCells / kMargin).
+inline constexpr int kAgCausCells = 256, kAgCausMargin = 32;
+inline constexpr int kAgCausVertices = 6 * (kAgCausCells + 2 * kAgCausMargin) * (kAgCausCells + 2 * kAgCausMargin);
 std::string agWaterSource(); // GL fragment source
+std::string agCausticSource(bool vertex); // GL source of shaders/uw_caustics.vert (true) / .frag (false)
 
 } // namespace ou::render

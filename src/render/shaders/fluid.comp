@@ -34,6 +34,8 @@ layout(binding = 4) uniform Water {
     mat4 viewProj; mat4 invViewProj;
     vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
     vec4 ripple; vec4 rippleInfo; vec4 ambient;
+    vec4 detail; vec4 lamps[4]; vec4 lampColor[4]; vec4 haze; vec4 mist; vec4 weather; vec4 volumes[16];
+    vec4 filters[9]; uvec4 filterLut[640]; vec4 waterPass[3]; uvec4 rays[157]; mat4 seaWaves; vec4 optics[3]; vec4 ocean[2]; // as water.vert
 } w;
 #ifdef VULKAN
 layout(set = 0, binding = 1, std430) buffer Particles { OuFluidParticle P[]; };
@@ -41,7 +43,8 @@ layout(set = 0, binding = 2, std430) buffer Grid { uint head[65536]; uint next[]
 layout(set = 0, binding = 3, std430) buffer Kicks { uint kickCount; uint kpad0, kpad1, kpad2; OuWaveKick kicks[4096]; };
 layout(set = 0, binding = 4, std430) readonly buffer Bursts { OuFluidBurst bursts[]; };
 layout(set = 0, binding = 5) uniform sampler2D uDepth;   // opaque scene depth copy
-layout(set = 0, binding = 6) uniform sampler2D uRipples; // the interactive wave field
+layout(set = 0, binding = 6) uniform sampler2D uRipples;      // the interactive wave field
+layout(set = 0, binding = 7) uniform sampler2DArray uOcean;   // the FFT ocean (shaders/ocean.comp)
 layout(push_constant) uniform Push { ivec4 cfg; vec4 sim; vec4 par; vec4 lim; } pc;
 #define CFG pc.cfg
 #define SIM pc.sim
@@ -57,6 +60,7 @@ layout(std430, binding = 2) buffer Kicks { uint kickCount; uint kpad0, kpad1, kp
 layout(std430, binding = 3) readonly buffer Bursts { OuFluidBurst bursts[]; };
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 7) uniform sampler2D uRipples;
+layout(binding = 12) uniform sampler2DArray uOcean;
 layout(location = 0) uniform ivec4 uCfg;
 layout(location = 1) uniform vec4 uSim;
 layout(location = 2) uniform vec4 uPar;
@@ -69,6 +73,7 @@ layout(location = 3) uniform vec4 uLim;
 #define OU_NDC_Y(uv) (2.0 * (uv).y - 1.0)
 #define OU_NDC_Z(d) (2.0 * (d) - 1.0)
 #endif
+#include "shaders/water_surface.glsl"
 
 const uint kNone = 0xFFFFFFFFu;
 const uint kHashMask = 65535u;
@@ -100,15 +105,9 @@ ivec3 cellOf(vec3 p) { return ivec3(floor(p / SIM.y)); }
 uint bucket(ivec3 c) { return (uint(c.x) * 73856093u ^ uint(c.y) * 19349663u ^ uint(c.z) * 83492791u) & kHashMask; }
 vec3 solverPos(uint j, int src) { return src == 0 ? P[j].p.xyz : P[j].d.xyz; }
 
-// The surface a particle falls back into: its water's rest z plus the interactive field there (water.vert's fade).
-// [Integration: point at water_surface.glsl ouSurfaceHeight once it lands, for the FFT ocean as well.]
-float surfaceZ(vec2 xy, float rest) {
-    if (w.rippleInfo.y < 0.5) return rest;
-    vec2 uv = (xy - w.ripple.xy) / (w.ripple.z * w.rippleInfo.x);
-    vec2 in2 = min(uv, 1.0 - uv);
-    if (min(in2.x, in2.y) <= 0.0) return rest;
-    return rest + smoothstep(0.0, 0.04, min(in2.x, in2.y)) * textureLod(uRipples, uv, 0.0).r;
-}
+// The surface a particle falls back into: its water's rest z plus the one summed surface every Enhanced effect draws
+// (shaders/water_surface.glsl: the sea waves / FFT ocean and the interactive wave field).
+float surfaceZ(vec2 xy, float rest) { return rest + ouSurfaceHeight(xy); }
 
 void emit() {
     uint t = gl_GlobalInvocationID.x;

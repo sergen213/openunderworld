@@ -4,6 +4,7 @@
 // vkGetInstanceProcAddr. Output is meant to match the GL backend pixel-for-pixel modulo rasterisation.
 #include "render/Fluid.hpp"
 #include "render/Ocean.hpp"
+#include "render/WaterField.hpp"
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
@@ -70,6 +71,9 @@ const uint32_t kOceanComp[] = { // the FFT ocean (render/Ocean.hpp)
 const uint32_t kFluidComp[] = { // the splash fluid (render/Fluid.hpp)
 #include "fluid.comp.inc"
 };
+const uint32_t kWaterFieldComp[] = { // the interactive wave field (render/WaterField.hpp)
+#include "water_field.comp.inc"
+};
 const uint32_t kPrepassVert[] = {
 #include "prepass.vert.inc"
 };
@@ -108,6 +112,12 @@ const uint32_t kShaftBlurFrag[] = {
 };
 const uint32_t kAgWaterFrag[] = { // Enhanced water's animated water texture (abyssal-garden W_WATER, render/Water.hpp)
 #include "uw_water.frag.inc"
+};
+const uint32_t kAgCausticVert[] = { // its floor caustics, added into g (shaders/uw_caustics.*, render/Water.hpp)
+#include "uw_caustics.vert.inc"
+};
+const uint32_t kAgCausticFrag[] = {
+#include "uw_caustics.frag.inc"
 };
 const uint32_t kWaterVert[] = { // Enhanced water + splashes (shared GLSL, render/shaders)
 #include "water.vert.inc"
@@ -181,7 +191,8 @@ const uint32_t kFxFrag[] = {
 // Pssm: tru.exe's shadow atlas (original::Pssm): as Shadow with the slope bias as dynamic state (the depth bias is in
 // the split's matrix).
 enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Pssm, Lines, Overlay, Post, Prepass, Water, SplashSplat,
-                          SplashBlur, SplashComposite, FxAlpha, FxAdditive, FxSubtract, FxMultiply }; // Fx*: FxBatch::blend order
+                          SplashBlur, SplashComposite, FxAlpha, FxAdditive, FxSubtract, FxMultiply, // Fx*: FxBatch::blend order
+                          CausticSplat }; // ONE + ONE into G only (uw_caustics.*)
 
 struct LineVertex {
     float pos[3];
@@ -883,7 +894,6 @@ public:
         // shaders' look. [O] l2_cliffclimb deck: raster / RT luminance of on-screen hits, median 2.2 (226k pixels).
         // ponytail: one global gain; per-material shading at the hit would need the translated programs in the ray path.
         wb.waterPass[2].w = options.originalShaders && !origPrograms_.empty() ? 2.0f : 1.0f;
-        if (enhancedWater) updateRipples(options);
         // The splash fluid's frame (render/Fluid.hpp): its bursts go to this frame's host-visible buffer now; it simulates
         // and draws after the water surfaces (recordFluid / recordSplashFluid).
         fluid::Frame fluidFrame;
@@ -896,6 +906,9 @@ public:
             if (oceanPipeline_) recordOcean(cmd, options);
             else wb.ocean[0].x = 0.0f; // afl's waves
         }
+        gpuMark(cmd, 13);
+        if (!recordWaterField(cmd, options, wb)) wb.rippleInfo.y = 0.0f; // the interactive waves (render/WaterField.hpp)
+        gpuMark(cmd, 14);
         if (enhancedWater) recordAgWater(cmd, wb.eye.w); // uAgWater: this frame's caustics / slopes (water + post read it)
         // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water; translated
         // materials reading the back/depth buffer (the sea, OrigDraw::screen) draw in the second pass from the copies.
@@ -1875,7 +1888,7 @@ public:
             destroyImage(attenuation_);
             destroyImage(cookies_);
             destroyImage(blackCube_);
-            if (ripples_.image) destroyImage(ripples_);
+            destroyWaterField();
             destroyOcean();
             for (auto& u : uiImages_)
                 if (u.gpu.image) destroyImage(u.gpu);
@@ -1908,7 +1921,7 @@ public:
             destroyFsr();
             for (VkPipeline p : {textPipeline_, shadowPipeline_, pssmPipeline_, postPipeline_,
                                  shaftMarchPipeline_, shaftBlurPipeline_, uwResolvePipeline_, uwBloomPipeline_, uwBloomUpPipeline_,
-                                 uwGradePipeline_, agWaterPipeline_})
+                                 uwGradePipeline_, agWaterPipeline_, agCausticPipeline_})
                 vkDestroyPipeline(device_, p, nullptr);
             for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_, fxLayout_, uwGradeLayout_, agWaterLayout_})
                 vkDestroyPipelineLayout(device_, l, nullptr);
@@ -2514,14 +2527,15 @@ private:
             barriers(cmd, {}, &done);
         });
         constexpr VkShaderStageFlags cs = VK_SHADER_STAGE_COMPUTE_BIT;
-        const VkDescriptorSetLayoutBinding b[7] = {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, cs, nullptr},
+        const VkDescriptorSetLayoutBinding b[8] = {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, cs, nullptr},
                                                    {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, cs, nullptr},
                                                    {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, cs, nullptr},
                                                    {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, cs, nullptr},
                                                    {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, cs, nullptr},
                                                    {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, cs, nullptr},
-                                                   {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, cs, nullptr}};
-        VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 7, b};
+                                                   {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, cs, nullptr},
+                                                   {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, cs, nullptr}};
+        VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 8, b};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &dl, nullptr, &fluidSetLayout_));
         const VkPushConstantRange push{cs, 0, sizeof(fluid::Push)};
         VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &fluidSetLayout_, 1, &push};
@@ -2534,7 +2548,7 @@ private:
         vkDestroyShaderModule(device_, ci.stage.module, nullptr);
         const VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight},
                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * kFramesInFlight},
-                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kFramesInFlight}};
+                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 * kFramesInFlight}};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, kFramesInFlight, 3, ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &fluidPool_));
         for (VkDescriptorSet& s : fluidSets_) {
@@ -2714,6 +2728,129 @@ private:
             run(size_t(lod), pass, n, pass == ocean::Rows || pass == ocean::Columns);
         if (lod > 0) run(size_t(ocean::kLevels - 1), ocean::Up, ocean::kMaxN, false);
         for (int l = lod; l < ocean::kLevels - 1; ++l) run(size_t(l), ocean::Mip, ocean::kMaxN >> (l + 1), false);
+    }
+    // Interactive wave field (render/WaterField.hpp, shaders/water_field.comp): its state and FFT scratch (device-local
+    // SSBOs), per frame in flight the kick buffer (contract C3) and the bodies + wall mask (host-visible), the external
+    // kick buffer (setExternalWaveKicks; a zero-count dummy until one is given) and uRipples, the rgba16f texture the
+    // water shaders read (always GENERAL: water_field.comp's storage image; cleared, unread until a frame ran).
+    void createWaterField() {
+        constexpr VkDeviceSize cells = VkDeviceSize(waterfield::kN) * waterfield::kN * sizeof(glm::vec2);
+        constexpr VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        constexpr VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        fieldState_ = createBuffer(staticMemory_, cells, ssbo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        fieldWork_ = createBuffer(staticMemory_, cells, ssbo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        fieldNoKicks_ = createBuffer(staticMemory_, sizeof(waterfield::KickBuffer), ssbo, host);
+        std::memset(fieldNoKicks_.mapped, 0, sizeof(waterfield::KickBuffer));
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            fieldKicks_[i] = createBuffer(staticMemory_, sizeof(waterfield::KickBuffer), ssbo, host);
+            fieldFrame_[i] = createBuffer(staticMemory_, sizeof(waterfield::FrameBuffer), ssbo, host);
+        }
+        ripples_ = createImage(staticMemory_, VK_FORMAT_R16G16B16A16_SFLOAT, waterfield::kN, waterfield::kN, 1,
+                               VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                               VK_IMAGE_ASPECT_COLOR_BIT);
+        UploadBatch batch;
+        flush(batch, [&](VkCommandBuffer cmd) {
+            const auto clear = imageBarrier(ripples_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                                            VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            barriers(cmd, {&clear, 1});
+            const VkClearColorValue zero{};
+            const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cmd, ripples_.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all);
+            const auto done = imageBarrier(ripples_.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                           VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT);
+            barriers(cmd, {&done, 1});
+        });
+        constexpr VkShaderStageFlags cs = VK_SHADER_STAGE_COMPUTE_BIT;
+        VkDescriptorSetLayoutBinding b[7];
+        for (uint32_t i = 0; i < 5; ++i) b[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, cs, nullptr};
+        b[5] = {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, cs, nullptr};
+        b[6] = {6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, cs, nullptr};
+        VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 7, b};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &dl, nullptr, &fieldSetLayout_));
+        const VkPushConstantRange push{cs, 0, sizeof(waterfield::Push)};
+        VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &fieldSetLayout_, 1, &push};
+        VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &fieldLayout_));
+        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shaderModule(kWaterFieldComp), "main", nullptr};
+        ci.layout = fieldLayout_;
+        VK_CHECK(vkCreateComputePipelines(device_, pipelineCache_, 1, &ci, nullptr, &fieldPipeline_));
+        vkDestroyShaderModule(device_, ci.stage.module, nullptr);
+        const VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5 * kFramesInFlight},
+                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight},
+                                            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kFramesInFlight}};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, kFramesInFlight, 3, ps};
+        VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &fieldPool_));
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, fieldPool_, 1, &fieldSetLayout_};
+            VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &fieldSets_[i]));
+        }
+        writeWaterFieldSets();
+    }
+    void writeWaterFieldSets() {
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            const VkDescriptorBufferInfo buf[5] = {{fieldState_.buffer, 0, VK_WHOLE_SIZE},
+                                                   {fieldWork_.buffer, 0, VK_WHOLE_SIZE},
+                                                   {fieldKicks_[i].buffer, 0, VK_WHOLE_SIZE},
+                                                   {fieldExternal_ ? fieldExternal_ : fieldNoKicks_.buffer, 0, VK_WHOLE_SIZE},
+                                                   {fieldFrame_[i].buffer, 0, VK_WHOLE_SIZE}};
+            const VkDescriptorImageInfo oc{oceanSampler_, ocean_.view, VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo img{VK_NULL_HANDLE, ripples_.view, VK_IMAGE_LAYOUT_GENERAL};
+            VkWriteDescriptorSet w[7];
+            for (uint32_t b = 0; b < 7; ++b) {
+                w[b] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w[b].dstSet = fieldSets_[i], w[b].dstBinding = b, w[b].descriptorCount = 1;
+                w[b].descriptorType = b < 5 ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : b == 5 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                                                                          : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                if (b < 5) w[b].pBufferInfo = &buf[b];
+            }
+            w[5].pImageInfo = &oc, w[6].pImageInfo = &img;
+            vkUpdateDescriptorSets(device_, 7, w, 0, nullptr);
+        }
+    }
+    // Contract C3 (b): a GPU buffer with the kick layout (`uint count; uint pad[3]; vec4 kicks[4096]`, k = world x, y,
+    // centre displacement, sigma) that the field consumes each frame it runs, setting its count back to 0; written by
+    // the GPU before this frame's field (e.g. WaterFluid's particle impacts). VK_NULL_HANDLE detaches it.
+    void setExternalWaveKicks(VkBuffer buffer) {
+        if (buffer == fieldExternal_) return;
+        waitIdle(); // the sets are in use by frames in flight
+        fieldExternal_ = buffer;
+        writeWaterFieldSets();
+    }
+    void destroyWaterField() {
+        vkDestroyPipeline(device_, std::exchange(fieldPipeline_, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipelineLayout(device_, std::exchange(fieldLayout_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorPool(device_, std::exchange(fieldPool_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorSetLayout(device_, std::exchange(fieldSetLayout_, VK_NULL_HANDLE), nullptr);
+        if (ripples_.image) destroyImage(ripples_);
+        for (Buffer* b : {&fieldState_, &fieldWork_, &fieldNoKicks_, &fieldKicks_[0], &fieldKicks_[1], &fieldFrame_[0], &fieldFrame_[1]})
+            vkDestroyBuffer(device_, std::exchange(*b, {}).buffer, nullptr);
+    }
+    // This frame's field (WaterField.hpp Pass, one dispatch each), after the previous frames' reads of uRipples and the
+    // ocean's passes (rough-sea damping reads uOcean), before this frame's water / post reads. False: the field rests.
+    bool recordWaterField(VkCommandBuffer cmd, const FrameOptions& o, const WaterBlock& wb) {
+        static_assert(kFramesInFlight == 2);
+        auto* kicks = reinterpret_cast<waterfield::KickBuffer*>(fieldKicks_[frameIndex_].mapped);
+        auto* frame = reinterpret_cast<waterfield::FrameBuffer*>(fieldFrame_[frameIndex_].mapped);
+        std::optional<waterfield::Push> push = fieldStepper_.frame(o, *kicks, *frame);
+        if (!push || !fieldPipeline_) return false;
+        waterfield::Push p = *push;
+        if (wb.ocean[0].x > 0.5f) p.cfg.w |= waterfield::kOcean, p.ocean = glm::vec4(glm::vec3(wb.ocean[1]), wb.ocean[0].y);
+        constexpr VkPipelineStageFlags2 kCompute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        constexpr VkPipelineStageFlags2 kReaders = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        constexpr VkAccessFlags2 kRw = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+        const VkMemoryBarrier2 war{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kReaders | kCompute, kRw, kCompute, kRw};
+        barriers(cmd, {}, &war);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fieldPipeline_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fieldLayout_, 0, 1, &fieldSets_[frameIndex_], 0, nullptr);
+        for (waterfield::Pass pass : waterfield::kPasses) {
+            p.cfg.x = pass;
+            vkCmdPushConstants(cmd, fieldLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof p, &p);
+            vkCmdDispatch(cmd, waterfield::groups(pass), 1, 1);
+            const VkMemoryBarrier2 step{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCompute, kRw, kReaders | kCompute, kRw};
+            barriers(cmd, {}, &step);
+        }
+        return true;
     }
     void destroyIndirect() {
         for (VkPipeline* p : {&indTrace_, &indTraceMs_, &indDenoise_}) vkDestroyPipeline(device_, std::exchange(*p, VK_NULL_HANDLE), nullptr);
@@ -3098,8 +3235,9 @@ private:
         pl.pSetLayouts = postSets;
         pl.pPushConstantRanges = &postPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &postLayout_));
-        // The animated water texture's pass (recordAgWater): no sets, push = the time (uw_water.frag AgWaterPush).
-        const VkPushConstantRange agPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float)};
+        // The animated water texture's passes (recordAgWater): no sets, push = the time (uw_water.frag and
+        // uw_caustics.vert AgWaterPush).
+        const VkPushConstantRange agPush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float)};
         const VkPipelineLayoutCreateInfo agl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &agPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &agl, nullptr, &agWaterLayout_));
         // Under-water particles (recordUwParticles): the post pass's sets 1-2 (set 0 unused), UwParticlePush.
@@ -3138,6 +3276,8 @@ private:
                                             VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
         agWaterPipeline_ = createPipeline(kPostVert, kAgWaterFrag, agWaterLayout_, nullptr, {}, PipelineKind::Post,
                                           VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
+        agCausticPipeline_ = createPipeline(kAgCausticVert, kAgCausticFrag, agWaterLayout_, nullptr, {}, PipelineKind::CausticSplat,
+                                            VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
         // Under-water composite (render/Water.hpp UwGrade): post.frag writing the linear frame, the bloom chain (up passes
         // added: Additive with alpha 1), the grade into the post target.
         uwResolvePipeline_ = createPipeline(kPostVert, kPostFrag, postLayout_, nullptr, {}, PipelineKind::Post,
@@ -3291,6 +3431,10 @@ private:
             factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE);
             if (kind == PipelineKind::FxSubtract) blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_REVERSE_SUBTRACT;
         } else if (kind == PipelineKind::FxMultiply) factors(VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_SRC_ALPHA);
+        else if (kind == PipelineKind::CausticSplat) {
+            factors(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE);
+            blend.colorWriteMask = VK_COLOR_COMPONENT_G_BIT;
+        }
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         const bool hasColor = colorFormat != VK_FORMAT_UNDEFINED;
         cb.attachmentCount = hasColor ? 1 : 0;
@@ -3860,6 +4004,10 @@ private:
         createAgWater();
         createOcean();
         createFluid();
+        // contract C3: the splash fluid's particles falling back kick the interactive waves (written each frame the fluid
+        // runs, consumed by the next frame's field); set before the field writes its sets
+        fieldExternal_ = fluidPipeline_ ? fluidKicks_.buffer : VK_NULL_HANDLE;
+        createWaterField();
         writeWaterSets();
 
         const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -4010,8 +4158,7 @@ private:
                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             const VkDescriptorImageInfo depth{fontSampler_, opaqueDepth_.view ? opaqueDepth_.view : white_.view,
                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-            const VkDescriptorImageInfo rip{postSampler_, ripples_.view ? ripples_.view : white_.view,
-                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkDescriptorImageInfo rip{postSampler_, ripples_.view, VK_IMAGE_LAYOUT_GENERAL}; // the wave field (GENERAL: its storage image)
             const VkDescriptorImageInfo* imgs[3] = {&color, &depth, &rip};
             for (int b = 0; b < 3; ++b) {
                 VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -4091,9 +4238,12 @@ private:
             const VkDescriptorBufferInfo fbufs[5] = {{waterUbo_[i].buffer, 0, sizeof(WaterBlock)}, pool,
                                                   {fluidGrid_.buffer, 0, VK_WHOLE_SIZE}, {fluidKicks_.buffer, 0, VK_WHOLE_SIZE},
                                                   {fluidBursts_[i].buffer, 0, VK_WHOLE_SIZE}};
-            const VkDescriptorImageInfo* fi[2] = {&depth, &rip};
-            VkWriteDescriptorSet fw[7];
-            for (uint32_t b = 0; b < 7; ++b) {
+            // binding 7: the FFT ocean (shaders/water_surface.glsl; createOcean runs before createFluid)
+            const VkDescriptorImageInfo oc{oceanSampler_, ocean_.view, VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo* fi[3] = {&depth, &rip, &oc};
+            const uint32_t fn = ocean_.view ? 8 : 7;
+            VkWriteDescriptorSet fw[8];
+            for (uint32_t b = 0; b < fn; ++b) {
                 fw[b] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
                 fw[b].dstSet = fluidSets_[i];
                 fw[b].dstBinding = b;
@@ -4104,7 +4254,7 @@ private:
                 if (b < 5) fw[b].pBufferInfo = &fbufs[b];
                 else fw[b].pImageInfo = fi[b - 5];
             }
-            vkUpdateDescriptorSets(device_, 7, fw, 0, nullptr);
+            vkUpdateDescriptorSets(device_, fn, fw, 0, nullptr);
         }
         writeScreenSets();
     }
@@ -4219,29 +4369,6 @@ private:
         batch.images.push_back({u.gpu.image, {{img.rgba.data(), img.rgba.size_bytes(), uint32_t(img.width), uint32_t(img.height)}}});
         flush(batch);
         u.version = img.version;
-    }
-
-    // Game ripple height field -> R32F texture, re-uploaded when its version changes (game::WaterSim).
-    void updateRipples(const FrameOptions& options) {
-        const auto& rip = options.ripples;
-        if (rip.cellSize <= 0 || rip.size <= 0 || rip.heights.empty()) return;
-        if (!ripples_.image || rippleSize_ != rip.size) {
-            if (ripples_.image) {
-                waitIdle();
-                destroyImage(ripples_);
-            }
-            ripples_ = createImage(staticMemory_, VK_FORMAT_R32_SFLOAT, uint32_t(rip.size), uint32_t(rip.size), 1,
-                                   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-            rippleSize_ = rip.size;
-            rippleVersion_ = 0;
-        }
-        if (rippleVersion_ == rip.version) return;
-        UploadBatch batch;
-        batch.images.push_back({ripples_.image,
-                                {{rip.heights.data(), rip.heights.size_bytes(), uint32_t(rip.size), uint32_t(rip.size)}}});
-        flush(batch);
-        rippleVersion_ = rip.version;
-        writeWaterSets();
     }
 
     // Original screen filters: `src` (render size, COLOR_ATTACHMENT) blitted to half size into `dst` mip 0, each further
@@ -4563,8 +4690,10 @@ private:
         vkCmdSetScissor(cmd, 0, 1, &ri.renderArea);
         vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, agWaterPipeline_);
-        vkCmdPushConstants(cmd, agWaterLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof time, &time);
+        vkCmdPushConstants(cmd, agWaterLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof time, &time);
         vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, agCausticPipeline_); // same layout: the push stays
+        vkCmdDraw(cmd, uint32_t(kAgCausVertices), 1, 0, 0);
         vkCmdEndRendering(cmd);
         auto src = mips(imageBarrier(agWater_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                      kOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kXfer, VK_ACCESS_2_TRANSFER_READ_BIT),
@@ -5697,7 +5826,7 @@ private:
     std::vector<VkImageView> swapViews_;
     std::vector<VkSemaphore> presentReady_;
     GpuImage depth_, sceneColor_, msColor_; // msColor_ only with MSAA
-    // Enhanced water: single-sample opaque copies (refraction etc.) and the game's ripple height field.
+    // Enhanced water: single-sample opaque copies (refraction etc.) and the interactive wave field's texture (uRipples).
     GpuImage opaqueColor_, opaqueDepth_, ripples_;
     // FFT ocean (createOcean): uOcean (grid 128 at mip 0 / 64 at mip 1 and level 0, the rest its means) + its storage views, spectra, scratch, pipeline.
     GpuImage ocean_;
@@ -5717,8 +5846,16 @@ private:
     uint32_t filterLevels_ = 0;
     bool hasFeedback_ = false;   // feedback_ holds last frame's copy (+0x3D)
     bool feedbackCopyable_ = false; // the post target can be a blit source (swapchain usage / format)
-    uint64_t rippleVersion_ = 0;
-    int rippleSize_ = 0;
+    // Interactive wave field (createWaterField): ripples_ above is its uRipples texture.
+    Buffer fieldState_, fieldWork_, fieldNoKicks_;
+    std::array<Buffer, kFramesInFlight> fieldKicks_{}, fieldFrame_{};
+    VkBuffer fieldExternal_ = VK_NULL_HANDLE; // setExternalWaveKicks
+    VkDescriptorSetLayout fieldSetLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout fieldLayout_ = VK_NULL_HANDLE;
+    VkPipeline fieldPipeline_ = VK_NULL_HANDLE;
+    VkDescriptorPool fieldPool_ = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, kFramesInFlight> fieldSets_{};
+    waterfield::Stepper fieldStepper_;
     VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
     VkSampleCountFlags supportedSamples_ = VK_SAMPLE_COUNT_1_BIT;
     VkFormat sceneFormat_ = VK_FORMAT_R8G8B8A8_UNORM, shadowFormat_ = VK_FORMAT_UNDEFINED;
@@ -5754,6 +5891,7 @@ private:
     VkSampler agWaterSampler_ = VK_NULL_HANDLE;
     VkPipelineLayout agWaterLayout_ = VK_NULL_HANDLE;
     VkPipeline agWaterPipeline_ = VK_NULL_HANDLE;
+    VkPipeline agCausticPipeline_ = VK_NULL_HANDLE;
     VkDescriptorPool waterPool_ = VK_NULL_HANDLE;
     std::array<Buffer, kFramesInFlight> waterUbo_{}; // WaterBlock, host-coherent
     std::array<VkDescriptorSet, kFramesInFlight> waterSets_{}, postWaterSets_{};
@@ -5939,12 +6077,14 @@ private:
     // OU_VK_PRESENT_STATS GPU pass times: timestamps after begin (0), vertex uploads + BLAS refits (1), TLAS update (2),
     // shadow map (3), planar reflection (4), scene draws (5), copies + screen readers (6), Enhanced water (7), fx + lines
     // (8), FSR masks (9), under-water sun shafts (10), post (11), FSR / FG / end (12); per timed frame. Marks inside a
-    // render pass time what the GPU has finished by then, so neighbouring scene segments can trade some time.
-    static constexpr uint32_t kGpuMarks = 13;
+    // render pass time what the GPU has finished by then, so neighbouring scene segments can trade some time. 13 / 14
+    // bracket the interactive wave field (recordWaterField; inside segment 1).
+    static constexpr uint32_t kGpuMarks = 15, kGpuSegments = 12;
     // ... and the splash fluid's own (queries kGpuMarks + 0..2: before its simulation, after it, after its composite),
     // averaged over the frames that drew it.
     static constexpr uint32_t kFluidMarks = 3;
-    std::vector<std::array<double, kGpuMarks - 1>> gpuMs_; // per timed frame
+    std::vector<std::array<double, kGpuSegments>> gpuMs_; // per timed frame
+    std::vector<double> fieldMs_;                         // the wave field per timed frame
     double fluidSimMs_ = 0, fluidDrawMs_ = 0;
     uint64_t fluidTimedFrames_ = 0;
     void gpuBegin(Frame& f, VkCommandBuffer cmd) {
@@ -5960,7 +6100,8 @@ private:
             uint64_t t[kGpuMarks];
             if (vkGetQueryPoolResults(device_, f.gpuTimes, 0, kGpuMarks, sizeof t, t, sizeof t[0], VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
                 auto& ms = gpuMs_.emplace_back();
-                for (uint32_t i = 1; i < kGpuMarks; ++i) ms[i - 1] = double(t[i] - t[i - 1]) * toMs;
+                for (uint32_t i = 1; i <= kGpuSegments; ++i) ms[i - 1] = double(t[i] - t[i - 1]) * toMs;
+                fieldMs_.push_back(double(t[14] - t[13]) * toMs);
             }
             uint64_t ft[kFluidMarks];
             if (f.fluidTimed && vkGetQueryPoolResults(device_, f.gpuTimes, kGpuMarks, kFluidMarks, sizeof ft, ft, sizeof ft[0],
@@ -6004,13 +6145,16 @@ private:
         // whole run (load, cinematics) and the last 500 frames (the steady state ou-game's frame time line measures)
         for (const size_t n : {gpuMs_.size(), std::min<size_t>(gpuMs_.size(), 500)}) {
             if (!n) break;
-            std::array<double, kGpuMarks - 1> s{};
-            for (size_t f = gpuMs_.size() - n; f < gpuMs_.size(); ++f)
+            std::array<double, kGpuSegments> s{};
+            double field = 0.0;
+            for (size_t f = gpuMs_.size() - n; f < gpuMs_.size(); ++f) {
                 for (size_t i = 0; i < s.size(); ++i) s[i] += gpuMs_[f][i] / double(n);
+                field += fieldMs_[f] / double(n);
+            }
             std::fprintf(stderr, "ou: GPU ms per frame (last %zu): uploads+BLAS %.2f, TLAS %.2f, shadow map %.2f, reflection %.2f, "
                          "scene %.2f, copies+screen %.2f, water %.2f, fx %.2f, FSR masks %.2f, uw shafts %.2f, post %.2f, "
-                         "FSR/end %.2f\n",
-                         n, s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], s[11]);
+                         "FSR/end %.2f; wave field %.3f\n",
+                         n, s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], s[11], field);
         }
         if (fluidTimedFrames_) {
             const double n = double(fluidTimedFrames_);

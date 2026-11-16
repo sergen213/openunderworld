@@ -475,8 +475,9 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   `shaders/common/pbr_shade.glsl` `shade_water` → `src/render/shaders/water.frag`, and
   `tests/engine/water_waves_test.cpp` → `WaveField.*` in `tests/test_game.cpp`. Not ported: its sky environment
   map / ray-traced water reflection (ours stay screen-space) and the `Lake1.bmp` normal map (value noise instead).
-- Since the Godot / afl_ext water (§8.8) only the wave field and the wading / wake strengths remain from Joan; the
-  surface shading `shade_water` was replaced.
+- Since the Godot / afl_ext water (§8.8) only the wave field and the wading / wake strengths remained from Joan; the
+  surface shading `shade_water` was replaced. Since the GPU wave field (§8.12, 2026-11-15) only the splash / bob kick
+  strengths and the wall predicate remain in `game::WaterSim`; `game::WaveField` and its tests are gone.
 
 ### 8.8 Enhanced water shading sources
 
@@ -611,6 +612,23 @@ abyssal-garden's texture ports now, §8.11); no third-party caustic code was use
   (RENDERING "Under water: marine snow and bubbles").
 
 ---
+
+### 8.12 Interactive waves (GPU wave field)
+
+Written from the papers, no code used (RENDERING "Interactive waves"):
+- **J. Tessendorf, "eWave: Using an Exponential Solver on the iWave Problem"** (2014 technical note) — the method:
+  height and vertical velocity advanced per Fourier mode by the exact oscillator solution, obstacles and sources in
+  space between the transforms. Ours adds the full gravity-capillary finite-depth dispersion, k-dependent damping,
+  pressure bodies as moving hydrostatic equilibria, a sponge and a steepness limit.
+- **J. Tessendorf, "Interactive Water Surfaces"** (Game Programming Gems 4, 2004: iWave) — the obstacle mask and the
+  vertical-derivative operator eWave makes exact; considered and not used (truncated kernel).
+- **S. Jeschke, C. Wojtan, "Generalizing Shallow Water Simulations with Dispersive Surface Waves"** (SIGGRAPH 2023)
+  and **S. Jeschke et al., "Water Surface Wavelets"** (SIGGRAPH 2018) — considered (currents, per-cell depth,
+  wave-direction transport); not used for cost and complexity at our scale.
+- Physics checked against: the dispersion relation ω² = (g k + σ/ρ k³) tanh(k d) (Lamb, *Hydrodynamics* §266–267;
+  minimum phase speed 0.23 m/s at 1.7 cm, test `WaterField.DispersionAndDamping`), the Cauchy–Poisson splash ring
+  train and the Kelvin ship wake (Lamb §255–256; its Froude-dependent narrowing: Rabaud & Moisy, "Ship wakes: Kelvin
+  or Mach angle?", PRL 110, 2013).
 
 ## Open questions
 

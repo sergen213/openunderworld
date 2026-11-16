@@ -15,6 +15,12 @@ const char* kFluidComp =
 const char* kFluidGlsl =
 #include "fluid.glsl.inc"
     ;
+const char* kWaterSurface =
+#include "water_surface.glsl.inc"
+    ;
+const char* kWaves =
+#include "waves.glsl.inc"
+    ;
 constexpr float kPi = 3.14159265358979f;
 float poly6(float r2) { return r2 < 1.0f ? 315.0f / (64.0f * kPi) * (1.0f - r2) * (1.0f - r2) * (1.0f - r2) : 0.0f; }
 float spikyGrad(float r) { return r < 1.0f ? 45.0f / kPi * (1.0f - r) * (1.0f - r) : 0.0f; } // |grad W|
@@ -104,8 +110,11 @@ Push Sim::push(Pass pass, const Frame& f, int source) const {
 
 std::string computeSource() {
     std::string s = kFluidComp;
-    constexpr const char* line = "#include \"shaders/fluid.glsl\"";
-    if (const size_t at = s.find(line); at != std::string::npos) s.replace(at, std::strlen(line), kFluidGlsl);
+    const std::pair<const char*, const char*> files[] = {{"#include \"shaders/fluid.glsl\"", kFluidGlsl},
+                                                         {"#include \"shaders/water_surface.glsl\"", kWaterSurface},
+                                                         {"#include \"shaders/waves.glsl\"", kWaves}};
+    for (const auto& [line, text] : files)
+        for (size_t at; (at = s.find(line)) != std::string::npos;) s.replace(at, std::strlen(line), text);
     return s;
 }
 
