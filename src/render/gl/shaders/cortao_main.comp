@@ -1,0 +1,30 @@
+// CORTAO main pass, OpenGL, occlusion only (third_party/cortao CORTAOMainPassOcclusionReference.glsl adapted).
+// GlRenderer prepends #version, CORTAO_SAMPLE_COUNT / CORTAO_RAY_COUNT and the other defines.
+#include <CORTAOMainPass.h>
+
+layout(std140, binding = 6) uniform CortaoMainBlock { CORTAOMainPassParameters parameters; };
+layout(binding = 0) uniform usampler2D ouAoPacked;    // R32UI with mips; nearest, clamp to border 0
+layout(binding = 1) uniform sampler2D ouAoNormal;     // RG16F octahedral view-space normal
+layout(binding = 2) uniform usampler3D ouAoOccluders; // occluder lookup table for CORTAO_RAY_COUNT; nearest, clamp to edge
+layout(r8, binding = 0) uniform restrict writeonly image2D ouAoRaw;
+
+cortao_uint cortao_samplePackedData(cortao_float2 texCoords, cortao_float mipmap) { return textureLod(ouAoPacked, texCoords, mipmap).r; }
+cortao_half3 cortao_loadNormal(cortao_int2 pixelCoords) { return ouOctDecode(texelFetch(ouAoNormal, pixelCoords, 0).rg); }
+cortao_uint cortao_sampleOccluderLookupTable(cortao_float3 texCoords) { return textureLod(ouAoOccluders, texCoords, 0.0).r; }
+void cortao_writeResult(cortao_int2 pixelCoords, cortao_half occlusion, cortao_half3 bentNormal, cortao_half3x3 tangentSpaceTransform,
+                        cortao_uint rayBits) {
+    imageStore(ouAoRaw, pixelCoords, cortao_float4(occlusion, 0.0, 0.0, 0.0));
+}
+
+// Reorders the threads inside the workgroup to be more cache coherent (as the reference).
+uvec2 deinterleave(uint index) {
+    uvec2 p = uvec2(index, index) >> uvec2(0, 1);
+    p &= 0x5555u;
+    p = (p ^ (p >> 1u)) & 0x3333u;
+    p = (p ^ (p >> 2u)) & 0x0f0fu;
+    p = (p ^ (p >> 4u)) & 0x00ffu;
+    return p;
+}
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() { cortao_mainPass(gl_WorkGroupID.xy * gl_WorkGroupSize.xy + deinterleave(gl_LocalInvocationIndex), parameters); }

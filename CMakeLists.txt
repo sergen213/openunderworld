@@ -84,6 +84,27 @@ endforeach()
 add_library(ou_render_gl STATIC src/render/gl/GlRenderer.cpp)
 target_link_libraries(ou_render_gl PUBLIC ou_render_common PRIVATE PkgConfig::EPOXY)
 target_include_directories(ou_render_gl PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen) # tonemap.glsl.inc (post pass)
+# CORTAO ambient occlusion on OpenGL (docs/RENDERING.md "Ambient occlusion"): the vendored shader headers
+# (third_party/cortao, MIT, unmodified) and our GL compute glue as raw strings (GlRenderer resolves their #includes), the
+# 24x24x16 occluder lookup tables (16 and 32 rays) as byte arrays.
+set(OU_CORTAO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cortao)
+foreach(f ${OU_CORTAO_DIR}/src/shaders/CORTAOBase.h ${OU_CORTAO_DIR}/src/shaders/CORTAOPrepass.h
+          ${OU_CORTAO_DIR}/src/shaders/CORTAOMainPass.h ${OU_CORTAO_DIR}/src/shaders/CORTAOFilterPass.h
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/render/gl/shaders/cortao_common.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/gl/shaders/cortao_prepass.comp
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/render/gl/shaders/cortao_main.comp ${CMAKE_CURRENT_SOURCE_DIR}/src/render/gl/shaders/cortao_filter.comp
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/render/gl/shaders/cortao_temporal.comp)
+  get_filename_component(n ${f} NAME)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${f})
+  file(READ ${f} OU_CORTAO_SRC)
+  file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gen/gl_cortao/${n}.inc CONTENT "R\"oucortao(@OU_CORTAO_SRC@)oucortao\"" @ONLY)
+endforeach()
+foreach(t 24x24x16x16_R16_UINT 24x24x16x32_R32_UINT)
+  set(f ${OU_CORTAO_DIR}/tables/occluder/${t}.bin)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${f})
+  file(READ ${f} OU_CORTAO_HEX HEX)
+  string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," OU_CORTAO_HEX "${OU_CORTAO_HEX}")
+  file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gen/gl_cortao/${t}.inc CONTENT "@OU_CORTAO_HEX@" @ONLY)
+endforeach()
 
 # ---- ou_render_vk: Vulkan 1.3 backend; SPIR-V compiled at build time by glslc and embedded ----
 find_package(Vulkan REQUIRED COMPONENTS glslc)

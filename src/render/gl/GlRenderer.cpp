@@ -24,6 +24,7 @@
 #include <SDL3/SDL.h>
 #include <epoxy/gl.h>
 #include <glm/gtc/type_ptr.hpp>
+#include "render/Cortao.hpp"
 
 namespace ou::render {
 namespace {
@@ -117,7 +118,7 @@ void main() {
     if (uLighting != 0 && len > 1e-6) {
         vec3 n = (gl_FrontFacing ? 1.0 : -1.0) * vNormal / len; // two-sided materials light both faces
         float ndl = max(dot(n, ouShadow.sun.xyz), 0.0);
-        c.rgb *= 0.45 + 0.55 * ndl * ouSunVisibility(vWorld, n, ndl > 0.0, false);
+        c.rgb *= 0.45 * ouAo() + 0.55 * ndl * ouSunVisibility(vWorld, n, ndl > 0.0, false); // AO: ambient only
     }
     oColor = c; // alpha matters for blended submeshes only
 })";
@@ -291,6 +292,94 @@ void main() {
     if (uParams.y > 0.0)
         a = clamp((viewDepth(texture(uDepth, suv).r) - viewDepth(gl_FragCoord.z) - (1.0 - t.a) * uParams.z) * uParams.y, 0.0, 1.0);
     oColor = t * vColor * vec4(1.0, 1.0, 1.0, a);
+})";
+
+// ---- CORTAO ambient occlusion (docs/RENDERING.md "Ambient occlusion"; third_party/cortao, MIT) ----
+const char* kCortaoBase =
+#include "gl_cortao/CORTAOBase.h.inc"
+    ;
+const char* kCortaoPrepassH =
+#include "gl_cortao/CORTAOPrepass.h.inc"
+    ;
+const char* kCortaoMainH =
+#include "gl_cortao/CORTAOMainPass.h.inc"
+    ;
+const char* kCortaoFilterH =
+#include "gl_cortao/CORTAOFilterPass.h.inc"
+    ;
+const char* kCortaoCommon =
+#include "gl_cortao/cortao_common.glsl.inc"
+    ;
+const char* kCortaoPrepassCs =
+#include "gl_cortao/cortao_prepass.comp.inc"
+    ;
+const char* kCortaoMainCs =
+#include "gl_cortao/cortao_main.comp.inc"
+    ;
+const char* kCortaoFilterCs =
+#include "gl_cortao/cortao_filter.comp.inc"
+    ;
+const char* kCortaoTemporalCs =
+#include "gl_cortao/cortao_temporal.comp.inc"
+    ;
+const uint8_t kCortaoOccluders16[] = { // 24x24x16 R16_UINT, 16 rays
+#include "gl_cortao/24x24x16x16_R16_UINT.inc"
+};
+const uint8_t kCortaoOccluders32[] = { // 24x24x16 R32_UINT, 32 rays
+#include "gl_cortao/24x24x16x32_R32_UINT.inc"
+};
+// CORTAO pass source: #version, the shared defines + `defines`, cortao_common.glsl, then `wrapper` with its
+// `#include <CORTAO*.h>` replaced by that header, whose own `#include "CORTAOBase.h"` becomes CORTAOBase.h.
+std::string cortaoSource(const char* wrapper, const std::string& defines) {
+    auto replace = [](std::string s, const std::string& from, const std::string& to) {
+        if (const size_t at = s.find(from); at != std::string::npos) s.replace(at, from.size(), to);
+        return s;
+    };
+    std::string body = wrapper;
+    for (auto [name, header] : {std::pair{"<CORTAOPrepass.h>", kCortaoPrepassH}, std::pair{"<CORTAOMainPass.h>", kCortaoMainH},
+                                std::pair{"<CORTAOFilterPass.h>", kCortaoFilterH}})
+        body = replace(body, std::string("#include ") + name, replace(header, "#include \"CORTAOBase.h\"", kCortaoBase));
+    return "#version 460 core\n#extension GL_EXT_control_flow_attributes : enable\n#define CORTAO_GLSL 1\n"
+           "#define CORTAO_PERSPECTIVE_PROJECTION 1\n#define CORTAO_16_BIT 0\n#define CORTAO_PACKED_NORMAL_BITS " +
+           std::to_string(cortao::kPackedNormalBits) + "\n" + defines + kCortaoCommon + body;
+}
+
+// AO depth pre-pass: render-resolution depth and the interpolated view-space vertex normal (octahedral RG16F), facing
+// the viewer; alpha-tested like the scene draws. The scene's vertex positions are final (CPU skinning and bends; the
+// translated vertex shaders read an identity bone 0), so this matches the translated programs' depth as well.
+const char* kAoPrepassVs = R"(#version 460 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aUv;
+layout(location = 3) in vec4 aColor;
+layout(location = 0) uniform mat4 uViewProj;
+layout(location = 1) uniform mat4 uModel;
+layout(location = 2) uniform mat4 uView;
+out vec3 vNormal; out vec3 vView; out vec2 vUv; out float vAlpha;
+void main() {
+    vec4 world = uModel * vec4(aPos, 1.0);
+    vNormal = mat3(uView) * (mat3(uModel) * aNormal);
+    vView = (uView * world).xyz;
+    vUv = aUv; vAlpha = aColor.a;
+    gl_Position = uViewProj * world;
+})";
+const char* kAoPrepassFsHead = R"(#version 460 core
+in vec3 vNormal; in vec3 vView; in vec2 vUv; in float vAlpha;
+layout(location = 3) uniform float uAlphaRef;
+layout(binding = 0) uniform sampler2D uTex;
+layout(location = 0) out vec2 oNormal;
+)";
+const char* kAoPrepassFsMain = R"(
+void main() {
+    vec3 face = cross(dFdx(vView), dFdy(vView)); // before the alpha test: uniform control flow
+    if (texture(uTex, vUv).a * vAlpha < uAlphaRef) discard;
+    float len = length(vNormal);
+    vec3 n = len > 1e-6 ? vNormal / len : normalize(face);
+    if (!gl_FrontFacing) n = -n; // two-sided materials: the visible side
+    vec3 v = normalize(-vView);
+    float nv = dot(n, v);
+    if (nv < 0.02) n = normalize(n + v * (0.02 - nv)); // interpolated normals turned away from the eye
+    oNormal = ouOctEncode(n);
 })";
 
 GLuint compileShader(GLenum type, const char* src, std::string& error) {
@@ -512,6 +601,25 @@ struct Resources {
     Bounds bounds;
     Targets targets;
     std::vector<DrawRef> order;
+    // CORTAO ambient occlusion (runAmbientOcclusion): programs built on first use (main pass per sample count), the
+    // render-resolution targets (rebuilt with the viewport) and the pass parameter UBO (binding 6, one aligned range
+    // per pass). `history[current]` is this frame's ouAoMap (sun.glsl, texture unit 17).
+    struct Ao {
+        bool failed = false; // a program did not build: AO stays off
+        Program prepass, cortaoPrepass, filter, temporal;
+        std::map<int, Program> main; // by CORTAO_SAMPLE_COUNT
+        Texture occluders16, occluders32;
+        Buffer params;
+        int width = 0, height = 0, mips = 1;
+        Texture depth, normal, packed, raw, filtered;
+        std::array<Texture, 2> history;
+        Framebuffer fbo;
+        int current = 0, samples = 0;
+        bool historyValid = false;
+        uint64_t upload = 0;
+        uint32_t frame = 0;
+        glm::mat4 prevViewProj{1.0f};
+    } ao;
 };
 
 class GlRenderer final : public Renderer {
@@ -967,6 +1075,13 @@ public:
             if (pssm_.active) drawPssm(pssm_);
         }
         const auto reflection = drawReflection(camera, vp, options);
+        // Screen-space AO for the main scene pass only (the reflection above saw screen.w = 0): ouAoMap on unit 17.
+        if (runAmbientOcclusion(camera, vp, viewProj, options)) {
+            SunShadowBlock block = sun.block;
+            block.screen.w = 4.0f; // sun.glsl ouAo: map valid
+            glNamedBufferSubData(r.shadowUbo.get(), 0, sizeof block, &block);
+            glBindTextureUnit(17, r.ao.history[size_t(r.ao.current)].get());
+        }
 
         glBindFramebuffer(GL_FRAMEBUFFER, r.targets.scene.get());
         glViewport(0, 0, vp.width, vp.height);
@@ -1326,6 +1441,191 @@ private:
         glBindTextureUnit(0, usable ? it->second : res_->white.get());
         glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
                        reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+    }
+
+    // ---- CORTAO ambient occlusion (docs/RENDERING.md "Ambient occlusion"; third_party/cortao, MIT) ----
+    // sun.glsl ouAoMap = the temporal pass output (r AO, g view depth, b history age), render resolution, bottom-up.
+    struct AoTemporalBlock { // cortao_temporal.comp OuAoTemporal
+        glm::mat4 reproject;
+        glm::vec4 unproject;
+        glm::uvec4 info;
+        glm::vec4 params;
+    };
+    GLintptr aoRange() const { return objectStrideFor(256); }
+
+    // The pass programs (first use; the main pass per sample count: 16 rays, 32 at 32 samples, with the matching
+    // occluder table), the occluder tables and the parameter UBO. false (once, logged): AO stays off.
+    bool aoPrograms(int samples) {
+        Resources::Ao& a = res_->ao;
+        std::string error;
+        auto fail = [&](const char* what) {
+            std::fprintf(stderr, "ou: CORTAO ambient occlusion unavailable (%s: %s)\n", what, error.c_str());
+            a.failed = true;
+            return false;
+        };
+        if (!a.prepass.get()) {
+            const std::string fs = std::string(kAoPrepassFsHead) + kCortaoCommon + kAoPrepassFsMain;
+            if (!(a.prepass = linkProgram(kAoPrepassVs, fs.c_str(), error)).get()) return fail("depth pre-pass");
+            if (!(a.cortaoPrepass = linkCompute(cortaoSource(kCortaoPrepassCs, "").c_str(), error)).get()) return fail("prepass");
+            const std::string filter = cortaoSource(kCortaoFilterCs, "#define CORTAO_LARGE_FILTER 1\n#define CORTAO_FILTER_SYMMETRY 1\n");
+            if (!(a.filter = linkCompute(filter.c_str(), error)).get()) return fail("filter pass");
+            const std::string temporal = std::string("#version 460 core\n") + kCortaoTemporalCs;
+            if (!(a.temporal = linkCompute(temporal.c_str(), error)).get()) return fail("temporal pass");
+            static_assert(sizeof kCortaoOccluders16 == 24 * 24 * 16 * 2 && sizeof kCortaoOccluders32 == 24 * 24 * 16 * 4);
+            auto table = [](GLenum format, GLenum type, const void* data) {
+                GLuint id = 0;
+                glCreateTextures(GL_TEXTURE_3D, 1, &id);
+                glTextureStorage3D(id, 1, format, 24, 24, 16);
+                glTextureSubImage3D(id, 0, 0, 0, 0, 24, 24, 16, GL_RED_INTEGER, type, data);
+                glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                for (GLenum w : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R}) glTextureParameteri(id, w, GL_CLAMP_TO_EDGE);
+                return Texture(id);
+            };
+            a.occluders16 = table(GL_R16UI, GL_UNSIGNED_SHORT, kCortaoOccluders16);
+            a.occluders32 = table(GL_R32UI, GL_UNSIGNED_INT, kCortaoOccluders32);
+            a.params = newBuffer();
+            glNamedBufferStorage(a.params.get(), 4 * aoRange(), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        }
+        if (!a.main.contains(samples)) {
+            const std::string defines = "#define CORTAO_SAMPLE_COUNT " + std::to_string(samples) + "\n#define CORTAO_RAY_COUNT " +
+                                        std::to_string(cortao::rayCount(samples)) + "\n#define CORTAO_OCCLUDER_LOOKUP_TABLE 1\n";
+            Program p = linkCompute(cortaoSource(kCortaoMainCs, defines).c_str(), error);
+            if (!p.get()) return fail("main pass");
+            a.main.emplace(samples, std::move(p));
+        }
+        return true;
+    }
+
+    // Render-resolution AO targets: pre-pass depth + RG16F normal, the R32UI packed buffer with its mips, the R8 main /
+    // filter outputs and the RGBA16F history pair. Rebuilt with the viewport (history dropped).
+    void ensureAoTargets(Viewport vp) {
+        Resources::Ao& a = res_->ao;
+        if (a.width == vp.width && a.height == vp.height) return;
+        a.width = vp.width, a.height = vp.height;
+        a.mips = int(cortao::mipCount(uint32_t(vp.width), uint32_t(vp.height)));
+        auto make = [&](GLenum format, int levels = 1) {
+            Texture t = newTexture();
+            glTextureStorage2D(t.get(), levels, format, vp.width, vp.height);
+            glTextureParameteri(t.get(), GL_TEXTURE_MIN_FILTER, levels > 1 ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST);
+            glTextureParameteri(t.get(), GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTextureParameteri(t.get(), GL_TEXTURE_MAX_LEVEL, levels - 1);
+            glTextureParameteri(t.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER); // CORTAO: border "colour" 0 (sky)
+            glTextureParameteri(t.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+            return t;
+        };
+        a.depth = make(GL_DEPTH_COMPONENT32F);
+        a.normal = make(GL_RG16F);
+        a.packed = make(GL_R32UI, a.mips);
+        const GLuint zero[4] = {};
+        glTextureParameterIuiv(a.packed.get(), GL_TEXTURE_BORDER_COLOR, zero);
+        a.raw = make(GL_R8);
+        a.filtered = make(GL_R8);
+        for (Texture& h : a.history) h = make(GL_RGBA16F);
+        a.fbo = newFramebuffer();
+        glNamedFramebufferTexture(a.fbo.get(), GL_DEPTH_ATTACHMENT, a.depth.get(), 0);
+        glNamedFramebufferTexture(a.fbo.get(), GL_COLOR_ATTACHMENT0, a.normal.get(), 0);
+        if (glCheckNamedFramebufferStatus(a.fbo.get(), GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            std::fprintf(stderr, "[gl] AO pre-pass framebuffer incomplete\n");
+        a.historyValid = false;
+    }
+
+    // FrameOptions::ao (Rt too: no ray tracing on GL): the AO depth pre-pass over the surfaces that write depth in the
+    // main pass (opaque and depth-writing alpha-tested submeshes, not the exterior or Enhanced water), then the CORTAO
+    // prepass / main / filter passes and the temporal accumulation into history[current]. Full render resolution, one
+    // sample per pixel (MSAA draws match it by their pixel's view depth, sun.glsl ouAo). false: no map this frame.
+    bool runAmbientOcclusion(const Camera& camera, Viewport vp, const glm::mat4& viewProj, const FrameOptions& o) {
+        Resources& r = *res_;
+        Resources::Ao& a = r.ao;
+        if (o.ao == AmbientOcclusion::Off || a.failed) {
+            a.historyValid = false;
+            return false;
+        }
+        const int samples = cortao::sampleCount(o.aoSamples);
+        if (!aoPrograms(samples)) return false;
+        ensureAoTargets(vp);
+        if (samples != a.samples || a.upload != uploads_) a.historyValid = false; // look change / new scene
+        a.samples = samples, a.upload = uploads_;
+        const int w = vp.width, h = vp.height;
+        const glm::mat4 view = camera.view(), proj = camera.projection(float(w) / float(h));
+
+        glBindFramebuffer(GL_FRAMEBUFFER, a.fbo.get());
+        glViewport(0, 0, w, h);
+        scissorFor(UINT32_MAX, vp);
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        const float noNormal[4] = {}, far = 1.0f;
+        glClearNamedFramebufferfv(a.fbo.get(), GL_COLOR, 0, noNormal);
+        glClearNamedFramebufferfv(a.fbo.get(), GL_DEPTH, 0, &far);
+        glUseProgram(a.prepass.get());
+        glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj));
+        glUniformMatrix4fv(2, 1, GL_FALSE, glm::value_ptr(view));
+        const bool enhancedWater = o.water == WaterQuality::Enhanced;
+        uint32_t bound = UINT32_MAX;
+        for (size_t i = exteriorCount(r.meshes, std::span<const DrawRef>(r.order)); i < r.order.size(); ++i) {
+            const DrawRef& d = r.order[i];
+            const GpuMesh& m = r.meshes[d.mesh];
+            const scene::SubMesh& s = m.submeshes[d.sub];
+            const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;
+            const scene::Blend blend = drawBlend(s, op);
+            if (!(blend == scene::Blend::Opaque || (blend == scene::Blend::Alpha && drawDepthWrite(s, op)))) continue;
+            if (enhancedWater && waterDraw(d.mesh, d.sub)) continue;
+            scissorFor(d.mesh, vp);
+            if (d.mesh != bound) {
+                glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
+                glBindVertexArray(m.vao.get());
+                bound = d.mesh;
+            }
+            if (o.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+            glUniform1f(3, s.alphaRef / 255.0f);
+            drawSubmesh(s);
+        }
+        scissorFor(UINT32_MAX, vp);
+
+        uint32_t seed = ++a.frame * 0x9E3779B9u; // a new pattern every frame; the temporal pass averages them
+        seed = (seed ^ (seed >> 16)) * 0x7FEB352Du;
+        // GL: texture rows and NDC y both point up (flipY false); GL's [-1, 1] clip z gives D3D's window depth
+        const cortao::Params cp = cortao::params(uint32_t(w), uint32_t(h), seed ^ (seed >> 15), proj, camera.nearZ, camera.farZ, false);
+        const AoTemporalBlock temporal{a.prevViewProj * glm::inverse(view), glm::make_vec4(cp.main.unproject),
+                                       {uint32_t(w), uint32_t(h), a.historyValid ? 1u : 0u, (1u << cortao::kPackedNormalBits) - 1u},
+                                       {0.08f, 0.03f, 1.5f, 32.0f}}; // min blend, depth tolerance, clamp sigmas, max age
+        const auto& pre = cp.prepass;
+        const auto& main = cp.main;
+        const auto& filter = cp.filter;
+        const GLintptr range = aoRange();
+        glNamedBufferSubData(a.params.get(), 0, sizeof pre, &pre);
+        glNamedBufferSubData(a.params.get(), range, sizeof main, &main);
+        glNamedBufferSubData(a.params.get(), 2 * range, sizeof filter, &filter);
+        glNamedBufferSubData(a.params.get(), 3 * range, sizeof temporal, &temporal);
+        auto pass = [&](GLuint program, int block, GLsizeiptr size, GLuint gx, GLuint gy) {
+            glUseProgram(program);
+            glBindBufferRange(GL_UNIFORM_BUFFER, 6, a.params.get(), block * range, std::max<GLsizeiptr>(size, 16));
+            glDispatchCompute(gx, gy, 1);
+            glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        };
+        auto groups = [](int n, int size) { return GLuint((n + size - 1) / size); };
+        glBindTextureUnit(0, a.depth.get());
+        glBindTextureUnit(1, a.normal.get());
+        for (GLuint i = 0; i < 8; ++i) // levels past mipCount are never written
+            glBindImageTexture(i, a.packed.get(), std::min(GLint(i), a.mips - 1), GL_FALSE, 0, GL_WRITE_ONLY, GL_R32UI);
+        pass(a.cortaoPrepass.get(), 0, sizeof pre, groups(w, 8), groups(h, 8));
+        glBindTextureUnit(0, a.packed.get());
+        glBindTextureUnit(2, cortao::rayCount(samples) == 32 ? a.occluders32.get() : a.occluders16.get());
+        glBindImageTexture(0, a.raw.get(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R8);
+        pass(a.main.at(samples).get(), 1, sizeof main, groups(w, 16), groups(h, 16));
+        glBindTextureUnit(1, a.raw.get());
+        glBindImageTexture(0, a.filtered.get(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R8);
+        pass(a.filter.get(), 2, 16, groups((w + 1) / 2, 8), groups((h + 1) / 2, 8)); // a thread per 2x2 block
+        a.current ^= 1;
+        glBindTextureUnit(1, a.filtered.get());
+        glBindTextureUnit(2, a.history[size_t(a.current ^ 1)].get());
+        glBindImageTexture(0, a.history[size_t(a.current)].get(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        pass(a.temporal.get(), 3, sizeof temporal, groups(w, 8), groups(h, 8));
+        a.prevViewProj = viewProj;
+        a.historyValid = true;
+        return true;
     }
 
     // One atlas tile per cascade. Opaque and alpha-blended surfaces cast (blended ones alpha-tested at 50 %);
