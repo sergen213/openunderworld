@@ -6,6 +6,7 @@
 #include "render/RenderCommon.hpp"
 #include "render/ShaderTranslate.hpp"
 #include "render/Water.hpp"
+#include "render/WaterField.hpp"
 
 #include <gtest/gtest.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -684,3 +685,90 @@ TEST(UnderwaterRays, DrawsColumnsInView) {
     EXPECT_FALSE(rays.draw(cam, 16.0f / 9.0f, waves, img));
 }
 
+
+// ---- the interactive wave field's CPU side (render/WaterField.hpp; the waves run in shaders/water_field.comp) ----
+namespace {
+ou::render::FrameOptions fieldFrame(float time, float originX, float originY, uint64_t generation = 1) {
+    ou::render::FrameOptions o;
+    o.water = ou::render::WaterQuality::Enhanced;
+    o.time = time;
+    o.waterField.active = true;
+    o.waterField.originX = originX, o.waterField.originY = originY;
+    o.waterField.cellSize = 290.0f * 40.0f / ou::render::waterfield::kN;
+    o.waterField.depth = 2.0f * 290.0f;
+    o.waterField.generation = generation;
+    return o;
+}
+} // namespace
+
+// The dispersion relation: deep water omega^2 = g k (phase speed sqrt(g / k): a 10 m swell at 3.95 m/s, a 10 cm ripple
+// at 0.43 m/s plus capillarity), shallow water omega = k sqrt(g h) (the depth bounds the speed), the minimum phase
+// speed ~0.23 m/s at the 1.7 cm capillary-gravity crossover; damping grows with k.
+TEST(WaterField, DispersionAndDamping) {
+    using namespace ou::render::waterfield;
+    constexpr float kPi = 3.14159265f;
+    const auto speed = [](float lambda, float depth) { const float k = 2 * kPi / lambda; return omega(k, depth) / k; };
+    EXPECT_NEAR(speed(10.0f, 100.0f), std::sqrt(9.81f * 10.0f / (2 * kPi)), 0.01f);
+    EXPECT_NEAR(speed(0.1f, 100.0f), 0.40f, 0.04f);
+    EXPECT_NEAR(speed(100.0f, 0.5f), std::sqrt(9.81f * 0.5f), 0.02f);
+    float slowest = 1e9f;
+    for (float l = 0.005f; l < 0.05f; l += 0.0005f) slowest = std::min(slowest, speed(l, 100.0f));
+    EXPECT_NEAR(slowest, 0.23f, 0.01f);
+    const float cell = 40.0f / kN;
+    EXPECT_LT(damping(2 * kPi / 5.0f, cell), damping(2 * kPi / 0.3f, cell));
+    EXPECT_GT(damping(kPi / cell, cell), 5.0f) << "grid-scale noise dies within a fraction of a second";
+    EXPECT_LT(damping(2 * kPi / 2.0f, cell), 0.35f) << "metre waves live for seconds";
+}
+
+// Stepper: the first frame restarts from rest, later ones scroll by the window's whole-cell moves and step by the
+// frame's game time (clamped); a new generation or a jump past the window restarts; inactive frames rest; inputs are
+// packed in the shader's layouts (contract C3 for the kicks).
+TEST(WaterField, StepperScrollsRestartsAndPacks) {
+    using namespace ou::render::waterfield;
+    Stepper st;
+    auto kicks = std::make_unique<KickBuffer>();
+    auto frame = std::make_unique<FrameBuffer>();
+    auto o = fieldFrame(10.0f, 0.0f, 0.0f);
+    const float cell = o.waterField.cellSize;
+    const std::vector<ou::render::WaveKick> k = {{100, 200, -45, 64}, {-50, 0, 3, 30}};
+    const std::vector<ou::render::WaveBody> b = {{1, 2, 90, 20, 400, 0, 0.5f, 0}};
+    std::vector<uint8_t> mask(size_t(kMaskN * kMaskN), 255);
+    mask[1] = 0;
+    o.waterField.kicks = k, o.waterField.bodies = b, o.waterField.mask = mask, o.waterField.maskSize = kMaskN;
+    auto p = st.frame(o, *kicks, *frame);
+    ASSERT_TRUE(p);
+    EXPECT_EQ(p->cfg.w & kReset, kReset);
+    EXPECT_EQ(p->par.x, 0.0f);
+    EXPECT_EQ(kicks->count, 2u);
+    EXPECT_EQ(kicks->kicks[0].amplitude, -45.0f);
+    EXPECT_EQ(std::memcmp(&kicks->kicks[1], &k[1], sizeof k[1]), 0);
+    EXPECT_EQ(frame->bodyCount, 1u);
+    EXPECT_EQ(frame->bodies[0].wall, 0.5f);
+    EXPECT_EQ(frame->mask[0], 0xFFFF00FFu) << "mask bytes packed little-endian, 4 per uint";
+    EXPECT_NEAR(p->par.z * kMetre, cell, 1e-4f);
+
+    o.time = 10.02f, o.waterField.originX = 4 * cell, o.waterField.originY = -2 * cell;
+    o.waterField.kicks = {};
+    p = st.frame(o, *kicks, *frame);
+    ASSERT_TRUE(p);
+    EXPECT_EQ(p->cfg.w & kReset, 0);
+    EXPECT_EQ(p->cfg.y, 4);
+    EXPECT_EQ(p->cfg.z, -2);
+    EXPECT_NEAR(p->par.x, 0.02f, 1e-5f);
+    EXPECT_EQ(kicks->count, 0u);
+
+    o.time = 13.0f; // a hitch: at most 1/15 s
+    EXPECT_NEAR(st.frame(o, *kicks, *frame)->par.x, 1.0f / 15.0f, 1e-6f);
+    o.time = 12.0f; // time went back (a load): holds
+    EXPECT_EQ(st.frame(o, *kicks, *frame)->par.x, 0.0f);
+    o.waterField.originX += float(kN) * cell; // past the window
+    EXPECT_EQ(st.frame(o, *kicks, *frame)->cfg.w & kReset, kReset);
+    o.waterField.generation = 2;
+    EXPECT_EQ(st.frame(o, *kicks, *frame)->cfg.w & kReset, kReset);
+    o.waterField.active = false;
+    EXPECT_FALSE(st.frame(o, *kicks, *frame));
+    o.waterField.active = true;
+    EXPECT_EQ(st.frame(o, *kicks, *frame)->cfg.w & kReset, kReset) << "waking restarts from rest";
+    o.water = ou::render::WaterQuality::Original;
+    EXPECT_FALSE(st.frame(o, *kicks, *frame)) << "Original water draws no field";
+}

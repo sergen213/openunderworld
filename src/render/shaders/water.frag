@@ -26,7 +26,7 @@
 // (MIT, notice in waves.glsl) do, with fewer iterations, a wider difference step and afl's normal smoothing with
 // distance. Either way afl's subsurface term (crests brighter by height) and sharp sun disc in the reflection.
 // The look also takes cues from Shadertoy "Seascape" by TDM (CC BY-NC-SA: no code used).
-// Plus ours: the interactive wave field (game::WaveField) bends the normals, foams and displaces (water.vert).
+// Plus ours: the interactive wave field (render/WaterField.hpp) bends the normals, foams and displaces (water.vert).
 // The scene copy is gamma (D3D9-style): colours go to linear and back. docs/RENDERING.md "Water".
 #ifdef VULKAN
 layout(set = 0, binding = 0) uniform Water {
@@ -61,7 +61,7 @@ layout(binding = 18) uniform sampler2D uAgWater; // the animated water texture (
 #define OU_SHADOW_SET 1
 #endif
 #include "sun.glsl"
-#include "shaders/waves.glsl" // the waves (shared with water.vert and the caustics)
+#include "shaders/water_surface.glsl" // the surface (shared with water.vert and the other water effects)
 #include "shaders/uw_medium.glsl" // the abyssal-garden medium (the bed's relight; seen from below: W_SURF)
 float ouSunShadowVisibility(vec3 p) { return ouSunVisibility(p, vec3(0.0), true, false); }
 #ifdef VULKAN
@@ -243,7 +243,7 @@ void main() {
             s += g * kSeaNormalAmp * (1.0 - 0.8 * min(1.0, sqrt(dist / kSeaUnit * 0.01) * 1.1));
         }
     }
-    vec4 wave = ouWaves(p.xy);
+    vec4 wave = ouFieldSample(p.xy); // the interactive wave field (render/WaterField.hpp)
     s += wave.xy * (w.fogRange.z * 1.2 / (1.0 + 4.0 * length(wave.xy)));
     vec3 n = normalize(vec3(-s, 1.0)); // a height field's normal: (-dh/dx, -dh/dy, 1)
     bool below = w.eye.z < p.z;        // seen from under the surface

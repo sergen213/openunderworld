@@ -401,3 +401,34 @@ TEST(VulkanRenderer, ResidentMeshesKeepBlases) {
     v.frame(enhanced(RayTracing::Full));
     EXPECT_EQ(v.r->rtStatus().blasBuilds, builds);
 }
+
+// The interactive wave field's compute passes (render/WaterField.hpp) run each Enhanced frame with an active field:
+// kicks, a moving body, a window scroll and a restart, then rest again, without disturbing the scene (the placeholder
+// has no water surface to show them) or the teardown.
+TEST(VulkanRenderer, WaveFieldRunsScrollsAndRests) {
+    VkWindow v;
+    if (!v.skip.empty()) GTEST_SKIP() << v.skip;
+    EXPECT_TRUE(v.r->upload(ou::scene::makePlaceholderScene()).empty());
+    ou::render::FrameOptions o = enhanced();
+    o.water = ou::render::WaterQuality::Enhanced;
+    const ou::render::Image calm = v.frame(o);
+    const std::vector<ou::render::WaveKick> kicks = {{0, 0, -45, 64}, {300, 100, 20, 40}};
+    std::vector<uint8_t> mask(256 * 256, 255);
+    o.waterField.active = true;
+    o.waterField.cellSize = 290.0f * 40.0f / 512.0f;
+    o.waterField.depth = 600;
+    o.waterField.mask = mask, o.waterField.maskSize = 256;
+    o.waterField.generation = 1;
+    for (int i = 0; i < 6; ++i) {
+        o.time = 1.0f + float(i) / 60.0f;
+        o.waterField.originX = -256 * o.waterField.cellSize + float(2 * i) * o.waterField.cellSize;
+        o.waterField.originY = -256 * o.waterField.cellSize;
+        o.waterField.kicks = i == 0 ? std::span<const ou::render::WaveKick>(kicks) : std::span<const ou::render::WaveKick>();
+        const std::vector<ou::render::WaveBody> body = {{float(20 * i), 0, 90, 20, 1200, 0, 0, 0}};
+        o.waterField.bodies = body;
+        if (i == 4) o.waterField.generation = 2;
+        EXPECT_LT(meanAbsDiff(v.frame(o), calm), 0.5) << i;
+    }
+    o.waterField.active = false;
+    EXPECT_LT(meanAbsDiff(v.frame(o), calm), 0.5);
+}
