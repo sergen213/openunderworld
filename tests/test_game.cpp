@@ -7478,9 +7478,11 @@ TEST(GameReal, SwimDodgesMoveAsTheirClips) {
     EXPECT_EQ(s.state, State::SwimUnder);
 }
 
-// Swan dive: a running jump, crouch while it still rises. Into deep water from any height: swim_swan_land carries her
-// 235 on and 346 down (its root motion from the request's start frame), unhurt. Onto the ground she rolls out of it (ng_swan_land, 591 ahead) and the fall counts as
-// any other: a short drop is free, a long one kills (death_fall_swan).
+// Swan dive: a running jump, crouch while it still rises. Into deep water from any height she goes in head first and
+// keeps going down (tru.exe under Wine, Tuning "Water entry": her velocity shrinks by 0.875 a 60 Hz frame, she sinks
+// 50 more a frame for 12 frames from the second, plus swim_swan_land's root from its first frame), unhurt, and ends
+// under water. Onto the ground she rolls out of it (ng_swan_land, 591 ahead) and the fall counts as any other: a short
+// drop is free, a long one kills (death_fall_swan).
 TEST(GameReal, SwanDiveIntoWaterAndOntoLand) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -7512,14 +7514,31 @@ TEST(GameReal, SwanDiveIntoWaterAndOntoLand) {
         EXPECT_TRUE(stage3) << "stage 1 (25 frames), stage 2 (6), then the stage 3 hold";
         ASSERT_EQ(s.state, State::SwimSplash);
         EXPECT_EQ(s.clip, "swim_swan_land");
-        const vec3 in = s.pos;
-        int n = 0;
-        for (; n < 200 && s.state == State::SwimSplash; ++n) w->tick({});
-        EXPECT_EQ(s.state, State::SwimUnder);
-        // the clip's root motion (268.5 on, 437.7 down over 31 frames) from its request's start frame 4
-        EXPECT_NEAR(s.pos.x - in.x, 235.0f, 2.0f);
-        EXPECT_NEAR(s.pos.z - in.z, -346.1f, 2.0f);
-        EXPECT_NEAR(n, 54, 2) << "27 frames";
+        const auto lib = game::loadLaraAnims(bf);
+        const anim::Clip* clip = lib.find("swim_swan_land");
+        ASSERT_TRUE(clip);
+        const auto rootZ = [&](double t) { return game::rootTranslation(*clip, std::min(t, clip->durationSeconds()), false).z; };
+        const float dt = 1.0f / 60;
+        vec3 p = s.pos, v = s.vel;
+        EXPECT_LT(v.z, -3000.0f) << "a 6000 plunge";
+        w->tick({});
+        EXPECT_EQ(s.state, State::SwimSplash);
+        EXPECT_NEAR(s.pos.z - p.z, v.z * dt, 0.01f) << "the entry state's first frame: her velocity alone";
+        EXPECT_EQ(s.vel, v);
+        int n = 1;
+        for (; n < 200 && s.state == State::SwimSplash; ++n) {
+            p = s.pos, v = s.vel;
+            w->tick({});
+            if (s.state != State::SwimSplash) break;
+            EXPECT_NEAR(s.vel.z, v.z * 0.875f, 1e-3f) << n;
+            EXPECT_NEAR(s.vel.x, v.x * 0.875f, 1e-3f) << n;
+            const float sink = n <= 12 ? -50.0f : 0.0f, trap = (v.z + s.vel.z) * 0.5f * dt;
+            EXPECT_NEAR(s.pos.z - p.z, sink + trap + rootZ((n + 1) / 60.0) - rootZ(n / 60.0), 0.05f) << n;
+            EXPECT_LT(s.pos.z, p.z) << "down all the way, no slam " << n;
+        }
+        EXPECT_EQ(s.state, State::SwimUnder) << "S154, the submerged swim";
+        EXPECT_NEAR(n / 60.0f, 1.033f, 0.02f) << "the whole of swim_swan_land (tru.exe S105: 1.033 s)";
+        EXPECT_GT(-6000 - s.pos.z, 1200.0f) << "deep under the surface";
         EXPECT_EQ(w->health().value(), w->health().max()) << "no fall damage into deep water";
     }
     { // 250 down onto the ground: the roll
@@ -7721,8 +7740,10 @@ TEST(GameReal, CliffSwanDiveIntoTheSea) {
     ASSERT_EQ(s.state, State::SwimSplash) << "at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
     EXPECT_EQ(s.clip, "swim_swan_land");
     EXPECT_GT(top - s.pos.z, 5500.0f);
+    const float in = s.pos.z;
     for (int k = 0; k < 200 && s.state == State::SwimSplash; ++k) w.tick({});
-    EXPECT_TRUE(s.state == State::SwimUnder || s.state == State::SwimTread);
+    EXPECT_EQ(s.state, State::SwimUnder) << "head first and on down: the submerged swim, not a landing on the surface";
+    EXPECT_LT(s.pos.z, in - 1000.0f) << "a 5900-unit swan dive goes far under (tru.exe off the 300 bow: 1170 in 1 s)";
     EXPECT_EQ(w.health().value(), w.health().max()) << "a 5900-unit fall into the sea costs nothing";
 }
 
