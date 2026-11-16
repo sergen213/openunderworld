@@ -1,7 +1,7 @@
 #version 460
 // Splash fluid particle (render/Fluid.hpp pool, shaders/fluid.glsl) as a camera-facing quad: no vertex input, 6 vertices
 // per instance, instance = particle slot; dead slots collapse to one point off screen. Spray (few neighbours) is drawn
-// finer and flagged as foam; particles fade over their last 0.3 s.
+// finer; spray and sheets are flagged as (part) foam; particles fade over their last 0.3 s.
 #include "shaders/fluid.glsl"
 #ifdef VULKAN
 layout(set = 0, binding = 0) uniform Water {
@@ -42,7 +42,7 @@ void main() {
     // camera right / up: the first two rows of the view-projection (jitter skews them negligibly)
     vec3 right = normalize(vec3(w.viewProj[0][0], w.viewProj[1][0], w.viewProj[2][0]));
     vec3 up = normalize(vec3(w.viewProj[0][1], w.viewProj[1][1], w.viewProj[2][1]));
-    float r = kOuFluidRadius * mix(1.0, 0.6, vFoam);
+    float r = kOuFluidRadius * mix(1.0, 0.5, ouFluidSpray(q.d.w));
     vWorld = q.d.xyz + (right * vUv.x + up * vUv.y) * r;
     gl_Position = w.viewProj * vec4(vWorld, 1.0);
 }

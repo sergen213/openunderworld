@@ -464,7 +464,7 @@ std::string waterFragmentSource(bool vulkan) { return expandIncludes(withVersion
 std::string splashVertexSource(bool vulkan) { return expandIncludes(withVersion(kSplashVert, vulkan)); }
 std::string splashSplatSource(bool vulkan) { return withVersion(kSplashSplat, vulkan); }
 std::string splashScreenVertexSource(bool vulkan) { return withVersion(kSplashScreen, vulkan); }
-std::string splashBlurSource(bool vulkan) { return withVersion(kSplashBlur, vulkan); }
+std::string splashBlurSource(bool vulkan) { return expandIncludes(withVersion(kSplashBlur, vulkan)); }
 std::string splashCompositeSource(bool vulkan) { return expandIncludes(withVersion(kSplashComposite, vulkan)); }
 
 namespace {

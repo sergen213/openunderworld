@@ -1,7 +1,7 @@
 #version 460
 // Splash fluid, pass 1 of 3 (screen-space fluid rendering, docs/RENDERING.md "Splash fluid"): every particle quad
 // splats a sphere into an RGBA32F target cleared to (-1e20, 0, 0, 0) and blended with MAX: r = -(distance from the eye
-// to the sphere's front), g = thickness through it, b = spray (foam), both x alpha (fading particles thin out). Occluded
+// to the sphere's front), g = thickness through it, b = spray (foam), both x alpha (fading particles thin out), a = 1 (covered). Occluded
 // fragments are rejected against the opaque depth copy, so the target needs no depth attachment; fronts below the
 // particle's water surface are dropped (the water hides them; they are merging). Adapted from
 // talvinckb/OpenGL-Water-Simulation fluid_depth.frag + fluid_thickness.frag (MIT, Copyright (c) 2026 Talvin Ackbaraly).
@@ -44,5 +44,5 @@ void main() {
         vec4 p = w.invViewProj * vec4(2.0 * uv.x - 1.0, OU_NDC_Y(uv), OU_NDC_Z(sd), 1.0);
         if (length(p.xyz / p.w - w.eye.xyz) < dist) discard;
     }
-    oSplat = vec4(-dist, 2.0 * r * z * vAlpha, vFoam * vAlpha, 0.0);
+    oSplat = vec4(-dist, 2.0 * r * z * vAlpha, vFoam * vAlpha, 1.0); // a: covered by a particle itself
 }
