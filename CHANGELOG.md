@@ -6,6 +6,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.49.2] - 2026-11-16
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: with AMD Anti-Lag on, the game crashed a few frames into a cutscene (the prologue corridor, the chapter 1
+  yacht). Cutscenes and the loading screen showed frames without telling Anti-Lag a frame had started, which filled
+  its 8-frame queue. Every frame shown now pairs its markers. Anti-Lag switches itself off while frame generation is on.
+
 ## [0.49.1] - 2026-11-15
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
