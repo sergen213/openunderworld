@@ -24,16 +24,21 @@
       "idle",
       "fall",
       "swimsplash",
-      "surfacing",
       "swimtread"
-     ]
+     ],
+     "note": "tru.exe (Wine, waterentry-wine drops from 300 to 3000): swim_jump_land (S104) ends at the rest level and goes straight to the surface group S111 (request 192), no surfacing state or swim_sub_up"
     },
     {
      "clips": [
       "swim_jump_land",
-      "swim_sub_up",
       "swim_surfaceidle"
      ]
+    },
+    {
+     "probe": "water.depth",
+     "near": 44.1,
+     "tol": 5,
+     "note": "treading 44.1 under the waves"
     },
     {
      "probe": "water.in",

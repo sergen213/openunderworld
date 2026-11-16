@@ -15,7 +15,7 @@
                 {"probe": "grapple.kind", "eq": "wall"},
                 {"probe": "grapple.rope", "near": 3404, "tol": 15}]},
     {"step": "step_off", "plan": ["run 180 4"], "duration": 12, "until": {"probe": "player.state", "eq": "swimtread"},
-     "expect": [{"visits": ["grappleswing", "swimsplash", "surfacing", "swimtread"]},
+     "expect": [{"visits": ["grappleswing", "swimsplash", "swimtread"], "note": "tru.exe (Wine, waterentry-wine traces of drops from 300 to 3000 and a running jump): swim_jump_land (S104) ends at the rest level and goes straight to the surface group S111 (request 192), no surfacing"},
                 {"probe": "grapple.attached", "eq": false, "note": "the rope is let go in the water"},
                 {"probe": "grapple.on_wall", "over": "all", "eq": false},
                 {"probe": "water.in", "eq": true},
