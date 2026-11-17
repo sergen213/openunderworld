@@ -1099,7 +1099,8 @@ public:
         }
         const auto reflection = drawReflection(camera, vp, options);
         // Screen-space AO for the main scene pass only (the reflection above saw screen.w = 0): ouAoMap on unit 17.
-        if (runAmbientOcclusion(camera, vp, viewProj, options)) {
+        aoDrawn_ = runAmbientOcclusion(camera, vp, viewProj, options);
+        if (aoDrawn_) {
             SunShadowBlock block = sun.block;
             block.screen.w = 4.0f; // sun.glsl ouAo: map valid
             glNamedBufferSubData(r.shadowUbo.get(), 0, sizeof block, &block);
@@ -1281,6 +1282,9 @@ public:
     }
 
     bool setVsync(bool enabled) override { return SDL_GL_SetSwapInterval(enabled ? 1 : 0); }
+    // No ray tracing on GL; reports the AO the last frame drew (RenderCommon rtSummary).
+    RtStatus rtStatus() const override { return {.ao = aoDrawn_ ? AmbientOcclusion::Cortao : AmbientOcclusion::Off}; }
+    bool aoDrawn_ = false;
 
     std::string description() const override {
         auto str = [](GLenum e) { auto* s = glGetString(e); return s ? reinterpret_cast<const char*>(s) : "?"; };

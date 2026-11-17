@@ -6,6 +6,20 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-11-16
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: CORTAO ambient occlusion (Daniel Isheden's screen-space ray-traced AO, MIT) in both Vulkan and OpenGL, on by
+  default with the Enhanced preset. Corners, crevices, the feet of walls and the ground under Lara, enemies and objects
+  get soft contact shading at full render resolution, so it stays sharp and never blocky, and it works without a ray
+  tracing GPU. It only darkens ambient light, never the sun, lamps or the flashlight. Costs about 0.2-0.5 ms per frame.
+- Changed: AMBIENT OCCLUSION moved to DISPLAY SETTINGS > QUALITY with the choices AUTO / OFF / CORTAO / RAY TRACED,
+  plus a new AO QUALITY (LOW / MEDIUM / HIGH / ULTRA). Ray-traced AO is still available on ray tracing GPUs and now
+  also darkens only ambient light instead of the whole image. Command line: `--ao off|cortao|rt` and
+  `--ao-quality low|medium|high|ultra` replace `--rt-ao`; the launcher has the same two options. An old `rt_ao`
+  setting in your config is ignored, so AO is on by default again.
+
 ## [0.50.1] - 2026-11-16
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
