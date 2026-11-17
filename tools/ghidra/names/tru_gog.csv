@@ -218,3 +218,86 @@ address,name,confidence,evidence
 0x476d80,Text_DrawKeyHighlight,medium,asm: on control char 0x1B toggles the key colour (colour & 0xFF000000) + 0x7D6932 into 0x9CE6C0; src/ui/Ui.cpp:96 (whole-function role is text drawing [I])
 0x5e2950,AutoSplineCamera_UpdateFov,medium,asm: thiscall; three-way on +0x19C (1: lerp +0x190 with t = min(+0x194 / +0x198; 1); 2: via 0x5E26B0); src/game/Camera.cpp:40 (class from neighbouring AutoSplineCamera_Start 0x5E26F0 [I])
 0x5e2ca0,AutoSplineCamera_NotifyDone,medium,asm: thiscall; guarded by byte +0x1A0 (set after); CameraManager (0x5E7770) slot 20 call or 0x77A3D0 dispatch; src/game/Camera.cpp:220 (class [I] as above)
+# --- W5-1 camera / UI / save / shutdown (docs/re/CAMERA.md, UI.md, SAVEGAME.md, SHUTDOWN.md)
+0x5e7770,CameraManager_Get,high,asm: mov eax 0xE804F0; ret; docs/re/CAMERA.md §1
+0x5f3a70,CameraManager_ctor,high,asm: stores vftable 0x855AE4; lea ecx [esi+0x120..0xE820] member ctors 5F3AAB..5F3B6A; camera table +4+4*type; CAMERA.md §2
+0x5eb0a0,CameraManager_dtor,high,decomp: member dtors in reverse; ends with ICameraManager vftable; CAMERA.md §1
+0x5f3c70,CameraManager_Update,high,asm 5F3C79: timeMult/30; vftable 0x855AE4 slot 10; active camera vf1 per frame; CAMERA.md §3
+0x5e8210,CameraManager_RequestMode,high,asm: slot 17; compares arg with +0x58 and 0x39/0x38/0x35/0x37/0x2B/0x2A; tools/wine-ref/camhook.sh hook; CAMERA.md §4
+0x5e7fe0,CameraManager_CommitMode,high,decomp: combat overrides; Lara camera vf 0x60(mode); +0x54 = +0x58; +0x5C = 0; CAMERA.md §4
+0x5edfc0,CameraManager_SwitchType,high,decomp: slot 20; cut switch to camera type (args type; 0); CAMERA.md §2
+0x5ee190,CameraManager_SwitchTypeBlended,high,decomp: slot 21; as slot 20 via the TransitionCamera; CAMERA.md §2
+0x5edd70,CameraManager_EnterGameplay,high,decomp: state +0x4C = 0; type +0x60; cut 0x5E8630 or blended 0x5EB310; CAMERA.md §2
+0x5edeb0,CameraManager_EnterCombat,high,decomp: state 1; +0x68 = type; type 2 -> 12; CAMERA.md §2
+0x5ede20,CameraManager_EnterScripted,high,decomp: state 3; +0x6C = type (4/7/8/15); CAMERA.md §2
+0x5e8630,CameraManager_SetActive,high,decomp: old vf 0x20(new); +0x44 = new; new vf 0x1C(old); CAMERA.md §1
+0x5eb310,CameraManager_StartTransition,high,asm 5EB310..5EB337: TransitionCamera at +0x670; +0x70 = state; state 4; CAMERA.md §5
+0x5ee3c0,CameraManager_EndTransition,high,decomp: re-enters state +0x70 with the target camera type; CAMERA.md §5
+0x5eb300,CameraManager_GetCamera,high,asm: mov eax [ecx+eax*4+4]; ret 4; slot 57; CAMERA.md §2
+0x433ab0,CameraManager_GetActive,high,decomp: return [this+0x44]; CameraManager slot 56; CAMERA.md §2
+0x5eb190,CameraManager_GetMode,high,decomp: return [this+0x54] (committed Lara-camera mode); slot 2; CAMERA.md §2
+0x5eb160,CameraManager_IsFrozen,high,decomp: return byte +0x7E (mode request 0x37); slot 1; CAMERA.md §4
+0x5eb180,CameraManager_GetMarkup,high,decomp: return [this+0x74]; slot 7; CAMERA.md §2
+0x60b4f0,TransitionCamera_Activate,high,decomp: TransitionCamera vf 7; snapshot previous camera matrix/fov/type; duration 0x60B210; CAMERA.md §5
+0x60b3c0,TransitionCamera_Update,high,asm 60B4D3: elapsed += [0x843CB0] = 1/30 per call; lerp/slerp to target; CAMERA.md §5
+0x60b320,TransitionCamera_Retarget,high,decomp: new target; elapsed 0; duration from the transition table; CAMERA.md §5
+0x60b210,TransitionCamera_GetDuration,high,decomp: {from;to;seconds} table lookup; anchored->anchored uses anchor record +0x58; CAMERA.md §5
+0x6020e0,LaraCameraRewrite_SetMode,high,decomp: LaraCameraRewrite vf 24; +0x1E0 = mode; mode-list records 0x5FE800/0x5FE8C0; CAMERA.md §1
+0x600710,LaraCameraRewrite_Follow,high,decomp: 0x5FF650 carry; 0x5FFB00 forces; 0x600200 proposal; position eases to +0x150; CAMERA.md §1
+0x5ff650,LaraCamera_CarryWithPlatform,high,asm 5FF7B8..5FF7E0: stores carrier matrix +0x180 and handle +0x1C0..+0x1C8; decomp: transforms +0x90 and +0x150 by the carrier delta; CAMERA.md §6
+0x609830,CameraFocus_Update,high,asm 609AFD..609B55: adds carrier velocity * dt * 30 to the focus before 0x609440; CAMERA.md §6
+0x7027b0,Player_GetCarrierVelocity,high,asm 702A03..702A71: physics body point velocity 0x4D8F70 or 0x5DC120 with min(timeMult 2); CAMERA.md §6
+0x5e7ef0,Camera_PlayerSelfMotion,high,decomp: 0xE91F20 = (pos+0x20 - old+0xC0) - timeMult*30*carrier velocity; constant 0x845258 = 30.0; CAMERA.md §6
+0x5e7db0,Camera_MarkupMode,high,decomp: markup type -> camera mode (1->11; 9->10; 15->17; 13->16; 14->3; 16..20->4; 4/6->9); CAMERA.md §4
+0x5b39d0,InstanceHandle_Get,high,decomp: {instance; serial} -> instance if instance+0x44 == serial else 0
+0x5b39f0,InstanceHandle_Set,high,decomp: handle = {instance; instance+0x44}
+0x5dae20,MAIN_FrontEnd,high,decomp: main state 10; front-end sub-state byte 0xFAE8DA; medsea_loop Bink; docs/re/UI.md §3
+0x77cb20,FrontEnd_StateName,high,decomp: LegalScreens..PlayNewGameMovie strings; UI.md §3
+0x77c190,UIGameData_QuitGame,high,asm 77C19F: mov [0xE7ED60] 8; script native uigamedata 45 (0x7A0F30); UI.md / SHUTDOWN.md
+0x4c7bc0,ScriptStdScreen_Create,high,decomp: cdc::ScriptStdScreen vf 1; creates the screen's script object at +4; UI.md §2
+0x4bdd00,ScriptPauseScreen_GetType,high,asm: global data 0xE7EE50 +0xE0 -> 0x551560; UI.md §2
+0x77d9b0,ScriptHUDMenu_GetType,high,decomp: global data +0x198 -> 0x551560; UI.md §2
+0x77e9e0,HUD_Create,high,decomp: new ScriptHUDMenu at 0xFAE920; UI.md §2
+0x77f390,HUD_Destroy,high,decomp: deletes the ScriptHUDMenu at 0xFAE920; SHUTDOWN.md
+0x59c390,UIWidget_SetParent,high,decomp: cdc::UIWidgetBase slot 1; +0x10 parent; UI.md §4
+0x5a1280,UIWidget_GetAlpha,high,decomp: UIWidgetBase slot 26; style +0x1F0 +0x1C times parent alpha; UI.md §4
+0x59c750,UIWidget_DrawLayerA,high,asm: slot 34; vf 0x94 test then vf 0x68 alpha > 0 then vf 0x84 Draw; UI.md §4
+0x5a2600,UIWidget_InLayerA,high,asm: (desc+0x20 -> +4 & 0x180) == 0x80; UI.md §4
+0x6df600,PDAMap_LoadDrm,high,strings: PDA MAP DRM "%s" Loaded / Has %i faces; UI.md §2
+0x6e4410,PDAMap_Deserialize,high,string: PDA MAP DATA IS BEING DESERIALIZED; UI.md §2
+0x6e4800,PDAMap_Save,high,string: PDA Map failed to save - it tried to write past the end of the save data block; UI.md §2
+0x556d20,SAVE_Init,high,asm 556D35..556D9D: two 0x140004 buffers with 0xDEADBEEF at +0x140000; docs/re/SAVEGAME.md §1
+0x556940,SAVE_ClearMemory,high,string SAVE_ClearMemory(); allocates the type-6 blocks 0xC59264/0xC59268; SAVEGAME.md §3
+0x555280,SAVE_ResetBuffer,high,asm 5552A9: sentinel 0xDEADBEEF; clears the intro index 0xC57258; SAVEGAME.md §2
+0x556310,SAVE_AllocBlock,high,strings illegal save type / save %d is too big! / ran out of saved memory; header (dwords<<8)|type at [buf+0x1357F4]; SAVEGAME.md §2
+0x5570f0,SAVE_SaveGame,high,asm 557120: memcpy committed <- working 0x140004; string Save Game; SAVEGAME.md §4
+0x5568c0,SAVE_BufferAll,high,decomp: every instance -> 0x556680; loaded units -> 0x5563D0; script tables 0x555820; SAVEGAME.md §1
+0x556680,SAVE_BufferIntro,high,decomp: block types 2/3/4/5 per instance (GAMEPLAY.md Checkpoints); SAVEGAME.md §2
+0x5563d0,SAVE_BufferUnit,high,decomp: block type 1 (moved terrain groups); SAVEGAME.md §2
+0x555820,SAVE_StoreScriptTables,high,decomp: six areas +0x135FF4..+0x13FBFC from the script variable stores; SAVEGAME.md §2
+0x5558a0,SAVE_LoadScriptTables,high,decomp: six areas back into the script variable stores; SAVEGAME.md §2
+0x555be0,SAVE_WriteGameState,high,asm 555BE5: version 0xC2C at block +0xA; MAIN check point %s %d; SAVEGAME.md §3
+0x557130,SAVE_RestoreGame,high,asm 557194/5571C6: memcpy working <- committed; sentinel check; string Restore Game; SAVEGAME.md §4
+0x556e90,SAVE_RestoreCheckpoint,high,asm 556E98: cmp version 0xC2C; MAIN checkpoint restore %s ID wanted = %d; SAVEGAME.md §3
+0x556dd0,SAVE_RestoreInventory,high,asm 556DD0..556E23: ten words from +0x260 or +0x230 into gamebase slots 1..10; SAVEGAME.md §3
+0x555b70,SAVE_GetCommitted,high,decomp: return [0xC5925C]; SAVEGAME.md §1
+0x555b80,SAVE_Shutdown,high,decomp: frees 0xC59258 and 0xC5925C; SHUTDOWN.md
+0x7744e0,Storage_RegisterCategories,high,decomp: savegame%02d .sav x10 0x140000 / Screenshot%03d .ss x100 / profile .pro; SAVEGAME.md §1
+0x78ab60,SaveFile_Update,high,decomp: PC save/load state machine (0x8B7158); Autosave .TRUSave; SAVEGAME.md §5
+0x78a3f0,SaveFile_BeginWrite,high,asm 78A4C6..78A641: game id 0x54525553 version 0x100; one 0x140000 block from the committed buffer; SAVEGAME.md §5
+0x78b550,Save_GetDirectory,high,strings Personal / C:\My Documents / \Eidos\ / Tomb Raider - Underworld; SAVEGAME.md §5
+0x789700,Registry_GetGUID,high,decomp: HKLM Software\Crystal Dynamics\Tomb Raider: Underworld GUID (16 bytes); SAVEGAME.md §5
+0x6db2f0,SaveContainer_SetMetadata,high,asm 6DB328: RGMH 0x484D4752 v1 size 0x2028; SAVEGAME.md §5
+0x6dbdf0,SaveContainer_BeginWrite,high,asm 6DBDF0..6DBE86: offsets; PCUD 0x44554350 v0x100; CRCs; SAVEGAME.md §5
+0x6db810,SaveContainer_WriteStep,high,decomp: WriteFile order RGMH; PCUD header 0x1C; block table; extra; blocks; SAVEGAME.md §5
+0x6db9b0,SaveContainer_ReadStep,high,decomp: accepts RGMH v1 or PCUD 0x100 first; header CRC check; SAVEGAME.md §5
+0x596d80,CRC32,high,decomp: MSB-first table CRC with init/final 0xFFFFFFFF; table poly 0x04C11DB7 (0x596CE0); SAVEGAME.md §1
+0x5df930,MAIN_Shutdown,high,asm 5E01E0: called when MainG2 leaves its loop; docs/re/SHUTDOWN.md §2
+0x5d1a80,STREAM_DumpAllLevels,high,string STREAM_DumpAllLevels(..); SHUTDOWN.md
+0x5c1990,STREAM_FreeUnitResources,high,string Freeing unit %s resources; SHUTDOWN.md
+0x5c1a80,OBTABLE_DumpObjects,high,strings Clearing NO_DUMP flag in object %s / Marking player object %s for dumping; SHUTDOWN.md
+0x550590,RESOLVE_ShutdownSectionHandlers,high,decomp: deletes every g_sectionHandlers entry; SHUTDOWN.md
+0x478230,Input_SaveBindingsToRegistry,high,string SOFTWARE\Crystal Dynamics\Tomb Raider: Underworld\Input; SHUTDOWN.md
+0x472ad0,FileSystems_Shutdown,high,decomp: deletes 0x9CE280/284/288/g_diskFileSystem/0x9CE28C; SHUTDOWN.md §3
+0x5237d0,PCDeviceManager_Release,high,decomp: refcount g_pcDeviceManager+0xC; destroy at 0; SHUTDOWN.md §3
+0x4a1730,JobSystem_StopThreads,high,decomp: ReleaseSemaphore; WaitForSingleObject + CloseHandle per worker; SHUTDOWN.md §3
