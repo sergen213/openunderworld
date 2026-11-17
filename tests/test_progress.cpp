@@ -280,14 +280,14 @@ TEST(Menus, GraphicsOptions) {
     EXPECT_EQ(g.rt, 0);
     m.input(ui::Nav::Back), m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // RAY TRACING
     ASSERT_EQ(m.screen(), ui::Screen::GfxRayTracing);
-    EXPECT_EQ(m.cursor(), 6); // every RT row greyed with preset original: BACK
+    EXPECT_EQ(m.cursor(), 5); // every RT row greyed with preset original: BACK
     m.input(ui::Nav::Back);
     EXPECT_EQ(m.cursor(), 1);
     g.preset = 0, g.rt = 1; // OFF: only the mode row stays selectable
     m.input(ui::Nav::Accept);
     EXPECT_EQ(m.cursor(), 0);
     m.input(ui::Nav::Down);
-    EXPECT_EQ(m.cursor(), 6); // greyed rows skipped
+    EXPECT_EQ(m.cursor(), 5); // greyed rows skipped
     m.input(ui::Nav::Down);
     EXPECT_EQ(m.cursor(), 0);
     m.input(ui::Nav::Right), m.input(ui::Nav::Right);

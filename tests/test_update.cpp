@@ -742,6 +742,8 @@ TEST(Config, GraphicsPresets) {
     auto rd = resolve(d);
     EXPECT_TRUE(rd.rtLights); // explicit on with rt shadows
     rd.rtLights = false;
+    EXPECT_EQ(rd.aoSamples, 32); // ao_quality ultra
+    rd.aoSamples = 12;
     EXPECT_EQ(rd, enhancedAo(GraphicsSettings{2, true, true, false, 1, 4, true, 1, 0.75f, true, 3, false, 1}));
     std::ofstream(p) << R"({"graphics":{"brightness":0.2}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
