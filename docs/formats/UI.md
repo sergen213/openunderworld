@@ -156,3 +156,9 @@ relocation types at +0x00/+0x04 (we read the stored ids), RAW header fields 0x0C
 - [U] Font header +0x16 and +0x20..+0x2F; glyph bytes +0x05 / +0x0A / +0x0B.
 - [U] RAW header +0x0C (3) and +0x10 (0x10 vs 0x70 on 3 records), and where tru.exe parses the header.
 - [I] Which tru.exe draw function selects texture2 for controller glyphs (we assume the U+1800..U+18FF range).
+
+## 10. Tools
+
+`ou-asset font <gameDir> <drm> [dtpId]` (game font: `pc-w\generalbank.drm`, DTP 46, the default id): textures,
+cell height, spacing, scale and every glyph (code, width, atlas position, second texture). [O] generalbank: textures
+109 / 110, cell height 46, spacing 4, scale 0.5 × 0.5, 205 glyphs.

@@ -293,3 +293,11 @@ against lara.drm.
 | CINE header (`cine::parseHeader` / `scan`) | magic ≠ `ENIC`; header size disagreeing with the bytes read; > 2²⁰ channels; truncation | `Cine.DemuxesAndParsesSyntheticStream` (bad magic, frame out of sequence) |
 | Frames (`cine::Decoder`) | a frame number out of sequence; a frame whose size disagrees with its content; no frames. A truncation exactly at a frame boundary ends the stream (voice-line streams end that way) | `Cine.TruncationThrowsOrEndsAtAFrame` (every prefix), real `CineReal.AllStreamsDecodeToTheEnd`, `CineReal.EveryStreamPlaysWithItsActors` |
 | Unit cinematic table | an entry without relocation; a name out of range | `CineReal.ChapterEndCinematics` |
+
+## 9. Tools
+
+`ou-asset cine <gameDir> <name> [channel [count]]` (`<name>` = a `pc-w\cinstream` stream such as `045_med_kraken`,
+or a full bigfile path): the header (unit, markers, instances with their channel bases, lights, vars and end
+positions, cameras, events), the frame count, the subtitle entry count and whether the stream ends cleanly; with a
+channel, one line per decoded frame with `count` channel values from there. [O] `045_med_kraken`: 3 063 channels,
+1 081 frames (36.03 s), 7 instances, 1 camera, 18 subtitle entries, clean end. Subtitle text: `ou-text cine`.

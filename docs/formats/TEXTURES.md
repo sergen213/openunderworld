@@ -80,3 +80,13 @@ Gap: no test for the palette and unknown-format rejections; the install survey (
 - [U] The cube face order (assumed D3D +X −X +Y −Y +Z −Z; used by the original shaders' environment reflections).
 - [I] There are many small white 32bpp textures with low alpha, e.g. `co_satchel` 0x1850. They are probably
   alpha/specular masks. Material category semantics are discussed in MESHES.md.
+
+## Round trip
+
+[O] Every texture section is exactly header + pixel data (no trailing bytes). `formats::encodePcd(header, pixels)`
+rebuilds it, and two re-wraps are byte-identical for all 36 220 texture sections of bigfile.000 (349 cube maps) and
+the 307 of patch.000: from the parsed header plus the raw pixel bytes, and from `decodeTexture`'s per-level dump
+reassembled face-major (so the mip-chain sizes and the cube face-major layout lose nothing). All 36 527 decode.
+Test `RealData.Pcd9RewrapEveryTexture` (~2 s warm), synthetic `Texture.EncodePcdMatchesStoredHeader`. CLI:
+`ou-asset roundtrip <gameDir> all|<drm>` (DRM serialise, CDRM re-wrap and PCD9 header re-wrap; exit 1 on a mismatch).
+DDS export (`dump-texture -o x.dds`) drops the flags word, so DDS is not a round-trip format.

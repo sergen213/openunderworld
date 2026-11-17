@@ -123,3 +123,10 @@ list below describes the generic fallback.
 - [U] Flags `0x1000`, `0x04`, `0x20`, `0x40` and the remaining blob fields; which pass list a material joins.
 - [U] Light-map source for IMFs and terrain (IMF +0x4C?), and the `COLOR0` meaning for objects whose shaders use it.
 - Shader translation, light maps, fog, instance textures: done, see docs/formats/SHADERS.md (PSSM and dynamic lights still open).
+
+## Tools
+
+`ou-asset materials <gameDir> <drm>`: one line per material section with `materialState` (blend, alpha ref,
+two-sided, shadow caster, depth write), the raw blend mode and flags, the vertex / pixel ShaderLib ids, the VS / PS
+constant register counts, the sampler count and every `materialTextures` entry as `id:category:slot`. [O]
+`pc-w\lara.drm`: 57 material sections.

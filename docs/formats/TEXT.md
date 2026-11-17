@@ -181,3 +181,11 @@ parsing, `.sch` parsing, ticker scrolling, speaker stripping, cinematic subtitle
 | cinematic subtitles (`.mul`) | bad subtitle length / language → `FormatError` (AUDIO.md §10) | `Subtitles.CineBlobHasEveryLanguage`, `Subtitles.CineLinesDropSpeaker`, `AudioReal.SubtitleMatchesLocals` |
 
 Gap: no malformed-`.sch` test (the parser's skip behaviour is untested).
+
+## 7. Round trip
+
+[O] Every locals.bin is laid out with no sharing or reordering: the offset table is followed directly by the strings
+in id order, each NUL-terminated, absent ids have offset 0. `locale::encodeLocals(headerLanguage, strings)` writes
+exactly that, and rebuilding each shipped file from `Strings::raw()` is byte-identical for all 12 records (six
+languages in bigfile.000, six in patch.000; 17 370 strings): `LocaleRealData.LocalsBinRoundTrip`, synthetic
+`Strings.EncodeLocalsLayoutAndRoundTrip`.

@@ -471,3 +471,11 @@ The complete native table (187 registered types, 2 267 `0x5768F0` binds from the
 against a Wine runtime capture), the CALLU (0x65) decode including builtin DYNARRAY / MAP methods (CALLU operand
 `{u8 1, u8 DataType, u16 index}` linked by `0x57EE20`; the fire volumes' `0x701` = DYNARRAY Size), and the decoded
 log-reported gaps are in [docs/re/SCRIPT_NATIVES.md](../re/SCRIPT_NATIVES.md) and `docs/re/db/script_natives.tsv`.
+
+## Tools
+
+`ou-asset script <gameDir> <drm>` lists every script type (id, super, native name, size, members, functions,
+states; parse errors per section); `ou-asset script <gameDir> <drm> <typeId>` prints its members (offset, DataType,
+type ids, symbol, initial value) and a bytecode listing per function: word offset, `SCMD_*` name (ByteCodeEnum
+numbering), argument, relocated operands as `section:offset`, ISTYPE type, PUSH immediates and PUSHC strings. [O]
+`pc-w\l2_puzzleroom.drm`: 418 script types, 0 errors.

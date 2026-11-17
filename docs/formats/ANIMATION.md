@@ -286,3 +286,11 @@ after a stop it swings out behind the head; rising in a standing jump it trails 
 | Clips (`decodeClip`) | section count ≠ 1; key count or time per key 0; an empty or short piece-wise channel; a zero-length piece-wise segment; an unknown channel mode; channel data that does not end at the `+0x3C` offset; reads past the end | `Anim.RejectsTruncatedAndInconsistent` (4 bytes cut; `+0x3C` zeroed), `Anim.DecodesAllChannelModes`, `AnimReal.AllLaraClipsDecodeAndKeepBoneLengths` (all lara.drm clips) |
 
 Gap: no synthetic test for the skeleton parent / count rejections.
+
+## Tools
+
+`ou-asset anim <gameDir> <objectDrm>` lists the skeletons (render model, bones with parent and pivot), the animation
+list (index, anim id, name), the pattern count and every type-2 clip (keys, time per key, seconds, segments, animated
+tracks); `ou-asset anim <gameDir> <objectDrm> <clipId>` dumps that clip's tracks, one line of key values per animated
+segment channel (`rotX..transZ`, as `anim::Clip`). [O] `pc-w\lara.drm`: skeletons for render models 2366 (153 bones)
+and 2367 (113 bones), 1 818 list entries, 1 502 patterns, 1 744 clips decoded with 0 errors.

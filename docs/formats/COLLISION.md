@@ -268,3 +268,13 @@ Gap: no synthetic test feeds a malformed collision mesh (out-of-range face verte
   plane 2571 disables model 5 and enables model 1 in `GameReal.TerrainGroupNativeUpdatesMergedCollision`.
 - [U] Moving terrain groups: which instance drives them, and their runtime transforms.
 - Object-DRM markup: decoded (above, GAMEPLAY.md "Moving markup"). [U] per-instance collision of non-solid segments.
+
+## Tools
+
+`ou-asset collision <gameDir> <unit> [-o out.obj]` (e.g. `pc-w\l4_pool.drm`): walks the game BIH of every terrain
+group straight from the DRM (node/inner/leaf counts, depth vs the stored tree height, leaf faces vs numFaces, a check
+that every node is reached once), then prints `loadLevelCollision`'s face tables (histograms of flags, mask,
+clientFlags, material, faces per group) and every markup item (id, type, points, intro, camera record). `-o` writes the
+merged mesh as OBJ with one `g group<N>` per terrain group. [O] l4_pool: 7 groups with a mesh, all BIH checks `ok`
+(group 0: 5 811 faces, 5 591 nodes, depth 22 = height 22), 6 043 faces, 73 markup items (61 ledgegrab, 10
+balancebeam, 2 jumplanding).

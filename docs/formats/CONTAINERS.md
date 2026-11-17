@@ -266,3 +266,28 @@ UTF-8 NUL-terminated strings
 | locals.bin (`locale::Strings`) | header < 8 bytes; offset table past the data (incl. huge counts); an offset at/after the end; a string without its NUL | `Strings.RejectsTruncation`, `Strings.DecodesSyntheticTableWithExeSemantics`, `LocaleRealData.AllLocalsBinVariantsDecode` (all six) |
 
 Not validated: CDRM `version` / `padding`, DRM `hdr[2..4]`, kind2 / resource16 relocation semantics (§6).
+
+---
+
+## 8. Round trip (writers)
+
+Writers in `src/cdc/Cdc.{hpp,cpp}` rebuild every container byte from decoded fields; the parsers above are unchanged
+and stay the reference readers. Tests: `tests/test_cdc.cpp` (`RoundTrip.*` synthetic, `RealData.RoundTrip*` over the
+install, ~17 s on a spinning disk), `tests/test_locale.cpp` (locals.bin, [TEXT.md §7](TEXT.md#7-round-trip)),
+`tests/test_formats.cpp` (PCD9, [TEXTURES.md](TEXTURES.md#round-trip)). CLI: `ou-asset roundtrip <gameDir> all|<drm>`.
+
+| Container | Writer | Result over the install [O] |
+|---|---|---|
+| Bigfile index | `encodeBigfileIndex` (count, hashes, records, zero pad to 2048) | identical for bigfile.000 (7 339 records) and patch.000 (9) |
+| Bigfile payload layout | `layoutBigfileSectors` (payloads back to back on 2048-byte boundaries in sector order; one that would cross a `0x7FF00000` part boundary starts the next part) | every sector of both archives recomputed from the sizes alone (7 338 + 9 payloads; two bigfile.000 records, hashes `0x9546A9AE` / `0xA3E19F70`, share one payload); the three non-zero gaps (532, 3 176, 51 sectors) are exactly these part skips; every part file ends at its last payload rounded up to 2048 |
+| CDRM framing | `readCdrmBlocks` / `writeCdrm` (header `CDRM, 0, n, 0`, table, zero pad to 16 after the table and between blocks, none after the last) | 1 059 / 1 059 identical (29 871 + 169 blocks) |
+| CDRM compression | `compressCdrm` (0x40000-byte blocks, zlib level 9) | **identical for all 1 059 CDRMs with classic zlib 1.3.1** (`RealData.CdrmRecompressSurvey`, opt-in: `OU_CLASSIC_ZLIB=<classic libz.so.1>`, ~3.5 min on 8 threads). Every block header is `78 DA`. zlib-ng 2.3.3 (this system's `libz`) emits other deflate streams at every level (probe: 0 of 105 blocks at levels 1/6/9), so with zlib-ng only the decompressed form is identical; the survey skips unless a classic zlib is available |
+| DRM v19 | `toDrmImage` / `serializeDrm` (header words, NUL-terminated name list, raw second block, section headers with `relocBytes` recomputed from the re-encoded table, relocation tables decoded field by field: `decodeRelocations` / `encodeRelocations`) | 1 060 / 1 060 identical in decompressed form (1 056 CDRM + 1 raw in bigfile.000, 3 in patch.000; 228 918 sections) |
+| locals.bin | `locale::encodeLocals` | 12 / 12 identical |
+| PCD9 | `formats::encodePcd` | 36 527 / 36 527 identical (also from the decoded per-level dump) |
+
+What identity proves: the formulas in §1.2, §3, §4.1 (`hdr[2..4]` = 0, name block = NUL-terminated names), §4.2
+(`relocBytes` = table size) and §4.5 (table size = `20 + 8·c0 + 8·c1 + 4·(c2 + c3 + c4)`; extern / typed bit packing)
+leave no byte unexplained, and the last section ends the file. It says nothing about the open semantics of §6
+(kind2 / resource16 meaning, `hdr[2]`): those fields are carried, not interpreted. The extern and typed relocation
+fields are bijective under their bit widths (a value out of range throws instead of truncating).
