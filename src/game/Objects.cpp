@@ -2027,11 +2027,14 @@ void World::tickObjects(float dt) {
     poseColliders();
     tickObjectMarkup();
     tickHazards();
+    carrierMove_ = vec3(0);
     if (const auto rideNow = rideBefore ? objectMarkupFrame(ride) : std::nullopt; rideNow && *rideNow != *rideBefore) {
+        const vec3 was = player_.state().pos;
         player_.rideFrame(*rideNow * glm::inverse(*rideBefore));
+        carrierMove_ = player_.state().pos - was;
     } else if (under >= 0) {
         const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
-        if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
+        if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved), carrierMove_ = moved;
     }
     restoredColliders_ = false;
 }
