@@ -653,7 +653,7 @@ UberObjectComposite_TR8	0085d55c	6	1	0	UberObjectComposite;ObjState;InstanceUser
 UberObjectSection	00847f30	5	1	0	ObjState;InstanceUserData
 UberObjectSection::ModelMarkerAnchor	00847d6c	7	3	0	cdc::IAnchor
 UberObjectSection_TR8	0085d544	5	2	0	UberObjectSection;ObjState;InstanceUserData
-UnderWaterRayDrawable	0085d5c4	12	2	0	cdc::IDrawable
+UnderWaterRayDrawable	0085d5c4	12	2	1	cdc::IDrawable
 UnitObjectDrawable	008542fc	12	2	0	RMIDrawableBase;cdc::IDrawable
 VPoleAttachGroundAnimTarget	0085ec8c	2	0	0	cdc::AnimTarget
 Vehicle	00861a18	13	1	1	
@@ -835,7 +835,7 @@ cdc::PCLightResource	00849514	1	0	0	cdc::ILightResource;cdc::RenderResource;cdc:
 cdc::PCMaterial	00849010	1	0	0	cdc::CommonMaterial;cdc::IMaterial;cdc::PCExternalResource
 cdc::PCMaterial	00849018	4	0	0	cdc::CommonMaterial;cdc::IMaterial;cdc::PCExternalResource
 cdc::PCMatrixState	00849084	8	0	0	cdc::IMatrixState
-cdc::PCModelDrawable	00849754	3	0	0	cdc::PCDeferredPrimGroup;cdc::RenderDrawable
+cdc::PCModelDrawable	00849754	3	0	1	cdc::PCDeferredPrimGroup;cdc::RenderDrawable
 cdc::PCNGAPrimitive	00848f14	3	0	0	cdc::RenderDrawable
 cdc::PCNoiseEffect	00849d4c	1	0	0	cdc::PCRenderEffect
 cdc::PCNoiseEffect::EffectDrawable	00849d30	3	1	0	cdc::RenderDrawable
@@ -845,7 +845,7 @@ cdc::PCPrimitive	00848f00	3	0	0	cdc::RenderDrawable
 cdc::PCRenderColorSurface	00849864	1	0	0	cdc::IRenderColorSurface;cdc::IRenderSurface;cdc::PCRenderSurface
 cdc::PCRenderContext	0084b84c	8	0	0	cdc::PCInternalResource
 cdc::PCRenderDepthSurface	0084985c	1	0	0	cdc::IRenderDepthSurface;cdc::IRenderSurface;cdc::PCRenderSurface
-cdc::PCRenderDevice	008492cc	69	8	0	cdc::RenderDevice;cdc::PCInternalResource
+cdc::PCRenderDevice	008492cc	69	8	1	cdc::RenderDevice;cdc::PCInternalResource
 cdc::PCRenderDevice	008493e8	5	0	0	cdc::RenderDevice;cdc::PCInternalResource
 cdc::PCRenderEffect	00849c04	1	0	0	
 cdc::PCRenderImage	00849474	9	1	0	cdc::IRenderImage;cdc::RenderResource
@@ -859,12 +859,12 @@ cdc::PCRenderTarget	008491b4	13	1	0	cdc::PCBaseRenderTarget;cdc::IRenderTarget;c
 cdc::PCRenderTarget	008491f0	1	0	0	cdc::PCBaseRenderTarget;cdc::IRenderTarget;cdc::RenderResource;cdc::PCExternalResource
 cdc::PCRenderTerrain	008499a4	1	0	0	cdc::IRenderTerrain;cdc::RenderResource;cdc::PCExternalResource
 cdc::PCRenderTerrain	008499ac	18	1	0	cdc::IRenderTerrain;cdc::RenderResource;cdc::PCExternalResource
-cdc::PCScene	00849a28	4	1	0	cdc::RenderDrawable
+cdc::PCScene	00849a28	4	1	1	cdc::RenderDrawable
 cdc::PCShaderLib	00849a70	1	0	0	cdc::IShaderLib;cdc::PCExternalResource
 cdc::PCShaderLib	00849a78	3	1	0	cdc::IShaderLib;cdc::PCExternalResource
 cdc::PCShaderManager	0084b8b8	1	0	0	
 cdc::PCShaderTable	0084b8e0	1	0	0	
-cdc::PCShadowMap	00849aa8	5	0	0	cdc::PCInternalResource
+cdc::PCShadowMap	00849aa8	5	0	1	cdc::PCInternalResource
 cdc::PCStateManager	0084b918	5	0	0	cdc::PCInternalResource
 cdc::PCStaticIndexBuffer	0084b94c	5	0	0	cdc::PCIndexBuffer;cdc::PCInternalResource
 cdc::PCStaticIndexBuffer	0084b964	3	0	0	cdc::PCIndexBuffer;cdc::PCInternalResource
@@ -873,7 +873,7 @@ cdc::PCStaticVertexBuffer	0084b9c4	5	0	0	cdc::PCVertexBuffer;cdc::PCInternalReso
 cdc::PCStaticVertexBuffer	0084b9dc	5	0	0	cdc::PCVertexBuffer;cdc::PCInternalResource
 cdc::PCStreamDecl	0084ba18	5	0	0	cdc::PCInternalResource
 cdc::PCSurface	00849df0	1	0	0	
-cdc::PCTerrainDrawable	00849944	3	0	0	cdc::RenderDrawable
+cdc::PCTerrainDrawable	00849944	3	0	1	cdc::RenderDrawable
 cdc::PCTexture	00849b18	1	0	0	cdc::PCBaseTexture;cdc::TextureMap;cdc::RenderResource;cdc::PCExternalResource
 cdc::PCTexture	00849b20	14	0	0	cdc::PCBaseTexture;cdc::TextureMap;cdc::RenderResource;cdc::PCExternalResource
 cdc::PCTransientRenderTarget	008491f8	12	1	0	cdc::PCBaseRenderTarget;cdc::IRenderTarget;cdc::RenderResource
@@ -882,9 +882,9 @@ cdc::PCVertexBuffer	0084b71c	2	0	0
 cdc::PCVertexBufferMemPool	0084ba54	7	0	0	cdc::PCInternalResource
 cdc::PCVertexShader	0084ba90	5	0	0	cdc::PCInternalResource
 cdc::PCVertexShaderTable	0084b8e8	1	0	0	cdc::PCShaderTable
-cdc::PCWaterSurface	00849ba4	1	0	0	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
-cdc::PCWaterSurface	00849bac	5	0	0	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
-cdc::PCWaterSurface	00849bc4	4	0	0	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
+cdc::PCWaterSurface	00849ba4	1	0	1	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
+cdc::PCWaterSurface	00849bac	5	0	1	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
+cdc::PCWaterSurface	00849bc4	4	0	1	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
 cdc::Package	0084e550	2	0	0	cdc::RCObject
 cdc::PlayerAPI	0085e37c	2	0	0	
 cdc::RCObject	008457c4	2	0	0	
@@ -897,7 +897,7 @@ cdc::ResolveDecompressor	0084cd74	15	1	1	cdc::FileSystem
 cdc::ResolveDecompressor::Receiver	0084cdb4	5	0	0	cdc::FileReceiver
 cdc::RingBuffer	008508e8	2	0	0	cdc::DebugRingBuffer;cdc::IRingBuffer;cdc::DebugIRingBuffer
 cdc::RingBufferChain	0085045c	2	0	0	cdc::DebugRingBufferChain;cdc::IRingBuffer;cdc::DebugIRingBuffer
-cdc::Scene	0084decc	36	2	0	cdc::IScene
+cdc::Scene	0084decc	36	2	1	cdc::IScene
 cdc::Scene::THAlloc	0084dd58	2	1	0	cdc::CullingAllocator
 cdc::SceneCell	0084df64	23	0	0	cdc::ISceneCell;cdc::SceneCellContainer
 cdc::SceneCellGroup	0084dfcc	19	0	0	cdc::ISceneCellGroup;cdc::SceneCellContainer
@@ -988,4 +988,4 @@ cdc::WaveSection	00850d2c	23	2	1	cdc::IWaveSection;ResolveSection
 df::IMenuManager	0086168c	2	0	0	
 std::bad_exception	00874d38	2	0	0	std::exception
 std::exception	00877668	2	0	0	
-type_info	00869918	1	0	0	
+type_info	00869918	1	0	1	

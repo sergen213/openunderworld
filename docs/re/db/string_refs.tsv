@@ -1,0 +1,2011 @@
+entry	string	sites	value
+00401ad0	008411f4	1	zoneOfAttraction
+00401ad0	00841208	1	zoneOfOrientation
+00401ad0	0084121c	1	zoneOfRepulsion
+00401ad0	0084122c	1	turnSmoothingFactor
+00401ad0	00841240	1	rollFactor
+00401ad0	0084124c	1	maxPitchAngle
+00401ad0	0084125c	1	turningRadiusV
+00401ad0	0084126c	1	turningRadiusH
+00401c30	008412d0	1	flockID
+00401c30	008412d8	1	rotVel
+00401c30	008412ec	1	replayID
+00401c30	008412f8	1	CreateMover3D
+00401ce0	008412ec	1	replayID
+00401ce0	00841318	1	goalPos
+00401ce0	00841320	1	Mover3D::GotoPos
+00401d40	008412ec	1	replayID
+00401d40	00841334	1	freeze
+00401d40	0084133c	1	Mover3D::Freeze
+00401da0	008412ec	1	replayID
+00401da0	00841360	1	debug
+00401da0	00841368	1	Mover3D::SetDebug
+00401e00	008412ec	1	replayID
+00401e00	0084137c	1	color
+00401e00	00841384	1	Mover3D::OverrideColor
+00401e60	008411f4	1	zoneOfAttraction
+00401e60	00841208	1	zoneOfOrientation
+00401e60	0084121c	1	zoneOfRepulsion
+00401e60	0084122c	1	turnSmoothingFactor
+00401e60	00841240	1	rollFactor
+00401e60	0084124c	1	maxPitchAngle
+00401e60	0084125c	1	turningRadiusV
+00401e60	0084126c	1	turningRadiusH
+00402170	008412ec	1	replayID
+00402170	0084134c	1	Mover3D::SetTune
+004038e0	00841164	1	FishTune::turnSmoothingFactor
+00404af0	008412ec	1	replayID
+00404af0	00841318	1	goalPos
+00404c70	008412ec	1	replayID
+00404c70	00841360	1	debug
+00405c00	008412ec	1	replayID
+00405c00	00841308	1	DestroyMover3D
+00408130	00841924	1	userData
+00408130	00841930	1	blockageFlags
+00408130	00841940	1	penalty
+00408130	00841948	1	affectedLayers
+00408130	00841958	1	obstacle_data
+004081b0	0084196c	1	obstacleID
+004081b0	00841978	1	CreateObstacle
+004082d0	0084196c	1	obstacleID
+004082d0	00841988	1	DestroyObstacle
+00408320	00841610	1	linkUsageFlags
+00408320	00841924	1	userData
+00408320	00841998	1	stopToUseLink
+00408320	008419a8	1	mustUseDist
+00408320	008419b4	1	mayUseDist
+00408320	008419c0	1	maxSnapDist
+00408320	008419cc	1	bidirectional
+00408320	008419dc	1	layerMask
+00408400	008419f8	1	start
+00408400	00841a00	1	linkID
+00408400	00841a08	1	CreateLink
+004084c0	00841a00	1	linkID
+004084c0	00841a24	1	start1
+004084c0	00841a2c	1	start0
+004084c0	00841a34	1	CreateLinkStrip
+004085d0	00841624	1	enable
+004085d0	00841a00	1	linkID
+004085d0	00841a44	1	LinkEnable
+00408630	008419dc	1	layerMask
+00408630	00841a00	1	linkID
+00408630	00841a50	1	LinkSetLayerMask
+00408690	00841a70	1	m_pathSharingPenalty
+00408690	00841a88	1	m_usePathSharingPenalty
+00408690	00841aa0	1	m_linkUsageFlags
+00408690	00841ab4	1	m_userDataMatchFlags
+00408690	00841acc	1	m_obstacleBlockageFlags
+00408690	00841ae4	1	PathSpec
+00408720	00841af0	1	results.m_generatePath
+00408720	00841b08	1	layer
+00408720	00841b18	1	startPos
+00408720	00841b24	1	NavProbe
+004087d0	00841b30	1	PlanLayer
+004087d0	00841b3c	1	GetClosestArea
+00408840	008412b0	1	radius
+00408840	00841b30	1	PlanLayer
+00408840	00841b4c	1	maxNumAreas
+00408840	00841b58	1	GetClosestAreas
+004088d0	00841318	1	goalPos
+004088d0	00841b08	1	layer
+004088d0	00841b18	1	startPos
+004088d0	00841b68	1	pathID
+004088d0	00841b70	1	CreatePolylinePath
+00408960	00841924	1	userData
+00408960	00841930	1	blockageFlags
+00408960	00841940	1	penalty
+00408960	00841948	1	affectedLayers
+00408960	00841958	1	obstacle_data
+004089e0	00841610	1	linkUsageFlags
+004089e0	00841924	1	userData
+004089e0	00841998	1	stopToUseLink
+004089e0	008419a8	1	mustUseDist
+004089e0	008419b4	1	mayUseDist
+004089e0	008419c0	1	maxSnapDist
+004089e0	008419cc	1	bidirectional
+004089e0	008419dc	1	layerMask
+00408ac0	00841a70	1	m_pathSharingPenalty
+00408ac0	00841a88	1	m_usePathSharingPenalty
+00408ac0	00841aa0	1	m_linkUsageFlags
+00408ac0	00841ab4	1	m_userDataMatchFlags
+00408ac0	00841acc	1	m_obstacleBlockageFlags
+00408ac0	00841ae4	1	PathSpec
+0040b2a0	00841ba8	1	LinkDat::m_penaltyMult
+0040c3a0	00841bc4	1	%3.1f
+0040dca0	00841c18	1	AreaHandle::GetEdgeStartPos called with an edge index of %d …
+0040dd80	00841c70	1	AreaHandle::GetEdgeEndPos called with an edge index of %d on…
+0040e350	00841b30	1	PlanLayer
+0040e350	00841cc4	1	DynamicAreaIndex
+0040e350	00841cd8	1	IsDynamic
+0040e350	00841ce4	1	StaticAreaOffset
+0040e350	00841cf8	1	GraphIndex
+0040e350	00841d04	3	IsValid
+0040e350	00841d0c	1	AreaHandle
+0040e4c0	00841d18	1	GetClosestReachableArea
+0040e520	008412b0	1	radius
+0040e520	00841b4c	1	maxNumAreas
+0040e520	00841d48	1	GetClosestReachableAreas
+0040e5a0	00841318	1	goalPos
+0040e5a0	00841b18	1	startPos
+0040e5a0	00841b68	1	pathID
+0040e5a0	00841b70	1	CreatePolylinePath
+0040e630	00841318	1	goalPos
+0040e630	00841b18	1	startPos
+0040e630	00841b68	1	pathID
+0040e630	00841b70	1	CreatePolylinePath
+00410f20	00841e14	1	ran out of available islands (limit = %d) n
+00411360	00841e40	1	Unexpected error in RemoveIsland(). Please report. n
+004116e0	00841e74	1	%3d -%3d          %3d n
+004116e0	00841e8c	1	group size        num groups n
+004116e0	00841eac	1	Island Group Size Histogram n n
+00411890	00841ed4	1	%d -> 
+00411890	00841edc	1	island -> adjacent islands n
+00411890	00841ef8	1	Island Adjacencies n
+004145e0	00841d30	1	IsAreaReachableFromArea
+00416a30	00841dc8	1	Unexpected error in AddSurfaceConnectionBetweenIslands(). Pl…
+00417e30	00841a00	1	linkID
+00417e30	00841a64	1	DestroyLink
+00418680	00841fb4	1	num polyline paths allocated = %d n
+00418680	00841fd8	1	num internal paths allocated = %d n
+00418680	00841ffc	1	islands = %d/%d
+00418680	0084200c	1	custom areas = %d, 
+00418680	00842020	1	autogen areas = %d, 
+00418680	00842038	1	Layer %d: 
+00418680	00842044	1	 n--- Planner Module --- n
+00418680	00842060	1	NavGraph drawing enabled but no selected layers loaded n
+004188c0	008419f8	1	start
+004188c0	00841a00	1	linkID
+00418990	00841a00	1	linkID
+00418990	00841a24	1	start1
+00418990	00841a2c	1	start0
+00418a90	00841a00	1	linkID
+0041af30	00841880	1	ObstacleDat::m_obstacleBlockageFlags's has bits set outside …
+0041af30	00841908	1	ObstacleDat::m_penaltyMult
+0041af30	0084196c	1	obstacleID
+0041af30	00841988	1	DestroyObstacle
+0041af30	00842098	1	Obstacle %s created on layers %s, but only layers %s have an…
+0041af30	008420e8	1	Obstacle %s created with a layer mask of zero which will hav…
+0041af30	00842134	1	Obstacle %s created without any NavGraphs being loaded n
+0041b2a0	00842170	1	DestroyObstacle() called with an invalid obstacle pointer. n
+0041b300	008421b0	1	AreaHandle::GetAdjacentArea called with an edge index of %d …
+0041b820	0084196c	1	obstacleID
+0041b8f0	0084196c	1	obstacleID
+0041b970	00841624	1	enable
+0041b970	00841a00	1	linkID
+0041ba20	008419dc	1	layerMask
+0041ba20	00841a00	1	linkID
+0041baa0	00841b30	1	PlanLayer
+0041baa0	00841cc4	1	DynamicAreaIndex
+0041baa0	00841cd8	1	IsDynamic
+0041baa0	00841ce4	1	StaticAreaOffset
+0041baa0	00841cf8	1	GraphIndex
+0041baa0	00841d04	1	IsValid
+0041baa0	00841d0c	1	AreaHandle
+0041c7d0	00842218	1	Failed to create NavGraph. AddNavGraph aborted. n
+0041c7d0	00842250	1	Layer %d is full (max %d graphs per layer). AddNavGraph abor…
+0041c8c0	00842298	1	attempt to add layer with layerIndex=%d, which is outside th…
+0041c8c0	008422ec	1	NavGraph version is out of date. AddResource aborted. n
+0041d570	00842380	1	Unexpected error in GetClosestReachableAreas(). Please repor…
+0041d680	008423c0	1	GetClosestAreas called with invalid layer number = %u (valid…
+0041d8b0	00842418	1	GetClosestReachableAreas called with invalid starting area. …
+0041db70	008412b0	1	radius
+0041db70	00841b30	1	PlanLayer
+0041db70	00841b4c	1	maxNumAreas
+0041dd20	008412b0	1	radius
+0041dd20	00841b4c	1	maxNumAreas
+0041e1c0	00842470	1	GetClosestArea called with invalid layer number = %u (valid …
+0041e340	00842418	1	GetClosestReachableAreas called with invalid starting area. …
+0041e4d0	00841b30	1	PlanLayer
+0041ed30	00841b68	1	pathID
+0041ed30	00841b84	1	DestroyPolylinePath
+0041f890	008424c8	1	CreatePolylinePath() called with invalid starting area.  No …
+0041fad0	008424c8	1	CreatePolylinePath() called with invalid starting area.  No …
+0041fad0	00842520	1	CreatePolylinePath() called with invalid goal area.  No path…
+0041fad0	00842570	1	CreatePolylinePath() called with a goal area which isn't rea…
+004208c0	00841af0	1	results.m_generatePath
+004208c0	00841b08	1	layer
+004208c0	00841b18	1	startPos
+004209c0	00841318	1	goalPos
+004209c0	00841b08	1	layer
+004209c0	00841b18	1	startPos
+004209c0	00841b68	1	pathID
+00420b10	00841318	1	goalPos
+00420b10	00841b18	1	startPos
+00420b10	00841b68	1	pathID
+00420ca0	00841318	1	goalPos
+00420ca0	00841b18	1	startPos
+00420ca0	00841b68	1	pathID
+00420e80	00841b68	1	pathID
+00426cc0	008417bc	1	bfxMover
+00426cc0	00842730	1	bfxPlanner
+00426cc0	00842834	1	bfxPlanner3D
+00426cc0	008428ac	1	bfxBuilder3D
+00426cc0	008428bc	1	bfxBuilder
+00426cc0	008428c8	1	bfxFlyer
+00426cc0	008428d4	1	bfxSystem
+00428320	008429b8	1	 %12s:  ct=%5u   alloc=%9u   dbg=%2u%% n
+00428320	008429e4	1	 %-12s:  ct=%5u   alloc=%9u   dbg=%2u%%   pk=%9u n
+00428320	00842a18	1	memory: total = %u, allocated = %u n
+00428320	00842a3c	1	--- Memory Usage Data --- n
+00428520	00842a74	1	image_ptr
+00428520	00842a80	1	RemoveResource
+00428590	00842a90	1	offset
+00428590	00842a98	1	RelocateWorld
+00429d60	008428f4	1	<system_params scaleDist=%f upAxis=%d> n
+00429d60	00842ab0	1	<bfx_replay version="%u" NavPower_version="%d.%d.%d" build_n…
+0042a070	00842928	1	[ %f, %f, %f ]
+0042a0a0	00842938	1	[ %f, %f, %f, %f ]
+0042a210	00842b58	1	<event componentID="%1d" eventID="%d" version="%d" time="%4.…
+0042a210	00842b9c	1	<!-- %s --> n
+0042a2e0	00842bac	1	</event> n
+0042a470	00842bb8	1	%s's value of %1.2f is above the maximum value of %1.2f.  Mo…
+0042a470	00842c08	1	%s's value of %1.2f is below the minimum value of %1.2f.  Mo…
+0042a930	00842c54	1	%16s   %6u  %6u  %6u  %6u %6u %6u n
+0042a930	00842c78	1	     -----------    -----   -----   -----   -----   ----   -…
+0042a930	00842cc0	1	                     time    time   count   count   time   t…
+0042a930	00842d08	1	                    frame   frame   frame   frame   call   c…
+0042a930	00842d50	1	     system name      avg     max     avg     max    avg    …
+0042b480	00842d94	1	BFX LEAK: {%d} at %p, %d bytes long. n
+0042cca0	00842e10	1	AddResource(): component "%s" has no resource type 0x%04X re…
+0042cca0	00842e58	1	AddResource(): component "%s" has not been registered! n
+0042ceb0	00842a74	1	image_ptr
+0042ceb0	00842e90	1	image_size
+0042ceb0	00842e9c	1	layer_offset
+0042ceb0	00842eac	1	rotation_offset
+0042ceb0	00842ebc	1	position_offset
+0042ceb0	00842ecc	1	AddResource
+0042e670	00842f10	1	AddResource() called twice with the same binary image. Ignor…
+0042e670	00842f60	1	ResourceHeader version is out of date. AddResource aborted. …
+0042eca0	00842a74	1	image_ptr
+0042eca0	00842e90	1	image_size
+0042eca0	00842e9c	1	layer_offset
+0042eca0	00842eac	1	rotation_offset
+0042eca0	00842ebc	1	position_offset
+0042f8a0	00842fac	1	NavPower Warning: %s
+00434270	008430a8	1	%.6f 
+0044cac0	0088f3ec	1	.?AVAnimPipelineNode@cdc@@
+004533a0	00843988	1	globalaniminfo
+00454bd0	00843a40	1	CONTENT MISMATCH in intro %d (%s%d) - found %d bones, expect…
+00455d90	00843a88	1	CinematicHandlerImpl: Warning - Instance (ID %d) destroyed d…
+004561c0	00843ae0	1	CinematicHandlerImpl: Switching to CAMERA_MODE_CINEMATIC_STR…
+004561c0	00843b24	1	Error: Could not introduce intro %d (0x%08x) in unit %d n
+004561c0	00843b60	1	Error: Could not find intro %d in unit %d n
+00457100	00843b8c	1	%02d:%02d.%02d
+00457100	00843bdc	1	CinematicHandlerImpl: Waiting until ReadyToPlay n
+00457100	00843c10	1	Dropped %d frame(s) (%d-%d) n
+00457100	00843c30	1	bad subtitle data
+00462e10	00843de8	1	WARNING: too many collision faces near %s
+004633c0	00843e14	1	WARNING: [SweepAndPrune] Out of space for pairs! n
+004635e0	00843e14	2	WARNING: [SweepAndPrune] Out of space for pairs! n
+004635e0	00843e48	1	WARNING: [SweepAndPrune] Out of space for boxes! n
+004726e0	00843f90	2	* Archived file '%s' NOT found * n
+00472890	00843fb4	1	Can't open file %s n
+00472c50	00844008	2	Unnamed
+004730b0	00844038	1	Archive %s isn't large enough! (should be at least %d bytes)
+004730b0	00844078	1	Unable to open bigfile: %s
+004730b0	00844094	1	.%03d
+004730b0	0084409c	1	Num of files in big file %d n
+004730b0	008440c4	1	Opening distributed archive %s... n
+00473840	00844008	1	Unnamed
+00473840	00844128	1	Unable to open bigfile BIGFILE.DAT!
+00473840	0084414c	1	BIGFILE.DAT
+00473b10	00844198	2	Disc error while reading %s n
+00473ba0	00844198	1	Disc error while reading %s n
+00473c00	00844198	1	Disc error while reading %s n
+004744c0	00844240	1	Failed to open %s n
+004778c0	0084433c	1	  tr8  game  pc  tr8.arg
+004778c0	00844354	1	tr8.arg
+00477970	008443bc	1	%s%s.drm
+00477990	008443c8	1	%sStreamGroups  %s.drm
+004779b0	008443e0	1	%spadshock  %s
+004779d0	008443f0	1	%smusic  %s  %s
+004779f0	00844400	1	%simage  %s.raw
+00477ea0	00844420	1	AimYInverted
+00477ea0	0084443c	1	AimXInverted
+00477ea0	00844458	1	CameraYInverted
+00477ea0	00844478	1	CameraXInverted
+00477ea0	00844498	1	CombatMode
+00477ea0	008444b0	1	Vibration
+00477ea0	008444c4	1	SubtitleLanguage
+00477ea0	008444e8	1	Language
+00478010	00844420	1	AimYInverted
+00478010	0084443c	1	AimXInverted
+00478010	00844458	1	CameraYInverted
+00478010	00844478	1	CameraXInverted
+00478010	00844498	1	CombatMode
+00478010	008444b0	1	Vibration
+00478010	008444c4	1	SubtitleLanguage
+00478010	008444e8	1	Language
+00478230	00844578	1	SOFTWARE  Crystal Dynamics  Tomb Raider: Underworld  Input
+00478890	008445e8	1	open
+00478890	008445f4	1	%SystemRoot%  ehome  ehshell.exe
+004790a0	008445d0	2	TOMBRAIDER8
+004790a0	00844650	1	Tomb Raider: Underworld
+004790a0	00844680	1	GAME_ICON
+004791d0	00844500	2	SOFTWARE  Crystal Dynamics  Tomb Raider: Underworld
+004791d0	00844564	1	Topmost
+004791d0	008446b4	1	SfxVolume
+004791d0	008446c8	1	MusicVolume
+004791d0	008446e0	1	VoVolume
+004791d0	008446f4	1	DontSleepOnFocusLoss
+004791d0	00844720	1	DontPauseOnFocusLoss
+004791d0	0084474c	1	DisableForceFeedback
+004796b0	00844420	1	AimYInverted
+004796b0	0084443c	1	AimXInverted
+004796b0	00844458	1	CameraYInverted
+004796b0	00844478	1	CameraXInverted
+004796b0	00844498	1	CombatMode
+004796b0	008444b0	1	Vibration
+004796b0	00844500	1	SOFTWARE  Crystal Dynamics  Tomb Raider: Underworld
+004796b0	00844564	1	Topmost
+00479c80	008445d0	1	TOMBRAIDER8
+00479c80	008448d0	1	Error loading %s
+00479c80	008448e4	2	PATCH.000
+00479c80	008448f0	1	No language specified n
+00479c80	00844908	1	-relaunchmce
+00479c80	00844918	1	-config
+00479c80	00844920	1	-setup
+00479c80	00844930	1	PC-RUSS
+0047a2c0	0084494c	1	Xbox 360 Controller
+0047af20	00844578	1	SOFTWARE  Crystal Dynamics  Tomb Raider: Underworld  Input
+00481db0	00844ad4	1	PID_%4X
+00481db0	00844ae4	1	PID_
+00481db0	00844af0	1	VID_%4X
+00481db0	00844b00	1	VID_
+00481db0	00844b14	1	DeviceID
+00481db0	00844b28	1	Win32_PNPEntity
+00481db0	00844b48	1	    .  root  cimv2
+004824f0	00844b98	1	XInputGetState
+004824f0	00844ba8	1	xinput9_1_0.dll
+00483240	00844c28	1	XInput
+00483760	00844c40	1	padshocklib.tfb
+00483a70	00844c98	1	Unknown
+004842d0	00844c28	1	XInput
+004842d0	00844ca0	1	%s - %d
+00484520	00844ca8	1	Right Stick Y
+00484520	00844cb8	1	Right Stick X
+00484520	00844cc8	1	Left Stick Y
+00484520	00844cd8	1	Left Stick X
+00484520	00844ce8	1	DPad Right
+00484520	00844cf4	1	DPad Left
+00484520	00844d00	1	DPad Down
+00484520	00844d0c	1	DPad Up
+00484900	0084494c	1	Xbox 360 Controller
+00484d80	00844aa8	1	%0.8x-%0.4x-%0.4x-%0.2x%0.2x-%x%x%x%x%x%x
+004861b0	00844c28	1	XInput
+004861b0	00844ca0	1	%s - %d
+00486550	00844c28	1	XInput
+00486550	00844fa0	1	No DirectInput available! n
+00486550	00844fbc	1	Unable to enumerate input devices! n
+00487110	00845050	1	Inverted
+00487710	0084494c	1	Xbox 360 Controller
+00487710	00844c98	1	Unknown
+00487710	00845060	1	028e045e-0000-0000-0000-504944564944
+00487710	00845088	1	010906a3-0000-0000-0000-504944564944
+00487710	008450b0	1	00010e8f-0000-0000-0000-504944564944
+00487710	008450d8	1	06676666-0000-0000-0000-504944564944
+00487710	00845100	1	88660925-0000-0000-0000-504944564944
+00487710	00845128	1	ff0c06a3-0000-0000-0000-504944564944
+00489320	00845050	2	Inverted
+00489c30	008451f4	1	Planner replay logging enabled n
+00494e60	00845320	1	%s%02d
+00497270	00845320	1	%s%02d
+0049a7a0	00845394	1	ERROR OUT OF TABLE RANGE
+0049a800	008453f4	2	Invalid UTF8 encoding
+0049a800	0084540c	1	ERROR: Could Not Load Localization Table: %s n
+004a0720	00845558	1	lang_dutch
+004a0720	00845564	1	lang_czech
+004a0720	00845570	1	lang_russian
+004a0720	00845580	1	lang_ukenglish
+004a0720	00845590	1	lang_polish
+004a0720	0084559c	1	lang_portugese
+004a0720	008455ac	1	lang_japanese
+004a0720	008455bc	1	lang_spanish
+004a0b00	0084566c	1	movies  
+004a21d0	008456d0	1	  AffinityMask = %d; Initial APIC = %d; Physical ID = %d, Co…
+004a3ca0	008458d4	1	ScriptSequence
+004a4480	00845a08	1	WaitForAllSectionsBirthSequence
+004a4680	00845a78	1	NtAnimatedSequence
+004a4960	00845aa8	1	Bad Camera Init
+004a49d0	00845aa8	1	Bad Camera Init
+004a4a80	00845ab8	1	NtCell::SetEnabled(%s) => Cell could not be found.
+004a4a80	00845aec	2	false
+004a4ac0	00845afc	1	NtCell::IsEnabled() => Cell could not be found.
+004a4af0	00845b2c	1	Cell ID[%d/%d]
+004a4af0	00845b3c	1	Bad Cell Init
+004a4b70	00845b2c	1	Cell ID[%d/%d]
+004a4b70	00845b3c	1	Bad Cell Init
+004a4bf0	00845b6c	1	NtCineSequence
+004a4c00	00845b7c	1	ERROR!! : Cinematic improperly initialized in script!
+004a4df0	00845bb8	1	Effect data can only be instantiated in a script that derive…
+004a4eb0	00845c14	1	NtGlobalEffect::FadeOut called over %d frames
+004a4ef0	00845c44	1	NtGlobalEffect::FadeIn called over %d frames
+004a52d0	00845c94	1	ScriptInstanceRefIsUnBindableSequence
+004a5490	00845aec	2	false
+004a5490	00845cbc	1	NtLight::SetEnabled(%s) => Light %d could not be found.
+004a54e0	00845cf4	1	NtLight::IsEnabled() => Light %d could not be found.
+004a5520	00845d2c	1	Light ID[%d]
+004a5520	00845d3c	1	Bad Light Init
+004a5590	00845d2c	1	Light ID[%d]
+004a5590	00845d3c	1	Bad Light Init
+004a5720	00845d4c	1	Unable to find the box of a Markup data
+004a5750	00845d74	1	Markup ID[%d]
+004a5750	00845d84	1	Bad Markup Init
+004a57c0	00845d74	1	Markup ID[%d]
+004a57c0	00845d84	1	Bad Markup Init
+004a6870	00845e18	1	RevoluteAngleSpeed: Joint must be of type Revolute.
+004a68d0	00845e4c	1	PrismaticTranslation: Joint must be of type Prismatic.
+004a6920	00845e84	1	PrismaticTranslationSpeed: Joint must be of type Prismatic.
+004a6980	00845ec0	1	CylinidricalAngle: Joint must be of type Cylindrical.
+004a69e0	00845ef8	1	CylinidricalAngleSpeed: Joint must be of type Cylindrical.
+004a6a40	00845f34	1	CylinidricalTranslation: Joint must be of type Cylindrical.
+004a6a90	00845f70	1	CylinidricalTranslationSpeed: Joint must be of type Cylindri…
+004a6af0	00845fb4	1	UniversalAngle1: Joint must be of type Universal.
+004a6b50	00845fe8	1	UniversalAngle2: Joint must be of type Universal.
+004a6bb0	0084601c	1	PlanarTranslation1: Joint must be of type Planar.
+004a6c00	00846050	1	PlanarTranslation2: Joint must be of type Planar.
+004a6c50	00846084	1	Can't Enable uninitialized Motor.
+004a6ca0	008460a8	1	Can't SetLinearVelocity for uninitialized Motor.
+004a6d00	008460dc	1	Can't SetAngularVelocity for uninitialized Motor.
+004a6d60	00846110	1	Can't SetMaxForce for uninitialized Motor.
+004a6f70	0084613c	1	Multibody has no atoms
+004a6ff0	0084613c	1	Multibody has no atoms
+004a7070	0084613c	1	Multibody has no atoms
+004a7100	00846154	1	Object must be Breakable to set Invincibiliy.
+004a7190	0084613c	1	Multibody has no atoms
+004a7400	00846184	1	Atom index out of range
+004a7460	00846184	1	Atom index out of range
+004a74c0	00846184	1	Atom index out of range
+004a7520	00846184	1	Atom index out of range
+004a7590	00846184	1	Atom index out of range
+004a75e0	00846184	1	Atom index out of range
+004a7670	00846184	1	Atom index out of range
+004a7800	00846184	1	Atom index out of range
+004a7960	00846184	1	Atom index out of range
+004a7ac0	00846184	1	Atom index out of range
+004a7c50	00846184	1	Atom index out of range
+004a7db0	00846184	1	Atom index out of range
+004a7e40	00846184	1	Atom index out of range
+004a7ec0	00846184	1	Atom index out of range
+004a7f50	00846184	1	Atom index out of range
+004a7fe0	00846184	1	Atom index out of range
+004a8070	00846184	1	Atom index out of range
+004a80f0	00846184	1	Atom index out of range
+004a8190	00846184	1	Atom index out of range
+004a8210	00846184	1	Atom index out of range
+004a82b0	00846184	1	Atom index out of range
+004a8340	00846184	1	Atom index out of range
+004a83e0	00846184	1	Atom index out of range
+004a8470	00846184	1	Atom index out of range
+004a8510	00846184	1	Atom index out of range
+004a85a0	00846184	1	Atom index out of range
+004a8620	00846184	1	Atom index out of range
+004a86b0	00846184	1	Atom index out of range
+004a8730	00846184	1	Atom index out of range
+004a87e0	00846184	1	Atom index out of range
+004a88b0	00846184	1	Atom index out of range
+004a89b0	00846184	1	Atom index out of range
+004a8aa0	00846184	1	Atom index out of range
+004a8ba0	00846184	1	Atom index out of range
+004a8c30	00846184	1	Atom index out of range
+004a8d30	00846184	1	Atom index out of range
+004a8e60	00846184	1	Atom index out of range
+004a8f60	00846184	1	Atom index out of range
+004a9060	00846184	1	Atom index out of range
+004a9160	00846184	1	Atom index out of range
+004a92a0	00846184	1	Atom index out of range
+004a93e0	0084619c	1	Joint index out of range
+004a9430	0084619c	1	Joint index out of range
+004a9490	0084619c	1	Joint index out of range
+004a9520	0084619c	1	Joint index out of range
+004a9580	0084619c	1	Joint index out of range
+004a9610	0084619c	1	Joint index out of range
+004a9670	0084619c	1	Joint index out of range
+004a96d0	0084619c	1	Joint index out of range
+004a9730	0084619c	1	Joint index out of range
+004a9790	0084619c	1	Joint index out of range
+004a97f0	0084619c	1	Joint index out of range
+004a9850	0084619c	1	Joint index out of range
+004a98b0	0084619c	1	Joint index out of range
+004a98b0	008461b8	1	Multibody: Trying to set link ratio on a non-link joint
+004a9930	0084619c	1	Joint index out of range
+004a9930	008461f0	1	Multibody: Trying to get link ratio on a non-link joint
+004a99b0	0084619c	1	Joint index out of range
+004a99b0	00846228	1	Multibody: Trying to engage non link joint
+004a9a30	0084619c	1	Joint index out of range
+004a9a30	00846254	1	Multibody: Trying to disengage non link joint
+004a9ab0	0084619c	1	Joint index out of range
+004a9ab0	00846284	1	Limit index out of range
+004a9b30	0084619c	1	Joint index out of range
+004a9b30	00846284	1	Limit index out of range
+004a9bb0	0084619c	1	Joint index out of range
+004a9bb0	00846284	1	Limit index out of range
+004a9c40	0084619c	1	Joint index out of range
+004a9c40	00846284	1	Limit index out of range
+004a9cf0	0084619c	1	Joint index out of range
+004a9cf0	00846284	1	Limit index out of range
+004a9d90	0084619c	1	Joint index out of range
+004a9d90	00846284	1	Limit index out of range
+004a9e10	0084619c	1	Joint index out of range
+004a9e10	00846284	1	Limit index out of range
+004a9ea0	0084619c	1	Joint index out of range
+004a9ea0	00846284	1	Limit index out of range
+004a9f40	0084619c	1	Joint index out of range
+004a9f40	00846284	1	Limit index out of range
+004a9fc0	0084619c	1	Joint index out of range
+004a9fc0	008462a0	1	Motor index out of range
+004aa040	0084619c	1	Joint index out of range
+004aa040	008462a0	1	Motor index out of range
+004aa0c0	0084619c	1	Joint index out of range
+004aa0c0	008462a0	1	Motor index out of range
+004aa140	0084619c	1	Joint index out of range
+004aa140	008462a0	1	Motor index out of range
+004aa1d0	0084619c	1	Joint index out of range
+004aa1d0	008462a0	1	Motor index out of range
+004aa250	0084619c	1	Joint index out of range
+004aa250	008462a0	1	Motor index out of range
+004aa2e0	0084619c	1	Joint index out of range
+004aa2e0	008462a0	1	Motor index out of range
+004aa360	0084619c	1	Joint index out of range
+004aa510	008462bc	1	Invalid
+004aa540	008462c4	1	shock1
+004aa540	008462cc	1	shock0
+004aa540	008462d4	1	shock
+004aa890	00846370	1	NtSplineSequence
+004aaca0	00846384	1	NtTerrainGroup::ResolveTerrainGroup: can't find terrain grou…
+004aaf70	008463c4	1	Unsupported Script Type n
+004ab3a0	00846468	1	NsInstance::Reset failed, intro not found for 
+004ab440	00846498	1	Instance::Bind FAILED, probably due to an uninitialized scri…
+004ab6a0	00846584	1	script
+004ab6a0	0084658c	1	uber object query: object mismatch (%s != %s)
+004ab760	00846584	1	script
+004ab760	008465c4	1	uber object command: object mismatch (%s != %s)
+004aba90	00846618	1	This Animated data was defined in a script of type %d, which…
+004abbd0	008466d8	1	This Animation data was defined in a script of type %d, whic…
+004abbd0	00846798	1	Data type Animation can't be defined inside functions.  Defi…
+004abc80	00846808	1	This Bark data was defined in a script of type %d, which doe…
+004abcd0	008468c0	1	NtCell::Start('%d'): could not find cell
+004abde0	0084690c	1	NtEffectSequence
+004abf00	00846920	1	This Health data was defined in a script of type %d, which d…
+004ac070	008469e0	1	InstanceRef::Bind FAILED - introID %d - instance %s (%d).  D…
+004ac160	00846a78	1	InstanceRef::InUnit FAILED UNIT NOT LOADED - introID %d n
+004ac160	00846ab4	1	InstanceRef::InUnit FAILED INSTANCE NOT BIRTHED - introID %d…
+004ac1f0	00846af4	1	NtLight::Start('%d'): could not find light %d
+004ac2d0	00846b28	1	This Markup data was defined in a script of type %d, which d…
+004ac340	00846bf8	1	This Modifiable data was defined in a script of type %d, whi…
+004ac3c0	00846cb8	1	This Multibody data was defined in a script of type %d, whic…
+004ac430	00846184	1	Atom index out of range
+004ac530	00846184	1	Atom index out of range
+004ac750	00846d98	1	Bad Padshock Init
+004ac7a0	00846d98	1	Bad Padshock Init
+004aca90	00846dd8	1	ScriptPlayerScriptIsNotLoadedSequence
+004acb00	00846e00	1	The playerInstance is not yet loaded.  Try calling WaitUntil…
+004acb00	00846e50	1	There is no player script!  Did you define an Instance scrip…
+004acb70	00846f2c	1	ERROR!  NtRangeSensor is of invalid shape type %i
+004acc20	00846f80	1	SoundSequence
+004ad050	00846fa0	1	This Spline data was defined in a script of type %d, which d…
+004ad0d0	00847060	1	This TerrainGroup data was defined in a script of type %d, w…
+004ad130	0084711c	1	NtTerrainGroup::SetEnabled: can't find terrain group.
+004ad170	00847154	1	NtTerrainGroup::IsEnabled: can't find terrain group.
+004ad380	008471c8	1	Sensor attach failed for sensor %s; this sensor is not set u…
+004ad3e0	00847224	1	ScriptInstanceSensor Init
+004ad420	00847240	1	Bad ScriptInstanceSensor Init
+004ad480	00847260	1	Sensor %s was not defined in an Instance script, and so cann…
+004adc00	008462e0	1	This Markup was instantiated in a non-Instance script, and s…
+004ae380	00847304	1	3D sound given invalid Anchor n
+004ae8d0	00847324	1	Could not load script '%d' from package '%d'. n
+004ae8d0	00847354	1	Could not find GameGlobals script. n
+004aee30	00847410	1	The maximum number of stickies has been exceeded!
+004af010	008472cc	1	Can't initialize Motor with null instance.
+004af0a0	00847464	1	NtPadshockSequence
+004af180	00847478	1	Scenario not found: %d n
+004af1c0	008474b0	1	NtCueingSoundSequence
+004af400	008474c8	1	An attempt was made to Unregister() an NsDispatcherBase inst…
+004af450	00847540	1	An attempt was made to Unregister() an NtInput instance that…
+004b03e0	00847324	1	Could not load script '%d' from package '%d'. n
+004b03e0	008475c4	1	Initializing script '%d' from package '%d'. n
+004b03e0	008475f4	2	Could not find Global Scenario script. n
+004b03e0	0084761c	1	More than one ScenarioManager script. n
+004b07f0	00845b7c	1	ERROR!! : Cinematic improperly initialized in script!
+004b09d0	00847644	1	Unit NtMarkup::OnAttach called.
+004b0b00	00847664	1	Unit NtMarkup::OnDetach called.
+004b0f40	0084761c	1	More than one ScenarioManager script. n
+004b0f40	00847698	1	scenario_database
+004b10b0	008476ac	1	ScenarioManager: %d n
+004d4240	00847d88	1	physics: invalid joint type %d
+004d66c0	00847df8	1	SAVE: LinkCoords %s body1X: %.3f, %.3f, %.3f
+004d66c0	00847e28	1	SAVE: LinkCoords %s (after): %.3f, %.3f
+004d66c0	00847e50	1	SAVE: LinkCoords %s (before): %.3f, %.3f
+004d66c0	00847e7c	1	UberObject: saving joint information
+004d6cf0	00847ea4	1	RESTORE: LinkCoords %s body1X: %.3f, %.3f, %.3f
+004d6cf0	00847ed4	1	RESTORE: LinkCoords %s (after): %.3f, %.3f
+004d6cf0	00847f00	1	RESTORE: LinkCoords %s (before): %.3f, %.3f
+004d78d0	00847f44	1	UberObject: failed to create rigid body
+004d7ed0	00847f88	1	UberObject: attempting to create a link joint before its joi…
+004dd820	00848090	1	NO NAME
+004e03f0	008480c0	1	Rope length too short = %g on %s
+004e98e0	00848154	1	WARNING: Out of space for Geometries! n
+004e9a80	0084817c	1	WARNING: Out of space for Joints! n
+004ea810	008481a0	1	WARNING: Multibody Contact Cache Full! n
+004ef010	00848218	1	MultibodySystem::Destroy(%x) n
+004efb20	00848268	1	WARNING: Body %s is translating too fast!!! n
+004f0b40	00848298	1	ragdoll bone %d
+004f2e40	0084830c	1	NO contact for %08x n
+004f2e40	00848324	1	NO sound for %08x n
+004f2e40	00848338	1	NO JointImpact for %08x n
+004f31a0	00848354	1	c %08x <- %08x n
+004f32e0	00848364	1	. %08x n
+004f32e0	0084836c	1	- %08x n
+004f3450	00848374	1	s %08x -> %08x n
+0050eb30	008497dc	1	Corrupt mesh data passed into PCRenderMesh constructor!
+00515b40	00849adc	1	Corrupt texture data passed into PCTexture constructor!
+0051d6e0	00849e30	1	%d*%d
+0051d7b0	00849e30	1	%d*%d
+0051d890	00849e40	1	{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}
+0051d960	00849e40	1	{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}
+0051da80	00849ea8	1	PresentationIntervalTwo
+0051da80	00849ed8	1	CreateGameFourCC
+0051da80	00849efc	1	UseLowResDepthOfField
+0051da80	00849f28	1	AlwaysRenderZPassFirst
+0051da80	00849f58	1	DontDeferShaderCreation
+0051da80	00849f88	1	DisableNullRenderTargets
+0051da80	00849fbc	1	AtiForceFetch4Shadows
+0051da80	00849fe8	1	DisableHardwareShadowMaps
+0051e120	00849ea8	1	PresentationIntervalTwo
+0051e120	00849ed8	1	CreateGameFourCC
+0051e120	00849efc	1	UseLowResDepthOfField
+0051e120	00849f28	1	AlwaysRenderZPassFirst
+0051e120	00849f58	1	DontDeferShaderCreation
+0051e120	00849f88	1	DisableNullRenderTargets
+0051e120	00849fbc	1	AtiForceFetch4Shadows
+0051e120	00849fe8	1	DisableHardwareShadowMaps
+0051ebf0	0084a46c	1	Medium
+0051ebf0	0084a47c	1	16:10
+0051ebf0	0084a490	1	16XQ AA
+0051ebf0	0084a498	1	16x AA
+0051ebf0	0084a4a0	1	8xQ AA
+0051ebf0	0084a4a8	2	8x AA
+0051ebf0	0084a4b0	1	6x AA
+0051ebf0	0084a4b8	1	4x AA
+0051f1c0	0084a538	1	1280*1024
+0051f1c0	0084a54c	1	1280*720
+0051f1c0	0084a560	1	1024*768
+0051f1c0	0084a574	1	800*600
+0051f1c0	0084a584	1	720*405
+0051f1c0	0084a594	1	640*480
+0051f1c0	0084a5a4	1	640*360
+005202d0	0084a640	1	No texture-format available to pick for 8888 input!
+005202d0	0084a674	1	No texture-format available to pick for 4444 input!
+005202d0	0084a6a8	1	No texture-format available to pick for 1555 input!
+005202d0	0084a6dc	1	No texture-format available to pick for 0565 input!
+00520600	0084a710	1	Unknown texture-format!
+00521d70	0084a8a0	1	<invalid>
+00522580	0084a8b0	1	ATI Driver Version %d.%d.%d.%d detected. Forcing Fetch4 shad…
+00522580	0084a8f4	1	Detected %s, disabling pixelshader compiler optimizations. n
+00522580	0084ac40	1	PCDeviceManager: CreateDevice() failed. Could not create Dir…
+00522580	0084ac8c	1	PCDeviceManager: - Driver management disabled n
+00522580	0084acbc	1	PCDeviceManager: - FPU preserve n
+00522580	0084ace0	1	PCDeviceManager: - Software vertex processing
+00522580	0084ad10	1	PCDeviceManager: - Pure device
+00522580	0084ad30	1	PCDeviceManager: - Hardware vertex processing
+00522a10	0084b478	1	ERROR: (PCDeviceManager) CreateDevice() failed. n
+00522a10	0084b4ac	1	--- ResetDevice : Create Resources --- n
+00522a10	0084b4d4	1	--- Init and Reset --- n
+00522a10	0084b4ec	1	--- Destroy Resources --- n
+00522a10	0084b508	1	ERROR: (PCDeviceManager) Settings failed to validate. n
+00523380	0084b540	1	%s (%d)
+00523810	0084b560	1	Using D3D Debug Runtime. Reduced performance and feature los…
+00523810	0084b5d0	1	LoadDebugRuntime
+00523810	0084b5e4	1	SOFTWARE  Microsoft  Direct3D
+005239c0	0084b600	1	Direct3DCreate9
+005239c0	0084b610	1	d3d9.dll
+0052b0b0	0084bb5c	1	object %s does not have model %d for use in an effect. n
+0052b0b0	0084bb94	1	Error, model %d object %s has no animated texture list! n
+0053d3f0	008a2c40	1	PCSurface@cdc@@
+0054dd10	0084c584	1	Out of range DTPData ID!
+0054e200	00843988	1	globalaniminfo
+0054e200	0084c5a0	1	FATAL ERROR: model version (%X) for object '%s' does not mat…
+0054e200	0084c5f8	1	FATAL ERROR: object '%s' is has duplicated models in slot %d…
+0054e200	0084c63c	1	Loaded object: %s n
+0054ec60	0084c668	1	Resource %d (type %d, file %s) can't find resource %d (type …
+0054eee0	0084c6a8	1	Reloading DRM %s (%s) n
+0054eee0	0084c6c0	2	queued
+0054eee0	0084c6c8	2	loaded
+0054eee0	0084c6d0	2	began load
+0054f070	0084c6dc	1	Reloading DRM %s n
+0054f430	0084ca04	1	Cannot open image: %s
+0054f570	0084ca1c	1	Dumping object: %s n
+0054f9b0	0084ca30	1	Wrong DRM version data %x, code %x nrebuild of %s needed n
+005515c0	0084ca94	1	Script %d/%d must inherit from %s n
+005515c0	0084cab8	1	Could not find %s script with runtime ID %d n
+00551820	008443bc	1	%s%s.drm
+00551b00	0084cae8	1	ScriptSection::GetBaseResourcePointer %d n
+00551b50	0084cb14	1	ScriptSection::GetRefCount %d n
+00551b80	0084cb34	1	ScriptSection::FindResource %d n
+00551df0	0084cb54	1	s_MaterialDB grew to bucket count %d n
+00551f30	0084cbdc	1	m_renderResourceDB type %d grew to bucket count %d n
+005521e0	0084cc10	1	ScriptSection::StartResource %d n
+005522b0	0084cc34	1	ScriptSection::HandleResourceEnd %d n
+00552370	0084cc60	1	ScriptSection::HandleResourceCancel(%d) on script that as al…
+00552370	0084ccbc	1	ScriptSection::HandleResourceCancel(%d)
+005523d0	0084cce4	1	ScriptSection::ReleaseResource %d n
+005524a0	0084cd08	1	s_ShaderLibDB grew to bucket count %d n
+00552bf0	0084cd54	2	CDRMCDRM file corrupt
+00552fc0	0084cd54	2	CDRMCDRM file corrupt
+00555370	0084d7c0	1	No saved Intro for instance %s. n
+00555470	0084d7e4	1	No saved Intro for instance %s. Line=%d n
+00555580	0084d810	1	Ran out of buffered intros. Increase MAX_BUFFERED_INTROS = %…
+00555580	0084d850	1	SAVE_BufferIntro %s
+005559a0	0084d864	1	Ran out of dead bits, size = %d, uniqueID = %d n
+00555a10	0084d864	1	Ran out of dead bits, size = %d, uniqueID = %d n
+00555a80	0084d864	1	Ran out of dead bits, size = %d, uniqueID = %d n
+00555be0	0084d894	1	MAIN check point %s %d --------------- n
+00556310	0084d8bc	1	ran out of saved memory. needed %d, free %d. nincrease from …
+00556310	0084d8fc	1	must purge save blocks, need %d, free %d n
+00556310	0084d928	1	save %d is too big! (type %d) n
+00556310	0084d948	1	illegal save type %d n
+00556940	0084d960	1	SAVE_ClearMemory() n
+00556e90	0084d974	1	MAIN checkpoint restore %s******* ID wanted = %d  n
+00556e90	0084d9a8	1	Wrong version for save. Not restoring save. n
+005570f0	0084d9d8	1	Save Game n
+00557130	0084d9e4	1	Load save game error n
+00557130	0084d9fc	1	Restore Game n
+0056c0b0	0084dddc	1	Entity
+00572b20	0084e040	1	CellGroup
+005731c0	0084e04c	1	cdcScene
+00573e20	0084e058	1	Light
+005751e0	0084e194	1	Node %d - Empty:   Roots=%d, Handles=%d n
+005751e0	0084e1c0	1	Node %d - Active:  Roots=%d, Handles=%d, Name=%s n
+005751e0	0084e1f4	1	Node %d - Garbage: Roots=%d, Handles=%d, Name=%s n
+005751e0	0084e228	1	GarbageCollector: %d allocated nodes n
+005751e0	0084e250	2	========================================================== n
+00575c80	0084e2a0	1	EmptySymbol
+00575f80	0084e2ac	1	Script: %d
+00576090	0084e33c	1	ScriptDynArrayImpl
+00577710	0084e37c	1	Removed script '%d' from linking
+00577cc0	0084e3a0	1	 -- TERMINATED n
+00577cc0	0084e3b0	1	Obj=%p, PC=%d, Func=%d.%d.%d
+00577cc0	0084e3d0	1	Script call stack: n
+00577cc0	0084e3e4	3	============================================================…
+00577cc0	0084e424	1	 n==========================================================…
+00577e60	0084e464	1	FATAL ERROR: Script callstack overflowed... see log for stac…
+00577f80	0084e4c4	1	ScriptExec
+005790b0	0084e4e8	1	Re-entrant call to ScriptManager::Update!  Lock count is %d.
+00579230	0084e53c	1	ScriptMapImpl
+0057a010	0084e558	1	Invalid script type version; try rebuilding resources n
+0057b560	0084e59c	1	Events have been triggered before Run() is called! n
+0057c1e0	0084e608	1	Branch occurred before ScriptObject::StartObject() called! n
+0057e770	0084e7c0	1	Script package '%d' not destroyed at exit! n
+0057f190	0084e8e8	1	No errors.
+0057f190	0084e8f4	1	The version number of this file format is not supported. 
+0057f190	0084e930	1	An error caused by System::update occured. 
+0057f190	0084e960	1	A command issued was not supported by this object.  Possibly…
+0057f190	0084e9d0	1	This command failed because System::init or System::setDrive…
+0057f190	0084ea20	1	Something in FMOD hasn't been implemented when it should be!…
+0057f190	0084ea70	1	The sound created exceeds the allowable input channel count.…
+0057f190	0084eb08	1	The specified tag could not be found or there are no tags. 
+0057ff10	00850464	1	MultiplexStream: Sound directory '%s' is too long!  Ignoring…
+0057ff60	008504a8	1	MultiplexStream: Cinematic directory '%s' is too long!  Igno…
+00580e20	0085055c	1	MUSIC: Slot allready taken! n
+00582770	00850580	1	Failed to open stream %s n
+00582770	0085059c	1	SNDAPP_StreamOpenFile n
+00582820	008505b4	1	SNDAPP_StreamCloseFile n
+005828a0	008505e4	1	------------------------------ sound cancelled ------------ …
+00582a00	00850624	1	___ SNDAPP_CANCEL %s n
+00582b90	00850658	1	FX Reverb changed: %d,%d n
+00582b90	00850674	1	FX Reverb -- %d invalid, turning it OFF n
+00582de0	008506c0	1	Semitone input %f clamped to +60 n
+00582de0	008506e4	1	Semitone input %f clamped to -60 n
+00583260	00850708	2	music
+00583710	00850714	1	DataRelease - forcing KILL to playing Assignment n
+00583850	00850714	1	DataRelease - forcing KILL to playing Assignment n
+005838c0	00850748	1	Data Release - forcing KILL to playing Envelope n
+00583910	0085077c	1	Runtime Edit - List change forcing KILL to playing Envelope …
+00583ac0	008507bc	1	Data Release - forcing KILL to playing Reaction n
+00583ba0	008507f0	1	Data Release - forcing KILL to playing Stream n
+00583c60	00850838	1	Data Release - abandoning Time-In n
+00584300	0085088c	1	WAVE id %d isn't loaded n
+00584300	008508a8	1	Wave_Find: Invalid WAVE id %d >= CDC_MAX_WAVES (%d) n
+00585550	008508f0	1	to start priority %3d %s n
+00585550	0085090c	1	Aborting priority %3d (%f remaining) %s n
+00585980	00850974	1	CAN'T STOP, Voice Busy [%08x] n
+00585b70	00850994	1	!!! UNKNOWN PACKET TYPE %08x n
+00585f20	008509c8	1	MUSBANK: Trying to set an unknown volume type!! n
+00586a20	008509fc	1	FMOD error in createSound: (%d) %s n
+00586db0	00850a20	1	Warning: SigmaTel driver, forcing mixer format to PCMFLOAT. …
+00586db0	00850a60	1	SigmaTel
+00586db0	00850a70	1	Warning: control panel 'Acceleration' is OFF, increasing lat…
+00586db0	00850ac8	1	Warning: no audio drivers. Disabling audio. n
+005871e0	00850af8	1	Player death sound %s n
+005871e0	00850b10	2	UNMUTE
+005872c0	00850b10	2	UNMUTE
+005872c0	00850b20	1	Player fall sound %s n
+005874f0	00850b38	1	Multiplier input %f clamped to -60 semitones n
+005874f0	00850b68	1	Multiplier input %f clamped to +60 semitones n
+00587e10	00850bb8	1	Data Release - forcing KILL to playing Overlap n
+00587e90	00850be8	1	Runtime Edit - List change forcing KILL to playing Overlap n
+00589790	00850c70	1	AnimBlend assigned, but AnimFragment %s on Processor %d not …
+00589790	00850cbc	1	AnimBlend assigned, but AnimProcessor %d not available - %s …
+00589b80	00850d14	1	Not ok!
+0058a8c0	00851018	1	performing splice %s n
+0058aa40	008443bc	2	%s%s.drm
+0058aa40	00851030	1	ERROR, file too short (%d bytes): %s
+0058aa40	00851058	1	creating %s n
+0058aa40	00851068	2	%s%s.mul
+0058aa40	0085107c	1	%s.drm
+0058b3b0	00851088	1	ILLEGAL RESOURCE RELEASE AFTER SOUND SYSTEM DESTROYED, DTP I…
+0058b4a0	008510cc	1	Data Release forcing KILL to playing MaterialList n
+0058b990	00851100	1	Data Release - forcing KILL to playing Sequence n
+0058bab0	00851138	1	WARNING: Sound stream distance culling IGNORED because <%s> …
+0058bd50	00851190	1	Cannot load music files for the '%s' music! nPlease rebuild …
+0058d5c0	008511e4	1	Loop point detected, looping... n
+0058d740	00851208	1	SoundComponent %08x destroyed.
+0058e510	008512c8	1	Freed %d waves to make room for %d (needed: %d, freed: %d) n
+005901a0	00851304	1	CLEARED Voice Busy [%08x] n
+005901a0	00851320	1	CLEARED Voice Busy, DESTROYING [%08x] n
+005901a0	00851348	1	%s MulFX DRM not ready yet, DELAYING... n
+005901a0	00851374	1	%s Cinematic not ready yet, DELAYING... n
+005904f0	008513a0	1	SOUND_Init() n
+005920b0	0085142c	1	AVERTED re-spawning released SND, DTP ID = %d n
+00592470	0085145c	1	Prevented restart of ending MaterialList n
+00592a50	00851488	1	couldn't allocate waveid %d size %d n
+00592a50	008514b0	1	WaveSection: DEBUG BREAK on ID %d n
+00594870	00851508	1	Unknown Trigger Action %d at %f, %f, %f n
+005965d0	008515ac	1	%s is starving n
+00596820	008515bc	1	couldn't allocate streaming buffer size %d x %d channels n
+00596b30	0084284c	1	Debug
+00596b30	0085165c	1	Alloc
+00596b30	00851664	1	Container
+00596dd0	00851680	1	Adding new block to FixedAllocator %x for size %d, count %d,…
+00597430	008516f0	1	ERROR: Out of memory requesting %d bytes (%.1f kB %.1f MB) (…
+00598650	008518c8	1	Stack
+005997b0	008516f0	1	ERROR: Out of memory requesting %d bytes (%.1f kB %.1f MB) (…
+0059a050	0085195c	1	Unable to reserve %dMB of address space.
+0059a1e0	00851a78	1	Mismatching allocator settings! Check compile flags!
+0059a3d0	00851ab0	1	Creating new FixedAllocator %x, size %d, initCount %d, growC…
+0059a3d0	00851b04	1	FixedBlock
+0059a550	00851b10	1	Small block allocator %d is out of space - tried alloc %d, f…
+0059a550	00851b5c	1	Small block allocator %d is out of space. n
+005b04b0	00853200	1	genUIScreenId_%08x
+005b0b70	00853520	1	 ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvw…
+005b21d0	0085376c	1	dummy
+005b22a0	0085376c	2	dummy
+005b2460	00853774	1	Unable to create cinstream: %s
+005b4340	0085383c	1	 AND %s depends on %s n
+005b4340	00853854	1	WARNING: IntroDepsManager: %s depends on %s n
+005b43e0	00853884	1	 unknown intro n
+005b43e0	00853894	1	 %s : %s n
+005b43e0	008538a8	1	%s waits: n
+005b6700	00853990	1	MiniInstances are not supported by WarpAttach
+005b67a0	008539c0	1	LinkAttach failed - one or both matrices of the two instance…
+005b67a0	00853a08	1	MiniInstances are not supported by LinkAttach
+005b6820	00853990	1	MiniInstances are not supported by WarpAttach
+005b68c0	008539c0	1	LinkAttach failed - one or both matrices of the two instance…
+005b68c0	00853a08	1	MiniInstances are not supported by LinkAttach
+005b6940	00853990	1	MiniInstances are not supported by WarpAttach
+005b70a0	00853a68	1	Could not find script game/script/game/instance n
+005b70a0	00853a9c	1	object
+005b70a0	00853aa4	1	intro
+005b70a0	00853aac	2	Instance
+005b8dc0	00853aec	1	Loading streamgroup %s n
+005b8e80	00853b04	1	Unable to stream streamgroup %d, unit %s
+005b8fc0	00853b30	1	Dumping streamgroup %s n
+005b8fc0	00853b48	1	New streaming set [player pos:(%f, %f, %f), unit:%s, cell:%s…
+005b8fc0	00853b98	2	default
+005b9170	00853ba0	1	CONTENT ERROR: Multibone objects are required to be animated…
+005b9c40	00847324	1	Could not load script '%d' from package '%d'. n
+005b9c40	00853c1c	1	Could not find intro script with ID %d. n
+005bb160	00853c48	1	INSTANCE_IntroduceSavedInstance %s:%s%d n
+005bb640	00853c74	1	INSTANCE_IntroduceSavedInstanceWithIntro %s:%s%d n
+005bbfd0	00843988	1	globalaniminfo
+005bbfd0	00847324	1	Could not load script '%d' from package '%d'. n
+005bbfd0	00853c1c	1	Could not find intro script with ID %d. n
+005bd650	00853ca8	1	%s dependency list is empty n
+005bd650	00853cc8	1	%s depends on %s DONE n
+005bd650	00853ce0	1	%s depends on %s n
+005be920	00853fa8	1	Warning: In 'MarkupManager::DisAssociateInstance', no associ…
+005bf0e0	00854034	2	enemy
+005bf0e0	0085403c	2	physical
+005bf0e0	00854ce0	1	lara_bikini
+005bf240	00853ec0	1	rainfx
+005bf240	00853ec8	1	waterfx
+005bf330	00854050	1	%d,%s
+005bf330	0085405c	1	  tr8  %s  objectlist.txt
+005c11e0	008540a8	1	STREAM_AbortAreaLoad(%s) n
+005c1270	008540c4	1	couldn't read %s n
+005c1270	008540d8	1	  tr8  %s  objlist.dat
+005c1270	008540ec	1	STREAM_Init n
+005c14b0	008540fc	1	 n tTotal number: %d n
+005c14b0	00854110	1	%d) status: %x n
+005c14b0	00854120	1	%d) object name %s ref: %d resolve: %x (ref: %d) n
+005c1550	00854154	1	Out of objecttracker space!
+005c1790	00854170	1	STREAM_DumpObject( [ %d ] %s ) n
+005c1790	00854190	2	object not in table, maybe the player
+005c17d0	008541b8	1	Unable to get ID for object: %s
+005c1990	008541d8	1	Freeing unit %s resources n
+005c1a00	008541f4	1	Cancelling load of object: %s n
+005c1a80	00854214	1	Marking player object %s for dumping n
+005c1a80	0085423c	1	Clearing NO_DUMP flag in object %s n
+005c25a0	008542c0	1	draw2D: more than one horizontal justification
+005c3dd0	00854350	1	FRAME[%d]: Removing %d markup items for %s ID: %d n
+005c41a0	00854388	1	NON Polyline Markup box (%s) created with introID(%d), marku…
+005c5ad0	00854434	1	Streamgroup %s loaded n
+005c5af0	0085444c	1	Streamgroup %s dumped n
+005c5f70	00854480	1	StreamOut(%s) n
+005c6210	00854490	1	RelocateUnit (%s, (%g, %g, %g)) n
+005cb9f0	008544dc	1	Binding %s to %s n
+005cb9f0	008544f0	1	PostStreamIn(%s) n
+005cbe90	00854504	1	RelocateWorld (%g, %g, %g) n
+005cca10	00854520	1	Could not load script %d/%d n
+005cca10	00854540	1	Could not find script game/script/game/unit n
+005cec60	008545d0	1	WARNING: no cell found for streamsignal (id=%d) in %s n
+005cec60	00854608	1	PreStreamIn(%s) n
+005cf070	008545d0	1	WARNING: no cell found for streamsignal (id=%d) in %s n
+005cf070	0085461c	1	Binding portal %s/%d to %s n
+005cf190	00854638	1	Flush Static Light Data n
+005cf260	00854654	1	Spline %s%d prevFrame=%d, frame=%d n
+005cf260	00854678	1	Spline %s%d : clip(%d,%d) prevFrame=%d, frame=%d n
+005d0610	008546d0	1	Adding %d markup items for %s%d n
+005d13e0	008546f8	2	Can't find signal%d in unit %s. nUnit %s is trying to hook u…
+005d13e0	00854748	1	2) hooking %s [signal%d] to mainunit %s [signal%d] n
+005d13e0	0085477c	1	1) hooking %s [signal%d] to mainunit %s [signal%d] n
+005d1750	00853f80	1	Removing %d markup2 items for %s n
+005d1750	0085432c	1	Removing %d markup items for %s n
+005d1750	008547b0	1	Dumping a level that is being loaded %s n
+005d1750	008547dc	1	Dumping unit: %s n
+005d1a80	008547f0	1	STREAM_DumpAllLevels(..) n
+005d1cd0	0085480c	1	Loaded unit: %s n
+005d1cd0	00854828	1	Wrong version number (%X) for unit %s, code is at version %x…
+005d23f0	00854868	1	Streaming unit: %s n
+005d23f0	0085487c	1	Loading unit: %s n
+005d2610	00854890	1	Streaming: %s n
+005d2610	008548a0	1	STREAM_LoadOverlayUnit(%s): %s does not exist
+005d2610	008548d0	1	STREAM_LoadOverlayUnit(%s)
+005d2940	008548ec	1	comp_entry1
+005d2940	008548f8	1	comp_exit1
+005d2940	00854904	1	STREAM_LevelLoadAdjacentUnits( %s ) n
+005d2aa0	0085492c	1	Hit stream portal in %s to %s n
+005d30d0	0085494c	1	%s: load adjacent units n
+005d30d0	00854968	1	%s: fast level load, do not load adjacent units n
+005d30d0	0085499c	1	gGT->requireImmediateAdjacentUnitLoad = %s n
+005d30d0	008549c8	2	FALSE
+005d30d0	008549d8	1	STREAM_LevelLoadAndInit %s n
+005d4090	00853eb4	1	particle
+005d40c0	00855118	1	invis_checkpoint
+005d40c0	0085512c	1	checkpoint
+005d40c0	00855138	1	Couldn't find a player object. n
+005d4340	00855158	1	defaultplayer
+005d55c0	008551f8	1	%saudio  streams  
+005dae20	008552a8	1	medsea_loop
+005dc170	00855334	2	attachment
+005dcb70	00855340	1	linked move
+005dce20	0085534c	1	respond to gravity collision
+005dded0	00853eb4	1	particle
+005de2b0	00854c48	4	lara_wetsuit_warm
+005de2b0	0085539c	2	l1_seatop
+005def70	00843988	1	globalaniminfo
+005def70	00853e74	1	generalbank
+005def70	008553a8	1	globalfingerprint
+005def70	008553bc	1	globalsoundinfo
+005def70	008553cc	1	shaderlib
+005df390	008553d8	1	18:30:39
+005df390	008553e4	1	Dec 16 2008
+005dfb20	008549c8	2	FALSE
+005e0f40	008554f4	1	  time %0.2f / %0.2f n
+005e0f40	0085550c	1	  angle %0.2f / %0.2f n
+005e0f40	00855524	1	  distance %0.2f / %0.2f n
+005e0f40	00855540	1	  movement %0.2f / %0.2f n
+005e0f40	0085555c	1	focus %s
+005e2860	00855678	1	AutoSpline: %s, target: %s n
+005e85b0	00855a00	1	exceeded kMaxActiveTriggers
+005e8910	00855a2c	1	CinematicCamera: invalid mode %d
+005e9920	00855a50	1	Camera
+005e9920	00855a58	1	exceeded kMaxFocusPoints
+005e99a0	00855a50	1	Camera
+005e99a0	00855a74	1	invalid ptr to RemoveExternal
+005ed860	00855c1c	1	foolish programmer
+005ee940	00855a1c	1	camerashakes
+005ee9b0	00855a1c	1	camerashakes
+005f0b30	00855a50	1	Camera
+005f0b30	00855c30	1	exceeded maxFocusPoints
+005f0df0	00855a50	1	Camera
+005f0df0	00855a58	1	exceeded kMaxFocusPoints
+005f0e90	00855a50	1	Camera
+005f0e90	00855a58	1	exceeded kMaxFocusPoints
+005f9d20	00855a50	1	Camera
+005fcd80	00855f28	1	yaw target
+005fcd80	00855f34	1	ideal pitch
+005fcd80	00855f40	1	ideal yaw
+005fec00	00855a50	1	Camera
+00601140	00855f28	1	yaw target
+00601140	00855f34	1	ideal pitch
+00601140	00855f40	1	ideal yaw
+006065b0	008562c8	1	Orbit magnet: %s n
+006088b0	00855a50	1	Camera
+0060a030	008563d4	1	paused
+0060a030	008563dc	1	active
+0060a030	008563e4	1	   state: %s, node %d, time: %0.2f s, length %0.2f n
+0060ac00	00856418	1	CameraSpline
+0060ac00	00856428	1	unsupported time mode on camera spline %s
+0060ada0	00856418	1	CameraSpline
+0060ada0	00856454	1	unsupported time mode on target spline %s
+0060e9c0	008566c0	1	EnemyAnimationSwitchData
+0060ea20	008566dc	1	EnemyHostAnimationSwitchData
+0060ea80	008566fc	1	EnemyAnimTurnSwitchData
+0060eae0	00856728	1	EnemyHitSwitchData
+0060eb40	00856754	1	EnemyAttackSwitchData
+0060eba0	0085676c	1	EnemyMoveNavSwitchData
+0060ec00	00856784	1	EnemySearchIdleSwitchData
+0060ec60	008567a0	1	EnemySidestepSwitchData
+0060ecc0	008567f8	1	EnemyJumpOverJumpSwitchData
+0060ed20	00856814	1	EnemyPanicSwitchData
+0060ed80	0085682c	1	EnemyVaultedSwitchData
+0060eeb0	00856714	1	EnemyFallSwitchData
+00610710	00856754	1	EnemyAttackSwitchData
+006110e0	0085676c	1	EnemyMoveNavSwitchData
+006110e0	00857948	1	MoveNav
+006111e0	00857948	1	MoveNav
+00611620	0085673c	1	EnemyStunnedSwitchData
+00611620	00857950	1	Stunned
+00612030	00857980	1	PatrolAttack
+00612030	00857990	1	PatrolIncr
+00612030	0085799c	1	PatrolAnim
+00612030	008579a8	1	PatrolLookTurn
+00612030	008579b8	1	PatrolMove
+00612030	008579c4	1	Patrol
+00612030	008579cc	1	NonCombat
+00612030	008579d8	1	SearchToPossiblePos
+006126b0	00857980	1	PatrolAttack
+006126b0	00857990	1	PatrolIncr
+006126b0	0085799c	1	PatrolAnim
+006126b0	008579a8	1	PatrolLookTurn
+006126b0	008579b8	1	PatrolMove
+006126b0	008579c4	1	Patrol
+006126b0	008579cc	1	NonCombat
+006126b0	008579d8	1	SearchToPossiblePos
+00612bd0	00857980	1	PatrolAttack
+00612bd0	00857990	1	PatrolIncr
+00612bd0	0085799c	1	PatrolAnim
+00612bd0	008579a8	1	PatrolLookTurn
+00612bd0	008579b8	1	PatrolMove
+00612bd0	008579c4	1	Patrol
+00612bd0	008579cc	1	NonCombat
+00612bd0	008579d8	1	SearchToPossiblePos
+00612f80	00857980	1	PatrolAttack
+00612f80	00857990	1	PatrolIncr
+00612f80	0085799c	1	PatrolAnim
+00612f80	008579a8	1	PatrolLookTurn
+00612f80	008579b8	1	PatrolMove
+00612f80	008579c4	1	Patrol
+00612f80	008579cc	1	NonCombat
+00612f80	008579d8	1	SearchToPossiblePos
+006134b0	008566b4	1	Adrenaline
+006134b0	00857bb0	1	Combat
+00613b40	00857bf4	1	PanicDive
+00613b40	00857d68	1	StunnedFinishingMove
+00615040	00853e74	1	generalbank
+00616080	00857d94	1	hiding weapons n
+00616100	00857da4	1	unhiding weapons n
+00616450	00857bf4	1	PanicDive
+00616450	00857db8	1	JumpUpLoop
+00616450	00857dc4	1	JumpDownFall
+00616910	00857d88	1	FirstThings
+00616c20	00857d88	1	FirstThings
+00616c80	00857e34	1	ProxyAdjust
+00618c30	00857ee4	1	vehicle dive
+00618c90	00857ef4	1	tranqed heavy hit
+00618c90	00857f08	1	tranqed light hit
+00618c90	00857f1c	1	tranqed explosion
+00618cf0	00857f30	1	light hit
+00618cf0	00857f3c	1	heavy hit
+00618cf0	00857f48	1	explosion
+00618d70	00857f30	1	light hit
+00618d70	00857f3c	1	heavy hit
+00618d70	00857f54	1	fatal explosion
+00618df0	00857f64	1	attack
+00618e20	00857f6c	1	getup
+00618e50	00857f74	1	death
+00618e80	00857f7c	1	vehicle death
+00618eb0	00857f8c	1	drown death
+00618ee0	00857f98	1	melee3
+00618ee0	00857fa0	1	melee2
+00618ee0	00857fa8	1	melee1
+00618ee0	00857fb0	1	melee
+00618f70	00857fe0	1	stunned
+00618fa0	00857ff8	1	grenade attach react
+00618fd0	00858018	1	melee evade
+00619ea0	00858314	1	CrouchToStand
+00619ea0	00858324	1	StandToCrouch
+00619f30	00857948	1	MoveNav
+0061a3c0	00856754	1	EnemyAttackSwitchData
+0061a3c0	00857a70	1	Attack
+0061a630	00856844	1	EnemyReloadSwitchData
+0061a630	00857a78	1	Reload
+0061a730	00856754	1	EnemyAttackSwitchData
+0061a940	00856754	1	EnemyAttackSwitchData
+0061ab50	008567d8	1	EnemyNonCombatIdleSwitchData
+0061ab50	00858344	1	NonCombatIdle
+0061abf0	0085676c	1	EnemyMoveNavSwitchData
+0061abf0	00857948	1	MoveNav
+0061add0	008566c0	1	EnemyAnimationSwitchData
+0061add0	00858354	1	Animation
+0061afe0	00858354	1	Animation
+0061afe0	00858360	1	HostAnimation
+0061b0c0	0085676c	1	EnemyMoveNavSwitchData
+0061b0c0	00857948	1	MoveNav
+0061b260	00856754	1	EnemyAttackSwitchData
+0061b7e0	00858370	1	CombatIdle
+0061b940	008567b8	1	EnemyCombatStepIdleSwitchData
+0061b940	00857ad4	1	CombatStepIdle
+0061c4a0	00857948	1	MoveNav
+0061c780	008566c0	1	EnemyAnimationSwitchData
+0061c780	00858354	1	Animation
+0061cc20	008566c0	1	EnemyAnimationSwitchData
+0061cc20	00858354	1	Animation
+0061cf70	0085676c	1	EnemyMoveNavSwitchData
+0061cf70	00857948	1	MoveNav
+0061d6a0	008566c0	1	EnemyAnimationSwitchData
+0061d6a0	00858354	1	Animation
+0061d880	008566fc	1	EnemyAnimTurnSwitchData
+0061df40	008566c0	1	EnemyAnimationSwitchData
+0061df40	00858354	1	Animation
+0061e0b0	00857fc0	1	investigate
+0061e0e0	0085676c	1	EnemyMoveNavSwitchData
+0061e0e0	00857948	1	MoveNav
+0061e250	00857fc0	1	investigate
+0061e320	008566c0	1	EnemyAnimationSwitchData
+0061e320	00858354	1	Animation
+0061e8f0	008566c0	1	EnemyAnimationSwitchData
+0061e8f0	00858354	1	Animation
+0061ea00	0085676c	1	EnemyMoveNavSwitchData
+0061ea00	00857948	1	MoveNav
+0061ebb0	00857fb8	1	search
+0061ec30	0085676c	1	EnemyMoveNavSwitchData
+0061ec30	00857948	1	MoveNav
+0061ed80	00857fb8	1	search
+0061eec0	008579ec	2	SearchIdle
+0061efb0	00857fb8	1	search
+0061f030	00856754	1	EnemyAttackSwitchData
+0061f030	00857a70	1	Attack
+0061f350	008566c0	1	EnemyAnimationSwitchData
+0061f350	00858354	1	Animation
+0061f410	00857fd4	1	adrenaline
+0061f440	008566fc	1	EnemyAnimTurnSwitchData
+00623000	00857af4	1	Sidestep
+00623f50	00857d4c	1	Vaulted
+00623fb0	00857bf4	1	PanicDive
+00624450	00857bf4	1	PanicDive
+00624450	0085840c	1	Getup
+00624920	00857bf4	1	PanicDive
+00624920	0085840c	1	Getup
+00625200	00858010	1	spawned
+006257e0	00858414	1	PatrolPath
+006271c0	00858444	1	align2
+00627710	008583c0	1	MeleeAttack
+00627b60	0085844c	1	flank
+00627b60	00858454	1	advance
+00628430	00858474	1	MoveToPosition
+00628800	008566fc	1	EnemyAnimTurnSwitchData
+00628b90	00858474	1	MoveToPosition
+00628c90	00858474	1	MoveToPosition
+00629b40	0085676c	1	EnemyMoveNavSwitchData
+00629b40	00857948	1	MoveNav
+0062a180	0085676c	1	EnemyMoveNavSwitchData
+0062a180	00857948	1	MoveNav
+0062a5f0	0085676c	1	EnemyMoveNavSwitchData
+0062a5f0	00857948	1	MoveNav
+0062a9b0	0085676c	1	EnemyMoveNavSwitchData
+0062a9b0	00857948	1	MoveNav
+0062b180	0085676c	1	EnemyMoveNavSwitchData
+0062b180	00857948	1	MoveNav
+0062b2e0	0085676c	1	EnemyMoveNavSwitchData
+0062b2e0	00857948	1	MoveNav
+0062bc20	00857ce0	1	JumpOverJump
+0062bf90	008566fc	1	EnemyAnimTurnSwitchData
+00631590	00857fcc	1	panic
+00631590	008584ec	1	PanicIdle
+00631590	008584f8	1	PanicBackup
+00631e80	00857fe8	1	grenade attach
+00632200	00858360	1	HostAnimation
+00632200	00858508	1	Invalid queryEnemyPlacedShotJoint on - Requires a vector par…
+00632200	0085854c	1	Block
+00632200	00858554	1	Invalid queryCombatTarget - no second parameter n
+00632200	00858588	1	Invalid queryTarget - no second parameter n
+00634020	0085803c	1	Behavior
+00634650	00857d88	1	FirstThings
+00634650	008585c0	1	set age to %d n
+00635690	00858474	1	MoveToPosition
+00635690	008585d0	1	StepToPosition
+00635cf0	00856754	1	EnemyAttackSwitchData
+00635cf0	00857a70	1	Attack
+00635d80	008567b8	1	EnemyCombatStepIdleSwitchData
+00635d80	00857ad4	1	CombatStepIdle
+00636030	008585e0	1	should not close: adr block n
+00636df0	00857b24	1	CloseInCover
+00636df0	00857bb0	1	Combat
+00638d40	00858608	1	%8.2f
+00639df0	00857a70	1	Attack
+0063ad50	00858634	1	hit by our platform n
+0063b330	00858360	1	HostAnimation
+0063b330	0085864c	1	unhandled evEnemyFinishWrestle n
+0063b330	0085866c	1	DrownDeath
+0063b330	00858678	1	DeferredInstantDie
+0063d380	008566fc	1	EnemyAnimTurnSwitchData
+0063d440	0085883c	1	EnemyLandSwitchData
+0063d4a0	00858850	1	EnemyGetupSwitchData
+0063d500	00858850	1	EnemyGetupSwitchData
+0063d560	00858868	1	EnemyMoveHitSwitchData
+0063d5c0	00856754	1	EnemyAttackSwitchData
+0063d620	00858880	1	EnemyJumpAttackSwitchData
+0063d680	0085889c	1	EnemyMoveAttackSwitchData
+0063d6e0	008588b8	1	EnemyDeathSwitchData
+0063d740	008588d0	1	EnemyMoveSpecialMoveSwitchData
+0063d7a0	008588f0	1	EnemyMoveCornerMoveSwitchData
+0063d800	008567b8	1	EnemyCombatStepIdleSwitchData
+0063d950	00858910	1	EnemyMoveHaltSwitchData
+0063d950	00858928	1	MoveHalt
+0063d9c0	00858928	1	MoveHalt
+0063da10	00858934	1	ground markup
+0063da70	00858944	1	ballistic init
+0063db60	00858954	1	ballistic exit
+0063dbb0	00858964	1	attempting to stand on the player
+0063dbb0	00858988	1	attempting to stand on another enemy %s%s
+0063e740	00854a30	1	begin
+0063fc20	00858a00	1	EnemyNonCombatIdleData
+0063fc50	008567d8	1	EnemyNonCombatIdleSwitchData
+0063fc80	00858a60	1	EnemyNapData
+0063fcb0	00858a60	1	EnemyNapData
+0063fcd0	00858ab8	1	EnemyAnimationData
+0063fd00	00858b18	1	EnemyHostAnimationData
+0063fd30	008566dc	1	EnemyHostAnimationSwitchData
+0063fd90	00858b78	1	EnemyFallData
+0063fdc0	00858b78	1	EnemyFallData
+0063fde0	00856714	1	EnemyFallSwitchData
+0063fe20	00858bdc	1	EnemyFallDeadData
+0063fe50	00858c40	1	EnemyPhysMoveData
+0063fec0	0085883c	1	EnemyLandSwitchData
+0063fef0	00858850	1	EnemyGetupSwitchData
+0063ff20	00858d38	1	EnemyHitData
+0063ff50	00858d90	1	EnemyStunnedData
+0063ff80	00858d90	1	EnemyStunnedData
+0063ffa0	0085673c	1	EnemyStunnedSwitchData
+0063ffe0	00858df0	1	EnemyStunnedFinishingMoveData
+00640080	00858e58	1	EnemyVaultedData
+00640110	00858eb8	1	EnemyAdrenalineMeleeHitData
+00640140	00858f20	1	EnemyDeathData
+00640170	008588b8	1	EnemyDeathSwitchData
+006401d0	00858f84	1	EnemyTimeData
+00640200	00858f84	1	EnemyTimeData
+00640250	00856844	1	EnemyReloadSwitchData
+00640290	00859030	1	EnemyAttackData
+006402c0	00858880	1	EnemyJumpAttackSwitchData
+00640310	008591c8	1	EnemyJumpAttackData
+00640360	008591c8	1	EnemyJumpAttackData
+00640390	00859030	1	EnemyAttackData
+00640400	00856754	1	EnemyAttackSwitchData
+00640460	008593e8	1	EnemyMoveAttackData
+00640490	0085889c	1	EnemyMoveAttackSwitchData
+006404d0	008593e8	1	EnemyMoveAttackData
+00640520	008595a8	1	EnemyMoveHitData
+00640550	00858868	1	EnemyMoveHitSwitchData
+00640590	00859650	1	EnemyCombatIdleData
+006405c0	00856784	1	EnemySearchIdleSwitchData
+00640600	008596c8	1	EnemySearchIdleData
+00640630	008596c8	1	EnemySearchIdleData
+00640680	00859780	1	EnemySidestepData
+006406b0	008597ec	1	EnemyJumpAlignData
+006406e0	008588d0	1	EnemyMoveSpecialMoveSwitchData
+00640730	00859854	1	EnemyJumpData
+00640760	00859854	1	EnemyJumpData
+00640790	0085996c	1	EnemyCornerAlignData
+006407c0	008599e0	1	EnemyCornerData
+006407f0	008566fc	1	EnemyAnimTurnSwitchData
+00640840	00859c00	1	EnemyAnimatedTurnData
+00640870	00859c00	1	EnemyAnimatedTurnData
+006408a0	00859664	1	EnemyCombatIdleSwitchData
+006408e0	008567b8	1	EnemyCombatStepIdleSwitchData
+00640920	00859db0	1	EnemyCrouchSwitchData
+00640950	00859e68	1	EnemyWaitForMeleeData
+00640980	00859e80	1	EnemyWaitForMeleeSwitchData
+00640a10	00859ee8	1	EnemyDrownDeathData
+00640a40	00859f48	1	EnemyAnimTurnData
+00640a70	00859f48	1	EnemyAnimTurnData
+00640aa0	00859ff0	1	EnemyJumpOverJumpData
+00640ad0	008567f8	1	EnemyJumpOverJumpSwitchData
+00641de0	00857948	1	MoveNav
+00643550	00858474	1	MoveToPosition
+00643550	008585d0	1	StepToPosition
+006435e0	00857948	1	MoveNav
+006435e0	00858474	1	MoveToPosition
+006435e0	008585d0	1	StepToPosition
+00643700	00858474	1	MoveToPosition
+00643700	008585d0	1	StepToPosition
+006437d0	00858474	1	MoveToPosition
+006437d0	008585d0	1	StepToPosition
+00643c70	008567b8	1	EnemyCombatStepIdleSwitchData
+00644110	0085a028	1	host exit
+00644870	0085a034	1	MoveIdle
+00644910	0085a034	1	MoveIdle
+00646620	0085a078	1	markup
+00646870	0085a080	1	ballistic proc
+00646870	0085a090	1	ballistic
+00646870	0085a09c	1	ballistic slide
+00646e80	0085a0ac	1	turn to face dir
+00647080	0085a0c0	1	scoot
+006471b0	0085a0c8	2	right180
+006471b0	0085a0d4	2	left180
+006471b0	0085a0e0	3	right45
+006471b0	0085a0e8	3	right90
+006471b0	0085a0f0	2	left45
+006471b0	0085a0f8	3	left90
+0064d080	00858a00	1	EnemyNonCombatIdleData
+0064d0d0	00858ab8	1	EnemyAnimationData
+0064d1a0	00858b18	1	EnemyHostAnimationData
+0064d1f0	00858bdc	1	EnemyFallDeadData
+0064d240	00858d38	1	EnemyHitData
+0064d2a0	00856728	1	EnemyHitSwitchData
+0064d2e0	00858df0	1	EnemyStunnedFinishingMoveData
+0064d310	00858e58	1	EnemyVaultedData
+0064d3b0	00858eb8	1	EnemyAdrenalineMeleeHitData
+0064d3f0	00858f20	1	EnemyDeathData
+0064d440	008595a8	1	EnemyMoveHitData
+0064d490	008567a0	1	EnemySidestepSwitchData
+0064d570	008597ec	1	EnemyJumpAlignData
+0064d660	008599e0	1	EnemyCornerData
+0064d740	00859e68	1	EnemyWaitForMeleeData
+0064d770	00859ee8	1	EnemyDrownDeathData
+0064d7a0	00859ff0	1	EnemyJumpOverJumpData
+0064d800	00857bf4	1	PanicDive
+0064e210	0085a148	1	fall hit object
+0064e210	0085a158	2	fall hit terrain
+0064f040	00858954	1	ballistic exit
+0064f1b0	00857f6c	1	getup
+0064fcf0	0085a18c	3	vaulted
+00652c80	00858928	1	MoveHalt
+006530d0	0085a1c0	1	jumpover align
+00655a40	0085a22c	1	SetOnGround
+00655b20	0085a22c	1	SetOnGround
+00655db0	0085a250	1	Ground
+00655ff0	00858bd0	1	FallDead
+00656b50	0085a258	1	Route
+00656d80	0085a278	1	project along planner mesh edge
+006599f0	008566b4	1	Adrenaline
+006599f0	00857bb0	1	Combat
+006599f0	00857d88	2	FirstThings
+006599f0	00857e34	1	ProxyAdjust
+006599f0	0085803c	1	Behavior
+006599f0	00858414	1	PatrolPath
+006599f0	0085a258	1	Route
+006599f0	0085a2e8	1	AddSenses
+00659bd0	0085a30c	1	Sense
+0065a3b0	008566c0	1	EnemyAnimationSwitchData
+0065a410	00858c40	1	EnemyPhysMoveData
+0065a470	0085682c	1	EnemyVaultedSwitchData
+0065a4b0	0085a314	1	EnemyAdrenalineMeleeHitSwitchData
+0065a530	00859780	1	EnemySidestepData
+0065a560	0085996c	1	EnemyCornerAlignData
+0065a5c0	00859650	1	EnemyCombatIdleData
+0065adb0	0085a34c	1	fall land
+0065b450	00857f6c	1	getup
+0065ced0	00858944	1	ballistic init
+0065d440	0085a374	1	wrestle attach
+0065f890	0085a384	1	jump hit terrain
+0065fd60	0085a398	1	corner hit terrain
+006615a0	0085a3ac	2	ground old
+00662ce0	0085a3c0	2	flyer
+00664670	0085a2e8	1	AddSenses
+00664e80	0085a3e0	1	WARNING: has no senses data! n
+00665770	008588f0	1	EnemyMoveCornerMoveSwitchData
+00665f10	0085a400	1	scoot to point
+006669d0	0085a410	1	melee jump
+00666eb0	00857948	1	MoveNav
+00668f50	0085a41c	2	jump land
+00669200	0085a428	1	corner
+00669200	0085a430	1	convex corner
+006694d0	0085a034	1	MoveIdle
+0066a7a0	0085a22c	1	SetOnGround
+0066dfe0	0085a034	1	MoveIdle
+0066ed90	0085a46c	1	managed link end
+0066ed90	0085a480	1	managed link start
+0066ef10	0085a22c	1	SetOnGround
+0066f280	0085a494	1	lockdown
+006725f0	0085676c	1	EnemyMoveNavSwitchData
+00672650	00859db0	1	EnemyCrouchSwitchData
+00672e50	00859664	1	EnemyCombatIdleSwitchData
+00672e50	00859c60	1	CombatStep
+00672ee0	00859664	1	EnemyCombatIdleSwitchData
+00672ee0	00859c60	1	CombatStep
+00672f90	00858324	1	StandToCrouch
+00672f90	00859db0	1	EnemyCrouchSwitchData
+006730d0	00858314	1	CrouchToStand
+00673bb0	0085676c	1	EnemyMoveNavSwitchData
+00673bb0	00857948	1	MoveNav
+00673fc0	008567b8	1	EnemyCombatStepIdleSwitchData
+00673fc0	00857ad4	1	CombatStepIdle
+00674170	0085a944	1	PanicRemoveAttachedGrenade
+00675250	008566c0	1	EnemyAnimationSwitchData
+00675250	00858354	1	Animation
+00675830	008566c0	1	EnemyAnimationSwitchData
+00675830	00858354	1	Animation
+00675ba0	00858314	1	CrouchToStand
+00675ba0	00858324	1	StandToCrouch
+00675ba0	00859c60	1	CombatStep
+006764d0	0085a034	1	MoveIdle
+00677ac0	00857948	1	MoveNav
+00677fa0	00858314	1	CrouchToStand
+00677fa0	00858324	1	StandToCrouch
+00677fa0	00859c60	1	CombatStep
+00678530	00857af4	1	Sidestep
+0067d850	00858850	1	EnemyGetupSwitchData
+0067d8b0	0085676c	1	EnemyMoveNavSwitchData
+0067d910	0085ac10	1	EnemyMoveNavData
+0067d940	0085adac	1	EnemyMoveOnStepsSwitchData
+0067d980	0085ac70	1	EnemyMoveData
+0067d9b0	0085ae64	1	EnemyMoveAdjustSwitchData
+0067d9f0	00858910	1	EnemyMoveHaltSwitchData
+0067da20	0085af24	1	EnemyReturnToPlannerMeshData
+0067da50	00857af4	1	Sidestep
+0067da50	00859c60	1	CombatStep
+0067da50	00859d00	1	CombatStepTurn
+0067da50	00859d58	1	CombatStepBack
+0067e640	00856814	1	EnemyPanicSwitchData
+0067e680	0085af90	1	EnemyPanicData
+0067ecf0	0085b118	1	EnemyRegenerateData
+0067f140	0085ac10	1	EnemyMoveNavData
+0067f1e0	0085b184	1	EnemyMoveSwitchData
+0067f220	0085af24	1	EnemyReturnToPlannerMeshData
+00680500	0085b198	1	EnemyState_MoveTurn
+00682120	0085af90	1	EnemyPanicData
+00682460	0085b118	1	EnemyRegenerateData
+00682810	0085676c	1	EnemyMoveNavSwitchData
+00683760	00857a70	1	Attack
+00683760	0085840c	1	Getup
+00683a30	0085ac70	1	EnemyMoveData
+00696b90	0085cf4c	1	ChunkDoll: failed to create geom
+006ab060	0085d128	1	splveh
+006ac340	0085d130	1	Can't find marker %d for water volume %d n
+006bada0	0085d0a0	1	bottom
+006cb060	0085d340	1	evObjectPickup: gear %s n
+006cb060	0085d35c	1	evControlSaveData: gear %s %s owned n
+006cb060	0085d384	2	IS NOT
+006cc3b0	0085d384	2	IS NOT
+006cc3b0	0085d390	1	evControlSaveData: rbweapon %s %s owned n
+006cc9e0	0085d3bc	1	evObjectPickup: weapon %s n
+006cd220	0085d384	2	IS NOT
+006cd220	0085d390	1	evControlSaveData: rbweapon %s %s owned n
+006ce2c0	0085d3e0	1	uninit rbweapon %s n
+006cf9f0	0085d3f4	1	uninit weapon %s n
+006da620	0084a498	1	16x AA
+006da620	0084a4a0	1	8xQ AA
+006da620	0084a4a8	1	8x AA
+006da620	0084a4b0	1	6x AA
+006da620	0084a4b8	1	4x AA
+006da620	0084a4c0	1	2x AA
+006da620	0085d624	1	16xQ AA
+006da9b0	00844aa8	1	%0.8x-%0.4x-%0.4x-%0.2x%0.2x-%x%x%x%x%x%x
+006daa00	00844aa8	2	%0.8x-%0.4x-%0.4x-%0.2x%0.2x-%x%x%x%x%x%x
+006dc5f0	0085d698	1	%s/%s
+006dcbe0	0084a47c	1	16:10
+006dd8a0	00845aec	6	false
+006df600	0085d760	1	PDA MAP DRM "%s" Has %i faces. n
+006df600	0085d780	1	PDA MAP DRM "%s" Has %i vertices. n
+006df600	0085d7a4	1	PDA MAP DRM "%s" Has %i signals. n
+006df600	0085d7c8	1	PDA MAP DRM "%s" does not have a mesh! n
+006df600	0085d7f0	1	PDA MAP DRM "%s" does not need to be pinged, so it was not a…
+006df600	0085d84c	1	PDA MAP DRM "%s" was added to the multibody system! n
+006df600	0085d884	1	PDA MAP DRM "%s" Has a mesh and/or waterMesh! n
+006df600	0085d8b4	1	PDA MAP DRM "%s" Loaded. n
+006e4410	0085d924	1	PDAMap: Box    Count: %i n
+006e4410	0085d940	1	PDAMap: Mesh   Count: %i n
+006e4410	0085d95c	1	>>>>> PDA MAP DATA IS BEING DESERIALIZED <<<<< n
+006e4800	0085d990	1	PDA Map failed to save - it tried to write past the end of t…
+006e5650	0085d9f4	1	Allocing %d bytes for PDAMapSection, addr %x, free space %d …
+006e56d0	0085da34	1	Freeing addr %x for PDAMapSection n
+006e75a0	0085ddf8	1	EnemyHP
+006e75e0	0085de00	1	AmmoAdj
+006e7620	0085de08	1	PlayerHP
+006e7660	0085de14	1	SavingGrabAdj
+006e7fc0	0085de6c	1	no description
+006f3360	0085def4	1	Grenade_reticule
+006f3c60	0085df08	1	[Engagement]: Invalid interaction shape %d
+0070cde0	00845aec	4	false
+0071ffe0	0085e2b4	1	LookAt
+00739c80	0085e648	1	--- [PlayerSC_Grapple::IsBelowAttachPoint] unhandled conditi…
+00739d70	0085e698	1	--- [PlayerSC_Grapple::GroundDetected] unhandled condition (…
+00739f60	0085e6e0	1	--- [PlayerSC_Grapple::WallDetected] unhandled condition (%d…
+0073a030	0085e728	1	--- [PlayerSC_Grapple::SupportDetected] unhandled condition …
+0073a170	0085e770	1	--- [PlayerSC_Grapple::WallLedgeDetected] unhandled conditio…
+0073a920	0085e818	1	--- [PlayerSC_Grapple::StepOnDetected] unhandled condition (…
+0073b280	0085e900	1	--- [PlayerSC_Grapple::FlailDetected] unhandled condition (%…
+0073b570	0085e948	1	--- [PlayerSC_Grapple::VelocityDirection] unhandled conditio…
+0073bd30	0085e990	1	--- [PlayerSC_Grapple::RappelSpeed] unhandled condition (%d)…
+0073bfc0	0085e9d8	1	--- [PlayerSC_Grapple::RappelLateralSpeed] unhandled conditi…
+0073c330	0085ea28	1	--- [PlayerSC_Grapple::RappelMesialSpeed] unhandled conditio…
+0073f900	0085eaa8	1	--- PlayerSC_PushPull::MustDetach unhandled condition (%d) -…
+0073fe10	0085eae8	1	ART WARNING: Walk-onto-slope animation covers no distance!
+00741f10	0085eba8	1	Wallhug segment %i is only %fcm, which is too short by %fcm
+0074f480	0085ec64	1	otherSegment
+0074f480	0085ec74	1	segment
+007612d0	0085ef28	1	--- PSCCF_MoveDir unhandled condition (%d) --- n
+00761560	0085ef58	1	--- PSCCF_MoveDirMomentum unhandled condition (%d) --- n
+00761660	0085ef90	1	--- PSCCF_MoveDirDownhill unhandled condition (%d) --- n
+00761780	0085efc8	1	--- PSCCF_MoveDirUnbalanced unhandled condition (%d) --- n
+00762540	0085f1c8	1	--- PSCCF_Markup_MoveDir unhandled condition (%d) --- n
+00763030	0085f2f8	1	--- PSCCF_OnGround unhandled condition (%d) --- n
+00763230	0085f32c	1	--- PSCCF_JustLanded unhandled condition (%d) --- n
+00763910	0085f4e0	1	--- PSCCF_VelocityDownward unhandled condition (%d) --- n
+00763ff0	0085f610	1	--- PSCCF_Markup_LadderCurrentRung unhandled property (%d) -…
+007640a0	0085f650	1	--- PSCCF_Markup_SegmentLengthLessThan unhandled property (%…
+00769830	0085f8fc	1	rb_bolivia_krock_small
+00769830	0085f914	2	bd_tokyo_paintcan
+00769830	0085f928	2	rb_flashback_soccerball
+00769be0	0085f970	1	physicsRollProxy
+00769be0	0085f984	1	physicsRollPivot
+0076f920	0085f9f0	1	--- PSCCF_CheckMeleeTargetDir unhandled condition (%d) --- n
+00772ca0	0085fa74	1	PSCPF_MarkUpAttach_SetAnimTarget isn't setup for Target: %d.…
+007744e0	0085fb38	1	profile
+007744e0	0085fb48	1	Screenshot%03d
+007744e0	0085fb5c	1	savegame%02d
+00774640	0085fbc0	1	Screenshots::LoadingTask
+00774750	0085fbf4	1	Screenshots::SavingTask
+00774780	0085fc24	2	Screenshot%i.raw
+00774820	0085fc38	1	Screenshots::GenerateUniqueFilenameTask
+00774890	0085fc78	1	Screenshots::LoadToWidgetsTask
+007749f0	0085fcb0	1	Screenshots::SaveAsNewFileTask
+00774b90	0085fce8	1	Screenshots::CaptureAndSaveTask
+00774cb0	0085fd20	1	Screenshots::SetInfoTask
+00774cc0	0085fd54	1	Screenshots::DeleteLocalFileTask
+00774ce0	0085fd90	1	Screenshots::RaiseScriptEventTask
+00775f20	00844930	1	PC-RUSS
+00775f40	00844938	1	PC-PCH
+00777140	0085ff08	1	script %s%s.MoveToNodeInUnit(%s,...): unit is not loaded
+00777210	0085ff44	1	script %s%s.GuardNode(%s,...): unit is not loaded
+007786a0	008600b0	1	%%.%df
+0077bd80	00860204	1	wp_assault_rifle
+0077bd80	00860218	1	wp_shotgun
+0077bd80	0086022c	1	wp_thorhammer
+0077bd80	0086023c	1	wp_handgun
+0077c000	0086022c	2	wp_thorhammer
+0077c000	0086023c	2	wp_handgun
+0077c390	00860248	1	Contrast
+0077c3e0	00860254	1	Brightness
+0077c430	00860260	1	Subtitles
+0077c480	0086026c	1	WideScreen
+0077cb20	00854048	1	ERROR
+0077cb20	00860280	1	PlayNewGameMovie
+0077cb20	00860294	1	InAttractMode
+0077cb20	008602a4	1	StartingAttractMode
+0077cb20	008602b8	1	PlayExtrasMovie
+0077cb20	008602c8	1	StartingNewGame
+0077cb20	008602d8	1	MainMenuScreen
+0077cb20	008602e8	1	PressStartScreen
+0077e120	00860380	1	empty
+007833a0	00860a48	1	Allocating new SCEnumTree node (%d). n
+007833a0	00860a70	1	Re-using freed SCEnumTree node. n
+00783590	00860a94	1	WARNING: SCPROPERTY_GetInt finds float TuningData n
+00783590	00860ac8	1	WARNING: SCPROPERTY_GetInt finds float data n
+00783680	00860af8	1	WARNING: SCPROPERTY_GetFloat finds non-float TuningData n
+00783680	00860b34	1	WARNING: SCPROPERTY_GetFloat finds int(dist) data n
+00783680	00860b68	1	WARNING: SCPROPERTY_GetFloat finds int data n
+00783770	00860b98	1	WARNING: SCPROPERTY_GetBool finds non-boolean TuningData n
+00783840	00860bd8	1	--- SCCondFunction_AnimationEnded unhandled condition (%d) -…
+00784600	00860c18	1	WARNING: Trying to run Entry function without Exit function …
+007846d0	00860c70	1	WARNING: Trying to run PreAnimEntry function without Exit fu…
+00784790	00860cd0	1	WARNING: Trying to run Reentry function without Original Ent…
+00784850	00860d30	1	WARNING: Trying to run PreAnimReentry function without Origi…
+00784910	00860d98	1	WARNING: Trying to run Exit function without Original Entry …
+007849e0	00860df8	1	WARNING: Trying to run Process function without Original Ent…
+00784de0	008609d8	1	<> To view SCEnum Tree debug, check GUI -> Tools -> CDC Opti…
+00784de0	00860e58	1	--- DESTROYING STATE CONTROL MANAGER --- n
+00784de0	00860e88	1	  State Control Manager used %d SCEnumTrees.  Update StateCo…
+00785fb0	0085ef28	1	--- PSCCF_MoveDir unhandled condition (%d) --- n
+00786490	00860ef0	1	--- PSCCF_MoveDirSpherical unhandled condition (%d) --- n
+007868f0	00860f2c	1	--- PSCCF_MoveDirLeftOrRight unhandled condition (%d) --- n
+00786af0	00860f68	1	--- SCCTest_MoveSpeed unhandled condition (%d) --- n
+00786af0	00860f9c	1	--- SCCTest_MoveSpeed does not test 'sprint' --- n
+00786af0	00860fd0	1	SCCTest_MoveSpeed LastZone %d not valid. n
+007871e0	00861000	1	ERROR: Direction enum of value %i is invalid; using default …
+007872f0	008609d8	1	<> To view SCEnum Tree debug, check GUI -> Tools -> CDC Opti…
+007872f0	0086104c	1	--- NEW STATE CONTROL MANAGER --- n
+00787890	00861070	1	* Agent %d ChangeState to NULL is illegal! n
+00787890	0086109c	1	* TriggerQueuedTrans with no Queued transistion n
+00788710	008611f8	1	EnumerationTask
+007890c0	00854048	1	ERROR
+007890c0	00861208	1	%04d/%02d/%02d
+00789160	00854048	1	ERROR
+00789160	00861218	1	%2d:%02d:%02d
+00789700	00861420	1	GUID
+00789700	00861430	1	Software  Crystal Dynamics  Tomb Raider: Underworld
+00789770	00861494	1	%s - %s
+007898e0	0086149c	1	%s: %s
+00789b00	008614a4	2	%s %d
+0078a3f0	008614b0	1	.TRUSave
+0078aad0	008614e4	1	*.TRUSave
+0078ab60	0086140c	2	Autosave
+0078ab60	008614b0	2	.TRUSave
+0078ab60	008614f8	1	%s%s%s
+0078b340	00861510	2	Software  Microsoft  Windows  CurrentVersion  Explorer  Shel…
+0078b420	00861594	1	SHGetPathFromIDListW
+0078b420	008615ac	1	SHGetMalloc
+0078b420	008615b8	1	SHGetFolderLocation
+0078b420	008615cc	1	shell32.dll
+0078b550	008615d8	1	Personal
+0078b550	008615ec	2	Tomb Raider - Underworld
+0078b550	00861630	1	C:  My Documents
+0078f520	008619ac	1	Donut Anchor Body
+007a8650	00850708	1	music
+007a8650	0085a078	1	markup
+007a8650	00861b8c	11	game/script/camera/camera
+007a8650	00861ba8	1	anchoredcamera
+007a8650	00861bf0	1	autosplinecamera
+007a8650	00861c3c	1	cameraanchor
+007a8650	00861c84	1	cameraref
+007a8650	00861cc8	1	cameraspline
+007b919d	008655b4	3	..  ..  src  fmod.cpp
+007ba2e2	0084b540	1	%s (%d)
+007ba2e2	008655c8	1	..  ..  src  fmod_memory.cpp
+007ba5d1	0084b540	1	%s (%d)
+007ba8b8	008655c8	1	..  ..  src  fmod_memory.cpp
+007bb88d	00865674	1	..  ..  src  fmod_systemi.cpp
+007bbc23	00865674	1	..  ..  src  fmod_systemi.cpp
+007bc72a	00865674	1	..  ..  src  fmod_systemi.cpp
+007bcbb6	00865674	3	..  ..  src  fmod_systemi.cpp
+007bd3d7	00865674	3	..  ..  src  fmod_systemi.cpp
+007bde85	00850708	1	music
+007bde85	00865674	1	..  ..  src  fmod_systemi.cpp
+007bde85	008656a8	1	ChannelGroup
+007be364	00865674	22	..  ..  src  fmod_systemi.cpp
+007be364	008656bc	2	TITLE
+007be364	008656c4	1	mms:    
+007be364	008656cc	1	mms://
+007be364	008656d4	1	https:    
+007be364	008656e0	1	https://
+007be364	008656ec	1	http:    
+007be364	008656f4	1	http://
+007c0c24	00865674	2	..  ..  src  fmod_systemi.cpp
+007c0f18	00865674	4	..  ..  src  fmod_systemi.cpp
+007c1368	00865674	1	..  ..  src  fmod_systemi.cpp
+007c13c6	00865674	4	..  ..  src  fmod_systemi.cpp
+007c13c6	00865784	3	FMOD master group
+007c13c6	00865798	1	FMOD ChannelGroup Target Unit
+007c13c6	008657b8	1	FMOD SoundCard Unit
+007c4a30	00865870	1	..  ..  src  fmod_channelgroupi.cpp
+007c4b0c	00865870	3	..  ..  src  fmod_channelgroupi.cpp
+007c57db	00865894	1	..  ..  src  fmod_soundi.cpp
+007c5b8f	00865894	12	..  ..  src  fmod_soundi.cpp
+007c6089	00865894	3	..  ..  src  fmod_soundi.cpp
+007c7b9a	00865894	5	..  ..  src  fmod_soundi.cpp
+007ce9ee	00865998	1	..  src  fmod_os_misc.cpp
+007cea3c	00865998	1	..  src  fmod_os_misc.cpp
+007d0194	008659b0	1	..  ..  src  fmod_string.cpp
+007d033e	008659cc	1	?????
+007d0418	008659d4	1	..  ..  src  fmod_thread.cpp
+007d05b8	008659f0	1	..  ..  src  fmod_reverbi.cpp
+007d1682	008659f0	2	..  ..  src  fmod_reverbi.cpp
+007d175b	008659f0	1	..  ..  src  fmod_reverbi.cpp
+007d19d2	00865a20	1	..  ..  src  fmod_file.cpp
+007d1b10	00865a20	3	..  ..  src  fmod_file.cpp
+007d2806	00865a20	1	..  ..  src  fmod_file.cpp
+007d2922	00865a58	1	FMOD file thread
+007d2992	008656f4	1	http://
+007d2992	00865a20	1	..  ..  src  fmod_file.cpp
+007d2a53	00865a20	2	..  ..  src  fmod_file.cpp
+007d3022	00865a6c	4	..  ..  src  fmod_dsp_codecpool.cpp
+007d318e	00865a6c	1	..  ..  src  fmod_dsp_codecpool.cpp
+007d3407	00865a90	1	..  ..  src  fmod_channelpool.cpp
+007d3454	00865a90	3	..  ..  src  fmod_channelpool.cpp
+007d36ad	00865ab0	3	..  ..  src  fmod_soundgroupi.cpp
+007d39bd	00865ad0	1	FMOD User Reader Codec
+007d4e01	00865bd0	1	SFX Reverb
+007d52f7	00865cb4	1	%.02f
+007d53cb	00865cbc	1	FMOD Compressor
+007d549f	00865f88	1	..  ..  src  fmod_dsp_itecho.cpp
+007d5758	00865f88	3	..  ..  src  fmod_dsp_itecho.cpp
+007d58b9	00865cb4	1	%.02f
+007d5a1a	00865fb8	1	FMOD IT Echo
+007d5d1e	0085cf14	1	%0.2f
+007d5d1e	008660b4	1	FREEZE
+007d5ead	008660bc	1	FMOD Reverb
+007d671e	00865cb4	1	%.02f
+007d685a	00866380	1	FMOD Chorus
+007d6a33	00866610	1	..  ..  src  fmod_dsp_pitchshift.cpp
+007d6d8c	00866610	3	..  ..  src  fmod_dsp_pitchshift.cpp
+007d71c3	00865cb4	1	%.02f
+007d92b7	00865cb4	1	%.02f
+007d9450	0086671c	1	FMOD ParamEQ
+007d972a	00865cb4	1	%.02f
+007d9808	0086687c	1	FMOD Normalize
+007d9d6a	00865cb4	1	%.02f
+007da336	00865cb4	1	%.02f
+007da44d	008669e8	1	FMOD Flange
+007da53c	00866bbc	1	..  ..  src  fmod_dsp_echo.cpp
+007db209	00866bbc	3	..  ..  src  fmod_dsp_echo.cpp
+007db378	00865cb4	1	%.02f
+007db4b3	00866bd8	1	FMOD Echo
+007dc32e	00865cb4	1	%.02f
+007dd02e	00865cb4	1	%.02f
+007ddcd6	00865cb4	1	%.02f
+007df670	00866de4	1	..  ..  src  fmod_pluginfactory.cpp
+007df767	00866de4	1	..  ..  src  fmod_pluginfactory.cpp
+007df892	00866de4	1	..  ..  src  fmod_pluginfactory.cpp
+007dfbe0	00866de4	3	..  ..  src  fmod_pluginfactory.cpp
+007dfd16	00866de4	4	..  ..  src  fmod_pluginfactory.cpp
+007dfee8	00866de4	1	..  ..  src  fmod_pluginfactory.cpp
+007dff92	00866de4	1	..  ..  src  fmod_pluginfactory.cpp
+007e0083	00866de4	8	..  ..  src  fmod_pluginfactory.cpp
+007e0083	0086710c	1	WINAMP
+007e06ad	00865cb4	1	%.02f
+007e06ad	00867188	1	square
+007e06ad	00867190	1	saw up
+007e06ad	00867198	1	saw down
+007e06ad	008671a4	1	triangle
+007e06ad	008671b0	1	noise
+007e07ba	008671b8	1	FMOD Oscillator
+007e0bbb	008671c8	1	FMOD Raw Codec
+007e0db1	008671d8	1	..  ..  src  fmod_codec_mpeg.cpp
+007e0f2f	008671d8	5	..  ..  src  fmod_codec_mpeg.cpp
+007e1516	008671d8	1	..  ..  src  fmod_codec_mpeg.cpp
+007e1623	008671d8	7	..  ..  src  fmod_codec_mpeg.cpp
+007e1e4e	0086720c	1	FMOD MPEG Codec
+007e2ee9	0086725c	1	FMOD Wav Codec
+007e2f6e	0086726c	14	..  ..  src  fmod_codec_fsb.cpp
+007e42c5	0086726c	1	..  ..  src  fmod_codec_fsb.cpp
+007e45d5	0086726c	26	..  ..  src  fmod_codec_fsb.cpp
+007e5684	008672ac	1	FMOD FSB Codec
+007e5727	008656bc	1	TITLE
+007e5727	008672bc	1	GENRE
+007e5727	008672c4	1	TRACK
+007e5727	008672cc	1	COMMENT
+007e5727	008672dc	1	ALBUM
+007e5727	008672e4	1	ARTIST
+007e59f2	008672ec	3	..  ..  src  fmod_codec_tag.cpp
+007e6181	00867314	1	FMOD Tag Reader Codec
+007e61f2	0086732c	1	NoSound Driver
+007e620c	0086733c	1	..  ..  src  fmod_output_nosound_nrt.cpp
+007e629d	0086733c	1	..  ..  src  fmod_output_nosound_nrt.cpp
+007e63dd	00867364	1	FMOD NoSound Output - Non real-time
+007e6462	00867388	1	..  ..  src  fmod_output_nosound.cpp
+007e6599	00867388	1	..  ..  src  fmod_output_nosound.cpp
+007e66ed	008673ac	1	FMOD NoSound Output
+007e67a8	008673f0	1	..  ..  src  fmod_output_wavwriter_nrt.cpp
+007e6adb	008673f0	1	..  ..  src  fmod_output_wavwriter_nrt.cpp
+007e6c9b	0086741c	1	FMOD WavWriter Output - Non real-time
+007e728c	00867488	1	FMOD WavWriter Output
+007e73df	008674c0	1	..  ..  src  fmod_output.cpp
+007e965a	00867548	1	HTTP/1.1
+007e965a	00867554	1	HTTP/1.0
+007e96e6	00867560	7	ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234567…
+007e9812	008675a4	3	..  ..  src  fmod_output_software.cpp
+007e9913	008675a4	1	..  ..  src  fmod_output_software.cpp
+007e9976	008675c8	1	FMOD Software Output
+007e99e0	008675a4	5	..  ..  src  fmod_output_software.cpp
+007eae85	008676d4	2	FMOD mixer thread
+007eb3a7	008676e8	3	..  ..  src  fmod_dsp_resampler.cpp
+007eb4f4	008676e8	1	..  ..  src  fmod_dsp_resampler.cpp
+007ebd00	0086776c	1	..  ..  src  fmod_metadata.cpp
+007ebd90	0086776c	4	..  ..  src  fmod_metadata.cpp
+007ebdec	0086776c	3	..  ..  src  fmod_metadata.cpp
+007ebe75	0086776c	1	..  ..  src  fmod_metadata.cpp
+007ec079	0086776c	1	..  ..  src  fmod_metadata.cpp
+007ec123	00867788	3	..  ..  src  fmod_codec.cpp
+007ec697	00867788	1	..  ..  src  fmod_codec.cpp
+007ec709	00867788	1	..  ..  src  fmod_codec.cpp
+007ee057	008656c4	1	mms:    
+007ee057	008656cc	1	mms://
+007ee057	008656d4	1	https:    
+007ee057	008656e0	1	https://
+007ee057	008656ec	1	http:    
+007ee057	008656f4	1	http://
+007ee2b0	008656ec	1	http:    
+007ee2b0	008656f4	2	http://
+007ee2b0	00867998	1	..  ..  src  fmod_file_net.cpp
+007ee2b0	008679c4	1	ice-private
+007ee2b0	008679d0	1	ice-private: 
+007ee2b0	008679e0	1	ice-audio-info
+007ee2b0	008679f0	1	ice-audio-info: 
+007ee2b0	00867a04	1	ice-aim
+007eeeca	00867998	1	..  ..  src  fmod_file_net.cpp
+007eef19	008656bc	1	TITLE
+007eef19	008672e4	1	ARTIST
+007eef19	00867ca4	1	StreamUrl='
+007eef19	00867cb4	1	StreamTitle='
+007ef244	00867998	2	..  ..  src  fmod_file_net.cpp
+007ef49c	00867ce4	3	..  ..  src  fmod_speakerlevels_pool.cpp
+007ef5e4	00867ce4	3	..  ..  src  fmod_speakerlevels_pool.cpp
+007ef719	00867d0c	1	..  ..  src  fmod_profile.cpp
+007ef75f	00867d0c	3	..  ..  src  fmod_profile.cpp
+007ef9e5	00867d0c	1	..  ..  src  fmod_profile.cpp
+007efb20	00867d0c	1	..  ..  src  fmod_profile.cpp
+007efbf8	00867d0c	1	..  ..  src  fmod_profile.cpp
+007efc7c	00867d0c	1	..  ..  src  fmod_profile.cpp
+007efebd	00867d38	3	..  ..  src  fmod_async.cpp
+007f0280	00867d54	1	FMOD thread for FMOD_NONBLOCKING
+007f0301	00867d38	1	..  ..  src  fmod_async.cpp
+007f040f	00867d84	3	..  ..  src  fmod_output_emulated.cpp
+007f050a	00867d84	1	..  ..  src  fmod_output_emulated.cpp
+007f05cb	00867db8	3	..  ..  src  fmod_profile_dsp.cpp
+007f0645	00867db8	4	..  ..  src  fmod_profile_dsp.cpp
+007f0714	00867db8	1	..  ..  src  fmod_profile_dsp.cpp
+007f0793	00867db8	2	..  ..  src  fmod_profile_dsp.cpp
+007f09ef	00867de8	1	..  ..  src  fmod_profile_cpu.cpp
+007f0a6e	00867e08	4	..  ..  src  fmod_dsp_connectionpool.cpp
+007f0b04	00867e08	4	..  ..  src  fmod_dsp_connectionpool.cpp
+007f0e3b	00867e08	4	..  ..  src  fmod_dsp_connectionpool.cpp
+007f0fd7	00867e30	1	..  ..  src  fmod_plugin.cpp
+007f15ad	00867e4c	1	..  src  MeteredSection.cpp
+007f1856	00867e4c	1	..  src  MeteredSection.cpp
+007f2c80	00867e90	1	FMOD DSP Codec
+007f2d56	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f2d8d	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f2dc4	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f2df4	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f2e24	00867ea0	3	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f3281	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f32c5	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f3342	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f33bd	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f3437	00867ea0	1	..  ..  lib  sfx  foreverb  aSfxDsp.cpp
+007f5bb7	0086812c	2	..  src  fmod_output_openal.cpp
+007f5e87	0086814c	1	EAX2.0
+007f5e87	00868154	1	EAX3.0
+007f5e87	0086815c	1	EAX4.0
+007f5e87	00868164	1	EAX5.0
+007f5e87	0086816c	1	MMSYSTEM
+007f5e87	00868178	1	DirectSound
+007f5e87	00868184	1	Generic Software
+007f604f	0086814c	1	EAX2.0
+007f604f	00868154	1	EAX3.0
+007f604f	0086815c	1	EAX4.0
+007f604f	00868164	1	EAX5.0
+007f604f	00868198	1	EAXSetBufferMode
+007f604f	008681ac	1	EAXGetBufferMode
+007f604f	008681c0	1	EAX-RAM
+007f604f	008681c8	1	EAXSet
+007f6173	0086812c	6	..  src  fmod_output_openal.cpp
+007f6b85	0086812c	6	..  src  fmod_output_openal.cpp
+007f6b85	00868280	1	AL_FORMAT_MONO16
+007f6b85	00868294	1	AL_FORMAT_STEREO16
+007f6b85	008682a8	1	AL_FORMAT_QUAD16
+007f6b85	008682bc	1	AL_FORMAT_51CHN16
+007f6b85	008682d0	1	AL_FORMAT_61CHN16
+007f6b85	008682e4	1	AL_FORMAT_71CHN16
+007f6b85	008682f8	1	AL_STORAGE_ACCESSIBLE
+007f716f	0086812c	3	..  src  fmod_output_openal.cpp
+007f98d7	008683b8	3	..  ..  src  fmod_codec_wav_riff.cpp
+007fa881	008684dc	1	..  src  fmod_output_asio.cpp
+007fa8fc	008684dc	1	..  src  fmod_output_asio.cpp
+007fa987	008684dc	1	..  src  fmod_output_asio.cpp
+007faa05	008684dc	6	..  src  fmod_output_asio.cpp
+007fab21	008684dc	1	..  src  fmod_output_asio.cpp
+007fab96	008684dc	1	..  src  fmod_output_asio.cpp
+007fadca	008684dc	13	..  src  fmod_output_asio.cpp
+007fb316	008684dc	1	..  src  fmod_output_asio.cpp
+007fb559	008684f8	1	FMOD ASIO Output
+007fb638	008685c4	2	..  src  fmod_output_wasapi.cpp
+007fb638	008685e4	2	%S (%S)
+007fb916	008685c4	4	..  src  fmod_output_wasapi.cpp
+007fb916	008685e4	1	%S (%S)
+007fc479	008685c4	3	..  src  fmod_output_wasapi.cpp
+007fc716	008685ec	1	Pro Audio
+007fc716	008685f8	1	AvSetMmThreadCharacteristicsA
+007fc716	00868618	1	avrt.dll
+007fcab9	008685c4	1	..  src  fmod_output_wasapi.cpp
+007fcec9	008685c4	1	..  src  fmod_output_wasapi.cpp
+007fd440	00868624	1	FMOD WASAPI Output
+007fda8a	00868678	1	FMOD Record thread
+007fe348	0086868c	1	FMOD WinMM Output
+007fe43b	00868970	1	DirectSoundCreate
+007fe43b	00868984	1	DirectSoundCaptureEnumerateA
+007fe43b	008689a4	1	DirectSoundCaptureCreate
+007fe43b	008689c0	1	DirectSoundCaptureCreate8
+007fe43b	008689dc	1	  d3d9.dll
+007fe43b	008689e8	1	DirectSoundEnumerateA
+007fe43b	00868a00	1	DirectSoundCreate8
+007fe43b	00868a14	1	dsound3d.dll
+007fe5ec	00868a30	1	..  src  fmod_output_dsound.cpp
+007fe693	00868a30	1	..  src  fmod_output_dsound.cpp
+007fe7a8	00868a30	4	..  src  fmod_output_dsound.cpp
+007febc1	00868a30	2	..  src  fmod_output_dsound.cpp
+007ff787	00868a30	5	..  src  fmod_output_dsound.cpp
+00802295	00868b30	1	FMOD Resampler Unit
+00802c02	00868b44	1	FMOD WaveTable Unit
+00802c02	00868b58	1	FMOD Channel DSPHead Unit
+00802db7	00868c44	4	..  ..  src  fmod_sample_software.cpp
+008085ba	00868d48	1	EmulatedChannel DSPHead Unit
+008086f3	00868d68	3	..  src  fmod_channel_openal.cpp
+0080a2ac	00868b30	1	FMOD Resampler Unit
+0080a916	00868b44	1	FMOD WaveTable Unit
+0080a916	00868b58	1	FMOD Channel DSPHead Unit
+0080a916	00868d68	3	..  src  fmod_channel_openal.cpp
+0080c05b	00868eec	1	alSpeedOfSound
+0080c05b	00868efc	1	alcGetEnumValue
+0080c05b	00868f0c	1	alcGetProcAddress
+0080c05b	00868f20	1	alcIsExtensionPresent
+0080c05b	00868f38	1	alcGetError
+0080c05b	00868f44	1	alcDestroyContext
+0080c05b	00868f58	1	alcSuspendContext
+0080c05b	00868f6c	1	alcGetContextsDevice
+0080c7b6	008681c8	1	EAXSet
+0080c7b6	008681d0	1	EAXGet
+0080cc5b	008685ec	1	Pro Audio
+0080cc5b	008685f8	1	AvSetMmThreadCharacteristicsA
+0080cc5b	00868618	1	avrt.dll
+0080d9ef	0086951c	3	..  src  fmod_sample_openal.cpp
+0080e28d	0086953c	1	No ASIO Driver Error
+0080e28d	00869554	1	No ASIO Driver
+0080e497	0086956c	1	InprocServer32
+0080e497	0086957c	1	clsid
+0080e627	0086957c	1	clsid
+0080e627	00869584	1	description
+0080e627	00869590	1	..  src  asio  asiolist.cpp
+0080e7d5	00869590	1	..  src  asio  asiolist.cpp
+0080e828	008695ac	1	software  asio
+008169cc	008699b8	1	CorExitProcess
+008169cc	008699c8	1	mscoree.dll
+00816f48	008bdb10	2	log10
+0081a72f	008699d4	1	e+000
+0081b0ca	00869a0c	1	KERNEL32
+0081b163	00869ee8	3	R6009 r n- not enough space for environment r n
+0081b163	00869f70	1	Microsoft Visual C++ Runtime Library
+0081b163	00869f98	1	<program name unknown>
+0081b163	00869fb0	1	Runtime Error! n nProgram: 
+0081b33c	00869fcc	1	.mixcrt
+0081b3a8	00869fd4	1	EncodePointer
+0081b3a8	00869fe4	1	KERNEL32.DLL
+0081b41f	00869fe4	1	KERNEL32.DLL
+0081b41f	00869ff4	1	DecodePointer
+0081b539	00869fd4	1	EncodePointer
+0081b539	00869fe4	1	KERNEL32.DLL
+0081b539	00869ff4	1	DecodePointer
+0081b811	00869fe4	1	KERNEL32.DLL
+0081b811	0086a004	1	FlsFree
+0081b811	0086a00c	1	FlsSetValue
+0081b811	0086a018	1	FlsGetValue
+0081b811	0086a024	1	FlsAlloc
+0081c7bc	0086c1bc	1	floor
+0081c7bc	0086c1d4	1	exp10
+0081c7bc	0086c1f0	3	log10
+0081d949	0086f968	2	(null)
+0081f621	0086f9dc	1	UTF-8
+0081f621	0086f9e4	1	UTF-16LE
+0081f621	0086f9f0	1	UNICODE
+00826615	0086f968	2	(null)
+00827025	00873590	1	InitializeCriticalSectionAndSpinCount
+00827025	008735b8	1	kernel32.dll
+00828f8a	00874d40	8	bad exception
+00828f8a	00874d50	1	 Complete Object Locator'
+0082a042	00875450	1	GetProcessWindowStation
+0082a042	00875468	1	GetUserObjectInformationA
+0082a042	00875484	1	GetLastActivePopup
+0082a042	00875498	1	GetActiveWindow
+0082a042	008754a8	1	MessageBoxA
+0082a042	008754b4	1	USER32.DLL
+0082db6e	008776a4	1	1#QNAN
+0082db6e	008776ac	1	1#INF
+0082db6e	008776b4	1	1#IND
+0082db6e	008776bc	1	1#SNAN
+0082f069	008776c4	1	CONOUT$
+00832080	00848d10	1	Normal
+008320a0	00848d18	1	Tangent
+008320c0	00848d20	1	Binormal
+008320e0	00848d2c	1	PackedNTB
+00832100	00848d38	1	SkinWeights
+00832120	00848d44	1	SkinIndices
+00832140	00848d50	1	Color1
+00832160	00848d58	1	Color2
+00832180	00848d60	1	Texcoord1
+008321a0	00848d6c	1	Texcoord2
+008321c0	00848d78	1	Texcoord3
+008321e0	00848d84	1	Texcoord4
+00832200	00848d90	1	PBPosition
+00832220	00848d9c	1	PBNormal
+00832240	00848da8	1	PBTangent
+00832260	00848db4	1	PBBinormal
+00832280	00848dc0	1	PBSkinWeights
+008322a0	00848dd0	1	PBSkinIndices
+008322c0	00848de0	1	PBColor1
+008322e0	00848dec	1	PBColor2
+00832300	00848df8	1	PBTexcoord1
+00832320	00848e04	1	PBTexcoord2
+00832340	00848e10	1	PBTexcoord3
+00832360	00848e1c	1	PBTexcoord4

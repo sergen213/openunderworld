@@ -207,3 +207,14 @@ address,name,confidence,evidence
 0x6d5ec0,UberObjectSection_TR8_vf2,medium,RTTI UberObjectSection_TR8 slot 2; src/formats/Uber.hpp:45 (state entry action 0x1D: engagement set)
 0x50b910,PCRenderLight_BuildRegisters,medium,src/render/OriginalShading.cpp:209 (per-light ShadowLights/NonShadowLights registers)
 0x4a4490,UberObject_AttachTo,medium,src/script/Script.cpp:1438 (uberobjectbase 3 -> 0x4A4490)
+0x5d9e50,GetDifficultyIndex,high,asm: (int)[0x8AB648] via 0x814D20 (1.0f in .data; no direct writer) with 3 mapped to 1; src/game/Combat.hpp:35; docs/GAMEPLAY.md:4051
+0x5d6f00,Markup_DisableBadPointCount,high,asm: stdcall ret 4; sets +0x28 bit 0x80000000 unless 0x8000 markup has exactly 3 points ([+0x58] count); src/game/Climb.cpp:81
+0x707c60,FreeClimb_RootFromHold,high,asm: copies hold point 0 and subtracts 158.025 (double 0x85DFC8) from z; src/game/Climb.cpp:81
+0x5d3ba0,WallJump_FaceIsWall,high,asm: returns 0 for type-3 faces with byte +0xE flag 0x80 (type 5: +0x30 flag 0x10) else 1; src/game/WallJump.cpp:45
+0x63c9b0,HitMessage_Build,high,asm: allocates 0x80 bytes (0x5C0B10) and fills +0x30..+0x72 from args (+0x50 / +0x64); caller 0x5D3C90 sends it as message 0x11C (0x5B3750); src/game/Combat.hpp:55
+0x60ef50,Enemy_TryStartRagdoll,high,asm: fails when live count [0xE91FE0] >= 6; calls 0x4F1920 and appends to 0xE91FE4[]; src/game/ai/Enemy.cpp:1129
+0x617ee0,Enemy_DeathRagdollOnce,high,asm: thiscall ret 4; skips when +0x374 has 0x100 or 0x200; calls 0x60EF50 and sets 0x100; src/game/ai/Enemy.cpp:1129
+0x5db6a0,Rewards_Collect,high,asm: tests/sets bit n of [state+0x3ED90] and increments [state+0x3EE90] count; calls 0x5D5F80; src/game/Progress.hpp:86
+0x476d80,Text_DrawKeyHighlight,medium,asm: on control char 0x1B toggles the key colour (colour & 0xFF000000) + 0x7D6932 into 0x9CE6C0; src/ui/Ui.cpp:96 (whole-function role is text drawing [I])
+0x5e2950,AutoSplineCamera_UpdateFov,medium,asm: thiscall; three-way on +0x19C (1: lerp +0x190 with t = min(+0x194 / +0x198; 1); 2: via 0x5E26B0); src/game/Camera.cpp:40 (class from neighbouring AutoSplineCamera_Start 0x5E26F0 [I])
+0x5e2ca0,AutoSplineCamera_NotifyDone,medium,asm: thiscall; guarded by byte +0x1A0 (set after); CameraManager (0x5E7770) slot 20 call or 0x77A3D0 dispatch; src/game/Camera.cpp:220 (class [I] as above)

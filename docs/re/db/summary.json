@@ -3,18 +3,18 @@
  "function_bytes": 4005555,
  "edges": 43097,
  "status": {
-  "Library": 2375,
-  "Named-only": 567,
+  "Library": 2374,
+  "Named-only": 704,
   "Reimplemented-cited": 1321,
-  "Unknown": 14503
+  "Unknown": 14367
  },
  "status_bytes": {
-  "Library": 492039,
-  "Named-only": 188657,
+  "Library": 492013,
+  "Named-only": 258561,
   "Reimplemented-cited": 615926,
-  "Unknown": 2708933
+  "Unknown": 2639055
  },
- "nonlib_bytes": 3513516,
+ "nonlib_bytes": 3513542,
  "cited_bytes": 615926,
  "cited_pct_of_nonlib_bytes": 17.53,
  "library_families": {
@@ -28,7 +28,8 @@
   "fmod": 277078
  },
  "library_evidence": {
-  "address-run": 1435,
+  "address-run": 1431,
+  "fid-vsOlder": 4,
   "ghidra-analysis-name": 1,
   "ghidra-fid": 381,
   "imported-symbol": 1,
@@ -46,20 +47,20 @@
    "bytes": 72373
   },
   "formats": {
-   "functions": 127,
-   "bytes": 62592
+   "functions": 126,
+   "bytes": 62375
   },
   "script": {
    "functions": 227,
    "bytes": 41721
   },
   "render": {
-   "functions": 49,
-   "bytes": 29365
+   "functions": 47,
+   "bytes": 27995
   },
   "physics": {
-   "functions": 29,
-   "bytes": 22025
+   "functions": 27,
+   "bytes": 21585
   },
   "audio": {
    "functions": 53,
@@ -77,9 +78,9 @@
    "functions": 10,
    "bytes": 5222
   },
-  "locale": {
-   "functions": 10,
-   "bytes": 3430
+  "re": {
+   "functions": 9,
+   "bytes": 4261
   },
   "anim": {
    "functions": 5,
@@ -89,9 +90,9 @@
    "functions": 5,
    "bytes": 2476
   },
-  "cdc": {
-   "functions": 3,
-   "bytes": 745
+  "locale": {
+   "functions": 8,
+   "bytes": 1934
   },
   "video": {
    "functions": 1,
@@ -101,38 +102,38 @@
    "functions": 1,
    "bytes": 204
   },
-  "re": {
-   "functions": 1,
-   "bytes": 182
+  "cdc": {
+   "functions": 2,
+   "bytes": 189
   }
  },
- "citations": 6305,
- "citing_files": 213,
+ "citations": 7308,
+ "citing_files": 218,
  "citation_kinds": {
-  "data": 230,
-  "data_symbol": 46,
-  "func_entry": 5903,
-  "func_interior": 99,
-  "vftable": 27
+  "data": 280,
+  "data_symbol": 66,
+  "func_entry": 6751,
+  "func_interior": 173,
+  "vftable": 38
  },
  "distinct_addresses_by_kind": {
-  "data": 124,
+  "data": 152,
   "data_symbol": 23,
-  "func_entry": 1874,
-  "func_interior": 57,
-  "vftable": 24
+  "func_entry": 2012,
+  "func_interior": 127,
+  "vftable": 35
  },
  "citations_by_subsystem": {
   "game": 1294,
+  "docs/re": 1255,
   "docs/formats": 1204,
   "docs/gameplay": 1121,
   "script": 392,
-  "docs/re": 273,
   "tests": 222,
   "fx": 220,
   "formats": 219,
   "docs/roadmap": 214,
-  "docs/audit": 131,
+  "docs/audit": 149,
   "docs/research": 125,
   "audio": 111,
   "render": 108,
@@ -155,21 +156,24 @@
   "tests/replays": 5,
   "docs/underworld_chapter_gameplay_matrix": 5,
   "video": 3,
+  "tools/re": 3,
   "docs/selftest": 3,
   "tools/ghidra": 3,
   "save": 2,
   "config": 1,
   "tools/ou-audio": 1
  },
- "roots": 1308,
- "reachable_uncited": 7870,
- "reachable_uncited_bytes": 1543884,
+ "roots": 1302,
+ "reachable_uncited": 7822,
+ "reachable_uncited_bytes": 1489893,
+ "reachable_uncited_direct_only": 7740,
+ "reachable_uncited_direct_only_bytes": 1479235,
  "rtti_families": {
   "(global)": {
    "classes": 594,
    "slots": 2386,
    "cited": 86,
-   "named": 22
+   "named": 23
   },
   "cdc": {
    "classes": 290,
@@ -238,5 +242,200 @@
    "named": 0
   }
  },
- "applied_names": 191
+ "applied_names": 202,
+ "fid": {
+  "vsOlder_x86": {
+   "matched": 375,
+   "accepted": 370,
+   "status": {
+    "below_multi": 5,
+    "multi_diff": 14,
+    "single": 356
+   },
+   "also_ghidra_fid_bookmark": 366,
+   "libraries": {
+    "Visual Studio 2005 Release": 321,
+    "Visual Studio 2005 Debug": 18,
+    "Visual Studio 2003 Release": 13,
+    "Visual Studio 1998": 9,
+    "Visual Studio 2003 Debug": 8,
+    "Visual Studio 1998 Debug": 3,
+    "Visual Studio 2008 Release": 2,
+    "Visual Studio 2010 Release": 1
+   }
+  },
+  "vs2012_x86": {
+   "matched": 56,
+   "accepted": 50,
+   "status": {
+    "below_multi": 6,
+    "multi_diff": 1,
+    "single": 49
+   },
+   "also_ghidra_fid_bookmark": 49,
+   "libraries": {
+    "Visual Studio 2012 Debug": 41,
+    "Visual Studio 2012 Release": 15
+   }
+  },
+  "vs2012_only_accepted": [],
+  "address_run_before": 1435,
+  "address_run_before_by_family": {
+   "bfx": 390,
+   "crt": 259,
+   "fmod": 786
+  },
+  "address_run_confirmed": 4,
+  "address_run_contradicted": [],
+  "address_run_after": 1431,
+  "newly_library": 0,
+  "on_code_cited": [
+   "00814118"
+  ],
+  "on_named": [],
+  "applied_to_project": 0
+ },
+ "vcall": {
+  "vptr_call_sites": 9146,
+  "indirect_calls": 11556,
+  "origins": {
+   "field": 5497,
+   "merge": 945,
+   "globalptr": 785,
+   "this": 609,
+   "retof": 432,
+   "param": 349,
+   "clobbered": 175,
+   "other": 102,
+   "local": 101,
+   "entry_reg": 61,
+   "far": 61,
+   "subobj": 19,
+   "globalobj": 10
+  },
+  "resolved_sites": 644,
+  "resolved_sites_by_evidence": {
+   "getter": 72,
+   "global-object": 4,
+   "global-ptr-stores": 143,
+   "this-method": 333,
+   "this-method-poly": 92
+  },
+  "edges": 845,
+  "distinct_caller_callee": 710,
+  "callees_reached": 342,
+  "unresolved": {
+   "clobbered": 175,
+   "entry_reg": 61,
+   "far": 61,
+   "field": 5497,
+   "globalobj:no-class": 6,
+   "globalptr:no-class": 642,
+   "local": 101,
+   "merge": 945,
+   "other": 102,
+   "param": 349,
+   "retof:no-class": 360,
+   "subobj": 19,
+   "this:no-class": 184
+  }
+ },
+ "no_direct_caller_nonlib": 6306,
+ "no_direct_caller_breakdown": {
+  "dynamic_initialiser_run": 6,
+  "none_found": 2000,
+  "pointer_referenced": 760,
+  "vftable_slot": 3270,
+  "virtual_caller": 270
+ },
+ "calling_convention": {
+  "thiscall": 10034,
+  "cdecl": 6189,
+  "stdcall": 1957,
+  "noret": 312,
+  "thunk": 201,
+  "fastcall": 73
+ },
+ "cc_vs_ghidra": {
+  "cdecl->cdecl": 219,
+  "cdecl->fastcall": 3,
+  "cdecl->noret": 9,
+  "cdecl->thiscall": 9,
+  "cdecl->thunk": 4,
+  "fastcall->cdecl": 1,
+  "fastcall->fastcall": 2,
+  "fastcall->stdcall": 1,
+  "fastcall->thiscall": 1,
+  "stdcall->noret": 1,
+  "stdcall->stdcall": 3,
+  "stdcall->thunk": 3,
+  "thiscall->thiscall": 7
+ },
+ "ret_guess": {
+  "int": 6164,
+  "void": 5959,
+  "call": 4987,
+  "": 1107,
+  "float": 549
+ },
+ "confidence": {
+  "none": 8655,
+  "low": 7130,
+  "medium": 2959,
+  "high": 22
+ },
+ "with_switch": 464,
+ "with_this_offsets": 11950,
+ "with_strings": 1233,
+ "with_global_writes": 1762,
+ "module_deps": {
+  "ADVAPI32.DLL": {
+   "imports": 13,
+   "calling_functions": 17
+  },
+  "BINKW32.DLL": {
+   "imports": 12,
+   "calling_functions": 6
+  },
+  "COMCTL32.DLL": {
+   "imports": 1,
+   "calling_functions": 1
+  },
+  "GDI32.DLL": {
+   "imports": 1,
+   "calling_functions": 2
+  },
+  "KERNEL32.DLL": {
+   "imports": 127,
+   "calling_functions": 315
+  },
+  "MSACM32.DLL": {
+   "imports": 6,
+   "calling_functions": 2
+  },
+  "OLE32.DLL": {
+   "imports": 9,
+   "calling_functions": 18
+  },
+  "OLEAUT32.DLL": {
+   "imports": 2,
+   "calling_functions": 2
+  },
+  "SHELL32.DLL": {
+   "imports": 1,
+   "calling_functions": 1
+  },
+  "USER32.DLL": {
+   "imports": 55,
+   "calling_functions": 33
+  },
+  "WINMM.DLL": {
+   "imports": 21,
+   "calling_functions": 20
+  },
+  "WS2_32.DLL": {
+   "imports": 18,
+   "calling_functions": 8
+  }
+ }
 }

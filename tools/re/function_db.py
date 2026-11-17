@@ -2,18 +2,25 @@
 """Build the tru.exe function database: Ghidra exports joined with every tru.exe address the repo cites.
 
 Inputs (all read-only):
-  <work>/ghidra/exports/{rtti,strings}.tsv            tools/ghidra/analyze.sh exports
+  <work>/ghidra/exports/{rtti,strings,imports}.tsv    tools/ghidra/analyze.sh exports
   <work>/re-baseline/FunctionDb/{functions_full,edges,func_refs,data_symbols,blocks}.tsv
                                                        tools/ghidra/scripts/ExportGraph.java
+  <work>/re-baseline/FuncDetail/{detail,vcalls,vft_stores,string_xrefs,this_offsets,fid_*}.tsv
+                                                       tools/ghidra/scripts/ExportFunctionDetail.java (all)
   tools/ghidra/names/tru_gog.csv                       applied names
   git ls-files of src/ tests/ docs/ tools/ CHANGELOG.md  citations
 
 Outputs (docs/re/db/, deterministic, no decompiled code):
-  functions.tsv   one row per Ghidra function
-  citations.tsv   one row per (address, citing line)
-  priorities.tsv  uncited non-library functions reachable from cited game/render roots, ranked
-  rtti.tsv        RTTI class families with slot coverage
-  summary.json    counts used by docs/re/FUNCTION_DATABASE.md
+  functions.tsv      one row per Ghidra function (calling convention, frame, globals, strings, confidence, ...)
+  citations.tsv      one row per (address, citing line)
+  priorities.tsv     uncited non-library functions reachable from cited game/render roots, ranked
+  rtti.tsv           RTTI class families with slot coverage
+  vcall_edges.tsv    resolved virtual call sites (caller, site, class, slot, callee, evidence)
+  xrefs_summary.tsv  per function: direct/virtual callers and callees, vftable slots, pointer and data refs
+  string_refs.tsv    function -> referenced strings (<= 8 per function, values truncated)
+  module_deps.tsv    imported API -> calling functions and their subsystems
+  this_offsets.tsv   function -> offsets accessed on 'this' / first stack parameter ([INFERENCE])
+  summary.json       counts used by docs/re/FUNCTION_DATABASE.md
 
 Usage: tools/re/function_db.py [--work DIR] [--out DIR]
 """
@@ -41,6 +48,16 @@ TEXT_EXT = {".cpp", ".hpp", ".h", ".c", ".glsl", ".vert", ".frag", ".comp", ".te
             ".java", ".cmake", ".txt", ".md", ".json", ".csv", ".plan", ".in", ".yml", ".yaml", ".toml", ".lua"}
 CODE_EXT = {".cpp", ".hpp", ".h", ".c", ".glsl", ".vert", ".frag", ".comp", ".tesc", ".tese", ".geom", ".py", ".sh",
             ".java", ".cmake", ".txt", ".in", ".yml", ".yaml", ".toml", ".lua"}
+# FID signature databases queried one at a time (ExportFunctionDetail fid mode) -> library evidence label.
+# tru.exe was built with VS2005, so vsOlder is the primary set; vs2012 is the comparison set.
+FID_DBS = {"vsOlder_x86": "fid-vsOlder", "vs2012_x86": "fid-vs2012"}
+PURECALL = 0x813237  # __purecall (FID vsOlder single match, score 72.7): the abstract-slot stub, never a dispatch target
+# Citations checked at instruction level (objdump of tru.exe); see FUNCTION_DATABASE.md "Verification sample".
+VERIFIED = {0x5DA230, 0x5E0190, 0x597E90, 0x69DA80, 0x4EFB20, 0x57CE50, 0x6F1790, 0x7594C0, 0x5570F0, 0x6AD070,
+            0x473840,
+            # second pass (2026-11-16): camera, climbing, wall jump, combat, AI, save, UI
+            0x5E2950, 0x5E2CA0, 0x5D6F00, 0x707C60, 0x5D3BA0, 0x63C9B0, 0x5D9E50, 0x60EF50, 0x617EE0, 0x5DB6A0,
+            0x476D80}
 
 RE_HEX = re.compile(r"(?<![0-9A-Za-z_+])0x([0-9A-Fa-f]{6,8})(?![0-9A-Za-z_])")
 RE_GHIDRA = re.compile(r"\b(?:FUN|DAT|LAB|thunk_FUN|PTR_[A-Za-z_]*?|switchD)_([0-9A-Fa-f]{8})\b")
@@ -182,6 +199,27 @@ class Image:
                 if m:
                     self.func_strings[int(m.group(1), 16)].append(r["value"])
         self.str_sorted = sorted(self.strings)
+        self.imports = read_tsv(gdir / "imports.tsv")
+        ddir = work / "re-baseline" / "FuncDetail"
+        self.detail = {int(r["entry"], 16): r for r in read_tsv(ddir / "detail.tsv")}
+        self.vcalls = read_tsv(ddir / "vcalls.tsv")
+        self.vft_stores = collections.defaultdict(list)
+        for r in read_tsv(ddir / "vft_stores.tsv"):
+            e = int(r["entry"], 16) if r["entry"] != "-" else 0  # '-': code outside any Ghidra function
+            self.vft_stores[e].append((int(r["site"], 16), r["base"], int(r["disp"]), int(r["value"], 16)))
+        self.str_xrefs = collections.defaultdict(list)
+        for r in read_tsv(ddir / "string_xrefs.tsv"):
+            self.str_xrefs[int(r["entry"], 16)].append((int(r["string"], 16), int(r["sites"])))
+        self.this_offs = collections.defaultdict(list)
+        for r in read_tsv(ddir / "this_offsets.tsv"):
+            self.this_offs[int(r["entry"], 16)].append(r)
+        self.fid = {db: {int(r["entry"], 16): r for r in read_tsv(ddir / f"fid_{db}.tsv")} for db in FID_DBS}
+        self.ptr_stores = collections.defaultdict(list)  # global -> [(origin, detail)]
+        for r in read_tsv(ddir / "ptr_stores.tsv"):
+            self.ptr_stores[int(r["global"], 16)].append((r["origin"], r["detail"]))
+        self.obj_calls = collections.defaultdict(set)  # global object -> direct callees with ECX = object
+        for r in read_tsv(ddir / "obj_calls.tsv"):
+            self.obj_calls[int(r["object"], 16)].add(int(r["callee"], 16))
 
     def block(self, v: int):
         for lo, hi, name, rwx in self.blocks:
@@ -299,7 +337,16 @@ def harvest(img: Image) -> list[dict]:
     return cites
 
 
-def library_class(img: Image) -> dict[int, tuple[str, str]]:
+def fid_accepted(img: Image, e: int) -> tuple[str, dict] | None:
+    """(db, row) of the first FID database whose match Ghidra's FID analyzer would accept, else None."""
+    for db in FID_DBS:
+        r = img.fid[db].get(e)
+        if r is not None and r["status"] != "below_multi":
+            return db, r
+    return None
+
+
+def library_class(img: Image, use_fid: bool = True) -> dict[int, tuple[str, str]]:
     """entry -> (family, evidence) from direct evidence, then filled across same-family address runs."""
     lib: dict[int, tuple[str, str]] = {}
     crt_name = re.compile(r"^(_|`|FID_conflict:|operator|~type_info|type_info|exception|std::|Unwind@|Catch@|"
@@ -332,6 +379,13 @@ def library_class(img: Image) -> dict[int, tuple[str, str]]:
     for e, r in img.funcs.items():
         if e not in lib and r["name"].startswith("bfx_"):
             lib[e] = ("bfx", "name-pattern")
+    # Direct FID evidence (ExportFunctionDetail fid mode: each MSVC signature database queried alone). Both
+    # databases hold only Microsoft runtime/SDK libraries, so a match means family crt.
+    if use_fid:
+        for e in sorted(img.funcs):
+            m = fid_accepted(img, e)
+            if e not in lib and m is not None:
+                lib[e] = ("crt", FID_DBS[m[0]])
     # Fill: an unclassified function whose nearest classified neighbours on both sides (by address) share a family
     # and lie within 0x2000 bytes of each other belongs to that library's object-file run.
     entries = sorted(img.funcs)
@@ -347,6 +401,151 @@ def library_class(img: Image) -> dict[int, tuple[str, str]]:
                 filled[e] = (lib[a][0], "address-run")
     lib.update(filled)
     return lib
+
+
+def resolve_vcalls(img: Image) -> tuple[list[tuple], collections.Counter]:
+    """Resolve `call [vptr+N]` sites whose receiver class is provable from the instruction stream.
+
+    ExportFunctionDetail traces each site's object register back along straight-line code (no merge points) to:
+      store      an immediate vftable written into [obj+vptr_off] before the load (constructor in the same function)
+      retof      EAX returned by a direct call F: F's last vftable store into [this+vptr_off] (new + constructor),
+                 or F is a getter returning a global object (`mov eax, imm`) / global pointer (`mov eax, [g]`)
+      this       ECX at entry (or a callee-saved register written once from entry ECX); the function is a slot of
+                 classes C: the receiver's dynamic class is one of the classes whose vftable holds this function
+      globalobj  a static object at a fixed address
+      globalptr  an object pointer loaded from a global variable
+    A static object's class is the most derived class among the vftables stored into it (absolute immediate stores
+    and constructors/destructors called with ECX = its address: both only ever store classes of its own chain).
+    A global pointer resolves only when every direct store into it is resolvable (null stores ignored); its
+    classes are the union. Returns rows (caller, site, class, slot, callee, evidence, candidates) and counts of
+    unresolved origins."""
+    vt_by_class = collections.defaultdict(list)
+    bases_of = collections.defaultdict(set)
+    for vt, r in img.vftables.items():
+        vt_by_class[r["class"]].append((int(r["offset"]), vt, [int(s, 16) for s in filter(None, r["slots"].split(";"))]))
+        bases_of[r["class"]].update(filter(None, r["bases"].split(";")))
+    slot_of = collections.defaultdict(list)  # function -> (class, vftable offset in the object)
+    for vt, r in img.vftables.items():
+        for s in filter(None, r["slots"].split(";")):
+            slot_of[int(s, 16)].append((r["class"], int(r["offset"])))
+    ctor_vt = collections.defaultdict(dict)  # function -> {disp: last vftable stored into [this+disp]}
+    abs_vt = collections.defaultdict(set)  # absolute address -> vftables stored there
+    for e, stores in img.vft_stores.items():
+        for site, base, disp, val in sorted(stores):
+            if val not in img.vftables:
+                continue
+            if base == "this":
+                ctor_vt[e][disp] = val
+            elif base.startswith("abs:"):
+                abs_vt[int(base[4:], 16)].add(val)
+
+    def target(f):
+        r = img.funcs.get(f)
+        while r is not None and r["thunk"] == "1" and r["thunk_target"] and ":" not in r["thunk_target"]:
+            f = int(r["thunk_target"], 16)
+            r = img.funcs.get(f)
+        return f
+
+    def most_derived(vts):
+        classes = {img.vftables[v]["class"] for v in vts}
+        top = [c for c in classes if classes - {c} <= bases_of[c]]
+        return [min(v for v in vts if img.vftables[v]["class"] == top[0])] if len(top) == 1 else None
+
+    def global_obj(g, k):
+        vts = set(abs_vt.get(g + k, ()))
+        for callee in img.obj_calls.get(g, ()):
+            vt = ctor_vt.get(target(callee), {}).get(k)
+            if vt is not None:
+                vts.add(vt)
+        return most_derived(vts) if vts else None
+
+    def global_ptr(p, k, depth):
+        stores = img.ptr_stores.get(p, [])
+        out = set()
+        for origin, detail in stores:
+            if (origin == "imm" and int(detail, 16) == 0) or (origin == "other" and detail == "XOR"):
+                continue  # null store (XOR reg, reg clears the stored register)
+            got = obj_vts(origin, detail, k, depth + 1)
+            if got is None:
+                return None
+            out.update(got)
+        return sorted(out) if out else None
+
+    def getter(f, k, depth):
+        rv = img.detail.get(f, {}).get("ret_value", "")
+        if rv.startswith("imm:"):
+            return global_obj(int(rv[4:], 16), k)
+        if rv.startswith("load:"):
+            return global_ptr(int(rv[5:], 16), k, depth)
+        return None
+
+    def obj_vts(origin, detail, k, depth=0):
+        """vftables the object at this origin can carry at offset k, or None when not provable."""
+        if depth > 3:
+            return None
+        if origin == "store":
+            return [int(detail, 16)] if int(detail, 16) in img.vftables else None
+        if origin == "imm":
+            return global_obj(int(detail, 16), k)
+        if origin == "retof":
+            f = target(int(detail, 16))
+            vt = ctor_vt.get(f, {}).get(k)
+            return [vt] if vt is not None else getter(f, k, depth)
+        if origin == "globalobj":
+            return global_obj(int(detail, 16), k)
+        if origin == "globalptr":
+            return global_ptr(int(detail, 16), k, depth)
+        return None
+
+    evidence = {"store": "ctor-store", "globalobj": "global-object", "globalptr": "global-ptr-stores",
+                "this": "this-method"}
+    rows, unresolved = [], collections.Counter()
+    for v in img.vcalls:
+        caller, site, n, k = int(v["entry"], 16), int(v["site"], 16), int(v["slot_off"]) // 4, int(v["vptr_off"])
+        origin, detail = v["origin"], v["detail"]
+        cands = collections.defaultdict(set)
+        if origin == "this":
+            vts = []
+            for cls, off in slot_of.get(caller, ()):
+                vts += [vt for o2, vt, _ in vt_by_class[cls] if o2 == off + k]
+        elif origin in ("store", "retof", "globalobj", "globalptr"):
+            vts = obj_vts(origin, detail, k) or []
+        else:
+            unresolved[origin] += 1
+            continue
+        if origin == "retof":
+            f = target(int(detail, 16))
+            ev = "new-object" if k in ctor_vt.get(f, {}) else "getter"
+        else:
+            ev = evidence[origin]
+        for vt in vts:
+            slots = [int(s, 16) for s in filter(None, img.vftables[vt]["slots"].split(";"))]
+            if n < len(slots) and slots[n] in img.funcs:
+                cands[slots[n]].add(img.vftables[vt]["class"])
+        if len(cands) > 1:
+            cands.pop(PURECALL, None)  # an abstract class has no instances
+        if not cands or set(cands) == {PURECALL}:
+            unresolved[origin + ":no-class" if not cands else origin + ":pure"] += 1
+            continue
+        for callee in sorted(cands):
+            cl = sorted(cands[callee])
+            rows.append((caller, site, cl[0] + (f"|+{len(cl) - 1}" if len(cl) > 1 else ""), n, callee,
+                         ev if len(cands) == 1 else ev + "-poly", len(cands)))
+    return rows, unresolved
+
+
+def compact_offsets(rows: list[dict]) -> str:
+    """this_offsets rows of one function/base -> 'off:rw:sizes ...' (offsets hex)."""
+    out = []
+    for r in rows:
+        rw = ("r" if r["r"] != "0" else "") + ("w" if r["w"] != "0" else "")
+        out.append(f'{int(r["offset"], 16):x}:{rw or "-"}:{r["sizes"].replace(";", "/")}')
+    return " ".join(out)
+
+
+def clean_str(s: str, n: int) -> str:
+    s = re.sub(r"[\t\r\n\\]", " ", s)
+    return s[:n] + ("…" if len(s) > n else "")
 
 
 def main() -> int:
@@ -370,7 +569,19 @@ def main() -> int:
     for c in cites:
         if c["function"] is not None:
             by_func[c["function"]].append(c)
+    lib_nofid = library_class(img, use_fid=False)
     lib = library_class(img)
+    vrows, v_unresolved = resolve_vcalls(img)
+    vcallees, vcallers = collections.defaultdict(set), collections.defaultdict(set)
+    for caller, _site, _cls, _slot, callee, _ev, _n in vrows:
+        vcallees[caller].add(callee)
+        vcallers[callee].add(caller)
+    vslots = collections.defaultdict(list)  # function -> "Class#slot" (primary vftables only)
+    for vt in sorted(img.vftables):
+        r = img.vftables[vt]
+        for i, s in enumerate(filter(None, r["slots"].split(";"))):
+            if r["offset"] == "0":
+                vslots[int(s, 16)].append(f'{r["class"]}#{i}')
 
     rows = []
     status_of = {}
@@ -405,6 +616,13 @@ def main() -> int:
         status_of[e] = status
         sub_of[e] = subsystem
         cls = sorted(img.slot_class.get(e, ()))
+        d = img.detail.get(e, {})
+        ret_imm = [int(x) for x in filter(None, d.get("ret_imm", "").split(";"))]
+        purge = max(ret_imm) if ret_imm else -1
+        frame_params = int(d.get("frame_params") or 0)
+        stack_args = purge if purge > 0 else frame_params
+        fm = fid_accepted(img, e) or next(((db, img.fid[db][e]) for db in FID_DBS if e in img.fid[db]), None)
+        vs = sorted(set(vslots.get(e, ())))
         rows.append({
             "entry": hx(e), "size": r["_size"], "callers": len(img.callers.get(e, {})),
             "callees": len(img.callees.get(e, {})), "thunk": r["thunk"], "thunk_target": r["thunk_target"],
@@ -415,6 +633,16 @@ def main() -> int:
             "rtti_class": "|".join(cls[:3]) + ("|..." if len(cls) > 3 else ""),
             "library": f"{fam[0]}:{fam[1]}" if fam else "", "data_refs": img.refs.get(e, {}).get("data_refs", ""),
             "string_refs": img.refs.get(e, {}).get("string_refs", ""), "status": status,
+            "cc": d.get("own_cc", ""), "cc_ghidra": d.get("ghidra_cc", "").lstrip("_"), "ecx_first": d.get("ecx_first", ""),
+            "stack_args": stack_args if d.get("own_cc") != "thunk" else "", "params": stack_args // 4 if stack_args > 0 else 0,
+            "ret_imm": d.get("ret_imm", ""), "ret_guess": d.get("ret_guess", ""), "frame": d.get("frame_local", ""),
+            "g_reads": d.get("g_reads", ""), "g_writes": d.get("g_writes", ""), "g_addr": d.get("g_addr", ""),
+            "strings": d.get("strings", ""), "consts": d.get("consts", ""), "this_offsets": d.get("this_offsets", ""),
+            "switches": d.get("switches", ""), "switch_cases": d.get("switch_cases", ""), "icalls": d.get("icalls", ""),
+            "vcall_sites": d.get("vcall_sites", ""), "vcallers": len(vcallers.get(e, ())), "vcallees": len(vcallees.get(e, ())),
+            "vft_slots": "|".join(vs[:2]) + (f"|+{len(vs) - 2}" if len(vs) > 2 else ""),
+            "fid": f'{FID_DBS[fm[0]][4:]}:{fm[1]["status"]}:{clean_str(fm[1]["names"], 48)}' if fm else "",
+            "confidence": "",
         })
 
     # Inferred subsystem for uncited code: majority of cited neighbours (callers and callees).
@@ -426,6 +654,20 @@ def main() -> int:
                                     if sub_of.get(n))
         if votes:
             row["subsystem"] = "~" + votes.most_common(1)[0][0]
+    # Confidence in the repo role: high = cited and the citation verified at instruction level (VERIFIED);
+    # medium = cited, or library with direct evidence; low = heuristic only (uncited applied name, address-run
+    # library fill, one-hop area hint); none.
+    for row in rows:
+        e = int(row["entry"], 16)
+        fam = lib.get(e)
+        if by_func.get(e) and e in VERIFIED:
+            row["confidence"] = "high"
+        elif by_func.get(e) or (fam is not None and fam[1] != "address-run"):
+            row["confidence"] = "medium"
+        elif fam is not None or row["applied_name"] or row["subsystem"].startswith("~"):
+            row["confidence"] = "low"
+        else:
+            row["confidence"] = "none"
 
     args.out.mkdir(parents=True, exist_ok=True)
     cols = list(rows[0].keys())
@@ -452,23 +694,36 @@ def main() -> int:
         slots = [int(s, 16) for s in filter(None, r["slots"].split(";"))]
         for s in slots:
             vt_peers[s].update(slots)
-    q = collections.deque(sorted(roots))
-    while q:
-        a = q.popleft()
-        nxt = set(img.callees.get(a, {}))
-        if depth[a] == 0:
-            nxt |= vt_peers.get(a, set())
-        for b in sorted(nxt):
-            if b not in depth and b in img.funcs and status_of.get(b) != "Library":
-                depth[b] = depth[a] + 1
-                root_area[b] = root_area[a]
-                q.append(b)
+    def reach(use_virtual: bool) -> tuple[dict, dict]:
+        depth = {e: 0 for e in roots}
+        root_area = {e: sub_of[e] for e in roots}
+        q = collections.deque(sorted(roots))
+        while q:
+            a = q.popleft()
+            nxt = set(img.callees.get(a, {}))
+            if use_virtual:
+                nxt |= vcallees.get(a, set())
+            if depth[a] == 0:
+                nxt |= vt_peers.get(a, set())
+            for b in sorted(nxt):
+                if b not in depth and b in img.funcs and status_of.get(b) != "Library":
+                    depth[b] = depth[a] + 1
+                    root_area[b] = root_area[a]
+                    q.append(b)
+        return depth, root_area
+
+    def uncited(depth):
+        return [e for e, d in depth.items() if d and status_of[e] != "Library" and e not in by_func
+                and img.funcs[e]["thunk"] != "1"]
+
+    depth_direct, _ = reach(False)
+    reach_direct = uncited(depth_direct)
+    depth, root_area = reach(True)
     cand = []
-    for e, d in depth.items():
-        if d == 0 or status_of[e] == "Library" or e in by_func or img.funcs[e]["thunk"] == "1":
-            continue
+    for e in uncited(depth):
+        d = depth[e]
         size = img.funcs[e]["_size"]
-        fanin = len(img.callers.get(e, {}))
+        fanin = len(img.callers.get(e, {})) + len(vcallers.get(e, ()))
         score = size * math.sqrt(1 + fanin) / (1 + 0.25 * (d - 1))
         cand.append((round(score, 1), e, size, fanin, d))
     cand.sort(key=lambda x: (-x[0], x[1]))
@@ -507,6 +762,103 @@ def main() -> int:
         f.write("class\tvftable\tslots\tslots_cited\tvftable_cited\tbases\n")
         for c in sorted(cls_rows):
             f.write("\t".join(map(str, c)) + "\n")
+
+    # Virtual call edges and per-function cross-reference summary.
+    with (args.out / "vcall_edges.tsv").open("w", encoding="utf-8", newline="") as f:
+        f.write("caller\tsite\tclass\tslot\tcallee\tevidence\tcandidates\n")
+        for caller, site, cls, slot, callee, ev, n in sorted(vrows):
+            f.write(f"{hx(caller)}\t{hx(site)}\t{cls}\t{slot}\t{hx(callee)}\t{ev}\t{n}\n")
+    site_ev = {}
+    for caller, site, _c, _s, _callee, ev, _n in vrows:
+        site_ev[site] = ev
+    vt_count = collections.Counter()
+    for vt, r in img.vftables.items():
+        for s in set(filter(None, r["slots"].split(";"))):
+            vt_count[int(s, 16)] += 1
+    with (args.out / "xrefs_summary.tsv").open("w", encoding="utf-8", newline="") as f:
+        f.write("entry\tcallers\tcallees\tvcallers\tvcallees\tvftables\tptr_refs_to\tdata_refs\tg_reads\tg_writes\tstrings\n")
+        for e in sorted(img.funcs):
+            d, rf = img.detail.get(e, {}), img.refs.get(e, {})
+            f.write(f'{hx(e)}\t{len(img.callers.get(e, {}))}\t{len(img.callees.get(e, {}))}\t{len(vcallers.get(e, ()))}\t'
+                    f'{len(vcallees.get(e, ()))}\t{vt_count.get(e, 0)}\t{rf.get("ptr_refs_to", "")}\t{rf.get("data_refs", "")}\t'
+                    f'{d.get("g_reads", "")}\t{d.get("g_writes", "")}\t{d.get("strings", "")}\n')
+    with (args.out / "string_refs.tsv").open("w", encoding="utf-8", newline="") as f:
+        f.write("entry\tstring\tsites\tvalue\n")
+        for e in sorted(img.str_xrefs):
+            for a, sites in sorted(img.str_xrefs[e])[:8]:
+                f.write(f"{hx(e)}\t{hx(a)}\t{sites}\t{clean_str(img.strings.get(a, ''), 60)}\n")
+    # Imported APIs -> calling functions (direct references plus callers of the import's thunk functions).
+    dll_stats = collections.defaultdict(lambda: {"imports": 0, "callers": set()})
+    with (args.out / "module_deps.tsv").open("w", encoding="utf-8", newline="") as f:
+        f.write("dll\timport\tcallers\tsubsystems\tcaller_entries\n")
+        for r in sorted(img.imports, key=lambda x: (x["library"].upper(), x["name"])):
+            thunks = {int(t, 16) for t in re.findall(r"[0-9a-fA-F]{8}", r["thunks"])}
+            callers = set()
+            for fe in filter(None, r["functions"].split(";")):
+                m = re.search(r"@([0-9a-fA-F]{8})$", fe)
+                if m and int(m.group(1), 16) in img.funcs and int(m.group(1), 16) not in thunks:
+                    callers.add(int(m.group(1), 16))
+            for t in thunks:
+                callers |= set(img.callers.get(t, {}))
+            subs = collections.Counter()
+            for c in callers:
+                fam = lib.get(c)
+                subs[f"lib:{fam[0]}" if status_of[c] == "Library" and fam else (sub_of[c] or "?")] += 1
+            dll = r["library"].upper()
+            dll_stats[dll]["imports"] += 1
+            dll_stats[dll]["callers"] |= callers
+            f.write(f'{dll}\t{r["name"]}\t{len(callers)}\t'
+                    f'{";".join(f"{k}:{v}" for k, v in sorted(subs.items(), key=lambda x: (-x[1], x[0])))}\t'
+                    f'{";".join(hx(c) for c in sorted(callers)[:8])}{";..." if len(callers) > 8 else ""}\n')
+    with (args.out / "this_offsets.tsv").open("w", encoding="utf-8", newline="") as f:
+        f.write("entry\tbase\tcount\toffsets\n")
+        for e in sorted(img.this_offs):
+            by_base = collections.defaultdict(list)
+            for r in img.this_offs[e]:
+                by_base[r["base"]].append(r)
+            for b in sorted(by_base):
+                f.write(f"{hx(e)}\t{b}\t{len(by_base[b])}\t{compact_offsets(by_base[b])}\n")
+
+    # Functions without a direct caller: what reaches them instead.
+    no_direct = [e for e in sorted(img.funcs) if status_of[e] != "Library" and not img.callers.get(e)]
+    why = collections.Counter()
+    for e in no_direct:
+        if vcallers.get(e):
+            why["virtual_caller"] += 1
+        elif e in img.slot_class:
+            why["vftable_slot"] += 1
+        elif int(img.refs.get(e, {}).get("ptr_refs_to") or 0) > 0:
+            why["pointer_referenced"] += 1
+        elif 0x830000 <= e < 0x83E000:
+            why["dynamic_initialiser_run"] += 1
+        else:
+            why["none_found"] += 1
+    # FID: confirmation of the address-run fill and conflicts with repo/analyst names.
+    fid_stats = {}
+    for db in FID_DBS:
+        rows_db = img.fid[db]
+        acc = [e for e, r in rows_db.items() if r["status"] != "below_multi" and e in img.funcs]
+        fid_stats[db] = {
+            "matched": len(rows_db), "accepted": len(acc),
+            "status": dict(sorted(collections.Counter(r["status"] for r in rows_db.values()).items())),
+            "also_ghidra_fid_bookmark": sum(1 for e in acc if img.funcs[e]["fid"] == "1"),
+            "libraries": dict(collections.Counter(r["libraries"].split("|")[0] for r in rows_db.values()).most_common(8)),
+        }
+    acc_any = {e for e in img.funcs if fid_accepted(img, e)}
+    old_run = {e: v[0] for e, v in lib_nofid.items() if v[1] == "address-run"}
+    fid_stats["vs2012_only_accepted"] = sorted(hx(e) for e in acc_any
+                                               if not (e in img.fid["vsOlder_x86"] and img.fid["vsOlder_x86"][e]["status"] != "below_multi"))
+    fid_stats["address_run_before"] = len(old_run)
+    fid_stats["address_run_before_by_family"] = dict(sorted(collections.Counter(old_run.values()).items()))
+    fid_stats["address_run_confirmed"] = sum(1 for e, fam in old_run.items() if e in acc_any and fam == "crt")
+    fid_stats["address_run_contradicted"] = sorted(f"{hx(e)}:{fam}" for e, fam in old_run.items() if e in acc_any and fam != "crt")
+    fid_stats["address_run_after"] = sum(1 for v in lib.values() if v[1] == "address-run")
+    fid_stats["newly_library"] = sum(1 for e in acc_any if e not in lib_nofid)
+    fid_stats["on_code_cited"] = sorted(hx(e) for e in acc_any if any(c["path"].startswith(("src/", "tests/"))
+                                                                       for c in by_func.get(e, ())))
+    fid_stats["on_named"] = sorted(f'{hx(e)}:{applied[e][0] if e in applied else img.funcs[e]["name"]}' for e in acc_any
+                                   if e in applied or img.funcs[e]["source"] == "USER_DEFINED")
+    fid_stats["applied_to_project"] = 0  # FID names are recorded in functions.tsv `fid`, never applied as names
 
     # Summary numbers.
     st = collections.Counter(r["status"] for r in rows)
@@ -547,8 +899,30 @@ def main() -> int:
         "distinct_addresses_by_kind": dict(sorted(addr_kinds.items())),
         "citations_by_subsystem": dict(cite_sub.most_common()),
         "roots": len(roots), "reachable_uncited": reach_uncited, "reachable_uncited_bytes": reach_uncited_bytes,
+        "reachable_uncited_direct_only": len(reach_direct),
+        "reachable_uncited_direct_only_bytes": sum(img.funcs[e]["_size"] for e in reach_direct),
         "rtti_families": dict(sorted(families.items(), key=lambda x: -x[1]["classes"])),
         "applied_names": len(applied),
+        "fid": fid_stats,
+        "vcall": {
+            "vptr_call_sites": len(img.vcalls), "indirect_calls": sum(int(d["icalls"] or 0) for d in img.detail.values()),
+            "origins": dict(collections.Counter(v["origin"] for v in img.vcalls).most_common()),
+            "resolved_sites": len(site_ev), "resolved_sites_by_evidence": dict(sorted(collections.Counter(site_ev.values()).items())),
+            "edges": len(vrows), "distinct_caller_callee": sum(len(v) for v in vcallees.values()),
+            "callees_reached": len(vcallers), "unresolved": dict(sorted(v_unresolved.items())),
+        },
+        "no_direct_caller_nonlib": len(no_direct), "no_direct_caller_breakdown": dict(sorted(why.items())),
+        "calling_convention": dict(collections.Counter(r["cc"] for r in rows).most_common()),
+        "cc_vs_ghidra": dict(sorted(collections.Counter(f'{r["cc_ghidra"]}->{r["cc"]}' for r in rows
+                                                        if r["cc_ghidra"] not in ("unknown", "")).items())),
+        "ret_guess": dict(collections.Counter(r["ret_guess"] for r in rows).most_common()),
+        "confidence": dict(collections.Counter(r["confidence"] for r in rows).most_common()),
+        "with_switch": sum(1 for r in rows if r["switches"] not in ("", "0")),
+        "with_this_offsets": sum(1 for r in rows if r["this_offsets"] not in ("", "0")),
+        "with_strings": sum(1 for r in rows if r["strings"] not in ("", "0")),
+        "with_global_writes": sum(1 for r in rows if r["g_writes"] not in ("", "0")),
+        "module_deps": {k: {"imports": v["imports"], "calling_functions": len(v["callers"])}
+                        for k, v in sorted(dll_stats.items())},
     }
     (args.out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     print(json.dumps({k: summary[k] for k in ("functions", "status", "cited_pct_of_nonlib_bytes", "citations",
