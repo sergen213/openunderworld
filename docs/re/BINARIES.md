@@ -277,10 +277,11 @@ Delphi linker 2.25; sections `.text .itext .data .bss .idata .tls .rdata .reloc 
 
 ### 5.1 Header oddities: `VLV` block and detached Eidos signature [OBS]
 
-- File offsets 0x40–0xCB, where the DOS stub, the "This program cannot be run in DOS mode" text
+- File offsets 0x40–0xCF, where the DOS stub, the "This program cannot be run in DOS mode" text
   and a Rich header would normally sit, hold `56 4C 56 00` ("VLV\0"), u32 1, u32 0x00674000,
-  then 128 high-entropy bytes. `e_lfanew` = 0x100. This is why EXECUTABLE.md found no `Rich`
-  marker. The layout (`VLV`, version, signed size, RSA-1024 signature) matches Valve's Steam
+  then 132 high-entropy bytes (0x4C–0xCF; zeros follow up to `e_lfanew` = 0x100). This is why
+  EXECUTABLE.md found no `Rich` marker. The layout (`VLV`, version, signed size, ~128-byte RSA
+  signature) matches Valve's Steam
   executable signature block [INF]. The recorded size 0x674000 is 0x54000 bytes larger than the
   file (0x620000) [OBS]. That is consistent with the GOG exe deriving from a Steam build signed
   before a section, such as a SteamStub `.bind`, was removed [INF]. There are no Steam strings,
@@ -387,7 +388,7 @@ These counts agree with CONTAINERS.md §1–2 and VIDEO.md.
 | Document | Claim | Correction |
 |---|---|---|
 | RESEARCH.md §1.1 | PE TimeDateStamp "2008-12-16 **12:31:02 UTC**" | 0x4947E5D6 = **17:31:02 UTC** (12:31 is US Eastern). EXECUTABLE.md has it right |
-| EXECUTABLE.md | Rich header "none recognised (bytes at 0x80..0xD8 are non-zero but no `Rich` marker) [?]" | The region 0x40–0xCB is a `VLV` signature block (§5.1). The Rich header was overwritten |
+| EXECUTABLE.md | Rich header "none recognised (bytes at 0x80..0xD8 are non-zero but no `Rich` marker) [?]" | The region 0x40–0xCF is a `VLV` signature block (§5.1). The Rich header was overwritten |
 | RESEARCH.md §1.2 | binkw32 "contains RAD sections (`RADCODE`/`RADDATA`)", "[I] that the original Bink code is embedded" | The loader has no RAD sections. Four RAD binkw32 builds (1.8r, 1.9u, 1.99w, 1.994i) are embedded as RCDATA 105–108 [OBS]. Its resources show `wndmode.dll` and a `vorbisfile.dll` stub but no separate d3d8to9 resource (it may be compiled into the code; not checked) |
 | RESEARCH.md §1.2 | DEPHook "[I] it passes 0" | Observed in assembly: `push 0; call SetProcessDEPPolicy` on `DLL_PROCESS_ATTACH` |
 | RESEARCH.md §1.2 | (implicit) wrappers are community additions | All of them are in GOG's own hashdb with matching MD5s (§2) |
