@@ -395,7 +395,9 @@ vec3 Player::slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) c
 }
 
 // tru.exe 0x5DCE20 on the face under her root [O]: with L = cos(player data +0x100E = 52 deg), U = cos(+0x100C =
-// 28 deg) and the face's client flags (terrain +0x0E through 0x5D3AF0): a slide-flagged face with L <= nz <= U is a
+// 28 deg; the check's slope limit, word 3 of its query record from 0x5C0CA0 = Lara +0x644, set at 0x71B550 / 0x720170,
+// read as [edi+0xC] at 0x5DD3A2 / 0x5DD4E8 / 0x5DD56C) and the face's client flags (terrain +0x0E through 0x5D3AF0): a
+// slide-flagged face with L <= nz <= U and nz < 1 is a
 // slope slide (message 0x1CA; Lara +0x11D0 = kind, +0x11CF, the chart's PSCCF_OnSlopeSlide); any face with 0 < nz < L
 // is too steep (message 0x1C9) unless flagged 0x0020 (never tested, when not slide-flagged) or 0x0100 (stood on).
 // [U] object faces (their flags come from the object: masks 0xA00 / 0x400 / 0x20): taken as unflagged.
@@ -1535,10 +1537,21 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
         const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
         constexpr float side = kLedgeSide;
         const auto cone = [&](float c) { return glm::length(toHit) <= 1e-3f || glm::dot(glm::normalize(toHit), q.dir) >= std::cos(c); };
+        // MUD 0x40000000 (0x6FC6B0): the 2-D dot of the way in with the ledge's outward normal against 0.2618 (0x855314),
+        // loosened to 0.5236 (0x85DBF4) when the ledge itself moves: the length of the candidate's +0x80 (the velocity
+        // at the attach point of the markup's owner, 0x6F6C50 -> 0x6EC930 -> 0x5D75B0, units per 30 Hz frame) above
+        // 3.1605 (0x6FCAD2..0x6FCAE4). Ours: Markup::velocity interpolated to the hit, x 1/30 s.
+        const auto ledgeSpeed = [&] {
+            if (m.velocity.size() != m.points.size()) return 0.0f;
+            const vec3 a = m.points[size_t(si)], ab = m.points[size_t(si) + 1] - a;
+            const float ll = glm::dot(ab, ab), u = ll > 1e-6f ? std::clamp(glm::dot(h - a, ab) / ll, 0.0f, 1.0f) : 0.0f;
+            return glm::length(glm::mix(m.velocity[size_t(si)], m.velocity[size_t(si) + 1], u));
+        };
         const auto wallSide = [&] {
             vec2 motion = xy(q.v);
             if (glm::length(motion) < 1e-3f) motion = glm::length(toHit) > 1e-3f ? toHit : q.dir;
-            return glm::dot(glm::normalize(motion), n * side) <= 0.2617994f;
+            const float limit = ledgeSpeed() > 3.1605f * 30.0f ? 0.5235988f : 0.2617994f;
+            return glm::dot(glm::normalize(motion), n * side) <= limit;
         };
         if (record.empty()) { // the default checks (0x70EC60)
             if (t <= q.minT || !capsule(arcAt(q.start, t), h) || !cone(q.cone) ||

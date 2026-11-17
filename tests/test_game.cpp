@@ -2020,12 +2020,15 @@ vec3 onRamp(float nz, float x, float run = 3000) { return {x, 0, (run - x) * std
 // tru.exe's ground check 0x5DCE20: too steep under cos 52 deg = 0.6157 (unless flagged 0x20 / 0x100), slide-flagged
 // faces (0x04 / 0x40) slid from cos 52 to cos 28 deg = 0.8829. Wine, l2_junglehub: stands on 0x0080 faces of normal z
 // 0.626..0.716 and on 0x0000 0.763, slides on 0x0004 faces of 0.753.
+// The 28-degree bound is the check's own (VERIFICATION.md V002 corrected): its slope limit is word 3 of the query record
+// 0x5C0CA0 builds (0x71BB6D..0x71BB9B, Lara +0x644 = cos(player data +0x100C), set at 0x71B550 / 0x720170), read as
+// [edi+0xC] at 0x5DD3A2 / 0x5DD45F / 0x5DD4E8 / 0x5DD56C: a flagged face flatter than 28 degrees (20: 0.9397) is ground.
 TEST(Game, SlopeStandsOrSlidesByFlagAndAngle) {
     struct Row { float nz; uint16_t flags; bool slides; };
     for (const Row r : {Row{0.626f, 0x0080, false}, {0.63f, 0x0000, false}, {0.716f, 0x0080, false}, {0.60f, 0x0000, true}, {0.60f, 0x0080, true},
                         {0.45f, 0x0080, true}, {0.63f, 0x0004, true}, {0.753f, 0x0004, true}, {0.87f, 0x0004, true}, {0.753f, 0x0040, true},
                         {0.90f, 0x0004, false}, {0.974f, 0x0004, false}, {0.50f, 0x00A0, false}, {0.50f, 0x01A0, false}, {0.50f, 0x0100, false},
-                        {0.50f, 0x0024, true}, {0.50f, 0x0104, false}, {0.753f, 0x0124, true}}) {
+                        {0.50f, 0x0024, true}, {0.50f, 0x0104, false}, {0.753f, 0x0124, true}, {0.9397f, 0x0004, false}, {0.9397f, 0x0040, false}}) {
         auto w = makeWorld(rampMesh(r.nz, r.flags), onRamp(r.nz, 600));
         const auto& s = w->player().state();
         bool slid = false;
@@ -9604,6 +9607,40 @@ TEST(Game, MovingMarkupJumpOffInheritsVelocity) {
     const vec3 still = leap(vec3(0)), moving = leap({0, 300, 0});
     EXPECT_GT(glm::length(still), 100.0f) << "the leap's own velocity";
     EXPECT_LT(glm::length((moving - still) - vec3(0, 300, 0)), 1.0f) << "plus the slider's";
+}
+
+// tru.exe 0x6FC6B0 (MUD 0x40000000, the class test 21): the way in, flattened, against the ledge's outward normal, dot
+// at most 0.2618, or 0.5236 when the ledge's owner moves at the attach point faster than 3.1605 units per 30 Hz frame
+// (candidate +0x80, 0x6FCAD2..0x6FCAE4). A standing jump (q2: straight up, so the way in is the way to the hit) from
+// behind the line past the ledge's end: at a dot of 0.41 / 0.31 a still ledge is refused and one sliding along its
+// line at 105 units/s caught, one at 85 (2.8 a frame) refused; 0.21 is caught still, 0.67 refused moving.
+TEST(Game, MovingLedgeLoosensWallSideLimit) {
+    const auto caught = [&](float deg, float speed) {
+        CollisionMesh m;
+        addFloor(m, -6000, -6000, 6000, 6000, 0);
+        const float a = glm::radians(deg);
+        const vec3 e(0, 800 - 79, 0), start = e - 200.0f * vec3(std::cos(a), -std::sin(a), 0); // e: the end less the inset
+        auto w = makeWorld(std::move(m), start, std::atan2(e.y - start.y, e.x - start.x));
+        // hangs toward +x (right of +y); 830 over the floor: q2's leap
+        w->script().addObject(markupObject(*w, "mm_slider", 9001, {0, 0, 0}, {1, 7, {{0, -800, 830}, {0, 800, 830}}}), false);
+        const auto& s = w->player().state();
+        Actions jump;
+        jump.jump = true;
+        float y = 0;
+        for (int i = 0; i < 150 && s.state != State::Hang; ++i) {
+            if (i >= 14 && i <= 20) y += speed * float(game::kTickSeconds); // sliding along its line while she jumps
+            w->script().setBody(9001, glm::translate(glm::mat4(1), vec3(0, y, 0)));
+            w->tick(i == 20 ? jump : Actions{});
+        }
+        return s.state == State::Hang || s.state == State::HangJump;
+    };
+    EXPECT_FALSE(caught(66, 0)) << "dot 0.41, still";
+    EXPECT_TRUE(caught(66, 105)) << "dot 0.41, moving";
+    EXPECT_FALSE(caught(66, 85)) << "dot 0.41, under 3.1605 a frame";
+    EXPECT_FALSE(caught(72, 0)) << "dot 0.31, still";
+    EXPECT_TRUE(caught(72, 105)) << "dot 0.31, moving";
+    EXPECT_TRUE(caught(78, 0)) << "dot 0.21";
+    EXPECT_FALSE(caught(48, 105)) << "dot 0.67, over the loosened limit too";
 }
 
 // A pole on a hinge: the object turns about a vertical axis 1000 from the pole; hanging, she swings round with it and
