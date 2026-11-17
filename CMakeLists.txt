@@ -279,12 +279,13 @@ if(OU_BUILD_TESTS)
   set(_d ${CMAKE_CURRENT_BINARY_DIR})
   add_test(NAME viewer_vulkan_matches_gl
            COMMAND sh -ec "\"${_v}\" --renderer opengl --preset original --no-overlay --frames 3 --screenshot ${_d}/cmp_gl.ppm; \"${_v}\" --renderer vulkan --preset original --no-overlay --frames 3 --screenshot ${_d}/cmp_vk.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl.ppm ${_d}/cmp_vk.ppm 2")
-  # Same with the Enhanced preset (4x MSAA + sun shadow map) plus FXAA and HDR tonemap; RT off (GL can't trace).
+  # Same with the Enhanced preset (4x MSAA + sun shadow map) plus FXAA and HDR tonemap; RT off (GL can't trace), AO off
+  # (each backend's AO accumulates temporally; 3 frames compare the backends, not AO convergence).
   add_test(NAME viewer_vulkan_matches_gl_enhanced
-           COMMAND sh -ec "\"${_v}\" --renderer opengl --no-overlay --frames 3 --preset enhanced --rt off --fxaa on --hdr on --screenshot ${_d}/cmp_gl_enh.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --preset enhanced --rt off --fxaa on --hdr on --screenshot ${_d}/cmp_vk_enh.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl_enh.ppm ${_d}/cmp_vk_enh.ppm 2")
+           COMMAND sh -ec "\"${_v}\" --renderer opengl --no-overlay --frames 3 --preset enhanced --rt off --ao off --fxaa on --hdr on --screenshot ${_d}/cmp_gl_enh.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --preset enhanced --rt off --ao off --fxaa on --hdr on --screenshot ${_d}/cmp_vk_enh.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl_enh.ppm ${_d}/cmp_vk_enh.ppm 2")
   # The optional AgX tone mapping (shaders/tonemap.glsl) matches between the backends too.
   add_test(NAME viewer_vulkan_matches_gl_agx
-           COMMAND sh -ec "\"${_v}\" --renderer opengl --no-overlay --frames 3 --tonemap agx --screenshot ${_d}/cmp_gl_agx.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --tonemap agx --screenshot ${_d}/cmp_vk_agx.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl_agx.ppm ${_d}/cmp_vk_agx.ppm 2")
+           COMMAND sh -ec "\"${_v}\" --renderer opengl --no-overlay --frames 3 --ao off --tonemap agx --screenshot ${_d}/cmp_gl_agx.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --ao off --tonemap agx --screenshot ${_d}/cmp_vk_agx.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl_agx.ppm ${_d}/cmp_vk_agx.ppm 2")
   add_executable(ou_vk_tests tests/test_vk_renderer.cpp)
   target_link_libraries(ou_vk_tests PRIVATE ou_render_vk ou_placeholder GTest::gtest_main)
   # Mesa RADV leaks 256 bytes per process (see tests/lsan_vulkan.supp).
