@@ -2488,6 +2488,64 @@ TEST(ProgressionReal, CalendarPushHandlesTurnTheRing) {
     for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 6506) << key.second;
 }
 
+// ca_uo_calendar_b 5477 (OU-PZL-007, docs/re/PUZZLE_BLOCKERS.md): once Lara has set the jaguar head 6499 on section 5
+// (state 4, which lifts hinge j2's limit), the jaguar handle is section 1's push / pull record (set 528 at the jaguar
+// head). Gripped (0x158 -> trigger 20 / kind 1: 3 -> 1), the stick turns the ring (j2, which carries the handle bar
+// through fixed joint 6) and j4 with it (link j8 = 0.667 j2); letting go (0x14F -> trigger 21) locks it and the section
+// waits again. Section 0's lever (record 540, east of the ring) is locked in the data: no transition out of state 2.
+TEST(ProgressionReal, CalendarBJaguarHandleTurnsTheRing) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_ballcourt");
+    auto& w = *wp;
+    const auto* mask = w.script().find(6499);
+    const auto* cal = w.script().find(5477);
+    ASSERT_TRUE(mask && cal && w.uberState(5477));
+    for (int i = 0; i < 5; ++i) w.tick({});
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *mask, 4), [&] { return carries(w, 6499); })) << "she takes the jaguar head";
+    bool inserted = false;
+    for (int k = 0; k < 8 && !inserted; ++k) {
+        auto spots = uberEngageSpots(bf, w, *cal, 5, 5, 40);
+        spots.resize(std::min<size_t>(spots.size(), 5));
+        inserted = interactFrom(w, spots, [&] { return w.insertedIn(6499) == 5477; });
+    }
+    ASSERT_TRUE(inserted) << "the head sits on the jaguar";
+    for (int i = 0; i < 300; ++i) w.tick({});
+    ASSERT_EQ((*w.uberState(5477))[5], 5u) << "3 -> 4 (the insert) -> 5";
+    ASSERT_EQ((*w.uberState(5477))[1], 3u) << "the handle waits";
+    const auto spots = uberEngageSpots(bf, w, *cal, 1, 1, 40);
+    ASSERT_FALSE(spots.empty());
+    EXPECT_LT(glm::distance(vec2(spots.front().first), vec2(3975, 10908)), 100.0f) << "at the jaguar head";
+    game::Actions grip;
+    grip.interact = true;
+    bool gripped = false;
+    for (const auto& [at, yaw] : spots) {
+        place(w, at, yaw);
+        for (int i = 0; i < 20; ++i) w.tick({});
+        if (w.player().state().state != game::State::Idle) continue;
+        w.tick(grip), w.tick(grip);
+        if ((*w.uberState(5477))[1] == 1) { gripped = true; break; }
+        w.tick({}), w.tick({});
+    }
+    ASSERT_TRUE(gripped) << "0x158: trigger 20 / kind 1";
+    const auto* ring = w.uberJoint(5477, 2);
+    ASSERT_TRUE(ring && ring->hinge);
+    const float before = ring->x;
+    game::Actions push = grip;
+    push.move = {0, 1};
+    for (int i = 0; i < 240; ++i) w.tick(push);
+    const float turned = w.uberJoint(5477, 2)->x - before;
+    EXPECT_LT(turned, -0.2f) << "the ring turns (negative for the forward push)";
+    ASSERT_TRUE(w.uberJoint(5477, 4));
+    EXPECT_NEAR(w.uberJoint(5477, 4)->x, 0.667f * w.uberJoint(5477, 2)->x, 0.05f) << "link j8";
+    w.tick({});
+    const uint32_t after = (*w.uberState(5477))[1];
+    EXPECT_TRUE(after == 5 || after == 4 || after == 0xFFFFFFFFu) << "0x14F: trigger 21 / kind 1 -> " << after;
+    for (int i = 0; i < 180; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(5477))[1], 3u) << "back to waiting";
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 5477) << key.second;
+}
+
 namespace {
 struct ThorCase {
     const char* unit;
