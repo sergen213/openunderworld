@@ -39,7 +39,8 @@ shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the o
 | Sun shadows | off | cascaded shadow map ("Sun shadows" below), or rays (`rt`) | `--shadows on/off`, `graphics.shadows` |
 | FXAA | off | off (optional) | `--fxaa on/off`, `graphics.fxaa` |
 | HDR | off | off: the original shaders write LDR gamma-space colour; the ACES tonemap (RGBA16F target) only compresses it | `--hdr on/off`, `graphics.hdr` |
-| Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `--rt-ao/--rt-gi on/off` (unset = on with `full`), `graphics.rt`, `graphics.rt_quality`, `graphics.rt_ao`, `graphics.rt_gi` |
+| Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `--rt-gi on/off` (unset = on with `full`), `graphics.rt`, `graphics.rt_quality`, `graphics.rt_gi` |
+| Ambient occlusion | off | `auto` = CORTAO ("Ambient occlusion" below) | `--ao auto/off/cortao/rt`, `--ao-quality low/medium/high/ultra`, `graphics.ao`, `graphics.ao_quality` |
 | Tone mapping | original | original (optional `agx`, "Tone mapping" below) | `--tonemap original/agx`, `graphics.tonemap` |
 | Water | TRU's own water shaders | enhanced water ("Water" below): waves, refraction, SSR, ripples, splashes, caustics under water (the under-water look itself is in both) | `--water original/enhanced`, `graphics.water` |
 | Brightness | 1.0 | 1.0 | `--brightness 0.5-2.0`, `graphics.brightness` |
@@ -162,7 +163,7 @@ Known limits (deliberate):
 
 `--rt shadows` traces the sun shadow; `--rt full` also traces water reflections (`--rt-reflections on|off`,
 `graphics.rt_reflections`; `FrameOptions::rtReflections`), local-light shadows (`--rt-lights`) and ray-traced AO and sun
-bounce ("RT AO / GI" below; `--rt-ao` / `--rt-gi on|off`). Each override wins over the mode, also with `shadows`. Needs `--preset
+bounce ("RT AO / GI" below; `--ao rt`, `--rt-gi on|off`). Each override wins over the mode, also with `shadows`. Needs `--preset
 enhanced` (`config::resolve` rejects RT with `original`); default `auto` = shadows. Works inside the original
 translated shaders ("Sun shadows": the traced visibility scales c212) and the generic ones alike. `--rt-quality low|medium|high`
 = 1 / 2 / 4 shadow rays per pixel. The overlay line `RT ...` shows the mode, whether rays are
@@ -204,7 +205,7 @@ Cost scales with rays per pixel; in the jungle it is dominated by alpha-tested c
 the `player` start at 1 ray: 6.2 ms, 3.4 ms with the alpha test forced to pass). Before the depth
 pre-pass and the shadow-map fallback for blended receivers the same view took 22 ms at 1 ray.
 
-### RT AO / GI (`graphics.rt_ao`, `graphics.rt_gi`; `shaders/rt_indirect.comp`, `VkRenderer::recordIndirect`)
+### RT AO / GI (`graphics.ao rt`, `graphics.rt_gi`; `shaders/rt_indirect.comp`, `VkRenderer::recordIndirect`)
 
 Ray-traced ambient occlusion and one bounce of sun light, sharing the rays. Only where the RT depth pre-pass ran (opaque,
 non-exterior submeshes); the pass sits between the pre-pass and the opaque colour draws (the rendering is split there,
@@ -217,7 +218,7 @@ marked reactive).
 | Surface | Position = eye + camera ray (OuShadow `rayBase/U/V`, jittered as drawn) × view depth from the depth (`w = P[3][2] / (d + P[2][2])` of the remapped projection). A primary ray within 1 % of that depth (mask 1) gives the receiver's albedo (texture rgb) and its vertex normal, used where it agrees with the depth normal (one-sided differences with the smaller step) within cos 0.3. One shadow ray toward the sun gives its direct-sun factor (ndl × visibility). |
 | Rays | 1 cosine-weighted hemisphere ray per half-res pixel (2 with `rt_quality high` and GI), its two random numbers interleaved gradient noise of q and of q with x / y swapped (two independent linear forms: IGN of q and of q + an offset are functions of one scalar, their points lay on two diagonal lines of the unit square, and the per-frame shift moved those lines over the hemisphere, so the whole screen's AO / bounce swung ~3 % with a 5.5-frame period), shifted along R2 per frame, masks 1 + 4 (solid or casting; water, including the planar-reflection sea, is mask 2: l2_cliffclimb's sea plane lies ~30 units above the yacht deck and hid every ray). AO: occlusion 1 − (t / 250)² for hits within 250 units. GI (rays to 2000 units): the hit's texture × vertex colour × sun colour (c212) × lambert × its sun visibility (one more shadow ray) — its baked light is not bounced again; escaping rays add 0.15 × fog colour; both × 1.5 (`kGiStrength`). |
 | Denoise | Temporal: reprojection through the previous frame's jittered view-projection (eye-relative, composed in double), bilinear over the history taps whose view depth (5 %) and normal (cos 0.8) agree, AO history clipped to the 3×3 raw AO mean ± (2σ + 0.5) (only an occluder that moved away; a tight box — Kabus 22 `rt_filter.comp`'s 2σ — collapsed wherever the nine 1-ray values agreed, biased the AO bright and made surfaces that lost their history pop dark while moving; the bounce is not clipped), blend max(1 / (n + 1), 0.06 GI / 0.08 AO), n ≤ 32 frames; reset on a camera cut (500 units) or after a frame without the pass. The direct-sun factor of the composite is accumulated the same way (history length image `.g`, clamped to its 3×3 min / max): its single hard ray toggled along shadow edges with the FSR jitter. Spatial: 3 à-trous B3 5×5 iterations (strides 1, 2, 4) with plane-distance (1 % of the depth) and normal (cos¹⁶) stopping. |
-| Composite | The last iteration writes rgb = bounce × receiver albedo, a = AO factor = mix(1, mix(ao², 1, 0.4 × direct sun), 0.85) (AO darkens the ambient / baked part much more than what the sun lights; 0.85 = `kAoStrength`), both faded out between 6000 and 12000 units of depth. The opaque ray-traced draws (generic `scene.frag` with `rt` bit 0, translated programs in `ouSunEnd` unless reflective) end with `colour × a + rgb` (sun.glsl `ouIndirect`), joint-bilaterally upsampled from the 2×2 half-res texels by view-depth agreement. `OuShadow.screen.w` bits 1 / 2 say whether the pass ran. AO alone skips the primary ray (depth normal, no albedo) and traces 1 ray at every quality. |
+| Composite | The last iteration writes rgb = bounce × receiver albedo, a = AO factor = mix(1, mix(ao², 1, 0.4 × direct sun), 0.85) (AO darkens the ambient / baked part much more than what the sun lights; 0.85 = `kAoStrength`), both faded out between 6000 and 12000 units of depth. The opaque ray-traced draws (generic `scene.frag` with `rt` bit 0, translated programs in `ouSunEnd` unless reflective) take a as their ambient / indirect light factor (sun.glsl `ouAo`, as the CORTAO map: generic `0.45 × a + 0.55 × ndl × vis`, translated programs through the ambient registers, "Ambient occlusion" below; before CORTAO it multiplied the whole colour) and add rgb (`ouIndirect`), joint-bilaterally upsampled from the 2×2 half-res texels by view-depth agreement. `OuShadow.screen.w` bits 1 / 2 say whether the pass ran. AO alone skips the primary ray (depth normal, no albedo) and traces 1 ray at every quality. |
 | Not done | Motion vectors of moving meshes in the reprojection (camera only; the depth test catches Lara, the loose AO clip her contact shadow once it moved well away, else it fades over ~12 frames); blended / depth-writing foliage receives nothing (not pre-passed); translated screen readers (drawn after the copies, not pre-passed) take the AO of the surface behind; receiver albedo at half resolution; temporal filtering of the full-resolution sun / local-light shadow rays (fixed per-pixel rotation; a per-frame rotation measured slightly worse under FSR). |
 
 Verification [O] (RX 7900 XTX / RADV, Debug build with validation, 2026-10-31; ou-game l2_cliffclimb `--spawn
@@ -241,6 +242,26 @@ averages out), RT off as the floor. Still: 0.526 → 0.041 (RT off 0.032); camer
 walking: 0.716 → 0.169 (0.158). With `rt_quality high`: still 0.122 → 0.054 (0.043), orbiting 0.668 → 0.390. The
 fixes: decorrelated ray noise, the loose AO-only history clip and the filtered direct-sun term above. Cost at 3840×2160:
 +0.1-0.2 ms in the "scene" segment (6.85 → ~7.0 ms).
+
+## Ambient occlusion (GL + Vulkan; `graphics.ao auto|off|cortao|rt`, `graphics.ao_quality`, `--ao`, `--ao-quality`, QUALITY > AMBIENT OCCLUSION)
+
+Default (`auto` with the enhanced preset): **CORTAO** (Circular Occluder Ray-Traced AO, Daniel Isheden, MIT, vendored
+unmodified in `third_party/cortao`, v1.0.3 @`420b168`): screen-space ray tracing against circular occluders built from
+the depth / normal buffer, at full render resolution (FSR: its render resolution, never upsampled). `rt` keeps the
+hardware ray-traced AO of "RT AO / GI" on Vulkan RT devices; without RT that frame (GL, no RT support, `--rt off`) it
+renders CORTAO. The original preset's `auto` = off. RT sun GI is independent of the AO choice. `ao_quality` low /
+medium / high / ultra = `CORTAO_SAMPLE_COUNT` 8 / 12 / 16 / 32 (16 rays, 32 rays at ultra; separate main-pass
+permutations, switched live). The overlay's RT line starts with the AO actually drawn (`AO off | AO CORTAO | AO ray
+traced`, `RtStatus::ao`).
+
+| Piece | Choice (Vulkan: `VkRenderer::recordCortao`, `vk/shaders/cortao_*.comp`; shared: `render/Cortao.hpp`) |
+|---|---|
+| Inputs | A depth pre-pass whenever AO or RT is on (`prepassPipelines_`): the inside's opaque submeshes (alpha-tested foliage included, its alpha test as drawn) write depth and the octahedral **interpolated world normal** (RG16F, `ouOctEncode`; generic `prepass.frag`, translated programs' `OU_PREPASS` variant: their VS adds `model × normal` at location 14, the PS keeps its alpha test and writes the normal instead of the colour), facing the viewer as the face does, the derivative face normal only where a mesh has none. MSAA: the targets are multisampled, the AO reads sample 0 (the sample the depth resolve keeps). The exterior backdrop draws first with depth writes and gets no AO (the depth clear removes it). |
+| Passes | CORTAO prepass (linear depth + 12-bit packed view normal, mips down to ~64 px), main pass (16×16 groups, Morton order, occluder lookup table `24x24x16x{16,32}` R16/R32_UINT 3D texture, occlusion only), filter (13-tap, symmetric, depth 512 / normal 128 sensitivity), then our temporal pass. Parameters: radius 300 units (~0.95 m), screen cap 0.2 × height, mip bias −4, slope compensation 4, backface threshold 0.5 / boost 0 (CORTAO defaults), the frame's jittered GL projection, `flipY` on Vulkan. |
+| Temporal | CORTAO's seed changes every frame; `cortao_temporal.comp` reprojects through the previous frame's jittered view-projection (current view space → previous clip, composed in double), bilinear over the history taps whose view depth agrees within 3 %, history clamped to the 3×3 filtered mean ± 1.25σ, blend 0.1; reset on a camera cut (500 units), settings change or a frame without the pass. Same with and without FSR (FSR then sees a converged AO). The map: aoMap_[frame] RG16F, r = AO, g = view depth (0 = no surface). |
+| Composite | `sun.glsl ouAo()`: `OuShadow.screen.w` bit 4 set and the fragment's view depth (1 / gl_FragCoord.w) within 2 % of the map's g → r, else 1 (blended, water, exterior, screen readers keep 1, no per-draw flag). Ambient / indirect light only: generic shading `0.45 × ao + 0.55 × ndl × vis`; translated programs scale g_Ambient c15, IrradianceState c70-c76 and the light-map scales c148 / c149 (ShaderTranslate `ouAoVis = ouAoBegin()`), never SunLight c212 or the light slots; unlit / emissive draws are untouched. [I] TRU's light maps are baked static light (the sun and dynamic lights are not in them). |
+| Cost [O] | RX 7900 XTX / RADV, Release, l2_cliffclimb spawn, 1920×1052, 4x MSAA, `rt shadows`, medium (12 samples): the four AO passes 0.41 ms (`OU_VK_PRESENT_STATS`: "screen-space AO"); "scene" segment 2.88 → 3.43 ms with AO on (the pre-pass ran in both: RT). |
+| GL | `GlRenderer` (same shaders' logic, hook: texture unit 17 / `screen.w` bit 4; see its own notes). |
 
 ## Original shaders (`--shaders original|generic`, `graphics.original_shaders`; default original)
 
