@@ -275,6 +275,7 @@ struct RtStatus {
     bool lights = false;      // the last frame traced local-light shadows (FrameOptions::rtLights)
     bool gi = false; // the last frame traced the RT sun bounce
     AmbientOcclusion ao = AmbientOcclusion::Off; // the AO the last frame drew (both renderers; Rt only with RT)
+    uint32_t waterSurfaces = 0; // the last frame: water surface draws with Enhanced water's own shading (0 with Original)
     uint32_t blas = 0, instances = 0, geometries = 0, waterInstances = 0; // current scene
     uint32_t lodHidden = 0; // last frame: TLAS instances masked out by their batch LOD (Vulkan)
     bool reflections = false; // the last frame traced water reflections (FrameOptions::rtReflections)

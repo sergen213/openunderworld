@@ -408,6 +408,7 @@ public:
     const std::string& hint() const { return hintLeft_ > 0 ? hint_ : kNone; }
     void tick(double dt) { toastLeft_ -= dt, titleLeft_ -= dt, hintLeft_ -= dt; }
     float alpha(Group g) const { return alpha_[g]; }
+    const HudState& shown() const { return s_; } // the state the last update() took (ou-game --self-test hud.* probes)
     void draw(Canvas& c) const;
 
     Reticle reticle;                       // set each frame

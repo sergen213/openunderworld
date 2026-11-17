@@ -395,6 +395,8 @@ public:
     struct RagdollPose { std::vector<mat4> frames; bool asleep = false; };
     std::optional<RagdollPose> ragdoll(int32_t id) const;
     void step(float dt); // one fixed tick
+    uint32_t bodyCount() const;       // Jolt bodies in the scene, of every kind (ou-game --self-test physics.bodies)
+    uint32_t activeBodyCount() const; // of them the rigid bodies awake (not sleeping, not static)
     // The scene's state for a save: body IDs by entity, constraint zeros and Jolt's recorded state (bodies, contact
     // cache, constraints). restore() drops the scene; as the caller re-creates the same entities they get the saved IDs
     // and zeros, and the next step() applies the recorded state, so the run continues bit for bit. false: not a state

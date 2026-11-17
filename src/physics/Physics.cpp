@@ -929,6 +929,8 @@ Scene::Scene() : impl_(std::make_unique<Impl>()) {}
 Scene::~Scene() = default;
 Scene::Scene(Scene&&) noexcept = default;
 Scene& Scene::operator=(Scene&&) noexcept = default;
+uint32_t Scene::bodyCount() const { return impl_->sys.GetNumBodies(); }
+uint32_t Scene::activeBodyCount() const { return impl_->sys.GetNumActiveBodies(JPH::EBodyType::RigidBody); }
 
 int Scene::addBody(const MassProps& m, const mat4& model) {
     Body b;

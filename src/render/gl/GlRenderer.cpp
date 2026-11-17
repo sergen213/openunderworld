@@ -1062,6 +1062,7 @@ public:
         const float aspect = float(vp.width) / float(vp.height);
         const glm::mat4 viewProj = camera.projection(aspect) * camera.view();
         const bool enhancedWater = options.water == WaterQuality::Enhanced;
+        waterSurfaces_ = 0; // drawWater counts this frame's
         WaterBlock wb = waterBlock(camera, vp, viewProj, environment_, options);
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
         if (wb.ocean[0].x > 0.5f) { // FFT ocean this frame (render/Ocean.hpp)
@@ -1283,8 +1284,11 @@ public:
 
     bool setVsync(bool enabled) override { return SDL_GL_SetSwapInterval(enabled ? 1 : 0); }
     // No ray tracing on GL; reports the AO the last frame drew (RenderCommon rtSummary).
-    RtStatus rtStatus() const override { return {.ao = aoDrawn_ ? AmbientOcclusion::Cortao : AmbientOcclusion::Off}; }
+    RtStatus rtStatus() const override {
+        return {.ao = aoDrawn_ ? AmbientOcclusion::Cortao : AmbientOcclusion::Off, .waterSurfaces = waterSurfaces_};
+    }
     bool aoDrawn_ = false;
+    uint32_t waterSurfaces_ = 0; // the last frame's Enhanced water surface draws (RtStatus::waterSurfaces)
 
     std::string description() const override {
         auto str = [](GLenum e) { auto* s = glGetString(e); return s ? reinterpret_cast<const char*>(s) : "?"; };
@@ -2291,9 +2295,11 @@ private:
             glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(waves));
             glBindVertexArray(m.vao.get());
             for (uint32_t s = 0; s < m.submeshes.size(); ++s)
-                if (waterDraw(i, s))
+                if (waterDraw(i, s)) {
                     glDrawElements(tess ? GL_PATCHES : GL_TRIANGLES, GLsizei(m.submeshes[s].indexCount), GL_UNSIGNED_INT,
                                    reinterpret_cast<const void*>(uintptr_t(m.submeshes[s].firstIndex) * sizeof(uint32_t)));
+                    ++waterSurfaces_;
+                }
         }
         if (query) glEndQuery(GL_TIME_ELAPSED), ++surfaceFrame_;
         scissorFor(UINT32_MAX, vp);

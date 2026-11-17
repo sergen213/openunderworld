@@ -930,6 +930,7 @@ public:
         const bool rtOn = rtPipelines_ && tlas_ && options.rt != RayTracing::Off;
         const bool shadowMap = options.shadows || options.rt != RayTracing::Off;
         rtStatus_.active = rtOn;
+        rtStatus_.waterSurfaces = 0; // the Enhanced water pass counts this frame's
         rtStatus_.reflections = rtOn && options.rtReflections;
         ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0, 0.0f, 0, 1.0f};
         const glm::mat4 currentVP = zRemap * eye.projection(aspect) * eye.view(); // unjittered (FSR motion)
@@ -1458,7 +1459,7 @@ public:
                 const glm::mat4 wp[2] = {m.model, waterWaves(m.center, m.radius, options.waterVolumes)};
                 vkCmdPushConstants(cmd, waterLayout_, waterPushStages(), 0, sizeof wp, wp);
                 for (uint32_t s = 0; s < m.submeshes.size(); ++s)
-                    if (waterDraw(mi, s)) vkCmdDrawIndexed(cmd, m.submeshes[s].indexCount, 1, m.submeshes[s].firstIndex, 0, 0);
+                    if (waterDraw(mi, s)) vkCmdDrawIndexed(cmd, m.submeshes[s].indexCount, 1, m.submeshes[s].firstIndex, 0, 0), ++rtStatus_.waterSurfaces;
             }
             clipTo(UINT32_MAX);
             if (splashing) {

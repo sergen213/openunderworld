@@ -2038,6 +2038,12 @@ int main(int argc, char** argv) {
         if (en.seaSwell) opt.graphics.water = "enhanced";
         opt.gfx = ou::config::resolve(opt.graphics);
         selfTest->trace = opt.selfTestTrace;
+        // save / load input runs ou-game's quicksave: only into a redirected data directory, never the user's saves.
+        if (const std::string why = ou::app::selftest::unsafeSaveReason(); selfTest->usesSaves() && !why.empty()) {
+            std::fprintf(stderr, "ou-game: self-test %s: its save / load input needs XDG_DATA_HOME redirected (%s)\n", opt.selfTest.string().c_str(),
+                         why.c_str());
+            return 2;
+        }
         if (opt.selfTestReport.empty()) opt.selfTestReport = opt.selfTest.stem().string() + ".report.json";
     }
     int exitCode = 0;
@@ -2965,6 +2971,8 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
+    ou::app::selftest::Engine engineState; // --self-test: the engine around the World (engine.* / hud.* / audio.* probes)
+    if (selfTest) selfTest->setEngine(&engineState);
     SDL_SetWindowRelativeMouseMode(window.get(), interactive && !menuStart);
     ou::platform::DeviceState devices;
     std::map<SDL_JoystickID, ou::platform::GamepadPtr> pads; // every connected gamepad stays open (SDL sends only their events)
@@ -3111,10 +3119,17 @@ int main(int argc, char** argv) {
             if (opt.controls.invertX) mouse.x = -mouse.x;
             a.look -= mouse * kMouseSensitivity * opt.controls.mouseScale / float(ou::game::kTickSeconds);
             mouse = glm::vec2(0);
-            if (a.save && !held.save) quickSave(*world, "quick");
+            if (a.save && !held.save) {
+                const bool ok = quickSave(*world, "quick");
+                if (selfTest) selfTest->saved(*world, ok);
+            }
             if (sound && a.hint && !held.hint) sound->playHelp(*world, false); // PDA Hint / Answer (help on demand)
             if (sound && a.answer && !held.answer) sound->playHelp(*world, true);
-            if (a.load && !held.load) loadGame("quick", "quick load"), shownChapter = world->chapter;
+            if (a.load && !held.load) {
+                const bool ok = loadGame("quick", "quick load");
+                shownChapter = world->chapter;
+                if (selfTest) selfTest->loaded(*world, ok);
+            }
             held = a;
             if (world->ticks() == dieTick) {
                 world->kill(); // death clip, then World respawns her at the last checkpoint
@@ -3265,6 +3280,27 @@ int main(int argc, char** argv) {
             if (sound) sound->tick(*world);
             hud.tick(ou::game::kTickSeconds);
             hud.update(CombatView::hudState(*world), ou::game::kTickSeconds);
+            if (selfTest) { // the HUD and the mixer after this tick (hud.* / audio.* probes)
+                const auto& hs = hud.shown();
+                engineState.hudAlpha = {hud.alpha(ou::ui::Hud::Health), hud.alpha(ou::ui::Hud::Weapons), hud.alpha(ou::ui::Hud::Gear)};
+                engineState.hudHealth = std::clamp(hs.health / std::max(1.0f, hs.healthMax), 0.0f, 1.0f);
+                engineState.hudBreath = hs.breath < 1 || hs.breathBar;
+                engineState.hudBar = std::clamp(engineState.hudBreath ? hs.breath : hs.adrenaline, 0.0f, 1.0f); // ui::Hud::draw's bar
+                engineState.hudHealthPacks = hs.healthPacks, engineState.hudClip = hs.clip[0] + (hs.dual ? hs.clip[1] : 0);
+                engineState.audioOn = audioOn, engineState.voices = audioOn ? mixer.activeVoices() : 0;
+                engineState.renderer = chosen, engineState.device = renderer->description(); // initialised (drawn or not)
+                engineState.sdlVideo = SDL_WasInit(SDL_INIT_VIDEO), engineState.sdlAudio = SDL_WasInit(SDL_INIT_AUDIO);
+                engineState.sdlGamepad = SDL_WasInit(SDL_INIT_GAMEPAD), engineState.sdlEvents = SDL_WasInit(SDL_INIT_EVENTS);
+                const char* vd = SDL_GetCurrentVideoDriver();
+                const char* ad = engineState.sdlAudio ? SDL_GetCurrentAudioDriver() : nullptr;
+                engineState.videoDriver = vd ? vd : "", engineState.audioDriver = ad ? ad : "";
+                engineState.music.clear(), engineState.musicIdle = true;
+                if (audioOn && music.player) {
+                    engineState.musicIdle = music.player->idle();
+                    for (int i = 0; i < ou::audio::MusicPlayer::kSlots; ++i)
+                        if (const auto sl = music.player->slot(i); sl.playing && !sl.track.empty()) engineState.music.push_back(sl.track);
+                }
+            }
         }
         bool poseAll = false; // after a renderer swap: every enemy, not only the visible ones (the upload is at bind pose)
         if (swapFrom) { // AUDIO/VISUAL > GRAPHICS renderer: the other backend in a new window, the scene uploaded to it
@@ -3511,7 +3547,10 @@ int main(int argc, char** argv) {
             hud.grappleButton = menus.helperButtons ? std::string(strings->get(363)) : std::string(); // GAME OPTIONS > HELPER BUTTONS
             if (world->fieldCamera() && menus.screen() == ou::ui::Screen::None) // the field camera's viewfinder, window-filling [I]
                 if (const auto* r = art->find(ou::ui::kViewfinder)) canvas.image(0, 0, 0, float(w), float(h), r->u0, r->v0, r->u1, r->v1, 0xFFFFFFFFu);
-            if (menus.screen() == ou::ui::Screen::None) hud.draw(canvas); // menus hide the HUD [O pause captures]
+            if (menus.screen() == ou::ui::Screen::None) { // menus hide the HUD [O pause captures]
+                hud.draw(canvas);
+                if (hud.alpha(ou::ui::Hud::Health) > 0 || hud.alpha(ou::ui::Hud::Weapons) > 0 || hud.alpha(ou::ui::Hud::Gear) > 0) ++engineState.hudFrames;
+            }
             if (sound && menus.subtitles) ou::app::drawSubtitles(canvas, sound->subtitles());
         }
         const ou::ui::Screen scr = menus.screen();
@@ -3719,6 +3758,16 @@ int main(int argc, char** argv) {
         const auto clips = ou::app::unitClips(*world, streamed.unitMeshes, world->cameraUnit(), cam, float(w) / float(std::max(1, h)));
         fo.unitClips = clips;
         renderer->drawFrame(cam, {w, h}, fo);
+        if (selfTest) { // what this frame drew (engine.* probes)
+            static constexpr const char* kAo[] = {"off", "cortao", "rt"};
+            static constexpr const char* kRt[] = {"off", "shadows", "full"};
+            const auto rs = renderer->rtStatus();
+            ++engineState.frames;
+            engineState.water = fo.water == ou::render::WaterQuality::Enhanced ? "enhanced" : "original";
+            engineState.waterSurfaces = rs.waterSurfaces;
+            engineState.aoRequested = kAo[size_t(fo.ao) % 3], engineState.ao = kAo[size_t(rs.ao) % 3];
+            engineState.rtRequested = kRt[size_t(fo.rt) % 3], engineState.rtSupported = rs.supported, engineState.rtActive = rs.active;
+        }
         ++frame;
         if (opt.frames && frame >= opt.frames) {
             running = false;
