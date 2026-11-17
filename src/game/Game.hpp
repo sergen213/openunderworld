@@ -1175,10 +1175,11 @@ public:
     const GrapplePress& grapplePress() const { return grapplePress_; }
     // The yaw (rad) the orbit camera's forces turned it by this tick (World.cpp updateOrbitCamera; ou-game logs it).
     float cameraSwing() const { return cameraSwing_; }
-    // The orbit camera's mode, as the player's state machine requests it from tru.exe's CameraManager (0x5E8210, Wine;
-    // CameraManager +0x54 is vtable slot 21, a call, not a mode field: docs/re/STRUCTURES.md): 1 on foot, 4 free climb,
-    // 11 hang, 19 / 20 under water / surface; -1 before its first update; and its current distance from the pivot
-    // (ou-game --self-test probes).
+    // The orbit camera's mode, as the player's state machine requests it from tru.exe's CameraManager (request slot 17
+    // 0x5E8210, Wine; the committed mode is the manager's field +0x54, written by 0x5E7FE0 and read by slot 2 0x5EB190 --
+    // not to be confused with vtable offset 0x54 = slot 21, the blended camera-type switch: docs/re/CAMERA.md): 1 on
+    // foot, 4 free climb, 11 hang, 19 / 20 under water / surface; -1 before its first update; and its current distance
+    // from the pivot (ou-game --self-test probes).
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
@@ -1308,7 +1309,7 @@ public:
 private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
     void updateCamera(const Actions& a, float dt); // Camera.cpp
-    void updateOrbitCamera(const Actions& a, float dt);
+    void updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove);
     bool startSplineCamera(const std::string& unit, uint32_t index, uint32_t value); // autosplinecamera 0
     bool cameraNative(int op, const std::string& unit, uint32_t index, uint32_t value); // script::Runtime::CameraNative
     bool tickSplineCamera(float dt); // false once no spline camera plays (Camera.cpp)
@@ -1488,6 +1489,10 @@ private:
     std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
+    // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
+    // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
+    // its tick).
+    vec3 carrierMove_{0};
     struct OrbitState {      // orbit camera (World.cpp): +0x150 desired point, +0x1D4 distance, +0x1D8 its return speed
         vec3 desired{0};
         float dist = 0, speed = 0;

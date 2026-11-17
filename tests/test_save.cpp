@@ -811,6 +811,58 @@ TEST(StreamReal, YachtDecksAboveSea) {
     EXPECT_GT(heights.size(), 3u) << "she rides the waves";
 }
 
+// OU-CAM-001: the camera rides what carries her. tru.exe (Wine 2026-11-16, l2_cliffclimb chapter start, idle 15 s on the
+// yacht deck heaving +-203; w2/WineMeasure/s1/deck-idle.txt): the pivot and the camera (mode 1) move with her, pivot z -
+// root z 451.6..457.5, camera z - root z 369.0..374.9 (5.9 wide), the camera's heave lagging hers by 0.00 s (0x609830
+// moves the focus by the carrier's motion before its dead-zone lag, 0x5FF650 the camera position and proposed point).
+// Before the carry ours swung 321..714, following 0.75 s late (tru.exe's waves, as here: no swell in the sim's sea).
+// The camera's height over her (ours ~488) differs with the distance (OU-CAM-005: 948.2 there, 1264.2 here).
+TEST(StreamReal, CameraRidesTheYachtDeck) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.startChapter(2);
+    for (int i = 0; i < 180; ++i) w.tick({}); // the self-test's 3 s start
+    std::vector<float> root, cam;
+    float plo = 1e9f, phi = -1e9f;
+    for (int i = 0; i < 15 * 60; ++i) {
+        w.tick({});
+        ASSERT_EQ(w.cameraMode(), 1) << i;
+        ASSERT_LT(w.player().state().water, 0) << "on the deck " << i;
+        const float z = w.player().state().pos.z;
+        root.push_back(z), cam.push_back(w.camera().position.z);
+        plo = std::min(plo, w.camera().target.z - z), phi = std::max(phi, w.camera().target.z - z);
+    }
+    const auto [rlo, rhi] = std::ranges::minmax(root);
+    EXPECT_GT(rhi - rlo, 300.0f) << "the deck heaves";
+    float lo = 1e9f, hi = -1e9f;
+    for (size_t i = 0; i < root.size(); ++i) lo = std::min(lo, cam[i] - root[i]), hi = std::max(hi, cam[i] - root[i]);
+    std::fprintf(stderr, "root %.1f..%.1f, pivot - root %.1f..%.1f, camera - root %.1f..%.1f\n", rlo, rhi, plo, phi, lo, hi);
+    // Its top is tru.exe's; under it ours dips to ~426 once: Lara plays a landing (State::Land, bone 108 60 lower for
+    // 0.7 s) as the deck drops away under her, where tru.exe stays in one state (rq 46) all 15 s -- not the camera.
+    EXPECT_LT(phi, 457.5f + 5.0f) << "pivot - root (tru.exe 451.6..457.5)";
+    EXPECT_LT(hi - lo, 5.9f + 5.0f) << "camera - root " << lo << ".." << hi << " (tru.exe 369.0..374.9)";
+    // The lag of the camera's heave behind hers: the shift (0..1.5 s) that best matches the two series.
+    const auto mean = [](const std::vector<float>& v, size_t a, size_t n) { float m = 0; for (size_t i = a; i < a + n; ++i) m += v[i] / float(n); return m; };
+    size_t best = 0;
+    float bestR = -2;
+    const size_t n = root.size() - 90;
+    for (size_t lag = 0; lag <= 90; ++lag) {
+        const float mr = mean(root, 0, n), mc = mean(cam, lag, n);
+        float sxy = 0, sxx = 0, syy = 0;
+        for (size_t i = 0; i < n; ++i) {
+            const float x = root[i] - mr, y = cam[i + lag] - mc;
+            sxy += x * y, sxx += x * x, syy += y * y;
+        }
+        if (const float r = sxy / std::sqrt(sxx * syy + 1e-9f); r > bestR) bestR = r, best = lag;
+    }
+    std::fprintf(stderr, "lag %zu ticks, r %.4f\n", best, bestR);
+    EXPECT_LE(best, 1u) << "camera heave lag (tru.exe 0.00 s)";
+    EXPECT_GT(bestR, 0.99f);
+}
+
 // A floating object's frame now: its intro frame, displacement and loose body motion (identity at rest).
 static glm::mat4 yachtFrame(const game::World& w, int32_t uid) {
     const auto* o = w.script().find(uid);

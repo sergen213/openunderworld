@@ -1,7 +1,7 @@
-# Re-recorded from the same plan (openunderworld-work/gameplaygoal/jumptiming/baldrs.plan) after loose bodies took the
-# physics record's damping 0.01 per 30 Hz frame (tru.exe 0x48E690 / 0x4EFB20 with 0x492B80's dt in frames): the
-# thrown weights land shorter, so the old recording's walks to them missed. Before: run start / jump take-off timing
-# (a request's clip starts at start - blend frames; docs/REFERENCE_COMPARISON.md M13 / M94).
+# Re-recorded from the same plan (openunderworld-work/gameplaygoal/jumptiming/baldrs.plan) after the orbit camera rode
+# what carries her (OU-CAM-001, tru.exe 0x609830 / 0x5FF650): standing on the sinking plates moves the camera with her,
+# so its yaw, which the recorded stick is relative to, differs from the old recording's. Before: loose bodies took the
+# physics record's damping 0.01 per 30 Hz frame (tru.exe 0x48E690 / 0x4EFB20); run start / jump take-off timing.
 0.0667 forward 1.00
 0.0667 walk 1.00
 2.9167 forward 0.00
