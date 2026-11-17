@@ -293,13 +293,13 @@ private:
     QPushButton* restartBtn_ = nullptr;
     std::vector<QPushButton*> updateButtons_; // check / install / rollback: disabled while one runs
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
-    QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
+    QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_, *ao_, *aoQuality_;
     QComboBox *water_, *waterDetail_, *waterColor_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_, *tonemap_;
     QComboBox* language_; // config game.language (also ou-game's AUDIO/VISUAL > LANGUAGE)
     QCheckBox *frameGeneration_, *antiLag_;
     QCheckBox* rtLights_;
     QCheckBox* rtReflections_; // tri-state: partially checked = unset (on with RT "full")
-    QCheckBox *rtAo_, *rtGi_; // checked state = resolved value; saved only where it differs from the rt mode's default
+    QCheckBox* rtGi_; // checked state = resolved value; saved only where it differs from the rt mode's default
     QDoubleSpinBox* sharpness_;
     QSpinBox *width_, *height_;
     QDoubleSpinBox *fov_, *brightness_;
@@ -417,10 +417,20 @@ private:
         rtReflections_ = new QCheckBox("RT reflections (water; partial = with Full)");
         rtReflections_->setTristate(true);
         rtReflections_->setCheckState(!g.rtReflections ? Qt::PartiallyChecked : *g.rtReflections ? Qt::Checked : Qt::Unchecked);
-        // RT ambient occlusion / sun bounce: on by default with "full".
-        rtAo_ = new QCheckBox("RT ambient occlusion");
+        // Ambient occlusion (config ao / ao_quality; docs/RENDERING.md "Ambient occlusion").
+        ao_ = new QComboBox;
+        ao_->addItem("Auto (CORTAO with Enhanced)", "auto");
+        ao_->addItem("Off", "off");
+        ao_->addItem("CORTAO (screen space)", "cortao");
+        ao_->addItem("Ray traced (Vulkan RT; else CORTAO)", "rt");
+        ao_->setCurrentIndex(std::max(0, ao_->findData(q(g.ao))));
+        aoQuality_ = new QComboBox;
+        for (auto [label, value] : {std::pair{"Low (8 samples)", "low"}, std::pair{"Medium (12 samples)", "medium"},
+                                    std::pair{"High (16 samples)", "high"}, std::pair{"Ultra (32 samples)", "ultra"}})
+            aoQuality_->addItem(label, value);
+        aoQuality_->setCurrentIndex(std::max(0, aoQuality_->findData(q(g.aoQuality))));
+        // RT sun bounce: on by default with "full".
         rtGi_ = new QCheckBox("RT sun bounce (global illumination)");
-        rtAo_->setChecked(g.rtAo.value_or(g.rt == "full"));
         rtGi_->setChecked(g.rtGi.value_or(g.rt == "full"));
         auto rtEnable = [this] { // RT needs the enhanced preset
             bool on = gfxPreset_->currentData().toString() == "enhanced";
@@ -428,7 +438,6 @@ private:
             rtQuality_->setEnabled(on);
             rtLights_->setEnabled(on);
             rtReflections_->setEnabled(on);
-            rtAo_->setEnabled(on);
             rtGi_->setEnabled(on);
         };
         connect(gfxPreset_, &QComboBox::currentIndexChanged, this, rtEnable);
@@ -528,8 +537,9 @@ private:
         f->addRow("RT quality", rtQuality_);
         f->addRow("", rtLights_);
         f->addRow("", rtReflections_);
-        f->addRow("", rtAo_);
         f->addRow("", rtGi_);
+        f->addRow("Ambient occlusion", ao_);
+        f->addRow("AO quality", aoQuality_);
         f->addRow("MSAA", msaa_);
         f->addRow("Sun shadows", shadows_);
         f->addRow("Shaders", shaders_);
@@ -956,8 +966,9 @@ private:
         else g.rtLights = lights;
         g.rtReflections = rtReflections_->checkState() == Qt::PartiallyChecked ? std::nullopt
                                                                                 : std::optional(rtReflections_->checkState() == Qt::Checked);
-        for (auto [box, field] : {std::pair{rtAo_, &g.rtAo}, std::pair{rtGi_, &g.rtGi}})
-            *field = box->isChecked() == (g.rt == "full") ? std::nullopt : std::optional(box->isChecked());
+        g.rtGi = rtGi_->isChecked() == (g.rt == "full") ? std::nullopt : std::optional(rtGi_->isChecked());
+        g.ao = s(ao_->currentData().toString());
+        g.aoQuality = s(aoQuality_->currentData().toString());
         g.msaa = msaa_->currentData().toInt();
         g.shadows = overrideValue(shadows_);
         g.originalShaders = shaders_->currentIndex() == 1 ? std::optional(false) : std::nullopt; // unset = original
@@ -1021,7 +1032,8 @@ private:
             if (d.rtLights != o.rtLights || d.rt != o.rt) rtLights_->setChecked(d.rtLights.value_or(d.rt == "full"));
             if (d.rtReflections != o.rtReflections)
                 rtReflections_->setCheckState(!d.rtReflections ? Qt::PartiallyChecked : *d.rtReflections ? Qt::Checked : Qt::Unchecked);
-            if (d.rtAo != o.rtAo || d.rt != o.rt) rtAo_->setChecked(d.rtAo.value_or(d.rt == "full"));
+            if (d.ao != o.ao) pick(ao_, q(d.ao));
+            if (d.aoQuality != o.aoQuality) pick(aoQuality_, q(d.aoQuality));
             if (d.rtGi != o.rtGi || d.rt != o.rt) rtGi_->setChecked(d.rtGi.value_or(d.rt == "full"));
             if (d.msaa != o.msaa) pick(msaa_, d.msaa);
             if (d.shadows != o.shadows) tri(shadows_, d.shadows);

@@ -61,7 +61,7 @@ void usage() {
                  "                 [--hdr on|off] [--shaders original|generic] [--rt auto|off|shadows|full] [--rt-quality low|medium|high]\n"
                  "                 [--rt-lights on|off]\n"
                  "                 [--rt-reflections on|off] (unset: on with --rt full)\n"
-                 "                 [--rt-ao on|off] [--rt-gi on|off]\n"
+                 "                 [--rt-gi on|off] [--ao off|cortao|rt] [--ao-quality low|medium|high|ultra]\n"
                  "                 [--water original|enhanced] [--water-detail auto|standard|high] [--ocean fft|procedural] [--water-debug 0-6]\n"
                  "                 [--water-color auto|original|emerald|coral_lagoon|pelagic_cobalt|mineral_jade|subpolar_slate|clear]\n"
                  "                 [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather off|rain|snow]\n"
@@ -514,7 +514,8 @@ int main(int argc, char** argv) {
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.rtLights = opt.gfx.rtLights;
         fo.rtReflections = opt.gfx.rtReflections;
-        fo.rtAo = opt.gfx.rtAo, fo.rtGi = opt.gfx.rtGi;
+        fo.rtGi = opt.gfx.rtGi;
+        fo.ao = ou::render::AmbientOcclusion(opt.gfx.ao), fo.aoSamples = opt.gfx.aoSamples;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
         fo.brightness = opt.gfx.brightness;
         fo.tonemap = ou::render::Tonemap(opt.gfx.tonemap);

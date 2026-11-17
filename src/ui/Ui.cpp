@@ -617,6 +617,9 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.label = "ORIGINAL SHADERS", .toggle = &g.originalShaders, .onId = 45, .offId = 46},
                 {.label = "PARTICLE EFFECTS", .toggle = &g.effects, .onId = 45, .offId = 46},
                 {.label = "TONE MAPPING", .choice = &g.tonemap, .choices = {"ORIGINAL", "AGX"}},
+                {.label = "AMBIENT OCCLUSION", .choice = &g.ao, .choices = {"AUTO", "OFF", "CORTAO", "RAY TRACED"}},
+                {.label = "AO QUALITY", .greyed = g.ao == 1 || (g.ao == 0 && g.preset == 1), .choice = &g.aoQuality,
+                 .choices = {"LOW", "MEDIUM", "HIGH", "ULTRA"}},
                 {.stringId = 469}};
     }
     case Screen::GfxRayTracing: {
@@ -627,7 +630,6 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.label = "RT QUALITY", .greyed = off, .choice = &g.rtQuality, .choices = {"LOW", "MEDIUM", "HIGH"}},
                 {.label = "LOCAL LIGHT SHADOWS", .greyed = off, .choice = &g.rtLights, .choices = tri},
                 {.stringId = 1022, .greyed = off, .choice = &g.rtReflections, .choices = tri}, // REFLECTIONS
-                {.label = "AMBIENT OCCLUSION", .greyed = off, .choice = &g.rtAo, .choices = tri},
                 {.label = "SUN BOUNCE", .greyed = off, .choice = &g.rtGi, .choices = tri},
                 {.stringId = 469}};
     }

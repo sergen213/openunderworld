@@ -30,6 +30,8 @@ inline constexpr std::array<std::string_view, 3> kRenderers{"auto", "vulkan", "o
 inline constexpr std::array<std::string_view, 2> kPresets{"enhanced", "original"};
 inline constexpr std::array<std::string_view, 4> kRt{"auto", "off", "shadows", "full"};
 inline constexpr std::array<std::string_view, 3> kRtQuality{"low", "medium", "high"};
+inline constexpr std::array<std::string_view, 4> kAo{"auto", "off", "cortao", "rt"};
+inline constexpr std::array<std::string_view, 4> kAoQuality{"low", "medium", "high", "ultra"};
 inline constexpr std::array<int, 5> kMsaa{0, 1, 2, 4, 8};
 inline constexpr std::array<std::string_view, 3> kWater{"auto", "original", "enhanced"};
 inline constexpr std::array<std::string_view, 3> kWaterDetail{"auto", "standard", "high"};
@@ -68,7 +70,8 @@ inline ui::GraphicsOptions graphicsMenu(const config::GraphicsConfig& g, const D
     m.resolution = indexOf(m.resolutions, std::pair(d.width, d.height));
     m.fullscreen = d.fullscreen, m.vsync = d.vsync, m.fov = fovStep(d.fov);
     m.preset = indexOf(kPresets, g.preset), m.rt = indexOf(kRt, g.rt), m.rtQuality = indexOf(kRtQuality, g.rtQuality);
-    m.rtLights = toTri(g.rtLights), m.rtReflections = toTri(g.rtReflections), m.rtAo = toTri(g.rtAo), m.rtGi = toTri(g.rtGi);
+    m.rtLights = toTri(g.rtLights), m.rtReflections = toTri(g.rtReflections), m.rtGi = toTri(g.rtGi);
+    m.ao = indexOf(kAo, g.ao), m.aoQuality = indexOf(kAoQuality, g.aoQuality);
     m.msaa = indexOf(kMsaa, g.msaa), m.shadows = toTri(g.shadows), m.originalShaders = g.originalShaders.value_or(true);
     m.water = indexOf(kWater, g.water), m.waterDetail = indexOf(kWaterDetail, g.waterDetail), m.ocean = indexOf(kOcean, g.ocean);
     m.waterColor = indexOf(config::kWaterColors, g.waterColor);
@@ -91,7 +94,8 @@ inline void applyGraphicsMenu(const ui::GraphicsOptions& m, config::GraphicsConf
     g.rt = at(kRt, m.rt);
     if (g.preset == "original" && (g.rt == "shadows" || g.rt == "full")) g.rt = "auto";
     g.rtQuality = at(kRtQuality, m.rtQuality);
-    g.rtLights = fromTri(m.rtLights), g.rtReflections = fromTri(m.rtReflections), g.rtAo = fromTri(m.rtAo), g.rtGi = fromTri(m.rtGi);
+    g.rtLights = fromTri(m.rtLights), g.rtReflections = fromTri(m.rtReflections), g.rtGi = fromTri(m.rtGi);
+    g.ao = at(kAo, m.ao), g.aoQuality = at(kAoQuality, m.aoQuality);
     g.msaa = at(kMsaa, m.msaa), g.shadows = fromTri(m.shadows);
     g.originalShaders = m.originalShaders ? std::nullopt : std::optional(false); // unset = original (as the launcher writes it)
     g.water = at(kWater, m.water), g.waterDetail = at(kWaterDetail, m.waterDetail), g.ocean = at(kOcean, m.ocean);

@@ -602,6 +602,12 @@ TEST(Config, ControlsMigrateOldDefaults) {
     fs::remove_all(p.parent_path());
 }
 
+// Enhanced presets resolve ao "auto" to CORTAO.
+ou::config::GraphicsSettings enhancedAo(ou::config::GraphicsSettings s) {
+    s.ao = 1;
+    return s;
+}
+
 TEST(Config, GraphicsPresets) {
     using ou::config::GraphicsSettings;
     using ou::config::resolve;
@@ -610,9 +616,9 @@ TEST(Config, GraphicsPresets) {
         return ou::config::GraphicsConfig{std::move(preset), msaa, shadows, fxaa, hdr};
     };
     // Default = enhanced: 4x MSAA + shadows + rt auto -> shadows, 2 rays, original shaders, neutral brightness.
-    EXPECT_EQ(resolve({}), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
-    EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
-    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true, 1, 2, true, 1, 1.0f, true, 2, true, 1})); // overrides
+    EXPECT_EQ(resolve({}), enhancedAo(GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(g("enhanced")), enhancedAo(GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), enhancedAo(GraphicsSettings{1, false, true, true, 1, 2, true, 1, 1.0f, true, 2, true, 1})); // overrides
     // Purist: rt auto -> off; `shadows` = tru.exe's own PSSM (on by default), never our shadow map.
     GraphicsSettings purist{1, false, false, false, 0};
     purist.pssm = true;
@@ -629,20 +635,36 @@ TEST(Config, GraphicsPresets) {
         c.rt = std::move(mode), c.rtQuality = std::move(quality);
         return c;
     };
-    EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "shadows")), enhancedAo(GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
     GraphicsSettings full{4, true, false, false, 2, 4, true, 1, 1.0f, true, 2, true, 1};
-    full.rtAo = full.rtGi = full.rtLights = full.rtReflections = true; // rt full turns on every RT feature whose override is unset
+    full.rtGi = full.rtLights = full.rtReflections = true; // rt full turns on every RT feature whose override is unset
+    full.ao = 1; // ao auto = CORTAO, independent of rt
     EXPECT_EQ(resolve(rt("enhanced", "full", "high")), full);
     auto feature = rt("enhanced", "full");
     feature.rtGi = false; // per-feature override
-    EXPECT_TRUE(resolve(feature).rtAo);
     EXPECT_FALSE(resolve(feature).rtGi);
     feature = rt("enhanced", "shadows");
-    feature.rtAo = true; // opt-in with rt shadows
-    EXPECT_TRUE(resolve(feature).rtAo);
-    EXPECT_FALSE(resolve(feature).rtGi);
+    feature.rtGi = true; // opt-in with rt shadows
+    EXPECT_TRUE(resolve(feature).rtGi);
     feature.rt = "off"; // needs rt
-    EXPECT_FALSE(resolve(feature).rtAo);
+    EXPECT_FALSE(resolve(feature).rtGi);
+    // Ambient occlusion: auto = CORTAO on enhanced, off on original; quality = CORTAO sample count.
+    auto ao = [&](std::string preset, std::string mode, std::string quality = "medium") {
+        auto c = g(std::move(preset));
+        c.ao = std::move(mode), c.aoQuality = std::move(quality);
+        return resolve(c);
+    };
+    EXPECT_EQ(ao("enhanced", "auto").ao, 1);
+    EXPECT_EQ(ao("original", "auto").ao, 0);
+    EXPECT_EQ(ao("original", "cortao").ao, 1);
+    EXPECT_EQ(ao("enhanced", "rt").ao, 2);
+    EXPECT_EQ(ao("enhanced", "off").ao, 0);
+    EXPECT_EQ(ao("enhanced", "auto", "low").aoSamples, 8);
+    EXPECT_EQ(ao("enhanced", "auto").aoSamples, 12);
+    EXPECT_EQ(ao("enhanced", "auto", "high").aoSamples, 16);
+    EXPECT_EQ(ao("enhanced", "auto", "ultra").aoSamples, 32);
+    EXPECT_THROW(ao("enhanced", "ssao"), std::runtime_error);
+    EXPECT_THROW(ao("enhanced", "auto", "max"), std::runtime_error);
     // rt_lights: unset = on with full only; an explicit value wins over the mode, but nothing traces without RT.
     auto lights = [&](std::string mode, Opt on) {
         auto c = rt("enhanced", std::move(mode));
@@ -661,11 +683,11 @@ TEST(Config, GraphicsPresets) {
     EXPECT_TRUE(resolve(refl).rtReflections);
     refl.rt = "off";
     EXPECT_FALSE(resolve(refl).rtReflections);
-    EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "off", "low")), enhancedAo(GraphicsSettings{4, true, false, false, 0, 1, true, 1, 1.0f, true, 2, true, 1}));
     EXPECT_THROW(resolve(rt("original", "shadows")), std::runtime_error);
     EXPECT_THROW(resolve(rt("original", "full")), std::runtime_error);
     EXPECT_EQ(resolve(rt("original", "auto")).rt, 0);
-    EXPECT_EQ(resolve(rt("enhanced", "auto", "high")), (GraphicsSettings{4, true, false, false, 1, 4, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "auto", "high")), enhancedAo(GraphicsSettings{4, true, false, false, 1, 4, true, 1, 1.0f, true, 2, true, 1}));
     auto bright = g("enhanced");
     bright.brightness = 0.2f;
     EXPECT_THROW(resolve(bright), std::runtime_error);
@@ -691,8 +713,11 @@ TEST(Config, GraphicsPresets) {
     EXPECT_EQ(flags.shadows, std::optional<bool>(false));
     EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--rt-gi", "off"));
     EXPECT_EQ(flags.rtGi, std::optional<bool>(false));
-    EXPECT_FALSE(flags.rtAo.has_value());
-    EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--rt-ao", "yes"), std::runtime_error);
+    EXPECT_FALSE(ou::config::applyGraphicsFlag(flags, "--rt-ao", "on")); // replaced by --ao
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--ao", "rt"));
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--ao-quality", "high"));
+    EXPECT_EQ(flags.ao, "rt");
+    EXPECT_EQ(flags.aoQuality, "high");
 
     fs::path p = fs::temp_directory_path() / ("ou_config_gfx_" + std::to_string(::getpid()) + "/config.json");
     ou::config::Config c;
@@ -700,9 +725,10 @@ TEST(Config, GraphicsPresets) {
     c.graphics.rt = "shadows", c.graphics.rtQuality = "high", c.graphics.brightness = 0.75f;
     c.graphics.atmosphere = "high", c.graphics.lightShafts = false;
     c.graphics.rtLights = true;
-    c.graphics.rtAo = false;
+    c.graphics.ao = "cortao", c.graphics.aoQuality = "ultra";
     ou::config::save(p, c);
-    EXPECT_EQ(ou::config::load(p).graphics.rtAo, std::optional<bool>(false));
+    EXPECT_EQ(ou::config::load(p).graphics.ao, "cortao");
+    EXPECT_EQ(ou::config::load(p).graphics.aoQuality, "ultra");
     EXPECT_FALSE(ou::config::load(p).graphics.rtGi.has_value());
     const auto d = ou::config::load(p).graphics;
     EXPECT_EQ(d.preset, "enhanced");
@@ -716,7 +742,7 @@ TEST(Config, GraphicsPresets) {
     auto rd = resolve(d);
     EXPECT_TRUE(rd.rtLights); // explicit on with rt shadows
     rd.rtLights = false;
-    EXPECT_EQ(rd, (GraphicsSettings{2, true, true, false, 1, 4, true, 1, 0.75f, true, 3, false, 1}));
+    EXPECT_EQ(rd, enhancedAo(GraphicsSettings{2, true, true, false, 1, 4, true, 1, 0.75f, true, 3, false, 1}));
     std::ofstream(p) << R"({"graphics":{"brightness":0.2}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
     std::ofstream(p) << R"({"graphics":{"preset":"enhanced","msaa":5}})";
@@ -725,7 +751,7 @@ TEST(Config, GraphicsPresets) {
     // Water detail, atmosphere, weather: auto = on for enhanced (medium atmosphere, the unit's weather), off for original.
     auto fx = g("enhanced");
     fx.waterDetail = "standard", fx.atmosphere = "high", fx.lightShafts = false, fx.weather = "snow";
-    EXPECT_EQ(resolve(fx), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, false, 3, false, 3}));
+    EXPECT_EQ(resolve(fx), enhancedAo(GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, false, 3, false, 3}));
     fx.atmosphere = "thick";
     EXPECT_THROW(resolve(fx), std::runtime_error);
     EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--atmosphere", "low"));
