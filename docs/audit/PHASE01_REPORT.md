@@ -12,7 +12,7 @@ Detailed deliverables (this report summarises them and does not repeat them):
 | Build, test and performance baseline | [BASELINE_2026-11.md](BASELINE_2026-11.md) |
 | Repository audit with the classification buckets | [PROJECT_AUDIT_2026-11.md](PROJECT_AUDIT_2026-11.md) |
 | Protected subsystems: 28 systems with files, defaults and verification tests | [PROTECTED_SYSTEMS.md](PROTECTED_SYSTEMS.md) |
-| Bug and regression database: 92 entries in 8 root-cause clusters | [BUGS.md](BUGS.md) |
+| Bug and regression database: 88 entries in 8 root-cause clusters | [BUGS.md](BUGS.md) |
 | External research and edition detection | [EXTERNAL_RESEARCH_2026-11.md](EXTERNAL_RESEARCH_2026-11.md) |
 | Original binary inventory: SHA-256 hashes, PE facts | [../re/BINARIES.md](../re/BINARIES.md), `tools/re/pe_inventory.py` |
 | tru.exe function database and coverage | [../re/FUNCTION_DATABASE.md](../re/FUNCTION_DATABASE.md), `docs/re/db/`, `tools/re/function_db.py` |
@@ -101,7 +101,8 @@ Everything below is an Enhancement and must be protected. See PROTECTED_SYSTEMS 
 
 ## 4. What is broken or open
 
-The full list is in BUGS.md. About 68 entries are open, 14 are fixed and verified, and 13 need a repro.
+The full list is in BUGS.md. Its index has 88 entries: 65 open (some are design limits), 11 fixed and
+verified, and 12 waiting for a repro.
 The most important are:
 
 - **OU-VK-001 `game_vulkan_rt_smoke` hangs the GPU.** This is a regression. The test passed when it was
