@@ -113,8 +113,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-013 | Lara | Slope-slide upper bound: OU treats slide-flagged faces flatter than 28° as standable (tru.exe slides) | Open (asm-verified) | pre-existing | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit not loosened to 0.5236 for fast arcs | Open (asm-verified) | pre-existing | — |
 | OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Reproduced | pre-existing | — |
-| OU-SWM-001 | swimming | Swim turn rates differ from tru.exe and are left/right uneven; snap-back on release too fast | Reproduced (Wine-measured) | pre-existing | C-MEASURE |
-| OU-SWM-002 | swimming | Surface swim velocity lags heading ~9° vs ~16° | Open | pre-existing | C-MEASURE |
+| OU-SWM-001 | swimming | Swim turn: symmetric and view-relative now (d122a62); steady circle still +2.3 / +1.8 deg/s fast (tru.exe settles 42.1° off its camera line, ours 44.2°) | Partly fixed on int/brief | pre-existing | C-MEASURE |
+| OU-SWM-002 | swimming | Surface swim velocity lag: now 5.25 / 5.37° vs tru.exe 5.4 / 5.6° (0x755A00 blend 0.25 = player data +0x240) | Fixed on int/brief (d122a62) | pre-existing | C-MEASURE |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
 | OU-GRP-002 | grapple | Swing dynamics unmeasured (five failed Wine sessions) | Open | pre-existing | C-MEASURE |
