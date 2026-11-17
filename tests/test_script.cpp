@@ -1239,3 +1239,204 @@ TEST(ScriptRealData, CliffclimbVolumeShowsTutorialPopup) {
     r.tick(at(pos)); // shown once
     EXPECT_TRUE(r.takePopups().empty());
 }
+
+// Operand decode (tru.exe link pass 0x57EE20): every opcode takes its operandWords(), relocated or not. The fire volumes'
+// CALLU 0x00000701 (no relocation, bit 0 set) is builtin DYNARRAY method 0 (Size), not CALLU + NOP 1793; START's null
+// function word is its operand, not NOP 0; relocated operands and PUSH immediates decode as before.
+TEST(ScriptParse, OperandWordsAndBuiltinCallU) {
+    const cdc::Pointer fn{3, 0x64};
+    const std::vector<CodeWord> words = {
+        {0x08000004}, {0x09000008}, {0x10000010}, {0x65000000}, {0x00000701}, // i < sensors.Size()
+        {0x08000008}, {0x43000000},
+        {0x65000000}, {0xBEEBBEEB, fn},                                       // a relocated CALLU
+        {0x02000000}, {0x3F800000},                                           // PUSH 1.0f
+        {0x77000000}, {0x00000000},                                           // START, null function
+        {0x7E000000}, {205, std::nullopt, true},                              // ISTYPE 205
+        {0x7B000000}};
+    const auto code = decodeCode(words);
+    ASSERT_EQ(code.size(), 11u);
+    EXPECT_EQ(code[3].op, 0x65);
+    EXPECT_EQ(code[3].builtinType, kDataDynArray);
+    EXPECT_EQ(code[3].builtinIndex, 0);
+    EXPECT_TRUE(code[3].ptrs.empty());
+    EXPECT_EQ(code[4].op, 0x08); // the next instruction, not NOP 1793
+    EXPECT_EQ(code[4].word, 5u);
+    EXPECT_EQ(code[6].op, 0x65);
+    EXPECT_EQ(code[6].builtinType, 0);
+    ASSERT_EQ(code[6].ptrs.size(), 1u);
+    EXPECT_EQ(code[6].ptrs[0].offset, 0x64u);
+    EXPECT_EQ(code[7].imm, 0x3F800000u);
+    EXPECT_EQ(code[8].op, 0x77);
+    EXPECT_TRUE(code[8].ptrs.empty());
+    EXPECT_EQ(code[8].word, 11u);
+    EXPECT_EQ(code.back().op, 0x7B);
+    EXPECT_EQ(code.back().word, 15u);
+    EXPECT_EQ(code[code.size() - 2].ref, 205u);
+    // MAP builtin 3 (Erase): {1, 8, 3}
+    const std::vector<CodeWord> erase = {{0x65000000}, {0x00030801}};
+    const auto e = decodeCode(erase);
+    ASSERT_EQ(e.size(), 1u);
+    EXPECT_EQ(e[0].builtinType, kDataMap);
+    EXPECT_EQ(e[0].builtinIndex, 3);
+    const std::vector<CodeWord> operandFirst = {{0xBEEBBEEB, fn}, {0x7B000000}};
+    EXPECT_THROW(decodeCode(operandFirst), cdc::FormatError);
+}
+
+// DYNARRAY builtins (NativeBuiltInImpl records 0x8A7718) over the VM's array model: the member's field is the count,
+// element i is elementOffset(member, i); DREFD / DBOUNDS / DREF32 read elements; a null receiver skips the call with the
+// result untouched (0x57DE34 -> 0x5766F0).
+TEST(ScriptVm, DynamicArrayBuiltins) {
+    auto ins = [](uint8_t op, int32_t arg = 0) { Instr i; i.op = op; i.arg = arg; return i; };
+    auto callu = [](uint16_t index) { Instr i; i.op = 0x65; i.builtinType = kDataDynArray; i.builtinIndex = index; return i; };
+    ScriptType type;
+    type.id = 100;
+    Member array; array.type = 0x37; array.offset = 16; array.init = 2;
+    Member element; element.type = 0x32;
+    element.init = 5; array.elements.push_back(element);
+    element.init = 6; array.elements.push_back(element);
+    type.members = {array};
+    Function f;
+    f.vtIndex = 54; f.self = {2, 0x64}; f.localCount = 1;
+    f.code = {
+        ins(0x0F, 4), ins(0x10, 16), callu(0),                                        // +4 = Size() = 2
+        ins(0x03, 9), ins(0x10, 16), callu(4),                                        // Push(9)
+        ins(0x0F, 8), ins(0x10, 16), callu(0),                                        // +8 = 3
+        ins(0x03, 0), ins(0x10, 16), callu(3),                                        // Remove(0): 6, 9
+        ins(0x0F, 12), ins(0x10, 16), ins(0x20), ins(0x03, 1), ins(0x22), ins(0x1D), ins(0x2F), // +12 = a[1]
+        ins(0x0F, 20), ins(0x03, 0), callu(0),                                        // null receiver
+        ins(0x10, 16), callu(5),                                                      // Pop: 6
+        ins(0x7B)};
+    type.functions = {f};
+    auto program = std::make_shared<vm::Program>(std::vector<ScriptType>{type});
+    auto object = program->instantiate(1, 100);
+    EXPECT_EQ(object->fields.at(16), 2u);
+    EXPECT_EQ(object->fields.at(elementOffset(16, 1)), 6u);
+    object->fields[20] = 55;
+    vm::Machine machine([&](int32_t) { return object; }, [&](vm::NativeContext&) { return false; });
+    ASSERT_TRUE(machine.call(*object, 54)) << machine.failure();
+    EXPECT_EQ(object->fields.at(4), 2u);
+    EXPECT_EQ(object->fields.at(8), 3u);
+    EXPECT_EQ(object->fields.at(12), 9u);
+    EXPECT_EQ(object->fields.at(20), 55u); // untouched
+    EXPECT_EQ(object->fields.at(16), 1u);
+    EXPECT_EQ(object->fields.at(elementOffset(16, 0)), 6u);
+    EXPECT_FALSE(object->fields.contains(elementOffset(16, 1)));
+    ASSERT_NE(program->member(100, elementOffset(16, 1)), nullptr);
+    EXPECT_EQ(program->member(100, elementOffset(16, 1))->init, 6u);
+
+    // A map method fails visibly: maps are not modelled.
+    Instr map = callu(0); map.builtinType = kDataMap;
+    f.code = {ins(0x0F, 4), ins(0x10, 16), map, ins(0x7B)};
+    type.functions = {f};
+    auto mapProgram = std::make_shared<vm::Program>(std::vector<ScriptType>{type});
+    auto mapObject = mapProgram->instantiate(1, 100);
+    vm::Machine mapMachine([&](int32_t) { return mapObject; }, [&](vm::NativeContext&) { return false; });
+    EXPECT_FALSE(mapMachine.call(*mapObject, 54));
+    EXPECT_EQ(mapMachine.failure(), "builtin map fn 0: maps are not modelled");
+}
+
+// CALLU on a native (0x57DE34): a null receiver drops the arguments and the result address without calling, and a
+// non-void native given a null result address is not called.
+TEST(ScriptVm, CallUNullReceiverAndNullResultSkip) {
+    auto ins = [](uint8_t op, int32_t arg = 0) { Instr i; i.op = op; i.arg = arg; return i; };
+    ScriptType native;
+    native.id = 51; native.nativeName = "instanceref";
+    Function get; get.self = {1, 0x54}; get.native = true; get.argCount = 1; get.returnType = 2;
+    native.functions = {get};
+    ScriptType type;
+    type.id = 100;
+    Function f;
+    f.vtIndex = 54; f.self = {2, 0x64}; f.localCount = 1;
+    Instr call = ins(0x65); call.ptrs = {get.self};
+    f.code = {ins(0x0F, 4), ins(0x03, 1), ins(0x03, 0), call,   // null receiver: +4 untouched
+              ins(0x03, 0), ins(0x03, 1), ins(0x0F, 12), call,  // null result address: not called
+              ins(0x0F, 8), ins(0x03, 1), ins(0x0F, 12), call,  // called: +8 = 7
+              ins(0x7B)};
+    type.functions = {f};
+    auto program = std::make_shared<vm::Program>(std::vector<ScriptType>{native, type});
+    auto object = program->instantiate(1, 100);
+    object->fields[4] = 33;
+    int calls = 0;
+    vm::Machine machine([&](int32_t) { return object; }, [&](vm::NativeContext& nc) {
+        ++calls; nc.result = vm::Value::scalar(7); return true;
+    });
+    ASSERT_TRUE(machine.call(*object, 54)) << machine.failure();
+    EXPECT_EQ(calls, 1);
+    EXPECT_EQ(object->fields.at(4), 33u);
+    EXPECT_EQ(object->fields.at(8), 7u);
+}
+
+// l3_main_bedroom's fire volumes (firetriggervolume 6516, constructor fn 4): `for (i = 0; i < sensors.Size(); ++i)
+// sensors[i].Attach(this)` over the four initial playersensors (radii 3160 / 2212 / 1580 / 948, onEnter and onExit, off
+// until vt 11-13 enable them). It used to stop at the CALLU (OU-SCR-001); now it runs to its end (+40 = 0).
+TEST(ScriptRealData, FireVolumeConstructorBuildsSensors) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l3_main_bedroom.drm")));
+    std::optional<ScriptType> fire;
+    for (uint32_t i = 0; i < drm->sections.size(); ++i)
+        if (drm->sections[i].type == cdc::SectionType::Script && drm->sections[i].id == 6516) fire = parseScriptType(*drm, i);
+    ASSERT_TRUE(fire);
+    ASSERT_GT(fire->functions.size(), 4u);
+    const auto& ctor = fire->functions[4].code;
+    const auto size = std::find_if(ctor.begin(), ctor.end(), [](const Instr& in) { return in.word == 21; });
+    ASSERT_NE(size, ctor.end());
+    EXPECT_EQ(size->op, 0x65);
+    EXPECT_EQ(size->builtinType, kDataDynArray);
+    EXPECT_EQ(size->builtinIndex, 0);
+    EXPECT_FALSE(std::any_of(ctor.begin(), ctor.end(), [](const Instr& in) { return in.word == 22; })); // was NOP 1793
+    const auto sensors = std::find_if(fire->members.begin(), fire->members.end(), [](const Member& m) { return m.offset == 16; });
+    ASSERT_NE(sensors, fire->members.end());
+    ASSERT_EQ(sensors->elements.size(), 4u);
+    EXPECT_NEAR(std::bit_cast<float>(sensors->elements[0].initWords[1]), 3160.5f, 1.0f);
+    EXPECT_NEAR(std::bit_cast<float>(sensors->elements[3].initWords[1]), 948.2f, 1.0f);
+    EXPECT_EQ(sensors->elements[0].init2, 0x101u);
+
+    Runtime r;
+    r.setBigfile(&bf);
+    r.setUnits({{"l3_main_bedroom", drm, {}}});
+    r.tick(at(vec3(1e7f)));
+    size_t volumes = 0;
+    for (const Object& o : r.objects()) {
+        if (o.name != "firetriggervolume" || !o.script) continue;
+        ++volumes;
+        EXPECT_TRUE(o.script->fields.contains(40)) << o.uid << ": constructor did not finish";
+        for (const auto& [key, count] : r.failures()) EXPECT_NE(key.first, o.uid) << key.second;
+    }
+    EXPECT_EQ(volumes, 14u);
+    size_t attached = 0;
+    for (const auto& s : r.serialize().at("runtime").at("sensors"))
+        if (isElement(s.at(1).get<uint32_t>())) {
+            ++attached;
+            EXPECT_EQ(s.at(2).get<int32_t>(), s.at(0).get<int32_t>()); // attached to the volume itself (instance 6)
+        }
+    EXPECT_EQ(attached, 4 * volumes);
+}
+
+// Natives the user logs and the script survey reported missing (docs/re/SCRIPT_NATIVES.md "Natives reported missing"):
+// l6_ship_exterior's yacht 7651 sets a colour ramp (gamebase 27; the current colour then moves to the target),
+// l3_main_hall's unit script asks unitref 1 IsLoaded of a unit; neither stops its handler any more (instanceref 10 needs
+// the World's natives: GameReal.UnitScriptsStoreFloatProperty).
+TEST(ScriptRealData, MissingNativesBound) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto run = [&](const char* unit, int ticks) {
+        auto r = std::make_unique<Runtime>();
+        r->setBigfile(&bf);
+        r->setStreamUnitId([unit](const std::string& name) { return name == unit ? 0x37u : 0u; });
+        r->setUnits({{unit, std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read(std::string("pc-w\\") + unit + ".drm"))), {}}});
+        for (int i = 0; i < ticks; ++i) r->tick(at(vec3(1e7f)));
+        for (const auto& [key, count] : r->failures())
+            for (const char* missing : {"native instanceref fn 10", "native gamebase fn 27", "native unitref fn 1", "native instance fn 27"})
+                EXPECT_NE(key.second, missing) << unit << " uid " << key.first;
+        return r;
+    };
+    const auto ship = run("l6_ship_exterior", 600);
+    const bool ramped = std::ranges::any_of(ship->colourRamps(), [](const Runtime::ColourRamp& c) {
+        return c.target != glm::vec4(1) && c.current == c.target;
+    });
+    EXPECT_TRUE(ramped);
+    run("l3_main_hall", 2);
+}

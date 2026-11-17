@@ -5037,6 +5037,23 @@ TEST(GameReal, ScriptSurvey) {
     }
 }
 
+// instanceref 10 SetFloatProperty(symbol, float) has two arguments (docs/re/SCRIPT_NATIVES.md, thunk 0x799B30 ->
+// 0x4B1870): the unit scripts of l1_seatop and l2_cliffclimb store a float in the property store's float block instead
+// of stopping at it.
+TEST(GameReal, UnitScriptsStoreFloatProperty) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const char* unit : {"l1_seatop", "l2_cliffclimb"}) {
+        game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), unit,
+                      game::loadLaraAnims(bf));
+        w.script().setBigfile(&bf);
+        for (int i = 0; i < 3; ++i) w.tick({});
+        for (const auto& [key, count] : w.script().failures()) EXPECT_NE(key.second, "native instanceref fn 10") << unit;
+        EXPECT_FALSE(w.script().floatProperties().empty()) << unit;
+        for (const auto& [key, bits] : w.script().floatProperties()) EXPECT_TRUE(std::isfinite(std::bit_cast<float>(bits))) << unit;
+    }
+}
+
 // The three chapter ends reached only through other scripts (docs/GAMEPLAY.md "Level ends"): a trigger (or the
 // preceding cinematic's post-stream helper) runs its real bytecode, which activates the closing cinematic_object;
 // World plays it and starts the next chapter.

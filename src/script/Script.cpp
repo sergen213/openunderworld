@@ -1421,10 +1421,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // stream (9) is not told apart from its end]; a receiver not activated this tick does not block (ours
             // has nothing later to wait for: l4_trailstart's reveal 6677 calls it on a stream that is never ended
             // here, and waiting stopped it before it set her down). l2_maproom volume 2636 waits so for cinematic
-            // 2624 before it hands the left gauntlet over.
-            if (!std::strcmp(name, "cinematic") && ((nc.function == 9 && nc.args.size() == 1) || (nc.function == 10 && nc.args.empty())) &&
-                (nc.receiver.kind == vm::Value::Kind::Member || nc.receiver.kind == vm::Value::Kind::Object)) {
-                const int32_t uid = nc.receiver.uid;
+            // 2624 before it hands the left gauntlet over. 10 takes any receiver (0x4A4CC0 starts the sequence on whatever
+            // stream value it is given): a value held in a local (unit scripts' handlers stopped on it in user logs) names
+            // the cinematic intro by its uid [I].
+            if (!std::strcmp(name, "cinematic") && ((nc.function == 9 && nc.args.size() == 1 &&
+                                                     (nc.receiver.kind == vm::Value::Kind::Member || nc.receiver.kind == vm::Value::Kind::Object)) ||
+                                                    (nc.function == 10 && nc.args.empty()))) {
+                const int32_t uid = nc.receiver.kind == vm::Value::Kind::Member || nc.receiver.kind == vm::Value::Kind::Object
+                    ? nc.receiver.uid : int32_t(nc.receiver.bits);
                 nc.wait = std::any_of(events_.begin(), events_.end(), [&](const Event& e) {
                     return e.kind == EventKind::Activate && e.target == uid && e.tick == tick_;
                 });
@@ -1462,6 +1466,23 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // gamebase 32 (0x797E50 -> 0x714DE0) frees a global effect list at a cinematic's start (cinematic_object base
             // vt 45 event 0); no effect on play.
             if (!std::strcmp(name, "gamebase") && nc.function == 32 && nc.args.empty()) return true;
+            // gamebase 27 SetColourRamp(slot, r, g, b, seconds) (0x797D90 -> 0x776130 -> 0x773290): colourRamps(); the
+            // yacht scripts (ms_uo_yacht 7651, co_yacht 7714) call it. Runtime::tick moves the current colours.
+            if (!std::strcmp(name, "gamebase") && nc.function == 27 && nc.args.size() == 5) {
+                const uint32_t slot = nc.args[0].bits;
+                if (slot < colourRamps_.size()) {
+                    ColourRamp& c = colourRamps_[slot];
+                    c.target = {std::bit_cast<float>(nc.args[1].bits), std::bit_cast<float>(nc.args[2].bits),
+                                std::bit_cast<float>(nc.args[3].bits), 1.0f};
+                    c.seconds = std::bit_cast<float>(nc.args[4].bits);
+                }
+                if (!std::exchange(colourRampLogged_, true)) {
+                    const auto f = [&](size_t i) { return double(std::bit_cast<float>(nc.args[i].bits)); };
+                    std::fprintf(stderr, "script: gamebase 27 SetColourRamp(%u, %.3f %.3f %.3f, %.2f s) stored; no renderer reads "
+                                 "the colour ramps yet (tru.exe render constants 8 / 9 [U])\n", slot, f(1), f(2), f(3), f(4));
+                }
+                return true;
+            }
             // uberobjectevent 0 (CALLU: receiver = the event vt 54 got, its index; argument = the member {object, index}):
             // does the event name this member's event?
             // A local event member arrives as its index (vm::Machine::push).
@@ -1507,6 +1528,46 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 }
                 if (nc.function == 3 && nc.args.empty()) { birth(int32_t(localValue)); return true; } // Birth (0x4AC0D0)
                 if (nc.function == 6 && nc.args.empty()) { nc.wait = !target; return true; }
+            }
+            // A native value given as receiver / argument: an object's uid, a member's assigned (else declared) value, or a
+            // local's value.
+            const auto nativeValue = [&](const vm::Value& v) -> uint32_t {
+                if (v.kind == vm::Value::Kind::Object) return uint32_t(v.uid);
+                if (v.kind != vm::Value::Kind::Member) return v.bits;
+                const auto holder = resolve(v.uid);
+                if (!holder || !holder->program) return 0;
+                if (const auto f = holder->fields.find(v.offset); f != holder->fields.end()) return f->second;
+                const Member* m = holder->program->member(holder->typeId, v.offset);
+                return m && m->init ? *m->init : 0;
+            };
+            // instanceref 10 SetFloatProperty(symbol, float) (thunk 0x799B30 -> 0x4B1870): args[0] the address of the
+            // 2-byte property symbol (null: no call), args[1] the float; 0x4B1700 finds / creates the (instance, symbol)
+            // slot in the dynamic property store's (*0xA13F18) float block and stores it. 13 / 16 GetFloatProperty(symbol)
+            // (0x799B70 -> 0x4B1700) read it, 0 when unset. The owner notification 0x4AF7B0 is not modelled [U: who listens;
+            // l7_arctic_sea's constructor and vt 13 pass the god-ray strength 0.8 to dispatcher 9089 so].
+            if (!std::strcmp(name, "instanceref") && ((nc.function == 10 && nc.args.size() == 2) ||
+                                                      ((nc.function == 13 || nc.function == 16) && nc.args.size() == 1))) {
+                const int32_t target = int32_t(nativeValue(nc.receiver));
+                const uint32_t symbol = nativeValue(nc.args[0]) & 0xFFFF;
+                const bool null = nc.args[0].kind == vm::Value::Kind::Scalar && nc.args[0].bits == 0;
+                if (nc.function == 10) {
+                    if (!null) floatProperties_[{target, symbol}] = nc.args[1].bits;
+                    nc.result = vm::Value::scalar(0);
+                } else {
+                    const auto it = floatProperties_.find({target, symbol});
+                    nc.result = vm::Value::scalar(it != floatProperties_.end() ? it->second : 0);
+                }
+                return true;
+            }
+            // unitref 1 IsLoaded (0x79D6B0 -> 0x4AAEC0 -> 0x5C1B50): the unit is in g_streamTracker in state 2 (loaded).
+            // Ours: a unit setUnits loaded (not a cinematic-only resident) whose stream unit id is the value's low 16 bits.
+            if (!std::strcmp(name, "unitref") && nc.function == 1 && nc.args.empty()) {
+                const uint32_t id = nativeValue(nc.receiver) & 0xFFFF;
+                const bool loaded = id && streamUnitId_ && std::any_of(unitRefs_.begin(), unitRefs_.end(), [&](const auto& u) {
+                    return !u.second.resident && (streamUnitId_(u.first) & 0xFFFF) == id;
+                });
+                nc.result = vm::Value::scalar(loaded);
+                return true;
             }
             // instanceref 0 (0x79A940 -> 0x4A52E0, as unitref 0): receiver and argument name the same instance; either may
             // be a member, a local's value or an object (instance 14 GetInstanceRef results; l1_seafloor 978, l7_arctic_sea
@@ -1848,14 +1909,6 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 self->properties[(uint64_t(off) << 32) | nc.args[0].bits] = nc.args[1].bits & 0xFF;
                 return true;
             }
-            // instanceref 10 (thunk 0x799B30, between SetProperty 9 and GetProperty 12): one float to the referenced
-            // instance, result unread. Seen only with the god-ray strength beside `unit` 15 of the same value
-            // (l7_arctic_sea's constructor and vt 13: 0.8 to dispatcher 9089, whose own thread feeds `unit` 15) [U: what the
-            // receiver does with it]; ours keeps nothing and runs on, so the constructor reaches its puzzle set-up.
-            if (!std::strcmp(name, "instanceref") && nc.function == 10 && nc.args.size() == 1) {
-                nc.result = vm::Value::scalar(0);
-                return true;
-            }
             if (!std::strcmp(name, "instanceref") && (nc.function == 12 || nc.function == 15) && nc.args.size() == 1) {
                 nc.result = vm::Value::scalar(self->properties[(uint64_t(off) << 32) | nc.args[0].bits]); // GetProperty
                 return true;
@@ -2177,19 +2230,20 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             if (!std::strcmp(name, "instance") && nc.function == 27 && nc.args.empty()) {
-                // GetUnit (thunk 0x7B2C20 -> 0x4B06F0): a 12-byte unitref of the instance's unit (+0xE0). Ours: the
-                // unit's ordinal + 1 as an identity (mercs pass it to enemybase 23 [U: what the AI does with it]).
+                // GetUnit (thunk 0x7B2C20 -> 0x4B06F0): a 12-byte unitref of the instance's unit (+0x20 -> +0xE0), which
+                // unitref 0 compares by stream unit id (l2_cliffclimb's unit script: Lara's unit == its own, then the god
+                // rays go off). Ours: that stream unit id (setStreamUnitId), 0 when unknown. Receivers: a World object (its
+                // unit), Lara's script (the unit she is in, setPlayerUnit; l7_arctic_sea's constructor asks whether she came
+                // from the unit before), a unit / global script (the unit whose DRM holds it). Mercs pass it to enemybase 27
+                // GuardNode, whose unit ours does not need.
                 const Object* object = findMut(self->uid);
-                // Lara's (l7_arctic_sea's constructor asks whether she came from the unit before): her stream unit
-                // id, what unitref 0 compares; 0 before the World has told us.
                 if (!object && self == playerScript_) {
                     nc.result = vm::Value::scalar(playerUnit_ ? playerUnit_->first : 0);
                     return true;
                 }
-                if (!object) return false;
-                auto unit = std::find(cameraUnits_.begin(), cameraUnits_.end(), object->unit);
-                if (unit == cameraUnits_.end()) unit = cameraUnits_.insert(unit, object->unit);
-                nc.result = vm::Value::scalar(uint32_t(unit - cameraUnits_.begin()) + 1);
+                const std::string& unit = object ? object->unit : self->program->unit;
+                if (unit.empty()) return false;
+                nc.result = vm::Value::scalar(streamUnitId_ ? streamUnitId_(unit) & 0xFFFF : 0);
                 return true;
             }
             if (!std::strcmp(name, "instance") && nc.function == 25 && nc.args.empty()) {
@@ -2855,6 +2909,12 @@ void Runtime::tick(const TickInput& in) {
     }
     tickSensors(in.pos);
     fade_ = fade_ < fadeTarget_ ? std::min(fadeTarget_, fade_ + fadeStep_) : std::max(fadeTarget_, fade_ - fadeStep_);
+    // Colour ramps (0x773BF0): the current colour covers dt / remaining of the way to the target each update.
+    for (ColourRamp& c : colourRamps_) {
+        const float dt = float(dt_);
+        if (c.seconds > dt) c.current += (c.target - c.current) * (dt / c.seconds), c.seconds -= dt;
+        else c.current = c.target, c.seconds = 0;
+    }
     for (size_t i = 0; i < threads_.size(); ++i) { // copy: adopt may add or end threads
         const auto [uid, thread] = threads_[i];
         if (!instance(uid)) continue; // owner unloaded: dropped below
@@ -3163,7 +3223,8 @@ nlohmann::json Runtime::serialize() const {
                     {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
                     {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
                     {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}},
-                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}, {"born", born_}, {"anchors", anchors_}};
+                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}, {"born", born_}, {"anchors", anchors_},
+                    {"floatProperties", floatProperties_}};
     if (!away_.empty()) { // instances away from their birth unit; the loaded ones where they are now
         nlohmann::json away = nlohmann::json::array();
         for (const auto& [uid, a] : away_) {
@@ -3377,6 +3438,7 @@ void Runtime::restoreRuntime(const nlohmann::json& r) {
     deferredUnits_ = r.value("deferredUnits", std::set<std::string>{});
     grappleOff_ = r.value("grappleOff", std::set<int32_t>{}); // older saves have none
     anchors_ = r.value("anchors", std::map<int32_t, std::pair<int32_t, int32_t>>{});
+    floatProperties_ = r.value("floatProperties", std::map<std::pair<int32_t, uint32_t>, uint32_t>{}); // older saves: none
 }
 
 } // namespace ou::script

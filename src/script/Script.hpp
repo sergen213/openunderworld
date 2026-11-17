@@ -586,6 +586,21 @@ public:
     const Weather& weather() const { return weather_; }
     // globaleffect FadeOut/FadeIn screen wipe: 0 = clear, 1 = black; moves by 1/frames each tick.
     float screenFade() const { return fade_; }
+    // gamebase 27 SetColourRamp(slot, r, g, b, seconds) (0x797D90 -> 0x776130 -> 0x773290): the slot's target colour
+    // (0xFAE6F0 + 16 slot, alpha 1) and seconds (0xFAE680[slot]); 0x773BF0 moves the current colour (0xFAE6A0 + 16 slot)
+    // toward the target over the remaining seconds each update; 0x7731B0 resets them to white. tru.exe uploads slots 0 / 1
+    // to g_pcRenderDevice vtable +0x84 ids 8 / 9 [U: which render constants]: no renderer reads these yet (gap; the
+    // first call logs it once). Not saved [I: the yacht scripts set them on entering].
+    static constexpr size_t kColourRampSlots = 5; // [I] 0xFAE6A0..0xFAE6F0 holds five current colours
+    struct ColourRamp { glm::vec4 current{1}, target{1}; float seconds = 0; };
+    const std::array<ColourRamp, kColourRampSlots>& colourRamps() const { return colourRamps_; }
+    // Stream unit ids (a portal's unit id; unitref values, the stream tracker's key) of loaded units, from the World:
+    // instance 27 GetUnit and unitref 1 IsLoaded. 0 = unknown.
+    using StreamUnitId = std::function<uint32_t(const std::string& unit)>;
+    void setStreamUnitId(StreamUnitId f) { streamUnitId_ = std::move(f); }
+    // instanceref 10 SetFloatProperty: the float block of the dynamic property store (0x4B1700, *0xA13F18) by
+    // (referenced intro uid, property symbol); instanceref 13 / 16 read it. Saved.
+    const std::map<std::pair<int32_t, uint32_t>, uint32_t>& floatProperties() const { return floatProperties_; }
     int32_t used() const { return used_; }      // last tick: the switch Lara used (uid), 0 = none
     uint64_t ticks() const { return tick_; }
     // Handler failures since construction: (intro uid, Machine::failure reason) -> count. The survey reads these.
@@ -768,6 +783,10 @@ private:
     struct Sensor { int32_t anchor = 0, marker = -1; bool enabled = true, inside = false; }; // attached sensors only
     std::map<uint64_t, Sensor> sensors_; // (uid << 32) | member offset; saved
     AnchorAt anchorAt_;
+    std::array<ColourRamp, kColourRampSlots> colourRamps_{};
+    bool colourRampLogged_ = false;
+    StreamUnitId streamUnitId_;
+    std::map<std::pair<int32_t, uint32_t>, uint32_t> floatProperties_; // floatProperties(); saved
     void tickSensors(vec3 lara);
     float fade_ = 0, fadeTarget_ = 0, fadeStep_ = 0;
     vec3 lastPos_{0};

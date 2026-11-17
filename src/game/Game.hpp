@@ -1577,6 +1577,8 @@ private:
     void bindLightHealth();
     void bindMarkup();
     void bindEnemies();
+    // A unit's stream unit id: the id a loaded unit's portal to it carries (unitref values; 0 = no loaded portal names it).
+    uint32_t streamUnitId(const std::string& unit) const;
     // A water volume the scripts changed (tru.exe water data, docs/GAMEPLAY.md "Water"): surface +0x58 moving toward
     // target +0x5C at rate +0x60 units per 30 Hz frame (0x6C10D0), flow markers +0x64 / +0x66 with their positions
     // (0x69D690) and strength +0x68. Unit frame; World::applyWaterState writes it into the volume's markup.

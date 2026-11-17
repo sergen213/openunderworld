@@ -533,6 +533,13 @@ void World::setOutfitRig(const cdc::Drm& drm) {
     updatePose(0, true);
 }
 
+uint32_t World::streamUnitId(const std::string& unit) const {
+    for (const auto& u : units_)
+        for (const auto& p : u.data.portals)
+            if (p.toUnit == unit) return uint32_t(uint16_t(p.toStreamId));
+    return 0;
+}
+
 World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tuning tuning)
     : col_(std::move(col)), anims_(std::move(anims)), player_(col_, anims_, tuning) {
     startSpawn_ = spawn; // respawn target without units
@@ -551,6 +558,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
         return cameraNative(op, unit, index, value);
     });
     script_.setTimeNative([this](bool world, float target, float seconds) { setTimeScale(world, target, seconds); });
+    script_.setStreamUnitId([this](const std::string& unit) { return streamUnitId(unit); });
     player_.spawn(spawn.pos, spawn.yaw);
     prev_ = player_.state();
     cam_.yaw = player_.state().yaw;
@@ -738,14 +746,8 @@ void World::tick(const Actions& input) {
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.
     if (!units_.empty() && units_[current_].data.name != playerUnit_) {
-        const auto streamId = [&](const std::string& name) -> uint32_t {
-            for (const auto& u : units_)
-                for (const auto& p : u.data.portals)
-                    if (p.toUnit == name) return uint32_t(uint16_t(p.toStreamId));
-            return 0;
-        };
         const std::string& now = units_[current_].data.name;
-        script_.setPlayerUnit(streamId(now), playerUnit_.empty() ? std::nullopt : std::optional<uint32_t>(streamId(playerUnit_)));
+        script_.setPlayerUnit(streamUnitId(now), playerUnit_.empty() ? std::nullopt : std::optional<uint32_t>(streamUnitId(playerUnit_)));
         playerUnit_ = now;
     }
     if (const auto to = script_.takeTeleport(); to && !units_.empty()) // instance 26 on Lara: onto an object / its marker
