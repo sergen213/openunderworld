@@ -44,3 +44,36 @@ work item IDs (W*-*) come from its §16.
 | Bench | W10-2 deterministic benchmarks, W10-1 extended performance baseline |
 
 Engine fixes (W6-*) wait for this wave's evidence (W3-*, ScriptNatives).
+
+## 2026-11-17 — batch 4: RE wave 2 + first evidence-backed fixes (paused by the user)
+
+- **Landed on main:**
+  - Reverse-engineering docs: SCRIPT_NATIVES, RENDER_PIPELINE, STRUCTURES, VERIFICATION, CAMERA, UI, SAVEGAME,
+    SHUTDOWN, PUZZLE_BLOCKERS.
+  - Format docs: UI and LIGHTING docs; endianness and validation sections in all format docs.
+  - LIMITATIONS.md; DocDrift corrections and refreshed chapter matrices.
+  - Tests: self-test probes (engine, HUD, inventory, audio, camera, save/load), AO regression and golden tests,
+    the `ctest -L protected` label.
+  - Tools: real-data round trips and ou-asset subcommands; the Wine harness in tools/wine-ref; benchmark tooling in
+    tools/bench.
+  - The script VM fix: CALLU builtins and natives (8daa2ee, f9676fd).
+- **Integration branch `int/brief`** (worktree `openunderworld-work/wt-int`). It builds cleanly. **The full ctest is
+  not run yet, so it is not merged into main or released.** It contains:
+
+  | Branch | Fixes |
+  |---|---|
+  | agent/SwellFix-2 | OU-WAT-006: sea within ~5 of tru.exe |
+  | agent/PlatformCam-2 | OU-CAM-001: lag 0; ~115-unit height residual → OU-CAM-005 |
+  | agent/SwimTurn-2 | OU-SWM-002 fixed; OU-SWM-001 partly fixed |
+  | agent/PuzzleFix | OU-PZL-006 / 007 / 010 |
+  | agent/SlideLedge | OU-PLY-014 fixed; OU-PLY-013 not a bug. Its own full ctest was interrupted. |
+
+- **Unfinished:** agent/ScriptPuzzle (worktree `wt-ScriptPuzzle`). It has uncommitted edits for OU-PZL-009, kept
+  on disk, which are not built yet. Still to do: multibody 3, OU-GRP-005 (vt 46 / larabase 26), multibody 92/93.
+- **Next:**
+  1. Full ctest on int/brief in a private kwin, excluding game_vulkan_rt_smoke.
+  2. Re-bless the cliff_water_enhanced goldens on the integrated build. Swell and camera carry both change that
+     frame; the merge kept SwellFix's PNG.
+  3. Merge into main, bump to 0.52.0, write the CHANGELOG, release.
+  4. Finish ScriptPuzzle.
+  5. Run the idle-machine benchmark (`tools/bench/run.sh --runs 2`).
