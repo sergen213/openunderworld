@@ -39,12 +39,18 @@ Other timer users. None of them feed the game clock:
 
 ```
 GAMELOOP_Frame 0x5DFFE0:
+  0x483810, 0x78BCC0, 0x5D4520     // not render code; roles not decoded [INF m]
   GAMELOOP_Process(gameTracker)    // simulate with timeMult computed at the end of the previous frame
   STREAM_PollLoadQueue
-  GAMELOOP_DrawFrame               // build + submit the frame (Present is inside the render path)
+  GAMELOOP_DrawFrame               // build + submit the frame; ends in Font_Flush 0x5C5A30 = the frame end (EndScene,
+                                   // 2-D scene, EndFrame / Present path), not just a font flush
+  0x5C1B50, 0x5B8FC0               // not render code; roles not decoded [INF m]
   GAMELOOP_UpdateTime              // measure, produce timeMult for the NEXT frame
   gameTracker+0x24++               // frame counter
 ```
+
+The five unnamed calls were missing from this listing before 2026-11-16; call order read from the disassembly at
+0x5DFFE1–0x5E003A (docs/re/RENDER_PIPELINE.md §1 and §10).
 
 The simulation of frame N uses a time step measured over frames before N. That is one frame of latency plus smoothing (see below).
 

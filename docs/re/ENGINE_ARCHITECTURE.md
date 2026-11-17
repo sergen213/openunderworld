@@ -258,7 +258,8 @@ WinMain ─ Win32_GameMain ─┬─ archives (InitArchive / InitPatchArchive) �
 | 0x5F39F0 / 0x5EDF50 | CAMERA_SetMode / CameraManager_ToggleMode | N-m / N-l |
 | 0x5E8750 / 0x5E86F0 | camera shake stop / free slot | C |
 
-- State machine: camera modes (CameraManager +0xE4 type, e.g. 8 = AutoSplineCamera, 23 = manual aim); CameraSpline
+- State machine: camera modes (passed as the argument of CameraManager vtable slot 57, vftable +0xE4: 8 =
+  AutoSplineCamera, 23 = manual aim; +0xE4 is a vfunc, not a field: docs/re/STRUCTURES.md "Mismatches"); CameraSpline
   states 1/2/3.
 - Linux: `src/game/World.cpp` (follow camera), `src/game/Camera.cpp` (splines), `src/render/Camera.hpp`.
 - Fidelity: **decoded** for the follow camera's tuning and the reveal splines (ROADMAP: tested). The citing code
@@ -472,7 +473,7 @@ WinMain ─ Win32_GameMain ─┬─ archives (InitArchive / InitPatchArchive) �
 
 | Address | Name | Evidence |
 |---|---|---|
-| 0x474C90.. 0x476BC0 / 0x5C5A30 | Font_* (cursor, scale, height, text width, printf) / Font_Flush | N-m |
+| 0x474C90.. 0x476BC0 / 0x5C5A30 | Font_* (cursor, scale, height, text width, printf) / Font_Flush (the name is the menu hook's; the function is the frame end: EndScene of the main scene, the 2-D scene, EndFrame vt 0x10, docs/re/RENDER_PIPELINE.md §2 / §10) | N-m |
 | 0x476D80 / 0x476540 / 0x475350 | text draw (`\x1B` highlight) / glyph draw / glyph lookup | C |
 | 0x5A7C20 | button prompts (U+1800 + i) | C |
 | 0x789770 | load/save slot naming | C |

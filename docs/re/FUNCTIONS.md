@@ -33,7 +33,7 @@ Tags: **[OBS]** seen in decompile, **[INF]** inference, **[?]** unknown.
 | 0x774550 | per-frame service A in `MainG2` (state 6 → 0x7743C0 with level data) [?] | called every `MainG2` iteration before `MAIN_ProcessMainState` [OBS] | low |
 | 0x789220 | per-frame queue drain in `MainG2` (list at 0xFAF2D0) [?] | same [OBS] | low |
 | 0x5DF930 | engine shutdown | called once after the `MainG2` loop; 66 callees [OBS] | medium |
-| 0x5DAB40 | level-start / load-fade path of `MAIN_PlayGame` | taken when `gameTracker+0xB8` != 0; sets fog/clear colours, calls `GAMELOOP_UpdateTime` [OBS] | low |
+| 0x5DAB40 | level-start / load-fade path of `MAIN_PlayGame` | taken when the u8 state `gameTracker+0xB8` is neither 0 nor 8 (0x5E0055..0x5E0061; else `GAMELOOP_Frame`); 0x5DAB40 then tests `== 0xC` (0x5DAB48); sets fog/clear colours, calls `GAMELOOP_UpdateTime` [OBS] (docs/re/STRUCTURES.md "Mismatches") | low |
 | 0x5DAAB0, 0x5DAE20 | other main states (menu/load) with their own `GAMELOOP_UpdateTime` call | callers = `MAIN_ProcessMainState` [OBS]; 0x5DAE20 string `medsea_loop` | low |
 | 0x5D3DF0 | `GAMELOOP_ResetLevelTime` | zeroes/sets game-time ms (+0xCC/+0xD0) from level data +0x19C; looks up object `"player"` [OBS] | medium |
 | 0x5D9E70 | game-tracker init | only caller of `GAMELOOP_InitTimeFields`; called from `MainG2_InitEngine` [OBS] | medium |

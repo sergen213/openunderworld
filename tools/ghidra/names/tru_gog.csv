@@ -20,7 +20,7 @@ address,name,confidence,evidence
 0x5e0190,MainG2,high,loop { ...; MAIN_ProcessMainState(mainTracker 0xE7ED60 gameTracker 0xE7F088); STREAM_PollLoadQueue; MainG2_PlatformUpdate } until mainTracker+0xC (0xE7ED6C) set
 0x5df390,MainG2_InitEngine,high,logs build date Dec 16 2008 18:30:39; RESOLVE_Init; registers PDAMapSection as section type 13; calls MAIN_DoMainInit
 0x5e0090,MAIN_ProcessMainState,medium,switch on mainTracker->mainState (1 = play game -> MAIN_PlayGame; 2..10 other states)
-0x5e0050,MAIN_PlayGame,low,mainState 1 handler; calls GAMELOOP_Frame unless gameTracker+0xB8 is set (then 0x5DAB40)
+0x5e0050,MAIN_PlayGame,low,mainState 1 handler; calls GAMELOOP_Frame unless the u8 gameTracker+0xB8 is neither 0 nor 8 (then 0x5DAB40; 5E0055..5E0061)
 0x5dffe0,GAMELOOP_Frame,medium,GAMELOOP_Process; STREAM_PollLoadQueue; GAMELOOP_DrawFrame; GAMELOOP_UpdateTime; gameTracker+0x24 frame counter++
 0x5da1c0,GAMELOOP_DrawFrame,low,called once per frame after GAMELOOP_Process; ends with Font flush 0x5C5A30
 0x5da230,GAMELOOP_UpdateTime,high,TIMER_GetTimeMicroseconds; 6-frame moving average of frame delta; clamp 66666us; timeMult = dt/33333.33 * scale (gameTracker+0x100)
