@@ -4,6 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+#include <optional>
+
 using namespace ou;
 using app::SelfTest;
 using app::selftest::Condition;
@@ -152,6 +155,9 @@ TEST(SelfTest, ScenarioChecks) {
         EXPECT_FALSE(t.passed()); // nothing ran
         const json r = t.report();
         EXPECT_EQ(r.at("game"), "Tomb Raider: Underworld");
+        EXPECT_EQ(r.at("platform"), "Linux"); // the brief's report schema: version, game, platform, steps
+        EXPECT_EQ(r.at("version"), 1);
+        EXPECT_FALSE(t.usesSaves());
         EXPECT_EQ(r.at("passed"), false);
         EXPECT_EQ(r.at("steps").at(0).at("passed"), false);
     }
@@ -203,11 +209,106 @@ TEST(SelfTest, ScenarioChecks) {
         alone.erase("level"), alone["start_chapter"] = 0, alone["level_chapter"] = 0;
         rejects(alone, "goes with 'level'");
     }
-    // probe names: fixed ones, ids, measurements
+    // probe names: fixed ones, ids, measurements, engine / HUD / audio, inventory, save
     for (const char* p : {"player.state", "player.pos.z", "bike.wheels", "object.6505.joint", "object.6505.uber.2", "object.6505.uberjoint.0",
-                          "object.6505.body.z", "enemy.6531.health", "target.0.hits", "portable.7190.in", "step.peak_height", "step.states"})
+                          "object.6505.body.z", "enemy.6531.health", "target.0.hits", "portable.7190.in", "step.peak_height", "step.states",
+                          "engine.sdl.video", "engine.renderer", "engine.ao_as_requested", "engine.water_surfaces", "hud.health_alpha", "hud.bar_kind",
+                          "audio.music_state", "camera.mode_name", "inventory.weapons", "inventory.health_packs", "physics.bodies", "save.restored",
+                          "save.differs"})
         EXPECT_TRUE(SelfTest::probeKnown(p)) << p;
     for (const char* p : {"", "player", "player.pos", "player.pos.w", "object.x.joint", "object.6505", "object.6505.uber", "enemy.1.mood", "step.nothing",
-                          "target.0", "portable.held.in"})
+                          "target.0", "portable.held.in", "engine", "engine.sdl", "engine.gpu", "hud", "audio.volume", "inventory", "save"})
         EXPECT_FALSE(SelfTest::probeKnown(p)) << p;
+    // save / load input lines mark the scenario (ou-game then wants a redirected XDG_DATA_HOME)
+    EXPECT_TRUE(SelfTest::parse(scenario(R"({"step":"s","input":["0.2 save 1","0.3 save 0"],"duration":1,"expect":{"probe":"save.saves","eq":1}})"))
+                    .usesSaves());
+    EXPECT_TRUE(SelfTest::parse(scenario(R"({"step":"l","input":"0.2 load 1 # reload\n0.3 load 0","duration":1,"expect":{"probe":"save.loads","eq":1}})"))
+                    .usesSaves());
+    EXPECT_FALSE(SelfTest::parse(scenario(R"({"step":"c","input":"0.2 jump 1 # no save here","duration":1,"expect":{"probe":"save.saves","eq":0}})"))
+                     .usesSaves());
+}
+
+// The engine.* / hud.* / audio.* probes read ou-game's selftest::Engine: each answers from its own field, and the
+// frame-derived ones are unavailable until a frame was drawn (--draw-last), so an engine scenario cannot pass headless.
+TEST(SelfTest, EngineProbes) {
+    using app::selftest::Engine;
+    using app::selftest::engineProbe;
+    Engine e;
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "engine.renderer")), nullptr) << "no renderer initialised";
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "engine.ao")), nullptr) << "no frame drawn";
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "engine.water_as_requested")), nullptr);
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "audio.music_state")), "off");
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "audio.voices")), nullptr) << "no mixer: no voice count";
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "engine.nothing")), nullptr);
+    for (const auto name : app::selftest::engineProbeNames()) EXPECT_TRUE(SelfTest::probeKnown(name)) << name;
+
+    e.sdlVideo = true, e.renderer = "opengl", e.device = "OpenGL 4.6 | test", e.frames = 3;
+    e.water = "enhanced", e.waterSurfaces = 2, e.aoRequested = "cortao", e.ao = "cortao", e.rtRequested = "off";
+    EXPECT_TRUE(cond(R"({"probe":"engine.sdl.video","eq":true})").holds(engineProbe(e, "engine.sdl.video")));
+    EXPECT_FALSE(cond(R"({"probe":"engine.sdl.audio","eq":true})").holds(engineProbe(e, "engine.sdl.audio")));
+    EXPECT_TRUE(cond(R"({"probe":"engine.renderer","in":["opengl","vulkan"]})").holds(engineProbe(e, "engine.renderer")));
+    const auto asRequested = [&](const char* probe) { return std::get<bool>(engineProbe(e, probe)); };
+    EXPECT_TRUE(asRequested("engine.water_as_requested"));
+    EXPECT_TRUE(asRequested("engine.ao_as_requested"));
+    EXPECT_TRUE(asRequested("engine.rt_as_requested"));
+    e.waterSurfaces = 0; // Enhanced asked, nothing drawn with its shading
+    EXPECT_FALSE(asRequested("engine.water_as_requested"));
+    e.water = "original";
+    EXPECT_TRUE(asRequested("engine.water_as_requested"));
+    e.ao = "off"; // CORTAO asked, none drawn
+    EXPECT_FALSE(asRequested("engine.ao_as_requested"));
+    EXPECT_FALSE(cond(R"({"probe":"engine.ao","eq":"cortao"})").holds(engineProbe(e, "engine.ao")));
+    e.aoRequested = "rt", e.ao = "cortao"; // RT AO without rays falls back to CORTAO
+    EXPECT_TRUE(asRequested("engine.ao_as_requested"));
+    e.rtActive = true;
+    EXPECT_FALSE(asRequested("engine.ao_as_requested"));
+    EXPECT_FALSE(asRequested("engine.rt_as_requested")) << "tracing although RT is off / unsupported";
+    e.rtRequested = "shadows", e.rtSupported = true, e.ao = "rt";
+    EXPECT_TRUE(asRequested("engine.rt_as_requested"));
+    EXPECT_TRUE(asRequested("engine.ao_as_requested"));
+    e.rtActive = false; // supported and asked, not traced
+    EXPECT_FALSE(asRequested("engine.rt_as_requested"));
+
+    e.hudAlpha = {1.0f, 0.5f, 0.0f}, e.hudHealth = 0.7f, e.hudBar = 0.4f, e.hudHealthPacks = 2, e.hudFrames = 10;
+    EXPECT_TRUE(cond(R"({"probe":"hud.health","near":0.7,"tol":1e-5})").holds(engineProbe(e, "hud.health")));
+    EXPECT_TRUE(cond(R"({"probe":"hud.weapons_alpha","near":0.5,"tol":1e-6})").holds(engineProbe(e, "hud.weapons_alpha")));
+    EXPECT_TRUE(cond(R"({"probe":"hud.gear_alpha","eq":0})").holds(engineProbe(e, "hud.gear_alpha")));
+    EXPECT_TRUE(cond(R"({"probe":"hud.bar_kind","eq":"adrenaline"})").holds(engineProbe(e, "hud.bar_kind")));
+    e.hudBreath = true;
+    EXPECT_TRUE(cond(R"({"probe":"hud.bar_kind","eq":"breath"})").holds(engineProbe(e, "hud.bar_kind")));
+    EXPECT_TRUE(cond(R"({"probe":"hud.health_packs","eq":2})").holds(engineProbe(e, "hud.health_packs")));
+
+    e.audioOn = true, e.voices = 5;
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "audio.music_state")), "idle");
+    e.musicIdle = false;
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "audio.music_state")), "loading");
+    e.music = {"l1_seatop_mus_01"};
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "audio.music_state")), "playing");
+    EXPECT_TRUE(cond(R"({"probe":"audio.music","has":["l1_seatop_mus_01"]})").holds(engineProbe(e, "audio.music")));
+    EXPECT_TRUE(cond(R"({"probe":"audio.voices","min":1})").holds(engineProbe(e, "audio.voices")));
+
+    EXPECT_EQ(app::selftest::cameraModeName(1), "foot");
+    EXPECT_EQ(app::selftest::cameraModeName(11), "hang");
+    EXPECT_EQ(app::selftest::cameraModeName(19), "underwater");
+    EXPECT_EQ(app::selftest::cameraModeName(-1), "none");
+    EXPECT_EQ(app::selftest::cameraModeName(7), "mode 7");
+}
+
+// Save / load input runs only into a redirected data directory: never the user's ~/.local/share.
+TEST(SelfTest, SaveDirectoryGuard) {
+    const auto keep = [](const char* name) { const char* v = std::getenv(name); return v ? std::optional<std::string>(v) : std::nullopt; };
+    const auto data = keep("XDG_DATA_HOME"), home = keep("HOME");
+    const auto restore = [](const char* name, const std::optional<std::string>& v) { v ? (void)setenv(name, v->c_str(), 1) : (void)unsetenv(name); };
+    setenv("HOME", "/tmp/ou-selftest-home", 1);
+    unsetenv("XDG_DATA_HOME");
+    EXPECT_FALSE(app::selftest::unsafeSaveReason().empty()) << "unset";
+    setenv("XDG_DATA_HOME", "", 1);
+    EXPECT_FALSE(app::selftest::unsafeSaveReason().empty()) << "empty";
+    setenv("XDG_DATA_HOME", "/tmp/ou-selftest-home/.local/share", 1);
+    EXPECT_FALSE(app::selftest::unsafeSaveReason().empty()) << "the user's own";
+    setenv("XDG_DATA_HOME", "/tmp/ou-selftest-home/.local/share/", 1);
+    EXPECT_FALSE(app::selftest::unsafeSaveReason().empty()) << "the user's own, spelt with a slash";
+    setenv("XDG_DATA_HOME", "/tmp/ou-selftest-data", 1);
+    EXPECT_TRUE(app::selftest::unsafeSaveReason().empty());
+    restore("XDG_DATA_HOME", data), restore("HOME", home);
 }

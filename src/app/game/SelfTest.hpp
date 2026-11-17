@@ -89,6 +89,39 @@ struct Measurements {
 // The measurement names Measurements::get answers (the probes "step.<name>").
 const std::vector<std::string_view>& measurementNames();
 
+// What ou-game around the World did, for the engine.* / hud.* / audio.* probes (docs/SELFTEST.md "Engine, HUD,
+// audio"). main.cpp fills it: SDL once it is up, the renderer's part after every drawn frame, the HUD's and the
+// mixer's after every tick. Plain values copied out of their owners: a probe never reaches into the renderer or the
+// mixer. Without one attached (the unit tests) these probes are unavailable.
+struct Engine {
+    bool sdlVideo = false, sdlAudio = false, sdlGamepad = false, sdlEvents = false; // SDL_WasInit
+    std::string videoDriver, audioDriver;    // SDL_GetCurrentVideoDriver / SDL_GetCurrentAudioDriver ("" none)
+    std::string renderer, device;            // the backend ("opengl" / "vulkan"); Renderer::description()
+    uint64_t frames = 0;                     // frames drawn (Renderer::drawFrame) since the start
+    std::string water;                       // the last frame's water quality: "original" / "enhanced" ("" no frame)
+    uint32_t waterSurfaces = 0;              // its surface draws with our water shading (render::RtStatus::waterSurfaces)
+    std::string aoRequested, ao;             // FrameOptions::ao of the last frame; the AO it drew (RtStatus::ao): off / cortao / rt
+    std::string rtRequested;                 // FrameOptions::rt of the last frame: off / shadows / full
+    bool rtSupported = false, rtActive = false; // RtStatus: the device can trace; the last frame traced rays
+    uint64_t hudFrames = 0;                  // frames that drew the HUD with one of its groups showing
+    std::array<float, 3> hudAlpha{};         // ui::Hud group opacity: health, weapons, gear (after the last tick)
+    float hudHealth = 0, hudBar = 0;         // the health meter's fill 0..1; the adrenaline / breath bar's fill 0..1
+    bool hudBreath = false;                  // that bar shows the breath
+    int hudHealthPacks = 0, hudClip = 0;     // the d-pad's health pack count; rounds in the drawn weapon's clip(s)
+    bool audioOn = false;                    // a device (or --music-wav) is open
+    size_t voices = 0;                       // the mixer's active voices
+    std::vector<std::string> music;          // tracks playing in the music player's slots, slot order
+    bool musicIdle = true;                   // no slot holds, plays or waits for a track
+};
+// The engine probe `name` from `e` (monostate for a name that is not one); engineProbeNames: the names it answers.
+Value engineProbe(const Engine& e, std::string_view name);
+const std::vector<std::string_view>& engineProbeNames();
+// Why a scenario's save / load input must not run here (empty: it may): saves go to $XDG_DATA_HOME/openunderworld/saves,
+// so XDG_DATA_HOME must be set and must not be the user's own data directory ($HOME/.local/share).
+std::string unsafeSaveReason();
+// tru.exe camera mode number -> name (camera.mode_name): "foot", "climb", "hang", "underwater", ...; "mode N" unnamed.
+std::string cameraModeName(int mode);
+
 } // namespace selftest
 
 class SelfTest {
@@ -121,6 +154,13 @@ public:
     void observe(game::World& w);          // after World::tick: measure, test `until` / the timeout, close the step
     void paused();                         // a tick the world did not run (a menu is up): counts toward the timeout
     bool done() const { return cur_ >= steps_.size(); }
+    // A step's input has save / load lines (they run, through ou-game's quicksave slot; see unsafeSaveReason).
+    bool usesSaves() const { return usesSaves_; }
+    // ou-game ran a save / load the scenario's input asked for (ok: it succeeded); read the World's state for the
+    // save.* probes. Called before the tick it happens in.
+    void saved(const game::World& w, bool ok);
+    void loaded(const game::World& w, bool ok);
+    void setEngine(const selftest::Engine* e) { engine_ = e; } // must outlive the run
     bool passed() const;
     nlohmann::json report() const;
     std::string summary() const; // one line per step + the verdict (stdout)
@@ -163,6 +203,16 @@ private:
     selftest::Measurements m_;
     std::vector<std::unique_ptr<game::DummyTarget>> dummies_; // "target" fixtures (World::targets holds the pointers)
     uint64_t simHash_ = 0;
+    bool usesSaves_ = false;
+    const selftest::Engine* engine_ = nullptr;
+    // save / load: the state one tick after the last save and one tick after the last load (World::stateParts; the
+    // loaded World holds the saved physics state until its first step, so the first tick after each is compared).
+    struct SaveTrack {
+        int saves = 0, loads = 0, failed = 0;
+        bool afterSave = false, afterLoad = false; // the next observe() records the state
+        std::vector<std::pair<std::string, uint64_t>> saved, loaded;
+        bool haveSaved = false, haveLoaded = false;
+    } save_;
 };
 
 } // namespace ou::app

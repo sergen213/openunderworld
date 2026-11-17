@@ -7,6 +7,7 @@
 #include <bit>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <fstream>
 #include <set>
@@ -116,7 +117,9 @@ const std::set<std::string_view>& fixedProbes() {
         "camera.pos.z",
         "world.unit", "world.units", "world.chapter", "world.checkpoint", "world.checkpoint_unit", "world.ticks", "world.treasures",
         "world.relics", "world.health_packs", "world.streaming", "world.autosaves", "world.flashlight", "world.screen_fade",
-        "portable.held", "portable.stowed", "enemies.count", "enemies.alive", "enemies.nearest", "enemies.nearest_uid"};
+        "portable.held", "portable.stowed", "enemies.count", "enemies.alive", "enemies.nearest", "enemies.nearest_uid",
+        "camera.mode_name", "inventory.health_packs", "inventory.weapons", "inventory.items", "inventory.grenades", "physics.bodies",
+        "physics.active", "save.saves", "save.loads", "save.failed", "save.restored", "save.differs"};
     return k;
 }
 } // namespace
@@ -323,6 +326,94 @@ json Measurements::json() const {
     return j;
 }
 
+// ---- engine, HUD, audio ----------------------------------------------------------------------------
+const std::vector<std::string_view>& selftest::engineProbeNames() {
+    static const std::vector<std::string_view> k = {
+        "engine.sdl.video", "engine.sdl.audio", "engine.sdl.gamepad", "engine.sdl.events", "engine.sdl.video_driver", "engine.sdl.audio_driver",
+        "engine.renderer", "engine.device", "engine.frames", "engine.water", "engine.water_surfaces", "engine.water_as_requested", "engine.ao",
+        "engine.ao_requested", "engine.ao_as_requested", "engine.rt_requested", "engine.rt_supported", "engine.rt_active",
+        "engine.rt_as_requested", "hud.frames", "hud.health_alpha", "hud.weapons_alpha", "hud.gear_alpha", "hud.health", "hud.bar",
+        "hud.bar_kind", "hud.health_packs", "hud.clip", "audio.on", "audio.voices", "audio.music", "audio.music_state"};
+    return k;
+}
+
+Value selftest::engineProbe(const Engine& e, std::string_view n) {
+    const auto num = [](auto v) { return Value(double(v)); };
+    if (n == "engine.sdl.video") return e.sdlVideo;
+    if (n == "engine.sdl.audio") return e.sdlAudio;
+    if (n == "engine.sdl.gamepad") return e.sdlGamepad;
+    if (n == "engine.sdl.events") return e.sdlEvents;
+    if (n == "engine.sdl.video_driver") return e.videoDriver;
+    if (n == "engine.sdl.audio_driver") return e.audioDriver;
+    if (n == "engine.renderer") return e.renderer.empty() ? Value() : Value(e.renderer);
+    if (n == "engine.device") return e.device.empty() ? Value() : Value(e.device);
+    if (n == "engine.frames") return num(e.frames);
+    if (n == "hud.frames") return num(e.hudFrames);
+    if (n == "audio.on") return e.audioOn;
+    if (n == "audio.voices") return e.audioOn ? num(e.voices) : Value();
+    if (n == "audio.music") return e.audioOn ? Value(e.music) : Value();
+    if (n == "audio.music_state") return std::string(!e.audioOn ? "off" : !e.music.empty() ? "playing" : e.musicIdle ? "idle" : "loading");
+    if (n.starts_with("hud.")) { // the HUD the last tick left (ui::Hud::update)
+        if (n == "hud.health_alpha") return num(e.hudAlpha[0]);
+        if (n == "hud.weapons_alpha") return num(e.hudAlpha[1]);
+        if (n == "hud.gear_alpha") return num(e.hudAlpha[2]);
+        if (n == "hud.health") return num(e.hudHealth);
+        if (n == "hud.bar") return num(e.hudBar);
+        if (n == "hud.bar_kind") return std::string(e.hudBreath ? "breath" : "adrenaline");
+        if (n == "hud.health_packs") return num(e.hudHealthPacks);
+        if (n == "hud.clip") return num(e.hudClip);
+        return {};
+    }
+    if (e.frames == 0) return {}; // the rest describe the last drawn frame (none with --draw-last)
+    if (n == "engine.water") return e.water;
+    if (n == "engine.water_surfaces") return num(e.waterSurfaces);
+    if (n == "engine.water_as_requested") return e.water == "enhanced" ? e.waterSurfaces > 0 : e.waterSurfaces == 0;
+    if (n == "engine.ao") return e.ao;
+    if (n == "engine.ao_requested") return e.aoRequested;
+    if (n == "engine.ao_as_requested") { // RT AO only while rays are traced, else CORTAO (docs/RENDERING.md)
+        const std::string want = e.aoRequested == "rt" ? (e.rtActive ? "rt" : "cortao") : e.aoRequested;
+        return e.ao == want;
+    }
+    if (n == "engine.rt_requested") return e.rtRequested;
+    if (n == "engine.rt_supported") return e.rtSupported;
+    if (n == "engine.rt_active") return e.rtActive;
+    if (n == "engine.rt_as_requested") return e.rtActive == (e.rtRequested != "off" && e.rtSupported);
+    return {};
+}
+
+std::string selftest::unsafeSaveReason() {
+    const char* data = std::getenv("XDG_DATA_HOME");
+    if (!data || !*data) return "XDG_DATA_HOME is not set (saves would go to the user's ~/.local/share)";
+    const char* home = std::getenv("HOME");
+    const auto norm = [](const std::filesystem::path& p) { // resolved, no trailing separator
+        std::error_code ec;
+        auto n = std::filesystem::weakly_canonical(p, ec).lexically_normal();
+        if (ec) n = p.lexically_normal();
+        return n.has_filename() ? n : n.parent_path();
+    };
+    if (home && *home && norm(data) == norm(std::filesystem::path(home) / ".local" / "share"))
+        return "XDG_DATA_HOME is the user's own data directory";
+    return {};
+}
+
+std::string selftest::cameraModeName(int mode) {
+    switch (mode) { // World::tickCamera's orbit modes (tru.exe CameraManager +0x54)
+    case -1: return "none";
+    case 1: return "foot";
+    case 3: return "beam";
+    case 4: return "climb";
+    case 9: return "pole";
+    case 10: return "ladder";
+    case 11: return "hang";
+    case 16: return "perch";
+    case 17: return "pillar";
+    case 19: return "underwater";
+    case 20: return "surface";
+    case 23: return "manual_aim";
+    default: return "mode " + std::to_string(mode);
+    }
+}
+
 // ---- scenario ---------------------------------------------------------------------------------------
 SelfTest SelfTest::load(const std::filesystem::path& file) {
     std::ifstream f(file);
@@ -402,7 +493,16 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
         static const std::set<std::string> kStep = {"step", "input", "plan", "duration", "until", "expect", "fixtures", "note"};
         for (const auto& [key, value] : s.items())
             if (!kStep.contains(key)) bad(where, "unknown key '" + key + "'");
-        if (s.contains("input")) step.input = lines(s["input"], where, "input");
+        if (s.contains("input")) {
+            step.input = lines(s["input"], where, "input");
+            std::istringstream in(step.input); // save / load lines: ou-game runs them (main.cpp checks unsafeSaveReason)
+            for (std::string line; std::getline(in, line);) {
+                std::istringstream ls(line.substr(0, line.find('#')));
+                double at = 0;
+                std::string action;
+                if (ls >> at >> action && (action == "save" || action == "load")) t.usesSaves_ = true;
+            }
+        }
         if (s.contains("plan")) step.plan = lines(s["plan"], where, "plan");
         try {
             (void)game::InputScript::parse(step.input);
@@ -429,6 +529,7 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
 
 bool SelfTest::probeKnown(std::string_view name) {
     if (fixedProbes().contains(name)) return true;
+    if (std::ranges::find(selftest::engineProbeNames(), name) != selftest::engineProbeNames().end()) return true;
     const auto p = split(name);
     if (p[0] == "step") return std::ranges::find(selftest::measurementNames(), name.substr(std::min<size_t>(5, name.size()))) != selftest::measurementNames().end();
     if (p[0] == "pose") return p.size() == 4 && p[1] == "bone" && integer(p[2]) && axisName(p[3]);
@@ -456,6 +557,7 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
     const auto num = [](auto v) { return Value(double(v)); };
     const auto str = [](std::string_view v) { return Value(std::string(v)); };
     if (p[0] == "step") return m_.get(name.substr(5));
+    if (p[0] == "engine" || p[0] == "hud" || p[0] == "audio") return engine_ ? selftest::engineProbe(*engine_, name) : Value();
     if (p[0] == "player") {
         const std::string_view f = p[1];
         if (f == "state") return str(game::stateName(s.state));
@@ -620,6 +722,7 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "pitch") return degrees(c.pitch);
         if (f == "distance") return num(w.cameraDistance());
         if (f == "mode") return num(w.cameraMode());
+        if (f == "mode_name") return selftest::cameraModeName(w.cameraMode());
         if (f == "spline") return w.splineCameraActive();
         if (f == "field") return w.fieldCamera();
         if (f == "pos") return component(c.position, p[2]);
@@ -644,6 +747,39 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "autosaves") return num(w.autosaveRequests());
         if (f == "flashlight") return w.flashlight;
         if (f == "screen_fade") return num(w.screenFade());
+        return {};
+    }
+    if (p[0] == "inventory") { // what she carries
+        const std::string_view f = p[1];
+        if (f == "health_packs") return num(w.found[size_t(game::PickupKind::HealthPack)]); // carried (World::found[2])
+        if (f == "grenades") return num(w.grenades);
+        const auto& objects = w.script().playerObjects();
+        if (f == "items") return std::vector<std::string>(objects.begin(), objects.end());
+        if (f == "weapons") { // the pistols, the secondary, Thor's hammer (her own slot: a carried object)
+            std::vector<std::string> out{std::string(game::weaponName(game::Weapon::Pistols))};
+            if (w.combat().secondary != game::Weapon::Pistols) out.emplace_back(game::weaponName(w.combat().secondary));
+            if (objects.contains(std::string(game::weaponObject(game::Weapon::ThorHammer)))) out.emplace_back(game::weaponName(game::Weapon::ThorHammer));
+            return out;
+        }
+        return {};
+    }
+    if (name == "physics.bodies") return num(w.physics().bodyCount());
+    if (name == "physics.active") return num(w.physics().activeBodyCount());
+    if (p[0] == "save") {
+        const std::string_view f = p[1];
+        if (f == "saves") return num(save_.saves);
+        if (f == "loads") return num(save_.loads);
+        if (f == "failed") return num(save_.failed);
+        if (!save_.haveSaved || !save_.haveLoaded) return {};
+        std::vector<std::string> differs; // stateParts names that differ (or exist on one side only)
+        for (const auto& [part, hash] : save_.saved) {
+            const auto it = std::ranges::find(save_.loaded, part, &std::pair<std::string, uint64_t>::first);
+            if (it == save_.loaded.end() || it->second != hash) differs.push_back(part);
+        }
+        for (const auto& [part, hash] : save_.loaded)
+            if (std::ranges::find(save_.saved, part, &std::pair<std::string, uint64_t>::first) == save_.saved.end()) differs.push_back(part);
+        if (f == "restored") return differs.empty();
+        if (f == "differs") return differs;
         return {};
     }
     if (name == "portable.held") return num(w.heldPortable());
@@ -856,11 +992,14 @@ game::Actions SelfTest::actions(game::World& w) {
         a.switchTarget |= p.switchTarget, a.weapon |= p.weapon, a.heal |= p.heal, a.grapple |= p.grapple, a.sprint |= p.sprint;
         a.light |= p.light, a.grenade |= p.grenade, a.recenter |= p.recenter, a.fieldCamera |= p.fieldCamera;
     }
-    a.save = a.load = a.pause = a.pda = false; // the scenario owns the run: no quicksaves or menus from its input
+    a.pause = a.pda = false; // the scenario owns the run: no menus from its input (save / load run: usesSaves)
     return a;
 }
 
 void SelfTest::observe(game::World& w) {
+    // The first tick after a save / load (also between steps): the World's state, compared by save.restored.
+    if (save_.afterSave) save_.saved = w.stateParts(), save_.haveSaved = true, save_.afterSave = false;
+    if (save_.afterLoad) save_.loaded = w.stateParts(), save_.haveLoaded = true, save_.afterLoad = false;
     if (done() || !started_) return;
     const Step& s = steps_[cur_];
     const auto& st = w.player().state();
@@ -891,6 +1030,19 @@ void SelfTest::observe(game::World& w) {
         else if (pilot_) close(w, "timeout", false, "the plan did not finish within " + std::to_string(s.ticks) + " ticks");
         else close(w, "duration", true, {});
     }
+}
+
+void SelfTest::saved(const game::World& w, bool ok) {
+    std::fprintf(stderr, "ou-game: self-test save %s at tick %llu\n", ok ? "done" : "FAILED", (unsigned long long)w.ticks());
+    if (!ok) return void(++save_.failed);
+    ++save_.saves, save_.afterSave = true;
+    save_.haveSaved = save_.haveLoaded = false; // a new save: the next load is compared with it
+}
+
+void SelfTest::loaded(const game::World& w, bool ok) {
+    std::fprintf(stderr, "ou-game: self-test load %s at tick %llu\n", ok ? "done" : "FAILED", (unsigned long long)w.ticks());
+    if (!ok) return void(++save_.failed);
+    ++save_.loads, save_.afterLoad = true, save_.haveLoaded = false;
 }
 
 void SelfTest::paused() {
@@ -964,7 +1116,7 @@ json SelfTest::report() const {
     if (!entry_.load.empty()) entry["load"] = entry_.load;
     char hash[24];
     std::snprintf(hash, sizeof hash, "%016llx", (unsigned long long)simHash_);
-    json j = {{"version", 1}, {"game", "Tomb Raider: Underworld"}, {"scenario", name_}, {"file", file_}, {"entry", entry},
+    json j = {{"version", 1}, {"game", "Tomb Raider: Underworld"}, {"platform", "Linux"}, {"scenario", name_}, {"file", file_}, {"entry", entry},
               {"fixtures", fixturesUsed_}, {"steps", steps}, {"ticks", totalTicks_}, {"sim", hash}, {"passed", passed()}};
     if (!chapterLabel_.empty()) j["chapter"] = chapterLabel_;
     if (!walkthrough_.empty()) j["walkthrough"] = walkthrough_;
