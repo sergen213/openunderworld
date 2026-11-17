@@ -801,8 +801,8 @@ ou::render::FrameOptions fieldFrame(float time, float originX, float originY, ui
 
 // Floating bodies ride the drawn FFT swell (render::ocean::Swell): at cascade 0's texel centres it equals ocean.comp's
 // transform (h(k, t) = h0 e^{i w t} + conj(h0(-k)) e^{-i w t}, quantized w, inverse DFT, x amplitude; cascade 1, whose
-// texels lie elsewhere, as the same Fourier sum between them) minus water.vert's 0.5 sigma centring, here as a plain
-// DFT; the 256 strongest wave vectors leave a small residual.
+// texels lie elsewhere, as the same Fourier sum between them; zero-mean, as water.vert adds it, OU-WAT-006), here as a
+// plain DFT; the 256 strongest wave vectors leave a small residual.
 TEST(Ocean, CpuSwellIsTheDrawnHeight) {
     using namespace ou::render::ocean;
     constexpr double kPi = 3.14159265358979;
@@ -830,7 +830,7 @@ TEST(Ocean, CpuSwellIsTheDrawnHeight) {
                             const double a = double(k.x) * at.x + double(k.y) * at.y;
                             h += g.amplitude[c] * (hr * std::cos(a) - hi * std::sin(a));
                         }
-                const float drawn = float(h * kMetre) - 0.5f * kMetre * std::sqrt(g.sigma[0] * g.sigma[0] + g.sigma[1] * g.sigma[1]);
+                const float drawn = float(h * kMetre);
                 const glm::vec2 p = glm::vec2(pm * double(kMetre));
                 worst = std::max(worst, std::abs(drawn - all.height(p, t)));
                 worstStrong = std::max(worstStrong, std::abs(drawn - strong.height(p, t)));

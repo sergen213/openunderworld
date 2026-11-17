@@ -1716,17 +1716,25 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   "bounce"); ou-game draws loose bodies between their last two ticks (`ScriptedMeshes::pose`)
   (`StreamReal.YachtsSettleAfloatWithoutBouncing`).
 - The drawn sea in the sim: with Enhanced water's FFT ocean the drawn surface is the waves plus the FFT swell
-  (water.vert: + h − 0.5 σ, clipped at the rest plane; RMS ~137 units), which the waves alone ignored. ou-game sets
+  (water.vert: + h, zero-mean, clipped at the rest plane; RMS ~137 units), which the waves alone ignored. ou-game sets
   `game::setSeaSwell` to `render::ocean::Swell` (the 256 strongest wave vectors of the drawn grid's cascades 0 + 1 on
   the CPU, same h0, quantized dispersion and clock as ocean.comp; ~9 units RMS left out; `Ocean.CpuSwellIsTheDrawnHeight`)
   and `FrameOptions::oceanTime` to the sim's sea clock, so `waterSurface` (swimming, buoyancy, the eye's water) is the
   drawn sea and the yacht rides it with Lara dry on deck (`StreamReal.YachtRidesTheDrawnSwell`). Original water, the
   afl sea and tests keep tru.exe's waves alone (gameplay then depends on the water settings); self-tests too, unless
   the scenario says `"sea_swell": true` (docs/SELFTEST.md), so Wine-measured bounds hold.
-- The deck stays dry: the swell clipped at the rest plane is all troughs (the mean sea sits lower), so l2_cliffclimb's
-  motorboat sits mostly under the volume's top 108 (its first seconds from the self-test start: deck z 78..154, 150–159
-  on the waves alone; a 20 s series from the same start: Lara's root on the deck −151..420 with the swell, −25..382 on
-  the waves alone, docs/audit/BUGS.md OU-WAT-006 / OU-DOC-002). Supported
+- Sea level with the swell [O Wine 2026-11-16, REFERENCE_COMPARISON M29]: tru.exe's sea mean is its waves' alone
+  (254.6 / 247.6 under the top at two l2 points; Σ h = 250). Until 0.51 the swell carried water.vert's −0.5 σ
+  "centring" (−68.6) and the played sea sat ~70 lower (OU-WAT-006); the swell is now zero-mean and only the crest bound
+  lowers the mean: l2 sea over 600 s at the yacht and a 9 × 9 grid −142.0 waves, −142.1 with the unclipped swell,
+  −147.2 as played (clip on 7.3 % of samples) (`World.SwellKeepsTheTruSeaMean`); 60 s of treading at M29's two points
+  (`sea_swell` true): surface mean 256.6 / 253.9 under the top (was 321.0 / 318.1), root 43.8 / 44.2 under the waves
+  (tru.exe 44.0). The yacht rides it: origin − top ch1 −389 .. 20 (mean −200), ch2 −446 .. 34 (mean −212) vs tru.exe's
+  waves-only −201 / −218 (`StreamReal.YachtRidesTheDrawnSwell`).
+- The deck stays dry: the swell's troughs carry l2_cliffclimb's motorboat under the volume's top 108 at times (a
+  20 s series from the self-test start, Lara's root on the deck: −80..424 mean 153 with the zero-mean swell, −151..420
+  mean 90 with the old centring, −25..382 mean 184 on the waves alone, all idle on deck; docs/audit/BUGS.md OU-WAT-006 /
+  OU-DOC-002). Supported
   by a moving solid (standing on it, or coming down onto it within a step) Lara is not in the water whatever the top
   or the waves say (`Player::enterWater`); off the edge the entry fires as before. Walking off an edge over a face too
   steep to slide (the rolled hull's side) is a fall like over nothing, so the safety drop still catches the deck's

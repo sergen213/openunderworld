@@ -81,10 +81,12 @@ float ouFieldSlick(vec2 p) {
 // The base surface of one water mesh at world p (water.vert's displacement): `waves` = its tru.exe sea waves (columns
 // c60-c63, zero = flat), `sea` = an open sea (the FFT ocean, or without it afl_ext's waves over Godot's height layers,
 // amplitude w.detail.z, which still water has alone), t = time (s). Centred on the TRU surface but never above the rest plane (the original's own crest bound:
-// decks and shores stay above the drawn sea).
+// decks and shores stay above the drawn sea). The FFT swell is zero-mean (no offset): the gameplay surface is this one
+// (render::ocean::Swell, game::surfaceHeight) and tru.exe's sea mean is its waves' alone (OU-WAT-006); the clip lowers
+// it ~4 units.
 float ouBaseHeight(vec2 p, mat4 waves, bool sea, float t) {
     float h = ouTruWaveHeight(p, waves);
-    if (sea && ouOceanOn()) return min(h + ouOceanHeight(p) - 0.5 * kM * w.ocean[0].w, 0.0);
+    if (sea && ouOceanOn()) return min(h + ouOceanHeight(p), 0.0);
     h += w.detail.z * (0.5 * (ouFbm(p / kLambdaA + t * vec2(0.10, 0.02), 0.0).x +
                               ouFbm(kWaterRot * p / kLambdaB + t * vec2(-0.04, 0.12), 0.0).x) - 0.5);
     if (sea) h += kSeaAmp * (ouSea(p, t, 12) - 0.47);
