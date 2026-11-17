@@ -348,28 +348,35 @@ std::string cortaoSource(const char* wrapper, const std::string& defines) {
 
 // AO depth pre-pass: render-resolution depth and the interpolated view-space vertex normal (octahedral RG16F), facing
 // the viewer; alpha-tested like the scene draws. The scene's vertex positions are final (CPU skinning and bends; the
-// translated vertex shaders read an identity bone 0), so this matches the translated programs' depth as well.
+// translated vertex shaders read an identity bone 0), so this matches the translated programs' depth as well. Second
+// target: the motion for the temporal pass (last frame's uv - this frame's, last frame's view depth / this frame's) from
+// the vertex's previous position (aPrevPos: GpuMesh::prevVbo for meshes updateVertices moved since the last frame, i.e.
+// skinned characters and the posed loose bodies such as the bobbing yacht) under last frame's view-projection.
 const char* kAoPrepassVs = R"(#version 460 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUv;
 layout(location = 3) in vec4 aColor;
+layout(location = 8) in vec3 aPrevPos;
 layout(location = 0) uniform mat4 uViewProj;
 layout(location = 1) uniform mat4 uModel;
 layout(location = 2) uniform mat4 uView;
-out vec3 vNormal; out vec3 vView; out vec2 vUv; out float vAlpha;
+layout(location = 4) uniform mat4 uPrevViewProj;
+out vec3 vNormal; out vec3 vView; out vec2 vUv; out float vAlpha; out vec4 vCur; out vec4 vPrev;
 void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
     vNormal = mat3(uView) * (mat3(uModel) * aNormal);
     vView = (uView * world).xyz;
     vUv = aUv; vAlpha = aColor.a;
-    gl_Position = uViewProj * world;
+    gl_Position = vCur = uViewProj * world;
+    vPrev = uPrevViewProj * (uModel * vec4(aPrevPos, 1.0));
 })";
 const char* kAoPrepassFsHead = R"(#version 460 core
-in vec3 vNormal; in vec3 vView; in vec2 vUv; in float vAlpha;
+in vec3 vNormal; in vec3 vView; in vec2 vUv; in float vAlpha; in vec4 vCur; in vec4 vPrev;
 layout(location = 3) uniform float uAlphaRef;
 layout(binding = 0) uniform sampler2D uTex;
 layout(location = 0) out vec2 oNormal;
+layout(location = 1) out vec4 oMotion;
 )";
 const char* kAoPrepassFsMain = R"(
 void main() {
@@ -382,6 +389,7 @@ void main() {
     float nv = dot(n, v);
     if (nv < 0.02) n = normalize(n + v * (0.02 - nv)); // interpolated normals turned away from the eye
     oNormal = ouOctEncode(n);
+    oMotion = vPrev.w > 0.0 ? vec4((vPrev.xy / vPrev.w - vCur.xy / vCur.w) * 0.5, vPrev.w / vCur.w, 1.0) : vec4(0.0);
 })";
 
 GLuint compileShader(GLenum type, const char* src, std::string& error) {
@@ -482,6 +490,10 @@ struct GpuMesh {
     uint64_t key = 0, part = 0;
     bool dirty = false;
     Bounds bounds;
+    // CORTAO temporal motion: the vertices before the last updateVertices, copied when it ran for frame `movedFrame`
+    // (GlRenderer::drawFrames_ numbering) while AO runs; vertex binding 1 (attribute 8) of `vao`.
+    Buffer prevVbo;
+    uint64_t movedFrame = 0;
 };
 
 // Offscreen scene target (MSAA renderbuffers + single-sample resolve texture), rebuilt on size or
@@ -613,7 +625,7 @@ struct Resources {
         Texture occluders16, occluders32;
         Buffer params;
         int width = 0, height = 0, mips = 1;
-        Texture depth, normal, packed, raw, filtered;
+        Texture depth, normal, motion, packed, raw, filtered;
         std::array<Texture, 2> history;
         Framebuffer fbo;
         int current = 0, samples = 0;
@@ -1016,6 +1028,14 @@ public:
         for (auto& g : res_->meshes)
             if (g.source == meshIndex) {
                 if (g.vertexCount != vertices.size()) return false;
+                if (res_->ao.historyValid && g.movedFrame != drawFrames_ + 1) { // the pose the last frame drew: AO motion
+                    if (!g.prevVbo.get()) {
+                        g.prevVbo = newBuffer();
+                        glNamedBufferStorage(g.prevVbo.get(), GLsizeiptr(vertices.size_bytes()), nullptr, 0);
+                    }
+                    glCopyNamedBufferSubData(g.vbo.get(), g.prevVbo.get(), 0, 0, GLsizeiptr(vertices.size_bytes()));
+                    g.movedFrame = drawFrames_ + 1;
+                }
                 glNamedBufferSubData(g.vbo.get(), 0, GLsizeiptr(vertices.size_bytes()), vertices.data());
                 const glm::vec4 sphere = original::boundingSphere(vertices, g.model); // skinned: follows the pose
                 g.center = glm::vec3(sphere), g.radius = sphere.w;
@@ -1030,6 +1050,7 @@ public:
     void drawFrame(const Camera& camera, Viewport vp, const FrameOptions& options) override {
         Resources& r = *res_;
         if (vp.width <= 0 || vp.height <= 0) return;
+        ++drawFrames_;
         for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
         if (options.unitLook) original::applyUnitLook(environment_, *options.unitLook);
         {
@@ -1448,8 +1469,6 @@ private:
     // ---- CORTAO ambient occlusion (docs/RENDERING.md "Ambient occlusion"; third_party/cortao, MIT) ----
     // sun.glsl ouAoMap = the temporal pass output (r AO, g view depth, b history age), render resolution, bottom-up.
     struct AoTemporalBlock { // cortao_temporal.comp OuAoTemporal
-        glm::mat4 reproject;
-        glm::vec4 unproject;
         glm::uvec4 info;
         glm::vec4 params;
     };
@@ -1499,8 +1518,8 @@ private:
         return true;
     }
 
-    // Render-resolution AO targets: pre-pass depth + RG16F normal, the R32UI packed buffer with its mips, the R8 main /
-    // filter outputs and the RGBA16F history pair. Rebuilt with the viewport (history dropped).
+    // Render-resolution AO targets: pre-pass depth + RG16F normal + RGBA16F motion, the R32UI packed buffer with its
+    // mips, the R8 main / filter outputs and the RGBA16F history pair. Rebuilt with the viewport (history dropped).
     void ensureAoTargets(Viewport vp) {
         Resources::Ao& a = res_->ao;
         if (a.width == vp.width && a.height == vp.height) return;
@@ -1518,6 +1537,7 @@ private:
         };
         a.depth = make(GL_DEPTH_COMPONENT32F);
         a.normal = make(GL_RG16F);
+        a.motion = make(GL_RGBA16F); // uv offset to last frame, last / this view depth, 1 = surface
         a.packed = make(GL_R32UI, a.mips);
         const GLuint zero[4] = {};
         glTextureParameterIuiv(a.packed.get(), GL_TEXTURE_BORDER_COLOR, zero);
@@ -1527,6 +1547,9 @@ private:
         a.fbo = newFramebuffer();
         glNamedFramebufferTexture(a.fbo.get(), GL_DEPTH_ATTACHMENT, a.depth.get(), 0);
         glNamedFramebufferTexture(a.fbo.get(), GL_COLOR_ATTACHMENT0, a.normal.get(), 0);
+        glNamedFramebufferTexture(a.fbo.get(), GL_COLOR_ATTACHMENT1, a.motion.get(), 0);
+        const GLenum targets[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+        glNamedFramebufferDrawBuffers(a.fbo.get(), 2, targets);
         if (glCheckNamedFramebufferStatus(a.fbo.get(), GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             std::fprintf(stderr, "[gl] AO pre-pass framebuffer incomplete\n");
         a.historyValid = false;
@@ -1560,10 +1583,12 @@ private:
         glDepthMask(GL_TRUE);
         const float noNormal[4] = {}, far = 1.0f;
         glClearNamedFramebufferfv(a.fbo.get(), GL_COLOR, 0, noNormal);
+        glClearNamedFramebufferfv(a.fbo.get(), GL_COLOR, 1, noNormal);
         glClearNamedFramebufferfv(a.fbo.get(), GL_DEPTH, 0, &far);
         glUseProgram(a.prepass.get());
         glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj));
         glUniformMatrix4fv(2, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(4, 1, GL_FALSE, glm::value_ptr(a.historyValid ? a.prevViewProj : viewProj));
         const bool enhancedWater = o.water == WaterQuality::Enhanced;
         uint32_t bound = UINT32_MAX;
         for (size_t i = exteriorCount(r.meshes, std::span<const DrawRef>(r.order)); i < r.order.size(); ++i) {
@@ -1578,6 +1603,8 @@ private:
             if (d.mesh != bound) {
                 glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
                 glBindVertexArray(m.vao.get());
+                const bool moved = m.movedFrame == drawFrames_ && m.prevVbo.get();
+                glVertexArrayVertexBuffer(m.vao.get(), 1, moved ? m.prevVbo.get() : m.vbo.get(), 0, sizeof(scene::Vertex));
                 bound = d.mesh;
             }
             if (o.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
@@ -1590,9 +1617,8 @@ private:
         seed = (seed ^ (seed >> 16)) * 0x7FEB352Du;
         // GL: texture rows and NDC y both point up (flipY false); GL's [-1, 1] clip z gives D3D's window depth
         const cortao::Params cp = cortao::params(uint32_t(w), uint32_t(h), seed ^ (seed >> 15), proj, camera.nearZ, camera.farZ, false);
-        const AoTemporalBlock temporal{a.prevViewProj * glm::inverse(view), glm::make_vec4(cp.main.unproject),
-                                       {uint32_t(w), uint32_t(h), a.historyValid ? 1u : 0u, (1u << cortao::kPackedNormalBits) - 1u},
-                                       {0.08f, 0.03f, 1.5f, 32.0f}}; // min blend, depth tolerance, clamp sigmas, max age
+        const AoTemporalBlock temporal{{uint32_t(w), uint32_t(h), a.historyValid ? 1u : 0u, (1u << cortao::kPackedNormalBits) - 1u},
+                                       {0.06f, 0.03f, 1.5f, 40.0f}}; // min blend, depth tolerance, clamp sigmas, max age
         const auto& pre = cp.prepass;
         const auto& main = cp.main;
         const auto& filter = cp.filter;
@@ -1623,6 +1649,7 @@ private:
         a.current ^= 1;
         glBindTextureUnit(1, a.filtered.get());
         glBindTextureUnit(2, a.history[size_t(a.current ^ 1)].get());
+        glBindTextureUnit(3, a.motion.get());
         glBindImageTexture(0, a.history[size_t(a.current)].get(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
         pass(a.temporal.get(), 3, sizeof temporal, groups(w, 8), groups(h, 8));
         a.prevViewProj = viewProj;
@@ -1786,6 +1813,11 @@ private:
         attrib(vao, sm3::kAttrTexcoord1, 2, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, uv1));
         attrib(vao, sm3::kAttrTangent, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, tangent));
         attrib(vao, sm3::kAttrBinormal, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, binormal));
+        // The AO pre-pass's previous position (kAoPrepassVs aPrevPos): binding 1 = this buffer, or prevVbo while moving.
+        glVertexArrayVertexBuffer(vao, 1, g.vbo.get(), 0, sizeof(scene::Vertex));
+        glEnableVertexArrayAttrib(vao, 8);
+        glVertexArrayAttribFormat(vao, 8, 3, GL_FLOAT, GL_FALSE, GLuint(offsetof(scene::Vertex, position)));
+        glVertexArrayAttribBinding(vao, 8, 1);
         return true;
     }
 
@@ -2529,6 +2561,7 @@ private:
     };
     std::map<uint64_t, Part> parts_;
     uint64_t uploads_ = 0; // upload() calls
+    uint64_t drawFrames_ = 0; // drawFrame calls (GpuMesh::movedFrame)
     std::vector<uint8_t> materialBlocks_; // during upload()
     std::vector<uint8_t> objectScratch_;
     size_t objectSlots_ = 0; // objectUbo blocks: 2 x meshes + terrain light groups (finishOriginals)

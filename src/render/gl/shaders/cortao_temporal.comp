@@ -1,66 +1,85 @@
 // CORTAO temporal accumulation, OpenGL (ours; CORTAO leaves temporal filtering to the engine and GL has no TAA / FSR):
-// the filtered AO of this frame (per-frame CORTAO seed) blended into the camera-reprojected history. History taps whose
-// stored view depth disagrees with the reprojected one (disocclusion, moving objects) are dropped, and the history is
-// clamped to this frame's 3x3 neighbourhood (mean +- k sigma) so contact shadows of moving objects do not trail.
+// the filtered AO of this frame (per-frame CORTAO seed) blended into last frame's output at the pixel's position then
+// (the AO pre-pass's per-pixel motion: camera and the vertices updateVertices moved, so the bobbing yacht and Lara keep
+// their history). History taps whose stored view depth disagrees with the surface's last-frame depth (beyond a tolerance
+// that grows with the depth slope) are dropped, the history is clamped to this frame's 3x3 neighbourhood (mean +- k
+// sigma) so contact shadows that moved do not trail, and young pixels (just disoccluded) take a depth-aware 9x9 average
+// of this frame instead of its noisy value until their history has built up.
 // Output = sun.glsl ouAoMap: r = AO, g = view depth (clip w, 0 = no pre-passed surface), b = history age (frames).
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0) uniform usampler2D ouAoPacked;  // R32UI packed data (linear depth in the high bits)
 layout(binding = 1) uniform sampler2D ouAoFiltered; // R8 filtered AO of this frame
 layout(binding = 2) uniform sampler2D ouAoHistory;  // RGBA16F: last frame's output
+layout(binding = 3) uniform sampler2D ouAoMotion;   // RGBA16F: uv offset to last frame, last / this view depth, 1 = surface
 layout(rgba16f, binding = 0) uniform restrict writeonly image2D ouAoOut;
 layout(std140, binding = 6) uniform OuAoTemporal {
-    mat4 reproject;  // this frame's view space -> last frame's clip space
-    vec4 unproject;  // CORTAO unprojectParams: view xy / depth = uv * xy + zw (view looks down -z)
-    uvec4 info;      // x width, y height, z history valid, w packed-normal bit mask
-    vec4 params;     // x minimum blend, y relative depth tolerance, z clamp sigmas, w maximum age
+    uvec4 info;  // x width, y height, z history valid, w packed-normal bit mask
+    vec4 params; // x minimum blend, y relative depth tolerance, z clamp sigmas, w maximum age
 } ouT;
+
+float depthAt(ivec2 q) { // linear view depth, 0 = none
+    return uintBitsToFloat(texelFetch(ouAoPacked, clamp(q, ivec2(0), ivec2(ouT.info.xy) - 1), 0).r & ~ouT.info.w);
+}
 
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy), size = ivec2(ouT.info.xy);
     if (any(greaterThanEqual(p, size))) return;
-    uint pk = texelFetch(ouAoPacked, p, 0).r;
-    if (pk == 0u) { // sky / not pre-passed (exterior, blended, water)
+    float z = depthAt(p);
+    if (z <= 0.0) { // sky / not pre-passed (exterior, blended, water)
         imageStore(ouAoOut, p, vec4(1.0, 0.0, 0.0, 0.0));
         return;
     }
-    float z = uintBitsToFloat(pk & ~ouT.info.w);
     float cur = texelFetch(ouAoFiltered, p, 0).r;
     float m1 = 0.0, m2 = 0.0, n = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x) {
             ivec2 q = clamp(p + ivec2(x, y), ivec2(0), size - 1);
-            if (texelFetch(ouAoPacked, q, 0).r == 0u) continue;
+            if (depthAt(q) <= 0.0) continue;
             float v = texelFetch(ouAoFiltered, q, 0).r;
             m1 += v, m2 += v * v, n += 1.0;
         }
     float mean = m1 / n, sigma = sqrt(max(m2 / n - mean * mean, 0.0));
+    // Relative depth change to the neighbours: grazing surfaces change depth fast across a pixel.
+    float slope = max(max(abs(depthAt(p + ivec2(1, 0)) - z), abs(depthAt(p - ivec2(1, 0)) - z)),
+                      max(abs(depthAt(p + ivec2(0, 1)) - z), abs(depthAt(p - ivec2(0, 1)) - z))) / z;
     float result = cur, age = 1.0;
-    if (ouT.info.z != 0u) {
-        vec2 uv = (vec2(p) + 0.5) / vec2(size);
-        vec4 pc = ouT.reproject * vec4(vec3(uv * ouT.unproject.xy + ouT.unproject.zw, -1.0) * z, 1.0);
-        if (pc.w > 0.0) {
-            vec2 tp = (pc.xy / pc.w * 0.5 + 0.5) * vec2(size) - 0.5;
-            ivec2 b = ivec2(floor(tp));
-            vec2 f = tp - vec2(b);
-            vec3 sum = vec3(0.0);
-            float wsum = 0.0;
-            for (int i = 0; i < 4; ++i) {
-                ivec2 o = ivec2(i & 1, i >> 1), q = b + o;
-                if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, size))) continue;
-                vec4 h = texelFetch(ouAoHistory, q, 0);
-                if (h.g <= 0.0 || abs(h.g - min(pc.w, 65000.0)) > ouT.params.y * pc.w) continue;
-                float w = mix(1.0 - f.x, f.x, float(o.x)) * mix(1.0 - f.y, f.y, float(o.y));
-                sum += w * h.rgb;
-                wsum += w;
-            }
-            if (wsum > 0.05) {
-                vec3 h = sum / wsum;
-                float k = ouT.params.z * sigma + 0.01;
-                float hist = clamp(h.r, mean - k, mean + k);
-                age = min(h.b + 1.0, ouT.params.w);
-                result = mix(hist, cur, max(1.0 / age, ouT.params.x));
-            }
+    vec4 motion = texelFetch(ouAoMotion, p, 0);
+    if (ouT.info.z != 0u && motion.w > 0.5) {
+        vec2 tp = ((vec2(p) + 0.5) / vec2(size) + motion.xy) * vec2(size) - 0.5;
+        float expected = min(z * motion.z, 65000.0), tolerance = (ouT.params.y + 2.0 * min(slope, 0.2)) * expected;
+        ivec2 b = ivec2(floor(tp));
+        vec2 f = tp - vec2(b);
+        vec3 sum = vec3(0.0);
+        float wsum = 0.0;
+        for (int i = 0; i < 4; ++i) {
+            ivec2 o = ivec2(i & 1, i >> 1), q = b + o;
+            if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, size))) continue;
+            vec4 h = texelFetch(ouAoHistory, q, 0);
+            if (h.g <= 0.0 || abs(h.g - expected) > tolerance) continue;
+            float w = mix(1.0 - f.x, f.x, float(o.x)) * mix(1.0 - f.y, f.y, float(o.y));
+            sum += w * h.rgb;
+            wsum += w;
         }
+        if (wsum > 0.05) {
+            vec3 h = sum / wsum;
+            float k = ouT.params.z * sigma + 0.01;
+            float hist = clamp(h.r, mean - k, mean + k);
+            age = min(h.b + 1.0, ouT.params.w);
+            result = mix(hist, cur, max(1.0 / age, ouT.params.x));
+        }
+    }
+    if (age < 8.0) { // young: blend towards a wide depth-aware average of this frame (9x9 footprint, every other texel)
+        float s = 0.0, ws = 0.0;
+        for (int y = -2; y <= 2; ++y)
+            for (int x = -2; x <= 2; ++x) {
+                ivec2 q = clamp(p + 2 * ivec2(x, y), ivec2(0), size - 1);
+                float zq = depthAt(q);
+                if (zq <= 0.0) continue;
+                float w = exp2(-abs(zq - z) / (z * (0.01 + 2.0 * min(slope, 0.2))) * 4.0);
+                s += w * texelFetch(ouAoFiltered, q, 0).r;
+                ws += w;
+            }
+        if (ws > 0.0) result = mix(result, s / ws, (8.0 - age) / 8.0);
     }
     imageStore(ouAoOut, p, vec4(result, min(z, 65000.0), age, 0.0));
 }
