@@ -7,6 +7,9 @@ Tests: `tests/test_physics.cpp` (`Physics.*` synthetic, `PhysicsRealData.*` with
 
 Labels: **[O]** observed in game data or our tru.exe decompile (GOG 1.1.0.0 VAs), **[I]** inference, **[U]** unknown.
 
+**Endianness:** little-endian (object DTP physics data, HInfo markers, model segments, collision primitives, ragdoll
+records) [O].
+
 ## Physical objects in tru.exe
 
 - [O] ObjectBase `+0` oflags bit `0x80000000` selects the object family "physical" (`0x5BF0E0`, family table
@@ -564,6 +567,22 @@ and face mask, moving platform, push, save / restore bit-exact).
   native 2:1 script coupling. `GameReal.BallcourtLeverReplayPassesDoor` completes the same route with physics
   isolated. With the poacher enabled, its genuine hit reactions interrupt the rendered replay at (-18871.9, 14058.3);
   this is combat, not a remaining door-collision blocker.
+
+## Validation
+
+`physics::loadObjectPhysics` throws `cdc::FormatError` on: reads past a section; an HInfo count > 4 096; a missing model
+DTP; a segment list > 4 096 or without its pointer; a segment whose parent is not an earlier segment; a ragdoll of more
+than 24 bones or with a bone parent out of order. Optional blocks (engagement sets past the data, mass-unit / friction
+tables with counts ≥ 256 or past the data, ragdolls without records) are skipped, not errors. World object setup
+catches the exception (`src/game/Objects.cpp`: a warning, the object gets no physics).
+
+| Check | Enforced by |
+|---|---|
+| every object DRM parses | `PhysicsRealData.AllObjectsParse` |
+| real objects | `PhysicsRealData.BallcourtDoorObject`, `BallcourtLeverObject`, `CameraCollidesOnlyWithFlaggedObjects`, `PoacherRagdoll` |
+| mass formula, joints, determinism, saves (synthetic) | `Physics.MassPropsBoxMatchesExeFormula`, `Physics.DeterministicAcrossRenderRates`, `Physics.SavedSceneContinuesBitIdentically` and the other `Physics.*` |
+
+Gap: no synthetic test of the count / parent-order rejections.
 
 ## Open questions
 

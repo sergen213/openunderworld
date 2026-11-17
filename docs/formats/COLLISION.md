@@ -7,6 +7,8 @@ Tests: `tests/test_collision.cpp` (synthetic BVH/query tests; `CollisionRealData
 Labels: **[O]** observed (game data, tru.exe decompile), **[I]** inference, **[U]** unknown.
 tru.exe addresses are GOG v1.1.0.0 VAs from our Ghidra export (`decomp_all.c`).
 
+**Endianness:** little-endian (collision Mesh header, vertices, faces, BIH nodes, markup records) [O].
+
 ## Where it lives
 
 Unit (level) DRMs only. Section 0 is a general section holding the `Level` struct [O]. Pointers are DRM
@@ -236,6 +238,20 @@ Survey of all 82 unit DRMs (throwaway tool over `loadLevelCollision` + `formats:
   below flat collision; in l5_startsnow the render surface lies 24–58 units above collision ([I] snow Lara sinks into).
 - Floors without render geometry within ±64 are common outdoors (l1_ship_exterior 1.9 %, l7_himalaya_end 27.6 %
   matched): [U] water surfaces and other render geometry we do not decode (skydome, water, object collision).
+
+## Validation
+
+`collision::loadLevelCollision` throws `cdc::FormatError` when section 0 is not a General section or `Level::terrain`
+is missing ("not a unit DRM"), when a required pointer is missing ("missing pointer: …"), when Level (0x8C bytes),
+Terrain (0x18), a mesh or an array runs past its section, and when a face references a vertex ≥ the vertex count.
+`game::loadUnitData` propagates it (the unit fails to load); the viewer reports it and draws no collision.
+
+| Check | Enforced by |
+|---|---|
+| our BVH and queries (synthetic meshes) | `Collision.RaycastFloorAndWall`, `MaskAndIgnoredFaces`, `MatchesBruteForce`, `PartsMatchOneBuild`, `SphereAndCapsuleSweeps`, `ClosestPointAndMarkupFlags` |
+| real units parse and agree with the render terrain / tru.exe group gates | `CollisionRealData.PoolCollisionMarkupAndRenderAgreement`, `TerrainGroupEnableGatesQueries`, `CameraSkipsTheTerrainGroupsTruSkips`, `SightSkipsTheTerrainGroupsTruSkips`, `LaraSkipsTheTerrainGroupsTruSkipsForThePlayer` |
+
+Gap: no synthetic test feeds a malformed collision mesh (out-of-range face vertex, truncated arrays) to the loader.
 
 ## Open questions
 

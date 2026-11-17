@@ -27,6 +27,9 @@ ou-import extract <gameDir> <name|0xHASH> -o <file> [--spec 0xMASK] [--raw]
 Every number below comes from the GOG build (`tru.exe` sha256 `1fdbd345…1011`), measured on
 2026-10-18. Labels: **[obs]** observed or measured, **[inf]** inference, **[unk]** unknown.
 
+**Endianness:** every binary structure `ou-import` reads is little-endian: bigfile / patch.000 index, CDRM block table,
+DRM v19 header, PE/COFF headers and version resources, ZIP (GOG `hashdb`) headers.
+
 ## Executable
 
 - **[obs]** PE machine i386. Timestamp 1229448662 (2008-12-16T17:31:02Z).
@@ -206,3 +209,16 @@ sources:
   removed one patch record). `diff` reported exactly those three changes and exited 1.
 - **[obs]** `diff` does not compare names or DRM details. Name coverage depends on the mode, so it
   is left out on purpose.
+
+## Validation
+
+| Input | Rejected / reported | Enforced by |
+|---|---|---|
+| output path | any manifest path resolving inside the game directory (checked after `realpath`, so `<game>/../<game>/x` too) | `Importer.PathContainment`, `Importer.DefaultManifestPathHonoursXdg` |
+| bigfile / patch index | truncated index → archive error; record past EOF; missing part; read errors | `Importer.TruncatedIndexIsArchiveError`, `Importer.RecordPastEofAndMissingPart`, `Importer.SyntheticRoundTripWithSplitParts` |
+| CDRM / DRM header (`--deep`) | DRM version ≠ 19, implausible header, CDRM block table / block truncated, stored block smaller than declared, zlib error, unknown block type, header past the payload: recorded per record, the scan continues | `Importer.SyntheticRoundTripWithSplitParts`; real `Importer.RealInstall` |
+| GOG hashdb ZIP | too small, no end of central directory, bad central / local header, member out of range or > 64 MiB, stored-size mismatch, method other than stored / deflate, inflate failure | `Importer.GogHashdbStoredZip` |
+| PE metadata | not MZ / PE, missing version resource pieces → no version info (not an error) | `Importer.RealInstall` |
+| manifests (`diff`) | — exit 0 identical, 1 different | `Importer.DiffDetectsFileAndRecordChanges`, `Importer.ExternalNameListFillsGapsAndCountsAgreement` |
+
+Gap: no synthetic test for the deflate path of the ZIP reader or a corrupt PE resource tree.

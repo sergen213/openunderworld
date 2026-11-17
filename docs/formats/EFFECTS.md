@@ -5,6 +5,8 @@ Code: `src/fx/Fx.*` (parser, deterministic 60 Hz simulation, sprites), GL `drawF
 Labels: **[O]** observed (data / tru.exe 1.1.0.0 decompile or disassembly), **[I]** inference, **[U]** unknown.
 Evidence scripts (private work dir): `scratch/fxd.py`, `pdef.py`, `pdefsurvey.py`, `fxsurvey.py`, `fxintros.py`.
 
+**Endianness:** little-endian (GenericFXObject, event lists, emitter definitions, point sets) [O].
+
 ## Survey [O]
 
 - 232 `fx_*` objects in the bigfile namelist (torches, waterfalls/splashes/spouts, steam, snow, surf, sun, sparks, …),
@@ -516,3 +518,20 @@ tru.exe's weather (0x546FC0 each frame, after the prims) is a legacy system besi
 
 Same-camera pair l4_ballcourt (Wine capture `orig_bc.png`, 1280x720, `postfx/cmp.py`): region |diff| 8.8 -> 8.2
 (Vulkan), 7.9 (OpenGL); the streak sheets now show as in the capture.
+
+## Validation
+
+The FX readers (`src/fx/Fx.cpp`) are deliberately lenient: an out-of-range scalar read yields 0, arrays are clipped to
+their section, and a particle definition past its section is skipped with a warning ("particle definition k past the
+end of its section"); a point-set list past its section is warned too. `parseObjectFx` returns nullopt when the DRM has
+no object section (or < 12 bytes) or neither an event list, a generic-FX DTP nor clips; `parseEffectList` returns
+nullopt for a missing list / generic DTP. Any exception while loading an object's effects (including physics segment
+errors) becomes a warning and the object has no effects.
+
+| Check | Enforced by |
+|---|---|
+| every `fx*` object in objectlist.txt parses **without warnings** | `FxReal.EveryFxObjectParses` |
+| definitions, births, markers, glows, lights, filters, material particles, point sets on real data | `FxReal.TorchDefinitionsAndBirthEffects`, `MarkerSegmentsResolve`, `GlowsAndEffectLights`, `PrologueFireScreenFilter`, `MaterialParticlesAndUnitPointSets`, `BulletHitPicksParticlesBySurfaceMaterial` |
+| key interpolation, deterministic simulation (synthetic) | `Fx.ParsesKeysAndInterpolatesMiddleColour`, `Fx.BirthSkipsDisabledEventsAndSimulatesDeterministically` and the other `Fx.*` |
+
+Gap: the lenient zero-read path hides truncation; only the no-warning survey above would notice a malformed object.

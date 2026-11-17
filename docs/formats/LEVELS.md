@@ -9,6 +9,9 @@ Labels: **[O]** observed in game data, in a render, or in our tru.exe decompile 
 into another section of the same DRM (`cdc::sectionPointers`). Resource references are type-3/type-5 relocations;
 the referenced id stays in the data (`{offset/4:25, sectionType:7}`).
 
+**Endianness:** little-endian for every unit-DRM structure below (Level, unit data, intros, lights, cell groups, IMF
+records, portals, splines); the NavPower resource carries its own u8 endian flag, which must be 0 (little) [O].
+
 ## Bigfile selection (language, patch)
 
 - [O] `ArchiveFileSystem_FindEntry` 0x4726E0 accepts a record when `(record.specMask & fs.specMask) == fs.specMask`.
@@ -537,6 +540,25 @@ Known deviations [O]:
 - `checkpoint`, `cinematic_object`, `co_cinetest_marker`, `co_light_rig*` and `portable_warp_attach` have models whose
   batches are all skipped volumes.
 - No unresolved object ids or IMF DTPs.
+
+## Validation
+
+`formats::parseUnit` / `parseObjectList` / `objectRenderModels` (`src/formats/Level.cpp`) throw `cdc::FormatError` on:
+section 0 not a General (level) section; reads past a section; a missing relocated pointer where one is required ("no
+relocated pointer for …"); a string pointer outside its section; a truncated resource relocation table; a spline track
+without keys; a nav graph that is not a little-endian version 8 resource; a nav link with a point count other than
+2 / 4; a portal unit name of 128+ bytes without NUL; irradiance regions or probes outside their DTP; an object section
+without its ObjectBase DTP. Lenient by design: unrelocated light-list entries and lights whose DTP is absent are
+skipped ([LIGHTING.md §4](LIGHTING.md#4-validation)); an uber object that fails to load is placed without its uber data.
+
+| Check | Enforced by |
+|---|---|
+| synthetic unit: intros, stream groups, IMFs; missing Level pointers and truncated intro arrays throw | `Level.ParseUnitIntrosStreamGroupsImfs` |
+| synthetic lights; intro matrix order; object list; object render models | `Level.ParseUnitLights`, `Level.IntroMatrixMatchesExeOrder`, `Level.ObjectList`, `Level.ObjectRenderModelsFollowsObjectBase` |
+| all 82 units parse | `RealData.UnitLightsAllUnits`, `RealData.UnitOutfitObjects` |
+| real placements, stream groups, uber data | `RealData.LevelL4PoolInstancesOnTerrain`, `RealData.LevelBallcourtStreamGroupsAndImfs`, `RealData.UberObjectCommandsDecode`, `RealData.UberJointsDecode`, `RealData.LevelUberSectionModels`, `RealData.UberSectionAnimReferences`; streaming `Stream.*`, `StreamReal.*` |
+
+Gap: no synthetic test for the nav-graph, nav-link, portal-name or irradiance rejections.
 
 ## Open questions
 

@@ -8,6 +8,8 @@ Labels: **[O]** observed in game data or in our tru.exe decompile (GOG 1.1.0.0 V
 unknown. Section ids below are DRM section ids; script type ids are global (the same id names the same type in
 every DRM that carries it).
 
+**Endianness:** little-endian (script type headers, function tables, bytecode words, shapes, intro data) [O].
+
 ## No per-level native event code
 
 - [O] cdcResearch `level/event.md`: earlier cdc games stored level events as native PE code (`EventMain`) in the
@@ -444,3 +446,21 @@ closing-door animations, Lara's interaction clips.
   (vt 57) branches to state 1: wait m172, then `2(1)`, `1(1)`.
 - Tests: `ProgressionReal.KrakenTentacleSlowMotionByItsScript` (plane 37 → tracker 51: 0.4 / 0.037 for 560 ticks, back to
   1), `Combat.ScriptTimeRampEasesInAndOut`, `Combat.TimeScaleSlowsLaraWithTheWorld`.
+
+## Validation
+
+`script::parseScriptType` throws `cdc::FormatError` on: a section that is not type 8; script type version ≠ 4; a
+native name, string or array pointer outside its section or into a non-existent section; an array without its count
+word; a truncated resource relocation table; bytecode that starts with an operand; an unknown opcode. Intro data in a
+missing section and a missing `\tr8\pc-w\objectlist.txt` throw too. The runtime catches parse errors where it
+materialises script objects (`Script.cpp`: the object is not created), and a malformed saved script block restarts
+its threads idle.
+
+| Check | Enforced by |
+|---|---|
+| every unit's script types and intros parse | `ScriptRealData.AllUnitsParse` |
+| VM semantics (synthetic) | `ScriptVm.ArithmeticRawWordBranchAndNativeCall`, `ScriptVm.StringCopyCompareAndConvert`, `ScriptVm.MoveUCopiesNativeWidthAndReferences`, `ScriptVm.SleepResumesNestedHandler`, `ScriptVm.SequenceReplacesParentHandler` |
+| shapes, volumes, planes, save round trips | `ScriptShapes.BoxSphereRotationAndPlane`, `ScriptRuntime.*` |
+| real behaviour | `ScriptRealData.*` (e.g. `BedroomSwitchOpensHouseDoor`), `ProgressionReal.*` |
+
+Gap: no synthetic test for the parse rejections (version, unknown opcode, operand-first code).
