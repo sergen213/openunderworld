@@ -534,9 +534,10 @@ TEST(Game, SwimSpeedMatchesTru) {
     EXPECT_NEAR(glm::length(s.vel), 21.6f * 30, 150) << "0.2 s after the release";
 }
 
-// tru.exe surface swim turning (Wine, l1_seatop sea, camfollow-wine/turn1.txt): with the stick swung round she turns at
-// 117.5 deg/s at full swim speed (2765 / speed rad/s), and her velocity is steered after her heading as a vector at the
-// swim acceleration, so it lags the heading in a turn and dips in speed.
+// tru.exe swim turning with the camera standing still in the world (Wine, l1_seatop sea, camfollow-wine/turn1.txt): with
+// the stick swung round she turns at most 117.5 deg/s at full swim speed (2765 / speed rad/s); her angle off the view
+// line runs to the stick's at 1.755 rad/s (w2/WineMeasure/s1/swim-turn.txt). Her velocity moves a quarter of the way
+// to heading x speed every 30 Hz frame (0x755A00, player data +0x240), so it lags the heading and dips in speed.
 TEST(Game, SwimTurnLagsLikeTru) {
     auto w = makeWorld(poolMesh(), {1000, -2500, 0}, glm::pi<float>() / 2);
     const auto& s = w->player().state();
@@ -544,21 +545,94 @@ TEST(Game, SwimTurnLagsLikeTru) {
     for (int i = 0; i < 90; ++i) w->tick(forward());
     ASSERT_EQ(s.state, State::SwimSurface);
     ASSERT_NEAR(glm::length(s.vel), 1348.6f, 1);
-    float lag = 0, slowest = 1e9f;
+    float lag = 0, slowest = 1e9f, prevCam = w->camera().yaw;
     for (int i = 0; i < 60; ++i) {
         Actions turn; // the stick toward world +x under the current camera
         const float cy = w->camera().yaw;
         turn.move = {std::sin(cy), std::cos(cy)};
-        const float y0 = s.yaw, v0 = glm::length(glm::vec2(s.vel));
+        const float y0 = s.yaw, v0 = glm::length(glm::vec2(s.vel)), carried = std::abs(std::remainder(cy - prevCam, 6.2831853f));
+        prevCam = cy;
         w->tick(turn);
         const float turned = std::abs(std::remainder(s.yaw - y0, 6.2831853f)) * 60;
-        if (std::abs(std::remainder(s.yaw, 6.2831853f)) > 0.05f) EXPECT_NEAR(turned, 2765.0f / v0, 1e-3f) << "tick " << i;
+        if (std::abs(std::remainder(s.yaw, 6.2831853f)) > 0.05f) {
+            // 1.755 rad/s off the view line (the camera turns after her, the same way: it carries her), at most 2765 / v
+            EXPECT_NEAR(turned, std::min(2765.0f / v0, 1.755f + carried * 60), 1e-3f) << "tick " << i;
+        }
         lag = std::max(lag, std::abs(std::remainder(std::atan2(s.vel.y, s.vel.x) - s.yaw, 6.2831853f)));
         slowest = std::min(slowest, glm::length(glm::vec2(s.vel)));
     }
     EXPECT_GT(lag, glm::radians(6.0f)) << "the velocity lags her heading";
     EXPECT_LT(slowest, 1340.0f) << "and dips in speed through the turn";
     EXPECT_NEAR(std::remainder(s.yaw, 6.2831853f), 0, 1e-3f) << "facing +x";
+}
+
+// tru.exe under Wine (2026-11-16; w2/WineMeasure/s1/swim-turn.txt at the surface, s2/under-turn.txt under water):
+// Forward + Right / Left held 3 s with the camera free (it drags after her and swings behind her, yaw set 11), then
+// Right / Left let go:
+// - her heading's angle off the view line runs to the stick's 45 deg at a constant ~100 deg/s (3.3 deg a 33 ms
+//   sample), both ways; on the release back to 0 at ~101 deg/s, the world turn rate 61 deg/s over the first 0.21 s
+//   (52.2 over the 0.25 s window that starts 38 ms before the release) and 73 over the next 0.25 s;
+// - the circle settles at 46.7 / 46.4 deg/s (surface), 48.3 / 48.0 deg/s (under water), the same both ways;
+// - her velocity trails her heading by 5.4 deg (surface) / 5.6 deg (under water) in it.
+// Ours settles ~2 deg/s faster: tru.exe stops 2.9 deg short of 45 off its camera-to-pivot line (42.1 deg in both
+// traces, and 1.5 deg past 0 after the release), ours 0.8 deg (one tick of the camera's turn), so her velocity crosses
+// the view a little faster and drags the camera round faster [U: what line tru.exe's stick is read against].
+TEST(Game, SwimCircleTurnsLikeTru) {
+    struct Run { float press, steady, offView, velLag, releaseWorld, releaseClose; };
+    const auto run = [](bool under, float side) {
+        CollisionMesh m;
+        addQuad(m, {-60000, -60000, -90000}, {60000, -60000, -90000}, {60000, 60000, -90000}, {-60000, 60000, -90000});
+        m.markup.push_back({10, 1, {{-60000, -60000, -100150}, {60000, 60000, -150}}});
+        auto w = makeWorld(std::move(m), {0, 0, 0});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 120; ++i) w->tick({});
+        if (under) {
+            Actions d;
+            d.drop = true;
+            for (int i = 0; i < 4 * 60; ++i) w->tick(d); // dive, then on down: deep enough not to surface in the circle
+            EXPECT_EQ(s.state, State::SwimUnder);
+        }
+        for (int i = 0; i < 8 * 60; ++i) w->tick(forward()); // the camera's swing weight is full (no look input for 7 s)
+        const auto off = [&] { return std::remainder(s.yaw - w->camera().yaw, 6.2831853f); };
+        Actions turn = forward();
+        turn.move.x = side;
+        Run r{};
+        const float o0 = off();
+        for (int i = 0; i < 12; ++i) w->tick(turn);
+        r.press = std::abs(off() - o0) / 0.2f; // the first 0.2 s: still short of 45 deg
+        for (int i = 12; i < 90; ++i) w->tick(turn);
+        const float y0 = s.yaw;
+        float lag = 0;
+        for (int i = 0; i < 90; ++i) {
+            w->tick(turn);
+            lag += std::abs(std::remainder(std::atan2(s.vel.y, s.vel.x) - s.yaw, 6.2831853f)) / 90;
+        }
+        r.steady = std::abs(std::remainder(s.yaw - y0, 6.2831853f)) / 1.5f, r.offView = std::abs(off()), r.velLag = lag;
+        const float y1 = s.yaw;
+        int n = 0;
+        for (; n < 60 && std::abs(off()) > glm::radians(0.5f); ++n) {
+            w->tick(forward());
+            if (n == 12) r.releaseWorld = std::abs(std::remainder(s.yaw - y1, 6.2831853f)) / 0.21f;
+        }
+        r.releaseClose = n / 60.0f;
+        if (under) EXPECT_EQ(s.state, State::SwimUnder);
+        return r;
+    };
+    const float deg = glm::degrees(1.0f);
+    for (const bool under : {false, true}) {
+        const Run right = run(under, 1), left = run(under, -1);
+        for (const Run& r : {right, left}) {
+            const char* where = under ? "under water" : "at the surface";
+            EXPECT_NEAR(r.press * deg, 100.6f, 1.5f) << where << ": the angle off the view line runs at 1.755 rad/s";
+            EXPECT_NEAR(r.steady * deg, under ? 48.2f : 46.6f, 2.5f) << where << ": the circle";
+            EXPECT_NEAR(r.offView * deg, 44.2f, 0.3f) << where << ": settled at the stick's angle (tru.exe 42.1)";
+            EXPECT_NEAR(r.velLag * deg, under ? 5.6f : 5.4f, 0.5f) << where << ": the velocity trails her heading";
+            EXPECT_NEAR(r.releaseWorld * deg, 61.0f, 6.0f) << where << ": the turn back on the release";
+            EXPECT_NEAR(r.releaseClose, 0.45f, 0.06f) << where << ": back on the view line (tru.exe 0.40..0.43 s)";
+        }
+        EXPECT_NEAR(right.steady, left.steady, glm::radians(0.1f)) << "the same both ways";
+        EXPECT_NEAR(right.releaseWorld, left.releaseWorld, glm::radians(0.1f));
+    }
 }
 
 // tru.exe swim sprint (Wine, l2_cliffclimb sea, player +0x2A0 velocity; openunderworld-work/scratch/swimsprint): Shift
@@ -589,9 +663,9 @@ TEST(Game, SwimSprintMatchesTru) {
     for (; n < 15 * 60 && s.clip == "swim_surface_sprint_forward"; ++n) w->tick(sprint);
     EXPECT_NEAR(n / 60.0f + 1.0f, 9.7f, 0.1f) << "one full sprint";
     EXPECT_EQ(s.clip, "swim_surface_exhausted");
-    for (int i = 0; i < 15; ++i) w->tick(sprint);
+    for (int i = 0; i < 30; ++i) w->tick(sprint); // the velocity eases down to it (0x755A00: a quarter a 30 Hz frame)
     EXPECT_NEAR(speed(sprint), 44.95f * 30, 5) << "exhausted: normal speed";
-    int off = 45, on = 0;
+    int off = 60, on = 0;
     for (; off < 5 * 60 && s.clip != "swim_surface_sprint_forward"; ++off) w->tick(sprint);
     for (; on < 5 * 60 && s.clip == "swim_surface_sprint_forward"; ++on) w->tick(sprint);
     EXPECT_NEAR(off / 60.0f, 2.13f, 0.1f) << "held after exhaustion";
@@ -1244,11 +1318,12 @@ TEST(Game, DiveSwimDownAndSurface) {
     EXPECT_EQ(s.state, State::SwimUnder);
     EXPECT_LT(s.pitch, -1.2f);
     EXPECT_LT(s.pos.z, -150 - 300);
-    for (int i = 0; i < 30; ++i) w->tick({}); // released: coasts to a stop (tru.exe swimDecel)
-    EXPECT_NEAR(glm::length(s.vel), 0, 1e-3);
+    // released: coasts to a stop (swimDecel, the velocity easing after it a quarter a 30 Hz frame, 0x755A00)
+    for (int i = 0; i < 60; ++i) w->tick({});
+    EXPECT_LT(glm::length(s.vel), 1.0f);
     const float z = s.pos.z;
     for (int i = 0; i < 30; ++i) w->tick({}); // no buoyancy evidence: she stays put
-    EXPECT_NEAR(s.pos.z, z, 1e-3);
+    EXPECT_NEAR(s.pos.z, z, 0.1f);
     EXPECT_EQ(s.clip, "swim_submerged_idle");
     Actions up;
     up.jump = true;
@@ -7353,7 +7428,7 @@ TEST(Game, SwimFollowsTheCameraPitchUnderWater) {
     for (int i = 0; i < 40; ++i) w->tick(down);
     float z = s.pos.z;
     for (int i = 0; i < 30; ++i) w->tick(forward());
-    EXPECT_LT(s.pos.z, z - 150);
+    EXPECT_LT(s.pos.z, z - 100); // the velocity swings down after the pitch (0x755A00: a quarter a 30 Hz frame)
     EXPECT_LT(s.pitch, -0.15f);
     for (int i = 0; i < 180; ++i) w->tick(down); // well under again
     Actions up = forward();

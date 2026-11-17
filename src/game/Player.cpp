@@ -13,9 +13,21 @@ namespace ou::game {
 namespace {
 
 constexpr float kPi = 3.14159265f;
-// Surface swim turning: at most this / her speed rad/s (tru.exe under Wine, l1_seatop sea: 117.5 deg/s while she lags
-// the stick at full swim speed 1348.6 = 2765 units/s^2; faster when slow) [O-runtime; the 1 / speed form [I]].
-constexpr float kSwimTurnAccel = 2765.0f;
+// Swim turning, surface and under water (Player::swim, swimTurn). tru.exe under Wine (2026-11-16, Forward + Right /
+// Left held, camera free; w2/WineMeasure/s1/swim-turn.txt, s2/under-turn.txt, heading +0x38 against the camera's
+// view line): her heading's angle off the view line runs to the stick's angle at a constant 3.3 deg a 33 ms sample -
+// 97..101 deg/s on the press and 101..103 deg/s on the release, while her world turn rate goes 96 -> 118 deg/s on the
+// press (the camera follows her) and 57 -> 92 deg/s on the release (it is still swinging the other way): the turn is
+// relative to the view, at the run loop's 1.755 rad/s (Tuning::runTurnRate, the same chart steering [I]). On top, she
+// turns at most kSwimTurnAccel / her speed rad/s in the world: with the camera turning after her the press tops out at
+// 118..123 deg/s at 1290..1340 units/s while the angle off the view falls behind its 100 deg/s (camfollow-wine/
+// turn1.txt: 117.5 deg/s at 1348.6) [O-runtime; the 1 / speed form [I]].
+constexpr float kSwimTurnRate = 1.755f, kSwimTurnAccel = 2765.0f;
+// tru.exe 0x755A00: the swim velocity moves this share of the way to heading x swim speed every 30 Hz frame (lara.drm
+// player data +0x240 = 0.25, passed with the difference to 0x6E6FE0 for the controller DAT_00FAE030). In a steady
+// turn at w rad/s the velocity trails the heading by atan(w / 8.63): Wine 5.4 deg at 46.5 deg/s (surface), 5.6 at 48.2
+// (under water), up to 12.8 still rising in the 118 deg/s press [O; O-runtime].
+constexpr float kSwimVelocityBlend = 0.25f;
 // Under-water steering (Player::swim): how far above the camera's root-to-camera pitch she swims, and the pitches
 // between which that lead falls to nothing [O-runtime fit, Wine trace under1.txt].
 constexpr float kSwimSteerLead = 9.2f * kPi / 180, kSwimSteerLo = -14.0f * kPi / 180, kSwimSteerHi = 8.5f * kPi / 180;
@@ -3289,14 +3301,25 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         }
         return swimSprintClip(s_.clip) ? t_.swimSprintFactor : 1.0f;
     };
-    // Swim velocity: towards `dir * swimSpeed * wish` at swimAccel, slowing at swimDecel (tru.exe ramps).
+    // Swim velocity (tru.exe 0x755A00): the swim speed ramps to `swimSpeed * wish` at swimAccel (swimDecel when
+    // slowing), and the velocity moves kSwimVelocityBlend of the way to `dir * speed` each 30 Hz frame, so it trails her
+    // heading in a turn and eases into the ramp's ends.
+    if (s_.state != State::SwimSurface && s_.state != State::SwimTread && s_.state != State::SwimUnder) s_.swimSpeed = -1;
     auto swimTowards = [&](vec3 dir, float wish) {
         const float speed = glm::length(s_.vel), want = t_.swimSpeed * wish;
-        const float next = want > speed ? std::min(want, speed + t_.swimAccel * dt) : std::max(want, speed - t_.swimDecel * dt);
+        float& sp = s_.swimSpeed;
+        if (sp < 0) sp = speed; // entering the swim: from the velocity it has
+        sp = want > sp ? std::min(want, sp + t_.swimAccel * dt) : std::max(want, sp - t_.swimDecel * dt);
         if (wish <= 0 && speed > 1e-4f) dir = s_.vel / speed; // coasting keeps its heading
-        s_.vel = dir * next;
+        s_.vel += (dir * sp - s_.vel) * (1.0f - std::pow(1.0f - kSwimVelocityBlend, dt * 30.0f));
         // plus the volume's current (0x755A00 adds 0x6ACB60 to the swim velocity it steers to [I: added straight on])
         s_.pos = swimSlide(s_.pos, (s_.vel + waterFlow(col_.markup[size_t(s_.water)], s_.pos)) * dt);
+    };
+    // Turning toward the stick (kSwimTurnRate): her heading's angle off the camera's view line runs to the stick's at
+    // kSwimTurnRate, so a turning camera carries her with it; in the world she turns at most kSwimTurnAccel / speed.
+    auto swimTurn = [&](float speed) {
+        const float held = approachAngle(s_.yaw + wrapAngle(cameraYaw_ - prevCameraYaw_), target, kSwimTurnRate * dt);
+        s_.yaw = approachAngle(s_.yaw, held, std::min(t_.turnRate, kSwimTurnAccel / std::max(speed, 1.0f)) * dt);
     };
     switch (s_.state) {
     case State::SwimSplash: // tru.exe SwimSplashDownState: the entry from the air (waterEntry)
@@ -3314,7 +3337,7 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
     }
     case State::SwimTread:
     case State::SwimSurface: {
-        s_.pos.z = surf;
+        s_.pos.z = surf, s_.vel.z = 0; // held at the surface: what is left of a rise does not carry on (or into a dive)
         s_.pitch += std::clamp(-s_.pitch, -t_.turnRate * dt, t_.turnRate * dt); // level out after surfacing
         // Turning on the spot (chart surface group S115 -> S145 / S144 [O]: the stick to a side quadrant, MoveDir 412 /
         // 413, plays swim_surface_idle_turn_90, request 832; behind her, 411, swim_surface_idle_turn_180, request 833;
@@ -3323,7 +3346,7 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         if (s_.clip == "swim_surface_idle_turn_90" || s_.clip == "swim_surface_idle_turn_180") {
             if (!clipDone()) {
                 advanceRoot(dt);
-                s_.vel = vec3(0);
+                s_.vel = vec3(0), s_.swimSpeed = 0;
                 s_.pos = swimSlide(s_.pos, waterFlow(col_.markup[size_t(s_.water)], s_.pos) * dt);
                 s_.pos.z = surf;
                 break;
@@ -3354,9 +3377,8 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
             break;
         }
         float speed = 1;
-        const float horiz = glm::length(xy(s_.vel));
         if (wantsMove) {
-            s_.yaw = approachAngle(s_.yaw, target, std::min(t_.turnRate, kSwimTurnAccel / std::max(horiz, 1.0f)) * dt);
+            swimTurn(glm::length(xy(s_.vel)));
             // tru.exe has one SwimState for surface and under water; the surface strokes are its surface blends (stroke).
             s_.state = State::SwimSurface;
             speed = stroke(true);
@@ -3365,12 +3387,7 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
             play("swim_surfaceidle", true);
         }
         advanceClip(dt);
-        // The velocity steers toward her heading x the wished speed as a vector, at swimAccel (swimDecel when slowing).
-        const vec3 want = forward() * (t_.swimSpeed * (s_.state == State::SwimSurface ? mag * speed : 0.0f));
-        const vec3 gap = want - s_.vel;
-        const float step = (glm::length(want) >= horiz ? t_.swimAccel : t_.swimDecel) * dt, len = glm::length(gap);
-        s_.vel = len <= step ? want : s_.vel + gap * (step / len);
-        s_.pos = swimSlide(s_.pos, (s_.vel + waterFlow(col_.markup[size_t(s_.water)], s_.pos)) * dt);
+        swimTowards(forward(), s_.state == State::SwimSurface ? mag * speed : 0.0f);
         s_.pos.z = surf;
         // Shallow water: stand on the floor.
         if (auto floor = col_.groundProbe(s_.pos, t_.swimDepth); floor && floor->normal.z >= t_.minFloorNormalZ) standUp(floor->point.z);
@@ -3389,7 +3406,7 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         if (a.aim && (dropPressed || jumpPressed) && startDodge(a.move)) break;
         const float h = wantsMove ? mag : 0.0f, v = float(a.jump) - float(a.drop);
         if (h > 0 || v != 0) {
-            if (wantsMove) s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
+            if (wantsMove) swimTurn(glm::length(s_.vel));
             // The stick's forward share swims along the camera's view line (controls: Forward + the camera steer her),
             // back against it. tru.exe under Wine (l2_cliffclimb sea: a dive, then forward and sprint held;
             // openunderworld-work/scratch/swimsprint/under1.txt, velocity at player +0x2A0, camera position): with the

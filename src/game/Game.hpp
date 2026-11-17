@@ -265,8 +265,12 @@ struct Tuning {
     vec3 waterProbeHalf{221.0f, 221.0f, 572.0f};
     float waterProbeCenterZ = 320.0f;
     // Swimming, surface and under water (tru.exe, Wine, l2_cliffclimb sea): 44.95 units per 30 Hz frame at full
-    // stick; from rest it ramps up in ~0.7 s, after release it slows ~twice as fast (fitted slopes, units/s^2).
-    float swimSpeed = 1348.6f, swimAccel = 2475.0f, swimDecel = 3760.0f;
+    // stick. tru.exe 0x755A00 ramps the swim speed (player globals +0x8E8) at the state's accel / decel properties
+    // 0x1FE / 0x1FF and pulls the velocity a quarter of the way to heading x that speed every 30 Hz frame (player data
+    // +0x240 = 0.25, Player::swim); accel / decel are fitted to the Wine ramps through that lag (units/s^2): from rest
+    // 1.1 / 10.4 / 36.5 / 44.6 a frame at 0.05 / 0.2 / 0.5 / 0.87 s (tru.exe 0.54 / 8.3 / 33.1 / 44.3), after the
+    // release 22.1 a frame at 0.18 s (tru.exe 21.6).
+    float swimSpeed = 1348.6f, swimAccel = 2800.0f, swimDecel = 7000.0f;
     // Sprint (Shift held) swims 1.2x as fast, surface and under water: 53.94 vs 44.95 units per 30 Hz frame (tru.exe,
     // Wine, l2_cliffclimb sea; player +0x2A0 velocity), on the run sprint's stamina (sprintSeconds, sprintResume).
     float swimSprintFactor = 1.2f;
@@ -382,6 +386,7 @@ struct PlayerState {
     vec3 pos{0};    // root = feet; swimming: the swim clips' root (water surface while treading, body centre under water)
     float yaw = 0;  // heading: forward = (cos yaw, sin yaw, 0)
     vec3 vel{0};    // air velocity, units/s
+    float swimSpeed = -1; // the swim speed the velocity is pulled to (tru.exe player globals +0x8E8); < 0: from vel
     std::string clip;
     double clipTime = 0; // unbounded for looping clips (anim time = fmod(clipTime, duration))
     float clipRate = 1;
@@ -527,11 +532,15 @@ public:
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
     // The orbit camera's view yaw and look pitch (rad, + = up), set by World each tick: under water the stick's forward
-    // share swims along the pitch and the dodges read the stick as on screen (Player::swim).
-    void setCamera(float yaw, float pitch) { cameraYaw_ = yaw, cameraPitch_ = pitch; }
+    // share swims along the pitch and the dodges read the stick as on screen (Player::swim). The yaw of the tick before
+    // is kept for the swim turn, which holds her heading relative to the view (Player::swim, swimTurn).
+    void setCamera(float yaw, float pitch) {
+        prevCameraYaw_ = cameraKnown_ ? cameraYaw_ : yaw;
+        cameraYaw_ = yaw, cameraPitch_ = pitch, cameraKnown_ = true;
+    }
     // Load / stream. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks them held
     // (Buttons::hold) so that a key still down gives no press edge on the next tick.
-    void restore(const PlayerState& s) { s_ = s; }
+    void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false; }
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
@@ -712,7 +721,8 @@ private:
     bool reseated_ = false; // this tick only (takeReseat)
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
-    float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;
+    float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch, prevCameraYaw_ = 0;
+    bool cameraKnown_ = false;
 };
 
 // ---- camera -----------------------------------------------------------------------------------
