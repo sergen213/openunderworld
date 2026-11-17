@@ -464,3 +464,10 @@ its threads idle.
 | real behaviour | `ScriptRealData.*` (e.g. `BedroomSwitchOpensHouseDoor`), `ProgressionReal.*` |
 
 Gap: no synthetic test for the parse rejections (version, unknown opcode, operand-first code).
+
+## Native binding table and builtin container calls
+
+The complete native table (187 registered types, 2 267 `0x5768F0` binds from the vftable slot-3 bind functions, verified
+against a Wine runtime capture), the CALLU (0x65) decode including builtin DYNARRAY / MAP methods (CALLU operand
+`{u8 1, u8 DataType, u16 index}` linked by `0x57EE20`; the fire volumes' `0x701` = DYNARRAY Size), and the decoded
+log-reported gaps are in [docs/re/SCRIPT_NATIVES.md](../re/SCRIPT_NATIVES.md) and `docs/re/db/script_natives.tsv`.
