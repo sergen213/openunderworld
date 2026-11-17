@@ -37,7 +37,10 @@ ou-game --game-dir DIR --self-test tests/selftests/locomotion.json [--self-test-
 
 Under ctest (`CMakeLists.txt` `ou_self_test`): every `tests/selftests/*.json` is registered as
 `game_selftest_<file name>` (re-run CMake after adding one); it needs `OU_GAME_DIR` and a display, else it is skipped
-(77). The report is written to `<build>/selftest/<name>.report.json`, the game's log beside it (`.log`).
+(77). The report is written to `<build>/selftest/<name>.report.json`, the game's log beside it (`.log`), with
+`XDG_DATA_HOME` a fresh `<name>.report.json.data`. `engine.json` is registered apart as `game_selftest_engine`
+(label `engine`): drawn (no `--draw-last`), with sound through SDL's dummy audio driver, and an empty
+`XDG_CONFIG_HOME` so the graphics are the defaults; scenarios with `engine.*` frame probes need that.
 
 ```
 OU_GAME_DIR="/path/to/Tomb Raider Underworld" ctest --test-dir build -R game_selftest_ -j2 --output-on-failure
@@ -121,7 +124,8 @@ Exactly one of `level`, `start_chapter`, `load` enters the game.
 `drop`, `interact`, `draw`, `fire`, `aim`, `switch`, `weapon`, `heal`, `grapple`, `sprint`, `light`, `grenade`,
 `recenter`, `camera` (0 / 1), `manual` (Manual Aim), `lookx`, `looky` (camera rate, rad/s). Every step starts with all inputs released: a
 stick or button held across steps must be given again at `0` (it is not released in between, so no new press edge
-happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario's very first tick is not an edge
+happens). `save` and `load` run ou-game's quicksave / quickload (see "Inventory, physics, save / load": they need a
+redirected `XDG_DATA_HOME`); `pause` and `pda` are ignored. A press at the scenario's very first tick is not an edge
 (the game treats buttons as held on its first tick): press at `0.1` or later in the first step.
 
 `plan` is the autopilot's syntax (`src/app/game/Autopilot.hpp`, docs/GAMEPLAY.md "Receptacle replays and the
@@ -276,6 +280,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `camera.yaw`, `camera.pitch` | the orbit angles |
 | `camera.distance` | the orbit camera's distance from its pivot |
 | `camera.mode` | tru.exe's camera mode number (1 on foot, 4 free climb, 11 hang, 19 / 20 under water / surface; -1 before the first update) |
+| `camera.mode_name` | its name: `foot`, `beam`, `climb`, `pole`, `ladder`, `hang`, `perch`, `pillar`, `underwater`, `surface`, `manual_aim`, `none` (else `mode N`) |
 | `camera.spline`, `camera.field` | a scripted reveal camera plays; the field camera view is on |
 | `camera.pos.x/.y/.z` | camera position |
 | `world.unit`, `world.units` | the unit Lara is in; the loaded units (list) |
@@ -300,6 +305,48 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 
 These object probes are what `--report-objects` prints (docs/GAMEPLAY.md); `--report-objects 0 --frames 1` lists every
 script object of a level with its uid.
+
+### Engine, HUD, audio
+
+What ou-game around the World did (`selftest::Engine`, filled by `main.cpp`: SDL, the renderer identity, the HUD and
+the mixer after every tick, so as of the tick before the one tested; the frame status after every drawn frame). The
+frame probes (`engine.water*`, `engine.ao*`, `engine.rt*`) are unavailable until a frame was drawn: with
+`--draw-last` they fail. `audio.voices` / `audio.music` are unavailable without a mixer (`--no-audio`).
+
+| probe | value |
+|---|---|
+| `engine.sdl.video`, `.events`, `.gamepad`, `.audio` | that SDL subsystem is initialised (`SDL_WasInit`; audio comes up with the mixer's device) |
+| `engine.sdl.video_driver`, `engine.sdl.audio_driver` | SDL's current drivers (`""` none) |
+| `engine.renderer`, `engine.device` | the backend (`opengl` / `vulkan`) and `Renderer::description()` (API version, GPU) |
+| `engine.frames` | frames drawn since the start |
+| `engine.water`, `engine.water_surfaces` | the last frame's water quality (`original` / `enhanced`); its surface draws with Enhanced water's own shading (`RtStatus::waterSurfaces`, 0 with Original) |
+| `engine.water_as_requested` | Enhanced and surfaces drawn with it, or Original and none (false: Enhanced asked, no water drawn with it, e.g. none in view) |
+| `engine.ao_requested`, `engine.ao` | `FrameOptions::ao` (`off` / `cortao` / `rt`) and the AO the frame drew (`RtStatus::ao`) |
+| `engine.ao_as_requested` | drawn = asked, RT AO resolving to CORTAO while no rays are traced |
+| `engine.rt_requested`, `engine.rt_supported`, `engine.rt_active` | `FrameOptions::rt` (`off` / `shadows` / `full`); the device can trace; the frame traced rays |
+| `engine.rt_as_requested` | traced exactly when RT is asked for and supported |
+| `hud.frames` | frames that drew the HUD with a group showing |
+| `hud.health_alpha`, `hud.weapons_alpha`, `hud.gear_alpha` | the HUD groups' opacity 0..1 (`ui::Hud`: they appear on damage, a drawn weapon, a d-pad press, and fade) |
+| `hud.health`, `hud.bar`, `hud.bar_kind` | the health meter's fill 0..1; the green bar's fill and what it shows (`adrenaline` / `breath`) |
+| `hud.health_packs`, `hud.clip` | the d-pad's health pack count; rounds in the drawn weapon's clip(s) |
+| `audio.on`, `audio.voices` | a device (or `--music-wav`) is open; the mixer's active voices |
+| `audio.music`, `audio.music_state` | tracks playing in the music player's slots; `off` / `idle` / `loading` / `playing` |
+
+### Inventory, physics, save / load
+
+| probe | value |
+|---|---|
+| `inventory.health_packs` | health packs carried (`World::found[2]`: picked up, less those used) |
+| `inventory.weapons` | `pistols`, the secondary, `thorhammer` (list) |
+| `inventory.items`, `inventory.grenades` | carried objects (`g_belt`, `wp_thorhammer`, ...; list); grenades |
+| `physics.bodies`, `physics.active` | Jolt bodies in the rigid-body scene; of them the rigid bodies awake |
+| `save.saves`, `save.loads`, `save.failed` | quicksaves / quickloads the scenario's input ran, and failed ones |
+| `save.restored` | the World's state (`World::stateParts`) one tick after the last load equals the state one tick after the save it loaded; unavailable before a save and a load |
+| `save.differs` | the `stateParts` names that differ (list; empty when restored) |
+
+`save` / `load` input lines (step `input`) run ou-game's quicksave slot `quick`, so a scenario that has them only runs
+with `XDG_DATA_HOME` set to a directory other than `$HOME/.local/share` (exit 2 otherwise: the user's saves are never
+touched). Under ctest every self-test gets a fresh `<build>/selftest/<name>.report.json.data`.
 
 ### The step's measurements (`step.*`)
 
@@ -335,9 +382,9 @@ climb-up's last tick moves the root ~340 units): prefer `player.speed` at the en
 - Per-wheel contact (which wheel); only the count `bike.wheels`.
 - Loose rigid bodies that are not script objects (debris, ragdoll bones) and an object's rotation (`body` is its
   translation only; hinged doors are read through `object.<uid>.joint`).
-- Health packs carried (only collected and used counts), the checkpoint's position, the camera mode's name.
+- The checkpoint's position.
 - Enemy internals beyond mode / health / clip (its target, cooldowns), melee state, the adrenaline head-shot pip.
-- HUD, sound and music state (the mixer is not inspected; scenarios run with `--no-audio`).
+- Sound by sound (which voice plays what); the HUD's reticles, toasts, titles and hints.
 
 ## Fixtures
 
@@ -365,6 +412,7 @@ tested behaviour happen.
 {
   "version": 1,
   "game": "Tomb Raider: Underworld",
+  "platform": "Linux",
   "scenario": "ledge",
   "chapter": "Core mechanics: ledge grab, shimmy, pull up",
   "file": "tests/selftests/ledge.json",
@@ -402,6 +450,8 @@ tested behaviour happen.
 }
 ```
 
+- `platform` (top) is `"Linux"`; with `version`, `game` and `steps` (`step`, `passed`, `detail`) it is the master brief's
+  report schema; the rest adds to it.
 - `passed` (top): every step ran and passed. A step: it ended properly and every expectation held.
 - `detail`: how many expectations held, after how many ticks, what ended the step (`until`, `plan`, `duration`,
   `timeout`), then why it failed: the timeout / plan failure and the first failed expectation with expected and actual.
@@ -423,6 +473,8 @@ tested behaviour happen.
 | `jump_timing` | l3_main_bedroom | press to leaving the ground: standing 10 frames, with the stick 8 frames and 128 along the ground, running 2 frames; the stick jump just after the run began; the run's start (303 units in 0.4 s) [O Wine] |
 | `death_respawn` | l4_pool | checkpoint 5502 touched; a 2600 fall kills; 3 s later she stands at the checkpoint with full health |
 | `ledge` | l3_main_bedroom | standing jump catches ledge 973; shimmy left and right; one Interact hustle move (371 in 0.57 s); pull up 496 onto the top |
+| `save_load` | chapter 1 start | a quicksave on the floating yacht's deck, a walk away with health set to 500, a quickload: the World's whole state one tick after the load equals the state one tick after the save (`save.restored`), health 1000 again, she ends the load step where the save step ended, on the deck; camera mode `foot`, the pistols carried |
+| `engine` (ctest `game_selftest_engine`, drawn, with sound) | chapter 1 start | SDL video / events / gamepad / audio up with their drivers; the renderer and its device, frames drawn; Jolt bodies awake, the yacht afloat in its heave band with Lara on its deck; Enhanced water drawn with our shading; CORTAO asked and drawn; RT traced exactly as asked; drawing the pistols shows the HUD's WEAPONS and HEALTH groups (meter full); the mixer playing voices. Each step fails with its subject off: `--no-audio` (sdl, audio_mixer), `--draw-last` (renderer and every frame probe), `--water original` (water_path), `--ao off` (ao_path) |
 | `traversal_chain` | l2_cliffclimb | run -> jump -> hang (911) -> shimmy -> climb up -> run on, as one state chain |
 | `ladder` | l1_ship_sinking_hall | attach from the ground (234), climb up, climb down, step off |
 | `ladder_fast` | l7_arctic_sea | ladder 2044: a rung per ladder_climb_up; Interact + up: ladder_climb_up_fast, four rungs at once, again on a second press [O chart] |
@@ -525,6 +577,7 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 
 | known gap | level | fails at | cause |
 |---|---|---|---|
+| `save_load_bedroom_doors` | l3_main_bedroom | `load` (`save.restored`) | one tick (and still 30 ticks) after a quickload the moving collision of bedroom doors 4526 / 4376 (`ma_uo_bedroom_door`) differs from the state one tick after the save (`save.differs` = `dynamic 4526`, `dynamic 4376`; their own motion is ~0.005 units); the same steps on the l1_seatop yacht round-trip (`save_load`) |
 | `ch10_maproom_wall_run` | l2_maproom | `leap` | the roped jump towards wall ring 2595 swings her under the pool's surface (rope 2670, ring 1200 over the bridge, water 870 under it), where the rope is let go: what shortens the original's rope in that jump is not decoded [U]. The later steps (reel to 1500, wall run, back jump to ledge 652, pull up) pass once she is on the wall |
 | `ch12_trailstart_lever_gate` | l4_trailstart | `let_go` | lever 6695 is pulled out by Interact and stays out (joint 1264); the original holds it by her weight on the rope and it returns when unloaded |
 | `ch04_column_hall_perches` | l1_baldrs_sideroom | the jump to perch 30 | ledge 35 -> perch 30 is 1620 away and 134 higher; the running jump comes down on pillar 29. The original's take-off spot is unknown |

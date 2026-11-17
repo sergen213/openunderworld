@@ -597,11 +597,13 @@ if(OU_BUILD_TESTS)
   # Gameplay self-tests (docs/SELFTEST.md): ou-game --self-test tests/selftests/<name>.json enters the scenario's level,
   # runs its steps at fixed 60 Hz ticks and exits 0 only when every step's expectations held against the World's own
   # state; the report goes to <build>/selftest/<name>.report.json. 77 = skipped (no OU_GAME_DIR or display).
+  # XDG_DATA_HOME is a fresh <name>.report.json.data: a scenario's save / load input never reaches the user's saves.
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/selftest)
   function(ou_self_test name)
     add_test(NAME game_selftest_${name} COMMAND sh -c [=[
       [ -n "$OU_GAME_DIR" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || exit 77
-      "$0" --game-dir "$OU_GAME_DIR" --renderer opengl --self-test "$1" --self-test-report "$2" \
+      rm -rf "$2.data" && mkdir -p "$2.data" || exit 1
+      XDG_DATA_HOME="$2.data" "$0" --game-dir "$OU_GAME_DIR" --renderer opengl --self-test "$1" --self-test-report "$2" \
         --no-audio --no-movies --no-overlay --draw-last --sync-loads --width 160 --height 120 2>"$2.log"
       code=$?
       [ $code = 0 ] || grep -E 'self-test|error' "$2.log" | tail -n 40
@@ -609,10 +611,23 @@ if(OU_BUILD_TESTS)
     set_tests_properties(game_selftest_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
   endfunction()
   file(GLOB OU_SELF_TESTS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/selftests/*.json)
+  list(REMOVE_ITEM OU_SELF_TESTS ${CMAKE_SOURCE_DIR}/tests/selftests/engine.json) # drawn, with audio: below
   foreach(scenario ${OU_SELF_TESTS})
     get_filename_component(name ${scenario} NAME_WE)
     ou_self_test(${name})
   endforeach()
+  # The engine scenario (docs/SELFTEST.md "Engine, HUD, audio"): drawn (no --draw-last) and with sound (SDL's dummy
+  # audio driver: a real mixer and device, nothing played), the default graphics (an empty XDG_CONFIG_HOME: no user
+  # config) on the GL renderer; its steps check SDL, the renderer, Jolt, the water / AO / RT paths, the HUD and the mixer.
+  add_test(NAME game_selftest_engine COMMAND sh -c [=[
+    [ -n "$OU_GAME_DIR" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || exit 77
+    rm -rf "$2.data" "$2.config" && mkdir -p "$2.data" "$2.config" || exit 1
+    SDL_AUDIO_DRIVER=dummy XDG_DATA_HOME="$2.data" XDG_CONFIG_HOME="$2.config" "$0" --game-dir "$OU_GAME_DIR" --renderer opengl \
+      --self-test "$1" --self-test-report "$2" --no-movies --no-overlay --sync-loads --width 320 --height 240 2>"$2.log"
+    code=$?
+    [ $code = 0 ] || grep -E 'self-test|error' "$2.log" | tail -n 40
+    exit $code]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/selftests/engine.json ${CMAKE_BINARY_DIR}/selftest/engine.report.json)
+  set_tests_properties(game_selftest_engine PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS engine)
   # throne 5891: the weight bears its press plate into "in position" (-150..-90) -> seal 5701 vt 54
   ou_receptacle_replay(traprooms_throne_insert l4_traprooms 7400,-34900,4440,-135 900 5883,5891,5701
                        "portables held 0 inserted .*5883>5891" "calls .* 5701:54( |$)" "object 5891 .* joint -(1[0-4][0-9]|150|9[0-9])\\.[0-9] uber 2 ")
