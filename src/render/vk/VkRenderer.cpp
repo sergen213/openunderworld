@@ -2,6 +2,7 @@
 // device-memory allocator (no VMA), staging uploads, SPIR-V embedded at build time (glslc).
 // Entry points come straight from the linked loader (libvulkan); extension functions via
 // vkGetInstanceProcAddr. Output is meant to match the GL backend pixel-for-pixel modulo rasterisation.
+#include "render/Cortao.hpp"
 #include "render/Fluid.hpp"
 #include "render/Ocean.hpp"
 #include "render/WaterField.hpp"
@@ -51,7 +52,7 @@ const uint32_t kSceneVert[] = {
 const uint32_t kSceneFrag[] = {
 #include "scene.frag.inc"
 };
-const uint32_t kSceneRtVert[] = { // scene.vert -DOU_RT: invariant position (depth pre-pass)
+const uint32_t kSceneRtVert[] = { // scene.vert -DOU_RT: invariant position (any depth pre-pass: RT or screen-space AO)
 #include "scene_rt.vert.inc"
 };
 const uint32_t kSceneRtFrag[] = { // scene.frag -DOU_RT: ray-queried sun shadows + water reflections
@@ -81,6 +82,51 @@ const uint32_t kPrepassVert[] = {
 const uint32_t kPrepassFrag[] = {
 #include "prepass.frag.inc"
 };
+// CORTAO ambient occlusion (third_party/cortao; recordCortao): prepass, main pass per CORTAO_SAMPLE_COUNT (8 / 12 / 16 /
+// 32) and MSAA (sample 0 of the pre-pass targets), filter, temporal accumulation; the occluder lookup tables.
+const uint32_t kCortaoPrepass[] = {
+#include "cortao_prepass.comp.inc"
+};
+const uint32_t kCortaoPrepassMs[] = {
+#include "cortao_prepass_ms.comp.inc"
+};
+const uint32_t kCortaoMain8[] = {
+#include "cortao_main8.comp.inc"
+};
+const uint32_t kCortaoMain8Ms[] = {
+#include "cortao_main8_ms.comp.inc"
+};
+const uint32_t kCortaoMain12[] = {
+#include "cortao_main12.comp.inc"
+};
+const uint32_t kCortaoMain12Ms[] = {
+#include "cortao_main12_ms.comp.inc"
+};
+const uint32_t kCortaoMain16[] = {
+#include "cortao_main16.comp.inc"
+};
+const uint32_t kCortaoMain16Ms[] = {
+#include "cortao_main16_ms.comp.inc"
+};
+const uint32_t kCortaoMain32[] = {
+#include "cortao_main32.comp.inc"
+};
+const uint32_t kCortaoMain32Ms[] = {
+#include "cortao_main32_ms.comp.inc"
+};
+const uint32_t kCortaoFilter[] = {
+#include "cortao_filter.comp.inc"
+};
+const uint32_t kCortaoTemporal[] = {
+#include "cortao_temporal.comp.inc"
+};
+const uint8_t kCortaoTable16[] = { // 24x24x16 R16_UINT, 16 rays
+#include "cortao_24x24x16x16_R16_UINT.inc"
+};
+const uint8_t kCortaoTable32[] = { // 24x24x16 R32_UINT, 32 rays
+#include "cortao_24x24x16x32_R32_UINT.inc"
+};
+static_assert(sizeof kCortaoTable16 == 24 * 24 * 16 * 2 && sizeof kCortaoTable32 == 24 * 24 * 16 * 4);
 const uint32_t kTextVert[] = {
 #include "text.vert.inc"
 };
@@ -261,13 +307,6 @@ const VkVertexInputAttributeDescription kShadowAttrs[] = {
     {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
     {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv)},
 };
-// Depth pre-pass: position, uv, colour (alpha test as the scene pass).
-const VkVertexInputAttributeDescription kPrepassAttrs[] = {
-    {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
-    {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv)},
-    {3, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(scene::Vertex, color)},
-};
-
 // Bump allocator over 64 MiB VkDeviceMemory blocks, one chain per memory type. Nothing is freed
 // individually; reset() releases everything (scene reload). ponytail: no free list, add one if
 // resources ever need per-object lifetimes (streaming).
@@ -450,6 +489,7 @@ struct Frame {
     VkQueryPool gpuTimes = VK_NULL_HANDLE; // OU_VK_PRESENT_STATS: pass timestamps (kGpuMarks)
     bool gpuTimed = false;                 // gpuTimes holds this frame's previous results
     bool fluidTimed = false;               // ... including the splash fluid's (VkRenderer::kFluidMarks)
+    bool aoTimed = false;                  // ... and the screen-space AO passes' (VkRenderer::kAoMarks)
 };
 
 // updateVertices staging of one frame in flight (host-visible, grown on demand), recorded by recordVertexUploads.
@@ -948,12 +988,17 @@ public:
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
         gpuMark(cmd, 2);
         // RT AO / sun bounce (recordIndirect): traced from the opaque pre-pass depth, between the pre-pass and the draws.
-        const bool indirect = rtOn && (options.rtAo || options.rtGi) && indTrace_ && ind_.final.image;
-        rtStatus_.ao = indirect && options.rtAo, rtStatus_.gi = indirect && options.rtGi;
+        const bool indirectReady = rtOn && indTrace_ && ind_.final.image;
+        const bool rtAo = indirectReady && options.ao == AmbientOcclusion::Rt;
+        const bool indirect = indirectReady && (rtAo || options.rtGi);
+        rtStatus_.gi = indirect && options.rtGi;
+        // Screen-space AO (recordCortao, RENDERING.md "Ambient occlusion"): requested, or RT AO requested without RT.
+        const bool cortao = cortaoReady() && (options.ao == AmbientOcclusion::Cortao || (options.ao == AmbientOcclusion::Rt && !rtAo));
+        rtStatus_.ao = rtAo ? AmbientOcclusion::Rt : cortao ? AmbientOcclusion::Cortao : AmbientOcclusion::Off;
         // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
         SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
                                   shadowMap, rtOn ? (options.rtReflections ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
-        sun.block.screen.w = float((rtStatus_.ao ? 1 : 0) | (rtStatus_.gi ? 2 : 0)); // sun.glsl ouIndirect
+        sun.block.screen.w = float((rtAo ? 1 : 0) | (rtStatus_.gi ? 2 : 0) | (cortao ? 4 : 0)); // sun.glsl ouAo / ouIndirect
         std::memcpy(shadowUbo_[frameIndex_].mapped, &sun.block, sizeof sun.block); // host-coherent
         // Local-light shadows (sun.glsl ouLightsBegin): the shadow lights of the table (scene::Light::shadow, tru.exe
         // DTP +0x144C: the flashlight's spot, fixtures), half the sun's rays per light (each pixel may trace 4 lights).
@@ -1085,7 +1130,15 @@ public:
             layout = Bound::Generic;
         };
         auto opacityOf = [&](uint32_t mesh) { return mesh < opacity_.size() ? opacity_[mesh] : 1.0f; };
-        auto drawOriginal = [&](const DrawRef& d, const OrigDraw& od, VkPipeline p) {
+        // With a depth pre-pass the opaque pipelines set their depth writes per draw (createPipeline): off for the pre-passed
+        // draws of the main pass, on where nothing pre-passed them (planar reflection, screen readers).
+        bool opaqueWrites = true;
+        auto depthWrites = [&](const scene::SubMesh& s, float op, bool prepassDraw) {
+            const scene::Blend b = drawBlend(s, op);
+            if (b == scene::Blend::Alpha) vkCmdSetDepthWriteEnable(cmd, drawDepthWrite(s, op));
+            else if (b == scene::Blend::Opaque && prepassPipelines_ && !prepassDraw) vkCmdSetDepthWriteEnable(cmd, opaqueWrites);
+        };
+        auto drawOriginal = [&](const DrawRef& d, const OrigDraw& od, VkPipeline p, bool prepassDraw = false) {
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             if (layout != Bound::Original) {
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 0, 1, &frameSet, 0, nullptr);
@@ -1115,7 +1168,7 @@ public:
             bindMesh(d.mesh);
             clipTo(d.mesh);
             vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
-            if (drawBlend(s, opacityOf(d.mesh)) == scene::Blend::Alpha) vkCmdSetDepthWriteEnable(cmd, drawDepthWrite(s, opacityOf(d.mesh)));
+            depthWrites(s, opacityOf(d.mesh), prepassDraw);
             vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
         };
         auto origDraw = [&](const DrawRef& d) -> const OrigDraw* {
@@ -1206,7 +1259,7 @@ public:
                 rp.opacity = s.blend == scene::Blend::Opaque ? -opacityOf(d.mesh) : opacityOf(d.mesh);
                 vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof rp, &rp);
                 vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
-                if (blend == scene::Blend::Alpha) vkCmdSetDepthWriteEnable(cmd, drawDepthWrite(s, opacityOf(d.mesh)));
+                depthWrites(s, opacityOf(d.mesh), false);
                 const VkDescriptorSet set = textureSet(s.textureId);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
                 vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
@@ -1223,10 +1276,12 @@ public:
             layout = Bound::None; // the frame set changes back
         }
         gpuMark(cmd, 4);
-        // RT AO / GI: the pre-pass renders without resolves first, the pass traces from its depth, then the draws load it.
+        // Depth pre-pass (RT shadows / AO / GI, screen-space AO; prepassPipelines_): the exterior draws first with depth
+        // writes, then the pre-pass renders the inside's opaque depth + normals in a pass of its own (prepassNormal_), the
+        // AO / GI passes read them, and the draws load the targets and test against the depth. No resolves before the last.
         VkRenderingAttachmentInfo color1 = color, depth1 = depth;
         VkRenderingInfo ri1 = ri;
-        if (indirect) {
+        if (prepassPipelines_) {
             color1.resolveMode = depth1.resolveMode = VK_RESOLVE_MODE_NONE;
             color1.resolveImageView = depth1.resolveImageView = VK_NULL_HANDLE;
             color1.storeOp = depth1.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1265,26 +1320,26 @@ public:
             push.opacity = s.blend == scene::Blend::Opaque ? -op : op;
             vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
             vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
-            if (blend == scene::Blend::Alpha) vkCmdSetDepthWriteEnable(cmd, drawDepthWrite(s, op));
+            depthWrites(s, op, false);
             const VkDescriptorSet set = textureSet(s.textureId);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
             vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
         };
-        // RT depth pre-pass over the leading opaque submeshes of `refs` (opaque ones come first in each drawOrder group).
+        // Depth pre-pass over the leading opaque submeshes of `refs` (opaque ones come first in each drawOrder group):
+        // depth + the normal target (prepass.frag, the translated programs' OU_PREPASS variant).
         auto prepass = [&](std::span<const DrawRef> refs) {
-            if (!rtPipelines_) return;
             for (const DrawRef& d : refs) {
                 const scene::SubMesh& s = meshes_[d.mesh].submeshes[d.sub];
                 if (drawBlend(s, opacityOf(d.mesh)) != scene::Blend::Opaque) break;
                 if (enhancedWater && waterDraw(d.mesh, d.sub)) continue;
-                // Translated programs pre-pass with their own (invariant) VS and plain PS (its alpha test, no sun term).
+                // Translated programs pre-pass with their own (invariant) VS and the pre-pass PS (alpha test, normal out).
                 if (const OrigDraw* od = origDraw(d)) {
                     if (od->screen) continue; // drawn after the copies, depth included
-                    drawOriginal(d, *od, origPipeline(od->program, kOrigPrepass, s.blend));
+                    drawOriginal(d, *od, origPipeline(od->program, kOrigPrepass, s.blend), true);
                     continue;
                 }
+                useGeneric(); // prepass.frag reads OuShadow (eye)
                 if (prepassPipeline_ != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = prepassPipeline_);
-                layout = Bound::None; // set 0 of sceneLayout_ below disturbs the translated programs' sets
                 bindMesh(d.mesh);
                 clipTo(d.mesh);
                 push.model = meshes_[d.mesh].model;
@@ -1297,27 +1352,50 @@ public:
             }
         };
         // Exterior terrain first, then a depth clear: it stays behind everything (tru.exe's far depth range, SubMesh::exterior).
+        // Not pre-passed: its opaque draws write depth themselves (and get no AO: the clear removes it from the pre-pass).
         const size_t exterior = exteriorCount(meshes_, std::span<const DrawRef>(order_));
         const std::span<const DrawRef> outside(order_.data(), exterior), inside(order_.data() + exterior, order_.size() - exterior);
         if (exterior) {
-            prepass(outside);
             for (const DrawRef& d : outside) drawMain(d);
             VkClearAttachment clear{VK_IMAGE_ASPECT_DEPTH_BIT};
             clear.clearValue.depthStencil = {1.0f, 0};
             const VkClearRect rect{{{0, 0}, extent_}, 0, 1};
             vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
         }
-        prepass(inside);
-        if (indirect) {
+        if (prepassPipelines_) {
             vkCmdEndRendering(cmd);
-            recordIndirect(cmd, options, camera, aspect, zRemap, push.viewProj);
+            const VkImage normalImage = prepassNormal_.image;
+            const VkImageMemoryBarrier2 toTarget = imageBarrier(
+                normalImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            barriers(cmd, {&toTarget, 1});
+            VkRenderingAttachmentInfo pn{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            pn.imageView = prepassNormal_.view;
+            pn.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            pn.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            pn.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingAttachmentInfo pd = depth1;
+            pd.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            VkRenderingInfo pri = ri1;
+            pri.pColorAttachments = &pn;
+            pri.pDepthAttachment = &pd;
+            vkCmdBeginRendering(cmd, &pri);
+            vkCmdSetViewport(cmd, 0, 1, &flipped);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            scissorClip = -1;
+            prepass(inside);
+            vkCmdEndRendering(cmd);
+            if (indirect) recordIndirect(cmd, options, rtAo, camera, aspect, zRemap, push.viewProj);
+            if (cortao) recordCortao(cmd, options, camera, aspect, zRemap * camera.projection(aspect) * camera.view());
             color.loadOp = depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; // ri: the same attachments, resolves included
             vkCmdBeginRendering(cmd, &ri);
             vkCmdSetViewport(cmd, 0, 1, &flipped);
             vkCmdSetScissor(cmd, 0, 1, &scissor);
             scissorClip = -1;
+            opaqueWrites = false; // pre-passed
         }
         for (const DrawRef& d : inside) drawMain(d);
+        opaqueWrites = true;
         clipTo(UINT32_MAX);
         gpuMark(cmd, 5);
 
@@ -1943,6 +2021,7 @@ public:
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(shadowSetLayout_, VK_NULL_HANDLE), nullptr);
             destroyIndirect();
+            destroyCortao();
             vkDestroyDescriptorSetLayout(device_, std::exchange(rtSetLayout_, VK_NULL_HANDLE), nullptr);
             for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_, biasedSampler_, blurSampler_, agWaterSampler_}) vkDestroySampler(device_, s, nullptr);
             vkDestroyImageView(device_, std::exchange(agWaterLevel0_, VK_NULL_HANDLE), nullptr);
@@ -1972,13 +2051,14 @@ public:
 
 private:
     // ---- Original Fidelity (translated TRU shaders, docs/formats/SHADERS.md) ----
-    // Pixel shader variants: plain (no sun term; RT depth pre-pass), cascaded shadow map, ray-traced sun + water
-    // reflections (render/sun.glsl via originalPixelSource). Pipelines: [variant][scene::Blend], pre-pass at [kOrigPrepass][0].
+    // Pixel shader variants: plain (no sun term), cascaded shadow map, ray-traced sun + water reflections (render/sun.glsl
+    // via originalPixelSource), depth pre-pass (OU_PREPASS: alpha test + the AO normal target, with the VS's pre-pass
+    // variant). Pipelines: [variant][scene::Blend], pre-pass at [kOrigPrepass][0].
     enum OrigVariant { kOrigPlain, kOrigShadowMap, kOrigRays, kOrigPrepass };
     struct OrigProgram {
-        std::vector<uint32_t> vs;                  // SPIR-V (libshaderc at upload)
-        std::string psGlsl;                        // translated pixel shader
-        std::array<std::vector<uint32_t>, 3> ps;   // per OrigVariant (compiled at upload; rays only with RT support)
+        std::vector<uint32_t> vs, vsPrepass;       // SPIR-V (libshaderc at upload); vsPrepass: originalPrepassVertex
+        std::string vsGlsl, psGlsl;                // translated shaders
+        std::array<std::vector<uint32_t>, 4> ps;   // per OrigVariant (compiled at upload; rays only with RT support)
         uint8_t attributes = 0;                    // vertex attribute locations the VS reads
         std::array<std::array<VkPipeline, 4>, 4> pipelines{}; // created on first use
         uint64_t vsHash = 0, psHash = 0;           // original::Program::vs / ps: identity across uploads (origStash_)
@@ -1992,23 +2072,29 @@ private:
 
     VkPipeline origPipeline(int program, OrigVariant variant, scene::Blend blend) {
         OrigProgram& o = origPrograms_[size_t(program)];
-        VkPipeline& p = o.pipelines[variant][variant == kOrigPrepass ? 0 : size_t(blend)];
+        const bool prepass = variant == kOrigPrepass;
+        VkPipeline& p = o.pipelines[variant][prepass ? 0 : size_t(blend)];
         if (!p) {
-            const int v = variant == kOrigPrepass ? kOrigPlain : variant;
-            if (o.ps[size_t(v)].empty()) {
-                std::string error;
-                o.ps[size_t(v)] = original::spirv(originalPixelSource(o.psGlsl, true, v == kOrigRays), true, error);
-                if (o.ps[size_t(v)].empty()) { // keep drawing without the sun term
-                    std::fprintf(stderr, "[vk] original pixel shader with sun term: %s\n", error.c_str());
-                    o.ps[size_t(v)] = o.ps[kOrigPlain];
+            std::string error;
+            if (o.ps[size_t(variant)].empty()) {
+                o.ps[size_t(variant)] =
+                    original::spirv(originalPixelSource(o.psGlsl, true, variant == kOrigRays, prepass), true, error);
+                if (o.ps[size_t(variant)].empty()) { // keep drawing without the sun term (pre-pass: no normals)
+                    std::fprintf(stderr, "[vk] original pixel shader variant %d: %s\n", int(variant), error.c_str());
+                    o.ps[size_t(variant)] = o.ps[kOrigPlain];
                 }
             }
+            if (prepass && o.vsPrepass.empty()) {
+                o.vsPrepass = original::spirv(originalPrepassVertex(o.vsGlsl), false, error);
+                if (o.vsPrepass.empty()) std::fprintf(stderr, "[vk] original pre-pass vertex shader: %s\n", error.c_str());
+            }
+            const bool withNormal = prepass && !o.vsPrepass.empty();
             std::vector<VkVertexInputAttributeDescription> attrs; // only consumed locations (validation-clean)
             for (const auto& a : kOriginalAttrs)
-                if (o.attributes >> a.location & 1) attrs.push_back(a);
-            p = createPipeline(o.vs, o.ps[size_t(v)], origLayout_, &kSceneBinding, attrs,
-                               variant == kOrigPrepass ? PipelineKind::Prepass : PipelineKind(blend), samples_, sceneFormat_,
-                               depthFormat_);
+                if ((o.attributes | (withNormal ? 1u << sm3::kAttrNormal : 0u)) >> a.location & 1) attrs.push_back(a);
+            p = createPipeline(withNormal ? o.vsPrepass : o.vs, o.ps[size_t(variant)], origLayout_, &kSceneBinding, attrs,
+                               prepass ? PipelineKind::Prepass : PipelineKind(blend), samples_,
+                               prepass ? kPrepassNormalFormat : sceneFormat_, depthFormat_);
         }
         return p;
     }
@@ -2028,7 +2114,7 @@ private:
                 const scene::Blend blend = meshes_[mi].submeshes[si].blend;
                 const bool opaque = blend == scene::Blend::Opaque;
                 auto& n = needs[size_t(od.program)];
-                if (rtPipelines_ && opaque && !od.screen) n.push_back({kOrigPrepass, blend});
+                if (prepassPipelines_ && opaque && !od.screen) n.push_back({kOrigPrepass, blend});
                 const bool rays = rtOn && (opaque || (meshes_[mi].water && rtFull && !od.screen));
                 n.push_back({rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, blend});
             }
@@ -2078,21 +2164,24 @@ private:
         origStash_.clear();
         // Every new program's VS and PS variants compile in parallel here (shaderc is reentrant): compiling the sun /
         // rays variants on first draw cost ~30 % of l4_ballcourt's frames as new materials came into view.
-        std::vector<std::array<std::string, 4>> errors(n); // per task: each written by one thread
+        constexpr size_t kTasks = 6;
+        std::vector<std::array<std::string, kTasks>> errors(n); // per task: each written by one thread
         const bool rays = rtStatus_.supported;
         std::atomic<size_t> next{0};
         auto work = [&] {
-            for (size_t task; (task = next++) < n * 4;) {
-                const size_t i = task / 4;
+            for (size_t task; (task = next++) < n * kTasks;) {
+                const size_t i = task / kTasks;
                 if (reused[i]) continue;
                 const auto& p = prep.programs[i];
                 OrigProgram& o = origPrograms_[i];
-                std::string& error = errors[i][task % 4];
-                switch (task % 4) {
+                std::string& error = errors[i][task % kTasks];
+                switch (task % kTasks) {
                 case 0: o.vs = original::spirv(p.vsGlsl.source, false, error); break;
                 case 1: o.ps[kOrigPlain] = original::spirv(p.psGlsl.source, true, error); break;
                 case 2: o.ps[kOrigShadowMap] = original::spirv(originalPixelSource(p.psGlsl.source, true, false), true, error); break;
                 case 3: if (rays) o.ps[kOrigRays] = original::spirv(originalPixelSource(p.psGlsl.source, true, true), true, error); break;
+                case 4: o.vsPrepass = original::spirv(originalPrepassVertex(p.vsGlsl.source), false, error); break;
+                case 5: o.ps[kOrigPrepass] = original::spirv(originalPixelSource(p.psGlsl.source, true, false, true), true, error); break;
                 }
             }
         };
@@ -2106,9 +2195,12 @@ private:
         for (size_t i = 0; i < n; ++i) {
             OrigProgram& o = origPrograms_[i];
             o.attributes = prep.programs[i].vsGlsl.attributes;
-            o.psGlsl = prep.programs[i].psGlsl.source;
+            o.vsGlsl = prep.programs[i].vsGlsl.source, o.psGlsl = prep.programs[i].psGlsl.source;
             o.vsHash = prep.programs[i].vs, o.psHash = prep.programs[i].ps;
-            if (o.vs.empty()) o.ps = {};
+            if (o.vs.empty()) {
+                o.ps = {};
+                o.vsPrepass.clear();
+            }
             for (int v : {kOrigShadowMap, kOrigRays}) { // keep drawing without the sun term
                 if (!o.ps[size_t(v)].empty() || (v == kOrigRays && !rays) || o.ps[kOrigPlain].empty()) continue;
                 std::fprintf(stderr, "[vk] original pixel shader with sun term: %s\n", errors[i][size_t(v) + 1].c_str());
@@ -2273,22 +2365,27 @@ private:
             fsrError_.clear();
             swapchainDirty_ = true;
         }
-        // Settings that change the look (menu, mid-run): drop the temporal histories (FSR, RT AO / GI) so the old image
-        // is not smeared into the new one. Weather is left out: its intensity fades every frame under shelter.
-        const std::array<float, 14> look{float(o.rt), float(o.rtRays), float(o.rtLights), float(o.rtReflections), float(o.rtAo),
-                                         float(o.rtGi), float(o.originalShaders), float(o.water), float(o.waterDetail),
-                                         float(o.atmosphere), float(o.lightShafts), float(o.shadows), float(o.hdr), o.brightness};
-        if (look != look_) look_ = look, fsrHistory_ = false, indLast_ = 0;
+        // Settings that change the look (menu, mid-run): drop the temporal histories (FSR, RT AO / GI, screen-space AO) so
+        // the old image is not smeared into the new one. Weather is left out: its intensity fades every frame under shelter.
+        const std::array<float, 15> look{float(o.rt), float(o.rtRays), float(o.rtLights), float(o.rtReflections), float(o.ao),
+                                         float(o.aoSamples), float(o.rtGi), float(o.originalShaders), float(o.water),
+                                         float(o.waterDetail), float(o.atmosphere), float(o.lightShafts), float(o.shadows),
+                                         float(o.hdr), o.brightness};
+        if (look != look_) look_ = look, fsrHistory_ = false, indLast_ = 0, cortaoLast_ = 0;
         VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
         for (int s = fsrActiveRequest() ? 1 : std::clamp(o.msaa, 1, 8); s > 1; s >>= 1)
             if (supportedSamples_ & VkSampleCountFlags(s)) { samples = VkSampleCountFlagBits(s); break; }
         const VkFormat format = o.hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
         const bool rt = rtStatus_.supported && o.rt != RayTracing::Off;
-        if (samples == samples_ && format == sceneFormat_ && rt == rtPipelines_ && scenePipelines_[0]) return;
+        // A depth pre-pass whenever something reads it: RT (shadows, AO / GI) or the screen-space AO.
+        const bool prepass = rt || (o.ao != AmbientOcclusion::Off && cortaoReason_.empty());
+        if (samples == samples_ && format == sceneFormat_ && rt == rtPipelines_ && prepass == prepassPipelines_ && scenePipelines_[0])
+            return;
         waitIdle();
         samples_ = samples;
         sceneFormat_ = format;
         rtPipelines_ = rt;
+        prepassPipelines_ = prepass;
         destroyScenePipelines();
         destroyOriginalPipelines(); // recreated on demand at the new sample count / format
         createScenePipelines();
@@ -2430,8 +2527,8 @@ private:
     // draws composite through sun.glsl ouIndirect. Recorded with no render pass active; leaves depth_ DEPTH_ATTACHMENT.
     static constexpr float kAoStrength = 0.85f, kGiStrength = 1.5f, kAoRange = 250.0f, kGiRange = 2000.0f;
     struct IndirectPush { glm::mat4 reproject; glm::vec4 depthW, sunColor, sky; glm::ivec4 cfg; }; // rt_indirect.comp Push
-    void recordIndirect(VkCommandBuffer cmd, const FrameOptions& o, const Camera& camera, float aspect, const glm::mat4& zRemap,
-                        const glm::mat4& viewProj) {
+    void recordIndirect(VkCommandBuffer cmd, const FrameOptions& o, bool ao, const Camera& camera, float aspect,
+                        const glm::mat4& zRemap, const glm::mat4& viewProj) {
         constexpr VkPipelineStageFlags2 kDepthStages =
             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
         constexpr VkPipelineStageFlags2 kCompute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
@@ -2464,7 +2561,7 @@ private:
         const glm::vec3 sky = 0.15f * glm::vec3(e.fogColor[0], e.fogColor[1], e.fogColor[2]);
         IndirectPush p{glm::mat4(indPrevVP_ * toWorld), {proj[2][2], proj[3][2], kAoRange, kGiRange},
                        {sunColor * kGiStrength, kAoStrength}, {sky * kGiStrength, 0.0f},
-                       {(o.rtAo ? 1 : 0) | (o.rtGi ? 2 : 0) | (history ? 4 : 0), int(frameCounter_ % 1024), 0, o.rtRays >= 4 && o.rtGi ? 2 : 1}};
+                       {(ao ? 1 : 0) | (o.rtGi ? 2 : 0) | (history ? 4 : 0), int(frameCounter_ % 1024), 0, o.rtRays >= 4 && o.rtGi ? 2 : 1}};
         indPrevVP_ = glm::dmat4(viewProj), indPrevEye_ = eye, indLast_ = frameCounter_ + 1;
         const VkDescriptorSet sets[3] = {indSets_[frameIndex_], rtSet_, shadowSets_[frameIndex_]};
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, indLayout_, 0, 3, sets, 0, nullptr);
@@ -2928,6 +3025,292 @@ private:
         indLast_ = 0; // new targets: no history
     }
 
+    // ---- CORTAO screen-space AO (shaders/cortao_*.comp, render/Cortao.hpp, docs/RENDERING.md "Ambient occlusion") ----
+    // Full render resolution from the depth pre-pass (depth + interpolated world normals, MSAA sample 0): CORTAO's
+    // prepass, main pass and 13-tap filter, then our temporal accumulation into aoMap_[frame], which the opaque draws read
+    // through sun.glsl ouAo (screen.w bit 4) and multiply into their ambient / indirect light only.
+    bool cortaoReady() const { return prepassPipelines_ && cortaoReason_.empty() && cortaoPacked_.image && prepassNormal_.image; }
+
+    // Set 0 bindings (one set for all passes; cortao_common.glsl): 0 depth, 1 normal, 2 packed mips (storage), 3 packed,
+    // 4 / 14 the 16 / 32-ray occluder tables, 5 / 6 / 7 samplers (border int, border float, clamp), 8 / 9 main pass
+    // output (storage / sampled), 10 / 11 filter output, 12 history (last frame's aoMap_), 13 this frame's aoMap_.
+    static constexpr uint32_t kCortaoPush = 128;
+    void createCortao() {
+        if (!cortaoFeatures_) {
+            cortaoReason_ = "no shaderStorageImageExtendedFormats / shaderStorageImageArrayDynamicIndexing";
+            std::fprintf(stderr, "[vk] CORTAO ambient occlusion unavailable: %s\n", cortaoReason_.c_str());
+            return;
+        }
+        constexpr VkShaderStageFlags cs = VK_SHADER_STAGE_COMPUTE_BIT;
+        std::array<VkDescriptorSetLayoutBinding, 15> b{};
+        for (uint32_t i = 0; i < b.size(); ++i) {
+            const VkDescriptorType t = i == 2 || i == 8 || i == 10 || i == 13 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                       : i >= 5 && i <= 7                     ? VK_DESCRIPTOR_TYPE_SAMPLER
+                                                                              : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            b[i] = {i, t, i == 2 ? 8u : 1u, cs, nullptr};
+        }
+        VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, uint32_t(b.size()), b.data()};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &dl, nullptr, &cortaoSetLayout_));
+        const VkPushConstantRange push{cs, 0, kCortaoPush};
+        VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &cortaoSetLayout_, 1, &push};
+        VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &cortaoLayout_));
+        auto pipeline = [&](std::span<const uint32_t> code) {
+            VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shaderModule(code),
+                        "main", nullptr};
+            ci.layout = cortaoLayout_;
+            VkPipeline p;
+            VK_CHECK(vkCreateComputePipelines(device_, pipelineCache_, 1, &ci, nullptr, &p));
+            vkDestroyShaderModule(device_, ci.stage.module, nullptr);
+            return p;
+        };
+        cortaoPrepass_[0] = pipeline(kCortaoPrepass), cortaoPrepass_[1] = pipeline(kCortaoPrepassMs);
+        const std::span<const uint32_t> mains[4][2] = {{kCortaoMain8, kCortaoMain8Ms}, {kCortaoMain12, kCortaoMain12Ms},
+                                                       {kCortaoMain16, kCortaoMain16Ms}, {kCortaoMain32, kCortaoMain32Ms}};
+        for (int q = 0; q < 4; ++q)
+            for (int m = 0; m < 2; ++m) cortaoMain_[q][m] = pipeline(mains[q][m]);
+        cortaoFilter_ = pipeline(kCortaoFilter), cortaoTemporal_ = pipeline(kCortaoTemporal);
+        VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sci.magFilter = sci.minFilter = VK_FILTER_NEAREST;
+        sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        sci.maxLod = VK_LOD_CLAMP_NONE;
+        sci.borderColor = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK;
+        VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &cortaoBorderInt_));
+        sci.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+        VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &cortaoBorderFloat_));
+        // The occluder tables: 24 x 24 x 16 texels, uploaded once.
+        auto table = [&](VkFormat format, std::span<const uint8_t> bytes) {
+            VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            ci.imageType = VK_IMAGE_TYPE_3D;
+            ci.format = format;
+            ci.extent = {24, 24, 16};
+            ci.mipLevels = ci.arrayLayers = 1;
+            ci.samples = VK_SAMPLE_COUNT_1_BIT;
+            ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+            ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            GpuImage img;
+            VK_CHECK(vkCreateImage(device_, &ci, nullptr, &img.image));
+            VkMemoryRequirements req;
+            vkGetImageMemoryRequirements(device_, img.image, &req);
+            const auto a = staticMemory_.alloc(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            VK_CHECK(vkBindImageMemory(device_, img.image, a.memory, a.offset));
+            VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            vi.image = img.image;
+            vi.viewType = VK_IMAGE_VIEW_TYPE_3D;
+            vi.format = format;
+            vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VK_CHECK(vkCreateImageView(device_, &vi, nullptr, &img.view));
+            const Buffer staging = createBuffer(staticMemory_, bytes.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            std::memcpy(staging.mapped, bytes.data(), bytes.size());
+            oneShot([&](VkCommandBuffer cmd) {
+                const auto toDst = imageBarrier(img.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+                barriers(cmd, {&toDst, 1});
+                VkBufferImageCopy region{};
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.imageExtent = ci.extent;
+                vkCmdCopyBufferToImage(cmd, staging.buffer, img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+                const auto toRead = imageBarrier(img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                 VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+                barriers(cmd, {&toRead, 1});
+            });
+            vkDestroyBuffer(device_, staging.buffer, nullptr); // its memory stays in staticMemory_ (36 KiB)
+            return img;
+        };
+        cortaoTable16_ = table(VK_FORMAT_R16_UINT, kCortaoTable16);
+        cortaoTable32_ = table(VK_FORMAT_R32_UINT, kCortaoTable32);
+        const VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8 * kFramesInFlight},
+                                            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 11 * kFramesInFlight},
+                                            {VK_DESCRIPTOR_TYPE_SAMPLER, 3 * kFramesInFlight}};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, kFramesInFlight, 3, ps};
+        VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &cortaoPool_));
+        for (VkDescriptorSet& s : cortaoSets_) {
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, cortaoPool_, 1, &cortaoSetLayout_};
+            VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &s));
+        }
+        cortaoReason_.clear();
+    }
+    void destroyCortao() {
+        for (VkPipeline* p : {&cortaoPrepass_[0], &cortaoPrepass_[1], &cortaoFilter_, &cortaoTemporal_})
+            vkDestroyPipeline(device_, std::exchange(*p, VK_NULL_HANDLE), nullptr);
+        for (auto& q : cortaoMain_)
+            for (VkPipeline& p : q) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
+        for (VkSampler* s : {&cortaoBorderInt_, &cortaoBorderFloat_}) vkDestroySampler(device_, std::exchange(*s, VK_NULL_HANDLE), nullptr);
+        for (GpuImage* img : {&cortaoTable16_, &cortaoTable32_})
+            if (img->image) destroyImage(*img);
+        vkDestroyPipelineLayout(device_, std::exchange(cortaoLayout_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorPool(device_, std::exchange(cortaoPool_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorSetLayout(device_, std::exchange(cortaoSetLayout_, VK_NULL_HANDLE), nullptr);
+    }
+
+    // Per swapchain (render resolution). The AO maps always exist (shadow set binding 4 is statically used), cleared to
+    // "no surface"; the pre-pass normal target with a depth pre-pass, the CORTAO intermediates when it can run.
+    void createCortaoTargets() {
+        const bool cortao = cortaoReason_.empty() && prepassPipelines_;
+        constexpr VkImageUsageFlags kStorage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        for (GpuImage& m : aoMap_)
+            m = createImage(swapMemory_, VK_FORMAT_R16G16_SFLOAT, extent_.width, extent_.height, 1,
+                            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (cortaoReason_.empty() ? VK_IMAGE_USAGE_STORAGE_BIT : 0),
+                            VK_IMAGE_ASPECT_COLOR_BIT);
+        if (prepassPipelines_)
+            prepassNormal_ = createImage(swapMemory_, kPrepassNormalFormat, extent_.width, extent_.height, 1,
+                                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                                         samples_);
+        if (cortao) {
+            cortaoMips_ = cortao::mipCount(extent_.width, extent_.height);
+            cortaoPacked_ = createImage(swapMemory_, VK_FORMAT_R32_UINT, extent_.width, extent_.height, cortaoMips_, kStorage,
+                                        VK_IMAGE_ASPECT_COLOR_BIT);
+            for (uint32_t i = 0; i < cortaoMipViews_.size(); ++i) {
+                if (i >= cortaoMips_) {
+                    cortaoMipViews_[i] = VK_NULL_HANDLE;
+                    continue;
+                }
+                VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+                vi.image = cortaoPacked_.image;
+                vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                vi.format = VK_FORMAT_R32_UINT;
+                vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1};
+                VK_CHECK(vkCreateImageView(device_, &vi, nullptr, &cortaoMipViews_[i]));
+            }
+            cortaoRaw_ = createImage(swapMemory_, VK_FORMAT_R8_UNORM, extent_.width, extent_.height, 1, kStorage, VK_IMAGE_ASPECT_COLOR_BIT);
+            cortaoFiltered_ = createImage(swapMemory_, VK_FORMAT_R16_SFLOAT, extent_.width, extent_.height, 1, kStorage,
+                                          VK_IMAGE_ASPECT_COLOR_BIT);
+        }
+        oneShot([&](VkCommandBuffer cmd) { // GENERAL from the start; the maps cleared to 0 (no surface: ouAo = 1)
+            std::vector<VkImageMemoryBarrier2> bs;
+            for (const GpuImage* img : {&aoMap_[0], &aoMap_[1], &cortaoPacked_, &cortaoRaw_, &cortaoFiltered_})
+                if (img->image)
+                    bs.push_back(imageBarrier(img->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                                              VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT));
+            barriers(cmd, bs);
+            const VkClearColorValue zero{};
+            const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            for (const GpuImage& m : aoMap_) vkCmdClearColorImage(cmd, m.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all);
+            const VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                                      VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                      VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT};
+            barriers(cmd, {}, &mb);
+        });
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            const VkDescriptorImageInfo map{fontSampler_, aoMap_[i].view, VK_IMAGE_LAYOUT_GENERAL};
+            VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            w.dstSet = shadowSets_[i];
+            w.dstBinding = 4;
+            w.descriptorCount = 1;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w.pImageInfo = &map;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+        }
+        if (cortao) {
+            const uint32_t last = cortaoMips_ - 1;
+            for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+                const uint32_t j = (i + 1) % kFramesInFlight; // the previous frame's map: history
+                constexpr VkImageLayout G = VK_IMAGE_LAYOUT_GENERAL, R = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                std::array<VkDescriptorImageInfo, 8> mips;
+                for (uint32_t m = 0; m < mips.size(); ++m) mips[m] = {VK_NULL_HANDLE, cortaoMipViews_[std::min(m, last)], G};
+                const VkDescriptorImageInfo ii[14] = {
+                    {VK_NULL_HANDLE, depth_.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}, {VK_NULL_HANDLE, prepassNormal_.view, R},
+                    {}, {VK_NULL_HANDLE, cortaoPacked_.view, G}, {VK_NULL_HANDLE, cortaoTable16_.view, R},
+                    {cortaoBorderInt_, VK_NULL_HANDLE, G}, {cortaoBorderFloat_, VK_NULL_HANDLE, G}, {fontSampler_, VK_NULL_HANDLE, G},
+                    {VK_NULL_HANDLE, cortaoRaw_.view, G}, {VK_NULL_HANDLE, cortaoRaw_.view, G},
+                    {VK_NULL_HANDLE, cortaoFiltered_.view, G}, {VK_NULL_HANDLE, cortaoFiltered_.view, G},
+                    {VK_NULL_HANDLE, aoMap_[j].view, G}, {VK_NULL_HANDLE, aoMap_[i].view, G}};
+                const VkDescriptorImageInfo table32{VK_NULL_HANDLE, cortaoTable32_.view, R};
+                std::array<VkWriteDescriptorSet, 15> w{};
+                for (uint32_t n = 0; n < w.size(); ++n) {
+                    w[n] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                    w[n].dstSet = cortaoSets_[i];
+                    w[n].dstBinding = n;
+                    w[n].descriptorCount = n == 2 ? 8u : 1u;
+                    w[n].descriptorType = n == 2 || n == 8 || n == 10 || n == 13 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                          : n >= 5 && n <= 7                     ? VK_DESCRIPTOR_TYPE_SAMPLER
+                                                                                 : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                    w[n].pImageInfo = n == 2 ? mips.data() : n == 14 ? &table32 : &ii[n];
+                }
+                vkUpdateDescriptorSets(device_, uint32_t(w.size()), w.data(), 0, nullptr);
+            }
+        }
+        cortaoLast_ = 0; // new targets: no history
+    }
+    void destroyCortaoTargets() {
+        for (VkImageView& v : cortaoMipViews_) vkDestroyImageView(device_, std::exchange(v, VK_NULL_HANDLE), nullptr);
+        for (GpuImage* img : {&aoMap_[0], &aoMap_[1], &prepassNormal_, &cortaoPacked_, &cortaoRaw_, &cortaoFiltered_})
+            if (img->image) destroyImage(*img);
+    }
+
+    // Records the passes after the pre-pass (no render pass active); leaves depth_ DEPTH_ATTACHMENT, the normal target
+    // read-only (the next pre-pass discards it) and aoMap_[frameIndex_] for the fragment shaders.
+    struct CortaoPrepassPush { cortao::PrepassParams params; glm::vec4 viewRows[3], unproject; };
+    struct CortaoMainPush { cortao::MainParams params; glm::vec4 viewRows[3]; };
+    struct CortaoTemporalPush { glm::mat4 reproject; glm::vec4 unproject, size; glm::ivec4 cfg; };
+    static_assert(sizeof(CortaoPrepassPush) <= kCortaoPush && sizeof(CortaoMainPush) <= kCortaoPush &&
+                  sizeof(CortaoTemporalPush) <= kCortaoPush);
+    void recordCortao(VkCommandBuffer cmd, const FrameOptions& o, const Camera& camera, float aspect, const glm::mat4& viewProj) {
+        constexpr VkPipelineStageFlags2 kDepthStages =
+            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        constexpr VkPipelineStageFlags2 kCompute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        constexpr VkPipelineStageFlags2 kColorOut = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        aoMark(cmd, 0);
+        const VkImageMemoryBarrier2 in[2] = {
+            imageBarrier(depth_.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                         kDepthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kCompute, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                         VK_IMAGE_ASPECT_DEPTH_BIT),
+            imageBarrier(prepassNormal_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kCompute, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+        };
+        // The intermediates and maps: the previous frames' compute / fragment reads before this frame's writes.
+        const VkMemoryBarrier2 war{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCompute | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                   VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT, kCompute,
+                                   VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT};
+        barriers(cmd, in, &war);
+        const uint32_t w = extent_.width, h = extent_.height;
+        // Seed per frame (temporal accumulation below, FSR's jittered accumulation): CORTAO's pattern moves every frame.
+        const uint32_t seed = uint32_t(frameCounter_ * 0x9E3779B9ull >> 7) ^ 0x5bd1e995u;
+        const glm::mat4 proj = camera.projection(aspect); // GL convention, FSR jitter included (camera.jitter)
+        const cortao::Params cp = cortao::params(w, h, seed, proj, camera.nearZ, camera.farZ, true);
+        const glm::mat4 view = camera.view();
+        glm::vec4 rows[3];
+        for (int k = 0; k < 3; ++k) rows[k] = glm::vec4(view[0][k], view[1][k], view[2][k], 0.0f);
+        const glm::vec4 unproject(cp.main.unproject[0], cp.main.unproject[1], cp.main.unproject[2], cp.main.unproject[3]);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cortaoLayout_, 0, 1, &cortaoSets_[frameIndex_], 0, nullptr);
+        const VkMemoryBarrier2 step{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCompute, VK_ACCESS_2_SHADER_WRITE_BIT, kCompute,
+                                    VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT};
+        auto dispatch = [&](VkPipeline p, const void* push, uint32_t size, uint32_t gx, uint32_t gy) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
+            vkCmdPushConstants(cmd, cortaoLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, size, push);
+            vkCmdDispatch(cmd, gx, gy, 1);
+            barriers(cmd, {}, &step);
+        };
+        const int ms = samples_ != VK_SAMPLE_COUNT_1_BIT ? 1 : 0;
+        CortaoPrepassPush pre{cp.prepass, {rows[0], rows[1], rows[2]}, unproject};
+        dispatch(cortaoPrepass_[ms], &pre, sizeof pre, (w + 7) / 8, (h + 7) / 8);
+        const int samples = cortao::sampleCount(o.aoSamples);
+        const int quality = samples <= 8 ? 0 : samples <= 12 ? 1 : samples <= 16 ? 2 : 3;
+        CortaoMainPush main{cp.main, {rows[0], rows[1], rows[2]}};
+        dispatch(cortaoMain_[quality][ms], &main, sizeof main, (w + 15) / 16, (h + 15) / 16);
+        dispatch(cortaoFilter_, &cp.filter, sizeof cp.filter, (w + 15) / 16, (h + 15) / 16);
+        // Temporal: this frame's view space -> the previous frame's jittered clip, in double (world translation ~40000).
+        const glm::dvec3 eye(camera.position);
+        const bool history = cortaoLast_ == frameCounter_ && glm::distance(eye, cortaoPrevEye_) < 500.0;
+        CortaoTemporalPush tp{glm::mat4(cortaoPrevVP_ * glm::inverse(glm::dmat4(view))), unproject,
+                              {float(w), float(h), 1.0f / float(w), 1.0f / float(h)}, {history ? 1 : 0, 0, 0, 0}};
+        dispatch(cortaoTemporal_, &tp, sizeof tp, (w + 7) / 8, (h + 7) / 8);
+        cortaoPrevVP_ = glm::dmat4(viewProj), cortaoPrevEye_ = eye, cortaoLast_ = frameCounter_ + 1;
+        const VkImageMemoryBarrier2 back =
+            imageBarrier(depth_.image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         kCompute, 0, kDepthStages,
+                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                         VK_IMAGE_ASPECT_DEPTH_BIT);
+        const VkMemoryBarrier2 out{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCompute, VK_ACCESS_2_SHADER_WRITE_BIT,
+                                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT};
+        barriers(cmd, {&back, 1}, &out);
+        aoMark(cmd, 1);
+    }
+
     void createInstance() {
         uint32_t loaderVersion = VK_API_VERSION_1_0;
         vkEnumerateInstanceVersion(&loaderVersion);
@@ -3064,6 +3447,9 @@ private:
         waterTess_ = supported.tessellationShader && !std::getenv("OU_WATER_NO_TESS");
         f2.features.tessellationShader = waterTess_;
         f2.features.samplerAnisotropy = supported.samplerAnisotropy;
+        // CORTAO (createCortao): r8 / r16f / rg16f storage images, the packed buffer's mips as a storage image array.
+        cortaoFeatures_ = supported.shaderStorageImageExtendedFormats && supported.shaderStorageImageArrayDynamicIndexing;
+        f2.features.shaderStorageImageExtendedFormats = f2.features.shaderStorageImageArrayDynamicIndexing = cortaoFeatures_;
         f2.features.shaderInt64 = rtStatus_.supported; // 64-bit buffer addresses in scene_rt.frag
         // FSR (docs/RENDERING.md "FSR"): its compute passes read and write storage images without a declared format.
         fsrReason_ = std::getenv("OU_VK_NO_FSR") ? "disabled by OU_VK_NO_FSR" : vkfsr::probe(gpu_);
@@ -3169,13 +3555,15 @@ private:
         // textures (partially bound).
         // Binding 2 / 3: the RT AO / GI composite map and its geometry (sun.glsl ouIndirect; createIndirectTargets).
         constexpr VkShaderStageFlags fcs = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // + rt_indirect.comp
-        const VkDescriptorSetLayoutBinding sb[4] = {
+        // Binding 4: the screen-space AO map (sun.glsl ouAoMap; createCortaoTargets), always written.
+        const VkDescriptorSetLayoutBinding sb[5] = {
             {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
             {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, fcs, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
             {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
+            {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
         };
-        VkDescriptorSetLayoutCreateInfo sl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, sb};
+        VkDescriptorSetLayoutCreateInfo sl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 5, sb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &sl, nullptr, &shadowSetLayout_));
         if (rtStatus_.supported) {
             constexpr VkShaderStageFlags fs = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // + rt_indirect.comp
@@ -3336,14 +3724,14 @@ private:
 
     // One pipeline per scene::Blend plus the debug lines, at the current MSAA count and scene format.
     void createScenePipelines() {
+        // With a depth pre-pass the colour pass needs the invariant VS (scene_rt.vert) to test LEQUAL against it.
+        const std::span<const uint32_t> vert = prepassPipelines_ ? std::span<const uint32_t>(kSceneRtVert) : kSceneVert;
         for (size_t b = 0; b < scenePipelines_.size(); ++b)
-            scenePipelines_[b] = rtPipelines_ ? createPipeline(kSceneRtVert, kSceneRtFrag, sceneLayout_, &kSceneBinding, kSceneAttrs,
-                                                               PipelineKind(b), samples_, sceneFormat_, depthFormat_)
-                                              : createPipeline(kSceneVert, kSceneFrag, sceneLayout_, &kSceneBinding, kSceneAttrs,
-                                                               PipelineKind(b), samples_, sceneFormat_, depthFormat_);
-        if (rtPipelines_)
-            prepassPipeline_ = createPipeline(kPrepassVert, kPrepassFrag, sceneLayout_, &kSceneBinding, kPrepassAttrs,
-                                              PipelineKind::Prepass, samples_, sceneFormat_, depthFormat_);
+            scenePipelines_[b] = createPipeline(vert, rtPipelines_ ? std::span<const uint32_t>(kSceneRtFrag) : kSceneFrag, sceneLayout_,
+                                                &kSceneBinding, kSceneAttrs, PipelineKind(b), samples_, sceneFormat_, depthFormat_);
+        if (prepassPipelines_)
+            prepassPipeline_ = createPipeline(kPrepassVert, kPrepassFrag, sceneLayout_, &kSceneBinding, kSceneAttrs,
+                                              PipelineKind::Prepass, samples_, kPrepassNormalFormat, depthFormat_);
         const VkVertexInputBindingDescription lineBinding{0, sizeof(LineVertex), VK_VERTEX_INPUT_RATE_VERTEX};
         const VkVertexInputAttributeDescription lineAttrs[] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LineVertex, pos)},
@@ -3438,17 +3826,20 @@ private:
         VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         ms.rasterizationSamples = samples;
         VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        // With the RT depth pre-pass, opaque colour draws only test (each visible pixel traces once).
-        const bool prepassed = rtPipelines_ && kind == PipelineKind::Opaque;
-        const bool writesDepth = (kind == PipelineKind::Opaque && !prepassed) || kind == PipelineKind::Shadow || kind == PipelineKind::Pssm ||
+        // With a depth pre-pass, opaque colour draws test LEQUAL with their depth writes set per draw (off where pre-passed:
+        // each visible pixel shades once; on for the exterior, the planar reflection and the screen readers).
+        const bool prepassed = prepassPipelines_ && kind == PipelineKind::Opaque;
+        const bool writesDepth = kind == PipelineKind::Opaque || kind == PipelineKind::Shadow || kind == PipelineKind::Pssm ||
                                  kind == PipelineKind::Prepass;
         ds.depthTestEnable = depthFormat != VK_FORMAT_UNDEFINED && kind != PipelineKind::SplashComposite;
         ds.depthWriteEnable = writesDepth;
-        // As GL: LESS for depth writers; blended submeshes (translucent pass) and debug lines LEQUAL.
-        ds.depthCompareOp = writesDepth ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
+        // As GL: LESS for depth writers; blended submeshes (translucent pass), debug lines and pre-passed draws LEQUAL.
+        ds.depthCompareOp = writesDepth && !prepassed ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
         VkPipelineColorBlendAttachmentState blend{};
-        blend.colorWriteMask = kind == PipelineKind::Prepass ? 0 : VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                                                   VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        // The pre-pass writes the AO normal target (octahedral, RG).
+        blend.colorWriteMask = kind == PipelineKind::Prepass ? VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                                              : VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_ADD;
         auto factors = [&](VkBlendFactor src, VkBlendFactor dst) {
             blend.blendEnable = VK_TRUE;
@@ -3477,12 +3868,13 @@ private:
         cb.attachmentCount = hasColor ? 1 : 0;
         cb.pAttachments = &blend;
         for (float& c : cb.blendConstants) c = 0.5f; // Blend::Average = D3DBLEND_BLENDFACTOR 0x80808080
-        // Alpha scene pipelines: depth write set per draw (SubMesh::depthWrite, blend modes 2-3; the scene draw loops).
+        // Alpha scene pipelines: depth write set per draw (SubMesh::depthWrite, blend modes 2-3; the scene draw loops), as
+        // the pre-passed opaque ones (VkRenderer::drawFrame depthWrites).
         VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE,
                                 VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE};
         if (kind == PipelineKind::Pssm) dyn[3] = VK_DYNAMIC_STATE_DEPTH_BIAS;
         VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0,
-                                            kind == PipelineKind::Alpha || kind == PipelineKind::Pssm ? 4u : 3u, dyn};
+                                            kind == PipelineKind::Alpha || kind == PipelineKind::Pssm || prepassed ? 4u : 3u, dyn};
         VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         rendering.colorAttachmentCount = hasColor ? 1 : 0;
         rendering.pColorAttachmentFormats = &colorFormat;
@@ -3981,7 +4373,7 @@ private:
         // post, white, font, the three UI images, the under-water composite's 1 + kUwBloomLevels images + the per-frame sun
         // shadow sets (atlas + OuShadow UBO + the RT AO / GI map and geometry).
         constexpr uint32_t kUwSets = 1 + kUwBloomLevels;
-        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 + kUwSets + 3 * kFramesInFlight},
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 + kUwSets + 4 * kFramesInFlight},
                                             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 6 + kUwSets + kFramesInFlight, 2, ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &staticPool_));
@@ -4095,6 +4487,7 @@ private:
             w.pBufferInfo = &bi;
             vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
         }
+        createCortao(); // after the upload pool: the occluder tables
     }
 
     Buffer createBuffer(LinearAllocator& mem, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props) {
@@ -5719,7 +6112,7 @@ private:
         swapMemory_.init(device_, gpu_, 0);
         depth_ = createImage(swapMemory_, depthFormat_, extent_.width, extent_.height, 1,
                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                 (fsrActiveRequest() || rtPipelines_ ? VK_IMAGE_USAGE_SAMPLED_BIT : 0), // + RT AO / GI
+                                 (fsrActiveRequest() || prepassPipelines_ ? VK_IMAGE_USAGE_SAMPLED_BIT : 0), // + pre-pass readers
                              VK_IMAGE_ASPECT_DEPTH_BIT, samples_);
         sceneColor_ = createImage(swapMemory_, sceneFormat_, extent_.width, extent_.height, 1,
                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -5805,6 +6198,7 @@ private:
         for (int i = 0; i < kUwBloomLevels; ++i) writeSet(uwBloomSets_[size_t(i)], uwBloom_[size_t(i)].view, postSampler_);
         createFsrTargets();
         createIndirectTargets();
+        createCortaoTargets();
         setMipBias(fsr_.valid() ? std::log2(float(extent_.width) / float(display_.width)) - 1.0f : 0.0f);
     }
 
@@ -5824,6 +6218,7 @@ private:
             if (img.image) destroyImage(img);
         for (GpuImage* img : indImages())
             if (img->image) destroyImage(*img);
+        destroyCortaoTargets();
         swapMemory_.reset();
         vkDestroySwapchainKHR(device_, chain, nullptr);
     }
@@ -5843,6 +6238,7 @@ private:
     SDL_Window* window_ = nullptr;
     bool libraryLoaded_ = false, validation_ = false, bc_ = false, vsync_ = true;
     bool waterTess_ = false; // tessellationShader enabled: the Enhanced water surface is tessellated (water.tesc / .tese)
+    bool cortaoFeatures_ = false; // the device features CORTAO needs are enabled (createDevice)
     VkShaderStageFlags waterPushStages() const {
         return VK_SHADER_STAGE_VERTEX_BIT | (waterTess_ ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT : 0);
     }
@@ -6090,7 +6486,28 @@ private:
     PFN_vkAntiLagUpdateAMD antiLagUpdate_ = nullptr;
     bool antiLagWanted_ = false; // the setting (last drawFrame's FrameOptions::antiLag)
     AntiLagMarkers antiLag_;
-    std::array<float, 14> look_{}; // applySettings: the look-changing settings of the last frame
+    std::array<float, 15> look_{}; // applySettings: the look-changing settings of the last frame
+    // Depth pre-pass (RT or screen-space AO): opaque colour draws test LEQUAL against it; its normal target
+    // (octahedral world normal, render/sun.glsl ouOctEncode), at the MSAA sample count (the AO passes read sample 0).
+    static constexpr VkFormat kPrepassNormalFormat = VK_FORMAT_R16G16_SFLOAT;
+    bool prepassPipelines_ = false;
+    GpuImage prepassNormal_;
+    // CORTAO (recordCortao, docs/RENDERING.md "Ambient occlusion"). cortaoReason_ non-empty: unsupported on this device.
+    std::string cortaoReason_ = "not initialised";
+    VkDescriptorSetLayout cortaoSetLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout cortaoLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool cortaoPool_ = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, kFramesInFlight> cortaoSets_{};
+    VkPipeline cortaoPrepass_[2]{}, cortaoMain_[4][2]{}, cortaoFilter_ = VK_NULL_HANDLE, cortaoTemporal_ = VK_NULL_HANDLE;
+    VkSampler cortaoBorderInt_ = VK_NULL_HANDLE, cortaoBorderFloat_ = VK_NULL_HANDLE;
+    GpuImage cortaoTable16_, cortaoTable32_;           // occluder lookup tables (3D, static)
+    GpuImage cortaoPacked_, cortaoRaw_, cortaoFiltered_; // per swapchain: packed data (mips), main pass, filter output
+    std::array<GpuImage, kFramesInFlight> aoMap_;     // temporal output = sun.glsl ouAoMap (r AO, g view depth); history
+    std::array<VkImageView, 8> cortaoMipViews_{};     // storage views of cortaoPacked_'s mips (the last repeated)
+    uint32_t cortaoMips_ = 1;
+    uint64_t cortaoLast_ = 0;                          // frameCounter_ + 1 of the last frame that ran the passes
+    glm::dmat4 cortaoPrevVP_{1.0};                     // its jittered view-projection (temporal reprojection)
+    glm::dvec3 cortaoPrevEye_{0.0};
     GpuImage motion_, reactive_, fsrInput_, fsrOutput_, fsrGenerated_;
     VkPipelineLayout fsrMaskLayout_ = VK_NULL_HANDLE, fsrCameraLayout_ = VK_NULL_HANDLE, fsrFxLayout_ = VK_NULL_HANDLE;
     VkPipeline fsrFxPipeline_ = VK_NULL_HANDLE, fsrSplashPipeline_ = VK_NULL_HANDLE, fsrWeatherPipeline_ = VK_NULL_HANDLE;
@@ -6128,15 +6545,19 @@ private:
     // ... and the splash fluid's own (queries kGpuMarks + 0..2: before its simulation, after it, after its composite),
     // averaged over the frames that drew it.
     static constexpr uint32_t kFluidMarks = 3;
+    // ... and the screen-space AO passes' (queries kGpuMarks + kFluidMarks + 0..1: around recordCortao).
+    static constexpr uint32_t kAoMarks = 2, kAoQuery = kGpuMarks + kFluidMarks;
     std::vector<std::array<double, kGpuSegments>> gpuMs_; // per timed frame
     std::vector<double> fieldMs_;                         // the wave field per timed frame
     double fluidSimMs_ = 0, fluidDrawMs_ = 0;
     uint64_t fluidTimedFrames_ = 0;
+    double aoMs_ = 0;
+    uint64_t aoTimedFrames_ = 0;
     void gpuBegin(Frame& f, VkCommandBuffer cmd) {
         if (!presentStats_) return;
         if (!f.gpuTimes) {
             const VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, nullptr, 0, VK_QUERY_TYPE_TIMESTAMP,
-                                           kGpuMarks + kFluidMarks};
+                                           kGpuMarks + kFluidMarks + kAoMarks};
             VK_CHECK(vkCreateQueryPool(device_, &qi, nullptr, &f.gpuTimes));
         } else if (f.gpuTimed) { // its fence was waited: the previous results are final
             VkPhysicalDeviceProperties props;
@@ -6154,14 +6575,25 @@ private:
                 fluidSimMs_ += double(ft[1] - ft[0]) * toMs, fluidDrawMs_ += double(ft[2] - ft[1]) * toMs;
                 ++fluidTimedFrames_;
             }
+            uint64_t at[kAoMarks];
+            if (f.aoTimed && vkGetQueryPoolResults(device_, f.gpuTimes, kAoQuery, kAoMarks, sizeof at, at, sizeof at[0],
+                                                   VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+                aoMs_ += double(at[1] - at[0]) * toMs;
+                ++aoTimedFrames_;
+            }
         }
-        vkCmdResetQueryPool(cmd, f.gpuTimes, 0, kGpuMarks + kFluidMarks);
+        vkCmdResetQueryPool(cmd, f.gpuTimes, 0, kGpuMarks + kFluidMarks + kAoMarks);
         f.gpuTimed = true;
-        f.fluidTimed = false;
+        f.fluidTimed = f.aoTimed = false;
         gpuMark(cmd, 0);
     }
     void gpuMark(VkCommandBuffer cmd, uint32_t i) {
         if (presentStats_) vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frames_[frameIndex_].gpuTimes, i);
+    }
+    void aoMark(VkCommandBuffer cmd, uint32_t i) {
+        if (!presentStats_) return;
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frames_[frameIndex_].gpuTimes, kAoQuery + i);
+        frames_[frameIndex_].aoTimed = true;
     }
 
     // OU_VK_PRESENT_STATS: presented images per second and the spacing of consecutive presents (CPU timestamps after
@@ -6206,6 +6638,9 @@ private:
             std::fprintf(stderr, "ou: splash fluid GPU ms per drawing frame (%llu frames): simulation %.3f, drawing %.3f, total %.3f\n",
                          (unsigned long long)fluidTimedFrames_, fluidSimMs_ / n, fluidDrawMs_ / n, (fluidSimMs_ + fluidDrawMs_) / n);
         }
+        if (aoTimedFrames_) // inside the "scene" segment above
+            std::fprintf(stderr, "ou: screen-space AO (CORTAO prepass + main + filter + temporal) GPU ms per frame (%llu frames): %.3f\n",
+                         (unsigned long long)aoTimedFrames_, aoMs_ / double(aoTimedFrames_));
     }
     std::atomic<int64_t> fenceNs_{0}, acquireNs_{0}, presentNs_{0}; // OU_VK_PRESENT_STATS wait totals
     int64_t frameAcquireNs_ = 0; // this frame's acquire wait (present())

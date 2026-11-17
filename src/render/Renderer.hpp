@@ -212,8 +212,10 @@ struct FrameOptions {
     int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)
     bool rtLights = false; // ray-traced shadows of the point / spot shadow lights (sun.glsl ouLightsBegin; Vulkan RT only)
     bool rtReflections = false; // ray-traced reflections on water (Enhanced: instead of SSR; Original: its water materials)
-    bool rtAo = false, rtGi = false; // ray-traced ambient occlusion / one-bounce sun GI (Vulkan RT; RENDERING.md "RT AO / GI")
-    AmbientOcclusion ao = AmbientOcclusion::Off; // replaces rtAo (migration in progress)
+    bool rtGi = false; // ray-traced one-bounce sun GI (Vulkan RT; RENDERING.md "RT AO / GI")
+    // Ambient occlusion of the opaque surfaces' ambient / indirect light (RENDERING.md "Ambient occlusion"); Rt without RT
+    // this frame renders Cortao.
+    AmbientOcclusion ao = AmbientOcclusion::Off;
     int aoSamples = 12; // CORTAO_SAMPLE_COUNT permutation: 8 low, 12 medium, 16 high, 32 ultra
     float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
     float screenFade = 0.0f; // scripted screen wipe (globaleffect FadeOut/FadeIn, script::Runtime::screenFade): 1 = black
@@ -271,7 +273,8 @@ struct RtStatus {
     bool supported = false;   // device + driver can (and may: OU_VK_NO_RT unset) do ray queries
     bool active = false;      // the last frame traced rays
     bool lights = false;      // the last frame traced local-light shadows (FrameOptions::rtLights)
-    bool ao = false, gi = false; // the last frame traced RT ambient occlusion / sun bounce
+    bool gi = false; // the last frame traced the RT sun bounce
+    AmbientOcclusion ao = AmbientOcclusion::Off; // the AO the last frame drew (both renderers; Rt only with RT)
     uint32_t blas = 0, instances = 0, geometries = 0, waterInstances = 0; // current scene
     uint32_t lodHidden = 0; // last frame: TLAS instances masked out by their batch LOD (Vulkan)
     bool reflections = false; // the last frame traced water reflections (FrameOptions::rtReflections)

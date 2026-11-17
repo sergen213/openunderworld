@@ -219,7 +219,9 @@ struct GraphicsOptions {
     int preset = 0;                                // 0 enhanced, 1 original
     int rt = 0;                                    // 0 auto, 1 off, 2 shadows, 3 full (explicit 2/3 need preset enhanced)
     int rtQuality = 1;                             // 0 low, 1 medium, 2 high
-    int rtLights = 0, rtReflections = 0, rtAo = 0, rtGi = 0; // tri-state (default = on with rt full)
+    int rtLights = 0, rtReflections = 0, rtGi = 0; // tri-state (default = on with rt full)
+    int ao = 0;                                    // 0 auto, 1 off, 2 cortao, 3 rt (config ao)
+    int aoQuality = 1;                             // 0 low, 1 medium, 2 high, 3 ultra (config ao_quality)
     int msaa = 0;                                  // 0 preset default, 1 1x, 2 2x, 3 4x, 4 8x
     int shadows = 0;                               // tri-state
     bool originalShaders = true;

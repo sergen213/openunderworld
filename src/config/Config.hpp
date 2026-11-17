@@ -31,7 +31,11 @@ struct GraphicsConfig {
     std::string rtQuality = "medium";       // "low" | "medium" | "high": 1, 2, 4 shadow rays per pixel
     std::optional<bool> rtLights;           // RT shadows of the point / spot shadow lights (flashlight, fixtures); unset = on with rt "full"
     std::optional<bool> rtReflections;      // ray-traced water reflections (replace SSR); unset = on with rt "full"
-    std::optional<bool> rtAo, rtGi;         // RT ambient occlusion / one-bounce sun GI; unset = on with rt "full"
+    std::optional<bool> rtGi;               // RT one-bounce sun GI; unset = on with rt "full"
+    // Ambient occlusion (docs/RENDERING.md "Ambient occlusion"): "auto" (enhanced -> cortao, original -> off) | "off" |
+    // "cortao" (screen-space, both renderers) | "rt" (ray traced, Vulkan RT; CORTAO without RT).
+    std::string ao = "auto";
+    std::string aoQuality = "medium";       // CORTAO sample count: "low" 8 | "medium" 12 | "high" 16 | "ultra" 32
     std::optional<bool> originalShaders;    // TRU's translated shaders (docs/formats/SHADERS.md); unset = preset default (on)
     std::string water = "auto";             // "auto" (enhanced -> enhanced, original -> original) | "original" | "enhanced"
     // Enhanced water / atmosphere / weather (docs/RENDERING.md); "auto" = on for the enhanced preset, off for original.
@@ -83,20 +87,23 @@ struct GraphicsSettings {
     bool rtLights = false; // RT shadows of local shadow lights (= render::FrameOptions::rtLights); last: tests brace-init the rest
     bool rtReflections = false; // ray-traced water reflections (render::FrameOptions::rtReflections); needs rt > 0
     // Last, so positional initialisers of the fields above keep working.
-    bool rtAo = false, rtGi = false; // RT ambient occlusion / sun bounce (rt on; rtAo / rtGi unset = rt full)
+    bool rtGi = false; // RT sun bounce (rt on; unset = rt full)
     bool antiLag = false; // AMD Anti-Lag (render::FrameOptions::antiLag); last, like the fields above
     bool cineDof = false; // cutscene depth of field (app::CineView::depthOfField); last, like the fields above
     bool pssm = false;    // tru.exe's sun shadows (render::FrameOptions::pssm): the original preset's `shadows`; last, as above
     int waterColor = 0;   // kWaterColors index (0 auto, 1 original, 2.. presets = render::WaterColor(index - 1)); last, as above
     int tonemap = 0;      // render::Tonemap: 0 original, 1 agx (render::FrameOptions::tonemap); last, as above
     bool oceanFft = true; // the FFT ocean on Enhanced open seas (render::FrameOptions::oceanFft); last, as above
+    int ao = 0;           // render::AmbientOcclusion: 0 off, 1 cortao, 2 rt (render::FrameOptions::ao); last, as above
+    int aoSamples = 12;   // CORTAO sample count 8 / 12 / 16 / 32 (render::FrameOptions::aoSamples); last, as above
     bool operator==(const GraphicsSettings&) const = default;
 };
-// Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler, fsrQuality or tonemap value, explicit rt
-// without the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
+// Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, ao, aoQuality, upscaler, fsrQuality or tonemap value,
+// explicit rt without the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
-// --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail, --water-color, --ocean fft|procedural,
+// --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-gi on|off, --ao off|cortao|rt, --ao-quality low|medium|high|ultra,
+// --water original|enhanced, --water-detail, --water-color, --ocean fft|procedural,
 // --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off,
 // --anti-lag on|off, --tonemap original|agx. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags
 // only; the rest via resolve()).

@@ -44,7 +44,16 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     else if (g.rtQuality != "medium") throw std::runtime_error("rt quality must be low, medium or high, got " + g.rtQuality);
     s.rtLights = s.rt != 0 && g.rtLights.value_or(s.rt == 2); // needs RT; an explicit override wins over the mode
     s.rtReflections = s.rt != 0 && g.rtReflections.value_or(s.rt == 2); // explicit on also works with rt shadows
-    s.rtAo = s.rt != 0 && g.rtAo.value_or(s.rt == 2);
+    if (g.ao == "auto") s.ao = g.preset == "enhanced" ? 1 : 0;
+    else if (g.ao == "off") s.ao = 0;
+    else if (g.ao == "cortao") s.ao = 1;
+    else if (g.ao == "rt") s.ao = 2;
+    else throw std::runtime_error("ao must be auto, off, cortao or rt, got " + g.ao);
+    if (g.aoQuality == "low") s.aoSamples = 8;
+    else if (g.aoQuality == "medium") s.aoSamples = 12;
+    else if (g.aoQuality == "high") s.aoSamples = 16;
+    else if (g.aoQuality == "ultra") s.aoSamples = 32;
+    else throw std::runtime_error("ao quality must be low, medium, high or ultra, got " + g.aoQuality);
     s.rtGi = s.rt != 0 && g.rtGi.value_or(s.rt == 2);
     if (g.water == "enhanced") s.water = 1;
     else if (g.water == "original") s.water = 0;
@@ -129,10 +138,12 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
         if (value != "on" && value != "off") throw std::runtime_error("--rt-lights wants on or off");
         g.rtLights = value == "on";
     }
-    else if (flag == "--rt-ao" || flag == "--rt-gi") {
-        if (value != "on" && value != "off") throw std::runtime_error(std::string(flag) + " wants on or off");
-        (flag == "--rt-ao" ? g.rtAo : g.rtGi) = value == "on";
+    else if (flag == "--rt-gi") {
+        if (value != "on" && value != "off") throw std::runtime_error("--rt-gi wants on or off");
+        g.rtGi = value == "on";
     }
+    else if (flag == "--ao") g.ao = value;
+    else if (flag == "--ao-quality") g.aoQuality = value;
     else return false;
     return true;
 }
@@ -242,7 +253,8 @@ Config load(const fs::path& path) {
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
             if (g->contains("rt_lights")) c.graphics.rtLights = g->at("rt_lights").get<bool>();
             if (g->contains("rt_reflections")) c.graphics.rtReflections = g->at("rt_reflections").get<bool>();
-            if (g->contains("rt_ao")) c.graphics.rtAo = g->at("rt_ao").get<bool>();
+            c.graphics.ao = g->value("ao", c.graphics.ao); // the old rt_ao key is ignored
+            c.graphics.aoQuality = g->value("ao_quality", c.graphics.aoQuality);
             if (g->contains("rt_gi")) c.graphics.rtGi = g->at("rt_gi").get<bool>();
             if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
             c.graphics.brightness = g->value("brightness", c.graphics.brightness);
@@ -310,14 +322,14 @@ void save(const fs::path& path, const Config& c) {
                                {"water", c.graphics.water}, {"water_detail", c.graphics.waterDetail}, {"ocean", c.graphics.ocean},
                                {"water_color", c.graphics.waterColor},
                                {"atmosphere", c.graphics.atmosphere}, {"weather", c.graphics.weather},
-                               {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness}, {"tonemap", c.graphics.tonemap},
+                               {"rt_quality", c.graphics.rtQuality}, {"ao", c.graphics.ao}, {"ao_quality", c.graphics.aoQuality},
+                               {"brightness", c.graphics.brightness}, {"tonemap", c.graphics.tonemap},
                                {"upscaler", c.graphics.upscaler}, {"fsr_quality", c.graphics.fsrQuality},
                                {"sharpness", c.graphics.sharpness}, {"frame_generation", c.graphics.frameGeneration},
                                {"effects", c.graphics.effects}, {"anti_lag", c.graphics.antiLag}};
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
     if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;
-    if (c.graphics.rtAo) g["rt_ao"] = *c.graphics.rtAo;
     if (c.graphics.rtGi) g["rt_gi"] = *c.graphics.rtGi;
     if (c.graphics.lightShafts) g["light_shafts"] = *c.graphics.lightShafts;
     if (c.graphics.cineDof) g["cine_dof"] = *c.graphics.cineDof;

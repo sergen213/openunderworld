@@ -13,8 +13,12 @@ layout(push_constant) uniform Push {
 };
 layout(set = 0, binding = 1) uniform OU_TEX2D normalBuffer;
 layout(set = 0, binding = 3) uniform utexture2D packedData;
-layout(set = 0, binding = 4) uniform utexture3D occluderTable;
 layout(set = 0, binding = 5) uniform sampler borderIntSampler; // nearest, clamp to border (0)
+#if OU_RAYS == 32
+layout(set = 0, binding = 14) uniform utexture3D occluderTable; // R32_UINT, 32 rays
+#else
+layout(set = 0, binding = 4) uniform utexture3D occluderTable;  // R16_UINT, 16 rays
+#endif
 layout(set = 0, binding = 7) uniform sampler clampSampler;     // nearest, clamp to edge
 layout(set = 0, binding = 8, r8) uniform restrict writeonly image2D rawOcclusion;
 

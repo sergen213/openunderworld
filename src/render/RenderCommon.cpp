@@ -213,13 +213,14 @@ std::string originalPrepassVertex(const std::string& translated) {
 
 std::string rtSummary(const RtStatus& s, RayTracing requested, int rays) {
     static constexpr const char* kModes[] = {"off", "shadows", "full (shadows + water reflections)"};
-    std::string line = std::string("RT ") + kModes[size_t(requested)];
+    static constexpr const char* kAo[] = {"AO off", "AO CORTAO", "AO ray traced"};
+    std::string line = std::string(kAo[size_t(s.ao)]) + " | RT " + kModes[size_t(requested)];
     if (!s.supported)
         return line + " | unsupported" + (s.reason.empty() ? "" : " (" + s.reason + ")") +
                (requested != RayTracing::Off ? " -> shadow map" : "");
     if (requested != RayTracing::Off)
         line += " | " + std::to_string(rays) + " ray(s)/px" + (s.reflections ? " | reflections" : "") + (s.active ? "" : " | NOT ACTIVE");
-    if (s.ao || s.gi) line += std::string(" | ") + (s.ao && s.gi ? "AO + sun GI" : s.ao ? "AO" : "sun GI");
+    if (s.gi) line += " | sun GI";
     return line + " | " + std::to_string(s.blas) + " BLAS, " + std::to_string(s.geometries) + " geometries, " +
            std::to_string(s.instances) + " instances (" + std::to_string(s.waterInstances) + " water, " +
            std::to_string(s.lodHidden) + " LOD-masked) | TLAS builds " +
