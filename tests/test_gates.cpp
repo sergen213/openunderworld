@@ -2694,6 +2694,66 @@ TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
     }
 }
 
+// l4_pool rune block 5609 (ca_pu_thor_debris; C15-12, OU-PZL-010, docs/re/PUZZLE_BLOCKERS.md) [O data]: one section
+// (model 0, a 632-unit box of 200 kg) and no joint record; its push / pull record (kind 1, sphere r 948) names g_belt.
+// tru.exe's PushPull drives the object's body (0x74AC00 / 0x73F390), no joint consulted: with the belt she grips it and
+// pulls it out of the walkway's corner, freeing the two treasures behind it. Without the belt she does not grip.
+TEST(ProgressionReal, ThorDebrisIsDraggedOffItsCorner) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_pool");
+    auto& w = *wp;
+    const auto* o = w.script().find(5609);
+    ASSERT_TRUE(o && w.uberState(5609));
+    ASSERT_EQ(o->name, "ca_pu_thor_debris");
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const vec3 rest = *w.objectOrigin(5609);
+    // From the walkway north of it (the scenario's way in), facing the block: inside its record's sphere (r 948).
+    std::vector<std::pair<vec3, float>> spots;
+    for (float dy = 600; dy <= 900; dy += 50)
+        if (const auto g = w.collision().groundProbe(vec3(rest.x, rest.y + dy, rest.z + 300), 600); g && std::abs(g->point.z - rest.z) < 50)
+            spots.push_back({g->point + vec3(0, 0, 5), glm::radians(-90.0f)});
+    ASSERT_FALSE(spots.empty()) << "the walkway north of the block";
+    game::Actions grip;
+    grip.interact = true;
+    const auto gripFrom = [&] {
+        for (const auto& [at, yaw] : spots) {
+            place(w, at, yaw);
+            for (int i = 0; i < 20; ++i) w.tick({});
+            if (w.player().state().state != game::State::Idle) continue;
+            w.tick(grip), w.tick(grip);
+            if (w.player().state().state == game::State::Block) return true;
+            w.tick({}), w.tick({});
+        }
+        return false;
+    };
+    w.script().setPlayerObjects({});
+    EXPECT_FALSE(gripFrom()) << "no grip without g_belt";
+    w.tick({}), w.tick({});
+    EXPECT_LT(glm::distance(*w.objectOrigin(5609), rest), 1.0f);
+    w.script().setPlayerObjects({"g_belt"});
+    ASSERT_TRUE(gripFrom()) << "g_belt: thor_engage";
+    for (int i = 0; i < 40; ++i) w.tick(grip); // thor_engage
+    const vec3 from = w.player().state().pos;
+    game::Actions pull = grip;
+    pull.move = {0, -1};
+    int ticks = 0;
+    for (; ticks < 240 && w.objectOrigin(5609)->y < rest.y + 300; ++ticks) w.tick(pull);
+    const vec3 moved = *w.objectOrigin(5609);
+    EXPECT_GE(moved.y, rest.y + 300) << "dragged 300 out of the corner (rest y " << rest.y << ")";
+    EXPECT_NEAR(moved.x, rest.x, 60.0f) << "straight out, the way she pulls";
+    EXPECT_NEAR(moved.z, rest.z, 20.0f) << "on its floor";
+    EXPECT_GT(glm::distance(vec2(w.player().state().pos), vec2(from)), 200.0f) << "she backs away with it";
+    w.tick({}), w.tick({}); // let go: the floor's friction stops it (driveJoint3)
+    for (int i = 0; i < 240; ++i) w.tick({});
+    const vec3 left = *w.objectOrigin(5609);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_LT(glm::distance(*w.objectOrigin(5609), left), 2.0f) << "at rest again";
+    EXPECT_NEAR(left.z, rest.z, 20.0f) << "on its floor";
+    EXPECT_GE(left.y, moved.y) << "out of the corner";
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 5609) << key.second;
+}
+
 // l2_maproom (C09-04): Lara crossing volume 2636 activates cinematic 2624 (095_tha_powerup); the volume's handler
 // then waits for the cutscene's end (cinematic 10, a latent NtCineSequence: tru.exe 0x4A4CC0 / 0x4ADAA0) and only
 // then has Lara's equip helper give her g_gauntletleft (larabase 37); the cinematic's own handlers switch the

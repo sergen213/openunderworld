@@ -333,8 +333,9 @@ nlohmann::json World::serializeObjects() const {
         e["joints"] = std::move(joints), e["links"] = rt.links, e["watches"] = std::move(watches);
         // only objects with a type-8 joint record carry the key
         if (std::ranges::any_of(uberData_.at(uid)->joints, [](const formats::UberJoint& j) { return j.type == 8; })) e["fixed"] = rt.fixed;
-        // only objects with a type-7 joint record carry the key (other objects' saves are unchanged)
-        if (std::ranges::any_of(uberData_.at(uid)->joints, [](const formats::UberJoint& j) { return j.type == 7; })) {
+        // only objects with a type-7 joint record, or a gripped free section's joint (index joints.size() + section),
+        // carry the key (other objects' saves are unchanged)
+        if (!rt.joints3.empty() || std::ranges::any_of(uberData_.at(uid)->joints, [](const formats::UberJoint& j) { return j.type == 7; })) {
             nlohmann::json joints3 = nlohmann::json::array();
             for (const auto& [index, jt] : rt.joints3)
                 joints3.push_back({index, std::array{jt.x.x, jt.x.y, jt.x.z}, std::array{jt.v.x, jt.v.y, jt.v.z}, std::to_array(jt.lo), std::to_array(jt.hi),
@@ -711,12 +712,21 @@ std::optional<physics::Joint1> World::makeUberJoint(int32_t uid, int32_t index) 
 // sections hinged or fixed to it ([I] as one body: ma_pu_thor_pillar's joint holds section 1, a 60 kg sphere without a
 // solid primitive, and the pillar proper, section 0 with the collision, turns on a hinge on it; the hinge's turn does
 // not turn the collision in ours). At rest where the object stands.
+// An index past the records (joints.size() + section, World::pushUberHandle) is a gripped section without any joint
+// record (ca_pu_thor_debris): a world three-axis joint like the records' own (all seven type-7 records in the data
+// have no limit, no motor and friction 1e-6 / 1e-7: a free body that slides on its floor).
 std::optional<physics::Joint3> World::makeUberJoint3(int32_t uid, int32_t index) {
     const auto* o = script_.find(uid);
     const auto data = uberData_.find(uid);
-    if (!o || data == uberData_.end() || !data->second || index < 0 || size_t(index) >= data->second->joints.size()) return std::nullopt;
+    if (!o || data == uberData_.end() || !data->second || index < 0) return std::nullopt;
     const auto& u = *data->second;
-    const auto& j = u.joints[size_t(index)];
+    formats::UberJoint j;
+    if (size_t(index) >= u.joints.size()) { // a section without a joint record (World::pushUberHandle)
+        if (size_t(index) - u.joints.size() >= u.sections.size()) return std::nullopt;
+        j.type = 7, j.bodyB = index - int32_t(u.joints.size()), j.friction = 1e-6f;
+    } else {
+        j = u.joints[size_t(index)];
+    }
     if (j.type != 7 || j.bodyB < 0 || j.bodyA >= 0) return std::nullopt; // [U] on a moving body A: none in the data
     physics::Joint3 out;
     const auto solid = [](const physics::ObjectPhysics* p) { return p && std::ranges::any_of(p->prims, &physics::Prim::solid); };
@@ -746,9 +756,10 @@ int32_t World::uberSectionJoint3(int32_t uid, int32_t section) const {
     const auto data = uberData_.find(uid);
     if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second || rt->second.joints3.empty()) return -1;
     const auto& joints = data->second->joints;
+    const auto bodyB = [&](int32_t index) { return size_t(index) < joints.size() ? joints[size_t(index)].bodyB : index - int32_t(joints.size()); };
     for (int depth = 0; depth < 8 && section >= 0; ++depth) {
         for (const auto& [index, j] : rt->second.joints3)
-            if (joints[size_t(index)].bodyB == section) return index;
+            if (bodyB(index) == section) return index;
         int32_t next = -1;
         for (const auto& j : joints)
             if ((j.type == 0 || j.type == 8) && j.bodyB == section) next = j.bodyA;
@@ -1107,6 +1118,21 @@ bool World::pushUberHandle(const Actions& a, float speed) {
     if (!uberHandle_.uid) return false;
     const int32_t index = uberSectionJoint(uberHandle_.uid, uberHandle_.section);
     auto rt = uberRuntime_.find(uberHandle_.uid);
+    // A gripped section that no joint record names as its body (ca_pu_thor_debris: one section, no joint record) is a
+    // free body: tru.exe's PushPull drives the object's body directly [O 0x74AC00 / 0x73F390], no joint consulted. On
+    // the first grip it gets a world three-axis joint (makeUberJoint3, index joints.size() + section, as a type-7
+    // record: no limit, no motor) and moves as the push blocks do below. A section whose records are not created yet
+    // (or were removed) is not free: it stays where its state has it.
+    if (rt != uberRuntime_.end() && index < 0 && size_t(uberHandle_.section) < rt->second.sections.size() &&
+        uberSectionJoint3(uberHandle_.uid, uberHandle_.section) < 0) {
+        const auto& data = *uberData_.at(uberHandle_.uid);
+        auto& sec = rt->second.sections[size_t(uberHandle_.section)];
+        const auto* o = script_.find(uberHandle_.uid);
+        const bool recorded = std::ranges::any_of(data.joints, [&](const formats::UberJoint& j) { return j.bodyB == uberHandle_.section; });
+        const int32_t own = int32_t(data.joints.size()) + uberHandle_.section;
+        if (o && !o->loose && !sec.removed && !sec.freed && !recorded)
+            if (auto made = makeUberJoint3(uberHandle_.uid, own)) rt->second.joints3[own] = *made, sec.held = true;
+    }
     const vec3 fwd0 = uberHandle_.face != vec3(0) ? uberHandle_.face : vec3(std::cos(s.yaw), std::sin(s.yaw), 0);
     // A section on a three-axis joint (the push blocks, the Thor pillars: ca_pu_thor_pillar itself, the others through
     // their hinge) goes where she pushes or pulls it [O 0x74AC00: an impulse-bounded velocity on the object's body,
