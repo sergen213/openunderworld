@@ -218,10 +218,11 @@ Verification:
 - [O] From tru.exe:
   - Saves go under `CSIDL_PERSONAL` (My Documents), via `SHGetFolderLocation`, with fallbacks `Personal` and
     `C:\My Documents`, in `Eidos\Tomb Raider - Underworld\` (`0x78B550`).
-  - Slots are registered in `0x7744E0`:
-    - `savegame%02d.sav`: 10 slots, size limit 0x140000 bytes;
-    - `Screenshot%03d.ss`: 100;
-    - `profile.pro`: 1.
+  - `0x7744E0` registers generic storage categories: `savegame%02d.sav` (10, limit 0x140000 bytes),
+    `Screenshot%03d.ss` (100), `profile.pro` (1).
+  - The PC writer itself produces `<name>.TRUSave` and `Autosave.TRUSave`. A file holds an `RGMH` metadata record,
+    a `PCUD` header, a CRC-32 block table and the 0x140000-byte save buffer. A disk save copies the committed buffer,
+    i.e. the last checkpoint [I high]. See [re/SAVEGAME.md](re/SAVEGAME.md) §5.
   - The contents are the engine's SAVE block buffer (`0x556310`: "illegal save type", "save %d is too big",
     "SAVE_BufferIntro", per-intro saved instances). It also holds the PDA map and gear ("evControlSaveData").
 - [U] The binary layout of `.sav` / `.pro`. No public documentation was found, and no original saves were available

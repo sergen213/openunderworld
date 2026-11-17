@@ -46,6 +46,8 @@ WinMain ─ Win32_GameMain ─┬─ archives (InitArchive / InitPatchArchive) �
 
 ## 1. Engine init and shutdown
 
+Shutdown decoded 2026-11-16: [SHUTDOWN.md](SHUTDOWN.md) (MAIN_Shutdown 0x5DF930, ~76 calls in order; Win32_GameMain tail).
+
 | Address | Name | Evidence |
 |---|---|---|
 | 0x818421 | entry (CRT `WinMainCRTStartup`) | N-h |
@@ -245,6 +247,10 @@ WinMain ─ Win32_GameMain ─┬─ archives (InitArchive / InitPatchArchive) �
 
 ## 9. Camera
 
+Full decode 2026-11-16: [CAMERA.md](CAMERA.md). It covers CameraManager 0xE804F0 (59 slots, 15 camera types), the
+state field +0x4C, mode requests via slot 17, TransitionCamera durations, and the platform carry (0x609830 / 0x5FF650 /
+0x7027B0).
+
 | Address | Name | Evidence |
 |---|---|---|
 | 0x602690 | LaraCameraRewrite (mode distances, focus, limits, collider; camera DTP 0x14) | C (ROADMAP, GAMEPLAY.md) |
@@ -413,6 +419,8 @@ WinMain ─ Win32_GameMain ─┬─ archives (InitArchive / InitPatchArchive) �
 
 ## 18. Rendering pipeline
 
+Per-frame pass order traced 2026-11-16: [RENDER_PIPELINE.md](RENDER_PIPELINE.md).
+
 | Address | Name | Evidence |
 |---|---|---|
 | 0x5239C0 / 0x522580 / 0x522060 / 0x522900 | PCDeviceManager_Create / CreateDevice / BuildPresentParams / HandleDeviceLost | N-h |
@@ -471,6 +479,8 @@ WinMain ─ Win32_GameMain ─┬─ archives (InitArchive / InitPatchArchive) �
 
 ## 21. UI, HUD and fonts
 
+cdc UI widgets, screens and the front-end state machine: [UI.md](UI.md). The font layout is in [../formats/UI.md](../formats/UI.md).
+
 | Address | Name | Evidence |
 |---|---|---|
 | 0x474C90.. 0x476BC0 / 0x5C5A30 | Font_* (cursor, scale, height, text width, printf) / Font_Flush (the name is the menu hook's; the function is the frame end: EndScene of the main scene, the 2-D scene, EndFrame vt 0x10, docs/re/RENDER_PIPELINE.md §2 / §10) | N-m |
@@ -487,6 +497,9 @@ WinMain ─ Win32_GameMain ─┬─ archives (InitArchive / InitPatchArchive) �
   not reimplemented).
 
 ## 22. Save, load and checkpoints
+
+Original save buffer and `.TRUSave` file layout: [SAVEGAME.md](SAVEGAME.md). The PC writer produces `<name>.TRUSave`;
+the `savegame%02d.sav` table is a generic storage registration.
 
 | Address | Name | Evidence |
 |---|---|---|
