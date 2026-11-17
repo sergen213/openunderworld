@@ -28,7 +28,7 @@ Standing verification rules: run ctest excluding `game_vulkan_rt_smoke` (real GP
 | OpenGL renderer | Enhancement (backend, reference path) | `viewer_placeholder_screenshot`, `viewer_vulkan_matches_gl*` |
 | Shader pipeline (translated SM3) | Original-faithful | `Sm3Real.*`, `Sm3Parser.*`, `OriginalShading.*` |
 | Water (Original / Enhanced) | Mixed | `Ocean.*`, `WaterField.*`, `WaterSurface.*`, `SplashFluid.*`, `VulkanRenderer.WaveFieldRunsScrollsAndRests`, `Game.Water*` |
-| Ambient occlusion | Enhancement | `Config.GraphicsPresets`, `viewer_vulkan_matches_gl*` (AO off), hand capture |
+| Ambient occlusion | Enhancement | `render_ao_{opengl,vulkan,rt_vulkan,parity}`, `render_golden_bedroom_enhanced_vk_ao_*`, `Config.GraphicsPresets` |
 | Ray tracing | Enhancement | `VulkanRenderer.RayTracing*`, `VulkanRenderer.ResidentMeshesKeepBlases` |
 | Shadows (CSM / PSSM / RT) | Mixed | `OriginalShading.PssmSplitsMatchOriginal`, `Config.GraphicsPresets` |
 | Reflections (planar / SSR / RT) | Mixed | `VulkanRenderer.RayTracing*`, `Config.WaterQuality` |
@@ -187,8 +187,9 @@ Standing verification rules: run ctest excluding `game_vulkan_rt_smoke` (real GP
 - **Other AO**: none. [O] `grep -i 'ssao|hbao|gtao'` finds only CORTAO's own `cortao_gatherSSAO` names and the plan
   line docs/RENDERING.md:1121. TRU's light maps / IrradianceState are baked lighting, not AO.
 - **Limits**: VK reprojection camera-only (GL per-pixel motion); AO accumulates, so GL-vs-VK parity tests run `--ao off`.
-- **Verify**: `Config.GraphicsPresets`; parity tests above with AO off; `RtStatus.ao` overlay line; no dedicated AO
-  image test exists [O] (gap).
+- **Verify**: `render_ao_opengl`, `render_ao_vulkan`, `render_ao_rt_vulkan` (bounded darkening vs `--ao off`),
+  `render_ao_parity` (GL vs VK with AO on), goldens `render_golden_bedroom_enhanced_vk_ao_{on,off}` (6627f6b; all in
+  `ctest -L protected`); `Config.GraphicsPresets`; `RtStatus.ao` overlay line.
 
 ## Ray tracing — Enhancement (Vulkan only)
 
