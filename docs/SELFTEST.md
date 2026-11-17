@@ -590,7 +590,7 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | `ch13_temple_block_topple` | l4_temple | the grapple | ring 4951 is not offered from the east ledge; the statue head's mover is unknown |
 | `ch15_pool_rune_block` | l4_pool | the drag | rune block 5609 has no joint record, so nothing drags it |
 | `ch21_platform_ride`, `natla_platform_ride` | l7_yggdrasil_end | `jump_to_a_platform` / the grab | the steps of `natla_fight`, then a jump from the entry walkway's end at a floating stone. The stones ride their orbit rigs now (they stood at their intro positions when `ch21_platform_ride` was written; that scenario was not rerun since), but the timed running jump at a passing stone falls short: its ledge is 1240 out and 540 up (docs/GAMEPLAY.md "Natla") |
-| `ch09_shrine_shaft_descent` | l2_shrineroom | after the statue pull | its floor slabs stay solid over the shaft and its ring is still a target; the drop-catches and the mid-fall grapple at ring 2673 follow |
+| `ch09_shrine_shaft_descent` | l2_shrineroom | `pull_the_statue`, `grapple_in_the_fall` | the fallen statue's ring is still offered as a target, and ring 2673 is not offered in the fall. The freed floor slabs fall into the shaft (OU-PZL-006: fixed joints simulated), so the edge hang and the two drop-catches pass |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

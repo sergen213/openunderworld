@@ -3119,6 +3119,56 @@ std::optional<vec3> grappleFrom(game::World& w, int32_t uid, float lo = 600, flo
 }
 } // namespace
 
+// l2_shrineroom naga statue 2794 (sa_uo_naga_statue; OU-PZL-006, docs/re/PUZZLE_BLOCKERS.md) [O data]: section 0's
+// state 0 creates hinge j0 (world -> the statue) and fixed joints j1 / j3 / j4 (type 8, world -> the floor slabs,
+// sections 1 / 3 / 4) over the shaft. Pulled past 45 degrees with the grapple the statue falls (state 1: action 10 on
+// j0), 0.48 s later state 4 / 2 removes j1, j3, j4 (action 10, 0x4D881D -> 0x4D6220): the slabs are free bodies and
+// fall into the shaft (tru.exe: the engine fixed constraint of 0x4D1040 gone, nothing else holds them).
+TEST(ProgressionReal, NagaStatueSlabsFallAfterThePull) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_shrineroom");
+    auto& w = *wp;
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_TRUE(w.script().find(2794) && w.uberState(2794));
+    ASSERT_GE(w.uberState(2794)->size(), 5u);
+    EXPECT_EQ((*w.uberState(2794))[0], 5u) << "standing";
+    // The shaft's mouth: the middle of its edge loop (markup 679).
+    vec3 mouth(0);
+    int points = 0;
+    for (const auto& m : w.collision().markup)
+        if (m.id == 679)
+            for (const auto& p : m.points) mouth += p, ++points;
+    ASSERT_GT(points, 2) << "the shaft's edge loop";
+    mouth /= float(points);
+    const auto slabAt = [&] { // the slabs' top over the shaft, 56 under the edge loop
+        const auto h = w.collision().raycast(mouth + vec3(0, 0, 400), {0, 0, -1}, 600);
+        return h && h->dynamic >= 0 && w.collision().dynamics[size_t(h->dynamic)].id == 2794;
+    };
+    EXPECT_TRUE(slabAt()) << "the slabs close the shaft";
+    const auto ground = w.collision().groundProbe(vec3(-20199, 59500, mouth.z + 1000), 2000);
+    ASSERT_TRUE(ground);
+    place(w, ground->point + vec3(0, 0, 5), glm::radians(90.0f));
+    for (int i = 0; i < 20; ++i) w.tick({});
+    game::Actions press;
+    press.grapple = true;
+    w.tick(press), w.tick({});
+    for (int i = 0; i < 60; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().grappleUid, 2794) << "the statue's ring is roped";
+    game::Actions pull;
+    pull.interact = true;
+    for (int i = 0; i < 720 && (*w.uberState(2794))[0] != 2u; ++i) w.tick(pull);
+    ASSERT_EQ((*w.uberState(2794))[0], 2u) << "fallen: 5 -> 3 -> 1 -> 4 -> 2";
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_FALSE(slabAt()) << "the slabs fell into the shaft";
+    for (const int32_t section : {1, 3, 4}) {
+        const auto body = w.uberSectionBody(2794, section);
+        ASSERT_TRUE(body) << section;
+        EXPECT_LT((*body)[3].z, -300.0f) << "section " << section << " fell";
+    }
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 2794) << key.second;
+}
+
 // l1_kraken_room gear rooms (C03-11 / C03-16). Both gears are grapple targets by a model feature (mask 4): gear 36
 // (ms_ani_tentacle_gearl) on model 1 = section 1, the recessed gear on a prismatic joint (limit 0..515, a 15.8 brake),
 // whose watch 512..537 sends trigger 14 (state 2, then 1: locked at 512..518, action 0x1A no target; event 0 = the

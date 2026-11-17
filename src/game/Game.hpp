@@ -1670,6 +1670,9 @@ private:
         std::map<int32_t, physics::Joint1> joints;
         std::map<int32_t, physics::Joint3> joints3; // created type-7 (three-axis) joints: the Thor pillars
         std::set<int32_t> links; // created type-11 link joints
+        // created type-8 fixed joints (engine fixed constraint, 0x4D1040): body B holds still on body A (the world: as
+        // posed at rest) until action 10 removes the joint (0x4D6220) and frees it (sa_uo_naga_statue's floor slabs)
+        std::set<int32_t> fixed;
         std::vector<UberWatch> watches;
         bool intangible = false;            // action 5: instance +0x18 bit 0x20000000, collision callbacks skip it
         bool grappleOff = false;            // action 0x1A / 0x19: instance +0x1C bit 2 set / cleared, not a grapple target
