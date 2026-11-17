@@ -224,7 +224,9 @@ struct Tuning {
     // along the fall line, 35 units per 30 Hz frame up to 45 by the slope angle, approached at 5 (up) / 10 (down) per
     // frame^2 x the frame's time multiplier: at 60 Hz 2.5 / 5 (Wine, l2_junglehub: +1.25 per 60 Hz tick). The angle
     // range is 29..51 degrees [O-runtime: twelve 0x0004 faces of 28.4..48.3 degrees fit it within 0.03 units per
-    // frame; the controller's defaults read 28 / 52 from the player data, U why they differ].
+    // frame]. The controller (0x73FFC0, the 0x740036 / 0x740049 reads) seeds the angle range with player data 28 / 52,
+    // then reads the state's props 0x192 / 0x193 into it (0x783F50 / 0x784BF0) [I: S814's give 29 / 51]; it decides no
+    // slide entry or exit (the 28-degree bound is the ground check's: slideMaxNormalZ).
     float slideSpeedMin = 35.0f * 30.0f, slideSpeedMax = 45.0f * 30.0f;
     float slideAngleMin = 29.0f, slideAngleMax = 51.0f; // degrees
     float slideAccel = 2.5f * 900.0f, slideDecel = 5.0f * 900.0f;

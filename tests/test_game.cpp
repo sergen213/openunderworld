@@ -1945,12 +1945,15 @@ vec3 onRamp(float nz, float x, float run = 3000) { return {x, 0, (run - x) * std
 // tru.exe's ground check 0x5DCE20: too steep under cos 52 deg = 0.6157 (unless flagged 0x20 / 0x100), slide-flagged
 // faces (0x04 / 0x40) slid from cos 52 to cos 28 deg = 0.8829. Wine, l2_junglehub: stands on 0x0080 faces of normal z
 // 0.626..0.716 and on 0x0000 0.763, slides on 0x0004 faces of 0.753.
+// The 28-degree bound is the check's own (VERIFICATION.md V002 corrected): its slope limit is word 3 of the query record
+// 0x5C0CA0 builds (0x71BB6D..0x71BB9B, Lara +0x644 = cos(player data +0x100C), set at 0x71B550 / 0x720170), read as
+// [edi+0xC] at 0x5DD3A2 / 0x5DD45F / 0x5DD4E8 / 0x5DD56C: a flagged face flatter than 28 degrees (20: 0.9397) is ground.
 TEST(Game, SlopeStandsOrSlidesByFlagAndAngle) {
     struct Row { float nz; uint16_t flags; bool slides; };
     for (const Row r : {Row{0.626f, 0x0080, false}, {0.63f, 0x0000, false}, {0.716f, 0x0080, false}, {0.60f, 0x0000, true}, {0.60f, 0x0080, true},
                         {0.45f, 0x0080, true}, {0.63f, 0x0004, true}, {0.753f, 0x0004, true}, {0.87f, 0x0004, true}, {0.753f, 0x0040, true},
                         {0.90f, 0x0004, false}, {0.974f, 0x0004, false}, {0.50f, 0x00A0, false}, {0.50f, 0x01A0, false}, {0.50f, 0x0100, false},
-                        {0.50f, 0x0024, true}, {0.50f, 0x0104, false}, {0.753f, 0x0124, true}}) {
+                        {0.50f, 0x0024, true}, {0.50f, 0x0104, false}, {0.753f, 0x0124, true}, {0.9397f, 0x0004, false}, {0.9397f, 0x0040, false}}) {
         auto w = makeWorld(rampMesh(r.nz, r.flags), onRamp(r.nz, 600));
         const auto& s = w->player().state();
         bool slid = false;

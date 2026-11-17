@@ -383,7 +383,9 @@ vec3 Player::slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) c
 }
 
 // tru.exe 0x5DCE20 on the face under her root [O]: with L = cos(player data +0x100E = 52 deg), U = cos(+0x100C =
-// 28 deg) and the face's client flags (terrain +0x0E through 0x5D3AF0): a slide-flagged face with L <= nz <= U is a
+// 28 deg; the check's slope limit, word 3 of its query record from 0x5C0CA0 = Lara +0x644, set at 0x71B550 / 0x720170,
+// read as [edi+0xC] at 0x5DD3A2 / 0x5DD4E8 / 0x5DD56C) and the face's client flags (terrain +0x0E through 0x5D3AF0): a
+// slide-flagged face with L <= nz <= U and nz < 1 is a
 // slope slide (message 0x1CA; Lara +0x11D0 = kind, +0x11CF, the chart's PSCCF_OnSlopeSlide); any face with 0 < nz < L
 // is too steep (message 0x1C9) unless flagged 0x0020 (never tested, when not slide-flagged) or 0x0100 (stood on).
 // [U] object faces (their flags come from the object: masks 0xA00 / 0x400 / 0x20): taken as unflagged.
