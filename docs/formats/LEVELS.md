@@ -122,7 +122,8 @@ Tests `RealData.LevelUberSectionModels`, `ProgressionReal.BreakPipeSwitchesItsMo
 ### Lights (unit data +0x00 / +0x04)
 
 Code: `formats::parseUnit` → `scene::Environment::{lights, sun*}`; tests `Level.ParseUnitLights`,
-`RealData.UnitLightsAllUnits`. Render use: SHADERS.md "Engine inputs".
+`RealData.UnitLightsAllUnits`. Render use: SHADERS.md "Engine inputs". Index of every lighting input (masks, probes,
+light maps, PSSM): [LIGHTING.md](LIGHTING.md).
 
 [O] Unit data `+0x00` u32 numLights, `+0x04` → array of pointers to 0xE0-byte light records. tru.exe 0x5CEC60 creates
 a scene light per record from its light DTP, 0x5C6530 applies the record's overrides.

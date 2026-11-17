@@ -88,8 +88,9 @@ Survey of all 1057 DRMs in the bigfile (2248 distinct materials) [O]: mode 0 ×1
   light map by a per-material constant [O for the foliage shaders above]. Its values are often not a colour: 0 on the
   ballcourt ground plants (rendered black before), (99, 0, 0, 255) on `ca_pt_weightbreak_b`, (0, 0, 80, 60) on a
   ballcourt terrain buffer [O]. The loader therefore no longer copies it into `scene::Vertex::color` (stays white).
-- Attribute `0x8E54B6F3` (second texcoord) is the light-map UV of the shaders above [O for those shaders];
-  light maps themselves (class-1 instance textures) are not loaded yet [U which DRM/IMF field supplies them].
+- Attribute `0x8E54B6F3` (second texcoord) is the light-map UV of the shaders above [O for those shaders]. Light maps
+  are the class-1 instance textures (terrain group / primgroup / IMF fields), loaded and bound by both renderers; all
+  lighting inputs and the no-TEXCOORD1 rule: [LIGHTING.md](LIGHTING.md).
 
 ## What the renderers implement
 

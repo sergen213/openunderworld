@@ -139,7 +139,7 @@ Header fields used (u32, offsets relative to Header) [O]:
   | 0x09B1D4EA | terrain normal | [O] SHORT4, normalized by us |
   | 0x8317902A | texcoord 0 | [O] SHORT2 ÷ 2048. v = 0 is texture row 0 (D3D convention, no flip). Verified by textured CPU renders of Lara (face and clothing land exactly) and of l4_pool |
   | 0x7E7DD623 | colour (`COLOR0`) | [O] baked-lighting input of the pixel shaders, lerped with a light map per material ([MATERIALS.md](MATERIALS.md)); often not a colour (0 on ballcourt ground plants). Not copied to `Vertex::color` |
-  | 0x8E54B6F3 | second texcoord | [O] SHORT2, present on Lara (offset 28) and on terrain; the light-map UV of the foliage shaders (MATERIALS.md). Light maps not loaded; ignored |
+  | 0x8E54B6F3 | second texcoord | [O] SHORT2, present on Lara (offset 28) and on terrain; decoded to `Vertex::uv1`, the light-map UV of the original shaders (class-1 instance textures; meshes without it: [LIGHTING.md §2](LIGHTING.md#2-light-maps-without-texcoord1-mean-light-map-rule)) |
   | 0x48E691C0 / 0x5156D8D3 | skin weights / bone-palette indices, formats 6 and 7 (D3DCOLOR) at +16 and +20 | [O] decoded into `MeshData::skin`; see ANIMATION.md |
   | 0x64A86F01 / 0xF1ED11C3 | D3DCOLOR at +36 and +40 | [I] tangent and binormal; ignored |
 
