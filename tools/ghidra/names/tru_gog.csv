@@ -181,3 +181,29 @@ address,name,confidence,evidence
 0xdb94d0,g_objectList,high,TRLAU-menu-hook Game.cpp; own: OBTABLE_GetObjectID reads count+names
 0xe80534,g_camera,low,TRLAU-menu-hook Camera.cpp (TR8 branch)
 0x8a6ebc,g_materialTable,low,TRLAU-menu-hook Materials.cpp (cdc::HashTable)
+# --- 2026-11-16 audit (tools/re/function_db.py, docs/re/FUNCTION_DATABASE.md): role from repo code + citations;
+#     RTTI slot = Ghidra vftable export rtti.tsv; ctor = writes that class's vftable at +0 (objdump checked).
+0x527a80,PCStateManager_SetBlendMode,high,src/formats/Formats.hpp:65; docs/formats/MATERIALS.md:34 [O] material +0x38 blend mode
+0x5bcc30,INSTANCE_IntroduceInstance,high,src/formats/Formats.hpp:107; docs/formats/LEVELS.md:46 copies intro rotation to instance+0x30; siblings 0x5BB160/0x5BB640 log INSTANCE_IntroduceSavedInstance*
+0x4d7d50,UberObjectComposite_ctor,high,writes UberObjectComposite vftable 0x847F70; src/formats/Scene.cpp:353 (hides the intro's own instance)
+0x4d3110,UberObjectSection_ModelMarkerAnchor_ctor,high,writes UberObjectSection::ModelMarkerAnchor vftable 0x847D6C; src/script/Script.cpp:1955
+0x41c8c0,bfx_NavGraph_AddResource,high,references "NavGraph version is out of date. AddResource aborted."; src/formats/Level.cpp:265
+0x41c7d0,bfx_AddNavGraph,high,references "... AddNavGraph aborted."; src/formats/Level.cpp:265
+0x417d50,bfx_CreateLink,medium,src/formats/Formats.hpp:242; docs/formats/LEVELS.md:434 (2-point nav link)
+0x417f30,bfx_CreateLinkStrip,medium,src/formats/Formats.hpp:242; docs/formats/LEVELS.md:434 (4-point nav link)
+0x5e26f0,AutoSplineCamera_Start,medium,src/formats/Formats.hpp:183; src/game/Camera.cpp:116
+0x5e2d90,AutoSplineCamera_vf1_Update,medium,RTTI AutoSplineCamera slot 1; src/formats/Formats.hpp:183 (update)
+0x7759f0,ScriptNative_autosplinecamera,medium,src/script/Script.hpp:385 (thunk 0x7B37D0 -> 0x7759F0 -> 0x5E26F0); src/game/Camera.cpp:15
+0x73ab70,PlayerSC_Grapple_OverhangDetected,medium,src/game/Grapple.cpp:9; exe string [PlayerSC_Grapple::OverhangDetected]
+0x677d70,EnemyBehavior_Sidestep_vf3,high,RTTI EnemyBehavior_Sidestep slot 3; src/game/ai/Enemy.cpp:484
+0x666d10,EnemyState_Fire_vf7,high,RTTI EnemyState_Fire slot 7; src/game/ai/Enemy.hpp:48 (attack record)
+0x666eb0,EnemyState_Fire_vf9,high,RTTI EnemyState_Fire slot 9; src/game/ai/Enemy.hpp:48
+0x6365b0,EnemyBehavior_Flank_vf3,high,RTTI EnemyBehavior_Flank slot 3; src/game/ai/Enemy.hpp:171
+0x635920,EnemyBehavior_PatrolAttack_vf4,high,RTTI EnemyBehavior_PatrolAttack slot 4; src/game/ai/Enemy.cpp:899
+0x61da60,EnemyBehavior_Investigate_vf4,high,RTTI EnemyBehavior_Investigate slot 4; src/game/ai/Enemy.hpp:192
+0x61dd10,EnemyBehavior_Investigate_vf13_OnMessage,medium,RTTI EnemyBehavior_Investigate slot 13; src/game/ai/Enemy.cpp:233 (message 0xBF)
+0x67ed20,EnemyState_RegenerateDeath_vf7,medium,RTTI EnemyState_RegenerateDeath slot 7; src/game/ai/Enemy.hpp:87 (repo text calls it EnemyRegenerateData)
+0x66c500,EnemyState_Death_vf7,medium,RTTI EnemyState_Death slot 7; src/game/ai/Enemy.hpp:60 (death record; arms the death timer)
+0x6d5ec0,UberObjectSection_TR8_vf2,medium,RTTI UberObjectSection_TR8 slot 2; src/formats/Uber.hpp:45 (state entry action 0x1D: engagement set)
+0x50b910,PCRenderLight_BuildRegisters,medium,src/render/OriginalShading.cpp:209 (per-light ShadowLights/NonShadowLights registers)
+0x4a4490,UberObject_AttachTo,medium,src/script/Script.cpp:1438 (uberobjectbase 3 -> 0x4A4490)

@@ -1,0 +1,242 @@
+{
+ "functions": 18766,
+ "function_bytes": 4005555,
+ "edges": 43097,
+ "status": {
+  "Library": 2375,
+  "Named-only": 567,
+  "Reimplemented-cited": 1321,
+  "Unknown": 14503
+ },
+ "status_bytes": {
+  "Library": 492039,
+  "Named-only": 188657,
+  "Reimplemented-cited": 615926,
+  "Unknown": 2708933
+ },
+ "nonlib_bytes": 3513516,
+ "cited_bytes": 615926,
+ "cited_pct_of_nonlib_bytes": 17.53,
+ "library_families": {
+  "bfx": 509,
+  "crt": 650,
+  "fmod": 1232
+ },
+ "library_family_bytes": {
+  "bfx": 111073,
+  "crt": 105927,
+  "fmod": 277078
+ },
+ "library_evidence": {
+  "address-run": 1435,
+  "ghidra-analysis-name": 1,
+  "ghidra-fid": 381,
+  "imported-symbol": 1,
+  "name-pattern": 13,
+  "rtti-vftable": 411,
+  "string": 149
+ },
+ "by_subsystem": {
+  "game": {
+   "functions": 683,
+   "bytes": 336378
+  },
+  "fx": {
+   "functions": 87,
+   "bytes": 72373
+  },
+  "formats": {
+   "functions": 127,
+   "bytes": 62592
+  },
+  "script": {
+   "functions": 227,
+   "bytes": 41721
+  },
+  "render": {
+   "functions": 49,
+   "bytes": 29365
+  },
+  "physics": {
+   "functions": 29,
+   "bytes": 22025
+  },
+  "audio": {
+   "functions": 53,
+   "bytes": 16396
+  },
+  "cine": {
+   "functions": 13,
+   "bytes": 11358
+  },
+  "collision": {
+   "functions": 17,
+   "bytes": 7799
+  },
+  "ui": {
+   "functions": 10,
+   "bytes": 5222
+  },
+  "locale": {
+   "functions": 10,
+   "bytes": 3430
+  },
+  "anim": {
+   "functions": 5,
+   "bytes": 3002
+  },
+  "scene": {
+   "functions": 5,
+   "bytes": 2476
+  },
+  "cdc": {
+   "functions": 3,
+   "bytes": 745
+  },
+  "video": {
+   "functions": 1,
+   "bytes": 658
+  },
+  "tests": {
+   "functions": 1,
+   "bytes": 204
+  },
+  "re": {
+   "functions": 1,
+   "bytes": 182
+  }
+ },
+ "citations": 6305,
+ "citing_files": 213,
+ "citation_kinds": {
+  "data": 230,
+  "data_symbol": 46,
+  "func_entry": 5903,
+  "func_interior": 99,
+  "vftable": 27
+ },
+ "distinct_addresses_by_kind": {
+  "data": 124,
+  "data_symbol": 23,
+  "func_entry": 1874,
+  "func_interior": 57,
+  "vftable": 24
+ },
+ "citations_by_subsystem": {
+  "game": 1294,
+  "docs/formats": 1204,
+  "docs/gameplay": 1121,
+  "script": 392,
+  "docs/re": 273,
+  "tests": 222,
+  "fx": 220,
+  "formats": 219,
+  "docs/roadmap": 214,
+  "docs/audit": 131,
+  "docs/research": 125,
+  "audio": 111,
+  "render": 108,
+  "physics": 99,
+  "app/game": 78,
+  "docs/rendering": 76,
+  "docs/reference_comparison": 71,
+  "tests/selftests": 48,
+  "docs/progression": 46,
+  "docs/matrix": 44,
+  "cine": 32,
+  "collision": 32,
+  "scene": 32,
+  "changelog": 30,
+  "ui": 16,
+  "locale": 14,
+  "docs/saves": 12,
+  "anim": 11,
+  "cdc": 7,
+  "tests/replays": 5,
+  "docs/underworld_chapter_gameplay_matrix": 5,
+  "video": 3,
+  "docs/selftest": 3,
+  "tools/ghidra": 3,
+  "save": 2,
+  "config": 1,
+  "tools/ou-audio": 1
+ },
+ "roots": 1308,
+ "reachable_uncited": 7870,
+ "reachable_uncited_bytes": 1543884,
+ "rtti_families": {
+  "(global)": {
+   "classes": 594,
+   "slots": 2386,
+   "cited": 86,
+   "named": 22
+  },
+  "cdc": {
+   "classes": 290,
+   "slots": 1318,
+   "cited": 33,
+   "named": 11
+  },
+  "FMOD": {
+   "classes": 51,
+   "slots": 297,
+   "cited": 0,
+   "named": 0
+  },
+  "bfx": {
+   "classes": 35,
+   "slots": 125,
+   "cited": 3,
+   "named": 1
+  },
+  "Screenshots": {
+   "classes": 9,
+   "slots": 24,
+   "cited": 0,
+   "named": 1
+  },
+  "PDAMap": {
+   "classes": 3,
+   "slots": 21,
+   "cited": 1,
+   "named": 0
+  },
+  "AsyncTaskManager": {
+   "classes": 2,
+   "slots": 6,
+   "cited": 0,
+   "named": 1
+  },
+  "std": {
+   "classes": 2,
+   "slots": 0,
+   "cited": 0,
+   "named": 0
+  },
+  "UberObjectSection": {
+   "classes": 1,
+   "slots": 7,
+   "cited": 3,
+   "named": 0
+  },
+  "EnemyCombat": {
+   "classes": 1,
+   "slots": 3,
+   "cited": 0,
+   "named": 1
+  },
+  "`anonymous namespace'": {
+   "classes": 1,
+   "slots": 12,
+   "cited": 3,
+   "named": 0
+  },
+  "df": {
+   "classes": 1,
+   "slots": 1,
+   "cited": 0,
+   "named": 0
+  }
+ },
+ "applied_names": 191
+}

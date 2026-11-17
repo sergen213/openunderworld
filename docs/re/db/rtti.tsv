@@ -1,0 +1,991 @@
+class	vftable	slots	slots_cited	vftable_cited	bases
+AccurateAimState	0085e1b0	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+AnchoredCamera	008555cc	28	2	0	BaseGameplayCamera;BaseCamera;ICamera
+AnimationSection	0084c7b4	17	2	1	ResolveSection
+ArchiveFile	0084402c	3	0	0	cdc::File
+ArchiveFileSystem	00843fcc	15	0	1	cdc::FileSystem
+AsyncTaskManager::EnumerationTask	008611e4	4	0	0	AsyncTaskManager::Task
+AsyncTaskManager::Task	008611c4	4	0	0	
+AutoSplineCamera	008556a0	4	1	0	BaseDrivenCamera;BaseGameplayCamera;BaseCamera;ICamera;ICameraSplineListener
+AutoSplineCamera	008556b4	23	3	0	BaseDrivenCamera;BaseGameplayCamera;BaseCamera;ICamera;ICameraSplineListener
+BFXWarningLogDevice	008451ec	2	0	0	bfx::LogDevice
+BarkTimer	00850424	1	0	0	GameTimer
+BaseCamera	0085556c	9	0	0	ICamera
+BasePlayerState	0085decc	4	0	0	StateObj
+BaseScriptCamera	0085fdd4	1	0	0	
+BasicRenderMesh	00861928	2	0	0	
+Bike	00861974	14	2	1	Vehicle
+CDCCollider	0084523c	2	0	0	bfx::Collider
+CDCRenderer	00845224	5	0	0	bfx::Renderer
+CSPCallback	008538b8	4	0	0	StreamingCallback
+CameraManager	00855ae4	59	2	0	ICameraManager
+CameraShakeResourceTypeHandler	00855be0	2	1	0	cdc::ResourceTypeHandler
+CellGroupUserData	008545c8	2	0	0	cdc::RCObject
+CheatCamera	0085575c	29	1	0	BaseDebugCamera;BaseCamera;ICamera
+CinematicCamera	00855c54	17	2	0	BaseDrivenCamera;BaseGameplayCamera;BaseCamera;ICamera
+CombatCamera	0085581c	28	2	0	BaseGameplayCamera;BaseCamera;ICamera
+CombatCameraResource	00855abc	8	0	0	ICameraResource
+CompressionState	0085e1e0	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+CrawlState	0085e210	4	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+CrouchState	0085e168	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+DTPDataSection	0084c994	20	2	1	ResolveSection
+DeCompressionState	0085e030	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+DeathState	0085e0c0	5	2	0	TopLevelPlayerState;BasePlayerState;StateObj
+DefaultGameNotifier	008538cc	7	2	0	IGameNotifier
+DefaultMenuManager	008616bc	11	0	0	df::IMenuManager
+DefaultSunLightInterpolationCallback	0085447c	1	0	0	ISunLightInterpolationCallback
+DeviceCallback	008445bc	10	0	0	cdc::PCInternalResource
+EmptySection	0084c6f4	15	2	1	ResolveSection
+EnemyBehavior	0085666c	12	3	0	
+EnemyBehaviorProcess	00858028	5	0	0	EnemyCameraDistPrioritizedProcess;EnemyProcess
+EnemyBehaviorTree_Creature	0085796c	1	0	0	EnemyBehaviorTree
+EnemyBehaviorTree_CreatureVolumetric	00857974	1	0	0	EnemyBehaviorTree
+EnemyBehaviorTree_Soldier	00857964	1	1	0	EnemyBehaviorTree
+EnemyBehaviorTree_Thrall	0085797c	1	0	0	EnemyBehaviorTree
+EnemyBehavior_Adrenaline	00856fec	17	2	0	EnemyBehavior
+EnemyBehavior_AtCover	0085a9b4	17	2	0	EnemyBehavior
+EnemyBehavior_AtCoverCrouch	0085a76c	15	3	0	EnemyBehavior
+EnemyBehavior_AtCoverDiveFromCover	0085a71c	15	3	0	EnemyBehavior
+EnemyBehavior_AtCoverDiveToCover	0085a6cc	15	3	0	EnemyBehavior
+EnemyBehavior_AtCoverIdle	0085a5dc	15	3	0	EnemyBehavior
+EnemyBehavior_AtCoverStepIntoCover	0085a67c	16	3	0	EnemyBehavior
+EnemyBehavior_AtCoverStepOutOfCover	0085a62c	16	3	0	EnemyBehavior
+EnemyBehavior_Attack	0085804c	17	3	0	EnemyBehavior
+EnemyBehavior_Circle	00856d6c	18	2	0	EnemyBehavior
+EnemyBehavior_CircleTurn	0085aaac	18	3	0	EnemyBehavior
+EnemyBehavior_Close	00856b3c	18	2	0	EnemyBehavior
+EnemyBehavior_CloseCombat	008580ec	17	2	0	EnemyBehavior
+EnemyBehavior_CloseInCover	0085818c	16	3	0	EnemyBehavior
+EnemyBehavior_Combat	0085686c	15	3	0	EnemyBehavior
+EnemyBehavior_CombatStepIdle	00856d1c	15	3	0	EnemyBehavior
+EnemyBehavior_Cover	00856e0c	18	2	0	EnemyBehavior
+EnemyBehavior_Death	008578ac	15	3	0	EnemyBehavior
+EnemyBehavior_Despawn	00856eac	17	2	0	EnemyBehavior
+EnemyBehavior_EmergencyAttack	00856c7c	16	3	0	EnemyBehavior
+EnemyBehavior_EmergencyCombatIdle	00856ccc	15	3	0	EnemyBehavior
+EnemyBehavior_EmergencyMelee	0085813c	17	3	0	EnemyBehavior
+EnemyBehavior_Flank	00856dbc	18	5	0	EnemyBehavior
+EnemyBehavior_Flee	00856bdc	18	3	0	EnemyBehavior
+EnemyBehavior_HackMove	008578fc	16	3	0	EnemyBehavior
+EnemyBehavior_Idle	008569fc	14	3	0	EnemyBehavior
+EnemyBehavior_IdleParent	008569ac	14	3	0	EnemyBehavior
+EnemyBehavior_Investigate	008582cc	17	4	0	EnemyBehavior
+EnemyBehavior_InvestigateEnd	0085767c	15	4	0	EnemyBehavior
+EnemyBehavior_InvestigateMove	0085762c	17	4	0	EnemyBehavior
+EnemyBehavior_InvestigateStart	008575dc	15	4	0	EnemyBehavior
+EnemyBehavior_Jump	008572bc	14	3	0	EnemyBehavior
+EnemyBehavior_JumpOver	0085712c	16	3	0	EnemyBehavior
+EnemyBehavior_JumpOverJump	008571cc	15	3	0	EnemyBehavior
+EnemyBehavior_JumpOverTurn	0085717c	14	3	0	EnemyBehavior
+EnemyBehavior_Jump_Turn	0085726c	15	3	0	EnemyBehavior
+EnemyBehavior_Melee	00856b8c	17	3	0	EnemyBehavior
+EnemyBehavior_MoveAway	0085a8ac	15	3	0	EnemyBehavior
+EnemyBehavior_MoveBy	0085a80c	15	3	0	EnemyBehavior
+EnemyBehavior_MoveByCombat	0085aa04	18	2	0	EnemyBehavior
+EnemyBehavior_MoveByIdle	0085a8fc	15	3	0	EnemyBehavior
+EnemyBehavior_MoveByMelee	0085a85c	15	3	0	EnemyBehavior
+EnemyBehavior_MoveToGuardZone	008581dc	17	3	0	EnemyBehavior
+EnemyBehavior_MoveToIdlePosition	0085809c	17	3	0	EnemyBehavior
+EnemyBehavior_Nap	00856a4c	13	3	0	EnemyBehavior
+EnemyBehavior_Nap_Nap	00856a9c	17	2	0	EnemyBehavior
+EnemyBehavior_Nap_Wake	00856aec	16	2	0	EnemyBehavior
+EnemyBehavior_NonCombat	008568bc	14	3	0	EnemyBehavior
+EnemyBehavior_PanicDive	00856f4c	16	3	0	EnemyBehavior
+EnemyBehavior_PanicRun	00856efc	15	3	0	EnemyBehavior
+EnemyBehavior_Patrol	008573fc	15	4	0	EnemyBehavior
+EnemyBehavior_PatrolAnim	0085753c	15	4	0	EnemyBehavior
+EnemyBehavior_PatrolAttack	0085758c	15	5	0	EnemyBehavior
+EnemyBehavior_PatrolIncr	0085744c	14	3	0	EnemyBehavior
+EnemyBehavior_PatrolLookTurn	008574ec	15	5	0	EnemyBehavior
+EnemyBehavior_PatrolMove	0085749c	16	6	0	EnemyBehavior
+EnemyBehavior_Puppet	00856c2c	17	2	0	EnemyBehavior
+EnemyBehavior_RangedCombat	0085690c	15	3	0	EnemyBehavior
+EnemyBehavior_ReactGrenadeAttach	0085aa5c	16	2	0	EnemyBehavior
+EnemyBehavior_ReactToAdrenaline	0085822c	18	2	0	EnemyBehavior
+EnemyBehavior_ReactToFire	0085827c	17	2	0	EnemyBehavior
+EnemyBehavior_ReactToOutsideNavigableRegion	0085721c	14	3	0	EnemyBehavior
+EnemyBehavior_ReactToPlayerDeath	0085703c	15	2	0	EnemyBehavior
+EnemyBehavior_ReactToPlayerDeath_React	008570dc	15	3	0	EnemyBehavior
+EnemyBehavior_ReactToPlayerDeath_Turn	0085708c	15	3	0	EnemyBehavior
+EnemyBehavior_Reload	0085695c	15	3	0	EnemyBehavior
+EnemyBehavior_ScriptAttack	0085785c	18	2	0	EnemyBehavior
+EnemyBehavior_Search	008576cc	18	4	0	EnemyBehavior
+EnemyBehavior_SearchIdle	008577bc	15	3	0	EnemyBehavior
+EnemyBehavior_SearchStart	0085771c	16	4	0	EnemyBehavior
+EnemyBehavior_SearchToLastKnownPos	0085776c	16	3	0	EnemyBehavior
+EnemyBehavior_SearchToPossiblePos	0085780c	16	4	0	EnemyBehavior
+EnemyBehavior_Sidestep	0085a964	16	6	0	EnemyBehavior
+EnemyBehavior_Spawn	00856e5c	15	2	0	EnemyBehavior
+EnemyBehavior_Stand	0085a7bc	16	3	0	EnemyBehavior
+EnemyBehavior_Stunned	00856f9c	15	3	0	EnemyBehavior
+EnemyBehavior_Taunt	0085730c	14	2	0	EnemyBehavior
+EnemyBehavior_Taunt_Anim	008573ac	15	3	0	EnemyBehavior
+EnemyBehavior_Taunt_Turn	0085735c	15	3	0	EnemyBehavior
+EnemyCameraDistPrioritizedProcess	0085a584	5	0	0	EnemyProcess
+EnemyCombat	008583ac	4	0	0	EnemyProcess
+EnemyCombat::EnemyAdrenaline	00857df0	3	0	0	EnemyProcess
+EnemyFireTeam	00857e74	4	1	0	EnemyProcess
+EnemyFirstThings	00857e08	4	0	0	EnemyProcess
+EnemyGrounding	0085a23c	5	0	0	EnemyCameraDistPrioritizedProcess;EnemyProcess
+EnemyHealthPack	00857e5c	4	0	0	EnemyProcess
+EnemyPatrolPath	00858424	4	0	0	EnemyProcess
+EnemyPositionTracker	0085a218	4	0	0	EnemyProcess
+EnemyProcess	00856650	4	0	0	
+EnemyProxyAdjust	00857e20	4	0	0	EnemyProcess
+EnemyRouting	0085a264	4	0	0	EnemyProcess
+EnemySense	0085a2f8	4	0	0	EnemyProcess
+EnemySensesControl	0085a3cc	4	0	0	EnemyProcess
+EnemySensesPositionUpdate	00857dd8	4	0	0	EnemyProcess
+EnemySpawnData	00857eac	4	0	0	EnemyProcess
+EnemyState_AdrenalineMeleeHit	00858e74	13	0	0	EnemyState
+EnemyState_AnimTurn	00859f04	12	0	0	EnemyState
+EnemyState_AnimatedTurn	00859bac	12	0	0	EnemyState
+EnemyState_Animation	00858a74	13	0	0	EnemyState
+EnemyState_Attack	00858fec	13	0	0	EnemyState
+EnemyState_AttackTurn	00859044	13	0	0	EnemyState
+EnemyState_CombatIdle	0085960c	14	0	0	EnemyState
+EnemyState_CombatStep	00859c1c	14	0	0	EnemyState
+EnemyState_CombatStepBack	00859d14	14	1	0	EnemyState
+EnemyState_CombatStepIdle	00859c74	14	0	0	EnemyState
+EnemyState_CombatStepTurn	00859cbc	14	0	0	EnemyState
+EnemyState_CornerAlign	0085991c	15	0	0	EnemyState
+EnemyState_CornerJump	008599f4	14	1	0	EnemyState
+EnemyState_CornerJumpLand	00859a4c	13	1	0	EnemyState
+EnemyState_CornerJumpStart	0085998c	14	0	0	EnemyState
+EnemyState_CornerWalk	00859afc	13	0	0	EnemyState
+EnemyState_CornerWalkEnd	00859b54	13	1	0	EnemyState
+EnemyState_CornerWalkStart	00859aa4	13	0	0	EnemyState
+EnemyState_CrouchToStand	00859dcc	13	0	0	EnemyState
+EnemyState_Death	00858edc	14	2	0	EnemyState
+EnemyState_DeferredInstantDie	00859f64	10	1	0	EnemyState
+EnemyState_DrownDeath	00859ea4	14	1	0	EnemyState
+EnemyState_Fade	00858f9c	12	1	0	EnemyState
+EnemyState_Fall	00858b34	13	0	0	EnemyState
+EnemyState_FallDead	00858b8c	13	1	0	EnemyState
+EnemyState_FinishAttack	00859404	13	1	0	EnemyState
+EnemyState_FinishMoveAttack	008594fc	13	1	0	EnemyState
+EnemyState_Fire	0085909c	13	3	0	EnemyState
+EnemyState_FlyerMove	0085adcc	15	0	0	EnemyState
+EnemyState_Getup	00858cac	13	0	0	EnemyState
+EnemyState_Hit	00858cf4	13	0	0	EnemyState
+EnemyState_HostAnimation	00858ad4	13	0	0	EnemyState
+EnemyState_JumpAlign	0085979c	15	0	0	EnemyState
+EnemyState_JumpLand	008598c4	14	1	0	EnemyState
+EnemyState_JumpLoop	0085986c	14	1	0	EnemyState
+EnemyState_JumpOverJump	00859fac	13	0	0	EnemyState
+EnemyState_JumpStart	00859804	14	0	0	EnemyState
+EnemyState_Land	00858c5c	13	0	0	EnemyState
+EnemyState_LandDeath	00858f34	12	1	0	EnemyState
+EnemyState_MeleeAttack	0085912c	13	0	0	EnemyState
+EnemyState_MeleeJump	008591e4	13	1	0	EnemyState
+EnemyState_MeleeJumpLand	0085923c	12	1	0	EnemyState
+EnemyState_MeleeJumpStart	00859174	13	0	0	EnemyState
+EnemyState_MeleeWindup	00859294	13	0	0	EnemyState
+EnemyState_MeleeWrestle	008592dc	13	0	0	EnemyState
+EnemyState_MeleeWrestleBrushedOff	00859334	12	1	0	EnemyState
+EnemyState_MoveAdjust	0085ae14	14	0	0	EnemyState
+EnemyState_MoveAttack	0085944c	14	0	0	EnemyState
+EnemyState_MoveFire	008594a4	14	1	0	EnemyState
+EnemyState_MoveHalt	0085ae84	11	1	0	EnemyState
+EnemyState_MoveHit	0085955c	14	0	0	EnemyState
+EnemyState_MoveIdle	0085ac2c	14	0	0	EnemyState
+EnemyState_MoveMeleeAttack	00859394	14	0	0	EnemyState
+EnemyState_MoveNav	0085abcc	14	0	0	EnemyState
+EnemyState_MoveOnSteps	0085ad5c	14	0	0	EnemyState
+EnemyState_MoveToPosition	0085ad14	15	0	0	EnemyState
+EnemyState_MoveTurn	0085ac84	13	0	0	EnemyState
+EnemyState_Nap	00858a1c	12	1	0	EnemyState
+EnemyState_NonCombatIdle	008589bc	13	0	0	EnemyState
+EnemyState_PanicBackup	0085affc	13	0	0	EnemyState
+EnemyState_PanicDive	0085b044	12	0	0	EnemyState
+EnemyState_PanicIdle	0085af4c	13	0	0	EnemyState
+EnemyState_PanicRemoveAttachedGrenade	0085b08c	10	1	0	EnemyState
+EnemyState_PanicTurn	0085afa4	12	0	0	EnemyState
+EnemyState_Puppet	008595c4	9	1	0	EnemyState
+EnemyState_Regenerate	0085b134	10	2	0	EnemyState
+EnemyState_RegenerateDeath	0085b0d4	13	4	0	EnemyState
+EnemyState_Reload	008590e4	12	1	0	EnemyState
+EnemyState_ReturnToPlannerMesh	0085aecc	11	1	0	EnemyState
+EnemyState_SearchIdle	00859684	13	0	0	EnemyState
+EnemyState_SearchIdleTurn	008596e4	12	0	0	EnemyState
+EnemyState_Sidestep	0085973c	13	0	0	EnemyState
+EnemyState_Splat	00858bf4	13	0	0	EnemyState
+EnemyState_StandToCrouch	00859d6c	13	0	0	EnemyState
+EnemyState_StepToPosition	0085accc	15	0	0	EnemyState
+EnemyState_Stunned	00858d4c	12	0	0	EnemyState
+EnemyState_StunnedFinishingMove	00858dac	13	1	0	EnemyState
+EnemyState_Vaulted	00858e14	13	0	0	EnemyState
+EnemyState_WaitForMeleeHit	00859e14	13	0	0	EnemyState
+EnemyTacticTracker	008583e4	4	0	0	EnemyProcess
+EnemyTargeting	0085a1e8	4	0	0	EnemyProcess
+EnemyTurn	00857e8c	4	0	0	EnemyProcess
+EnemyWeapon	00857e44	4	0	0	EnemyProcess
+EngagementAnimTarget	0085fa6c	2	0	0	cdc::AnimTarget
+ExplorationCamera	00855d04	28	1	0	BaseGameplayCamera;BaseCamera;ICamera
+ExplorationCameraResource	00855bfc	8	0	0	ICameraResource
+FMOD::ChannelDSound	00868714	35	0	0	FMOD::ChannelReal
+FMOD::ChannelDSoundEAX2	008687ac	35	0	0	FMOD::ChannelDSound;FMOD::ChannelReal
+FMOD::ChannelDSoundEAX3	00868844	35	0	0	FMOD::ChannelDSound;FMOD::ChannelReal
+FMOD::ChannelDSoundEAX4	008688dc	35	0	0	FMOD::ChannelDSound;FMOD::ChannelReal
+FMOD::ChannelEmulated	00868cb4	31	0	0	FMOD::ChannelReal
+FMOD::ChannelOpenAL	00868d94	34	0	0	FMOD::ChannelReal
+FMOD::ChannelOpenALEAX2	008681dc	36	0	0	FMOD::ChannelOpenAL;FMOD::ChannelReal
+FMOD::ChannelOpenALEAX3	00867f54	36	0	0	FMOD::ChannelOpenAL;FMOD::ChannelReal
+FMOD::ChannelOpenALEAX4	00867ff4	36	0	0	FMOD::ChannelOpenAL;FMOD::ChannelReal
+FMOD::ChannelOpenALEAX5	00868094	36	0	0	FMOD::ChannelOpenAL;FMOD::ChannelReal
+FMOD::ChannelReal	0086786c	29	0	0	
+FMOD::ChannelRealManual3D	00869854	30	0	0	FMOD::ChannelReal
+FMOD::ChannelSoftware	00868a9c	35	0	0	FMOD::ChannelRealManual3D;FMOD::ChannelReal
+FMOD::ChannelStream	00867904	37	0	0	FMOD::ChannelReal;FMOD::LinkedListNode
+FMOD::Codec	00866fd4	1	0	0	FMOD::Plugin;FMOD::LinkedListNode;FMOD_CODEC_STATE
+FMOD::CodecMPEG	00866fdc	1	0	0	FMOD::Codec;FMOD::Plugin;FMOD::LinkedListNode;FMOD_CODEC_STATE
+FMOD::CodecRaw	00866fec	1	0	0	FMOD::Codec;FMOD::Plugin;FMOD::LinkedListNode;FMOD_CODEC_STATE
+FMOD::CodecWav	00866fe4	1	0	0	FMOD::Codec;FMOD::Plugin;FMOD::LinkedListNode;FMOD_CODEC_STATE
+FMOD::DSPCodec	00866f74	22	0	0	FMOD::DSPResampler;FMOD::DSPFilter;FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPCodecADPCM	00867054	22	0	0	FMOD::DSPCodec;FMOD::DSPResampler;FMOD::DSPFilter;FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPCodecMPEG	00866ff4	22	0	0	FMOD::DSPCodec;FMOD::DSPResampler;FMOD::DSPFilter;FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPCodecRaw	008670b4	22	0	0	FMOD::DSPCodec;FMOD::DSPResampler;FMOD::DSPFilter;FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPFilter	00866e0c	21	0	0	FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPI	0086581c	21	0	0	FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPResampler	00867714	22	0	0	FMOD::DSPFilter;FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPResamplerMultiInput	00866e64	22	0	0	FMOD::DSPResampler;FMOD::DSPFilter;FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPSoundCard	00866ec4	21	0	0	FMOD::DSPFilter;FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DSPWaveTable	00866f1c	21	0	0	FMOD::DSPI;FMOD::Plugin;FMOD::LinkedListNode;FMOD_DSP_STATE
+FMOD::DiskFile	00865618	7	0	0	FMOD::File;FMOD::LinkedListNode
+FMOD::File	00865a3c	4	0	0	FMOD::LinkedListNode
+FMOD::MemoryFile	008655f8	6	0	0	FMOD::File;FMOD::LinkedListNode
+FMOD::NetFile	00867cc8	7	0	0	FMOD::File;FMOD::LinkedListNode
+FMOD::NullFile	00865658	6	0	0	FMOD::File;FMOD::LinkedListNode
+FMOD::Output	008674e0	2	0	0	FMOD::Plugin;FMOD::LinkedListNode;FMOD_OUTPUT_STATE
+FMOD::OutputEmulated	00867d7c	2	0	0	FMOD::Output;FMOD::Plugin;FMOD::LinkedListNode;FMOD_OUTPUT_STATE
+FMOD::OutputOpenAL	00868278	2	0	0	FMOD::OutputTimer;FMOD::Output;FMOD::Plugin;FMOD::LinkedListNode;FMOD_OUTPUT_STATE
+FMOD::OutputPolled	008676c0	2	0	0	FMOD::Output;FMOD::Plugin;FMOD::LinkedListNode;FMOD_OUTPUT_STATE;FMOD::Thread
+FMOD::OutputPolled	008676cc	2	0	0	FMOD::Output;FMOD::Plugin;FMOD::LinkedListNode;FMOD_OUTPUT_STATE;FMOD::Thread
+FMOD::OutputSoftware	008675e4	3	0	0	FMOD::Output;FMOD::Plugin;FMOD::LinkedListNode;FMOD_OUTPUT_STATE
+FMOD::Plugin	0086580c	1	0	0	FMOD::LinkedListNode
+FMOD::ProfileCpu	00867ddc	3	0	0	FMOD::ProfileModule;FMOD::LinkedListNode
+FMOD::ProfileDsp	00867dac	3	0	0	FMOD::ProfileModule;FMOD::LinkedListNode
+FMOD::ProfileModule	00867d2c	2	0	0	FMOD::LinkedListNode
+FMOD::Sample	008675f4	50	0	0	FMOD::SoundI;FMOD::LinkedListNode
+FMOD::SampleDSound	0086973c	50	0	0	FMOD::Sample;FMOD::SoundI;FMOD::LinkedListNode
+FMOD::SampleOpenAL	00869454	50	0	0	FMOD::Sample;FMOD::SoundI;FMOD::LinkedListNode
+FMOD::SampleSoftware	00868b7c	50	0	0	FMOD::Sample;FMOD::SoundI;FMOD::LinkedListNode
+FMOD::SoundI	008658b4	47	0	0	FMOD::LinkedListNode
+FMOD::Stream	008677ac	47	0	0	FMOD::SoundI;FMOD::LinkedListNode
+FMOD::Thread	008655e8	2	0	0	
+FMOD::UserFile	00865638	7	0	0	FMOD::File;FMOD::LinkedListNode
+FallState	0085e270	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+FollowSplineCamera	00855dcc	21	1	0	BaseGameplayCamera;BaseCamera;ICamera
+FreeCamera	00855e54	27	1	0	BaseDebugCamera;BaseCamera;ICamera
+GameTerrainCallback	0085faf4	4	0	0	cdc::ISceneTerrainCallback
+GameTimer	0085041c	1	0	0	
+GenericSection	0084c754	16	2	1	ResolveSection
+GetupState	0085e090	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+HPoleAirAttachAnimTarget	0085ec28	2	0	0	cdc::AnimTarget
+HandMatchingFullAnimInterpTarget	0085ec34	2	0	1	cdc::AnimTarget
+HitReactionState	0085e078	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+ICamera	008554a4	2	0	0	
+ICameraManager	008558e4	2	0	0	
+ICameraResource	00855a98	2	0	0	
+ICameraSplineListener	00855668	1	0	0	
+IGameNotifier	0085379c	4	1	0	
+IMFObjectDrawable	0085380c	12	2	0	RMIDrawableBase;cdc::IDrawable
+InAirAnimTarget	0085ec40	2	0	0	cdc::AnimTarget
+InputDevice	00844a64	4	1	0	
+InputRemapDevice	0084500c	16	0	0	InputDevice
+JobHarness_JobClothSimulate	00843ce8	1	0	0	cdc::JobHarness
+JobHarness_JobInflate	0084d754	1	0	0	cdc::JobHarness
+JobHarness_JobMemCopy	0084d788	1	0	0	cdc::JobHarness
+JobHarness_JobOcclTreeIntersections	0084da6c	1	0	0	cdc::JobHarness
+JobHarness_fxParticleDraw	0084c458	1	0	0	cdc::JobHarness
+JobHarness_fxParticleUpdate	0084c4b0	1	0	0	cdc::JobHarness
+JumpState	0085e258	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+LadderRungAlignAnimTarget	0085ec5c	2	0	0	cdc::AnimTarget
+LaraCamera	00855f54	30	0	0	LaraCameraAbstract;BaseGameplayCamera;BaseCamera;ICamera
+LaraCameraRewrite	0085600c	30	1	1	LaraCameraAbstract;BaseGameplayCamera;BaseCamera;ICamera
+LaraCombatCamera	008560c4	21	0	0	BaseGameplayCamera;BaseCamera;ICamera
+LightResourceType	0084ca80	3	1	0	cdc::ResourceTypeHandler
+LookAroundState	0085e000	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+MantleState	0085e150	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+MarkupManager	00853f54	3	1	0	
+MaterialSection	0084c8d4	20	2	1	ResolveSection
+ModelParticleDrawable	00853ffc	14	2	0	cdc::IDrawable
+ModelViewCamera	0085614c	27	1	0	BaseDebugCamera;BaseCamera;ICamera
+MonitorDrawable	0085d468	12	3	0	cdc::InstanceDrawable;cdc::IDrawable;InstanceComponent
+MoveToPositionState	0085e060	5	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+MultiFileSystem	008440ec	15	0	1	cdc::FileSystem
+MusicReceiver	00850860	5	0	0	cdc::FileAllocatedReceiver;cdc::FileReceiver
+MyStreamingCallback	00854424	4	1	0	StreamingCallback
+NeCoreBase	0085fe2c	1	0	0	
+NeDispatcherBase	00861a88	1	0	0	NeInstance;NeGameBase;NeCoreBase
+NeGameBase	0085fe8c	1	0	0	NeCoreBase
+NeInstance	0085fe94	1	0	0	NeGameBase;NeCoreBase
+NeUnit	0085fe9c	1	0	0	NeGameBase;NeCoreBase
+NsActor	008463e4	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsActor_ScriptType	0086213c	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsCheckpointBase	0085fea4	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsCheckpointBase_ScriptType	00862414	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsCommunityInfoScreen	008603f4	37	1	0	NsUIScreen;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsCommunityInfoScreen_ScriptType	00863b50	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsCoreBase	008457dc	9	0	0	cdc::ScriptObject;cdc::GCObject
+NsCoreBase_ScriptType	00861eec	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NsDLCSystem	008600dc	9	0	0	NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsDLCSystem_ScriptType	00862574	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsDispatcherBase	00846418	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsDispatcherBase_ScriptType	0086252c	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NsEnemyBase	0085fed8	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsEnemyBase_ScriptType	008625f8	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NsEnemyThrallBase	0085ff7c	11	1	0	NsEnemyBase;NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsEnemyThrallBase_ScriptType	0086263c	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsGameBase	00845908	10	1	0	NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsGameBase_ScriptType	00862684	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NsGameGlobalsBase	00845938	10	1	0	NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsGameGlobalsBase_ScriptType	008626c8	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsGeneratorBase	0085ffb0	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsGeneratorBase_ScriptType	00862754	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NsInstance	00845988	11	1	0	NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsInstance_ScriptType	008628ec	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsLaraBase	0085ffe4	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsLaraBase_ScriptType	00862a38	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsOLBase	008473ec	9	0	0	NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsOLBase_ScriptType	00862cfc	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsPortableBase	00860018	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsPortableBase_ScriptType	00862fe8	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsProfileScreen	00861a94	37	1	0	NsUIScreen;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsProfileScreen_ScriptType	00863c3c	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsScenario	008459bc	10	1	0	NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsScenarioManager	008476c8	10	1	0	NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsScenarioManager_ScriptType	00863140	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsScenario_ScriptType	008630fc	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsScreenshotSystem	0086039c	9	0	0	NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsScreenshotSystem_ScriptType	00863cc8	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsTriggerPlaneBase	008464ec	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsTriggerPlaneBase_ScriptType	00863474	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsTriggerVolumeBase	00846520	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsTriggerVolumeBase_ScriptType	008634c0	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsUIScreen	00847724	37	1	0	NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsUIScreen_ScriptType	00864794	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsUberObjectBase	00846554	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsUberObjectBase_ScriptType	0086350c	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsUnit	00845a2c	10	1	0	NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsUnit_ScriptType	008636c4	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NsWaterVolumeBase	0086004c	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsWaterVolumeBase_ScriptType	00863a38	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NsWeaponBase	00860080	11	1	0	NsInstance;NsGameBase;NsCoreBase;cdc::ScriptObject;cdc::GCObject
+NsWeaponBase_ScriptType	00863b0c	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NtAchievement_ScriptType	008620e0	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtAnchor_ScriptType	0086217c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtAnchoredCamera	0085fddc	1	0	0	BaseScriptCamera
+NtAnchoredCamera_ScriptType	00861b58	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtAnimatedSequence	00845a5c	6	1	0	cdc::ScriptSequence;cdc::GCObject
+NtAnimatedThread	008465f8	7	1	0	cdc::ScriptThread;cdc::RCObject
+NtAnimated_ScriptType	008621bc	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtAnimation_ScriptType	00862200	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtAtom_ScriptType	00862244	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NtAutoSplineCamera	0085fde4	1	0	0	BaseScriptCamera
+NtAutoSplineCamera_ScriptType	00861bbc	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtBark_ScriptType	00862284	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCameraAnchor_ScriptType	00861c08	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCameraPathSpline_ScriptType	008622fc	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCameraRef_ScriptType	00861c50	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCameraSettings_ScriptType	00862348	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCameraShake_ScriptType	00862390	12	3	0	cdc::NativeScriptType;cdc::RCObject
+NtCameraSplineEvent_ScriptType	00861cdc	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCameraSpline_ScriptType	00861c94	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCamera_ScriptType	008622c4	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCell_ScriptType	008623d4	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCineSequence	00845b50	6	1	0	cdc::ScriptSequence;cdc::GCObject
+NtCinematicEvent_ScriptType	008624a0	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCinematic_ScriptType	0086245c	13	3	0	cdc::NativeScriptType;cdc::RCObject
+NtClockInst	00845860	2	0	0	cdc::RCObject
+NtClockThread	0084583c	8	1	0	cdc::ScriptThread;cdc::RCObject
+NtClock_ScriptType	00861e94	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCombatCamera	0085fdec	1	0	0	BaseScriptCamera
+NtCombatCamera_ScriptType	00861d28	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtCueingSoundSequence	00847494	6	1	0	cdc::ScriptSequence;cdc::GCObject
+NtDamageType_ScriptType	008624e8	13	3	0	cdc::NativeScriptType;cdc::RCObject
+NtEffectSequence	008468f0	6	1	0	cdc::ScriptSequence;cdc::GCObject
+NtEffect_ScriptType	008625b8	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtExplorationCamera	0085fdf4	1	0	0	BaseScriptCamera
+NtExplorationCamera_ScriptType	00861d70	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtFocusPoint_ScriptType	00861dbc	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtGameValueID_ScriptType	00863bb0	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtGameValue_ScriptType	00862710	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtGlobalEffect_ScriptType	0086279c	9	2	0	cdc::NativeScriptType;cdc::RCObject
+NtGlobalsRef_ScriptType	008627e4	9	2	0	cdc::NativeScriptType;cdc::RCObject
+NtHUDScreenMgr_ScriptType	00863bf4	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtHealth_ScriptType	00862828	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtInputAction_ScriptType	008628a8	13	3	0	cdc::NativeScriptType;cdc::RCObject
+NtInput_ScriptType	00862868	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtInstanceRef_ScriptType	00862930	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtInvSlot_ScriptType	00862974	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtJoint_ScriptType	008629b4	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NtJumpHelper_ScriptType	008629f4	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtLight_ScriptType	00862a7c	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtLimit_ScriptType	00862abc	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NtMarker_ScriptType	00862afc	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtMarkup_ScriptType	00862b3c	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtMessageChannel	0084586c	3	0	0	cdc::IMessageChannelReferrer
+NtMessageChannel_ScriptType	00861f30	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtMicrophone_ScriptType	00862b74	11	3	0	cdc::NativeScriptType;cdc::RCObject
+NtModelMarker_ScriptType	00862bb8	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtModifiable_ScriptType	00862bfc	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NtMotor_ScriptType	00862c40	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NtMultibody_ScriptType	00862c80	10	2	0	cdc::NativeScriptType;cdc::RCObject
+NtMusic_ScriptType	00862cc4	13	3	0	cdc::NativeScriptType;cdc::RCObject
+NtOLDelete_ScriptType	00862d3c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtOLFeed_ScriptType	00862d80	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtOLFileEntry_ScriptType	00862dc0	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtOLFriend_ScriptType	00862e04	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtOLMsg_ScriptType	00862e48	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtPadshockInst	00846db0	2	0	0	cdc::RCObject
+NtPadshockSequence	00847448	6	1	0	cdc::ScriptSequence;cdc::GCObject
+NtPadshockThread	00846d78	6	1	0	cdc::ScriptThread;cdc::RCObject
+NtPadshock_ScriptType	00862e88	13	3	0	cdc::NativeScriptType;cdc::RCObject
+NtPatchBase	0085fe50	1	0	0	
+NtPatchBase_ScriptType	00862080	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtPlannerObstacle_ScriptType	00862ecc	12	3	0	cdc::NativeScriptType;cdc::RCObject
+NtPlannerVolume_ScriptType	00862f14	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtPlayerRef_ScriptType	00862f5c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtPlayerSensorInst	00860104	2	0	0	cdc::RCObject
+NtPlayerSensor_ScriptType	00862fa0	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtPosition_ScriptType	00861f78	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtRangeSensor	008472fc	2	0	0	ScriptInstanceSensor
+NtRangeSensorInst	00847688	4	0	0	ScriptInstanceSensorInst;cdc::RCObject
+NtRangeSensor_ScriptType	00863030	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtReverb_ScriptType	00863074	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtRewardSystem_ScriptType	008630b4	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtRotationTarget_ScriptType	00861e00	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtRotation_ScriptType	00861fbc	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtScenarioRef_ScriptType	00863188	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtScreenshot_ScriptType	00863c84	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtSightSensor	008600bc	2	0	0	ScriptInstanceSensor
+NtSightSensorInst	008600c8	4	0	0	ScriptInstanceSensorInst;cdc::RCObject
+NtSightSensor_ScriptType	008631cc	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtSoundEndType_ScriptType	00863250	13	3	0	cdc::NativeScriptType;cdc::RCObject
+NtSoundGroup_ScriptType	00863298	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtSoundInst	00846f94	2	0	0	cdc::RCObject
+NtSoundThread	00846330	6	1	0	cdc::ScriptThread;cdc::RCObject
+NtSound_ScriptType	00863210	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtSplineSequence	00846354	6	0	0	cdc::ScriptSequence;cdc::GCObject
+NtSpline_ScriptType	008632dc	10	3	0	cdc::NativeScriptType;cdc::RCObject
+NtStdScreenMgr_ScriptType	00863d14	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtStickyBool_ScriptType	0086331c	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtStickyFloat_ScriptType	00863360	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtStickyInt_ScriptType	008633a4	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtStimulus_ScriptType	008633e8	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtSymbol_ScriptType	00862000	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtTerrainGroupInst	00847190	2	0	0	cdc::RCObject
+NtTerrainGroup_ScriptType	0086342c	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtTransitionCamera	0085fdfc	1	0	0	BaseScriptCamera
+NtTransitionCamera_ScriptType	00861e48	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIAnimation_ScriptType	00863d5c	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIBitmap	008477f4	20	0	0	
+NtUIBitmap_ScriptType	00863da0	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIBoolProperty_ScriptType	00863de4	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIButton	0084784c	21	0	0	
+NtUIButton_ScriptType	00863e2c	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIColorProperty_ScriptType	00863e70	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIColorTLStyle_ScriptType	00863f00	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIColorTimeline_ScriptType	00863eb8	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIDebugText	008478a4	23	0	0	
+NtUIDebugText_ScriptType	00863f48	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIDialogConfirm_ScriptType	00863fd4	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIDialogNoInput_ScriptType	0086401c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIDialogYesNo_ScriptType	00864064	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIDialog_DLC_ScriptType	00863f8c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIDynamicBitmap	0086019c	20	0	0	
+NtUIDynamicBitmap_ScriptType	008640ac	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIExperienceAdjustmentMenu_ScriptType	008640f4	11	3	0	cdc::NativeScriptType;cdc::RCObject
+NtUIFloatProperty_ScriptType	00864148	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIFloatTimeline_ScriptType	00864190	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIGameData_ScriptType	008641d8	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIGameValues_ScriptType	0086421c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIGnrcEventID_ScriptType	00864264	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIIntProperty_ScriptType	008642ac	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIIntTimeline_ScriptType	008642f4	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUILoadMenu_ScriptType	0086433c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUILocalStrProperty_ScriptType	00864380	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIMenuBoolItem_ScriptType	0086440c	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIMenuEnumItem_ScriptType	00864454	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIMenuItem_ScriptType	0086449c	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIMenu_ScriptType	008643cc	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIMeter	00847904	20	0	0	
+NtUIMeter_ScriptType	008644e0	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIModel_ScriptType	00864520	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUINGAPoly	00847958	13	0	0	
+NtUINGAPoly_ScriptType	00864560	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIPDAMapWidget	00860320	12	0	0	
+NtUIPDAMapWidget_ScriptType	008645a4	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIPS3GameData_ScriptType	00864678	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIPS3SaveLoad_ScriptType	008646c0	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIPopupMgr_ScriptType	008645ec	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIProfileMenu_ScriptType	00864630	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIRenderImage_ScriptType	00864708	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUISaveMenu_ScriptType	00864750	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIScrollbar	008479e4	9	0	0	
+NtUIScrollbar_ScriptType	008647d8	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUISignal_ScriptType	0086481c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUISlider	00847994	19	0	0	
+NtUISlider_ScriptType	00864860	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUISpecialItemStyle_ScriptType	008648a4	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIStringFactory_ScriptType	008648f0	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIStringProperty_ScriptType	00864938	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUITexTLStyle_ScriptType	00864a08	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIText	00847a0c	21	0	0	
+NtUITextEntry	00847a64	13	0	0	
+NtUITextEntry_ScriptType	008649c4	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIText_ScriptType	00864984	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUITextureProperty_ScriptType	00864a50	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUITextureTimeline_ScriptType	00864a9c	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIVec2Property_ScriptType	00864ae8	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIVec2TLStyle_ScriptType	00864b78	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIVec2Timeline_ScriptType	00864b30	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIVec3Property_ScriptType	00864bc0	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIVec3TLStyle_ScriptType	00864c50	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIVec3Timeline_ScriptType	00864c08	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIWidgetRef_ScriptType	00864c98	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIWidgetStyle_ScriptType	00864cdc	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIWinButtonConfig_ScriptType	00864d24	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIWinDisplayMode_ScriptType	00864d70	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIWinDisplaySettings_ScriptType	00864dbc	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIWinFilenameEntry_ScriptType	00864e0c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIWinGamepad_ScriptType	00864e58	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUIWinSave_ScriptType	00864ea0	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUberObjectCommand_ScriptType	00863554	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUberObjectEvent_ScriptType	008635a0	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUberObjectQuery_ScriptType	008635e8	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUberObjectSectionID_ScriptType	00863630	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnderWaterRay_ScriptType	0086367c	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnitRef_ScriptType	008636fc	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockableCharacterImage_ScriptType	00863780	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockableCinematic_ScriptType	008637d4	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockableConceptImage_ScriptType	00863820	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockableCostume_ScriptType	00863870	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockableEnvironmentImage_ScriptType	008638bc	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockableGearImage_ScriptType	00863910	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockableMovie_ScriptType	0086395c	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockableMusic_ScriptType	008639a4	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockable_ScriptType	0086373c	13	3	0	cdc::NativeScriptType;cdc::RCObject
+NtUnlockablesSystem_ScriptType	008639ec	11	2	0	cdc::NativeScriptType;cdc::RCObject
+NtVector_ScriptType	00862040	12	2	0	cdc::NativeScriptType;cdc::RCObject
+NtWaypointNode_ScriptType	00863a80	13	2	0	cdc::NativeScriptType;cdc::RCObject
+NtWaypointSet_ScriptType	00863ac8	12	2	0	cdc::NativeScriptType;cdc::RCObject
+ObjectDebugCamera	008561f4	28	1	0	FreeCamera;BaseDebugCamera;BaseCamera;ICamera
+ObjectSection	0084c814	18	3	1	ResolveSection
+ObjectThread	00845818	7	1	0	cdc::ScriptThread;cdc::RCObject
+PCCombinationInputDevice	00844c54	17	0	0	InputDevice
+PCGamepadDevice	00844ebc	16	1	0	PCSubInputDevice;InputDevice
+PCKeyboardDevice	00844f5c	14	2	0	PCSubInputDevice;InputDevice
+PCMouseDevice	00844f14	14	2	0	PCSubInputDevice;InputDevice
+PCSubInputDevice	00844be4	14	2	0	InputDevice
+PCXInputDevice	00844dcc	16	1	0	PCSubInputDevice;InputDevice
+PDAMap::RevealedInfo_Box	0085d744	7	1	0	PDAMap::RevealedInfo_Geom
+PDAMap::RevealedInfo_Capsule	0085d724	7	0	0	PDAMap::RevealedInfo_Geom
+PDAMap::RevealedInfo_Sphere	0085d704	7	0	0	PDAMap::RevealedInfo_Geom
+PDAMapSection	008552bc	16	2	1	ResolveSection
+PhysicsKickStateImpl	0085fa54	5	0	0	PhysicsKickState;TopLevelPlayerState;BasePlayerState;StateObj
+PhysicsRollAttach	0085f95c	4	0	0	PlayerSubState;BasePlayerState;StateObj
+PhysicsRollDetach	0085ee08	5	0	0	PlayerSubState;BasePlayerState;StateObj
+PhysicsRollIdle	0085f944	4	0	0	PlayerSubState;BasePlayerState;StateObj
+PhysicsRollStateImpl	0085fa30	5	1	0	PhysicsRollState;TopLevelPlayerState;BasePlayerState;StateObj
+PillarAttachGroundAnimTarget	0085ed20	2	0	0	cdc::AnimTarget
+PillarDetachAnimTarget	0085ed14	2	0	0	cdc::AnimTarget
+PlayerSM	0085e2a8	2	1	0	StateMachine
+PrimAirAttachAnimTarget	0085ec1c	2	0	0	cdc::AnimTarget
+PuppetShowState	0085e048	5	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+RMIDrawableBase	00854078	11	2	0	cdc::IDrawable
+RenderResourceSection	0084cb84	18	1	1	ResolveSection
+ResolveObject	0084ca90	1	0	0	
+ResolveReceiver	0084c654	5	0	1	cdc::FileReceiver
+ResolveSection	0084c52c	11	2	0	
+RollState	0085e180	5	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+SampleReceiver	00850878	5	0	0	cdc::FileReceiver
+ScopeCamera	00856304	20	2	0	BaseGameplayCamera;BaseCamera;ICamera
+Screenshots::CaptureAndSaveTask	0085fcd4	4	0	0	AsyncTaskManager::Task
+Screenshots::DeleteLocalFileTask	0085fd40	3	0	0	AsyncTaskManager::Task
+Screenshots::GenerateUniqueFilenameTask	0085fc10	4	0	0	AsyncTaskManager::Task
+Screenshots::LoadToWidgetsTask	0085fc64	3	0	0	Screenshots::LoadingTask;AsyncTaskManager::Task
+Screenshots::LoadingTask	0085fbac	3	0	0	AsyncTaskManager::Task
+Screenshots::RaiseScriptEventTask	0085fd7c	4	0	0	AsyncTaskManager::Task
+Screenshots::SaveAsNewFileTask	0085fc9c	4	0	0	AsyncTaskManager::Task
+Screenshots::SavingTask	0085fbe0	4	0	0	AsyncTaskManager::Task
+Screenshots::SetInfoTask	0085fd0c	4	0	0	AsyncTaskManager::Task
+ScriptHUDMenu	00860354	8	0	0	cdc::ScriptStdScreen
+ScriptInstanceRefIsUnBindableSequence	00845c78	6	1	0	cdc::ScriptSequence;cdc::GCObject
+ScriptInstanceSensor	008471c0	2	0	0	
+ScriptInstanceSensorInst	008475b4	3	0	0	cdc::RCObject
+ScriptInstanceSensorThread	008472ac	6	1	0	cdc::ScriptThread;cdc::RCObject
+ScriptLoadScreen	00847ce8	8	0	0	cdc::ScriptStdScreen
+ScriptMainMenu	00847cc4	8	0	0	cdc::ScriptStdScreen
+ScriptOptionsScreen	00847ca0	8	0	0	cdc::ScriptStdScreen
+ScriptPauseScreen	00847c7c	8	0	0	cdc::ScriptStdScreen
+ScriptPlayerScriptIsNotLoadedSequence	00846dbc	6	1	0	cdc::ScriptSequence;cdc::GCObject
+ScriptSection	0084c934	20	2	1	ResolveSection
+Sense	0085e28c	1	0	0	
+ShaderLibSection	0084c874	20	2	1	ResolveSection
+SkiSlopeSlideState	0085e1f8	3	0	0	SlopeSlideState;TopLevelPlayerState;BasePlayerState;StateObj
+SlideLandState	0085e240	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+SlideState	0085e198	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+SlopeSlideState	0085e018	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+SndReceiver	008505d0	5	0	0	cdc::FileAllocatedReceiver;cdc::FileReceiver
+SplatState	0085e0a8	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+StateControlState	0085e1c8	5	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+StateMachine	00855458	2	0	0	
+StateObj	00855440	4	0	0	
+SwimClimbOutState	0085e108	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+SwimDiveInState	0085e0f0	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+SwimSplashDownState	0085e120	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+SwimState	0085e138	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+SwimTreadState	0085e0d8	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+TRDispatcherManager	00860134	1	0	0	cdc::ScriptDispatcherManager
+TRGameNotifier	00855174	18	5	0	IGameNotifier
+TRMarkupManager	00855214	12	4	0	MarkupManager
+TRPlayerAPI	0085e3fc	31	1	0	cdc::PlayerAPI
+TRScriptUnitManager	00860160	1	0	0	cdc::ScriptUnitManager
+TerrainCallback	00854468	3	1	0	cdc::ISceneTerrainCallback
+TerrainGroupThread	0084719c	6	1	0	cdc::ScriptThread;cdc::RCObject
+ThrownState	0085e228	3	0	0	TopLevelPlayerState;BasePlayerState;StateObj
+TopLevelPlayerState	0085df70	4	0	0	BasePlayerState;StateObj
+TransitionCamera	008564a4	20	2	0	BaseDrivenCamera;BaseGameplayCamera;BaseCamera;ICamera
+UberObjectComposite	00847f70	6	1	0	ObjState;InstanceUserData
+UberObjectComposite_TR8	0085d55c	6	1	0	UberObjectComposite;ObjState;InstanceUserData
+UberObjectSection	00847f30	5	1	0	ObjState;InstanceUserData
+UberObjectSection::ModelMarkerAnchor	00847d6c	7	3	0	cdc::IAnchor
+UberObjectSection_TR8	0085d544	5	2	0	UberObjectSection;ObjState;InstanceUserData
+UnderWaterRayDrawable	0085d5c4	12	2	0	cdc::IDrawable
+UnitObjectDrawable	008542fc	12	2	0	RMIDrawableBase;cdc::IDrawable
+VPoleAttachGroundAnimTarget	0085ec8c	2	0	0	cdc::AnimTarget
+Vehicle	00861a18	13	1	1	
+VehicleCamera	00856544	21	1	0	BaseGameplayCamera;BaseCamera;ICamera
+WaitForAllSectionsBirthSequence	008459ec	6	1	0	cdc::ScriptSequence;cdc::GCObject
+`anonymous namespace'::EnemyBehavior_Root	0085a524	12	3	0	EnemyBehavior
+bfx::AreaHandlePath	0084220c	3	0	0	bfx::Path
+bfx::BinaryReplayLogOut	00842dcc	16	1	0	bfx::ReplayLogOut
+bfx::BoolSetting	00841144	5	0	0	bfx::Setting
+bfx::BoxObstacle	00841bf4	2	0	0	bfx::ObstacleImpl;bfx::Obstacle;bfx::Reloc
+bfx::BoxObstacle	00841c00	6	0	0	bfx::ObstacleImpl;bfx::Obstacle;bfx::Reloc
+bfx::Collider	008451cc	2	0	0	
+bfx::DummyMover3D	00841194	12	3	0	bfx::Mover3D
+bfx::Fish	00841444	2	0	0	bfx::Mover3DBase;bfx::Mover3D;bfx::Reloc
+bfx::Fish	00841454	19	0	0	bfx::Mover3DBase;bfx::Mover3D;bfx::Reloc
+bfx::HLink	00841d68	2	0	0	bfx::HandleTargetBase<class bfx::HLink>;bfx::Reloc
+bfx::KDTree	00841874	2	0	0	bfx::Reloc
+bfx::LinkBase	00841f10	2	0	0	bfx::HandleTargetBase<class bfx::LinkBase>
+bfx::LinkImpl	00841f9c	5	0	0	bfx::LinkBase;bfx::HandleTargetBase<class bfx::LinkBase>
+bfx::LinkStripImpl	00841f28	5	0	0	bfx::LinkBase;bfx::HandleTargetBase<class bfx::LinkBase>;bfx::Reloc
+bfx::LinkStripImpl	00841f40	2	0	0	bfx::LinkBase;bfx::HandleTargetBase<class bfx::LinkBase>;bfx::Reloc
+bfx::LogDevice	00842894	2	0	0	
+bfx::Mover3D	008410d4	2	0	0	
+bfx::Mover3DBase	008413d4	10	0	0	bfx::Mover3D;bfx::Reloc
+bfx::Mover3DBase	00841424	2	0	0	bfx::Mover3D;bfx::Reloc
+bfx::Mover3DBase::Surfer	008413a0	2	0	0	bfx::Surfer3D
+bfx::NBody	00842dc0	2	0	0	bfx::Reloc
+bfx::NavGraph	00841f4c	2	0	0	bfx::Reloc
+bfx::ObstacleImpl	00841bd8	2	0	0	bfx::Obstacle
+bfx::Path	00841d74	3	0	0	
+bfx::RVec3	008415b4	2	0	0	bfx::Vec3;bfx::Reloc
+bfx::Reloc	008428ec	2	0	0	
+bfx::Renderer	0084287c	2	0	0	
+bfx::ReplayLogOut	00842954	2	0	0	
+bfx::ScreenLog	00842a5c	2	0	0	bfx::LogDevice
+bfx::ScreenWarningLog	00842fa4	2	0	0	bfx::LogDevice
+bfx::Setting	0084299c	2	0	0	
+bfx::StdioLog	00842a6c	2	0	0	bfx::LogDevice
+bfx::Surfer3D	0084115c	2	0	0	
+bfx::TextReplayLogOut	00842b0c	16	0	0	bfx::ReplayLogOut
+bfx::VolumeGraph	00842790	2	0	0	bfx::Reloc
+cdc::AllocGlobals	0085167c	1	0	0	
+cdc::Allocator	0085176c	6	0	0	
+cdc::AnimBlendNode	0084359c	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimBoneSetNode	008435dc	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimDrivenRagdollNode	0084361c	18	1	0	cdc::AnimRagdollNode;cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimFaceFxNode	0084366c	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimForwardNode	008436ac	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimFragmentNode	008436ec	15	2	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimHostedNode	0084372c	15	2	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimInputSocket	00843398	7	0	0	cdc::AnimSocket
+cdc::AnimInterpNode	0084376c	17	2	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimMirrorNode	008437b4	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimModifierNode	008437f4	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimOutputSocket	00843508	7	0	0	cdc::AnimSocket
+cdc::AnimOverlayNode	00843834	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimPhysicsNode	00843874	15	2	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimPipelineGraph	008438b4	15	2	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimPipelineInputSocket	008433b8	7	0	0	cdc::AnimInputSocket;cdc::AnimSocket
+cdc::AnimPipelineNode	008433fc	15	3	0	cdc::IAnimGraphNode
+cdc::AnimPoseNode	0084343c	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimRagdollDataNode	0084347c	15	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimRagdollNode	008434bc	18	1	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimSocket	00843378	2	0	0	
+cdc::AnimStateGraph	00843528	12	1	0	cdc::IAnimGraphNode
+cdc::AnimSyncNode	0084355c	13	3	0	cdc::AnimPipelineNode;cdc::IAnimGraphNode
+cdc::AnimTarget	00843124	2	1	0	
+cdc::AtomAnchor	00845da4	7	1	0	cdc::IAnchor
+cdc::BaseInstanceAnchor	00853738	7	0	0	cdc::IAnchor
+cdc::BaseInstanceBoneAnchor	0084644c	7	0	0	cdc::IAnchor
+cdc::CapturedModel	00848cd0	6	1	0	cdc::RenderResource
+cdc::CenterOfMassAnchor	00845dc4	6	1	0	cdc::IAnchor
+cdc::CinematicHandler	0084399c	6	0	0	cdc::MediaStreamHandler
+cdc::CinematicHandlerImpl	008439d0	7	1	0	cdc::CinematicHandler;cdc::MediaStreamHandler
+cdc::CommonMaterial	0084902c	3	0	0	cdc::IMaterial
+cdc::CommonRenderModelInstance	00848c5c	21	2	0	cdc::RenderModelInstance;cdc::RenderResource
+cdc::DP_Checkpts	00853c10	3	1	0	cdc::DP_Obj
+cdc::DP_Obj	00853758	2	0	0	
+cdc::DefaultCullingAllocator	0084dd64	2	0	0	cdc::CullingAllocator
+cdc::DefaultNativeScript	0084e2bc	10	2	0	cdc::NativeScriptType;cdc::RCObject
+cdc::DefaultNativeType	0084e2f4	10	2	0	cdc::NativeScriptType;cdc::RCObject
+cdc::File	00843f40	2	0	0	
+cdc::FileReceiver	00843f28	4	1	0	
+cdc::FileRequest	008441c0	3	0	0	
+cdc::FileSystem	00843f54	2	0	1	
+cdc::FileUserBufferReceiver	00844014	4	0	1	cdc::FileReceiver
+cdc::FixedAllocator	008517bc	18	0	0	cdc::Allocator
+cdc::GCObject	0084e290	3	0	0	
+cdc::GameHeapAllocator	0085180c	26	0	0	cdc::HeapAllocator;cdc::Allocator
+cdc::GarbageCollector	0084e16c	2	0	0	
+cdc::GarbageCollector::Impl	0084e354	10	0	0	cdc::GarbageCollector
+cdc::GenericLimbLockController	00843130	6	0	1	cdc::LimbLockController
+cdc::Geom	008449a8	5	0	0	
+cdc::GeomBox	00843d2c	5	0	0	cdc::Geom
+cdc::GeomDisc	008449c4	5	0	0	cdc::Geom
+cdc::GeomPoint	008449dc	5	0	0	cdc::Geom
+cdc::GeomRect	008449f4	5	0	0	cdc::Geom
+cdc::GeomSegment	00843d44	5	0	0	cdc::Geom
+cdc::GeomSphere	00843d5c	5	0	0	cdc::Geom
+cdc::GeomSweep	00843d74	5	0	0	cdc::Geom
+cdc::GeomTriangle	00843d8c	5	0	0	cdc::Geom
+cdc::GeomWrap	00844a0c	5	0	0	cdc::Geom
+cdc::Heap	008516e4	2	0	0	
+cdc::IAnchor	008458e8	2	0	0	
+cdc::IAnimGraphNode	008431ac	2	0	0	
+cdc::IDrawable	00853704	5	2	0	
+cdc::ILightResource	008494c4	3	0	0	cdc::RenderResource
+cdc::IMaterial	00848ffc	2	0	0	
+cdc::IMatrixState	00849060	2	0	0	
+cdc::IMessageChannelReferrer	00845804	2	0	0	
+cdc::IRenderLight	0084951c	3	0	0	cdc::RenderResource
+cdc::IRenderTerrain	00849954	3	0	0	cdc::RenderResource
+cdc::IRippleMap	00849b90	2	0	0	
+cdc::IScene	0084db24	2	0	0	
+cdc::ISceneCell	0084dbb4	2	0	0	
+cdc::ISceneCellGroup	0084dc14	2	0	0	
+cdc::ISceneEntity	0084dc64	2	0	0	
+cdc::ISceneLight	0084dcd4	2	0	0	cdc::ISceneEntity
+cdc::IScenePortal	0084dcb4	2	0	0	
+cdc::ISceneTerrainCallback	00853f20	2	0	0	
+cdc::IShaderLib	00849a60	2	0	0	
+cdc::ImageLoader	0084c9f0	5	0	0	cdc::FileReceiver
+cdc::InstanceDrawable	00853abc	12	3	0	cdc::IDrawable;InstanceComponent
+cdc::JobChainImpl	008456b4	2	0	0	
+cdc::JobChainImplWithThreads	0084572c	7	0	0	cdc::JobChainImpl
+cdc::JobChainImplWithoutThreads	0084574c	5	0	0	cdc::JobChainImpl
+cdc::LimbLockController	00843084	2	0	0	
+cdc::MSFileSource	00844178	4	0	0	
+cdc::MSFileSourceDisk	008441f8	8	0	0	cdc::MSFileSource
+cdc::MSFileSystem	0084425c	15	2	1	cdc::FileSystem
+cdc::MSFileSystem::File	008441e8	3	0	0	cdc::File
+cdc::MSFileSystem::Request	0084421c	9	1	0	cdc::FileRequest
+cdc::MarkerAnchor	00845968	6	1	0	cdc::IAnchor
+cdc::MediaStream	00843960	2	0	0	
+cdc::MemBlockHeap	008518dc	3	0	0	cdc::Heap
+cdc::MemHeapAllocator	008518ec	27	0	0	cdc::GameHeapAllocator;cdc::HeapAllocator;cdc::Allocator
+cdc::ModelMarkerAnchor	00853f34	7	2	0	cdc::IAnchor
+cdc::MultiplexStreamImpl	0085094c	10	0	0	cdc::MultiplexStream;cdc::MediaStream
+cdc::NativeBuiltIn	0084e15c	2	0	0	
+cdc::NativeBuiltInImpl	0084e5d4	3	0	0	cdc::NativeBuiltIn
+cdc::NativeScriptType	0084e124	10	2	0	cdc::RCObject
+cdc::OSHeap	0085198c	3	0	0	cdc::Heap
+cdc::OSHeapAllocator	0085199c	26	0	0	cdc::GameHeapAllocator;cdc::HeapAllocator;cdc::Allocator
+cdc::OSHeapWithSmallPoolAllocator	00851a0c	26	0	0	cdc::OSHeapAllocator;cdc::GameHeapAllocator;cdc::HeapAllocator;cdc::Allocator
+cdc::OcclusionTree	0084dd80	2	0	1	cdc::RCObject
+cdc::PCBaseRenderTarget	008498a8	13	1	0	cdc::IRenderTarget;cdc::RenderResource
+cdc::PCBaseTexture	0084986c	5	1	0	cdc::TextureMap;cdc::RenderResource
+cdc::PCBufferTexture	00849d8c	1	0	0	cdc::PCDeviceTexture;cdc::PCDeviceBaseTexture;cdc::PCInternalResource;cdc::PCSurface
+cdc::PCBufferTexture	00849d94	14	0	0	cdc::PCDeviceTexture;cdc::PCDeviceBaseTexture;cdc::PCInternalResource;cdc::PCSurface
+cdc::PCColorDOFEffect	00849c2c	1	0	0	cdc::PCRenderEffect
+cdc::PCColorDOFEffect::EffectDrawable	00849c10	3	1	0	cdc::RenderDrawable
+cdc::PCColorSurface	00849df8	1	0	0	cdc::PCInternalResource;cdc::PCSurface
+cdc::PCColorSurface	00849e00	5	0	0	cdc::PCInternalResource;cdc::PCSurface
+cdc::PCDeferredLegacyPrimGroup	00849744	3	0	0	cdc::PCDeferredPrimGroup;cdc::RenderDrawable
+cdc::PCDepthSurface	0084a5d4	5	0	0	cdc::PCSurface;cdc::PCInternalResource
+cdc::PCDepthSurface	0084a5ec	1	0	0	cdc::PCSurface;cdc::PCInternalResource
+cdc::PCDeviceBaseTexture	0084a748	8	0	0	cdc::PCInternalResource
+cdc::PCDeviceCubeTexture	0084a788	12	0	0	cdc::PCDeviceBaseTexture;cdc::PCInternalResource
+cdc::PCDeviceCubeTexture::PCCubeMapSurface	0084a780	1	0	0	cdc::PCSurface
+cdc::PCDeviceManager	0084b54c	4	0	0	
+cdc::PCDeviceTexture	0084b674	1	0	0	cdc::PCDeviceBaseTexture;cdc::PCInternalResource;cdc::PCSurface
+cdc::PCDeviceTexture	0084b67c	14	0	0	cdc::PCDeviceBaseTexture;cdc::PCInternalResource;cdc::PCSurface
+cdc::PCDynamicTexture	0084b63c	13	1	0	cdc::PCDeviceBaseTexture;cdc::PCInternalResource
+cdc::PCDynamicVertexBuffer	0084b734	5	0	0	cdc::PCVertexBuffer
+cdc::PCExternalResource	00848ec4	1	0	0	
+cdc::PCFeedbackEffect	00849c84	1	0	0	cdc::PCRenderEffect;cdc::PCInternalResource
+cdc::PCFeedbackEffect	00849c8c	5	0	0	cdc::PCRenderEffect;cdc::PCInternalResource
+cdc::PCFeedbackEffect::EffectDrawable	00849ca4	3	1	0	cdc::RenderDrawable
+cdc::PCFinishEffect	00849ce8	1	0	0	cdc::PCRenderEffect
+cdc::PCFinishEffect::EffectDrawable	00849cf0	3	1	0	cdc::RenderDrawable
+cdc::PCImmediateIndexBuffer	0084b768	5	0	0	cdc::PCIndexBuffer;cdc::PCInternalResource
+cdc::PCImmediateIndexBuffer	0084b780	3	0	0	cdc::PCIndexBuffer;cdc::PCInternalResource
+cdc::PCIndexBuffer	0084b6f0	2	0	0	
+cdc::PCIndexPool	0084b7ac	5	0	0	cdc::PCInternalResource
+cdc::PCInternalResource	0084b7e0	4	0	0	
+cdc::PCLightManager	00848f44	5	0	0	cdc::PCInternalResource
+cdc::PCLightResource	008494ec	8	1	0	cdc::ILightResource;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCLightResource	00849514	1	0	0	cdc::ILightResource;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCMaterial	00849010	1	0	0	cdc::CommonMaterial;cdc::IMaterial;cdc::PCExternalResource
+cdc::PCMaterial	00849018	4	0	0	cdc::CommonMaterial;cdc::IMaterial;cdc::PCExternalResource
+cdc::PCMatrixState	00849084	8	0	0	cdc::IMatrixState
+cdc::PCModelDrawable	00849754	3	0	0	cdc::PCDeferredPrimGroup;cdc::RenderDrawable
+cdc::PCNGAPrimitive	00848f14	3	0	0	cdc::RenderDrawable
+cdc::PCNoiseEffect	00849d4c	1	0	0	cdc::PCRenderEffect
+cdc::PCNoiseEffect::EffectDrawable	00849d30	3	1	0	cdc::RenderDrawable
+cdc::PCPixelShader	0084b814	5	0	0	cdc::PCInternalResource
+cdc::PCPixelShaderTable	0084b8f0	1	0	0	cdc::PCShaderTable
+cdc::PCPrimitive	00848f00	3	0	0	cdc::RenderDrawable
+cdc::PCRenderColorSurface	00849864	1	0	0	cdc::IRenderColorSurface;cdc::IRenderSurface;cdc::PCRenderSurface
+cdc::PCRenderContext	0084b84c	8	0	0	cdc::PCInternalResource
+cdc::PCRenderDepthSurface	0084985c	1	0	0	cdc::IRenderDepthSurface;cdc::IRenderSurface;cdc::PCRenderSurface
+cdc::PCRenderDevice	008492cc	69	8	0	cdc::RenderDevice;cdc::PCInternalResource
+cdc::PCRenderDevice	008493e8	5	0	0	cdc::RenderDevice;cdc::PCInternalResource
+cdc::PCRenderEffect	00849c04	1	0	0	
+cdc::PCRenderImage	00849474	9	1	0	cdc::IRenderImage;cdc::RenderResource
+cdc::PCRenderLight	0084958c	1	0	0	cdc::IRenderLight;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderLight	00849594	26	4	0	cdc::IRenderLight;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderModel	008496fc	1	0	0	cdc::RenderMesh;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderModel	00849704	15	1	0	cdc::RenderMesh;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderModelInstance	00849764	27	3	0	cdc::CommonRenderModelInstance;cdc::RenderModelInstance;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderModelInstance	008497d8	1	0	0	cdc::CommonRenderModelInstance;cdc::RenderModelInstance;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderTarget	008491b4	13	1	0	cdc::PCBaseRenderTarget;cdc::IRenderTarget;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderTarget	008491f0	1	0	0	cdc::PCBaseRenderTarget;cdc::IRenderTarget;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderTerrain	008499a4	1	0	0	cdc::IRenderTerrain;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCRenderTerrain	008499ac	18	1	0	cdc::IRenderTerrain;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCScene	00849a28	4	1	0	cdc::RenderDrawable
+cdc::PCShaderLib	00849a70	1	0	0	cdc::IShaderLib;cdc::PCExternalResource
+cdc::PCShaderLib	00849a78	3	1	0	cdc::IShaderLib;cdc::PCExternalResource
+cdc::PCShaderManager	0084b8b8	1	0	0	
+cdc::PCShaderTable	0084b8e0	1	0	0	
+cdc::PCShadowMap	00849aa8	5	0	0	cdc::PCInternalResource
+cdc::PCStateManager	0084b918	5	0	0	cdc::PCInternalResource
+cdc::PCStaticIndexBuffer	0084b94c	5	0	0	cdc::PCIndexBuffer;cdc::PCInternalResource
+cdc::PCStaticIndexBuffer	0084b964	3	0	0	cdc::PCIndexBuffer;cdc::PCInternalResource
+cdc::PCStaticPool	0084b990	4	0	0	cdc::PCInternalResource
+cdc::PCStaticVertexBuffer	0084b9c4	5	0	0	cdc::PCVertexBuffer;cdc::PCInternalResource
+cdc::PCStaticVertexBuffer	0084b9dc	5	0	0	cdc::PCVertexBuffer;cdc::PCInternalResource
+cdc::PCStreamDecl	0084ba18	5	0	0	cdc::PCInternalResource
+cdc::PCSurface	00849df0	1	0	0	
+cdc::PCTerrainDrawable	00849944	3	0	0	cdc::RenderDrawable
+cdc::PCTexture	00849b18	1	0	0	cdc::PCBaseTexture;cdc::TextureMap;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCTexture	00849b20	14	0	0	cdc::PCBaseTexture;cdc::TextureMap;cdc::RenderResource;cdc::PCExternalResource
+cdc::PCTransientRenderTarget	008491f8	12	1	0	cdc::PCBaseRenderTarget;cdc::IRenderTarget;cdc::RenderResource
+cdc::PCTransientTexture	008498e4	11	2	0	cdc::PCBaseTexture;cdc::TextureMap;cdc::RenderResource
+cdc::PCVertexBuffer	0084b71c	2	0	0	
+cdc::PCVertexBufferMemPool	0084ba54	7	0	0	cdc::PCInternalResource
+cdc::PCVertexShader	0084ba90	5	0	0	cdc::PCInternalResource
+cdc::PCVertexShaderTable	0084b8e8	1	0	0	cdc::PCShaderTable
+cdc::PCWaterSurface	00849ba4	1	0	0	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
+cdc::PCWaterSurface	00849bac	5	0	0	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
+cdc::PCWaterSurface	00849bc4	4	0	0	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource
+cdc::Package	0084e550	2	0	0	cdc::RCObject
+cdc::PlayerAPI	0085e37c	2	0	0	
+cdc::RCObject	008457c4	2	0	0	
+cdc::RandomTarget	0084314c	2	0	0	cdc::AnimTarget
+cdc::RenderDevice	008490cc	6	1	0	
+cdc::RenderDrawable	00848ef0	2	0	0	
+cdc::RenderMesh	008496bc	4	0	0	cdc::RenderResource
+cdc::RenderResource	00848c3c	3	0	0	
+cdc::ResolveDecompressor	0084cd74	15	1	1	cdc::FileSystem
+cdc::ResolveDecompressor::Receiver	0084cdb4	5	0	0	cdc::FileReceiver
+cdc::RingBuffer	008508e8	2	0	0	cdc::DebugRingBuffer;cdc::IRingBuffer;cdc::DebugIRingBuffer
+cdc::RingBufferChain	0085045c	2	0	0	cdc::DebugRingBufferChain;cdc::IRingBuffer;cdc::DebugIRingBuffer
+cdc::Scene	0084decc	36	2	0	cdc::IScene
+cdc::Scene::THAlloc	0084dd58	2	1	0	cdc::CullingAllocator
+cdc::SceneCell	0084df64	23	0	0	cdc::ISceneCell;cdc::SceneCellContainer
+cdc::SceneCellGroup	0084dfcc	19	0	0	cdc::ISceneCellGroup;cdc::SceneCellContainer
+cdc::SceneDynamicPortal	0084e064	7	0	0	cdc::IScenePortal
+cdc::SceneEntity	0084dd8c	20	0	0	cdc::ISceneEntity
+cdc::SceneLight	0084ddec	32	1	0	cdc::SceneEntity;cdc::ISceneEntity;cdc::ISceneLight;cdc::ISceneEntity
+cdc::SceneLight	0084de74	20	0	0	cdc::SceneEntity;cdc::ISceneEntity;cdc::ISceneLight;cdc::ISceneEntity
+cdc::ScriptDataCursor	0084e118	2	0	0	
+cdc::ScriptDispatcherManager	008475ac	1	0	0	
+cdc::ScriptDtpStructRef	0084e10c	2	0	0	cdc::RCObject
+cdc::ScriptDynArrayImpl	0084e32c	4	0	0	cdc::GCObject
+cdc::ScriptExec	0084e4a8	7	0	0	cdc::ScriptSequence;cdc::GCObject
+cdc::ScriptManager	0084e7f0	2	0	0	cdc::RCObject
+cdc::ScriptMapImpl	0084e52c	4	0	0	cdc::GCObject
+cdc::ScriptObject	0084e5e4	9	0	0	cdc::GCObject
+cdc::ScriptScope	0084e4e0	2	0	0	cdc::RCObject
+cdc::ScriptSequence	008458b8	4	0	0	cdc::GCObject
+cdc::ScriptSequenceThread	00847c34	7	1	0	cdc::ScriptThread;cdc::RCObject
+cdc::ScriptStdScreen	00847c58	8	1	0	
+cdc::ScriptType	0084e4d4	2	0	0	cdc::RCObject
+cdc::ScriptUIScreen	00847a9c	96	2	0	cdc::UISuperWidget;cdc::UIWidgetBase
+cdc::ScriptUniqueDataCursor	0084e594	2	0	0	cdc::ScriptDataCursor
+cdc::SoundOwner	00851240	2	0	0	cdc::RCObject;cdc::SoundTypes
+cdc::SoundPlex	0085042c	4	1	0	cdc::SoundTypes
+cdc::SoundPlexAssignment	008513b4	5	0	0	cdc::SoundPlexSingleChild;cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexEffect	0085124c	5	0	0	cdc::SoundPlexSingleChild;cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexEnvelope	008513cc	5	1	0	cdc::SoundPlexSingleChild;cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexMaterialList	00851264	5	0	0	cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexOscillator	00850ba4	5	2	0	cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexOverlap	00850d00	5	0	0	cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexReaction	008513e4	5	1	0	cdc::SoundPlexSingleChild;cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexSequence	0085127c	5	0	0	cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexSingleChild	00850444	4	1	0	cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexStream	008513fc	5	0	0	cdc::SoundPlexSingleChild;cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexTimeIn	00850824	5	0	0	cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundPlexWave	00851414	6	2	0	cdc::SoundPlex;cdc::SoundTypes
+cdc::SoundResourceType	0084ca70	2	1	0	cdc::ResourceTypeHandler
+cdc::SoundSequence	00846f64	6	2	0	cdc::ScriptSequence;cdc::GCObject
+cdc::SoundStreamHandlerImpl	0085159c	4	0	0	cdc::SoundStreamHandler;cdc::MediaStreamHandler
+cdc::StackAllocator	0085187c	17	1	0	cdc::Allocator
+cdc::UIAnimation	00851fcc	1	0	0	
+cdc::UIBitmap	0085211c	65	3	0	cdc::UIWidgetBase
+cdc::UIButton	00852264	66	3	0	cdc::UIWidgetBase
+cdc::UIColorTimeLine	00851fb8	4	0	0	cdc::UITimeline<class cdc::Vector4>
+cdc::UIDebugText	008523ac	76	3	0	cdc::UIWidgetBase
+cdc::UIDynamicBitmap	00861714	65	3	0	cdc::UIWidgetBase
+cdc::UIFloatTimeLine	00851f7c	4	0	0	cdc::UITimeline<float>
+cdc::UIIntTimeLine	00851f68	4	0	0	cdc::UITimeline<int>
+cdc::UIMenuBoolItem	0085266c	69	3	0	cdc::UIMenuEntry;cdc::UIWidgetBase
+cdc::UIMenuEntry	00852524	70	3	0	cdc::UIWidgetBase
+cdc::UIMenuEnumItem	008527b4	70	3	0	cdc::UIMenuEntry;cdc::UIWidgetBase
+cdc::UIMenuWdgt	008528fc	74	3	0	cdc::UIWidgetBase
+cdc::UIMeter	00852a44	67	3	0	cdc::UIWidgetBase
+cdc::UIModel	00852b8c	65	3	0	cdc::UIWidgetBase
+cdc::UINGAPoly	00852cd4	66	3	0	cdc::UIWidgetBase
+cdc::UIPDAMapWidget	0085da7c	63	3	0	cdc::UIWidgetBase
+cdc::UIPropertyBase<bool>	00851ce8	9	0	0	
+cdc::UIPropertyBase<class cdc::ScriptSymbol>	00851dd8	9	0	0	
+cdc::UIPropertyBase<class cdc::Vector2>	00851d88	9	0	0	
+cdc::UIPropertyBase<class cdc::Vector3>	00851d60	9	0	0	
+cdc::UIPropertyBase<class cdc::Vector4>	00851db0	9	0	0	
+cdc::UIPropertyBase<float>	00851d10	9	0	0	
+cdc::UIPropertyBase<int>	00851d38	9	0	0	
+cdc::UIPropertyBool	00851e00	10	0	0	cdc::UIPropertyBase<bool>
+cdc::UIPropertyColor	00851e2c	10	0	0	cdc::UIPropertyBase<class cdc::Vector4>
+cdc::UIPropertyFloat	00851e58	10	0	0	cdc::UIPropertyBase<float>
+cdc::UIPropertyInt	00851e84	10	0	0	cdc::UIPropertyBase<int>
+cdc::UIPropertyLocalStr	00851eb0	10	0	0	cdc::UIPropertyBase<int>
+cdc::UIPropertyString	00851edc	10	0	0	cdc::UIPropertyBase<class cdc::ScriptSymbol>
+cdc::UIPropertyVec2	00851f3c	10	0	0	cdc::UIPropertyBase<class cdc::Vector2>
+cdc::UIPropertyVec3	00851f10	10	0	0	cdc::UIPropertyBase<class cdc::Vector3>
+cdc::UIRenderImg	00852e1c	61	3	0	cdc::UIWidgetBase
+cdc::UIScrollbar	00852f6c	68	3	0	cdc::UIWidgetBase
+cdc::UISlider	008530bc	66	3	0	cdc::UIWidgetBase
+cdc::UISuperWidget	0085321c	77	2	0	cdc::UIWidgetBase
+cdc::UIText	008533ac	76	3	0	cdc::UIWidgetBase
+cdc::UITextEntry	00853564	75	3	0	cdc::UIWidgetBase
+cdc::UITimeline<class cdc::Vector2>	00851cac	4	1	0	
+cdc::UITimeline<class cdc::Vector3>	00851cc0	4	1	0	
+cdc::UITimeline<class cdc::Vector4>	00851cd4	4	1	0	
+cdc::UITimeline<float>	00851c98	4	1	0	
+cdc::UITimeline<int>	00851c84	4	1	0	
+cdc::UIVec2TimeLine	00851f90	4	0	0	cdc::UITimeline<class cdc::Vector2>
+cdc::UIVec3TimeLine	00851fa4	4	0	0	cdc::UITimeline<class cdc::Vector3>
+cdc::UIWidgetBase	00851fd4	63	3	0	
+cdc::VoiceBuffer	00851590	2	0	0	cdc::RingBuffer;cdc::DebugRingBuffer;cdc::IRingBuffer;cdc::DebugIRingBuffer
+cdc::WaveSection	00850d2c	23	2	1	cdc::IWaveSection;ResolveSection
+df::IMenuManager	0086168c	2	0	0	
+std::bad_exception	00874d38	2	0	0	std::exception
+std::exception	00877668	2	0	0	
+type_info	00869918	1	0	0	
