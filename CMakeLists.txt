@@ -715,6 +715,73 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_vehicle_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 900)
 endif()
 
+# ---- Render regression checks on real data + golden images (tests/golden, docs/RENDERING.md "Testing") ----------------
+if(OU_BUILD_TESTS)
+  add_executable(ou-golden tests/golden/ou_golden.cpp) # PNG/PPM compare, AO darkening bounds, golden (re-)bless
+  target_link_libraries(ou-golden PRIVATE ZLIB::ZLIB)
+  set(_rc sh ${CMAKE_SOURCE_DIR}/tests/golden/render_check.sh $<TARGET_FILE:ou-game> $<TARGET_FILE:ou-golden>
+      ${CMAKE_BINARY_DIR}/render ${CMAKE_SOURCE_DIR}/tests/golden)
+  # Ambient occlusion: CORTAO (GL, Vulkan) and RT AO (Vulkan) must darken l3_main_bedroom within measured bounds, and the
+  # two backends must agree with CORTAO on. The parity check compares the frames the two `render_ao_*` runs leave behind.
+  add_test(NAME render_ao_opengl COMMAND ${_rc} ao opengl)
+  add_test(NAME render_ao_vulkan COMMAND ${_rc} ao vulkan)
+  add_test(NAME render_ao_rt_vulkan COMMAND ${_rc} ao_rt)
+  add_test(NAME render_ao_parity COMMAND ${_rc} ao_parity)
+  set_tests_properties(render_ao_opengl PROPERTIES FIXTURES_SETUP ou_ao_gl)
+  set_tests_properties(render_ao_vulkan PROPERTIES FIXTURES_SETUP ou_ao_vk)
+  set_tests_properties(render_ao_parity PROPERTIES FIXTURES_REQUIRED "ou_ao_gl;ou_ao_vk")
+  # Golden frames (tests/golden/NAME.png; re-bless: OU_GOLDEN_BLESS=1 ctest -R render_golden_). Explicit preset, AO,
+  # water and RT settings so no default change slips through unnoticed; RT off so the goldens hold without ray queries.
+  function(ou_golden name level)
+    add_test(NAME render_golden_${name} COMMAND ${_rc} golden ${name} ${level} ${ARGN})
+    set_tests_properties(render_golden_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS protected
+                         ENVIRONMENT "${OU_VK_TEST_ENV}")
+  endfunction()
+  ou_golden(bedroom_original_gl l3_main_bedroom --renderer opengl --preset original --ao off)
+  ou_golden(bedroom_enhanced_vk_ao_off l3_main_bedroom --renderer vulkan --preset enhanced --rt off --ao off)
+  ou_golden(bedroom_enhanced_vk_ao_on l3_main_bedroom --renderer vulkan --preset enhanced --rt off --ao cortao)
+  ou_golden(cliff_water_original_vk l2_cliffclimb --renderer vulkan --preset enhanced --rt off --water original)
+  ou_golden(cliff_water_enhanced_vk l2_cliffclimb --renderer vulkan --preset enhanced --rt off --water enhanced)
+  ou_golden(cliff_water_enhanced_gl l2_cliffclimb --renderer opengl --preset enhanced --water enhanced)
+  set_tests_properties(render_ao_opengl render_ao_vulkan render_ao_rt_vulkan render_ao_parity PROPERTIES
+                       SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS protected ENVIRONMENT "${OU_VK_TEST_ENV}")
+
+  # `ctest -L protected` (docs/BUILDING.md): one quick check per protected system of docs/audit/PROTECTED_SYSTEMS.md,
+  # for running after every change. gtest cases run as protected_<system> filters of their test binaries.
+  function(ou_protected system exe filter)
+    add_test(NAME protected_${system} COMMAND $<TARGET_FILE:${exe}> --gtest_filter=${filter})
+    set_tests_properties(protected_${system} PROPERTIES LABELS protected TIMEOUT 300 ENVIRONMENT "${OU_VK_TEST_ENV}")
+  endfunction()
+  ou_protected(sdl3_frame_clock ou_viewer_tests "FrameClock.*")
+  ou_protected(fixed_step ou_game_tests "Game.SimulationIndependentOfRenderRate")
+  ou_protected(jolt_physics ou_physics_tests "Physics.*")
+  ou_protected(collision ou_collision_tests "Collision.*")
+  ou_protected(vulkan_renderer ou_vk_tests "VulkanRenderer.*")
+  ou_protected(shader_pipeline ou_shader_tests "Sm3Parser.*:Sm3Real.CharacterProgramsCompile")
+  ou_protected(water ou_shader_tests "Ocean.*:WaterField.*:WaterSurface.*:SplashFluid.*")
+  ou_protected(graphics_config ou_update_tests "Config.GraphicsPresets:Config.Tonemap:Config.WaterQuality")
+  ou_protected(shadows_lights ou_shader_tests "OriginalShading.*")
+  ou_protected(anti_lag ou_anti_lag_tests "AntiLag.*")
+  ou_protected(materials ou_formats_tests "Model.MaterialStateFromBlob:Texture.*")
+  ou_protected(effects ou_fx_tests "Fx.*")
+  ou_protected(audio ou_audio_tests "Mixer.*")
+  ou_protected(animation ou_anim_tests "Anim.*")
+  ou_protected(camera_input ou_game_tests "Game.Camera*:Game.ControlBindings:Rumble.*:SelfTest.*")
+  ou_protected(ui ou_progress_tests "Menus.*")
+  ou_protected(hud ou_hud_tests "Hud.*")
+  ou_protected(save_load ou_save_tests "Save.*:Stream.*")
+  ou_protected(script_vm ou_script_tests "ScriptVm.*")
+  ou_protected(cinematics ou_cine_tests "Cine.*")
+  ou_protected(updater ou_update_tests "UpdateTest.*:UpdateCore.*")
+  ou_protected(appimage ou_update_tests "AppImageUpdateTest.*") # + vulkan_lavapipe (skips without Mesa's lavapipe ICD)
+  set_tests_properties(game_input_replay_smoke game_render_rate_smoke game_selftest_locomotion viewer_placeholder_screenshot
+                       viewer_vulkan_matches_gl viewer_vulkan_matches_gl_agx vulkan_lavapipe movie_intro_screenshot
+                       PROPERTIES LABELS protected)
+  if(TEST launcher_self_test)
+    set_tests_properties(launcher_self_test PROPERTIES LABELS protected)
+  endif()
+endif()
+
 include(GNUInstallDirs)
 install(TARGETS ou-viewer ou-game ou-asset ou-import ou-sign RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(TARGET ou-launcher)

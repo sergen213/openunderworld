@@ -1412,3 +1412,36 @@ live part is freed. `residentCount()` counts it.
   the upload builds only new meshes' BLASes and changed groups, then the TLAS. pool_to_ragnarok `--rt full` join frame
   (RX 7900 XTX, 1280x720, GPU uploads + AS span): 10.0 → 4.4 ms; `buildRayTracing` CPU 0.30 → 0.19 ms (35 mesh BLASes
   of moved / skinned / unkeyed meshes and 1 new group remain). Test `VulkanRenderer.ResidentMeshesKeepBlases`.
+
+## Testing (render regression ctests; `tests/golden/`)
+
+Real-data checks, run by `tests/golden/render_check.sh` with `ou-game --screenshot` (both backends read back their
+own backbuffer) and the test tool `ou-golden` (`tests/golden/ou_golden.cpp`: PPM / PNG compare, AO darkening bounds,
+PNG re-bless; zlib only). Every frame is deterministic: `--render-hz 60` (fixed virtual frame time, so ticks, AO
+seeds and water time are fixed), `--sync-loads`, 120 frames from the level's own start checkpoint, empty config
+(XDG dirs under `build/render/`), 640x360. **Observed** reruns on one machine are bit-identical (mean 0.000), GL and
+Vulkan included. They need `OU_GAME_DIR` and a display (77 = skipped otherwise); Vulkan runs skip without a device.
+
+| ctest | Checks (bounds measured on RX 7900 XTX / Mesa 26.2.6, 2026-11-16) |
+|---|---|
+| `render_ao_opengl`, `render_ao_vulkan` | l3_main_bedroom, enhanced, `--rt off`: `--ao off` vs `--ao cortao`; the whole-frame luminance drop (measured 0.289 / 0.286 /255) must lie in 0.20..0.45 /255 and the darkened pixels must outweigh the brightened 4:1 (AO only removes ambient light). |
+| `render_ao_rt_vulkan` | Same with `--rt shadows`, `--ao off` vs `--ao rt` (measured 0.541; bounds 0.38..0.85); skipped without ray queries (`--ao rt` then draws CORTAO). |
+| `render_ao_parity` | GL vs Vulkan frames of the two `render_ao_*` runs with CORTAO on (ctest fixtures): mean ≤ 0.15 /255, PSNR ≥ 48 dB (measured 0.072, 53.6 dB; AO off 0.045; one backend without AO 0.31). |
+| `render_golden_<name>` | Fresh frame vs `tests/golden/<name>.png`: mean ≤ 0.12 /255, PSNR ≥ 48 dB. `bedroom_original_gl` (`--preset original --ao off`), `bedroom_enhanced_vk_ao_off` / `_ao_on` (enhanced, `--rt off`), `cliff_water_original_vk`, `cliff_water_enhanced_vk`, `cliff_water_enhanced_gl` (l2_cliffclimb yacht start). Preset, AO, water and RT are passed explicitly; RT is off so the goldens hold on devices without ray queries. |
+
+Regression proof (2026-11-16): a build with `ouAo()` at half strength (`mix(ao, 1, 0.5)` in sun.glsl, local
+worktree only) fails `render_ao_opengl` (drop 0.145), `render_ao_vulkan` (0.143) and
+`render_golden_bedroom_enhanced_vk_ao_on` (mean 0.142) while the AO-off goldens still pass; `--water original`
+against the enhanced-water golden differs by 29 /255 (15.7 dB); an RT-AO frame equal to its AO-off frame fails the
+RT bound. Same-scene differences for scale: water original vs enhanced at the yacht 29 /255, GL vs Vulkan enhanced
+water 2.0 /255 (hence one golden per backend).
+
+Re-bless after an intended visual change (review the new PNGs before committing; keep `tests/golden/` < 4 MB, the six
+images are 1.8 MB):
+
+```sh
+OU_GOLDEN_BLESS=1 ctest --test-dir build -R render_golden_
+```
+
+The goldens and bounds are tied to the reference GPU / driver; on another GPU a mismatch near the limits is driver
+drift — re-bless locally rather than widen the limits.

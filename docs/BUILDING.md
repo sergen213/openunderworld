@@ -59,6 +59,12 @@ video device (e.g. `env -u WAYLAND_DISPLAY -u DISPLAY`).
 
 Tests that need the original game read `OU_GAME_DIR` and skip when it is unset.
 
+After every change, `ctest --test-dir build -L protected` runs one quick check per protected system of
+[docs/audit/PROTECTED_SYSTEMS.md](audit/PROTECTED_SYSTEMS.md) (gtest filters as `protected_<system>`, the SDL /
+render-rate / input-replay / self-test / movie / launcher smokes, `vulkan_lavapipe`) plus the AO and golden-image
+render checks of [RENDERING.md](RENDERING.md) "Testing": 41 tests, about 3 minutes (164 s measured with
+`OU_GAME_DIR` set on an RX 7900 XTX; game and GPU tests skip without the game data or a display).
+
 ## ou-game
 
 `build/ou-game --game-dir "/path/to/Tomb Raider Underworld"` opens the main menu. Options, controls and
