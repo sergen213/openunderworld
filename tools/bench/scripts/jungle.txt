@@ -1,0 +1,5 @@
+# tools/bench: l2_junglehub, dense foliage. 15 s at 60 Hz (900 frames).
+# Lara stays at the spawn (running forward from it drops off the ledge to her death within 3 s); the camera pans
+# one and a half turns over the foliage.
+0 lookx 0.6
+15 lookx 0

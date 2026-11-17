@@ -1,0 +1,6 @@
+# tools/bench: l1_seafloor, underwater (Lara starts swimming). 15 s at 60 Hz (900 frames).
+# Swim forward 4 s, then pan one full turn.
+0 forward 1
+4 forward 0
+4 lookx 0.5
+15 lookx 0

@@ -1,0 +1,8 @@
+# tools/bench: l3_main_bedroom, static interior. 15 s at 60 Hz (900 frames).
+# Pan right, run forward briefly, pan back. Times in seconds; a value holds until changed.
+0 lookx 0.6
+5 lookx 0
+5 forward 1
+7 forward 0
+7 lookx -0.6
+12 lookx 0

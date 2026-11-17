@@ -1,0 +1,4 @@
+# tools/bench: l2_cliffclimb yacht deck, open sea. 15 s at 60 Hz (900 frames).
+# Lara stays on the deck; the camera pans one full turn so the sea fills most frames.
+0 lookx 0.42
+15 lookx 0
