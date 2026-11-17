@@ -1,6 +1,12 @@
-// ou-asset: inspect and dump TRU assets (sections, textures, meshes) from the bigfile.
+// ou-asset: inspect and dump TRU assets (sections, textures, meshes, collision, animation, materials, scripts,
+// cinematics, the UI font) from the bigfile, and check container round trips.
+#include "anim/Anim.hpp"
+#include "cine/Cine.hpp"
+#include "collision/Collision.hpp"
 #include "formats/Formats.hpp"
 #include "formats/Shader.hpp"
+#include "script/Script.hpp"
+#include "ui/Art.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -31,8 +37,16 @@ int usage() {
                  "  ou-asset render <gameDir> <drm> -o out.ppm [--view top|front|side] [--size N] [--textured] [--level|--deps]\n"
                  "  ou-asset shaders <gameDir> all|<drm>        survey ShaderLib (type 9) D3D9 shaders: counts, opcodes, registers\n"
                  "  ou-asset shader-dis <gameDir> <drm> <libId> [slot]   disassemble a ShaderLib section\n"
+                 "  ou-asset collision <gameDir> <unit> [-o out.obj]    game BIH per terrain group, face/markup tables\n"
+                 "  ou-asset anim <gameDir> <objectDrm> [clipId]         skeletons, anim list, clips; clipId: track dump\n"
+                 "  ou-asset materials <gameDir> <drm>                   material sections: state, shaders, textures\n"
+                 "  ou-asset script <gameDir> <drm> [typeId]             script types; typeId: members + bytecode listing\n"
+                 "  ou-asset cine <gameDir> <name> [channel [count]]     cinematic header/summary; channel: per-frame values\n"
+                 "  ou-asset font <gameDir> <drm> [dtpId]                font DTP glyph table (pc-w\\generalbank.drm, 46)\n"
+                 "  ou-asset roundtrip <gameDir> all|<drm>              DRM serialise, CDRM re-wrap, PCD9 re-wrap identity\n"
                  "--level loads a unit DRM as a whole level (stream groups, IMFs, intros; transforms baked).\n"
-                 "<drm> is a bigfile path such as pc-w\\lara.drm; ids accept 0x prefix.\n";
+                 "<drm> is a bigfile path such as pc-w\\lara.drm; <name> a pc-w\\cinstream stream (or a bigfile path);\n"
+                 "ids accept 0x prefix.\n";
     return 2;
 }
 
@@ -274,6 +288,332 @@ void shaderSurvey(const std::vector<formats::d3d9::InstallShader>& shaders) {
     for (const auto& [k, v] : unsupported) std::printf("  %s %zu\n", k.c_str(), v);
 }
 
+// ---- collision (docs/formats/COLLISION.md) ---------------------------------------------------------------
+// Pointer chasing through DRM relocations, as collision/LevelCollision.cpp does.
+struct Ptrs {
+    const cdc::Drm& drm;
+    std::map<uint32_t, std::unordered_map<uint32_t, cdc::Pointer>> cache;
+    std::optional<cdc::Pointer> at(cdc::Pointer p) {
+        auto it = cache.find(p.section);
+        if (it == cache.end()) it = cache.emplace(p.section, cdc::sectionPointers(drm, p.section)).first;
+        const auto f = it->second.find(p.offset);
+        return f == it->second.end() ? std::nullopt : std::optional(f->second);
+    }
+    // Bytes past the section end read as 0 (the last face / BIH node is stored without its padding).
+    template <class T> T rd(cdc::Pointer p, size_t extra = 0) const {
+        const auto d = drm.sections.at(p.section).data;
+        const size_t off = size_t(p.offset) + extra;
+        T v{};
+        if (off < d.size()) std::memcpy(&v, d.data() + off, std::min(sizeof v, d.size() - off));
+        return v;
+    }
+};
+cdc::Pointer plus(cdc::Pointer p, uint32_t off) { return {p.section, p.offset + off}; }
+
+void collisionDump(const cdc::Drm& drm, const std::string& out) {
+    Ptrs u{drm, {}};
+    const auto terrain = u.at({0, 0});
+    if (!terrain) throw cdc::FormatError("section 0 has no Terrain pointer (not a unit DRM?)");
+    const uint32_t groups = u.rd<uint32_t>(*terrain, 0x08);
+    const auto groupArray = u.at(plus(*terrain, 0x0C));
+    std::printf("game BIH (16-byte nodes, depth-first; left = this + 1, right = this + value):\n");
+    std::printf("%5s %10s %6s %7s %7s %6s %6s %6s %6s %9s %s\n", "group", "flags", "verts", "faces", "nodes", "height",
+                "inner", "leaves", "depth", "leafFaces", "check");
+    for (uint32_t g = 0; g < groups && groupArray; ++g) {
+        const auto grp = plus(*groupArray, 0x50 * g);
+        const auto mesh = u.at(plus(grp, 0x38));
+        if (!mesh) continue;
+        const auto extra = u.at(plus(grp, 0x30));
+        const uint32_t flags = extra ? u.rd<uint32_t>(*extra) : 0;
+        const uint32_t numNodes = u.rd<uint32_t>(*mesh, 0x40), numFaces = u.rd<uint32_t>(*mesh, 0x44),
+                       numVerts = u.rd<uint32_t>(*mesh, 0x48);
+        const uint16_t height = u.rd<uint16_t>(*mesh, 0x56);
+        const auto nodes = u.at(plus(*mesh, 0x38));
+        uint32_t inner = 0, leaves = 0, maxDepth = 0;
+        uint64_t leafFaces = 0;
+        std::string check = "ok";
+        std::vector<uint8_t> seen(numNodes);
+        std::vector<std::pair<uint32_t, uint32_t>> stack;
+        if (nodes && numNodes) stack.push_back({0, 1});
+        while (!stack.empty()) {
+            const auto [n, depth] = stack.back();
+            stack.pop_back();
+            if (n >= numNodes || seen[n]++) { check = "bad child / revisit"; continue; }
+            maxDepth = std::max(maxDepth, depth);
+            const auto node = plus(*nodes, 16 * n);
+            if (const uint8_t count = u.rd<uint8_t>(node, 0x0D)) {
+                ++leaves;
+                leafFaces += count;
+                if (u.rd<uint32_t>(node, 0x08) + count > numFaces) check = "leaf past faces";
+            } else {
+                ++inner;
+                stack.push_back({n + u.rd<uint32_t>(node, 0x08), depth + 1});
+                stack.push_back({n + 1, depth + 1});
+            }
+        }
+        if (inner + leaves != numNodes && check == "ok") check = "unreached nodes";
+        if (leafFaces != numFaces && check == "ok") check = "leaf faces != faces";
+        std::printf("%5u %10x %6u %7u %7u %6u %6u %6u %6u %9llu %s\n", g, flags, numVerts, numFaces, numNodes, height,
+                    inner, leaves, maxDepth, (unsigned long long)leafFaces, check.c_str());
+    }
+    std::vector<std::string> warnings;
+    const auto mesh = collision::loadLevelCollision(drm, &warnings);
+    std::printf("loaded mesh: %zu vertices, %zu faces, %zu markup\n", mesh.vertices.size(), mesh.faces.size(), mesh.markup.size());
+    std::map<uint32_t, size_t> flags, masks, materials, client, perGroup;
+    for (const auto& f : mesh.faces) ++flags[f.flags], ++masks[f.mask], ++materials[f.material], ++client[f.clientFlags], ++perGroup[f.group];
+    const auto hist = [](const char* name, const std::map<uint32_t, size_t>& h) {
+        std::printf("%s:", name);
+        for (const auto& [k, n] : h) std::printf(" 0x%x=%zu", k, n);
+        std::printf("\n");
+    };
+    hist("face flags (+0x0C)", flags);
+    hist("face mask (+0x0D)", masks);
+    hist("face clientFlags (+0x0E)", client);
+    hist("face material (+0x10)", materials);
+    hist("faces per group", perGroup);
+    std::map<std::string, size_t> types;
+    for (const auto& m : mesh.markup) ++types[std::string(collision::markupTypeName(m.type))];
+    std::printf("markup types:");
+    for (const auto& [k, n] : types) std::printf(" %s=%zu", k.c_str(), n);
+    std::printf("\n%6s %5s %-12s %4s %6s %s\n", "id", "type", "name", "pts", "intro", "first point / camera");
+    for (const auto& m : mesh.markup) {
+        std::printf("%6u %5u %-12s %4zu %6u", m.id, m.type, std::string(collision::markupTypeName(m.type)).c_str(),
+                    m.points.size(), m.intro);
+        if (!m.points.empty()) std::printf(" (%.1f %.1f %.1f)", m.points[0].x, m.points[0].y, m.points[0].z);
+        if (m.camera) std::printf(" camera type %u, %zu spline points", m.camera->type, m.camera->pos.size());
+        std::printf("\n");
+    }
+    for (const auto& w : warnings) std::printf("warning: %s\n", w.c_str());
+    if (!out.empty()) {
+        std::ofstream o(out);
+        for (const auto& v : mesh.vertices) o << "v " << v.x << ' ' << v.y << ' ' << v.z << '\n';
+        uint32_t group = UINT32_MAX;
+        for (const auto& f : mesh.faces) {
+            if (f.group != group) o << "g group" << (group = f.group) << '\n';
+            o << "f " << f.v[0] + 1 << ' ' << f.v[1] + 1 << ' ' << f.v[2] + 1 << '\n';
+        }
+        std::printf("wrote %s\n", out.c_str());
+    }
+}
+
+// ---- animation (docs/formats/ANIMATION.md) ---------------------------------------------------------------
+void animDump(const cdc::Drm& drm, std::optional<uint32_t> clipId) {
+    static const char* const channel[] = {"rotX", "rotY", "rotZ", "scaleX", "scaleY", "scaleZ", "transX", "transY", "transZ"};
+    std::vector<std::string> warnings;
+    if (!clipId) {
+        for (const auto& sk : anim::decodeSkeletons(drm, warnings)) {
+            std::printf("skeleton: render model %u, %zu bones\n", sk.renderModelId, sk.bones.size());
+            for (size_t b = 0; b < sk.bones.size(); ++b)
+                std::printf("  bone %3zu parent %3d pivot (%.2f %.2f %.2f)\n", b, sk.bones[b].parent, sk.bones[b].pivot[0],
+                            sk.bones[b].pivot[1], sk.bones[b].pivot[2]);
+        }
+        const auto list = anim::animList(drm);
+        std::printf("animation list: %zu entries\n", list.size());
+        for (size_t i = 0; i < list.size(); ++i) std::printf("  %4zu anim %5u %s\n", i, list[i].animId, list[i].name.c_str());
+        std::printf("animation patterns: %zu\n", anim::animPatterns(drm).size());
+        std::printf("clips (type-2 sections):\n%6s %5s %7s %8s %5s %8s\n", "id", "keys", "tpk", "seconds", "segs", "animated");
+    }
+    size_t clips = 0, bad = 0;
+    for (const auto& s : drm.sections) {
+        if (s.type != cdc::SectionType::Animation || (clipId && s.id != *clipId)) continue;
+        try {
+            const auto c = anim::decodeClip(s.data);
+            ++clips;
+            size_t animated = 0;
+            for (const auto& seg : c.tracks)
+                for (const auto& t : seg) animated += !t.empty();
+            if (!clipId) {
+                std::printf("%6u %5u %7u %8.3f %5zu %8zu\n", c.id, c.keyCount, c.timePerKey, c.durationSeconds(), c.tracks.size(), animated);
+                continue;
+            }
+            std::printf("clip %u: %u keys, %u time units per key (%.3f s), %zu segments, %zu animated tracks\n", c.id,
+                        c.keyCount, c.timePerKey, c.durationSeconds(), c.tracks.size(), animated);
+            for (size_t seg = 0; seg < c.tracks.size(); ++seg)
+                for (int ch = 0; ch < anim::kChannels; ++ch) {
+                    const auto& t = c.tracks[seg][size_t(ch)];
+                    if (t.empty()) continue;
+                    std::printf("seg %3zu %-6s", seg, channel[ch]);
+                    for (float v : t) std::printf(" %.4g", v);
+                    std::printf("\n");
+                }
+        } catch (const std::exception& e) {
+            ++bad;
+            std::printf("%6u error: %s\n", s.id, e.what());
+        }
+    }
+    if (clipId && !clips && !bad) throw cdc::FormatError("no animation section " + std::to_string(*clipId));
+    if (!clipId) std::printf("%zu clips decoded, %zu errors\n", clips, bad);
+    for (const auto& w : warnings) std::printf("warning: %s\n", w.c_str());
+}
+
+// ---- materials (docs/formats/MATERIALS.md) ---------------------------------------------------------------
+void materialsDump(const cdc::Drm& drm) {
+    static const char* const blend[] = {"opaque", "alpha", "additive", "average"};
+    std::printf("%6s %-8s %3s %3s %3s %3s %4s %8s %6s %6s %3s %3s %3s  textures (id:category:slot)\n", "id", "blend", "mod",
+                "ref", "2s", "shd", "zw", "flags", "vsLib", "psLib", "vsC", "psC", "smp");
+    size_t n = 0;
+    for (const auto& s : drm.sections) {
+        if (s.type != cdc::SectionType::Material) continue;
+        ++n;
+        const auto st = formats::materialState(s);
+        formats::MaterialShaderLibs libs;
+        const auto m = formats::decodeMaterial(s, &libs);
+        std::printf("%6u %-8s %3u %3u %3d %3d %4d %8x %6u %6u %3zu %3zu %3zu ", s.id, blend[size_t(st.blend) & 3], m.blendMode,
+                    st.alphaRef, st.doubleSided, st.castsShadow, st.depthWrite, m.flags, libs.vertex, libs.pixel,
+                    m.vsParams.size() / 4, m.psParams.size() / 4, m.samplers.size());
+        for (const auto& t : formats::materialTextures(s)) std::printf(" %u:%u:%u", t.textureId, t.category, t.slot);
+        std::printf("\n");
+    }
+    std::printf("%zu material sections\n", n);
+}
+
+// ---- scripts (docs/formats/SCRIPTS.md) -------------------------------------------------------------------
+// cdc SCMD_* names (cdcEngineDXHR cdcScript/ByteCodeEnum.h), opcode = index; same table as tests/test_gates.cpp.
+constexpr const char* kOps[] = {
+    "NOP", "POP", "PUSH", "PUSHI", "PUSHI8", "PUSHC", "PUSHL8", "PUSHL16", "PUSHL32", "PUSHLA", "PUSHLR", "PUSHS",
+    "PUSHS8", "PUSHS16", "PUSHS32", "PUSHSA", "PUSHSR", "PUSHM8", "PUSHM16", "PUSHM32", "PUSHMA", "PUSHMR", "PUSHT8",
+    "PUSHT16", "PUSHT32", "PUSHTA", "PUSHTR", "DREF8", "DREF16", "DREF32", "DREFA", "DREFR", "DREFD", "BOUNDS",
+    "DBOUNDS", "MAP8", "MAP16", "MAP32", "MAPA", "MAPR", "MAPG", "IMAP8", "IMAP16", "IMAP32", "IMAPA", "IMAPR",
+    "MOVE8", "MOVE32", "MOVER", "MOVEC", "MOVEM", "MOVED", "MOVEU", "MOVET", "MOVEN", "MOVEAR", "MOVEAC", "MOVEAM",
+    "MOVEAD", "MOVEAU", "MOVEAT", "NEGI", "ADDI", "SUBI", "MULI", "DIVI", "MODI", "LTI", "LTEQI", "EQI", "EQI8",
+    "NEGF", "ADDF", "SUBF", "MULF", "DIVF", "LTF", "LTEQF", "EQF", "EQC", "NOTB", "ANDB", "ORB", "XORB", "AND", "OR",
+    "XOR", "SHL", "SHR", "INV", "FTOI", "FTOB", "ITOF", "ITOB", "BTOI", "BTOF", "CTOI", "CTOF", "CTOB", "JMP", "JMPF",
+    "CALLU", "CALL1", "CALL2", "CALL3", "CALL4", "CALL5", "SSEQU", "SSEQ1", "SSEQ2", "SSEQ3", "SSEQ4", "SSEQ5",
+    "PSEQU", "PSEQ1", "PSEQ2", "PSEQ3", "PSEQ4", "PSEQ5", "START", "TSSTART", "TPSTART", "TEND", "RET", "SLEEP",
+    "STATE", "ISTYPE", "NEW", "WAIT", "PUSHD8", "PUSHD16", "PUSHD32", "PUSHDA", "MOVEP"};
+static_assert(std::size(kOps) == script::kOpCount && std::string_view(kOps[script::kOpCallU]) == "CALLU" &&
+              std::string_view(kOps[script::kOpRet]) == "RET");
+
+void scriptDump(const cdc::Drm& drm, std::optional<uint32_t> typeId) {
+    size_t types = 0, errors = 0;
+    if (!typeId) std::printf("%6s %6s %-24s %5s %7s %9s %6s\n", "id", "super", "native", "size", "members", "functions", "states");
+    for (uint32_t i = 0; i < drm.sections.size(); ++i) {
+        const auto& s = drm.sections[i];
+        if (s.type != cdc::SectionType::Script || (typeId && s.id != *typeId)) continue;
+        script::ScriptType t;
+        try {
+            t = script::parseScriptType(drm, i);
+        } catch (const std::exception& e) {
+            ++errors;
+            std::printf("%6u error: %s\n", s.id, e.what());
+            continue;
+        }
+        ++types;
+        if (!typeId) {
+            std::printf("%6u %6u %-24s %5u %7zu %9zu %6zu\n", t.id, t.superId, t.nativeName.c_str(), t.size, t.members.size(),
+                        t.functions.size(), t.states.size());
+            continue;
+        }
+        std::printf("script type %u (section %u): super %u, native '%s', %u bytes, %zu states\n", t.id, i, t.superId,
+                    t.nativeName.c_str(), t.size, t.states.size());
+        for (const auto& m : t.members) {
+            std::printf("  member +0x%03x type 0x%02x typeId %u argTypeId %u symbol %u", m.offset, m.type, m.typeId,
+                        m.argTypeId, m.name);
+            if (m.init) std::printf(" init 0x%x", *m.init);
+            if (!m.initText.empty()) std::printf(" \"%s\"", m.initText.c_str());
+            std::printf("\n");
+        }
+        for (size_t f = 0; f < t.functions.size(); ++f) {
+            const auto& fn = t.functions[f];
+            std::printf("  function %zu @%u:%x vt %d, %u args, %u locals, returns 0x%x%s, %u words\n", f, fn.self.section,
+                        fn.self.offset, fn.vtIndex, fn.argCount, fn.localCount, fn.returnType, fn.native ? ", native" : "",
+                        fn.wordCount);
+            for (const auto& in : fn.code) {
+                std::printf("    %5u  %-8s %d", in.word, in.op < std::size(kOps) ? kOps[in.op] : "?", in.arg);
+                for (const auto& p : in.ptrs) std::printf(" ->%u:%x", p.section, p.offset);
+                if (in.ref) std::printf(" type %u", in.ref);
+                if (in.op == script::kOpPush) std::printf(" #0x%x", in.imm);
+                if (!in.text.empty()) std::printf(" \"%s\"", in.text.c_str());
+                std::printf("\n");
+            }
+        }
+    }
+    if (typeId && !types && !errors) throw cdc::FormatError("no script section " + std::to_string(*typeId));
+    if (!typeId) std::printf("%zu script types, %zu errors\n", types, errors);
+}
+
+// ---- cinematics (docs/formats/CINEMATICS.md) -------------------------------------------------------------
+void cineDump(const cdc::BigfileSet& bf, const std::string& name, std::optional<uint32_t> channel, uint32_t count) {
+    const std::string path = name.find('\\') == std::string::npos ? "pc-w\\cinstream\\" + name + ".mul" : name;
+    const auto mul = bf.read(path);
+    if (!mul) throw cdc::FormatError("not in bigfile: " + path);
+    const auto c = cine::demux(*mul);
+    const auto sum = cine::scan(c);
+    const auto& h = sum.header;
+    std::printf("%s: CINE version %u, unit %s (%u), %u channels, %d frames (%.2f s), %zu subtitle entries, clean end %d\n",
+                path.c_str(), h.version, h.unitName.c_str(), h.unitId, h.channels, sum.frames, sum.frames / cine::kFps,
+                sum.subtitles.size(), sum.cleanEnd);
+    for (const auto& m : h.markers) std::printf("  marker unit %u intro %d channels %u..%u\n", m.unit, m.intro, m.channel, m.channel + 8);
+    for (const auto& in : h.instances) {
+        std::printf("  instance intro %d: %u bones, channels %u.. (bone 0 at %u), %zu lights", in.intro, in.bones, in.channel,
+                    in.boneChannel(0), in.lights.size());
+        if (!in.lights.empty()) std::printf(" (channels %u..)", in.lightChannel);
+        if (in.vars) std::printf(", %u vars at %u", in.vars, in.varChannel);
+        if (in.endPos) std::printf(", ends at (%.0f %.0f %.0f) unit %u", in.endPos->x, in.endPos->y, in.endPos->z, in.endUnit);
+        std::printf("\n");
+    }
+    for (const uint32_t cam : h.cameras) std::printf("  camera channels %u..%u\n", cam, cam + 15);
+    for (const auto& e : h.events) std::printf("  event %u on channel %u (target %u)\n", e.id, e.channel, h.eventTarget);
+    if (!channel) return;
+    if (*channel >= h.channels) throw cdc::FormatError("channel past the header's " + std::to_string(h.channels));
+    count = std::min(count, h.channels - *channel);
+    cine::Decoder dec(c, h);
+    while (dec.next()) {
+        std::printf("%5d", dec.frame());
+        for (uint32_t k = 0; k < count; ++k) std::printf(" %.5g", dec.values()[*channel + k]);
+        std::printf("\n");
+    }
+}
+
+// ---- UI font (docs/formats/UI.md) ------------------------------------------------------------------------
+void fontDump(const cdc::Drm& drm, uint32_t dtpId) {
+    std::string why;
+    const auto f = ui::parseFont(drm, dtpId, &why);
+    if (!f) throw cdc::FormatError("font DTP " + std::to_string(dtpId) + ": " + why);
+    std::printf("font DTP %u: textures %u / %u, cell height %d, spacing %d, scale %.3f x %.3f, %zu glyphs\n", dtpId, f->texture,
+                f->texture2, f->cellHeight, f->spacing, f->scaleX, f->scaleY, f->glyphs.size());
+    std::vector<uint32_t> codes;
+    for (const auto& [code, g] : f->glyphs) codes.push_back(code);
+    std::ranges::sort(codes);
+    for (const uint32_t code : codes) {
+        const auto& g = f->glyphs.at(code);
+        std::printf("  U+%04X %-4s width %2u at (%4u, %4u)%s\n", code, code >= 0x20 && code < 0x7F ? std::string(1, char(code)).c_str() : "",
+                    g.width, g.x, g.y, g.second ? " texture2" : "");
+    }
+}
+
+// ---- container round trip (docs/formats/CONTAINERS.md §8, TEXTURES.md "Round trip") ---------------------
+struct RoundTripCounts {
+    size_t drms = 0, cdrm = 0, cdrmSame = 0, drmSame = 0, textures = 0, pcdSame = 0;
+    std::vector<std::string> mismatches;
+};
+void roundTrip(const std::string& label, std::vector<uint8_t> bytes, RoundTripCounts& n) {
+    const bool wrapped = cdc::isCdrm(bytes);
+    try {
+        if (wrapped) {
+            ++n.cdrm;
+            if (cdc::writeCdrm(cdc::readCdrmBlocks(bytes)) == bytes) ++n.cdrmSame;
+            else n.mismatches.push_back(label + ": CDRM re-wrap differs");
+        }
+        const auto drm = cdc::parseDrm(std::move(bytes));
+        ++n.drms;
+        if (cdc::serializeDrm(cdc::toDrmImage(drm)) == drm.bytes) ++n.drmSame;
+        else n.mismatches.push_back(label + ": DRM serialise differs");
+        for (const auto& s : drm.sections) {
+            if (s.type != cdc::SectionType::Texture) continue;
+            ++n.textures;
+            const auto h = formats::parsePcdHeader(s.data);
+            if (h && s.data.size() - 24 == h->dataSize &&
+                formats::encodePcd(*h, s.data.subspan(24)) == std::vector<uint8_t>(s.data.begin(), s.data.end()))
+                ++n.pcdSame;
+            else
+                n.mismatches.push_back(label + ": PCD9 re-wrap differs for texture " + std::to_string(s.id));
+        }
+    } catch (const std::exception& e) {
+        n.mismatches.push_back(label + ": " + e.what());
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) try {
@@ -421,6 +761,45 @@ int main(int argc, char** argv) try {
                             disassemble(parse(e.bytecode)).c_str());
             }
         }
+    } else if (cmd == "collision") {
+        collisionDump(loadDrm(bf, path), out);
+    } else if (cmd == "anim") {
+        animDump(loadDrm(bf, path), pos.size() > 3 ? std::optional(uint32_t(std::stoul(pos[3], nullptr, 0))) : std::nullopt);
+    } else if (cmd == "materials") {
+        materialsDump(loadDrm(bf, path));
+    } else if (cmd == "script") {
+        scriptDump(loadDrm(bf, path), pos.size() > 3 ? std::optional(uint32_t(std::stoul(pos[3], nullptr, 0))) : std::nullopt);
+    } else if (cmd == "cine") {
+        cineDump(bf, path, pos.size() > 3 ? std::optional(uint32_t(std::stoul(pos[3], nullptr, 0))) : std::nullopt,
+                 pos.size() > 4 ? uint32_t(std::stoul(pos[4], nullptr, 0)) : 1u);
+    } else if (cmd == "font") {
+        fontDump(loadDrm(bf, path), pos.size() > 3 ? uint32_t(std::stoul(pos[3], nullptr, 0)) : 46u);
+    } else if (cmd == "roundtrip") {
+        RoundTripCounts n;
+        if (path == "all") {
+            for (const char* archive : {"bigfile.000", "patch.000"}) {
+                if (!fs::exists(fs::path(pos[1]) / archive)) continue;
+                const cdc::Bigfile big(fs::path(pos[1]) / archive);
+                for (const auto& r : big.records()) {
+                    auto bytes = big.read(r);
+                    uint32_t version = 0;
+                    if (bytes.size() >= 4) std::memcpy(&version, bytes.data(), 4);
+                    if (!cdc::isCdrm(bytes) && version != cdc::kDrmVersion) continue;
+                    char label[48];
+                    std::snprintf(label, sizeof label, "%s:%08x", archive, r.hash);
+                    roundTrip(label, std::move(bytes), n);
+                }
+            }
+        } else {
+            auto bytes = bf.read(path);
+            if (!bytes) throw cdc::FormatError("not in bigfile: " + path);
+            roundTrip(path, std::move(*bytes), n);
+        }
+        for (const auto& m : n.mismatches) std::printf("MISMATCH %s\n", m.c_str());
+        std::printf("%zu DRMs (%zu CDRM): DRM serialise identical %zu, CDRM re-wrap identical %zu, %zu PCD9 textures, "
+                    "re-wrap identical %zu, %zu mismatches\n",
+                    n.drms, n.cdrm, n.drmSame, n.cdrmSame, n.textures, n.pcdSame, n.mismatches.size());
+        return n.mismatches.empty() ? 0 : 1;
     } else {
         return usage();
     }
