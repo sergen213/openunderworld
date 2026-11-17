@@ -84,6 +84,9 @@ struct Markup {
     std::vector<vec3> points;
     std::optional<CameraRecord> camera; // item +0x64 / +0x68 camera commands: the record command 0x12 selects
     uint16_t intro = 0; // unit item +0x4A -> MarkUp +0x2C: tru.exe's "introID" of a markup box (0x5C41A0's debug text)
+    // Units per second of each point as its owner moved it on the last tick (empty: static; game::World fills it for
+    // object markup). tru.exe keeps the same at a ledge candidate's attach point, candidate +0x80 (0x6F6C50 / 0x6EC930).
+    std::vector<vec3> velocity;
 };
 // MUD flag bits tru.exe derives from the type (switch 0x5D6F90 | 0x5D70A0).
 uint32_t markupFlags(uint8_t type);

@@ -9534,6 +9534,40 @@ TEST(Game, MovingMarkupJumpOffInheritsVelocity) {
     EXPECT_LT(glm::length((moving - still) - vec3(0, 300, 0)), 1.0f) << "plus the slider's";
 }
 
+// tru.exe 0x6FC6B0 (MUD 0x40000000, the class test 21): the way in, flattened, against the ledge's outward normal, dot
+// at most 0.2618, or 0.5236 when the ledge's owner moves at the attach point faster than 3.1605 units per 30 Hz frame
+// (candidate +0x80, 0x6FCAD2..0x6FCAE4). A standing jump (q2: straight up, so the way in is the way to the hit) from
+// behind the line past the ledge's end: at a dot of 0.41 / 0.31 a still ledge is refused and one sliding along its
+// line at 105 units/s caught, one at 85 (2.8 a frame) refused; 0.21 is caught still, 0.67 refused moving.
+TEST(Game, MovingLedgeLoosensWallSideLimit) {
+    const auto caught = [&](float deg, float speed) {
+        CollisionMesh m;
+        addFloor(m, -6000, -6000, 6000, 6000, 0);
+        const float a = glm::radians(deg);
+        const vec3 e(0, 800 - 79, 0), start = e - 200.0f * vec3(std::cos(a), -std::sin(a), 0); // e: the end less the inset
+        auto w = makeWorld(std::move(m), start, std::atan2(e.y - start.y, e.x - start.x));
+        // hangs toward +x (right of +y); 830 over the floor: q2's leap
+        w->script().addObject(markupObject(*w, "mm_slider", 9001, {0, 0, 0}, {1, 7, {{0, -800, 830}, {0, 800, 830}}}), false);
+        const auto& s = w->player().state();
+        Actions jump;
+        jump.jump = true;
+        float y = 0;
+        for (int i = 0; i < 150 && s.state != State::Hang; ++i) {
+            if (i >= 14 && i <= 20) y += speed * float(game::kTickSeconds); // sliding along its line while she jumps
+            w->script().setBody(9001, glm::translate(glm::mat4(1), vec3(0, y, 0)));
+            w->tick(i == 20 ? jump : Actions{});
+        }
+        return s.state == State::Hang || s.state == State::HangJump;
+    };
+    EXPECT_FALSE(caught(66, 0)) << "dot 0.41, still";
+    EXPECT_TRUE(caught(66, 105)) << "dot 0.41, moving";
+    EXPECT_FALSE(caught(66, 85)) << "dot 0.41, under 3.1605 a frame";
+    EXPECT_FALSE(caught(72, 0)) << "dot 0.31, still";
+    EXPECT_TRUE(caught(72, 105)) << "dot 0.31, moving";
+    EXPECT_TRUE(caught(78, 0)) << "dot 0.21";
+    EXPECT_FALSE(caught(48, 105)) << "dot 0.67, over the loosened limit too";
+}
+
 // A pole on a hinge: the object turns about a vertical axis 1000 from the pole; hanging, she swings round with it and
 // turns with it, and a drop throws her off along the tangent.
 TEST(Game, MovingMarkupPoleOnHinge) {

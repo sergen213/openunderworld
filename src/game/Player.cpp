@@ -1525,10 +1525,21 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
         const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
         constexpr float side = kLedgeSide;
         const auto cone = [&](float c) { return glm::length(toHit) <= 1e-3f || glm::dot(glm::normalize(toHit), q.dir) >= std::cos(c); };
+        // MUD 0x40000000 (0x6FC6B0): the 2-D dot of the way in with the ledge's outward normal against 0.2618 (0x855314),
+        // loosened to 0.5236 (0x85DBF4) when the ledge itself moves: the length of the candidate's +0x80 (the velocity
+        // at the attach point of the markup's owner, 0x6F6C50 -> 0x6EC930 -> 0x5D75B0, units per 30 Hz frame) above
+        // 3.1605 (0x6FCAD2..0x6FCAE4). Ours: Markup::velocity interpolated to the hit, x 1/30 s.
+        const auto ledgeSpeed = [&] {
+            if (m.velocity.size() != m.points.size()) return 0.0f;
+            const vec3 a = m.points[size_t(si)], ab = m.points[size_t(si) + 1] - a;
+            const float ll = glm::dot(ab, ab), u = ll > 1e-6f ? std::clamp(glm::dot(h - a, ab) / ll, 0.0f, 1.0f) : 0.0f;
+            return glm::length(glm::mix(m.velocity[size_t(si)], m.velocity[size_t(si) + 1], u));
+        };
         const auto wallSide = [&] {
             vec2 motion = xy(q.v);
             if (glm::length(motion) < 1e-3f) motion = glm::length(toHit) > 1e-3f ? toHit : q.dir;
-            return glm::dot(glm::normalize(motion), n * side) <= 0.2617994f;
+            const float limit = ledgeSpeed() > 3.1605f * 30.0f ? 0.5235988f : 0.2617994f;
+            return glm::dot(glm::normalize(motion), n * side) <= limit;
         };
         if (record.empty()) { // the default checks (0x70EC60)
             if (t <= q.minT || !capsule(arcAt(q.start, t), h) || !cone(q.cone) ||

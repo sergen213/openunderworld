@@ -1371,7 +1371,7 @@ private:
     void tickInserted(float dt);           // inserted portables: the receptacle's slider, the portable's pose, pole markup
     // Objects' model markup (physics::ObjectPhysics::markup) in col_, placed by the object's collider each tick: ledges
     // on push blocks, cog rings, breakable ledges move with their instance (tru.exe markup boxes owned by the instance).
-    void tickObjectMarkup();
+    void tickObjectMarkup(float dt = 0); // dt > 0 (a tick): also each moved point's velocity (Markup::velocity)
     void poseUberModels(); // each uber object's own mesh under its section's clip (Object::animPose)
     // (uid, item) of the object markup at col_ index `index`; its frame as tickObjectMarkup last placed it.
     std::optional<glm::mat4> objectMarkupFrame(int index) const;

@@ -2025,7 +2025,7 @@ void World::tickObjects(float dt) {
     tickJoints(dt);
     collectJointSounds(dt);
     poseColliders();
-    tickObjectMarkup();
+    tickObjectMarkup(dt);
     tickHazards();
     if (const auto rideNow = rideBefore ? objectMarkupFrame(ride) : std::nullopt; rideNow && *rideNow != *rideBefore) {
         player_.rideFrame(*rideNow * glm::inverse(*rideBefore));
@@ -2591,7 +2591,7 @@ void World::tickInserted(float dt) {
 // under the pose that draws and collides it (script pose: body, push offset, clip palette; a section: its joint and
 // clip). Items are keyed (uid, model x 100 + item) -- model 0's by their index, as saves made before name them.
 // Portables add none (an inserted pole: tickInserted), class-30 breakables add their pieces' (tickBreakableMarkup).
-void World::tickObjectMarkup() {
+void World::tickObjectMarkup(float dt) {
     std::set<std::pair<int32_t, int>> seen;
     const auto place = [&](const script::Object& o, const physics::ObjectPhysics& p, int model, const glm::mat4& base,
                            const std::vector<glm::mat4>* palette) {
@@ -2609,7 +2609,15 @@ void World::tickObjectMarkup() {
             objectMarkupFrame_[key] = frame;
             auto [it, added] = objectMarkup_.try_emplace(key, int(col_.markup.size()));
             if (added) col_.markup.push_back(std::move(m));
-            else col_.markup[size_t(it->second)].points = std::move(m.points), col_.markup[size_t(it->second)].type = m.type;
+            else {
+                auto& old = col_.markup[size_t(it->second)];
+                // Each point's velocity over this tick (tru.exe 0x6EC930 -> 0x5D75B0: the point under the segment's
+                // last and current world matrix, per frame); a placement without a tick (load, rebuild) has none.
+                old.velocity.clear();
+                if (dt > 0 && old.points.size() == m.points.size())
+                    for (size_t i = 0; i < m.points.size(); ++i) old.velocity.push_back((m.points[i] - old.points[i]) / dt);
+                old.points = std::move(m.points), old.type = m.type;
+            }
         }
     };
     for (const auto& o : script_.objects()) {

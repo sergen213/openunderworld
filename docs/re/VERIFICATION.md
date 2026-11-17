@@ -54,6 +54,13 @@ be checked in the exe. For these the row checks the read (offset, scale, compari
    0x7201A0 (a message handler; 0x72015D sets it from a message value / 4096). The controller's 0x740036 read is only
    the seed of its angle range (props 0x192 / 0x193). `floorKind` matches; test rows added, no behaviour change.
 
+   **V042 resolved 2026-11-16 (agent/SlideLedge).** `edi` is the ledge candidate record (0xE0 bytes, built by 0x6F6C50
+   / 0x6F6DB0 in 0x70F300). Its +0x80 is the velocity of the markup's owner at the attach point (0x6EC930: zero for
+   static markup, else 0x4D8F70 on a physics body or 0x5D75B0 = displacement between the segment's last and current
+   matrix / timeMult, per 30 Hz frame). So the loosening applies to moving ledges, not to Lara's arc speed. Fixed:
+   `Markup::velocity`, filled by `World::tickObjectMarkup`; threshold 3.1605 × 30 units/s. [U] the units of the
+   physics-body path 0x4D8F70.
+
 Citation error, behaviour correct:
 
 - **V049, 0x622418.** Cited at World.cpp:580, Combat.hpp:376, SCRIPTS.md:435 and GAMEPLAY.md:4185. 0x622418 is not an
