@@ -43,6 +43,10 @@ Labels: **[O]** observed in game data or tru.exe, **[I]** inference, **[U]** unk
 sections: 17 208 DXT1 (BC1), 9 284 DXT5 (BC3) and 9 105 A8R8G8B8 decoded, and 349 rejected (all of them cube maps).
 No DXT3 texture was seen, so the BC2 path is untested. No size or mip-chain errors occurred.
 
+Superseded for cube maps: the decoder has since gained cube support (`TextureData::cube`, above), and all 36 527 texture
+sections of bigfile.000 + patch.000, the 349 cube maps included, decode (`RealData.Pcd9RewrapEveryTexture`, commit
+623d059; "Round trip" below).
+
 ## Channel order (verified)
 
 - [O] DXT1 and DXT5 decode to correct colours (the surveyed DRMs contain no DXT3). We decoded Lara's diffuse textures to TGA, converted
