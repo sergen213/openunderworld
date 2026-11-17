@@ -17,6 +17,10 @@ All integers are little-endian.
 
 ---
 
+**Endianness:** little-endian for every integer in the bigfile index, patch.000, CDRM block table, DRM header,
+section headers, relocation tables and locals.bin [V-data: every record parses with LE reads; `hash[]` is ascending
+as LE u32]. Relocation bitfields are packed into LE words as shown in §4.5.
+
 ## 1. Bigfile (`bigfile.000` … `bigfile.003`)
 
 ### 1.1 Layout
@@ -249,3 +253,16 @@ UTF-8 NUL-terminated strings
 4. `Mus!` sequence semantics (`.mul` codec and FSB4 sample mode: [AUDIO.md](AUDIO.md)).
 5. Names for the 20 "other" payloads and for hashes not in any public file list.
 6. Runtime spec mask actually used per language (bits beyond 0–4 and 11); whether bit 31 is ever cleared.
+
+---
+
+## 7. Validation
+
+| Container | Loader rejects (`cdc::FormatError` unless noted) | Enforced by |
+|---|---|---|
+| Bigfile index (`cdc::Bigfile`, `src/cdc/Cdc.cpp`) | file cannot be opened; header < 4 bytes; count 0 or > 1 000 000; index truncated; `hash[]` not ascending; a record with `compressedSize ≠ 0`; a record past the end of its part; short reads | `Bigfile.SpecMaskNeedsAllBitsLikeTheExe` (spec-mask superset rule, patch priority, language variants); `RealData.PatchOverridesBigfile`. Synthetic rejection test for count / unsorted hashes / `compressedSize`: **missing** (the importer's own parser has `Importer.TruncatedIndexIsArchiveError`, `Importer.RecordPastEofAndMissingPart`, INVENTORY.md) |
+| CDRM (`decompressCdrm`) | magic ≠ `CDRM`; block table past the data; a block past the data; stored block smaller than declared; zlib error; block type > 2 | `Cdrm.RoundTripMixedBlocks`, `Cdrm.TruncationThrows` (every prefix), `Cdrm.CorruptZlibThrows` |
+| DRM v19 (`parseDrm`) | version ≠ 19; section table or dependency names past the data; a section's relocations + data past the file; an external relocation to a section index ≥ numSections | `Drm.ParsesSectionsDepsAndRelocs`, `Drm.WrappedInCdrm`, `Drm.RejectsBadVersionAndTruncation` (version 18, every truncation), `Drm.SectionPointersInternalAndExternal` |
+| locals.bin (`locale::Strings`) | header < 8 bytes; offset table past the data (incl. huge counts); an offset at/after the end; a string without its NUL | `Strings.RejectsTruncation`, `Strings.DecodesSyntheticTableWithExeSemantics`, `LocaleRealData.AllLocalsBinVariantsDecode` (all six) |
+
+Not validated: CDRM `version` / `padding`, DRM `hdr[2..4]`, kind2 / resource16 relocation semantics (§6).

@@ -8,6 +8,8 @@ D3D9 token format), `src/render/ShaderTranslate.*` (SM3 → GLSL 4.50, libshader
 Labels: **[O]** observed (data, tru.exe decompile/disassembly, our renders), **[I]** inferred, **[U]** unknown. VAs: GOG tru.exe 1.1.0.0.
 Engine RE notes behind the tables below were collected in the private work dir (decomp_all.c + objdump).
 
+**Endianness:** little-endian: ShaderLib headers and every D3D9 token are LE u32 DWORDs [O].
+
 ## ShaderLib section [O]
 
 | off | type | meaning |
@@ -147,3 +149,14 @@ reflections and depth fade in GL and Vulkan.
 - Missing vs the original: light and PSSM shadows (PS slots 2–7 sample one shadow atlas s14 with Fetch4-style 4-tap PCF, `WorldToShadowMap` c158–c169, `PSSMToMap*` c80–c85, `PSSMDistances` c96; we use PS slot 0 with our shadow map / rays as `ouSunVis` / `ouLightVis`), directional SH terms on characters.
 - No original-game screenshot of the same views was available for a pixel comparison (PCGamingWiki's TRU page only has
   settings-menu images); comparison is against our previous renders.
+
+## Validation
+
+| Data | Loader rejects (`cdc::FormatError`) | Enforced by |
+|---|---|---|
+| ShaderLib (`parseShaderLib`) | header past the section; kind > 1; an entry < 16 bytes or past the section | `Sm3Parser.ShaderLibContainer` (truncated last entry) |
+| D3D9 bytecode (`parse`) | size not a multiple of 4; empty; version token not 0xFFFE/0xFFFF (vs/ps); shader model < 2; a comment, CTAB or instruction past the end; a missing end token; operand count mismatching the opcode | `Sm3Parser.RejectsMalformed` (no end token, overlong instruction, SM1, odd size), `Sm3Parser.SyntheticVertexShader` |
+| whole install | — | `Sm3Real.EveryInstallShaderTranslates` (all 5 594 programs parse, translate, compile for Vulkan and OpenGL) |
+| engine inputs | — | `OriginalShading.*` (light table / sets, cookies, irradiance, PSSM; [LIGHTING.md](LIGHTING.md)) |
+
+Unreadable shader libs inside a DRM are caught per library (`Shader.cpp` scan) and reported, not fatal.

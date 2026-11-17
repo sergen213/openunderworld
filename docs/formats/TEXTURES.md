@@ -5,6 +5,8 @@ CLI: `ou-asset textures <gameDir> <drm>`, `ou-asset dump-texture <gameDir> <drm>
 
 Labels: **[O]** observed in game data or tru.exe, **[I]** inference, **[U]** unknown.
 
+**Endianness:** little-endian (header fields, BCn block words, and A8R8G8B8 texels stored B, G, R, A) [O].
+
 ## Container
 
 - [O] Textures are DRM sections of section type 5. In tru.exe the type-5 handler is a
@@ -54,6 +56,23 @@ No DXT3 texture was seen, so the BC2 path is untested. No size or mip-chain erro
 - `decodeTexture` keeps BCn data compressed (`PixelFormat::BC1/BC2/BC3`) and returns format 0x15 as
   `PixelFormat::BGRA8`, without swizzling. `toRgba8` CPU-decodes any level to RGBA8 for dumps and tests.
   BC1 uses 3-colour+transparent mode when c0 ≤ c1. BC2/BC3 colour blocks always use 4-colour mode.
+
+## Validation
+
+`formats::decodeTexture` returns nullopt with a reason (`why`) for: data < 24 bytes or magic ≠ `PCD9`; a format other
+than 0x15 / DXT1 / DXT3 / DXT5; a non-zero palette size; pixel data larger than the section; a mip chain (× 6 for
+cube maps) whose byte size differs from the header's data size. Callers skip such textures (renderers bind a
+fallback; the scene loader records a warning).
+
+| Check | Enforced by |
+|---|---|
+| BC1 mip-chain sizes and decode | `Texture.Bc1MipChainAndDecode` |
+| BGRA swizzle, BC3 alpha | `Texture.Bgra8SwizzleAndBc3Alpha`, real data `RealData.Bgra8ChannelOrder` |
+| cube faces; chain one byte short, bad size, short header → rejected | `Texture.CubeFacesAndBadSizes` |
+| real textures decode | `RealData.LaraTexturesAndModel` |
+
+Gap: no test for the palette and unknown-format rejections; the install survey (0 size errors) is a tool run
+(`ou-asset textures`), not a test.
 
 ## Open questions
 

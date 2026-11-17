@@ -6,6 +6,8 @@ CLI: `ou-asset stats|render|dump-mesh <gameDir> <drm>`.
 Labels: **[O]** observed (game data, CPU render, or tru.exe decompile), **[I]** inference, **[U]** unknown.
 The tru.exe addresses below are GOG build VAs. They come from our own Ghidra decompiles and from GhidraRE's notes.
 
+**Endianness:** little-endian (Mesh/terrain headers, vertex and index buffers, D3DCOLOR and SHORT2 attributes) [O].
+
 ## Where the geometry lives
 
 - [O] DRM section type 12 is a RenderResource. The low byte of its packed header word, shifted right by 1 and masked to 7 bits (`(packed >> 1) & 0x7F`), is the resource type:
@@ -207,6 +209,26 @@ Verified paths: `pc-w\lara.drm` (7 meshes, 24 textures), `pc-w\l4_pool.drm` (8 t
 - `ou-asset render <game> pc-w\lara.drm --textured --view front|side`: Lara is in her T-pose with correct face, hair, clothing, holsters and boots.
 - `ou-asset render <game> pc-w\l4_pool.drm --textured --view top|front`: coherent stone-block level geometry with tiled textures.
 - `ou-asset dump-mesh … -o lara.obj --textures` writes OBJ, MTL and TGA files. OBJ `vt` = (u, 1−v).
+
+## Validation
+
+`decodeModel` / `decodeTerrain` (`src/formats/Model.cpp`) throw `cdc::FormatError` on: reads past the section; a
+vertex element outside the declared stride; a declaration without POSITION; a skin index outside the bone palette; an
+index count not a multiple of 3 or an index ≥ the vertex count; a missing `Mesh` header (magic); primgroup counts that
+disagree with the batches or a primgroup outside the index buffer; a missing terrain header pointer; a terrain group
+with an out-of-range vertex buffer or declaration; a terrain chunk outside its group / index buffer.
+`decodeRenderResources` catches per resource: the resource's meshes are dropped and a warning names the DRM and
+section; unknown resource types are warned and skipped; batches without texcoords and without textures are skipped
+with a warning.
+
+| Check | Enforced by |
+|---|---|
+| synthetic model decode; no-texcoord batch skipped with a warning | `Model.SyntheticMesh` |
+| real models / terrain | `RealData.LaraTexturesAndModel`, `RealData.UnitTerrain`, `RealData.ExteriorTerrain`, `RealData.ShadowOnlyTerrainGroups`, `RealData.BatchLodRanges` |
+| light maps without TEXCOORD1 | `RealData.LightMapsWithoutCoordinatesReadTheMean` ([LIGHTING.md](LIGHTING.md)) |
+
+Gap: no synthetic test feeds a corrupt index / primgroup / declaration; the all-DRM survey above is a tool run
+(`ou-asset stats`).
 
 ## Open questions
 

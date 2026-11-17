@@ -7,6 +7,8 @@ Labels: **[O]** observed (game data, tru.exe decompile/disassembly, or our rende
 Addresses are GOG tru.exe v1.1.0.0 VAs. Evidence tools (private work dir, not shipped): `scratch/mat.py`,
 `matparams.py`, `matsurvey.py`, `d3dbc.py` (a small D3D9 SM2/SM3 bytecode disassembler) and `shl2.py`.
 
+**Endianness:** little-endian (material blob words and relocation entries) [O].
+
 ## Material blob (section data, offsets from the section start)
 
 `cdc::PCMaterial` (RTTI `.?AVPCMaterial@cdc@@`) keeps the section data as its blob (`*(this+4)`). Fields used by the
@@ -104,6 +106,17 @@ list below describes the generic fallback.
   (docs/RENDERING.md "Instance opacity").
 - Verified [O]: `l4_ballcourt` from the `player` start (`--cam 26971,23597,3000,-100,-5`): ground plants and palms
   that rendered black or opaque now show textured, alpha-cut leaves in GL and Vulkan (docs/RENDERING.md).
+
+## Validation
+
+- `materialState`: a blob shorter than 0x50 bytes yields the default state (opaque, no alpha test, one-sided); blend
+  modes 6, 7, 9 (unseen in the survey) fall back to Alpha. Test: `Model.MaterialStateFromBlob` (modes 0/1/2/4/5/8,
+  flags 0x80 / 0x800, shadow-caster bit and the blend < 4 rule).
+- `materialTextures`: relocation table < 20 bytes → no textures; entries whose section type is not 5 are skipped; a
+  texture entry past the blob throws `cdc::FormatError`, which `decodeRenderResources` turns into a warning and drops
+  that render resource's meshes. Tested through `Model.SyntheticMesh` (material 50 → texture 9) and
+  `RealData.LaraTexturesAndModel`; **no** synthetic test of an out-of-range texture entry.
+- ShaderLib containers: SHADERS.md "Validation".
 
 ## Open questions
 
