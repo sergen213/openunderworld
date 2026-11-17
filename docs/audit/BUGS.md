@@ -110,7 +110,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
 | OU-PLY-012 | collision | No depenetration pass | Reproduced (idle) | pre-existing | — |
-| OU-SWM-001 | swimming | Under-water turn rate unmeasured; tru.exe steering 0x755A00 not ported | Open | pre-existing | C-MEASURE |
+| OU-SWM-001 | swimming | Swim turn rates differ from tru.exe and are left/right uneven; snap-back on release too fast | Reproduced (Wine-measured) | pre-existing | C-MEASURE |
 | OU-SWM-002 | swimming | Surface swim velocity lags heading ~9° vs ~16° | Open | pre-existing | C-MEASURE |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
@@ -149,6 +149,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
+| OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Reproduced (Wine-measured) | pre-existing | — |
+| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: one bite in ~4.5 min) | Reproduced (Wine-measured) | pre-existing | — |
 
 ## Root-cause clusters
 
@@ -541,6 +543,9 @@ saved slot requests with a 2 s fade-in [I] (ROADMAP L64). Status · Origin: Open
   125 → 247. Only past that does the camera move, and then late: camera z peaks at 730 (swell) 1.5 s after the deck's
   peak (158), when the deck is already down at 54; 760 (tru) 2.5 s after its peak (291). Over 20 s: deck −151 .. 420 vs camera 511 .. 946 (swell); −25 .. 382 vs
   611 .. 977 (tru). The focus behaves as a vertical dead zone plus easing, not as a carried platform [O].
+- Wine reference (WineMeasure 2026-11-16, `tools/wine-ref/sessions/l2_cliffclimb_sea.sh`; REFERENCE_COMPARISON new rows):
+  in tru.exe the pivot and camera ride the deck exactly. Camera minus root stays 369..375 while the deck heaves ±203,
+  lag 0.00 s. Ours: camera minus root 321..714, lag 0.75 s (original waves) / 1.0 s (FFT).
 - Status · Origin: Reproduced · pre-existing (27a5d8e, 2026-10-31).
 
 **OU-CAM-002 Swim camera follows the wave bob exactly**
@@ -557,12 +562,23 @@ saved slot requests with a 2 s fade-in [I] (ROADMAP L64). Status · Origin: Open
   moves **566** with the swell (23 %); 101 vs 430 on tru.exe's waves (24 %). The camera does not copy the bob, and
   the ratio does not depend on the swell. Status · Origin: Not reproduced · new-feature defect [I] (swell in gameplay,
   0.50.0).
+- Wine reference (2026-11-16, tru.exe side only): the swim pivot follows the wave bob 0.41..0.53 s late at gain
+  0.87..0.91; the camera height follows at gain 0.14..0.45. Camera mode switches in the same frame as the chart request
+  (dive → 19, surfacing → 20). Ours' side is not measured yet.
 
 **OU-CAM-003 Motorcycle camera placeholder** — `kDistance = bike ? 1711` [I] (`World.cpp:993`), swing 1002 [I];
 VehicleCamera not decoded (AUDIT_A L361). Status · Origin: Open · pre-existing.
 
 **OU-CAM-004 Reveal cameras** — blend in / out ours, key event 7 [U], gamebase time scales not applied (ROADMAP L51).
 Status · Origin: Open · pre-existing.
+
+**OU-CAM-005 Deck camera distance** — on the l2_cliffclimb yacht deck tru.exe's camera distance is 948.2. Ours is
+1264.2 (mode 1 `distance`, `World.cpp`). What sets 948.2 is unknown: a level camera record or mode command [U].
+Source: WineMeasure 2026-11-16, REFERENCE_COMPARISON new rows. Status · Origin: Reproduced · pre-existing.
+
+**OU-CMB-003 Shark aggression** — in l2_cliffclimb ours' sharks bite within 5 s of Lara entering the water at both
+measured points. In tru.exe there was one bite in about 4.5 min in the water (WineMeasure 2026-11-16). AI trigger
+distance and cooldown are not decoded [U]. Status · Origin: Reproduced · pre-existing.
 
 ### Lara's controller and traversal (OU-PLY)
 
@@ -634,7 +650,12 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
 **OU-SWM-001 Under-water turn rate unmeasured** — tru.exe steering function 0x755A00 (properties 0x200..0x20F, speed table
 512..519) not ported [U] (GAMEPLAY.md L1886-1887, ROADMAP L82); turn / pitch rates are an unmeasured row (M29 / M85,
 REFERENCE_COMPARISON "Unmeasured": l2_cliffclimb sea session). Test `Game.SwimFollowsTheCameraPitchUnderWater`.
-Status · Origin: Open · pre-existing.
+- Wine-measured 2026-11-16 (WineMeasure, REFERENCE_COMPARISON new turn rows). Forward + Right/Left held, camera free:
+  - tru.exe settles at 46.7/46.4 deg/s at the surface and 48.3/48.0 under water.
+  - Ours settles at 43/56 at the surface and 57..60/56 under water: different from tru.exe, and left/right uneven.
+  - On release ours snaps back at 118..143 deg/s; tru.exe at 52..73.
+  - Breath matches: 4000 frames last 133.5..134.0 s in tru.exe, 133.3 s in ours.
+- Status · Origin: Reproduced · pre-existing.
 
 **OU-SWM-002 Surface swim lag** — velocity lags heading ~9° vs tru.exe ~16° (`camfollow-wine/turn1.txt`, M29 /
 Differences #7). Files `Player.cpp` SwimSurface `kSwimTurnAccel`. Status · Origin: Open · pre-existing.
