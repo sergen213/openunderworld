@@ -1,0 +1,1160 @@
+struct	offset	meaning	sources	confidence	evidence_count	files	evidence	cited_funcs	disp_in_cited_funcs	asm_check
+.mus layout	0x0	char[4] | `"Mus!"`	table	stated	1	1	docs/formats/AUDIO.md:231			
+.mus layout	0x4	u32 | 0x2560 in all 75 = first sequence offset − 8 [I]; unused by `0x580E20`	table	inference	1	1	docs/formats/AUDIO.md:232	00580e20	1/1	
+.mus layout	0x8	u32 | version. `0x580E20` only warns "The musicfile %s has an incorrect version! (rebuild music)" if ≠ 0x114; all 75 are 0x114. `parseMus` throws on other values	table	stated	1	1	docs/formats/AUDIO.md:233	00580e20	1/1	
+.mus layout	0xc	u32×3 | 0 in all 75 [U]	table	unknown	1	1	docs/formats/AUDIO.md:234			
+.mus layout	0x17	u32×3 | 0 in all 75 [U]	table	unknown	1	1	docs/formats/AUDIO.md:234			
+.mus layout	0x18	u32 | sequence count (1 in all 75)	table	stated	1	1	docs/formats/AUDIO.md:235			
+.mus layout	0x1c	u32 | stem count (1–3; 137 in total)	table	stated	1	1	docs/formats/AUDIO.md:236			
+.mus layout	0x20	u32 | BPM of the stream clock (§5.3): 120 in all 75 (= the stems' 500 ms/beat; the sequence tempo says 100)	table	stated	1	1	docs/formats/AUDIO.md:237			
+.mus layout	0x24	u32 | offset of the stem records (0x58 bytes each)	table	stated	1	1	docs/formats/AUDIO.md:238			
+.mus layout	0x28	u32 | label count (11–20) / offset of the label table (u32 track offsets)	table	stated	1	1	docs/formats/AUDIO.md:239			
+.mus layout	0x2c	u32 | label count (11–20) / offset of the label table (u32 track offsets)	table	stated	1	1	docs/formats/AUDIO.md:239			
+.mus layout	0x30	u32 | sample / tone / program counts (4 / 52 / 50 in all 75)	table	stated	1	1	docs/formats/AUDIO.md:240			
+.mus layout	0x34	u32 | sample / tone / program counts (4 / 52 / 50 in all 75)	table	stated	1	1	docs/formats/AUDIO.md:240			
+.mus layout	0x38	u32 | sample / tone / program counts (4 / 52 / 50 in all 75)	table	stated	1	1	docs/formats/AUDIO.md:240			
+.mus layout	0x3c	{u32 id, u32 offset}×n | sequence table (id 0 in all 75)	table	stated	1	1	docs/formats/AUDIO.md:241			
+Action	0x1c	float delay = 0; // +0x1C: 30 Hz frames from the first contact to the break	mirror	stated	1	1	src/game/Breakables.hpp:32			
+Action	0x20	glm::vec3 shake{0}; // +0x20: the pieces' random jitter while it waits (units, per axis)	mirror	stated	1	1	src/game/Breakables.hpp:33			
+Action	0x38	float grace = 0; // +0x38: frames	mirror	stated	1	1	src/game/Breakables.hpp:34			
+AdrenalineTuning	0x286	float secondTargetHold = 1000 / 30.0f; // +0x286 u16 frames a second (dual) target is kept before another may take over	mirror	stated	1	1	src/game/Combat.hpp:461			
+AdrenalineTuning	0x2c8	float headShotScale = 0.2f; // +0x2C8 world time scale while aiming the head shot (0x715020)	mirror	stated	1	1	src/game/Combat.hpp:459	00715020	1/1	
+AdrenalineTuning	0x2cc	float ease = 10 / 30.0f; // +0x2CC frames for each time-scale ramp (x 33.33 ms, 0x78C160)	mirror	stated	1	1	src/game/Combat.hpp:460	0078c160	0/1	
+AdrenalineTuning	0x2d0	float max = 500.0f; // +0x2D0: the full meter, in damage dealt	mirror	stated	1	1	src/game/Combat.hpp:455			
+AdrenalineTuning	0x2d4	float drain = 20.0f; // +0x2D4 per second (0x6F2930: x timeMult / 30 per frame)	mirror	stated	1	1	src/game/Combat.hpp:456	006f2930	1/1	
+AdrenalineTuning	0x2d8	float modeDrain = 225.0f; // +0x2D8 per second in adrenaline mode (flag 0x8000000)	mirror	stated	1	1	src/game/Combat.hpp:457			
+AdrenalineTuning	0x31c	float modeScale = 0.5f; // +0x31C world time scale in adrenaline mode (0x7189C0)	mirror	stated	1	1	src/game/Combat.hpp:458	007189c0	1/1	
+AgainstData	0x10	instance slots (0x3FC - live instances) against data +0x10 (minimum)	prose	stated	1	1	docs/formats/PHYSICS.md:275			
+AmmoData	0x3c	un pellet), then the ammo's hit object (ammo data +0x3C, +0xA8 under water: 0x6C64D0 ->	prose	stated	1	1	src/app/game/main.cpp:1346	006c64d0	1/1	
+AmmoRecord	0x20	Hit class / type come from Lara's ammo record +0x20 / +0x24 (0x6C64D0 → 0x63C9B0): pr_handgun / uzi / akrifle bullet	prose	stated	1	1	docs/GAMEPLAY.md:3625	0063c9b0;006c64d0	2/2	
+Animation clip	0x0	floats | [U] (first clip: −100.6, −146.5, −3.36, 121, 20.4, 473.7, …); [I] bounds or root data	table	inference	1	1	docs/formats/ANIMATION.md:93			
+Animation clip	0x2f	floats | [U] (first clip: −100.6, −146.5, −3.36, 121, 20.4, 473.7, …); [I] bounds or root data	table	inference	1	1	docs/formats/ANIMATION.md:93			
+Animation clip	0x30	i16 | animID = the section id (all 1744 clips)	table	stated	1	1	docs/formats/ANIMATION.md:94			
+Animation clip	0x32	u16 | key count (the update code tests `> 1`)	table	stated	1	1	docs/formats/ANIMATION.md:95			
+Animation clip	0x34	i16 | time per key, in anim time units (below)	table	stated	1	1	docs/formats/ANIMATION.md:96			
+Animation clip	0x36	u8 | segment count (Lara clips: 113, so hair attach bones 113..115 stay at bind)	table	stated	1	1	docs/formats/ANIMATION.md:97			
+Animation clip	0x37	u8 | section count (1 in all 1744 clips; others are rejected)	table	stated	1	1	docs/formats/ANIMATION.md:98			
+Animation clip	0x38	u8 | extra-channel count (0 in 1398 clips; up to 8)	table	stated	1	1	docs/formats/ANIMATION.md:99			
+Animation clip	0x3c	u32 | self-relative offset of the extra channels = end of the bone channel data	table	stated	1	1	docs/formats/ANIMATION.md:100			
+Animation clip	0x40	u32 | [U] (0 in the first clip)	table	unknown	1	1	docs/formats/ANIMATION.md:101			
+Animation clip	0x44	u32 | self-relative offset of the bone channel data (one per section)	table	stated	2	1	docs/formats/ANIMATION.md:102;docs/formats/ANIMATION.md:103			
+AnimGraphState	0x14	std::vector<uint32_t> out; // +0x14/+0x18: transitions it can leave by (indices into AnimGraph::transitions)	mirror	stated	1	1	src/formats/AnimGraph.hpp:25			
+AnimGraphTransition	0xc	float after = 0; // +0xC: the stimulus value (timer: frames in the state) must reach this	mirror	stated	1	1	src/formats/AnimGraph.hpp:31			
+AnimGraphTransition	0x10	float window = 0; // +0x10: > 0: the stimulus' running total since the state's entry must reach this	mirror	stated	1	1	src/formats/AnimGraph.hpp:34			
+AnimGraphTransition	0x14	int32_t target = -1; // +0x14: state (index into AnimGraph::states); null = the current one again (0x6A5660)	mirror	stated	1	1	src/formats/AnimGraph.hpp:32	006a5660	1/1	
+AnimGraphTransition	0x1c	std::vector<uint32_t> events; // +0x1C/+0x20: hit damage classes (message 0x11C +0x50) that start it (mask 0x800)	mirror	stated	1	1	src/formats/AnimGraph.hpp:33			
+AnimNode	0xc	The first header bytes (two vec4s) and node +0x0C.	prose	unknown	1	1	docs/formats/MESHES.md:104			
+AnimNode	0x20	| node +0x20 | weapon `{u16 +2 object, s16 +8, f +0x10}`: poacher/long_range 114 `wp_akrifle	prose	observed	3	2	docs/GAMEPLAY.md:3573;docs/GAMEPLAY.md:3660;src/game/ai/Enemy.hpp:212	00614400;00614950	1/2	
+AnimNode	0x30	| node +0x30 / +0x34 / +0x38 | senses: default / mode 2 / combat (layout below) | [O] 0x6144	prose	observed	4	4	docs/GAMEPLAY.md:3574;docs/ROADMAP.md:57;src/game/ai/Enemy.hpp:39	005bf0e0;00612030;006126b0;00612bd0;00612f80	3/22	
+AnimNode	0x3c	| node +0x3C | health block {easy, normal, hard, +0xC} | [O] 0x620CC0 → 0x6E77B0 by difficul	prose	observed	2	2	docs/GAMEPLAY.md:3575;src/game/ai/EnemyData.cpp:138	00620cc0;0063c190;006e7710;006e77b0	2/4	
+AnimNode	0x40	] (0x62F520 → AI path +0x48): a point's node +0x40 byte	prose	observed	3	3	docs/GAMEPLAY.md:3832;src/formats/Formats.hpp:125;src/game/ai/Enemy.hpp:420	0062f520	1/1	
+AnimNode	0x44	| node +0x44 / +0x4C | pointers to sleep / investigate senses | [O] |	prose	observed	3	1	docs/GAMEPLAY.md:3576;docs/GAMEPLAY.md:3762;docs/GAMEPLAY.md:3859	00669d00	1/1	
+AnimNode	0x48	Patrol record [O] (behaviour-list node +0x48): +0x00 → MoveNav set (merc `idle_passive_to_passive_walk` +0x14,	prose	observed	6	4	docs/GAMEPLAY.md:3806;docs/GAMEPLAY.md:3859;docs/ROADMAP.md:57	005bf0e0;00612030;006126b0;00612bd0;00612f80	4/20	
+AnimNode	0x4c	+ 632.1, within node +0x44°, under the node +0x4C height line.	prose	observed	4	2	docs/GAMEPLAY.md:3859;docs/GAMEPLAY.md:3866;src/game/ai/Enemy.hpp:192	0061da60;0061dd10;0061df40;0061e320;0062c070	4/5	
+AnimNode	0x50	O] (0x628730 / 0x628800): a point whose node +0x50 has bit 1 turns to the node's facing (cdc -Y of its frame) with	prose	observed	2	2	docs/GAMEPLAY.md:3836;src/game/ai/Enemy.hpp:419	00628730;00628800	0/2	
+AnimNode	0x54	node +0x54: distance 316.06, blend 6 frames); clip events 5 / 4 open and close the window	prose	stated	5	4	docs/GAMEPLAY.md:4805;src/game/ai/Enemy.hpp:97;src/game/ai/Enemy.hpp:142	006255d0;00715020;00718ea0	1/3	
+AnimNode	0x64	| node +0x64 | death record (below), with the regenerate fields | [O] 0x614610, EnemyState_D	prose	observed	3	2	docs/GAMEPLAY.md:3577;docs/GAMEPLAY.md:3608;src/game/ai/Enemy.hpp:60	00614610;0066c500;0067ed20	1/3	
+AnimNode	0x68	| node +0x68..+0x9C | attack records (below) | [O] 0x642D80, EnemyState_Fire 0x666D10/0x666E	prose	observed	3	3	docs/GAMEPLAY.md:3578;docs/ROADMAP.md:57;src/game/ai/Enemy.hpp:48	005bf0e0;00612030;006126b0;00612bd0;00612f80	0/20	
+AnimNode	0xc8	ly `panther_thrall` has a taunt record (node +0xC8, flag AI +0x3718 set when its Adrenaline behaviour	prose	observed	1	1	docs/GAMEPLAY.md:3899			
+AnimNode	0xcc	reature / Thrall trees): behaviour-list node +0xCC, record R = +0x10 {+0 MoveNav set, +4 bit 0	prose	stated	3	2	docs/GAMEPLAY.md:3853;src/game/ai/Enemy.hpp:171;src/game/ai/Enemy.hpp:245	0062a180;0062d930;006365b0;00639b20	0/4	
+AnimNode	0xd8	Search record [O] (node +0xD8; 0x61E480 needs its +0x00 set): +0x00 → MoveNav set (merc `combat_walk_search`,	prose	observed	3	2	docs/GAMEPLAY.md:3811;src/game/ai/Enemy.hpp:162;src/game/ai/Enemy.hpp:244	0061e480;00637130	2/2	
+AnimNode	0xe4	| node +0xE4 | `"Sidestep"` behaviour parameters `{300, ptr, 948.2/790.1, 60/100, …}` — not	prose	observed	4	2	docs/GAMEPLAY.md:3579;docs/GAMEPLAY.md:3873;src/game/ai/Enemy.hpp:185	00623000;00674320;00677d70;00678530;00678b50	1/5	
+AnimNode	0x134	blockage 0xFF, user-data match from node +0x134 flags, linkUsageFlags = node +0x14C u8[16] as bits when the	prose	stated	1	1	docs/GAMEPLAY.md:3881			
+AnimNode	0x14c	rom node +0x134 flags, linkUsageFlags = node +0x14C u8[16] as bits when the	prose	stated	4	4	docs/GAMEPLAY.md:3881;src/game/ai/Enemy.hpp:235;src/game/ai/EnemyData.cpp:249	006148b0;00662ec0	1/2	
+AnimNode	0x4e68	or_Cover picks the AI's current planner node +0x4E68 with cover flags (+0x84 bits 6 / 12..14) that	prose	inference	1	1	src/game/ai/Enemy.cpp:394			
+AnimRequest	0x20	rror`: the clip reflected left / right (anim request +0x20 bit 0x80, tru.exe 0x4428A0 -> controller +0xF4 0x200).	prose	stated	2	2	src/anim/Anim.hpp:107;src/game/Game.hpp:393	004428a0	1/1	
+AttackRecord	0x35eb8	s) as lara.drm holds them: section 850, attack record +0x35EB8 (class 13,	prose	stated	1	1	tests/test_combat.cpp:847			
+BalanceController	0x65	flag is cond 0x200 (byte +0x3BD = balance controller +0x65, 0x764C30). From about to fall: flag + side → S893 / S890	prose	stated	1	1	docs/GAMEPLAY.md:1554	00764c30	0/1	
+BaseCamera	0x10	vec3 camX; // the camera's x axis (BaseCamera +0x10 row 0, 0x5E7850): its right (Wine: row 2 = the look)	prose	stated	1	1	src/game/World.cpp:82	005e7850	0/1	
+BelowData	0x70	Regeneration `0x6F5160`: below data+0x70 = 25 % of max, 45 frames (+0x78) after the last damage, health rises over	prose	stated	1	1	docs/GAMEPLAY.md:4067	006f5160	1/1	
+BendType	0x8	bool physical = false; // +0x08: has a physics phantom; Lara pushes it by contact (0x490590), else by distance (0x490450)	mirror	stated	1	1	src/game/Bend.hpp:25	00490450;00490590	2/2	
+BetweenFrame	0x20	the first markup box it enters between frame +0x20 and +0xA4 (0x70F300 / 0x70EC60; 0x710100 keeps the first accepted):	prose	stated	1	1	src/game/Climb.cpp:24	0070ec60;0070f300;00710100	2/3	
+Bike	0x4c4	g record (+0x10 -> 0x20C bytes, tru.exe Bike +0x4C4); the model's wheel spheres / markers;	prose	stated	1	1	src/game/Vehicle.hpp:29			
+BikeTuning	0x0	float rest = 0; // +0x00 suspension ray beyond the radius (spring rest), units	mirror	stated	1	1	src/game/Vehicle.hpp:54			
+BikeTuning	0x4	float stopSpeed = 250.4f; // +0x04 2 mph: slower = stopped (brake holds, back = reverse; 0x790E40)	mirror	stated	1	1	src/game/Vehicle.hpp:33	00790e40	1/1	
+BikeTuning	0x8	float friction = 0; // +0x08 [I: the tyres' friction peak]	mirror	stated	1	1	src/game/Vehicle.hpp:55			
+BikeTuning	0xc	float brake = 0; // +0x0C brake friction [I: units/frame^2 per mass share]	mirror	stated	1	1	src/game/Vehicle.hpp:56			
+BikeTuning	0x10	float steerLow = 0.5236f, steerHigh = 0.1745f; // +0x10 / +0x14: front wheel limit, 30 / 10 degrees	mirror	stated	2	1	src/game/Vehicle.hpp:35;src/game/Vehicle.hpp:57			
+BikeTuning	0x14	float drive = 0; // +0x14 share of the engine torque	mirror	stated	1	1	src/game/Vehicle.hpp:58			
+BikeTuning	0x18	float steerRateLow = 1.658f, steerRateHigh = 1.309f; // +0x18 / +0x1B4: 95 / 75 degrees/s	mirror	stated	2	1	src/game/Vehicle.hpp:36;src/game/Vehicle.hpp:59			
+BikeTuning	0x1c	float steerFraction = 0.3f; // +0x1C: the steering limits blend over [steerFraction, 1] * maxSpeed	mirror	stated	2	1	src/game/Vehicle.hpp:34;src/game/Vehicle.hpp:60			
+BikeTuning	0x22	uint8_t sphere = 0; // +0x22	mirror	stated	1	1	src/game/Vehicle.hpp:61			
+BikeTuning	0x28	float forceRaise = 0.7f; // +0x28: wheel forces act 0.7 x (attach -> contact) above the contact (0x792900)	mirror	stated	1	1	src/game/Vehicle.hpp:52	00792900	1/1	
+BikeTuning	0x30	float brakeRamp = 1.25f; // +0x30: seconds for the brakes to bite fully (0x792900 states 3 / 5)	mirror	stated	1	1	src/game/Vehicle.hpp:37	00792900	1/1	
+BikeTuning	0x40	float maxTilt = 0.7418f; // +0x40 42.5 degrees: the body's tilt limit (0x795080 constraint)	mirror	stated	1	1	src/game/Vehicle.hpp:38	00795080	1/1	
+BikeTuning	0x54	float gearRatio = 6, reverseRatio = 4, reverseTorque = 20; // +0x54, +0x6C; +0xBC N m in reverse (0x791D10)	mirror	stated	1	1	src/game/Vehicle.hpp:43	00791d10	1/1	
+BikeTuning	0x74	float reverseSpeed = 1877.6f; // +0x74 15 mph, reverse ratio +0x6C 4 against gear +0x54 6: rpm top at 10 mph	mirror	stated	1	1	src/game/Vehicle.hpp:42			
+BikeTuning	0xa4	float springHz = 1.8f, springDamping = 0.35f; // +0xA4 / +0xA8, times each wheel's +0x18 (0x792900)	mirror	stated	1	1	src/game/Vehicle.hpp:51	00792900	1/1	
+Bone	0x8	float mass = 1, linear = 0, quadratic = 0, omega = 0, damping = 0; // +0x08 .. +0x18	mirror	stated	1	1	src/game/Bend.hpp:28			
+Bone	0x1c	float push = 0, pushRadius = 0, pushPad = 0, wind = 0; // +0x1C .. +0x28	mirror	stated	1	1	src/game/Bend.hpp:29			
+Bone	0x3c	int segment = 0; // +0x3C s16	mirror	stated	1	1	src/game/Bend.hpp:27			
+BreakableData	0x10	int hits = 0; // +0x10: hits of a listed damage class it takes (message 0x11C, 0x6D3160)	mirror	stated	1	1	src/game/Breakables.hpp:20	006d3160	1/1	
+BuildsInstance	0x248	ex*, i16 segment, i16}[count] (0x58D6A0 builds instance +0x248 from it). Event	prose	stated	1	1	docs/formats/AUDIO.md:775	0058d6a0	0/1	
+Camera	0x8f8	traces swim_right*.txt): yaw controller camera +0x8F8 = set 11 (2 forces, speed π), pitch controller +0xDA0 = set 4 blended out (B no	prose	observed	3	3	docs/GAMEPLAY.md:263;src/game/World.cpp:1021;tests/test_game.cpp:409	00462e10;0048ef50;00493330;005e8210;005e8940	3/53	
+Camera records	0x0	4×4 matrix (identity in every record seen)	table	stated	1	1	docs/formats/COLLISION.md:187			
+Camera records	0x44	point count / 0x20-byte Hermite points `{float4 position, float4 tangent}` (unit frame, like markup)	table	stated	1	1	docs/formats/COLLISION.md:188			
+Camera records	0x48	point count / 0x20-byte Hermite points `{float4 position, float4 tangent}` (unit frame, like markup)	table	stated	1	1	docs/formats/COLLISION.md:188			
+Camera records	0x4c	type: 0 point nearest the camera pivot (0x605A20), 1 / 2 along her markup / one minus (0x5F7510 / 0x5F7550), 3 by the index of her markup in the list (0x605ED0)	table	stated	1	1	docs/formats/COLLISION.md:189	005f7510;005f7550;00605a20;00605ed0	0/4	
+Camera records	0x50	count / markup item pointers	table	stated	1	1	docs/formats/COLLISION.md:190			
+Camera records	0x54	count / markup item pointers	table	stated	1	1	docs/formats/COLLISION.md:190			
+Camera records	0x58	turn speed, deg/s	table	stated	1	1	docs/formats/COLLISION.md:191			
+Camera records	0x5c	distance speed, units/s	table	stated	1	1	docs/formats/COLLISION.md:192			
+Camera records	0x60	radius (with +0x6D: no camera collision within it of the point, 0x606070)	table	stated	1	1	docs/formats/COLLISION.md:193	00606070	1/1	
+Camera records	0x64	count / 0x44-byte force records `{type, k, curve}` (0x5F2180)	table	stated	1	1	docs/formats/COLLISION.md:194	005f2180	0/1	
+Camera records	0x68	count / 0x44-byte force records `{type, k, curve}` (0x5F2180)	table	stated	1	1	docs/formats/COLLISION.md:194	005f2180	0/1	
+Camera records	0x6c	byte: drive the distance too / the radius bypass	table	stated	1	1	docs/formats/COLLISION.md:195			
+Camera records	0x6d	byte: drive the distance too / the radius bypass	table	stated	1	1	docs/formats/COLLISION.md:195			
+CameraManager	0x50	op 1, CameraManager +0x50 (0x5EDFC0): switching to the AutoSplineCamera keeps the spline autosplinecamera	prose	stated	2	1	src/game/Camera.cpp:136;src/game/Camera.cpp:156	005edfc0	1/1	
+CameraManager	0x54	The orbit camera's mode (tru.exe CameraManager +0x54: 1 on foot, 4 free climb, 11 hang, 19 / 20 under water	prose	stated	2	2	src/game/Game.hpp:1178;src/script/Script.cpp:1989	007767c0	1/1	007767c0 mismatch(semantic) 7767cd: mov edx,DWORD PTR [edx+0x54] — MISMATCH: edx = [eax] = the manager's vftable (0x7767CB); +0x54 is vfunc slot 21 called at 0x7767D8 with (arg, 1) - Script.cpp:1989 says so, Game.hpp:1178 calls it the orbit camera's mode field
+CameraManager	0x74	Lara is on that markup (player +0xC94 → CameraManager +0x74 +0x24) and the camera mode is	prose	stated	2	2	docs/formats/COLLISION.md:197;src/game/World.cpp:1058	005fe800;00601d30	1/2	
+CameraManager	0xe4	State machine: camera modes (CameraManager +0xE4 type, e.g. 8 = AutoSplineCamera, 23 = manual aim); CameraSpline	prose	stated	2	2	docs/re/ENGINE_ARCHITECTURE.md:261;src/game/Camera.cpp:15	007759f0	1/1	007759f0 match 7759fe: mov eax,DWORD PTR [edx+0xe4] — vfunc slot 57 (edx = vftable at 0x7759F7) called with 8 at 0x775A06: a call, not a 'type' field as ENGINE_ARCHITECTURE.md:261 words it; Camera.cpp:15 writes it as a call
+CameraRecord	0x44	std::vector<vec3> pos, tangent; // +0x44 count, +0x48 0x20-byte Hermite points {position, tangent} (unit frame)	mirror	stated	1	1	src/collision/Collision.hpp:73			
+CameraRecord	0x4c	uint32_t type = 0; // +0x4C: 0 nearest spline point to Lara, 1 / 2 along her markup, 3 by markup in `markups`	mirror	stated	1	1	src/collision/Collision.hpp:72			
+CameraRecord	0x50	std::vector<uint16_t> markups; // +0x50 count, +0x54 markup items (as markup ids)	mirror	stated	1	1	src/collision/Collision.hpp:74			
+CameraRecord	0x58	float angleSpeed = 0, distanceSpeed = 0, radius = 0; // +0x58 deg/s, +0x5C units/s, +0x60	mirror	stated	1	1	src/collision/Collision.hpp:75			
+CameraRecord	0x64	std::vector<std::pair<uint32_t, float>> forces; // +0x64 count, +0x68 0x44-byte force records {type, k}	mirror	stated	1	1	src/collision/Collision.hpp:77			
+CameraRecord	0x6c	bool distance = false, inside = false; // +0x6C drive the distance too, +0x6D no collision within radius	mirror	stated	1	1	src/collision/Collision.hpp:76			
+CameraSpline	0x30	float offset[3] = {}; // +0x30, added to every camera key (unit frame)	mirror	stated	1	1	src/formats/Formats.hpp:207			
+CameraSpline	0x4c	float fovDeg = 50; // +0x4C	mirror	stated	1	1	src/formats/Formats.hpp:208			
+CameraSpline	0x58	std::optional<CameraSplineTrack> target; // +0x58 when +0x5C; else the camera keys' rotations aim it	mirror	stated	1	1	src/formats/Formats.hpp:210			
+CameraSpline	0x5d	bool targetFitsCamera = false; // +0x5D: target key times scaled to the camera track's length	mirror	stated	1	1	src/formats/Formats.hpp:211			
+Capsule	0x20	the flag bytes (sphere +0, box +0x30, capsule +0x20); head[1] & 1 = solid [I]	prose	inference	1	1	src/physics/Physics.hpp:33			
+Capsule	0x2c	yancy percent (sphere +0x16, box +0x38, capsule +0x2C; 0 =	prose	stated	4	4	docs/GAMEPLAY.md:1681;docs/formats/PHYSICS.md:69;docs/re/ENGINE_ARCHITECTURE.md:214	004dee60;006ad070	1/2	
+Capsule	0x2e	s, in percent (sphere +0x18, box +0x3A, capsule +0x2E, s8;	prose	stated	1	1	src/physics/Physics.hpp:44			
+Capsule	0x32	damage amount (sphere +0x1C, box +0x3E, capsule +0x32, s16;	prose	observed	2	2	src/game/Hazards.cpp:3;src/physics/Physics.hpp:41	0048e040	1/1	
+Cell group data	0x0	header* `{numTotalCells, numToplevelCells, numBSPNodes, numStreamGroups (+0x0C), …, numImfs (+0x1C)}`	table	observed	1	1	docs/formats/LEVELS.md:173			
+Cell group data	0x4	BSP nodes* (planes with child links)	table	observed	1	1	docs/formats/LEVELS.md:174			
+Cell group data	0x8	stream groups*, 20 bytes `{name*, numCells, cells*, streamFileName*, resolveObject}`	table	observed	1	1	docs/formats/LEVELS.md:175			
+Cell group data	0xc	symbol table* (offsets + strings "unitname", "portal_cell1"…)	table	observed	1	1	docs/formats/LEVELS.md:176			
+Cell group data	0x10	cells*[numTotalCells] → `CellData {header*, terrainData*, …, renderMesh* @+0x20}`	table	observed	1	1	docs/formats/LEVELS.md:177			
+Cell group data	0x14	exterior terrains* `{count, CellTerrainData[count] {terrain ref, flags, light mask, user data}}` (`Unit::exteriorTerrains`): panorama cylinders / sky domes added to the scene's "Exterior Cellgroup" (0	table	observed	1	1	docs/formats/LEVELS.md:178	0056de80;00572bd0	1/2	
+Cell group data	0x18	IMF records*, 0x70 bytes each	table	observed	1	1	docs/formats/LEVELS.md:179			
+Cell group data	0x1c	resource ref to the **irradiance volume** DTP (light probes, below)	table	observed	1	1	docs/formats/LEVELS.md:180			
+CellData	0x8	eiver light mask (entity +0xE4, terrain cell data +0x08 = 1 in l3_main_bedroom) tested against Light::mask.	prose	stated	1	1	src/scene/Assets.hpp:247			
+CellGroup	0x14	Cell group +0x14 exterior terrains (panorama cylinders), drawn behind everything (tru.exe far de	prose	stated	1	1	tests/test_formats.cpp:232			
+CellGroupData	0x14	Exterior terrain (unit cell group +0x14: panorama cylinders, sky domes) is drawn behind all other geometry as tru.exe	prose	observed	3	3	CHANGELOG.md:935;docs/RENDERING.md:1294;src/formats/Formats.hpp:259	0051d0a0	0/1	
+CellGroupData	0x1c	ELS.md "Irradiance volume"): the DTP of cell group +0x1C. Dynamic objects	prose	stated	1	1	src/scene/Assets.hpp:143			
+ChecksInstance	0x284	!object->spline) { // every thunk null-checks instance +0x284 (0x4AA8B0..)	prose	stated	1	1	src/script/Script.cpp:1943	004aa8b0	1/1	
+ChunkDoll	0x10	int32_t minimum = -1, kept = 0; // +0x10 / +0x14: budget checks against the free instance slots (0x696F90)	mirror	stated	1	1	src/game/ai/Enemy.hpp:83	00696f90	1/1	
+ChunkPiece	0x10	uint32_t flags = 0; // +0x10: bit 0 [U] (instance +0x14 bit 0x40000000 cleared, else +0x18 |= 0x20000)	mirror	unknown	1	1	src/game/ai/Enemy.hpp:79			
+Collision mesh	0x0	2×float4 | box min/max, local (relative to +0x20)	table	stated	1	1	docs/formats/COLLISION.md:37			
+Collision mesh	0x20	float4 | position: world = vertex + position (+ levelOffset)	table	stated	1	1	docs/formats/COLLISION.md:38			
+Collision mesh	0x30	ptr | vertices	table	stated	1	1	docs/formats/COLLISION.md:39			
+Collision mesh	0x34	ptr | faces	table	stated	1	1	docs/formats/COLLISION.md:40			
+Collision mesh	0x38	ptr | BIH root (node array)	table	stated	1	1	docs/formats/COLLISION.md:41			
+Collision mesh	0x3c	ptr | client data = owning TerrainGroup	table	stated	1	1	docs/formats/COLLISION.md:42			
+Collision mesh	0x40	u32 ×5 | numNodes, numFaces, numVertices, numDegenerateFaces, numNonManifoldEdges	table	stated	1	1	docs/formats/COLLISION.md:43			
+Collision mesh	0x54	u16 | vertex type: 1 = float4 (x, y, z, w); 0 (int16 xyz in TRL/TRA) never occurs in TRU	table	stated	1	1	docs/formats/COLLISION.md:44			
+Collision mesh	0x56	u16 | tree height (max 27 over all units)	table	stated	1	1	docs/formats/COLLISION.md:45			
+CollisionFace	0xe	uses a terrain face whose client flags (face +0x0E) have **0x80**, and an object whose data byte +0x30	prose	stated	2	1	docs/GAMEPLAY.md:2885;docs/GAMEPLAY.md:3014	005d3ba0	1/1	005d3ba0 match 5d3bbb: movzx ecx,BYTE PTR [esi+0xe] — u8 client flags
+CollisionFace	0x10	of the collision face under / at a hit (face +0x10; tru.exe copies it to instance +0x186).	prose	stated	1	1	src/app/game/main.cpp:1340			
+CollisionFace	0xc0	t = rd<uint32_t>(r, 4)) // material id (face +0xC0)	prose	stated	1	1	src/fx/Fx.cpp:403			
+CollisionQuery	0x40	e current jump took off (tru.exe's jump query +0x40, player state	prose	stated	1	1	src/game/Game.hpp:467			
+CollisionQuery	0x68	x (1 - clamp((-0.2 - s) / 0.8, 0, 1) x query +0x68 (0.6))`, the vertical	prose	stated	1	1	docs/GAMEPLAY.md:4996			
+CollisionQuery	0x70	e limits (frames since context +0x444 > query +0x70 = 15 once +0x444 is set - its setter	prose	stated	2	2	docs/GAMEPLAY.md:5000;src/game/Player.cpp:2048	00750040	1/1	
+CollisionQuery	0x74	is off centre, |s - s0| > 0.05 and s < query +0x74 (-0.2; -1	prose	stated	3	3	docs/GAMEPLAY.md:4994;src/game/Game.hpp:238;src/game/Player.cpp:2042			
+CollisionQuery	0x94	its list's first]. This default path (query +0x94 = 0: 0x70FFB0 → 0x70EC60) is not what Lara's jump queries take:	prose	stated	1	1	docs/GAMEPLAY.md:2476	0070ec60;0070ffb0	0/2	
+Contacts	0x158	// +0x158, v *= 1 - frames x damping in 0x4EFB20; every record read in memory holds 0.01 / 0.01) = 0.3 / s,	mirror	stated	1	1	src/physics/Physics.cpp:731	004efb20	1/1	
+Context	0x358	Balance controller [O] (chart context +0x358; action 301: enter 0x742330, update 0x742770 every frame, exit	prose	observed	2	2	docs/GAMEPLAY.md:1559;src/game/Game.hpp:487	00742330;00742770	0/2	
+Context	0x390	the sign of the controller angle chart context +0x390,	prose	observed	2	2	docs/GAMEPLAY.md:1551;docs/ROADMAP.md:48	004428a0;0073edc0;00742330;00742770;00758b00	2/11	
+Context	0x430	context +0x430) and the stick's forward part against her heading s0 (+0x420). Each frame, when	prose	stated	3	3	docs/GAMEPLAY.md:4992;src/game/Game.hpp:482;src/game/Player.cpp:2039	0073ece0;00750040	1/2	
+Context	0x444	x750040's two time limits (frames since context +0x444 > query +0x70 = 15 once +0x444 is set - its setter	prose	stated	3	3	docs/GAMEPLAY.md:5000;src/game/Player.cpp:2048;src/render/OriginalShading.hpp:49	00750040	1/1	
+Context	0x4ec	allJumpAllowed` (0x21C, 0x7660D0: chart context +0x4EC < byte +0x843 =	prose	stated	3	3	docs/GAMEPLAY.md:2900;src/game/Game.hpp:470;src/game/WallJump.cpp:11	007660d0	0/1	
+Controller	0x34	controller +0x34, the instance's +0x20) [O], stowed at her HInfo marker GrappleTuning::stowMarke	prose	observed	1	1	src/game/Combat.cpp:1141			
+Controller	0x65	780 → 0x7868F0), fall flag cond 0x200 = controller +0x65 [O]; root rotation of turning clips drives the heading; crouch capsule 260 = pl	prose	observed	1	1	docs/ROADMAP.md:48	004428a0;0073edc0;00742330;00742770;00758b00	2/11	
+Controller	0xf4	est +0x20 bit 0x80, tru.exe 0x4428A0 -> controller +0xF4 0x200).	prose	stated	1	1	src/anim/Anim.hpp:107	004428a0	1/1	
+Controller	0x14c	(controller +0x14C): 1 → 0x73E6F0 (the floor under a foot), 5 → 0x732EC0 (a markup box's segment),	prose	stated	1	1	docs/GAMEPLAY.md:5138	00732ec0;0073e6f0;007445a0	0/3	
+DamageRecord	0x1c	damage record +0x1C (spear 250, +0x84 record 550; dart 500 dose); every hit posts class 4, type 0.	prose	stated	1	1	docs/GAMEPLAY.md:4136			
+DeathRecord	0x1c	> 0x4F1920), else the timer re-arms for death record +0x1C. A pure ragdoll from the	prose	stated	1	1	src/game/ai/Enemy.cpp:1129	004f1920;0060ef50;00617ee0	1/3	
+DeathRecord	0x20	Regenerate (death record +0x20..+0x70; tru.exe EnemyRegenerateData 0x67ED20, decision 0x620380, hit filter	prose	stated	3	3	docs/GAMEPLAY.md:3619;src/game/ai/Enemy.hpp:87;tests/test_ai.cpp:1428	00620380;0067ed20;00682490	1/3	
+DeathRecord	0x46	nto their `*_chunkdoll` pieces instead (death record +0x46: loose bodies at the body's segments,	prose	stated	2	2	docs/ROADMAP.md:133;src/game/ai/Enemy.hpp:251			
+DeathRecord	0x4c	] except Lara's 55 kg | Bullet impulse: death record +0x4C x 2.5 is decoded for ragdolls (Obj:1959); for objects the value is not |	prose	inference	7	4	docs/audit/AUDIT_B.md:123;docs/formats/PHYSICS.md:282;docs/formats/PHYSICS.md:301	00696a60;0078df80	0/2	
+DeathRecord	0x64	cooldown, clips via ObjectBase +0x60), death record +0x64, via the enemy-data getters 0x614400..0x614940; behaviour trees (Soldier 0x6120	prose	observed	1	1	docs/ROADMAP.md:57	005bf0e0;00612030;006126b0;00612bd0;00612f80	2/17	
+DRM loader	0x0	u32 | data size	table	stated	1	1	docs/re/FILESYSTEM.md:100			
+DRM loader	0x4	u8 | section type → index into `g_sectionHandlers` 0xC56FC8	table	stated	1	1	docs/re/FILESYSTEM.md:101			
+DRM loader	0x5	u8 | bit0 = skip (already resident / not to be loaded) [INF]	table	inference	1	1	docs/re/FILESYSTEM.md:102			
+DRM loader	0x6	u16 | passed to the handler	table	stated	1	1	docs/re/FILESYSTEM.md:103			
+DRM loader	0x8	u32 | `(v>>1)&0x7F` = resource type, `v>>8` = relocation bytes	table	stated	1	1	docs/re/FILESYSTEM.md:104			
+DRM loader	0xc	u32 | section/resource id; matched against already loaded sections of the same type for sharing [INF]	table	inference	1	1	docs/re/FILESYSTEM.md:105			
+DRM loader	0x10	u32 | [?] (language/spec mask in other cdc games)	table	unknown	1	1	docs/re/FILESYSTEM.md:106			
+DrmRequest	0x20	Mirrored anim requests (lara.drm request +0x20 bit 0x80) reflect the pose in X: each bone takes its twin's transform.	prose	stated	1	1	tests/test_anim.cpp:196			
+DrmSectionHeader	0x10	| DRM section header +0x10 | language/spec mask | position matches other cdc games [INF]; not read in the	prose	inference	1	1	docs/re/FUNCTIONS.md:53			
+DTP	0x0	u32 type: 0 point, 1 spot, 2 sun (directional)	table	observed	1	1	docs/formats/LEVELS.md:147	005042b0;0050b910	2/2	
+DTP	0x4	radius / intensity	table	observed	1	1	docs/formats/LEVELS.md:148	0050a3c0	0/1	
+DTP	0x8	radius / intensity	table	observed	1	1	docs/formats/LEVELS.md:148	0050a3c0	0/1	
+DTP	0xc	spot cone angles (full, radians; bedroom 1.14 / 1.66)	table	observed	1	1	docs/formats/LEVELS.md:149	0050a280;0050a3c0	1/2	
+DTP	0x10	spot cone angles (full, radians; bedroom 1.14 / 1.66)	table	observed	1	1	docs/formats/LEVELS.md:149	0050a280;0050a3c0	0/2	
+DTP	0x14	spot width at the light: apex moved back by it / tan(outer/2)	table	observed	1	1	docs/formats/LEVELS.md:150	0050b910	1/1	
+DTP	0x18	u8 rgb colour	table	observed	1	1	docs/formats/LEVELS.md:151	0050afb0	1/1	
+DTP	0x1c	f32[255] falloff curve over d / radius → AttenuationSampler row (texel k = curve[k]·255 in R, texel 255 = 0)	table	observed	1	1	docs/formats/LEVELS.md:152	0050a050;0050afb0	0/2	
+DTP	0x41c	flicker flag, period, f32[256] intensity curve	table	observed	1	1	docs/formats/LEVELS.md:153	0050a500;0050afb0	1/2	
+DTP	0x420	flicker flag, period, f32[256] intensity curve	table	observed	1	1	docs/formats/LEVELS.md:153	0050a500;0050afb0	1/2	
+DTP	0x424	flicker flag, period, f32[256] intensity curve	table	observed	1	1	docs/formats/LEVELS.md:153	0050a500;0050afb0	1/2	
+DTP	0x824	cookie flag, cookie texture (type-5 ref), scale, rotation, scroll	table	observed	1	1	docs/formats/LEVELS.md:154	0050afb0;0050b910	0/2	
+DTP	0x828	cookie flag, cookie texture (type-5 ref), scale, rotation, scroll	table	observed	1	1	docs/formats/LEVELS.md:154	0050afb0;0050b910	0/2	
+DTP	0x82c	cookie flag, cookie texture (type-5 ref), scale, rotation, scroll	table	observed	1	1	docs/formats/LEVELS.md:154	0050afb0;0050b910	0/2	
+DTP	0x838	cookie flag, cookie texture (type-5 ref), scale, rotation, scroll	table	observed	1	1	docs/formats/LEVELS.md:154	0050afb0;0050b910	1/2	
+DTP	0x144c	casts shadows (shadow-light slot)	table	observed	1	1	docs/formats/LEVELS.md:155	0050a080	0/1	
+EffectRecord	0x153c	+1e7, Finish +5e6, ColorDOF = effect +0x153C, Feedback −1e7. With the descending sort, Noise draws first and Feedback	prose	stated	1	1	docs/re/RENDER_PIPELINE.md:128			
+Emitter	0x11	ode == 2) { // one persistent particle (emitter +0x11 == 2) [I]: spawned once, kept alive	prose	inference	1	1	src/fx/Fx.cpp:1029			
+Emitter	0x24	Y plane (water rings): def +0x05 & 1 -> emitter +0x24 & 1 -> particle +0x2C & 4 unless	prose	stated	1	1	src/fx/Fx.cpp:179			
+Emitter	0x2c	74 / +0x78 | camera range for emitting (emitter +0x2C/+0x30 squared) [O] |	prose	observed	1	1	docs/formats/EFFECTS.md:68			
+Emitter	0x34	emitter +0x34 (0x5446EB), x the +0x164 line-length factor (0x5386F0)	prose	stated	1	1	src/fx/Fx.cpp:1037	005386f0;005446eb	0/2	
+Emitter	0x3c	ax] (0x5416E0), shape offset (switch on emitter +0x3C = def +0x68).	prose	stated	1	1	src/fx/Fx.cpp:959	005416e0	0/1	
+Emitter	0x90	+0x10 / +0x6C | shell radius max / min (emitter +0x90 / +0x92, 0x5445B8) [O] |	prose	observed	2	2	docs/formats/EFFECTS.md:57;src/fx/Fx.cpp:183	005445b8	0/1	
+Emitter	0xa8	| +0x2C | acceleration × 0.25 (emitter +0xA8) [O] → per 60 Hz tick: 30 Hz authoring [I] |	prose	observed	2	2	docs/formats/EFFECTS.md:59;src/fx/Fx.cpp:982	00544331	0/1	
+Emitter	0x10c	Depth bias (def +0x15E -> emitter +0x10C -> particle +0x28, flag 0x200; 0x54B0E8): z += bias, >= 16. Drawn by	prose	stated	1	1	src/fx/Fx.cpp:1183	0054b0e8	0/1	
+Emitter	0x148	ween its neighbours (0x5441F6 loop over emitter +0x148 keys, 0x548D40).	prose	stated	2	2	src/fx/Fx.cpp:212;src/fx/Fx.hpp:25	00543f70;005441f6;00548d40	1/3	
+Enemy data	0x0	magic 0xDAF00018	table	observed	1	1	docs/GAMEPLAY.md:3567	0063c190	1/1	
+Enemy data	0x4	class: 1 bats/sharks, 3 cats, 4 soldiers, 7 spiders, 8 thralls	table	observed	1	1	docs/GAMEPLAY.md:3568			
+Enemy data	0xc	byte: behaviour-tree vtable choice (0x8ACF90..A8): 0 soldiers, 1 cats, 2 bats + sharks (flyer: EnemyState_FlyerMove RTTI), 3 thralls	table	observed	1	1	docs/GAMEPLAY.md:3569	0063c190	1/1	
+Enemy data	0x20	component list head (next +0x1C); each field below is read from the first node where it is non-null	table	observed	1	1	docs/GAMEPLAY.md:3570	00614400;00614940	1/2	
+Enemy data	0x2c	94.8 (0.3 m) on all types	table	observed	1	1	docs/GAMEPLAY.md:3571			
+Enemy data	0x3c	1264 (4 m), 60°	table	observed	1	1	docs/GAMEPLAY.md:3572	00620500;006497c0;0067b610	2/3	
+Enemy data	0xa0	1264 (4 m), 60°	table	observed	1	1	docs/GAMEPLAY.md:3572	00620500;006497c0;0067b610	1/3	
+EnemyData	0x4	int32_t enemyClass = -1; // enemy data +0x04 (3 cats, 8 thralls, 4 soldiers, 7 spiders, 1 bats); -1 synthetic	prose	stated	1	1	src/game/ai/Enemy.hpp:203			
+EnemyData	0xc	ic 0x612BD0, Thrall 0x612F80, picked by enemy data +0x0C. Soldier, top level:	prose	stated	2	2	docs/GAMEPLAY.md:3785;src/game/ai/Enemy.hpp:204	006126b0;00612bd0;00612f80	0/3	
+EnemyData	0x2c	167f; // body capsule radius; [O] enemy data +0x2C (0.3 m of 316.056 units)	prose	observed	2	2	src/game/ai/Enemy.hpp:115;tests/test_ai.cpp:919			
+Engagement	0x10	int shape = 0; // +0x10: 0 sphere, 1 cylinder (centre = middle), 2 cylinder + facing cone (0x6F3A50)	mirror	stated	1	1	src/physics/Physics.hpp:75	006f3a50	1/1	
+Engagement	0x14	vec3 centre{0}; // +0x14, units (the data's centimetres x 3.1605)	mirror	stated	1	1	src/physics/Physics.hpp:76			
+Engagement	0x20	float radius = 0, height = 0; // +0x20 / +0x24, units	mirror	stated	1	1	src/physics/Physics.hpp:77			
+Engagement	0x28	float heading = 0, half = 0; // +0x28 / +0x2C, radians: the cone about the frame's Z, measured from +X	mirror	stated	1	1	src/physics/Physics.hpp:78			
+Engagement	0x6c	std::vector<uint16_t> needs; // +0x6C -> u16 object ids, +0x70 count: Lara must hold one of them (0x6F3BB0)	mirror	stated	1	1	src/physics/Physics.hpp:79	006f3bb0	0/1	
+EngagementRecord	0x44	ip chosen by name, stand-off distance = engagement record +0x44 [I], her side of the switch inferred; engagement cone / required items, `obj_pu	prose	inference	2	2	docs/ROADMAP.md:53;src/script/Script.hpp:246	0057ce50	0/1	
+Environment	0x68	// +0x68 / +0x6C event lists run on Lara when the camera goes under / comes out (0x5C7CA0). 0 = none.	mirror	stated	1	1	src/scene/Assets.hpp:190	005c7ca0	1/1	
+Environment	0x74	// +0x74 material; that material's PS MaterialParams c100 = surface colour + alpha at the eye, c101 = deep colour +	mirror	stated	1	1	src/scene/Assets.hpp:198			
+Environment	0x84	// +0x84 deep / +0x88 surface screen-filter DTPs, faded over +0x90 units below / +0x8C above the surface (0x5C78A0);	mirror	stated	1	1	src/scene/Assets.hpp:189	005c78a0	1/1	
+Environment	0x830	// +0x830 rotation (deg/s), +0x834/+0x838 scroll (1/s).	mirror	stated	1	1	src/scene/Assets.hpp:175			
+EveryData	0xfe	r int kDamagePeriodic = 3; // 0x755230: every data+0xFE frames, data+0xFC % of max	prose	stated	1	1	src/game/Combat.hpp:111	00755230	1/1	
+ExplosionRecord	0x44	explosion record +0x44 (kind 2) as pr_grenade's: +0x48 damage, +0x4C radius, +0x50 damage at the edge,	prose	stated	1	1	src/game/Combat.hpp:256			
+FadeDef	0x0	float from = 0, to = 0; // +0x00 / +0x02 s16 / 4096	mirror	stated	1	1	src/fx/Fx.hpp:180			
+FadeDef	0x4	int16_t frames = 0; // +0x04	mirror	stated	1	1	src/fx/Fx.hpp:181			
+FadeDef	0x6	int16_t model = 0; // +0x06 model index (flags & 0x80)	mirror	stated	1	1	src/fx/Fx.hpp:182			
+FadeDef	0xb	uint8_t flags = 0; // +0x0B: 0x80 = crossfade of draw group `model` (instance +0x238, 0x5B3EC0): Lara's 17	mirror	stated	1	1	src/fx/Fx.hpp:183	005b3ec0	0/1	
+FilterDef	0x1	bool birth = false; // +0x01 & 1	mirror	stated	1	1	src/fx/Fx.hpp:239			
+FilterDef	0x2	int16_t fadeIn = 0; // +0x02	mirror	stated	1	1	src/fx/Fx.hpp:240			
+FilterDef	0x4	uint32_t rgba = 0; // +0x04 tint colour (filters without a resource: not drawn)	mirror	stated	1	1	src/fx/Fx.hpp:241			
+FilterDef	0x9	uint8_t id = 0; // +0x09 (stop commands)	mirror	stated	1	1	src/fx/Fx.hpp:242			
+FilterDef	0xa	int16_t fadeOut = 0, hold = -1; // +0x0A / +0x0C (-1 forever)	mirror	stated	1	1	src/fx/Fx.hpp:243			
+FilterDef	0xe	float intensity = 0; // +0x0E / 128	mirror	stated	1	1	src/fx/Fx.hpp:244			
+FilterDef	0x10	float radius = 0; // +0x10: weight x (1 - d^2 / r^2), 0 = everywhere	mirror	stated	1	1	src/fx/Fx.hpp:245			
+FilterDef	0x12	float playerMix = 0; // +0x12 / 4096: d measured from mix(camera, player, playerMix) to the owner	mirror	stated	1	1	src/fx/Fx.hpp:246			
+FilterDef	0x14	std::shared_ptr<const FilterResource> resource; // +0x14 DTP id	mirror	stated	1	1	src/fx/Fx.hpp:249			
+FilterDef	0x18	float screen = 0; // +0x18 screen-centre term (sun glares) [not drawn]	mirror	stated	1	1	src/fx/Fx.hpp:247			
+FilterDef	0x1c	uint32_t other = 0; // +0x1C second effect (0x546340) [not drawn]	mirror	stated	1	1	src/fx/Fx.hpp:248	00546340	0/1	
+FilterResource	0x0	Matrix m1{}, m2{}; // +0x0000 scene matrix, +0x0900 overlay matrix	mirror	stated	1	1	src/fx/Fx.hpp:196			
+FilterResource	0x10	bool noise = false; // +0x10	mirror	stated	2	1	src/fx/Fx.hpp:208;src/fx/Fx.hpp:212			
+FilterResource	0x1c	uint32_t fbColour = 0; // +0x1C bytes R, G, B	mirror	stated	1	1	src/fx/Fx.hpp:206			
+FilterResource	0x900	float finishBlur = 0, finishAmount = 0; // +0x900 (sum <= 4), +0x904 (sum <= 2; drawn x 0.5)	mirror	stated	1	1	src/fx/Fx.hpp:200			
+FilterResource	0x909	bool finish = false, finishCurves = false, finishFull = false; // +0x909, +0x90A, +0x908 (all 9 tables, else diagonal)	mirror	stated	1	1	src/fx/Fx.hpp:199			
+FilterResource	0x1200	std::array<uint8_t, 256> dofCurve{}; // +0x1200 overlay alpha over the depth range	mirror	stated	1	1	src/fx/Fx.hpp:197			
+FilterResource	0x1300	float blur = 0, alpha = 0; // +0x1300 (sum <= 4), +0x1304 (sum <= 1)	mirror	stated	1	1	src/fx/Fx.hpp:193			
+FilterResource	0x1308	uint32_t tint = 0xFFFFFF; // +0x1308 bytes R, G, B	mirror	stated	1	1	src/fx/Fx.hpp:194			
+FilterResource	0x130e	bool colorDof = false, dof = false, matrix1 = false; // +0x130E enable, +0x130C depth curve, +0x130D scene matrix	mirror	stated	1	1	src/fx/Fx.hpp:192			
+FilterResource	0x1310	float dofNear = 0, dofFar = 0; // +0x1310 / +0x1314	mirror	stated	1	1	src/fx/Fx.hpp:195			
+FilterResource	0x2640	Matrix mf{}; // +0x2640	mirror	stated	1	1	src/fx/Fx.hpp:201			
+FireRecord	0x1c	| direct hit (fire record +0x1C) | 0 | 3000 (three times her health) |	prose	stated	2	2	docs/GAMEPLAY.md:1223;tests/test_combat.cpp:2399			
+FireRecord	0x4c	| gravity (fire record +0x4C) | 0: a straight line | 0 |	prose	stated	1	1	docs/GAMEPLAY.md:1226			
+FloatsData	0x4c	eath) at **2215.55**, death above | [O] floats data+0x4C/+0x50/+0x54 and the curve 0x6F1790; height = z on becoming airborne (player +0x	prose	observed	1	1	docs/GAMEPLAY.md:262	006f1790;00702fc0;0075c550;0075d080	0/4	
+Foot	0xf3c	// +0xF3C; controller messages 0x37 / 0x38), which the clips' events would give; the fade keeps the	mirror	stated	1	1	src/game/Ik.cpp:74			
+ForData	0x60	invulnerable for data+0x60 = 30 frames, during which only a type of higher priority (table `DAT_0085de28`	prose	stated	1	1	docs/GAMEPLAY.md:4064			
+Function	0xc	std::vector<Member> locals; // +0x0C: DataMember records (offset = byte offset in the frame, init = initial value)	mirror	stated	1	1	src/script/Script.hpp:79			
+GAMELOOP_UpdateTime 0x5DA230	0xcc	accumulates +0xD8: game time in ms	table	stated	1	1	docs/re/TIMING.md:77			
+GAMELOOP_UpdateTime 0x5DA230	0xd4	accumulated in `GAMELOOP_Process`	table	stated	1	1	docs/re/TIMING.md:78			
+GAMELOOP_UpdateTime 0x5DA230	0xd8	step in ms, int (`dt/1000`, or `round(timeMult*33)` in fixed mode)	table	stated	1	1	docs/re/TIMING.md:76			
+GAMELOOP_UpdateTime 0x5DA230	0xdc	`timeMult * 4096` (fixed point)	table	stated	1	1	docs/re/TIMING.md:79			
+GAMELOOP_UpdateTime 0x5DA230	0x110	saved `timeMult`	table	stated	1	1	docs/re/TIMING.md:80			
+GameState	0x20c	x5DE2B0: a load keeps the saved outfit (game state +0x20C), except l1_seatop forces lara_wetsuit_warm.	prose	stated	1	1	src/save/Save.cpp:386	005de2b0	1/1	
+GameState	0x590	_Capsule, serialised with the save at game state +0x590.. by 0x6E4410) containing Lara's position + 200 z	prose	stated	1	1	docs/GAMEPLAY.md:4694	006e4410	0/1	
+GameState	0x3ef98	config::GameConfig`) | Tested | tru.exe game state +0x3EF98..+0x3EFAC and setters 0x6E75A0..0x6E76A0, preset script (generalbank script 132	prose	inference	2	2	docs/ROADMAP.md:62;docs/re/ENGINE_ARCHITECTURE.md:351	006e75a0;006e76a0;006e7760;006e77b0;006e7960	1/6	
+GameTracker	0x0	00e7f088 gameTracker: width ?, 0 readers, 0 writers, 19 address-taken	code-ref	observed	7	5	docs/GAMEPLAY.md:911;docs/RESEARCH.md:193;docs/RESEARCH.md:292			
+GameTracker	0x8	00e7f090: width 4, 3 readers, 4 writers	code-ref	observed	1	0	globals.tsv:00e7f090			
+GameTracker	0xc	00e7f094: width 4, 642 readers, 2 writers	code-ref	observed	5	3	docs/GAMEPLAY.md:271;docs/GAMEPLAY.md:274;docs/GAMEPLAY.md:913			
+GameTracker	0x10	00e7f098: width 1/4, 3 readers, 0 writers	code-ref	observed	1	0	globals.tsv:00e7f098			
+GameTracker	0x14	00e7f09c: width 4, 1 readers, 0 writers	code-ref	observed	1	0	globals.tsv:00e7f09c			
+GameTracker	0x18	00e7f0a0: width 4, 1 readers, 0 writers	code-ref	observed	1	0	globals.tsv:00e7f0a0			
+GameTracker	0x1c	00e7f0a4: width 1/4, 5 readers, 0 writers	code-ref	observed	1	1	docs/re/TIMING.md:61			
+GameTracker	0x20	00e7f0a8: width 4, 4 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f0a8			
+GameTracker	0x24	00e7f0ac: width 4, 9 readers, 1 writers; 1C0 → `GAMELOOP_UpdateTime` 0x5DA230 → `gameTracker+0x24++`.	code-ref;prose	observed	2	2	docs/re/STARTUP.md:57;docs/re/TIMING.md:46	005da1c0;005da230	0/2	
+GameTracker	0x28	00e7f0b0: width 4, 2 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f0b0			
+GameTracker	0x2c	00e7f0b4: width 1/4, 30 readers, 19 writers	code-ref	observed	1	0	globals.tsv:00e7f0b4			
+GameTracker	0x30	00e7f0b8: width 4, 18 readers, 10 writers	code-ref	observed	1	0	globals.tsv:00e7f0b8			
+GameTracker	0x34	00e7f0bc: width 4, 3 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f0bc			
+GameTracker	0x38	00e7f0c0: width 1, 1 readers, 4 writers, 10 address-taken	code-ref	observed	1	0	globals.tsv:00e7f0c0			
+GameTracker	0x39	00e7f0c1: width ?, 1 readers, 4 writers, 1 address-taken	code-ref	observed	1	0	globals.tsv:00e7f0c1			
+GameTracker	0x3a	00e7f0c2: width ?, 0 readers, 0 writers, 1 address-taken	code-ref	observed	1	0	globals.tsv:00e7f0c2			
+GameTracker	0xb8	00e7f140: width 1, 1 readers, 4 writers; e path of `MAIN_PlayGame` | taken when `gameTracker+0xB8` != 0; sets fog/clear colours, calls `GAMELOOP_UpdateTime` [OBS] | low |	code-ref;prose	observed	1	1	docs/re/FUNCTIONS.md:36	005dab40	1/1	005e0050 partial 5e0055: mov al,BYTE PTR [esi+0xb8] — PARTIAL: u8 state; the caller skips 0x5DAB40 when it is 0 or 8 and 0x5DAB40 tests == 0xC at 0x5DAB48 (FUNCTIONS.md:36 says 'taken when != 0'); the global copy 0xE7F140 is written 0/8/0xA, compared with 3
+GameTracker	0xb9	00e7f141: width 1, 1 readers, 3 writers	code-ref	observed	1	0	globals.tsv:00e7f141			
+GameTracker	0xba	00e7f142: width 1, 2 readers, 6 writers	code-ref	observed	1	0	globals.tsv:00e7f142			
+GameTracker	0xbb	00e7f143: width 1, 43 readers, 8 writers; _UpdateTime` while playing; at ≤0 sets `gameTracker+0xBB = 10` | [OBS]; role [?] (timed sequence / game-over timer) | low |	code-ref;prose	observed	2	2	docs/re/FUNCTIONS.md:52;docs/formats/TEXT.md:161			
+GameTracker	0xbc	00e7f144: width 1, 28 readers, 0 writers	code-ref	observed	1	0	globals.tsv:00e7f144			
+GameTracker	0xbd	00e7f145: width 1, 1 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f145			
+GameTracker	0xbe	00e7f146: width 2, 1 readers, 3 writers	code-ref	observed	1	0	globals.tsv:00e7f146			
+GameTracker	0xc0	00e7f148: width 4, 25 readers, 5 writers	code-ref	observed	1	0	globals.tsv:00e7f148			
+GameTracker	0xc5	00e7f14d: width 1, 4 readers, 4 writers	code-ref	observed	1	0	globals.tsv:00e7f14d			
+GameTracker	0xc8	00e7f150 gameTracker_variableTimestep: width 4, 1 readers, 1 writers	code-ref	observed	2	2	docs/re/ENGINE_ARCHITECTURE.md:87;docs/re/TIMING.md:60			
+GameTracker	0xcc	00e7f154: width 4, 33 readers, 3 writers	code-ref	observed	2	2	docs/GAMEPLAY.md:3939;docs/re/TIMING.md:77			
+GameTracker	0xd0	00e7f158: width 4, 10 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f158			
+GameTracker	0xd4	00e7f15c: width 4, 26 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f15c			
+GameTracker	0xd8	00e7f160 gameTracker_frameTimeMs: width 4, 3 readers, 1 writers	code-ref	observed	1	1	docs/re/TIMING.md:76			
+GameTracker	0xdc	00e7f164 gameTracker_timeMultFixed: width 4, 4 readers, 3 writers	code-ref	observed	1	1	docs/re/TIMING.md:79			
+GameTracker	0xe0	00e7f168: width ?, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f168			
+GameTracker	0xe4	00e7f16c: width 4, 0 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f16c			
+GameTracker	0xe8	00e7f170 gameTracker_frameTimeUs: width 4, 1 readers, 1 writers	code-ref	observed	1	1	docs/re/TIMING.md:54			
+GameTracker	0xf4	00e7f17c: width 4, 2 readers, 3 writers	code-ref	observed	1	0	globals.tsv:00e7f17c			
+GameTracker	0xf8	00e7f180: width 4, 1 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f180			
+GameTracker	0xfc	00e7f184: width 4, 1 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f184			
+GameTracker	0x100	00e7f188 gameTracker_timeMult: width 4, 188 readers, 8 writers	code-ref	observed	3	3	docs/re/EXECUTABLE.md:72;docs/re/FUNCTIONS.md:61;docs/re/TIMING.md:66			
+GameTracker	0x108	00e7f190: width 4, 2 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f190			
+GameTracker	0x10c	00e7f194 gameTracker_timeMultUnscaled: width 4, 7 readers, 2 writers; ainG2_PlatformUpdate (sound/stream dt = gameTracker+0x10C / 30) | N-m |	code-ref;prose	observed	3	3	docs/re/ENGINE_ARCHITECTURE.md:82;docs/re/STARTUP.md:46;docs/re/TIMING.md:65	0047afd0	0/1	
+GameTracker	0x110	00e7f198 gameTracker_timeMultSaved: width 4, 2 readers, 1 writers	code-ref	observed	1	1	docs/re/TIMING.md:80			
+GameTracker	0x114	00e7f19c: width 4, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f19c			
+GameTracker	0x118	00e7f1a0: width 4, 4 readers, 3 writers	code-ref	observed	5	5	docs/GAMEPLAY.md:4812;docs/formats/SCRIPTS.md:431;docs/matrix/06_realm_of_the_dead.md:36			
+GameTracker	0x11c	00e7f1a4: width 4, 1 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f1a4			
+GameTracker	0x120	00e7f1a8 gameTracker_frameRateLock: width 4, 1 readers, 2 writers	code-ref	observed	1	1	docs/re/TIMING.md:55			
+GameTracker	0x124	00e7f1ac: width 1, 4 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f1ac			
+GameTracker	0x126	00e7f1ae: width 1, 0 readers, 3 writers	code-ref	observed	1	0	globals.tsv:00e7f1ae			
+GameTracker	0x12c	00e7f1b4: width ?, 1 readers, 0 writers	code-ref	observed	1	0	globals.tsv:00e7f1b4			
+GameTracker	0x12e	00e7f1b6: width 2, 1 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f1b6			
+GameTracker	0x138	00e7f1c0: width 4, 15 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f1c0			
+GameTracker	0x13c	00e7f1c4: width 4, 5 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f1c4			
+GameTracker	0x140	00e7f1c8: width 2/4, 11 readers, 6 writers	code-ref	observed	2	1	docs/GAMEPLAY.md:314;docs/GAMEPLAY.md:317			
+GameTracker	0x144	00e7f1cc: width 4, 1 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f1cc			
+GameTracker	0x148	00e7f1d0 gameTracker_timeScale: width 4, 1 readers, 1 writers	code-ref	observed	2	2	docs/re/ENGINE_ARCHITECTURE.md:87;docs/re/TIMING.md:66			
+GameTracker	0x14c	00e7f1d4: width 4, 7 readers, 3 writers	code-ref	observed	5	5	docs/GAMEPLAY.md:4801;docs/formats/SCRIPTS.md:430;docs/re/TIMING.md:69			
+GameTracker	0x150	00e7f1d8: width 4, 1 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f1d8			
+GameTracker	0x154	00e7f1dc: width 4, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f1dc			
+GameTracker	0x160	00e7f1e8: width 4, 4 readers, 4 writers	code-ref	observed	1	0	globals.tsv:00e7f1e8			
+GameTracker	0x164	00e7f1ec: width 4, 4 readers, 4 writers	code-ref	observed	1	0	globals.tsv:00e7f1ec			
+GameTracker	0x168	00e7f1f0: width 1, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7f1f0			
+GameTracker	0x169	00e7f1f1: width 1, 0 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f1f1			
+GameTracker	0x16a	00e7f1f2: width 1, 1 readers, 3 writers	code-ref	observed	1	0	globals.tsv:00e7f1f2			
+GameTracker	0x170	00e7f1f8: width 2, 2 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f1f8			
+GameTracker	0x172	00e7f1fa: width 2, 2 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f1fa			
+GameTracker	0x174	00e7f1fc: width 2, 2 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f1fc			
+GameTracker	0x178	00e7f200: width 4, 2 readers, 2 writers	code-ref	observed	1	0	globals.tsv:00e7f200			
+GameTracker	0x17c	00e7f204: width 4, 1 readers, 2 writers	code-ref	observed	1	1	docs/GAMEPLAY.md:4001			
+GameTracker	0x180	00e7f208: width 1, 2 readers, 3 writers	code-ref	observed	1	0	globals.tsv:00e7f208			
+GenericFXObject	0x4	effect map | u16 n, 4-byte `{id, class, index}` | case 0x2F	table	stated	1	1	docs/formats/EFFECTS.md:28			
+GenericFXObject	0x8	effect map | u16 n, 4-byte `{id, class, index}` | case 0x2F	table	stated	1	1	docs/formats/EFFECTS.md:28			
+GenericFXObject	0xc	particle emitters | 0x17C | 0x543F70	table	stated	1	1	docs/formats/EFFECTS.md:29	00543f70	1/1	
+GenericFXObject	0x10	particle emitters | 0x17C | 0x543F70	prose;table	stated	2	2	docs/formats/EFFECTS.md:29;src/fx/Fx.hpp:48	00543f70	1/1	
+GenericFXObject	0x14	class 1 | 0x2C | 0x545810 [U: ribbon?]	prose;table	stated	2	2	docs/formats/EFFECTS.md:30;src/fx/Fx.hpp:123	00545570;00545810	2/2	
+GenericFXObject	0x18	class 1 | 0x2C | 0x545810 [U: ribbon?]	table	stated	1	1	docs/formats/EFFECTS.md:30	00545810	1/1	
+GenericFXObject	0x1c	class 2 glows (prim 0x82) | 0x58 | 0x536B70, update 0x535FA0, draw 0x536280 — implemented, "Glows"	prose;table	stated	2	2	docs/formats/EFFECTS.md:31;src/fx/Fx.hpp:89	00535fa0;00536070;00536280;00536b70	2/4	
+GenericFXObject	0x20	class 2 glows (prim 0x82) | 0x58 | 0x536B70, update 0x535FA0, draw 0x536280 — implemented, "Glows"	table	stated	1	1	docs/formats/EFFECTS.md:31	00535fa0;00536280;00536b70	2/3	
+GenericFXObject	0x24	class 3 | 0xB8 | 0x537230 [U]	prose;table	stated	2	2	docs/formats/EFFECTS.md:32;src/fx/Fx.hpp:141	00537230	1/1	
+GenericFXObject	0x28	class 3 | 0xB8 | 0x537230 [U]	table	unknown	1	1	docs/formats/EFFECTS.md:32	00537230	1/1	
+GenericFXObject	0x2c	class 4 | 0x64 | 0x53D100 [U]	table	unknown	1	1	docs/formats/EFFECTS.md:33	0053d100	1/1	
+GenericFXObject	0x30	class 4 | 0x64 | 0x53D100 [U]	table	unknown	1	1	docs/formats/EFFECTS.md:33	0053d100	1/1	
+GenericFXObject	0x34	class 5 screen filters (prim 0x85) | 0x28 | 0x535CC0, draw 0x5469A0 ("Screen filters" below)	prose;table	stated	2	2	docs/formats/EFFECTS.md:34;src/fx/Fx.hpp:236	00535cc0;005469a0	2/2	
+GenericFXObject	0x38	class 5 screen filters (prim 0x85) | 0x28 | 0x535CC0, draw 0x5469A0 ("Screen filters" below)	table	stated	1	1	docs/formats/EFFECTS.md:34	00535cc0;005469a0	2/2	
+GenericFXObject	0x3c	0x546710 reads it from GenericFXObject +0x3C/+0x40 — [U] whether that helper's input is right for every object.)	prose;table	stated	3	2	docs/formats/EFFECTS.md:22;docs/formats/EFFECTS.md:35;src/fx/Fx.hpp:163	00546710;005c35d0	1/2	
+GenericFXObject	0x40	effect lights (prim 6) | 0x24 | 0x546710 → 0x5C35D0 — implemented, "Lights"	table	stated	1	1	docs/formats/EFFECTS.md:35	00546710;005c35d0	1/2	
+GenericFXObject	0x44	class 7 instance fades | 0x0C | 0x52C920: instance fade (+0x1B4/+0x1B8, 4096 = 1) [O] — implemented, "Instance fades"	prose;table	observed	2	2	docs/formats/EFFECTS.md:36;src/fx/Fx.hpp:176	0052c920	0/1	
+GenericFXObject	0x48	class 7 instance fades | 0x0C | 0x52C920: instance fade (+0x1B4/+0x1B8, 4096 = 1) [O] — implemented, "Instance fades"	table	observed	1	1	docs/formats/EFFECTS.md:36	0052c920	1/1	
+GenericFXObject	0x54	class 8 | 0x3C | 0x5310A0	table	stated	1	1	docs/formats/EFFECTS.md:37	005310a0	0/1	
+GenericFXObject	0x58	class 8 | 0x3C | 0x5310A0	table	stated	1	1	docs/formats/EFFECTS.md:37	005310a0	1/1	
+GenericFXObject	0x5c	class 9 | 0x10 | 0x5471A0	table	stated	1	1	docs/formats/EFFECTS.md:38	005471a0	1/1	
+GenericFXObject	0x60	class 9 | 0x10 | 0x5471A0	table	stated	1	1	docs/formats/EFFECTS.md:38	005471a0	1/1	
+GenericFXObject	0x64	texture lists `{u32 n, ids[n]}` | referenced by particle +0x114	table	stated	1	1	docs/formats/EFFECTS.md:39			
+GenericFXObject	0x68	texture lists `{u32 n, ids[n]}` | referenced by particle +0x114	table	stated	1	1	docs/formats/EFFECTS.md:39			
+GlobalData	0x144	. The camera settings are DTP 0x14 (the global data +0x144's id): distance +0x60	prose	stated	1	1	src/game/World.cpp:867			
+GlobalData	0x164	only, 0x10 / 1 yaw / pitch force set in global data +0x164 / +0x168, 0x13 floor probe; defaults 0x601D30 / 0x5FEE10), +0x14C markup type →	prose	observed	1	1	docs/GAMEPLAY.md:263	00462e10;0048ef50;00493330;005e8210;005e8940	2/53	
+GlobalInfo	0x1c	p** [O generalbank.drm DTP 47, named by GlobalInfo +0x1C; tru.exe 0x4868F0 hands it to the mapper	prose	observed	3	2	docs/GAMEPLAY.md:566;docs/GAMEPLAY.md:4792;src/game/Melee.cpp:22	004868f0	0/1	
+GlobalInfo	0x24	60 (capacity columns); difficulty table GlobalInfo +0x24 read | `Tailoring.PresetsScaleHealthAndCapacity`, `GadgetsReal.TuningLightsAndS	prose	inference	2	2	docs/ROADMAP.md:62;src/game/Combat.hpp:33	006e75a0;006e76a0;006e7760;006e77b0;006e7960	1/6	
+GlobalInfo	0x164	its length. [O] force sets: generalbank GlobalInfo +0x164 / +0x168 = DTP 0x1C (18 yaw sets) / 0x1D (36 pitch sets), entries {angle, speed	prose	observed	2	2	docs/GAMEPLAY.md:263;src/game/World.cpp:34	00462e10;0048ef50;00493330;005e8210;005e8940	2/53	
+GlobalInfo	0x194	d table: generalbank.drm's DTP named by GlobalInfo +0x194 (tru.exe 0x5D5F80 builds the totals from it; the	prose	stated	1	1	src/game/Progress.hpp:80	005d5f80	0/1	
+GlowDef	0x0	uint8_t flags = 0; // +0x00: 1 birth-enabled, 2 rotation jitter, 4 ignores instance fade,	mirror	stated	1	1	src/fx/Fx.hpp:92			
+GlowDef	0x1	int8_t kind = 1; // +0x01: 1 one sprite at `segment` (every record); >= 2 beams (0x5361E0): not drawn	mirror	stated	1	1	src/fx/Fx.hpp:94	005361e0	0/1	
+GlowDef	0x2	int16_t segment = 0, segment2 = 0; // +0x02 / +0x04 (-126 = the instance origin)	mirror	stated	1	1	src/fx/Fx.hpp:95			
+GlowDef	0x8	std::vector<uint32_t> colours; // +0x08 -> {u32 n, rgba[n]}; none = 0x80808080	mirror	stated	1	1	src/fx/Fx.hpp:96			
+GlowDef	0xc	uint8_t id = 0; // +0x0C prim id (stop commands 0x15 / 0x1A / 0x18 / 0x1B)	mirror	stated	1	1	src/fx/Fx.hpp:97			
+GlowDef	0xf	uint8_t lifeVar = 0; // +0x0F +- period	mirror	stated	1	1	src/fx/Fx.hpp:98			
+GlowDef	0x10	int16_t period = 30; // +0x10 colour cycle period (colours >= 2)	mirror	stated	1	1	src/fx/Fx.hpp:99			
+GlowDef	0x12	float facing = 1; // +0x12 / 180: drawn while dot(axis, to camera) > 1 - facing	mirror	stated	1	1	src/fx/Fx.hpp:100			
+GlowDef	0x14	float width = 0, height = 0; // +0x14 / +0x16 start half-size [I: world units]	mirror	stated	1	1	src/fx/Fx.hpp:101			
+GlowDef	0x18	float endWidth = -1, endHeight = -1; // +0x18 / +0x1A size at the end of `life` (< 0 = constant)	mirror	stated	1	1	src/fx/Fx.hpp:102			
+GlowDef	0x1c	int32_t life = -1; // +0x1C; <= 0 forever (until stopped)	mirror	stated	1	1	src/fx/Fx.hpp:103			
+GlowDef	0x20	uint16_t fadeIn = 0, fadeOut = 0; // +0x20 / +0x22	mirror	stated	1	1	src/fx/Fx.hpp:104			
+GlowDef	0x24	int16_t depthBias = 0; // +0x24 view-depth offset (z >= 20 after it)	mirror	stated	1	1	src/fx/Fx.hpp:105			
+GlowDef	0x26	int8_t facingMode = 0; // +0x26 low nibble, signed: +-1/2/3 = local +-X/Y/Z of axisSegment (or the	mirror	stated	1	1	src/fx/Fx.hpp:106			
+GlowDef	0x28	int16_t axisSegment = 0, axisSegment2 = 0; // +0x28 / +0x2A	mirror	stated	1	1	src/fx/Fx.hpp:108			
+GlowDef	0x2c	float rot0 = 0, rotRange = 0, spin = 0, spinRange = 0; // +0x2C.. degrees, degrees per 30 Hz frame [I]	mirror	inference	1	1	src/fx/Fx.hpp:109			
+GlowDef	0x3c	uint8_t texRate = 0; // +0x3C texture-list frames per step (0 = one random frame)	mirror	stated	1	1	src/fx/Fx.hpp:110			
+GlowDef	0x3d	uint8_t condition = 0; // +0x3D: 1 / 2 draw only when / unless 0x5EA390 (a camera mode [U]) is set	mirror	unknown	1	1	src/fx/Fx.hpp:111	005ea390	0/1	
+GlowDef	0x40	uint32_t texture = 0; // +0x40; 0 = kGlowTexture	mirror	stated	1	1	src/fx/Fx.hpp:112			
+GlowDef	0x44	std::vector<uint32_t> textures; // +0x44 -> {u32 n, ids[n]}	mirror	stated	1	1	src/fx/Fx.hpp:113			
+GlowDef	0x48	glm::vec3 offset{0}; // +0x48 s16 x3 in the segment's frame	mirror	stated	1	1	src/fx/Fx.hpp:114			
+GlowDef	0x4e	uint16_t fadeFar = 0, fadeNear = 0; // +0x4E / +0x50 camera-distance fade band	mirror	stated	1	1	src/fx/Fx.hpp:115			
+GrappleController	0x34	rom the instance message 0x175 returns (grapple controller +0x34: the g_grapple instance, stowed	prose	stated	2	2	docs/GAMEPLAY.md:2226;src/game/Combat.hpp:424			
+GrappleTuning	0xb4	// +0xB4..+0xB7 Lara's HInfo markers {in hand, stowed, ...} as a weapon's +0xB8 (g_grapple: 30, 9). Stowed, the	mirror	stated	1	1	src/game/Combat.hpp:423			
+GrappleTuning	0x100	float range = 4424.78f; // +0x100	mirror	stated	1	1	src/game/Combat.hpp:419			
+GrappleTuning	0x104	float maxRope = 4424.78f; // +0x104	mirror	stated	1	1	src/game/Combat.hpp:420			
+GrappleTuning	0x108	float minRope = 553.09735f; // +0x108	mirror	stated	1	1	src/game/Combat.hpp:421			
+GrappleTuning	0x10c	int bends = kRopeBends; // +0x10C	mirror	stated	1	1	src/game/Combat.hpp:422			
+GravityRecord	0x4c	speed weapon S+0x10 (1000 / 1500), gravity record +0x4C (−2 / −1; the +0x84 record −6 / −3), per 30 Hz frame [I unit];	prose	stated	2	2	docs/GAMEPLAY.md:4135;src/game/Combat.hpp:221	006b6d10;006c91d0	0/2	
+GrenadeTuning	0x58	float impulse = 300.0f, edgeImpulse = 100.0f; // +0x58 / +0x5C: knock speed at the centre / the edge [I meaning]	mirror	stated	1	1	src/game/Combat.hpp:405			
+GrenadeTuning	0xe6	std::array<int, 3> maxCarried{10, 6, 4}; // +0xE6 / +0xE4 / +0xE2 by Tailoring::ammo (0x6E7760)	mirror	stated	1	1	src/game/Combat.hpp:399	006e7760	1/1	
+GrenadeTuning	0xea	float cooldown = 20 / 30.0f; // +0xEA frames	mirror	stated	1	1	src/game/Combat.hpp:400			
+GrenadeTuning	0x10c	float launchVz = 632.1f; // +0x10C units/s [I meaning]	mirror	stated	1	1	src/game/Combat.hpp:401			
+GrenadeTuning	0x110	float gravity = 4741.0f; // +0x110 units/s^2 [I meaning]	mirror	stated	1	1	src/game/Combat.hpp:402			
+GrenadeTuning	0x134	float minRange = 200.0f, maxRange = 1000.0f; // +0x134 / +0x138 [I meaning]	mirror	stated	1	1	src/game/Combat.hpp:403			
+Header	0x0	u32 | sampleRate	table	observed	2	2	docs/formats/AUDIO.md:136;docs/formats/TEXTURES.md:20			
+Header	0x4	s32 | loopStart	table	observed	2	2	docs/formats/AUDIO.md:137;docs/formats/TEXTURES.md:21			
+Header	0x8	u32 | numSamples	table	observed	2	2	docs/formats/AUDIO.md:138;docs/formats/TEXTURES.md:22			
+Header	0xc	u32 | channels	table	observed	2	2	docs/formats/AUDIO.md:139;docs/formats/TEXTURES.md:23			
+Header	0x10	0	prose;table	observed	3	3	docs/formats/AUDIO.md:140;docs/formats/MESHES.md:55;docs/formats/TEXTURES.md:24	0050f7c0	1/1	
+Header	0x12	u16 | height [O]	table	observed	1	1	docs/formats/TEXTURES.md:25			
+Header	0x14	u8 | bits per pixel: 32 for 0x15, 0 for DXT [O]	table	observed	1	1	docs/formats/TEXTURES.md:26			
+Header	0x15	u8 | mip levels − 1 [O] (tru.exe 0x515B40 and the size check below)	table	observed	1	1	docs/formats/TEXTURES.md:27	00515b40	1/1	00515b40 match 515be2: cmp BYTE PTR [eax+0x15],0x0; 515c3e: add BYTE PTR [eax+0x15],bl — u8 mip levels - 1 (texture header)
+Header	0x16	u16 | flags; 0x8000 = cube map with 6 faces [O]. Other observed values: 0, 1, 3 (meaning [U])	table	observed	1	1	docs/formats/TEXTURES.md:28			
+Header	0x1c	0	table	stated	1	1	docs/formats/AUDIO.md:140			
+Header	0x20	u32 | hasCinematic	prose;table	stated	2	2	docs/formats/AUDIO.md:141;src/formats/Model.cpp:376			
+Header	0x24	u32 | hasSubtitles	table	stated	1	1	docs/formats/AUDIO.md:142			
+Header	0x2c	u32 | loopStartFileOffset	prose;table	stated	2	2	docs/formats/AUDIO.md:143;src/audio/Audio.hpp:80			
+Header	0x30	u32 | ?	table	unknown	1	1	docs/formats/AUDIO.md:144			
+Header	0x34	u32 | ?	table	unknown	1	1	docs/formats/AUDIO.md:145			
+Header	0x38	f32 | mediaLength	prose;table	observed	2	2	docs/formats/AUDIO.md:146;src/audio/Audio.hpp:81			
+Header	0x3c	f32[12] | volLeft	table	stated	1	1	docs/formats/AUDIO.md:147			
+Header	0x44	n, u8 drawn}; a drawn node's chunk list is header +0x44 [node]. tru.exe draws per leaf with the lights	prose	stated	1	1	src/formats/Model.cpp:377			
+Header	0x6c	f32[12] | volRight	table	stated	1	1	docs/formats/AUDIO.md:148			
+Header	0x74	bit 0 is set, the batch +0x10 field and the header +0x74 field are used (tru.exe 0x50EB30) [O]. Meaning [U] |	prose	observed	1	1	docs/formats/MESHES.md:30	0050eb30	1/1	
+Header	0x9c	u32[12] | loopStartSamplesToSkip?	table	reference	1	1	docs/formats/AUDIO.md:149			
+Health	0x63c	int lastType_ = 0; // +0x63C	mirror	stated	1	1	src/game/Combat.hpp:171			
+HerInstance	0x228	and segment she stands on (her instance +0x228 / +0x226). `0x5D75B0` then gives (segment matrix now x its inverse one	prose	stated	1	1	docs/GAMEPLAY.md:2694	005d75b0	0/1	
+HInfo	0x3c	0x40 bytes: pivot +0x20, parent +0x38, HInfo +0x3C; HInfo slot 2 = markers of 0x20 bytes: +6 u16 the id births	prose	stated	2	2	src/formats/Births.cpp:22;src/physics/Physics.cpp:211			
+Hurdle	0x9c0	// +0x9C0); jumpTime: seconds of free flight in State::Jump (gives the wall test the launch speed); jumpAimed: the	mirror	stated	1	1	src/game/Game.hpp:468			
+ImfPlacement	0x4c	uint32_t textures[4] = {}; // +0x4C..+0x58 instance textures (classes 1-4; light map) overriding the model's, 0 = none	mirror	stated	1	1	src/formats/Formats.hpp:165			
+IMFRecord	0x4c	hat slot is the per-instance light map (IMF record +0x4C, LEVELS.md).	prose	observed	1	1	docs/formats/MATERIALS.md:32			
+Instance	0x10	e, id) handle pairs left/right, name `*(instance+0x10)+0x60`; mask = player	prose	stated	1	1	docs/GAMEPLAY.md:912			
+Instance	0x14	me +6 ± u8 +7 (0..127, 0x582C20; /127 = instance +0x14), u32 DTP +8,	prose	stated	3	3	docs/formats/AUDIO.md:573;docs/formats/PHYSICS.md:286;docs/formats/SCRIPTS.md:201	00582c20	0/1	
+Instance	0x18	actions 5 (instance +0x18 |= 0x20000000: collision callbacks skip it, 0x48D590 / 0x697970) and 29 (sectio	prose	observed	10	8	docs/GAMEPLAY.md:395;docs/formats/AUDIO.md:574;docs/formats/EFFECTS.md:375	0048d590;004d4a00;00539500;00582ca0;00582d50	5/8	
+Instance	0x1c	x19/0x1A clear/set "no grapple target" (instance +0x1C bit 2); UberObjectSection_TR8 0x6D5EC0: 0x1C the removal record, 0x1D word +4 →	prose	observed	4	3	docs/formats/SCRIPTS.md:130;src/game/Game.hpp:1673;src/game/Objects.cpp:582	004d86a0;006d5ec0;006ecca0;007131a0	2/4	
+Instance	0x20	me] tru.exe under Wine, `wmem trace` of Instance +0x20 position / +0x2A0 velocity (Lara-local, units per 30 Hz frame: 48.04 / 49.97 +	prose	observed	6	5	docs/GAMEPLAY.md:242;docs/REFERENCE_COMPARISON.md:55;docs/audit/AUDIT_B.md:335			
+Instance	0x28	e 315.4 above the feet (proxy +0x648 vs Instance +0x28), so the capsule spans 141.6..489.2; swimming it is 80 / 228. 0x490E60 steps ra	prose	observed	2	2	docs/GAMEPLAY.md:243;docs/formats/AUDIO.md:843	00490e60;0049a410;007018e0;007144b0	1/4	
+Instance	0x2c	near = 0; // Reaction parameter 1 (instance +0x2C): speed along the axis, units/s, signed	prose	stated	1	1	src/game/JointSound.hpp:24			
+Instance	0x30	sea, camfollow-wine/turn1.txt, rotz of Instance +0x30): with the stick swung round faster than she can follow she turns at a steady 1	prose	observed	4	3	docs/GAMEPLAY.md:249;docs/formats/LEVELS.md:46;docs/re/ENGINE_ARCHITECTURE.md:144	005bcc30	1/1	005bcc30 match 5bcdee: mov DWORD PTR [esi+0x30],eax — rotation (from intro +0x00)
+Instance	0x34	probe box against the volume's own box (instance data +0x34 centre, +0x40..+0x54 extents; no surface-mesh footprint), as `findWater`; +0x91	prose	observed	1	1	docs/GAMEPLAY.md:1797	005d77e0;00710a20;00777780	1/3	
+Instance	0x40	| +0x52 | u16, copied to instance+0x40 | [O]; meaning [U] |	prose	observed	1	1	docs/formats/LEVELS.md:51			005bcc30 match 5bcd6d: mov WORD PTR [esi+0x40],dx — u16 from intro +0x52
+Instance	0x50	0x28F80. Player init 0x721F80 copies it to instance+0x50; the exe reads every player tuning	prose	inference	3	3	docs/GAMEPLAY.md:270;docs/ROADMAP.md:47;src/game/ai/EnemyData.cpp:121	005db370;0063c190;00721f80	2/3	
+Instance	0x54	every range, carried by the projectile (instance +0x54, 0x6C9670).	prose	stated	1	1	src/game/Combat.hpp:212	006c9670	1/1	
+Instance	0x6c	0x508570), then the entity's drawable (instance +0x6C) | D, C |	prose	stated	1	1	docs/re/RENDER_PIPELINE.md:102	005076a0;00508570;0055fb60	2/3	
+Instance	0x80	track (+0x48 a third vec4 track written to instance +0x80; no shipped intro has one).	prose	stated	1	1	src/formats/Formats.hpp:85			
+Instance	0x90	s owner's matrix of the item's segment (instance +0x90 + 0x40 x item	prose	observed	6	5	docs/GAMEPLAY.md:2685;docs/formats/ANIMGRAPH.md:65;src/fx/Fx.cpp:608	0046da20;0046df20;005c41a0	2/3	
+Instance	0xe0	unit with her** [O]. An instance's unit is instance +0xE0; 0x5B3A20 sets it and, down	prose	observed	4	3	docs/GAMEPLAY.md:740;docs/GAMEPLAY.md:3151;docs/formats/LEVELS.md:302	005b3a20;005d2aa0	2/2	005b3a20 match 5b3a56: mov DWORD PTR [edi+0xe0],ebx — unit pointer set by 0x5B3A20
+Instance	0x100	CD1B0(player, volume)`: shape data = `*(instance+0x100)+0x78` (the intro data).	prose	stated	1	1	docs/formats/SCRIPTS.md:83	005cd1b0	1/1	005cd1b0 match 5cd244: mov eax,DWORD PTR [esi+0x100] — intro pointer; next instruction loads [eax+0x78] = intro data
+Instance	0x104	instance +0x104, else its parent's) overrides both when flagged [O]: `GrappleTarget::range / ro	prose	observed	4	3	docs/GAMEPLAY.md:2215;docs/formats/LEVELS.md:55;docs/formats/LEVELS.md:453	005ba810;0063c7a0;00698250;00698a70;00698ac0	3/6	
+Instance	0x118	efore each instance's process callback (instance+0x118) they reset `timeMult` from the saved +0x110 copy. The callback can rescale it	prose	stated	1	1	docs/re/TIMING.md:111	00454550;0045e100;00752c50	0/3	
+Instance	0x160	The bone's first hit primitive (instance +0x160 list, byte 3 = segment): a box {size, centre} (0x48FD70). Its	prose	stated	1	1	src/game/Bend.cpp:57	0048fd70	0/1	
+Instance	0x186	at a hit (face +0x10; tru.exe copies it to instance +0x186).	prose	stated	2	2	src/app/game/main.cpp:1340;src/fx/Fx.hpp:261	005bbfd0	0/1	
+Instance	0x1b0	r-vertex burn map on the instance mesh (instance +0x1B0) [I: BurnFX] | 0 (particle.drm records only) | no |	prose	stated	1	1	docs/formats/EFFECTS.md:337	005310a0	1/1	
+Instance	0x1b4	per frame 0x5B55D0). The instance fade is instance +0x1B4 (0 drawn, 1 gone; 4096 = 1 in the record): set to	prose	stated	4	2	src/fx/Fx.hpp:177;src/fx/Fx.hpp:411;src/fx/Fx.hpp:563	0052c920;00536280;005b55d0	3/3	0052c920 match 52ca60: fstp DWORD PTR [esi+0x1b4] — float instance fade
+Instance	0x214	(instance +0x214) from the explosion's own position, so the parent's knock is the full one and i	prose	stated	2	2	docs/GAMEPLAY.md:445;src/game/Breakables.cpp:314			
+Instance	0x234	model uber section `section` draws now (instance +0x234: its record's +0x18 until state action 1 sets	prose	stated	1	1	src/game/Game.hpp:970			
+Instance	0x23c	Lara's hidden draw groups (Instance +0x23C, tru.exe 0x5B3DD0): bit n-1 hides model primgroups of group n	prose	stated	1	1	src/script/Script.hpp:520	005b3dd0	1/1	005b3dd0 match 5b3e23: and DWORD PTR [ecx+0x23c],ebp; 5b3e2f: or DWORD PTR [ecx+0x23c],esi — u32 hidden draw-group mask
+Instance	0x244	the drawable (`cdc::InstanceDrawable`, instance +0x244) holds one render-model	prose	stated	1	1	docs/formats/LEVELS.md:79			
+Instance	0x280	on instance has its own anim component (instance +0x280 → +0x14; 0x4D0E50), so a	prose	observed	3	3	docs/formats/SCRIPTS.md:152;src/game/Game.hpp:1617;src/game/Objects.cpp:485	00444ba0;004d0e50	1/2	
+Instance	0x284	MultiSpline (tru.exe 0x5D1290 binds it to instance +0x284; LEVELS.md "Spline movers"): +0x40 position	prose	stated	2	2	src/formats/Formats.hpp:84;src/script/Script.cpp:2669	005d1290;0079c750;0079c970;007ad0d0	0/4	
+Instance	0x288	tru.exe under Wine, Lara's Havok proxy (instance +0x288) while standing: radius +0x65C = 79.0139, cylinder +0x660 = 189.633 (targets +0	prose	observed	4	3	docs/GAMEPLAY.md:243;docs/GAMEPLAY.md:244;docs/REFERENCE_COMPARISON.md:135	00490e60;0049a410;007018e0;007144b0	1/4	
+Instance	0x294	x6B4440 / 0x6B4090 | object anim graph (Instance +0x294): run / transition pick / stimulus / Lara's use pick | C |	prose	stated	4	4	docs/re/ENGINE_ARCHITECTURE.md:236;src/formats/AnimGraph.hpp:2;src/script/Script.cpp:1548	004a52e0;006a5660;006b3dd0;006b4090;006b4440	2/5	
+Instance	0x2a0	a·t²/2; v += a·t` | [O] `FUN_005DB370` (Instance +0x2A0 velocity, +0x2B0 acceleration); ported exactly, so results do not depend on the	prose	observed	4	3	docs/GAMEPLAY.md:239;docs/GAMEPLAY.md:2697;src/game/Game.hpp:233	005db370;007027b0;00714630	2/3	005db370 match 5db40d: movups XMMWORD PTR [eax+0x2a0],xmm2 — float4 velocity written back
+Instance	0x2d8	+0x20 = the item, flags from the type; instance +0x2D8 lists them) for every instance whose model has	prose	stated	1	1	src/game/Objects.cpp:2582			
+Instance	0x2e0	system (instance +0x2E0, chains of 0x120 bytes solved joint by joint at 0x443D00), +4 type, +8 group, +	prose	stated	1	1	docs/GAMEPLAY.md:5135	00443d00	0/1	
+Intro	0x0	rotation, float4 Euler radians	table	observed	1	1	docs/formats/LEVELS.md:46	005bcc30	1/1	005bcc30 match 5bcdec: mov eax,DWORD PTR [edi] — rotation float4 copied dword-wise to instance +0x30
+Intro	0x10	position, float4	table	observed	1	1	docs/formats/LEVELS.md:47			005bcc30 match 5bcda8: mov edx,DWORD PTR [edi+0x10] — position float4 copied to instance +0x20
+Intro	0x20	second copy of rotation and position	table	observed	1	1	docs/formats/LEVELS.md:48			
+Intro	0x30	second copy of rotation and position	table	observed	1	1	docs/formats/LEVELS.md:48			
+Intro	0x40	scale, float3	table	observed	1	1	docs/formats/LEVELS.md:49			
+Intro	0x50	u16 object id (`objectlist.txt`); 0xFFFA (−6) = marker with no object	prose;table	observed	2	1	docs/formats/LEVELS.md:50;docs/formats/LEVELS.md:50	005c1730	0/1	005bcc30 match 5bcc7d: movzx eax,WORD PTR [edi+0x50]; 5bcff4: movzx eax,WORD PTR [edi+0x50] — u16 object id
+Intro	0x52	u16, copied to instance+0x40	mirror;table	observed	2	2	docs/formats/LEVELS.md:51;src/formats/Formats.hpp:110	0069d690	0/1	005bcc30 match 5bcd67: mov dx,WORD PTR [edi+0x52] — u16 copied to instance +0x40
+Intro	0x58	i32 unique intro id	table	observed	1	1	docs/formats/LEVELS.md:52			005bcc30 match 5bcc3f: mov esi,DWORD PTR [edi+0x58] — i32 unique intro id (first use: lookup arg)
+Intro	0x60	i16 initial animation (−1 = none)	table	observed	1	1	docs/formats/LEVELS.md:53			
+Intro	0x68	Spline movers: intro +0x68 paths (Bezier/Hermite position, slerped rotation, 30 Hz keys) move their object	mirror;prose	stated	6	5	CHANGELOG.md:1020;docs/formats/SCRIPTS.md:351;src/formats/Formats.hpp:84	004aa8b0;005ba280;005cf260;005d1290	1/4	
+Intro	0x70	flag bytes	table	observed	1	1	docs/formats/LEVELS.md:54	005bcc30	1/1	
+Intro	0x72	Intro +0x72 & 0x10: the game notifier's intro check (vtable +0x3C) runs and both notifiers	prose	stated	2	2	src/formats/Formats.hpp:136;tests/test_formats.cpp:623	005bcc30	1/1	
+Intro	0x73	flag bytes	table	observed	1	1	docs/formats/LEVELS.md:54	005bcc30	0/1	
+Intro	0x78	Patrol paths [O] (intro +0x78 data, type 13 = enemy; tru.exe birth 0x63C7A0 → 0x63AC40 → 0x62F520): data +0x3	mirror;prose;table	observed	3	3	docs/GAMEPLAY.md:3797;docs/formats/LEVELS.md:55;src/formats/Formats.hpp:112	005ba810;0062f520;0063ac40;0063c7a0	0/4	
+Intro	0x7c	uint32_t scriptId = 0; // +0x7C intro script: type-8 section id in the unit DRM, 0 = none	mirror	stated	1	1	src/formats/Formats.hpp:113			
+IntroData	0x12	lumes from `watervolume` intros linked (intro data +0x12) to their surface intro: l4_pool's blue goo (`ca_goo_pool_watersurface`, surfac	prose	inference	1	1	docs/ROADMAP.md:49	005d3860;005d7130;006acb60;00710a20	0/4	
+IntroData	0x30	0; // index in the game's reward table (intro data +0x30; the urn's for a born treasure); 0: none	prose	stated	2	2	src/game/Progress.hpp:78;src/game/Stream.cpp:302			
+IntroData	0x34	x612F80 node priorities), patrol paths (intro data +0x34/+0x38/+0x88, 0x63C7A0 → 0x63AC40 → 0x62F520, order 0x637870; 280 paths surveyed	prose	observed	3	3	docs/ROADMAP.md:57;src/game/ai/EnemyData.cpp:577;tests/test_script.cpp:550	005bf0e0;00612030;006126b0;00612bd0;00612f80	5/17	
+IntroData	0x38	erFlow`, tru.exe 0x6ACB60): watervolume intro data +0x38 / +0x3A source / sink marker ids (the last	prose	stated	2	2	docs/GAMEPLAY.md:1788;tests/test_game.cpp:5954	006acb60	0/1	
+IntroData	0x54	o's data holds its box: half extents at intro data +0x54/+0x58/+0x5C (centre	prose	observed	3	3	docs/GAMEPLAY.md:1654;src/game/World.cpp:1603;tests/test_save.cpp:743			
+IntroData	0x5c	oints[1].z, 2661.5f, 0.5f); // box top (intro data +0x5C half height), 38 under the goo plane	prose	stated	1	1	tests/test_game.cpp:2058			
+Irradiance volume	0x0	u32 region count	table	stated	2	1	docs/formats/LEVELS.md:189;docs/formats/LEVELS.md:233			
+Irradiance volume	0x4	sphere-tree root: node {centre xyz, radius, region*, probe index (−1 inner), child*[] null-ended}; leaves = probes	table	stated	1	1	docs/formats/LEVELS.md:190			
+Irradiance volume	0x8	region*[count]: {f32[6] [U], +0x18 settings* (record: +0x4A..+0x4C tint bytes, +0x50 SH scale, +0x54 L00 offset), +0x1C tint-table slot (0xAD7C90, 1.0 in every observed case), +0x20 u32 probes, +0x24 	table	unknown	1	1	docs/formats/LEVELS.md:191			
+Irradiance volume	0x40	internal pointer [U]	table	unknown	1	1	docs/formats/LEVELS.md:234			
+Irradiance volume	0x44	name* (e.g. "alowpolybush_bakedInstGroup")	table	stated	1	1	docs/formats/LEVELS.md:235			
+Irradiance volume	0x48	resource ref to a DTP `{?, renderModel ref @+4}`	table	stated	1	1	docs/formats/LEVELS.md:236			
+Irradiance volume	0x4c	optional texture ref [U] (lightmap?)	table	unknown	1	1	docs/formats/LEVELS.md:237			
+Irradiance volume	0x60	u32 1 [U]	table	unknown	1	1	docs/formats/LEVELS.md:238			
+Joint	0x108	x4AA250: motor target speed of a joint, joint +0x108 -> `Object::Joint::speed`; a non-plate, non-hinge joint moves	prose	inference	3	3	docs/PROGRESSION.md:69;src/game/Objects.cpp:1744;src/script/Script.hpp:214	004aa250	0/1	
+Joint	0x120	for all three axes (joint +0x120.., 0x4D1860), +0x1C [U] (at most 1, 0x4E1E60), +0x28 bits 0 / 1 [U] (joint +0x1	prose	unknown	2	2	docs/formats/PHYSICS.md:149;src/formats/Uber.hpp:73	004d1860;004e1e60	0/2	
+Joint	0x174	on / off, joint +0x174 bit 2 << (limit - 1), read by the joint solver 0x4E7550 only while set; hpoles	prose	stated	5	5	docs/PROGRESSION.md:92;docs/formats/PHYSICS.md:149;src/formats/Uber.hpp:73	004a9ab0;004d1860;004d9f50;004e1e60;004e7550	1/5	
+Joint	0x178	indices [O decomp 0x4A5C40 / 0x4A5D90, joint +0x178]: 1 hinge (limit 1 =	prose	stated	1	1	docs/formats/PHYSICS.md:104	004a5c40;004a5d90	2/2	
+Joint	0x179	s its rotation (three constrained rows, joint +0x179 = 3) and	prose	stated	1	1	docs/formats/PHYSICS.md:146			
+LaraCameraRewrite	0x3b0	_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)	prose	stated	1	1	src/game/Game.hpp:1488			
+Level	0x0	`Terrain*` (24-byte section: portals, collision terrain groups)	table	observed	1	1	docs/formats/LEVELS.md:32			
+Level	0x8	list" was wrong: the level's 0x5C list (Level +0x08) is	prose	stated	2	2	docs/GAMEPLAY.md:2680;docs/formats/COLLISION.md:162	005ce4f0;005d0610	1/2	
+Level	0x2c	usic variable 2 (rain bus), unit flags (Level+0x2C: 2, 0x20000 deep drops) | Tested | Wine reads (ballcourt rain 0x199, l5_startsn	prose	inference	9	6	docs/ROADMAP.md:70;docs/ROADMAP.md:70;docs/formats/EFFECTS.md:511	00539ef0;00545950	2/2	
+Level	0x32	r.shock1(std::min<int>(c.a1, level + 0x32), c.a2 << 12);	prose	stated	1	1	src/app/game/main.cpp:2148			
+Level	0x54	else rainfx), 512 drop sheets above the Level+0x54 height map, splashes (event 0x2E / 0x2F), lightning light + event 0x30, event 0	prose	inference	5	5	docs/ROADMAP.md:70;docs/formats/EFFECTS.md:485;src/formats/Formats.hpp:292	00546fc0;005c30e0	1/2	
+Level	0x60	unit's Level +0x60 holds a version-8 resource of graphs per layer (l1_ship_exterior: layer 3, agen	prose	observed	6	6	docs/GAMEPLAY.md:3844;docs/ROADMAP.md:57;docs/formats/LEVELS.md:420	0041c7d0;0041c8c0;005bf0e0;00612030;006126b0	2/19	
+Level	0x70	audio/script: unit scripts (Level+0x70 DTP +0x1C0) start with their unit, so help-on-demand conditions are set: l1_sea	prose;table	observed	23	16	CHANGELOG.md:1006;docs/GAMEPLAY.md:283;docs/GAMEPLAY.md:4220	004545c0;00454bd0;00455910;00456580;00457100	7/10	
+Level	0x74	Unit data (Level +0x74) +0xAC count, +0xB0 `sfxmarker*[]`; each loaded unit's markers update every fra	prose;table	observed	11	7	docs/formats/AUDIO.md:489;docs/formats/COLLISION.md:108;docs/formats/COLLISION.md:183	0048b770;0048bab0;0048c3f0;005b3860;005be650	3/7	005b3860 match 5b3872: mov edi,DWORD PTR [edx+0x74] — unit data pointer
+Level	0x80	works (tru = ours − Level+0x80 = (5610.33, −22439.56, −19571.3)), but she did not attach to the ladder from a	prose;table	observed	26	13	docs/GAMEPLAY.md:2441;docs/RENDERING.md:355;docs/ROADMAP.md:34	0047d180;0050b910;005c32c0;005d10d0;005d13e0	1/5	
+Level	0x90	cell group data (general section)	prose;table	observed	2	2	docs/formats/LEVELS.md:36;src/formats/Level.cpp:613			
+Level	0xa0	stream-unit portal array, reached through `Terrain+0x04` (see "Streaming"); its position in section 0 varies (ballcourt: +0x2260)	table	observed	1	1	docs/formats/LEVELS.md:37			
+Light	0x34	oat intensity_ = 0; // light +0x34	prose	stated	1	1	src/fx/Weather.hpp:93			
+Light	0xf4	30: tile size ≤ 2048, tiles per light = light +0xF4 (4 for the sun's PSSM splits), ≤ 16 tiles in total, at most two 2048² tiles, wi	prose	stated	1	1	docs/re/RENDER_PIPELINE.md:189	00504f30;005050c0	1/2	
+Light	0x17c	(entity +0x10C, then +0x12C filtered by light +0x17C != sun and receiver mask entity +0xE4 & light +0x2CC) to SetLights (device vfun	prose	observed	1	1	docs/formats/SHADERS.md:89	005042b0;00504cc0;00505530;005076a0;00511810	2/11	
+Light	0x2cc	!= sun and receiver mask entity +0xE4 & light +0x2CC) to SetLights (device vfunc 0x70 = 0x5076A0 → 0x505530); 0x504CC0 keeps, in lis	prose	observed	1	1	docs/formats/SHADERS.md:89	005042b0;00504cc0;00505530;005076a0;00511810	2/11	
+LightDef	0x0	uint8_t kind = 0; // +0x00 (1 = timed light prim)	mirror	stated	1	1	src/fx/Fx.hpp:165			
+LightDef	0x2	int16_t life = 0; // +0x02 timed prim life (0 = the +0x16 duration applies)	mirror	stated	1	1	src/fx/Fx.hpp:166			
+LightDef	0x6	int16_t segment = 0; // +0x06	mirror	stated	1	1	src/fx/Fx.hpp:167			
+LightDef	0xa	glm::vec3 colour{0}, colour2{0}; // +0x0A / +0x0E rgb / 255; colour2 = end colour [I]	mirror	inference	1	1	src/fx/Fx.hpp:168			
+LightDef	0x11	bool birth = false; // +0x11 & 1	mirror	stated	1	1	src/fx/Fx.hpp:169			
+LightDef	0x12	float radius = 0, radius2 = 0; // +0x12 / +0x14 (radius2 0 = constant) [I]	mirror	inference	1	1	src/fx/Fx.hpp:170			
+LightDef	0x16	int16_t duration = -1; // +0x16, -1 forever	mirror	stated	1	1	src/fx/Fx.hpp:171			
+LightDef	0x18	int16_t fadeIn = 0, fadeOut = 0; // +0x18 / +0x1A [I]	mirror	inference	1	1	src/fx/Fx.hpp:172			
+LightDef	0x20	std::optional<scene::Light> dtp; // +0x20 light DTP: type, cone, falloff curve, flicker	mirror	stated	1	1	src/fx/Fx.hpp:173			
+LightningDef	0x0	uint8_t kind = 0; // +0x00: 0 bolt (constant colours), 2 colours along, 3 beam (colours + widths along)	mirror	stated	1	1	src/fx/Fx.hpp:146			
+LightningDef	0x2	int16_t life = 1; // +0x02 frames	mirror	stated	1	1	src/fx/Fx.hpp:149			
+LightningDef	0x10	glm::vec3 offset{0}, offset2{0}; // +0x10 / +0x18 s16 x3 in the segments' frames	mirror	stated	1	1	src/fx/Fx.hpp:151			
+LightningDef	0x16	int16_t segment = 0, segment2 = 0; // +0x16 / +0x20 (command a2 / a3 win); -100: the shot's end [I]	mirror	inference	1	1	src/fx/Fx.hpp:150			
+LightningDef	0x22	int segments = 1; // +0x22	mirror	stated	1	1	src/fx/Fx.hpp:153			
+LightningDef	0x24	float width = 0, width2 = 0; // +0x24 / +0x52 core width at start / end	mirror	stated	1	1	src/fx/Fx.hpp:154			
+LightningDef	0x26	float glow = 0, glow2 = 0; // +0x26 / +0x54 glow width	mirror	stated	1	1	src/fx/Fx.hpp:155			
+LightningDef	0x28	float wave = 0, jag = 0; // +0x28 / +0x2A amplitudes	mirror	stated	1	1	src/fx/Fx.hpp:156			
+LightningDef	0x2c	uint32_t core = 0, core2 = 0, outer = 0, outer2 = 0; // +0x2C / +0x30 / +0x34 / +0x38 rgba, start / end	mirror	stated	1	1	src/fx/Fx.hpp:157			
+LightningDef	0x4c	bool birth = false; // +0x4C & 1	mirror	stated	2	1	src/fx/Fx.hpp:147;src/fx/Fx.hpp:148			
+LightningDef	0x4d	uint8_t id = 0; // +0x4D prim id (stop commands)	mirror	stated	1	1	src/fx/Fx.hpp:145			
+LightningDef	0x56	int16_t fadeIn = 0, fadeOut = 0; // +0x56 / +0x58	mirror	stated	1	1	src/fx/Fx.hpp:158			
+LightningDef	0x64	uint32_t texture = 0, texture2 = 0; // +0x64 core / +0x68 glow (0 = kRibbonTexture)	mirror	stated	1	1	src/fx/Fx.hpp:160			
+LightningDef	0x6c	float spread = 0, spread2 = 0; // +0x6C / +0x6E random end offsets (+-)	mirror	stated	1	1	src/fx/Fx.hpp:152			
+LightningDef	0xa8	float speed = 0, length = 0; // +0xA8 / +0xAA moving section (tracers): head speed per frame, length	mirror	stated	1	1	src/fx/Fx.hpp:159			
+LimbLock	0x0	uint32_t chain = 0; // +0x00 IK chain of the instance's IK system (instance +0x2E0, 0x120-byte chains)	mirror	stated	1	1	src/game/Ik.hpp:22			
+LimbLock	0x4	uint32_t type = 0; // +0x04 target callback (controller +0x14C, chosen at 0x6EFDA0): 1 the floor under a foot	mirror	stated	1	1	src/game/Ik.hpp:23	006efda0	1/1	
+LimbLock	0x8	uint32_t group = 0; // +0x08	mirror	stated	1	1	src/game/Ik.hpp:26			
+LimbLock	0xc	uint16_t limb = 0; // +0x0C 0x30 / 0x31 left / right foot, 0x40 / 0x41 left / right hand (0x6F1A60)	mirror	stated	1	1	src/game/Ik.hpp:27	006f1a60	1/1	
+LimbLock	0xe	uint16_t limb2 = 0; // +0x0E	mirror	stated	1	1	src/game/Ik.hpp:28			
+LimbLock	0x14	float up = 0, down = 0; // +0x14 / +0x18 the probe: from `up` over the effector to `down` under it (0x438F60)	mirror	stated	1	1	src/game/Ik.hpp:29	00438f60	1/1	
+LimbLock	0x1c	glm::vec3 offset{0}; // +0x1C; z = how far off the hit the effector is held, along the hit's normal	mirror	stated	1	1	src/game/Ik.hpp:30			
+LimbLock	0x28	uint32_t framesIn = 2, framesOut = 3; // +0x28 / +0x2C blend in / out in 30 Hz frames (controller +0x10E / +0x10F)	mirror	stated	1	1	src/game/Ik.hpp:31			
+LimbLock	0x34	int16_t ignoreSegment = 0, segment = 0; // +0x34 / +0x36: the effector segment when > 0 (else the chain's last)	mirror	stated	1	1	src/game/Ik.hpp:32			
+LimbLock	0x40	uint32_t flags = 0; // +0x40: 1 and 2 = on from the start (0x443C60), 8 = object hits count, 0x10 = the	mirror	stated	1	1	src/game/Ik.hpp:33	00443c60	1/1	
+MainTracker	0x0	00e7ed60 mainTracker: width 4, 5 readers, 7 writers, 2 address-taken	code-ref	observed	5	3	docs/RESEARCH.md:194;docs/RESEARCH.md:290;docs/re/ENGINE_ARCHITECTURE.md:63			
+MainTracker	0x4	00e7ed64: width 4, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7ed64			
+MainTracker	0x8	00e7ed68: width 4, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7ed68			
+MainTracker	0xc	00e7ed6c: width 4, 1 readers, 1 writers	code-ref	observed	2	2	docs/re/ENGINE_ARCHITECTURE.md:76;docs/re/STARTUP.md:47			
+MainTracker	0x14	00e7ed74: width 4, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7ed74			
+MainTracker	0x18	00e7ed78: width 1, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7ed78			
+MainTracker	0x19	00e7ed79: width 1, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7ed79			
+MainTracker	0x1a	00e7ed7a: width 1, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7ed7a			
+MainTracker	0x1b	00e7ed7b: width 1, 2 readers, 3 writers	code-ref	observed	1	0	globals.tsv:00e7ed7b			
+MainTracker	0x1c	00e7ed7c: width 4, 8 readers, 0 writers	code-ref	observed	1	0	globals.tsv:00e7ed7c			
+MainTracker	0x4c	00e7edac: width 4, 1 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7edac			
+MainTracker	0x50	00e7edb0: width 4, 1 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7edb0			
+MainTracker	0x55	00e7edb5: width 1, 0 readers, 1 writers	code-ref	observed	1	0	globals.tsv:00e7edb5			
+MainTracker	0x56	00e7edb6: width 1, 2 readers, 4 writers	code-ref	observed	1	0	globals.tsv:00e7edb6			
+MainTracker	0x57	00e7edb7: width 1, 1 readers, 4 writers	code-ref	observed	1	0	globals.tsv:00e7edb7			
+MainTracker	0x60	00e7edc0: width 4, 0 readers, 3 writers	code-ref	observed	1	0	globals.tsv:00e7edc0			
+MainTracker	0x64	00e7edc4: width 4, 1 readers, 1 writers	code-ref	observed	1	1	docs/re/TIMING.md:54			
+MainTracker	0x68	00e7edc8: width ?, 0 readers, 0 writers, 3 address-taken	code-ref	observed	1	0	globals.tsv:00e7edc8			
+Marker	0x20	uint32_t kind = 0; // +0x20; 2 on ca_rb_wall_hpole_door ([I] its joint type: 2 = cylindrical in tru.exe)	mirror	inference	1	1	src/physics/Physics.hpp:57			
+Marker	0x24	int32_t link = -1; // +0x24	mirror	stated	1	1	src/physics/Physics.hpp:58			
+MarkUp	0x2c	| 0x4A | u16 (copied to MarkUp+0x2C) |	prose	stated	3	2	docs/formats/COLLISION.md:114;docs/formats/COLLISION.md:176;src/collision/Collision.hpp:86	005c41a0	1/1	
+MarkUp	0x2e	| 0x48 | u16 id (copied to MarkUp+0x2E) |	prose	stated	1	1	docs/formats/COLLISION.md:113			
+MarkUp	0x58	ems" at Level+0x08/+0x0C (FUN_005CE4F0; MarkUp+0x58 → PolyLine `{int n; pad; float4 points[n]}`)	prose	stated	1	1	docs/formats/COLLISION.md:162	005ce4f0	0/1	
+Markup	0x0	4×4 matrix, rows = basis, row 3 = translation; identity in l4_pool, a half turn + translation on l4_traprooms' poles [O]. Points are transformed by it (0x49BA20); row-vector convention confirmed by th	table	observed	1	1	docs/formats/COLLISION.md:112	0049ba20	1/1	
+Markup	0x48	u16 id (copied to MarkUp+0x2E)	table	stated	1	1	docs/formats/COLLISION.md:113			
+Markup	0x4a	u16 (copied to MarkUp+0x2C)	table	stated	1	1	docs/formats/COLLISION.md:114			
+Markup	0x4c	u8 kind (0 → flags from type; 1 → +0x98 byte copied)	table	stated	1	1	docs/formats/COLLISION.md:115			
+Markup	0x4d	u8 type	table	stated	1	1	docs/formats/COLLISION.md:116			
+Markup	0x50	u8; bit 2 → MarkUp+0	table	stated	1	1	docs/formats/COLLISION.md:117			
+Markup	0x68	+ (+0x6E0) - attach point z (+0x9F8) + markup +0x68 > limit`.	prose	stated	1	1	docs/GAMEPLAY.md:4898			
+Markup	0x98	ptr → byte (equals type in l4_pool)	table	stated	1	1	docs/formats/COLLISION.md:118			
+Markup	0x9c	u32 point count	table	stated	1	1	docs/formats/COLLISION.md:119			
+Markup	0xa0	ptr → points, 32 bytes each: float4 position (w = 1), float4 (0, 0, 1000, 0) in every point seen [U]	table	unknown	1	1	docs/formats/COLLISION.md:120			
+MarkupBox	0xc	ance as owner: one markup box per item (box +0x0C = the	prose	stated	4	4	docs/GAMEPLAY.md:2677;docs/formats/COLLISION.md:165;src/game/Objects.cpp:2581	005ce4f0;005d0610	1/2	
+MarkupBox	0x30	] = {}; // the flag bytes (sphere +0, box +0x30, capsule +0x20); head[1] & 1 = solid [I]	prose	inference	1	1	src/physics/Physics.hpp:33			
+MarkupBox	0x38	y their buoyancy percent (sphere +0x16, box +0x38, capsule +0x2C; 0 =	prose	stated	4	4	docs/GAMEPLAY.md:1681;docs/formats/PHYSICS.md:69;docs/re/ENGINE_ARCHITECTURE.md:214	004dee60;006ad070	1/2	
+MarkupBox	0x3a	shape takes, in percent (sphere +0x18, box +0x3A, capsule +0x2E, s8;	prose	stated	1	1	src/physics/Physics.hpp:44			
+MarkupBox	0x3e	carries a damage amount (sphere +0x1C, box +0x3E, capsule +0x32, s16;	prose	observed	2	2	src/game/Hazards.cpp:3;src/physics/Physics.hpp:41	0048e040	1/1	
+MarkupBox	0x914	(2844) and rocks (2865) inside the same box +0x914 > 0 and she lives. Ours gives the same outcome at the same eight spots (dies at	prose	observed	1	1	docs/GAMEPLAY.md:1797	005d77e0;00710a20;00777780	1/3	
+Material	0x28	s by pass: 1 → 0x5064F0 (depth program, material +0x28),	prose	stated	1	1	docs/re/RENDER_PIPELINE.md:131	005064f0;0050f4a0	2/2	
+Material	0x30	n offset, by composite pixel ShaderLib (material +0x30),	prose	stated	1	1	src/fx/Fx.cpp:64			
+Material	0x38	eManager_SetRenderState / SetBlendMode (material +0x38) | N-h |	prose	stated	1	1	docs/re/ENGINE_ARCHITECTURE.md:421	00502b70;00527a80	0/2	
+Material	0x44	ha-tested casters (tru.exe caster rule: material +0x44 0x40000000, blend < 4; shadow map too), water mirror reflections, BLAS refit fo	prose	inference	3	2	docs/ROADMAP.md:39;docs/re/RENDER_PIPELINE.md:110;docs/re/RENDER_PIPELINE.md:115	00504ee0	0/1	
+Material	0x68	its four side walls; back faces culled (material +0x68 has	prose	stated	2	2	docs/RENDERING.md:812;src/render/Water.hpp:113	006d8c20	1/1	
+Material blob	0x4	u32 | returned by `PCMaterial` vtable slot 1 (0x505A20, `GetId` in DXHR's `CommonMaterial`) [O]; 0 in the file, patched at load [I]	table	observed	1	1	docs/formats/MATERIALS.md:17	00505a20	1/1	
+Material blob	0x8	ptr[8] | per-pass shader input specs (vertex attribute hash lists, e.g. `0xD2F7D823` position, `0x36F5E414` normal) [O]	table	observed	1	1	docs/formats/MATERIALS.md:18			
+Material blob	0x24	ptr[8] | per-pass shader input specs (vertex attribute hash lists, e.g. `0xD2F7D823` position, `0x36F5E414` normal) [O]	table	observed	1	1	docs/formats/MATERIALS.md:18			
+Material blob	0x28	res[4] | ShaderLib (section type 9) references, resource relocations; e.g. ballcourt material 13393 → ShaderLibs 945–948 [O]	table	observed	1	1	docs/formats/MATERIALS.md:19			
+Material blob	0x34	res[4] | ShaderLib (section type 9) references, resource relocations; e.g. ballcourt material 13393 → ShaderLibs 945–948 [O]	table	observed	1	1	docs/formats/MATERIALS.md:19			
+Material blob	0x38	u32 | **blend mode**, passed to `PCStateManager_SetBlendMode` (0x527A80) [O], table below	table	observed	1	1	docs/formats/MATERIALS.md:20	00527a80	0/1	
+Material blob	0x40	u32 | **flags**: `0x80` = cull none (0x506040, 0x5061C0, 0x5066A0: `(flags & 0x80 or instance polyflags & 0x40) and !(flags & 0x800)` selects the no-cull entry of `DAT_008A34F8`) [O]; `0x800` = "rende	table	observed	1	1	docs/formats/MATERIALS.md:21	00506040;005061c0;005066a0	3/3	
+Material blob	0x44	u32 | `0x40000000` = **shadow caster** (with blend mode < 4: model drawables get pass bit 2 in 0x50F7C0, terrain groups join the shadow lights' lists in 0x511E20) [O]; `0x80000000` light-set related (	table	observed	1	1	docs/formats/MATERIALS.md:22	00504cc0;0050f7c0;00511e20	2/3	
+Material blob	0x4c	u8 | **alpha threshold** (0–255), second argument of SetBlendMode [O]	table	observed	1	1	docs/formats/MATERIALS.md:23			
+Material blob	0x50	u8 | texture-entry counts (PS instance, PS material, …) [O]; exact split [I]	table	observed	1	1	docs/formats/MATERIALS.md:24			
+Material blob	0x51	u8 | texture-entry counts (PS instance, PS material, …) [O]; exact split [I]	table	observed	1	1	docs/formats/MATERIALS.md:24			
+Material blob	0x52	u8 | texture-entry counts (PS instance, PS material, …) [O]; exact split [I]	table	observed	1	1	docs/formats/MATERIALS.md:24			
+Material blob	0x54	ptr | 16-byte texture entries `{textureId, f32 lodBias, u32 category, u8 class, u8 sampler, u16 filter}` [O]	table	observed	1	1	docs/formats/MATERIALS.md:25			
+Material blob	0x58	u32 / ptr | pixel-shader constants: `SetPixelShaderConstantF(100, ptr, count)` = CTAB `MaterialParams` c100+ [O]	table	observed	1	1	docs/formats/MATERIALS.md:26			
+Material blob	0x5c	u32 / ptr | pixel-shader constants: `SetPixelShaderConstantF(100, ptr, count)` = CTAB `MaterialParams` c100+ [O]	table	observed	1	1	docs/formats/MATERIALS.md:26			
+Material blob	0x68	u16 / ptr | vertex-shader constants: `SetVertexShaderConstantF(25, ptr, count)` = CTAB `MaterialParams` c25+ [O]	table	observed	1	1	docs/formats/MATERIALS.md:27			
+Material blob	0x6c	u16 / ptr | vertex-shader constants: `SetVertexShaderConstantF(25, ptr, count)` = CTAB `MaterialParams` c25+ [O]	table	observed	1	1	docs/formats/MATERIALS.md:27			
+Material blob	0x70	u8 | per-instance parameter registers/counts (PS c132+, VS c57+) [O]; source data [U]	table	observed	1	1	docs/formats/MATERIALS.md:28			
+Material blob	0x73	u8 | per-instance parameter registers/counts (PS c132+, VS c57+) [O]; source data [U]	table	observed	1	1	docs/formats/MATERIALS.md:28			
+MaterialBlob	0x30	bs` names (vertex = blob +0x34, pixel = blob +0x30); the caller	prose	stated	1	1	src/formats/Formats.hpp:70			
+MaterialBlob	0x34	aderLib sections `libs` names (vertex = blob +0x34, pixel = blob +0x30); the caller	prose	stated	1	1	src/formats/Formats.hpp:70			
+MaterialBlob	0x38	p) in GL and Vulkan | Tested | Material blob +0x38/+0x40/+0x4C decoded from tru.exe 0x527A80/0x5066A0, 2248-material survey, Shade	prose	stated	5	4	docs/ROADMAP.md:40;src/formats/Formats.hpp:64;src/scene/Assets.hpp:43	005066a0;00527a80	1/2	
+MaterialBlob	0x40	uint32_t flags = 0; // blob +0x40 (0x04 = fogged: the VS gets fogScaleAndOffset)	prose	stated	1	1	src/scene/Assets.hpp:108			
+MaterialBlob	0x44	.exe's caster rule: only materials with blob +0x44 bit 0x40000000 and blend	prose	observed	3	3	CHANGELOG.md:942;docs/RENDERING.md:1291;src/scene/Assets.hpp:66	00505d80;0050f7c0;00511e20	2/3	
+MaterialBlob	0x4c	uint8_t alphaThreshold = 0; // blob +0x4C	prose	stated	1	1	src/scene/Assets.hpp:107			
+MaterialBlob	0x54	exture bound to sampler register `reg` (blob +0x54 entries, PCMaterial 0x505A90). `source` 1:	prose	stated	1	1	src/scene/Assets.hpp:88	00505a90	1/1	
+Mesh	0x4	flags (bit0: optional extra block at +0x74)	table	stated	1	1	docs/re/FILESYSTEM.md:193			
+Mesh	0xc	index count; index data at `Mesh + [+0x78]`	table	stated	1	1	docs/re/FILESYSTEM.md:194			
+Mesh	0x44	-1 sentinel [?]	table	unknown	1	1	docs/re/FILESYSTEM.md:195			
+Mesh	0x6c	offset → primitive groups, count u16 at +0x7C, stride 0x40: +0x28 material index (via material table), +0x2C/+0x30/+0x34/+0x38 texture indices (via texture table, -1 = none)	table	stated	1	1	docs/re/FILESYSTEM.md:196			
+Mesh	0x70	offset → vertex buffers, count u16 at +0x7E, stride 0x34: +0x10 rel ptr (if flags&1), +0x14 rel ptr vertex data, +0x24 rel ptr `VertexDecl`, +0x28 vertex count	table	stated	1	1	docs/re/FILESYSTEM.md:197			
+MeshHeader	0x10	to its model's bounding-sphere centre (Mesh header +0x10,	prose	stated	2	2	src/scene/Assets.hpp:258;tests/test_formats.cpp:302			
+MeshHeader	0x74	Mesh header +0x74 points at a `0, 1, 2, …` table [U].	prose	unknown	2	2	docs/formats/ANIMATION.md:84;docs/formats/MESHES.md:215			
+Mode	0xe4	// +0xE4 = 11, without 1 none: 0x601D30 -> 0x609C40 / 0x608D20) [O: camera DTP 0x14 +0x144 / +0x148].	mirror	stated	1	1	src/game/World.cpp:915	00601d30;00608d20;00609c40	0/3	
+Model	0x38	Model marker (dtp Model +0x38 count, +0x3C list, 0x30 bytes): frame of e.g. a joint [I].	prose	inference	1	1	src/physics/Physics.hpp:54			
+MusicPlayer	0x0	std::string name; // +0x000 the loaded track; cleared by 0x594D10 once nothing is loaded	mirror	stated	1	1	src/audio/MusicPlayer.cpp:12	00594d10	1/1	
+MusicPlayer	0x35	bool fadeDone = false; // +0x35 (also: the stream ended, 0x5950A0)	mirror	stated	1	1	src/audio/MusicPlayer.cpp:29	005950a0	1/1	
+MusicPlayer	0x38	float master = 0; // +0x38	mirror	stated	1	1	src/audio/MusicPlayer.cpp:25			
+MusicPlayer	0x3c	float fadeLeft = 0; // +0x3C seconds	mirror	stated	1	1	src/audio/MusicPlayer.cpp:26			
+MusicPlayer	0x40	float fadeTarget = 0; // +0x40	mirror	stated	1	1	src/audio/MusicPlayer.cpp:27			
+MusicPlayer	0x44	bool stopAfter = false; // +0x44: the fade ends in fadeDone	mirror	stated	1	1	src/audio/MusicPlayer.cpp:28			
+MusicPlayer	0x100	std::string pending; // +0x100 requested while the slot fades out; requested again when the fade ends	mirror	stated	1	1	src/audio/MusicPlayer.cpp:13			
+MusicPlayer	0x500	bool pendingPlay = false; // +0x500	mirror	stated	1	1	src/audio/MusicPlayer.cpp:14			
+MusicPlayer	0x502	bool fadingOut = false; // +0x502	mirror	stated	1	1	src/audio/MusicPlayer.cpp:17			
+MusicPlayer	0x503	bool keepLoaded = false; // +0x503 a Load of the fading track: stay loaded (stopped) when the fade ends	mirror	stated	1	1	src/audio/MusicPlayer.cpp:18			
+MusicPlayer	0x505	bool play = false; // +0x505 started, or starts when loaded	mirror	stated	1	1	src/audio/MusicPlayer.cpp:16			
+MusicPlayer	0x50c	int fadeIn = 0; // +0x50C fade-in frames for the pending / loaded track	mirror	stated	1	1	src/audio/MusicPlayer.cpp:15			
+MusicPlayer	0x51c	bool loaded = false; // +0x51C != 0	mirror	stated	1	1	src/audio/MusicPlayer.cpp:20			
+NeedGroup	0xc	end mode +0x38 < 4; terrain groups also need group +0x0C bit 2 clear (models 0x50F7C0, terrain 0x511E20) [O decompile]. The casters over	prose	observed	1	1	docs/RENDERING.md:1291	00505d80;0050f7c0;00511e20	3/3	
+NtPadshockInst	0xc	k member key -> its last rumble handle (NtPadshockInst +0xC)	prose	stated	1	1	src/game/Game.hpp:1593			
+ObjectBase	0x3c	objectLights` reads the light list from ObjectBase +0x3C; tru.exe	prose	stated	1	1	docs/formats/EFFECTS.md:21			
+ObjectBase	0x50	live ragdolls, the object's +0x78, else ObjectBase +0x50 +0x24's object) ->	prose	stated	1	1	docs/formats/PHYSICS.md:261	0060ef50;00617ee0	1/2	
+ObjectBase	0x54	Animation list (ObjectBase +0x54 / +0x58 {i16 anim, i16, u32 event-list DTP, char* name}) -> that clip's	prose	stated	1	1	src/fx/Fx.hpp:313			
+ObjectBase	0x60	rds are `{s16 type, s16 idx}`: type 1 → ObjectBase +0x60 table (count +0x5C, 0x24-byte entries),	prose	observed	3	3	docs/GAMEPLAY.md:3581;docs/ROADMAP.md:57;src/game/ai/EnemyData.cpp:165	005bf0e0;00612030;006126b0;00612bd0;00612f80	2/17	
+ObjectBase	0x64	Open: the cdc AnimGraph (ObjectBase +0x64) is unused by TR8 objects (C, 0x453100), so no work is needed there.	prose	stated	2	2	docs/re/ENGINE_ARCHITECTURE.md:244;src/formats/AnimGraph.hpp:3	00453100	1/1	
+ObjectBase	0x78	[O] Data: ObjectBase +0x78 non-zero, +0x7C -> record {+0 0xBEEBBEEB, +4 total mass (poacher 60, panther 90	prose	observed	3	3	docs/formats/PHYSICS.md:241;src/physics/Physics.cpp:254;src/physics/Physics.hpp:275	004f1390;004f1920	0/2	
+ObjectBase	0x7c	ragdoll record (ObjectBase +0x7C: capsule per bone, hinge / two-axis / cone-twist joints with the data's limits)	prose	observed	8	7	docs/ROADMAP.md:131;docs/audit/PROTECTED_SYSTEMS.md:98;docs/formats/PHYSICS.md:204			
+ObjectBase	0xa0	Models: ObjectBase +0xA0 u16 count, +0xA4 -> resource refs of the model DTPs (formats::objectRenderModel	prose	stated	1	1	src/physics/Physics.cpp:200			
+ObjectBase	0xa4	Model `model` (ObjectBase +0xA4 list) of an object DRM. Empty without an object section or that model; throws	prose	stated	1	1	src/physics/Physics.hpp:131			
+ObjectBase	0xa8	ObjectBase +0xA8 count, +0xAC {Plex*, i16 segment, i16}[count] (0x58D6A0 builds instance +0x248	prose	stated	2	2	docs/formats/AUDIO.md:775;src/fx/Fx.hpp:309	0058d6a0	1/1	
+ObjectBase	0xc8	ct anim state graphs (physical class 6, ObjectBase +0xC8; `src/formats/AnimGraph.*`, docs/formats/ANIMGRAPH.md): scripted objects with a	prose	observed	45	28	CHANGELOG.md:978;docs/GAMEPLAY.md:180;docs/GAMEPLAY.md:269	004533a0;004547d0;0048e330;0048fd70;00499b40	2/49	
+ObjectBase	0xde	Generators: ObjectBase +0xDE u16 = spawned object (mayan_thrall_pool_generator → 600 `mayan_thrall`, others	prose	observed	4	4	docs/GAMEPLAY.md:3560;docs/ROADMAP.md:57;src/game/ai/Enemy.hpp:547	005bf0e0;00612030;006126b0;00612bd0;00612f80	0/17	
+ObjectData	0x18	object data +0x18), as tru.exe's fire function 0x6C9E50 / hitscan 0x6C64D0 read them. Defaults: t	prose	stated	1	1	src/game/Combat.hpp:196	006c64d0;006c9e50	2/2	
+ObjectData	0x24	table (object data +0x24, 0x18-byte entries; Normal = entry 1). Seconds = 30 Hz frames / 30.	prose	stated	1	1	src/game/Combat.hpp:118			
+ObjectData	0x28	6FE0 / 0x617040; update 0x62E3E0 births object +0x28 at marker +0x2C through 0x622BF0	prose	stated	2	2	docs/GAMEPLAY.md:3671;src/audio/SoundPlex.hpp:113	00585070;005850e0;00616fe0;00617040;00622bf0	5/7	
+ObjectData	0x3c	1000 / 400 / 100. Hit object +0x3C `bullet_hit_thor`.	prose	stated	1	1	docs/GAMEPLAY.md:355			
+ObjectData	0x40	`model = object +0x40 [instance model index]` (FUN_005B41E0, ECX = the instance) — the model DTP's +0	prose	stated	1	1	docs/formats/COLLISION.md:164	005b41e0	1/1	
+ObjectData	0x5c	ObjectSection construct 0x54E200 sets `Object+0x5C (data) = ObjectBase+0xC8` when non-null. In lara.drm	prose	stated	3	3	docs/GAMEPLAY.md:269;docs/formats/EFFECTS.md:477;tests/test_fx.cpp:823	00546fc0;0054e200	2/2	
+ObjectData	0xa8	EngagementProperties`) picks a set from object data +0xA8 / +0xAC.	prose	stated	2	2	docs/GAMEPLAY.md:3371;src/game/Combat.hpp:215			
+ObjectData	0xdc	dual pistols plus one secondary (weapon object data +0xDC = 1; picking up another	prose	stated	1	1	src/game/Combat.hpp:175			
+ObjectData	0xdd	D0, over the volumes of instances whose object +0xDD is set); those volumes' data was not decoded.	prose	stated	1	1	docs/GAMEPLAY.md:4695	006e33d0	1/1	
+ObjectData	0xe0	A weapon object's stats block S (object data +0xE0) and its ammo object's fire-mode record (ammo	prose	stated	1	1	src/game/Combat.hpp:195			
+ObjectData	0x168	int pelvis = 1; // object data +0x168 [O]	prose	observed	1	1	src/game/Ik.hpp:49			
+ObjectData	0x530	ction 0x201 = 0x73DFF0 on entry (tuning objdata +0x530): rays along her heading	prose	stated	2	2	docs/GAMEPLAY.md:199;src/game/Player.cpp:1024	0073dff0	0/1	
+ObjectData	0x5c8	from the player object data: lara.drm object data +0x5C8 u16 count (30), +0x5CC records of 0x4C bytes [O].	prose	observed	3	3	src/game/Ik.hpp:20;src/game/World.cpp:1423;tests/test_game.cpp:10168			
+ObjectData	0xbde	8, hits from frame +0x20 to +0xA4 (≤ 0: object +0xBDE = 40); 0x70F300	prose	stated	4	3	docs/GAMEPLAY.md:2089;docs/GAMEPLAY.md:2457;src/game/Climb.cpp:29	0070f300	0/1	
+ObjectData	0xcd4	the neck [O tru.exe 0x6FD080, lara.drm object data +0xCD4 / +0xCD8]. Hanging in ledgeb_idle the hand locks (records 4 / 7, type 7; state	prose	observed	1	1	tests/selftests/ik_pose.json:5	006fd080	1/1	
+ObjectData	0xde4	Markup-detection queries [O]: lara.drm object data +0xDE4 = 106 queries, +0xDE8 = (id, record) pairs (tru.exe	prose	observed	2	2	docs/GAMEPLAY.md:2085;src/game/Climb.cpp:22			
+ObjectData	0xe78	et = 2·weight + 2·unbalanced time·side (objdata +0xE78 / +0xE7C) [O]; ours divides the	prose	observed	2	2	docs/GAMEPLAY.md:1572;src/game/Player.cpp:39			
+ObjectData	0xe94	race when entered without property 912 (objdata +0xE94 bit 0	prose	stated	2	1	docs/GAMEPLAY.md:1562;docs/GAMEPLAY.md:1569			
+ObjectData	0xe98	ty 0x209 through 0x72A430: walk (0x193) objdata +0xE98 = sway ±50° at 0.5..1°/frame, tolerance 10°,	prose	observed	4	4	docs/GAMEPLAY.md:1561;docs/REFERENCE_COMPARISON.md:184;docs/audit/AUDIT_A.md:508	0072a430;00742330;00742770	0/3	
+ObjectData	0xf88	alance controller (0x742330 / 0x742770, objdata +0xF88 tuning) and the fall query (q64 from 47.4 aside, 0x76D4D0) decoded [O], but the	prose	observed	5	5	docs/ROADMAP.md:48;docs/audit/AUDIT_A.md:130;src/game/Game.hpp:488	004428a0;0072a430;0072a5e0;0073edc0;00742330	0/13	
+ObjectData	0xfdd4	0 | 0x509847 | 0x519360 (screen effects object +0xFDD4): 0x51A2E0 copies the back buffer, half size, into the Feedback texture (A8R8G8	prose	stated	1	1	docs/re/RENDER_PIPELINE.md:175	00509847;00519360;0051a2e0	0/3	
+ObjectData	0x116b0	markup table (FUN_005D5930 → objdata +0x116B0 → +0x90 / +0x94 = objdata +0x121C0, 18 × `{class, min, max, kind,	prose	stated	2	2	docs/GAMEPLAY.md:190;docs/audit/BUGS.md:598	005d5930	0/1	
+ObjectData	0x121c0	30 → objdata +0x116B0 → +0x90 / +0x94 = objdata +0x121C0, 18 × `{class, min, max, kind,	prose	stated	5	2	docs/GAMEPLAY.md:190;docs/GAMEPLAY.md:2493;src/game/Player.cpp:1003	005d5930;00728650	0/2	
+ObjectData	0x12508	Player state chart [O] (lara.drm objdata +0x12508, decoded with Hurdles' openunderworld-work/hurdles/sc.py; tru.exe	prose	observed	2	2	docs/GAMEPLAY.md:2096;src/game/Climb.cpp:32			
+ObjectData	0x5c290	object data +0x5C290, 400 entries of {type, value}).	prose	stated	1	1	docs/GAMEPLAY.md:5021			
+ObjectFx	0x4	std::vector<MapEntry> effectMap; // +0x04 / +0x08 (commands 0x1C / 0x2F look effects up by id)	mirror	stated	1	1	src/fx/Fx.hpp:305			
+ObjectPhysics	0x2e	// +0x2E id, +0x33 type, +0x58 -> polyline {u32 n, pad, float4 points[n]}), points in model space. tru.exe adds them	mirror	stated	1	1	src/physics/Physics.hpp:111			
+Particle	0x28	h bias (def +0x15E -> emitter +0x10C -> particle +0x28, flag 0x200; 0x54B0E8): z += bias, >= 16. Drawn by	prose	stated	1	1	src/fx/Fx.cpp:1183	0054b0e8	0/1	
+Particle	0x2c	: def +0x05 & 1 -> emitter +0x24 & 1 -> particle +0x2C & 4 unless	prose	stated	1	1	src/fx/Fx.cpp:179			
+Particle	0xa4	x60 / +0x64 | on-screen size fade ×255 (particle +0xA4/+0xA5) [O] |	prose	observed	2	2	docs/formats/EFFECTS.md:66;src/fx/Fx.cpp:1169	0054b130	0/1	
+Particle	0xb8	5A / +0x5C | camera-distance fade band (particle +0xB8/+0xBA, 0x54B1A6) [O] |	prose	observed	2	2	docs/formats/EFFECTS.md:65;src/fx/Fx.cpp:1164	0054b1a6	0/1	
+Particle	0x114	sts `{u32 n, ids[n]}` | | referenced by particle +0x114 |	prose	stated	1	1	docs/formats/EFFECTS.md:39			
+Particle emitter definition	0x0	key 0 size (ftol → emitter key +4) [O]; sprite half-width [I]	table	observed	1	1	docs/formats/EFFECTS.md:53			
+Particle emitter definition	0x4	flags; +0x04 & 0x80 model particle [O]	table	observed	1	1	docs/formats/EFFECTS.md:54			
+Particle emitter definition	0x5	flags; +0x04 & 0x80 model particle [O]	table	observed	1	1	docs/formats/EFFECTS.md:54			
+Particle emitter definition	0x6	mode: 0 free, 1 attached, 2 one persistent particle [I from 0x540B80 `local_430`]	table	stated	1	1	docs/formats/EFFECTS.md:55	00540b80	0/1	
+Particle emitter definition	0xa	segment / second segment (shape 7 line), −127 none [O]	table	observed	1	1	docs/formats/EFFECTS.md:56			
+Particle emitter definition	0xc	segment / second segment (shape 7 line), −127 none [O]	table	observed	1	1	docs/formats/EFFECTS.md:56			
+Particle emitter definition	0x10	shell radius max / min (emitter +0x90 / +0x92, 0x5445B8) [O]	table	observed	1	1	docs/formats/EFFECTS.md:57	005445b8	0/1	
+Particle emitter definition	0x14	velocity / random range per axis; spawn velocity = (v + rand·range) × 0.5 [O 0x542112]	table	stated	1	1	docs/formats/EFFECTS.md:58	00542112	0/1	
+Particle emitter definition	0x20	velocity / random range per axis; spawn velocity = (v + rand·range) × 0.5 [O 0x542112]	table	stated	1	1	docs/formats/EFFECTS.md:58	00542112	0/1	
+Particle emitter definition	0x2c	acceleration × 0.25 (emitter +0xA8) [O] → per 60 Hz tick: 30 Hz authoring [I]	table	observed	1	1	docs/formats/EFFECTS.md:59			
+Particle emitter definition	0x38	first / last key colour, bytes R,G,B,A, 0x80 = 1.0 [I: plausible fire gradients]	table	stated	1	1	docs/formats/EFFECTS.md:60			
+Particle emitter definition	0x3c	first / last key colour, bytes R,G,B,A, 0x80 = 1.0 [I: plausible fire gradients]	table	stated	1	1	docs/formats/EFFECTS.md:60			
+Particle emitter definition	0x44	emitter life (30 Hz frames [I]); −1 forever, 0 one burst	table	inference	1	1	docs/formats/EFFECTS.md:61			
+Particle emitter definition	0x46	particle life (30 Hz frames; key times scale ×2 ticks, 0x54223F) / ± variance [O]	table	observed	1	1	docs/formats/EFFECTS.md:62	0054223f	0/1	
+Particle emitter definition	0x48	rate: per 60 Hz tick rate×0.5, < 0: 0.5/−rate; < 0.5 → random spawn (0x5446EB, 0x540C0B) [O]	table	observed	1	1	docs/formats/EFFECTS.md:63	00540c0b;005446eb	0/2	
+Particle emitter definition	0x4c	position offset [O]	table	observed	1	1	docs/formats/EFFECTS.md:64			
+Particle emitter definition	0x5a	camera-distance fade band (particle +0xB8/+0xBA, 0x54B1A6) [O]	table	observed	1	1	docs/formats/EFFECTS.md:65	0054b1a6	0/1	
+Particle emitter definition	0x5c	camera-distance fade band (particle +0xB8/+0xBA, 0x54B1A6) [O]	table	observed	1	1	docs/formats/EFFECTS.md:65	0054b1a6	0/1	
+Particle emitter definition	0x60	on-screen size fade ×255 (particle +0xA4/+0xA5) [O]	table	observed	1	1	docs/formats/EFFECTS.md:66			
+Particle emitter definition	0x64	on-screen size fade ×255 (particle +0xA4/+0xA5) [O]	table	observed	1	1	docs/formats/EFFECTS.md:66			
+Particle emitter definition	0x68	spawn shape: 0 sphere shell, 1 hemisphere, 2/3/4 circle XY/XZ/YZ, 7 line + sphere, 5/6 mesh, 8 camera circle, 9 ? [O switch; geometry partly I]	table	stated	1	1	docs/formats/EFFECTS.md:67			
+Particle emitter definition	0x6c	shell radius max / min (emitter +0x90 / +0x92, 0x5445B8) [O]	table	observed	1	1	docs/formats/EFFECTS.md:57	005445b8	0/1	
+Particle emitter definition	0x74	camera range for emitting (emitter +0x2C/+0x30 squared) [O]	table	observed	1	1	docs/formats/EFFECTS.md:68			
+Particle emitter definition	0x78	camera range for emitting (emitter +0x2C/+0x30 squared) [O]	table	observed	1	1	docs/formats/EFFECTS.md:68			
+Particle emitter definition	0x7c	particle life (30 Hz frames; key times scale ×2 ticks, 0x54223F) / ± variance [O]	table	observed	1	1	docs/formats/EFFECTS.md:62	0054223f	0/1	
+Particle emitter definition	0x80	last size (≥ 0) / its variance / key 0 variance [O]	table	observed	1	1	docs/formats/EFFECTS.md:69			
+Particle emitter definition	0x84	last size (≥ 0) / its variance / key 0 variance [O]	table	observed	1	1	docs/formats/EFFECTS.md:69			
+Particle emitter definition	0x86	last size (≥ 0) / its variance / key 0 variance [O]	table	observed	1	1	docs/formats/EFFECTS.md:69			
+Particle emitter definition	0x88	`>> 5 & 3` water side (emitter `+0x3D >> 4`, particle `+0xA7 & 3`): 1 only while the camera is under water (0x5EA390 → DAT_00AD7DBC, view `+0xEC`), 2 only while it is not; checked at spawn (0x540B80, 	table	observed	1	1	docs/formats/EFFECTS.md:75	0053d100;00540b80;005488a0;00549c00;0054aec0	1/6	
+Particle emitter definition	0x91	texture frame rate (0 random) / start frame [O]; 255 = over life [I]	table	observed	1	1	docs/formats/EFFECTS.md:71			
+Particle emitter definition	0x94	radial-velocity / velocity-frame / offset-frame segments (−127 none) [O]	table	observed	1	1	docs/formats/EFFECTS.md:70			
+Particle emitter definition	0x96	radial-velocity / velocity-frame / offset-frame segments (−127 none) [O]	table	observed	1	1	docs/formats/EFFECTS.md:70			
+Particle emitter definition	0xaa	radial-velocity / velocity-frame / offset-frame segments (−127 none) [O]	table	observed	1	1	docs/formats/EFFECTS.md:70			
+Particle emitter definition	0xb1	texture frame rate (0 random) / start frame [O]; 255 = over life [I]	table	observed	1	1	docs/formats/EFFECTS.md:71			
+Particle emitter definition	0xb8	key 1 colour / size / variance / time % [O]	table	observed	1	1	docs/formats/EFFECTS.md:72			
+Particle emitter definition	0xbc	key 1 colour / size / variance / time % [O]	table	observed	1	1	docs/formats/EFFECTS.md:72			
+Particle emitter definition	0xc0	key 1 colour / size / variance / time % [O]	table	observed	1	1	docs/formats/EFFECTS.md:72			
+Particle emitter definition	0xc4	key 2 likewise [O]; key present if colour ≠ 0 or size ≥ 0; colour 0 = interpolated	table	observed	1	1	docs/formats/EFFECTS.md:73			
+Particle emitter definition	0xc8	key 2 likewise [O]; key present if colour ≠ 0 or size ≥ 0; colour 0 = interpolated	table	observed	1	1	docs/formats/EFFECTS.md:73			
+Particle emitter definition	0xcc	key 2 likewise [O]; key present if colour ≠ 0 or size ≥ 0; colour 0 = interpolated	table	observed	1	1	docs/formats/EFFECTS.md:73			
+Particle emitter definition	0xce	key 1 colour / size / variance / time % [O]	table	observed	1	1	docs/formats/EFFECTS.md:72			
+Particle emitter definition	0xd0	key 2 likewise [O]; key present if colour ≠ 0 or size ≥ 0; colour 0 = interpolated	table	observed	1	1	docs/formats/EFFECTS.md:73			
+Particle emitter definition	0xe0	per-key height/width ×16 [O]	table	observed	1	1	docs/formats/EFFECTS.md:74			
+Particle emitter definition	0xec	per-key height/width ×16 [O]	table	observed	1	1	docs/formats/EFFECTS.md:74			
+Particle emitter definition	0xf4	rotation / range / spin / spin range, degrees (×4096/360) [O]; spin unit [I]	table	observed	1	1	docs/formats/EFFECTS.md:76			
+Particle emitter definition	0xf6	rotation / range / spin / spin range, degrees (×4096/360) [O]; spin unit [I]	table	observed	1	1	docs/formats/EFFECTS.md:76			
+Particle emitter definition	0xf8	rotation / range / spin / spin range, degrees (×4096/360) [O]; spin unit [I]	table	observed	1	1	docs/formats/EFFECTS.md:76			
+Particle emitter definition	0xfc	rotation / range / spin / spin range, degrees (×4096/360) [O]; spin unit [I]	table	observed	1	1	docs/formats/EFFECTS.md:76			
+Particle emitter definition	0x110	texture id / → texture list (list wins) [O]	table	observed	1	1	docs/formats/EFFECTS.md:77			
+Particle emitter definition	0x114	texture id / → texture list (list wins) [O]	table	observed	1	1	docs/formats/EFFECTS.md:77			
+Particle emitter definition	0x11c	per-key blend, low 3 bits: 1 alpha, 2 additive, 3 opaque, 4 rev-subtract, 5 DESTCOLOR/SRCALPHA (0x52AE60) [O]	table	observed	1	1	docs/formats/EFFECTS.md:78	0052ae60	0/1	
+Particle emitter definition	0x11f	per-key blend, low 3 bits: 1 alpha, 2 additive, 3 opaque, 4 rev-subtract, 5 DESTCOLOR/SRCALPHA (0x52AE60) [O]	table	observed	1	1	docs/formats/EFFECTS.md:78	0052ae60	0/1	
+Particle emitter definition	0x174	atlas cols, rows, frames, first frame (1-based) [O]	table	observed	1	1	docs/formats/EFFECTS.md:79			
+Particle emitter definition	0x177	atlas cols, rows, frames, first frame (1-based) [O]	table	observed	1	1	docs/formats/EFFECTS.md:79			
+ParticleDef	0x6	int8_t mode = 0; // +0x06: 0 free particles, 1 attached, 2 one persistent particle	mirror	stated	1	1	src/fx/Fx.hpp:52			
+ParticleDef	0x10	float radiusMax = 0, radiusMin = 0; // +0x10 / +0x6C spawn shell radius	mirror	stated	1	1	src/fx/Fx.hpp:55			
+ParticleDef	0x14	glm::vec3 velocity{0}, velocityRandom{0}, accel{0}, offset{0}; // +0x14 / +0x20 / +0x2C / +0x4C, per 30 Hz frame	mirror	stated	1	1	src/fx/Fx.hpp:56			
+ParticleDef	0x38	uint32_t colour0 = 0, colourLast = 0; // +0x38 / +0x3C	mirror	stated	1	1	src/fx/Fx.hpp:57			
+ParticleDef	0x44	int16_t duration = -1; // +0x44 emitter life in 30 Hz frames; -1 forever, 0 one burst	mirror	stated	1	1	src/fx/Fx.hpp:58			
+ParticleDef	0x46	uint16_t life = 1; // +0x46 particle life in 30 Hz frames	mirror	stated	1	1	src/fx/Fx.hpp:59			
+ParticleDef	0x48	float rate = 0; // +0x48 particles per 30 Hz frame (< 0: one per -rate frames)	mirror	stated	1	1	src/fx/Fx.hpp:61			
+ParticleDef	0x5a	uint16_t fadeFar = 0, fadeNear = 0; // +0x5A / +0x5C camera-distance fade-in band	mirror	stated	1	1	src/fx/Fx.hpp:62			
+ParticleDef	0x60	float screenFadeStart = 0, screenFadeEnd = 0; // +0x60 / +0x64 on-screen size fade (NDC half-size / 2)	mirror	stated	1	1	src/fx/Fx.hpp:63			
+ParticleDef	0x68	uint8_t shape = 0; // +0x68 spawn shape	mirror	stated	1	1	src/fx/Fx.hpp:64			
+ParticleDef	0x74	float maxDistance = 0, minDistance = 0; // +0x74 / +0x78 emit only while the camera is in range (0 = off)	mirror	stated	1	1	src/fx/Fx.hpp:68			
+ParticleDef	0x7c	uint8_t lifeVar = 0; // +0x7C	mirror	stated	1	1	src/fx/Fx.hpp:60			
+ParticleDef	0x88	// +0x88 >> 5 & 3 (0x543F70 -> emitter +0x3D >> 4, particle +0xA7): 1 only while the camera is under water	mirror	stated	1	1	src/fx/Fx.hpp:65	00543f70	1/1	
+ParticleDef	0x91	int8_t animStart = 0; // +0x91	mirror	stated	1	1	src/fx/Fx.hpp:71			
+ParticleDef	0x94	int16_t radialSegment = kNoSegment, velocitySegment = kNoSegment, offsetSegment = kNoSegment; // +0x94/+0x96/+0xAA	mirror	stated	1	1	src/fx/Fx.hpp:69			
+ParticleDef	0xb1	uint8_t animRate = 0; // +0xB1 texture frame rate (0 random frame per particle)	mirror	stated	1	1	src/fx/Fx.hpp:70			
+ParticleDef	0x110	uint32_t texture = 0; // +0x110 texture section id, 0 = none	mirror	stated	1	1	src/fx/Fx.hpp:74			
+ParticleDef	0x114	std::vector<uint32_t> textures; // +0x114 -> {u32 n, ids[n]} (wins over +0x110)	mirror	stated	1	1	src/fx/Fx.hpp:77			
+ParticleDef	0x15e	int16_t depthBias = 0; // +0x15E view-depth offset (< 0 = toward the camera)	mirror	stated	1	1	src/fx/Fx.hpp:75			
+ParticleDef	0x164	int16_t rateLength = 0; // +0x164: rate x |segment2 - segment| / this (0x543F70 -> 0x5386F0); 0 = off	mirror	stated	1	1	src/fx/Fx.hpp:76	005386f0;00543f70	1/2	
+ParticleDef	0x168	std::vector<ParticleMaterial> materials; // +0x168 / +0x16C (wins over the textures)	mirror	stated	1	1	src/fx/Fx.hpp:79			
+ParticleDef	0x174	uint8_t atlasCols = 0, atlasRows = 0, atlasFrames = 0, atlasFirst = 0; // +0x174..+0x177	mirror	stated	1	1	src/fx/Fx.hpp:78			
+PCD9 textures	0x0	char[4] | `PCD9`	table	stated	1	1	docs/re/FILESYSTEM.md:170			
+PCD9 textures	0x4	u32 | D3DFORMAT: 0x15 A8R8G8B8, 0x16 X8R8G8B8, 0x17–0x1A/0x33 16 bpp, 0x1C 8 bpp, `DXT1`…`DXT5` FourCC	table	stated	1	1	docs/re/FILESYSTEM.md:171			
+PCD9 textures	0x8	u32 | [?] (data size in other cdc games)	table	unknown	1	1	docs/re/FILESYSTEM.md:172			
+PCD9 textures	0xc	u32 | [?]	table	unknown	1	1	docs/re/FILESYSTEM.md:173			
+PCD9 textures	0x10	u16 | width	table	stated	1	1	docs/re/FILESYSTEM.md:174			
+PCD9 textures	0x12	u16 | height	table	stated	1	1	docs/re/FILESYSTEM.md:175			
+PCD9 textures	0x14	u8 | [?]	table	unknown	1	1	docs/re/FILESYSTEM.md:176			
+PCD9 textures	0x15	u8 | extra mip count (levels = n+1)	table	stated	1	1	docs/re/FILESYSTEM.md:177			
+PCD9 textures	0x16	u16 | flags; 0x8000 = cube map (6 faces)	table	stated	1	1	docs/re/FILESYSTEM.md:178			
+PCLightResource	0x42c	light DTP (0x14E4 bytes) is copied to `PCLightResource +0x42C` (0x50A000; getter 0x50A030), so DTP offset d is	prose	stated	2	2	docs/formats/LEVELS.md:142;src/formats/Level.cpp:421	0050a000;0050a030	1/2	
+PCRenderDevice	0x1330	cene matrix, `+0x1300` blur (sum ≤ 4) × device +0x1330 [U, 1 here], `+0x1304` alpha (≤ 1), `+0x1308` tint RGB, `+0x1310` / `+0x1314` d	prose	unknown	1	1	docs/formats/EFFECTS.md:259	00516e70;005177e0	1/2	
+PCRenderDevice	0xfa50	s are filed into the **current** scene (device +0xFA50) by pass bits. The model list builder is 0x50F7C0 (**D**)	prose	stated	1	1	docs/re/RENDER_PIPELINE.md:104	0050f7c0	1/1	
+PCRenderDevice	0xfaa8	(device +0xFAA8, **A** 0x507CF2) unless its depth target is shared with a scene still open, in	prose	stated	1	1	docs/re/RENDER_PIPELINE.md:86	00507cf2	0/1	
+PCRenderDevice	0xfad4	BA290 14.474, 16.755, 20.887 (x 1/255 = device +0xFAD4, g_Ambient).	prose	stated	1	1	tests/test_game.cpp:996			
+PCRenderDevice	0xfc88	m on the device (vtable 26 = 0x508570 → device +0xFC88) and every model drawable whose material has flag bit 0 takes that pointer (0x5	prose	observed	1	1	docs/formats/SHADERS.md:90	005043d0;00507d60;00508570;0050e690;00529d40	2/10	
+PCRenderDevice	0xfdd4	[O]: with `EnableFullscreenEffects` (device +0xFDD4 object byte 0) the unit filter's Finish block	prose	observed	1	1	docs/RENDERING.md:331			
+PCRenderDevice	0x11484	s own sun shadows, composite PS slot 6 (device +0x11484 = 6 under Wine, hardware PCF), 4 splits in a 4096×3072 atlas, split fitting mat	prose	inference	4	4	docs/ROADMAP.md:41;docs/formats/SHADERS.md:25;src/formats/Scene.cpp:102	00506980;00514d90;005c7ca0;005cc190	0/4	
+PCRenderLight	0xb0	de / flag | [O] SceneLight vfunc 0x20 → PCRenderLight +0xB0 (0x50A1F0) |	prose	observed	1	1	docs/formats/LEVELS.md:134	0050a1f0	1/1	
+PCRenderLight	0xc5	false; // ch7 != 0: SceneLight 0x58 -> PCRenderLight +0xC5 bit 2	prose	stated	1	1	src/cine/Cine.hpp:138			
+PCRenderLight	0x10c	| +0x5D, +0x60..+0x68 | vfunc 0x48 (PCRenderLight +0x10C..+0x114, default (1.5e-5, 2.2, 0)) | [O] write; meaning [U] |	prose	observed	2	2	docs/formats/LEVELS.md:137;src/scene/Assets.hpp:181			
+PCRenderTerrain	0xc8	does (far 2 % of the depth range, PCRenderTerrain +0xC8 / 0x51D0A0): the l2_junglehub start shows the temple behind	prose	observed	5	5	CHANGELOG.md:936;docs/RENDERING.md:1294;docs/formats/LEVELS.md:206	00510b00;0051d0a0;0056de80	1/3	
+PegData	0x4c	(0x741490, 0x7406E0, the bike's grip / peg data +0x4C / +0x4D / +0x710) are the next thing to decode |	prose	stated	1	1	docs/GAMEPLAY.md:5244	007406e0;00741490	1/2	
+PhysicalData	0x2c	at it within the body's limit, physical data +0x2C -> {lo, hi} [O values]), and the joint range watches report leaving	prose	observed	6	5	docs/PROGRESSION.md:70;docs/PROGRESSION.md:226;docs/formats/AUDIO.md:832	006b6440	1/1	
+PhysicalData	0x70	The record at the object's physical data +0x70; nullopt without one or when it deals no damage.	prose	stated	1	1	src/game/Breakables.hpp:65			
+PhysicalRecord	0x3c	receptacle model's marker named by physical record +0x3C (query 0x173 -> 0x6B55D0); the level data's placed pairs lie	prose	stated	2	2	docs/GAMEPLAY.md:3470;src/game/Objects.cpp:2250	006b55d0	0/1	
+PhysicalRecord	0x68	bytes, sets {id, -> records, count} at physical record +0x68	prose	stated	2	2	docs/GAMEPLAY.md:3418;src/physics/Physics.hpp:101	006f3c60;00719520	0/2	
+PhysicalRecord	0x70	physical record +0x70: +4 damage, +6 damage at the edge [I], +0xC radius, +0xE knock, +0x10 knock at	prose	inference	3	2	docs/GAMEPLAY.md:432;docs/GAMEPLAY.md:3380;src/script/Script.cpp:822	006f3c60	1/1	
+PhysicsBody	0xa0	ngine's velocities are per 30 Hz frame (body +0xA0 linear,	prose	stated	1	1	docs/GAMEPLAY.md:1684			
+PhysicsBody	0x108	body +0x108; our Jolt joint bodies never sleep] — is listed with its speed (hinge degrees/s	prose	stated	2	2	docs/formats/AUDIO.md:869;src/game/JointSound.hpp:49			
+PhysicsBody	0x154	amp(1 − dt × damping, 0, 1), damping at body +0x154 (linear) / +0x158 (angular) | **V** |	prose	stated	2	2	docs/re/ENGINE_ARCHITECTURE.md:201;src/physics/Physics.cpp:730	0048e690;004efb20	1/2	
+PhysicsBody	0x15c	body` 4 (0x4A7070: an atom still fixed, body +0x15C bit 0; ours: not on a hinge and not loose [I]) and 59	prose	observed	4	4	docs/PROGRESSION.md:51;docs/formats/AUDIO.md:848;src/game/JointSound.hpp:47	004a6f70;004a7070;004d8fd0;004d8ff0;004d9000	3/6	
+Piece	0xa	int model = 0; // +0x0A	mirror	stated	1	1	src/game/Breakables.hpp:22			
+PitchController	0xda0	ra +0x8F8 = set 11 (2 forces, speed π), pitch controller +0xDA0 = set 4 blended out (B none) at the surface, side flag +0x4A4 = 1, look clock +	prose	observed	1	1	docs/GAMEPLAY.md:263	00462e10;0048ef50;00493330;005e8210;005e8940	3/53	
+PlayerData	0x10	sets the per-state targets. Height [O] player data +0x10 = 512.01 (used as Lara's height: ×0.5 centre, ×0.75 head, capsule test `FUN_007	prose	observed	2	2	docs/GAMEPLAY.md:243;src/game/Game.hpp:210	00490e60;0049a410;007018e0;007144b0	3/4	
+PlayerData	0x14	| Crouch capsule height | **260** | [O] player data +0x14 |	prose	observed	7	6	docs/GAMEPLAY.md:248;docs/GAMEPLAY.md:1533;docs/REFERENCE_COMPARISON.md:126	004428a0;0073edc0;00742330;00742770;00758b00	3/11	
+PlayerData	0x44	health is `difficulty table[level] +8 x Lara data +0x44 x (1 + found[relics]	prose	observed	5	4	docs/GAMEPLAY.md:836;docs/GAMEPLAY.md:4048;docs/REFERENCE_COMPARISON.md:271	005d6170;006c9670;006cbb20;006e7990;006e79d0	2/11	
+PlayerData	0x4c	was not found; frames in the air > 2 x Lara data +0x4C (1280.03) / g = 447) are not applied.	prose	observed	3	2	docs/GAMEPLAY.md:5001;docs/REFERENCE_COMPARISON.md:136;docs/REFERENCE_COMPARISON.md:383	006f1790	0/1	
+PlayerData	0x60	invulnerability window (player data +0x60, 30 frames) is ignored.	prose	stated	1	1	src/game/Hazards.cpp:10			
+PlayerData	0x64	), class-6 heavy >= 250 / light >= 100 (Lara data +0x64 / +0x66); sticky grenades exist (`Gadgets.cpp`, pr_grenade decoded). Still [I]	prose	inference	2	2	docs/ROADMAP.md:58;src/game/Combat.hpp:68	006c9670;006cbb20;006eb320;006f1790;006f5030	1/8	
+PlayerData	0xac	Depth classes** [O]: player data +0xAC 154, +0xAE 391, +0xB0 391, +0xB2 948, +0xA8 / +0xAA −44 (the surface	prose	observed	1	1	docs/GAMEPLAY.md:1869			
+PlayerData	0xae	or) is swum, shallower walked: lara.drm player data +0xAE / +0xB0 = 391, the	prose	stated	1	1	src/game/Game.hpp:273			
+PlayerData	0xb2	where the water is at least diveDepth (player data +0xB2 = 948) deep.	prose	stated	2	2	src/game/Player.cpp:3349;tests/test_game.cpp:7298			
+PlayerData	0xf8	4 / +0x98 = 962 / 963 [U: not played]): player data +0xF8 / +0xFA / +0xFC / +0xFE; the HUD gets the percent (0x5D5100(0x2E)), death type	prose	observed	2	2	docs/GAMEPLAY.md:261;docs/REFERENCE_COMPARISON.md:237	005d5100;0069d350;006ad070;00755230;00756c40	2/5	
+PlayerData	0x138	her root, 0x756FF0, under player data +0x138 = 90), else `swim_climbout_A` (890) -> the `_B` hang (889) -> `_C` (888)	prose	stated	1	1	docs/GAMEPLAY.md:1925	00756ff0	0/1	
+PlayerData	0x286	ag 0x4000); one already held stays for `Lara data +0x286`	prose	stated	2	2	src/game/Aim.cpp:120;src/game/Combat.hpp:388			
+PlayerData	0x2b4	ault), the melee target height classes (player data +0x2B4	prose	stated	1	1	src/game/Combat.hpp:475			
+PlayerData	0x2c8	scale 0.2, ramp 10 frames | [O-data] † Lara data +0x2C8..+0x31C | `Combat.cpp` adrenaline; self-test `adrenaline` | fill rule and windo	prose	observed	5	5	docs/REFERENCE_COMPARISON.md:262;docs/ROADMAP.md:58;docs/audit/controls.md:85	006c9670;006cbb20;006eb320;006f1790;006f5030	0/9	
+PlayerData	0x2d0	Adrenaline [O numbers: Lara data +0x2D0 max 500, +0x2D4 / +0x2D8 drain 20 / 225 per s, +0x31C mode scale 0.5, +0x2C8	prose	stated	2	2	docs/GAMEPLAY.md:4180;tests/test_combat.cpp:500			
+PlayerData	0x464	Selection [O lara.drm player data +0x464, criteria 0x712090]: flags 0xEC000000 (line of sight from her eye), six	prose	observed	4	4	docs/GAMEPLAY.md:2220;docs/REFERENCE_COMPARISON.md:197;docs/audit/AUDIT_A.md:151	00712090	0/1	
+PlayerData	0x470	eapon controller +0xC / +0x10, soft set Lara data +0x470, hold +0x286 =	prose	observed	2	2	docs/GAMEPLAY.md:4808;src/game/Aim.cpp:119	007035f0;0071e490	0/2	
+PlayerData	0x480	Targeting [O data, I use] (Lara data +0x480 / +0x470, criteria records {u16 type, u16 mode, f threshold, axis}):	prose	inference	3	3	docs/GAMEPLAY.md:4173;docs/REFERENCE_COMPARISON.md:254;docs/ROADMAP.md:58	006c9670;006cbb20;006eb320;006f1790;006f5030	0/8	
+PlayerData	0x520	Stamina data [O-data, semantics U]: Lara data +0x520 = 300, +0x524 = 30, +0x528 = 30, +0x52C = 300 (frames; drain	prose	stated	1	1	docs/GAMEPLAY.md:5100			
+PlayerData	0x584	t type of the markup's record (lara.drm player data +0x584..+0x5C0, chosen by MUD	prose	stated	2	2	docs/GAMEPLAY.md:2458;src/game/Player.cpp:1378	0070f300	0/1	
+PlayerData	0x5c8	IkTuning ik; // Lara data +0x5C8 limb locks, head look-at limits (loadIkTuning; Ik.hpp)	prose	stated	1	1	src/game/Game.hpp:100			
+PlayerData	0x6e2	longer than Lara data +0x6E2 = **15 frames**. Conditions 0x96..0x99 test one action's flags directly (0x98 =	prose	observed	4	3	docs/GAMEPLAY.md:4889;src/game/Game.hpp:261;src/game/Game.hpp:354			
+PlayerData	0x71c	r float kHugDepth = 88.496f; // tru.exe player data +0x71C: she stands this far in from the ledge line [I]	prose	inference	1	1	tests/test_game.cpp:6447			
+PlayerData	0x770	.exe 0x734B70 / 0x72B920 / 0x74DCD0 and player data +0x770 / +0x774 / +0x778 / +0x784 [O]; pillar ground attach +0x7EE [O]; perch turns le	prose	observed	2	2	docs/ROADMAP.md:75;tests/test_game.cpp:4095	0072b920;00733e00;00734b70;007420d0;0074b920	2/10	
+PlayerData	0x7ee	ttach_ground puts her 199 up the shaft (player data +0x7EE),	prose	stated	1	1	tests/test_game.cpp:4398			
+PlayerData	0x820	est 0x7594C0 / 0x758F70 / 0x5D3BA0 with player data +0x820..+0x843, chart states S1291 / S1294..S1296, jump query q12 [O]; three real shaf	prose	observed	2	2	docs/ROADMAP.md:79;src/game/Game.hpp:318	005d3ba0;00758f70;007594c0	0/3	
+PlayerData	0x833	lingOntoBeamCatchesIt` | zVel window [O player data +0x833 / +0x834]; reach 60 / window 40 / facing cos 0.5 [I]; decoded per-markup capsul	prose	inference	1	1	docs/audit/AUDIT_A.md:53			
+PlayerData	0x85c	unt at the default AMMUNITION CAPACITY (Lara data +0x85C)"},	prose	stated	1	1	tests/selftests/checkpoint_respawn.json:12			
+PlayerData	0x868	25 / 15 by tailoring level | [O-data] † Lara data +0x868 / +0x87C / +0x872 (0x6EEAE0) | `Combat.cpp`, `Tailoring` | which column is "nor	prose	inference	2	2	docs/REFERENCE_COMPARISON.md:257;src/game/Combat.hpp:201	006eeae0	1/1	
+PlayerData	0x87c	un S blocks + ammo records, max reserve Lara data +0x87C; screenshots viewed: uzi, shotgun (7 tracers), speargun under water, health pac	prose	inference	1	1	docs/ROADMAP.md:58	006c9670;006cbb20;006eb320;006f1790;006f5030	0/8	
+PlayerData	0x8a0	t cond c2e4, 0x72D720) | [O] † decomp + player data +0x8A0 | `Grapple.cpp` pull: 1 s heave, block follows at 240 units/s [I] | timing [I]	prose	observed	1	1	docs/REFERENCE_COMPARISON.md:299	0072d720	0/1	
+PlayerData	0x8d8	Swing law [O tru.exe 0x746F60, player data +0x8D8..+0xA3C; all per 30 Hz frame]. The original swings a rigid body	prose	observed	3	3	docs/GAMEPLAY.md:2291;docs/REFERENCE_COMPARISON.md:300;docs/ROADMAP.md:86	006a47e0;0073c640;00745fa0;00746f60	0/4	
+PlayerData	0x924	110.6 / 316.1 / 63.2) | [O] † 0x745FA0, player data +0x924 / +0x928, 0x73AB70 | `kWallAscend` 1043.0, `kWallDescend` 1327.4 units/s; self	prose	observed	1	1	docs/REFERENCE_COMPARISON.md:207	0073ab70;00745fa0	1/2	
+PlayerData	0x940	re, cap 97.98 a frame | [O] † 0x745FA0, player data +0x940..+0x970; reversal rule not decoded | `Grapple.cpp` wall run (`kWallRun`, `kWall	prose	observed	1	1	docs/REFERENCE_COMPARISON.md:208	00745fa0	1/1	
+PlayerData	0x980	rSC_Grapple::OverhangDetected 0x73AB70, player data +0x980..+0xA44]: climbing down a wall, nothing	prose	stated	1	1	docs/GAMEPLAY.md:2336	0073ab70	1/1	
+PlayerData	0x994	ut + 44.25 up a frame | [O] † 0x73C640, player data +0x994..+0x9A8 | `kWallJumpSide` / `kWallJumpBack` / `kWallJumpUp` | — | unmeasured (s	prose	observed	1	1	docs/REFERENCE_COMPARISON.md:209	0073c640	1/1	
+PlayerData	0x9c8	input +0x10 / +0x18; dead below 0.35, player data +0x9C8 / +0x920), not the camera's:	prose	observed	2	2	docs/GAMEPLAY.md:2261;tests/selftests/grapple_swing.json:5	00746f60	0/1	
+PlayerData	0x9d8	ed cap 379.27 a frame | [O] † 0x746F60, player data +0x9D8..+0xA3C | l3_chapel: **54.4..54.9°** on the forward side every pass, 4660..4680	prose	observed	2	2	docs/REFERENCE_COMPARISON.md:202;src/game/Game.hpp:445	00746f60	0/1	
+PlayerData	0x9e4	frame x the stick; not past 40° | [O] † player data +0x9E4 / +0x9E8 / +0x9EC | `kFreeAscend` 711.1, `kFreeDescend` 1232.6 units/s: 698 up	prose	observed	1	1	docs/REFERENCE_COMPARISON.md:205			
+PlayerData	0xa04	ds the swing up to the 45 degree limit (player data +0xA04), where she is braked;	prose	stated	1	1	tests/test_game.cpp:3602			
+PlayerData	0xa48	) up a frame | [O] † 0x73C640 case 734, player data +0xA48..+0xA54 | `kFreeJumpFwd` 1896.3, `kFreeJumpUp` 1422.3 units/s from rest (3D 197	prose	observed	1	1	docs/REFERENCE_COMPARISON.md:203	0073c640	1/1	
+PlayerData	0xbb8	adrant thresholds (anim-graph bytecode, Lara data +0xBB8..+0xBD4), adrenaline toggle button (input +0x6F0 & 0x10; ours interact) and hea	prose	inference	1	1	docs/ROADMAP.md:58	006c9670;006cbb20;006eb320;006f1790;006f5030	0/8	
+PlayerData	0xc10	slide, perch, balance beam); speed cap player data +0xC10 = 18963 (never reached). [I] the 300 radius and solving once at take-off. Groun	prose	observed	1	1	docs/GAMEPLAY.md:253	0073edc0;00751d10	1/2	
+PlayerData	0xc14	q64 / q71 / q98 / q106); with no query Lara data +0xC14 = 951.33 [O-data]. A markup whose	prose	stated	1	1	src/game/Player.cpp:604			
+PlayerData	0xc18	cone; 31 the hit at most player data +0xC18 = **1583.44** under her; 33 for classes 5 / 6 the class table's +0xA4	prose	stated	3	2	docs/GAMEPLAY.md:2490;src/game/Player.cpp:1397;src/game/Player.cpp:1454			
+PlayerData	0xc7c	C00 / 0x73F390 | prismatic push / pull (player data +0xC7C..+0xC88) | C |	prose	stated	2	2	docs/re/ENGINE_ARCHITECTURE.md:292;src/game/Objects.cpp:1026	0073f390;0074ac00	1/2	
+PlayerData	0xc8c	ff her facing [O 0x6F1450 with lara.drm player data +0xC8C / +0xC90 = 60 / 30 degrees]:	prose	stated	1	1	src/game/Objects.cpp:1021	006f1450	0/1	
+PlayerData	0xc94	(query state +0x280 = the candidate of player data +0xC94), by the attached markup's	prose	stated	1	1	src/game/Player.cpp:1387			
+PlayerData	0xca0	(+0xCC = 1: player data +0xCA0, the ledge point she hangs from [I]) along her facing f [O-data]:	prose	inference	1	1	src/game/Player.cpp:1301			
+PlayerData	0xedc	its segment frame by 0x76D010, kept in player data +0xEDC, read by the chart's	prose	stated	2	2	docs/GAMEPLAY.md:1513;src/game/Player.cpp:921	00737d60;0076d010	1/2	
+PlayerData	0x100e	e face under her root [O]: with L = cos(player data +0x100E = 52 deg), U = cos(+0x100C =	prose	observed	1	1	src/game/Player.cpp:385	005dce20	1/1	
+PlayerData	0x12508	Chart** [O lara.drm state chart, player data +0x12508; conditions 0x8B2838, actions 0x8B0A50]: the chart's input	prose	observed	4	4	docs/GAMEPLAY.md:562;docs/re/ENGINE_ARCHITECTURE.md:169;src/game/Combat.hpp:493			
+PlayerInstance	0x6c	not found = 0 (over). Condition 0x1D1 (player +0x6C) then picks S971 / S981 (0 over), S974	prose	stated	2	2	docs/GAMEPLAY.md:203;src/game/Player.cpp:1009	0073dff0	1/1	
+PlayerInstance	0x2a0	player +0x2A0 and the camera position): with the camera looking down at her after the dive (r	prose	stated	6	5	docs/GAMEPLAY.md:1880;docs/GAMEPLAY.md:2322;docs/audit/AUDIT_A.md:50			
+PlayerInstance	0x420	ts owner not flagged 0x2 / 0x20000000), player +0x420 (+0x428), and last the instance	prose	stated	1	1	docs/GAMEPLAY.md:2693			
+PlayerInstance	0x500	the gadget in Lara's inventory slot 10 (player +0x500, 15	prose	stated	2	2	docs/GAMEPLAY.md:1848;docs/RENDERING.md:840	006eef50	1/1	
+PlayerInstance	0x50d	+0x24; player +0x50D = 2 selects it, the HUD names `wp_thorhammer`, icon 97). S block: no ammo slot,	prose	stated	1	1	docs/GAMEPLAY.md:351			
+PlayerInstance	0x610	explicit handle, player +0x610 (+0x618 segment), her markup box (owner +0x0C, segment item +0x30; `0x5BE2F0` f	prose	observed	3	3	docs/GAMEPLAY.md:2692;src/game/World.cpp:1426;tests/selftests/ik_feet.json:5	005be2f0;006efd60	0/2	
+PlayerInstance	0x6dc	F1790; height = z on becoming airborne (player +0x6DC, set on FallState entry 0x75C550) − landing z; applied on landing (0x75D080 → 0	prose	observed	6	5	docs/GAMEPLAY.md:262;src/game/Game.hpp:427;src/game/Player.cpp:460	006f1790;00702fc0;0074fdf0;0075c550;0075d080	3/6	
+PlayerInstance	0x6e4	from her velocity scaled by player +0x6E4 (DiceJumps), not measured yet; the far-ledge search radius of query 100.	prose	stated	1	1	docs/GAMEPLAY.md:216			
+PlayerInstance	0x7f0	0xE7F204 with player +0x7F0), then 0x6F57F0(1): every ammunition slot's count = its start amount at the	prose	stated	1	1	src/game/Combat.cpp:884	006f57f0	0/1	
+PlayerInstance	0x854	nto the first free of her 8 stow slots, player +0x854 +0xF4), **0x188 on 0x51** (0x6E7E90	prose	stated	7	2	docs/GAMEPLAY.md:728;docs/GAMEPLAY.md:3404;docs/GAMEPLAY.md:3486	006e7dc0;006e7e90;00715dd0;00719520	0/4	
+PlayerInstance	0x8e0	: Lara's z fits the player's water top (player +0x8E0, −18895.8 there) + the 0x69DA80	prose	stated	2	2	docs/GAMEPLAY.md:1763;src/game/Game.hpp:280	0069da80	0/1	
+PlayerInstance	0x8ec	x10 (≤ 948 under); dry 0x400; stored at player +0x8EC (query 9, SCCondFunction_InWater 0x7824F0 tests 0x400 / 0x4800 / 0x3000). Ours:	prose	observed	1	1	docs/GAMEPLAY.md:258	005d3860;005d77e0;00700530;007824f0	1/4	
+PlayerInstance	0x980	3 (0x75EB50) runs both every frame into player+0x980	prose	stated	1	1	docs/GAMEPLAY.md:2100	0075eb50	0/1	
+PlayerInstance	0xa20	jump's **launch** speed long (0x758DD0: player +0xA20, the	prose	observed	3	3	docs/GAMEPLAY.md:2974;docs/REFERENCE_COMPARISON.md:155;src/game/WallJump.cpp:38	004935f0;007522a0;00758dd0	1/3	
+PlayerInstance	0xa40	(player +0xA40). `0x7694B0` is the same velocity for the jump queries' solver (`0x7296C0`), ze	prose	stated	1	1	docs/GAMEPLAY.md:2699	007296c0;007694b0	0/2	
+PlayerInstance	0xa64	markup target (player +0xA64 = 0), the jump query's +0x64 >= 0.05 (0.9 for the ground / hang / pole / ladder	prose	stated	2	2	docs/GAMEPLAY.md:4993;src/game/Player.cpp:2040			
+PlayerInstance	0xa84	The jump query in effect (player +0xA84 -> 0x6F1950) must not carry flag 0x80 in its +0x2C word, else the test	prose	stated	3	2	docs/GAMEPLAY.md:2872;src/game/Player.cpp:602;src/game/Player.cpp:2500	006f1950;007594c0	1/2	
+PlayerInstance	0xb00	under Wine reading player+0xB00 / +0xC90, the query ids of state props 541 / 546, and the current state at	prose	stated	2	2	docs/GAMEPLAY.md:2097;src/game/Climb.cpp:33			
+PlayerInstance	0xc94	How Lara is carried.** She is on a box (player +0xC94), and her place is a position on that box, so she moves with	prose	stated	4	3	docs/GAMEPLAY.md:2690;docs/GAMEPLAY.md:5174;docs/formats/COLLISION.md:197	005fe800;00601d30	0/2	
+PlayerInstance	0xca0	(player +0xCA0, +0xCC = 1) or a point of the markup she is on (+0xCC = 3, 0x72AD10); velocity	prose	stated	2	1	docs/GAMEPLAY.md:2456;docs/GAMEPLAY.md:5181	0072ad10;0076e190	1/2	
+PlayerInstance	0xedc	= 325 × 3.1605). Top clear (cond 0x28A, player +0xEDC	prose	stated	2	2	docs/GAMEPLAY.md:2411;src/game/Traverse.cpp:157	004935f0	0/1	
+PlayerInstance	0xee8	the markup's +0x68 > limit -> player +0xEE8 = 1 [O]; +0x68 read as the root's offset under the attach point [I],	prose	observed	1	1	src/game/Player.cpp:600			
+PlayerInstance	0xf00	e is the bike `larabase` 52 last named (Lara +0xF00): 7464's vt 58	prose	stated	6	3	docs/GAMEPLAY.md:1050;docs/GAMEPLAY.md:3175;docs/GAMEPLAY.md:5159	00777e10;00777e40;0079a4d0;0079a4e0	2/4	
+PlayerInstance	0xf10	osition, velocity +0x2A0, chart state *(player+0xF10)+0x510 request / parent, the wave surface)]:	prose	stated	3	1	docs/GAMEPLAY.md:1738;docs/GAMEPLAY.md:2098;docs/GAMEPLAY.md:2569	00764270	0/1	
+PlayerInstance	0xf18	port-foot root** [O existence, U rule]: player +0xF18 is a 0xD0-byte object (0x434F90, segments from data	prose	stated	1	1	docs/GAMEPLAY.md:5169	00434f90	0/1	
+PlayerInstance	0xf34	ords of 0x4C bytes)** and keeps them at player +0xF34; +0xF20	prose	stated	1	1	docs/GAMEPLAY.md:5132			
+PlayerInstance	0xf3c	(player +0xF3C, state property 0x12F with values 301..306 overrides it per state) and events s	prose	stated	1	1	docs/GAMEPLAY.md:5166			
+PlayerInstance	0x11d0	slope slide (message 0x1CA; Lara +0x11D0 = kind, +0x11CF, the chart's PSCCF_OnSlopeSlide); any face with 0 < nz < L	prose	stated	1	1	src/game/Player.cpp:387			
+PlayerInstance	0x1240	vt 54) stores a float in player +0x1240 [U: its reader].	prose	stated	3	3	docs/GAMEPLAY.md:3466;src/script/Script.cpp:2033;src/script/Script.hpp:482	006ee920;0074ac00;00777da0;0079a270	2/4	
+PointSet	0x40	std::string name; // +0x40, e.g. "FXPointSet50069", "fx_heat_haze50001"	mirror	stated	1	1	src/fx/Fx.hpp:338			
+PointSet	0x58	std::vector<Event> events; // +0x58 list	mirror	stated	1	1	src/fx/Fx.hpp:340			
+PointSet	0x5c	float distance = 0; // +0x5C [U: cull distance]	mirror	stated	1	1	src/fx/Fx.hpp:342			
+Portal	0x0	std::string toUnit; // +0x00 char[128], unit base name ("l4_ragnarok_room")	mirror	stated	1	1	src/formats/Formats.hpp:172			
+Portal	0x80	int16_t toSignal = 0; // +0x80 signal id of the matching portal in toUnit	mirror	stated	1	1	src/formats/Formats.hpp:173			
+Portal	0x82	int16_t signal = 0; // +0x82 this portal's signal id	mirror	stated	1	1	src/formats/Formats.hpp:174			
+Portal	0x84	int16_t toStreamId = 0; // +0x84 stream unit id of toUnit	mirror	stated	1	1	src/formats/Formats.hpp:175			
+Portal	0x86	signal faces and the `Signal` records; portal +0x86..+0x8E; the unpaired l2 portals; whether tru.exe ever	prose	unknown	1	1	docs/formats/LEVELS.md:376			
+Portal	0x88	float radius = 0; // +0x88 environment blend radius (tru.exe 0x5C7CA0; RENDERING.md "Neighbour units")	mirror	stated	1	1	src/formats/Formats.hpp:176	005c7ca0	0/1	
+Portal	0x90	float min[3], max[3]; // +0x90, +0xA0 bounds; min is the relocation anchor	mirror	stated	1	1	src/formats/Formats.hpp:177			
+Portal	0xb0	float quad[4][3]; // +0xB0 corners (float4 each)	mirror	stated	1	1	src/formats/Formats.hpp:178			
+Portal	0xf0	float normal[3]; // +0xF0	mirror	stated	1	1	src/formats/Formats.hpp:179			
+Portal records	0x0	`char[128]` target unit base name	table	observed	1	1	docs/formats/LEVELS.md:257			
+Portal records	0x80	i16 **toSignal**: signal id of the matching portal in the target unit	table	observed	1	1	docs/formats/LEVELS.md:258	005d13e0	0/1	
+Portal records	0x82	i16 **signal**: this portal's own signal id	table	observed	1	1	docs/formats/LEVELS.md:259			
+Portal records	0x84	i16 **toStreamId**: stream-unit id of the target	table	observed	1	1	docs/formats/LEVELS.md:260	005d13e0;005d2aa0	2/2	
+Portal records	0x86	i16	table	unknown	1	1	docs/formats/LEVELS.md:261			
+Portal records	0x88	f32 **radius** of the environment blend (2500 in the units checked)	table	observed	1	1	docs/formats/LEVELS.md:262	005c7ca0	0/1	
+Portal records	0x8c	runtime `StreamUnit*` of the target (written by `0x5D13E0`)	table	observed	1	1	docs/formats/LEVELS.md:263	005d13e0	0/1	
+Portal records	0x90	min / max, float4	table	observed	1	1	docs/formats/LEVELS.md:264			
+Portal records	0xa0	min / max, float4	table	observed	1	1	docs/formats/LEVELS.md:264			
+Portal records	0xb0	quad[4], float4 each	table	observed	1	1	docs/formats/LEVELS.md:265			
+Portal records	0xf0	normal, float4	table	observed	1	1	docs/formats/LEVELS.md:266			
+PositionInstance	0xf0	MoveToIdlePosition 2 (back to the birth position instance +0xF0 when more than	prose	stated	1	1	docs/GAMEPLAY.md:3793			
+PoundRing	0x10	float knockEdge, knock; // +0x10 / +0x14 knock-back speed at the outer / inner radius (knock 0: none; knockEdge < 0: no lerp)	mirror	stated	1	1	src/game/Combat.hpp:313			
+PoundRing	0x18	float angle; // +0x18 degrees up of the knock-back	mirror	stated	1	1	src/game/Combat.hpp:314			
+RagdollBone	0x24	int parent = -1; // +0x24: ragdoll bone it hangs from	mirror	stated	1	1	src/physics/Physics.hpp:281			
+RagdollBone	0x28	float massShare = 0; // +0x28: % of RagdollDef::mass	mirror	stated	1	1	src/physics/Physics.hpp:282			
+RagdollBone	0x2c	float radius = 0; // +0x2C x RagdollDef::radiusScale	mirror	stated	1	1	src/physics/Physics.hpp:283			
+RagdollBone	0x38	int joint = 0; // +0x38: 0 none (the root), 1 hinge, 2 two axes, 3 cone + twist	mirror	stated	1	1	src/physics/Physics.hpp:284			
+RagdollBone	0x3c	vec3 pivot{0}, axis1{0}, axis2{0}; // +0x3C (from the capsule start), +0x48, +0x54	mirror	stated	1	1	src/physics/Physics.hpp:285			
+RagdollBone	0x60	float limits[5] = {}; // +0x60..+0x70 degrees: axis 1 lo, hi; axis 2 lo, hi; cone	mirror	stated	1	1	src/physics/Physics.hpp:286			
+RagdollBone	0x74	float friction = 0; // +0x74 (at least 0.01)	mirror	stated	1	1	src/physics/Physics.hpp:287			
+ReadsInstance	0x20	e instance position: her root (0x7784F0 reads instance +0x20)	prose	stated	1	1	src/game/Combat.cpp:1311	007784f0	1/1	
+ReadsInstance	0x90	segment every frame (0x540B80 reads instance +0x90 + 0x40 × segment), so they follow her onto the deck; ours did not	prose	stated	1	1	docs/GAMEPLAY.md:1996	00540b80	1/1	
+record Lights	0x0	matrix rows X, Y, Z (= the way a spot points), position; same frame as the intros	table	observed	1	1	docs/formats/LEVELS.md:132	005c6530	1/1	
+record Lights	0x10	matrix rows X, Y, Z (= the way a spot points), position; same frame as the intros	table	observed	1	1	docs/formats/LEVELS.md:132	005c6530	0/1	
+record Lights	0x20	matrix rows X, Y, Z (= the way a spot points), position; same frame as the intros	table	observed	1	1	docs/formats/LEVELS.md:132	005c6530	1/1	
+record Lights	0x30	matrix rows X, Y, Z (= the way a spot points), position; same frame as the intros	table	observed	1	1	docs/formats/LEVELS.md:132	005c6530	1/1	
+record Lights	0x48	light DTP (resource reference, type 7, resolved in the unit DRM)	table	observed	1	1	docs/formats/LEVELS.md:133			
+record Lights	0x4c	intensity override / flag	table	observed	1	1	docs/formats/LEVELS.md:134	0050a1f0	0/1	
+record Lights	0x50	intensity override / flag	table	observed	1	1	docs/formats/LEVELS.md:134	0050a1f0	0/1	
+record Lights	0x51	colour override u8 rgb / flag (bedroom torches 246,154,36)	table	observed	1	1	docs/formats/LEVELS.md:135			
+record Lights	0x53	colour override u8 rgb / flag (bedroom torches 246,154,36)	table	observed	1	1	docs/formats/LEVELS.md:135			
+record Lights	0x54	colour override u8 rgb / flag (bedroom torches 246,154,36)	table	observed	1	1	docs/formats/LEVELS.md:135			
+record Lights	0x58	radius override / flag (0 → DTP radius)	table	observed	1	1	docs/formats/LEVELS.md:136	005742b0	0/1	
+record Lights	0x5c	radius override / flag (0 → DTP radius)	table	observed	1	1	docs/formats/LEVELS.md:136	005742b0	0/1	
+record Lights	0x5d	vfunc 0x48 (PCRenderLight +0x10C..+0x114, default (1.5e-5, 2.2, 0))	table	observed	1	1	docs/formats/LEVELS.md:137			
+record Lights	0x60	vfunc 0x48 (PCRenderLight +0x10C..+0x114, default (1.5e-5, 2.2, 0))	table	observed	1	1	docs/formats/LEVELS.md:137			
+record Lights	0x68	vfunc 0x48 (PCRenderLight +0x10C..+0x114, default (1.5e-5, 2.2, 0))	table	observed	1	1	docs/formats/LEVELS.md:137			
+record Lights	0x6c	vfunc 0x68: fade/LOD distances (bedroom 2000/4000/8000) [I]	table	observed	1	1	docs/formats/LEVELS.md:138			
+record Lights	0x70	vfunc 0x68: fade/LOD distances (bedroom 2000/4000/8000) [I]	table	observed	1	1	docs/formats/LEVELS.md:138			
+record Lights	0x78	vfunc 0x68: fade/LOD distances (bedroom 2000/4000/8000) [I]	table	observed	1	1	docs/formats/LEVELS.md:138			
+record Lights	0x88	render-light flag bits, shadow mode, misc	table	observed	1	1	docs/formats/LEVELS.md:139			
+record Lights	0x89	render-light flag bits, shadow mode, misc	table	observed	1	1	docs/formats/LEVELS.md:139			
+record Lights	0x8c	two 32-bit receiver masks built from bytes (vfuncs 0x6C / 0x74)	table	observed	1	1	docs/formats/LEVELS.md:140			
+record Lights	0x8f	render-light flag bits, shadow mode, misc	table	observed	1	1	docs/formats/LEVELS.md:139			
+record Lights	0xa6	render-light flag bits, shadow mode, misc	table	observed	1	1	docs/formats/LEVELS.md:139			
+record Lights	0xa7	render-light flag bits, shadow mode, misc	table	observed	1	1	docs/formats/LEVELS.md:139			
+record Lights	0xb7	two 32-bit receiver masks built from bytes (vfuncs 0x6C / 0x74)	table	observed	1	1	docs/formats/LEVELS.md:140			
+record Lights	0xc4	render-light flag bits, shadow mode, misc	table	observed	1	1	docs/formats/LEVELS.md:139			
+record Lights	0xd0	render-light flag bits, shadow mode, misc	table	observed	1	1	docs/formats/LEVELS.md:139			
+Records	0x0	u16 | tag 0x2714	table	stated	2	1	docs/formats/ANIMGRAPH.md:38;docs/formats/ANIMGRAPH.md:49			
+Records	0x2	s16 | id (modifiable 7 / 8, script vt 20); negative = lowest id < 32 no other state uses	table	stated	2	1	docs/formats/ANIMGRAPH.md:39;docs/formats/ANIMGRAPH.md:50			
+Records	0x4	u16 | flags: 2 loop the clip (else once and hold); 0x40 reported by modifiable 2 (query 0xED); 0x800 / 0x400 / 0x200 / 0x100 / 0x80 post INSTANCE message 0x138 with 1 / 3 / 5 / 0 / -1 on entry (`0x6A5	table	stated	2	1	docs/formats/ANIMGRAPH.md:40;docs/formats/ANIMGRAPH.md:51	006a5660;006b0c00	2/2	
+Records	0x7	s8 | animation-list index played on entry, -1 keeps the pose	table	stated	1	1	docs/formats/ANIMGRAPH.md:41			
+Records	0x8	u32 | posted on entry as INSTANCE message 0x1E2, which `0x6B5890` stores in the anim record `+0x80` [U: no reader found]; 0xBEEBBEEB in every object but a few 0s [not modelled]	table	stated	2	1	docs/formats/ANIMGRAPH.md:42;docs/formats/ANIMGRAPH.md:52	006a52e0;006b3dd0;006b4090;006b5890	4/4	
+Records	0x9	s8 | animation-list index played once; its end enters the target	table	stated	1	1	docs/formats/ANIMGRAPH.md:53			
+Records	0xc	f32 | threshold the stimulus value must reach (timer: 30 Hz frames in the state)	table	stated	1	1	docs/formats/ANIMGRAPH.md:54			
+Records	0x10	f32 | > 0: window, the stimulus' running total since the state's entry must reach it instead (only `ca_ei_flame_trap` transition 0, mask 0)	table	stated	1	1	docs/formats/ANIMGRAPH.md:55			
+Records	0x14	u32 / ptr | count / list of pointers to the transitions leaving the state	table	stated	2	1	docs/formats/ANIMGRAPH.md:43;docs/formats/ANIMGRAPH.md:56	006a5660	1/1	
+Records	0x18	u32 / ptr | count / list of pointers to the transitions leaving the state	table	stated	1	1	docs/formats/ANIMGRAPH.md:43			
+Records	0x1c	u32 / ptr | count / list of hit damage classes (message 0x11C `+0x50`) that start it, with mask 0x800; such a transition ignores plain stimuli	table	stated	1	1	docs/formats/ANIMGRAPH.md:57			
+Records	0x20	u32 / ptr | count / list of hit damage classes (message 0x11C `+0x50`) that start it, with mask 0x800; such a transition ignores plain stimuli	table	stated	1	1	docs/formats/ANIMGRAPH.md:57			
+Regenerate	0x20	std::string clip, up; // +0x20 clip ref: falls (played on entering, 0x67ED20); +0x24: gets back up	mirror	stated	1	1	src/game/ai/Enemy.hpp:91	0067ed20	1/1	
+Regenerate	0x28	float time = 0; // +0x28 s down ([I] 30 Hz counts); used only with a clip (0x67F040: ref +0x22 or +0x26 set)	mirror	inference	1	1	src/game/ai/Enemy.hpp:92	0067f040	0/1	
+Render model	0x0	u32 | magic `Mesh` (0x6873654D) [O]	table	observed	2	1	docs/formats/MESHES.md:29;docs/formats/MESHES.md:55	0050f7c0	1/1	
+Render model	0x4	u32 | flags. When bit 0 is set, the batch +0x10 field and the header +0x74 field are used (tru.exe 0x50EB30) [O]. Meaning [U]	table	observed	2	1	docs/formats/MESHES.md:30;docs/formats/MESHES.md:55	0050eb30;0050f7c0	2/2	
+Render model	0x8	number of consecutive primgroups belonging to this batch	table	stated	1	1	docs/formats/MESHES.md:56			
+Render model	0xc	u32 | total index count [O]	table	observed	1	1	docs/formats/MESHES.md:31			
+Render model	0x10	vec4 | bounding-sphere centre (model space); the batch LOD distance is measured to it (0x50F7C0) [O]	table	observed	3	1	docs/formats/MESHES.md:32;docs/formats/MESHES.md:60;docs/formats/MESHES.md:75	0050f7c0	1/1	
+Render model	0x14	vertex data offset	table	stated	2	1	docs/formats/MESHES.md:57;docs/formats/MESHES.md:76			
+Render model	0x20	vec4 | bounding box min / max [O data: Lara max.z 510.97]	table	stated	1	1	docs/formats/MESHES.md:33			
+Render model	0x24	VertexDecl offset	table	stated	1	1	docs/formats/MESHES.md:58			
+Render model	0x28	vertex count	table	stated	2	1	docs/formats/MESHES.md:59;docs/formats/MESHES.md:77			
+Render model	0x2c	texture indices via textureList, or −1 (tru.exe). We don't use these [U]	table	unknown	1	1	docs/formats/MESHES.md:78			
+Render model	0x30	vec4 | bounding box min / max [O data: Lara max.z 510.97]	table	stated	1	1	docs/formats/MESHES.md:33			
+Render model	0x38	texture indices via textureList, or −1 (tru.exe). We don't use these [U]	table	unknown	1	1	docs/formats/MESHES.md:78			
+Render model	0x40	f32 | bounding-sphere radius (0x50F7C0 near-plane test) [O]	table	observed	1	1	docs/formats/MESHES.md:34	0050f7c0	1/1	
+Render model	0x44	u32 | 0 or 2 in models with geometry (2 with flags bit 0: skinned), −1 makes 0x4F36D0 leave the model instance's flag word 0 (below) [O]; meaning [U]	table	observed	1	1	docs/formats/MESHES.md:35	004f36d0	1/1	
+Render model	0x6c	u32 | offset of the primgroups, 0x40 bytes each [O]	table	observed	1	1	docs/formats/MESHES.md:36			
+Render model	0x70	u32 | offset of the batches (vertex buffers), 0x34 bytes each [O]	table	observed	1	1	docs/formats/MESHES.md:37			
+Render model	0x78	u32 | offset of the u16 index buffer [O]	table	observed	1	1	docs/formats/MESHES.md:38			
+Render model	0x7c	u16 | primgroup count [O]	table	observed	1	1	docs/formats/MESHES.md:39			
+Render model	0x7e	u16 | batch count [O]	table	observed	1	1	docs/formats/MESHES.md:40			
+RenderBatch	0x0	Batch LOD (render model batch +0x00 / +0x04; tru.exe model list builder 0x50F7C0): the batch draws, in every pass,	prose	stated	2	2	src/scene/Assets.hpp:257;tests/test_formats.cpp:301	0050f7c0	1/1	
+RenderBatch	0x8	set32(d, batch + 0x08, 1);	prose	stated	1	1	tests/test_formats.cpp:119			
+RenderBatch	0xc	alette**: when Mesh flags bit 0 is set, batch +0x0C = palette size and	prose	stated	3	3	docs/formats/ANIMATION.md:81;docs/formats/MESHES.md:149;src/formats/Model.cpp:322			
+RenderBatch	0x10	batch +0x10 = Mesh-relative offset of `u32` bone indices (Lara: 11, 39, 42, 42, 42, 42, 11	prose	observed	3	2	docs/formats/ANIMATION.md:82;docs/formats/MESHES.md:30;docs/formats/MESHES.md:215	0050eb30	1/1	
+RenderBatch	0x14	set32(d, batch + 0x14, uint32_t(verts - M));	prose	stated	1	1	tests/test_formats.cpp:120			
+RenderBatch	0x24	set32(d, batch + 0x24, uint32_t(decl - M));	prose	stated	1	1	tests/test_formats.cpp:121			
+RenderBatch	0x28	set32(d, batch + 0x28, 3);	prose	stated	1	1	tests/test_formats.cpp:122			
+RenderBatch	0x30	set32(d, batch + 0x30, 1);	prose	stated	1	1	tests/test_formats.cpp:123			
+RenderBatch	0x34	d.resize(batch + 0x34, 0);	prose	stated	1	1	tests/test_formats.cpp:118			
+RenderSettings	0xc	every unit's own screen filter (render settings +0x0C) runs at weight 1, its fog block is the haze (`render::Fog`: c22 / c0 / LUT fog	prose	inference	3	3	docs/ROADMAP.md:41;src/scene/Assets.hpp:192;tests/test_fx.cpp:723	00514d90;005c7ca0;005cc190	1/3	
+RenderSettings	0x1c	ocs/RENDERING.md "Under water"). Render settings +0x1C fog colour u8[3], +0x4C near, +0x48 far	prose	stated	1	1	src/scene/Assets.hpp:185			
+RenderSettings	0x28	render settings +0x28..+0x34 fractions (device vfunc 0x80 = 0x508350; far plane, fog far and fraction	prose	stated	3	3	docs/formats/SHADERS.md:141;src/scene/Assets.hpp:180;tests/test_shaders.cpp:537	00508350;005c7ca0	1/2	
+RenderSettings	0x38	far plane is the unit's (render settings +0x38), not our camera's (which keeps more of the view).	prose	stated	2	2	src/render/OriginalShading.cpp:320;src/scene/Assets.hpp:183	00513be0	1/1	00513be0 match 513e0a: fld DWORD PTR [ebx+0x38]; 513e58: fld DWORD PTR [ebx+0x38] — float far plane
+RenderSettings	0x50	ix: read the swim modes' focus records (settings +0x50) and check the z dead zone; if tru.exe follows exactly,	prose	stated	2	2	docs/audit/BUGS.md:550;src/game/World.cpp:955			
+RenderSettings	0x60	gets the defaults (0x601D30: record 1, settings +0x60). Look pitch limits from command 8 (0x607A30: centre	prose	stated	1	1	src/game/World.cpp:880	00601d30;00607a30	0/2	
+RenderSettings	0x68	Collider (0x5ED010, settings +0x68 radius): the proposed point stands when a sphere swept out from the pivot	prose	stated	1	1	src/game/World.cpp:1171	005ed010	0/1	
+RenderSettings	0x78	de's focus record blends in over 0.5 s (settings +0x78 via 0x608200; 0x609830 lerps the records) and its	prose	stated	1	1	src/game/World.cpp:929	00608200;00609830	0/2	
+RenderSettings	0xc4	input, 1 from 7 s, settings +0xC4 / +0xC8; the clock +0x1E4 runs at +0xCC = 1 x dt also while she moves and caps	prose	stated	1	1	src/game/World.cpp:1005			
+RenderSettings	0xd0	ot a ray probe (0x600200 with 0x13 set; settings +0xD0 radius 0) pulls it in to what it sees, never under 300.	prose	stated	1	1	src/game/World.cpp:1241	00600200	1/1	
+RenderSettings	0xe4	02f, nullptr}}}, // default (settings +0xE4)	prose	stated	1	1	src/game/World.cpp:64			
+RenderSettings	0x2a4	ASSERT_EQ(u.wind.size(), 1u); // [O] settings +0x2A4: retarget 1..5 s, strength 0..0.1, heading 0..80, wavelength 6..10, 0.1 Hz	prose	observed	1	1	tests/test_game.cpp:5826			
+RenderSettings	0x2b4	ach chapter's level loadout list (level settings +0x2B4, GAMEPLAY.md "Collectibles"); the	prose	stated	1	1	src/game/Combat.cpp:453			
+RibbonDef	0x0	uint8_t id = 0; // +0x00 prim id (stop commands)	mirror	stated	1	1	src/fx/Fx.hpp:127			
+RibbonDef	0x1	bool birth = false; // +0x01 & 1	mirror	inference	2	1	src/fx/Fx.hpp:128;src/fx/Fx.hpp:129			
+RibbonDef	0x4	std::optional<ParticleMaterial> material; // +0x04 material (face +0xC0), else `texture`	mirror	stated	1	1	src/fx/Fx.hpp:130			
+RibbonDef	0x8	int16_t segment = 0, segment2 = 0; // +0x08 / +0x0A (command a2 / a3 win)	mirror	stated	1	1	src/fx/Fx.hpp:131			
+RibbonDef	0xc	uint8_t kind = 0; // +0x0C: 1 = a chain of segments [U, no data]	mirror	stated	1	1	src/fx/Fx.hpp:132			
+RibbonDef	0xe	int16_t life = -1; // +0x0E ribbon life, -1 until its owner goes	mirror	stated	1	1	src/fx/Fx.hpp:133			
+RibbonDef	0x10	int16_t faceLife = 1; // +0x10	mirror	stated	1	1	src/fx/Fx.hpp:134			
+RibbonDef	0x12	float startFade = 0; // +0x12 x 2 / 0x2000: fade of a new quad (0 = opaque)	mirror	stated	1	1	src/fx/Fx.hpp:135			
+RibbonDef	0x14	uint32_t rgba = 0, rgba2 = 0; // +0x14 / +0x18 bytes R,G,B,A (0x80 = 1): new -> old quad colour [I]	mirror	inference	1	1	src/fx/Fx.hpp:136			
+RibbonDef	0x20	uint32_t texture = 0; // +0x20 (0 = kRibbonTexture)	mirror	stated	1	1	src/fx/Fx.hpp:137			
+RibbonDef	0x25	uint8_t fadeIn = 0, fadeOut = 0; // +0x25 / +0x26 ribbon fade in / out (frames)	mirror	stated	1	1	src/fx/Fx.hpp:138			
+SceneLight	0x4	our l3_chamberrockhall's light 2 (Wine, SceneLight +0x04/+0x1F0 → that unit's cell 2;	prose	stated	1	1	docs/formats/LEVELS.md:162			
+SceneLight	0x14	wMask = 0; // round(ch6) | 0x83000000 (SceneLight +0x14), round(ch7) | 0x83000000 (+0x18)	prose	stated	1	1	src/cine/Cine.hpp:137			
+SceneLight	0x64	time (Wine, l3_main_bedroom start) [O]: SceneLight +0x64 enabled (0x5CEC60 creates every light disabled, vfunc	prose	observed	3	3	docs/formats/LEVELS.md:164;src/render/OriginalShading.cpp:400;tests/test_save.cpp:594	005cec60	0/1	
+SceneLight	0x154	Light mask (SceneLight +0x154): the light reaches receivers with (mask & MeshData::lightMask) != 0 (tru.exe	prose	stated	1	1	src/scene/Assets.hpp:128			
+SceneLight	0x178	lights whose volume reaches its bounds, SceneLight +0x178 1 = several cells, 2 = its home cell +0x1F0 only), then 0x504CC0 per leaf. Ours	prose	observed	1	1	docs/formats/SHADERS.md:89	005042b0;00504cc0;00505530;005076a0;00511810	0/11	
+SceneLight	0x2ca	heres), the per-frame light visibility (SceneLight +0x2CA: lights whose volume is not seen through the portals are dropped, which only fr	prose	observed	2	2	docs/formats/SHADERS.md:89;tests/test_shaders.cpp:582	005042b0;00504cc0;00505530;005076a0;00511810	2/11	
+ScriptType	0x34	std::vector<int16_t> prototypes; // +0x34: declared prototypes' vtable slots (native types bind callbacks by index)	mirror	stated	1	1	src/script/Script.hpp:98			
+ScriptType	0x40	// +0x40 (count: u8 +0x3E): Function record run on entering state n (tru.exe 0x57B560; Run() enters state 0)	mirror	stated	1	1	src/script/Script.hpp:96	0057b560	0/1	
+Section header	0x0	u32 | data size	table	stated	1	1	docs/formats/CONTAINERS.md:155			
+Section header	0x4	u8 | section type (§4.3)	table	stated	1	1	docs/formats/CONTAINERS.md:156			
+Section header	0x5	u8 | flags	table	observed	1	1	docs/formats/CONTAINERS.md:157			
+Section header	0x6	u16 | versionID	table	stated	1	1	docs/formats/CONTAINERS.md:158			
+Section header	0x8	u32 | packed: bit 0 `hasDebugInfo`, bits 1–7 `resourceType`, bits 8–31 relocation table size **in bytes**	table	stated	1	1	docs/formats/CONTAINERS.md:159			
+Section header	0xc	u32 | id (resource id for non-General sections)	table	stated	1	1	docs/formats/CONTAINERS.md:160			
+Section header	0x10	u32 | specMask	table	stated	1	1	docs/formats/CONTAINERS.md:161			
+Section type 8	0x0	u32 version = 4	table	observed	1	1	docs/formats/SCRIPTS.md:33			
+Section type 8	0x8	u16 ×2 script name (symbol ids)	table	observed	1	1	docs/formats/SCRIPTS.md:34			
+Section type 8	0x10	`char*` native script name, null for bytecode-only types	table	observed	1	1	docs/formats/SCRIPTS.md:35			
+Section type 8	0x14	ref: own section id	table	observed	1	1	docs/formats/SCRIPTS.md:36			
+Section type 8	0x18	ref: super type section id	table	observed	1	1	docs/formats/SCRIPTS.md:37			
+Section type 8	0x1c	u16 instance size, u16 alignment	table	observed	1	1	docs/formats/SCRIPTS.md:38			
+Section type 8	0x20	SArray states	table	observed	1	1	docs/formats/SCRIPTS.md:39			
+Section type 8	0x2c	SArray members, 0x14 bytes each	table	observed	1	1	docs/formats/SCRIPTS.md:40			
+Section type 8	0x34	SArray prototypes, 0x1C bytes each, +6 = i16 vtIndex	table	observed	1	1	docs/formats/SCRIPTS.md:41			
+Section type 8	0x38	SArray functions, 0x1C bytes each	table	observed	1	1	docs/formats/SCRIPTS.md:42			
+Section type 8	0x44	vtables pointer	table	observed	1	1	docs/formats/SCRIPTS.md:43			
+Section type 8	0x48	SArray dependencies (refs to other script types)	table	observed	1	1	docs/formats/SCRIPTS.md:44			
+SectionInstance	0x20	(2026-11-15, section instance +0x20 / +0x30 sampled every 100 ms for 30 / 20 s): ms_uo_yacht floats (0x6AD070: its	prose	stated	1	1	tests/test_save.cpp:824	006ad070	0/1	
+SectionInstance	0x234	State action 1 (0x4D86A0: section instance +0x234 = the action's low byte): l1_ship_sinking_hall pipe 1190	prose	stated	1	1	tests/test_gates.cpp:1167	004d86a0	1/1	
+SectionRecord	0x52	C (UberObjectSection_TR8 0x6D4690) when section record +0x52 bit 0 is set:	prose	observed	1	1	docs/GAMEPLAY.md:388	006d4690	1/1	
+Senses	0x20	float loseTrack = 0; // +0x20; [I] unseen Lara closer than this to the enemy is still tracked	mirror	inference	1	1	src/game/ai/Enemy.hpp:46			
+SetInstance	0x1c	Uber state action 0x1A set instance +0x1C bit 2 on it (0x19 clears it): no grapple target (0x6ECCA0).	prose	stated	1	1	src/game/Game.hpp:976	006ecca0	1/1	
+SetsController	0xf4	im requests [O]: request +0x20 bit 0x80 sets controller +0xF4 0x200 (tru.exe 0x4428A0), which reflects the root motion (x, quat y / z negated	prose	observed	2	2	docs/ROADMAP.md:48;docs/formats/ANIMATION.md:214	00441fb0;004428a0;0073edc0;00742330;00742770	4/12	
+SetsInstance	0x1c	instance 21 (bool, 0x4A3FD0: clears/sets instance +0x1C flag 0x100), 18 (bool, 0x4A3F50: toggles the	prose	stated	1	1	src/script/Script.cpp:1952	004a3f50;004a3fd0	1/2	
+SfxMarker	0x20	uint32_t id = 0; // +0x20	mirror	stated	1	1	src/audio/SoundPlex.hpp:96			
+ShaderLib section	0x0	u32 | kind: 0 vertex (`PCVertexShaderTable` 0x5263A0), 1 pixel (`PCPixelShaderTable` 0x526440); PCShaderLib fill 0x515530	table	stated	1	1	docs/formats/SHADERS.md:15	00515530;005263a0;00526440	3/3	
+ShaderLib section	0x4	u32 | table header bytes; slot count = value / 4	table	stated	1	1	docs/formats/SHADERS.md:16			
+ShaderLib section	0x8	u32 | [U]	table	unknown	1	1	docs/formats/SHADERS.md:17			
+ShaderLib section	0xc	u32[slots] | entry offset relative to +0x04, `~0` = empty slot	table	stated	1	1	docs/formats/SHADERS.md:18			
+ShortsData	0xc3e	× ±572 centred 320 above the feet | [O] shorts data+0xC3E/+0xC40/+0xC42 (221, 572, 320), box overlap against each water volume box in 0x7	prose	observed	1	1	docs/GAMEPLAY.md:256	00710a20	1/1	
+Skeleton	0x0	7 floats, zero on bones without vertices; [I] a bounding box. [U] exact meaning	table	inference	1	1	docs/formats/ANIMATION.md:40			
+Skeleton	0x4	u32 segment count (Lara: 116)	table	stated	1	1	docs/formats/ANIMATION.md:32			
+Skeleton	0xc	pointer to the segments, 0x40 bytes each	table	stated	1	1	docs/formats/ANIMATION.md:33			
+Skeleton	0x1b	7 floats, zero on bones without vertices; [I] a bounding box. [U] exact meaning	table	inference	1	1	docs/formats/ANIMATION.md:40			
+Skeleton	0x20	vec4 pivot: bind offset from the parent (w = 1)	table	stated	1	1	docs/formats/ANIMATION.md:41			
+Skeleton	0x34	u32, `0xFFFF0000` on bones without vertices; [U]	table	unknown	1	1	docs/formats/ANIMATION.md:42			
+Skeleton	0x38	i32 parent index (−1 for segment 0; always lower than the segment's own index)	table	stated	1	1	docs/formats/ANIMATION.md:43			
+Skeleton	0x3c	pointer (HInfo in DXHR) on some segments; [U]	table	unknown	1	1	docs/formats/ANIMATION.md:44			
+Skeleton	0x64	u32 render-model section id (resource relocation)	table	stated	1	1	docs/formats/ANIMATION.md:34			
+SoundInstance	0x14	0): u8 volume +6 ± u8 +7 (0..127, /127: sound instance +0x14), f32 semitones +0xC	prose	stated	1	1	src/fx/Fx.hpp:270	005953e0;005b99c0	2/2	
+SoundInstance	0x28	maps on `SoundPlayer::setParam` inputs (sound instance +0x28) |	prose	stated	2	2	docs/formats/AUDIO.md:473;src/audio/SoundPlex.hpp:167	00587f10;00587ff0;00590f30;00592640	0/4	
+SoundInstance	0x44	rial = the instance's surface material (sound instance +0x44, MaterialList input).	prose	stated	2	2	docs/formats/AUDIO.md:577;src/audio/SoundPlex.hpp:137	005875a0	0/1	
+SoundInstance	0x50	i16 +4 (sound instance +0x50 when ≥ 0) [U], u8 volume +6 ± u8 +7 (0..127, 0x582C20; /127 = instance +0x14),	prose	unknown	1	1	docs/formats/AUDIO.md:573	00582c20	0/1	
+StreamData	0x2b4	rope's pool (0x6A3430). A unit (stream data +0x2B4: +0x18 flag, +0x1C / +0x20) or the target (its 0x404 block: flag,	prose	stated	1	1	src/game/Combat.hpp:415	006a3430	0/1	
+StreamUnitPortal	0xf0	as the StreamUnitPortal +0xF0 normals of l1_seatop, l1_cineseatop, l4_pool and l4_ragnarok_room do).	prose	stated	1	1	src/render/RenderCommon.hpp:161			
+SubMesh	0x10	// +0x10, model primgroup +0x2C, overridden by IMF placements (+0x4C). 0 = the material's own texture.	mirror	stated	1	1	src/scene/Assets.hpp:60			
+SunRecord	0x60	0000), depth bias / slope bias from the sun record +0x60 / +0x64	prose	stated	1	1	docs/formats/SHADERS.md:136			
+TargetingTuning	0x470	float softRange = 5000.0f; // +0x470: 2D distance	mirror	stated	2	1	src/game/Combat.hpp:449;src/game/Combat.hpp:450			
+Terrain	0x2	record at Terrain +0x04 (count: i16 at Terrain +0x02). Coordinates are stored	prose	stated	1	1	src/formats/Formats.hpp:168			
+Terrain	0x4	(`ou-game`) | Tested | Portal records (Terrain+0x04, 0x100 B, Level+0x80 frame) and relocation by signal from tru.exe 0x5D13E0/0x5D	prose	observed	4	4	docs/ROADMAP.md:55;docs/formats/LEVELS.md:37;docs/re/ENGINE_ARCHITECTURE.md:132	005d10d0;005d13e0	2/2	
+Terrain	0xe	28 deg) and the face's client flags (terrain +0x0E through 0x5D3AF0): a slide-flagged face with L <= nz <= U is a	prose	stated	1	1	src/game/Player.cpp:386	005d3af0	1/1	
+Terrain	0x20	node array offset and count (0x20 bytes each)	table	stated	1	1	docs/formats/MESHES.md:90			
+Terrain	0x24	node array offset and count (0x20 bytes each)	table	stated	1	1	docs/formats/MESHES.md:90			
+Terrain	0x28	group array offset and count (0x20 bytes each)	table	stated	1	1	docs/formats/MESHES.md:91			
+Terrain	0x2c	group array offset and count (0x20 bytes each)	table	stated	1	1	docs/formats/MESHES.md:91			
+Terrain	0x30	VertexDecl array offset and count. Decls are packed back to back, `16 + 8·numAttr` bytes each	table	stated	1	1	docs/formats/MESHES.md:92			
+Terrain	0x34	VertexDecl array offset and count. Decls are packed back to back, `16 + 8·numAttr` bytes each	table	stated	1	1	docs/formats/MESHES.md:92			
+Terrain	0x3c	vertex-buffer array offset and count (16 bytes each: `{dataOff, ?, vertexCount, declIndex}`)	table	stated	1	1	docs/formats/MESHES.md:93			
+Terrain	0x40	vertex-buffer array offset and count (16 bytes each: `{dataOff, ?, vertexCount, declIndex}`)	table	stated	1	1	docs/formats/MESHES.md:93			
+Terrain	0x44	per-node u32 offset table: 0 means the node has no geometry, otherwise it points to a chunk list	table	stated	1	1	docs/formats/MESHES.md:94			
+Terrain	0x50	u16 index buffer offset and index count	table	stated	1	1	docs/formats/MESHES.md:95			
+Terrain	0x54	u16 index buffer offset and index count	table	stated	1	1	docs/formats/MESHES.md:95			
+TheirRecord	0x30	jointless sections drawn in bind pose (their record +0x30 animations not run); skydomes are the units' exterior terrain, drawn behind eve	prose	stated	2	2	docs/ROADMAP.md:29;docs/audit/BUGS.md:380	004d7d50;005b5d20;005bcc30;005d4b90;00800000	1/5	
+Tuning	0xac	float wadeDepth = 154.0f; // +0xAC: water this deep up to swimDepth is waded (class 0x100), shallower walked (0x200)	mirror	stated	1	1	src/game/Game.hpp:276			
+Tuning	0xb2	float diveDepth = 948.0f; // +0xB2: the surface dive needs water this deep (depth class 0x325, tru.exe 0x764340)	mirror	stated	1	1	src/game/Game.hpp:277	00764340	0/1	
+Tuning	0x288	// +0x288: radius +0x65C 79.01, cylinder +0x660 189.63, centre 315.4 above the feet), so its top is 489.2; on the	mirror	stated	1	1	src/game/Game.hpp:211			
+Tuning	0xc42	// +0xC42 above the feet; overlapping a water volume puts Lara in it.	mirror	stated	1	1	src/game/Game.hpp:264			
+UberJoint	0xc	uint8_t model = 0, marker = 0; // +0xC / +0xD	mirror	stated	2	1	src/formats/Uber.hpp:59;src/formats/Uber.hpp:64			
+UberJoint	0x10	// +0x10 SoundPlex* and +0x24 where it plays (0 the pivot on body A, 1 on body B, 2 between them; 0x4F1E10): 0x4D8000	mirror	stated	1	1	src/formats/Uber.hpp:65	004d8000;004f1e10	2/2	
+UberJoint	0x2c	float lo = 0, hi = 0; // +0x2C / +0x30, used when flags bit 0 (0x4D4690)	mirror	stated	1	1	src/formats/Uber.hpp:60	004d4690	1/1	
+UberJoint	0x34	float speed = 0, force = 0; // +0x34 / +0x38 motor: speed per second, impulse bound (<= 0 none), flags bit 1 (0x4D1F00)	mirror	stated	1	1	src/formats/Uber.hpp:61	004d1f00	0/1	
+UberJoint	0x3c	uint8_t flags = 0; // +0x3C	mirror	stated	1	1	src/formats/Uber.hpp:62			
+UberObjectData	0x28	std::vector<std::vector<UberCondition>> queries; // +0x28 / +0x2C: `uberobjectquery` index -> condition list (0x4AB6A0)	mirror	stated	1	1	src/formats/Uber.hpp:133	004ab6a0	1/1	
+UberObjectSection_TR8	0xd4	ealth, +0x40 → engagement set at birth (UberObjectSection_TR8 +0xD4, query 0x53), +0x48 s16 HInfo marker (query 0x174), +0x4C → constraint record f	prose	stated	1	1	docs/formats/SCRIPTS.md:129	004d3050;006b6440	0/2	
+UberSection	0x3c	// +0x3C health and +0x52 bit 0 "takes damage" (UberObjectSection_TR8 ctor 0x6D60B0: +0xDC = record +0x3C; 0x6D4690	mirror	stated	1	1	src/formats/Uber.hpp:98	006d4690;006d60b0	1/2	
+UberSection	0x40	// +0x40 the engagement set the section starts with (offset in the object section, -1 none; 0x6D60B0 -> +0xD4, query	mirror	stated	1	1	src/formats/Uber.hpp:102	006d60b0	1/1	
+UberTransition	0x18	uint32_t trigger = 0, param = 0; // +0x18 / +0x1C: 1 seconds in state (float), 2 command, 3 always, 9 conditions,	mirror	stated	1	1	src/formats/Uber.hpp:27			
+UberTransition	0x28	uint16_t animKind = 0; // +0x28 its kind (0x444BA0 on the section instance's anim component):	mirror	stated	1	1	src/formats/Uber.hpp:38	00444ba0	0/1	
+UberTransition	0x2a	int32_t anim = -1; // +0x2A animation reference index, -1 none (0x4D4A00)	mirror	stated	1	1	src/formats/Uber.hpp:37	004d4a00	1/1	
+UberTransition	0x2c	uint32_t probability = 100, flags = 0; // +0x2C, +0x34 (1 play anim, 2 wait for its end, 0x10 random)	mirror	stated	1	1	src/formats/Uber.hpp:40			
+UnitData	0x0	Unit data +0x00 numLights, +0x04 -> pointers to 0xE0-byte light records {+0x00 matrix rows X, Y	prose	stated	1	1	src/formats/Level.cpp:419			
+UnitData	0x4	`, b6 | the unit's type-2 light record (unit data +0x04 list, record row 2 = direction, DTP +0x08 intensity, +0x18 colour); 23 units ha	prose	observed	3	3	docs/formats/SHADERS.md:86;src/scene/Assets.hpp:168;tests/test_formats.cpp:435	0050b910;005c6530	2/2	
+UnitData	0x44	NavPower link (unit data +0x44 count, +0x48 -> record pointers; tru.exe 0x48BAB0 -> 0x48B770 creates them with	prose	stated	3	3	src/formats/Formats.hpp:241;src/formats/Level.cpp:304;tests/test_ai.cpp:1970	0048b770;0048bab0	1/2	
+UnitData	0x68	Reveal cameras: unit camera splines (unit data +0x68/+0x6C) decoded and played like tru.exe's AutoSplineCamera — Hermite camera trac	prose	stated	2	2	CHANGELOG.md:1018;src/formats/Formats.hpp:182			
+UnitData	0xac	sfxmarker (unit data +0xAC count / +0xB0 pointers, 0x3C bytes each; trigger update 0x594A80)	prose	stated	1	1	src/audio/SoundPlex.hpp:84	00594a80	0/1	
+UnitData	0x118	translation + the unit's offset (unit data +0x118 count / +0x11C 0x60-byte records, +0x4C node count, +0x50 →	prose	stated	1	1	docs/GAMEPLAY.md:3751			
+UnitData	0x11c	Planner node (unit data +0x11C records, +0x50 -> 0x60-byte nodes; tru.exe 0x5C8EA0 / 0x669D00). `frame` = reco	prose	stated	2	2	src/formats/Formats.hpp:214;src/formats/Level.cpp:169	005c8ea0;00669d00	2/2	
+UnitData	0x120	Unit FX point sets (unit data +0x120 count, +0x124 -> 0x70-byte records; EFFECTS.md "FX point sets"): fires, heat	prose	stated	2	2	src/fx/Fx.hpp:333;tests/test_fx.cpp:431			
+UnitData	0x160	er"): tru.exe's full-screen water pass (unit data +0x160 records, 0x6D8C20 drawing the unit's water material: deep-to-surface blue by vi	prose	stated	3	3	CHANGELOG.md:971;src/formats/Level.cpp:564;src/scene/Assets.hpp:197	005c78a0;005c7ca0;005d4ab0;006d8c20;006da130	1/5	
+UnitData	0x208	Level camera record (unit data +0x208 count, +0x20C 0x70-byte records; tru.exe 0x606xxx): where the gameplay camera	prose	stated	2	2	src/collision/Collision.hpp:69;src/collision/LevelCollision.cpp:107	00605ed0;00606160;00606310	2/3	
+UnlessRecord	0x8a	90 switches each light every frame: off unless record +0x8A, and with +0x80 off from camera distance d ≥ D + range − min(0.3 D, range / 2),	prose	inference	2	2	docs/formats/LEVELS.md:165;src/render/OriginalShading.cpp:301	005cbfa0;005cc190	1/2	
+UsesRecord	0x10	ht); PatrolAttack (0x635920 / 0x61B260) uses record +0x10 (point mode 2) / +0x14 (3).	prose	stated	1	1	src/game/ai/Enemy.hpp:155	0061b260;00635920	2/2	
+VehicleData	0x90	one gear, reverse), wheel definitions (vehicle data +0x90: spheres, suspension markers, rest, drive share, spring, brake, slide, friction	prose	observed	3	3	docs/ROADMAP.md:77;src/game/Vehicle.hpp:53;tests/test_vehicle.cpp:58	006ab960;0078eda0;0078f860;00790920;00790e40	1/9	
+Voice lines are referenced from SoundPlex DTPs	0x0	u32 | 0xBEEBBEEB (record marker, also used as an empty slot)	table	stated	1	1	docs/formats/AUDIO.md:441			
+Voice lines are referenced from SoundPlex DTPs	0x4	u16 | 0	table	stated	1	1	docs/formats/AUDIO.md:442			
+Voice lines are referenced from SoundPlex DTPs	0x6	u16 | 0x50 / 0x5A / 0x64 (80/90/100) [I] volume percent	table	inference	1	1	docs/formats/AUDIO.md:443			
+Voice lines are referenced from SoundPlex DTPs	0x8	8 bytes | 0	table	stated	1	1	docs/formats/AUDIO.md:444			
+Voice lines are referenced from SoundPlex DTPs	0x10	char[] | NUL-terminated stream path without extension, e.g. `vo\lara\lara_drown_01`	table	stated	1	1	docs/formats/AUDIO.md:445			
+VolumeData	0x4e	e open seas have tru.exe's waves (water volume data +0x4E bit 1: four long swells, 0x69DA80 / 0x69DFB0): the sea	prose	stated	1	1	CHANGELOG.md:964	0069da80;0069dfb0	0/2	
+WaterRays	0x40	float origin[3] = {}; // +0x40: grid centre xy, surface z	mirror	stated	1	1	src/scene/Assets.hpp:206			
+WaterRays	0x50	float length = 0; // +0x50: column length along the refracted sun	mirror	stated	1	1	src/scene/Assets.hpp:209			
+WaterRays	0x68	float vsExtinction = 0; // +0x68 material VS MaterialParams c25.x	mirror	stated	1	1	src/scene/Assets.hpp:215			
+WaterRays	0x8c	float halfSize = 0; // +0x8C: grid half extent	mirror	stated	1	1	src/scene/Assets.hpp:208			
+WaterRays	0x90	float life[2] = {}; // +0x90 base, +0x94 random column life (s)	mirror	stated	1	1	src/scene/Assets.hpp:212			
+WaterRays	0xa0	float dark[2] = {}; // +0xA0 random dark spell (s), +0xA4 longest spell kept lit	mirror	stated	1	1	src/scene/Assets.hpp:213			
+WaterRays	0xa8	float extinction[2] = {}; // +0xA8 bottom, +0xAC top vertices, x the material's VS c25.x	mirror	stated	1	1	src/scene/Assets.hpp:214			
+WaterRays	0xc8	int grid = 0; // +0xC8 DTP +0x00: vertices per side	mirror	stated	1	1	src/scene/Assets.hpp:204			
+WaterRays	0xf0	bool follow = false; // +0xF0: the grid centre xy follows Lara (0x6D8C20; set in every shipped record)	mirror	stated	1	1	src/scene/Assets.hpp:207	006d8c20	1/1	
+WaterRecord	0xba	e message 0x30 [O 0x4A59F0 -> 0x6AC340: water record +0xBA amount, +0xBC time left, run down by 0x6C10D0; 0x6AD070 sends every instance th	prose	inference	4	4	docs/GAMEPLAY.md:543;src/game/Objects.cpp:1643;src/script/Script.cpp:1964	004a59f0;006ac340;006ad070;006c10d0	3/4	
+WeaponController	0xc	ual targets** [O]: 0x71E490 / 0x7035F0 (weapon controller +0xC / +0x10, soft set Lara data +0x470, hold +0x286 =	prose	observed	1	1	docs/GAMEPLAY.md:4808	007035f0;0071e490	2/2	
+WeaponController	0x10	becomes the second target (weapon controller +0x10, flag 0x4000); one already held stays for `Lara data +0x286`	prose	stated	1	1	src/game/Aim.cpp:120			
+WeaponController	0xc4	1005 (type 27) names the one in force, weapon controller +0xC4]:	prose	inference	4	3	docs/GAMEPLAY.md:590;src/game/Combat.cpp:1359;src/game/Combat.hpp:309	0069f1e0;006e68b0	1/2	
+WeaponData	0xb8	[O] Mount: weapon data +0xB8 / +0xB9 = Lara HInfo markers 5 (segment 71, the LEFT hand's grip child of 55) a	prose	observed	2	1	docs/GAMEPLAY.md:368;docs/GAMEPLAY.md:4167			
+WeaponData	0xb9	weapon data +0xB9 / +0xBB name Lara's HInfo markers (lara model, `AnimLibrary::markers`) and the	prose	stated	1	1	docs/GAMEPLAY.md:4169			
+WeaponData	0xdc	bjectlist 42), ammo `pr_thorbolt` (71): weapon data +0xDC = 2 (its own inventory slot	prose	observed	1	1	docs/GAMEPLAY.md:350			
+WeaponData	0xe6	ind(library->dataU16(weapon, 0xE6)); // weapon data +0xE6: ammo object (game::loadWeapon)	prose	stated	1	1	src/app/game/main.cpp:1358			
+WeatherDef	0x0	std::array<uint32_t, 3> textures{}; // +0x00 sheet textures, dense .. sparse	mirror	stated	1	1	src/fx/Weather.hpp:22			
+WeatherDef	0xc	std::array<float, 4> levels{}; // +0x0C..+0x18 rain amounts (0..1) where the textures take over	mirror	stated	1	1	src/fx/Weather.hpp:23			
+WeatherDef	0x20	float minWidth = 0, width = 0; // +0x20 / +0x24: quad half-width max(width x 512 / depth, minWidth), view units	mirror	stated	1	1	src/fx/Weather.hpp:24			
+WeatherDef	0x28	float length = 0; // +0x28 streak = velocity x length	mirror	stated	1	1	src/fx/Weather.hpp:25			
+WeatherDef	0x2c	float nearZ = 0, farZ = 0; // +0x2C drawn beyond this view depth; +0x30 far colour scale	mirror	stated	1	1	src/fx/Weather.hpp:26			
+WeatherDef	0x34	float wind = 0; // +0x34 drift = unit wind x this	mirror	stated	1	1	src/fx/Weather.hpp:27			
+WeatherDef	0x38	uint32_t colourA = 0, colourB = 0; // +0x38 / +0x3C rgb of the two textures' drops	mirror	stated	1	1	src/fx/Weather.hpp:28			
+WeatherDef	0x40	uint32_t farColour = 0; // +0x40 rgb OR'd in x depth / farZ	mirror	stated	1	1	src/fx/Weather.hpp:29			
+WeatherDef	0x44	uint32_t alpha = 0; // +0x44: >> 24 the drops' alpha, low 24 bits OR'd into both colours	mirror	stated	1	1	src/fx/Weather.hpp:30			
+WeatherDef	0x48	uint8_t flags = 0; // +0x48: 1 the two textures cross-fade by alpha, 2 lightning	mirror	stated	1	1	src/fx/Weather.hpp:31			
+WeatherDef	0x4c	uint32_t flashColour = 0; // +0x4C bytes R, G, B of the lightning light	mirror	stated	1	1	src/fx/Weather.hpp:32			
+WeatherDef	0x50	uint32_t flashLight = 0; // +0x50 light DTP id (0 = no lightning)	mirror	stated	1	1	src/fx/Weather.hpp:33			
+WeatherDef	0x54	float flashRadius = 0; // +0x54	mirror	stated	1	1	src/fx/Weather.hpp:34			
+WeatherDef	0x64	float flashDistance = 0, flashHeight = 0; // +0x64 / +0x68 (s32): where the light stands from the camera [I]	mirror	inference	1	1	src/fx/Weather.hpp:35			
+Wetness	0x0	std::array<float, kRegions> region{}; // +0x00	mirror	stated	1	1	src/game/Game.hpp:829			
+Wetness	0x38	uint8_t water = 0; // +0x38: regions in water (message 0x641 -> 0x6ED050; swimming 0x7F [O Wine])	mirror	stated	1	1	src/game/Game.hpp:831	006ed050	0/1	
+Wetness	0x60	std::array<float, kBones> bone{}; // +0x60 + 16 bone (.x)	mirror	stated	1	1	src/game/Game.hpp:830			
+Wheel	0x8	s scaled to peak 1.5 front / 1.7 rear | wheel +0x08 [V-data]; its meaning [I] |	prose	observed	2	2	docs/GAMEPLAY.md:3260;docs/formats/PHYSICS.md:553	004e1a40	1/1	
+Wheel	0xc	er 1.25 s; held at rest (below 2 mph) | wheel +0x0C, record +0x30 / +0x04 [V-data]; units [I] |	prose	observed	3	2	docs/GAMEPLAY.md:3261;docs/GAMEPLAY.md:3325;docs/REFERENCE_COMPARISON.md:318			
+Wheel	0x10	bit 25, no hop): hand brake torque from wheel +0x10 (front 2.8, rear 0.5, as the brakes' units), biting over 0.5 s, no drive | +0x1	prose	observed	1	1	docs/GAMEPLAY.md:3265	00792900	1/1	
+Wheel	0x14	ward axis at each wheel's force point | wheel +0x14 [V-data], 0x792900 [V-exe] |	prose	observed	1	1	docs/GAMEPLAY.md:3256	00792900	1/1	
+Wheel	0x18	vel above the contact | +0xA4 / +0xA8 / wheel +0x18 / +0x28 [V-data], 0x792900 [V-exe]; one fixed point in Jolt [I] |	prose	observed	2	2	docs/GAMEPLAY.md:3259;docs/REFERENCE_COMPARISON.md:320	00792900	1/1	
+WhichRecord	0xc4	knock-at-outer < 0, angle × π/180). [I] which record +0xC4 holds: the only one with rings and class 13.	prose	inference	1	1	docs/GAMEPLAY.md:383			
+WhileInstance	0x131	(0x69E770 picks it while instance +0x131 is set, [I] under water: its hit object is `bullet_hit_thor_underwater`)	prose	inference	3	3	docs/GAMEPLAY.md:354;src/game/Combat.cpp:604;src/game/Combat.hpp:214	0069e770	1/1	
+Wind	0x0	bool enabled = false; // +0x00 byte	mirror	stated	1	1	src/formats/Formats.hpp:278			
+Wind	0x4	float retarget[2] = {}; // +0x04: seconds until the next random targets	mirror	stated	1	1	src/formats/Formats.hpp:279			
+Wind	0xc	float strength[2] = {}; // +0x0C, x 8	mirror	stated	1	1	src/formats/Formats.hpp:280			
+Wind	0x14	float heading[2] = {}; // +0x14: degrees about Z	mirror	stated	1	1	src/formats/Formats.hpp:281			
+Wind	0x1c	float wavelength[2] = {}; // +0x1C, x 100.60183: spatial phase |x + y| / wavelength	mirror	stated	1	1	src/formats/Formats.hpp:282			
+Wind	0x24	float frequency = 0; // +0x24: Hz of the rectified sine (x 2 pi / 60 per 60 Hz tick)	mirror	stated	1	1	src/formats/Formats.hpp:283			
+Intro	0x71	flag byte, bit 0x10 = use the +0x40 scale	check	observed	0	0		005bcc30		005bcc30 match 5bce03: test BYTE PTR [edi+0x71],0x10

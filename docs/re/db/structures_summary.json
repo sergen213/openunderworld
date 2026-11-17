@@ -1,0 +1,513 @@
+{
+ "classes": {
+  "allocators": {
+   "00427b00": 6,
+   "00558da0": 5,
+   "00574940": 128,
+   "007ba2e2": 10,
+   "007ba5b7": 13
+  },
+  "base_larger_than_derived": [],
+  "classes_with_static_instances": 6,
+  "complete_object_locators": 991,
+  "constructors": 426,
+  "ctor_min_size_only": 284,
+  "deallocators": [
+   [
+    "00596b10",
+    105
+   ],
+   [
+    "0044db20",
+    16
+   ],
+   [
+    "005977d0",
+    11
+   ]
+  ],
+  "deleting_destructors": 318,
+  "destructors": 130,
+  "families": {
+   "AsyncTaskManager::": 2,
+   "BaseScriptCamera": 6,
+   "BasicRenderMesh": 1,
+   "EnemyBehavior": 81,
+   "EnemyBehaviorTree": 4,
+   "EnemyCombat::": 1,
+   "EnemyProcess": 20,
+   "EnemyState": 79,
+   "FMOD::": 50,
+   "GameTimer": 2,
+   "ICamera": 18,
+   "ICameraManager": 2,
+   "ICameraResource": 3,
+   "ICameraSplineListener": 1,
+   "IGameNotifier": 3,
+   "InputDevice": 8,
+   "InstanceUserData": 4,
+   "MarkupManager": 2,
+   "NeCoreBase": 5,
+   "PDAMap::": 3,
+   "ResolveSection": 11,
+   "Screenshots::": 9,
+   "ScriptInstanceSensor": 3,
+   "StateMachine": 2,
+   "StateObj": 35,
+   "StreamingCallback": 2,
+   "Vehicle": 2,
+   "bfx::": 31,
+   "cdc::": 269,
+   "cdc::AnimTarget": 9,
+   "cdc::FileReceiver": 4,
+   "cdc::FileSystem": 2,
+   "cdc::GCObject": 35,
+   "cdc::IDrawable": 6,
+   "cdc::ISceneTerrainCallback": 2,
+   "cdc::JobHarness": 6,
+   "cdc::RCObject": 203,
+   "cdc::ResourceTypeHandler": 2,
+   "cdc::ScriptStdScreen": 5,
+   "std::": 2
+  },
+  "ghidra_rtti_rows": 990,
+  "ghidra_slot_count_mismatch": 0,
+  "hierarchy_descriptors": 964,
+  "hierarchy_rows": 1499,
+  "multiple_inheritance": 57,
+  "secondary_vftables": 27,
+  "sizeof_conflict": 0,
+  "sizeof_high": 31,
+  "sizeof_medium": 84,
+  "sizeof_recovered": 115,
+  "type_descriptors": 1015,
+  "vft_stores_vs_funcdetail": {
+   "both": 1528,
+   "funcdetail": 1544,
+   "objdump": 1528
+  },
+  "vftable_storing_functions": 933,
+  "vftables": 991,
+  "vftables_in_ghidra_rtti_tsv": 990,
+  "virtual_inheritance": 0
+ },
+ "global_structs": {
+  "GameTracker": [
+   "00e7f088",
+   "0x184"
+  ],
+  "MainTracker": [
+   "00e7ed60",
+   "0x70"
+  ]
+ },
+ "globals": {
+  "addresses": 11650,
+  "by_section": {
+   ".data": 1633,
+   ".data(bss)": 4645,
+   ".rdata": 5372
+  },
+  "data_named": 32,
+  "data_written": 4258,
+  "funcdetail_globals_used": true,
+  "ghidra_only": 1170,
+  "kinds": {
+   "data": 6261,
+   "float-const": 1589,
+   "import": 256,
+   "object": 8,
+   "rdata": 863,
+   "rtti": 5,
+   "string": 1846,
+   "vftable": 822
+  },
+  "objdump_only": 61,
+  "top_data_by_fanin": [
+   [
+    "00cd9cac",
+    "",
+    1895,
+    1895,
+    1,
+    "re:108;formats:97;game:68"
+   ],
+   [
+    "00fadb58",
+    "",
+    728,
+    728,
+    1,
+    "game:378;formats:64;re:38"
+   ],
+   [
+    "00e7f094",
+    "gameTracker+0xc",
+    644,
+    642,
+    2,
+    "game:352;formats:64;re:56"
+   ],
+   [
+    "008bd7e8",
+    "",
+    453,
+    452,
+    4,
+    "lib:fmod:119;re:59;game:50"
+   ],
+   [
+    "00ecfaec",
+    "",
+    223,
+    185,
+    2,
+    "formats:75;game:48;fx:21"
+   ],
+   [
+    "008b929c",
+    "",
+    209,
+    186,
+    36,
+    "lib:fmod:200;formats:1;re:1"
+   ],
+   [
+    "00e7f188",
+    "gameTracker_timeMult",
+    191,
+    188,
+    8,
+    "game:87;re:31;formats:19"
+   ],
+   [
+    "00ecfaf0",
+    "",
+    187,
+    185,
+    2,
+    "formats:67;game:37;fx:21"
+   ],
+   [
+    "00e7ee50",
+    "GlobalInfo",
+    173,
+    173,
+    1,
+    "game:38;script:31;formats:26"
+   ],
+   [
+    "00cda0c4",
+    "",
+    164,
+    163,
+    164,
+    "game:41;formats:24;fx:6"
+   ],
+   [
+    "0105bbec",
+    "",
+    162,
+    162,
+    0,
+    "lib:fmod:160;formats:1"
+   ],
+   [
+    "00cc5038",
+    "",
+    155,
+    154,
+    0,
+    "formats:113;game:18;script:16"
+   ],
+   [
+    "00ad75e4",
+    "g_pcDeviceManager",
+    154,
+    154,
+    2,
+    "re:61;formats:20;render:18"
+   ],
+   [
+    "00fad764",
+    "",
+    119,
+    119,
+    1,
+    "game:69;formats:8;re:4"
+   ],
+   [
+    "00c59264",
+    "",
+    116,
+    116,
+    1,
+    "game:49;re:14;script:13"
+   ],
+   [
+    "00cc4f70",
+    "",
+    114,
+    111,
+    3,
+    "script:16;re:11;formats:8"
+   ],
+   [
+    "00ecfb00",
+    "",
+    109,
+    81,
+    1,
+    "formats:43;game:32;collision:9"
+   ],
+   [
+    "00fadfb0",
+    "",
+    107,
+    107,
+    3,
+    "game:64;formats:4;re:4"
+   ],
+   [
+    "008c0f34",
+    "",
+    104,
+    103,
+    2,
+    "lib:bfx:52;game:10;re:9"
+   ],
+   [
+    "00a037f4",
+    "",
+    90,
+    90,
+    2,
+    "game:41;formats:17;physics:10"
+   ],
+   [
+    "008a9c78",
+    "",
+    89,
+    0,
+    0,
+    "fx:42;game:28;formats:12"
+   ],
+   [
+    "00a1407c",
+    "g_pcRenderDevice",
+    85,
+    84,
+    2,
+    "re:22;formats:14;game:11"
+   ],
+   [
+    "00a02b68",
+    "",
+    73,
+    73,
+    2,
+    "re:30;game:20;formats:5"
+   ],
+   [
+    "00cc4f6c",
+    "",
+    71,
+    68,
+    4,
+    "script:10;re:9;formats:5"
+   ],
+   [
+    "00e92180",
+    "",
+    70,
+    31,
+    1,
+    "game:28;formats:9;collision:3"
+   ],
+   [
+    "00ecfb20",
+    "",
+    69,
+    34,
+    1,
+    "formats:36;game:19;collision:4"
+   ],
+   [
+    "009eee34",
+    "",
+    57,
+    57,
+    0,
+    "re:5;script:4;audio:2"
+   ],
+   [
+    "01000000",
+    "",
+    56,
+    0,
+    0,
+    "game:19;formats:8;fx:4"
+   ],
+   [
+    "00a038a0",
+    "",
+    51,
+    13,
+    0,
+    "formats:20;game:9;re:4"
+   ],
+   [
+    "00e7f143",
+    "gameTracker+0xbb",
+    48,
+    43,
+    8,
+    "re:20;game:15;formats:5"
+   ],
+   [
+    "00cc4f7d",
+    "",
+    47,
+    1,
+    47,
+    "re:7;formats:5;script:4"
+   ],
+   [
+    "00cc4f5c",
+    "",
+    46,
+    45,
+    2,
+    "re:16;game:7;formats:4"
+   ],
+   [
+    "008bf428",
+    "",
+    44,
+    44,
+    0,
+    "lib:bfx:32;formats:2;game:1"
+   ],
+   [
+    "008c0f1c",
+    "",
+    43,
+    43,
+    1,
+    "lib:bfx:34"
+   ],
+   [
+    "00dbab44",
+    "g_streamTracker+0x4",
+    40,
+    39,
+    2,
+    "re:15;game:13;formats:6"
+   ],
+   [
+    "00dbac1c",
+    "g_streamTracker+0xdc",
+    38,
+    37,
+    3,
+    "re:15;game:12;formats:6"
+   ],
+   [
+    "00ffffff",
+    "",
+    38,
+    0,
+    0,
+    "fx:16;re:7;game:2"
+   ],
+   [
+    "00cd10f0",
+    "",
+    37,
+    36,
+    0,
+    "formats:24;game:6;audio:4"
+   ],
+   [
+    "00ad7d08",
+    "",
+    36,
+    3,
+    0,
+    "fx:11;game:8;re:8"
+   ],
+   [
+    "00d98d54",
+    "g_instanceList",
+    35,
+    33,
+    4,
+    "re:18;game:12;docs/roadmap:1"
+   ]
+  ]
+ },
+ "structures": {
+  "by_confidence": {
+   "inference": 52,
+   "observed": 400,
+   "reference": 1,
+   "stated": 674,
+   "unknown": 32
+  },
+  "by_source": {
+   "check": 1,
+   "code-ref": 86,
+   "mirror": 287,
+   "prose": 436,
+   "table": 373
+  },
+  "checks": 20,
+  "checks_match": 18,
+  "disp_found_in_a_cited_func": 263,
+  "fields": 1159,
+  "structs": 186,
+  "top_structs": {
+   ".mus layout": 15,
+   "AnimNode": 19,
+   "Animation clip": 11,
+   "BikeTuning": 15,
+   "Camera records": 13,
+   "Collision mesh": 9,
+   "DTP": 16,
+   "Emitter": 9,
+   "FilterDef": 11,
+   "FilterResource": 11,
+   "GameTracker": 68,
+   "GenericFXObject": 24,
+   "GlowDef": 22,
+   "Header": 21,
+   "Instance": 34,
+   "Intro": 16,
+   "Level": 11,
+   "LightDef": 9,
+   "LightningDef": 15,
+   "LimbLock": 10,
+   "MainTracker": 18,
+   "Markup": 10,
+   "Material blob": 19,
+   "MusicPlayer": 13,
+   "ObjectBase": 12,
+   "ObjectData": 25,
+   "Particle emitter definition": 54,
+   "ParticleDef": 22,
+   "PlayerData": 52,
+   "PlayerInstance": 29,
+   "Portal records": 11,
+   "Records": 12,
+   "Render model": 19,
+   "RenderSettings": 13,
+   "RibbonDef": 11,
+   "Section type 8": 12,
+   "Terrain": 14,
+   "UnitData": 10,
+   "WeatherDef": 14,
+   "record Lights": 27
+  },
+  "with_cited_funcs": 410
+ }
+}

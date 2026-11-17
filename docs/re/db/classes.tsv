@@ -1,0 +1,1016 @@
+class	mangled	type_descriptor	vftable	secondary_vftables	slots	slots_cited	chd_attributes	n_bases	direct_bases	family	sizeof	sizeof_confidence	sizeof_evidence	ctor_min_size	constructors	destructors	deleting_dtors	static_instances	ghidra_rtti
+AccurateAimState	.?AVAccurateAimState@@	008b0698	0085e1b0		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+AnchoredCamera	.?AVAnchoredCamera@@	008ac18c	008555cc		28	2	0	3	BaseGameplayCamera	ICamera				0xe0	005e22f0		005e36c0		yes
+AnimationSection	.?AVAnimationSection@@	008a6f80	0084c7b4		22	2	0	1	ResolveSection	ResolveSection							005505e0		yes
+ArchiveFile	.?AVArchiveFile@@	0088f934	0084402c		3	0	0	1	cdc::File	cdc::File							00472ff0		yes
+ArchiveFileSystem	.?AVArchiveFileSystem@@	0088f8e8	00843fcc		15	0	0	1	cdc::FileSystem	cdc::FileSystem				0x10	00473420	004729a0	00473440		yes
+AsyncTaskManager::EnumerationTask	.?AUEnumerationTask@AsyncTaskManager@@	008b7104	008611e4		5	0	0	1	AsyncTaskManager::Task	AsyncTaskManager::	0x10	high	775354:574940:ctor;775403:574940:ctor	0x10	007886c0				yes
+AsyncTaskManager::Task	.?AUTask@AsyncTaskManager@@	008b3be8	008611c4		5	0	0	0		AsyncTaskManager::				0x8	00788690				yes
+AutoSplineCamera	.?AVAutoSplineCamera@@	008ac1fc	008556b4	008556a0@208	28	3	1	5	BaseDrivenCamera;ICameraSplineListener	ICamera				0x1a2	005e3290	005e2d20	005e3310		yes
+BFXWarningLogDevice	.?AVBFXWarningLogDevice@@	0089064c	008451ec		2	0	0	1	bfx::LogDevice	bfx::LogDevice							00426660		yes
+BarkTimer	.?AVBarkTimer@@	008a9134	00850424		1	0	0	1	GameTimer	GameTimer							0057fb40		yes
+BaseCamera	.?AVBaseCamera@@	008ac14c	0085556c		21	0	0	1	ICamera	ICamera				0xb4	005e1b60		005e36c0		yes
+BaseDebugCamera	.?AVBaseDebugCamera@@	008ac228								BaseDebugCamera									base-only
+BaseDrivenCamera	.?AVBaseDrivenCamera@@	008ac1dc								BaseDrivenCamera									base-only
+BaseGameplayCamera	.?AVBaseGameplayCamera@@	008ac168								BaseGameplayCamera									base-only
+BasePlayerState	.?AVBasePlayerState@@	008b0424	0085decc		5	0	0	1	StateObj	StateObj				0x18	006ee8b0		00769bb0		yes
+BaseScriptCamera	.?AVBaseScriptCamera@@	008b3d88	0085fdd4		1	0	0	0		BaseScriptCamera						007756d0	007756d0		yes
+BasicRenderMesh	.?AVBasicRenderMesh@@	008b73bc	00861928		2	0	0	0		BasicRenderMesh	0x344	high	6d6309:574940:ctor;6d83f7:574940:ctor	0x341	0078e4d0;0078e9c0	0078ed50	0078ed50	00edb588;00edb910;00edbc58	yes
+Bike	.?AVBike@@	008b73e0	00861974		14	2	0	1	Vehicle	Vehicle	0x790	medium	6abafb:574940:ctor	0x784	0078eda0	0078eec0	00790900		yes
+CDCCollider	.?AVCDCCollider@@	0089068c	0084523c		2	0	0	1	bfx::Collider	bfx::Collider	0x4	medium	48a974:574940:inline				0048a850		yes
+CDCRenderer	.?AVCDCRenderer@@	00890670	00845224		5	0	0	1	bfx::Renderer	bfx::Renderer	0x4	medium	48a951:574940:inline				00426640		yes
+CSPCallback	.?AVCSPCallback@@	008aa6bc	008538b8		4	0	0	1	StreamingCallback	StreamingCallback									yes
+CameraManager	.?AVCameraManager@@	008ac30c	00855ae4		62	2	0	1	ICameraManager	ICameraManager				0xb84	005f3a70	005eb0a0	005edd50	00e804f0	yes
+CameraShakeResourceTypeHandler	.?AVCameraShakeResourceTypeHandler@@	008ac328	00855be0		3	1	0	1	cdc::ResourceTypeHandler	cdc::ResourceTypeHandler	0x4	medium	5f2402:574940:inline						yes
+CellGroupUserData	.?AVCellGroupUserData@@	008aa9f4	008545c8		2	0	0	1	cdc::RCObject	cdc::RCObject						005cec10	005cec10		yes
+CheatCamera	.?AVCheatCamera@@	008ac248	0085575c		30	1	0	3	BaseDebugCamera	ICamera				0xf4	005e3650		005e36c0		yes
+CinematicCamera	.?AVCinematicCamera@@	008ac380	00855c54		28	2	0	4	BaseDrivenCamera	ICamera							005e36c0		yes
+CombatCamera	.?AVCombatCamera@@	008ac270	0085581c		28	2	0	3	BaseGameplayCamera	ICamera				0x234	005e68a0	005e69c0	005e69c0		yes
+CombatCameraResource	.?AVCombatCameraResource@@	008ac2e8	00855abc		8	0	0	1	ICameraResource	ICameraResource	0x274	medium	5ed8a9:574940:inline				005ed840		yes
+CompressionState	.?AVCompressionState@@	008b06d8	0085e1e0		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+CrawlState	.?AVCrawlState@@	008b071c	0085e210		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+CrouchState	.?AVCrouchState@@	008b0648	0085e168		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+DTPDataSection	.?AVDTPDataSection@@	008a7040	0084c994		22	2	0	1	ResolveSection	ResolveSection							005505e0		yes
+DeCompressionState	.?AVDeCompressionState@@	008b04b4	0085e030		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+DeathState	.?AVDeathState@@	008b0574	0085e0c0		5	2	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+DefaultGameNotifier	.?AVDefaultGameNotifier@@	008aa6d8	008538cc		24	2	0	1	IGameNotifier	IGameNotifier							005b2970		yes
+DefaultMenuManager	.?AVDefaultMenuManager@@	008b7320	008616bc		11	0	0	1	df::IMenuManager	df::IMenuManager						0078bd00	0078bd00		yes
+DefaultSunLightInterpolationCallback	.?AVDefaultSunLightInterpolationCallback@@	008aa9c0	0085447c		1	0	0	1	ISunLightInterpolationCallback	ISunLightInterpolationCallback									yes
+DeviceCallback	.?AVDeviceCallback@@	008903dc	008445bc		10	0	0	1	cdc::PCInternalResource	cdc::PCInternalResource	0x14	medium	47866e:574940:inline			00478520	00478520		yes
+EmptySection	.?AVEmptySection@@	008a6f44	0084c6f4		22	2	0	1	ResolveSection	ResolveSection							005505e0		yes
+EnemyBehavior	.?AVEnemyBehavior@@	008ad004	0085666c		18	3	0	0		EnemyBehavior									yes
+EnemyBehaviorProcess	.?AVEnemyBehaviorProcess@@	008adab4	00858028		5	0	0	2	EnemyCameraDistPrioritizedProcess	EnemyProcess							00654fe0		yes
+EnemyBehaviorTree	.?AVEnemyBehaviorTree@@	008ad020								EnemyBehaviorTree									base-only
+EnemyBehaviorTree_Creature	.?AVEnemyBehaviorTree_Creature@@	008ad908	0085796c		1	0	0	1	EnemyBehaviorTree	EnemyBehaviorTree									yes
+EnemyBehaviorTree_CreatureVolumetric	.?AVEnemyBehaviorTree_CreatureVolumetric@@	008ad934	00857974		1	0	0	1	EnemyBehaviorTree	EnemyBehaviorTree									yes
+EnemyBehaviorTree_Soldier	.?AVEnemyBehaviorTree_Soldier@@	008ad8e0	00857964		1	1	0	1	EnemyBehaviorTree	EnemyBehaviorTree									yes
+EnemyBehaviorTree_Thrall	.?AVEnemyBehaviorTree_Thrall@@	008ad968	0085797c		1	0	0	1	EnemyBehaviorTree	EnemyBehaviorTree									yes
+EnemyBehavior_Adrenaline	.?AVEnemyBehavior_Adrenaline@@	008ad3d4	00856fec		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_AtCover	.?AVEnemyBehavior_AtCover@@	008af4b4	0085a9b4		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_AtCoverCrouch	.?AVEnemyBehavior_AtCoverCrouch@@	008af3a0	0085a76c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_AtCoverDiveFromCover	.?AVEnemyBehavior_AtCoverDiveFromCover@@	008af36c	0085a71c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_AtCoverDiveToCover	.?AVEnemyBehavior_AtCoverDiveToCover@@	008af33c	0085a6cc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_AtCoverIdle	.?AVEnemyBehavior_AtCoverIdle@@	008af2ac	0085a5dc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_AtCoverStepIntoCover	.?AVEnemyBehavior_AtCoverStepIntoCover@@	008af308	0085a67c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_AtCoverStepOutOfCover	.?AVEnemyBehavior_AtCoverStepOutOfCover@@	008af2d4	0085a62c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Attack	.?AVEnemyBehavior_Attack@@	008adb08	0085804c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Circle	.?AVEnemyBehavior_Circle@@	008ad2ac	00856d6c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_CircleTurn	.?AVEnemyBehavior_CircleTurn@@	008af534	0085aaac		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Close	.?AVEnemyBehavior_Close@@	008ad194	00856b3c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_CloseCombat	.?AVEnemyBehavior_CloseCombat@@	008adb5c	008580ec		18	2	0	1	EnemyBehavior	EnemyBehavior				0x68	00619250				yes
+EnemyBehavior_CloseInCover	.?AVEnemyBehavior_CloseInCover@@	008adbb0	0085818c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Combat	.?AVEnemyBehavior_Combat@@	008ad040	0085686c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_CombatStepIdle	.?AVEnemyBehavior_CombatStepIdle@@	008ad280	00856d1c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Cover	.?AVEnemyBehavior_Cover@@	008ad2f4	00856e0c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Death	.?AVEnemyBehavior_Death@@	008ad894	008578ac		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Despawn	.?AVEnemyBehavior_Despawn@@	008ad33c	00856eac		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_EmergencyAttack	.?AVEnemyBehavior_EmergencyAttack@@	008ad224	00856c7c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_EmergencyCombatIdle	.?AVEnemyBehavior_EmergencyCombatIdle@@	008ad250	00856ccc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_EmergencyMelee	.?AVEnemyBehavior_EmergencyMelee@@	008adb84	0085813c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Flank	.?AVEnemyBehavior_Flank@@	008ad2d0	00856dbc		18	5	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Flee	.?AVEnemyBehavior_Flee@@	008ad1dc	00856bdc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_HackMove	.?AVEnemyBehavior_HackMove@@	008ad8b8	008578fc		19	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Idle	.?AVEnemyBehavior_Idle@@	008ad104	008569fc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_IdleParent	.?AVEnemyBehavior_IdleParent@@	008ad0dc	008569ac		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Investigate	.?AVEnemyBehavior_Investigate@@	008adc60	008582cc		18	4	0	1	EnemyBehavior	EnemyBehavior				0x1a	00619b20				yes
+EnemyBehavior_InvestigateEnd	.?AVEnemyBehavior_InvestigateEnd@@	008ad764	0085767c		18	4	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_InvestigateMove	.?AVEnemyBehavior_InvestigateMove@@	008ad738	0085762c		18	4	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_InvestigateStart	.?AVEnemyBehavior_InvestigateStart@@	008ad708	008575dc		18	4	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Jump	.?AVEnemyBehavior_Jump@@	008ad57c	008572bc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_JumpOver	.?AVEnemyBehavior_JumpOver@@	008ad498	0085712c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_JumpOverJump	.?AVEnemyBehavior_JumpOverJump@@	008ad4ec	008571cc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_JumpOverTurn	.?AVEnemyBehavior_JumpOverTurn@@	008ad4c0	0085717c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Jump_Turn	.?AVEnemyBehavior_Jump_Turn@@	008ad554	0085726c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Melee	.?AVEnemyBehavior_Melee@@	008ad1b8	00856b8c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_MoveAway	.?AVEnemyBehavior_MoveAway@@	008af43c	0085a8ac		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_MoveBy	.?AVEnemyBehavior_MoveBy@@	008af3f0	0085a80c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_MoveByCombat	.?AVEnemyBehavior_MoveByCombat@@	008af4d8	0085aa04		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_MoveByIdle	.?AVEnemyBehavior_MoveByIdle@@	008af464	0085a8fc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_MoveByMelee	.?AVEnemyBehavior_MoveByMelee@@	008af414	0085a85c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_MoveToGuardZone	.?AVEnemyBehavior_MoveToGuardZone@@	008adbdc	008581dc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_MoveToIdlePosition	.?AVEnemyBehavior_MoveToIdlePosition@@	008adb2c	0085809c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Nap	.?AVEnemyBehavior_Nap@@	008ad128	00856a4c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Nap_Nap	.?AVEnemyBehavior_Nap_Nap@@	008ad148	00856a9c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Nap_Wake	.?AVEnemyBehavior_Nap_Wake@@	008ad16c	00856aec		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_NonCombat	.?AVEnemyBehavior_NonCombat@@	008ad064	008568bc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_PanicDive	.?AVEnemyBehavior_PanicDive@@	008ad388	00856f4c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_PanicRun	.?AVEnemyBehavior_PanicRun@@	008ad360	00856efc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Patrol	.?AVEnemyBehavior_Patrol@@	008ad614	008573fc		18	4	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_PatrolAnim	.?AVEnemyBehavior_PatrolAnim@@	008ad6b4	0085753c		18	4	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_PatrolAttack	.?AVEnemyBehavior_PatrolAttack@@	008ad6dc	0085758c		18	5	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_PatrolIncr	.?AVEnemyBehavior_PatrolIncr@@	008ad638	0085744c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_PatrolLookTurn	.?AVEnemyBehavior_PatrolLookTurn@@	008ad688	008574ec		18	5	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_PatrolMove	.?AVEnemyBehavior_PatrolMove@@	008ad660	0085749c		18	6	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Puppet	.?AVEnemyBehavior_Puppet@@	008ad200	00856c2c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_RangedCombat	.?AVEnemyBehavior_RangedCombat@@	008ad08c	0085690c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_ReactGrenadeAttach	.?AVEnemyBehavior_ReactGrenadeAttach@@	008af504	0085aa5c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_ReactToAdrenaline	.?AVEnemyBehavior_ReactToAdrenaline@@	008adc08	0085822c		18	2	0	1	EnemyBehavior	EnemyBehavior				0x1a	006196c0				yes
+EnemyBehavior_ReactToFire	.?AVEnemyBehavior_ReactToFire@@	008adc38	0085827c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_ReactToOutsideNavigableRegion	.?AVEnemyBehavior_ReactToOutsideNavigableRegion@@	008ad518	0085721c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_ReactToPlayerDeath	.?AVEnemyBehavior_ReactToPlayerDeath@@	008ad3fc	0085703c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_ReactToPlayerDeath_React	.?AVEnemyBehavior_ReactToPlayerDeath_React@@	008ad460	008570dc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_ReactToPlayerDeath_Turn	.?AVEnemyBehavior_ReactToPlayerDeath_Turn@@	008ad42c	0085708c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Reload	.?AVEnemyBehavior_Reload@@	008ad0b8	0085695c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_ScriptAttack	.?AVEnemyBehavior_ScriptAttack@@	008ad868	0085785c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Search	.?AVEnemyBehavior_Search@@	008ad790	008576cc		18	4	0	1	EnemyBehavior	EnemyBehavior				0x1a	00610150				yes
+EnemyBehavior_SearchIdle	.?AVEnemyBehavior_SearchIdle@@	008ad810	008577bc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_SearchStart	.?AVEnemyBehavior_SearchStart@@	008ad7b4	0085771c		18	4	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_SearchToLastKnownPos	.?AVEnemyBehavior_SearchToLastKnownPos@@	008ad7dc	0085776c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_SearchToPossiblePos	.?AVEnemyBehavior_SearchToPossiblePos@@	008ad838	0085780c		18	4	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Sidestep	.?AVEnemyBehavior_Sidestep@@	008af48c	0085a964		18	6	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Spawn	.?AVEnemyBehavior_Spawn@@	008ad318	00856e5c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Stand	.?AVEnemyBehavior_Stand@@	008af3cc	0085a7bc		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Stunned	.?AVEnemyBehavior_Stunned@@	008ad3b0	00856f9c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Taunt	.?AVEnemyBehavior_Taunt@@	008ad5a0	0085730c		18	2	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Taunt_Anim	.?AVEnemyBehavior_Taunt_Anim@@	008ad5ec	008573ac		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyBehavior_Taunt_Turn	.?AVEnemyBehavior_Taunt_Turn@@	008ad5c4	0085735c		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+EnemyCameraDistPrioritizedProcess	.?AVEnemyCameraDistPrioritizedProcess@@	008adad8	0085a584		5	0	0	1	EnemyProcess	EnemyProcess				0x44	00672190;00672260				yes
+EnemyCombat	.?AVEnemyCombat@@	008adc88	008583ac		5	0	0	1	EnemyProcess	EnemyProcess				0x5a0	0062ca40	0061f560	0062cf40		yes
+EnemyCombat::EnemyAdrenaline	.?AVEnemyAdrenaline@EnemyCombat@@	008ad9b8	00857df0		5	0	0	1	EnemyProcess	EnemyCombat::							00654fe0		yes
+EnemyFireTeam	.?AVEnemyFireTeam@@	008ada60	00857e74		5	1	0	1	EnemyProcess	EnemyProcess				0x2c	006170a0		00654fe0		yes
+EnemyFirstThings	.?AVEnemyFirstThings@@	008ad9e4	00857e08		5	0	0	1	EnemyProcess	EnemyProcess				0x25	00616c20		00654fe0		yes
+EnemyGrounding	.?AVEnemyGrounding@@	008ae66c	0085a23c		5	0	0	2	EnemyCameraDistPrioritizedProcess	EnemyProcess				0x1a8	00655b20		00654fe0		yes
+EnemyHealthPack	.?AVEnemyHealthPack@@	008ada40	00857e5c		5	0	0	1	EnemyProcess	EnemyProcess				0x3c	00617040		00654fe0		yes
+EnemyPatrolPath	.?AVEnemyPatrolPath@@	008adcc8	00858424		5	0	0	1	EnemyProcess	EnemyProcess				0x70c	006257e0		00654fe0		yes
+EnemyPositionTracker	.?AVEnemyPositionTracker@@	008ae648	0085a218		5	0	0	1	EnemyProcess	EnemyProcess				0x41	00654f70		00654fe0		yes
+EnemyProcess	.?AVEnemyProcess@@	008acfe8	00856650		5	0	0	0		EnemyProcess				0xc	00672210	00625880;00654fe0;00656d40	00654fe0		yes
+EnemyProxyAdjust	.?AVEnemyProxyAdjust@@	008ada04	00857e20		5	0	0	1	EnemyProcess	EnemyProcess				0x25	00616c80		00654fe0		yes
+EnemyRouting	.?AVEnemyRouting@@	008ae68c	0085a264		5	0	0	1	EnemyProcess	EnemyProcess				0xf91	00656b50		00656d40		yes
+EnemySense	.?AVEnemySense@@	008ae6a8	0085a2f8		5	0	0	1	EnemyProcess	EnemyProcess				0xd0	00659b50		00654fe0		yes
+EnemySensesControl	.?AVEnemySensesControl@@	008ae6c4	0085a3cc		5	0	0	1	EnemyProcess	EnemyProcess				0xacd	00664670		006647a0		yes
+EnemySensesPositionUpdate	.?AVEnemySensesPositionUpdate@@	008ad990	00857dd8		5	0	0	1	EnemyProcess	EnemyProcess				0x25	00616910		00654fe0		yes
+EnemySpawnData	.?AVEnemySpawnData@@	008ada94	00857eac		5	0	0	1	EnemyProcess	EnemyProcess				0x61	00617290		00654fe0		yes
+EnemyState	.?AVEnemyState@@	008adce8								EnemyState									base-only
+EnemyState_AdrenalineMeleeHit	.?AVEnemyState_AdrenalineMeleeHit@@	008aded4	00858e74		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_AnimTurn	.?AVEnemyState_AnimTurn@@	008ae5b0	00859f04		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_AnimatedTurn	.?AVEnemyState_AnimatedTurn@@	008ae44c	00859bac		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Animation	.?AVEnemyState_Animation@@	008add4c	00858a74		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Attack	.?AVEnemyState_Attack@@	008adf64	00858fec		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_AttackTurn	.?AVEnemyState_AttackTurn@@	008adf84	00859044		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CombatIdle	.?AVEnemyState_CombatIdle@@	008ae210	0085960c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CombatStep	.?AVEnemyState_CombatStep@@	008ae474	00859c1c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CombatStepBack	.?AVEnemyState_CombatStepBack@@	008ae4e8	00859d14		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_CombatStepIdle	.?AVEnemyState_CombatStepIdle@@	008ae498	00859c74		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CombatStepTurn	.?AVEnemyState_CombatStepTurn@@	008ae4c0	00859cbc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CornerAlign	.?AVEnemyState_CornerAlign@@	008ae334	0085991c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CornerJump	.?AVEnemyState_CornerJump@@	008ae388	008599f4		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_CornerJumpLand	.?AVEnemyState_CornerJumpLand@@	008ae3ac	00859a4c		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_CornerJumpStart	.?AVEnemyState_CornerJumpStart@@	008ae35c	0085998c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CornerWalk	.?AVEnemyState_CornerWalk@@	008ae400	00859afc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CornerWalkEnd	.?AVEnemyState_CornerWalkEnd@@	008ae424	00859b54		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_CornerWalkStart	.?AVEnemyState_CornerWalkStart@@	008ae3d4	00859aa4		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_CrouchToStand	.?AVEnemyState_CrouchToStand@@	008ae538	00859dcc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Death	.?AVEnemyState_Death@@	008adf00	00858edc		17	2	0	1	EnemyState	EnemyState									yes
+EnemyState_DeferredInstantDie	.?AVEnemyState_DeferredInstantDie@@	008ae5d4	00859f64		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_DrownDeath	.?AVEnemyState_DrownDeath@@	008ae58c	00859ea4		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_Fade	.?AVEnemyState_Fade@@	008adf44	00858f9c		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_Fall	.?AVEnemyState_Fall@@	008add98	00858b34		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_FallDead	.?AVEnemyState_FallDead@@	008addb8	00858b8c		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_FinishAttack	.?AVEnemyState_FinishAttack@@	008ae130	00859404		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_FinishMoveAttack	.?AVEnemyState_FinishMoveAttack@@	008ae1a0	008594fc		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_Fire	.?AVEnemyState_Fire@@	008adfa8	0085909c		17	3	0	1	EnemyState	EnemyState									yes
+EnemyState_FlyerMove	.?AVEnemyState_FlyerMove@@	008af664	0085adcc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Getup	.?AVEnemyState_Getup@@	008ade1c	00858cac		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Hit	.?AVEnemyState_Hit@@	008ade3c	00858cf4		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_HostAnimation	.?AVEnemyState_HostAnimation@@	008add70	00858ad4		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_JumpAlign	.?AVEnemyState_JumpAlign@@	008ae2a4	0085979c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_JumpLand	.?AVEnemyState_JumpLand@@	008ae310	008598c4		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_JumpLoop	.?AVEnemyState_JumpLoop@@	008ae2ec	0085986c		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_JumpOverJump	.?AVEnemyState_JumpOverJump@@	008ae600	00859fac		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_JumpStart	.?AVEnemyState_JumpStart@@	008ae2c8	00859804		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Land	.?AVEnemyState_Land@@	008addfc	00858c5c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_LandDeath	.?AVEnemyState_LandDeath@@	008adf20	00858f34		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_MeleeAttack	.?AVEnemyState_MeleeAttack@@	008adfe8	0085912c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MeleeJump	.?AVEnemyState_MeleeJump@@	008ae038	008591e4		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_MeleeJumpLand	.?AVEnemyState_MeleeJumpLand@@	008ae05c	0085923c		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_MeleeJumpStart	.?AVEnemyState_MeleeJumpStart@@	008ae010	00859174		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MeleeWindup	.?AVEnemyState_MeleeWindup@@	008ae084	00859294		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MeleeWrestle	.?AVEnemyState_MeleeWrestle@@	008ae0ac	008592dc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MeleeWrestleBrushedOff	.?AVEnemyState_MeleeWrestleBrushedOff@@	008ae0d4	00859334		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveAdjust	.?AVEnemyState_MoveAdjust@@	008af688	0085ae14		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveAttack	.?AVEnemyState_MoveAttack@@	008ae158	0085944c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveFire	.?AVEnemyState_MoveFire@@	008ae17c	008594a4		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveHalt	.?AVEnemyState_MoveHalt@@	008af6ac	0085ae84		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveHit	.?AVEnemyState_MoveHit@@	008ae1cc	0085955c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveIdle	.?AVEnemyState_MoveIdle@@	008af5a4	0085ac2c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveMeleeAttack	.?AVEnemyState_MoveMeleeAttack@@	008ae104	00859394		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveNav	.?AVEnemyState_MoveNav@@	008af580	0085abcc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveOnSteps	.?AVEnemyState_MoveOnSteps@@	008af63c	0085ad5c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveToPosition	.?AVEnemyState_MoveToPosition@@	008af614	0085ad14		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_MoveTurn	.?AVEnemyState_MoveTurn@@	008af5c8	0085ac84		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Nap	.?AVEnemyState_Nap@@	008add2c	00858a1c		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_NonCombatIdle	.?AVEnemyState_NonCombatIdle@@	008add04	008589bc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_PanicBackup	.?AVEnemyState_PanicBackup@@	008af748	0085affc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_PanicDive	.?AVEnemyState_PanicDive@@	008af770	0085b044		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_PanicIdle	.?AVEnemyState_PanicIdle@@	008af700	0085af4c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_PanicRemoveAttachedGrenade	.?AVEnemyState_PanicRemoveAttachedGrenade@@	008af794	0085b08c		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_PanicTurn	.?AVEnemyState_PanicTurn@@	008af724	0085afa4		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Puppet	.?AVEnemyState_Puppet@@	008ae1f0	008595c4		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_Regenerate	.?AVEnemyState_Regenerate@@	008af7f4	0085b134		17	2	0	1	EnemyState	EnemyState									yes
+EnemyState_RegenerateDeath	.?AVEnemyState_RegenerateDeath@@	008af7c8	0085b0d4		17	4	0	1	EnemyState	EnemyState									yes
+EnemyState_Reload	.?AVEnemyState_Reload@@	008adfc8	008590e4		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_ReturnToPlannerMesh	.?AVEnemyState_ReturnToPlannerMesh@@	008af6d0	0085aecc		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_SearchIdle	.?AVEnemyState_SearchIdle@@	008ae234	00859684		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_SearchIdleTurn	.?AVEnemyState_SearchIdleTurn@@	008ae258	008596e4		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Sidestep	.?AVEnemyState_Sidestep@@	008ae280	0085973c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Splat	.?AVEnemyState_Splat@@	008adddc	00858bf4		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_StandToCrouch	.?AVEnemyState_StandToCrouch@@	008ae510	00859d6c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_StepToPosition	.?AVEnemyState_StepToPosition@@	008af5ec	0085accc		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_Stunned	.?AVEnemyState_Stunned@@	008ade5c	00858d4c		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_StunnedFinishingMove	.?AVEnemyState_StunnedFinishingMove@@	008ade80	00858dac		17	1	0	1	EnemyState	EnemyState									yes
+EnemyState_Vaulted	.?AVEnemyState_Vaulted@@	008adeb0	00858e14		17	0	0	1	EnemyState	EnemyState									yes
+EnemyState_WaitForMeleeHit	.?AVEnemyState_WaitForMeleeHit@@	008ae560	00859e14		17	0	0	1	EnemyState	EnemyState									yes
+EnemyTacticTracker	.?AVEnemyTacticTracker@@	008adca4	008583e4		5	0	0	1	EnemyProcess	EnemyProcess				0x4b4	00621480		00654fe0		yes
+EnemyTargeting	.?AVEnemyTargeting@@	008ae628	0085a1e8		5	0	0	1	EnemyProcess	EnemyProcess				0x13a	00653750		00654fe0		yes
+EnemyTurn	.?AVEnemyTurn@@	008ada7c	00857e8c		5	0	0	1	EnemyProcess	EnemyProcess				0x38	006170f0		00654fe0		yes
+EnemyWeapon	.?AVEnemyWeapon@@	008ada24	00857e44		5	0	0	1	EnemyProcess	EnemyProcess				0x3d	00616fe0		00654fe0		yes
+EngagementAnimTarget	.?AVEngagementAnimTarget@@	008b3b58	0085fa6c		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0x10	medium	772c65:574940:inline			00772b90	00772b90		yes
+ExplorationCamera	.?AVExplorationCamera@@	008ac3a0	00855d04		28	1	0	3	BaseGameplayCamera	ICamera				0x204	005f6510	005f65d0	005f65d0		yes
+ExplorationCameraResource	.?AVExplorationCameraResource@@	008ac358	00855bfc		8	0	0	1	ICameraResource	ICameraResource	0x29c	medium	5ed86e:574940:inline				005ed840		yes
+FMOD::ChannelDSound	.?AVChannelDSound@FMOD@@	008bd43c	00868714		37	0	0	1	FMOD::ChannelReal	FMOD::							007f6b3f		yes
+FMOD::ChannelDSoundEAX2	.?AVChannelDSoundEAX2@FMOD@@	008bd460	008687ac		37	0	0	2	FMOD::ChannelDSound	FMOD::							007f6b3f		yes
+FMOD::ChannelDSoundEAX3	.?AVChannelDSoundEAX3@FMOD@@	008bd488	00868844		37	0	0	2	FMOD::ChannelDSound	FMOD::							007f6b3f		yes
+FMOD::ChannelDSoundEAX4	.?AVChannelDSoundEAX4@FMOD@@	008bd4b0	008688dc		37	0	0	2	FMOD::ChannelDSound	FMOD::							007f6b3f		yes
+FMOD::ChannelEmulated	.?AVChannelEmulated@FMOD@@	008bd5e4	00868cb4		37	0	0	1	FMOD::ChannelReal	FMOD::							007f6b3f		yes
+FMOD::ChannelOpenAL	.?AVChannelOpenAL@FMOD@@	008bbee8	00868d94		38	0	0	1	FMOD::ChannelReal	FMOD::							007f6b3f		yes
+FMOD::ChannelOpenALEAX2	.?AVChannelOpenALEAX2@FMOD@@	008bbf7c	008681dc		38	0	0	2	FMOD::ChannelOpenAL	FMOD::							007f6b3f		yes
+FMOD::ChannelOpenALEAX3	.?AVChannelOpenALEAX3@FMOD@@	008bbec0	00867f54		38	0	0	2	FMOD::ChannelOpenAL	FMOD::							007f6b3f		yes
+FMOD::ChannelOpenALEAX4	.?AVChannelOpenALEAX4@FMOD@@	008bbf0c	00867ff4		38	0	0	2	FMOD::ChannelOpenAL	FMOD::							007f6b3f		yes
+FMOD::ChannelOpenALEAX5	.?AVChannelOpenALEAX5@FMOD@@	008bbf34	00868094		38	0	0	2	FMOD::ChannelOpenAL	FMOD::							007f6b3f		yes
+FMOD::ChannelReal	.?AVChannelReal@FMOD@@	008bbcf4	0086786c		37	0	0	0		FMOD::				0x90	008072f3	007f6b3f	007f6b3f		yes
+FMOD::ChannelRealManual3D	.?AVChannelRealManual3D@FMOD@@	008bd598	00869854		37	0	0	1	FMOD::ChannelReal	FMOD::				0x98	00811a9f		007f6b3f		yes
+FMOD::ChannelSoftware	.?AVChannelSoftware@FMOD@@	008bd574	00868a9c		37	0	0	2	FMOD::ChannelRealManual3D	FMOD::							007f6b3f		yes
+FMOD::ChannelStream	.?AVChannelStream@FMOD@@	008bbd14	00867904		37	0	1	2	FMOD::ChannelReal;FMOD::LinkedListNode	FMOD::	0xcc	medium	7bf48b:7ba5b7:ctor	0xb4	007ed78d		007f6b3f		yes
+FMOD::Codec	.?AVCodec@FMOD@@	008bb180	00866fd4		1	0	1	3	FMOD::Plugin;FMOD_CODEC_STATE	FMOD::				0xe0	007dfe43				yes
+FMOD::CodecMPEG	.?AVCodecMPEG@FMOD@@	008bb1bc	00866fdc		1	0	1	4	FMOD::Codec	FMOD::	0x104	medium	7e50cd:7ba5b7:inline						yes
+FMOD::CodecRaw	.?AVCodecRaw@FMOD@@	008bb1f8	00866fec		1	0	1	4	FMOD::Codec	FMOD::									yes
+FMOD::CodecWav	.?AVCodecWav@FMOD@@	008bb1dc	00866fe4		1	0	1	4	FMOD::Codec	FMOD::	0x14c	medium	7e4e83:7ba5b7:inline						yes
+FMOD::DSPCodec	.?AVDSPCodec@FMOD@@	008bb164	00866f74		22	0	1	6	FMOD::DSPResampler	FMOD::				0x4	007dfbc3				yes
+FMOD::DSPCodecADPCM	.?AVDSPCodecADPCM@FMOD@@	008bb234	00867054		22	0	1	7	FMOD::DSPCodec	FMOD::				0x4	007e0035				yes
+FMOD::DSPCodecMPEG	.?AVDSPCodecMPEG@FMOD@@	008bb214	00866ff4		22	0	1	7	FMOD::DSPCodec	FMOD::				0x4	007e000e				yes
+FMOD::DSPCodecRaw	.?AVDSPCodecRaw@FMOD@@	008bb258	008670b4		22	0	1	7	FMOD::DSPCodec	FMOD::				0x4	007e005c				yes
+FMOD::DSPFilter	.?AVDSPFilter@FMOD@@	008bb0b8	00866e0c		21	0	1	4	FMOD::DSPI	FMOD::									yes
+FMOD::DSPI	.?AVDSPI@FMOD@@	008b938c	0086581c		21	0	1	3	FMOD::Plugin;FMOD_DSP_STATE	FMOD::				0xfc	007c424a				yes
+FMOD::DSPResampler	.?AVDSPResampler@FMOD@@	008bb104	00867714		22	0	1	5	FMOD::DSPFilter	FMOD::				0x164	007eb483				yes
+FMOD::DSPResamplerMultiInput	.?AVDSPResamplerMultiInput@FMOD@@	008bb0d8	00866e64		22	0	1	6	FMOD::DSPResampler	FMOD::									yes
+FMOD::DSPSoundCard	.?AVDSPSoundCard@FMOD@@	008bb124	00866ec4		21	0	1	5	FMOD::DSPFilter	FMOD::									yes
+FMOD::DSPWaveTable	.?AVDSPWaveTable@FMOD@@	008bb144	00866f1c		21	0	1	4	FMOD::DSPI	FMOD::									yes
+FMOD::DiskFile	.?AVDiskFile@FMOD@@	008b9318	00865618		7	0	0	2	FMOD::File	FMOD::	0x198	medium	7be841:7ba2e2:ctor	0x28	007bab2c				yes
+FMOD::File	.?AVFile@FMOD@@	008b92dc	00865a3c		7	0	0	1	FMOD::LinkedListNode	FMOD::				0x4	007d27e0				yes
+FMOD::LinkedListNode	.?AVLinkedListNode@FMOD@@	008b92f4								FMOD::									base-only
+FMOD::MemoryFile	.?AVMemoryFile@FMOD@@	008b92bc	008655f8		7	0	0	2	FMOD::File	FMOD::	0x19c	medium	7be4ec:7ba2e2:ctor	0x28	007baaaf				yes
+FMOD::NetFile	.?AVNetFile@FMOD@@	008bbd38	00867cc8		7	0	0	2	FMOD::File	FMOD::	0x2f0	medium	7be714:7ba2e2:ctor	0x2f0	007ef42b				yes
+FMOD::NullFile	.?AVNullFile@FMOD@@	008b9350	00865658		7	0	0	2	FMOD::File	FMOD::	0x198	medium	7be547:7ba2e2:inline						yes
+FMOD::Output	.?AVOutput@FMOD@@	008bbc2c	008674e0		2	0	1	3	FMOD::Plugin;FMOD_OUTPUT_STATE	FMOD::				0x4d	007e7ea4				yes
+FMOD::OutputEmulated	.?AVOutputEmulated@FMOD@@	008bbd84	00867d7c		2	0	1	4	FMOD::Output	FMOD::	0x2a8	medium	7c18e6:7ba2e2:ctor	0x2a4	007f03e0				yes
+FMOD::OutputOpenAL	.?AVOutputOpenAL@FMOD@@	008bbfa4	00868278		2	0	1	5	FMOD::OutputTimer	FMOD::	0x4a8	medium	7dfc23:7ba5b7:ctor	0x3d4	007f6b5c				yes
+FMOD::OutputPolled	.?AVOutputPolled@FMOD@@	008bbcb8	008676c0	008676cc@672	2	0	1	5	FMOD::Output;FMOD::Thread	FMOD::									yes
+FMOD::OutputSoftware	.?AVOutputSoftware@FMOD@@	008bbc78	008675e4		3	0	1	4	FMOD::Output	FMOD::	0x2a8	medium	7c1584:7ba2e2:ctor	0x2a4	007e9976				yes
+FMOD::OutputTimer	.?AVOutputTimer@FMOD@@	008bbf5c								FMOD::									base-only
+FMOD::Plugin	.?AVPlugin@FMOD@@	008b9370	0086580c		1	0	0	1	FMOD::LinkedListNode	FMOD::				0x18	007c3cfe				yes
+FMOD::ProfileCpu	.?AVProfileCpu@FMOD@@	008bbdc8	00867ddc		3	0	0	2	FMOD::ProfileModule	FMOD::	0x18	medium	7f0a1d:7ba2e2:ctor	0x4	007f0962				yes
+FMOD::ProfileDsp	.?AVProfileDsp@FMOD@@	008bbda8	00867dac		3	0	0	2	FMOD::ProfileModule	FMOD::	0x34	medium	7f0742:7ba2e2:ctor	0x34	007f059a				yes
+FMOD::ProfileModule	.?AVProfileModule@FMOD@@	008bbd54	00867d2c		3	0	0	1	FMOD::LinkedListNode	FMOD::				0x18	007efa9c				yes
+FMOD::Sample	.?AVSample@FMOD@@	008bbc9c	008675f4		50	0	0	2	FMOD::SoundI	FMOD::	0x13c	high	7bd57f:7ba5b7:ctor;7bee7e:7ba5b7:ctor;7bfbca:7ba5b7:ctor	0xe9	007e9d7c				yes
+FMOD::SampleDSound	.?AVSampleDSound@FMOD@@	008bd748	0086973c		50	0	0	3	FMOD::Sample	FMOD::	0x14c	medium	7fecac:7ba5b7:ctor	0x144	0081137a				yes
+FMOD::SampleOpenAL	.?AVSampleOpenAL@FMOD@@	008bd728	00869454		50	0	0	3	FMOD::Sample	FMOD::	0x154	medium	7f71dc:7ba5b7:ctor	0x151	0080d9c9				yes
+FMOD::SampleSoftware	.?AVSampleSoftware@FMOD@@	008bd5c0	00868b7c		50	0	0	3	FMOD::Sample	FMOD::	0x154	medium	7e9a4f:7ba5b7:ctor	0x151	00802d91				yes
+FMOD::SoundI	.?AVSoundI@FMOD@@	008b93c4	008658b4		47	0	0	1	FMOD::LinkedListNode	FMOD::				0x130	007c5a9c				yes
+FMOD::Stream	.?AVStream@FMOD@@	008bbcd8	008677ac		47	0	0	2	FMOD::SoundI	FMOD::	0x154	high	7bf068:7ba5b7:ctor;7bf544:7ba5b7:ctor;7c0cc8:7ba5b7:ctor	0x154	007ecabc				yes
+FMOD::Thread	.?AVThread@FMOD@@	008b92a0	008655e8		2	0	0	0		FMOD::				0x124	007d0303	007ba9f7	007ba9f7		yes
+FMOD::UserFile	.?AVUserFile@FMOD@@	008b9334	00865638		7	0	0	2	FMOD::File	FMOD::	0x1ac	high	7be5c1:7ba2e2:ctor;7be639:7ba2e2:ctor	0x1ac	007bab45				yes
+FMOD_CODEC_STATE	.?AUFMOD_CODEC_STATE@@	008bb19c								FMOD_CODEC_STATE									base-only
+FMOD_DSP_STATE	.?AUFMOD_DSP_STATE@@	008b93a4								FMOD_DSP_STATE									base-only
+FMOD_OUTPUT_STATE	.?AUFMOD_OUTPUT_STATE@@	008bbc48								FMOD_OUTPUT_STATE									base-only
+FallState	.?AVFallState@@	008b078c	0085e270		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+FollowSplineCamera	.?AVFollowSplineCamera@@	008ac3cc	00855dcc		21	1	0	3	BaseGameplayCamera	ICamera				0x13c	005f8bb0		005e36c0		yes
+FreeCamera	.?AVFreeCamera@@	008ac3fc	00855e54		29	1	0	3	BaseDebugCamera	ICamera				0x13c	005f95f0		005e36c0		yes
+GameTerrainCallback	.?AVGameTerrainCallback@@	008b3b7c	0085faf4		4	0	0	1	cdc::ISceneTerrainCallback	cdc::ISceneTerrainCallback							00773a40		yes
+GameTimer	.?AVGameTimer@@	008a911c	0085041c		1	0	0	0		GameTimer						0057fb40	0057fb40		yes
+GenericSection	.?AVGenericSection@@	008a6f60	0084c754		22	2	0	1	ResolveSection	ResolveSection							005505e0		yes
+GetupState	.?AVGetupState@@	008b053c	0085e090		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+HPoleAirAttachAnimTarget	.?AVHPoleAirAttachAnimTarget@@	008b08ec	0085ec28		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0xa0	medium	75070b:574940:ctor	0x60	0074c040		0074c830		yes
+HandMatchingFullAnimInterpTarget	.?AVHandMatchingFullAnimInterpTarget@@	008b0914	0085ec34		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0xa0	medium	7514ed:574940:ctor	0x94	0074c740		0074c830		yes
+HitReactionState	.?AVHitReactionState@@	008b051c	0085e078		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+ICamera	.?AVICamera@@	008ac134	008554a4		20	0	0	0		ICamera				0x4	005e6100;005f6380;0060d480	005e0ce0;005e36c0	005e36c0		yes
+ICameraManager	.?AVICameraManager@@	008ac2a8	008558e4		60	0	0	0		ICameraManager						005e7370	005e7370		yes
+ICameraResource	.?AVICameraResource@@	008ac2c8	00855a98		8	0	0	0		ICameraResource						005ed840	005ed840		yes
+ICameraSplineListener	.?AVICameraSplineListener@@	008ac1b8	00855668		4	0	0	0		ICameraSplineListener									yes
+IGameNotifier	.?AVIGameNotifier@@	008aa660	0085379c		24	1	0	0		IGameNotifier						005b2970	005b2970		yes
+IMFObjectDrawable	.?AVIMFObjectDrawable@@	008aa67c	0085380c		12	2	0	2	RMIDrawableBase	cdc::IDrawable				0x14	005b5160	005b52d0	005b52d0		yes
+ISunLightInterpolationCallback	.?AVISunLightInterpolationCallback@@	008aa928								ISunLightInterpolationCallback									base-only
+InAirAnimTarget	.?AVInAirAnimTarget@@	008b0944	0085ec40		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0x50	medium	74ffb6:574940:ctor	0x48	0074c7c0		0074c830		yes
+InputDevice	.?AVInputDevice@@	008904d8	00844a64		17	1	0	0		InputDevice						004806b0	004806b0		yes
+InputRemapDevice	.?AVInputRemapDevice@@	008905b8	0084500c		17	0	0	1	InputDevice	InputDevice	0xa0	medium	486902:574940:ctor	0xa0	00488400	00486a80	004885d0		yes
+InstanceComponent	.?AVInstanceComponent@@	008aa720								InstanceComponent									base-only
+InstanceUserData	.?AUInstanceUserData@@	00891130								InstanceUserData									base-only
+JobHarness_JobClothSimulate	.?AVJobHarness_JobClothSimulate@@	0088f79c	00843ce8		1	0	0	1	cdc::JobHarness	cdc::JobHarness									yes
+JobHarness_JobInflate	.?AVJobHarness_JobInflate@@	008a7194	0084d754		1	0	0	1	cdc::JobHarness	cdc::JobHarness									yes
+JobHarness_JobMemCopy	.?AVJobHarness_JobMemCopy@@	008a71bc	0084d788		1	0	0	1	cdc::JobHarness	cdc::JobHarness									yes
+JobHarness_JobOcclTreeIntersections	.?AVJobHarness_JobOcclTreeIntersections@@	008a71f8	0084da6c		1	0	0	1	cdc::JobHarness	cdc::JobHarness									yes
+JobHarness_fxParticleDraw	.?AVJobHarness_fxParticleDraw@@	008a6e50	0084c458		1	0	0	1	cdc::JobHarness	cdc::JobHarness									yes
+JobHarness_fxParticleUpdate	.?AVJobHarness_fxParticleUpdate@@	008a6e84	0084c4b0		1	0	0	1	cdc::JobHarness	cdc::JobHarness									yes
+JumpState	.?AVJumpState@@	008b0774	0085e258		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+LadderRungAlignAnimTarget	.?AVLadderRungAlignAnimTarget@@	008b0964	0085ec5c		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0x10	medium	74dc81:574940:inline				0074c830		yes
+LaraCamera	.?AVLaraCamera@@	008ac448	00855f54		32	0	0	4	LaraCameraAbstract	ICamera				0x1b4	005fe610	005fe560	005fe710		yes
+LaraCameraAbstract	.?AVLaraCameraAbstract@@	008ac424								LaraCameraAbstract									base-only
+LaraCameraRewrite	.?AVLaraCameraRewrite@@	008ac470	0085600c		32	1	0	4	LaraCameraAbstract	ICamera				0x1f4	006029d0	00602930	00602ad0		yes
+LaraCombatCamera	.?AVLaraCombatCamera@@	008ac49c	008560c4		21	0	0	3	BaseGameplayCamera	ICamera				0x148	00605130	006050a0	006052b0		yes
+LightResourceType	.?AVLightResourceType@@	008a70a4	0084ca80		3	1	0	1	cdc::ResourceTypeHandler	cdc::ResourceTypeHandler	0x4	medium	5525ae:574940:inline						yes
+LookAroundState	.?AVLookAroundState@@	008b0474	0085e000		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+MantleState	.?AVMantleState@@	008b062c	0085e150		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+MarkupManager	.?AVMarkupManager@@	008aa8e8	00853f54		11	1	0	0		MarkupManager				0x24	005be3a0	005be440			yes
+MaterialSection	.?AVMaterialSection@@	008a6fdc	0084c8d4		22	2	0	1	ResolveSection	ResolveSection							005505e0		yes
+ModelParticleDrawable	.?AVModelParticleDrawable@@	008aa904	00853ffc		14	2	0	1	cdc::IDrawable	cdc::IDrawable	0x18	medium	543136:574940:ctor	0x18	005c5300	005c53c0	005c53c0		yes
+ModelViewCamera	.?AVModelViewCamera@@	008ac4c8	0085614c		28	1	0	3	BaseDebugCamera	ICamera				0xd8	006053a0		005e36c0		yes
+MonitorDrawable	.?AUMonitorDrawable@@	008afdb4	0085d468		12	3	1	3	cdc::InstanceDrawable	cdc::IDrawable				0x374	006d0c20	006d1910	006d1f90		yes
+MoveToPositionState	.?AVMoveToPositionState@@	008b04f8	0085e060		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+MultiFileSystem	.?AVMultiFileSystem@@	0088f950	008440ec		15	0	0	1	cdc::FileSystem	cdc::FileSystem				0x580	004737f0	00473920	00473920		yes
+MusicReceiver	.?AVMusicReceiver@@	008a92d0	00850860		5	0	0	2	cdc::FileAllocatedReceiver	cdc::FileReceiver							00583d00		yes
+MyStreamingCallback	.?AVMyStreamingCallback@@	008aa97c	00854424		4	1	0	1	StreamingCallback	StreamingCallback									yes
+NeCoreBase	.?AVNeCoreBase@@	008b3e58	0085fe2c		1	0	0	0		NeCoreBase				0x8	00775d00	00775d20;00775ea0	00775ea0		yes
+NeDispatcherBase	.?AVNeDispatcherBase@@	008b744c	00861a88		1	0	0	3	NeInstance	NeCoreBase						00795980	00795980		yes
+NeGameBase	.?AVNeGameBase@@	008b3ea0	0085fe8c		1	0	0	1	NeCoreBase	NeCoreBase				0x1c	00775fa0	00776880;00779170	00779170		yes
+NeInstance	.?AVNeInstance@@	008b3ebc	0085fe94		1	0	0	2	NeGameBase	NeCoreBase				0x20	00776830		00779170		yes
+NeUnit	.?AVNeUnit@@	008b3ed8	0085fe9c		1	0	0	2	NeGameBase	NeCoreBase				0x20	007769f0		00779170		yes
+NsActor	.?AVNsActor@@	00890af4	008463e4		12	1	0	5	NsInstance	cdc::GCObject				0x24	004ab260		004ab230		yes
+NsActor_ScriptType	.?AVNsActor_ScriptType@@	008b77b8	0086213c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsCheckpointBase	.?AVNsCheckpointBase@@	008b3ef0	0085fea4		12	1	0	5	NsInstance	cdc::GCObject				0x4	00776c90		007784c0		yes
+NsCheckpointBase_ScriptType	.?AVNsCheckpointBase_ScriptType@@	008b7950	00862414		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsCommunityInfoScreen	.?AVNsCommunityInfoScreen@@	008b4184	008603f4		48	1	0	4	NsUIScreen	cdc::GCObject						0077fbc0	0077fbc0		yes
+NsCommunityInfoScreen_ScriptType	.?AVNsCommunityInfoScreen_ScriptType@@	008b86f4	00863b50		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsCoreBase	.?AVNsCoreBase@@	008907e0	008457dc		9	0	0	2	cdc::ScriptObject	cdc::GCObject				0x20	004a2bd0	004a2c40;004a3160	004a3160		yes
+NsCoreBase_ScriptType	.?AVNsCoreBase_ScriptType@@	008b7688	00861eec		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsDLCSystem	.?AVNsDLCSystem@@	008b4020	008600dc		9	0	0	3	NsCoreBase	cdc::GCObject				0x4	00779f00	00779f30	0077a1f0		yes
+NsDLCSystem_ScriptType	.?AVNsDLCSystem_ScriptType@@	008b7a24	00862574		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsDispatcherBase	.?AVNsDispatcherBase@@	00890b0c	00846418		12	1	0	5	NsInstance	cdc::GCObject				0x24	004ab280		004ab230		yes
+NsDispatcherBase_ScriptType	.?AVNsDispatcherBase_ScriptType@@	008b79f8	0086252c		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsEnemyBase	.?AVNsEnemyBase@@	008b3f10	0085fed8		12	1	0	5	NsInstance	cdc::GCObject				0x4	00776d70		007784c0		yes
+NsEnemyBase_ScriptType	.?AVNsEnemyBase_ScriptType@@	008b7a70	008625f8		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsEnemyThrallBase	.?AVNsEnemyThrallBase@@	008b3f2c	0085ff7c		12	1	0	6	NsEnemyBase	cdc::GCObject				0x4	00777440		007784c0		yes
+NsEnemyThrallBase_ScriptType	.?AVNsEnemyThrallBase_ScriptType@@	008b7a98	0086263c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsGameBase	.?AVNsGameBase@@	0089091c	00845908		11	1	0	3	NsCoreBase	cdc::GCObject				0x4	004a3d90	004a3db0;004ab230;004ab500	004ab230		yes
+NsGameBase_ScriptType	.?AVNsGameBase_ScriptType@@	008b7ac4	00862684		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsGameGlobalsBase	.?AVNsGameGlobalsBase@@	00890938	00845938		11	1	0	4	NsGameBase	cdc::GCObject				0x4	004a3e70		004ab230		yes
+NsGameGlobalsBase_ScriptType	.?AVNsGameGlobalsBase_ScriptType@@	008b7ae8	008626c8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsGeneratorBase	.?AVNsGeneratorBase@@	008b3f4c	0085ffb0		12	1	0	5	NsInstance	cdc::GCObject				0x4	00777530		007784c0		yes
+NsGeneratorBase_ScriptType	.?AVNsGeneratorBase_ScriptType@@	008b7b3c	00862754		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsInstance	.?AVNsInstance@@	00890978	00845988		12	1	0	4	NsGameBase	cdc::GCObject				0x24	004a3e90	007784c0	004ab230		yes
+NsInstance_ScriptType	.?AVNsInstance_ScriptType@@	008b7c28	008628ec		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsLaraBase	.?AVNsLaraBase@@	008b3f6c	0085ffe4		12	1	0	5	NsInstance	cdc::GCObject				0x4	00777630		007784c0		yes
+NsLaraBase_ScriptType	.?AVNsLaraBase_ScriptType@@	008b7ce4	00862a38		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsOLBase	.?AVNsOLBase@@	00890d64	008473ec		9	0	0	3	NsCoreBase	cdc::GCObject				0x4	004aed50	004aed80	004af9a0		yes
+NsOLBase_ScriptType	.?AVNsOLBase_ScriptType@@	008b7e80	00862cfc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsPortableBase	.?AVNsPortableBase@@	008b3f88	00860018		12	1	0	5	NsInstance	cdc::GCObject				0x4	00778170		007784c0		yes
+NsPortableBase_ScriptType	.?AVNsPortableBase_ScriptType@@	008b8028	00862fe8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsProfileScreen	.?AVNsProfileScreen@@	008b746c	00861a94		48	1	0	4	NsUIScreen	cdc::GCObject						007ab6c0	007ab6c0		yes
+NsProfileScreen_ScriptType	.?AVNsProfileScreen_ScriptType@@	008b8774	00863c3c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsScenario	.?AVNsScenario@@	00890994	008459bc		11	1	0	4	NsGameBase	cdc::GCObject				0x4	004a4240		004ab500		yes
+NsScenarioManager	.?AVNsScenarioManager@@	00890e38	008476c8		11	1	0	4	NsGameBase	cdc::GCObject				0x4	004b10b0		004ab230		yes
+NsScenarioManager_ScriptType	.?AVNsScenarioManager_ScriptType@@	008b80e8	00863140		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsScenario_ScriptType	.?AVNsScenario_ScriptType@@	008b80c4	008630fc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsScreenshotSystem	.?AVNsScreenshotSystem@@	008b4160	0086039c		9	0	0	3	NsCoreBase	cdc::GCObject				0x4	0077f870	0077f8a0	0077f9b0		yes
+NsScreenshotSystem_ScriptType	.?AVNsScreenshotSystem_ScriptType@@	008b87c8	00863cc8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsTriggerPlaneBase	.?AVNsTriggerPlaneBase@@	00890b58	008464ec		12	1	0	5	NsInstance	cdc::GCObject				0x2c	004ab580		004ab230		yes
+NsTriggerPlaneBase_ScriptType	.?AVNsTriggerPlaneBase_ScriptType@@	008b82c0	00863474		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsTriggerVolumeBase	.?AVNsTriggerVolumeBase@@	00890b7c	00846520		12	1	0	5	NsInstance	cdc::GCObject				0x2c	004ab5b0		004ab230		yes
+NsTriggerVolumeBase_ScriptType	.?AVNsTriggerVolumeBase_ScriptType@@	008b82ec	008634c0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsUIScreen	.?AVNsUIScreen@@	00890e70	00847724		48	1	0	3	NsCoreBase	cdc::GCObject				0x28	004be430	004b1bb0;004be4a0	004be4a0		yes
+NsUIScreen_ScriptType	.?AVNsUIScreen_ScriptType@@	008b8e38	00864794		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsUberObjectBase	.?AVNsUberObjectBase@@	00890ba0	00846554		12	1	0	5	NsInstance	cdc::GCObject				0x24	004ab630		004ab230		yes
+NsUberObjectBase_ScriptType	.?AVNsUberObjectBase_ScriptType@@	008b831c	0086350c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsUnit	.?AVNsUnit@@	008909e0	00845a2c		11	1	0	4	NsGameBase	cdc::GCObject				0x4	004a44e0		004ab230		yes
+NsUnit_ScriptType	.?AVNsUnit_ScriptType@@	008b842c	008636c4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsWaterVolumeBase	.?AVNsWaterVolumeBase@@	008b3fa8	0086004c		12	1	0	5	NsInstance	cdc::GCObject				0x4	00778190		007784c0		yes
+NsWaterVolumeBase_ScriptType	.?AVNsWaterVolumeBase_ScriptType@@	008b8650	00863a38		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NsWeaponBase	.?AVNsWeaponBase@@	008b3fc8	00860080		12	1	0	5	NsInstance	cdc::GCObject				0x4	007784a0		007784c0		yes
+NsWeaponBase_ScriptType	.?AVNsWeaponBase_ScriptType@@	008b86cc	00863b0c		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtAchievement_ScriptType	.?AVNtAchievement_ScriptType@@	008b7790	008620e0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtAnchor_ScriptType	.?AVNtAnchor_ScriptType@@	008b77dc	0086217c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtAnchoredCamera	.?AVNtAnchoredCamera@@	008b3da8	0085fddc		1	0	0	1	BaseScriptCamera	BaseScriptCamera				0x8	007754a0;007754b0		007756d0		yes
+NtAnchoredCamera_ScriptType	.?AVNtAnchoredCamera_ScriptType@@	008b748c	00861b58		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtAnimatedSequence	.?AVNtAnimatedSequence@@	008909f8	00845a5c		7	1	0	2	cdc::ScriptSequence	cdc::GCObject							004a4690		yes
+NtAnimatedThread	.?AVNtAnimatedThread@@	00890bc0	008465f8		8	1	0	2	cdc::ScriptThread	cdc::RCObject				0x11	004ab970	004ab9d0	004ab9d0		yes
+NtAnimated_ScriptType	.?AVNtAnimated_ScriptType@@	008b7800	008621bc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtAnimation_ScriptType	.?AVNtAnimation_ScriptType@@	008b7824	00862200		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtAtom_ScriptType	.?AVNtAtom_ScriptType@@	008b784c	00862244		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtAutoSplineCamera	.?AVNtAutoSplineCamera@@	008b3dc8	0085fde4		1	0	0	1	BaseScriptCamera	BaseScriptCamera				0x8	007754d0;007754e0		007756d0		yes
+NtAutoSplineCamera_ScriptType	.?AVNtAutoSplineCamera_ScriptType@@	008b74b8	00861bbc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtBark_ScriptType	.?AVNtBark_ScriptType@@	008b786c	00862284		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCameraAnchor_ScriptType	.?AVNtCameraAnchor_ScriptType@@	008b74e4	00861c08		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCameraPathSpline_ScriptType	.?AVNtCameraPathSpline_ScriptType@@	008b78b0	008622fc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCameraRef_ScriptType	.?AVNtCameraRef_ScriptType@@	008b750c	00861c50		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCameraSettings_ScriptType	.?AVNtCameraSettings_ScriptType@@	008b78dc	00862348		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCameraShake_ScriptType	.?AVNtCameraShake_ScriptType@@	008b7908	00862390		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCameraSplineEvent_ScriptType	.?AVNtCameraSplineEvent_ScriptType@@	008b755c	00861cdc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCameraSpline_ScriptType	.?AVNtCameraSpline_ScriptType@@	008b7534	00861c94		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCamera_ScriptType	.?AVNtCamera_ScriptType@@	008b788c	008622c4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCell_ScriptType	.?AVNtCell_ScriptType@@	008b7930	008623d4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCineSequence	.?AVNtCineSequence@@	00890a1c	00845b50		7	1	0	2	cdc::ScriptSequence	cdc::GCObject							004a4690		yes
+NtCinematicEvent_ScriptType	.?AVNtCinematicEvent_ScriptType@@	008b79a4	008624a0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCinematic_ScriptType	.?AVNtCinematic_ScriptType@@	008b797c	0086245c		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtClockInst	.?AVNtClockInst@@	0089089c	00845860		2	0	0	1	cdc::RCObject	cdc::RCObject				0x20	004a3510	004a35b0	004a3b40		yes
+NtClockThread	.?AVNtClockThread@@	00890880	0084583c		8	1	0	2	cdc::ScriptThread	cdc::RCObject						004a3330	004a3330		yes
+NtClock_ScriptType	.?AVNtClock_ScriptType@@	008b7664	00861e94		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCombatCamera	.?AVNtCombatCamera@@	008b3dec	0085fdec		1	0	0	1	BaseScriptCamera	BaseScriptCamera				0x8	00775510;00775520		007756d0		yes
+NtCombatCamera_ScriptType	.?AVNtCombatCamera_ScriptType@@	008b758c	00861d28		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtCueingSoundSequence	.?AVNtCueingSoundSequence@@	00890da0	00847494		7	1	0	2	cdc::ScriptSequence	cdc::GCObject						004af1f0	004af1f0		yes
+NtDamageType_ScriptType	.?AVNtDamageType_ScriptType@@	008b79d0	008624e8		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtEffectSequence	.?AVNtEffectSequence@@	00890be0	008468f0		7	1	0	2	cdc::ScriptSequence	cdc::GCObject							004a4690		yes
+NtEffect_ScriptType	.?AVNtEffect_ScriptType@@	008b7a4c	008625b8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtExplorationCamera	.?AVNtExplorationCamera@@	008b3e0c	0085fdf4		1	0	0	1	BaseScriptCamera	BaseScriptCamera				0x8	00775540;00775550		007756d0		yes
+NtExplorationCamera_ScriptType	.?AVNtExplorationCamera_ScriptType@@	008b75b4	00861d70		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtFocusPoint_ScriptType	.?AVNtFocusPoint_ScriptType@@	008b75e4	00861dbc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtGameValueID_ScriptType	.?AVNtGameValueID_ScriptType@@	008b8724	00863bb0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtGameValue_ScriptType	.?AVNtGameValue_ScriptType@@	008b7b14	00862710		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtGlobalEffect_ScriptType	.?AVNtGlobalEffect_ScriptType@@	008b7b68	0086279c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtGlobalsRef_ScriptType	.?AVNtGlobalsRef_ScriptType@@	008b7b90	008627e4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtHUDScreenMgr_ScriptType	.?AVNtHUDScreenMgr_ScriptType@@	008b874c	00863bf4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtHealth_ScriptType	.?AVNtHealth_ScriptType@@	008b7bb8	00862828		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtInputAction_ScriptType	.?AVNtInputAction_ScriptType@@	008b7c00	008628a8		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtInput_ScriptType	.?AVNtInput_ScriptType@@	008b7bdc	00862868		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtInstanceRef_ScriptType	.?AVNtInstanceRef_ScriptType@@	008b7c4c	00862930		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtInvSlot_ScriptType	.?AVNtInvSlot_ScriptType@@	008b7c74	00862974		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtJoint_ScriptType	.?AVNtJoint_ScriptType@@	008b7c98	008629b4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtJumpHelper_ScriptType	.?AVNtJumpHelper_ScriptType@@	008b7cbc	008629f4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtLight_ScriptType	.?AVNtLight_ScriptType@@	008b7d08	00862a7c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtLimit_ScriptType	.?AVNtLimit_ScriptType@@	008b7d2c	00862abc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtMarker_ScriptType	.?AVNtMarker_ScriptType@@	008b7d50	00862afc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtMarkup_ScriptType	.?AVNtMarkup_ScriptType@@	008b7d74	00862b3c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtMessageChannel	.?AVNtMessageChannel@@	008908b8	0084586c		3	0	0	1	cdc::IMessageChannelReferrer	cdc::IMessageChannelReferrer				0x14	004a3680;004a36d0	004a3750	004a3b70		yes
+NtMessageChannel_ScriptType	.?AVNtMessageChannel_ScriptType@@	008b76ac	00861f30		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtMicrophone_ScriptType	.?AVNtMicrophone_ScriptType@@	008b7d98	00862b74		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtModelMarker_ScriptType	.?AVNtModelMarker_ScriptType@@	008b7dc0	00862bb8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtModifiable_ScriptType	.?AVNtModifiable_ScriptType@@	008b7de8	00862bfc		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtMotor_ScriptType	.?AVNtMotor_ScriptType@@	008b7e10	00862c40		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtMultibody_ScriptType	.?AVNtMultibody_ScriptType@@	008b7e34	00862c80		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtMusic_ScriptType	.?AVNtMusic_ScriptType@@	008b7e5c	00862cc4		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtOLDelete_ScriptType	.?AVNtOLDelete_ScriptType@@	008b7ea4	00862d3c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtOLFeed_ScriptType	.?AVNtOLFeed_ScriptType@@	008b7ec8	00862d80		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtOLFileEntry_ScriptType	.?AVNtOLFileEntry_ScriptType@@	008b7eec	00862dc0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtOLFriend_ScriptType	.?AVNtOLFriend_ScriptType@@	008b7f14	00862e04		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtOLMsg_ScriptType	.?AVNtOLMsg_ScriptType@@	008b7f38	00862e48		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtPadshockInst	.?AVNtPadshockInst@@	00890c20	00846db0		2	0	0	1	cdc::RCObject	cdc::RCObject				0x34	004ac800;004ac910	004ac9d0	004ade20		yes
+NtPadshockSequence	.?AVNtPadshockSequence@@	00890d7c	00847448		7	1	0	2	cdc::ScriptSequence	cdc::GCObject						004af0b0	004af0b0		yes
+NtPadshockThread	.?AVNtPadshockThread@@	00890c00	00846d78		8	1	0	2	cdc::ScriptThread	cdc::RCObject						004ac630	004ac630		yes
+NtPadshock_ScriptType	.?AVNtPadshock_ScriptType@@	008b7f5c	00862e88		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtPatchBase	.?AVNtPatchBase@@	008b3e80	0085fe50		1	0	0	0		NtPatchBase				0x4	00775ed0	00775f80	00775f80		yes
+NtPatchBase_ScriptType	.?AVNtPatchBase_ScriptType@@	008b7768	00862080		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtPlannerObstacle_ScriptType	.?AVNtPlannerObstacle_ScriptType@@	008b7f80	00862ecc		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtPlannerVolume_ScriptType	.?AVNtPlannerVolume_ScriptType@@	008b7fac	00862f14		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtPlayerRef_ScriptType	.?AVNtPlayerRef_ScriptType@@	008b7fd8	00862f5c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtPlayerSensorInst	.?AVNtPlayerSensorInst@@	008b403c	00860104		2	0	0	1	cdc::RCObject	cdc::RCObject				0x1d	0077a0c0;0077a120	0077a1a0	0077a2d0		yes
+NtPlayerSensor_ScriptType	.?AVNtPlayerSensor_ScriptType@@	008b8000	00862fa0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtPosition_ScriptType	.?AVNtPosition_ScriptType@@	008b76d8	00861f78		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtRangeSensor	.?AVNtRangeSensor@@	00890d48	008472fc		2	0	0	1	ScriptInstanceSensor	ScriptInstanceSensor				0x8	004b1ad0;004b1b20				yes
+NtRangeSensorInst	.?AVNtRangeSensorInst@@	00890e18	00847688		4	0	0	2	ScriptInstanceSensorInst	cdc::RCObject				0x38	004b18d0	004b1100	004b1100		yes
+NtRangeSensor_ScriptType	.?AVNtRangeSensor_ScriptType@@	008b8050	00863030		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtReverb_ScriptType	.?AVNtReverb_ScriptType@@	008b8078	00863074		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtRewardSystem_ScriptType	.?AVNtRewardSystem_ScriptType@@	008b809c	008630b4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtRotationTarget_ScriptType	.?AVNtRotationTarget_ScriptType@@	008b760c	00861e00		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtRotation_ScriptType	.?AVNtRotation_ScriptType@@	008b76fc	00861fbc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtScenarioRef_ScriptType	.?AVNtScenarioRef_ScriptType@@	008b8114	00863188		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtScreenshot_ScriptType	.?AVNtScreenshot_ScriptType@@	008b87a0	00863c84		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtSightSensor	.?AVNtSightSensor@@	008b3fe4	008600bc		2	0	0	1	ScriptInstanceSensor	ScriptInstanceSensor				0x4	007788f0;00779de0;00779e30				yes
+NtSightSensorInst	.?AVNtSightSensorInst@@	008b4000	008600c8		4	0	0	2	ScriptInstanceSensorInst	cdc::RCObject				0x38	00779aa0	00779ea0	00779ea0		yes
+NtSightSensor_ScriptType	.?AVNtSightSensor_ScriptType@@	008b813c	008631cc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtSoundEndType_ScriptType	.?AVNtSoundEndType_ScriptType@@	008b8188	00863250		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtSoundGroup_ScriptType	.?AVNtSoundGroup_ScriptType@@	008b81b0	00863298		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtSoundInst	.?AVNtSoundInst@@	00890c94	00846f94		2	0	0	1	cdc::RCObject	cdc::RCObject						004acee0	004ae640		yes
+NtSoundThread	.?AVNtSoundThread@@	00890ab8	00846330		8	1	0	2	cdc::ScriptThread	cdc::RCObject						004aa780	004aa780		yes
+NtSound_ScriptType	.?AVNtSound_ScriptType@@	008b8164	00863210		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtSplineSequence	.?AVNtSplineSequence@@	00890ad4	00846354		7	0	0	2	cdc::ScriptSequence	cdc::GCObject							004a4690		yes
+NtSpline_ScriptType	.?AVNtSpline_ScriptType@@	008b81d8	008632dc		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtStdScreenMgr_ScriptType	.?AVNtStdScreenMgr_ScriptType@@	008b87f4	00863d14		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtStickyBool_ScriptType	.?AVNtStickyBool_ScriptType@@	008b81fc	0086331c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtStickyFloat_ScriptType	.?AVNtStickyFloat_ScriptType@@	008b8224	00863360		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtStickyInt_ScriptType	.?AVNtStickyInt_ScriptType@@	008b824c	008633a4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtStimulus_ScriptType	.?AVNtStimulus_ScriptType@@	008b8274	008633e8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtSymbol_ScriptType	.?AVNtSymbol_ScriptType@@	008b7720	00862000		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtTerrainGroupInst	.?AVNtTerrainGroupInst@@	00890cb0	00847190		2	0	0	1	cdc::RCObject	cdc::RCObject				0x18	004ae690	004ad1a0	004ae730		yes
+NtTerrainGroup_ScriptType	.?AVNtTerrainGroup_ScriptType@@	008b8298	0086342c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtTransitionCamera	.?AVNtTransitionCamera@@	008b3e30	0085fdfc		1	0	0	1	BaseScriptCamera	BaseScriptCamera				0x8	00775680;00775690		007756d0		yes
+NtTransitionCamera_ScriptType	.?AVNtTransitionCamera_ScriptType@@	008b7638	00861e48		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIAnimation_ScriptType	.?AVNtUIAnimation_ScriptType@@	008b881c	00863d5c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIBitmap	.?AVNtUIBitmap@@	00890e8c	008477f4		20	0	0	0		NtUIBitmap				0x9	004b25d0;004b25f0;004b2610;004b2640				yes
+NtUIBitmap_ScriptType	.?AVNtUIBitmap_ScriptType@@	008b8844	00863da0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIBoolProperty_ScriptType	.?AVNtUIBoolProperty_ScriptType@@	008b8868	00863de4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIButton	.?AVNtUIButton@@	00890ea8	0084784c		21	0	0	0		NtUIButton				0x9	004b3090;004b30b0;004b30e0				yes
+NtUIButton_ScriptType	.?AVNtUIButton_ScriptType@@	008b8894	00863e2c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIColorProperty_ScriptType	.?AVNtUIColorProperty_ScriptType@@	008b88b8	00863e70		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIColorTLStyle_ScriptType	.?AVNtUIColorTLStyle_ScriptType@@	008b8910	00863f00		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIColorTimeline_ScriptType	.?AVNtUIColorTimeline_ScriptType@@	008b88e4	00863eb8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIDebugText	.?AVNtUIDebugText@@	00890ec4	008478a4		23	0	0	0		NtUIDebugText	0x24	high	77f6e2:574940:ctor;77f7d7:574940:ctor	0x9	004b3aa0;004b3ac0;004b3af0				yes
+NtUIDebugText_ScriptType	.?AVNtUIDebugText_ScriptType@@	008b893c	00863f48		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIDialogConfirm_ScriptType	.?AVNtUIDialogConfirm_ScriptType@@	008b898c	00863fd4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIDialogNoInput_ScriptType	.?AVNtUIDialogNoInput_ScriptType@@	008b89b8	0086401c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIDialogYesNo_ScriptType	.?AVNtUIDialogYesNo_ScriptType@@	008b89e4	00864064		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIDialog_DLC_ScriptType	.?AVNtUIDialog_DLC_ScriptType@@	008b8964	00863f8c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIDynamicBitmap	.?AVNtUIDynamicBitmap@@	008b4104	0086019c		20	0	0	0		NtUIDynamicBitmap				0x9	0077a960;0077a980;0077a9d0				yes
+NtUIDynamicBitmap_ScriptType	.?AVNtUIDynamicBitmap_ScriptType@@	008b8a10	008640ac		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIExperienceAdjustmentMenu_ScriptType	.?AVNtUIExperienceAdjustmentMenu_ScriptType@@	008b8a3c	008640f4		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIFloatProperty_ScriptType	.?AVNtUIFloatProperty_ScriptType@@	008b8a74	00864148		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIFloatTimeline_ScriptType	.?AVNtUIFloatTimeline_ScriptType@@	008b8aa0	00864190		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIGameData_ScriptType	.?AVNtUIGameData_ScriptType@@	008b8acc	008641d8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIGameValues_ScriptType	.?AVNtUIGameValues_ScriptType@@	008b8af4	0086421c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIGnrcEventID_ScriptType	.?AVNtUIGnrcEventID_ScriptType@@	008b8b1c	00864264		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIIntProperty_ScriptType	.?AVNtUIIntProperty_ScriptType@@	008b8b48	008642ac		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIIntTimeline_ScriptType	.?AVNtUIIntTimeline_ScriptType@@	008b8b74	008642f4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUILoadMenu_ScriptType	.?AVNtUILoadMenu_ScriptType@@	008b8ba0	0086433c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUILocalStrProperty_ScriptType	.?AVNtUILocalStrProperty_ScriptType@@	008b8bc8	00864380		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIMenuBoolItem_ScriptType	.?AVNtUIMenuBoolItem_ScriptType@@	008b8c1c	0086440c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIMenuEnumItem_ScriptType	.?AVNtUIMenuEnumItem_ScriptType@@	008b8c48	00864454		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIMenuItem_ScriptType	.?AVNtUIMenuItem_ScriptType@@	008b8c74	0086449c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIMenu_ScriptType	.?AVNtUIMenu_ScriptType@@	008b8bf8	008643cc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIMeter	.?AVNtUIMeter@@	00890ee0	00847904		20	0	0	0		NtUIMeter				0x9	004b7150;004b7170;004b71a0				yes
+NtUIMeter_ScriptType	.?AVNtUIMeter_ScriptType@@	008b8c9c	008644e0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIModel_ScriptType	.?AVNtUIModel_ScriptType@@	008b8cc0	00864520		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUINGAPoly	.?AVNtUINGAPoly@@	00890ef8	00847958		13	0	0	0		NtUINGAPoly				0x9	004b85e0;004b8600;004b8630				yes
+NtUINGAPoly_ScriptType	.?AVNtUINGAPoly_ScriptType@@	008b8ce4	00864560		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIPDAMapWidget	.?AVNtUIPDAMapWidget@@	008b4124	00860320		12	0	0	0		NtUIPDAMapWidget				0x9	0077cd50;0077cda0;0077cdd0				yes
+NtUIPDAMapWidget_ScriptType	.?AVNtUIPDAMapWidget_ScriptType@@	008b8d0c	008645a4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIPS3GameData_ScriptType	.?AVNtUIPS3GameData_ScriptType@@	008b8d8c	00864678		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIPS3SaveLoad_ScriptType	.?AVNtUIPS3SaveLoad_ScriptType@@	008b8db8	008646c0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIPopupMgr_ScriptType	.?AVNtUIPopupMgr_ScriptType@@	008b8d38	008645ec		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIProfileMenu_ScriptType	.?AVNtUIProfileMenu_ScriptType@@	008b8d60	00864630		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIRenderImage_ScriptType	.?AVNtUIRenderImage_ScriptType@@	008b8de4	00864708		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUISaveMenu_ScriptType	.?AVNtUISaveMenu_ScriptType@@	008b8e10	00864750		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIScrollbar	.?AVNtUIScrollbar@@	00890f30	008479e4		9	0	0	0		NtUIScrollbar				0x9	004babd0;004babf0;004bac20				yes
+NtUIScrollbar_ScriptType	.?AVNtUIScrollbar_ScriptType@@	008b8e5c	008647d8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUISignal_ScriptType	.?AVNtUISignal_ScriptType@@	008b8e84	0086481c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUISlider	.?AVNtUISlider@@	00890f14	00847994		19	0	0	0		NtUISlider				0x9	004b9c30;004b9c50;004b9c80				yes
+NtUISlider_ScriptType	.?AVNtUISlider_ScriptType@@	008b8ea8	00864860		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUISpecialItemStyle_ScriptType	.?AVNtUISpecialItemStyle_ScriptType@@	008b8ecc	008648a4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIStringFactory_ScriptType	.?AVNtUIStringFactory_ScriptType@@	008b8efc	008648f0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIStringProperty_ScriptType	.?AVNtUIStringProperty_ScriptType@@	008b8f28	00864938		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUITexTLStyle_ScriptType	.?AVNtUITexTLStyle_ScriptType@@	008b8fa0	00864a08		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIText	.?AVNtUIText@@	00890f4c	00847a0c		21	0	0	0		NtUIText				0x9	004bb5f0;004bb610;004bb640				yes
+NtUITextEntry	.?AVNtUITextEntry@@	00890f64	00847a64		13	0	0	0		NtUITextEntry				0x9	004bc5e0;004bc600;004bc630				yes
+NtUITextEntry_ScriptType	.?AVNtUITextEntry_ScriptType@@	008b8f78	008649c4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIText_ScriptType	.?AVNtUIText_ScriptType@@	008b8f54	00864984		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUITextureProperty_ScriptType	.?AVNtUITextureProperty_ScriptType@@	008b8fc8	00864a50		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUITextureTimeline_ScriptType	.?AVNtUITextureTimeline_ScriptType@@	008b8ff8	00864a9c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIVec2Property_ScriptType	.?AVNtUIVec2Property_ScriptType@@	008b9028	00864ae8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIVec2TLStyle_ScriptType	.?AVNtUIVec2TLStyle_ScriptType@@	008b9080	00864b78		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIVec2Timeline_ScriptType	.?AVNtUIVec2Timeline_ScriptType@@	008b9054	00864b30		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIVec3Property_ScriptType	.?AVNtUIVec3Property_ScriptType@@	008b90ac	00864bc0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIVec3TLStyle_ScriptType	.?AVNtUIVec3TLStyle_ScriptType@@	008b9104	00864c50		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIVec3Timeline_ScriptType	.?AVNtUIVec3Timeline_ScriptType@@	008b90d8	00864c08		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIWidgetRef_ScriptType	.?AVNtUIWidgetRef_ScriptType@@	008b9130	00864c98		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIWidgetStyle_ScriptType	.?AVNtUIWidgetStyle_ScriptType@@	008b9158	00864cdc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIWinButtonConfig_ScriptType	.?AVNtUIWinButtonConfig_ScriptType@@	008b9184	00864d24		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIWinDisplayMode_ScriptType	.?AVNtUIWinDisplayMode_ScriptType@@	008b91b4	00864d70		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIWinDisplaySettings_ScriptType	.?AVNtUIWinDisplaySettings_ScriptType@@	008b91e0	00864dbc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIWinFilenameEntry_ScriptType	.?AVNtUIWinFilenameEntry_ScriptType@@	008b9210	00864e0c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIWinGamepad_ScriptType	.?AVNtUIWinGamepad_ScriptType@@	008b9240	00864e58		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUIWinSave_ScriptType	.?AVNtUIWinSave_ScriptType@@	008b9268	00864ea0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUberObjectCommand_ScriptType	.?AVNtUberObjectCommand_ScriptType@@	008b8348	00863554		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUberObjectEvent_ScriptType	.?AVNtUberObjectEvent_ScriptType@@	008b8378	008635a0		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUberObjectQuery_ScriptType	.?AVNtUberObjectQuery_ScriptType@@	008b83a4	008635e8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUberObjectSectionID_ScriptType	.?AVNtUberObjectSectionID_ScriptType@@	008b83d0	00863630		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnderWaterRay_ScriptType	.?AVNtUnderWaterRay_ScriptType@@	008b8400	0086367c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnitRef_ScriptType	.?AVNtUnitRef_ScriptType@@	008b844c	008636fc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockableCharacterImage_ScriptType	.?AVNtUnlockableCharacterImage_ScriptType@@	008b8498	00863780		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockableCinematic_ScriptType	.?AVNtUnlockableCinematic_ScriptType@@	008b84cc	008637d4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockableConceptImage_ScriptType	.?AVNtUnlockableConceptImage_ScriptType@@	008b84fc	00863820		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockableCostume_ScriptType	.?AVNtUnlockableCostume_ScriptType@@	008b8530	00863870		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockableEnvironmentImage_ScriptType	.?AVNtUnlockableEnvironmentImage_ScriptType@@	008b8560	008638bc		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockableGearImage_ScriptType	.?AVNtUnlockableGearImage_ScriptType@@	008b8598	00863910		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockableMovie_ScriptType	.?AVNtUnlockableMovie_ScriptType@@	008b85c8	0086395c		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockableMusic_ScriptType	.?AVNtUnlockableMusic_ScriptType@@	008b85f4	008639a4		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockable_ScriptType	.?AVNtUnlockable_ScriptType@@	008b8470	0086373c		13	3	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtUnlockablesSystem_ScriptType	.?AVNtUnlockablesSystem_ScriptType@@	008b8620	008639ec		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtVector_ScriptType	.?AVNtVector_ScriptType@@	008b7744	00862040		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtWaypointNode_ScriptType	.?AVNtWaypointNode_ScriptType@@	008b867c	00863a80		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+NtWaypointSet_ScriptType	.?AVNtWaypointSet_ScriptType@@	008b86a4	00863ac8		13	2	0	2	cdc::NativeScriptType	cdc::RCObject							007ad960		yes
+ObjState	.?AUObjState@@	00891118								ObjState									base-only
+ObjectDebugCamera	.?AVObjectDebugCamera@@	008ac4f4	008561f4		29	1	0	4	FreeCamera	ICamera				0x149	00605530;00605570	006056f0	006056f0		yes
+ObjectSection	.?AVObjectSection@@	008a6fa0	0084c814		22	3	0	1	ResolveSection	ResolveSection							005505e0		yes
+ObjectThread	.?AVObjectThread@@	00890864	00845818		8	1	0	2	cdc::ScriptThread	cdc::RCObject				0xc	004a3080	004a30f0	004a38d0		yes
+PCCombinationInputDevice	.?AVPCCombinationInputDevice@@	00890514	00844c54		17	0	0	1	InputDevice	InputDevice	0x30	medium	486746:574940:ctor	0x30	00483a30	00483fb0	004842b0		yes
+PCGamepadDevice	.?AVPCGamepadDevice@@	0089055c	00844ebc		17	1	0	2	PCSubInputDevice	InputDevice	0xd90	medium	4864a8:574940:ctor	0xc70	00484d80	00485980	00485ac0		yes
+PCKeyboardDevice	.?AVPCKeyboardDevice@@	00890598	00844f5c		17	2	0	2	PCSubInputDevice	InputDevice	0x894	medium	48640d:574940:ctor	0x891	00485e00	00486160	00486160		yes
+PCMouseDevice	.?AVPCMouseDevice@@	0089057c	00844f14		17	2	0	2	PCSubInputDevice	InputDevice	0x890	medium	4863be:574940:ctor	0x890	00485ae0	00485db0	00485db0		yes
+PCSubInputDevice	.?AVPCSubInputDevice@@	008904f4	00844be4		17	2	0	1	InputDevice	InputDevice						00484440	00484500		yes
+PCXInputDevice	.?AVPCXInputDevice@@	0089053c	00844dcc		17	1	0	2	PCSubInputDevice	InputDevice	0x8a4	high	486246:574940:ctor;486664:574940:ctor	0x8a4	00484520	00484d40	00484d40		yes
+PDAMap::RevealedInfo_Box	.?AURevealedInfo_Box@PDAMap@@	008afffc	0085d744		7	1	0	1	PDAMap::RevealedInfo_Geom	PDAMap::	0x50	high	6e29e7:574940:inline;6e45e1:574940:inline						yes
+PDAMap::RevealedInfo_Capsule	.?AURevealedInfo_Capsule@PDAMap@@	008affd0	0085d724		7	0	0	1	PDAMap::RevealedInfo_Geom	PDAMap::	0x50	high	6e29c9:574940:ctor;6e45a9:574940:inline	0x50	006de5b0				yes
+PDAMap::RevealedInfo_Geom	.?AURevealedInfo_Geom@PDAMap@@	008aff7c								PDAMap::									base-only
+PDAMap::RevealedInfo_Sphere	.?AURevealedInfo_Sphere@PDAMap@@	008affa4	0085d704		7	0	0	1	PDAMap::RevealedInfo_Geom	PDAMap::	0x40	high	6e2992:574940:inline;6e45c5:574940:inline						yes
+PDAMapSection	.?AVPDAMapSection@@	008abf24	008552bc		22	2	0	1	ResolveSection	ResolveSection							005505e0		yes
+PhysicsKickState	.?AVPhysicsKickState@@	008b3af0								PhysicsKickState									base-only
+PhysicsKickStateImpl	.?AVPhysicsKickStateImpl@@	008b3b34	0085fa54		5	0	0	4	PhysicsKickState	StateObj							00769bb0		yes
+PhysicsRollAttach	.?AUPhysicsRollAttach@@	008b3ab0	0085f95c		5	0	0	3	PlayerSubState	StateObj							00769bb0		yes
+PhysicsRollDetach	.?AUPhysicsRollDetach@@	008b3a70	0085ee08		5	0	0	3	PlayerSubState	StateObj							00769bb0		yes
+PhysicsRollIdle	.?AUPhysicsRollIdle@@	008b3a90	0085f944		5	0	0	3	PlayerSubState	StateObj							00769bb0		yes
+PhysicsRollState	.?AVPhysicsRollState@@	008b3ad0								PhysicsRollState									base-only
+PhysicsRollStateImpl	.?AVPhysicsRollStateImpl@@	008b3b10	0085fa30		5	1	0	4	PhysicsRollState	StateObj							00769bb0		yes
+PillarAttachGroundAnimTarget	.?AVPillarAttachGroundAnimTarget@@	008b09e0	0085ed20		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0x14	medium	754324:574940:inline			00753f50	00753f50		yes
+PillarDetachAnimTarget	.?AVPillarDetachAnimTarget@@	008b09b8	0085ed14		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0x10	medium	75441e:574940:inline				0074c830		yes
+PlayerSM	.?AVPlayerSM@@	008b07b8	0085e2a8		2	1	0	1	StateMachine	StateMachine	0x560	high	716e6e:574940:ctor;71ad34:574940:ctor	0x560	00716a00		00716e00		yes
+PlayerSubState	.?AVPlayerSubState@@	008b3a50								PlayerSubState									base-only
+PrimAirAttachAnimTarget	.?AVPrimAirAttachAnimTarget@@	008b08c4	0085ec1c		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0x70	high	74c6ce:574940:ctor;74d2e8:574940:ctor;74e0e1:574940:ctor;74f409:574940:ctor	0x68	0074bf90		0074c830		yes
+PuppetShowState	.?AVPuppetShowState@@	008b04d8	0085e048		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+RMIDrawableBase	.?AVRMIDrawableBase@@	008aa69c	00854078		12	2	0	1	cdc::IDrawable	cdc::IDrawable				0xc	005bfec0	005bff10;005c5a60	005c5a60		yes
+RenderResourceSection	.?AVRenderResourceSection@@	008a70e0	0084cb84		22	1	0	1	ResolveSection	ResolveSection							00551ee0		yes
+ResolveObject	.?AVResolveObject@@	008a70c4	0084ca90		1	0	0	0		ResolveObject				0x30	005512e0	00551360	00551440		yes
+ResolveReceiver	.?AVResolveReceiver@@	008a6f24	0084c654		5	0	0	1	cdc::FileReceiver	cdc::FileReceiver				0x70	0054eb90;0054ec00	00550520	00550520		yes
+ResolveSection	.?AVResolveSection@@	008a6f04	0084c52c		22	2	0	0		ResolveSection						005505e0;00551ee0	005505e0		yes
+RollState	.?AVRollState@@	008b0664	0085e180		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+SampleReceiver	.?AVSampleReceiver@@	008a92ec	00850878		5	0	0	1	cdc::FileReceiver	cdc::FileReceiver							00583d00		yes
+ScopeCamera	.?AVScopeCamera@@	008ac52c	00856304		21	2	0	3	BaseGameplayCamera	ICamera				0xe4	006076f0		005e36c0		yes
+Screenshots::CaptureAndSaveTask	.?AUCaptureAndSaveTask@Screenshots@@	008b3cc4	0085fcd4		5	0	0	1	AsyncTaskManager::Task	Screenshots::									yes
+Screenshots::DeleteLocalFileTask	.?AUDeleteLocalFileTask@Screenshots@@	008b3d1c	0085fd40		5	0	0	1	AsyncTaskManager::Task	Screenshots::	0x48	medium	775445:574940:inline						yes
+Screenshots::GenerateUniqueFilenameTask	.?AUGenerateUniqueFilenameTask@Screenshots@@	008b3c34	0085fc10		5	0	0	1	AsyncTaskManager::Task	Screenshots::									yes
+Screenshots::LoadToWidgetsTask	.?AULoadToWidgetsTask@Screenshots@@	008b3c6c	0085fc64		5	0	0	2	Screenshots::LoadingTask	Screenshots::	0x8f0	medium	775251:574940:ctor	0x8f0	00774830				yes
+Screenshots::LoadingTask	.?AULoadingTask@Screenshots@@	008b3bc0	0085fbac		5	0	0	1	AsyncTaskManager::Task	Screenshots::				0x8d9	007745a0				yes
+Screenshots::RaiseScriptEventTask	.?AURaiseScriptEventTask@Screenshots@@	008b3d4c	0085fd7c		5	0	0	1	AsyncTaskManager::Task	Screenshots::	0x8	medium	77530c:574940:inline						yes
+Screenshots::SaveAsNewFileTask	.?AUSaveAsNewFileTask@Screenshots@@	008b3c98	0085fc9c		5	0	0	1	AsyncTaskManager::Task	Screenshots::				0x94c	007748b0				yes
+Screenshots::SavingTask	.?AUSavingTask@Screenshots@@	008b3c0c	0085fbe0		5	0	0	1	AsyncTaskManager::Task	Screenshots::				0x8e5	00774650				yes
+Screenshots::SetInfoTask	.?AUSetInfoTask@Screenshots@@	008b3cf4	0085fd0c		5	0	0	1	AsyncTaskManager::Task	Screenshots::	0x11d0	medium	7752c9:574940:ctor	0x11d0	00774ba0				yes
+ScriptHUDMenu	.?AVScriptHUDMenu@@	008b4144	00860354		8	0	0	1	cdc::ScriptStdScreen	cdc::ScriptStdScreen	0x8	medium	77e9ec:574940:inline						yes
+ScriptInstanceRefIsUnBindableSequence	.?AVScriptInstanceRefIsUnBindableSequence@@	00890a3c	00845c78		7	1	0	2	cdc::ScriptSequence	cdc::GCObject							004a4690		yes
+ScriptInstanceSensor	.?AVScriptInstanceSensor@@	00890cf8	008471c0		2	0	0	0		ScriptInstanceSensor				0x8	004ad360;004ade50				yes
+ScriptInstanceSensorInst	.?AVScriptInstanceSensorInst@@	00890df0	008475b4		4	0	0	1	cdc::RCObject	cdc::RCObject				0x18	004b1190;004b1260	004b02c0	004b0f00		yes
+ScriptInstanceSensorThread	.?AVScriptInstanceSensorThread@@	00890d1c	008472ac		8	1	0	2	cdc::ScriptThread	cdc::RCObject						004ad4e0	004ad4e0		yes
+ScriptLoadScreen	.?AVScriptLoadScreen@@	00891094	00847ce8		8	0	0	1	cdc::ScriptStdScreen	cdc::ScriptStdScreen									yes
+ScriptMainMenu	.?AVScriptMainMenu@@	00891074	00847cc4		8	0	0	1	cdc::ScriptStdScreen	cdc::ScriptStdScreen	0xc	medium	4ccd7e:574940:inline						yes
+ScriptOptionsScreen	.?AVScriptOptionsScreen@@	00891050	00847ca0		8	0	0	1	cdc::ScriptStdScreen	cdc::ScriptStdScreen	0x8	medium	4ccd53:574940:inline						yes
+ScriptPauseScreen	.?AVScriptPauseScreen@@	00891030	00847c7c		8	0	0	1	cdc::ScriptStdScreen	cdc::ScriptStdScreen	0x8	medium	4ccd28:574940:inline						yes
+ScriptPlayerScriptIsNotLoadedSequence	.?AVScriptPlayerScriptIsNotLoadedSequence@@	00890c40	00846dbc		7	1	0	2	cdc::ScriptSequence	cdc::GCObject							004a4690		yes
+ScriptSection	.?AVScriptSection@@	008a7024	0084c934		22	2	0	1	ResolveSection	ResolveSection							005505e0		yes
+Sense	.?AVSense@@	008b07a4	0085e28c		1	0	0	0		Sense				0x94	00711830	0070bcc0	0070bd40		yes
+ShaderLibSection	.?AVShaderLibSection@@	008a6fbc	0084c874		22	2	0	1	ResolveSection	ResolveSection							005505e0		yes
+SkiSlopeSlideState	.?AVSkiSlopeSlideState@@	008b06f8	0085e1f8		5	0	0	4	SlopeSlideState	StateObj							00769bb0		yes
+SlideLandState	.?AVSlideLandState@@	008b0754	0085e240		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+SlideState	.?AVSlideState@@	008b067c	0085e198		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+SlopeSlideState	.?AVSlopeSlideState@@	008b0494	0085e018		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+SndReceiver	.?AVSndReceiver@@	008a9290	008505d0		5	0	0	2	cdc::FileAllocatedReceiver	cdc::FileReceiver							00583d00		yes
+SplatState	.?AVSplatState@@	008b0558	0085e0a8		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+StateControlState	.?AVStateControlState@@	008b06b8	0085e1c8		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+StateMachine	.?AVStateMachine@@	008abf64	00855458		2	0	0	0		StateMachine						005e0640	005e08e0		yes
+StateObj	.?AVStateObj@@	008abf4c	00855440		5	0	0	0		StateObj						005e0260;005e02b0	005e02b0		yes
+StreamingCallback	.?AVStreamingCallback@@	008aa624								StreamingCallback									base-only
+SwimClimbOutState	.?AVSwimClimbOutState@@	008b05d0	0085e108		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+SwimDiveInState	.?AVSwimDiveInState@@	008b05b0	0085e0f0		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+SwimSplashDownState	.?AVSwimSplashDownState@@	008b05f0	0085e120		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+SwimState	.?AVSwimState@@	008b0614	0085e138		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+SwimTreadState	.?AVSwimTreadState@@	008b0590	0085e0d8		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+TRDispatcherManager	.?AVTRDispatcherManager@@	008b406c	00860134		1	0	0	1	cdc::ScriptDispatcherManager	cdc::ScriptDispatcherManager	0x8	medium	77a333:574940:inline			0077a3a0	0077a3a0		yes
+TRGameNotifier	.?AVTRGameNotifier@@	008abed4	00855174		24	5	0	1	IGameNotifier	IGameNotifier				0x4	005da970	005daa10	005daa10	00e7f080	yes
+TRMarkupManager	.?AVTRMarkupManager@@	008abef8	00855214		12	4	0	1	MarkupManager	MarkupManager						005db9f0	005db9f0		yes
+TRPlayerAPI	.?AVTRPlayerAPI@@	008b07ec	0085e3fc		31	1	0	1	cdc::PlayerAPI	cdc::PlayerAPI	0x4	medium	722b12:574940:inline				00722af0		yes
+TRScriptUnitManager	.?AVTRScriptUnitManager@@	008b409c	00860160		1	0	0	1	cdc::ScriptUnitManager	cdc::ScriptUnitManager						0077a4c0	0077a4c0		yes
+TerrainCallback	.?AVTerrainCallback@@	008aa9a0	00854468		4	1	0	1	cdc::ISceneTerrainCallback	cdc::ISceneTerrainCallback							00773a40		yes
+TerrainGroupThread	.?AVTerrainGroupThread@@	00890cd4	0084719c		8	1	0	2	cdc::ScriptThread	cdc::RCObject						004ad270	004ad270		yes
+ThrownState	.?AVThrownState@@	008b0738	0085e228		5	0	0	3	TopLevelPlayerState	StateObj							00769bb0		yes
+TopLevelPlayerState	.?AVTopLevelPlayerState@@	008b0450	0085df70		5	0	0	2	BasePlayerState	StateObj				0x28	00701390		00769bb0		yes
+TransitionCamera	.?AVTransitionCamera@@	008ac55c	008564a4		28	2	0	4	BaseDrivenCamera	ICamera				0x150	0060b680		005e36c0		yes
+UberObjectComposite	.?AVUberObjectComposite@@	00891150	00847f70		6	1	0	2	ObjState	InstanceUserData				0x78	004d7d50	004d7e60	004d7fe0		yes
+UberObjectComposite_TR8	.?AVUberObjectComposite_TR8@@	008afe50	0085d55c		6	1	0	3	UberObjectComposite	InstanceUserData	0x78	medium	6d5f97:574940:inline			006d4a20	006d5d10		yes
+UberObjectSection	.?AVUberObjectSection@@	008910f8	00847f30		5	1	0	2	ObjState	InstanceUserData	0xd0	medium	4d7af8:574940:ctor	0xc4	004d78d0	004d7270	004d7530		yes
+UberObjectSection::ModelMarkerAnchor	.?AVModelMarkerAnchor@UberObjectSection@@	008910c4	00847d6c		7	3	0	1	cdc::IAnchor	UberObjectSection::	0x18	high	4ab805:574940:ctor;4d10d5:574940:inline	0x18	004d3110		004a5b20		yes
+UberObjectSection_TR8	.?AVUberObjectSection_TR8@@	008afe2c	0085d544		5	2	0	3	UberObjectSection	InstanceUserData	0x1c0	medium	6d6178:574940:ctor	0xf1	006d60b0	006d4640	006d54d0		yes
+UnderWaterRayDrawable	.?AVUnderWaterRayDrawable@@	008afeb8	0085d5c4		12	2	0	1	cdc::IDrawable	cdc::IDrawable				0x3f2	006d8b90	006da090	006da2a0		yes
+UnitObjectDrawable	.?AVUnitObjectDrawable@@	008aa958	008542fc		12	2	0	2	RMIDrawableBase	cdc::IDrawable				0x10	005c3040		005c5a60		yes
+VPoleAttachGroundAnimTarget	.?AVVPoleAttachGroundAnimTarget@@	008b098c	0085ec8c		2	0	0	1	cdc::AnimTarget	cdc::AnimTarget	0x14	medium	751175:574940:inline			00750c60	00750c60		yes
+Vehicle	.?AVVehicle@@	008b73f4	00861a18		14	1	0	0		Vehicle	0x4c0	medium	6abac5:574940:ctor	0x4b4	00795080	00795380	00795840		yes
+VehicleCamera	.?AVVehicleCamera@@	008ac580	00856544		21	1	0	3	BaseGameplayCamera	ICamera				0x128	0060d4e0	0060d5e0	0060d5e0		yes
+WaitForAllSectionsBirthSequence	.?AVWaitForAllSectionsBirthSequence@@	008909b0	008459ec		7	1	0	2	cdc::ScriptSequence	cdc::GCObject							004a4690		yes
+`anonymous namespace'::EnemyBehavior_Root	.?AVEnemyBehavior_Root@?A0x65ecfe05@@	008aefc4	0085a524		18	3	0	1	EnemyBehavior	EnemyBehavior									yes
+`private: bool __thiscall cdc::SceneCellContainer::InternalGetCellsFromVolume(struct cdc::SceneCellContainer::TraverseParams const &) const'::`2'::GeneralCR	.?AUGeneralCR@?1??InternalGetCellsFromVolume@SceneCellContainer@cdc@@ABE_NABUTraverseParams@23@@Z@	008a7508	0084dd74		2		0	1	cdc::SceneCellContainer::CellReceiver	cdc::SceneCellContainer::CellReceiver									no
+bfx::AreaHandlePath	.?AVAreaHandlePath@bfx@@	0088e870	0084220c		3	0	0	1	bfx::Path	bfx::						0041c680	0041c6e0		yes
+bfx::BinaryReplayLogOut	.?AVBinaryReplayLogOut@bfx@@	0088f1e4	00842dcc		17	1	0	1	bfx::ReplayLogOut	bfx::				0x1c	0042c9b0	0042e4d0	0042e4d0		yes
+bfx::BoolSetting	.?AVBoolSetting@bfx@@	0088e01c	00841144		5	0	0	1	bfx::Setting	bfx::							00402070		yes
+bfx::BoxObstacle	.?AVBoxObstacle@bfx@@	0088e740	00841c00	00841bf4@36	6	0	1	3	bfx::ObstacleImpl;bfx::Reloc	bfx::				0x88	00413340	004133f0	004133f0		yes
+bfx::Collider	.?AVCollider@bfx@@	00890630	008451cc		2	0	0	0		bfx::						0048a850	0048a850		yes
+bfx::DummyMover3D	.?AVDummyMover3D@bfx@@	0088e074	00841194		18	3	0	1	bfx::Mover3D	bfx::	0x24	medium	404909:427b00:inline				00402490		yes
+bfx::Fish	.?AVFish@bfx@@	0088e0f4	00841454	00841444@4	19	0	1	3	bfx::Mover3DBase	bfx::	0xf0	medium	4048bc:427b00:ctor	0xf0	004038e0	00403b20	00404d70		yes
+bfx::HLink	.?AVHLink@bfx@@	0088e760	00841d68		2	0	1	2	bfx::HandleTargetBase<class bfx::HLink>;bfx::Reloc	bfx::	0x40	high	41625e:427b00:ctor;416295:427b00:ctor	0x40	0040edd0	0040eec0	0040eec0		yes
+bfx::HandleTargetBase<class bfx::HLink>	.?AV?$HandleTargetBase@VHLink@bfx@@@bfx@@	0088e778								bfx::									base-only
+bfx::HandleTargetBase<class bfx::LinkBase>	.?AV?$HandleTargetBase@VLinkBase@bfx@@@bfx@@	0088e7e0								bfx::									base-only
+bfx::KDTree	.?AVKDTree@bfx@@	0088e6e8	00841874		2	0	0	1	bfx::Reloc	bfx::						00429300	00406750		yes
+bfx::LinkBase	.?AVLinkBase@bfx@@	0088e7c4	00841f10		5	0	0	1	bfx::HandleTargetBase<class bfx::LinkBase>	bfx::						00412100;004161a0;004161f0	004161f0		yes
+bfx::LinkImpl	.?AVLinkImpl@bfx@@	0088e854	00841f9c		5	0	0	2	bfx::LinkBase	bfx::	0x78	medium	4165eb:427b00:ctor	0x48	00416100		00419e90		yes
+bfx::LinkStripImpl	.?AVLinkStripImpl@bfx@@	0088e818	00841f28	00841f40@72	5	0	1	3	bfx::LinkBase;bfx::Reloc	bfx::							004165a0		yes
+bfx::LogDevice	.?AVLogDevice@bfx@@	0088f134	00842894		2	0	0	0		bfx::						00426660;004284c0;0042f830	00426660		yes
+bfx::Mover3D	.?AVMover3D@bfx@@	0088e000	008410d4		18	0	0	0		bfx::				0x30	004049a0	00401000;00402490	00401000		yes
+bfx::Mover3DBase	.?AVMover3DBase@bfx@@	0088e0bc	008413d4	00841424@4	19	0	1	2	bfx::Mover3D;bfx::Reloc	bfx::				0x74	004024b0				yes
+bfx::Mover3DBase::Surfer	.?AVSurfer@Mover3DBase@bfx@@	0088e094	008413a0		2	0	0	1	bfx::Surfer3D	bfx::							004013a0		yes
+bfx::NBody	.?AVNBody@bfx@@	0088f1cc	00842dc0		2	0	0	1	bfx::Reloc	bfx::	0x3c	medium	402320:427b00:ctor	0x3c	0042d230	0042d2a0	0042d2a0		yes
+bfx::NavGraph	.?AVNavGraph@bfx@@	0088e838	00841f4c		2	0	0	1	bfx::Reloc	bfx::						00417560	0041aa80		yes
+bfx::Obstacle	.?AVObstacle@bfx@@	0088e724								bfx::									base-only
+bfx::ObstacleImpl	.?AVObstacleImpl@bfx@@	0088e704	00841bd8		6	0	0	1	bfx::Obstacle	bfx::						004132f0	004132f0		yes
+bfx::Path	.?AVPath@bfx@@	0088e7ac	00841d74		3	0	0	0		bfx::						0040faf0	0040faf0		yes
+bfx::RVec3	.?AVRVec3@bfx@@	0088e41c	008415b4		2	0	1	2	bfx::Vec3;bfx::Reloc	bfx::							004062a0		yes
+bfx::Reloc	.?AVReloc@bfx@@	0088e0dc	008428ec		2	0	0	0		bfx::				0xc	00427d00	00427d30;00429cd0	00429cd0		yes
+bfx::Renderer	.?AVRenderer@bfx@@	0088f118	0084287c		5	0	0	0		bfx::						00426640	00426640		yes
+bfx::ReplayLogOut	.?AVReplayLogOut@bfx@@	0088f150	00842954		17	0	0	0		bfx::						00427ec0	00427ec0		yes
+bfx::ScreenLog	.?AVScreenLog@bfx@@	0088f170	00842a5c		2	0	0	1	bfx::LogDevice	bfx::							004284c0		yes
+bfx::ScreenWarningLog	.?AVScreenWarningLog@bfx@@	0088f20c	00842fa4		2	0	0	1	bfx::LogDevice	bfx::							0042f830		yes
+bfx::Setting	.?AVSetting@bfx@@	0088e03c	0084299c		5	0	0	0		bfx::				0xc	00428030	00428050;0042a360	0042a360	008bf034;008bf04c;008bf074;008bf08c	yes
+bfx::StdioLog	.?AVStdioLog@bfx@@	0088f18c	00842a6c		2	0	0	1	bfx::LogDevice	bfx::							004284c0		yes
+bfx::Surfer3D	.?AVSurfer3D@bfx@@	0088e058	0084115c		2	0	0	0		bfx::						004013a0	004013a0		yes
+bfx::TextReplayLogOut	.?AVTextReplayLogOut@bfx@@	0088f1a8	00842b0c		17	0	0	1	bfx::ReplayLogOut	bfx::							00427ec0		yes
+bfx::Vec3	.?AVVec3@bfx@@	0088e434								bfx::									base-only
+bfx::VolumeGraph	.?AVVolumeGraph@bfx@@	0088e894	00842790		2	0	0	1	bfx::Reloc	bfx::						00423b00	00423ba0		yes
+cdc::AllocGlobals	.?AUAllocGlobals@cdc@@	008a9d60	0085167c		1	0	0	0		cdc::				0x1458	00596b30				yes
+cdc::Allocator	.?AVAllocator@cdc@@	008a9d98	0085176c		19	0	0	0		cdc::				0x14	0059a350	00599710;00599b90	00599710		yes
+cdc::AnimBlendNode	.?AVAnimBlendNode@cdc@@	0088f4dc	0084359c		15	3	0	2	cdc::AnimPipelineNode	cdc::						0044f590	0044f590		yes
+cdc::AnimBoneSetNode	.?AVAnimBoneSetNode@cdc@@	0088f4fc	008435dc		15	3	0	2	cdc::AnimPipelineNode	cdc::				0x24	0044f5e0	0044f630	0044f630		yes
+cdc::AnimDrivenRagdollNode	.?AVAnimDrivenRagdollNode@cdc@@	0088f520	0084361c		18	1	0	3	cdc::AnimRagdollNode	cdc::				0xc4	0044f700	0044e350	0044f790		yes
+cdc::AnimFaceFxNode	.?AVAnimFaceFxNode@cdc@@	0088f548	0084366c		15	3	0	2	cdc::AnimPipelineNode	cdc::				0x24	0044fc90	0044fd00	0044fd00		yes
+cdc::AnimForwardNode	.?AVAnimForwardNode@cdc@@	0088f56c	008436ac		15	3	0	2	cdc::AnimPipelineNode	cdc::						0044fd30	0044fd30		yes
+cdc::AnimFragmentNode	.?AVAnimFragmentNode@cdc@@	0088f590	008436ec		15	2	0	2	cdc::AnimPipelineNode	cdc::				0x6e	0044fd60	0044fe60	0044fe60		yes
+cdc::AnimHostedNode	.?AVAnimHostedNode@cdc@@	0088f5b4	0084372c		15	2	0	2	cdc::AnimPipelineNode	cdc::				0x28	0044ffe0	00450040	00450040		yes
+cdc::AnimInputSocket	.?AVAnimInputSocket@cdc@@	0088f374	00843398		7	0	0	1	cdc::AnimSocket	cdc::	0x28	high	4504a3:574940:inline;451b4e:574940:inline;451b82:574940:inline;452172:574940:inline				0044bd60		yes
+cdc::AnimInterpNode	.?AVAnimInterpNode@cdc@@	0088f5d8	0084376c		17	2	0	2	cdc::AnimPipelineNode	cdc::				0x30	00450070	004500f0	004500f0		yes
+cdc::AnimMirrorNode	.?AVAnimMirrorNode@cdc@@	0088f5fc	008437b4		15	3	0	2	cdc::AnimPipelineNode	cdc::				0x24	00450120	00450190	00450190		yes
+cdc::AnimModifierNode	.?AVAnimModifierNode@cdc@@	0088f620	008437f4		15	3	0	2	cdc::AnimPipelineNode	cdc::				0x24	004501c0	00450250	00450250		yes
+cdc::AnimOutputSocket	.?AVAnimOutputSocket@cdc@@	0088f474	00843508		7	0	0	1	cdc::AnimSocket	cdc::	0x1c	high	4504d7:574940:inline;451bb6:574940:inline;452102:574940:inline;4521ad:574940:inline			0044f380	0044f380		yes
+cdc::AnimOverlayNode	.?AVAnimOverlayNode@cdc@@	0088f644	00843834		15	3	0	2	cdc::AnimPipelineNode	cdc::				0x24	00450280	004502f0	004502f0		yes
+cdc::AnimPhysicsNode	.?AVAnimPhysicsNode@cdc@@	0088f668	00843874		15	2	0	2	cdc::AnimPipelineNode	cdc::				0x24	00450320	00450390	00450390		yes
+cdc::AnimPipelineGraph	.?AVAnimPipelineGraph@cdc@@	0088f68c	008438b4		15	2	0	2	cdc::AnimPipelineNode	cdc::				0x64	004503c0	0044eaf0	00450440		yes
+cdc::AnimPipelineInputSocket	.?AVAnimPipelineInputSocket@cdc@@	0088f398	008433b8		7	0	0	2	cdc::AnimInputSocket	cdc::	0x2c	medium	4520c2:574940:inline				0044bd60		yes
+cdc::AnimPipelineNode	.?AVAnimPipelineNode@cdc@@	0088f3e4	008433fc		15	3	0	1	cdc::IAnimGraphNode	cdc::				0x20	0044ebb0	0044db20	0044eb80		yes
+cdc::AnimPoseNode	.?AVAnimPoseNode@cdc@@	0088f408	0084343c		15	3	0	2	cdc::AnimPipelineNode	cdc::				0x61	0044ecd0	0044ed50	0044ed50		yes
+cdc::AnimRagdollDataNode	.?AVAnimRagdollDataNode@cdc@@	0088f428	0084347c		15	3	0	2	cdc::AnimPipelineNode	cdc::				0x28	0044ed80	0044ede0	0044ede0		yes
+cdc::AnimRagdollNode	.?AVAnimRagdollNode@cdc@@	0088f450	008434bc		18	1	0	2	cdc::AnimPipelineNode	cdc::				0x40	0044ee10	0044eea0	0044eea0		yes
+cdc::AnimSocket	.?AVAnimSocket@cdc@@	0088f354	00843378		7	0	0	0		cdc::						0044bd60	0044bd60		yes
+cdc::AnimStateGraph	.?AVAnimStateGraph@cdc@@	0088f498	00843528		12	1	0	1	cdc::IAnimGraphNode	cdc::				0x98	00452270	0044e000	0044f430		yes
+cdc::AnimSyncNode	.?AVAnimSyncNode@cdc@@	0088f4bc	0084355c		15	3	0	2	cdc::AnimPipelineNode	cdc::				0x24	0044f460	0044f4d0	0044f4d0		yes
+cdc::AnimTarget	.?AVAnimTarget@cdc@@	0088f2a4	00843124		2	1	0	0		cdc::						00443960;00445120	00445120		yes
+cdc::AtomAnchor	.?AVAtomAnchor@cdc@@	00890a70	00845da4		7	1	0	1	cdc::IAnchor	cdc::	0x10	high	4a8dc5:574940:inline;4a8e15:574940:inline;5b1bd5:574940:inline				004a5b20		yes
+cdc::BaseInstanceAnchor	.?AVBaseInstanceAnchor@cdc@@	008aa5fc	00853738		7	0	0	1	cdc::IAnchor	cdc::	0x10	high	4ab2a5:574940:ctor;5b1c05:574940:inline	0x10	005b4810		004a5b20		yes
+cdc::BaseInstanceBoneAnchor	.?AVBaseInstanceBoneAnchor@cdc@@	00890b2c	0084644c		7	0	0	1	cdc::IAnchor	cdc::	0xc	high	4ab2e5:574940:inline;5b1c35:574940:inline				004a5b20		yes
+cdc::CapturedModel	.?AVCapturedModel@cdc@@	00891210	00848cd0		7	1	0	1	cdc::RenderResource	cdc::				0xc8	004f5780	004f4af0	004f5800		yes
+cdc::CenterOfMassAnchor	.?AVCenterOfMassAnchor@cdc@@	00890a90	00845dc4		7	1	0	1	cdc::IAnchor	cdc::	0xc	high	4a7624:574940:inline;5b1c85:574940:inline				004a5b20		yes
+cdc::CinematicHandler	.?AVCinematicHandler@cdc@@	0088f70c	0084399c		7	0	0	1	cdc::MediaStreamHandler	cdc::						00454280	00454280		yes
+cdc::CinematicHandlerImpl	.?AVCinematicHandlerImpl@cdc@@	0088f730	008439d0		7	1	0	2	cdc::CinematicHandler	cdc::				0x114	004542c0	00456fd0	00457970		yes
+cdc::CommonMaterial	.?AVCommonMaterial@cdc@@	008a2388	0084902c		4	0	0	1	cdc::IMaterial	cdc::							00505870		yes
+cdc::CommonRenderModelInstance	.?AVCommonRenderModelInstance@cdc@@	008911e4	00848c5c		28	2	0	2	cdc::RenderModelInstance	cdc::				0x24	004f4580		004f55b0;0050e330		yes
+cdc::CullingAllocator	.?AVCullingAllocator@cdc@@	008a7440								cdc::									base-only
+cdc::DP_Checkpts	.?AUDP_Checkpts@cdc@@	008aa740	00853c10		3	1	0	1	cdc::DP_Obj	cdc::				0x78	005b9670	005b9700	005b9700		yes
+cdc::DP_Obj	.?AUDP_Obj@cdc@@	008aa644	00853758		3	0	0	0		cdc::				0x44	005b1cb0	005b1d30	005b1d30		yes
+cdc::DebugIRingBuffer	.?AVDebugIRingBuffer@cdc@@	008a91d0								cdc::									base-only
+cdc::DebugRingBuffer	.?AVDebugRingBuffer@cdc@@	008a932c								cdc::									base-only
+cdc::DebugRingBufferChain	.?AVDebugRingBufferChain@cdc@@	008a9218								cdc::									base-only
+cdc::DefaultCullingAllocator	.?AVDefaultCullingAllocator@cdc@@	008a74d8	0084dd64		2	0	0	1	cdc::CullingAllocator	cdc::									yes
+cdc::DefaultNativeScript	.?AVDefaultNativeScript@cdc@@	008a78bc	0084e2bc		13	2	0	2	cdc::NativeScriptType	cdc::							005760c0		yes
+cdc::DefaultNativeType	.?AVDefaultNativeType@cdc@@	008a78e4	0084e2f4		13	2	0	2	cdc::NativeScriptType	cdc::							005760c0		yes
+cdc::File	.?AVFile@cdc@@	0088f8b0	00843f40		3	0	0	0		cdc::						00472ff0	00472ff0		yes
+cdc::FileAllocatedReceiver	.?AVFileAllocatedReceiver@cdc@@	008a9264								cdc::									base-only
+cdc::FileReceiver	.?AVFileReceiver@cdc@@	0088f890	00843f28		5	1	0	0		cdc::						00583d00	00583d00		yes
+cdc::FileRequest	.?AVFileRequest@cdc@@	0088f994	008441c0		9	0	0	0		cdc::						004743c0	004743c0		yes
+cdc::FileSystem	.?AVFileSystem@cdc@@	0088f8c8	00843f54		15	0	0	0		cdc::						00472590	00472590		yes
+cdc::FileUserBufferReceiver	.?AVFileUserBufferReceiver@cdc@@	0088f908	00844014		5	0	0	1	cdc::FileReceiver	cdc::							00583d00		yes
+cdc::FixedAllocator	.?AVFixedAllocator@cdc@@	008a9db4	008517bc		19	0	0	1	cdc::Allocator	cdc::				0x30	0059a3d0	00598180	00598a60	00a14040;00e799a0	yes
+cdc::GCObject	.?AVGCObject@cdc@@	0089081c	0084e290		4	0	0	0		cdc::				0x4	00575c50	00575c70;00576380	00576380		yes
+cdc::GameHeapAllocator	.?AVGameHeapAllocator@cdc@@	008a9df8	0085180c		27	0	0	2	cdc::HeapAllocator	cdc::							00599710		yes
+cdc::GarbageCollector	.?AVGarbageCollector@cdc@@	008a7898	0084e16c		10	0	0	0		cdc::						005761e0;00576310	005761e0		yes
+cdc::GarbageCollector::Impl	.?AVImpl@GarbageCollector@cdc@@	008a7930	0084e354		10	0	0	1	cdc::GarbageCollector	cdc::				0x24	00576200		00576310		yes
+cdc::GenericLimbLockController	.?AVGenericLimbLockController@cdc@@	0088f2c4	00843130		6	0	0	1	cdc::LimbLockController	cdc::				0x160	00445160		004439f0		yes
+cdc::Geom	.?AVGeom@cdc@@	0088f7e8	008449a8		5	0	0	0		cdc::				0x30	0047c640;0047c6b0;0047d7d0	0047c710;0047f640	0047f640		yes
+cdc::GeomBox	.?AVGeomBox@cdc@@	0088f7cc	00843d2c		5	0	0	1	cdc::Geom	cdc::	0x40	medium	4d9595:574940:ctor	0x40	00460390		00464520		yes
+cdc::GeomDisc	.?AVGeomDisc@cdc@@	00890440	008449c4		5	0	0	1	cdc::Geom	cdc::				0x34	0047d440		0047f640		yes
+cdc::GeomPoint	.?AVGeomPoint@cdc@@	0089045c	008449dc		5	0	0	1	cdc::Geom	cdc::	0x30	medium	47fab3:574940:ctor	0x30	0047d4f0		0047f640		yes
+cdc::GeomRect	.?AVGeomRect@cdc@@	00890478	008449f4		5	0	0	1	cdc::Geom	cdc::	0x40	medium	47f9ba:574940:ctor	0x40	0047d560		0047f640		yes
+cdc::GeomSegment	.?AVGeomSegment@cdc@@	0088f800	00843d44		5	0	0	1	cdc::Geom	cdc::	0x50	medium	4d96dd:574940:ctor	0x50	004603c0		00464520		yes
+cdc::GeomSphere	.?AVGeomSphere@cdc@@	0088f820	00843d5c		5	0	0	1	cdc::Geom	cdc::	0x40	high	47f8ab:574940:ctor;4d9647:574940:ctor;4d9738:574940:ctor	0x34	00460410		00464520		yes
+cdc::GeomSweep	.?AVGeomSweep@cdc@@	0088f840	00843d74		5	0	0	1	cdc::Geom	cdc::	0x70	high	47fc1d:574940:ctor;4d9718:574940:ctor	0x68	00460430	004604c0	004604c0		yes
+cdc::GeomTriangle	.?AVGeomTriangle@cdc@@	0088f85c	00843d8c		5	0	0	1	cdc::Geom	cdc::				0x60	00460510		00464520		yes
+cdc::GeomWrap	.?AVGeomWrap@cdc@@	00890494	00844a0c		5	0	0	1	cdc::Geom	cdc::	0x70	medium	47fc7a:574940:ctor	0x68	0047d5e0;0047d700	0047d800	0047d800		yes
+cdc::Heap	.?AVHeap@cdc@@	008a9d80	008516e4		3	0	0	0		cdc::				0x42d	005970a0	005981e0	005981e0		yes
+cdc::HeapAllocator	.?AVHeapAllocator@cdc@@	008a9dd8								cdc::									base-only
+cdc::IAnchor	.?AVIAnchor@cdc@@	00890900	008458e8		7	0	0	0		cdc::						004a5b20	004a5b20		yes
+cdc::IAnimGraphNode	.?AVIAnimGraphNode@cdc@@	0088f320	008431ac		12	0	0	0		cdc::						00448810	00448810		yes
+cdc::IDrawable	.?AVIDrawable@cdc@@	008aa5e0	00853704		12	2	0	0		cdc::						005b1b70	005b1b70		yes
+cdc::ILightResource	.?AVILightResource@cdc@@	008a25d8	008494c4		9	0	0	1	cdc::RenderResource	cdc::							0050e330		yes
+cdc::IMaterial	.?AVIMaterial@cdc@@	008a234c	00848ffc		4	0	0	0		cdc::						00505870	00505870		yes
+cdc::IMatrixState	.?AVIMatrixState@cdc@@	008a23e8	00849060		8	0	0	0		cdc::						00506d10	00506d10		yes
+cdc::IMessageChannelReferrer	.?AVIMessageChannelReferrer@cdc@@	00890838	00845804		3	0	0	0		cdc::						004a2e50	004a2e50		yes
+cdc::IRenderColorSurface	.?AVIRenderColorSurface@cdc@@	008a279c								cdc::									base-only
+cdc::IRenderDepthSurface	.?AVIRenderDepthSurface@cdc@@	008a2774								cdc::									base-only
+cdc::IRenderImage	.?AVIRenderImage@cdc@@	008a2594								cdc::									base-only
+cdc::IRenderLight	.?AVIRenderLight@cdc@@	008a2620	0084951c		27	0	0	1	cdc::RenderResource	cdc::							0050e330		yes
+cdc::IRenderSurface	.?AVIRenderSurface@cdc@@	008a2750								cdc::									base-only
+cdc::IRenderTarget	.?AVIRenderTarget@cdc@@	008a2524								cdc::									base-only
+cdc::IRenderTerrain	.?AVIRenderTerrain@cdc@@	008a28c8	00849954		19	0	0	1	cdc::RenderResource	cdc::							0050e330		yes
+cdc::IRingBuffer	.?AVIRingBuffer@cdc@@	008a91b0								cdc::									base-only
+cdc::IRippleMap	.?AVIRippleMap@cdc@@	008a29ec	00849b90		4	0	0	0		cdc::				0x4	00515f70	00515e90	00515e90		yes
+cdc::IScene	.?AVIScene@cdc@@	008a73a0	0084db24		35	0	0	0		cdc::						005587d0	005587d0		yes
+cdc::ISceneCell	.?AVISceneCell@cdc@@	008a73bc	0084dbb4		23	0	0	0		cdc::						00558800	00558800		yes
+cdc::ISceneCellGroup	.?AVISceneCellGroup@cdc@@	008a73dc	0084dc14		19	0	0	0		cdc::						00558830	00558830		yes
+cdc::ISceneEntity	.?AVISceneEntity@cdc@@	008a7400	0084dc64		19	0	0	0		cdc::						00558860	00558860		yes
+cdc::ISceneLight	.?AVISceneLight@cdc@@	008a7464	0084dcd4		32	0	0	1	cdc::ISceneEntity	cdc::							00558860		yes
+cdc::IScenePortal	.?AVIScenePortal@cdc@@	008a7420	0084dcb4		7	0	0	0		cdc::						00558890	00558890		yes
+cdc::ISceneTerrainCallback	.?AVISceneTerrainCallback@cdc@@	008aa89c	00853f20		4	0	0	0		cdc::						00773a40	00773a40		yes
+cdc::IShaderLib	.?AVIShaderLib@cdc@@	008a2964	00849a60		3	0	0	0		cdc::						00515510	00515510		yes
+cdc::IWaveSection	.?AVIWaveSection@cdc@@	008a93a0								cdc::									base-only
+cdc::ImageLoader	.?AVImageLoader@cdc@@	008a7060	0084c9f0		5	0	0	1	cdc::FileReceiver	cdc::							00583d00		yes
+cdc::InstanceDrawable	.?AVInstanceDrawable@cdc@@	008aa6fc	00853abc		12	3	1	2	cdc::IDrawable;InstanceComponent	cdc::				0x24	005b93e0	005b76b0	005b94d0		yes
+cdc::JobChainImpl	.?AVJobChainImpl@cdc@@	00890710	008456b4		7	0	0	0		cdc::						004a2800	004a2800		yes
+cdc::JobChainImplWithThreads	.?AVJobChainImplWithThreads@cdc@@	00890730	0084572c		7	0	0	1	cdc::JobChainImpl	cdc::	0x3f30	medium	4a2891:574940:ctor	0x3f30	004a2710	004a2750	004a2950		yes
+cdc::JobChainImplWithoutThreads	.?AVJobChainImplWithoutThreads@cdc@@	0089075c	0084574c		7	0	0	1	cdc::JobChainImpl	cdc::	0x10c	medium	4a28b6:574940:ctor	0x4	004a27c0		004a2800		yes
+cdc::JobHarness	.?AVJobHarness@cdc@@	0088f77c								cdc::									base-only
+cdc::LimbLockController	.?AVLimbLockController@cdc@@	0088f27c	00843084		6	0	0	0		cdc::						004439f0	004439f0		yes
+cdc::MSFileSource	.?AVMSFileSource@cdc@@	0088f974	00844178		8	0	0	0		cdc::						00474380	00474380		yes
+cdc::MSFileSourceDisk	.?AVMSFileSourceDisk@cdc@@	0088f9d8	008441f8		8	0	0	1	cdc::MSFileSource	cdc::							00474380		yes
+cdc::MSFileSystem	.?AVMSFileSystem@cdc@@	0088fa24	0084425c		15	2	0	1	cdc::FileSystem	cdc::						00474b20	00474b70		yes
+cdc::MSFileSystem::File	.?AVFile@MSFileSystem@cdc@@	0088f9b4	008441e8		3	0	0	1	cdc::File	cdc::				0x118	004744c0	00473d60	00474550		yes
+cdc::MSFileSystem::Request	.?AVRequest@MSFileSystem@cdc@@	0088f9fc	0084421c		9	1	0	1	cdc::FileRequest	cdc::							004743c0		yes
+cdc::MarkerAnchor	.?AVMarkerAnchor@cdc@@	00890958	00845968		7	1	0	1	cdc::IAnchor	cdc::	0x8	high	4a5605:574940:inline;5be155:574940:inline				004a5b20		yes
+cdc::MediaStream	.?AVMediaStream@cdc@@	0088f6c4	00843960		10	0	0	0		cdc::						004532f0	004532f0		yes
+cdc::MediaStreamHandler	.?AVMediaStreamHandler@cdc@@	0088f6e4								cdc::									base-only
+cdc::MemBlockHeap	.?AVMemBlockHeap@cdc@@	008a9e40	008518dc		3	0	0	1	cdc::Heap	cdc::				0x43c	00599a80		005981e0		yes
+cdc::MemHeapAllocator	.?AVMemHeapAllocator@cdc@@	008a9e60	008518ec		28	0	0	3	cdc::GameHeapAllocator	cdc::				0x2c	00599b10		00599b90		yes
+cdc::ModelMarkerAnchor	.?AVModelMarkerAnchor@cdc@@	008aa8c4	00853f34		7	2	0	1	cdc::IAnchor	cdc::	0x14	high	4ab325:574940:ctor;4ab365:574940:ctor;5be215:574940:inline	0x14	005be1a0		004a5b20		yes
+cdc::MultiplexStream	.?AVMultiplexStream@cdc@@	008a9240								cdc::									base-only
+cdc::MultiplexStreamImpl	.?AVMultiplexStreamImpl@cdc@@	008a9350	0085094c		10	0	0	2	cdc::MultiplexStream	cdc::				0x7a8	00585750	005858d0	00588b80		yes
+cdc::NativeBuiltIn	.?AVNativeBuiltIn@cdc@@	008a7878	0084e15c		3	0	0	0		cdc::									yes
+cdc::NativeBuiltInImpl	.?AVNativeBuiltInImpl@cdc@@	008a7a20	0084e5d4		3	0	0	1	cdc::NativeBuiltIn	cdc::	0x14	medium	57ec9f:574940:ctor	0x14	0057bf90	0057c660	0057c660		yes
+cdc::NativeScriptType	.?AVNativeScriptType@cdc@@	008a7854	0084e124		13	2	0	1	cdc::RCObject	cdc::				0x21	00574b20;00574b60	00574bb0;005760c0	005760c0		yes
+cdc::OSHeap	.?AVOSHeap@cdc@@	008a9e84	0085198c		3	0	0	1	cdc::Heap	cdc::				0x43c	0059a050		005981e0		yes
+cdc::OSHeapAllocator	.?AVOSHeapAllocator@cdc@@	008a9ea0	0085199c		27	0	0	3	cdc::GameHeapAllocator	cdc::				0x2c	0059a150		00599b90		yes
+cdc::OSHeapWithSmallPoolAllocator	.?AVOSHeapWithSmallPoolAllocator@cdc@@	008a9ec4	00851a0c		27	0	0	4	cdc::OSHeapAllocator	cdc::							00599b90		yes
+cdc::OcclusionTree	.?AVOcclusionTree@cdc@@	008a7574	0084dd80		2	0	0	1	cdc::RCObject	cdc::	0xa0	high	567a16:558da0:ctor;56845c:574940:ctor;5686a4:558da0:ctor;5688c8:558da0:ctor	0xa0	0055f6b0;00564c50;00564da0	00567bc0	00567bc0		yes
+cdc::PCBaseRenderTarget	.?AVPCBaseRenderTarget@cdc@@	008a24fc	008498a8		14	1	0	2	cdc::IRenderTarget	cdc::				0x5c	005103d0	00510100	005104a0		yes
+cdc::PCBaseTexture	.?AVPCBaseTexture@cdc@@	008a2858	0084986c		14	1	0	2	cdc::TextureMap	cdc::							0050e330		yes
+cdc::PCBufferTexture	.?AVPCBufferTexture@cdc@@	008a2bc4	00849d94	00849d8c@16	14	0	1	4	cdc::PCDeviceTexture	cdc::				0x50	0051c610	0051c670	0051c670		yes
+cdc::PCColorDOFEffect	.?AVPCColorDOFEffect@cdc@@	008a2a8c	00849c2c		1	0	0	1	cdc::PCRenderEffect	cdc::				0x1540	00517470	00517790	00517790		yes
+cdc::PCColorDOFEffect::EffectDrawable	.?AVEffectDrawable@PCColorDOFEffect@cdc@@	008a2a58	00849c10		3	1	0	1	cdc::RenderDrawable	cdc::				0x2a	005172b0		0050f240		yes
+cdc::PCColorSurface	.?AVPCColorSurface@cdc@@	008a2c54	00849e00	00849df8@12	5	0	1	2	cdc::PCInternalResource;cdc::PCSurface	cdc::	0x44	medium	5255b8:574940:ctor	0x42	0051cfb0	0051d040	0051d040		yes
+cdc::PCDeferredLegacyPrimGroup	.?AVPCDeferredLegacyPrimGroup@cdc@@	008a26cc	00849744		3	0	0	2	cdc::PCDeferredPrimGroup	cdc::				0x2c	0050e580		0050f240		yes
+cdc::PCDeferredPrimGroup	.?AVPCDeferredPrimGroup@cdc@@	008a26a4								cdc::									base-only
+cdc::PCDepthSurface	.?AVPCDepthSurface@cdc@@	008a2ce4	0084a5ec	0084a5d4@4	1	0	1	2	cdc::PCSurface;cdc::PCInternalResource	cdc::				0x21	0051fdb0;0051fee0;0051ff30				yes
+cdc::PCDeviceBaseTexture	.?AVPCDeviceBaseTexture@cdc@@	008a2c0c	0084a748		13	0	0	1	cdc::PCInternalResource	cdc::						00520f20	00520f20		yes
+cdc::PCDeviceCubeTexture	.?AVPCDeviceCubeTexture@cdc@@	008a328c	0084a788		13	0	0	2	cdc::PCDeviceBaseTexture	cdc::				0x5c	00520fa0	00521070	00521380		yes
+cdc::PCDeviceCubeTexture::PCCubeMapSurface	.?AVPCCubeMapSurface@PCDeviceCubeTexture@cdc@@	008a3254	0084a780		1	0	0	1	cdc::PCSurface	cdc::									yes
+cdc::PCDeviceManager	.?AVPCDeviceManager@cdc@@	008a32b8	0084b54c		4	0	0	0		cdc::	0x29c	medium	523a17:574940:ctor	0x29c	005236e0;00523810				yes
+cdc::PCDeviceTexture	.?AVPCDeviceTexture@cdc@@	008a2be8	0084b67c	0084b674@16	14	0	1	3	cdc::PCDeviceBaseTexture;cdc::PCSurface	cdc::	0x48	high	52545e:574940:ctor;525561:574940:ctor	0x48	00523d70	00524590	00524770		yes
+cdc::PCDynamicTexture	.?AVPCDynamicTexture@cdc@@	008a32e0	0084b63c		13	1	0	2	cdc::PCDeviceBaseTexture	cdc::				0x28	00523d10	005242d0	005242d0		yes
+cdc::PCDynamicVertexBuffer	.?AVPCDynamicVertexBuffer@cdc@@	008a3354	0084b734		5	0	0	1	cdc::PCVertexBuffer	cdc::				0x18	00524800		005247e0		yes
+cdc::PCExternalResource	.?AVPCExternalResource@cdc@@	008a2264	00848ec4		1	0	0	0		cdc::				0x14	00502600	00502670;005026b0	005026b0		yes
+cdc::PCFeedbackEffect	.?AVPCFeedbackEffect@cdc@@	008a2ab8	00849c84	00849c8c@4	1	0	1	2	cdc::PCRenderEffect;cdc::PCInternalResource	cdc::				0x44	0051a150	0051aa10	0051aa10		yes
+cdc::PCFeedbackEffect::EffectDrawable	.?AVEffectDrawable@PCFeedbackEffect@cdc@@	008a2adc	00849ca4		3	1	0	1	cdc::RenderDrawable	cdc::				0x34	0051a390		0050f240		yes
+cdc::PCFinishEffect	.?AVPCFinishEffect@cdc@@	008a2b14	00849ce8		1	0	0	1	cdc::PCRenderEffect	cdc::				0xa34	0051aa70		0051ae20		yes
+cdc::PCFinishEffect::EffectDrawable	.?AVEffectDrawable@PCFinishEffect@cdc@@	008a2b38	00849cf0		3	1	0	1	cdc::RenderDrawable	cdc::				0x924	0051ad20		0050f240		yes
+cdc::PCImmediateIndexBuffer	.?AVPCImmediateIndexBuffer@cdc@@	008a3380	0084b780	0084b768@4	3	0	1	2	cdc::PCIndexBuffer;cdc::PCInternalResource	cdc::				0x1d	005248e0	00524920	00524920		yes
+cdc::PCIndexBuffer	.?AVPCIndexBuffer@cdc@@	008a330c	0084b6f0		3	0	0	0		cdc::						005247a0	005247a0		yes
+cdc::PCIndexPool	.?AVPCIndexPool@cdc@@	008a33b0	0084b7ac		5	0	0	1	cdc::PCInternalResource	cdc::				0x18	00524b10	00524a40	00524bd0		yes
+cdc::PCInternalResource	.?AVPCInternalResource@cdc@@	008903fc	0084b7e0		5	0	0	0		cdc::				0xc	00524c00	00524c30;00524c80	00524c80		yes
+cdc::PCLightManager	.?AVPCLightManager@cdc@@	008a2318	00848f44		5	0	0	1	cdc::PCInternalResource	cdc::				0x1688	005053a0	00504ff0	005054d0		yes
+cdc::PCLightResource	.?AVPCLightResource@cdc@@	008a25fc	008494ec	00849514@4	9	1	1	3	cdc::ILightResource;cdc::PCExternalResource	cdc::				0x1d1c	0050b7b0		0050af70		yes
+cdc::PCMaterial	.?AVPCMaterial@cdc@@	008a2368	00849018	00849010@8	4	0	1	3	cdc::CommonMaterial;cdc::PCExternalResource	cdc::				0x8	00505cf0	00505d30	00505d30		yes
+cdc::PCMatrixState	.?AVPCMatrixState@cdc@@	008a2408	00849084		8	0	0	1	cdc::IMatrixState	cdc::	0x10	high	507445:574940:ctor;50909f:574940:ctor	0x10	00506cf0		00506d10		yes
+cdc::PCModelDrawable	.?AVPCModelDrawable@cdc@@	008a26f8	00849754		3	0	0	2	cdc::PCDeferredPrimGroup	cdc::				0x34	0050e690;0050e780		0050f240		yes
+cdc::PCNGAPrimitive	.?AVPCNGAPrimitive@cdc@@	008a22d8	00848f14		3	0	0	1	cdc::RenderDrawable	cdc::				0x7c	00502ff0		0050f240		yes
+cdc::PCNoiseEffect	.?AVPCNoiseEffect@cdc@@	008a2b9c	00849d4c		1	0	0	1	cdc::PCRenderEffect	cdc::				0x28	0051b6a0	0051b770	0051b770		yes
+cdc::PCNoiseEffect::EffectDrawable	.?AVEffectDrawable@PCNoiseEffect@cdc@@	008a2b6c	00849d30		3	1	0	1	cdc::RenderDrawable	cdc::							0050f240		yes
+cdc::PCPixelShader	.?AVPCPixelShader@cdc@@	008a33d8	0084b814		5	0	0	1	cdc::PCInternalResource	cdc::				0x20	00524d00	00524cc0	00524cc0		yes
+cdc::PCPixelShaderTable	.?AVPCPixelShaderTable@cdc@@	008a34cc	0084b8f0		1	0	0	1	cdc::PCShaderTable	cdc::				0x19	00526440	005262b0	005262b0		yes
+cdc::PCPrimitive	.?AVPCPrimitive@cdc@@	008a22b8	00848f00		3	0	0	1	cdc::RenderDrawable	cdc::				0x84	00502820		0050f240		yes
+cdc::PCRenderColorSurface	.?AVPCRenderColorSurface@cdc@@	008a2830	00849864		1	0	1	3	cdc::IRenderColorSurface;cdc::PCRenderSurface	cdc::	0x10	medium	525839:574940:inline						yes
+cdc::PCRenderContext	.?AVPCRenderContext@cdc@@	008a342c	0084b84c		8	0	0	1	cdc::PCInternalResource	cdc::				0x50	005257c0	005251c0	005258d0		yes
+cdc::PCRenderDepthSurface	.?AVPCRenderDepthSurface@cdc@@	008a27c4	0084985c		1	0	1	3	cdc::IRenderDepthSurface;cdc::PCRenderSurface	cdc::	0x10	medium	52588b:574940:inline						yes
+cdc::PCRenderDevice	.?AVPCRenderDevice@cdc@@	008a2570	008492cc	008493e8@4	70	8	1	2	cdc::RenderDevice;cdc::PCInternalResource	cdc::				0xfdfc	005088a0	005092c0	00509ac0		yes
+cdc::PCRenderEffect	.?AVPCRenderEffect@cdc@@	008a2a34	00849c04		1	0	0	0		cdc::						00516dd0;0051ae20	00516dd0		yes
+cdc::PCRenderImage	.?AVPCRenderImage@cdc@@	008a25b4	00849474		11	1	0	2	cdc::IRenderImage	cdc::				0xc	00509e30		00509e50		yes
+cdc::PCRenderLight	.?AVPCRenderLight@cdc@@	008a2640	00849594	0084958c@4	27	4	1	3	cdc::IRenderLight;cdc::PCExternalResource	cdc::				0x118	0050b120	0050b1e0	0050a3a0;0050b1e0		yes
+cdc::PCRenderModel	.?AVPCRenderModel@cdc@@	008a2684	00849704	008496fc@4	15	1	1	3	cdc::RenderMesh;cdc::PCExternalResource	cdc::				0x48	0050ea80	0050e370	0050eb00		yes
+cdc::PCRenderModelInstance	.?AVPCRenderModelInstance@cdc@@	008a271c	00849764	008497d8@36	28	3	1	4	cdc::CommonRenderModelInstance;cdc::PCExternalResource	cdc::				0x39	0050e8c0	0050f6d0	004f55b0;0050e960;0050f6d0		yes
+cdc::PCRenderSurface	.?AVPCRenderSurface@cdc@@	008a27ec								cdc::									base-only
+cdc::PCRenderTarget	.?AVPCRenderTarget@cdc@@	008a24d8	008491b4	008491f0@92	14	1	1	4	cdc::PCBaseRenderTarget;cdc::PCExternalResource	cdc::	0x70	medium	50843e:574940:ctor	0x4	00506d90	00506e30	00506e30		yes
+cdc::PCRenderTerrain	.?AVPCRenderTerrain@cdc@@	008a28ec	008499ac	008499a4@4	19	1	1	3	cdc::IRenderTerrain;cdc::PCExternalResource	cdc::				0xd0	00511240	00510a60	00510b00;005112b0		yes
+cdc::PCScene	.?AVPCScene@cdc@@	008a2944	00849a28		5	1	0	1	cdc::RenderDrawable	cdc::				0x680	00513be0		00514660		yes
+cdc::PCShaderLib	.?AVPCShaderLib@cdc@@	008a2984	00849a78	00849a70@4	3	1	1	2	cdc::IShaderLib;cdc::PCExternalResource	cdc::				0x20	005155d0	00515630	00515630		yes
+cdc::PCShaderManager	.?AVPCShaderManager@cdc@@	008a345c	0084b8b8		1	0	0	0		cdc::	0x24	medium	5238cf:574940:ctor	0x24	00525cb0	00525ea0	00525f10		yes
+cdc::PCShaderTable	.?AVPCShaderTable@cdc@@	008a3484	0084b8e0		1	0	0	0		cdc::				0x4	00526200;00526230	005261d0	005261d0		yes
+cdc::PCShadowMap	.?AVPCShadowMap@cdc@@	008a29a8	00849aa8		5	0	0	1	cdc::PCInternalResource	cdc::				0x24	005156e0	005157b0	005157b0		yes
+cdc::PCStateManager	.?AVPCStateManager@cdc@@	008a3508	0084b918		5	0	0	1	cdc::PCInternalResource	cdc::				0x600	00527f30	00527ed0	00527ed0		yes
+cdc::PCStaticIndexBuffer	.?AVPCStaticIndexBuffer@cdc@@	008a352c	0084b964	0084b94c@4	3	0	1	2	cdc::PCIndexBuffer;cdc::PCInternalResource	cdc::				0x30	00528110	005282b0	005282b0		yes
+cdc::PCStaticPool	.?AVPCStaticPool@cdc@@	008a3558	0084b990		5	0	0	1	cdc::PCInternalResource	cdc::				0x30	00528470	005283c0	005284f0		yes
+cdc::PCStaticVertexBuffer	.?AVPCStaticVertexBuffer@cdc@@	008a357c	0084b9dc	0084b9c4@4	5	0	1	2	cdc::PCVertexBuffer;cdc::PCInternalResource	cdc::				0x38	00528760	005287f0	00528970		yes
+cdc::PCStreamDecl	.?AVPCStreamDecl@cdc@@	008a35a8	0084ba18		5	0	0	1	cdc::PCInternalResource	cdc::				0x68	00528f00	00528e80	00528f50		yes
+cdc::PCSurface	.?AVPCSurface@cdc@@	008a2c34	00849df0		1	0	0	0		cdc::									yes
+cdc::PCTerrainDrawable	.?AVPCTerrainDrawable@cdc@@	008a28a4	00849944		3	0	0	1	cdc::RenderDrawable	cdc::				0x2c	00510670		0050f240		yes
+cdc::PCTexture	.?AVPCTexture@cdc@@	008a29cc	00849b20	00849b18@4	14	0	1	4	cdc::PCBaseTexture;cdc::PCExternalResource	cdc::				0x28	00515d60;00515e00;00515e50	00515da0	00515da0		yes
+cdc::PCTransientRenderTarget	.?AVPCTransientRenderTarget@cdc@@	008a2544	008491f8		14	1	0	3	cdc::PCBaseRenderTarget	cdc::						00506e70	00506e70		yes
+cdc::PCTransientTexture	.?AVPCTransientTexture@cdc@@	008a2878	008498e4		14	2	0	3	cdc::PCBaseTexture	cdc::							0050e330		yes
+cdc::PCVertexBuffer	.?AVPCVertexBuffer@cdc@@	008a3330	0084b71c		5	0	0	0		cdc::						005247e0	005247e0		yes
+cdc::PCVertexBufferMemPool	.?AVPCVertexBufferMemPool@cdc@@	008a35cc	0084ba54		7	0	0	1	cdc::PCInternalResource	cdc::				0x20	00529760	00529510	005296a0		yes
+cdc::PCVertexShader	.?AVPCVertexShader@cdc@@	008a35f8	0084ba90		5	0	0	1	cdc::PCInternalResource	cdc::				0x20	00529970	00529930	00529930		yes
+cdc::PCVertexShaderTable	.?AVPCVertexShaderTable@cdc@@	008a34a4	0084b8e8		1	0	0	1	cdc::PCShaderTable	cdc::				0x19	005263a0	00526260	00526260		yes
+cdc::PCWaterSurface	.?AVPCWaterSurface@cdc@@	008a2a0c	00849bc4	00849bac@4;00849ba4@16	4	0	1	3	cdc::IRippleMap;cdc::PCInternalResource;cdc::PCExternalResource	cdc::				0x60	00515ed0				yes
+cdc::Package	.?AVPackage@cdc@@	008a79d8	0084e550		2	0	0	1	cdc::RCObject	cdc::						005796f0	0057a310		yes
+cdc::PlayerAPI	.?AVPlayerAPI@cdc@@	008b07d0	0085e37c		31	0	0	0		cdc::						00722af0	00722af0		yes
+cdc::RCObject	.?AVRCObject@cdc@@	008907a4	008457c4		2	0	0	0		cdc::						005977d0	00575ec0		yes
+cdc::RandomTarget	.?AVRandomTarget@cdc@@	0088f2f0	0084314c		2	0	0	1	cdc::AnimTarget	cdc::							00445120		yes
+cdc::RenderDevice	.?AVRenderDevice@cdc@@	008a24b8	008490cc		57	1	0	0		cdc::						00506d60	00506d60		yes
+cdc::RenderDrawable	.?AVRenderDrawable@cdc@@	008a2294	00848ef0		3	0	0	0		cdc::						0050f240;005145b0	0050f240		yes
+cdc::RenderMesh	.?AVRenderMesh@cdc@@	008a2664	008496bc		15	0	0	1	cdc::RenderResource	cdc::							0050e330		yes
+cdc::RenderModelInstance	.?AVRenderModelInstance@cdc@@	008911bc								cdc::									base-only
+cdc::RenderResource	.?AVRenderResource@cdc@@	00891198	00848c3c		7	0	0	0		cdc::						004f36c0;00509e50;0050af70;0050e330	0050e330		yes
+cdc::ResolveDecompressor	.?AVResolveDecompressor@cdc@@	008a7104	0084cd74		15	1	0	1	cdc::FileSystem	cdc::				0x61	00553160	00553200	00553260		yes
+cdc::ResolveDecompressor::Receiver	.?AVReceiver@ResolveDecompressor@cdc@@	008a712c	0084cdb4		5	0	0	1	cdc::FileReceiver	cdc::							00583d00		yes
+cdc::ResourceTypeHandler	.?AVResourceTypeHandler@cdc@@	008a6ffc								cdc::									base-only
+cdc::RingBuffer	.?AVRingBuffer@cdc@@	008a930c	008508e8		2	0	1	3	cdc::DebugRingBuffer;cdc::IRingBuffer	cdc::	0x1c	high	586961:574940:inline;596901:574940:inline						yes
+cdc::RingBufferChain	.?AVRingBufferChain@cdc@@	008a91f4	0085045c		2	0	1	3	cdc::DebugRingBufferChain;cdc::IRingBuffer	cdc::									yes
+cdc::Scene	.?AVScene@cdc@@	008a75d4	0084decc		36	2	0	1	cdc::IScene	cdc::				0x1094	005731c0	0056c8f0	0056d590		yes
+cdc::Scene::THAlloc	.?AVTHAlloc@Scene@cdc@@	008a7484	0084dd58		2	1	0	1	cdc::CullingAllocator	cdc::									yes
+cdc::SceneCell	.?AVSceneCell@cdc@@	008a75ec	0084df64		24	0	1	2	cdc::ISceneCell;cdc::SceneCellContainer	cdc::				0x110	00572450	00571400	00572620		yes
+cdc::SceneCellContainer	.?AVSceneCellContainer@cdc@@	008a7608								cdc::									base-only
+cdc::SceneCellContainer::CellReceiver	.?AVCellReceiver@SceneCellContainer@cdc@@	008a74a4								cdc::									base-only
+cdc::SceneCellGroup	.?AVSceneCellGroup@cdc@@	008a7630	0084dfcc		19	0	1	2	cdc::ISceneCellGroup;cdc::SceneCellContainer	cdc::				0xc8	00572a30;00572b20		00572af0		yes
+cdc::SceneDynamicPortal	.?AVSceneDynamicPortal@cdc@@	008a765c	0084e064		7	0	0	1	cdc::IScenePortal	cdc::				0x56	00574690	005748a0	005748a0		yes
+cdc::SceneEntity	.?AVSceneEntity@cdc@@	008a7594	0084dd8c		20	0	0	1	cdc::ISceneEntity	cdc::				0x140	0056c0b0	00564910	005675f0;0056c470		yes
+cdc::SceneLight	.?AVSceneLight@cdc@@	008a75b4	0084de74	0084ddec@320	20	0	5	4	cdc::SceneEntity;cdc::ISceneLight	cdc::				0x2ec	00573e20	0056c540	00558f60;0056d560		yes
+cdc::ScriptDataCursor	.?AVScriptDataCursor@cdc@@	008a7830	0084e118		2	0	0	0		cdc::						005760a0;0057a2c0	005760a0		yes
+cdc::ScriptDispatcherManager	.?AVScriptDispatcherManager@cdc@@	00890dc4	008475ac		1	0	0	0		cdc::				0x8	004afcd0	004afce0;004b0e70	004b0e70		yes
+cdc::ScriptDtpStructRef	.?AVScriptDtpStructRef@cdc@@	008a7808	0084e10c		2	0	0	1	cdc::RCObject	cdc::	0xc	high	579886:574940:inline;57a435:574940:inline				00575ec0		yes
+cdc::ScriptDynArrayImpl	.?AVScriptDynArrayImpl@cdc@@	008a7908	0084e32c		4	0	0	1	cdc::GCObject	cdc::	0x28	medium	57a3f9:574940:ctor	0x28	00576010;00576810	00576890	00576890		yes
+cdc::ScriptExec	.?AVScriptExec@cdc@@	008a7958	0084e4a8		7	0	0	2	cdc::ScriptSequence	cdc::	0x14	high	57e194:574940:ctor;57e48b:574940:ctor	0x14	00577ed0;0057aa80	00577fa0	00578e90		yes
+cdc::ScriptManager	.?AVScriptManager@cdc@@	008a7a44	0084e7f0		2	0	0	1	cdc::RCObject	cdc::				0x60	0057eb80	0057e770	0057ecd0		yes
+cdc::ScriptMapImpl	.?AVScriptMapImpl@cdc@@	008a79b8	0084e52c		4	0	0	1	cdc::GCObject	cdc::	0x2c	medium	57a3ca:574940:ctor	0x2c	005791a0;00579240	00579e80	00579e80		yes
+cdc::ScriptObject	.?AVScriptObject@cdc@@	008907fc	0084e5e4		9	0	0	1	cdc::GCObject	cdc::				0x1a	0057c0a0	0057c150	0057c800		yes
+cdc::ScriptScope	.?AVScriptScope@cdc@@	008a7998	0084e4e0		2	0	0	1	cdc::RCObject	cdc::						00578cc0	00579ce0		yes
+cdc::ScriptSequence	.?AVScriptSequence@cdc@@	008908dc	008458b8		7	0	0	1	cdc::GCObject	cdc::						004a4690	004a4690		yes
+cdc::ScriptSequenceThread	.?AVScriptSequenceThread@cdc@@	00890fe4	00847c34		8	1	0	2	cdc::ScriptThread	cdc::						004be2b0	004be350		yes
+cdc::ScriptStdScreen	.?AVScriptStdScreen@cdc@@	0089100c	00847c58		8	1	0	0		cdc::				0x8	004be500;004c51f0;004ccb60;004ccbc0;004ccc20;004ccc80				yes
+cdc::ScriptThread	.?AVScriptThread@cdc@@	008907c0								cdc::									base-only
+cdc::ScriptType	.?AVScriptType@cdc@@	008a7978	0084e4d4		2	0	0	1	cdc::RCObject	cdc::				0x1a	005784e0	0057c860	0057e740		yes
+cdc::ScriptUIScreen	.?AVScriptUIScreen@cdc@@	00890f80	00847a9c		99	2	0	2	cdc::UISuperWidget	cdc::						004c5330	004c5330;0059c4f0;0059c500;0059c690		yes
+cdc::ScriptUniqueDataCursor	.?AVScriptUniqueDataCursor@cdc@@	008a79f4	0084e594		2	0	0	1	cdc::ScriptDataCursor	cdc::				0x14	0057a210		0057a2c0		yes
+cdc::ScriptUnitManager	.?AVScriptUnitManager@cdc@@	008b40c0								cdc::									base-only
+cdc::SoundOwner	.?AVSoundOwner@cdc@@	008a9404	00851240		2	0	1	2	cdc::RCObject;cdc::SoundTypes	cdc::				0xa4	00590860	00590920	00590920		yes
+cdc::SoundPlex	.?AVSoundPlex@cdc@@	008a914c	0085042c		5	1	0	1	cdc::SoundTypes	cdc::				0x1c	00589ab0	00583c30	00583c30		yes
+cdc::SoundPlexAssignment	.?AVSoundPlexAssignment@cdc@@	008a9494	008513b4		5	0	0	3	cdc::SoundPlexSingleChild	cdc::	0x30	medium	5922e0:574940:ctor	0x2c	00590970	00590c00	00592410		yes
+cdc::SoundPlexEffect	.?AVSoundPlexEffect@cdc@@	008a9424	0085124c		5	0	0	3	cdc::SoundPlexSingleChild	cdc::	0x20	medium	5921a1:574940:ctor	0x20	0058def0	00590c80	00590c80		yes
+cdc::SoundPlexEnvelope	.?AVSoundPlexEnvelope@cdc@@	008a94bc	008513cc		5	1	0	3	cdc::SoundPlexSingleChild	cdc::	0x2c	medium	59230d:574940:ctor	0x2c	00590ce0	00590ec0	00592440		yes
+cdc::SoundPlexMaterialList	.?AVSoundPlexMaterialList@cdc@@	008a9448	00851264		5	0	0	2	cdc::SoundPlex	cdc::	0x20	medium	5921ce:574940:ctor	0x20	0058dfc0	0058e010	0058e040		yes
+cdc::SoundPlexOscillator	.?AVSoundPlexOscillator@cdc@@	008a9378	00850ba4		5	2	0	2	cdc::SoundPlex	cdc::	0x24	medium	59222f:574940:ctor	0x24	00587c60				yes
+cdc::SoundPlexOverlap	.?AVSoundPlexOverlap@cdc@@	008a93c0	00850d00		5	0	0	2	cdc::SoundPlex	cdc::	0x28	medium	592383:574940:ctor	0x28	0058b570	0058b700	0058b700		yes
+cdc::SoundPlexReaction	.?AVSoundPlexReaction@cdc@@	008a94e0	008513e4		5	1	0	3	cdc::SoundPlexSingleChild	cdc::	0x24	medium	592337:574940:ctor	0x24	00590f30	00590ff0	00592610		yes
+cdc::SoundPlexSequence	.?AVSoundPlexSequence@cdc@@	008a9470	0085127c		5	0	0	2	cdc::SoundPlex	cdc::	0x28	medium	59235d:574940:ctor	0x28	0058e070	0058e0d0	00591050		yes
+cdc::SoundPlexSingleChild	.?AVSoundPlexSingleChild@cdc@@	008a9188	00850444		5	1	0	2	cdc::SoundPlex	cdc::						0057fd10	0057fd10		yes
+cdc::SoundPlexStream	.?AVSoundPlexStream@cdc@@	008a9504	008513fc		5	0	0	3	cdc::SoundPlexSingleChild	cdc::	0x28	medium	5922b3:574940:ctor	0x28	00591080	00591190	00592870		yes
+cdc::SoundPlexTimeIn	.?AVSoundPlexTimeIn@cdc@@	008a92ac	00850824		5	0	0	2	cdc::SoundPlex	cdc::	0x1c	high	5921fb:574940:ctor;593668:574940:ctor	0x1c	00583bf0		00583c30		yes
+cdc::SoundPlexWave	.?AVSoundPlexWave@cdc@@	008a9528	00851414		6	2	0	2	cdc::SoundPlex	cdc::	0x1c	medium	592289:574940:ctor	0x1c	00591220	005938f0	005938f0		yes
+cdc::SoundResourceType	.?AVSoundResourceType@cdc@@	008a7080	0084ca70		3	1	0	1	cdc::ResourceTypeHandler	cdc::	0x4	medium	552591:574940:inline						yes
+cdc::SoundSequence	.?AVSoundSequence@cdc@@	00890c74	00846f64		7	2	0	2	cdc::ScriptSequence	cdc::						004acc70	004acc70		yes
+cdc::SoundStreamHandler	.?AVSoundStreamHandler@cdc@@	008a9704								cdc::									base-only
+cdc::SoundStreamHandlerImpl	.?AVSoundStreamHandlerImpl@cdc@@	008a974c	0085159c		4	0	0	2	cdc::SoundStreamHandler	cdc::				0x30	00596390				yes
+cdc::SoundTypes	.?AVSoundTypes@cdc@@	008a9168								cdc::									base-only
+cdc::StackAllocator	.?AVStackAllocator@cdc@@	008a9e1c	0085187c		19	1	0	1	cdc::Allocator	cdc::				0x2c	00598650	005986f0	00599a50		yes
+cdc::TextureMap	.?AVTextureMap@cdc@@	008a2810								cdc::									base-only
+cdc::UIAnimation	.?AVUIAnimation@cdc@@	008aa3b0	00851fcc		1	0	0	0		cdc::				0x1e	005ad180;005ae9b0				yes
+cdc::UIBitmap	.?AVUIBitmap@cdc@@	008aa3d0	0085211c		81	3	0	1	cdc::UIWidgetBase	cdc::				0x214	005aebe0	005b0e50	0059c4f0;0059c500;0059c690;005b0e50		yes
+cdc::UIButton	.?AVUIButton@cdc@@	008aa3ec	00852264		81	3	0	1	cdc::UIWidgetBase	cdc::				0x251	005aec90	005b0e90	0059c4f0;0059c500;0059c690;005b0e90		yes
+cdc::UIColorTimeLine	.?AVUIColorTimeLine@cdc@@	008aa38c	00851fb8		4	0	0	1	cdc::UITimeline<class cdc::Vector4>	cdc::				0x34	005ad000				yes
+cdc::UIDebugText	.?AVUIDebugText@cdc@@	008aa408	008523ac		92	3	0	1	cdc::UIWidgetBase	cdc::				0x2b0	005aedb0	005aefa0	0059c4f0;0059c500;0059c690;005b0ed0		yes
+cdc::UIDynamicBitmap	.?AVUIDynamicBitmap@cdc@@	008b7370	00861714		81	3	0	1	cdc::UIWidgetBase	cdc::				0x214	0078bd30	0078bdc0	0059c4f0;0059c500;0059c690;0078bdc0		yes
+cdc::UIFloatTimeLine	.?AVUIFloatTimeLine@cdc@@	008aa320	00851f7c		4	0	0	1	cdc::UITimeline<float>	cdc::				0x34	005acb60				yes
+cdc::UIIntTimeLine	.?AVUIIntTimeLine@cdc@@	008aa300	00851f68		4	0	0	1	cdc::UITimeline<int>	cdc::				0x34	005ac9e0				yes
+cdc::UIMenuBoolItem	.?AVUIMenuBoolItem@cdc@@	008aa448	0085266c		81	3	0	2	cdc::UIMenuEntry	cdc::				0x24c	005b0f60	005af140	005b1410		yes
+cdc::UIMenuEntry	.?AVUIMenuEntry@cdc@@	008aa428	00852524		81	3	0	1	cdc::UIWidgetBase	cdc::				0x228	005af070	005b0f00	005b0f00		yes
+cdc::UIMenuEnumItem	.?AVUIMenuEnumItem@cdc@@	008aa46c	008527b4		81	3	0	2	cdc::UIMenuEntry	cdc::				0x244	005b1490	005af210	005b16e0		yes
+cdc::UIMenuWdgt	.?AVUIMenuWdgt@cdc@@	008aa490	008528fc		81	3	0	1	cdc::UIWidgetBase	cdc::				0x264	005af520	005af650	0059c4f0;0059c500;0059c690;005b1970		yes
+cdc::UIMeter	.?AVUIMeter@cdc@@	008aa4b0	00852a44		81	3	0	1	cdc::UIWidgetBase	cdc::				0x2a4	005af760	005af970	0059c4f0;0059c500;0059c690;005b19a0		yes
+cdc::UIModel	.?AVUIModel@cdc@@	008aa4cc	00852b8c		81	3	0	1	cdc::UIWidgetBase	cdc::				0x21b	005afa30	005b19d0	0059c4f0;0059c500;0059c690;005b19d0		yes
+cdc::UINGAPoly	.?AVUINGAPoly@cdc@@	008aa4e8	00852cd4		81	3	0	1	cdc::UIWidgetBase	cdc::				0x224	005afae0	005afcc0	0059c4f0;0059c500;0059c690;005b1a10		yes
+cdc::UIPDAMapWidget	.?AVUIPDAMapWidget@cdc@@	008b0184	0085da7c		81	3	0	1	cdc::UIWidgetBase	cdc::				0x211	006e5730	006e59c0	0059c4f0;0059c500;0059c690;006e59c0		yes
+cdc::UIPropertyBase<bool>	.?AV?$UIPropertyBase@_N@cdc@@	008aa094	00851ce8		9	0	0	0		cdc::						005ab4a0			yes
+cdc::UIPropertyBase<class cdc::ScriptSymbol>	.?AV?$UIPropertyBase@VScriptSymbol@cdc@@@cdc@@	008aa1a8	00851dd8		9	0	0	0		cdc::						005ab940			yes
+cdc::UIPropertyBase<class cdc::Vector2>	.?AV?$UIPropertyBase@VVector2@cdc@@@cdc@@	008aa140	00851d88		9	0	0	0		cdc::						005ab770			yes
+cdc::UIPropertyBase<class cdc::Vector3>	.?AV?$UIPropertyBase@VVector3@cdc@@@cdc@@	008aa10c	00851d60		9	0	0	0		cdc::						005ab6f0			yes
+cdc::UIPropertyBase<class cdc::Vector4>	.?AV?$UIPropertyBase@VVector4@cdc@@@cdc@@	008aa174	00851db0		9	0	0	0		cdc::						005ab830			yes
+cdc::UIPropertyBase<float>	.?AV?$UIPropertyBase@M@cdc@@	008aa0bc	00851d10		9	0	0	0		cdc::						005ab570			yes
+cdc::UIPropertyBase<int>	.?AV?$UIPropertyBase@H@cdc@@	008aa0e4	00851d38		9	0	0	0		cdc::						005ab640			yes
+cdc::UIPropertyBool	.?AVUIPropertyBool@cdc@@	008aa1e0	00851e00		10	0	0	1	cdc::UIPropertyBase<bool>	cdc::				0x10	005ac570	005ae270	005ae270		yes
+cdc::UIPropertyColor	.?AVUIPropertyColor@cdc@@	008aa204	00851e2c		10	0	0	1	cdc::UIPropertyBase<class cdc::Vector4>	cdc::				0x28	005ac5a0	005ae2a0	005ae2a0		yes
+cdc::UIPropertyFloat	.?AVUIPropertyFloat@cdc@@	008aa228	00851e58		10	0	0	1	cdc::UIPropertyBase<float>	cdc::				0x10	005ac600	005ae2d0	005ae2d0		yes
+cdc::UIPropertyInt	.?AVUIPropertyInt@cdc@@	008aa24c	00851e84		10	0	0	1	cdc::UIPropertyBase<int>	cdc::				0x10	005ac630	005ae300	005ae300		yes
+cdc::UIPropertyLocalStr	.?AVUIPropertyLocalStr@cdc@@	008aa26c	00851eb0		10	0	0	1	cdc::UIPropertyBase<int>	cdc::				0x10	005ac660;005ac690	005ae330	005ae330	00faf2f4	yes
+cdc::UIPropertyString	.?AVUIPropertyString@cdc@@	008aa294	00851edc		10	0	0	1	cdc::UIPropertyBase<class cdc::ScriptSymbol>	cdc::				0x10	005ac6a0	005ae360	005ae360		yes
+cdc::UIPropertyVec2	.?AVUIPropertyVec2@cdc@@	008aa2dc	00851f3c		10	0	0	1	cdc::UIPropertyBase<class cdc::Vector2>	cdc::				0x28	005ac7b0	005ae3c0	005ae3c0		yes
+cdc::UIPropertyVec3	.?AVUIPropertyVec3@cdc@@	008aa2b8	00851f10		10	0	0	1	cdc::UIPropertyBase<class cdc::Vector3>	cdc::				0x28	005ac710	005ae390	005ae390		yes
+cdc::UIRenderImg	.?AVUIRenderImg@cdc@@	008aa504	00852e1c		81	3	0	1	cdc::UIWidgetBase	cdc::				0x39c	005afd80	005b1a40	0059c4f0;0059c500;0059c690;005b1a40		yes
+cdc::UIScrollbar	.?AVUIScrollbar@cdc@@	008aa524	00852f6c		82	3	0	1	cdc::UIWidgetBase	cdc::				0x274	005afee0	005b0060	0059c4f0;0059c500;0059c690;005b1a80		yes
+cdc::UISlider	.?AVUISlider@cdc@@	008aa544	008530bc		81	3	0	1	cdc::UIWidgetBase	cdc::				0x2c5	005b0110	005b03d0	0059c4f0;0059c500;0059c690;005b1ab0		yes
+cdc::UISuperWidget	.?AVUISuperWidget@cdc@@	00890fa4	0085321c		99	2	0	1	cdc::UIWidgetBase	cdc::				0x23b	005b04b0	005b0760	0059c4f0;0059c500;0059c690;005b1ae0		yes
+cdc::UIText	.?AVUIText@cdc@@	008aa560	008533ac		92	3	0	1	cdc::UIWidgetBase	cdc::				0x2b0	005b0890	005b0aa0	0059c4f0;0059c500;0059c690;005b1b10		yes
+cdc::UITextEntry	.?AVUITextEntry@cdc@@	008aa57c	00853564		87	3	0	1	cdc::UIWidgetBase	cdc::				0x4b8	005b0b70	005b0d60	0059c4f0;0059c500;0059c690;005b1b40		yes
+cdc::UITimeline<class cdc::Vector2>	.?AV?$UITimeline@VVector2@cdc@@@cdc@@	008aa004	00851cac		4	1	0	0		cdc::				0x34	005acd30				yes
+cdc::UITimeline<class cdc::Vector3>	.?AV?$UITimeline@VVector3@cdc@@@cdc@@	008aa034	00851cc0		4	1	0	0		cdc::				0x34	005acee0				yes
+cdc::UITimeline<class cdc::Vector4>	.?AV?$UITimeline@VVector4@cdc@@@cdc@@	008aa064	00851cd4		4	1	0	0		cdc::				0x34	005ad060				yes
+cdc::UITimeline<float>	.?AV?$UITimeline@M@cdc@@	008a9fe0	00851c98		4	1	0	0		cdc::				0x34	005acbc0				yes
+cdc::UITimeline<int>	.?AV?$UITimeline@H@cdc@@	008a9fbc	00851c84		4	1	0	0		cdc::				0x34	005aca40				yes
+cdc::UIVec2TimeLine	.?AVUIVec2TimeLine@cdc@@	008aa344	00851f90		4	0	0	1	cdc::UITimeline<class cdc::Vector2>	cdc::				0x34	005acce0				yes
+cdc::UIVec3TimeLine	.?AVUIVec3TimeLine@cdc@@	008aa368	00851fa4		4	0	0	1	cdc::UITimeline<class cdc::Vector3>	cdc::				0x34	005ace80				yes
+cdc::UIWidgetBase	.?AVUIWidgetBase@cdc@@	00890fc4	00851fd4		81	3	0	0		cdc::				0x210	005ad590	005aea70	0059c4f0;0059c500;0059c690;005b0e20		yes
+cdc::VoiceBuffer	.?AVVoiceBuffer@cdc@@	008a972c	00851590		2	0	1	4	cdc::RingBuffer	cdc::	0x20	medium	5969b8:574940:inline						yes
+cdc::WaveSection	.?AVWaveSection@cdc@@	008a93e4	00850d2c		26	2	0	2	cdc::IWaveSection	cdc::				0x4	00589dc0	00589e70	0058c160		yes
+df::IMenuManager	.?AVIMenuManager@df@@	008b7300	0086168c		11	0	0	0		df::						0078b8c0	0078b8c0		yes
+std::bad_exception	.?AVbad_exception@std@@	008beaec	00874d38		2	0	0	1	std::exception	std::						0082875d	0082875d		yes
+std::exception	.?AVexception@std@@	008beb0c	00877668		2	0	0	0		std::				0xc	0082d70a;0082d758	0082d7b0	0082d7d3		yes
+type_info	.?AVtype_info@@	008bd774	00869918		1	0	0	0		type_info						008131f2	00813200		yes
