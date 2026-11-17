@@ -2488,6 +2488,64 @@ TEST(ProgressionReal, CalendarPushHandlesTurnTheRing) {
     for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 6506) << key.second;
 }
 
+// ca_uo_calendar_b 5477 (OU-PZL-007, docs/re/PUZZLE_BLOCKERS.md): once Lara has set the jaguar head 6499 on section 5
+// (state 4, which lifts hinge j2's limit), the jaguar handle is section 1's push / pull record (set 528 at the jaguar
+// head). Gripped (0x158 -> trigger 20 / kind 1: 3 -> 1), the stick turns the ring (j2, which carries the handle bar
+// through fixed joint 6) and j4 with it (link j8 = 0.667 j2); letting go (0x14F -> trigger 21) locks it and the section
+// waits again. Section 0's lever (record 540, east of the ring) is locked in the data: no transition out of state 2.
+TEST(ProgressionReal, CalendarBJaguarHandleTurnsTheRing) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_ballcourt");
+    auto& w = *wp;
+    const auto* mask = w.script().find(6499);
+    const auto* cal = w.script().find(5477);
+    ASSERT_TRUE(mask && cal && w.uberState(5477));
+    for (int i = 0; i < 5; ++i) w.tick({});
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *mask, 4), [&] { return carries(w, 6499); })) << "she takes the jaguar head";
+    bool inserted = false;
+    for (int k = 0; k < 8 && !inserted; ++k) {
+        auto spots = uberEngageSpots(bf, w, *cal, 5, 5, 40);
+        spots.resize(std::min<size_t>(spots.size(), 5));
+        inserted = interactFrom(w, spots, [&] { return w.insertedIn(6499) == 5477; });
+    }
+    ASSERT_TRUE(inserted) << "the head sits on the jaguar";
+    for (int i = 0; i < 300; ++i) w.tick({});
+    ASSERT_EQ((*w.uberState(5477))[5], 5u) << "3 -> 4 (the insert) -> 5";
+    ASSERT_EQ((*w.uberState(5477))[1], 3u) << "the handle waits";
+    const auto spots = uberEngageSpots(bf, w, *cal, 1, 1, 40);
+    ASSERT_FALSE(spots.empty());
+    EXPECT_LT(glm::distance(vec2(spots.front().first), vec2(3975, 10908)), 100.0f) << "at the jaguar head";
+    game::Actions grip;
+    grip.interact = true;
+    bool gripped = false;
+    for (const auto& [at, yaw] : spots) {
+        place(w, at, yaw);
+        for (int i = 0; i < 20; ++i) w.tick({});
+        if (w.player().state().state != game::State::Idle) continue;
+        w.tick(grip), w.tick(grip);
+        if ((*w.uberState(5477))[1] == 1) { gripped = true; break; }
+        w.tick({}), w.tick({});
+    }
+    ASSERT_TRUE(gripped) << "0x158: trigger 20 / kind 1";
+    const auto* ring = w.uberJoint(5477, 2);
+    ASSERT_TRUE(ring && ring->hinge);
+    const float before = ring->x;
+    game::Actions push = grip;
+    push.move = {0, 1};
+    for (int i = 0; i < 240; ++i) w.tick(push);
+    const float turned = w.uberJoint(5477, 2)->x - before;
+    EXPECT_LT(turned, -0.2f) << "the ring turns (negative for the forward push)";
+    ASSERT_TRUE(w.uberJoint(5477, 4));
+    EXPECT_NEAR(w.uberJoint(5477, 4)->x, 0.667f * w.uberJoint(5477, 2)->x, 0.05f) << "link j8";
+    w.tick({});
+    const uint32_t after = (*w.uberState(5477))[1];
+    EXPECT_TRUE(after == 5 || after == 4 || after == 0xFFFFFFFFu) << "0x14F: trigger 21 / kind 1 -> " << after;
+    for (int i = 0; i < 180; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(5477))[1], 3u) << "back to waiting";
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 5477) << key.second;
+}
+
 namespace {
 struct ThorCase {
     const char* unit;
@@ -2634,6 +2692,66 @@ TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
         EXPECT_NEAR(w.uberJoint(c.uid, c.joint)->x, open, 2.0f) << "it stays where she left it";
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, c.uid) << key.second;
     }
+}
+
+// l4_pool rune block 5609 (ca_pu_thor_debris; C15-12, OU-PZL-010, docs/re/PUZZLE_BLOCKERS.md) [O data]: one section
+// (model 0, a 632-unit box of 200 kg) and no joint record; its push / pull record (kind 1, sphere r 948) names g_belt.
+// tru.exe's PushPull drives the object's body (0x74AC00 / 0x73F390), no joint consulted: with the belt she grips it and
+// pulls it out of the walkway's corner, freeing the two treasures behind it. Without the belt she does not grip.
+TEST(ProgressionReal, ThorDebrisIsDraggedOffItsCorner) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_pool");
+    auto& w = *wp;
+    const auto* o = w.script().find(5609);
+    ASSERT_TRUE(o && w.uberState(5609));
+    ASSERT_EQ(o->name, "ca_pu_thor_debris");
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const vec3 rest = *w.objectOrigin(5609);
+    // From the walkway north of it (the scenario's way in), facing the block: inside its record's sphere (r 948).
+    std::vector<std::pair<vec3, float>> spots;
+    for (float dy = 600; dy <= 900; dy += 50)
+        if (const auto g = w.collision().groundProbe(vec3(rest.x, rest.y + dy, rest.z + 300), 600); g && std::abs(g->point.z - rest.z) < 50)
+            spots.push_back({g->point + vec3(0, 0, 5), glm::radians(-90.0f)});
+    ASSERT_FALSE(spots.empty()) << "the walkway north of the block";
+    game::Actions grip;
+    grip.interact = true;
+    const auto gripFrom = [&] {
+        for (const auto& [at, yaw] : spots) {
+            place(w, at, yaw);
+            for (int i = 0; i < 20; ++i) w.tick({});
+            if (w.player().state().state != game::State::Idle) continue;
+            w.tick(grip), w.tick(grip);
+            if (w.player().state().state == game::State::Block) return true;
+            w.tick({}), w.tick({});
+        }
+        return false;
+    };
+    w.script().setPlayerObjects({});
+    EXPECT_FALSE(gripFrom()) << "no grip without g_belt";
+    w.tick({}), w.tick({});
+    EXPECT_LT(glm::distance(*w.objectOrigin(5609), rest), 1.0f);
+    w.script().setPlayerObjects({"g_belt"});
+    ASSERT_TRUE(gripFrom()) << "g_belt: thor_engage";
+    for (int i = 0; i < 40; ++i) w.tick(grip); // thor_engage
+    const vec3 from = w.player().state().pos;
+    game::Actions pull = grip;
+    pull.move = {0, -1};
+    int ticks = 0;
+    for (; ticks < 240 && w.objectOrigin(5609)->y < rest.y + 300; ++ticks) w.tick(pull);
+    const vec3 moved = *w.objectOrigin(5609);
+    EXPECT_GE(moved.y, rest.y + 300) << "dragged 300 out of the corner (rest y " << rest.y << ")";
+    EXPECT_NEAR(moved.x, rest.x, 60.0f) << "straight out, the way she pulls";
+    EXPECT_NEAR(moved.z, rest.z, 20.0f) << "on its floor";
+    EXPECT_GT(glm::distance(vec2(w.player().state().pos), vec2(from)), 200.0f) << "she backs away with it";
+    w.tick({}), w.tick({}); // let go: the floor's friction stops it (driveJoint3)
+    for (int i = 0; i < 240; ++i) w.tick({});
+    const vec3 left = *w.objectOrigin(5609);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_LT(glm::distance(*w.objectOrigin(5609), left), 2.0f) << "at rest again";
+    EXPECT_NEAR(left.z, rest.z, 20.0f) << "on its floor";
+    EXPECT_GE(left.y, moved.y) << "out of the corner";
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 5609) << key.second;
 }
 
 // l2_maproom (C09-04): Lara crossing volume 2636 activates cinematic 2624 (095_tha_powerup); the volume's handler
@@ -3060,6 +3178,56 @@ std::optional<vec3> grappleFrom(game::World& w, int32_t uid, float lo = 600, flo
     return std::nullopt;
 }
 } // namespace
+
+// l2_shrineroom naga statue 2794 (sa_uo_naga_statue; OU-PZL-006, docs/re/PUZZLE_BLOCKERS.md) [O data]: section 0's
+// state 0 creates hinge j0 (world -> the statue) and fixed joints j1 / j3 / j4 (type 8, world -> the floor slabs,
+// sections 1 / 3 / 4) over the shaft. Pulled past 45 degrees with the grapple the statue falls (state 1: action 10 on
+// j0), 0.48 s later state 4 / 2 removes j1, j3, j4 (action 10, 0x4D881D -> 0x4D6220): the slabs are free bodies and
+// fall into the shaft (tru.exe: the engine fixed constraint of 0x4D1040 gone, nothing else holds them).
+TEST(ProgressionReal, NagaStatueSlabsFallAfterThePull) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_shrineroom");
+    auto& w = *wp;
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_TRUE(w.script().find(2794) && w.uberState(2794));
+    ASSERT_GE(w.uberState(2794)->size(), 5u);
+    EXPECT_EQ((*w.uberState(2794))[0], 5u) << "standing";
+    // The shaft's mouth: the middle of its edge loop (markup 679).
+    vec3 mouth(0);
+    int points = 0;
+    for (const auto& m : w.collision().markup)
+        if (m.id == 679)
+            for (const auto& p : m.points) mouth += p, ++points;
+    ASSERT_GT(points, 2) << "the shaft's edge loop";
+    mouth /= float(points);
+    const auto slabAt = [&] { // the slabs' top over the shaft, 56 under the edge loop
+        const auto h = w.collision().raycast(mouth + vec3(0, 0, 400), {0, 0, -1}, 600);
+        return h && h->dynamic >= 0 && w.collision().dynamics[size_t(h->dynamic)].id == 2794;
+    };
+    EXPECT_TRUE(slabAt()) << "the slabs close the shaft";
+    const auto ground = w.collision().groundProbe(vec3(-20199, 59500, mouth.z + 1000), 2000);
+    ASSERT_TRUE(ground);
+    place(w, ground->point + vec3(0, 0, 5), glm::radians(90.0f));
+    for (int i = 0; i < 20; ++i) w.tick({});
+    game::Actions press;
+    press.grapple = true;
+    w.tick(press), w.tick({});
+    for (int i = 0; i < 60; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().grappleUid, 2794) << "the statue's ring is roped";
+    game::Actions pull;
+    pull.interact = true;
+    for (int i = 0; i < 720 && (*w.uberState(2794))[0] != 2u; ++i) w.tick(pull);
+    ASSERT_EQ((*w.uberState(2794))[0], 2u) << "fallen: 5 -> 3 -> 1 -> 4 -> 2";
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_FALSE(slabAt()) << "the slabs fell into the shaft";
+    for (const int32_t section : {1, 3, 4}) {
+        const auto body = w.uberSectionBody(2794, section);
+        ASSERT_TRUE(body) << section;
+        EXPECT_LT((*body)[3].z, -300.0f) << "section " << section << " fell";
+    }
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 2794) << key.second;
+}
 
 // l1_kraken_room gear rooms (C03-11 / C03-16). Both gears are grapple targets by a model feature (mask 4): gear 36
 // (ms_ani_tentacle_gearl) on model 1 = section 1, the recessed gear on a prismatic joint (limit 0..515, a 15.8 brake),

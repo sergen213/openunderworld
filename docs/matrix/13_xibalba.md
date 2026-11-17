@@ -95,7 +95,7 @@ Abbreviations as in `08_bhogavati.md`. Screenshot base: https://tombraiders.net/
 | `ch13_ballcourt_calendar_locked` | l4_ballcourt checkpoint 5478 | at calendar 5477 without the mask: a push handle gripped and pushed 4 s, the ring's hinge stays at 0 | C13-01, C13-02 (the gate's closed side) |
 | `ch13_temple_headdress` | l4_temple checkpoint 4971 (pit floor) | to the altar, Interact takes headdress 5228 out of its holder 5249, carried | C13-24 |
 | `ch13_ballcourt_pole_gate` | l4_ballcourt, the yard before calendar 2 | pole 6503 into lever 6502, block 6504 pushed under it, onto the block, jump to the pole (door 6505 up 1200), turn across the pole, swing, fling to the gate, through the doorway into the calendar court (cinematic 6388) | C13-36, C13-37, C13-38 |
-| known gap `ch13_ballcourt_calendar_solve` | l4_ballcourt checkpoint 5478 | the mask onto the jaguar, the handle turning the ring: fails at the insert (the mask does not reach her) | C13-01 .. C13-04 |
+| `ch13_ballcourt_calendar_solve` | l4_trailstart → l4_ballcourt checkpoint 5478 | the mask onto the jaguar, then the jaguar handle (section 1's record at (3975, 10908)) gripped: the push turns the ring (j2 past -0.2 rad). The alignment (C13-03 / C13-04) is not played | C13-01, C13-02 |
 | known gap `ch13_temple_block_topple` | l4_temple checkpoint 4976 (east upper ledge) | ring 4951 from the ledge, rope round statue head 5236, tugged through the floor: fails at the first step (ring not offered) | C13-22 |
 
 Blockers found in this pass (cause, where it stops the section):
