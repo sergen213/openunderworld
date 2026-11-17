@@ -2,6 +2,8 @@
 
 Central list of known defects, deviations from tru.exe and regressions in OpenUnderworld. Baseline: `main` 9034839
 (tag v0.51.0, 2026-11-16, 997 ctest entries, `game_vulkan_rt_smoke` excluded). Audit pass: no engine code was changed.
+Reproduction pass (Phase 0.3): `main` a80bdb8, binaries of `build-AuditBaseline` (= v0.51.0 sources), private KWin;
+results per entry under **Repro result** and in "Reproduction log" at the end.
 
 Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMAP L<line>`), `docs/GAMEPLAY_AUDIT.md`,
 `docs/audit/AUDIT_A.md` / `AUDIT_B.md` (rows classified incorrect / placeholder / needs refactor),
@@ -14,7 +16,9 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 
 - **Status**: `Open` = present at 9034839; `Fixed-verified` = the fix is in HEAD and the cited code / doc / test shows
   it (this audit read the code, it did not re-run visuals or the game unless it says so); `Needs-repro` = reported or
-  plausible but no evidence at HEAD either way.
+  plausible but no evidence at HEAD either way. Reproduction pass (a80bdb8): `Reproduced` = seen on HEAD with the
+  recorded command (still open); `Not reproduced` = tried on HEAD as recorded, not seen (kept for a hand-test with
+  the user's settings); `Needs-Windows-ref` = ours measured, the correct behaviour needs a tru.exe capture under Wine.
 - **Origin**: `pre-existing` = never implemented / present since the feature landed; `regression` = worked once (a
   green test or a release that had it), broken later; `new-feature defect` = shipped with its feature. Dates from
   `git log -S` where cheap.
@@ -55,42 +59,43 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | ID | Subsystem | Title | Status | Origin | Cluster |
 |---|---|---|---|---|---|
 | OU-WAT-001 | water render | Under-water floor caustics looked unnatural (white sheet / blobs) | Fixed-verified | pre-existing | — |
-| OU-WAT-002 | water render | Splash spray hides the dive crater centre | Open | new-feature defect (0.50.0) | C-SPLASH |
+| OU-WAT-002 | water render | Splash spray hides the dive crater centre | Reproduced | new-feature defect (0.50.0) | C-SPLASH |
 | OU-WAT-003 | water render | Whitecaps drawn as soft blobs / plates | Fixed-verified | pre-existing | — |
-| OU-WAT-004 | water render | Foam / whitewater thresholds tuned on calm seas only | Needs-repro | pre-existing | C-WATERTUNE |
+| OU-WAT-004 | water render | Foam / whitewater thresholds tuned on calm seas only | Not reproduced | pre-existing | C-WATERTUNE |
 | OU-WAT-005 | water render | Interactive field rings only 1-3 cm (hard to see) | Fixed-verified | new-feature defect | — |
-| OU-WAT-006 | water / gameplay | FFT swell clipped at the rest plane (troughs only, sea ~35 units low) | Open | new-feature defect (0.50.0) | C-SWELL |
-| OU-WAT-007 | water / gameplay | Dry-deck rule applies to any moving solid, not only floating hulls | Open | new-feature defect (0.50.0) | C-SWELL |
-| OU-WAT-008 | water render | Under-water sun shafts weak | Needs-repro | pre-existing | C-UWPORT |
+| OU-WAT-006 | water / gameplay | FFT swell lowers the sea ~70 units below tru.exe's waves (centring offset + crest clip) | Reproduced | new-feature defect (0.50.0) | C-SWELL |
+| OU-WAT-007 | water / gameplay | Dry-deck rule applies to any moving solid, not only floating hulls | Open (not reproduced off-hull) | new-feature defect (0.50.0) | C-SWELL |
+| OU-WAT-008 | water render | Under-water sun shafts weak | Reproduced (haze, no beams) | pre-existing | C-UWPORT |
 | OU-WAT-009 | water render | Marine snow specks too large | Fixed-verified | pre-existing | C-UWPORT |
 | OU-WAT-010 | water render | Shaft shadow map looked up along the unrefracted sun | Fixed-verified | pre-existing | C-UWPORT |
 | OU-WAT-011 | water render | Water reflections miss off-screen geometry (SSR) | Open (limit) | pre-existing | — |
-| OU-WAT-012 | water render / RT | RT reflection of a shadowed cliff overhang reads too dark | Needs-repro | pre-existing | — |
+| OU-WAT-012 | water render / RT | RT reflection of a shadowed cliff overhang reads too dark | Not reproduced | pre-existing | — |
 | OU-WAT-013 | water render | Geometry swell small outside the tessellated window (coarse TRU sea meshes) | Open (limit) | pre-existing | C-SWELL |
-| OU-REN-001 | render | Dark sky near the chapter 2 cliff | Needs-repro | unknown | — |
+| OU-REN-001 | render | Dark sky near the chapter 2 cliff | Reproduced, Needs-Windows-ref | unknown | — |
 | OU-REN-002 | render | HDR off by default: bright window highlights band | Open | pre-existing | — |
 | OU-REN-003 | render / cine | `co_*` cutscene actor faces render green | Open | pre-existing | — |
 | OU-REN-004 | render | Jointless uber sections drawn in bind pose | Open | pre-existing | — |
 | OU-REN-005 | render | Under-water hair mode not switched; hair has no water response | Open | pre-existing | — |
-| OU-REN-006 | render | Batches skipped "no texcoords, no material textures" (bedroom units) | Needs-repro | pre-existing | — |
+| OU-REN-006 | render | Batches skipped "no texcoords, no material textures" (bedroom units) | Reproduced (log), needs RE | pre-existing | — |
 | OU-REN-007 | render | Blended foliage receives the shadow map under RT; no roughness | Open | pre-existing | — |
 | OU-REN-008 | render / FSR | Translated wind vertex animation has no motion vectors (FSR ghosting) | Open | pre-existing | — |
+| OU-REN-009 | render / log | False `texture 2 not found in loaded DRMs` for back-/depth-buffer samplers | Reproduced | pre-existing | — |
 | OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Open | regression | — |
-| OU-VK-002 | Vulkan AO | CORTAO temporal pass is camera-only (risk of halos on moving meshes) | Needs-repro | new-feature defect (0.51.0) | — |
+| OU-VK-002 | Vulkan AO | CORTAO temporal pass is camera-only (risk of halos on moving meshes) | Not reproduced | new-feature defect (0.51.0) | — |
 | OU-VK-003 | Vulkan | AMD Anti-Lag crash a few frames into cutscenes / loading screen | Fixed-verified | regression (Anti-Lag support) | — |
-| OU-VK-004 | Vulkan / FSR | `VK_ERROR_OUT_OF_DEVICE_MEMORY` then FSR frame generation context failed | Needs-repro | unknown | — |
+| OU-VK-004 | Vulkan / FSR | `VK_ERROR_OUT_OF_DEVICE_MEMORY` then FSR frame generation context failed | Not reproduced | unknown | — |
 | OU-VK-005 | Vulkan / FSR | FSR SDK validation messages (FG 3-component write, storage formats) | Open (upstream) | pre-existing | — |
-| OU-STR-001 | streaming | 2-9 s `stream scene` stalls at level load | Needs-repro | unknown | — |
+| OU-STR-001 | streaming | 2-9 s `stream scene` stalls at level load | Not reproduced | unknown | — |
 | OU-UI-001 | UI | Game font / button-glyph rendering missing | Fixed-verified | pre-existing | — |
 | OU-UI-002 | UI | Chapter title / letterbox screens, confirmation dialogs, PDA sub-screens not drawn | Open | pre-existing | — |
 | OU-UI-003 | UI / text | Game font has no Cyrillic; movie / voice subtitles English only | Open | pre-existing | — |
 | OU-AUD-001 | audio | No Mus! sequencer / FMOD effects | Fixed-verified (Mus!), see OU-AUD-002 | pre-existing | — |
 | OU-AUD-002 | audio | Reverb is a Freeverb tank, not FMOD's I3DL2; music bus not fed to reverb | Open | pre-existing | — |
-| OU-AUD-003 | audio | One global music volume fade unidentified | Needs-repro | unknown | — |
+| OU-AUD-003 | audio | One global music volume fade unidentified | Not reproducible (RE item) | unknown | — |
 | OU-AUD-004 | audio | Script sound wait threads, uber mover / physics-lever sounds missing | Open | pre-existing | C-VM |
 | OU-AUD-005 | audio | Music loads synchronously (tracks start a few frames early) | Open | pre-existing | — |
-| OU-CAM-001 | camera | Moving platforms do not carry the camera focus | Open | pre-existing | — |
-| OU-CAM-002 | camera | Swim camera follows the wave bob exactly | Needs-repro | new-feature defect [I] | C-SWELL |
+| OU-CAM-001 | camera | Moving platforms do not carry the camera focus | Reproduced | pre-existing | — |
+| OU-CAM-002 | camera | Swim camera follows the wave bob exactly | Not reproduced | new-feature defect [I] | C-SWELL |
 | OU-CAM-003 | camera | Motorcycle camera distance / swing are placeholders | Open | pre-existing | — |
 | OU-CAM-004 | camera | Reveal camera blend in/out ours; gamebase time scales not applied | Open | pre-existing | — |
 | OU-PLY-001 | Lara / beams | Beam-walk entry into "about to fall" undecoded | Open | pre-existing | C-CHART |
@@ -104,7 +109,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-009 | Lara / chimney | Chimney wall reach / standoff pair differs (holds 110 vs 119-131) | Open | pre-existing | C-MEASURE |
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
-| OU-PLY-012 | collision | No depenetration pass | Needs-repro | pre-existing | — |
+| OU-PLY-012 | collision | No depenetration pass | Reproduced (idle) | pre-existing | — |
 | OU-SWM-001 | swimming | Under-water turn rate unmeasured; tru.exe steering 0x755A00 not ported | Open | pre-existing | C-MEASURE |
 | OU-SWM-002 | swimming | Surface swim velocity lags heading ~9° vs ~16° | Open | pre-existing | C-MEASURE |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
@@ -128,10 +133,10 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Open | pre-existing | C-JOINT |
 | OU-PZL-015 | progression | ch08 `multibody` 3 unbound; ch14 thrones stop at an unbound native | Open | pre-existing | C-VM |
-| OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 | Open | pre-existing | C-VM |
+| OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Reproduced | pre-existing | C-VM |
 | OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Open | pre-existing | C-VM |
 | OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Open | pre-existing | C-VM |
-| OU-SCR-004 | script VM | Handlers stop on the VM budget (`firetriggervolume`, `dispatcher`) | Needs-repro | pre-existing | C-VM |
+| OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Reproduced | pre-existing | C-VM |
 | OU-SCR-005 | script VM | Level-change fade to white unsupported (always black) | Open | pre-existing | C-VM |
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
@@ -147,7 +152,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 
 | Cluster | Shared cause | Bugs |
 |---|---|---|
-| C-SWELL | 0.50.0 made the drawn FFT swell part of the gameplay water surface but kept the render's `min(…, 0)` crest clamp (`src/render/shaders/water_surface.glsl:87-91`, `src/game/World.cpp:1710-1718`); decks that now sit under the volume top got a blanket dry-deck rule instead of a hull model; the camera focus follows Lara's bone 108 on that surface | OU-WAT-006, OU-WAT-007, OU-WAT-013, OU-CAM-002 |
+| C-SWELL | 0.50.0 made the drawn FFT swell part of the gameplay water surface but kept the render's −0.5 σ centring offset (`src/render/Ocean.cpp:202`, measured −68.6 of the −70 mean shift) and `min(…, 0)` crest clamp (`src/render/shaders/water_surface.glsl:87-91`, `src/game/World.cpp:1710-1718`); decks that now sit under the volume top got a blanket dry-deck rule instead of a hull model; the camera focus follows Lara's bone 108 on that surface | OU-WAT-006, OU-WAT-007, OU-WAT-013, OU-CAM-002 |
 | C-UWPORT | 0.49.0 replaced the under-water look with a literal port of Noniv's abyssal-garden (shafts, snow, caustics, grade); look complaints from before the port must be re-judged against it | OU-WAT-008, OU-WAT-009, OU-WAT-010 (and OU-WAT-001 via 0.49.1) |
 | C-SPLASH / C-WATERTUNE | Enhanced water thresholds and opacities are ours [I] (`water.frag` 415-432, fluid composite RENDERING L744-746) and were tuned on l1_seatop / l2_cliffclimb calm-sea views | OU-WAT-002, OU-WAT-004 |
 | C-VM | SCMD VM gaps: unimplemented opcode 0x65, natives without bindings, no vector values, partial `modifiable` semantics, no script UI; a stopped handler silently leaves its object idle | OU-SCR-001..005, OU-PZL-009, OU-PZL-012, OU-PZL-013, OU-PZL-015, OU-AUD-004 |
@@ -187,7 +192,15 @@ established) / **Fix** (suggested) / **Test** / **Status · Origin**.
 - Fix: fade spray haze inside the crater radius for the first ~0.3 s, or draw the original splash's white water
   only around, not over, the fluid crown.
 - Test: proposed `WaterFluid.CraterCentreVisible` (capture at entry + 0.2 s, centre luminance vs ring).
-- Status · Origin: Open · new-feature defect (0.50.0 PBF splash).
+- Repro result (a80bdb8): **Reproduced.** Swan dive from the `swan_dive.json` cliff top, Vulkan default (Enhanced,
+  FFT): `ou-game --level 'pc-w\l2_cliffclimb.drm' --spawn -29056,2361,6100,180 --input-script swan.txt --frames N
+  --screenshot …` (`swan.txt`: `0.6 forward 1`, `1.25 jump 1`, `1.3 jump 0`, `1.35 drop 1`, `1.45 drop 0`,
+  `1.5 forward 0`; 60 Hz fixed). Entry (`swimsplash`, z 105.5) at tick 187, as the self-test trace. At tick 199
+  (entry + 0.2 s) the crater centre is a flat white patch: mean luma 236 over 80² px at the centre vs 110 in the ring
+  and 108 on open water (`BugRepro/shots/swan_199.png`). Additional observation at tick 211 (+0.4 s): the follow
+  camera passing down through the splash fills the frame with large translucent discs (spray / bubble particles drawn
+  at screen size near the eye, `swan_211.png`) [O]; not in this entry's original report.
+- Status · Origin: Reproduced · new-feature defect (0.50.0 PBF splash).
 
 **OU-WAT-003 Whitecaps drawn as soft blobs / plates**
 - Repro: `--chapter 1` surface swim, FFT ocean on.
@@ -205,30 +218,61 @@ established) / **Fix** (suggested) / **Test** / **Status · Origin**.
   sea state / wind of the level.
 - Fix: scale thresholds with the FFT spectrum's significant wave height; verify on two sea states.
 - Test: proposed coverage metric per unit in the water debug view (`--water-debug`).
-- Status · Origin: Needs-repro · pre-existing.
+- Repro result (a80bdb8): **Not reproduced as described.** There is no rough sea state to test: the FFT spectrum is
+  one global parameter set, logged identically on every sea (`FFT ocean: 128^2 grid, 3 cascades (240 / 28 / 11.3 m),
+  choppiness 2.24, height RMS 0.47 / 0.026 m` on l1_seatop and l2_cliffclimb); only tru.exe's own wave heights
+  differ per level. l7_arctic_sea's default spawn is under the ice (no surface view). Foam pixel share (min channel
+  > 190, chroma < 40) after 300 / 600 fixed ticks: l1_seatop water 0.001 %, l2_cliffclimb water 0.11 % (Original water
+  0.02 %) (`BugRepro/shots/seatop.png`, `cliff_enh_fft.png`). Re-test only if a per-level sea state is added.
+- Status · Origin: Not reproduced · pre-existing.
 
 **OU-WAT-005 Interactive field rings only 1-3 cm**
 - Actual (0.50.0): rings 2-4 cm, no rebound, swimmer acted as a wall (CHANGELOG 0.50.1).
 - Fix landed (0.50.1): crater ~0.5 m, rebound ~20 cm at 1/3 s, rings up to 10 cm; field clipping removed
   (RENDERING L656). Status · Origin: Fixed-verified (changelog + RENDERING) · new-feature defect.
 
-**OU-WAT-006 FFT swell clipped at the rest plane**
+**OU-WAT-006 FFT swell lowers the sea below tru.exe's waves**
 - Repro: `--chapter 1` or `--chapter 2` with Enhanced water + FFT ocean; compare drawn sea level with the level's
   water volume top / tru.exe wave height.
 - Expected: tru.exe's sea is its own sine waves only, `Σ h(sin(k·x + φ) − 1)` (0x69DA80, GAMEPLAY / World.cpp
   `waveHeight`) — never above rest, mean below it. Whether a crest bound applies to an added swell is unknown (the
   FFT swell is ours).
 - Actual: `ouBaseHeight` returns `min(h + ouOceanHeight(p) − 0.5·kM·w.ocean[0].w, 0.0)` and the gameplay surface
-  `std::min(h + gSeaSwell(…), 0)`: crests are cut flat at the rest plane, the visible sea is all troughs and its mean
-  sits roughly half a swell amplitude (~35 units on l1 / l2 [memory note, not re-measured]) below the volume top.
+  `std::min(h + gSeaSwell(…), 0)`, where `render::ocean::Swell::height` already includes the same centring
+  `offset_ = −0.5 · kMetre · σ` (`src/render/Ocean.cpp:202`).
+- Repro result (a80bdb8): **Reproduced, measured.** Scratch program `BugRepro/tex2/swell.cpp` linked against the
+  built libraries evaluates the exact gameplay functions (`game::waterSurface` / `waveHeight`,
+  `render::ocean::swell(128)`) on the l2_cliffclimb sea (volume top 108) at the yacht (−34600, −14670), every 1/60 s
+  for 600 s, and on a 9 × 9 grid (2000-unit spacing, every 0.5 s):
+
+  | sample | tru.exe waves: mean / min / max | + swell (as played): mean / min / max | mean shift | swell's own mean | crest clip active |
+  |---|---|---|---|---|---|
+  | yacht point | −142.0 / −349.9 / 41.8 | −211.9 / −749.2 / 108.0 | **−69.9** | −68.6 | 2.58 % of samples |
+  | 9 × 9 grid | −142.1 / −391.7 / 103.4 | −212.8 / −833.0 / 108.0 | **−70.7** | −68.8 | 2.98 % |
+  | l1_seatop grid (top 1672.7) | 1451.4 / 1231.5 / 1669.6 | 1380.1 / 742.6 / 1672.7 | −71.3 | −68.8 | 3.83 % |
+
+  The swell's RMS is 137.2 (modes 256, residual 9.2). The waves-only mean −142.0 matches the tru.exe Wine
+  measurement (GAMEPLAY.md L1676: "53 and −363, mean −142") [O]. So the played sea sits ~70 units below tru.exe's,
+  and ~98 % of that is the centring offset −0.5 σ = −68.6, not the crest clip (clip adds ~1.3 units; it is active
+  on only 2.6-3.8 % of samples). The earlier "~35 units" note was wrong.
+- Lara rest height gap (baseline z 108 Enhanced vs 250 Original): the player intro stands on the floating yacht, which
+  heaves continuously in both sea models; the baseline runs were wall-clock paced (249 vs 237 ticks). With fixed
+  60 Hz ticks (`--input-script idle.txt`, `0 forward 0`, `--frames 600`) Lara ends at z **−103.4** (Enhanced + FFT,
+  repeated: identical sim digest `aa658bbc448797bb`), **24.8** (Enhanced + `--ocean procedural`) and **24.8**
+  (Original; same digest `ba37a30333bf7b16` as procedural: the water quality itself does not touch the sim). Over a
+  20 s self-test series from the chapter-2 start (80 × 0.25 s samples) her root on the deck spans −151.4 .. 420.2
+  with the swell and −25.5 .. 382.3 on tru.exe's waves (with `fall` / `land` states as the deck drops away). The gap
+  is a heave phase difference, not a rest-height offset; the lowered mean above is the real offset.
 - Files: `src/render/shaders/water_surface.glsl:83-91`, `src/render/shaders/water.vert:51`, `src/game/World.cpp:1710-1718`,
-  `src/render/Ocean.*` (`render::ocean::Swell`).
-- Cause (confirmed by code): the clamp keeps yacht decks above the drawn sea; with the swell in the gameplay surface
-  (c033ab5, 2026-11-15) buoyancy, swimming and the under-water test all see the lowered, crest-less sea.
-- Fix: centre the swell on the rest plane (no clamp) and keep decks dry by the hull model (OU-WAT-007) instead; or
-  clamp only the render inside hull footprints. Needs a decision with the yacht buoyancy tests.
-- Test: `game_selftest_*` water scenarios with `"sea_swell": true`; proposed `World.SwellMeanAtRestPlane`.
-- Status · Origin: Open · new-feature defect (render clamp 0.4x; gameplay coupling 0.50.0, c033ab5).
+  `src/render/Ocean.cpp:202` (`render::ocean::Swell`).
+- Cause (confirmed by measurement + code): the "centring" −0.5 σ shifts the whole swell down so that, after the clip,
+  decks stay above the drawn sea; with the swell in the gameplay surface (c033ab5, 2026-11-15) buoyancy, swimming and
+  the under-water test all see the lowered sea. The clip is a minor contributor.
+- Fix: centre the swell on zero (drop the −0.5 σ offset) and decide the crest bound separately; keep decks dry by the
+  hull model (OU-WAT-007). Needs a decision with the yacht buoyancy tests.
+- Test: `game_selftest_*` water scenarios with `"sea_swell": true`; proposed `World.SwellMeanAtRestPlane` (mean of
+  `surfaceHeight` with swell − without, over a grid, within ±5).
+- Status · Origin: Reproduced · new-feature defect (render clamp 0.4x; gameplay coupling 0.50.0, c033ab5).
 
 **OU-WAT-007 Dry-deck rule applies to any moving solid**
 - Repro: stand on any collision dynamic (moving uber section, platform, loose crate) inside a water volume below its
@@ -241,7 +285,14 @@ established) / **Fix** (suggested) / **Test** / **Status · Origin**.
 - Fix: restrict to loose bodies with buoyancy (the yacht / motorboat objects) or to bodies whose top is above the
   undisturbed rest plane; better, remove once OU-WAT-006 stops lowering the sea.
 - Test: proposed `Game.DryDeckOnlyOnFloatingHulls` (a submerged moving platform still wets Lara).
-- Status · Origin: Open · new-feature defect (0.50.0).
+- Repro result (a80bdb8): **Not reproduced off a hull; scope narrowed by code.** `Player.cpp:3092`
+  (`if (s_.pos.z > (airborne ? vol.points[1].z : surf)) return false;`) returns before the rule for a grounded Lara
+  above the surface, so the rule (`:3099-3101`) only changes anything while she is **airborne** with her root between
+  the wave surface and the volume's static top and a dynamic standable face within the step range: landing on a moving
+  solid in that band. No non-hull moving solid inside a water volume was found to exercise; the hull case works as
+  designed (`ch07_cliffclimb_boat_swell`). A repro needs a dynamic platform whose top lies in that band (candidates:
+  flooding-ship rooms, water-level puzzles).
+- Status · Origin: Open (not reproduced off-hull) · new-feature defect (0.50.0).
 
 **OU-WAT-008 Under-water sun shafts weak**
 - Repro: under water, sun above the horizon, Enhanced water, `light_shafts` on (l1 sea, l2_cliffclimb).
@@ -251,7 +302,14 @@ established) / **Fix** (suggested) / **Test** / **Status · Origin**.
 - Cause (suspected): the demo's mist term `1 + 1.2 mist²` is dropped (mist = 0), so shafts get the demo's open-water
   minimum only.
 - Fix: decide after a hand-test at HEAD; if still weak, feed a mist estimate (depth / near rock) instead of 0.
-- Test: none. Status · Origin: Needs-repro · pre-existing.
+- Test: none.
+- Repro result (a80bdb8): **Reproduced as a look (haze, no beams); judgement left to the user.** l7_arctic_sea default
+  spawn (Lara under the sunlit ice), Vulkan default, `--input-script idle.txt --frames 300`, `--shafts on` vs
+  `--shafts off`: mean luma 164.7 vs 148.3 (+16.4, max +38; 93 % of pixels ≥ +5, 61 % ≥ +15). The difference image is
+  a smooth veil, weakest over the bright caustic patches; no beam structure is visible
+  (`BugRepro/shots/uw_shafts_on.png`, `uw_shafts_off.png`). Consistent with the suspected cause (mist term 0 → the
+  demo's open-water minimum only) [I].
+- Status · Origin: Reproduced (haze, no beams) · pre-existing.
 
 **OU-WAT-009 Marine snow too large** — 0.49.0 replaced the bright cyan blobs with 9000 specks of 0.012-0.057 m
 (`uw_snow.vert`, RENDERING L978-980). Status · Origin: Fixed-verified (doc + code) · pre-existing.
@@ -273,7 +331,15 @@ established) / **Fix** (suggested) / **Test** / **Status · Origin**.
 - Cause (suspected): hit shading uses sun × shadow plus a small ambient; no GI / sky term at the hit, so a sun-shadowed
   surface goes near black in the reflection.
 - Fix: add the irradiance/ambient (c15 / c70-c76 equivalent) at RT hits.
-- Status · Origin: Needs-repro · pre-existing.
+- Repro result (a80bdb8): **Not reproduced as an RT-specific darkening.** l2_cliffclimb player intro, Vulkan, fixed
+  60 Hz (`--input-script idle.txt --frames 300/600`), `--rt full` vs `--rt shadows` (SSR water) vs `--rt off`, four
+  views: Lara's default camera, `--camera -35070,-15040,1500,-31590,-12040,0`, `-33000,-13300,800,-31000,-11300,-100`
+  and the grazing `-32600,-12900,250,-30600,-10900,300`. Water under the pillar overhang: luma 66.9 / 67.2 / 66.6 and
+  89.8 / 89.9 / 89.6 (full / shadows / off); grazing view water strip RGB 54/111/104 (full) vs 56/112/107 (SSR), dark
+  streaks (luma < 80) 17.8 % vs 17.1 %, their mean 53/71/66 vs 49/70/65: RT is not darker than SSR. RT does show the
+  cliff's colour where SSR shows grey (`BugRepro/shots/refl_c_*.png`). Dark reflection streaks exist in every mode;
+  they plausibly mirror the dark grey sky of OU-REN-001 [I]. Needs the user's camera / screenshot.
+- Status · Origin: Not reproduced · pre-existing.
 
 **OU-WAT-013 Geometry swell small outside the tessellated window** — TRU sea meshes are ~3.5 m quads (RENDERING L542-546);
 only the wave-field window is tessellated (`water.tesc/.tese`), elsewhere relief is normals only (ROADMAP L67).
@@ -289,7 +355,15 @@ Status · Origin: Open (limit) · pre-existing.
 - Cause: unknown; candidates: exterior terrain drawn with the wrong unit's sky in a neighbour join, or AgX / fog
   darkening the sky band.
 - Fix: same-camera A/B against the original capture (RENDERING L362 method).
-- Status · Origin: Needs-repro · unknown.
+- Repro result (a80bdb8): **Reproduced; needs a Windows reference.** `ou-game --level 'pc-w\l2_cliffclimb.drm'
+  --input-script idle.txt --frames 120 --camera -34700,-14800,600,-33000,-13000,3000` (looking up NE from the boat):
+  sky top-right region mean RGB **44 / 48 / 47** (Vulkan and OpenGL identical), **21 / 24 / 30** with `--preset
+  original` (`BugRepro/shots/sky_*.png`). The unit has **no exterior terrain** (0 exterior submeshes in
+  `loadLevelScene`; l2_junglehub 5, l1_seatop 12, l7_arctic_sea 1; scratch `BugRepro/tex2/ext.cpp`), so the sky is
+  whatever the clear / fog leaves. `screens/chapters/orig_ch2.png` shows no sky. Wine capture needed: tru.exe at the
+  l2_cliffclimb start with the camera pitched up to the NE (camarg method, RENDERING L354), plus its clear colour /
+  any sky draw (D3D9 Clear and the first draws of the frame).
+- Status · Origin: Reproduced, Needs-Windows-ref · unknown.
 
 **OU-REN-002 HDR off by default: highlights band**
 - Repro: default Enhanced, any bright window / sun-lit opening (l3_main_bedroom windows).
@@ -314,13 +388,31 @@ Open · pre-existing.
   the last 12 logs, also l3_chamberrockhall 36, l3_bedroom_hall 24) [O].
 - Expected: unknown whether tru.exe draws them (likely untextured helper / shadow geometry [I]).
 - Fix: check the sections' material blobs against tru.exe's draw rule (0x511810 colour pass) before dropping them.
-- Status · Origin: Needs-repro · pre-existing.
+- Repro result (a80bdb8): **Reproduced (log).** `--level 'pc-w\l3_main_bedroom.drm'` logs 9: l3_main_bedroom sections
+  12025 / 12027 / 12030 / 12032, l3_bedroom_hall 11890 / 11892, l3_chamberrockhall 12245 / 12247 / 12249 (batch 0
+  each). The skip is deliberate (`src/formats/Model.cpp:303-313`: no TEXCOORD1 and no material texture = "level-enclosing
+  boxes with depth/shadow/fog-only shaders (material 0xd78)", hypothesis). No visible defect attributed; whether
+  tru.exe draws them (fog / occlusion volumes) needs RE of the material's passes.
+- Status · Origin: Reproduced (log), needs RE · pre-existing.
 
 **OU-REN-007 RT: blended foliage still receives the shadow map; no roughness** — ROADMAP L39. Status · Origin: Open ·
 pre-existing.
 
 **OU-REN-008 Wind vertex animation has no motion vectors** — FSR ghosting on foliage (RENDERING L1221). Status · Origin:
 Open · pre-existing.
+
+**OU-REN-009 False `texture 2 not found in loaded DRMs`**
+- Repro: any l2_cliffclimb load (`--level 'pc-w\l2_cliffclimb.drm'`): the warning appears twice (scene + neighbour
+  rebuild) [O, every run of this pass].
+- Repro result (a80bdb8): **Reproduced; cause confirmed.** Scratch `BugRepro/tex2/tex2.cpp` (`loadLevelScene`, then
+  scan every reference): the only references to id 2 are material samplers with `source 1` (engine-global table) —
+  l2_cliffclimb material 8035 (reg 8, cls 9 = back buffer), material 10930 (reg 7 cls 10 = depth buffer, reg 3 cls 9);
+  l2_flushtunnel material 9544 (reg 1 cls 10, reg 0 cls 9); l2_cliffhall none. Per `scene::MaterialSampler`
+  (`src/scene/Assets.hpp:90-96`) source 1 binds the global slot and `textureId` is only a fallback, so the missing
+  section is never needed; `loadTextures` (`src/formats/Scene.cpp:119-131`) still asks for it.
+- Fix: skip `source == 1` samplers with cls 9 / 10 when collecting wanted textures (or don't warn for them).
+- Test: proposed `RealData.NoMissingTextureWarnings` on l2_cliffclimb.
+- Status · Origin: Reproduced · pre-existing (cosmetic).
 
 ### Vulkan, FSR, streaming (OU-VK, OU-STR)
 
@@ -348,7 +440,12 @@ Open · pre-existing.
 - Files: `src/render/vk/shaders/cortao_temporal.comp`, `VkRenderer::recordCortao`.
 - Fix: feed the pre-pass motion (GL's `prevVbo` scheme) to the Vulkan temporal pass if a hand-test shows halos on
   fast movers (Lara running, swinging objects).
-- Status · Origin: Needs-repro · new-feature defect risk (0.51.0).
+- Repro result (a80bdb8): **Not reproduced in single frames.** l2_cliffclimb intro, Vulkan, `--input-script idle.txt
+  --frames 400`, `--ao cortao` / `off` / `rt` (same sim digest, deck heaving): the cortao − off difference follows
+  Lara's and the rail's silhouettes exactly, no displaced copy; open-water mean |Δ| 0.73 (`BugRepro/shots/ao_boat_*.png`).
+  A bedroom run with Lara running did not move her (she starts against geometry; no useful frame). Temporal halos
+  need a frame sequence while something moves fast: hand-test.
+- Status · Origin: Not reproduced · new-feature defect risk (0.51.0).
 
 **OU-VK-003 Anti-Lag crash in cutscenes / loading**
 - Repro (pre-0.49.2): AMD GPU, `graphics.anti_lag on`, New Game → `001_pro_corridor`.
@@ -363,7 +460,13 @@ Open · pre-existing.
 - Evidence: `game-20261031-201908.log:86` then `ou: FSR off: FSR frame generation context failed (ffx-api 3)`; also
   `game-20261102-224911` / `-230311` (MangoHud loaded) [O]. Not in logs since 2026-11-06.
 - Cause (suspected): VRAM exhaustion at FG context creation with another overlay layer present.
-- Fix: log heap budgets (`VK_EXT_memory_budget`) at FG creation. Status · Origin: Needs-repro · unknown.
+- Fix: log heap budgets (`VK_EXT_memory_budget`) at FG creation.
+- Repro result (a80bdb8): **Not reproduced.** Same GPU (RX 7900 XTX), Mesa 26.2.6 (the user's failing logs were Mesa
+  26.2.5 builds of 2026-10-31 / 11-02): `--level 'pc-w\l2_cliffclimb.drm' --upscaler fsr --frame-generation on
+  --frames 600` with `MANGOHUD=1` (layer loaded, log line `[MANGOHUD] [info]`) and `OU_VK_PRESENT_STATS=1`: FG active
+  ("presents 1200 … real 600, generated 600"), no `OUT_OF_DEVICE_MEMORY`, no "FSR off"; also `--fsr-quality
+  performance` 300 frames. Untested: the user's display resolution (the virtual output is 1920×1052) and a long play
+  session. Status · Origin: Not reproduced · unknown.
 
 **OU-VK-005 FSR SDK validation messages** — FG writes a 3-component texel to RGBA8
 (`VUID-vkCmdDispatch-OpImageWrite-08795`), upscaler storage formats `Rg32f` / `R32f` over R16G16 / R16 images
@@ -374,7 +477,11 @@ Open · pre-existing.
   none above 1 s in 2026-11-15/16 logs.
 - Note: ROADMAP L55 still lists the neighbour join rebuilding the whole render scene (~53 + 12 + 12 ms) next to the
   newer per-unit residency (4 + 2 + 2.5 ms).
-- Status · Origin: Needs-repro (possibly fixed by resident units) · unknown.
+- Repro result (a80bdb8): **Not reproduced.** Every load of this pass (async loads, Vulkan): `stream scene` ≤ 21.35 ms
+  (tick 1), 0.55-1.08 ms later (`--chapter 1` / `--chapter 2 --no-cinematics --frames 300`, l2_cliffclimb, l3, l7).
+  Second scene load via quicksave + quickload (`saveload.txt`: `2 save`, `4 load`, XDG dirs redirected): 0.61 ms
+  (ch1) / 1.20 ms (ch2) at tick 121. Consistent with the per-unit residency having fixed it [I].
+- Status · Origin: Not reproduced · unknown.
 
 ### UI and text (OU-UI)
 
@@ -408,7 +515,8 @@ Status · Origin: Fixed-verified (Mus!) · pre-existing.
 - No repo doc or code names this fade; known music fades are per stem (0x5866B0 / 0x586650, AUDIO.md L343) and per
   slot master (+0x38..+0x44, 0x589370, AUDIO.md L611-619) [O]. Origin of the item: earlier session note.
 - Fix: RE — trace writers of the music master besides the slot masters (e.g. pause / cinematic ducking) in tru.exe.
-- Status · Origin: Needs-repro / RE · unknown.
+- Repro result (a80bdb8): **Not reproducible at runtime**: no symptom, level or log signature names this fade; it stays an
+  RE item. Status · Origin: Not reproducible (RE item) · unknown.
 
 **OU-AUD-004 Script sound waits and mover sounds** — script wait threads, uber mover / physics-lever sounds, kind-1 i16
 +4 [U], 0x7B / 0x0D replay (ROADMAP L65). Status · Origin: Open · pre-existing.
@@ -424,7 +532,14 @@ saved slot requests with a 2 s fade-in [I] (ROADMAP L64). Status · Origin: Open
 - Actual: focus eases toward bone 108 at ≤ 1896.3 units/s per axis with no carrier velocity (`World.cpp:955-978`).
 - Fix: add the carrier's frame delta (already known for Lara's riding, `Objects.cpp` moving markup) to `focus_`
   before easing. Test: proposed `Game.CameraFocusRidesMovingMarkup`.
-- Status · Origin: Open · pre-existing (27a5d8e, 2026-10-31).
+- Repro result (a80bdb8): **Reproduced on the floating yacht** (vertical axis). Self-test series from the chapter-2
+  start (`BugRepro/sc/deck_series_{swell,tru}.json`: 80 steps × 0.25 s recording `player.pos.z`, `camera.pos.z`,
+  `camera.mode`), Lara idle on the deck, camera mode 1: with the swell the camera z stays **597.0 for the first 5 s**
+  while her root heaves 79 → 158 → 89 → 132; on tru.exe's waves it stays **611-612 for 3.75 s** while she rises
+  125 → 247. Only past that does the camera move, and then late: camera z peaks at 730 (swell) 1.5 s after the deck's
+  peak (158), when the deck is already down at 54; 760 (tru) 2.5 s after its peak (291). Over 20 s: deck −151 .. 420 vs camera 511 .. 946 (swell); −25 .. 382 vs
+  611 .. 977 (tru). The focus behaves as a vertical dead zone plus easing, not as a carried platform [O].
+- Status · Origin: Reproduced · pre-existing (27a5d8e, 2026-10-31).
 
 **OU-CAM-002 Swim camera follows the wave bob exactly**
 - Repro: `--chapter 1` surface swim / tread on the swell (Enhanced + FFT).
@@ -434,7 +549,12 @@ saved slot requests with a 2 s fade-in [I] (ROADMAP L64). Status · Origin: Open
   (`World.cpp:971`), so a zero vertical zone copies her bob.
 - Fix: read the swim modes' focus records (settings +0x50) and check the z dead zone; if tru.exe follows exactly,
   the bob comes from our larger swell (C-SWELL).
-- Status · Origin: Needs-repro · new-feature defect [I] (swell in gameplay, 0.50.0).
+- Repro result (a80bdb8): **Not reproduced.** Self-test series `BugRepro/sc/tread_series_{swell,tru}.json` (the
+  ch07 route over the side and into the sea, then 80 × 0.25 s samples; only `swimtread` samples with `water.depth`
+  44.1 ± 3 are used, a shark interrupts after ~9 s): surface-swim camera (mode 20) z moves **132** while her root
+  moves **566** with the swell (23 %); 101 vs 430 on tru.exe's waves (24 %). The camera does not copy the bob, and
+  the ratio does not depend on the swell. Status · Origin: Not reproduced · new-feature defect [I] (swell in gameplay,
+  0.50.0).
 
 **OU-CAM-003 Motorcycle camera placeholder** — `kDistance = bike ? 1711` [I] (`World.cpp:993`), swing 1002 [I];
 VehicleCamera not decoded (AUDIT_A L361). Status · Origin: Open · pre-existing.
@@ -498,7 +618,14 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
 `GameReal.SavingGrabClips`). Interact recover not yet Wine-traced. Status · Origin: Fixed-verified · pre-existing.
 
 **OU-PLY-012 No depenetration pass** — "an already-touching contact being left is ignored; query mask 0xFF"
-(GAMEPLAY.md L4426). Needs a repro of a stuck-in-geometry case. Status · Origin: Needs-repro · pre-existing.
+(GAMEPLAY.md L4426).
+- Repro result (a80bdb8): **Reproduced for an idle Lara.** l3_main_bedroom, the wall in front of the `ledge.json`
+  spawn: running into it (`wall_contact.json`, yaw −90) stops her root at y −4385.4. Spawned 35 units past that face
+  (`--spawn`-style scenario `pen_stand_35.json`, `[-8470, -4420, 244, 90]`) and left alone for 1.5 s she stays at
+  y −4420.0 (moved 0.0). Moving resolves it: running away (`pen_out_35`, `pen_out_75` at −4460) leaves freely
+  (1598 / 1465 horizontal), running further in (`pen_in_35`) ends at the face y −4385.4 (moved 37 the other way). No
+  in-play stuck case was found; the risk is placements (respawns, loads, moved platforms) that start her inside.
+- Status · Origin: Reproduced (idle) · pre-existing.
 
 ### Swimming (OU-SWM)
 
@@ -570,7 +697,15 @@ All: Status Open · pre-existing.
 - Expected: tru.exe interpreter 0x57CE50 executes 0x65 (meaning unknown).
 - Fix: decode 0x65 in the interpreter switch (cdcEngineDXHR ByteCodeEnum.h gives numbering, RESEARCH), implement in
   `src/script/Vm.cpp`. Test: proposed `ScriptRealData.FireVolumeRunsPastOp65` (l3 fire volume uid from logs).
-- Status · Origin: Open · pre-existing.
+- Repro result (a80bdb8): **Reproduced; failing instruction identified.** `--level 'pc-w\l3_main_bedroom.drm'` logs
+  23 `op 0x65` stops (fire volumes 4492-4501, 4516-4518, …); l2_cliffclimb 4080 / 4081. Bytecode dump
+  (`OU_PROGRESSION_DUMP="l3_main_bedroom:4492" ou_gates_tests --gtest_filter=ProgressionReal.DumpScripts`,
+  `BugRepro/logs/dump_4492.txt`): 0x65 is CALLU; the stop is the constructor (type 6516 fn 4, state 0) at word 21:
+  `PUSHL32 4, PUSHLA 8, PUSHSR 16, CALLU` with **no relocated function pointer** (`in.ptrs` empty → `Vm.cpp:551`
+  fail), followed by a word the dump shows as `NOP 1793` (0x701) [I: the call's own operand, a builtin / array method
+  on member +16, type 55]. The constructor's loop that builds the volume's player sensors never runs. RE next: the
+  0x57CE50 case for CALLU with an unrelocated operand.
+- Status · Origin: Reproduced · pre-existing.
 
 **OU-SCR-002 Native `anchor` 1 unbound** — 0x7966F0, the vector between two anchors (0x4AB870); the VM has no vector
 values (PROGRESSION.md L76-78). Logs: `triggervolume` 158, `triggerplane` 6 stops [O]; l7_helheim01 8945 (sound loudness
@@ -583,8 +718,19 @@ loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Open 
 Status · Origin: Open · pre-existing.
 
 **OU-SCR-004 VM budget stops** — `firetriggervolume` 16, `dispatcher` 6 `handler stopped: budget` [O logs]; the per-resume
-budget is ours (ROADMAP L95 "the VM budget per resume"). Needs a repro to tell an infinite loop (missing wait
-semantics) from a long legitimate handler. Status · Origin: Needs-repro · pre-existing.
+budget is ours (100000 instructions, `Vm.cpp:352`).
+- Repro result (a80bdb8): **Reproduced deterministically; cause confirmed (fire volumes).** `ou-game --self-test
+  tests/selftests/ch01_bedroom_new_game.json --self-test-trace --renderer opengl --no-audio --draw-last --sync-loads`
+  (PASSED) logs `uid 4492 … budget` as she enters 4492 at tick 325 and `uid 4494 … budget` at tick 700; the same run
+  **with audio** logs none. Bytecode (`dump_4492.txt`): state 1 (fn 8) is `while (true) { health damage (member +12
+  = 300); log; instance fn 8; SSEQU sound fn 1 }` (`JMP −49`), whose only yield is the sound sequence; `Script.cpp:2309-2329`
+  blocks only when the sound starts and reports busy, else falls through to the passive return → the loop spins until
+  the budget kills the thread. Health is identical in both runs (1000 → 700 at 4492, → 400 at 4494: one hit per entry,
+  none while she stays 3.2 s in 4494). User logs with audio show the same stop at times (e.g. `game-20261106-111105`
+  tick 551, 4493) [I: the sound not starting / not busy]. tru.exe repeats the damage per sound length [I]. The
+  `dispatcher` 2559 / 663 budget stops (l2_cliffclimb sharks) were not reproduced here.
+- Fix: treat SSEQU on a sound that does not play as a one-tick wait (yield) instead of an immediate return.
+- Status · Origin: Reproduced · pre-existing.
 
 **OU-SCR-005 Fade to white unsupported** — level changes that fade to white (0x5DAB40) always fade black (`Script.cpp:2052`).
 Status · Origin: Open · pre-existing.
@@ -640,6 +786,9 @@ Open · pre-existing (test-tool gap).
   bodies").
 - ROADMAP L95 "Natla cannot be hit (script vt 22)" vs REPORT §7 "Mjolnir hits do reach Natla's script".
 - ROADMAP L55 lists both the whole-scene neighbour join cost and the per-unit residency numbers.
+- `tests/selftests/ch07_cliffclimb_boat_swell.json` note and GAMEPLAY.md L1726-1727 "deck between z 78 and 154 (150–159
+  on the waves alone)": a 20 s series from the same start measures her root on the deck −151 .. 420 (swell) and
+  −25 .. 382 (waves alone) (OU-WAT-006 repro); the quoted ranges cover only the first seconds.
 - Fix: one doc pass correcting each against the code. Status · Origin: Open · doc drift.
 
 ## Triage
@@ -668,5 +817,47 @@ Open · pre-existing (test-tool gap).
   -008 / -009, OU-PZL-002 take-off spot, OU-VEH-001 bike, OU-PHY-002 push speeds, OU-AUD-002 reverb A/B,
   OU-REN-001 sky A/B against `orig_ch2`.
 
-**Needs a hand-test / repro on current HEAD** (no code change until seen): OU-WAT-004, OU-WAT-008, OU-WAT-012,
-OU-VK-002, OU-VK-004, OU-STR-001, OU-SCR-004, OU-PLY-012, and OU-VK-001 (bisect only in a GPU-reset-safe session).
+**Needs a hand-test / repro on current HEAD** (no code change until seen): OU-WAT-012 and OU-VK-002 (not reproduced
+headlessly), OU-VK-004 (user's resolution), OU-WAT-008 (look judgement), OU-VK-001 (bisect only in a GPU-reset-safe
+session). Reproduced in this pass and ready for a fix decision: OU-WAT-002, OU-WAT-006, OU-CAM-001, OU-SCR-004,
+OU-REN-009, OU-PLY-012 (idle).
+
+## Reproduction log
+
+Pass of 2026-11-16 on `main` a80bdb8 (agent BugRepro). Binaries: `build-AuditBaseline` (read-only). Scratch:
+`openunderworld-work/re-baseline/BugRepro/` (`inner{1,2,3}.sh` = the exact runs, `sc/` scenarios and input scripts,
+`logs/`, `rep/` self-test reports, `shots/` PNGs, `tex2/` scratch probes `tex2.cpp`, `ext.cpp`, `swell.cpp`).
+
+- Session: `systemd-run --user --scope --unit=ou-bugrepro{1,2,3} -q -p MemoryMax=14G -- env -u DISPLAY dbus-run-session
+  -- kwin_wayland --virtual --socket ou-bugrepro --width 1920 --height 1080 --exit-with-session ./innerN.sh`; env
+  `OU_GAME_DIR`, `QT_QPA_PLATFORM=offscreen OU_DISABLE_UPDATES=1`, XDG dirs under the scratch dir (user saves untouched).
+  Scopes stopped afterwards; the leaked `ksecretd` / `xdg-desktop-portal-kde` of each session went with its scope.
+- Shots: `ou-game --game-dir … --renderer vulkan|opengl --width 1920 --height 1080 --no-vsync --no-overlay --no-audio
+  --screenshot X.ppm …`; every gameplay-dependent shot uses `--input-script` (60 Hz fixed ticks, so `--frames N` = tick N
+  and reruns give the same `sim` digest — checked: `cliff_enh_fft` twice, `aa658bbc448797bb`).
+- Self-tests: `ou-game --self-test X.json --self-test-trace --renderer opengl --no-audio --no-overlay --draw-last
+  --sync-loads --width 160 --height 120`; time series by steps of 0.25 s whose expectations always hold and record the
+  probes' values in the report.
+- Not run: `game_vulkan_rt_smoke`, anything in l1_kraken_room with RT.
+
+| ID | Result | Key measurement |
+|---|---|---|
+| OU-WAT-002 | Reproduced | crater centre luma 236 vs 110 ring at entry + 0.2 s; camera-in-splash discs at + 0.4 s |
+| OU-WAT-004 | Not reproduced | one global FFT sea state; foam share ≤ 0.11 % |
+| OU-WAT-006 | Reproduced | played sea mean −70 vs tru.exe waves; −68.6 of it the −0.5 σ centring; clip active 2.6-3.8 % |
+| z 108 / 250 gap | Explained | yacht heave phase: fixed-tick z −103.4 (FFT) vs 24.8 (procedural = Original) at tick 600 |
+| OU-WAT-007 | Not reproduced off-hull | rule only reachable airborne between surface and top |
+| OU-WAT-008 | Reproduced (haze) | shafts +16.4 mean luma, no beam structure |
+| OU-WAT-012 | Not reproduced | RT vs SSR water luma within ±1 at four views |
+| OU-REN-001 | Reproduced, Needs-Windows-ref | sky RGB 44/48/47 (Original preset 21/24/30); unit has no exterior terrain |
+| OU-REN-006 | Reproduced (log) | 9 sections skipped at the bedroom start |
+| OU-REN-009 (new) | Reproduced | texture 2 = fallback id of back/depth-buffer samplers (materials 8035, 10930, 9544) |
+| OU-VK-002 | Not reproduced | AO difference aligned with geometry on the heaving deck |
+| OU-VK-004 | Not reproduced | FG active with MangoHud, 600 generated frames, no OOM |
+| OU-STR-001 | Not reproduced | stream scene ≤ 21.35 ms; after quickload 0.6 / 1.2 ms |
+| OU-AUD-003 | Not reproducible | no runtime symptom |
+| OU-CAM-001 | Reproduced | camera z flat for 5 s (swell) / 3.75 s (tru) while the deck heaves 79-158 / 125-247 |
+| OU-CAM-002 | Not reproduced | tread camera moves 23-24 % of the bob in both sea models |
+| OU-PLY-012 | Reproduced (idle) | embedded 35 units: idle 1.5 s, moved 0.0 |
+| OU-SCR-001 | Reproduced | 23 stops in l3_main_bedroom; CALLU without function pointer, constructor word 21 |
+| OU-SCR-004 | Reproduced | ch01 self-test, `--no-audio`: 4492 @ tick 325, 4494 @ tick 700; with audio: none |
