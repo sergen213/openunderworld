@@ -229,7 +229,7 @@ int main(int argc, char** argv) {
         int total = atoi(argv[2]), ne = argc - 3; WORD vk[32]; int dn[32], up[32], st[32] = {0}; double at[32] = {0};
         for (int i = 0; i < ne && i < 32; ++i) { unsigned v; sscanf(argv[3 + i], "%x:%d:%d", &v, &dn[i], &up[i]); vk[i] = (WORD)v; }
         LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
-        float last[12] = {0}; DWORD lastSt = 0; unsigned short lastAn = 0; long lastM = -2; timeBeginPeriod(1);
+        float last[14] = {0}; DWORD lastSt = 0; unsigned short lastAn = 0; long lastM = -2; timeBeginPeriod(1);
         for (;;) {
             QueryPerformanceCounter(&t); double ms = (t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
             for (int i = 0; i < ne; ++i) if ((st[i] == 0 && ms >= dn[i]) || (st[i] == 1 && ms >= up[i] && ms >= at[i] + (up[i] - dn[i]))) { if (st[i] == 0) at[i] = ms;
@@ -262,7 +262,8 @@ int main(int argc, char** argv) {
                 ReadProcessMemory(h, (void*)(R + 0x120), ph, 16, 0); ReadProcessMemory(h, (void*)(R + 0x110), hh, 16, 0);
                 if (fl & 2) for (int k = 0; k < 4; ++k) sf += hh[k] * ((float)sin(kx[k] * s[0] + ky[k] * s[1] + ph[k]) - 1.0f); } }
             unsigned short an = 0; if (p) ReadProcessMemory(h, (void*)(p + 0xC18), &an, 2, 0);
-            float cur[12] = {s[0], s[1], s[2], s[3], s[4], s[5], C[0], C[1], C[2], P[0], P[1], P[2]};
+            // health and whole breath frames count as changes too: a still body under water still logs its drain and drowning
+            float cur[14] = {s[0], s[1], s[2], s[3], s[4], s[5], C[0], C[1], C[2], P[0], P[1], P[2], hp, (float)(int)air};
             if (memcmp(cur, last, sizeof cur) || stp != lastSt || an != lastAn || m != lastM) {
                 memcpy(last, cur, sizeof cur); lastSt = stp; lastAn = an; lastM = m;
                 printf("%.1f pos %.2f %.2f %.2f rot %.4f %.4f %.4f vel %.2f %.2f %.2f st %08lx rq %d par %d an %u wt %.2f sf %.2f air %.1f hp %.1f"

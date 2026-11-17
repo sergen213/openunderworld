@@ -3,15 +3,20 @@
 # -59357.3, 19003.8); the sea volume's static top is tru z -18895.82 = ours 108). Writes into $OUT:
 #   repro-h300.txt   the existing trace work/waterentry-wine/h300.txt again (a plain drop from 300 over the top)
 #   tread-yacht.txt  60 s treading 1000 units off the yacht's start position, tread-open.txt the same in open water
-#   swim-*.txt       under-water swim start / stop, turn, ascend / descend, camera-pitch steering
+#   swim-*.txt       surface swim start / stop, turn, Space / Ctrl while swimming, camera-pitch steering
 #   breath.txt       a dive with no input and no god mode until the first drowning damage
+#   under-*.txt      under water: Forward + Right / Left, sprint;  drown.txt  breath out and the drowning ticks
 #   deck-*.txt       the camera on the yacht's deck (idle, weapons drawn / holstered, run off into the sea)
 #   camhook.txt      the camera mode requests (camhook.sh log) of the deck part
-# Usage: OU_WREF_DIR=... WINEPREFIX=... OUT=dir sessions/l2_cliffclimb_sea.sh [parts...]  (parts default: all)
+# Usage: OU_WREF_DIR=... WINEPREFIX=... OUT=dir sessions/l2_cliffclimb_sea.sh [parts...]
+# parts: repro tread swim breath under drown deck (default: repro tread swim breath deck)
 WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"
 : "${OUT:=$OU_WREF_DIR/out}"; mkdir -p "$OUT"
 W="$WREF_SRC/w.sh"
 R() { "$W" ref "$@"; }
+GODPAT="$(basename "$OU_WREF_DIR").bin.ref.exe god"   # this harness's god helper only
+godrunning() { pgrep -f "$GODPAT" > /dev/null; }
+godstop() { [ -n "$GP" ] && kill "$GP" 2>/dev/null; pkill -f "$GODPAT"; GP=; }
 PARTS=${*:-"repro tread swim breath deck"}
 has() { case " $PARTS " in *" $1 "*) return 0;; esac; return 1; }
 TOP=-18895.82
@@ -44,8 +49,21 @@ if has breath; then
     R god > /dev/null 2>&1 & GP=$!
     sleep 3; "$WREF_SRC/shot.sh" "$OUT/breath-end.png"
 fi
+if has under; then # under water (dive by a Ctrl tap from treading): Forward + Right 3 s, Forward + Left 3 s, then sprint 8 s
+    godrunning || { R god > /dev/null 2>&1 & GP=$!; }
+    R drop -19500 45500 "$(awk "BEGIN{print $TOP - 44}")" 500 3000 0 0 0 > /dev/null
+    R rec 16000 11:300:450 26:2000:15500 27:4000:7000 25:8500:11500 > "$OUT/under-turn.txt"
+    R rec 10000 26:0:9500 a0:500:9000 > "$OUT/under-sprint.txt"
+    "$WREF_SRC/shot.sh" "$OUT/under-end.png"
+fi
+if has drown; then # a dive with no input; health is restored after 138 s (air runs out at ~134 s, 100 a tick after)
+    godstop
+    R drop -19500 45500 "$(awk "BEGIN{print $TOP - 44}")" 500 3000 0 0 0 > /dev/null
+    R rec 138000 11:300:450 > "$OUT/drown.txt"
+    R god > /dev/null 2>&1 & GP=$!
+fi
 if has deck; then
-    pgrep -f "ref.exe god" > /dev/null || { R god > /dev/null 2>&1 & GP=$!; }
+    godrunning || { R god > /dev/null 2>&1 & GP=$!; }
     "$WREF_SRC/camhook.sh" install > "$OUT/camhook-install.txt" 2>&1
     R tpv -22369.98 44705.42 -18792.41 1500 > /dev/null; "$W" pole yaw 2.3214; sleep 3
     R rec 15000 > "$OUT/deck-idle.txt"; "$WREF_SRC/shot.sh" "$OUT/deck-idle.png"
@@ -53,6 +71,6 @@ if has deck; then
     R rec 10000 26:500:6000 > "$OUT/deck-to-sea.txt"; "$WREF_SRC/shot.sh" "$OUT/deck-to-sea.png"
     "$WREF_SRC/camhook.sh" log > "$OUT/camhook.txt" 2>&1
 fi
-[ -n "$GP" ] && kill "$GP" 2>/dev/null
+godstop
 "$WREF_SRC/stop.sh"
 echo done > "$OUT/done.txt"
