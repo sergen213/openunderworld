@@ -112,6 +112,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-012 | collision | No depenetration pass | Reproduced (idle) | pre-existing | — |
 | OU-PLY-013 | Lara | Slope-slide upper bound: OU treats slide-flagged faces flatter than 28° as standable (tru.exe slides) | Open (asm-verified) | pre-existing | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit not loosened to 0.5236 for fast arcs | Open (asm-verified) | pre-existing | — |
+| OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Reproduced | pre-existing | — |
 | OU-SWM-001 | swimming | Swim turn rates differ from tru.exe and are left/right uneven; snap-back on release too fast | Reproduced (Wine-measured) | pre-existing | C-MEASURE |
 | OU-SWM-002 | swimming | Surface swim velocity lags heading ~9° vs ~16° | Open | pre-existing | C-MEASURE |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
@@ -662,6 +663,13 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
 - OU `wallSide` (`Player.cpp:1526-1530`) always uses 0.2618.
 - Which object +0x80 belongs to is unresolved [U].
 - Status · Origin: Open · pre-existing.
+
+**OU-PLY-015 Land state on a dropping deck** (PlatformCam-2, 2026-11-16)
+- Repro: chapter 2 start, 15 s idle on the yacht deck (tru.exe waves); test `StreamReal.CameraRidesTheYachtDeck`.
+- Actual: ours enters State::Land once as the deck drops (bone 108 drops 60 for 0.7 s; pivot−root dips to 426).
+- tru.exe (Wine deck traces): stays in one chart state (rq 46) for all 15 s.
+- Suspected cause [I]: the ground follow on a dropping carrier lets her go airborne for a tick.
+- Status · Origin: Reproduced · pre-existing.
 
 ### Swimming (OU-SWM)
 
