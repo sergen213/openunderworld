@@ -264,9 +264,11 @@ state field +0x4C, mode requests via slot 17, TransitionCamera durations, and th
 | 0x5F39F0 / 0x5EDF50 | CAMERA_SetMode / CameraManager_ToggleMode | N-m / N-l |
 | 0x5E8750 / 0x5E86F0 | camera shake stop / free slot | C |
 
-- State machine: camera modes (passed as the argument of CameraManager vtable slot 57, vftable +0xE4: 8 =
-  AutoSplineCamera, 23 = manual aim; +0xE4 is a vfunc, not a field: docs/re/STRUCTURES.md "Mismatches"); CameraSpline
-  states 1/2/3.
+- State machine:
+  - Camera types 1-15 come from vtable slot 57 (vftable +0xE4: the camera of a type; 8 = AutoSplineCamera).
+  - The committed camera mode is the field +0x54 (manual aim 23, on foot 1, ...). Mode requests go through slot 17.
+  - Vftable +0x54 = slot 21 is the blended type switch; see [CAMERA.md](CAMERA.md).
+  - CameraSpline has states 1/2/3.
 - Linux: `src/game/World.cpp` (follow camera), `src/game/Camera.cpp` (splines), `src/render/Camera.hpp`.
 - Fidelity: **decoded** for the follow camera's tuning and the reveal splines (ROADMAP: tested). The citing code
   marks some parts as not modelled [U] (the default yaw force set 11, the look-target blend 0x6009C0), so the

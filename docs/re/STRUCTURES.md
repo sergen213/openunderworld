@@ -205,18 +205,19 @@ the new instance.
 | Texture header +0x15 u8 mips | 0x515B40 | 515BE2 `cmp BYTE PTR [eax+0x15],0` | match |
 | CameraManager +0xE4 | 0x7759F0 | 7759FE `mov eax,[edx+0xe4]`, edx = vftable | match as a **vfunc** (see below) |
 | GameTracker +0xB8 | 0x5E0050 | 5E0055 `mov al,BYTE PTR [esi+0xb8]` | **partial** |
-| CameraManager +0x54 | 0x7767C0 | 7767CD `mov edx,[edx+0x54]`; 7767D8 `call edx` | **semantic mismatch** |
+| CameraManager +0x54 | 0x7767C0 | 7767CD `mov edx,[edx+0x54]`; 7767D8 `call edx` | vftable +0x54 confirmed; the field +0x54 also exists (see below) |
 
 ## Mismatches and corrections found
 
-- **CameraManager +0x54 / +0xE4 are vftable slots, not fields** [O]:
-  - In 0x7767C0 `eax` = the manager (from 0x5E7770), `edx = [eax]` (the vftable), `[edx+0x54]` is called
-    with `(arg, 1)`. In 0x7759F0 `[edx+0xE4]` is called with 8.
-  - `src/script/Script.cpp:1989` already words +0x54 as "through CameraManager +0x54", i.e. a call.
-  - `src/game/Game.hpp:1178` calls "CameraManager +0x54" the orbit camera's *mode* (1 on foot, 4 free climb,
-    …). Either the mode values are arguments of that vfunc, or Game.hpp means a different field; the
-    comment needs rewording [U which].
-  - ENGINE_ARCHITECTURE.md:261 "CameraManager +0xE4 type" is likewise vfunc 57 called with the type.
+- **CameraManager "+0x54" names two different things, and both are real** [O; corrected 2026-11-16 by
+  [CAMERA.md](CAMERA.md)]:
+  - vftable +0x54 = slot 21 (0x5EE190), the camera-type switch blended through the TransitionCamera. 0x7767C0
+    calls `[edx+0x54]` with `(arg, 1)`.
+  - The field +0x54 = the committed camera mode. 0x5E7FE0 writes it and slot 2 (0x5EB190) reads it. Mode requests
+    go through slot 17 (0x5E8210).
+  - So `src/game/Game.hpp:1178` (the orbit camera's mode 1 / 4 / 11 / 19 / 20) correctly describes the field, and
+    0x7767C0 / `Script.cpp:1989` describe the vfunc. The earlier "not a field" verdict here was wrong.
+  - vftable +0xE4 = slot 57 (0x5EB300) returns the camera of a type (a table at +4+4*type); 0x7759F0 calls it with 8.
 - **gameTracker +0xB8 is a u8 state, not a flag** [O]:
   - `MAIN_PlayGame` 0x5E0050 calls 0x5DAB40 only when the byte is neither 0 nor 8 (5E0055..5E0061).
     0x5DAB40 then tests `== 0xC` (5DAB48).

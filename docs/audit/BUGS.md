@@ -730,6 +730,25 @@ docs/GAMEPLAY_DEVELOPMENT_REPORT.md §7; regression test = the scenario moved up
 
 All: Status Open · pre-existing.
 
+Decoded causes, 2026-11-16 ([../re/PUZZLE_BLOCKERS.md](../re/PUZZLE_BLOCKERS.md), commit 8b2543a; evidence and
+proving tests there):
+- **OU-PZL-007:** a test bug. The scenario grips section 0's locked lever. The jaguar handle is section 1's record
+  528; with it, ours already turns ring joint j2 by −0.646 rad in 4 s.
+- **OU-PZL-009:** confirmed. tru.exe's modifiable 7 posts message 0x2E (0x4A5A90 → anim-graph 0x6B453B). Drop the
+  `ar_ei_switch_oneway` name check. The regression it guarded is gate {l1_kraken_room, 498}, which needs the
+  kraken-dead message first.
+- **OU-PZL-010:** confirmed. `ca_pu_thor_debris` has no joint records; PushPull 0x74AC00 drives the body directly.
+  Fix: a world three-axis joint on first grip.
+- **OU-PZL-006:** confirmed. Fixed joints (type 8) are never created, so removing them releases nothing
+  (`Objects.cpp:651`, `:539`, `:797`).
+- **OU-PZL-008:** split into three causes. (a) The sight ray end and mask differ (0x713090 / 0x6FF040 query 0xDE,
+  mask 0x1F). (b) Rope bends don't tug the bodies they wrap. (c) multibody 92 / 93 are unbound.
+- **OU-PZL-015:** multibody 3 = set "fixed" bit 0 at physics +0x15C on every body (inverse of 2). The throne native
+  is still unknown.
+- **OU-GRP-005:** moves to C-VM. Vt 46 is not called on rope attach, larabase 26 (0x777C30) is unbound, and our heave
+  releases the rope.
+- **OU-PHY-001:** narrowed to fixed joints plus body-A motion. Type 5 / 7 joints never occur on moving bodies in the data.
+
 ### Script VM (OU-SCR)
 
 **OU-SCR-001 Fire-volume handlers stop at opcode 0x65**
@@ -849,7 +868,10 @@ Open · pre-existing (test-tool gap).
     `World.cpp:580`, `Combat.hpp:376`, `SCRIPTS.md:435` and `GAMEPLAY.md:4185`.
   - V074: the `Combat.hpp:32-33` comment says difficulty table +0x08 / +0x14 are unread. They are read, by 0x6E7960,
     0x702F5E and 0x75E600 (behaviour is already correct).
-- The World.cpp:877 comment and tru_gog.csv rows 24 / 78 were fixed in 207426b.
+- tru_gog.csv rows 24 / 78 were fixed in 207426b.
+- The World.cpp:877 comment edit in 207426b was itself wrong. CameraManager "+0x54" is both the field holding the
+  committed mode and vtable slot 21 (docs/re/CAMERA.md). STRUCTURES.md and ENGINE_ARCHITECTURE.md were corrected on
+  main. The World.cpp / Game.hpp comments are being corrected on branch agent/PlatformCam-2.
 - Status · Origin: Open · doc drift.
 
 **OU-TST-003 Loaders lack synthetic rejection tests** — listed per format in each `docs/formats/*.md` "Validation"
