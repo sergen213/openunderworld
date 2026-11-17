@@ -339,7 +339,9 @@ std::string cortaoSource(const char* wrapper, const std::string& defines) {
     for (auto [name, header] : {std::pair{"<CORTAOPrepass.h>", kCortaoPrepassH}, std::pair{"<CORTAOMainPass.h>", kCortaoMainH},
                                 std::pair{"<CORTAOFilterPass.h>", kCortaoFilterH}})
         body = replace(body, std::string("#include ") + name, replace(header, "#include \"CORTAOBase.h\"", kCortaoBase));
-    return "#version 460 core\n#extension GL_EXT_control_flow_attributes : enable\n#define CORTAO_GLSL 1\n"
+    // No GL_EXT_control_flow_attributes in desktop GL drivers (Mesa warns): cortao_unroll stays empty, the drivers
+    // unroll the constant-count loops themselves.
+    return "#version 460 core\n#define CORTAO_GLSL 1\n"
            "#define CORTAO_PERSPECTIVE_PROJECTION 1\n#define CORTAO_16_BIT 0\n#define CORTAO_PACKED_NORMAL_BITS " +
            std::to_string(cortao::kPackedNormalBits) + "\n" + defines + kCortaoCommon + body;
 }

@@ -133,6 +133,25 @@ RX 7900 XTX, average after 11 warm-up frames, l4_ballcourt `--level`, 4380 meshe
 Shadows dominate the Enhanced cost (a second pass over every mesh; `original --shadows on`: GL 4.14,
 VK 1.66 ms); FXAA + HDR add ≤ 0.07 ms. GL is CPU/draw-call bound (one draw per submesh).
 
+## Ambient occlusion (`FrameOptions::ao`, `aoSamples`; CORTAO, `third_party/cortao`, MIT)
+
+Shared by both renderers: `render/Cortao.hpp` (configuration, pass parameters), the `sun.glsl` hook `ouAo()` (map
+`ouAoMap`: r = AO, g = view depth; used only where g matches the fragment's own view depth within 2 %, so blended,
+water, exterior and other surfaces that were not pre-passed keep 1) and the ambient-only composite: generic shading
+`c *= 0.45 * ouAo() + 0.55 * ndl * vis`, translated programs scale g_Ambient c15, IrradianceState c70-c76 and the
+light-map scales c148 / c149 (ShaderTranslate). Sun, local lights and emissive terms are never occluded.
+
+### OpenGL (`GlRenderer::runAmbientOcclusion`, `src/render/gl/shaders/cortao_*.comp`)
+
+| Piece | Choice |
+|---|---|
+| Modes | `Cortao`; `Rt` renders CORTAO too (no ray tracing on GL). `aoSamples` -> 8 / 12 / 16 / 32 samples, 16 rays (32 rays at 32 samples), each main-pass permutation compiled on first use. |
+| Pre-pass | Own depth + normal pass at full render resolution, single sample, after the planar reflection and before the scene: every submesh that writes depth in the main pass (opaque and depth-writing alpha-tested ones, alpha test as the scene; not the exterior or Enhanced water), generic vertex shader (the scene's vertices are final on the CPU, so it matches the translated programs' depth), per-pixel interpolated vertex normal in view space (octahedral RG16F), turned to face the eye. |
+| Passes | CORTAO prepass (R32UI packed depth + 12-bit normal, `cortao::mipCount` mips), main pass (R8, occluder lookup table), 13-tap symmetric filter (R8), then our temporal pass into an RGBA16F ping-pong (r AO, g view depth, b age) = `ouAoMap` on texture unit 17; `OuShadow.screen.w = 4` for the main scene pass only. Shader sources: the vendored headers embedded unmodified, `#include`s resolved by `cortaoSource`; 32-bit maths (no explicit 16-bit types in GL GLSL); UBO binding 6 instead of push constants. |
+| Temporal | GL has no TAA / FSR, so a fresh CORTAO seed every frame is accumulated: the history is reprojected with the camera (this frame's view -> last frame's clip), taps whose stored view depth disagrees by > 3 % are dropped (disocclusion, moving objects), the history is clamped to this frame's filtered 3x3 neighbourhood (mean ± 1.5 σ + 0.01) and blended by max(1 / age, 0.08), age ≤ 32. History drops with a new scene, a sample-count change, a viewport change or a frame without AO. A constant seed + filter alone left visible grain on every surface. |
+| MSAA | The map is built from the single-sample pre-pass; MSAA fragments take it where their own view depth matches (pixel-centre surface), so silhouettes do not bleed. |
+| Cost | 1920x1080, l2_cliffclimb boat spawn, no vsync, Mesa (this machine): frame time 6.87 ms without AO, 7.33 / 7.51 / 7.53 ms at 12 / 16 / 32 samples (pre-pass + four compute passes). |
+
 ## Vulkan backend (`src/render/vk/VkRenderer.cpp`)
 
 | Piece | Choice |
