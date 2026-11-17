@@ -2986,6 +2986,11 @@ int main(int argc, char** argv) {
     int frame = 0, fpsFrames = 0;
     double fps = 0, renderedFps = 0;
     std::vector<double> frameMs, tickMs; // --frames: wall frame times and World::tick CPU times for the final report
+    // OU_FRAME_TIMES=<file> (tools/bench): with --frames, every frame's wall time incl. warm-up, the ticks' CPU times
+    // and the main-loop start (SDL init to first frame: level load + renderer setup) are written there at exit.
+    const char* frameTimesPath = std::getenv("OU_FRAME_TIMES");
+    std::vector<double> allFrameMs;
+    const uint64_t loopStartNs = last;
     // GAMEPAD SELECTION shows the pad in use (locals.bin 7 "Disabled" without one).
     auto showPad = [&] {
         const char* name = devices.pad ? SDL_GetGamepadNameForID(devices.pad) : nullptr;
@@ -3069,6 +3074,7 @@ int main(int argc, char** argv) {
         const uint64_t now = SDL_GetTicksNS();
         const double dt = opt.renderHz > 0 ? 1.0 / opt.renderHz : double(now - last) * 1e-9;
         if (opt.frames && frame > 30) frameMs.push_back(double(now - last) * 1e-6); // wall time, after 30 warm-up frames
+        if (opt.frames && frameTimesPath) allFrameMs.push_back(double(now - last) * 1e-6);
         last = now;
 
         for (int n = clock.advance(dt); n > 0 && running; --n) {
@@ -3824,6 +3830,15 @@ int main(int argc, char** argv) {
                 std::sort(sorted.begin(), sorted.end());
                 std::fprintf(stderr, "ou-game: frame time mean %.3f ms p95 %.3f ms max %.3f ms (%zu frames)\n", sum / double(sorted.size()),
                              sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)], sorted.back(), sorted.size());
+            }
+            if (frameTimesPath && *frameTimesPath) {
+                if (std::FILE* f = std::fopen(frameTimesPath, "w")) {
+                    std::fprintf(f, "# loop_start_ms %.3f warmup_frames 30\nkind,index,ms\n", double(loopStartNs) * 1e-6);
+                    for (size_t i = 0; i < allFrameMs.size(); ++i) std::fprintf(f, "frame,%zu,%.4f\n", i, allFrameMs[i]);
+                    for (size_t i = 0; i < tickMs.size(); ++i) std::fprintf(f, "tick,%zu,%.4f\n", i, tickMs[i]);
+                    std::fclose(f);
+                } else
+                    std::fprintf(stderr, "ou-game: cannot write %s\n", frameTimesPath);
             }
             if (!tickMs.empty()) { // World::tick CPU time (streaming joins included), its script and physics shares
                 auto sorted = tickMs;
