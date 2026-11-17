@@ -66,6 +66,23 @@ std::optional<PcdHeader> parsePcdHeader(std::span<const uint8_t> d) {
     return h;
 }
 
+std::vector<uint8_t> encodePcd(const PcdHeader& h, std::span<const uint8_t> pixels) {
+    std::vector<uint8_t> v(24 + pixels.size());
+    const auto put32 = [&](size_t at, uint32_t x) { std::memcpy(v.data() + at, &x, 4); };
+    const auto put16 = [&](size_t at, uint16_t x) { std::memcpy(v.data() + at, &x, 2); };
+    put32(0, kPcd9);
+    put32(4, h.format);
+    put32(8, uint32_t(pixels.size()));
+    put32(12, h.paletteSize);
+    put16(16, h.width);
+    put16(18, h.height);
+    v[20] = h.depth;
+    v[21] = h.mipCount;
+    put16(22, h.flags);
+    std::memcpy(v.data() + 24, pixels.data(), pixels.size());
+    return v;
+}
+
 std::optional<scene::TextureData> decodeTexture(const cdc::Section& s, std::string* why) {
     auto fail = [&](std::string m) -> std::optional<scene::TextureData> {
         if (why) *why = std::move(m);

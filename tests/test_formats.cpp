@@ -8,12 +8,16 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <map>
+#include <mutex>
 #include <set>
+#include <thread>
 
 using namespace ou;
 
@@ -60,6 +64,19 @@ TEST(Texture, Bc1MipChainAndDecode) {
     ASSERT_EQ(rgba.size(), 64u);
     const uint8_t expect[4][4] = {{255, 0, 0, 255}, {0, 0, 255, 255}, {170, 0, 85, 255}, {85, 0, 170, 255}};
     for (int i = 0; i < 4; ++i) EXPECT_EQ(0, std::memcmp(&rgba[4 * i], expect[i], 4)) << i;
+}
+
+TEST(Texture, EncodePcdMatchesStoredHeader) {
+    std::vector<uint8_t> px(16 * 6);
+    for (size_t i = 0; i < px.size(); ++i) px[i] = uint8_t(i * 7);
+    const auto data = pcd(0x35545844, 4, 4, 0, 0x8003, px); // DXT5 cube with the unknown low flag bits set
+    const auto h = formats::parsePcdHeader(data);
+    ASSERT_TRUE(h);
+    EXPECT_EQ(formats::encodePcd(*h, std::span(data).subspan(24)), data);
+    // dataSize follows the pixels, not the (stale) parsed header.
+    const auto shorter = formats::encodePcd(*h, std::span(px).first(16));
+    EXPECT_EQ(formats::parsePcdHeader(shorter)->dataSize, 16u);
+    EXPECT_EQ(shorter.size(), 40u);
 }
 
 TEST(Texture, Bgra8SwizzleAndBc3Alpha) {
@@ -190,6 +207,95 @@ void checkMeshes(const scene::SceneData& sc) {
     }
 }
 } // namespace
+
+// W2-6: every PCD9 texture section in the install (bigfile.000 + patch.000) is re-wrapped twice: from its parsed
+// header + raw pixel bytes, and from the decoder's per-level dump (decodeTexture mips reassembled face-major).
+// Both must give the section payload back byte for byte.
+TEST(RealData, Pcd9RewrapEveryTexture) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    for (const char* archive : {"bigfile.000", "patch.000"}) {
+        const auto path = std::filesystem::path(g) / archive;
+        if (!std::filesystem::exists(path)) continue;
+        const cdc::Bigfile bf(path);
+        const auto& recs = bf.records();
+        // Sector order with serialised reads (one forward stream on a spinning disk); non-DRM payloads are skipped
+        // after a 4-byte peek.
+        std::vector<size_t> order(recs.size());
+        for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::ranges::stable_sort(order, {}, [&](size_t i) { return recs[i].sector; });
+        std::atomic<size_t> drms{0}, textures{0}, headerSame{0}, dumpSame{0}, undecodable{0}, cubes{0}, next{0};
+        std::mutex m, io;
+        std::vector<std::string> bad;
+        std::vector<std::thread> pool;
+        for (unsigned t = 0; t < std::max(1u, std::min(8u, std::thread::hardware_concurrency())); ++t)
+            pool.emplace_back([&] {
+                for (;;) {
+                    size_t i = 0;
+                    std::vector<uint8_t> bytes;
+                    {
+                        std::scoped_lock l(io);
+                        for (;;) {
+                            const size_t k = next.fetch_add(1);
+                            if (k >= order.size()) return;
+                            i = order[k];
+                            const uint64_t pos = uint64_t(recs[i].sector) << 11;
+                            char head[4] = {};
+                            std::ifstream f(bf.partPath(uint32_t(pos / cdc::Bigfile::kPartAlignment)), std::ios::binary);
+                            f.seekg(std::streamoff(pos % cdc::Bigfile::kPartAlignment));
+                            f.read(head, 4);
+                            uint32_t version;
+                            std::memcpy(&version, head, 4);
+                            if (recs[i].size >= 24 && (std::memcmp(head, "CDRM", 4) == 0 || version == cdc::kDrmVersion)) break;
+                        }
+                        bytes = bf.read(recs[i]);
+                    }
+                    const auto drm = cdc::parseDrm(std::move(bytes));
+                    ++drms;
+                    for (const auto& s : drm.sections) {
+                        if (s.type != cdc::SectionType::Texture) continue;
+                        ++textures;
+                        const auto note = [&](const std::string& what) {
+                            std::scoped_lock l(m);
+                            bad.push_back(std::to_string(recs[i].hash) + " texture " + std::to_string(s.id) + ": " + what);
+                        };
+                        const auto h = formats::parsePcdHeader(s.data);
+                        if (!h || s.data.size() - 24 != h->dataSize) {
+                            note("not PCD9 or bytes after the pixel data");
+                            continue;
+                        }
+                        const std::vector<uint8_t> orig(s.data.begin(), s.data.end());
+                        if (formats::encodePcd(*h, s.data.subspan(24)) == orig) ++headerSame;
+                        else note("header re-wrap differs");
+                        const auto t = formats::decodeTexture(s);
+                        if (!t) {
+                            ++undecodable;
+                            continue;
+                        }
+                        cubes += t->cube;
+                        const int faces = t->cube ? 6 : 1;
+                        std::vector<uint8_t> pixels;
+                        for (int f = 0; f < faces; ++f)
+                            for (const auto& mip : t->mips) {
+                                const size_t n = mip.data.size() / size_t(faces);
+                                pixels.insert(pixels.end(), mip.data.begin() + ptrdiff_t(n * size_t(f)),
+                                              mip.data.begin() + ptrdiff_t(n * size_t(f + 1)));
+                            }
+                        if (formats::encodePcd(*h, pixels) == orig) ++dumpSame;
+                        else note("decoded-mip re-wrap differs");
+                    }
+                }
+            });
+        for (auto& t : pool) t.join();
+        for (const auto& b : bad) ADD_FAILURE() << archive << ": " << b;
+        std::printf("[ round trip ] %s: %zu DRMs, %zu PCD9 textures (%zu cube maps); header re-wrap identical %zu, "
+                    "decoded-mip re-wrap identical %zu, undecodable %zu, mismatches %zu\n",
+                    archive, size_t(drms), size_t(textures), size_t(cubes), size_t(headerSame), size_t(dumpSame),
+                    size_t(undecodable), bad.size());
+        EXPECT_EQ(headerSame, textures);
+        EXPECT_EQ(dumpSame + undecodable, textures);
+    }
+}
 
 TEST(RealData, LaraTexturesAndModel) {
     const char* g = gameDir();

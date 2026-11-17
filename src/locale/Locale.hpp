@@ -65,6 +65,8 @@ public:
     // locals.bin header value; NOT the Language enum (IT = 2, DE = 3 here; see TEXT.md).
     uint32_t headerLanguage() const { return headerLanguage_; }
     bool valid(int id) const; // in range, non-empty offset and passes the exe UTF-8 check
+    // Stored bytes of string `id` without the exe's UTF-8 check; nullopt for offset 0 or out of range.
+    std::optional<std::string_view> raw(int id) const;
 
 private:
     std::vector<uint8_t> bytes_;
@@ -74,6 +76,10 @@ private:
 
 // pc-w\local\locals.bin for `lang` (spec mask 1 << lang; patch.000 first). nullopt = not present.
 std::optional<Strings> loadStrings(const std::filesystem::path& gameDir, Language lang);
+// locals.bin writer: header, offset table (0 for nullopt), then each string NUL-terminated in id order right after the
+// table. Every shipped locals.bin is laid out exactly like this, so encodeLocals of its raw() strings reproduces it
+// byte for byte (CONTAINERS.md §8; LocaleRealData.LocalsBinRoundTrip).
+std::vector<uint8_t> encodeLocals(uint32_t headerLanguage, std::span<const std::optional<std::string>> strings);
 
 // tru.exe's UTF-8 check (0x597DC0): no C0 C1 F5..FF anywhere, lead-byte length classes,
 // continuation bytes must have the top bit set.

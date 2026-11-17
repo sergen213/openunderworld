@@ -32,6 +32,9 @@ struct PcdHeader {
     bool cube() const { return flags & 0x8000; }
 };
 std::optional<PcdHeader> parsePcdHeader(std::span<const uint8_t> sectionData);
+// Writes a PCD9 section payload: the 24-byte header with dataSize = pixels.size(), then `pixels` (TEXTURES.md "Round
+// trip": encodePcd(parsePcdHeader(s), pixel bytes) == s for every texture section in the install).
+std::vector<uint8_t> encodePcd(const PcdHeader& h, std::span<const uint8_t> pixels);
 
 // Decodes a type-5 section. BCn stays compressed; 0x15 is returned as BGRA8; cube maps (flags 0x8000) set
 // TextureData::cube. Returns nullopt for non-PCD9 data, unknown formats and inconsistent sizes (see `why`).

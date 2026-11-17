@@ -129,4 +129,70 @@ int resourceRefType(const Section& s, uint32_t offset);
 struct Pointer { uint32_t section, offset; };
 std::unordered_map<uint32_t, Pointer> sectionPointers(const Drm& drm, uint32_t index);
 
+// ---- Writers (round trip; docs/formats/CONTAINERS.md §8) ------------------------------
+// They rebuild every container byte from decoded fields; the parsers above stay the reference readers.
+
+// Bigfile index: u32 count, hash[count], {size, sector, specMask, compressedSize}[count], zero padding to the next
+// 2048-byte sector (where the first payload starts). `records` in stored order.
+std::vector<uint8_t> encodeBigfileIndex(std::span<const BigfileRecord> records);
+// Sectors of payloads written one after another in `sizes` order from `firstSector`: each payload starts at the next
+// 2048-byte boundary, and one that would cross a part boundary (`partAlignment`) starts at the next part instead.
+std::vector<uint32_t> layoutBigfileSectors(std::span<const uint32_t> sizes, uint32_t firstSector,
+                                           uint64_t partAlignment = Bigfile::kPartAlignment);
+
+// CDRM blocks as stored. writeCdrm(readCdrmBlocks(x)) == x: header {"CDRM", 0, count, 0}, block table, zero padding
+// to 16 after the table and after every block but the last.
+struct CdrmBlock {
+    uint8_t type = 2;               // 0 empty, 1 stored, 2 zlib
+    uint32_t uncompressedSize = 0;  // 24 bits
+    std::vector<uint8_t> payload;   // as stored (zlib stream for type 2)
+};
+std::vector<CdrmBlock> readCdrmBlocks(std::span<const uint8_t> cdrm); // throws FormatError like decompressCdrm
+std::vector<uint8_t> writeCdrm(std::span<const CdrmBlock> blocks);
+// Every non-final block holds 0x40000 bytes; every block is a zlib stream at level 9 (header 78 DA) [V-data].
+inline constexpr size_t kCdrmBlockBytes = 0x40000;
+inline constexpr int kCdrmZlibLevel = 9;
+// zlib stream of `raw`; compressCdrm's default is the linked zlib's compress2(kCdrmZlibLevel).
+using Deflate = std::vector<uint8_t> (*)(std::span<const uint8_t> raw);
+std::vector<uint8_t> deflateLevel9(std::span<const uint8_t> raw);
+// Splits `raw` into kCdrmBlockBytes blocks, deflates each (type 2) and writes the container. The output equals the
+// install's bytes only with the deflate implementation that made them (classic zlib; zlib-ng emits other streams).
+std::vector<uint8_t> compressCdrm(std::span<const uint8_t> raw, Deflate deflate = deflateLevel9);
+
+// Relocation table of one section, decoded field by field (§4.5).
+struct Relocations {
+    struct Internal { uint32_t offset, target; };             // same-section pointer
+    struct External { uint32_t section, offset, target; };    // offset: patch byte offset (multiple of 4, < 2^26)
+    struct Typed { uint32_t offset; uint8_t sectionType; };   // offset: byte offset (multiple of 4, < 2^27)
+    std::vector<Internal> internal;
+    std::vector<External> external;
+    std::vector<Typed> kind2, resource32, resource16;
+};
+// Throws FormatError when the table is shorter than 20 bytes or its size differs from what the counts imply.
+Relocations decodeRelocations(std::span<const uint8_t> table);
+// Throws FormatError for fields that do not fit their bit widths.
+std::vector<uint8_t> encodeRelocations(const Relocations& r);
+
+// Everything a DRM v19 file stores, decoded. serializeDrm(toDrmImage(parseDrm(x))) == x (decompressed form) for the
+// whole install (tests/test_cdc.cpp RoundTrip*).
+struct DrmImage {
+    struct Sec {
+        SectionType type{};
+        uint8_t flags = 0;
+        uint16_t versionId = 0;
+        uint8_t packedLow = 0; // packed bits 0-7 (debug info, resourceType); bits 8-31 come from the table size
+        uint32_t id = 0, specMask = 0;
+        std::optional<Relocations> relocations; // nullopt = no table (relocBytes 0)
+        std::vector<uint8_t> data;
+    };
+    uint32_t version = kDrmVersion;
+    std::vector<std::string> names;  // hdr[1] block: each name NUL-terminated
+    std::vector<uint8_t> block2;     // hdr[2] block, raw (empty in every file; meaning open, §6)
+    uint32_t header3 = 0, header4 = 0; // hdr[3], hdr[4] (0 in every file)
+    std::vector<Sec> sections;
+};
+// Throws FormatError when the name block is not a list of non-empty NUL-terminated names or a table is malformed.
+DrmImage toDrmImage(const Drm& drm);
+std::vector<uint8_t> serializeDrm(const DrmImage& image);
+
 } // namespace ou::cdc

@@ -91,6 +91,30 @@ TEST(Strings, RejectsTruncation) {
     EXPECT_NO_THROW(Strings(std::move(b)));
 }
 
+TEST(Strings, EncodeLocalsLayoutAndRoundTrip) {
+    const std::vector<std::optional<std::string>> in{std::nullopt, "Complete", "", std::nullopt, "Termin\xC3\xA9"};
+    const auto bytes = encodeLocals(3, in);
+    // Table directly followed by the strings in id order; offset 0 = absent (an empty string still gets an offset).
+    ASSERT_EQ(bytes.size(), 8u + 4 * 5 + 9 + 1 + 9);
+    uint32_t off[5];
+    std::memcpy(off, bytes.data() + 8, sizeof off);
+    EXPECT_EQ(off[0], 0u);
+    EXPECT_EQ(off[1], 28u);
+    EXPECT_EQ(off[2], 37u);
+    EXPECT_EQ(off[3], 0u);
+    EXPECT_EQ(off[4], 38u);
+    const Strings s{std::vector<uint8_t>(bytes)};
+    EXPECT_EQ(s.headerLanguage(), 3u);
+    EXPECT_EQ(s.get(1), "Complete");
+    EXPECT_FALSE(s.raw(0));
+    EXPECT_EQ(s.raw(2), "");
+    EXPECT_FALSE(s.raw(5));
+    std::vector<std::optional<std::string>> back;
+    for (int i = 0; i < int(s.size()); ++i) back.emplace_back(s.raw(i) ? std::optional<std::string>(*s.raw(i)) : std::nullopt);
+    EXPECT_EQ(encodeLocals(s.headerLanguage(), back), bytes);
+    EXPECT_THROW(encodeLocals(0, std::vector<std::optional<std::string>>{std::string("a\0b", 3)}), FormatError);
+}
+
 TEST(Strings, ExeUtf8Check) {
     EXPECT_TRUE(exeUtf8Valid("plain"));
     EXPECT_TRUE(exeUtf8Valid("\xC3\xA9\xE2\x80\xA6\xF0\x9F\x98\x80"));
@@ -192,6 +216,33 @@ TEST(LocaleRealData, AllLocalsBinVariantsDecode) {
         }
         EXPECT_EQ(nonEmpty, 1448u); // 3688 offsets are 0 in every variant
     }
+}
+
+// Every locals.bin record (6 languages in bigfile.000, 6 in patch.000) rebuilt from its strings is byte-identical.
+TEST(LocaleRealData, LocalsBinRoundTrip) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    size_t files = 0, identical = 0, strings = 0;
+    for (const char* archive : {"bigfile.000", "patch.000"}) {
+        const auto path = std::filesystem::path(gameDir()) / archive;
+        if (!std::filesystem::exists(path)) continue;
+        const ou::cdc::Bigfile bf(path);
+        for (const auto& rec : bf.find(ou::cdc::pathHash("pc-w\\local\\locals.bin"))) {
+            auto bytes = bf.read(rec);
+            const Strings s{std::vector<uint8_t>(bytes)};
+            std::vector<std::optional<std::string>> table;
+            for (int i = 0; i < int(s.size()); ++i) {
+                const auto r = s.raw(i);
+                table.emplace_back(r ? std::optional<std::string>(*r) : std::nullopt);
+                strings += r.has_value();
+            }
+            ++files;
+            const bool same = encodeLocals(s.headerLanguage(), table) == bytes;
+            identical += same;
+            EXPECT_TRUE(same) << archive << " specMask " << std::hex << rec.specMask;
+        }
+    }
+    std::printf("[ round trip ] locals.bin: %zu files, %zu identical, %zu strings\n", files, identical, strings);
+    EXPECT_EQ(files, 12u); // CONTAINERS.md §5: six languages in bigfile.000, six updated copies in patch.000
 }
 
 TEST(LocaleRealData, PrevontrMovieSubtitles) {

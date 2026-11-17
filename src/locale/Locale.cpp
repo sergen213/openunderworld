@@ -95,6 +95,26 @@ std::string_view Strings::get(int id) const {
     return exeUtf8Valid(s) ? s : "Invalid UTF8 encoding";
 }
 
+std::optional<std::string_view> Strings::raw(int id) const {
+    if (id < 0 || size_t(id) >= offsets_.size() || !offsets_[id]) return std::nullopt;
+    return std::string_view(reinterpret_cast<const char*>(bytes_.data() + offsets_[id]));
+}
+
+std::vector<uint8_t> encodeLocals(uint32_t headerLanguage, std::span<const std::optional<std::string>> strings) {
+    std::vector<uint8_t> v(8 + 4 * strings.size());
+    const auto put = [&](size_t at, uint32_t x) { std::memcpy(v.data() + at, &x, 4); };
+    put(0, headerLanguage);
+    put(4, uint32_t(strings.size()));
+    for (size_t i = 0; i < strings.size(); ++i) {
+        if (!strings[i]) continue;
+        if (strings[i]->find('\0') != std::string::npos) throw FormatError("locals.bin: string " + std::to_string(i) + " contains NUL");
+        put(8 + 4 * i, uint32_t(v.size()));
+        v.insert(v.end(), strings[i]->begin(), strings[i]->end());
+        v.push_back(0);
+    }
+    return v;
+}
+
 std::optional<Strings> loadStrings(const std::filesystem::path& gameDir, Language lang) {
     auto bytes = cdc::BigfileSet(gameDir, specMask(lang)).read("pc-w\\local\\locals.bin");
     if (!bytes) return std::nullopt;
