@@ -34,18 +34,44 @@ using glm::vec3;
 
 // ---- cdc script types (section type 8, ScriptTypeStreamData) -------------------------------------
 // One bytecode word: opcode in the top byte (cdc SCMD_* numbering, as cdcEngineDXHR ByteCodeEnum.h),
-// signed 24-bit argument; the relocated operand words that follow an opcode are attached to it.
+// signed 24-bit argument; the operand words that follow an opcode are attached to it.
 struct Instr {
     uint8_t op = 0;
     int32_t arg = 0;
     uint32_t word = 0;            // raw code-word offset (JMP/JMPF use these, including operands)
     std::vector<cdc::Pointer> ptrs; // CALLU/CALLn/PUSHC operands (function, prototype, constant)
     uint32_t ref = 0;               // ISTYPE operand: script type section id (resource reference)
-    uint32_t imm = 0;               // PUSH operand word
+    uint32_t imm = 0;               // PUSH operand word; any other unrelocated operand word (START's null function)
     std::string text;               // PUSHC: relocated constant string
+    // CALLU on a builtin container method: the unrelocated operand {u8 1, u8 DataType, u16 index} with bit 0 set that
+    // the link pass 0x57EE20 replaces by NativeBuiltInImpl's Function (DataType 7 DYNARRAY, 8 MAP; docs/re/SCRIPT_NATIVES.md).
+    uint8_t builtinType = 0;        // 0 = not a builtin call
+    uint16_t builtinIndex = 0;
 };
 inline constexpr uint8_t kOpPush = 0x02, kOpPushSA = 0x0F, kOpCallU = 0x65, kOpCall1 = 0x66, kOpCall5 = 0x6A,
                          kOpRet = 0x7B, kOpCount = 0x86;
+inline constexpr uint8_t kDataDynArray = 7, kDataMap = 8; // DataType low nibble of builtin containers
+
+// Operand words of an opcode, as tru.exe's link pass 0x57EE20 walks code: one for 02 05 34 35 3B 3C 65 66 68-6C 6E-72
+// 74-77 7E 7F, two for 67 6D 73, none otherwise.
+constexpr int operandWords(uint8_t op) {
+    if (op == 0x67 || op == 0x6D || op == 0x73) return 2;
+    if (op == 0x02 || op == 0x05 || op == 0x34 || op == 0x35 || op == 0x3B || op == 0x3C || op == 0x65 || op == 0x66 ||
+        (op >= 0x68 && op <= 0x6C) || (op >= 0x6E && op <= 0x72) || (op >= 0x74 && op <= 0x77) || op == 0x7E || op == 0x7F)
+        return 1;
+    return 0;
+}
+// One code word as the DRM stores it: its value and whether a pointer relocation (ptr) or a resource reference (ref)
+// patches it.
+struct CodeWord {
+    uint32_t value = 0;
+    std::optional<cdc::Pointer> ptr;
+    bool ref = false;
+};
+// Decodes a function's code (parseScriptType; PUSHC texts are filled in by the caller). Every opcode consumes its
+// operandWords(); a relocated word outside an operand slot is attached to the instruction before it (none in the 82
+// units). Throws FormatError on an unknown opcode or code that starts with an operand.
+std::vector<Instr> decodeCode(std::span<const CodeWord> words);
 
 struct Member {
     uint8_t type = 0;       // DataType byte: low nibble DTVOID..NTENUM (10 NATIVE, 11 SCRIPT), 0x80 = A<B>
@@ -61,7 +87,16 @@ struct Member {
     std::string initText;   // NATIVE/SCRIPT: a C string the value's first word points to (music: the track name), else
                             // its second word (messagechannel {mode, name}: the channel name)
     std::array<uint32_t, 6> initWords{}; // NATIVE/SCRIPT: words 1..6 of the initial value (padshock: 6 floats)
+    // DYNARRAY: the initial elements ({count, {index, element*}...}; l3_main_bedroom firetriggervolume 6516 +16: four
+    // `playersensor` values), each a record of the element type with its own init as a member's.
+    std::vector<Member> elements;
 };
+
+// Dynamic-array elements in the VM: element i of the DYNARRAY member at byte offset `array` (< 0x4000) is the member
+// offset elementOffset(array, i) (+ the byte inside the element); the array member's own field holds the count.
+inline constexpr uint32_t kElementBit = 0x40000000u, kMaxElements = 256;
+constexpr uint32_t elementOffset(uint32_t array, uint32_t index) { return kElementBit | array << 16 | index << 8; }
+constexpr bool isElement(uint32_t offset) { return (offset & kElementBit) != 0; }
 
 // A messagechannel member's value: its channel, identified by name (0x4A3680 registers channels by name, 0x5D0700;
 // equality 0x4A2E90 compares the registered channel). FNV-1a of the name.

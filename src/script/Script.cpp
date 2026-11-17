@@ -124,6 +124,42 @@ const char* eventName(EventKind k) { return kEventNames[size_t(k)]; }
 
 // ---- script types ----------------------------------------------------------------------------------
 
+// tru.exe's link pass 0x57EE20 walks code with operandWords() and rewrites operands: relocated words (functions,
+// prototypes, strings, type references), and CALLU words with bit 0 set and no relocation, builtin container methods
+// {u8 1, u8 DataType, u16 index}. The earlier rule (an unrelocated word ends the operands) decoded the fire volumes'
+// CALLU 0x00000701 as CALLU without operand + NOP 1793, and START's null function word as NOP 0.
+std::vector<Instr> decodeCode(std::span<const CodeWord> words) {
+    std::vector<Instr> code;
+    int operands = 0; // operand words the last opcode still takes
+    for (uint32_t w = 0; w < words.size(); ++w) {
+        const CodeWord& c = words[w];
+        if (operands > 0) {
+            --operands;
+            Instr& in = code.back();
+            if (c.ptr) in.ptrs.push_back(*c.ptr);
+            else if (c.ref) in.ref = c.value;
+            else if (in.op == kOpCallU && (c.value & 1))
+                in.builtinType = uint8_t(c.value >> 8), in.builtinIndex = uint16_t(c.value >> 16);
+            else in.imm = c.value;
+            continue;
+        }
+        if (c.ptr || c.ref) {
+            if (code.empty()) throw FormatError("script code starts with an operand");
+            if (c.ptr) code.back().ptrs.push_back(*c.ptr);
+            else code.back().ref = c.value;
+            continue;
+        }
+        Instr in;
+        in.op = uint8_t(c.value >> 24);
+        in.arg = int32_t(c.value << 8) >> 8;
+        in.word = w;
+        if (in.op >= kOpCount) throw FormatError("unknown script opcode " + std::to_string(in.op));
+        operands = operandWords(in.op);
+        code.push_back(std::move(in));
+    }
+    return code;
+}
+
 ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
     if (index >= drm.sections.size() || drm.sections[index].type != cdc::SectionType::Script)
         throw FormatError("not a script section");
@@ -141,6 +177,38 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
         t.nativeName.assign(c, strnlen(c, d.size() - p->offset));
     }
 
+    // The initial value at `ip` (a member's +0x10, a dynamic-array element's pointer) of a record whose type is set.
+    auto readInit = [&](Member& m, cdc::Pointer ip) {
+        const View& iv = views[ip.section];
+        const uint8_t base = m.type & 0x0F;
+        if (base == 10 || base == 11) { // NATIVE/SCRIPT: init points at a pointer to the value
+            if (const auto vp = iv.ptr(ip.offset)) {
+                m.init = views[vp->section].at<uint32_t>(vp->offset);
+                m.initAt = *vp;
+                if (const auto tp = views[vp->section].ptr(vp->offset); tp && tp->section < drm.sections.size()) {
+                    const auto& d = drm.sections[tp->section].data;
+                    for (size_t i = tp->offset; i < d.size() && d[i] >= 0x20 && d[i] < 0x7F && m.initText.size() < 256; ++i)
+                        m.initText += char(d[i]);
+                }
+                if (vp->offset <= drm.sections[vp->section].data.size() &&
+                    drm.sections[vp->section].data.size() - vp->offset >= 8) {
+                    m.init2 = views[vp->section].at<uint32_t>(vp->offset + 4);
+                    for (size_t w = 0; w < m.initWords.size() && drm.sections[vp->section].data.size() - vp->offset >= 8 + 4 * w; ++w)
+                        m.initWords[w] = views[vp->section].at<uint32_t>(uint32_t(vp->offset + 4 + 4 * w));
+                    // messagechannel {mode, name}: the channel is the name (0x4A3680 registers it by name, 0x5D0700)
+                    if (const auto np = views[vp->section].ptr(vp->offset + 4); m.initText.empty() && np &&
+                        np->section < drm.sections.size())
+                        for (size_t i = np->offset, n = drm.sections[np->section].data.size(); i < n; ++i) {
+                            const char c = char(drm.sections[np->section].data[i]);
+                            if (c < 0x20 || c >= 0x7F || m.initText.size() >= 256) break;
+                            m.initText += c;
+                        }
+                }
+            }
+        } else {
+            m.init = iv.at<uint32_t>(ip.offset);
+        }
+    };
     // Members: 0x14-byte DataMember {DataType {u8 type, ..., +8 type ref or Compound*}, u16 offset, u16 name, init*}.
     // Function locals use the same record (DXHR cdc::Function +0x0C m_locals).
     auto dataMember = [&](const View& v, uint32_t b) {
@@ -158,34 +226,21 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
         m.offset = v.at<uint16_t>(b + 0xC);
         m.name = v.at<uint16_t>(b + 0xE);
         if (const auto ip = v.ptr(b + 0x10)) {
+            readInit(m, *ip);
+            // DYNARRAY: +8 points at the element DataType; the initial value is {u32 count, u32 0, {u32 index, element
+            // init*} x count} (l3_main_bedroom 6516 +16: 4 playersensors, indices 0..3).
             const View& iv = views[ip->section];
-            const uint8_t base = m.type & 0x0F;
-            if (base == 10 || base == 11) { // NATIVE/SCRIPT: init points at a pointer to the value
-                if (const auto vp = iv.ptr(ip->offset)) {
-                    m.init = views[vp->section].at<uint32_t>(vp->offset);
-                    m.initAt = *vp;
-                    if (const auto tp = views[vp->section].ptr(vp->offset); tp && tp->section < drm.sections.size()) {
-                        const auto& d = drm.sections[tp->section].data;
-                        for (size_t i = tp->offset; i < d.size() && d[i] >= 0x20 && d[i] < 0x7F && m.initText.size() < 256; ++i)
-                            m.initText += char(d[i]);
-                    }
-                    if (vp->offset <= drm.sections[vp->section].data.size() &&
-                        drm.sections[vp->section].data.size() - vp->offset >= 8) {
-                        m.init2 = views[vp->section].at<uint32_t>(vp->offset + 4);
-                        for (size_t w = 0; w < m.initWords.size() && drm.sections[vp->section].data.size() - vp->offset >= 8 + 4 * w; ++w)
-                            m.initWords[w] = views[vp->section].at<uint32_t>(uint32_t(vp->offset + 4 + 4 * w));
-                        // messagechannel {mode, name}: the channel is the name (0x4A3680 registers it by name, 0x5D0700)
-                        if (const auto np = views[vp->section].ptr(vp->offset + 4); m.initText.empty() && np &&
-                            np->section < drm.sections.size())
-                            for (size_t i = np->offset, n = drm.sections[np->section].data.size(); i < n; ++i) {
-                                const char c = char(drm.sections[np->section].data[i]);
-                                if (c < 0x20 || c >= 0x7F || m.initText.size() >= 256) break;
-                                m.initText += c;
-                            }
-                    }
+            const auto et = (m.type & 0x8F) == kDataDynArray ? v.ptr(b + 8) : std::nullopt;
+            const uint32_t n = m.init.value_or(0);
+            if (et && n && n <= kMaxElements && ip->offset + 8ull + 8ull * n <= drm.sections[ip->section].data.size()) {
+                Member e;
+                e.type = views[et->section].at<uint8_t>(et->offset);
+                e.typeId = views[et->section].ref(et->offset + 8);
+                m.elements.assign(n, e);
+                for (uint32_t k = 0; k < n; ++k) {
+                    const uint32_t index = iv.at<uint32_t>(ip->offset + 4 + 8 * k);
+                    if (const auto ep = iv.ptr(ip->offset + 8 + 8 * k); ep && index < n) readInit(m.elements[index], *ep);
                 }
-            } else {
-                m.init = iv.at<uint32_t>(ip->offset);
             }
         } else if (const uint8_t base = m.type & 0x0F; !(m.type & 0x80) && base >= 1 && base <= 3) {
             m.init = v.at<uint32_t>(b + 0x10); // BOOL/INT/FLOAT: the value itself (lara.drm 205 +40 = 10) [O]
@@ -223,29 +278,14 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
         f.wordCount = cn;
         if (cn) {
             const View& cv = views[cp.section];
-            bool immediate = false; // the word after PUSH is its raw operand
+            std::vector<CodeWord> words(cn);
             for (uint32_t w = 0; w < cn; ++w) {
                 const uint32_t off = cp.offset + 4 * w;
-                const auto word = cv.at<uint32_t>(off);
-                const auto p = cv.ptr(off);
-                if ((p || cv.refs.contains(off)) && f.code.empty()) throw FormatError("script code starts with an operand");
-                if (p) {
-                    f.code.back().ptrs.push_back(*p);
-                    if (f.code.back().op == 0x05) f.code.back().text = views[p->section].string(p->offset);
-                } else if (cv.refs.contains(off)) {
-                    f.code.back().ref = word;
-                } else if (immediate) {
-                    f.code.back().imm = word, immediate = false;
-                } else {
-                    Instr in;
-                    in.op = uint8_t(word >> 24);
-                    in.arg = int32_t(word << 8) >> 8;
-                    in.word = w;
-                    if (in.op >= kOpCount) throw FormatError("unknown script opcode " + std::to_string(in.op));
-                    immediate = in.op == kOpPush;
-                    f.code.push_back(std::move(in));
-                }
+                words[w] = {cv.at<uint32_t>(off), cv.ptr(off), cv.refs.contains(off)};
             }
+            f.code = decodeCode(words);
+            for (Instr& in : f.code)
+                if (in.op == 0x05 && !in.ptrs.empty()) in.text = views[in.ptrs.front().section].string(in.ptrs.front().offset);
         }
         t.functions.push_back(std::move(f));
     }

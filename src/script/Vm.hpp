@@ -97,6 +97,7 @@ private:
     Step step();
     bool push(Instance& object, const Function& f, std::span<const Value> args = {});
     int invoke(Instance& object, const Function& f, Value receiver, Frame& frame); // 0 failed, 1 inline, 2 child pushed
+    bool builtin(const Instr& in, Frame& frame); // CALLU on a builtin container method (Instr::builtinType)
     std::shared_ptr<Instance> resolveObject(const Value& v);
     uint32_t load(const Value& v) const;
     Value read(const Value& v) const;

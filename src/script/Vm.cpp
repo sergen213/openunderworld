@@ -27,6 +27,17 @@ uint32_t nativeMoveSize(const ScriptType* type) {
     if (n == "sound" || n == "instanceref" || n == "playersensor" || n == "clock" || n == "inputaction") return 4;
     return 0;
 }
+// A DYNARRAY member (the builtin container CALLU and DREFD work on); maps are not modelled.
+bool dynamicArray(const Instance& o, uint32_t offset) {
+    if (!o.program || offset >= 0x4000) return false;
+    const Member* m = o.program->member(o.typeId, offset);
+    return m && (m->type & 0x8F) == kDataDynArray;
+}
+// Byte range of element `index` of the array at `array` in Instance::fields / strings.
+template <class Map>
+void eraseElement(Map& map, uint32_t array, uint32_t index) {
+    map.erase(map.lower_bound(elementOffset(array, index)), map.lower_bound(elementOffset(array, index) + 0x100));
+}
 } // namespace
 
 Program::Program(std::vector<ScriptType> types) : types_(std::move(types)) {
@@ -48,6 +59,12 @@ const char* Program::nativeName(uint32_t id) const {
     return t ? t->nativeName.c_str() : "";
 }
 const Member* Program::member(uint32_t typeId, uint32_t offset) const {
+    if (isElement(offset)) { // a dynamic-array element: its record from the array's initial value
+        if (offset & 0xFF) return nullptr;
+        const Member* array = member(typeId, offset >> 16 & 0x3FFF);
+        const uint32_t index = offset >> 8 & 0xFF;
+        return array && index < array->elements.size() ? &array->elements[index] : nullptr;
+    }
     for (const ScriptType* t = type(typeId); t; t = type(t->superId))
         for (const auto& m : t->members) if (m.offset == offset) return &m;
     return nullptr;
@@ -112,6 +129,13 @@ std::shared_ptr<Instance> Program::instantiate(int32_t uid, uint32_t typeId) {
             if (m.init && m.init2 && (!std::strcmp(nativeName(m.typeId), "uberobjectcommand") ||
                                       !std::strcmp(nativeName(m.typeId), "uberobjectevent")))
                 out->fields[m.offset] = *m.init, out->fields[m.offset + 4u] = *m.init2;
+            // A dynamic array's field is its element count (the exe's array +0x18); elements: elementOffset().
+            if ((m.type & 0x8F) == kDataDynArray && !m.elements.empty() && m.offset < 0x4000) {
+                out->fields[m.offset] = uint32_t(m.elements.size());
+                for (uint32_t i = 0; i < m.elements.size(); ++i) // scalar / instanceref elements hold their value
+                    if (const Member& e = m.elements[i]; e.init && ((e.type & 0x0F) - 1u < 3u || e.typeId == kInstanceRefType))
+                        out->fields[elementOffset(m.offset, i)] = *e.init;
+            }
         }
     out->initial = out->fields;
     out->initialStrings = out->strings;
@@ -322,6 +346,82 @@ int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame&
     return 2;
 }
 
+// Builtin container methods (cdc::NativeBuiltInImpl 0x57BF90; records 0x8A7718 DYNARRAY, 0x8A7688 MAP), called by CALLU
+// with the stack as for a native (0x57DE34): arguments, then a result address for non-void ones, then the receiver; a
+// null receiver or a null result address skips the call. DYNARRAY: 0 Size -> int (0x574A30), 1 Clear (0x5795A0),
+// 2 Resize(int) (0x579520), 3 Remove(int) (0x57CE30: 0 <= i < count), 4 Push(value) (0x57BE50), 5 Pop (0x5795B0).
+// MAP: 0 Size -> int, 1 Clear, 2 Find(string) -> bool, 3 Erase(string); maps are not modelled (no shipped bytecode
+// calls them: the 82 units' only builtin operand is the fire volumes' DYNARRAY Size), so a call on a map fails.
+bool Machine::builtin(const Instr& in, Frame& fr) {
+    const bool array = in.builtinType == kDataDynArray, map = in.builtinType == kDataMap;
+    static constexpr uint8_t kArrayArgs[] = {0, 0, 1, 1, 1, 0}, kMapArgs[] = {0, 0, 1, 1};
+    auto unsupported = [&](const char* what) {
+        failure_ = std::string("builtin ") + (array ? "array" : map ? "map" : "type " + std::to_string(in.builtinType)) +
+                   " fn " + std::to_string(in.builtinIndex) + what;
+        return false;
+    };
+    if ((!array && !map) || in.builtinIndex >= (array ? std::size(kArrayArgs) : std::size(kMapArgs))) return unsupported("");
+    const size_t argc = array ? kArrayArgs[in.builtinIndex] : kMapArgs[in.builtinIndex];
+    const bool result = in.builtinIndex == 0 || (map && in.builtinIndex == 2);
+    if (fr.stack.size() < 1 + argc + result) return unsupported(": stack");
+    Value receiver = fr.stack.back();
+    fr.stack.pop_back();
+    for (int i = 0; i < 4 && receiver.kind == Value::Kind::Local; ++i) receiver = read(receiver); // held in a local
+    std::vector<Value> args(fr.stack.end() - ptrdiff_t(argc), fr.stack.end());
+    for (Value& a : args)
+        for (int i = 0; i < 4 && a.kind == Value::Kind::Local; ++i) a = read(a);
+    const Value address = result ? *(fr.stack.end() - ptrdiff_t(argc) - 1) : Value{};
+    fr.stack.resize(fr.stack.size() - argc - result);
+    if (receiver.kind == Value::Kind::Scalar && receiver.bits == 0 && !receiver.text) return true;   // null receiver
+    if (result && address.kind == Value::Kind::Scalar && address.bits == 0 && !address.text) return true; // null result
+    if (map) return unsupported(": maps are not modelled");
+    const auto o = receiver.kind == Value::Kind::Member ? resolveObject(receiver) : nullptr;
+    if (!o || !dynamicArray(*o, receiver.offset)) return unsupported(": receiver is not a dynamic array");
+    const uint32_t at = receiver.offset;
+    uint32_t& count = o->fields[at]; // std::map: stays valid while elements are inserted / erased
+    count = std::min(count, kMaxElements);
+    auto erase = [&](uint32_t i) { eraseElement(o->fields, at, i), eraseElement(o->strings, at, i); };
+    auto moveDown = [&](auto& values, uint32_t j) { // element j -> j - 1
+        const auto first = values.lower_bound(elementOffset(at, j)), last = values.lower_bound(elementOffset(at, j + 1));
+        std::vector<std::pair<uint32_t, typename std::decay_t<decltype(values)>::mapped_type>> moved(first, last);
+        values.erase(first, last);
+        for (auto& [k, v] : moved) values[k - 0x100] = std::move(v);
+    };
+    switch (in.builtinIndex) {
+    case 0: return write(address, Value::scalar(count)); // Size
+    case 1: // Clear (0x579540: destroys every element)
+        for (uint32_t i = 0; i < count; ++i) erase(i);
+        count = 0;
+        return true;
+    case 2: { // Resize (0x5794A0): new elements start zeroed, dropped ones are destroyed
+        const uint32_t n = args[0].bits;
+        if (n > kMaxElements) return unsupported(": size out of range");
+        for (uint32_t i = std::min(n, count); i < std::max(n, count); ++i) erase(i);
+        count = n;
+        return true;
+    }
+    case 3: { // Remove (0x57CE30 -> 0x57CDD0): out of range does nothing; later elements move down
+        const uint32_t i = args[0].bits;
+        if (i >= count) return true;
+        erase(i);
+        for (uint32_t j = i + 1; j < count; ++j) moveDown(o->fields, j), moveDown(o->strings, j);
+        --count;
+        return true;
+    }
+    case 4: { // Push (0x57BE50)
+        if (count >= kMaxElements) return unsupported(": more elements than modelled");
+        Value element = receiver;
+        element.offset = elementOffset(at, count);
+        erase(count++);
+        return write(element, args[0]);
+    }
+    case 5: // Pop (0x5795B0): the last element is destroyed
+        if (count) erase(--count);
+        return true;
+    }
+    return unsupported("");
+}
+
 Machine::Step Machine::step() {
     if (frames_.empty()) return Step::Complete;
     Frame& fr = frames_.back();
@@ -414,7 +514,8 @@ Machine::Step Machine::step() {
         case 0x09: fr.stack.push_back(local(frames_.size() - 1, arg)); ++pc; break;
         case 0x0B: pushMember(object.uid, arg); ++pc; break;
         case 0x0E: fr.stack.push_back(read(member(object.uid, arg))); ++pc; break;
-        case 0x10: {
+        case 0x10: { // PUSHSR: a script reference; a dynamic-array member is the array itself (DREFD, builtins)
+            if (dynamicArray(object, arg)) { fr.stack.push_back(member(object.uid, arg)); ++pc; break; }
             const uint32_t uid = load(member(object.uid, arg));
             fr.stack.push_back(uid ? Value::object(int32_t(uid)) : Value::scalar(0));
             ++pc; break;
@@ -424,6 +525,7 @@ Machine::Step Machine::step() {
         case 0x0F: fr.stack.push_back(member(object.uid, arg)); ++pc; break;
         case 0x11: case 0x12: case 0x15: { // member of an object on the stack; a null object yields 0 (exe 0x57D040)
             Value v = pop(); auto o = resolveObject(v); if (!o) { pushScalar(0); ++pc; break; }
+            if (in.op == 0x15 && dynamicArray(*o, arg)) { fr.stack.push_back(member(o->uid, arg)); ++pc; break; }
             const auto it = o->fields.find(arg);
             if (it == o->fields.end()) pushScalar(0);
             else if (in.op == 0x11) pushScalar(it->second & 0xFF);
@@ -456,6 +558,15 @@ Machine::Step Machine::step() {
             Value src = pop(), d = pop();
             auto address = [](Value::Kind k) { return k == Value::Kind::Local || k == Value::Kind::Member; };
             if (!address(src.kind) || !address(d.kind)) return fail();
+            // A playersensor value is the handle of its native sensor (NtPlayerSensorInst): the copy in a local names the
+            // same sensor, here its member / array element (the fire volumes' constructor attaches sensors[i] so).
+            if (d.kind == Value::Kind::Local && src.kind == Value::Kind::Member && d.frame < frames_.size() &&
+                object.program->type(in.ref)->nativeName == "playersensor") {
+                auto& l = frames_[d.frame].locals;
+                if (d.offset >= l.size()) l.resize(d.offset + 1);
+                l[d.offset] = src;
+                ++pc; break;
+            }
             for (uint32_t off = 0; off < size; off += 4) {
                 Value s = src, dest = d;
                 s.offset += off; dest.offset += off;
@@ -547,11 +658,30 @@ Machine::Step Machine::step() {
             }
             break;
         }
-        case 0x65: { // CALLU: direct Function, receiver on top after arguments
+        case 0x65: { // CALLU (0x57DE34): native method on the receiver on top, after the arguments
+            if (in.builtinType) {
+                if (!builtin(in, fr)) return fail();
+                ++pc; break;
+            }
             if (in.ptrs.empty() || fr.stack.empty()) return fail();
             Value receiver = pop();
             const Function* callee = object.program->method(in.ptrs[0]);
             if (!callee) return fail();
+            if (callee->native) {
+                // A null receiver drops the arguments and the result slot without a call, the result untouched
+                // (0x5766F0); a non-void native whose result address is null is not called either.
+                const bool nullReceiver = receiver.kind == Value::Kind::Scalar && receiver.bits == 0 && !receiver.text;
+                const Value* slot = callee->returnType && fr.stack.size() > callee->argCount
+                    ? &fr.stack[fr.stack.size() - callee->argCount - 1] : nullptr;
+                const bool hasResult = slot && (slot->kind == Value::Kind::Local || slot->kind == Value::Kind::Member ||
+                                                (slot->kind == Value::Kind::Scalar && slot->bits == 0 && !slot->text));
+                const bool nullResult = hasResult && slot->kind == Value::Kind::Scalar;
+                if (nullReceiver || nullResult) {
+                    if (fr.stack.size() < size_t(callee->argCount) + hasResult) return fail();
+                    fr.stack.resize(fr.stack.size() - callee->argCount - hasResult);
+                    ++pc; break;
+                }
+            }
             return called(callWith(*callee, receiver, true));
         }
         case 0x66: case 0x67: return called(direct(false, false)); // CALL1 static / CALL2 this, super (non-virtual)
@@ -600,15 +730,28 @@ Machine::Step Machine::step() {
             if (fr.stack.size() < 2) return fail();
             const uint32_t index = pop().bits;
             Value& a = fr.stack.back();
-            if (a.kind == Value::Kind::Local || a.kind == Value::Kind::Member) {
+            if (a.kind == Value::Kind::Member && isElement(a.offset)) { // dynamic-array data (DREFD): element `index`
+                if (index >= kMaxElements || (a.offset & 0xFFFF) != 0) a = Value::scalar(0);
+                else a.offset += index << 8;
+                if (in.op == 0x1D && a.kind == Value::Kind::Member) a = Value::scalar(load(a));
+            } else if (a.kind == Value::Kind::Local || a.kind == Value::Kind::Member) {
                 a.offset += (in.op == 0x1D ? 4u : uint32_t(in.arg) & 0xFFFFFFu) * index;
                 if (in.op == 0x1D) a = Value::scalar(load(a));
             }
             ++pc; break;
         }
-        case 0x20: // DREFD: dynamic array -> {data, count}; dynamic arrays are not modelled and read as empty [I]
+        case 0x20: { // DREFD: dynamic array -> {data, count} (the exe's array +0x20 / +0x18); not a modelled array: empty
             if (fr.stack.empty()) return fail();
-            fr.stack.back() = Value::scalar(0), pushScalar(0); ++pc; break;
+            const Value a = fr.stack.back();
+            const auto o = a.kind == Value::Kind::Member ? resolveObject(a) : nullptr;
+            if (o && dynamicArray(*o, a.offset)) {
+                fr.stack.back() = member(o->uid, elementOffset(a.offset, 0));
+                pushScalar(load(a));
+            } else {
+                fr.stack.back() = Value::scalar(0), pushScalar(0);
+            }
+            ++pc; break;
+        }
         case 0x21: // BOUNDS n: an index >= n nulls the address below it
             if (fr.stack.size() < 2) return fail();
             if (fr.stack.back().bits >= (uint32_t(in.arg) & 0xFFFFFFu)) fr.stack[fr.stack.size() - 2] = Value::scalar(0);
