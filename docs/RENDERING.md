@@ -287,8 +287,10 @@ traced`, `RtStatus::ao`).
 
 Materials draw with TRU's own D3D9 SM3 programs translated to GLSL (`render/ShaderTranslate`; GL compiles the GLSL,
 Vulkan compiles it to SPIR-V with libshaderc at `upload()`) fed with the engine's register files (`render/OriginalShading`,
-shared): frame UBO, material UBO + 16 samplers, object block (GL UBO range / Vulkan push constants). Programs that need
-irradiance-volume lighting (dynamic objects), and materials without composite programs, keep the generic shading below.
+shared): frame UBO, material UBO + 16 samplers, object block (GL UBO range / Vulkan push constants). Programs that read
+irradiance-volume lighting (IrradianceState c70-c76, dynamic objects) get it per mesh from the unit's light probes
+(`original::IrradianceSlots`, OriginalShading.cpp `irradianceState`; SHADERS.md "IrradianceState"); materials without
+composite programs keep the generic shading below.
 With RT: depth pre-pass, then opaque draws use the ray-traced pixel-shader variant (water: + reflections), blended ones
 the shadow-map variant. Details, survey and evidence: docs/formats/SHADERS.md.
 Vulkan: one pipeline per (program, pixel-shader variant plain / shadow map / rays, blend), the ones the current RT / shadow
@@ -822,11 +824,13 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   ends share them): a corner whose life ended and that is not in a dark spell starts a new life now lasting `+0x90` +
   rand · rand · `+0x94` s (l1 3 + up to 10), after a dark spell of rand · `+0xA0` s when that exceeds `+0xA4` (l1 50 /
   10: four lives in five); at load every corner starts dark for rand · 20 s with texcoord (rand, 0). 0x6D8C20 draws
-  the mesh into a 50 × 50 A8R8G8B8 target only with the camera fully under water (strength 1) and the depth fade > 0
+  the mesh into a target of 50 % × 50 % of the back buffer (A8R8G8B8; vt 0xCC(0x32, 0x32, 0x19), target flag 0x10 =
+  sizes in percent: docs/re/RENDER_PIPELINE.md §7.5) only with the camera fully under water (strength 1) and the depth fade > 0
   (record byte `+0xB8` = 0), then after the full-screen pass the `+0x6C` material (5380, PS lib 405, additive) adds it
   bilinearly over the screen × (1 − murk / 0.7). Ours rasterises the mesh on the CPU every frame (perspective
-  correct, near-plane clipped, pixel centres; [I] the generator) and packs the 50 × 50 bytes into the water block
-  (`rays`); `ouRays` adds them after `ouWaterPass`. [I]: c63.x is taken as the camera forward z (tru.exe passes the
+  correct, near-plane clipped, pixel centres; [I] the generator) and packs 50 × 50 bytes into the water block
+  (`rays`; fixed texels, so ours is blurrier than tru.exe's screen-relative target at high resolutions [I]); `ouRays`
+  adds them after `ouWaterPass`. [I]: c63.x is taken as the camera forward z (tru.exe passes the
   camera matrix's row 2 z); tru.exe's unit offset (0xEDBFA0) is ours (`LoadedUnit::offset`); origin [O]: with record
   byte `+0xF0` set (every shipped record) 0x6D8C20 centres the grid on Lara (xy of the player's +0x90 matrix +0x70,
   z = `+0x40`.z + offset; 0x6D8D44..0x6D8DA3, passed as 0x6D75C0's origin), else at `+0x40` + offset
@@ -839,11 +843,12 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   l2_flushtunnel, l7_arctic_sea (grid DTP 19967), l7_thin_ice, l7_helheim01 / hall01 / hall02.
 - Flashlight beam [O, not drawn]: with the post effects on and Lara's personal light lit (player +0x500 attached object
   type 6, its data +0x54 bit 14), 0x6D8C20 also draws two cone meshes (0x6D6DE0: radius 5 → 3000 and 5 → 600 over
-  7000 units, 20 × 20) from the light's matrix with material `+0x80` into a 25 × 25 target, blurs it twice through
-  25 × 25 with `+0x70` (5381, 9 taps), and the `+0x6C` composite adds it too (InstanceParams c132 = depth fade,
+  7000 units, 20 × 20) from the light's matrix with material `+0x80` into a target of 25 % × 25 % of the back buffer
+  (vt 0xCC(0x19, 0x19, 0x19), RENDER_PIPELINE.md §7.5), blurs it twice at that size with `+0x70` (5381, 9 taps), and
+  the `+0x6C` composite adds it too (InstanceParams c132 = depth fade,
   1 − murk / 0.7, beam drawn, rays drawn: out = rays · c132.w · c132.y + beam · c132.z).
 - Interior ray records (`+0x84` bit 0 clear; l1 ship halls, l2 Norse halls / puzzle room / map room, l4 ballcourt) [O,
-  not drawn]: window light boxes (0x6D83C0) drawn above water only by 0x6D9660 into 50 × 50, blurred, composited.
+  not drawn]: window light boxes (0x6D83C0) drawn above water only by 0x6D9660 into the 50 % target, blurred, composited.
 - Enhanced scene light and fog (ours, camera submerged: the water block's submerged flag, Enhanced only; Original keeps
   the full-screen pass above): `ouUwFog` (underwater.glsl, called by `ouWaterPass`) is abyssal-garden's `W_SOLID` light
   and `S_B` fog ported literally (Noniv, MIT; RESEARCH 8.11), the `ag` section of `shaders/uw_medium.glsl`: the demo's
@@ -1107,17 +1112,18 @@ Techniques credited in docs/RESEARCH.md §8.6 (modern-wow-renderer: inspiration 
 
 Two render modes share the scene graph and simulation; only the backend's frame graph differs.
 
-**Original Fidelity** (default; the reference for screenshots and regression tests)
+**Original Fidelity** (`--preset original`; the purist reference for screenshots and regression comparisons. The
+default preset is Enhanced: `GraphicsConfig::preset = "enhanced"`, src/config/Config.hpp:21-26)
 - Reproduce TRU's Direct3D 9 output: the game's own shader programs (`shaderlib` sections in
-  DRMs, currently unused — 59 in `lara.drm`, **observed**) translated to SPIR-V/GLSL, its
-  material and blend states, fog, light rig and post effects, in gamma space unless research
+  DRMs — 59 in `lara.drm`, **observed**) translated to SPIR-V/GLSL ("Original shaders" above; on by default in both
+  presets), its material and blend states, fog, light rig and post effects, in gamma space unless research
   shows sRGB states [unknown: TRU's D3D9 sampler/render states not yet verified].
 - Native resolution and aspect (Hor+ already, **observed**), high refresh rate decoupled from the
   simulation tick, anisotropic filtering. Nothing else changes the image.
 - Verification: frame captures from the original game under the same camera, compared with
   `ou-imgdiff`-style metrics plus side-by-side review.
 
-**Enhanced** (opt-in per feature, GL + Vulkan)
+**Enhanced** (the default preset; every feature switchable, GL + Vulkan)
 - Linear-space lighting, higher-precision shadows, MSAA/TAA, SSAO, HDR output.
 - Enhanced water (both backends): waves, refraction, depth absorption, SSR reflections, foam,
   caustics, interactive ripples and splashes, underwater fog ("Water" above).

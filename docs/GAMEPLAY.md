@@ -1724,7 +1724,9 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   afl sea and tests keep tru.exe's waves alone (gameplay then depends on the water settings); self-tests too, unless
   the scenario says `"sea_swell": true` (docs/SELFTEST.md), so Wine-measured bounds hold.
 - The deck stays dry: the swell clipped at the rest plane is all troughs (the mean sea sits lower), so l2_cliffclimb's
-  motorboat heaves its deck between z 78 and 154 (150–159 on the waves alone), under the volume's top 108. Supported
+  motorboat sits mostly under the volume's top 108 (its first seconds from the self-test start: deck z 78..154, 150–159
+  on the waves alone; a 20 s series from the same start: Lara's root on the deck −151..420 with the swell, −25..382 on
+  the waves alone, docs/audit/BUGS.md OU-WAT-006 / OU-DOC-002). Supported
   by a moving solid (standing on it, or coming down onto it within a step) Lara is not in the water whatever the top
   or the waves say (`Player::enterWater`); off the edge the entry fires as before. Walking off an edge over a face too
   steep to slide (the rolled hull's side) is a fall like over nothing, so the safety drop still catches the deck's
@@ -1795,7 +1797,8 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   (0x778430), 4 GetDepth ((surface − bottom) × 0.3164); handler 0x6AC340 sets target +0x5C and rate +0x60 (units per
   frame), 0x6C10D0 moves the surface. l7_yggdrasil_end's 8309 calls 2 at load (GameReal.ScriptSurvey), larabase 3
   (0x777780: Lara's volume +0x8DC is the argument and +0x914 < 0; 0x5D77E0 sets +0x914 = floor under her − surface when she is below the surface, else her z − surface; ours: `World::waterNative` "larabase", her probe box's volume with its surface over her feet [I]) is bound: l4_pool's 5608 polls it every 3 ticks and calls health 2 (12345, 0) on Lara in the goo, a kill. [O] tru.exe under Wine (l4_pool, 2026-11-06; tru = ours + (4003.8, 158, −6637)): 0x710A20 tests her probe box against the volume's own box (instance data +0x34 centre, +0x40..+0x54 extents; no surface-mesh footprint), as `findWater`; +0x914 = −79.5 on the goo bed (floor 2582) and she dies; on the walkways (2844) and rocks (2865) inside the same box +0x914 > 0 and she lives. Ours gives the same outcome at the same eight spots (dies at (0, 0), (−2000, 2000), (−6072, 2898), (3210, 2429); lives at (1884, −3042), (5000, 3000), (−6610, −4845), (−3000, −4000)). A save goes on the same (`StreamReal.SaveContinuesBitIdentically` goo case: saved with the loop sleeping, both runs die in the goo); the earlier "loaded run takes no damage" was a save taken while dead, which loads at full health by design. `GameReal.ScriptedWaterLevelsRun`: the watervolumebase calls of 8209 / 8309 / 5608 run. 8309's instance argument is null in our runtime (an unbound instanceref) and the exe's thunk skips a null one [U: what it names]; `GameReal.ScriptedWaterLevelMoves` drives SetLevel (100, 10 -> 316 units, 32 per frame), GetDepth and a save. Marker ids resolve through the unit's intros (`UnitData::markers`).
-- Interactive surface (`src/game/Water.{hpp,cpp}`, `World::water()`; TRU does not simulate ripples): the game tick
+- Interactive surface (`src/game/Water.{hpp,cpp}`, `World::water()`; tru.exe's ripples are render-side only: a ≤ 30 Hz
+  CPU ripple map per water drawable with EnableWaterFX, no gameplay feedback, docs/re/RENDER_PIPELINE.md §7.2): the game tick
   decides what makes waves; the waves themselves run on the GPU (docs/RENDERING.md "Interactive waves": a spectral
   gravity-capillary wave field, `render/WaterField.hpp`). `game::WaveWindow` is the field's window: 512² cells of
   22.66 units (7.8 cm; a 40 m square) around Lara, scrolled in whole mask cells, with a 256² static wall mask: a mask
@@ -4412,20 +4415,26 @@ No side-by-side comparison with the original game was made.
   beam sprint, the beam drops (`bbeam_drop_*`), `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
   the bad-attach / wrestle clips of poles, ladders and pillars. Root motion of the jump, attach and fling clips is not applied (the flight is
   ballistic), so their poses can sit off the computed path.
-- Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
-  see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
-  model, ledge-grapple transitions, exe rappel speeds (ours are [I]).
+- Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off, rappel,
+  wall-running, pulls on uber / Mounted targets, rope wrapping round geometry, hook model and rope rendering; see
+  "Grapple"; ROADMAP "Grapple" / "Grapple inputs" rows, `Game.GrappleRappelInputsAndWallJump`,
+  `Game.GrappleRopeBendsRoundGeometry`, `GameReal.KrakenRoomRappel`, `GameReal.ValaskjalfWallRun`). Not done:
+  ledge-grapple transitions; exe rappel / wall-run speeds and the swing are unmeasured (ours are [I]).
 - Missing: sprint on stairs / slopes (`ng_sprint_up` / `_down`), beam sprint,
   state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenade crouch / perch / under-water
-  placing, the
-  assault rifle / tranquilizer / Thor's hammer, projectile flight for the speargun (hitscan), mirrored side hit
-  reactions, thrown / knock-down reactions (`Hit_Thrown*`, `hitReact_*`, types 7/9/10/12/15), hit reactions while
-  hanging/crouching, weapon and ammo pickups (none of uzi / shotgun / speargun in any intro), aiming from ledges /
-  poles / ladders (the `combat_pistol_ledgeb_*`, `_hpole_*` … sets), the adrenaline numbers (fill, slow factor,
-  window) and the exe's anim-graph hit-reaction thresholds. Saves do not store weapons, clips or reserves.
+  placing, projectile flight for the speargun (hitscan), mirrored side hit
+  reactions, thrown reactions (`Hit_Thrown*`, `hitReact_*`, types 7/9/10/12/15; the blast knock-down and get-up are done:
+  `CombatReal.GrenadeBlastKnocksLaraDownAndSheGetsUp`), hit reactions while
+  hanging/crouching, weapon and ammo pickups (none of uzi / shotgun / speargun in any intro), the adrenaline numbers
+  (fill, slow factor, window) and the exe's anim-graph hit-reaction thresholds. Done since this list was written: the
+  assault rifle and tranquilizer (`CombatReal.RifleAndTranquilizerClips`, `CombatReal.PoolRifleAndTranquilizer`), Mjolnir
+  (`Combat.MjolnirCycleSwingAndGroundPound`), one-handed pistols / Uzis from ledges, free climb, ladders, poles and
+  pillars ("One-handed shooting", `CombatReal.PoolLedgeHangShootsPantherOneHanded`), saves storing weapons, clips and
+  reserves (`Save::combat`, src/save/Save.hpp:51; `Combat.RespawnKeepsTheLoadout`).
 - Collision: no depenetration pass (an already-touching contact being left is ignored); query mask 0xFF.
 - Live keyboard/mouse/gamepad play was not exercised by any recorded run: every screenshot is a scripted replay.
-- Hair is rigid; editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).
+- Hair is a Verlet chain sim (src/anim/Anim.hpp:185; ROADMAP "Skeleton" row; under-water hair mode not switched);
+  editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).
 
 ## Progression: chapters, level ends, pickups, menus, music
 
