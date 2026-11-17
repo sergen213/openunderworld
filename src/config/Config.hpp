@@ -127,7 +127,8 @@ struct InputConfig {
 };
 // Bindable actions in display order: forward, back, left, right, walk, sprint, jump, drop, interact, draw, fire,
 // aim, switch, weapon, heal, grapple, save, load, hint, answer, pda, light, grenade, recenter, camera, pause, then the menu
-// navigation menu_up, menu_down, menu_left, menu_right, menu_accept, menu_back, menu_delete, menu_alt (ui::Nav order).
+// navigation menu_up, menu_down, menu_left, menu_right, menu_accept, menu_back, menu_delete, menu_alt (ui::Nav order),
+// and last manual_aim.
 const std::vector<std::string>& bindableActions();
 // The stick names moveStick / lookStick accept.
 inline bool validStick(const std::string& s) { return s == "left" || s == "right" || s == "none"; }

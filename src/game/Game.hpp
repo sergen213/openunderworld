@@ -1175,8 +1175,10 @@ public:
     const GrapplePress& grapplePress() const { return grapplePress_; }
     // The yaw (rad) the orbit camera's forces turned it by this tick (World.cpp updateOrbitCamera; ou-game logs it).
     float cameraSwing() const { return cameraSwing_; }
-    // The orbit camera's mode (tru.exe CameraManager +0x54: 1 on foot, 4 free climb, 11 hang, 19 / 20 under water /
-    // surface; -1 before its first update) and its current distance from the pivot (ou-game --self-test probes).
+    // The orbit camera's mode, as the player's state machine requests it from tru.exe's CameraManager (0x5E8210, Wine;
+    // CameraManager +0x54 is vtable slot 21, a call, not a mode field: docs/re/STRUCTURES.md): 1 on foot, 4 free climb,
+    // 11 hang, 19 / 20 under water / surface; -1 before its first update; and its current distance from the pivot
+    // (ou-game --self-test probes).
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }

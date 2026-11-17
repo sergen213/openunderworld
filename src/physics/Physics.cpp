@@ -1497,7 +1497,8 @@ bool Scene::knock(int32_t id, vec3 velocity, vec3 at) {
 }
 
 // ---- vehicles ---------------------------------------------------------------------------------------------------------
-// tru.exe's Vehicle is one Havok body with a ray per wheel from its suspension top (0x792900) and a spring along it;
+// tru.exe's Vehicle is one rigid body (cdc physics; no Havok in the exe, docs/re/BINARIES.md §5.3) with a ray per wheel
+// from its suspension top (0x792900) and a spring along it;
 // Jolt's VehicleConstraint is the same model (ray collision tester). Mapping: docs/formats/PHYSICS.md "Vehicles".
 Scene::Impl::VehicleE Scene::Impl::makeVehicle(int32_t id, const VehicleSpec& spec, const mat4& model) {
     MassProps mp = massProps(*spec.physics);
