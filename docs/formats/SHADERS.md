@@ -112,8 +112,11 @@ the instance opacity multiplies the output alpha instead (RENDERING.md "Instance
 opacity variant is not used].
 
 Screen targets (`original::screenSamplers`, 2026-10-29): global class 9 `BackBufferTexture` / class 10
-`DepthBufferTexture` [O: CTAB names], and for water shaders reading `DepthToW` the unsupplied instance classes 2 / 3
-[I] (l1_seatop sea 5990) get single-sample copies of the scene drawn so far; those submeshes draw after the opaque and
+`DepthBufferTexture` [O: CTAB names], and for water shaders reading `DepthToW` the instance classes 2 / 3 (l1_seatop
+sea 5990) get single-sample copies of the scene drawn so far. In tru.exe those classes are the colour / depth of the
+refraction view (water component flag 8: a half-resolution render of only the part of the scene below / above the
+water plane, docs/re/RENDER_PIPELINE.md §7.3, medium confidence), so ours shows above-water objects and a sharper image in
+the refraction where tru.exe clipped them [I]. Those submeshes draw after the opaque and
 blended scene (GL: after the main loop; Vulkan: in the second pass after `recordWaterCopies`). Frame registers: c51
 `ScreenExtents` (0.5/w, 0.5/h, 1/w, 1/h; GL flips v) [I], c3 `DepthFactors` (0, 1, 0, 0), c77 `DepthToW`
 (−(f−n)/(fn), 1/n), c97 `CameraDirection`. Viewed: the sea at l1_seatop / l2_cliffclimb (was white) shows refraction,
