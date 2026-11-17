@@ -980,6 +980,44 @@ TEST(StreamReal, YachtsSettleAfloatWithoutBouncing) {
     }
 }
 
+// OU-WAT-006: the drawn FFT swell (render::ocean::Swell) in the sim's sea must not move the mean sea. tru.exe's sea is
+// its four sin waves alone (0x69DA80; [O Wine 2026-11-16, 60 s treading at two l2_cliffclimb points: the wave surface
+// mean 254.6 / 247.6 under the volume top, exact 250 = sum of heights]); with the swell's old -0.5 sigma centring the
+// played sea sat ~70 units lower. Here l2_cliffclimb's waves (GAMEPLAY.md "Sea waves") without game data: over 600 s at
+// the yacht and on a 9 x 9 grid the swell before the crest clip is centred on the waves (within 2 units); the clip at
+// the rest plane (the original's crest bound, kept: tru.exe's sea never rises over the top, shores and decks stay dry)
+// takes off the crests that reach it, ~5 units of mean (6 % of samples), so the played sea is within 6 of tru.exe's.
+TEST(World, SwellKeepsTheTruSeaMean) {
+    collision::Markup sea;
+    sea.type = 10;
+    sea.points.assign(13, glm::vec3(0));
+    sea.points[1] = glm::vec3(0, 0, 108.0f);
+    const float kx[4] = {1e-4f, 5e-4f, -14e-4f, -16e-4f}, ky[4] = {3e-4f, 0, -14e-4f, 2e-4f}, height[4] = {100, 75, 50, 25},
+                speed[4] = {0.7f, 1.0f, 0.7f, 0.3f};
+    for (int i = 0; i < 4; ++i) sea.points[size_t(5 + i)] = glm::vec3(kx[i], ky[i], speed[i]), sea.points[size_t(9 + i)].x = height[i];
+    std::vector<glm::vec2> at{{-34600.0f, -14670.0f}}; // the ch2 yacht
+    for (int y = -4; y <= 4; ++y)
+        for (int x = -4; x <= 4; ++x) at.push_back(glm::vec2(-34600.0f + 2000.0f * x, -14670.0f + 2000.0f * y));
+    double waves = 0, unclipped = 0, swell = 0, highest = -1e9;
+    size_t n = 0, clipped = 0;
+    game::setSeaSwell([](const void* u, glm::vec2 p, double t) { return static_cast<const render::ocean::Swell*>(u)->height(p, t); },
+                      &render::ocean::swell(render::ocean::kMaxN));
+    struct Reset { ~Reset() { game::setSeaSwell(nullptr, nullptr); } } reset;
+    for (size_t i = 0; i < at.size(); ++i)
+        for (double t = 0; t < 600.0; t += i == 0 ? 1.0 / 60.0 : 0.5) {
+            const float s = game::waterSurface(sea, at[i], t), h = 108.0f + game::waveHeight(sea, at[i], t);
+            const float raw = h + render::ocean::swell(render::ocean::kMaxN).height(at[i], t);
+            waves += h, unclipped += raw, swell += s, highest = std::max(highest, double(s)), clipped += raw > 108.0f, ++n;
+        }
+    waves /= double(n), unclipped /= double(n), swell /= double(n);
+    std::fprintf(stderr, "l2 sea over %zu samples: waves mean %.1f, + swell %.1f unclipped (shift %.1f), %.1f as played (shift %.1f, clip %.1f %%), highest %.1f\n",
+                 n, waves, unclipped, unclipped - waves, swell, swell - waves, 100.0 * double(clipped) / double(n), highest);
+    EXPECT_NEAR(waves, 108.0 - 250.0, 15.0) << "the sum of the wave heights under the top";
+    EXPECT_NEAR(unclipped, waves, 2.0) << "the swell is centred on tru.exe's sea";
+    EXPECT_NEAR(swell, waves, 6.0) << "the played sea: only the crest bound lowers it";
+    EXPECT_LE(highest, 108.0) << "the crest bound: never above the top";
+}
+
 // With Enhanced water's FFT ocean (the user's config) the drawn sea is tru.exe's waves plus the swell (RMS ~137
 // units); the yacht floated on the waves alone, so its waterline wandered against the drawn water. With
 // game::setSeaSwell (ou-game: render::ocean::Swell) the sim's sea is the drawn one: the yacht rides it and Lara on its
@@ -1003,8 +1041,9 @@ TEST(StreamReal, YachtRidesTheDrawnSwell) {
         for (size_t i = 600; i < 2400; ++i)
             sz += h.z[i], sd += h.drawn[i], szz += double(h.z[i]) * h.z[i], sdd += double(h.drawn[i]) * h.drawn[i], szd += double(h.z[i]) * h.drawn[i];
         const double corr = (szd - sz * sd / n) / std::sqrt((szz - sz * sz / n) * (sdd - sd * sd / n));
-        std::fprintf(stderr, "ch%d with the swell: heave / drawn sea corr %.3f, jerk max %.1f, Lara wet %d ticks\n", c.chapter, corr, h.maxJerk(),
-                     h.wetTicks);
+        const auto [lo, hi] = std::minmax_element(h.z.begin() + 600, h.z.end());
+        std::fprintf(stderr, "ch%d with the swell: heave %.1f .. %.1f mean %.1f (sea mean %.1f), corr %.3f, jerk max %.1f, Lara wet %d ticks\n",
+                     c.chapter, *lo, *hi, sz / n, sd / n, corr, h.maxJerk(), h.wetTicks);
         EXPECT_GT(corr, 0.9) << "ch" << c.chapter << ": rides the drawn sea";
         EXPECT_LT(h.maxJerk(), 40.0f) << "ch" << c.chapter;
         EXPECT_LE(h.wetTicks, c.chapter == 1 ? 12 : 0) << "ch" << c.chapter << ": dry on the deck (ch1: her sea ticks before 997)";
