@@ -145,8 +145,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
 | OU-TST-001 | tests | No walkthrough section plays end to end; 14 parked known-gap scenarios | Open | pre-existing | — |
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
-| OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Open | doc drift | C-DOC |
-| OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open | doc drift | C-DOC |
+| OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
+| OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 
@@ -780,7 +780,11 @@ Open · pre-existing (test-tool gap).
 - Raw grep over the 21 files: VERIFIED 6, IMPLEMENTED (tested) 134, IMPLEMENTED BUT UNVERIFIED 318, PARTIALLY 323,
   NOT IMPLEMENTED 67 (counts include secondary tables, so they differ from the headline 9 / 135 / 282 / 145 / 88 in
   `docs/underworld_chapter_gameplay_matrix.md`).
-- Fix: relabel with a distinct status ("implemented, not exercised here"). Status · Origin: Open · doc drift.
+- Fix: relabel with a distinct status ("implemented, not exercised here").
+- Fixed 2026-11-16 (DocDrift, f3bd9d0..34535f1): chapters 02-21 and the master matrix were refreshed row by row against
+  the baseline's passing tests. Totals moved from 9/135/282/145/88 to 9/146/398/99/7 (+2 n/a) of 661 rows. The 7 rows
+  still NOT IMPLEMENTED are C03-31, C10-06, C11-27, C12-08, C13-22, C15-02 and C16-21.
+- Status · Origin: Fixed-verified · doc drift.
 
 **OU-DOC-002 Contradictions between docs** [O]
 - ROADMAP L46 "Mus! music sequencer not implemented" vs L64 music row Tested and AUDIO.md L401.
@@ -796,7 +800,13 @@ Open · pre-existing (test-tool gap).
 - `tests/selftests/ch07_cliffclimb_boat_swell.json` note and GAMEPLAY.md L1726-1727 "deck between z 78 and 154 (150–159
   on the waves alone)": a 20 s series from the same start measures her root on the deck −151 .. 420 (swell) and
   −25 .. 382 (waves alone) (OU-WAT-006 repro); the quoted ranges cover only the first seconds.
-- Fix: one doc pass correcting each against the code. Status · Origin: Open · doc drift.
+- Fix: one doc pass correcting each against the code.
+- Mostly fixed 2026-11-16 (DocDrift, 550830a, b4c1dba, 4b58147): ROADMAP L46/L51/L54/L55/L66/L95/L102, GAMEPLAY
+  Deviations, the ch07 deck range, RENDERING/SHADERS, TIMING, FUNCTIONS, and the Havok and CameraManager comments.
+- Still open: REFERENCE_COMPARISON M17 vs Differences #4; the note in
+  `tests/selftests/ch07_cliffclimb_boat_swell.json`; `src/game/World.cpp:877` (CameraManager +0x54 called a mode
+  field); `tru_gog.csv` rows 24 (GAMELOOP_Frame call list) and 78 (Font_Flush role).
+- Status · Origin: Open · doc drift.
 
 **OU-TST-003 Loaders lack synthetic rejection tests** — listed per format in each `docs/formats/*.md` "Validation"
 section (FormatDocs, 2026-11-16). Examples:

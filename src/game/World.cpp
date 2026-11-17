@@ -874,7 +874,8 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     constexpr float kRadius = 13.91f;
     const Bike* bike = ridden();
     const PlayerState& s = player_.state();
-    // Camera mode (CameraManager 0xE804F0 +0x54) the player's state machine requests (message 0x44E -> 0x7683B0 ->
+    // Camera mode (set through CameraManager 0xE804F0 vfunc +0x54 = slot 21, not a field; docs/re/STRUCTURES.md)
+    // the player's state machine requests (message 0x44E -> 0x7683B0 ->
     // 0x5E8210; Wine, hooked at 0x5E8210 while she acted: on foot, jumping and falling 1, free climb 4, ledge hang and
     // shimmy 11, surface swim 20, under water 19), and what its mode-list entry sets; a mode without command 10 / 2
     // gets the defaults (0x601D30: record 1, settings +0x60). Look pitch limits from command 8 (0x607A30: centre

@@ -21,7 +21,7 @@ address,name,confidence,evidence
 0x5df390,MainG2_InitEngine,high,logs build date Dec 16 2008 18:30:39; RESOLVE_Init; registers PDAMapSection as section type 13; calls MAIN_DoMainInit
 0x5e0090,MAIN_ProcessMainState,medium,switch on mainTracker->mainState (1 = play game -> MAIN_PlayGame; 2..10 other states)
 0x5e0050,MAIN_PlayGame,low,mainState 1 handler; calls GAMELOOP_Frame unless the u8 gameTracker+0xB8 is neither 0 nor 8 (then 0x5DAB40; 5E0055..5E0061)
-0x5dffe0,GAMELOOP_Frame,medium,GAMELOOP_Process; STREAM_PollLoadQueue; GAMELOOP_DrawFrame; GAMELOOP_UpdateTime; gameTracker+0x24 frame counter++
+0x5dffe0,GAMELOOP_Frame,medium,0x483810; 0x78BCC0; 0x5D4520; GAMELOOP_Process; STREAM_PollLoadQueue; GAMELOOP_DrawFrame; 0x5C1B50; 0x5B8FC0; GAMELOOP_UpdateTime; gameTracker+0x24 frame counter++ (objdump 0x5DFFE1-0x5E003A; docs/re/TIMING.md)
 0x5da1c0,GAMELOOP_DrawFrame,low,called once per frame after GAMELOOP_Process; ends with Font flush 0x5C5A30
 0x5da230,GAMELOOP_UpdateTime,high,TIMER_GetTimeMicroseconds; 6-frame moving average of frame delta; clamp 66666us; timeMult = dt/33333.33 * scale (gameTracker+0x100)
 0x5d3cf0,GAMELOOP_InitTimeFields,medium,writes gameTracker timing defaults (+0xC8 variable-step=1; +0x120 lock=1; +0x148 scale=1.0; +0x11C 0x1000; +0x10C 1.0)
@@ -75,7 +75,7 @@ address,name,confidence,evidence
 0x475870,Font_GetHeight,medium,TRLAU-menu-hook Font.cpp
 0x4758c0,Font_GetTextWidth,medium,TRLAU-menu-hook Font.cpp
 0x476bc0,Font_PrintFormatted,medium,TRLAU-menu-hook Font.cpp
-0x5c5a30,Font_Flush,medium,TRLAU-menu-hook Font.cpp (hooked as flush point)
+0x5c5a30,Font_Flush,medium,TRLAU-menu-hook Font.cpp (hooked as flush point); actually the frame end: 0x5BFD60 main-scene EndScene + 2-D text scene; 0x5A4340; EndFrame 0x509630 (docs/re/RENDER_PIPELINE.md)
 0x480e50,InputSystem_GetAxisValue,medium,TRLAU-menu-hook Input.cpp
 0x48a450,TRANS_TransToDrawVertex,medium,TRLAU-menu-hook Draw.cpp
 0x49be10,cdc_OrthonormalInverse3x4,medium,TRLAU-menu-hook Math.cpp
