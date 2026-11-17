@@ -40,8 +40,8 @@ Abbreviations as in `08_bhogavati.md`. Screenshot base: https://tombraiders.net/
 
 ### Gaps
 - **Weight pole on its track (C10-06, M52)** is the only way to open the underwater exit and is explicitly "not done". Critical path.
-- **Wall run + back jump to a ledge (C10-05, M24)**: the original releases the rope and catches the ledge behind; ours documents only a kick-off into a free swing. Critical path, unverified / probably different.
-- **Airborne grapple throw and rope release on hitting water (C10-03)**: no evidence either way.
+- **Wall run + back jump to a ledge (C10-05, M24)**: Jump at the apex plays `grapple_rappel_jumpoff_back`, lets the rope go and catches ledge 652 (played with the water rule off); Back + Jump (the original's T424 -> S324 dynamic jump-off) is not implemented. Critical path.
+- **Airborne grapple throw and rope release on hitting water (C10-03)**: both happen in ours (`Game.RopeIsLetGoInDeepWater`, self-test `ch10_maproom_rope_step_off`); the throw in the air stops her for the 1 s clip (defect); the roped jump towards the wall is the blocker.
 - **Under-water Interact (C10-02, -09, -10; M30)**: treasure pickups and the wheel are untested with Lara swimming; the wheel plays a standing lever clip [I].
 - Air pocket (C10-08): depends on water-volume data; not checked in l2_flushtunnel.
 - Spider swarm trigger untested.
