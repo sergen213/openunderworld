@@ -9,6 +9,8 @@ Tests: `AnimGraph.LcgAndTransitionPicks`, `ProgressionReal.CombatCrateBreaksOnHi
 
 Labels: **[O]** observed in game data or our tru.exe decompile (GOG 1.1.0.0 VAs), **[I]** inference, **[U]** unknown.
 
+**Endianness:** little-endian (anim-graph records inside the object's DTP data) [O].
+
 ## What the "anim graph" is
 
 - [O] No TR8 object uses the cdc AnimGraph: ObjectBase `+0x64` hasAnimGraph is 0 (and `+0x68` graph null) in every
@@ -137,3 +139,12 @@ Transition, 0x34 bytes, tag `0x2776`:
   towers' state-2 event's modifiable 4 (2)); Lara's use (stimulus 1) runs transition 3 "break" → state 3, whose vt 20
   sends buttress_mount_broken and the mount's vt 54 tells dispatcher 8360. The endgame gun 8401 only reacts to broken
   mounts.
+
+## Validation
+
+`formats::loadAnimGraph` throws `cdc::FormatError` on: reads past the ObjectBase section; a pointer outside its
+expected section ("pointer outside the …"); an event or transition list that is missing or longer than 64; a null
+transition. `script::Runtime` catches it per object: logged to stderr, the object runs without a graph (`Script.cpp`).
+Tests: `AnimGraph.LcgAndTransitionPicks` (pick logic, synthetic), real-data `ProgressionReal.CombatCrateBreaksOnHit`,
+`TempleRevealReopens`, `EndgameCredits`, `ChapelShadowPillars`, `CriticalGates`; survey `ProgressionReal.AnimGraphSurvey` /
+`AnimGraphRecords`. Gap: no synthetic test of the rejections above.

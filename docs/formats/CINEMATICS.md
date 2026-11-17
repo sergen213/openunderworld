@@ -7,6 +7,8 @@ Tests: `tests/test_cine.cpp`. Subtitle text and the ticker: [TEXT.md](TEXT.md) �
 Labels: **[O]** observed in the GOG data, in a render, or in our tru.exe 1.1.0.0 decompile (VAs below); **[I]**
 inferred; **[U]** unknown.
 
+**Endianness:** little-endian (CINE header, channel values, frames; the `.mul` packets that carry them) [O].
+
 ## 1. Files and binding
 
 - [O] A cutscene is `pc-w\cinstream\<nnn_name>.mul` (MultiplexStream: sound packets + cinematic packets, one record per
@@ -282,3 +284,12 @@ frame-boundary end), interpolation, camera basis and FOV, bone FK with a fix mat
 holding, origin, end of stream. Gated on `OU_GAME_DIR`: all 53 streams decode to a clean end (3253 subtitle entries on
 845 frames), 060_med_natla subtitles + camera continuity + a voice-line stream, the chapter-end bindings, Lara's bones
 against lara.drm.
+
+## 8. Validation
+
+| Data | Loader rejects (`cdc::FormatError`) | Enforced by |
+|---|---|---|
+| `.mul` demux (`cine::demux`) | header < 2 048 bytes; a packet past the data | `Cine.DemuxesAndParsesSyntheticStream` |
+| CINE header (`cine::parseHeader` / `scan`) | magic ≠ `ENIC`; header size disagreeing with the bytes read; > 2²⁰ channels; truncation | `Cine.DemuxesAndParsesSyntheticStream` (bad magic, frame out of sequence) |
+| Frames (`cine::Decoder`) | a frame number out of sequence; a frame whose size disagrees with its content; no frames. A truncation exactly at a frame boundary ends the stream (voice-line streams end that way) | `Cine.TruncationThrowsOrEndsAtAFrame` (every prefix), real `CineReal.AllStreamsDecodeToTheEnd`, `CineReal.EveryStreamPlaysWithItsActors` |
+| Unit cinematic table | an entry without relocation; a name out of range | `CineReal.ChapterEndCinematics` |

@@ -5,6 +5,10 @@ Labels: **[V-data]** observed in the retail GOG data; **[V-exe]** read in the tr
 Code: `src/audio/Audio.{hpp,cpp}` (decoders), `src/audio/Mus.cpp` (`.mus` parser + stem-gain
 sequencer), `src/audio/Mixer.{hpp,cpp}` (SDL3 mixer) and `tools/ou-audio` (CLI).
 
+**Endianness:** little-endian for FSB4, Wave sections, `.mul` headers/packets and the `.mus` header / tables [V-data];
+exceptions: `.mus` event delta times are MIDI-style variable-length quantities (7 bits per byte, most significant group
+first), and the loop-break target is a 24-bit little-endian offset (§5.2).
+
 ## 0. Where audio lives
 
 | Container | Count | Content |
@@ -872,3 +876,14 @@ Moving uber sections and rigid bodies are heard through their Havok joints, not 
   the list (logged `joint sound <object> uid u joint j start / impact / stop`). Multi-axis uber joints (types 5 / 7:
   shiva scales, push blocks) and fixed joints are not simulated, so they stay silent [U]; rigid-body collision sounds
   (0x48DF90: contacts with material-pair sounds 0x5893D0, dust 0x4F1EB0) are not done.
+
+## 10. Validation
+
+| Data | Loader rejects (`cdc::FormatError`) | Enforced by |
+|---|---|---|
+| IMA ADPCM | — (decoder clamps step index and saturates samples) | `Ima.XboxKnownVector`, `Ima.CrystalDynamicsKnownVector`, `Ima.StepClampAndSaturation`, `Ima.StrideInterleaves` |
+| FSB4 (`parseFsb4`, `decodeSample`) | bad magic; bank past the data; sample count > header bytes / 8; a sample header truncated or < 0x50 bytes; sample data out of bounds; multichannel IMA ADPCM; ADPCM or PCM data shorter than the sample count; unsupported sample mode | `Fsb4.TruncationThrows` (every prefix, overlong dataSize, overlong count), `Fsb4.ParsesAndDecodesSyntheticBank`, `Fsb4.BasicHeadersShareFirstSampleFormat` |
+| DRM Wave (`decodeWave`) | not exactly one FSB4 sample; truncated section | `Wave.UsesSectionSampleRate` (cut by 1 byte, 8-byte section) |
+| `.mul` (`decodeMul`) | header < 0x800; sample rate outside 1 000..192 000 or channels outside 1..12; a packet past the data; a bad sound packet or one out of sequence (start sample); a bad cinematic frame / header / header size; a bad subtitle length or language | `Mul.TruncationAndCorruptionThrow` (short header, cut packet, wrong start sample, zero channels), `Mul.DecodesChannelsAndSubtitles`; real `AudioReal.LaraVoiceLine`, `AudioReal.SubtitleMatchesLocals`, `CineReal.AllStreamsDecodeToTheEnd` |
+| `.mus` (`parseMus`) | magic ≠ `Mus!`; unsupported version; truncation anywhere; a VLQ longer than 4 bytes; a bad status byte; an event past the data; sequence magic ≠ `QSMa`; tempo < 1 000 or ppqn 0; a short meta event; a stem index out of range; a bad label or loop-break target | `Mus.TruncationAndBadDataThrow` (every prefix, version, goto past the label table), `Mus.ParsesSyntheticScript`, `AudioReal.MusParsesAll75` (all 75 in the install) |
+| SoundPlex / sfxmarkers | lenient readers; see §9 | `AudioReal.SoundPlexVoiceDtps`, `AudioReal.SfxMarkersAllUnits`, `AudioReal.EffectAndOscillatorNodesAllUnits` |

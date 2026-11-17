@@ -8,6 +8,8 @@ Labels: **[O]** observed (game data, tru.exe decompile, or a viewed render), **[
 Addresses are GOG tru.exe v1.1.0.0 VAs from `decomp_all.c`. Everything was checked on `pc-w\lara.drm`; other
 objects are untested unless stated.
 
+**Endianness:** little-endian (skeleton segments, clip header, channel masks and key data) [O].
+
 ## Where the data lives (pc-w\lara.drm) [O]
 
 | What | Section | Notes |
@@ -275,3 +277,12 @@ animated orientation swung onto the simulated segment (to the child; tips: from 
 Checks [O]: settles under gravity, finite under teleports/spins, deterministic (`Anim.HairChain…`); in the replay
 the largest constraint strain is 14 %. Screenshots (not committed): at rest the ponytail hangs down the back;
 after a stop it swings out behind the head; rising in a standing jump it trails downward.
+
+## Validation
+
+| Data | Loader rejects (`cdc::FormatError`) | Enforced by |
+|---|---|---|
+| Skeletons (`decodeSkeletons`) | segment count 0 or > 4 096; a missing relocated pointer; a parent ≥ its own index, < −1, or −1 after segment 0; a hair-chain bone or link index out of range; reads past the section. Caught per skeleton: a warning, the skeleton is skipped | `AnimReal.LaraSkeletonHierarchy`, `AnimReal.LaraHairRig`, `AnimReal.OutfitsShareClipsAndSkeletonTopology` (all outfit skeletons: 153 bones, lara.drm's parents) |
+| Clips (`decodeClip`) | section count ≠ 1; key count or time per key 0; an empty or short piece-wise channel; a zero-length piece-wise segment; an unknown channel mode; channel data that does not end at the `+0x3C` offset; reads past the end | `Anim.RejectsTruncatedAndInconsistent` (4 bytes cut; `+0x3C` zeroed), `Anim.DecodesAllChannelModes`, `AnimReal.AllLaraClipsDecodeAndKeepBoneLengths` (all lara.drm clips) |
+
+Gap: no synthetic test for the skeleton parent / count rejections.

@@ -5,6 +5,9 @@ Evidence tags as in [CONTAINERS.md](CONTAINERS.md): **[V-data]** observed on the
 **[V-exe]** our Ghidra decompilation of `tru.exe`, **[V-run]** observed running our code, **[I]** inference,
 **?** unknown. Function addresses are tru.exe VAs (unnamed in our Ghidra project unless given).
 
+**Endianness:** little-endian for locals.bin (header, offsets) and the binary `.mul` subtitle packets; `.sch` files
+are text (CRLF lines); all strings are UTF-8 [V-data].
+
 ## 0. Languages [V-exe]
 
 The exe's language index (`0x49A730` returns it) orders the `lang_*` table in `0x4A0720`:
@@ -168,3 +171,13 @@ parsing, `.sch` parsing, ticker scrolling, speaker stripping, cinematic subtitle
 `OU_GAME_DIR`: all six locals.bin variants (5136 strings, header values, 1448 non-empty, strict UTF-8),
 `prevontr.sch` cues per language, Bink decode and track selection. CINE streams (synthetic, truncation,
 `060_med_natla` subtitles, all 53 streams): `tests/test_cine.cpp`.
+
+## 6. Validation
+
+| Data | Loader rejects | Enforced by |
+|---|---|---|
+| locals.bin (`locale::Strings`) | `cdc::FormatError`: header < 8 bytes; offset table past the data; an offset at or past the end; a final string without NUL. Getter: id out of range or offset 0 → no string; strings failing the exe's UTF-8 check are treated as the exe does (§1) | `Strings.RejectsTruncation`, `Strings.ExeUtf8Check`, `Strings.DecodesSyntheticTableWithExeSemantics`, `LocaleRealData.AllLocalsBinVariantsDecode`, `LocaleRealData.InstallLanguagesMapToTheirRecords` |
+| `.sch` (`parseMovieSchema`) | lenient: lines whose key is not the language (case-insensitive) or that lack a quoted text are skipped; never throws | `MovieSchema.ParsesTimedCuesPerLanguage`, `LocaleRealData.PrevontrMovieSubtitles` |
+| cinematic subtitles (`.mul`) | bad subtitle length / language → `FormatError` (AUDIO.md §10) | `Subtitles.CineBlobHasEveryLanguage`, `Subtitles.CineLinesDropSpeaker`, `AudioReal.SubtitleMatchesLocals` |
+
+Gap: no malformed-`.sch` test (the parser's skip behaviour is untested).

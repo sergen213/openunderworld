@@ -7,6 +7,8 @@ Evidence tags as in [CONTAINERS.md](CONTAINERS.md): **[V-data]** observed on the
 **[V-exe]** read in our Ghidra decompilation of `tru.exe`, **[V-run]** observed running our code,
 **[I]** inference, **?** unknown.
 
+**Endianness:** Bink 1 containers are little-endian; we never parse them ourselves: libavformat/libavcodec do (§3) [V-run].
+
 ## 1. Inventory (`ou-movie --info Movies/`) [V-data]
 
 All five are Bink 1 (`BIKi`), demuxed by libavformat `bink`, video `binkvideo`, audio `binkaudio_dct`.
@@ -76,3 +78,11 @@ Unnamed functions `0x4A0C70` (open) / `0x4A12B0` (loop) / `0x4A0F70` (per frame)
 
 Not compared against the original game's playback (timing, letterbox colours, subtitle font/position
 on screen). Bink 1 decode correctness rests on libavcodec.
+
+## 5. Validation
+
+`video::Movie` throws `std::runtime_error` when libav cannot open or probe the file, finds no video stream, has no
+decoder for a stream's codec, or swscale cannot convert the frame format; ou-game logs the error and continues without
+the movie. Audio track selection follows the exe rule (id = language, else first). Tests:
+`VideoRealData.DecodesBinkVideoAndAudio` (real Bink files), `VideoRealData.SelectsAudioTrackByLanguage`, ctest
+`movie_intro_screenshot`. Gap: no test opens a corrupt or non-Bink file.
