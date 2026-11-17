@@ -1,0 +1,17 @@
+// CORTAO prepass, OpenGL (third_party/cortao CORTAOPrepassReference.glsl adapted: UBO instead of push constants, combined
+// samplers, image units). GlRenderer prepends #version, CORTAO_* defines and cortao_common.glsl and resolves the include.
+#include <CORTAOPrepass.h>
+
+layout(std140, binding = 6) uniform CortaoPrepassBlock { CORTAOPrepassParameters parameters; };
+layout(binding = 0) uniform sampler2D ouAoDepth;  // depth pre-pass (single sample, render resolution)
+layout(binding = 1) uniform sampler2D ouAoNormal; // RG16F octahedral view-space normal (ao pre-pass)
+layout(r32ui, binding = 0) uniform restrict writeonly uimage2D ouAoPackedMips[8]; // R32UI packed data, mips 0-7
+
+cortao_float cortao_loadDepth(cortao_int2 pixelCoords) { return texelFetch(ouAoDepth, pixelCoords, 0).r; }
+cortao_float3 cortao_loadNormal(cortao_int2 pixelCoords) { return ouOctDecode(texelFetch(ouAoNormal, pixelCoords, 0).rg); }
+void cortao_writePackedData(cortao_int2 pixelCoords, cortao_int mipLevel, cortao_uint data) {
+    imageStore(ouAoPackedMips[mipLevel], pixelCoords, cortao_uint4(data, 0u, 0u, 0u));
+}
+
+layout(local_size_x = 8, local_size_y = 8) in;
+void main() { cortao_prepass(gl_GlobalInvocationID.xy, parameters); }

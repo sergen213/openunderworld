@@ -134,6 +134,26 @@ RX 7900 XTX, average after 11 warm-up frames, l4_ballcourt `--level`, 4380 meshe
 Shadows dominate the Enhanced cost (a second pass over every mesh; `original --shadows on`: GL 4.14,
 VK 1.66 ms); FXAA + HDR add ≤ 0.07 ms. GL is CPU/draw-call bound (one draw per submesh).
 
+## Ambient occlusion (`FrameOptions::ao`, `aoSamples`; CORTAO, `third_party/cortao`, MIT)
+
+Shared by both renderers: `render/Cortao.hpp` (configuration, pass parameters), the `sun.glsl` hook `ouAo()` (map
+`ouAoMap`: r = AO, g = view depth; used only where g matches the fragment's own view depth within 2 %, so blended,
+water, exterior and other surfaces that were not pre-passed keep 1) and the ambient-only composite: generic shading
+`c *= 0.45 * ouAo() + 0.55 * ndl * vis`, translated programs scale g_Ambient c15, IrradianceState c70-c76 and the
+light-map scales c148 / c149 (ShaderTranslate). Sun, local lights and emissive terms are never occluded.
+
+### OpenGL (`GlRenderer::runAmbientOcclusion`, `src/render/gl/shaders/cortao_*.comp`)
+
+| Piece | Choice |
+|---|---|
+| Modes | `Cortao`; `Rt` renders CORTAO too (no ray tracing on GL). `aoSamples` -> 8 / 12 / 16 / 32 samples, 16 rays (32 rays at 32 samples), each main-pass permutation compiled on first use. |
+| Pre-pass | Own depth + normal + motion pass at full render resolution, single sample, after the planar reflection and before the scene: every submesh that writes depth in the main pass (opaque and depth-writing alpha-tested ones, alpha test as the scene; not the exterior or Enhanced water), generic vertex shader (the scene's vertices are final on the CPU, so it matches the translated programs' depth), per-pixel interpolated vertex normal in view space (octahedral RG16F), turned to face the eye, and the motion to last frame (RGBA16F: uv offset, last / this view depth) from last frame's view-projection and the vertex's previous position: meshes `updateVertices` moved for this frame keep their previous vertices in `GpuMesh::prevVbo` (copied while AO runs; vertex binding 1, attribute 8), so Lara and posed loose bodies such as the bobbing yacht carry their history. |
+| Passes | CORTAO prepass (R32UI packed depth + 12-bit normal, `cortao::mipCount` mips), main pass (R8, occluder lookup table), 13-tap symmetric filter (R8), then our temporal pass into an RGBA16F ping-pong (r AO, g view depth, b age) = `ouAoMap` on texture unit 17; `OuShadow.screen.w = 4` for the main scene pass only. Shader sources: the vendored headers embedded unmodified, `#include`s resolved by `cortaoSource`; 32-bit maths (no explicit 16-bit types in GL GLSL); UBO binding 6 instead of push constants. |
+| Temporal | GL has no TAA / FSR, so a fresh CORTAO seed every frame is accumulated: the history is fetched at the pixel's last-frame position (pre-pass motion), taps whose stored view depth disagrees with the surface's last-frame depth by more than 3 % + 2x the local relative depth slope are dropped (disocclusion), the history is clamped to this frame's filtered 3x3 neighbourhood (mean ± 1.5 σ + 0.01) and blended by max(1 / age, 0.06), age ≤ 40; pixels younger than 8 frames blend towards a depth-aware 9x9 average of this frame. History drops with a new scene, a sample-count change, a viewport change or a frame without AO. Without per-pixel motion the bobbing yacht rejected its history every frame (about a third of the boat at age < 2) and left grainy halos along every depth edge; a constant seed + filter alone leaves grain on every surface. |
+| Strength | Physically based, no strength knob. Measured at the cliffclimb boat spawn (forcing the map to 0 vs AO off): the ambient / indirect terms AO scales carry 40 % of the boat's brightness with the translated shaders (55 % generic); the map averages 0.86 there, so AO darkens the boat by 5.7 % (8.7 % generic), concentrated in creases and contact (bench base, boots). 94 % of the boat's pixels pass the 2 % depth match. |
+| MSAA | The map is built from the single-sample pre-pass; MSAA fragments take it where their own view depth matches (pixel-centre surface), so silhouettes do not bleed. |
+| Cost | 1920x1080, l2_cliffclimb boat spawn, no vsync, Mesa (this machine): frame time 6.87 ms without AO, 7.33 / 7.51 / 7.53 ms at 12 / 16 / 32 samples (pre-pass + four compute passes). |
+
 ## Vulkan backend (`src/render/vk/VkRenderer.cpp`)
 
 | Piece | Choice |

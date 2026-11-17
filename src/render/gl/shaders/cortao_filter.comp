@@ -1,0 +1,15 @@
+// CORTAO filter pass, OpenGL, occlusion only, 13 taps with symmetric weights (third_party/cortao
+// CORTAOFilterPassOcclusionReference.glsl adapted; 32-bit maths: GL has no explicit 16-bit arithmetic types).
+#include <CORTAOFilterPass.h>
+
+layout(std140, binding = 6) uniform CortaoFilterBlock { CORTAOFilterPassParameters parameters; };
+layout(binding = 0) uniform usampler2D ouAoPacked; // R32UI; nearest, clamp to border 0
+layout(binding = 1) uniform sampler2D ouAoRaw;     // R8 main pass output; nearest, clamp to border 0
+layout(r8, binding = 0) uniform restrict writeonly image2D ouAoFiltered;
+
+cortao_uint4 cortao_gatherPackedData(cortao_float2 texCoords, cortao_int2 offset) { return textureGatherOffset(ouAoPacked, texCoords, offset); }
+cortao_half4 cortao_gatherSSAO(cortao_float2 texCoords, cortao_int2 offset) { return textureGatherOffset(ouAoRaw, texCoords, offset); }
+void cortao_writeFilterOutput(cortao_int2 pixelCoords, cortao_half ssao) { imageStore(ouAoFiltered, pixelCoords, cortao_float4(ssao, 0.0, 0.0, 0.0)); }
+
+layout(local_size_x = 8, local_size_y = 8) in; // each thread filters a 2x2 block
+void main() { cortao_filterPass(gl_GlobalInvocationID.xy, parameters); }
