@@ -6,8 +6,8 @@
 `address,name,confidence,evidence`. `ApplyNames.java` writes the rows into the Ghidra
 project on every `tools/ghidra/analyze.sh` run.
 
-The current CSV has 75 high, 76 medium and 16 low rows. 144 functions and 23 data labels
-were applied with 0 errors.
+The current CSV has 87 high, 88 medium and 16 low rows. 168 functions and 23 data labels
+were applied with 0 errors. Full inventory and coverage: [FUNCTION_DATABASE.md](FUNCTION_DATABASE.md).
 
 | Confidence | Meaning |
 |---|---|
