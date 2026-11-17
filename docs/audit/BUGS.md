@@ -147,6 +147,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Open | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open | doc drift | C-DOC |
+| OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
+| OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 
 ## Root-cause clusters
 
@@ -705,6 +707,11 @@ All: Status Open · pre-existing.
   fail), followed by a word the dump shows as `NOP 1793` (0x701) [I: the call's own operand, a builtin / array method
   on member +16, type 55]. The constructor's loop that builds the volume's player sensors never runs. RE next: the
   0x57CE50 case for CALLU with an unrelocated operand.
+- Root cause (2026-11-16, [SCRIPT_NATIVES.md](../re/SCRIPT_NATIVES.md), commit 1f71837, runtime-verified under Wine): an
+  odd unrelocated CALLU operand is a builtin reference `{u8 1, u8 DataType, u16 index}` that the link pass 0x57EE20
+  rewrites. 0x701 = DYNARRAY builtin 0 `Size` (handler 0x574A30, count at +0x18); the patched word was seen as
+  0x02269574 at runtime. Our parser decodes it as `NOP 1793`, so CALLU loses its operand. It is the only real
+  operand-length mismatch with the exe over all 82 units. Fix in progress (agent ScriptVm, W6-5).
 - Status · Origin: Reproduced · pre-existing.
 
 **OU-SCR-002 Native `anchor` 1 unbound** — 0x7966F0, the vector between two anchors (0x4AB870); the VM has no vector
@@ -790,6 +797,33 @@ Open · pre-existing (test-tool gap).
   on the waves alone)": a 20 s series from the same start measures her root on the deck −151 .. 420 (swell) and
   −25 .. 382 (waves alone) (OU-WAT-006 repro); the quoted ranges cover only the first seconds.
 - Fix: one doc pass correcting each against the code. Status · Origin: Open · doc drift.
+
+**OU-TST-003 Loaders lack synthetic rejection tests** — listed per format in each `docs/formats/*.md` "Validation"
+section (FormatDocs, 2026-11-16). Examples:
+- UI: `ui::parseFont` and `ui::loadRaw` on broken input, and `decodeUtf8` edge cases.
+- Bigfile index: too many records, unsorted hashes, nonzero compressed size.
+- Textures: palette and unknown-format rejections.
+- Meshes: corrupt index buffer, primgroup or vertex declaration.
+- Animation: skeleton parent and segment-count checks.
+- Anim graph: all of its rejections.
+- Scripts: wrong version, unknown opcode, code starting with an operand.
+- Levels: nav, portal and irradiance rejections.
+- Text: malformed `.sch`.
+- Video: corrupt movie file.
+
+Effects read out-of-range values as zero; only `FxReal.EveryFxObjectParses` would catch a truncated object.
+Status · Origin: Open · pre-existing.
+
+### Save / load (OU-SAV)
+
+**OU-SAV-001 Bedroom doors not restored exactly after quickload**
+- Repro: self-test `tests/selftests/known_gaps/save_load_bedroom_doors.json` (SelfTestBrief, 4594f2c).
+- Actual: `save.differs = ["dynamic 4526", "dynamic 4376"]` (`ma_uo_bedroom_door`). Their own motion is tiny
+  (body.z −0.003 / −0.006), but the difference persists 2, 5 and 30 ticks after the load. Every other state part
+  matches.
+- Comparison: the same steps on the l1_seatop yacht and in l1_baldrs_tomb restore exactly.
+- Suspected cause [I]: door hinge/joint body state is not restored bit-identically.
+- Status · Origin: Reproduced · pre-existing.
 
 ## Triage
 
