@@ -110,6 +110,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
 | OU-PLY-012 | collision | No depenetration pass | Reproduced (idle) | pre-existing | — |
+| OU-PLY-013 | Lara | Slope-slide upper bound: OU treats slide-flagged faces flatter than 28° as standable (tru.exe slides) | Open (asm-verified) | pre-existing | — |
+| OU-PLY-014 | Lara | Ledge wall-side limit not loosened to 0.5236 for fast arcs | Open (asm-verified) | pre-existing | — |
 | OU-SWM-001 | swimming | Swim turn rates differ from tru.exe and are left/right uneven; snap-back on release too fast | Reproduced (Wine-measured) | pre-existing | C-MEASURE |
 | OU-SWM-002 | swimming | Surface swim velocity lags heading ~9° vs ~16° | Open | pre-existing | C-MEASURE |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
@@ -645,6 +647,22 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   in-play stuck case was found; the risk is placements (respawns, loads, moved platforms) that start her inside.
 - Status · Origin: Reproduced (idle) · pre-existing.
 
+**OU-PLY-013 Slope-slide upper bound** (docs/re/VERIFICATION.md V002, medium confidence)
+- tru.exe: the ground check 0x5DCE20 reads only player data +0x100E (52°; cos read at 0x5DD3BA / 0x5DD4F4 /
+  0x5DD578). It flags a slide face when cos52 < nz < 1.
+- The 28° value (+0x100C) is read only by the slide controller 0x73FF50 (0x740036), 0x71B550 and 0x720170.
+- OU: `floorKind` (`Player.cpp:394`) also requires nz <= cos 28°, so a slide-flagged face flatter than 28° is
+  standable in OU but a slide in the original.
+- Fix: move the 28° test into the slide controller as tru.exe does; test with a synthetic 20° slide face.
+- Status · Origin: Open · pre-existing.
+
+**OU-PLY-014 Ledge wall-side limit for fast arcs** (VERIFICATION.md V042)
+- tru.exe 0x6FC6B0 compares a 2-D dot (0x4898E0) with 0.2618. It loosens the limit to 0.5236 when the velocity at
+  `[edi+0x80]` is longer than 3.1605 per frame (0x6FCAD2-0x6FCAE4).
+- OU `wallSide` (`Player.cpp:1526-1530`) always uses 0.2618.
+- Which object +0x80 belongs to is unresolved [U].
+- Status · Origin: Open · pre-existing.
+
 ### Swimming (OU-SWM)
 
 **OU-SWM-001 Under-water turn rate unmeasured** — tru.exe steering function 0x755A00 (properties 0x200..0x20F, speed table
@@ -825,8 +843,13 @@ Open · pre-existing (test-tool gap).
 - Mostly fixed 2026-11-16 (DocDrift, 550830a, b4c1dba, 4b58147): ROADMAP L46/L51/L54/L55/L66/L95/L102, GAMEPLAY
   Deviations, the ch07 deck range, RENDERING/SHADERS, TIMING, FUNCTIONS, and the Havok and CameraManager comments.
 - Still open: REFERENCE_COMPARISON M17 vs Differences #4; the note in
-  `tests/selftests/ch07_cliffclimb_boat_swell.json`; `src/game/World.cpp:877` (CameraManager +0x54 called a mode
-  field); `tru_gog.csv` rows 24 (GAMELOOP_Frame call list) and 78 (Font_Flush role).
+  `tests/selftests/ch07_cliffclimb_boat_swell.json`.
+- From VERIFICATION.md:
+  - V049: 0x622418 is not an instruction start. The world-time-scale divide is at 0x7228E0. It is cited wrongly in
+    `World.cpp:580`, `Combat.hpp:376`, `SCRIPTS.md:435` and `GAMEPLAY.md:4185`.
+  - V074: the `Combat.hpp:32-33` comment says difficulty table +0x08 / +0x14 are unread. They are read, by 0x6E7960,
+    0x702F5E and 0x75E600 (behaviour is already correct).
+- The World.cpp:877 comment and tru_gog.csv rows 24 / 78 were fixed in 207426b.
 - Status · Origin: Open · doc drift.
 
 **OU-TST-003 Loaders lack synthetic rejection tests** — listed per format in each `docs/formats/*.md` "Validation"
