@@ -95,6 +95,10 @@ struct MaterialSampler {
     uint32_t category = 0; // entry +0x08: 3 = normal map (distortion particles) [I], 0 / 1 colour
 };
 
+// Sampler bound to an engine render target (source 1: cls 9 back buffer, 10 depth buffer): the renderers bind the
+// screen copy (render::original::screenSamplers), never textureId, so no texture section is needed for it.
+constexpr bool readsRenderTarget(const MaterialSampler& s) { return s.source == 1 && (s.cls == 9 || s.cls == 10); }
+
 // cdc material (section type 10) for the translated original shaders: composite-pass programs and
 // the constants PCMaterial uploads (docs/formats/MATERIALS.md, SHADERS.md).
 struct Material {

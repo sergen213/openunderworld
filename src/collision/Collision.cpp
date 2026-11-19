@@ -386,6 +386,36 @@ std::optional<Hit> CollisionMesh::closestPoint(vec3 p, float maxDist, uint8_t ma
     });
 }
 
+std::vector<Hit> CollisionMesh::overlapCapsule(vec3 a, vec3 b, float radius, uint8_t mask) const {
+    std::vector<Hit> out;
+    overlapFaces(a, b, radius, mask, out);
+    for (size_t i = 0; i < dynamics.size(); ++i) {
+        const Dynamic& d = dynamics[i];
+        if (!d.shape) continue;
+        const glm::mat4 inv = glm::inverse(d.transform);
+        const size_t first = out.size();
+        d.shape->overlapFaces(vec3(inv * glm::vec4(a, 1)), vec3(inv * glm::vec4(b, 1)), radius, mask, out);
+        for (size_t k = first; k < out.size(); ++k) {
+            out[k].point = vec3(d.transform * glm::vec4(out[k].point, 1));
+            out[k].normal = glm::mat3(d.transform) * out[k].normal;
+            out[k].dynamic = int32_t(i);
+        }
+    }
+    return out;
+}
+
+void CollisionMesh::overlapFaces(vec3 a, vec3 b, float radius, uint8_t mask, std::vector<Hit>& out) const {
+    if (nodes_.empty()) return;
+    overlap(glm::min(a, b) - radius, glm::max(a, b) + radius, [&](uint32_t fi) {
+        const Face& f = faces[fi];
+        if (!queryable(f, mask)) return;
+        vec3 ps, pt;
+        const float d = segTriDist(a, b, {vertices[f.v[0]], vertices[f.v[1]], vertices[f.v[2]]}, ps, pt);
+        if (d >= radius) return;
+        out.push_back(Hit{d, pt, d > 0 ? (ps - pt) / d : vec3(0), fi});
+    });
+}
+
 std::optional<Hit> CollisionMesh::closestFaces(vec3 p, float maxDist, uint8_t mask) const {
     if (nodes_.empty()) return std::nullopt;
     std::optional<Hit> best;

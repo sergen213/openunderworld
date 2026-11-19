@@ -132,6 +132,9 @@ public:
     std::optional<Hit> sweepCapsule(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask = kSolidMask) const;
     // Closest surface point within `maxDist`.
     std::optional<Hit> closestPoint(vec3 p, float maxDist, uint8_t mask = kSolidMask) const;
+    // Every face (terrain and dynamics) closer than `radius` to the segment a-b: Hit::t = that distance, point = the
+    // face's closest point, normal = unit from it to the segment (zero when the segment passes through the face).
+    std::vector<Hit> overlapCapsule(vec3 a, vec3 b, float radius, uint8_t mask = kSolidMask) const;
     // Floor below `p` (ray straight down, -Z) within `maxDrop`.
     std::optional<Hit> groundProbe(vec3 p, float maxDrop, uint8_t mask = kSolidMask) const {
         return raycast(p, {0, 0, -1}, maxDrop, mask);
@@ -162,6 +165,7 @@ private:
     std::optional<Hit> rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const;
     std::optional<Hit> sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask) const;
     std::optional<Hit> closestFaces(vec3 p, float maxDist, uint8_t mask) const;
+    void overlapFaces(vec3 a, vec3 b, float radius, uint8_t mask, std::vector<Hit>& out) const;
     // Runs `local(shape, inverse transform)` on every dynamic and keeps the smallest t (hits mapped back).
     template <class Local> std::optional<Hit> withDynamics(std::optional<Hit> best, Local&& local) const;
     bool queryable(const Face& f, uint8_t mask) const;

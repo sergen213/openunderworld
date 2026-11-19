@@ -544,9 +544,10 @@ public:
     // turn after it carries the camera's turn as the uninterrupted game does. nullopt: none since the last restore.
     std::optional<float> seenCameraYaw() const { return cameraKnown_ ? std::optional<float>(cameraYaw_) : std::nullopt; }
     void seeCamera(float yaw) { cameraYaw_ = yaw, cameraKnown_ = true; }
-    // Load / stream. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks them held
-    // (Buttons::hold) so that a key still down gives no press edge on the next tick.
-    void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false; }
+    // Load / stream / placement. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks
+    // them held (Buttons::hold) so that a key still down gives no press edge on the next tick. The next tick first
+    // pushes her out of walls she was put into (depenetrate).
+    void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false, placed_ = true; }
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
@@ -597,6 +598,7 @@ private:
     void groundMove(vec3 delta, float dt);
     void airMove(float dt, vec2 move);
     vec3 slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) const;
+    vec3 depenetrate(vec3 pos, float bottom) const; // out of faces the capsule [pos + bottom, top] overlaps (ground)
     void startFall(vec3 vel);
     void startSlide(vec3 vel, bool fromGround = false);
     bool tryGrab(vec3 prevPos);
@@ -729,6 +731,7 @@ private:
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch, prevCameraYaw_ = 0;
     bool cameraKnown_ = false;
+    bool placed_ = false; // spawned / restored since the last tick (Player::tick depenetrates once); not saved: a load sets it
 };
 
 // ---- camera -----------------------------------------------------------------------------------

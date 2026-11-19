@@ -404,6 +404,30 @@ TEST(RealData, LightMapsWithoutCoordinatesReadTheMean) {
     EXPECT_GT(straight, 0u);
 }
 
+// Back-/depth-buffer samplers (source 1, cls 9 / 10) bind the screen copy; their textureId (2 in l2_cliffclimb materials
+// 8035 / 10930) is never sampled, so loadTextures does not look it up (OU-REN-009: "texture 2 not found in loaded DRMs").
+TEST(Formats, RenderTargetSamplersNeedNoTexture) {
+    EXPECT_TRUE(scene::readsRenderTarget({.reg = 8, .source = 1, .cls = 9, .textureId = 2}));
+    EXPECT_TRUE(scene::readsRenderTarget({.reg = 7, .source = 1, .cls = 10, .textureId = 2}));
+    EXPECT_FALSE(scene::readsRenderTarget({.reg = 0, .source = 1, .cls = 5, .textureId = 2})); // reflection slot
+    EXPECT_FALSE(scene::readsRenderTarget({.reg = 0, .source = 0, .cls = 9, .textureId = 2}));
+    EXPECT_FALSE(scene::readsRenderTarget({.reg = 0, .source = 2, .cls = 10, .textureId = 2}));
+}
+
+TEST(RealData, NoMissingTextureWarningsForRenderTargets) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    for (const char* unit : {"pc-w\\l2_cliffclimb.drm", "pc-w\\l2_flushtunnel.drm"}) {
+        const auto sc = formats::loadLevelScene(bf, unit);
+        bool target = false;
+        for (const auto& m : sc.materials)
+            for (const auto& s : m.samplers) target |= scene::readsRenderTarget(s) && s.textureId == 2;
+        EXPECT_TRUE(target) << unit; // the repro case is still present
+        for (const auto& w : sc.warnings) EXPECT_EQ(w.find("texture 2 not found"), std::string::npos) << unit << ": " << w;
+    }
+}
+
 // Batch LOD (batch +0x00 / +0x04, tru.exe 0x50F7C0): viking_thrall's model 14580 holds three LODs of 5 batches each,
 // [0, 3160.56], [3160.56, 4740.83], [4740.83, 3.16e9], measured from the Mesh header +0x10 centre; at any distance the
 // renderers' selection (render::lodShown) draws exactly one of them, also with the model moved (instance matrix).

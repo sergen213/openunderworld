@@ -1488,7 +1488,9 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 
 ## Controller
 
-- Ground: each tick the current clip's root delta (rotated by heading) is the desired move. A capsule from
+- Ground: on the first tick after a placement (spawn, load, restore, teleport) a capsule overlapping a wall is pushed
+  out along the face's horizontal normal by the full depth (`Player::depenetrate`; tru.exe under Wine puts her back at
+  the wall's contact within one frame from 10..116 units in, every frame: OU-PLY-012). Then the current clip's root delta (rotated by heading) is the desired move. A capsule from
   `feet + stepUp` to the head is swept and slid along walls (up to 4 iterations, contact normals flattened), then a ray
   from `feet + stepUp` down `stepUp + stepDown` snaps to the floor. Whether the face under her is stood on is `Player::floorKind`
   (section "Slopes and slides": by client flag and angle); a too-steep floor still counts
@@ -4441,7 +4443,9 @@ No side-by-side comparison with the original game was made.
   (`Combat.MjolnirCycleSwingAndGroundPound`), one-handed pistols / Uzis from ledges, free climb, ladders, poles and
   pillars ("One-handed shooting", `CombatReal.PoolLedgeHangShootsPantherOneHanded`), saves storing weapons, clips and
   reserves (`Save::combat`, src/save/Save.hpp:51; `Combat.RespawnKeepsTheLoadout`).
-- Collision: no depenetration pass (an already-touching contact being left is ignored); query mask 0xFF.
+- Collision: depenetration only on the tick after a placement and only in ground states (`Player::depenetrate`: terrain
+  wall faces; a capsule whose axis passes through a face is left); tru.exe resolves overlaps every frame, but our own
+  [I] moves (roll stand-up under a beam, switch stand points) end inside our collision and would be shoved; query mask 0xFF.
 - Live keyboard/mouse/gamepad play was not exercised by any recorded run: every screenshot is a scripted replay.
 - Hair is a Verlet chain sim (src/anim/Anim.hpp:185; ROADMAP "Skeleton" row; under-water hair mode not switched);
   editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).

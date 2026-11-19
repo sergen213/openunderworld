@@ -118,7 +118,7 @@ void loadTextures(scene::SceneData& sc, const Drms& drms) {
     }
     for (const auto& m : sc.materials)
         for (const auto& t : m.samplers)
-            if (t.textureId) wanted.insert(t.textureId);
+            if (t.textureId && !scene::readsRenderTarget(t)) wanted.insert(t.textureId);
     if (sc.environment.sunCookie) wanted.insert(sc.environment.sunCookie);
     for (const auto& l : sc.environment.lights)
         if (l.cookie) wanted.insert(l.cookie);

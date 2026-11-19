@@ -167,6 +167,25 @@ std::string slurp(const fs::path& p) {
 }
 void spit(const fs::path& p, const std::string& s) { std::ofstream(p, std::ios::binary) << s; }
 
+// Puts Lara in front of switch `uid` as she walks up to it (test_gates' Action::Use): the first of eight sides 100 out
+// from its origin, facing it, where she engages its use record (World::engaged). Its origin itself lies inside its wall,
+// out of which she is pushed (OU-PLY-012).
+void placeToUse(game::World& w, int32_t uid) {
+    const auto* t = w.script().find(uid);
+    ASSERT_TRUE(t);
+    const vec3 at = t->pos;
+    for (int k = 0; k < 8; ++k) {
+        const float a = t->rot.z + float(k) * glm::quarter_pi<float>();
+        game::PlayerState s;
+        s.pos = at + vec3(std::cos(a), std::sin(a), 0) * 100.0f;
+        if (const auto floor = w.collision().groundProbe(s.pos + vec3(0, 0, 200), 600, 0x0F)) s.pos.z = floor->point.z;
+        s.yaw = a + glm::pi<float>();
+        w.restore(s, s.yaw, -0.25f);
+        if (w.engaged().uid == uid) return;
+    }
+    FAIL() << "no side of " << uid << " engages it";
+}
+
 } // namespace
 
 // ---- format ------------------------------------------------------------------------------------
@@ -1373,9 +1392,7 @@ TEST(StreamReal, UberStateSaveLoad) {
     ASSERT_TRUE(sw);
     w.script().call(4834, 54); // the dais plate pressed frees the switches (vt 60 -> modifiable 7 (1), OU-PZL-009)
     for (int i = 0; i < 30; ++i) w.tick({});
-    game::PlayerState s;
-    s.pos = sw->pos;
-    w.restore(s, 0, -0.25f);
+    placeToUse(w, 4819);
     game::Actions use;
     use.interact = true;
     for (int i = 0; i < 10; ++i) w.tick(use);
@@ -1604,7 +1621,7 @@ TEST(StreamReal, DeathRestoresTheCheckpointSave) {
         ASSERT_TRUE(sw);
         w.script().call(4834, 54); // the dais plate frees the switches (vt 60 -> modifiable 7 (1), OU-PZL-009)
         for (int i = 0; i < 30; ++i) w.tick({});
-        place(sw->pos);
+        placeToUse(w, 4819);
         for (int i = 0; i < 10; ++i) w.tick(use);
         for (int i = 0; i < 300; ++i) w.tick({});
     };

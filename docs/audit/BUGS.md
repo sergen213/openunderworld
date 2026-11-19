@@ -79,7 +79,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-REN-006 | render | Batches skipped "no texcoords, no material textures" (bedroom units) | Reproduced (log), needs RE | pre-existing | — |
 | OU-REN-007 | render | Blended foliage receives the shadow map under RT; no roughness | Open | pre-existing | — |
 | OU-REN-008 | render / FSR | Translated wind vertex animation has no motion vectors (FSR ghosting) | Open | pre-existing | — |
-| OU-REN-009 | render / log | False `texture 2 not found in loaded DRMs` for back-/depth-buffer samplers | Reproduced | pre-existing | — |
+| OU-REN-009 | render / log | False `texture 2 not found in loaded DRMs` for back-/depth-buffer samplers | Fixed on agent/Depen6 (f6e4264) | pre-existing | — |
 | OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Open | regression | — |
 | OU-VK-002 | Vulkan AO | CORTAO temporal pass is camera-only (risk of halos on moving meshes) | Not reproduced | new-feature defect (0.51.0) | — |
 | OU-VK-003 | Vulkan | AMD Anti-Lag crash a few frames into cutscenes / loading screen | Fixed-verified | regression (Anti-Lag support) | — |
@@ -109,7 +109,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-009 | Lara / chimney | Chimney wall reach / standoff pair differs (holds 110 vs 119-131) | Open | pre-existing | C-MEASURE |
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
-| OU-PLY-012 | collision | No depenetration pass | Reproduced (idle) | pre-existing | — |
+| OU-PLY-012 | collision | No depenetration pass: now after placements (tru.exe resolves every frame) | Partly fixed on agent/Depen6 (96d30d4) | pre-existing | — |
 | OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed on int/brief (21678c2; full ctest pending) | pre-existing | — |
 | OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Reproduced | pre-existing | — |
@@ -417,9 +417,12 @@ Open · pre-existing.
   l2_flushtunnel material 9544 (reg 1 cls 10, reg 0 cls 9); l2_cliffhall none. Per `scene::MaterialSampler`
   (`src/scene/Assets.hpp:90-96`) source 1 binds the global slot and `textureId` is only a fallback, so the missing
   section is never needed; `loadTextures` (`src/formats/Scene.cpp:119-131`) still asks for it.
-- Fix: skip `source == 1` samplers with cls 9 / 10 when collecting wanted textures (or don't warn for them).
-- Test: proposed `RealData.NoMissingTextureWarnings` on l2_cliffclimb.
-- Status · Origin: Reproduced · pre-existing (cosmetic).
+- Fix (f6e4264, agent/Depen6): `scene::readsRenderTarget` (source 1, cls 9 / 10); `loadTextures` no longer collects
+  those samplers' `textureId`. Every other missing id still warns.
+- Tests: `Formats.RenderTargetSamplersNeedNoTexture`, `RealData.NoMissingTextureWarningsForRenderTargets`
+  (l2_cliffclimb, l2_flushtunnel). ou-game `--level` l3_main_bedroom / l2_cliffclimb and `--chapter 1`: 0 such lines
+  (the BugRepro logs had 88, all id 2).
+- Status · Origin: Fixed on agent/Depen6 · pre-existing (cosmetic).
 
 ### Vulkan, FSR, streaming (OU-VK, OU-STR)
 
@@ -653,7 +656,27 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   y −4420.0 (moved 0.0). Moving resolves it: running away (`pen_out_35`, `pen_out_75` at −4460) leaves freely
   (1598 / 1465 horizontal), running further in (`pen_in_35`) ends at the face y −4385.4 (moved 37 the other way). No
   in-play stuck case was found; the risk is placements (respawns, loads, moved platforms) that start her inside.
-- Status · Origin: Reproduced (idle) · pre-existing.
+- tru.exe (Wine, 2026-11-19, agent Depen6; traces `re-baseline/Depen6/`): after a new game, `ref tpv` holding her
+  3..15 ms at x 1152 (ours −8470), y −4076 / −4087 / −4107 / −4127 / −4152 / −4182 (10..116 past the y −4066.2 where a
+  walk into this wall stops her in tru.exe's frame = ours + (9622, 333, −2977)): the next frame she is at
+  y −4065.6 / −4064.5 / −4062.5 / −4062.0 / −4064.3 / −4065.3, x unchanged — pushed out along the wall normal, fully, in
+  one frame, at every depth (even with the root past the face plane); afterwards a sub-unit creep. A 600 ms hold
+  inside instead throws her ~4000 units (harness artefact: re-embedding every frame). The code is not decoded
+  (her proxy, instance +0x288, created by 0x7018E0 / 0x494E60, is a physics body) [U].
+- Fix (96d30d4): `CollisionMesh::overlapCapsule` + `Player::depenetrate`: the deepest overlapping terrain wall face
+  pushes the capsule out by depth + 1 along its horizontal normal, up to 4 passes, in one tick. It runs once, on the
+  tick after a placement (`Player::spawn` / `restore`: spawns, loads, restores, teleports) in ground states.
+  Tests: `GameReal.EmbeddedLaraIsPushedOutOfTheWall` (35 and 75 past the y −4385.4 contact: at it after 1 tick, x
+  unchanged, Idle 1.5 s), `Game.EmbeddedCapsuleIsPushedOutInOneTick` (synthetic wall and corner, a 0.3 touch left
+  alone, the run into the wall unchanged), `Collision.CapsuleOverlaps`.
+- Left open: tru.exe does it every frame. Tried per tick in `groundMove`: 9 scenarios broke because our own [I] moves
+  end inside our collision — the ch01 roll's stand-up under the leaning beam (`under_the_beams`), ch03's switch
+  stand point 76 units into the gear room's wall (`down_to_the_lower_hall`), the chapel switch 4819's origin 24 inside
+  its wall (`StreamReal.UberStateSaveLoad`), a running landing 34 into a ch06 wall, a rune block (dynamic) pushing every
+  tick. Also not like tru.exe: a capsule whose axis passed through the face stays (tru.exe still came out on her side
+  from 38 past the face plane), and air / hang / swim states have none. Our walk contact at this wall is 14 units short
+  of tru.exe's (y −4385.4 vs −4399.2 in our frame).
+- Status · Origin: Partly fixed on agent/Depen6 · pre-existing.
 
 **OU-PLY-013 Slope-slide upper bound** (docs/re/VERIFICATION.md V002, medium confidence)
 - tru.exe: the ground check 0x5DCE20 reads only player data +0x100E (52°; cos read at 0x5DD3BA / 0x5DD4F4 /
@@ -978,8 +1001,8 @@ Status · Origin: Open · pre-existing.
 
 **Needs a hand-test / repro on current HEAD** (no code change until seen): OU-WAT-012 and OU-VK-002 (not reproduced
 headlessly), OU-VK-004 (user's resolution), OU-WAT-008 (look judgement), OU-VK-001 (bisect only in a GPU-reset-safe
-session). Reproduced in this pass and ready for a fix decision: OU-WAT-002, OU-WAT-006, OU-CAM-001, OU-SCR-004,
-OU-REN-009, OU-PLY-012 (idle).
+session). Reproduced in this pass and ready for a fix decision: OU-WAT-002, OU-WAT-006, OU-CAM-001, OU-SCR-004
+(OU-REN-009 fixed, OU-PLY-012 partly fixed on agent/Depen6).
 
 ## Reproduction log
 

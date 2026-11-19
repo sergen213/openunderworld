@@ -307,6 +307,7 @@ void Player::spawn(vec3 feet, float yaw) {
     s_.yaw = yaw;
     if (auto g = col_.groundProbe(feet + vec3(0, 0, t_.stepUp), t_.stepUp + 1000.0f)) s_.pos.z = g->point.z;
     s_.fallStartZ = s_.pos.z;
+    placed_ = true;
     play("ng_idle", true);
 }
 
@@ -380,8 +381,8 @@ vec3 Player::slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) c
         vec3 n = hit ? hit->normal : vec3(0);
         if (horizontalNormals) n.z = 0;
         const float nl = glm::length(n);
-        // ponytail: an already-touching contact we are moving away from is ignored (the sweep reports
-        // touching faces at t = 0); a full depenetration pass would handle overlapping starts.
+        // An already-touching contact we are moving away from is ignored (the sweep reports touching faces at t = 0);
+        // a capsule placed overlapping is pushed out once by Player::tick (depenetrate).
         if (!hit || nl < 1e-4f || (hit->t == 0 && glm::dot(delta, n) >= 0)) {
             pos += delta;
             break;
@@ -421,6 +422,54 @@ bool Player::standable(vec3 p, const collision::Hit& g) const {
         if (h && h->normal.z >= t_.minFloorNormalZ && floorKind(*h) == Floor::Stand && std::abs(h->point.z - g.point.z) <= 20) return true;
     }
     return false;
+}
+
+// Out of geometry a placement put the capsule into (spawn, load, restore, teleport: Player::tick runs it once, on the
+// tick after; OU-PLY-012). tru.exe under Wine (l3_main_bedroom, the prologue wall under ledge 973; `ref tpv` for
+// 3..15 ms, then per-frame traces): her root put 10..116 units past where a walk into the wall stops (y -4066.2 in tru's
+// frame) is back at that contact (-4062.0..-4065.6) on the next frame, every depth, moved only along the wall's normal
+// (x unchanged) [O-runtime]; the code doing it (her proxy, instance +0x288: 0x7018E0 / 0x494E60) is not decoded [U].
+// tru.exe does it every frame; ours only after placements, because our own [I] moves end inside our collision where
+// tru.exe's presumably do not (the ch01 roll's stand-up under the leaning beam, ch03's switch stand point 76 units into
+// the gear room's wall, the chapel switch 4819's origin 24 units into its wall): pushing those out every tick broke the
+// scenarios built on them. Ours: the deepest overlapping terrain face pushes her out along its horizontal normal by the
+// depth + kSkin, up to 4 passes (corners) [I: closest points, the sweep's frame]. Ignored [I]: overlaps under
+// kDepenetrateSlop (touching contacts as slide() leaves them); faces with a normal steeper than 60 degrees from
+// horizontal and faces a cap of the capsule rests on or under (floors, slopes, ceilings: the ground probe's); faces the
+// axis passes through (no outward direction); moving solids (World carries and pushes her with those); a pass that
+// leaves a deeper overlap than it removed (a gap narrower than the capsule: she stays as she was) and a result with no
+// standable floor under it (it never pushes her off an edge).
+constexpr float kDepenetrateSlop = 0.5f;
+vec3 Player::depenetrate(vec3 pos, float bottom) const {
+    // Depth of the capsule at `p`'s deepest pushable overlap (0: none) and its push-out.
+    const auto deepest = [&](vec3 p, vec3& push) {
+        const vec3 a = p + vec3(0, 0, bottom + t_.radius), b = p + vec3(0, 0, capHeight() - t_.radius);
+        float depth = 0;
+        push = vec3(0);
+        for (const auto& h : col_.overlapCapsule(a, b, t_.radius)) {
+            const float over = t_.radius - h.t;
+            if (h.dynamic >= 0 || over < kDepenetrateSlop || over <= depth) continue;
+            const float axisZ = h.point.z + h.normal.z * h.t;
+            if ((axisZ <= a.z + 1e-3f && h.normal.z > 0.01f) || (axisZ >= b.z - 1e-3f && h.normal.z < -0.01f)) continue;
+            const vec2 n = xy(h.normal);
+            const float nl = glm::length(n);
+            if (nl < 0.5f) continue;
+            depth = over, push = vec3(n / nl * ((over + kSkin) / nl), 0);
+        }
+        return depth;
+    };
+    vec3 push, next;
+    float depth = deepest(pos, push);
+    if (depth == 0) return pos;
+    vec3 p = pos;
+    for (int iter = 0; iter < 4 && depth > 0; ++iter) {
+        const float d = deepest(p + push, next);
+        if (d >= depth) break;
+        p += push, push = next, depth = d;
+    }
+    if (p == pos) return pos;
+    const auto g = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
+    return g && standable(p, *g) ? p : pos;
 }
 
 void Player::groundMove(vec3 delta, float dt) {
@@ -2117,6 +2166,13 @@ void Player::rideFrame(const glm::mat4& d) {
 void Player::tick(vec2 move, const Actions& a, float dt) {
     Buttons& b = s_.buttons;
     walk_ = a.walk;
+    if (placed_) { // spawned / loaded / restored into a wall: out of it first (depenetrate, OU-PLY-012)
+        placed_ = false;
+        const State g = s_.state;
+        if (g == State::Idle || g == State::Walk || g == State::Run || g == State::Stop || g == State::Turn || g == State::Land ||
+            g == State::Crouch)
+            s_.pos = depenetrate(s_.pos, t_.stepUp);
+    }
     if (s_.state != State::Hang) s_.pullWait = -1;
     b.jump.update(a.jump, dt, t_.pressBuffer), b.interact.update(a.interact, dt, t_.pressBuffer);
     b.drop.update(a.drop, dt, t_.pressBuffer), b.grapple.update(a.grapple, dt, t_.pressBuffer);
