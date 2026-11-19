@@ -3,7 +3,7 @@
  "name": "ch06_second_shaft_valves",
  "chapter": "06 Realm of the Dead: the second shaft from its ladder up both valve-wheel groups (docs/matrix/06_realm_of_the_dead.md C06-09, C06-10)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/realm3.html",
- "note": "l1_ship_sinking_hall at checkpoint 1055. Ladder 235 to its top rungs, ladder_jump_up onto the grating's edge (ledge 250), the hang's jump up onto the valve wheels (free-climb holds 209..232 on the wall y = -1237: Player::hangJumpToHold), hold to hold with the stick as on screen (up, up-right, right ...), the DICE jump up (q31) from the first group's top to the second, and its weave to the top wheel 209. On the jump between the groups she touches floor grate 1245 for a few ticks before the air attach. Continues in known_gaps/ch06_second_shaft_exit.json.",
+ "note": "l1_ship_sinking_hall at checkpoint 1055. Ladder 235 to its top rungs, ladder_jump_up onto the grating's edge (ledge 250), the hang's jump up onto the valve wheels (free-climb holds 209..232 on the wall y = -1237: Player::hangJumpToHold), hold to hold with the stick as on screen (up, up-right, right ...), the DICE jump up (q31) from the first group's top to the second, and its weave to the top wheel 209. On the jump between the groups she touches floor grate 1245 for a few ticks before the air attach. The shaft's camera trigger volume 1061 sets a yaw force set of 0 deg (behind her, 50 deg/s x min(1, 0.1 x her move); OU-CAM-006): at the first group's top the camera looks along her heading (yaw 89.5, was 117.3 under the hang set 15), so the jump's stick (0.884 forward, -0.468 right) is the old one's world direction (117.3 deg). Continues in known_gaps/ch06_second_shaft_exit.json.",
  "level": "l1_ship_sinking_hall",
  "spawn": [
   -417,
@@ -208,10 +208,12 @@
   {
    "step": "jump_up_to_the_next_group",
    "input": [
-    "0.1 forward 1",
+    "0.1 forward 0.884",
+    "0.1 right -0.468",
     "0.3 jump 1",
     "0.4 jump 0",
-    "1.5 forward 0"
+    "1.5 forward 0",
+    "1.5 right 0"
    ],
    "duration": 3,
    "expect": [

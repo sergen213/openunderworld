@@ -137,8 +137,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Open | pre-existing | C-JOINT |
 | OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed on int/brief (171100e) | pre-existing | C-VM |
 | OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Fixed-verified (8daa2ee) | pre-existing | C-VM |
-| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Open (natives decoded, VM has no vector values) | pre-existing | C-VM |
-| OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (f9676fd; `instance` 63 open) | pre-existing | C-VM |
+| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Fixed on agent/ScriptVec7 (vector values, anchor / vector / rotation / larabase 21-22 bound; the fire overlay itself not played) | pre-existing | C-VM |
+| OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (f9676fd; `instance` 63 open, record narrowed) | pre-existing | C-VM |
 | OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Fixed-verified (agent/ScriptVm6) | pre-existing | C-VM |
 | OU-SCR-005 | script VM | Level-change fade to white unsupported (always black) | Open | pre-existing | C-VM |
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
@@ -153,7 +153,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
-| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040) | pre-existing | — |
+| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861); 1 / 3-8 / 0xC / 0x14 / 0x16 and kind 1 open | pre-existing | — |
+| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040); presence, CloseCombat slots, bite range on agent/EnemySpawn7 | pre-existing | — |
 
 ## Root-cause clusters
 
@@ -606,10 +607,41 @@ Status · Origin: Open · pre-existing.
   was re-measured in Wine (`spin-deck2.txt`): a mouse turn circles at 948.2 and the cabin pulls it in to 879.9..905.2.
   The older "1264.2 elsewhere" was measured outside the volume. The `render_golden_cliff_water_*` goldens frame the
   deck at tick 120 and were re-blessed: Lara is drawn larger, matching the 948/1264 distance ratio.
-- Not modelled [U]: commands 0x19 / 0x1A / 0x1B / 0x1C (tracker records), 0x12 / 0x14 / 0x15 / 4 / 6 / 8 in a volume,
-  kinds 1 / 2 and sets with forces (91 volumes in the game carry commands). The deck volume rides the yacht in tru.exe;
-  ours stays at its intro place (inside it on the deck at every heave).
+- Not modelled [U] at the time: the other commands, kinds 1 / 2 and sets with forces; the deck volume riding the
+  yacht. Followed up as OU-CAM-006.
 - Status · Origin: Fixed on agent/DeckCam6 · pre-existing.
+
+**OU-CAM-006 Camera trigger commands** — `World::updateOrbitCamera` applied only a volume's distance (2 / 0xD) and its
+inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) were tested at their intro places.
+- Survey (`ScriptRealData.CameraTriggerCommandSurvey`, docs/re/CAMERA.md §9): 459 kind-0 volumes carry commands (58
+  with priority); uses: 0x18 155, 2 129, 0x12 116, 0xD 109, 0x1A 73, 0x19 65, 0x16 54, 0x14 53, 0x1C 51, 0x1B 47, 0x15
+  33, 0x17 24, 6 15, 4 7, 0 / 1 / 8 4, 3 / 0xC 2, 5 / 7 1; 89 force sets carry forces (types 2, 3, 5, 7). 9 kind-1 volumes
+  name an AnchoredCamera record (0x5EE4A0); 8 of them have none, so 0x5E7BF0 refuses them.
+- tru.exe (0x6019D0, jump table 0x601CC0): 0x12 = a level camera record of the unit (applied as a markup's; priority-0
+  volumes under the mode records, the others over them, 0x601D30); 0x15 clears +0x1338 (the on-foot ray probe,
+  0x600591); 0x17 / 0x18 sets with forces (0x609C40, strength = the product of the forces, 0x607B90); 0x19 / 0x1B and
+  0x1A / 0x1C add (x, y, z) to the focus / look trackers (+0x3B0 / +0x620 +0x20 via 0x608280; 0x1B / 0x1C blend over arg 3
+  when byte arg 4 is set, 0x608200); the camera orbits the focus and looks at the look point (0x6009C0 / 0x600B20).
+  0x16 is the LaraCombatCamera's distance (0x603190), 0x14 flags a unit fade record (0x5ED2D0), 3..6 drive the
+  yaw / pitch override +0x1248 / +0x1278 (0x609F10 / 0x609D40), 7 / 8 limits, 1 sets by id.
+- Wine 2026-11-19 (`openunderworld-work/w2/CamZones7/camz.py`): 3852 look tracker +0x20 = (0, 0, −79.01), look 0.22°
+  up with the pivot 5.00° up; 3859 pitch −6.00°, back from a nudge at 19.5°/s at ~31 fps (300 × min(1, 2 dt) per
+  frame); 3861 record (unit 9, record 7) holds the camera 13 s. The yacht volumes are linked to the yacht (instance
+  +0x214) and sit at its markers (3852 − yacht (1497, 1551, 811), ours at the marker (1547, 1530, 685)).
+- Fix (agent/CamZones7): Script.cpp keeps the forces and the record pointer of each command; CollisionMesh keeps the
+  unit's record list; `World::updateOrbitCamera` applies 0x12, 0x15, 0x17 / 0x18 with forces and the tracker offsets
+  (`World::cameraPivot()`; `camera().target` is the look point); `script::Runtime` tests a volume whose body / offset is
+  set (anchored: `World::poseAnchored`) in that frame. The orbit state (trigger sets, offsets, a volume's record) is saved.
+- Tests: `ScriptRealData.CameraTriggerCommandSurvey`, `StreamReal.CameraRidesTheYachtDeck` (look 0.22°, stays in the
+  riding volume), `StreamReal.CameraTriggerForceSetEasesPitch`, `StreamReal.CameraTriggerRecordHoldsTheCamera`.
+- Knock-on effects: the `render_golden_cliff_water_*` goldens frame the deck at tick 120 and were re-blessed (the view
+  now looks at the point 79 under the pivot: level, as tru.exe's 0.22°, where it looked 5° up; image-reviewed). In
+  l1_ship_sinking_hall's second shaft volume 1061's yaw set (0°, force type 2 k 0.1) now holds the climbing camera
+  behind her (yaw 89.5 where the hang set 15 had swung it to 117.3), so `ch06_second_shaft_valves`'s jump-up stick
+  was turned to keep the old world direction (0.884 forward, −0.468 right).
+- Open [U]: 1 / 3..8 / 0xC / 0x14 / 0x16 and kind 1; the frame of x / y tracker offsets (all are (0, 0, z)); a volume
+  record of type 1 / 2 off a markup (her place 0 [I]); the look tracker's own lag (ours uses the focus's).
+- Status · Origin: Fixed on agent/CamZones7 (partial: see open) · pre-existing.
 
 **OU-CMB-003 Shark aggression**
 - Repro: l2_cliffclimb, into the sea and tread (`w2/WineMeasure/ours/tread_*`): ours bit within ~7 s and every 1.5..3 s.
@@ -625,11 +657,29 @@ Status · Origin: Open · pre-existing.
   that top; Chase = a pass of the combat record's +4..+8 counts (0x6108A0), then `Mode::Circle`; bite 200 from node
   +0xC4 record +0x50; speed 1780 / circle 1492 measured. [I] calibrated: kPassBite 6/29, circle 7..13 s (EnemyBehavior_Circle
   end condition and what makes a pass come near not decoded); ours idles where tru.exe searches.
-- Test: `AiReal.CliffclimbSharksSpareATreadingLara` (treading 300 s at 64 / 64 / -380: 0 bites, 0 engaged; 1100 under:
-  first bite 22.1 s, 1.47 / min per engaged shark, bounds 8..45 s and 0.3..1.6); before: 113 bites in 120 s, first
-  6.7 s. `AiReal.SharksSpawnSwimBiteAndDie`, combat / ch07 self-tests, `ctest -L protected` pass.
-- Open: tru.exe has no shark 4023 at the unit load (ours places it: a third engaged shark); per-shark rate ×1.9 of
-  tru.exe's small sample. Status · Origin: Fixed on agent/SharkAi6 · pre-existing.
+- Test: `AiReal.CliffclimbSharksSpareATreadingLara` (treading 300 s at 64 / 64 / -380: 0 bites, 0 engaged); before: 113
+  bites in 120 s, first 6.7 s. `AiReal.SharksSpawnSwimBiteAndDie`, combat / ch07 self-tests, `ctest -L protected` pass.
+- Follow-up (agent/EnemySpawn7, batch 7):
+  - Presence [O]: shark 4023 (and 4024-4032) is a dormant intro (+0x72 & 0x80); 0x5C2360 skips +0x72 & 0x82 at the
+    unit load and a script's Birth introduces it. The game already obeyed it (World → `script::Runtime::born`); the
+    bare `ai::Enemies` the AiReal tests use spawned every dormant intro (31 units, e.g. all l1_ship_exterior mercs), so
+    the 1.47 / min came from a three-shark harness. Now dormant intros wait for `birth()` there too;
+    `AiReal.SharksSpawnSwimBiteAndDie` asserts the l2_cliffclimb load set {4020, 4021, 4022} (Wine list) and l1_seafloor /
+    l7_arctic_sea 3 placed. The only other load-time skip, an intro dependency list (+0x80 / +0x84, 0x5BD500 / 0x5BD650 /
+    0x5B43E0), occurs once (l4_pool 5607, not an enemy).
+  - Passes [O]: EnemyBehavior_CloseCombat 0x6108A0 rolls slots of combat record +4 .. +8 counts (2 .. 4 s) and gives each
+    to its Circle or its Sidestep child by record bytes +0xC / +0xD (50 / 50; rand % 101); a shark's non-Circle slots are
+    passes [I: no sidestep]. Replaces the fitted 7 .. 13 s circling (Circle's own timer, record +0xBC / +0xBE, is 0).
+  - Bite range [O Wine, s2 traces]: origin to origin, bites at 196 .. 405 (shark 0 .. 172 under her): 370 / 405 replace
+    the flyer centre-to-head range, so 800 / 950 under now bite as in tru.exe (before only ~1100 under could); 500 under
+    cannot (shark origin 392+ under hers), as tru.exe's 28 s there.
+  - Measured (twelve rolls, 300 s each at 800 / 950 / 1100 under): 0.98 bites / min per engaged shark (tru.exe 0.78;
+    6 bites, 95 % band 0.3 .. 1.6), a pass per 11.6 s (14), first bite median 36.2 s (13 .. 26), Circle median 4 .. 6 s
+    (7.0). Test bounds 0.5 .. 1.1 / min, 10 .. 18 s per pass, first-bite median 8 .. 45 s.
+  - Still [I]: kPassBite 6 / 29 (how near tru.exe's Close path comes is a NavPower 3D move, not decoded); non-biting passes
+    swim by at 580 (the nearest measured); out of reach ours idles where tru.exe searches; tru.exe's short Search phases
+    between passes are not modelled (our Circle runs shorter, passes slightly more often).
+- Status · Origin: Fixed on agent/SharkAi6; presence and pass timing on agent/EnemySpawn7 · pre-existing.
 
 ### Lara's controller and traversal (OU-PLY)
 
@@ -865,14 +915,30 @@ proving tests there):
 
 **OU-SCR-002 Native `anchor` 1 unbound** — 0x7966F0, the vector between two anchors (0x4AB870); the VM has no vector
 values (PROGRESSION.md L76-78). Logs: `triggervolume` 158, `triggerplane` 6 stops [O]; l7_helheim01 8945 (sound loudness
-loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Open · pre-existing.
+loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Fixed on agent/ScriptVec7 · pre-existing.
 - Narrowed 2026-11-19 (agent/ScriptVm6): the chain the fire triggervolumes (type 6515 vt 73, e.g. l3_main_bedroom 4529)
-  run is decoded (SCRIPT_NATIVES.md rows `anchor` 4, `vector` 5/8/9/11, `rotation` 0/9): `VectorTo(Lara)`, the anchor's
-  y axis, both z zeroed (`vector` 8), the rotation between them (0x49DA10 quaternion → 0x49D450 euler), its yaw
-  (`rotation` 9 = component z) against ±π/4 · 3π/4 → "front" / "back" / "left" / "right" for Lara's burn flinch clip
-  (`larabase` 21 / 22, `vector` 0/1/2/10 still undecoded). Vectors are 16-byte locals; our locals are byte-offset
-  indexed, so a vector could live in four slots, but `NativeContext` returns one word. Not bound: the clip choice also
-  needs the larabase natives.
+  run is decoded (SCRIPT_NATIVES.md rows `anchor` 4, `vector` 5/8/9/11, `rotation` 0/9).
+- Fixed 2026-11-19 (agent/ScriptVec7). Current implementation before: no vector values, `NativeContext` returned one
+  word, `anchor` / `vector` / `rotation` / `larabase` 21-22 unbound, so every handler reaching them stopped (survey: 41
+  anchor 1, 2 larabase 21). What tru.exe does [O]: vectors / rotations are 16-byte `{x, y, z, w}` values inline in the
+  frame or instance data whose address the interpreter passes to the thunk (`handler(receiver*, argc, args*, result*)`,
+  0x57DE34); thunks 0x796540.. (get / set / copy / Set / length / scale), 0x796360 → 0x4A2F40 (rotation between two
+  vectors: 0x49DA10 quaternion `(a × h, a · h)`, 0x49D450 → 0x49B440 euler), anchor 0x7966B0 / 0x7966F0 / 0x796770..
+  (position, VectorTo, matrix rows of 0x49D500), larabase 0x79A110 / 0x79A130 → 0x777B10 / 0x777B70 (an `animation`
+  value's pattern into Lara +0x488, INSTANCE_Post 0x1DA / 0x1DB). Also [O] the frame setup 0x57A850 constructs every
+  local from its record (0x579770), so BOOL / INT / FLOAT locals start at their init (6515 fn 1's π lives there).
+  Change: vectors live in four byte-offset slots (`Machine::valueAt`, `Machine::valueNative`), multi-word results
+  (`NativeContext::words`), MOVEU 16 bytes, scalar local inits, anchor 0/1/3..5 and larabase 21/22 in `Script.cpp`,
+  `TickInput::yaw` (Lara's rotation z = yaw + π/2: her model faces −Y). The fire volumes now pick the side as tru.exe:
+  `ScriptRealData.FireVolumeFlinchSide` (volume 4529, Lara placed front / left / right / back / −63°; expected sides
+  evaluated by hand from vt 73's formula; the posts are larabase 22 walk → 22 standing → 21 standing, patterns
+  1501/1500/1499 and 1493/1494/1495 = Lara's `fire_walk_*` / `fire_standing_*`). Survey (`GameReal.ScriptSurvey`):
+  132 → 89 handler stops (anchor 1 41 → 0, larabase 21 2 → 0, no new reason). ctest (private kwin, build-ScriptVec7):
+  `-R 'Script|ProgressionReal|GameReal|StreamReal|^Game|selftest|replay'` 545 / 545, `-L protected` 41 / 41.
+- Still open: the overlay is not played (`Runtime::playerAnimPosts` records it): which of Lara's chart states take
+  0x1DA / 0x1DB, her action 0x760530's query 0x645 and the mask of anim layer +0x320 (0x444BA0) are not decoded; general
+  (tilted) euler order of rotation 0 / anchor 3..5 beyond yaw is [I]; a marker anchor stored in a member keeps only the
+  object's uid [I].
 
 **OU-SCR-003 Other unbound natives seen in user runs** — `instanceref` fn 10 (unit scripts, 64), `instance` fn 27
 (l2_cliffclimb 37, l1_seafloor 10, l7_arctic_sea 5), `gamebase` fn 27 (`ms_uo_yacht` 7, `co_yacht` 1), `instance` fn 63
@@ -880,8 +946,11 @@ loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Open 
 - Fixed in f9676fd (on main since 0.53.0): `instanceref` 10/13/16, `unitref` 1, `gamebase` 27, `instance` 27 and
   `cinematic` 10 for every receiver (SCRIPT_NATIVES.md; test `ScriptRealData.MissingNativesBound`,
   `GameReal.UnitScriptsStoreFloatProperty`).
-- Open: `instance` 63 (0x798F50 → 0x7769A0 → 0x66A640 on the AI manager `*0xE922A8`, the crates' record; meaning of the
-  record unknown, no binding without it).
+- Open: `instance` 63 (0x798F50 → 0x7769A0 → 0x66A640 → 0x66A240 on the AI manager `*0xE922A8`). Narrowed 2026-11-19
+  (agent/ScriptVec7, SCRIPT_NATIVES.md row): it queues `{unit record word, args[0]+4, 0, 0, 0}` at +0x25FE4
+  (0x661050) and zeroes floats +0x78 / +0x7C / +0x80 of the kind-1 entry keyed (unit, id) in the 0x90-byte records at
+  +0x1F50; what those records are and who reads the three floats is [U], so no binding (the survey never reaches the
+  crates).
 - Status · Origin: Partly fixed · pre-existing.
 
 **OU-SCR-004 VM budget stops** — `firetriggervolume` 16, `dispatcher` 6 `handler stopped: budget` [O logs]; the per-resume

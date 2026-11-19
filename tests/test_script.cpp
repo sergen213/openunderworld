@@ -9,6 +9,8 @@
 
 #include <bit>
 #include <cstdlib>
+#include <numbers>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -464,6 +466,62 @@ TEST(ScriptRealData, AllUnitsParse) {
     EXPECT_EQ(units, 82u);
     EXPECT_GT(volumes, 1000u);
     EXPECT_GT(planes, 100u);
+}
+
+// Camera trigger volumes (intro data +0x18 block, kind 0: inline command lists; docs/re/CAMERA.md §9): which commands the
+// game's volumes use, counted over the 82 units (the survey behind the commands World::updateOrbitCamera models). The
+// 0x17 / 0x18 force sets carry their force records, all of types the global sets use (2 = her move, 3 / 4 curves, 5 =
+// k x dt: l2_cliffclimb 3851 k 20, 3859 k 2; 7 = her mean move), and every 0x12 points at a record.
+TEST(ScriptRealData, CameraTriggerCommandSurvey) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list);
+    std::string text(list->begin(), list->end());
+    std::map<uint32_t, int> uses;
+    int volumes = 0, late = 0, setsWithForces = 0, records = 0;
+    std::set<uint32_t> forceTypes;
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty()) continue;
+        const std::string name = line.substr(line.rfind('\\') + 1);
+        auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*bytes)));
+        Runtime r;
+        r.setBigfile(&bf);
+        r.setUnits({{name, drm, {}}});
+        for (const auto& o : r.objects()) {
+            if (o.kind != Kind::Volume || o.camera.empty()) continue;
+            ++volumes, late += o.cameraLate;
+            for (const auto& c : o.camera) {
+                ++uses[c.command];
+                if ((c.command == 0x17 || c.command == 0x18) && !c.forces.empty()) {
+                    ++setsWithForces;
+                    EXPECT_EQ(c.forces.size(), std::bit_cast<uint32_t>(c.arg[3])) << name << " " << o.uid;
+                    for (const auto& f : c.forces) {
+                        forceTypes.insert(f.type);
+                        EXPECT_TRUE(f.type >= 1 && f.type <= 7) << name << " " << o.uid;
+                    }
+                }
+                if (c.command == 0x12) records += c.record.has_value();
+            }
+        }
+    }
+    for (const auto& [c, n] : uses) std::printf("command 0x%X: %d\n", c, n);
+    std::printf("%d volumes (%d with priority), %d force sets with forces, %d records\n", volumes, late, setsWithForces, records);
+    const std::map<uint32_t, int> expected = {{0x0, 4},   {0x1, 4},    {0x2, 129},  {0x3, 2},    {0x4, 7},    {0x5, 1},    {0x6, 15},
+                                              {0x7, 1},   {0x8, 4},    {0xC, 2},    {0xD, 109},  {0x12, 116}, {0x14, 53},  {0x15, 33},
+                                              {0x16, 54}, {0x17, 24},  {0x18, 155}, {0x19, 65},  {0x1A, 73},  {0x1B, 47},  {0x1C, 51}};
+    EXPECT_EQ(uses, expected);
+    EXPECT_EQ(volumes, 459);
+    EXPECT_EQ(setsWithForces, 89);
+    EXPECT_EQ(records, uses[0x12]);
+    EXPECT_EQ(forceTypes, (std::set<uint32_t>{2, 3, 5, 7}));
 }
 
 // setUnits adds a unit once: it used to take "no objects of the unit" for "not loaded" and add an object-less unit again
@@ -1468,6 +1526,65 @@ TEST(ScriptRealData, FireVolumeBurnWaitsOnItsSound) {
     run(true, 600, hits, starts);
     EXPECT_EQ(starts, 1);
     EXPECT_EQ(hits, 1) << "the sustained burn sound holds the loop (tru.exe: one 300 hit in 14 s)";
+}
+
+// Fire volumes of type 6515 (l3_main_bedroom: the `fireanim` volumes beside the 6516 burners) run a thread (fn 7) every
+// 1/30 s: vt 73 takes anchor 1 VectorTo(Lara) from the volume, Lara's anchor 4 (her local y axis = her back: the model
+// faces -Y), zeroes both z (vector 8), rotation 0 between them and its yaw (rotation 9), and names the fire's side:
+// [-pi/4, pi/4) "front", [-3pi/4, -pi/4) "left", [pi/4, 3pi/4) "right", else "back". vt 74 (vector 9/0/1/2/10/11, anchor
+// 0) is "moved more than one unit since the last pass" (its last position, member +64, starts at 0, so the first pass
+// counts as moving). A change posts larabase 22 with her fire overlay pattern, then larabase 21 while it holds:
+// moving fire_walk_front / _left / _right (Lara patterns 1501 / 1500 / 1499), standing fire_standing_front / _left /
+// _right (1493 / 1494 / 1495); "back" has none. Expected sides are the tru.exe formulas above evaluated by hand.
+TEST(ScriptRealData, FireVolumeFlinchSide) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l3_main_bedroom.drm")));
+    // Lara's root along `direction` from the volume's origin (inside its box: OnIn sets sticky +168, whose vt 6
+    // notification enters state 1 = the thread fn 7), heading `yaw`.
+    struct Case { glm::vec2 direction; float yaw; std::optional<std::pair<uint32_t, uint32_t>> patterns; const char* what; };
+    const float pi = std::numbers::pi_v<float>;
+    const Case cases[] = {
+        {{1, 0}, pi, std::pair{1501u, 1493u}, "facing the fire: front"},
+        {{0, -1}, 0, std::pair{1500u, 1494u}, "fire on her left"},
+        {{0, 1}, 0, std::pair{1499u, 1495u}, "fire on her right"},
+        {{1, 0}, 0, std::nullopt, "fire behind her: back, no overlay"},
+        {{1, 2}, pi, std::pair{1500u, 1494u}, "fire ahead of her and further left: left (-63 degrees)"},
+    };
+    for (const Case& c : cases) {
+        Runtime r;
+        r.setBigfile(&bf);
+        r.setUnits({{"l3_main_bedroom", drm, {}}});
+        r.tick(at(vec3(1e7f)));
+        const Object* volume = r.find(4529); // intro script 12135, a subtype of 6515
+        ASSERT_TRUE(volume && volume->script && volume->script->program->isA(volume->script->typeId, 6515));
+        const int32_t uid = volume->uid;
+        const float reach = 0.4f * std::min(volume->shape.half.x, volume->shape.half.y);
+        const glm::vec2 d = glm::normalize(c.direction) * reach;
+        TickInput in{volume->pos + vec3(d, 0) - vec3(0, 0, kTestPointHeight), false};
+        ASSERT_TRUE(inside(volume->shape, volume->pos, volume->rot, volume->pos + vec3(d, 0))) << c.what << " reach " << reach;
+        in.yaw = c.yaw;
+        std::vector<Runtime::PlayerAnimPost> posts;
+        for (int i = 0; i < 30; ++i) {
+            r.tick(in);
+            for (const auto& p : r.playerAnimPosts()) posts.push_back(p);
+        }
+        for (const auto& [key, count] : r.failures()) EXPECT_NE(key.first, uid) << c.what << ": " << key.second;
+        if (!c.patterns) {
+            EXPECT_TRUE(posts.empty()) << c.what << ": " << (posts.empty() ? 0 : posts[0].pattern);
+            continue;
+        }
+        ASSERT_GT(posts.size(), 3u) << c.what;
+        EXPECT_EQ(posts[0].message, 0x1DBu) << c.what; // larabase 22: first pass, side new and "moving" from 0
+        EXPECT_EQ(posts[0].pattern, c.patterns->first) << c.what;
+        EXPECT_EQ(posts[1].message, 0x1DBu) << c.what; // standing now: changed again
+        EXPECT_EQ(posts[1].pattern, c.patterns->second) << c.what;
+        for (size_t i = 2; i < posts.size(); ++i) { // larabase 21 while it holds
+            EXPECT_EQ(posts[i].message, 0x1DAu) << c.what << " post " << i;
+            EXPECT_EQ(posts[i].pattern, c.patterns->second) << c.what << " post " << i;
+        }
+    }
 }
 
 // Natives the user logs and the script survey reported missing (docs/re/SCRIPT_NATIVES.md "Natives reported missing"):

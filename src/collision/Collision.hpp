@@ -121,6 +121,10 @@ public:
     std::vector<vec3> vertices;
     std::vector<Face> faces;
     std::vector<Markup> markup;
+    // Every level camera record of the unit (unit data +0x208 / +0x20C, 0x70 bytes each, in order) and where the list
+    // sits in the DRM: a camera trigger volume's command 0x12 points at record (offset - recordsOffset) / 0x70.
+    std::vector<CameraRecord> cameraRecords;
+    uint32_t recordsSection = ~0u, recordsOffset = 0;
     std::vector<Dynamic> dynamics; // queried with the faces by raycast/sweeps/closestPoint (not by build)
 
     // (Re)builds the BVH over `faces`. Queries need it; loadLevelCollision calls it.

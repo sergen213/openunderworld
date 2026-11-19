@@ -149,3 +149,13 @@ Merged into `int/batch6` (worktree `openunderworld-work/wt-int6`):
   skipped as usual).
 - **Lesson:** an agent's narrow ctest set (`-R` by subsystem) misses tests that place Lara by object origin. Any
   change to placement or collision needs `ProgressionReal` in its set.
+- **Released:** main 5751cf9, tag v0.54.0 (`tools/release.sh`, signed AppImage verified).
+
+## 2026-11-19 — batch 7: follow-ups from batch 6 (running)
+
+| Agent | Items |
+|---|---|
+| TickDepen7 | OU-PLY-012 remainder: depenetration every tick, as tru.exe does; first fix the approximated moves that end inside our collision |
+| CamZones7 | Unmodelled camera trigger commands (0x19-0x1C, 0x12/0x14/0x15/4/6/8), trigger kinds 1/2, force sets with forces, volumes riding moving objects; OU-CAM-004 if on the same path |
+| ScriptVec7 | OU-SCR-002: vector values in the VM, anchor/vector/larabase natives; OU-SCR-003 `instance` 63 |
+| EnemySpawn7 | The enemy presence rule at unit load (shark 4023 exists only in ours); shark pass and circle rules in place of the fitted constants |

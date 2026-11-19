@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <numbers>
 #include <set>
 #include <utility>
 
@@ -776,7 +777,7 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
         const auto shape = parseShape(*u.drm, *in.data, o.kind == Kind::Plane);
         if (!shape) return;
         o.shape = *shape;
-        if (o.kind == Kind::Volume) { // camera commands, inline lists only (kind 0; 1 / 2 name another record [U])
+        if (o.kind == Kind::Volume) { // camera commands, inline lists only (kind 0; kind 1 = AnchoredCamera, not kept)
             const auto& d = u.drm->sections.at(in.data->section).data;
             const uint32_t b = in.data->offset;
             uint32_t head[4] = {}; // +0x18 kind, +0x24 count
@@ -786,10 +787,26 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
                 if (const auto cmds = v.ptr(b + 0x28); cmds && cmds->section < u.drm->sections.size()) {
                     const View c(*u.drm, cmds->section);
                     for (uint32_t k = 0; k < head[3]; ++k) {
+                        const uint32_t at = cmds->offset + 0x18 * k;
                         Object::CameraCommand cc;
-                        cc.command = c.at<uint32_t>(cmds->offset + 0x18 * k);
-                        for (uint32_t i = 0; i < 5; ++i) cc.arg[i] = c.at<float>(cmds->offset + 0x18 * k + 4 + 4 * i);
-                        o.camera.push_back(cc);
+                        cc.command = c.at<uint32_t>(at);
+                        for (uint32_t i = 0; i < 5; ++i) cc.arg[i] = c.at<float>(at + 4 + 4 * i);
+                        // 0x17 / 0x18 {angle, speed, dir, count, forces*} (0x609C40 reads the set as the global ones)
+                        if (cc.command == 0x17 || cc.command == 0x18)
+                            if (const uint32_t n = c.at<uint32_t>(at + 0x10); n && n < 16)
+                                if (const auto f = c.ptr(at + 0x14); f && f->section < u.drm->sections.size()) {
+                                    const View fv(*u.drm, f->section);
+                                    for (uint32_t i = 0; i < n; ++i) {
+                                        Object::CameraForce force;
+                                        force.type = fv.at<uint32_t>(f->offset + 0x44 * i);
+                                        force.k = fv.at<float>(f->offset + 0x44 * i + 4);
+                                        for (uint32_t j = 0; j < 64; ++j) force.curve[j] = fv.at<uint8_t>(f->offset + 0x44 * i + 4 + j);
+                                        cc.forces.push_back(force);
+                                    }
+                                }
+                        if (cc.command == 0x12)
+                            if (const auto r = c.ptr(at + 4)) cc.record = r;
+                        o.camera.push_back(std::move(cc));
                     }
                     o.cameraLate = v.at<uint8_t>(b + 0x2C) != 0;
                 }
@@ -1417,6 +1434,81 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             }
             if (!std::strcmp(name, "larabase") && nc.function == 20 && nc.args.empty()) {
                 nc.result = vm::Value::scalar(gauntletCharged_);
+                return true;
+            }
+            // anchor (type 54; NtAnchor {anchor object*}: vtable +8 position, +0xC rotation; a null anchor reads zeros,
+            // 0x4A3CB0 / 0x4A3D20). Results are 16-byte vectors (NativeContext::words). 0 Position (0x7966B0); 1 VectorTo
+            // (0x7966F0 -> 0x4AB870: position(args[0]) - position(receiver), w = 0; a null argument skips the call);
+            // 3 / 4 / 5 rows 0 / 1 / 2 of the rotation's matrix (0x4A3D20 then 0x4A3840 / 0x4A3870 / 0x4A38A0 over
+            // 0x49D500), i.e. its local x / y / z axis. Anchors here are object values (`instance` 4 / 6 / 8 results,
+            // marker anchors with kAnchorBit): Lara's script = her root (TickInput) and rotation (0, 0, yaw + pi/2);
+            // another object = its origin or HInfo marker (setAnchorAt) and intro rotation. Anchor 2 (0x4AB8F0) is not
+            // called by any shipped script.
+            if (!std::strcmp(name, "anchor") && (nc.function <= 1 || (nc.function >= 3 && nc.function <= 5))) {
+                // The anchor as an object value; one stored in a member (l1_seafloor's planes keep Lara's, `instance` 6,
+                // in +48) holds the object's uid (a marker id is not kept there [I]). uid 0 = a null anchor.
+                const auto anchor = [&](const vm::Value& a) -> std::optional<vm::Value> {
+                    if (a.kind == vm::Value::Kind::Object) return a;
+                    if (a.kind == vm::Value::Kind::Member) {
+                        const auto holder = resolve(a.uid);
+                        if (!holder) return std::nullopt;
+                        const auto it = holder->fields.find(a.offset);
+                        return vm::Value::object(it == holder->fields.end() ? 0 : int32_t(it->second));
+                    }
+                    if (a.kind == vm::Value::Kind::Scalar && a.bits == 0 && !a.text) return vm::Value::object(0);
+                    return std::nullopt;
+                };
+                const auto position = [&](const vm::Value& v) -> std::optional<vec3> {
+                    const auto a = anchor(v);
+                    if (!a) return std::nullopt;
+                    if (!a->uid) return vec3(0);
+                    if (playerScript_ && a->uid == playerScript_->uid) return playerPos_;
+                    const int32_t marker = a->bits & kAnchorBit ? int32_t(a->bits & 0xFFFF) : -1;
+                    if (anchorAt_) return anchorAt_(a->uid, marker);
+                    const Object* o = find(a->uid);
+                    return o && marker < 0 ? std::optional(o->pos) : std::nullopt;
+                };
+                const auto vector = [&](vec3 v) {
+                    nc.wordCount = 4;
+                    nc.words = {std::bit_cast<uint32_t>(v.x), std::bit_cast<uint32_t>(v.y), std::bit_cast<uint32_t>(v.z), 0u};
+                    return true;
+                };
+                if (nc.function == 0 && nc.args.empty()) {
+                    const auto p = position(nc.receiver);
+                    return p && vector(*p);
+                }
+                if (nc.function == 1 && nc.args.size() == 1) {
+                    const auto other = anchor(nc.args[0]);
+                    if (other && !other->uid) return true; // a null argument: no call, the result untouched
+                    const auto from = position(nc.receiver), to = position(nc.args[0]);
+                    return from && to && vector(*to - *from);
+                }
+                if (nc.function >= 3 && nc.args.empty()) {
+                    const auto a = anchor(nc.receiver);
+                    if (!a) return false;
+                    vec3 euler(0);
+                    if (!a->uid) {
+                    } else if (playerScript_ && a->uid == playerScript_->uid) {
+                        euler.z = playerYaw_ + std::numbers::pi_v<float> / 2;
+                    } else if (const Object* o = find(a->uid)) {
+                        euler = o->rot; // [I] a marker anchor's own frame is not modelled: the object's
+                    } else {
+                        return false;
+                    }
+                    const glm::mat4 r = glm::rotate(glm::mat4(1), euler.x, vec3(1, 0, 0)) * glm::rotate(glm::mat4(1), euler.y, vec3(0, 1, 0)) *
+                                        glm::rotate(glm::mat4(1), euler.z, vec3(0, 0, 1));
+                    return vector(vec3(r[int(nc.function) - 3]));
+                }
+            }
+            // larabase 21 / 22 (playerAnimPosts): the argument is the address of an `animation` member, {u16 object,
+            // u16 1, u32 pattern} (0x4A4800 reads the record word +2 behind value +4: the pattern); a null one skips it.
+            if (!std::strcmp(name, "larabase") && (nc.function == 21 || nc.function == 22) && nc.args.size() == 1) {
+                const vm::Value& a = nc.args[0];
+                if (a.kind == vm::Value::Kind::Scalar && a.bits == 0) return true;
+                const auto holder = a.kind == vm::Value::Kind::Member ? resolve(a.uid) : nullptr;
+                const Member* m = holder ? holder->program->member(holder->typeId, a.offset) : nullptr;
+                if (!m || !m->init || std::strcmp(holder->program->nativeName(m->typeId), "animation")) return false;
+                playerAnimPosts_.push_back({nc.function == 21 ? 0x1DAu : 0x1DBu, m->initWords[0]});
                 return true;
             }
             // gamebase 50 (0x7B2BB0 -> 0x779C60): the camera data named by its first argument (a DTP id whose record is
@@ -2910,8 +3002,10 @@ void Runtime::tickSensors(vec3 lara) {
 
 void Runtime::tick(const TickInput& in) {
     events_.clear();
+    playerAnimPosts_.clear();
     ++tick_;
     savedOrder_.clear(); // a load's object order is put back by now (restore, setUnits)
+    playerPos_ = in.pos, playerYaw_ = in.yaw;
     for (const auto& c : std::exchange(calls_, {})) {
         std::vector<vm::Value> args;
         for (const uint32_t a : c.args) args.push_back(vm::Value::scalar(a));
@@ -2993,7 +3087,13 @@ void Runtime::tick(const TickInput& in) {
         if (o.dead || residentOnly_.contains(o.unit)) continue; // a resident unit is not loaded: nothing in it meets her
         switch (o.kind) {
         case Kind::Volume: {
-            const bool now = inside(o.shape, o.pos, o.rot, p);
+            // tru.exe tests the instance's transform now (0x5CD1B0): a volume anchored to a moving host rides it (World::
+            // poseAnchored gives it the body; Wine: l2_cliffclimb's deck volume 3852 at its intro + the yacht's motion).
+            const bool moved = o.body != glm::mat4(1) || o.offset != vec3(0);
+            const bool now = !moved ? inside(o.shape, o.pos, o.rot, p)
+                                    : inside(o.shape, vec3(0), vec3(0),
+                                             vec3(glm::inverse(glm::translate(glm::mat4(1), o.pos + o.offset) * glm::mat4(rotation(o.rot)) * o.body) *
+                                                  glm::vec4(p, 1)));
             if (now && !o.inside) { // Enter (vt 54): OnFirstIn once, then OnIn
                 fire(EventKind::Enter, o);
                 if (!o.firstIn) o.firstIn = true, fire(EventKind::FirstIn, o);

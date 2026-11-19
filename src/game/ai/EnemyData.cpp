@@ -427,11 +427,18 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
         // blueshark 200, the bite measured under Wine (6 of 6, OU-CMB-003), greenland 300; which code reads it for the bite is
         // not traced [I]. Use the actual fast-swim root cycle rather than the bat's speed.
         if (const auto b = field(0xC4)) t->tuning.attackDamage = read<float>(drm->sections[b->section], b->offset + 0x50);
-        // A pass (EnemyBehavior_Close) lasts at most the combat record's (node +0xCC) s32 +4 .. +8 counts: 0x6108A0 rolls a
-        // time between them when CloseCombat starts (blueshark 60 / 120 = 2..4 s; Wine: Close phases 2.0..5.6 s).
-        if (const auto c = field(0xCC))
-            t->tuning.closeTime = {float(read<int32_t>(drm->sections[c->section], c->offset + 4)) / 30.0f,
-                                   float(read<int32_t>(drm->sections[c->section], c->offset + 8)) / 30.0f};
+        // [O Wine] bite range, origin to origin (Enemy::tick): every pass that came within 370 of her bit; bites landed at
+        // 196..405 (w2/SharkAi6/s2: a shark origin 0..172 under hers, 196..367 across).
+        t->tuning.attackRange = 370.0f;
+        t->tuning.attackReach = 405.0f;
+        // EnemyBehavior_CloseCombat's slots (0x6108A0, rolled at its start 0x627F00 and again once a slot ran out): a slot
+        // lasts the combat record's (node +0xCC) s32 +4 .. +8 counts (blueshark 60 / 120 = 2..4 s) and goes to its Circle or
+        // Sidestep child by the record's bytes +0xC / +0xD (blueshark 50 / 50). Wine: Close phases 2.0..5.6 s, one per 14 s.
+        if (const auto c = field(0xCC)) {
+            const auto& sec = drm->sections[c->section];
+            t->tuning.closeTime = {float(read<int32_t>(sec, c->offset + 4)) / 30.0f, float(read<int32_t>(sec, c->offset + 8)) / 30.0f};
+            t->tuning.slotShare = {read<uint8_t>(sec, c->offset + 0xC), read<uint8_t>(sec, c->offset + 0xD)};
+        }
         // Reach: enemy data +0x88 (395.1; +0x84 948.2 across), the limits 0x6391F0 and 0x6298C0 hand to 0x64A5B0.
         t->tuning.reachHeight = read<float>(ed, o + 0x88);
         // Swim speed: the fast-swim clip's root cycle; the blueshark's has none, so [O Wine] the median speed of its passes
@@ -565,7 +572,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
         links_[u.name] = parsed.navLinks;
         rebuildNodes();
         for (const auto& in : parsed.intros) {
-            if (formats::dormant(in) && born && !born(in.uniqueId)) {
+            if (formats::dormant(in) && !(born && born(in.uniqueId))) {
                 dormant_.insert_or_assign(in.uniqueId, std::pair{u.name, in}); // not introduced at load (0x5C2360)
                 continue;
             }

@@ -1205,6 +1205,13 @@ public:
     // from the pivot (ou-game --self-test probes).
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
+    // The point the orbit camera turns about (LaraCameraRewrite +0x100, the focus tracker's); camera().target is where it
+    // looks, that point moved by a trigger's look offset (commands 0x1A / 0x1C, World.cpp).
+    vec3 cameraPivot() const { return cam_.target - orbit_.lookAdd.now(); }
+    // The trigger volume whose level camera record (command 0x12) the orbit camera follows now, if any.
+    std::optional<int32_t> cameraRecordVolume() const {
+        return orbit_.hintMarkup <= -2 ? std::optional<int32_t>(-2 - orbit_.hintMarkup) : std::nullopt;
+    }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
     float air() const { return std::max(0.0f, air_); }
@@ -1539,11 +1546,19 @@ private:
         float along = -1; // her position along the markup she is on (0x6EC660; +0x4A0), -1 none
         vec3 lastPos{0};
         vec3 hint{0};         // level camera record point (+0x12B0), eased toward the record's
-        int hintMarkup = -1;  // the markup whose record it follows, -1 = none
+        int hintMarkup = -1;  // what its record hangs off: the markup index, -2 - uid for a trigger volume, -1 = none
         struct InlineSet {    // a camera trigger's own force set (commands 0x17 / 0x18): {angle deg, speed deg/s, dir}
             float angle = 0, speed = 0;
-            uint8_t dir = 0;
+            uint8_t dir = 0, count = 0;
+            struct Force { uint8_t type = 0; float k = 0; std::array<uint8_t, 64> curve{}; } force[2];
         } yawInline, pitchInline; // kept after she leaves it: the controller blends out of it (0x609C40)
+        // Trigger commands 0x19 / 0x1B and 0x1A / 0x1C: offsets added to the focus (pivot) and look trackers (+0x3B0 /
+        // +0x620 +0x20, 0x608280), blended over the command's time when it asks (0x608200).
+        struct TrackerAdd {
+            vec3 from{0}, to{0};
+            float t = 0, time = 0; // seconds since `to` changed, blend length (0 = at once)
+            vec3 now() const { return time > 0 && t < time ? glm::mix(from, to, t / time) : to; }
+        } pivotAdd, lookAdd;
     } orbit_;
     float cameraSwing_ = 0; // cameraSwing()
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp
