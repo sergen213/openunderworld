@@ -93,3 +93,17 @@ Engine fixes (W6-*) wait for this wave's evidence (W3-*, ScriptNatives).
 - **agent/ScriptPuzzle** (ScriptPuzzle2) was merged: OU-PZL-009, OU-GRP-005, OU-PZL-015 (partly) and OU-PZL-008(c).
 - **Lesson:** an agent's "re-blessed" golden or re-recorded replay can come from a stale build. Check the binary's
   link time against the source edit, or run the integration full ctest before trusting it.
+- **Released:** int/brief was merged into main and released as 0.53.0 (74f58af). The full ctest had 1066 tests: 1064
+  passed, and 2 test fixes were re-verified (game_vulkan_rt_smoke excluded).
+
+## 2026-11-19 — batch 6: evidence-backed fixes for open BUGS entries (running)
+
+Each agent works in its own worktree (`openunderworld-work/wt-<Name>`, branch `agent/<Name>`). The parent merges
+them into an integration branch, runs the full ctest in a private kwin, and releases.
+
+| Agent | Items |
+|---|---|
+| ScriptVm6 | OU-SCR-001 (op 0x65 in fire volumes), OU-SCR-004 (sound wait without audio), OU-SCR-003 / 002 (unbound natives) |
+| DeckCam6 | OU-CAM-005 (deck camera distance 1264.2 vs 948.2), OU-PLY-015 (Land state on the dropping deck) |
+| SharkAi6 | OU-CMB-003 (l2_cliffclimb shark aggression vs tru.exe) |
+| Depen6 | OU-PLY-012 (no depenetration), OU-REN-009 (false `texture 2` log) |
