@@ -811,12 +811,48 @@ TEST(StreamReal, YachtDecksAboveSea) {
     EXPECT_GT(heights.size(), 3u) << "she rides the waves";
 }
 
+// OU-CAM-005, the same rule away from the yacht: l2_cliffclimb camera trigger volume 3857 (commands 2 = distance 790.14,
+// 0x18 = pitch force set -17 deg at 300 deg/s). tru.exe under Wine with her held at its centre (tpv): CameraManager +0x8C
+// holds that one trigger, the distance goes to 790.1 and the camera stands 231 over the pivot (790.1 sin 17 deg = 231.0).
+TEST(StreamReal, CameraTriggerVolumeSetsDistanceAndPitch) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.startChapter(2);
+    for (int i = 0; i < 180; ++i) w.tick({}); // the self-test's 3 s start
+    const auto* t = w.script().find(3857);
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->camera.size(), 2u);
+    // A floor inside the box (her root + 200 is the test point).
+    const auto floor = w.collision().groundProbe(t->pos + glm::vec3(0, 0, t->shape.half.z - 200), 2 * t->shape.half.z);
+    ASSERT_TRUE(floor) << "a floor under trigger 3857";
+    auto s = w.player().state();
+    s.pos = floor->point;
+    // Looking the way tru.exe's camera looked there (pivot - camera = (459.9, 599.5) in the plane): the rock is behind
+    // her on other sides, and the collider would pull the camera in.
+    w.restore(s, std::atan2(599.5f, 459.9f), w.camera().pitch);
+    for (int i = 0; i < 9 * 60; ++i) w.tick({}); // past the 5..7 s look-idle ramp of the forces
+    ASSERT_TRUE(w.script().find(3857)->inside) << "she stays in the volume: floor " << floor->point.x << " " << floor->point.y << " "
+                                               << floor->point.z << ", now " << w.player().state().pos.x << " " << w.player().state().pos.y
+                                               << " " << w.player().state().pos.z << " state " << int(w.player().state().state);
+    ASSERT_EQ(w.cameraMode(), 1);
+    EXPECT_NEAR(w.cameraDistance(), 790.14f, 1.0f);
+    EXPECT_NEAR(glm::degrees(w.camera().pitch), -17.0f, 0.5f);
+    std::fprintf(stderr, "distance %.1f pitch %.2f deg, camera - pivot z %.1f\n", w.cameraDistance(), glm::degrees(w.camera().pitch),
+                 w.camera().position.z - w.camera().target.z);
+}
+
 // OU-CAM-001: the camera rides what carries her. tru.exe (Wine 2026-11-16, l2_cliffclimb chapter start, idle 15 s on the
 // yacht deck heaving +-203; w2/WineMeasure/s1/deck-idle.txt): the pivot and the camera (mode 1) move with her, pivot z -
 // root z 451.6..457.5, camera z - root z 369.0..374.9 (5.9 wide), the camera's heave lagging hers by 0.00 s (0x609830
 // moves the focus by the carrier's motion before its dead-zone lag, 0x5FF650 the camera position and proposed point).
 // Before the carry ours swung 321..714, following 0.75 s late (tru.exe's waves, as here: no swell in the sim's sea).
-// The camera's height over her (ours ~488) differs with the distance (OU-CAM-005: 948.2 there, 1264.2 here).
+// OU-CAM-005: on the deck tru.exe's camera stands at distance 948.2 (mode 1), not 1264.2, looking up 5 deg (camera -
+// pivot z -84.2..-81.4): l2_cliffclimb's camera trigger volume by the yacht (Wine: CameraManager +0x8C, commands 0xD
+// 948.17 and 0x18 = pitch force set 5 deg at 250 deg/s). The pitch force waits for 5..7 s without look input (0x5FFA90),
+// so the absolute height is checked from 8 s on, as the Wine traces had no look input for long before.
 TEST(StreamReal, CameraRidesTheYachtDeck) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -826,7 +862,7 @@ TEST(StreamReal, CameraRidesTheYachtDeck) {
     w.startChapter(2);
     for (int i = 0; i < 180; ++i) w.tick({}); // the self-test's 3 s start
     std::vector<float> root, cam;
-    float plo = 1e9f, phi = -1e9f;
+    float plo = 1e9f, phi = -1e9f, dlo = 1e9f, dhi = -1e9f;
     for (int i = 0; i < 15 * 60; ++i) {
         w.tick({});
         ASSERT_EQ(w.cameraMode(), 1) << i;
@@ -834,6 +870,7 @@ TEST(StreamReal, CameraRidesTheYachtDeck) {
         const float z = w.player().state().pos.z;
         root.push_back(z), cam.push_back(w.camera().position.z);
         plo = std::min(plo, w.camera().target.z - z), phi = std::max(phi, w.camera().target.z - z);
+        if (i >= 5 * 60) dlo = std::min(dlo, w.cameraDistance()), dhi = std::max(dhi, w.cameraDistance());
         // OU-PLY-015: tru.exe stays in one chart state (rq 46, standing idle) all 15 s; ours fell once as a script
         // object spawned 6.5 s in and rebuilt the colliders at their intro frames before her step.
         ASSERT_EQ(w.player().state().state, game::State::Idle) << "tick " << i << " clip " << w.player().state().clip;
@@ -841,20 +878,25 @@ TEST(StreamReal, CameraRidesTheYachtDeck) {
     const auto [rlo, rhi] = std::ranges::minmax(root);
     EXPECT_GT(rhi - rlo, 300.0f) << "the deck heaves";
     float lo = 1e9f, hi = -1e9f;
-    for (size_t i = 0; i < root.size(); ++i) lo = std::min(lo, cam[i] - root[i]), hi = std::max(hi, cam[i] - root[i]);
-    std::fprintf(stderr, "root %.1f..%.1f, pivot - root %.1f..%.1f, camera - root %.1f..%.1f\n", rlo, rhi, plo, phi, lo, hi);
+    for (size_t i = 5 * 60; i < root.size(); ++i) lo = std::min(lo, cam[i] - root[i]), hi = std::max(hi, cam[i] - root[i]);
+    std::fprintf(stderr, "root %.1f..%.1f, pivot - root %.1f..%.1f, camera - root %.1f..%.1f, distance %.1f..%.1f\n", rlo, rhi,
+                 plo, phi, lo, hi, dlo, dhi);
     EXPECT_GT(plo, 451.6f - 5.0f) << "pivot - root (tru.exe 451.6..457.5)";
     EXPECT_LT(phi, 457.5f + 5.0f) << "pivot - root (tru.exe 451.6..457.5)";
-    EXPECT_LT(hi - lo, 5.9f + 5.0f) << "camera - root " << lo << ".." << hi << " (tru.exe 369.0..374.9)";
-    // The lag of the camera's heave behind hers: the shift (0..1.5 s) that best matches the two series.
+    EXPECT_NEAR(dlo, 948.2f, 1.0f) << "camera distance (tru.exe 947.7..948.6)";
+    EXPECT_NEAR(dhi, 948.2f, 1.0f) << "camera distance (tru.exe 947.7..948.6)";
+    EXPECT_GT(lo, 369.0f - 5.0f) << "camera - root (tru.exe 369.0..374.9)";
+    EXPECT_LT(hi, 374.9f + 5.0f) << "camera - root (tru.exe 369.0..374.9)";
+    // The lag of the camera's heave behind hers: the shift (0..1.5 s) that best matches the two series, from 8 s on
+    // (before, the trigger's pitch force is still swinging the camera down to its 5 deg).
     const auto mean = [](const std::vector<float>& v, size_t a, size_t n) { float m = 0; for (size_t i = a; i < a + n; ++i) m += v[i] / float(n); return m; };
     size_t best = 0;
     float bestR = -2;
-    const size_t n = root.size() - 90;
+    const size_t from = 5 * 60, n = root.size() - from - 90;
     for (size_t lag = 0; lag <= 90; ++lag) {
-        const float mr = mean(root, 0, n), mc = mean(cam, lag, n);
+        const float mr = mean(root, from, n), mc = mean(cam, from + lag, n);
         float sxy = 0, sxx = 0, syy = 0;
-        for (size_t i = 0; i < n; ++i) {
+        for (size_t i = from; i < from + n; ++i) {
             const float x = root[i] - mr, y = cam[i + lag] - mc;
             sxy += x * y, sxx += x * x, syy += y * y;
         }
@@ -1137,9 +1179,12 @@ TEST(StreamReal, YachtCameraTurnsRoundTheCabin) {
     }
     EXPECT_GT(turned, 6.2831853f) << "a full turn";
     EXPECT_GE(bins.size(), 18u) << "every 20 deg sector";
-    EXPECT_NEAR(hi, 1264.22f, 1.0f) << "full distance off the cabin";
+    // Re-measured 2026-11-19 (Wine, `w2/DeckCam6/spin-deck2.txt`, Lara on the deck inside camera trigger volume 3852): a
+    // mouse turn circles four times at 948.2, pulled in to 879.9..905.2 behind the cabin (azimuth 135..146 / -165 deg).
+    // The older note's "1264.2 elsewhere" was taken outside the volume (OU-CAM-005).
+    EXPECT_NEAR(hi, 948.17f, 1.0f) << "full distance off the cabin (the deck's trigger volume)";
     EXPECT_GT(lo, 800.0f);
-    EXPECT_LT(lo, 1150.0f) << "the cabin still pulls it in";
+    EXPECT_LT(lo, 940.0f) << "the cabin still pulls it in";
 }
 
 // User report (v0.11.0): the ch2 yacht still sat in the sea. The sim's waves were right, but (1) the sea program got

@@ -184,6 +184,15 @@ struct Object {
     Kind kind = Kind::Volume;
     vec3 pos{0}, rot{0};    // world frame (intro + unit offset), Euler radians
     Shape shape;            // Volume/Plane
+    // A trigger volume's camera commands (intro data +0x18 block, kind 0: +0x24 count, +0x28 0x18-byte commands
+    // {u32 command, 20 bytes of arguments}, +0x2C priority; tru.exe 0x5F29A0 -> 0x5E7BF0 / 0x5E85B0 copy it into
+    // CameraManager +0x8C while Lara is inside, 0x601D30 -> 0x6019D0 applies it). Static intro data, not saved.
+    struct CameraCommand {
+        uint32_t command = 0;
+        float arg[5]{};
+    };
+    std::vector<CameraCommand> camera;
+    bool cameraLate = false; // priority byte != 0: applied after the camera mode records (0x601D30)
     std::map<int16_t, std::vector<int32_t>> links; // vtIndex -> targets (legacy fallback when VM is unsupported)
     std::shared_ptr<vm::Instance> script;          // parsed intro type + mutable fields; null in synthetic tests
     std::shared_ptr<vm::Machine> machine;          // active handler; retained across SLEEP/WAIT ticks
