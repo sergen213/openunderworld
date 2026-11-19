@@ -189,6 +189,26 @@ TEST(Collision, SphereAndCapsuleSweeps) {
     EXPECT_NEAR(h->t, (200 - dx) / 400, 1e-3);
 }
 
+// kSweepSkipLeaving (Player::slide, OU-PLY-012): a face the capsule overlaps at the start but does not close on (here the
+// floor it moves along, 0.3 into it) is no hit, so the wall ahead is; without the flag the floor stops the sweep at
+// t = 0 and a caller ignoring touching contacts it leaves would apply the whole move, through the wall.
+TEST(Collision, SweepSkipsFacesItLeaves) {
+    const auto m = room();
+    const vec3 a(0, 0, 19.7f), b(0, 0, 119.7f), d(400, 0, 0);
+    auto h = m.sweepCapsule(a, b, 20, d);
+    ASSERT_TRUE(h);
+    EXPECT_EQ(h->t, 0);
+    EXPECT_NEAR(h->normal.z, 1, 1e-4);
+    h = m.sweepCapsule(a, b, 20, d, collision::kSolidMask, collision::kSweepSkipLeaving);
+    ASSERT_TRUE(h);
+    EXPECT_NEAR(h->t, (200 - 20) / 400.0f, 1e-3);
+    EXPECT_NEAR(h->normal.x, -1, 1e-4);
+    // Closing on the overlapped face is still a hit at t = 0.
+    h = m.sweepCapsule(a, b, 20, {400, 0, -10}, collision::kSolidMask, collision::kSweepSkipLeaving);
+    ASSERT_TRUE(h);
+    EXPECT_EQ(h->t, 0);
+}
+
 // Faces closer than the radius to the capsule's segment (Player::depenetrate, OU-PLY-012).
 TEST(Collision, CapsuleOverlaps) {
     const auto m = room();

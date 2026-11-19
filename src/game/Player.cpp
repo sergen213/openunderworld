@@ -377,12 +377,15 @@ void Player::grip(vec3 axis, int moving, bool thor) {
 vec3 Player::slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) const {
     for (int iter = 0; iter < 4 && glm::dot(delta, delta) > 1e-8f; ++iter) {
         const vec3 a = pos + vec3(0, 0, bottom + t_.radius), b = pos + vec3(0, 0, capHeight() - t_.radius);
-        const auto hit = col_.sweepCapsule(a, b, t_.radius, delta);
+        // A face touched at t = 0 that the move does not close on (a wall she runs alongside, one she steps away from)
+        // is skipped by the sweep (kSweepSkipLeaving), so the faces ahead still stop her. Before, such a contact was the
+        // earliest hit and the whole move was applied past every face ahead: brushing one wall walked her through
+        // the next (OU-PLY-012).
+        const auto hit = col_.sweepCapsule(a, b, t_.radius, delta, collision::kSolidMask, collision::kSweepSkipLeaving);
         vec3 n = hit ? hit->normal : vec3(0);
         if (horizontalNormals) n.z = 0;
         const float nl = glm::length(n);
-        // An already-touching contact we are moving away from is ignored (the sweep reports touching faces at t = 0);
-        // a capsule placed overlapping is pushed out once by Player::tick (depenetrate).
+        // An overlapping contact whose axis lies in the face (no direction) or one left after flattening is passed.
         if (!hit || nl < 1e-4f || (hit->t == 0 && glm::dot(delta, n) >= 0)) {
             pos += delta;
             break;

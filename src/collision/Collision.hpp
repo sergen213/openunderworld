@@ -65,6 +65,8 @@ inline constexpr uint8_t kTerrainMask = 0x07; // Lara's terrain faces only (no o
 // objects only with ObjectBase oflags bit 0x08 (0x713090 ignores a hit instance without it), which
 // physics::solidShape marks with bit 0x40.
 inline constexpr uint8_t kSightMask = 0x4C;
+// sweepCapsule flags.
+inline constexpr uint8_t kSweepSkipLeaving = 0x01;
 
 // Level camera record (unit data +0x208 count, +0x20C 0x70-byte records; tru.exe 0x606xxx): where the gameplay camera
 // is drawn while Lara is on a markup whose camera commands select it (command 0x12, COLLISION.md "Camera records").
@@ -127,9 +129,10 @@ public:
     // Nearest double-sided hit along `dir` (any length) within `maxDist`.
     std::optional<Hit> raycast(vec3 origin, vec3 dir, float maxDist, uint8_t mask = kSolidMask) const;
     // First contact of a sphere / capsule (segment a-b, radius r) translated by `delta`.
-    // Already-touching shapes hit at t = 0.
+    // Already-touching shapes hit at t = 0, unless `flags` has kSweepSkipLeaving: then a face touched (or overlapped)
+    // at t = 0 that `delta` does not close on (moving away from it or along it) is no hit, so the faces ahead still are.
     std::optional<Hit> sweepSphere(vec3 center, float radius, vec3 delta, uint8_t mask = kSolidMask) const;
-    std::optional<Hit> sweepCapsule(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask = kSolidMask) const;
+    std::optional<Hit> sweepCapsule(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask = kSolidMask, uint8_t flags = 0) const;
     // Closest surface point within `maxDist`.
     std::optional<Hit> closestPoint(vec3 p, float maxDist, uint8_t mask = kSolidMask) const;
     // Every face (terrain and dynamics) closer than `radius` to the segment a-b: Hit::t = that distance, point = the
@@ -163,7 +166,7 @@ private:
     template <class Visit> void overlap(vec3 lo, vec3 hi, Visit&& visit) const;
     // Terrain faces only; the public queries add `dynamics`.
     std::optional<Hit> rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const;
-    std::optional<Hit> sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask) const;
+    std::optional<Hit> sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask, uint8_t flags = 0) const;
     std::optional<Hit> closestFaces(vec3 p, float maxDist, uint8_t mask) const;
     void overlapFaces(vec3 a, vec3 b, float radius, uint8_t mask, std::vector<Hit>& out) const;
     // Runs `local(shape, inverse transform)` on every dynamic and keeps the smallest t (hits mapped back).
