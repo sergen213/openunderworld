@@ -96,7 +96,7 @@ Engine fixes (W6-*) wait for this wave's evidence (W3-*, ScriptNatives).
 - **Released:** int/brief was merged into main and released as 0.53.0 (74f58af). The full ctest had 1066 tests: 1064
   passed, and 2 test fixes were re-verified (game_vulkan_rt_smoke excluded).
 
-## 2026-11-19 — batch 6: evidence-backed fixes for open BUGS entries (running)
+## 2026-11-19 — batch 6: evidence-backed fixes for open BUGS entries (released as 0.54.0)
 
 Each agent works in its own worktree (`openunderworld-work/wt-<Name>`, branch `agent/<Name>`). The parent merges
 them into an integration branch, runs the full ctest in a private kwin, and releases.
@@ -125,3 +125,27 @@ Merged into `int/batch6` (worktree `openunderworld-work/wt-int6`):
   - OU-SCR-003 is partly fixed (`instance` 63 is open); OU-SCR-002 is narrowed (the anchor / vector / rotation chain
     is decoded; vector values in the VM are still missing).
   - The script ctests on the integration build: 61 passed, 2 skipped (surveys).
+- **agent/SharkAi6:** OU-CMB-003 is fixed. In tru.exe a treading Lara is outside the sharks' reach: the 395.1
+  vertical limit from enemy data +0x88, and shark origins stay ≥ 892.2 under the surface. Measured under Wine: 0
+  bites in 600 s of treading. Below that depth each shark makes a pass about every 14 s and 6 bites came in 232 s.
+  Ours now applies the reach rule, a circling mode and the data bite damage (200). The pass bite chance and the
+  circling time are fitted, not decoded. Open: shark 4023 exists only in ours.
+- **agent/DeckCam6:**
+  - OU-CAM-005 is fixed: camera trigger volumes now apply their distance commands (2 / 0xD) and inline force sets
+    (0x17 / 0x18) as tru.exe does (0x5CD520 → 0x5F29A0 → 0x601D30 / 0x6019D0). The deck now gives 948.2 as tru.exe,
+    and volume 3857 gives 790.1 with the camera 231.0 above the pivot, as tru.exe. The +5° pitch set accounted for
+    the old ~115-unit OU-CAM-001 height residual.
+  - OU-PLY-015 is fixed: colliders are posed after a mid-game rebuild.
+  - The cliff goldens were re-blessed and the old and new frames compared.
+  - The volume rule changes the camera at all 91 volumes that carry camera commands.
+- **agent/Depen6:**
+  - OU-REN-009 is fixed.
+  - OU-PLY-012 is partly fixed: Lara is pushed out of terrain walls she is placed into. tru.exe does this every
+    frame (measured under Wine); ours does it only on placement, because several approximated moves of ours end
+    inside our own collision.
+  - The first full ctest found 5 ProgressionReal failures. All five tests stood her inside a wall at a switch or
+    receptacle origin; they now use `placeToUse` (follow-up 766a5d6).
+- **Full ctest on int/batch6** (private kwin, game_vulkan_rt_smoke excluded): 100 % of 1074 passed (18 surveys
+  skipped as usual).
+- **Lesson:** an agent's narrow ctest set (`-R` by subsystem) misses tests that place Lara by object origin. Any
+  change to placement or collision needs `ProgressionReal` in its set.
