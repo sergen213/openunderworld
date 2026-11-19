@@ -309,6 +309,9 @@ struct TickInput {
     // The anim-graph object whose "use" engagement record (kind 8) Lara engages on this press (game::World::engaged,
     // tru.exe 0x719520): 0 none, -1 not resolved (Runtime alone: every graph object is used by reach).
     int32_t engagedUse = -1;
+    // Lara's heading (game::PlayerState::yaw, forward = (cos, sin, 0)). Her model faces -Y, so tru.exe's instance rotation
+    // z is yaw + pi/2 (Player::modelMatrix); `anchor` 3..5 on her read the rows of that rotation.
+    float yaw = 0;
 };
 
 class Runtime {
@@ -499,6 +502,16 @@ public:
     void cinematicEvent(int32_t uid, uint32_t id);
     // Bikes larabase 52 mounted Lara on (0x777DD0 posts INSTANCE message 0x85 to the bike and to her), oldest first.
     std::vector<int32_t> takeMounts() { return std::exchange(mounts_, {}); }
+    // larabase 21 / 22 (thunks 0x79A110 / 0x79A130 -> 0x777B10 / 0x777B70): an `animation` value {u16 object 8, u16 1,
+    // u32 pattern} names one of Lara's animation patterns (lara.drm Object +0x60; `anim::animPatterns`); the pattern goes
+    // into Lara +0x488 and INSTANCE_Post(Lara, 0x1DA | 0x1DB, 0). Her chart's action 0x760530 (gated on query 0x645)
+    // plays pattern +0x488 on her anim layer +0x320 (0x444BA0). The fire volumes (6515 fn 7) post 22 when her side to
+    // the fire or her moving changed, 21 while it holds: fire_walk_front / _left / _right (patterns 1501 / 1500 / 1499)
+    // moving, fire_standing_front / _left / _right (1493 / 1494 / 1495) standing. This tick's posts, oldest first. [open]
+    // Nothing plays them yet: which of Lara's chart states take 0x1DA / 0x1DB (data-driven), query 0x645 and the mask
+    // of layer +0x320 are not decoded.
+    struct PlayerAnimPost { uint32_t message = 0; uint32_t pattern = 0; };
+    const std::vector<PlayerAnimPost>& playerAnimPosts() const { return playerAnimPosts_; }
     // `instance` 26 on an instance other than Lara: {receiver uid, target object uid, its marker id or -1}, oldest first.
     // The World places what it simulates itself (a parked motorcycle, World::placeBike).
     std::vector<std::array<int32_t, 3>> takePlacements() { return std::exchange(placements_, {}); }
@@ -752,6 +765,9 @@ private:
     std::set<std::string> payloads_; // delivered payload texts (handler arguments point at them)
     std::vector<int32_t> mounts_;
     int32_t lastBike_ = 0; // larabase 52's bike (Lara +0xF00) for larabase 53; saved
+    std::vector<PlayerAnimPost> playerAnimPosts_; // playerAnimPosts (cleared each tick)
+    vec3 playerPos_{0};   // this tick's TickInput (anchor natives on Lara); not saved: every tick sets it
+    float playerYaw_ = 0;
     EnemyNative enemy_;
     WaterNative water_;
     std::array<uint8_t, 256> gameValues_{};

@@ -137,8 +137,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Open | pre-existing | C-JOINT |
 | OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed on int/brief (171100e) | pre-existing | C-VM |
 | OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Fixed-verified (8daa2ee) | pre-existing | C-VM |
-| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Open (natives decoded, VM has no vector values) | pre-existing | C-VM |
-| OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (f9676fd; `instance` 63 open) | pre-existing | C-VM |
+| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Fixed on agent/ScriptVec7 (vector values, anchor / vector / rotation / larabase 21-22 bound; the fire overlay itself not played) | pre-existing | C-VM |
+| OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (f9676fd; `instance` 63 open, record narrowed) | pre-existing | C-VM |
 | OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Fixed-verified (agent/ScriptVm6) | pre-existing | C-VM |
 | OU-SCR-005 | script VM | Level-change fade to white unsupported (always black) | Open | pre-existing | C-VM |
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
@@ -883,14 +883,30 @@ proving tests there):
 
 **OU-SCR-002 Native `anchor` 1 unbound** — 0x7966F0, the vector between two anchors (0x4AB870); the VM has no vector
 values (PROGRESSION.md L76-78). Logs: `triggervolume` 158, `triggerplane` 6 stops [O]; l7_helheim01 8945 (sound loudness
-loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Open · pre-existing.
+loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Fixed on agent/ScriptVec7 · pre-existing.
 - Narrowed 2026-11-19 (agent/ScriptVm6): the chain the fire triggervolumes (type 6515 vt 73, e.g. l3_main_bedroom 4529)
-  run is decoded (SCRIPT_NATIVES.md rows `anchor` 4, `vector` 5/8/9/11, `rotation` 0/9): `VectorTo(Lara)`, the anchor's
-  y axis, both z zeroed (`vector` 8), the rotation between them (0x49DA10 quaternion → 0x49D450 euler), its yaw
-  (`rotation` 9 = component z) against ±π/4 · 3π/4 → "front" / "back" / "left" / "right" for Lara's burn flinch clip
-  (`larabase` 21 / 22, `vector` 0/1/2/10 still undecoded). Vectors are 16-byte locals; our locals are byte-offset
-  indexed, so a vector could live in four slots, but `NativeContext` returns one word. Not bound: the clip choice also
-  needs the larabase natives.
+  run is decoded (SCRIPT_NATIVES.md rows `anchor` 4, `vector` 5/8/9/11, `rotation` 0/9).
+- Fixed 2026-11-19 (agent/ScriptVec7). Current implementation before: no vector values, `NativeContext` returned one
+  word, `anchor` / `vector` / `rotation` / `larabase` 21-22 unbound, so every handler reaching them stopped (survey: 41
+  anchor 1, 2 larabase 21). What tru.exe does [O]: vectors / rotations are 16-byte `{x, y, z, w}` values inline in the
+  frame or instance data whose address the interpreter passes to the thunk (`handler(receiver*, argc, args*, result*)`,
+  0x57DE34); thunks 0x796540.. (get / set / copy / Set / length / scale), 0x796360 → 0x4A2F40 (rotation between two
+  vectors: 0x49DA10 quaternion `(a × h, a · h)`, 0x49D450 → 0x49B440 euler), anchor 0x7966B0 / 0x7966F0 / 0x796770..
+  (position, VectorTo, matrix rows of 0x49D500), larabase 0x79A110 / 0x79A130 → 0x777B10 / 0x777B70 (an `animation`
+  value's pattern into Lara +0x488, INSTANCE_Post 0x1DA / 0x1DB). Also [O] the frame setup 0x57A850 constructs every
+  local from its record (0x579770), so BOOL / INT / FLOAT locals start at their init (6515 fn 1's π lives there).
+  Change: vectors live in four byte-offset slots (`Machine::valueAt`, `Machine::valueNative`), multi-word results
+  (`NativeContext::words`), MOVEU 16 bytes, scalar local inits, anchor 0/1/3..5 and larabase 21/22 in `Script.cpp`,
+  `TickInput::yaw` (Lara's rotation z = yaw + π/2: her model faces −Y). The fire volumes now pick the side as tru.exe:
+  `ScriptRealData.FireVolumeFlinchSide` (volume 4529, Lara placed front / left / right / back / −63°; expected sides
+  evaluated by hand from vt 73's formula; the posts are larabase 22 walk → 22 standing → 21 standing, patterns
+  1501/1500/1499 and 1493/1494/1495 = Lara's `fire_walk_*` / `fire_standing_*`). Survey (`GameReal.ScriptSurvey`):
+  132 → 89 handler stops (anchor 1 41 → 0, larabase 21 2 → 0, no new reason). ctest (private kwin, build-ScriptVec7):
+  `-R 'Script|ProgressionReal|GameReal|StreamReal|^Game|selftest|replay'` 545 / 545, `-L protected` 41 / 41.
+- Still open: the overlay is not played (`Runtime::playerAnimPosts` records it): which of Lara's chart states take
+  0x1DA / 0x1DB, her action 0x760530's query 0x645 and the mask of anim layer +0x320 (0x444BA0) are not decoded; general
+  (tilted) euler order of rotation 0 / anchor 3..5 beyond yaw is [I]; a marker anchor stored in a member keeps only the
+  object's uid [I].
 
 **OU-SCR-003 Other unbound natives seen in user runs** — `instanceref` fn 10 (unit scripts, 64), `instance` fn 27
 (l2_cliffclimb 37, l1_seafloor 10, l7_arctic_sea 5), `gamebase` fn 27 (`ms_uo_yacht` 7, `co_yacht` 1), `instance` fn 63
@@ -898,8 +914,11 @@ loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Open 
 - Fixed in f9676fd (on main since 0.53.0): `instanceref` 10/13/16, `unitref` 1, `gamebase` 27, `instance` 27 and
   `cinematic` 10 for every receiver (SCRIPT_NATIVES.md; test `ScriptRealData.MissingNativesBound`,
   `GameReal.UnitScriptsStoreFloatProperty`).
-- Open: `instance` 63 (0x798F50 → 0x7769A0 → 0x66A640 on the AI manager `*0xE922A8`, the crates' record; meaning of the
-  record unknown, no binding without it).
+- Open: `instance` 63 (0x798F50 → 0x7769A0 → 0x66A640 → 0x66A240 on the AI manager `*0xE922A8`). Narrowed 2026-11-19
+  (agent/ScriptVec7, SCRIPT_NATIVES.md row): it queues `{unit record word, args[0]+4, 0, 0, 0}` at +0x25FE4
+  (0x661050) and zeroes floats +0x78 / +0x7C / +0x80 of the kind-1 entry keyed (unit, id) in the 0x90-byte records at
+  +0x1F50; what those records are and who reads the three floats is [U], so no binding (the survey never reaches the
+  crates).
 - Status · Origin: Partly fixed · pre-existing.
 
 **OU-SCR-004 VM budget stops** — `firetriggervolume` 16, `dispatcher` 6 `handler stopped: budget` [O logs]; the per-resume

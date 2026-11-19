@@ -9,6 +9,8 @@
 
 #include <bit>
 #include <cstdlib>
+#include <numbers>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -1468,6 +1470,65 @@ TEST(ScriptRealData, FireVolumeBurnWaitsOnItsSound) {
     run(true, 600, hits, starts);
     EXPECT_EQ(starts, 1);
     EXPECT_EQ(hits, 1) << "the sustained burn sound holds the loop (tru.exe: one 300 hit in 14 s)";
+}
+
+// Fire volumes of type 6515 (l3_main_bedroom: the `fireanim` volumes beside the 6516 burners) run a thread (fn 7) every
+// 1/30 s: vt 73 takes anchor 1 VectorTo(Lara) from the volume, Lara's anchor 4 (her local y axis = her back: the model
+// faces -Y), zeroes both z (vector 8), rotation 0 between them and its yaw (rotation 9), and names the fire's side:
+// [-pi/4, pi/4) "front", [-3pi/4, -pi/4) "left", [pi/4, 3pi/4) "right", else "back". vt 74 (vector 9/0/1/2/10/11, anchor
+// 0) is "moved more than one unit since the last pass" (its last position, member +64, starts at 0, so the first pass
+// counts as moving). A change posts larabase 22 with her fire overlay pattern, then larabase 21 while it holds:
+// moving fire_walk_front / _left / _right (Lara patterns 1501 / 1500 / 1499), standing fire_standing_front / _left /
+// _right (1493 / 1494 / 1495); "back" has none. Expected sides are the tru.exe formulas above evaluated by hand.
+TEST(ScriptRealData, FireVolumeFlinchSide) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l3_main_bedroom.drm")));
+    // Lara's root along `direction` from the volume's origin (inside its box: OnIn sets sticky +168, whose vt 6
+    // notification enters state 1 = the thread fn 7), heading `yaw`.
+    struct Case { glm::vec2 direction; float yaw; std::optional<std::pair<uint32_t, uint32_t>> patterns; const char* what; };
+    const float pi = std::numbers::pi_v<float>;
+    const Case cases[] = {
+        {{1, 0}, pi, std::pair{1501u, 1493u}, "facing the fire: front"},
+        {{0, -1}, 0, std::pair{1500u, 1494u}, "fire on her left"},
+        {{0, 1}, 0, std::pair{1499u, 1495u}, "fire on her right"},
+        {{1, 0}, 0, std::nullopt, "fire behind her: back, no overlay"},
+        {{1, 2}, pi, std::pair{1500u, 1494u}, "fire ahead of her and further left: left (-63 degrees)"},
+    };
+    for (const Case& c : cases) {
+        Runtime r;
+        r.setBigfile(&bf);
+        r.setUnits({{"l3_main_bedroom", drm, {}}});
+        r.tick(at(vec3(1e7f)));
+        const Object* volume = r.find(4529); // intro script 12135, a subtype of 6515
+        ASSERT_TRUE(volume && volume->script && volume->script->program->isA(volume->script->typeId, 6515));
+        const int32_t uid = volume->uid;
+        const float reach = 0.4f * std::min(volume->shape.half.x, volume->shape.half.y);
+        const glm::vec2 d = glm::normalize(c.direction) * reach;
+        TickInput in{volume->pos + vec3(d, 0) - vec3(0, 0, kTestPointHeight), false};
+        ASSERT_TRUE(inside(volume->shape, volume->pos, volume->rot, volume->pos + vec3(d, 0))) << c.what << " reach " << reach;
+        in.yaw = c.yaw;
+        std::vector<Runtime::PlayerAnimPost> posts;
+        for (int i = 0; i < 30; ++i) {
+            r.tick(in);
+            for (const auto& p : r.playerAnimPosts()) posts.push_back(p);
+        }
+        for (const auto& [key, count] : r.failures()) EXPECT_NE(key.first, uid) << c.what << ": " << key.second;
+        if (!c.patterns) {
+            EXPECT_TRUE(posts.empty()) << c.what << ": " << (posts.empty() ? 0 : posts[0].pattern);
+            continue;
+        }
+        ASSERT_GT(posts.size(), 3u) << c.what;
+        EXPECT_EQ(posts[0].message, 0x1DBu) << c.what; // larabase 22: first pass, side new and "moving" from 0
+        EXPECT_EQ(posts[0].pattern, c.patterns->first) << c.what;
+        EXPECT_EQ(posts[1].message, 0x1DBu) << c.what; // standing now: changed again
+        EXPECT_EQ(posts[1].pattern, c.patterns->second) << c.what;
+        for (size_t i = 2; i < posts.size(); ++i) { // larabase 21 while it holds
+            EXPECT_EQ(posts[i].message, 0x1DAu) << c.what << " post " << i;
+            EXPECT_EQ(posts[i].pattern, c.patterns->second) << c.what << " post " << i;
+        }
+    }
 }
 
 // Natives the user logs and the script survey reported missing (docs/re/SCRIPT_NATIVES.md "Natives reported missing"):
