@@ -776,7 +776,7 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
         const auto shape = parseShape(*u.drm, *in.data, o.kind == Kind::Plane);
         if (!shape) return;
         o.shape = *shape;
-        if (o.kind == Kind::Volume) { // camera commands, inline lists only (kind 0; 1 / 2 name another record [U])
+        if (o.kind == Kind::Volume) { // camera commands, inline lists only (kind 0; kind 1 = AnchoredCamera, not kept)
             const auto& d = u.drm->sections.at(in.data->section).data;
             const uint32_t b = in.data->offset;
             uint32_t head[4] = {}; // +0x18 kind, +0x24 count
@@ -786,10 +786,26 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
                 if (const auto cmds = v.ptr(b + 0x28); cmds && cmds->section < u.drm->sections.size()) {
                     const View c(*u.drm, cmds->section);
                     for (uint32_t k = 0; k < head[3]; ++k) {
+                        const uint32_t at = cmds->offset + 0x18 * k;
                         Object::CameraCommand cc;
-                        cc.command = c.at<uint32_t>(cmds->offset + 0x18 * k);
-                        for (uint32_t i = 0; i < 5; ++i) cc.arg[i] = c.at<float>(cmds->offset + 0x18 * k + 4 + 4 * i);
-                        o.camera.push_back(cc);
+                        cc.command = c.at<uint32_t>(at);
+                        for (uint32_t i = 0; i < 5; ++i) cc.arg[i] = c.at<float>(at + 4 + 4 * i);
+                        // 0x17 / 0x18 {angle, speed, dir, count, forces*} (0x609C40 reads the set as the global ones)
+                        if (cc.command == 0x17 || cc.command == 0x18)
+                            if (const uint32_t n = c.at<uint32_t>(at + 0x10); n && n < 16)
+                                if (const auto f = c.ptr(at + 0x14); f && f->section < u.drm->sections.size()) {
+                                    const View fv(*u.drm, f->section);
+                                    for (uint32_t i = 0; i < n; ++i) {
+                                        Object::CameraForce force;
+                                        force.type = fv.at<uint32_t>(f->offset + 0x44 * i);
+                                        force.k = fv.at<float>(f->offset + 0x44 * i + 4);
+                                        for (uint32_t j = 0; j < 64; ++j) force.curve[j] = fv.at<uint8_t>(f->offset + 0x44 * i + 4 + j);
+                                        cc.forces.push_back(force);
+                                    }
+                                }
+                        if (cc.command == 0x12)
+                            if (const auto r = c.ptr(at + 4)) cc.record = r;
+                        o.camera.push_back(std::move(cc));
                     }
                     o.cameraLate = v.at<uint8_t>(b + 0x2C) != 0;
                 }

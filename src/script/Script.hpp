@@ -187,9 +187,17 @@ struct Object {
     // A trigger volume's camera commands (intro data +0x18 block, kind 0: +0x24 count, +0x28 0x18-byte commands
     // {u32 command, 20 bytes of arguments}, +0x2C priority; tru.exe 0x5F29A0 -> 0x5E7BF0 / 0x5E85B0 copy it into
     // CameraManager +0x8C while Lara is inside, 0x601D30 -> 0x6019D0 applies it). Static intro data, not saved.
+    // Kind 1 blocks (9 volumes) switch to the AnchoredCamera (0x5EE4A0) and are not kept; docs/re/CAMERA.md §9.
+    struct CameraForce {     // 0x44-byte force record {u32 type, f32 k | 64-byte curve} (as the global sets')
+        uint32_t type = 0;
+        float k = 0;
+        std::array<uint8_t, 64> curve{};
+    };
     struct CameraCommand {
         uint32_t command = 0;
         float arg[5]{};
+        std::vector<CameraForce> forces; // 0x17 / 0x18: arg[3] = count, arg[4] = the force records
+        std::optional<cdc::Pointer> record; // 0x12: the unit's level camera record (unit data +0x20C) arg[0] points at
     };
     std::vector<CameraCommand> camera;
     bool cameraLate = false; // priority byte != 0: applied after the camera mode records (0x601D30)
