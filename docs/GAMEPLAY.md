@@ -534,7 +534,7 @@ ours does. Two mechanisms carry every trap of the game [O]: **damaging collision
 |---|---|---|---|
 | `firetriggervolume` (script 6516) | l3_main_bedroom x14, l3_main_hall x14, l3_bedroom_hall x7, l1_ship_sinking_hall x5, l1_ship_lower_hallway x4, l3_mansion_exterior_afterburn x2 | while Lara is in the volume (vt 70 -> state 1): `health` 2 with member +12 (300), then the burn sound as a sequence (`sound` 1), again when the sound ended; leaving (vt 71) ends it. Its player sensors count on global byte 13 ("fireanim": her arm raised against the heat [I]) | the first 300 at once (`GameReal.FireVolumeBurns300`); the repeats run on the app's sound clock (`GameSound::scriptSoundBusy`), so a World without sound burns once per entry [open]. The constructor completes: its sensor loop's length call is the DYNARRAY builtin Size (tru.exe 0x57EE20 operand decoding, 0x574A30), and it attaches its four player sensors to the volume (`ScriptRealData.FireVolumeConstructorBuildsSensors`), so "fireanim" counts; nothing in ours reads global byte 13 yet [I] |
 | `slowfiretriggervolume`, `deathfiretriggervolume` | l3_main_hall x5, x5 | the same script type; their amounts come from the intro data [U: not dumped] | 300 measured in ours for both [U] |
-| fire flinch `triggervolume`s (script 6515: l3_main_bedroom 4529..4557, l3_main_hall 4171, ...) | beside the burners | no damage: while Lara is inside (sticky +168 → state 1, fn 7), every 1/30 s the side of the fire relative to her (front / left / right / back from the yaw between the volume→Lara vector and her back axis, ±π/4, ±3π/4) and whether she moved pick her fire overlay (`larabase` 22 on a change, 21 while it holds): `fire_walk_front / _left / _right` (patterns 1501 / 1500 / 1499) or `fire_standing_*` (1493 / 1494 / 1495); none for back (docs/re/SCRIPT_NATIVES.md "The fire volumes' burn flinch") | the chain runs (`ScriptRealData.FireVolumeFlinchSide`; `Runtime::playerAnimPosts`); the overlay is not played yet: her chart's 0x1DA / 0x1DB states, query 0x645 and layer +0x320 are [U] |
+| fire flinch `triggervolume`s (script 6515: l3_main_bedroom 4529..4557, l3_main_hall 4171, ...) | beside the burners | no damage: while Lara is inside (sticky +168 → state 1, fn 7), every 1/30 s the side of the fire relative to her (front / left / right / back from the yaw between the volume→Lara vector and her back axis, ±π/4, ±3π/4) and whether she moved pick her fire overlay (`larabase` 22 on a change, 21 while it holds): `fire_walk_front / _left / _right` (patterns 1501 / 1500 / 1499) or `fire_standing_*` (1493 / 1494 / 1495); none for back (docs/re/SCRIPT_NATIVES.md "The fire volumes' burn flinch"); the clip plays on her upper body ("Script flinch overlay") | the chain runs (`ScriptRealData.FireVolumeFlinchSide`; `Runtime::playerAnimPosts`) and the overlay plays on anim section 1 (`World::tickFlinch`, `GameReal.FireVolumeFlinchPlaysUpperBodySection`) |
 | `jellyfish_a` | l1_seafloor x31, l1_norse_hallway_a x12 | 100 every 2 s inside its sensors | yes (`GameReal.JellyfishStingOnTouch`) |
 | `fx_steam_val_column` | l5_valgrind x16 | two player sensors on markers 2101 / 2102 of cog wheel 7314, on during the blast clip; a hit sends player message 0x1D4 (`larabase` 58, `0x778000`; [I] the scald that breaks her grip), takes 250 (`health` 1) and switches the sensors off until the next blast; a dispatcher of the unit takes 350 | `larabase` 58 is bound (the handler ran into it and stopped before the damage); message 0x1D4 has no effect on her yet [U]; untested by input |
 | kill planes, `health` 1 99999 | l5_valaskjalf x4, l3_bedroom_hall x2, l4_staircase_upper x2, l1_baldrsstairs_a, l4_ballcourt, l4_staircase_xibalba, l4_trailstart x1 | pits (the spike pits of the Mexican roads and stairs are these and the volumes below: no spike object exists) | yes (one-sided planes fire toward local +Y since 0.42) |
@@ -5340,3 +5340,61 @@ read from code and data, and what the code was not followed far enough to say is
 Render sanity (viewed, kept privately in the work dir `gameplaygoal/ik/`): `hang.png` (ledge 973, tick 200: both hands
 on the ledge) and `look.png` (pistols drawn on a dummy up to her left: head turned to it). No comparison against the
 original's frames was made for these passes.
+
+## Script flinch overlay (decoded 2026-11; `World::tickFlinch`, `World::flinchLayer`)
+
+Scripts ask Lara for an upper-body clip with `larabase` 21 / 22; the fire flinch volumes (script 6515, table above) are
+the users. Sources: tru.exe disassembly, lara.drm's two state charts (dump: `openunderworld-work/hurdles/sc.py`, the
+second chart's tables at player data `+0x12530`), lara.drm ObjectBase `+0xBC` / `+0xC0` and globalaniminfo.drm, and a
+Wine run in l3_main_bedroom fire volume 4529 (`tools/wine-ref` helper `section`; traces in the work dir
+`w2/Flinch8/walk1.txt`, `exit2.txt`).
+
+### The original
+
+- **Request** [O]. `larabase` 21 / 22 (`0x777B10` / `0x777B70`) write `{u16 kind 1, u16 pattern}` to `+0x488` of her
+  *upper-body* chart object (`*(0xFADB58 + 0xF14)`; the locomotion chart is `+0xF10`) and post INSTANCE message 0x1DA /
+  0x1DB to her. Kind 1 = an anim pattern of hers (object DTP `+0x60`): 1493..1495 `fire_standing_front / _left /
+  _right`, 1499..1501 `fire_walk_right / _left / _front`, each mode once, blend 4, start frame 3, `+0x1B` = 5.
+- **Chart** [O data]. The upper-body chart has 103 states; 0x1DA / 0x1DB are events (records `{u32 message, ..., u32
+  count, ptr transitions}`) of its root S0: 0x1DA → T11 / T24, 0x1DB → T10 / T23, all into **S90**. T11 / T10 need
+  `PSCCF_OnGround` (0x201) and `PSCCF_ScriptContextualAnimAllowed` (0x21B); T24 / T23 condition 0x1F5 instead of
+  OnGround [U: no registry entry]. T10 / T23 carry flag 4 [I: re-entry from S90 itself — Wine: a 0x1DB while S90 plays
+  restarts the clip at once, 0x1DA does not]. S4 (combat), S71 (grapple) and S86 (wrestle) list both messages with no
+  transitions (swallowed); S0 goes to S87 in combat mode; S91 (carrying) lists neither.
+- **Condition 0x21B** [O]: `0x765FD0` reads chart property 0x645. The upper-body chart's own 0x645 (S0) is type 43,
+  which `0x785BF6` resolves through the linked chart (`+0x524`): the **locomotion chart's** 0x645. That is 1 on the
+  ground family S9 (idle, walk, run, turns, run start / stop, the standing jump's take-off), landings S1279 / S1284,
+  crouch S80..S87, slopes S814, wall hug / beam S1232, hurdles S875, the swim families S101 / S217; 0 elsewhere (root).
+- **S90** [O]: entry action 0x641 (PSCPF table `0x8B1E00` entry 28: `0x760530`) reads 0x645 again and plays `+0x488`
+  on **anim section 1** (`[[inst+0x280]+0x14] + 0x320`; `0x444BA0` → `0x4428A0`). S90 → S0 when the clip is done
+  (condition 0xC9, T171) or 0x645 is clear (T193). S0's entry request 121 has no animation (blend 4): section 1's
+  target weight 0, crossfaded over the last pattern's `+0x1B` frames instead (the next request's override,
+  docs/formats/ANIMATION.md; fire_* `+0x1B` = 5).
+- **Section 1's bones** [O]: the anim component's sections are built at `0x5BAB80`; section 1's mask is `0x432780(obj,
+  1)`: globalaniminfo id 1 → mask index 1 of lara.drm's ObjectBase masks (`+0xBC` count, `+0xC0` records `{u16 index,
+  u32 count, ptr ranges {f32 weight, s8 first, s8 last}}`, `0x54E340`): **segments 14..106 at weight 1** (spine, arms,
+  head, hands; not the legs 0..13 nor the hair / helpers 107..152). Wine: section `+0xD8` runs `{0, 0..13} {1, 14..106}
+  {0, 107..152}`. Sections 2 / 3 (ids 4 / 2) are segments 52..76 / 16..51.
+- **Weights** [O-runtime, Wine]: section `+0xA4` weight steps toward `+0xAC` target by `+0xA8` per 30 Hz frame: on S90
+  entry 0.25 (0.125, 0.375, 0.625, 0.875, 1.0 in 33 ms samples), on the return to S0 0.2 (0.898, 0.697, 0.494, 0.294,
+  0.091, 0). Standing in the volume: `fire_standing_right` for 1.29 s, one sample in S0 (weight still 1), S90 again
+  with the clip restarted (`+0x44` = the request playing); walking: `fire_walk_right`, then `fire_standing_right` once
+  she stops. Stepping down off the hearth (0x645 / OnGround dropping) faded the section out while the posts went on.
+
+### Ours
+
+`World::tickFlinch` runs after the script tick on `Runtime::playerAnimPosts`: in an allowed state (Idle, Walk, Run, Stop,
+Turn, JumpPrep, Land, Crouch, Slide, WallHug, Beam, out of water) with no weapon out and nothing carried, a post enters
+S90 (0x1DB also from S90) and plays the pattern's clip on a second `AnimController` (crossfade = the pattern's blend,
+the clip starting at start − blend, cut at 0, as `0x441FB0`); S90 ends when the clip is done or the state is no longer
+allowed. The weight ramps by 1 / blend (entry) and 1 / (the pattern's `+0x1B`, else request 121's blend) (exit) per
+30 Hz frame. `World::flinchLayer` blends the section's pose over segments 14..106
+before the weapon and throw layers. Saved as `flinch` in the runtime state while it shows. Tests:
+`GameReal.FireVolumeFlinchPlaysUpperBodySection`, `StreamReal.SaveContinuesBitIdentically` (l3_main_bedroom case).
+
+### Open
+
+- [U] condition 0x1F5 (T24 / T23): the swimming / wading families that set 0x645 do not flinch in ours.
+- [I] combat mode = a weapon out (the chart's 0x385 condition is not decoded here).
+- [I] S90's restart after the clip ends: ours steps the weight down for the 60 Hz tick before the next post (≥ 0.9);
+  tru.exe showed no dip at its frame rate.

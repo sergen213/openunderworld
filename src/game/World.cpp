@@ -312,6 +312,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     "hit_light_front", "hit_light_back", "hit_light_side", "hit_mediumfront", "hit_mediumback", "hit_mediumright",
     "hit_light_front_swim", "hit_light_back_swim", "hit_light_side_swim", "hit_mediumfront_swim", "hit_mediumback_swim",
     "hit_mediumright_swim",
+    // script flinch patterns (larabase 21 / 22 from the fire volumes; World::tickFlinch): patterns 1493-1495, 1499-1501
+    "fire_standing_front", "fire_standing_left", "fire_standing_right", "fire_walk_front", "fire_walk_left", "fire_walk_right",
     // free climbing (Climb.cpp), one set per hand stance B / L / LW / R / RW (the hold's markup type 16-20): attach,
     // idle, directional moves, jump off, drop; then every hold-to-hold transition DICE_<from>_to_<to>_<dir> as lara.drm
     // spells it (stance capitalisation varies: Lw/LW, Rw/RW; Climb.cpp looks them up case-insensitively)
@@ -471,6 +473,14 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
     };
     loadClips(drm, kLaraClipNames, path, "");
     loadClips(drm, kMeleeClipNames, path, ""); // close combat / carried objects (Melee.cpp)
+    { // her anim patterns, as script anim requests name them (World::tickFlinch)
+        const auto list = anim::animList(drm);
+        for (const auto& p : anim::animPatterns(drm)) {
+            AnimLibrary::Pattern q{{}, p.rate, p.mode, p.blend, p.start, p.nextBlend};
+            if (!p.anims.empty() && p.anims[0] < list.size() && lib.clips.contains(list[p.anims[0]].name)) q.clip = list[p.anims[0]].name;
+            lib.patterns.push_back(std::move(q));
+        }
+    }
     if (auto t = loadMeleeTuning(bigfile)) lib.melee = *t;
     // Lara's weapon clips live in each weapon's DRM (they animate her skeleton); stats from its data.
     for (int i = 0; i < kWeaponCount; ++i) {
@@ -749,6 +759,7 @@ void World::tick(const Actions& input) {
     if (player_.takeReseat()) script_.playerJumped();
     script_.tick({player_.state().pos, a.interact, engagedUse(a.interact && !interactHeld_), player_.state().yaw});
     tickTimes.scriptMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - scriptStart).count();
+    tickFlinch(dt); // this tick's larabase 21 / 22 posts
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.
     if (!units_.empty() && units_[current_].data.name != playerUnit_) {
@@ -1491,6 +1502,7 @@ void World::updatePose(float dt, bool reset) {
             anim_.setTime(s.clipTime); // the player's clock is authoritative (root motion comes from it)
     }
     auto local = anim_.pose();
+    flinchLayer(local); // anim section 1 (the weapon layer replaces the upper body on top of it)
     aimLayer(local, reset ? 0 : dt);
     throwLayer(local);
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(anims_.skeleton.bones[0].pivot)}; // root motion is in pos
@@ -1525,6 +1537,76 @@ void World::updatePose(float dt, bool reset) {
     hair_.apply(m, toWorld);
     prevBones_ = reset ? m : std::move(bones_);
     bones_ = std::move(m);
+}
+
+namespace {
+// Her locomotion chart's property 0x645 (PSCCF_ScriptContextualAnimAllowed, condition 0x21B = 0x765FD0; the upper-body
+// chart's own 0x645 is type 43, a link to the locomotion chart's value, 0x785BF6) is set on the ground family S9 (idle,
+// walk, run, turns, run start / stop, standing jump take-off), the landings S1279 / S1284, crouch S80-S87, slopes S814,
+// wall hug / beam S1232 and hurdles S875 [O lara.drm chart]; clear (root S0) everywhere else. Its transitions into S90
+// also need PSCCF_OnGround (0x201; T11 / T10) or condition 0x1F5 (T24 / T23) [U: 0x1F5 has no registry entry: the
+// swimming families S101 / S217 that set 0x645 are left out].
+bool scriptAnimAllowed(const PlayerState& s) {
+    if (s.water >= 0) return false;
+    switch (s.state) {
+    case State::Idle: case State::Walk: case State::Run: case State::Stop: case State::Turn: case State::JumpPrep:
+    case State::Land: case State::Crouch: case State::Slide: case State::WallHug: case State::Beam: return true;
+    default: return false;
+    }
+}
+} // namespace
+
+// larabase 21 / 22 (0x777B10 / 0x777B70) store a pattern at her upper-body chart's +0x488 and post 0x1DA / 0x1DB. That
+// chart (lara.drm player data +0x12530: 103 states) lists both in its root S0's events: 0x1DA -> T11, 0x1DB -> T10 (flag 4:
+// also re-entering S90 from S90 itself), both into S90 while 0x645 holds; S4 (combat), S71 (grapple) and S86 (wrestle)
+// swallow them, S87 is entered in combat mode. S90's entry action 0x641 (0x760530) plays the pattern on anim section 1
+// (0x444BA0 -> 0x4428A0) when 0x645 holds; S90 returns to S0 when its clip is done (condition 0xC9, T171) or 0x645 drops
+// (T193), and S0's entry request 121 (no animation, blend 4) sets the section's target weight 0, crossfading over the
+// last pattern's +0x1B frames instead (the next request's override, docs/formats/ANIMATION.md). Wine (l3_main_bedroom
+// volume 4529, tools/wine-ref helper `section`): the section weight rises 0.25 per 30 Hz frame on entry (the pattern's
+// blend 4), falls 0.2 per frame on the return to S0 (fire_* +0x1B = 5); standing in the volume the clip ends, S0 lasts
+// one frame and the next 0x1DA re-enters S90 (the clip restarts, the weight stays 1); a side change (0x1DB) restarts it
+// at once. [I] Combat mode = a weapon out; carrying a portable (S91 lists neither message) blocks it too.
+void World::tickFlinch(float dt) {
+    FlinchState& f = flinch_;
+    const auto& patterns = anims_.patterns;
+    const bool allowed = scriptAnimAllowed(player_.state()) && !combat_.drawn && combat_.drawT <= 0 && held_ == 0;
+    flinchAnim_.update(dt);
+    if (f.playing) {
+        const auto& layers = flinchAnim_.layerStates();
+        const bool done = layers.empty() || !layers.back().clip ||
+                          (!layers.back().loop && layers.back().time >= layers.back().clip->durationSeconds());
+        if (done || !allowed) {
+            f.playing = false;
+            constexpr size_t kS0Request = 121;
+            const uint8_t next = f.playingPattern < patterns.size() ? patterns[f.playingPattern].nextBlend : 0xFF;
+            const uint8_t out = next != 0xFF ? next : kS0Request < patterns.size() ? patterns[kS0Request].blend : 0;
+            f.target = 0, f.step = out ? 1.0f / out : 1.0f;
+        }
+    }
+    for (const auto& post : script_.playerAnimPosts()) {
+        f.pattern = post.pattern;
+        if (!allowed || (f.playing && post.message != 0x1DBu) || post.pattern >= patterns.size()) continue;
+        const AnimLibrary::Pattern& p = patterns[post.pattern];
+        const anim::Clip* clip = anims_.find(p.clip);
+        if (!clip) continue;
+        // the clip is at its start frame when the crossfade ends: it starts at start - blend, cut at 0 (0x441FB0)
+        flinchAnim_.play(clip, p.blend / 30.0f, p.mode == 2, p.rate, std::max(0, p.start - p.blend) / 30.0);
+        f.playing = true, f.playingPattern = post.pattern;
+        f.target = 1, f.step = p.blend ? 1.0f / p.blend : 1.0f;
+    }
+    const float move = f.step * dt * 30.0f;
+    f.weight = f.weight < f.target ? std::min(f.target, f.weight + move) : std::max(f.target, f.weight - move);
+    if (!f.playing && f.weight <= 0 && flinchAnim_.layers()) flinchAnim_ = anim::AnimController(anims_.skeleton);
+}
+
+// Anim section 1 over the pose: its clip replaces segments kUpperSectionFirst..kUpperSectionLast (mask weight 1) by the
+// section's weight.
+void World::flinchLayer(std::vector<anim::LocalTransform>& local) const {
+    if (flinch_.weight <= 0 || !flinchAnim_.layers() || local.size() <= size_t(kUpperSectionLast)) return;
+    const auto p = flinchAnim_.pose();
+    for (size_t i = kUpperSectionFirst; i <= size_t(kUpperSectionLast) && i < p.size(); ++i)
+        local[i] = anim::blend(local[i], p[i], flinch_.weight);
 }
 
 // tru.exe gives Lara 30 cdc::GenericLimbLockController records (lara.drm object data +0x5C8; Ik.hpp). Which are on:

@@ -137,7 +137,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Open | pre-existing | C-JOINT |
 | OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed on int/brief (171100e) | pre-existing | C-VM |
 | OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Fixed-verified (8daa2ee) | pre-existing | C-VM |
-| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Fixed on agent/ScriptVec7 (vector values, anchor / vector / rotation / larabase 21-22 bound; the fire overlay itself not played) | pre-existing | C-VM |
+| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Fixed on agent/ScriptVec7 (vector values, anchor / vector / rotation / larabase 21-22 bound); fire overlay played on agent/Flinch8 (upper-body chart S90, anim section 1) | pre-existing | C-VM |
 | OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (f9676fd; `instance` 63 open, record narrowed) | pre-existing | C-VM |
 | OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Fixed-verified (agent/ScriptVm6) | pre-existing | C-VM |
 | OU-SCR-005 | script VM | Level-change fade to white unsupported (always black) | Open | pre-existing | C-VM |
@@ -983,10 +983,25 @@ loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Fixed
   1501/1500/1499 and 1493/1494/1495 = Lara's `fire_walk_*` / `fire_standing_*`). Survey (`GameReal.ScriptSurvey`):
   132 → 89 handler stops (anchor 1 41 → 0, larabase 21 2 → 0, no new reason). ctest (private kwin, build-ScriptVec7):
   `-R 'Script|ProgressionReal|GameReal|StreamReal|^Game|selftest|replay'` 545 / 545, `-L protected` 41 / 41.
-- Still open: the overlay is not played (`Runtime::playerAnimPosts` records it): which of Lara's chart states take
-  0x1DA / 0x1DB, her action 0x760530's query 0x645 and the mask of anim layer +0x320 (0x444BA0) are not decoded; general
-  (tilted) euler order of rotation 0 / anchor 3..5 beyond yaw is [I]; a marker anchor stored in a member keeps only the
-  object's uid [I].
+- Overlay played 2026-11-19 (agent/Flinch8). Before: `Runtime::playerAnimPosts` recorded the posts and nothing played
+  them. What tru.exe does [O, docs/GAMEPLAY.md "Script flinch overlay"]: larabase 21 / 22 store `{kind 1, pattern}` at
+  `+0x488` of her upper-body chart (`*(0xFADB58 + 0xF14)`, lara.drm player data `+0x12530`). That chart's root S0 lists
+  0x1DA → T11 and 0x1DB → T10 (flag 4: also re-enters from S90), into S90 under `PSCCF_OnGround` and condition 0x21B
+  (`0x765FD0`: property 0x645, type 43 = the locomotion chart's value, `0x785BF6`; set on idle / walk / run / turns /
+  landings / crouch / slopes / wall hug / hurdles). S90's entry action 0x641 = `0x760530` plays the pattern on anim
+  section 1 (`+0x320`). Its bone mask is `0x432780(obj, 1)`: globalaniminfo id 1 → lara.drm ObjectBase `+0xC0` mask 1
+  = segments 14..106 at weight 1. S90 returns to S0 on clip done (0xC9) or 0x645 clear; S0's request 121 fades the
+  section out over the pattern's `+0x1B` frames. Wine (l3_main_bedroom 4529, `tools/wine-ref` helper `section`): walking
+  `fire_walk_right` (request 1499), standing `fire_standing_right` (1495); weight +0.25 / −0.2 per 30 Hz frame; mask runs
+  `{0, 0..13} {1, 14..106} {0, 107..152}`; standing, the clip restarts after one frame in S0. Change: `World::tickFlinch`
+  / `flinchLayer` (a second `AnimController` blended over segments 14..106 before the weapon layer), pattern fields
+  `+0x19..+0x1B` decoded, saved as runtime `flinch`. Tests: `GameReal.FireVolumeFlinchPlaysUpperBodySection` (front /
+  left / right standing, walking right; fade-in, restart, mask, fade-out), `StreamReal.SaveContinuesBitIdentically`
+  (new l3_main_bedroom case). ctest (private kwin, build-Flinch8): `-R
+  'ProgressionReal|GameReal|StreamReal|^Game|selftest|replay|Script|Anim|Save'` 595 / 595, `-L protected` 41 / 41.
+- Still open: condition 0x1F5 (the swimming entry T24 / T23) [U], so she does not flinch in water; combat mode is taken
+  as a weapon out [I]; general (tilted) euler order of rotation 0 / anchor 3..5 beyond yaw is [I]; a marker anchor stored
+  in a member keeps only the object's uid [I].
 
 **OU-SCR-003 Other unbound natives seen in user runs** — `instanceref` fn 10 (unit scripts, 64), `instance` fn 27
 (l2_cliffclimb 37, l1_seafloor 10, l7_arctic_sea 5), `gamebase` fn 27 (`ms_uo_yacht` 7, `co_yacht` 1), `instance` fn 63

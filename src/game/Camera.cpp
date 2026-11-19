@@ -343,6 +343,13 @@ nlohmann::json World::serializeRuntime() const {
         for (const auto& [uid, d] : waterDamage_) w.push_back({uid, d.amount, d.frames});
         out["waterDamage"] = std::move(w);
     }
+    if (flinch_.playing || flinch_.weight > 0) { // the script flinch overlay (only while it shows: other saves keep their bytes)
+        nlohmann::json section = nlohmann::json::array();
+        for (const auto& l : flinchAnim_.layerStates())
+            section.push_back({clipName(l.clip), l.time, l.rate, l.fade, l.elapsed, l.loop});
+        const FlinchState& f = flinch_;
+        out["flinch"] = {f.playing, f.pattern, f.playingPattern, f.weight, f.target, f.step, std::move(section)};
+    }
     if (!multibodyFixed_.empty()) out["multibodyFixed"] = multibodyFixed_; // (only once a script fixed one)
     return out;
 }
@@ -363,6 +370,16 @@ void World::restoreWorldRuntime(const nlohmann::json& j) {
     multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
     multibodyLimitOff_ = j.value("limitsOff", std::set<int32_t>{}); // older saves: every limit on
     multibodyFixed_ = j.value("multibodyFixed", std::set<int32_t>{});
+    flinch_ = {}, flinchAnim_ = anim::AnimController(anims_.skeleton); // the script flinch overlay (the key only while it shows)
+    if (const auto& f = j.value("flinch", nlohmann::json(nullptr)); f.is_array()) {
+        flinch_ = {f.at(0).get<bool>(), f.at(1).get<uint32_t>(), f.at(2).get<uint32_t>(), f.at(3).get<float>(), f.at(4).get<float>(),
+                   f.at(5).get<float>()};
+        std::vector<anim::AnimController::Layer> section;
+        for (const auto& l : f.at(6))
+            section.push_back({l.at(0).is_null() ? nullptr : anims_.find(l.at(0).get<std::string>()), l.at(1).get<double>(),
+                               l.at(2).get<float>(), l.at(3).get<float>(), l.at(4).get<float>(), l.at(5).get<bool>(), false, nullptr, 0});
+        flinchAnim_.setLayers(std::move(section));
+    }
     syncedObjects_ = ~size_t(0);
 }
 
