@@ -1108,6 +1108,41 @@ run-to-run noise). No cost is measurable above the noise of these runs; GPU time
 
 Techniques credited in docs/RESEARCH.md §8.6 (modern-wow-renderer: inspiration only, no code).
 
+## Time of day (GL + Vulkan, both presets; `graphics.time_of_day default|day|night|cycle`, `graphics.day_length`, `--time-of-day`, `--day-length`, WATER & SKY > TIME OF DAY / DAY LENGTH)
+
+Ours; tru.exe has no time of day. `default` is the game's own lighting (nothing changes). Code:
+`render/TimeOfDay.{hpp,cpp}` (the model), ou-game `EffectsView::timeOfDayLook` (per frame), `FrameOptions::sky`
+(`render::Sky`), the backdrop pass `shaders/sky.{vert,frag}`. Test `TimeOfDay.ConfigUnitsAndLight`.
+
+- Where: the camera unit is under open sky (`timeOfDayApplies`: a sun record, exterior terrain or rain-map cells) and
+  is not Croft Manor (`l3_*`: the prologue's burning manor and the chapter 3 manor keep their scripted storm and fire).
+  Caves, tombs, Helheim, Valhalla, the ship interiors have none of the three and keep their own lighting; walking from
+  a night jungle into one switches to its lighting (their light is artificial anyway).
+- Sun arc (`sunArc`): elevation `max(own elevation, 50 deg) x sin(2 pi (h - 6) / 24)` (sunrise 6:00, sunset 18:00),
+  azimuth turning 15 deg per hour and passing the unit's own sun direction at its native hour (6..12), so the cycle
+  starts (at the first outdoor unit's native hour) with the default lighting. `day` = 12:00, `night` = 21:00 (the
+  moon about 35 deg up, in view, long shadows). The cycle runs on game time (paused with the game), `day_length` real
+  minutes per 24 hours (1..240, default 24; menu 12 / 24 / 48 / 96).
+- Sun and moon: the frame's sun replaces the unit record's (`original::applySky` into the backend's environment, record
+  rows 0 / 1 turned with it: PSSM light space and sun cookie), so TRU's shaders, PSSM, the shadow map, RT shadows / GI,
+  Enhanced water, atmosphere shafts all follow. Sunrise / sunset tint the sun golden (1, 0.62, 0.38); once it is down
+  the moon takes the slot opposite it: moonlight (0.24, 0.30, 0.48), casting shadows. Units without a sun record get no
+  sun or moon.
+- Light the art baked for daylight, scaled from day to night (`smoothstep(-8, 6 deg)` of the sun elevation): ambient
+  and light probes x (0.20, 0.24, 0.38), light maps (GlobalParams c148 / c149, which scripts use to fade them) and
+  programs reading no light register at all (`FrameBlock::unlit`: foliage lit by vertex colour / texture; not additive
+  or exterior) x (0.32, 0.35, 0.48), every fog colour (unit / water fog sets, the filters' fog blocks, TRU's water
+  pass) and the backdrop x (0.10, 0.12, 0.20). Sunless outdoor units (lamp-lit) keep more: ambient 0.6, light maps 0.7.
+  Local lights (torches, lamps, the flashlight) are untouched. A dark own look (fog luminance below 0.32, e.g.
+  l6_ship_exterior's storm) is lifted by day toward it, at most x 2.2.
+- Backdrop pass: right after the exterior terrain and its depth clear (or first, without one; also in the planar
+  reflection), a full-screen triangle multiplies the frame so far (sky domes, the clear colour) by the backdrop tint,
+  then adds a star field (3D cell hash, ~1.5 px stars, twinkle, fading at the horizon) and the moon disc with a glow,
+  under a clear sky only (no Enhanced weather, no unit rain object). Colour writes rgb only.
+
+Limits: the cycle clock is not saved (it restarts at the native hour each session); generic-shaded fallback draws keep
+their fixed lambert.
+
 ## Original Fidelity vs Enhanced (plan)
 
 Two render modes share the scene graph and simulation; only the backend's frame graph differs.

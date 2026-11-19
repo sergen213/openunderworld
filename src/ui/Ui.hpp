@@ -240,6 +240,8 @@ struct GraphicsOptions {
     bool effects = true;
     bool antiLag = false;                          // AMD Anti-Lag (Vulkan, VK_AMD_anti_lag)
     int tonemap = 0;                               // 0 original, 1 agx (config tonemap)
+    int timeOfDay = 0;                             // config::kTimesOfDay: 0 default, 1 day, 2 night, 3 cycle
+    int dayLength = 1;                             // cycle minutes per day: app::graphics_detail::kDayLengths index
     // Set by the app from the live renderer: rows that cannot apply are greyed (shown, not selectable).
     bool rtSupported = true, fsrSupported = true, antiLagSupported = true;
     bool operator==(const GraphicsOptions&) const = default;

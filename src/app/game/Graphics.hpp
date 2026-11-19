@@ -40,6 +40,7 @@ inline constexpr std::array<std::string_view, 5> kAtmosphere{"auto", "off", "low
 inline constexpr std::array<std::string_view, 4> kWeather{"auto", "off", "rain", "snow"};
 inline constexpr std::array<std::string_view, 5> kFsrQuality{"native", "quality", "balanced", "performance", "ultra_performance"};
 inline constexpr std::array<std::string_view, 2> kTonemap{"original", "agx"};
+inline constexpr std::array<int, 4> kDayLengths{12, 24, 48, 96}; // minutes (DAY LENGTH)
 
 int indexOf(const auto& values, const auto& v) { // unknown: 0
     const auto it = std::find(values.begin(), values.end(), v);
@@ -50,6 +51,12 @@ inline int toTri(std::optional<bool> v) { return !v ? 0 : *v ? 1 : 2; } // 0 def
 inline std::optional<bool> fromTri(int v) { return v == 1 ? std::optional(true) : v == 2 ? std::optional(false) : std::nullopt; }
 inline int fovStep(float fov) { return std::clamp(int(std::lround(fov)), 30, 120); }
 inline int sharpnessStep(float s) { return std::clamp(int(std::lround(s * 10)), 0, 10); }
+inline int dayLengthStep(float minutes) { // nearest kDayLengths index
+    int best = 0;
+    for (int i = 1; i < int(kDayLengths.size()); ++i)
+        if (std::abs(float(kDayLengths[size_t(i)]) - minutes) < std::abs(float(kDayLengths[size_t(best)]) - minutes)) best = i;
+    return best;
+}
 } // namespace graphics_detail
 
 // Window sizes offered: the launcher's presets, the desktop and the current size, sorted, no duplicates.
@@ -78,12 +85,13 @@ inline ui::GraphicsOptions graphicsMenu(const config::GraphicsConfig& g, const D
     m.atmosphere = indexOf(kAtmosphere, g.atmosphere), m.lightShafts = toTri(g.lightShafts), m.cineDof = toTri(g.cineDof), m.weather = indexOf(kWeather, g.weather);
     m.fsr = g.upscaler == "fsr", m.fsrQuality = indexOf(kFsrQuality, g.fsrQuality), m.sharpness = sharpnessStep(g.sharpness);
     m.frameGeneration = g.frameGeneration, m.effects = g.effects, m.antiLag = g.antiLag, m.tonemap = indexOf(kTonemap, g.tonemap);
+    m.timeOfDay = indexOf(config::kTimesOfDay, g.timeOfDay), m.dayLength = dayLengthStep(g.dayLength);
     return m;
 }
 
 // Menu values back into the config + display. Keys the menu does not show (brightness, fxaa, hdr) stay; finer launcher
-// values (fov 62.5, sharpness 0.33) stay while their slider step is unchanged. Sanitized so config::resolve() accepts it:
-// explicit RT with the original preset -> "auto" (off), frame generation needs FSR.
+// values (fov 62.5, sharpness 0.33, day length 30) stay while their slider / choice step is unchanged. Sanitized so
+// config::resolve() accepts it: explicit RT with the original preset -> "auto" (off), frame generation needs FSR.
 inline void applyGraphicsMenu(const ui::GraphicsOptions& m, config::GraphicsConfig& g, Display& d) {
     using namespace graphics_detail;
     d.renderer = at(kRenderers, m.renderer);
@@ -105,6 +113,8 @@ inline void applyGraphicsMenu(const ui::GraphicsOptions& m, config::GraphicsConf
     g.tonemap = at(kTonemap, m.tonemap);
     if (m.sharpness != sharpnessStep(g.sharpness)) g.sharpness = float(std::clamp(m.sharpness, 0, 10)) / 10;
     g.frameGeneration = m.fsr && m.frameGeneration, g.effects = m.effects, g.antiLag = m.antiLag;
+    g.timeOfDay = at(config::kTimesOfDay, m.timeOfDay);
+    if (m.dayLength != dayLengthStep(g.dayLength)) g.dayLength = float(at(kDayLengths, m.dayLength));
 }
 
 } // namespace ou::app

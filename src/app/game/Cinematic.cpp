@@ -384,6 +384,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
             if (v.unitFilter) sum.add(*v.unitFilter, 1.0f);
             if (pose.dof && settings.dofFilter) sum.add(*settings.dofFilter, 1.0f);
             fog = sum.resolve(v.fogSet);
+            for (int k = 0; k < 3; ++k) fog.color[k] *= v.fogTint[k];
             fo.fog = &fog;
         }
         v.renderer.drawFrame(cam, {w, hgt}, fo);

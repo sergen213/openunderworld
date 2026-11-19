@@ -26,9 +26,11 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect);
 // `flipY`: the backend's screen copies are stored bottom-up (GL), so ScreenExtents maps vPos.y to 1 - v.
 // `underwater` with fog: its fog replaces the unit's (FrameOptions::underwater).
 // `cookies`: the backend's spot cookie array layers (cookieIds of the uploaded scene).
+// `sky` (FrameOptions::sky, time of day): its light-map scale goes to GlobalParams c148 / c149 (else 1). Its sun is the
+// backend's to put into `env` (applySky).
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float timeSeconds, const scene::Environment& env,
                bool flipY = false, const Underwater* underwater = nullptr, std::span<const uint32_t> cookies = {},
-               const Fog* fog = nullptr);
+               const Fog* fog = nullptr, const Sky* sky = nullptr);
 // The point/spot light table (FrameBlock::lights, first kMaxLights of env.lights) at time t (flicker); part of fillFrame.
 // `eye`: the camera position, for the lights' distance switch (lightFade); nullptr = every light at full intensity.
 void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds, std::span<const uint32_t> cookies = {},
@@ -38,6 +40,11 @@ float lightFade(const scene::Light& l, glm::vec3 eye);
 // FrameOptions::unitLook into the backend's copy of the uploaded environment: fog and water fog sets, far plane,
 // ambient, PSSM split fractions (the fields game::blendUnitLook writes). Kept until the next look or upload.
 void applyUnitLook(scene::Environment& env, const scene::Environment& look);
+// The frame's sun into the backend's copy of the uploaded environment: `sky`'s sun when it has one, else `own` (the
+// uploaded unit's sun fields, kept by the backend at upload), so a frame without a time of day shows the scene's sun.
+struct SunFields { bool sun = false; float direction[3] = {}, color[3] = {}, axes[2][3] = {}; };
+SunFields sunFields(const scene::Environment& env);
+void applySky(scene::Environment& env, const SunFields& own, const Sky* sky);
 
 // tru.exe's sun shadows (PSSM, 0x50CCB0; SHADERS.md "PSSM"): kPssmSplits splits, far to near, each an orthographic view
 // of the bounding sphere of its camera-frustum slice, rendered into one kPssmTile² tile of a kPssmWidth x kPssmHeight
@@ -100,7 +107,8 @@ public:
         for (size_t i = 0; i < meshes.size(); ++i)
             if (meshes[i].irradiance) slot_[i] = place(env, i, meshes[i].center);
     }
-    void fill(sm3::FrameBlock& f) const; // slots 1..: after fillFrame (which writes slot 0)
+    // Slots 1..: after fillFrame (which writes slot 0). `scale`: rgb factor of every state (Sky::probes); null = 1.
+    void fill(sm3::FrameBlock& f, const float* scale = nullptr) const;
     uint32_t slot(size_t mesh) const { return mesh < slot_.size() ? slot_[mesh] : 0; }
 
 private:
