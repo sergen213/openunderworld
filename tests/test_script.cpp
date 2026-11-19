@@ -1425,6 +1425,51 @@ TEST(ScriptRealData, FireVolumeConstructorBuildsSensors) {
     EXPECT_EQ(attached, 4 * volumes);
 }
 
+// l3_main_bedroom fire volume 4493 (firetriggervolume 6516, state 1 = fn 8): `while (true) { health 2 (300); ...;
+// SSEQU sound 1 }`, the burn sound being the loop's only clock (at 4493's centre no triggervolume sends "stopOthers").
+// tru.exe always suspends the thread on the sequence's latent (0x4AF230 allocates it even when the sound did not start;
+// 0x57CE50 case 0x6A queues it via 0x576A30 and returns) and resumes it once IsActive (0x4ACC30) is false, checked from
+// the next thread update (0x57E970). So:
+// - a sound that does not play costs one tick per pass: the loop hits again every tick and never runs into the VM's
+//   instruction budget (before: it spun until "handler stopped: budget");
+// - the sustained burn sound (busy) holds the thread: one hit per entry, as Wine measured with Lara held in fire volume
+//   4494 for 14 s (health 1000 -> 700 once, openunderworld-work/w2/ScriptVm6/rec4494.txt).
+TEST(ScriptRealData, FireVolumeBurnWaitsOnItsSound) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l3_main_bedroom.drm")));
+    const auto run = [&](bool busy, int ticks, int& hits, int& starts) {
+        Runtime r;
+        r.setBigfile(&bf);
+        r.setUnits({{"l3_main_bedroom", drm, {}}});
+        hits = starts = 0;
+        r.setHealthNative([&](uint32_t fn, std::span<const vm::Value>, uint32_t& result) {
+            result = 0;
+            hits += fn == 2;
+            return true;
+        });
+        r.setSoundNative([&](int32_t owner, uint32_t member, cdc::Pointer, uint32_t fn, int32_t) {
+            starts += owner == 4493 && member == 64 && fn == 1;
+            return busy;
+        });
+        r.setSoundBusy([&](int32_t owner, uint32_t member) { return busy && owner == 4493 && member == 64; });
+        r.tick(at(vec3(1e7f)));
+        const Object* v = r.find(4493);
+        ASSERT_TRUE(v);
+        const vec3 pos = v->pos;
+        for (int i = 0; i < ticks; ++i) r.tick(at(pos));
+        for (const auto& [key, count] : r.failures()) EXPECT_NE(key.first, 4493) << key.second;
+    };
+    int hits = 0, starts = 0;
+    run(false, 30, hits, starts);
+    EXPECT_GE(starts, 25) << "a silent sound costs one tick per pass";
+    EXPECT_EQ(hits, starts);
+    run(true, 600, hits, starts);
+    EXPECT_EQ(starts, 1);
+    EXPECT_EQ(hits, 1) << "the sustained burn sound holds the loop (tru.exe: one 300 hit in 14 s)";
+}
+
 // Natives the user logs and the script survey reported missing (docs/re/SCRIPT_NATIVES.md "Natives reported missing"):
 // l6_ship_exterior's yacht 7651 sets a colour ramp (gamebase 27; the current colour then moves to the target),
 // l3_main_hall's unit script asks unitref 1 IsLoaded of a unit; neither stops its handler any more (instanceref 10 needs

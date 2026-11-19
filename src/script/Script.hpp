@@ -346,7 +346,8 @@ public:
     // Whether (owner, member)'s sound still plays. 1 / 2 return a SoundSequence (0x4AF230 / 0x4AF290, cdc::SoundSequence
     // IsActive 0x4ACC30: the handle's sound instance lives) and every retail call runs them as one (SSEQU), so the thread
     // waits for the sound: l5_valaskjalf types 16266-16269 change state after theirs, l4_traprooms 15087 plays 20 in a row.
-    // Unset (no sound): the call returns at once.
+    // The wait always lasts at least one tick (0x57E970 checks the latent from the next update on); unset (no sound
+    // clock) it lasts exactly one, as a sound that never started does in the exe.
     using SoundBusy = std::function<bool(int32_t owner, uint32_t member)>;
     void setSoundBusy(SoundBusy busy) { soundBusy_ = std::move(busy); }
     // `reverb` 1 (0x4AA750): `at` = the member's initial value in `unit`'s DRM: the 13 SFX-reverb floats its pointer names

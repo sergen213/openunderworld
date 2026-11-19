@@ -2417,8 +2417,21 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                     return true;
                 }
             }
-            if (!std::strcmp(name, "sound") && nc.function >= 1 && nc.function <= 5 && sound_ &&
-                nc.receiver.kind == vm::Value::Kind::Member) {
+            if (!std::strcmp(name, "sound") && nc.function >= 1 && nc.function <= 5 && nc.receiver.kind == vm::Value::Kind::Member) {
+                // 1 / 2 return a SoundSequence latent (0x4AF230 / 0x4AF290 allocate it whether or not the sound started) and
+                // SSEQU on a latent always suspends the thread (0x57CE50 case 0x6A: 0x574960, then 0x576A30 queues it and the
+                // interpreter returns). The thread update 0x57E970 runs the thread again only once IsActive (0x4ACC30: the
+                // handle's sound instance lives) is false, checked from the next update on. So the call costs at least one
+                // tick; the retries (one a tick, stack untouched) only ask whether the sound still plays.
+                const bool waits = nc.function == 1 || nc.function == 2;
+                const auto key = std::make_pair(self->uid, uint32_t(off));
+                const auto w = soundWaits_.find(key);
+                if (waits && w != soundWaits_.end() && w->second + 1 >= tick_) {
+                    nc.result = vm::Value::scalar(0);
+                    if (soundBusy_ && soundBusy_(self->uid, off)) w->second = tick_, nc.wait = true;
+                    else soundWaits_.erase(w);
+                    return true;
+                }
                 int32_t anchor = 0;
                 if ((nc.function == 1 || nc.function == 3) && !nc.args.empty()) { // 3D: an instance(ref) argument
                     const auto& a = nc.args[0];
@@ -2426,19 +2439,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                     else if (a.kind == vm::Value::Kind::Member)
                         if (const auto holder = resolve(a.uid)) anchor = int32_t(holder->fields[a.offset]);
                 }
-                const Member* m = program->member(self->typeId, off);
-                // 1 / 2 as a sequence (setSoundBusy): the first call plays, the retries (one a tick, stack untouched) only
-                // ask whether the sound still plays.
-                const bool waits = nc.function == 1 || nc.function == 2;
-                const auto key = std::make_pair(self->uid, uint32_t(off));
-                const auto w = soundWaits_.find(key);
-                const bool retry = waits && w != soundWaits_.end() && w->second + 1 >= tick_;
-                if (m && m->initAt && (retry || sound_(self->uid, off, *m->initAt, nc.function, anchor))) {
-                    nc.result = vm::Value::scalar(0);
-                    if (waits && soundBusy_ && soundBusy_(self->uid, off)) soundWaits_[key] = tick_, nc.wait = true;
-                    else if (waits) soundWaits_.erase(key);
-                    return true;
-                }
+                if (const Member* m = program->member(self->typeId, off); sound_ && m && m->initAt)
+                    sound_(self->uid, off, *m->initAt, nc.function, anchor);
+                nc.result = vm::Value::scalar(0);
+                if (waits) soundWaits_[key] = tick_, nc.wait = true;
+                return true;
             }
             // Existing engine systems already handle (or intentionally do not yet expose) these side effects.
             // Their return values are zero; unknown gameplay bindings remain unsupported instead of being ignored.
