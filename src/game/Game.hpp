@@ -540,6 +540,10 @@ public:
         prevCameraYaw_ = cameraKnown_ ? cameraYaw_ : yaw;
         cameraYaw_ = yaw, cameraPitch_ = pitch, cameraKnown_ = true;
     }
+    // The view yaw the last tick swam by (setCamera), for a save: a load seeds it (seeCamera) so that the first swim
+    // turn after it carries the camera's turn as the uninterrupted game does. nullopt: none since the last restore.
+    std::optional<float> seenCameraYaw() const { return cameraKnown_ ? std::optional<float>(cameraYaw_) : std::nullopt; }
+    void seeCamera(float yaw) { cameraYaw_ = yaw, cameraKnown_ = true; }
     // Load / stream. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks them held
     // (Buttons::hold) so that a key still down gives no press edge on the next tick.
     void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false; }
@@ -1160,6 +1164,7 @@ public:
     int markupIndex(const std::string& unit, int local) const;
     // Replaces Lara's state (world frame) and the camera orbit; no interpolation across the jump.
     void restore(const PlayerState& s, float camYaw, float camPitch);
+    void seeCamera(float yaw) { player_.seeCamera(yaw); } // the view yaw her last tick swam by (Player::seenCameraYaw), after a load
 
     // Interactive water (src/game/Water): ripple field + splash droplets around Lara, ticked with the world.
     const WaterSim& water() const { return water_; }

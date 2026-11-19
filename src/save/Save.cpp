@@ -58,7 +58,11 @@ json toJson(const SaveGame& s) {
                     {"clip", p.clip}, {"clipTime", p.clipTime}, {"clipRate", p.clipRate}, {"loop", p.loop},
                     {"ledge", ledge}, {"runJump", p.runJump}, {"regrabCooldown", p.regrabCooldown},
                     {"water", water}, {"pitch", p.pitch}, {"fallStartZ", p.fallStartZ}, {"controller", s.controller}}},
-        {"camera", {{"yaw", s.cameraYaw}, {"pitch", s.cameraPitch}}},
+        {"camera", [&] {
+             json c = {{"yaw", s.cameraYaw}, {"pitch", s.cameraPitch}};
+             if (s.cameraSeenYaw) c["seen"] = *s.cameraSeenYaw;
+             return c;
+         }()},
         {"runtime", s.runtime},
         {"checkpoint", cp},
         {"checkpointSave", s.checkpointSave},
@@ -132,6 +136,7 @@ SaveGame fromJson(const json& j) {
     if (const auto c = j.find("camera"); c != j.end()) {
         s.cameraYaw = c->at("yaw").get<float>();
         s.cameraPitch = c->at("pitch").get<float>();
+        if (const auto seen = c->find("seen"); seen != c->end()) s.cameraSeenYaw = seen->get<float>();
         s.runtime = j.value("runtime", json(nullptr)); // written beside the camera angles
     } else {
         s.cameraYaw = ps.yaw;
@@ -222,7 +227,7 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
             {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends, p.ropeMax}},
-            {"sprintUsed", p.sprintUsed}, {"polePara", p.polePara},
+            {"sprintUsed", p.sprintUsed}, {"polePara", p.polePara}, {"swimSpeed", p.swimSpeed},
             {"wallJump", {vec(p.jumpStart - offset), p.jumpTime, p.jumpAimed, p.wallJumps, p.wallTime,
                           vec(p.jumpFromLedge ? p.jumpLedge - offset : game::vec3(0)), p.jumpFromLedge}},
             {"balance", {p.balance.build, p.balance.aboutFall, p.balance.grace, p.balance.unbal, p.balance.bal, p.balance.notImprove,
@@ -282,6 +287,7 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     p.ropeMax = g.size() > 5 ? g.at(5).get<float>() : 0.0f; // older saves: g_grapple's rope
     p.sprintUsed = c.at("sprintUsed");
     p.polePara = c.value("polePara", false); // older saves: the perpendicular hang
+    p.swimSpeed = c.value("swimSpeed", -1.0f); // older saves: from the velocity, as on entering the swim
     p.jumpStart = p.pos, p.jumpTime = 0, p.jumpAimed = false, p.wallJumps = 0, p.wallTime = 0; // older saves: no chimney jump
     p.jumpLedge = game::vec3(0), p.jumpFromLedge = false;
     if (const auto wj = c.find("wallJump"); wj != c.end()) {
@@ -315,6 +321,7 @@ SaveGame capture(const game::World& world) {
     s.player.ledge = s.player.water = -1;
     s.cameraYaw = world.camera().yaw;
     s.cameraPitch = world.camera().pitch;
+    s.cameraSeenYaw = world.player().seenCameraYaw();
     s.runtime = world.serializeRuntime();
     s.checkpoint = world.checkpoint();
     s.checkpointSave = world.checkpointSave();
@@ -414,6 +421,9 @@ void apply(const SaveGame& save, game::World& world) {
         throw SaveError(e.what());
     }
     if (objectLedge) world.restoreObjectMarkup(save.ledgeUnit, save.ledgeIndex);
+    // Last, after every restore above that replaces her state (each forgets the camera): the swim turn's view yaw of
+    // the tick before, so the first tick turns her with the camera as the uninterrupted game does.
+    if (!airborne && save.cameraSeenYaw) world.seeCamera(*save.cameraSeenYaw);
     // The maximum follows the relics among `collected` (World::maxHealth); a save without health loads at full.
     world.syncMaxHealth();
     world.setHealth(save.health ? *save.health : world.health().max());
