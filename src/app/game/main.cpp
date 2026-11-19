@@ -2284,6 +2284,11 @@ int main(int argc, char** argv) {
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: audio: %s\n", e.what());
         }
+    }
+    // GameSound also under --no-audio (no device opened: nothing is played): script `sound` 1 / 2 sequences wait on the
+    // sound's game-time length (SoundPlayer::busy, tru.exe SoundSequence IsActive 0x4ACC30), so script timing (the
+    // fire volumes' burn clock) must not depend on whether audio is on.
+    {
         try {
             sound.emplace(*bigfile, mixer);
             sound->setLanguage(language);
@@ -3147,6 +3152,9 @@ int main(int argc, char** argv) {
                 const size_t frames = mixer.outputRate() / 60, at = wav.size();
                 wav.resize(at + 2 * frames);
                 mixer.mix(wav.data() + at, frames);
+            } else if (!audioOn) { // device-less mixer (--no-audio, no device): a tick of output discarded so voices end
+                static std::vector<float> scratch(size_t(2 * (mixer.outputRate() / 60)));
+                mixer.mix(scratch.data(), scratch.size() / 2);
             }
             if (menus.screen() != ou::ui::Screen::None) { // paused: the world does not tick
                 if (script)
