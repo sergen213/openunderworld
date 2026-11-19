@@ -7,7 +7,11 @@
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <numbers>
 #include <stdexcept>
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace ou::script::vm {
 namespace {
@@ -24,6 +28,7 @@ uint32_t nativeMoveSize(const ScriptType* type) {
     const std::string& n = type->nativeName;
     if (n == "cameraspline" || n == "cameraanchor") return 8;
     if (n == "messagechannel") return 20;
+    if (n == "vector" || n == "rotation") return 16; // {x, y, z, w} floats (valueNative)
     if (n == "sound" || n == "instanceref" || n == "playersensor" || n == "clock" || n == "inputaction") return 4;
     return 0;
 }
@@ -222,6 +227,14 @@ bool Machine::push(Instance& object, const Function& f, std::span<const Value> a
         // `damagetype` locals are constants a hit's damage class is compared with (damagetype 0): the base script of
         // l7_yggdrasil_end's Natla holds 13, Mjolnir's class, in her hit callback (vt 22).
         const bool damage = l.init && !std::strcmp(type, "damagetype");
+        // BOOL / INT / FLOAT locals start at their record's value too: the frame setup 0x57A850 constructs every local
+        // record (Function +0xC, 0x14 bytes) at frame + offset from its init (+0x10) through 0x579770 (a BOOL copies one
+        // byte). 6515 fn 1 (the fire volumes' side test) compares against its FLOAT local +12 = pi so.
+        if (const uint8_t base = l.type & 0x8F; l.init && base >= 1 && base <= 3) {
+            if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
+            fr.locals[l.offset] = Value::scalar(base == 1 ? *l.init & 0xFF : *l.init);
+            continue;
+        }
         if (!symbol && !music && !damage) continue;
         if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
         fr.locals[l.offset] = Value::scalar(symbol || damage ? *l.init : l.init2.value_or(0));
@@ -307,32 +320,49 @@ int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame&
     // A native whose receiver address is null (a member of a null object, 0x11/0x12/0x15) is skipped by the exe
     // (0x57CE50 native call: the prototype's receiver flag set and a null receiver -> next instruction).
     const bool nullNative = f.native && receiver.kind == Value::Kind::Scalar && receiver.bits == 0 && !receiver.text;
+    const Value receiverAddress = receiver;
     receiver = deref(receiver); // object or native value held in a local
     std::vector<Value> args(frame.stack.end() - f.argCount, frame.stack.end());
-    if (f.native) // natives get values, not addresses of the caller's locals (a cameraspline argument held in a local)
-        for (Value& a : args) a = deref(a);
     // A caller that discards the result pushes no result address (l3_chapel soundvolume `globals.member12.vt19()`).
     const Value* slot = f.returnType && frame.stack.size() > f.argCount ? &*(frame.stack.end() - f.argCount - 1) : nullptr;
     const bool hasResult = slot && (slot->kind == Value::Kind::Local || slot->kind == Value::Kind::Member ||
                                      (slot->kind == Value::Kind::Scalar && slot->bits == 0));
     const Value resultAddress = hasResult ? *slot : Value{};
-    Value result;
     if (nullNative) {
         frame.stack.resize(frame.stack.size() - f.argCount - hasResult);
         return hasResult && !write(resultAddress, Value::scalar(0)) ? 0 : 1;
     }
     if (f.native) {
-        NativeContext nc{current.program->owner(&f), current.program->functionIndex(&f), receiver, args, {}};
+        const uint32_t type = current.program->owner(&f), index = current.program->functionIndex(&f);
+        bool ok = true;
+        if (valueNative(current.program->nativeName(type), index, receiverAddress, args, hasResult ? &resultAddress : nullptr, ok)) {
+            if (!ok) {
+                failure_ = std::string("native ") + current.program->nativeName(type) + " fn " + std::to_string(index);
+                return 0;
+            }
+            frame.stack.resize(frame.stack.size() - f.argCount - hasResult);
+            return 1;
+        }
+        for (Value& a : args) a = deref(a); // natives get values, not addresses of the caller's locals (a cameraspline argument held in a local)
+        NativeContext nc{type, index, receiver, args, {}};
         nc.name = current.program->nativeName(nc.typeId);
         if (!native_(nc)) {
             failure_ = std::string("native ") + nc.name + " fn " + std::to_string(nc.function);
             return 0;
         }
         if (nc.wait) return 3; // blocking native (e.g. WaitUntilBirthed): stack untouched, retried next tick
-        result = nc.result;
+        frame.stack.resize(frame.stack.size() - f.argCount - hasResult);
+        if (!hasResult) return 1;
+        if (!nc.wordCount) return write(resultAddress, nc.result) ? 1 : 0;
+        const Value at = valueAt(resultAddress);
+        for (uint32_t i = 0; i < nc.wordCount; ++i) {
+            Value word = at;
+            word.offset += 4 * i;
+            if (!store(word, nc.words[i])) return 0;
+        }
+        return 1;
     }
     frame.stack.resize(frame.stack.size() - f.argCount - hasResult);
-    if (f.native) return hasResult && !write(resultAddress, result) ? 0 : 1;
     auto target = resolveObject(receiver);
     if (!target) {
         if (hasResult && !write(resultAddress, Value::scalar(0))) return 0;
@@ -344,6 +374,95 @@ int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame&
     // vt 54: PUSHL32 0 ... MOVE8); its arguments follow it.
     if (hasResult && (!f.argCount || (!f.argOffsets.empty() && f.argOffsets[0] >= 4))) frames_.back().locals[0] = resultAddress;
     return 2;
+}
+
+Value Machine::valueAt(Value a) const {
+    for (int i = 0; i < 4 && a.kind == Value::Kind::Local && a.frame < frames_.size() && a.offset < frames_[a.frame].locals.size(); ++i) {
+        const Value& held = frames_[a.frame].locals[a.offset];
+        if (held.kind != Value::Kind::Local && held.kind != Value::Kind::Member) break;
+        a = held;
+    }
+    return a;
+}
+
+// `vector` (type 220) and `rotation` (type 219) values are 16 bytes, {x, y, z, w} floats (a rotation: euler angles,
+// z = yaw), at a local's or member's byte offset: words at +0, +4, +8, +12 (tru.exe keeps them inline in the frame /
+// instance data; the interpreter passes their address as receiver and as native-typed argument, 0x57DE34). Thunks
+// `handler(receiver*, argc, args*, result*)`:
+// vector  0 / 3, 1 / 4, 2 / 5 get x / y / z (0x796540 / 0x7962A0 / 0x796440); 6 / 7 / 8 set x / y / z (0x796550 /
+//         0x796560 / 0x796450); 9 copy from args[0] (0x796570, null: nothing); 10 Set(x, y, z), w = 0 (0x796460);
+//         11 length sqrt(x²+y²+z²) (0x7ABAB0); 12 scale all four by args[0] (0x7ABAF0).
+// rotation 0 between args[0] and args[1] (0x796360 -> 0x4A2F40: 0x49DA10 normalises both, h = (a + b) / 2, quaternion
+//         (a × h, a · h), normalised (0x49B000); 0x49D450 -> matrix 0x49CF90 -> euler 0x49B440: x = atan2(m12, m22),
+//         y = atan2(-m02, |(m00, m01)|), z = atan2(m01, m00) of the row-vector matrix); 1 / 2 / 3 rows 0 / 1 / 2 of its
+//         matrix (0x4A3840 / 0x4A3870 / 0x4A38A0 over 0x49D500: identity, then z, y, x applied); 4 / 7, 5 / 8, 6 / 9
+//         get x / y / z; 10 / 11 / 12 set x / y / z; 13 copy; 14 Set(x, y, z); 15 z += args[0] degrees (0x7964B0,
+//         x 0.0174533). Not modelled: vector 13 / 14, rotation 16 / 17 (bool-argument engine calls 0x79D8E0 / 0x7987B0;
+//         no shipped bytecode calls them).
+bool Machine::valueNative(const char* type, uint32_t fn, const Value& receiver, std::span<const Value> args,
+                          const Value* resultAddress, bool& ok) {
+    const bool vector = !std::strcmp(type, "vector"), rotation = !std::strcmp(type, "rotation");
+    if (!vector && !rotation) return false;
+    const Value self = valueAt(receiver);
+    auto component = [](Value at, uint32_t i) { at.offset += 4 * i; return at; };
+    auto get = [&](const Value& at, uint32_t i) { return asFloat(load(component(at, i))); };
+    auto set = [&](const Value& at, uint32_t i, float v) { return store(component(at, i), fromFloat(v)); };
+    auto getVec = [&](const Value& at) { return glm::vec4(get(at, 0), get(at, 1), get(at, 2), get(at, 3)); };
+    auto setVec = [&](const Value& at, glm::vec4 v) { return set(at, 0, v.x) && set(at, 1, v.y) && set(at, 2, v.z) && set(at, 3, v.w); };
+    auto returns = [&](float v) { return !resultAddress || store(*resultAddress, fromFloat(v)); };
+    auto returnsVec = [&](glm::vec4 v) { return !resultAddress || setVec(valueAt(*resultAddress), v); };
+    auto isNull = [](const Value& v) { return v.kind == Value::Kind::Scalar && v.bits == 0 && !v.text; };
+    const auto argf = [&](size_t i) { return i < args.size() ? asFloat(load(args[i])) : 0.0f; };
+    // rotation -> matrix rows (0x49D500): column-vector R = Rx * Ry * Rz, row i of the exe's matrix = R e_i.
+    auto rows = [&](const Value& at) {
+        const glm::mat4 r = glm::rotate(glm::mat4(1), get(at, 0), glm::vec3(1, 0, 0)) *
+                            glm::rotate(glm::mat4(1), get(at, 1), glm::vec3(0, 1, 0)) *
+                            glm::rotate(glm::mat4(1), get(at, 2), glm::vec3(0, 0, 1));
+        return glm::mat3(r);
+    };
+    static constexpr uint8_t kVectorArgs[] = {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 3, 0, 1};
+    static constexpr uint8_t kRotationArgs[] = {2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 3, 1};
+    const std::span<const uint8_t> argc = vector ? std::span<const uint8_t>(kVectorArgs) : std::span<const uint8_t>(kRotationArgs);
+    const bool address = self.kind == Value::Kind::Local || self.kind == Value::Kind::Member;
+    if (fn >= argc.size() || args.size() != argc[fn] || !address) { ok = false; return true; }
+    if (vector) {
+        switch (fn) {
+        case 0: case 3: ok = returns(get(self, 0)); break;
+        case 1: case 4: ok = returns(get(self, 1)); break;
+        case 2: case 5: ok = returns(get(self, 2)); break;
+        case 6: case 7: case 8: ok = set(self, fn - 6, argf(0)); break;
+        case 9: ok = isNull(args[0]) || setVec(self, getVec(valueAt(args[0]))); break;
+        case 10: ok = setVec(self, {argf(0), argf(1), argf(2), 0.0f}); break;
+        case 11: ok = returns(glm::length(glm::vec3(getVec(self)))); break;
+        case 12: ok = setVec(self, getVec(self) * argf(0)); break;
+        }
+        return true;
+    }
+    switch (fn) {
+    case 0: { // RotationBetween(a, b): both null -> nothing
+        if (isNull(args[0]) && isNull(args[1])) break;
+        const glm::vec3 a = glm::normalize(glm::vec3(getVec(valueAt(args[0])))), b = glm::normalize(glm::vec3(getVec(valueAt(args[1]))));
+        if (!std::isfinite(a.x + b.x)) { ok = setVec(self, glm::vec4(0)); break; } // a zero vector [I: 0x49DA10 bails out]
+        const glm::vec3 h = (a + b) * 0.5f, xyz = glm::cross(a, h);
+        glm::quat q(glm::dot(a, h), xyz.x, xyz.y, xyz.z);
+        // a = -b: no half vector; 0x49DA10 then turns pi about an axis normal to a [I: about z for a horizontal a].
+        q = glm::length(q) > 1e-6f ? glm::normalize(q)
+                                   : glm::angleAxis(std::numbers::pi_v<float>, std::abs(a.z) < 0.999f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0));
+        const glm::mat3 r = glm::mat3_cast(q); // column-vector; the exe's row-vector m_ij = r[i][j] (glm r[column][row])
+        ok = setVec(self, {std::atan2(r[1][2], r[2][2]), std::atan2(-r[0][2], std::hypot(r[0][0], r[0][1])),
+                           std::atan2(r[0][1], r[0][0]), 0.0f});
+        break;
+    }
+    case 1: case 2: case 3: ok = returnsVec(glm::vec4(rows(self)[fn - 1], 0.0f)); break;
+    case 4: case 7: ok = returns(get(self, 0)); break;
+    case 5: case 8: ok = returns(get(self, 1)); break;
+    case 6: case 9: ok = returns(get(self, 2)); break;
+    case 10: case 11: case 12: ok = set(self, fn - 10, argf(0)); break;
+    case 13: ok = isNull(args[0]) || setVec(self, getVec(valueAt(args[0]))); break;
+    case 14: ok = setVec(self, {argf(0), argf(1), argf(2), 0.0f}); break;
+    case 15: ok = set(self, 2, get(self, 2) + argf(0) * 0.0174532924f); break;
+    }
+    return true;
 }
 
 // Builtin container methods (cdc::NativeBuiltInImpl 0x57BF90; records 0x8A7718 DYNARRAY, 0x8A7688 MAP), called by CALLU

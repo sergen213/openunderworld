@@ -59,6 +59,11 @@ struct NativeContext {
     Value receiver;
     std::span<const Value> args;
     Value result;
+    // A native value result wider than one word (a 16-byte `vector`: anchor 0 / 1 / 3..5): `wordCount` words written at
+    // the result address and the slots 4, 8, 12 bytes after it (locals and members are byte-offset keyed); then `result`
+    // is unused.
+    std::array<uint32_t, 4> words{};
+    uint8_t wordCount = 0;
     const char* name = "";  // native type name ("instanceref", ...)
     bool wait = false;      // set by a blocking native: the call is retried next tick (stack untouched)
 };
@@ -98,6 +103,11 @@ private:
     bool push(Instance& object, const Function& f, std::span<const Value> args = {});
     int invoke(Instance& object, const Function& f, Value receiver, Frame& frame); // 0 failed, 1 inline, 2 child pushed
     bool builtin(const Instr& in, Frame& frame); // CALLU on a builtin container method (Instr::builtinType)
+    // `vector` / `rotation` natives (pure value methods; the receiver and native-typed arguments are addresses): true =
+    // handled (`ok` = the call is supported), false = not a value native.
+    bool valueNative(const char* type, uint32_t function, const Value& receiver, std::span<const Value> args,
+                     const Value* resultAddress, bool& ok);
+    Value valueAt(Value address) const; // a local holding a caller's address (by-reference argument) -> that address
     std::shared_ptr<Instance> resolveObject(const Value& v);
     uint32_t load(const Value& v) const;
     Value read(const Value& v) const;
