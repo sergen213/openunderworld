@@ -5596,7 +5596,11 @@ TEST(GameReal, LaraPlaysInteractionClips) {
         EXPECT_EQ(s.state, game::State::Use);
         EXPECT_EQ(s.clip, "use:" + std::to_string(sw->laraClip));
         EXPECT_EQ(s.clip, "use:2605") << "obj_pull_lever";
-        EXPECT_NEAR(glm::length(glm::vec2(s.pos - sw->pos)), sw->useDistance, 1.0f);
+        // Wine (tru.exe, prologue frame): she ends 174.0 out of the switch's origin along its +X and 3.0 aside; the box rule
+        // (World::useSwitchClip) gives 179.4 / 1.6.
+        const glm::vec2 lx(std::cos(sw->rot.z), std::sin(sw->rot.z)), rel(glm::vec2(s.pos - sw->pos));
+        EXPECT_NEAR(glm::dot(rel, lx), 174.0f, 6.0f);
+        EXPECT_NEAR(glm::dot(rel, glm::vec2(-lx.y, lx.x)), -3.0f, 3.0f);
         bool fired = false;
         for (int i = 0; i < 200 && !fired; ++i) {
             w->tick(i % 2 ? use : game::Actions{}); // presses are ignored while the clip plays

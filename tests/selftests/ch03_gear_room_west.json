@@ -12,7 +12,7 @@
                 {"probe": "step.events", "has": ["use:57>57"]},
                 {"calls": ["32:55"], "note": "the switch's command reaches the jammed gears: they only try"},
                 {"probe": "object.32.uber.12", "eq": 0, "note": "the column stands"}]},
-    {"step": "down_to_the_lower_hall", "plan": ["go -10000 -11500 60", "face -157"], "duration": 60,
+    {"step": "down_to_the_lower_hall", "plan": ["go -12950 -13060 60", "go -12700 -13060 60", "go -12650 -12640 60", "go -10000 -11500 60", "face -157"], "duration": 60,
      "expect": [{"probe": "player.pos.z", "near": 0, "tol": 10},
                 {"probe": "step.health_lost", "max": 620, "note": "the 2055 fall off the ledge (not the walkthrough's way down)"},
                 {"probe": "grapple.offered", "eq": 32, "note": "the ring on the pillar"}]},

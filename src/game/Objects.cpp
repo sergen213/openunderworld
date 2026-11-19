@@ -954,8 +954,13 @@ std::set<int32_t> World::switchedObjects() const {
 
 // Lara's side of a switch (docs/GAMEPLAY.md "Interactions"). [O] The switch's DRM carries her clip (Object::laraClip,
 // AnimLibrary "use:<id>"), without root motion; the use handler still runs when the switch's own clip ends (src/script).
-// [I] She stands useDistance in front of it on her side of the switch's local horizontal axis she is most along, facing
-// it. Switches without a clip of their own (l4_ballcourt pole lever 6502) play the button press as she stands.
+// [O] Where she stands: tru.exe 0x6F4740 takes the point of the switch's collision shapes nearest her (0x4DF090; a box:
+// 0x46AE20) and the shape's normal there, made horizontal (|z| < 1 -> 0). [I] She stands useDistance (engagement record
+// +0x44) out of that point along that normal, facing it; the box is queried at its own centre height. Wine (l3_main_bedroom
+// switch 4525, useDistance 135): she ends 174.0 out of its origin and 3.0 aside; this rule 179.4 / 1.6, the old one
+// (useDistance out of the origin) 135. Switches without a solid box: useDistance out of the origin along the local
+// horizontal axis she is most along [I]. Switches without a clip of their own (l4_ballcourt pole lever 6502) play the
+// button press as she stands.
 void World::useSwitchClip(const script::Object& o) {
     const auto& s = player_.state();
     const std::string own = "use:" + std::to_string(o.laraClip);
@@ -963,11 +968,35 @@ void World::useSwitchClip(const script::Object& o) {
         player_.use("use:2441", s.pos, s.yaw);
         return;
     }
-    const vec3 lx(std::cos(o.rot.z), std::sin(o.rot.z), 0), ly(-lx.y, lx.x, 0), d = s.pos - o.pos;
-    vec3 out = std::abs(glm::dot(d, lx)) > std::abs(glm::dot(d, ly)) ? lx : ly;
-    if (glm::dot(d, out) < 0) out = -out;
     const float distance = o.useDistance > 20 && o.useDistance < 500 ? o.useDistance : 135.0f; // [I] the wall switch's
-    player_.use(own, vec3(vec2(o.pos + out * distance), s.pos.z), std::atan2(-out.y, -out.x));
+    const glm::mat4 frame = glm::rotate(glm::translate(glm::mat4(1), o.pos), o.rot.z, vec3(0, 0, 1));
+    float best = 1e30f;
+    vec3 at(0), out(0);
+    if (const physics::ObjectPhysics* p = objectPhysics(o.name))
+        for (const physics::Prim& prim : p->prims) {
+            if (prim.kind != physics::PrimKind::Box || !prim.solid() || prim.segment < 0 || size_t(prim.segment) >= p->segments.size()) continue;
+            const glm::mat4 box = frame * p->segments[size_t(prim.segment)] * glm::translate(glm::mat4(1), prim.pos) * glm::mat4_cast(prim.rot);
+            const vec3 q(glm::inverse(box) * glm::vec4(s.pos.x, s.pos.y, box[3].z, 1));
+            const vec3 half = prim.size * 0.5f, c = glm::clamp(q, -half, half);
+            vec3 n = q - c;
+            if (glm::dot(n, n) < 1e-6f) { // inside: the face she is least deep behind
+                const vec3 depth = half - glm::abs(q);
+                const int k = depth.x < depth.y ? (depth.x < depth.z ? 0 : 2) : (depth.y < depth.z ? 1 : 2);
+                n = vec3(0), n[k] = q[k] < 0 ? -1.0f : 1.0f;
+            }
+            vec3 nw(box * glm::vec4(n, 0));
+            nw.z = 0;
+            const float d = glm::length(q - c);
+            if (glm::length(nw) < 1e-3f || d >= best) continue;
+            best = d, at = vec3(box * glm::vec4(c, 1)), out = glm::normalize(nw);
+        }
+    if (best == 1e30f) {
+        const vec3 lx(std::cos(o.rot.z), std::sin(o.rot.z), 0), ly(-lx.y, lx.x, 0), d = s.pos - o.pos;
+        out = std::abs(glm::dot(d, lx)) > std::abs(glm::dot(d, ly)) ? lx : ly;
+        if (glm::dot(d, out) < 0) out = -out;
+        at = o.pos;
+    }
+    player_.use(own, vec3(vec2(at + out * distance), s.pos.z), std::atan2(-out.y, -out.x));
 }
 
 // Lara pushes / pulls uber objects by their push / pull engagement records only (pushUberHandle: tru.exe's PushPull
