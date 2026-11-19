@@ -413,7 +413,9 @@ closing-door animations, Lara's interaction clips.
 - [O] Progression findings (docs/PROGRESSION.md "Fixes"): the native base, not the object name, makes a trigger a plane
   or a volume; cinematic vt 63 preloads (state 2) and only vt 57 plays; gamebase prototypes 17/18/19 = unit callbacks
   vt 11/12/13 with stream unit ids (unitref 0 compares them); `instance` 26 places Lara on an `instance` 4 transform;
-  SSEQU on a native waits for it and then continues (0x57CE50 case 0x6A). The physical pressure plate base 3938
+  SSEQU on a native waits for it and then continues (0x57CE50 case 0x6A); a native that returns a latent always
+  suspends the thread at least until the next update (0x57E970 checks IsActive from then on), so `sound` 1 / 2 loops
+  such as the fire volumes' burn clock cost one tick per pass even when the sound does not play. The physical pressure plate base 3938
   (`multibody` 1, `joint` 17, `limit` 3 ranges, engine callback vt 34 with the range id) is not modelled.
 
 ## Verification
