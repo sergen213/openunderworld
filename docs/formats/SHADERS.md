@@ -149,9 +149,29 @@ reflections and depth fade in GL and Vulkan.
   sampler2DShadow (LESS_OR_EQUAL, bilinear), the atlas rendered with the shadow-map casters, depth bias in the split
   matrix, slope bias as polygon offset; the ShadowLights' WorldToShadowMap c158–c169 point at a lit texel (no light
   shadow maps). `OriginalShading.PssmSplitsMatchOriginal` matches the Wine-read registers.
-- Missing vs the original: light and PSSM shadows (PS slots 2–7 sample one shadow atlas s14 with Fetch4-style 4-tap PCF, `WorldToShadowMap` c158–c169, `PSSMToMap*` c80–c85, `PSSMDistances` c96; we use PS slot 0 with our shadow map / rays as `ouSunVis` / `ouLightVis`), directional SH terms on characters.
-- No original-game screenshot of the same views was available for a pixel comparison (PCGamingWiki's TRU page only has
-  settings-menu images); comparison is against our previous renders.
+- Missing vs the original: light shadow maps (PS slots 2–7 sample `WorldToShadowMap` c158–c169 in the shared atlas s14; we point them at a lit texel and use our shadow map / rays as `ouLightVis` outside the Original preset), directional SH terms on characters.
+- PSSM on the l2_cliffclimb yacht deck (2026-11-18) [O]: the deck receives. In the atlas dump, split 3's tile holds
+  the yacht. Most of `co_yacht`'s 40 materials lack `+0x44` 0x40000000 and do not cast, but the hull, cabin and
+  arch materials that do cast are enough. tru.exe's collector 0x50F7C0 uses the same per-primgroup rule (primgroup
+  `+0x1C` bit 2 clear, material 0x40000000, blend < 4, then 0x504EE0 into every shadow-casting light, the sun
+  included), so the caster set matches. Receivers on the deck read split 3, and their compare depth matches
+  `Pssm::map[3]`. The cabin and Lara cast onto the deck in GL and Vulkan alike. In full shadow the deck equals a render
+  with the atlas cleared to 0, so the sun term (c212 × s11 cookie × PCF) is removed completely.
+  Inputs at the deck draw (material 6179, teak 1601; Wine 2026-11-18, `tools/wine-ref/py/regcap.py`, Lara at ours
+  (−34816.2, −14651.9, 211.4)) [O]: c15 (0.148, 0.15, 0.125), c76 (0.22, 0.34, 0.37) and the other SH rows within 0.01
+  of ours, c96 and c100–c104 equal (c104.x = 1 picks c149), c148 = c149 = (1, 1, 1, 1), c176/c177 = 0, c209/c212 equal.
+  Bools 0x48 (b3 + b6): one non-shadow light, c193–c197 = unit light 9 (white, radius 8000, AttenuationSampler row 2),
+  register for register as ours. Bound textures: s1 = instance light map 1586, s2 = 1587, s0 / s4 / s5 = the
+  material's maps (texture objects matched by DRM order and size). Ours binds the same.
+  Contrast (red channel, camera matched to `openunderworld-work/w2/WineMeasure/s1/deck-idle.png`: eye
+  (−34097.7, −14044.1, 470.4), target (−34821.3, −14651.1, 420), FOV 45): lit planks 190–215 for us and 194–215 for
+  tru.exe. Shadowed / lit is 0.60–0.62 for us (the same pixel with the atlas cleared to 1 and to 0) and ~0.56–0.61 for
+  tru.exe (neighbouring planks across its cabin-shadow edge). An earlier 0.43–0.47 compared unmatched planks, some also
+  in the bench's shade. So the deck shadow is as strong as tru.exe's, and no register or light-set change is called
+  for. Still different: tru.exe draws thin sun stripes on the port aft deck (a thin caster, probably the ladder) that
+  ours lacks, and its sky is lit [U: caster not identified].
+- Original-game screenshots exist for l2_cliffclimb's yacht deck only (above). Other views have no tru.exe capture:
+  PCGamingWiki's TRU page only has settings-menu images, so those comparisons are against our previous renders.
 
 ## Validation
 

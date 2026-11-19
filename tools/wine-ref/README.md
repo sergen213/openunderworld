@@ -75,7 +75,7 @@ Rules learnt the hard way (details in docs/REFERENCE_COMPARISON.md "Method"):
 
 | tool | commands |
 |---|---|
-| `wmem` | `goto <unit>` (load a unit), `unit <name>` (redirect the next load), `inst` (instance list), `cam [n] [ms]` (Lara + camera position / pivot / distance / mode), `rd` / `w32` / `wf` / `w8` / `wb` / `wp` (memory), `find`, `alloc` (code cave), `call2` (remote cdecl call), `mask` |
+| `wmem` | `goto <unit>` (load a unit), `unit <name>` (redirect the next load), `inst` (instance list), `cam [n] [ms]` (Lara + camera position / pivot / distance / mode), `rd` / `w32` / `wf` / `w8` / `wb` / `wp` (memory), `wbs` (`wb` with the game's threads suspended and none inside the patched bytes: detours of hot functions), `find`, `alloc [bytes]` (code cave, default one page), `call2` (remote cdecl call), `mask` |
 | `wkey` | `click <title> <button>` (dialogs), `key <vk> [ms]`, `multi <ms> vk...`, `km <hold> <total> vk...` (keys + camera mode samples), `mouse dx dy steps`, `combo`, `post` |
 | `pole` | `dump uid...` / `raw uid...` (instance position / rotation / words; -1 = player), `watch n ms uid...`, `yaw <rad>`, `lara x y z`, `post` / `postv` (INSTANCE_Post 0x5B3750) |
 | `ref` | `trace <ms> [vk:down:up ...]` (keys + a line per change: pos +0x20, rot +0x30, vel +0x2A0, state pointer, anim +0xC18), `drop x y z pinms ms vx vy vz [keys]` (pin, release with a velocity, trace with chart request / parent, volume top wt and wave surface sf), `rec <ms> [keys]` (trace + water, breath +0x920, health +0x628, camera +0x90 / pivot +0x100 / distance +0x1D4 / mode +0x1E0), `tp` / `tpv x y z ms`, `god`, `mouse dx dy [steps]`, and the `wmem` memory commands |
@@ -103,3 +103,7 @@ Every line is `ms` (since the command started) followed by named fields. The scr
 - `fitwave.py`, `waterentry_model.py`, `waterentry_validate.py`: the water-entry law fits of docs/GAMEPLAY.md
   "Water entry".
 - `swim_summary.py TRACE...`: speeds, turn / pitch rates, breath and damage times, camera lag of `rec` traces.
+- `regcap.py install | find P0 P1 ... | read`: the pixel-shader constants (c15, c70–c76, c96, c100–c104, c140–c149,
+  c176–c212), bound textures and PS bool mask of one material's model draws (detours of 0x526920 and 0x50EFED; the
+  material is picked by the first floats of its MaterialParams). Used for SHADERS.md "PSSM on the l2_cliffclimb yacht
+  deck".
