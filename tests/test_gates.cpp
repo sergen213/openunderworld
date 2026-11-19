@@ -2774,6 +2774,28 @@ TEST(ProgressionReal, MaproomHubTurnsByItsPanel) {
     EXPECT_NEAR(glm::degrees(w.uberJoint(2667, 1)->x), 41.0f, 2.5f) << "let go: braked where she left it";
 }
 
+// OU-PZL-015. multibody 3 (thunk 0x79ACD0 -> 0x4A6FF0): every body of the instance with a physics component gets the
+// "fixed" bit 0 of +0x15C set and its timer +0x160 zeroed (0x4D8FF0), the inverse of 2 (Enable, 0x4D8FD0); 4 (0x4A7070)
+// then reads true. l2_maproom walkway planes 2637 / 2638 (scripts 9627 / 9628) call it on the Thor bridge 2667's
+// multibody member (+180) in their vt 54, before cinematics 100 / 105 [O bytecode]. Ours left 3 unbound: the handler
+// stopped there and the cinematic never started.
+TEST(ProgressionReal, MaproomMultibodyDisableFixesTheBodies) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_maproom");
+    auto& w = *wp;
+    std::vector<int32_t> activated;
+    w.script().onCall = [&](int32_t source, int32_t target, int16_t vt) { if (source == 2637 && vt == 57) activated.push_back(target); };
+    ASSERT_TRUE(w.script().find(2637) && w.script().find(2667));
+    EXPECT_FALSE(w.serializeRuntime().contains("multibodyFixed"));
+    w.script().call(2637, 54); // Lara crosses the plane
+    for (int i = 0; i < 30; ++i) w.tick({});
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 2637) << key.second;
+    EXPECT_EQ(w.serializeRuntime().value("multibodyFixed", nlohmann::json::array()), nlohmann::json::array({2667}))
+        << "the bridge's bodies are fixed (saved with the world runtime)";
+    EXPECT_EQ(activated, (std::vector<int32_t>{2625})) << "and the handler goes on to cinematic 100 (2625 vt 57)";
+}
+
 namespace {
 // Lara grips the kind-1 record of `uid`'s section `section` from the spot whose way to the object is nearest to `dir`
 // (any spot for a zero `dir`), facing `face`, and holds the stick `stick` until `done` or `ticks` pass. False: no grip.

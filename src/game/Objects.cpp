@@ -1733,12 +1733,22 @@ void World::bindMultibody() {
         int index = -1;
         for (const auto& c : colliders_)
             if (c.uid == uid && c.hinge >= 0) { index = c.hinge; break; }
-        if (function == 2) return true; // Enable: bodies are already active once their hinge exists
+        // 2 Enable (0x4A6F70 -> 0x4D8FD0) clears and 3 Disable (0x79ACD0 -> 0x4A6FF0 -> 0x4D8FF0) sets the "fixed" bit 0 of
+        // physics component +0x15C (3 also zeroes its timer +0x160) on every body the instance lists (queries 0x13F count /
+        // 0x140 array, those with a physics component +0x274). Ours keeps the set (multibodyFixed_, saved) for 4; hinged
+        // bodies already simulate once their hinge exists. [I] Neither moves anything of ours: our uber joints run by their
+        // motors and pushes, not by this flag (l2_maproom volumes 2637 / 2638 fix bridge 2667 before cinematics 100 / 105).
+        if (function == 2 || (function == 3 && args.empty())) {
+            if (function == 3) multibodyFixed_.insert(uid);
+            else multibodyFixed_.erase(uid);
+            return true;
+        }
         // 4 (0x4A7070): 1 while an atom's body is still fixed (body +0x15C bit 0, cleared by Enable 0x4A6F70 -> 0x4D8FD0).
-        // Ours: fixed unless simulated, on a hinge or loose [I] (l4_temple floor 5234 polls statue head 5236).
+        // Ours: fixed by multibody 3, else fixed unless simulated, on a hinge or loose [I] (l4_temple floor 5234 polls
+        // statue head 5236).
         auto* o = const_cast<script::Object*>(script_.find(uid)); // World owns object motion
         if (function == 4 && args.empty()) {
-            result = index < 0 && !(o && o->loose);
+            result = multibodyFixed_.contains(uid) || (index < 0 && !(o && o->loose));
             return true;
         }
         // 59 (0x4A93E0): INSTANCE_Post(0x35, joint) breaks a joint (l5_valaskjalf falling bridge 6974 breaks 0, then 1).

@@ -1611,6 +1611,7 @@ private:
     // Class-34 rigid bodies with a grapple feature (the tomb gate): their hinge has no motor, the pull moves it.
     bool pulledHinge(const script::Object& o);
     std::set<int32_t> multibodyLimitOff_; // `multibody` 75: objects whose joint limit is switched off (joint +0x174 bit 2)
+    std::set<int32_t> multibodyFixed_; // `multibody` 3 (Disable) minus 2 (Enable): objects whose bodies are fixed again (+0x15C bit 0)
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
     std::map<int32_t, std::vector<uint32_t>> uberStates_; // per section: current state, 0xFFFFFFFF in a transition
