@@ -1764,6 +1764,18 @@ void World::bindMultibody() {
             (o->joint ? *o->joint : o->joint.emplace(script::Object::Joint{})).speed = std::bit_cast<float>(args[2].bits);
             return true;
         }
+        // 92 (0x79B8F0 -> 0x4A7300) posts message 0x2C (value) and 93 (0x79B910 -> 0x4A7320) asks query 0xCA. The breakable
+        // component (handlers 0x6D3160 / 0x6D3A20) takes 0x2C while not broken (+0x240 bit 4): the break record whose id
+        // (record +0x18 -> s16) is the value starts (0x6D2BF0); 0xCA answers +0x240 bit 4, broken. l4_temple floor 5234's
+        // vt 54: 92 (1) on itself, its state 1 waits on 93 [O decomp]. Other receivers' 0x2C / 0xCA [U]: no effect, false.
+        if (function == 92 && args.size() == 1) {
+            breakBreakable(uid, int(int32_t(args[0].bits)));
+            return true;
+        }
+        if (function == 93 && args.empty()) {
+            result = breakablePhase(uid) == BreakPhase::Broken;
+            return true;
+        }
         // 75 (0x4A9AB0 -> 0x4D9F50): limit `args[1]` (1..3) of joint `args[0]` on / off (joint +0x174 bit 2 << (limit - 1);
         // 0x4E7550 tests only within the joint's [lo, hi] while it is set). Ours have one degree of freedom: limit 1 off
         // frees the hinge (+-pi) and lets a motor run past the joint limit. l5_valaskjalf hpoles 6984 take it off when the

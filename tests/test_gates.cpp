@@ -2796,6 +2796,22 @@ TEST(ProgressionReal, MaproomMultibodyDisableFixesTheBodies) {
     EXPECT_EQ(activated, (std::vector<int32_t>{2625})) << "and the handler goes on to cinematic 100 (2625 vt 57)";
 }
 
+// OU-PZL-008 (c). Temple floor 5234 (class-30 breakable, script 13229): its vt 54 (plane 5247 saw head 5236 cross)
+// calls multibody 92 (1) on itself (0x79B8F0 -> 0x4A7300: INSTANCE_Post 0x2C, the breakable's "break by action id"),
+// its state 1 waits on multibody 93 (0x79B910 -> 0x4A7320: query 0xCA, broken) and then broadcasts "broken" on
+// floor_break [O bytecode]. Ours left both unbound: the handler stopped at 92 and the floor stayed whole.
+TEST(ProgressionReal, TempleFloorBreaksByMultibody92) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_temple");
+    auto& w = *wp;
+    ASSERT_EQ(w.breakablePhase(5234), game::World::BreakPhase::Whole);
+    w.script().call(5234, 54); // the head fell through plane 5247
+    for (int i = 0; i < 60 * 2; ++i) w.tick({});
+    EXPECT_EQ(w.breakablePhase(5234), game::World::BreakPhase::Broken) << "92 (1) started the floor's break record 1";
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 5234) << key.second;
+}
+
 namespace {
 // Lara grips the kind-1 record of `uid`'s section `section` from the spot whose way to the object is nearest to `dir`
 // (any spot for a zero `dir`), facing `face`, and holds the stick `stick` until `done` or `ticks` pass. False: no grip.
