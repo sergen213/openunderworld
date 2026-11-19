@@ -1161,6 +1161,8 @@ TEST(ProgressionReal, ChapelPillarSectionsPlayTheirClips) {
     EXPECT_LT(glm::length(vec3(bone() * glm::vec4(pivot, 1)) - pivot), 2.0f);
     EXPECT_LT(glm::length(vec3(bone()[0]) - vec3(-1, 0, 0)), 0.01f);
     const auto* o = w.script().find(4819);
+    w.script().call(4834, 54); // the dais plate pressed frees the switches (vt 60 -> modifiable 7 (1), OU-PZL-009)
+    for (int i = 0; i < 30; ++i) w.tick({});
     place(w, o->pos, 0);
     game::Actions a;
     a.interact = true;
@@ -3606,6 +3608,10 @@ TEST(ProgressionReal, KrakenChainLinksByManualAim) {
     EXPECT_EQ(state(2), 1u);
     const auto* sw = w.script().find(30);
     ASSERT_TRUE(sw);
+    // 30 starts locked (vt 61 -> modifiable 7 (2)); the gear switches 55 / 57 free it (vt 62 + vt 63 -> 7 (1), OU-PZL-009)
+    w.script().call(30, 62);
+    w.script().call(30, 63);
+    for (int i = 0; i < 30; ++i) w.tick({});
     place(w, sw->pos, 0);
     game::Actions use;
     use.interact = true;
