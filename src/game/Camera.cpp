@@ -288,9 +288,17 @@ nlohmann::json World::serializeRuntime() const {
     const auto forces = [](const OrbitState::Forces& f) {
         return nlohmann::json{f.set, f.fromSet, f.fromBase, f.fromSpeed, f.fromSign, f.sign, f.blend};
     };
+    const auto inlineSet = [](const OrbitState::InlineSet& s) {
+        nlohmann::json f = nlohmann::json::array();
+        for (int i = 0; i < s.count; ++i) f.push_back({s.force[i].type, s.force[i].k, s.force[i].curve});
+        return nlohmann::json{s.angle, s.speed, s.dir, std::move(f)};
+    };
+    const auto trackerAdd = [&](const OrbitState::TrackerAdd& t) { return nlohmann::json{v(t.from), v(t.to), t.t, t.time}; };
     const auto& o = orbit_;
-    nlohmann::json hint = nullptr; // the markup as (unit, local index): global indices depend on the streamed set
-    if (const auto owner = o.hintMarkup >= 0 ? markupOwner(o.hintMarkup) : std::nullopt) hint = {owner->first, owner->second};
+    // The markup as (unit, local index): global indices depend on the streamed set; a trigger volume's record as its uid.
+    nlohmann::json hint = nullptr;
+    if (o.hintMarkup <= -2) hint = -2 - o.hintMarkup;
+    else if (const auto owner = o.hintMarkup >= 0 ? markupOwner(o.hintMarkup) : std::nullopt) hint = {owner->first, owner->second};
     nlohmann::json hair = nlohmann::json::array();
     for (const vec3& p : hair_.state()) hair.push_back(v(p));
     // Lara's crossfade in progress (clips by name), the aim poses' clock and the pose itself (the camera focus reads it).
@@ -319,7 +327,8 @@ nlohmann::json World::serializeRuntime() const {
                         {"focus", focus_ ? v(*focus_) : nlohmann::json(nullptr)},
                         {"orbit", {v(o.desired), o.dist, o.speed, o.valid, o.yaw, o.pitch, limits(o.from), limits(o.now), o.mode,
                                    o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint,
-                                   forces(o.yawForce), forces(o.pitchForce), o.along}},
+                                   forces(o.yawForce), forces(o.pitchForce), o.along, inlineSet(o.yawInline), inlineSet(o.pitchInline),
+                                   trackerAdd(o.pivotAdd), trackerAdd(o.lookAdd)}},
                         {"spline", std::move(spline)}, {"blendOut", blendOut_}, {"blendFrom", pose(blendFrom_)}}},
             {"hair", std::move(hair)}, {"playerUnit", playerUnit_}, {"air", air_}, {"submerged", submerged_},
             {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"limitsOff", multibodyLimitOff_}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)},
@@ -374,12 +383,24 @@ void World::restoreRuntime(const nlohmann::json& j) {
         std::copy(moves.begin(), moves.end(), o.moves);
         o.lastPos = v(a.at(12)), o.hint = v(a.at(13));
         if (const auto& h = a.at(14); h.is_array()) o.hintMarkup = markupIndex(h.at(0).get<std::string>(), h.at(1).get<int>());
+        else if (h.is_number()) o.hintMarkup = -2 - h.get<int>();
         const auto forces = [](const nlohmann::json& f) {
             return OrbitState::Forces{f.at(0).get<int>(),   f.at(1).get<int>(),   f.at(2).get<float>(), f.at(3).get<float>(),
                                       f.at(4).get<float>(), f.at(5).get<float>(), f.at(6).get<float>()};
         };
         if (a.size() > 17) o.yawForce = forces(a.at(15)), o.pitchForce = forces(a.at(16)), o.along = a.at(17);
         else o.mode = -1; // older saves: the next tick picks the mode's force sets afresh
+        const auto inlineSet = [](const nlohmann::json& s) {
+            OrbitState::InlineSet r{s.at(0).get<float>(), s.at(1).get<float>(), s.at(2).get<uint8_t>(), 0, {}};
+            for (const auto& f : s.at(3))
+                if (r.count < 2) r.force[r.count++] = {f.at(0).get<uint8_t>(), f.at(1).get<float>(), f.at(2).get<std::array<uint8_t, 64>>()};
+            return r;
+        };
+        const auto trackerAdd = [&](const nlohmann::json& t) {
+            return OrbitState::TrackerAdd{v(t.at(0)), v(t.at(1)), t.at(2).get<float>(), t.at(3).get<float>()};
+        };
+        if (a.size() > 21) // older saves: no trigger sets or offsets in flight
+            o.yawInline = inlineSet(a.at(18)), o.pitchInline = inlineSet(a.at(19)), o.pivotAdd = trackerAdd(a.at(20)), o.lookAdd = trackerAdd(a.at(21));
         const auto& f = cam.at("focus");
         const std::optional<vec3> focus = f.is_null() ? std::nullopt : std::optional<vec3>(v(f));
         CameraState c = cam_;

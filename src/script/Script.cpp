@@ -3009,7 +3009,13 @@ void Runtime::tick(const TickInput& in) {
         if (o.dead || residentOnly_.contains(o.unit)) continue; // a resident unit is not loaded: nothing in it meets her
         switch (o.kind) {
         case Kind::Volume: {
-            const bool now = inside(o.shape, o.pos, o.rot, p);
+            // tru.exe tests the instance's transform now (0x5CD1B0): a volume anchored to a moving host rides it (World::
+            // poseAnchored gives it the body; Wine: l2_cliffclimb's deck volume 3852 at its intro + the yacht's motion).
+            const bool moved = o.body != glm::mat4(1) || o.offset != vec3(0);
+            const bool now = !moved ? inside(o.shape, o.pos, o.rot, p)
+                                    : inside(o.shape, vec3(0), vec3(0),
+                                             vec3(glm::inverse(glm::translate(glm::mat4(1), o.pos + o.offset) * glm::mat4(rotation(o.rot)) * o.body) *
+                                                  glm::vec4(p, 1)));
             if (now && !o.inside) { // Enter (vt 54): OnFirstIn once, then OnIn
                 fire(EventKind::Enter, o);
                 if (!o.firstIn) o.firstIn = true, fire(EventKind::FirstIn, o);
