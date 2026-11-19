@@ -63,7 +63,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-WAT-003 | water render | Whitecaps drawn as soft blobs / plates | Fixed-verified | pre-existing | — |
 | OU-WAT-004 | water render | Foam / whitewater thresholds tuned on calm seas only | Not reproduced | pre-existing | C-WATERTUNE |
 | OU-WAT-005 | water render | Interactive field rings only 1-3 cm (hard to see) | Fixed-verified | new-feature defect | — |
-| OU-WAT-006 | water / gameplay | FFT swell lowers the sea ~70 units below tru.exe's waves (centring offset + crest clip) | Reproduced | new-feature defect (0.50.0) | C-SWELL |
+| OU-WAT-006 | water / gameplay | FFT swell lowered the sea ~70 units below tru.exe's waves; now zero-mean, treading 256.6 / 253.9 vs tru.exe 254.6 / 247.6 | Fixed on int/brief (bf9179e) | new-feature defect (0.50.0) | C-SWELL |
 | OU-WAT-007 | water / gameplay | Dry-deck rule applies to any moving solid, not only floating hulls | Open (not reproduced off-hull) | new-feature defect (0.50.0) | C-SWELL |
 | OU-WAT-008 | water render | Under-water sun shafts weak | Reproduced (haze, no beams) | pre-existing | C-UWPORT |
 | OU-WAT-009 | water render | Marine snow specks too large | Fixed-verified | pre-existing | C-UWPORT |
@@ -120,7 +120,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-GRP-002 | grapple | Swing dynamics unmeasured (five failed Wine sessions) | Open | pre-existing | C-MEASURE |
 | OU-GRP-003 | grapple | Jump into the gap released the rope; leap off a wall ignored the stick | Fixed-verified | pre-existing | — |
 | OU-GRP-004 | grapple | ch10 roped leap to wall ring 2595 swings under the pool surface | Open | pre-existing | — |
-| OU-GRP-005 | grapple | ch12 lever 6695 not held by Lara's weight on the rope | Open | pre-existing | C-JOINT |
+| OU-GRP-005 | grapple | ch12 lever 6695: rope attach calls vt 46, larabase 26 bound, she stays roped while Interact is held | Fixed on int/brief (f832536) | pre-existing | C-VM |
 | OU-PZL-001 | progression | ch01: no input route into the pocket north of the bedroom beams | Open | pre-existing | — |
 | OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Open | pre-existing | C-MEASURE |
 | OU-PZL-003 | progression | ch05: west recess from the T junction is shut | Open | pre-existing | — |
@@ -128,14 +128,14 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Open | pre-existing | C-CHART |
 | OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed on int/brief (ecf03db); ch09 scenario still parked (2 grapple issues) | pre-existing | C-JOINT |
 | OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed on int/brief (test bug, 2e6ef11) | pre-existing | C-JOINT |
-| OU-PZL-008 | progression | ch13: grapple ring 4951 not offered from the east ledge | Open | pre-existing | — |
-| OU-PZL-009 | progression | Switch `modifiable` 7 lock honoured only for one-way switches (ch15 exit switch) | Open | pre-existing | C-VM |
+| OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ~115 short and (b) rope bends don't tug bodies remain | Partly fixed on int/brief | pre-existing | — |
+| OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed on int/brief (30cc49f) | pre-existing | C-VM |
 | OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed on int/brief (b716e88); pull speed unverified | pre-existing | C-JOINT |
 | OU-PZL-011 | progression | ch17: hammer chamber lower steps absent from collision | Open | pre-existing | — |
 | OU-PZL-012 | progression | ch21: Natla platform jump falls short; fight sequence unplayable by input | Open | pre-existing | C-VM |
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Open | pre-existing | C-JOINT |
-| OU-PZL-015 | progression | ch08 `multibody` 3 unbound; ch14 thrones stop at an unbound native | Open | pre-existing | C-VM |
+| OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed on int/brief (171100e) | pre-existing | C-VM |
 | OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Reproduced | pre-existing | C-VM |
 | OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Open | pre-existing | C-VM |
 | OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Open | pre-existing | C-VM |
