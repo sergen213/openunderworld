@@ -114,7 +114,8 @@ her pose, the camera, the chart state or the animation changes (~60 a second); t
 0.25 s with probes (`water.depth`, `player.pos.z`, `camera.pos.z`) or the per-tick trace; scenarios in
 `w2/WineMeasure/ours/`. The l2_cliffclimb sharks attack ours within 5 s of entering the sea at both points (health
 fixtures keep her alive; hit states interrupt the treading); in tru.exe one shark bite (200) came in about 4.5 minutes
-in the water.
+in the water (during the breath dive). Re-measured 2026-11-19 (OU-CMB-003, row "Sharks" under Combat): treading draws
+no bite in tru.exe at all; only a Lara deeper than 497 under the top is in the sharks' reach.
 
 ## Movement (goal §5 "Basic movement", "Jumping")
 
@@ -284,6 +285,7 @@ status is therefore "unmeasured" throughout, with what a live session would have
 | M38 | Melee | Kick states S1424 / S1432, damage per the chart table | [O-data] † docs/GAMEPLAY.md "Close combat" | `Melee.cpp`; self-test `melee_kick` | — | unmeasured |
 | M39 | Finishing a downed thrall | Thralls only go down to bullets, kicks and explosions; regenerate fields of the death record | [O] † 0x67F040 / 0x620380 / 0x613B40 | `ai/Enemy.cpp` `getsUp` | — | unmeasured |
 | M40..M46, M82..M84 | Enemies (bats, nagas, spiders, cats, poachers, thralls, mercenaries, sharks) | Per type: senses record (ranges, cones, lose-track 2528), health block by difficulty, attack records, behaviour tree by enemy class | [O-data] † enemy data ObjectBase +0xC8 (0x63C190 and getters 0x614400..0x614940) | `ai/Enemy.cpp`, `ai/EnemyData.cpp` read the same blocks; movement speeds = clip root motion | attack timing and tactics partly [I] | unmeasured: no enemy was timed under Wine |
+| M84 (sharks) | l2_cliffclimb sharks against a treading / submerged Lara | Treading 300 s at the yacht and in open water: **0 bites**, sharks in EnemyBehavior_Search though they see her (out of reach: the top of their swim space is **892.2** under the sea volume's top, reach enemy data +0x88 **395.1**, so she must be **497** under); pinned 500 / 800 / 950 / 1100 under and lying 1200 under: Close **2.0..5.6 s** (median 3.0) / Circle (median **7.0 s**, distance **4164**) passes, one per **14 s** per shark, **6 bites of 200** in 232 s by 2 sharks (**0.78 / min** each), first **13..26 s**, every pass within 370 bit; speeds Close **1780**, Circle **1492**; enemy clock **30.0** counts/s | [O-runtime] `tools/wine-ref/sessions/l2_cliffclimb_sharks.sh` 2026-11-19, `w2/SharkAi6/s1`, `s2`; [O] 0x6391F0 / 0x6298C0 → 0x660640 → 0x64A5B0, 0x6108A0, node +0xC4 / +0xCC records | `ai/Enemy.cpp` `reachable`, `kSwimCeiling`, `Mode::Circle`, `kPassBite`; `AiReal.CliffclimbSharksSpareATreadingLara`: treading **0** bites / 0 engaged at 64, 64, -380 (300 s each); 1100 under 300 s: first bite **22.1 s**, 22 bites by 3 sharks (**1.47 / min** each); before the fix: 113 bites in 120 s at 1100, first 6.7 s | per-shark rate ×1.9 (within the 6-bite sample's 90 % range 0.34..1.53); ours has a third engaged shark (4023, absent in tru.exe) | matches (reach, bite 200); pass cadence calibrated [I] |
 | M81 | Mjolnir | Bolt, swing, ground pound rings from the weapon data | [O-data] † `CombatReal.GroundPoundRings` | `Combat.cpp` | — | unmeasured |
 | M88 | Natla | † not decoded | [U] | none | — | unmeasured (not implemented) |
 | M92 | Breakable crates / fuel tanks | Breakable records, triggers 17 / 18 / 19 | [O-data] † | `Objects.cpp` breakables | contents, blast [U] | unmeasured |

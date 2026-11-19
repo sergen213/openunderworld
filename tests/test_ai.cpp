@@ -1079,10 +1079,10 @@ TEST(AiReal, SharksSpawnSwimBiteAndDie) {
     auto& shark = **it;
     const vec3 start = shark.state().pos;
     const game::ai::Target lara{start + vec3(1200, 0, 0), true, 512, 100, true}; // swimming
-    std::vector<float> damage;
+    std::vector<float> damage; // 4020's bites (one in five passes comes in to bite: OU-CMB-003)
     bool attacked = false;
-    for (int i = 0; i < 900 && damage.empty(); ++i) {
-        es.tick(unit.col, lara, [&](float d, vec3, int) { damage.push_back(d); }, kDt);
+    for (int i = 0; i < 7200 && damage.empty(); ++i) {
+        es.tick(unit.col, lara, [&](float d, vec3 from, int) { if (glm::distance(from, shark.state().pos) < 1) damage.push_back(d); }, kDt);
         attacked |= shark.state().mode == Mode::Attack && shark.state().clip == shark.type().clipName(Role::Attack);
     }
     EXPECT_TRUE(attacked);
@@ -1095,6 +1095,55 @@ TEST(AiReal, SharksSpawnSwimBiteAndDie) {
         es.tick(unit.col, lara, [](float, vec3, int) { FAIL() << "dead sharks do not bite"; }, kDt);
     EXPECT_EQ(shark.state().mode, Mode::Dead);
     EXPECT_EQ(shark.state().clip, "death_float_loop");
+}
+
+// OU-CMB-003: l2_cliffclimb's sharks against a treading and a submerged Lara, as tru.exe under Wine
+// (tools/wine-ref/sessions/l2_cliffclimb_sharks.sh, 2026-11-19; tru = ours + (12446.2, 59357.3, -19003.8)). Treading at
+// the yacht and in open water for 300 s each: no bite in tru.exe (its sharks perceive her but stay in
+// EnemyBehavior_Search: she is out of their reach). Held 500..1100 under the sea volume's top: they alternate Close and
+// Circle and bite (200) on some passes; tru.exe's first bite came 13..26 s in (four runs) and the two sharks that
+// engaged her bit 6 times in 232 s, 0.78 a minute each.
+TEST(AiReal, CliffclimbSharksSpareATreadingLara) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto unit = game::loadUnitData(bf, "l2_cliffclimb");
+    unit.col.build();
+    struct Result { std::vector<std::pair<int, float>> bites; size_t engaged = 0; };
+    const auto run = [&](const char* name, vec3 at, float seconds) {
+        game::ai::Enemies es;
+        es.setBigfile(&bf);
+        es.setUnits({{unit.name, unit.drm, vec3(0)}});
+        const game::ai::Target lara{at, true, 512, 100, true}; // swimming
+        Hurt hurt;
+        std::set<int32_t> engaged; // sharks that closed in or circled her
+        for (hurt.tick = 0; hurt.tick < int(seconds / kDt); ++hurt.tick) {
+            es.tick(unit.col, lara, hurt.fn(), kDt);
+            for (const auto& e : es.all())
+                if (e->type().aquatic() && (e->state().mode == Mode::Chase || e->state().mode == Mode::Circle)) engaged.insert(e->uid());
+        }
+        std::fprintf(stderr, "%s: %zu sharks engaged, %zu bites in %.0f s:", name, engaged.size(), hurt.blows.size(), seconds);
+        for (const auto& b : hurt.blows) std::fprintf(stderr, " %.1f s (%.0f)", b.first * kDt, b.second);
+        std::fprintf(stderr, "\n");
+        return Result{hurt.blows, engaged.size()};
+    };
+    // Treading 44 under the static top (108) at the l2_cliffclimb_sea.sh points; tru.exe's waves carried her between 62 and
+    // -386 there (still out of reach: 892.2 - 395.1 under the top is -389.1)
+    for (const auto& [name, at] : {std::pair{"tread at the yacht", vec3(-33596.2f, -14670.3f, 64)},
+                                   std::pair{"tread in open water", vec3(-31946.2f, -13857.3f, 64)},
+                                   std::pair{"tread in a trough", vec3(-31946.2f, -13857.3f, -380)}}) {
+        const Result r = run(name, at, 300);
+        EXPECT_TRUE(r.bites.empty()) << name;
+        EXPECT_EQ(r.engaged, 0u) << name;
+    }
+    const Result deep = run("1100 under the top", {-31946.2f, -13857.3f, 108 - 1100}, 300);
+    ASSERT_FALSE(deep.bites.empty());
+    ASSERT_GT(deep.engaged, 0u);
+    EXPECT_GE(deep.bites[0].first * kDt, 8.0f);
+    EXPECT_LE(deep.bites[0].first * kDt, 45.0f);
+    const float perShark = float(deep.bites.size()) / float(deep.engaged) / 5.0f; // a minute; tru.exe 0.78
+    EXPECT_GE(perShark, 0.3f);
+    EXPECT_LE(perShark, 1.6f);
+    for (const auto& b : deep.bites) EXPECT_EQ(b.second, 200);
 }
 
 // l4_pool's mayan_thrall_pool_generator 5637 spawns a mayan_thrall that plays spawn_from_pool, then hunts Lara.

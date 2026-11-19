@@ -423,8 +423,20 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
         t->tuning.attackCooldown = 1.5f;
     }
     if (t->aquatic()) {
-        // Sharks have no attack records: their clip set supplies the locomotion and the unrecorded melee damage
-        // remains the inferred 120 default. Use the actual fast-swim root cycle rather than the bat's speed.
+        // Sharks have no attack records (+0x68..+0x9C). Their bite: node +0xC4 record (0x61FF40 keeps it at AI +0x3724) +0x50:
+        // blueshark 200, the bite measured under Wine (6 of 6, OU-CMB-003), greenland 300; which code reads it for the bite is
+        // not traced [I]. Use the actual fast-swim root cycle rather than the bat's speed.
+        if (const auto b = field(0xC4)) t->tuning.attackDamage = read<float>(drm->sections[b->section], b->offset + 0x50);
+        // A pass (EnemyBehavior_Close) lasts at most the combat record's (node +0xCC) s32 +4 .. +8 counts: 0x6108A0 rolls a
+        // time between them when CloseCombat starts (blueshark 60 / 120 = 2..4 s; Wine: Close phases 2.0..5.6 s).
+        if (const auto c = field(0xCC))
+            t->tuning.closeTime = {float(read<int32_t>(drm->sections[c->section], c->offset + 4)) / 30.0f,
+                                   float(read<int32_t>(drm->sections[c->section], c->offset + 8)) / 30.0f};
+        // Reach: enemy data +0x88 (395.1; +0x84 948.2 across), the limits 0x6391F0 and 0x6298C0 hand to 0x64A5B0.
+        t->tuning.reachHeight = read<float>(ed, o + 0x88);
+        // Swim speed: the fast-swim clip's root cycle; the blueshark's has none, so [O Wine] the median speed of its passes
+        // (EnemyBehavior_Close) in tru.exe, 1780 units/s (OU-CMB-003 traces; greenland unmeasured).
+        t->tuning.flySpeed = 1780.0f;
         const anim::Clip* run = t->clip(Role::Run);
         const double seconds = run ? run->durationSeconds() : 0;
         if (run && seconds > 0) {
@@ -666,7 +678,7 @@ nlohmann::json toJson(const EnemyState& s) {
 EnemyState stateFromJson(const nlohmann::json& j) {
     EnemyState s;
     const int mode = j.at("mode").get<int>();
-    if (mode < 0 || mode > int(Mode::Knocked)) throw std::runtime_error("enemy mode " + std::to_string(mode));
+    if (mode < 0 || mode > int(Mode::Circle)) throw std::runtime_error("enemy mode " + std::to_string(mode));
     s.mode = Mode(mode);
     s.pos = vec(j.at("pos")), s.yaw = j.at("yaw"), s.vz = j.at("vz"), s.clip = j.at("clip"), s.clipTime = j.at("clipTime");
     s.loop = j.at("loop"), s.health = j.at("health"), s.modeTime = j.at("modeTime"), s.unseenTime = j.at("unseenTime");
