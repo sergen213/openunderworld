@@ -153,7 +153,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
-| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040) | pre-existing | — |
+| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040); presence, CloseCombat slots, bite range on agent/EnemySpawn7 | pre-existing | — |
 
 ## Root-cause clusters
 
@@ -625,11 +625,29 @@ Status · Origin: Open · pre-existing.
   that top; Chase = a pass of the combat record's +4..+8 counts (0x6108A0), then `Mode::Circle`; bite 200 from node
   +0xC4 record +0x50; speed 1780 / circle 1492 measured. [I] calibrated: kPassBite 6/29, circle 7..13 s (EnemyBehavior_Circle
   end condition and what makes a pass come near not decoded); ours idles where tru.exe searches.
-- Test: `AiReal.CliffclimbSharksSpareATreadingLara` (treading 300 s at 64 / 64 / -380: 0 bites, 0 engaged; 1100 under:
-  first bite 22.1 s, 1.47 / min per engaged shark, bounds 8..45 s and 0.3..1.6); before: 113 bites in 120 s, first
-  6.7 s. `AiReal.SharksSpawnSwimBiteAndDie`, combat / ch07 self-tests, `ctest -L protected` pass.
-- Open: tru.exe has no shark 4023 at the unit load (ours places it: a third engaged shark); per-shark rate ×1.9 of
-  tru.exe's small sample. Status · Origin: Fixed on agent/SharkAi6 · pre-existing.
+- Test: `AiReal.CliffclimbSharksSpareATreadingLara` (treading 300 s at 64 / 64 / -380: 0 bites, 0 engaged); before: 113
+  bites in 120 s, first 6.7 s. `AiReal.SharksSpawnSwimBiteAndDie`, combat / ch07 self-tests, `ctest -L protected` pass.
+- Follow-up (agent/EnemySpawn7, batch 7):
+  - Presence [O]: shark 4023 (and 4024-4032) is a dormant intro (+0x72 & 0x80); 0x5C2360 skips +0x72 & 0x82 at the
+    unit load and a script's Birth introduces it. The game already obeyed it (World → `script::Runtime::born`); the
+    bare `ai::Enemies` the AiReal tests use spawned every dormant intro (31 units, e.g. all l1_ship_exterior mercs), so
+    the 1.47 / min came from a three-shark harness. Now dormant intros wait for `birth()` there too;
+    `AiReal.SharksSpawnSwimBiteAndDie` asserts the l2_cliffclimb load set {4020, 4021, 4022} (Wine list) and l1_seafloor /
+    l7_arctic_sea 3 placed. The only other load-time skip, an intro dependency list (+0x80 / +0x84, 0x5BD500 / 0x5BD650 /
+    0x5B43E0), occurs once (l4_pool 5607, not an enemy).
+  - Passes [O]: EnemyBehavior_CloseCombat 0x6108A0 rolls slots of combat record +4 .. +8 counts (2 .. 4 s) and gives each
+    to its Circle or its Sidestep child by record bytes +0xC / +0xD (50 / 50; rand % 101); a shark's non-Circle slots are
+    passes [I: no sidestep]. Replaces the fitted 7 .. 13 s circling (Circle's own timer, record +0xBC / +0xBE, is 0).
+  - Bite range [O Wine, s2 traces]: origin to origin, bites at 196 .. 405 (shark 0 .. 172 under her): 370 / 405 replace
+    the flyer centre-to-head range, so 800 / 950 under now bite as in tru.exe (before only ~1100 under could); 500 under
+    cannot (shark origin 392+ under hers), as tru.exe's 28 s there.
+  - Measured (twelve rolls, 300 s each at 800 / 950 / 1100 under): 0.98 bites / min per engaged shark (tru.exe 0.78;
+    6 bites, 95 % band 0.3 .. 1.6), a pass per 11.6 s (14), first bite median 36.2 s (13 .. 26), Circle median 4 .. 6 s
+    (7.0). Test bounds 0.5 .. 1.1 / min, 10 .. 18 s per pass, first-bite median 8 .. 45 s.
+  - Still [I]: kPassBite 6 / 29 (how near tru.exe's Close path comes is a NavPower 3D move, not decoded); non-biting passes
+    swim by at 580 (the nearest measured); out of reach ours idles where tru.exe searches; tru.exe's short Search phases
+    between passes are not modelled (our Circle runs shorter, passes slightly more often).
+- Status · Origin: Fixed on agent/SharkAi6; presence and pass timing on agent/EnemySpawn7 · pre-existing.
 
 ### Lara's controller and traversal (OU-PLY)
 
