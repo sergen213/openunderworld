@@ -312,7 +312,7 @@ std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist,
     return best;
 }
 
-std::optional<Hit> CollisionMesh::sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask) const {
+std::optional<Hit> CollisionMesh::sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask, uint8_t flags) const {
     if (nodes_.empty()) return std::nullopt;
     const vec3 lo = glm::min(glm::min(a, b), glm::min(a, b) + delta) - radius,
                hi = glm::max(glm::max(a, b), glm::max(a, b) + delta) + radius;
@@ -320,7 +320,7 @@ std::optional<Hit> CollisionMesh::sweepFaces(vec3 a, vec3 b, float radius, vec3 
     std::optional<Hit> best;
     overlap(lo, hi, [&](uint32_t fi) {
         const Face& f = faces[fi];
-        if (!queryable(f, mask)) return;
+        if (!queryable(f, mask) || ((flags & kSweepOneSided) && dot(faceNormal(fi), delta) >= 0)) return;
         const Tri tri{vertices[f.v[0]], vertices[f.v[1]], vertices[f.v[2]]};
         // Conservative advancement: under pure translation the shape-triangle distance d(t) is convex,
         // so stepping to the root of its tangent never overshoots the first contact.
@@ -333,6 +333,7 @@ std::optional<Hit> CollisionMesh::sweepFaces(vec3 a, vec3 b, float radius, vec3 
             dir = l > 0 ? dir / l : faceNormal(fi);
             if (d <= kEps) {
                 if (l == 0 && dot(dir, (a + b) * 0.5f + delta * t - pt) < 0) dir = -dir;
+                if ((flags & kSweepSkipLeaving) && iter == 0 && l > 0 && dot(delta, dir) >= 0) return; // not closing on it
                 if (!best || t < best->t) best = Hit{t, pt, dir, fi};
                 return;
             }
@@ -369,9 +370,9 @@ std::optional<Hit> CollisionMesh::raycast(vec3 origin, vec3 dir, float maxDist, 
     });
 }
 
-std::optional<Hit> CollisionMesh::sweepCapsule(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask) const {
-    return withDynamics(sweepFaces(a, b, radius, delta, mask), [&](const CollisionMesh& s, const glm::mat4& inv) {
-        return s.sweepFaces(vec3(inv * glm::vec4(a, 1)), vec3(inv * glm::vec4(b, 1)), radius, glm::mat3(inv) * delta, mask);
+std::optional<Hit> CollisionMesh::sweepCapsule(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask, uint8_t flags) const {
+    return withDynamics(sweepFaces(a, b, radius, delta, mask, flags), [&](const CollisionMesh& s, const glm::mat4& inv) {
+        return s.sweepFaces(vec3(inv * glm::vec4(a, 1)), vec3(inv * glm::vec4(b, 1)), radius, glm::mat3(inv) * delta, mask, flags);
     });
 }
 

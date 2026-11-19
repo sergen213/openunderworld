@@ -189,6 +189,43 @@ TEST(Collision, SphereAndCapsuleSweeps) {
     EXPECT_NEAR(h->t, (200 - dx) / 400, 1e-3);
 }
 
+// kSweepSkipLeaving (Player::slide, OU-PLY-012): a face the capsule overlaps at the start but does not close on (here a
+// side wall it moves along, 0.3 into it) is no hit, so the wall ahead is; without the flag the side wall stops the sweep
+// at t = 0 and a caller ignoring touching contacts it leaves would apply the whole move, through the wall ahead.
+TEST(Collision, SweepSkipsFacesItLeaves) {
+    CollisionMesh m;
+    addTri(m, {-1000, 20, 0}, {1000, 20, 0}, {1000, 20, 400}); // side wall y = 20
+    addTri(m, {-1000, 20, 0}, {1000, 20, 400}, {-1000, 20, 400});
+    addTri(m, {200, -500, 0}, {200, 500, 0}, {200, 500, 400}); // ahead, x = 200
+    addTri(m, {200, -500, 0}, {200, 500, 400}, {200, -500, 400});
+    m.build();
+    const vec3 a(0, 0.3f, 100), b(0, 0.3f, 200), d(400, 0, 0);
+    auto h = m.sweepCapsule(a, b, 20, d);
+    ASSERT_TRUE(h);
+    EXPECT_EQ(h->t, 0);
+    EXPECT_NEAR(h->normal.y, -1, 1e-4);
+    h = m.sweepCapsule(a, b, 20, d, collision::kSolidMask, collision::kSweepSkipLeaving);
+    ASSERT_TRUE(h);
+    EXPECT_NEAR(h->t, (200 - 20) / 400.0f, 1e-3);
+    EXPECT_NEAR(h->normal.x, -1, 1e-4);
+    // Closing on the overlapped face is still a hit at t = 0.
+    h = m.sweepCapsule(a, b, 20, {400, 10, 0}, collision::kSolidMask, collision::kSweepSkipLeaving);
+    ASSERT_TRUE(h);
+    EXPECT_EQ(h->t, 0);
+}
+
+// kSweepOneSided (Player::slide; tru.exe 0x461640): the room's wall at x = 200 faces +X by its winding. Swept into from
+// its front it stops the capsule; from behind it is passed.
+TEST(Collision, OneSidedSweepPassesFacesFromBehind) {
+    const auto m = room();
+    ASSERT_GT(m.faceNormal(m.raycast({300, 0, 100}, {-1, 0, 0}, 200)->face).x, 0.99f);
+    auto h = m.sweepCapsule({400, 0, 50}, {400, 0, 150}, 20, {-400, 0, 0}, collision::kSolidMask, collision::kSweepOneSided);
+    ASSERT_TRUE(h);
+    EXPECT_NEAR(h->t, (200 - 20) / 400.0f, 1e-3);
+    EXPECT_FALSE(m.sweepCapsule({0, 0, 50}, {0, 0, 150}, 20, {400, 0, 0}, collision::kSolidMask, collision::kSweepOneSided));
+    EXPECT_TRUE(m.sweepCapsule({0, 0, 50}, {0, 0, 150}, 20, {400, 0, 0})); // double-sided by default
+}
+
 // Faces closer than the radius to the capsule's segment (Player::depenetrate, OU-PLY-012).
 TEST(Collision, CapsuleOverlaps) {
     const auto m = room();

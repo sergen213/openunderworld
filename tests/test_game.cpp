@@ -45,13 +45,14 @@ void addFloor(CollisionMesh& m, float x0, float y0, float x1, float y1, float z)
         for (float y = y0; y < y1; y += 200)
             addQuad(m, {x, y, z}, {std::min(x + 200, x1), y, z}, {std::min(x + 200, x1), std::min(y + 200, y1), z}, {x, std::min(y + 200, y1), z});
 }
-// Box [lo, hi] (top + four sides).
+// Box [lo, hi] (top + four sides), wound counter-clockwise seen from outside as the game's collision (Lara's ground
+// sweep is one-sided: collision::kSweepOneSided).
 void addBox(CollisionMesh& m, vec3 lo, vec3 hi) {
     addFloor(m, lo.x, lo.y, hi.x, hi.y, hi.z);
-    addQuad(m, {lo.x, lo.y, lo.z}, {lo.x, hi.y, lo.z}, {lo.x, hi.y, hi.z}, {lo.x, lo.y, hi.z});
+    addQuad(m, {lo.x, hi.y, lo.z}, {lo.x, lo.y, lo.z}, {lo.x, lo.y, hi.z}, {lo.x, hi.y, hi.z});
     addQuad(m, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z}, {hi.x, hi.y, hi.z}, {hi.x, lo.y, hi.z});
     addQuad(m, {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, lo.y, hi.z}, {lo.x, lo.y, hi.z});
-    addQuad(m, {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z});
+    addQuad(m, {hi.x, hi.y, lo.z}, {lo.x, hi.y, lo.z}, {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z});
 }
 
 // Clip whose root moves forward (model -Y) by `perKey` units per key, `keys` keys of 100 units (1/30 s).
@@ -174,7 +175,7 @@ TEST(Game, RootTranslationUnwrapsLoops) {
 TEST(Game, WalkingIntoWallSlides) {
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
-    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1000}, {400, -2000, 1000});
+    addQuad(m, {400, -2000, 0}, {400, -2000, 1000}, {400, 2000, 1000}, {400, 2000, 0}); // facing -X, toward her
     auto w = makeWorld(std::move(m), {0, 0, 0});
     Actions a;
     a.move = {0.5f, 0.866f}; // camera faces +X: forward + a bit right (-Y)
@@ -194,7 +195,7 @@ TEST(Game, EmbeddedCapsuleIsPushedOutInOneTick) {
     for (const float depth : {0.3f, 30.0f, 75.0f}) {
         CollisionMesh m;
         addFloor(m, -2000, -2000, 2000, 2000, 0);
-        addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1000}, {400, -2000, 1000});
+        addQuad(m, {400, -2000, 0}, {400, -2000, 1000}, {400, 2000, 1000}, {400, 2000, 0});
         auto w = makeWorld(std::move(m), {contact + 1 + depth, 25, 0});
         const auto& s = w->player().state();
         w->tick({});
@@ -210,7 +211,7 @@ TEST(Game, EmbeddedCapsuleIsPushedOutInOneTick) {
     // A corner: out of both walls in the same tick.
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
-    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1000}, {400, -2000, 1000});
+    addQuad(m, {400, -2000, 0}, {400, -2000, 1000}, {400, 2000, 1000}, {400, 2000, 0});
     addQuad(m, {-2000, 400, 0}, {2000, 400, 0}, {2000, 400, 1000}, {-2000, 400, 1000});
     auto w = makeWorld(std::move(m), {360, 350, 0});
     w->tick({});
@@ -1988,6 +1989,31 @@ TEST(Game, CrouchUnderSlabAndRoll) {
     EXPECT_NEAR(s.pos.x - x, 45.5f * 30 * 50 / 60.0f, 50); // ng_roll_front root motion
     w->tick(forward());
     EXPECT_EQ(s.state, State::Run);
+}
+
+// OU-PLY-012: a roll ending under a ceiling too low to stand ends crouched (chart S7 T250, PSCCF_LowCeiling), and
+// crawls on with the stick; before, she stood up into the slab (the ch01 roll under the bedroom's leaning beam).
+TEST(Game, RollEndsCrouchedUnderALowCeiling) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 8000, 2000, 0);
+    addBox(m, {700, -2000, 350}, {4000, 2000, 450});
+    addFloor(m, 700, -2000, 4000, 2000, 350); // slab underside
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 12; ++i) w->tick(forward());
+    ASSERT_EQ(s.state, State::Run);
+    ASSERT_LT(s.pos.x, 700 - w->player().tuning().radius);
+    Actions roll = forward();
+    roll.drop = true;
+    w->tick(roll);
+    ASSERT_EQ(s.state, State::Roll);
+    for (int i = 0; i < 120 && s.state == State::Roll; ++i) w->tick(forward());
+    EXPECT_EQ(s.state, State::Crouch);
+    EXPECT_GT(s.pos.x, 700 + w->player().tuning().radius);
+    EXPECT_NEAR(s.pos.z, 0, 1e-3);
+    for (int i = 0; i < 900 && s.state == State::Crouch; ++i) w->tick(forward()); // crawls out, stands past the slab
+    EXPECT_NE(s.state, State::Crouch);
+    EXPECT_GT(s.pos.x, 4000);
 }
 
 // A 63-degree slope (normal z 0.45) between a 1000-high top and the ground: walking off the top slides
@@ -5570,7 +5596,11 @@ TEST(GameReal, LaraPlaysInteractionClips) {
         EXPECT_EQ(s.state, game::State::Use);
         EXPECT_EQ(s.clip, "use:" + std::to_string(sw->laraClip));
         EXPECT_EQ(s.clip, "use:2605") << "obj_pull_lever";
-        EXPECT_NEAR(glm::length(glm::vec2(s.pos - sw->pos)), sw->useDistance, 1.0f);
+        // Wine (tru.exe, prologue frame): she ends 174.0 out of the switch's origin along its +X and 3.0 aside; the box rule
+        // (World::useSwitchClip) gives 179.4 / 1.6.
+        const glm::vec2 lx(std::cos(sw->rot.z), std::sin(sw->rot.z)), rel(glm::vec2(s.pos - sw->pos));
+        EXPECT_NEAR(glm::dot(rel, lx), 174.0f, 6.0f);
+        EXPECT_NEAR(glm::dot(rel, glm::vec2(-lx.y, lx.x)), -3.0f, 3.0f);
         bool fired = false;
         for (int i = 0; i < 200 && !fired; ++i) {
             w->tick(i % 2 ? use : game::Actions{}); // presses are ignored while the clip plays
@@ -6591,8 +6621,10 @@ TEST(GameReal, TemplePerchTurnsAndPillarTop) {
 }
 
 // Wall hug on l2_puzzleroom ledge 476 (a 88.5-139 deep shelf against a wall: tru.exe 0x74B920's test passes along
-// most of it): walking along the floor onto its first end, bbeam_walk_turn180 turns her back to the wall
-// (Wall_Hug_Idle), Wall_Hug_Shimmy_Left (mirrored the other way) carries her along it, its end walks her off.
+// most of it): walking along the shelf from just past its first end, bbeam_walk_turn180 turns her back to the wall
+// (Wall_Hug_Idle), Wall_Hug_Shimmy_Left (mirrored the other way) carries her along it, its end walks her off. The
+// floor before that end lies under an overhang 293.5 over it (faces 12686 / 12687, out to x -14303.9): no room for
+// her standing capsule, so she starts 100 along the shelf, clear of it (OU-PLY-012: she is pushed out every tick).
 TEST(GameReal, PuzzleRoomWallHug) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -6601,7 +6633,7 @@ TEST(GameReal, PuzzleRoomWallHug) {
     ASSERT_TRUE(m);
     const vec3 p0 = m->points[0], p1 = m->points[1];
     const vec2 d = glm::normalize(vec2(p1 - p0)), shelf(-d.y, d.x);
-    const vec3 start = vec3(vec2(p0) - d * 150.0f + shelf * 88.496f, p0.z + 20);
+    const vec3 start = vec3(vec2(p0) + d * 100.0f + shelf * 88.496f, p0.z + 20);
     auto w = unitWorld(bf, "l2_puzzleroom", {start, std::atan2(d.y, d.x)});
     const auto& s = w.player().state();
     for (int i = 0; i < 120 && s.state != State::WallHug; ++i) w.tick(worldStick(w, d));

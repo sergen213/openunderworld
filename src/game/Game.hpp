@@ -545,9 +545,9 @@ public:
     std::optional<float> seenCameraYaw() const { return cameraKnown_ ? std::optional<float>(cameraYaw_) : std::nullopt; }
     void seeCamera(float yaw) { cameraYaw_ = yaw, cameraKnown_ = true; }
     // Load / stream / placement. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks
-    // them held (Buttons::hold) so that a key still down gives no press edge on the next tick. The next tick first
-    // pushes her out of walls she was put into (depenetrate).
-    void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false, placed_ = true; }
+    // them held (Buttons::hold) so that a key still down gives no press edge on the next tick. Every ground tick first
+    // pushes her out of walls she is in (depenetrate).
+    void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false; }
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
@@ -592,13 +592,14 @@ private:
     vec3 forward() const;
     vec3 toWorld(vec3 model) const; // model-space vector -> world, by yaw
     float capHeight() const;        // capsule height (crouched or standing)
+    bool roomToStand() const;       // the crouched capsule can grow to the standing one (no PSCCF_LowCeiling)
     enum class Floor { Stand, Slide, Steep };
     Floor floorKind(const collision::Hit& g) const;        // tru.exe 0x5DCE20's verdict on the face under her
     bool standable(vec3 p, const collision::Hit& g) const; // floor hit under p supports standing
     void groundMove(vec3 delta, float dt);
     void airMove(float dt, vec2 move);
     vec3 slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) const;
-    vec3 depenetrate(vec3 pos, float bottom) const; // out of faces the capsule [pos + bottom, top] overlaps (ground)
+    vec3 depenetrate(vec3 pos, float bottom) const; // out of faces the capsule [pos + bottom, top] overlaps (ground, every tick)
     void startFall(vec3 vel);
     void startSlide(vec3 vel, bool fromGround = false);
     bool tryGrab(vec3 prevPos);
@@ -731,7 +732,6 @@ private:
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch, prevCameraYaw_ = 0;
     bool cameraKnown_ = false;
-    bool placed_ = false; // spawned / restored since the last tick (Player::tick depenetrates once); not saved: a load sets it
 };
 
 // ---- camera -----------------------------------------------------------------------------------

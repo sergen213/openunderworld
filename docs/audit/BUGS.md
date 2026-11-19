@@ -109,7 +109,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-009 | Lara / chimney | Chimney wall reach / standoff pair differs (holds 110 vs 119-131) | Open | pre-existing | C-MEASURE |
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
-| OU-PLY-012 | collision | No depenetration pass: now after placements (tru.exe resolves every frame) | Partly fixed on agent/Depen6 (96d30d4) | pre-existing | — |
+| OU-PLY-012 | collision | Push-out every ground tick; one-sided ground sweep + front-only push-out (Wine: tru.exe lets her through a wall from behind); switch stand point from the nearest collision box face (Wine 4525) | Fixed on agent/TickDepen7 | pre-existing | — |
 | OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed on int/brief (21678c2; full ctest pending) | pre-existing | — |
 | OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Fixed on agent/DeckCam6 (colliders posed after a mid-game rebuild) | pre-existing | — |
@@ -768,7 +768,55 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   tick. Also not like tru.exe: a capsule whose axis passed through the face stays (tru.exe still came out on her side
   from 38 past the face plane), and air / hang / swim states have none. Our walk contact at this wall is 14 units short
   of tru.exe's (y −4385.4 vs −4399.2 in our frame).
-- Status · Origin: Partly fixed on agent/Depen6 · pre-existing.
+- Batch 7 (agent/TickDepen7, on int/batch7): the moves that ended inside our collision were mostly `Player::slide`'s.
+  (1) 1158366: a face the sweep touched or overlapped at t = 0 that the move does not close on (tangent / leaving) made
+  slide() apply the whole move past every face ahead — brushing one wall walked her through the next (l2_puzzleroom shelf
+  476 is 157.2 wide, her capsule 158). Sweep flag `kSweepSkipLeaving`. (2) f5c5eed: tru.exe's segment-triangle test
+  0x461640 is one-sided [O] (hit only when -dot(dir, (v1-v0)x(v2-v0)) > 1.19e-5; serves BIH queries 0x462FA0 / 0x46C450,
+  0x46C450 <- 0x4E8FC0 <- the player-code ray 0x493330; whether her proxy's contacts use it is [U]); Lara's ground sweep
+  is one-sided (`kSweepOneSided`) and the push-out only uses faces whose front her axis is on. The ch01 roll under the
+  leaning beam passes the beam's faces 965 / 966 / 907 from behind, as the walkthrough plays it. (3) 91405ad: push-out on
+  every ground tick (placed_ removed); the roll's end follows chart S7 (T250 low ceiling -> crouch, T253 Crouch + stick ->
+  Crouch_Front), so it crawls out from under the beam. GameReal.PuzzleRoomWallHug starts clear of the 293.5-high overhang.
+  Tests: Collision.SweepSkipsFacesItLeaves, Collision.OneSidedSweepPassesFacesFromBehind,
+  Game.RollEndsCrouchedUnderALowCeiling. Scenario results on the merged tree: ch01_bedroom_ring_door,
+  ch01_ring_door_walk_through, kraken_kill, ch06_second_shaft_valves (with CamZones7's rotated stick; its route lands on
+  grate 1245 and air-attaches to hold 212 without passing through object 1245), chapel 4819 / UberStateSaveLoad,
+  GameReal.PuzzleRoomWallHug pass; `-L protected` 41/41.
+- Sidedness, Wine (batch 8, 2026-11-19, prologue frame = ours + (9622, 333, −2977); traces in
+  openunderworld-work/w2/TickDepen7/{behind,front,behind2,behind3}.txt): l3_main_bedroom wall face 236 (plane x −10672,
+  facing −x, nothing behind it, floor 1593 / 1605 both sides). Walking −x into it from 220 behind, tru.exe lets her
+  through: no stop at the plane; as her axis passes it she jumps 91 in one sample to 79 in front of it (−1041.9 →
+  −1133.3 tru x; plane −1051) and walks on. From the front she stops 68 short of it. Face 112 / 113 from behind: the
+  same jump through (−1022.2 → −1102.9, plane −1018). A third try (face 176, −y) stopped 106 short of the plane with
+  no other terrain face there (an object, [U]). So her wall contacts against terrain are one-sided and the per-frame
+  push-out works from the front only — what f5c5eed / 91405ad do [O-runtime]. The routine her proxy uses is still [U]
+  (0x4ECBB0, a body-point contact via 0x46C450, also one-sided, is a candidate).
+- Slide-only (1158366 on the merged tree, without f5c5eed / 91405ad; build wt-TickDepen7s): 7 of 516 fail
+  (Collision.SweepSkipsFacesItLeaves as committed in C1, GameReal.PuzzleRoomWallHug, StreamReal.SaveContinuesBitIdentically
+  timeout, ch01_bedroom_ring_door, ch01_ring_door_walk_through, ch03_gear_room_east / _west) and protected_collision:
+  the three commits only stand together.
+- ch03 gear rooms (fixed): switch stand point. tru.exe's engagement start 0x704730 -> 0x6F4740 targets the point of
+  the switch's collision shapes nearest her (0x4DF090 per shape type; box 0x46AE20) with the shape's normal there made
+  horizontal. Wine at switch 4525 (`ma_ei_wall_switch_electric`, useDistance 135): she ends 174.0 out of its origin
+  along +X, 3.0 aside; our old rule (135 out of the origin) put her 39 short. `World::useSwitchClip` now stands her
+  useDistance out of the nearest point of the switch's solid boxes along that face's normal (179.4 / 1.6 at 4525; [I]
+  the distance). Switch 57 / 55 (`ms_ei_switch_oneway_wall`) stand on a 2282-high pedestal; the old point (135 from the
+  origin) was inside the pedestal, the new one is 249.5 out, beside a post (x −12941..−12893) that pushes her 48 west.
+  ch03_gear_room_east passes unchanged; ch03_gear_room_west's `go` from there to the lower hall ran through that post:
+  it now goes round its south end and joins the old line (waypoints only; expectations unchanged).
+  GameReal.LaraPlaysInteractionClips pins 4525 to the Wine numbers (±6 / ±3).
+- SaveContinuesBitIdentically case 9 (setup changed): she walks roped on the drained goo's floor of l4_pool; −y she
+  meets the back of face 5096 (normal (−0.48, −0.79, −0.38)) at y −554 and, past it, the 64° slope at y −540, which
+  stumbles her off the rope (Land), so she is not in GrappleSwing at the save. The old setup relied on the double-sided
+  sweep stopping her at 5096's back. She now walks +y, where the floor is level for 700 units.
+- Survey (2026-11-19): of 427 802 terrain wall faces (>= 100 sq units) 244 933 have nothing within 300 behind them and
+  37 712 have a floor 150 behind at body height (walk-through from behind, as tru.exe at face 236; mostly level shells:
+  l1_seafloor 4 022, l1_kraken_room 2 892, l7_arctic_sea 2 757, l4_ballcourt 2 693). Open: deep placements behind a face
+  (Wine: out from 38 past the plane), air / hang / swim push-out, the walk contact (tru.exe stops her root 66.2 / 68
+  from the face, under the proxy radius 79.01), our raycast is double-sided where 0x493330 is not, the switch stand
+  distance (5.4 off at 4525).
+- Status · Origin: Fixed on agent/TickDepen7 (1158366, f5c5eed, 91405ad + stand point / tests; see the commits) · pre-existing.
 
 **OU-PLY-013 Slope-slide upper bound** (docs/re/VERIFICATION.md V002, medium confidence)
 - tru.exe: the ground check 0x5DCE20 reads only player data +0x100E (52°; cos read at 0x5DD3BA / 0x5DD4F4 /
