@@ -153,6 +153,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
+| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861); 1 / 3-8 / 0xC / 0x14 / 0x16 and kind 1 open | pre-existing | — |
 | OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040) | pre-existing | — |
 
 ## Root-cause clusters
@@ -606,10 +607,36 @@ Status · Origin: Open · pre-existing.
   was re-measured in Wine (`spin-deck2.txt`): a mouse turn circles at 948.2 and the cabin pulls it in to 879.9..905.2.
   The older "1264.2 elsewhere" was measured outside the volume. The `render_golden_cliff_water_*` goldens frame the
   deck at tick 120 and were re-blessed: Lara is drawn larger, matching the 948/1264 distance ratio.
-- Not modelled [U]: commands 0x19 / 0x1A / 0x1B / 0x1C (tracker records), 0x12 / 0x14 / 0x15 / 4 / 6 / 8 in a volume,
-  kinds 1 / 2 and sets with forces (91 volumes in the game carry commands). The deck volume rides the yacht in tru.exe;
-  ours stays at its intro place (inside it on the deck at every heave).
+- Not modelled [U] at the time: the other commands, kinds 1 / 2 and sets with forces; the deck volume riding the
+  yacht. Followed up as OU-CAM-006.
 - Status · Origin: Fixed on agent/DeckCam6 · pre-existing.
+
+**OU-CAM-006 Camera trigger commands** — `World::updateOrbitCamera` applied only a volume's distance (2 / 0xD) and its
+inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) were tested at their intro places.
+- Survey (`ScriptRealData.CameraTriggerCommandSurvey`, docs/re/CAMERA.md §9): 459 kind-0 volumes carry commands (58
+  with priority); uses: 0x18 155, 2 129, 0x12 116, 0xD 109, 0x1A 73, 0x19 65, 0x16 54, 0x14 53, 0x1C 51, 0x1B 47, 0x15
+  33, 0x17 24, 6 15, 4 7, 0 / 1 / 8 4, 3 / 0xC 2, 5 / 7 1; 89 force sets carry forces (types 2, 3, 5, 7). 9 kind-1 volumes
+  name an AnchoredCamera record (0x5EE4A0); 8 of them have none, so 0x5E7BF0 refuses them.
+- tru.exe (0x6019D0, jump table 0x601CC0): 0x12 = a level camera record of the unit (applied as a markup's; priority-0
+  volumes under the mode records, the others over them, 0x601D30); 0x15 clears +0x1338 (the on-foot ray probe,
+  0x600591); 0x17 / 0x18 sets with forces (0x609C40, strength = the product of the forces, 0x607B90); 0x19 / 0x1B and
+  0x1A / 0x1C add (x, y, z) to the focus / look trackers (+0x3B0 / +0x620 +0x20 via 0x608280; 0x1B / 0x1C blend over arg 3
+  when byte arg 4 is set, 0x608200); the camera orbits the focus and looks at the look point (0x6009C0 / 0x600B20).
+  0x16 is the LaraCombatCamera's distance (0x603190), 0x14 flags a unit fade record (0x5ED2D0), 3..6 drive the
+  yaw / pitch override +0x1248 / +0x1278 (0x609F10 / 0x609D40), 7 / 8 limits, 1 sets by id.
+- Wine 2026-11-19 (`openunderworld-work/w2/CamZones7/camz.py`): 3852 look tracker +0x20 = (0, 0, −79.01), look 0.22°
+  up with the pivot 5.00° up; 3859 pitch −6.00°, back from a nudge at 19.5°/s at ~31 fps (300 × min(1, 2 dt) per
+  frame); 3861 record (unit 9, record 7) holds the camera 13 s. The yacht volumes are linked to the yacht (instance
+  +0x214) and sit at its markers (3852 − yacht (1497, 1551, 811), ours at the marker (1547, 1530, 685)).
+- Fix (agent/CamZones7): Script.cpp keeps the forces and the record pointer of each command; CollisionMesh keeps the
+  unit's record list; `World::updateOrbitCamera` applies 0x12, 0x15, 0x17 / 0x18 with forces and the tracker offsets
+  (`World::cameraPivot()`; `camera().target` is the look point); `script::Runtime` tests a volume whose body / offset is
+  set (anchored: `World::poseAnchored`) in that frame. The orbit state (trigger sets, offsets, a volume's record) is saved.
+- Tests: `ScriptRealData.CameraTriggerCommandSurvey`, `StreamReal.CameraRidesTheYachtDeck` (look 0.22°, stays in the
+  riding volume), `StreamReal.CameraTriggerForceSetEasesPitch`, `StreamReal.CameraTriggerRecordHoldsTheCamera`.
+- Open [U]: 1 / 3..8 / 0xC / 0x14 / 0x16 and kind 1; the frame of x / y tracker offsets (all are (0, 0, z)); a volume
+  record of type 1 / 2 off a markup (her place 0 [I]); the look tracker's own lag (ours uses the focus's).
+- Status · Origin: Fixed on agent/CamZones7 (partial: see open) · pre-existing.
 
 **OU-CMB-003 Shark aggression**
 - Repro: l2_cliffclimb, into the sea and tread (`w2/WineMeasure/ours/tread_*`): ours bit within ~7 s and every 1.5..3 s.
