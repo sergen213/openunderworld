@@ -5,6 +5,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <tlhelp32.h>
+// wbs <addr> <hexbytes>: wb with every thread of the game suspended and none inside [addr, addr + n) (patching a hot
+// function's first instructions while it runs crashes it); retries up to 50 times.
+static int patchSuspended(HANDLE h, DWORD a, const unsigned char* v, int n) {
+    const DWORD pid = GetProcessId(h);
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        HANDLE th[256]; int k = 0, clear = 1;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        THREADENTRY32 te = {sizeof te};
+        for (BOOL ok = Thread32First(snap, &te); ok && k < 256; ok = Thread32Next(snap, &te)) {
+            if (te.th32OwnerProcessID != pid) continue;
+            HANDLE t = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, te.th32ThreadID);
+            if (!t) continue;
+            SuspendThread(t); th[k++] = t;
+            CONTEXT c = {0}; c.ContextFlags = CONTEXT_CONTROL;
+            if (GetThreadContext(t, &c) && c.Eip >= a && c.Eip < a + (DWORD)n) clear = 0;
+        }
+        CloseHandle(snap);
+        int ok = 0;
+        if (clear) {
+            DWORD old; VirtualProtectEx(h, (void*)a, n, PAGE_EXECUTE_READWRITE, &old);
+            ok = WriteProcessMemory(h, (void*)a, v, n, 0); FlushInstructionCache(h, (void*)a, n);
+        }
+        for (int i = 0; i < k; ++i) ResumeThread(th[i]), CloseHandle(th[i]);
+        if (clear) return ok;
+        Sleep(1);
+    }
+    return 0;
+}
 #define B(x) s[n++] = (unsigned char)(x)
 #define D(x) do { DWORD v_ = (x); memcpy(s + n, &v_, 4); n += 4; } while (0)
 static HANDLE proc(void) {
@@ -66,6 +95,12 @@ int main(int argc, char** argv) {
         int ok = WriteProcessMemory(h, (void*)a, v, n, 0); FlushInstructionCache(h, (void*)a, n);
         printf("%d bytes %s\n", n, ok ? "ok" : "fail"); return !ok;
     }
+    if (!strcmp(argv[1], "wbs") && argc > 3) { // wb with the game's threads suspended (patchSuspended)
+        DWORD a = strtoul(argv[2], 0, 16); unsigned char v[64]; int n = 0; const char* q = argv[3];
+        while (q[0] && q[1] && n < 64) { unsigned x; sscanf(q, "%2x", &x); v[n++] = (unsigned char)x; q += 2; }
+        int ok = patchSuspended(h, a, v, n);
+        printf("%d bytes %s\n", n, ok ? "ok" : "fail"); return !ok;
+    }
     if (!strcmp(argv[1], "wp") && argc > 3) { // write code byte
         DWORD a = strtoul(argv[2], 0, 16); unsigned char v = (unsigned char)strtoul(argv[3], 0, 16), o = 0; DWORD old;
         ReadProcessMemory(h, (void*)a, &o, 1, 0);
@@ -117,8 +152,8 @@ int main(int argc, char** argv) {
         printf("player %08lx mask23C %08lx mask240 %08lx\n", p, p ? rd32(h, p + 0x23C) : 0, p ? rd32(h, p + 0x240) : 0);
         return 0;
     }
-    if (!strcmp(argv[1], "alloc")) {
-        void* c = VirtualAllocEx(h, 0, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!strcmp(argv[1], "alloc")) { // alloc [bytes]: an RWX code cave (default one page)
+        void* c = VirtualAllocEx(h, 0, argc > 2 ? strtoul(argv[2], 0, 0) : 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
         printf("%08lx\n", (DWORD)(size_t)c); return 0;
     }
     if (!strcmp(argv[1], "cam")) { // cam [n] [ms]: Lara pos/rot, camera vtable, pos +0x90, pivot +0x100, desired +0x150, dist +0x1d4/+0x1320, mode +0x1e0

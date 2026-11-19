@@ -157,11 +157,19 @@ reflections and depth fade in GL and Vulkan.
   included), so the caster set matches. Receivers on the deck read split 3, and their compare depth matches
   `Pssm::map[3]`. The cabin and Lara cast onto the deck in GL and Vulkan alike. In full shadow the deck equals a render
   with the atlas cleared to 0, so the sun term (c212 × s11 cookie × PCF) is removed completely.
-  The shadow only looks absent because of contrast: shadowed / lit deck luminance is 0.65–0.69 for us and 0.43–0.47
-  for tru.exe at the same spot (Wine `openunderworld-work/w2/WineMeasure/s1/deck-idle.png`, Lara at ours
-  (−34816.2, −14651.9, 211.4), yaw 223). Ours has a brighter unshadowed part (light map s1 × c148/c149 + c15 + irradiance:
-  ~105 vs ~66 at the same 0–255 levels) and a weaker sun part (~52 vs ~81). That is the light-map scale / sun balance,
-  not the PSSM path [I: which GlobalParams set (c148 vs c149, chosen by MaterialParams c104.x) tru.exe feeds there].
+  Inputs at the deck draw (material 6179, teak 1601; Wine 2026-11-18, `tools/wine-ref/py/regcap.py`, Lara at ours
+  (−34816.2, −14651.9, 211.4)) [O]: c15 (0.148, 0.15, 0.125), c76 (0.22, 0.34, 0.37) and the other SH rows within 0.01
+  of ours, c96 and c100–c104 equal (c104.x = 1 picks c149), c148 = c149 = (1, 1, 1, 1), c176/c177 = 0, c209/c212 equal.
+  Bools 0x48 (b3 + b6): one non-shadow light, c193–c197 = unit light 9 (white, radius 8000, AttenuationSampler row 2),
+  register for register as ours. Bound textures: s1 = instance light map 1586, s2 = 1587, s0 / s4 / s5 = the
+  material's maps (texture objects matched by DRM order and size). Ours binds the same.
+  Contrast (red channel, camera matched to `openunderworld-work/w2/WineMeasure/s1/deck-idle.png`: eye
+  (−34097.7, −14044.1, 470.4), target (−34821.3, −14651.1, 420), FOV 45): lit planks 190–215 for us and 194–215 for
+  tru.exe. Shadowed / lit is 0.60–0.62 for us (the same pixel with the atlas cleared to 1 and to 0) and ~0.56–0.61 for
+  tru.exe (neighbouring planks across its cabin-shadow edge). An earlier 0.43–0.47 compared unmatched planks, some also
+  in the bench's shade. So the deck shadow is as strong as tru.exe's, and no register or light-set change is called
+  for. Still different: tru.exe draws thin sun stripes on the port aft deck (a thin caster, probably the ladder) that
+  ours lacks, and its sky is lit [U: caster not identified].
 - Original-game screenshots exist for l2_cliffclimb's yacht deck only (above). Other views have no tru.exe capture:
   PCGamingWiki's TRU page only has settings-menu images, so those comparisons are against our previous renders.
 
