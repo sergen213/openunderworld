@@ -32,6 +32,7 @@ struct SaveGame {
     // markup as (unit, index), positions in the unit's frame; null (older saves) = their defaults.
     nlohmann::json controller;
     float cameraYaw = 0, cameraPitch = -0.25f;
+    std::optional<float> cameraSeenYaw; // Player::seenCameraYaw (the swim turn's view yaw of the tick before); missing = none
     nlohmann::json runtime; // World::serializeRuntime() (orbit camera lag, hair, scripts' player unit); null (older saves) = seeded afresh
     std::optional<game::CheckpointRef> checkpoint;
     nlohmann::json checkpointSave; // World::checkpointSave() (what a death restores); null (version 2) = the state at the load
