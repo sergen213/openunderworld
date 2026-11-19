@@ -145,7 +145,15 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             centre();
             next(tick, "timed out");
         } else {
-            steer(d / dist, has("walk") || dist < 250);
+            // In water she turns toward the stick at 1.755 rad/s whatever her speed (Player::swim, swimTurn), so at full
+            // speed she circles ~770 units wide and can be carried past the point, over a sill she then cannot swim back
+            // across (l7_arctic_sea's niches); a player eases off the stick until she faces it, as this does.
+            float ease = 1;
+            if (lara.water >= 0) {
+                const float err = std::abs(std::remainder(std::atan2(d.y, d.x) - lara.yaw, glm::two_pi<float>()));
+                ease = std::clamp(std::cos(err), 0.25f, 1.0f);
+            }
+            steer(d / dist * ease, has("walk") || dist < 250);
         }
     } else if (s.op == "swim") { // swim X Y Z [R]: in water, the stick towards (X, Y), Jump / Drop held to rise / sink
         const glm::vec3 d = glm::vec3(std::stof(s.args[0]), std::stof(s.args[1]), std::stof(s.args[2])) - lara.pos;
