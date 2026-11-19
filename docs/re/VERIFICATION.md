@@ -46,6 +46,21 @@ be checked in the exe. For these the row checks the read (offset, scale, compari
    0.2617994, so fast arcs are refused that the original accepts. Which object `+0x80` belongs to (the query state or
    the markup) is not resolved.
 
+   **Resolved 2026-11-16 (agent/SlideLedge).** V002 was a false positive: 0x5DCE20 does apply the 28° bound, through
+   its query record. The per-frame caller 0x71B910 loads Lara +0x644 (0x71BA19) and passes it as the 7th argument of
+   0x5C0CA0 (0x71BB6D..0x71BB9B), which stores it as record word 3. The record is 0x5DCE20's second argument (`edi`),
+   and `[edi+0xC]` is compared with the normal z at 0x5DD3A2, 0x5DD45F, 0x5DD4E8 and 0x5DD56C (slide needs
+   `cos 52° <= nz <= [edi+0xC]`, `nz < 1`). +0x644 = cos(player data +0x100C) is written at 0x71B580 (spawn) and
+   0x7201A0 (a message handler; 0x72015D sets it from a message value / 4096). The controller's 0x740036 read is only
+   the seed of its angle range (props 0x192 / 0x193). `floorKind` matches; test rows added, no behaviour change.
+
+   **V042 resolved 2026-11-16 (agent/SlideLedge).** `edi` is the ledge candidate record (0xE0 bytes, built by 0x6F6C50
+   / 0x6F6DB0 in 0x70F300). Its +0x80 is the velocity of the markup's owner at the attach point (0x6EC930: zero for
+   static markup, else 0x4D8F70 on a physics body or 0x5D75B0 = displacement between the segment's last and current
+   matrix / timeMult, per 30 Hz frame). So the loosening applies to moving ledges, not to Lara's arc speed. Fixed:
+   `Markup::velocity`, filled by `World::tickObjectMarkup`; threshold 3.1605 × 30 units/s. [U] the units of the
+   physics-body path 0x4D8F70.
+
 Citation error, behaviour correct:
 
 - **V049, 0x622418.** Cited at World.cpp:580, Combat.hpp:376, SCRIPTS.md:435 and GAMEPLAY.md:4185. 0x622418 is not an

@@ -15,8 +15,8 @@ high / medium / low per item.
 | `0x5768F0(index, handler)` bind calls | 2 267 (2 283 rows: identical-code-folded bind functions shared by several classes) | [O] objdump, all parsed (0 unparsed) |
 | Distinct handler (thunk) addresses | 1 884 | [O] |
 | Native functions the bytecode calls | 362 (distinct (type, index)) | [O] `script_types_dump` `R` rows; equals the SCRIPTS.md survey count |
-| ... handled by OpenUnderworld | 213 yes, 27 stub (zero result), 1 argument-count mismatch, 121 no | [I] heuristic over `src/script/Script.cpp` + `src/game` forwarders (below) |
-| All bound natives (2 283 rows) | 276 yes, 74 stub, 1 mismatch, 1 932 no | [I] same heuristic |
+| ... handled by OpenUnderworld | 220 yes, 27 stub (zero result), 0 argument-count mismatch, 115 no | [I] heuristic over `src/script/Script.cpp` + `src/game` forwarders (below) |
+| All bound natives (2 283 rows) | 285 yes, 74 stub, 0 mismatch, 1 924 no | [I] same heuristic |
 | Runtime verification | 1 920 of 1 920 checked rows match (153 linked types with functions; 7 more linked with no functions, 27 not linked in the captured scene); 0 runtime-only handlers | [O] two Wine captures, new-game prologue (Croft Manor bedroom: 21 `firetriggervolume`, `ma_uo_bedroom_door`, `lara_casual` in the instance list) |
 
 ## How the table is built (high)
@@ -112,6 +112,16 @@ Handler = thunk; target = engine function it calls. `args` / `ret` from the prot
 Other frequently called natives without a binding (by calling types): `instance` 63 (90), `anchor` 1 (28), `enemybase` 28
 (25), `vector` 11 / 9 / 5 (24 / 23 / 16), `waypointnode` 2 (23), `inputaction` 0 (19), `padshock` 1 (15), `marker` 1
 (11), `plannerobstacle` 1 (10), `larabase` 21 (10). Full list: rows with `called_by_types > 0` and `implemented_ou = no`.
+
+## Puzzle natives (OU-PZL-009 / 015 / 008, OU-GRP-005)
+
+| native | handler → target | args / ret | decoded behaviour | OU status | confidence |
+|---|---|---|---|---|---|
+| `modifiable` 7 (type 823) | `0x79ABA0` → `0x4A5A90` | 1 / void | INSTANCE_Post(0x2E, value) to the instance, for every receiver; the anim-graph handler `0x6B4440` → `0x6B453B` enters the state with that id at once (no class check) | yes on every switch (before: `ar_ei_switch_oneway` only); `ProgressionReal.BallcourtExitSwitchLockedUntilTheKey`, CriticalGates 498 / 5469 | high |
+| `multibody` 3 (type 3566) | `0x79ACD0` → `0x4A6FF0` → `0x4D8FF0` | 0 / void | Disable: queries 0x13F / 0x140 (body count / array); each body with a physics component (`+0x274`) gets `+0x15C \|= 1` ("fixed") and `+0x160 = 0`; inverse of 2 (`0x4D8FD0`) | yes: World keeps the set (saved as `multibodyFixed`), `multibody` 4 reads it; no motion change of ours [I]. `ProgressionReal.MaproomMultibodyDisableFixesTheBodies` (l2_maproom planes 2637 / 2638 on bridge 2667) | high (semantics) |
+| `multibody` 92 (type 3566) | `0x79B8F0` → `0x4A7300` | 1 / void | `if (*this) INSTANCE_Post(*this, 0x2C, value)`; a class-30 breakable takes 0x2C while whole: the break record whose id is the value starts (`World::breakBreakable`) | yes for breakables; other receivers' 0x2C [U] (no effect). `ProgressionReal.TempleFloorBreaksByMultibody92` (l4_temple floor 5234) | high (thunk), medium (breakable handler) |
+| `multibody` 93 (type 3566) | `0x79B910` → `0x4A7320` | 0 / bool | `query(*this, 0xCA) != 0`; for a breakable: broken | yes for breakables (false elsewhere) [U other receivers] | high (thunk), medium (breakable answer) |
+| `larabase` 26 (type 213) | `0x79A1A0` → `0x777C30` | 1 / bool | her grapple controller (query 0x175, then 0x17C) has its rope's target (`+0x4C` → `+0x44`) on the argument instance | yes (`Player::grappleUid`); the rope attach `0x6A35E0` also calls the target's instance prototype 64 = vt 46 (`0x799840`). `GameReal.GrappleLeverReturnsWhenReleased` | high |
 
 ## Reproduce
 

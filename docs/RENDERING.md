@@ -540,9 +540,10 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   pass with the ocean dispatches 0.36 → 0.61 ms (8× anisotropy; without the whitecap pattern 0.56, no anisotropy 0.46, 16× 0.64).
 - Vertex displacement (`water.vert`): the original sea waves (`render::waterWaves`, which the gameplay surface
   follows), then the Godot height layers (± 0.06 m; not on FFT seas) and on seas the FFT ocean's swell + gravity
-  height (above) or afl's waves (12 iterations, 0.45 m) centred on that
-  surface but clamped to the rest plane — the original's own crest bound — so the yacht deck stays above the drawn
-  sea; then the wave field's height (`ouBaseHeight` + `ouFieldHeight`, shaders/water_surface.glsl). TRU's meshes are
+  height (above, zero-mean: the gameplay surface is this one and tru.exe's sea mean is its waves' alone, OU-WAT-006) or
+  afl's waves (12 iterations, 0.45 m) centred on that
+  surface but clamped to the rest plane — the original's own crest bound — so shores and decks never sit under the
+  drawn sea's crests; then the wave field's height (`ouBaseHeight` + `ouFieldHeight`, shaders/water_surface.glsl). TRU's meshes are
   coarse (l1_seatop's sea: a regular grid of ~3.5 m quads [measured: triangle-ID debug view over a 1 m grid]), so
   inside the wave field's window the surface is tessellated ("Interactive waves" below, "Geometry"); elsewhere the
   mesh's own vertices are displaced and the relief is the per-pixel normals'.

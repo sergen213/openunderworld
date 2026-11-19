@@ -6,6 +6,34 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-11-18
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: with Enhanced water the open sea sat about 70 units too low. Its average level now matches the original
+  game's (measured against tru.exe under Wine): Lara treads water at the right height, and the yachts ride where they
+  should. The FFT swell keeps its look.
+- Fixed: the camera now rides along with whatever Lara stands on, such as a heaving yacht deck, sinking pressure
+  plates or moving platforms. It no longer stays put for a moment and then lags behind.
+- Fixed: swimming turns the same way in both directions and is relative to the camera, as in the original. Releasing
+  the stick no longer snaps her round, and her swimming direction trails her heading slightly, as in tru.exe. Starting
+  and stopping at the surface follows the measured original curves.
+- Fixed: chapter 9's shrine slabs fall away when you pull the statue, as fixed links between parts of puzzle objects
+  are now simulated and released.
+- Fixed: chapter 15's rune block in the pool room can be dragged out of its corner.
+- Fixed: Lara grabs a moving ledge a little more forgivingly when she arrives fast, as in the original.
+- Fixed: chapter 15's ballcourt exit switch stays locked until the key is in its keyhole, as in the original; switches
+  that a level script locks or frees now obey it everywhere, not only the Arctic Sea wheels.
+- Fixed: in chapter 12 the grapple lever at the trail start swings back when Lara lets go of the rope, so the gate
+  closes again as the level intends; she stays on the rope as long as you hold Interact.
+- Fixed: the chapter 9 map room's planes now really lock their mechanism, and the chapter 13 temple floor breaks when
+  its script breaks it.
+- Note: 0.52.0 already contained, without listing them, the script fix for Croft Manor's fire volumes (the burning
+  rooms in the prologue now run their scripts fully) and several other level scripts that used to stop part-way
+  (float properties on objects, "is this area loaded" checks, colour ramps on the ship), plus new self-tests of the
+  engine, HUD, inventory, camera and save/load, ambient-occlusion and reference-image tests, and byte-exact round
+  trips of all game archives, containers, textures and text.
+
 ## [0.52.0] - 2026-11-18
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

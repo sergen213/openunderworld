@@ -256,6 +256,7 @@ bool World::tickSplineCamera(float dt) {
 
 void World::updateCamera(const Actions& a, float dt) {
     cameraSwing_ = 0;
+    const vec3 carrierMove = std::exchange(carrierMove_, vec3(0)); // this tick's carrier (tickObjects)
     if (tickSplineCamera(dt)) return;
     if (fieldCamera_) { // from her eyes along the look angles; zoom narrows the view and slows the look (World::tick)
         const float fov = glm::mix(fovDeg * 0.75f, 6.0f, fieldZoom_), slow = fov / (fovDeg * 0.75f);
@@ -268,7 +269,7 @@ void World::updateCamera(const Actions& a, float dt) {
         orbit_.valid = false; // the orbit reseeds behind her when it ends
         return;
     }
-    updateOrbitCamera(a, dt);
+    updateOrbitCamera(a, dt, carrierMove);
     cam_.up = vec3(0, 0, 1), cam_.fovDeg = 0;
     if (blendOut_ <= 0) return;
     blendOut_ = std::max(0.0f, blendOut_ - dt);
@@ -333,6 +334,7 @@ nlohmann::json World::serializeRuntime() const {
         for (const auto& [uid, d] : waterDamage_) w.push_back({uid, d.amount, d.frames});
         out["waterDamage"] = std::move(w);
     }
+    if (!multibodyFixed_.empty()) out["multibodyFixed"] = multibodyFixed_; // (only once a script fixed one)
     return out;
 }
 
@@ -351,6 +353,7 @@ void World::restoreWorldRuntime(const nlohmann::json& j) {
         waterDamage_[e.at(0).get<int32_t>()] = {e.at(1).get<float>(), e.at(2).get<float>()};
     multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
     multibodyLimitOff_ = j.value("limitsOff", std::set<int32_t>{}); // older saves: every limit on
+    multibodyFixed_ = j.value("multibodyFixed", std::set<int32_t>{});
     syncedObjects_ = ~size_t(0);
 }
 

@@ -534,9 +534,10 @@ TEST(Game, SwimSpeedMatchesTru) {
     EXPECT_NEAR(glm::length(s.vel), 21.6f * 30, 150) << "0.2 s after the release";
 }
 
-// tru.exe surface swim turning (Wine, l1_seatop sea, camfollow-wine/turn1.txt): with the stick swung round she turns at
-// 117.5 deg/s at full swim speed (2765 / speed rad/s), and her velocity is steered after her heading as a vector at the
-// swim acceleration, so it lags the heading in a turn and dips in speed.
+// tru.exe swim turning with the camera standing still in the world (Wine, l1_seatop sea, camfollow-wine/turn1.txt): with
+// the stick swung round she turns at most 117.5 deg/s at full swim speed (2765 / speed rad/s); her angle off the view
+// line runs to the stick's at 1.755 rad/s (w2/WineMeasure/s1/swim-turn.txt). Her velocity moves a quarter of the way
+// to heading x speed every 30 Hz frame (0x755A00, player data +0x240), so it lags the heading and dips in speed.
 TEST(Game, SwimTurnLagsLikeTru) {
     auto w = makeWorld(poolMesh(), {1000, -2500, 0}, glm::pi<float>() / 2);
     const auto& s = w->player().state();
@@ -544,21 +545,94 @@ TEST(Game, SwimTurnLagsLikeTru) {
     for (int i = 0; i < 90; ++i) w->tick(forward());
     ASSERT_EQ(s.state, State::SwimSurface);
     ASSERT_NEAR(glm::length(s.vel), 1348.6f, 1);
-    float lag = 0, slowest = 1e9f;
+    float lag = 0, slowest = 1e9f, prevCam = w->camera().yaw;
     for (int i = 0; i < 60; ++i) {
         Actions turn; // the stick toward world +x under the current camera
         const float cy = w->camera().yaw;
         turn.move = {std::sin(cy), std::cos(cy)};
-        const float y0 = s.yaw, v0 = glm::length(glm::vec2(s.vel));
+        const float y0 = s.yaw, v0 = glm::length(glm::vec2(s.vel)), carried = std::abs(std::remainder(cy - prevCam, 6.2831853f));
+        prevCam = cy;
         w->tick(turn);
         const float turned = std::abs(std::remainder(s.yaw - y0, 6.2831853f)) * 60;
-        if (std::abs(std::remainder(s.yaw, 6.2831853f)) > 0.05f) EXPECT_NEAR(turned, 2765.0f / v0, 1e-3f) << "tick " << i;
+        if (std::abs(std::remainder(s.yaw, 6.2831853f)) > 0.05f) {
+            // 1.755 rad/s off the view line (the camera turns after her, the same way: it carries her), at most 2765 / v
+            EXPECT_NEAR(turned, std::min(2765.0f / v0, 1.755f + carried * 60), 1e-3f) << "tick " << i;
+        }
         lag = std::max(lag, std::abs(std::remainder(std::atan2(s.vel.y, s.vel.x) - s.yaw, 6.2831853f)));
         slowest = std::min(slowest, glm::length(glm::vec2(s.vel)));
     }
     EXPECT_GT(lag, glm::radians(6.0f)) << "the velocity lags her heading";
     EXPECT_LT(slowest, 1340.0f) << "and dips in speed through the turn";
     EXPECT_NEAR(std::remainder(s.yaw, 6.2831853f), 0, 1e-3f) << "facing +x";
+}
+
+// tru.exe under Wine (2026-11-16; w2/WineMeasure/s1/swim-turn.txt at the surface, s2/under-turn.txt under water):
+// Forward + Right / Left held 3 s with the camera free (it drags after her and swings behind her, yaw set 11), then
+// Right / Left let go:
+// - her heading's angle off the view line runs to the stick's 45 deg at a constant ~100 deg/s (3.3 deg a 33 ms
+//   sample), both ways; on the release back to 0 at ~101 deg/s, the world turn rate 61 deg/s over the first 0.21 s
+//   (52.2 over the 0.25 s window that starts 38 ms before the release) and 73 over the next 0.25 s;
+// - the circle settles at 46.7 / 46.4 deg/s (surface), 48.3 / 48.0 deg/s (under water), the same both ways;
+// - her velocity trails her heading by 5.4 deg (surface) / 5.6 deg (under water) in it.
+// Ours settles ~2 deg/s faster: tru.exe stops 2.9 deg short of 45 off its camera-to-pivot line (42.1 deg in both
+// traces, and 1.5 deg past 0 after the release), ours 0.8 deg (one tick of the camera's turn), so her velocity crosses
+// the view a little faster and drags the camera round faster [U: what line tru.exe's stick is read against].
+TEST(Game, SwimCircleTurnsLikeTru) {
+    struct Run { float press, steady, offView, velLag, releaseWorld, releaseClose; };
+    const auto run = [](bool under, float side) {
+        CollisionMesh m;
+        addQuad(m, {-60000, -60000, -90000}, {60000, -60000, -90000}, {60000, 60000, -90000}, {-60000, 60000, -90000});
+        m.markup.push_back({10, 1, {{-60000, -60000, -100150}, {60000, 60000, -150}}});
+        auto w = makeWorld(std::move(m), {0, 0, 0});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 120; ++i) w->tick({});
+        if (under) {
+            Actions d;
+            d.drop = true;
+            for (int i = 0; i < 4 * 60; ++i) w->tick(d); // dive, then on down: deep enough not to surface in the circle
+            EXPECT_EQ(s.state, State::SwimUnder);
+        }
+        for (int i = 0; i < 8 * 60; ++i) w->tick(forward()); // the camera's swing weight is full (no look input for 7 s)
+        const auto off = [&] { return std::remainder(s.yaw - w->camera().yaw, 6.2831853f); };
+        Actions turn = forward();
+        turn.move.x = side;
+        Run r{};
+        const float o0 = off();
+        for (int i = 0; i < 12; ++i) w->tick(turn);
+        r.press = std::abs(off() - o0) / 0.2f; // the first 0.2 s: still short of 45 deg
+        for (int i = 12; i < 90; ++i) w->tick(turn);
+        const float y0 = s.yaw;
+        float lag = 0;
+        for (int i = 0; i < 90; ++i) {
+            w->tick(turn);
+            lag += std::abs(std::remainder(std::atan2(s.vel.y, s.vel.x) - s.yaw, 6.2831853f)) / 90;
+        }
+        r.steady = std::abs(std::remainder(s.yaw - y0, 6.2831853f)) / 1.5f, r.offView = std::abs(off()), r.velLag = lag;
+        const float y1 = s.yaw;
+        int n = 0;
+        for (; n < 60 && std::abs(off()) > glm::radians(0.5f); ++n) {
+            w->tick(forward());
+            if (n == 12) r.releaseWorld = std::abs(std::remainder(s.yaw - y1, 6.2831853f)) / 0.21f;
+        }
+        r.releaseClose = n / 60.0f;
+        if (under) EXPECT_EQ(s.state, State::SwimUnder);
+        return r;
+    };
+    const float deg = glm::degrees(1.0f);
+    for (const bool under : {false, true}) {
+        const Run right = run(under, 1), left = run(under, -1);
+        for (const Run& r : {right, left}) {
+            const char* where = under ? "under water" : "at the surface";
+            EXPECT_NEAR(r.press * deg, 100.6f, 1.5f) << where << ": the angle off the view line runs at 1.755 rad/s";
+            EXPECT_NEAR(r.steady * deg, under ? 48.2f : 46.6f, 2.5f) << where << ": the circle";
+            EXPECT_NEAR(r.offView * deg, 44.2f, 0.3f) << where << ": settled at the stick's angle (tru.exe 42.1)";
+            EXPECT_NEAR(r.velLag * deg, under ? 5.6f : 5.4f, 0.5f) << where << ": the velocity trails her heading";
+            EXPECT_NEAR(r.releaseWorld * deg, 61.0f, 6.0f) << where << ": the turn back on the release";
+            EXPECT_NEAR(r.releaseClose, 0.45f, 0.06f) << where << ": back on the view line (tru.exe 0.40..0.43 s)";
+        }
+        EXPECT_NEAR(right.steady, left.steady, glm::radians(0.1f)) << "the same both ways";
+        EXPECT_NEAR(right.releaseWorld, left.releaseWorld, glm::radians(0.1f));
+    }
 }
 
 // tru.exe swim sprint (Wine, l2_cliffclimb sea, player +0x2A0 velocity; openunderworld-work/scratch/swimsprint): Shift
@@ -589,9 +663,9 @@ TEST(Game, SwimSprintMatchesTru) {
     for (; n < 15 * 60 && s.clip == "swim_surface_sprint_forward"; ++n) w->tick(sprint);
     EXPECT_NEAR(n / 60.0f + 1.0f, 9.7f, 0.1f) << "one full sprint";
     EXPECT_EQ(s.clip, "swim_surface_exhausted");
-    for (int i = 0; i < 15; ++i) w->tick(sprint);
+    for (int i = 0; i < 30; ++i) w->tick(sprint); // the velocity eases down to it (0x755A00: a quarter a 30 Hz frame)
     EXPECT_NEAR(speed(sprint), 44.95f * 30, 5) << "exhausted: normal speed";
-    int off = 45, on = 0;
+    int off = 60, on = 0;
     for (; off < 5 * 60 && s.clip != "swim_surface_sprint_forward"; ++off) w->tick(sprint);
     for (; on < 5 * 60 && s.clip == "swim_surface_sprint_forward"; ++on) w->tick(sprint);
     EXPECT_NEAR(off / 60.0f, 2.13f, 0.1f) << "held after exhaustion";
@@ -1244,11 +1318,12 @@ TEST(Game, DiveSwimDownAndSurface) {
     EXPECT_EQ(s.state, State::SwimUnder);
     EXPECT_LT(s.pitch, -1.2f);
     EXPECT_LT(s.pos.z, -150 - 300);
-    for (int i = 0; i < 30; ++i) w->tick({}); // released: coasts to a stop (tru.exe swimDecel)
-    EXPECT_NEAR(glm::length(s.vel), 0, 1e-3);
+    // released: coasts to a stop (swimDecel, the velocity easing after it a quarter a 30 Hz frame, 0x755A00)
+    for (int i = 0; i < 60; ++i) w->tick({});
+    EXPECT_LT(glm::length(s.vel), 1.0f);
     const float z = s.pos.z;
     for (int i = 0; i < 30; ++i) w->tick({}); // no buoyancy evidence: she stays put
-    EXPECT_NEAR(s.pos.z, z, 1e-3);
+    EXPECT_NEAR(s.pos.z, z, 0.1f);
     EXPECT_EQ(s.clip, "swim_submerged_idle");
     Actions up;
     up.jump = true;
@@ -1945,12 +2020,15 @@ vec3 onRamp(float nz, float x, float run = 3000) { return {x, 0, (run - x) * std
 // tru.exe's ground check 0x5DCE20: too steep under cos 52 deg = 0.6157 (unless flagged 0x20 / 0x100), slide-flagged
 // faces (0x04 / 0x40) slid from cos 52 to cos 28 deg = 0.8829. Wine, l2_junglehub: stands on 0x0080 faces of normal z
 // 0.626..0.716 and on 0x0000 0.763, slides on 0x0004 faces of 0.753.
+// The 28-degree bound is the check's own (VERIFICATION.md V002 corrected): its slope limit is word 3 of the query record
+// 0x5C0CA0 builds (0x71BB6D..0x71BB9B, Lara +0x644 = cos(player data +0x100C), set at 0x71B550 / 0x720170), read as
+// [edi+0xC] at 0x5DD3A2 / 0x5DD45F / 0x5DD4E8 / 0x5DD56C: a flagged face flatter than 28 degrees (20: 0.9397) is ground.
 TEST(Game, SlopeStandsOrSlidesByFlagAndAngle) {
     struct Row { float nz; uint16_t flags; bool slides; };
     for (const Row r : {Row{0.626f, 0x0080, false}, {0.63f, 0x0000, false}, {0.716f, 0x0080, false}, {0.60f, 0x0000, true}, {0.60f, 0x0080, true},
                         {0.45f, 0x0080, true}, {0.63f, 0x0004, true}, {0.753f, 0x0004, true}, {0.87f, 0x0004, true}, {0.753f, 0x0040, true},
                         {0.90f, 0x0004, false}, {0.974f, 0x0004, false}, {0.50f, 0x00A0, false}, {0.50f, 0x01A0, false}, {0.50f, 0x0100, false},
-                        {0.50f, 0x0024, true}, {0.50f, 0x0104, false}, {0.753f, 0x0124, true}}) {
+                        {0.50f, 0x0024, true}, {0.50f, 0x0104, false}, {0.753f, 0x0124, true}, {0.9397f, 0x0004, false}, {0.9397f, 0x0040, false}}) {
         auto w = makeWorld(rampMesh(r.nz, r.flags), onRamp(r.nz, 600));
         const auto& s = w->player().state();
         bool slid = false;
@@ -5499,11 +5577,11 @@ TEST(GameReal, PressurePlateIndependentOfRenderRate) {
 // l4_trailstart grapple lever post 6695 (ca_ei_lever_grapple_post, uber joints): Lara pulls it with the grapple, its
 // script's command runs section 0's motor (158 units/s), the post slides out on its prismatic joint and drives section
 // 1's joint through their 0.75 link; that joint entering its watched range [158, 1580) sends trigger 14 (section 1:
-// 0 -> 1) from the simulation, not a timer.
+// 0 -> 1) from the simulation, not a timer. Interact stays held: let go, the unloaded post returns (GrappleLeverReturnsWhenReleased).
 TEST(GameReal, GrappleLeverJointIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/grapple_pull.txt");
+    const auto replay = game::InputScript::parse("0.1 looky 0.9\n1.1 looky 0\n1.2 grapple 1\n1.3 grapple 0\n2.5 interact 1\n"); // grapple_pull.txt, held
     const auto w = expectRateIndependent(worldMaker(bf, "l4_trailstart", game::Spawn{{61161, -42611, 4948}, glm::radians(-11.0f)}), replay, 420);
     EXPECT_EQ(w->lastPulled(), 6695);
     const auto* post = w->uberJoint(6695, 0);
@@ -5513,6 +5591,38 @@ TEST(GameReal, GrappleLeverJointIndependentOfRenderRate) {
     EXPECT_NEAR(linked->x, 0.75f * post->x, 0.5f) << "the 0.75 link"; // a Jolt constraint row: holds within its drift fix
     ASSERT_TRUE(w->uberState(6695));
     EXPECT_EQ((*w->uberState(6695))[1], 1u);
+}
+
+// OU-GRP-005. The lever post's script (l4_trailstart 6695, type 16052): vt 46 "attached" (instance prototype 64, called by
+// the rope attach 0x6A35E0 -> 0x799840) enters state 1, which loops while `larabase` 26 (0x777C30: her rope is on this
+// instance) and then logs "detached" and sends command 1 (vt 60). Section 0: command 1 takes the out state 1 to 3 (no
+// motor), 1.5 s later to 2 (brake 158 below the gate's weight): the gate falls and drags the post back. Ours let go of
+// the rope after the one-second heave and never called vt 46, so the post stayed out.
+TEST(GameReal, GrappleLeverReturnsWhenReleased) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto w = worldMaker(bf, "l4_trailstart", game::Spawn{{61161, -42611, 4948}, glm::radians(-11.0f)})();
+    const auto replay = game::InputScript::parse("0.1 looky 0.9\n1.1 looky 0\n1.2 grapple 1\n1.3 grapple 0\n2.5 interact 1\n");
+    const auto* post = [&] { w->tick({}); return w->uberJoint(6695, 0); }();
+    ASSERT_TRUE(post && w->uberState(6695));
+    int t = 1;
+    for (; t < 60 * 20 && post->x <= 1000.0f; ++t) w->tick(replay.at(uint64_t(t)));
+    ASSERT_GT(post->x, 1000.0f) << "Interact held draws the post out";
+    EXPECT_EQ(w->player().state().grappleUid, 6695) << "she is still on the rope";
+    EXPECT_EQ(w->player().state().state, State::GrapplePull);
+    EXPECT_EQ((*w->uberState(6695))[0], 1u);
+    std::vector<uint32_t> states{(*w->uberState(6695))[0]};
+    w->tick({}); // she lets go of Interact
+    EXPECT_EQ(w->player().state().grappleUid, 0) << "and lets go of the rope";
+    int i = 0;
+    for (; i < 60 * 8 && post->x >= 50.0f; ++i) {
+        w->tick({});
+        if (const uint32_t s = (*w->uberState(6695))[0]; s != states.back()) states.push_back(s);
+    }
+    EXPECT_LT(post->x, 50.0f) << "unloaded, the gate falls and drags the post back";
+    std::erase(states, 0xFFFFFFFFu); // in a transition
+    EXPECT_EQ(std::vector<uint32_t>(states.begin(), states.begin() + std::min<size_t>(states.size(), 3)), (std::vector<uint32_t>{1, 3, 2}));
+    for (const auto& [key, n] : w->script().failures()) EXPECT_NE(key.first, 6695) << key.second;
 }
 
 // Joint sounds (World::jointSounds, AUDIO.md §9.16): l1_baldrs_tomb press plate 219 (class 34, ms_rb_press_plate: its
@@ -7370,7 +7480,7 @@ TEST(Game, SwimFollowsTheCameraPitchUnderWater) {
     for (int i = 0; i < 40; ++i) w->tick(down);
     float z = s.pos.z;
     for (int i = 0; i < 30; ++i) w->tick(forward());
-    EXPECT_LT(s.pos.z, z - 150);
+    EXPECT_LT(s.pos.z, z - 100); // the velocity swings down after the pitch (0x755A00: a quarter a 30 Hz frame)
     EXPECT_LT(s.pitch, -0.15f);
     for (int i = 0; i < 180; ++i) w->tick(down); // well under again
     Actions up = forward();
@@ -9529,6 +9639,40 @@ TEST(Game, MovingMarkupJumpOffInheritsVelocity) {
     const vec3 still = leap(vec3(0)), moving = leap({0, 300, 0});
     EXPECT_GT(glm::length(still), 100.0f) << "the leap's own velocity";
     EXPECT_LT(glm::length((moving - still) - vec3(0, 300, 0)), 1.0f) << "plus the slider's";
+}
+
+// tru.exe 0x6FC6B0 (MUD 0x40000000, the class test 21): the way in, flattened, against the ledge's outward normal, dot
+// at most 0.2618, or 0.5236 when the ledge's owner moves at the attach point faster than 3.1605 units per 30 Hz frame
+// (candidate +0x80, 0x6FCAD2..0x6FCAE4). A standing jump (q2: straight up, so the way in is the way to the hit) from
+// behind the line past the ledge's end: at a dot of 0.41 / 0.31 a still ledge is refused and one sliding along its
+// line at 105 units/s caught, one at 85 (2.8 a frame) refused; 0.21 is caught still, 0.67 refused moving.
+TEST(Game, MovingLedgeLoosensWallSideLimit) {
+    const auto caught = [&](float deg, float speed) {
+        CollisionMesh m;
+        addFloor(m, -6000, -6000, 6000, 6000, 0);
+        const float a = glm::radians(deg);
+        const vec3 e(0, 800 - 79, 0), start = e - 200.0f * vec3(std::cos(a), -std::sin(a), 0); // e: the end less the inset
+        auto w = makeWorld(std::move(m), start, std::atan2(e.y - start.y, e.x - start.x));
+        // hangs toward +x (right of +y); 830 over the floor: q2's leap
+        w->script().addObject(markupObject(*w, "mm_slider", 9001, {0, 0, 0}, {1, 7, {{0, -800, 830}, {0, 800, 830}}}), false);
+        const auto& s = w->player().state();
+        Actions jump;
+        jump.jump = true;
+        float y = 0;
+        for (int i = 0; i < 150 && s.state != State::Hang; ++i) {
+            if (i >= 14 && i <= 20) y += speed * float(game::kTickSeconds); // sliding along its line while she jumps
+            w->script().setBody(9001, glm::translate(glm::mat4(1), vec3(0, y, 0)));
+            w->tick(i == 20 ? jump : Actions{});
+        }
+        return s.state == State::Hang || s.state == State::HangJump;
+    };
+    EXPECT_FALSE(caught(66, 0)) << "dot 0.41, still";
+    EXPECT_TRUE(caught(66, 105)) << "dot 0.41, moving";
+    EXPECT_FALSE(caught(66, 85)) << "dot 0.41, under 3.1605 a frame";
+    EXPECT_FALSE(caught(72, 0)) << "dot 0.31, still";
+    EXPECT_TRUE(caught(72, 105)) << "dot 0.31, moving";
+    EXPECT_TRUE(caught(78, 0)) << "dot 0.21";
+    EXPECT_FALSE(caught(48, 105)) << "dot 0.67, over the loosened limit too";
 }
 
 // A pole on a hinge: the object turns about a vertical axis 1000 from the pole; hanging, she swings round with it and

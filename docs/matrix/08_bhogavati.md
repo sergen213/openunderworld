@@ -94,7 +94,7 @@ Abbreviations: GP = docs/GAMEPLAY.md, PR = docs/PROGRESSION.md, Mnn = row of `B_
 ### Gaps
 - **Chimney jump (M06)** on the critical path (C08-05, C08-32, C08-44) and one treasure route (C08-36): implemented since 0.42.0; only the l2_towerroom chimney (418 → 417) is played.
 - **Situational adrenaline (M36)** at the lift drop (C08-14): script time scales exist since 0.42.0; this sequence's slow motion and the two outcomes (grapple catch / ride the platform crouched) are not tested.
-- **Naga statue pull (C08-64)**: played by `ch08_shrine_statue_pull` (the statue's hinge passes 45 degrees); the floor slabs stay solid over the shaft afterwards (known gap `ch09_shrine_shaft_descent`).
+- **Naga statue pull (C08-64)**: played by `ch08_shrine_statue_pull` (the statue's hinge passes 45 degrees); the floor slabs then fall into the shaft (fixed joints 1 / 3 / 4 removed by section 0's state 2, OU-PZL-006: `ProgressionReal.NagaStatueSlabsFallAfterThePull`).
 - **Scales (C08-51, -53, -58, -60)**: gem insertion is tested, but nothing shows the pans moving under Lara's / the pole's weight, the arms following, or the cage holding a pan. UNVERIFIED end to end.
 - **Fan statues on the track and the light beams (C08-61, -62; M57, M61)**: no evidence of track movers with a junction, of the reflection condition, or of the floor lowering as its result.
 - **Gem gates (C08-24, -35)**: no gate test that taking a gem opens the paired gates; and docs disagree on where gems 2964 / 2965 start (GP "Placed portables" vs PR "Receptacle replays" note "on the upper floor (z 5447)").
@@ -120,7 +120,7 @@ Abbreviations: GP = docs/GAMEPLAY.md, PR = docs/PROGRESSION.md, Mnn = row of `B_
 | `ch08_shrine_statue_pull` | l2_shrineroom player intro (checkpoint 2769) | naga statue 2794 grappled by its ring and pulled over; spiders out | C08-64, C09-01 |
 
 Blockers and open legs:
-- **C08-64 / C09-02** (known gap `tests/selftests/known_gaps/ch09_shrine_shaft_descent.json`): after the pull the statue's floor slabs (uber sections 1 / 3 / 4 of 2794) stay solid over the shaft and its ring is still a grapple target; the chapter cannot be left by play.
+- **C08-64 / C09-02** (known gap `tests/selftests/known_gaps/ch09_shrine_shaft_descent.json`): after the pull the statue's floor slabs (uber sections 1 / 3 / 4 of 2794) fall into the shaft (fixed in 2026-11-16, OU-PZL-006), but its ring is still a grapple target.
 - **C08-14** lift drop: not playable as one leg until the climbs between the three upper ledges (C08-02 .. C08-13) are played by input (both sides must be free in one run).
 - **C08-54** bracket: from checkpoint 2820 volume 3023 is entered at once (2982 / 2983 vt 55) and plane 2987 crossed, but on the mid-level walk east (to -24500, 41235) bracket 2982 was never offered and the room's nagas killed an unarmed Lara: the leg needs the fight and the throw spot [not found].
 - **C08-57** cage 2971 at (-13942, 47558, 1154) on the lower courtyard: the autopilot found no way down from checkpoint 2067's ledge (z 1985); not played.

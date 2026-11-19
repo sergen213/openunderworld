@@ -59,13 +59,13 @@ type_id	native_name	class	package	bind_fn	fn_index	handler	handler_name	handler_
 51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	7	0x7b2c80		0x4ac070 0x4a2970	-	-1	0	11	1332	yes	bind 0x7b5380; runtime match
 51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	8	0x799af0		0x4b17c0	-	-1	2	0	0	no	bind 0x7b5380; runtime match
 51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	9	0x799b10		0x4b0900	-	-1	2	0	18	yes	bind 0x7b5380; runtime match
-51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	10	0x799b30		0x4b1870	-	-1	2	0	11	args-mismatch(1)	bind 0x7b5380; runtime match
+51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	10	0x799b30		0x4b1870	-	-1	2	0	11	yes	bind 0x7b5380; runtime match
 51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	11	0x799b90		0x4b1770	-	-1	1	2	0	no	bind 0x7b5380; runtime match
 51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	12	0x799b50		0x4b08a0	-	-1	1	1	0	yes	bind 0x7b5380; runtime match
-51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	13	0x799b70		0x4b1820	-	-1	1	3	0	no	bind 0x7b5380; runtime match
+51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	13	0x799b70		0x4b1820	-	-1	1	3	0	yes	bind 0x7b5380; runtime match
 51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	14	0x799b90		0x4b1770	-	-1	1	2	0	no	bind 0x7b5380; runtime match
 51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	15	0x799b50		0x4b08a0	-	-1	1	1	42	yes	bind 0x7b5380; runtime match
-51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	16	0x799b70		0x4b1820	-	-1	1	3	0	no	bind 0x7b5380; runtime match
+51	instanceref	NtInstanceRef_ScriptType	game/script/game/game	0x7b5380	16	0x799b70		0x4b1820	-	-1	1	3	0	yes	bind 0x7b5380; runtime match
 52	damagetype	NtDamageType_ScriptType	game/script/game/game	0x7ac4f0	0	0x796fd0		0x4aa4d0	-	-1	1	1	1	yes	bind 0x7ac4f0; runtime match
 53	animation	NtAnimation_ScriptType	game/script/game/game	0x7abd90	0	0x7969d0		0x4a5470	-	-1	1	1	7	no	bind 0x7abd90; runtime match
 54	anchor	NtAnchor_ScriptType	game/script/game/game	0x7abc80	0	0x7966b0		0x4a3cb0	-	-1	0	10	5	no	bind 0x7abc80; runtime match
@@ -89,7 +89,7 @@ type_id	native_name	class	package	bind_fn	fn_index	handler	handler_name	handler_
 55	gamebase	NsGameBase_ScriptType	game/script/game/game	0x7b44a0	24	0x797d10		0x776090	-	-1	2	0	2	yes	bind 0x7b44a0; runtime match
 55	gamebase	NsGameBase_ScriptType	game/script/game/game	0x7b44a0	25	0x797d30		0x7760f0	-	-1	5	0	4	no	bind 0x7b44a0; runtime match
 55	gamebase	NsGameBase_ScriptType	game/script/game/game	0x7b44a0	26	0x797d70		0x776120	-	-1	1	0	2	no	bind 0x7b44a0; runtime match
-55	gamebase	NsGameBase_ScriptType	game/script/game/game	0x7b44a0	27	0x797d90		0x776130	-	-1	5	0	3	no	bind 0x7b44a0; runtime match
+55	gamebase	NsGameBase_ScriptType	game/script/game/game	0x7b44a0	27	0x797d90		0x776130	-	-1	5	0	3	yes	bind 0x7b44a0; runtime match
 55	gamebase	NsGameBase_ScriptType	game/script/game/game	0x7b44a0	28	0x797dd0		0x776170	-	-1	3	0	0	no	bind 0x7b44a0; runtime match
 55	gamebase	NsGameBase_ScriptType	game/script/game/game	0x7b44a0	29	0x797e00		0x7761a0	-	-1	0	0	0	no	bind 0x7b44a0; runtime match
 55	gamebase	NsGameBase_ScriptType	game/script/game/game	0x7b44a0	30	0x797e10		0x7761b0	-	-1	1	0	3	yes	bind 0x7b44a0; runtime match
@@ -121,7 +121,7 @@ type_id	native_name	class	package	bind_fn	fn_index	handler	handler_name	handler_
 57	waypointnode	NtWaypointNode_ScriptType	game/script/game/game	0x7ad910	1	0x7a2ef0		-	-	-1	0	2	0	no	bind 0x7ad910; runtime match
 57	waypointnode	NtWaypointNode_ScriptType	game/script/game/game	0x7ad910	2	0x79e1f0		-	-	-1	0	2	23	no	bind 0x7ad910; runtime match
 58	unitref	NtUnitRef_ScriptType	game/script/game/game	0x7b6860	0	0x79a940		0x4a52e0	-	-1	1	1	30	yes	bind 0x7b6860; runtime match
-58	unitref	NtUnitRef_ScriptType	game/script/game/game	0x7b6860	1	0x79d6b0		0x4aaec0	-	-1	0	1	6	no	bind 0x7b6860; runtime match
+58	unitref	NtUnitRef_ScriptType	game/script/game/game	0x7b6860	1	0x79d6b0		0x4aaec0	-	-1	0	1	6	yes	bind 0x7b6860; runtime match
 58	unitref	NtUnitRef_ScriptType	game/script/game/game	0x7b6860	2	0x79d6c0		0x79c670	-	-1	0	0	6	yes	bind 0x7b6860; runtime match
 58	unitref	NtUnitRef_ScriptType	game/script/game/game	0x7b6860	3	0x7b33e0		0x4ad310 0x4a2970	-	-1	0	11	629	yes	bind 0x7b6860; runtime match
 58	unitref	NtUnitRef_ScriptType	game/script/game/game	0x7b6860	4	0x79d6d0		0x4b1990	-	-1	2	0	0	no	bind 0x7b6860; runtime match
@@ -846,7 +846,7 @@ type_id	native_name	class	package	bind_fn	fn_index	handler	handler_name	handler_
 213	larabase	NsLaraBase_ScriptType	game/script/game/game	0x7b5490	23	0x79a150		0x777bd0	-	-1	1	1	0	no	bind 0x7b5490; runtime match
 213	larabase	NsLaraBase_ScriptType	game/script/game/game	0x7b5490	24	0x79a170		0x7794f0	-	-1	1	0	0	no	bind 0x7b5490; runtime match
 213	larabase	NsLaraBase_ScriptType	game/script/game/game	0x7b5490	25	0x79a190		0x777c10	-	-1	0	0	4	yes	bind 0x7b5490; runtime match
-213	larabase	NsLaraBase_ScriptType	game/script/game/game	0x7b5490	26	0x79a1a0		0x777c30	-	-1	1	1	5	no	bind 0x7b5490; runtime match
+213	larabase	NsLaraBase_ScriptType	game/script/game/game	0x7b5490	26	0x79a1a0		0x777c30	-	-1	1	1	5	yes	bind 0x7b5490; runtime match
 213	larabase	NsLaraBase_ScriptType	game/script/game/game	0x7b5490	27	0x79a1c0		0x777c90	-	-1	0	0	12	yes	bind 0x7b5490; runtime match
 213	larabase	NsLaraBase_ScriptType	game/script/game/game	0x7b5490	28	0x79a1d0		0x777cb0	-	-1	0	0	1	yes	bind 0x7b5490; runtime match
 213	larabase	NsLaraBase_ScriptType	game/script/game/game	0x7b5490	29	0x79a1e0		0x777cd0	-	-1	1	0	1	yes	bind 0x7b5490; runtime match
@@ -1154,7 +1154,7 @@ type_id	native_name	class	package	bind_fn	fn_index	handler	handler_name	handler_
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	0	0x79ac90		0x4ac410	-	-1	1	10	0	no	bind 0x7b2cf0; runtime match
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	1	0x79ac90		0x4ac410	-	-1	1	10	1	yes	bind 0x7b2cf0; runtime match
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	2	0x79acc0		0x4a6f70	-	-1	0	0	16	yes	bind 0x7b2cf0; runtime match
-3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	3	0x79acd0		0x4a6ff0	-	-1	0	0	2	no	bind 0x7b2cf0; runtime match
+3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	3	0x79acd0		0x4a6ff0	-	-1	0	0	2	yes	bind 0x7b2cf0; runtime match
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	4	0x79ace0		0x4a7070	-	-1	0	1	1	yes	bind 0x7b2cf0; runtime match
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	5	0x79acf0		0x4a7100	-	-1	1	0	0	no	bind 0x7b2cf0; runtime match
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	6	0x79ad10		0x4a7150	-	-1	0	2	0	no	bind 0x7b2cf0; runtime match
@@ -1243,8 +1243,8 @@ type_id	native_name	class	package	bind_fn	fn_index	handler	handler_name	handler_
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	89	0x79b890		0x4aa250	-	-1	3	0	4	yes	bind 0x7b2cf0; runtime match
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	90	0x79b8b0		0x4aa2e0	-	-1	2	3	0	no	bind 0x7b2cf0; runtime match
 3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	91	0x79b8d0		0x4aa360	-	-1	1	3	0	no	bind 0x7b2cf0; runtime match
-3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	92	0x79b8f0		0x4a7300	-	-1	1	0	1	no	bind 0x7b2cf0; runtime match
-3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	93	0x79b910		0x4a7320	-	-1	0	1	1	no	bind 0x7b2cf0; runtime match
+3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	92	0x79b8f0		0x4a7300	-	-1	1	0	1	yes	bind 0x7b2cf0; runtime match
+3566	multibody	NtMultibody_ScriptType	game/script/game/game	0x7b2cf0	93	0x79b910		0x4a7320	-	-1	0	1	1	yes	bind 0x7b2cf0; runtime match
 3567	limit	NtLimit_ScriptType	game/script/game/game	0x7ac780	0	0x79a770		0x4a6db0	-	-1	1	0	0	no	bind 0x7ac780; runtime match
 3567	limit	NtLimit_ScriptType	game/script/game/game	0x7ac780	1	0x79a790		0x4a6e30	-	-1	2	0	0	no	bind 0x7ac780; runtime match
 3567	limit	NtLimit_ScriptType	game/script/game/game	0x7ac780	2	0x79a7b0		0x4a6df0	-	-1	2	0	0	no	bind 0x7ac780; runtime match

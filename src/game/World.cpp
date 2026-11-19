@@ -692,7 +692,7 @@ void World::tick(const Actions& input) {
     hingePull_.clear();
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
     else if (uberGrappleOff(player_.state().grappleUid)) player_.releaseGrapple(false); // its state dropped the target (action 0x1A)
-    else if (a.interact)
+    else if (a.interact) {
         if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid)); target) {
             if (auto* slide = uberSlide(target->uid)) { // a body free on the floor (ca_pu_block_grapple): the rope drags it to her
                 vec3 delta = player_.state().pos - (target->pos + slide->x);
@@ -704,11 +704,16 @@ void World::tick(const Actions& input) {
                 if (const float distance = glm::length(delta); distance > 1.0f && d.speed > 0) // [I] braced pull speed 240 units/s,
                     slide->push = delta * (std::min(240.0f * float(dt), distance) / distance / float(dt) / 30.0f), slide->pushBound = d.impulse; // her push's impulse
             } else if (pullGrappled(a)) { // the rope drags the target's own joint (Objects.cpp)
-            } else if ((pullT_ += dt) >= 1.0f) { // [I] a one-second heave runs the target's pull handler, then lets go
+            } else if (pullT_ < 1.0f && (pullT_ += dt) >= 1.0f) { // [I] a one-second heave runs the target's pull handler, then lets go
                 if (script_.grapplePulled(target->uid)) lastPulled_ = target->uid;
-                player_.releaseGrapple(false);
+                // A target whose script waits on `larabase` 26 (the grapple lever posts' state 1, entered by vt 46 on attach)
+                // keeps her on the rope: her weight holds it until she lets go (OU-GRP-005; tru.exe 0x777C30).
+                if (!script_.pollsRope(target->uid)) player_.releaseGrapple(false);
             }
         }
+    } else if (pullT_ >= 1.0f && script_.pollsRope(player_.state().grappleUid)) {
+        player_.releaseGrapple(false); // heaved, Interact let go: she lets go of the rope, the script sees it detached
+    }
     if (!units_.empty()) { // streaming world (src/game/Stream.cpp)
         crossPortals(prev_.pos, player_.state().pos);
         touchCheckpoints();
@@ -871,14 +876,14 @@ void World::tick(const Actions& input) {
 // radius +0x68 13.91; the mode list +0x148 (0x5F99F0 / 0x5FF080) picks per camera mode the focus record (command 10),
 // the distance (2), yaw/pitch limits (7 / 8), pull-in only (15), force sets (0x10 / 1) and the 300 floor probe (0x13;
 // defaults 0x601D30 / 0x5FEE10). Not modelled [U]: the default yaw force set 11, the look target blend (0x6009C0),
-// level camera records (0x5FE800 resources, command 0x12), moving platforms (0x7027B0 / 0x5FF650).
-void World::updateOrbitCamera(const Actions& a, float dt) {
+// level camera records (0x5FE800 resources, command 0x12), the freeze request 55 (no carry while frozen).
+// Her displacement by what carried her this tick (`carrierMove`: tickObjects) carries the camera (docs/re/CAMERA.md §6).
+void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     constexpr float kRadius = 13.91f;
     const Bike* bike = ridden();
     const PlayerState& s = player_.state();
-    // Camera mode (set through CameraManager 0xE804F0 vfunc +0x54 = slot 21, not a field; docs/re/STRUCTURES.md)
-    // the player's state machine requests (message 0x44E -> 0x7683B0 ->
-    // 0x5E8210; Wine, hooked at 0x5E8210 while she acted: on foot, jumping and falling 1, free climb 4, ledge hang and
+    // Camera mode: the player's state machine requests it through CameraManager 0xE804F0's slot 17 (message 0x44E ->
+    // 0x7683B0 -> 0x5E8210; Wine, hooked at 0x5E8210 while she acted: on foot, jumping and falling 1, free climb 4, ledge hang and
     // shimmy 11, surface swim 20, under water 19), and what its mode-list entry sets; a mode without command 10 / 2
     // gets the defaults (0x601D30: record 1, settings +0x60). Look pitch limits from command 8 (0x607A30: centre
     // (c + 90) deg from straight up, half-range r): look pitch within -c +- r. Ladders, perches, pillars, beams and
@@ -961,8 +966,20 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     const vec3 goal = bones_.size() > 108 ? vec3(model * bones_[108] * glm::vec4(lim.offset, 1)) : s.pos + vec3(0, 0, 320.3f) + lim.offset;
     // The focus lags its goal (0x609830 -> 0x609440) per axis of the camera's horizontal frame (0x6091A0: right,
     // forward, up) by the record's dead zones: what is past a zone is caught up at once, the rest at up to 1896.3
-    // units/s scaled by the record's ease curve at (distance / zone) (0x5E4530). Moving platforms carry it in the
-    // original (0x7027B0); not modelled [U].
+    // units/s scaled by the record's ease curve at (distance / zone) (0x5E4530).
+    // A moving carrier (0x7027B0: the markup she is on, else what she stands on) moves the focus first by her root's
+    // displacement through it this frame (0x609830, objdump 609AFD..609B55: velocity per 30 Hz frame x dt x 30): only
+    // her motion relative to it is eased. The camera position (+0x90) and its proposed point (+0x150) are carried too
+    // (0x5FF650's tail: inverse of last frame's segment matrix, then this frame's). Ours moves them by the same
+    // displacement, without the carrier's tilt: tru.exe under Wine on the l2_cliffclimb yacht deck (heave +-203, hull
+    // tilting up to 3.3 / 3.7 degrees) keeps camera - pivot z within -84.2..-81.4 and camera - root 369.0..374.9 with
+    // lag 0.00 s, where a rigid carry of the tilt would swing it ~+-55 at its 948 distance (ours with the full frame:
+    // camera - root 439..508; translated: 486..490). Whether the segment matrix of a loose body carries the tilt, or the
+    // pivot frame +0xD0 / the limits take it out again, is [U] (docs/re/CAMERA.md §6).
+    if (carrierMove != vec3(0)) {
+        if (focus_) *focus_ += carrierMove;
+        if (orbit_.valid) orbit_.desired += carrierMove, cam_.position += carrierMove;
+    }
     const bool snap = !focus_ || bike || glm::distance(*focus_, goal) > 2000.0f; // spawns, teleports
     if (snap) focus_ = goal;
     {
@@ -1025,7 +1042,8 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     // none): after a mouse nudge the camera circles her at 60 deg/s for 5 s, then 101 deg/s from 7 s (the swing adds
     // 41 deg/s; set 11 from tru.exe's own heading / velocity there predicts 41-43).
     orbit_.idle = a.look.x != 0 || a.look.y != 0 ? 0.0f : std::min(1000.0f, orbit_.idle + dt);
-    const vec3 move = dt > 0 && orbit_.valid ? (s.pos - orbit_.lastPos) / (dt * 60.0f) : vec3(0);
+    // her move less the carrier's (0x5E7EF0)
+    const vec3 move = dt > 0 && orbit_.valid ? (s.pos - carrierMove - orbit_.lastPos) / (dt * 60.0f) : vec3(0);
     orbit_.lastPos = s.pos;
     const vec3 camX(std::sin(cam_.yaw), -std::cos(cam_.yaw), 0);
     float along = -1; // 0x6EC660: her position along the markup she hangs on, -1 without one [I: our distance / length]

@@ -474,9 +474,9 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
         if (!list.is_array()) bad(where, "'fixtures' wants an array");
         std::vector<json> out;
         for (const auto& f : list) {
-            static const std::set<std::string> kFixtures = {"weapon", "ammo", "health", "adrenaline", "give", "target", "kill", "tailoring", "teleport", "camera", "level"};
+            static const std::set<std::string> kFixtures = {"weapon", "ammo", "health", "adrenaline", "give", "target", "kill", "tailoring", "teleport", "camera", "level", "call"};
             if (!f.is_object() || f.size() != 1 || !kFixtures.contains(f.begin().key()))
-                bad(where, "a fixture is an object with one of weapon, ammo, health, adrenaline, give, target, kill, tailoring, teleport, camera, level");
+                bad(where, "a fixture is an object with one of weapon, ammo, health, adrenaline, give, target, kill, tailoring, teleport, camera, level, call");
             out.push_back(f);
         }
         return out;
@@ -917,6 +917,12 @@ void SelfTest::applyFixture(game::World& w, const json& f, const std::string& st
             bad(where, e.what());
         }
         w.setHealth(health);
+    } else if (key == "call") {
+        // call [uid, vt]: the object's script handler at the start of the next tick (script::Runtime::call; nothing runs
+        // when the object is not loaded by then): stands for a puzzle part the scenario does not play whose script
+        // reports to the tested object (a gear switch to its lock).
+        if (!v.is_array() || v.size() != 2 || !v[0].is_number_integer() || !v[1].is_number_integer()) bad(where, "wants [uid, vt]");
+        w.script().call(v[0].get<int32_t>(), int16_t(v[1].get<int>()));
     } else if (key == "tailoring") {
         if (!v.is_number_integer() || v.get<int>() < 0 || v.get<int>() > 2) bad(where, "wants a PLAYER TAILORING level 0..2");
         w.setTailoring(game::Tailoring::preset(v.get<int>()));

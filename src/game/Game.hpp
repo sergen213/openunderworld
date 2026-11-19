@@ -224,7 +224,9 @@ struct Tuning {
     // along the fall line, 35 units per 30 Hz frame up to 45 by the slope angle, approached at 5 (up) / 10 (down) per
     // frame^2 x the frame's time multiplier: at 60 Hz 2.5 / 5 (Wine, l2_junglehub: +1.25 per 60 Hz tick). The angle
     // range is 29..51 degrees [O-runtime: twelve 0x0004 faces of 28.4..48.3 degrees fit it within 0.03 units per
-    // frame; the controller's defaults read 28 / 52 from the player data, U why they differ].
+    // frame]. The controller (0x73FFC0, the 0x740036 / 0x740049 reads) seeds the angle range with player data 28 / 52,
+    // then reads the state's props 0x192 / 0x193 into it (0x783F50 / 0x784BF0) [I: S814's give 29 / 51]; it decides no
+    // slide entry or exit (the 28-degree bound is the ground check's: slideMaxNormalZ).
     float slideSpeedMin = 35.0f * 30.0f, slideSpeedMax = 45.0f * 30.0f;
     float slideAngleMin = 29.0f, slideAngleMax = 51.0f; // degrees
     float slideAccel = 2.5f * 900.0f, slideDecel = 5.0f * 900.0f;
@@ -265,8 +267,12 @@ struct Tuning {
     vec3 waterProbeHalf{221.0f, 221.0f, 572.0f};
     float waterProbeCenterZ = 320.0f;
     // Swimming, surface and under water (tru.exe, Wine, l2_cliffclimb sea): 44.95 units per 30 Hz frame at full
-    // stick; from rest it ramps up in ~0.7 s, after release it slows ~twice as fast (fitted slopes, units/s^2).
-    float swimSpeed = 1348.6f, swimAccel = 2475.0f, swimDecel = 3760.0f;
+    // stick. tru.exe 0x755A00 ramps the swim speed (player globals +0x8E8) at the state's accel / decel properties
+    // 0x1FE / 0x1FF and pulls the velocity a quarter of the way to heading x that speed every 30 Hz frame (player data
+    // +0x240 = 0.25, Player::swim); accel / decel are fitted to the Wine ramps through that lag (units/s^2): from rest
+    // 1.1 / 10.4 / 36.5 / 44.6 a frame at 0.05 / 0.2 / 0.5 / 0.87 s (tru.exe 0.54 / 8.3 / 33.1 / 44.3), after the
+    // release 22.1 a frame at 0.18 s (tru.exe 21.6).
+    float swimSpeed = 1348.6f, swimAccel = 2800.0f, swimDecel = 7000.0f;
     // Sprint (Shift held) swims 1.2x as fast, surface and under water: 53.94 vs 44.95 units per 30 Hz frame (tru.exe,
     // Wine, l2_cliffclimb sea; player +0x2A0 velocity), on the run sprint's stamina (sprintSeconds, sprintResume).
     float swimSprintFactor = 1.2f;
@@ -382,6 +388,7 @@ struct PlayerState {
     vec3 pos{0};    // root = feet; swimming: the swim clips' root (water surface while treading, body centre under water)
     float yaw = 0;  // heading: forward = (cos yaw, sin yaw, 0)
     vec3 vel{0};    // air velocity, units/s
+    float swimSpeed = -1; // the swim speed the velocity is pulled to (tru.exe player globals +0x8E8); < 0: from vel
     std::string clip;
     double clipTime = 0; // unbounded for looping clips (anim time = fmod(clipTime, duration))
     float clipRate = 1;
@@ -527,11 +534,19 @@ public:
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
     // The orbit camera's view yaw and look pitch (rad, + = up), set by World each tick: under water the stick's forward
-    // share swims along the pitch and the dodges read the stick as on screen (Player::swim).
-    void setCamera(float yaw, float pitch) { cameraYaw_ = yaw, cameraPitch_ = pitch; }
+    // share swims along the pitch and the dodges read the stick as on screen (Player::swim). The yaw of the tick before
+    // is kept for the swim turn, which holds her heading relative to the view (Player::swim, swimTurn).
+    void setCamera(float yaw, float pitch) {
+        prevCameraYaw_ = cameraKnown_ ? cameraYaw_ : yaw;
+        cameraYaw_ = yaw, cameraPitch_ = pitch, cameraKnown_ = true;
+    }
+    // The view yaw the last tick swam by (setCamera), for a save: a load seeds it (seeCamera) so that the first swim
+    // turn after it carries the camera's turn as the uninterrupted game does. nullopt: none since the last restore.
+    std::optional<float> seenCameraYaw() const { return cameraKnown_ ? std::optional<float>(cameraYaw_) : std::nullopt; }
+    void seeCamera(float yaw) { cameraYaw_ = yaw, cameraKnown_ = true; }
     // Load / stream. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks them held
     // (Buttons::hold) so that a key still down gives no press edge on the next tick.
-    void restore(const PlayerState& s) { s_ = s; }
+    void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false; }
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
@@ -712,7 +727,8 @@ private:
     bool reseated_ = false; // this tick only (takeReseat)
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
-    float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;
+    float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch, prevCameraYaw_ = 0;
+    bool cameraKnown_ = false;
 };
 
 // ---- camera -----------------------------------------------------------------------------------
@@ -1148,6 +1164,7 @@ public:
     int markupIndex(const std::string& unit, int local) const;
     // Replaces Lara's state (world frame) and the camera orbit; no interpolation across the jump.
     void restore(const PlayerState& s, float camYaw, float camPitch);
+    void seeCamera(float yaw) { player_.seeCamera(yaw); } // the view yaw her last tick swam by (Player::seenCameraYaw), after a load
 
     // Interactive water (src/game/Water): ripple field + splash droplets around Lara, ticked with the world.
     const WaterSim& water() const { return water_; }
@@ -1160,8 +1177,11 @@ public:
     void splashWater(vec3 pos, float strength = 1.0f) { water_.splash(pos, strength); }
     // Grapple: best target within range, aim cone and line of sight (World.cpp), for attach + the HUD marker.
     std::optional<GrappleTarget> grappleTarget() const;
+    // tru.exe rope attach 0x6A35E0: a target whose object has a script (+0x60) gets instance prototype 64 = vt 46
+    // ("attached", thunk 0x799840) at the start of the next tick.
     void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling, float ropeMax = 0) {
         player_.attachGrapple(anchor, uid, kind, ropeMax);
+        if (const auto* o = script_.find(uid); o && o->script && player_.state().grappleUid == uid) script_.call(uid, 46);
     }
     int32_t lastPulled() const { return lastPulled_; } // grapple target whose pull handler ran last (World::tick), 0 = none
     // What the grapple button's press edge did this tick (World::tick; ou-game logs it): thrown at `uid` (`attached`
@@ -1175,10 +1195,11 @@ public:
     const GrapplePress& grapplePress() const { return grapplePress_; }
     // The yaw (rad) the orbit camera's forces turned it by this tick (World.cpp updateOrbitCamera; ou-game logs it).
     float cameraSwing() const { return cameraSwing_; }
-    // The orbit camera's mode, as the player's state machine requests it from tru.exe's CameraManager (0x5E8210, Wine;
-    // CameraManager +0x54 is vtable slot 21, a call, not a mode field: docs/re/STRUCTURES.md): 1 on foot, 4 free climb,
-    // 11 hang, 19 / 20 under water / surface; -1 before its first update; and its current distance from the pivot
-    // (ou-game --self-test probes).
+    // The orbit camera's mode, as the player's state machine requests it from tru.exe's CameraManager (request slot 17
+    // 0x5E8210, Wine; the committed mode is the manager's field +0x54, written by 0x5E7FE0 and read by slot 2 0x5EB190 --
+    // not to be confused with vtable offset 0x54 = slot 21, the blended camera-type switch: docs/re/CAMERA.md): 1 on
+    // foot, 4 free climb, 11 hang, 19 / 20 under water / surface; -1 before its first update; and its current distance
+    // from the pivot (ou-game --self-test probes).
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
@@ -1308,7 +1329,7 @@ public:
 private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
     void updateCamera(const Actions& a, float dt); // Camera.cpp
-    void updateOrbitCamera(const Actions& a, float dt);
+    void updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove);
     bool startSplineCamera(const std::string& unit, uint32_t index, uint32_t value); // autosplinecamera 0
     bool cameraNative(int op, const std::string& unit, uint32_t index, uint32_t value); // script::Runtime::CameraNative
     bool tickSplineCamera(float dt); // false once no spline camera plays (Camera.cpp)
@@ -1369,7 +1390,7 @@ private:
     void tickInserted(float dt);           // inserted portables: the receptacle's slider, the portable's pose, pole markup
     // Objects' model markup (physics::ObjectPhysics::markup) in col_, placed by the object's collider each tick: ledges
     // on push blocks, cog rings, breakable ledges move with their instance (tru.exe markup boxes owned by the instance).
-    void tickObjectMarkup();
+    void tickObjectMarkup(float dt = 0); // dt > 0 (a tick): also each moved point's velocity (Markup::velocity)
     void poseUberModels(); // each uber object's own mesh under its section's clip (Object::animPose)
     // (uid, item) of the object markup at col_ index `index`; its frame as tickObjectMarkup last placed it.
     std::optional<glm::mat4> objectMarkupFrame(int index) const;
@@ -1488,6 +1509,10 @@ private:
     std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
+    // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
+    // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
+    // its tick).
+    vec3 carrierMove_{0};
     struct OrbitState {      // orbit camera (World.cpp): +0x150 desired point, +0x1D4 distance, +0x1D8 its return speed
         vec3 desired{0};
         float dist = 0, speed = 0;
@@ -1608,6 +1633,7 @@ private:
     // Class-34 rigid bodies with a grapple feature (the tomb gate): their hinge has no motor, the pull moves it.
     bool pulledHinge(const script::Object& o);
     std::set<int32_t> multibodyLimitOff_; // `multibody` 75: objects whose joint limit is switched off (joint +0x174 bit 2)
+    std::set<int32_t> multibodyFixed_; // `multibody` 3 (Disable) minus 2 (Enable): objects whose bodies are fixed again (+0x15C bit 0)
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
     std::map<int32_t, std::vector<uint32_t>> uberStates_; // per section: current state, 0xFFFFFFFF in a transition
@@ -1672,6 +1698,9 @@ private:
         std::map<int32_t, physics::Joint1> joints;
         std::map<int32_t, physics::Joint3> joints3; // created type-7 (three-axis) joints: the Thor pillars
         std::set<int32_t> links; // created type-11 link joints
+        // created type-8 fixed joints (engine fixed constraint, 0x4D1040): body B holds still on body A (the world: as
+        // posed at rest) until action 10 removes the joint (0x4D6220) and frees it (sa_uo_naga_statue's floor slabs)
+        std::set<int32_t> fixed;
         std::vector<UberWatch> watches;
         bool intangible = false;            // action 5: instance +0x18 bit 0x20000000, collision callbacks skip it
         bool grappleOff = false;            // action 0x1A / 0x19: instance +0x1C bit 2 set / cleared, not a grapple target

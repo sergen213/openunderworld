@@ -199,7 +199,6 @@ Swell::Swell(int n, size_t count) {
     for (size_t i = 0; i < std::min(count, cands.size()); ++i) modes_.push_back(cands[i].m), kept += cands[i].var;
     rms_ = float(std::sqrt(total) * kMetre);
     residual_ = float(std::sqrt(std::max(0.0, total - kept)) * kMetre);
-    offset_ = -0.5f * kMetre * std::sqrt(g.sigma[0] * g.sigma[0] + g.sigma[1] * g.sigma[1]); // water.vert's centring
 }
 
 float Swell::height(glm::vec2 p, double seconds) const {
@@ -215,7 +214,7 @@ float Swell::height(glm::vec2 p, double seconds) const {
         const double ci = m.ar * es + m.ai * ec - m.br * es + m.bi * ec;
         h += cr * std::cos(a) - ci * std::sin(a);
     }
-    return float(h) + offset_;
+    return float(h);
 }
 
 const Swell& swell(int n) {

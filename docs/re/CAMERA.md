@@ -200,19 +200,31 @@ relative to the platform.
 
 | # | tru.exe | OpenUnderworld | Evidence |
 |---|---|---|---|
-| 1 | Focus pre-moved by the carrier velocity × dt·30 before the dead-zone lag (0x609830) | Focus eases toward bone 108 with no carrier term | src/game/World.cpp:958-981 (comment "not modelled [U]"); BUGS OU-CAM-001 repro (camera z flat 3.75-5 s while the deck heaves) |
-| 2 | Camera position and proposed point transformed by the carrier's frame delta (0x5FF650) — the camera rotates with a turning platform too | Not modelled | World.cpp:872 "moving platforms (0x7027B0 / 0x5FF650)" listed as not modelled |
-| 3 | Force-set "her move" is platform-relative (0x5E7EF0) | `move = (pos − lastPos)/(dt·60)`, absolute | World.cpp:1026 |
-| 4 | Mode requests go through slot 17 (0x5E8210) with markup overrides 53/56/57, freeze 55, 0.5 s fallback to 1; field +0x54 = committed mode | Mode chosen per player state in `updateOrbitCamera`; comments call +0x54 "vtable slot 21, not a field" | World.cpp:877, Game.hpp:1178-1180, STRUCTURES.md "Mismatches": slot 21 (vftable +0x54) is SwitchTypeBlended; the **field** +0x54 is the mode (0x5E7FE0 / 0x5EB190). Both readings of "+0x54" are true; the mode is the field |
+| 1 | Focus pre-moved by the carrier velocity × dt·30 before the dead-zone lag (0x609830) | Done (OU-CAM-001): `*focus_ += carrierMove` (her root's displacement by the markup she is on / the dynamic she stands on, `World::tickObjects`) before the lag | `StreamReal.CameraRidesTheYachtDeck`: lag 0 ticks (was 0.75 s) |
+| 2 | Camera position and proposed point transformed by the carrier's frame delta (0x5FF650) | Moved by the same displacement, without the carrier's rotation: tru.exe's deck camera keeps camera − pivot z within −84.2..−81.4 while the hull tilts up to 3.7° (a rigid tilt carry would swing it ~±55 at d 948); whether a loose body's segment matrix carries the tilt, or +0xD0 / the limits remove it, is [U]. A platform that turns about the vertical does not turn ours | Wine `deck-*.txt`; ours full-frame 439..508 vs translated 486.4..490.1 camera − root (tru.exe 369.0..374.9) |
+| 3 | Force-set "her move" is platform-relative (0x5E7EF0) | Done: the move subtracts `carrierMove` | World.cpp `move` |
+| 4 | Mode requests go through slot 17 (0x5E8210) with markup overrides 53/56/57, freeze 55, 0.5 s fallback to 1; field +0x54 = committed mode | Mode chosen per player state in `updateOrbitCamera` (no freeze 55: ours always carries) | Comments corrected: field +0x54 = committed mode (0x5E7FE0 / 0x5EB190), vtable offset 0x54 = slot 21 SwitchTypeBlended |
 | 5 | Combat target overrides the mode to 0x33 / 0x34 / 0x30 / 0x36 (0x5E7FE0) | Only mode 23 (manual aim) is modelled | World.cpp:910-914 |
 | 6 | Camera types switch through a TransitionCamera with per-(from, to) durations from a resource and a fixed 1/30 s step | Reveal splines blend in/out with our own times (OU-CAM-004); no general transition camera | src/game/Camera.cpp; BUGS OU-CAM-004 |
 | 7 | Vehicle: VehicleCamera (type 13) entered via a transition while player +0xF00 is set | `kDistance = 1711` on the bike, our ratio | World.cpp:986 "[I] VehicleCamera"; OU-CAM-003 |
 | 8 | Scope (type 14) and LaraCombatCamera (type 12) are separate cameras | One orbit camera with modes | World.cpp |
 
-Proposed fix for OU-CAM-001 (for the owner of World.cpp, not done here): before the per-axis lag, `*focus_ +=
-carrierVelocityPerFrame · dt · 30`, where the velocity is the platform's displacement of her root this tick (the
-riding code in `Objects.cpp` already knows it), skipped while a scripted freeze (request 55) is active; and carry
-`cam_.position` / `orbit_.desired` with the platform's transform delta. Test: `Game.CameraFocusRidesMovingMarkup`.
+Camera distance on the l2_cliffclimb yacht deck (OU-CAM-005, tru.exe 948.2 in mode 1, ours 1264.22): it is the target
+distance +0x1320 (0x5FFB00 returns +0x1D4 to it), held at 948.2 for 15 s of idling and 5.5 s of running across the deck,
+so it is a set value, not a pull-in. Writers of +0x1320: the settings' +0x60 (0x5FEF60, 1264.22; the settings resource
+is +0x1D0 when set, slot 0x28 via CameraManager 0x5E8180, else global +0x144 = DTP 0x14, the only camera-settings DTP
+in generalbank / l2_cliffclimb / l1_seatop / every object DRM), and commands 2 / 0xD of a command list (0x5FF080
+mode list; 0x6019D0 for camera-trigger records). Camera triggers: 0x5CD520 tests trigger volumes against Lara
+(0x5CD1B0: 2 enter, 3 leave) and calls CameraManager slot 27 0x5F29A0 / slot 28 0x5F2A70 with the trigger instance;
+0x5E85B0 copies its intro data +0x78 record into +0x8C (≤ 4, "exceeded kMaxActiveTriggers"); 0x601D30 applies the
+mode-list entry, the triggers with +0x14 = 0, the mode records +0x1348 / +0x1344, the triggers with +0x14 ≠ 0, then
+slot 5's record (+0x110); the last command 2 / 0xD wins. l2_cliffclimb's level DTP 0x2b54 holds four such
+volumes by the yacht (box, half extents, Euler z 43.1°): 0x2b6d at (−34899, −15044, 322), half (1095, 557, 451),
+commands [2 → 632.11, 0x18 (4, 300)]; 0x2b6e at (−35813, −15914, 1708), half (711, 1128, 479), [0xD → 948.17 (cap
+790.14 unused), 0x18 (5, 250), 0x1C]; one at (−36224, −16340, 295) [0x12 …, 0x15]; 0x2b6f at (−38213, −18283, 810),
+[0xD → 3160.56, 0x18 (−60, 300)]. Mode 8's list entry also has command 2 → 948.17. With the Wine deck position (ours
+(−34816, −14652, 211), test point +200) she is inside 0x2b6d (632.11) and outside 0x2b6e, which contradicts the measured
+948.2, so which record sets 948.2 is not established [U]; ours has no camera triggers. Not fixed.
 
 ## 8. Unknowns
 
