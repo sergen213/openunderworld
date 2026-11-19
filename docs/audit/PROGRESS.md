@@ -77,3 +77,19 @@ Engine fixes (W6-*) wait for this wave's evidence (W3-*, ScriptNatives).
   3. Merge into main, bump to 0.52.0, write the CHANGELOG, release.
   4. Finish ScriptPuzzle.
   5. Run the idle-machine benchmark (`tools/bench/run.sh --runs 2`).
+
+## 2026-11-18/19 — batch 5: integration of the fix branches
+
+- **main moved:** it gained 0.52.0 (time of day, from another session). It already contained the script VM fix and
+  the batch-3 tests, which were not listed in its CHANGELOG. int/brief merged main at 6a01070.
+- **First full ctest on int/brief:** 1054 of 1060 passed, 6 failed. Each was root-caused and fixed on its own branch:
+
+  | Branch | Failure | Cause and fix |
+  |---|---|---|
+  | agent/IntSave 7699d51 | `StreamReal.SaveContinuesBitIdentically` | SwimTurn-2's swim speed and last seen camera yaw were not saved. Now saved (`player.controller.swimSpeed`, optional `camera.seen`). |
+  | agent/IntSwim 7792f25 | `game_selftest_ch19_arctic_sea_stone_niche` | The self-test autopilot assumed instant swim turns. It now eases the stick in water. The game model (measured tru.exe turn) is unchanged. |
+  | agent/IntGolden 4986979 | baldrs replay and 3 cliff goldens | PlatformCam-2 had recorded and blessed them with a stale binary linked before the camera change. Re-recorded from the plan and re-blessed after an image review; only the framing changed (the camera rides the deck). |
+
+- **agent/ScriptPuzzle** (ScriptPuzzle2) was merged: OU-PZL-009, OU-GRP-005, OU-PZL-015 (partly) and OU-PZL-008(c).
+- **Lesson:** an agent's "re-blessed" golden or re-recorded replay can come from a stale build. Check the binary's
+  link time against the source edit, or run the integration full ctest before trusting it.
