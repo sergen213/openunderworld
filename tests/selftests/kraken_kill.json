@@ -3,7 +3,7 @@
  "name": "kraken_kill",
  "chapter": "Coastal Thailand: the kraken's hall - raise the spiked platform, shoot both chain links by manual aim, the platform drops",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/thailand2.html",
- "note": "l1_kraken_room, on the switch ledge. Switch 30 raises platform 27 (uber section 0: 1 -> 2), its chain sections 2 / 3 arm (1 -> 0) and the weak links 61 / 62 come down to the ledge's ends. They are no lock targets: Manual Aim, the look stick, Fire. Each hit drops a chain (section 2 / 3 -> 2); after both the platform falls (section 0 -> 3) and its script starts the kraken's death.",
+ "note": "l1_kraken_room, on the switch ledge. Switch 30 raises platform 27 (uber section 0: 1 -> 2), its chain sections 2 / 3 arm (1 -> 0) and the weak links 61 / 62 come down to the ledge's ends. They are no lock targets: Manual Aim, the look stick, Fire. Each hit drops a chain (section 2 / 3 -> 2); after both the platform falls (section 0 -> 3) and its script starts the kraken's death. Switch 30 starts locked (modifiable 7 (2), tru.exe 0x4A5A90): the gear switches 55 (left gear engaged: 30 vt 62) and 57 (right: 30 vt 63) free it [O bytecode, scripts 3536 / 3542 / 3501]; the gear halves are not played here, so the two `call` fixtures stand for their reports.",
  "level": "l1_kraken_room",
  "spawn": [
   -1,
@@ -11,6 +11,7 @@
   2300,
   90
  ],
+ "fixtures": [{"call": [30, 62]}, {"call": [30, 63]}],
  "steps": [
   {
    "step": "raise_the_platform",

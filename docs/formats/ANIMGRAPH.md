@@ -106,10 +106,12 @@ Transition, 0x34 bytes, tag `0x2776`:
   birth, then each use moves it along the use transition (`Runtime::switchUsed`, `pickUse`) and `modifiable` 4 to the
   started transition's target; `modifiable` 8 returns it. l5_valaskjalf_entryb lever 7188 opens reward door 7187 only
   while switch 7192 is not in its state 0 "on" (7192 starts in state 1). `modifiable` 7 on a switch sets that id (its
-  own member, whichever of the chain's `modifiable` members the caller reached it by); [I] ours honours it for
-  `ar_ei_switch_oneway` only: l1_kraken_room's scripts put switch 30 into the locked state 2 as well, and with that
-  honoured nothing in ours frees it again (self-test `kraken_kill` and the critical gates stop at the first pull):
-  that lock and its release are not decoded. The one-way switches' graph
+  own member, whichever of the chain's `modifiable` members the caller reached it by), on every switch: tru.exe thunk
+  0x79ABA0 -> 0x4A5A90 posts 0x2E to any receiver and the handler 0x6B4440 -> 0x6B453B enters the state by id [O].
+  Scripts lock switches with it until a puzzle is done: l1_kraken_room switch 30 (vt 61 -> 7 (2)) until both gear
+  switches report (55 -> 30 vt 62, 57 -> 30 vt 63 -> 7 (1)); l1_kraken_room 498 until the "Kraken dead" broadcast;
+  l4_ballcourt exit switch 5469 until keyhole 6501; the l3_chapel pillar switches while dais plate 4834 is up; the
+  l7_arctic_sea wheel 9103 until the stones and swords are counted (OU-PZL-009). The one-way switches' graph
   (`ar_ei_switch_oneway`, `ms_ei_switch_oneway_wall`) [O data]: state 1 "off" —use, transition 0→ state 0 "on" —use,
   transition 1→ state 1; state 2 —use, transition 2→ state 2: the locked state. The exe passes vt 20 the state id
   entered (type 3637 vt 20: its "on" id 0 → vt 55, "off" id 1 → vt 54 [O bytecode]); ours still runs vt 20 with a

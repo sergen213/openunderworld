@@ -1860,13 +1860,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance: an anim-graph object (handler
             // 0x6B4440) enters the state with that id at once (state list query 0xE6, 0x6A5660); other receivers [U].
             if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) {
-                // A switch keeps its graph state as the id in this member (switchUsed): the unit scripts lock and free
-                // their wheels with it (l7_arctic_sea's constructor: 9103 vt 63 -> 7 (2), free again by vt 62 -> 7 (1)
-                // once four stones and four swords are counted). A pulled switch whose new state can be used is free.
-                // [I] Honoured for the Arctic Sea's wheels only (`ar_ei_switch_oneway`), whose lock and release are decoded and
-                // played. Elsewhere scripts put switches into state 2 too (l1_kraken_room switch 30) and nothing in ours frees
-                // them again yet: honouring it there stops self-test kraken_kill and the critical gates at the first pull.
-                if (Object* o = findMut(self->uid); o && o->kind == Kind::Switch && !o->graph && o->name == "ar_ei_switch_oneway") {
+                // A switch keeps its graph state as the id in this member (switchUsed): scripts lock and free their
+                // switches with it. l7_arctic_sea's constructor: 9103 vt 63 -> 7 (2), free again by vt 62 -> 7 (1) once four
+                // stones and four swords are counted; l4_ballcourt exit switch 5469's constructor: 7 (2) until keyhole 6501
+                // (vt 62 -> vt 60 -> 7 (1)); l1_kraken_room 498: 7 (2) until the "Kraken dead" broadcast (vt 0 -> 7 (1)).
+                // In the locked state 2 a use is a failed try (Runtime::fire). A switch whose new state can be used is free.
+                // [O tru.exe] thunk 0x79ABA0 -> 0x4A5A90 posts 0x2E for every receiver; anim-graph handler 0x6B4440 ->
+                // 0x6B453B enters the state by id (no class check).
+                if (Object* o = findMut(self->uid); o && o->kind == Kind::Switch && !o->graph) {
                     if (const auto set = graphSet(o->name); set && set->graph)
                         if (const int state = set->graph->stateById(int32_t(nc.args[0].bits)); state >= 0) {
                             // (its own member, whichever of the chain's `modifiable` members the caller reached it by)
@@ -2871,7 +2872,11 @@ void Runtime::tick(const TickInput& in) {
     events_.clear();
     ++tick_;
     savedOrder_.clear(); // a load's object order is put back by now (restore, setUnits)
-    for (const auto& [uid, vt] : std::exchange(calls_, {})) run(uid, vt, {});
+    for (const auto& c : std::exchange(calls_, {})) {
+        std::vector<vm::Value> args;
+        for (const uint32_t a : c.args) args.push_back(vm::Value::scalar(a));
+        run(c.uid, c.vt, args);
+    }
     // Queued messages: the recipients are taken per message (a handler's own Sends wait for the next tick).
     for (auto& msg : std::exchange(messages_, {})) {
         std::vector<int32_t> uids;

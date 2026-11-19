@@ -405,6 +405,7 @@ tested behaviour happen.
 | `{"teleport": [x, y, z, yawDeg]}` | puts her there (current unit's frame) standing idle, exactly at z: in the air she falls. The camera goes behind her; health is kept. Same loaded units: for another level use `level` |
 | `{"camera": [yawDeg, pitchDeg]}` | turns the orbit camera |
 | `{"level": ["unit", checkpoint]}` | a level load at that unit's checkpoint with the game's state kept (`World::enterUnit`, as a respawn makes one): stands for a way between two units the scenario does not play. What she carries goes with her; health is kept |
+| `{"call": [uid, vt]}` | runs that object's script handler (vtable slot) at the start of the next tick: stands for a puzzle part the scenario does not play whose script reports to the tested object (`kraken_kill`: the gear switches free switch 30) |
 
 ## Report
 

@@ -525,9 +525,9 @@ public:
     // `uid`'s anim graph has a transition on `mask` out of its current state and none is running.
     bool graphAccepts(int32_t uid, uint32_t mask) const;
     void tick(const TickInput& in);
-    // Runs `uid`'s override of vtable slot `vt` (no arguments) at the start of the next tick, as an engine callback
+    // Runs `uid`'s override of vtable slot `vt` (with scalar `args`) at the start of the next tick, as an engine callback
     // would: the gate tests call handlers no data path of ours reaches yet.
-    void call(int32_t uid, int16_t vt) { calls_.emplace_back(uid, vt); }
+    void call(int32_t uid, int16_t vt, std::vector<uint32_t> args = {}) { calls_.push_back({uid, vt, std::move(args)}); }
     // Research (ProgressionReal.GateSweep): every script-to-script virtual call as (thread source uid, callee uid, vt).
     std::function<void(int32_t source, int32_t target, int16_t vt)> onCall;
     // The player's stream unit (stream unit id, Portal::toStreamId) for the unit scripts (gamebase callbacks): on a level
@@ -725,7 +725,8 @@ private:
     void callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args);
     // Runs `uid`'s override of vtable slot `vt` with `args` as a new thread beside its running ones.
     void run(int32_t uid, int16_t vt, std::span<const vm::Value> args);
-    std::vector<std::pair<int32_t, int16_t>> calls_; // call(): run at the next tick
+    struct QueuedCall { int32_t uid; int16_t vt; std::vector<uint32_t> args; };
+    std::vector<QueuedCall> calls_; // call(): run at the next tick
     // Sticky Set (0x7B6200 bool / 0x7B7B50 int) notifies the sticky's owner (0x4AF6D0 / 0x4AF740): its corebase
     // vt 5 float / 6 bool / 7 int with (the sticky, the value); the owner is not notified again from its own handler.
     struct StickyChange { int32_t uid; uint32_t offset; int16_t vt; uint32_t value; };
