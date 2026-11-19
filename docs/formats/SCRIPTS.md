@@ -315,8 +315,12 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   FLT_MAX (10: its end). Ours: the call blocks through the tick in which that cinematic object was activated (its
   cutscene is played or skipped at that tick's end) and not otherwise. `larabase` 19 / 20 (0x79A0E0 / 0x79A100) set / get one bool in
   0xECFC88, read only by the material constant setter 0x6A6530 and saved by 0x6F5910 (+0xD4): the gauntlet's glow;
-  accepted, not drawn. Open: `multibody` 3 (Disable, 0x79ACD0 -> 0x4A6FF0 -> 0x4D8FF0: every atom's fixed bit set,
-  inverse mass 0; 2 = Enable clears it, 4 reads it) is unbound: l2_maproom volume 2637 calls it on bridge 2667.
+  accepted, not drawn. `multibody` 3 (Disable, 0x79ACD0 -> 0x4A6FF0 -> 0x4D8FF0: every body's fixed bit 0 of +0x15C
+  set, its timer +0x160 zeroed; 2 = Enable clears it, 4 reads it) is bound: World keeps the fixed set (saved as
+  `multibodyFixed`) for 4; l2_maproom planes 2637 / 2638 call it on bridge 2667 before cinematics 100 / 105.
+  `multibody` 92 (0x4A7300: post 0x2C with the value) breaks a class-30 breakable by its break-record id and 93
+  (0x4A7320: query 0xCA) answers broken (l4_temple floor 5234); their meaning for other receivers [U]. `larabase` 26
+  (0x777C30): Lara's rope is attached to the argument instance; the rope attach (0x6A35E0) calls the target's vt 46.
 - [O] More bindings: `enemybase` (bind 0x7B4060) 16/17 Set/Get the AI behaviour index (0x776F10 → 0x62DE00),
   22 selects patrol path n of the intro data (0x777010 → 0x63AC40: n < 1 its own, 1..count an alternative, else
   none; LEVELS.md "Enemy intro data") → `ai::Enemies::selectPatrol`, 26 the MoveNav animation variant (0x7771E0,
@@ -380,8 +384,11 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
 
 - [O] Globals (gameglobalsbase type 5) SCRIPT members without initial values (+4/+8/+12/+272/+356/+432/+436 ->
   types 76/75/74/72/73/60/77) are engine-created objects; ours instantiate them with the globals (l5 soundvolumes
-  call `globals.member12` type 74 vt 20). `instance` 27 GetUnit (0x4B06F0) returns a unitref (ours: a unit identity);
-  a local holding another local's address is followed to its value for receivers and native arguments.
+  call `globals.member12` type 74 vt 20). `instance` 27 GetUnit (0x7B2C20 -> 0x4B06F0) returns the unitref of the
+  instance's unit (instance +0x20 -> +0xE0); ours: its stream unit id (World's portal stream unit id, `World::streamUnitId`,
+  handed to the scripts by `setStreamUnitId`) for objects, Lara and unit / global scripts alike; `unitref` 0 compares those
+  ids and `unitref` 1 IsLoaded (0x4AAEC0 -> 0x5C1B50: the unit is in g_streamTracker in state 2) asks the World.
+  A local holding another local's address is followed to its value for receivers and native arguments.
 
 The survey also found a crash: cyclic static links (l2 planes) recursed forever in the legacy fallback; it is now
 bounded to depth 8. The three script-only chapter ends (l1_ship_sinking_hall plane 1074 / volume 1082 → 1005,
