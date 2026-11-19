@@ -1,6 +1,7 @@
 #include "collision/Collision.hpp"
 #include "formats/Formats.hpp"
 #include <glm/common.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
 #include <gtest/gtest.h>
 
@@ -186,6 +187,44 @@ TEST(Collision, SphereAndCapsuleSweeps) {
     EXPECT_NEAR(h->point.z, 400, 1e-2); // contact on the edge
     const float dx = std::sqrt(20.f * 20 - 10.f * 10);
     EXPECT_NEAR(h->t, (200 - dx) / 400, 1e-3);
+}
+
+// Faces closer than the radius to the capsule's segment (Player::depenetrate, OU-PLY-012).
+TEST(Collision, CapsuleOverlaps) {
+    const auto m = room();
+    // Upright capsule (z 30..130, r 20) with its axis 15 from the wall at x = 200: overlaps the wall by 5, not the floor.
+    auto o = m.overlapCapsule({185, 0, 30}, {185, 0, 130}, 20);
+    ASSERT_EQ(o.size(), 1u);
+    EXPECT_NEAR(o[0].t, 15, 1e-3);
+    EXPECT_NEAR(o[0].normal.x, -1, 1e-4);
+    EXPECT_NEAR(o[0].point.x, 200, 1e-3);
+    EXPECT_EQ(o[0].dynamic, -1);
+    EXPECT_TRUE(m.overlapCapsule({170, 0, 30}, {170, 0, 130}, 20).empty()); // 30 away
+    // Bottom sphere 10 over the floor: the floor's triangles at (185, 0) too, normal up, distance 10 (and the floor tiles
+    // past the wall's foot, 18 away).
+    o = m.overlapCapsule({185, 0, 10}, {185, 0, 130}, 20);
+    int floor = 0, wall = 0;
+    for (const auto& h : o) {
+        EXPECT_LT(h.t, 20);
+        if (h.normal.z > 0.999f && std::abs(h.t - 10) < 1e-3f) ++floor;
+        if (h.normal.x < -0.999f && std::abs(h.t - 15) < 1e-3f) ++wall;
+    }
+    EXPECT_GE(floor, 1);
+    EXPECT_EQ(wall, 1);
+    // A dynamic: its faces come back in world space (box x -150..-50, z 30..130; the x = -50 side is 2 triangles).
+    collision::CollisionMesh d = m;
+    auto box = std::make_shared<collision::CollisionMesh>();
+    collision::addBox(*box, glm::mat4(1), {100, 100, 100});
+    box->build();
+    d.dynamics.push_back({7, box, glm::translate(glm::mat4(1), vec3(-100, 0, 80))});
+    o = d.overlapCapsule({-30, 0, 60}, {-30, 0, 100}, 25);
+    ASSERT_FALSE(o.empty());
+    for (const auto& h : o) {
+        EXPECT_EQ(h.dynamic, 0);
+        EXPECT_NEAR(h.t, 20, 1e-3);
+        EXPECT_NEAR(h.normal.x, 1, 1e-4);
+        EXPECT_NEAR(h.point.x, -50, 1e-3);
+    }
 }
 
 TEST(Collision, ClosestPointAndMarkupFlags) {

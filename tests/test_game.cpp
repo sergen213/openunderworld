@@ -187,6 +187,40 @@ TEST(Game, WalkingIntoWallSlides) {
     EXPECT_NEAR(s.pos.z, 0, 1e-3);
 }
 
+// OU-PLY-012: a capsule that starts a tick inside a wall is pushed out along the wall's normal in that tick
+// (Player::depenetrate; tru.exe under Wine resolves 10..116 units in one frame), and walking on afterwards is unchanged.
+TEST(Game, EmbeddedCapsuleIsPushedOutInOneTick) {
+    const float r = game::defaultTuning().radius, contact = 400 - r - 1; // where slide() leaves her against the wall
+    for (const float depth : {0.3f, 30.0f, 75.0f}) {
+        CollisionMesh m;
+        addFloor(m, -2000, -2000, 2000, 2000, 0);
+        addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1000}, {400, -2000, 1000});
+        auto w = makeWorld(std::move(m), {contact + 1 + depth, 25, 0});
+        const auto& s = w->player().state();
+        w->tick({});
+        if (depth < 0.5f) EXPECT_NEAR(s.pos.x, contact + 1 + depth, 1e-4) << "touching: left alone"; // kDepenetrateSlop
+        else EXPECT_NEAR(s.pos.x, contact, 0.01f) << depth;
+        EXPECT_NEAR(s.pos.y, 25, 1e-4) << depth;
+        EXPECT_NEAR(s.pos.z, 0, 1e-3) << depth;
+        EXPECT_EQ(s.state, State::Idle) << depth;
+        for (int i = 0; i < 60; ++i) w->tick(fixedCamera(*w, forward(), 0)); // run on into the wall: stays at the contact
+        EXPECT_LE(s.pos.x, contact + 1 + 0.01f) << depth;
+        EXPECT_GE(s.pos.x, 400 - r - 5) << depth;
+    }
+    // A corner: out of both walls in the same tick.
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1000}, {400, -2000, 1000});
+    addQuad(m, {-2000, 400, 0}, {2000, 400, 0}, {2000, 400, 1000}, {-2000, 400, 1000});
+    auto w = makeWorld(std::move(m), {360, 350, 0});
+    w->tick({});
+    const auto& s = w->player().state();
+    EXPECT_LE(s.pos.x, 400 - r + 0.01f);
+    EXPECT_LE(s.pos.y, 400 - r + 0.01f);
+    EXPECT_GE(s.pos.x, 400 - r - 2);
+    EXPECT_GE(s.pos.y, 400 - r - 2);
+}
+
 TEST(Game, GravityJumpAndLanding) {
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
@@ -2672,6 +2706,30 @@ TEST(GameReal, HangJumpLeans) {
     upJump.jump = true;
     w.tick(upJump);
     EXPECT_EQ(s.state, State::ClimbUp) << "the climbable top: jump from the up lean climbs";
+}
+
+// OU-PLY-012, l3_main_bedroom's prologue wall under ledge 973 (BugRepro `pen_stand_35`). tru.exe under Wine: her root put
+// 10..116 units past where a walk into the wall stops is back at that contact (within 4.2 units) on the next frame,
+// along the wall's normal (x unchanged). Ours: running into the wall stops at y -4385.4; spawned 35 / 75 units past
+// that and left alone she stands at it after one tick (Player::depenetrate), and stays there idle.
+TEST(GameReal, EmbeddedLaraIsPushedOutOfTheWall) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto run = unitWorld(bf, "l3_main_bedroom", {{-8484.3f, -4330, 244}, glm::radians(-90.0f)});
+    for (int i = 0; i < 120; ++i) run.tick(forward());
+    const float contact = run.player().state().pos.y;
+    EXPECT_NEAR(contact, -4385.4f, 1);
+    for (const float depth : {35.0f, 75.0f}) {
+        auto w = unitWorld(bf, "l3_main_bedroom", {{-8470, contact - depth, 244}, glm::radians(90.0f)});
+        const auto& s = w.player().state();
+        w.tick({});
+        EXPECT_NEAR(s.pos.y, contact, 4.2f) << depth;
+        EXPECT_NEAR(s.pos.x, -8470, 0.01f) << depth;
+        for (int i = 0; i < 89; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::Idle) << depth;
+        EXPECT_NEAR(s.pos.y, contact, 4.2f) << depth;
+        EXPECT_NEAR(s.pos.x, -8470, 0.01f) << depth;
+    }
 }
 
 // l4_traprooms poles 1336 and 1337 (markup 4, z 7133, 1264 apart in y, floor 6358 beside them): a standing
@@ -9982,7 +10040,11 @@ TEST(GameReal, SlopeJunglehubRampSeries) {
         EXPECT_EQ(slid, r.slides) << "flags " << r.flags << " nz " << r.nz;
         if (!r.slides) {
             EXPECT_EQ(s.state, State::Idle) << "flags " << r.flags << " nz " << r.nz;
-            EXPECT_LT(glm::distance(s.pos, g->point), 1.0f) << "flags " << r.flags << " nz " << r.nz;
+            // The 0.665 spot's capsule starts 3 units into the wall beside it and is pushed out (OU-PLY-012): 3.9 aside,
+            // 4.4 up the slope; every other spot stays put.
+            const bool wall = r.flags == 0 && r.nz == 0.665f;
+            EXPECT_LT(glm::distance(glm::vec2(s.pos), glm::vec2(g->point)), wall ? 4.5f : 1.0f) << "flags " << r.flags << " nz " << r.nz;
+            if (!wall) EXPECT_LT(glm::distance(s.pos, g->point), 1.0f) << "flags " << r.flags << " nz " << r.nz;
         } else {
             EXPECT_GT(glm::distance(s.pos, g->point), 150.0f) << "flags " << r.flags << " nz " << r.nz;
         }
