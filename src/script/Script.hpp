@@ -497,6 +497,10 @@ public:
     // the naga statue 56/57, the snake head 57) [O]; which slot the exe calls on a pull is [I]: the first overridden
     // void one that does more than return runs, as its own thread. False if none ran to completion.
     bool grapplePulled(int32_t uid);
+    // `uid`'s script asks `larabase` 26 (tru.exe 0x79A1A0 -> 0x777C30: Lara's rope is attached to this instance), as the
+    // grapple lever posts' state 1 does from vt 46 ("attached") until she lets go (l4_trailstart 6695): World keeps such a
+    // target roped after the heave instead of letting go.
+    bool pollsRope(int32_t uid) const;
     // Lara inserts the portable she carries into a receptacle (her chart action 0x4D posts INSTANCE message 0x165 to the
     // portable, 0x716F30): the portable's anim graph takes the insert stimulus (0x6B5890: message 0x33, mask 0x20,
     // any), then it posts 0x165 to the receptacle (0x6C2530), which calls its script's instance prototype 67 (vt 49,

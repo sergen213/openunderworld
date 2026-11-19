@@ -1556,6 +1556,12 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
         result = b && b->uid == uid;
         return true;
     }
+    // 26 (0x777C30): Lara's rope is attached to the instance (grapple controller target +0x4C -> +0x44). The rope is hers
+    // from the throw until she lets go (Player::grappleUid).
+    if (type == "larabase" && function == 26) {
+        result = player_.state().grappleUid != 0 && player_.state().grappleUid == uid;
+        return true;
+    }
     // modifiable 1 on a water volume: message 0x30 (amount, time), below (tickWaterStates).
     if (type == "modifiable") {
         if (a.size() == 2 && a[0] > 0 && a[1] > 0) waterDamage_[uid] = {float(a[0]), float(a[1])};

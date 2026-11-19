@@ -1,5 +1,6 @@
 # Pull an uber grapple target: spawn facing it, look up at it, throw the grapple, hold E (use) for a second: the
-# target's pull handler runs (World::lastPulled), then Lara lets go standing. Two sites (GameReal.GrapplePullsUberTargets):
+# target's pull handler runs (World::lastPulled), then Lara lets go standing; the lever post 6695 polls `larabase` 26,
+# so she stays on its rope until E is released (4.5 s). Two sites (GameReal.GrapplePullsUberTargets):
 # ou-game --level 'pc-w\l4_trailstart.drm' --spawn 61161,-42611,4948,-11 --input-script tests/replays/grapple_pull.txt   (lever 6695)
 # ou-game --level 'pc-w\l2_puzzleroom.drm' --spawn -23353,42001,1149,-67 --input-script tests/replays/grapple_pull.txt   (shiva 2982)
 # From l2_norsehall 381,-1901,-1279,180 the same input ropes Lara to the naga statue's swivelling handle 2457 (an anchor).

@@ -2372,7 +2372,9 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   `GameReal.GrappleShootsOnTheRope`,
   `Game.GrappleWallRunFromGround`, `GameReal.PoolGrappleTargetAndSwing`, `GameReal.MountedGrapplePullsBlockWithoutSwinging`,
   `GameReal.GrapplePullsUberTargets` (replay `tests/replays/grapple_pull.txt` at l4_trailstart lever 6695,
-  l2_puzzleroom shiva 2982), `ProgressionReal.GrappleHandlesSwivel`, `GameReal.KrakenRoomRappel` (replay
+  l2_puzzleroom shiva 2982), `GameReal.GrappleLeverReturnsWhenReleased` (the rope attach calls the target's script vt 46,
+  tru.exe 0x6A35E0 -> instance prototype 64 / 0x799840; a target whose script polls `larabase` 26, 0x777C30 "her rope
+  is on me", keeps her on the rope after the one-second heave until Interact is let go), `ProgressionReal.GrappleHandlesSwivel`, `GameReal.KrakenRoomRappel` (replay
   `tests/replays/kraken_rappel.txt`: swing onto 326's wall, Interact + back / forward down and up, Jump leaps back off
   the wall), `Game.GrappleSwingDrive`, `Game.GrappleJumpIntoGapKeepsRope`, `Game.GrappleRopeClimbNeedsInteract`,
   `Game.GrappleRappelInputsAndWallJump`, `GameReal.MainHallSwingToFarBalcony`; self-tests `prologue_hall_swing`,

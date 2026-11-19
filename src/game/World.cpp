@@ -692,7 +692,7 @@ void World::tick(const Actions& input) {
     hingePull_.clear();
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
     else if (uberGrappleOff(player_.state().grappleUid)) player_.releaseGrapple(false); // its state dropped the target (action 0x1A)
-    else if (a.interact)
+    else if (a.interact) {
         if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid)); target) {
             if (auto* slide = uberSlide(target->uid)) { // a body free on the floor (ca_pu_block_grapple): the rope drags it to her
                 vec3 delta = player_.state().pos - (target->pos + slide->x);
@@ -704,11 +704,16 @@ void World::tick(const Actions& input) {
                 if (const float distance = glm::length(delta); distance > 1.0f && d.speed > 0) // [I] braced pull speed 240 units/s,
                     slide->push = delta * (std::min(240.0f * float(dt), distance) / distance / float(dt) / 30.0f), slide->pushBound = d.impulse; // her push's impulse
             } else if (pullGrappled(a)) { // the rope drags the target's own joint (Objects.cpp)
-            } else if ((pullT_ += dt) >= 1.0f) { // [I] a one-second heave runs the target's pull handler, then lets go
+            } else if (pullT_ < 1.0f && (pullT_ += dt) >= 1.0f) { // [I] a one-second heave runs the target's pull handler, then lets go
                 if (script_.grapplePulled(target->uid)) lastPulled_ = target->uid;
-                player_.releaseGrapple(false);
+                // A target whose script waits on `larabase` 26 (the grapple lever posts' state 1, entered by vt 46 on attach)
+                // keeps her on the rope: her weight holds it until she lets go (OU-GRP-005; tru.exe 0x777C30).
+                if (!script_.pollsRope(target->uid)) player_.releaseGrapple(false);
             }
         }
+    } else if (pullT_ >= 1.0f && script_.pollsRope(player_.state().grappleUid)) {
+        player_.releaseGrapple(false); // heaved, Interact let go: she lets go of the rope, the script sees it detached
+    }
     if (!units_.empty()) { // streaming world (src/game/Stream.cpp)
         crossPortals(prev_.pos, player_.state().pos);
         touchCheckpoints();
