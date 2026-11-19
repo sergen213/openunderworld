@@ -56,7 +56,8 @@ tools/wine-ref/stop.sh                                          # tru.exe, wines
 ```
 
 `sessions/l2_cliffclimb_sea.sh` is a complete scripted session (water entry, treading, swimming, breath, the camera
-on the yacht's deck); `$OU_WORK/gameplaygoal/reference/session7a.sh` / `session7b.sh` are the older templates for
+on the yacht's deck); `sessions/l2_cliffclimb_sharks.sh` watches the l2_cliffclimb sharks around a treading, diving or
+pinned Lara (OU-CMB-003); `$OU_WORK/gameplaygoal/reference/session7a.sh` / `session7b.sh` are the older templates for
 ledge / chimney / grapple placements (they still use the pre-`env.sh` paths).
 
 Rules learnt the hard way (details in docs/REFERENCE_COMPARISON.md "Method"):
@@ -79,6 +80,7 @@ Rules learnt the hard way (details in docs/REFERENCE_COMPARISON.md "Method"):
 | `wkey` | `click <title> <button>` (dialogs), `key <vk> [ms]`, `multi <ms> vk...`, `km <hold> <total> vk...` (keys + camera mode samples), `mouse dx dy steps`, `combo`, `post` |
 | `pole` | `dump uid...` / `raw uid...` (instance position / rotation / words; -1 = player), `watch n ms uid...`, `yaw <rad>`, `lara x y z`, `post` / `postv` (INSTANCE_Post 0x5B3750) |
 | `ref` | `trace <ms> [vk:down:up ...]` (keys + a line per change: pos +0x20, rot +0x30, vel +0x2A0, state pointer, anim +0xC18), `drop x y z pinms ms vx vy vz [keys]` (pin, release with a velocity, trace with chart request / parent, volume top wt and wave surface sf), `rec <ms> [keys]` (trace + water, breath +0x920, health +0x628, camera +0x90 / pivot +0x100 / distance +0x1D4 / mode +0x1E0), `tp` / `tpv x y z ms`, `god`, `mouse dx dy [steps]`, and the `wmem` memory commands |
+| `enemy` | `list` (instances with an AI: uid, position, object), `watch <ms> <period> uid...` (Lara, health with bites as `hurt` and a heal under 600, per enemy position, distance, Lara-sense flags and the EnemyBehavior / EnemyState objects its AI points at; map the vftables with docs/re/db/rtti.tsv), `zones uid...` (guard zones and region as 0x622C80 tests them) |
 
 `camhook.sh install` detours CameraManager 0x5E8210 (camera mode requests) into a ring buffer; `camhook.sh log`
 prints the requests as `mode@caller`.
