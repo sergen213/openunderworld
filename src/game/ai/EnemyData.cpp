@@ -565,7 +565,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
         links_[u.name] = parsed.navLinks;
         rebuildNodes();
         for (const auto& in : parsed.intros) {
-            if (formats::dormant(in) && born && !born(in.uniqueId)) {
+            if (formats::dormant(in) && !(born && born(in.uniqueId))) {
                 dormant_.insert_or_assign(in.uniqueId, std::pair{u.name, in}); // not introduced at load (0x5C2360)
                 continue;
             }

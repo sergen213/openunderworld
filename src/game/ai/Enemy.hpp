@@ -580,8 +580,9 @@ public:
     void setHealthLevel(int level) { healthLevel_ = level; } // Tailoring::enemyHealth for enemies added from now on
     // Spawns the enemies and generators of newly loaded units; drops (and remembers) those of unloaded ones.
     void setUnits(const std::vector<script::UnitRef>& units);
-    // Dormant intros (formats::dormant) are not spawned until birth(uid) unless `born` says so (World:
-    // script::Runtime::born, instanceref Birth). Unset: every intro spawns.
+    // Dormant intros (formats::dormant; tru.exe 0x5C2360 skips intro +0x72 & 0x82 at the unit load) are not spawned
+    // until birth(uid), or at the load when `born` says a script already birthed them (World: script::Runtime::born,
+    // instanceref Birth). l2_cliffclimb: placed sharks 4020-4022, dormant 4023 absent in tru.exe as here.
     std::function<bool(int32_t uid)> born;
     void birth(int32_t uid);
     Enemy& add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false, glm::vec2 tilt = {});

@@ -24,6 +24,11 @@ using game::ai::Role;
 namespace {
 
 constexpr float kDt = float(game::kTickSeconds);
+// Most enemy intros are dormant (formats::dormant): tru.exe does not introduce them at the unit load (0x5C2360), a
+// script births them (instanceref Birth). Tests of those enemies run without the scripts and treat every one as born.
+void scriptBorn(game::ai::Enemies& es) {
+    es.born = [](int32_t) { return true; };
+}
 
 void addTri(CollisionMesh& m, vec3 a, vec3 b, vec3 c) {
     const auto base = uint32_t(m.vertices.size());
@@ -874,6 +879,7 @@ TEST(AiReal, EnemyIntrosResolveToSkinnedEnemyTypes) {
                            "l4_traprooms", "l2_junglehub", "l2_towerroom", "l2_hubhall", "l2_cliffclimb"};
     game::ai::Enemies es;
     es.setBigfile(&bf);
+    scriptBorn(es);
     std::vector<script::UnitRef> refs;
     std::map<std::string, int> intros; // enemy object -> intros
     for (const char* u : units) {
@@ -1034,17 +1040,19 @@ TEST(AiReal, DecodedSensesAttacksDeaths) {
         }
 }
 
-// The placed sharks are live enemies, not discarded intros. A real blueshark leaves its placement, swims to Lara,
-// plays its data's bite clip and hurts her, then responds normally to a fatal hit.
+// The placed sharks are live enemies, not discarded intros; dormant shark intros (formats::dormant) wait for a script's
+// Birth as in tru.exe (0x5C2360): its l2_cliffclimb instance list after the unit load (Wine, w2/SharkAi6/s1/enemies.txt)
+// holds sharks 4020-4022, not 4023. A real blueshark leaves its placement, swims to Lara, plays its data's bite clip and
+// hurts her, then responds normally to a fatal hit.
 TEST(AiReal, SharksSpawnSwimBiteAndDie) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     const auto objectBytes = bf.read("\\tr8\\pc-w\\objectlist.txt");
     ASSERT_TRUE(objectBytes);
     const auto objectNames = formats::parseObjectList({reinterpret_cast<const char*>(objectBytes->data()), objectBytes->size()});
-    struct Population { const char* unit; int first, last, count; };
-    for (const Population p : {Population{"l1_seafloor", 980, 985, 6}, Population{"l2_cliffclimb", 4020, 4023, 4},
-                               Population{"l7_arctic_sea", 9125, 9133, 8}}) { // 9129 is a triggervolume, not a ninth shark
+    struct Population { const char* unit; int first, last, placed, count; };
+    for (const Population p : {Population{"l1_seafloor", 980, 985, 3, 6}, Population{"l2_cliffclimb", 4020, 4023, 3, 4},
+                               Population{"l7_arctic_sea", 9125, 9133, 3, 8}}) { // 9129 is a triggervolume, not a ninth shark
         auto unit = game::loadUnitData(bf, p.unit);
         unit.col.build();
         for (const auto& in : formats::parseUnit(*unit.drm).intros)
@@ -1054,14 +1062,21 @@ TEST(AiReal, SharksSpawnSwimBiteAndDie) {
         game::ai::Enemies es;
         es.setBigfile(&bf);
         es.setUnits({{unit.name, unit.drm, vec3(0)}});
-        std::set<int32_t> sharks;
-        for (const auto& e : es.all())
-            if (e->uid() >= p.first && e->uid() <= p.last) {
-                sharks.insert(e->uid());
-                EXPECT_TRUE(e->type().name.starts_with("shark_")) << p.unit << " " << e->uid();
-            }
-        EXPECT_EQ(sharks.size(), size_t(p.count)) << p.unit;
-        std::fprintf(stderr, "%s: %zu sharks, %zu water volumes\n", p.unit, sharks.size(),
+        const auto sharks = [&] {
+            std::set<int32_t> out;
+            for (const auto& e : es.all())
+                if (e->uid() >= p.first && e->uid() <= p.last) {
+                    out.insert(e->uid());
+                    EXPECT_TRUE(e->type().name.starts_with("shark_")) << p.unit << " " << e->uid();
+                }
+            return out;
+        };
+        const std::set<int32_t> placed = sharks();
+        EXPECT_EQ(placed.size(), size_t(p.placed)) << p.unit;
+        if (std::string_view(p.unit) == "l2_cliffclimb") EXPECT_EQ(placed, (std::set<int32_t>{4020, 4021, 4022}));
+        for (int uid = p.first; uid <= p.last; ++uid) es.birth(uid); // the scripts' Birth of the dormant ones
+        EXPECT_EQ(sharks().size(), size_t(p.count)) << p.unit;
+        std::fprintf(stderr, "%s: %zu placed sharks, %zu with the born ones, %zu water volumes\n", p.unit, placed.size(), sharks().size(),
                      size_t(std::count_if(unit.col.markup.begin(), unit.col.markup.end(), [](const auto& m) { return m.type == 10; })));
         for (const auto& m : unit.col.markup)
             if (m.type == 10 && m.points.size() >= 2)
@@ -1186,6 +1201,7 @@ TEST(AiReal, EnemyStateSaveRestore) {
     unit.col.build();
     game::ai::Enemies es;
     es.setBigfile(&bf);
+    scriptBorn(es);
     es.setUnits({{unit.name, unit.drm, vec3(0)}});
     const auto g = std::find_if(es.generators().begin(), es.generators().end(), [](const auto& x) { return x.uid == 5637; });
     ASSERT_NE(g, es.generators().end());
@@ -1203,6 +1219,7 @@ TEST(AiReal, EnemyStateSaveRestore) {
     const vec3 offset(1000, -2000, 300);
     game::ai::Enemies loaded;
     loaded.setBigfile(&bf);
+    scriptBorn(loaded);
     loaded.setUnits({{unit.name, unit.drm, offset}}); // a different stream: placements, then replaced below
     loaded.restore(nlohmann::json::parse(es.serialize().dump()));
     EXPECT_TRUE(loaded.all().empty());
@@ -1231,6 +1248,7 @@ TEST(AiReal, EnemyStateSaveRestore) {
     // Restored in place, the chase goes on exactly as the original.
     game::ai::Enemies again;
     again.setBigfile(&bf);
+    scriptBorn(again);
     again.restore(es.serialize());
     again.setUnits({{unit.name, unit.drm, vec3(0)}});
     for (int i = 0; i < 120; ++i) {
@@ -1257,6 +1275,7 @@ TEST(AiReal, PoachersFireAndBatsBite) {
         unit.col.build();
         game::ai::Enemies es;
         es.setBigfile(&bf);
+        scriptBorn(es);
         es.setUnits({{unit.name, unit.drm, vec3(0)}});
         std::map<int32_t, float> startZ;
         for (const auto& e : es.all()) startZ[e->uid()] = e->state().pos.z;
@@ -1339,6 +1358,7 @@ TEST(AiReal, NagasClingDropBiteSpitAndDie) {
         auto u = game::loadUnitData(bf, unit);
         game::ai::Enemies es;
         es.setBigfile(&bf);
+        scriptBorn(es);
         es.setUnits({{u.name, u.drm, vec3(0)}});
         int g = 0, r = 0, c = 0;
         for (const auto& e : es.all()) {
@@ -1371,6 +1391,7 @@ TEST(AiReal, NagasClingDropBiteSpitAndDie) {
     u.col.build();
     game::ai::Enemies es;
     es.setBigfile(&bf);
+    scriptBorn(es);
     es.setUnits({{u.name, u.drm, vec3(0)}});
     const auto it = std::find_if(es.all().begin(), es.all().end(), [](const auto& e) { return e->uid() == 2417; });
     ASSERT_NE(it, es.all().end());
@@ -1429,6 +1450,7 @@ TEST(AiReal, SpidersClingDropAndBite) {
     u.col.build();
     game::ai::Enemies es;
     es.setBigfile(&bf);
+    scriptBorn(es);
     es.setUnits({{u.name, u.drm, vec3(0)}});
     std::vector<game::ai::Enemy*> spiders;
     for (const auto& e : es.all())
@@ -1438,6 +1460,7 @@ TEST(AiReal, SpidersClingDropAndBite) {
     // Save round trip keeps them on the wall.
     game::ai::Enemies loaded;
     loaded.setBigfile(&bf);
+    scriptBorn(loaded);
     loaded.restore(nlohmann::json::parse(es.serialize().dump()));
     loaded.setUnits({{u.name, u.drm, vec3(0)}});
     for (const auto& e : loaded.all())
@@ -1463,6 +1486,7 @@ TEST(AiReal, SpidersClingDropAndBite) {
     // Shot on the wall: dies and falls off it.
     game::ai::Enemies fresh;
     fresh.setBigfile(&bf);
+    scriptBorn(fresh);
     fresh.setUnits({{u.name, u.drm, vec3(0)}});
     auto& other = **std::find_if(fresh.all().begin(), fresh.all().end(), [](const auto& e) { return e->uid() == 3156; });
     ASSERT_EQ(other.state().mode, Mode::Cling);
@@ -1486,6 +1510,7 @@ TEST(AiReal, ThrallsGetUpUnlessMjolnir) {
         auto u = game::loadUnitData(bf, "l5_valaskjalf_entry");
         game::ai::Enemies es;
         es.setBigfile(&bf);
+        scriptBorn(es);
         es.setUnits({{u.name, u.drm, vec3(0)}});
         EXPECT_EQ(std::count_if(es.all().begin(), es.all().end(), [](const auto& e) { return e->type().name == "viking_thrall"; }), 7);
     }
@@ -1643,6 +1668,7 @@ TEST(AiReal, MercsGuardZonesCoverAndAlert) {
     const auto fresh = [&] {
         auto es = std::make_unique<game::ai::Enemies>();
         es->setBigfile(&bf);
+        scriptBorn(*es);
         es->setUnits({{u.name, u.drm, vec3(0)}});
         return es;
     };
@@ -1776,6 +1802,7 @@ TEST(AiReal, MercPatrolsSearchesAndReturns) {
     u.col.build();
     game::ai::Enemies es;
     es.setBigfile(&bf);
+    scriptBorn(es);
     es.setUnits({{u.name, u.drm, vec3(0)}});
     es.guard(1650, 0, 127, 2500, 4000);
     auto& m = **std::find_if(es.all().begin(), es.all().end(), [](const auto& e) { return e->uid() == 1650; });
@@ -1848,6 +1875,7 @@ TEST(AiReal, ShipNavGraphFlankAndInvestigate) {
     const auto fresh = [&] {
         auto es = std::make_unique<game::ai::Enemies>();
         es->setBigfile(&bf);
+        scriptBorn(*es);
         es->setUnits({{u.name, u.drm, vec3(0)}});
         es->guard(1650, 0, 127, 2500, 4000); // its script's GuardNode
         return es;
@@ -2053,6 +2081,7 @@ TEST(AiReal, BallcourtPantherJumpsDownALink) {
     u.col.build();
     game::ai::Enemies es;
     es.setBigfile(&bf);
+    scriptBorn(es);
     es.setUnits({{u.name, u.drm, vec3(0)}});
     const game::ai::NavMesh* nav = es.navFor(*panther);
     ASSERT_NE(nav, nullptr);
