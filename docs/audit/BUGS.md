@@ -153,7 +153,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
-| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861); 1 / 3-8 / 0xC / 0x14 / 0x16 and kind 1 open | pre-existing | — |
+| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861) and agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349); 9 / 0xC / 0x14 / 0x16 and kind 1 open | pre-existing | — |
 | OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040); presence, CloseCombat slots, bite range on agent/EnemySpawn7 | pre-existing | — |
 
 ## Root-cause clusters
@@ -639,9 +639,27 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
   l1_ship_sinking_hall's second shaft volume 1061's yaw set (0°, force type 2 k 0.1) now holds the climbing camera
   behind her (yaw 89.5 where the hang set 15 had swung it to 117.3), so `ch06_second_shaft_valves`'s jump-up stick
   was turned to keep the old world direction (0.884 forward, −0.468 right).
-- Open [U]: 1 / 3..8 / 0xC / 0x14 / 0x16 and kind 1; the frame of x / y tracker offsets (all are (0, 0, z)); a volume
-  record of type 1 / 2 off a markup (her place 0 [I]); the look tracker's own lag (ours uses the focus's).
-- Status · Origin: Fixed on agent/CamZones7 (partial: see open) · pre-existing.
+- Batch 8 (agent/CamRest8, docs/re/CAMERA.md §9 "Angle overrides"): 0x601D30 runs on a mode or trigger-list change, not
+  per frame. 3 / 4 (global data +0x170 / +0x174 by id) and 5 / 6 (inline) set the yaw / pitch override (+0x1248 / +0x1278,
+  0x609F10): it turns its angle in place of the force set (0x609D40, not scaled by the look-idle weight), its speed
+  blending in over the 0.25 s clock from the previous override's, and switches itself off within 1° after `hold`
+  seconds; look input and level records switch it off. 1 picks a pitch set by id (sets 0 / 6 / 26 read from global data
+  +0x168 under Wine). 7 / 8 set the look limits {centre, range} as the mode lists' do (blend 0.25 s).
+  Wine (w2/CamRest8, l3_main_bedroom): walking into 4468 ({4 id 9 = (−5°, 1500°/s, 0)}) inside 4476 the pitch went −10 →
+  −5 in two frames and the override switched off with cur = target × 0.133 (+0x1278 read back), leaving reset it; 4349
+  ({8 −10 10}): +0x8C4 centre 80° range 10°, the mouse stops at 0.00 / −20.00. Ours, walked in from tru.exe's start: off
+  after 2 ticks with cur (0.198, 3.491), peak −5.00°; −20 / 0 limits; `StreamReal.CameraTriggerPitchOverrideAndLimits`.
+  Triggers now apply in CameraManager list order (entering appends 0x5E85B0, leaving moves the last into the hole
+  0x5F2A70): 4468 entered inside 4476 gives 790.1 as tru.exe, where our uid order gave 948.2.
+  New saved orbit state: both overrides, the limits' clock and target, the trigger list.
+- Narrowed, still open: 0xC is a cut (0x6017D0: blends end, the camera put at the targets' angles at +0x1320) but a Wine
+  check at l1_krakenstairs_b 599 was confounded by the teleport's own camera reset; 0x14 flags a **focus point** (unit
+  data +0x200 / +0x204 records, the `focuspoint` script type), which the focus-point blend 0x5F0B30 / 0x5F1540 (+0x14C0)
+  turns the look toward — a subsystem not ported; 0x16 is read only by the LaraCombatCamera (0x603190), which ours lacks;
+  9 (+0x133C) unread; kind 1 (AnchoredCamera, one usable record of 9); the frame of x / y tracker offsets; a volume
+  record of type 1 / 2 off a markup (her place 0 [I]); the look tracker's own lag (ours uses the focus's). OU-CAM-004 (reveal
+  blends) not touched.
+- Status · Origin: Fixed on agent/CamZones7 + agent/CamRest8 (partial: see open) · pre-existing.
 
 **OU-CMB-003 Shark aggression**
 - Repro: l2_cliffclimb, into the sea and tread (`w2/WineMeasure/ours/tread_*`): ours bit within ~7 s and every 1.5..3 s.
