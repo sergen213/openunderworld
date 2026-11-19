@@ -634,6 +634,11 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
   set (anchored: `World::poseAnchored`) in that frame. The orbit state (trigger sets, offsets, a volume's record) is saved.
 - Tests: `ScriptRealData.CameraTriggerCommandSurvey`, `StreamReal.CameraRidesTheYachtDeck` (look 0.22°, stays in the
   riding volume), `StreamReal.CameraTriggerForceSetEasesPitch`, `StreamReal.CameraTriggerRecordHoldsTheCamera`.
+- Knock-on effects: the `render_golden_cliff_water_*` goldens frame the deck at tick 120 and were re-blessed (the view
+  now looks at the point 79 under the pivot: level, as tru.exe's 0.22°, where it looked 5° up; image-reviewed). In
+  l1_ship_sinking_hall's second shaft volume 1061's yaw set (0°, force type 2 k 0.1) now holds the climbing camera
+  behind her (yaw 89.5 where the hang set 15 had swung it to 117.3), so `ch06_second_shaft_valves`'s jump-up stick
+  was turned to keep the old world direction (0.884 forward, −0.468 right).
 - Open [U]: 1 / 3..8 / 0xC / 0x14 / 0x16 and kind 1; the frame of x / y tracker offsets (all are (0, 0, z)); a volume
   record of type 1 / 2 off a markup (her place 0 [I]); the look tracker's own lag (ours uses the focus's).
 - Status · Origin: Fixed on agent/CamZones7 (partial: see open) · pre-existing.
