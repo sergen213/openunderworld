@@ -668,7 +668,11 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   tick after a placement (`Player::spawn` / `restore`: spawns, loads, restores, teleports) in ground states.
   Tests: `GameReal.EmbeddedLaraIsPushedOutOfTheWall` (35 and 75 past the y −4385.4 contact: at it after 1 tick, x
   unchanged, Idle 1.5 s), `Game.EmbeddedCapsuleIsPushedOutInOneTick` (synthetic wall and corner, a 0.3 touch left
-  alone, the run into the wall unchanged), `Collision.CapsuleOverlaps`.
+  alone, the run into the wall unchanged), `Collision.CapsuleOverlaps`. Tests that put her at an object's origin
+  inside its wall and relied on staying there now stand her where she can be: the l3_chapel switches 4819 / 4822
+  (`test_gates` `placeToUse`, `test_save` `placeToUse`: origin, else the first side 100 out where she still engages
+  it once settled) and receptacle spots (`engageSpotsIn` drops floor points whose standing capsule is inside a terrain
+  wall: l5_valgrind cog 7312's nearest socket spots were ~73 units in).
 - Left open: tru.exe does it every frame. Tried per tick in `groundMove`: 9 scenarios broke because our own [I] moves
   end inside our collision — the ch01 roll's stand-up under the leaning beam (`under_the_beams`), ch03's switch
   stand point 76 units into the gear room's wall (`down_to_the_lower_hall`), the chapel switch 4819's origin 24 inside

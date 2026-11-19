@@ -185,6 +185,25 @@ void place(game::World& w, vec3 pos, float yaw, bool cross = false) {
     w.restore(s, yaw, -0.25f);
     if (!cross) w.script().playerJumped();
 }
+// Lara put to use object `uid`. One with "use" records (kind 8: the class-6 switches' facing cone, 0x6F3A50) is used
+// from in front of it, as she walks up to it: its origin, else the first of eight sides 100 out from it, facing it,
+// where she still engages it (World::engaged) once settled — a placement inside its wall is pushed out first
+// (OU-PLY-012: l3_chapel switches 4819 / 4822 stand 24 units inside theirs). Others from their origin (the reach rule).
+void placeToUse(game::World& w, int32_t uid) {
+    const auto* t = w.script().find(uid);
+    if (!t) return;
+    const vec3 at = t->pos;
+    place(w, at, 0);
+    if (w.engagementCentres(uid, 8).empty()) return;
+    w.tick({});
+    for (int k = 0; k < 8 && w.engaged().uid != uid; ++k) {
+        const float a = t->rot.z + float(k) * glm::quarter_pi<float>();
+        vec3 p = at + vec3(std::cos(a), std::sin(a), 0) * 100.0f;
+        if (const auto floor = w.collision().groundProbe(p + vec3(0, 0, 200), 600, 0x0F)) p.z = floor->point.z;
+        place(w, p, a + glm::pi<float>());
+        w.tick({});
+    }
+}
 
 std::vector<std::pair<vec3, float>> uberEngageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, size_t section,
                                                     int kind = 5, size_t most = 40);
@@ -303,19 +322,7 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
         const vec3 at = t->pos;
         switch (action) {
         case Action::Use: {
-            // An object with "use" records (kind 8: the class-6 switches' facing cone, 0x6F3A50) is used from in front
-            // of it, as she walks up to it: the first of eight sides 100 out from its origin where she engages it
-            // (World::engaged); others from their origin (the reach rule).
-            place(w, at, 0);
-            if (!w.engagementCentres(uid, 8).empty()) {
-                const float yaw = t->rot.z;
-                for (int k = 0; k < 8 && w.engaged().uid != uid; ++k) {
-                    const float a = yaw + float(k) * glm::quarter_pi<float>();
-                    vec3 p = at + vec3(std::cos(a), std::sin(a), 0) * 100.0f;
-                    if (const auto floor = w.collision().groundProbe(p + vec3(0, 0, 200), 600, 0x0F)) p.z = floor->point.z;
-                    place(w, p, a + glm::pi<float>());
-                }
-            }
+            placeToUse(w, uid);
             game::Actions use;
             use.interact = true;
             for (int i = 0; i < 10; ++i) tick(use);
@@ -1110,8 +1117,7 @@ TEST(ProgressionReal, ChapelShadowPillars) {
     ASSERT_EQ(u->size(), 6u);
     EXPECT_EQ(*u, (std::vector<uint32_t>{0, 2, 1, 0, 0, 1}));
     const auto use = [&](int32_t sw) {
-        const auto* o = w.script().find(sw);
-        place(w, o->pos, 0);
+        placeToUse(w, sw);
         game::Actions a;
         a.interact = true;
         for (int i = 0; i < 10; ++i) w.tick(a);
@@ -1160,10 +1166,9 @@ TEST(ProgressionReal, ChapelPillarSectionsPlayTheirClips) {
     const vec3 pivot(-146.7f, -304.2f, -3.0f); // bone 1's origin in the model frame (Wine: b1 - b0; intro unrotated)
     EXPECT_LT(glm::length(vec3(bone() * glm::vec4(pivot, 1)) - pivot), 2.0f);
     EXPECT_LT(glm::length(vec3(bone()[0]) - vec3(-1, 0, 0)), 0.01f);
-    const auto* o = w.script().find(4819);
     w.script().call(4834, 54); // the dais plate pressed frees the switches (vt 60 -> modifiable 7 (1), OU-PZL-009)
     for (int i = 0; i < 30; ++i) w.tick({});
-    place(w, o->pos, 0);
+    placeToUse(w, 4819);
     game::Actions a;
     a.interact = true;
     for (int i = 0; i < 10; ++i) w.tick(a);
@@ -1930,7 +1935,16 @@ std::vector<std::pair<vec3, float>> engageSpotsIn(const game::World& w, const ph
     }
     std::ranges::sort(found, {}, [](const auto& t) { return std::get<0>(t); });
     std::vector<std::pair<vec3, float>> out;
-    for (const auto& [d, at, yaw] : found) if (out.size() < most) out.push_back({at, yaw});
+    // Not where her standing capsule would be inside a terrain wall: no one stands there (a placement there is pushed
+    // out, OU-PLY-012; l5_valgrind cog 7312's socket spots lie 72 units inside the wall behind it).
+    const auto embedded = [&](vec3 feet) {
+        const auto& t = game::defaultTuning();
+        for (const auto& h : w.collision().overlapCapsule(feet + vec3(0, 0, t.stepUp + t.radius), feet + vec3(0, 0, t.capsuleTop - t.radius), t.radius))
+            if (h.dynamic < 0 && t.radius - h.t > 0.5f && std::abs(h.normal.z) < 0.5f) return true;
+        return false;
+    };
+    for (const auto& [d, at, yaw] : found)
+        if (out.size() < most && !embedded(at)) out.push_back({at, yaw});
     for (const auto& e : records) // last: swimming there (l7_arctic_sea, under water), her middle at the record's centre
         if (e.kind == kind) {
             glm::mat4 f = base;
