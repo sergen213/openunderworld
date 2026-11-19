@@ -1371,6 +1371,8 @@ TEST(StreamReal, UberStateSaveLoad) {
     for (int i = 0; i < 300; ++i) w.tick({});
     const auto* sw = w.script().find(4819);
     ASSERT_TRUE(sw);
+    w.script().call(4834, 54); // the dais plate pressed frees the switches (vt 60 -> modifiable 7 (1), OU-PZL-009)
+    for (int i = 0; i < 30; ++i) w.tick({});
     game::PlayerState s;
     s.pos = sw->pos;
     w.restore(s, 0, -0.25f);
@@ -1600,6 +1602,8 @@ TEST(StreamReal, DeathRestoresTheCheckpointSave) {
     const auto pull = [&] {
         const auto* sw = w.script().find(4819);
         ASSERT_TRUE(sw);
+        w.script().call(4834, 54); // the dais plate frees the switches (vt 60 -> modifiable 7 (1), OU-PZL-009)
+        for (int i = 0; i < 30; ++i) w.tick({});
         place(sw->pos);
         for (int i = 0; i < 10; ++i) w.tick(use);
         for (int i = 0; i < 300; ++i) w.tick({});
