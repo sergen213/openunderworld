@@ -900,21 +900,22 @@ std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bo
     const glm::mat4 intro = introModel(*o), toModel = glm::inverse(intro);
     const auto& r = rt->second;
     const auto& joints = data->second->joints;
-    const auto pose = [&](this const auto& self, int32_t s, int depth) -> std::optional<glm::mat4> {
+    // GCC 14 cannot name members through the implicit `this` inside an explicit-object lambda: capture it by name
+    const auto pose = [&, w = this](this const auto& self, int32_t s, int depth) -> std::optional<glm::mat4> {
         if (s < 0 || depth > 8) return std::nullopt;
         if (size_t(s) < r.sections.size() && r.sections[size_t(s)].freed) // a freed section: where its loose body is
-            return toModel * physics_.loose(sectionId(uid, size_t(s))).value_or(r.sections[size_t(s)].freedAt);
+            return toModel * w->physics_.loose(sectionId(uid, size_t(s))).value_or(r.sections[size_t(s)].freedAt);
         for (const auto& [index, j] : r.joints)
             if (joints[size_t(index)].bodyB == s) {
                 if (const auto onA = self(joints[size_t(index)].bodyA, depth + 1)) return *onA * toModel * jointMotion(j) * intro;
-                const int32_t slide = uberSectionJoint3(uid, s); // body A stands: the three-axis joint under it, if any
+                const int32_t slide = w->uberSectionJoint3(uid, s); // body A stands: the three-axis joint under it, if any
                 const glm::mat4 slid = slide >= 0 ? glm::translate(glm::mat4(1), r.joints3.at(slide).x) : glm::mat4(1);
                 return toModel * slid * jointMotion(j) * intro;
             }
         for (const int32_t index : r.fixed)
             if (joints[size_t(index)].bodyB == s)
                 if (const auto onA = self(joints[size_t(index)].bodyA, depth + 1)) return onA;
-        if (const int32_t slide = uberSectionJoint3(uid, s); slide >= 0) // the three-axis joint it rides, itself or through its hinge
+        if (const int32_t slide = w->uberSectionJoint3(uid, s); slide >= 0) // the three-axis joint it rides, itself or through its hinge
             return toModel * glm::translate(glm::mat4(1), r.joints3.at(slide).x) * intro;
         return std::nullopt;
     };
