@@ -1137,7 +1137,8 @@ Ours; tru.exe has no time of day. `default` is the game's own lighting (nothing 
   l6_ship_exterior's storm) is lifted by day toward it, at most x 2.2.
 - Backdrop pass: right after the exterior terrain and its depth clear (or first, without one; also in the planar
   reflection), a full-screen triangle multiplies the frame so far (sky domes, the clear colour) by the backdrop tint,
-  then adds a star field (3D cell hash, ~1.5 px stars, twinkle, fading at the horizon) and the moon disc with a glow,
+  then adds a star field (3D cell hash, one cell in 30, ~1.2 px stars, twinkle, fading at the horizon) and the moon disc
+  (1 deg) with a glow,
   under a clear sky only (no Enhanced weather, no unit rain object). Colour writes rgb only.
 
 Limits: the cycle clock is not saved (it restarts at the native hour each session); generic-shaded fallback draws keep

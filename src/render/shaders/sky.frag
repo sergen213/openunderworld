@@ -20,20 +20,21 @@ vec3 hash33(vec3 p) {
     return fract((p.xxy + p.yxx) * p.zyx);
 }
 
-// Point stars on a 3D lattice around the view sphere: about one cell in 9 holds a star placed inside the cell's middle
-// (so no star is cut by a cell border), sized to ~1.5 pixels of the current view whatever the resolution.
+// Point stars on a 3D lattice around the view sphere: about one cell in 30 holds a star placed inside the cell's middle
+// (so no star is cut by a cell border), sized to ~1.2 pixels of the current view whatever the resolution.
 vec3 stars(vec3 d, float pixel) {
     const float kCells = 150.0;
     const vec3 p = d * kCells, cell = floor(p);
     const float h = hash13(cell);
-    if (h > 0.11) return vec3(0.0);
+    if (h > 0.035) return vec3(0.0);
     const vec3 star = cell + 0.25 + 0.5 * hash33(cell);
     const float dist = length(p - normalize(star) * kCells) / kCells; // radians
-    const float size = max(1.5 * pixel, 0.0006);
-    const float mag = pow(hash13(cell + 17.0), 3.0);                 // a few bright, many faint
-    const float twinkle = 0.75 + 0.25 * sin(pc.stars.z * (1.5 + 3.0 * h) + 40.0 * h);
+    const float size = max(1.2 * pixel, 0.0005);
+    const float mag = pow(hash13(cell + 17.0), 4.0);                 // a few bright, many faint
+    const float r = hash13(cell + 9.0);
+    const float twinkle = 0.75 + 0.25 * sin(pc.stars.z * (1.5 + 3.0 * r) + 40.0 * r);
     const vec3 tint = mix(vec3(0.75, 0.82, 1.0), vec3(1.0, 0.9, 0.75), hash13(cell + 5.0));
-    return tint * ((0.25 + 1.6 * mag) * twinkle * exp(-dist * dist / (size * size)));
+    return tint * ((0.12 + 1.5 * mag) * twinkle * exp(-dist * dist / (size * size)));
 }
 
 void main() {
@@ -49,7 +50,7 @@ void main() {
     if (pc.stars.y > 0.0) {
         const float cosA = dot(d, normalize(pc.moon.xyz));
         const float a = acos(clamp(cosA, -1.0, 1.0));
-        const float kRadius = 0.0105; // radians: twice the real moon, as games draw it
+        const float kRadius = 0.017; // radians: about three times the real moon, as games draw it
         const float disc = 1.0 - smoothstep(kRadius - max(pixel, 0.0004), kRadius, a);
         const float glow = exp(-a * 18.0) * 0.18 + exp(-a * 90.0) * 0.25;
         c += vec3(0.86, 0.9, 1.0) * ((disc * 0.95 + glow) * pc.stars.y * smoothstep(-0.03, 0.05, d.z));
