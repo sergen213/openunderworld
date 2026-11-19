@@ -3535,6 +3535,12 @@ TEST(ProgressionReal, PrologueRingDoorPulledOffByTheGrapple) {
     const auto* slide = w.uberJoint(4526, 1);
     ASSERT_TRUE(slide && !slide->hinge);
     const vec3 axis = slide->axis;
+    const auto* hinge = w.uberJoint(4526, 0); // the ring's hinge on the leaf (body A section 1, body B the ring)
+    ASSERT_TRUE(hinge && hinge->hinge);
+    const auto* door = w.script().find(4526);
+    const glm::mat4 intro = glm::translate(glm::mat4(1), door->pos) * glm::rotate(glm::mat4(1), door->rot.x, {1, 0, 0}) *
+                            glm::rotate(glm::mat4(1), door->rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), door->rot.z, {0, 0, 1});
+    const glm::vec4 pivot = glm::inverse(intro) * glm::vec4(hinge->pivot, 1); // model space, at rest
     // Squarely in front of the door, on the side its slide leads to.
     const auto spot = grappleFrom(w, 4526, 600, 2400, [&](vec3 p) { return glm::dot(glm::normalize(p + vec3(0, 0, 400) - ring), axis) > 0.8f; });
     ASSERT_TRUE(spot) << "the ring is a grapple target from the room";
@@ -3579,17 +3585,30 @@ TEST(ProgressionReal, PrologueRingDoorPulledOffByTheGrapple) {
     EXPECT_GE(off, 5) << "31.6 out at 240 units/s (4 a 30 Hz frame)";
     EXPECT_LE(off, 20);
     EXPECT_EQ(w.player().state().grappleUid, 0) << "the door is off its slide: no target any more, she lets go";
-    for (int i = 0; i < 180; ++i) w.tick({}), exploded |= !w.explosions().empty();
-    // The squib's knock on the leaf that gave birth to it (tru.exe under Wine: 1000 units/s toward world -X, the leaf
-    // tumbles out of the corridor and lands in the bedroom; docs/GAMEPLAY.md "Explosion records"): leaf and ring are
-    // out of the frame and the doorway is open.
+    for (int i = 0; i < 300; ++i) w.tick({}), exploded |= !w.explosions().empty();
+    // The squib's knock on the leaf that gave birth to it (tru.exe under Wine, gameplaygoal/prologue/wine/s4.txt: 1000
+    // units/s toward world -X, the leaf tumbles out of the corridor and lands flat in the bedroom, its frame 656 from
+    // the door's, face (-0.10, 0, 1.00) up; docs/GAMEPLAY.md "Explosion records"): leaf and ring are out of the frame
+    // and the doorway is open. The tumble itself is chaotic in ours (where it lands moves with any change in the
+    // scene) [I], so the band is the leaf's middle in the room, flat, below the sill, at rest, its ring still hinged
+    // to it (Scene::Loose::hang about the pivot carried by the leaf, World::uberFreeSection).
     EXPECT_FALSE(shut()) << "the doorway is open";
+    door = w.script().find(4526);
+    const auto leaf = w.uberSectionBody(4526, 1);
+    ASSERT_TRUE(leaf) << "the leaf is a loose body";
+    const glm::mat4 leafWorld = intro * *leaf;
+    const vec3 middle = vec3(leafWorld * glm::vec4(-6.5f, 2.0f, 398.3f, 1)); // its 100 kg slab's centre [O data]
+    EXPECT_GT(glm::dot(middle - door->pos, through), 400.0f) << "thrown into the room";
+    EXPECT_LT(middle.z, door->pos.z) << "down off the doorway's sill";
+    EXPECT_GT(std::abs(leafWorld[0].z), 0.85f) << "lying flat: its face up or down";
+    const glm::mat4 ringWorld = glm::translate(glm::mat4(1), door->offset) * intro * door->body; // the object's loose body
+    const vec3 onLeaf = vec3(leafWorld * pivot), onRing = vec3(ringWorld * pivot);
+    EXPECT_LT(glm::distance(onLeaf, onRing), 20.0f) << "the ring stays hinged to the leaf";
+    EXPECT_GT(glm::dot(onRing - door->pos, through), 150.0f) << "the ring went into the room with it";
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_LT(glm::distance(vec3(intro * *w.uberSectionBody(4526, 1) * glm::vec4(-6.5f, 2.0f, 398.3f, 1)), middle), 5.0f) << "at rest";
     int bodies = 0;
-    for (const auto& d : w.collision().dynamics)
-        if (d.id == 4526) {
-            ++bodies;
-            EXPECT_LT(d.transform[3].x, w.script().find(4526)->pos.x - 150) << "thrown into the room";
-        }
+    for (const auto& d : w.collision().dynamics) bodies += d.id == 4526;
     EXPECT_EQ(bodies, 2) << "the leaf and its ring";
     EXPECT_EQ((*w.uberState(4526))[1], 2u) << "trigger 15 (out of its range) -> state 1, 0.2 s -> state 2";
     EXPECT_FALSE(w.uberJoint(4526, 1)) << "the slide is removed";
