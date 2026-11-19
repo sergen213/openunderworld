@@ -14,10 +14,10 @@ harness output, `path:line`), **[I]** inference with confidence, **[U]** unknown
 | OU-PZL-009 ch15 exit switch (`ch15_ballcourt_exit_switch`) | `modifiable` 7 (post 0x2E: enter the anim-graph state by id) is honoured only for `ar_ei_switch_oneway`; 5469's constructor calls 7(2) | high | Honour 7 on every switch. CriticalGates' gate 498 then needs the "Kraken dead" broadcast first | no. **Fixed** on agent/ScriptPuzzle (`BallcourtExitSwitchLockedUntilTheKey`; scenario out of known_gaps; `kraken_kill` takes the gear switches' reports as `call` fixtures) |
 | OU-PZL-010 ch15 rune block (`ch15_pool_rune_block`) | `ca_pu_thor_debris` has no joint record: one free body. `pushUberHandle` moves only jointed sections | high | A gripped jointless section takes the same impulse-bounded push velocity as a type-7 body | no |
 | OU-GRP-005 ch12 lever gate (`ch12_trailstart_lever_gate`) | The post's return works in ours (harness). What never runs is the detach: vt 46 "attached" is not called, `larabase` 26 is unbound, and the 1 s heave lets go of the rope | high | Call vt 46 on attach (instance prototype 64), bind `larabase` 26, keep this target roped until she lets go | no (`larabase` 26 is not in the list). **Fixed** on agent/ScriptPuzzle (`GrappleLeverReturnsWhenReleased`; scenario out of known_gaps) |
-| OU-PZL-008 ch13 statue head (`ch13_temple_block_topple`) | (a) the ring's sight ray hits terrain about 115 units short of ring 4951 from every ledge point; (b) nothing in ours drags a rigid body that the rope bends round; (c) `multibody` 92 / 93 are unbound | (a) high observed, cause medium; (b) high; (c) high | Decode 0x713090's ray end and mask; give the bend a body; bind 92 / 93 | no. (c) **bound** on agent/ScriptPuzzle for breakables (`TempleFloorBreaksByMultibody92`); (a) / (b) open, scenario stays parked |
+| OU-PZL-008 ch13 statue head (`ch13_temple_block_topple`) | (a) the sight ray ended at the post's origin, 4 under the top of its floor (tru.exe: at the feature, query 0xDE); (b) nothing in ours drags a rigid body that the rope bends round (tru.exe's bends are physics bodies, 0x699A50); (c) `multibody` 92 / 93 are unbound | (a) high; (b) high; (c) high | (a) end the ray at the feature; (b) a Jolt rope chain; bind 92 / 93 | no. (c) **bound** on agent/ScriptPuzzle (`TempleFloorBreaksByMultibody92`); (a) **fixed** on agent/Joint8 (`TempleRingOfferedFromTheEastLedge`); (b) open, scenario stays parked |
 | OU-PZL-006 freed slabs (`ch09_shrine_shaft_descent`) | Fixed joints (type 8) are never created, so action 10 on them frees nothing | high | Track fixed joints; action 10 on one frees its body B | no |
 | OU-PZL-015 ch08 `multibody` 3 | `multibody` 3 = make every body fixed again (bit 0 of physics +0x15C, timer +0x160 = 0); ours leaves it unbound | high (semantics) | Bind 3 as the inverse of 2 (Enable) | no. **Fixed** on agent/ScriptPuzzle (`MaproomMultibodyDisableFixesTheBodies`: l2_maproom planes 2637 / 2638 call it, not a ch08 object) |
-| OU-PHY-001 joint types 5 / 7 on moving bodies | Type 7: no record has a moving body A. Type 5: only the shiva scale pans, which nothing watches | high (survey) | None needed for progression. Body-A motion matters for calendar_b section 0 only | n/a |
+| OU-PHY-001 joint types 5 / 7 on moving bodies | Type 7: no record has a moving body A. Type 5: only the shiva scale pans, which nothing watches | high (survey) | None needed for progression. Body-A motion: **done** on agent/Joint8 (poses follow body A; fixed riders follow a freed body A) | n/a |
 
 None of these scripts calls a native from the in-flight ScriptVm list (CALLU builtins, `instanceref` 10, `instance` 27,
 `unitref` 1, `gamebase` 27, `cinematic` 10) [O: natives in the dumps below: `instanceref` 7, `stickybool` 0/2,
@@ -298,12 +298,12 @@ Scenario `known_gaps/ch13_temple_block_topple`.
   - the ray mask word is `0x1F`; the cast is 0x4935F0 with hash 0xC5AC1983;
   - a hit blocks only when it is terrain or an instance with flag byte & 8 whose hit type is not 5 / 1 / 10;
   - type 5 / 1 / 10 hits on the target itself or its parent (+0x4C) count as visible.
-- [I medium] Ours differs in the end point (the feature position minus 60 versus 0xDE's point), the filter (0x4C
-  versus 0x1F, whose group semantics are not mapped), or both. The terrain face 115 units in front of the ring (the
-  ring's own post / wall) is exactly the kind of near-target geometry those rules decide.
-- Fix: decode 0x6FF040's 0xDE point for `ca_ei_grapple_post` and the raycast filter `0x1F` against our
-  `collision::kSightMask`. Match them in `World::grappleTarget`. Test: `ring.cpp` as a unit test, offered 4951 at
-  (−2790, −14380).
+- **Cause found and fixed (agent/Joint8):** the end point. The hit is the top face (z 3893, normal +Z) of the floor the
+  post stands on, at x −7277: our ray ended at the named anchor's intro origin (z 3888.6, 4.4 under that face), while
+  0x713090's ray ends at 0x6FF040's query-0xDE point, the post's grapple feature 117.8 up its axis (z 4006.4). The
+  filter was not the difference: with every mask (0xFF too) the same face is hit, and with the feature as the end
+  nothing is hit from any ledge point. Ours: `GrappleTarget::sight` (the feature through the intro matrix) ends the
+  sight ray; the rope point stays the origin. Test: `ProgressionReal.TempleRingOfferedFromTheEastLedge`.
 
 ### (b) The head 5236 is not pulled off: decoded high
 
@@ -319,12 +319,18 @@ Scenario `known_gaps/ch13_temple_block_topple`.
   - its state 0 polls `multibody` 4 on the head (the head's "fixed" flag) with a 60 s sound loop.
 - So in tru.exe the head falls as a free body under the rope's pull, crosses plane 5247, and that breaks the floor.
 - [O] Ours has rope bends (`src/game/Grapple.cpp` wrapRope) as geometric points with no body. `pullGrappled` moves
-  only the rope target's own joints (`Objects.cpp:3206`). Nothing applies the rope tension to a body the rope wraps.
-- Fix:
-  1. Record, at each bend, the dynamic collider it wraps (object uid).
-  2. When Interact tugs with a bend on a class-34 object, make that object loose (`Object::loose`) and apply, at the
-     bend point, the impulse the direct grapple pull gives `*_rb_grapple*` bodies, along (hand − bend).
-  3. Bind `multibody` 92 / 93 (below).
+  only the rope target's own joints. Nothing applies the rope tension to a body the rope wraps.
+- [O decomp, Joint8] tru.exe's bends are physics bodies: 0x6A4D40 (a new bend node from the free list +0xA4 into the
+  rope's list +0xA0, prev +0x40 / next +0x44) calls 0x699A50, which makes a body per bend (0x4E98E0, shape size
+  4.74 = 0x4097B43A via 0x4EE2B0, damping 0.02 = 0x3CA3D70A, 0x4DC770(5.0, 4.74) [U: mass?], 0x4E9590 its physics
+  instance) at the bend position, and, for the bend next to the hand, 0x699900 / 0x6996F0 (a second body, size 3.95
+  = 0x407CD70A, 0x4DC770(55.0, 4.74)) / 0x699960 (a joint, 0x4E03F0, between the rope body +0x38 and the bend,
+  callback 0x698BE0) re-chain the rope's end. 0x6C5490 reads each bend's position back from its body (0x4D8D90: body
+  +0x80). So the rope is a chain of small dynamic bodies, and a wrapped rigid body is pushed by the bend bodies'
+  contacts. [U] the joint type and the rope tension law (0x698BE0).
+- Fix (not done: a Jolt rope chain, beyond this batch's smallest change): bend bodies as small Jolt spheres joined
+  by distance constraints from the anchor to the hand, colliding with loose bodies; the head 5236 made loose
+  (class 34) so that their contact moves it. Then `multibody` 92 / 93 (below, bound) finish the floor.
 
 ### (c) `multibody` 92 / 93 [O]
 
@@ -411,13 +417,28 @@ section (model 1, section 0) is freed but stays a target. Fix: drop freed / loos
   door ring and the windup statue. Only calendar_b's section-0 lever (OU-PZL-007 above) touches a parked scenario, and
   even there it is not on the critical step.
 - Fixed joints (92 records): see OU-PZL-006. Their release is the progression-relevant part.
+- **Done (agent/Joint8):** body B is posed by body A's pose × its joint's motion (`World::uberSectionBody`,
+  `uberJointPose`), a live fixed joint poses body B where body A is, also on a freed body A. Survey of riders left on
+  a freed body (every state whose action 10 frees a section while a joint with that section as body A stays):
+  `ma_uo_bedroom_door` states 1 / 4 / 5 (hinge j0, the ring), `ms_rb_grapple_snake_head` (hinge j2),
+  `sa_uo_chain_debris` (hinge j1), `sa_uo_naga_statue` (hinge j2), and the only fixed riders,
+  `ms_ani_tentacle_gearr` (j9-j15 between the sections; each section's state 1 removes its own world fixed joint after
+  clips of different lengths). [I] Body A's motion is not fed back into the Jolt joint body's dynamics, and a fixed
+  rider follows its freed body A without adding its mass.
 
-## OU-PZL-014 (prologue ring door), not re-analysed
+## OU-PZL-014 (prologue ring door)
 
 `ma_uo_bedroom_door`: the door section is on slide j1; its state 1 removes the joint and gives birth to
 `squib_explode_door` (`ProgressionReal.PrologueRingDoorPulledOffByTheGrapple`). The ring (section 0) rides the door
-through the body-A hinge j0 (`uberFreeSection` riders, `Objects.cpp:806`). Whether the "leaf stays standing" report
-still reproduces at HEAD was not checked in this pass [U].
+through the body-A hinge j0 (pivot 595 up, 47 out).
+- "Leaf stays standing in its doorway" no longer reproduces: fixed by 6d6c9eb (2026-11-10, the squib's knock on its
+  parent, Wine-measured) before the audit listed it.
+- Joint8: the ring now rides the leaf's slide while it is drawn, and its loose body and hinge are made where the leaf
+  carries them (they were 36 units off). The knock gives the leaf (−930, −26, +39) units/s after one step, yaw
+  −6.5 rad/s, tip −1.75 rad/s; tru.exe (s4.txt) (−870, 0, +364), yaw −8, tip ≈ 4.6 rad/s. The door's record
+  elevation is 0 (`2775 b00b 0005 0002 0768 000a 0768 03e8 0190 0000`), so tru.exe's lift and faster tip come from
+  something not decoded [U] (its knock handler on a Havok body, or the shape blast 0x492CC0 kept on the parent, which
+  ours erases). Where the tumble ends is chaotic in ours: 1.1 thousand into the room, flat (tru.exe 656, flat).
 
 ## Proposed docs/audit/BUGS.md updates (for the parent)
 

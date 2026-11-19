@@ -431,8 +431,9 @@ outfit (the original only reads `+0x294` on a level load).
   after she steps on it walking north, she catches ledge 1551; the jump across works too.
 - **Explosion records** [O layout from data; I field meanings beyond damage / radius]: tag 0x2775 at an object's
   physical record +0x70: +4 damage, +6 damage at the edge [I], +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12
-  cone angle. `squib_exploding_barrel` 800 / 800, radius 948, knock 500 / 250; `squib_explode_door` 5 / 2, radius 1896,
-  knock 1000 / 400, angle 30. An uber action-19 birth of such an object blasts at the section's marker one tick later
+  cone angle. `squib_exploding_barrel` 800 / 800, radius 948, knock 500 / 250, angle 30; `squib_explode_door` 5 / 2,
+  radius 1896, knock 1000 / 400, angle 0 (record words `2775 b00b 0005 0002 0768 000a 0768 03e8 0190 0000`; the
+  measured +364 units/s up of the leaf below is not from the record [U]). An uber action-19 birth of such an object blasts at the section's marker one tick later
   (`World::birthBlast` / `tickBlasts` / `blast`): damage class 4 to Lara, enemies and damageable objects in the radius
   (so tanks set each other off). The knock [O decomp]: the area hit 0x69F1E0 (called from 0x6A5C50's record hand-over
   with +4 damage, +6, +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12 elevation) sends instances message 0x91 at knock .. edge
@@ -461,12 +462,17 @@ outfit (the original only reads `+0x294` on a level load).
   section uses the object's own loose flag. A rider's hinge stays [O: action 10, 0x4D6220, removes only the joint it
   names]: the rider is a loose body of its own hinged to the freed one (`physics::Scene::Loose::hang`, a Jolt hinge
   between the two bodies, angle 0 and limits about its pose at the freeing; the joint's motor is dropped [I]; saved
-  with the section state). The bedroom door's ring (4376 section 0, the object's model 0, hinge 0 on the leaf) falls
-  into the pit with the leaf; as a free body of its own it caught on the doorway's sill and lay there or in the pit
-  by the slightest change elsewhere in the scene. It starts with the velocity its prismatic joint had when removed (the ring
-  door 4526 comes off its slide moving toward the rope's pull). Saved with the section state (not the velocity). Its
-  shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. What
-  throws the freed ring door out of its frame is its squib's knock ("Explosion records" above).
+  with the section state). The hinge's pivot and axis are where the freed body's motion carries them, and the rider
+  leaves with the freed body's velocity: until the freeing it rode body A (`World::uberSectionBody`), so the bedroom
+  door's ring (section 0, the object's model 0, hinge 0 on the leaf, pivot 595 up and 47 out) slides out with the leaf
+  as Interact draws it; before, it stayed in the doorway and its loose body and hinge were made 36 units off the leaf.
+  The section starts with the velocity its prismatic joint had when removed (the ring door 4526 comes off its slide
+  moving toward the rope's pull). Saved with the section state (not the velocity). Its shape is the model's solid
+  primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. What throws the freed ring door
+  out of its frame is its squib's knock ("Explosion records" above). Where it lands is chaotic in ours (any change in
+  the scene moves it; now 1.1 thousand into the room, flat; tru.exe 656, flat):
+  `ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` checks the band (slab centre over 400 into the room, below
+  the sill, flat, at rest, ring hinged).
 
 ## Hazards
 

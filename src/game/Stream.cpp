@@ -352,9 +352,11 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
             // 118..261 along the anchor's axis, the handles' 214 out on the hinged handle].
             float im[16];
             formats::introMatrix(in, im);
-            const vec3 at = named ? v3(in.position) : vec3(glm::make_mat4(im) * glm::vec4(g->point, 1));
+            const vec3 feature = vec3(glm::make_mat4(im) * glm::vec4(g->point, 1));
+            const vec3 at = named ? v3(in.position) : feature;
             GrappleTarget t{in.uniqueId, at, k};
             t.model = g->model;
+            t.sight = feature; // 0x713090's ray ends at the feature for every target (l4_temple post 4951: 4 under its floor's top at its origin)
             // its intro data's 0x404 block: flag +4, own throw range +8 and longest rope +12 (0x698A70) [O]
             if (in.data && in.data->section < drm->sections.size()) {
                 const auto& d = drm->sections[in.data->section].data;

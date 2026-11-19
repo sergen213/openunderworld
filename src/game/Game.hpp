@@ -781,6 +781,7 @@ struct GrappleTarget {
     GrappleKind kind = GrappleKind::Ceiling;
     float range = 0, rope = 0;
     int model = 0; // the object model carrying the grapple feature: offered while a section shows it (uber objects)
+    vec3 sight{0}; // the grapple feature (0x6FF040: query 0xDE), where the line of sight ends (0x713090); == pos unless named
 };
 // A `checkpoint` / `invis_checkpoint` intro: respawn transform in its unit's frame (tru.exe 0x5D40C0).
 struct Checkpoint {

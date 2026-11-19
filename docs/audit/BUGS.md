@@ -128,13 +128,13 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Open | pre-existing | C-CHART |
 | OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed on int/brief (ecf03db); ch09 scenario still parked (2 grapple issues) | pre-existing | C-JOINT |
 | OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed on int/brief (test bug, 2e6ef11) | pre-existing | C-JOINT |
-| OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ~115 short and (b) rope bends don't tug bodies remain | Partly fixed on int/brief | pre-existing | — |
+| OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends don't tug bodies remains (tru.exe's bends are physics bodies, 0x699A50) | Partly fixed (a on agent/Joint8) | pre-existing | — |
 | OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed on int/brief (30cc49f) | pre-existing | C-VM |
 | OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed on int/brief (b716e88); pull speed unverified | pre-existing | C-JOINT |
 | OU-PZL-011 | progression | ch17: hammer chamber lower steps absent from collision | Open | pre-existing | — |
 | OU-PZL-012 | progression | ch21: Natla platform jump falls short; fight sequence unplayable by input | Open | pre-existing | C-VM |
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
-| OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Open | pre-existing | C-JOINT |
+| OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Fixed-verified (6d6c9eb; ring rides the leaf on agent/Joint8; landing place chaotic: ours 1.1k flat, tru.exe 656 flat) | pre-existing | C-JOINT |
 | OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed on int/brief (171100e) | pre-existing | C-VM |
 | OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Fixed-verified (8daa2ee) | pre-existing | C-VM |
 | OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Fixed on agent/ScriptVec7 (vector values, anchor / vector / rotation / larabase 21-22 bound); fire overlay played on agent/Flinch8 (upper-body chart S90, anim section 1) | pre-existing | C-VM |
@@ -144,7 +144,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
 | OU-VEH-001 | motorcycle | Brake strength, slopes, coasting, top speed, pit jump unmeasured | Open | pre-existing | C-MEASURE |
-| OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Open (narrowed) | pre-existing | C-JOINT |
+| OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed on agent/Joint8 (poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
 | OU-TST-001 | tests | No walkthrough section plays end to end; 14 parked known-gap scenarios | Open | pre-existing | — |
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
@@ -921,13 +921,13 @@ docs/GAMEPLAY_DEVELOPMENT_REPORT.md §7; regression test = the scenario moved up
 | OU-PZL-005 | l1_ship_sinking_hall top valve wheel → bar 238 | side jump to bar | lands hanging on beam ledge 253 (ladder / side-jump rules, OU-PLY-004) | `known_gaps/ch06_second_shaft_exit` |
 | OU-PZL-006 | l2_shrineroom after the statue pull; l1/ch08 statue floor | slabs fall, shaft opens | freed slab bodies stay solid; ring stays a target | `known_gaps/ch09_shrine_shaft_descent` |
 | OU-PZL-007 | l4_ballcourt calendar 5477, mask set | jaguar handle turns sections | no joint moves; unlock rule after the mask not decoded | `known_gaps/ch13_ballcourt_calendar_solve` |
-| OU-PZL-008 | l4_temple east ledge | ring 4951 offered; statue head topples | ring not offered; head mover unknown | `known_gaps/ch13_temple_block_topple` |
+| OU-PZL-008 | l4_temple east ledge | ring 4951 offered; statue head topples | ring offered (agent/Joint8); head not moved by the rope's bend | `known_gaps/ch13_temple_block_topple` |
 | OU-PZL-009 | l4_ballcourt exit switch 5469, socket empty | locked until keyhole 6501 (modifiable 7 (2)) [O bytecode] | switch usable; ours honours modifiable 7 only for `ar_ei_switch_oneway` | `known_gaps/ch15_ballcourt_exit_switch` |
 | OU-PZL-010 | l4_pool rune block 5609 | dragged | no joint record → nothing drags it | `known_gaps/ch15_pool_rune_block` |
 | OU-PZL-011 | l5_valaskjalf checkpoint 7067 | reach volume 6866 | lower 790 of the central steps absent from collision / objects [U]; edge 1542 is clearance class 1 (no pull-up, tru.exe 0x72BAE0) | `known_gaps/ch17_hammer_chamber` |
 | OU-PZL-012 | l7_yggdrasil_end entry walkway | jump onto a passing stone (rig 8389); towers / mounts | ledge 1240 out, 540 up: falls short; fight unplayed by input. ROADMAP L95 says Natla cannot be hit (vt 22), REPORT §7 says Mjolnir hits reach her script (OU-DOC-002) | `known_gaps/ch21_platform_ride`, `natla_platform_ride`; `ProgressionReal.NatlaFightByInput` |
 | OU-PZL-013 | level entries with a bike but no placing script (ch14 et al.) | bike present | placed only where a level script places it (REPORT §8.1) | ch14 legs |
-| OU-PZL-014 | prologue ring door pulled by grapple | leaf falls away [U] | freed leaf stays standing (CHANGELOG L260, ROADMAP L89) | `ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` |
+| OU-PZL-014 | prologue ring door pulled by grapple | leaf thrown into the bedroom, lands flat 656 from its frame [O Wine s4.txt] | fixed (6d6c9eb): leaf and ring thrown into the room, flat (1.1k) | `ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` |
 | OU-PZL-015 | ch08 Bhogavati statue / lift; ch14 thrones | statue floor, lift drop, thrones run | `multibody` 3 unbound; thrones stop at an unbound native (REPORT §7) | ch08 / ch14 legs |
 
 All: Status Open · pre-existing.
@@ -943,13 +943,23 @@ proving tests there):
   Fix: a world three-axis joint on first grip.
 - **OU-PZL-006:** confirmed. Fixed joints (type 8) are never created, so removing them releases nothing
   (`Objects.cpp:651`, `:539`, `:797`).
-- **OU-PZL-008:** split into three causes. (a) The sight ray end and mask differ (0x713090 / 0x6FF040 query 0xDE,
-  mask 0x1F). (b) Rope bends don't tug the bodies they wrap. (c) multibody 92 / 93 are unbound.
+- **OU-PZL-008:** split into three causes. (a) The sight ray ended at the named post's origin, 4.4 under the top face
+  of its floor; tru.exe ends it at 0x6FF040's query-0xDE feature (117.8 up the post), the filter is not the difference.
+  Fixed on agent/Joint8 (`TempleRingOfferedFromTheEastLedge`; either end seen counts [I]). (b) Rope bends don't tug
+  the bodies they wrap: tru.exe's bends are small physics bodies chained to the rope (0x6A4D40 → 0x699A50 / 0x699960
+  joint 0x4E03F0); needs a Jolt rope chain. (c) multibody 92 / 93 bound.
 - **OU-PZL-015:** multibody 3 = set "fixed" bit 0 at physics +0x15C on every body (inverse of 2). The throne native
   is still unknown.
 - **OU-GRP-005:** moves to C-VM. Vt 46 is not called on rope attach, larabase 26 (0x777C30) is unbound, and our heave
   releases the rope.
 - **OU-PHY-001:** narrowed to fixed joints plus body-A motion. Type 5 / 7 joints never occur on moving bodies in the data.
+  Body-A motion done on agent/Joint8: `World::uberSectionBody` / `uberJointPose` pose body B by body A's pose × its
+  joint, live fixed joints follow body A (also freed: `ms_ani_tentacle_gearr`), freed riders hang about the carried
+  pivot and leave with the freed body's velocity.
+- **OU-PZL-014:** not reproduced at HEAD: 6d6c9eb (2026-11-10) added the squib's Wine-measured knock on its parent.
+  Joint8 found the ring (hinge 0 on the leaf) stayed in the doorway while the leaf slid and was hinged 36 off; fixed
+  with OU-PHY-001. Open detail [U]: tru.exe's leaf leaves at (−870, 0, +364) tipping ≈ 4.6 rad/s, ours (−930, −26,
+  +39) tipping 1.75: the door's squib record has elevation 0, so the lift is not from the record.
 
 ### Script VM (OU-SCR)
 
@@ -1085,7 +1095,11 @@ ramming, dismount position, respawn with the bike (ROADMAP L77, L96; Wine sessio
 
 **OU-PHY-001 Joint model gaps** — fixed joints and body-A motion not simulated; uber body A is the world; types 5 / 7 on
 moving bodies (ROADMAP L54, "Planned: Jolt" step 1; `Objects.cpp:694`, `:826`). Plates' Havok motor numbers [I].
-Status · Origin: Open · pre-existing.
+Fixed joints: ecf03db. Body-A motion (agent/Joint8): body B's pose follows body A's (recursively), live fixed joints pose
+body B on body A also once it is freed, freed riders hang about the pivot their body A carries; [I] body A's motion is
+not fed into the Jolt joint body's dynamics and a fixed rider does not add its mass. Test:
+`ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` (ring hinged to the leaf, < 20 apart at the pivot).
+Status · Origin: Fixed on agent/Joint8 · pre-existing.
 
 **OU-PHY-002 Push speed fitted to one trace** — push blocks and Thor mechanisms: proxy mass 0.125 × object mass [I], law
 fitted to one block trace (ROADMAP L87, REPORT §6, §8.4). Status · Origin: Open · pre-existing.

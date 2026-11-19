@@ -812,7 +812,8 @@ glm::mat4 jointMotion(const physics::Joint1& j) {
 }
 } // namespace
 
-// World motion of model 0 riding its joint (tomb doors, levers, pushed towers).
+// World motion of model 0 riding its joint (tomb doors, levers, pushed towers). A joint whose body A is a section moves
+// with that section (World::uberSectionBody): the bedroom door's ring (hinge 0 on the leaf) rides the leaf's slide.
 std::optional<glm::mat4> World::uberJointPose(int32_t uid) const {
     const int32_t index = uberModelJoint(uid);
     int32_t slide = -1; // ... and / or the three-axis joint under it (the Thor pillars)
@@ -820,6 +821,12 @@ std::optional<glm::mat4> World::uberJointPose(int32_t uid) const {
         for (size_t k = 0; k < data->second->sections.size(); ++k)
             if (data->second->sections[k].model == 0) { slide = uberSectionJoint3(uid, int32_t(k)); break; }
     if (index < 0 && slide < 0) return std::nullopt;
+    if (index >= 0)
+        if (const int32_t a = uberData_.at(uid)->joints[size_t(index)].bodyA; a >= 0)
+            if (const auto onA = uberSectionBody(uid, a)) {
+                const glm::mat4 intro = introModel(*script_.find(uid));
+                return intro * *onA * glm::inverse(intro) * jointMotion(uberRuntime_.at(uid).joints.at(index));
+            }
     glm::mat4 m = index >= 0 ? jointMotion(uberRuntime_.at(uid).joints.at(index)) : glm::mat4(1);
     if (slide >= 0) m = glm::translate(glm::mat4(1), uberRuntime_.at(uid).joints3.at(slide).x) * m;
     return m;
@@ -847,6 +854,9 @@ void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose,
     // door, the object's main section) falls with the door when it leaves its slide, hinged to it: loose bodies joined by that hinge
     // (Scene::Loose::hang; its motor is not kept [I]). Before, it fell as a body of its own, which caught on the
     // l3_bedroom_hall doorway's sill and lay there or in the pit by the slightest change elsewhere in the scene.
+    // The joint's pivot and axis are fixed in body A: they move with this section's motion now (World::uberSectionBody),
+    // and the riders leave with its velocity.
+    const glm::mat4 motion = rt.sections[size_t(section)].freedAt * glm::inverse(introModel(*o));
     std::vector<std::pair<int32_t, int32_t>> riders; // joint, its body
     for (const auto& [index, j] : rt.joints)
         if (data.joints[size_t(index)].bodyA == section) riders.push_back({index, data.joints[size_t(index)].bodyB});
@@ -856,8 +866,10 @@ void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose,
         rt.joints.erase(index);
         bool freed = false;
         if (size_t(body) == main) { // the object's own loose body (the bedroom door's ring is its model 0)
-            if (auto* own = const_cast<script::Object*>(o); !own->loose) // World owns object motion
+            if (auto* own = const_cast<script::Object*>(o); !own->loose) { // World owns object motion
                 own->body = at.value_or(glm::mat4(1)), own->loose = true, syncedObjects_ = ~size_t(0), freed = true;
+                if (vel != vec3(0)) melee_.launch[uid] = vel; // read when its loose body is made
+            }
         } else if (at) {
             uberFreeSection(uid, body, *at, vel);
             freed = rt.sections[size_t(body)].freed;
@@ -865,12 +877,19 @@ void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose,
         if (auto& rider = rt.sections[size_t(body)]; freed && joint.hinge) { // [U] a prismatic rider: none in the data
             rider.hangsOn = section;
             // limits about the angle it has now, the hinge's 0 then
-            rider.hang = {0, joint.pivot, joint.axis, joint.lo - joint.x, joint.hi - joint.x, joint.limited};
+            rider.hang = {0, vec3(motion * glm::vec4(joint.pivot, 1)), glm::normalize(glm::mat3(motion) * joint.axis), joint.lo - joint.x,
+                          joint.hi - joint.x, joint.limited};
         }
     }
 }
 
-// [I] A joint whose other body is a moving section (ms_rb_grapple_snake_head joint 2) is posed as if that body stood.
+// Model-space pose of uber section `section`. A joint's body B moves with its body A (tru.exe's joints are Havok
+// constraints between the two section bodies, 0x4D1040; the pivot and axis are fixed in body A): its pose is body A's
+// times the joint's motion, so the bedroom door's ring (hinge 0, body A the leaf on slide 1) rides the slide, as do
+// ms_rb_grapple_snake_head's joint 2, sa_uo_chain_debris' joint 1 and the calendars' ring (hinge 2 on the prismatic
+// section 6). A live fixed joint (type 8) poses its body B where its body A is, also once body A is a freed loose body
+// (ms_ani_tentacle_gearr: each section's state 1 removes its own world fixed joint while the fixed joints between the
+// sections stay) [I: the rider follows; its mass does not join body A's loose body].
 std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bool* removed) const {
     const auto rt = uberRuntime_.find(uid);
     const auto data = uberData_.find(uid);
@@ -878,22 +897,28 @@ std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bo
     if (removed) *removed = rt != uberRuntime_.end() && section >= 0 && size_t(section) < rt->second.sections.size() &&
                             rt->second.sections[size_t(section)].removed;
     if (!o || rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return std::nullopt;
-    if (section >= 0 && size_t(section) < rt->second.sections.size() && rt->second.sections[size_t(section)].freed) {
-        const auto& sec = rt->second.sections[size_t(section)]; // a freed section: where its loose body is
-        return glm::inverse(introModel(*o)) * physics_.loose(sectionId(uid, size_t(section))).value_or(sec.freedAt);
-    }
-    const int32_t slide = uberSectionJoint3(uid, section); // the three-axis joint it rides, itself or through its hinge
-    const glm::mat4 slid = slide >= 0 ? glm::translate(glm::mat4(1), rt->second.joints3.at(slide).x) : glm::mat4(1);
-    for (const auto& [index, j] : rt->second.joints)
-        if (data->second->joints[size_t(index)].bodyB == section) {
-            const glm::mat4 intro = introModel(*o);
-            return glm::inverse(intro) * slid * jointMotion(j) * intro;
-        }
-    if (slide >= 0) {
-        const glm::mat4 intro = introModel(*o);
-        return glm::inverse(intro) * slid * intro;
-    }
-    return std::nullopt;
+    const glm::mat4 intro = introModel(*o), toModel = glm::inverse(intro);
+    const auto& r = rt->second;
+    const auto& joints = data->second->joints;
+    const auto pose = [&](this const auto& self, int32_t s, int depth) -> std::optional<glm::mat4> {
+        if (s < 0 || depth > 8) return std::nullopt;
+        if (size_t(s) < r.sections.size() && r.sections[size_t(s)].freed) // a freed section: where its loose body is
+            return toModel * physics_.loose(sectionId(uid, size_t(s))).value_or(r.sections[size_t(s)].freedAt);
+        for (const auto& [index, j] : r.joints)
+            if (joints[size_t(index)].bodyB == s) {
+                if (const auto onA = self(joints[size_t(index)].bodyA, depth + 1)) return *onA * toModel * jointMotion(j) * intro;
+                const int32_t slide = uberSectionJoint3(uid, s); // body A stands: the three-axis joint under it, if any
+                const glm::mat4 slid = slide >= 0 ? glm::translate(glm::mat4(1), r.joints3.at(slide).x) : glm::mat4(1);
+                return toModel * slid * jointMotion(j) * intro;
+            }
+        for (const int32_t index : r.fixed)
+            if (joints[size_t(index)].bodyB == s)
+                if (const auto onA = self(joints[size_t(index)].bodyA, depth + 1)) return onA;
+        if (const int32_t slide = uberSectionJoint3(uid, s); slide >= 0) // the three-axis joint it rides, itself or through its hinge
+            return toModel * glm::translate(glm::mat4(1), r.joints3.at(slide).x) * intro;
+        return std::nullopt;
+    };
+    return pose(section, 0);
 }
 
 // The section instance's skeleton (its current model's, state action 1) at its anim component's clip, world matrices in
