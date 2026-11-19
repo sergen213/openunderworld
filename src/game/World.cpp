@@ -747,7 +747,7 @@ void World::tick(const Actions& input) {
     // is no motion, so it crosses no trigger plane [I] (else the pull-up out of l3_bedroom_hall's pit, ledge 969,
     // "falls" through kill plane 4379 that lies 231 under the ledge top).
     if (player_.takeReseat()) script_.playerJumped();
-    script_.tick({player_.state().pos, a.interact, engagedUse(a.interact && !interactHeld_)});
+    script_.tick({player_.state().pos, a.interact, engagedUse(a.interact && !interactHeld_), player_.state().yaw});
     tickTimes.scriptMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - scriptStart).count();
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.
