@@ -20,10 +20,10 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 | [04](#04-the-norse-connection-level-1---mediterranean-sea-part-3) | implemented | unverified | implemented | unverified; 1 matches | n/a | implemented; 1 open | n/a | — | 4 (1) |
 | [05](#05-god-of-thunder-level-1---mediterranean-sea-part-4) | unverified | implemented | n/a | unverified | unverified | n/a; 1 open | n/a | — | 3 (1) |
 | [06](#06-realm-of-the-dead-level-1---mediterranean-sea-part-5) | unverified | partial | n/a | n/a | n/a | n/a; 2 open | n/a | — | 2 (2) |
-| [07](#07-the-remnants-level-2---coastal-thailand-part-1) | implemented; 1 differs / 3 matches / 1 unmeasured | partial; 3 matches | unverified | verified; 4 matches | unverified; 1 matches | n/a | n/a | — | 4 (0) |
+| [07](#07-the-remnants-level-2---coastal-thailand-part-1) | implemented; 1 differs / 3 matches / 1 unmeasured | partial; 3 matches | unverified | verified; 4 matches | unverified; 1 matches | n/a | n/a | 1 matches | 4 (0) |
 | [08](#08-bhogavati-level-2---coastal-thailand-part-2) | unverified | partial | partial | n/a | partial | partial | n/a | — | 4 (0) |
 | [09](#09-the-ancient-world-level-2---coastal-thailand-part-3) | unverified | unverified | unverified | n/a | unverified | partial | n/a | — | 3 (1) |
-| [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified | partial; 4 matches | unverified; 1 matches | partial | n/a | — | 1 (1) |
+| [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified | partial; 4 matches | unverified; 1 matches | partial | n/a | 1 matches | 1 (1) |
 | [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 3 unmeasured | n/a | partial | partial; 1 open | n/a | — | 3 (0) |
 | [12](#12-the-unnamed-days-level-4---southern-mexico-part-1) | unverified; 1 matches | unverified | partial | n/a | unverified | partial; 1 unmeasured | partial | — | 2 (0) |
 | [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 3 matches | implemented; 1 matches | partial | n/a | partial | unverified; 1 unmeasured | unverified | — | 5 (1) |
@@ -160,7 +160,7 @@ Matrix: [07_remnants.md](matrix/07_remnants.md). Units: `l2_cliffclimb`, `l2_cli
 | Combat / AI | unverified | M84 (sharks) l2_cliffclimb sharks against a treading / submerged Lara: matches | — |
 | Objects / puzzles | n/a | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
-| Camera / systems | — | unmeasured here | — |
+| Camera / systems | — | — Camera trigger commands (OU-CAM-006, 2026-11-19): matches | — |
 
 Self-tests: `ch07_cliffclimb_boat_swell`, `ch07_cliffclimb_boat_to_cliff`, `ch07_cliffhall_grapple_gap`, `ch07_hubhall_statue_hall`.
 
@@ -212,7 +212,7 @@ Matrix: [10_puppet_no_longer.md](matrix/10_puppet_no_longer.md). Units: `l2_mapr
 | Combat / AI | unverified | M84 (sharks) l2_cliffclimb sharks against a treading / submerged Lara: matches | — |
 | Objects / puzzles | partial | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
-| Camera / systems | — | unmeasured here | — |
+| Camera / systems | — | — Camera trigger commands (OU-CAM-006, 2026-11-19): matches | — |
 
 Self-tests: `ch10_maproom_rope_step_off`.
 Parked known gaps: `known_gaps/ch10_maproom_wall_run`.
@@ -423,4 +423,4 @@ Rows of REFERENCE_COMPARISON whose evidence names no chapter unit (synthetic sce
 | Vehicle | 9 unmeasured |
 | Camera / systems | 1 differs / 2 matches / 12 unmeasured |
 
-Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-GRP-001, OU-GRP-002, OU-GRP-004, OU-PHY-001, OU-PHY-002, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-007, OU-PLY-008, OU-PLY-009, OU-PLY-010, OU-PZL-013, OU-PZL-014, OU-REN-001, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-002, OU-SCR-005, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
+Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-GRP-001, OU-GRP-002, OU-GRP-004, OU-PHY-001, OU-PHY-002, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-007, OU-PLY-008, OU-PLY-009, OU-PLY-010, OU-PZL-013, OU-PZL-014, OU-REN-001, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-005, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
