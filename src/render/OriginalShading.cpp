@@ -37,7 +37,7 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect) {
 }
 
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env, bool flipY,
-               const Underwater* underwater, std::span<const uint32_t> cookies, const Fog* fog) {
+               const Underwater* underwater, std::span<const uint32_t> cookies, const Fog* fog, const Sky* sky) {
     std::memset(&f, 0, sizeof f);
     const float aspect = vp.height > 0 ? float(vp.width) / float(vp.height) : 1.0f;
     const glm::vec3 eye = camera.position;
@@ -83,10 +83,13 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     // in units with light probes get theirs (IrradianceSlots); point/spot lights reach them through their light set.
     if (env.valid) put(f.irradiance, 6, env.ambient[0], env.ambient[1], env.ambient[2], 0);
     // GlobalParams: c140-c146 player position / bones (foliage interaction; unknown here, so far away),
-    // c148/c149 light-map scale sets (default 1, 0x7731B0).
+    // c148/c149 light-map scale sets (default 1, 0x7731B0; the time of day scales them, w = the mean).
     for (int r = 140; r < 147; ++r) put(f.ps, r, 0, 0, -1e9f, 1); // ponytail: no player -> no foliage bending
-    put(f.ps, 148, 1, 1, 1, 1);
-    put(f.ps, 149, 1, 1, 1, 1);
+    const float* lm = sky ? sky->lightMaps : nullptr;
+    const float lmR = lm ? lm[0] : 1, lmG = lm ? lm[1] : 1, lmB = lm ? lm[2] : 1, lmW = (lmR + lmG + lmB) / 3;
+    put(f.ps, 148, lmR, lmG, lmB, lmW);
+    put(f.ps, 149, lmR, lmG, lmB, lmW);
+    f.unlit[0] = lmR, f.unlit[1] = lmG, f.unlit[2] = lmB, f.unlit[3] = 1;
     f.bools[0] = 0; // vs b0-15
     // Sun = light slot 6 (c208 + 5*6): c209 direction, c212 colour (w = luminance), b6 (0x50A5F0, 0x5042B0).
     fillLights(f, env, t, cookies, &eye);
@@ -134,9 +137,10 @@ void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene
     m.fixed[1] = 1.0f; // MaterialOpacity: 1 (instance fades: ObjectBlock::opacity)
     m.fixed[2] = sub.alphaRef ? float(sub.alphaRef) / 255.0f : -1.0f;
     // Bit 0: fogged material (flags 0x04) -> VS c22; bit 1: additive modes 5/6 -> PS FogColor 0 (0x5068E6, 0x5066A0);
-    // value 8: opaque (mode 0, alpha-blended as mode 4 while the instance fades, 0x5066A0).
+    // value 8: opaque (mode 0, alpha-blended as mode 4 while the instance fades, 0x5066A0); value 16: exterior terrain
+    // (no FrameBlock::unlit tint: the time of day's backdrop pass tints it).
     m.fixed[3] = float(((mat.flags & 4) ? 1 : 0) | ((mat.blendMode == 5 || mat.blendMode == 6) ? 2 : 0) |
-                       (sub.blend == scene::Blend::Opaque ? 8 : 0));
+                       (sub.blend == scene::Blend::Opaque ? 8 : 0) | (sub.exterior ? 16 : 0));
 }
 
 void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProj, const glm::mat4& model, LightSet lights, float opacity) {
@@ -189,9 +193,17 @@ uint32_t IrradianceSlots::place(const scene::Environment& env, size_t mesh, glm:
     return uint32_t(states_.size());
 }
 
-void IrradianceSlots::fill(sm3::FrameBlock& f) const {
-    for (size_t i = 0; i < states_.size(); ++i)
-        std::memcpy(f.irradiance[(i + 1) * sm3::kIrradianceRegs], states_[i].data(), sizeof(State));
+void IrradianceSlots::fill(sm3::FrameBlock& f, const float* scale) const {
+    for (size_t i = 0; i < states_.size(); ++i) {
+        float* dst = f.irradiance[(i + 1) * sm3::kIrradianceRegs];
+        std::memcpy(dst, states_[i].data(), sizeof(State));
+        if (!scale) continue;
+        // irradianceState rows: 0-2 and 3-5 per colour channel (r, g, b), row 6 = Base rgb.
+        for (int c = 0; c < 3; ++c) {
+            for (int k = 0; k < 4; ++k) dst[c * 4 + k] *= scale[c], dst[(3 + c) * 4 + k] *= scale[c];
+            dst[6 * 4 + c] *= scale[c];
+        }
+    }
 }
 
 std::vector<int> falloffRows(const scene::Environment& env) {
@@ -295,6 +307,40 @@ void applyUnitLook(scene::Environment& env, const scene::Environment& look) {
     std::copy_n(look.waterFogColor, 3, env.waterFogColor), env.waterFogNear = look.waterFogNear, env.waterFogFar = look.waterFogFar;
     env.farPlane = look.farPlane;
     std::copy_n(look.ambient, 3, env.ambient), std::copy_n(look.pssmSplits, 4, env.pssmSplits);
+}
+
+SunFields sunFields(const scene::Environment& env) {
+    SunFields s;
+    s.sun = env.sun;
+    std::copy_n(env.sunDirection, 3, s.direction), std::copy_n(env.sunColor, 3, s.color);
+    std::copy_n(&env.sunAxes[0][0], 6, &s.axes[0][0]);
+    return s;
+}
+
+void applySky(scene::Environment& env, const SunFields& own, const Sky* sky) {
+    const bool replace = sky && sky->sun;
+    env.sun = replace || own.sun;
+    std::copy_n(replace ? sky->sunDirection : own.direction, 3, env.sunDirection);
+    std::copy_n(replace ? sky->sunColor : own.color, 3, env.sunColor);
+    std::copy_n(&own.axes[0][0], 6, &env.sunAxes[0][0]);
+    if (!replace) return;
+    // The record's rows 0 / 1 (PSSM light space, cookie projection) turned with the sun: the shortest rotation taking the
+    // record's direction to the frame's, so they stay perpendicular to it.
+    glm::vec3 from = glm::make_vec3(own.direction), to = glm::make_vec3(sky->sunDirection);
+    if (glm::dot(from, from) < 1e-12f || glm::dot(to, to) < 1e-12f) return;
+    from = glm::normalize(from), to = glm::normalize(to);
+    const float c = glm::dot(from, to);
+    glm::vec3 k = glm::cross(from, to);
+    float s = glm::length(k);
+    if (s < 1e-6f) {
+        if (c > 0) return; // same direction
+        k = glm::normalize(glm::cross(from, std::abs(from.x) < 0.9f ? glm::vec3(1, 0, 0) : glm::vec3(0, 1, 0))), s = 0; // half turn
+    } else k /= s;
+    for (auto& axis : env.sunAxes) { // Rodrigues: a cos + (k x a) sin + k (k . a)(1 - cos)
+        const glm::vec3 a0 = glm::make_vec3(axis);
+        const glm::vec3 a = a0 * c + glm::cross(k, a0) * s + k * glm::dot(k, a0) * (1.0f - c);
+        axis[0] = a.x, axis[1] = a.y, axis[2] = a.z;
+    }
 }
 
 float lightFade(const scene::Light& l, glm::vec3 eye) {

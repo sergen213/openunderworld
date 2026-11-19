@@ -51,6 +51,7 @@
 #include "render/Water.hpp"
 #include "render/Ocean.hpp"
 #include "render/WaterField.hpp"
+#include "render/TimeOfDay.hpp"
 #include "video/Player.hpp"
 #include "video/Movie.hpp"
 #include "ui/Art.hpp"
@@ -1543,6 +1544,7 @@ struct EffectsView {
         // the EnableDepthOfField display setting (0x516E70, device manager +0x182), off by default and in the Wine
         // reference [O]. Its Finish (bloom) and fog blocks apply.
         std::shared_ptr<const ou::fx::FilterResource> own;
+        bool outdoor = false; // the time of day applies (render::timeOfDayApplies)
     };
     std::map<std::string, UnitWater> unitWater;
     const UnitWater& unitEntry(const ou::game::UnitData& unit) {
@@ -1550,7 +1552,10 @@ struct EffectsView {
         if (it != unitWater.end()) return it->second;
         it = unitWater.emplace(unit.name, UnitWater{}).first;
         if (unit.drm) {
-            it->second.env = ou::formats::parseUnit(*unit.drm).environment;
+            const auto parsed = ou::formats::parseUnit(*unit.drm);
+            it->second.env = parsed.environment;
+            const bool rain = std::ranges::any_of(parsed.rainMap.cells, [](int32_t c) { return c >= 0; });
+            it->second.outdoor = ou::render::timeOfDayApplies(unit.name, it->second.env, !parsed.exteriorTerrains.empty(), rain);
             it->second.env.lights.clear();
             for (int k = 0; k < 2; ++k) it->second.filter[k] = ou::fx::loadFilterResource(*unit.drm, it->second.env.waterFilter[k]);
             if (const auto own = ou::fx::loadFilterResource(*unit.drm, it->second.env.filter)) {
@@ -1571,6 +1576,36 @@ struct EffectsView {
             return nullptr;
         }, look);
     }
+    // Time of day (render/TimeOfDay.hpp; the app sets the mode, the clock and the sky state before water()): in an outdoor
+    // camera unit, its sun arc at the hour shown tints the look (ambient, fog sets), the filters' fog (finishFog) and the
+    // water pass, and gives the renderer `sky`. The cycle starts at the first outdoor unit's own hour.
+    ou::render::TimeOfDay timeOfDay = ou::render::TimeOfDay::Default;
+    float dayLength = 24;
+    double todSeconds = 0; // the cycle's clock: game time
+    bool todClearSky = true;
+    double cycleStart = -1;
+    ou::render::TimeOfDayLight tod;
+    ou::render::Sky sky;
+    bool todActive = false;
+    std::string todLogged; // unit + mode last logged
+    void timeOfDayLook(const ou::game::World& w) {
+        todActive = false;
+        if (timeOfDay == ou::render::TimeOfDay::Default || !look.valid) return;
+        const auto& unit = w.currentUnit().data;
+        const UnitWater& uw = unitEntry(unit);
+        if (const std::string key = unit.name + char('0' + int(timeOfDay)); key != todLogged) {
+            todLogged = key;
+            std::fprintf(stderr, "ou-game: time of day %s in %s: %s\n",
+                         std::string(ou::config::kTimesOfDay[size_t(timeOfDay)]).c_str(), unit.name.c_str(),
+                         uw.outdoor ? "applies" : "indoor, the unit's own lighting");
+        }
+        if (!uw.outdoor) return;
+        if (cycleStart < 0) cycleStart = ou::render::sunArc(uw.env).nativeHour;
+        tod = ou::render::timeOfDayLight(uw.env, ou::render::timeOfDayHours(timeOfDay, todSeconds, dayLength, cycleStart), todClearSky);
+        ou::render::applyTimeOfDay(look, tod);
+        sky = tod.sky;
+        todActive = true;
+    }
     std::vector<std::pair<const ou::fx::FilterResource*, float>> waterFilters; // the unit's own + water filters
     // The frame's fog for TRU's shaders (render::Fog): the filters' fog blocks (waterFilters' in water(), the effect
     // filters' in frame()) topped up by the camera unit's fog set (fogBase: under water its water set).
@@ -1582,6 +1617,8 @@ struct EffectsView {
         ou::fx::FogSum s = unitFog;
         if (more) s.add(*more);
         fog = s.resolve(fogBase);
+        if (todActive)
+            for (int k = 0; k < 3; ++k) fog.color[k] *= tod.fog[k];
         fo.fog = &fog;
         if (underwater.fog) { // Enhanced water / atmosphere under water see the same fog
             underwater.fogNear = fog.nearZ, underwater.fogFar = fog.farZ;
@@ -1647,6 +1684,12 @@ struct EffectsView {
             underwater.fog = true, underwater.fogNear = fogBase.nearZ, underwater.fogFar = fogBase.farZ;
             for (int k = 0; k < 3; ++k) underwater.fogColor[k] = fogBase.color[k];
         }
+        // After the fog set above took the look's own colours (finishFog tints the resolved fog once).
+        timeOfDayLook(w);
+        fo.sky = todActive ? &sky : nullptr;
+        if (todActive)
+            for (auto& p : underwater.pass)
+                for (int k = 0; k < 3; ++k) p[k] *= tod.fog[k];
         unitFog = {}, effectFog = {};
         for (const auto& [r, k] : waterFilters)
             if (r && k > 0) unitFog.add(*r, k);
@@ -2424,10 +2467,11 @@ int main(int argc, char** argv) {
         if (d.renderer != opt.renderer && !swapFrom) swapFrom = opt.renderer;
         opt.renderer = d.renderer;
         appliedGraphics = menus.graphics, graphicsDirty = true;
-        std::fprintf(stderr, "ou-game: tick %llu graphics: %s %dx%d%s vsync %d fov %.0f | %s rt %s msaa %d water %s fsr %s fx %d tonemap %s\n",
+        std::fprintf(stderr, "ou-game: tick %llu graphics: %s %dx%d%s vsync %d fov %.0f | %s rt %s msaa %d water %s fsr %s fx %d tonemap %s "
+                             "time of day %s (%.0f min)\n",
                      (unsigned long long)world->ticks(), opt.renderer.c_str(), opt.width, opt.height, opt.fullscreen ? " fullscreen" : "",
                      int(opt.vsync), opt.fov, g.preset.c_str(), g.rt.c_str(), opt.gfx.msaa, g.water.c_str(),
-                     opt.gfx.fsr ? g.fsrQuality.c_str() : "off", int(opt.gfx.effects), g.tonemap.c_str());
+                     opt.gfx.fsr ? g.fsrQuality.c_str() : "off", int(opt.gfx.effects), g.tonemap.c_str(), g.timeOfDay.c_str(), g.dayLength);
     };
     // AUDIO/VISUAL > LANGUAGE (locale::kInstallLanguages order, its names in the current text). A switch applies at once as
     // tru.exe 0x49A900 (spec mask, locals.bin reload): menus and prompts redraw in the new text, voice lines and
@@ -2911,7 +2955,9 @@ int main(int argc, char** argv) {
             };
         }
         v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
-        // The unit look and its fog (EffectsView::water, without the water look: the camera is not Lara's here).
+        // The unit look and its fog (EffectsView::water, without the water look: the camera is not Lara's here), then the
+        // time of day at the game time the cinematic starts (the fog set keeps the look's own colours: CineView::fogTint
+        // tints the resolved fog once).
         effects.updateLook(*world);
         v.frame.exteriorOrigin = world->exteriorOrigin();
         if (effects.look.valid) {
@@ -2921,6 +2967,12 @@ int main(int argc, char** argv) {
             std::copy_n(effects.look.fogColor, 3, v.fogSet.color);
             if (opt.graphics.preset == "original" && effects.look.farPlane > 0) v.farZ = effects.look.farPlane;
         }
+        effects.timeOfDay = ou::render::TimeOfDay(opt.gfx.timeOfDay), effects.dayLength = opt.gfx.dayLength;
+        effects.todSeconds = double(world->ticks()) * ou::game::kTickSeconds;
+        effects.todClearSky = world->currentUnit().data.weatherObject.empty();
+        effects.timeOfDayLook(*world);
+        v.frame.sky = effects.todActive ? &effects.sky : nullptr;
+        if (effects.todActive) std::copy_n(effects.tod.fog, 3, v.fogTint);
         return v;
     };
     if (!opt.cine.empty()) {
@@ -3737,6 +3789,11 @@ int main(int argc, char** argv) {
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
+        // Time of day (render/TimeOfDay.hpp): the cycle runs on game time (paused with the game); stars and moon only
+        // under a clear sky (no Enhanced weather, no unit rain object).
+        effects.timeOfDay = ou::render::TimeOfDay(opt.gfx.timeOfDay), effects.dayLength = opt.gfx.dayLength;
+        effects.todSeconds = waveSeconds;
+        effects.todClearSky = fo.weather.kind == ou::render::Weather::Kind::None && world->currentUnit().data.weatherObject.empty();
         if (!mainMenu) effects.water(cam, float(w) / float(std::max(1, h)), float(dt), *world, fo, opt.gfx.effects, warnings);
         // Original: the camera's far plane is the blended unit look's (0x5C7CA0 -> view +0x3C; l4_ballcourt 113 570 [O]).
         if (!mainMenu && fo.unitLook && fo.unitLook->farPlane > 0 && opt.graphics.preset == "original") cam.farZ = fo.unitLook->farPlane;

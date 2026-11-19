@@ -6,6 +6,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-11-18
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: time of day for the outdoor levels: DEFAULT (the game's own lighting), DAY, NIGHT and a day-night CYCLE, in
+  DISPLAY SETTINGS > WATER & SKY > TIME OF DAY (DAY LENGTH sets how many real minutes a cycle day lasts: 12, 24, 48 or
+  96), in the launcher and as `--time-of-day default|day|night|cycle` / `--day-length MINUTES`. The sun travels a daily
+  arc through each level's own sun direction, turns golden at sunrise and sunset, and at night the moon lights the level
+  in cool moonlight and casts shadows; the sky gets stars and a moon disc when it is not raining or snowing. Ambient
+  light, light maps, foliage, fog and the sky darken toward night while torches, lamps and the flashlight keep their
+  strength. Works with both presets and both renderers, with TRU's shadows, our shadows and ray tracing. Croft Manor
+  (the prologue and chapter 3), caves, tombs and ship interiors keep their own lighting. Switching in the menu applies
+  at once, mid-game.
+- Note: the Original preset does draw tru.exe's own sun shadows in OpenGL and Vulkan. On the chapter 2 yacht deck they
+  are as faint as in the original game (checked against tru.exe under Wine: same shader inputs, same lights, same
+  contrast), so they are easy to miss. The Enhanced preset's shadows are the stronger ones.
+
 ## [0.51.0] - 2026-11-16
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

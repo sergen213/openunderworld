@@ -110,8 +110,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
 | OU-PLY-012 | collision | No depenetration pass | Reproduced (idle) | pre-existing | — |
-| OU-PLY-013 | Lara | Slope-slide upper bound: OU treats slide-flagged faces flatter than 28° as standable (tru.exe slides) | Open (asm-verified) | pre-existing | — |
-| OU-PLY-014 | Lara | Ledge wall-side limit not loosened to 0.5236 for fast arcs | Open (asm-verified) | pre-existing | — |
+| OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
+| OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed on int/brief (21678c2; full ctest pending) | pre-existing | — |
 | OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Reproduced | pre-existing | — |
 | OU-SWM-001 | swimming | Swim turn: symmetric and view-relative now (d122a62); steady circle still +2.3 / +1.8 deg/s fast (tru.exe settles 42.1° off its camera line, ours 44.2°) | Partly fixed on int/brief | pre-existing | C-MEASURE |
 | OU-SWM-002 | swimming | Surface swim velocity lag: now 5.25 / 5.37° vs tru.exe 5.4 / 5.6° (0x755A00 blend 0.25 = player data +0x240) | Fixed on int/brief (d122a62) | pre-existing | C-MEASURE |

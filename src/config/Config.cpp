@@ -101,6 +101,11 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     s.frameGeneration = g.frameGeneration;
     s.effects = g.effects;
     s.antiLag = g.antiLag;
+    const auto tod = std::find(kTimesOfDay.begin(), kTimesOfDay.end(), g.timeOfDay);
+    if (tod == kTimesOfDay.end()) throw std::runtime_error("time of day must be default, day, night or cycle, got " + g.timeOfDay);
+    s.timeOfDay = int(tod - kTimesOfDay.begin());
+    if (!(g.dayLength >= 1.0f && g.dayLength <= 240.0f)) throw std::runtime_error("day length must be within 1..240 minutes");
+    s.dayLength = g.dayLength;
     return s;
 }
 
@@ -144,6 +149,8 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     }
     else if (flag == "--ao") g.ao = value;
     else if (flag == "--ao-quality") g.aoQuality = value;
+    else if (flag == "--time-of-day") g.timeOfDay = value;
+    else if (flag == "--day-length") g.dayLength = std::strtof(std::string(value).c_str(), nullptr);
     else return false;
     return true;
 }
@@ -265,6 +272,8 @@ Config load(const fs::path& path) {
             c.graphics.frameGeneration = g->value("frame_generation", c.graphics.frameGeneration);
             c.graphics.effects = g->value("effects", c.graphics.effects);
             c.graphics.antiLag = g->value("anti_lag", c.graphics.antiLag);
+            c.graphics.timeOfDay = g->value("time_of_day", c.graphics.timeOfDay);
+            c.graphics.dayLength = g->value("day_length", c.graphics.dayLength);
         }
         if (auto in = j.find("controls"); in != j.end()) {
             c.controls.mouseSensitivity = in->value("mouse_sensitivity", c.controls.mouseSensitivity);
@@ -326,7 +335,8 @@ void save(const fs::path& path, const Config& c) {
                                {"brightness", c.graphics.brightness}, {"tonemap", c.graphics.tonemap},
                                {"upscaler", c.graphics.upscaler}, {"fsr_quality", c.graphics.fsrQuality},
                                {"sharpness", c.graphics.sharpness}, {"frame_generation", c.graphics.frameGeneration},
-                               {"effects", c.graphics.effects}, {"anti_lag", c.graphics.antiLag}};
+                               {"effects", c.graphics.effects}, {"anti_lag", c.graphics.antiLag},
+                               {"time_of_day", c.graphics.timeOfDay}, {"day_length", c.graphics.dayLength}};
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
     if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;

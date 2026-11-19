@@ -296,6 +296,8 @@ private:
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_, *ao_, *aoQuality_;
     QComboBox *water_, *waterDetail_, *waterColor_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_, *tonemap_;
     QComboBox* language_; // config game.language (also ou-game's AUDIO/VISUAL > LANGUAGE)
+    QComboBox* timeOfDay_; // config graphics.time_of_day (also ou-game's WATER & SKY > TIME OF DAY)
+    QDoubleSpinBox* dayLength_;
     QCheckBox *frameGeneration_, *antiLag_;
     QCheckBox* rtLights_;
     QCheckBox* rtReflections_; // tri-state: partially checked = unset (on with RT "full")
@@ -470,6 +472,18 @@ private:
         cineDof_ = overrideCombo(g.cineDof);
         weather_ = choice({{"Preset default (level's rain / snow)", "auto"}, {"Off", "off"}, {"Always rain", "rain"},
                            {"Always snow", "snow"}}, g.weather);
+        timeOfDay_ = choice({{"Default (the game's own lighting)", "default"}, {"Day", "day"}, {"Night (moonlight)", "night"},
+                             {"Day-night cycle", "cycle"}}, g.timeOfDay);
+        timeOfDay_->setToolTip("Outdoor levels only: Croft Manor, caves, tombs and ship interiors keep their own lighting");
+        dayLength_ = new QDoubleSpinBox;
+        dayLength_->setRange(1.0, 240.0);
+        dayLength_->setSingleStep(1.0);
+        dayLength_->setDecimals(0);
+        dayLength_->setSuffix(" min per day");
+        dayLength_->setValue(g.dayLength);
+        auto dayLengthEnable = [this] { dayLength_->setEnabled(timeOfDay_->currentData().toString() == "cycle"); };
+        dayLengthEnable();
+        connect(timeOfDay_, &QComboBox::currentIndexChanged, this, dayLengthEnable);
         brightness_ = new QDoubleSpinBox;
         brightness_->setRange(0.5, 2.0);
         brightness_->setSingleStep(0.05);
@@ -550,6 +564,8 @@ private:
         f->addRow("Sun shafts", shafts_);
         f->addRow("Cutscene depth of field", cineDof_);
         f->addRow("Weather", weather_);
+        f->addRow("Time of day", timeOfDay_);
+        f->addRow("Day length", dayLength_);
         f->addRow("Tone mapping", tonemap_);
         f->addRow("Brightness", brightness_);
         f->addRow("Upscaler", upscaler_);
@@ -981,6 +997,8 @@ private:
         g.lightShafts = overrideValue(shafts_);
         g.cineDof = overrideValue(cineDof_);
         g.weather = s(weather_->currentData().toString());
+        g.timeOfDay = s(timeOfDay_->currentData().toString());
+        g.dayLength = float(dayLength_->value());
         g.upscaler = s(upscaler_->currentData().toString());
         g.fsrQuality = s(fsrQuality_->currentData().toString());
         g.sharpness = float(sharpness_->value());
@@ -1047,6 +1065,8 @@ private:
             if (d.lightShafts != o.lightShafts) tri(shafts_, d.lightShafts);
             if (d.cineDof != o.cineDof) tri(cineDof_, d.cineDof);
             if (d.weather != o.weather) pick(weather_, q(d.weather));
+            if (d.timeOfDay != o.timeOfDay) pick(timeOfDay_, q(d.timeOfDay));
+            if (d.dayLength != o.dayLength) dayLength_->setValue(d.dayLength);
             if (d.upscaler != o.upscaler) pick(upscaler_, q(d.upscaler));
             if (d.fsrQuality != o.fsrQuality) pick(fsrQuality_, q(d.fsrQuality));
             if (d.sharpness != o.sharpness) sharpness_->setValue(d.sharpness);

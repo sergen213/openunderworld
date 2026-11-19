@@ -17,6 +17,8 @@ namespace fs = std::filesystem;
 // GraphicsConfig::waterColor spellings; the index is GraphicsSettings::waterColor.
 inline constexpr std::array<std::string_view, 8> kWaterColors{"auto",         "original",       "emerald", "coral_lagoon",
                                                                "pelagic_cobalt", "mineral_jade", "subpolar_slate", "clear"};
+// GraphicsConfig::timeOfDay spellings; the index is GraphicsSettings::timeOfDay (= render::TimeOfDay).
+inline constexpr std::array<std::string_view, 4> kTimesOfDay{"default", "day", "night", "cycle"};
 
 // Graphics preset plus per-feature overrides. "enhanced" (default) = 4x MSAA + directional sun shadows + TRU's
 // translated shaders, plus ray-traced sun shadows where the Vulkan device supports ray queries (rt "auto");
@@ -66,6 +68,11 @@ struct GraphicsConfig {
     bool effects = true;                    // the original particle effects (src/fx: particles, ribbons, lightning,
                                             // glows, effect lights, screen filters); false = none (sounds stay)
     bool antiLag = false;                   // AMD Anti-Lag (VK_AMD_anti_lag, Vulkan only; docs/RENDERING.md "Anti-Lag")
+    // Time of day in the outdoor units (render/TimeOfDay.hpp; docs/RENDERING.md "Time of day"): "default" (the game's
+    // own lighting) | "day" | "night" | "cycle" (a running day-night cycle of dayLength real minutes per 24 hours).
+    // Indoor units (Croft Manor, caves, tombs, ship interiors) always keep their own lighting.
+    std::string timeOfDay = "default";
+    float dayLength = 24.0f;                // real minutes per in-game day with "cycle", 1..240
 };
 struct GraphicsSettings {
     int msaa = 1;
@@ -96,16 +103,20 @@ struct GraphicsSettings {
     bool oceanFft = true; // the FFT ocean on Enhanced open seas (render::FrameOptions::oceanFft); last, as above
     int ao = 0;           // render::AmbientOcclusion: 0 off, 1 cortao, 2 rt (render::FrameOptions::ao); last, as above
     int aoSamples = 12;   // CORTAO sample count 8 / 12 / 16 / 32 (render::FrameOptions::aoSamples); last, as above
+    int timeOfDay = 0;    // render::TimeOfDay: 0 default, 1 day, 2 night, 3 cycle; last, as above
+    float dayLength = 24; // real minutes per cycle day (render::TimeOfDay::Cycle); last, as above
     bool operator==(const GraphicsSettings&) const = default;
 };
-// Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, ao, aoQuality, upscaler, fsrQuality or tonemap value,
-// explicit rt without the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
+// Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, ao, aoQuality, upscaler, fsrQuality, tonemap or
+// timeOfDay value, explicit rt without the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0],
+// sharpness outside [0, 1] or dayLength outside [1, 240].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
 // --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-gi on|off, --ao off|cortao|rt, --ao-quality low|medium|high|ultra,
 // --water original|enhanced, --water-detail, --water-color, --ocean fft|procedural,
 // --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off,
-// --anti-lag on|off, --tonemap original|agx. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags
+// --anti-lag on|off, --tonemap original|agx, --time-of-day default|day|night|cycle, --day-length MINUTES. false = not a
+// graphics flag. Throws std::runtime_error on a bad value (on/off flags
 // only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 // Control bindings: action -> inputs, any of which triggers it. Input names (case-insensitive): SDL scancode

@@ -5,6 +5,7 @@
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
+#include "render/TimeOfDay.hpp"
 
 #include <algorithm>
 #include <array>
@@ -546,6 +547,8 @@ struct Resources {
     // agCausticProgram (shaders/uw_caustics.*) adds the floor caustics into g.
     Program agWaterProgram;
     Program agCausticProgram;
+    Program skyProgram;                  // time of day backdrop (shaders/sky.*, render/TimeOfDay.hpp), SkyPush at UBO 5
+    Buffer skyUbo;
     Texture agWater;
     Framebuffer agWaterFbo;
     Buffer waterUbo;                     // WaterBlock, UBO binding 4 (water, splash, post)
@@ -723,6 +726,10 @@ public:
         if (!r.agWaterProgram.get()) return false;
         r.agCausticProgram = linkProgram(agCausticSource(true).c_str(), agCausticSource(false).c_str(), error);
         if (!r.agCausticProgram.get()) return false;
+        r.skyProgram = linkProgram(std::string(skySource(true)).c_str(), std::string(skySource(false)).c_str(), error);
+        if (!r.skyProgram.get()) return false;
+        r.skyUbo = newBuffer();
+        glNamedBufferStorage(r.skyUbo.get(), sizeof(SkyPush), nullptr, GL_DYNAMIC_STORAGE_BIT);
         r.agWater = newTexture();
         glTextureStorage2D(r.agWater.get(), kAgWaterLevels, GL_RGBA16F, kAgWaterSize, kAgWaterSize);
         glTextureParameteri(r.agWater.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -959,6 +966,7 @@ public:
         std::erase_if(r.resident, [&](const auto& kv) { return kv.second.upload != uploads_ && !parts_.contains(kv.second.part); });
         r.transientTextures = std::move(transient);
         environment_ = scene.environment;
+        uploadSun_ = original::sunFields(environment_);
         irradiance_.reset(); // mesh indices and probes change with the scene
         // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
         const auto lut = original::attenuationLut(environment_);
@@ -1053,6 +1061,7 @@ public:
         ++drawFrames_;
         for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
         if (options.unitLook) original::applyUnitLook(environment_, *options.unitLook);
+        original::applySky(environment_, uploadSun_, options.sky); // time of day: its sun, else the scene's
         {
             std::vector<std::string> ignored; // the upload listing them reports them
             pumpParts(kPartBytesPerFrame, ignored);
@@ -1124,11 +1133,13 @@ public:
         int state = -1, program = -1; // -1 = generic scene program
         deferred_.clear();
         const size_t exterior = exteriorCount(r.meshes, std::span<const DrawRef>(r.order));
+        if (!exterior && drawSky(camera, vp, options)) program = -3, boundMesh = UINT32_MAX;
         for (const DrawRef& d : r.order) {
             if (exterior && &d - r.order.data() == std::ptrdiff_t(exterior)) { // exterior drawn: behind everything else
                 scissorFor(UINT32_MAX, vp);
                 glDepthMask(GL_TRUE);
                 glClear(GL_DEPTH_BUFFER_BIT);
+                if (drawSky(camera, vp, options)) program = -3, boundMesh = UINT32_MAX;
                 state = -1;
             }
             const GpuMesh& m = r.meshes[d.mesh];
@@ -1696,6 +1707,34 @@ private:
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
 
+    // Time of day backdrop (Sky::backdropPass, shaders/sky.*): right after the exterior terrain and its depth clear (or
+    // first, without exterior terrain), the frame so far (sky domes, the clear colour) x the backdrop tint, then the stars
+    // and the moon added; later draws cover it. Leaves blending, depth writes and the program changed. false = no pass.
+    bool drawSky(const Camera& camera, Viewport vp, const FrameOptions& o) {
+        if (!o.sky || !o.sky->backdropPass()) return false;
+        Resources& r = *res_;
+        glUseProgram(r.skyProgram.get());
+        glBindVertexArray(r.emptyVao.get());
+        glBindBufferBase(GL_UNIFORM_BUFFER, 5, r.skyUbo.get());
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND);
+        glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+        const float aspect = float(vp.width) / float(std::max(vp.height, 1));
+        for (int mode = 0; mode < 2; ++mode) {
+            if (mode == 1 && o.sky->stars <= 0 && o.sky->moon <= 0) break;
+            const SkyPush push = skyPush(camera, aspect, *o.sky, mode, o.time);
+            glNamedBufferSubData(r.skyUbo.get(), 0, sizeof push, &push);
+            if (mode == 0) glBlendFunc(GL_DST_COLOR, GL_ZERO); // dst x tint
+            else glBlendFunc(GL_ONE, GL_ONE);                  // + stars, moon
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+        glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
+        return true;
+    }
+
     // tru.exe's PSSM atlas (original::Pssm): one 1024² tile per split, the casters of the shadow map above, D3D9 depth
     // bias (in the split's matrix) and slope bias. D3D clip -> GL: y flipped (rows top-down as tru.exe's lookups count
     // them), z [0, 1] -> [-1, 1].
@@ -2042,10 +2081,12 @@ private:
         beginOriginals(refl.camera, half, options);
         int state = -1, program = -2;
         const size_t exterior = exteriorCount(r.meshes, std::span<const DrawRef>(r.order));
+        if (!exterior && drawSky(refl.camera, half, options)) program = -3;
         for (const DrawRef& d : r.order) {
             if (exterior && &d - r.order.data() == std::ptrdiff_t(exterior)) { // exterior drawn: behind everything else
                 glDepthMask(GL_TRUE);
                 glClear(GL_DEPTH_BUFFER_BIT);
+                if (drawSky(refl.camera, half, options)) program = -3;
                 state = -1;
             }
             const GpuMesh& m = r.meshes[d.mesh];
@@ -2120,12 +2161,12 @@ private:
     void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o, const original::Reflection* reflection = nullptr) {
         Resources& r = *res_;
         sm3::FrameBlock f;
-        original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater, cookieIds_, o.fog); // screen copies are bottom-up
+        original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater, cookieIds_, o.fog, o.sky); // screen copies are bottom-up
         if (const auto row = original::fogLutRow(o.fog); row != fogRow_) // the fog curve (Fog) changed: its LUT row
             fogRow_ = row, glTextureSubImage2D(r.attenuation.get(), 0, 0, original::kFogLutRow, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, row.data());
         original::fillPssm(f, pssm_, pssmCamera_);
         irradiance_.assign(environment_, r.meshes);
-        irradiance_.fill(f);
+        irradiance_.fill(f, o.sky ? o.sky->probes : nullptr);
         glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
         const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
         const size_t stride = size_t(objectStride()), n = r.meshes.size();
@@ -2558,6 +2599,7 @@ private:
     std::optional<Resources> res_;
     original::Prepared prepared_;         // during upload()
     scene::Environment environment_;
+    original::SunFields uploadSun_;       // the uploaded environment's sun (applySky restores it without a time of day)
     std::vector<uint32_t> cookieIds_;     // layers of the spot cookie array (upload)
     std::array<uint8_t, 256 * 4> fogRow_ = original::fogLutRow(nullptr); // the LUT's fog row as uploaded
     original::IrradianceSlots irradiance_; // per frame, cached per mesh between uploads

@@ -9,6 +9,7 @@
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
+#include "render/TimeOfDay.hpp"
 #include "render/vk/AntiLag.hpp"
 #include "render/vk/VkFsr.hpp"
 
@@ -166,6 +167,12 @@ const uint32_t kAgCausticVert[] = { // its floor caustics, added into g (shaders
 const uint32_t kAgCausticFrag[] = {
 #include "uw_caustics.frag.inc"
 };
+const uint32_t kSkyVert[] = { // time of day backdrop (shaders/sky.*, render/TimeOfDay.hpp)
+#include "sky.vert.inc"
+};
+const uint32_t kSkyFrag[] = {
+#include "sky.frag.inc"
+};
 const uint32_t kWaterVert[] = { // Enhanced water + splashes (shared GLSL, render/shaders)
 #include "water.vert.inc"
 };
@@ -246,9 +253,11 @@ const uint32_t kFxFrag[] = {
 // Prepass: RT depth pre-pass (depth only; the RT Opaque pipeline then tests LEQUAL without writes).
 // Pssm: tru.exe's shadow atlas (original::Pssm): as Shadow with the slope bias as dynamic state (the depth bias is in
 // the split's matrix).
+// SkyMultiply / SkyAdd: the time of day backdrop (render/TimeOfDay.hpp): dst x src, src + dst; rgb only, no depth test.
 enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Pssm, Lines, Overlay, Post, Prepass, Water, SplashSplat,
                           SplashBlur, SplashComposite, FxAlpha, FxAdditive, FxSubtract, FxMultiply, // Fx*: FxBatch::blend order
-                          CausticSplat }; // ONE + ONE into G only (uw_caustics.*)
+                          CausticSplat, // ONE + ONE into G only (uw_caustics.*)
+                          SkyMultiply, SkyAdd };
 
 struct LineVertex {
     float pos[3];
@@ -857,6 +866,7 @@ public:
         if (vp.width <= 0 || vp.height <= 0) return; // minimised
         for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
         if (options.unitLook) original::applyUnitLook(environment_, *options.unitLook);
+        original::applySky(environment_, uploadSun_, options.sky); // time of day: its sun, else the scene's
         if (vp.width != requested_.width || vp.height != requested_.height) swapchainDirty_ = true;
         if (presentOutOfDate_.exchange(false)) swapchainDirty_ = true; // reported by the present thread
         applySettings(options);
@@ -1117,9 +1127,9 @@ public:
             irradiance_.assign(environment_, meshes_);
             sm3::FrameBlock fb;
             original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_, false,
-                                options.underwater, cookieIds_, options.fog);
+                                options.underwater, cookieIds_, options.fog, options.sky);
             original::fillPssm(fb, pssm, camera);
-            irradiance_.fill(fb);
+            irradiance_.fill(fb, options.sky ? options.sky->probes : nullptr);
             std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
         }
         // Sets shared by every draw of a pipeline layout (binding with the other layout disturbs them).
@@ -1176,6 +1186,20 @@ public:
             const OrigDraw* od = originals ? &origDraws_[d.mesh][d.sub] : nullptr;
             return od && od->program >= 0 ? od : nullptr;
         };
+        // Time of day backdrop (Sky::backdropPass, shaders/sky.*): after the exterior terrain and its depth clear (or
+        // first without one), the frame so far x the tint, then the stars and the moon added.
+        auto drawSky = [&](const Camera& c, VkExtent2D ext) {
+            if (!options.sky || !options.sky->backdropPass()) return;
+            clipTo(UINT32_MAX);
+            vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+            for (int mode = 0; mode < 2; ++mode) {
+                if (mode == 1 && options.sky->stars <= 0 && options.sky->moon <= 0) break;
+                const SkyPush sp = skyPush(c, float(ext.width) / float(std::max(ext.height, 1u)), *options.sky, mode, options.time);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = skyPipelines_[size_t(mode)]);
+                vkCmdPushConstants(cmd, skyLayout_, kPushStages, 0, sizeof sp, &sp);
+                vkCmdDraw(cmd, 3, 1, 0, 0);
+            }
+        };
         // Planar reflection (original::reflection): the plane of the nearest drawn reflecting submesh, with the camera above
         // it; the scene except the water surfaces and the screen / reflection readers, seen from the mirrored camera, into
         // reflColor_ (half size). Enhanced water draws its reflecting submeshes itself (waterDraw): no reader, no pass.
@@ -1190,9 +1214,9 @@ public:
             const VkExtent2D half{std::max(1u, extent_.width / 2), std::max(1u, extent_.height / 2)};
             sm3::FrameBlock fb;
             original::fillFrame(fb, reflection->camera, {int(half.width), int(half.height)}, options.time, environment_, false,
-                                options.underwater, cookieIds_, options.fog);
+                                options.underwater, cookieIds_, options.fog, options.sky);
             original::fillPssm(fb, pssm, camera);
-            irradiance_.fill(fb);
+            irradiance_.fill(fb, options.sky ? options.sky->probes : nullptr);
             std::memcpy(reflFrameUbo_[frameIndex_].mapped, &fb, sizeof fb);
             std::vector<VkImageMemoryBarrier2> rb = {
                 imageBarrier(reflColor_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -1235,12 +1259,14 @@ public:
             rp.rt = 0;
             // Exterior terrain first, then a depth clear, as in the main pass (SubMesh::exterior).
             const size_t exterior = exteriorCount(meshes_, std::span<const DrawRef>(order_));
+            if (!exterior) drawSky(reflection->camera, half);
             for (const DrawRef& d : order_) {
                 if (exterior && &d - order_.data() == std::ptrdiff_t(exterior)) {
                     VkClearAttachment clear{VK_IMAGE_ASPECT_DEPTH_BIT};
                     clear.clearValue.depthStencil = {1.0f, 0};
                     const VkClearRect rect{hs, 0, 1};
                     vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
+                    drawSky(reflection->camera, half);
                 }
                 const GpuMesh& m = meshes_[d.mesh];
                 const scene::SubMesh& s = m.submeshes[d.sub];
@@ -1363,6 +1389,7 @@ public:
             const VkClearRect rect{{{0, 0}, extent_}, 0, 1};
             vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
         }
+        drawSky(camera, extent_);
         if (prepassPipelines_) {
             vkCmdEndRendering(cmd);
             const VkImage normalImage = prepassNormal_.image;
@@ -2016,7 +2043,7 @@ public:
                                  shaftMarchPipeline_, shaftBlurPipeline_, uwResolvePipeline_, uwBloomPipeline_, uwBloomUpPipeline_,
                                  uwGradePipeline_, agWaterPipeline_, agCausticPipeline_})
                 vkDestroyPipeline(device_, p, nullptr);
-            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_, fxLayout_, uwGradeLayout_, agWaterLayout_})
+            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_, fxLayout_, uwGradeLayout_, agWaterLayout_, skyLayout_})
                 vkDestroyPipelineLayout(device_, l, nullptr);
             for (auto& m : lineMemory_) m.reset();
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
@@ -2145,6 +2172,7 @@ private:
     // block + descriptor set per distinct (program, material, instance textures, alpha ref) of the uploaded submeshes.
     void uploadOriginals(const scene::SceneData& scene, std::vector<std::string>& warnings) {
         environment_ = scene.environment;
+        uploadSun_ = original::sunFields(environment_);
         irradiance_.reset(); // mesh indices and probes change with the scene
         const original::Prepared prep = original::prepare(scene, true);
         for (const auto& w : prep.warnings) warnings.push_back(w);
@@ -2219,6 +2247,7 @@ private:
             uint32_t material, inst[4];
             uint8_t alphaRef;
             bool water; // RT reflections (MaterialBlock::fixed[3] bit 2, sun.glsl ouSunEnd)
+            bool exterior; // MaterialBlock::fixed[3] value 16 (fillMaterial)
             auto operator<=>(const Key&) const = default;
         };
         std::map<Key, size_t> keys;
@@ -2240,7 +2269,7 @@ private:
                 size_t k = SIZE_MAX;
                 if (d.program >= 0) {
                     const Key key{d.program, s.materialId, {s.instanceTextures[0], s.instanceTextures[1], s.instanceTextures[2],
-                                                            s.instanceTextures[3]}, s.alphaRef, meshes_[mi].water};
+                                                            s.instanceTextures[3]}, s.alphaRef, meshes_[mi].water, s.exterior};
                     const auto [it, fresh] = keys.try_emplace(key, unique.size());
                     if (fresh) unique.push_back({key, &s});
                     k = it->second;
@@ -2404,6 +2433,7 @@ private:
         for (VkPipeline* p : {&splashSplatPipeline_, &splashBlurPipeline_, &splashCompositePipeline_, &uwSnowPipeline_, &uwBubblePipeline_})
             vkDestroyPipeline(device_, std::exchange(*p, VK_NULL_HANDLE), nullptr);
         for (VkPipeline& p : fxPipelines_) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
+        for (VkPipeline& p : skyPipelines_) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
     }
 
     // Sun shadow atlas, one tile per cascade: opaque and alpha-blended submeshes (the latter alpha-tested at 50 %),
@@ -3650,6 +3680,10 @@ private:
         const VkPushConstantRange agPush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float)};
         const VkPipelineLayoutCreateInfo agl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &agPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &agl, nullptr, &agWaterLayout_));
+        // The time of day backdrop (render/TimeOfDay.hpp SkyPush): no sets.
+        const VkPushConstantRange skyPushRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(SkyPush)};
+        const VkPipelineLayoutCreateInfo skl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &skyPushRange};
+        VK_CHECK(vkCreatePipelineLayout(device_, &skl, nullptr, &skyLayout_));
         // Under-water particles (recordUwParticles): the post pass's sets 1-2 (set 0 unused), UwParticlePush.
         VkPushConstantRange uwPush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(UwParticlePush)};
         pl.pPushConstantRanges = &uwPush;
@@ -3786,6 +3820,9 @@ private:
         for (size_t b = 0; b < fxPipelines_.size(); ++b)
             fxPipelines_[b] = createPipeline(kFxVert, kFxFrag, fxLayout_, &fxBinding, fxAttrs,
                                              PipelineKind(size_t(PipelineKind::FxAlpha) + b), samples_, sceneFormat_, depthFormat_);
+        for (size_t m = 0; m < skyPipelines_.size(); ++m)
+            skyPipelines_[m] = createPipeline(kSkyVert, kSkyFrag, skyLayout_, nullptr, {},
+                                              m ? PipelineKind::SkyAdd : PipelineKind::SkyMultiply, samples_, sceneFormat_, depthFormat_);
     }
 
     // `binding` null = no vertex input (fullscreen triangle). colorFormat UNDEFINED = depth-only. tesc / tese: optional
@@ -3832,7 +3869,8 @@ private:
         const bool prepassed = prepassPipelines_ && kind == PipelineKind::Opaque;
         const bool writesDepth = kind == PipelineKind::Opaque || kind == PipelineKind::Shadow || kind == PipelineKind::Pssm ||
                                  kind == PipelineKind::Prepass;
-        ds.depthTestEnable = depthFormat != VK_FORMAT_UNDEFINED && kind != PipelineKind::SplashComposite;
+        const bool sky = kind == PipelineKind::SkyMultiply || kind == PipelineKind::SkyAdd;
+        ds.depthTestEnable = depthFormat != VK_FORMAT_UNDEFINED && kind != PipelineKind::SplashComposite && !sky;
         ds.depthWriteEnable = writesDepth;
         // As GL: LESS for depth writers; blended submeshes (translucent pass), debug lines and pre-passed draws LEQUAL.
         ds.depthCompareOp = writesDepth && !prepassed ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
@@ -3863,6 +3901,10 @@ private:
         else if (kind == PipelineKind::CausticSplat) {
             factors(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE);
             blend.colorWriteMask = VK_COLOR_COMPONENT_G_BIT;
+        } else if (sky) {
+            if (kind == PipelineKind::SkyMultiply) factors(VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_ZERO);
+            else factors(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE);
+            blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
         }
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         const bool hasColor = colorFormat != VK_FORMAT_UNDEFINED;
@@ -6378,6 +6420,8 @@ private:
     std::array<VkDeviceSize, kFramesInFlight> fxCapacity_{};
     std::array<VkPipeline, 4> fxPipelines_{}; // FxBatch::blend: alpha, additive, subtract, multiply
     VkPipelineLayout fxLayout_ = VK_NULL_HANDLE;
+    std::array<VkPipeline, 2> skyPipelines_{}; // time of day backdrop: [0] multiply, [1] add (render/TimeOfDay.hpp)
+    VkPipelineLayout skyLayout_ = VK_NULL_HANDLE;
     std::array<LinearAllocator, kFramesInFlight> lineMemory_;
     VkSampler sceneSampler_ = VK_NULL_HANDLE, fontSampler_ = VK_NULL_HANDLE, shadowSampler_ = VK_NULL_HANDLE,
               postSampler_ = VK_NULL_HANDLE, biasedSampler_ = VK_NULL_HANDLE, // biasedSampler_: setMipBias
@@ -6440,6 +6484,7 @@ private:
     std::vector<DrawRef> screenDraws_;                               // per frame: their draws, for the second pass
     Buffer origMaterialUbo_;
     scene::Environment environment_;
+    original::SunFields uploadSun_;        // the uploaded environment's sun (applySky restores it without a time of day)
     original::IrradianceSlots irradiance_; // per frame, cached per mesh between uploads
 
     // Ray tracing.
