@@ -224,6 +224,13 @@ float Player::capHeight() const {
     return s_.state == State::Crouch || s_.state == State::Roll ? t_.crouchHeight : t_.capsuleTop;
 }
 
+// Room to stand up: the crouched capsule swept up to the standing height hits nothing [I: the chart's
+// PSCCF_LowCeiling 0x1F7 test is not decoded].
+bool Player::roomToStand() const {
+    return !col_.sweepCapsule(s_.pos + vec3(0, 0, t_.stepUp + t_.radius), s_.pos + vec3(0, 0, t_.crouchHeight - t_.radius), t_.radius,
+                              vec3(0, 0, t_.capsuleTop - t_.crouchHeight));
+}
+
 void Player::play(std::string_view clip, bool loop, float rate, bool mirror) {
     if (s_.clip == clip && s_.loop == loop && s_.clipRate == rate && s_.mirror == mirror) return;
     // A new clip starts at the original request's start frame (clipBlend); swapping between the looping
@@ -307,7 +314,6 @@ void Player::spawn(vec3 feet, float yaw) {
     s_.yaw = yaw;
     if (auto g = col_.groundProbe(feet + vec3(0, 0, t_.stepUp), t_.stepUp + 1000.0f)) s_.pos.z = g->point.z;
     s_.fallStartZ = s_.pos.z;
-    placed_ = true;
     play("ng_idle", true);
 }
 
@@ -430,15 +436,14 @@ bool Player::standable(vec3 p, const collision::Hit& g) const {
     return false;
 }
 
-// Out of geometry a placement put the capsule into (spawn, load, restore, teleport: Player::tick runs it once, on the
-// tick after; OU-PLY-012). tru.exe under Wine (l3_main_bedroom, the prologue wall under ledge 973; `ref tpv` for
-// 3..15 ms, then per-frame traces): her root put 10..116 units past where a walk into the wall stops (y -4066.2 in tru's
-// frame) is back at that contact (-4062.0..-4065.6) on the next frame, every depth, moved only along the wall's normal
-// (x unchanged) [O-runtime]; the code doing it (her proxy, instance +0x288: 0x7018E0 / 0x494E60) is not decoded [U].
-// tru.exe does it every frame; ours only after placements, because our own [I] moves end inside our collision where
-// tru.exe's presumably do not (the ch01 roll's stand-up under the leaning beam, ch03's switch stand point 76 units into
-// the gear room's wall, the chapel switch 4819's origin 24 units into its wall): pushing those out every tick broke the
-// scenarios built on them. Ours: the deepest overlapping terrain face pushes her out along its horizontal normal by the
+// Out of geometry the capsule is in, on every ground tick (Player::tick; OU-PLY-012). tru.exe under Wine
+// (l3_main_bedroom, the prologue wall under ledge 973; `ref tpv` for 3..15 ms, then per-frame traces): her root put
+// 10..116 units past where a walk into the wall stops (y -4066.2 in tru's frame) is back at that contact
+// (-4062.0..-4065.6) on the next frame, every depth, moved only along the wall's normal (x unchanged) [O-runtime]; the
+// code doing it (her proxy, instance +0x288: 0x7018E0 / 0x494E60) is not decoded [U]. The moves that used to end inside
+// our collision were slide()'s (it skipped the faces ahead after brushing one; it stopped her on faces met from behind,
+// which tru.exe's one-sided test 0x461640 passes) and the roll's stand-up under a low ceiling (it crouches now, chart
+// T250). Ours: the deepest overlapping terrain face pushes her out along its horizontal normal by the
 // depth + kSkin, up to 4 passes (corners) [I: closest points, the sweep's frame]. Ignored [I]: overlaps under
 // kDepenetrateSlop (touching contacts as slide() leaves them); faces with a normal steeper than 60 degrees from
 // horizontal and faces a cap of the capsule rests on or under (floors, slopes, ceilings: the ground probe's); faces the
@@ -2174,8 +2179,7 @@ void Player::rideFrame(const glm::mat4& d) {
 void Player::tick(vec2 move, const Actions& a, float dt) {
     Buttons& b = s_.buttons;
     walk_ = a.walk;
-    if (placed_) { // spawned / loaded / restored into a wall: out of it first (depenetrate, OU-PLY-012)
-        placed_ = false;
+    { // in a wall: out of it first, every ground tick as tru.exe (depenetrate, OU-PLY-012)
         const State g = s_.state;
         if (g == State::Idle || g == State::Walk || g == State::Run || g == State::Stop || g == State::Turn || g == State::Land ||
             g == State::Crouch)
@@ -2369,9 +2373,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         break;
     }
     case State::Crouch: {
-        const bool headroom = !col_.sweepCapsule(s_.pos + vec3(0, 0, t_.stepUp + t_.radius), s_.pos + vec3(0, 0, t_.crouchHeight - t_.radius),
-                                                 t_.radius, vec3(0, 0, t_.capsuleTop - t_.crouchHeight));
-        if (!a.drop && headroom) { s_.state = State::Idle; play("ng_idle", true); break; }
+        if (!a.drop && roomToStand()) { s_.state = State::Idle; play("ng_idle", true); break; }
         if (wantsMove) {
             s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
             play("Crouch_Front", true);
@@ -2383,8 +2385,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     }
     case State::Roll:
         groundMove(toWorld(advanceClip(dt)), dt);
+        // The roll's end (chart S7, cond 0xC9 the clip done) [O-data]: T253 Crouch held (0x66 = 1) with the stick
+        // pushed -> S80 Crouch_Front; T250 a low ceiling (PSCCF_LowCeiling 0x1F7) -> S90, the crouch group; T242 -> S3,
+        // the ground group. [I] T249 (stick neutral -> S82 crouch_Idle, which stands at once without Crouch held and
+        // with room) is taken as standing straight away.
         if (s_.state == State::Roll && clipDone()) {
-            if (wantsMove && !wantsWalk) { s_.state = State::Run; play("ng_run", true); }
+            if ((a.drop && wantsMove) || !roomToStand()) { s_.state = State::Crouch; play(wantsMove ? "Crouch_Front" : "crouch_Idle", true); }
+            else if (wantsMove && !wantsWalk) { s_.state = State::Run; play("ng_run", true); }
             else { s_.state = State::Idle; play("ng_idle", true); }
         }
         break;
