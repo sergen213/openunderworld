@@ -381,7 +381,10 @@ vec3 Player::slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) c
         // is skipped by the sweep (kSweepSkipLeaving), so the faces ahead still stop her. Before, such a contact was the
         // earliest hit and the whole move was applied past every face ahead: brushing one wall walked her through
         // the next (OU-PLY-012).
-        const auto hit = col_.sweepCapsule(a, b, t_.radius, delta, collision::kSolidMask, collision::kSweepSkipLeaving);
+        // One-sided (kSweepOneSided, tru.exe 0x461640's rule): a face met from behind does not stop her; the ch01 roll
+        // under the bedroom's leaning beam passes its south and end faces (965 / 966, 907) from behind as in the game.
+        const auto hit = col_.sweepCapsule(a, b, t_.radius, delta, collision::kSolidMask,
+                                           collision::kSweepSkipLeaving | collision::kSweepOneSided);
         vec3 n = hit ? hit->normal : vec3(0);
         if (horizontalNormals) n.z = 0;
         const float nl = glm::length(n);
@@ -451,7 +454,9 @@ vec3 Player::depenetrate(vec3 pos, float bottom) const {
         push = vec3(0);
         for (const auto& h : col_.overlapCapsule(a, b, t_.radius)) {
             const float over = t_.radius - h.t;
-            if (h.dynamic >= 0 || over < kDepenetrateSlop || over <= depth) continue;
+            // only faces whose front her axis is on: a face she is behind (inside an open-backed shell, under the
+            // beam) is not pushed out of, as the one-sided sweep let her pass it
+            if (h.dynamic >= 0 || over < kDepenetrateSlop || over <= depth || glm::dot(col_.faceNormal(h.face), h.normal) <= 0) continue;
             const float axisZ = h.point.z + h.normal.z * h.t;
             if ((axisZ <= a.z + 1e-3f && h.normal.z > 0.01f) || (axisZ >= b.z - 1e-3f && h.normal.z < -0.01f)) continue;
             const vec2 n = xy(h.normal);

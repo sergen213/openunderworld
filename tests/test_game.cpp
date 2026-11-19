@@ -45,13 +45,14 @@ void addFloor(CollisionMesh& m, float x0, float y0, float x1, float y1, float z)
         for (float y = y0; y < y1; y += 200)
             addQuad(m, {x, y, z}, {std::min(x + 200, x1), y, z}, {std::min(x + 200, x1), std::min(y + 200, y1), z}, {x, std::min(y + 200, y1), z});
 }
-// Box [lo, hi] (top + four sides).
+// Box [lo, hi] (top + four sides), wound counter-clockwise seen from outside as the game's collision (Lara's ground
+// sweep is one-sided: collision::kSweepOneSided).
 void addBox(CollisionMesh& m, vec3 lo, vec3 hi) {
     addFloor(m, lo.x, lo.y, hi.x, hi.y, hi.z);
-    addQuad(m, {lo.x, lo.y, lo.z}, {lo.x, hi.y, lo.z}, {lo.x, hi.y, hi.z}, {lo.x, lo.y, hi.z});
+    addQuad(m, {lo.x, hi.y, lo.z}, {lo.x, lo.y, lo.z}, {lo.x, lo.y, hi.z}, {lo.x, hi.y, hi.z});
     addQuad(m, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z}, {hi.x, hi.y, hi.z}, {hi.x, lo.y, hi.z});
     addQuad(m, {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, lo.y, hi.z}, {lo.x, lo.y, hi.z});
-    addQuad(m, {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z});
+    addQuad(m, {hi.x, hi.y, lo.z}, {lo.x, hi.y, lo.z}, {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z});
 }
 
 // Clip whose root moves forward (model -Y) by `perKey` units per key, `keys` keys of 100 units (1/30 s).
@@ -174,7 +175,7 @@ TEST(Game, RootTranslationUnwrapsLoops) {
 TEST(Game, WalkingIntoWallSlides) {
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
-    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1000}, {400, -2000, 1000});
+    addQuad(m, {400, -2000, 0}, {400, -2000, 1000}, {400, 2000, 1000}, {400, 2000, 0}); // facing -X, toward her
     auto w = makeWorld(std::move(m), {0, 0, 0});
     Actions a;
     a.move = {0.5f, 0.866f}; // camera faces +X: forward + a bit right (-Y)
@@ -194,7 +195,7 @@ TEST(Game, EmbeddedCapsuleIsPushedOutInOneTick) {
     for (const float depth : {0.3f, 30.0f, 75.0f}) {
         CollisionMesh m;
         addFloor(m, -2000, -2000, 2000, 2000, 0);
-        addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1000}, {400, -2000, 1000});
+        addQuad(m, {400, -2000, 0}, {400, -2000, 1000}, {400, 2000, 1000}, {400, 2000, 0});
         auto w = makeWorld(std::move(m), {contact + 1 + depth, 25, 0});
         const auto& s = w->player().state();
         w->tick({});
@@ -210,7 +211,7 @@ TEST(Game, EmbeddedCapsuleIsPushedOutInOneTick) {
     // A corner: out of both walls in the same tick.
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
-    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1000}, {400, -2000, 1000});
+    addQuad(m, {400, -2000, 0}, {400, -2000, 1000}, {400, 2000, 1000}, {400, 2000, 0});
     addQuad(m, {-2000, 400, 0}, {2000, 400, 0}, {2000, 400, 1000}, {-2000, 400, 1000});
     auto w = makeWorld(std::move(m), {360, 350, 0});
     w->tick({});

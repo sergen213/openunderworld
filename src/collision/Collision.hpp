@@ -65,8 +65,12 @@ inline constexpr uint8_t kTerrainMask = 0x07; // Lara's terrain faces only (no o
 // objects only with ObjectBase oflags bit 0x08 (0x713090 ignores a hit instance without it), which
 // physics::solidShape marks with bit 0x40.
 inline constexpr uint8_t kSightMask = 0x4C;
-// sweepCapsule flags.
-inline constexpr uint8_t kSweepSkipLeaving = 0x01;
+// sweepCapsule flags. kSweepOneSided: only faces the move goes against from their front (CCW winding normal n,
+// dot(n, delta) < 0) are hit; faces approached from behind or moved along are passed. tru.exe's segment-triangle test
+// 0x461640 is one-sided the same way [O]: n = (v1 - v0) x (v2 - v0), a hit needs -dot(dir, n) > 1.19e-5; it serves
+// the BIH segment queries 0x462FA0 and 0x46C450, the latter called by 0x4E8FC0, the cast behind the player-code ray
+// 0x493330 (flags 0x2C19E7). [U] which query her proxy's wall contacts use.
+inline constexpr uint8_t kSweepSkipLeaving = 0x01, kSweepOneSided = 0x02;
 
 // Level camera record (unit data +0x208 count, +0x20C 0x70-byte records; tru.exe 0x606xxx): where the gameplay camera
 // is drawn while Lara is on a markup whose camera commands select it (command 0x12, COLLISION.md "Camera records").

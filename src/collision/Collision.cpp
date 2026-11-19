@@ -320,7 +320,7 @@ std::optional<Hit> CollisionMesh::sweepFaces(vec3 a, vec3 b, float radius, vec3 
     std::optional<Hit> best;
     overlap(lo, hi, [&](uint32_t fi) {
         const Face& f = faces[fi];
-        if (!queryable(f, mask)) return;
+        if (!queryable(f, mask) || ((flags & kSweepOneSided) && dot(faceNormal(fi), delta) >= 0)) return;
         const Tri tri{vertices[f.v[0]], vertices[f.v[1]], vertices[f.v[2]]};
         // Conservative advancement: under pure translation the shape-triangle distance d(t) is convex,
         // so stepping to the root of its tangent never overshoots the first contact.
