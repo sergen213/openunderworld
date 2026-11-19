@@ -2946,6 +2946,34 @@ TEST(ProgressionReal, TempleFloorBreaksByMultibody92) {
     for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 5234) << key.second;
 }
 
+// OU-PZL-008 (a). l4_temple's east ledge (markup 1167, x -2790): the rope is thrown onto ca_ei_grapple_post 4951, 4.6
+// thousand units west. tru.exe's sight ray (0x713090) ends at the target's feature (0x6FF040: query 0xDE; the post's
+// grapple feature, 118 up its axis); ours ended at the post's origin, 4 under the top of the floor it stands on, and
+// that floor's edge blocked it 115 .. 126 short from every ledge point, so nothing was offered. The rope's point stays
+// the named anchor's origin (World::grappleTarget, GrappleTarget::sight).
+TEST(ProgressionReal, TempleRingOfferedFromTheEastLedge) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_temple");
+    auto& w = *wp;
+    std::optional<game::GrappleTarget> post;
+    for (const auto& u : w.units())
+        for (const auto& g : u.data.grapples)
+            if (g.uid == 4951) post = g, post->pos += u.offset, post->sight += u.offset;
+    ASSERT_TRUE(post);
+    EXPECT_EQ(post->kind, game::GrappleKind::Post);
+    EXPECT_NEAR(post->sight.z - post->pos.z, 117.8f, 1.0f) << "its feature, up the post";
+    for (const float y : {-14380.0f, -13500.0f, -12500.0f}) {
+        SCOPED_TRACE(y);
+        const auto ground = w.collision().groundProbe(vec3(-2790, y, 4200), 1500, 0x0F);
+        ASSERT_TRUE(ground);
+        place(w, ground->point + vec3(0, 0, 5), std::atan2(post->pos.y - y, post->pos.x + 2790));
+        for (int i = 0; i < 30; ++i) w.tick({});
+        const auto offered = w.grappleTarget();
+        EXPECT_TRUE(offered && offered->uid == 4951) << "offered " << (offered ? offered->uid : 0);
+    }
+}
+
 namespace {
 // Lara grips the kind-1 record of `uid`'s section `section` from the spot whose way to the object is nearest to `dir`
 // (any spot for a zero `dir`), facing `face`, and holds the stick `stick` until `done` or `ticks` pass. False: no grip.

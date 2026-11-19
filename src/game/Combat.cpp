@@ -1162,10 +1162,14 @@ std::optional<GrappleTarget> World::grappleTarget() const {
             const float d = glm::length(v);
             if (d < 1) continue;
             // Line of sight from her eye (0x713200 -> 0x713090): what tru.exe's targeting ray sees blocks (kSightMask:
-            // terrain except the groups its filter skips, objects with oflags bit 8), not the target's own object.
-            if (const auto hit = col_.raycast(eye, v / d, d - 60.0f, collision::kSightMask);
-                hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != t.uid))
-                continue;
+            // terrain except the groups its filter skips, objects with oflags bit 8), not the target's own object. The
+            // ray ends at the target's feature (0x6FF040: query 0xDE), also for the named anchors whose rope point is
+            // their origin: l4_temple's post 4951 stands 4 under the top of its floor, which hid it from every ledge.
+            const vec3 sv = t.sight + u.offset - eye;
+            if (const float sd = glm::length(sv); sd > 60)
+                if (const auto hit = col_.raycast(eye, sv / sd, sd - 60.0f, collision::kSightMask);
+                    hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != t.uid))
+                    continue;
             const float range = t.range > 0 ? t.range : anims_.grapple.range; // 0x698AC0: the target's own, else g_grapple's
             cs.push_back({t, d, angleBetween(laraFwd, vec3(vec2(v), 0)), angleBetween(camFwd, t.pos - cam_.position),
                           std::asin(std::clamp(v.z / d, -1.0f, 1.0f)), glm::length(t.pos - gadget) < range});
