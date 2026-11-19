@@ -94,7 +94,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-AUD-003 | audio | One global music volume fade unidentified | Not reproducible (RE item) | unknown | — |
 | OU-AUD-004 | audio | Script sound wait threads, uber mover / physics-lever sounds missing | Open | pre-existing | C-VM |
 | OU-AUD-005 | audio | Music loads synchronously (tracks start a few frames early) | Open | pre-existing | — |
-| OU-CAM-001 | camera | Moving platforms do not carry the camera focus | Reproduced | pre-existing | — |
+| OU-CAM-001 | camera | Moving platforms do not carry the camera focus | Fixed on int/brief (lag/band); residual height offset → OU-CAM-005 | pre-existing | — |
 | OU-CAM-002 | camera | Swim camera follows the wave bob exactly | Not reproduced | new-feature defect [I] | C-SWELL |
 | OU-CAM-003 | camera | Motorcycle camera distance / swing are placeholders | Open | pre-existing | — |
 | OU-CAM-004 | camera | Reveal camera blend in/out ours; gamebase time scales not applied | Open | pre-existing | — |
@@ -110,10 +110,11 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
 | OU-PLY-012 | collision | No depenetration pass | Reproduced (idle) | pre-existing | — |
-| OU-PLY-013 | Lara | Slope-slide upper bound: OU treats slide-flagged faces flatter than 28° as standable (tru.exe slides) | Open (asm-verified) | pre-existing | — |
-| OU-PLY-014 | Lara | Ledge wall-side limit not loosened to 0.5236 for fast arcs | Open (asm-verified) | pre-existing | — |
-| OU-SWM-001 | swimming | Swim turn rates differ from tru.exe and are left/right uneven; snap-back on release too fast | Reproduced (Wine-measured) | pre-existing | C-MEASURE |
-| OU-SWM-002 | swimming | Surface swim velocity lags heading ~9° vs ~16° | Open | pre-existing | C-MEASURE |
+| OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
+| OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed on int/brief (21678c2; full ctest pending) | pre-existing | — |
+| OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Reproduced | pre-existing | — |
+| OU-SWM-001 | swimming | Swim turn: symmetric and view-relative now (d122a62); steady circle still +2.3 / +1.8 deg/s fast (tru.exe settles 42.1° off its camera line, ours 44.2°) | Partly fixed on int/brief | pre-existing | C-MEASURE |
+| OU-SWM-002 | swimming | Surface swim velocity lag: now 5.25 / 5.37° vs tru.exe 5.4 / 5.6° (0x755A00 blend 0.25 = player data +0x240) | Fixed on int/brief (d122a62) | pre-existing | C-MEASURE |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
 | OU-GRP-002 | grapple | Swing dynamics unmeasured (five failed Wine sessions) | Open | pre-existing | C-MEASURE |
@@ -125,11 +126,11 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-003 | progression | ch05: west recess from the T junction is shut | Open | pre-existing | — |
 | OU-PZL-004 | progression | ch06: hallway roll stops on a 45° floor before plane 1203 | Open | pre-existing | — |
 | OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Open | pre-existing | C-CHART |
-| OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Open | pre-existing | C-JOINT |
-| OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Open | pre-existing | C-JOINT |
+| OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed on int/brief (ecf03db); ch09 scenario still parked (2 grapple issues) | pre-existing | C-JOINT |
+| OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed on int/brief (test bug, 2e6ef11) | pre-existing | C-JOINT |
 | OU-PZL-008 | progression | ch13: grapple ring 4951 not offered from the east ledge | Open | pre-existing | — |
 | OU-PZL-009 | progression | Switch `modifiable` 7 lock honoured only for one-way switches (ch15 exit switch) | Open | pre-existing | C-VM |
-| OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Open | pre-existing | C-JOINT |
+| OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed on int/brief (b716e88); pull speed unverified | pre-existing | C-JOINT |
 | OU-PZL-011 | progression | ch17: hammer chamber lower steps absent from collision | Open | pre-existing | — |
 | OU-PZL-012 | progression | ch21: Natla platform jump falls short; fight sequence unplayable by input | Open | pre-existing | C-VM |
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
@@ -143,7 +144,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
 | OU-VEH-001 | motorcycle | Brake strength, slopes, coasting, top speed, pit jump unmeasured | Open | pre-existing | C-MEASURE |
-| OU-PHY-001 | physics | Fixed joints, body-A motion, joint types 5 / 7 on moving bodies not simulated | Open | pre-existing | C-JOINT |
+| OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Open (narrowed) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
 | OU-TST-001 | tests | No walkthrough section plays end to end; 14 parked known-gap scenarios | Open | pre-existing | — |
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
@@ -548,7 +549,14 @@ saved slot requests with a 2 s fade-in [I] (ROADMAP L64). Status · Origin: Open
 - Wine reference (WineMeasure 2026-11-16, `tools/wine-ref/sessions/l2_cliffclimb_sea.sh`; REFERENCE_COMPARISON new rows):
   in tru.exe the pivot and camera ride the deck exactly. Camera minus root stays 369..375 while the deck heaves ±203,
   lag 0.00 s. Ours: camera minus root 321..714, lag 0.75 s (original waves) / 1.0 s (FFT).
-- Status · Origin: Reproduced · pre-existing (27a5d8e, 2026-10-31).
+- Fix (agent/PlatformCam-2 80ce86f, merged into int/brief): the carrier's per-tick translation is added to the
+  focus, the camera position and the desired point before easing, as tru.exe 0x609830 / 0x5FF650 do, and her move is
+  made carrier-relative (0x5E7EF0). Measured: lag 0 ticks (was 57) and band 3.7 wide (tru.exe 5.9).
+- **Residual:** camera minus root is 486-490 in ours vs 369-375 in tru.exe, about 115 units higher. The likely cause
+  is the deck camera distance (OU-CAM-005: 1264.2 vs 948.2). Not counted as matching tru.exe. The test
+  `StreamReal.CameraRidesTheYachtDeck` asserts lag, band width and pivot−root, not the absolute level (checked).
+- Tilt is not carried [U], and freeze request 55 is not modelled.
+- Status · Origin: Fixed (lag / band) on int/brief, residual open · pre-existing.
 
 **OU-CAM-002 Swim camera follows the wave bob exactly**
 - Repro: `--chapter 1` surface swim / tread on the swell (Enhanced + FFT).
@@ -662,6 +670,13 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
 - OU `wallSide` (`Player.cpp:1526-1530`) always uses 0.2618.
 - Which object +0x80 belongs to is unresolved [U].
 - Status · Origin: Open · pre-existing.
+
+**OU-PLY-015 Land state on a dropping deck** (PlatformCam-2, 2026-11-16)
+- Repro: chapter 2 start, 15 s idle on the yacht deck (tru.exe waves); test `StreamReal.CameraRidesTheYachtDeck`.
+- Actual: ours enters State::Land once as the deck drops (bone 108 drops 60 for 0.7 s; pivot−root dips to 426).
+- tru.exe (Wine deck traces): stays in one chart state (rq 46) for all 15 s.
+- Suspected cause [I]: the ground follow on a dropping carrier lets her go airborne for a tick.
+- Status · Origin: Reproduced · pre-existing.
 
 ### Swimming (OU-SWM)
 

@@ -147,6 +147,22 @@ struct Weather {
     float wind[2] = {0.25f, 0.1f}; // world xy drift per unit of fall
 };
 
+// Time of day (render/TimeOfDay.hpp, docs/RENDERING.md "Time of day"): what the frame changes in the uploaded unit's
+// lighting besides the look's ambient and fog (FrameOptions::unitLook / fog, which the app tints itself).
+struct Sky {
+    bool sun = false;                         // sunDirection / sunColor replace the scene's sun (false: keep the scene's)
+    float sunDirection[3] = {0, 0, -1};       // as scene::Environment: the direction the light travels
+    float sunColor[3] = {};                   // intensity x colour; 0 = unlit (the sun below the horizon, no moon)
+    float lightMaps[3] = {1, 1, 1};           // light-map scale: TRU's GlobalParams c148 / c149 (default 1, 0x7731B0)
+    float probes[3] = {1, 1, 1};              // light-probe (IrradianceState slot 1..) scale of the dynamic objects
+    float backdrop[3] = {1, 1, 1};            // multiplies the exterior terrain (sky domes, panoramas) and the empty sky
+    float stars = 0;                          // star field over the backdrop, 0..1
+    float moonToward[3] = {0, 0, 1};          // unit vector to the moon disc
+    float moon = 0;                           // moon disc brightness, 0..1
+    // The backdrop pass (multiply + stars / moon) changes the frame.
+    bool backdropPass() const { return stars > 0 || moon > 0 || backdrop[0] != 1 || backdrop[1] != 1 || backdrop[2] != 1; }
+};
+
 struct RgbaImage {
     std::span<const uint8_t> rgba; // tightly packed RGBA8, top row first
     int width = 0, height = 0;
@@ -266,6 +282,9 @@ struct FrameOptions {
     // The FFT ocean's clock, seconds: the sim's sea clock (game ticks + alpha), so the drawn swell is the one floating
     // bodies ride (render::ocean::Swell). < 0 = `time`.
     double oceanTime = -1.0;
+    // Time of day in an outdoor unit (render/TimeOfDay.hpp): sun, light-map / light-probe scales, the backdrop pass after
+    // the exterior terrain. nullptr = the game's own lighting.
+    const Sky* sky = nullptr;
 };
 
 // Ray-tracing state for diagnostics and tests.

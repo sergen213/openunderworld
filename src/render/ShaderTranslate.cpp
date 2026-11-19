@@ -29,7 +29,7 @@ const char* kPrelude = R"(#version 450
 #define OU_SAMPLER(n) layout(binding = n)
 #define OU_DFDY_SIGN -1.0
 #endif
-OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[576]; vec4 irradiance[896]; } ouFrame;
+OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[576]; vec4 irradiance[896]; vec4 unlit; } ouFrame;
 OU_UBO(1, 0, 1) uniform OuMaterial { vec4 vs[40]; vec4 ps[40]; vec4 fixedParams; } ouMat;
 #ifdef OU_VULKAN
 layout(push_constant) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; uint irradiance; vec4 inst[3]; vec4 waves[4]; } ouObj;
@@ -243,6 +243,11 @@ public:
             if (in.op == If || in.op == IfC || in.op == Loop || in.op == Rep || in.op == Else) ++depth;
         }
         if (p_.pixel) { // after the body: statement() set out_.sunLit, lightsLit_ and ambientRead_
+            // Programs reading no light register at all (light baked into vertex colours / textures: foliage) take the
+            // time of day's tint (FrameBlock::unlit), except additive ones (bit 1: glows, fire) and the exterior (bit 4:
+            // the backdrop pass tints it).
+            if (!out_.sunLit && !ambientRead_ && !lightsLit_)
+                post = "    if ((int(ouMat.fixedParams.w) & 18) == 0) oC0.rgb *= ouFrame.unlit.rgb;\n" + post;
             // Ambient / indirect registers read by the body are scaled by the screen-space AO (render/sun.glsl
             // ouAoBegin; 1 without OU_SUN or without a map this frame).
             if (ambientRead_)

@@ -4,6 +4,7 @@
 #include "config/Config.hpp"
 #include "app/game/Graphics.hpp"
 #include "render/Water.hpp"
+#include "render/TimeOfDay.hpp"
 #include "save/Save.hpp"
 #include "locale/Locale.hpp"
 #include "ui/Art.hpp"
@@ -1127,6 +1128,101 @@ TEST(WaterColor, ConfigUnitChapterPreset) {
     EXPECT_NEAR(glm::dot(glm::vec3(lagoon[1]), glm::vec3(0.2126f, 0.7152f, 0.0722f)), 1.0f, 1e-5f);
     EXPECT_GT(lagoon[1].b, lagoon[1].r); // blue-green, not grey
     for (int i = 0; i < 3; ++i) EXPECT_LT(lagoon[2][i], lagoon[0][i]);
+}
+
+// Time of day (render/TimeOfDay.hpp): config spellings and menu rows, where it applies, and the light it gives. The sun
+// of l2_cliffclimb (unit record: direction (-0.15, 0.56, -0.82), colour (1.44, 1.46, 1.04), fog 0.44 0.48 0.49).
+TEST(TimeOfDay, ConfigUnitsAndLight) {
+    config::GraphicsConfig g;
+    EXPECT_EQ(config::resolve(g).timeOfDay, 0); // default: the game's own lighting
+    g.timeOfDay = "cycle", g.dayLength = 48;
+    EXPECT_EQ(config::resolve(g).timeOfDay, 3);
+    EXPECT_EQ(config::resolve(g).dayLength, 48.0f);
+    g.dayLength = 0.5f;
+    EXPECT_THROW(config::resolve(g), std::runtime_error);
+    g.dayLength = 24, g.timeOfDay = "dusk";
+    EXPECT_THROW(config::resolve(g), std::runtime_error);
+    namespace fs = std::filesystem;
+    const fs::path p = fs::temp_directory_path() / ("ou_time_of_day_" + std::to_string(::getpid()) + "/config.json");
+    config::Config cfg;
+    cfg.graphics.timeOfDay = "night", cfg.graphics.dayLength = 30;
+    config::save(p, cfg);
+    EXPECT_EQ(config::load(p).graphics.timeOfDay, "night");
+    EXPECT_EQ(config::load(p).graphics.dayLength, 30.0f);
+    fs::remove_all(p.parent_path());
+    // menu rows: mode by index; a finer launcher day length stays while its choice is untouched
+    g.timeOfDay = "night", g.dayLength = 30;
+    auto m = app::graphicsMenu(g, {}, {0, 0});
+    EXPECT_EQ(m.timeOfDay, 2);
+    EXPECT_EQ(m.dayLength, 1); // nearest: 24 minutes
+    app::Display d;
+    m.timeOfDay = 3;
+    app::applyGraphicsMenu(m, g, d);
+    EXPECT_EQ(g.timeOfDay, "cycle");
+    EXPECT_EQ(g.dayLength, 30.0f);
+    m.dayLength = 3;
+    app::applyGraphicsMenu(m, g, d);
+    EXPECT_EQ(g.dayLength, 96.0f);
+
+    scene::Environment sun;
+    sun.valid = sun.sun = true;
+    const glm::vec3 dir = glm::normalize(glm::vec3(-0.15f, 0.56f, -0.82f));
+    sun.sunDirection[0] = dir.x, sun.sunDirection[1] = dir.y, sun.sunDirection[2] = dir.z;
+    sun.sunColor[0] = 1.44f, sun.sunColor[1] = 1.46f, sun.sunColor[2] = 1.04f;
+    sun.fogColor[0] = 0.44f, sun.fogColor[1] = 0.48f, sun.fogColor[2] = 0.49f;
+    scene::Environment indoor;
+    indoor.valid = true;
+    // where: open sky (a sun, exterior terrain or rain cells), never Croft Manor (the prologue's burning manor)
+    EXPECT_TRUE(render::timeOfDayApplies("l2_cliffclimb", sun, false, false));
+    EXPECT_TRUE(render::timeOfDayApplies("l6_ship_exterior", indoor, true, true));
+    EXPECT_FALSE(render::timeOfDayApplies("l1_kraken_room", indoor, false, false));
+    EXPECT_FALSE(render::timeOfDayApplies("l3_main_bedroom", indoor, false, true));
+    EXPECT_FALSE(render::timeOfDayApplies("l3_main_hall", indoor, true, true));
+
+    // the cycle passes the unit's own sun at its native hour: the default lighting
+    const render::SunArc arc = render::sunArc(sun);
+    EXPECT_GT(arc.nativeHour, 6.0f);
+    EXPECT_LE(arc.nativeHour, 12.0f);
+    const auto native = render::timeOfDayLight(sun, arc.nativeHour, true);
+    ASSERT_TRUE(native.sky.sun);
+    for (int k = 0; k < 3; ++k) {
+        EXPECT_NEAR(native.sky.sunDirection[k], dir[k], 1e-3f) << k;
+        EXPECT_NEAR(native.sky.sunColor[k], sun.sunColor[k], 1e-3f) << k;
+        EXPECT_NEAR(native.ambient[k], 1.0f, 1e-3f) << k;
+        EXPECT_NEAR(native.sky.lightMaps[k], 1.0f, 1e-3f) << k;
+    }
+    EXPECT_FALSE(native.sky.backdropPass()); // nothing to tint by day under this unit's own (bright) fog
+    EXPECT_EQ(render::timeOfDayHours(render::TimeOfDay::Cycle, 0, 24, arc.nativeHour), double(arc.nativeHour));
+    EXPECT_NEAR(render::timeOfDayHours(render::TimeOfDay::Cycle, 6 * 60, 24, 20.0), 2.0, 1e-9); // a quarter day, wrapped
+
+    // night: moonlight from above in the sun's slot, cool and dimmer than the sun; baked light and fog darkened; stars
+    // and the moon only under a clear sky
+    const auto night = render::timeOfDayLight(sun, render::timeOfDayHours(render::TimeOfDay::Night, 0, 24, 0), true);
+    ASSERT_TRUE(night.sky.sun);
+    EXPECT_LT(night.sky.sunDirection[2], -0.3f);                 // shining down
+    EXPECT_GT(night.sky.sunColor[2], night.sky.sunColor[0]);     // blue
+    EXPECT_GT(night.sky.sunColor[2], 0.2f);                      // bright enough to read
+    EXPECT_LT(night.sky.sunColor[1], 0.5f * sun.sunColor[1]);
+    for (int k = 0; k < 3; ++k) {
+        EXPECT_LT(night.ambient[k], 0.5f) << k;
+        EXPECT_LT(night.sky.lightMaps[k], 0.6f) << k;
+        EXPECT_LT(night.fog[k], 0.3f) << k;
+    }
+    EXPECT_GT(night.sky.moonToward[2], 0.3f); // the disc stands where the moonlight comes from
+    for (int k = 0; k < 3; ++k) EXPECT_NEAR(night.sky.moonToward[k], -night.sky.sunDirection[k], 1e-4f);
+    EXPECT_GT(night.sky.stars, 0.9f);
+    EXPECT_GT(night.sky.moon, 0.9f);
+    const auto rainy = render::timeOfDayLight(sun, 21.0, false);
+    EXPECT_EQ(rainy.sky.stars, 0.0f);
+    EXPECT_EQ(rainy.sky.moon, 0.0f);
+    // sunset: the sun low and golden (red over blue), still the light source
+    const auto dusk = render::timeOfDayLight(sun, 17.5, true);
+    EXPECT_GT(dusk.sky.sunColor[0], 1.5f * dusk.sky.sunColor[2]);
+    EXPECT_LT(dusk.sky.sunDirection[2], 0.0f);
+    // a sunless outdoor unit keeps its (absent) sun and loses less of its lamp-lit light maps
+    const auto sunless = render::timeOfDayLight(indoor, 21.0, true);
+    EXPECT_FALSE(sunless.sky.sun);
+    EXPECT_GT(sunless.sky.lightMaps[0], night.sky.lightMaps[0]);
 }
 
 // The l1 sea is two stacked water boxes in separate units (l1_seatop z -7177..1400, l1_seafloor -48412..-6295; values
