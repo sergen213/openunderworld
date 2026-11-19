@@ -1236,6 +1236,12 @@ public:
     std::optional<int32_t> cameraRecordVolume() const {
         return orbit_.hintMarkup <= -2 ? std::optional<int32_t>(-2 - orbit_.hintMarkup) : std::nullopt;
     }
+    // A trigger's yaw (false) / pitch (true) angle override (commands 3..6, World.cpp): {cur angle, speed, hold, target
+    // angle, speed, hold, clock, time} as tru.exe's +0x1248 / +0x1278 +4..+0x20 (angles in the force sets' frame, rad).
+    std::array<float, 8> cameraOverride(bool pitch) const {
+        const auto& o = pitch ? orbit_.pitchOverride : orbit_.yawOverride;
+        return {o.cur[0], o.cur[1], o.cur[2], o.tgt[0], o.tgt[1], o.tgt[2], o.clock, o.time};
+    }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
     float air() const { return std::max(0.0f, air_); }
@@ -1583,6 +1589,18 @@ private:
             float t = 0, time = 0; // seconds since `to` changed, blend length (0 = at once)
             vec3 now() const { return time > 0 && t < time ? glm::mix(from, to, t / time) : to; }
         } pivotAdd, lookAdd;
+        // Trigger commands 3 / 5 (yaw) and 4 / 6 (pitch): an angle override (+0x1248 / +0x1278, 0x609F10 / 0x609D40) that
+        // drives the angle in place of the force set while its speed is not 0 (0x5FA4A0). cur = what the last one had got
+        // to, tgt = {angle rad (in the force sets' frame: +90 deg), speed rad/s, hold s}; clock = +0x1C (0.25 = blended),
+        // time = +0x20 seconds since it was set.
+        struct Override {
+            float cur[3] = {}, tgt[3] = {};
+            float clock = 0.25f, time = 0;
+            bool active() const { return std::abs(tgt[1]) > 0.001f; }
+        } yawOverride, pitchOverride;
+        float limitTime = 0;     // seconds since the look limits' target changed (0x609C00: +0x30, blended over 0.25 s)
+        vec3 limitTo{0, 0, -1};  // that target (yawRange, pitchLo, pitchHi); z < y: none yet
+        std::vector<int32_t> triggers; // the camera trigger volumes she was inside when 0x601D30 last ran (+ the mode)
     } orbit_;
     float cameraSwing_ = 0; // cameraSwing()
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp

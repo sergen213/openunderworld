@@ -65,15 +65,34 @@ constexpr CamForceSet kYawSets[] = {
     {11, 0, 180, 0, 2, {{3, 0, kSideCurve}, {1, 0.02f, nullptr}}},            // default (settings +0xE4)
     {15, -60, 10, 3, 1, {{7, 20, nullptr}}},                                  // free climbing, hanging
 };
+// Global data (*0xE7EE50) +0x168 pitch sets (Wine 2026-11-19, w2/CamRest8/gd.py): 0 / 6 / 26 are the ids trigger command 1
+// names (l4_pool 5515, l5_valaskjalf 6756 / 6757 / 6760).
 constexpr CamForceSet kPitchSets[] = {
+    {0, 0, 90, 0, 1, {{2, 0.1f, nullptr}}},
     {4, -7.5f, 5, 0, 1, {{2, 1, nullptr}}},     // on foot
+    {6, 0, 0, 0, 0, {}},
     {16, 45, 5, 2, 1, {{4, 0, kStickCurve}}},   // ladders, pillars
     {17, -10, 70, 0, 1, {{5, 1, nullptr}}},     // perches
+    {26, -15, 200, 0, 0, {}},
 };
 const CamForceSet* camForceSet(const CamForceSet* sets, size_t n, int id) {
     for (size_t i = 0; i < n; ++i)
         if (sets[i].id == id) return &sets[i];
     return nullptr; // none: no forces, speed 0 (0x608D20)
+}
+// Camera angle overrides by id (trigger commands 3 / 4: global data +0x170 yaw / +0x174 pitch, 12-byte records {angle deg,
+// speed deg/s, hold s}; Wine 2026-11-19, gd.py): the ids the volumes use (yaw 7: l4_pool 5523, l4_temple 4981; pitch 9:
+// l3_main_bedroom 4468, l3_stairhall 4703, l3_chamberrockhall 4603; pitch 1: l4_traprooms 5805..5808).
+struct CamOverride {
+    uint32_t id;
+    float v[3];
+};
+constexpr CamOverride kYawOverrides[] = {{7, {0, 1500, 0}}};
+constexpr CamOverride kPitchOverrides[] = {{1, {-35, 80, 0}}, {9, {-5, 1500, 0}}};
+const float* camOverride(const CamOverride* list, size_t n, uint32_t id) {
+    for (size_t i = 0; i < n; ++i)
+        if (list[i].id == id) return list[i].v;
+    return nullptr; // 0x5FE7D0 / 0x5F9910: out of range = none (switches the override off)
 }
 // What the forces read this tick (0x5F2180's inputs).
 struct ForceInputs {
@@ -963,25 +982,59 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // Wine, l2_cliffclimb yacht deck: one trigger (3852) in CameraManager +0x8C, priority 1, commands {0xD 948.17},
     // {0x18 5 deg, 250 deg/s, no forces}, {0x1C (0, 0, -79.01)}; the camera at 948.2 with camera - pivot z -82.6
     // (-948.2 sin 5 deg) and the look tracker +0x20 = (0, 0, -79.01): its look vector +0x160 0.22 deg up, at the pivot
-    // less 79.01 (OU-CAM-005). Not modelled [U]: 3 / 4 / 5 / 6 (the yaw / pitch override +0x1248 / +0x1278, 0x609D40),
-    // 1 / 0x10 (sets by id other than ours), 7 / 8 limits, 9, 0xC, 0x14 (a unit fade record's flag 0x20, 0x5ED2D0).
+    // less 79.01 (OU-CAM-005).
+    // - 1 sets the pitch force set by id (0x5F98E0: global data +0x168, as the mode lists' sets);
+    // - 3 / 4 (by id: global data +0x170 / +0x174, 12-byte records) and 5 / 6 (inline {angle, speed, hold}) set the yaw /
+    //   pitch override (0x609F10 on +0x1248 / +0x1278, below);
+    // - 7 / 8 the yaw / pitch look limits {centre, range} (0x609C00 -> 0x607A30, as the mode lists' 7 / 8);
+    // 0x601D30 runs when the mode or the active trigger list changes (enter / leave, 0x5F29A0 / 0x5F2A70; the mode, 0x6020E0),
+    // not every frame: the sets, overrides and limits are (re)set then. An override no trigger sets is switched off there
+    // (0x608F10). Not modelled [U]: 9 (+0x133C), 0xC (a cut: 0x601D30 ends in 0x6017D0, which ends every blend and puts
+    // the camera at +0x1320 at the override's / force set's target angles; not separable from a teleport's camera reset
+    // under Wine, docs/re/CAMERA.md §9), 0x14 (flags focus point `id` of her unit for this frame: flag 0x20 on unit data
+    // +0x204 record +0xFC, 0x5ED2D0, that the focus-point blend 0x5F0B30 / 0x5F1540 at +0x14C0 gathers), 0x16 (the
+    // LaraCombatCamera's distance, read only by 0x603190: ours has no combat camera).
     constexpr int kInlineSet = 1000;
     const script::Object* recordVolume = nullptr; // the last 0x12 of a priority-0 / priority-1 trigger
     const script::Object::CameraCommand* recordCommand = nullptr;
     bool recordLate = false;
     vec3 pivotAdd(0), lookAdd(0);
     float pivotTime = 0, lookTime = 0;
+    const float* yawOverride = nullptr; // the override record a trigger sets ({angle deg, speed deg/s, hold s}), if any
+    const float* pitchOverride = nullptr;
+    // The active triggers in CameraManager +0x8C order: entering appends (0x5E85B0), leaving moves the last entry into the
+    // freed slot (0x5F2A70: rep movs of entry count - 1); 0x601D30 applies them in that order, so of two overlapping
+    // volumes the one entered later wins (Wine: 4468 entered inside 4476 sets the distance, 790.1). Only volumes with a
+    // camera block enter it (0x5E7BF0).
+    std::vector<int32_t> active(orbit_.triggers.empty() ? orbit_.triggers.end() : orbit_.triggers.begin() + 1, orbit_.triggers.end());
+    const auto isActive = [&](const script::Object* o) {
+        return !bike && o && o->kind == script::Kind::Volume && o->inside && !o->dead && !o->camera.empty();
+    };
+    for (size_t i = 0; i < active.size();)
+        if (isActive(script_.find(active[i]))) ++i;
+        else active[i] = active.back(), active.pop_back();
+    for (const auto& o : script_.objects())
+        if (isActive(&o) && std::ranges::find(active, o.uid) == active.end()) active.push_back(o.uid);
+    std::vector<int32_t> triggers{mode.id};
+    triggers.insert(triggers.end(), active.begin(), active.end());
     const auto inlineSet = [](OrbitState::InlineSet& set, const script::Object::CameraCommand& c) {
         set.angle = c.arg[0], set.speed = c.arg[1], set.dir = uint8_t(std::bit_cast<uint32_t>(c.arg[2]));
         set.count = uint8_t(std::min<size_t>(c.forces.size(), 2));
         for (size_t i = 0; i < set.count; ++i) set.force[i] = {uint8_t(c.forces[i].type), c.forces[i].k, c.forces[i].curve};
     };
-    if (!bike)
-        for (const bool late : {false, true})
-            for (const auto& o : script_.objects())
-                if (o.kind == script::Kind::Volume && o.inside && !o.dead && o.cameraLate == late)
-                    for (const auto& c : o.camera) {
+    for (const bool late : {false, true})
+        for (const int32_t uid : active)
+            if (const script::Object& o = *script_.find(uid); o.cameraLate == late)
+                for (const auto& c : o.camera) {
+                        const uint32_t id = std::bit_cast<uint32_t>(c.arg[0]);
                         switch (c.command) {
+                        case 1: pitchSet = int(id); break;
+                        case 3: yawOverride = camOverride(kYawOverrides, std::size(kYawOverrides), id); break;
+                        case 4: pitchOverride = camOverride(kPitchOverrides, std::size(kPitchOverrides), id); break;
+                        case 5: yawOverride = c.arg; break;
+                        case 6: pitchOverride = c.arg; break;
+                        case 7: mode.yawRange = glm::radians(c.arg[1]); break; // centre c.arg[0] 0 (behind her) in its one use
+                        case 8: mode.pitchLo = glm::radians(c.arg[0] - c.arg[1]), mode.pitchHi = glm::radians(c.arg[0] + c.arg[1]); break;
                         case 2: case 0xD: mode.distance = c.arg[0]; break;
                         case 0x15: mode.floorProbe = false; break;
                         case 0x17: inlineSet(orbit_.yawInline, c), yawSet = kInlineSet; break;
@@ -997,11 +1050,38 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
                         case 0x12: recordVolume = &o, recordCommand = &c, recordLate = late; break;
                         default: break;
                         }
-                    }
+                }
     for (auto [add, to, time] : {std::tuple{&orbit_.pivotAdd, pivotAdd, pivotTime}, std::tuple{&orbit_.lookAdd, lookAdd, lookTime}}) {
         if (to != add->to) add->from = add->now(), add->to = to, add->t = 0, add->time = time;
         add->t += dt;
     }
+    // Overrides (+0x1248 yaw / +0x1278 pitch): 0x609F10 sets one (null: 0x608F10 switches it off) after taking what the
+    // last had got to (cur += (tgt - cur) x min(1, 4 x clock)), and zeroes its clock and time; 0x607CA0 puts the clock at
+    // 0.25 (a cut 0x6017D0, look input, a level record 0x5FFA1F, reaching the target). Wine 2026-11-19 (w2/CamRest8/
+    // fast.py, l3_main_bedroom: walking into 4468 {2 790.14}, {4 id 9 = (-5, 1500, 0)} inside 4476 {0x18 -10 1000}):
+    // +0x1278 after entering = cur (0.198, 3.493, 0) = id 9's target x 0.133 (two frames of clock), tgt 0, clock 0.25,
+    // time 0.017: the pitch turned the 5 deg from -10 up to -5 in two frames (1.7 + 3.3 deg as the speed blends in),
+    // switched itself off (hold 0), and 4476's pitch set took it back to -10. Leaving reset both clocks (0.05 a frame later).
+    const auto setOverride = [](OrbitState::Override& o, const float* r) {
+        const float f = std::min(1.0f, o.clock * 4.0f);
+        for (int i = 0; i < 3; ++i) o.cur[i] += (o.tgt[i] - o.cur[i]) * f;
+        o.tgt[0] = r ? glm::radians(r[0] + 90.0f) : 0.0f, o.tgt[1] = r ? glm::radians(r[1]) : 0.0f, o.tgt[2] = r ? r[2] : 0.0f;
+        o.clock = 0, o.time = 0;
+    };
+    const auto switchOverrideOff = [&](OrbitState::Override& o) { setOverride(o, nullptr), o.clock = 0.25f; }; // 0x608F10 + 0x607CA0
+    // Look input (0x5FFD18) switches both off while either is on; so does a level record while it applies (0x5FF930 ->
+    // 0x5FFA1F, every frame).
+    if (((a.look.x != 0 || a.look.y != 0) && (orbit_.yawOverride.active() || orbit_.pitchOverride.active())) || orbit_.hintMarkup != -1)
+        switchOverrideOff(orbit_.yawOverride), switchOverrideOff(orbit_.pitchOverride);
+    // 0x601D30 ran: the mode or the list of active triggers changed.
+    if (triggers != orbit_.triggers) {
+        orbit_.triggers = std::move(triggers);
+        setOverride(orbit_.yawOverride, yawOverride);
+        setOverride(orbit_.pitchOverride, pitchOverride);
+    }
+    // Their clocks run at 1 x dt up to 0.25 every frame, on or off (Wine: +0x1294 written to 0 climbs 0.067 / 0.117 /
+    // 0.183 / 0.25 at 65 ms reads; the writer is not among the absolute-offset uses of +0x1264 / +0x1294).
+    for (auto* o : {&orbit_.yawOverride, &orbit_.pitchOverride}) o->clock = std::min(0.25f, o->clock + dt);
     const auto inlineForceSet = [](const OrbitState::InlineSet& s) {
         CamForceSet set{kInlineSet, s.angle, s.speed, s.dir, s.count, {}};
         for (int i = 0; i < s.count; ++i) set.force[i] = {s.force[i].type, s.force[i].k, s.force[i].curve.data()};
@@ -1023,17 +1103,24 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         c.fromSpeed += f * ((b ? glm::radians(b->speed) : 0.0f) - c.fromSpeed);
         c.fromSign = c.sign, c.fromSet = c.set, c.set = id, c.sign = 0, c.blend = 0;
     };
+    // A trigger's limits (7 / 8, 0x609C00) blend in from where the limits are over 0.25 s as the mode's do.
+    const vec3 limitTo(mode.yawRange, mode.pitchLo, mode.pitchHi);
     if (mode.id != orbit_.mode) {
-        orbit_.from = orbit_.now, orbit_.mode = mode.id, orbit_.modeTime = 0;
+        orbit_.from = orbit_.now, orbit_.mode = mode.id, orbit_.modeTime = 0, orbit_.limitTime = 0;
         switchForces(orbit_.yawForce, kYawSets, std::size(kYawSets), yawSet);
         switchForces(orbit_.pitchForce, kPitchSets, std::size(kPitchSets), pitchSet);
     } else {
         if (yawSet != orbit_.yawForce.set) switchForces(orbit_.yawForce, kYawSets, std::size(kYawSets), yawSet);
         if (pitchSet != orbit_.pitchForce.set) switchForces(orbit_.pitchForce, kPitchSets, std::size(kPitchSets), pitchSet);
+        if (limitTo != orbit_.limitTo && orbit_.limitTo.z >= orbit_.limitTo.y) {
+            orbit_.from.yawRange = orbit_.now.yawRange, orbit_.from.pitchLo = orbit_.now.pitchLo, orbit_.from.pitchHi = orbit_.now.pitchHi;
+            orbit_.limitTime = 0;
+        }
     }
-    orbit_.modeTime += dt;
+    orbit_.limitTo = limitTo;
+    orbit_.modeTime += dt, orbit_.limitTime += dt;
     {
-        const float f = std::min(1.0f, orbit_.modeTime / 0.5f), g = std::min(1.0f, orbit_.modeTime * 4.0f);
+        const float f = std::min(1.0f, orbit_.modeTime / 0.5f), g = std::min(1.0f, orbit_.limitTime * 4.0f);
         const auto& o = orbit_.from;
         orbit_.now = {glm::mix(o.offset, mode.offset, f), glm::mix(o.zones, mode.zones, f), glm::mix(o.yawRange, mode.yawRange, g),
                       glm::mix(o.pitchLo, mode.pitchLo, g), glm::mix(o.pitchHi, mode.pitchHi, g)};
@@ -1244,7 +1331,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
                 recordDistance = true;
             }
         }
-    } else if (weight > 0 && !bike && a.look.x == 0 && a.look.y == 0) {
+    } else if (orbit_.hintMarkup == -1 && !bike && a.look.x == 0 && a.look.y == 0) {
         const ForceInputs in{move, meanMove, glm::length(a.move), camX, dt};
         const float off = std::remainder(cam_.yaw - s.yaw, 6.2831853f); // 0 = behind her
         // 0x608B60: during a switch (f = min(1, 4 x clock) < 1) the rate is speed x strength(B) x f x (1 - f) x
@@ -1259,9 +1346,24 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
             const float rate = glm::mix(c.fromSpeed, speedB, f) * camForceStrength(B, off, in) * f * other * dt;
             return std::clamp(std::remainder(glm::mix(targetA, targetB, f) - angle, 6.2831853f), -rate, rate);
         };
-        cameraSwing_ = force(orbit_.yawForce, kYawSets, std::size(kYawSets), kPi / 2 + off) * weight;
-        cam_.yaw += cameraSwing_;
-        cam_.pitch += force(orbit_.pitchForce, kPitchSets, std::size(kPitchSets), kPi / 2 + cam_.pitch) * weight;
+        // An active override (speed != 0, 0x5FA4A0) turns its angle in place of the force set, not scaled by the look-idle
+        // weight (0x5FFE47 / 0x5FFEB8 jump past the fmul): 0x609D40 turns toward its target (clamped to its own limits
+        // when +0x2C is set [U: no writer seen]) at mix(cur, tgt, min(1, 4 x clock)) speed; within 1 deg of it after more
+        // than mix(cur, tgt) hold seconds since it was set, it switches itself off (0x608F10, clock 0.25).
+        const auto overrideStep = [&](OrbitState::Override& o, float angle) {
+            const float f = std::min(1.0f, o.clock * 4.0f);
+            const float hold = glm::mix(o.cur[2], o.tgt[2], f), speed = glm::mix(o.cur[1], o.tgt[1], f);
+            const float diff = std::remainder(o.tgt[0] - angle, 6.2831853f);
+            const float step = (diff < 0 ? -1.0f : 1.0f) * std::min(std::abs(diff), speed * dt);
+            if (std::abs(std::remainder(o.tgt[0] - (angle + step), 6.2831853f)) < glm::radians(1.0f) && hold < o.time)
+                switchOverrideOff(o);
+            o.time += dt;
+            return step;
+        };
+        if (orbit_.yawOverride.active()) cameraSwing_ = overrideStep(orbit_.yawOverride, kPi / 2 + off), cam_.yaw += cameraSwing_;
+        else if (weight > 0) cameraSwing_ = force(orbit_.yawForce, kYawSets, std::size(kYawSets), kPi / 2 + off) * weight, cam_.yaw += cameraSwing_;
+        if (orbit_.pitchOverride.active()) cam_.pitch += overrideStep(orbit_.pitchOverride, kPi / 2 + cam_.pitch);
+        else if (weight > 0) cam_.pitch += force(orbit_.pitchForce, kPitchSets, std::size(kPitchSets), kPi / 2 + cam_.pitch) * weight;
     }
     // [I] riding without looking: swing behind the bike, faster the faster it goes
     if (bike && bike->phase == BikePhase::Ride && a.look.x == 0 && bike->speed > 0)

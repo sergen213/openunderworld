@@ -208,7 +208,7 @@ relative to the platform.
 | 6 | Camera types switch through a TransitionCamera with per-(from, to) durations from a resource and a fixed 1/30 s step | Reveal splines blend in/out with our own times (OU-CAM-004); no general transition camera | src/game/Camera.cpp; BUGS OU-CAM-004 |
 | 7 | Vehicle: VehicleCamera (type 13) entered via a transition while player +0xF00 is set | `kDistance = 1711` on the bike, our ratio | World.cpp:986 "[I] VehicleCamera"; OU-CAM-003 |
 | 8 | Scope (type 14) and LaraCombatCamera (type 12) are separate cameras | One orbit camera with modes | World.cpp |
-| 9 | Camera trigger volumes (0x5CD520 → 0x5F29A0 / 0x5F2A70 → 0x601D30 / 0x6019D0) override the camera while Lara is inside | Done (OU-CAM-005, OU-CAM-006): distance 2 / 0xD, inline force sets 0x17 / 0x18 with their forces, 0x15 (no ray probe), tracker offsets 0x19 / 0x1B (pivot) and 0x1A / 0x1C (look point), level records 0x12; volumes anchored to a moving object ride it. Not modelled: 1 / 3–6 / 7 / 8 / 9 / 0xC / 0x14, 0x16 (LaraCombatCamera), kind-1 blocks (AnchoredCamera). §9 | Wine `w2/DeckCam6/`, `w2/CamZones7/`; `ScriptRealData.CameraTriggerCommandSurvey`, `StreamReal.CameraRidesTheYachtDeck`, `StreamReal.CameraTriggerVolumeSetsDistanceAndPitch`, `StreamReal.CameraTriggerForceSetEasesPitch`, `StreamReal.CameraTriggerRecordHoldsTheCamera` |
+| 9 | Camera trigger volumes (0x5CD520 → 0x5F29A0 / 0x5F2A70 → 0x601D30 / 0x6019D0) override the camera while Lara is inside | Done (OU-CAM-005, OU-CAM-006): distance 2 / 0xD, pitch set by id 1, angle overrides 3–6 (applied when the trigger list or mode changes), look limits 7 / 8, inline force sets 0x17 / 0x18 with their forces, 0x15 (no ray probe), tracker offsets 0x19 / 0x1B (pivot) and 0x1A / 0x1C (look point), level records 0x12; volumes anchored to a moving object ride it. Not modelled: 9, 0xC (cut), 0x14 (focus points), 0x16 (LaraCombatCamera), kind-1 blocks (AnchoredCamera). §9 | Wine `w2/DeckCam6/`, `w2/CamZones7/`, `w2/CamRest8/`; `ScriptRealData.CameraTriggerCommandSurvey`, `StreamReal.CameraRidesTheYachtDeck`, `StreamReal.CameraTriggerVolumeSetsDistanceAndPitch`, `StreamReal.CameraTriggerForceSetEasesPitch`, `StreamReal.CameraTriggerRecordHoldsTheCamera`, `StreamReal.CameraTriggerPitchOverrideAndLimits` |
 
 Camera distance on the l2_cliffclimb yacht deck (OU-CAM-005, tru.exe 948.2 in mode 1, ours was 1264.22): it is the
 target distance +0x1320 (0x5FFB00 returns +0x1D4 to it), set by a **camera trigger volume**. Writers of +0x1320: the
@@ -261,17 +261,17 @@ priority; 9 kind-1 volumes: l1_kraken_room 49 / 291 / 327 / 328 / 353, l2_maproo
 | Command | Uses | tru.exe (0x6019D0 unless noted) | OpenUnderworld |
 |---|---|---|---|
 | 0 | 4 | nothing | — |
-| 1 | 4 | pitch set by id (0x5F98E0 → 0x609C40 on +0xDA0): ids 6, 0x1A, 0 | not modelled (ours knows sets 4 / 16 / 17 only) |
+| 1 | 4 | pitch set by id (0x5F98E0: global data +0x168 → 0x609C40 on +0xDA0): ids 0x1A, 6, 0 | done: sets 0 / 6 / 26 added to `kPitchSets` (global data read under Wine) |
 | 2 | 129 | distance +0x1320 | done |
-| 3 / 4 | 2 / 7 | yaw / pitch override by id (0x5FE7D0 / 0x5F9910 → 0x609F10 on +0x1248 / +0x1278) | not modelled |
-| 5 / 6 | 1 / 15 | inline yaw / pitch override {angle, speed, gain} (0x609F10; active when the speed is not 0, 0x5FA4A0): drives the angle in place of the force set (0x5FFB00 → 0x609D40) | not modelled (3 of the 15 sixes have speed 0) |
-| 7 / 8 | 1 / 4 | yaw / pitch limits (0x609C00 on +0x890 / +0x8C4) | not modelled |
-| 0xC | 2 | flag → 0x6017D0 after the apply | not modelled |
+| 3 / 4 | 2 / 7 | yaw / pitch override by id (0x5FE7D0 / 0x5F9910: global data +0x170 / +0x174, 12-byte {angle, speed, hold} → 0x609F10 on +0x1248 / +0x1278): yaw id 7, pitch ids 9 and 1 | done (`kYawOverrides` / `kPitchOverrides`); 4 Wine-verified at 4468 |
+| 5 / 6 | 1 / 15 | inline yaw / pitch override {angle, speed, hold} (0x609F10) | done (same functions as 3 / 4) |
+| 7 / 8 | 1 / 4 | yaw / pitch limits {centre, range} (0x609C00 → 0x607A30 on +0x890 / +0x8C4, as the mode lists' 7 / 8; 0x608700 clamps to centre ± range) | done; 8 Wine-verified at 4349 (7: centre 0 in its one use) |
+| 0xC | 2 | flag → 0x6017D0 at the end of 0x601D30: a cut | not modelled (below) |
 | 0xD | 109 | distance +0x1320 (byte +0xC: cap +0x1340, read by 0x6000EF) | done (distance; the cap not) |
 | 0x12 | 116 | level camera record (arg 0 → unit data +0x20C, 0x70 bytes) | done: the unit's record list (CollisionMesh::cameraRecords), in every mode, under a markup's record unless the priority is set |
-| 0x14 | 53 | (unit, id) → unit data +0x200 / +0x204 record (0x100 bytes) flag 0x20 (0x5ED2D0) [U: a fade record] | not modelled (no camera motion) |
+| 0x14 | 53 | flags focus point `id` of her unit (unit data +0x200 count / +0x204 records of 0x100 bytes, the `focuspoint` script type 0x7758B0..0x775C20) with 0x20 at +0xFC for this frame (0x5ED2D0; 0x5F1480 clears them) | not modelled (below) |
 | 0x15 | 33 | clears +0x1338: no on-foot ray probe (0x600591) | done |
-| 0x16 | 54 | LaraCombatCamera distance +0x14C (0x603190; not read by 0x6019D0) | not modelled (ours: mode 23) |
+| 0x16 | 54 | LaraCombatCamera distance +0x14C (0x603190 reads the active triggers' 0x16 itself; 0x6019D0 skips it) | not modelled: ours has no LaraCombatCamera (combat aim = mode 23) |
 | 0x17 / 0x18 | 24 / 155 | inline yaw / pitch force set {angle, speed, dir, count, forces} (0x609C40); 23 / 66 carry forces (types 2, 3, 5, 7) | done, with their forces |
 | 0x19 / 0x1A | 65 / 73 | (x, y, z) onto the focus / look tracker (+0x3B0 / +0x620 +0x20, 0x5FE730 → 0x608280) | done (every offset is (0, 0, z); world frame [I]) |
 | 0x1B / 0x1C | 47 / 51 | as 0x19 / 0x1A, blending over arg 3 s when byte arg 4 is set (0x608200) | done |
@@ -297,3 +297,45 @@ Wine (2026-11-19, `openunderworld-work/w2/CamZones7/camz.py`, l2_cliffclimb; our
   `script::Runtime` tests a volume whose body or offset is set in that frame (`World::poseAnchored`).
 - Not separable at 3845 ({0x12}, {0x15}, {0x1C −158.03 0.2 s}): held mid-air she hangs (mode 11 / 37), and the mode
   records also set the look offset (0, −31.61, −158.03), the probe 0 and a record.
+
+**Angle overrides (3..6) and limits (7 / 8)**, agent/CamRest8. 0x601D30 runs when the mode or the active trigger list
+changes (enter / leave via 0x5F29A0 / 0x5F2A70, mode via 0x6020E0 / 0x6021B0), not every frame; an override no trigger
+sets is switched off there (flags +0xB / +0xC → 0x608F10). Override object (+0x1248 yaw, +0x1278 pitch): +0 owner, +4
+cur {angle, speed, hold}, +0x10 target {angle (deg + 90) rad, speed rad/s, hold s}, +0x1C clock, +0x20 time since set,
++0x24 / +0x28 / +0x2C own limits (no writer seen). 0x609F10: cur += (target − cur) × min(1, 4 × clock), target = the
+record, clock = time = 0 (null record: 0x608F10, target 0). Active while |target speed| > 0.001 (0x5FA4A0). 0x5FFB00 runs,
+per controller, a level record (0x5FA500) else an active override (0x609D40, **not** scaled by the look-idle weight:
+0x5FFE47 / 0x5FFEB8 skip the fmul) else the force set; look input switches both overrides off (0x5FFD18), and so does a
+level record every frame (0x5FF930 → 0x5FFA1F). 0x609D40: speed and hold = mix(cur, target, min(1, 4 × clock)); the angle
+turns by sign × min(|wrapped gap|, speed × dt); once within 1° after more than `hold` seconds it switches itself off
+(0x608F10 + 0x607CA0 clock 0.25); time += dt. The clock runs at 1 × dt up to 0.25 every frame, on or off (Wine: written
+to 0 it reads 0.067 / 0.117 / 0.183 / 0.25 at 65 ms intervals; its writer was not found among the absolute-offset uses).
+Global data (*0xE7EE50) lists read under Wine (`w2/CamRest8/gd.py`): +0x164 18 yaw sets, +0x168 36 pitch sets, +0x170 9
+yaw overrides, +0x174 12 pitch overrides; the volumes use yaw override 7 (0°, 1500°/s, 0), pitch overrides 9 (−5°, 1500°/s,
+0) and 1 (−35°, 80°/s, 0), pitch sets 26 (−15°, 200°/s, no forces), 6 (0, 0) and 0 (0°, 90°/s, force type 2 k 0.1).
+The list +0x8C is in entry order: entering appends (0x5E85B0), leaving moves the last entry into the freed slot (0x5F2A70,
+`rep movs` of 8 dwords); 0x601D30 walks it in that order (priority 0 first, then the rest), so the volume entered later
+wins — ours keeps the same list (`OrbitState::triggers`, saved).
+
+Wine (2026-11-19, `openunderworld-work/w2/CamRest8/fast.py` / `camz.py`, l3_main_bedroom after a new game, tru.exe frame):
+
+- 4468 ({2 790.14}, {4 id 9}) inside 4476 ({2 948.17}, {0x19 / 0x1A z −126.42}, {0x18 −10° 1000°/s, one force}),
+  walked in with the pitch at −10.00: distance target 790.1 (4468 is applied after 4476); +0x1278 = cur (0.198, 3.493,
+  0) = id 9's target × 0.133, target 0, clock 0.25, time 0.017 — the override blended its speed in for two frames, turned
+  the pitch 1.7° + 3.3° to −5, switched itself off (hold 0), and 4476's set took the pitch back to −10.00. Leaving
+  switched both overrides off (clocks 0.05 one sample later). A teleport into a volume is no test: tru.exe's camera
+  reset sets the pitch override itself (current angle, 300..400°/s) after the trigger's.
+- 4349 (l3_bedroom_hall, {8 −10 10}): +0x8C4 = centre 1.396 (80°), range 0.175 (10°); the mouse moves the pitch no
+  further than 0.00 up and −20.00 down (ours: pitch within [c − r, c + r] as the mode lists' 8).
+- Not verified: 0xC (l1_krakenstairs_b 599: teleported in, the yaw jumped to her heading and the pitch sat at −7.50 = the
+  sets' targets, but the distance eased 1262 → 1092 instead of jumping to 474, and a teleport resets the camera behind
+  her by itself; keys did not reach the game in that session). 0x6017D0: both trackers at once (0x6084A0(1)), override
+  clocks 0.25 (0x607CA0), force switch clocks done (0x607C00), then +0x150 / +0x90 = the pivot + the angles of the
+  active override's target, else the force set's (0x5FA440 / 0x608980), else 90° (0x8555C0), at +0x1320 in the frame
+  +0xD0 (0x435220); with a level record, its point.
+- 0x14 = **focus points** (not a fade record): the 0x100-byte records at unit data +0x200 / +0x204 are the `focuspoint`
+  script type's (NtFocusPoint 0x7B7A00; method 1 0x7758B0 tests +0xFC bit 4 = enabled). 0x5F0B30 gathers up to 32
+  records of the loaded units with +0xFC & 0x24 (enabled, or flagged this frame by a trigger) whose +0 point is within
+  the +0x18 radius (bit 2) / passes the view test 0x5EA3D0 with +0x1C (bit 8) / is not hidden from the camera by
+  0x493330 (bit 1); 0x5F1540 blends their points into the +0x14C0 point that 0x6009C0 turns the look toward by +0x204.
+  Not modelled (a subsystem of its own: the weights 0x5F0DF0..0x5F12F0 are not decoded).

@@ -294,6 +294,9 @@ nlohmann::json World::serializeRuntime() const {
         return nlohmann::json{s.angle, s.speed, s.dir, std::move(f)};
     };
     const auto trackerAdd = [&](const OrbitState::TrackerAdd& t) { return nlohmann::json{v(t.from), v(t.to), t.t, t.time}; };
+    const auto override = [](const OrbitState::Override& s) {
+        return nlohmann::json{s.cur[0], s.cur[1], s.cur[2], s.tgt[0], s.tgt[1], s.tgt[2], s.clock, s.time};
+    };
     const auto& o = orbit_;
     // The markup as (unit, local index): global indices depend on the streamed set; a trigger volume's record as its uid.
     nlohmann::json hint = nullptr;
@@ -328,7 +331,8 @@ nlohmann::json World::serializeRuntime() const {
                         {"orbit", {v(o.desired), o.dist, o.speed, o.valid, o.yaw, o.pitch, limits(o.from), limits(o.now), o.mode,
                                    o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint,
                                    forces(o.yawForce), forces(o.pitchForce), o.along, inlineSet(o.yawInline), inlineSet(o.pitchInline),
-                                   trackerAdd(o.pivotAdd), trackerAdd(o.lookAdd)}},
+                                   trackerAdd(o.pivotAdd), trackerAdd(o.lookAdd), override(o.yawOverride), override(o.pitchOverride),
+                                   o.limitTime, v(o.limitTo), o.triggers}},
                         {"spline", std::move(spline)}, {"blendOut", blendOut_}, {"blendFrom", pose(blendFrom_)}}},
             {"hair", std::move(hair)}, {"playerUnit", playerUnit_}, {"air", air_}, {"submerged", submerged_},
             {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"limitsOff", multibodyLimitOff_}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)},
@@ -418,6 +422,18 @@ void World::restoreRuntime(const nlohmann::json& j) {
         };
         if (a.size() > 21) // older saves: no trigger sets or offsets in flight
             o.yawInline = inlineSet(a.at(18)), o.pitchInline = inlineSet(a.at(19)), o.pivotAdd = trackerAdd(a.at(20)), o.lookAdd = trackerAdd(a.at(21));
+        const auto override = [](const nlohmann::json& s) {
+            OrbitState::Override r;
+            for (int i = 0; i < 3; ++i) r.cur[i] = s.at(i).get<float>(), r.tgt[i] = s.at(3 + i).get<float>();
+            r.clock = s.at(6).get<float>(), r.time = s.at(7).get<float>();
+            return r;
+        };
+        if (a.size() > 26) { // older saves: no overrides; the limits' clock is the mode's; the triggers apply afresh
+            o.yawOverride = override(a.at(22)), o.pitchOverride = override(a.at(23));
+            o.limitTime = a.at(24), o.limitTo = v(a.at(25)), o.triggers = a.at(26).get<std::vector<int32_t>>();
+        } else {
+            o.limitTime = o.modeTime;
+        }
         const auto& f = cam.at("focus");
         const std::optional<vec3> focus = f.is_null() ? std::nullopt : std::optional<vec3>(v(f));
         CameraState c = cam_;
