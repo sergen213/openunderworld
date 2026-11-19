@@ -179,10 +179,16 @@ type 2, is [I].
     written back to `Joint1` after each step; a hinge x is unwrapped across ±π. [I] A tru.exe solver step of 1/60 s:
     of the vertical prismatic uber joints, five motors are weaker than their body's weight per 30 Hz frame but stronger
     than per 1/60 s (hallway ramps 395 vs 100 × 5.72, wall lever 319 vs 60 × 5.72, cliffclimb ledge, empty throne,
-    windup statue), and only the latter lets them hold their bodies as the states expect. [I] Body A is the world (its
-    own joint motion does not carry B); fixed joints (8) therefore pin nothing and are not created; the multi-axis
-    type 5 (scales) is not simulated; watches on it never fire. Type 7 (the Thor pillars, the push blocks:
-    docs/GAMEPLAY.md "Push and pull objects") is a translation-only body with the object's collision (`Joint3`).
+    windup statue), and only the latter lets them hold their bodies as the states expect. Body A: each Jolt joint body
+    stands on a world-fixed constraint, but its pose follows body A's (`World::uberSectionBody`: body B = body A's pose
+    × the joint's motion, recursively; tru.exe's constraints join the two section bodies with pivot and axis fixed in
+    body A, 0x4D1040) [I: body A's motion is not fed back into the Jolt joint body's dynamics]; the bedroom door's ring
+    rides the leaf's slide, the calendars' ring hinge 2 its prismatic section 6. Fixed joints (8) are recorded live
+    (`UberRuntime::fixed`) and pose body B where body A is, also on a freed body A (ms_ani_tentacle_gearr) [I: the
+    rider does not add its mass to body A's loose body]. A freed section's hinge riders hang about the pivot and axis
+    its motion carries and leave with its velocity (`World::uberFreeSection`). The multi-axis type 5 (scales) is not
+    simulated; watches on it never fire. Type 7 (the Thor pillars, the push blocks: docs/GAMEPLAY.md "Push and pull
+    objects") is a translation-only body with the object's collision (`Joint3`).
   - Every uber object's sections start in their default state at spawn (each section component exists from the
     instance's creation, 0x4D3DA0), not when a script first touches it: the l7 Thor towers extend on their motors at
     load. Model 0 of an uber object follows the joint of the section that uses it when it has no loose / carried
