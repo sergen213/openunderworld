@@ -341,7 +341,9 @@ void GameSound::syncUnits(const game::World& world) {
     }
     for (auto it = units_.begin(); it != units_.end();) { // streamed out: their sounds end
         if (present.contains(it->first)) { ++it; continue; }
-        for (const auto& [k, h] : it->second.handles) player_.stop(h);
+        // Cut, not released: a release envelope would keep reading the markers' plex nodes erased below (a stop keeps
+        // releasing voices' instance alive; the second stop ends it).
+        for (const auto& [k, h] : it->second.handles) player_.stop(h), player_.stop(h);
         it = units_.erase(it);
     }
 }
