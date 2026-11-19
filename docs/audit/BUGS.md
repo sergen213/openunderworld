@@ -153,7 +153,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Reproduced (Wine-measured) | pre-existing | — |
-| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: one bite in ~4.5 min) | Reproduced (Wine-measured) | pre-existing | — |
+| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040) | pre-existing | — |
 
 ## Root-cause clusters
 
@@ -589,9 +589,25 @@ Status · Origin: Open · pre-existing.
 1264.2 (mode 1 `distance`, `World.cpp`). What sets 948.2 is unknown: a level camera record or mode command [U].
 Source: WineMeasure 2026-11-16, REFERENCE_COMPARISON new rows. Status · Origin: Reproduced · pre-existing.
 
-**OU-CMB-003 Shark aggression** — in l2_cliffclimb ours' sharks bite within 5 s of Lara entering the water at both
-measured points. In tru.exe there was one bite in about 4.5 min in the water (WineMeasure 2026-11-16). AI trigger
-distance and cooldown are not decoded [U]. Status · Origin: Reproduced · pre-existing.
+**OU-CMB-003 Shark aggression**
+- Repro: l2_cliffclimb, into the sea and tread (`w2/WineMeasure/ours/tread_*`): ours bit within ~7 s and every 1.5..3 s.
+- Expected [O Wine 2026-11-19, `tools/wine-ref/sessions/l2_cliffclimb_sharks.sh`, traces `w2/SharkAi6/s1`, `s2`]:
+  treading 300 s at the yacht and 300 s in open water: 0 bites; the sharks see her (sense flags 0x80F7) but run
+  EnemyBehavior_Search, never Close / Circle. Close (vftable 0x856B3C), Circle (0x6298C0) and CloseCombat (0x6391F0) need her
+  reachable: 0x660640 → 0x64A5B0 takes the nearest point of the shark's NavPower 3D space (AI +0x5030, bfx Mover3D from
+  node +0x154, 0x637B20) within enemy data +0x84 (948.2) across / +0x88 (395.1) up-down. That space's top: shark origins
+  never above 892.2 under the sea volume's top; pinned 500 under she is engaged, treading down to 494 under not. In
+  reach (dive, pinned 500..1100 under): Close 2.0..5.6 s / Circle median 7.0 s at 4164, a pass per 14 s per shark, 6
+  bites of 200 in 232 s by two sharks (0.78 / min each, first 13..26 s); every pass within 370 bit. No guard zones.
+- Fix (76cc040): `Enemy::reachable` / `kSwimCeiling` (out of reach she counts as unseen), sharks swim no higher than
+  that top; Chase = a pass of the combat record's +4..+8 counts (0x6108A0), then `Mode::Circle`; bite 200 from node
+  +0xC4 record +0x50; speed 1780 / circle 1492 measured. [I] calibrated: kPassBite 6/29, circle 7..13 s (EnemyBehavior_Circle
+  end condition and what makes a pass come near not decoded); ours idles where tru.exe searches.
+- Test: `AiReal.CliffclimbSharksSpareATreadingLara` (treading 300 s at 64 / 64 / -380: 0 bites, 0 engaged; 1100 under:
+  first bite 22.1 s, 1.47 / min per engaged shark, bounds 8..45 s and 0.3..1.6); before: 113 bites in 120 s, first
+  6.7 s. `AiReal.SharksSpawnSwimBiteAndDie`, combat / ch07 self-tests, `ctest -L protected` pass.
+- Open: tru.exe has no shark 4023 at the unit load (ours places it: a third engaged shark); per-shark rate ×1.9 of
+  tru.exe's small sample. Status · Origin: Fixed on agent/SharkAi6 · pre-existing.
 
 ### Lara's controller and traversal (OU-PLY)
 

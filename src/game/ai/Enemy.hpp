@@ -134,6 +134,10 @@ struct EnemyTuning {
     float minFloorNormalZ = 0.7f;
     float gravity = 5.72443f * 900.0f; // units/s^2 (tru.exe 5.72443 units per 30 Hz frame^2)
     float flySpeed = 700.0f;       // [I] flyers, units/s
+    // Aquatic reach (enemy data +0x88; CloseCombat 0x6391F0 / Circle 0x6298C0 -> 0x660640 -> 0x64A5B0): Lara is reachable
+    // when the nearest point of its swim space lies within enemy data +0x84 across and this up / down of her. 0: no test.
+    float reachHeight = 0;
+    std::array<float, 2> closeTime{}; // s an aquatic Close lasts at most (combat record node +0xCC +4 / +8 counts); 0: no limit
     std::vector<Attack> attacks;   // every record, node order
     std::vector<DeathClip> deaths;
     Regenerate regenerate;
@@ -281,8 +285,10 @@ bool isEnemyObject(const cdc::BigfileSet& bigfile, const std::string& name);
 // Investigate: walking to a disturbance (EnemyBehavior_Investigate*).
 // Knocked: off its feet from Lara's melee (a kick, a swung or thrown object): the knock-down clip, then the get-up clip
 // (EnemyType::knockFront / knockBack), or the vault reaction (EnemyType::vaultClip) once; then it hunts on.
+// Circle: an aquatic enemy between its passes at Lara (EnemyBehavior_Circle of the CreatureVolumetric tree): it swims
+// round her for a while, then closes in again (Chase = EnemyBehavior_Close).
 enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep, Cling, Drop, Down, Rise, Return, Cover, Crawl,
-                  Patrol, Search, Flank, Dodge, Investigate, Knocked };
+                  Patrol, Search, Flank, Dodge, Investigate, Knocked, Circle };
 std::string_view modeName(Mode m);
 
 // What enemies hunt: Lara's feet and whether she can still be hurt.
@@ -337,7 +343,7 @@ struct EnemyState {
     uint32_t visited = 0;    // mode 4: points visited this round (+0x654)
     int phase = 0;           // Patrol: 0 walking, 1 idle at the point, 2 look-turn; Search: 0 start, 1 to last known, 2 idle, 3 to a
                              // possible position; Investigate: 0 start clip, 1 walking there, 2 end clip
-    float phaseTime = 0, phaseLength = 0; // s in the phase, s it lasts (idles)
+    float phaseTime = 0, phaseLength = 0; // s in the phase, s it lasts (idles); Chase (aquatic Close) / Circle: s it lasts
     vec3 goal{0};            // Search / Flank / Investigate: where it walks
     float searchTime = 0;    // s searching
     float flankWait = 0, dodgeWait = 0; // s before it flanks / sidesteps again
@@ -503,6 +509,10 @@ private:
     float aimError(vec3 p) const; // |heading - bearing to p|, rad
     void move(const collision::CollisionMesh& col, vec3 delta, float dt);
     void fly(const collision::CollisionMesh& col, vec3 delta);
+    // Aquatic: the highest its origin swims, the top of the type-10 water box it is in less kSwimCeiling; none outside a box.
+    std::optional<float> swimCeiling(const collision::CollisionMesh& col) const;
+    // Aquatic: Lara swims within its reach (EnemyTuning::reach / reachHeight) of its swim space.
+    bool reachable(const collision::CollisionMesh& col, const Target& lara) const;
     void die(const Hit& hit);
     bool getsUp(const Hit& hit) const; // Regenerate::kills match (0x67F040)
     vec3 up() const;                    // body up axis (tilted while clinging)

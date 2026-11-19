@@ -3740,21 +3740,50 @@ spawns included. `Enemies::checkpoint()` / `Enemies::reset()` (the dead-at-check
 placement with full health, generators re-armed) remain for a World without units. Generator spawns are stashed with
 their generator's uid when their unit streams out and re-spawned when it streams back in.
 
-Sharks [O]: enemy family, class 1, behaviour 2 (the bats' flyer tree), health 500 / 800, senses above, death record
-with four type-2 entries, no attack records (bite damage stays at the inferred 120 default [I]); clips
+Sharks [O]: enemy family, class 1, behaviour 2 (the CreatureVolumetric tree 0x612BD0, as bats), health 500 / 800,
+senses above, death record with four type-2 entries, no attack records (+0x68..+0x9C); clips
 `swim_forward_slow/medium/fast`, `burst_attack`, `bite_2` (blueshark), `death` (8 s), `death_float_loop`. They spawn,
-chase with 3D clip-driven swimming and sphere collision, bite, and die into the floating loop. Type-10 boxes confine
-swimming when present; the real shark units expose none, so their live behavior uses collision-based free swimming.
+swim in 3D with sphere collision inside their type-10 water box, bite, and die into the floating loop.
 `AiReal.SharksSpawnSwimBiteAndDie` verifies populations and shark 4020 chasing, biting and dying.
+
+Shark reach and passes (OU-CMB-003; tru.exe under Wine 2026-11-19, `tools/wine-ref/sessions/l2_cliffclimb_sharks.sh`,
+traces in `openunderworld-work/w2/SharkAi6/s1`, `s2`):
+- [O Wine] Treading at the yacht and in open water, 300 s each (her origin 62 .. -386 in our frame on tru.exe's waves):
+  no bite. The sharks' sense of her stays set (flags 0x80F7: seen) but they run EnemyBehavior_Search (SearchToPossiblePos
+  / SearchToLastKnownPos), never Close / Circle; 4020 keeps its patrol 13 km off. Guard zones: none (AI +0x2C90 count
+  0; region AI +0x3EB8 unbounded).
+- [O] Why: Close (vftable 0x856B3C), Circle (can-run 0x6298C0) and CloseCombat (0x6391F0) need her reachable: 0x660640 →
+  0x64A5B0 projects her position into the shark's NavPower 3D space (AI +0x5030, a bfx Mover3D made by 0x637B20 from
+  node +0x154 at its birth) and accepts it only when the nearest point is within enemy data +0x84 (948.2) across and
+  +0x88 (395.1) up / down.
+- [O Wine] The space's top: shark origins never above 892.2 under the sea volume's top (one sample 740, mid-pass);
+  pinned 500 under the top she is engaged (Close / Circle), treading down to 494 under (origin -386) she is not:
+  892.2 - 395.1 = 497.1 [O] matches.
+- [O Wine] Reachable (dive lying 1200 under; pinned 500 / 800 / 950 / 1100 under, 28 s each): the two nearby sharks
+  alternate Close (2.0 .. 5.6 s, median 3.0) and Circle (median 7.0 s, distance median 4164) with short Search phases; a
+  pass every 14 s per shark (29 in 408 shark-seconds). 6 bites of 200 (first 25.7 s after a cold dive, 13 .. 21 s
+  pinned); every Close phase that came within 370 of her bit, none of those that stopped 580 .. 3500 away. Swim
+  speeds (medians): Close 1780, Circle 1492, Search 1196 units/s. The enemy clock (0xECFAF0) runs 30.0 counts/s.
+- Ours: `Enemy::reachable` (aquatic): her origin under the water box's top - `kSwimCeiling` (892.2) + `reachHeight`
+  (enemy data +0x88); out of reach she counts as unseen [I: tru.exe searches, ours idles / patrols]. Sharks swim no higher
+  than that top - 892.2. In reach: Chase is a pass (EnemyBehavior_Close) that lasts at most the combat record's (node
+  +0xCC) +4 .. +8 counts (2 .. 4 s; 0x6108A0 rolls them); [I calibrated] one pass in 6 / 29 comes in to bite (what
+  decides how near a pass comes is not decoded), the others turn away within bite range; after a pass it circles
+  (`Mode::Circle`) at [O] 4164 and 1492 / 1780 of its speed for [I calibrated] 7 .. 13 s (the measured 14 s per pass).
+  Bite damage: node +0xC4 record +0x50 (blueshark 200 = the measured bite; greenland 300; its reader for the bite not
+  traced). Speed: 1780 [O Wine] (the blueshark's swim clips carry no root travel). Test
+  `AiReal.CliffclimbSharksSpareATreadingLara`: treading 300 s at both points and in a -380 trough, no bite and no shark
+  engaged; 1100 under, first bite 8 .. 45 s and 0.3 .. 1.6 bites a minute per engaged shark (tru.exe 0.78).
+- Open: tru.exe has no shark 4023 at the l2_cliffclimb unit load (instance list: 4020-4022); ours places it.
 `AiReal.NagasClingDropBiteSpitAndDie`, `AiReal.SpidersClingDropAndBite` and `AiReal.ThrallsGetUpUnlessMjolnir`
 cover the crawlers and thralls (spawn counts, clinging, walking down the wall / pillar to the floor in l2_norsehub and
 l2_hubhall, bites, the green spit, sleep, the regenerate record, knock-down / get-up timing, Mjolnir kills, cling
 saved); `AiReal.MercsGuardZonesCoverAndAlert` the mercs (below).
-Sharks sense Lara only while she swims (`Target::inWater` = `PlayerState::water >= 0`) [I]: l2_cliffclimb's placed
-sharks 4021-4023 (1100-1900 below the start boat) used to see her on the deck, chase her out of the sea and land on it;
-the original's chapter-2 start (Wine capture, "Chapter starts") has no shark in sight. Out of their medium they stay
-idle (`Ai.SharkIgnoresLaraOutOfWater`, `StreamReal.ChapterStartEnemiesStayInTheirMedium`: no hunting enemy and no
-shark above a dry Lara 5 s into any chapter start).
+Out of the water (on a deck or shore) she is out of their reach: l2_cliffclimb's placed sharks 4021-4023 (1100-1900
+below the start boat) used to see her on the deck, chase her out of the sea and land on it; the original's chapter-2
+start (Wine capture, "Chapter starts") has no shark in sight. They stay idle (`Ai.SharkIgnoresLaraOutOfWater`,
+`StreamReal.ChapterStartEnemiesStayInTheirMedium`: no hunting enemy and no shark above a dry Lara 5 s into any chapter
+start).
 
 Mercs (l1 / l6 ship units: `merc`, `merc_deux`, `merc_generator_run`):
 - Guard zones [O]: each merc intro's own script type (l1_ship_exterior 7780 for 1650, ...) has a native member of
