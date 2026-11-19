@@ -2052,10 +2052,12 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              const auto& s = w.player().state();
              return s.state == State::Climb && s.climbWarp && s.clip.find("_to_") != std::string::npos && s.clipTime > 0.1;
          }},
-        // Swinging on l4_pool's ceiling anchor 5511.
+        // Swinging on l4_pool's ceiling anchor 5511. She walks roped along the drained goo's floor (+y, level along y): -y
+        // she reaches the 64-degree slope at y -540 and stumbles off the rope; before, the back of face 5096 (normal
+        // (-0.48, -0.79, -0.38)) stopped her short of it, which the one-sided sweep (tru.exe 0x461640, Wine) no longer does.
         {"l4_pool", game::Spawn{{4362, -400, 3300}, 0}, 120, 300, [](uint64_t t) {
              game::Actions a;
-             a.move.y = t % 120 < 60 ? 1.0f : -1.0f;
+             a.move.y = t % 120 < 60 ? -1.0f : 1.0f;
              return a;
          }, [](game::World& w) {
              uint32_t depth = 0;
