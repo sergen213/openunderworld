@@ -94,7 +94,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-AUD-003 | audio | One global music volume fade unidentified | Not reproducible (RE item) | unknown | — |
 | OU-AUD-004 | audio | Script sound wait threads, uber mover / physics-lever sounds missing | Open | pre-existing | C-VM |
 | OU-AUD-005 | audio | Music loads synchronously (tracks start a few frames early) | Open | pre-existing | — |
-| OU-CAM-001 | camera | Moving platforms do not carry the camera focus | Fixed on int/brief (lag/band); residual height offset → OU-CAM-005 | pre-existing | — |
+| OU-CAM-001 | camera | Moving platforms do not carry the camera focus | Fixed on int/brief (lag/band); height residual fixed with OU-CAM-005 (agent/DeckCam6) | pre-existing | — |
 | OU-CAM-002 | camera | Swim camera follows the wave bob exactly | Not reproduced | new-feature defect [I] | C-SWELL |
 | OU-CAM-003 | camera | Motorcycle camera distance / swing are placeholders | Open | pre-existing | — |
 | OU-CAM-004 | camera | Reveal camera blend in/out ours; gamebase time scales not applied | Open | pre-existing | — |
@@ -112,7 +112,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-012 | collision | No depenetration pass | Reproduced (idle) | pre-existing | — |
 | OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed on int/brief (21678c2; full ctest pending) | pre-existing | — |
-| OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Reproduced | pre-existing | — |
+| OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Fixed on agent/DeckCam6 (colliders posed after a mid-game rebuild) | pre-existing | — |
 | OU-SWM-001 | swimming | Swim turn: symmetric and view-relative now (d122a62); steady circle still +2.3 / +1.8 deg/s fast (tru.exe settles 42.1° off its camera line, ours 44.2°) | Partly fixed on int/brief | pre-existing | C-MEASURE |
 | OU-SWM-002 | swimming | Surface swim velocity lag: now 5.25 / 5.37° vs tru.exe 5.4 / 5.6° (0x755A00 blend 0.25 = player data +0x240) | Fixed on int/brief (d122a62) | pre-existing | C-MEASURE |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
@@ -152,7 +152,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
-| OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Reproduced (Wine-measured) | pre-existing | — |
+| OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
 | OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: one bite in ~4.5 min) | Reproduced (Wine-measured) | pre-existing | — |
 
 ## Root-cause clusters
@@ -552,11 +552,13 @@ saved slot requests with a 2 s fade-in [I] (ROADMAP L64). Status · Origin: Open
 - Fix (agent/PlatformCam-2 80ce86f, merged into int/brief): the carrier's per-tick translation is added to the
   focus, the camera position and the desired point before easing, as tru.exe 0x609830 / 0x5FF650 do, and her move is
   made carrier-relative (0x5E7EF0). Measured: lag 0 ticks (was 57) and band 3.7 wide (tru.exe 5.9).
-- **Residual:** camera minus root is 486-490 in ours vs 369-375 in tru.exe, about 115 units higher. The likely cause
-  is the deck camera distance (OU-CAM-005: 1264.2 vs 948.2). Not counted as matching tru.exe. The test
-  `StreamReal.CameraRidesTheYachtDeck` asserts lag, band width and pivot−root, not the absolute level (checked).
+- **Residual:** camera minus root was 486-490 in ours vs 369-375 in tru.exe, about 115 units higher. Cause: the deck's
+  camera trigger volume 3852 (OU-CAM-005) sets distance 948.17 and a pitch force set of +5° (camera 83 under the
+  pivot). With it (agent/DeckCam6) camera − root is 376.0 (tru.exe 369.0..374.9; the 1.1 over is our pivot − root
+  458.6 against 451.6..457.5). `StreamReal.CameraRidesTheYachtDeck` now asserts the absolute level from 8 s on (after
+  the 5..7 s look-idle ramp of the forces).
 - Tilt is not carried [U], and freeze request 55 is not modelled.
-- Status · Origin: Fixed (lag / band) on int/brief, residual open · pre-existing.
+- Status · Origin: Fixed (lag / band on int/brief, level on agent/DeckCam6) · pre-existing.
 
 **OU-CAM-002 Swim camera follows the wave bob exactly**
 - Repro: `--chapter 1` surface swim / tread on the swell (Enhanced + FFT).
@@ -582,9 +584,29 @@ VehicleCamera not decoded (AUDIT_A L361). Status · Origin: Open · pre-existing
 **OU-CAM-004 Reveal cameras** — blend in / out ours, key event 7 [U], gamebase time scales not applied (ROADMAP L51).
 Status · Origin: Open · pre-existing.
 
-**OU-CAM-005 Deck camera distance** — on the l2_cliffclimb yacht deck tru.exe's camera distance is 948.2. Ours is
-1264.2 (mode 1 `distance`, `World.cpp`). What sets 948.2 is unknown: a level camera record or mode command [U].
-Source: WineMeasure 2026-11-16, REFERENCE_COMPARISON new rows. Status · Origin: Reproduced · pre-existing.
+**OU-CAM-005 Deck camera distance** — on the l2_cliffclimb yacht deck tru.exe's camera distance is 948.2. Ours was
+1264.2 (mode 1 `distance`, `World.cpp`). Source: WineMeasure 2026-11-16, REFERENCE_COMPARISON new rows.
+- Cause (Wine 2026-11-19, `openunderworld-work/w2/DeckCam6/camtrig.py`): a camera trigger volume. With her on the
+  deck, CameraManager 0xE804F0 +0x10C = 1 active trigger. Its +0x8C entry is the trigger's intro data +0x18 block
+  (priority 1, commands {0xD 948.17}, {0x18 inline pitch force set 5° at 250°/s, no forces}, {0x1C (0, 0, −79.01)}).
+  Its intro is our l2_cliffclimb volume 3852 at (−34899, −15044, 322), half (711, 1128, 479). The earlier DTP reading
+  (CAMERA.md) had paired the boxes with the wrong command lists. Code: 0x5CD520 → 0x5F29A0 / 0x5F2A70 (enter / leave)
+  → 0x5E85B0, applied by 0x601D30 → 0x6019D0 (2 / 0xD → +0x1320, 0x17 / 0x18 → 0x609C40; with count 0 the strength
+  is 1, 0x607B90).
+- The same rule away from the deck: Lara held in volume 3857 ([2 790.14], [0x18 −17° 300°/s]) gives distance 790.1
+  and a camera 231.0 over the pivot in tru.exe.
+- Fix (agent/DeckCam6): `script::Object::camera` holds a volume's inline commands (Script.cpp), and
+  `World::updateOrbitCamera` applies 2 / 0xD and inline yaw / pitch sets without forces of the volumes she is inside
+  (priority 0 first), in every gameplay-camera mode. Measured: deck 948.2 and camera − root 376.0; 3857 790.1 and
+  +231.0. Tests: `StreamReal.CameraRidesTheYachtDeck`, `StreamReal.CameraTriggerVolumeSetsDistanceAndPitch`.
+- Knock-on effects: on the deck the camera is now 948.2 from her, as it is in tru.exe. `StreamReal.YachtCameraTurnsRoundTheCabin`
+  was re-measured in Wine (`spin-deck2.txt`): a mouse turn circles at 948.2 and the cabin pulls it in to 879.9..905.2.
+  The older "1264.2 elsewhere" was measured outside the volume. The `render_golden_cliff_water_*` goldens frame the
+  deck at tick 120 and were re-blessed: Lara is drawn larger, matching the 948/1264 distance ratio.
+- Not modelled [U]: commands 0x19 / 0x1A / 0x1B / 0x1C (tracker records), 0x12 / 0x14 / 0x15 / 4 / 6 / 8 in a volume,
+  kinds 1 / 2 and sets with forces (91 volumes in the game carry commands). The deck volume rides the yacht in tru.exe;
+  ours stays at its intro place (inside it on the deck at every heave).
+- Status · Origin: Fixed on agent/DeckCam6 · pre-existing.
 
 **OU-CMB-003 Shark aggression** — in l2_cliffclimb ours' sharks bite within 5 s of Lara entering the water at both
 measured points. In tru.exe there was one bite in about 4.5 min in the water (WineMeasure 2026-11-16). AI trigger
@@ -675,8 +697,14 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
 - Repro: chapter 2 start, 15 s idle on the yacht deck (tru.exe waves); test `StreamReal.CameraRidesTheYachtDeck`.
 - Actual: ours enters State::Land once as the deck drops (bone 108 drops 60 for 0.7 s; pivot−root dips to 426).
 - tru.exe (Wine deck traces): stays in one chart state (rq 46) for all 15 s.
-- Suspected cause [I]: the ground follow on a dropping carrier lets her go airborne for a tick.
-- Status · Origin: Reproduced · pre-existing.
+- Cause: at 6.5 s a script object spawned, so `syncObjects` rebuilt every collider at its intro frame before her
+  player step. The heaving deck's collider stood at its intro height for that step; her ground probe found nothing and
+  she fell for one tick, then landed (`World::tick` → `syncObjects`, then `Player::tick`, then `tickObjects` poses them).
+- Fix (agent/DeckCam6): after a rebuild in a running world (`ticks_ > 0`) `syncObjects` poses the colliders and uber
+  models where their objects are, as it already did for a restored world. tru.exe has no such global rebuild: each
+  instance's collision follows its own segment matrices. Test: `StreamReal.CameraRidesTheYachtDeck` asserts State::Idle
+  on every tick for 15 s and pivot − root ≥ 446.6 (now 458.6 constant, was dipping to 425.7).
+- Status · Origin: Fixed on agent/DeckCam6 · pre-existing.
 
 ### Swimming (OU-SWM)
 
