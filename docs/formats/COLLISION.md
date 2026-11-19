@@ -80,7 +80,10 @@ TerrainGroup (0x50)
 - Face and BIH sections are 3 resp. 2 bytes shorter than count × stride: the last element is stored without
     its padding [O]. Hence material is read as u8 and node bytes 0x0E–0x0F are padding [I].
 - Winding: floor faces whose CCW normal points up match the render floors (see agreement below) much better than
-  down-facing ones (83 % vs 47 % within 16 units in l4_pool), so [I] CCW = outward/open side. Queries are double-sided.
+  down-facing ones (83 % vs 47 % within 16 units in l4_pool), so [I] CCW = outward/open side. tru.exe's
+  segment-triangle test 0x461640 agrees: it hits a face only from its CCW front (-dot(dir, (v1-v0)x(v2-v0)) > 1.19e-5)
+  [O]; it serves the BIH segment queries 0x462FA0 and 0x46C450 (0x46C450 <- 0x4E8FC0 <- the player-code ray 0x493330).
+  Ours: queries are double-sided except Lara's ground sweep (`kSweepOneSided`, below).
 
 ### Game BIH (bounding interval hierarchy) [O]
 
@@ -212,7 +215,9 @@ l4_ballcourt none.
 - Queries: `raycast` (Möller–Trumbore, double-sided, normal faces the origin; rays within ~1e-5 rad of a face's plane
   miss it), `sweepSphere`/`sweepCapsule`
   (conservative advancement on exact segment–triangle distance; convex distance under translation ⇒ Newton step
-  never overshoots; 1e-3 unit contact tolerance), `closestPoint`, `groundProbe` (ray −Z). All take the tru.exe query mask.
+  never overshoots; 1e-3 unit contact tolerance; flags `kSweepSkipLeaving` = a face touched at t = 0 that the move does
+  not close on is no hit, `kSweepOneSided` = faces met from behind are no hit: both used by `Player::slide`),
+  `closestPoint`, `overlapCapsule`, `groundProbe` (ray −Z). All take the tru.exe query mask.
 
 ## Verification
 

@@ -1490,10 +1490,15 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 
 ## Controller
 
-- Ground: on the first tick after a placement (spawn, load, restore, teleport) a capsule overlapping a wall is pushed
-  out along the face's horizontal normal by the full depth (`Player::depenetrate`; tru.exe under Wine puts her back at
-  the wall's contact within one frame from 10..116 units in, every frame: OU-PLY-012). Then the current clip's root delta (rotated by heading) is the desired move. A capsule from
-  `feet + stepUp` to the head is swept and slid along walls (up to 4 iterations, contact normals flattened), then a ray
+- Ground: every tick in a ground state (idle, walk, run, stop, turn, land, crouch) a capsule overlapping a wall from its
+  front is pushed out along the face's horizontal normal by the full depth (`Player::depenetrate`; tru.exe under Wine
+  puts her back at the wall's contact within one frame from 10..116 units in, every frame: OU-PLY-012). Then the
+  current clip's root delta (rotated by heading) is the desired move. A capsule from `feet + stepUp` to the head is
+  swept and slid along walls (up to 4 iterations, contact normals flattened). The sweep is one-sided (only faces met
+  from their CCW front: tru.exe's segment-triangle test 0x461640, which serves the player-code ray 0x493330 through
+  0x4E8FC0 / 0x46C450 [O]; whether her proxy's wall contacts use it is [U]) and skips faces touched at the start that
+  the move does not close on (it used to apply the whole move past every face ahead after brushing one). A roll ending
+  under a ceiling too low to stand crouches (chart S7 T250). Then a ray
   from `feet + stepUp` down `stepUp + stepDown` snaps to the floor. Whether the face under her is stood on is `Player::floorKind`
   (section "Slopes and slides": by client flag and angle); a too-steep floor still counts
   when a standable face lies within 20 units of its height 60 units to a side (`Player::standable`: floor bumps, seams;
@@ -4493,9 +4498,14 @@ No side-by-side comparison with the original game was made.
   (`Combat.MjolnirCycleSwingAndGroundPound`), one-handed pistols / Uzis from ledges, free climb, ladders, poles and
   pillars ("One-handed shooting", `CombatReal.PoolLedgeHangShootsPantherOneHanded`), saves storing weapons, clips and
   reserves (`Save::combat`, src/save/Save.hpp:51; `Combat.RespawnKeepsTheLoadout`).
-- Collision: depenetration only on the tick after a placement and only in ground states (`Player::depenetrate`: terrain
-  wall faces; a capsule whose axis passes through a face is left); tru.exe resolves overlaps every frame, but our own
-  [I] moves (roll stand-up under a beam, switch stand points) end inside our collision and would be shoved; query mask 0xFF.
+- Collision: depenetration only in ground states (`Player::depenetrate`: terrain wall faces seen from the front; a
+  capsule whose axis is behind a face or passes through it is left; tru.exe brought her back from 38 past the
+  prologue wall's plane); none in air / hang / swim states (no Wine evidence). The ground sweep is one-sided: of
+  427 802 terrain wall faces (≥ 100 square units, kSolidMask) 244 933 have nothing within 300 behind them, and 37 712
+  of those have a floor 150 behind at body height, so she could walk through them from behind (survey 2026-11-19;
+  most are level shells, e.g. l1_seafloor 4 022, l1_kraken_room 2 892, l7_arctic_sea 2 757) [I: as tru.exe if its
+  proxy uses 0x461640]. Our walk contact is 14 units short of tru.exe's at the prologue wall (y -4385.4 vs -4399.2:
+  tru.exe stops her root 66.2 from the face, under her proxy radius 79.01 [U]); query mask 0xFF.
 - Live keyboard/mouse/gamepad play was not exercised by any recorded run: every screenshot is a scripted replay.
 - Hair is a Verlet chain sim (src/anim/Anim.hpp:185; ROADMAP "Skeleton" row; under-water hair mode not switched);
   editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).
