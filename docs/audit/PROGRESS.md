@@ -193,3 +193,36 @@ Merged into `int/batch7`:
   - Carried over to batch 8: proxy sidedness evidence, a slide-only split, the ch03 switch stand point, and save
     case 9.
 - **Full ctest on int/batch7** (private kwin, game_vulkan_rt_smoke excluded): 100 % of 1078 passed.
+
+## 2026-11-19 — batch 8 (released as 0.56.0)
+
+Merged into `int/batch8` (worktree `openunderworld-work/wt-int8`):
+
+- **agent/TickDepen7** (carried over): OU-PLY-012 is fixed.
+  - Wine (prologue faces 236, 112 / 113): walked into from behind, tru.exe lets Lara through a terrain wall; from
+    the front she stops 68 short. So her wall contacts are one-sided, as the segment-triangle test 0x461640 is.
+  - Changes: the slide skips only faces it leaves (`kSweepSkipLeaving`); the ground sweep is one-sided; push-out
+    runs every ground tick from front faces; the roll ends crouched under a low ceiling (chart S7).
+  - The switch stand point now follows the nearest collision face's normal (0x704730 → 0x6F4740, Wine 174.0 vs
+    ours 179.4).
+  - The save case 9 setup moved off a path that relied on the double-sided sweep.
+  - Open: deep-behind pull-out, air / hang / swim push-out, the walk-stop gap (66-68 vs 79), the double-sided
+    raycast.
+- **agent/Flinch8:** the fire flinch overlay is done.
+  - larabase 21/22 write to the upper-body chart (`*(0xFADB58+0xF14)`, lara.drm `+0x12530`). S0 → S90 is gated by
+    query 0x645. Action 0x760530 plays the pattern on animation section 1 (mask 1 = segments 14..106).
+  - Wine-verified in volume 4529: fade 0.25 / frame in, 0.2 / frame out; restarts while standing.
+  - Open: no flinch in water (condition 0x1F5).
+- **agent/CamRest8:** OU-CAM-006 commands 1, 3-6 (overrides, 0x609F10 / 0x609D40) and 7 / 8 (limits,
+  0x607A30) are implemented. Triggers now apply in entry order and only on change (0x601D30, 0x5E85B0 / 0x5F2A70).
+  - Wine-verified: 4468 (command 4; the distance is 790.1 because of entry order) and 4349 (command 8).
+  - Open: 0xC (cut), 0x14 (focus points), 0x16 (combat camera), 9, AnchoredCamera, OU-CAM-004.
+- **agent/Joint8:**
+  - OU-PHY-001 is fixed: a section pose is body A × joint motion; live fixed joints follow body A; freed riders
+    keep the carried pivot.
+  - OU-PZL-014 was already fixed (6d6c9eb). The ring now rides the leaf, and the test is strengthened against
+    Wine s4.txt. The leaf's launch speed still differs; cause unknown.
+  - OU-PZL-008 (a) is fixed: the sight ray ends at the target's grapple feature (0x713090 → 0x6FF040). The
+    either-end rule is [I].
+  - OU-PZL-008 (b) is narrowed: tru.exe's rope bends are chained physics bodies (0x6A4D40 / 0x699A50 / 0x699960).
+- **Full ctest on int/batch8** (private kwin, game_vulkan_rt_smoke excluded): 100 % of 1084 passed.

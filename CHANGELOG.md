@@ -6,6 +6,21 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-11-19
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: Lara no longer slips through walls and objects when she brushes another surface while moving. Walls block
+  her from the side they face, and she is pushed back out every moment she ends up inside one, as in the original
+  game (measured under Wine). Rolling under a low beam ends in a crouch instead of standing up inside it.
+- Fixed: Lara stands where the original puts her when she uses a switch (measured under Wine).
+- Added: walking or standing in fire, Lara flinches with her upper body, front, left or right, as in the original.
+- Changed: camera zones can now tilt or turn the camera to a set angle, limit how far you can look around, and apply
+  in the order Lara entered them, as in the original.
+- Fixed: parts of puzzle machinery move with whatever they are attached to, and stay attached when that part is
+  knocked loose; the prologue door's ring now falls with its door.
+- Fixed: chapter 13's grapple ring above the temple's east ledge can be targeted.
+
 ## [0.55.0] - 2026-11-19
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
