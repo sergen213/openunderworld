@@ -81,6 +81,7 @@ Rules learnt the hard way (details in docs/REFERENCE_COMPARISON.md "Method"):
 | `pole` | `dump uid...` / `raw uid...` (instance position / rotation / words; -1 = player), `watch n ms uid...`, `yaw <rad>`, `lara x y z`, `post` / `postv` (INSTANCE_Post 0x5B3750) |
 | `ref` | `trace <ms> [vk:down:up ...]` (keys + a line per change: pos +0x20, rot +0x30, vel +0x2A0, state pointer, anim +0xC18), `drop x y z pinms ms vx vy vz [keys]` (pin, release with a velocity, trace with chart request / parent, volume top wt and wave surface sf), `rec <ms> [keys]` (trace + water, breath +0x920, health +0x628, camera +0x90 / pivot +0x100 / distance +0x1D4 / mode +0x1E0), `tp` / `tpv x y z ms`, `god`, `mouse dx dy [steps]`, and the `wmem` memory commands |
 | `enemy` | `list` (instances with an AI: uid, position, object), `watch <ms> <period> uid...` (Lara, health with bites as `hurt` and a heal under 600, per enemy position, distance, Lara-sense flags and the EnemyBehavior / EnemyState objects its AI points at; map the vftables with docs/re/db/rtti.tsv), `zones uid...` (guard zones and region as 0x622C80 tests them) |
+| `section` | `<n> <ms>`: Lara's anim section 1 (weight / step / target, request playing, bone-mask runs; changed dwords per sample) and her upper-body chart (state, pattern +0x488); docs/GAMEPLAY.md "Script flinch overlay" (l3_main_bedroom fire volume 4529) |
 
 `camhook.sh install` detours CameraManager 0x5E8210 (camera mode requests) into a ring buffer; `camhook.sh log`
 prints the requests as `mode@caller`.
