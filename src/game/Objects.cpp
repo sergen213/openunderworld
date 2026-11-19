@@ -1611,6 +1611,12 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
         result = b && b->uid == uid;
         return true;
     }
+    // 26 (0x777C30): Lara's rope is attached to the instance (grapple controller target +0x4C -> +0x44). The rope is hers
+    // from the throw until she lets go (Player::grappleUid).
+    if (type == "larabase" && function == 26) {
+        result = player_.state().grappleUid != 0 && player_.state().grappleUid == uid;
+        return true;
+    }
     // modifiable 1 on a water volume: message 0x30 (amount, time), below (tickWaterStates).
     if (type == "modifiable") {
         if (a.size() == 2 && a[0] > 0 && a[1] > 0) waterDamage_[uid] = {float(a[0]), float(a[1])};
@@ -1782,12 +1788,22 @@ void World::bindMultibody() {
         int index = -1;
         for (const auto& c : colliders_)
             if (c.uid == uid && c.hinge >= 0) { index = c.hinge; break; }
-        if (function == 2) return true; // Enable: bodies are already active once their hinge exists
+        // 2 Enable (0x4A6F70 -> 0x4D8FD0) clears and 3 Disable (0x79ACD0 -> 0x4A6FF0 -> 0x4D8FF0) sets the "fixed" bit 0 of
+        // physics component +0x15C (3 also zeroes its timer +0x160) on every body the instance lists (queries 0x13F count /
+        // 0x140 array, those with a physics component +0x274). Ours keeps the set (multibodyFixed_, saved) for 4; hinged
+        // bodies already simulate once their hinge exists. [I] Neither moves anything of ours: our uber joints run by their
+        // motors and pushes, not by this flag (l2_maproom volumes 2637 / 2638 fix bridge 2667 before cinematics 100 / 105).
+        if (function == 2 || (function == 3 && args.empty())) {
+            if (function == 3) multibodyFixed_.insert(uid);
+            else multibodyFixed_.erase(uid);
+            return true;
+        }
         // 4 (0x4A7070): 1 while an atom's body is still fixed (body +0x15C bit 0, cleared by Enable 0x4A6F70 -> 0x4D8FD0).
-        // Ours: fixed unless simulated, on a hinge or loose [I] (l4_temple floor 5234 polls statue head 5236).
+        // Ours: fixed by multibody 3, else fixed unless simulated, on a hinge or loose [I] (l4_temple floor 5234 polls
+        // statue head 5236).
         auto* o = const_cast<script::Object*>(script_.find(uid)); // World owns object motion
         if (function == 4 && args.empty()) {
-            result = index < 0 && !(o && o->loose);
+            result = multibodyFixed_.contains(uid) || (index < 0 && !(o && o->loose));
             return true;
         }
         // 59 (0x4A93E0): INSTANCE_Post(0x35, joint) breaks a joint (l5_valaskjalf falling bridge 6974 breaks 0, then 1).
@@ -1801,6 +1817,18 @@ void World::bindMultibody() {
         if (function == 89 && args.size() == 3 && args[0].bits == 0 && args[1].bits >= 1 && args[1].bits <= 3) {
             if (!o) return false;
             (o->joint ? *o->joint : o->joint.emplace(script::Object::Joint{})).speed = std::bit_cast<float>(args[2].bits);
+            return true;
+        }
+        // 92 (0x79B8F0 -> 0x4A7300) posts message 0x2C (value) and 93 (0x79B910 -> 0x4A7320) asks query 0xCA. The breakable
+        // component (handlers 0x6D3160 / 0x6D3A20) takes 0x2C while not broken (+0x240 bit 4): the break record whose id
+        // (record +0x18 -> s16) is the value starts (0x6D2BF0); 0xCA answers +0x240 bit 4, broken. l4_temple floor 5234's
+        // vt 54: 92 (1) on itself, its state 1 waits on 93 [O decomp]. Other receivers' 0x2C / 0xCA [U]: no effect, false.
+        if (function == 92 && args.size() == 1) {
+            breakBreakable(uid, int(int32_t(args[0].bits)));
+            return true;
+        }
+        if (function == 93 && args.empty()) {
+            result = breakablePhase(uid) == BreakPhase::Broken;
             return true;
         }
         // 75 (0x4A9AB0 -> 0x4D9F50): limit `args[1]` (1..3) of joint `args[0]` on / off (joint +0x174 bit 2 << (limit - 1);

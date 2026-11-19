@@ -87,6 +87,11 @@ struct Gate {
     std::vector<int32_t> targets; // empty: the trigger itself must move (push blocks)
     int nextChapter = -1;         // >= 0: the gate is a level end (chapter change asserted)
     std::vector<std::pair<int32_t, Action>> first{}; // steps done before the gate (any loaded unit), 4 s apart
+    // messagechannel posts delivered before the steps: {listener uid, text} on the listener's (first) channel (a scripted
+    // event the gate's fixture skips)
+    std::vector<std::pair<int32_t, std::string>> broadcasts{};
+    // handlers run before the steps: {uid, vt, scalar arguments} (an engine or item event the fixture does not play)
+    std::vector<std::tuple<int32_t, int16_t, std::vector<uint32_t>>> calls{};
 };
 struct GateResult {
     bool pass = false;
@@ -422,6 +427,22 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
         }
         }
     };
+    for (const auto& [listener, text] : g.broadcasts) { // what the skipped part of the level posted
+        const auto* o = w.script().find(listener);
+        std::optional<uint32_t> channel;
+        if (o && o->script && o->script->program)
+            for (const auto* t = o->script->program->type(o->script->typeId); t && !channel; t = o->script->program->type(t->superId))
+                for (const auto& m : t->members)
+                    if (!std::strcmp(o->script->program->nativeName(m.typeId), "messagechannel"))
+                        if (const auto f = o->script->fields.find(m.offset); f != o->script->fields.end()) { channel = f->second; break; }
+        if (!channel) { r.failure = "no channel on " + std::to_string(listener); return r; }
+        w.script().sendMessage(*channel, 0, text);
+        for (int i = 0; i < 30; ++i) tick({});
+    }
+    for (const auto& [uid, vt, args] : g.calls) {
+        w.script().call(uid, vt, args);
+        for (int i = 0; i < 30; ++i) tick({});
+    }
     for (const auto& [uid, action] : g.first) { // earlier steps the gate needs (a puzzle's other half, a level flag)
         perform(uid, action);
         for (int i = 0; i < 240; ++i) tick({});
@@ -534,7 +555,9 @@ const std::vector<Case>& criticalGates() {
         {0, {"l3_main_hall", 4129, Action::Enter, {4106}, 1}},           // prologue end: cinematic 010 -> chapter 1
         // both locks: the pulled snake head on plate 752, both weights on plate 753 (one 30 kg weight does not press it)
         {1, {"l1_kraken_entrance", 748, Action::Use, {743}, -1, {{751, Action::Pull}, {753, Action::Weigh}, {753, Action::Weigh}}}},
-        {1, {"l1_kraken_room", 498, Action::Use, {497}}},                // switch -> tomb door
+        // Switch 498's constructor locks it (modifiable 7 (2), tru.exe 0x4A5A90 -> 0x2E); its vt 0 frees it (7 (1)) on the
+        // unit script's broadcast after the platform killed the kraken (KrakenChainLinksByManualAim).
+        {1, {"l1_kraken_room", 498, Action::Use, {497}, -1, {}, {{498, "Kraken dead, so remove tentacle hazards"}}}}, // switch -> tomb door
         {1, {"l1_baldrs_tomb", 219, Action::Step, {223}}},               // press plate -> door
         // Lara on plate 221 draws lock 70 back (multibody 89; tru.exe under Wine: the plate at -51, the lock 1254 down).
         // Gate 45 needs both weights on 222 as well and the grapple pull: TombGateNeedsBothBlocksAndThePull.
@@ -548,16 +571,20 @@ const std::vector<Case>& criticalGates() {
         {2, {"l2_flushtunnel", 2564, Action::Enter, {}, 3, {{2542, Action::Enter}}}}, // BeatLevel plane, then the boat
         {3, {"l3_chapel", 4832, Action::Step, {4830}}},                  // press plate -> gate
         {3, {"l3_chapel", 4833, Action::Step, {4831, 4836}}},            // press plate -> gate, gold reward
-        // shadow pillars (uber 4837): switches 4819 (section 1, c -> d -> a) and 4822 (section 2, b -> c -> d -> a) line
-        // them up, then the plate lights fire 4818 and the pillars' check opens shadow door 4835
-        {3, {"l3_chapel", 4834, Action::Step, {4835}, -1, {{4819, Action::Use}, {4819, Action::Use}, {4822, Action::Use},
-                                                         {4822, Action::Use}, {4822, Action::Use}}}},
+        // shadow pillars (uber 4837): the two blocks on the dais plate 4834 keep fire 4818 lit, and only then are the
+        // switches free (the plate's vt 54 -> their vt 60 -> modifiable 7 (1); vt 55 locks them again); 4819 (section 1,
+        // c -> d -> a) and 4822 (section 2, b -> c -> d -> a) line them up, and in the fire's light the last pull opens
+        // shadow door 4835 (ChapelShadowPillars)
+        {3, {"l3_chapel", 4822, Action::Use, {4835}, -1, {{4834, Action::Weigh}, {4834, Action::Weigh}, {4819, Action::Use},
+                                                         {4819, Action::Use}, {4822, Action::Use}, {4822, Action::Use}}}},
         {3, {"l3_chamberrockhall", 4617, Action::Use, {4528}}},          // electric switch -> secret door
         {3, {"l3_main_hall", 4128, Action::Enter, {}, 4}},               // 160_man_shot, 170_man_exit -> chapter 4
         {4, {"l4_ballcourt", 6502, Action::Hang, {6505}}},               // pole 6503 in pole lever 6502, hung on -> door joint
         {4, {"l4_traprooms", 5884, Action::Push, {}}},                   // grapple push block
-        // the Xibalba exit switch, the plane of 190_mex (6410 -> 6389), then the chapter end 5483
-        {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5, {{5469, Action::Use}, {6410, Action::Enter}}}},
+        // the Xibalba exit switch, the plane of 190_mex (6410 -> 6389), then the chapter end 5483. The switch is locked until
+        // the key 5695 is in keyhole 6501 (its vt 20 (1) -> 5469 vt 62 -> modifiable 7 (1); the key's way here is
+        // known_gaps/ch15_ballcourt_exit_key): the keyhole's handler stands in for it.
+        {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5, {{5469, Action::Use}, {6410, Action::Enter}}, {}, {{6501, 20, {1}}}}},
         {5, {"l5_valaskjalf_entry", 7228, Action::Use, {7227}}},         // switch -> reward door
         // silver lever (uber event 709 -> vt 55) -> reward door, only while switch 7192's graph state (modifiable 8) is not "on"
         {5, {"l5_valaskjalf_entryb", 7188, Action::Use, {7187}}},
@@ -1096,13 +1123,18 @@ TEST(ProgressionReal, ChapelShadowPillars) {
     const auto half = [&](int32_t j) { const auto* p = w.uberJoint(4835, j); return p ? p->x : 0.0f; };
     ASSERT_TRUE(w.script().find(4835));
     const float left = half(6), right = half(7);
+    // The switches are locked while the dais plate 4834 is up (constructor -> vt 61 -> modifiable 7 (2)): a pull is a
+    // failed try. The plate's vt 54 (pressed: the two blocks on it) frees them (vt 60 -> 7 (1)) [O bytecode].
+    use(4819);
+    EXPECT_EQ((*u)[1], 2u) << "locked: section 1 stays at c";
+    w.script().call(4834, 54);
+    for (int i = 0; i < 30; ++i) w.tick({});
     for (const int32_t sw : {4819, 4819}) use(sw); // section 1: c -> d -> a
     EXPECT_EQ((*u)[1], 0u);
     EXPECT_EQ((*u)[4], 2u); // sections 1 and 3 lined up: "left solved"
     for (const int32_t sw : {4822, 4822, 4822}) use(sw); // section 2: b -> c -> d -> a
     EXPECT_EQ(*u, (std::vector<uint32_t>{0, 0, 0, 0, 1, 1}));
-    EXPECT_LT(std::abs(half(6) - left) + std::abs(half(7) - right), 5.0f); // the shadows only count in the fire's light
-    place(w, w.script().find(4834)->pos + vec3(0, 0, 30), 0); // the plate lights fire 4818: its vt 55 checks the pillars
+    // The shadows count in the fire's light: lit by the pressed plate, the lined-up pillars open the door at once.
     for (int i = 0; i < 600; ++i) w.tick({});
     EXPECT_LT(half(6), left - 1000.0f) << "the left half sinks";
     EXPECT_LT(half(7), right - 1000.0f) << "the right half sinks";
@@ -1129,6 +1161,8 @@ TEST(ProgressionReal, ChapelPillarSectionsPlayTheirClips) {
     EXPECT_LT(glm::length(vec3(bone() * glm::vec4(pivot, 1)) - pivot), 2.0f);
     EXPECT_LT(glm::length(vec3(bone()[0]) - vec3(-1, 0, 0)), 0.01f);
     const auto* o = w.script().find(4819);
+    w.script().call(4834, 54); // the dais plate pressed frees the switches (vt 60 -> modifiable 7 (1), OU-PZL-009)
+    for (int i = 0; i < 30; ++i) w.tick({});
     place(w, o->pos, 0);
     game::Actions a;
     a.interact = true;
@@ -1732,7 +1766,8 @@ TEST(ProgressionReal, CombatCrateBreaksOnHit) {
 
 // l4_ballcourt Xibalba exit switch 5469 reopens the temple (docs/formats/ANIMGRAPH.md): its vt 55 calls the temple
 // reveal 5464's vt 54 "ReopenFromXibalba": modifiable 7 enters state 3 (BothSidesOpen), the 0x20000 stimulus starts
-// transition 4 (TimerA) -> state 5, whose 300-frame timer plays TimerB -> 6 -> TimerB_Done -> 7.
+// transition 4 (TimerA) -> state 5, whose 300-frame timer plays TimerB -> 6 -> TimerB_Done -> 7. The switch is locked
+// until the key is in keyhole 6501 (BallcourtExitSwitchLockedUntilTheKey): the keyhole's vt 20 (1) frees it first.
 TEST(ProgressionReal, TempleRevealReopens) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1741,6 +1776,8 @@ TEST(ProgressionReal, TempleRevealReopens) {
     w.script().setBigfile(&bf);
     w.onCinematic = [](const std::string&, bool) {};
     for (int i = 0; i < 60; ++i) w.tick({});
+    w.script().call(6501, 20, {1}); // the key goes in
+    for (int i = 0; i < 10; ++i) w.tick({});
     const auto* temple = w.script().find(5464);
     const auto* sw = w.script().find(5469);
     ASSERT_TRUE(temple && temple->graph && temple->graph->set->graph && sw);
@@ -1763,6 +1800,43 @@ TEST(ProgressionReal, TempleRevealReopens) {
     ASSERT_TRUE(open);
     EXPECT_TRUE(std::ranges::any_of(std::views::iota(size_t(0), open->size()), [&](size_t i) { return moved((*open)[i], closed[i]); }))
         << "the temple stands open";
+}
+
+// OU-PZL-009. Switch 5469 (ca_ei_switch_wall_autoreset, script 13914) without sticky +36: its state-0 constructor logs
+// "Disabling xibablba exit switch" and calls vt 61 -> modifiable 7 (2), the graph's locked state id 2, whose use is a
+// failed try (id 2 -use-> id 2). Keyhole 6501 vt 20 (1) calls 5469 vt 62: sticky +36, vt 60 -> modifiable 7 (1)
+// [O bytecode]. tru.exe 0x79ABA0 -> 0x4A5A90 posts 0x2E to every receiver; handler 0x6B4440 -> 0x6B453B enters the
+// state by id. Ours honoured 7 on `ar_ei_switch_oneway` only, so the switch opened the exit without the key.
+TEST(ProgressionReal, BallcourtExitSwitchLockedUntilTheKey) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l4_ballcourt", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 60; ++i) w.tick({});
+    const auto* temple = w.script().find(5464);
+    const auto* sw = w.script().find(5469);
+    ASSERT_TRUE(temple && temple->graph && sw && sw->script);
+    const auto id = [&] { const auto f = sw->script->fields.find(4); return f == sw->script->fields.end() ? -1 : int32_t(f->second); };
+    EXPECT_EQ(id(), 2) << "the constructor's modifiable 7 (2): locked";
+    const vec3 front = sw->pos + vec3(std::cos(sw->rot.z), std::sin(sw->rot.z), 0) * 100.0f;
+    const auto pull = [&] {
+        place(w, front, sw->rot.z + glm::pi<float>());
+        game::Actions use;
+        use.interact = true;
+        w.tick(use);
+        for (int i = 0; i < 600 && temple->graph->state == 0; ++i) w.tick({});
+    };
+    pull();
+    EXPECT_EQ(temple->graph->state, 0) << "a failed try: the exit stays shut";
+    EXPECT_EQ(id(), 2) << "and the switch locked";
+    for (int i = 0; i < 120; ++i) w.tick({});
+    w.script().call(6501, 20, {1}); // the key goes in
+    for (int i = 0; i < 10; ++i) w.tick({});
+    EXPECT_EQ(id(), 1) << "freed: modifiable 7 (1)";
+    pull();
+    EXPECT_EQ(temple->graph->state, 3) << "the switch now reopens the temple";
 }
 
 // l5_valaskjalf chains 6943 / 6944 (ar_ani_infinite_chain, uber: state 0 rest, command 0 (trigger 16 param 0) -> 1
@@ -2820,6 +2894,44 @@ TEST(ProgressionReal, MaproomHubTurnsByItsPanel) {
     EXPECT_NEAR(glm::degrees(w.uberJoint(2667, 1)->x), 41.0f, 2.5f) << "let go: braked where she left it";
 }
 
+// OU-PZL-015. multibody 3 (thunk 0x79ACD0 -> 0x4A6FF0): every body of the instance with a physics component gets the
+// "fixed" bit 0 of +0x15C set and its timer +0x160 zeroed (0x4D8FF0), the inverse of 2 (Enable, 0x4D8FD0); 4 (0x4A7070)
+// then reads true. l2_maproom walkway planes 2637 / 2638 (scripts 9627 / 9628) call it on the Thor bridge 2667's
+// multibody member (+180) in their vt 54, before cinematics 100 / 105 [O bytecode]. Ours left 3 unbound: the handler
+// stopped there and the cinematic never started.
+TEST(ProgressionReal, MaproomMultibodyDisableFixesTheBodies) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_maproom");
+    auto& w = *wp;
+    std::vector<int32_t> activated;
+    w.script().onCall = [&](int32_t source, int32_t target, int16_t vt) { if (source == 2637 && vt == 57) activated.push_back(target); };
+    ASSERT_TRUE(w.script().find(2637) && w.script().find(2667));
+    EXPECT_FALSE(w.serializeRuntime().contains("multibodyFixed"));
+    w.script().call(2637, 54); // Lara crosses the plane
+    for (int i = 0; i < 30; ++i) w.tick({});
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 2637) << key.second;
+    EXPECT_EQ(w.serializeRuntime().value("multibodyFixed", nlohmann::json::array()), nlohmann::json::array({2667}))
+        << "the bridge's bodies are fixed (saved with the world runtime)";
+    EXPECT_EQ(activated, (std::vector<int32_t>{2625})) << "and the handler goes on to cinematic 100 (2625 vt 57)";
+}
+
+// OU-PZL-008 (c). Temple floor 5234 (class-30 breakable, script 13229): its vt 54 (plane 5247 saw head 5236 cross)
+// calls multibody 92 (1) on itself (0x79B8F0 -> 0x4A7300: INSTANCE_Post 0x2C, the breakable's "break by action id"),
+// its state 1 waits on multibody 93 (0x79B910 -> 0x4A7320: query 0xCA, broken) and then broadcasts "broken" on
+// floor_break [O bytecode]. Ours left both unbound: the handler stopped at 92 and the floor stayed whole.
+TEST(ProgressionReal, TempleFloorBreaksByMultibody92) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_temple");
+    auto& w = *wp;
+    ASSERT_EQ(w.breakablePhase(5234), game::World::BreakPhase::Whole);
+    w.script().call(5234, 54); // the head fell through plane 5247
+    for (int i = 0; i < 60 * 2; ++i) w.tick({});
+    EXPECT_EQ(w.breakablePhase(5234), game::World::BreakPhase::Broken) << "92 (1) started the floor's break record 1";
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 5234) << key.second;
+}
+
 namespace {
 // Lara grips the kind-1 record of `uid`'s section `section` from the spot whose way to the object is nearest to `dir`
 // (any spot for a zero `dir`), facing `face`, and holds the stick `stick` until `done` or `ticks` pass. False: no grip.
@@ -3664,6 +3776,10 @@ TEST(ProgressionReal, KrakenChainLinksByManualAim) {
     EXPECT_EQ(state(2), 1u);
     const auto* sw = w.script().find(30);
     ASSERT_TRUE(sw);
+    // 30 starts locked (vt 61 -> modifiable 7 (2)); the gear switches 55 / 57 free it (vt 62 + vt 63 -> 7 (1), OU-PZL-009)
+    w.script().call(30, 62);
+    w.script().call(30, 63);
+    for (int i = 0; i < 30; ++i) w.tick({});
     place(w, sw->pos, 0);
     game::Actions use;
     use.interact = true;

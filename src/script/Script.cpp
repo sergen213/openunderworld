@@ -1081,6 +1081,19 @@ bool Runtime::grapplePulled(int32_t uid) {
     return false;
 }
 
+bool Runtime::pollsRope(int32_t uid) const {
+    const Object* o = find(uid);
+    if (!o || !o->script || !o->script->program) return false;
+    const auto& p = *o->script->program;
+    for (const ScriptType* t = p.type(o->script->typeId); t; t = p.type(t->superId))
+        for (const Function& f : t->functions)
+            for (const Instr& in : f.code)
+                for (const cdc::Pointer& ptr : in.ptrs)
+                    if (const Function* c = p.method(ptr); c && c->native && p.functionIndex(c) == 26 && !std::strcmp(p.nativeName(p.owner(c)), "larabase"))
+                        return true;
+    return false;
+}
+
 void Runtime::endCinematic(int32_t uid) {
     if (Object* object = findMut(uid)) fire(EventKind::CinematicEnd, *object);
 }
@@ -1860,13 +1873,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance: an anim-graph object (handler
             // 0x6B4440) enters the state with that id at once (state list query 0xE6, 0x6A5660); other receivers [U].
             if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) {
-                // A switch keeps its graph state as the id in this member (switchUsed): the unit scripts lock and free
-                // their wheels with it (l7_arctic_sea's constructor: 9103 vt 63 -> 7 (2), free again by vt 62 -> 7 (1)
-                // once four stones and four swords are counted). A pulled switch whose new state can be used is free.
-                // [I] Honoured for the Arctic Sea's wheels only (`ar_ei_switch_oneway`), whose lock and release are decoded and
-                // played. Elsewhere scripts put switches into state 2 too (l1_kraken_room switch 30) and nothing in ours frees
-                // them again yet: honouring it there stops self-test kraken_kill and the critical gates at the first pull.
-                if (Object* o = findMut(self->uid); o && o->kind == Kind::Switch && !o->graph && o->name == "ar_ei_switch_oneway") {
+                // A switch keeps its graph state as the id in this member (switchUsed): scripts lock and free their
+                // switches with it. l7_arctic_sea's constructor: 9103 vt 63 -> 7 (2), free again by vt 62 -> 7 (1) once four
+                // stones and four swords are counted; l4_ballcourt exit switch 5469's constructor: 7 (2) until keyhole 6501
+                // (vt 62 -> vt 60 -> 7 (1)); l1_kraken_room 498: 7 (2) until the "Kraken dead" broadcast (vt 0 -> 7 (1)).
+                // In the locked state 2 a use is a failed try (Runtime::fire). A switch whose new state can be used is free.
+                // [O tru.exe] thunk 0x79ABA0 -> 0x4A5A90 posts 0x2E for every receiver; anim-graph handler 0x6B4440 ->
+                // 0x6B453B enters the state by id (no class check).
+                if (Object* o = findMut(self->uid); o && o->kind == Kind::Switch && !o->graph) {
                     if (const auto set = graphSet(o->name); set && set->graph)
                         if (const int state = set->graph->stateById(int32_t(nc.args[0].bits)); state >= 0) {
                             // (its own member, whichever of the chain's `modifiable` members the caller reached it by)
@@ -1966,7 +1980,9 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // watervolumebase (thunks 0x79E080..0x79E130, bind 0x7B6930): 0 SetFlow(source, sink, strength), 1 SetLevel(depth,
             // speed), 2 SetLevelToMarker(instance, speed), 3 SetFlowStrength(strength), 4 GetDepth. The volume is the
             // receiver (its own script) or the calling object. larabase 3 (0x777780): Lara's water volume (+0x8DC) is the
-            // argument and its surface is over her floor (+0x914 < 0); World answers both as type "larabase".
+            // argument and its surface is over her floor (+0x914 < 0); World answers both as type "larabase". larabase 26
+            // (0x79A1A0 -> 0x777C30): her grapple controller (query 0x175, then 0x17C) has its rope's target (+0x4C -> +0x44)
+            // on the argument instance; World answers it from her rope.
             const auto uidOf = [&](const vm::Value& a) -> int32_t {
                 if (a.kind == vm::Value::Kind::Object) return a.uid;
                 if (a.kind != vm::Value::Kind::Member) return int32_t(a.bits);
@@ -1976,8 +1992,9 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const Member* m = holder->program ? holder->program->member(holder->typeId, a.offset) : nullptr;
                 return m && m->init ? int32_t(*m->init) : 0;
             };
-            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6 || nc.function == 54) && nc.args.size() == 1) {
-                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force), 54: a bike
+            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6 || nc.function == 26 || nc.function == 54) &&
+                nc.args.size() == 1) {
+                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force), 26: a rope target, 54: a bike
                 uint32_t result = 0;
                 if (target && !water_(target, name, nc.function, {}, result)) return false;
                 nc.result = vm::Value::scalar(result);
@@ -2871,7 +2888,11 @@ void Runtime::tick(const TickInput& in) {
     events_.clear();
     ++tick_;
     savedOrder_.clear(); // a load's object order is put back by now (restore, setUnits)
-    for (const auto& [uid, vt] : std::exchange(calls_, {})) run(uid, vt, {});
+    for (const auto& c : std::exchange(calls_, {})) {
+        std::vector<vm::Value> args;
+        for (const uint32_t a : c.args) args.push_back(vm::Value::scalar(a));
+        run(c.uid, c.vt, args);
+    }
     // Queued messages: the recipients are taken per message (a handler's own Sends wait for the next tick).
     for (auto& msg : std::exchange(messages_, {})) {
         std::vector<int32_t> uids;

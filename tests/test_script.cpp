@@ -1044,7 +1044,18 @@ TEST(ScriptRealData, UberCommandDispatchesWithObjectIdentity) {
     });
     r.setUnits({{"l1_kraken_room", std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l1_kraken_room.drm"))), {}}});
     const Object* sw = r.find(498);
-    ASSERT_TRUE(sw);
+    ASSERT_TRUE(sw && sw->script && sw->script->program);
+    // 498's constructor locks it (modifiable 7 (2)) until the unit's "Kraken dead" broadcast on its channel (vt 0 ->
+    // 7 (1); OU-PZL-009): deliver it first.
+    std::optional<uint32_t> channel;
+    const auto& p = *sw->script->program;
+    for (const auto* t = p.type(sw->script->typeId); t && !channel; t = p.type(t->superId))
+        for (const auto& m : t->members)
+            if (!std::strcmp(p.nativeName(m.typeId), "messagechannel"))
+                if (const auto f = sw->script->fields.find(m.offset); f != sw->script->fields.end()) { channel = f->second; break; }
+    ASSERT_TRUE(channel);
+    r.sendMessage(*channel, 0, "Kraken dead, so remove tentacle hazards");
+    for (int i = 0; i < 30; ++i) r.tick({});
     for (int i = 0; i < 600; ++i) r.tick({sw->pos, true});
     EXPECT_EQ(sw->state, 2);
     EXPECT_GT(calls, 0u);

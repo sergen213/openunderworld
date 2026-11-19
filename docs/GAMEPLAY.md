@@ -531,7 +531,7 @@ ours does. Two mechanisms carry every trap of the game [O]: **damaging collision
 
 | Kind | Units x instances | Rule [O bytecode] | Ours |
 |---|---|---|---|
-| `firetriggervolume` (script 6516) | l3_main_bedroom x14, l3_main_hall x14, l3_bedroom_hall x7, l1_ship_sinking_hall x5, l1_ship_lower_hallway x4, l3_mansion_exterior_afterburn x2 | while Lara is in the volume (vt 70 -> state 1): `health` 2 with member +12 (300), then the burn sound as a sequence (`sound` 1), again when the sound ended; leaving (vt 71) ends it. Its player sensors count on global byte 13 ("fireanim": her arm raised against the heat [I]) | the first 300 at once (`GameReal.FireVolumeBurns300`); the repeats run on the app's sound clock (`GameSound::scriptSoundBusy`), so a World without sound burns once per entry [open]. The constructor stops at the sensor array's length call (op 0x65 without a target: dynamic arrays are not modelled), so "fireanim" never counts [open] |
+| `firetriggervolume` (script 6516) | l3_main_bedroom x14, l3_main_hall x14, l3_bedroom_hall x7, l1_ship_sinking_hall x5, l1_ship_lower_hallway x4, l3_mansion_exterior_afterburn x2 | while Lara is in the volume (vt 70 -> state 1): `health` 2 with member +12 (300), then the burn sound as a sequence (`sound` 1), again when the sound ended; leaving (vt 71) ends it. Its player sensors count on global byte 13 ("fireanim": her arm raised against the heat [I]) | the first 300 at once (`GameReal.FireVolumeBurns300`); the repeats run on the app's sound clock (`GameSound::scriptSoundBusy`), so a World without sound burns once per entry [open]. The constructor completes: its sensor loop's length call is the DYNARRAY builtin Size (tru.exe 0x57EE20 operand decoding, 0x574A30), and it attaches its four player sensors to the volume (`ScriptRealData.FireVolumeConstructorBuildsSensors`), so "fireanim" counts; nothing in ours reads global byte 13 yet [I] |
 | `slowfiretriggervolume`, `deathfiretriggervolume` | l3_main_hall x5, x5 | the same script type; their amounts come from the intro data [U: not dumped] | 300 measured in ours for both [U] |
 | `jellyfish_a` | l1_seafloor x31, l1_norse_hallway_a x12 | 100 every 2 s inside its sensors | yes (`GameReal.JellyfishStingOnTouch`) |
 | `fx_steam_val_column` | l5_valgrind x16 | two player sensors on markers 2101 / 2102 of cog wheel 7314, on during the blast clip; a hit sends player message 0x1D4 (`larabase` 58, `0x778000`; [I] the scald that breaks her grip), takes 250 (`health` 1) and switches the sensors off until the next blast; a dispatcher of the unit takes 350 | `larabase` 58 is bound (the handler ran into it and stopped before the damage); message 0x1D4 has no effect on her yet [U]; untested by input |
@@ -2380,7 +2380,9 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   `GameReal.GrappleShootsOnTheRope`,
   `Game.GrappleWallRunFromGround`, `GameReal.PoolGrappleTargetAndSwing`, `GameReal.MountedGrapplePullsBlockWithoutSwinging`,
   `GameReal.GrapplePullsUberTargets` (replay `tests/replays/grapple_pull.txt` at l4_trailstart lever 6695,
-  l2_puzzleroom shiva 2982), `ProgressionReal.GrappleHandlesSwivel`, `GameReal.KrakenRoomRappel` (replay
+  l2_puzzleroom shiva 2982), `GameReal.GrappleLeverReturnsWhenReleased` (the rope attach calls the target's script vt 46,
+  tru.exe 0x6A35E0 -> instance prototype 64 / 0x799840; a target whose script polls `larabase` 26, 0x777C30 "her rope
+  is on me", keeps her on the rope after the one-second heave until Interact is let go), `ProgressionReal.GrappleHandlesSwivel`, `GameReal.KrakenRoomRappel` (replay
   `tests/replays/kraken_rappel.txt`: swing onto 326's wall, Interact + back / forward down and up, Jump leaps back off
   the wall), `Game.GrappleSwingDrive`, `Game.GrappleJumpIntoGapKeepsRope`, `Game.GrappleRopeClimbNeedsInteract`,
   `Game.GrappleRappelInputsAndWallJump`, `GameReal.MainHallSwingToFarBalcony`; self-tests `prologue_hall_swing`,

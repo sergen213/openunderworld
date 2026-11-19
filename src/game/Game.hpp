@@ -1177,8 +1177,11 @@ public:
     void splashWater(vec3 pos, float strength = 1.0f) { water_.splash(pos, strength); }
     // Grapple: best target within range, aim cone and line of sight (World.cpp), for attach + the HUD marker.
     std::optional<GrappleTarget> grappleTarget() const;
+    // tru.exe rope attach 0x6A35E0: a target whose object has a script (+0x60) gets instance prototype 64 = vt 46
+    // ("attached", thunk 0x799840) at the start of the next tick.
     void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling, float ropeMax = 0) {
         player_.attachGrapple(anchor, uid, kind, ropeMax);
+        if (const auto* o = script_.find(uid); o && o->script && player_.state().grappleUid == uid) script_.call(uid, 46);
     }
     int32_t lastPulled() const { return lastPulled_; } // grapple target whose pull handler ran last (World::tick), 0 = none
     // What the grapple button's press edge did this tick (World::tick; ou-game logs it): thrown at `uid` (`attached`
@@ -1630,6 +1633,7 @@ private:
     // Class-34 rigid bodies with a grapple feature (the tomb gate): their hinge has no motor, the pull moves it.
     bool pulledHinge(const script::Object& o);
     std::set<int32_t> multibodyLimitOff_; // `multibody` 75: objects whose joint limit is switched off (joint +0x174 bit 2)
+    std::set<int32_t> multibodyFixed_; // `multibody` 3 (Disable) minus 2 (Enable): objects whose bodies are fixed again (+0x15C bit 0)
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
     std::map<int32_t, std::vector<uint32_t>> uberStates_; // per section: current state, 0xFFFFFFFF in a transition

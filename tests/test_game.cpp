@@ -5577,11 +5577,11 @@ TEST(GameReal, PressurePlateIndependentOfRenderRate) {
 // l4_trailstart grapple lever post 6695 (ca_ei_lever_grapple_post, uber joints): Lara pulls it with the grapple, its
 // script's command runs section 0's motor (158 units/s), the post slides out on its prismatic joint and drives section
 // 1's joint through their 0.75 link; that joint entering its watched range [158, 1580) sends trigger 14 (section 1:
-// 0 -> 1) from the simulation, not a timer.
+// 0 -> 1) from the simulation, not a timer. Interact stays held: let go, the unloaded post returns (GrappleLeverReturnsWhenReleased).
 TEST(GameReal, GrappleLeverJointIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/grapple_pull.txt");
+    const auto replay = game::InputScript::parse("0.1 looky 0.9\n1.1 looky 0\n1.2 grapple 1\n1.3 grapple 0\n2.5 interact 1\n"); // grapple_pull.txt, held
     const auto w = expectRateIndependent(worldMaker(bf, "l4_trailstart", game::Spawn{{61161, -42611, 4948}, glm::radians(-11.0f)}), replay, 420);
     EXPECT_EQ(w->lastPulled(), 6695);
     const auto* post = w->uberJoint(6695, 0);
@@ -5591,6 +5591,38 @@ TEST(GameReal, GrappleLeverJointIndependentOfRenderRate) {
     EXPECT_NEAR(linked->x, 0.75f * post->x, 0.5f) << "the 0.75 link"; // a Jolt constraint row: holds within its drift fix
     ASSERT_TRUE(w->uberState(6695));
     EXPECT_EQ((*w->uberState(6695))[1], 1u);
+}
+
+// OU-GRP-005. The lever post's script (l4_trailstart 6695, type 16052): vt 46 "attached" (instance prototype 64, called by
+// the rope attach 0x6A35E0 -> 0x799840) enters state 1, which loops while `larabase` 26 (0x777C30: her rope is on this
+// instance) and then logs "detached" and sends command 1 (vt 60). Section 0: command 1 takes the out state 1 to 3 (no
+// motor), 1.5 s later to 2 (brake 158 below the gate's weight): the gate falls and drags the post back. Ours let go of
+// the rope after the one-second heave and never called vt 46, so the post stayed out.
+TEST(GameReal, GrappleLeverReturnsWhenReleased) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto w = worldMaker(bf, "l4_trailstart", game::Spawn{{61161, -42611, 4948}, glm::radians(-11.0f)})();
+    const auto replay = game::InputScript::parse("0.1 looky 0.9\n1.1 looky 0\n1.2 grapple 1\n1.3 grapple 0\n2.5 interact 1\n");
+    const auto* post = [&] { w->tick({}); return w->uberJoint(6695, 0); }();
+    ASSERT_TRUE(post && w->uberState(6695));
+    int t = 1;
+    for (; t < 60 * 20 && post->x <= 1000.0f; ++t) w->tick(replay.at(uint64_t(t)));
+    ASSERT_GT(post->x, 1000.0f) << "Interact held draws the post out";
+    EXPECT_EQ(w->player().state().grappleUid, 6695) << "she is still on the rope";
+    EXPECT_EQ(w->player().state().state, State::GrapplePull);
+    EXPECT_EQ((*w->uberState(6695))[0], 1u);
+    std::vector<uint32_t> states{(*w->uberState(6695))[0]};
+    w->tick({}); // she lets go of Interact
+    EXPECT_EQ(w->player().state().grappleUid, 0) << "and lets go of the rope";
+    int i = 0;
+    for (; i < 60 * 8 && post->x >= 50.0f; ++i) {
+        w->tick({});
+        if (const uint32_t s = (*w->uberState(6695))[0]; s != states.back()) states.push_back(s);
+    }
+    EXPECT_LT(post->x, 50.0f) << "unloaded, the gate falls and drags the post back";
+    std::erase(states, 0xFFFFFFFFu); // in a transition
+    EXPECT_EQ(std::vector<uint32_t>(states.begin(), states.begin() + std::min<size_t>(states.size(), 3)), (std::vector<uint32_t>{1, 3, 2}));
+    for (const auto& [key, n] : w->script().failures()) EXPECT_NE(key.first, 6695) << key.second;
 }
 
 // Joint sounds (World::jointSounds, AUDIO.md §9.16): l1_baldrs_tomb press plate 219 (class 34, ms_rb_press_plate: its

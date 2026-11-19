@@ -334,6 +334,7 @@ nlohmann::json World::serializeRuntime() const {
         for (const auto& [uid, d] : waterDamage_) w.push_back({uid, d.amount, d.frames});
         out["waterDamage"] = std::move(w);
     }
+    if (!multibodyFixed_.empty()) out["multibodyFixed"] = multibodyFixed_; // (only once a script fixed one)
     return out;
 }
 
@@ -352,6 +353,7 @@ void World::restoreWorldRuntime(const nlohmann::json& j) {
         waterDamage_[e.at(0).get<int32_t>()] = {e.at(1).get<float>(), e.at(2).get<float>()};
     multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
     multibodyLimitOff_ = j.value("limitsOff", std::set<int32_t>{}); // older saves: every limit on
+    multibodyFixed_ = j.value("multibodyFixed", std::set<int32_t>{});
     syncedObjects_ = ~size_t(0);
 }
 
