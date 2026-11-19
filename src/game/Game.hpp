@@ -1540,6 +1540,10 @@ private:
         vec3 lastPos{0};
         vec3 hint{0};         // level camera record point (+0x12B0), eased toward the record's
         int hintMarkup = -1;  // the markup whose record it follows, -1 = none
+        struct InlineSet {    // a camera trigger's own force set (commands 0x17 / 0x18): {angle deg, speed deg/s, dir}
+            float angle = 0, speed = 0;
+            uint8_t dir = 0;
+        } yawInline, pitchInline; // kept after she leaves it: the controller blends out of it (0x609C40)
     } orbit_;
     float cameraSwing_ = 0; // cameraSwing()
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp

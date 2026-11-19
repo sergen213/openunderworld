@@ -2015,7 +2015,12 @@ void World::syncObjects() {
     // A restored world: where the saved one had them (until its first tickObjects). After syncHazards: the crusher
     // jaws are posed by what it makes, and after the uber models' clip poses (Object::animPose is not saved:
     // l4_traprooms' blades 5897 / 5898 stood at their intro frames for the first step).
-    if (restoredColliders_) poseUberModels(), poseColliders();
+    // So does a rebuild in a running world (an object spawned, one turned loose, a unit streamed): its colliders are
+    // born at their intro frames, and the player's step comes before tickObjects poses them. On the l2_cliffclimb yacht
+    // a script object spawned 6.5 s in put the heaving deck's collider back at its intro height for that step; her
+    // ground probe met nothing and she fell and landed (OU-PLY-015) where tru.exe stays in one chart state (rq 46) for
+    // 15 s (Wine deck-idle.txt): an instance's collision follows its own segment matrices, there is no global rebuild.
+    if (restoredColliders_ || ticks_ > 0) poseUberModels(), poseColliders();
 }
 
 // An anchored object (script::Runtime::anchor) sits in the frame of its host's HInfo marker: the marker's segment as

@@ -776,6 +776,25 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
         const auto shape = parseShape(*u.drm, *in.data, o.kind == Kind::Plane);
         if (!shape) return;
         o.shape = *shape;
+        if (o.kind == Kind::Volume) { // camera commands, inline lists only (kind 0; 1 / 2 name another record [U])
+            const auto& d = u.drm->sections.at(in.data->section).data;
+            const uint32_t b = in.data->offset;
+            uint32_t head[4] = {}; // +0x18 kind, +0x24 count
+            if (b + 0x28 <= d.size()) std::memcpy(head, d.data() + b + 0x18, sizeof head);
+            if (head[0] == 0 && head[3] != 0) {
+                const View v(*u.drm, in.data->section);
+                if (const auto cmds = v.ptr(b + 0x28); cmds && cmds->section < u.drm->sections.size()) {
+                    const View c(*u.drm, cmds->section);
+                    for (uint32_t k = 0; k < head[3]; ++k) {
+                        Object::CameraCommand cc;
+                        cc.command = c.at<uint32_t>(cmds->offset + 0x18 * k);
+                        for (uint32_t i = 0; i < 5; ++i) cc.arg[i] = c.at<float>(cmds->offset + 0x18 * k + 4 + 4 * i);
+                        o.camera.push_back(cc);
+                    }
+                    o.cameraLate = v.at<uint8_t>(b + 0x2C) != 0;
+                }
+            }
+        }
     }
     if (in.data) { // [O] l2_puzzleroom pole 2967 -> hole 2969, l2_norsehub gems -> their portable_key_preinsert holders
         const auto& d = u.drm->sections.at(in.data->section).data;

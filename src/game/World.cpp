@@ -9,6 +9,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -921,7 +922,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     if (combat_.manualAim) mode = {23, {0, 0, 158.03f}, {126.42f, 3.16f, 252.84f}, 632.11f, false, kFree, -1.2f, 0.7f};
     // Its force sets (the mode list's command 0x10 yaw set, 1 pitch set; without 0x10 the default yaw set settings
     // +0xE4 = 11, without 1 none: 0x601D30 -> 0x609C40 / 0x608D20) [O: camera DTP 0x14 +0x144 / +0x148].
-    const auto [yawSet, pitchSet] = [&]() -> std::pair<int, int> {
+    auto [yawSet, pitchSet] = [&]() -> std::pair<int, int> {
         switch (mode.id) {
         case 1: return {11, 4};
         case 23: return {11, -1};
@@ -934,13 +935,42 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         default: return {11, -1}; // 19, 20
         }
     }();
+    // Camera trigger volumes she is inside (tru.exe 0x5CD520 tests her root + 200 against each trigger instance and
+    // calls CameraManager 0x5F29A0 on entering / 0x5F2A70 on leaving: script::Object::inside is the same test) override
+    // what the mode set, in every mode of the gameplay camera (not the bike's VehicleCamera): 0x601D30 applies the mode
+    // list entry, the triggers with priority 0, the mode records, then those with priority != 0, through 0x6019D0
+    // (0x18-byte commands): 2 and 0xD set the distance +0x1320 (0xD with byte +0xC also a cap +0x1340 [U: not used]),
+    // 0x17 / 0x18 an inline yaw / pitch force set {angle, speed, dir, count, forces} (0x609C40 on +0x8F8 / +0xDA0; with
+    // no forces its strength is 1, 0x607B90). Not modelled [U]: 0x1B / 0x1C tracker records (+0x3B0 / +0x620), kinds 1 /
+    // 2 (another record), sets with forces. Wine, l2_cliffclimb yacht deck: one trigger in CameraManager +0x8C, priority
+    // 1, commands {0xD 948.17}, {0x18 5 deg, 250 deg/s, no forces}, {0x1C (0, 0, -79.01)}; the camera at 948.2 with
+    // camera - pivot z -84.2..-81.4 (= -948.2 sin 5 deg): OU-CAM-005.
+    constexpr int kInlineSet = 1000;
+    if (!bike)
+        for (const bool late : {false, true})
+            for (const auto& o : script_.objects())
+                if (o.kind == script::Kind::Volume && o.inside && !o.dead && o.cameraLate == late)
+                    for (const auto& c : o.camera) {
+                        if (c.command == 2 || c.command == 0xD) mode.distance = c.arg[0];
+                        else if ((c.command == 0x17 || c.command == 0x18) && std::bit_cast<uint32_t>(c.arg[3]) == 0) {
+                            auto& set = c.command == 0x17 ? orbit_.yawInline : orbit_.pitchInline;
+                            set = {c.arg[0], c.arg[1], uint8_t(std::bit_cast<uint32_t>(c.arg[2]))};
+                            (c.command == 0x17 ? yawSet : pitchSet) = kInlineSet;
+                        }
+                    }
+    const CamForceSet inlineYaw{kInlineSet, orbit_.yawInline.angle, orbit_.yawInline.speed, orbit_.yawInline.dir, 0, {}},
+        inlinePitch{kInlineSet, orbit_.pitchInline.angle, orbit_.pitchInline.speed, orbit_.pitchInline.dir, 0, {}};
+    const auto findSet = [&](const CamForceSet* sets, size_t n, int id) {
+        return id != kInlineSet ? camForceSet(sets, n, id) : sets == kYawSets ? &inlineYaw : &inlinePitch;
+    };
     // A new mode's focus record blends in over 0.5 s (settings +0x78 via 0x608200; 0x609830 lerps the records) and its
     // limits over 0.25 s (0x609C00 / 0x608F10: x 4 per second).
     // Its force sets switch with it (0x609C40 / 0x608D20): the old set B becomes set A, blended to where the last
     // switch had got (target angle and speed lerped by min(1, 4 x its clock)), the new set B starts with side sign 0.
-    const auto switchForces = [](OrbitState::Forces& c, const CamForceSet* sets, size_t n, int id) {
+    // So does a set a trigger brings or takes away [I: only that controller].
+    const auto switchForces = [&](OrbitState::Forces& c, const CamForceSet* sets, size_t n, int id) {
         const float f = std::min(1.0f, c.blend * 4.0f);
-        const CamForceSet* b = camForceSet(sets, n, c.set);
+        const CamForceSet* b = findSet(sets, n, c.set);
         c.fromBase += f * ((b ? glm::radians(b->angle + 90.0f) : 0.0f) - c.fromBase);
         c.fromSpeed += f * ((b ? glm::radians(b->speed) : 0.0f) - c.fromSpeed);
         c.fromSign = c.sign, c.fromSet = c.set, c.set = id, c.sign = 0, c.blend = 0;
@@ -949,6 +979,9 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         orbit_.from = orbit_.now, orbit_.mode = mode.id, orbit_.modeTime = 0;
         switchForces(orbit_.yawForce, kYawSets, std::size(kYawSets), yawSet);
         switchForces(orbit_.pitchForce, kPitchSets, std::size(kPitchSets), pitchSet);
+    } else {
+        if (yawSet != orbit_.yawForce.set) switchForces(orbit_.yawForce, kYawSets, std::size(kYawSets), yawSet);
+        if (pitchSet != orbit_.pitchForce.set) switchForces(orbit_.pitchForce, kPitchSets, std::size(kPitchSets), pitchSet);
     }
     orbit_.modeTime += dt;
     {
@@ -1064,7 +1097,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         const CamForceSet* sets = c == &orbit_.yawForce ? kYawSets : kPitchSets;
         const size_t n = c == &orbit_.yawForce ? std::size(kYawSets) : std::size(kPitchSets);
         for (auto [id, sign] : {std::pair{c->fromSet, &c->fromSign}, std::pair{c->set, &c->sign}}) {
-            const CamForceSet* set = camForceSet(sets, n, id);
+            const CamForceSet* set = findSet(sets, n, id);
             const int dir = set ? set->dir : 0;
             const float v = dir == 1 ? glm::dot(move, camX) : dir == 2 ? move.z : dir == 3 ? along - orbit_.along : 0.0f;
             if (std::abs(v) >= 0.001f) *sign = v >= 0 ? 1.0f : -1.0f;
@@ -1155,7 +1188,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         // 0x608B60: during a switch (f = min(1, 4 x clock) < 1) the rate is speed x strength(B) x f x (1 - f) x
         // strength(A) toward the lerped target; the yaw frame angle = 90 deg + off [I: the side of +].
         const auto force = [&](const OrbitState::Forces& c, const CamForceSet* sets, size_t n, float angle) {
-            const CamForceSet *A = camForceSet(sets, n, c.fromSet), *B = camForceSet(sets, n, c.set);
+            const CamForceSet *A = findSet(sets, n, c.fromSet), *B = findSet(sets, n, c.set);
             const float f = std::min(1.0f, c.blend * 4.0f), kHalf = kPi / 2;
             const float baseB = B ? glm::radians(B->angle + 90.0f) : 0.0f, speedB = B ? glm::radians(B->speed) : 0.0f;
             const float targetA = A && A->dir ? c.fromSign * (c.fromBase - kHalf) + kHalf : c.fromBase;
