@@ -1496,8 +1496,11 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   current clip's root delta (rotated by heading) is the desired move. A capsule from `feet + stepUp` to the head is
   swept and slid along walls (up to 4 iterations, contact normals flattened). The sweep is one-sided (only faces met
   from their CCW front: tru.exe's segment-triangle test 0x461640, which serves the player-code ray 0x493330 through
-  0x4E8FC0 / 0x46C450 [O]; whether her proxy's wall contacts use it is [U]) and skips faces touched at the start that
-  the move does not close on (it used to apply the whole move past every face ahead after brushing one). A roll ending
+  0x4E8FC0 / 0x46C450 [O]; Wine, l3_main_bedroom wall face 236 (plane x -10672, facing -x, open behind): walked into
+  from behind she passes it and, her axis past the plane, is put 79 out in front of it within one frame; from the front
+  she stops 68 short of it [O-runtime]; which routine her proxy's wall contacts use is still [U]) and skips faces
+  touched at the start that the move does not close on (it used to apply the whole move past every face ahead after
+  brushing one). A roll ending
   under a ceiling too low to stand crouches (chart S7 T250). Then a ray
   from `feet + stepUp` down `stepUp + stepDown` snaps to the floor. Whether the face under her is stood on is `Player::floorKind`
   (section "Slopes and slides": by client flag and angle); a too-steep floor still counts
@@ -3391,9 +3394,11 @@ door / block object; Lara's clips = 113-track animations on her skeleton):
   +0x14.. centre / radius / height in cm (× 3.1605 units), +0x28 cone heading and +0x2C half angle in degrees. The
   switches' list is at physical record (+0xC8) +0x70: +4 → records, +8 count (wall switch: cylinder r 175 h 200 centred
   100 up, heading 0, ±95°). Script message 0x1B1 (`UseEngagementProperties`) picks a set from object data +0xA8 / +0xAC.
-  [I] record +0x44 = how far in front of the switch Lara stands (wall switches 135 units; her hand arc in
-  `obj_pull_lever` centres 139 units ahead at the lever pivot height 427 = bone 1; cheat button 110.6); +0x48, +0x58,
-  +0x60 [U].
+  [I] record +0x44 = how far out Lara stands (wall switches 135 units; her hand arc in `obj_pull_lever` centres 139
+  units ahead at the lever pivot height 427 = bone 1; cheat button 110.6); +0x48, +0x58, +0x60 [U]. [O] The stand
+  target (0x704730 -> 0x6F4740): the point of the switch's collision shapes nearest her (0x4DF090; box 0x46AE20) and
+  the shape's normal there, made horizontal. Wine: at `ma_ei_wall_switch_electric` 4525 she ends 174.0 out of its
+  origin along its +X and 3.0 aside (box face 44.4 out, so 129.6 past the face).
 
 Ours:
 
@@ -3415,7 +3420,10 @@ Ours:
   `ProgressionReal.TempleRevealReopens` (5469), `ProgressionReal.CriticalGates`, self-test `ch20_helheim01_rune_symbols`.
 - Using a switch: Lara's clip = the switch DRM's `obj_pull_lever`, else `obj_pushbutton`
   / `hosted_push_button`, else `interact` [I: by name; `obj_pull_fail` unused]. She is placed `useDistance` (record
-  +0x44) in front of it on her side of its local horizontal axis she is most along, facing it, and plays the clip in
+  +0x44) out of the nearest point of the switch's solid collision boxes along that box face's horizontal normal, facing
+  it ([O] 0x6F4740's target; [I] the distance, the box queried at its centre height; Wine 4525: 174.0 / 3.0 aside, ours
+  179.4 / 1.6); without a solid box, `useDistance` out of its origin on her side of its local axis she is most along [I].
+  She plays the clip in
   `State::Use` with the input locked (move, jump, drop, interact, grapple, weapons); Idle at its end. The use handler
   still fires when the switch's own clip ends (src/script), inside her clip. Clip-less switches (pole lever 6502) play
   `obj_pushbutton` as she stands (position and heading kept) and fire at once [I].
@@ -3540,8 +3548,8 @@ Ours:
   insert / remove clips (`hosted_insert` / `hosted_remove` in the portable DRMs, "Carried objects"), the lever's Havok slide numbers (no Wine measurement), l2_maproom's track slide, the
   uber transitions' condition check (0x4D0E10) on insert.
 
-Test: `GameReal.LaraPlaysInteractionClips` (switch 4525: State::Use with `use:2605` at `useDistance` while the use
-event fires; block 6504: grab, push clip, Lara moves with the block, release).
+Test: `GameReal.LaraPlaysInteractionClips` (switch 4525: State::Use with `use:2605` where tru.exe stands her, within
+6 units, while the use event fires; block 6504: grab, push clip, Lara moves with the block, release).
 Not done [U/I]: the engagement cone / required items and the anim target's exact offsets, `obj_pull_fail` for locked
 switches, sideways / upper block clips, a block grid (blocks move freely along the axis), buttress mounts (anim-graph
 objects) keep their own handling.
@@ -4499,13 +4507,14 @@ No side-by-side comparison with the original game was made.
   pillars ("One-handed shooting", `CombatReal.PoolLedgeHangShootsPantherOneHanded`), saves storing weapons, clips and
   reserves (`Save::combat`, src/save/Save.hpp:51; `Combat.RespawnKeepsTheLoadout`).
 - Collision: depenetration only in ground states (`Player::depenetrate`: terrain wall faces seen from the front; a
-  capsule whose axis is behind a face or passes through it is left; tru.exe brought her back from 38 past the
-  prologue wall's plane); none in air / hang / swim states (no Wine evidence). The ground sweep is one-sided: of
-  427 802 terrain wall faces (≥ 100 square units, kSolidMask) 244 933 have nothing within 300 behind them, and 37 712
-  of those have a floor 150 behind at body height, so she could walk through them from behind (survey 2026-11-19;
-  most are level shells, e.g. l1_seafloor 4 022, l1_kraken_room 2 892, l7_arctic_sea 2 757) [I: as tru.exe if its
-  proxy uses 0x461640]. Our walk contact is 14 units short of tru.exe's at the prologue wall (y -4385.4 vs -4399.2:
-  tru.exe stops her root 66.2 from the face, under her proxy radius 79.01 [U]); query mask 0xFF.
+  capsule whose axis is behind a face is left, as tru.exe leaves her walking in from behind; tru.exe brought her back
+  from 38 past the prologue wall's plane, which we do not); none in air / hang / swim states (no Wine evidence). The
+  ground sweep is one-sided as tru.exe's (Wine, face 236 above): of 427 802 terrain wall faces (≥ 100 square units,
+  kSolidMask) 244 933 have nothing within 300 behind them, and 37 712 of those have a floor 150 behind at body height,
+  so she can walk through them from behind (survey 2026-11-19; most are level shells, e.g. l1_seafloor 4 022,
+  l1_kraken_room 2 892, l7_arctic_sea 2 757). Our walk contact is 14 units short of tru.exe's at the prologue wall
+  (y -4385.4 vs -4399.2: tru.exe stops her root 66.2 from the face, 68 at face 236, under her proxy radius 79.01 [U]);
+  query mask 0xFF.
 - Live keyboard/mouse/gamepad play was not exercised by any recorded run: every screenshot is a scripted replay.
 - Hair is a Verlet chain sim (src/anim/Anim.hpp:185; ROADMAP "Skeleton" row; under-water hair mode not switched);
   editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).
