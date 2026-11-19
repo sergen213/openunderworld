@@ -151,7 +151,7 @@ Merged into `int/batch6` (worktree `openunderworld-work/wt-int6`):
   change to placement or collision needs `ProgressionReal` in its set.
 - **Released:** main 5751cf9, tag v0.54.0 (`tools/release.sh`, signed AppImage verified).
 
-## 2026-11-19 — batch 7: follow-ups from batch 6 (running)
+## 2026-11-19 — batch 7: follow-ups from batch 6 (released as 0.55.0 without TickDepen7)
 
 | Agent | Items |
 |---|---|
@@ -159,3 +159,37 @@ Merged into `int/batch6` (worktree `openunderworld-work/wt-int6`):
 | CamZones7 | Unmodelled camera trigger commands (0x19-0x1C, 0x12/0x14/0x15/4/6/8), trigger kinds 1/2, force sets with forces, volumes riding moving objects; OU-CAM-004 if on the same path |
 | ScriptVec7 | OU-SCR-002: vector values in the VM, anchor/vector/larabase natives; OU-SCR-003 `instance` 63 |
 | EnemySpawn7 | The enemy presence rule at unit load (shark 4023 exists only in ours); shark pass and circle rules in place of the fitted constants |
+
+Merged into `int/batch7`:
+
+- **agent/EnemySpawn7:**
+  - Dormant intros (`+0x72 & 0x80`, skipped by tru.exe's load loop 0x5C2360) now wait for Birth in the bare
+    `ai::Enemies` harness too. The game was already right; batch 6's 1.47 bites/min was measured with a third shark.
+  - Shark CloseCombat time slots come from 0x627F00 / 0x63A4C0 / 0x6108A0 (2-4 s, Circle vs Sidestep 50/50; sharks
+    have no sidestep, so the other slots are passes [I]). Bite range is 370 / 405 from the Wine traces.
+  - 0.98 bites/min per shark vs tru.exe 0.78. The share of passes that bite is still calibrated.
+  - The ch19 stone-niche step 1 check changed from "swimming the whole time" to `water.in` (a greenland shark now
+    reaches her).
+- **agent/ScriptVec7:**
+  - OU-SCR-002 is fixed: VM vectors / rotations are 16-byte inline values; natives write multi-word results;
+    vector 0-12, rotation 0-15, anchor 0/1/3/4/5 and larabase 21/22 are bound; locals start at their declared
+    values (0x57A850 → 0x579770).
+  - Script survey stops: 132 → 89.
+  - Fire volumes pick Lara's side as tru.exe does. The flinch clip is not played yet (chart states for messages
+    0x1DA / 0x1DB are undecoded).
+  - `instance` 63 is still unbound.
+- **agent/CamZones7:** OU-CAM-006 is partly fixed.
+  - The survey found 459 command-carrying volumes, and all commands are decoded from 0x6019D0.
+  - Implemented: 0x12, 0x15, 0x17 / 0x18 with forces, 0x19-0x1C pivot and look offsets, and volumes riding their
+    objects. Wine-verified at volumes 3852 / 3859 / 3861.
+  - The cliff goldens were re-blessed (the deck view is level). The ch06 shaft jump input was rotated for the new
+    climbing camera.
+  - Open: commands 1, 3-8, 0xC, 0x14, 0x16, and the AnchoredCamera kind.
+- **agent/TickDepen7: not merged.**
+  - The slide fix (`kSweepSkipLeaving`) and per-tick ground push-out work on its branch.
+  - The one-sided ground sweep rests only on tru.exe's ray test 0x461640, not on the player proxy's wall contacts.
+    Its own survey found 37,712 single-sided walls Lara could pass from behind.
+  - 3 tests fail on the combined tree (ch03 gear room west / east, save case 9).
+  - Carried over to batch 8: proxy sidedness evidence, a slide-only split, the ch03 switch stand point, and save
+    case 9.
+- **Full ctest on int/batch7** (private kwin, game_vulkan_rt_smoke excluded): 100 % of 1078 passed.

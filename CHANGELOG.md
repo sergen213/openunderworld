@@ -6,6 +6,20 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-19
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Changed: camera zones in the levels now do everything the original game uses them for: they can switch to the
+  level's own fixed camera setups, ease the camera with the original's springs, move the point the camera looks at,
+  and turn off its wall probe. Zones on moving objects, such as the chapter 2 yacht, now travel with them. On the
+  yacht deck the camera now looks level, as in the original.
+- Changed: chapter 2 shark passes and circling now follow the original game's own combat timer, and a bite needs the
+  shark as close as in the original. In deep water they bite about once a minute each.
+- Fixed: level scripts can now work with positions and directions. Many scripts that used to stop part-way now run to
+  the end (43 fewer stops across the game), and script variables start at their declared values as in the original.
+  The prologue fire now works out which side of Lara it is on; Lara's matching flinch animation is not played yet.
+
 ## [0.54.0] - 2026-11-19
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
