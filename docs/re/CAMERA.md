@@ -208,23 +208,34 @@ relative to the platform.
 | 6 | Camera types switch through a TransitionCamera with per-(from, to) durations from a resource and a fixed 1/30 s step | Reveal splines blend in/out with our own times (OU-CAM-004); no general transition camera | src/game/Camera.cpp; BUGS OU-CAM-004 |
 | 7 | Vehicle: VehicleCamera (type 13) entered via a transition while player +0xF00 is set | `kDistance = 1711` on the bike, our ratio | World.cpp:986 "[I] VehicleCamera"; OU-CAM-003 |
 | 8 | Scope (type 14) and LaraCombatCamera (type 12) are separate cameras | One orbit camera with modes | World.cpp |
+| 9 | Camera trigger volumes (0x5CD520 → 0x5F29A0 / 0x5F2A70 → 0x601D30 / 0x6019D0) override distance and force sets while Lara is inside | Done for commands 2 / 0xD (distance) and 0x17 / 0x18 inline force sets without forces (OU-CAM-005); other commands, kinds 1 / 2 and sets with forces not modelled; the volume stays at its intro place (tru.exe's deck volume rides the yacht) | Wine `w2/DeckCam6/`; `StreamReal.CameraRidesTheYachtDeck`, `StreamReal.CameraTriggerVolumeSetsDistanceAndPitch` |
 
-Camera distance on the l2_cliffclimb yacht deck (OU-CAM-005, tru.exe 948.2 in mode 1, ours 1264.22): it is the target
-distance +0x1320 (0x5FFB00 returns +0x1D4 to it), held at 948.2 for 15 s of idling and 5.5 s of running across the deck,
-so it is a set value, not a pull-in. Writers of +0x1320: the settings' +0x60 (0x5FEF60, 1264.22; the settings resource
-is +0x1D0 when set, slot 0x28 via CameraManager 0x5E8180, else global +0x144 = DTP 0x14, the only camera-settings DTP
-in generalbank / l2_cliffclimb / l1_seatop / every object DRM), and commands 2 / 0xD of a command list (0x5FF080
-mode list; 0x6019D0 for camera-trigger records). Camera triggers: 0x5CD520 tests trigger volumes against Lara
-(0x5CD1B0: 2 enter, 3 leave) and calls CameraManager slot 27 0x5F29A0 / slot 28 0x5F2A70 with the trigger instance;
-0x5E85B0 copies its intro data +0x78 record into +0x8C (≤ 4, "exceeded kMaxActiveTriggers"); 0x601D30 applies the
-mode-list entry, the triggers with +0x14 = 0, the mode records +0x1348 / +0x1344, the triggers with +0x14 ≠ 0, then
-slot 5's record (+0x110); the last command 2 / 0xD wins. l2_cliffclimb's level DTP 0x2b54 holds four such
-volumes by the yacht (box, half extents, Euler z 43.1°): 0x2b6d at (−34899, −15044, 322), half (1095, 557, 451),
-commands [2 → 632.11, 0x18 (4, 300)]; 0x2b6e at (−35813, −15914, 1708), half (711, 1128, 479), [0xD → 948.17 (cap
-790.14 unused), 0x18 (5, 250), 0x1C]; one at (−36224, −16340, 295) [0x12 …, 0x15]; 0x2b6f at (−38213, −18283, 810),
-[0xD → 3160.56, 0x18 (−60, 300)]. Mode 8's list entry also has command 2 → 948.17. With the Wine deck position (ours
-(−34816, −14652, 211), test point +200) she is inside 0x2b6d (632.11) and outside 0x2b6e, which contradicts the measured
-948.2, so which record sets 948.2 is not established [U]; ours has no camera triggers. Not fixed.
+Camera distance on the l2_cliffclimb yacht deck (OU-CAM-005, tru.exe 948.2 in mode 1, ours was 1264.22): it is the
+target distance +0x1320 (0x5FFB00 returns +0x1D4 to it), set by a **camera trigger volume**. Writers of +0x1320: the
+settings' +0x60 (0x5FEF60, 1264.22; the settings resource is +0x1D0 when set, slot 0x28 via CameraManager 0x5E8180,
+else global +0x144 = DTP 0x14), and commands 2 / 0xD of a command list (0x5FF080 mode list; 0x6019D0 for trigger
+records). Triggers: 0x5CD520 tests the trigger instances against Lara (0x5CD1B0, her root + 200: 2 enter, 3 leave)
+and calls CameraManager slot 27 0x5F29A0 / slot 28 0x5F2A70; 0x5F29A0 takes the block at the trigger's intro data
++0x18 (0x5E7BF0: kind +0 = 0 needs a command count +0xC; kinds 1 / 2 name another record) and 0x5E85B0 copies it into
+CameraManager +0x8C (≤ 4, "exceeded kMaxActiveTriggers"), with the instance handle at +0x18. 0x601D30 applies the
+mode-list entry, the triggers whose priority byte (+0x14 of the block = intro data +0x2C) is 0, the mode records
++0x1348 / +0x1344, the triggers with priority ≠ 0, then slot 5's record (+0x110); commands are 0x18 bytes {type, 20
+bytes} (0x6019D0 jump table 0x601CC0): 1 / 0x10 pitch / yaw set by id, **2** distance, **0xD** distance (and, with
+byte +0xC, a cap +0x1340), **0x17 / 0x18** an inline yaw / pitch force set {angle, speed, dir, count, forces}
+(0x609C40 on +0x8F8 / +0xDA0; with count 0 its strength is 1, 0x607B90), 0x12 a level camera record, 0x1B / 0x1C
+tracker records (+0x3B0 / +0x620 via 0x5FE730). Wine 2026-11-19 (`openunderworld-work/w2/DeckCam6/`, `camtrig.py`):
+standing on the deck, CameraManager +0x10C = 1 trigger: triggervolume intro data with half extents (710.6, 1127.7,
+478.9), priority 1, commands {0xD 948.17 (cap 790.14, flag 0)}, {0x18 5° 250°/s, dir 0, count 0}, {0x1C (0, 0,
+−79.01), no blend}; the instance's intro position is ours (−34899.2, −15044.1, 322.4), Euler z 43.1° = our
+l2_cliffclimb volume **3852**, and its instance position moves with the yacht (+0x20 = intro + (6, 78, 168) at the
+sample). The earlier reading of DTP 0x2b54 paired the boxes with the wrong command lists: 3851 at (−36224, −16340,
+295) half (1095, 557, 451) has [2 632.11, 0x18 (4, 300) with a force], 3853 at (−35813, −15914, 1708) half (1767,
+1501, 781) [0xD 3160.56, 0x18 (−60, 300)], 3854 at (−38213, −18283, 810) [0xD 790.14, 0x18 (0, 10)]. The pitch set
+explains the rest of the OU-CAM-001 height residual: camera − pivot z −84.2..−81.4 = −948.2 sin 5°. A second spot,
+volume 3857 on the cliff path ([2 790.14], [0x18 −17° 300°/s]), with her held at its centre: one trigger, distance
+790.1, camera 231.0 over the pivot (790.1 sin 17°). Ours now applies 2 / 0xD and inline sets without forces in
+`World::updateOrbitCamera` (row 9 above): deck distance 948.2, camera − root 376.0 (tru.exe 369.0..374.9; the 1.1 over
+is our pivot, 458.6 against 451.6..457.5); 3857: 790.1 and +231.0.
 
 ## 8. Unknowns
 
