@@ -1116,30 +1116,52 @@ TEST(AiReal, SharksSpawnSwimBiteAndDie) {
 // (tools/wine-ref/sessions/l2_cliffclimb_sharks.sh, 2026-11-19; tru = ours + (12446.2, 59357.3, -19003.8)). Treading at
 // the yacht and in open water for 300 s each: no bite in tru.exe (its sharks perceive her but stay in
 // EnemyBehavior_Search: she is out of their reach). Held 500..1100 under the sea volume's top: they alternate Close and
-// Circle and bite (200) on some passes; tru.exe's first bite came 13..26 s in (four runs) and the two sharks that
-// engaged her bit 6 times in 232 s, 0.78 a minute each.
+// Circle and bite (200) on some passes (none at 500 under in its 28 s); tru.exe's first bite came 13..26 s in (four runs)
+// and the two sharks that engaged her bit 6 times in 232 s, 0.78 a minute each, a pass every 14 s per shark.
 TEST(AiReal, CliffclimbSharksSpareATreadingLara) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     auto unit = game::loadUnitData(bf, "l2_cliffclimb");
     unit.col.build();
-    struct Result { std::vector<std::pair<int, float>> bites; size_t engaged = 0; };
-    const auto run = [&](const char* name, vec3 at, float seconds) {
+    struct Result { std::vector<std::pair<int, float>> bites; size_t engaged = 0; std::vector<float> passes, circles; };
+    // `seed` != 0: the sharks' random state is replaced (a different roll of their CloseCombat slots and passes).
+    const auto run = [&](const char* name, vec3 at, float seconds, uint32_t seed = 0) {
         game::ai::Enemies es;
         es.setBigfile(&bf);
         es.setUnits({{unit.name, unit.drm, vec3(0)}});
+        if (seed)
+            for (const auto& e : es.all()) {
+                game::ai::EnemyState st = e->state();
+                st.rng = seed * 2654435761u + uint32_t(e->uid());
+                e->restore(st);
+            }
         const game::ai::Target lara{at, true, 512, 100, true}; // swimming
         Hurt hurt;
         std::set<int32_t> engaged; // sharks that closed in or circled her
+        // Phases as the Wine traces count them: a pass = Close (ours Chase, its bite included), Circle.
+        std::map<int32_t, std::pair<int, int>> phase; // uid -> (0 none / 1 pass / 2 circle, start tick)
+        Result out;
+        const auto close = [&](int32_t uid, int tick) {
+            auto& [kind, start] = phase[uid];
+            if (kind) (kind == 1 ? out.passes : out.circles).push_back(float(tick - start) * kDt);
+        };
         for (hurt.tick = 0; hurt.tick < int(seconds / kDt); ++hurt.tick) {
             es.tick(unit.col, lara, hurt.fn(), kDt);
-            for (const auto& e : es.all())
-                if (e->type().aquatic() && (e->state().mode == Mode::Chase || e->state().mode == Mode::Circle)) engaged.insert(e->uid());
+            for (const auto& e : es.all()) {
+                if (!e->type().aquatic()) continue;
+                const Mode m = e->state().mode;
+                const int kind = m == Mode::Chase || m == Mode::Attack ? 1 : m == Mode::Circle ? 2 : 0;
+                if (kind) engaged.insert(e->uid());
+                if (kind != phase[e->uid()].first) close(e->uid(), hurt.tick), phase[e->uid()] = {kind, hurt.tick};
+            }
         }
-        std::fprintf(stderr, "%s: %zu sharks engaged, %zu bites in %.0f s:", name, engaged.size(), hurt.blows.size(), seconds);
+        const auto median = [](std::vector<float> v) { return v.empty() ? 0.0f : (std::ranges::sort(v), v[v.size() / 2]); };
+        std::fprintf(stderr, "%s: %zu sharks engaged, %zu passes (median %.1f s), %zu circles (median %.1f s), %zu bites in %.0f s:", name,
+                     engaged.size(), out.passes.size(), median(out.passes), out.circles.size(), median(out.circles), hurt.blows.size(), seconds);
         for (const auto& b : hurt.blows) std::fprintf(stderr, " %.1f s (%.0f)", b.first * kDt, b.second);
         std::fprintf(stderr, "\n");
-        return Result{hurt.blows, engaged.size()};
+        out.bites = hurt.blows, out.engaged = engaged.size();
+        return out;
     };
     // Treading 44 under the static top (108) at the l2_cliffclimb_sea.sh points; tru.exe's waves carried her between 62 and
     // -386 there (still out of reach: 892.2 - 395.1 under the top is -389.1)
@@ -1150,15 +1172,35 @@ TEST(AiReal, CliffclimbSharksSpareATreadingLara) {
         EXPECT_TRUE(r.bites.empty()) << name;
         EXPECT_EQ(r.engaged, 0u) << name;
     }
-    const Result deep = run("1100 under the top", {-31946.2f, -13857.3f, 108 - 1100}, 300);
-    ASSERT_FALSE(deep.bites.empty());
-    ASSERT_GT(deep.engaged, 0u);
-    EXPECT_GE(deep.bites[0].first * kDt, 8.0f);
-    EXPECT_LE(deep.bites[0].first * kDt, 45.0f);
-    const float perShark = float(deep.bites.size()) / float(deep.engaged) / 5.0f; // a minute; tru.exe 0.78
-    EXPECT_GE(perShark, 0.3f);
-    EXPECT_LE(perShark, 1.6f);
-    for (const auto& b : deep.bites) EXPECT_EQ(b.second, 200);
+    // 500 under: engaged (in reach: 892.2 - 395.1 = 497.1), but a shark origin cannot come within the bite range (370) of
+    // hers from 892.2 under; tru.exe did not bite there in its 28 s.
+    EXPECT_GT(run("500 under the top", {-31946.2f, -13857.3f, 108 - 500}, 60).engaged, 0u);
+    // In reach where tru.exe bit (800 / 950 / 1100 under the top), twelve rolls of the sharks' random state: its first bites
+    // came 13..21 s in (25.7 s after a cold dive), a pass every 14 s per engaged shark, 6 of 29 passes bit, 0.78 bites a
+    // minute each.
+    size_t bites = 0, engaged = 0, passes = 0;
+    std::vector<float> firsts;
+    for (uint32_t seed = 1; seed <= 12; ++seed) {
+        const float under = std::array{800.0f, 950.0f, 1100.0f}[seed % 3];
+        const std::string name = std::to_string(int(under)) + " under the top, roll " + std::to_string(seed);
+        const Result deep = run(name.c_str(), {-31946.2f, -13857.3f, 108 - under}, 300, seed);
+        ASSERT_GT(deep.engaged, 0u) << name;
+        for (const auto& b : deep.bites) EXPECT_EQ(b.second, 200);
+        bites += deep.bites.size(), engaged += deep.engaged, passes += deep.passes.size();
+        firsts.push_back(deep.bites.empty() ? 300.0f : deep.bites[0].first * kDt);
+    }
+    std::ranges::sort(firsts);
+    const float perShark = float(bites) / float(engaged) / 5.0f;    // a minute
+    const float perPass = float(engaged) * 300.0f / float(passes); // s per pass per shark
+    const float firstMedian = firsts[firsts.size() / 2];
+    std::fprintf(stderr, "in reach: %.2f bites a minute per shark, a pass per %.1f s, %zu of %zu passes bit, first bite %.1f .. %.1f s (median %.1f)\n",
+                 perShark, perPass, bites, passes, firsts.front(), firsts.back(), firstMedian);
+    EXPECT_GE(perShark, 0.5f); // tru.exe 0.78 (6 bites: 0.3 .. 1.6 at 95 %)
+    EXPECT_LE(perShark, 1.1f);
+    EXPECT_GE(perPass, 10.0f); // tru.exe 14 (29 passes)
+    EXPECT_LE(perPass, 18.0f);
+    EXPECT_GE(firstMedian, 8.0f); // tru.exe 13..26 s
+    EXPECT_LE(firstMedian, 45.0f);
 }
 
 // l4_pool's mayan_thrall_pool_generator 5637 spawns a mayan_thrall that plays spawn_from_pool, then hunts Lara.

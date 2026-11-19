@@ -11,7 +11,7 @@
      "expect": [{"probe": "step.events", "has": ["use:9103>9103"]},
                 {"calls": ["9114:55", "9115:55"], "note": "the failed try: the chains rattle"},
                 {"probe": "object.9116.uber.0", "over": "all", "eq": 0, "note": "the drawbridge does not move"},
-                {"probe": "player.swimming", "over": "all", "eq": true}]},
+                {"probe": "water.in", "over": "all", "eq": true, "note": "stays in the sea (a greenland shark's bite may play its in-water hit reaction)"}]},
     {"step": "lift_the_stone", "plan": ["swim 8500 -37200 -23900 300", "swim 11086 -40150 -24100 150", "press", "wait 2"], "duration": 90,
      "expect": [{"probe": "object.9273.stowed", "eq": true, "note": "a key item: put away by the pick-up (clip event 0x52)"},
                 {"probe": "portable.held", "eq": 0},

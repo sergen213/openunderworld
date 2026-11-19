@@ -137,7 +137,11 @@ struct EnemyTuning {
     // Aquatic reach (enemy data +0x88; CloseCombat 0x6391F0 / Circle 0x6298C0 -> 0x660640 -> 0x64A5B0): Lara is reachable
     // when the nearest point of its swim space lies within enemy data +0x84 across and this up / down of her. 0: no test.
     float reachHeight = 0;
-    std::array<float, 2> closeTime{}; // s an aquatic Close lasts at most (combat record node +0xCC +4 / +8 counts); 0: no limit
+    // EnemyBehavior_CloseCombat's slots (0x6108A0): each lasts the combat record's (node +0xCC) +4 .. +8 counts and gives
+    // its Circle child (r < byte +0xC of rand % 101: none) or its Sidestep child (r < +0xC + +0xD: none) the slot; a shark
+    // has no Sidestep, so a slot not Circle's is a Close pass. Seconds; 0: no limit.
+    std::array<float, 2> closeTime{};
+    std::array<uint8_t, 2> slotShare{}; // record bytes +0xC / +0xD (blueshark 50 / 50)
     std::vector<Attack> attacks;   // every record, node order
     std::vector<DeathClip> deaths;
     Regenerate regenerate;
@@ -286,7 +290,7 @@ bool isEnemyObject(const cdc::BigfileSet& bigfile, const std::string& name);
 // Knocked: off its feet from Lara's melee (a kick, a swung or thrown object): the knock-down clip, then the get-up clip
 // (EnemyType::knockFront / knockBack), or the vault reaction (EnemyType::vaultClip) once; then it hunts on.
 // Circle: an aquatic enemy between its passes at Lara (EnemyBehavior_Circle of the CreatureVolumetric tree): it swims
-// round her for a while, then closes in again (Chase = EnemyBehavior_Close).
+// round her while EnemyBehavior_CloseCombat's slots (0x6108A0) are Circle's, then closes in again (Chase = Close).
 enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep, Cling, Drop, Down, Rise, Return, Cover, Crawl,
                   Patrol, Search, Flank, Dodge, Investigate, Knocked, Circle };
 std::string_view modeName(Mode m);
@@ -343,7 +347,7 @@ struct EnemyState {
     uint32_t visited = 0;    // mode 4: points visited this round (+0x654)
     int phase = 0;           // Patrol: 0 walking, 1 idle at the point, 2 look-turn; Search: 0 start, 1 to last known, 2 idle, 3 to a
                              // possible position; Investigate: 0 start clip, 1 walking there, 2 end clip
-    float phaseTime = 0, phaseLength = 0; // s in the phase, s it lasts (idles); Chase (aquatic Close) / Circle: s it lasts
+    float phaseTime = 0, phaseLength = 0; // s in the phase, s it lasts (idles); Chase (aquatic Close) / Circle: modeTime its slot ends
     vec3 goal{0};            // Search / Flank / Investigate: where it walks
     float searchTime = 0;    // s searching
     float flankWait = 0, dodgeWait = 0; // s before it flanks / sidesteps again
@@ -501,6 +505,9 @@ public:
 
 private:
     void setMode(Mode m);
+    // Aquatic: the next EnemyBehavior_CloseCombat slot (0x6108A0): its length in s, and whether Circle has it (else a pass).
+    std::pair<float, bool> closeCombatSlot();
+    void nextSlot(); // the slot ran out: the next one (the same child again goes on)
     void play(Role r, bool loop);
     void playClip(const std::string& name, bool loop);
     bool clipDone() const;

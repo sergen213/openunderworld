@@ -46,16 +46,27 @@ constexpr float kLinkHop = 158.0f;     // [I] the flight's top above the higher 
 // [O Wine] their origins never rose above 892.2 under the sea volume's top in 14 min of traces (one 740 mid-pass); the
 // space itself is a NavPower 3D space per shark (AI +0x5030, bfx Mover3D from node +0x154, 0x637B20) we do not decode.
 constexpr float kSwimCeiling = 892.2f;
-// [I] calibrated: s between passes. In tru.exe an engaged shark made a pass every 14 s (29 Close phases in 408
-// shark-seconds): Circle phases of median 7.0 s alternating with short Search ones when its sense lost her; ours circles
-// the whole gap. EnemyBehavior_Circle's own end condition is not decoded. [O Wine] median distance from her while
-// circling 4164, median speed 1492 (Close 1780).
-constexpr float kCircleTime[2] = {7.0f, 13.0f};
+// Between passes (EnemyBehavior_CloseCombat 0x6108A0, rolled at its start 0x627F00 and whenever its slot ran out): a slot
+// of the combat record's +4 .. +8 counts (blueshark 2..4 s) goes to its Circle child or (record bytes +0xC / +0xD of
+// rand % 101: blueshark 50 / 50) to its Sidestep child; a shark has no sidestep, so [I] that slot is a pass (Close). Runs
+// of one child merge: [O Wine] a pass every 14 s per engaged shark, Close 2.0..5.6 s (median 3.0), Circle median 7.0 s.
+// Circle's own timer (record s16 +0xBE .. +0xBC counts, 0x629BC0) is 0 / 0 for both sharks: no limit of its own.
+// [O Wine] median distance from her while circling 4164, median speed 1492 (Close 1780).
 constexpr float kCircleRadius = 4164.0f;
 constexpr float kCircleSpeed = 1492.0f / 1780.0f; // x flySpeed
 // [I] calibrated: share of passes that bite. In tru.exe 6 of 29 measured Close phases bit (every one that came within
-// 370 of her, none of those that stopped 580..3500 away); what decides how far a pass comes is not decoded.
+// 370 of her, none of those that stopped 580..3500 away); how near a pass comes (Close's NavPower 3D path) is not decoded.
 constexpr float kPassBite = 6.0f / 29.0f;
+// [O Wine] the nearest the non-biting passes came (580..3500 away; every pass within 370 bit).
+constexpr float kPassMiss = 580.0f;
+
+// Flat heading that rounds `centre` at `radius` from `pos` (counter-clockwise), easing out or in towards it.
+glm::vec2 roundDir(vec3 pos, vec3 centre, float yaw, float radius) {
+    const glm::vec2 out(pos - centre);
+    const float d = glm::length(out);
+    const glm::vec2 radial = d > 1 ? out / d : glm::vec2(std::cos(yaw), std::sin(yaw));
+    return glm::normalize(glm::vec2(-radial.y, radial.x) + radial * std::clamp((radius - d) / radius, -1.0f, 1.0f));
+}
 
 glm::mat3 tiltMatrix(glm::vec2 tilt) { // Rx(x) * Ry(y), as formats::introMatrix before the heading
     return glm::mat3(glm::rotate(glm::rotate(glm::mat4(1), tilt.x, vec3(1, 0, 0)), tilt.y, vec3(0, 1, 0)));
@@ -158,6 +169,7 @@ vec3 Enemy::advanceClip(float dt) {
 
 void Enemy::setMode(Mode m) {
     if (m == Mode::Dead || m == Mode::Down || m == Mode::Sleep) s_.leap = 0; // falls from wherever it is
+    const Mode prev = s_.mode;
     s_.mode = m;
     s_.modeTime = 0;
     switch (m) {
@@ -165,15 +177,16 @@ void Enemy::setMode(Mode m) {
     case Mode::Alert: play(Role::Alert, true); break;
     case Mode::Chase:
         play(Role::Run, true);
-        if (type_->aquatic()) { // a pass (EnemyBehavior_Close) lasts at most the combat record's time
-            const auto& c = type_->tuning.closeTime;
-            s_.phaseTime = 0, s_.phaseLength = c[1] > 0 ? c[0] + (c[1] - c[0]) * frand(s_.rng) : 0;
+        if (type_->aquatic()) { // a pass (EnemyBehavior_Close): a CloseCombat slot that is not Circle's
+            const auto [length, circle] = closeCombatSlot();
+            s_.phaseTime = 0, s_.phaseLength = length;
             s_.phase = frand(s_.rng) < kPassBite ? 1 : 0; // 1: this pass comes in to bite
+            if (circle && prev != Mode::Circle) setMode(Mode::Circle); // CloseCombat starts with a Circle slot (0x627F00)
         }
         break;
     case Mode::Circle:
         play(Role::Walk, true);
-        s_.phaseTime = 0, s_.phaseLength = kCircleTime[0] + (kCircleTime[1] - kCircleTime[0]) * frand(s_.rng);
+        s_.phaseTime = 0, s_.phaseLength = closeCombatSlot().first;
         break;
     case Mode::Attack:
         s_.blowLanded = false;
@@ -222,6 +235,23 @@ void Enemy::setMode(Mode m) {
         if (!type_->investigate.start.empty()) s_.phase = 0, playClip(type_->investigate.start, false);
         break;
     }
+}
+
+std::pair<float, bool> Enemy::closeCombatSlot() {
+    const auto& t = type_->tuning;
+    if (t.closeTime[1] <= 0) return {0.0f, false}; // no combat record: one pass without a limit
+    const float length = t.closeTime[0] + (t.closeTime[1] - t.closeTime[0]) * frand(s_.rng);
+    // 0x6108A0: r = rand % 101; below +0xC Circle's timer is cleared (Sidestep has the slot), below +0xC + +0xD
+    // Sidestep's (Circle has it), else both run [I: Circle].
+    const int r = int(frand(s_.rng) * 101.0f);
+    return {length, r >= t.slotShare[0]};
+}
+
+void Enemy::nextSlot() {
+    const auto [length, circle] = closeCombatSlot();
+    const Mode m = circle ? Mode::Circle : Mode::Chase;
+    if (s_.mode != m) setMode(m);
+    s_.phaseLength = s_.modeTime + length; // the same child again: its run goes on (Chase keeps its bite decision)
 }
 
 bool GuardZone::contains(vec3 p, bool outerRadius) const {
@@ -874,9 +904,10 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
             inReach && glm::distance(s_.pos, lara.pos) < senses().loseTrack)
             s_.lastSeen = lara.pos; // [I] senses +0x20: still tracked this close, unseen
     }
-    // Ground enemies measure Lara flat, centre to centre; flyers from their centre to her head.
+    // Ground enemies measure Lara flat, centre to centre; flyers from their centre to her head; aquatic enemies origin to
+    // origin (the Wine shark traces: bites at 196..405 between the origins, a shark origin 0..172 under hers).
     const vec3 head = lara.pos + vec3(0, 0, lara.height * 0.85f), centre = s_.pos + vec3(0, 0, t.height * 0.5f);
-    const float dist = flyer ? glm::distance(centre, head) : flatDist(s_.pos, lara.pos);
+    const float dist = aquatic ? glm::distance(s_.pos, lara.pos) : flyer ? glm::distance(centre, head) : flatDist(s_.pos, lara.pos);
     // A blow's own distance [I]: flat while the two bodies' heights overlap, else with the gap between them (a spider
     // on a bridge does not bite a swimmer 1000 below it; before, the flat distance alone let the blow land).
     const float gap = std::max({0.0f, lara.pos.z - (s_.pos.z + t.height), s_.pos.z - (lara.pos.z + lara.height)});
@@ -1057,18 +1088,25 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         const vec3 goal = zoneGoal(s_.lastSeen); // the guard zone bounds the chase (0x61F990)
         const bool held = flatDist(s_.pos, goal) < t.radius; // at the last seen spot, or the zone's edge
         const bool stands = sees && (dist <= t.attackRange || (type_->ranged() && dist <= senses().eye.range));
-        turnTowards(stands || held || (sees && flyer) ? s_.lastSeen : flyer ? goal : steer(goal), dt);
+        // [I] a shark's pass that does not bite swims by her once as near as those passes came under Wine, until its slot
+        // runs out (tru.exe's Close path is a NavPower 3D move we do not decode).
+        const bool swimBy = aquatic && s_.phase == 0 && dist < kPassMiss;
+        if (swimBy) turnTowards(s_.pos + vec3(roundDir(s_.pos, s_.lastSeen, s_.yaw, kPassMiss), 0) * 100.0f, dt);
+        else turnTowards(stands || held || (sees && flyer) ? s_.lastSeen : flyer ? goal : steer(goal), dt);
         const bool facing = aimError(lara.pos) < kFaceToAttack;
         const int fire = type_->ranged() ? readyFire() : -1;
         if (!lara.alive) {
             setMode(Mode::Idle);
         } else if (s_.unseenTime > t.loseTime) { // lost her: searches (ground enemies with a search record), else idle
             setMode(!flyer && type_->search.time > 0 ? Mode::Search : Mode::Idle);
+        } else if (aquatic && s_.phaseLength > 0 && s_.modeTime >= s_.phaseLength) { // the slot ran out (0x6108A0)
+            nextSlot();
+        } else if (swimBy) {
+            play(Role::Run, true);
+            flight = vec3(std::cos(s_.yaw), std::sin(s_.yaw), 0) * (t.flySpeed * dt);
         } else if (sees && blowDist <= t.attackRange && facing && s_.cooldown <= 0 && type_->clip(Role::Attack)) {
             s_.melee = -1;
-            setMode(aquatic && s_.phase == 0 ? Mode::Circle : Mode::Attack); // a shark's pass that does not bite turns away
-        } else if (aquatic && s_.phaseLength > 0 && s_.modeTime >= s_.phaseLength) { // the pass is over: circles (0x6108A0 timer)
-            setMode(Mode::Circle);
+            setMode(Mode::Attack);
         } else if (type_->spit >= 0 && sees && dist > t.attackRange && dist <= kSpitRange && facing && s_.cooldown <= 0 &&
                    s_.fireCooldown[0] <= 0) { // [I] spits at Lara out of reach (its record's cooldown)
             s_.melee = type_->spit;
@@ -1090,7 +1128,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         } else {
             play(Role::Run, true);
             if (flyer && dist > 1) {
-                const vec3 to = (sees ? head : s_.lastSeen + vec3(0, 0, lara.height * 0.85f)) - centre;
+                const vec3 to = aquatic ? s_.lastSeen - s_.pos : (sees ? head : s_.lastSeen + vec3(0, 0, lara.height * 0.85f)) - centre;
                 const float l = glm::length(to), go = std::min(t.flySpeed * dt, l - t.attackRange * 0.8f);
                 if (l > 1 && go > 0) flight = to / l * go;
             }
@@ -1169,20 +1207,13 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         delta = vec3(0), flight = vec3(0);
         break;
     case Mode::Circle: { // EnemyBehavior_Circle between passes; [I] geometry: round her at kCircleRadius, the walk clip
-        s_.phaseTime += dt;
         if (!lara.alive || s_.unseenTime > t.loseTime) {
             setMode(Mode::Idle);
             break;
         }
-        if (s_.phaseTime >= s_.phaseLength) {
-            setMode(Mode::Chase); // the next pass (EnemyBehavior_Close)
-            break;
-        }
-        const glm::vec2 out(s_.pos - s_.lastSeen);
-        const float d = glm::length(out);
-        const glm::vec2 radial = d > 1 ? out / d : glm::vec2(std::cos(s_.yaw), std::sin(s_.yaw));
-        const glm::vec2 dir = glm::normalize(glm::vec2(-radial.y, radial.x) + radial * std::clamp((kCircleRadius - d) / kCircleRadius, -1.0f, 1.0f));
-        turnTowards(s_.pos + vec3(dir, 0) * 100.0f, dt);
+        if (s_.phaseLength > 0 && s_.modeTime >= s_.phaseLength) nextSlot(); // the slot ran out (0x6108A0)
+        if (s_.mode != Mode::Circle) break;                                    // the next pass (EnemyBehavior_Close)
+        turnTowards(s_.pos + vec3(roundDir(s_.pos, s_.lastSeen, s_.yaw, kCircleRadius), 0) * 100.0f, dt);
         flight = vec3(std::cos(s_.yaw), std::sin(s_.yaw), 0) * (t.flySpeed * kCircleSpeed * dt);
         break;
     }
