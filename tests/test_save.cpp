@@ -834,14 +834,16 @@ TEST(StreamReal, CameraRidesTheYachtDeck) {
         const float z = w.player().state().pos.z;
         root.push_back(z), cam.push_back(w.camera().position.z);
         plo = std::min(plo, w.camera().target.z - z), phi = std::max(phi, w.camera().target.z - z);
+        // OU-PLY-015: tru.exe stays in one chart state (rq 46, standing idle) all 15 s; ours fell once as a script
+        // object spawned 6.5 s in and rebuilt the colliders at their intro frames before her step.
+        ASSERT_EQ(w.player().state().state, game::State::Idle) << "tick " << i << " clip " << w.player().state().clip;
     }
     const auto [rlo, rhi] = std::ranges::minmax(root);
     EXPECT_GT(rhi - rlo, 300.0f) << "the deck heaves";
     float lo = 1e9f, hi = -1e9f;
     for (size_t i = 0; i < root.size(); ++i) lo = std::min(lo, cam[i] - root[i]), hi = std::max(hi, cam[i] - root[i]);
     std::fprintf(stderr, "root %.1f..%.1f, pivot - root %.1f..%.1f, camera - root %.1f..%.1f\n", rlo, rhi, plo, phi, lo, hi);
-    // Its top is tru.exe's; under it ours dips to ~426 once: Lara plays a landing (State::Land, bone 108 60 lower for
-    // 0.7 s) as the deck drops away under her, where tru.exe stays in one state (rq 46) all 15 s -- not the camera.
+    EXPECT_GT(plo, 451.6f - 5.0f) << "pivot - root (tru.exe 451.6..457.5)";
     EXPECT_LT(phi, 457.5f + 5.0f) << "pivot - root (tru.exe 451.6..457.5)";
     EXPECT_LT(hi - lo, 5.9f + 5.0f) << "camera - root " << lo << ".." << hi << " (tru.exe 369.0..374.9)";
     // The lag of the camera's heave behind hers: the shift (0..1.5 s) that best matches the two series.
