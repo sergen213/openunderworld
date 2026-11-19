@@ -208,7 +208,7 @@ relative to the platform.
 | 6 | Camera types switch through a TransitionCamera with per-(from, to) durations from a resource and a fixed 1/30 s step | Reveal splines blend in/out with our own times (OU-CAM-004); no general transition camera | src/game/Camera.cpp; BUGS OU-CAM-004 |
 | 7 | Vehicle: VehicleCamera (type 13) entered via a transition while player +0xF00 is set | `kDistance = 1711` on the bike, our ratio | World.cpp:986 "[I] VehicleCamera"; OU-CAM-003 |
 | 8 | Scope (type 14) and LaraCombatCamera (type 12) are separate cameras | One orbit camera with modes | World.cpp |
-| 9 | Camera trigger volumes (0x5CD520 → 0x5F29A0 / 0x5F2A70 → 0x601D30 / 0x6019D0) override distance and force sets while Lara is inside | Done for commands 2 / 0xD (distance) and 0x17 / 0x18 inline force sets without forces (OU-CAM-005); other commands, kinds 1 / 2 and sets with forces not modelled; the volume stays at its intro place (tru.exe's deck volume rides the yacht) | Wine `w2/DeckCam6/`; `StreamReal.CameraRidesTheYachtDeck`, `StreamReal.CameraTriggerVolumeSetsDistanceAndPitch` |
+| 9 | Camera trigger volumes (0x5CD520 → 0x5F29A0 / 0x5F2A70 → 0x601D30 / 0x6019D0) override the camera while Lara is inside | Done (OU-CAM-005, OU-CAM-006): distance 2 / 0xD, inline force sets 0x17 / 0x18 with their forces, 0x15 (no ray probe), tracker offsets 0x19 / 0x1B (pivot) and 0x1A / 0x1C (look point), level records 0x12; volumes anchored to a moving object ride it. Not modelled: 1 / 3–6 / 7 / 8 / 9 / 0xC / 0x14, 0x16 (LaraCombatCamera), kind-1 blocks (AnchoredCamera). §9 | Wine `w2/DeckCam6/`, `w2/CamZones7/`; `ScriptRealData.CameraTriggerCommandSurvey`, `StreamReal.CameraRidesTheYachtDeck`, `StreamReal.CameraTriggerVolumeSetsDistanceAndPitch`, `StreamReal.CameraTriggerForceSetEasesPitch`, `StreamReal.CameraTriggerRecordHoldsTheCamera` |
 
 Camera distance on the l2_cliffclimb yacht deck (OU-CAM-005, tru.exe 948.2 in mode 1, ours was 1264.22): it is the
 target distance +0x1320 (0x5FFB00 returns +0x1D4 to it), set by a **camera trigger volume**. Writers of +0x1320: the
@@ -244,3 +244,56 @@ is our pivot, 458.6 against 451.6..457.5); 3857: 790.1 and +231.0.
 - The ICamera slots 0x28 / 0x4C (set / get resource id, 0x5E8180) are read from two callers only.
 - Whether the transition step is per render frame or per fixed game step under the 60 fps lock (needs a Wine trace,
   W3-9).
+
+## 9. Camera trigger volumes: command survey (OU-CAM-006)
+
+A triggervolume's intro data +0x18 is a camera block (0x5E7BF0 validates it): kind +0 = 0 with a count +0xC and a
+pointer +0x10 to 0x18-byte commands {u32 command, 20 bytes}, priority byte +0x14 (the copy CameraManager +0x8C keeps,
+≤ 4, 0x5E85B0); kind 1 = +4 a record of type 4 and +8 a DTP id: 0x5EE4A0 switches to the AnchoredCamera (type 4,
++0x7C0) with it. 0x5EE4A0 also handles commands 0x10 / 0x11 / 0x13 of a kind-0 block (AnchoredCamera, AutoSplineCamera,
+FollowSplineCamera) — none occur in a volume. 0x601D30 hands every active block to 0x6019D0 (jump table 0x601CC0)
+whatever its kind: priority-0 blocks before the mode records +0x1348 / +0x1344, the others after; the last writer wins.
+
+Survey of the 82 units (`ScriptRealData.CameraTriggerCommandSurvey`; 459 kind-0 volumes carry commands, 58 of them with
+priority; 9 kind-1 volumes: l1_kraken_room 49 / 291 / 327 / 328 / 353, l2_maproom 2670, l2_puzzleroom 2978, l4_pool
+5514 / 5518 — 8 of them have no record at +4, so 0x5E7BF0 refuses them):
+
+| Command | Uses | tru.exe (0x6019D0 unless noted) | OpenUnderworld |
+|---|---|---|---|
+| 0 | 4 | nothing | — |
+| 1 | 4 | pitch set by id (0x5F98E0 → 0x609C40 on +0xDA0): ids 6, 0x1A, 0 | not modelled (ours knows sets 4 / 16 / 17 only) |
+| 2 | 129 | distance +0x1320 | done |
+| 3 / 4 | 2 / 7 | yaw / pitch override by id (0x5FE7D0 / 0x5F9910 → 0x609F10 on +0x1248 / +0x1278) | not modelled |
+| 5 / 6 | 1 / 15 | inline yaw / pitch override {angle, speed, gain} (0x609F10; active when the speed is not 0, 0x5FA4A0): drives the angle in place of the force set (0x5FFB00 → 0x609D40) | not modelled (3 of the 15 sixes have speed 0) |
+| 7 / 8 | 1 / 4 | yaw / pitch limits (0x609C00 on +0x890 / +0x8C4) | not modelled |
+| 0xC | 2 | flag → 0x6017D0 after the apply | not modelled |
+| 0xD | 109 | distance +0x1320 (byte +0xC: cap +0x1340, read by 0x6000EF) | done (distance; the cap not) |
+| 0x12 | 116 | level camera record (arg 0 → unit data +0x20C, 0x70 bytes) | done: the unit's record list (CollisionMesh::cameraRecords), in every mode, under a markup's record unless the priority is set |
+| 0x14 | 53 | (unit, id) → unit data +0x200 / +0x204 record (0x100 bytes) flag 0x20 (0x5ED2D0) [U: a fade record] | not modelled (no camera motion) |
+| 0x15 | 33 | clears +0x1338: no on-foot ray probe (0x600591) | done |
+| 0x16 | 54 | LaraCombatCamera distance +0x14C (0x603190; not read by 0x6019D0) | not modelled (ours: mode 23) |
+| 0x17 / 0x18 | 24 / 155 | inline yaw / pitch force set {angle, speed, dir, count, forces} (0x609C40); 23 / 66 carry forces (types 2, 3, 5, 7) | done, with their forces |
+| 0x19 / 0x1A | 65 / 73 | (x, y, z) onto the focus / look tracker (+0x3B0 / +0x620 +0x20, 0x5FE730 → 0x608280) | done (every offset is (0, 0, z); world frame [I]) |
+| 0x1B / 0x1C | 47 / 51 | as 0x19 / 0x1A, blending over arg 3 s when byte arg 4 is set (0x608200) | done |
+
+The camera orbits the focus tracker's point (+0x100; 0x600B20: +0x1D4 = |camera − focus|) and looks at the look
+tracker's (0x6009C0: +0x160 = look point − camera, blended toward the +0x14C0 point by +0x204), so 0x1A / 0x1C tilt the
+view without moving the camera. Ours: `World::cameraPivot()` and `camera().target` = the pivot + the look offset.
+
+Wine (2026-11-19, `openunderworld-work/w2/CamZones7/camz.py`, l2_cliffclimb; our frame = tru.exe's − (12446.2,
+59357.3, −19003.8)):
+
+- 3852 (yacht deck; {0xD 948.17}, {0x18 5° 250°/s}, {0x1C (0, 0, −79.01)}): look tracker +0x20 = (0, 0, −79.01), the
+  pivot 5.00° up from the camera, the look vector 0.22° up (79.01 under the pivot). Ours: 0.22°.
+- 3859 ({0x14 3}, {0x18 −6° 300°/s, force type 5 k 2}): the pitch settles at −6.00°; after a mouse nudge to +13.4° it
+  returns at 19.5°/s at Wine's ~31 fps = 300 × min(1, 2 dt) per frame (10°/s at 60 Hz). Ours: −6.00°, at most 10.0°/s.
+- 3861 ({0x12 → record 7}, priority 1, mode 1): +0x12D0 = (unit 9, record 7); the record (type 0, one point, 0°/s, no
+  forces) replaces the forces and turns at 0°/s, so the camera holds where it was (13 s, no motion). Ours: the record
+  engages, no force moves the camera while she walks.
+- Riding: the yacht volumes 3851..3854 are anchored to ms_uo_yacht 2566 by their script (instance 23, `anchor()`); in
+  tru.exe the volume instance links to the yacht (+0x214 → the yacht's link node) and moves with it. Volume − yacht in
+  tru.exe: 3852 (1497, 1551, 811), 3851 (381, 400, 746); ours (marker frame, yacht at rest): (1547, 1530, 685),
+  (408, 401, 670) — the marker, not the intro (the intros are 552 / 2216 from the yacht origin; tru.exe 928 / 2303).
+  `script::Runtime` tests a volume whose body or offset is set in that frame (`World::poseAnchored`).
+- Not separable at 3845 ({0x12}, {0x15}, {0x1C −158.03 0.2 s}): held mid-air she hangs (mode 11 / 37), and the mode
+  records also set the look offset (0, −31.61, −158.03), the probe 0 and a record.

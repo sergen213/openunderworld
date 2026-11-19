@@ -939,27 +939,64 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // calls CameraManager 0x5F29A0 on entering / 0x5F2A70 on leaving: script::Object::inside is the same test) override
     // what the mode set, in every mode of the gameplay camera (not the bike's VehicleCamera): 0x601D30 applies the mode
     // list entry, the triggers with priority 0, the mode records, then those with priority != 0, through 0x6019D0
-    // (0x18-byte commands): 2 and 0xD set the distance +0x1320 (0xD with byte +0xC also a cap +0x1340 [U: not used]),
-    // 0x17 / 0x18 an inline yaw / pitch force set {angle, speed, dir, count, forces} (0x609C40 on +0x8F8 / +0xDA0; with
-    // no forces its strength is 1, 0x607B90). Not modelled [U]: 0x1B / 0x1C tracker records (+0x3B0 / +0x620), kinds 1 /
-    // 2 (another record), sets with forces. Wine, l2_cliffclimb yacht deck: one trigger in CameraManager +0x8C, priority
-    // 1, commands {0xD 948.17}, {0x18 5 deg, 250 deg/s, no forces}, {0x1C (0, 0, -79.01)}; the camera at 948.2 with
-    // camera - pivot z -84.2..-81.4 (= -948.2 sin 5 deg): OU-CAM-005.
+    // (0x18-byte commands, jump table 0x601CC0; docs/re/CAMERA.md §9 lists every command and its use in the game):
+    // - 2 and 0xD set the distance +0x1320 (0xD with byte +0xC also a cap +0x1340 [U: its reader 0x6000EF]);
+    // - 0x17 / 0x18 an inline yaw / pitch force set {angle, speed, dir, count, forces} (0x609C40 on +0x8F8 / +0xDA0;
+    //   strength = the product of its forces as the global sets', 1 without, 0x607B90);
+    // - 0x15 clears +0x1338, the on-foot ray probe (0x600591);
+    // - 0x19 / 0x1B and 0x1A / 0x1C add (x, y, z) to the focus and look trackers (+0x3B0 / +0x620 +0x20, 0x5FE730 ->
+    //   0x608280), 0x1B / 0x1C blending over arg 3 seconds when byte arg 4 is set (0x608200). Every offset in the game is
+    //   (0, 0, z): added in the world frame [I: frame of x / y]. The camera orbits the focus and looks at the look
+    //   point (0x6009C0: +0x160 = look point - camera; 0x600B20: +0x1D4 = |camera - focus|);
+    // - 0x12 points at a level camera record of the volume's unit (as a markup's, below).
+    // Wine, l2_cliffclimb yacht deck: one trigger (3852) in CameraManager +0x8C, priority 1, commands {0xD 948.17},
+    // {0x18 5 deg, 250 deg/s, no forces}, {0x1C (0, 0, -79.01)}; the camera at 948.2 with camera - pivot z -82.6
+    // (-948.2 sin 5 deg) and the look tracker +0x20 = (0, 0, -79.01): its look vector +0x160 0.22 deg up, at the pivot
+    // less 79.01 (OU-CAM-005). Not modelled [U]: 3 / 4 / 5 / 6 (the yaw / pitch override +0x1248 / +0x1278, 0x609D40),
+    // 1 / 0x10 (sets by id other than ours), 7 / 8 limits, 9, 0xC, 0x14 (a unit fade record's flag 0x20, 0x5ED2D0).
     constexpr int kInlineSet = 1000;
+    const script::Object* recordVolume = nullptr; // the last 0x12 of a priority-0 / priority-1 trigger
+    const script::Object::CameraCommand* recordCommand = nullptr;
+    bool recordLate = false;
+    vec3 pivotAdd(0), lookAdd(0);
+    float pivotTime = 0, lookTime = 0;
+    const auto inlineSet = [](OrbitState::InlineSet& set, const script::Object::CameraCommand& c) {
+        set.angle = c.arg[0], set.speed = c.arg[1], set.dir = uint8_t(std::bit_cast<uint32_t>(c.arg[2]));
+        set.count = uint8_t(std::min<size_t>(c.forces.size(), 2));
+        for (size_t i = 0; i < set.count; ++i) set.force[i] = {uint8_t(c.forces[i].type), c.forces[i].k, c.forces[i].curve};
+    };
     if (!bike)
         for (const bool late : {false, true})
             for (const auto& o : script_.objects())
                 if (o.kind == script::Kind::Volume && o.inside && !o.dead && o.cameraLate == late)
                     for (const auto& c : o.camera) {
-                        if (c.command == 2 || c.command == 0xD) mode.distance = c.arg[0];
-                        else if ((c.command == 0x17 || c.command == 0x18) && std::bit_cast<uint32_t>(c.arg[3]) == 0) {
-                            auto& set = c.command == 0x17 ? orbit_.yawInline : orbit_.pitchInline;
-                            set = {c.arg[0], c.arg[1], uint8_t(std::bit_cast<uint32_t>(c.arg[2]))};
-                            (c.command == 0x17 ? yawSet : pitchSet) = kInlineSet;
+                        switch (c.command) {
+                        case 2: case 0xD: mode.distance = c.arg[0]; break;
+                        case 0x15: mode.floorProbe = false; break;
+                        case 0x17: inlineSet(orbit_.yawInline, c), yawSet = kInlineSet; break;
+                        case 0x18: inlineSet(orbit_.pitchInline, c), pitchSet = kInlineSet; break;
+                        case 0x19: case 0x1B:
+                            pivotAdd = {c.arg[0], c.arg[1], c.arg[2]};
+                            pivotTime = c.command == 0x1B && std::bit_cast<uint32_t>(c.arg[4]) & 0xFF ? c.arg[3] : 0.0f;
+                            break;
+                        case 0x1A: case 0x1C:
+                            lookAdd = {c.arg[0], c.arg[1], c.arg[2]};
+                            lookTime = c.command == 0x1C && std::bit_cast<uint32_t>(c.arg[4]) & 0xFF ? c.arg[3] : 0.0f;
+                            break;
+                        case 0x12: recordVolume = &o, recordCommand = &c, recordLate = late; break;
+                        default: break;
                         }
                     }
-    const CamForceSet inlineYaw{kInlineSet, orbit_.yawInline.angle, orbit_.yawInline.speed, orbit_.yawInline.dir, 0, {}},
-        inlinePitch{kInlineSet, orbit_.pitchInline.angle, orbit_.pitchInline.speed, orbit_.pitchInline.dir, 0, {}};
+    for (auto [add, to, time] : {std::tuple{&orbit_.pivotAdd, pivotAdd, pivotTime}, std::tuple{&orbit_.lookAdd, lookAdd, lookTime}}) {
+        if (to != add->to) add->from = add->now(), add->to = to, add->t = 0, add->time = time;
+        add->t += dt;
+    }
+    const auto inlineForceSet = [](const OrbitState::InlineSet& s) {
+        CamForceSet set{kInlineSet, s.angle, s.speed, s.dir, s.count, {}};
+        for (int i = 0; i < s.count; ++i) set.force[i] = {s.force[i].type, s.force[i].k, s.force[i].curve.data()};
+        return set;
+    };
+    const CamForceSet inlineYaw = inlineForceSet(orbit_.yawInline), inlinePitch = inlineForceSet(orbit_.pitchInline);
     const auto findSet = [&](const CamForceSet* sets, size_t n, int id) {
         return id != kInlineSet ? camForceSet(sets, n, id) : sets == kYawSets ? &inlineYaw : &inlinePitch;
     };
@@ -996,7 +1033,9 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // rock climbing) through the mode's focus record (settings +0x50, 0x6C bytes: bone, offset, dead zones, speed,
     // 64-byte ease curve): record 1 (0, 0, 142.23) on foot, 10 (0, 0, 79.01) free climbing, 8 (0, 63.21, 316.06) hanging.
     const glm::mat4 model = player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
-    const vec3 goal = bones_.size() > 108 ? vec3(model * bones_[108] * glm::vec4(lim.offset, 1)) : s.pos + vec3(0, 0, 320.3f) + lim.offset;
+    // A trigger's 0x19 / 0x1B offset rides on top of the record's (the focus tracker's +0x20).
+    const vec3 goal = (bones_.size() > 108 ? vec3(model * bones_[108] * glm::vec4(lim.offset, 1)) : s.pos + vec3(0, 0, 320.3f) + lim.offset) +
+                      orbit_.pivotAdd.now();
     // The focus lags its goal (0x609830 -> 0x609440) per axis of the camera's horizontal frame (0x6091A0: right,
     // forward, up) by the record's dead zones: what is past a zone is caught up at once, the rest at up to 1896.3
     // units/s scaled by the record's ease curve at (distance / zone) (0x5E4530).
@@ -1125,26 +1164,38 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     const int on = s.state == State::Climb ? s.climbHold : s.ledge;
     const collision::Markup* onMarkup = on >= 0 && size_t(on) < col_.markup.size() ? &col_.markup[size_t(on)] : nullptr;
     const collision::CameraRecord* rec = nullptr;
+    int recKey = on;     // what the record hangs off (orbit_.hintMarkup)
+    vec3 recOffset(0);   // a volume's record is in its unit's frame (a markup's already in the world's)
     if (onMarkup && onMarkup->camera && !bike)
         if (const auto g = kMarkupModes.find(onMarkup->type); g != kMarkupModes.end() && std::ranges::find(g->second, mode.id) != g->second.end())
             rec = &*onMarkup->camera;
+    // A trigger volume's 0x12 (0x6019D0: the last one wins, ebx[0]; 0x601D30 applies priority-0 triggers before the mode
+    // records and the others after): in every mode, under a markup's record unless its priority byte is set.
+    if (recordVolume && (recordLate || !rec))
+        for (const auto& u : units_)
+            if (const auto& p = recordCommand->record;
+                p && u.data.name == recordVolume->unit && p->section == u.data.col.recordsSection && p->offset >= u.data.col.recordsOffset) {
+                const uint32_t i = (p->offset - u.data.col.recordsOffset) / 0x70;
+                if (i < u.data.col.cameraRecords.size())
+                    rec = &u.data.col.cameraRecords[i], recKey = -2 - recordVolume->uid, recOffset = u.offset;
+            }
     if (rec && !rec->pos.empty()) {
         const auto& r = *rec;
         const auto spline = [&](float u) { // u in [0, 1] over the whole spline (0x6057F0 / 0x5F7340)
-            if (r.pos.size() == 1) return r.pos[0];
+            if (r.pos.size() == 1) return r.pos[0] + recOffset;
             const float sv = std::clamp(u, 0.0f, 1.0f) * float(r.pos.size() - 1);
             const size_t i = std::min(size_t(sv), r.pos.size() - 2);
             const float t = std::min(1.0f, sv - float(i)), t2 = t * t, t3 = t2 * t;
             return (2 * t3 - 3 * t2 + 1) * r.pos[i] + (t3 - 2 * t2 + t) * r.tangent[i] + (3 * t2 - 2 * t3) * r.pos[i + 1] +
-                   (t3 - t2) * r.tangent[i + 1];
+                   (t3 - t2) * r.tangent[i + 1] + recOffset;
         };
         float u = 0;
-        if (r.type == 3) {
-            if (const auto k = std::ranges::find(r.markups, onMarkup->id); k != r.markups.end())
+        if (r.type == 3) { // her markup's place in the record's list; 0 off a listed markup (0x605ED0)
+            if (const auto k = onMarkup ? std::ranges::find(r.markups, onMarkup->id) : r.markups.end(); k != r.markups.end())
                 u = float(k - r.markups.begin()) / float(std::max<size_t>(r.markups.size() - 1, 1));
-        } else if (r.type == 1 || r.type == 2) {
+        } else if (r.type == 1 || r.type == 2) { // [I] off a markup (a volume's record): her place 0
             float len = 0, at = 0;
-            for (size_t i = 0; i + 1 < onMarkup->points.size(); ++i) {
+            for (size_t i = 0; onMarkup && i + 1 < onMarkup->points.size(); ++i) {
                 const float seg = glm::distance(onMarkup->points[i], onMarkup->points[i + 1]);
                 if (int(i) < s.ledgeSeg) at += seg;
                 len += seg;
@@ -1160,13 +1211,13 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
                     if (const float d = glm::distance(spline(c), target); c >= 0 && c <= 1 && d < best) best = d, u = c;
         }
         const vec3 point = spline(u);
-        orbit_.hint = orbit_.hintMarkup == on ? orbit_.hint + (point - orbit_.hint) * (1 - std::pow(0.75f, dt * 60.0f)) : point;
-        orbit_.hintMarkup = on;
+        orbit_.hint = orbit_.hintMarkup == recKey ? orbit_.hint + (point - orbit_.hint) * (1 - std::pow(0.75f, dt * 60.0f)) : point;
+        orbit_.hintMarkup = recKey;
     } else {
         orbit_.hintMarkup = -1;
     }
     bool recordDistance = false;
-    if (orbit_.hintMarkup >= 0 && weight > 0 && a.look.x == 0 && a.look.y == 0) {
+    if (orbit_.hintMarkup != -1 && weight > 0 && a.look.x == 0 && a.look.y == 0) {
         float strength = 1;
         for (const auto& [type, k] : rec->forces)
             strength *= type == 5 ? std::min(1.0f, k * dt) : type == 7 ? std::min(1.0f, k * meanMove) : 0.0f;
@@ -1211,7 +1262,9 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // Yaw limit (0x608700, command 7 via 0x609C00 / 0x607A30: (0 + 90) deg in her frame = behind her, half-range 90):
     // the camera stays on her back side, its look within yawRange of her heading.
     if (lim.yawRange < 3.14f) cam_.yaw = s.yaw + std::clamp(std::remainder(cam_.yaw - s.yaw, 6.2831853f), -lim.yawRange, lim.yawRange);
-    cam_.target = target;
+    // It looks at the look tracker's point (0x6009C0): the focus, moved by a trigger's 0x1A / 0x1C offset (Wine, the yacht
+    // deck: +0x160 points 79.01 under the pivot). Its own dead-zone lag (+0x620's record) is the focus's [I].
+    cam_.target = target + orbit_.lookAdd.now();
     // Distance back toward the mode's (0x5FFB00): its speed accelerates by 1106.36 x clamp((gap - 2 step) / step, -1, 1)
     // per second (step = speed x dt, at least 1) up to 4741.4; it moves by at most last tick's step.
     if (!recordDistance) {
@@ -1240,7 +1293,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         const auto h = col_.sweepSphere(target + d * 10.0f, kRadius, d * (len - 10.0f), kMask);
         return h ? target + d * std::clamp(10.0f + (len - 10.0f) * h->t, std::min(97.98f, len), len) : p;
     };
-    const auto insideRecord = [&] { return orbit_.hintMarkup >= 0 && rec->inside && glm::distance(cam_.position, orbit_.hint) < rec->radius; };
+    const auto insideRecord = [&] { return orbit_.hintMarkup != -1 && rec->inside && glm::distance(cam_.position, orbit_.hint) < rec->radius; };
     vec3 out = proposed;
     if (insideRecord()) {
         // inside the record's radius: no collision

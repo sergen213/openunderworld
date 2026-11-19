@@ -863,6 +863,86 @@ TEST(StreamReal, CameraTriggerVolumeSetsDistanceAndPitch) {
                  w.camera().position.z - w.camera().target.z);
 }
 
+// Camera trigger commands beyond distance / pitch (docs/re/CAMERA.md §9), tru.exe under Wine 2026-11-19 (w2/CamZones7,
+// camz.py: CameraManager +0x8C, Lara camera +0x90 / +0x100 / +0x160 / +0x12D0), Lara put on the floor of a volume:
+// - 3859 {0x14 3}, {0x18 -6 deg at 300 deg/s with force type 5, k 2}: the pitch settles at -6.00 deg (the global on-foot
+//   set would hold -7.5 only while she moves); after a mouse nudge to +13.4 it comes back at 19.5 deg/s at Wine's ~31 fps
+//   (= 300 x min(1, 2 dt) per frame: 10 deg/s at our 60 Hz; without the force it would be 300 deg/s);
+// - 3861 {0x12 record 7}, priority 1, on foot (mode 1): CameraManager +0x12D0 = unit 9, record 7 (type 0, one point, 0
+//   deg/s, no forces): the record replaces the forces (0x5FFB00: +0x12B0 active -> 0x606B00, no 0x608B60) and turns at 0
+//   deg/s, so the camera holds (13 s without a unit of motion, 58.5 deg down, at 1264.2) where it was.
+static game::World& cliffWorld(const cdc::BigfileSet& bf, std::optional<game::World>& w) {
+    w.emplace([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w->script().setBigfile(&bf);
+    w->enemies().setBigfile(&bf);
+    w->startChapter(2);
+    for (int i = 0; i < 180; ++i) w->tick({});
+    return *w;
+}
+
+TEST(StreamReal, CameraTriggerForceSetEasesPitch) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::optional<game::World> world;
+    game::World& w = cliffWorld(bf, world);
+    const auto* t = w.script().find(3859);
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->camera.size(), 2u);
+    ASSERT_EQ(t->camera[1].forces.size(), 1u);
+    EXPECT_EQ(t->camera[1].forces[0].type, 5u);
+    EXPECT_FLOAT_EQ(t->camera[1].forces[0].k, 2.0f);
+    auto s = w.player().state();
+    s.pos = {-23267.2f, -520.2f, 5096.1f}; // the floor at its centre
+    w.restore(s, w.camera().yaw, glm::radians(13.4f)); // as the mouse left tru.exe's camera
+    float maxRate = 0, prev = w.camera().pitch;
+    for (int i = 0; i < 12 * 60; ++i) {
+        w.tick({});
+        maxRate = std::max(maxRate, std::abs(w.camera().pitch - prev) * 60.0f), prev = w.camera().pitch;
+    }
+    ASSERT_TRUE(w.script().find(3859)->inside);
+    ASSERT_EQ(w.cameraMode(), 1);
+    std::fprintf(stderr, "pitch %.2f deg, fastest %.2f deg/s, distance %.1f\n", glm::degrees(w.camera().pitch), glm::degrees(maxRate),
+                 w.cameraDistance());
+    EXPECT_NEAR(glm::degrees(w.camera().pitch), -6.0f, 0.3f) << "tru.exe -6.00";
+    EXPECT_LT(glm::degrees(maxRate), 10.5f) << "type-5 force: 300 deg/s x min(1, 2 dt)";
+    EXPECT_GT(glm::degrees(maxRate), 5.0f);
+}
+
+TEST(StreamReal, CameraTriggerRecordHoldsTheCamera) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::optional<game::World> world;
+    game::World& w = cliffWorld(bf, world);
+    const auto* t = w.script().find(3861);
+    ASSERT_NE(t, nullptr);
+    ASSERT_TRUE(t->camera[0].command == 0x12 && t->camera[0].record);
+    const collision::CameraRecord* r = nullptr;
+    for (const auto& u : w.units())
+        if (u.data.name == "l2_cliffclimb")
+            if (const uint32_t i = (t->camera[0].record->offset - u.data.col.recordsOffset) / 0x70; i < u.data.col.cameraRecords.size())
+                r = &u.data.col.cameraRecords[i];
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->type, 0u);
+    EXPECT_EQ(r->angleSpeed, 0.0f);
+    EXPECT_TRUE(r->forces.empty());
+    auto s = w.player().state();
+    s.pos = {-23638.6f, -3509.7f, 158.0f};
+    s.yaw = 0; // tru.exe 1.5708 (ours + 90 deg)
+    w.restore(s, 0, glm::radians(-25.0f));
+    for (int i = 0; i < 8 * 60; ++i) w.tick({}); // past the look-idle ramp (5..7 s)
+    ASSERT_TRUE(w.script().find(3861)->inside);
+    ASSERT_EQ(w.cameraMode(), 1);
+    EXPECT_EQ(w.cameraRecordVolume(), std::optional<int32_t>(3861)) << "its record replaces the forces (priority 1, mode 1)";
+    const glm::vec3 held = w.camera().position;
+    for (int i = 0; i < 4 * 60; ++i) w.tick({});
+    EXPECT_LT(glm::distance(w.camera().position, held), 1.0f) << "the camera holds (0 deg/s record; tru.exe: 13 s without motion)";
+    s.pos = {-23267.2f, -520.2f, 5096.1f}; // out of it (3859's floor)
+    w.restore(s, w.camera().yaw, w.camera().pitch);
+    w.tick({});
+    ASSERT_FALSE(w.script().find(3861)->inside);
+    EXPECT_EQ(w.cameraRecordVolume(), std::nullopt) << "leaving drops its record (0x5F2A70)";
+}
+
 // OU-CAM-001: the camera rides what carries her. tru.exe (Wine 2026-11-16, l2_cliffclimb chapter start, idle 15 s on the
 // yacht deck heaving +-203; w2/WineMeasure/s1/deck-idle.txt): the pivot and the camera (mode 1) move with her, pivot z -
 // root z 451.6..457.5, camera z - root z 369.0..374.9 (5.9 wide), the camera's heave lagging hers by 0.00 s (0x609830
@@ -871,7 +951,11 @@ TEST(StreamReal, CameraTriggerVolumeSetsDistanceAndPitch) {
 // OU-CAM-005: on the deck tru.exe's camera stands at distance 948.2 (mode 1), not 1264.2, looking up 5 deg (camera -
 // pivot z -84.2..-81.4): l2_cliffclimb's camera trigger volume by the yacht (Wine: CameraManager +0x8C, commands 0xD
 // 948.17 and 0x18 = pitch force set 5 deg at 250 deg/s). The pitch force waits for 5..7 s without look input (0x5FFA90),
-// so the absolute height is checked from 8 s on, as the Wine traces had no look input for long before.
+// so the absolute height is checked from 8 s on, as the Wine traces had no look input for long before. Its third
+// command, 0x1C (0, 0, -79.01), moves the look point under the pivot: tru.exe's look vector (+0x160) stands 0.22 deg up
+// where the pivot is 5.00 deg up (Wine 2026-11-19, w2/CamZones7 camz.py; look tracker +0x620 +0x20 = (0, 0, -79.01)).
+// The volume rides the yacht (Wine: instance 3852 at its intro + (-36.9, 27.3, 279.0) in our frame at the sample; ours:
+// anchored to ms_uo_yacht 2566 by its script, posed by World::poseAnchored, tested in that frame).
 TEST(StreamReal, CameraRidesTheYachtDeck) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -881,14 +965,20 @@ TEST(StreamReal, CameraRidesTheYachtDeck) {
     w.startChapter(2);
     for (int i = 0; i < 180; ++i) w.tick({}); // the self-test's 3 s start
     std::vector<float> root, cam;
-    float plo = 1e9f, phi = -1e9f, dlo = 1e9f, dhi = -1e9f;
+    float plo = 1e9f, phi = -1e9f, dlo = 1e9f, dhi = -1e9f, llo = 1e9f, lhi = -1e9f;
     for (int i = 0; i < 15 * 60; ++i) {
         w.tick({});
         ASSERT_EQ(w.cameraMode(), 1) << i;
         ASSERT_LT(w.player().state().water, 0) << "on the deck " << i;
         const float z = w.player().state().pos.z;
         root.push_back(z), cam.push_back(w.camera().position.z);
-        plo = std::min(plo, w.camera().target.z - z), phi = std::max(phi, w.camera().target.z - z);
+        plo = std::min(plo, w.cameraPivot().z - z), phi = std::max(phi, w.cameraPivot().z - z);
+        ASSERT_TRUE(w.script().find(3852)->inside) << "she stays in the riding volume " << i;
+        if (i >= 8 * 60) {
+            const glm::vec3 look = w.camera().target - w.camera().position;
+            const float deg = glm::degrees(std::asin(look.z / glm::length(look)));
+            llo = std::min(llo, deg), lhi = std::max(lhi, deg);
+        }
         if (i >= 5 * 60) dlo = std::min(dlo, w.cameraDistance()), dhi = std::max(dhi, w.cameraDistance());
         // OU-PLY-015: tru.exe stays in one chart state (rq 46, standing idle) all 15 s; ours fell once as a script
         // object spawned 6.5 s in and rebuilt the colliders at their intro frames before her step.
@@ -898,8 +988,10 @@ TEST(StreamReal, CameraRidesTheYachtDeck) {
     EXPECT_GT(rhi - rlo, 300.0f) << "the deck heaves";
     float lo = 1e9f, hi = -1e9f;
     for (size_t i = 5 * 60; i < root.size(); ++i) lo = std::min(lo, cam[i] - root[i]), hi = std::max(hi, cam[i] - root[i]);
-    std::fprintf(stderr, "root %.1f..%.1f, pivot - root %.1f..%.1f, camera - root %.1f..%.1f, distance %.1f..%.1f\n", rlo, rhi,
-                 plo, phi, lo, hi, dlo, dhi);
+    std::fprintf(stderr, "root %.1f..%.1f, pivot - root %.1f..%.1f, camera - root %.1f..%.1f, distance %.1f..%.1f, look %.2f..%.2f deg\n",
+                 rlo, rhi, plo, phi, lo, hi, dlo, dhi, llo, lhi);
+    EXPECT_NEAR(llo, 0.22f, 0.3f) << "look pitch (tru.exe 0.22 deg: the pivot 5.00 deg up less the 79.01 look offset)";
+    EXPECT_NEAR(lhi, 0.22f, 0.3f) << "look pitch (tru.exe 0.22 deg)";
     EXPECT_GT(plo, 451.6f - 5.0f) << "pivot - root (tru.exe 451.6..457.5)";
     EXPECT_LT(phi, 457.5f + 5.0f) << "pivot - root (tru.exe 451.6..457.5)";
     EXPECT_NEAR(dlo, 948.2f, 1.0f) << "camera distance (tru.exe 947.7..948.6)";
@@ -1192,7 +1284,7 @@ TEST(StreamReal, YachtCameraTurnsRoundTheCabin) {
         const auto& c = w.camera();
         const glm::vec2 off = glm::vec2(c.position) - glm::vec2(w.player().state().pos);
         bins.insert(int(std::floor((std::atan2(off.y, off.x) + 3.1415927f) / 0.34906585f)));
-        const float d = glm::distance(c.position, c.target);
+        const float d = glm::distance(c.position, w.cameraPivot()); // tru.exe +0x1D4 (the deck's look point sits 79 under it)
         lo = std::min(lo, d), hi = std::max(hi, d);
         turned += std::remainder(c.yaw - last, 6.2831853f), last = c.yaw;
     }

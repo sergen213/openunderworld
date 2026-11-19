@@ -468,6 +468,62 @@ TEST(ScriptRealData, AllUnitsParse) {
     EXPECT_GT(planes, 100u);
 }
 
+// Camera trigger volumes (intro data +0x18 block, kind 0: inline command lists; docs/re/CAMERA.md §9): which commands the
+// game's volumes use, counted over the 82 units (the survey behind the commands World::updateOrbitCamera models). The
+// 0x17 / 0x18 force sets carry their force records, all of types the global sets use (2 = her move, 3 / 4 curves, 5 =
+// k x dt: l2_cliffclimb 3851 k 20, 3859 k 2; 7 = her mean move), and every 0x12 points at a record.
+TEST(ScriptRealData, CameraTriggerCommandSurvey) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list);
+    std::string text(list->begin(), list->end());
+    std::map<uint32_t, int> uses;
+    int volumes = 0, late = 0, setsWithForces = 0, records = 0;
+    std::set<uint32_t> forceTypes;
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty()) continue;
+        const std::string name = line.substr(line.rfind('\\') + 1);
+        auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*bytes)));
+        Runtime r;
+        r.setBigfile(&bf);
+        r.setUnits({{name, drm, {}}});
+        for (const auto& o : r.objects()) {
+            if (o.kind != Kind::Volume || o.camera.empty()) continue;
+            ++volumes, late += o.cameraLate;
+            for (const auto& c : o.camera) {
+                ++uses[c.command];
+                if ((c.command == 0x17 || c.command == 0x18) && !c.forces.empty()) {
+                    ++setsWithForces;
+                    EXPECT_EQ(c.forces.size(), std::bit_cast<uint32_t>(c.arg[3])) << name << " " << o.uid;
+                    for (const auto& f : c.forces) {
+                        forceTypes.insert(f.type);
+                        EXPECT_TRUE(f.type >= 1 && f.type <= 7) << name << " " << o.uid;
+                    }
+                }
+                if (c.command == 0x12) records += c.record.has_value();
+            }
+        }
+    }
+    for (const auto& [c, n] : uses) std::printf("command 0x%X: %d\n", c, n);
+    std::printf("%d volumes (%d with priority), %d force sets with forces, %d records\n", volumes, late, setsWithForces, records);
+    const std::map<uint32_t, int> expected = {{0x0, 4},   {0x1, 4},    {0x2, 129},  {0x3, 2},    {0x4, 7},    {0x5, 1},    {0x6, 15},
+                                              {0x7, 1},   {0x8, 4},    {0xC, 2},    {0xD, 109},  {0x12, 116}, {0x14, 53},  {0x15, 33},
+                                              {0x16, 54}, {0x17, 24},  {0x18, 155}, {0x19, 65},  {0x1A, 73},  {0x1B, 47},  {0x1C, 51}};
+    EXPECT_EQ(uses, expected);
+    EXPECT_EQ(volumes, 459);
+    EXPECT_EQ(setsWithForces, 89);
+    EXPECT_EQ(records, uses[0x12]);
+    EXPECT_EQ(forceTypes, (std::set<uint32_t>{2, 3, 5, 7}));
+}
+
 // setUnits adds a unit once: it used to take "no objects of the unit" for "not loaded" and add an object-less unit again
 // on every call, restarting its unit script (a second instance and thread). container1 is the one unit whose intros make
 // no script objects (it has no unit script); l3_main_bedroom's unit script must stay the same instance while loaded.
