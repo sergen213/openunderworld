@@ -943,6 +943,76 @@ TEST(StreamReal, CameraTriggerRecordHoldsTheCamera) {
     EXPECT_EQ(w.cameraRecordVolume(), std::nullopt) << "leaving drops its record (0x5F2A70)";
 }
 
+// Trigger commands 4 (pitch override by id) and 8 (pitch look limits), tru.exe under Wine 2026-11-19 (w2/CamRest8,
+// l3_main_bedroom after a new game; fast.py / camz.py read the Lara camera +0x1278 and +0x8C4):
+// - 4468 {2 790.14}, {4 id 9 = (-5 deg, 1500 deg/s, hold 0)} inside 4476 {0x18 -10 deg 1000 deg/s}: walking in with the
+//   pitch at -10.00, +0x1278 ends at cur = (0.198, 3.493, 0) = id 9's target (85 deg, 1500 deg/s) x 0.133, target 0,
+//   clock 0.25, time 0.017: the override blends its speed in from 0 (0x609F10 took the switched-off one's), turns the
+//   5 deg up to -5 in two frames, then switches itself off within 1 deg of it (0x609D40, hold 0); leaving resets it;
+// - 4349 (l3_bedroom_hall) {8 -10 10}: +0x8C4 = centre 1.396 (80 deg), range 0.175 (10 deg); the mouse turns the pitch
+//   no further than 0.00 up and -20.00 down.
+TEST(StreamReal, CameraTriggerPitchOverrideAndLimits) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.startChapter(0);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto floorIn = [&](int32_t uid) {
+        const auto* t = w.script().find(uid);
+        EXPECT_NE(t, nullptr) << uid;
+        const auto floor = t ? w.collision().groundProbe(t->pos + glm::vec3(0, 0, t->shape.half.z - 200), 2 * t->shape.half.z) : std::nullopt;
+        EXPECT_TRUE(floor) << "a floor in " << uid;
+        return floor ? floor->point : glm::vec3(0);
+    };
+    // 4468: walk her in as in tru.exe, from where she started there (tru.exe (438.3, -9454.1, -1385.0); our frame = tru.exe's
+    // - (9623.7, 330.8, -2977.6), from 4468's instance in both), looking the way she walks.
+    const glm::vec3 centre = floorIn(4468);
+    const auto start = w.collision().groundProbe(glm::vec3(438.3f - 9623.7f, -9454.1f - 330.8f, -1385.0f + 2977.6f + 200), 600);
+    ASSERT_TRUE(start) << "tru.exe's start floor";
+    const glm::vec3 dir = glm::normalize(glm::vec3(glm::vec2(centre - start->point), 0));
+    auto s = w.player().state();
+    s.pos = start->point, s.yaw = std::atan2(dir.y, dir.x);
+    w.restore(s, s.yaw, glm::radians(-10.0f));
+    for (int i = 0; i < 90; ++i) w.tick({});
+    ASSERT_FALSE(w.script().find(4468)->inside);
+    ASSERT_TRUE(w.script().find(4476)->inside);
+    game::Actions walk;
+    walk.move = {0, 1};
+    for (int i = 0; i < 240 && !w.script().find(4468)->inside; ++i) w.tick(walk);
+    ASSERT_TRUE(w.script().find(4468)->inside) << "she walks into 4468";
+    ASSERT_EQ(w.cameraMode(), 1);
+    const float target = glm::radians(85.0f), speed = glm::radians(1500.0f);
+    auto o = w.cameraOverride(true);
+    EXPECT_FLOAT_EQ(o[3], target) << "command 4 sets id 9's (-5 deg, 1500 deg/s)";
+    EXPECT_FLOAT_EQ(o[4], speed);
+    float peak = w.camera().pitch;
+    int ticks = 1;
+    for (; ticks < 30 && o[4] != 0; ++ticks) w.tick(walk), o = w.cameraOverride(true), peak = std::max(peak, w.camera().pitch);
+    std::fprintf(stderr, "4468: off after %d ticks, cur %.3f %.3f, pitch peak %.2f deg, distance %.1f\n", ticks, o[0], o[1],
+                 glm::degrees(peak), w.cameraDistance());
+    EXPECT_EQ(o[4], 0.0f) << "it switches itself off at its target (hold 0)";
+    EXPECT_EQ(o[6], 0.25f);
+    EXPECT_NEAR(o[1] / speed, o[0] / target, 1e-4f) << "cur = target x 4 x clock when it switched off";
+    EXPECT_NEAR(o[0] / target, 4.0f * float(ticks) / 60.0f, 1e-3f);
+    EXPECT_LE(ticks, 3) << "tru.exe: 2 frames for the 5 deg from -10";
+    EXPECT_NEAR(glm::degrees(peak), -5.0f, 0.5f) << "it turned the pitch up to -5";
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_NEAR(w.cameraDistance(), 790.14f, 5.0f);
+    // 4349: the look input turns the pitch only within -10 +- 10 deg.
+    s.pos = floorIn(4349);
+    w.restore(s, w.camera().yaw, glm::radians(-10.0f));
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_TRUE(w.script().find(4349)->inside);
+    game::Actions up, down;
+    up.look = {0, 2}, down.look = {0, -2};
+    for (int i = 0; i < 60; ++i) w.tick(up);
+    EXPECT_NEAR(glm::degrees(w.camera().pitch), 0.0f, 0.3f) << "tru.exe 0.00";
+    for (int i = 0; i < 60; ++i) w.tick(down);
+    EXPECT_NEAR(glm::degrees(w.camera().pitch), -20.0f, 0.3f) << "tru.exe -20.00";
+}
+
 // OU-CAM-001: the camera rides what carries her. tru.exe (Wine 2026-11-16, l2_cliffclimb chapter start, idle 15 s on the
 // yacht deck heaving +-203; w2/WineMeasure/s1/deck-idle.txt): the pivot and the camera (mode 1) move with her, pivot z -
 // root z 451.6..457.5, camera z - root z 369.0..374.9 (5.9 wide), the camera's heave lagging hers by 0.00 s (0x609830
