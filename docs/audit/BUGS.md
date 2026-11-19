@@ -136,10 +136,10 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Open | pre-existing | C-JOINT |
 | OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed on int/brief (171100e) | pre-existing | C-VM |
-| OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Reproduced | pre-existing | C-VM |
-| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Open | pre-existing | C-VM |
-| OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Open | pre-existing | C-VM |
-| OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Reproduced | pre-existing | C-VM |
+| OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Fixed-verified (8daa2ee) | pre-existing | C-VM |
+| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Open (natives decoded, VM has no vector values) | pre-existing | C-VM |
+| OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (f9676fd; `instance` 63 open) | pre-existing | C-VM |
+| OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Fixed-verified (agent/ScriptVm6) | pre-existing | C-VM |
 | OU-SCR-005 | script VM | Level-change fade to white unsupported (always black) | Open | pre-existing | C-VM |
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
@@ -784,18 +784,34 @@ proving tests there):
   odd unrelocated CALLU operand is a builtin reference `{u8 1, u8 DataType, u16 index}` that the link pass 0x57EE20
   rewrites. 0x701 = DYNARRAY builtin 0 `Size` (handler 0x574A30, count at +0x18); the patched word was seen as
   0x02269574 at runtime. Our parser decodes it as `NOP 1793`, so CALLU loses its operand. It is the only real
-  operand-length mismatch with the exe over all 82 units. Fix in progress (agent ScriptVm, W6-5).
-- Status · Origin: Reproduced · pre-existing.
+  operand-length mismatch with the exe over all 82 units.
+- Fix (8daa2ee, on main since 0.53.0): operands decoded per 0x57EE20, builtin CALLU `{1, DataType, index}` → DYNARRAY
+  builtins in the VM. Tests `ScriptParse.OperandWordsAndBuiltinCallU`, `ScriptRealData.FireVolumeConstructorBuildsSensors`.
+- Re-verified 2026-11-19 (agent/ScriptVm6, main bcdf1db): no `op 0x65` stop in `ch01_bedroom_new_game` (with and without
+  audio), in a 900-tick l3_main_bedroom run standing in 4494, or in 600-tick idle runs of l3_main_bedroom and
+  l2_cliffclimb (the fire volumes' constructors 4080 / 4081 finish: no handler stops at all).
+- Status · Origin: Fixed-verified · pre-existing.
 
 **OU-SCR-002 Native `anchor` 1 unbound** — 0x7966F0, the vector between two anchors (0x4AB870); the VM has no vector
 values (PROGRESSION.md L76-78). Logs: `triggervolume` 158, `triggerplane` 6 stops [O]; l7_helheim01 8945 (sound loudness
 loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Open · pre-existing.
+- Narrowed 2026-11-19 (agent/ScriptVm6): the chain the fire triggervolumes (type 6515 vt 73, e.g. l3_main_bedroom 4529)
+  run is decoded (SCRIPT_NATIVES.md rows `anchor` 4, `vector` 5/8/9/11, `rotation` 0/9): `VectorTo(Lara)`, the anchor's
+  y axis, both z zeroed (`vector` 8), the rotation between them (0x49DA10 quaternion → 0x49D450 euler), its yaw
+  (`rotation` 9 = component z) against ±π/4 · 3π/4 → "front" / "back" / "left" / "right" for Lara's burn flinch clip
+  (`larabase` 21 / 22, `vector` 0/1/2/10 still undecoded). Vectors are 16-byte locals; our locals are byte-offset
+  indexed, so a vector could live in four slots, but `NativeContext` returns one word. Not bound: the clip choice also
+  needs the larabase natives.
 
 **OU-SCR-003 Other unbound natives seen in user runs** — `instanceref` fn 10 (unit scripts, 64), `instance` fn 27
 (l2_cliffclimb 37, l1_seafloor 10, l7_arctic_sea 5), `gamebase` fn 27 (`ms_uo_yacht` 7, `co_yacht` 1), `instance` fn 63
-(`sh_ei_combat_crate_a/c` 12), `cinematic` fn 10 (3), `unitref` fn 1 (2) [O logs]. Effect per native unknown; the yacht's
-`gamebase` 27 stop is in the 0.50.0 yacht work area. Fix: bind from the native tables (docs/formats/SCRIPTS.md method).
-Status · Origin: Open · pre-existing.
+(`sh_ei_combat_crate_a/c` 12), `cinematic` fn 10 (3), `unitref` fn 1 (2) [O logs].
+- Fixed in f9676fd (on main since 0.53.0): `instanceref` 10/13/16, `unitref` 1, `gamebase` 27, `instance` 27 and
+  `cinematic` 10 for every receiver (SCRIPT_NATIVES.md; test `ScriptRealData.MissingNativesBound`,
+  `GameReal.UnitScriptsStoreFloatProperty`).
+- Open: `instance` 63 (0x798F50 → 0x7769A0 → 0x66A640 on the AI manager `*0xE922A8`, the crates' record; meaning of the
+  record unknown, no binding without it).
+- Status · Origin: Partly fixed · pre-existing.
 
 **OU-SCR-004 VM budget stops** — `firetriggervolume` 16, `dispatcher` 6 `handler stopped: budget` [O logs]; the per-resume
 budget is ours (100000 instructions, `Vm.cpp:352`).
@@ -809,8 +825,26 @@ budget is ours (100000 instructions, `Vm.cpp:352`).
   none while she stays 3.2 s in 4494). User logs with audio show the same stop at times (e.g. `game-20261106-111105`
   tick 551, 4493) [I: the sound not starting / not busy]. tru.exe repeats the damage per sound length [I]. The
   `dispatcher` 2559 / 663 budget stops (l2_cliffclimb sharks) were not reproduced here.
-- Fix: treat SSEQU on a sound that does not play as a one-tick wait (yield) instead of an immediate return.
-- Status · Origin: Reproduced · pre-existing.
+- tru.exe (2026-11-19, agent/ScriptVm6, SCRIPT_NATIVES.md row `sound` 1 / 2): `sound` 1 / 2 (0x4AF230 / 0x4AF290) always
+  return a SoundSequence latent (vftable 0x846F64), also when the sound did not start. SSEQU (0x57CE50 case 0x6A,
+  0x57E016 → 0x574960) queues a non-null latent on the thread (0x576A30) and returns, so the thread always suspends.
+  The thread update 0x57E970 runs the interpreter again only once IsActive (0x4ACC30: the sound instance lives) is false,
+  checked from the next update. A sound that does not play therefore costs one tick per pass, never a spin.
+- Wine (tools/wine-ref, new-game prologue, Lara held with `ref tpv` inside fire volume 4494 for 14 s,
+  `openunderworld-work/w2/ScriptVm6/rec4494.txt`): health 1000 → 700 once, then no further hit. The burn sound
+  (Assignment → Envelope → DTP 6559) sustains, so its sequence never ends while she stays. The earlier "repeats per
+  sound length [I]" is wrong. Ours with audio matched (SoundPlayer::busy stays true); without audio it spun.
+- Fix (agent/ScriptVm6): `Script.cpp` `sound` 1 / 2 always wait one tick, then while `SoundBusy` reports the sound
+  playing (no clock: exactly one tick). `ou-game` also builds GameSound under `--no-audio`, with the device-less mixer
+  (nothing is played; it is drained once a tick so voices end), so the burn clock runs on the sound's game-time length
+  with or without audio. Streamed-out units' marker sounds are now cut, not released: with the drained mixer,
+  `game_selftest_ch20_helheim02_passage` crashed in `SoundPlayer::apply` on l7_helheim01's freed marker plex.
+- Tests: new `ScriptRealData.FireVolumeBurnWaitsOnItsSound` (4493: a silent sound gives one pass per tick and no
+  failure; a busy sound gives one hit in 600 ticks). It fails before the fix with `handler stopped: budget`.
+  `ctest -R 'Script|selftest|replay|Fire'` (203, every self-test and replay with `--no-audio`) and `-L protected` (41)
+  pass. No self-test or replay changed result, and none needed re-recording. ch01 health is unchanged (700 / 400) and
+  no self-test log has a `budget` or `op 0x65` stop. The `dispatcher` budget stops remain unreproduced.
+- Status · Origin: Fixed-verified · pre-existing.
 
 **OU-SCR-005 Fade to white unsupported** — level changes that fade to white (0x5DAB40) always fade black (`Script.cpp:2052`).
 Status · Origin: Open · pre-existing.
