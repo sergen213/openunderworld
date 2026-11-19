@@ -271,6 +271,7 @@ std::vector<AnimPattern> animPatterns(const cdc::Drm& drm) {
         AnimPattern p;
         p.rate = float(r.u16(e + 0x14)) / 4096.0f;
         p.mode = r.u8(e + 0x16);
+        p.blend = r.u8(e + 0x19), p.start = r.u8(e + 0x1A), p.nextBlend = r.u8(e + 0x1B);
         const uint32_t count = r.u32(e + 0x10);
         if (const auto anims = cdc::internalPointer(*object, e + 0xC); anims && count < 256)
             for (uint32_t k = 0; k < count; ++k) p.anims.push_back(r.u16(*anims + 4 * k));

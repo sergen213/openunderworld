@@ -511,13 +511,12 @@ public:
     // Bikes larabase 52 mounted Lara on (0x777DD0 posts INSTANCE message 0x85 to the bike and to her), oldest first.
     std::vector<int32_t> takeMounts() { return std::exchange(mounts_, {}); }
     // larabase 21 / 22 (thunks 0x79A110 / 0x79A130 -> 0x777B10 / 0x777B70): an `animation` value {u16 object 8, u16 1,
-    // u32 pattern} names one of Lara's animation patterns (lara.drm Object +0x60; `anim::animPatterns`); the pattern goes
-    // into Lara +0x488 and INSTANCE_Post(Lara, 0x1DA | 0x1DB, 0). Her chart's action 0x760530 (gated on query 0x645)
-    // plays pattern +0x488 on her anim layer +0x320 (0x444BA0). The fire volumes (6515 fn 7) post 22 when her side to
-    // the fire or her moving changed, 21 while it holds: fire_walk_front / _left / _right (patterns 1501 / 1500 / 1499)
-    // moving, fire_standing_front / _left / _right (1493 / 1494 / 1495) standing. This tick's posts, oldest first. [open]
-    // Nothing plays them yet: which of Lara's chart states take 0x1DA / 0x1DB (data-driven), query 0x645 and the mask
-    // of layer +0x320 are not decoded.
+    // u32 pattern} names one of Lara's animation patterns (lara.drm Object +0x60; `anim::animPatterns`); {kind 1, pattern}
+    // goes into her upper-body chart's +0x488 (chart object *(player globals 0xFADB58 +0xF14)) and INSTANCE_Post(Lara,
+    // 0x1DA | 0x1DB, 0). The fire volumes (6515 fn 7) post 22 when her side to the fire or her moving changed, 21 while it
+    // holds: fire_walk_front / _left / _right (patterns 1501 / 1500 / 1499) moving, fire_standing_front / _left / _right
+    // (1493 / 1494 / 1495) standing. This tick's posts, oldest first; World::tickFlinch plays them (the chart's S90 on
+    // anim section 1, docs/GAMEPLAY.md "Script flinch overlay").
     struct PlayerAnimPost { uint32_t message = 0; uint32_t pattern = 0; };
     const std::vector<PlayerAnimPost>& playerAnimPosts() const { return playerAnimPosts_; }
     // `instance` 26 on an instance other than Lara: {receiver uid, target object uid, its marker id or -1}, oldest first.

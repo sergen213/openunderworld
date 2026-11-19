@@ -107,12 +107,33 @@ struct AnimLibrary {
     std::vector<vec3> bind;
 
     MeleeTuning melee; // Lara's attack records, melee target classes and hit windows (Melee.cpp)
+    // lara.drm's anim patterns (object DTP +0x60, anim::animPatterns) by index, as script anim requests name them
+    // (larabase 21 / 22: World::tickFlinch): the first animation's clip (empty when it is not in `clips`), rate, mode
+    // (1 once, 2 loop), crossfade / start frames and the next request's crossfade override (0xFF none), 30 Hz frames.
+    struct Pattern {
+        std::string clip;
+        float rate = 1;
+        uint8_t mode = 1, blend = 0, start = 0, nextBlend = 0xFF;
+    };
+    std::vector<Pattern> patterns;
     const anim::Clip* find(std::string_view name) const;
     const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")
     // Mean of the hand bones (55, 80) relative to the root segment in `clip` at `t` (model space, root
     // translation removed); nullopt without a full skeleton.
     std::optional<vec3> handsAt(const anim::Clip& clip, double t) const;
 };
+// Lara's script flinch overlay (World::tickFlinch; docs/GAMEPLAY.md "Script flinch overlay"). tru.exe: her upper-body
+// chart (player data +0x12530) in state S90 plays chart +0x488 (the pattern larabase 21 / 22 stored) on anim section 1;
+// the section's weight +0xA4 steps toward its target +0xAC by +0xA8 per 30 Hz frame.
+struct FlinchState {
+    bool playing = false; // the chart in S90 (else S0)
+    uint32_t pattern = 0; // the last posted pattern (lara.drm anim pattern index; AnimLibrary::patterns)
+    uint32_t playingPattern = 0; // the pattern S90's entry action (0x760530) started
+    float weight = 0, target = 0, step = 0;
+};
+// Anim section 1's bone mask (lara.drm ObjectBase +0xC0 mask 1, globalaniminfo id 1; Wine: section +0xD8 runs
+// {0, 0..13} {1, 14..106} {0, 107..152}).
+inline constexpr int kUpperSectionFirst = 14, kUpperSectionLast = 106;
 // World::ik(): the limb-lock passes of one tick (docs/GAMEPLAY.md "Animation layers and IK").
 struct IkReport {
     bool feet = false, hands = false, look = false; // the pass ran (its gate held)
@@ -1062,6 +1083,9 @@ public:
     // What the limb locks and the head look-at did on the last tick, and a bone's origin in the world then (tests,
     // self-test probes `ik.*` / `pose.bone.*`); nullopt for a bone the skeleton has not.
     const IkReport& ik() const { return ik_; }
+    // The script flinch overlay (FlinchState) and the clip anim section 1 shows (empty while idle).
+    const FlinchState& flinch() const { return flinch_; }
+    const anim::AnimController& flinchSection() const { return flinchAnim_; }
     std::optional<vec3> boneWorld(int bone) const;
 
     // Streaming (empty units() for the single-mesh constructor).
@@ -1798,6 +1822,13 @@ private:
     float lightCooldown_ = 0, grenadeCooldown_ = 0;
     float throwT_ = -1;              // seconds into the throw clip; -1 = not throwing
     vec3 throwAt_{0};                // landing point chosen on the press
+    // Script flinch (World::tickFlinch; docs/GAMEPLAY.md "Script flinch overlay"): Lara's upper-body chart (tru.exe chart
+    // object *(player globals +0xF14)) enters S90 on message 0x1DA / 0x1DB and plays pattern +0x488 on anim section 1
+    // (segments 14..106). `flinchAnim_` crossfades the section's requests; both saved (serializeRuntime "flinch").
+    void tickFlinch(float dt);
+    void flinchLayer(std::vector<anim::LocalTransform>& local) const;
+    FlinchState flinch_;
+    anim::AnimController flinchAnim_{anims_.skeleton};
     CombatState combat_ = fullClips(anims_.weapons);
     double aimTime_ = 0; // pose clips' clock
     bool interactHeld_ = true;     // no press edge on the first tick

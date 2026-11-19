@@ -5617,6 +5617,90 @@ TEST(GameReal, LaraPlaysInteractionClips) {
     }
 }
 
+// Script flinch (docs/GAMEPLAY.md "Script flinch overlay"): l3_main_bedroom fire volume 4529 posts larabase 22 / 21
+// (ScriptRealData.FireVolumeFlinchSide); her upper-body chart plays the pattern on anim section 1, segments 14..106.
+// tru.exe under Wine in the same volume: walking fire_walk_* (1499..1501), standing fire_standing_* (1493..1495), the
+// section weight rising 0.25 per 30 Hz frame, the clip restarting while she stays, fading 0.2 per frame once she leaves.
+TEST(GameReal, FireVolumeFlinchPlaysUpperBodySection) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const float pi = glm::pi<float>();
+    struct Case { glm::vec2 direction; float yaw; bool walk; const char* clip; uint32_t pattern; };
+    const Case cases[] = {
+        {{1, 0}, pi, false, "fire_standing_front", 1493},
+        {{0, -1}, 0, false, "fire_standing_left", 1494},
+        {{0, 1}, 0, false, "fire_standing_right", 1495},
+        {{0, 1}, 0, true, "fire_walk_right", 1499},
+    };
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.clip);
+        const auto w = worldMaker(bf, "l3_main_bedroom", std::nullopt)();
+        w->tick({});
+        const game::PlayerState start = w->player().state(); // the new game's start, far from the fires
+        const auto* volume = w->script().find(4529);
+        ASSERT_TRUE(volume);
+        const glm::vec2 d = glm::normalize(c.direction) * 0.4f * std::min(volume->shape.half.x, volume->shape.half.y);
+        // from just above the box's bottom (its centre is above the hearth's top beside the burner)
+        const auto floor = w->collision().groundProbe(volume->pos + vec3(d, 100 - volume->shape.half.z), 1500);
+        ASSERT_TRUE(floor);
+        game::PlayerState p;
+        p.pos = floor->point, p.yaw = c.yaw;
+        w->restore(p, c.yaw, -0.25f);
+        game::Actions in;
+        if (c.walk) in.move = {0, 0.3f}, in.walk = true;
+        bool sawWeight = false;
+        // walking along +x the fire passes behind her after ~20 ticks (then on her left): stop before
+        for (int i = 0; i < (c.walk ? 16 : 40); ++i) {
+            w->tick(in);
+            sawWeight |= w->flinch().weight > 0 && w->flinch().weight < 1;
+        }
+        ASSERT_TRUE(w->flinch().playing);
+        EXPECT_EQ(w->flinch().playingPattern, c.pattern);
+        EXPECT_EQ(w->flinch().weight, 1.0f);
+        EXPECT_TRUE(sawWeight) << "faded in over the pattern's 4 frames";
+        ASSERT_GE(w->flinchSection().layers(), 1u);
+        EXPECT_EQ(w->flinchSection().layerStates().back().clip, w->anims().find(c.clip));
+        if (c.walk) continue;
+        // Standing, the clip ends and restarts while she stays (S90 -> S0 -> S90 on the next 0x1DA): the weight holds.
+        const double length = w->anims().find(c.clip)->durationSeconds();
+        float lowest = 1;
+        bool restarted = false;
+        double last = w->flinchSection().layerStates().back().time;
+        for (int i = 0; i < int(length * 60) + 30; ++i) {
+            w->tick({});
+            lowest = std::min(lowest, w->flinch().weight);
+            const double t = w->flinchSection().layerStates().back().time;
+            restarted |= t < last;
+            last = t;
+        }
+        EXPECT_TRUE(restarted);
+        EXPECT_GE(lowest, 0.8f);
+        EXPECT_EQ(w->flinchSection().layerStates().back().clip, w->anims().find(c.clip));
+        // The section covers segments 14..106 only: at full weight with no crossfade in progress, the spine (14, child of
+        // 2) takes the section's rotation, the left foot (6, below the section's range) keeps her own.
+        for (int i = 0; i < 200 && (w->flinchSection().layers() != 1 || w->flinch().weight < 1); ++i) w->tick({});
+        ASSERT_EQ(w->flinchSection().layers(), 1u);
+        const auto m = w->pose(1.0);
+        const auto sectionPose = w->flinchSection().pose();
+        const auto& sk = w->anims().skeleton;
+        const auto localRot = [&](int b) { return glm::quat_cast(glm::inverse(m[size_t(sk.bones[size_t(b)].parent)]) * m[size_t(b)]); };
+        const auto sectionRot = [&](int b) { return glm::quat_cast(anim::rotationFromVector(sectionPose[size_t(b)].rot)); };
+        EXPECT_GT(std::abs(glm::dot(localRot(14), sectionRot(14))), 0.9999f);
+        EXPECT_LT(std::abs(glm::dot(localRot(6), sectionRot(6))), 0.999f);
+        // Out of the volume the posts stop: the clip plays out, S0 fades the section out at 0.2 per 30 Hz frame.
+        w->restore(start, start.yaw, -0.25f);
+        int ticks = 0, fading = 0;
+        while (w->flinch().weight > 0 && ticks < int(length * 60) + 60) {
+            w->tick({}), ++ticks;
+            fading += !w->flinch().playing;
+        }
+        EXPECT_FALSE(w->flinch().playing);
+        EXPECT_EQ(w->flinch().weight, 0.0f);
+        EXPECT_NEAR(fading, 10, 1) << "5 frames of 30 Hz";
+        EXPECT_EQ(w->flinchSection().layers(), 0u);
+    }
+}
+
 // l1_baldrs_tomb press plate 219 (prismatic joint, Objects.cpp tickJoints): Lara stands on it, it sinks to its pressed
 // range (vt 34 -> vt 54; door 223: ProgressionReal.CriticalGates), she walks off and it rises back.
 TEST(GameReal, PressurePlateIndependentOfRenderRate) {

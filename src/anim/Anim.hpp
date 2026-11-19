@@ -49,11 +49,14 @@ struct AnimEntry {
 std::vector<AnimEntry> animList(const cdc::Drm& drm);
 // The object's animation patterns (Object DTP +0x5C count, +0x60 records of 0x24 bytes; an anim reference of kind 1,
 // tru.exe 0x444BA0 -> 0x4428A0): +0xC -> {u16 animation-list index, u8 weight} x +0x10, +0x14 u16 playback rate in
-// 1/4096 (0x438C40: channel +0x50), +0x16 mode (1 once, 2 loop), +0x19 blend frames. `anims` holds the indices.
+// 1/4096 (0x438C40: channel +0x50), +0x16 mode (1 once, 2 loop), +0x19 blend frames, +0x1A start frame, +0x1B the
+// next request's blend frames instead of its own (0xFF none; docs/formats/ANIMATION.md; Wine: after a fire_* pattern
+// (+0x1B 5) the empty request 121 (blend 4) fades anim section 1 out at 1/5 per 30 Hz frame). `anims` holds the indices.
 struct AnimPattern {
     std::vector<uint16_t> anims;
     float rate = 1;
     uint8_t mode = 1;
+    uint8_t blend = 0, start = 0, nextBlend = 0xFF;
 };
 std::vector<AnimPattern> animPatterns(const cdc::Drm& drm);
 

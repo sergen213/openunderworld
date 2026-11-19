@@ -2030,6 +2030,15 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              const auto owner = w.markupOwner(w.player().state().ledge);
              return w.player().state().state == State::Hang && owner && owner->first == "@8401";
          }},
+        // Standing in l3_main_bedroom fire volume 4529, facing the fire: saved while the script flinch shows on her upper
+        // body (anim section 1); after the load the clip plays out and restarts (GameReal.FireVolumeFlinchPlaysUpperBodySection).
+        {"l3_main_bedroom", std::nullopt, 50, 200, idle, [](game::World& w) {
+             w.tick({});
+             game::PlayerState s = w.player().state();
+             s.state = State::Idle, s.clip = "ng_idle", s.loop = true, s.clipTime = 0, s.vel = game::vec3(0);
+             s.pos = {-3984.6f, 223.7f, 87.2f}, s.yaw = 3.1415927f;
+             w.restore(s, s.yaw, -0.25f);
+         }, [](const game::World& w) { return w.flinch().playing && w.flinch().weight == 1.0f; }},
         // Hanging on l4_temple ledge 1187 (a standing jump), then shimmying along it.
         {"l4_temple", game::Spawn{{-8771.2f, -9922.7f, 2600}, 0}, 85, 240, [](uint64_t t) {
              game::Actions a;
