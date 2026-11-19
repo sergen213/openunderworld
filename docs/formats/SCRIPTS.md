@@ -272,7 +272,9 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   Collections, arrays/maps, object construction, other thread/PSEQ fibers and most native types
   are not implemented.
 - [O] Function local records (+0x0C, DataMember like members, DXHR `cdc::Function::m_locals`) carry initial values;
-  ours applies those of `symbol` locals (property names, e.g. 10814). PUSHL32 of a local holding a string keeps it a
+  the frame setup `0x57A850` constructs every local record at frame + offset from its init through `0x579770`. Ours
+  applies those of `symbol` locals (property names, e.g. 10814) and of BOOL / INT / FLOAT locals (6515 fn 1: FLOAT
+  +12 = π). PUSHL32 of a local holding a string keeps it a
   string (unit hint handlers compare/store their argument). `instanceref` natives accept a ref held as an object value
   (`instance` 14/15 return the intro id, 0x4AB400). `uiexperienceadjustmentmenu` [O registration 0x7AEDE0]: 4..10 set
   and 11..17 read training text, the +0x3EFB0 toggle and the five PLAYER TAILORING levels, 18 reads the preset; ours
@@ -280,6 +282,12 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   [O] The exe's CALL2/CALL3 (cases 0x66/0x67 of
   0x57CE50) look the callee up by vtable slot (virtual on `this`); ours keeps them direct because the virtual form
   stops l3 switch 4525 at a null CALL5 (test BedroomSwitchOpensHouseDoor) [U].
+- [O] **Vector values** (`vector` 220, `rotation` 219: 16 bytes `{x, y, z, w}` floats; a rotation is euler angles, z = yaw)
+  live inline in the frame or instance data, so ours keeps them in the byte-offset keyed slots: a vector at offset k is
+  the words at k, k+4, k+8, k+12 of the locals or `Instance::fields` (saved with the other dirty fields). Natives get
+  their address (receiver and native-typed arguments); a local holding a caller's address is followed to it
+  (`Machine::valueAt`). `Machine::valueNative` runs the `vector` / `rotation` methods, natives returning a vector fill
+  `NativeContext::words` (anchor 0 / 1 / 3..5), MOVEU copies 16 bytes. Thunks and maths: docs/re/SCRIPT_NATIVES.md.
 - cdcEngineDXHR/cdcScript/ByteCodeEnum.h supplies the opcode numbering; no interpreter exists in the research
   clones. No Wine process is needed for this implementation.
 - [O] Interpreter details read from 0x57CE50 (switch on opcode − 1): **SLEEP 0x7C** pops nothing and yields until
@@ -358,6 +366,8 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
 | Baseline 2026-10-29 (state 0 startup reaches more code) | 472 | playersensor 0 (72), instance 27 (39), spline 5 (27), CALL5 0x6A (24), instance 21 (23), larabase 56 (20), generatorbase 3 (20), multibody 1 (18), modifiable 1 (15), instance 18 (15), unitref 2 (14), larabase 55 (14) |
 | After spline movers, argument offsets, sensor/instance/larabase natives, array/thread opcodes | 265 | instance 27 (39, mercs: returns a 12-byte unitref value), CALL5 0x6A (24: globals member 12 is an engine-created object of type 74 that we do not create, so the call dispatches on the globals object), generatorbase 3 (20, survey artifact), multibody 1 (18), autosplinecamera 0 (20, reveal cameras now reached), uberobjectbase 1 (11), plannerobstacle 1 (11). Gone: spline (all), playersensor 0/1, instance 18/21/23, larabase 25/27/29/55/56, modifiable 1, unitref 2. Static: DREF/BOUNDS and TSSTART/TPSTART/TEND now execute (no unsupported opcode left). |
 | After reveal cameras, globals engine objects, instance 27, clock alarms | 183 | generatorbase 3 (20, survey artifact), multibody 1 (18), uberobjectbase 1 (11), plannerobstacle 1 (11), gamebase 1 (10), generatorbase 4 (9), triggervolumebase 0 (8), camerashake 0 (8). Gone: autosplinecamera 0, CALL5 0x6A, instance 27, microphone 1, gamebase 23/24/30/52, enemybase 18/27, clock 10. |
+| Before vector values (main 5751cf9, 2026-11-19) | 132 | anchor 1 (41: l1_seafloor / norse planes keep Lara's anchor in a member), generatorbase 3 (20, survey artifact), multibody 81 (12), plannerobstacle 1 (10), generatorbase 4 (8), larabase 21 (2: l4_temple 5237 / 5238) |
+| After vector values, anchor 0/1/3..5, larabase 21/22, scalar local inits (agent/ScriptVec7) | 89 | generatorbase 3 (20), multibody 81 (12), plannerobstacle 1 (10), generatorbase 4 (8), unit 14 (5), input 1 (5). Gone: anchor 1, larabase 21; no new reason (vector / rotation natives never stop) |
 
 - [O] **Arguments** live in the callee's locals at the byte offsets of the prototype's argument records (prototype
   +0x0C: 0x14-byte records, u16 offset +0x0C), from 0, in declaration order, without a `this` local. Before this
