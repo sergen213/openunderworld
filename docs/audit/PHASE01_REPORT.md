@@ -244,3 +244,14 @@ The 19-row Windows-to-Linux mapping table is at the end of ENGINE_ARCHITECTURE.m
    pipeline.
 5. **Wine measurement campaign** for the unmeasured REFERENCE_COMPARISON rows and the speedrun claims.
 6. **Bisect OU-VK-001** (`game_vulkan_rt_smoke`) between 671e35e and v0.41.0.
+
+## Addendum (2026-11-19)
+
+This report describes the state on 2026-11-16. For everything after it, read these instead:
+- [PROGRESS.md](PROGRESS.md): batches 2-5.
+- [BUGS.md](BUGS.md): current statuses.
+- [BRIEF_COMPLIANCE.md](BRIEF_COMPLIANCE.md) §16: the work queue.
+- The newer docs/re files: STRUCTURES, RENDER_PIPELINE, SCRIPT_NATIVES, VERIFICATION, CAMERA, UI, SAVEGAME,
+  SHUTDOWN, PUZZLE_BLOCKERS.
+
+The fixes from that work shipped in 0.52.0 (script VM) and 0.53.0 (sea level, platform camera, swim turn, puzzles).
