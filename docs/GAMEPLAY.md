@@ -2361,7 +2361,7 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     during which the rope pulls each such bend along both its segments with the weight of 87 kg [I: fitted; the
     head rocks on its pillar edge, so the tug that topples it is chaotic in the tension: 85 .. 90 kg on the fifth ..
     seventh tug, 80 after the eighth, 83 not at all]. From y -12940 (the test) ours tips it off on the fifth tug
-    (tru.exe: after the eighth); in the self-test it comes to rest at z -2523 (tru.exe -2523, the test's run -2681).
+    (tru.exe: after the eighth); in the self-test it comes to rest at z -2523 (tru.exe -2523, the test's run -2806).
 - Rope inputs [O state chart + tru.exe 0x746F60 / 0x745FA0; input actions 44 / 48 = Interact, 47 / 52 = Jump, 46 =
   Grapple (generalbank DTP 0x2F)]. On the rope the stick is read in its own frame (the pad's angle and deflection,
   input +0x10 / +0x18; dead below 0.35, player data +0x9C8 / +0x920), not the camera's:
