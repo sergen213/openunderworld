@@ -7,7 +7,7 @@ no engine code was changed. It builds on [TIMING.md](TIMING.md), [STARTUP.md](ST
 [../formats/MATERIALS.md](../formats/MATERIALS.md) and [../RENDERING.md](../RENDERING.md), and closes the open item
 "trace PCScene_Draw 0x5150E0 pass order end to end" from ENGINE_ARCHITECTURE.md.
 
-Snapshot: repo main a80bdb8 (2026-11-16).
+Snapshot: repo main a80bdb8 (2026-11-16). §13 (2026-11-20, int/batch10) adds a D3D9 call capture of the running game.
 
 ## Evidence legend
 
@@ -16,6 +16,7 @@ Snapshot: repo main a80bdb8 (2026-11-16).
 | **A** | Call order or operand checked in `objdump -d -M intel` of tru.exe during this audit. Disassembly: `objdump -d -M intel --no-show-raw-insn tru.exe` (scratch copy in `openunderworld-work/re-baseline/RenderOrder/tru.asm`, not committed) |
 | **D** | Read from the Ghidra whole-program decompile (`openunderworld-work/ghidra/exports/decomp_all.c`) during this audit, not re-checked instruction by instruction |
 | **C** | Taken from a cited repo document that marks it observed ([O]); not re-verified here |
+| **R** | Observed in the D3D9 call capture of the running game under Wine (§13; call numbers into its traces) |
 | **[INFERENCE]** | Reasoned from structure; confidence given as high / medium / low |
 
 Confidence (h/m/l) is given per row where it is not obvious from the tag. Function names that do not appear in
@@ -315,22 +316,22 @@ removal); **reordered** = same pass, different position; **missing** = no equiva
 | Shadow atlas: spot / shadow-casting lights (§6) | RT local-light shadows (`rtLights`) when RT is on; otherwise none | none | enhanced replacement (RT) / **missing** without RT | in Original without RT, torches and the flashlight light through walls and objects |
 | Sun shadow map for generic shading | `recordShadowPass` | `drawShadowMap` | enhanced (OU's own) | n/a |
 | Planar reflection (§7.4) | VkRenderer.cpp:1178–1267, same-frame plane, oblique near plane | `drawReflection` | translated, **reordered in time** | OU uses this frame's plane (tru.exe: last frame's); OU picks the nearest reflecting mesh's mean z, tru.exe the drawable's registered plane. No visible lag in OU |
-| Refraction view (§7.3) | scene copies (`recordWaterCopies`) bound as classes 2/3 | screen copies in `drawScreenReaders` | **missing** (approximated) | above-water objects can leak into the sea's refraction; full resolution instead of half |
+| Refraction view (§7.3) | scene copies (`recordWaterCopies`) bound as classes 2/3 | screen copies in `drawScreenReaders` | **missing** (approximated) | above-water objects can leak into the sea's refraction; full resolution instead of half. Capture (§13.2 row 3): tru.exe renders a 640x360 colour + INTZ depth view with its own clip plane every frame the sea is visible (BUGS OU-WAT-015) |
 | Ripple map (§7.2) | none in Original; Enhanced: GPU eWave field (`WaterField`) | same | **missing** in Original / enhanced replacement | Original water shows no ripples around Lara where tru.exe (EnableWaterFX) had a 30 Hz ripple map |
-| Clear (§4 step 7) | colour (0.08, 0.09, 0.11), depth 1 | same | different value | only where nothing is drawn; tru.exe's clear colour (+0x220) not decoded |
+| Clear (§4 step 7) | colour (0.08, 0.09, 0.11), depth 1 | same | different value | only where nothing is drawn; tru.exe clears to a per-unit colour with alpha 0 (l3_main_bedroom (45, 26, 0), l2_cliffclimb (111, 122, 125), §13.3) |
 | Depth pre-pass (§4 step 8) | only with AO / RT (`prepassPipelines_`) | AO pre-pass only | reordered (opaque draws LESS + write instead of pre-pass + EQUAL) | none for opaque; see blend 2–3 below |
 | DepthBufferTexture (class 10) | depth copy (`recordWaterCopies`) | `opaqueDepthFbo` blit | translated | none known |
 | Opaque list, state-sorted, Z EQUAL (§4 step 9) | opaque in mesh order | same | reordered (order irrelevant with depth test) | none |
 | Blend modes 2–3 in the opaque list (§3) | drawn in the back-to-front blended part with depth writes (`SubMesh::depthWrite`) | same | **reordered** | tru.exe blends foliage edges over whatever opaque was drawn earlier in state order and lets later geometry behind fail EQUAL; OU blends over the finished opaque scene, so OU edges are cleaner than the original [INFERENCE m] |
 | Opaque without pre-pass, list 2 (§4 step 10) | part of opaque | same | equivalent | none |
-| Translucent list, back to front by view depth (§4 step 11) | back to front by mesh-centre distance, per mesh | same | translated (coarser key) | sorting differs inside one mesh and when centres cross; FX are not interleaved (below) |
-| FX / particles / weather drops (PCPrimitives in list 3, §2) | FX batches after the water (`fxBatches`; the original rain drops are appended as additive quads, `fx/Weather.hpp`) | `drawFx` after the water | **reordered** | particles behind a translucent mesh draw over it in OU; in tru.exe they sort with translucent meshes by view depth [INFERENCE m] |
-| Alpha-only mask pass 0x800 (§4 step 12) | none | none | **missing** | none until its consumer is known [U] |
-| Screen readers with back-buffer copy, list 5 (§4 step 13) | `screenDraws_` after `recordWaterCopies` (second pass) | `drawScreenReaders` | translated | copy taken after all blended draws in both (same as tru.exe) |
+| Translucent list, back to front by view depth (§4 step 11) | back to front by mesh-centre distance, per mesh | same | translated (coarser key) | sorting differs inside one mesh and when centres cross; FX are not interleaved (below). Capture: instance drawables strictly back to front (§13.4); two-sided blended batches are two draws, back faces then front (OU: one cull-off draw, BUGS OU-REN-011) |
+| FX / particles / weather drops (PCPrimitives in list 3, §2) | FX batches after the water (`fxBatches`; the original rain drops are appended as additive quads, `fx/Weather.hpp`) | `drawFx` after the water | **reordered** | particles behind a translucent mesh draw over it in OU; in tru.exe they sort with translucent meshes (capture: 45 blend-state changes among 260 bedroom translucent draws, §13.4). Fixed-function sprites (glows) are drawn after the filters in tru.exe (§13.2 row 10), before them in OU, so OU's glows are bloomed |
+| Alpha-only mask pass 0x800 (§4 step 12) | none | none | **missing** | capture: heat-haze cards write their luminance into the back buffer's alpha; no reader in the captured frames (§13.6 1): none visible |
+| Screen readers with back-buffer copy, list 5 (§4 step 13) | `screenDraws_` after `recordWaterCopies` (second pass) | `drawScreenReaders` | translated; the **sea reordered** | copy taken after all blended draws in both (same as tru.exe). The l2_cliffclimb sea is not a list-5 reader in tru.exe: its pieces are depth-sorted in the translucent list and read the refraction / reflection targets (§13.3 b); OU draws it after all blended draws, so a translucent mesh or particle in front of the sea is covered by it [INFERENCE m] |
 | Enhanced water, splash fluid, FFT ocean, caustics | `water*` pipelines, `recordFluid`, `recordOcean`, `recordAgWater` | `drawWater`, `drawAgWater`, `runOcean` | enhanced replacement | Enhanced only |
-| Screen filters, list 6 (§4 step 14) | post pass `filter.glsl` | same | translated, **reordered** | tru.exe order (descending keys): Noise → Finish → ColorDOF → Feedback. OU `ouScreenFilter`: ColorDOF → Finish → Feedback → tints → Noise. Noise is drawn under the bloom / DOF in tru.exe and on top in OU; whether bloom is drawn before or after DOF also differs [INFERENCE m: key semantics read from the constructors] |
-| List 7 (0x2000 primitives, §4 step 15) | under-water pass / rays in post after the filters | same | translated [INFERENCE l] | none known |
-| Under-water full-screen pass + rays (§7.5) | `ouWaterPass` / `ouRays` in post | same | translated | the ray target is 50 % / 25 % of the screen in tru.exe, OU rasterises 50 × 50 texels (RENDERING.md) → OU's rays are much blurrier at high resolutions [INFERENCE m] |
+| Screen filters, list 6 (§4 step 14) | post pass `filter.glsl` | same | translated, **reordered** | tru.exe order (descending keys): Noise → Finish → ColorDOF → Feedback. OU `ouScreenFilter`: ColorDOF → Finish → Feedback → tints → Noise. Noise is drawn under the bloom / DOF in tru.exe and on top in OU; whether bloom is drawn before or after DOF also differs [INFERENCE m: key semantics read from the constructors]. Finish composite adds `a · (M(c) + α_b · a · c)` in tru.exe, `a · M(c)` in OU (BUGS OU-REN-010) |
+| List 7 (0x2000 primitives, §4 step 15) | under-water pass / rays in post after the filters | same | translated [INFERENCE l] | capture: fixed-function sprite primitives and one 1024x256 textured quad after the filters (§13.2 row 10) |
+| Under-water full-screen pass + rays (§7.5) | `ouWaterPass` / `ouRays` in post | same | translated; **missing above water** | the ray target is 50 % / 25 % of the screen in tru.exe (capture: 640x360 / 320x180 at 1280x720), OU rasterises 50 × 50 texels (RENDERING.md) → OU's rays are much blurrier at high resolutions [INFERENCE m]. tru.exe also renders the ray volume with the camera above the water (l2_cliffclimb deck, §13.2 row 5) and composites it before the filters; OU only under water. Visible effect above water not established [U] |
 | 2-D/text scene (§2) | overlay after post (`drawOverlay`) | `drawOverlay` | translated | none |
 | Brightness: D3D gamma ramp (0x5222D0, whole display) | post-pass gamma before the overlay | same | translated | in tru.exe the HUD is brightened too; in OU it is not |
 | Feedback copy after all scenes (§5 step 10) | copy of the post output before the overlay (VkRenderer.cpp:1610) | before the overlay (GlRenderer.cpp:1240) | translated, **reordered** | tru.exe's copy includes the text/HUD scene [INFERENCE m]; in feedback effects tru.exe shows ghosted HUD trails, OU does not |
@@ -349,6 +350,8 @@ removal); **reordered** = same pass, different position; **missing** = no equiva
 | SHADERS.md "Screen targets" | sea instance classes 2/3 unsupplied, fed with scene copies | they are the refraction view's colour / depth (§7.3) | medium |
 
 ## 11. Open questions
+
+Questions 1, 2, 3, 4, 6, 9 and 11 are answered or narrowed by the D3D9 capture: §13.6.
 
 1. Consumer of the alpha-only pass 0x800 (materials with flags +0x40 bit 1) and of the alpha the main scene clears to
    0: Finish (bloom) mask, DOF or something else? Needs the filter shaders' CTAB or a Wine capture of the back-buffer
@@ -375,3 +378,116 @@ removal); **reordered** = same pass, different position; **missing** = no equiva
   for 0x509630 (EndFrame), 0x50F720 (pass → list), 0x507BF0 (EndScene), 0x517DE0 (filter insertion), 0x4F6240 (sort
   direction), 0x5DFFE0 / 0x5DA1C0 / 0x5CEBC0 / 0x5C5A30 / 0x5BFD60 / 0x5D9F90 (frame driver).
 - Bodies: `decomp_all.c` sections `/* ==== 005150e0 ... */` etc.; vtables from `rtti.tsv` (slot lists).
+
+## 13. Runtime capture under Wine (2026-11-20)
+
+**Method.** apitrace 14.0's `d3d9.dll` wrapper (win32 release, `lib/wrappers/d3d9.dll`) placed next to tru.exe in a
+private game copy; it forwards to the prefix's DXVK `d3d9.dll` and records every D3D9 call with its arguments and
+shader disassembly. Session `tools/wine-ref/sessions/render_capture.sh` (`SCENE=bedroom | cliffclimb | sharks`, each a
+new game; the scene is held still for the trace's last seconds), reduction `tools/wine-ref/py/d3d9_frames.py` (`index`,
+`frame`, `sort`, `shader`, `lod`) with the Linux apitrace 14 `apitrace dump`. Traces and reductions stay in the work
+directory: `/mnt/4TBNVMEXT4/openunderworld-work/rendercap10/{bedroom,cliffclimb,sharks}/` (`tru.trace` 16.9 / 18.1 /
+21.6 GB, `frame*.txt`, `sort3.txt`, `shot.png`, `cam.txt` / `rec.txt`). Settings of the capture prefix: 1280x720,
+`EnableShadows` 1, `EnableReflection` 1, `EnableWaterFX` 1, `EnableVolumetricFX` 1, `EnableFullscreenEffects` 1,
+`EnableDepthOfField` **0**, `AntiAliasing` 0, `DisableHardwareShadowMaps` 0, VSync off. Device: PUREDEVICE + hardware
+vertex processing, A8R8G8B8 back buffer, no auto depth surface, `PRESENT_INTERVAL_IMMEDIATE`.
+
+API caveat: capability-dependent branches are DXVK's. DXVK reports `INTZ` and hardware shadow maps, so the main depth
+is an INTZ depth *texture* (no colour target + StretchRect of §4 step 8) and the shadow atlas is a D16 depth texture
+with a `D3DFMT_NULL` colour target (§6 "hardware shadow maps"). A GPU without them takes the other branch.
+
+### 13.1 l3_main_bedroom, prologue corridor (frame calls 20000495..20004640, 504 draws)
+
+| # | Calls | Target / depth | What (state) | § |
+|---|---|---|---|---|
+| 1 | 20000501 | — | `BeginScene`: the only D3D scene of the frame (one BeginScene / EndScene per frame) | §5 4, 12 |
+| 2 | 20000515..697 | NULL-format 4096x3072 / D16 texture 4096x3072 | shadow atlas, 3 tiles, each `Clear(target \| z, 0xFFFF00, 1)` then LEQUAL + write, colour writes 0, cull none: 39 / 13 / 9 draws | §6 |
+| 3 | 20000699..719 | back buffer / INTZ 1280x720 | main view `Clear(target \| z \| stencil, 0x002D1A00)`: rgb (45, 26, 0), alpha 0 | §4 1, 2, 7 |
+| 4 | 20000730..916 | same | depth pre-pass: LEQUAL + write, colour writes 0, cull CW or none per material (53 draws) | §4 8 |
+| 5 | 20000950..2028 | same | opaque: EQUAL, no write, colour writes RGBA (one run RGB), 84 draws | §4 9 |
+| 6 | 20002064..4232 | same | translucent: LEQUAL, no write, SRCALPHA / INVSRCALPHA or ONE, colour writes **RGB** (alpha kept), alpha test on: 226 particle draws, then Lara's two-sided blended batches as CCW + CW pairs, 260 in all | §4 11 |
+| 7 | 20004260..447 | same | alpha only (`COLORWRITEENABLE` = A), SRCALPHA / ONE: 42 heat-haze cards whose PS fades by the INTZ depth and writes luminance × c100.x / 3 | §4 12 |
+| 8 | 20004448..478 | same | `StretchRect` back buffer → 1280x720 A8R8G8B8 (BackBufferTexture), then the heat-haze screen reader (the copy's rgb at a normal-mapped screen offset; it does not read the copy's alpha) | §4 13 |
+| 9 | 20004479..583 | 640x360 targets | Finish: `StretchRect` → 640x360, 4-tap ps_2_0 blur passes (a fraction pass blended at 0.839), composite onto the back buffer SRCALPHA / ONE through three 256-entry curve textures (vertex alpha 0x38) | §4 14 |
+| 10 | 20004613 | back buffer | one fixed-function textured quad (a 1024x256 texture made at load, call 1437), z off [U] | §4 15 / 0x5CDF30 |
+| 11 | 20004626..640 | same | `Clear(z \| stencil)`: the 2-D scene, no draws (no HUD while idle); `EndScene`, `Present` | §2 |
+
+### 13.2 l2_cliffclimb, yacht deck (frame calls 82812962..82830881, 5204 draws)
+
+| # | Calls | Target / depth | What | § |
+|---|---|---|---|---|
+| 1 | 82812981..82816127 | shadow atlas | 8 tiles (67 / 131 / 125 / 33 / 247 / 469 / 442 / 87 draws); which tiles are the sun's 4 PSSM splits is not split out [U] | §6 |
+| 2 | 82816140..82817874 | 640x360 A8R8G8B8 / 640x360 D24S8 | **planar reflection**: `Clear(all, 0x006F7A7D)`, user clip plane 0 (`SetClipPlane`, clip space), pre-pass cull **CCW** (the main view's CW flipped), opaque EQUAL, translucent with colour writes RGBA, two-sided pairs CW + CCW | §7.4, §4 4 |
+| 3 | 82817880..82821058 | 640x360 A8R8G8B8 / 640x360 INTZ texture | **refraction view**: same clear, its own clip plane 0, cull CW, pre-pass / opaque / translucent | §7.3 |
+| 4 | 82821059..82823749 | back buffer / INTZ 1280x720 | main view `Clear(all, 0x006F7A7D)`: rgb (111, 122, 125), alpha 0; depth pre-pass | §4 7, 8 |
+| 5 | 82823750..82823881 | 640x360 + the reflection's 640x360 D24S8; 320x180 | inside the depth pass: a full-screen quad with depth ALWAYS writing `oDepth` from the INTZ main depth (half-size depth copy), `Clear(target \| stencil)`, a 384-primitive volume mesh drawn additively and depth-tested (VS reads InstanceParams c57–c63), a 9-tap blur to 320x180 and back: the volumetric ray targets (50 % / 25 %) [INFERENCE m: sizes and passes as 0x6D8C20 / 0x6D9660], drawn with the camera **above** the water | §4 8 sub-scene, §7.5 |
+| 6 | 82823938..82828042 | back buffer | opaque EQUAL (~1100 draws) | §4 9 |
+| 7 | 82828116..82830112 | same | translucent, 403 draws: the sea (material PS of call 13277874: refraction colour + depth of row 3, reflection of row 2, two 1024² normal maps) in pieces among the other translucent draws, Lara's two-sided pairs, FX particles alternating ONE / INVSRCALPHA, fixed-function sprites, and last the ray composite (screen-space, z off, ONE, × c100.x × c132) | §4 11 |
+| 8 | 82830113..82830404 | same | `StretchRect` → BackBufferTexture; 22 screen readers (copy + INTZ depth; one of 183 primitives with an environment cube) | §4 13 |
+| 9 | 82830405..82830523 | 640x360 → 80x45 → 160x90 → 320x180 → 640x360 | Finish: blur 3 levels down, 4-tap steps back up, composite SRCALPHA / ONE without curves (PS of call 13365863) | §4 14 |
+| 10 | 82830539..82830855 | back buffer | after the filters: fixed-function sprite primitives (ONE / INVSRCALPHA, LEQUAL) and the 1024x256 quad: list 7 | §4 15 |
+| 11 | 82830868..881 | — | `Clear(z \| stencil)` (2-D scene), `EndScene`, `Present` | §2 |
+
+### 13.3 What the capture confirms, corrects and adds
+
+- **Confirmed** (§2–§7): one D3D scene per frame with the shadow atlas first (EndFrame §5); the root order reflection →
+  refraction → main → 2-D (§2); pre-pass LEQUAL + write with colour writes off, opaque EQUAL without writes,
+  translucent LEQUAL without writes, alpha-only pass, back-buffer copy then screen readers, filters (§4 8–15); the
+  mirror view's cull flip (§4 4, **A**); the refraction view's user clip plane and half-size colour + depth targets
+  bound to the sea (§7.3, open question 3); 50 % / 25 % ray targets (§7.5 correction of RENDERING.md); the Finish
+  blur "down to level ceil(r), back up by 4-tap steps, the fraction blended" (EFFECTS.md 0x519F20); G16R16 ripple
+  textures of at most 384² (§7.2: three dynamic 384x384 G16R16 textures for the l2_cliffclimb sea, three 177x129 and
+  three 257x285 for other volumes; none of them was bound in the captured frames, so how the sea samples them stays
+  open).
+- **Corrected**: (a) translucent colour writes are RGB only in the main view (alpha is kept for the alpha-only pass),
+  RGBA in the mirror and refraction views; (b) the sea is not a list-5 screen reader in this view: it is drawn in the
+  translucent list (pass 0x80) in depth-sorted pieces and reads the refraction / reflection targets, while the list-5
+  draws (after the back-buffer copy) are other materials (heat haze, an environment-cube surface); (c) with INTZ the
+  depth texture is the depth surface itself, no StretchRect; (d) the main view's clear colour is per unit, not a
+  constant: (45, 26, 0) in l3_main_bedroom, (111, 122, 125) in l2_cliffclimb, alpha 0.
+- **Added**: (a) two-sided blended batches are drawn twice in a row, back faces (`D3DCULL_CCW`) then front faces
+  (`D3DCULL_CW`), the reverse in the mirror view (BUGS OU-REN-011); (b) the volumetric ray pass runs as a sub-scene
+  inside the main depth pass even with the camera above water, and its composite is the last translucent draw, before
+  the back-buffer copy and the filters (open questions 4, 9); (c) fixed-function sprite primitives are drawn after the
+  filters (list 7), so they are not bloomed; (d) the Finish composite is `M(c) + c · c.a · a` with `a` the quad's
+  vertex alpha, the blur passes writing their vertex alpha (BUGS OU-REN-010); (e) only `D3DRS_DESTBLEND` changes
+  during play (INVSRCALPHA / ONE); `SRCBLEND` is not set at all in the captured frames (its value from start-up was not
+  read), and no draw reads the destination alpha.
+
+### 13.4 Transparency sort
+
+The translucent list is not state-sorted: in the bedroom frame its blend state changes 45 times among 260 draws (ONE
+fire / INVSRCALPHA smoke particles interleaved). Instance drawables come in strictly decreasing origin view depth (VS
+c3.w): l2_cliffclimb 19197.8 → 18279.8 → 17716.4 → 15609.0 → 15539.9 → 955.0 (Lara, 23 draws together) → −1.8 →
+−1283.9 (`cliffclimb/sort3.txt`): back to front, as §3's descending key. World-space drawables (terrain pieces, sea
+pieces, particles) carry the view-projection translation in c3 (24244.1 / 7541.8 for all of them), so their order
+cannot be ranked from the constants; the sea's pieces are spread over the list (34 at its start, the nearest two near
+its end), consistent with a per-drawable depth key [INFERENCE h].
+
+### 13.5 Batch LOD switching
+
+Session `SCENE=sharks` (Lara treading at the l2_cliffclimb open-water point, the water camera 3160 above her, three
+`shark_blueshark` circling; `sharks/lod600.txt` = `d3d9_frames.py lod tru.trace 600 6867,2610,1472`, the model's
+three batch totals [O-data: `ou-asset stats pc-w\shark_blueshark.drm`, ranges [0, 3160.56] / [3160.56, 4740.83] /
+[4740.83, ∞), MESHES.md]). Over the last 600 frames (sharks in view in the last 171) every shark instance is drawn
+with exactly **one** LOD per pass, the same one in the main pre-pass, the main opaque pass and the refraction view:
+the middle LOD (2610 primitives) at origin distances 3934..4751 (107 frames, 493..599), the far LOD (1472) at
+4774..5587 (64 instance-frames). The switch lies between 4751 and 4774 units from the camera to the model's origin;
+tru.exe measures to the bounding-sphere centre (≈ 148 units from the origin [I: the batch's bounding-box centre]), so
+this is the decoded 4740.83 bound within that offset. No shark came nearer than 3934, so the near switch (3160.56) was
+not crossed. The shadow atlas draws the same choice: the middle LOD as a caster in exactly those 107 frames, the far
+LOD otherwise (also for sharks out of view): the LOD is chosen by the camera's distance in every pass, as OU's
+`render::lodShown` does for the colour, sun-shadow and PSSM passes.
+
+### 13.6 Answers to §11
+
+| # | Answer from the capture |
+|---|---|
+| 1 | No consumer in these frames: the 4-tap blur passes replace the copy's alpha with their vertex alpha, the heat-haze reader uses the copy's rgb only, and no draw reads the destination alpha. The pass draws the heat-haze cards' luminance into alpha; DOF (off in the capture prefix) remains the candidate reader [U] |
+| 2 | Partly: ripple textures exist (G16R16, ≤ 384², three per volume); binding and sampling not seen |
+| 3 | **Yes**: the refraction view has its own user clip plane and half-size colour + INTZ depth, both read by the sea's PS |
+| 4 | The ray composite is a translucent-list draw (z off, ONE, last by its key) before the filters, so it is filtered |
+| 6 | Clear mode 3 (target, depth, stencil); colour per unit, alpha 0 (13.3 d) |
+| 9 | The ray targets are a sub-scene drawn inside the main depth pass; their depth surface is the reflection view's 640x360 D24S8, refilled from the main depth by a quad writing `oDepth` |
+| 5, 7, 8, 10, 12 | Not decided by these frames: DOF was off, no EndFrame image queue and no feedback effect ran |
+| 11 | tru.exe flips the cull in the mirror view (reflection pre-pass CCW, two-sided pairs CW + CCW); OU's side is unchecked |
