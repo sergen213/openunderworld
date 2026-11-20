@@ -1018,6 +1018,11 @@ public:
     // section is an instance of its own model, 0x4D3DA0: the grapple handles' model 1), nullopt without one; `removed`
     // reports action 28 on that section.
     std::optional<glm::mat4> uberSectionBody(int32_t uid, int32_t section, bool* removed = nullptr) const;
+    // Unit-frame motion of grapple target `uid`'s feature (on object model `model`) since its intro (Objects.cpp).
+    glm::mat4 grappleTargetMotion(int32_t uid, int32_t model) const;
+    // A unit's grapple target where its feature is now, world frame (Combat.cpp); by uid: nullopt when none is loaded.
+    GrappleTarget liveGrapple(const GrappleTarget& g, vec3 offset) const;
+    std::optional<GrappleTarget> grappleTargetNow(int32_t uid) const;
     // Skin palette (model space) of uber object `uid`'s section `section` at the animation its section instance's anim
     // component plays (transitions 0x4D4A00, state actions 2 / 3 0x4D86A0), nullopt while it stands in the bind pose.
     std::optional<std::vector<glm::mat4>> uberSectionPose(int32_t uid, int32_t section) const;

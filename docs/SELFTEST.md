@@ -296,6 +296,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `object.<uid>.exists` `.name` `.hidden` `.dead` | a script object by intro uid (objectlist name; instance hidden / killed) |
 | `object.<uid>.pos.x/.y/.z` | its position with its own displacement (a pushed block, a fallen body) |
 | `object.<uid>.body.x/.y/.z` | the translation of its own rigid motion from rest (doors on their joints, sliders) |
+| `object.<uid>.feature.x/.y/.z` | where its grapple target point is now (`World::grappleTargetNow`: a pull target's feature moves with the section showing its model), null when it is no grapple target |
 | `object.<uid>.lara.x/.y/.z` | Lara's root in that object's own frame (intro frame, displacement, loose motion): her height on a floating deck |
 | `object.<uid>.graph` | its anim-graph state id |
 | `object.<uid>.joint` | its multibody joint's position (plate units, hinge degrees) |
@@ -515,6 +516,7 @@ tested behaviour happen.
 | `ch08_puzzleroom_lift_pole` | l2_puzzleroom | from checkpoint 2818: pole 2967 pulled out of hole 2969 and carried (2960 vt 54, 2961 vt 62) |
 | `ch08_shrine_statue_pull` | l2_shrineroom | the naga statue 2794 grappled by its ring and pulled over (uber section 0: 5 -> 2), its script wakes the shaft's spiders |
 | `ch09_maproom_gauntlet_door` | l2_maproom | from under the shaft: volume 2636 -> cinematic 2624, the scripts hand the left gauntlet over (no fixture), door 2661 gripped and slid open by a left sidestep, through it (spider trigger, checkpoint 2590), the pedestal cinematic 2625, checkpoint 2591 |
+| `ch09_shrine_shaft_descent` | l2_shrineroom | the statue pull, then its ring lies with the toppled statue (the feature read off the live instance, 0x6FF040) and is no target; the freed slabs fall (OU-PZL-006); the edge hang, the stone band (one-handed, Interact), the bottom lip, the mid-fall throw at ring 2673, the rope paid out, the swing's release onto l2_maproom's floor under the ring |
 | `ch09_maproom_hub_panel` | l2_maproom | from checkpoint 2591: off the platform edge into a hang, drop-catches down the hub's panel (ledges 673 / 674 / 676 / 678), the ring ledge, the panel gripped with the gauntlet (2667 vt 49 / 50) |
 | `ch09_maproom_hub_turn` | l2_maproom | as `ch09_maproom_hub_panel`, then the hub turned by its panel: forward does nothing, a right sidestep walks the panel round hinge joint 1 to its stop at 41 degrees (0.716 rad; the record sets swap at 20 degrees and she keeps her grip), braked when she lets go |
 | `ch01_bedroom_new_game` | New Game | Prologue leg 1: the corridor onto the debris slab without a jump, wall 973, the stairs, switch 4525 opens house door 4520, down to the bedroom floor (checkpoint 4454) |
@@ -576,7 +578,7 @@ tested behaviour happen.
 | `ch20_yggdrasil_reveal` | l7_yggdrasil → l7_yggdrasil_hall01 | section 20 (C20-17, C20-18): volume 8804 from checkpoint 8792, cinematic object 8773 leaves her at checkpoint 8775; the thralls after it met with the hammer |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now (`pole_drop_after_fling` moved up 2026-11-10):
+registered with ctest. Run them by hand; move one up a directory when it passes. Now (`ch09_shrine_shaft_descent` moved up 2026-11-20):
 
 | known gap | level | fails at | cause |
 |---|---|---|---|
@@ -591,7 +593,6 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | `ch15_ballcourt_exit_switch` | l4_ballcourt | `switch_without_the_key` | with the socket empty Interact uses exit switch 5469 (through its use record) and reveal 5464 opens: the original keeps the switch locked (modifiable 7 (2), its state code) until the key goes in (keyhole 6501 vt 20 -> 5469 vt 62) [O bytecode]; ours honours a switch's modifiable 7 for `ar_ei_switch_oneway` only. The key itself now reaches the keyhole (`ch15_xibalba_key_to_exit`) |
 | `ch13_temple_block_topple` | l4_temple | `walk_until_the_rope_bends` | ring 4951 is offered from the east ledge and the throw holds (OU-PZL-008 (a): the sight ray ends at the post's feature); the run along the ledge wraps no bend on statue head 5236, and a bend that drags a rigid body is not modelled (tru.exe's bends are physics bodies, OU-PZL-008 (b)) |
 | `ch21_platform_ride`, `natla_platform_ride` | l7_yggdrasil_end | `jump_to_a_platform` / the grab | the steps of `natla_fight`, then a jump from the entry walkway's end at a floating stone. The stones ride their orbit rigs now (they stood at their intro positions when `ch21_platform_ride` was written; that scenario was not rerun since), but the timed running jump at a passing stone falls short: its ledge is 1240 out and 540 up (docs/GAMEPLAY.md "Natla") |
-| `ch09_shrine_shaft_descent` | l2_shrineroom | `pull_the_statue`, `grapple_in_the_fall` | the fallen statue's ring is still offered as a target, and ring 2673 is not offered in the fall. The freed floor slabs fall into the shaft (OU-PZL-006: fixed joints simulated), so the edge hang and the two drop-catches pass |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

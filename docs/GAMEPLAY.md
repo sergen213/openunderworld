@@ -2270,7 +2270,10 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   camera angle <= 90; (1) in range, <= 15, <= 5120, camera <= 90; (2) <= 2880, camera <= 90; (3) <= 2880, horizontal <=
   90, no more than 60 below level; (4) in range, camera <= 90, at least 5 above level; (5) in range, horizontal <= 90,
   at least 5 above level (`World::grappleTarget`). Distances from her eye (0x6ECE40: position + data +0x48C) to the
-  target point (0x6FF040: origin + its message-0xDB offset; ours the intro origin) [O]; "in range" (criterion 15) is
+  target point (0x6FF040: the live instance's +0x20 plus its message-0xDB offset, read at every query; ours the intro
+  origin for the named `*_grapple*` anchors, the feature riding the section that shows its model for the other pull
+  targets (`World::liveGrapple`): the naga statue 2794's ring goes down the shaft with the toppled statue) [O];
+  "in range" (criterion 15) is
   measured by tru.exe from the instance message 0x175 returns (grapple controller +0x34: the g_grapple instance, stowed
   at Lara's HInfo marker 9 on her pelvis, g_grapple data +0xB4 {in hand 30, stowed 9}) [O; Wine idle: 30 ahead, 37
   right, 295 up of her root; ours marker 9 at 22 / 37 / 303], ours from that marker (`GrappleTuning::stowMarker`). Line of

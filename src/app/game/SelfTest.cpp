@@ -539,7 +539,7 @@ bool SelfTest::probeKnown(std::string_view name) {
     if (p[0] == "object") {
         if (p.size() == 3) return f == "exists" || f == "name" || f == "graph" || f == "joint" || f == "hidden" || f == "dead" || f == "in" || f == "stowed" || f == "unit";
         if (p.size() == 5) return f == "uberslide" && integer(p[3]) && axisName(p[4]);
-        return p.size() == 4 && ((f == "pos" || f == "body" || f == "lara") ? axisName(p[3]) : (f == "uber" || f == "uberjoint") && integer(p[3]));
+        return p.size() == 4 && ((f == "pos" || f == "body" || f == "lara" || f == "feature") ? axisName(p[3]) : (f == "uber" || f == "uberjoint") && integer(p[3]));
     }
     if (p[0] == "enemy") {
         if (p.size() == 3) return f == "exists" || f == "health" || f == "mode" || f == "alive" || f == "distance" || f == "clip" || f == "type";
@@ -834,6 +834,10 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "unit") return o->unit; // the unit the instance lives in (it travels with Lara while she carries it)
         if (f == "pos") return component(*w.objectOrigin(*id), p[3]);
         if (f == "body") return component(glm::vec3(o->body[3]), p[3]); // a door's / slider's own motion from rest
+        if (f == "feature") { // its grapple target's point now (World::grappleTargetNow), null without one
+            const auto t = w.grappleTargetNow(*id);
+            return t ? component(t->pos, p[3]) : Value();
+        }
         if (f == "lara") { // Lara's root in the object's own frame (intro, displacement, loose motion): a floating deck's height
             glm::mat4 m = glm::translate(glm::mat4(1), o->pos + o->offset);
             m = glm::rotate(glm::rotate(glm::rotate(m, o->rot.x, {1, 0, 0}), o->rot.y, {0, 1, 0}), o->rot.z, {0, 0, 1}) * o->body;
