@@ -93,6 +93,7 @@ vec3 ouUwFog(vec3 c, vec2 uv) {
             vec3 ca = w.sunColor.w > 0.0 ? agCausLod(uAgWater, p, d, fp) : vec3(kAgCausMean); // no sun: no pattern
             // x the interactive field's caustics (water_surface.glsl ouFieldCaustic), as water.frag's bed from above
             if (w.sunColor.w > 0.0) ca *= ouFieldCaustic(q, ps, w.sunDir.xyz, 1.0 - smoothstep(1.5, 6.0, fp * kM / max(w.ripple.z, 1.0)));
+            ca = mix(vec3(kAgCausMean), ca, agSat(agSunK())); // ours: the pattern fades with the sun (time of day; none by moonlight)
             lit = agRelight(lit, p, agDir(n), -dir, ca, ouSunShadowVisibility(q + n * (0.35 * kM)));
         }
     }
@@ -143,10 +144,11 @@ float ouSunTapVisibility(vec3 p); // shaders/atmosphere.glsl
 const float kAgRayn = 34.0;  // quality.js RAYN (high)
 const float kAgRays = 0.54;  // g.mis.y = main.js RAYS
 const float kAgZFar = 6e4;   // view depth of sky pixels, metres: the demo's NEAR / 1e-6 = 1e5 clamped under half float's 65504
-// Shafts this frame: Enhanced water (fogColor.w), the camera below the nearest surface, a sun above the horizon.
-// Mirrors render::underwaterShaftsActive (Water.cpp), which records the passes.
+// Shafts this frame: Enhanced water (fogColor.w), the camera below the nearest surface, a sun above the horizon, sunlight
+// (medium.w: the time of day; 0 by moonlight). Mirrors render::underwaterShaftsActive (Water.cpp), which records the passes.
 bool ouShaftsOn() {
-    return w.fogColor.w > 0.5 && w.sunColor.w > 0.0 && w.sunDir.z >= 0.05 && w.detail.w > 0.5 && w.eye.z < w.volumes[1].z;
+    return w.fogColor.w > 0.5 && w.sunColor.w > 0.0 && w.sunDir.z >= 0.05 && w.detail.w > 0.5 && w.eye.z < w.volumes[1].z &&
+           w.medium.w > 0.0;
 }
 // The demo's zl = g.fwd.w / depth: linear view depth (metres) of the opaque scene at full-resolution pixel `fp`, sky
 // kAgZFar. The post pass stores it in its linear frame's alpha for uw_grade.frag's upsample.

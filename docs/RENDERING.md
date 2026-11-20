@@ -1140,9 +1140,10 @@ Ours; tru.exe has no time of day. `default` is the game's own lighting (nothing 
   (`shaders/uw_medium.glsl`, abyssal-garden's daylight constants) takes `TimeOfDayLight::medium` through
   `Underwater::light` / `WaterBlock::medium`, applied only to light the medium adds on its own: rgb (the fog scale
   without the day lift) x its in-scatter (agFogIn), the marine snow's ambient and the sky seen through Snell's window;
-  w (the frame's sun or moon over the unit's own sun, by luminance; the day factor in sunless units) x the shafts, the
-  particles' sun highlights, the glint and tru.exe's light rays (Original water). agRelight keeps the medium's daylight
-  terms (it takes their ratio), so TRU's own night-lit colour stays.
+  w (the sun alone: its height and golden tint, 0 once it has set, so the moon draws no shafts; the day factor in
+  sunless units) x the shafts (skipped at 0), the caustic pattern's contrast, the particles' sun highlights, the glint
+  and tru.exe's light rays (Original water). agRelight keeps the medium's daylight terms (it takes their ratio), so
+  TRU's own night-lit colour stays.
 - Backdrop pass: right after the exterior terrain and its depth clear (or first, without one; also in the planar
   reflection), a full-screen triangle multiplies the frame so far (sky domes, the clear colour) by the backdrop tint,
   then adds a star field (3D cell hash, one cell in 30, ~1.2 px stars, twinkle, fading at the horizon) and the moon disc

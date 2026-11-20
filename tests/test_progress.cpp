@@ -1211,8 +1211,7 @@ TEST(TimeOfDay, ConfigUnitsAndLight) {
         EXPECT_LT(night.fog[k], 0.3f) << k;
         EXPECT_LT(night.medium[k], 0.3f) << k; // the under-water medium darkens with it (Enhanced water)
     }
-    EXPECT_GT(night.medium[3], 0.05f); // moonlit, not black
-    EXPECT_LT(night.medium[3], 0.4f);
+    EXPECT_LT(night.medium[3], 0.01f); // no sun shafts / caustics through the water by moonlight
     EXPECT_GT(night.sky.moonToward[2], 0.3f); // the disc stands where the moonlight comes from
     for (int k = 0; k < 3; ++k) EXPECT_NEAR(night.sky.moonToward[k], -night.sky.sunDirection[k], 1e-4f);
     EXPECT_GT(night.sky.stars, 0.9f);

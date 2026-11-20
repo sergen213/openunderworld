@@ -525,7 +525,8 @@ std::string underwaterPostSource(bool vulkan) {
 }
 
 bool underwaterShaftsActive(const WaterBlock& b) {
-    return b.fogColor.w > 0.5f && b.sunColor.w > 0.0f && b.sunDir.z >= 0.05f && b.detail.w > 0.5f && b.eye.z < b.volumes[1].z;
+    return b.fogColor.w > 0.5f && b.sunColor.w > 0.0f && b.sunDir.z >= 0.05f && b.detail.w > 0.5f && b.eye.z < b.volumes[1].z &&
+           b.medium.w > 0.0f; // medium.w: the time of day's sunlight (0 by moonlight)
 }
 
 std::string underwaterShaftSource(int pass) {

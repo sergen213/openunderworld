@@ -1597,7 +1597,7 @@ struct EffectsView {
             todLogged = key;
             std::fprintf(stderr, "ou-game: time of day %s in %s: %s\n",
                          std::string(ou::config::kTimesOfDay[size_t(timeOfDay)]).c_str(), unit.name.c_str(),
-                         uw.outdoor ? "applies" : "indoor, the unit's own lighting");
+                         !uw.outdoor ? "indoor, the unit's own lighting" : uw.env.sun ? "applies (sun record)" : "applies (no sun record)");
         }
         if (!uw.outdoor) return;
         if (cycleStart < 0) cycleStart = ou::render::sunArc(uw.env).nativeHour;

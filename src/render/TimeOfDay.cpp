@@ -114,8 +114,9 @@ TimeOfDayLight timeOfDayLight(const scene::Environment& unit, double hours, bool
     put(s.probes, ambient);
     put(s.backdrop, fog);
     put(out.medium, mix3(kNightFog, glm::vec3(1.0f), day) * skyTint);
-    const float ownSun = luminance(glm::make_vec3(unit.sunColor));
-    out.medium[3] = sun && ownSun > 1e-4f ? luminance(glm::make_vec3(s.sunColor)) / ownSun : day;
+    // The sun alone (sunUp, golden tint by luminance): moonlight is far too weak to draw shafts, caustics or a glint
+    // through water, so they fade out with the sunset instead of the moon carrying them on at the sun's contrast.
+    out.medium[3] = sun ? sunUp * luminance(mix3(glm::vec3(1.0f), kGoldenSun, golden)) : day;
     const float clear = clearSky ? 1.0f : 0.0f;
     s.stars = clear * (1.0f - day) * (1.0f - day);
     s.moon = clear * smooth(deg(-2.0f), deg(5.0f), -elevation) * (1.0f - 0.7f * day);
