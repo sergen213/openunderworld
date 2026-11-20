@@ -1,9 +1,9 @@
 {
  "version": 1,
  "name": "ch06_hallway_roll",
- "chapter": "06 Realm of the Dead: the ship heels over, the sliding cases, toward the barrel run (docs/matrix/06_realm_of_the_dead.md C06-04, C06-05)",
+ "chapter": "06 Realm of the Dead: the ship heels over, past the sliding cases to plane 1203 (docs/matrix/06_realm_of_the_dead.md C06-04)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/05realm.html",
- "note": "KNOWN GAP (2026-11-10, re-checked 2026-11-20). After ch06_sinking_hall_door's steps she walks on down the hall: plane 1202 runs dispatcher 1199's second stage (hallway 1056 command 2, cases 1177..1219 vt 55, barrel 1168 vt 55), then she is stopped at lower-hallway frame (1176 15942 -2029) = sinking hall (-2617 -3537 -2029), 3850 short of plane 1203. Hallway 1056's uber data [O]: state 4 plays clip 0_10 (command 1), state 1 clip 10_30 (command 2), then 1 -> 2 by 30_60 and 2 -> 3 by 60_90, so here the hall stands at 30 degrees in the original too. The floor map there (plan line `map 700 50`): her floor slopes down to -y; a one-cell wall runs along x 1126 (y 15942..16292); west of it the floor is 100..300 higher (level only at y 15992, behind the wall). The walkthrough runs past the sliding cases and turns right (east from a northward run), plane 1203 lies west. Not verified: the original's route after the second tilt, Lara riding the roll (script 6310 of intro 1076 'WARP ATTACH' to 1056; dispatcher 1200's larabase 56 / 59 calls), the sliding cases as bodies and the barrel run (adrenaline tracker 1077, ms_ani_ship_adren_trap) (docs/audit/BUGS.md OU-PZL-004). The last step fails today.",
+ "note": "ch06_sinking_hall_door's steps, then on down the hall through the second tilt to plane 1203. Plane 1201 runs dispatcher 1199's first stage (hallway 1056 command 1: state 4, clip 0_10), plane 1202 the second (command 2: state 1, clip 10_30; cases 1177..1219 and barrel 1168 vt 55) [O data]. tru.exe under Wine (2026-11-20, private session from l1_ship_lower_hallway): held forward she stops at the hall's end by the lockers (lower-hallway frame 2755 15482 -693; ours stops there too); westward the cabinets block her at x ~-950 for y 15480..15690 and at y 14880, but along y ~15420 she runs down the tilted floor to the west wall (x -3031), and north from there up the slope plane 1203 fires (gone from the instance list) on the way to y 19190, z 207. The scenario of 2026-11-10 turned west at y 15930, where ours (and the hall) is walled off at x 1126. The barrel run beyond (planes 1079 / 1084, tracker 1077) is not played.",
  "level": "l1_ship_lower_hallway",
  "spawn": [
   2842,
@@ -109,9 +109,8 @@
     "go 2747 14500 80",
     "go 2700 15300 80",
     "wait 6",
-    "go 1500 15700 80",
-    "go 1182 15930 60",
-    "wait 2"
+    "go 1500 15560 80",
+    "wait 4"
    ],
    "duration": 90,
    "expect": [
@@ -134,10 +133,11 @@
    ]
   },
   {
-   "step": "on_to_the_barrel_run",
+   "step": "west_then_north_past_the_cases",
    "plan": [
-    "go 0 15900 80",
-    "go -2675 16003 80"
+    "go 0 15470 80",
+    "go -2650 15470 80",
+    "go -2650 17500 80"
    ],
    "duration": 60,
    "expect": [
@@ -146,7 +146,30 @@
      "has": [
       "cross:1203>1203"
      ],
-     "note": "plane 1203 (sinking_hall -6468 -3476 -1420), the third stage before the adrenaline run (planes 1079 / 1084, tracker 1077)"
+     "note": "plane 1203 (lower-hallway frame -2675 16003 -1418): tru.exe under Wine took this route (2026-11-20): west along y ~15420..15480 (at y 15480..15690 the cabinets stop her at x ~-950), at the west wall north up the tilted floor, plane 1203 gone after the run"
+    },
+    {
+     "calls": [
+      "1199:64"
+     ],
+     "note": "dispatcher 1199's third stage"
+    },
+    {
+     "probe": "player.pos.z",
+     "min": -1400,
+     "note": "up the slope north (tru.exe: z rose ~2500 from the west end to y 19190)"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
     }
    ]
   }

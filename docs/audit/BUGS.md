@@ -130,8 +130,9 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-001 | progression | ch01: no input route into the pocket north of the bedroom beams | Open | pre-existing | — |
 | OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Fixed on agent/GapsA10 (43b506c) | pre-existing | C-MEASURE |
 | OU-PZL-003 | progression | ch05: west recess from the T junction is shut | Not a bug (wrong route in the scenario; d66d67a) | pre-existing | — |
-| OU-PZL-004 | progression | ch06: hallway roll stops on a 45° floor before plane 1203 | Open (decoded in part: the hall stands at 30°; floor junction 100-300 high) | pre-existing | — |
-| OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Open (no decoded query reaches the bar from hold 209) | pre-existing | C-CHART |
+| OU-PZL-004 | progression | ch06: hallway roll stops on a 45° floor before plane 1203 | Not a bug (wrong route in the scenario; Wine trace 2026-11-20) | pre-existing | — |
+| OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Fixed on agent/GapsA10 (the lean goes on by itself; Wine trace) | pre-existing | C-CHART |
+| OU-PZL-016 | progression | ch06: Crouch on bar 238 does not land on beam 233 | Fixed on agent/GapsA10 (hang drop re-aimed at a beam below; Wine trace) | pre-existing | C-CHART |
 | OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed-verified (0.53.0, ecf03db); the fallen ring and the scenario fixed on agent/GapsA10 (1088550) | pre-existing | C-JOINT |
 | OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed-verified (0.53.0, 2e6ef11: test bug) | pre-existing | C-JOINT |
 | OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends don't tug bodies remains (tru.exe's bends are physics bodies, 0x699A50) | Partly fixed ((c) 0.53.0; (a) 0.56.0, merge 02b7a09; (b) open) | pre-existing | — |
@@ -1128,8 +1129,9 @@ docs/GAMEPLAY_DEVELOPMENT_REPORT.md §7; regression test = the scenario moved up
 | OU-PZL-001 | l3_main_bedroom, beams north pocket | walkthrough route by input | no input route; second leg starts off-checkpoint; fire volumes cost health (REPORT §7 row 01) | ch01 legs |
 | OU-PZL-002 | l1_baldrs_sideroom ledge 35 → perch 30 (1618 away, 135 up) | jump reaches perch 30 | fixed (43b506c): the ground jump query sweeps perches (record 0x2AB8C entry 3) and re-aims the flight | `ch04_column_hall_perches` |
 | OU-PZL-003 | l1_ship_engine_hall west end of the hall | way to volume 1436 | the scenario's "T" was the hall's west recess; the way is down the ramp, up the engine room's corridor, its left wing | `ch05_natla_room` |
-| OU-PZL-004 | l1_ship_sinking_hall after plane 1202 | roll reaches plane 1203 | stopped against a thin wall at lower-hallway x 1126 with the floor west of it 100-300 higher, 3850 short (below) | `known_gaps/ch06_hallway_roll` |
-| OU-PZL-005 | l1_ship_sinking_hall top valve wheel → bar 238 | the walkthrough "climbs from the valves to the bar" | lands hanging on beam ledge 253; no decoded query reaches the bar from hold 209 (below) | `known_gaps/ch06_second_shaft_exit` |
+| OU-PZL-004 | l1_ship_sinking_hall after plane 1202 | roll reaches plane 1203 | the scenario turned west at y 15930 (walled off); tru.exe's route (Wine) west along y ~15420, north at the west wall, passes in ours too | `ch06_hallway_roll` |
+| OU-PZL-005 | l1_ship_sinking_hall top valve wheel → bar 238 | Left held: lean, then onto the bar's end (Wine) | fixed: the lean goes on to its target without Jump; side jumps from a hold take the bar's end (360) | `ch06_second_shaft_exit` |
+| OU-PZL-016 | l1_ship_sinking_hall bar 238 over beam 233 | Crouch flies her onto the beam's line (Wine) | fixed: the hang drop is re-aimed at the beam point nearest her (150 [I]) | `ch06_second_shaft_exit` |
 | OU-PZL-006 | l2_shrineroom after the statue pull; l1/ch08 statue floor | slabs fall, shaft opens | fixed: slabs fall (ecf03db); the ring lies with the toppled statue (1088550) | `ch09_shrine_shaft_descent` |
 | OU-PZL-007 | l4_ballcourt calendar 5477, mask set | jaguar handle turns sections | no joint moves; unlock rule after the mask not decoded | `known_gaps/ch13_ballcourt_calendar_solve` |
 | OU-PZL-008 | l4_temple east ledge | ring 4951 offered; statue head topples | ring offered (agent/Joint8); head not moved by the rope's bend | `known_gaps/ch13_temple_block_topple` |
@@ -1204,6 +1206,29 @@ Batch 10 (2026-11-20, agent/GapsA10):
   q73 / q82 (158 reach) end on holds or a beam (cond 0x262: flags 0x8000 / 0x10000), not ledges. Ours tried: jump left
   (ledge 253), jump up (back onto hold 219), move left (lean only). Open [U]: which hold the original leaves from (the
   walkthrough ends the weave "up and to the right a bit") and which query reaches the bar; needs a Wine trace.
+- **Wine traces, 2026-11-20** (private prefix and game copy, `taskset -c 12-15`; traces in
+  `openunderworld-work/w-GapsA10wine/o/`). tru.exe's sinking-hall frame = lower-hallway frame + (30811.6, −15683.1,
+  12742) (hallway 1056's instance against its intro).
+  - **OU-PZL-004:** walking the hall from the lower hallway's door (`walk.txt`) both blasts fire; held forward she
+    stops at the lockers at the hall's end, (2755, 15482, −693) — ours stops there too. West along y 15480..15690 and
+    at y 14880 the cabinets block her at x ≈ −950 (`west.txt`, `sw.txt`); along y 15420 she runs down the tilted
+    floor to the west wall at x −3031 (`wy-263.txt`), and north from there up the slope plane 1203 fires (gone from
+    the instance list) on the way to y 19190, z +207 (`nn.txt`). Ours takes the same route across plane 1203 (stage
+    three, 1199 vt 64): the known gap's route turned west at y 15930, where the hall is walled off. Not a bug.
+  - **OU-PZL-005:** on hold 209 Left held alone leans (state S585 under S583) and 0.66..0.72 s after the lean began
+    she rushes in a straight line (0.18 s) onto bar 238's inset end, root (−4630.1, −1428.9, 10886.6)
+    (`moveleft.txt`); from hold 219 Left first moves to 209, then the same (`l219.txt`). The chart [O-data]: S583's
+    T702 (cond 0xC9, clip done; cond 0x262, the jump target any but a beam) → S614 → on by the target's flags. Ours
+    looped the lean until Jump and the side jump refused the bar's end (394 from the hold point against +0x28's 410).
+    Fix (`Climb.cpp`, `Player.cpp` kS3): the lean goes on at its clip's end (0.80 s [I]); hold → ledge is the 11-tick
+    rush sideways too; entry 3 uses the record's 360 [I: the base point, source 28 = query state +0xA0 plus the
+    candidate's +0x90, is not decoded, so the 410 may stand with another base].
+  - **OU-PZL-016 (new, fixed):** Crouch on the bar at x −5243.5 (60 beside beam 233's line) flies her onto the
+    line at (−5183.8, −1415.1, 10770.1): 116 down in 0.25 s, the flight starting 5.55 up a frame — a jump-to-target
+    solve (0x73EDC0, which re-aims at MUD 0x10000 markup) (`drop.txt`). Ours dropped straight, met the beam's side 50
+    off its line and slid off. Fix (`Player.cpp` hang drop): the beam point nearest her root within 150 horizontally
+    and 0..600 down is the target, reached at the free fall's time [I: radius and timing; tru.exe's flight time comes
+    from a query not identified].
 
 ### Script VM (OU-SCR)
 

@@ -1538,7 +1538,11 @@ constexpr ClassTest kS1[] = {kRise700, kFar, kAngle, kCapsule, kCone, kWall, kAf
                              kHurdleA4};
 constexpr ClassTest kS2[] = {kFar, kAngle, kCapsule, kCone, kWall, kAfterMin, kVzOff, kDepth, kClass, kHurdleA4, kNot6,
                              kNotDown};
-constexpr ClassTest kS3[] = {{1, 28, 4, 6, 360}, kAngle, kCapsule, kCone, kWall, kAfterMin, kVzOff, kDepth};
+// Entry 3 (from a hold): the hit's distance from the base point against the record's own 360, not q28 / q29's +0x28
+// (410) [O-runtime: tru.exe under Wine, l1_ship_sinking_hall hold 209, Left held: onto bar 238's inset end, 394 from
+// the hold point; I: the decoded flags read "value not given", and the base point (source 28: query state +0xA0 plus
+// the candidate's +0x90) is not decoded, so either may be what differs].
+constexpr ClassTest kS3[] = {{1, 28, 4, 7, 360}, kAngle, kCapsule, kCone, kWall, kAfterMin, kVzOff, kDepth};
 constexpr ClassEntry kSide[] = {{0x12, kT14, {}, kS0}, {0x1F, {}, kHoldTypes, kS1}, {0x1F, {}, kHoldTypes15, kS2},
                                 {0x06, {}, kHoldTypes, kS3}};
 // lara.drm 0x2A9EC (q9 / q10 hang back / up, q22 / q23 ladder, q32 / q33 poles and 17 more) [O-data]
@@ -2757,6 +2761,19 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             s_.pos -= forward() * 20.0f; // off the wall
             s_.regrabCooldown = 0.4f;
             startFall(vec3(0));
+            // A balance beam below is a target: tru.exe under Wine (l1_ship_sinking_hall, Crouch on bar 238 60 beside
+            // beam 233's line) flies onto the beam's line, 116 down, in 0.25 s from a start 5.55 up a frame, a
+            // jump-to-target solve (0x73EDC0 re-aims at MUD 0x10000 markup) [O-runtime]. Ours: the beam point nearest her
+            // root within 150 horizontally and 0..600 down [I], reached at the free fall's time for that drop [I];
+            // tryBeam catches her on arrival.
+            bool found = false;
+            OnLine on;
+            for (const auto& m : col_.markup)
+                if (m.type == 14)
+                    if (const OnLine o = closestOn(m, s_.pos);
+                        o.seg >= 0 && o.dist <= 150.0f && s_.pos.z - o.q.z > 0 && s_.pos.z - o.q.z <= 600.0f && (!found || o.dist < on.dist))
+                        on = o, found = true;
+            if (found) s_.vel = vec3(xy(on.q - s_.pos) / std::sqrt(2.0f * (s_.pos.z - on.q.z) / t_.gravity), 0);
             break;
         }
         if (hangCorner(lateral, glm::dot(move, xy(forward())), jumpPressed, dt)) break;

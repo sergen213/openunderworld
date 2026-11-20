@@ -2173,8 +2173,14 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   no move but a jump target lies straight that way; the chart enters its lean states from the move states on a move
   query result whose markup lacks flag 0x10000 and whose direction class (cond 0x19E, 0x786490) matches — not
   reproduced exactly.
-- DICE jumps to far holds: the lean `DICE_<s>_antic_<dir>` loops (lara.drm request flag b16 = 2) until jump is
-  pressed; then `DICE_<s>_jump_<dir>` carries her off the rock with its root motion (70-224 out and sideways in
+- DICE jumps to far holds: the lean `DICE_<s>_antic_<dir>` plays (lara.drm request flag b16 = 2) until jump is
+  pressed or, with the stick held, until its clip is done: S583's T702 (cond 0xC9, the jump target's flags any but a
+  beam, cond 0x262) goes on to S614 and the target by itself [O chart]. tru.exe under Wine (l1_ship_sinking_hall hold
+  209, Left held, no Jump): the lean, then 0.66..0.72 s after it began a straight 0.18 s transfer onto bar 238's inset
+  end; from hold 219 Left first moved her to 209, then the same [O-runtime]. Ours ends the lean on the clip's end
+  (0.80 s) [I]. Onto a ledge the transfer is the 11-tick straight rush (up and sideways, measured); onto a hold the
+  jump below; the side jumps' entry 3 takes a ledge hit 360 or more from the hold point (the record's value; the
+  decoded +0x28 410 would refuse the bar's end at 394) [I]. Then `DICE_<s>_jump_<dir>` carries her off the rock with its root motion (70-224 out and sideways in
   0.17-0.23 s), a ballistic flight (g 5.72443 / frame²) reaches the catch point at the query's hit time — 168 out and
   161 below the hold, `DICE_attach_M`'s root motion (tru.exe: 167 / 163) — and the stance's `air_attach` clip carries
   her onto the hold (0.9 s; tru.exe 0.8 s), then its idle. No settle clip is played (none seen in tru.exe's catch).
@@ -2570,8 +2576,8 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     Wine logged its centre at root + 707.27 (the hands' apex, 505.69 + 201.6) for type 3 and root + 201.6 for type 1
     — with the hit within **1581** of her (kind 36), cone, wall side, after +0x20, depth (31), class 14, not 20, not
     19, kind 33; entries 0 / 1 / 3 for beams (14, the arc's vertical speed < 1, 1700), type 15 and types 2 / 13.
-  - **0x2AA4C** (q7 / q8 hang sides, q28 / q29 DICE sides, q30, q38): from a hold (entry 3, any target) the hit 410
-    or more (+0x28; kind 1 a2 = hit, its record value 360 unused) from the base point, capsule, cone, wall side, after
+  - **0x2AA4C** (q7 / q8 hang sides, q28 / q29 DICE sides, q30, q38): from a hold (entry 3, any target) the hit 360
+    or more (kind 1 a2 = hit; the flags read +0x28 = 410, but tru.exe under Wine takes bar 238's end 394 from hold 209's point, so ours uses the record's 360 [I]) from the base point, capsule, cone, wall side, after
     +0x20, depth — no class; not from a hold (entries 1 / 2, any target) the hit **553** or more from the base point
     (q7 / q8 +0x28), capsule, cone, wall side, after +0x20, depth, class 14, not 18 (6), kind 33, and either a rise
     over her root ≤ 700 (entry 1) or not 20 (entry 2); entry 0: beams.
