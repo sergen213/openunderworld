@@ -676,8 +676,8 @@ if(OU_BUILD_TESTS)
               --level "pc-w\\$1.drm" --spawn "$2" --no-audio --no-movies --no-overlay --width 640 --height 360 --frames 40 2>&1)
       code=$?
       echo "$out" | grep -q 'ray queries yes' || exit 77
-      echo "$out" | grep -E '^ou-game: (final tick|RT )'
-      [ $code -eq 0 ] && echo "$out" | grep -q '^ou-game: RT shadows .*BLAS' && ! echo "$out" | grep -q 'NOT ACTIVE' ||
+      echo "$out" | grep -E '^ou-game: (final tick|AO [^|]*\| RT )'
+      [ $code -eq 0 ] && echo "$out" | grep -qE '^ou-game: AO [^|]*\| RT shadows .*BLAS' && ! echo "$out" | grep -q 'NOT ACTIVE' ||
         { echo "$out" | tail -n 20; echo "$1: exit $code"; exit 1; }
     done]=] $<TARGET_FILE:ou-game>)
   set_tests_properties(game_vulkan_rt_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "${OU_VK_TEST_ENV}")
