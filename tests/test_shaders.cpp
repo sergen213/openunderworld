@@ -612,6 +612,44 @@ TEST(OriginalShading, TerrainLeafLightsMatchOriginal) {
         for (const auto& m : meshes) EXPECT_LE(m.lightBoxes.size(), 1u) << m.origin;
 }
 
+// Terrain vertex shaders decode the packed SHORT4 normal (256 x normal byte + tangent byte, defs 1/256 and 256/127):
+// their translations repack it from the decoded normal / tangent / binormal; other programs read the normal as is.
+TEST(Sm3Real, PackedTerrainNormalsAreRepacked) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto drm = cdc::parseDrm(*bf.read("pc-w\\l2_cliffclimb.drm"));
+    const auto lib = std::find_if(drm.sections.begin(), drm.sections.end(),
+                                  [](const cdc::Section& s) { return s.type == cdc::SectionType::ShaderLib && s.id == 523; });
+    ASSERT_NE(lib, drm.sections.end());
+    const auto sl = parseShaderLib(lib->data);
+    for (const auto [slot, packed] : {std::pair{160u, true}, std::pair{1u, false}}) {
+        const auto* e = sl.find(slot);
+        ASSERT_TRUE(e) << slot;
+        const auto t = render::sm3::translate(parse(e->bytecode), true);
+        ASSERT_TRUE(t.error.empty()) << t.error;
+        EXPECT_EQ(t.source.find("ouPackedNormal(") != std::string::npos, packed) << slot;
+        EXPECT_EQ((t.attributes >> render::sm3::kAttrTangent & 1) != 0, packed) << slot;
+        std::string err;
+        EXPECT_FALSE(render::sm3::compileSpirv(t.source, false, true, err).empty()) << err;
+    }
+}
+
+// Two-sided blended submeshes draw back faces, then front faces (BUGS OU-REN-011); opaque or one-sided ones once.
+TEST(RenderCommon, TwoSidedBlendedDrawsSidesApart) {
+    scene::SubMesh s;
+    s.doubleSided = true, s.blend = scene::Blend::Alpha;
+    EXPECT_TRUE(render::drawSidesApart(s, 1.0f, true));
+    EXPECT_FALSE(render::drawSidesApart(s, 1.0f, false)); // culling off: one draw
+    s.blend = scene::Blend::Additive;
+    EXPECT_TRUE(render::drawSidesApart(s, 1.0f, true));
+    s.blend = scene::Blend::Opaque;
+    EXPECT_FALSE(render::drawSidesApart(s, 1.0f, true));
+    EXPECT_TRUE(render::drawSidesApart(s, 0.5f, true)); // fading: drawn blended
+    s.doubleSided = false, s.blend = scene::Blend::Alpha;
+    EXPECT_FALSE(render::drawSidesApart(s, 1.0f, true));
+}
+
 // Shadow cascade culling: only spheres wholly outside the orthographic x / y clip range are skipped.
 TEST(RenderCommon, OutsideOrtho) {
     const glm::mat4 vp = glm::ortho(-100.0f, 100.0f, -50.0f, 50.0f, -1000.0f, 1000.0f);

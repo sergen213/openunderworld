@@ -3,6 +3,7 @@
 #include "render/ShaderTranslate.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -151,15 +152,35 @@ public:
         if (!p_.pixel) {
             // The RT depth pre-pass and the colour pass run this program in two pipelines (equal depth required).
             h += "invariant gl_Position;\n";
+            // Packed terrain normals (SHORT4: 256 x normal byte + tangent byte, formats/Model.cpp readVertices): programs
+            // with the decode's defs 1/256 and 256/127 get them repacked from the decoded normal, tangent and binormal.
+            auto hasDef = [&](float x) {
+                return std::ranges::any_of(floatDefs_, [&](const auto& kv) {
+                    return std::ranges::any_of(kv.second->value, [&](uint32_t b) { return std::bit_cast<float>(b) == x; });
+                });
+            };
+            const bool packedNormal = hasDef(0.00390625f) && hasDef(2.01574802f);
             for (const auto& [n, d] : inputs_) {
                 const int loc = attributeLocation(d->usage, d->usageIndex);
                 if (loc >= 0) {
                     h += "layout(location = " + std::to_string(loc) + ") in vec4 ouAttr" + std::to_string(loc) + ";\n";
                     pre += "    vec4 v" + std::to_string(n) + " = ouAttr" + std::to_string(loc) + ";\n";
+                    if (packedNormal && loc == kAttrNormal)
+                        pre += "    v" + std::to_string(n) + " = ouPackedNormal(ouAttr" + std::to_string(kAttrNormal) + ".xyz, ouAttr" +
+                               std::to_string(kAttrTangent) + ".xyz, ouAttr" + std::to_string(kAttrBinormal) + ".xyz);\n";
                     out_.attributes |= uint8_t(1u << loc);
                 } else {
                     pre += "    vec4 v" + std::to_string(n) + " = vec4(0.0, 0.0, 0.0, 1.0); // unsupplied input\n";
                 }
+            }
+            if (packedNormal && (out_.attributes >> kAttrNormal & 1)) {
+                for (const int loc : {int(kAttrTangent), int(kAttrBinormal)})
+                    if (!(out_.attributes >> loc & 1)) {
+                        h += "layout(location = " + std::to_string(loc) + ") in vec4 ouAttr" + std::to_string(loc) + ";\n";
+                        out_.attributes |= uint8_t(1u << loc);
+                    }
+                h += "vec4 ouPackedNormal(vec3 n, vec3 t, vec3 b) {\n"
+                     "    return vec4(256.0 * round(n * 127.0) + round(t * 127.0) + 128.0, dot(cross(n, t), b) < 0.0 ? -1.0 : 1.0);\n}\n";
             }
             for (const auto& [n, d] : outputs_) {
                 pre += "    vec4 o" + std::to_string(n) + " = vec4(0.0);\n";

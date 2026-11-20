@@ -134,11 +134,29 @@ std::vector<scene::Vertex> readVertices(const Reader& r, size_t off, uint32_t co
         std::copy_n(tmp, 3, o.position);
         o.normal[0] = o.normal[1] = 0;
         o.normal[2] = 1;
+        // SHORT4 normals (terrain, 0x09B1D4EA) pack normal and tangent per component: v = 256 hi + lo, lo in [0, 255];
+        // the terrain / sea vertex shaders decode normal = hi / 127, tangent = (lo - 128) / 127, binormal = cross x v.w
+        // (their defs 1/256, 128, 1/127, 256/127; l2_cliffclimb VS of D3D9 call 13364084). Kept decoded here; the
+        // translated programs repack them (render/ShaderTranslate ouPackedNormal).
+        const bool packed = nrm && (nrm->format == 10 || nrm->format == 0x14);
         if (nrm && readAttr(v + nrm->offset, nrm->format, tmp)) {
             if (nrm->format >= 4 && nrm->format <= 7) // D3DCOLOR normals: shader applies *2-1
                 for (int k = 0; k < 3; ++k) tmp[k] = tmp[k] * 2 - 1;
+            float t[3] = {};
+            if (packed)
+                for (int k = 0; k < 3; ++k) {
+                    const float hi = std::floor(tmp[k] / 256.f), lo = tmp[k] - 256.f * hi;
+                    tmp[k] = hi / 127.f, t[k] = (lo - 128.f) / 127.f;
+                }
             const float len = std::sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1] + tmp[2] * tmp[2]);
             if (len > 0) for (int k = 0; k < 3; ++k) o.normal[k] = tmp[k] / len;
+            if (packed && !tan) std::copy_n(t, 3, o.tangent);
+            if (packed && !bin) { // binormal = v.w x cross(normal, tangent); the repack recovers v.w's sign from it
+                const float w = tmp[3] < 0 ? -1.f : 1.f;
+                o.binormal[0] = w * (tmp[1] * t[2] - tmp[2] * t[1]);
+                o.binormal[1] = w * (tmp[2] * t[0] - tmp[0] * t[2]);
+                o.binormal[2] = w * (tmp[0] * t[1] - tmp[1] * t[0]);
+            }
         }
         o.uv[0] = o.uv[1] = 0;
         // SHORT2/SHORT4 texcoords are scaled by 1/2048 (constant at 0x84ba10 in tru.exe; the shaders' TexcoordScales c254)
