@@ -2,9 +2,11 @@
 
 #include <glm/gtc/constants.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 
@@ -277,22 +279,31 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             const float lock = brake && s.args.size() > 5 ? std::stof(s.args[5]) : 1.0f;
             set(tick, "forward", brake ? -1.0f : b->speed > limit ? 0.0f : throttle, a), set(tick, "right", q(std::clamp(-2.5f * err, -lock, lock)), a);
         }
-    } else if (s.op == "fight") { // fight [R] [SECONDS]: until no living enemy is within R (default 3000) for a second
-        const float range = s.args.size() > 0 ? std::stof(s.args[0]) : 3000.0f;
-        const uint64_t limit = s.args.size() > 1 ? ticks(s.args[1]) : 60 * 60;
+    } else if (s.op == "fight") { // fight [R] [SECONDS] [all]: until no foe is within R (default 3000) for a second
+        std::vector<std::string> nums; // R and SECONDS: the arguments other than "all"
+        std::ranges::copy_if(s.args, std::back_inserter(nums), [](const std::string& w) { return w != "all"; });
+        const float range = nums.size() > 0 ? std::stof(nums[0]) : 3000.0f;
+        const uint64_t limit = nums.size() > 1 ? ticks(nums[1]) : 60 * 60;
         if (t == 0) clearSince_ = 0, healAt_ = 0, lostSince_ = 0, foeUid_ = 0, foeHp_ = 0, hitSince_ = tick;
         const game::ai::Enemy* foe = nullptr;
         float dist = 0;
+        // Foes: enemies aware of her (not idle, patrolling, asleep, going home or still clinging to a wall), or the one the
+        // target lock holds; an unaware one behind a wall does not keep the fight going. `all`: every living enemy within
+        // R (hunting them down).
+        using M = game::ai::Mode;
         for (const auto& e : w.enemies().all()) {
-            if (!e->alive()) continue;
+            const M m = e->state().mode;
+            const bool unaware = m == M::Idle || m == M::Patrol || m == M::Sleep || m == M::Cling || m == M::Return;
+            if (!e->alive() || (unaware && !has("all") && w.combat().target != e.get())) continue;
             if (const float d = glm::distance(e->state().pos, lara.pos); d <= range && (!foe || d < dist)) foe = e.get(), dist = d;
         }
         const auto release = [&] { set(tick, "aim", 0, a), set(tick, "fire", 0, a), set(tick, "interact", 0, a), set(tick, "heal", 0, a); };
         const auto& c = w.combat();
-        if (!foe) {
+        if (!foe) { // the lock stays held for the second: an unaware enemy in sight is still locked onto (and fought)
             if (!clearSince_) clearSince_ = tick;
-            release(), centre();
+            set(tick, "fire", 0, a), set(tick, "interact", 0, a), set(tick, "heal", 0, a), set(tick, "aim", 1, a), centre();
             if (tick - clearSince_ >= 60) {
+                release();
                 std::fprintf(stderr, "ou-game: autopilot tick %llu fight: none left within %.0f, health %.0f, shots %d\n", (unsigned long long)tick,
                              range, w.health().value(), c.shotsFired);
                 next(tick, nullptr);
