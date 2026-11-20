@@ -3,7 +3,7 @@
  "name": "ch06_second_shaft_exit",
  "chapter": "06 Realm of the Dead: from the top wheel to the bar, the beam and the exit ledges (docs/matrix/06_realm_of_the_dead.md C06-10 end, C06-11, C06-12)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/realm3.html",
- "note": "KNOWN GAP (2026-11-10). After ch06_second_shaft_valves's steps she is on hold 209 (root -4236 -1237 11059). The page goes on onto a straight bar, shimmies left over the beam and drops onto it. Bar 238's near end (-4551 -1264 11377) is 315 to the left and 318 over her root: no hold lies between, the DICE jump up (q31) is not under it and the DICE side jump (q28: 70.80 aside + 34.77 up a frame) does not rise that far: it meets the beam's own side ledge 253 instead, 800 lower, where she is caught one-handed (ledgeb_bad_attach_M; Interact recovers) and can shimmy the beam's length hanging. Which move reaches the bar in the original is not known (no Wine trace); the three up-jumps beyond the beam (ledges 239 at z 11456, 237 at z 12100: 644 apart, more than q10's 502.5) are not played. The last step fails today (player.ledge is 253).",
+ "note": "KNOWN GAP (2026-11-10, re-checked 2026-11-20; its first seven steps are ch06_second_shaft_valves's current ones). After them she is on hold 209 (root -4236 -1237 11059). The page climbs 'from the valves to the straight metal bar', shimmies left over the beam and drops onto it. Bar 238 (z 11377.8, x -5586 .. -4551) lies 160 over hold 209's point and its near end 315 to the left. The DICE side jump q28 needs the hit 360 or more from the hold point and its capsule (centred 219 under the arc that starts 316 under the hold point) tops out ~12 over the hold point: it meets the beam's own side ledge 253 instead, 800 lower (caught one-handed, ledgeb_bad_attach_M; Interact recovers). The jump up q31 is straight up: the bar's end (inset 79) is ~394 off its axis, outside the capsule's 316. The moves (q73 / q82, 158 reach) end on holds or beams (cond 0x262), not ledges. Which hold and query reach the bar in the original is not traced (docs/audit/BUGS.md OU-PZL-005); the three up-jumps beyond the beam (ledges 239 at z 11456, 237 at z 12100: 644 apart, more than q10's 502.5) are not played. The last step fails today (player.ledge is 253).",
  "level": "l1_ship_sinking_hall",
  "spawn": [
   -417,
@@ -208,10 +208,12 @@
   {
    "step": "jump_up_to_the_next_group",
    "input": [
-    "0.1 forward 1",
+    "0.1 forward 0.884",
+    "0.1 right -0.468",
     "0.3 jump 1",
     "0.4 jump 0",
-    "1.5 forward 0"
+    "1.5 forward 0",
+    "1.5 right 0"
    ],
    "duration": 3,
    "expect": [
