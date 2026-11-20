@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "name": "ch09_shrine_shaft_descent",
+  "chapter": "09 The Ancient World: down the shaft the statue opened (docs/matrix/09_ancient_world.md C09-02, C09-03)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/08ancient.html",
+  "note": "l2_shrineroom from its player intro: the statue pull (as ch08_shrine_statue_pull), then down the shaft the statue opened (C09-02, C09-03). The ring of sa_uo_naga_statue 2794 is read off the live instance (0x713090 -> 0x6FF040: instance +0x20 + query 0xDB) [O decomp], so once the statue is down its ring lies with the statue's loose body and is no target from the yard. Section 0's state 0 creates fixed joints 1, 3, 4 and state 2 removes them (OU-PZL-006): the freed slabs (sections 1 / 3 / 4) fall into the shaft. Then the walkthrough's way down: the safety drop onto the shaft's edge (loop markup 679), drop to the stone band (ledge 681, 1502 lower: one-handed, Interact recovers), to the bottom lip (ledge 680), let go and throw the grapple in the fall at ceiling ring 2673 (l2_maproom), pay the rope out, swing forward and let go over the floor under the ring (l2_maproom's player intro). The release point (the forward swing past y 57700) is ours.",
+  "level": "l2_shrineroom",
+  "stop_on_fail": true,
+  "steps": [
+    {
+      "step": "pull_the_statue",
+      "plan": [
+        "go -20199 59500 150",
+        "face 90",
+        "press grapple",
+        "wait 1",
+        "hold interact 6",
+        "wait 6"
+      ],
+      "duration": 60,
+      "expect": [
+        {
+          "probe": "object.2794.uber.0",
+          "eq": 2
+        },
+        {
+          "probe": "object.2794.uber.1",
+          "eq": 1
+        },
+        {
+          "probe": "grapple.offered",
+          "ne": 2794,
+          "note": "the ring's feature is read off the live instance (0x713090 -> 0x6FF040: instance +0x20 + query 0xDB) [O decomp]: it lies with the toppled statue, outside every target set from here"
+        },
+        {
+          "probe": "object.2794.feature.z",
+          "max": -9000,
+          "note": "the ring went down the shaft with the toppled statue's loose body (measured z -14633, from -3068 over the yard): no longer where it stood"
+        }
+      ]
+    },
+    {
+      "step": "over_the_edge",
+      "plan": [
+        "go -20199 59700 40 walk",
+        "run 90 1.2",
+        "wait 2"
+      ],
+      "duration": 30,
+      "expect": [
+        {
+          "probe": "player.hanging",
+          "eq": true,
+          "note": "caught on the shaft's edge (no key: the safety drop)"
+        },
+        {
+          "probe": "player.ledge",
+          "eq": 679
+        }
+      ]
+    },
+    {
+      "step": "to_the_stone_band",
+      "input": [
+        "0.2 drop 1",
+        "0.3 drop 0",
+        "1.4 interact 1",
+        "1.5 interact 0"
+      ],
+      "duration": 4,
+      "expect": [
+        {
+          "probe": "player.ledge",
+          "eq": 681
+        },
+        {
+          "clips": [
+            "ledgeb_bad_attach_M"
+          ],
+          "note": "1502 down: one-handed, Interact recovers"
+        },
+        {
+          "probe": "player.saving_grab",
+          "eq": 0
+        }
+      ]
+    },
+    {
+      "step": "to_the_bottom_lip",
+      "input": [
+        "0.2 drop 1",
+        "0.3 drop 0"
+      ],
+      "duration": 4,
+      "expect": [
+        {
+          "probe": "player.ledge",
+          "eq": 680
+        }
+      ]
+    },
+    {
+      "step": "grapple_in_the_fall",
+      "input": [
+        "0.2 drop 1",
+        "0.3 drop 0",
+        "0.6 grapple 1",
+        "0.7 grapple 0"
+      ],
+      "duration": 4,
+      "until": {
+        "probe": "grapple.swinging",
+        "eq": true
+      },
+      "expect": [
+        {
+          "probe": "grapple.target",
+          "eq": 2673
+        },
+        {
+          "probe": "grapple.kind",
+          "eq": "ceiling"
+        }
+      ]
+    },
+    {
+      "step": "pay_out_and_swing_forward",
+      "input": [
+        "0 interact 1",
+        "0 forward -1",
+        "3 forward 1",
+        "3 interact 0"
+      ],
+      "duration": 9,
+      "until": {
+        "probe": "player.pos.y",
+        "max": 57700
+      },
+      "expect": [
+        {
+          "probe": "player.state",
+          "eq": "grappleswing"
+        },
+        {
+          "probe": "step.drop",
+          "min": 2000,
+          "note": "the rope paid out (Interact + back) from the catch at z -6011: measured 2426 by y 57700, the forward swing's end over the floor"
+        }
+      ]
+    },
+    {
+      "step": "release_onto_the_floor",
+      "input": [
+        "0 jump 1",
+        "0.1 jump 0",
+        "0.1 forward 0"
+      ],
+      "duration": 4,
+      "until": {
+        "probe": "player.grounded",
+        "eq": true
+      },
+      "expect": [
+        {
+          "probe": "player.grounded",
+          "eq": true
+        },
+        {
+          "probe": "player.pos.z",
+          "near": -9388.5,
+          "tol": 30,
+          "note": "the floor under the ring: l2_maproom's player intro (-20173.3 57802.7 -8850.5 in its frame; l2_shrineroom lies 538 higher)"
+        },
+        {
+          "probe": "world.unit",
+          "eq": "l2_maproom"
+        },
+        {
+          "probe": "player.dead",
+          "eq": false
+        }
+      ]
+    }
+  ]
+}

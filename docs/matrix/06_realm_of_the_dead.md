@@ -46,8 +46,8 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 
 ### Gaps
 - C06-05 situational adrenaline and the burning barrels: slow motion and the barrel hazard exist (0.42.0 / 0.45.0) but the sequence is not reachable by input (C06-04); it is on the critical path.
-- C06-04 ship roll: hallway 1056's first two stages run by input; she is stopped before plane 1203 (known gap scenario); the cause is not found.
-- C06-10: from the top valve wheel the bar 238 is not reached (known gap scenario); C06-11 / C06-12 follow it.
+- C06-04 ship roll: hallway 1056's first two stages run by input; she is stopped before plane 1203 (known gap scenario). Decoded in part (2026-11-20, BUGS.md OU-PZL-004): after command 2 the hall stands at 30 degrees in the original too (state 1 plays clip `10_30`; `30_60` / `60_90` follow); a thin wall along lower-hallway x 1126 with the floor west of it 100..300 higher stops her; the original's route after the sliding cases (the walkthrough turns right) is not traced.
+- C06-10: from the top valve wheel the bar 238 is not reached (known gap scenario); no decoded DICE query reaches it from hold 209 (BUGS.md OU-PZL-005); C06-11 / C06-12 follow it.
 - C06-06..C06-10 valve-wheel / ladder shafts: hold ↔ ladder and ledge ↔ hold transfers are undocumented; stacked ladders (q88) are "not done"; only a floor attach to ladder 234 is tested. Whether the valve wheels are free-climb holds (markup 16-20) or ledges in this unit has not been surveyed.
 - C06-11 hang → beam drop untested in this unit.
 - No test walks from the Natla room to plane 1074.

@@ -120,7 +120,7 @@ Abbreviations: GP = docs/GAMEPLAY.md, PR = docs/PROGRESSION.md, Mnn = row of `B_
 | `ch08_shrine_statue_pull` | l2_shrineroom player intro (checkpoint 2769) | naga statue 2794 grappled by its ring and pulled over; spiders out | C08-64, C09-01 |
 
 Blockers and open legs:
-- **C08-64 / C09-02** (known gap `tests/selftests/known_gaps/ch09_shrine_shaft_descent.json`): after the pull the statue's floor slabs (uber sections 1 / 3 / 4 of 2794) fall into the shaft (fixed in 2026-11-16, OU-PZL-006), but its ring is still a grapple target.
+- **C08-64 / C09-02** (self-test `ch09_shrine_shaft_descent`, moved out of the known gaps 2026-11-20): after the pull the statue's floor slabs (uber sections 1 / 3 / 4 of 2794) fall into the shaft (OU-PZL-006), and its ring, read off the live instance (tru.exe 0x6FF040), goes down with the statue: no longer a target.
 - **C08-14** lift drop: not playable as one leg until the climbs between the three upper ledges (C08-02 .. C08-13) are played by input (both sides must be free in one run).
 - **C08-54** bracket: from checkpoint 2820 volume 3023 is entered at once (2982 / 2983 vt 55) and plane 2987 crossed, but on the mid-level walk east (to -24500, 41235) bracket 2982 was never offered and the room's nagas killed an unarmed Lara: the leg needs the fight and the throw spot [not found].
 - **C08-57** cage 2971 at (-13942, 47558, 1154) on the lower courtyard: the autopilot found no way down from checkpoint 2067's ledge (z 1985); not played.

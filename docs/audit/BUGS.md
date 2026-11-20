@@ -123,11 +123,11 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-GRP-004 | grapple | ch10 roped leap to wall ring 2595 swings under the pool surface (unit rope override ruled out: no unit sets it) | Open | pre-existing | — |
 | OU-GRP-005 | grapple | ch12 lever 6695: rope attach calls vt 46, larabase 26 bound, she stays roped while Interact is held | Fixed-verified (0.53.0, f832536) | pre-existing | C-VM |
 | OU-PZL-001 | progression | ch01: no input route into the pocket north of the bedroom beams | Open | pre-existing | — |
-| OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Open | pre-existing | C-MEASURE |
-| OU-PZL-003 | progression | ch05: west recess from the T junction is shut | Open | pre-existing | — |
-| OU-PZL-004 | progression | ch06: hallway roll stops on a 45° floor before plane 1203 | Open | pre-existing | — |
-| OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Open | pre-existing | C-CHART |
-| OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed-verified (0.53.0, ecf03db); ch09 scenario still parked (2 grapple issues) | pre-existing | C-JOINT |
+| OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Fixed on agent/GapsA10 (43b506c) | pre-existing | C-MEASURE |
+| OU-PZL-003 | progression | ch05: west recess from the T junction is shut | Not a bug (wrong route in the scenario; d66d67a) | pre-existing | — |
+| OU-PZL-004 | progression | ch06: hallway roll stops on a 45° floor before plane 1203 | Open (decoded in part: the hall stands at 30°; floor junction 100-300 high) | pre-existing | — |
+| OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Open (no decoded query reaches the bar from hold 209) | pre-existing | C-CHART |
+| OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed-verified (0.53.0, ecf03db); the fallen ring and the scenario fixed on agent/GapsA10 (1088550) | pre-existing | C-JOINT |
 | OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed-verified (0.53.0, 2e6ef11: test bug) | pre-existing | C-JOINT |
 | OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends don't tug bodies remains (tru.exe's bends are physics bodies, 0x699A50) | Partly fixed ((c) 0.53.0; (a) 0.56.0, merge 02b7a09; (b) open) | pre-existing | — |
 | OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed-verified (0.53.0, 30cc49f) | pre-existing | C-VM |
@@ -1011,11 +1011,11 @@ docs/GAMEPLAY_DEVELOPMENT_REPORT.md §7; regression test = the scenario moved up
 | ID | Level / repro | Expected (original) | Actual / suspected cause | Test |
 |---|---|---|---|---|
 | OU-PZL-001 | l3_main_bedroom, beams north pocket | walkthrough route by input | no input route; second leg starts off-checkpoint; fire volumes cost health (REPORT §7 row 01) | ch01 legs |
-| OU-PZL-002 | l1_baldrs_sideroom ledge 35 → perch 30 (1620 away, 134 up) | jump reaches perch 30 | running jump lands on pillar 29; tru.exe take-off spot unknown | `known_gaps/ch04_column_hall_perches` |
-| OU-PZL-003 | l1_ship_exterior T junction | way west to volume 1436 | west recess shut | `known_gaps/ch05_natla_room` |
-| OU-PZL-004 | l1_ship_sinking_hall after plane 1202 | roll reaches plane 1203 | stopped on 45° floor against a 100-high step, 3850 short | `known_gaps/ch06_hallway_roll` |
-| OU-PZL-005 | l1_ship_sinking_hall top valve wheel → bar 238 | side jump to bar | lands hanging on beam ledge 253 (ladder / side-jump rules, OU-PLY-004) | `known_gaps/ch06_second_shaft_exit` |
-| OU-PZL-006 | l2_shrineroom after the statue pull; l1/ch08 statue floor | slabs fall, shaft opens | freed slab bodies stay solid; ring stays a target | `known_gaps/ch09_shrine_shaft_descent` |
+| OU-PZL-002 | l1_baldrs_sideroom ledge 35 → perch 30 (1618 away, 135 up) | jump reaches perch 30 | fixed (43b506c): the ground jump query sweeps perches (record 0x2AB8C entry 3) and re-aims the flight | `ch04_column_hall_perches` |
+| OU-PZL-003 | l1_ship_engine_hall west end of the hall | way to volume 1436 | the scenario's "T" was the hall's west recess; the way is down the ramp, up the engine room's corridor, its left wing | `ch05_natla_room` |
+| OU-PZL-004 | l1_ship_sinking_hall after plane 1202 | roll reaches plane 1203 | stopped against a thin wall at lower-hallway x 1126 with the floor west of it 100-300 higher, 3850 short (below) | `known_gaps/ch06_hallway_roll` |
+| OU-PZL-005 | l1_ship_sinking_hall top valve wheel → bar 238 | the walkthrough "climbs from the valves to the bar" | lands hanging on beam ledge 253; no decoded query reaches the bar from hold 209 (below) | `known_gaps/ch06_second_shaft_exit` |
+| OU-PZL-006 | l2_shrineroom after the statue pull; l1/ch08 statue floor | slabs fall, shaft opens | fixed: slabs fall (ecf03db); the ring lies with the toppled statue (1088550) | `ch09_shrine_shaft_descent` |
 | OU-PZL-007 | l4_ballcourt calendar 5477, mask set | jaguar handle turns sections | no joint moves; unlock rule after the mask not decoded | `known_gaps/ch13_ballcourt_calendar_solve` |
 | OU-PZL-008 | l4_temple east ledge | ring 4951 offered; statue head topples | ring offered (agent/Joint8); head not moved by the rope's bend | `known_gaps/ch13_temple_block_topple` |
 | OU-PZL-009 | l4_ballcourt exit switch 5469, socket empty | locked until keyhole 6501 (modifiable 7 (2)) [O bytecode] | switch usable; ours honours modifiable 7 only for `ar_ei_switch_oneway` | `known_gaps/ch15_ballcourt_exit_switch` |
@@ -1062,6 +1062,33 @@ proving tests there):
   Joint8 found the ring (hinge 0 on the leaf) stayed in the doorway while the leaf slid and was hinged 36 off; fixed
   with OU-PHY-001. Open detail [U]: tru.exe's leaf leaves at (−870, 0, +364) tipping ≈ 4.6 rad/s, ours (−930, −26,
   +39) tipping 1.75: the door's squib record has elevation 0, so the lift is not from the record.
+
+Batch 10 (2026-11-20, agent/GapsA10):
+- **OU-PZL-006 (the ring):** tru.exe reads a grapple target's point off the live instance at every query (0x713090 →
+  0x6FF040: instance +0x20 plus its query-0xDB offset) [O decomp]. Ours kept the intro feature. `World::liveGrapple`
+  moves a pull target's feature with the section showing its model; the naga statue's ring goes down the shaft with
+  the statue (z −14633). The mid-fall throw at ring 2673 already passed at HEAD; the scenario's last step jumped off
+  at a fixed time over the pit and now releases at the forward swing's end over the floor.
+- **OU-PZL-002:** lara.drm's ground jump record 0x2AB8C (q2 / q26 / q43) admits perches in entry 3 (types 2 / 13)
+  [O-data]; 0x6FC6B0's wall test passes non-ledge markup (only MUD 0x40000000 is tested) [O decomp]; 0x73EDC0
+  re-aims the flight at the hit. q26's arc from ledge 35's corner meets perch 30 at frame ~16.6. Ours swept ledges
+  only. [I]: the perch's own markup record (target types, insets) is not decoded; perches are met by the root's arc.
+- **OU-PZL-003:** no engine fault. The walkthrough's T is the V-shaped engine room's two wings, reached east down the
+  ramp onto the engine floor and north up its middle corridor; the left wing ends at volume 1436.
+- **OU-PZL-004 (decoded in part):** hallway 1056's uber data [O]: state 4 plays clip `0_10` (command 1, plane 1201),
+  state 1 `10_30` (command 2, plane 1202), then 1 → 2 by `30_60` and 2 → 3 by `60_90`. So at the stuck point the
+  hall stands at 30° in the original too. Floor map there (self-test `map 700 50`): her floor slopes down to −y; a
+  one-cell wall runs along lower-hallway x 1126 (y 15942..16292); west of it the floor is 100..300 higher (level only
+  at y 15992, behind the wall), so no way west to plane 1203 (−2675 16003). The walkthrough turns right after the
+  sliding cases (east from a northward run), but plane 1203 lies west. Open [U]: the original's route after the second
+  tilt, the sliding cases as bodies, the hall's roll axis and sense against the clip; needs a Wine trace.
+- **OU-PZL-005 (decoded in part):** bar 238 (z 11377.8, x −5586..−4551) lies 160 over hold 209's point and its near
+  end 315 to her left. q28 (left side jump) needs the hit ≥ 360 from the hold point and its capsule centred 219 under
+  the arc started 316 under the hold point tops out ~12 over the hold point: it meets beam ledge 253 instead. q31 (jump
+  up) is straight up; the bar's end (inset 79) is ~394 off its axis, outside the 316 capsule radius. The DICE moves
+  q73 / q82 (158 reach) end on holds or a beam (cond 0x262: flags 0x8000 / 0x10000), not ledges. Ours tried: jump left
+  (ledge 253), jump up (back onto hold 219), move left (lean only). Open [U]: which hold the original leaves from (the
+  walkthrough ends the weave "up and to the right a bit") and which query reaches the bar; needs a Wine trace.
 
 ### Script VM (OU-SCR)
 

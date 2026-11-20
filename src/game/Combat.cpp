@@ -1126,6 +1126,25 @@ std::vector<Damageable*> World::candidates(bool hard) const {
     return out;
 }
 
+// A unit's grapple target as it is now, in the world frame. The feature is read off the live instance at every query
+// (0x713090 -> 0x6FF040: instance +0x20 plus its query-0xDB offset) [O decomp]: a pull target's feature moves with the
+// section showing its model (the naga statue 2794's ring lies with the toppled statue). The named anchors keep their
+// intro origin (Stream.cpp).
+GrappleTarget World::liveGrapple(const GrappleTarget& g, vec3 offset) const {
+    GrappleTarget t = g;
+    t.pos += offset, t.sight += offset;
+    if (g.sight == g.pos)
+        if (const glm::mat4 m = grappleTargetMotion(g.uid, g.model); m != glm::mat4(1)) t.pos = t.sight = offset + vec3(m * glm::vec4(g.pos, 1));
+    return t;
+}
+
+std::optional<GrappleTarget> World::grappleTargetNow(int32_t uid) const {
+    for (const auto& u : units_)
+        for (const auto& g : u.data.grapples)
+            if (g.uid == uid) return liveGrapple(g, u.offset);
+    return std::nullopt;
+}
+
 // Grapple target: Lara's grapple targeting slot, player data +0x464 [O lara.drm]: flags 0xEC000000 (line of sight from
 // her eye, 0x04000000 as the combat slots), six target sets tried in order, the first one with a candidate wins
 // (criteria 0x712090; d = 3D distance from the eye, horiz = horizontal angle from her facing, cam = angle from the
@@ -1156,8 +1175,7 @@ std::optional<GrappleTarget> World::grappleTarget() const {
         for (const auto& g : u.data.grapples) {
             if (script_.grappleOff(g.uid) || uberGrappleOff(g.uid)) continue; // `unit` 13 took its markers / uber action 0x1A
             if (g.model > 0 && !uberShowsModel(g.uid, g.model)) continue;     // the feature's model is not an instance now
-            GrappleTarget t = g;
-            t.pos += u.offset;
+            const GrappleTarget t = liveGrapple(g, u.offset);
             const vec3 v = t.pos - eye;
             const float d = glm::length(v);
             if (d < 1) continue;
@@ -1174,7 +1192,7 @@ std::optional<GrappleTarget> World::grappleTarget() const {
                 const auto hit = col_.raycast(eye, sv / sd, sd - 60.0f, collision::kSightMask);
                 return !hit || (hit->dynamic >= 0 && col_.dynamics[size_t(hit->dynamic)].id == t.uid);
             };
-            if (!seen(t.pos) && (t.sight + u.offset == t.pos || !seen(t.sight + u.offset))) continue;
+            if (!seen(t.pos) && (t.sight == t.pos || !seen(t.sight))) continue;
             const float range = t.range > 0 ? t.range : anims_.grapple.range; // 0x698AC0: the target's own, else g_grapple's
             cs.push_back({t, d, angleBetween(laraFwd, vec3(vec2(v), 0)), angleBetween(camFwd, t.pos - cam_.position),
                           std::asin(std::clamp(v.z / d, -1.0f, 1.0f)), glm::length(t.pos - gadget) < range});
