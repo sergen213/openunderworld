@@ -226,6 +226,22 @@ TEST(SelfTest, ScenarioChecks) {
                     .usesSaves());
     EXPECT_FALSE(SelfTest::parse(scenario(R"({"step":"c","input":"0.2 jump 1 # no save here","duration":1,"expect":{"probe":"save.saves","eq":0}})"))
                      .usesSaves());
+    // SDL device events (step "events"): EventLog lines with seconds; a malformed one rejects the scenario
+    const SelfTest pad = SelfTest::parse(scenario(R"({"step":"p","events":["0 padadd 1","0.1 button 1 0 1  # A","0.2 button 1 0 0","","1 axis 1 1 -32767"],
+                                                    "duration":2,"expect":{"probe":"player.state","eq":"run"}})"));
+    EXPECT_TRUE(pad.usesEvents());
+    EXPECT_FALSE(SelfTest::parse(scenario(good)).usesEvents());
+    rejects(scenario(R"({"step":"e","events":["0.1 joystick 1 0 1"],"duration":1,"expect":{"probe":"player.state","eq":"idle"}})"), "unknown event");
+    rejects(scenario(R"({"step":"e","events":["key 44 1"],"duration":1,"expect":{"probe":"player.state","eq":"idle"}})"), "'<seconds> <event> <args>'");
+    rejects(scenario(R"({"step":"e","events":["0.5 key 44 1","0.2 key 44 0"],"duration":1,"expect":{"probe":"player.state","eq":"idle"}})"),
+            "ticks go backwards");
+    rejects(scenario(R"({"step":"e","events":["-1 key 44 1"],"duration":1,"expect":{"probe":"player.state","eq":"idle"}})"), "negative time");
+    // the fighting autopilot's line, checkpoint position, HUD reticle / toasts, sounds
+    EXPECT_NO_THROW((void)SelfTest::parse(scenario(R"({"step":"f","plan":["fight","fight 2500 40"],"duration":45,"expect":{"probe":"enemies.alive","eq":0}})")));
+    for (const char* p : {"world.checkpoint_pos.x", "world.checkpoint_pos.z", "world.checkpoint_distance", "hud.reticle", "hud.reticle_slowmo", "hud.toast",
+                          "hud.title", "hud.hint", "step.sounds", "step.toasts", "step.titles", "step.hints"})
+        EXPECT_TRUE(SelfTest::probeKnown(p)) << p;
+    for (const char* p : {"world.checkpoint_pos", "world.checkpoint_pos.w", "step.sound", "hud.reticles"}) EXPECT_FALSE(SelfTest::probeKnown(p)) << p;
 }
 
 // The engine.* / hud.* / audio.* probes read ou-game's selftest::Engine: each answers from its own field, and the
@@ -277,6 +293,14 @@ TEST(SelfTest, EngineProbes) {
     e.hudBreath = true;
     EXPECT_TRUE(cond(R"({"probe":"hud.bar_kind","eq":"breath"})").holds(engineProbe(e, "hud.bar_kind")));
     EXPECT_TRUE(cond(R"({"probe":"hud.health_packs","eq":2})").holds(engineProbe(e, "hud.health_packs")));
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "hud.reticle")), "none");
+    EXPECT_EQ(app::selftest::toJson(engineProbe(e, "hud.toast")), "") << "nothing shown";
+    e.reticle = "locked", e.reticleSlowMo = true, e.toast = "HEALTH PACKS  1", e.title = "CROFT MANOR", e.hint = "Press \u1803 to jump";
+    EXPECT_TRUE(cond(R"({"probe":"hud.reticle","eq":"locked"})").holds(engineProbe(e, "hud.reticle")));
+    EXPECT_TRUE(cond(R"({"probe":"hud.reticle_slowmo","eq":true})").holds(engineProbe(e, "hud.reticle_slowmo")));
+    EXPECT_TRUE(cond(R"({"probe":"hud.toast","eq":"HEALTH PACKS  1"})").holds(engineProbe(e, "hud.toast")));
+    EXPECT_TRUE(cond(R"({"probe":"hud.title","eq":"CROFT MANOR"})").holds(engineProbe(e, "hud.title")));
+    EXPECT_TRUE(cond(R"({"probe":"hud.hint","has":["Press \u1803 to jump"]})").holds(engineProbe(e, "hud.hint")));
 
     e.audioOn = true, e.voices = 5;
     EXPECT_EQ(app::selftest::toJson(engineProbe(e, "audio.music_state")), "idle");

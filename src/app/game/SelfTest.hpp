@@ -6,6 +6,7 @@
 
 #include "app/game/Autopilot.hpp"
 #include "game/Game.hpp"
+#include "platform/Input.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -13,6 +14,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -79,6 +81,9 @@ struct Measurements {
     std::vector<std::string> events;        // script events "kind:source>target", in order (repeats kept once)
     std::vector<std::string> pickups;       // "kind:id" collected
     std::vector<std::string> hazards;       // "object name:damage" of each contact-hazard hit that hurt her, in order
+    // What ou-game around the World did (from selftest::Engine, first-seen order): sound events started ("script:<owner>:
+    // <member>", "anim:<object>:<dtp>", ...; app/game/Sound.hpp GameSound::started), HUD toasts / title cards / hints shown.
+    std::vector<std::string> sounds, toasts, titles, hints;
 
     void begin(glm::vec3 pos, std::string_view state, std::string_view clip, float health);
     void tick(glm::vec3 pos, std::string_view state, std::string_view clip, bool airborne, float health);
@@ -108,6 +113,10 @@ struct Engine {
     float hudHealth = 0, hudBar = 0;         // the health meter's fill 0..1; the adrenaline / breath bar's fill 0..1
     bool hudBreath = false;                  // that bar shows the breath
     int hudHealthPacks = 0, hudClip = 0;     // the d-pad's health pack count; rounds in the drawn weapon's clip(s)
+    std::string reticle = "none";            // the combat reticle the HUD shows: none / free / target / locked / manual
+    bool reticleSlowMo = false;              // it shows the head-shot window (adrenaline slow motion)
+    std::string toast, title, hint;          // the HUD's notification, title card and hint shown now ("" none)
+    std::vector<std::string> sounds;         // sound events GameSound started during the last tick (GameSound::started)
     bool audioOn = false;                    // a device (or --music-wav) is open
     size_t voices = 0;                       // the mixer's active voices
     std::vector<std::string> music;          // tracks playing in the music player's slots, slot order
@@ -150,7 +159,13 @@ public:
 
     // Before the first tick: the scenario's fixtures, the script-call hook. `w` must outlive the run.
     void attach(game::World& w);
-    game::Actions actions(game::World& w); // this tick's input (starts the next step when one is due)
+    game::Actions actions(game::World& w, const game::Actions& devices = {}); // this tick's input (starts the next step when one is due)
+    // The SDL device events due this tick (a step's "events"; starts the next step when one is due). ou-game feeds them
+    // through its own input handling (platform::DeviceState, the bindings, menus) and passes readDevices' Actions to
+    // actions(), which uses them while the step has events. At a step's start the previous step's held keys, buttons and
+    // axes are released by events of their own.
+    std::vector<SDL_Event> deviceEvents(game::World& w);
+    bool usesEvents() const { return usesEvents_; } // some step has "events" (read through ou-game's bindings: the defaults without --config)
     void observe(game::World& w);          // after World::tick: measure, test `until` / the timeout, close the step
     void paused();                         // a tick the world did not run (a menu is up): counts toward the timeout
     bool done() const { return cur_ >= steps_.size(); }
@@ -172,7 +187,7 @@ public:
 
 private:
     struct Step {
-        std::string id, input, plan;
+        std::string id, input, plan, events; // events: platform::EventLog text with ticks from the step's start
         uint64_t ticks = 0; // duration
         std::vector<selftest::Condition> until, expect;
         std::vector<nlohmann::json> fixtures;
@@ -203,7 +218,12 @@ private:
     selftest::Measurements m_;
     std::vector<std::unique_ptr<game::DummyTarget>> dummies_; // "target" fixtures (World::targets holds the pointers)
     uint64_t simHash_ = 0;
-    bool usesSaves_ = false;
+    bool usesSaves_ = false, usesEvents_ = false;
+    platform::EventLog events_;              // the current step's
+    std::vector<SDL_Event> release_;         // its start's releases of what earlier steps' events held, not sent yet
+    // What the events this far hold down (released at the next step's start): keys, mouse buttons, (pad, button), (pad, axis).
+    std::set<int> heldKeys_, heldMouse_;
+    std::set<std::pair<SDL_JoystickID, int>> heldButtons_, heldAxes_;
     const selftest::Engine* engine_ = nullptr;
     // save / load: the state one tick after the last save and one tick after the last load (World::stateParts; the
     // loaded World holds the saved physics state until its first step, so the first tick after each is compared).

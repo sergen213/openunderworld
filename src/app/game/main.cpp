@@ -2354,6 +2354,7 @@ int main(int argc, char** argv) {
         try {
             sound.emplace(*bigfile, mixer);
             sound->setLanguage(language);
+            sound->record = selfTest.has_value(); // step.sounds
             sound->attach(*world);
             if (effects.library) // Lara's and the weapons' sounds decoded up front (not on the first step / shot)
                 for (int i = -1; i < ou::game::kWeaponCount; ++i)
@@ -3179,15 +3180,15 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
             case SDL_EVENT_QUIT: running = false; break;
-            case SDL_EVENT_GAMEPAD_ADDED: // hotplug: open it (a replay's pads come from the recording)
-                if (!replay) pads[e.gdevice.which].reset(SDL_OpenGamepad(e.gdevice.which));
+            case SDL_EVENT_GAMEPAD_ADDED: // hotplug: open it (a replay's / self-test's pads come from the recording / scenario)
+                if (!replay && !selfTest) pads[e.gdevice.which].reset(SDL_OpenGamepad(e.gdevice.which));
                 break;
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: // not a window left by a renderer swap
                 if (e.window.windowID == SDL_GetWindowID(window.get())) renderer->resize({e.window.data1, e.window.data2});
                 break;
             default: break;
             }
-            if (!replay) handleInput(e);
+            if (!replay && !selfTest) handleInput(e); // a self-test's device input is its scenario's "events" alone
             if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pads.erase(e.gdevice.which);
         }
         if (interactive) SDL_SetWindowRelativeMouseMode(window.get(), menus.screen() == ou::ui::Screen::None);
@@ -3200,11 +3201,12 @@ int main(int argc, char** argv) {
         for (int n = clock.advance(dt); n > 0 && running; --n) {
             if (replay)
                 while (const auto ev = replay->next(appTicks)) handleInput(*ev);
-            ou::game::Actions a = selfTest    ? selfTest->actions(*world)
+            if (selfTest) // a step's SDL events: the same handling as live ones (device state, bindings, menus)
+                for (const SDL_Event& ev : selfTest->deviceEvents(*world)) handleInput(ev);
+            ou::game::Actions a = selfTest    ? selfTest->actions(*world, ou::game::readDevices(opt.controls, devices))
                                   : script    ? script->at(appTicks)
                                   : autopilot ? autopilot->step(appTicks, *world)
                                               : ou::game::readDevices(opt.controls, devices);
-            if (selfTest) mouse = glm::vec2(0); // the desktop's pointer is no part of a scenario
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)
@@ -3416,6 +3418,16 @@ int main(int argc, char** argv) {
                 engineState.hudBreath = hs.breath < 1 || hs.breathBar;
                 engineState.hudBar = std::clamp(engineState.hudBreath ? hs.breath : hs.adrenaline, 0.0f, 1.0f); // ui::Hud::draw's bar
                 engineState.hudHealthPacks = hs.healthPacks, engineState.hudClip = hs.clip[0] + (hs.dual ? hs.clip[1] : 0);
+                { // the reticle the next frame draws (CombatView::reticle from this tick's camera), as GAME OPTIONS shows it
+                    int pw = opt.width, ph = opt.height;
+                    SDL_GetWindowSizeInPixels(window.get(), &pw, &ph);
+                    const auto r = menus.reticles ? CombatView::reticle(*world, world->camera(), world->fovDeg, pw, ph) : ou::ui::Reticle{};
+                    static constexpr const char* kReticle[] = {"none", "free", "target", "locked", "manual"};
+                    engineState.reticle = kReticle[size_t(r.kind)], engineState.reticleSlowMo = r.kind != ou::ui::Reticle::Kind::None && r.slowMo;
+                }
+                engineState.toast = hud.toast(), engineState.title = hud.title(), engineState.hint = hud.hint();
+                engineState.sounds.clear();
+                if (sound) engineState.sounds.swap(sound->started);
                 engineState.audioOn = audioOn, engineState.voices = audioOn ? mixer.activeVoices() : 0;
                 engineState.renderer = chosen, engineState.device = renderer->description(); // initialised (drawn or not)
                 engineState.sdlVideo = SDL_WasInit(SDL_INIT_VIDEO), engineState.sdlAudio = SDL_WasInit(SDL_INIT_AUDIO);

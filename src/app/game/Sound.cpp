@@ -80,6 +80,7 @@ void GameSound::attach(game::World& world) {
             return true;
         }
         scriptHandles_[key] = player_.start(*plex, pos);
+        note("script:" + std::to_string(owner) + ":" + std::to_string(member));
         std::fprintf(stderr, "ou-game: tick %llu script sound %d (%s) +%u %s%s%u%s%s\n", (unsigned long long)world.ticks(), owner,
                      o->name.c_str(), member, fn == 1 || fn == 3 ? "3D " : "", plex->type == audio::PlexType::Reference ? "DTP " : "node type ",
                      plex->type == audio::PlexType::Reference ? plex->id : uint32_t(plex->type), pos ? " at anchor" : "",
@@ -190,6 +191,7 @@ void GameSound::slotSound(const fx::ObjectFx& fx, uint8_t slot, uint8_t action, 
     }
     const auto h = player_.start(*objectPlex(fx, fx.soundSlots[slot].plex), position, 1, material);
     slots_[key] = h;
+    note("slot:" + fx.name + ":" + std::to_string(slot));
     std::fprintf(stderr, "ou-game: tick %llu slot sound %s owner %d slot %u%s\n", (unsigned long long)tick, fx.name.c_str(), owner, slot,
                  h ? "" : " (silent)");
 }
@@ -243,6 +245,7 @@ void GameSound::jointSounds(const game::World& world) {
         JointVoice& v = jointVoices_[key];
         if (!player_.active(v.roll)) {
             v.roll = player_.start(*p, s.at);
+            note("joint:" + std::to_string(s.uid) + ":" + std::to_string(s.joint));
             std::fprintf(stderr, "ou-game: tick %llu joint sound %s uid %d joint %d start (%.1f units/s, %.1f deg/s)%s\n", tick,
                          s.object.c_str(), s.uid, s.joint, s.linear, s.angular, v.roll ? "" : " (silent)");
         }
@@ -298,6 +301,7 @@ void GameSound::animSound(const fx::ObjectFx& fx, const fx::Event& e, glm::vec3 
     // Root Assignments wrap a Reference: log the DTP it names.
     if (!dtp && p->type == audio::PlexType::Assignment && !p->children.empty() && p->children[0].type == audio::PlexType::Reference)
         dtp = p->children[0].id;
+    note("anim:" + fx.name + ":" + std::to_string(dtp));
     std::fprintf(stderr, "ou-game: tick %llu anim sound %s frame %u DTP %u material %u%s", (unsigned long long)tick, fx.name.c_str(),
                  e.frame, dtp, material, h ? "" : " (silent)");
     if (s.kind == 1) std::fprintf(stderr, " volume %.2f semitones %.2f delay %.2f", volume, semitones, delay);
@@ -367,6 +371,7 @@ void GameSound::tick(game::World& world) {
             if (const auto it = us.barks.find(b.category); it != us.barks.end()) lines.insert(lines.end(), it->second.begin(), it->second.end());
         if (lines.empty()) continue;
         if (const audio::Plex* p = bank_.find(lines[rng_() % lines.size()])) player_.start(*p, b.pos);
+        note("bark:" + std::to_string(b.uid) + ":" + b.category);
         std::fprintf(stderr, "ou-game: tick %llu enemy %d bark %s\n", tick, b.uid, b.category.c_str());
     }
     for (const auto& u : world.units()) {
@@ -384,6 +389,7 @@ void GameSound::tick(game::World& world) {
                     auto& h = s.handles[{f.marker, size_t(r)}];
                     if (player_.active(h)) continue; // still playing: not restarted
                     h = player_.start(m.sounds[size_t(r)], m.position + u.offset);
+                    note("marker:" + u.data.name + ":" + std::to_string(m.id) + ":" + std::to_string(r));
                     std::fprintf(stderr, "ou-game: tick %llu sfxmarker %s #%zu (id %u) start sound %d%s\n", tick, u.data.name.c_str(),
                                  f.marker, m.id, r, h ? "" : " (silent)");
                 }
@@ -406,6 +412,7 @@ void GameSound::tick(game::World& world) {
     if (air <= 0 && !world.health().dead() && !player_.active(drown_))
         if (const audio::Plex* p = bank_.find(kLaraDrown)) {
             drown_ = player_.start(*p, lara);
+            note("drown");
             std::fprintf(stderr, "ou-game: tick %llu drowning: Lara sound DTP %u\n", tick, kLaraDrown);
         }
 
@@ -414,6 +421,7 @@ void GameSound::tick(game::World& world) {
             if (!bank_.find(kBikeEngine))
                 if (auto drm = load(bf_, "pc-w\\motorcycle.drm")) mixer_.addWaves(*drm), bank_.add(std::move(drm));
             if (const audio::Plex* p = bank_.find(kBikeEngine)) engine_ = player_.start(*p, lara);
+            note("engine");
             std::fprintf(stderr, "ou-game: tick %llu bike engine %s (DTP %u)\n", tick, engine_ ? "start" : "missing", kBikeEngine);
         }
         // [I] rpm 1500 at rest to 10000 at the top speed; parameter 5 = throttle (0..700), 0 = 0.
@@ -431,6 +439,7 @@ void GameSound::tick(game::World& world) {
     player_.update(game::kTickSeconds);
     for (const auto& l : player_.lines) {
         std::fprintf(stderr, "ou-game: tick %llu voice %s \"%s\"\n", tick, l.path.c_str(), l.subtitle.c_str());
+        note("voice:" + l.path);
         for (const auto& line : locale::cineSubtitleLines(l.subtitle)) ticker_.push(line);
     }
     player_.lines.clear(), player_.waves.clear();

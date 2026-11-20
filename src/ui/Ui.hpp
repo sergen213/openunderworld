@@ -408,6 +408,8 @@ public:
     // expanded through Canvas::prompts) [I layout: not captured; a shaded box at the top, the toast's font]. Empty hides.
     void hint(std::string text, double seconds) { hint_ = std::move(text), hintLeft_ = hint_.empty() ? 0 : seconds; }
     const std::string& hint() const { return hintLeft_ > 0 ? hint_ : kNone; }
+    const std::string& toast() const { return toastLeft_ > 0 ? toast_ : kNone; } // the notification shown now, "" none
+    const std::string& title() const { return titleLeft_ > 0 ? title_ : kNone; } // the title card shown now, "" none
     void tick(double dt) { toastLeft_ -= dt, titleLeft_ -= dt, hintLeft_ -= dt; }
     float alpha(Group g) const { return alpha_[g]; }
     const HudState& shown() const { return s_; } // the state the last update() took (ou-game --self-test hud.* probes)
