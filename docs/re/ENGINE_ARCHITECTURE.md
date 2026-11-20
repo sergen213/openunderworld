@@ -66,8 +66,9 @@ Shutdown decoded 2026-11-16: [SHUTDOWN.md](SHUTDOWN.md) (MAIN_Shutdown 0x5DF930,
   `gameTracker` 0xE7F088 (N-h/N-m).
 - Linux: `src/app/game/main.cpp` (SDL3 window, Vulkan/GL device, config), `src/launcher/` (Qt launcher
   replacing the setup dialog), `src/config/`.
-- Fidelity: **decoded** for the order of initialisation ([STARTUP.md](STARTUP.md)); the Win32/D3D9 specifics are
-  replaced by design. Shutdown (0x5DF930 and what follows) is **unknown**.
+- Fidelity: **decoded** for the order of initialisation ([STARTUP.md](STARTUP.md)) and of shutdown (MAIN_Shutdown
+  0x5DF930, [SHUTDOWN.md](SHUTDOWN.md); its own Unknowns list the calls whose role is open); the Win32/D3D9 specifics
+  are replaced by design.
 - Open: the Media Center relaunch flag 0x9EEDCA (the docs mark its meaning as inferred from its name); the job
   system's thread layout.
 

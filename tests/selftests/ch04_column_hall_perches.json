@@ -3,7 +3,7 @@
  "name": "ch04_column_hall_perches",
  "chapter": "04 The Norse Connection: the hall of broken columns, second half (docs/matrix/04_norse_connection.md C04-15)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/norse2.html",
- "note": "KNOWN GAP (2026-11-10). After ch04_column_hall's steps the page crosses from the broken ledge (35) to a perch across the hall, turns left, jumps to the next perch (30 -> 22, 948 apart) and to the exit ledge 34. From ledge 35's north-east corner (5460 9831 4030) perch 30 (6798 10743 4164) is 1620 away and 134 higher: our running jump (1975 units/s, apex 157) comes down ~1000 lower and catches pillar 29's shaft under the perch (z 3127; the pillar markup ends at 3470, 694 under the perch, so the perch cannot be reached from it either). Either the original's take-off spot is another one (the floor behind ledge 35 is the triangle x 3700..5600, y 8500..10100; a strip along the west wall runs on north at z ~3930) or a jump of ours is short: not measured under Wine. The last step fails today.",
+ "note": "ch04_column_hall's steps, then the page's second half: from the broken ledge (35) a running jump to the nearest broken column across the hall (perch 30), a perch jump to the next one (perch 22, 948 on) and the jump to the exit ledge 34. From ledge 35's north-east corner (5460 9831 4030) perch 30 (6798 10743 4164) is 1618 away and 135 higher, far beyond a free running jump (1975 units/s, apex 157). tru.exe's running jump query q26 (90.25 forward + 42.54 up a 30 Hz frame) runs lara.drm's class record 0x2AB8C, whose entry 3 admits jump landings and perches (types 2 / 13) [O-data]; for them 0x6FC6B0's wall test passes (it tests only MUD 0x40000000 ledges) [O decomp], and 0x73EDC0 re-aims the flight at the hit (v = (target - pos - g t^2 / 2) / t). Ours sweeps perches for that record (Player::ledgeOnArc) and times the re-aimed flight by the hit frame [I]; the take-off corner is ours.",
  "level": "l1_baldrs_sideroom",
  "spawn": [
   2053,
@@ -185,7 +185,7 @@
   {
    "step": "running_jump_to_the_perch",
    "plan": [
-    "run 90 1.0 jump 0.15",
+    "run 90 1.0 jump 0.3",
     "wait 2"
    ],
    "duration": 8,
@@ -332,9 +332,106 @@
    "duration": 20,
    "expect": [
     {
-     "probe": "player.state",
-     "eq": "perch",
-     "note": "perch 30 (6798 10743 4164)"
+     "visits": [
+      "run",
+      "jumpprep",
+      "jump",
+      "perch"
+     ]
+    },
+    {
+     "clips": [
+      "perch_attach_air"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 30,
+     "note": "perch 30 (6798 10743 4164), 1618 from the take-off and 135 higher: the running jump's query q26 meets it (lara.drm record 0x2AB8C entry 3 names perches) and 0x73EDC0 re-aims the flight at it"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "perch_to_the_next_perch",
+   "plan": [
+    "face 90",
+    "wait 0.6",
+    "run 90 0.3 jump 0",
+    "wait 2"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "visits": [
+      "perch",
+      "jump",
+      "perch"
+     ]
+    },
+    {
+     "clips": [
+      "perch_jump_forward",
+      "perch_attach_air"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 22,
+     "note": "perch 22 (6798 11694 4164), 948 on along the row"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "jump_to_the_exit_ledge",
+   "plan": [
+    "face 90",
+    "wait 0.6",
+    "run 90 0.3 jump 0",
+    "wait 2"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "visits": [
+      "perch",
+      "jump",
+      "land"
+     ]
+    },
+    {
+     "probe": "player.pos.y",
+     "min": 12400,
+     "note": "beyond ledge 34's edge (y 12392 .. 12770)"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 4029.6,
+     "tol": 4,
+     "note": "the exit floor behind ledge 34 (z 4029.6), 135 under the perch"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
     }
    ]
   }

@@ -1036,21 +1036,26 @@ void Player::dropToHang(int ledge, int seg, float t, float side, std::string_vie
 // The chart (S530 T558 / T573 / T563, S439): 2 climbs up, 11 jumps up, anything else goes on to S439 (5 crouching,
 // 8 the wall hug, a balance beam as the jump target bbeam_ledgeu_climbup). Classes 0 / 12 (0x7375C0's check of what
 // is under her) are not modelled [I].
+// Its rays are the player code's (0x74E290: 0x4935F0, and 0x72BAE0 / 0x7144B0 -> 0x70B5A0 -> 0x493330; ray flags 0x2C19E7 [O decomp]):
+// they pass terrain groups flagged 0x800 (CollisionMesh::playerRay). l5_valaskjalf's central steps to the hammer
+// chamber carry such a group (5, 0x6005FB00): a smooth ramp over the treads from ledge 1542 up, face mask 1,
+// client flags 0xA0, material 0x14; with it the point 139 over the top is 69.5 up (class 1), without it the first
+// tread at the ledge's height (class 2, the pull-up the walkthrough's "up the central steps" needs).
 int Player::hangClearance() const {
     constexpr float kRayZ = 252.0f, kBack = 100.0f, kOver = 139.0f, kStand = 512.0101f, kCrouch = 260.0f;
     const auto& m = col_.markup[size_t(s_.ledge)];
     const vec3 q = pointOn(m, s_.ledgeSeg, s_.ledgeT);
     const vec3 top = forward();
-    if (col_.raycast(q - top * kBack + vec3(0, 0, kRayZ), top, kBack + kOver)) {
+    if (col_.playerRay(q - top * kBack + vec3(0, 0, kRayZ), top, kBack + kOver)) {
         const vec2 d = segDir(m, s_.ledgeSeg);
         if (glm::dot(vec2(-d.y, d.x), xy(top)) > 0.7f && shelfAt(s_.ledge, s_.ledgeSeg, s_.ledgeT)) return 8;
         return 1; // [I] 0x74BB50's 2 (wall within 88.5) as 1: no up jump without a target
     }
-    const auto floor = col_.raycast(q + top * kOver + vec3(0, 0, kRayZ), vec3(0, 0, -1), kRayZ + 30.0f);
+    const auto floor = col_.playerRay(q + top * kOver + vec3(0, 0, kRayZ), vec3(0, 0, -1), kRayZ + 30.0f);
     const float dz = floor ? floor->point.z - q.z : -30.0f;
     if (!(dz > -30.0f && dz < 40.0f)) return 1;
     const vec3 above = q + top * (kOver * 0.5f) + vec3(0, 0, kRayZ);
-    const auto roof = col_.raycast(above, vec3(0, 0, 1), kStand - kRayZ);
+    const auto roof = col_.playerRay(above, vec3(0, 0, 1), kStand - kRayZ);
     const float room = roof ? kRayZ + roof->t : kStand;
     return room >= kStand ? 2 : room < kCrouch ? 1 : 5;
 }
@@ -1621,7 +1626,9 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
         // +0x2C bit 0x80, the arc coming down (0x6EC3D0): a default check (0x70EC60), not in the class record path
         // (0x7296C0) [O: decomp]; ours keeps it for both to time the re-aimed flight (the record path's box test holds
         // at every time, its first hit is the take-off) [I]
-        if (h.z < q.minZ || t >= best.frames || (q.falling && q.v.z - kQueryG * t >= 0.05f)) return;
+        // a perch (13) is landed on, the [I] step rule (q.minZ) is the ledges'
+        const bool perch = col_.markup[size_t(li)].type == 13;
+        if ((!perch && h.z < q.minZ) || t >= best.frames || (q.falling && q.v.z - kQueryG * t >= 0.05f)) return;
         if (q.sight) { // a ledge on the far side of what she jumps at is none (a ledge point lies on its wall: 100 short)
             const vec3 d = h - from;
             const float len = glm::length(d);
@@ -1642,7 +1649,10 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
             const float ll = glm::dot(ab, ab), u = ll > 1e-6f ? std::clamp(glm::dot(h - a, ab) / ll, 0.0f, 1.0f) : 0.0f;
             return glm::length(glm::mix(m.velocity[size_t(si)], m.velocity[size_t(si) + 1], u));
         };
+        // 0x6FC6B0 switches on the candidate's MUD flags: only a ledge (0x40000000) tests the way in against its face;
+        // jump landings, perches, rail slides and beams (0x20000000 / 0x800000 / 0x20000 / 0x10000) pass [O: decomp]
         const auto wallSide = [&] {
+            if (perch) return true;
             vec2 motion = xy(q.v);
             if (glm::length(motion) < 1e-3f) motion = glm::length(toHit) > 1e-3f ? toHit : q.dir;
             const float limit = ledgeSpeed() > 3.1605f * 30.0f ? 0.5235988f : 0.2617994f;
@@ -1717,15 +1727,21 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
             entry = int(hit - record.begin());
         }
         const float along = glm::length(xy(h - m.points[size_t(si)]));
-        if (openBelow(col_, m, si, along, side)) best = {li, si, along, side, t, entry};
+        if (perch || openBelow(col_, m, si, along, side)) best = {li, si, along, side, t, entry};
     };
     // The class path's candidates: the markup sweep-and-prune pass over x / y (0x70F300 -> 0x463DE0, axes mask 3) of
     // the query's start -> start + its whole-range displacement against each ledge segment's box grown by kSweepPad.
+    // The sweep takes every markup; the class record's entries gate them by type (lara.drm 0x2AB8C lists 14, 15, 2, 13,
+    // 4 and 1) [O-data]. Ours sweeps ledges (1) and, for the ground jumps' record (its entry 3 names 2 / 13), perches
+    // (13): a perch is met by the root's arc alone, at its nearest point (no end insets) [I: the perch's own markup
+    // record (target types, insets) is not decoded]. Jump landings (2), beams (14), pillars (15) and the other records'
+    // non-ledge candidates are not swept [U].
     const vec3 end = arcAt(q.start, q.frames);
     const vec2 sLo = glm::min(xy(q.start), xy(end)), sHi = glm::max(xy(q.start), xy(end));
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
-        if (m.type != 1 || int(li) == s_.ledge) continue;
+        const bool perch = m.type == 13 && q.record == JumpRecord::Ground;
+        if ((m.type != 1 && !perch) || int(li) == s_.ledge) continue;
         const int last = int(m.points.size()) - 2;
         for (int si = 0; si <= last; ++si) {
             const vec3 a = m.points[size_t(si)], b = m.points[size_t(si) + 1];
@@ -1735,9 +1751,11 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
                               glm::any(glm::lessThan(glm::max(xy(a), xy(b)) + kSweepPad, sLo))))
                 continue;
             const vec3 u = (b - a) / len;
-            const float lo = si == 0 ? kLedgeInset : 0, hi = len - (si == last ? kLedgeInset : 0);
+            const float inset = perch ? 0.0f : kLedgeInset;
+            const float lo = si == 0 ? inset : 0, hi = len - (si == last ? inset : 0);
             const auto perp = [&](vec3 w) { return w - u * glm::dot(w, u); };
             for (const vec3& from : {q.hang, q.root}) {
+                if (perch && from != q.root) continue;
                 float ts[2];
                 const int nt = arcMinima(perp(from - a), perp(q.v), perp(a2), q.frames, ts);
                 for (int k = 0; k < nt; ++k) {
@@ -1775,7 +1793,7 @@ bool Player::standJumpToLedge() {
     q.record = JumpRecord::Ground, q.classify = true; // record 0x2AB8C, +0x2C 0x18D0
     q.minZ = s_.pos.z + kBand3;
     const JumpTarget best = ledgeOnArc(q);
-    if (best.markup < 0) return false;
+    if (best.markup < 0 || col_.markup[size_t(best.markup)].type != 1) return false; // S535 rushes onto a hang
     s_.ledge = best.markup, s_.ledgeSeg = best.seg, s_.ledgeT = best.t, s_.ledgeSide = best.side, s_.polePara = false;
     s_.vel = (attachPose(best.markup, best.seg, best.t, best.side).first - s_.pos) / kStandLeap;
     s_.flight = kStandLeap;
@@ -2118,8 +2136,9 @@ bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone, bool 
     const JumpTarget j = ledgeOnArc(q);
     if (j.markup < 0) return false;
     const auto& m = col_.markup[size_t(j.markup)];
-    const vec3 hit = pointOn(m, j.seg, j.t), goal = attachPose(j.markup, j.seg, j.t, j.side).first;
-    if (running) {
+    const bool perch = m.type == 13; // landed on: her root arrives on the perch point (tryPerch from the air catches it)
+    const vec3 hit = pointOn(m, j.seg, j.t), goal = perch ? hit : attachPose(j.markup, j.seg, j.t, j.side).first;
+    if (running && !perch) {
         const vec2 sd = segDir(m, j.seg), out = vec2(-sd.y, sd.x) * j.side;
         const int cls = ledgeClassOf(col_, hit, out, s_.pos, f);
         if (j.entry == 2 && (cls < 5 || cls > 7)) { // the capsule entry: S535's straight rush onto the hang
@@ -2132,7 +2151,8 @@ bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone, bool 
         // the box entry's reach (measured on a ledge over the hurdle bands; S289 sends classes 5..7 to the hurdle states)
         if (j.entry == 4 && (cls < 5 || cls > 7) && glm::length(xy(hit - s_.pos)) > kRunJumpReach) return false;
     }
-    // 0x73EDC0 re-aims the flight at the hang; a running jump's box catch rises to it, arriving at the top [I]
+    // 0x73EDC0 re-aims the flight at the hang (a perch: its point, timed by the hit frame [I]); a running jump's box
+    // catch rises to it, arriving at the top [I]
     const vec3 d = goal - s_.pos;
     const float time = running && j.entry == 4 && d.z > 0 ? std::sqrt(2 * d.z / t_.gravity) : j.frames / 30.0f;
     s_.vel = jumpVelocity(d, time, t_.gravity);

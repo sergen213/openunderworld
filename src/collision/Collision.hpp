@@ -29,6 +29,9 @@ struct Face {
     // (game/WallJump.cpp). Other bits unknown.
     uint16_t clientFlags = 0;
     uint8_t material = 0;     // raw +0x10; meaning unknown (surface/sound type?)
+    // The terrain group's TerrainGroupExtra flags 0x800 (kSkipPlayerRays): tru.exe's player rays skip the face
+    // (CollisionMesh::playerRay). loadLevelCollision sets it.
+    uint8_t rays = 0;
     uint16_t group = 0;       // terrain group index in the unit
 };
 
@@ -57,6 +60,7 @@ inline constexpr uint8_t kCameraMask = 0xA2;
 // l2_puzzleroom ledge 476: open, COLLISION.md). [U] the classes of rigid bodies and of the bike (Jolt still builds
 // its terrain from every face).
 inline constexpr uint8_t kSolidMask = 0x77;
+inline constexpr uint8_t kSkipPlayerRays = 0x01; // Face::rays: TerrainGroupExtra 0x800
 inline constexpr uint8_t kNotPlayerCameraBit = 0x80, kNotPlayerSightBit = 0x08;
 inline constexpr uint8_t kTerrainMask = 0x07; // Lara's terrain faces only (no objects: physics::kObjectMask 0x10)
 // Query mask of tru.exe's line-of-sight ray for targeting (0x713200 -> 0x713090: ray flags 0xC5AC1983 -> 0x4935F0 ->
@@ -158,6 +162,11 @@ public:
 
     // Nearest double-sided hit along `dir` (any length) within `maxDist`.
     std::optional<Hit> raycast(vec3 origin, vec3 dir, float maxDist, uint8_t mask = kSolidMask) const;
+    // raycast as tru.exe's player code casts its rays (0x493330 with ray flags 0x2C19E7: terrain faces with mask bit 1,
+    // and the ray filter 0x48EF50 drops terrain groups flagged 0x800 for rays with class bit 0x4 [O disassembly]): the
+    // faces of those groups (Face::rays & kSkipPlayerRays) are passed. Her capsule and ground check still meet them
+    // (their query class is not decoded: kSolidMask's note).
+    std::optional<Hit> playerRay(vec3 origin, vec3 dir, float maxDist) const;
     // First contact of a sphere / capsule (segment a-b, radius r) translated by `delta`.
     // Already-touching shapes hit at t = 0, unless `flags` has kSweepSkipLeaving: then a face touched (or overlapped)
     // at t = 0 that `delta` does not close on (moving away from it or along it) is no hit, so the faces ahead still are.
@@ -195,7 +204,7 @@ private:
     };
     template <class Visit> void overlap(vec3 lo, vec3 hi, Visit&& visit) const;
     // Terrain faces only; the public queries add `dynamics`.
-    std::optional<Hit> rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const;
+    std::optional<Hit> rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask, uint8_t skipRays = 0) const;
     std::optional<Hit> sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask, uint8_t flags = 0) const;
     std::optional<Hit> closestFaces(vec3 p, float maxDist, uint8_t mask) const;
     void overlapFaces(vec3 a, vec3 b, float radius, uint8_t mask, std::vector<Hit>& out) const;

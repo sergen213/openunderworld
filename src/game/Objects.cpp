@@ -883,6 +883,24 @@ void World::uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose,
     }
 }
 
+// How far grapple target `uid`'s feature on object model `model` has moved from its intro, in its unit's frame: the
+// object's own loose body for the feature on its main model (the naga statue once its hinge is removed), else the
+// section showing that model as it rides its joints (World::uberSectionBody); identity while it stands.
+glm::mat4 World::grappleTargetMotion(int32_t uid, int32_t model) const {
+    const auto* o = script_.find(uid);
+    if (!o) return glm::mat4(1);
+    const glm::mat4 intro = introModel(*o);
+    if (model == 0 && o->loose) return intro * o->body * glm::inverse(intro);
+    const auto rt = uberRuntime_.find(uid);
+    if (rt == uberRuntime_.end()) return glm::mat4(1);
+    for (size_t k = 0; k < rt->second.sections.size(); ++k)
+        if (!rt->second.sections[k].removed && uberSectionModel(uid, int32_t(k)) == model) {
+            if (const auto body = uberSectionBody(uid, int32_t(k))) return intro * *body * glm::inverse(intro);
+            break;
+        }
+    return glm::mat4(1);
+}
+
 // Model-space pose of uber section `section`. A joint's body B moves with its body A (tru.exe's joints are Havok
 // constraints between the two section bodies, 0x4D1040; the pivot and axis are fixed in body A): its pose is body A's
 // times the joint's motion, so the bedroom door's ring (hinge 0, body A the leaf on slide 1) rides the slide, as do
