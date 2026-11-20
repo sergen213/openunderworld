@@ -14,23 +14,23 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 
 | Chapter | Locomotion | Traversal | Grapple | Swimming / water | Combat / AI | Objects / puzzles | Vehicle | Camera / systems | Self-tests (parked) |
 |---|---|---|---|---|---|---|---|---|---|
-| [01](#01-prologue-no-illusions-prologue---croft-manor) | verified; 1 differs / 1 matches | verified; 2 matches | partial; 1 matches / 2 unmeasured | n/a | n/a | partial; 1 open | n/a | — | 6 (0) |
-| [02](#02-the-path-to-avalon-level-1---mediterranean-sea-part-1) | implemented | unverified | implemented | implemented; 1 matches | partial | partial | n/a | — | 2 (0) |
+| [01](#01-prologue-no-illusions-prologue---croft-manor) | verified; 1 differs / 1 matches | verified; 2 matches | partial; 1 matches / 2 unmeasured | n/a | n/a | partial; 1 differs; 1 open | n/a | — | 6 (0) |
+| [02](#02-the-path-to-avalon-level-1---mediterranean-sea-part-1) | implemented | unverified | implemented | implemented; 1 matches | partial | partial; 1 differs | n/a | — | 2 (0) |
 | [03](#03-niflheim-level-1---mediterranean-sea-part-2) | implemented | partial | implemented | unverified | implemented | partial | n/a | — | 2 (0) |
-| [04](#04-the-norse-connection-level-1---mediterranean-sea-part-3) | implemented | unverified | implemented | unverified; 1 matches | n/a | implemented | n/a | 1 matches | 5 (0) |
+| [04](#04-the-norse-connection-level-1---mediterranean-sea-part-3) | implemented | unverified | implemented | unverified; 1 matches | n/a | implemented; 1 differs | n/a | 1 matches | 5 (0) |
 | [05](#05-god-of-thunder-level-1---mediterranean-sea-part-4) | unverified | implemented | n/a | unverified | unverified | n/a | n/a | — | 4 (0) |
 | [06](#06-realm-of-the-dead-level-1---mediterranean-sea-part-5) | unverified | partial; 2 matches | n/a | n/a | n/a | n/a | n/a | — | 4 (0) |
 | [07](#07-the-remnants-level-2---coastal-thailand-part-1) | implemented; 1 differs / 3 matches / 1 unmeasured | partial; 3 matches | unverified | verified; 6 matches; 1 open | unverified; 1 matches | n/a | n/a | 1 matches | 4 (0) |
 | [08](#08-bhogavati-level-2---coastal-thailand-part-2) | unverified | partial | partial | n/a | partial | partial | n/a | — | 4 (0) |
 | [09](#09-the-ancient-world-level-2---coastal-thailand-part-3) | unverified | unverified | unverified; 2 matches | n/a | unverified | partial | n/a | — | 4 (0) |
 | [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified; 2 matches | partial; 6 matches; 1 open | unverified; 1 matches | partial | n/a | 1 matches | 2 (0) |
-| [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 1 matches / 2 unmeasured | n/a | partial | partial; 1 open | n/a | — | 3 (0) |
-| [12](#12-the-unnamed-days-level-4---southern-mexico-part-1) | unverified; 1 matches | unverified | partial | n/a | unverified | partial; 1 unmeasured | partial | — | 2 (0) |
-| [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 3 matches | implemented; 1 matches | partial | n/a | partial | unverified; 1 unmeasured | unverified | — | 5 (1) |
-| [14](#14-the-midgard-serpent-level-4---southern-mexico-part-3) | partial | partial; 2 matches | partial | n/a; 1 matches | partial | partial | partial | — | 5 (0) |
-| [15](#15-land-of-the-dead-level-4---southern-mexico-part-4) | unverified | unverified; 2 matches | partial | n/a; 1 matches | partial | partial; 1 unmeasured | unverified | — | 5 (0) |
-| [16](#16-gate-of-the-dead-level-5---jan-mayen-island-part-1) | unverified | unverified | n/a | n/a | partial | partial | unverified | — | 3 (0) |
-| [17](#17-valhalla-level-5---jan-mayen-island-part-2) | implemented | partial | partial | n/a | partial | partial; 1 matches | unverified | — | 2 (0) |
+| [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 1 matches / 2 unmeasured | n/a | partial | partial; 1 differs; 1 open | n/a | — | 3 (0) |
+| [12](#12-the-unnamed-days-level-4---southern-mexico-part-1) | unverified; 2 matches | unverified | partial | n/a | unverified | partial; 1 matches / 1 unmeasured | partial | — | 2 (0) |
+| [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 4 matches | implemented; 1 matches | partial | n/a | partial | unverified; 1 matches / 1 unmeasured | unverified | — | 5 (1) |
+| [14](#14-the-midgard-serpent-level-4---southern-mexico-part-3) | partial | partial; 2 matches | partial | n/a; 1 matches | partial | partial; 2 matches | partial | — | 5 (0) |
+| [15](#15-land-of-the-dead-level-4---southern-mexico-part-4) | unverified; 1 matches | unverified; 2 matches | partial | n/a; 1 matches | partial | partial; 3 matches / 1 unmeasured | unverified | — | 5 (0) |
+| [16](#16-gate-of-the-dead-level-5---jan-mayen-island-part-1) | unverified | unverified | n/a | n/a | partial | partial; 1 unmeasured | unverified | — | 3 (0) |
+| [17](#17-valhalla-level-5---jan-mayen-island-part-2) | implemented | partial | partial | n/a | partial | partial; 1 differs / 1 matches / 1 unmeasured | unverified | — | 2 (0) |
 | [18](#18-rituals-old-level-6---andaman-sea) | unverified | unverified | n/a | n/a | partial | n/a | n/a | — | 2 (0) |
 | [19](#19-helheim-level-7---arctic-sea-part-1) | unverified | implemented | n/a | unverified | partial | partial | n/a | — | 4 (0) |
 | [20](#20-yggdrasil-level-7---arctic-sea-part-2) | unverified | partial | unverified | n/a | partial | partial; 1 open | n/a | — | 7 (0) |
@@ -47,7 +47,7 @@ Matrix: [01_prologue.md](matrix/01_prologue.md). Units: `l3_main_bedroom`, `l3_b
 | Grapple | partial | M20 Rope she hangs on after a jump with the rope: matches, M20 Swing with Forward held: growth and limit: unmeasured, M20 Roped walk, walking off the edge: unmeasured | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | n/a | unmeasured here | — |
-| Objects / puzzles | partial | unmeasured here | OU-PZL-001 |
+| Objects / puzzles | partial | M103 Fire / script death volumes: differs | OU-PZL-001 |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -64,7 +64,7 @@ Matrix: [02_path_to_avalon.md](matrix/02_path_to_avalon.md). Units: `l1_seatop`,
 | Grapple | implemented | unmeasured here | — |
 | Swimming / water | implemented | M29 Surface turn: matches | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | partial | unmeasured here | — |
+| Objects / puzzles | partial | M104 Jellyfish: differs | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -100,7 +100,7 @@ Matrix: [04_norse_connection.md](matrix/04_norse_connection.md). Units: `l1_bald
 | Grapple | implemented | unmeasured here | — |
 | Swimming / water | unverified | M29 Surface turn: matches | — |
 | Combat / AI | n/a | unmeasured here | — |
-| Objects / puzzles | implemented | unmeasured here | — |
+| Objects / puzzles | implemented | M104 Jellyfish: differs | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | — Camera trigger cut 0xC (OU-CAM-006, 2026-11-20): matches | — |
 
@@ -221,7 +221,7 @@ Matrix: [11_protected_by_the_dead.md](matrix/11_protected_by_the_dead.md). Units
 | Grapple | verified | M20 Rope she hangs on after a jump with the rope: matches, M20 Swing with Forward held: growth and limit: unmeasured, M20 Roped walk, walking off the edge: unmeasured | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | partial | unmeasured here | OU-PZL-001 |
+| Objects / puzzles | partial | M103 Fire / script death volumes: differs | OU-PZL-001 |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -233,12 +233,12 @@ Matrix: [12_unnamed_days.md](matrix/12_unnamed_days.md). Units: `l4_trailstart`,
 
 | Subsystem | Ours (matrix) | Measured against tru.exe | Open bugs |
 |---|---|---|---|
-| Locomotion | unverified | M14 Sprint stamina: matches | — |
+| Locomotion | unverified | M14 Sprint stamina: matches, M65 Fall damage: matches | — |
 | Traversal | unverified | unmeasured here | — |
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | unverified | unmeasured here | — |
-| Objects / puzzles | partial | M52 Pole lever by hanging weight: unmeasured | — |
+| Objects / puzzles | partial | M52 Pole lever by hanging weight: unmeasured, M56 Push / pull blocks: matches | — |
 | Vehicle | partial | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -250,12 +250,12 @@ Matrix: [13_xibalba.md](matrix/13_xibalba.md). Units: `l4_ballcourt`, `l4_temple
 
 | Subsystem | Ours (matrix) | Measured against tru.exe | Open bugs |
 |---|---|---|---|
-| Locomotion | unverified | M94 Walk: matches, M13 Jump to a ledge: standing: matches, M13 Jump to a ledge: running: matches | — |
+| Locomotion | unverified | M94 Walk: matches, M13 Jump to a ledge: standing: matches, M13 Jump to a ledge: running: matches, M65 Fall damage: matches | — |
 | Traversal | implemented | M03 Drop to hang: matches | — |
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | unverified | M52 Pole lever by hanging weight: unmeasured | — |
+| Objects / puzzles | unverified | M52 Pole lever by hanging weight: unmeasured, M56 Push / pull blocks: matches | — |
 | Vehicle | unverified | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -273,7 +273,7 @@ Matrix: [14_midgard_serpent.md](matrix/14_midgard_serpent.md). Units: `l4_stairc
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | M66 Deadly liquid (eitr): matches | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | partial | unmeasured here | — |
+| Objects / puzzles | partial | M67 Crushers: matches, M68 Flame jets: matches | — |
 | Vehicle | partial | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -285,12 +285,12 @@ Matrix: [15_land_of_the_dead.md](matrix/15_land_of_the_dead.md). Units: `l4_pool
 
 | Subsystem | Ours (matrix) | Measured against tru.exe | Open bugs |
 |---|---|---|---|
-| Locomotion | unverified | unmeasured here | — |
+| Locomotion | unverified | M65 Fall damage: matches | — |
 | Traversal | unverified | M07 Pole grab from a jump: matches, M07 Pole fling to the next pole: matches | — |
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | M66 Deadly liquid (eitr): matches | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | partial | M52 Pole lever by hanging weight: unmeasured | — |
+| Objects / puzzles | partial | M52 Pole lever by hanging weight: unmeasured, M56 Push / pull blocks: matches, M67 Crushers: matches, M68 Flame jets: matches | — |
 | Vehicle | unverified | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -307,7 +307,7 @@ Matrix: [16_gate_of_the_dead.md](matrix/16_gate_of_the_dead.md). Units: `l5_star
 | Grapple | n/a | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | partial | unmeasured here | — |
+| Objects / puzzles | partial | M77 Steam vents (l5_valgrind): unmeasured | — |
 | Vehicle | unverified | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -324,7 +324,7 @@ Matrix: [17_valhalla.md](matrix/17_valhalla.md). Units: `l5_valgrind`, `l5_valas
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | partial | M51 Portable poles: matches | — |
+| Objects / puzzles | partial | M51 Portable poles: matches, M79 Rollers (l5_valaskjalf `ar_ei_grinders`, 400): differs, M77 Steam vents (l5_valgrind): unmeasured | — |
 | Vehicle | unverified | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -408,13 +408,13 @@ Rows of REFERENCE_COMPARISON whose evidence names no chapter unit (synthetic sce
 
 | Subsystem | Rows |
 |---|---|
-| Locomotion | 11 matches / 7 unmeasured |
+| Locomotion | 10 matches / 7 unmeasured |
 | Traversal | 17 matches / 15 unmeasured |
 | Grapple | 9 unmeasured |
 | Swimming / water | 5 matches / 7 unmeasured |
-| Combat / AI | 18 unmeasured |
-| Objects / puzzles | 26 unmeasured |
+| Combat / AI | 1 matches / 17 unmeasured |
+| Objects / puzzles | 22 unmeasured |
 | Vehicle | 9 unmeasured |
 | Camera / systems | 4 matches / 12 unmeasured |
 
-Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-AUD-006, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-DOC-003, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PHY-003, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PLY-016, OU-PLY-017, OU-PLY-018, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-REN-010, OU-REN-011, OU-REN-012, OU-SCR-005, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
+Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-AUD-006, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-CMB-004, OU-DOC-003, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PHY-003, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PLY-016, OU-PLY-017, OU-PLY-018, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-REN-010, OU-REN-011, OU-REN-012, OU-SCR-005, OU-SCR-006, OU-SCR-007, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.

@@ -11,6 +11,10 @@
 //                                   half-planes count +0xF0 of {point +0xD0 + 16 k, normal +0xE0 + 16 k}) and the region
 //                                   index AI+0x3EB8 into the table *0xE92008 (0x58-byte entries: s32 count, instance,
 //                                   radius +0x14, half height +0x18 printed as raw words; 0x620BE0), with Lara's position.
+//  enemy hp <ms> <period> [set]     Lara's health (player data +0x628) every period ms, printed when it changes and
+//                                   every second: position, health, "hurt <amount>" on a drop (and a line whenever she
+//                                   moved 50 or more since the last line: teleports); [set] writes that
+//                                   health first; env HEAL=<h>: put back to 1000 when under h (default: never)
 #include <windows.h>
 #include <math.h>
 #include <stdio.h>
@@ -84,6 +88,32 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    if (argc > 3 && !strcmp(argv[1], "hp")) {
+        int total = atoi(argv[2]), period = atoi(argv[3]);
+        float heal = getenv("HEAL") ? (float)atof(getenv("HEAL")) : -1e9f;
+        DWORD pd0 = rd32(0xFADB58);
+        if (argc > 4 && pd0) { float s = (float)atof(argv[4]); WriteProcessMemory(h, (void*)(size_t)(pd0 + 0x628), &s, 4, 0); }
+        LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
+        float hp0 = -1, px = 0, py = 0, pz = 0; double lastPrint = -2000; timeBeginPeriod(1);
+        for (;;) {
+            QueryPerformanceCounter(&t); double ms = (t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
+            if (ms > total) break;
+            DWORD L = rd32(0xE7F094), pd = rd32(0xFADB58);
+            float hp = pd ? rdf(pd + 0x628) : -1;
+            if (hp0 >= 0 && hp < hp0 - 0.5f) printf("%.1f hurt %.1f\n", ms, hp0 - hp);
+            const float x = rdf(L + 0x20), y = rdf(L + 0x24), z = rdf(L + 0x28);
+            if (hp != hp0 || ms - lastPrint >= 1000 || fabsf(x - px) + fabsf(y - py) + fabsf(z - pz) >= 50) {
+                printf("%.1f lara %.1f %.1f %.1f hp %.1f\n", ms, x, y, z, hp);
+                lastPrint = ms, px = x, py = y, pz = z;
+            }
+            hp0 = hp;
+            if (pd && hp < heal) { float full = 1000; WriteProcessMemory(h, (void*)(size_t)(pd + 0x628), &full, 4, 0); hp0 = full; printf("%.1f heal\n", ms); }
+            fflush(stdout);
+            Sleep(period);
+        }
+        timeEndPeriod(1);
+        return 0;
+    }
     if (argc > 4 && !strcmp(argv[1], "watch")) {
         int total = atoi(argv[2]), period = atoi(argv[3]), ne = argc - 4 < MAXE ? argc - 4 : MAXE;
         long uid[MAXE]; for (int k = 0; k < ne; ++k) uid[k] = atol(argv[4 + k]);
@@ -115,6 +145,6 @@ int main(int argc, char** argv) {
         timeEndPeriod(1);
         return 0;
     }
-    puts("usage: enemy list | enemy watch <ms> <period> uid... | enemy zones uid...");
+    puts("usage: enemy list | enemy watch <ms> <period> uid... | enemy zones uid... | enemy hp <ms> <period> [set]");
     return 2;
 }
