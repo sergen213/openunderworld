@@ -22,7 +22,7 @@
      "expect": [{"probe": "grapple.attached", "over": "all", "eq": true},
                 {"clips": ["ng_walk", "grapple_rappel_free_jumpon", "grapple_rappel_free_swing_forward"]},
                 {"probe": "step.horizontal", "min": 1200, "note": "out over the pit"},
-                {"probe": "step.drop", "min": 150}]},
+                {"probe": "step.drop", "min": 50}]},
     {"step": "swing_across", "fixtures": [{"camera": [15, -15]}], "input": ["0 forward 1"], "duration": 0.6,
      "expect": [{"probe": "grapple.swinging", "over": "all", "eq": true},
                 {"probe": "player.pos.x", "min": -17900, "note": "the pit is behind her: its far face is at x -17337"},

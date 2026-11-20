@@ -3,7 +3,7 @@
  "name": "ch21_platform_ride",
  "chapter": "21 Out of Time: from the entry walkway onto a floating platform (docs/matrix/21_out_of_time.md C21-01)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/20outoftime.html",
- "note": "Known gap. l7_yggdrasil_end from the unit's start by input: the steps of natla_fight (ledge, ramp, arena volume 8303, 320_hel_boss, the towers retract), then the middle ring's entry walkway to its end. The original's way on is a floating platform (ar_ani_floating_runestone 8365-8388, three on the markers of each orbit ring 8389-8396) that comes past the walkway's end: a jump catches its edge, she rides it to the ledge with the ring and ropes down. Ours (re-run 2026-11-20): the stones ride their orbit rigs and collide (natla_platform_ride), but this untimed jump from the end meets no stone: she falls 3850 to the lower ring and loses 1000 health (the reach: OU-PZL-012, natla_platform_ride). Fails at jump_to_a_platform. Blockers: docs/GAMEPLAY.md \"Natla\" Open (the way from the entry walkway to the rings).",
+ "note": "l7_yggdrasil_end from the unit's start by input: the steps of natla_fight (ledge, ramp, arena volume 8303, 320_hel_boss, the towers retract), then along the middle ring's entry walkway, a timed stick jump from 154 back from its end onto floating stone 8368 (rig 8389) as it comes past: hanging on its ledge. tru.exe under Wine (2026-11-20, wine-ref): after 320_hel_boss she stands on the entry walkway at (-8143, 793, 4321) as in ours; the stones 8368-8370 circle at radius 4924-5025 (origin z 4442-4462, as ours) at 13.8 degrees a second; standing 58 back from the walkway's end, Up + Jump as stone 8368 came past at 159 degrees, she left the floor 0.07-0.11 s after the press (~25 units on), flew aimed at 2430 units/s and caught the stone's ledge near its corner (hang root 490 under the ledge loop, z 401.5 over the stone's origin: our ledge height). A stick jump with no target there leaves after 8.3 frames and ~175 units (as ours, Tuning::stickJumpFrames). Ours checks the jump's target (q43) only at the take-off, against the ledge where it is then, so from 58 back she walks off the end during the 8-frame run-up; how tru.exe's query sees the coming stone early (0x7296C0, the owner velocity 0x7027B0) is not decoded [U] (OU-PZL-012). This route starts the jump 154 back for that reason (natla_platform_ride). Not played: the ride, the jump off onto the ledge with the ring, the rope down (C21-02).",
  "level": "l7_yggdrasil_end",
  "steps": [
   {
@@ -99,20 +99,16 @@
    ]
   },
   {
-   "step": "the_walkway_ends_over_the_rings",
+   "step": "to_the_walkway_end",
    "plan": [
-    "run 0 3"
+    "go -6775 793 8",
+    "face 0"
    ],
-   "duration": 6,
+   "duration": 30,
    "expect": [
     {
-     "probe": "player.hanging",
-     "eq": true
-    },
-    {
-     "probe": "player.pos.x",
-     "near": -6472,
-     "tol": 80
+     "probe": "player.state",
+     "eq": "idle"
     },
     {
      "probe": "step.health_lost",
@@ -121,25 +117,44 @@
    ]
   },
   {
-   "step": "jump_to_a_platform",
-   "input": [
-    "0 forward 1",
-    "0.1 jump 1",
-    "0.3 jump 0",
-    "1.0 jump 1",
-    "1.2 jump 0"
+   "step": "wait_for_a_stone",
+   "duration": 40,
+   "until": [
+    {
+     "probe": "object.8368.body.x",
+     "max": 25670
+    },
+    {
+     "probe": "object.8368.body.y",
+     "min": -19434
+    }
    ],
-   "duration": 8,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "idle"
+    }
+   ]
+  },
+  {
+   "step": "jump_to_a_platform",
+   "plan": [
+    "run 0 0.6 jump 0",
+    "wait 2"
+   ],
+   "duration": 4,
    "expect": [
     {
      "probe": "player.dead",
-     "eq": false,
-     "note": "a platform takes her"
+     "eq": false
     },
     {
-     "probe": "player.pos.z",
-     "min": 3000,
-     "note": "still at the middle ring's height: on a stone or hanging from its edge"
+     "probe": "player.hanging",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.x",
+     "min": -6000
     },
     {
      "probe": "step.health_lost",

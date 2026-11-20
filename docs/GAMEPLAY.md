@@ -1291,16 +1291,19 @@ rule in code: the level scripts run in the VM and call general natives).
   ledge at x −26750 (hang, drop to z 6160), a ramp runs down into arena volume 8303 (x −14800, z 4724); 320_hel_boss
   leaves her on the middle ring's entry walkway at (−8143, 793, 4321), which ends at x −6621 over the rings (lower ring
   z 474, 3850 below: a fatal fall). There no zone volume holds her and Natla throws nothing.
-- **The way down from the entry walkway** [O data, U reach]. The first platforms are the stones 8368-8370 on rig 8389
-  (buttress A's, started by 320_hel_boss's end): they circle the tower counter-clockwise, coming from her left, one
-  past the walkway's end every 7.6-10.1 s (they sit 103 / 136 / 121 degrees apart). A stone is a block whose top
-  (collision and ledge loop, z 4859-4862) is 536 over the walkway's floor (4323), its outer edge at radius 5400-5570
-  against the walkway's end at 6667: 1240 out and 540 up. Ours cannot make that jump: a running jump (1975 units/s,
-  measured here: take-off z 4325, back at the hang height, root 492 under the ledge, 900 out) meets the stone's side
-  830 under its ledge. [U] the original's reach here (a jump query solved to the passing ledge, 0x7296C0 with the
-  carrier's velocity 0x7694B0?): needs a Wine measurement. Parked as `tests/selftests/known_gaps/natla_platform_ride`
-  (it plays the entry, waits for the stone and jumps; fails at the grab). The rope down from the ring ledge (C21-02)
-  comes after it and is untested.
+- **The way down from the entry walkway** [O data; O-runtime tru.exe under Wine 2026-11-20]. The first platforms are
+  the stones 8368-8370 on rig 8389 (buttress A's, started by 320_hel_boss's end): they circle the tower
+  counter-clockwise, coming from her left (Wine: radius 4924-5025, origin z 4442-4462, 13.8 degrees a second, as ours).
+  A stone is a block whose ledge loop (z 401.5 over its origin, about 4850) is 536 over the walkway's floor (4323), its
+  outer edge at radius 5400-5570 against the walkway's end at 6667: 1240 out and 540 up. The original's way (Wine,
+  wine-ref rec): standing 58 back from the end, Up + Jump as stone 8368 came past (159 degrees) — she left the floor
+  0.07-0.11 s after the press, ~25 units on, flew aimed at 2430 units/s and hung from the stone's ledge near its corner
+  (root 490 under the loop: the ledge height is ours). The same stick jump with no target leaves after 8.3 frames and
+  ~175 units (our `stickJumpFrames`). Ours takes off after the 8 frames in both cases and checks the jump's target (q43)
+  only then, against where the ledge is at that moment: from 58 back she walks off the end during the run-up; from 154
+  back she takes off at the end and the aimed jump catches the stone (self-tests `natla_platform_ride`,
+  `ch21_platform_ride`). [U] how tru.exe's query sees the coming stone at the press and shortens the take-off
+  (0x7296C0; the markup owner's velocity, 0x7027B0). The rope down from the ring ledge (C21-02) is untested.
 
 Tests: `CombatReal.NatlaFireballWeaponsDecoded`, `CombatReal.NatlaFireballsBlastThrowAndBurn` (throw from her warp
 point at 9000 units/s, blast on the floor target, 50-250 damage and thrown down, the patch's 100 a second on entering
@@ -1314,8 +1317,9 @@ floor targets), `CombatReal.NatlaCountsMjolnirHits`, `GameReal.OrbitRigsCarryThe
 placed at the six interactions).
 
 Open (the fight is not yet playable from the entry to the credits by input alone):
-- the way from the entry walkway to the rings by input: the jump onto a passing stone falls 340 short (above; known gap
-  `natla_platform_ride`), the rope down after it is untested (matrix C21-01 / -02).
+- the way from the entry walkway to the rings by input: the jump onto a passing stone is caught from 154 back from the
+  walkway's end, not from its edge as in the original (the early aimed take-off, above); the ride, the step off and the
+  rope down after it are untested (matrix C21-01 / -02).
 - the lower ring on foot: the running jumps between its wedge ledges to the towers' alcoves (C21-04 to -06) have no
   input route; the towers and mounts are worked by input only where Lara is placed (`EndgameCredits`).
 - the two chimney climbs, the tower's moving handholds, the buttress slide (C21-07, -12, -21, -23): no input route.
@@ -2354,10 +2358,18 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
     re-enter the hang by T291].
 - Water under the rope: hanging or on a wall with her feet `swimDepth` (391) under a water surface she lets go of the
   rope and swims (`Game.RopeIsLetGoInDeepWater`, self-test `ch10_maproom_rope_step_off`; the walkthrough of l2_maproom's
-  flooded room has a plain step off the bridge end in the pool without the rope; the depth is ours [I]). Before, she
-  ran the wall under water. Open: the roped jump towards l2_maproom's ring 2595 ends in the pool in ours and on the
-  wall in the original (known gap `ch10_maproom_wall_run`; the rope's length during `grapple_rappel_free_jumpon` on a
-  wall anchor is not decoded [U]); a throw in the air stops her in the air for the throw clip (1 s) [defect].
+  flooded room has a plain step off the bridge end in the pool without the rope; the depth is ours [I], and agrees
+  with tru.exe under Wine: on ring 2595's wall with her root 303 under the surface she kept the rope, at 416 she
+  swam). Before, she ran the wall under water.
+- The jump with the rope [O: tru.exe under Wine, 2026-11-20, l2_maproom ring 2595, wine-ref `rec`]. Grapple thrown in the
+  air (a running jump off the near stub, Grapple 0.35 s after take-off) does not stop her: she keeps her jump's arc
+  (1973 units/s along), the rope is slack and taken up while she nears the ring, and it comes taut at the least distance
+  she reached (2280, 0.4 s after the throw); she swings onto the wall, feet ~300 under the surface. Thrown first and
+  then Up + Jump (`grapple_rappel_free_jumpon`, 1043 along, 1098 up) the rope is taut at the least distance too (2690,
+  then into the pool: the walkthrough's warning). Ours (`Player::attachGrapple`, `Player::grapple` `jumping`): a throw
+  in the air keeps her velocity in the jump-with-the-rope state, whose rope follows her while she rises and takes up
+  slack coming down until it is taut; before, the throw stopped her in the air for the 1 s throw clip and the rope
+  kept the length at the press (`ch10_maproom_wall_run`).
 - Swing law [O tru.exe 0x746F60, player data +0x8D8..+0xA3C; all per 30 Hz frame]. The original swings a rigid body
   ("[GrappleRope] User Body": sphere radius 30, mass +0x8D8 = 55, damping +0x8DC = 0.022) on the rope; ours is a point
   pendulum (hand = root + 400 [I]) under the same forces, gravity 5.72443 [I: Lara's own].
@@ -2379,11 +2391,11 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 
   | | original [O data / code; not yet measured in the running game] | ours (measured) |
   |---|---|---|
-  | rope she hangs on after the jump off the balcony edge (2614 from the edge) | her distance when the jump comes down with no ground under her (T1387) | 2170 ("no ground" = none within 316 [I]) |
-  | drive, rope 2170 | 3.003 + 0.158 x (2170 - 948) / 1896 = 3.10 units/frame^2 forward, 3.42 backward, x stick | the same |
-  | swing period, rope 2170 | [U] | 3.67 s (220 ticks) |
-  | far end of the first swing, Forward held | [U] | x -1686, z 1993 (107 ticks after the jump; 53 deg) |
-  | swing held with Forward (steady) | no drive past 45 deg going out, brake 2.5 x v / 55 per frame | ends at 56 deg (x -1755 / +1871, z 2090 / 2140) |
+  | rope she hangs on after the jump off the balcony edge (2614 from the edge) | taut at the least distance she reaches in the jump (Wine, l2_maproom ring 2595: "The jump with the rope") | 1850 |
+  | drive, rope 1850 | 3.003 + 0.158 x (1850 - 948) / 1896 = 3.08 units/frame^2 forward (rope 2170: 3.10 forward, 3.42 backward), x stick | the same |
+  | swing period, rope 2170 (before 2026-11-20) | [U] | 3.67 s (220 ticks) |
+  | far end of the first swing, Forward held | [U] | x -1557, z 2373 (rope 1850; with 2170: x -1686, z 1993) |
+  | swing held with Forward (steady) | no drive past 45 deg going out, brake 2.5 x v / 55 per frame | ends at 56 deg (x -1755 / +1871, z 2090 / 2140; rope 2170, before 2026-11-20) |
   | no stick | brake 1.0 x v / 55 per frame going out, body damping 0.022 | dies down within ~3 s (self-test `grapple_swing`: peak speed 1214 -> 80 units/s) |
   | leap off (Jump) | 63.21 forward, 47.41 up per frame (or 0.45 / 0.85 of her speed) | 1896.3 / 1422.3 units/s; lands at x -3014 on the far balcony (z 1727) |
   | rope climb / slide (Interact + forward / back) | 23.70 / 41.09 per frame | 711.1 / 1232.6 units/s (self-test: 711.1 in 1 s) |

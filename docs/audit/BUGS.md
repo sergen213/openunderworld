@@ -125,7 +125,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
 | OU-GRP-002 | grapple | Swing dynamics unmeasured (five failed Wine sessions) | Open | pre-existing | C-MEASURE |
 | OU-GRP-003 | grapple | Jump into the gap released the rope; leap off a wall ignored the stick | Fixed-verified | pre-existing | — |
-| OU-GRP-004 | grapple | ch10 roped leap to wall ring 2595 swings under the pool surface (unit rope override ruled out: no unit sets it) | Open | pre-existing | — |
+| OU-GRP-004 | grapple | ch10 leap to wall ring 2595: a throw in the air stopped her for the throw clip; the jump's rope is taut at the least distance (Wine) | Fixed on agent/GapsB10 (`ch10_maproom_wall_run` moved up) | pre-existing | — |
 | OU-GRP-005 | grapple | ch12 lever 6695: rope attach calls vt 46, larabase 26 bound, she stays roped while Interact is held | Fixed-verified (0.53.0, f832536) | pre-existing | C-VM |
 | OU-PZL-001 | progression | ch01: no input route into the pocket north of the bedroom beams | Open | pre-existing | — |
 | OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Fixed on agent/GapsA10 (43b506c) | pre-existing | C-MEASURE |
@@ -139,7 +139,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed-verified (0.53.0, 30cc49f) | pre-existing | C-VM |
 | OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed-verified (0.53.0, b716e88); pull speed unverified | pre-existing | C-JOINT |
 | OU-PZL-011 | progression | ch17: no pull-up onto the hammer chamber block: hang clearance met the steps' smooth ramp (group 5, flags 0x800), which tru.exe's player rays skip | Fixed on agent/GapsB10 (`ch17_hammer_chamber` moved up) | pre-existing | — |
-| OU-PZL-012 | progression | ch21: Natla platform jump falls short; fight sequence unplayable by input | Open | pre-existing | C-VM |
+| OU-PZL-012 | progression | ch21: Natla platform jump from the walkway's edge: tru.exe's stick jump with the passing stone as target leaves after ~3 frames (Wine), ours after 8 | Decoded (Wine); jump caught from 154 back (`natla_platform_ride`, `ch21_platform_ride` moved up) | pre-existing | C-VM |
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Fixed-verified (6d6c9eb, 0.47.0; ring rides the leaf 0.56.0; landing place chaotic: ours 1.1k flat, tru.exe 656 flat) | pre-existing | C-JOINT |
 | OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed (0.53.0, 171100e) | pre-existing | C-VM |
@@ -1109,10 +1109,22 @@ water, so the original shortens the rope by something else. Not the hang's rope 
 frame, attached) keeps the constraint length plus what the bends give back, minus controller +0xC0 x timeMult once the
 time stamp +0x44 has passed, clamped to g_grapple +0x108 .. 0x698B40's rope; +0xC0 is only the stick's climb rate
 (0x746F60: stick x player data +0x9E4 up / +0x9E8 down, else 0) and +0x44 the 0x9F0-second hold after the swing
-passes 0x9EC degrees (the "no reel past 40 degrees" seen in ours): no reel-in without the stick. The walkthrough (tombraiders.net puppet2) has her
-"dangling from the ring" with her feet a little over the water after the jump, then the cable adjusted. Next step: a
-Wine trace of this jump (five earlier grapple sessions failed on other rings, GAMEPLAY.md "Grapple").
-Status · Origin: Open · pre-existing.
+passes 0x9EC degrees (the "no reel past 40 degrees" seen in ours): no reel-in without the stick.
+**Wine trace (2026-11-20, private prefix, wine-ref `rec`, tru = ours + (14287.10, -32216.28, 13540.49) in l2_maproom)
+[O-runtime]:** (1) the scenario's input (Grapple from the corner, then Up + Jump): the rope comes taut at the least
+distance she reached (2690 from the ring), she swings into the pool (root 416 under the surface) and swims — the
+original does the same as ours there (our "bound" above was right that it cannot end on the wall). (2) The
+walkthrough's first way, a running jump off the corner with Grapple 0.35 s after the take-off: the throw does not stop
+her, she keeps the jump's arc (1973 units/s along), the slack rope is taken up and comes taut at the least distance
+(2280, 0.4 s after the throw), and she swings onto the wall with her root ~300 under the surface, still roped (at 416
+she let go: our `swimDepth` 391 lies between). Cause in ours: `Player::attachGrapple` stopped her in the air for the
+1 s throw clip with the rope at its length at the press, so she swung from rest. Fix: a throw in the air (not a pull
+target) keeps her velocity in the jump-with-the-rope state, whose rope follows her while she rises and takes up slack
+coming down until taut (`Player::grapple` `jumping`); `ch10_maproom_wall_run` (input: running jump + air throw) passes
+and moved out of `known_gaps/` (it fails without the fix at `leap`). Changed with it: the rope after a roped standing
+jump (`grapple_swing` 3631.7 → 2998.2, `prologue_hall_swing` 2170 → 1850, `ch07_cliffhall_grapple_gap` drop), all
+routes still played.
+Status · Origin: Fixed · pre-existing.
 
 **OU-GRP-005 ch12 lever 6695 not held by her weight** — known gap `ch12_trailstart_lever_gate` (`let_go`): lever pulled by
 Interact stays out (joint 1264); tru.exe holds it by rope tension and it returns unloaded. Grapple pull heave / rope
@@ -1138,7 +1150,7 @@ docs/GAMEPLAY_DEVELOPMENT_REPORT.md §7; regression test = the scenario moved up
 | OU-PZL-009 | l4_ballcourt exit switch 5469, socket empty | locked until keyhole 6501 (modifiable 7 (2)) [O bytecode] | switch usable; ours honours modifiable 7 only for `ar_ei_switch_oneway` | `known_gaps/ch15_ballcourt_exit_switch` |
 | OU-PZL-010 | l4_pool rune block 5609 | dragged | no joint record → nothing drags it | `known_gaps/ch15_pool_rune_block` |
 | OU-PZL-011 | l5_valaskjalf checkpoint 7067 | reach volume 6866 | fixed: the block's 790 face is the render terrain's too (no lower steps exist); the hang clearance's rays now skip TerrainGroupExtra 0x800 groups as tru.exe's player rays (0x2C19E7) do, so group 5's smooth ramp over the steps no longer hides the first tread (class 2, pull-up) | `ch17_hammer_chamber` |
-| OU-PZL-012 | l7_yggdrasil_end entry walkway | jump onto a passing stone (rig 8389); towers / mounts | ledge 1240 out, 540 up: falls short; fight unplayed by input. The walkthrough (tombraiders.net outoftime2) has a jump "forward to grab the edge" of a stone approaching from the left: a stick jump peaks ~220 over the floor, so either the stone's ledge is lower / nearer in the original or her reach differs [U: Wine]; re-run 2026-11-20 both scenarios fail at the grab (`ch21_platform_ride` loses 1000 health: falls to the lower ring). ROADMAP L95 says Natla cannot be hit (vt 22), REPORT §7 says Mjolnir hits reach her script (OU-DOC-002) | `known_gaps/ch21_platform_ride`, `natla_platform_ride`; `ProgressionReal.NatlaFightByInput` |
+| OU-PZL-012 | l7_yggdrasil_end entry walkway | jump onto a passing stone (rig 8389) from the edge; towers / mounts | tru.exe under Wine (2026-11-20, tru = ours + (1511.94, 2620.93, 4105.71)): stones circle at radius 4924-5025, origin z 4442-4462, 13.8 degrees/s, ledge loop 401.5 over the origin (= ours); standing 58 back from the walkway's end, Up + Jump as stone 8368 passed 159 degrees: off the floor 0.07-0.11 s after the press (~25 units on), aimed flight 2430 units/s, hang from the stone's ledge (root 490 under it); a stick jump with no target there leaves after 8.3 frames / ~175 units (= our stickJumpFrames). Ours checks the q43 target only at take-off and against the ledge's present position, so from 58 back she walks off the end; from 154 back the aimed jump catches the stone. [U] how the query sees the coming stone (0x7296C0, owner velocity 0x7027B0). Fight towers / mounts by input still open. ROADMAP L95 says Natla cannot be hit (vt 22), REPORT §7 says Mjolnir hits reach her script (OU-DOC-002) | `natla_platform_ride`, `ch21_platform_ride` (from 154 back); `ProgressionReal.NatlaFightByInput` |
 | OU-PZL-013 | level entries with a bike but no placing script (ch14 et al.) | bike present | placed only where a level script places it (REPORT §8.1) | ch14 legs |
 | OU-PZL-014 | prologue ring door pulled by grapple | leaf thrown into the bedroom, lands flat 656 from its frame [O Wine s4.txt] | fixed (6d6c9eb): leaf and ring thrown into the room, flat (1.1k) | `ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` |
 | OU-PZL-015 | ch08 Bhogavati statue / lift; ch14 thrones | statue floor, lift drop, thrones run | `multibody` 3 unbound; thrones stop at an unbound native (REPORT §7) | ch08 / ch14 legs |
@@ -1476,7 +1488,7 @@ Status · Origin: Open · pre-existing.
   `modifiable` 7 semantics; OU-PZL-015 `multibody` 3 and the throne native; OU-SCR-005.
 - OU-PLY-001 kind-1000 beam conditions; OU-PLY-002 lookahead 0x74BCF0; OU-PLY-004 ladder side jumps; OU-PLY-006
   query 96 reach; OU-PLY-010 free hang / beam drops; OU-SWM-001 port 0x755A00.
-- OU-PZL-006 / -007 / -008 / -010 / -014 (joint and freed-section rules: C-JOINT), OU-GRP-004 (rope shortening), OU-CAM-002 (swim focus records), OU-CAM-003 VehicleCamera,
+- OU-PZL-006 / -007 / -008 / -010 / -014 (joint and freed-section rules: C-JOINT), OU-CAM-002 (swim focus records), OU-CAM-003 VehicleCamera,
   OU-AUD-003, OU-REN-003 face materials, OU-REN-006.
 
 **Needs Windows / Wine runtime measurement** (sessions listed in REFERENCE_COMPARISON "Unmeasured"):
