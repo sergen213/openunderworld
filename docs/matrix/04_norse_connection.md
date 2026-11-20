@@ -3,6 +3,8 @@ Walkthrough: https://tombraiders.net/stella/walks/TR8walk/03norse.html
 Sub-pages read: details/norse2.html (column room), norse3.html (grapple swing), norse4.html (two treasures and the relic), bugnotes.html (major bug 1: boat cinematic not triggering, PS3 / Xbox 360 only)
 Our units: l1_baldrs_tomb → l1_baldrs_sideroom → l1_baldrs_hall → l1_kraken_room (upper level) → back through l1_krakenstairs_b / _a, l1_kraken_entrance, l1_norse_hallway_a, l1_seafloor → l1_seatop → l1_cineseatop (the hall of broken columns is the north half of l1_baldrs_sideroom: pillars 15..33, upper floor z 4029.6 [O markup, self-test ch04_column_hall]; l1_baldrs_hall is the passage on to the kraken hall's upper level)
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 1" (generated from the game data, P4-1).
+
 Reading notes: statuses use the session vocabulary. "Passing" means the test is in the v0.41.0 suite (675 pass per
 RULES.md); this agent ran no tests. A status is chapter-specific: a mechanic tested only in another unit is
 `IMPLEMENTED BUT UNVERIFIED` here and the generic test is named as "mechanic test". [O]/[I]/[U] as in the repo docs.

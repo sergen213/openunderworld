@@ -3,6 +3,8 @@ Walkthrough: https://tombraiders.net/stella/walks/TR8walk/04thunder.html
 Sub-pages read: details/swandive.html (Swan Diver II spot on the upper deck), bugnotes.html (nothing for this section)
 Our units: l1_ship_exterior → l1_ship_upper_hallway_a / _b → l1_ship_upper_hallway → l1_ship_engine_hall → l1_ship_natla_room (chapter 1 route, ship part up to the Natla cinematic)
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 1" (generated from the game data, P4-1).
+
 Reading notes: statuses use the session vocabulary. "Passing" means the test is in the v0.41.0 suite (675 pass per
 RULES.md); this agent ran no tests. A status is chapter-specific: a mechanic tested only in another unit is
 `IMPLEMENTED BUT UNVERIFIED` here and the generic test is named as "mechanic test". [O]/[I]/[U] as in the repo docs.
@@ -10,7 +12,7 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 
 | Category | Required information | Status | Evidence / tests |
 |---|---|---|---|
-| Chapter | Board the ship by its anchor, fight across the container deck, upper deck, helipad and aft deck (19 mercenaries on the page), go below to the engine room and the Natla room | PARTIALLY IMPLEMENTED | enemies and doors tested; boarding, the first deck fight and the way below played by input (`ch05_boarding`, `ch05_container_deck`, `ch05_below_decks`); the later deck fights and the Natla room approach (known gap `ch05_natla_room`) are not |
+| Chapter | Board the ship by its anchor, fight across the container deck, upper deck, helipad and aft deck (19 mercenaries on the page), go below to the engine room and the Natla room | PARTIALLY IMPLEMENTED | enemies and doors tested; boarding, the first deck fight and the way below played by input (`ch05_boarding`, `ch05_container_deck`, `ch05_below_decks`); the Natla room approach by input since 2026-11-20 (`ch05_natla_room`: the engine room's wings are the T, volume 1436 plays cinematic 1288); the later deck fights are not |
 | Movement | Run, strafe under fire, stairs, cover behind crates | IMPLEMENTED BUT UNVERIFIED | no Lara-movement test in the ship units |
 | Traversal | Jump from the boat to the anchor, climb anchor and chain, four ledge jumps to the deck; container stack by chimney jump or by box steps; jumps across containers | IMPLEMENTED (boarding); container routes IMPLEMENTED BUT UNVERIFIED | boarding: `GameReal.ShipBoardingByTheAnchorChain`, self-test `ch05_boarding`; chimney jump exists since 0.42.0 (`src/game/WallJump.cpp`, `Game.ChimneyJump*`), not played between these containers |
 | Physics | Exploding fuel tanks (blast damage to enemies and Lara), crates shot to pieces, sticky grenades, enemy ragdolls | IMPLEMENTED | crates: `ProgressionReal.CombatCrateBreaksOnHit`; ragdolls: `GameReal.KilledPoacherRagdollIndependentOfRenderRate` (mechanic); tank blast since 0.44.0 (explosion records, `World::birthBlast`): `GameReal.FuelTankExplosionHurtsLaraAndAMercenary` (l1_ship_exterior) |

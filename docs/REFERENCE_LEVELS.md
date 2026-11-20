@@ -68,6 +68,8 @@ Matrix: [02_path_to_avalon.md](matrix/02_path_to_avalon.md). Units: `l1_seatop`,
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
+Other open bugs here: OU-SAV-002 (Checkpoint respawn at a fresh unit load: under-water intros put Lara on the floor below; 5 l7_yggdrasil_end checkpoints have no floor at the intro; the l1_seatop yacht deck settles 437 below its intro (docs/CHECKPOINTS.md)).
+
 Self-tests: `ch02_seatop_dive`, `ch02_serpent_door`.
 
 ## 03. Niflheim (Level 1 - Mediterranean Sea, part 2)
@@ -101,6 +103,8 @@ Matrix: [04_norse_connection.md](matrix/04_norse_connection.md). Units: `l1_bald
 | Objects / puzzles | implemented | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | — Camera trigger cut 0xC (OU-CAM-006, 2026-11-20): matches | — |
+
+Other open bugs here: OU-SAV-002 (Checkpoint respawn at a fresh unit load: under-water intros put Lara on the floor below; 5 l7_yggdrasil_end checkpoints have no floor at the intro; the l1_seatop yacht deck settles 437 below its intro (docs/CHECKPOINTS.md)).
 
 Self-tests: `ch04_column_hall`, `ch04_column_hall_perches`, `ch04_gate_room`, `ch04_kraken_swing`, `ch04_pillar_entry`.
 
@@ -328,7 +332,7 @@ Self-tests: `ch17_hammer_chamber`, `ch17_maze_to_relic_door`.
 
 ## 18. Rituals Old (Level 6 - Andaman Sea)
 
-Matrix: [18_rituals_old.md](matrix/18_rituals_old.md). Units: `l6_ship_exterior`, `l6_ship_upper_hallway_a`, `l6_ship_upper_hallway`, `l6_ship_engine_hall`, `l6_ship_natla_room`, `l7_thin_ice`, `l1_ship_exterior`.
+Matrix: [18_rituals_old.md](matrix/18_rituals_old.md). Units: `l6_ship_exterior`, `l6_ship_upper_hallway_a`, `l6_ship_upper_hallway`, `l6_ship_engine_hall`, `l6_ship_natla_room`, `l7_thin_ice`.
 
 | Subsystem | Ours (matrix) | Measured against tru.exe | Open bugs |
 |---|---|---|---|
@@ -375,6 +379,8 @@ Matrix: [20_yggdrasil.md](matrix/20_yggdrasil.md). Units: `l7_helheim01`, `l7_he
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
+Other open bugs here: OU-SAV-002 (Checkpoint respawn at a fresh unit load: under-water intros put Lara on the floor below; 5 l7_yggdrasil_end checkpoints have no floor at the intro; the l1_seatop yacht deck settles 437 below its intro (docs/CHECKPOINTS.md)).
+
 Self-tests: `ch20_helheim01_portal`, `ch20_helheim01_rune_symbols`, `ch20_helheim02_passage`, `ch20_helheim03_hall`, `ch20_yggdrasil_hall_eitr_pit`, `ch20_yggdrasil_hall_slide`, `ch20_yggdrasil_reveal`.
 
 ## 21. Out of Time (Level 7 - Arctic Sea, part 3)
@@ -391,6 +397,8 @@ Matrix: [21_out_of_time.md](matrix/21_out_of_time.md). Units: `l7_yggdrasil_end`
 | Objects / puzzles | unverified | unmeasured here | OU-PZL-012 |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
+
+Other open bugs here: OU-SAV-002 (Checkpoint respawn at a fresh unit load: under-water intros put Lara on the floor below; 5 l7_yggdrasil_end checkpoints have no floor at the intro; the l1_seatop yacht deck settles 437 below its intro (docs/CHECKPOINTS.md)).
 
 Self-tests: `ch21_platform_ride`.
 
@@ -409,4 +417,4 @@ Rows of REFERENCE_COMPARISON whose evidence names no chapter unit (synthetic sce
 | Vehicle | 9 unmeasured |
 | Camera / systems | 4 matches / 12 unmeasured |
 
-Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-DOC-003, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PHY-003, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PLY-016, OU-PLY-017, OU-PLY-018, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-REN-010, OU-REN-011, OU-REN-012, OU-SCR-005, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
+Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-AUD-006, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-DOC-003, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PHY-003, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PLY-016, OU-PLY-017, OU-PLY-018, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-REN-010, OU-REN-011, OU-REN-012, OU-SCR-005, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.

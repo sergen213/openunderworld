@@ -163,6 +163,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
 | OU-DOC-003 | docs | Batch 10 asm checks: wrong citation addresses and branches the comments omit | Open | doc drift | C-DOC |
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom reported doors 4526 / 4376 as not resumed: a false difference (two colliders per door shared one state-part name) | Fixed on agent/GapsB10 (`save_load_bedroom_doors` moved up) | pre-existing | — |
+| OU-AUD-006 | audio | Help on demand picks `sc_0<unit digit>_NN`; the lines are per chapter (`sc_CC`, CC = kChapters index), so the prologue (l3 units) plays Croft Manor's sc_03 lines instead of sc_00 | Open | pre-existing | — |
+| OU-SAV-002 | save/load | Checkpoint respawn at a fresh unit load: under-water intros put Lara on the floor below; 5 l7_yggdrasil_end checkpoints have no floor at the intro; the l1_seatop yacht deck settles 437 below its intro (docs/CHECKPOINTS.md) | Needs-Windows-ref | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed-verified (0.54.0, merge bccdaa7: camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
 | OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Partly fixed: 0.55.0 (merge 6aa19ec: 0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861), 0.56.0 (merge dece273: 1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349), 0.58.0 (merge b9b4166: 0xC cut, 0x14 focus points Wine-verified at 3859; 9 carried by no volume); 0xC Wine-verified walking into 599, shown at the distance state (agent/WineCheck10); 0x16 (no LaraCombatCamera) and kind 1 open | pre-existing | — |
@@ -655,6 +657,16 @@ Status · Origin: Fixed-verified (Mus!) · pre-existing.
 
 **OU-AUD-005 Synchronous music loads** — tracks start a few frames earlier than in tru.exe; after a load ours replays the
 saved slot requests with a 2 s fade-in [I] (ROADMAP L64). Status · Origin: Open · pre-existing.
+
+**OU-AUD-006 Help on demand uses the unit's level digit, not the chapter**
+- Evidence [O data]: generalbank's help lines (DTPs 270..999, docs/CHECKPOINTS.md "Objectives") are `sc_00_01..03` for
+  the burning manor ("I need to get back inside the manor…", "…reach the Great Hall", "…floor of the Great Hall"),
+  `sc_01`..`sc_07` for chapters 1..7: CC is the kChapters index (sc_06 = the Andaman Sea ship, l6 units).
+- Actual: `GameSound::playHelp` (src/app/game/Sound.cpp) builds `sc_0<unit[1]>_NN`; in the prologue's l3 units it asks
+  for `sc_03_NN` (Croft Manor's lines: l3_main_bedroom names hint_01..06 / 18, both chapters' conditions).
+- Fix: CC from `World::chapter` (0..7; the epilogue has no line). Test: `ChaptersReal.ObjectiveListMatchesTheHelpLines`
+  pins the line table; a playHelp test with chapter 0 in l3_main_bedroom would pin the choice.
+- Status · Origin: Open · pre-existing.
 
 ### Camera (OU-CAM)
 
@@ -1527,6 +1539,22 @@ Status · Origin: Open · pre-existing.
 - Fix: parts are `dynamic <uid> <ordinal>` (the collider's ordinal among its object's). `save_load_bedroom_doors`
   passes and moved out of `known_gaps/`; `save_load` still passes.
 - Status · Origin: Fixed · pre-existing.
+
+**OU-SAV-002 Checkpoint respawn at a fresh unit load: open cases** (found by `ChaptersReal/CheckpointRespawn.*`, P4-1)
+- Repro: `OU_GAME_DIR=… ou_progress_tests --gtest_filter='ChaptersReal/CheckpointRespawn.*'`; each checkpoint goes
+  through a save game into `World::setCheckpoint` and `World::respawn` loads its unit in a World of its own. 288 of 313
+  rows stay; the 25 others are listed with their observed reason in docs/CHECKPOINTS.md.
+- Expected by context (not deviations): cinematics a fresh load plays (145_man_powerdown, 195_mex_lords ×5,
+  240_val_gate ×2, 300_hel_mother) place her at their end; the l4_pool eitr kills at its fresh-load level (×8, the
+  pool states of sections 14 / 15, docs/matrix/15 C15-01); l7_helheim03 8844 lies on a slide face; small brown spider
+  4029 reaches l2_cliffclimb 3833 and bites.
+- Open [U, needs tru.exe under Wine]: (a) under-water intros (l1_seafloor 234, l1_norse_hallway_a 779, l2_flushtunnel
+  2505 / 2506, l2_maproom 2593, l7_arctic_sea 9112 / 9221 / 9222 / 9224, l7_helheim_hall01 9170) put Lara on the floor
+  490..970 below the intro, where she swims; tru.exe 0x5D40C0 births her on the intro [I: whether the original lets
+  her float there]; (b) l7_yggdrasil_end 8242-8245 / 8248: no floor under the intro at a load (she falls and catches a
+  ledge 400-525 below and hangs; under 8248 the face is 66 degrees steep and she falls 14927); (c) l1_seatop 1000: the
+  yacht deck carries her down to 437 below the intro as it settles at the sea level.
+- Status · Origin: Needs-Windows-ref · pre-existing.
 
 ## Triage
 

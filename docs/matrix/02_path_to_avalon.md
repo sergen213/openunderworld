@@ -3,6 +3,8 @@ Walkthrough: https://tombraiders.net/stella/walks/TR8walk/01avalon.html
 Sub-pages read: details/avalon2.html … avalon8.html (treasure routes, ledge climb), screenshots/mediterranean_map.jpg (treasure map), bugnotes.html
 Our units: l1_seatop → l1_seafloor → l1_norse_hallway_a → l1_kraken_entrance (chapter 1 route, first four units; ends at reveal cinematic 696 / gate 743)
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 1" (generated from the game data, P4-1).
+
 Reading notes: statuses use the session vocabulary. "Passing" means the test is in the v0.41.0 suite (675 pass per
 RULES.md); this agent ran no tests. A status is chapter-specific: a mechanic tested only in another unit is
 `IMPLEMENTED BUT UNVERIFIED` here and the generic test is named as "mechanic test". [O]/[I]/[U] as in the repo docs.
@@ -46,7 +48,7 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | C02-15 | Treasure 4: on the left "eye" ledge part-way up the tower's door side | swim to ledge, pickup | l1_seafloor | IMPLEMENTED BUT UNVERIFIED | — | screenshots/avalon18.jpg, avalon19.jpg |
 | C02-16 | Treasure 5: collapsed slab structure at the right edge of the ruins, entrance on its far side, dark tunnel to a sand room | swim, light, pickup | l1_seafloor | IMPLEMENTED BUT UNVERIFIED | — | screenshots/avalon20.jpg … avalon22.jpg |
 | C02-17 | Treasure 6: slab arch on the far side of the ruins, dark tunnel, item under a jellyfish group | swim, light, hazard, pickup | l1_seafloor | IMPLEMENTED BUT UNVERIFIED | — | screenshots/avalon23.jpg … avalon26.jpg; overview screenshots/mediterranean_map.jpg |
-| C02-18 | Through the open eye door: a single winding flooded corridor with jellyfish; a checkpoint just inside | swim, checkpoint | l1_seafloor → l1_norse_hallway_a | IMPLEMENTED BUT UNVERIFIED | checkpoints: `Stream.CheckpointAndRespawn` (mechanic) | — |
+| C02-18 | Through the open eye door: a single winding flooded corridor with jellyfish; a checkpoint just inside | swim, checkpoint | l1_seafloor → l1_norse_hallway_a (checkpoints 779 / 780, docs/CHECKPOINTS.md) | IMPLEMENTED BUT UNVERIFIED | checkpoints: `Stream.CheckpointAndRespawn` (mechanic); the respawn at each l1_norse_hallway_a checkpoint (born on its intro, stays): `ChaptersReal/CheckpointRespawn.PlacesLaraOnSolidGround/ch1`; the corridor swim not played | — |
 | C02-19 | Treasure 7: where rocks half block a right turn, swim over them and look back to the floor on the right | pickup | l1_norse_hallway_a | IMPLEMENTED BUT UNVERIFIED | — | screenshots/avalon27.jpg |
 | C02-20 | A giant tentacle sticks out of a round hole and swats without real harm; swim through the hole and up to the surface | scripted animated object, surfacing | l1_norse_hallway_a (`ms_ani_tentacle_*`) | IMPLEMENTED BUT UNVERIFIED | tentacle objects are script / uber driven (GAMEPLAY.md "Enemies: Not enemies"); no test here | — |
 | C02-21 | Climb out on the low pool ledge, vault into the doorway | swim climb-out, hurdle | l1_norse_hallway_a | IMPLEMENTED BUT UNVERIFIED | mechanic test `Game.SwimEnterCrossClimbOut` | — |

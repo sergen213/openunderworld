@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/15gateofdead.html (plus `details/gateofdead2..5.html`: first gate lock and the three tower climbs; all read)
 Our units (PR "Chapter routes" ch 5): l5_startsnow (arrival cinematic `230_val_intro`, bike 7528), l5_valgrind_tunnel (serpentine tunnel, bike 7229, Thor slide door 7400 `ar_ei_thor_slide_door`, cinematic 7403 `235_val_shaft`), l5_valgrind (spiral ramp, Valgrind gate 7334 `ar_ei_thor_valgrind_door`, cinematic 7464 `240_val_gate`, mechanical tower: cog wheel 7312 + rings 7492-7509 `ar_uo_valgrind_column_floor{a,b,c}_ring*`, lock glyphs 7330 / 7326 / 7323 / 7319, beams `fx_beam_val_door_unlock` 7331 / 7327 / 7324 / 7320). uids from `ProgressionReal.Survey` (`matrix/.scratchC/survey_all.txt`) and GP; area ↔ unit mapping [I].
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 5" (generated from the game data, P4-1).
+
 Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |

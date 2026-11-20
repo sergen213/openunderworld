@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/20outoftime.html (plus `details/outoftime2..10.html`: nine screenshot sequences; all read)
 Our units (PR "Chapter routes" ch 7): l7_yggdrasil_end (the Midgard Serpent device: three levels of ring walkways, floating platforms = `natla_end_mover` ×82 spline movers incl. 8404, Natla = `natla_end` ×6 scripted objects, fireballs `wp_natla_fireball(_adren)` ×17, rune panels = Thor towers 8398 / 8399 / 8400, power nodes = buttress mounts 8362 / 8363 / 8364, dispatcher 8360, endgame gun 8401, wall anchor 8165, water volume 8309 + ten flow volumes, yeti generators) → l7_monastery (cinematic 8138 `342_hel_endgame`, end save, credits). l7_himalaya_end is not on the route (PR ch 8). uids from PR, GP "Enemies / Survey", "Grapple", "Water" and the sweep (`matrix/.scratchC/sweep_l7_yggdrasil_end.txt`). Panel / node numbering (first / second / third) ↔ uids is not established.
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 7" (generated from the game data, P4-1).
+
 Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |

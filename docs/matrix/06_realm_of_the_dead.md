@@ -3,6 +3,8 @@ Walkthrough: https://tombraiders.net/stella/walks/TR8walk/05realm.html
 Sub-pages read: details/realm2.html (first shaft), details/realm3.html (second shaft), bugnotes.html (nothing for this section)
 Our units: l1_ship_natla_room (start) → l1_ship_lower_hallway → l1_ship_sinking_hall → l1_cine_ship_sinking (chapter 1 end, PROGRESSION.md "Chapter routes")
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 1" (generated from the game data, P4-1).
+
 Reading notes: statuses use the session vocabulary. "Passing" means the test is in the v0.41.0 suite (675 pass per
 RULES.md); this agent ran no tests. A status is chapter-specific: a mechanic tested only in another unit is
 `IMPLEMENTED BUT UNVERIFIED` here and the generic test is named as "mechanic test". [O]/[I]/[U] as in the repo docs.

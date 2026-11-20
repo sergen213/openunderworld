@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/16valhalla.html (plus `details/valhalla2..11.html`, the maze map `screenshots/valhalla.gif` and the hammer-room map `screenshots/valhalla2.gif`; all read)
 Our units (PR "Chapter routes" ch 5): l5_valgrind (tower descent, gate 7334) → l5_valaskjalf_entry (maze half next to the gate: relic room door 7227 `ar_uo_reward_door` with inside switch 7228) → l5_valaskjalf_entryb (maze half with the pole intersection: fixed pole lever 7188 `ar_uo_wall_lever`, pole socket lever 7189 `ar_uo_phole_lever` + loose pole 7190, treasure-room door 7187 with inside switch 7192) → l5_valaskjalf (hammer room: hammers `ar_ani_thor_hammer_three` 6947, weights `ar_ani_weight_pair` 6951, chains `ar_ani_infinite_chain` 6939-6944, shafts `ar_rb_hpoles_on_gears` 6982-6984, bars `ar_rb_hpole_hammer_release` 6979-6981, jammed gear 6985, falling bridge 6974, falling floor 6975, falling columns 6976-6978, lying yeti 7036, wall-run anchors 6750 / 6751, level end 6866 → 6846 `250_val_hammer`). uids: PR gates ch 5, `ProgressionReal.Survey` (`matrix/.scratchC/survey_l5_valaskjalf.txt`), GP "Grapple". Which door is which follows from the links (7189 → 7227, 7188 → 7187) and the map; room numbering ↔ uids [I].
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 5" (generated from the game data, P4-1).
+
 Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |

@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/17andaman.html (plus `details/andaman2.html`: container climb screenshots; read)
 Our units (PR "Chapter routes" ch 6): l6_ship_exterior (bow deck, container deck, upper deck, helipad, stern; start cinematic 7652 `260_ship_intro`) → l6_ship_upper_hallway_a / _b (stairs and halls behind the stern doors 7642 / 7643 / 7621) → l6_ship_upper_hallway (door 7589) → l6_ship_engine_hall (engine room, crate corners, T-junction; plane 7565) → l6_ship_natla_room (cinematic 1387 → l7_thin_ice). uids from PR gates ch 6 and `ProgressionReal.Survey` (`matrix/.scratchC/survey_l6_ship.txt`).
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 6" (generated from the game data, P4-1).
+
 Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |
