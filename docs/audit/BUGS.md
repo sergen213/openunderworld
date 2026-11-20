@@ -142,8 +142,11 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (0.52.0, f9676fd; `instance` 63 open, record narrowed) | pre-existing | C-VM |
 | OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Fixed-verified (0.54.0, merge b6c1b47) | pre-existing | C-VM |
 | OU-SCR-005 | script VM | Level-change fade to white unsupported (always black) | Open | pre-existing | C-VM |
+| OU-SCR-006 | script / sound | Fire volume 4517 burns once in ours; tru.exe repeats 300 every 1.2 .. 4.4 s | Reproduced | pre-existing | C-VM |
+| OU-SCR-007 | script | Jellyfish sting at once; tru.exe stings ~2 s after she enters | Reproduced | pre-existing | C-VM |
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
+| OU-CMB-004 | hazards | Valaskjalf rollers hurt whenever she is in them; tru.exe's stop after a 4-hit burst | Reproduced (Wine, one trial) | pre-existing | — |
 | OU-VEH-001 | motorcycle | Brake strength, slopes, coasting, top speed, pit jump unmeasured | Open | pre-existing | C-MEASURE |
 | OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed-verified (0.56.0, merge 02b7a09: poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
@@ -164,7 +167,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | C-SWELL | 0.50.0 made the drawn FFT swell part of the gameplay water surface but kept the render's −0.5 σ centring offset (`src/render/Ocean.cpp:202`, measured −68.6 of the −70 mean shift) and `min(…, 0)` crest clamp (`src/render/shaders/water_surface.glsl:87-91`, `src/game/World.cpp:1710-1718`); decks that now sit under the volume top got a blanket dry-deck rule instead of a hull model; the camera focus follows Lara's bone 108 on that surface | OU-WAT-006, OU-WAT-007, OU-WAT-013, OU-CAM-002 |
 | C-UWPORT | 0.49.0 replaced the under-water look with a literal port of Noniv's abyssal-garden (shafts, snow, caustics, grade); look complaints from before the port must be re-judged against it | OU-WAT-008, OU-WAT-009, OU-WAT-010 (and OU-WAT-001 via 0.49.1) |
 | C-SPLASH / C-WATERTUNE | Enhanced water thresholds and opacities are ours [I] (`water.frag` 415-432, fluid composite RENDERING L744-746) and were tuned on l1_seatop / l2_cliffclimb calm-sea views | OU-WAT-002, OU-WAT-004 |
-| C-VM | SCMD VM gaps: unimplemented opcode 0x65, natives without bindings, no vector values, partial `modifiable` semantics, no script UI; a stopped handler silently leaves its object idle | OU-SCR-001..005, OU-PZL-009, OU-PZL-012, OU-PZL-013, OU-PZL-015, OU-AUD-004 |
+| C-VM | SCMD VM gaps: unimplemented opcode 0x65, natives without bindings, no vector values, partial `modifiable` semantics, no script UI; a stopped handler silently leaves its object idle | OU-SCR-001..007, OU-PZL-009, OU-PZL-012, OU-PZL-013, OU-PZL-015, OU-AUD-004 |
 | C-JOINT | Objects whose motion the data defines outside our joint model: missing joint records, fixed joints / body A motion, freed-section bodies that never get released, joints held by rope tension | OU-PZL-006, OU-PZL-007, OU-PZL-010, OU-PZL-014, OU-GRP-005, OU-PHY-001 |
 | C-CHART | Lara's player state chart is hand-ported per move (AUDIT_A L331 / L433: sub-states keyed on clip names, no transition table); every undecoded condition becomes a guessed rule or a missing move | OU-PLY-001..004, OU-PLY-006, OU-PLY-010, OU-PZL-005 |
 | C-MEASURE | Numbers decoded or fitted but not measured in tru.exe under Wine (`docs/REFERENCE_COMPARISON.md`: 107 of 161 rows unmeasured, "Unmeasured" table lists the session for each) | OU-PLY-005, OU-PLY-009, OU-GRP-002, OU-PZL-002, OU-VEH-001, OU-PHY-002 |
@@ -1162,6 +1165,46 @@ budget is ours (100000 instructions, `Vm.cpp:352`).
 **OU-SCR-005 Fade to white unsupported** — level changes that fade to white (0x5DAB40) always fade black (`Script.cpp:2052`).
 Status · Origin: Open · pre-existing.
 
+**OU-SCR-006 Fire volume 4517 burns once; tru.exe repeats the burn**
+- Repro: l3_main_bedroom, Lara held inside `firetriggervolume` 4517 (tru.exe new-game frame 2126.3, −3559.6, floor
+  −2890.4; ours = tru − (9623.8, 331.0, −2977.4): −7540, −3890.6, 137); self-test `fire4517.json` (four 7 s steps,
+  health 1000 at each start) in `openunderworld-work/WineSweep10-wine/ours/`.
+- Expected (Wine 2026-11-20, `tools/wine-ref` `enemy hp`, `WineSweep10-wine/ref/s1-fire4517*.txt`, new-game prologue,
+  health refilled under 400): **300 a burn, repeated**: 11 burns in 23.6 s (gaps 1.23 .. 4.40 s, mean 2.36 s); the
+  first 1.3 .. 3.5 s after she stood in the volume (two trials). A first trial gave 300 at 1.33 / 4.08 / 6.08 s.
+  Volumes 4492 / 4493 / 4494 at their origins burnt nothing in 8 .. 20 s (she was pushed off the origin by the rubble;
+  the boxes' extents are not known), and agent/ScriptVm6 measured one burn and no repeat in 14 s in 4494 (OU-SCR-004).
+- Actual (ours at 9d2935c+, audio through SDL's dummy driver): 300 at once (tick 1 after the teleport), then none in
+  28 s. The trace logs `script sound 4517 (firetriggervolume) +64 3D node type 4` once; [I] that sound (member +64,
+  an Assignment) is the burn sequence and never ends in `SoundPlayer`, so the `sound` 1 wait of state 1 never returns.
+- Files: `src/app/game/Sound.cpp` (`scriptSoundBusy`), `src/audio/SoundPlex.cpp` (`SoundPlayer::start` / `busy`, the
+  instance's game-time end), `src/script` (`sound` 1 wait).
+- Cause: [U]. Candidates: 4517's burn plex ends in tru.exe (its Envelope / ChoiceList picks a finite part: the gaps
+  vary like a random choice of lengths) while ours extends it forever; or tru.exe's IsActive (0x4ACC30) goes false on
+  something ours does not model (distance / virtual voice). The delay before the first burn in tru.exe is also not
+  explained (the thread may still wait on the volume's previous sequence).
+- Fix: decode 4517's +64 plex (`ou-asset` plex dump of l3_main_bedroom section/offset) against 4494's, and the
+  SoundSequence IsActive path; no change made.
+- Test: proposed `ScriptRealData.FireVolume4517RepeatsItsBurn` once the length rule is known.
+- Status · Origin: Reproduced (Wine and ours, 2026-11-20) · pre-existing.
+
+**OU-SCR-007 Jellyfish sting at once; tru.exe stings ~2 s after she enters**
+- Repro: l1_seafloor, Lara held at ours (−4680, 8850, 1532) (`GameReal.JellyfishStingOnTouch` spot); self-test
+  `jelly.json` in `openunderworld-work/WineSweep10-wine/ours/`.
+- Expected (Wine 2026-11-20, `WineSweep10-wine/ref/s5-jelly*.txt`, tru = ours + (31071.5, 6311.8, 148279.7)): 100
+  every 1.997 .. 2.003 s; the first sting 1.72 s after the placement and 1.97 / 1.98 / 1.98 s after each of three
+  re-entries (4 s outside, 900 under).
+- Actual: 100 at tick 1, then every 121 ticks (2.017 s).
+- Files: `src/script` (state change / `WAIT`), `src/game/World.cpp` (player sensors), script 5594 of `jellyfish_a`.
+- Cause: [U]. Bytecode [O-data]: vt 14 sets flag +42 and `STATE 1` when a sensor first holds her; state 1's fn 3 loops
+  `while (+42) { command 0 (shock); damage +36 (100) via 53:9c; WAIT 2.0 }`, so a sting before the first wait is what
+  ours does. tru.exe's 2 s may come from the state change taking effect only at the thread's next resume, from 53:9c
+  waiting on the shock clip, or from the sensors' own update; not decoded. The extra tick of ours' period (121
+  against 120) is a separate one-tick `WAIT` rounding [I].
+- Fix: none made; decode 53:9c and the `STATE` resume in tru.exe first.
+- Test: `GameReal.JellyfishStingOnTouch` asserts "at once" (`hurtAt[0] < 5`) [I]; it must change with the fix.
+- Status · Origin: Reproduced (Wine and ours, 2026-11-20) · pre-existing.
+
 ### Combat, AI, vehicles, physics (OU-CMB, OU-VEH, OU-PHY)
 
 **OU-CMB-001 Head shot below a full meter** — AUDIT_B L410 (incorrect). Now `if (c.adrenaline >= 1 && !c.adrenalineMode)
@@ -1170,6 +1213,23 @@ c.headShotReady = true` (`Combat.cpp:1206`). Status · Origin: Fixed-verified ·
 **OU-CMB-002 AI gaps** — no jump-over (NavPower links not decoded), flyers patrol straight (VolumeGraph), mercs never
 sidestep, cover flags not derived, poacher rifle mesh not drawn, shark bite damage [I] (ROADMAP L57). Status · Origin:
 Open · pre-existing.
+
+**OU-CMB-004 Valaskjalf rollers hurt for as long as she stands in them; tru.exe's stop after a burst**
+- Repro: l5_valaskjalf, Lara 1.5 s at ours (−6200, −75221), then in grinder 6965 (ours −4895.1, −75221.3); self-test
+  `roller.json` in `openunderworld-work/WineSweep10-wine/ours/`.
+- Expected (Wine 2026-11-20, one fresh session, `WineSweep10-wine/ref/s4-roller*.txt`, tru = ours + (−5372.7,
+  54581.7, 70460.1), Lara held by `tpv`, health refilled under 700): 400 at 0.82 / 1.83 / 2.85 / 3.87 s (the 30-frame
+  window), then no hit in 8 s and 35 s more; grinders 6964 and 6968 afterwards: no hit in 8 s each.
+- Actual: 400 on every touch while she overlaps a roller box (`GameReal.RollersCost400ATouch`: three hits ≥ 60 ticks
+  apart while she runs through); in `roller.json` the hit reaction carries her out after two hits.
+- Files: `src/game/Hazards.cpp` (overlap rule), the grinders' anim graph (clips 3904 `idle`, not animated, and 3905
+  `grinding`).
+- Cause: [U]. The grinder's own script (type 16575) only answers vt 21 with a sound; the switch between `idle` and
+  `grinding` comes from elsewhere (unit script / dispatcher), and ours hurts on overlap whatever the clip. Whether
+  tru.exe's overlap hurts only while `grinding` plays, and what starts / stops it, is not decoded.
+- Fix: none made; trace the grinders' anim request in tru.exe (instance anim section) across a burst first.
+- Test: proposed: the burst length against the Wine trace once the trigger is known.
+- Status · Origin: Reproduced (Wine, one trial) · pre-existing.
 
 **OU-VEH-001 Motorcycle unmeasured** — brake strength, slopes, coasting, top speed, pit jump, crash rules, water,
 ramming, dismount position, respawn with the bike (ROADMAP L77, L96; Wine session in REFERENCE_COMPARISON
