@@ -155,7 +155,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SCR-007 | script | Jellyfish first sting ~2 s after entry (WineSweep10) | Not a bug (Wine re-measured: at once, as ours); the 121-tick period fixed to 120 (6cecca7) | pre-existing | C-VM |
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
-| OU-CMB-004 | hazards | Valaskjalf rollers hurt whenever she is in them; tru.exe's stop after a 4-hit burst | Reproduced (Wine, one trial) | pre-existing | — |
+| OU-CMB-004 | hazards | Valaskjalf rollers: tru.exe's "stop after a 4-hit burst" (WineSweep10) | Not a bug (Wine re-measured: 400 every 1.016 s for as long as she is held in any roller, as ours) | pre-existing | — |
 | OU-VEH-001 | motorcycle | Brake strength, slopes, coasting, top speed, pit jump unmeasured | Open | pre-existing | C-MEASURE |
 | OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed-verified (0.56.0, merge 02b7a09: poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
@@ -1457,22 +1457,20 @@ c.headShotReady = true` (`Combat.cpp:1206`). Status · Origin: Fixed-verified ·
 sidestep, cover flags not derived, poacher rifle mesh not drawn, shark bite damage [I] (ROADMAP L57). Status · Origin:
 Open · pre-existing.
 
-**OU-CMB-004 Valaskjalf rollers hurt for as long as she stands in them; tru.exe's stop after a burst**
-- Repro: l5_valaskjalf, Lara 1.5 s at ours (−6200, −75221), then in grinder 6965 (ours −4895.1, −75221.3); self-test
-  `roller.json` in `openunderworld-work/WineSweep10-wine/ours/`.
-- Expected (Wine 2026-11-20, one fresh session, `WineSweep10-wine/ref/s4-roller*.txt`, tru = ours + (−5372.7,
-  54581.7, 70460.1), Lara held by `tpv`, health refilled under 700): 400 at 0.82 / 1.83 / 2.85 / 3.87 s (the 30-frame
-  window), then no hit in 8 s and 35 s more; grinders 6964 and 6968 afterwards: no hit in 8 s each.
-- Actual: 400 on every touch while she overlaps a roller box (`GameReal.RollersCost400ATouch`: three hits ≥ 60 ticks
-  apart while she runs through); in `roller.json` the hit reaction carries her out after two hits.
-- Files: `src/game/Hazards.cpp` (overlap rule), the grinders' anim graph (clips 3904 `idle`, not animated, and 3905
-  `grinding`).
-- Cause: [U]. The grinder's own script (type 16575) only answers vt 21 with a sound; the switch between `idle` and
-  `grinding` comes from elsewhere (unit script / dispatcher), and ours hurts on overlap whatever the clip. Whether
-  tru.exe's overlap hurts only while `grinding` plays, and what starts / stops it, is not decoded.
-- Fix: none made; trace the grinders' anim request in tru.exe (instance anim section) across a burst first.
-- Test: proposed: the burst length against the Wine trace once the trigger is known.
-- Status · Origin: Reproduced (Wine, one trial) · pre-existing.
+**OU-CMB-004 Valaskjalf rollers: the "stop after a burst" did not reproduce**
+- Repro: l5_valaskjalf, Lara 2 s at ours (−6200, −75221), then held in grinder 6965 (ours −4895.1, −75221.3), 6964 and
+  6968 (tru = ours + (−5372.7, 54581.7, 70460.1)).
+- WineSweep10 (`WineSweep10-wine/ref/s4-roller*.txt`, one session): 400 at 0.82 / 1.83 / 2.85 / 3.87 s, then none
+  while her position read unchanged; 6964 / 6968 none. Its `tpv` counted 1 ms sleeps (several ms each on the loaded
+  machine), so how long she was really held is not known; [U] why she was not hit there.
+- Re-measured (Wine 2026-11-20, two fresh sessions, wall-clock `tpv`, health refilled under 700):
+  `Hazards11-wine/ref/h4-roller.txt`, `h4-roller2.txt`: **400 every 1.016 s for the whole hold** (12 hits in 12 s in
+  6965, 9 on re-entry, 8 in 8 s in 6964, 9 in 6968): the 30-frame invulnerability window, no stop.
+  `h5-roller-free.txt` (held 1 s, then free): hit at 2.08 / 3.08 / 4.38 / 5.43 / 6.45 s while the hit reactions
+  knocked her 460 along the roller, then none once she stood at the box's side. Ours hurts on every overlap once per
+  window (`GameReal.RollersCost400ATouch`) and the reaction carries her out (`roller.json`): the same rule.
+- Fix: none needed.
+- Status · Origin: Not a bug (agent/Hazards11, 2026-11-20) · pre-existing.
 
 **OU-VEH-001 Motorcycle unmeasured** — brake strength, slopes, coasting, top speed, pit jump, crash rules, water,
 ramming, dismount position, respawn with the bike (ROADMAP L77, L96; Wine session in REFERENCE_COMPARISON
