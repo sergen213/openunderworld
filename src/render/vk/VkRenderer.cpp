@@ -1149,6 +1149,17 @@ public:
             if (b == scene::Blend::Alpha) vkCmdSetDepthWriteEnable(cmd, drawDepthWrite(s, op));
             else if (b == scene::Blend::Opaque && prepassPipelines_ && !prepassDraw) vkCmdSetDepthWriteEnable(cmd, opaqueWrites);
         };
+        // A submesh's draw with its cull mode; two-sided blended ones as a back-face then a front-face draw (drawSidesApart).
+        auto drawSides = [&](const scene::SubMesh& s, float op) {
+            if (drawSidesApart(s, op, options.cullBackFaces)) {
+                vkCmdSetCullMode(cmd, VK_CULL_MODE_FRONT_BIT);
+                vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+                vkCmdSetCullMode(cmd, VK_CULL_MODE_BACK_BIT);
+            } else {
+                vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+            }
+            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+        };
         auto drawOriginal = [&](const DrawRef& d, const OrigDraw& od, VkPipeline p, bool prepassDraw = false) {
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             if (layout != Bound::Original) {
@@ -1178,9 +1189,8 @@ public:
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);
             clipTo(d.mesh);
-            vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
             depthWrites(s, opacityOf(d.mesh), prepassDraw);
-            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+            drawSides(s, opacityOf(d.mesh));
         };
         auto origDraw = [&](const DrawRef& d) -> const OrigDraw* {
             const OrigDraw* od = originals ? &origDraws_[d.mesh][d.sub] : nullptr;
@@ -1291,11 +1301,10 @@ public:
                 rp.alphaRef = s.alphaRef / 255.0f;
                 rp.opacity = s.blend == scene::Blend::Opaque ? -opacityOf(d.mesh) : opacityOf(d.mesh);
                 vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof rp, &rp);
-                vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
                 depthWrites(s, opacityOf(d.mesh), false);
                 const VkDescriptorSet set = textureSet(s.textureId);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
-                vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+                drawSides(s, opacityOf(d.mesh));
             }
             vkCmdEndRendering(cmd);
             const VkImageMemoryBarrier2 toRead = imageBarrier(reflColor_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -1352,11 +1361,10 @@ public:
             push.rt = (rays && blend == scene::Blend::Opaque ? 1 : 0) | (reflective ? 2 : 0);
             push.opacity = s.blend == scene::Blend::Opaque ? -op : op;
             vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
-            vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
             depthWrites(s, op, false);
             const VkDescriptorSet set = textureSet(s.textureId);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
-            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+            drawSides(s, op);
         };
         // Depth pre-pass over the leading opaque submeshes of `refs` (opaque ones come first in each drawOrder group):
         // depth + the normal target (prepass.frag, the translated programs' OU_PREPASS variant).

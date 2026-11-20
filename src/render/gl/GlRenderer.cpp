@@ -1170,7 +1170,6 @@ public:
             }
             if (int(blend) != state) setBlend(state = int(blend));
             if (blend == scene::Blend::Alpha) glDepthMask(drawDepthWrite(s, op) ? GL_TRUE : GL_FALSE);
-            if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
                 if (m.screenSamplers[d.sub]) { // reads the scene drawn so far: after the loop, from the copies
                     deferred_.push_back(d);
@@ -1182,16 +1181,15 @@ public:
                 }
                 glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
                 glBindTextures(0, 16, originalTextures(m, d).data());
-                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
-                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+                drawSides(s, op, options.cullBackFaces, [&] { drawElements(s); });
                 continue;
             }
             glUniform1f(3, s.alphaRef / 255.0f);
             glUniform2f(4, op, s.blend == scene::Blend::Opaque ? 1.0f : 0.0f);
-            drawSubmesh(s);
+            drawSides(s, op, options.cullBackFaces, [&] { drawSubmesh(s); });
         }
         scissorFor(UINT32_MAX, vp); // off: blits obey the scissor
-        if (originals && !deferred_.empty()) drawScreenReaders(vp);
+        if (originals && !deferred_.empty()) drawScreenReaders(vp, options.cullBackFaces);
         setBlend(int(scene::Blend::Opaque));
         if (enhancedWater) {
             drawAgWater(wb.eye.w);
@@ -1490,8 +1488,26 @@ private:
         auto it = res_->textures.find(s.textureId);
         const bool usable = it != res_->textures.end() && !cubes_.contains(s.textureId);
         glBindTextureUnit(0, usable ? it->second : res_->white.get());
+        drawElements(s);
+    }
+    static void drawElements(const scene::SubMesh& s) {
         glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
                        reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+    }
+    // Submesh `s`'s cull state, then `draw`; two-sided blended ones as a back-face then a front-face draw (drawSidesApart).
+    // `cullOff`: single draws never cull (screen readers: the sea is also seen from below).
+    template <class Draw> static void drawSides(const scene::SubMesh& s, float op, bool cullBackFaces, Draw&& draw, bool cullOff = false) {
+        if (drawSidesApart(s, op, cullBackFaces)) {
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_FRONT);
+            draw();
+            glCullFace(GL_BACK);
+        } else if (cullBackFaces && !s.doubleSided && !cullOff) {
+            glEnable(GL_CULL_FACE);
+        } else {
+            glDisable(GL_CULL_FACE);
+        }
+        draw();
     }
 
     // ---- CORTAO ambient occlusion (docs/RENDERING.md "Ambient occlusion"; third_party/cortao, MIT) ----
@@ -2013,7 +2029,7 @@ private:
 
     // Submeshes whose materials sample the back / depth buffer (original::screenSamplers; the sea): copy the scene drawn
     // so far into the single-sample textures, then draw them in draw order with those bound.
-    void drawScreenReaders(Viewport vp) {
+    void drawScreenReaders(Viewport vp, bool cullBackFaces) {
         Resources& r = *res_;
         Targets& t = r.targets;
         glBlitNamedFramebuffer(t.scene.get(), t.opaqueColorFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
@@ -2027,9 +2043,9 @@ private:
             glUseProgram(r.originals[size_t(m.program[d.sub])]);
             glBindVertexArray(m.vao.get());
             scissorFor(d.mesh, vp);
-            const scene::Blend blend = drawBlend(s, d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f);
+            const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;
+            const scene::Blend blend = drawBlend(s, op);
             if (int(blend) != state) setBlend(state = int(blend));
-            glDisable(GL_CULL_FACE); // the sea is also seen from below
             glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(objectSlot(m, d)) * objectStride(), sizeof(sm3::ObjectBlock));
             glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
             auto tex = originalTextures(m, d);
@@ -2038,8 +2054,7 @@ private:
                 if (m.screenSamplers[d.sub] >> (16 + n) & 1) tex[size_t(n)] = t.opaqueDepth.get();
             }
             glBindTextures(0, 16, tex.data());
-            glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
-                           reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+            drawSides(s, op, cullBackFaces, [&] { drawElements(s); }, true);
         }
         scissorFor(UINT32_MAX, vp);
     }
@@ -2121,19 +2136,17 @@ private:
             const scene::Blend blend = drawBlend(s, op);
             if (int(blend) != state) setBlend(state = int(blend));
             if (blend == scene::Blend::Alpha) glDepthMask(drawDepthWrite(s, op) ? GL_TRUE : GL_FALSE);
-            if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
                 glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(litSlot(m, d)) * objectStride(), sizeof(sm3::ObjectBlock));
                 glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
                 glBindTextures(0, 16, m.samplers[d.sub].data());
-                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
-                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+                drawSides(s, op, options.cullBackFaces, [&] { drawElements(s); });
                 continue;
             }
             glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
             glUniform1f(3, s.alphaRef / 255.0f);
             glUniform2f(4, op, s.blend == scene::Blend::Opaque ? 1.0f : 0.0f);
-            drawSubmesh(s);
+            drawSides(s, op, options.cullBackFaces, [&] { drawSubmesh(s); });
         }
         setBlend(int(scene::Blend::Opaque));
         reflecting_ = true;
