@@ -8228,6 +8228,9 @@ TEST(GameReal, ScriptedWaterLevelCarriesLara) {
 // markers 10 / 20 / 30 (radii 278.1 / 208.6 / 192.8 around the bell and down the tentacles). While Lara is inside one
 // its script runs the shock command and takes 100 health, again and again; away from it nothing happens; shots do
 // nothing to it (its section takes no damage). A save carries the sensors on.
+// tru.exe (Wine 2026-11-20, openunderworld-work/Hazards11-wine/ref/h3-jelly.txt, Lara held in the spot below): the first
+// sting 26 ms after each of three entries, then every 1.981 .. 2.018 s (mean 1.998 s): `WAIT 2.0` adds to the thread
+// timer (0x57CE50 case 0x7F, update 0x57E970), so the stings keep a 2.0 s average, 120 ticks, not 121.
 TEST(GameReal, JellyfishStingOnTouch) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -8252,6 +8255,8 @@ TEST(GameReal, JellyfishStingOnTouch) {
     }
     ASSERT_GE(hurtAt.size(), 3u) << "stung again and again";
     EXPECT_LT(hurtAt[0], 5) << "at once";
+    for (size_t k = 1; k < hurtAt.size(); ++k) EXPECT_NEAR(hurtAt[k] - hurtAt[k - 1], 120, 1) << k;
+    EXPECT_NEAR(hurtAt.back() - hurtAt[0], 120 * int(hurtAt.size() - 1), 1) << "2.0 s on average";
     EXPECT_FALSE(w.health().dead());
     for (const auto& [key, count] : w.script().failures()) EXPECT_NE(key.first, 817) << key.second;
     // swimming away ends it

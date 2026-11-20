@@ -167,16 +167,23 @@ bool Machine::call(Instance& object, int16_t vt, std::span<const Value> args) {
 bool Machine::start(Instance& object, const Function& f, std::span<const Value> args) {
     frames_.clear(); steps_ = 0; wait_ = 0; failure_.clear();
     if (!push(object, f, args)) return false;
-    return run() != Step::Failed;
+    const bool ok = run() != Step::Failed;
+    if (wait_ <= 0) wait_ = 0;
+    return ok;
 }
 
+// The thread timer (ScriptExec +8, update 0x57E970): each update takes dt off it and runs the thread once it is no longer
+// positive; WAIT (0x57CE50 case 0x7F) adds its seconds to it, so the overshoot of one wait is taken off the next and a
+// WAIT 2.0 loop runs every 2.0 s on average, not every whole tick after it. After the run a timer at or below 0 is 0.
 bool Machine::tick(float seconds) {
     if (frames_.empty()) return true;
     failure_.clear();
-    wait_ = std::max(0.0f, wait_ - std::max(0.0f, seconds));
+    wait_ -= std::max(0.0f, seconds);
     if (wait_ > 0) return true;
     steps_ = 0; // the instruction budget bounds one resume: a thread that yields (SLEEP / WAIT) may poll for ever
-    return run() != Step::Failed;
+    const bool ok = run() != Step::Failed;
+    if (wait_ <= 0) wait_ = 0;
+    return ok;
 }
 
 Machine::Step Machine::run() {
@@ -883,11 +890,12 @@ Machine::Step Machine::step() {
             ++pc; break;
         }
         case 0x7C: wait_ = 0; ++pc; return suspend(); // SLEEP: yield until the next tick (exe case 0x7B pops nothing)
-        case 0x80: { // WAIT seconds
+        case 0x80: { // WAIT seconds: added to the thread timer; a timer still at or below 0 goes on at once (case 0x7F)
             if (fr.stack.empty()) return fail();
-            wait_ = std::max(0.0f, asFloat(load(pop())));
+            wait_ += asFloat(load(pop()));
             ++pc;
-            return suspend();
+            if (wait_ > 0) return suspend();
+            break;
         }
         case 0x7D: { // STATE: pop the state index; tru.exe 0x57C830 ends this object's threads and enters that state
             if (fr.stack.empty()) return fail();
