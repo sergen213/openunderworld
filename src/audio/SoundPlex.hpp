@@ -126,6 +126,11 @@ Pcm oscillator(uint8_t wave, float hz, float seconds, uint32_t rate, uint32_t se
 struct SoundCategory { int32_t parent = -1; Effect effect; };
 std::vector<SoundCategory> parseSoundCategories(const cdc::Drm& globalsoundinfo); // Throws FormatError
 
+// Help on demand (AUDIO.md §9.5): generalbank's line for the unit script's "hint_NN" condition, vo\lara\sc_CC_NN_hint|answer
+// with CC = the kChapters index being played (sc_00 = the burning manor prologue, whose l3 units share the level digit
+// with Croft Manor's sc_03 lines). Empty when the condition is not "hint_NN" or the chapter has no lines (0..7 only).
+std::string helpLinePath(int chapter, const std::string& condition, bool answer);
+
 // ---- player ----
 class SoundPlayer {
 public:

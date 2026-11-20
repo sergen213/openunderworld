@@ -330,6 +330,13 @@ float rolloff(float d, float mn, float mx) { // 0x585070 (curve 1)
     return f * f;
 }
 
+std::string helpLinePath(int chapter, const std::string& condition, bool answer) {
+    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    if (chapter < 0 || chapter > 7 || condition.size() != 7 || !condition.starts_with("hint_") || !digit(condition[5]) || !digit(condition[6]))
+        return {};
+    return std::string("vo\\lara\\sc_0") + char('0' + chapter) + "_" + condition.substr(5, 2) + (answer ? "_answer" : "_hint");
+}
+
 Pcm oscillator(uint8_t wave, float hz, float seconds, uint32_t rate, uint32_t seed) {
     Pcm p{.sampleRate = rate, .channels = 1};
     p.samples.resize(size_t(std::max(0.0f, seconds) * float(rate)));

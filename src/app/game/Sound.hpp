@@ -33,8 +33,8 @@ public:
     void menuSound(uint32_t dtp);
     const locale::SubtitleTicker& subtitles() const { return ticker_; }
     void setLanguage(locale::Language l) { player_.language = uint32_t(l); } // voice-line subtitles from now on
-    // Help on demand (PDA Hint / Answer): plays vo\lara\sc_<level>_<NN>_hint|answer for the unit script's current
-    // "hint_NN" condition (script::Runtime::helpCondition); false (and a log line) when there is none.
+    // Help on demand (PDA Hint / Answer): plays audio::helpLinePath(World::chapter, …) = vo\lara\sc_<chapter>_<NN>_hint|answer
+    // for the unit script's current "hint_NN" condition (script::Runtime::helpCondition); false (and a log line) when none.
     bool playHelp(const game::World& world, bool answer);
     // A sound record of an animation / one-shot event list (fx::System::sound; AUDIO.md §9.7) at a world position.
     void addObject(const fx::ObjectFx& fx); // its DTPs join the bank, its Waves the mixer (once; animSound does it too)
