@@ -943,6 +943,132 @@ TEST(StreamReal, CameraTriggerRecordHoldsTheCamera) {
     EXPECT_EQ(w.cameraRecordVolume(), std::nullopt) << "leaving drops its record (0x5F2A70)";
 }
 
+// Trigger command 0x14 (focus points, World::updateFocusPoints): l2_cliffclimb 3859 {0x14 3} flags focus point 3 of her
+// unit (weight 65 %, radius 1295.8 (flag 0x02), view margin 695.3 (0x08), fades of type 2 over 1.2 s). tru.exe under
+// Wine 2026-11-19 (w2/CamZones7 s3859.txt / s3859b.txt: camera +0x90, pivot +0x100, look vector +0x160, Lara put on the
+// floor at the volume's centre, 1066 from the point): the look vector meets the pivot -> point segment at 0.38..0.42 of
+// the way (0x5F12F0: (pivot + 0.65 point) / 1.65 = 0.394, mixed in by +0x204 = the look-idle weight); after a mouse
+// nudge it looks at the pivot (0.005) until the 5..7 s look-idle ramp brings it back (0.18, 0.36, 0.41).
+TEST(StreamReal, CameraTriggerFocusPointTurnsTheLook) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::optional<game::World> world;
+    game::World& w = cliffWorld(bf, world);
+    const auto* t = w.script().find(3859);
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->camera[0].command, 0x14u);
+    EXPECT_EQ(std::bit_cast<int32_t>(t->camera[0].arg[0]), 3);
+    glm::vec3 point(0);
+    for (const auto& u : w.units())
+        if (u.data.name == "l2_cliffclimb") {
+            ASSERT_GT(u.data.col.focusPoints.size(), 3u);
+            const auto& f = u.data.col.focusPoints[3];
+            EXPECT_FLOAT_EQ(f.weight, 65.0f);
+            EXPECT_EQ(f.flags, 0xAu) << "radius + view tests, not enabled by itself";
+            point = f.pos + u.offset;
+        }
+    // Its share of the way from the pivot to the point (the look target lies on that segment with one point gathered).
+    const auto share = [&] {
+        const glm::vec3 to = point - w.cameraPivot(), look = w.camera().target - w.cameraPivot();
+        EXPECT_LT(glm::length(look - to * glm::dot(look, to) / glm::dot(to, to)), 1.0f) << "on the pivot -> point segment";
+        return glm::dot(look, to) / glm::dot(to, to);
+    };
+    auto s = w.player().state();
+    s.pos = {-23267.2f, -520.2f, 5096.1f}; // the floor at its centre, as in tru.exe
+    w.restore(s, glm::radians(-175.29f), glm::radians(-6.0f)); // tru.exe's camera there
+    for (int i = 0; i < 9 * 60; ++i) w.tick({});
+    ASSERT_TRUE(w.script().find(3859)->inside);
+    std::fprintf(stderr, "focus share %.3f (tru.exe 0.38..0.42)\n", share());
+    EXPECT_NEAR(share(), 0.65f / 1.65f, 0.002f) << "(pivot + 0.65 point) / 1.65, fully blended in";
+    game::Actions nudge;
+    nudge.look = {0.5f, 0};
+    w.tick(nudge);
+    for (int i = 0; i < 3 * 60; ++i) w.tick({});
+    EXPECT_LT(share(), 0.01f) << "look input: the blend follows the look-idle weight down (4 / s)";
+    for (int i = 0; i < 3 * 60; ++i) w.tick({}); // 6 s since the nudge: the look-idle weight 0.5
+    const float mid = share();
+    EXPECT_GT(mid, 0.05f) << "the 5..7 s ramp brings it back";
+    EXPECT_LT(mid, 0.35f);
+    // A save in the middle of the ramp continues the same.
+    const auto bytes = save::serialize(save::capture(w));
+    for (int i = 0; i < 60; ++i) w.tick({});
+    const glm::vec3 after = w.camera().target;
+    save::apply(save::parse(bytes), w);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ(w.camera().target, after);
+    for (int i = 0; i < 2 * 60; ++i) w.tick({});
+    EXPECT_NEAR(share(), 0.65f / 1.65f, 0.002f);
+    // Out of the volume the flag is gone (0x601D30 clears it) and the point fades out over its 1.2 s: onto the floor of
+    // 3857 ({2 790.14}, {0x18 -17 deg}: no focus point).
+    const auto* other = w.script().find(3857);
+    ASSERT_NE(other, nullptr);
+    const auto floor = w.collision().groundProbe(other->pos + glm::vec3(0, 0, other->shape.half.z - 200), 2 * other->shape.half.z);
+    ASSERT_TRUE(floor);
+    s.pos = floor->point;
+    w.restore(s, w.camera().yaw, w.camera().pitch);
+    for (int i = 0; i < 2 * 60; ++i) w.tick({});
+    ASSERT_FALSE(w.script().find(3859)->inside);
+    ASSERT_TRUE(w.script().find(3857)->inside);
+    EXPECT_LT(glm::distance(w.camera().target, w.cameraPivot()), 1.0f) << "no focus point gathered";
+}
+
+// Trigger command 0xC (a cut): l1_krakenstairs_b 599 is one of the two volumes that carry it (with l7_arctic_sea 9226).
+// Entering it runs 0x601D30, which ends in 0x6017D0: the focus jumps to its goal and the camera (+0x90) is put at the
+// target distance +0x1320 at the angles of the active override, else the force set's target, else behind her, level;
+// the distance state +0x1D4 stays, so the camera then follows back out to it while it returns toward +0x1320 (Wine:
+// +0x1D4 1262.3 -> 1236.3 toward 474.1 after entering, the yaw at 19.64 = behind her, the pitch at the set's -7.50;
+// w2/CamRest8/k599tp.txt).
+TEST(StreamReal, CameraTriggerCutPutsTheCameraAtItsAngles) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l1_krakenstairs_b", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto* t = w.script().find(599);
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->camera.size(), 5u); // {2 474.08}, {0x19 / 0x1A (0, 0, -237.04)}, {0x15}, {0xC}
+    EXPECT_EQ(t->camera[4].command, 0xCu);
+    EXPECT_NEAR(t->camera[0].arg[0], 474.083f, 0.01f);
+    // A floor her root + 200 is inside the box from (the box is unturned; the floor under its centre lies too deep).
+    std::optional<collision::Hit> inside;
+    for (float x = -t->shape.half.x + 50; x < t->shape.half.x && !inside; x += 50)
+        for (float y = -t->shape.half.y + 50; y < t->shape.half.y && !inside; y += 50)
+            if (const auto f = w.collision().groundProbe(t->pos + glm::vec3(x, y, t->shape.half.z - 200), 2 * t->shape.half.z))
+                if (f->point.z + 200 > t->pos.z - t->shape.half.z + 20) inside = f;
+    ASSERT_TRUE(inside) << "a floor in 599";
+    auto s = w.player().state();
+    std::optional<glm::vec3> outside;
+    for (int k = 0; k < 8 && !outside; ++k) { // a floor beside it, out of it
+        const float a = float(k) * glm::radians(45.0f);
+        const auto f = w.collision().groundProbe(inside->point + glm::vec3(700 * std::cos(a), 700 * std::sin(a), 200), 400);
+        if (!f) continue;
+        s.pos = f->point, s.yaw = a + glm::radians(180.0f);
+        w.restore(s, s.yaw + glm::radians(60.0f), glm::radians(10.0f));
+        for (int i = 0; i < 60; ++i) w.tick({});
+        if (!w.script().find(599)->inside && glm::distance(w.player().state().pos, f->point) < 50) outside = f->point;
+    }
+    ASSERT_TRUE(outside) << "a floor beside 599";
+    const float distBefore = w.cameraDistance();
+    s = w.player().state();
+    ASSERT_GT(std::abs(std::remainder(w.camera().yaw - s.yaw, 6.2831853f)), glm::radians(30.0f)) << "the camera turned off her back";
+    s.pos = inside->point;
+    w.restore(s, w.camera().yaw, w.camera().pitch);
+    w.tick({});
+    ASSERT_TRUE(w.script().find(599)->inside);
+    // The cut: behind her (yaw set 11's target), at the on-foot pitch set 4's -7.5 deg, the camera at 474.08 plus the one
+    // follow step it has made back out this tick (3793.1 / 60); the distance state as it was.
+    EXPECT_NEAR(glm::degrees(std::remainder(w.camera().yaw - w.player().state().yaw, 6.2831853f)), 0.0f, 0.1f);
+    EXPECT_NEAR(glm::degrees(w.camera().pitch), -7.5f, 0.05f);
+    const float cutDistance = glm::distance(w.camera().position, w.cameraPivot());
+    EXPECT_GT(cutDistance, 474.0f);
+    EXPECT_LT(cutDistance, 474.1f + 3793.1f / 60.0f + 1.0f);
+    EXPECT_NEAR(w.cameraDistance(), distBefore, 2.0f) << "+0x1D4 stays (Wine: 1262.3 -> 1236.3 easing toward 474.1)";
+    for (int i = 0; i < 4; ++i) w.tick({});
+    EXPECT_NEAR(glm::distance(w.camera().position, w.cameraPivot()), w.cameraDistance(), 1.0f) << "the camera follows back out";
+    EXPECT_NEAR(glm::degrees(std::remainder(w.camera().yaw - w.player().state().yaw, 6.2831853f)), 0.0f, 0.1f);
+}
+
 // Trigger commands 4 (pitch override by id) and 8 (pitch look limits), tru.exe under Wine 2026-11-19 (w2/CamRest8,
 // l3_main_bedroom after a new game; fast.py / camz.py read the Lara camera +0x1278 and +0x8C4):
 // - 4468 {2 790.14}, {4 id 9 = (-5 deg, 1500 deg/s, hold 0)} inside 4476 {0x18 -10 deg 1000 deg/s}: walking in with the

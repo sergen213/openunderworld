@@ -1234,9 +1234,10 @@ public:
     // from the pivot (ou-game --self-test probes).
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
-    // The point the orbit camera turns about (LaraCameraRewrite +0x100, the focus tracker's); camera().target is where it
-    // looks, that point moved by a trigger's look offset (commands 0x1A / 0x1C, World.cpp).
-    vec3 cameraPivot() const { return cam_.target - orbit_.lookAdd.now(); }
+    // The point the orbit camera turns about (LaraCameraRewrite +0x100, the focus tracker's) as its last update left it;
+    // camera().target is where it looks: that point moved by a trigger's look offset (commands 0x1A / 0x1C) and turned
+    // toward the focus points (World.cpp).
+    vec3 cameraPivot() const { return pivot_; }
     // The trigger volume whose level camera record (command 0x12) the orbit camera follows now, if any.
     std::optional<int32_t> cameraRecordVolume() const {
         return orbit_.hintMarkup <= -2 ? std::optional<int32_t>(-2 - orbit_.hintMarkup) : std::nullopt;
@@ -1375,6 +1376,9 @@ private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
     void updateCamera(const Actions& a, float dt); // Camera.cpp
     void updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove);
+    // The look point turned toward the gathered focus points (0x5F1540 / 0x6009C0): `look` the look tracker's point, `last`
+    // last tick's camera, `idle` the look-idle weight, `stick` the move stick's length, `move` her move this tick.
+    vec3 updateFocusPoints(vec3 look, const CameraState& last, float idle, float stick, float move, float dt);
     bool startSplineCamera(const std::string& unit, uint32_t index, uint32_t value); // autosplinecamera 0
     bool cameraNative(int op, const std::string& unit, uint32_t index, uint32_t value); // script::Runtime::CameraNative
     bool tickSplineCamera(float dt); // false once no spline camera plays (Camera.cpp)
@@ -1554,6 +1558,7 @@ private:
     std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
+    vec3 pivot_{0}; // cameraPivot(): the orbit camera's pivot this tick (output only, recomputed by every update)
     // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
     // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
     // its tick).
@@ -1606,6 +1611,18 @@ private:
         float limitTime = 0;     // seconds since the look limits' target changed (0x609C00: +0x30, blended over 0.25 s)
         vec3 limitTo{0, 0, -1};  // that target (yawRange, pitchLo, pitchHi); z < y: none yet
         std::vector<int32_t> triggers; // the camera trigger volumes she was inside when 0x601D30 last ran (+ the mode)
+        // Focus points (World::updateFocusPoints; tru.exe 0x5F1540 with the lists at +0x14C0 +0x10): the ones gathered
+        // (fading in) and the ones dropped (fading out), each {unit, id, weight t, its curved value}; the ones the
+        // triggers' 0x14 flag (0x20 on +0xFC) since 0x601D30 last ran; the look's blend toward their point (+0x204).
+        struct FocusEntry {
+            std::string unit;
+            int id = 0;
+            float t = 0, w = 0;
+            bool operator==(const FocusEntry&) const = default;
+        };
+        std::vector<FocusEntry> focusIn, focusOut;
+        std::vector<std::pair<std::string, int>> focusFlags;
+        float focusBlend = 0;
     } orbit_;
     float cameraSwing_ = 0; // cameraSwing()
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp
