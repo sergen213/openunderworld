@@ -294,6 +294,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `object.<uid>.stowed`, `object.<uid>.unit` | that object is stowed on her; the unit the instance lives in (it changes unit with her while she carries it; a bike's is the unit it stands in) |
 | `portable.<uid>.in`, `object.<uid>.in` | the receptacle that portable is inserted in, 0 none |
 | `object.<uid>.exists` `.name` `.hidden` `.dead` | a script object by intro uid (objectlist name; instance hidden / killed) |
+| `object.<uid>.broken` | a class-30 breakable is broken (`World::breakablePhase`); null for other objects |
 | `object.<uid>.pos.x/.y/.z` | its position with its own displacement (a pushed block, a fallen body) |
 | `object.<uid>.body.x/.y/.z` | the translation of its own rigid motion from rest (doors on their joints, sliders) |
 | `object.<uid>.feature.x/.y/.z` | where its grapple target point is now (`World::grappleTargetNow`: a pull target's feature moves with the section showing its model), null when it is no grapple target |
@@ -554,6 +555,7 @@ tested behaviour happen.
 | `ch12_trailstart_ride_in` | l4_trailstart | section 12 (C12-03, C12-04): the ride of `bike_ride`, then the upper road: plane 6712 starts reveal 6677, which sets her down beside the bike (larabase 54); mount again, ride into the temple courtyard (volumes 6713, 6703) |
 | `ch13_ballcourt_calendar_locked` | l4_ballcourt | Xibalba: at calendar 5477 without the jaguar head a gripped push handle turns nothing (hinge joint 2 stays 0, section 5 waits in state 3) |
 | `ch13_temple_headdress` | l4_temple | Xibalba: from the pit floor's checkpoint 4971 to the altar, the headdress 5228 taken out of its holder 5249 |
+| `ch13_temple_block_topple` | l4_temple | Xibalba (C13-22): from the east ledge (checkpoint 4976) the rope onto post 4951, a walk north until it bends round statue head 5236, eight Interact taps: the head tips off its pillar and falls through floor 5234 (broken) to z -2523 (tru.exe under Wine: -2523; docs/GAMEPLAY.md "Rope bends on bodies") |
 | `ch13_ballcourt_pole_gate` | l4_ballcourt | Xibalba: `puzzle_pole_block_door`'s six steps, then on the pole the turn across it, the swing, the fling to the gate (1550), through the doorway into calendar 2's court (cinematic 6388) |
 | `ch13_mask_to_calendar` | l4_trailstart → l4_ballcourt | the jaguar head 6604 taken from its pedestal (stowed by the pick-up clip), a level load to checkpoint 5478 (the `level` fixture stands for the ride), set on calendar 5477's jaguar by one Interact (section 5: 3 -> 4 -> 5, vt 54) |
 | `ch13_ballcourt_calendar_solve` | l4_trailstart → l4_ballcourt | the steps of `ch13_mask_to_calendar`, then the jaguar handle (section 1's push / pull record at (3975, 10908), facing -135 degrees) gripped and pushed forward 4 s: the ring's hinge j2 turns negative past -0.2 rad. The lever east of the ring (section 0, record 540) is locked in the data (docs/re/PUZZLE_BLOCKERS.md OU-PZL-007) |
@@ -586,11 +588,10 @@ tested behaviour happen.
 | `ch20_yggdrasil_reveal` | l7_yggdrasil → l7_yggdrasil_hall01 | section 20 (C20-17, C20-18): volume 8804 from checkpoint 8792, cinematic object 8773 leaves her at checkpoint 8775; the thralls after it met with the hammer |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now (`ch09_shrine_shaft_descent`, `ch04_column_hall_perches`, `ch05_natla_room`, `ch06_hallway_roll` and `ch06_second_shaft_exit` moved up 2026-11-20):
-
-| known gap | level | fails at | cause |
-|---|---|---|---|
-| `ch13_temple_block_topple` | l4_temple | `walk_until_the_rope_bends` | ring 4951 is offered from the east ledge and the throw holds (OU-PZL-008 (a): the sight ray ends at the post's feature); the run along the ledge wraps no bend on statue head 5236, and a bend that drags a rigid body is not modelled (tru.exe's bends are physics bodies, OU-PZL-008 (b)); the head has no collider the rope's ray could meet, and the scenario's walk stops 850 short of where the rope crosses it |
+registered with ctest. Run them by hand; move one up a directory when it passes. None is parked now
+(`ch13_temple_block_topple` moved up 2026-11-20: OU-PZL-008 (b), the rope's bends on bodies; before it
+`ch09_shrine_shaft_descent`, `ch04_column_hall_perches`, `ch05_natla_room`, `ch06_hallway_roll` and
+`ch06_second_shaft_exit`).
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);
