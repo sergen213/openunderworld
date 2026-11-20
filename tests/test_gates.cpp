@@ -2974,6 +2974,76 @@ TEST(ProgressionReal, TempleRingOfferedFromTheEastLedge) {
     }
 }
 
+// OU-PZL-008 (b). From the east ledge roped to post 4951, she walks north until the rope bends round statue head 5236
+// (ca_rb_statue_head_temple, class 34, one 569 x 569 x 538 box, mass 100) and tugs: tru.exe under Wine (2026-11-20,
+// docs/GAMEPLAY.md "Rope bends on bodies"): the bend stirs the head (0.2 units, 0.003 rad), each 0.2 s Interact tap
+// (the pull state lasts while E is held) moves it a few units north and tips it more; after the eighth tap it tips off
+// its pillar to the north, breaks floor 5234 and lands 4100 below. Ours: the bend on the head's rope-only collision
+// (World::ropeSolids_) makes it loose, its bend body (Scene::setRopeBends) takes the rope's pull while she tugs.
+TEST(ProgressionReal, TempleHeadToppledByTheRopeBend) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_temple");
+    auto& w = *wp;
+    const bool debug = std::getenv("OU_ROPE_DEBUG");
+    const auto head = [&] { return w.script().find(5236)->pos + w.script().find(5236)->offset; };
+    const vec3 head0 = head();
+    const auto ground = w.collision().groundProbe(vec3(-2790, -14380, 4200), 1500, 0x0F);
+    ASSERT_TRUE(ground);
+    place(w, ground->point + vec3(0, 0, 5), glm::radians(180.0f));
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_TRUE(w.grappleTarget() && w.grappleTarget()->uid == 4951);
+    game::Actions press;
+    press.grapple = true;
+    w.tick(press);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().grappleUid, 4951);
+    ASSERT_EQ(w.player().state().state, game::State::GrappleSwing);
+    const auto onHead = [&] {
+        const auto& s = w.player().state();
+        for (size_t k = 0; k < s.ropeBends; ++k)
+            if (s.ropeBendOn[k] == 5236) return true;
+        return false;
+    };
+    // north along the ledge (the stick in the camera's frame) to where she tugged under Wine (y -12940; the rope first
+    // touches the head's south-east corner at y -13365)
+    float bentAt = 0;
+    for (int i = 0; i < 60 * 8 && w.player().state().pos.y < -12940.0f; ++i) {
+        game::Actions walk;
+        const float cy = w.camera().yaw;
+        walk.move = vec2(-std::cos(cy), std::sin(cy));
+        w.tick(walk);
+        if (!bentAt && onHead()) bentAt = w.player().state().pos.y;
+    }
+    EXPECT_NEAR(bentAt, -13365.0f, 60.0f) << "bent where the rope first meets the head";
+    if (debug) std::printf("walked to %.0f %.0f %.0f, bends %u\n", w.player().state().pos.x, w.player().state().pos.y, w.player().state().pos.z, w.player().state().ropeBends);
+    ASSERT_TRUE(onHead()) << "the rope bends round the head";
+    for (int i = 0; i < 10; ++i) w.tick({});
+    EXPECT_TRUE(w.script().find(5236)->loose) << "the bend enables the head";
+    EXPECT_LT(glm::distance(head(), head0), 10.0f) << "the bend alone leaves it on its pillar";
+    game::Actions tug;
+    tug.interact = true;
+    const auto tap = [&] { // 0.2 s held, 0.3 s let go
+        for (int i = 0; i < 12; ++i) w.tick(tug);
+        for (int i = 0; i < 18; ++i) w.tick({});
+    };
+    for (int i = 0; i < 30; ++i) w.tick(tug); // the first tug with Interact held 0.5 s
+    EXPECT_FALSE(w.player().ropeTugging()) << "one tug per press however long Interact is held (Wine: 0.215 s with E held 6 s)";
+    for (int i = 0; i < 18; ++i) w.tick({});
+    if (debug) std::printf("after one tap: head %.1f %.1f %.1f\n", head().x, head().y, head().z);
+    EXPECT_GT(head().z, head0.z - 20.0f) << "one tap does not topple it";
+    EXPECT_GT(head().y, head0.y) << "it is pulled north, toward the straight rope";
+    for (int n = 1; n < 8; ++n) {
+        tap();
+        if (debug) std::printf("after %d taps: head %.1f %.1f %.1f\n", n + 1, head().x, head().y, head().z);
+    }
+    for (int i = 0; i < 60 * 6; ++i) w.tick({});
+    if (debug) std::printf("end: head %.1f %.1f %.1f, floor %d\n", head().x, head().y, head().z, int(w.breakablePhase(5234).value_or(game::World::BreakPhase::Whole)));
+    EXPECT_LT(head().z, 1700.0f) << "it left its pillar and went down through the floor (1652)";
+    EXPECT_GT(head().y, head0.y + 300.0f) << "to the north";
+    EXPECT_EQ(w.breakablePhase(5234), game::World::BreakPhase::Broken) << "plane 5247 saw it cross: the floor broke";
+}
+
 namespace {
 // Lara grips the kind-1 record of `uid`'s section `section` from the spot whose way to the object is nearest to `dir`
 // (any spot for a zero `dir`), facing `face`, and holds the stick `stick` until `done` or `ticks` pass. False: no grip.

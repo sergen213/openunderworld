@@ -2437,6 +2437,32 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              for (const game::vec3 p : {base - n * 300.0f, base - n * 300.0f, base + n * 300.0f}) s.pos = p, w.restore(s, 0, 0), w.tick({});
              w.restore(start, 0, 0); // back on the floor: an airborne save resumes at the checkpoint
          }, [](const game::World& w) { return w.splineCameraActive(); }},
+        // Roped to l4_temple post 4951 with the rope bent round statue head 5236 (loose, its bend body pulled by a tug):
+        // saved mid-tug; the taps (one every 0.5 s) go on after the load until the head falls (OU-PZL-008 b).
+        {"l4_temple", game::Spawn{{-2790, -14380, 3700}, 3.1415927f}, 1, 600, [](uint64_t t) {
+             game::Actions a;
+             a.interact = t % 30 < 12;
+             return a;
+         }, [](game::World& w) {
+             for (int i = 0; i < 30; ++i) w.tick({});
+             game::Actions press;
+             press.grapple = true;
+             w.tick(press);
+             for (int i = 0; i < 90; ++i) w.tick({});
+             for (int i = 0; i < 600 && w.player().state().pos.y < -12940.0f; ++i) {
+                 game::Actions walk;
+                 const float cy = w.camera().yaw;
+                 walk.move = game::vec2(-std::cos(cy), std::sin(cy));
+                 w.tick(walk);
+             }
+             while (w.ticks() % 30) w.tick({});
+             game::Actions tug;
+             tug.interact = true;
+             for (int i = 0; i < 5; ++i) w.tick(tug); // into the first tug, as the input goes on
+         }, [](const game::World& w) {
+             const auto& s = w.player().state();
+             return w.player().ropeTugging() && s.ropeBends && s.ropeBendOn[0] == 5236 && w.script().find(5236)->loose;
+         }},
     };
     const auto dump = [](const game::World& w) {
         const std::string s = save::serialize(save::capture(w));

@@ -1962,7 +1962,7 @@ void World::syncObjects() {
     colliders_.clear();
     col_.dynamics.clear();
     jaws_.clear();
-    shotOnly_.clear(), shotOnlyLocal_.clear();
+    shotOnly_.clear(), shotOnlyLocal_.clear(), ropeSolids_.clear();
     physics_.clearHinges(); // uber joints and loose bodies keep simulating
     for (const auto& o : script_.objects()) {
         const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Switch;
@@ -1997,6 +1997,11 @@ void World::syncObjects() {
                     for (int seg = 0; seg < int(sp->segments.size()); ++seg)
                         if (auto shape = physics::solidShape(*sp, seg))
                             shotOnly_.push_back({o.uid, std::move(shape), introModel(o) * sp->segments[seg]}), shotOnlyLocal_.push_back(sp->segments[seg]);
+            // A fixed rigid body (World::ropeSolids_): the rope's bends meet it.
+            if (const physics::ObjectPhysics* rp = objectPhysics(o.name); rp && rp->physClass == physics::kClassRigidBody && !o.joint && !o.hidden && !o.dead &&
+                                                                         o.name.find("_grapple") == std::string::npos)
+                for (int seg = 0; seg < int(rp->segments.size()); ++seg)
+                    if (auto shape = physics::solidShape(*rp, seg)) ropeSolids_.push_back({o.uid, std::move(shape), introModel(o) * rp->segments[seg]});
             continue;
         }
         if (o.kind == script::Kind::Switch && !uber &&
@@ -2999,6 +3004,15 @@ void World::stepPhysics(float dt) {
         if (afloat || (base && base->loose && base->uid != o.uid))
             const_cast<script::Object&>(o).loose = true, syncedObjects_ = ~size_t(0); // World owns object motion
     }
+    // A fixed rigid body the rope bends on (World::ropeSolids_, PlayerState::ropeBendOn) is enabled: tru.exe 0x6B3570
+    // pins the bend body to the touched instance's body (0x4E1260 with its +0x274) anew every frame, and removing the
+    // previous joint (0x4E9B00) clears the fixed bit 0 of +0x15C on both its bodies, as multibody 2 does (0x4D8FD0)
+    // [O decomp]. Under Wine the statue head 5236 stirs (0.2 units, 0.003 rad) as the rope comes onto it. Ours: loose.
+    if (const auto& s = player_.state(); s.grappleUid)
+        for (size_t k = 0; k < s.ropeBends; ++k)
+            if (s.ropeBendOn[k] && std::ranges::any_of(ropeSolids_, [&](const collision::Dynamic& d) { return d.id == s.ropeBendOn[k]; }))
+                if (auto* o = const_cast<script::Object*>(script_.find(s.ropeBendOn[k])); o && !o->loose)
+                    o->loose = true, syncedObjects_ = ~size_t(0); // World owns object motion
     // A body the grapple pulled loose that still rides its uber joint (l1 snake head 751 on its rail, held by a
     // counterweight link): the pull drags its watched prismatic joints downhill at the braced pull speed while they are
     // in range [I] (tru.exe: Lara's rope pulls the Havok body); leaving the range, its states drop the link, then the
@@ -3045,6 +3059,34 @@ void World::stepPhysics(float dt) {
                     looseIds.insert(uid);
                 }
     physics_.setLoose(loose);
+    // The rope's tension while she tugs it, as the weight of kRopeTug kg [I: tru.exe's rope joints (type 6, 0x4E03F0)
+    // and her pull's force law are not decoded; fitted to the Wine trial, eight tugs 0.5 s apart from y -12940 after
+    // which the statue head tips off its pillar. The head rocks on its pillar edge, so the tug that topples it is
+    // chaotic in the tension: 85 .. 90 topple it on the fifth .. seventh tug, 80 after the eighth, 83 not at all, 92 ..
+    // 120 by the third / fourth (docs/GAMEPLAY.md "Rope bends on bodies")].
+    constexpr float kRopeTug = 87.0f;
+    // The rope's pull on its bends that lie on loose bodies (Scene::setRopeBends: tru.exe's bend bodies). While she tugs
+    // the rope (Player::ropeTugging: tru.exe's pull state, 0.215 s per Interact press) the rope's tension pulls each
+    // such bend along both of its segments, toward the straight rope.
+    std::vector<physics::Scene::RopeBend> ropeBends;
+    if (const auto& s = player_.state(); s.grappleUid) {
+        const bool tug = player_.ropeTugging();
+        for (size_t k = 0; k < s.ropeBends; ++k) {
+            if (!s.ropeBendOn[k] || !looseIds.contains(s.ropeBendOn[k])) continue;
+            // the bend in the body's model frame: ropeBendLocal is in its first collider's frame (Player::ropeBody); a body
+            // turned loose this tick has its colliders from the next one
+            const auto c = std::ranges::find(colliders_, s.ropeBendOn[k], &ObjectCollider::uid);
+            if (c == colliders_.end()) continue;
+            const vec3 at = s.ropeBend[k], prev = k ? s.ropeBend[k - 1] : s.grappleAnchor;
+            const vec3 next = k + 1 < s.ropeBends ? s.ropeBend[k + 1] : s.pos + vec3(0, 0, 400.0f); // the hand, as Grapple.cpp kHandZ
+            vec3 f(0);
+            if (tug)
+                for (const vec3 to : {prev, next})
+                    if (glm::distance(to, at) > 1.0f) f += glm::normalize(to - at) * (kRopeTug * physics::kJointGravity * 900.0f);
+            ropeBends.push_back({s.ropeBendOn[k], at, vec3(c->frame * glm::vec4(s.ropeBendLocal[k], 1)), f});
+        }
+    }
+    physics_.setRopeBends(ropeBends);
     const auto bikes = bikeVehicles();
     physics_.setVehicles(bikes); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result
     // Lara's proxy shoves loose bodies and ragdolls she walks into (by her mass); not while she rides or lies dead, nor

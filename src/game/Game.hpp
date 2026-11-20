@@ -480,6 +480,11 @@ struct PlayerState {
     uint8_t ropeBends = 0;
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
+    // The object whose collision bend i touched (0: the terrain) and the bend in that object's first collider frame:
+    // the bend rides the object (tru.exe 0x6C5490 reads each bend back from its body, 0x4D8D90; 0x699A50 / 0x6B3570 hold
+    // the bend body to the touched instance's body by a type-11 joint at the bend, 0x4E1260).
+    std::array<int32_t, kRopeBends> ropeBendOn{};
+    std::array<vec3, kRopeBends> ropeBendLocal{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
     float runTime = 0;    // Run: seconds in the run loop ng_run (the chart's state time of S65)
     // Carrying a portable that encumbers her (PortableDef::encumbers; World sets it every tick): the
@@ -578,6 +583,12 @@ public:
     void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling, float ropeMax = 0);
     void releaseGrapple(bool jump);               // let go, keeping the swing's momentum
     float maxRope() const { return s_.ropeMax > 0 ? s_.ropeMax : anims_.grapple.maxRope; } // 0x698B40
+    // Object collision the rope's bends meet besides the collision mesh's (World::ropeSolids_: fixed rigid bodies that
+    // collide with nothing else in ours). Kept by pointer; World sets it before each tick.
+    void setRopeSolids(const std::vector<collision::Dynamic>* solids) { ropeSolids_ = solids; }
+    // On the ground roped to an anchor with Interact held she tugs the rope (Grapple.cpp; World::stepPhysics pulls the
+    // rope's bends on loose bodies with it).
+    bool ropeTugging() const;
     void die(std::string_view clip);       // State::Dead playing `clip` once
     void hitReact(std::string_view clip, bool mirror = false); // State::Hit playing `clip` once (restarts it)
     // Interactions (World): where they can start: on her feet (standing, walking, running, landing) or crouched, out of
@@ -745,10 +756,12 @@ private:
     void standUp(); // let go of the rope, standing
     void jumpOffRope(vec2 move); // Jump on the rope: the leap off it (hanging free: along her facing; on a wall: by the stick)
     void wrapRope(vec3 oldHand, vec3 hand); // bends the rope round geometry / straightens it (Grapple.cpp)
+    const glm::mat4* ropeBody(int32_t uid) const; // the first collider frame of object `uid` the rope can meet, null none
     void land(vec2 move);
 
     const collision::CollisionMesh& col_;
     const AnimLibrary& anims_;
+    const std::vector<collision::Dynamic>* ropeSolids_ = nullptr; // setRopeSolids
     Tuning t_;
     PlayerState s_;
     bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
@@ -1854,6 +1867,10 @@ private:
     std::vector<collision::Dynamic> shotOnly_;
     std::vector<glm::mat4> shotOnlyLocal_; // each shape's segment frame in its object's model space
     void poseShotOnly();                   // their world frames: the object's intro, or the marker it is anchored to
+    // Fixed rigid bodies (class 34, no joint, not loose, not a grapple anchor) that collide with nothing in ours: the
+    // rope's bends meet them (Player::setRopeSolids; tru.exe's rope casts 0x6B1CC0 meet every instance body), at their
+    // intro frames. A bend on one enables it (stepPhysics: it turns loose). l4_temple's statue head 5236.
+    std::vector<collision::Dynamic> ropeSolids_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     const physics::ObjectPhysics* objectPhysics(const std::string& name); // objectPhysics_, loaded on first use
     std::optional<glm::mat4> markerFrame(const script::Object& o, int id); // HInfo marker `id` of `o` in the world

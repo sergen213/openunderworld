@@ -211,7 +211,9 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
     const game::Buttons& b = p.buttons;
     const auto& h = p.hurdle;
     json bends = json::array();
-    for (size_t i = 0; i < p.ropeBends; ++i) bends.push_back({vec(p.ropeBend[i] - offset), p.ropeBendClear[i]});
+    for (size_t i = 0; i < p.ropeBends; ++i) // a bend on an object: that object and the bend in its collider frame
+        bends.push_back(p.ropeBendOn[i] ? json::array({vec(p.ropeBend[i] - offset), p.ropeBendClear[i], p.ropeBendOn[i], vec(p.ropeBendLocal[i])})
+                                        : json::array({vec(p.ropeBend[i] - offset), p.ropeBendClear[i]}));
     return {{"clipMix", p.clipMix}, {"mix", p.mix}, {"mirror", p.mirror},
             {"hurdle", {int(h.next), h.mix, h.alt, h.draw, vec2j(h.drawOff), vec(h.edge - offset), vec2j(h.out), h.h, h.endZ - offset.z,
                         markupRef(w, h.farLedge), h.farSeg, h.farT, h.farSide}},
@@ -282,6 +284,8 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
         for (const auto& b : g.at(4)) {
             if (p.ropeBends == game::kRopeBends) throw SaveError("too many rope bends " + g.dump());
             p.ropeBend[p.ropeBends] = vec(b.at(0)), p.ropeBendClear[p.ropeBends] = b.at(1).get<uint8_t>();
+            p.ropeBendOn[p.ropeBends] = b.size() > 3 ? b.at(2).get<int32_t>() : 0; // older saves: bends in the world
+            p.ropeBendLocal[p.ropeBends] = b.size() > 3 ? vec(b.at(3)) : game::vec3(0);
             ++p.ropeBends;
         }
     p.ropeMax = g.size() > 5 ? g.at(5).get<float>() : 0.0f; // older saves: g_grapple's rope

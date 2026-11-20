@@ -14,7 +14,7 @@ harness output, `path:line`), **[I]** inference with confidence, **[U]** unknown
 | OU-PZL-009 ch15 exit switch (`ch15_ballcourt_exit_switch`) | `modifiable` 7 (post 0x2E: enter the anim-graph state by id) is honoured only for `ar_ei_switch_oneway`; 5469's constructor calls 7(2) | high | Honour 7 on every switch. CriticalGates' gate 498 then needs the "Kraken dead" broadcast first | no. **Fixed** on agent/ScriptPuzzle (`BallcourtExitSwitchLockedUntilTheKey`; scenario out of known_gaps; `kraken_kill` takes the gear switches' reports as `call` fixtures) |
 | OU-PZL-010 ch15 rune block (`ch15_pool_rune_block`) | `ca_pu_thor_debris` has no joint record: one free body. `pushUberHandle` moves only jointed sections | high | A gripped jointless section takes the same impulse-bounded push velocity as a type-7 body | no |
 | OU-GRP-005 ch12 lever gate (`ch12_trailstart_lever_gate`) | The post's return works in ours (harness). What never runs is the detach: vt 46 "attached" is not called, `larabase` 26 is unbound, and the 1 s heave lets go of the rope | high | Call vt 46 on attach (instance prototype 64), bind `larabase` 26, keep this target roped until she lets go | no (`larabase` 26 is not in the list). **Fixed** on agent/ScriptPuzzle (`GrappleLeverReturnsWhenReleased`; scenario out of known_gaps) |
-| OU-PZL-008 ch13 statue head (`ch13_temple_block_topple`) | (a) the sight ray ended at the post's origin, 4 under the top of its floor (tru.exe: at the feature, query 0xDE); (b) nothing in ours drags a rigid body that the rope bends round (tru.exe's bends are physics bodies, 0x699A50); (c) `multibody` 92 / 93 are unbound | (a) high; (b) high; (c) high | (a) end the ray at the feature; (b) a Jolt rope chain; bind 92 / 93 | no. (c) **bound** on agent/ScriptPuzzle (`TempleFloorBreaksByMultibody92`); (a) **fixed** on agent/Joint8 (`TempleRingOfferedFromTheEastLedge`); (b) open, scenario stays parked |
+| OU-PZL-008 ch13 statue head (`ch13_temple_block_topple`) | (a) the sight ray ended at the post's origin, 4 under the top of its floor (tru.exe: at the feature, query 0xDE); (b) nothing in ours drags a rigid body that the rope bends round (tru.exe's bends are physics bodies, 0x699A50); (c) `multibody` 92 / 93 are unbound | (a) high; (b) high; (c) high | (a) end the ray at the feature; (b) bend bodies on Jolt; bind 92 / 93 | no. (c) **bound** on agent/ScriptPuzzle (`TempleFloorBreaksByMultibody92`); (a) **fixed** on agent/Joint8 (`TempleRingOfferedFromTheEastLedge`); (b) **fixed** on agent/Rope11 (`TempleHeadToppledByTheRopeBend`, scenario moved up) |
 | OU-PZL-006 freed slabs (`ch09_shrine_shaft_descent`) | Fixed joints (type 8) are never created, so action 10 on them frees nothing | high | Track fixed joints; action 10 on one frees its body B | no |
 | OU-PZL-015 ch08 `multibody` 3 | `multibody` 3 = make every body fixed again (bit 0 of physics +0x15C, timer +0x160 = 0); ours leaves it unbound | high (semantics) | Bind 3 as the inverse of 2 (Enable) | no. **Fixed** on agent/ScriptPuzzle (`MaproomMultibodyDisableFixesTheBodies`: l2_maproom planes 2637 / 2638 call it, not a ch08 object) |
 | OU-PHY-001 joint types 5 / 7 on moving bodies | Type 7: no record has a moving body A. Type 5: only the shiva scale pans, which nothing watches | high (survey) | None needed for progression. Body-A motion: **done** on agent/Joint8 (poses follow body A; fixed riders follow a freed body A) | n/a |
@@ -326,11 +326,18 @@ Scenario `known_gaps/ch13_temple_block_topple`.
   instance) at the bend position, and, for the bend next to the hand, 0x699900 / 0x6996F0 (a second body, size 3.95
   = 0x407CD70A, 0x4DC770(55.0, 4.74)) / 0x699960 (a joint, 0x4E03F0, between the rope body +0x38 and the bend,
   callback 0x698BE0) re-chain the rope's end. 0x6C5490 reads each bend's position back from its body (0x4D8D90: body
-  +0x80). So the rope is a chain of small dynamic bodies, and a wrapped rigid body is pushed by the bend bodies'
-  contacts. [U] the joint type and the rope tension law (0x698BE0).
-- Fix (not done: a Jolt rope chain, beyond this batch's smallest change): bend bodies as small Jolt spheres joined
-  by distance constraints from the anchor to the hand, colliding with loose bodies; the head 5236 made loose
-  (class 34) so that their contact moves it. Then `multibody` 92 / 93 (below, bound) finish the floor.
+  +0x80). [Corrected 2026-11-20, agent/Rope11] The bend body is not pushed by contacts: it is pinned to the touched
+  instance's body by the type-11 joint (0x4E1260, re-made every frame by 0x6B3570 while it touches), so the rope's
+  pull on the bend reaches the body through that joint; 0x698BE0 is the joints' removal callback (it unlinks the
+  bend node), and the joint removal 0x4E9B00 clears both bodies' fixed bit, which enables the head. The rope's end
+  is the "[GrappleRope] Rappel Body" (0x6996F0, 55 kg, world-pinned at the last bend by a type-5 joint 0x4E0220)
+  with a type-6 rope joint (0x4E03F0) to her. [U] the type-6 joints' tension law.
+- Done (agent/Rope11; docs/GAMEPLAY.md "Rope bends on bodies"): the post's rope tied at its feature (from its origin
+  every rope segment ran into the floor, so no bend formed), fixed rigid bodies as rope-only collision, bends that
+  record and ride the object they touch, the head enabled (loose) by a bend, and a Jolt bend body (5 kg sphere 4.74,
+  point constraint) per bend on a loose body, pulled by the rope while she tugs (one 0.215 s tug per Interact
+  press: Wine) with a fitted tension [I]. Wine (2026-11-20): eight taps tip the head off after the eighth; ours
+  after the fifth. `multibody` 92 / 93 (below) finish the floor.
 
 ### (c) `multibody` 92 / 93 [O]
 
@@ -341,8 +348,9 @@ Scenario `known_gaps/ch13_temple_block_topple`.
 
 ### Proving test
 
-New `ProgressionReal.TempleHeadFallsThroughTheFloor`: from (−2790, −14380) offered 4951; throw; walk until
-`grapple.bends ≥ 1` on 5236; tug. Expect 5236 z < 1700, 5234 dead, the "broken" message. Then the scenario passes.
+`ProgressionReal.TempleHeadToppledByTheRopeBend` (agent/Rope11): from (−2790, −14380) offered 4951; throw; walk north
+until the rope bends on 5236 (first at y −13365) and on to y −12940; one held tug and seven taps. Expect 5236 z < 1700,
+5234 broken. The scenario `ch13_temple_block_topple` passes and is no longer parked.
 
 ---
 

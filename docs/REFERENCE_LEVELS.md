@@ -26,7 +26,7 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 | [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified; 2 matches | partial; 6 matches | unverified; 1 matches | partial | n/a | 1 matches | 2 (0) |
 | [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 1 matches / 2 unmeasured | n/a | partial | partial; 1 differs; 1 open | n/a | — | 4 (0) |
 | [12](#12-the-unnamed-days-level-4---southern-mexico-part-1) | unverified; 2 matches | unverified | partial | n/a | unverified; 3 differs / 1 matches / 1 unmeasured; 2 open | partial; 1 matches / 1 unmeasured | partial | — | 2 (0) |
-| [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 4 matches | implemented; 1 matches | partial | n/a | partial; 3 differs / 1 matches / 1 unmeasured; 2 open | unverified; 1 matches / 1 unmeasured | unverified | — | 5 (1) |
+| [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 4 matches | implemented; 1 matches | partial | n/a | partial; 3 differs / 1 matches / 1 unmeasured; 2 open | unverified; 1 differs / 1 matches / 1 unmeasured | unverified | — | 6 (0) |
 | [14](#14-the-midgard-serpent-level-4---southern-mexico-part-3) | partial | partial; 2 matches | partial | n/a; 1 matches | partial | partial; 2 matches | partial | — | 5 (0) |
 | [15](#15-land-of-the-dead-level-4---southern-mexico-part-4) | unverified; 1 matches | unverified; 2 matches | partial | n/a; 1 matches | partial; 3 differs / 1 matches / 1 unmeasured; 2 open | partial; 3 matches / 1 unmeasured | unverified | — | 5 (0) |
 | [16](#16-gate-of-the-dead-level-5---jan-mayen-island-part-1) | unverified | unverified | n/a | n/a | partial | partial; 1 unmeasured | unverified | — | 3 (0) |
@@ -251,12 +251,11 @@ Matrix: [13_xibalba.md](matrix/13_xibalba.md). Units: `l4_ballcourt`, `l4_temple
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | M31 Pistol damage in play (2026-11-20): differs, M40..M46, M82..M84 Enemies (bats, nagas, spiders, cats, poachers, thralls, mercenaries, sharks): unmeasured, M44 / M45 l4_ballcourt "combat 4": births and health (2026-11-20): matches, M44 l4_ballcourt panther 6532 against Lara (2026-11-20): differs, M45 l4_ballcourt poachers 6538 / 6539 without Lara (2026-11-20): differs | OU-CMB-006, OU-CMB-008 |
-| Objects / puzzles | unverified | M52 Pole lever by hanging weight: unmeasured, M56 Push / pull blocks: matches | — |
+| Objects / puzzles | unverified | M52 Pole lever by hanging weight: unmeasured, M56 Push / pull blocks: matches, M27 Rope snagged round an object: differs | — |
 | Vehicle | unverified | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
-Self-tests: `ch13_ballcourt_calendar_locked`, `ch13_ballcourt_calendar_solve`, `ch13_ballcourt_pole_gate`, `ch13_mask_to_calendar`, `ch13_temple_headdress`.
-Parked known gaps: `known_gaps/ch13_temple_block_topple`.
+Self-tests: `ch13_ballcourt_calendar_locked`, `ch13_ballcourt_calendar_solve`, `ch13_ballcourt_pole_gate`, `ch13_mask_to_calendar`, `ch13_temple_block_topple`, `ch13_temple_headdress`.
 
 ## 14. The Midgard Serpent (Level 4 - Southern Mexico, part 3)
 
@@ -406,7 +405,7 @@ Rows of REFERENCE_COMPARISON whose evidence names no chapter unit (synthetic sce
 | Grapple | 9 unmeasured |
 | Swimming / water | 5 matches / 7 unmeasured |
 | Combat / AI | 1 differs / 1 matches / 15 unmeasured |
-| Objects / puzzles | 22 unmeasured |
+| Objects / puzzles | 21 unmeasured |
 | Vehicle | 9 unmeasured |
 | Camera / systems | 4 matches / 12 unmeasured |
 

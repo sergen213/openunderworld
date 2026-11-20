@@ -2330,6 +2330,38 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   hand and this one gets a bend where it first touched, 7.90125 off the surface, none within 15.8 of another
   (0x6A50B0). Segments are tested shortened by min(9.48, 0.45 x length) at each end (0x6B2CC0). Ours: one ray per
   segment instead of the 4.74-radius sphere casts, the touch point by bisection [I]. Saved in `player.controller`.
+- **Rope bends on bodies** (OU-PZL-008 (b); l4_temple's statue head 5236, `ProgressionReal.TempleHeadToppledByTheRopeBend`,
+  self-test `ch13_temple_block_topple`).
+  - tru.exe [O decomp]: a new bend (0x6A4D40, from the rope's free list +0xA4 into its list +0xA0, prev +0x40 / next
+    +0x44) is a body of its own (0x699A50 "Bend Body": sphere 4.74 = 0x4097B43A via 0x4EE2B0, 0x4DC770(5.0, 4.74),
+    damping 0.02 both, 0x4D8D00 / 0x4D8D20) held to the body of the instance it touched (+0x274; 0 = the world) by a
+    type-11 joint at the bend point (0x4E1260; type byte +0x5E = 0xB, two frames). Each frame 0x6B3570 casts again:
+    touching, it pins the bend anew to the touched instance at the contact + 7.90 along its normal; clear, it moves it
+    toward its neighbours' line and pins it to the world. Removing the previous joint (0x4E9B00) clears the fixed bit 0
+    of +0x15C of both its bodies, as `multibody` 2 does (0x4D8FD0): a bend enables a fixed rigid body. The rope's end
+    beyond the last bend is the "[GrappleRope] Rappel Body" (0x6996F0: radius 3.95, 55 kg, pinned to the world at the
+    bend by a type-5 joint, 0x4E0220) with a type-6 rope joint (0x4E03F0: a maximum distance, the current one when
+    given 0) to her; 0x698BE0 is the joints' removal callback (it unlinks the bend). 0x6C5490 reads each bend back from
+    its body (0x4D8D90). [U] the tension law of the type-6 joints and her pull.
+  - Wine (2026-11-20, `openunderworld-work/Rope11-wine`, tru = ours + (500.97, 9432.56, -19910.26)): the rope leaves
+    post 4951 at its top (its feature, not its origin 4 under its floor's top); stepped north along the ledge to y
+    -12940 the rope wrapped the head's south-east corner and the head stirred (0.2 units, 0.003 rad). Each Interact
+    press is one tug: the pull state lasts 0.2 s for a 0.2 s tap and 0.215 s with E held 6 s, she does not move. Eight
+    taps 0.5 s apart moved the head a few units north and tipped it a little more each time (0.01 .. 0.16 rad); it
+    tipped off its pillar to the north 0.9 s after the eighth, broke floor 5234 (its instance gone) and came to rest
+    1050 north, 6100 lower (z -2523). One held press moved it 6.8 north and left it standing. The roped walk with the
+    stick dragged her west off the ledge in both tries (the rope taut toward the post) [U: the roped walk law].
+  - Ours: a post's rope is tied at its feature (`World::tick`, GrappleKind::Post). Fixed rigid bodies without
+    collision in ours (class 34, no joint, not loose, no `_grapple` anchor) are rope-only collision
+    (`World::ropeSolids_`, `Player::setRopeSolids`); a bend records the object it touched and its point in that
+    object's collider frame and rides it (`PlayerState::ropeBendOn` / `ropeBendLocal`, saved; a clear bend becomes a
+    world point). A bend on such a body turns it loose (`World::stepPhysics`). A bend on a loose body gets a bend body
+    (`Scene::setRopeBends`: a 5 kg sphere of radius 4.74, damping 0.02, touching nothing, joined to the body by a
+    Jolt point constraint at the bend). Interact pressed on the ground roped: one tug of 0.215 s (`Player::ropeTugging`),
+    during which the rope pulls each such bend along both its segments with the weight of 87 kg [I: fitted; the
+    head rocks on its pillar edge, so the tug that topples it is chaotic in the tension: 85 .. 90 kg on the fifth ..
+    seventh tug, 80 after the eighth, 83 not at all]. From y -12940 (the test) ours tips it off on the fifth tug
+    (tru.exe: after the eighth); in the self-test it comes to rest at z -2523 (tru.exe -2523, the test's run -2806).
 - Rope inputs [O state chart + tru.exe 0x746F60 / 0x745FA0; input actions 44 / 48 = Interact, 47 / 52 = Jump, 46 =
   Grapple (generalbank DTP 0x2F)]. On the rope the stick is read in its own frame (the pad's angle and deflection,
   input +0x10 / +0x18; dead below 0.35, player data +0x9C8 / +0x920), not the camera's:
