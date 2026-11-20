@@ -15,6 +15,28 @@ Your fork may be used only to prepare pull requests to this repository. Do
 not publish or distribute your fork or modified builds separately (see
 [LICENSE](LICENSE)).
 
+## Before changing a subsystem
+
+OpenUnderworld preserves its existing systems (SDL3, Jolt, the water shaders, every AO option, RT and the rest of
+[docs/audit/PROTECTED_SYSTEMS.md](docs/audit/PROTECTED_SYSTEMS.md)) and repairs them rather than replacing them. Every
+change to a subsystem answers these seven questions in its commit message or pull request (one line each is enough
+for a small fix; write "n/a" with the reason where one does not apply):
+
+```
+1. Current:     how is it implemented now (files, config keys, defaults)?
+2. Works:       what works today, and which tests prove it?
+3. Broken:      what is wrong (BUGS.md ID, reproduction command, observed numbers)?
+4. Original:    what does tru.exe do (address or Wine measurement; [I] if inferred, [U] if unknown)?
+5. Change:      what is the smallest change that fixes it in place?
+6. Replacement: if anything is replaced, why it cannot be fixed, what migrates, and what could be lost
+                (otherwise "none")?
+7. Verify:      which tests show the fix and that nothing protected regressed (`ctest -L protected`, the
+                touched subsystem's suites, the Original preset's images)?
+```
+
+A replacement also needs its justification and migration plan written down before the code (docs/audit/BUGS.md
+entry or the subsystem's doc); defaults never change silently.
+
 ## Contribution terms
 
 By submitting a pull request, issue attachment, or any other contribution,

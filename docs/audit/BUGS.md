@@ -63,7 +63,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-WAT-003 | water render | Whitecaps drawn as soft blobs / plates | Fixed-verified | pre-existing | — |
 | OU-WAT-004 | water render | Foam / whitewater thresholds tuned on calm seas only | Not reproduced | pre-existing | C-WATERTUNE |
 | OU-WAT-005 | water render | Interactive field rings only 1-3 cm (hard to see) | Fixed-verified | new-feature defect | — |
-| OU-WAT-006 | water / gameplay | FFT swell lowered the sea ~70 units below tru.exe's waves; now zero-mean, treading 256.6 / 253.9 vs tru.exe 254.6 / 247.6 | Fixed on int/brief (bf9179e) | new-feature defect (0.50.0) | C-SWELL |
+| OU-WAT-006 | water / gameplay | FFT swell lowered the sea ~70 units below tru.exe's waves; now zero-mean, treading 256.6 / 253.9 vs tru.exe 254.6 / 247.6 | Fixed-verified (0.53.0, bf9179e) | new-feature defect (0.50.0) | C-SWELL |
 | OU-WAT-007 | water / gameplay | Dry-deck rule applies to any moving solid, not only floating hulls | Open (not reproduced off-hull) | new-feature defect (0.50.0) | C-SWELL |
 | OU-WAT-008 | water render | Under-water sun shafts weak | Reproduced (haze, no beams) | pre-existing | C-UWPORT |
 | OU-WAT-009 | water render | Marine snow specks too large | Fixed-verified | pre-existing | C-UWPORT |
@@ -71,8 +71,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-WAT-011 | water render | Water reflections miss off-screen geometry (SSR) | Open (limit) | pre-existing | — |
 | OU-WAT-012 | water render / RT | RT reflection of a shadowed cliff overhang reads too dark | Not reproduced | pre-existing | — |
 | OU-WAT-013 | water render | Geometry swell small outside the tessellated window (coarse TRU sea meshes) | Open (limit) | pre-existing | C-SWELL |
-| OU-WAT-014 | water render | Under-water tint over a level view while swimming at the surface | Fixed-verified | pre-existing | — |
-| OU-REN-001 | render | Dark sky near the chapter 2 cliff | Fixed (sky dome object) | pre-existing | — |
+| OU-WAT-014 | water render | Under-water tint over a level view while swimming at the surface | Fixed-verified (0.58.0, merge 59e367c) | pre-existing | — |
+| OU-REN-001 | render | Dark sky near the chapter 2 cliff | Fixed-verified (0.57.0, 471b42e: sky dome object) | pre-existing | — |
 | OU-REN-002 | render | HDR off by default: bright window highlights band | Open | pre-existing | — |
 | OU-REN-003 | render / cine | `co_*` cutscene actor faces render green | Open | pre-existing | — |
 | OU-REN-004 | render | Jointless uber sections drawn in bind pose | Open | pre-existing | — |
@@ -80,7 +80,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-REN-006 | render | Batches skipped "no texcoords, no material textures" (bedroom units) | Reproduced (log), needs RE | pre-existing | — |
 | OU-REN-007 | render | Blended foliage receives the shadow map under RT; no roughness | Open | pre-existing | — |
 | OU-REN-008 | render / FSR | Translated wind vertex animation has no motion vectors (FSR ghosting) | Open | pre-existing | — |
-| OU-REN-009 | render / log | False `texture 2 not found in loaded DRMs` for back-/depth-buffer samplers | Fixed on agent/Depen6 (f6e4264) | pre-existing | — |
+| OU-REN-009 | render / log | False `texture 2 not found in loaded DRMs` for back-/depth-buffer samplers | Fixed-verified (0.54.0, f6e4264) | pre-existing | — |
 | OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Open | regression | — |
 | OU-VK-002 | Vulkan AO | CORTAO temporal pass is camera-only (risk of halos on moving meshes) | Not reproduced | new-feature defect (0.51.0) | — |
 | OU-VK-003 | Vulkan | AMD Anti-Lag crash a few frames into cutscenes / loading screen | Fixed-verified | regression (Anti-Lag support) | — |
@@ -95,67 +95,67 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-AUD-003 | audio | One global music volume fade unidentified | Not reproducible (RE item) | unknown | — |
 | OU-AUD-004 | audio | Script sound wait threads, uber mover / physics-lever sounds missing | Open | pre-existing | C-VM |
 | OU-AUD-005 | audio | Music loads synchronously (tracks start a few frames early) | Open | pre-existing | — |
-| OU-CAM-001 | camera | Moving platforms do not carry the camera focus | Fixed on int/brief (lag/band); height residual fixed with OU-CAM-005 (agent/DeckCam6) | pre-existing | — |
+| OU-CAM-001 | camera | Moving platforms do not carry the camera focus | Fixed-verified (lag / band 0.53.0, merge 9fdeff9; height residual 0.54.0 with OU-CAM-005) | pre-existing | — |
 | OU-CAM-002 | camera | Swim camera follows the wave bob exactly | Not reproduced | new-feature defect [I] | C-SWELL |
 | OU-CAM-003 | camera | Motorcycle camera distance / swing are placeholders | Open | pre-existing | — |
 | OU-CAM-004 | camera | Reveal camera blend in/out ours; gamebase time scales not applied | Open | pre-existing | — |
 | OU-PLY-001 | Lara / beams | Beam-walk entry into "about to fall" undecoded | Open | pre-existing | C-CHART |
 | OU-PLY-002 | Lara / wall hug | Wall-hug corners reconstructed, not decoded | Open | pre-existing | C-CHART |
-| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Fixed on agent/ShelfOut9 (chart T1110 / clearance 8 / clip 887; which ledge [I]; no Wine runtime check) | pre-existing | C-CHART |
+| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Fixed-verified (0.58.0, merge 7d6bf3e: chart T1110 / clearance 8 / clip 887; which ledge [I]; no Wine runtime check) | pre-existing | C-CHART |
 | OU-PLY-004 | Lara / ladders | No ladder side jumps or reaches | Open | pre-existing | C-CHART |
 | OU-PLY-005 | Lara / jumps | Ledge-aim reach: running-jump rush/arc switch 20-70 farther out | Open | pre-existing | C-MEASURE |
 | OU-PLY-006 | Lara / obstacles | Low-obstacle detection distance (query 96 reach) unknown | Open | pre-existing | C-CHART |
-| OU-PLY-007 | Lara / poles | Pole fling onto a platform lands 79 past the edge (tru.exe 3 short) | Fixed-verified | pre-existing | C-MEASURE |
-| OU-PLY-008 | Lara / ledges | Running safety drop lacks the 82-unit overshoot and take-back | Fixed-verified | pre-existing | C-MEASURE |
+| OU-PLY-007 | Lara / poles | Pole fling onto a platform lands 79 past the edge (tru.exe 3 short) | Fixed-verified (0.58.0, merge bd8b8e0) | pre-existing | C-MEASURE |
+| OU-PLY-008 | Lara / ledges | Running safety drop lacks the 82-unit overshoot and take-back | Fixed-verified (0.58.0, merge bd8b8e0) | pre-existing | C-MEASURE |
 | OU-PLY-009 | Lara / chimney | Chimney wall reach / standoff pair differs (holds 110 vs 119-131) | Open | pre-existing | C-MEASURE |
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
-| OU-PLY-012 | collision | Push-out every ground tick; one-sided ground sweep + front-only push-out (Wine: tru.exe lets her through a wall from behind); switch stand point from the nearest collision box face (Wine 4525) | Fixed on agent/TickDepen7 | pre-existing | — |
+| OU-PLY-012 | collision | Push-out every ground tick; one-sided ground sweep + front-only push-out (Wine: tru.exe lets her through a wall from behind); switch stand point from the nearest collision box face (Wine 4525) | Fixed-verified (placement 0.54.0; every ground tick 0.56.0, merge 3bf7288; air / hang / swim push-out open) | pre-existing | — |
 | OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
-| OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed on int/brief (21678c2; full ctest pending) | pre-existing | — |
-| OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Fixed on agent/DeckCam6 (colliders posed after a mid-game rebuild) | pre-existing | — |
-| OU-SWM-001 | swimming | Swim turn: symmetric and view-relative (d122a62); the stick is now read against the view, which trails the camera-to-pivot line (look tracker +0x620): circle 46.2 / 47.2 deg/s (tru.exe 46.7 / 48.3), 42.2° off the line (42.1) | Fixed on agent/Swim9 | pre-existing | — |
-| OU-SWM-002 | swimming | Surface swim velocity lag: 4.96 / 5.07° vs tru.exe 5.44 / 5.6° (0x755A00 blend 0.25 = player data +0x240; the rest is the 30 Hz blend spread over 60 Hz ticks) | Fixed (d122a62; re-measured on agent/Swim9) | pre-existing | — |
+| OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed-verified (0.53.0, 21678c2) | pre-existing | — |
+| OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Fixed-verified (0.54.0, merge bccdaa7: colliders posed after a mid-game rebuild) | pre-existing | — |
+| OU-SWM-001 | swimming | Swim turn: symmetric and view-relative (d122a62); the stick is now read against the view, which trails the camera-to-pivot line (look tracker +0x620): circle 46.2 / 47.2 deg/s (tru.exe 46.7 / 48.3), 42.2° off the line (42.1) | Fixed-verified (0.53.0 d122a62; view tracker 0.58.0, merge 1a5bb3b) | pre-existing | — |
+| OU-SWM-002 | swimming | Surface swim velocity lag: 4.96 / 5.07° vs tru.exe 5.44 / 5.6° (0x755A00 blend 0.25 = player data +0x240; the rest is the 30 Hz blend spread over 60 Hz ticks) | Fixed-verified (0.53.0, d122a62; re-measured for 0.58.0) | pre-existing | — |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
 | OU-GRP-002 | grapple | Swing dynamics unmeasured (five failed Wine sessions) | Open | pre-existing | C-MEASURE |
 | OU-GRP-003 | grapple | Jump into the gap released the rope; leap off a wall ignored the stick | Fixed-verified | pre-existing | — |
 | OU-GRP-004 | grapple | ch10 roped leap to wall ring 2595 swings under the pool surface | Open | pre-existing | — |
-| OU-GRP-005 | grapple | ch12 lever 6695: rope attach calls vt 46, larabase 26 bound, she stays roped while Interact is held | Fixed on int/brief (f832536) | pre-existing | C-VM |
+| OU-GRP-005 | grapple | ch12 lever 6695: rope attach calls vt 46, larabase 26 bound, she stays roped while Interact is held | Fixed-verified (0.53.0, f832536) | pre-existing | C-VM |
 | OU-PZL-001 | progression | ch01: no input route into the pocket north of the bedroom beams | Open | pre-existing | — |
 | OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Open | pre-existing | C-MEASURE |
 | OU-PZL-003 | progression | ch05: west recess from the T junction is shut | Open | pre-existing | — |
 | OU-PZL-004 | progression | ch06: hallway roll stops on a 45° floor before plane 1203 | Open | pre-existing | — |
 | OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Open | pre-existing | C-CHART |
-| OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed on int/brief (ecf03db); ch09 scenario still parked (2 grapple issues) | pre-existing | C-JOINT |
-| OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed on int/brief (test bug, 2e6ef11) | pre-existing | C-JOINT |
-| OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends don't tug bodies remains (tru.exe's bends are physics bodies, 0x699A50) | Partly fixed (a on agent/Joint8) | pre-existing | — |
-| OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed on int/brief (30cc49f) | pre-existing | C-VM |
-| OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed on int/brief (b716e88); pull speed unverified | pre-existing | C-JOINT |
+| OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed-verified (0.53.0, ecf03db); ch09 scenario still parked (2 grapple issues) | pre-existing | C-JOINT |
+| OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed-verified (0.53.0, 2e6ef11: test bug) | pre-existing | C-JOINT |
+| OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends don't tug bodies remains (tru.exe's bends are physics bodies, 0x699A50) | Partly fixed ((c) 0.53.0; (a) 0.56.0, merge 02b7a09; (b) open) | pre-existing | — |
+| OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed-verified (0.53.0, 30cc49f) | pre-existing | C-VM |
+| OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed-verified (0.53.0, b716e88); pull speed unverified | pre-existing | C-JOINT |
 | OU-PZL-011 | progression | ch17: hammer chamber lower steps absent from collision | Open | pre-existing | — |
 | OU-PZL-012 | progression | ch21: Natla platform jump falls short; fight sequence unplayable by input | Open | pre-existing | C-VM |
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
-| OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Fixed-verified (6d6c9eb; ring rides the leaf on agent/Joint8; landing place chaotic: ours 1.1k flat, tru.exe 656 flat) | pre-existing | C-JOINT |
-| OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed on int/brief (171100e) | pre-existing | C-VM |
-| OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Fixed-verified (8daa2ee) | pre-existing | C-VM |
-| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Fixed on agent/ScriptVec7 (vector values, anchor / vector / rotation / larabase 21-22 bound); fire overlay played on agent/Flinch8 (upper-body chart S90, anim section 1) | pre-existing | C-VM |
-| OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (f9676fd; `instance` 63 open, record narrowed) | pre-existing | C-VM |
-| OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Fixed-verified (agent/ScriptVm6) | pre-existing | C-VM |
+| OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Fixed-verified (6d6c9eb, 0.47.0; ring rides the leaf 0.56.0; landing place chaotic: ours 1.1k flat, tru.exe 656 flat) | pre-existing | C-JOINT |
+| OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed (0.53.0, 171100e) | pre-existing | C-VM |
+| OU-SCR-001 | script VM | Fire-volume handlers stop at opcode 0x65 (CALLU without a function pointer) | Fixed-verified (0.52.0, 8daa2ee) | pre-existing | C-VM |
+| OU-SCR-002 | script VM | Native `anchor` 1 (vector values) unbound | Fixed-verified (0.55.0, merge 0846176: vector values, anchor / vector / rotation / larabase 21-22 bound; fire overlay 0.56.0, merge 8f6a440: upper-body chart S90, anim section 1) | pre-existing | C-VM |
+| OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (0.52.0, f9676fd; `instance` 63 open, record narrowed) | pre-existing | C-VM |
+| OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Fixed-verified (0.54.0, merge b6c1b47) | pre-existing | C-VM |
 | OU-SCR-005 | script VM | Level-change fade to white unsupported (always black) | Open | pre-existing | C-VM |
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
 | OU-VEH-001 | motorcycle | Brake strength, slopes, coasting, top speed, pit jump unmeasured | Open | pre-existing | C-MEASURE |
-| OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed on agent/Joint8 (poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
+| OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed-verified (0.56.0, merge 02b7a09: poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
-| OU-TST-001 | tests | No walkthrough section plays end to end; 14 parked known-gap scenarios | Open | pre-existing | — |
+| OU-TST-001 | tests | No walkthrough section plays end to end; 11 parked known-gap scenarios (14 at the audit) | Open | pre-existing | — |
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
-| OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
-| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861), agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349) and agent/CamCut9 (0xC cut, 0x14 focus points Wine-verified at 3859; 9 carried by no volume); 0x16 (no LaraCombatCamera) and kind 1 open | pre-existing | — |
-| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040); presence, CloseCombat slots, bite range on agent/EnemySpawn7 | pre-existing | — |
+| OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed-verified (0.54.0, merge bccdaa7: camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
+| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Partly fixed: 0.55.0 (merge 6aa19ec: 0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861), 0.56.0 (merge dece273: 1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349), 0.58.0 (merge b9b4166: 0xC cut, 0x14 focus points Wine-verified at 3859; 9 carried by no volume); 0x16 (no LaraCombatCamera) and kind 1 open | pre-existing | — |
+| OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed-verified (0.54.0, 76cc040; presence, CloseCombat slots, bite range 0.55.0, merge a57583f) | pre-existing | — |
 
 ## Root-cause clusters
 
@@ -439,7 +439,7 @@ Open · pre-existing.
 - Tests: `Formats.RenderTargetSamplersNeedNoTexture`, `RealData.NoMissingTextureWarningsForRenderTargets`
   (l2_cliffclimb, l2_flushtunnel). ou-game `--level` l3_main_bedroom / l2_cliffclimb and `--chapter 1`: 0 such lines
   (the BugRepro logs had 88, all id 2).
-- Status · Origin: Fixed on agent/Depen6 · pre-existing (cosmetic).
+- Status · Origin: Fixed-verified (0.54.0, f6e4264) · pre-existing (cosmetic).
 
 ### Vulkan, FSR, streaming (OU-VK, OU-STR)
 
@@ -578,7 +578,7 @@ saved slot requests with a 2 s fade-in [I] (ROADMAP L64). Status · Origin: Open
   458.6 against 451.6..457.5). `StreamReal.CameraRidesTheYachtDeck` now asserts the absolute level from 8 s on (after
   the 5..7 s look-idle ramp of the forces).
 - Tilt is not carried [U], and freeze request 55 is not modelled.
-- Status · Origin: Fixed (lag / band on int/brief, level on agent/DeckCam6) · pre-existing.
+- Status · Origin: Fixed-verified (lag / band 0.53.0, level 0.54.0 with OU-CAM-005) · pre-existing.
 
 **OU-CAM-002 Swim camera follows the wave bob exactly**
 - Repro: `--chapter 1` surface swim / tread on the swell (Enhanced + FFT).
@@ -625,7 +625,7 @@ Status · Origin: Open · pre-existing.
   deck at tick 120 and were re-blessed: Lara is drawn larger, matching the 948/1264 distance ratio.
 - Not modelled [U] at the time: the other commands, kinds 1 / 2 and sets with forces; the deck volume riding the
   yacht. Followed up as OU-CAM-006.
-- Status · Origin: Fixed on agent/DeckCam6 · pre-existing.
+- Status · Origin: Fixed-verified (0.54.0, merge bccdaa7) · pre-existing.
 
 **OU-CAM-006 Camera trigger commands** — `World::updateOrbitCamera` applied only a volume's distance (2 / 0xD) and its
 inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) were tested at their intro places.
@@ -691,7 +691,7 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
   one unit's scripts); the third focus list (+0x330, 0x5F11C0 / 0x5ED260); kind 1 (AnchoredCamera, one usable record
   of 9); the frame of x / y tracker offsets; a volume record of type 1 / 2 off a markup (her place 0 [I]); the look
   tracker's own lag (ours uses the focus's); 599's box placement. OU-CAM-004 (reveal blends) not touched.
-- Status · Origin: Fixed on agent/CamZones7 + agent/CamRest8 + agent/CamCut9 (partial: see open) · pre-existing.
+- Status · Origin: Partly fixed (0.55.0, 0.56.0, 0.58.0; see open) · pre-existing.
 
 **OU-CMB-003 Shark aggression**
 - Repro: l2_cliffclimb, into the sea and tread (`w2/WineMeasure/ours/tread_*`): ours bit within ~7 s and every 1.5..3 s.
@@ -729,7 +729,7 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
   - Still [I]: kPassBite 6 / 29 (how near tru.exe's Close path comes is a NavPower 3D move, not decoded); non-biting passes
     swim by at 580 (the nearest measured); out of reach ours idles where tru.exe searches; tru.exe's short Search phases
     between passes are not modelled (our Circle runs shorter, passes slightly more often).
-- Status · Origin: Fixed on agent/SharkAi6; presence and pass timing on agent/EnemySpawn7 · pre-existing.
+- Status · Origin: Fixed-verified (0.54.0, 76cc040; presence and pass timing 0.55.0, merge a57583f) · pre-existing.
 
 ### Lara's controller and traversal (OU-PLY)
 
@@ -758,7 +758,7 @@ Open · pre-existing.
 - Test: `GameReal.SwimClimbOutOntoShelf` (l2_cliffclimb ledge 936 seg 0: no l2_puzzleroom shelf lies over water; the
   survey found only 936 seg 0 / seg 9 and l7_arctic_sea 2073). Open: runtime comparison with tru.exe at 936 (a Wine
   session was started but not completed: the machine was overloaded, the front end did not take the keys).
-  Status · Origin: Fixed on agent/ShelfOut9 · pre-existing.
+  Status · Origin: Fixed-verified (0.58.0, merge 7d6bf3e) · pre-existing.
 
 **OU-PLY-004 No ladder side jumps or reaches**
 - Expected: ladder side jumps exist (ship escape shafts, ROADMAP L89); clips in lara.drm [I].
@@ -891,7 +891,7 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   (Wine: out from 38 past the plane), air / hang / swim push-out, the walk contact (tru.exe stops her root 66.2 / 68
   from the face, under the proxy radius 79.01), our raycast is double-sided where 0x493330 is not, the switch stand
   distance (5.4 off at 4525).
-- Status · Origin: Fixed on agent/TickDepen7 (1158366, f5c5eed, 91405ad + stand point / tests; see the commits) · pre-existing.
+- Status · Origin: Fixed-verified (0.56.0, merge 3bf7288: 1158366, f5c5eed, 91405ad + stand point / tests) · pre-existing.
 
 **OU-PLY-013 Slope-slide upper bound** (docs/re/VERIFICATION.md V002, medium confidence)
 - tru.exe: the ground check 0x5DCE20 reads only player data +0x100E (52°; cos read at 0x5DD3BA / 0x5DD4F4 /
@@ -920,7 +920,7 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   models where their objects are, as it already did for a restored world. tru.exe has no such global rebuild: each
   instance's collision follows its own segment matrices. Test: `StreamReal.CameraRidesTheYachtDeck` asserts State::Idle
   on every tick for 15 s and pivot − root ≥ 446.6 (now 458.6 constant, was dipping to 425.7).
-- Status · Origin: Fixed on agent/DeckCam6 · pre-existing.
+- Status · Origin: Fixed-verified (0.54.0, merge bccdaa7) · pre-existing.
 
 ### Swimming (OU-SWM)
 
@@ -955,7 +955,7 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   load); ours uses the surface one [I], which matches tru.exe's 42.0° there. Other camera modes keep the look point on
   the pivot [U: their look records]. The in-game Right-first asymmetry remains when the self-test turns before the
   camera's look-idle clock (+0x1E4) is full; tru.exe's value of that clock at a level start is [U].
-- Status · Origin: Fixed on agent/Swim9 · pre-existing.
+- Status · Origin: Fixed-verified (0.58.0, merge 1a5bb3b) · pre-existing.
 
 **OU-SWM-002 Surface swim lag** — velocity lagged heading ~9° vs tru.exe ~16° (`camfollow-wine/turn1.txt`, M29 /
 Differences #7). d122a62: 0x755A00 moves the velocity a quarter of the way to heading x speed every 30 Hz frame (player
@@ -1073,7 +1073,7 @@ proving tests there):
 
 **OU-SCR-002 Native `anchor` 1 unbound** — 0x7966F0, the vector between two anchors (0x4AB870); the VM has no vector
 values (PROGRESSION.md L76-78). Logs: `triggervolume` 158, `triggerplane` 6 stops [O]; l7_helheim01 8945 (sound loudness
-loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Fixed on agent/ScriptVec7 · pre-existing.
+loop, not a gate). Fix: add a vec3 value kind to the VM. Status · Origin: Fixed-verified (0.55.0, merge 0846176) · pre-existing.
 - Narrowed 2026-11-19 (agent/ScriptVm6): the chain the fire triggervolumes (type 6515 vt 73, e.g. l3_main_bedroom 4529)
   run is decoded (SCRIPT_NATIVES.md rows `anchor` 4, `vector` 5/8/9/11, `rotation` 0/9).
 - Fixed 2026-11-19 (agent/ScriptVec7). Current implementation before: no vector values, `NativeContext` returned one
@@ -1181,7 +1181,7 @@ Fixed joints: ecf03db. Body-A motion (agent/Joint8): body B's pose follows body 
 body B on body A also once it is freed, freed riders hang about the pivot their body A carries; [I] body A's motion is
 not fed into the Jolt joint body's dynamics and a fixed rider does not add its mass. Test:
 `ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` (ring hinged to the leaf, < 20 apart at the pivot).
-Status · Origin: Fixed on agent/Joint8 · pre-existing.
+Status · Origin: Fixed-verified (0.56.0, merge 02b7a09) · pre-existing.
 
 **OU-PHY-002 Push speed fitted to one trace** — push blocks and Thor mechanisms: proxy mass 0.125 × object mass [I], law
 fitted to one block trace (ROADMAP L87, REPORT §6, §8.4). Status · Origin: Open · pre-existing.

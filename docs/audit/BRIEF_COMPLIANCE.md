@@ -19,8 +19,8 @@ Rows per section by status, counted over the Status column of every table in §1
 
 | Section | Met | Partly | Missing (Not met) | N/A |
 |---|---|---|---|---|
-| §1 Preservation policy | 16 | 2 | 0 | 0 |
-| §2 Phase 0 research and audit | 14 | 2 | 0 | 0 |
+| §1 Preservation policy | 17 | 1 | 0 | 0 |
+| §2 Phase 0 research and audit | 15 | 1 | 0 | 0 |
 | §3 Phase 1 binary analysis | 43 | 6 | 0 | 0 |
 | §4 Phase 2 asset formats | 22 | 1 | 0 | 0 |
 | §5 Phase 3 original runtime | 2 | 14 | 2 | 0 |
@@ -34,7 +34,7 @@ Rows per section by status, counted over the Status column of every table in §1
 | §13 Phase 11 deliverables | 24 | 5 | 0 | 2 |
 | §14 Execution rules | 26 | 4 | 0 | 0 |
 | §15 First assignment | 26 | 1 | 0 | 0 |
-| **Total** | **254** | **62** | **6** | **2** |
+| **Total** | **256** | **60** | **6** | **2** |
 
 What moved since 2026-11-16: the self-test schema and probes (W8-1, W8-3, W8-4, W8-6), AO and golden image tests
 (W8-2, W8-5), the `protected` ctest label (W10-4), every format doc (W2-1, W2-2, W2-3), real-data round trips and
@@ -94,7 +94,7 @@ that cites `work/` also cites a repo path. Test names are ctest names (`Suite.Na
 
 | Requirement | Status | Evidence | Gap |
 |---|---|---|---|
-| Answer the 7 questions before modifying a subsystem | Partly | PROTECTED_SYSTEMS per system; BUGS.md entries (Cause / Fix / Test); batch agents' branch notes in docs/audit/PROGRESS.md | No per-change template in the repo (§16 P11-4) |
+| Answer the 7 questions before modifying a subsystem | Met | CONTRIBUTING.md "Before changing a subsystem" (seven-question template for commits and pull requests); BUGS.md entries (Cause / Fix / Test) | — |
 | Replacement only with documented justification + migration | Met | no replacement through 0.58.0 (CHANGELOG.md; PHASE01_REPORT §10 "Keep") | — |
 
 ---
@@ -107,7 +107,7 @@ that cites `work/` also cites a repo path. Test names are ctest names (`Suite.Na
 |---|---|---|---|
 | TRU RE research, engine docs, modding projects | Met | docs/RESEARCH.md §4-§8; docs/audit/EXTERNAL_RESEARCH_2026-11.md §1 | — |
 | File format docs, extraction tools | Met | RESEARCH §8; docs/formats/*.md | — |
-| Previous native-port attempts | Partly | RESEARCH §8.7; EXTERNAL_RESEARCH §1 | No explicit "none found" statement with the searches listed (§16 P0-1) |
+| Previous native-port attempts | Met | docs/audit/EXTERNAL_RESEARCH_2026-11.md §1 "Previous native ports of TRU" (queries, dates, result: none other than OpenUnderworld) | — |
 | Graphics/rendering research | Met | RESEARCH §8.8-§8.10 | — |
 | Animation/gameplay investigations | Partly | EXTERNAL_RESEARCH §3 (speedrun leads) | Leads not checked against tru.exe (§16 P3-12) |
 | Patches and executable differences | Met | RESEARCH §2-§3; EXTERNAL_RESEARCH §2 | Other editions not in hand |
@@ -190,7 +190,7 @@ docs/re/ENGINE_ARCHITECTURE.md has one section per subsystem (§1-§26). The bri
 
 | Brief subsystem | Status | Evidence | Gap |
 |---|---|---|---|
-| Init, shutdown | Met | ENGINE_ARCHITECTURE §1; docs/re/STARTUP.md; docs/re/SHUTDOWN.md (58c435b) | ENGINE_ARCHITECTURE §1 still has a stale "Shutdown … is unknown" line (§16 P11-2) |
+| Init, shutdown | Met | ENGINE_ARCHITECTURE §1; docs/re/STARTUP.md; docs/re/SHUTDOWN.md (58c435b) | — |
 | Main loop, timing | Met | §2; docs/re/TIMING.md | — |
 | Rendering pipeline, graphics resources | Met | §18; docs/re/RENDER_PIPELINE.md | Static only (§16 P3-10) |
 | Scene/world, level loading, asset loading | Met | §3, §4; docs/re/FILESYSTEM.md | — |
@@ -329,7 +329,7 @@ Counted 2026-11-20 over docs/matrix/*.md: 661 requirement rows; status strings 1
 | 17 | Resource formats | Met | docs/formats/*.md (§4) | — |
 | 18 | Scripting and events | Met | §23; docs/formats/SCRIPTS.md; docs/re/SCRIPT_NATIVES.md | Unbound natives listed there |
 | 19 | Runtime dependencies | Met | BINARIES §4-§5.3 | — |
-| 20 | Unresolved questions | Met | docs/LIMITATIONS.md (register); ENGINE_ARCHITECTURE "Open questions across subsystems" | LIMITATIONS counts dated 2026-11-16 (§16 P11-2) |
+| 20 | Unresolved questions | Met | docs/LIMITATIONS.md (register, counts refreshed 2026-11-20); ENGINE_ARCHITECTURE "Open questions across subsystems" | — |
 | — | Windows-to-Linux mapping | Met | ENGINE_ARCHITECTURE "Windows → Linux mapping" | — |
 | — | Every decision traceable or marked approximation | Partly | [O]/[I]/[U] tags; docs/re/db/citations.tsv | Untagged code paths not inventoried (§16 P5-2) |
 
@@ -359,7 +359,7 @@ Counted 2026-11-20 over docs/matrix/*.md: 661 requirement rows; status strings 1
 
 | Requirement | Status | Evidence | Gap |
 |---|---|---|---|
-| Central bug database, IDs, subsystem, steps, expected, actual, RE evidence, cause, correction | Met | docs/audit/BUGS.md (98 index rows, counted 2026-11-20: 38 fixed, 3 partly fixed, 45 Open, 4 Reproduced, 7 Not reproduced, 1 Not a bug) | 19 merged fixes still read "Fixed on <branch>" (§16 P11-1) |
+| Central bug database, IDs, subsystem, steps, expected, actual, RE evidence, cause, correction | Met | docs/audit/BUGS.md (98 index rows, counted 2026-11-20: 37 fixed, 4 partly fixed, 45 Open, 4 Reproduced, 7 Not reproduced, 1 Not a bug; each fix names the release that shipped it) | — |
 | Correction + regression test + verify existing functionality | Met | batches 4-9 (docs/audit/PROGRESS.md): each fix with a test, full ctest per integration (batch 9: 1089 of 1089) | Remaining open bugs: §16 P6/P7 |
 | Root-cause clusters, not symptoms | Met | BUGS.md "Root-cause clusters" | — |
 | Verify the protected areas after each change | Met | `ctest -L protected` (CMakeLists.txt `ou_protected`, 41 tests; 6627f6b) | — |
@@ -415,9 +415,9 @@ Counted 2026-11-20 over docs/matrix/*.md: 661 requirement rows; status strings 1
 
 ## 11. Phase 9 — Windows vs Linux comparison
 
-docs/REFERENCE_COMPARISON.md, counted 2026-11-20 by the Status column: 169 rows, 60 `matches`, 2 `differs`, 107
-`unmeasured` (its own "Counts" line still says 170 / 55 / 6 / 109, §16 P11-1). Per chapter: docs/REFERENCE_LEVELS.md
-(`tools/re/ref_levels.py --check` passes at 9d2935c).
+docs/REFERENCE_COMPARISON.md, counted 2026-11-20 by the Status column: 169 rows, 61 `matches`, 1 `differs` (M17), 107
+`unmeasured` (its "Counts" section agrees). Per chapter: docs/REFERENCE_LEVELS.md (`tools/re/ref_levels.py --check`
+passes after regenerating it).
 
 | Requirement | Status | Evidence | Gap |
 |---|---|---|---|
@@ -489,7 +489,7 @@ docs/REFERENCE_COMPARISON.md, counted 2026-11-20 by the Status column: 169 rows,
 | 22 | Original-versus-Linux comparison reports | Partly | docs/REFERENCE_COMPARISON.md, docs/REFERENCE_LEVELS.md | 107 rows unmeasured (§16 P3) |
 | 23 | Chapter-by-chapter validation | Partly | docs/underworld_chapter_gameplay_matrix.md, docs/matrix/*.md, docs/PROGRESSION.md | §16 P4 |
 | 24 | Build and installation instructions | Met | docs/BUILDING.md, docs/LAUNCHER.md, docs/RELEASING.md, docs/UPDATES.md | — |
-| 25 | Remaining limitations and unresolved questions | Met | docs/LIMITATIONS.md (8fc17a3) | Counts dated 2026-11-16 (§16 P11-2) |
+| 25 | Remaining limitations and unresolved questions | Met | docs/LIMITATIONS.md (8fc17a3; counts refreshed 2026-11-20) | — |
 | — | Persistent engineering progress report | Met | docs/audit/PROGRESS.md | — |
 | — | This compliance matrix | N/A | (self) | — |
 
@@ -628,12 +628,14 @@ tru.exe under Wine (tools/wine-ref/, serialised by `wine.lock`); **[RE]** static
 | W6-5 script VM op 0x65, natives, vectors | 8daa2ee, f9676fd, ScriptVm6, ScriptVec7 | OU-SCR-001 / 002 / 004 |
 | W6-6 differences #5, #6, #7, #13 | Drop9, SwimTurn-2, Swim9 | REFERENCE_COMPARISON "Differences to fix" |
 | W6-8 known gaps (part) | PuzzleFix, ScriptPuzzle, Joint8 | known gaps 14 → 11 |
+| P0-1 native-port search | batch 10 (agent/Compliance10) | docs/audit/EXTERNAL_RESEARCH_2026-11.md §1 "Previous native ports of TRU" |
+| P11-1 status drift | batch 10 (agent/Compliance10) | docs/audit/BUGS.md index and entry statuses carry the release; docs/REFERENCE_COMPARISON.md Counts, M29 sea level, moving-platform camera, Differences #11 / #14; docs/REFERENCE_LEVELS.md regenerated |
+| P11-2 limitations / shutdown line | batch 10 (agent/Compliance10) | docs/LIMITATIONS.md, docs/re/ENGINE_ARCHITECTURE.md §1 |
+| P11-4 seven-question template | batch 10 (agent/Compliance10) | CONTRIBUTING.md "Before changing a subsystem" |
 
 ### 16.1 Phase 0 — research
 
-| ID | Flag | Goal | Files | Done when |
-|---|---|---|---|---|
-| P0-1 | [doc] | State the native-port search (queries, date, result) explicitly | docs/audit/EXTERNAL_RESEARCH_2026-11.md §1 | a "searched, none found" or a list |
+Nothing remains (P0-1 done, §16.0).
 
 ### 16.2 Phase 1 — binary analysis
 
@@ -732,7 +734,4 @@ batch rules (`ProgressionReal|GameReal|StreamReal|^Game|selftest|replay`).
 
 | ID | Flag | Goal | Files | Done when |
 |---|---|---|---|---|
-| P11-1 | [doc] | Status drift: BUGS index rows "Fixed on <branch>" for merged fixes (19 rows) → Fixed-verified with the release; REFERENCE_COMPARISON "Counts" (169 / 60 / 2 / 107) and its "Camera on a moving platform" row and Differences #11 (fixed by OU-CAM-001 / 005) | docs/audit/BUGS.md (own commit), docs/REFERENCE_COMPARISON.md | no index row names a merged branch; counts match the rows |
-| P11-2 | [doc] | Refresh docs/LIMITATIONS.md counts (2026-11-16) and drop ENGINE_ARCHITECTURE §1's stale "Shutdown … is unknown" line | docs/LIMITATIONS.md, docs/re/ENGINE_ARCHITECTURE.md | counts current |
 | P11-3 | [doc] | Batch 10 entry in the progress log | docs/audit/PROGRESS.md | entry written |
-| P11-4 | [doc] | A per-change template for the 7 policy questions (commit / PR text) | docs/RELEASING.md or CONTRIBUTING section in docs/BUILDING.md | template referenced by the batch rules |

@@ -27,8 +27,22 @@ Opened but not usable (blocked by Cloudflare, HTTP 403): TRF "GOG Update - Tomb 
 and SteamDB depot 8141 (`https://steamdb.info/depot/8141`, Steam TRU content manifest). Neither is in the table.
 
 Searched without a usable hit: noclip.website support for any LAU game (no result naming it); Xentax TRU threads
-(Xentax is offline; ResHax only has reboot-era threads); a prior native port or full decompilation of TRU (none found;
-TheIndra55/cdcEngine is Legend-only, already cited).
+(Xentax is offline; ResHax only has reboot-era threads).
+
+**Previous native ports of TRU (brief Phase 0.1).** First searched 2026-11-16 (queries not recorded then; result
+"none found"), repeated 2026-11-20 with web search, queries `"Tomb Raider Underworld" native Linux port OR
+reimplementation OR decompilation github` and `"Tomb Raider: Underworld" source port open source engine recreation
+tru.exe` (20 hits; the result list read, and the trudlcport fork's docs/RELATED_WORK.md opened). Result: **no native
+port, engine reimplementation or decompilation of TRU other than OpenUnderworld itself was found** [O]. What the
+searches return instead:
+
+| Project | What it is | Why it is not a TRU port |
+|---|---|---|
+| TheIndra55/cdcEngine (https://github.com/TheIndra55/cdcEngine) | decompilation of Tomb Raider: Legend (GPL-3.0) | Legend only (already cited in RESEARCH.md) |
+| rrika/cdcEngineDXHR (https://github.com/rrika/cdcEngineDXHR) | non-matching decompilation of Deus Ex: Human Revolution, Linux via dxvk-native | a later cdc game, not TRU |
+| andrearicci93/trudlcport and its fork LukasKurthRocks/tomb-raider-underworld-dlc-pc (https://github.com/LukasKurthRocks/tomb-raider-underworld-dlc-pc) | Xbox 360 DLC content brought to the PC game as ASI plugins and data conversion | keeps and patches tru.exe (a content port); its docs/RELATED_WORK.md (2026-10-29) lists OpenUnderworld as the only TRU engine reimplementation |
+| opentomb/OpenTomb, LostArtefacts/TRX, xythobuz/OpenRaider | open engines for the Core Design games (TR1-5) | different engine family |
+| caniplayonlinux.com, CodeWeavers, PCGamingWiki TRU pages | run tru.exe through Proton / Wine / CrossOver | compatibility layers, not ports |
 
 ## 2. Executable versions and detection (ROADMAP milestone 8)
 
@@ -40,7 +54,7 @@ Known PC builds (RESEARCH.md §2–§3, re-checked; no new published hashes were
 | Retail 1.0 (SecuROM 7.38.0015; PL/CZ/HU 7.38.0014; GfW Marketplace SecuROM PA 7.42) | SecuROM sections, FileVersion 1.0 [I] | no hash known |
 | Retail 1.1 disc patch 2008-12-16 | FileVersion 1.1, still SecuROM-wrapped [I] | no hash known |
 | Steam AppID 8140, depot 8141 ("v1.1", steamless-strippable) | Steam stub; code layout after unwrapping probably = GOG (TRLAU uses one TR8 address set for Steam and GOG) [I] | depot manifest blocked (403) |
-| GOG "1.1" 2021-05-06, GOG "1.1 GOG v3" 2024-11-07 | **ours**: `tru.exe` 6,422,528 bytes, SHA-256 `1fdbd34560ffe6b5fa959666e023e405d6f3166ce3b63b0ae16a6aa4121d1011` [O `sha256sum`, `ls -l`; docs/ENVIRONMENT.md:45], PE TimeDateStamp 2008-12-16 17:31:02 UTC, VERSIONINFO 1.1, no DRM [O docs/re/EXECUTABLE.md:12-31] | verified |
+| GOG "1.1" 2021-05-06, GOG "1.1 GOG v3" 2024-11-07 | **ours**: `tru.exe` 6,422,528 bytes, SHA-256 `1fdbd34560ffe6b5fa959666e023e405d6f3166ce3b63b0ae16a6aa4121d1011` [O `sha256sum`, `ls -l`; docs/re/BINARIES.md §1], PE TimeDateStamp 2008-12-16 17:31:02 UTC, VERSIONINFO 1.1, no DRM [O docs/re/EXECUTABLE.md:12-31] | verified |
 
 Detection recipe for other editions (proposal, [I]): (1) SHA-256 allow-list (only GOG known); (2) PE TimeDateStamp +
 FileVersion; (3) presence of SecuROM / Steam stub sections → refuse or ask for a stripped exe; (4) the byte-pattern
