@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <string>
 
 using namespace ou::audio;
@@ -1180,6 +1181,44 @@ TEST(AudioReal, BankFindsDtpAddedAfterMiss) {
     EXPECT_FALSE(bank.find(13589));
     bank.add(std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\motorcycle.drm"))));
     EXPECT_TRUE(bank.find(13589));
+}
+
+// Help on demand (BUGS OU-AUD-006): the line set is the chapter's (sc_CC = kChapters index), not the unit's level digit;
+// the prologue's l3 units ask for sc_00, the epilogue has none.
+TEST(HelpOnDemand, LinePathUsesTheChapter) {
+    EXPECT_EQ(helpLinePath(0, "hint_01", false), "vo\\lara\\sc_00_01_hint");
+    EXPECT_EQ(helpLinePath(3, "hint_01", true), "vo\\lara\\sc_03_01_answer");
+    EXPECT_EQ(helpLinePath(7, "hint_15", false), "vo\\lara\\sc_07_15_hint");
+    EXPECT_EQ(helpLinePath(8, "hint_01", false), "") << "the epilogue has no help lines";
+    EXPECT_EQ(helpLinePath(-1, "hint_01", false), "");
+    EXPECT_EQ(helpLinePath(1, "", false), "") << "no condition";
+    EXPECT_EQ(helpLinePath(1, "hint_5", false), "");
+    EXPECT_EQ(helpLinePath(1, "hint_x5", false), "");
+}
+
+// The prologue's first condition (hint_01, set in l3_main_bedroom) names the burning manor's line in generalbank, whose
+// subtitle is the prologue's goal; the old unit-digit choice (sc_03_01, Croft Manor) is another line.
+TEST(AudioReal, PrologueHelpLineIsTheBurningManorsLine) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    PlexBank bank;
+    bank.add(std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\generalbank.drm"))));
+    std::map<std::string, std::string> lines; // stream -> English subtitle (generalbank's help members, AUDIO.md §9.5)
+    for (uint32_t id = 200; id < 1000; ++id)
+        if (const Plex* p = bank.find(id); p && p->type == PlexType::Assignment && p->children.size() == 1 &&
+                                           p->children[0].type == PlexType::Stream) {
+            std::string text;
+            if (auto m = bf.read("pc-w\\audio\\streams\\" + p->children[0].stream + ".mul"))
+                for (const auto& s : decodeMul(*m).subtitles)
+                    if (const auto t = s.text(0); !t.empty()) text += std::string(t);
+            lines.emplace(p->children[0].stream, text);
+        }
+    const auto prologue = lines.find(helpLinePath(0, "hint_01", false));
+    ASSERT_NE(prologue, lines.end());
+    EXPECT_NE(prologue->second.find("get back inside the manor"), std::string::npos) << prologue->second;
+    const auto manor = lines.find(helpLinePath(3, "hint_01", false));
+    ASSERT_NE(manor, lines.end());
+    EXPECT_EQ(manor->second.find("get back inside the manor"), std::string::npos) << manor->second;
 }
 
 // Script `sound` 1 / 2 wait sequences ask SoundPlayer::busy: game time (update()), the data's length, not the mixer.

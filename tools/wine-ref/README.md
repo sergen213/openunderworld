@@ -63,7 +63,9 @@ tools/wine-ref/stop.sh                                          # tru.exe, wines
 
 `sessions/l2_cliffclimb_sea.sh` is a complete scripted session (water entry, treading, swimming, breath, the camera
 on the yacht's deck); `sessions/l2_cliffclimb_sharks.sh` watches the l2_cliffclimb sharks around a treading, diving or
-pinned Lara (OU-CMB-003); `$OU_WORK/gameplaygoal/reference/session7a.sh` / `session7b.sh` are the older templates for
+pinned Lara (OU-CMB-003); `sessions/checkpoint_respawn.sh <unit> <uid> <tag>` births her on a chosen checkpoint at a
+fresh load (the id written to the player's level data before the `goto`; OU-SAV-002) and traces her from the birth;
+`$OU_WORK/gameplaygoal/reference/session7a.sh` / `session7b.sh` are the older templates for
 ledge / chimney / grapple placements (they still use the pre-`env.sh` paths).
 
 `sessions/render_capture.sh` records every D3D9 call of a new game with apitrace's `d3d9.dll` wrapper (apitrace 14.0

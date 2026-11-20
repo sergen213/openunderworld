@@ -1867,7 +1867,8 @@ TEST(ChaptersReal, ObjectiveListMatchesTheHelpLines) {
 // Every row: she is born in that unit on the intro's vertical, at most pushed 128 up out of the floor. "Stays": after the
 // first tick (which poses decks and platforms) she is swimming or not falling with a walkable floor face right under her
 // feet (normal within 52 degrees of up, tru.exe 0x5DCE20), and 60 ticks without input later she is alive and still there
-// (standing within 64 of the intro and of that floor, or swimming not above the intro). Rows docs/CHECKPOINTS.md gives
+// (standing within 64 of the intro and of that floor, or swimming within 128 of the intro's height: tru.exe under Wine
+// births her afloat on an under-water intro, l1_seafloor 234 settling 13 in 0.9 s, BUGS OU-SAV-002). Rows docs/CHECKPOINTS.md gives
 // another result with its reason are asserted not to stay, so the list cannot go stale.
 class CheckpointRespawn : public ::testing::TestWithParam<int> {};
 
@@ -1919,7 +1920,7 @@ TEST_P(CheckpointRespawn, PlacesLaraOnSolidGround) {
         const bool water = s.state == game::State::SwimTread || s.state == game::State::SwimSurface || s.state == game::State::SwimUnder;
         const float dxy = glm::length(glm::vec2(s.pos - r.pos)), dz = s.pos.z - r.pos.z;
         const bool stays = supported && !w.health().dead() && dxy < 64 &&
-                           (water ? dz <= 128 : s.state == game::State::Idle && std::abs(s.pos.z - b.pos.z) < 64);
+                           (water ? std::abs(dz) <= 128 : s.state == game::State::Idle && std::abs(s.pos.z - b.pos.z) < 64);
         std::string nearest = "none";
         float nearestD = 1500;
         for (const auto& e : w.enemies().all())

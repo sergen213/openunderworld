@@ -4128,6 +4128,15 @@ Ours (`World::respawn`, `World::serializeCheckpoint` / `restoreCheckpointSave`, 
   `invis_checkpoint` intros on the chapter routes with uid, unit and position). `ChaptersReal/CheckpointRespawn.*`
   respawns at each through a save game in a fresh load of its unit; where she does not stay (a cinematic the fresh load
   plays, the l4_pool eitr, the yggdrasil arena, the settling yacht deck, a slide face, a spider) the list gives the observed reason (BUGS OU-SAV-002).
+- Where she is born [O-runtime, tru.exe under Wine 2026-11-20, `tools/wine-ref/sessions/checkpoint_respawn.sh`: the checkpoint id written to
+  the player's level data (*0xC59264 +0x90, read by 0x5D40C0) before a `wmem goto`]: exactly on the intro, then the
+  game moves her. Under water (l1_seafloor 234, 803 over the sea floor) she is born swimming and settles 13 units in
+  0.9 s; on the l1_seatop yacht (1000) she falls 197 onto the deck in 0.3 s and the sinking yacht carries her 586 below
+  the intro by 0.7 s; in the Natla arena (l7_yggdrasil_end 8242) she drops and hangs from a handhold 414 below; on
+  8248 she falls 15889; on l7_helheim03 8844 she slides 1890 down the face. Ours (`Player::spawn`) drops a dry spawn
+  onto the floor under it [I] but keeps an under-water one more than a step over its floor where it is, so the ten
+  under-water checkpoints no longer put her on the floor 490..970 below (the test asserts swimming within 128 of the
+  intro); the measured dry rows give the original's fresh-load result (docs/CHECKPOINTS.md quotes each).
 
 ## Loadout
 

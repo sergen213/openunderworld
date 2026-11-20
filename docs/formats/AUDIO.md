@@ -553,8 +553,10 @@ trigger volumes' OnFirstIn (vt 72) call the unit script's vt 28 with `"hint_NN"`
 4086, set by l3_secretchamber). The handler's slot varies by unit (seafloor vt 26 +228, bedroom vt 28, cliffclimb vt 25
 shows tutorial popups instead); only 7 units store a condition. The unit script itself is the Level+0x70 DTP +0x1C0 type
 (LEVELS.md "Unit script") and starts with its unit.
-ou-game: T / Y (bindable `hint`/`answer`, keys ours [I]) play `vo\lara\sc_0<level>_<NN>_hint|answer` for
-`Runtime::helpCondition()` [I: CC = the unit's level digit; sc_04_01 = "Mayan Ball Court" fits l4]. Verified
+ou-game: T / Y (bindable `hint`/`answer`, keys ours [I]) play `vo\lara\sc_CC_<NN>_hint|answer` for
+`Runtime::helpCondition()`, CC = `World::chapter` (`audio::helpLinePath`; [O data] the prologue's l3 units need sc_00,
+"I need to get back inside the manor…", not Croft Manor's sc_03; BUGS OU-AUD-006, tests `HelpOnDemand.LinePathUsesTheChapter`,
+`AudioReal.PrologueHelpLineIsTheBurningManorsLine`). Verified
 (test `ScriptRealData.SeafloorVolumeSetsHelpCondition`; replay `--level l1_seafloor --spawn 7857,-805,-3402,0`, T at
 1 s): tick 1 `help condition hint_05`, T -> `voice vo\lara\sc_01_05_hint "The other two ornate disks are missing
 axles."` with the subtitle on screen, Y -> sc_01_05_answer [O]. The bedroom gate stays closed until its property is

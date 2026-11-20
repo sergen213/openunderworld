@@ -119,14 +119,13 @@ void GameSound::resume(const game::World& world) {
 }
 
 bool GameSound::playHelp(const game::World& world, bool answer) {
-    const std::string& unit = world.currentUnit().data.name;
     const std::string condition = world.script().helpCondition();
-    if (condition.empty() || unit.size() < 3 || unit[0] != 'l' || !std::isdigit(static_cast<unsigned char>(unit[1]))) {
-        std::fprintf(stderr, "ou-game: tick %llu help: no hint condition\n", (unsigned long long)world.ticks());
+    // sc_<CC>: the chapter being played (sc_00 = the prologue in l3 units); NN: the condition's number.
+    const std::string path = audio::helpLinePath(world.chapter, condition, answer);
+    if (path.empty()) {
+        std::fprintf(stderr, "ou-game: tick %llu help: no hint condition (chapter %d)\n", (unsigned long long)world.ticks(), world.chapter);
         return false;
     }
-    // sc_<CC>: the level number of the unit name [I]; NN: the condition's number.
-    const std::string path = std::string("vo\\lara\\sc_0") + unit[1] + "_" + condition.substr(5, 2) + (answer ? "_answer" : "_hint");
     const auto it = helpLines_.find(path);
     const audio::Plex* p = it == helpLines_.end() ? nullptr : bank_.find(it->second);
     std::fprintf(stderr, "ou-game: tick %llu help %s %s -> %s\n", (unsigned long long)world.ticks(), answer ? "answer" : "hint",
