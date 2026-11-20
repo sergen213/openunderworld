@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/10manor.html (plus `details/manor2..11.html`; a relic gameplay video is linked, not viewed)
 Our units (PR "Chapter routes" ch 3): l3_caverns_start (tunnels under the crypt) → l3_chapel (chapel, side corridors, stained-glass room) → l3_stairhall (dark stairway) → l3_secretchamber (Richard Croft's study) → l3_chamberrockhall (exit tunnel, door switch) → l3_main_bedroom → l3_bedroom_hall → l3_main_hall (burning manor, tech room); level end plane 4128 → cinematics 160 + 170 → chapter 4.
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 3" (generated from the game data, P4-1).
+
 Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" = per-unit `ProgressionReal.GateSweep`, v0.41.0, 2026-11-10). Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |

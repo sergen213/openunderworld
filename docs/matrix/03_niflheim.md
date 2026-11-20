@@ -3,6 +3,8 @@ Walkthrough: https://tombraiders.net/stella/walks/TR8walk/02niflheim.html
 Sub-pages read: details/niflheim2.html (high route), niflheim3.html (statue arm to switch ledge), niflheim4.html (chimney jump to treasure 15), details/swandive.html, bugnotes.html
 Our units: l1_krakenstairs_a / _b → l1_kraken_room → l1_baldrsstairs_a / _b (ends on entering l1_baldrs_tomb, Thor-statue cinematic)
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 1" (generated from the game data, P4-1).
+
 Reading notes: statuses use the session vocabulary. "Passing" means the test is in the v0.41.0 suite (675 pass per
 RULES.md); this agent ran no tests. A status is chapter-specific: a mechanic tested only in another unit is
 `IMPLEMENTED BUT UNVERIFIED` here and the generic test is named as "mechanic test". [O]/[I]/[U] as in the repo docs.

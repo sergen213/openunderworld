@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/08ancient.html (plus `details/ancient2..5.html`; the page also links a gameplay video for the relic route, not viewed)
 Our units: l2_shrineroom (shaft under the naga statue, gauntlet door) and l2_maproom (Thor statue room with the rotating hub). Mapping **[I]**: GP "Thor's gear" (l2_maproom volume 9626 gives the left gauntlet after its cinematic, 9628 takes it back), enemy survey (small spiders ×14 shrineroom, ×19 + bats ×12 maproom), grapple anchors 2676 / 2595 in l2_maproom.
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 2" (generated from the game data, P4-1).
+
 Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" = per-unit `ProgressionReal.GateSweep`, v0.41.0, 2026-11-10). Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |

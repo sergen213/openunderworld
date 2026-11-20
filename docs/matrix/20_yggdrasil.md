@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html (plus `details/yggdrasil2.html` and `details/yggdrasil3.html`: the relic run in two parts; all read)
 Our units (PR "Chapter routes" ch 7): l7_helheim01 (portal room again: rune symbols 8993-8996 `ar_uo_rune_wall_switch_{c,b,d}` / `…_swich_a` → dispatcher 8997, eitr falls 8998-9003 `ar_uo_goo_fall`, wall anchor 8897, relic 8936, portal door 8956) → l7_helheim02 / l7_helheim03 (hallway beyond the portal: broken-stair slide, thrall waves) → l7_yggdrasil (waterfall room: volume 8804 → cinematic 8773) → l7_yggdrasil_hall01 / hall02 (hallway to the device: thralls, eitr pit) → l7_yggdrasil_end (arrival walkway; arena volume 8303 → 8261 `320_hel_boss`). uids from PR, GP "Grapple", `ProgressionReal.Survey` and the sweeps (`matrix/.scratchC/`); hallway ↔ unit split [I] (generators are placed in helheim03 and both yggdrasil halls, GP "Survey").
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 7" (generated from the game data, P4-1).
+
 Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |

@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/09puppet.html (plus `details/puppet2.html`)
 Our units: tail of l2_maproom (flooded room with the broken bridge — pole 2665 on track 2664, **[I]**), l2_flushtunnel (underwater tunnel, wheel-operated doors), l2_cliffclimb (open sea, the boat). PR "Chapter routes" ch 2: "… l2_maproom → l2_flushtunnel → l2_cliffclimb; flushtunnel plane 2542 → unit script 9502 vt 26 sets volume 2564's BeatLevel sticky; volume 2564 at the boat then plays 2565 → chapter 3".
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 2" (generated from the game data, P4-1).
+
 Abbreviations as in `08_bhogavati.md`. Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |

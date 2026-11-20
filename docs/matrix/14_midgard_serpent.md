@@ -2,6 +2,8 @@
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/13midgard.html (plus `details/midgard2..17.html`, incl. the alternate "pool shortcut" page `midgard16.html` and the thrall strategy page `midgard17.html`; bug footnotes read; linked videos not viewed)
 Our units (PR "Chapter routes" ch 4): l4_staircase_upper (entrance room with the spike pit), l4_staircase_xibalba (long hallway with three pits), l4_traprooms (Lords of Xibalba statue room + the four trap houses), l4_staircase_mictlan (long dark tunnel), l4_ragnarok_room (carved hall, Xibalba key), l4_pool (Midgard Serpent pool, three levels, Thor statue, belt). Mapping **[I]** except objects PR names: ramps 6045 / 6036, door 5702, seal 5701, plates 5717 / 5718, throne 5891 + scepter 5883, grapple block 5884, crusher volume 5905, key 5695, pool volumes 5566 / 5624 / 5626, ceiling ring 5511, goo volume 5608.
 
+Checkpoints (uid, unit, position, respawn test) and objectives (help-on-demand lines): docs/CHECKPOINTS.md "Chapter 4" (generated from the game data, P4-1).
+
 Abbreviations as in `08_bhogavati.md`. Screenshot base: https://tombraiders.net/stella/walks/TR8walk/
 
 | Category | Required information | Status | Evidence / tests |
