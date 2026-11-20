@@ -14,7 +14,10 @@
 //  enemy hp <ms> <period> [set]     Lara's health (player data +0x628) every period ms, printed when it changes and
 //                                   every second: position, health, "hurt <amount>" on a drop (and a line whenever she
 //                                   moved 50 or more since the last line: teleports); [set] writes that
-//                                   health first; env HEAL=<h>: put back to 1000 when under h (default: never)
+//                                   health first; env HEAL=<h>: put back to 1000 when under h (default: never);
+//                                   env PDX=<hex>[,<hex>...]: also "pd <off> <hex> <float>" whenever the player-data
+//                                   dword at that offset changes (e.g. 638 = the hit invulnerability timer), env
+//                                   MW=<hex>[,<hex>...] the same for absolute addresses ("mw <addr> ...")
 //  enemy fight <ms> <period> uid... every period ms (5 for timings), printed when it changes: Lara's health ("hurt
 //                                   <amount>"), each enemy's health (AI + 0x2C64, float: "hit <uid> <amount> -> <health>"),
 //                                   the player data's ammo words (u16 at +0x51C + 2 slot, slots 0..7: "ammo ..."),
@@ -104,6 +107,21 @@ int main(int argc, char** argv) {
             QueryPerformanceCounter(&t); double ms = (t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
             if (ms > total) break;
             DWORD L = rd32(0xE7F094), pd = rd32(0xFADB58);
+            static DWORD wa[16], wv[16]; static int wn = -1, wpd[16];
+            if (wn < 0) {
+                wn = 0;
+                static const char* const envs[2] = {"PDX", "MW"};
+                for (int e = 0; e < 2; ++e)
+                    for (char* s = getenv(envs[e]); s && *s && wn < 16;) {
+                        wpd[wn] = e == 0, wa[wn] = strtoul(s, &s, 16), wv[wn] = 0xDEADBEEF, ++wn;
+                        if (*s == ',') ++s; else break;
+                    }
+            }
+            for (int k = 0; k < wn; ++k) {
+                if (wpd[k] && !pd) continue;
+                const DWORD a = wpd[k] ? pd + wa[k] : wa[k], v = rd32(a);
+                if (v != wv[k]) { float fv; memcpy(&fv, &v, 4); printf("%.1f %s %lx %08lx %g\n", ms, wpd[k] ? "pd" : "mw", wa[k], v, fv); wv[k] = v; }
+            }
             float hp = pd ? rdf(pd + 0x628) : -1;
             if (hp0 >= 0 && hp < hp0 - 0.5f) printf("%.1f hurt %.1f\n", ms, hp0 - hp);
             const float x = rdf(L + 0x20), y = rdf(L + 0x24), z = rdf(L + 0x28);

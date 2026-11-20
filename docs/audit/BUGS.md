@@ -151,11 +151,11 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SCR-003 | script VM | Natives `instanceref` 10, `instance` 27 / 63, `gamebase` 27, `cinematic` 10, `unitref` 1 unbound | Partly fixed (0.52.0, f9676fd; `instance` 63 open, record narrowed) | pre-existing | C-VM |
 | OU-SCR-004 | script VM | Fire-volume damage loop spins to the VM budget when its sound wait does not block | Fixed-verified (0.54.0, merge b6c1b47) | pre-existing | C-VM |
 | OU-SCR-005 | script VM | Level-change fade to white unsupported (always black) | Open | pre-existing | C-VM |
-| OU-SCR-006 | script / sound | Fire volume 4517 burns once in ours; tru.exe repeats 300 every 1.2 .. 4.4 s | Reproduced | pre-existing | C-VM |
-| OU-SCR-007 | script | Jellyfish sting at once; tru.exe stings ~2 s after she enters | Reproduced | pre-existing | C-VM |
+| OU-SCR-006 | script / sound | Fire volume 4517: the burn repeats only when flinch volume 4541 was entered first; ours then burnt every 1 s with SDL's dummy audio | Fixed (agent/Hazards11 d1fde0b; the "repeat" was entry order, Wine re-measured) | pre-existing | C-VM |
+| OU-SCR-007 | script | Jellyfish first sting ~2 s after entry (WineSweep10) | Not a bug (Wine re-measured: at once, as ours); the 121-tick period fixed to 120 (6cecca7) | pre-existing | C-VM |
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
-| OU-CMB-004 | hazards | Valaskjalf rollers hurt whenever she is in them; tru.exe's stop after a 4-hit burst | Reproduced (Wine, one trial) | pre-existing | — |
+| OU-CMB-004 | hazards | Valaskjalf rollers: tru.exe's "stop after a 4-hit burst" (WineSweep10) | Not a bug (Wine re-measured: 400 every 1.016 s for as long as she is held in any roller, as ours) | pre-existing | — |
 | OU-CMB-006 | AI | l4_ballcourt panther 6532 alerts on Lara 10 950 units away at its birth and charges; tru.exe's keeps patrolling the lower court | Reproduced (Wine, three runs) | pre-existing | — |
 | OU-CMB-007 | combat | Pistols fire every 333 ms (tru.exe 281 ms) and hit 6..8 harder at 1800..3600 away | Reproduced (Wine, one fight) | pre-existing | — |
 | OU-CMB-008 | AI | l4_ballcourt poachers 6538 / 6539 never reach door 6505; in tru.exe they can walk into it and are crushed | Reproduced (Wine, one of two runs) | pre-existing | — |
@@ -1479,45 +1479,47 @@ budget is ours (100000 instructions, `Vm.cpp:352`).
 **OU-SCR-005 Fade to white unsupported** — level changes that fade to white (0x5DAB40) always fade black (`Script.cpp:2052`).
 Status · Origin: Open · pre-existing.
 
-**OU-SCR-006 Fire volume 4517 burns once; tru.exe repeats the burn**
-- Repro: l3_main_bedroom, Lara held inside `firetriggervolume` 4517 (tru.exe new-game frame 2126.3, −3559.6, floor
-  −2890.4; ours = tru − (9623.8, 331.0, −2977.4): −7540, −3890.6, 137); self-test `fire4517.json` (four 7 s steps,
-  health 1000 at each start) in `openunderworld-work/WineSweep10-wine/ours/`.
-- Expected (Wine 2026-11-20, `tools/wine-ref` `enemy hp`, `WineSweep10-wine/ref/s1-fire4517*.txt`, new-game prologue,
-  health refilled under 400): **300 a burn, repeated**: 11 burns in 23.6 s (gaps 1.23 .. 4.40 s, mean 2.36 s); the
-  first 1.3 .. 3.5 s after she stood in the volume (two trials). A first trial gave 300 at 1.33 / 4.08 / 6.08 s.
-  Volumes 4492 / 4493 / 4494 at their origins burnt nothing in 8 .. 20 s (she was pushed off the origin by the rubble;
-  the boxes' extents are not known), and agent/ScriptVm6 measured one burn and no repeat in 14 s in 4494 (OU-SCR-004).
-- Actual (ours at 9d2935c+, audio through SDL's dummy driver): 300 at once (tick 1 after the teleport), then none in
-  28 s. The trace logs `script sound 4517 (firetriggervolume) +64 3D node type 4` once; [I] that sound (member +64,
-  an Assignment) is the burn sequence and never ends in `SoundPlayer`, so the `sound` 1 wait of state 1 never returns.
-- Files: `src/app/game/Sound.cpp` (`scriptSoundBusy`), `src/audio/SoundPlex.cpp` (`SoundPlayer::start` / `busy`, the
-  instance's game-time end), `src/script` (`sound` 1 wait).
-- Cause: [U]. Candidates: 4517's burn plex ends in tru.exe (its Envelope / ChoiceList picks a finite part: the gaps
-  vary like a random choice of lengths) while ours extends it forever; or tru.exe's IsActive (0x4ACC30) goes false on
-  something ours does not model (distance / virtual voice). The delay before the first burn in tru.exe is also not
-  explained (the thread may still wait on the volume's previous sequence).
-- Fix: decode 4517's +64 plex (`ou-asset` plex dump of l3_main_bedroom section/offset) against 4494's, and the
-  SoundSequence IsActive path; no change made.
-- Test: proposed `ScriptRealData.FireVolume4517RepeatsItsBurn` once the length rule is known.
-- Status · Origin: Reproduced (Wine and ours, 2026-11-20) · pre-existing.
+**OU-SCR-006 Fire volume 4517: the burn repeats only after flinch volume 4541; ours burnt every 1 s with dummy audio**
+- Repro: l3_main_bedroom (ours = tru − (9623.8, 331.0, −2977.4)). Fire volume 4517 (script 6516) and the flinch
+  volume 4541 (script 6515) overlap at the old spot (ours −7540, −3890.6, 137); ours −7950, −3900 is in 4541 only,
+  −7500, −3500 in 4517 only. Self-test `ch01_fire_volume_burn_order`; probes `fireA.json` / `fireB.json` /
+  `fire4517.json` in `openunderworld-work/Hazards11-ours/`.
+- Expected (Wine 2026-11-20, `Hazards11-wine/ref/h2-fire*.txt`, new-game prologue, `tpv` now held for wall-clock ms):
+  teleported into both at once (`h2-fire4517.txt`) or into 4517 first and then 4541 (`h2-fireB.txt`): **300 at once,
+  then none in 15 .. 20 s**; into 4541 first and then 4517 (`h2-fireA.txt`): **300 at once, then again after 2.16 /
+  2.10 / 3.51 / 1.33 / 2.41 / 2.98 s**, the lengths of the burn sound's seven waves (`flesh_sizzle_ss_*`, 1.197 ..
+  3.773 s, a shuffled ChoiceList under an Envelope; member +64's plex 401:0xAD4 -> DTP 6559).
+- Cause [O]: state 1 of 6516 (fn 8) burns (`health` 2, 300), plays the burn sound as a sequence and waits on it,
+  forever; entering 4541 runs 6515 vt 70, which sends `stopOthers` on the `fireanim` channel, and 6516 vt 0 answers
+  it with `STATE 2` (no state function: its threads end, 0x57C830 against the type's 3 state names). tru.exe tests the
+  volumes in registration order (0x5CD520 over 0xDB6BE0; Wine read: ascending uid, 4517 index 31 before 4541 index
+  50), so a joint entry burns first and is stopped at once. The WineSweep10 repeat came from holds that ran out early
+  (iteration-counted `tpv`): she walked into 4517 after 4541. Ours already had the order and the stop (queued to the
+  next tick; tru.exe's Send 0x4A2E70 -> 0x5D0670 -> 0x4A3800 -> 0x796140 runs the receivers at once [O], not changed:
+  the same result here). The difference was in `GameSound`'s script sound: Play / Play3D kept the old sound while
+  its mixer voice was alive (`SoundPlayer::active`), the wait ended by the data length (`busy`); with SDL's dummy
+  driver the voice never drained, so the second sound never started and the loop burnt every invulnerability window
+  (ours before: 300 at 1, 228, 289, 350 ticks). tru.exe's 0x4AE380 and the latent's IsActive (0x4ACC30) test the same
+  sound instance.
+- Fix: agent/Hazards11 d1fde0b: the still-playing test of Play / Play3D is `busy` (`src/app/game/Sound.cpp`). Ours
+  after: fireA 300 at 1, 228, 367, 535 ticks (wave lengths 3.78 / 2.32 / 2.80 s); fireB and fire4517 one burn.
+- Test: self-test `ch01_fire_volume_burn_order` (entry order, the second burn after the first sound, no third within
+  1.15 s). Under ctest's `--no-audio` the old rule passed too (that mixer drains); the dummy-driver runs above are the
+  before / after evidence. Open [U]: the receiver binding of message channels (0x4A3800 needs the referrer's handle).
+- Status · Origin: Fixed (agent/Hazards11, 2026-11-20) · pre-existing.
 
-**OU-SCR-007 Jellyfish sting at once; tru.exe stings ~2 s after she enters**
-- Repro: l1_seafloor, Lara held at ours (−4680, 8850, 1532) (`GameReal.JellyfishStingOnTouch` spot); self-test
-  `jelly.json` in `openunderworld-work/WineSweep10-wine/ours/`.
-- Expected (Wine 2026-11-20, `WineSweep10-wine/ref/s5-jelly*.txt`, tru = ours + (31071.5, 6311.8, 148279.7)): 100
-  every 1.997 .. 2.003 s; the first sting 1.72 s after the placement and 1.97 / 1.98 / 1.98 s after each of three
-  re-entries (4 s outside, 900 under).
-- Actual: 100 at tick 1, then every 121 ticks (2.017 s).
-- Files: `src/script` (state change / `WAIT`), `src/game/World.cpp` (player sensors), script 5594 of `jellyfish_a`.
-- Cause: [U]. Bytecode [O-data]: vt 14 sets flag +42 and `STATE 1` when a sensor first holds her; state 1's fn 3 loops
-  `while (+42) { command 0 (shock); damage +36 (100) via 53:9c; WAIT 2.0 }`, so a sting before the first wait is what
-  ours does. tru.exe's 2 s may come from the state change taking effect only at the thread's next resume, from 53:9c
-  waiting on the shock clip, or from the sensors' own update; not decoded. The extra tick of ours' period (121
-  against 120) is a separate one-tick `WAIT` rounding [I].
-- Fix: none made; decode 53:9c and the `STATE` resume in tru.exe first.
-- Test: `GameReal.JellyfishStingOnTouch` asserts "at once" (`hurtAt[0] < 5`) [I]; it must change with the fix.
-- Status · Origin: Reproduced (Wine and ours, 2026-11-20) · pre-existing.
+**OU-SCR-007 Jellyfish first sting ~2 s after entry (WineSweep10)**
+- Repro: l1_seafloor, Lara held at ours (−4680, 8850, 1532) (`GameReal.JellyfishStingOnTouch` spot).
+- Expected (Wine re-measured 2026-11-20, `Hazards11-wine/ref/h3-jelly.txt`, wall-clock `tpv`, three entries from 900
+  under): **the first sting 26 ms after the first entry and in the same sample as each re-entry**, then every 1.981 ..
+  2.018 s (mean 1.998 s). The
+  WineSweep10 delay (1.72 / 1.97 s) was the iteration-counted hold: she reached the spot later than the script assumed.
+- Ours: the first sting at tick 1 (matches); the period was 121 ticks (2.017 s): the VM restarted `WAIT` from 0 each
+  time. tru.exe adds the seconds to the thread timer (0x57CE50 case 0x7F) and takes dt off it each update (0x57E970),
+  so the overshoot carries over and a timer at or below 0 goes on without yielding [O].
+- Fix: 6cecca7 (`src/script/Vm.cpp`): the same timer; now every 120 ticks.
+- Test: `GameReal.JellyfishStingOnTouch` (at once; each gap 120 ± 1 ticks, the sum 120 per sting ± 1).
+- Status · Origin: Not a bug (first sting); period fixed (agent/Hazards11, 2026-11-20) · pre-existing.
 
 ### Combat, AI, vehicles, physics (OU-CMB, OU-VEH, OU-PHY)
 
@@ -1528,22 +1530,20 @@ c.headShotReady = true` (`Combat.cpp:1206`). Status · Origin: Fixed-verified ·
 sidestep, cover flags not derived, poacher rifle mesh not drawn, shark bite damage [I] (ROADMAP L57). Status · Origin:
 Open · pre-existing.
 
-**OU-CMB-004 Valaskjalf rollers hurt for as long as she stands in them; tru.exe's stop after a burst**
-- Repro: l5_valaskjalf, Lara 1.5 s at ours (−6200, −75221), then in grinder 6965 (ours −4895.1, −75221.3); self-test
-  `roller.json` in `openunderworld-work/WineSweep10-wine/ours/`.
-- Expected (Wine 2026-11-20, one fresh session, `WineSweep10-wine/ref/s4-roller*.txt`, tru = ours + (−5372.7,
-  54581.7, 70460.1), Lara held by `tpv`, health refilled under 700): 400 at 0.82 / 1.83 / 2.85 / 3.87 s (the 30-frame
-  window), then no hit in 8 s and 35 s more; grinders 6964 and 6968 afterwards: no hit in 8 s each.
-- Actual: 400 on every touch while she overlaps a roller box (`GameReal.RollersCost400ATouch`: three hits ≥ 60 ticks
-  apart while she runs through); in `roller.json` the hit reaction carries her out after two hits.
-- Files: `src/game/Hazards.cpp` (overlap rule), the grinders' anim graph (clips 3904 `idle`, not animated, and 3905
-  `grinding`).
-- Cause: [U]. The grinder's own script (type 16575) only answers vt 21 with a sound; the switch between `idle` and
-  `grinding` comes from elsewhere (unit script / dispatcher), and ours hurts on overlap whatever the clip. Whether
-  tru.exe's overlap hurts only while `grinding` plays, and what starts / stops it, is not decoded.
-- Fix: none made; trace the grinders' anim request in tru.exe (instance anim section) across a burst first.
-- Test: proposed: the burst length against the Wine trace once the trigger is known.
-- Status · Origin: Reproduced (Wine, one trial) · pre-existing.
+**OU-CMB-004 Valaskjalf rollers: the "stop after a burst" did not reproduce**
+- Repro: l5_valaskjalf, Lara 2 s at ours (−6200, −75221), then held in grinder 6965 (ours −4895.1, −75221.3), 6964 and
+  6968 (tru = ours + (−5372.7, 54581.7, 70460.1)).
+- WineSweep10 (`WineSweep10-wine/ref/s4-roller*.txt`, one session): 400 at 0.82 / 1.83 / 2.85 / 3.87 s, then none
+  while her position read unchanged; 6964 / 6968 none. Its `tpv` counted 1 ms sleeps (several ms each on the loaded
+  machine), so how long she was really held is not known; [U] why she was not hit there.
+- Re-measured (Wine 2026-11-20, two fresh sessions, wall-clock `tpv`, health refilled under 700):
+  `Hazards11-wine/ref/h4-roller.txt`, `h4-roller2.txt`: **400 every 1.016 s for the whole hold** (12 hits in 12 s in
+  6965, 9 on re-entry, 8 in 8 s in 6964, 9 in 6968): the 30-frame invulnerability window, no stop.
+  `h5-roller-free.txt` (held 1 s, then free): hit at 2.08 / 3.08 / 4.38 / 5.43 / 6.45 s while the hit reactions
+  knocked her 460 along the roller, then none once she stood at the box's side. Ours hurts on every overlap once per
+  window (`GameReal.RollersCost400ATouch`) and the reaction carries her out (`roller.json`): the same rule.
+- Fix: none needed.
+- Status · Origin: Not a bug (agent/Hazards11, 2026-11-20) · pre-existing.
 
 **OU-CMB-006 l4_ballcourt panther 6532 engages Lara from 10 950 units**
 - Repro: l4_ballcourt, Lara spawned at ours (−32783, 3585), yaw −0.471, Forward 0.5..3.8 s over trigger plane 6543

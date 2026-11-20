@@ -180,7 +180,9 @@ int main(int argc, char** argv) {
         float v[3] = {(float)atof(argv[2]), (float)atof(argv[3]), (float)atof(argv[4])}; int ms = atoi(argv[5]);
         DWORD p = rd32(h, 0xE7F094), q = rd32(h, p + 0x288); timeBeginPeriod(1);
         float c[3] = {v[0], v[1], v[2] + 315.4f}; // proxy capsule centre (+0x640/+0x680/+0x6D0)
-        for (int i = 0; i < ms; ++i) { WriteProcessMemory(h, (void*)(p + 0x20), v, 12, 0);
+        LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0); // ms of wall time, not loops
+        for (;;) { QueryPerformanceCounter(&t); if ((t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart > ms) break;
+            WriteProcessMemory(h, (void*)(p + 0x20), v, 12, 0);
             if (q) for (int o = 0; o < 3; ++o) WriteProcessMemory(h, (void*)(q + (o == 0 ? 0x640 : o == 1 ? 0x680 : 0x6D0)), c, 12, 0); Sleep(1); }
         timeEndPeriod(1); return 0;
     }
@@ -188,7 +190,9 @@ int main(int argc, char** argv) {
         float v[3] = {(float)atof(argv[2]), (float)atof(argv[3]), (float)atof(argv[4])}; int ms = atoi(argv[5]); float z[3] = {0, 0, 0};
         DWORD p = rd32(h, 0xE7F094), q = rd32(h, p + 0x288); timeBeginPeriod(1);
         float c[3] = {v[0], v[1], v[2] + 315.4f};
-        for (int i = 0; i < ms; ++i) { WriteProcessMemory(h, (void*)(p + 0x20), v, 12, 0); WriteProcessMemory(h, (void*)(p + 0x2A0), z, 12, 0);
+        LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0); // ms of wall time, not loops
+        for (;;) { QueryPerformanceCounter(&t); if ((t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart > ms) break;
+            WriteProcessMemory(h, (void*)(p + 0x20), v, 12, 0); WriteProcessMemory(h, (void*)(p + 0x2A0), z, 12, 0);
             if (q) for (int o = 0; o < 3; ++o) WriteProcessMemory(h, (void*)(q + (o == 0 ? 0x640 : o == 1 ? 0x680 : 0x6D0)), c, 12, 0); Sleep(1); }
         timeEndPeriod(1); return 0;
     }

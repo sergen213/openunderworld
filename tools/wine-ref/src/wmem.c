@@ -185,6 +185,11 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    if (!strcmp(argv[1], "rdp") && argc > 4) { // rdp <array> <count> <hex off>: per pointer in the array, the dword at +off
+        DWORD a = strtoul(argv[2], 0, 16), off = strtoul(argv[4], 0, 16); int n = atoi(argv[3]);
+        for (int i = 0; i < n; ++i) { DWORD p = rd32(h, a + 4 * i); printf("%d %08lx %08lx\n", i, p, p ? rd32(h, p + off) : 0); }
+        return 0;
+    }
     if (!strcmp(argv[1], "rd") && argc > 3) {
         DWORD a = strtoul(argv[2], 0, 16); int len = atoi(argv[3]);
         unsigned char b[4096]; if (len > 4096) len = 4096;

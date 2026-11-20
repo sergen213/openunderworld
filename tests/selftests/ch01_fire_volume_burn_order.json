@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "ch01_fire_volume_burn_order",
+  "chapter": "01 Prologue: the bedroom's fire volume 4517 and the flinch volume 4541 over it (OU-SCR-006)",
+  "note": "tru.exe (Wine 2026-11-20, openunderworld-work/Hazards11-wine/ref/h2-fire*.txt): entering flinch volume 4541 first and then fire volume 4517 burns 300 at once and again each time the burn sound ends (gaps 1.33 .. 3.51 s = the seven flesh_sizzle waves, 1.197 .. 3.773 s); entering 4517 first, or both at once, burns once: 4541's vt 70 sends stopOthers, which ends 4517's burn thread (STATE 2). The last step checks the wait after the second burn: no burn sooner than the shortest wave.",
+  "level": "l3_main_bedroom",
+  "spawn": [-4300, 2700, 137, 0],
+  "steps": [
+    {"step": "outside", "fixtures": [{"health": 1000}], "duration": 1,
+     "expect": [{"probe": "player.health", "eq": 1000}]},
+    {"step": "flinch_volume_first", "fixtures": [{"teleport": [-7950, -3900, 137, 0]}], "duration": 2,
+     "expect": [{"probe": "player.health", "eq": 1000, "note": "4541 alone: no damage, stopOthers to nobody burning"}]},
+    {"step": "into_the_fire", "fixtures": [{"teleport": [-7540, -3890.6, 137, 0]}], "duration": 6,
+     "until": {"probe": "player.health", "max": 400},
+     "expect": [{"probe": "player.health", "eq": 400, "note": "300 on entry, 300 when the first burn sound ended"}]},
+    {"step": "next_burn_waits_for_the_sound", "fixtures": [{"health": 1000}], "duration": 1.15,
+     "expect": [{"probe": "player.health", "eq": 1000, "note": "the third burn comes after the second sound (>= 1.197 s), not after the 30-frame invulnerability"}]}
+  ]
+}
