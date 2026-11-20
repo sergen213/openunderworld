@@ -62,11 +62,12 @@ UNIT = re.compile(r"\bl\d_[a-z0-9_]+[a-z0-9]")
 # reason. The test asserts that she does not stay at them, so a fix shows up as a failure until the row is updated.
 _POOL = ("dies: at a fresh load the eitr (pool box 5608) stands over the intro; the checkpoint belongs to the pool "
          "levels the section 14 / 15 scripts set (docs/matrix/15 C15-01)")
-_ARENA = ("no floor under the intro at a fresh load: she drops onto a ledge {} below and hangs [U: what carries these in "
-          "the original; the Natla arena's floating runestones ride orbit rigs, known gap ch21_platform_ride]")
+_ARENA = ("no floor under the intro at a fresh load: she drops onto a handhold {} below and hangs (tru.exe under Wine, "
+          "fresh load on 8242: drops and hangs from a handhold 414 below; BUGS OU-SAV-002)")
 NOT_STAYING = {
     ("l1_seatop", 1000): "stands on the yacht deck, which carries her down to 437 below the intro as it settles at the sea "
-                         "level [U: the original's deck height here not measured]",
+                         "level (tru.exe under Wine, fresh load: lands on the deck 197 below in 0.3 s and rides it down to "
+                         "586 below by 0.7 s; BUGS OU-SAV-002)",
     ("l2_cliffclimb", 3833): "a small brown spider (4029) reaches and bites her (state hit, health 940 after 60 ticks)",
     ("l3_secretchamber", 4598): "a fresh load plays cinematic 145_man_powerdown, whose end places her 387 away",
     ("l4_traprooms", 5722): "a fresh load plays cinematic 195_mex_lords, whose end places her elsewhere in the room",
@@ -78,11 +79,13 @@ NOT_STAYING = {
     ("l4_pool", 5503): _POOL, ("l4_pool", 5504): _POOL, ("l4_pool", 5506): _POOL, ("l4_pool", 5507): _POOL,
     ("l5_valgrind", 7329): "a fresh load plays cinematic 240_val_gate, whose end places her 107 away",
     ("l5_valaskjalf_entry", 7281): "a fresh load plays cinematic 240_val_gate, whose end places her 7120 away (in l5_valgrind)",
-    ("l7_helheim03", 8844): "born on a slide face: she slides down it [U: the original not measured here]",
+    ("l7_helheim03", 8844): "born on a slide face: she slides down it (tru.exe under Wine, fresh load: slides 1890 down the "
+                            "face, 947 lower, within 2.4 s; BUGS OU-SAV-002)",
     ("l7_yggdrasil", 8792): "a fresh load plays cinematic 300_hel_mother, whose end places her 7351 away",
     ("l7_yggdrasil_end", 8242): _ARENA.format(416), ("l7_yggdrasil_end", 8243): _ARENA.format(525),
     ("l7_yggdrasil_end", 8244): _ARENA.format(520), ("l7_yggdrasil_end", 8245): _ARENA.format(508),
-    ("l7_yggdrasil_end", 8248): "the face under the intro is 66 degrees steep (normal z 0.41): she falls 14927 [U: what carries it in the original]",
+    ("l7_yggdrasil_end", 8248): "the face under the intro is 66 degrees steep (normal z 0.41): she falls 14927 (tru.exe under "
+                                "Wine, fresh load: falls 4650, slides off a face and lands 15889 below; BUGS OU-SAV-002)",
 }
 
 
@@ -143,7 +146,8 @@ def generate(text):
         "  a save (`save::capture` → serialize → parse) into `World::setCheckpoint` and `World::respawn` loads its unit.",
         "  Every row: Lara is born in that unit on the intro's vertical, at most 128 above it, on a walkable floor face",
         "  under her feet (or swimming). \"respawn (60 ticks)\": `stays` = 60 ticks later she is alive and still there",
-        "  (standing within 64 units, or swimming); otherwise the observed reason, which the test asserts still holds.",
+        "  (standing within 64 units, or swimming within 128 of the intro's height: tru.exe births her afloat on an",
+        "  under-water intro, BUGS OU-SAV-002); otherwise the observed reason, which the test asserts still holds.",
         "  `ChaptersReal.CheckpointListMatchesTheData` checks every row against the data and that no checkpoint is missing.",
         "- **Objectives** [O]: TRU shows no objective list; the player's goals are the PDA's FIELD ASSISTANCE lines",
         "  (help on demand, docs/formats/AUDIO.md §9.5): `vo\\lara\\sc_CC_NN_hint` / `_answer` in generalbank with",
