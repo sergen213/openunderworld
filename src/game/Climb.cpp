@@ -434,10 +434,17 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
     };
 
     // Jump (tru.exe player chart, hold idle S571 / lean S583..S587 on the jump button): the stick's quadrant picks the
-    // jump query — up q31, right q29, left q28, neutral or down q30.
-    if (jumpPressed && held && verb != 2) {
+    // jump query — up q31, right q29, left q28, neutral or down q30. The lean goes on by itself: S583's T702 takes her to
+    // S614 (on to the target by its markup flags) once the lean clip is done (cond 0xC9) while the quadrant's jump query
+    // still has a target that is not a beam (cond 0x262 1, not 625) [O chart]. tru.exe under Wine (l1_ship_sinking_hall,
+    // Left held on hold 209): the lean, then 0.66..0.72 s after it began the transfer onto bar 238 without the jump button
+    // [O-runtime; ours waits for the antic clip's end, 0.80 s].
+    const std::string antic(held && verb != 2 ? stanceClip(stance, "antic_" + std::string(kSide[verb])) : std::string_view{});
+    const bool leanDone = !antic.empty() && s_.clip == antic && clipDone();
+    if ((jumpPressed || leanDone) && held && verb != 2) {
         const std::string launch(stanceClip(stance, "jump_" + std::string(kSide[verb])));
-        if (const Target j = jumpTarget(verb); j.hold >= 0) {
+        const Target j = jumpTarget(verb);
+        if (j.hold >= 0) {
             jumpTo(j.hold, j.frames, launch);
             return;
         } else if (j.ledge.markup >= 0) { // onto a ledge: the launch clip, the flight (HangJump), ledgeb_attach_U / _S
@@ -447,14 +454,15 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
             s_.state = State::HangJump;
             s_.fallStartZ = s_.pos.z;
             play(launch, false);
-            if (verb == 0) { // up (tru.exe under Wine, hold 5 -> ledge 45): a straight rush, 11 ticks at a constant speed
-                // onto the hang (S605 -> S289 -> S535), no ballistic arc
-                constexpr float kRush = 11.0f / 60.0f;
-                s_.vel = (attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide).first - s_.pos) / kRush;
-                s_.flight = kRush;
-            } else launchHangJump(kJumpSideUp * 30.0f);
+            // a straight rush, 11 ticks at a constant speed onto the hang (S605 -> S289 -> S535), no ballistic arc: tru.exe
+            // under Wine up (hold 5 -> ledge 45) and sideways (l1_ship_sinking_hall hold 209 -> bar 238's end, 394 left
+            // and 331 down, in 0.18 s on a straight line)
+            constexpr float kRush = 11.0f / 60.0f;
+            s_.vel = (attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide).first - s_.pos) / kRush;
+            s_.flight = kRush;
             return;
         }
+        if (!jumpPressed) return; // the lean's target went away: she stays [I]
         // nothing that way: the leap still goes (S601..S605), q31 / q28 / q29's launch (74.12 up; 63.21 sideways,
         // 34.77 up a frame)
         s_.climbHold = -1;
@@ -502,11 +510,9 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
         const int32_t best = firstHold(vec2(sd.x * kStepSide, sd.y * kStepUp), 0.0f, 0.0f, kStepFrames, kStepRadius, [&](vec3 d) {
             return glm::dot(vec2(glm::dot(d, right), d.z), sd) >= 0; // q73 +0x24: 90 degrees
         }).first;
-        if (best < 0 && jumpTarget(verb).any()) { // a far hold or ledge that way: lean toward it until jump is pressed
-            if (const auto antic = stanceClip(stance, "antic_" + std::string(kSide[verb])); !antic.empty()) {
-                play(antic, true);
-                return;
-            }
+        if (best < 0 && !antic.empty() && jumpTarget(verb).any()) { // a far hold or ledge that way: lean toward it
+            if (s_.clip != antic) play(antic, false);
+            return;
         }
         std::string_view bestClip;
         if (best >= 0) {

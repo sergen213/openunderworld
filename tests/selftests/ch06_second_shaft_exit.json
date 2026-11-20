@@ -1,9 +1,9 @@
 {
  "version": 1,
  "name": "ch06_second_shaft_exit",
- "chapter": "06 Realm of the Dead: from the top wheel to the bar, the beam and the exit ledges (docs/matrix/06_realm_of_the_dead.md C06-10 end, C06-11, C06-12)",
+ "chapter": "06 Realm of the Dead: from the top wheel onto the bar, along it and down onto the beam (docs/matrix/06_realm_of_the_dead.md C06-10 end, C06-11)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/realm3.html",
- "note": "KNOWN GAP (2026-11-10, re-checked 2026-11-20; its first seven steps are ch06_second_shaft_valves's current ones). After them she is on hold 209 (root -4236 -1237 11059). The page climbs 'from the valves to the straight metal bar', shimmies left over the beam and drops onto it. Bar 238 (z 11377.8, x -5586 .. -4551) lies 160 over hold 209's point and its near end 315 to the left. The DICE side jump q28 needs the hit 360 or more from the hold point and its capsule (centred 219 under the arc that starts 316 under the hold point) tops out ~12 over the hold point: it meets the beam's own side ledge 253 instead, 800 lower (caught one-handed, ledgeb_bad_attach_M; Interact recovers). The jump up q31 is straight up: the bar's end (inset 79) is ~394 off its axis, outside the capsule's 316. The moves (q73 / q82, 158 reach) end on holds or beams (cond 0x262), not ledges. Which hold and query reach the bar in the original is not traced (docs/audit/BUGS.md OU-PZL-005); the three up-jumps beyond the beam (ledges 239 at z 11456, 237 at z 12100: 644 apart, more than q10's 502.5) are not played. The last step fails today (player.ledge is 253).",
+ "note": "ch06_second_shaft_valves's steps, then the walkthrough's 'climbing from the valves to the straight metal bar' and the shimmy left over the beam. tru.exe under Wine (2026-11-20, private session, l1_ship_sinking_hall): on hold 209 Left alone (no jump) leans (chart S585 under S583) and, once the lean clip is done, S583's T702 takes her on to the quadrant's jump target (cond 0x262: not a beam) [O chart]: a straight 0.18 s transfer onto bar 238's inset end, root (-4630.1, -1428.9, 10886.6). From hold 219 Left first moves to 209 (q82), then the same. Ours: the lean ends on the antic clip's end (0.80 s; tru 0.66..0.72), the transfer is the hold -> ledge rush, and entry 3 of the side jumps' record takes the bar's end 394 from the hold point (its record value 360; the decoded +0x28 410 would refuse it) [I]. Then Crouch over beam 233: tru.exe re-aims the drop onto the beam's line (0x73EDC0 targets MUD 0x10000 markup; Wine: 60 aside, 116 down, 0.25 s); ours takes the beam point nearest her within 150 [I]. The walk across and the three up-jumps beyond the beam (ledges 239 at z 11456, 237 at z 12100) are not played.",
  "level": "l1_ship_sinking_hall",
  "spawn": [
   -417,
@@ -296,12 +296,10 @@
    ]
   },
   {
-   "step": "onto_the_bar",
+   "step": "lean_left_onto_the_bar",
    "input": [
     "0.1 right -1",
-    "0.3 jump 1",
-    "0.4 jump 0",
-    "0.8 right 0"
+    "2.5 right 0"
    ],
    "duration": 3,
    "until": {
@@ -310,9 +308,98 @@
    },
    "expect": [
     {
+     "visits": [
+      "climb",
+      "hangjump",
+      "hang"
+     ]
+    },
+    {
+     "clips": [
+      "DICE_B_antic_Left"
+     ],
+     "note": "the lean; no jump press"
+    },
+    {
      "probe": "player.ledge",
      "eq": 238,
-     "note": "the straight bar over the wheels (z 11377, x -5586 .. -4551)"
+     "note": "the straight bar over the wheels (z 11377.8, x -5586 .. -4551)"
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -4630.1,
+     "tol": 8,
+     "note": "tru.exe under Wine (2026-11-20): Left held on hold 209 -> the lean, then a straight 0.18 s transfer onto the bar's inset end, root (-4630.1, -1428.9, 10886.6)"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 10886.6,
+     "tol": 10
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "shimmy_left_over_the_beam",
+   "input": [
+    "0.2 right -1"
+   ],
+   "duration": 6,
+   "until": {
+    "probe": "player.pos.x",
+    "max": -5235
+   },
+   "expect": [
+    {
+     "probe": "player.state",
+     "over": "all",
+     "in": [
+      "hang",
+      "shimmy"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 238
+    }
+   ]
+  },
+  {
+   "step": "drop_onto_the_beam",
+   "input": [
+    "0 right 0",
+    "0.3 drop 1",
+    "0.4 drop 0"
+   ],
+   "duration": 4,
+   "expect": [
+    {
+     "probe": "player.state",
+     "eq": "beam",
+     "note": "balance beam 233 under the bar"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 10770,
+     "tol": 20,
+     "note": "tru.exe under Wine (2026-11-20): Crouch on the bar at x -5243.5 flies her onto the beam's line at (-5183.8, -1415.1, 10770.1), 116 down in 0.25 s (a jump-to-target solve)"
+    },
+    {
+     "probe": "player.pos.x",
+     "near": -5185,
+     "tol": 25,
+     "note": "on the beam's line (x -5209 at the wall, -5011 at its far end)"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
     }
    ]
   }
