@@ -314,7 +314,15 @@ void Player::spawn(vec3 feet, float yaw) {
     s_ = PlayerState{};
     s_.pos = feet;
     s_.yaw = yaw;
-    if (auto g = col_.groundProbe(feet + vec3(0, 0, t_.stepUp), t_.stepUp + 1000.0f)) s_.pos.z = g->point.z;
+    // tru.exe 0x5D40C0 -> 0x698180 births her on the intro's position. Ours drops a dry spawn onto the floor under it
+    // (intros sit on or a little in their floor) [I]; one under water further than a step above the floor stays where
+    // it is, as the original's does: tru.exe under Wine, l1_seafloor checkpoint 234 (803 over the sea floor), born
+    // swimming there and settling 13 units in 0.9 s (BUGS OU-SAV-002).
+    const auto g = col_.groundProbe(feet + vec3(0, 0, t_.stepUp), t_.stepUp + 1000.0f);
+    const int w = waterAt(feet);
+    const bool afloat = w >= 0 && feet.z < waterSurface(col_.markup[size_t(w)], vec2(feet), waveSeconds_) - t_.swimSurfaceDepth &&
+                        (!g || feet.z - g->point.z > t_.stepDown);
+    if (g && !afloat) s_.pos.z = g->point.z;
     s_.fallStartZ = s_.pos.z;
     play("ng_idle", true);
 }
