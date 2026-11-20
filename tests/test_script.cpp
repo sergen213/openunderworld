@@ -509,6 +509,8 @@ TEST(ScriptRealData, CameraTriggerCommandSurvey) {
                     }
                 }
                 if (c.command == 0x12) records += c.record.has_value();
+                if (c.command == 0xC || c.command == 0x14) // the cuts and the focus points flagged (unit, volume, id)
+                    std::printf("%s %d: 0x%X %d (%zu commands)\n", name.c_str(), o.uid, c.command, std::bit_cast<int32_t>(c.arg[0]), o.camera.size());
             }
         }
     }

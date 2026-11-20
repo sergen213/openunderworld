@@ -154,7 +154,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
-| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861) and agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349); 9 / 0xC / 0x14 / 0x16 and kind 1 open | pre-existing | — |
+| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861), agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349) and agent/CamCut9 (0xC cut, 0x14 focus points Wine-verified at 3859; 9 carried by no volume); 0x16 (no LaraCombatCamera) and kind 1 open | pre-existing | — |
 | OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040); presence, CloseCombat slots, bite range on agent/EnemySpawn7 | pre-existing | — |
 
 ## Root-cause clusters
@@ -668,14 +668,30 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
   Triggers now apply in CameraManager list order (entering appends 0x5E85B0, leaving moves the last into the hole
   0x5F2A70): 4468 entered inside 4476 gives 790.1 as tru.exe, where our uid order gave 948.2.
   New saved orbit state: both overrides, the limits' clock and target, the trigger list.
-- Narrowed, still open: 0xC is a cut (0x6017D0: blends end, the camera put at the targets' angles at +0x1320) but a Wine
-  check at l1_krakenstairs_b 599 was confounded by the teleport's own camera reset; 0x14 flags a **focus point** (unit
-  data +0x200 / +0x204 records, the `focuspoint` script type), which the focus-point blend 0x5F0B30 / 0x5F1540 (+0x14C0)
-  turns the look toward — a subsystem not ported; 0x16 is read only by the LaraCombatCamera (0x603190), which ours lacks;
-  9 (+0x133C) unread; kind 1 (AnchoredCamera, one usable record of 9); the frame of x / y tracker offsets; a volume
-  record of type 1 / 2 off a markup (her place 0 [I]); the look tracker's own lag (ours uses the focus's). OU-CAM-004 (reveal
-  blends) not touched.
-- Status · Origin: Fixed on agent/CamZones7 + agent/CamRest8 (partial: see open) · pre-existing.
+- Batch 9 (agent/CamCut9, docs/re/CAMERA.md §9 "Cut" / "Focus points"):
+  - 0xC (l1_krakenstairs_b 599, l7_arctic_sea 9226): 0x6019D0 flags a cut and 0x601D30 ends in 0x6017D0 — trackers at
+    their goals with their blends done, override / force-switch clocks done, the camera (+0x90) put at the target
+    distance +0x1320 at the active override's / force set's target angles (else behind her, level), or at a level
+    record's point; the distance state +0x1D4 and its speed stay, so the camera follows back out (Wine k599tp: +0x1D4
+    1262.3 → 1236.3 toward 474.1). Ours on the tick the trigger list changes; `StreamReal.CameraTriggerCutPutsTheCameraAtItsAngles`.
+    [I] the frame +0xD0 = her heading frame (as the force sets'). The angles' Wine check stays confounded by the
+    teleport's own reset, and tru.exe counted her in 599 at a point our box test leaves out (756 off its centre, half
+    extent 447) [U].
+  - 0x14: focus points (unit data +0x200 / +0x204, 0x100-byte records; none enabled in the data) gathered by flags /
+    radius / view / sight (0x5F0B30), faded in and out (0x5F0DF0..0x5F1060, their last-comparison-only loops kept),
+    blended with the look point (0x5F12F0) and mixed in by the look-idle weight (0x6009C0); flags last until 0x601D30
+    runs again (0x5F1480 then 0x5ED2D0). Wine-verified at l2_cliffclimb 3859 (look at 0.38..0.42 of the way to point 3;
+    0.65 / 1.65 = 0.394; gone after a mouse nudge until the 5..7 s ramp): `StreamReal.CameraTriggerFocusPointTurnsTheLook`,
+    `CollisionRealData.FocusPointSurvey`. Saved: both lists, the flags, the blend. [I] view frustum (our FOV, 16:9),
+    sight mask, gather order.
+  - 9: no volume carries it (+0x133C feeds the object at +0x2800 in 0x602690): nothing to model.
+  - 0x16: the LaraCombatCamera's distance cap (0x603190 / 0x603150 → +0x14C, 0x603C40 min) — ours has no
+    LaraCombatCamera: open.
+- Still open: 0x16 (needs the LaraCombatCamera); the focuspoint script type's Enable / Disable (0x775910 / 0x775960,
+  one unit's scripts); the third focus list (+0x330, 0x5F11C0 / 0x5ED260); kind 1 (AnchoredCamera, one usable record
+  of 9); the frame of x / y tracker offsets; a volume record of type 1 / 2 off a markup (her place 0 [I]); the look
+  tracker's own lag (ours uses the focus's); 599's box placement. OU-CAM-004 (reveal blends) not touched.
+- Status · Origin: Fixed on agent/CamZones7 + agent/CamRest8 + agent/CamCut9 (partial: see open) · pre-existing.
 
 **OU-CMB-003 Shark aggression**
 - Repro: l2_cliffclimb, into the sea and tread (`w2/WineMeasure/ours/tread_*`): ours bit within ~7 s and every 1.5..3 s.
