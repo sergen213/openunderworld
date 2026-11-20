@@ -371,6 +371,52 @@ the decompiled update 0x793680 / 0x791D10 / 0x792900 (†); ours feeds the same 
 | M109 | PDA | Menus as captured (`screens/ui`) | [O-runtime] screenshots | `ui/Ui.cpp` | layout compared by eye only | unmeasured |
 | M110 | Training text / helper buttons | Tutorial natives, locals.bin strings | [O-data] † | `Script.cpp` → `src/ui` | — | unmeasured |
 
+## Rendering (goal "defect vs API difference vs intentional improvement"; brief W9-3)
+
+**Scene set.** Two fixed views, each captured from tru.exe under Wine with every D3D9 call recorded (apitrace d3d9
+wrapper over DXVK, `tools/wine-ref/sessions/render_capture.sh`; pass lists in docs/re/RENDER_PIPELINE.md §13), and
+rendered by ours at the same camera in both presets and both renderers (`ou-game --preset original|enhanced --renderer
+vulkan|opengl --width 1280 --height 720 --camera EYE,TARGET,UP,45`; EYE, UP from `wmem cam` / `ref rec` (camera
+position, matrix row 1 negated), TARGET = EYE + 1000 × matrix row 2 (the pivot is not the look point), the unit
+offsets of "Method"):
+
+| Scene | tru.exe (2026-11-20, `openunderworld-work/rendercap10/`) | Ours |
+|---|---|---|
+| **B** l3_main_bedroom prologue corridor, Lara idle at the new-game start | `bedroom/shot.png`, `frame3.txt` (504 draws) | `ou-game --chapter 0 --render-hz 60 --frames 2400 --camera -4264.2,7219.1,554.5,-4265.2,5954.9,549.1,0,-0.0043,1,45` (`ours/bedroomng-*.png`); a `--level … --spawn -4264.2,5958.0,86.6,-90` start skips the prologue cinematic and with it the fire particles (`ours/bedroom-*.png`) |
+| **C** l2_cliffclimb yacht deck, facing the cliff | `cliffclimb/shot.png`, `frame3.txt` (5204 draws) | `--level 'pc-w\l2_cliffclimb.drm' --spawn -34775.5,-14687.7,225.9,41.7 --frames 150 --camera -35002.4,-15613.9,565.2,-34746.9,-14647.1,569.1,-0.0010,-0.0038,1,45` (`ours/cliffclimb-*.png`) |
+
+Vulkan and OpenGL give the same image in each preset (mean grey 14.76 / 14.76 bedroom Original, rgb 72.2 / 79.0 / 68.4
+against 72.2 / 79.1 / 68.4 cliff Original), so the rows do not split by renderer. Lara's clothes differ in C only
+because `wmem goto` keeps the prologue outfit in tru.exe: not compared. Classes: **defect** (ours is wrong against the
+original; BUGS entry), **API difference** (D3D9 against Vulkan / OpenGL mechanics, nothing visible or the same result),
+**intentional enhancement** (Enhanced-preset or configured features that the original does not have).
+
+| # | Scene | Visible difference | Original preset | Enhanced preset | Class | Evidence / cause |
+|---|---|---|---|---|---|---|
+| R1 | B | Smoke under the arch: tru.exe warm brown and dense, ours light grey puffs | yes | yes | defect | lit material sprite (PS c133 / c135 by normal, D3D9 call 1504259) reduced to texture × colour: BUGS OU-REN-012 |
+| R2 | B | Flames on the rubble: tru.exe large white-hot tongues, ours smaller (and none with a `--spawn` start) | yes | yes | defect | known density gap, cause [U] (docs/formats/EFFECTS.md "Prologue corridor fire density"); the start dependence is the cinematic's fireball particles |
+| R3 | B | Bloom strength around the fire | yes | yes | defect | Finish composite `a · (M(c) + α_b · a · c)` against ours `a · M(c)`: 16 % weaker here, half at amount 2: BUGS OU-REN-010 |
+| R4 | B | Overall exposure (mean grey 13.6 tru.exe, 14.8 ours Original, 15.1 Enhanced) | ≈ | ≈ | none (within 1.5 grey levels) | same view, new-game start |
+| R5 | B, C | Two-sided blended meshes (Lara's hair / gear batches) | not seen | not seen | defect | tru.exe draws them twice, back faces then front; ours once with culling off: BUGS OU-REN-011 (visible only close up [I]) |
+| R6 | B | Heat haze distorts the particles behind it in tru.exe (back-buffer copy after all translucent draws, then the haze reader); ours copies the scene before the effects | not seen | not seen | defect (order) [I] | RENDER_PIPELINE §13.1 rows 6–8; EFFECTS.md "Material particles" |
+| R7 | B, C | Torch / spot-light shadows: tru.exe renders 3 (B) and 8 (C) shadow-atlas tiles; Original without RT has only the sun's PSSM | not seen at these spots | RT local-light shadows | defect (Original, known) / intentional (Enhanced RT) | RENDER_PIPELINE §9 "Shadow atlas: spot"; §13.1 row 2 |
+| R8 | C | Sea: tru.exe teal refraction broken up by small waves, faint distorted reflection; ours Original a strong, nearly undistorted mirror of the cliff and a dark seam at the shore | yes | — | defect | BUGS OU-WAT-015 (cause [U]: full-resolution refraction / reflection inputs, missing ripple map, plane height) |
+| R9 | C | Sea: ours Enhanced a bright cyan FFT / foam sea | — | yes | intentional enhancement | RENDERING.md "Water" (Enhanced only) |
+| R10 | C | Cliff tone: tru.exe slightly warmer (mean rgb 78.7 / 81.9 / 70.8 against ours Original 72.2 / 79.0 / 68.4, Enhanced 82.8 / 93.3 / 83.9) | −8 % red | brighter, bluer | Original: defect [U cause, small]; Enhanced: intentional (AO, tone, sun shadows) | whole-frame means of the matched views; per-material causes not split |
+| R11 | C | Sea draw order: tru.exe sorts the sea's pieces with the other translucent draws; ours draws it after all of them | not seen | — | defect (order) [I] | RENDER_PIPELINE §9 "Screen readers", §13.3 b |
+| R12 | C | Above-water ray volume: tru.exe renders its 50 % / 25 % ray targets on the deck too and adds them before the filters; ours draws rays only under water | not seen | not seen | defect [U visibility] | RENDER_PIPELINE §13.2 row 5 |
+| R13 | B, C | Glows / fixed-function sprites after the filters in tru.exe, before them in ours (ours blooms them) | not seen | not seen | defect (order) [I] | RENDER_PIPELINE §13.2 row 10 |
+| R14 | B, C | Edges: tru.exe without MSAA (the capture prefix's `AntiAliasing` 0); ours Enhanced 4x MSAA | same | smoother | intentional enhancement | RENDERING.md "Graphics presets" |
+| R15 | B, C | Ambient occlusion in corners and under Lara | none | CORTAO | intentional enhancement | RENDERING.md "Ambient occlusion" |
+| R16 | B, C | Default field of view: tru.exe 45° vertical, ours 60° unless `--fov` / config | — | — | intentional (configurable; these views were rendered at 45°) | docs/GAMEPLAY.md camera table |
+| R17 | B, C | Depth: tru.exe pre-pass + EQUAL into an INTZ depth texture; shadow atlas as D16 depth texture with a NULL colour target; ours one LESS pass into Vulkan / GL depth formats | — | — | API difference | RENDER_PIPELINE §13 "API caveat", §9 "Depth pre-pass" |
+| R18 | B, C | Clear colour: tru.exe per unit ((45, 26, 0), (111, 122, 125)), ours a constant | not seen (nothing undrawn in view) | not seen | API difference | RENDER_PIPELINE §9 "Clear" |
+| R19 | B, C | Brightness gamma: tru.exe a D3D gamma ramp over the whole display, ours a post-pass gamma before the HUD | — | — | API difference | RENDER_PIPELINE §9 "Brightness" (no HUD in these views) |
+
+Rows: 19; defects 11 (seen in these views: R1, R2, R8, R10; R3 computed from the captured filter shader and vertex
+alpha; the others from the call lists), intentional enhancements 6 (R9, R14, R15, R16 and the Enhanced halves of R7,
+R10), API differences 3, one row within tolerance.
+
 ## Differences to fix
 
 Measured differences beyond the tolerance, with the area that owns the code. None of them is fixed by this document's
