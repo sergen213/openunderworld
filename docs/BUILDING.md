@@ -225,3 +225,28 @@ Observed (Debug + ASan/UBSan, Khronos validation layer 1.4.363 active):
 
 Not exercised: interactive mouse-drag resize and minimise, the `V` vsync toggle at runtime
 (both go through the same recreate path as the tested resize), non-AMD drivers, BC2 data.
+
+## Sanitizer + validation runs
+
+One run per release (recipe: [RELEASING.md](RELEASING.md) "Sanitizer + validation run"): Debug + ASan/UBSan
+(`-DOU_SANITIZE=ON`), Khronos validation with synchronization validation (`OU_VK_VALIDATION=1 VK_LAYER_VALIDATE_SYNC=1`),
+LSan with `tests/lsan_vulkan.supp`. Report count = lines matching `[vk error]`, `ERROR: AddressSanitizer`,
+`ERROR: LeakSanitizer` or `runtime error` in ctest's `LastTest.log` / the run logs. Reports become BUGS.md entries.
+
+Useful layer settings (environment, layer 1.4.363): `VK_LAYER_VALIDATE_SYNC=1` (sync validation),
+`VK_LAYER_PRINTF_ENABLE=1 VK_LAYER_PRINTF_TO_STDOUT=1` (shader `debugPrintfEXT`), `VK_LAYER_GPUAV_ENABLE=1` (GPU-AV;
+crashes llvmpipe's JIT with ray queries, so RADV only). The older `VK_KHRONOS_VALIDATION_*` names are ignored.
+Lavapipe with ray queries (CPU, cannot hang the GPU): the flatpak GL runtime's
+`/var/lib/flatpak/runtime/org.freedesktop.Platform.GL.default/x86_64/25.08/<hash>/files/lib/libvulkan_lvp.so`
+(Mesa 26.2.7) through an ICD json naming that path, `LD_LIBRARY_PATH` = that `lib/`, `VK_DRIVER_FILES` = the json,
+`SDL_VIDEO_DRIVER=offscreen`; `-DOU_LAVAPIPE_ICD=<json>` plus that `LD_LIBRARY_PATH` runs ctest `vulkan_lavapipe`.
+
+| Date | Commit | Driver | Run | Result |
+|---|---|---|---|---|
+| 2026-11-20 | 9d2935c (0.58.0) | lavapipe 26.2.7 | Release `ou-game`, `game_vulkan_rt_smoke` spots (l1_kraken_room, l4_ballcourt), 20 frames, core + sync | 12 / 11 errors → OU-VK-006 |
+| 2026-11-20 | agent/VkHang10 (1d3b4fe) | lavapipe 26.2.7 | same | 0 / 0 |
+| 2026-11-20 | agent/VkHang10 (1d3b4fe) | lavapipe 26.2.7 | ASan/UBSan `ou-game`, both spots, 10 frames, core + sync | 0 / 0 reports |
+| 2026-11-20 | agent/VkHang10 (1d3b4fe) | lavapipe 26.2.7 | Release ctest `vulkan_lavapipe` (validation, FSR frame) | passed |
+| 2026-11-20 | agent/VkHang10 (5e41a6c) | RADV 26.2.6, RX 7900 XTX | ASan/UBSan ctest `-L protected` (41) | 0 ASan/UBSan/LSan; 2 sync errors (prepass normal transition, `viewer_vulkan_matches_gl_agx`) → OU-VK-006 (5bcf3bc); 4 timeouts at the 300 s limit (`render_ao_vulkan`, `render_ao_rt_vulkan`, `render_golden_cliff_water_{original,enhanced}_vk`: Debug + ASan too slow; all pass in Release), `render_ao_parity` not run (depends on them), `vulkan_lavapipe` skipped (no system lavapipe) |
+| 2026-11-20 | agent/VkHang10 (5e41a6c) | RADV 26.2.6, RX 7900 XTX | ASan/UBSan ctest `VulkanRenderer\|viewer_vulkan\|game_render_rate_smoke` (13) | 13 passed; 0 ASan/UBSan/LSan; the same 2 sync errors |
+| 2026-11-20 | agent/VkHang10 (5bcf3bc) | RADV 26.2.6, RX 7900 XTX | same 13 | 13 passed; **0 reports** |

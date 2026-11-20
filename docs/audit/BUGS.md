@@ -81,11 +81,12 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-REN-007 | render | Blended foliage receives the shadow map under RT; no roughness | Open | pre-existing | — |
 | OU-REN-008 | render / FSR | Translated wind vertex animation has no motion vectors (FSR ghosting) | Open | pre-existing | — |
 | OU-REN-009 | render / log | False `texture 2 not found in loaded DRMs` for back-/depth-buffer samplers | Fixed-verified (0.54.0, f6e4264) | pre-existing | — |
-| OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Open | regression | — |
+| OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Fixed-verified on agent/VkHang10 (stale regex since 0.51.0; no hang on RADV 26.2.6; 0.12/0.13 hang cause unidentified) | test defect + unreproduced hang | — |
 | OU-VK-002 | Vulkan AO | CORTAO temporal pass is camera-only (risk of halos on moving meshes) | Not reproduced | new-feature defect (0.51.0) | — |
 | OU-VK-003 | Vulkan | AMD Anti-Lag crash a few frames into cutscenes / loading screen | Fixed-verified | regression (Anti-Lag support) | — |
 | OU-VK-004 | Vulkan / FSR | `VK_ERROR_OUT_OF_DEVICE_MEMORY` then FSR frame generation context failed | Not reproduced | unknown | — |
 | OU-VK-005 | Vulkan / FSR | FSR SDK validation messages (FG 3-component write, storage formats) | Open (upstream) | pre-existing | — |
+| OU-VK-006 | Vulkan | Validation: wave field image never initialised (UNDEFINED), `shaderImageGatherExtended` not enabled, unordered attenuation-table copies, pre-pass normal transition hazard | Fixed-verified on agent/VkHang10 (1d3b4fe, 5bcf3bc) | pre-existing | — |
 | OU-STR-001 | streaming | 2-9 s `stream scene` stalls at level load | Not reproduced | unknown | — |
 | OU-UI-001 | UI | Game font / button-glyph rendering missing | Fixed-verified | pre-existing | — |
 | OU-UI-002 | UI | Chapter title / letterbox screens, confirmation dialogs, PDA sub-screens not drawn | Open | pre-existing | — |
@@ -450,13 +451,54 @@ Open · pre-existing.
 - Expected: 40 frames, `RT shadows … BLAS` line, exit 0.
 - Actual: GPU hang in l1_kraken_room (project process rule: always excluded; `docs/audit/AUDIT_B.md:733` "excluded
   (hang, project memory)" at 0.41.0; `docs/GAMEPLAY_DEVELOPMENT_REPORT.md:95`).
-- Files: `src/render/shaders/sun.glsl` (`ouRayInputsFinite`), Vulkan RT path (`VkRenderer`, `scene_rt.*`).
-- Cause: the original hang (non-finite ray origins from translated shaders, RENDERING L205) was fixed in 671e35e
-  (2026-10-29), which added this test green; something later reintroduced a hang [I]. Unconfirmed.
-- Fix: in a private compositor with a GPU-reset-safe setup, bisect 671e35e..v0.41.0 with the test; check new ray users
-  (RT AO / GI `rt_indirect.comp`, water RT, BLAS refits) for non-finite inputs.
-- Test: `game_vulkan_rt_smoke` itself.
-- Status · Origin: Open · regression (between 671e35e and v0.41.0).
+- Files: `src/render/shaders/sun.glsl` (`ouRayInputsFinite`), Vulkan RT path (`VkRenderer`, `scene_rt.*`), the test in
+  `CMakeLists.txt` (`game_vulkan_rt_smoke`).
+- History (git + project memory): the test was added green in 671e35e (2026-10-29, 6 × 2000 RT frames clean after
+  `ouRayInputsFinite`); first commit message with "(game_vulkan_rt_smoke excluded)" is 35959e6 (0.17.1, 2026-10-31);
+  project memory records "skipped for 0.13.0 because it hung the GPU in l1_kraken_room" and "GPUVM fault in hidden kwin
+  (also on 0.12.0)" (2026-10-30). So the hang was seen between v0.10.0 (444b276) and 0.13.0, not first at v0.41.0.
+- Re-run (agent VkHang10, 2026-11-20, main 9d2935c, RX 7900 XTX, RADV Mesa 26.2.6, kernel 7.3.4-cachyos, private
+  `kwin_wayland --virtual` transient service, `timeout -s KILL 120`, user-approved):
+  - Safe tools first. Lavapipe with ray queries (flatpak `org.freedesktop.Platform.GL.default` 25.08 `libvulkan_lvp.so`,
+    Mesa 26.2.7, loaded on the host through a custom ICD json + `LD_LIBRARY_PATH`): the test's exact command, both spots,
+    40 frames, exit 0. Khronos core + sync validation (`VK_LAYER_VALIDATE_SYNC=1`): no acceleration-structure or ray
+    hazard (three unrelated errors, OU-VK-006). `debugPrintfEXT` before every `rayQueryInitializeEXT` (sun / light
+    shadow rays, reflection hits; positive control fired 22-30 times): **0** non-finite origins or directions in 40
+    frames at either spot. GPU-AV (`VK_LAYER_GPUAV_ENABLE=1`) segfaults inside llvmpipe's JIT with every option
+    subset tried (tool limit, no finding). Debug + ASan/UBSan `ou-game` on lavapipe, both spots, core + sync validation:
+    no reports.
+  - Real GPU, run 1 (unchanged test): l4_ballcourt ran its 40 frames, exit 0, no amdgpu kernel message; the test still
+    **failed**: since 0.51.0 (CORTAO) `rtSummary` starts with the AO mode (`ou-game: AO CORTAO | RT shadows …`), the
+    test greps `^ou-game: RT shadows .*BLAS`, so it failed after its first spot and never reached l1_kraken_room.
+  - Real GPU, run 2 (regex fixed, 1da8102): **passed**, both spots, 15.8 s, no amdgpu kernel messages.
+- Cause: of the Oct-30 hang, **not identified** — it does not reproduce on the current tree and driver (RADV 26.2.6),
+  and bisecting v0.10.0..0.13.0 would need repeated real-GPU hang attempts. Candidates in that range [I]: fe4c7d2 (vFace
+  sign in translated shaders), 62dc35e (planar water reflection pass), ab95165 (exterior terrain at far depth),
+  2eda2ec (shadow-only terrain groups in the TLAS); none shows a non-finite ray input today (printf run above). The
+  current test failure was the stale summary regex (since 0.51.0), not a hang.
+- Fix: 1da8102 (test regex). 1d3b4fe fixes the validation errors found on the way (OU-VK-006).
+- Test: `game_vulkan_rt_smoke` (needs `OU_GAME_DIR`, a display, a ray-query device).
+- Status · Origin: Fixed-verified (one real-GPU pass at 1da8102; hang cause of 0.12/0.13 unidentified, not reproduced)
+  · test defect (regex since 0.51.0) + unreproduced driver/engine hang (0.12.0-0.13.0).
+
+**OU-VK-006 Vulkan validation errors in every Enhanced run (wave field layout, gather feature, staged-copy order)**
+- Repro: any Vulkan run with `OU_VK_VALIDATION=1` (+ `VK_LAYER_VALIDATE_SYNC=1` for the third), e.g. the
+  `game_vulkan_rt_smoke` spots on lavapipe, 20 frames.
+- Actual (9d2935c): `VUID-VkShaderModuleCreateInfo-pCode-08740` (cortao_filter.comp declares ImageGatherExtended, the
+  device never enabled `shaderImageGatherExtended`); 10 × `VUID-vkCmdDraw-None-09600` (wave field image `ripples_`
+  sampled as GENERAL while UNDEFINED: `flush()` returned before its callback for an empty batch, so
+  `createWaterField`'s clear never ran and the image was never initialised); sync `WRITE_AFTER_WRITE` on the
+  attenuation table (upload() and a fog change stage it in the same frame; the two copies were unordered, either
+  table could win).
+  Also (Debug + ASan ctest on RADV, `viewer_vulkan_matches_gl_agx`): 2 × sync `WRITE_AFTER_WRITE` on the pre-pass
+  normal target's UNDEFINED → COLOR_ATTACHMENT transition (source scope compute only, the previous frame's store
+  unordered when the AO passes did not read it).
+- Fix: 1d3b4fe (callback runs in its own one-shot submit; feature enabled with the other CORTAO features; repeated
+  staged images wait for the earlier copy); 5bcf3bc (transition also waits for colour attachment output / writes).
+- Test: both spots, lavapipe, 20 frames, core + sync validation: before 12 (kraken: 1 + 10 + 1 WAW) / 11 (ballcourt)
+  errors, after 0 / 0. ASan ctest `VulkanRenderer|viewer_vulkan|game_render_rate_smoke` with core + sync validation on
+  RADV: 2 errors before 5bcf3bc, 0 after (13/13 passed).
+- Status · Origin: Fixed-verified · pre-existing (wave field 0.13-era 234e10f; CORTAO 0.51.0).
 
 **OU-VK-002 CORTAO temporal is camera-only on Vulkan**
 - Repro: l2_cliffclimb spawn (bobbing yacht), `--ao cortao`, Vulkan, watch the deck / Lara edges.

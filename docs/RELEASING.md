@@ -118,6 +118,28 @@ On any failure the worktree is removed, as is the local tag if it was not pushed
 
 Heavy steps run under `systemd-run --user --scope -p MemoryMax=6G` when available (`OU_RELEASE_MEMMAX` overrides). Without the limit, the build can run the machine out of memory.
 
+### Sanitizer + validation run (once per release)
+
+Before tagging, run the sanitizer and Vulkan validation pass on the release commit and add one line to the log in
+[BUILDING.md](BUILDING.md) "Sanitizer + validation runs" (date, commit, driver, counts). Any report is a BUGS.md entry.
+All window-opening steps run in a private `kwin_wayland --virtual` session (transient `systemd-run --user --wait
+--collect -p KillMode=control-group` service, never a `--scope`).
+
+1. `cmake -S . -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOU_SANITIZE=ON`, build (ASan + UBSan; Debug turns
+   Khronos validation on).
+2. Environment: `OU_VK_VALIDATION=1 VK_LAYER_VALIDATE_SYNC=1 UBSAN_OPTIONS=print_stacktrace=1
+   LSAN_OPTIONS=fast_unwind_on_malloc=0:suppressions=$PWD/tests/lsan_vulkan.supp` and `OU_GAME_DIR`.
+3. `ctest --test-dir build-san -L protected` and `ctest --test-dir build-san -R 'VulkanRenderer|viewer_vulkan|game_render_rate_smoke'`;
+   then `grep -cE '\[vk error\]|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error' build-san/Testing/Temporary/LastTest.log`
+   after each (both must be 0, all tests passed).
+4. Ray tracing under the sanitizers, on lavapipe (CPU; cannot hang the desktop GPU): `build-san/ou-game` with the
+   `game_vulkan_rt_smoke` command line (`--renderer vulkan --preset enhanced --shaders original --rt shadows`, both
+   spots, `--frames 10`), `SDL_VIDEO_DRIVER=offscreen`, `VK_DRIVER_FILES` = a lavapipe ICD with ray queries
+   (Mesa ≥ 25; the flatpak GL runtime's `libvulkan_lvp.so` works with a custom ICD json and `LD_LIBRARY_PATH` to its
+   `lib/`). Same grep, must be 0.
+5. RADV ray tracing: the Release ctest `game_vulkan_rt_smoke` (OU-VK-001; passes again since 1da8102, but runs on the
+   desktop GPU: only where a GPU reset is acceptable).
+
 **Releases are normal GitHub releases marked "experimental" in the title and notes, not GitHub pre-releases.** `releases/latest/download/…` (the launcher's default manifest URL) never resolves to a pre-release. Observed: a repo with only pre-releases answers `/releases/latest` with a redirect to `/releases`, and the API returns 404.
 
 ### v0.1.0 (2026-10-18)
