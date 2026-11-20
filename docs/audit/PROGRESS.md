@@ -226,3 +226,30 @@ Merged into `int/batch8` (worktree `openunderworld-work/wt-int8`):
     either-end rule is [I].
   - OU-PZL-008 (b) is narrowed: tru.exe's rope bends are chained physics bodies (0x6A4D40 / 0x699A50 / 0x699960).
 - **Full ctest on int/batch8** (private kwin, game_vulkan_rt_smoke excluded): 100 % of 1084 passed.
+
+## 2026-11-20 — batch 9 (released as 0.58.0)
+
+Between batch 8 and batch 9, 0.56.1 / 0.56.2 (time of day under water) and 0.57.0 / 0.57.1 (sky domes, OU-REN-001)
+were released from single fixes. Batch 9 worktrees moved to NVMe (`/mnt/4TBNVMEXT4/openunderworld-work`, game data
+copy `/mnt/4TBNVMEXT4/ou-gamedata`): four agents' real-data tests had saturated the HDD (IO pressure full 85 %,
+selftest / StreamReal timeouts).
+
+Merged into `int/batch9` (worktree `/mnt/4TBNVMEXT4/openunderworld-work/wt-int9`):
+
+- **agent/SurfTint** (player report): OU-WAT-014 fixed. The above-surface under-water pass needs the camera looking
+  down, acos(camera row 2 z) > 2.0 rad (0x6D9DA0 / 0x5EA200 / 0x431CA0). Open: third gate 0x69E270.
+- **agent/CamCut9:** OU-CAM-006 0xC cut (0x601D30 → 0x6017D0, distance state +0x1D4 kept) and 0x14 focus points
+  (unit data +0x200 / +0x204, 0x5F0B30 / 0x5F0DF0..0x5F1060 / 0x5F12F0, look-idle ramp 5..7 s in 0x6009C0;
+  Wine 0.394 share at volume 3859). 9: no volume uses it. Open: 0x16 (needs LaraCombatCamera), focuspoint script
+  type, a clean Wine walk-in of the cut.
+- **agent/Drop9:** OU-PLY-007 (fling aims at the ledge point, 0x73EDC0; lands at the line) and OU-PLY-008 (S11
+  holds 3 frames over the edge, S542 10-tick attach blend; Wine `w2/Drop9/s1`). Open: plain run-off hold, the
+  24-tick descent path, S543 attach.
+- **agent/ShelfOut9:** OU-PLY-003 (S237 T1110, clearance 0x74E290 → 0x74E160 → shelf test 0x74BB50 result 8).
+  Open: Wine check at l2_cliffclimb ledge 936, the swim ledge query's reach.
+- **agent/Swim9:** OU-SWM-001 / 002. The stick is read against the view, which follows a second tracker (+0x620,
+  0x6009C0 / 0x6022F0 → 0x609830, dead zones from mode 20 memory); circles 47.3 / 47.1 (surface) and 47.8 / 47.1
+  (under water) vs tru.exe 46.7 / 46.4 and 48.3 / 48.0. Conflict with CamCut9 resolved on the agent branch: focus
+  points turn the look point in modes 19 / 20 (0x6022F0 → 0x5F1540). Open: under-water look record, other modes.
+- **Full ctest on int/batch9** (private kwin, NVMe game data, game_vulkan_rt_smoke excluded): 100 % of 1089 passed
+  in 7 min.

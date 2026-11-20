@@ -6,6 +6,22 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-11-20
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: swimming at the surface no longer tints the whole view blue-green as if under water; the tint now only
+  appears when the camera looks steeply down into the water, as in the original.
+- Fixed: swimming turns like the original: steady circles turn at the same rate both ways (within about 2 % of the
+  original at the surface and under water), the stick is read against where the camera looks, and Lara's motion lags
+  her heading by the original amount.
+- Fixed: a pole fling now lands Lara on the ledge's edge instead of 79 units past it.
+- Fixed: running off an edge with a ledge below, Lara carries on briefly over the drop before catching the ledge and
+  is drawn back onto it smoothly, as in the original.
+- New: Lara can climb out of the water straight into a wall hug on a narrow shelf (`swim_climbout_to_wallhug`).
+- New: camera trigger volumes can cut the camera straight to its new angle and distance, and pull the view towards
+  points of interest after a few seconds without camera input (focus points), as in the original.
+
 ## [0.57.1] - 2026-11-19
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
