@@ -3,7 +3,7 @@
  "name": "ch21_platform_ride",
  "chapter": "21 Out of Time: from the entry walkway onto a floating platform (docs/matrix/21_out_of_time.md C21-01)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/20outoftime.html",
- "note": "l7_yggdrasil_end from the unit's start by input: the steps of natla_fight (ledge, ramp, arena volume 8303, 320_hel_boss, the towers retract), then along the middle ring's entry walkway, a timed stick jump from 154 back from its end onto floating stone 8368 (rig 8389) as it comes past: hanging on its ledge. tru.exe under Wine (2026-11-20, wine-ref): after 320_hel_boss she stands on the entry walkway at (-8143, 793, 4321) as in ours; the stones 8368-8370 circle at radius 4924-5025 (origin z 4442-4462, as ours) at 13.8 degrees a second; standing 58 back from the walkway's end, Up + Jump as stone 8368 came past at 159 degrees, she left the floor 0.07-0.11 s after the press (~25 units on), flew aimed at 2430 units/s and caught the stone's ledge near its corner (hang root 490 under the ledge loop, z 401.5 over the stone's origin: our ledge height). A stick jump with no target there leaves after 8.3 frames and ~175 units (as ours, Tuning::stickJumpFrames). Ours checks the jump's target (q43) only at the take-off, against the ledge where it is then, so from 58 back she walks off the end during the 8-frame run-up; how tru.exe's query sees the coming stone early (0x7296C0, the owner velocity 0x7027B0) is not decoded [U] (OU-PZL-012). This route starts the jump 154 back for that reason (natla_platform_ride). Not played: the ride, the jump off onto the ledge with the ring, the rope down (C21-02).",
+ "note": "l7_yggdrasil_end from the unit's start by input: the steps of natla_fight (ledge, ramp, arena volume 8303, 320_hel_boss, the towers retract), then along the middle ring's entry walkway, a timed running jump from 58 back from its end onto floating stone 8368 (rig 8389) as it comes past: hanging on its ledge. tru.exe under Wine (2026-11-20, wine-ref, w-GapsB10/s2/j1.txt): after 320_hel_boss she stands on the entry walkway at (-8143, 793, 4321) as in ours; the stones 8368-8370 circle at radius 4924-5025 (origin z 4442-4462, as ours) at 13.8 degrees a second; standing 58 back from the walkway's end, Up (full stick) and Space 50 ms after it as stone 8368 came past at 159 degrees: her run state had begun, so the press is the running jump (S281, request 678; the chart's T56 gives the stick jump from the run's start only under full stick), off the floor 0.07-0.11 s after the press at ours x -6647.0, launched 89 along + 41 up a 30 Hz frame at the stone and re-aimed every frame (0x73EDC0), on the stone's ledge near its corner 12.5 frames later (hang root 490 under the ledge loop, z 401.5 over the stone's origin: our ledge height). Ours (OU-PZL-012, OU-PLY-017): the running jump's query meets the stone in its own frame (0x70F300: the arc's velocity less the markup's) at frame 12.39, the box catch's reach is measured to the ledge point led by the flight, the flight aims at that point and is re-aimed every tick.",
  "level": "l7_yggdrasil_end",
  "steps": [
   {
@@ -101,7 +101,7 @@
   {
    "step": "to_the_walkway_end",
    "plan": [
-    "go -6775 793 8",
+    "go -6679 793 8",
     "face 0"
    ],
    "duration": 30,
@@ -139,7 +139,7 @@
   {
    "step": "jump_to_a_platform",
    "plan": [
-    "run 0 0.6 jump 0",
+    "run 0 0.6 jump 0.05",
     "wait 2"
    ],
    "duration": 4,

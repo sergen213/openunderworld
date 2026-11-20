@@ -1152,7 +1152,8 @@ glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, c
 bool World::pushUberHandle(const Actions& a, float speed) {
     const auto& s = player_.state();
     uberMoving_ = 0;
-    // MustDetach [O 0x73F900]: the body she grips left her grip (it fell off an edge, or was held back while she went on).
+    // MustDetach's stand-in (kPushDetachLevel; tru.exe 0x73F900 tests the proxy's speed, spin and tilt) [I]: the body
+    // she grips left her grip (it fell off an edge, or was held back while she went on).
     bool slipped = false;
     if (const auto* j = uberHandle_.hold ? uberSlide(uberHandle_.uid) : nullptr) {
         const vec3 d = s.pos - j->x - *uberHandle_.hold;

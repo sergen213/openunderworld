@@ -226,6 +226,8 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"pullWait", p.pullWait},
             {"runTime", p.runTime},
             {"airBrake", {vec2j(p.jumpVel0), p.jumpStick0}},
+            {"aim", {markupRef(w, p.aimMarkup), p.aimSeg, p.aimT, p.aimSide, p.aimLeft, p.aimPerch}},
+            {"jumpQuery", p.jumpQuery},
             {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
             {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends, p.ropeMax}},
@@ -272,6 +274,13 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     p.runTime = c.value("runTime", 1.0f); // older saves: a run long enough for the running stop
     p.jumpVel0 = game::vec2(p.vel), p.jumpStick0 = 0; // older saves: the flight as it is
     if (const auto ab = c.find("airBrake"); ab != c.end()) p.jumpVel0 = vec2j(ab->at(0)), p.jumpStick0 = ab->at(1);
+    p.aimMarkup = -1, p.aimSeg = 0, p.aimT = 0, p.aimSide = 1, p.aimLeft = 0, p.aimPerch = false; // older saves: unaimed
+    if (const auto am = c.find("aim"); am != c.end()) {
+        if (!am->is_array() || am->size() != 6) throw SaveError("bad aim " + am->dump());
+        p.aimMarkup = ref(am->at(0)), p.aimSeg = am->at(1), p.aimT = am->at(2), p.aimSide = am->at(3), p.aimLeft = am->at(4);
+        p.aimPerch = am->at(5);
+    }
+    p.jumpQuery = c.value("jumpQuery", uint8_t(0)); // older saves: none (the player data's fall heights)
     const auto& cl = c.at("climb");
     p.climbHold = ref(cl.at(0)), p.climbStance = cl.at(1), p.climbWarp = cl.at(2), p.climbNormal = vec(cl.at(3));
     p.climbFrom = vec(cl.at(4)), p.climbTo = vec(cl.at(5)), p.climbYawFrom = cl.at(6), p.climbYawTo = cl.at(7);
