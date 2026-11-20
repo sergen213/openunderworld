@@ -42,8 +42,7 @@ SHOT="$OU_WREF_DIR/menu-sel.png"
 k() { $W wkey key "$1" 200 > /dev/null; sleep "${2:-1.5}"; }
 private() {
     [ -d "$UDIR" ] || { echo "no Wine user directory under $WINEPREFIX" >&2; exit 1; }
-    links=$(find "$WINEPREFIX/drive_c/users" -maxdepth 2 -type l)
-    [ -n "$links" ] && { echo "links out of the prefix (run menu.sh setup): $links" >&2; exit 1; }
+    wref_private_prefix
     mkdir -p "$SAVES"
 }
 nsaves() { ls "$SAVES" 2>/dev/null | grep '\.TRUSave$' | grep -v -x Autosave.TRUSave | wc -l; }
@@ -132,10 +131,10 @@ waitplay() {
 }
 case "$1" in
 setup)
-    for u in "$WINEPREFIX"/drive_c/users/*/; do
-        for l in Desktop Documents Downloads Music Pictures Videos; do
-            [ -L "$u$l" ] && rm "$u$l" && mkdir "$u$l" && echo "unlinked $u$l"
-        done
+    # every link out of the prefix that wref_private_prefix (env.sh) refuses: replaced by an empty directory; nothing
+    # behind a link is touched
+    find "$WINEPREFIX/drive_c/users" -maxdepth 2 -type l -lname '/*' | while IFS= read -r l; do
+        rm "$l" && mkdir "$l" && echo "unlinked $l"
     done
     private; echo "saves: $SAVES" ;;
 install)

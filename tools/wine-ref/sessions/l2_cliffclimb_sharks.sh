@@ -11,7 +11,7 @@
 #                        sharks watched meanwhile (zones-depth-<d>.txt at the start); 4 s at the top in between
 # Usage: OU_WREF_DIR=... OU_WREF_NAME=... OUT=dir sessions/l2_cliffclimb_sharks.sh [parts...]
 # parts: yacht open dive depth (default: yacht open dive)
-WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"
+WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 : "${OUT:=$OU_WREF_DIR/out}"; mkdir -p "$OUT"
 W="$WREF_SRC/w.sh"
 PARTS=${*:-"yacht open dive"}

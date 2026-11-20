@@ -15,7 +15,7 @@
 # Usage: OU_WREF_DIR=... WINEPREFIX=<private prefix copy> OU_TRU_DIR=<private game copy with the wrapper> \
 #        OU_WREF_CPUS=4-7 OUT=dir SCENE=... sessions/render_capture.sh
 # (a private prefix and game copy on NVMe need no wine.lock; the shared $OU_WORK/wine prefix does).
-WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"
+WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 : "${OUT:=$OU_WREF_DIR/out}"; : "${SCENE:=bedroom}"; mkdir -p "$OUT"
 [ -f "$OU_TRU_DIR/d3d9.dll" ] || { echo "no apitrace d3d9.dll wrapper in $OU_TRU_DIR" >&2; exit 1; }
 W="$WREF_SRC/w.sh"

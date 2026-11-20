@@ -4,6 +4,15 @@ The harness behind the `[O-runtime]` rows of `docs/REFERENCE_COMPARISON.md` and 
 1.1.0.0) runs under Wine in a private nested compositor and a private Wine prefix; small Win32 helpers read and write
 its memory, send it keys and print per-frame traces; Python scripts reduce the traces to the numbers in the docs.
 
+> **Hard rule: the Wine prefix must not link out of itself.** A prefix made by `winecfg`, and every copy of
+> `$OU_WORK/wine`, links `drive_c/users/<user>/{Documents,Desktop,Downloads,Music,Pictures,Videos}` to the Linux home
+> directory, and tru.exe then writes `Autosave.TRUSave` and its saves into the user's own `~/Documents`. Every entry
+> point that runs wine (`tru.sh`, `w.sh`, `newgame.sh`, `camhook.sh`, `menu.sh`, `sessions/*.sh`) calls
+> `wref_private_prefix` (env.sh) first and refuses to run while
+> `find "$WINEPREFIX/drive_c/users" -maxdepth 2 -type l -lname '/*'` prints anything. Fix a prefix with
+> `tools/wine-ref/menu.sh setup` (replaces each such link with an empty directory; nothing behind a link is touched).
+> Never point `WINEPREFIX` at a prefix whose links you have not removed, and never touch files under `/home`.
+
 Nothing here contains game data. The game install, the Wine prefix, traces and screenshots stay in the private work
 directory (`openunderworld-work/`, default `OU_WORK`), never in the repository.
 

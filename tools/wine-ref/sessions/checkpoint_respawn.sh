@@ -7,7 +7,7 @@
 # Usage: OU_WREF_DIR=... WINEPREFIX=... OUT=dir sessions/checkpoint_respawn.sh <unit> <checkpoint uid> <tag>
 # Outputs <tag>-ld.txt (level data before / after), -rec.txt, -end.txt (pole dump of her and the checkpoint), -inst.txt,
 # -end.png. Compare her trace with the checkpoint instance's position (both tru.exe frame).
-WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"
+WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 : "${OUT:=$OU_WREF_DIR/out}"; mkdir -p "$OUT"
 W="$WREF_SRC/w.sh"
 O=$OUT/$3

@@ -5,7 +5,7 @@
 #   (cave +0x100 = index, cave +0x200 = 8-byte entries), then runs the two overwritten instructions
 #   (push esi; mov esi,[esp+8]) and jumps back to 0x5E8215. The cave address is kept in $OU_WREF_DIR/camcave.txt.
 # log: print the ring as mode@caller, oldest slot first (the ring wraps after 64 requests).
-WREF_SRC=$(cd "$(dirname "$0")" && pwd); . "$WREF_SRC/env.sh"
+WREF_SRC=$(cd "$(dirname "$0")" && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 W="$WREF_SRC/w.sh"
 case $1 in
 install)

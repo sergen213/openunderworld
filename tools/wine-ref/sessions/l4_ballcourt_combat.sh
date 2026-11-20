@@ -3,7 +3,7 @@
 # 6537..6539) born by Lara walking across trigger plane 6543, and the combat traces of docs/REFERENCE_COMPARISON.md
 # (M31 / M40..M46, 2026-11-20).
 #
-#   SAVE=<chapter-4 .TRUSave> sessions/l4_ballcourt_combat.sh start   compositor, private Documents, boot, LOAD GAME
+#   SAVE=<chapter-4 .TRUSave> sessions/l4_ballcourt_combat.sh start   (after menu.sh setup) compositor, boot, LOAD GAME
 #                                                                     slot 1, goto l4_ballcourt (the checkpoint there
 #                                                                     becomes the autosave), then `cross`
 #   sessions/l4_ballcourt_combat.sh again     restart tru.exe, RESUME GAME (that checkpoint: nothing born), `cross`
@@ -21,7 +21,7 @@
 # of tens of thousands of units keeps her velocity, flings her and can kill her; a death reloads the checkpoint.
 # Frame: tru.exe = ours + (5881.3, -10787.3, -15435.9) after the goto and after loads of saves made in it (planes 6543 /
 # 6546, dispatcher 6535; headings: tru yaw = ours + 90 degrees).
-WR=$(cd "$(dirname "$0")/.." && pwd); . "$WR/env.sh"
+WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); WR=$WREF_SRC; . "$WR/env.sh"; wref_private_prefix
 W="$WR/w.sh"; M="$WR/menu.sh"; O=$OU_WREF_DIR
 DX=5881.3 DY=-10787.3 DZ=-15435.9
 tru() { awk -v x="$1" -v y="$2" -v z="$3" -v dx=$DX -v dy=$DY -v dz=$DZ 'BEGIN { printf "%.1f %.1f %.1f", x + dx, y + dy, z + dz }'; }
@@ -30,7 +30,6 @@ restart() { systemctl --user stop "$WREF_TRU_UNIT" 2>/dev/null; wineserver -k 2>
 case "${1:-start}" in
 start)
     "$WR/start-kwin.sh" || exit 1
-    $M setup
     [ -n "$SAVE" ] && $M install --only "$SAVE"
     $M boot > /dev/null && $M load 1 || exit 1
     $W wmem goto l4_ballcourt > /dev/null; sleep 90

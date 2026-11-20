@@ -19,3 +19,14 @@ wref_display() { # DISPLAY of the private compositor's Xwayland (written by kwin
     [ -f "$OU_WREF_DIR/display.env" ] || { echo "no compositor: run start-kwin.sh first" >&2; return 1; }
     . "$OU_WREF_DIR/display.env"; export DISPLAY; unset WAYLAND_DISPLAY
 }
+# Hard rule (README "Prerequisites"): no Wine user directory may link out of the prefix. A prefix made by winecfg (and
+# every copy of $OU_WORK/wine) links drive_c/users/<user>/Documents, Desktop, ... to the Linux home, and tru.exe then
+# writes its autosave and saves into the user's own ~/Documents. Every entry point that runs wine calls this first and
+# stops; `menu.sh setup` replaces the links with empty directories.
+wref_private_prefix() {
+    l=$(find "$WINEPREFIX/drive_c/users" -maxdepth 2 -type l -lname '/*' 2>/dev/null)
+    [ -z "$l" ] && return 0
+    printf 'refusing to run wine: %s links out of the prefix:\n%s\nrun %s/menu.sh setup (it replaces the links with empty directories)\n' \
+        "$WINEPREFIX" "$l" "$WREF_SRC" >&2
+    exit 1
+}

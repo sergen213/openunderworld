@@ -1,7 +1,7 @@
 #!/bin/sh
 # (Re)start tru.exe and start a new game (Tomb Raider difficulty) into the prologue, l3_main_bedroom.
 # The key sequence is the GOG 1.1 front end at 1280x720: setup dialog Ok, then Down / Enter / Up / Enter / Enter.
-WREF_SRC=$(cd "$(dirname "$0")" && pwd); . "$WREF_SRC/env.sh"
+WREF_SRC=$(cd "$(dirname "$0")" && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 W="$WREF_SRC/w.sh"
 systemctl --user stop "$WREF_TRU_UNIT" 2>/dev/null; wineserver -k 2>/dev/null; sleep 2
 "$WREF_SRC/tru.sh"
