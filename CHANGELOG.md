@@ -6,6 +6,25 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-11-20
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: chapter 4, the running jump from the column hall ledge now reaches perch 30 (jumps can target perches as in
+  the original).
+- Fixed: chapter 6, from the top valve wheel Lara reaches the bar by holding the direction (the lean carries on by
+  itself as in the original), and dropping from the bar lands her on the beam below instead of sliding off it.
+- Fixed: chapter 9, a grapple ring on a moving statue follows the statue, so the shaft descent plays as in the original.
+- Fixed: chapter 10, throwing the grapple in mid-air keeps Lara's jump and takes up the slack rope, so the leap to the
+  map room wall ring holds her above the pool.
+- Fixed: chapter 17, Lara can pull up onto the hammer chamber block.
+- Fixed: climbing out of the water onto a high ledge plays the original's three-part climb-out; the wall-hug
+  climb-out added in 0.58.0 was removed (the original does not do it there).
+- Fixed: a camera cut trigger no longer pops the camera in close and back out.
+- Fixed: four Vulkan validation errors (water wave field, ambient occlusion filter feature, two synchronisation
+  issues).
+- New: a progress site (https://sergen213.github.io/openunderworld/) with badges and a chapter map in the README.
+
 ## [0.58.0] - 2026-11-20
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

@@ -253,3 +253,33 @@ Merged into `int/batch9` (worktree `/mnt/4TBNVMEXT4/openunderworld-work/wt-int9`
   points turn the look point in modes 19 / 20 (0x6022F0 → 0x5F1540). Open: under-water look record, other modes.
 - **Full ctest on int/batch9** (private kwin, NVMe game data, game_vulkan_rt_smoke excluded): 100 % of 1089 passed
   in 7 min.
+
+## 2026-11-20 — batch 10 (released as 0.59.0)
+
+Picked from docs/audit/BRIEF_COMPLIANCE.md §16 across phases (the user pointed out that batches 6-9 only took
+BUGS.md player fixes). Wine sessions now run in parallel (private NVMe prefixes, separate CPU sets); private
+compositors run as transient services (scopes leaked xdg-desktop-portal / ksecretd).
+
+- **Compliance10:** BRIEF_COMPLIANCE re-audited at 0.58.0 (§0 summary, §16 remaining queue); doc drift P0-1, P11-1,
+  P11-2, P11-4.
+- **WineCheck10** (Wine): camera cut shown at the distance state (0x6017D0 writes the proposed point); under-water
+  look record Wine-verified; the 0.58.0 wall-hug climb-out disproved at ledge 936 and removed; swim climb-out
+  A / B / C onto ledges 90+ above (hang 61.9 out, end 62 in, as traced).
+- **GapsA10 / GapsB10** (Phase 4, Wine): known gaps 11 → 1. ch09 live grapple points (0x713090 → 0x6FF040), ch04
+  ground jumps to perches, ch05 route, ch06 route (not a bug), lean-then-rush to bar 238 and bar drop onto beam 233,
+  ch10 air throw (rope taut at the shortest reach), ch17 player-ray flag 0x800 (0x48EF50), bedroom doors compare
+  fix. Natla grab narrowed (early take-off at a moving target, 0x7296C0 / 0x7027B0 lead).
+- **VkHang10** (Phase 10): game_vulkan_rt_smoke passes on RADV (stale grep since 0.51.0; the Oct-30 hang does not
+  reproduce); four validation fixes (OU-VK-006); first ASan/UBSan + validation run recorded. Integration ctest runs
+  the test again (user's choice).
+- **RenderCap10** (Phase 3/9): apitrace D3D9 captures of l3_main_bedroom, l2_cliffclimb and the sharks' LODs;
+  RENDER_PIPELINE §13; 19-row rendering classification; OU-REN-010/011/012, OU-WAT-015.
+- **Chapters10** (Phase 4): docs/CHECKPOINTS.md, 303 checkpoints + 499 help lines from the data, respawn tests
+  (288 stay, 25 pinned with reasons); matrices refreshed.
+- **ReVerify10** (Phase 1/5): libjpeg 6b located (195 functions); verification table settled + 23 batch 6-9 rows;
+  call edges + CFG summaries in docs/re/db; untagged-path inventory; contradictions OU-PLY-016..018, OU-PHY-003,
+  OU-DOC-003.
+- **Pages10:** tools/progress (progress.py, tests), .github/workflows/pages.yml, README badges and map; GitHub Pages
+  enabled (Actions source).
+- **Full ctest on int/batch10** (private kwin, NVMe data, game_vulkan_rt_smoke INCLUDED): 100 % of 1111 passed.
+- Still running at release: WineSweep10 (combat / object / hazard measurements) — goes into batch 11.
