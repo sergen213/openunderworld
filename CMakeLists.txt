@@ -403,6 +403,9 @@ add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Dsp.cpp src/audio/Mixe
 target_link_libraries(ou_audio PUBLIC ou_cdc glm::glm PRIVATE SDL3::SDL3)
 add_executable(ou-audio tools/ou-audio/main.cpp)
 target_link_libraries(ou-audio PRIVATE ou_audio SDL3::SDL3)
+# tools/re/chapter_data.py input (docs/CHECKPOINTS.md): checkpoints, help conditions and help lines from the game files
+add_executable(ou-chapter-data tools/re/chapter_data_dump.cpp)
+target_link_libraries(ou-chapter-data PRIVATE ou_audio ou_formats SDL3::SDL3)
 if(OU_BUILD_TESTS)
   add_executable(ou_audio_tests tests/test_audio.cpp)
   target_link_libraries(ou_audio_tests PRIVATE ou_audio SDL3::SDL3 GTest::gtest_main)
@@ -706,8 +709,9 @@ if(OU_BUILD_TESTS)
   target_link_libraries(ou_save_tests PRIVATE ou_save ou_render_common GTest::gtest_main)
   gtest_discover_tests(ou_save_tests DISCOVERY_TIMEOUT 60)
   add_executable(ou_progress_tests tests/test_progress.cpp)
-  target_link_libraries(ou_progress_tests PRIVATE ou_ui ou_game ou_save ZLIB::ZLIB GTest::gtest_main)
-  gtest_discover_tests(ou_progress_tests DISCOVERY_TIMEOUT 60)
+  target_link_libraries(ou_progress_tests PRIVATE ou_ui ou_game ou_save ou_audio ZLIB::ZLIB GTest::gtest_main)
+  target_compile_definitions(ou_progress_tests PRIVATE OU_SOURCE_DIR="${CMAKE_SOURCE_DIR}") # docs/CHECKPOINTS.md
+  gtest_discover_tests(ou_progress_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 2400) # CheckpointRespawn/chN: a unit load per checkpoint
   add_executable(ou_gates_tests tests/test_gates.cpp src/app/game/Autopilot.cpp)
   target_link_libraries(ou_gates_tests PRIVATE ou_game ou_save ZLIB::ZLIB GTest::gtest_main)
   gtest_discover_tests(ou_gates_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 1200)

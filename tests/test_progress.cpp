@@ -6,6 +6,8 @@
 #include "render/Water.hpp"
 #include "render/TimeOfDay.hpp"
 #include "save/Save.hpp"
+#include "audio/Audio.hpp"
+#include "audio/SoundPlex.hpp"
 #include "locale/Locale.hpp"
 #include "ui/Art.hpp"
 #include "ui/Pda.hpp"
@@ -22,7 +24,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
+#include <format>
+#include <map>
+#include <set>
 
 #include <zlib.h>
 #include <unistd.h>
@@ -1707,3 +1713,228 @@ TEST(ObjectsReal, OnlyRewardUrnsGiveBirthToPickups) {
     EXPECT_EQ(urns, 4); // ar_ (l1 / l5 / l7 share it), sa_, ma_, ca_
     EXPECT_TRUE(births.contains("sh_ei_exploading_barrel"));
 }
+
+// ---- per-chapter checkpoints and objectives (docs/CHECKPOINTS.md, tools/re/chapter_data.py; brief W4-1) ----------
+
+namespace {
+
+struct CheckpointRow {
+    int chapter = 0;
+    std::string unit;
+    int32_t uid = 0;
+    vec3 pos{0};
+    float yaw = 0;      // degrees
+    std::string result; // "stays", else the documented reason she does not (respawn test)
+};
+struct ObjectiveRow {
+    int chapter = 0, number = 0;
+    std::string hint, answer;
+};
+struct ChapterDoc {
+    std::vector<std::vector<std::string>> routes; // chapter -> route units
+    std::vector<CheckpointRow> checkpoints;
+    std::vector<ObjectiveRow> objectives;
+};
+
+std::vector<std::string> splitCells(const std::string& line) {
+    std::vector<std::string> out;
+    size_t at = line.find('|') + 1;
+    for (size_t next; (next = line.find(" | ", at)) != std::string::npos; at = next + 3) out.push_back(line.substr(at, next - at));
+    out.push_back(line.substr(at, line.rfind(" |") - at));
+    for (auto& c : out) {
+        while (!c.empty() && c.front() == ' ') c.erase(c.begin());
+        while (!c.empty() && c.back() == ' ') c.pop_back();
+    }
+    return out;
+}
+
+ChapterDoc chapterDoc() {
+    ChapterDoc d;
+    std::ifstream f(OU_SOURCE_DIR "/docs/CHECKPOINTS.md");
+    int chapter = -1;
+    bool objectives = false;
+    for (std::string line; std::getline(f, line);) {
+        if (line.starts_with("## Chapter ")) {
+            chapter = std::stoi(line.substr(11));
+            d.routes.resize(size_t(chapter) + 1);
+            objectives = false;
+        } else if (line.starts_with("### Objectives")) {
+            objectives = true;
+        } else if (chapter >= 0 && line.starts_with("Route units: ")) {
+            const std::string list = line.substr(13, line.find(". Walkthrough") - 13);
+            for (size_t at = 0; at < list.size();) {
+                const size_t next = std::min(list.find(" → ", at), list.size());
+                d.routes[size_t(chapter)].push_back(list.substr(at, next - at));
+                at = next + std::string_view(" → ").size();
+            }
+        } else if (chapter >= 0 && line.starts_with("| " + std::to_string(chapter) + ".")) {
+            const auto c = splitCells(line);
+            const int number = std::stoi(c[0].substr(c[0].find('.') + 1));
+            if (objectives) d.objectives.push_back({chapter, number, c.at(1), c.at(2)});
+            else d.checkpoints.push_back({chapter, c.at(1), std::stoi(c.at(2)), {std::stof(c.at(4)), std::stof(c.at(5)), std::stof(c.at(6))},
+                                          std::stof(c.at(7)), c.at(9)});
+        }
+    }
+    return d;
+}
+
+bool standsOrTreads(game::State s) {
+    using game::State;
+    return s == State::Idle || s == State::SwimTread || s == State::SwimSurface || s == State::SwimUnder;
+}
+
+} // namespace
+
+// The committed list is the data: every route unit's checkpoint intros (game::loadUnitData, the respawn's own list)
+// appear with their uid, position and heading, and nothing else does. Regenerate with tools/re/chapter_data.py.
+TEST(ChaptersReal, CheckpointListMatchesTheData) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const ChapterDoc doc = chapterDoc();
+    ASSERT_EQ(doc.routes.size(), game::kChapters.size());
+    std::set<std::pair<std::string, int32_t>> unique;
+    for (size_t ch = 0; ch < doc.routes.size(); ++ch) {
+        ASSERT_FALSE(doc.routes[ch].empty()) << ch;
+        EXPECT_EQ(doc.routes[ch].front(), game::kChapters[ch].unit) << "a route starts at its chapter's start unit";
+        for (const auto& name : doc.routes[ch]) {
+            ASSERT_TRUE(bf.read("pc-w\\" + name + ".drm")) << name;
+            const game::UnitData u = game::loadUnitData(bf, name);
+            std::vector<const CheckpointRow*> rows;
+            for (const auto& r : doc.checkpoints)
+                if (r.chapter == int(ch) && r.unit == name) rows.push_back(&r);
+            ASSERT_EQ(rows.size(), u.checkpoints.size()) << "chapter " << ch << " " << name;
+            for (const auto& c : u.checkpoints) {
+                const auto it = std::find_if(rows.begin(), rows.end(), [&](const CheckpointRow* r) { return r->uid == c.id; });
+                ASSERT_NE(it, rows.end()) << name << " checkpoint " << c.id << " missing";
+                EXPECT_LT(glm::distance((*it)->pos, c.pos), 0.11f) << name << " " << c.id;
+                EXPECT_NEAR(std::remainder((*it)->yaw - glm::degrees(c.yaw), 360.0f), 0.0f, 0.06f) << name << " " << c.id;
+                unique.emplace(name, c.id);
+            }
+        }
+    }
+    EXPECT_EQ(unique.size(), 303u) << "checkpoint intros on the chapter routes";
+    for (size_t ch = 0; ch + 1 < doc.routes.size(); ++ch)
+        EXPECT_TRUE(std::any_of(doc.checkpoints.begin(), doc.checkpoints.end(), [&](const auto& r) { return r.chapter == int(ch); })) << ch;
+}
+
+// Objectives = the chapter's help-on-demand lines (AUDIO.md §9.5): each listed hint / answer is a generalbank
+// single-stream line vo\lara\sc_CC_NN_hint|answer (CC = the chapter) whose English subtitle is the listed text.
+TEST(ChaptersReal, ObjectiveListMatchesTheHelpLines) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const ChapterDoc doc = chapterDoc();
+    audio::PlexBank bank;
+    bank.add(std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\generalbank.drm"))));
+    std::map<std::string, std::string> lines; // stream -> English subtitle
+    for (uint32_t id = 200; id < 1000; ++id)
+        if (const audio::Plex* p = bank.find(id); p && p->type == audio::PlexType::Assignment && p->children.size() == 1 &&
+                                                  p->children[0].type == audio::PlexType::Stream) {
+            std::string text;
+            if (auto m = bf.read("pc-w\\audio\\streams\\" + p->children[0].stream + ".mul"))
+                for (const auto& s : audio::decodeMul(*m).subtitles)
+                    if (const auto t = s.text(0); !t.empty()) text += (text.empty() ? "" : " ") + std::string(t);
+            lines.emplace(p->children[0].stream, text);
+        }
+    const auto shown = [](std::string s) {
+        for (char& c : s)
+            if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+        std::replace(s.begin(), s.end(), '|', '/');
+        while (!s.empty() && s.back() == ' ') s.pop_back();
+        return s.empty() ? std::string("(no subtitle)") : s;
+    };
+    std::map<int, int> perChapter;
+    for (const auto& o : doc.objectives) {
+        char base[32];
+        std::snprintf(base, sizeof base, "vo\\lara\\sc_%02d_%02d_", o.chapter, o.number);
+        const auto check = [&](const char* kind, const std::string& listed) {
+            const auto it = lines.find(std::string(base) + kind);
+            EXPECT_EQ(it == lines.end() ? std::string("(no line)") : shown(it->second), listed) << base << kind;
+        };
+        check("hint", o.hint), check("answer", o.answer);
+        ++perChapter[o.chapter];
+    }
+    for (int ch = 0; ch <= 7; ++ch) EXPECT_GT(perChapter[ch], 0) << "chapter " << ch << " has help lines";
+    EXPECT_EQ(perChapter.count(8), 0u) << "the epilogue has none";
+    std::set<std::string> numbers; // sc_CC_NN of every line
+    for (const auto& [stream, text] : lines)
+        if (stream.starts_with("vo\\lara\\sc_")) numbers.insert(stream.substr(0, stream.rfind('_')));
+    EXPECT_EQ(numbers.size(), doc.objectives.size()) << "every help line is listed";
+}
+
+// Every listed checkpoint, loaded the way a death loads it: the checkpoint goes through a save game (CheckpointRef round
+// trip, docs/SAVES.md) into World::setCheckpoint and World::respawn births Lara on its intro (tru.exe 0x5D40C0) in a
+// fresh load of its unit, in a World of its own (no script state from another checkpoint) carrying the chapter's gear.
+// Every row: she is born in that unit on the intro's vertical, at most pushed 128 up out of the floor. "Stays": after the
+// first tick (which poses decks and platforms) she is swimming or not falling with a walkable floor face right under her
+// feet (normal within 52 degrees of up, tru.exe 0x5DCE20), and 60 ticks without input later she is alive and still there
+// (standing within 64 of the intro and of that floor, or swimming not above the intro). Rows docs/CHECKPOINTS.md gives
+// another result with its reason are asserted not to stay, so the list cannot go stale.
+class CheckpointRespawn : public ::testing::TestWithParam<int> {};
+
+TEST_P(CheckpointRespawn, PlacesLaraOnSolidGround) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const int ch = GetParam();
+    const ChapterDoc doc = chapterDoc();
+    std::vector<CheckpointRow> rows;
+    for (const auto& r : doc.checkpoints)
+        if (r.chapter == ch) rows.push_back(r);
+    if (ch == 8) {
+        EXPECT_TRUE(rows.empty()) << "the epilogue has no checkpoint";
+        return;
+    }
+    ASSERT_FALSE(rows.empty());
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    // "ou_test_floor" = a plain floor: the World is built without loading a game unit, the respawn loads the checkpoint's.
+    const game::UnitLoader load([&](const std::string& n) { return n == "ou_test_floor" ? unit(n) : game::loadUnitData(bf, n); });
+    const float minFloorNormalZ = game::defaultTuning().minFloorNormalZ;
+    int stayed = 0;
+    for (const auto& r : rows) {
+        SCOPED_TRACE(r.unit + " checkpoint " + std::to_string(r.uid));
+        game::World w(load, "ou_test_floor", anims);
+        w.script().setBigfile(&bf);
+        w.enemies().setBigfile(&bf);
+        std::string cines;
+        w.onCinematic = [&](const std::string& c, bool) { cines += c + ","; };
+        w.chapter = ch;
+        w.script().setPlayerObjects(game::chapterGear(ch));
+        w.setCheckpoint(game::CheckpointRef{r.unit, r.uid});
+        const auto saved = save::parse(save::serialize(save::capture(w)));
+        ASSERT_TRUE(saved.checkpoint);
+        EXPECT_EQ(*saved.checkpoint, (game::CheckpointRef{r.unit, r.uid}));
+        w.setCheckpoint(saved.checkpoint);
+        w.setCheckpointSave(nullptr); // the unit as it loads: the respawn of a death before any save
+        w.respawn();
+        ASSERT_EQ(w.currentUnit().data.name, r.unit);
+        const vec3 born = w.player().state().pos;
+        EXPECT_LT(glm::length(glm::vec2(born - r.pos)), 1.0f) << "born on the intro's vertical";
+        EXPECT_LE(born.z - r.pos.z, 128.0f) << "at most pushed out of the floor";
+        w.tick({}); // the first tick poses the unit's objects (decks, platforms) and finds her medium
+        const game::PlayerState b = w.player().state(); // a copy: compared with tick 60
+        const auto floor = w.collision().groundProbe(b.pos + vec3(0, 0, 40), 80);
+        const bool supported = b.water >= 0 || (floor && floor->normal.z >= minFloorNormalZ && b.state != game::State::Fall);
+        const std::string under = b.water >= 0 ? "water" : floor ? std::format("floor normal z {:.2f}", floor->normal.z) : "no floor within 40";
+        for (int i = 1; i < 60; ++i) w.tick({});
+        const auto& s = w.player().state();
+        const bool water = s.state == game::State::SwimTread || s.state == game::State::SwimSurface || s.state == game::State::SwimUnder;
+        const float dxy = glm::length(glm::vec2(s.pos - r.pos)), dz = s.pos.z - r.pos.z;
+        const bool stays = supported && !w.health().dead() && dxy < 64 &&
+                           (water ? dz <= 128 : s.state == game::State::Idle && std::abs(s.pos.z - b.pos.z) < 64);
+        std::string nearest = "none";
+        float nearestD = 1500;
+        for (const auto& e : w.enemies().all())
+            if (const float d = glm::distance(e->position(), s.pos); d < nearestD) nearestD = d, nearest = std::format("{} {} at {:.0f}", e->type().name, e->uid(), d);
+        const std::string what = std::format("tick 1 {} on {}; tick 60 {}{} dxy {:.0f} dz {:.0f}, health {:.0f}; cinematics [{}]; enemy within 1500: {}",
+                                             game::stateName(b.state), under, game::stateName(s.state), w.health().dead() ? " (dead)" : "", dxy,
+                                             dz, w.health().value(), cines, nearest);
+        std::fprintf(stderr, "ou-test: checkpoint %d %s %d: %s; %s\n", ch, r.unit.c_str(), r.uid, stays ? "stays" : "does not stay",
+                     what.c_str());
+        if (r.result == "stays") EXPECT_TRUE(stays) << what;
+        else EXPECT_FALSE(stays) << "listed as \"" << r.result << "\" but she stays now: update tools/re/chapter_data.py; " << what;
+        stayed += stays;
+    }
+    std::fprintf(stderr, "ou-test: chapter %d: %d of %zu checkpoints stay\n", ch, stayed, rows.size());
+}
+
+INSTANTIATE_TEST_SUITE_P(ChaptersReal, CheckpointRespawn, ::testing::Range(0, int(game::kChapters.size())),
+                         [](const ::testing::TestParamInfo<int>& i) { return "ch" + std::to_string(i.param); });

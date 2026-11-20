@@ -4093,6 +4093,10 @@ Ours (`World::respawn`, `World::serializeCheckpoint` / `restoreCheckpointSave`, 
   re-saves), `Save.MigratesVersion2`, `Combat.RespawnKeepsTheLoadout`, self-test `checkpoint_respawn` (l4_pool by
   ordinary input: rounds fired, a grenade thrown and the torch put out after checkpoint 5502 are back after the
   fall).
+- Every checkpoint of the game: docs/CHECKPOINTS.md (`tools/re/chapter_data.py`, 303 `checkpoint` /
+  `invis_checkpoint` intros on the chapter routes with uid, unit and position). `ChaptersReal/CheckpointRespawn.*`
+  respawns at each through a save game in a fresh load of its unit; where she does not stay (a cinematic the fresh load
+  plays, the l4_pool eitr, the yggdrasil arena, the settling yacht deck, a slide face, a spider) the list gives the observed reason (BUGS OU-SAV-002).
 
 ## Loadout
 
