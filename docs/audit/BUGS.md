@@ -120,7 +120,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
 | OU-GRP-002 | grapple | Swing dynamics unmeasured (five failed Wine sessions) | Open | pre-existing | C-MEASURE |
 | OU-GRP-003 | grapple | Jump into the gap released the rope; leap off a wall ignored the stick | Fixed-verified | pre-existing | — |
-| OU-GRP-004 | grapple | ch10 roped leap to wall ring 2595 swings under the pool surface | Open | pre-existing | — |
+| OU-GRP-004 | grapple | ch10 roped leap to wall ring 2595 swings under the pool surface (unit rope override ruled out: no unit sets it) | Open | pre-existing | — |
 | OU-GRP-005 | grapple | ch12 lever 6695: rope attach calls vt 46, larabase 26 bound, she stays roped while Interact is held | Fixed on int/brief (f832536) | pre-existing | C-VM |
 | OU-PZL-001 | progression | ch01: no input route into the pocket north of the bedroom beams | Open | pre-existing | — |
 | OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Open | pre-existing | C-MEASURE |
@@ -132,7 +132,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends don't tug bodies remains (tru.exe's bends are physics bodies, 0x699A50) | Partly fixed (a on agent/Joint8) | pre-existing | — |
 | OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed on int/brief (30cc49f) | pre-existing | C-VM |
 | OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed on int/brief (b716e88); pull speed unverified | pre-existing | C-JOINT |
-| OU-PZL-011 | progression | ch17: hammer chamber lower steps absent from collision | Open | pre-existing | — |
+| OU-PZL-011 | progression | ch17: no pull-up onto the hammer chamber block: hang clearance met the steps' smooth ramp (group 5, flags 0x800), which tru.exe's player rays skip | Fixed on agent/GapsB10 (`ch17_hammer_chamber` moved up) | pre-existing | — |
 | OU-PZL-012 | progression | ch21: Natla platform jump falls short; fight sequence unplayable by input | Open | pre-existing | C-VM |
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Fixed-verified (6d6c9eb; ring rides the leaf on agent/Joint8; landing place chaotic: ours 1.1k flat, tru.exe 656 flat) | pre-existing | C-JOINT |
@@ -151,7 +151,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
-| OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
+| OU-SAV-001 | save/load | Quickload in l3_main_bedroom reported doors 4526 / 4376 as not resumed: a false difference (two colliders per door shared one state-part name) | Fixed on agent/GapsB10 (`save_load_bedroom_doors` moved up) | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
 | OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861), agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349) and agent/CamCut9 (0xC cut, 0x14 focus points Wine-verified at 3859; 9 carried by no volume); 0x16 (no LaraCombatCamera) and kind 1 open | pre-existing | — |
@@ -983,11 +983,25 @@ Status · Origin: Fixed-verified · pre-existing.
 
 **OU-GRP-004 ch10 roped leap ends in the pool** — known gap `ch10_maproom_wall_run` (l2_maproom, step `leap`): rope 2670
 swings her under the pool (water 870 under the bridge) where the rope is let go; what shortens tru.exe's rope is [U]
-(SELFTEST.md known-gap table). Status · Origin: Open · pre-existing.
+(SELFTEST.md known-gap table). Re-run 2026-11-20 (agent/GapsB10): still fails at `leap` (`water.in` true). Ruled out
+[O]: a unit-level rope limit. tru.exe 0x5D3FF0 (on entering a unit) passes Level+0x70 DTP +0x2B4 → S, S+0x18 flag,
+S+0x1C range / S+0x20 rope to 0x698BC0 (globals 0x8AFD80 / 0x8AFD84, read by 0x698AC0 / 0x698B40 below a target's
+0x404 block); S+0x18 is 0 in all 75 units of docs/REFERENCE_LEVELS.md (l2_maproom included). Bound [O arithmetic]:
+taking up the rope's slack during the jump (rope = the least distance reached) still leaves ~2420 (running jump
+1975 / 1276 units/s, gravity ~5100, ring 3400 out and ~1000 over her hands), more than the ring's ~2070 over the
+water, so the original shortens the rope by something else. Not the hang's rope update either [O decomp]: 0x6A4A40 (each
+frame, attached) keeps the constraint length plus what the bends give back, minus controller +0xC0 x timeMult once the
+time stamp +0x44 has passed, clamped to g_grapple +0x108 .. 0x698B40's rope; +0xC0 is only the stick's climb rate
+(0x746F60: stick x player data +0x9E4 up / +0x9E8 down, else 0) and +0x44 the 0x9F0-second hold after the swing
+passes 0x9EC degrees (the "no reel past 40 degrees" seen in ours): no reel-in without the stick. The walkthrough (tombraiders.net puppet2) has her
+"dangling from the ring" with her feet a little over the water after the jump, then the cable adjusted. Next step: a
+Wine trace of this jump (five earlier grapple sessions failed on other rings, GAMEPLAY.md "Grapple").
+Status · Origin: Open · pre-existing.
 
 **OU-GRP-005 ch12 lever 6695 not held by her weight** — known gap `ch12_trailstart_lever_gate` (`let_go`): lever pulled by
 Interact stays out (joint 1264); tru.exe holds it by rope tension and it returns unloaded. Grapple pull heave / rope
-weight unmeasured (M25 / M26). Status · Origin: Open · pre-existing.
+weight unmeasured (M25 / M26). Fixed on int/brief (f832536); `tests/selftests/ch12_trailstart_lever_gate.json`
+passes (4 of 4 steps, re-run 2026-11-20 on agent/GapsB10). Status · Origin: Fixed · pre-existing.
 
 ### Progression blockers (OU-PZL)
 
@@ -1006,8 +1020,8 @@ docs/GAMEPLAY_DEVELOPMENT_REPORT.md §7; regression test = the scenario moved up
 | OU-PZL-008 | l4_temple east ledge | ring 4951 offered; statue head topples | ring offered (agent/Joint8); head not moved by the rope's bend | `known_gaps/ch13_temple_block_topple` |
 | OU-PZL-009 | l4_ballcourt exit switch 5469, socket empty | locked until keyhole 6501 (modifiable 7 (2)) [O bytecode] | switch usable; ours honours modifiable 7 only for `ar_ei_switch_oneway` | `known_gaps/ch15_ballcourt_exit_switch` |
 | OU-PZL-010 | l4_pool rune block 5609 | dragged | no joint record → nothing drags it | `known_gaps/ch15_pool_rune_block` |
-| OU-PZL-011 | l5_valaskjalf checkpoint 7067 | reach volume 6866 | lower 790 of the central steps absent from collision / objects [U]; edge 1542 is clearance class 1 (no pull-up, tru.exe 0x72BAE0) | `known_gaps/ch17_hammer_chamber` |
-| OU-PZL-012 | l7_yggdrasil_end entry walkway | jump onto a passing stone (rig 8389); towers / mounts | ledge 1240 out, 540 up: falls short; fight unplayed by input. ROADMAP L95 says Natla cannot be hit (vt 22), REPORT §7 says Mjolnir hits reach her script (OU-DOC-002) | `known_gaps/ch21_platform_ride`, `natla_platform_ride`; `ProgressionReal.NatlaFightByInput` |
+| OU-PZL-011 | l5_valaskjalf checkpoint 7067 | reach volume 6866 | fixed: the block's 790 face is the render terrain's too (no lower steps exist); the hang clearance's rays now skip TerrainGroupExtra 0x800 groups as tru.exe's player rays (0x2C19E7) do, so group 5's smooth ramp over the steps no longer hides the first tread (class 2, pull-up) | `ch17_hammer_chamber` |
+| OU-PZL-012 | l7_yggdrasil_end entry walkway | jump onto a passing stone (rig 8389); towers / mounts | ledge 1240 out, 540 up: falls short; fight unplayed by input. The walkthrough (tombraiders.net outoftime2) has a jump "forward to grab the edge" of a stone approaching from the left: a stick jump peaks ~220 over the floor, so either the stone's ledge is lower / nearer in the original or her reach differs [U: Wine]; re-run 2026-11-20 both scenarios fail at the grab (`ch21_platform_ride` loses 1000 health: falls to the lower ring). ROADMAP L95 says Natla cannot be hit (vt 22), REPORT §7 says Mjolnir hits reach her script (OU-DOC-002) | `known_gaps/ch21_platform_ride`, `natla_platform_ride`; `ProgressionReal.NatlaFightByInput` |
 | OU-PZL-013 | level entries with a bike but no placing script (ch14 et al.) | bike present | placed only where a level script places it (REPORT §8.1) | ch14 legs |
 | OU-PZL-014 | prologue ring door pulled by grapple | leaf thrown into the bedroom, lands flat 656 from its frame [O Wine s4.txt] | fixed (6d6c9eb): leaf and ring thrown into the room, flat (1.1k) | `ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` |
 | OU-PZL-015 | ch08 Bhogavati statue / lift; ch14 thrones | statue floor, lift drop, thrones run | `multibody` 3 unbound; thrones stop at an unbound native (REPORT §7) | ch08 / ch14 legs |
@@ -1029,7 +1043,13 @@ proving tests there):
   of its floor; tru.exe ends it at 0x6FF040's query-0xDE feature (117.8 up the post), the filter is not the difference.
   Fixed on agent/Joint8 (`TempleRingOfferedFromTheEastLedge`; either end seen counts [I]). (b) Rope bends don't tug
   the bodies they wrap: tru.exe's bends are small physics bodies chained to the rope (0x6A4D40 → 0x699A50 / 0x699960
-  joint 0x4E03F0); needs a Jolt rope chain. (c) multibody 92 / 93 bound.
+  joint 0x4E03F0); needs a Jolt rope chain. (c) multibody 92 / 93 bound. Re-run 2026-11-20 (agent/GapsB10): the
+  scenario's walk (`run 90 2.5` = 750 at the roped walk's 300 units/s) ends at y −13609, where the rope (hand → ring
+  4951 at −7392, −13906) passes 443 south of head 5236 (−4982, −13307); it crosses the head's x at the head only for
+  her y ≥ −12763 [O arithmetic]. Walked on to y −12259 still no bend forms: the rope's ray (`ropeHit` → CollisionMesh
+  raycast: terrain and `col_.dynamics`) cannot meet the head, a class-34 rigid body with no collider in
+  `World::syncObjects` while it is neither loose nor jointed [I from the code path]. So (b) needs the head's own
+  collision for the rope, bends round it, and the tension pushing it.
 - **OU-PZL-015:** multibody 3 = set "fixed" bit 0 at physics +0x15C on every body (inverse of 2). The throne native
   is still unknown.
 - **OU-GRP-005:** moves to C-VM. Vt 46 is not called on rope attach, larabase 26 (0x777C30) is unbound, and our heave
@@ -1258,14 +1278,19 @@ Status · Origin: Open · pre-existing.
 
 ### Save / load (OU-SAV)
 
-**OU-SAV-001 Bedroom doors not restored exactly after quickload**
-- Repro: self-test `tests/selftests/known_gaps/save_load_bedroom_doors.json` (SelfTestBrief, 4594f2c).
+**OU-SAV-001 Bedroom doors not restored exactly after quickload** (fixed on agent/GapsB10)
+- Repro: self-test `tests/selftests/save_load_bedroom_doors.json` (SelfTestBrief, 4594f2c; was in `known_gaps/`).
 - Actual: `save.differs = ["dynamic 4526", "dynamic 4376"]` (`ma_uo_bedroom_door`). Their own motion is tiny
   (body.z −0.003 / −0.006), but the difference persists 2, 5 and 30 ticks after the load. Every other state part
   matches.
 - Comparison: the same steps on the l1_seatop yacht and in l1_baldrs_tomb restore exactly.
-- Suspected cause [I]: door hinge/joint body state is not restored bit-identically.
-- Status · Origin: Reproduced · pre-existing.
+- Cause [O, hex dump of both snapshots]: no state differed. Each door has two colliders (the leaf on its slide and the
+  ring hinged to it), and `World::stateParts` named both `dynamic <uid>`; SelfTest's `save.restored` pairs parts by
+  name, so the leaf's part after the save was compared with the ring's after the load. Both transforms were
+  bit-identical after the load at every tick dumped (73, 120).
+- Fix: parts are `dynamic <uid> <ordinal>` (the collider's ordinal among its object's). `save_load_bedroom_doors`
+  passes and moved out of `known_gaps/`; `save_load` still passes.
+- Status · Origin: Fixed · pre-existing.
 
 ## Triage
 
@@ -1284,8 +1309,7 @@ Status · Origin: Open · pre-existing.
   `modifiable` 7 semantics; OU-PZL-015 `multibody` 3 and the throne native; OU-SCR-005.
 - OU-PLY-001 kind-1000 beam conditions; OU-PLY-002 lookahead 0x74BCF0; OU-PLY-004 ladder side jumps; OU-PLY-006
   query 96 reach; OU-PLY-010 free hang / beam drops; OU-SWM-001 port 0x755A00.
-- OU-PZL-006 / -007 / -008 / -010 / -014 (joint and freed-section rules: C-JOINT), OU-PZL-011 (missing step
-  collision), OU-GRP-004 (rope shortening), OU-CAM-002 (swim focus records), OU-CAM-003 VehicleCamera,
+- OU-PZL-006 / -007 / -008 / -010 / -014 (joint and freed-section rules: C-JOINT), OU-GRP-004 (rope shortening), OU-CAM-002 (swim focus records), OU-CAM-003 VehicleCamera,
   OU-AUD-003, OU-REN-003 face materials, OU-REN-006.
 
 **Needs Windows / Wine runtime measurement** (sessions listed in REFERENCE_COMPARISON "Unmeasured"):
