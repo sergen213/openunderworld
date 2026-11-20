@@ -160,7 +160,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed-verified (0.56.0, merge 02b7a09: poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
 | OU-PHY-003 | physics | Damping of loose bodies without a physics record unproven (template 0.01 never reaches the integrator) | Needs-Windows-ref | pre-existing | C-MEASURE |
-| OU-TST-001 | tests | No walkthrough section plays end to end; 11 parked known-gap scenarios (14 at the audit) | Open | pre-existing | — |
+| OU-TST-001 | tests | No walkthrough section plays end to end; 1 parked known-gap scenario (14 at the audit, 11 at 0.58.0) | Open | pre-existing | — |
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
@@ -1500,8 +1500,10 @@ fitted to one block trace (ROADMAP L87, REPORT §6, §8.4). Status · Origin: Op
 
 ### Tests and docs (OU-TST, OU-DOC)
 
-**OU-TST-001 No section end to end** — chapter legs per section 6/2/2/4/3/2/3/4/3/1/3/1/4/5/3/3/1/2/4/7/0, 14 parked
-scenarios (ROADMAP L100, SELFTEST.md L523-551). Status · Origin: Open · pre-existing.
+**OU-TST-001 No section end to end** — at the audit: chapter legs per section 6/2/2/4/3/2/3/4/3/1/3/1/4/5/3/3/1/2/4/7/0,
+14 parked scenarios (ROADMAP L100, SELFTEST.md L523-551). Parked since: 11 at 0.58.0, **1** at 0.59.0
+(`tests/selftests/known_gaps/ch13_temple_block_topple.json`; batch 10 unparked the rest, docs/audit/PROGRESS.md).
+No chapter plays end to end yet. Status · Origin: Open · pre-existing.
 
 **OU-TST-002 Autopilot does not fight** — blocks ch11 (spiders) and ch18 (deck fights) legs (REPORT §7-8). Status · Origin:
 Open · pre-existing (test-tool gap).

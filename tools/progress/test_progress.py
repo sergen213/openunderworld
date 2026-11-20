@@ -10,10 +10,22 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import comparison_counts  # noqa: E402
 import progress as p  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TREE = p.WorkTree(ROOT)
+
+
+class ComparisonCounts(unittest.TestCase):
+    def test_counts_paragraph_is_current(self):
+        text = TREE.read(p.COMPARISON)
+        self.assertEqual(comparison_counts.replace(text), text,
+                         "docs/REFERENCE_COMPARISON.md Counts out of date: run tools/progress/comparison_counts.py")
+
+    def test_counts_follow_the_tables(self):
+        text = TREE.read(p.COMPARISON).replace("| matches |", "| unmeasured |", 1)
+        self.assertNotEqual(comparison_counts.replace(text), text)
 
 
 class RealDocuments(unittest.TestCase):
