@@ -3541,10 +3541,13 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         }
         // Climb out: swimming at an edge with the stick held toward it she climbs out by herself (controls; no button).
         // [I] once the wall is within the clip's reach (its hands start 205.4 ahead of the root) and the stick points
-        // within 45 deg of her heading; the chart's conditions for requests 888-891 are not decoded. Onto a wall-hug
-        // shelf she climbs out into the hug instead (S237's first transition T1110, Player::tryClimbOutToWallHug).
+        // within 45 deg of her heading. A ledge 90 or more over her root: swim_climbout_A / _B / _C (requests 890 / 889 /
+        // 888, Player::tryClimbOutToLedge), else the single swim_climbout (891). The chart's climb-out into a wall hug
+        // (S237 T1110, request 887 on clearance result 8) is not ported: the swim query's target rule is not decoded
+        // and tru.exe never takes it at the one shelf over open water our survey found (l2_cliffclimb 936; Wine,
+        // OU-PLY-003).
         if (wantsMove && std::abs(wrapAngle(target - s_.yaw)) < glm::radians(45.0f) &&
-            (tryClimbOutToWallHug(t_.swimRadius + 130.0f) || tryClimbOut(t_.swimRadius + 130.0f))) break;
+            (tryClimbOutToLedge() || tryClimbOut(t_.swimRadius + 130.0f))) break;
         // Surface dive (chart S115 -> S106, T887: the crouch button, cond 0x98 = 118, with the water's depth class
         // 0x325, cond 0x323 = 805): only where the water is at least diveDepth (player data +0xB2 = 948) deep.
         if (dropPressed && !col_.groundProbe(vec3(xy(s_.pos), surf + t_.swimSurfaceDepth), t_.diveDepth)) {
@@ -3620,6 +3623,18 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         }
         break;
     case State::SwimClimbOut: // full root motion, no collision (as ClimbUp)
+        if (s_.clip == "swim_climbout_A") { // the grab: carried square to the ledge into the hang (Player::tryClimbOutToLedge)
+            advanceClip(dt);
+            const double dur = std::max(1e-3, anims_.find(s_.clip)->durationSeconds());
+            s_.pos = glm::mix(s_.climbFrom, s_.climbTo, float(std::clamp(s_.clipTime / dur, 0.0, 1.0)));
+            if (clipDone()) s_.pos = s_.climbTo, play("swim_climbout_B", false);
+            break;
+        }
+        if (s_.clip == "swim_climbout_B") { // the hang: one cycle, then up [I: cond 0xDA not decoded]
+            advanceClip(dt);
+            if (clipDone()) play("swim_climbout_C", false);
+            break;
+        }
         s_.pos += toWorld(advanceClip(dt));
         if (clipDone()) {
             if (auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown)) standUp(g->point.z);

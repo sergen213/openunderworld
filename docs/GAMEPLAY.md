@@ -1959,27 +1959,36 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   on cond 0xDA, or `swim_climbout_to_wallhug` (887) onto a shelf (clearance result 657). Ours: swimming at the surface
   with the stick within 45° of her heading, a wall within 230 ahead (the clip's hands start 205.4 before the root)
   whose top is 50..400 over the water starts `swim_climbout` (`Player::tryClimbOut`: geometry, not the ledge markup
-  [I]); Jump no longer does it. The `_A / _B / _C` variant for the higher edge is not played [U: 0x756FF0's reference
-  points]. Test `Game.SwimEnterCrossClimbOut` (rewritten: the stick alone).
-- **Climb out onto a wall-hug shelf** [O chart, decomp, clip; I which ledge]: S237's first transition T1110 (ahead of
+  [I]); Jump no longer does it. Test `Game.SwimEnterCrossClimbOut` (rewritten: the stick alone).
+- **Climb out onto a higher ledge** [O chart, requests, clips, runtime; I target]: requests 890 / 889 / 888 play
+  `swim_climbout_A` (blend 4, start frame 1; 4 frames, no root motion: the grab), `_B` (blend 2, start 2, a loop: the
+  hang, hands 46.3 ahead and 149.6 up) and `_C` (blend 4, start 8; root 123.2 forward, 172.8 up over the whole clip).
+  tru.exe under Wine (2026-11-20, `w2/WineCheck10/a/shelf180.txt`, `c/swim1.txt`, `c/swim2.txt`, `d/a*.txt`;
+  l2_cliffclimb ledge 936 segment 0, treading 180..214 out facing it, Forward held, clearance +0xEDC logged): 890 within
+  ~50 ms of the press with her heading set square to the ledge, carried into the hang 61..63 out during _A (889 after
+  ~216 ms), 888 ~150 ms later, and _C ends with her root 62 in from the line at its height, still facing the wall, after
+  ~1.5 s; with the stick still held she runs on inland. Clearance stays 2. Ours (`Player::tryClimbOutToLedge`, tried
+  before `tryClimbOut`): the nearest ledge point within **250** of her root [I: tru.exe attached from 214], she on its
+  hang side facing it within 45°, 90..500 over her root [O: 90 = player data +0x138; I: 0x756FF0's reference points
+  (ours the line point over her root) and the 500]; her heading set square to it, carried linearly over _A into the
+  hang (placed so that _C from its start frame ends 62 in, i.e. 61.9 out), one _B cycle [I: cond 0xDA not decoded],
+  then _C's root motion. Test `GameReal.SwimClimbOutOntoHigherLedge` (936, approached at 79 along). Our timing: _A
+  0.10 s, _B 0.07 s, _C 1.36 s (tru.exe ~0.22 / ~0.15 / ~1.5 s) [I]. Not decoded: the swim query's point rule —
+  tru.exe attaches at **79.0** along from 30 / 50 / 64 / 72, at 93.9 from 90 and 109.1 from 110, never inside the notch
+  (48..80 along); ours takes the nearest point (OU-PLY-003).
+- **Climb out onto a wall-hug shelf** [O chart, decomp, clip; not ported]: S237's first transition T1110 (ahead of
   T1115 `swim_climbout` and T1117 `_A`) → S1253 `swim_climbout_to_wallhug` (request 887: blend 4, start frame 4) →
   S1250 T2045 → `Wall_Hug_Idle`; it needs the swim query's target to be a ledgegrab (0x262 = 610), the stick pushed
   and not back, and clearance result 8 (cond 0x28A = 657, player +0xEDC). 0x76D270 → 0x76D010 → 0x74E290 compute it
-  on the target at the query point: when the ray 252 over the ledge from 100 on her side to 139 over the top hits,
-  0x74E160 runs the shelf test 0x74BB50 and its 1 sets +0xEDC = 8 (2 sets 11, else 1) — the wall-hug shelf of "Wall
-  hug". The clip has no root translation: the root stands on the shelf from its first frame, facing the wall, and its
-  yaw turns evenly +π (to her left) to the hug; her pelvis starts 186 out over the water and 78 under the root.
-  Ours (`Player::tryClimbOutToWallHug`, tried before `tryClimbOut`): the nearest ledgegrab point within the plain
-  climb-out's reach, 50..400 over the water [I: the query's reach and band are not decoded], she on its hang side
-  facing it (±60°), `shelfAt` there; the root goes 88.496 in from the line at its height facing the wall, the clip
-  turns her, `Wall_Hug_Idle` after. Shelves over open water (survey of the 97 units with our collision and water
-  volumes): l2_cliffclimb ledge 936 segment 0 (48..80 along, 50 over the sea's rest top; the swell lowers the surface
-  up to ~370) and segment 9, l7_arctic_sea 2073 (159 over). Test `GameReal.SwimClimbOutOntoShelf` (936).
-  [O-runtime] contradicts it at 936 (Wine 2026-11-20, `w2/WineCheck10/a`, `c`, `d`: treading 180 out, Forward held,
-  from 30..110 along): tru.exe never attaches inside the notch — from 30 / 50 / 64 / 72 along at **79.0** (63 out), from
-  90 at 93.9, from 110 at 109.1 — with clearance +0xEDC = 2 (no box-ray hit, so no shelf test) and plays
-  `swim_climbout_A` → `_B` → `_C` (890 → 889 → 888), standing 62 in from the line facing the wall. How its swim query
-  skips the notch's points is not decoded [U]; ours still attaches at the nearest point (OU-PLY-003 open).
+  on the target at the query point: when the ray 252 over the ledge from 100 on her side to 139 over the top hits (or
+  the point is within 0.05 of a segment end, 0x731EA0), 0x74E160 runs the shelf test 0x74BB50 (when its flag argument
+  is set) and its 1 sets +0xEDC = 8 (2 sets 11, else 1); no hit: 2 / 5 / 1 from a floor probe. The clip has no root
+  translation: the root stands on the shelf from its first frame, facing the wall, and its yaw turns evenly +π (to her
+  left) to the hug; her pelvis starts 186 out over the water and 78 under the root. The only shelves over open water
+  in our survey are l2_cliffclimb ledge 936 segment 0 (48..80 along) / segment 9 and l7_arctic_sea 2073. A port
+  (agent/ShelfOut9, 0.58.0: the nearest ledge point where `shelfAt` holds) was removed after the Wine check of 936
+  (above): tru.exe never attaches inside that notch and plays `_A / _B / _C` there. Which targets reach T1110 needs the
+  swim query's point rule [U] (OU-PLY-003).
 - **Weapons in the water** [O data, I rule]: the weapon stats have no under-water flag (S+0x88: 0x80 infinite, 0x40,
   0x20 dual, 0x08 two-handed); every wp_* DRM has Lara's `combat_water_submerged_equip / _unequip` and
   `combat_water_surface_equip / _unequip` clips (wp_handgun and wp_uzi reloads of both too), a `fire_submerged` gun

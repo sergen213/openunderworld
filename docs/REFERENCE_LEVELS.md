@@ -20,10 +20,10 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 | [04](#04-the-norse-connection-level-1---mediterranean-sea-part-3) | implemented | unverified | implemented | unverified; 1 matches | n/a | implemented | n/a | 1 matches | 5 (0) |
 | [05](#05-god-of-thunder-level-1---mediterranean-sea-part-4) | unverified | implemented | n/a | unverified | unverified | n/a | n/a | — | 4 (0) |
 | [06](#06-realm-of-the-dead-level-1---mediterranean-sea-part-5) | unverified | partial | n/a | n/a | n/a | n/a; 2 open | n/a | — | 2 (2) |
-| [07](#07-the-remnants-level-2---coastal-thailand-part-1) | implemented; 1 differs / 3 matches / 1 unmeasured | partial; 3 matches | unverified | verified; 1 differs / 5 matches | unverified; 1 matches | n/a | n/a | 1 matches | 4 (0) |
+| [07](#07-the-remnants-level-2---coastal-thailand-part-1) | implemented; 1 differs / 3 matches / 1 unmeasured | partial; 3 matches | unverified | verified; 6 matches | unverified; 1 matches | n/a | n/a | 1 matches | 4 (0) |
 | [08](#08-bhogavati-level-2---coastal-thailand-part-2) | unverified | partial | partial | n/a | partial | partial | n/a | — | 4 (0) |
 | [09](#09-the-ancient-world-level-2---coastal-thailand-part-3) | unverified | unverified | unverified | n/a | unverified | partial | n/a | — | 4 (0) |
-| [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified | partial; 1 differs / 5 matches | unverified; 1 matches | partial | n/a | 1 matches | 1 (1) |
+| [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified | partial; 6 matches | unverified; 1 matches | partial | n/a | 1 matches | 1 (1) |
 | [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 3 unmeasured | n/a | partial | partial; 1 open | n/a | — | 3 (0) |
 | [12](#12-the-unnamed-days-level-4---southern-mexico-part-1) | unverified; 1 matches | unverified | partial | n/a | unverified | partial; 1 unmeasured | partial | — | 2 (0) |
 | [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 3 matches | implemented; 1 matches | partial | n/a | partial | unverified; 1 unmeasured | unverified | — | 5 (1) |
@@ -152,7 +152,7 @@ Matrix: [07_remnants.md](matrix/07_remnants.md). Units: `l2_cliffclimb`, `l2_cli
 | Locomotion | implemented | M13 Standing jump: matches, M13 Jump timing: press to leaving the ground: matches, M13 Which jump a press gives just after the stick: matches, M17 Slope slide: differs, M90 Swan dive: unmeasured | — |
 | Traversal | partial | M05 Free climb: matches, M06 Chimney / wall jump: which jumps cling: matches, M06 The climb at l2_junglehub: ledge 796 → 797 between the columns: matches | — |
 | Grapple | unverified | unmeasured here | — |
-| Swimming / water | verified | M29 Swim speed: matches, M29 Turning with Forward + Right / Left held, camera free (2026-11-16): matches, M29 Surface level: matches, M29 Sea level at rest (OU-WAT-006, 2026-11-16): matches, — The yacht's heave with Lara on its deck (l2_cliffclimb start, 2026-11-16): matches, — Swim climb-out at a wall-hug shelf (OU-PLY-003, 2026-11-20): differs | — |
+| Swimming / water | verified | M29 Swim speed: matches, M29 Turning with Forward + Right / Left held, camera free (2026-11-16): matches, M29 Surface level: matches, M29 Sea level at rest (OU-WAT-006, 2026-11-16): matches, — The yacht's heave with Lara on its deck (l2_cliffclimb start, 2026-11-16): matches, — Swim climb-out onto a higher ledge (OU-PLY-003, 2026-11-20): matches | — |
 | Combat / AI | unverified | M84 (sharks) l2_cliffclimb sharks against a treading / submerged Lara: matches | — |
 | Objects / puzzles | n/a | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
@@ -203,7 +203,7 @@ Matrix: [10_puppet_no_longer.md](matrix/10_puppet_no_longer.md). Units: `l2_mapr
 | Locomotion | unverified | M90 Swan dive: unmeasured | — |
 | Traversal | unverified | M05 Free climb: matches | — |
 | Grapple | unverified | unmeasured here | — |
-| Swimming / water | partial | M29 Swim speed: matches, M29 Turning with Forward + Right / Left held, camera free (2026-11-16): matches, M29 Surface level: matches, M29 Sea level at rest (OU-WAT-006, 2026-11-16): matches, — The yacht's heave with Lara on its deck (l2_cliffclimb start, 2026-11-16): matches, — Swim climb-out at a wall-hug shelf (OU-PLY-003, 2026-11-20): differs | — |
+| Swimming / water | partial | M29 Swim speed: matches, M29 Turning with Forward + Right / Left held, camera free (2026-11-16): matches, M29 Surface level: matches, M29 Sea level at rest (OU-WAT-006, 2026-11-16): matches, — The yacht's heave with Lara on its deck (l2_cliffclimb start, 2026-11-16): matches, — Swim climb-out onto a higher ledge (OU-PLY-003, 2026-11-20): matches | — |
 | Combat / AI | unverified | M84 (sharks) l2_cliffclimb sharks against a treading / submerged Lara: matches | — |
 | Objects / puzzles | partial | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
