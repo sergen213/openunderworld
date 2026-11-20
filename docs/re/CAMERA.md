@@ -336,16 +336,21 @@ Wine (2026-11-19, `openunderworld-work/w2/CamRest8/fast.py` / `camz.py`, l3_main
   +0x1288; 0x5FA4A0) else the force set's (0x5FA440 → 0x608980 at a full switch: base, or the signed target of a dir
   set, π/2 with side 0) else π/2), through the frame +0xD0 (0x5E0C20 → 0x435220) [I: her heading frame, as the force
   sets' angles]; with a level record (0x5FA500), its point +0x12B0. The distance state +0x1D4 and its speed +0x1D8 are
-  not touched, so 0x600200 proposes the point at +0x1D4 again and 0x600710 moves the camera back out to it at the
-  follow speed (3793.1/s): the cut snaps the angles, the camera only flashes in. Wine (w2/CamRest8 k599tp.txt,
-  teleported next to 599): +0x1D4 went on 1262.3 → 1236.3 → … → 1092 toward its 474.1 target while the yaw stepped 17.01
-  → 19.64 and the pitch −7.48 → −7.50 (the set's) as the trigger entered (a teleport also resets the camera, so the
-  angles alone prove little).
-  Ours (`World::updateOrbitCamera`): the same on the tick the trigger list changes with a 0xC in it, without
-  interpolation from the last tick's pose; `StreamReal.CameraTriggerCutPutsTheCameraAtItsAngles` (599: behind her,
-  −7.50°, the camera at 474.1 + one follow step, then back at +0x1D4 four ticks later). Our 599 box test does not
-  contain tru.exe's teleport point (−4300.0, −1765.8, −993.45) (756 off the box centre along x, half extent 447) although
-  tru.exe counted her in it there [U: the box's placement in tru.exe's test 0x5CD520].
+  not touched, so the same frame's 0x600200 proposes the point at +0x1D4 again, and 0x600710's step (the follow speed
+  3793.1/s plus how far the proposed point moved from +0x150, which the cut set to the cut point) takes the camera
+  straight to it: the cut snaps the angles, the 474.1 point exists only mid-frame. Wine 2026-11-20 (agent/WineCheck10,
+  `w2/WineCheck10/b/walk1.txt`, `walk2.txt`: l1_krakenstairs_b, Forward held from the unit start, `ref rec` every
+  ~16 ms frame plus mid-frame samples): she enters 599 at x −8043.5 (ours, box edge −8057.9); one sample shows +0x90 at
+  474.1 behind her (yaw = hers to 0.01°, pitch −7.50°, the pivot 200.1 lower: the 0x19 offset −237.04 through the
+  clearance), the next, 1..2 ms later in the same frame, +0x90 at the new +0x1D4 (1111.8 → 1097.6; 1207.8 → 1193.7 in
+  the repeat) at those angles; +0x1D4 then eases toward 474.1 at ~1030 units/s and the pitch stays −7.50 while she is
+  inside; she leaves at x −8058.9..−8067.2 and the distance returns to 1264.2. (`w2/CamRest8/k599tp.txt` was a teleport,
+  whose own camera reset hid this; the point it counted inside was the teleport's, not the box's.)
+  Ours (`World::updateOrbitCamera`): on the tick the trigger list changes with a 0xC in it, the camera and `orbit_.desired`
+  (+0x150) at the cut point, so that tick's follow ends at the distance state; walked in from the start as above, ours
+  enters at x −8048.0 with the camera at the distance state (1022.7), yaw = hers, −7.50°.
+  `StreamReal.CameraTriggerCutPutsTheCameraAtItsAngles`. The box placement matches (entry / exit within a frame's travel
+  of our box edge).
 - **Focus points (0x14)**, agent/CamCut9: the 0x100-byte records at unit data +0x200 / +0x204 are the `focuspoint`
   script type's (NtFocusPoint 0x7B7A00; 1 0x7758B0 IsEnabled tests +0xFC & 0x04, 2 0x775910 Enable sets it, 3 0x775960
   Disable clears it). Record: +0 point (unit frame, + the unit's offset 0x5C1E20), +0x14 weight %, +0x18 radius, +0x1C
