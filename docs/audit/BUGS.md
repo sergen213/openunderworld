@@ -1522,8 +1522,8 @@ fitted to one block trace (ROADMAP L87, REPORT §6, §8.4). Status · Origin: Op
 scenarios (ROADMAP L100, SELFTEST.md L523-551). Batch 11: the prologue's legs do not chain (from the bedroom floor
 into the beam pocket, C01-05, and the molding / chest route, C01-09 / C01-10, have no input route), so chapter 6 was
 chained from its start instead (`known_gaps/ch18_container_climb`: bow, the first fight, two container climbs; it stops
-at the jump to the three-high stack, beyond tru.exe's measured running re-aim range). Status · Origin: Open ·
-pre-existing.
+at the jump to the three-high stack: 1278 from its rim, past our running re-aim cap of 1233 that was measured on one
+782-high ledge; tru.exe's reach for this 636-high rim is not measured). Status · Origin: Open · pre-existing.
 
 **OU-TST-002 Autopilot does not fight** — blocked ch11 (spiders) and ch18 (deck fights) legs (REPORT §7-8). Fixed in
 batch 11: autopilot line `fight [R] [SECONDS] [all]` (`src/app/game/Autopilot.cpp`, docs/SELFTEST.md): target lock +
