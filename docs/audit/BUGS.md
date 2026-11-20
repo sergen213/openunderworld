@@ -156,12 +156,13 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
 | OU-CMB-004 | hazards | Valaskjalf rollers hurt whenever she is in them; tru.exe's stop after a 4-hit burst | Reproduced (Wine, one trial) | pre-existing | — |
+| OU-CMB-005 | AI | The study's two panther thralls (l3_secretchamber) never appear after the gauntlet cinematic 4654 | Reproduced (ours; the original from the walkthrough only) | pre-existing | — |
 | OU-VEH-001 | motorcycle | Brake strength, slopes, coasting, top speed, pit jump unmeasured | Open | pre-existing | C-MEASURE |
 | OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed-verified (0.56.0, merge 02b7a09: poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
 | OU-PHY-003 | physics | Damping of loose bodies without a physics record unproven (template 0.01 never reaches the integrator) | Needs-Windows-ref | pre-existing | C-MEASURE |
 | OU-TST-001 | tests | No walkthrough section plays end to end; 11 parked known-gap scenarios (14 at the audit) | Open | pre-existing | — |
-| OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
+| OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Fixed (batch 11: autopilot `fight`; `ch11_stairhall_spiders`, `ch18_bow_deck` `the_first_soldiers`) | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
 | OU-DOC-003 | docs | Batch 10 asm checks: wrong citation addresses and branches the comments omit | Open | doc drift | C-DOC |
@@ -1472,6 +1473,23 @@ Open · pre-existing.
 - Test: proposed: the burst length against the Wine trace once the trigger is known.
 - Status · Origin: Reproduced (Wine, one trial) · pre-existing.
 
+**OU-CMB-005 The study's panther thralls never appear**
+- Repro: self-test `ch11_study_gauntlet` (l3_stairhall checkpoint 4699 → l3_secretchamber, volume 4666 → cinematic
+  4654, skipped: its events and placement run), then 25 s standing in the study (a draft step; `enemies.count`,
+  `enemy.<uid>.type`).
+- Expected: the walkthrough (C11-25 / C11-26, details/manor7.html): two tiger thralls climb down a pillar after the
+  cinematic and attack; the enemy survey (docs/GAMEPLAY.md "Enemies per chapter") places `panther_thrall` ×2 in
+  l3_secretchamber. Not measured under Wine.
+- Actual: `enemies.count` 2 throughout, both `small_brown_spider` still clinging in l3_stairhall (4712 at (−17023,
+  2050)); no thrall is spawned. The scenario's old note counted those two as "the two thralls".
+- Files: the enemy spawning of placed intros (`src/game/ai`, World enemy births), l3_secretchamber's scripts after
+  4654.
+- Cause: [U] what births the two placed thralls (an intro flag, a script activation after the cinematic, or the
+  pillar-climb animation's start) is not decoded.
+- Fix: none made. Test: once they spawn, `fight` them in `ch11_study_gauntlet` (the autopilot's finishing move ends a
+  downed thrall).
+- Status · Origin: Reproduced (ours; the original from the walkthrough only) · pre-existing.
+
 **OU-VEH-001 Motorcycle unmeasured** — brake strength, slopes, coasting, top speed, pit jump, crash rules, water,
 ramming, dismount position, respawn with the bike (ROADMAP L77, L96; Wine session in REFERENCE_COMPARISON
 "Unmeasured"). Status · Origin: Open · pre-existing.
@@ -1501,10 +1519,19 @@ fitted to one block trace (ROADMAP L87, REPORT §6, §8.4). Status · Origin: Op
 ### Tests and docs (OU-TST, OU-DOC)
 
 **OU-TST-001 No section end to end** — chapter legs per section 6/2/2/4/3/2/3/4/3/1/3/1/4/5/3/3/1/2/4/7/0, 14 parked
-scenarios (ROADMAP L100, SELFTEST.md L523-551). Status · Origin: Open · pre-existing.
+scenarios (ROADMAP L100, SELFTEST.md L523-551). Batch 11: the prologue's legs do not chain (from the bedroom floor
+into the beam pocket, C01-05, and the molding / chest route, C01-09 / C01-10, have no input route), so chapter 6 was
+chained from its start instead (`known_gaps/ch18_container_climb`: bow, the first fight, two container climbs; it stops
+at the jump to the three-high stack, beyond tru.exe's measured running re-aim range). Status · Origin: Open ·
+pre-existing.
 
-**OU-TST-002 Autopilot does not fight** — blocks ch11 (spiders) and ch18 (deck fights) legs (REPORT §7-8). Status · Origin:
-Open · pre-existing (test-tool gap).
+**OU-TST-002 Autopilot does not fight** — blocked ch11 (spiders) and ch18 (deck fights) legs (REPORT §7-8). Fixed in
+batch 11: autopilot line `fight [R] [SECONDS] [all]` (`src/app/game/Autopilot.cpp`, docs/SELFTEST.md): target lock +
+fire on the enemies aware of her (or all), backing off / closing in when blocked, the thrall finishing move, a health
+pack when low. Verified by `ch11_stairhall_spiders` (seven spiders killed on the way to checkpoint 4699) and
+`ch18_bow_deck` `the_first_soldiers` (generators 7661 / 7662 killed with bolts); both fail with the fight lines
+replaced by waits. The ch11 thrall fight stays unplayed (OU-CMB-005: the thralls do not appear); the ch18 container
+climb is the next gap (`known_gaps/ch18_container_climb`). Status · Origin: Fixed · pre-existing (test-tool gap).
 
 **OU-DOC-001 Chapter matrices stale**
 - `docs/matrix/NN_*.md` keep rows `NOT IMPLEMENTED` for mechanics that landed in 0.42-0.46: chimney jumps (C08-05,
