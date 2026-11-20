@@ -134,7 +134,7 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ng_generic_land_forwards", 3, 3}, {"ng_running_land", 2, 1}, {"ng_land_hard", 2, 2}, {"ng_land_rolling", 4, 4},
         {"ng_running_land_stumble", 3, 3}, {"ledgeb_attach_M", 4, 4}, {"ledgeb_idle", 8, 4},
         {"ledgeb_right", 3, 3}, {"ledgeb_right_hustle", 3, 3}, {"ledgeb_climbupflair", 5, 5}, {"ladder_climb_up_fast", 3, 3}, {"ledgeb_climbup_fast", 6, 6}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
-        {"swim_climbout", 12, 6}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
+        {"swim_climbout", 12, 6}, {"swim_climbout_to_wallhug", 4, 4}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
         {"swim_surfaceidle", 8, 6}, {"swim_jump_land", 6, 6}, {"swim_submerged_idle", 10, 10},
         // surface stroke (request 881), swim sprint (896, 934) and its exhaustion (880, 921)
         {"swim_surface_fast_forward", 8, 8}, {"swim_surface_sprint_forward", 8, 8}, {"swim_submerged_sprint", 10, 10},
@@ -294,6 +294,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "swim_jump_land", "swim_surfaceidle",
     "swim_surface", "swim_surfaceidle_to_swim",
     "swim_surfacedive", "swim_submerged_idle", "swim_sub", "swim_sub_up", "swim_sub_down", "swim_climbout",
+    "swim_climbout_to_wallhug", // onto a wall-hug shelf (Player::tryClimbOutToWallHug)
     "bbeam_walk", "bbeam_idle", "bbeam_walk_attach", "bbeam_jumpland", "bbeam_walk_turn180", "drop_to_ledgeb",
     "bbeam_ledgeu_climbup", "ledgeb_jumpuptocrouch", "bbeam_flip_foward", // from the hang by its clearance (Player.cpp State::Hang)
     "bbeam_unbalance_walk_left", "bbeam_unbalance_walk_right", "bbeam_idle_wobble_fwd", // off balance (Player::beam)
@@ -907,13 +908,14 @@ void World::tick(const Actions& input) {
 // 1264.22, return acceleration +0x70 1106.36, return speed cap +0x6C 4741.4, follow speed +0x74 3793.1, collider
 // radius +0x68 13.91; the mode list +0x148 (0x5F99F0 / 0x5FF080) picks per camera mode the focus record (command 10),
 // the distance (2), yaw/pitch limits (7 / 8), pull-in only (15), force sets (0x10 / 1) and the 300 floor probe (0x13;
-// defaults 0x601D30 / 0x5FEE10). Not modelled [U]: the default yaw force set 11, the look target blend (0x6009C0),
-// level camera records (0x5FE800 resources, command 0x12), the freeze request 55 (no carry while frozen).
+// defaults 0x601D30 / 0x5FEE10). Not modelled [U]: the default yaw force set 11, level camera records (0x5FE800
+// resources, command 0x12), the freeze request 55 (no carry while frozen).
 // Her displacement by what carried her this tick (`carrierMove`: tickObjects) carries the camera (docs/re/CAMERA.md §6).
 void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     constexpr float kRadius = 13.91f;
     const Bike* bike = ridden();
     const PlayerState& s = player_.state();
+    const CameraState last = cam_; // the camera the focus points' view / sight tests see (g_camera, last frame's)
     // Camera mode: the player's state machine requests it through CameraManager 0xE804F0's slot 17 (message 0x44E ->
     // 0x7683B0 -> 0x5E8210; Wine, hooked at 0x5E8210 while she acted: on foot, jumping and falling 1, free climb 4, ledge hang and
     // shimmy 11, surface swim 20, under water 19), and what its mode-list entry sets; a mode without command 10 / 2
@@ -988,13 +990,19 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // - 3 / 4 (by id: global data +0x170 / +0x174, 12-byte records) and 5 / 6 (inline {angle, speed, hold}) set the yaw /
     //   pitch override (0x609F10 on +0x1248 / +0x1278, below);
     // - 7 / 8 the yaw / pitch look limits {centre, range} (0x609C00 -> 0x607A30, as the mode lists' 7 / 8);
+    // - 0xC asks for a cut (0x6019D0 sets flag byte +0xD; 0x601D30 then ends in 0x6017D0, below);
+    // - 0x14 flags focus point `id` of her unit (0x6019D0: the camera target's unit, +0x1CC -> +0xE0; 0x5ED2D0 sets 0x20 on
+    //   unit data +0x204 record +0xFC) until 0x601D30 runs again (its 0x5FEE10 -> 0x5F1480 clears every flag first), so
+    //   while she is inside: the focus-point blend gathers it (updateFocusPoints);
+    // - 9 stores +0x133C (as a mode list's 9, 0x5FF27D), which the per-frame update 0x602690 hands to the object at +0x2800
+    //   (its +0x5C) while +0x2814 is set (2 with mode 6: a spline path, 0x5F1EF0) [U: that object]; no volume of the 82
+    //   units carries it (ScriptRealData.CameraTriggerCommandSurvey), so a trigger 9 never happens: nothing to model;
+    // - 0x16 is the LaraCombatCamera's distance cap (0x6019D0 skips it; 0x603190 / 0x603150 copy it into that camera's
+    //   +0x14C, 0x603C40 returns min(its own distance, +0x14C)): ours has no LaraCombatCamera (combat aim = mode 23), so it
+    //   stays unmodelled [U].
     // 0x601D30 runs when the mode or the active trigger list changes (enter / leave, 0x5F29A0 / 0x5F2A70; the mode, 0x6020E0),
     // not every frame: the sets, overrides and limits are (re)set then. An override no trigger sets is switched off there
-    // (0x608F10). Not modelled [U]: 9 (+0x133C), 0xC (a cut: 0x601D30 ends in 0x6017D0, which ends every blend and puts
-    // the camera at +0x1320 at the override's / force set's target angles; not separable from a teleport's camera reset
-    // under Wine, docs/re/CAMERA.md §9), 0x14 (flags focus point `id` of her unit for this frame: flag 0x20 on unit data
-    // +0x204 record +0xFC, 0x5ED2D0, that the focus-point blend 0x5F0B30 / 0x5F1540 at +0x14C0 gathers), 0x16 (the
-    // LaraCombatCamera's distance, read only by 0x603190: ours has no combat camera).
+    // (0x608F10).
     constexpr int kInlineSet = 1000;
     const script::Object* recordVolume = nullptr; // the last 0x12 of a priority-0 / priority-1 trigger
     const script::Object::CameraCommand* recordCommand = nullptr;
@@ -1023,6 +1031,8 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         set.count = uint8_t(std::min<size_t>(c.forces.size(), 2));
         for (size_t i = 0; i < set.count; ++i) set.force[i] = {uint8_t(c.forces[i].type), c.forces[i].k, c.forces[i].curve};
     };
+    bool cutAsked = false;      // a 0xC
+    std::vector<int> focusIds;  // the focus points 0x14 flags
     for (const bool late : {false, true})
         for (const int32_t uid : active)
             if (const script::Object& o = *script_.find(uid); o.cameraLate == late)
@@ -1049,6 +1059,10 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
                             lookTime = c.command == 0x1C && std::bit_cast<uint32_t>(c.arg[4]) & 0xFF ? c.arg[3] : 0.0f;
                             break;
                         case 0x12: recordVolume = &o, recordCommand = &c, recordLate = late; break;
+                        case 0xC: cutAsked = true; break;
+                        case 0x14:
+                            if (id != 0xFFFFFFFFu) focusIds.push_back(int(id));
+                            break;
                         default: break;
                         }
                 }
@@ -1075,10 +1089,15 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     if (((a.look.x != 0 || a.look.y != 0) && (orbit_.yawOverride.active() || orbit_.pitchOverride.active())) || orbit_.hintMarkup != -1)
         switchOverrideOff(orbit_.yawOverride), switchOverrideOff(orbit_.pitchOverride);
     // 0x601D30 ran: the mode or the list of active triggers changed.
+    bool cut = false;
     if (triggers != orbit_.triggers) {
         orbit_.triggers = std::move(triggers);
         setOverride(orbit_.yawOverride, yawOverride);
         setOverride(orbit_.pitchOverride, pitchOverride);
+        orbit_.focusFlags.clear(); // 0x5FEE10 -> 0x5F1480, then the triggers' 0x14 (0x5ED2D0)
+        if (!units_.empty())
+            for (const int id : focusIds) orbit_.focusFlags.push_back({units_[current_].data.name, id});
+        cut = cutAsked;
     }
     // Their clocks run at 1 x dt up to 0.25 every frame, on or off (Wine: +0x1294 written to 0 climbs 0.067 / 0.117 /
     // 0.183 / 0.25 at 65 ms reads; the writer is not among the absolute-offset uses of +0x1264 / +0x1294).
@@ -1119,6 +1138,32 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         }
     }
     orbit_.limitTo = limitTo;
+    // A cut (0xC: 0x601D30 ends in 0x6017D0): both trackers jump to their goals with their record / offset blends done
+    // (0x6084A0(1): +0x250 = +0x260, focus = goal), the override clocks go to 0.25 (0x607CA0), the force switches end with
+    // her move history refilled (0x607C00), and the camera is put at the target distance +0x1320 at the angles the
+    // active override (+0x1258 / +0x1288) else the force set B (0x5FA440: speed set; 0x608980 at a full switch: its
+    // signed target, behind her for a dir set with side 0) else 90 deg give, in the pivot frame +0xD0 [I: her heading frame,
+    // as the force sets' angles: behind her, level]
+    // (0x5E0C20 -> 0x435220 -> +0x150 = +0x90); with a level camera record at its point (+0x12B0; below).
+    float cutYaw = 0, cutPitch = 0;
+    if (cut) {
+        const auto cutAngle = [&](const OrbitState::Override& o, const OrbitState::Forces& c, const CamForceSet* sets, size_t n) {
+            if (o.active()) return o.tgt[0];
+            const CamForceSet* b = findSet(sets, n, c.set);
+            if (!b || std::abs(glm::radians(b->speed)) < 0.001f) return kPi / 2;
+            const float base = glm::radians(b->angle + 90.0f);
+            return b->dir ? c.sign * (base - kPi / 2) + kPi / 2 : base;
+        };
+        orbit_.yawOverride.clock = orbit_.pitchOverride.clock = 0.25f;
+        orbit_.yawForce.blend = orbit_.pitchForce.blend = 0.25f;
+        const vec3 move = dt > 0 && orbit_.valid ? (s.pos - carrierMove - orbit_.lastPos) / (dt * 60.0f) : vec3(0);
+        std::fill(orbit_.moves, orbit_.moves + 10, glm::length(move));
+        for (auto* add : {&orbit_.pivotAdd, &orbit_.lookAdd}) add->t = std::max(add->t, add->time);
+        orbit_.modeTime = std::max(orbit_.modeTime, 0.5f);
+        cutYaw = s.yaw + cutAngle(orbit_.yawOverride, orbit_.yawForce, kYawSets, std::size(kYawSets)) - kPi / 2;
+        cutPitch = cutAngle(orbit_.pitchOverride, orbit_.pitchForce, kPitchSets, std::size(kPitchSets)) - kPi / 2;
+        cameraCut_ = true; // no interpolation from the last tick's pose
+    }
     orbit_.modeTime += dt, orbit_.limitTime += dt;
     {
         const float f = std::min(1.0f, orbit_.modeTime / 0.5f), g = std::min(1.0f, orbit_.limitTime * 4.0f);
@@ -1153,7 +1198,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         if (orbit_.valid) orbit_.desired += carrierMove, cam_.position += carrierMove;
     }
     const bool snap = !focus_ || bike || glm::distance(*focus_, goal) > 2000.0f; // spawns, teleports
-    if (snap) focus_ = goal;
+    if (snap || cut) focus_ = goal; // a cut: 0x6084A0(1), focus = goal
     // Look tracker (+0x620, updated with the focus by 0x6022F0: the same 0x609830 -> 0x609440 lag toward the same
     // goal, without the pivot's 0x19 / 0x1B offset). Its record is the focus record with the right and forward dead
     // zones swapped (tru.exe under Wine 2026-11-20, camera mode 20, w2/Swim9/s4/cam-*.txt: +0x3B0 +0x1C0 zones
@@ -1166,7 +1211,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     const bool lookLags = mode.id == 19 || mode.id == 20;
     const vec3 lookGoal = goal - orbit_.pivotAdd.now();
     if (!lookLags) lookPoint_.reset(); // saves outside the water keep their bytes
-    else if (snap || !lookPoint_ || glm::distance(*lookPoint_, lookGoal) > 2000.0f) lookPoint_ = lookGoal;
+    else if (snap || cut || !lookPoint_ || glm::distance(*lookPoint_, lookGoal) > 2000.0f) lookPoint_ = lookGoal; // a cut snaps both trackers (0x6017D0 -> 0x6084A0(1))
     {
         constexpr uint8_t kEase[64] = {0,   1,   2,   2,   2,   3,   3,   3,   4,   5,   6,   8,   10,  13,  16,  20,
                                        24,  29,  34,  40,  46,  52,  58,  65,  72,  79,  86,  93,  101, 109, 118, 127,
@@ -1203,7 +1248,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     };
     const vec3 target = clearance(*focus_);
     const float kDistance = bike ? 1711.0f : mode.distance; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
-    const bool reseed = snap || !orbit_.valid || cam_.yaw != orbit_.yaw || cam_.pitch != orbit_.pitch; // [I] set from outside
+    const bool reseed = snap || !orbit_.valid || (!cut && (cam_.yaw != orbit_.yaw || cam_.pitch != orbit_.pitch)); // [I] set from outside
     if (reseed) { // where the angles put it (at full distance after a spawn or teleport)
         const vec3 dir(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw), std::sin(cam_.pitch));
         const float dist = snap || !orbit_.valid ? kDistance : orbit_.dist;
@@ -1212,6 +1257,16 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     } else if (glm::length(orbit_.desired - target) > 1e-3f) { // angles from where it ended up (0x5FF320)
         const vec3 look = glm::normalize(target - orbit_.desired);
         cam_.yaw = std::atan2(look.y, look.x), cam_.pitch = std::asin(std::clamp(look.z, -1.0f, 1.0f));
+    }
+    // A cut moves only the camera (+0x90, 0x6017D0) to the target distance +0x1320 at its angles; the distance state +0x1D4
+    // and its return speed +0x1D8 stay, so 0x600200 proposes the point at +0x1D4 again and 0x600710 brings the camera
+    // back to it at the follow speed while +0x1D4 returns toward +0x1320 (Wine, l1_krakenstairs_b 599 {0xC}: entering
+    // stepped the yaw 17.01 -> 19.64 and the pitch -7.48 -> -7.50 (the set's), while +0x1D4 went on 1262.3 -> 1236.3 toward
+    // the 474.1 target; it was teleported in, which resets the camera too; w2/CamRest8/k599tp.txt).
+    if (cut) {
+        cam_.yaw = cutYaw, cam_.pitch = cutPitch;
+        const vec3 dir(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw), std::sin(cam_.pitch));
+        orbit_.desired = target - dir * orbit_.dist, cam_.position = target - dir * kDistance;
     }
     // Forces (0x5FFB00 -> 0x608B60 per controller, x the look-idle weight 0x5FFA90: 0 until 5 s after the last look
     // input, 1 from 7 s, settings +0xC4 / +0xC8; the clock +0x1E4 runs at +0xCC = 1 x dt also while she moves and caps
@@ -1336,6 +1391,11 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     } else {
         orbit_.hintMarkup = -1;
     }
+    if (cut && orbit_.hintMarkup != -1 && glm::length(target - orbit_.hint) > 1e-3f) { // 0x6017D0: +0x150 = +0x90 = +0x12B0
+        const vec3 look = glm::normalize(target - orbit_.hint);
+        cam_.yaw = std::atan2(look.y, look.x), cam_.pitch = std::asin(std::clamp(look.z, -1.0f, 1.0f));
+        orbit_.desired = target - look * orbit_.dist, cam_.position = orbit_.hint;
+    }
     bool recordDistance = false;
     if (orbit_.hintMarkup != -1 && weight > 0 && a.look.x == 0 && a.look.y == 0) {
         float strength = 1;
@@ -1397,10 +1457,13 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // Yaw limit (0x608700, command 7 via 0x609C00 / 0x607A30: (0 + 90) deg in her frame = behind her, half-range 90):
     // the camera stays on her back side, its look within yawRange of her heading.
     if (lim.yawRange < 3.14f) cam_.yaw = s.yaw + std::clamp(std::remainder(cam_.yaw - s.yaw, 6.2831853f), -lim.yawRange, lim.yawRange);
-    // It looks at the look tracker's point (0x6009C0: through the same clearance 0x5FE930 -> 0x5EA050), moved by a
-    // trigger's 0x1A / 0x1C offset (Wine, the yacht deck: +0x160 points 79.01 under the pivot).
-    cam_.target = (lookLags ? clearance(*lookPoint_) : target) + orbit_.lookAdd.now();
-    if (lookLags) swimPivot_ = target;
+    // It looks at the look tracker's point (0x6009C0: through the same clearance 0x5FE930 -> 0x5EA050; while swimming
+    // that tracker trails the pivot, above), moved by a trigger's 0x1A / 0x1C offset (Wine, the yacht deck: +0x160
+    // points 79.01 under the pivot), turned toward the focus points: 0x6022F0 hands 0x5F1540 (updateFocusPoints) the
+    // same look point, 0x607F50 -> 0x5FE930, after both trackers' 0x609830 updates.
+    pivot_ = target;
+    const vec3 look = (lookLags ? clearance(*lookPoint_) : target) + orbit_.lookAdd.now();
+    cam_.target = bike ? look : updateFocusPoints(look, last, weight, std::min(1.0f, glm::length(a.move)), glm::length(move), dt);
     // Distance back toward the mode's (0x5FFB00): its speed accelerates by 1106.36 x clamp((gap - 2 step) / step, -1, 1)
     // per second (step = speed x dt, at least 1) up to 4741.4; it moves by at most last tick's step.
     if (!recordDistance) {
@@ -1517,6 +1580,108 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         orbit_.dist = turned;
     }
     orbit_.yaw = cam_.yaw, orbit_.pitch = cam_.pitch;
+}
+
+// Focus points (unit data +0x200 / +0x204; collision::FocusPoint), per frame from the Lara camera's update 0x6022F0:
+// - 0x5F0B30 gathers (up to 32) the records of every loaded unit whose +0xFC has 0x04 (enabled: the `focuspoint` script
+//   type's Enable / Disable 0x775910 / 0x775960) or 0x20 (a camera trigger's 0x14, orbit_.focusFlags), and which pass the
+//   tests their flags ask for: 0x08 in view (0x5EA3D0 against the view frustum planes widened by +0x1C [I: the planes'
+//   sign; our frustum from the last camera at World::fovDeg and 16:9]), 0x02 within the +0x18 radius of her root (her
+//   instance +0x20), 0x01 not hidden from the camera (0x493330 from the camera's position to it [I: the camera mask]);
+// - 0x5F0DF0 adds each gathered one (weight 0) to the fading-in list unless it matches the list's LAST entry, and
+//   0x5F0E90 moves each list entry that does not match the LAST gathered one to the fading-out list with its weight: both
+//   loops keep only the last comparison (5F0E17..5F0E39: dl = match, no break), so with two or more gathered only the
+//   last gathered stays, and it is added again (weight 0) every frame while another precedes it, up to 32 copies;
+// - 0x5F0F70 raises a fading-in weight by its fade-in rate (+0x64 type 0: the move stick's length x dt / +0x68, 1: her
+//   move this frame / +0x68, 2: dt / +0x68, else 1) up to 1, curved by +0x6C when +0xAC; 0x5F1060 lowers a fading-out
+//   one by its fade-out rate (+0xB0 / +0xB4 / +0xB8 / +0xF8) and drops it once that would take it to 0 or below;
+// - 0x5F12F0: the point = (look point + sum w p) / (1 + sum w) over both lists, w = +0x14 x 0.01 x the curved weight,
+//   x curve +0x24 at (|her root - p| / +0x20, clamped to [0, 1]) with flag 0x10; [U] a third list 0x5ED260 (+0x330, 32
+//   entries of 0x80 bytes) that no camera trigger or focus point fills;
+// - 0x6009C0: the blend +0x204 moves toward the look-idle weight (0x5FFA90: 0 until 5 s after the last look input, 1 from
+//   7 s) by at most 4 x dt, and the camera looks at mix(look point, that point, +0x204).
+vec3 World::updateFocusPoints(vec3 look, const CameraState& last, float idle, float stick, float move, float dt) {
+    using Entry = OrbitState::FocusEntry;
+    const vec3 root = player_.state().pos;
+    const auto find = [&](const std::string& unit, int id) -> std::pair<const collision::FocusPoint*, vec3> {
+        for (const auto& u : units_)
+            if (u.data.name == unit && id >= 0 && size_t(id) < u.data.col.focusPoints.size()) return {&u.data.col.focusPoints[size_t(id)], u.offset};
+        return {nullptr, vec3(0)};
+    };
+    // The view frustum of the last camera (0x5EA3D0): the point in its frame within the half-angles, widened by the margin.
+    const vec3 fwd = glm::length(last.target - last.position) > 1e-3f ? glm::normalize(last.target - last.position) : vec3(1, 0, 0);
+    const vec3 right = glm::length(glm::cross(fwd, vec3(0, 0, 1))) > 1e-3f ? glm::normalize(glm::cross(fwd, vec3(0, 0, 1))) : vec3(0, -1, 0);
+    const vec3 up = glm::cross(right, fwd);
+    const float tanV = std::tan(glm::radians(fovDeg) / 2), tanH = tanV * 16.0f / 9.0f;
+    const auto inView = [&](vec3 p, float margin) {
+        const vec3 d = p - last.position;
+        const float z = glm::dot(d, fwd), x = glm::dot(d, right), y = glm::dot(d, up);
+        const auto inside = [&](float c, float t) { return (std::abs(c) - t * z) / std::sqrt(1 + t * t) <= margin; };
+        return z >= -margin && inside(x, tanH) && inside(y, tanV);
+    };
+    std::vector<Entry> gathered;
+    for (const auto& u : units_)
+        for (size_t i = 0; i < u.data.col.focusPoints.size() && gathered.size() < 32; ++i) {
+            const auto& f = u.data.col.focusPoints[i];
+            const vec3 p = f.pos + u.offset;
+            uint32_t flags = f.flags;
+            if (std::ranges::any_of(orbit_.focusFlags, [&](const auto& g) { return g.second == int(i) && g.first == u.data.name; })) flags |= 0x20;
+            if (!(flags & 0x24)) continue;
+            if ((flags & 0x08) && !inView(p, f.viewMargin)) continue;
+            if ((flags & 0x02) && glm::distance(root, p) >= f.radius) continue;
+            if (flags & 0x01) {
+                const vec3 d = p - last.position;
+                if (const float len = glm::length(d); len > 1e-3f && col_.raycast(last.position, d / len, len, collision::kCameraMask)) continue;
+            }
+            gathered.push_back({u.data.name, int(i), 0, 0});
+        }
+    const auto same = [](const Entry& a, const Entry& b) { return a.unit == b.unit && a.id == b.id; };
+    for (const Entry& g : gathered) { // 0x5F0DF0
+        bool found = false;
+        for (const Entry& e : orbit_.focusIn) found = same(e, g);
+        if (!found && orbit_.focusIn.size() < 32) orbit_.focusIn.push_back(g);
+    }
+    for (size_t i = 0; i < orbit_.focusIn.size();) { // 0x5F0E90: the last entry fills the hole and is tested next
+        bool found = false;
+        for (const Entry& g : gathered) found = same(g, orbit_.focusIn[i]);
+        if (found) {
+            ++i;
+            continue;
+        }
+        if (orbit_.focusOut.size() < 32) orbit_.focusOut.push_back(orbit_.focusIn[i]);
+        orbit_.focusIn[i] = orbit_.focusIn.back(), orbit_.focusIn.pop_back();
+    }
+    const auto rate = [&](const collision::FocusPoint::Fade& fade) {
+        return fade.type == 0 ? stick * dt / fade.length : fade.type == 1 ? move / fade.length : fade.type == 2 ? dt / fade.length : 1.0f;
+    };
+    for (Entry& e : orbit_.focusIn) { // 0x5F0F70
+        const auto [f, offset] = find(e.unit, e.id);
+        e.t = std::min(1.0f, e.t + (f ? rate(f->in) : 1.0f)), e.w = f && f->in.curved ? curve64(f->in.curve.data(), e.t) : e.t;
+    }
+    for (size_t i = 0; i < orbit_.focusOut.size();) { // 0x5F1060
+        Entry& e = orbit_.focusOut[i];
+        const auto [f, offset] = find(e.unit, e.id);
+        const float r = f ? rate(f->out) : 1.0f;
+        if (e.t <= r) {
+            e = orbit_.focusOut.back(), orbit_.focusOut.pop_back();
+            continue;
+        }
+        e.t -= r, e.w = f && f->out.curved ? curve64(f->out.curve.data(), e.t) : e.t;
+        ++i;
+    }
+    vec3 sum = look;
+    float total = 1;
+    for (const auto* list : {&orbit_.focusIn, &orbit_.focusOut}) // 0x5F12F0
+        for (const Entry& e : *list)
+            if (const auto [f, offset] = find(e.unit, e.id); f) {
+                const vec3 p = f->pos + offset;
+                float w = f->weight * 0.01f * e.w;
+                if (f->flags & 0x10) w *= curve64(f->falloffCurve.data(), glm::distance(root, p) / f->falloff);
+                sum += w * p, total += w;
+            }
+    const float step = std::clamp(idle - orbit_.focusBlend, -4 * dt, 4 * dt); // 0x6009C0
+    orbit_.focusBlend += step;
+    return glm::mix(look, sum / total, orbit_.focusBlend);
 }
 
 // tru.exe 0x6FF200 (region soak / dry, no rain or mud) + 0x6ED3F0 (clamp) + 0x6ED130 (bone chains, in its call order).
@@ -1853,7 +2018,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.jumpVel0), add(s.jumpStick0);
     for (const ButtonTime* b : {&s.buttons.jump, &s.buttons.interact, &s.buttons.drop, &s.buttons.grapple})
         add(b->down), add(b->edge), add(b->time), add(b->buffer);
-    add(s.droppedPole), add(s.fallStall), add(s.landTime), add(s.prepTime), add(s.prepInPlace), add(s.pullWait), add(s.runTime);
+    add(s.droppedPole), add(s.fallStall), add(s.runOffHold), add(s.landTime), add(s.prepTime), add(s.prepInPlace), add(s.pullWait), add(s.runTime);
     const auto& ba = s.balance;
     add(ba.build), add(ba.aboutFall), add(ba.grace), add(ba.unbal), add(ba.bal), add(ba.notImprove), add(ba.full), add(ba.clock);
     add(ba.lastFlip), add(ba.period), add(ba.ref), add(ba.stickYaw), add(ba.blend), add(ba.lean), add(ba.side), add(ba.osc), add(ba.fall);

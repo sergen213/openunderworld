@@ -71,6 +71,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-WAT-011 | water render | Water reflections miss off-screen geometry (SSR) | Open (limit) | pre-existing | — |
 | OU-WAT-012 | water render / RT | RT reflection of a shadowed cliff overhang reads too dark | Not reproduced | pre-existing | — |
 | OU-WAT-013 | water render | Geometry swell small outside the tessellated window (coarse TRU sea meshes) | Open (limit) | pre-existing | C-SWELL |
+| OU-WAT-014 | water render | Under-water tint over a level view while swimming at the surface | Fixed-verified | pre-existing | — |
 | OU-REN-001 | render | Dark sky near the chapter 2 cliff | Fixed (sky dome object) | pre-existing | — |
 | OU-REN-002 | render | HDR off by default: bright window highlights band | Open | pre-existing | — |
 | OU-REN-003 | render / cine | `co_*` cutscene actor faces render green | Open | pre-existing | — |
@@ -100,12 +101,12 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-CAM-004 | camera | Reveal camera blend in/out ours; gamebase time scales not applied | Open | pre-existing | — |
 | OU-PLY-001 | Lara / beams | Beam-walk entry into "about to fall" undecoded | Open | pre-existing | C-CHART |
 | OU-PLY-002 | Lara / wall hug | Wall-hug corners reconstructed, not decoded | Open | pre-existing | C-CHART |
-| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Open | pre-existing | C-CHART |
+| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Fixed on agent/ShelfOut9 (chart T1110 / clearance 8 / clip 887; which ledge [I]; no Wine runtime check) | pre-existing | C-CHART |
 | OU-PLY-004 | Lara / ladders | No ladder side jumps or reaches | Open | pre-existing | C-CHART |
 | OU-PLY-005 | Lara / jumps | Ledge-aim reach: running-jump rush/arc switch 20-70 farther out | Open | pre-existing | C-MEASURE |
 | OU-PLY-006 | Lara / obstacles | Low-obstacle detection distance (query 96 reach) unknown | Open | pre-existing | C-CHART |
-| OU-PLY-007 | Lara / poles | Pole fling onto a platform lands 79 past the edge (tru.exe 3 short) | Open | pre-existing | C-MEASURE |
-| OU-PLY-008 | Lara / ledges | Running safety drop lacks the 82-unit overshoot and take-back | Open | pre-existing | C-MEASURE |
+| OU-PLY-007 | Lara / poles | Pole fling onto a platform lands 79 past the edge (tru.exe 3 short) | Fixed-verified | pre-existing | C-MEASURE |
+| OU-PLY-008 | Lara / ledges | Running safety drop lacks the 82-unit overshoot and take-back | Fixed-verified | pre-existing | C-MEASURE |
 | OU-PLY-009 | Lara / chimney | Chimney wall reach / standoff pair differs (holds 110 vs 119-131) | Open | pre-existing | C-MEASURE |
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
@@ -153,7 +154,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
-| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861) and agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349); 9 / 0xC / 0x14 / 0x16 and kind 1 open | pre-existing | — |
+| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861), agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349) and agent/CamCut9 (0xC cut, 0x14 focus points Wine-verified at 3859; 9 carried by no volume); 0x16 (no LaraCombatCamera) and kind 1 open | pre-existing | — |
 | OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040); presence, CloseCombat slots, bite range on agent/EnemySpawn7 | pre-existing | — |
 
 ## Root-cause clusters
@@ -166,7 +167,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | C-VM | SCMD VM gaps: unimplemented opcode 0x65, natives without bindings, no vector values, partial `modifiable` semantics, no script UI; a stopped handler silently leaves its object idle | OU-SCR-001..005, OU-PZL-009, OU-PZL-012, OU-PZL-013, OU-PZL-015, OU-AUD-004 |
 | C-JOINT | Objects whose motion the data defines outside our joint model: missing joint records, fixed joints / body A motion, freed-section bodies that never get released, joints held by rope tension | OU-PZL-006, OU-PZL-007, OU-PZL-010, OU-PZL-014, OU-GRP-005, OU-PHY-001 |
 | C-CHART | Lara's player state chart is hand-ported per move (AUDIT_A L331 / L433: sub-states keyed on clip names, no transition table); every undecoded condition becomes a guessed rule or a missing move | OU-PLY-001..004, OU-PLY-006, OU-PLY-010, OU-PZL-005 |
-| C-MEASURE | Numbers decoded or fitted but not measured in tru.exe under Wine (`docs/REFERENCE_COMPARISON.md`: 107 of 161 rows unmeasured, "Unmeasured" table lists the session for each) | OU-PLY-005, OU-PLY-007..009, OU-GRP-002, OU-PZL-002, OU-VEH-001, OU-PHY-002 |
+| C-MEASURE | Numbers decoded or fitted but not measured in tru.exe under Wine (`docs/REFERENCE_COMPARISON.md`: 107 of 161 rows unmeasured, "Unmeasured" table lists the session for each) | OU-PLY-005, OU-PLY-009, OU-GRP-002, OU-PZL-002, OU-VEH-001, OU-PHY-002 |
 | C-DOC | Status columns not refreshed when later work landed | OU-DOC-001, OU-DOC-002 |
 
 ## Entries
@@ -352,6 +353,18 @@ established) / **Fix** (suggested) / **Test** / **Status · Origin**.
 **OU-WAT-013 Geometry swell small outside the tessellated window** — TRU sea meshes are ~3.5 m quads (RENDERING L542-546);
 only the wave-field window is tessellated (`water.tesc/.tese`), elsewhere relief is normals only (ROADMAP L67).
 Status · Origin: Open (limit) · pre-existing.
+
+**OU-WAT-014 Under-water tint while swimming at the surface** (player report, 2026-11-20)
+- Repro: l2_cliffclimb `--spawn -31946.2,-13857.3,408,43 --camera -32600,-14500,50,-30000,-12000,-150` (a level view
+  just over the sea while she treads): the whole frame was washed blue-green (mean rgb 44 / 133 / 130).
+- Cause (confirmed): ours drew the full-screen under-water pass at 1 − h / 600 whenever the eye was within 600 over
+  the surface. tru.exe 0x6D9DA0 also needs 0x5EA200's view angle: acos(camera matrix row 2 z) > 2.0 rad (0x431CA0 =
+  acos: a quaternion-to-axis-angle caller doubles its result of w), i.e. only looking steeply down into the water.
+- Fix (agent/SurfTint): the look-down test in `EffectsView::water` (`src/app/game/main.cpp`). [U] third gate 0x69E270
+  (water +0x2D0 → +0x2EC flags +0x7C bit 1) not applied.
+- Verified: same view after the fix shows the cliffs untinted (mean rgb 63 / 102 / 94); the default top-down treading
+  camera and an under-water camera are unchanged (Vulkan and GL).
+- Status · Origin: Fixed-verified · pre-existing.
 
 ### Rendering (OU-REN)
 
@@ -655,14 +668,30 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
   Triggers now apply in CameraManager list order (entering appends 0x5E85B0, leaving moves the last into the hole
   0x5F2A70): 4468 entered inside 4476 gives 790.1 as tru.exe, where our uid order gave 948.2.
   New saved orbit state: both overrides, the limits' clock and target, the trigger list.
-- Narrowed, still open: 0xC is a cut (0x6017D0: blends end, the camera put at the targets' angles at +0x1320) but a Wine
-  check at l1_krakenstairs_b 599 was confounded by the teleport's own camera reset; 0x14 flags a **focus point** (unit
-  data +0x200 / +0x204 records, the `focuspoint` script type), which the focus-point blend 0x5F0B30 / 0x5F1540 (+0x14C0)
-  turns the look toward — a subsystem not ported; 0x16 is read only by the LaraCombatCamera (0x603190), which ours lacks;
-  9 (+0x133C) unread; kind 1 (AnchoredCamera, one usable record of 9); the frame of x / y tracker offsets; a volume
-  record of type 1 / 2 off a markup (her place 0 [I]); the look tracker's own lag (ours uses the focus's). OU-CAM-004 (reveal
-  blends) not touched.
-- Status · Origin: Fixed on agent/CamZones7 + agent/CamRest8 (partial: see open) · pre-existing.
+- Batch 9 (agent/CamCut9, docs/re/CAMERA.md §9 "Cut" / "Focus points"):
+  - 0xC (l1_krakenstairs_b 599, l7_arctic_sea 9226): 0x6019D0 flags a cut and 0x601D30 ends in 0x6017D0 — trackers at
+    their goals with their blends done, override / force-switch clocks done, the camera (+0x90) put at the target
+    distance +0x1320 at the active override's / force set's target angles (else behind her, level), or at a level
+    record's point; the distance state +0x1D4 and its speed stay, so the camera follows back out (Wine k599tp: +0x1D4
+    1262.3 → 1236.3 toward 474.1). Ours on the tick the trigger list changes; `StreamReal.CameraTriggerCutPutsTheCameraAtItsAngles`.
+    [I] the frame +0xD0 = her heading frame (as the force sets'). The angles' Wine check stays confounded by the
+    teleport's own reset, and tru.exe counted her in 599 at a point our box test leaves out (756 off its centre, half
+    extent 447) [U].
+  - 0x14: focus points (unit data +0x200 / +0x204, 0x100-byte records; none enabled in the data) gathered by flags /
+    radius / view / sight (0x5F0B30), faded in and out (0x5F0DF0..0x5F1060, their last-comparison-only loops kept),
+    blended with the look point (0x5F12F0) and mixed in by the look-idle weight (0x6009C0); flags last until 0x601D30
+    runs again (0x5F1480 then 0x5ED2D0). Wine-verified at l2_cliffclimb 3859 (look at 0.38..0.42 of the way to point 3;
+    0.65 / 1.65 = 0.394; gone after a mouse nudge until the 5..7 s ramp): `StreamReal.CameraTriggerFocusPointTurnsTheLook`,
+    `CollisionRealData.FocusPointSurvey`. Saved: both lists, the flags, the blend. [I] view frustum (our FOV, 16:9),
+    sight mask, gather order.
+  - 9: no volume carries it (+0x133C feeds the object at +0x2800 in 0x602690): nothing to model.
+  - 0x16: the LaraCombatCamera's distance cap (0x603190 / 0x603150 → +0x14C, 0x603C40 min) — ours has no
+    LaraCombatCamera: open.
+- Still open: 0x16 (needs the LaraCombatCamera); the focuspoint script type's Enable / Disable (0x775910 / 0x775960,
+  one unit's scripts); the third focus list (+0x330, 0x5F11C0 / 0x5ED260); kind 1 (AnchoredCamera, one usable record
+  of 9); the frame of x / y tracker offsets; a volume record of type 1 / 2 off a markup (her place 0 [I]); the look
+  tracker's own lag (ours uses the focus's); 599's box placement. OU-CAM-004 (reveal blends) not touched.
+- Status · Origin: Fixed on agent/CamZones7 + agent/CamRest8 + agent/CamCut9 (partial: see open) · pre-existing.
 
 **OU-CMB-003 Shark aggression**
 - Repro: l2_cliffclimb, into the sea and tread (`w2/WineMeasure/ours/tread_*`): ours bit within ~7 s and every 1.5..3 s.
@@ -717,10 +746,19 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
 Open · pre-existing.
 
 **OU-PLY-003 No climb out of water onto a shelf**
-- Expected: `swim_climbout_to_wallhug` (887) onto a shelf when the clearance result is 657 (GAMEPLAY.md L1926) [O chart].
-- Actual: not done (GAMEPLAY.md L2614, ROADMAP L75); ordinary climb-out only.
-- Fix: add the shelf branch to the automatic climb-out using the wall-hug shelf test 0x74E160 / 0x74BB50.
-- Test: proposed `GameReal.SwimClimbOutOntoShelf` (l2_puzzleroom shelf). Status · Origin: Open · pre-existing.
+- Expected: `swim_climbout_to_wallhug` (887) onto a shelf when the clearance result is 657 (GAMEPLAY.md "Climb out onto a
+  wall-hug shelf") [O chart].
+- Actual (before): not done; ordinary climb-out only.
+- Evidence: chart S237 T1110 is the first transition (before T1115 `swim_climbout`), conds 0x262 = 610, stick pushed /
+  not back, 0x28A = 657; clearance +0xEDC = 8 from 0x76D270 → 0x76D010 → 0x74E290 → 0x74E160 when 0x74BB50 == 1
+  (decomp). Clip 887: no root translation, root yaw 0 → +π evenly, pelvis from (18, 186, −78) to standing [O clip].
+- Fix: `Player::tryClimbOutToWallHug` before `tryClimbOut`: nearest ledgegrab point in reach whose `shelfAt` holds →
+  root on the shelf (88.496 in) facing the wall, clip 887 turns her, `Wall_Hug_Idle`. [I] the swim query's reach and
+  height band (the plain climb-out's 50..400), the ±60° facing.
+- Test: `GameReal.SwimClimbOutOntoShelf` (l2_cliffclimb ledge 936 seg 0: no l2_puzzleroom shelf lies over water; the
+  survey found only 936 seg 0 / seg 9 and l7_arctic_sea 2073). Open: runtime comparison with tru.exe at 936 (a Wine
+  session was started but not completed: the machine was overloaded, the front end did not take the keys).
+  Status · Origin: Fixed on agent/ShelfOut9 · pre-existing.
 
 **OU-PLY-004 No ladder side jumps or reaches**
 - Expected: ladder side jumps exist (ship escape shafts, ROADMAP L89); clips in lara.drm [I].
@@ -738,12 +776,28 @@ at 634..719 (REFERENCE_COMPARISON M13, Differences #3); the 1233 box limit is [O
 - Fix: decode query 96's reach record (property 0x21D, objdata +0x116B0) or Wine-measure hurdle onset distances on
   l2_cliffclimb step 941. Test `CliffclimbObstaclesAndLedgeGrabs`. Status · Origin: Open · pre-existing.
 
-**OU-PLY-007 Pole fling lands 79 past the edge** — tru.exe touches down 3 short and steps on (`polefid2/mhsw.txt`,
-REFERENCE_COMPARISON M07 / Differences #5). Files `Player::poleFling`. Status · Origin: Open · pre-existing.
+**OU-PLY-007 Pole fling lands 79 past the edge** — tru.exe aims the fling at the ledge's own point: the launch (35.87,
+74.1) a frame from (2850.33, -416.17) solves 0x73EDC0's v = (target - pos - g t^2/2) / t for l3_main_hall ledge 946's
+point (3678.41, -230.93) at t = 23.09 frames to 0.2 units; she touches down 3.3 short the tick before the floor and
+rests on the line, 3678.41 (`polefid2/mhsw.txt`, REFERENCE_COMPARISON M07 / Differences #5). Fix (`agent/Drop9`):
+`Player::poleFling` aims at the ledge point at its floor's height (moved in to where our collision top begins, 1 unit
+at 946 [I]) and State::Jump lands her there when the flight time runs out (`flight`, `climbTo`): x 2095.6 against the
+line 2094.6, floor 1708.6, still on the platform 30 ticks later. Remaining: our flight time is the [I] 23.5 frames
+(tru.exe's solve 23.09), so the landing tick is one later. Test `GameReal.MainHallPoleFlingLandsOnPlatform`.
+Status · Origin: Fixed-verified · pre-existing.
 
-**OU-PLY-008 Running safety drop lacks overshoot** — tru.exe overshoots 82 and is taken back, hang ~1.2 s after the line
-(REFERENCE_COMPARISON M03 / Differences #6). Files `Player::trySafetyDrop`. Test self-test `safety_drop`.
-Status · Origin: Open · pre-existing.
+**OU-PLY-008 Running safety drop lacks overshoot** — tru.exe's run states (S63 / S65 / S57 / S58 / S61) go on
+`PSCCF_IsFalling` to S11 (T88; S59 -> S13 by T91), a state with no request whose T90 / T92 loop while the state time
+(cond 0x14) is under 3 frames, ahead of T114 and the fall T89 [O-data]: 0.10 s on at her speed, feet at the top's
+height, then the attach S542 blends her from where she is onto the clip's start linearly in 10 ticks (Wine, l4_temple
+ledge 1155: 12.6 -> 121.4 past the line from a run start, 27.6 -> 182.6 sprinting, walking no hold, 2.5 past;
+`gameplaygoal/inputrules/wine2.txt`, `w2/Drop9/s1` by `tools/wine-ref/sessions/l4_temple_safety_drop.sh`; the old
+"82" was not the root's overshoot). Fix (`agent/Drop9`): `Player::groundMove` holds State::Run 3 / 30 s over an edge
+the safety drop takes (`PlayerState::runOffHold`, saved), `dropToHang(..., blend)` blends 10 / 60 s:
+`GameReal.TempleSafetyDropOffThePlatform` 10.1 -> 116.5 past the line at her full run, walking 5.8, blend 10 ticks.
+Remaining [I]: tru.exe holds a plain run-off without a ledge too (S11 before T89), ours does not; after the blend tru.exe
+moves her to the hang linearly in 24 ticks (her root (−157, −481), heading +π), ours plays `drop_to_ledgeb`'s root
+motion (same end, different path). Test self-test `safety_drop`. Status · Origin: Fixed-verified · pre-existing.
 
 **OU-PLY-009 Chimney reach / standoff** — tru.exe takes walls 24..35 nearer and holds 119..131 out of the face, ours 110
 (third hold 30 high) (REFERENCE_COMPARISON Differences #10, `WallJump.cpp:43`). Test
@@ -1222,7 +1276,7 @@ Status · Origin: Open · pre-existing.
 4. OU-REN-002 dither the post output (no change to the LDR look).
 5. OU-WAT-002 spray haze fade at the crater centre.
 6. OU-DOC-001 / OU-DOC-002 doc corrections.
-7. OU-PLY-003 shelf climb-out: chart state and shelf test are already decoded (GAMEPLAY.md L1926, L2608).
+7. OU-PLY-003 shelf climb-out: done on agent/ShelfOut9 (Wine check of ledge 936 still open).
 8. OU-GRP-001 throw clip lookup in the grapple DRM (data search, no exe work).
 
 **Needs RE first** (tru.exe decode before code):

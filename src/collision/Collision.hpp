@@ -8,6 +8,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -83,6 +84,26 @@ struct CameraRecord {
     std::vector<std::pair<uint32_t, float>> forces;      // +0x64 count, +0x68 0x44-byte force records {type, k}
 };
 
+// Focus point (unit data +0x200 count, +0x204 0x100-byte records; the `focuspoint` script type, NtFocusPoint 0x7B7A00):
+// a point the gameplay camera's look turns toward while it is gathered (tru.exe 0x5F0B30 / 0x5F1540, docs/re/CAMERA.md
+// §9 "Focus points"). A fade is {type, length, curve}: per frame its weight moves by type 0 = stick x dt / length,
+// 1 = her move this frame / length, 2 = dt / length, other = all at once (0x5F0F70 / 0x5F1060).
+struct FocusPoint {
+    vec3 pos{0};                 // +0x00 (unit frame)
+    float weight = 0;            // +0x14 percent
+    float radius = 0;            // +0x18 gathered only within it of Lara (flag 0x02)
+    float viewMargin = 0;        // +0x1C view test margin (flag 0x08)
+    float falloff = 1;           // +0x20 weight x curve(|Lara - point| / falloff) (flag 0x10), curve +0x24
+    std::array<uint8_t, 64> falloffCurve{};
+    struct Fade {
+        uint32_t type = 3;
+        float length = 1;
+        bool curved = false;
+        std::array<uint8_t, 64> curve{};
+    } in, out;                   // +0x64 type / +0x68 length / +0x6C curve / +0xAC curved; +0xB0 / +0xB4 / +0xB8 / +0xF8
+    uint32_t flags = 0;          // +0xFC: 0x01 not hidden from the camera, 0x02 radius, 0x04 enabled, 0x08 in view, 0x10 falloff
+};
+
 // Markup polyline ("markup2" in tru.exe): ledges, landings, balance beams, ...
 struct Markup {
     uint8_t type = 0;   // raw type byte; markupFlags/markupTypeName interpret it
@@ -129,6 +150,7 @@ public:
     // sits in the DRM: a camera trigger volume's command 0x12 points at record (offset - recordsOffset) / 0x70.
     std::vector<CameraRecord> cameraRecords;
     uint32_t recordsSection = ~0u, recordsOffset = 0;
+    std::vector<FocusPoint> focusPoints; // unit data +0x200 / +0x204, in order (index = the focus point id)
     std::vector<Dynamic> dynamics; // queried with the faces by raycast/sweeps/closestPoint (not by build)
 
     // (Re)builds the BVH over `faces`. Queries need it; loadLevelCollision calls it.

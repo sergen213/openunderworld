@@ -325,6 +325,14 @@ nlohmann::json World::serializeRuntime() const {
                   {"held", c->held}, {"fov", {c->fovMode, c->fov, c->fovTo, c->fovFrom, c->fovTime, c->fovDuration}}};
     }
     const auto pose = [&](const CameraState& c) { return nlohmann::json{v(c.position), v(c.target), v(c.up), c.fovDeg}; };
+    const auto focus = [](const OrbitState& s) { // focus points: {in, out, flagged, blend}
+        const auto list = [](const std::vector<OrbitState::FocusEntry>& l) {
+            nlohmann::json r = nlohmann::json::array();
+            for (const auto& e : l) r.push_back({e.unit, e.id, e.t, e.w});
+            return r;
+        };
+        return nlohmann::json{list(s.focusIn), list(s.focusOut), s.focusFlags, s.focusBlend};
+    };
     nlohmann::json out = {{"camera", {{"position", v(cam_.position)}, {"target", v(cam_.target)}, {"yaw", cam_.yaw}, {"pitch", cam_.pitch},
                         {"up", v(cam_.up)}, {"fov", cam_.fovDeg},
                         {"focus", focus_ ? v(*focus_) : nlohmann::json(nullptr)},
@@ -332,7 +340,7 @@ nlohmann::json World::serializeRuntime() const {
                                    o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint,
                                    forces(o.yawForce), forces(o.pitchForce), o.along, inlineSet(o.yawInline), inlineSet(o.pitchInline),
                                    trackerAdd(o.pivotAdd), trackerAdd(o.lookAdd), override(o.yawOverride), override(o.pitchOverride),
-                                   o.limitTime, v(o.limitTo), o.triggers}},
+                                   o.limitTime, v(o.limitTo), o.triggers, focus(o)}},
                         {"spline", std::move(spline)}, {"blendOut", blendOut_}, {"blendFrom", pose(blendFrom_)}}},
             {"hair", std::move(hair)}, {"playerUnit", playerUnit_}, {"air", air_}, {"submerged", submerged_},
             {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"limitsOff", multibodyLimitOff_}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)},
@@ -342,8 +350,7 @@ nlohmann::json World::serializeRuntime() const {
                      w.push_back({uid, s.surface, s.target, s.rate, s.source, s.sink, s.strength, v(s.sourceAt), v(s.sinkAt)});
                  return w;
              }()}};
-    // The swim camera's look point and pivot (only then: other saves keep their bytes).
-    if (lookPoint_) out["camera"]["look"] = {v(*lookPoint_), v(swimPivot_)};
+    if (lookPoint_) out["camera"]["look"] = v(*lookPoint_); // the swim camera's look point (only then: other saves keep their bytes)
     if (!waterDamage_.empty()) { // only where a volume is armed: other saves keep their bytes
         nlohmann::json w = nlohmann::json::array();
         for (const auto& [uid, d] : waterDamage_) w.push_back({uid, d.amount, d.frames});
@@ -436,11 +443,20 @@ void World::restoreRuntime(const nlohmann::json& j) {
         } else {
             o.limitTime = o.modeTime;
         }
+        if (a.size() > 27) { // older saves: no focus points in flight
+            const auto& fp = a.at(27);
+            const auto list = [](const nlohmann::json& l) {
+                std::vector<OrbitState::FocusEntry> r;
+                for (const auto& e : l) r.push_back({e.at(0).get<std::string>(), e.at(1).get<int>(), e.at(2).get<float>(), e.at(3).get<float>()});
+                return r;
+            };
+            o.focusIn = list(fp.at(0)), o.focusOut = list(fp.at(1));
+            o.focusFlags = fp.at(2).get<std::vector<std::pair<std::string, int>>>(), o.focusBlend = fp.at(3).get<float>();
+        }
         const auto& f = cam.at("focus");
         const std::optional<vec3> focus = f.is_null() ? std::nullopt : std::optional<vec3>(v(f));
         const auto l = cam.find("look"); // older saves: none, the look point starts on its goal
-        const std::optional<vec3> look = l == cam.end() || l->is_null() ? std::nullopt : std::optional<vec3>(v(l->at(0)));
-        const vec3 swimPivot = look ? v(l->at(1)) : vec3(0);
+        const std::optional<vec3> look = l == cam.end() || l->is_null() ? std::nullopt : std::optional<vec3>(v(*l));
         CameraState c = cam_;
         c.position = v(cam.at("position")), c.target = v(cam.at("target")), c.yaw = cam.at("yaw"), c.pitch = cam.at("pitch");
         std::vector<vec3> hair;
@@ -460,7 +476,7 @@ void World::restoreRuntime(const nlohmann::json& j) {
         const auto bones = j.at("bones").get<std::vector<float>>();
         air_ = air, submerged_ = submerged;
         restoreWorldRuntime(j);
-        focus_ = focus, lookPoint_ = look, swimPivot_ = swimPivot, orbit_ = o, cam_ = prevCam_ = c;
+        focus_ = focus, lookPoint_ = look, orbit_ = o, cam_ = prevCam_ = c;
         playerUnit_ = playerUnit; // the scripts heard of this unit already: no level-load vt 13 again (World::tick)
         hair_.setState(hair);
         if (bones.size() == bones_.size() * 16)

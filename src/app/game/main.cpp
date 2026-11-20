@@ -1708,7 +1708,12 @@ struct EffectsView {
             const auto eu = ou::render::eyeUnderWater(eye, lo, hi, ew->surface, fo.waterVolumes);
             const float h = eu.height, d = std::abs(h);
             under = eu.under;
-            underwater.strength = under ? 1.0f : xy && h >= 0 && h < 600 ? 1.0f - h / 600.0f : 0.0f;
+            // Above the surface (0x6D9DA0): only less than 600 over it and looking down into the water, acos(the camera
+            // matrix's row 2 z = forward z) > 2.0 rad (0x5EA200 → 0x431CA0 = acos); a level view while treading or
+            // swimming at the surface gets no pass. [U]: its third gate, 0x69E270 (the water's +0x2D0 → +0x2EC flags +0x7C
+            // bit 1), is not applied.
+            const bool lookingDown = cam.forward().z < std::cos(2.0f);
+            underwater.strength = under ? 1.0f : xy && lookingDown && h > 0 && h < 600 ? 1.0f - h / 600.0f : 0.0f;
             const float range = uw.env.waterFilterRange[under ? 0 : 1];
             // Enhanced water submerged: abyssal-garden's medium (post pass ouUwFog, uw_grade.frag) is the whole under-water
             // look, so TRU's deep / surface water filters (l1 5292: a ColorDOF blur at alpha 0.89 + a bloom of the

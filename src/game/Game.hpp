@@ -488,6 +488,7 @@ struct PlayerState {
     Buttons buttons; // input timing (Player::tick)
     int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
     float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
+    float runOffHold = 0; // Run: seconds left of the run-off hold over an edge with a ledge (Player::groundMove)
     float landTime = 0;   // Land: seconds since she landed (the chart's state time of the landing group S1276)
     float prepTime = 0;   // JumpPrep: seconds since the take-off state began
     bool prepInPlace = false; // JumpPrep off a balance beam: no run-up, the stick is read when the take-off clip ends
@@ -628,8 +629,10 @@ private:
     bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
-    bool trySafetyDrop(vec3 vel, std::string_view clip = "drop_to_ledgeb"); // off an edge that carries a ledge: hang from it
-    void dropToHang(int ledge, int seg, float t, float side, std::string_view clip = "drop_to_ledgeb");
+    // off an edge that carries a ledge: hang from it (act false: only whether there is one; extra: reach beyond the
+    // usual, the run-off hold's travel)
+    bool trySafetyDrop(vec3 vel, std::string_view clip = "drop_to_ledgeb", bool act = true, float extra = 0);
+    void dropToHang(int ledge, int seg, float t, float side, std::string_view clip = "drop_to_ledgeb", bool blend = false);
     bool badAttach(float attachZ) const; // a catch that rests her root at this height is a saving grab
     int hangClearance() const; // tru.exe 0x74E290's class: 2 climb up, 5 crouching, 8 wall-hug shelf, 1 none
     bool tryHangToBeam();      // hanging beside a balance beam: bbeam_ledgeu_climbup onto it
@@ -723,6 +726,7 @@ private:
     bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
     bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
     void startHangToWallHug();                        // up onto it from the hang (clearance class 8)
+    bool tryClimbOutToWallHug(float reach);           // swimming out onto such a shelf (clearance class 8)
     void wallHug(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     bool wallHugCorner(float ds);           // shimmying ds along the shelf onto a corner: the corner clip round it
     JumpQuery wallHugQuery(int way) const;  // q68 forward (0) / left (1) / right (-1), q55 the twist up (2)
@@ -1240,10 +1244,10 @@ public:
     // from the pivot (ou-game --self-test probes).
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
-    // The point the orbit camera turns about (LaraCameraRewrite +0x100, the focus tracker's); camera().target is where it
-    // looks: that point moved by a trigger's look offset (commands 0x1A / 0x1C, World.cpp), or while swimming the look
-    // tracker's point (lookPoint_), which trails it.
-    vec3 cameraPivot() const { return lookPoint_ ? swimPivot_ : cam_.target - orbit_.lookAdd.now(); }
+    // The point the orbit camera turns about (LaraCameraRewrite +0x100, the focus tracker's) as its last update left it;
+    // camera().target is where it looks: that point (while swimming the look tracker's point, which trails it) moved by
+    // a trigger's look offset (commands 0x1A / 0x1C) and turned toward the focus points (World.cpp).
+    vec3 cameraPivot() const { return pivot_; }
     // The trigger volume whose level camera record (command 0x12) the orbit camera follows now, if any.
     std::optional<int32_t> cameraRecordVolume() const {
         return orbit_.hintMarkup <= -2 ? std::optional<int32_t>(-2 - orbit_.hintMarkup) : std::nullopt;
@@ -1382,6 +1386,9 @@ private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
     void updateCamera(const Actions& a, float dt); // Camera.cpp
     void updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove);
+    // The look point turned toward the gathered focus points (0x5F1540 / 0x6009C0): `look` the look tracker's point, `last`
+    // last tick's camera, `idle` the look-idle weight, `stick` the move stick's length, `move` her move this tick.
+    vec3 updateFocusPoints(vec3 look, const CameraState& last, float idle, float stick, float move, float dt);
     bool startSplineCamera(const std::string& unit, uint32_t index, uint32_t value); // autosplinecamera 0
     bool cameraNative(int op, const std::string& unit, uint32_t index, uint32_t value); // script::Runtime::CameraNative
     bool tickSplineCamera(float dt); // false once no spline camera plays (Camera.cpp)
@@ -1562,7 +1569,7 @@ private:
     CameraState cam_, prevCam_;
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
     std::optional<vec3> lookPoint_; // its look point (+0x620), lagging the same goal while swimming (World.cpp)
-    vec3 swimPivot_{0};             // the pivot (focus after the clearance) while lookPoint_ is set, for cameraPivot()
+    vec3 pivot_{0}; // cameraPivot(): the orbit camera's pivot this tick (output only, recomputed by every update)
     // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
     // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
     // its tick).
@@ -1615,6 +1622,18 @@ private:
         float limitTime = 0;     // seconds since the look limits' target changed (0x609C00: +0x30, blended over 0.25 s)
         vec3 limitTo{0, 0, -1};  // that target (yawRange, pitchLo, pitchHi); z < y: none yet
         std::vector<int32_t> triggers; // the camera trigger volumes she was inside when 0x601D30 last ran (+ the mode)
+        // Focus points (World::updateFocusPoints; tru.exe 0x5F1540 with the lists at +0x14C0 +0x10): the ones gathered
+        // (fading in) and the ones dropped (fading out), each {unit, id, weight t, its curved value}; the ones the
+        // triggers' 0x14 flag (0x20 on +0xFC) since 0x601D30 last ran; the look's blend toward their point (+0x204).
+        struct FocusEntry {
+            std::string unit;
+            int id = 0;
+            float t = 0, w = 0;
+            bool operator==(const FocusEntry&) const = default;
+        };
+        std::vector<FocusEntry> focusIn, focusOut;
+        std::vector<std::pair<std::string, int>> focusFlags;
+        float focusBlend = 0;
     } orbit_;
     float cameraSwing_ = 0; // cameraSwing()
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp

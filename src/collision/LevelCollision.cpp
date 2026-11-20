@@ -130,6 +130,25 @@ void decodeMarkup(Unit& u, Pointer level, CollisionMesh& out, std::vector<std::s
         out.recordsSection = records->section, out.recordsOffset = records->offset;
         for (uint32_t i = 0; i < numRecords; ++i) out.cameraRecords.push_back(record({records->section, records->offset + 0x70 * i}, true));
     }
+    // Focus points (unit data +0x200 count, +0x204 records of 0x100 bytes; tru.exe 0x5F0B30 / 0x5F0F70 / 0x5F1060 /
+    // 0x5F12F0 read them).
+    if (const uint32_t n = u.at<uint32_t>(*ud, 0x200); n)
+        if (const auto p = u.ptr({ud->section, ud->offset + 0x204}))
+            for (uint32_t i = 0; i < n; ++i) {
+                const Pointer r{p->section, p->offset + 0x100 * i};
+                FocusPoint f;
+                f.pos = vec(u, r, 0);
+                f.weight = u.at<float>(r, 0x14), f.radius = u.at<float>(r, 0x18), f.viewMargin = u.at<float>(r, 0x1C);
+                f.falloff = u.at<float>(r, 0x20);
+                for (size_t k = 0; k < 64; ++k) f.falloffCurve[k] = u.at<uint8_t>(r, 0x24 + k);
+                for (auto [fade, at] : {std::pair{&f.in, 0x64u}, std::pair{&f.out, 0xB0u}}) {
+                    fade->type = u.at<uint32_t>(r, at), fade->length = u.at<float>(r, at + 4);
+                    for (size_t k = 0; k < 64; ++k) fade->curve[k] = u.at<uint8_t>(r, at + 8 + k);
+                    fade->curved = u.at<uint8_t>(r, at + 0x48) != 0;
+                }
+                f.flags = u.at<uint32_t>(r, 0xFC);
+                out.focusPoints.push_back(f);
+            }
     for (uint32_t i = 0; i < count; ++i) {
         const auto& item = items[i];
         if (!item) { warn.push_back("markup " + std::to_string(i) + ": null"); continue; }

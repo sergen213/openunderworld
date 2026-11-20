@@ -523,3 +523,41 @@ TEST(CollisionRealData, PoolCollisionMarkupAndRenderAgreement) {
             for (const auto& p : mk.points) ++total, near += bool(u.col.closestPoint(p, 16));
     EXPECT_GT(near, total * 9 / 10) << near << " of " << total;
 }
+
+// Focus points (unit data +0x200 / +0x204, 0x100-byte records; docs/re/CAMERA.md §9 "Focus points"): what the 82 units
+// carry, the records tru.exe's camera gathers (0x5F0B30) and blends its look toward (0x5F1540).
+TEST(CollisionRealData, FocusPointSurvey) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list);
+    const std::string text(list->begin(), list->end());
+    int units = 0, points = 0;
+    std::map<uint32_t, int> flags, inTypes, outTypes;
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty()) continue;
+        const std::string name = line.substr(line.rfind('\\') + 1);
+        auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        const cdc::Drm drm = cdc::parseDrm(std::move(*bytes));
+        const CollisionMesh col = collision::loadLevelCollision(drm);
+        ++units;
+        for (size_t i = 0; i < col.focusPoints.size(); ++i) {
+            const auto& f = col.focusPoints[i];
+            ++points, ++flags[f.flags], ++inTypes[f.in.type], ++outTypes[f.out.type];
+            std::printf("%s %zu: pos %.1f %.1f %.1f weight %.1f radius %.1f view %.1f falloff %.1f in %u %.2f %d out %u %.2f %d flags 0x%X\n",
+                        name.c_str(), i, f.pos.x, f.pos.y, f.pos.z, f.weight, f.radius, f.viewMargin, f.falloff, f.in.type, f.in.length,
+                        f.in.curved, f.out.type, f.out.length, f.out.curved, f.flags);
+        }
+    }
+    for (const auto& [k, n] : flags) std::printf("flags 0x%X: %d\n", k, n);
+    for (const auto& [k, n] : inTypes) std::printf("in type %u: %d\n", k, n);
+    for (const auto& [k, n] : outTypes) std::printf("out type %u: %d\n", k, n);
+    std::printf("%d units, %d focus points\n", units, points);
+    EXPECT_EQ(units, 82);
+}

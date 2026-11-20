@@ -2801,7 +2801,8 @@ TEST(GameReal, TrapRoomsPoleFling) {
 
 // l3_main_hall pole 948 (axis z 1861) -> ledge 946, the edge of a platform 1052 ahead and 152 under the axis (floor
 // 1708.6). tru.exe under Wine (openunderworld-work/polefid2/mhsw.txt): the fling lands her on that edge 23.0 frames
-// after she leaves, (35.9 forward, 74.1 up) a frame; q33 as it is (52.10 up) tops out ~230 short of the platform.
+// after she leaves, (35.9 forward, 74.1 up) a frame, aimed at the ledge's point (x 2094.6), where she comes to rest
+// (3678.41 in tru.exe's frame); q33 as it is (52.10 up) tops out ~230 short of the platform.
 TEST(GameReal, MainHallPoleFlingLandsOnPlatform) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -2820,10 +2821,12 @@ TEST(GameReal, MainHallPoleFlingLandsOnPlatform) {
     int air = 0;
     for (; air < 120 && s.state == State::Jump; ++air) w.tick({});
     EXPECT_NEAR(air / 60.0, 23.5 / 30.0, 0.04);
+    EXPECT_NEAR(s.pos.x, 2094.6f, 1); // on the platform's edge, as tru.exe (not 79 past it)
+    EXPECT_NEAR(s.pos.z, 1708.6f, 1) << game::stateName(s.state) << " air " << air;
     for (int i = 0; i < 30; ++i) w.tick({});
     EXPECT_NE(s.state, State::Fall);
-    EXPECT_GT(s.pos.x, 2094.6f); // on the platform, past its edge
-    EXPECT_NEAR(s.pos.z, 1740, 40);
+    EXPECT_NE(s.state, State::Hang) << "she stays on the platform";
+    EXPECT_NEAR(s.pos.x, 2094.6f, 1);
 }
 
 // l2_junglehub ledge 851 (z 7972): the top of a platform across a gap, 353 over the floor the run-up ends on (y ~9850).
@@ -8134,6 +8137,54 @@ TEST(GameReal, CliffSwanDiveIntoTheSea) {
     EXPECT_EQ(w.health().value(), w.health().max()) << "a 5900-unit fall into the sea costs nothing";
 }
 
+// Climb out of the water onto a wall-hug shelf (OU-PLY-003; chart S237 T1110 -> swim_climbout_to_wallhug, request 887,
+// on clearance result 8 = tru.exe 0x74E290 / 0x74E160 / 0x74BB50 == 1): l2_cliffclimb ledge 936 has a 95-deep notch
+// 50 over the sea (segment 0, 48..80 along it; the only shelf over open water found in the 97 units). Treading off it
+// with the stick toward it she climbs out into the hug, not the plain swim_climbout: the clip's root stands on the shelf
+// from its first frame and turns her half round, Wall_Hug_Idle after, back to the wall 88.496 in from the ledge.
+TEST(GameReal, SwimClimbOutOntoShelf) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    // in the sea off the notch (ledge 936 segment 0, 64 along: (-24233.5, -3181.8, 158), top side (0.986, -0.164))
+    UnitGame g(bf, "l2_cliffclimb", {{-24411, -3152, 158}, -0.165f});
+    auto& w = g.w;
+    const auto* m = markupById(w, 1, 936);
+    ASSERT_TRUE(m);
+    const vec2 d = glm::normalize(vec2(m->points[1] - m->points[0])), shelf(-d.y, d.x);
+    const vec3 q = m->points[0] + vec3(d * 64.0f, 0.0f);
+    const auto& s = w.player().state();
+    for (int i = 0; i < 900 && s.state != State::SwimTread; ++i) w.tick(held(false, true)); // up to the surface
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::SwimTread) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    // The swell carries her along the cliff while she rises: treading 180 out from the notch again (the rock under it
+    // stops her stroke ~170 out), facing it.
+    game::PlayerState st = s;
+    st.pos = vec3(vec2(q) - shelf * 180.0f, st.pos.z), st.yaw = std::atan2(shelf.y, shelf.x), st.vel = vec3(0);
+    w.restore(st, st.yaw, -0.25f);
+    bool hug = false, plain = false;
+    for (int i = 0; i < 60 && s.state != State::WallHug; ++i) {
+        w.tick(worldStick(w, shelf));
+        plain |= s.state == State::SwimClimbOut;
+    }
+    ASSERT_EQ(s.state, State::WallHug) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    EXPECT_FALSE(plain);
+    EXPECT_EQ(s.clip, "swim_climbout_to_wallhug");
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 936);
+    EXPECT_LT(glm::distance(s.pos, q + vec3(shelf * 88.496f, 0.0f)), 20.0f) << "on the shelf from the clip's first frame";
+    EXPECT_GT(glm::dot(vec2(std::cos(s.yaw), std::sin(s.yaw)), shelf), 0.9f) << "facing the wall as the clip starts";
+    for (int i = 0; i < 400 && s.clip == "swim_climbout_to_wallhug"; ++i) {
+        w.tick({});
+        hug |= s.clip == "Wall_Hug_Idle";
+    }
+    for (int i = 0; i < 30; ++i) w.tick({});
+    hug |= s.clip == "Wall_Hug_Idle";
+    EXPECT_TRUE(hug) << s.clip;
+    EXPECT_EQ(s.state, State::WallHug);
+    EXPECT_NEAR(glm::dot(vec2(std::cos(s.yaw), std::sin(s.yaw)), -shelf), 1, 1e-3) << "back to the wall";
+    EXPECT_LT(glm::distance(s.pos, q + vec3(shelf * 88.496f, 0.0f)), 20.0f);
+    EXPECT_LT(s.water, 0);
+}
+
 // l7_yggdrasil_end volume 8309: SetLevel (watervolumebase 1) lowers the surface by script; Lara treading on it goes
 // down with it, 16 units per 30 Hz frame, and stays afloat.
 TEST(GameReal, ScriptedWaterLevelCarriesLara) {
@@ -9074,7 +9125,10 @@ TEST(Game, SafetyDropOffALedgeEdge) {
 }
 
 // l4_temple's high platform (top z 3690) between ledges 1168 (east edge, x -1227) and 1167 (west edge, x -2870):
-// running off the east edge and walking off the west one she turns and hangs from the edge's ledge, no key.
+// running off the east edge and walking off the west one she turns and hangs from the edge's ledge, no key. tru.exe
+// under Wine (l4_temple ledge 1155, openunderworld-work/w2/Drop9/s1, gameplaygoal/inputrules/wine2.txt): running, the
+// chart's S11 hold carries her on 0.10 s at her speed, her feet at the top's height, then the attach takes her back to
+// the edge linearly in 10 ticks; walking there is no hold.
 TEST(GameReal, TempleSafetyDropOffThePlatform) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -9084,8 +9138,24 @@ TEST(GameReal, TempleSafetyDropOffThePlatform) {
         Actions go = forward();
         go.walk = walk;
         std::set<State> seen;
-        const float top = s.pos.z;
-        for (int i = 0; i < 1200 && s.state != State::Hang; ++i) w.tick(go), seen.insert(s.state);
+        const float top = s.pos.z, line = walk ? -2869.6f : -1226.8f, out = walk ? -1.0f : 1.0f;
+        float past = -1e9f, speed = 0, back = 0;
+        int hold = 0, blend = 0;
+        float over = 0, loss = 0;
+        for (int i = 0; i < 1200 && s.state != State::Hang; ++i) {
+            const vec3 before = s.pos;
+            const State was = s.state;
+            w.tick(go), seen.insert(s.state);
+            if (s.state == State::Run || s.state == State::Walk) {
+                past = std::max(past, (s.pos.x - line) * out);
+                if (s.runOffHold > 0) {
+                    if (hold++ == 0) loss = (s.pos.x - line) * out; // the first tick over the edge
+                    EXPECT_NEAR(s.pos.z, top, 1) << "her feet at the top's height";
+                } else speed = std::abs(s.pos.x - before.x) * 60;
+            }
+            if (s.state == State::DropToHang && was != State::DropToHang) over = (s.climbFrom.x - line) * out;
+            if (s.state == State::DropToHang && s.flight > 0) ++blend, back = std::max(back, std::abs(s.pos.x - before.x));
+        }
         ASSERT_EQ(s.state, State::Hang) << walk << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
         EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, walk ? 1167 : 1168);
         EXPECT_TRUE(seen.count(State::DropToHang));
@@ -9095,6 +9165,15 @@ TEST(GameReal, TempleSafetyDropOffThePlatform) {
         EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).z, 3686.5, 1);
         EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).x, walk ? -2869.6 : -1226.8, 1);
         EXPECT_LT(s.pos.z, top - 450);
+        EXPECT_EQ(blend, 10) << walk << ": 10 ticks of the attach's blend";
+        if (walk) {
+            EXPECT_EQ(hold, 0);
+            EXPECT_LT(over, 15) << "she attaches at the edge";
+        } else {
+            EXPECT_EQ(hold, 5) << "6 ticks on over the edge (0.10 s)";
+            EXPECT_NEAR(over - loss, speed * 5 / 60, 10) << "carried on at her speed";
+            EXPECT_GT(back, 8) << "taken back to the edge";
+        }
     }
 }
 
