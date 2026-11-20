@@ -113,8 +113,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed on int/brief (21678c2; full ctest pending) | pre-existing | — |
 | OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Fixed on agent/DeckCam6 (colliders posed after a mid-game rebuild) | pre-existing | — |
-| OU-SWM-001 | swimming | Swim turn: symmetric and view-relative now (d122a62); steady circle still +2.3 / +1.8 deg/s fast (tru.exe settles 42.1° off its camera line, ours 44.2°) | Partly fixed on int/brief | pre-existing | C-MEASURE |
-| OU-SWM-002 | swimming | Surface swim velocity lag: now 5.25 / 5.37° vs tru.exe 5.4 / 5.6° (0x755A00 blend 0.25 = player data +0x240) | Fixed on int/brief (d122a62) | pre-existing | C-MEASURE |
+| OU-SWM-001 | swimming | Swim turn: symmetric and view-relative (d122a62); the stick is now read against the view, which trails the camera-to-pivot line (look tracker +0x620): circle 46.2 / 47.2 deg/s (tru.exe 46.7 / 48.3), 42.2° off the line (42.1) | Fixed on agent/Swim9 | pre-existing | — |
+| OU-SWM-002 | swimming | Surface swim velocity lag: 4.96 / 5.07° vs tru.exe 5.44 / 5.6° (0x755A00 blend 0.25 = player data +0x240; the rest is the 30 Hz blend spread over 60 Hz ticks) | Fixed (d122a62; re-measured on agent/Swim9) | pre-existing | — |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
 | OU-GRP-002 | grapple | Swing dynamics unmeasured (five failed Wine sessions) | Open | pre-existing | C-MEASURE |
@@ -166,7 +166,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | C-VM | SCMD VM gaps: unimplemented opcode 0x65, natives without bindings, no vector values, partial `modifiable` semantics, no script UI; a stopped handler silently leaves its object idle | OU-SCR-001..005, OU-PZL-009, OU-PZL-012, OU-PZL-013, OU-PZL-015, OU-AUD-004 |
 | C-JOINT | Objects whose motion the data defines outside our joint model: missing joint records, fixed joints / body A motion, freed-section bodies that never get released, joints held by rope tension | OU-PZL-006, OU-PZL-007, OU-PZL-010, OU-PZL-014, OU-GRP-005, OU-PHY-001 |
 | C-CHART | Lara's player state chart is hand-ported per move (AUDIT_A L331 / L433: sub-states keyed on clip names, no transition table); every undecoded condition becomes a guessed rule or a missing move | OU-PLY-001..004, OU-PLY-006, OU-PLY-010, OU-PZL-005 |
-| C-MEASURE | Numbers decoded or fitted but not measured in tru.exe under Wine (`docs/REFERENCE_COMPARISON.md`: 107 of 161 rows unmeasured, "Unmeasured" table lists the session for each) | OU-PLY-005, OU-PLY-007..009, OU-SWM-001, OU-SWM-002, OU-GRP-002, OU-PZL-002, OU-VEH-001, OU-PHY-002 |
+| C-MEASURE | Numbers decoded or fitted but not measured in tru.exe under Wine (`docs/REFERENCE_COMPARISON.md`: 107 of 161 rows unmeasured, "Unmeasured" table lists the session for each) | OU-PLY-005, OU-PLY-007..009, OU-GRP-002, OU-PZL-002, OU-VEH-001, OU-PHY-002 |
 | C-DOC | Status columns not refreshed when later work landed | OU-DOC-001, OU-DOC-002 |
 
 ## Entries
@@ -870,18 +870,43 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
 
 ### Swimming (OU-SWM)
 
-**OU-SWM-001 Under-water turn rate unmeasured** — tru.exe steering function 0x755A00 (properties 0x200..0x20F, speed table
-512..519) not ported [U] (GAMEPLAY.md L1886-1887, ROADMAP L82); turn / pitch rates are an unmeasured row (M29 / M85,
-REFERENCE_COMPARISON "Unmeasured": l2_cliffclimb sea session). Test `Game.SwimFollowsTheCameraPitchUnderWater`.
-- Wine-measured 2026-11-16 (WineMeasure, REFERENCE_COMPARISON new turn rows). Forward + Right/Left held, camera free:
-  - tru.exe settles at 46.7/46.4 deg/s at the surface and 48.3/48.0 under water.
-  - Ours settles at 43/56 at the surface and 57..60/56 under water: different from tru.exe, and left/right uneven.
-  - On release ours snaps back at 118..143 deg/s; tru.exe at 52..73.
-  - Breath matches: 4000 frames last 133.5..134.0 s in tru.exe, 133.3 s in ours.
-- Status · Origin: Reproduced · pre-existing.
+**OU-SWM-001 Swim turn rate** — tru.exe steering function 0x755A00 (properties 0x200..0x20F, speed table 512..519); turn
+/ pitch rates were an unmeasured row (M29 / M85). Tests `Game.SwimCircleTurnsLikeTru`, `Game.SwimTurnLagsLikeTru`,
+`Game.SwimFollowsTheCameraPitchUnderWater`.
+- Wine-measured 2026-11-16 (WineMeasure, REFERENCE_COMPARISON turn rows). Forward + Right/Left held, camera free:
+  tru.exe settles at 46.7/46.4 deg/s at the surface and 48.3/48.0 under water; ours (then) 43/56 and 57..60/56, snapping
+  back at 118..143 deg/s on the release (tru.exe 61 over the first 0.21 s). Breath matches (4000 frames = 133.5..134.0 s
+  against 133.3 s).
+- d122a62 (0.53.0): heading's angle off the view at 1.755 rad/s, world cap 2765 / speed, under water too: symmetric
+  48.9 / 50.0 deg/s, release 61..62 deg/s. The old left/right split was the self-test's timing: Right ran before the
+  camera's look-idle swing weight was full (5..7 s without look input).
+- Re-measured on main (782ea58, 2026-11-20), the same keys: the in-game self-test (`w2/Swim9/ours/turn_ours.json`, the
+  WineMeasure script, l2_cliffclimb open sea) 41.1 / 49.9 at the surface (Right before the swing weight is full),
+  50.7 / 49.9 under water; with 8 s of treading first (`turn_settled.json`, the weight full as in the Wine session)
+  50.0 / 49.9 and 50.7 / 49.9: +3.5 deg/s (7 %) at the surface, +2.2 under water; `Game.SwimCircleTurnsLikeTru`
+  48.9 / 50.0, settling 44.2° off the camera-to-pivot line where tru.exe settles 42.1°.
+- Cause [O-runtime, Wine 2026-11-20, `w2/Swim9/s3`, `s4`; `ref rec` now logs the camera's look vector +0x160]: tru.exe
+  reads the stick against the view, not the camera-to-pivot line: in the steady circle she is 44.45° off the view
+  (42.3° off the line) at 46.8 deg/s both ways, back on the view after the release (1.5° past the line). The view
+  trails the line by 2.1..2.4° because the camera looks at the look tracker (+0x620, 0x6009C0), updated with the focus
+  (0x6022F0 -> 0x609830 -> 0x609440) whose record has the right / forward dead zones swapped: memory read in camera mode
+  20, +0x3B0 +0x1C0 = (3.16, 126.42, 252.84), +0x620 +0x1C0 = (126.42, 3.16, 252.84), speed 1896.33, curve equal.
+- Fix (agent/Swim9): `World::updateOrbitCamera` runs the look tracker in camera modes 19 / 20 and the camera looks at
+  it; `World::stickYaw` (the view's yaw while swimming) maps the stick and feeds `Player::setCamera`; the autopilot
+  steers by it. After: `Game.SwimCircleTurnsLikeTru` 46.15 / 47.20 deg/s (surface / under water, both ways), 42.2° off
+  the line, press 96 deg/s (tru.exe 95..97), release 64 / 63 deg/s over 0.21 s (61), back on the line in 0.43 s
+  (0.40..0.43); in game (settled) 47.3 / 47.1 at the surface (+1.2 / +1.6 %), 47.8 / 47.1 under water (−1.0 / −1.9 %),
+  0.5 s press 105.4 / 104.6 (104.5..104.8), release 63.2 then 76.4 (61 then 73).
+- Open: under water (mode 19) the look record was not read (the dive key never reached tru.exe in three sessions under
+  load); ours uses the surface one [I], which matches tru.exe's 42.0° there. Other camera modes keep the look point on
+  the pivot [U: their look records]. The in-game Right-first asymmetry remains when the self-test turns before the
+  camera's look-idle clock (+0x1E4) is full; tru.exe's value of that clock at a level start is [U].
+- Status · Origin: Fixed on agent/Swim9 · pre-existing.
 
-**OU-SWM-002 Surface swim lag** — velocity lags heading ~9° vs tru.exe ~16° (`camfollow-wine/turn1.txt`, M29 /
-Differences #7). Files `Player.cpp` SwimSurface `kSwimTurnAccel`. Status · Origin: Open · pre-existing.
+**OU-SWM-002 Surface swim lag** — velocity lagged heading ~9° vs tru.exe ~16° (`camfollow-wine/turn1.txt`, M29 /
+Differences #7). d122a62: 0x755A00 moves the velocity a quarter of the way to heading x speed every 30 Hz frame (player
+data +0x240 = 0.25). 2026-11-20 Wine (`w2/Swim9/s4/swim-turn-long.txt`): 5.44° behind at 46.8 deg/s; ours 4.96 / 5.07°
+at 46.2 / 47.2 deg/s (the 30 Hz blend spread over two 60 Hz ticks lags ~0.4° less). Status · Origin: Fixed · pre-existing.
 
 **OU-SWM-003 Scuba slot, grenades under water** — scuba slot not read live; grenades under water unchanged; swan-dive
 input window and dodge side flag [I] (ROADMAP L82). Status · Origin: Open · pre-existing.
