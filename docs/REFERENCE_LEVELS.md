@@ -14,27 +14,27 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 
 | Chapter | Locomotion | Traversal | Grapple | Swimming / water | Combat / AI | Objects / puzzles | Vehicle | Camera / systems | Self-tests (parked) |
 |---|---|---|---|---|---|---|---|---|---|
-| [01](#01-prologue-no-illusions-prologue---croft-manor) | verified; 1 differs / 1 matches | verified; 2 matches | partial; 3 unmeasured | n/a | n/a | partial; 1 open | n/a | — | 6 (0) |
+| [01](#01-prologue-no-illusions-prologue---croft-manor) | verified; 1 differs / 1 matches | verified; 2 matches | partial; 1 matches / 2 unmeasured | n/a | n/a | partial; 1 open | n/a | — | 6 (0) |
 | [02](#02-the-path-to-avalon-level-1---mediterranean-sea-part-1) | implemented | unverified | implemented | implemented; 1 matches | partial | partial | n/a | — | 2 (0) |
 | [03](#03-niflheim-level-1---mediterranean-sea-part-2) | implemented | partial | implemented | unverified | implemented | partial | n/a | — | 2 (0) |
-| [04](#04-the-norse-connection-level-1---mediterranean-sea-part-3) | implemented | unverified | implemented | unverified; 1 matches | n/a | implemented; 1 open | n/a | — | 4 (1) |
-| [05](#05-god-of-thunder-level-1---mediterranean-sea-part-4) | unverified | implemented | n/a | unverified | unverified | n/a; 1 open | n/a | — | 3 (1) |
+| [04](#04-the-norse-connection-level-1---mediterranean-sea-part-3) | implemented | unverified | implemented | unverified; 1 matches | n/a | implemented | n/a | — | 5 (0) |
+| [05](#05-god-of-thunder-level-1---mediterranean-sea-part-4) | unverified | implemented | n/a | unverified | unverified | n/a | n/a | — | 4 (0) |
 | [06](#06-realm-of-the-dead-level-1---mediterranean-sea-part-5) | unverified | partial | n/a | n/a | n/a | n/a; 2 open | n/a | — | 2 (2) |
 | [07](#07-the-remnants-level-2---coastal-thailand-part-1) | implemented; 1 differs / 3 matches / 1 unmeasured | partial; 3 matches | unverified | verified; 5 matches | unverified; 1 matches | n/a | n/a | 1 matches | 4 (0) |
 | [08](#08-bhogavati-level-2---coastal-thailand-part-2) | unverified | partial | partial | n/a | partial | partial | n/a | — | 4 (0) |
-| [09](#09-the-ancient-world-level-2---coastal-thailand-part-3) | unverified | unverified | unverified | n/a | unverified | partial | n/a | — | 3 (1) |
-| [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified | partial; 5 matches | unverified; 1 matches | partial | n/a | 1 matches | 1 (1) |
-| [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 3 unmeasured | n/a | partial | partial; 1 open | n/a | — | 3 (0) |
+| [09](#09-the-ancient-world-level-2---coastal-thailand-part-3) | unverified | unverified | unverified; 2 matches | n/a | unverified | partial | n/a | — | 4 (0) |
+| [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified; 2 matches | partial; 5 matches | unverified; 1 matches | partial | n/a | 1 matches | 2 (0) |
+| [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 1 matches / 2 unmeasured | n/a | partial | partial; 1 open | n/a | — | 3 (0) |
 | [12](#12-the-unnamed-days-level-4---southern-mexico-part-1) | unverified; 1 matches | unverified | partial | n/a | unverified | partial; 1 unmeasured | partial | — | 2 (0) |
 | [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 3 matches | implemented; 1 matches | partial | n/a | partial | unverified; 1 unmeasured | unverified | — | 5 (1) |
 | [14](#14-the-midgard-serpent-level-4---southern-mexico-part-3) | partial | partial; 2 matches | partial | n/a; 1 matches | partial | partial | partial | — | 5 (0) |
 | [15](#15-land-of-the-dead-level-4---southern-mexico-part-4) | unverified | unverified; 2 matches | partial | n/a; 1 matches | partial | partial; 1 unmeasured | unverified | — | 5 (0) |
 | [16](#16-gate-of-the-dead-level-5---jan-mayen-island-part-1) | unverified | unverified | n/a | n/a | partial | partial | unverified | — | 3 (0) |
-| [17](#17-valhalla-level-5---jan-mayen-island-part-2) | implemented | partial | partial | n/a | partial | partial; 1 matches; 1 open | unverified | — | 1 (1) |
-| [18](#18-rituals-old-level-6---andaman-sea) | unverified | unverified | n/a | n/a | partial | n/a; 1 open | n/a | — | 2 (0) |
+| [17](#17-valhalla-level-5---jan-mayen-island-part-2) | implemented | partial | partial | n/a | partial | partial; 1 matches | unverified | — | 2 (0) |
+| [18](#18-rituals-old-level-6---andaman-sea) | unverified | unverified | n/a | n/a | partial | n/a | n/a | — | 2 (0) |
 | [19](#19-helheim-level-7---arctic-sea-part-1) | unverified | implemented | n/a | unverified | partial | partial | n/a | — | 4 (0) |
 | [20](#20-yggdrasil-level-7---arctic-sea-part-2) | unverified | partial | unverified | n/a | partial | partial; 1 open | n/a | — | 7 (0) |
-| [21](#21-out-of-time-level-7---arctic-sea-part-3) | partial | partial | unverified | n/a | partial | unverified; 1 open | n/a | — | 0 (1) |
+| [21](#21-out-of-time-level-7---arctic-sea-part-3) | partial | partial | unverified | n/a | partial | unverified; 1 open | n/a | — | 1 (0) |
 
 ## 01. Prologue: No Illusions (Prologue - Croft Manor)
 
@@ -44,14 +44,12 @@ Matrix: [01_prologue.md](matrix/01_prologue.md). Units: `l3_main_bedroom`, `l3_b
 |---|---|---|---|
 | Locomotion | verified | M14 Sprint speed: matches, M17 Slope slide: differs | — |
 | Traversal | verified | M02 Free leaps off a hang: matches, M07 Pole fling onto a platform: matches | — |
-| Grapple | partial | M20 Rope she hangs on after a jump into the gap: unmeasured, M20 Swing with Forward held: growth and limit: unmeasured, M20 Roped walk, walking off the edge: unmeasured | — |
+| Grapple | partial | M20 Rope she hangs on after a jump with the rope: matches, M20 Swing with Forward held: growth and limit: unmeasured, M20 Roped walk, walking off the edge: unmeasured | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | n/a | unmeasured here | — |
 | Objects / puzzles | partial | unmeasured here | OU-PZL-001 |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
-
-Other open bugs here: OU-SAV-001 (Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly).
 
 Self-tests: `ch01_bedroom_new_game`, `ch01_bedroom_ring_door`, `ch01_hall_first_aid`, `ch01_hall_floor_collapse`, `ch01_main_hall`, `ch01_ring_door_walk_through`.
 
@@ -102,14 +100,13 @@ Matrix: [04_norse_connection.md](matrix/04_norse_connection.md). Units: `l1_bald
 | Grapple | implemented | unmeasured here | — |
 | Swimming / water | unverified | M29 Surface turn: matches | — |
 | Combat / AI | n/a | unmeasured here | — |
-| Objects / puzzles | implemented | unmeasured here | OU-PZL-002 |
+| Objects / puzzles | implemented | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
 Other open bugs here: OU-VK-001 (`game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room)).
 
-Self-tests: `ch04_column_hall`, `ch04_gate_room`, `ch04_kraken_swing`, `ch04_pillar_entry`.
-Parked known gaps: `known_gaps/ch04_column_hall_perches`.
+Self-tests: `ch04_column_hall`, `ch04_column_hall_perches`, `ch04_gate_room`, `ch04_kraken_swing`, `ch04_pillar_entry`.
 
 ## 05. God of Thunder (Level 1 - Mediterranean Sea, part 4)
 
@@ -122,12 +119,11 @@ Matrix: [05_god_of_thunder.md](matrix/05_god_of_thunder.md). Units: `l1_ship_ext
 | Grapple | n/a | unmeasured here | — |
 | Swimming / water | unverified | unmeasured here | — |
 | Combat / AI | unverified | unmeasured here | — |
-| Objects / puzzles | n/a | unmeasured here | OU-PZL-003 |
+| Objects / puzzles | n/a | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
-Self-tests: `ch05_below_decks`, `ch05_boarding`, `ch05_container_deck`.
-Parked known gaps: `known_gaps/ch05_natla_room`.
+Self-tests: `ch05_below_decks`, `ch05_boarding`, `ch05_container_deck`, `ch05_natla_room`.
 
 ## 06. Realm of the Dead (Level 1 - Mediterranean Sea, part 5)
 
@@ -189,15 +185,14 @@ Matrix: [09_ancient_world.md](matrix/09_ancient_world.md). Units: `l2_shrineroom
 |---|---|---|---|
 | Locomotion | unverified | unmeasured here | — |
 | Traversal | unverified | unmeasured here | — |
-| Grapple | unverified | unmeasured here | — |
+| Grapple | unverified | M20 Rope she hangs on after a jump with the rope: matches, M21 Grapple thrown in mid-air: matches | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | unverified | unmeasured here | — |
 | Objects / puzzles | partial | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
-Self-tests: `ch09_maproom_gauntlet_door`, `ch09_maproom_hub_panel`, `ch09_maproom_hub_turn`.
-Parked known gaps: `known_gaps/ch09_shrine_shaft_descent`.
+Self-tests: `ch09_maproom_gauntlet_door`, `ch09_maproom_hub_panel`, `ch09_maproom_hub_turn`, `ch09_shrine_shaft_descent`.
 
 ## 10. A Puppet No Longer (Level 2 - Coastal Thailand, part 4)
 
@@ -207,15 +202,14 @@ Matrix: [10_puppet_no_longer.md](matrix/10_puppet_no_longer.md). Units: `l2_mapr
 |---|---|---|---|
 | Locomotion | unverified | M90 Swan dive: unmeasured | — |
 | Traversal | unverified | M05 Free climb: matches | — |
-| Grapple | unverified | unmeasured here | — |
+| Grapple | unverified | M20 Rope she hangs on after a jump with the rope: matches, M21 Grapple thrown in mid-air: matches | — |
 | Swimming / water | partial | M29 Swim speed: matches, M29 Turning with Forward + Right / Left held, camera free (2026-11-16): matches, M29 Surface level: matches, M29 Sea level at rest (OU-WAT-006, 2026-11-16): matches, — The yacht's heave with Lara on its deck (l2_cliffclimb start, 2026-11-16): matches | — |
 | Combat / AI | unverified | M84 (sharks) l2_cliffclimb sharks against a treading / submerged Lara: matches | — |
 | Objects / puzzles | partial | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | — Camera trigger commands (OU-CAM-006, 2026-11-19): matches | — |
 
-Self-tests: `ch10_maproom_rope_step_off`.
-Parked known gaps: `known_gaps/ch10_maproom_wall_run`.
+Self-tests: `ch10_maproom_rope_step_off`, `ch10_maproom_wall_run`.
 
 ## 11. Protected by the Dead (Level 3 - Croft Manor)
 
@@ -225,14 +219,12 @@ Matrix: [11_protected_by_the_dead.md](matrix/11_protected_by_the_dead.md). Units
 |---|---|---|---|
 | Locomotion | unverified | M14 Sprint speed: matches, M17 Slope slide: differs | — |
 | Traversal | implemented | M02 Free leaps off a hang: matches, M07 Pole fling onto a platform: matches | — |
-| Grapple | verified | M20 Rope she hangs on after a jump into the gap: unmeasured, M20 Swing with Forward held: growth and limit: unmeasured, M20 Roped walk, walking off the edge: unmeasured | — |
+| Grapple | verified | M20 Rope she hangs on after a jump with the rope: matches, M20 Swing with Forward held: growth and limit: unmeasured, M20 Roped walk, walking off the edge: unmeasured | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
 | Objects / puzzles | partial | unmeasured here | OU-PZL-001 |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
-
-Other open bugs here: OU-SAV-001 (Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly).
 
 Self-tests: `ch11_chapel_dais_furnace`, `ch11_rockhall_switch`, `ch11_study_gauntlet`.
 
@@ -333,12 +325,11 @@ Matrix: [17_valhalla.md](matrix/17_valhalla.md). Units: `l5_valgrind`, `l5_valas
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | partial | M51 Portable poles: matches | OU-PZL-011 |
+| Objects / puzzles | partial | M51 Portable poles: matches | — |
 | Vehicle | unverified | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
-Self-tests: `ch17_maze_to_relic_door`.
-Parked known gaps: `known_gaps/ch17_hammer_chamber`.
+Self-tests: `ch17_hammer_chamber`, `ch17_maze_to_relic_door`.
 
 ## 18. Rituals Old (Level 6 - Andaman Sea)
 
@@ -351,7 +342,7 @@ Matrix: [18_rituals_old.md](matrix/18_rituals_old.md). Units: `l6_ship_exterior`
 | Grapple | n/a | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | n/a | unmeasured here | OU-PZL-003 |
+| Objects / puzzles | n/a | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
@@ -406,7 +397,7 @@ Matrix: [21_out_of_time.md](matrix/21_out_of_time.md). Units: `l7_yggdrasil_end`
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
 
-Parked known gaps: `known_gaps/ch21_platform_ride`.
+Self-tests: `ch21_platform_ride`.
 
 ## General mechanics (measured, no chapter attributed)
 
@@ -416,11 +407,11 @@ Rows of REFERENCE_COMPARISON whose evidence names no chapter unit (synthetic sce
 |---|---|
 | Locomotion | 11 matches / 7 unmeasured |
 | Traversal | 17 matches / 15 unmeasured |
-| Grapple | 10 unmeasured |
+| Grapple | 9 unmeasured |
 | Swimming / water | 5 matches / 7 unmeasured |
 | Combat / AI | 18 unmeasured |
 | Objects / puzzles | 26 unmeasured |
 | Vehicle | 9 unmeasured |
 | Camera / systems | 3 matches / 12 unmeasured |
 
-Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-GRP-001, OU-GRP-002, OU-GRP-004, OU-PHY-002, OU-PLY-001, OU-PLY-002, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-005, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
+Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PLY-001, OU-PLY-002, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-005, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
