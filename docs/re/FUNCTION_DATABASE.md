@@ -8,6 +8,9 @@ strings, constants, `this` offsets, switch tables, virtual calls), and which unc
 we already reimplement. First generated 2026-11-16 at v0.51.0; this revision (second pass, same day, repo
 `ffae429` + this commit) adds the per-function detail export, Function ID results, virtual-call resolution and the
 cross-reference / string / module reports. Ghidra 12.2 project in `openunderworld-work/ghidra/project`.
+Regenerated 2026-11-20 (batch 10) with the libjpeg tags, `call_edges.tsv` and `cfg.tsv`; `summary.json` holds the
+current numbers. Prose counts outside the batch 10 sections (status totals, priorities, coverage) are from the
+2026-11-16 pass; citation counts have grown with later docs.
 
 No decompiled code is stored here: the tables hold addresses, sizes, counts, names, RTTI class names, library
 tags, `path:line` citations, short string values (≤ 60 characters, ≤ 8 per function) and one string per
@@ -25,7 +28,9 @@ $H $W/ghidra/project tru -process tru.exe -noanalysis -readOnly -scriptPath tool
 # 2. Per-function detail + Function ID (read-only; ~35 s; mode detail | fid | all):
 $H $W/ghidra/project tru -process tru.exe -noanalysis -readOnly -scriptPath tools/ghidra/scripts \
     -postScript ExportFunctionDetail.java $W/re-baseline/FuncDetail all
-# 3. Join (stdlib Python, ~2 s):
+# 3. libjpeg identification (objdump + step 1 output; ~2 s; fails if an anchor instruction differs):
+tools/re/libjpeg_id.py             # --work DIR, --exe PATH (default $TRU_EXE / the GOG install)
+# 4. Join (stdlib Python, ~2 s):
 tools/re/function_db.py            # --work DIR (default ../openunderworld-work), --out DIR (default docs/re/db)
 ```
 
@@ -35,7 +40,7 @@ when other commits add docs that cite addresses; the join itself is a pure funct
 
 `tools/ghidra/scripts/ExportGraph.java` writes `functions_full.tsv` (entry, name, namespace, symbol source,
 size, body ranges, thunk target, FID flag), `edges.tsv` (caller, callee, call|jump|thunk, site count),
-`func_refs.tsv`, `data_symbols.tsv` and `blocks.tsv`. `tools/ghidra/scripts/ExportFunctionDetail.java` writes
+`func_refs.tsv`, `data_symbols.tsv`, `blocks.tsv` and (batch 10) `cfg.tsv` (per-function control-flow summary). `tools/ghidra/scripts/ExportFunctionDetail.java` writes
 `detail.tsv`, `globals.tsv`, `string_xrefs.tsv`, `consts.tsv`, `this_offsets.tsv`, `vcalls.tsv`,
 `vft_stores.tsv`, `ptr_stores.tsv`, `obj_calls.tsv`, `switches.tsv` (detail mode) and `fid_vsOlder_x86.tsv`,
 `fid_vs2012_x86.tsv` (fid mode); see the script header for every column. `function_db.py` also reads the older
@@ -48,7 +53,7 @@ database does not duplicate it.
 | File | Rows | Content |
 |---|---:|---|
 | `functions.tsv` | 18 766 | one row per function, columns below (2.7 MB) |
-| `citations.tsv` | 7 308 | address, kind (`func_entry`, `func_interior`, `vftable`, `string`, `data_symbol`, `data`), containing function, path, line, citing subsystem, name the citing text attaches |
+| `citations.tsv` | 9 217 | address, kind (`func_entry`, `func_interior`, `vftable`, `string`, `data_symbol`, `data`), containing function, path, line, citing subsystem, name the citing text attaches |
 | `priorities.tsv` | 200 | uncited non-library functions reachable from cited engine roots over direct + resolved virtual edges, ranked (top 100 below) |
 | `rtti.tsv` | 990 | class, vftable, slot count, slots cited, vftable itself cited, bases |
 | `vcall_edges.tsv` | 845 | caller, site, receiver class (suffix `+n` after a bar = n more classes with the same callee), slot index, callee, evidence, candidate count |
@@ -56,7 +61,19 @@ database does not duplicate it.
 | `string_refs.tsv` | 2 010 | entry, string address, sites, value (≤ 60 chars; ≤ 8 strings per function, by address) |
 | `module_deps.tsv` | 266 | DLL, import, calling functions (direct refs + callers of the import thunk), their subsystems (`lib:<family>` for library callers, `?` uncited), first 8 callers |
 | `this_offsets.tsv` | 11 950 | entry, base (`this` / `arg1`), count, `offset:rw:sizes` list ([INFERENCE], method below; 0.48 MB) |
+| `call_edges.tsv` | 44 146 | every direct edge from ExportGraph: caller, callee (`EXTERNAL:…` for import thunks), kind (`call`, `jump` = tail jump, `thunk`), call-site count (43 773 call, 172 jump, 201 thunk) |
+| `cfg.tsv` | 18 766 | per function: basic blocks, intra-function edges, exit blocks, cyclomatic number (edges − blocks + 2), back edges (target at or before the source block, a loop proxy), instructions, RET / CALL / computed-JMP counts (below) |
+| `libjpeg.tsv` | 275 | libjpeg 6b chunks and the game code that drives them (section "libjpeg 6b") |
 | `summary.json` | | every number quoted in this file |
+
+### `call_edges.tsv` and `cfg.tsv` (batch 10)
+
+Both come straight from ExportGraph (`function_db.py` only sorts and copies them), so they are a pure function of
+the Ghidra project. `cfg.tsv` uses Ghidra's `BasicBlockModel`: a CALL does not end a block, edges are distinct
+block-to-block flows that stay inside the function body (fall-through, jumps, switch cases), and a block with no
+such successor counts as an exit (RET, tail jump, call to a no-return function). Totals: 187 741 blocks, 254 414
+edges; 5 093 functions have a back edge, 984 a computed jump, 858 a cyclomatic number above 20 (maximum 405 at
+0x7BE364). Functions Ghidra never created (e.g. the 74 libjpeg method chunks) have no row.
 
 ### `functions.tsv` columns
 
@@ -125,8 +142,8 @@ in code/JSON need `tru`, `global`, `DAT_` or `[O`; bare `00XXXXXX` must hit a fu
 symbol; `tools/ghidra/names/`, `docs/re/BINARIES.md`, `tools/re/pe_inventory.py`, `tools/re/function_db.py`
 (its `VERIFIED` set) and this database's own outputs are skipped.
 
-Result now: 7 308 citations from 218 files: 2 012 distinct function entries, 127 interior addresses, 35
-vftables, 23 named data symbols, 152 other data addresses.
+Result now (2026-11-20): 9 217 citations from 244 files: 2 396 distinct function entries, 186 interior addresses,
+58 vftables, 23 named data symbols, 241 other data addresses.
 
 ### Library classification
 
@@ -135,11 +152,51 @@ vftables, 23 named data symbols, 152 other data addresses.
 | fmod (FMOD Ex, statically linked) | 1 232 | 277 078 | 51 `FMOD::` RTTI classes' slots; functions referencing `..\..\src\fmod_*.cpp` paths or FMOD error strings; address-run fill |
 | crt (MSVC CRT/STL/EH) | 650 | 105 927 | 381 Ghidra analysis-time FID bookmarks, 4 new FID matches (below), `FID_conflict:`/`_`/`__` names, `std::`/`type_info`/`exception` RTTI |
 | bfx (NavPower/behaviour middleware) | 509 | 111 073 | 35 `bfx::` RTTI classes' slots, `bfx_` names; address-run fill at 0x401000..0x42xxxx |
+| libjpeg (IJG 6b, statically linked) | 195 | 49 158 | 28 6b entry points checked at instruction level, 167 reached from them by direct calls or stored method pointers (`tools/re/libjpeg_id.py`, below) |
 
-Evidence counts: 381 ghidra-fid, 4 fid-vsOlder, 411 RTTI slot, 149 string, 15 name/import, 1 431 address-run.
-The fill rule ([INFERENCE]): an uncited function whose nearest classified neighbours on both sides share a family
-and lie ≤ 0x2000 bytes apart is that family's object-file run. No zlib or D3DX code is statically linked; IJG
-libjpeg is present but its functions are still untagged (open item).
+Evidence counts: 381 ghidra-fid, 4 fid-vsOlder, 411 RTTI slot, 149 string, 15 name/import, 28 libjpeg-named,
+167 libjpeg-reach, 1 431 address-run. The fill rule ([INFERENCE]): an uncited function whose nearest classified
+neighbours on both sides share a family and lie ≤ 0x2000 bytes apart is that family's object-file run. No zlib or
+D3DX code is statically linked.
+
+### libjpeg 6b (batch 10)
+
+`tools/re/libjpeg_id.py` (objdump of tru.exe + ExportGraph bounds) writes [`db/libjpeg.tsv`](db/libjpeg.tsv): one
+row per code chunk in the run 0x683DE0..0x695ADF, plus the game code that drives it. `function_db.py` reads it and
+tags the Ghidra functions `libjpeg:libjpeg-named` / `libjpeg:libjpeg-reach`; glue, callers and the folded stub are
+kept out of the address-run fill. The script fails if any listed instruction differs, so every name is re-checked
+on each run.
+
+- Data: the 124-entry `jpeg_std_message_table` at 0x85CA48 (first "Bogus message code %d", last "Application
+  transferred too many scanlines"; it holds the 0x85B7E4 string as entry 122 and the "6b  27-Mar-1998" / "Thomas
+  G. Lane" messages); the 6b quantisation tables at 0x85B350 (luminance 16, 11, 10, 16, ...) and 0x85B250
+  (chrominance 17, 18, 24, 47, ...); the AA&N float DCT constants at 0x85CC40..0x85CC78.
+- Callers: only two game functions call into the run: `Screenshots::CaptureAndSaveTask` slot 0 (0x695AE0, vftable
+  0x85FCD4) compresses the screenshot (3 components, JCS_RGB) into a memory destination, and
+  `Screenshots::LoadToWidgetsTask` slot 2 (0x695C00, vftable 0x85FC64) decodes one for the save / load widgets.
+  Both go through game C++ glue (thiscall, `ret N`): the memory destination 0x68ADE0, the memory source 0x68AD50
+  and the RGB scanline writer 0x695A10. The source's `fill_input_buffer` 0x68AC90 is a folded 3-byte stub that
+  game code also calls (4 sites), so it is `shared`, not library.
+- Named (28 Ghidra functions + 7 chunks Ghidra never made a function): `jpeg_std_error` 0x684FE0 and its five
+  methods 0x684E70..0x684FC0, `jpeg_CreateCompress` 0x683DE0, `jpeg_CreateDecompress` 0x68A760,
+  `jinit_memory_mgr` 0x693AA0, `jpeg_set_defaults` 0x688BA0, `jpeg_set_quality` 0x6885E0 (quality scaling and
+  `jpeg_set_linear_quality` inlined), `jpeg_add_quant_table` 0x688450, `jpeg_alloc_quant_table` 0x688410,
+  `jpeg_alloc_huff_table` 0x688430, `jpeg_start_compress` 0x683F90, `jpeg_write_scanlines` 0x683FF0,
+  `jpeg_finish_compress` 0x683ED0, `jpeg_read_header` 0x68AA70, `jpeg_consume_input` 0x68A940,
+  `jpeg_start_decompress` 0x68ABE0, `jpeg_read_scanlines` 0x68AB80, `jpeg_finish_decompress` 0x68A9F0,
+  `jpeg_abort` 0x6883A0, `jpeg_destroy` 0x6883E0 (both `jpeg_destroy_*` folded into the thunk 0x68A800),
+  `jpeg_resync_to_restart` 0x68EAE0, `jinit_compress_master` 0x686C10, `jpeg_suppress_tables` 0x683E60, the
+  jutils helpers 0x695950..0x6959F0, `jpeg_fdct_float` 0x690E20 and `jpeg_idct_float` 0x691B40 (no Ghidra function).
+- Closure: 269 libjpeg chunks (195 Ghidra functions, 74 code chunks with none), all reached from the named entry
+  points; nothing in the run is reached only by address. The 74 are method code reached only through stored
+  pointers, which Ghidra's analysis never made functions; with no string reference and no ERREXIT, the earlier
+  string / caller rules found no libjpeg code.
+- Build: every `ERREXIT` / `WARNMS` is compiled out. `jpeg_start_compress` has no `global_state` check
+  (0x683F90..0x683FE8), `jpeg_CreateCompress` no version / structsize check, and the run has no
+  `msg_code` store followed by `error_exit`. `jpeg_std_error` points `jpeg_message_table` at 0x85B244 (0x685011),
+  which holds a single NULL entry (the next qword, 0x85B248, is the 16384.5 rounding constant read at 0x685E19);
+  the populated table at 0x85CA48 has no reference in the image. [I] the game builds libjpeg with messages and
+  error checks stripped; the full table is unreferenced data kept by the linker. No OpenUnderworld code depends on it.
 
 ### Function ID (second pass)
 
@@ -489,7 +546,8 @@ Applied with `ApplyNames.java` (headless, `-noanalysis`, saved): **179 functions
 - 1 431 library tags still rest on the address-run fill; FID confirmed 4 and contradicted none, because the
   shipped signature sets hold no FMOD Ex or NavPower code. An FMOD Ex 4.x / VS2005 signature set would settle the
   fmod run; the bfx run (0x401000..0x42xxxx) needs NavPower signatures or string anchors.
-- libjpeg: locate its functions (the error-message table at 0x85B7E4.. is referenced through a pointer table).
+- libjpeg: located 2026-11-20 (section "libjpeg 6b"). [U] why `jpeg_message_table` points at a one-entry table
+  while the full 124-entry table stays unreferenced; it does not affect any decoded path.
 - Virtual calls: 93 % of vptr call sites stay unresolved; the biggest group (5 497) loads the object from a
   member field. Field types from StructDb (`docs/re/db/structures.tsv`) plus constructor stores into
   `[this+k]` would resolve many; so would following the `new`-then-null-check merge (MSVC

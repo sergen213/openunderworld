@@ -16,20 +16,65 @@ Data: [`db/verification.tsv`](db/verification.tsv). It has one row per claim. Co
 Verdicts:
 - `match`: the instructions show what the claim says.
 - `mismatch`: the instructions contradict the claim or the OpenUnderworld behaviour built on it.
-- `partially`: the core holds, but part of the claim is attributed to another function or the code does more than
-  the claim says.
-- `not-found-in-function`: the cited function does not contain the instructions. Usually the value is data or sits
-  at another address.
+- `partially` / `not-found-in-function` (first pass only, all settled 2026-11-20): the core held but part of the claim
+  sat elsewhere, or the cited function did not contain the instructions. Each such row now carries `match` or
+  `mismatch` and a "Settled 2026-11-20 (batch 10)" note with the instruction addresses that decided it.
 
 Values that live in lara.drm or other data (player-data shorts and floats, chart properties, camera settings) cannot
 be checked in the exe. For these the row checks the read (offset, scale, comparison) and says the value is data.
 
 ## Counts
 
-| | match | partially | not-found-in-function | mismatch | total |
-|---|---|---|---|---|---|
-| New (V001–V074) | 51 | 17 | 4 | 2 | 74 |
-| Earlier, by reference (P001–P023) | 22 | 0 | 1 (0x746F60, open) | 0 | 23 |
+| | match | mismatch | total |
+|---|---|---|---|
+| First pass (V001–V074) | 70 | 4 (V002, V042 resolved 2026-11-16; V020, V056 open) | 74 |
+| Batch 6-9 citations (V075–V097, 2026-11-20) | 23 | 0 | 23 |
+| Earlier, by reference (P001–P023) | 23 | 0 | 23 |
+
+Before the batch 10 pass the first-pass rows stood at 51 match, 17 partially, 4 not found, 2 mismatch; P023
+(0x746F60) was open.
+
+## Batch 10 (2026-11-20): settled rows and batch 6-9 citations
+
+Same method (objdump of the GOG tru.exe, `docs/re/db/call_edges.tsv` for call structure; no decompiler as proof).
+
+Settled:
+- **Found where the first pass looked in vain.** V065 / P023: 0x746F60 reads player data `+0x9C8` / `+0x9CC` at
+  0x7473FD / 0x747443 through a base `pd + 0x888` (0x746FD1), which a displacement search cannot see. V032: the
+  0.5 s blend is settings `+0x78`, passed to 0x608200 by 0x5FEE10 (0x5FEE6D / 0x5FEE81, `edi` = resource + 0x10),
+  which 0x601D30 calls first. V063: the `+0x82C` / `+0x838` reads sit in 0x7591E0 / 0x758B00, both called only by
+  0x7594C0.
+- **Data, now with the read pinned.** V005 (the fifth class 0x80 is empty because `+0xAE` = `+0xB0` = 391), V011
+  (slot 10 from the 16-byte handle stride at `[Lara+0x500]` + 4 [I]), V027, V041 (record fields +0x34 / +0x54 /
+  +0x58), V058, V036 (632.1 is credited to our probe, not to 0x7396E0).
+- **Extra code that does not touch the claim.** V017 (clock wrap), V045 (OU's `ledgeClear` already has the 31.605
+  column), V051, V054 (the rest of 0x74FDF0 builds an attach message), V057 (return codes 0 / 1 / 3 / 2 map onto
+  pushWay), V069 (0x5D6170 is the relic factor, which OU's maximum already includes).
+- **Citation address wrong, behaviour right** (BUGS OU-DOC-003): V048 (0x441FB0, not 0x4428A0), V049 (0x7228E0,
+  not 0x622418), V050 (0x5DA230, not 0x5DA1C0), V024 (the comment calls 1.1538 a step; it is a lag threshold).
+- **Mismatch.** V020: no instruction path carries the template's 0.01 / 0.01 (`+0x100` / `+0x104`) to the
+  integrator's `+0x154` / `+0x158`; in the pooled objects those are list links (BUGS OU-PHY-003). V056: MustDetach
+  also releases on player data `+0xCB4` (distance) and three angles `+0xCA8` / `+0xCAC` / `+0xCB0` that OU does not
+  model (BUGS OU-PLY-016).
+
+New rows V075–V097 cover the tru.exe addresses batches 6-9 cited (docs/audit/PROGRESS.md, BUGS.md): camera triggers
+(0x5CD520, 0x601D30, 0x6019D0 with its jump table 0x601CC0, 0x5E85B0 / 0x5F2A70, 0x609F10, 0x607A30, the cut
+0x6017D0, focus points 0x5F0B30 / 0x5F12F0, the look blend 0x6009C0, the trackers 0x6022F0 / 0x609830), the
+SoundSequence latent (0x4AF230 / 0x4AF290 / 0x4ACC30 / 0x57E970 / 0x57E016), dormant intros 0x5C2360, CloseCombat
+slots 0x6108A0 (0x627F00 / 0x63A4C0), the aquatic reach (0x6391F0 / 0x6298C0 → 0x660640 → 0x64A5B0), VM locals
+0x57A850 → 0x579770, the one-sided ray 0x461640, the switch stand point 0x704730 → 0x6F4740, the flinch action
+0x760530, the grapple point 0x6FF040, rope bend bodies 0x6A4D40 → 0x699A50 / 0x699960, the above-surface under-water
+gate 0x6D9DA0 / 0x5EA200 / 0x431CA0, the fling solver 0x73EDC0 and the shelf test 0x74E290 → 0x74E160 → 0x74BB50.
+All 23 match on the cited claim. Branches the claims do not mention, recorded in each row's note and in BUGS:
+- 0x73EDC0 leads a moving markup (target + t × its velocity) and caps the speed (query `+0xD4` else player data
+  `+0xC10`); `jumpVelocity` does neither (OU-PLY-017).
+- 0x702E90 replaces the fall-damage thresholds by the active jump query's `+0xC4` triple (OU-PLY-018).
+- 0x6FF040 lets queries 0xDE / 0x159 / 0x158 replace the instance + 0xDB point; 0x601D30 applies one more record
+  (trigger list vt+0x14) after the priority triggers; the active trigger list holds at most 4 (0x5E85B9); the
+  0x5CD520 → 0x5F29A0 / 0x5F2A70 calls go through CameraManager vtable slots 27 / 28; 0x6391F0 reaches 0x660640
+  through 0x60E4C0 (all OU-DOC-003).
+
+The first-pass sections below are kept as written; the rows' notes carry the settlement.
 
 ## Mismatches (bug candidates)
 

@@ -119,6 +119,9 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed-verified (0.53.0, 21678c2) | pre-existing | — |
 | OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Fixed-verified (0.54.0, merge bccdaa7: colliders posed after a mid-game rebuild) | pre-existing | — |
+| OU-PLY-016 | Lara | Push / pull MustDetach: four release conditions of 0x73F900 not modelled | Open | pre-existing | — |
+| OU-PLY-017 | Lara | Jump-to-target solver 0x73EDC0: no moving-markup lead, no speed cap | Open | pre-existing | — |
+| OU-PLY-018 | Lara | Fall-damage thresholds: the jump query's override (0x702E90) not modelled | Open | pre-existing | — |
 | OU-SWM-001 | swimming | Swim turn: symmetric and view-relative (d122a62); the stick is now read against the view, which trails the camera-to-pivot line (look tracker +0x620): circle 46.2 / 47.2 deg/s (tru.exe 46.7 / 48.3), 42.2° off the line (42.1) | Fixed-verified (0.53.0 d122a62; view tracker 0.58.0, merge 1a5bb3b; mode-19 look record Wine-verified, agent/WineCheck10) | pre-existing | — |
 | OU-SWM-002 | swimming | Surface swim velocity lag: 4.96 / 5.07° vs tru.exe 5.44 / 5.6° (0x755A00 blend 0.25 = player data +0x240; the rest is the 30 Hz blend spread over 60 Hz ticks) | Fixed-verified (0.53.0, d122a62; re-measured for 0.58.0) | pre-existing | — |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
@@ -153,10 +156,12 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-VEH-001 | motorcycle | Brake strength, slopes, coasting, top speed, pit jump unmeasured | Open | pre-existing | C-MEASURE |
 | OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed-verified (0.56.0, merge 02b7a09: poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
+| OU-PHY-003 | physics | Damping of loose bodies without a physics record unproven (template 0.01 never reaches the integrator) | Needs-Windows-ref | pre-existing | C-MEASURE |
 | OU-TST-001 | tests | No walkthrough section plays end to end; 11 parked known-gap scenarios (14 at the audit) | Open | pre-existing | — |
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
+| OU-DOC-003 | docs | Batch 10 asm checks: wrong citation addresses and branches the comments omit | Open | doc drift | C-DOC |
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom reported doors 4526 / 4376 as not resumed: a false difference (two colliders per door shared one state-part name) | Fixed on agent/GapsB10 (`save_load_bedroom_doors` moved up) | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed-verified (0.54.0, merge bccdaa7: camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
@@ -1036,6 +1041,31 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   on every tick for 15 s and pivot − root ≥ 446.6 (now 458.6 constant, was dipping to 425.7).
 - Status · Origin: Fixed-verified (0.54.0, merge bccdaa7) · pre-existing.
 
+**OU-PLY-016 Push / pull MustDetach releases on more than distance** (VERIFICATION.md V056, batch 10)
+- tru.exe 0x73F900 (PlayerSC_PushPull::MustDetach) releases her when the grip point leaves her by more than player
+  data `+0xCA0` (level, 0x73F97B) or `+0xCA4` (height, 0x73F9C3), and also on `+0xCB4` (a second distance, 0x73F9EE)
+  and on three angles `+0xCB0`, `+0xCA8`, `+0xCAC` (degrees → sin 0x813680, 0x73FCD1..0x73FD95).
+- OU (`src/game/Objects.cpp:1155`, Game.hpp:184) tests only `+0xCA0` / `+0xCA4`.
+- [U] which object directions the angles compare and the lara.drm values; no behaviour change made.
+- Status · Origin: Open · pre-existing.
+
+**OU-PLY-017 Jump-to-target solver without lead or cap** (VERIFICATION.md V094, batch 10)
+- tru.exe 0x73EDC0 solves v = (target − pos − ½ g t²) / t (0x73EF16..0x73EF91, g −5.72443, ½ at 0x8413A8) as
+  `jumpVelocity` (`src/game/Player.cpp:170`) does, but its target is the ledge point plus t × the markup's velocity
+  (0x6EC930 output), and the result is clamped to a speed limit from the jump query `+0xD4` else player data
+  `+0xC10` (0x73EE2F / 0x73EE51, clamp 0x73EFA0..0x73EFD6).
+- OU aims at the static point and never caps (Player.cpp:2048, 2054, 2158). Effect expected only on moving ledges
+  and long flings [I]. [U] the limit's value and the comparison metric of 0x4355D0.
+- Status · Origin: Open · pre-existing.
+
+**OU-PLY-018 Fall-damage threshold override** (VERIFICATION.md V069, batch 10)
+- tru.exe 0x702F10 takes the thresholds from 0x702E90, which starts from player data `+0x4C` / `+0x50` / `+0x54`
+  and replaces all three by the active jump query's `+0xC4` record (0x702EB4..0x702EE6) when it has one.
+- OU `Health::fallDamage` (`src/game/Combat.cpp:326`) always uses the player-data triple. The maximum matches
+  (OU's `t_.max` includes the relic factor 0x5D6170, as 0x702F7C does).
+- [U] which jump queries carry `+0xC4`.
+- Status · Origin: Open · pre-existing.
+
 ### Swimming (OU-SWM)
 
 **OU-SWM-001 Swim turn rate** — tru.exe steering function 0x755A00 (properties 0x200..0x20F, speed table 512..519); turn
@@ -1385,6 +1415,17 @@ Status · Origin: Fixed-verified (0.56.0, merge 02b7a09) · pre-existing.
 **OU-PHY-002 Push speed fitted to one trace** — push blocks and Thor mechanisms: proxy mass 0.125 × object mass [I], law
 fitted to one block trace (ROADMAP L87, REPORT §6, §8.4). Status · Origin: Open · pre-existing.
 
+**OU-PHY-003 Loose bodies without a physics record: damping unproven** (VERIFICATION.md V020, batch 10)
+- `src/physics/Physics.cpp:734-736` gives every loose body 0.01 / 0.01 per frame, citing the template constructor
+  0x4DD820 (`+0x100` / `+0x104` = 0.01). The integrator 0x4EFB20 reads `+0x154` / `+0x158` (0x4EFC5E, 0x4EFCCB).
+- No instruction path copies `+0x100` / `+0x104` there: the template is built by the physics-instance factory
+  0x4E9590 (0x4E95C8), whose pooled objects use `+0x154` / `+0x158` as list links (0x4E9AA7..0x4E9AE0,
+  0x4DD44C..0x4DD491); every writer of a body's damping goes through 0x4D8D00 / 0x4D8D20 and none loads a template
+  field (callers listed in verification.tsv V020).
+- Bodies with a record take its values (V019, 0.01 in every record read), so only record-less bodies are in doubt.
+- Needed: a Wine read of `+0x154` on a body spawned without a physics record. No behaviour change made.
+- Status · Origin: Needs-Windows-ref · pre-existing.
+
 ### Tests and docs (OU-TST, OU-DOC)
 
 **OU-TST-001 No section end to end** — chapter legs per section 6/2/2/4/3/2/3/4/3/1/3/1/4/5/3/3/1/2/4/7/0, 14 parked
@@ -1437,6 +1478,22 @@ Open · pre-existing (test-tool gap).
 - The World.cpp:877 comment edit in 207426b was itself wrong. CameraManager "+0x54" is both the field holding the
   committed mode and vtable slot 21 (docs/re/CAMERA.md). STRUCTURES.md and ENGINE_ARCHITECTURE.md were corrected on
   main. The World.cpp / Game.hpp comments are being corrected on branch agent/PlatformCam-2.
+- Status · Origin: Open · doc drift.
+
+**OU-DOC-003 Batch 10 assembly checks: citation errors and unmentioned branches** (VERIFICATION.md, batch 10)
+- Wrong addresses (behaviour right): mirror negation `0x4428A0` → 0x441FB0 (`src/game/Player.cpp:306`,
+  Game.hpp:422; V048); time-scale ramps `0x5DA1C0` → 0x5DA230 (`World.cpp:618`, `Combat.hpp:374`; V050); the
+  world-scale divide `0x622418` → 0x7228E0 is still cited (`World.cpp:619`, `Combat.hpp:376`; V049, also OU-DOC-002).
+- Wrong description: `Physics.cpp:734` calls 1.1538 "30 / 26 frames" of step; in 0x492B80 it is the lag threshold
+  that feeds the overrun accumulator `[0xA0381C]` (V024).
+- Incomplete chains: 0x5CD520 reaches 0x5F29A0 / 0x5F2A70 through CameraManager vtable slots 27 / 28 (0x5CD683 /
+  0x5CD6AE), not direct calls (`World.cpp:971`); 0x6391F0 reaches 0x660640 through 0x60E4C0 (`Enemy.hpp:137`).
+- Branches the comments omit [U each]: 0x601D30 applies one more record, the trigger list's vt+0x14, after the
+  priority != 0 triggers (0x601E91..0x601EAF); the active trigger list holds at most 4 (0x5E85B9), ours is
+  unbounded; 0x6FF040 lets queries 0xDE / 0x159 (before) and 0x158 (after, player flag bit 6) replace the instance's
+  `+0x20` plus query-0xDB grapple point (`Combat.cpp:1130`); 0x6108A0 gives both children the slot when r ≥ +0xC + +0xD
+  (1 in 101 for blueshark 50 / 50).
+- Fix: comment corrections only, plus a decode of each [U] branch before any behaviour change.
 - Status · Origin: Open · doc drift.
 
 **OU-TST-003 Loaders lack synthetic rejection tests** — listed per format in each `docs/formats/*.md` "Validation"

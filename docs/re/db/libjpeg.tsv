@@ -1,0 +1,276 @@
+entry	ghidra	size	name	role	evidence	ext_refs
+00683de0	1	128	jpeg_CreateCompress	api	checked 683def,683df9,683e07,683e48,695b13,695b1c: memset(cinfo,0,0x168 = sizeof jpeg_compress_struct), jinit_memory_mgr, global_state = 100 (CSTATE_START); caller passes version 62. The version / structsize ERREXITs are absent (see note)	695b23
+00683e60	1	112	jpeg_suppress_tables	api	checked 683f9c,683f9f: jpeg_start_compress: if write_all_tables, jpeg_suppress_tables(cinfo, FALSE)	
+00683ed0	1	192	jpeg_finish_compress	api	checked 695ab7: after the scanline loop	
+00683f90	1	96	jpeg_start_compress	api	checked 683fa9,683fb2,683fb9,683fe1: err->reset_error_mgr, dest->init_destination, jinit_compress_master, global_state = 101 + raw_data_in	
+00683ff0	1	128	jpeg_write_scanlines	api	checked 695a9f: per-row call in the scanline loop 0x695A10 (rows of packed RGB)	
+00684070	0	672	-	lib	reach<-684730	
+00684310	1	512	-	lib	reach<-684730	
+00684510	1	544	-	lib	reach<-684730	
+00684730	0	144	-	lib	reach<-6847c0	
+006847c0	1	272	-	lib	reach<-686c10	
+006848d0	1	224	-	lib	reach<-684db0	
+006849b0	1	288	-	lib	reach<-684db0	
+00684ad0	1	176	-	lib	reach<-684db0	
+00684b80	1	336	-	lib	reach<-684db0	
+00684cd0	0	96	-	lib	reach<-684db0	
+00684d30	0	128	-	lib	reach<-684db0	
+00684db0	1	192	-	lib	reach<-686c10	
+00684e70	0	32	error_exit	method	checked 684fe6: jpeg_error_mgr slot +0x00	
+00684e90	0	27	output_message	method	checked 684ff3: slot +0x08	
+00684eab	0	37	-	lib	reach<-684db0	
+00684ed0	0	64	emit_message	method	checked 684fec: slot +0x04	
+00684f10	0	176	format_message	method	checked 684f1e,684f26,684f2b,684f63: slot +0x0C: msg_code range check against last_jpeg_message, addon table +0x78, scans for '%'	
+00684fc0	0	32	reset_error_mgr	method	checked 685001: slot +0x10	
+00684fe0	1	80	jpeg_std_error	api	checked 684fe6,684fec,684ff3,684ffa,685001,685011,685018: fills jpeg_error_mgr: 5 methods, jpeg_message_table +0x70, last_jpeg_message +0x74 = 123	695b0e;695c55
+00685030	1	704	-	lib	reach<-685e80	
+006852f0	0	1040	-	lib	reach<-685e80	
+00685700	0	1920	-	lib	reach<-685e80	
+00685e80	1	128	-	lib	reach<-686c10	
+00685f00	1	336	-	lib	reach<-6896a0	
+00686050	1	192	-	lib	reach<-686490	
+00686110	1	336	-	lib	reach<-686320	
+00686260	1	192	-	lib	reach<-686320	
+00686320	1	368	-	lib	reach<-686a70	
+00686490	1	176	-	lib	reach<-686a70	
+00686540	1	176	-	lib	reach<-6865f0	
+006865f0	1	208	-	lib	reach<-686a70	
+006866c0	1	704	-	lib	reach<-6895d0	
+00686980	1	240	-	lib	reach<-686a70	
+00686a70	1	320	-	lib	reach<-686bb0	
+00686bb0	1	96	-	lib	reach<-686c10	
+00686c10	1	176	jinit_compress_master	api	checked 683fb9: called by jpeg_start_compress	
+00686cc0	0	176	-	lib	reach<-686d70	
+00686d70	0	48	-	lib	reach<-686da0	
+00686da0	1	128	-	lib	reach<-686c10	
+00686e20	1	384	-	lib	reach<-687b80	
+00686fa0	1	336	-	lib	reach<-687b80	
+006870f0	1	176	-	lib	reach<-687a80	
+006871a0	1	400	-	lib	reach<-6879a0	
+00687330	1	416	-	lib	reach<-687a80	
+006874d0	1	496	-	lib	reach<-687930	
+006876c0	1	448	-	lib	reach<-687930	
+00687880	1	128	-	lib	reach<-687c60	
+00687900	0	48	-	lib	reach<-687c60	
+00687930	1	112	-	lib	reach<-687c60	
+006879a0	0	224	-	lib	reach<-687c60	
+00687a80	1	192	-	lib	reach<-687c60	
+00687b40	1	64	-	lib	reach<-687c60	
+00687b80	0	224	-	lib	reach<-687c60	
+00687c60	1	96	-	lib	reach<-686c10	
+00687cc0	1	288	-	lib	reach<-6882f0	
+00687de0	1	128	-	lib	reach<-6882f0	
+00687e60	1	208	-	lib	reach<-6880b0	
+00687f30	1	384	-	lib	reach<-6880b0	
+006880b0	1	416	-	lib	reach<-6882f0	
+00688250	1	48	-	lib	reach<-6882f0	
+00688280	0	112	-	lib	reach<-6882f0	
+006882f0	1	176	-	lib	reach<-686c10	
+006883a0	1	64	jpeg_abort	api	checked 6883ac,6883bd,6883d0: mem->free_pool(JPOOL_IMAGE); global_state = 200 (decompress) / 100 (compress)	
+006883e0	1	48	jpeg_destroy	api	checked 6883ef,6883f8,6883fb: mem->self_destruct; global_state = 0; mem = NULL	
+00688410	1	32	jpeg_alloc_quant_table	api	checked 688419,688426: alloc_small 130 bytes (64 UINT16 + sent_table), sent_table = FALSE	
+00688430	1	32	jpeg_alloc_huff_table	api	checked 688439,688446: alloc_small 274 bytes (17 + 256 + sent_table)	
+00688450	1	400	jpeg_add_quant_table	api	checked 688621: called with (cinfo, slot, std table, scale, force)	
+006885e0	1	112	jpeg_set_quality	api	checked 6885eb,6885fc,688619,688628: jpeg_quality_scaling inlined (5000 / q, 200 - 2q), jpeg_set_linear_quality inlined	695b73
+00688650	1	128	-	lib	reach<-6886d0	
+006886d0	1	96	-	lib	reach<-688ba0	
+00688730	1	624	-	lib	reach<-6889a0	
+006889a0	1	512	-	lib	reach<-688ba0	
+00688ba0	1	240	jpeg_set_defaults	api	checked 688bb2,688bc3,688bc5,688bcc: allocates comp_info (10 x 84 bytes = 0x348), data_precision = 8, quality 75 (scale 50) quant tables	695b5f
+00688c90	1	224	-	lib	reach<-688da0	
+00688d70	1	48	-	lib	reach<-688da0	
+00688da0	1	128	-	lib	reach<-6895d0	
+00688e20	1	208	-	lib	reach<-6892e0	
+00688ef0	1	352	-	lib	reach<-6896a0	
+00689050	1	464	-	lib	reach<-6896a0	
+00689220	0	192	-	lib	reach<-6896a0	
+006892e0	0	672	-	lib	reach<-6896a0	
+00689580	0	80	-	lib	reach<-6896a0	
+006895d0	0	208	-	lib	reach<-6896a0	
+006896a0	1	368	-	lib	reach<-689810	
+00689810	1	64	-	lib	reach<-686c10	
+00689850	0	48	-	lib	reach<-689dc0	
+00689880	0	544	-	lib	reach<-689dc0	
+00689aa0	1	512	-	lib	reach<-689dc0	
+00689ca0	1	288	-	lib	reach<-689dc0	
+00689dc0	1	160	-	lib	reach<-686c10	
+00689e60	1	80	-	lib	reach<-68a4c0	
+00689eb0	1	144	-	lib	reach<-68a650	
+00689f40	1	304	-	lib	reach<-68a650	
+0068a070	0	80	-	lib	reach<-68a650	
+0068a0c0	1	176	-	lib	reach<-68a650	
+0068a170	1	208	-	lib	reach<-68a650	
+0068a240	1	640	-	lib	reach<-68a650	
+0068a4c0	1	400	-	lib	reach<-68a650	
+0068a650	1	272	-	lib	reach<-686c10	
+0068a760	1	160	jpeg_CreateDecompress	api	checked 695c5a,695c63,695c6a: called with version 62, structsize 0x1B0 = sizeof jpeg_decompress_struct	695c6a
+0068a800	1	16	jpeg_destroy_compress / jpeg_destroy_decompress	api	checked 68a800: identical-code-folded thunk to jpeg_destroy, called by both wrappers	695bd8;695d7a
+0068a810	1	304	-	lib	reach<-68a940	
+0068a940	1	176	jpeg_consume_input	api	checked 68aa76: called by jpeg_read_header	
+0068a9f0	1	128	jpeg_finish_decompress	api	checked 695d70: after the decode loop	695d70
+0068aa70	1	64	jpeg_read_header	api	checked 68aa76,68aa8b,68aa93: jpeg_consume_input; REACHED_EOI -> jpeg_abort, HEADER_TABLES_ONLY (2)	695c92
+0068aab0	1	208	-	lib	reach<-68abe0	
+0068ab80	1	96	jpeg_read_scanlines	api	checked 695d05,695d11: one row per call in the decode loop	695d11
+0068abe0	1	176	jpeg_start_decompress	api	checked 695ca8: after jpeg_read_header(TRUE)	695ca8
+0068ac90	1	16	-	shared	reach<-68ad50; also called by game code (4 sites)	75537d;75a0f9;776d35;795f84
+0068aca0	0	48	-	lib	reach<-68ade0	
+0068acd0	1	96	-	lib	reach<-68ad90	
+0068ad30	0	32	-	lib	reach<-68ad50	
+0068ad50	1	64	game memory source manager setup	glue	checked 68ad5a,68ad68,68ad6f,68ad89: sets cinfo->src (+0x18); fill_input_buffer 0x68AC90 is a folded 3-byte stub shared with game code	695c84
+0068ad90	0	16	-	lib	reach<-68ade0	
+0068ada0	0	64	-	lib	reach<-68ade0	
+0068ade0	1	64	game memory destination manager setup	glue	checked 68adf8,68adff,68ae06,68ae1a: sets cinfo->dest (+0x18): init / empty_output_buffer / term_destination	695b8a;695bc0
+0068ae20	0	96	-	lib	reach<-68bcc0	
+0068ae80	1	640	-	lib	reach<-68bcc0	
+0068b100	1	560	-	lib	reach<-68bcc0	
+0068b330	1	400	-	lib	reach<-68bcc0	
+0068b4c0	1	352	-	lib	reach<-68bc70	
+0068b620	0	1616	-	lib	reach<-68bc70	
+0068bc70	0	80	-	lib	reach<-68bcc0	
+0068bcc0	1	336	-	lib	reach<-68ef80	
+0068be10	1	208	-	lib	reach<-68c280	
+0068bee0	1	288	-	lib	reach<-68c280	
+0068c000	0	144	-	lib	reach<-68c280	
+0068c090	0	48	-	lib	reach<-68c280	
+0068c0c0	0	96	-	lib	reach<-68c280	
+0068c120	1	352	-	lib	reach<-68c280	
+0068c280	1	288	-	lib	reach<-68ef80	
+0068c3a0	1	704	-	lib	reach<-68c660	
+0068c660	1	128	-	lib	reach<-68ef80	
+0068c6e0	1	544	-	lib	reach<-6902c0	
+0068c900	1	256	-	lib	reach<-68fef0	
+0068ca00	1	208	-	lib	reach<-68fef0	
+0068cad0	1	128	-	lib	reach<-68cb50	
+0068cb50	1	1056	-	lib	reach<-68d080	
+0068cf70	0	272	-	lib	reach<-68d080	
+0068d080	1	80	-	lib	reach<-68ef80	
+0068d0d0	1	352	-	lib	reach<-68d450	
+0068d230	1	352	-	lib	reach<-68d410	
+0068d390	1	128	-	lib	reach<-68d410	
+0068d410	1	64	-	lib	reach<-68d530	
+0068d450	1	128	-	lib	reach<-68d530	
+0068d4d0	1	64	-	lib	reach<-68d530	
+0068d510	0	32	-	lib	reach<-68d530	
+0068d530	1	80	-	lib	reach<-68a760	
+0068d580	1	176	-	lib	reach<-68db60	
+0068d630	1	336	-	lib	reach<-68daf0	
+0068d780	1	224	-	lib	reach<-68d980	
+0068d860	1	176	-	lib	reach<-68d980	
+0068d910	0	112	-	lib	reach<-68daf0	
+0068d980	0	320	-	lib	reach<-68daf0	
+0068dac0	0	48	-	lib	reach<-68daf0	
+0068daf0	0	112	-	lib	reach<-68db60	
+0068db60	1	160	-	lib	reach<-68ef80	
+0068dc00	1	112	-	lib	reach<-68e890	
+0068dc70	1	576	-	lib	reach<-68e890	
+0068deb0	1	496	-	lib	reach<-68e890	
+0068e0a0	1	528	-	lib	reach<-68e890	
+0068e2b0	1	448	-	lib	reach<-68e890	
+0068e470	1	176	-	lib	reach<-68e890	
+0068e520	1	128	-	lib	reach<-68e5a0	
+0068e5a0	1	400	-	lib	reach<-68ebc0	
+0068e730	1	128	-	lib	reach<-68ebc0	
+0068e7b0	1	224	-	lib	reach<-68eae0	
+0068e890	0	480	-	lib	reach<-68ebc0	
+0068ea70	1	112	-	lib	reach<-68ebc0	
+0068eae0	1	176	jpeg_resync_to_restart	api	checked 68ad76: installed as jpeg_source_mgr.resync_to_restart (+0x14) by the game source manager 0x68AD50	
+0068eb90	0	48	-	lib	reach<-68ebc0	
+0068ebc0	1	160	-	lib	reach<-68a760	
+0068ec60	1	128	-	lib	reach<-68ef80	
+0068ece0	1	512	-	lib	reach<-68ef80	
+0068eee0	1	160	-	lib	reach<-68ef80	
+0068ef80	1	432	-	lib	reach<-68f2b0	
+0068f130	1	336	-	lib	reach<-68f2b0	
+0068f280	0	48	-	lib	reach<-68f2b0	
+0068f2b0	1	64	-	lib	reach<-68abe0	
+0068f2f0	1	208	-	lib	reach<-68f860	
+0068f3c0	0	32	-	lib	reach<-68f860	
+0068f3e0	0	208	-	lib	reach<-68f860	
+0068f4b0	0	64	-	lib	reach<-68f860	
+0068f4f0	1	336	-	lib	reach<-68f860	
+0068f640	0	544	-	lib	reach<-68f860	
+0068f860	1	128	-	lib	reach<-68ef80	
+0068f8e0	1	144	-	lib	reach<-68fef0	
+0068f970	1	576	-	lib	reach<-6902c0	
+0068fbb0	1	592	-	lib	reach<-6902c0	
+0068fe00	1	240	-	lib	reach<-6902c0	
+0068fef0	0	976	-	lib	reach<-6902c0	
+006902c0	1	336	-	lib	reach<-690410	
+00690410	1	112	-	lib	reach<-68ef80	
+00690480	0	128	-	lib	reach<-690650	
+00690500	1	176	-	lib	reach<-690650	
+006905b0	1	160	-	lib	reach<-690650	
+00690650	0	160	-	lib	reach<-6906f0	
+006906f0	1	160	-	lib	reach<-68ef80	
+00690790	0	32	-	lib	reach<-690c60	
+006907b0	1	208	-	lib	reach<-690c60	
+00690880	0	16	-	lib	reach<-690c60	
+00690890	0	16	-	lib	reach<-690c60	
+006908a0	1	224	-	lib	reach<-690c60	
+00690980	0	96	-	lib	reach<-690c60	
+006909e0	0	112	-	lib	reach<-690c60	
+00690a50	0	208	-	lib	reach<-690c60	
+00690b20	1	320	-	lib	reach<-690c60	
+00690c60	1	448	-	lib	reach<-68ef80	
+00690e20	0	816	jpeg_fdct_float	lib	checked 690e24,690f2a,690f36,690f4c: AA&N float forward DCT constants 0.707106781 (0x85CC58), 0.382683433, 0.541196100, 1.306562965	
+00691150	0	1744	-	lib	reach<-685e80	
+00691820	1	800	-	lib	reach<-685e80	
+00691b40	0	1360	jpeg_idct_float	lib	checked 691b44,691b4e,691b58,691d65: AA&N float inverse DCT constants 1.414213562, 1.847759065, 1.082392200, 2.613125930	
+00692090	0	992	-	lib	reach<-68c3a0	
+00692470	0	1312	-	lib	reach<-68c3a0	
+00692990	0	800	-	lib	reach<-68c3a0	
+00692cb0	1	1136	-	lib	reach<-68c3a0	
+00693120	0	64	-	lib	reach<-68c3a0	
+00693160	1	224	-	lib	reach<-693aa0	
+00693240	0	80	-	lib	reach<-693aa0	
+00693290	1	224	-	lib	reach<-693aa0	
+00693370	1	240	-	lib	reach<-693aa0	
+00693460	0	80	-	lib	reach<-693aa0	
+006934b0	0	80	-	lib	reach<-693aa0	
+00693500	1	416	-	lib	reach<-693aa0	
+006936a0	1	160	-	lib	reach<-6937e0	
+00693740	1	160	-	lib	reach<-6938a0	
+006937e0	0	192	-	lib	reach<-693aa0	
+006938a0	0	208	-	lib	reach<-693aa0	
+00693970	1	240	-	lib	reach<-693aa0	
+00693a60	0	64	-	lib	reach<-693aa0	
+00693aa0	1	176	jinit_memory_mgr	api	checked 683e07: called by both Create functions	
+00693b50	1	16	-	lib	reach<-693aa0	
+00693b60	1	16	-	lib	reach<-693a60	
+00693b70	1	16	-	lib	reach<-693500	
+00693b80	1	208	-	lib	reach<-693c50	
+00693c50	1	304	-	lib	reach<-694640	
+00693d80	1	368	-	lib	reach<-694640	
+00693ef0	1	128	-	lib	reach<-693f70	
+00693f70	1	80	-	lib	reach<-694570	
+00693fc0	0	176	-	lib	reach<-694570	
+00694070	1	192	-	lib	reach<-694570	
+00694130	1	288	-	lib	reach<-694570	
+00694250	1	304	-	lib	reach<-694570	
+00694380	1	432	-	lib	reach<-694570	
+00694530	1	64	-	lib	reach<-694640	
+00694570	1	208	-	lib	reach<-694640	
+00694640	1	80	-	lib	reach<-68ef80	
+00694690	0	128	-	lib	reach<-695790	
+00694710	1	1040	-	lib	reach<-694e20	
+00694b20	1	384	-	lib	reach<-694e20	
+00694ca0	1	384	-	lib	reach<-694e20	
+00694e20	1	112	-	lib	reach<-695760	
+00694e90	1	464	-	lib	reach<-6951e0	
+00695060	1	384	-	lib	reach<-6951e0	
+006951e0	1	320	-	lib	reach<-6953f0	
+00695320	1	208	-	lib	reach<-695790	
+006953f0	1	704	-	lib	reach<-695790	
+006956b0	1	176	-	lib	reach<-695870	
+00695760	0	48	-	lib	reach<-695790	
+00695790	1	208	-	lib	reach<-695870	
+00695860	0	16	-	lib	reach<-695870	
+00695870	1	224	-	lib	reach<-68ef80	
+00695950	1	16	jdiv_round_up	util	checked 695958,69595d: (a + b - 1) / b	
+00695960	1	32	jround_up	util	checked 695969,695975: a += b - 1; a - a % b	
+00695980	1	80	jcopy_sample_rows	util	checked 695994,6959b3: row-pointer arrays, memcpy per row	
+006959d0	1	32	jcopy_block_row	util	checked 6959dc,6959e2: memcpy(num_blocks * 128 = DCTSIZE2 * sizeof(JCOEF))	
+006959f0	1	32	jzero_far	util	checked 6959fc: memset(target, 0, bytes)	
+00695a10	1	208	game scanline writer	glue	checked 695a36,695a75,695a9f,695ab7: thiscall: start_compress, converts 0x00RRGGBB rows to RGB, write_scanlines, finish_compress	695b98;695bce
+00695ae0	1	283	Screenshots::CaptureAndSaveTask slot 0	caller	checked 695b0e,695b23,695b49,695b54,695b5f,695b73: vftable 0x85FCD4 slot 0 (rtti.tsv): compresses the screenshot, 3 components, JCS_RGB, to a memory buffer	
+00695c00	1	405	Screenshots::LoadToWidgetsTask slot 2	caller	checked 695c48,695c55,695c6a,695c92,695ca8,695d70: vftable 0x85FC64 slot 2 (rtti.tsv): decodes a saved screenshot for the load / save widgets	

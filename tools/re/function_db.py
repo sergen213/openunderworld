@@ -379,6 +379,16 @@ def library_class(img: Image, use_fid: bool = True) -> dict[int, tuple[str, str]
     for e, r in img.funcs.items():
         if e not in lib and r["name"].startswith("bfx_"):
             lib[e] = ("bfx", "name-pattern")
+    # libjpeg 6b: tools/re/libjpeg_id.py checks named entry points at instruction level and closes over direct
+    # calls / stored method pointers from them; game glue, callers and folded stubs shared with game code are not
+    # library code.
+    not_lib = set()  # game glue next to libjpeg: kept out of the address-run fill
+    for r in read_tsv(REPO / "docs/re/db/libjpeg.tsv"):
+        e = int(r["entry"], 16)
+        if r["role"] in ("glue", "caller", "shared"):
+            not_lib.add(e)
+        if r["ghidra"] == "1" and r["role"] in ("api", "method", "util", "lib") and e in img.funcs and e not in lib:
+            lib[e] = ("libjpeg", "libjpeg-named" if r["name"] != "-" else "libjpeg-reach")
     # Direct FID evidence (ExportFunctionDetail fid mode: each MSVC signature database queried alone). Both
     # databases hold only Microsoft runtime/SDK libraries, so a match means family crt.
     if use_fid:
@@ -392,7 +402,7 @@ def library_class(img: Image, use_fid: bool = True) -> dict[int, tuple[str, str]
     seeds = [e for e in entries if e in lib]
     filled = {}
     for e in entries:
-        if e in lib:
+        if e in lib or e in not_lib:
             continue
         i = bisect.bisect_left(seeds, e)
         if 0 < i < len(seeds):
@@ -763,6 +773,28 @@ def main() -> int:
         for c in sorted(cls_rows):
             f.write("\t".join(map(str, c)) + "\n")
 
+    # Direct call edges and per-function control-flow summaries (ExportGraph edges.tsv / cfg.tsv), versioned as is.
+    fdir = args.work / "re-baseline" / "FunctionDb"
+    edge_rows = read_tsv(fdir / "edges.tsv")
+    with (args.out / "call_edges.tsv").open("w", encoding="utf-8", newline="") as f:
+        f.write("caller\tcallee\tkind\tsites\n")
+        for r in sorted(edge_rows, key=lambda r: (r["caller"], r["callee"], r["kind"])):
+            f.write(f"{r['caller']}\t{r['callee']}\t{r['kind']}\t{r['sites']}\n")
+    cfg_rows = read_tsv(fdir / "cfg.tsv")
+    cfg_cols = ["entry", "blocks", "edges", "exits", "cyclomatic", "back_edges", "instructions", "returns", "calls",
+                "indirect_jumps"]
+    with (args.out / "cfg.tsv").open("w", encoding="utf-8", newline="") as f:
+        f.write("\t".join(cfg_cols) + "\n")
+        for r in sorted(cfg_rows, key=lambda r: r["entry"]):
+            f.write("\t".join(r[c] for c in cfg_cols) + "\n")
+    cfg_stats = {"functions": len(cfg_rows), "blocks": sum(int(r["blocks"]) for r in cfg_rows),
+                 "edges": sum(int(r["edges"]) for r in cfg_rows),
+                 "with_back_edges": sum(1 for r in cfg_rows if r["back_edges"] != "0"),
+                 "with_indirect_jumps": sum(1 for r in cfg_rows if r["indirect_jumps"] != "0"),
+                 "cyclomatic_over_20": sum(1 for r in cfg_rows if int(r["cyclomatic"]) > 20),
+                 "max_cyclomatic": max((int(r["cyclomatic"]), r["entry"]) for r in cfg_rows)}
+    edge_kinds = dict(sorted(collections.Counter(r["kind"] for r in edge_rows).items()))
+
     # Virtual call edges and per-function cross-reference summary.
     with (args.out / "vcall_edges.tsv").open("w", encoding="utf-8", newline="") as f:
         f.write("caller\tsite\tclass\tslot\tcallee\tevidence\tcandidates\n")
@@ -889,6 +921,7 @@ def main() -> int:
                 for k, v in fam_rows.items()}
     summary = {
         "functions": len(rows), "function_bytes": sum(r["size"] for r in rows), "edges": sum(len(v) for v in img.callees.values()),
+        "call_edges": {"rows": len(edge_rows), "by_kind": edge_kinds}, "cfg": cfg_stats,
         "status": dict(sorted(st.items())), "status_bytes": dict(sorted(st_bytes.items())),
         "nonlib_bytes": nonlib_bytes, "cited_bytes": cited_bytes,
         "cited_pct_of_nonlib_bytes": round(100 * cited_bytes / nonlib_bytes, 2) if nonlib_bytes else 0,
