@@ -62,7 +62,7 @@ rank	entry	size	callers	callees	depth	root_area	score	ghidra_name	rtti_class	str
 61	0049d720	307	73	1	1	game	2640.9	FUN_0049d720		0	
 62	00567620	935	11	13	2	script	2591.1	FUN_00567620		0	
 63	005f53b0	1594	3	7	2	game	2550.4	FUN_005f53b0		0	
-64	004de560	1801	1	1	1	physics	2547.0	FUN_004de560		0	
+64	004de560	1801	1	1	1	game	2547.0	FUN_004de560		0	
 65	005088a0	2216	1	23	2	render	2507.1	FUN_005088a0		0	
 66	00409970	1188	9	2	3	game	2504.5	FUN_00409970		0	
 67	00518970	1113	4	9	1	fx	2488.7	FUN_00518970		0	
@@ -88,7 +88,7 @@ rank	entry	size	callers	callees	depth	root_area	score	ghidra_name	rtti_class	str
 87	007b5490	2200	0	2	1	script	2200.0	FUN_007b5490	NsLaraBase_ScriptType	0	
 88	00653bb0	319	46	4	1	game	2187.0	FUN_00653bb0		0	
 89	006a3790	1927	1	14	2	game	2180.2	FUN_006a3790		0	
-90	004edeb0	820	10	7	2	physics	2175.7	FUN_004edeb0		0	
+90	004edeb0	820	10	7	2	game	2175.7	FUN_004edeb0		0	
 91	00646870	961	7	4	2	script	2174.5	FUN_00646870		3	ballistic
 92	006292d0	1082	3	12	1	game	2164.0	FUN_006292d0		0	
 93	005ab9e0	1902	1	21	2	formats	2151.9	FUN_005ab9e0		0	
@@ -160,7 +160,7 @@ rank	entry	size	callers	callees	depth	root_area	score	ghidra_name	rtti_class	str
 159	00638750	1086	3	14	2	script	1737.6	FUN_00638750		0	
 160	005b87d0	962	4	6	2	game	1720.9	FUN_005b87d0		0	
 161	0043f060	1520	1	10	2	game	1719.7	FUN_0043f060		0	
-162	004db710	1518	1	1	2	physics	1717.4	FUN_004db710		0	
+162	004db710	1518	1	1	2	game	1717.4	FUN_004db710		0	
 163	00646e80	506	17	13	2	game	1717.4	FUN_00646e80		1	turn to face dir
 164	00491ef0	1073	3	7	2	game	1716.8	FUN_00491ef0		0	
 165	005a5d30	1073	3	5	2	script	1716.8	FUN_005a5d30		0	
@@ -175,7 +175,7 @@ rank	entry	size	callers	callees	depth	root_area	score	ghidra_name	rtti_class	str
 174	004d36c0	1166	1	14	1	game	1649.0	FUN_004d36c0	UberObjectSection	0	
 175	0078c840	2038	1	9	4	game	1647.0	FUN_0078c840		0	
 176	00437160	475	11	9	1	game	1645.4	FUN_00437160		0	
-177	004ec530	1161	1	2	1	physics	1641.9	FUN_004ec530		0	
+177	004ec530	1161	1	2	1	game	1641.9	FUN_004ec530		0	
 178	00513030	1741	1	4	3	formats	1641.4	FUN_00513030		0	
 179	006807b0	1640	0	36	1	script	1640.0	FUN_006807b0	EnemyState_MoveToPosition	0	
 180	006688f0	1626	0	18	1	script	1626.0	FUN_006688f0	EnemyState_JumpStart	0	
@@ -184,7 +184,7 @@ rank	entry	size	callers	callees	depth	root_area	score	ghidra_name	rtti_class	str
 183	00651230	825	5	11	2	script	1616.7	FUN_00651230		0	
 184	00769be0	1616	0	38	1	script	1616.0	FUN_00769be0	PhysicsRollIdle	2	physicsRollPivot
 185	0064af60	2284	1	18	5	script	1615.0	FUN_0064af60		0	
-186	0049b870	248	41	0	1	physics	1607.2	FUN_0049b870		0	
+186	0049b870	248	41	0	1	game	1607.2	FUN_0049b870		0	
 187	00563d90	796	3	5	1	formats	1592.0	FUN_00563d90		0	
 188	00470830	1955	1	7	4	game	1579.9	FUN_00470830		0	
 189	006f7c10	804	5	5	2	game	1575.5	FUN_006f7c10		0	

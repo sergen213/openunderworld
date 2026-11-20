@@ -23,18 +23,18 @@
   ]
  },
  "status": {
-  "Library": 2565,
-  "Named-only": 962,
+  "Library": 2564,
+  "Named-only": 968,
   "Reimplemented-cited": 1450,
-  "Unknown": 13789
+  "Unknown": 13784
  },
  "status_bytes": {
-  "Library": 540872,
-  "Named-only": 288190,
+  "Library": 540859,
+  "Named-only": 289179,
   "Reimplemented-cited": 652455,
-  "Unknown": 2524038
+  "Unknown": 2523062
  },
- "nonlib_bytes": 3464683,
+ "nonlib_bytes": 3464696,
  "cited_bytes": 652455,
  "cited_pct_of_nonlib_bytes": 18.83,
  "library_families": {
@@ -63,8 +63,8 @@
  },
  "by_subsystem": {
   "game": {
-   "functions": 774,
-   "bytes": 367471
+   "functions": 776,
+   "bytes": 371383
   },
   "fx": {
    "functions": 87,
@@ -75,16 +75,16 @@
    "bytes": 59727
   },
   "script": {
-   "functions": 263,
-   "bytes": 48440
+   "functions": 262,
+   "bytes": 47773
   },
   "render": {
    "functions": 45,
    "bytes": 27106
   },
   "physics": {
-   "functions": 24,
-   "bytes": 20303
+   "functions": 23,
+   "bytes": 17058
   },
   "audio": {
    "functions": 53,
@@ -131,31 +131,31 @@
    "bytes": 189
   }
  },
- "citations": 9217,
- "citing_files": 244,
+ "citations": 9371,
+ "citing_files": 248,
  "citation_kinds": {
-  "data": 433,
+  "data": 436,
   "data_symbol": 72,
-  "func_entry": 8348,
-  "func_interior": 296,
+  "func_entry": 8462,
+  "func_interior": 333,
   "string": 1,
   "vftable": 67
  },
  "distinct_addresses_by_kind": {
-  "data": 241,
+  "data": 243,
   "data_symbol": 23,
-  "func_entry": 2396,
-  "func_interior": 186,
+  "func_entry": 2401,
+  "func_interior": 218,
   "string": 1,
   "vftable": 58
  },
  "citations_by_subsystem": {
-  "docs/re": 2265,
-  "game": 1522,
+  "docs/re": 2347,
+  "game": 1523,
   "docs/formats": 1298,
   "docs/gameplay": 1206,
   "script": 473,
-  "docs/audit": 384,
+  "docs/audit": 449,
   "tests": 289,
   "formats": 223,
   "fx": 220,
@@ -165,36 +165,36 @@
   "render": 109,
   "physics": 99,
   "app/game": 87,
-  "docs/reference_comparison": 86,
+  "docs/reference_comparison": 87,
   "docs/rendering": 79,
-  "tests/selftests": 71,
+  "tests/selftests": 72,
   "collision": 49,
   "docs/matrix": 48,
   "docs/progression": 46,
   "scene": 33,
   "cine": 32,
   "changelog": 30,
-  "tools/wine-ref": 24,
+  "tools/wine-ref": 27,
   "ui": 16,
   "locale": 14,
   "docs/saves": 12,
   "anim": 11,
+  "tools/re": 9,
   "cdc": 7,
   "docs/underworld_chapter_gameplay_matrix": 7,
   "tests/replays": 6,
-  "tools/re": 6,
-  "docs/selftest": 5,
   "video": 3,
+  "docs/selftest": 3,
   "tools/ghidra": 3,
   "save": 2,
   "config": 1,
   "tools/ou-audio": 1
  },
  "roots": 1421,
- "reachable_uncited": 8086,
- "reachable_uncited_bytes": 1540049,
- "reachable_uncited_direct_only": 8009,
- "reachable_uncited_direct_only_bytes": 1529488,
+ "reachable_uncited": 8084,
+ "reachable_uncited_bytes": 1539953,
+ "reachable_uncited_direct_only": 8007,
+ "reachable_uncited_direct_only_bytes": 1529392,
  "rtti_families": {
   "(global)": {
    "classes": 594,
@@ -406,9 +406,9 @@
   "float": 549
  },
  "confidence": {
-  "none": 7912,
-  "low": 7293,
-  "medium": 3539,
+  "none": 7904,
+  "low": 7295,
+  "medium": 3545,
   "high": 22
  },
  "with_switch": 464,

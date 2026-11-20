@@ -61,9 +61,9 @@ KERNEL32.DLL	GetConsoleCP	1	lib:crt:1	00827a32
 KERNEL32.DLL	GetConsoleMode	1	lib:crt:1	00827a32
 KERNEL32.DLL	GetConsoleOutputCP	1	lib:crt:1	0082d5e4
 KERNEL32.DLL	GetCurrentDirectoryA	1	lib:crt:1	0082d846
-KERNEL32.DLL	GetCurrentProcess	5	lib:crt:2;re:2;?:1	00478a10;00479c80;004a21d0;0081d644;0081e2e7
+KERNEL32.DLL	GetCurrentProcess	5	lib:crt:2;?:1;re:1;tools/wine-ref:1	00478a10;00479c80;004a21d0;0081d644;0081e2e7
 KERNEL32.DLL	GetCurrentProcessId	1	lib:crt:1	008286be
-KERNEL32.DLL	GetCurrentThread	2	re:2	00479c80;004a21d0
+KERNEL32.DLL	GetCurrentThread	2	re:1;tools/wine-ref:1	00479c80;004a21d0
 KERNEL32.DLL	GetCurrentThreadId	6	lib:crt:3;?:2;re:1	00478a10;00479c80;007ce94a;0081b5f8;0081b811;008286be
 KERNEL32.DLL	GetDriveTypeA	1	lib:crt:1	0082942c
 KERNEL32.DLL	GetEnvironmentStrings	1	lib:crt:1	00828589
@@ -82,7 +82,7 @@ KERNEL32.DLL	GetModuleHandleW	3	re:2;?:1	004790a0;004866e0;0051fbb0
 KERNEL32.DLL	GetOEMCP	1	lib:crt:1	0082261e
 KERNEL32.DLL	GetOverlappedResult	2	?:2	00473ba0;006db7a0
 KERNEL32.DLL	GetProcAddress	14	lib:crt:8;lib:fmod:3;re:2;?:1	004824f0;005239c0;0078b420;007ceb58;007fe43b;0080c05b;008169cc;0081b0ca;...
-KERNEL32.DLL	GetProcessAffinityMask	1	re:1	004a21d0
+KERNEL32.DLL	GetProcessAffinityMask	1	tools/wine-ref:1	004a21d0
 KERNEL32.DLL	GetProcessHeap	2	lib:crt:2	00818241;0082e865
 KERNEL32.DLL	GetStartupInfoA	2	lib:crt:2	00818241;0081e54b
 KERNEL32.DLL	GetStdHandle	2	lib:crt:2	0081b163;0081e54b
@@ -133,10 +133,10 @@ KERNEL32.DLL	SetHandleCount	1	lib:crt:1	0081e54b
 KERNEL32.DLL	SetLastError	3	lib:fmod:2;lib:crt:1	007f179b;007f1856;0081b5f8
 KERNEL32.DLL	SetPriorityClass	1	re:1	00479c80
 KERNEL32.DLL	SetStdHandle	2	lib:crt:2	0082aaf0;0082ab6d
-KERNEL32.DLL	SetThreadAffinityMask	2	re:2	00479c80;004a21d0
+KERNEL32.DLL	SetThreadAffinityMask	2	re:1;tools/wine-ref:1	00479c80;004a21d0
 KERNEL32.DLL	SetThreadPriority	2	?:1;re:1	00479c80;007ce959
 KERNEL32.DLL	SetUnhandledExceptionFilter	3	lib:crt:3	008145e4;0081d644;0081e2e7
-KERNEL32.DLL	Sleep	17	re:5;formats:4;lib:crt:3;?:2;lib:fmod:2;game:1	004741d0;0047ac30;004a0f70;004a12b0;004a21d0;005d2870;005d2aa0;005dded0;...
+KERNEL32.DLL	Sleep	17	formats:4;re:4;lib:crt:3;?:2;lib:fmod:2;game:1;tools/wine-ref:1	004741d0;0047ac30;004a0f70;004a12b0;004a21d0;005d2870;005d2aa0;005dded0;...
 KERNEL32.DLL	SuspendThread	1	?:1	00478a10
 KERNEL32.DLL	TerminateProcess	3	lib:crt:2;?:1	00478a10;0081d644;0081e2e7
 KERNEL32.DLL	TlsAlloc	1	lib:crt:1	0081b811
