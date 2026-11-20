@@ -2818,7 +2818,7 @@ TEST(GameReal, MainHallPoleFlingLandsOnPlatform) {
     for (; air < 120 && s.state == State::Jump; ++air) w.tick({});
     EXPECT_NEAR(air / 60.0, 23.5 / 30.0, 0.04);
     EXPECT_NEAR(s.pos.x, 2094.6f, 1); // on the platform's edge, as tru.exe (not 79 past it)
-    EXPECT_NEAR(s.pos.z, 1708.6f, 1);
+    EXPECT_NEAR(s.pos.z, 1708.6f, 1) << game::stateName(s.state) << " air " << air;
     for (int i = 0; i < 30; ++i) w.tick({});
     EXPECT_NE(s.state, State::Fall);
     EXPECT_NE(s.state, State::Hang) << "she stays on the platform";

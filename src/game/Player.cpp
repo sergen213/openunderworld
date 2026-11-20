@@ -1964,11 +1964,20 @@ void Player::poleFling(float dirSign) {
             const float side = (glm::dot(n, f) > 0) == pole ? 1.0f : -1.0f;
             std::optional<vec3> land;
             if (!pole) {
-                const vec3 in = p - vec3(n * (side * t_.radius), 0);
+                const vec2 inward = -n * side;
+                const vec3 in = p + vec3(inward * t_.radius, 0);
                 if (const auto g = col_.groundProbe(in + vec3(0, 0, 100), 150);
-                    g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - p.z) < 50)
-                    land = vec3(xy(p), g->point.z);
-                else if (!openBelow(col_, m, si, t, side)) continue;
+                    g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - p.z) < 50) {
+                    // the ledge's point, moved in to where our collision's top begins (it can start a unit or two
+                    // inside the markup line) at that floor's height [I: the inset]
+                    for (float d = 0; d <= t_.radius; d += 1) {
+                        const vec3 q = p + vec3(inward * d, 0);
+                        if (const auto h = col_.groundProbe(q + vec3(0, 0, 100), 150); h && std::abs(h->point.z - p.z) < 50) {
+                            land = vec3(xy(q), h->point.z);
+                            break;
+                        }
+                    }
+                } else if (!openBelow(col_, m, si, t, side)) continue;
             }
             bestFw = fw, bestLi = int(li), bestSeg = si, bestT = t, bestSide = side, landAt = land;
         }
