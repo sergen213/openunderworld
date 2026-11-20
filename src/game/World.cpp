@@ -690,7 +690,10 @@ void World::tick(const Actions& input) {
     if (!script_.playerControl()) move = vec2(0);
     if (grappleActs) {
         if (player_.state().grappleUid) releaseGrapple(false);
-        else attachGrapple(grappleAt->pos, grappleAt->uid, grappleAt->kind, grappleAt->rope),
+        // A post's rope is tied at its feature (0x6FF040 query 0xDE, 118 up ca_ei_grapple_post), not at its origin 4 under
+        // the top of the floor it stands in, where every rope segment from it ran into that floor and no bend could form
+        // [O: Wine, l4_temple post 4951: the rope leaves the post's top; I: the other named anchors keep their origin].
+        else attachGrapple(grappleAt->kind == GrappleKind::Post ? grappleAt->sight : grappleAt->pos, grappleAt->uid, grappleAt->kind, grappleAt->rope),
              grapplePress_.attached = player_.state().grappleUid == grappleAt->uid;
     }
     // Freshly loaded units (a chapter start) get their scripted objects and colliders before Lara moves, so she
@@ -719,6 +722,7 @@ void World::tick(const Actions& input) {
             carrier.frame = col_.dynamics[size_t(g->dynamic)].transform, carrier.held = true;
         }
     }
+    player_.setRopeSolids(&ropeSolids_);
     if (!onBike) player_.tick(move, a, dt);
     tickTimes.playerMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - playerStart).count();
     hingePull_.clear();
@@ -2025,7 +2029,10 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     const auto& ba = s.balance;
     add(ba.build), add(ba.aboutFall), add(ba.grace), add(ba.unbal), add(ba.bal), add(ba.notImprove), add(ba.full), add(ba.clock);
     add(ba.lastFlip), add(ba.period), add(ba.ref), add(ba.stickYaw), add(ba.blend), add(ba.lean), add(ba.side), add(ba.osc), add(ba.fall);
-    for (size_t i = 0; i < s.ropeBends; ++i) add(s.ropeBend[i]), add(s.ropeBendClear[i]);
+    for (size_t i = 0; i < s.ropeBends; ++i) {
+        add(s.ropeBend[i]), add(s.ropeBendClear[i]);
+        if (s.ropeBendOn[i]) add(s.ropeBendOn[i]), add(s.ropeBendLocal[i]);
+    }
     const auto& hu = s.hurdle;
     add(hu.next), add(hu.mix), add(hu.alt), add(hu.draw), add(hu.drawOff), add(hu.edge), add(hu.out), add(hu.h), add(hu.endZ);
     add(hu.farLedge), add(hu.farSeg), add(hu.farT), add(hu.farSide);

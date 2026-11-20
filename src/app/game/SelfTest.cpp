@@ -537,7 +537,7 @@ bool SelfTest::probeKnown(std::string_view name) {
     if (p.size() < 3 || !integer(p[1])) return false;
     const std::string_view f = p[2];
     if (p[0] == "object") {
-        if (p.size() == 3) return f == "exists" || f == "name" || f == "graph" || f == "joint" || f == "hidden" || f == "dead" || f == "in" || f == "stowed" || f == "unit";
+        if (p.size() == 3) return f == "exists" || f == "name" || f == "graph" || f == "joint" || f == "hidden" || f == "dead" || f == "broken" || f == "in" || f == "stowed" || f == "unit";
         if (p.size() == 5) return f == "uberslide" && integer(p[3]) && axisName(p[4]);
         return p.size() == 4 && ((f == "pos" || f == "body" || f == "lara" || f == "feature") ? axisName(p[3]) : (f == "uber" || f == "uberjoint") && integer(p[3]));
     }
@@ -829,6 +829,10 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "name") return o->name;
         if (f == "hidden") return o->hidden;
         if (f == "dead") return o->dead;
+        if (f == "broken") { // a class-30 breakable broken (World::breakablePhase), null for other objects
+            const auto phase = w.breakablePhase(*id);
+            return phase ? Value(*phase == game::World::BreakPhase::Broken) : Value();
+        }
         if (f == "in") return num(w.insertedIn(*id));
         if (f == "stowed") return std::ranges::find(w.stowedPortables(), *id) != w.stowedPortables().end();
         if (f == "unit") return o->unit; // the unit the instance lives in (it travels with Lara while she carries it)

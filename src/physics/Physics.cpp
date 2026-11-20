@@ -31,6 +31,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/StateRecorderImpl.h>
@@ -348,7 +349,7 @@ constexpr float kM = 1.0f / kUnitsPerMetre;
 constexpr float kFrame = 30.0f;  // tru.exe joint units are per 30 Hz frame
 constexpr float kJoint3Friction = 0.2f; // a three-axis joint body on the floor: Jolt's default, as it was made before
 constexpr float kSolver = 60.0f; // [I] motor impulse bounds are per 1/60 s solver step (PHYSICS.md "Uber joints")
-enum : JPH::ObjectLayer { kLayerJoint, kLayerSolid, kLayerLoose, kLayerVehicle, kLayerPlate, kLayerLara, kLayerHeavy, kLayers };
+enum : JPH::ObjectLayer { kLayerJoint, kLayerSolid, kLayerLoose, kLayerVehicle, kLayerPlate, kLayerLara, kLayerHeavy, kLayerRope, kLayers };
 
 JPH::Vec3 J(vec3 v) { return {v.x, v.y, v.z}; }
 JPH::Vec3 Jm(vec3 p) { return J(p * kM); } // game units -> metres
@@ -602,6 +603,13 @@ struct Scene::Impl {
         for (auto& b : r.bodies) remove(b);
         r.joints.clear(), r.bodies.clear();
     }
+    // Rope bends on loose bodies (Scene::setRopeBends), in order: a body each (keys "q<i>") pinned to its loose body.
+    struct RopeE { int32_t on; JPH::BodyID body; JPH::Ref<JPH::TwoBodyConstraint> pin; vec3 force{0}; };
+    std::vector<RopeE> rope;
+    void dropRope(RopeE& e) {
+        if (e.pin) sys.RemoveConstraint(e.pin), e.pin = nullptr;
+        remove(e.body);
+    }
 
     JPH::BodyID add(const JPH::BodyCreationSettings& s, const std::string& key, JPH::EActivation act) {
         JPH::BodyID id;
@@ -627,6 +635,7 @@ struct Scene::Impl {
         layers.MapObjectToBroadPhaseLayer(kLayerPlate, JPH::BroadPhaseLayer(1));
         layers.MapObjectToBroadPhaseLayer(kLayerLara, JPH::BroadPhaseLayer(1));
         layers.MapObjectToBroadPhaseLayer(kLayerHeavy, JPH::BroadPhaseLayer(1));
+        layers.MapObjectToBroadPhaseLayer(kLayerRope, JPH::BroadPhaseLayer(1)); // collides with nothing
         // three-axis joint bodies (the Thor pillars): on the terrain and the colliders, against loose bodies and each
         // other; not Lara's proxy (55 kg would shove a pillar she may not move without the gear)
         pairs.EnableCollision(kLayerSolid, kLayerHeavy), pairs.EnableCollision(kLayerLoose, kLayerHeavy);
@@ -653,6 +662,8 @@ struct Scene::Impl {
         for (auto& a : hingeJoints) sys.RemoveConstraint(a->c);
         for (auto& l : loose)
             if (l.hang) sys.RemoveConstraint(l.hang);
+        for (auto& e : rope)
+            if (e.pin) sys.RemoveConstraint(e.pin);
     }
     // The constraint of `a` with its zero at coordinate a.ref: built with the body posed there (derived from its pose at
     // 0, so the same everywhere), then the body is put back.
@@ -897,6 +908,8 @@ struct Scene::Impl {
             for (const auto& c : r.joints) all.push_back(c.GetPtr());
         for (const auto& l : loose)
             if (l.hang) all.push_back(l.hang.GetPtr());
+        for (const auto& e : rope)
+            if (e.pin) all.push_back(e.pin.GetPtr());
         return all;
     }
     void reorder() {
@@ -1165,9 +1178,45 @@ void Scene::setLoose(std::span<const Loose> loose) {
         self->hang = m.bi->CreateConstraint(&s, on->body, self->body), self->hangOn = l->hang.on;
         m.sys.AddConstraint(self->hang);
     }
+    for (auto& r : m.rope) // a bend goes with the body it is pinned to
+        if (std::ranges::find(m.loose, r.on, &Impl::LooseE::id) != m.loose.end() && std::ranges::find(next, r.on, &Impl::LooseE::id) == next.end()) m.dropRope(r);
+    std::erase_if(m.rope, [](const Impl::RopeE& r) { return r.body.IsInvalid(); });
     for (auto& e : m.loose)
         if (e.id != INT32_MIN) m.remove(e.body);
     m.loose = std::move(next);
+}
+
+void Scene::setRopeBends(std::span<const RopeBend> bends) {
+    Impl& m = *impl_;
+    constexpr float kRadius = 4.7407503f, kMass = 5.0f, kDamping = 0.02f; // 0x699A50: 0x4EE2B0(4.74), 0x4DC770(5.0, 4.74), 0x4D8D00 / 0x4D8D20(0.02)
+    std::vector<Impl::RopeE> next;
+    for (const RopeBend& b : bends) {
+        const auto on = std::ranges::find(m.loose, b.on, &Impl::LooseE::id);
+        if (on == m.loose.end()) continue;
+        const size_t j = next.size();
+        if (j < m.rope.size() && m.rope[j].on == b.on && !m.rope[j].body.IsInvalid() &&
+            glm::distance(G(m.bi->GetCenterOfMassPosition(m.rope[j].body)) * kUnitsPerMetre, b.at) < 20.0f) { // still where its pin holds it
+            next.push_back(m.rope[j]), next.back().force = b.force;
+            m.rope[j].body = JPH::BodyID(), m.rope[j].pin = nullptr; // kept
+            continue;
+        }
+        if (j < m.rope.size()) m.dropRope(m.rope[j]);
+        Impl::RopeE e{b.on, {}, nullptr, b.force};
+        JPH::BodyCreationSettings s(new JPH::SphereShape(kRadius * kM), Jm(b.at), JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic, kLayerRope);
+        s.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+        s.mMassPropertiesOverride.mMass = kMass;
+        s.mLinearDamping = s.mAngularDamping = kDamping * kFrame;
+        s.mAllowSleeping = false;
+        e.body = m.add(s, "q" + std::to_string(j), JPH::EActivation::Activate);
+        m.bi->SetLinearVelocity(e.body, m.bi->GetPointVelocity(on->body, Jm(b.at))); // moving with what it is pinned to
+        JPH::PointConstraintSettings p;
+        p.mPoint1 = p.mPoint2 = Jm(b.at);
+        e.pin = m.bi->CreateConstraint(&p, on->body, e.body);
+        m.sys.AddConstraint(e.pin);
+        next.push_back(std::move(e));
+    }
+    for (auto& r : m.rope) m.dropRope(r); // the ones not kept
+    m.rope = std::move(next);
 }
 
 std::optional<mat4> Scene::loose(int32_t id) const {
@@ -1681,6 +1730,8 @@ void Scene::step(float dt) {
     m.moveProxies(dt);
     m.driveCharacter(dt);
     m.buoyancy(dt);
+    for (const auto& r : m.rope) // the rope's pull on its bends (Scene::setRopeBends)
+        if (r.force != vec3(0)) m.bi->AddForce(r.body, Jm(r.force));
     for (auto& l : m.loose) // knocked bodies clear of where they were knocked: the walls hold them again
         if (l.clear > 0 && glm::distance(G(m.bi->GetCenterOfMassPosition(l.body)) * kUnitsPerMetre, l.knockedAt) > l.clear)
             m.bi->SetUserData(l.body, 0), l.clear = 0;
@@ -1737,6 +1788,7 @@ std::string Scene::save() const {
     for (size_t i = 0; i < m.proxies.size(); ++i)
         if (!m.proxies[i].body.IsInvalid()) ids.push_back({"p" + std::to_string(i), m.proxies[i].body});
     if (!m.lara.IsInvalid()) ids.push_back({"a", m.lara});
+    for (size_t i = 0; i < m.rope.size(); ++i) ids.push_back({"q" + std::to_string(i), m.rope[i].body});
     r.Write(uint32_t(1));
     r.Write(uint32_t(ids.size()));
     for (const auto& [key, id] : ids) str(key), r.Write(id.GetIndexAndSequenceNumber());
@@ -1754,6 +1806,8 @@ bool Scene::restore(std::string_view state) {
     for (auto& e : m.joints3) m.dropJoint3(e);
     m.joints3.clear();
     clearHinges();
+    for (auto& r : m.rope) m.dropRope(r); // before the loose bodies they are pinned to
+    m.rope.clear();
     for (auto& l : m.loose) {
         if (l.hang) m.sys.RemoveConstraint(l.hang);
         m.remove(l.body);

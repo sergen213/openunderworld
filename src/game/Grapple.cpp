@@ -54,6 +54,7 @@ constexpr float kFreeJumpFwd = 63.21113f * 30.0f, kFreeJumpUp = 47.40834f * 30.0
 constexpr float kWallJumpSide = 45.82807f * 30.0f, kWallJumpBack = 53.72946f * 30.0f, kWallJumpUp = 44.24779f * 30.0f;
 constexpr float kHangClear = 316.0f; // her jump becomes a hang with no floor this near under her feet [I: GroundDetected 0x739D70 not decoded; over a standing jump's 202]
 constexpr float kRopedWalk = 300.0f; // roped on the ground she moves in the ordinary ground set (chart S705 / S722) [I speed]
+constexpr float kTugTime = 0.215f;   // one tug per Interact press (Wine: the pull state lasts 0.2 .. 0.215 s however long E is held)
 constexpr float kSteep = 0.35f;  // |normal.z| of a wall Lara can rappel on (as free climbing)
 constexpr float kWallRunSpeed = 700.0f, kWallRunLift = 350.0f; // sideways start from the ground [I]
 constexpr float kWallReach = 400.0f;     // ground start: the anchor's wall within this of Lara's capsule [I]
@@ -70,18 +71,43 @@ constexpr float kRopeTrim = 9.481501f, kBendLift = 7.90125f, kBendApart2 = 249.7
 // lip is more than 158.025 under the pivot.
 constexpr float kOverhangDrop = -110.6195f, kOverhangReach = 553.0974f, kOverhangUp = 316.0556f, kOverhangNear = 63.2111f;
 
-// The rope segment a -> b (shortened as above) runs into geometry; the grapple target's own body never counts.
-std::optional<collision::Hit> ropeHit(const collision::CollisionMesh& col, vec3 a, vec3 b, int32_t uid) {
+// The rope segment a -> b (shortened as above) runs into geometry; the grapple target's own body never counts. `solids`:
+// object collision met by the rope only (Player::setRopeSolids). `on` = the object hit (0: the terrain).
+struct RopeContact { collision::Hit hit; int32_t on = 0; };
+std::optional<RopeContact> ropeHit(const collision::CollisionMesh& col, const std::vector<collision::Dynamic>* solids, vec3 a, vec3 b, int32_t uid) {
     vec3 d = b - a;
     const float len = glm::length(d);
     if (len < 1e-3f) return std::nullopt;
     d /= len;
     const float trim = std::min(kRopeTrim, 0.45f * len);
-    auto h = col.raycast(a + d * trim, d, len - 2 * trim);
+    const vec3 from = a + d * trim;
+    const auto h = col.raycast(from, d, len - 2 * trim);
     if (h && h->dynamic >= 0 && col.dynamics[size_t(h->dynamic)].id == uid) return std::nullopt;
-    return h;
+    std::optional<RopeContact> best;
+    if (h) best = RopeContact{*h, h->dynamic >= 0 ? col.dynamics[size_t(h->dynamic)].id : 0};
+    if (solids)
+        for (const auto& s : *solids) {
+            if (!s.shape || s.id == uid) continue;
+            const glm::mat4 inv = glm::inverse(s.transform);
+            auto sh = s.shape->raycast(vec3(inv * glm::vec4(from, 1)), glm::mat3(inv) * d, best ? best->hit.t : len - 2 * trim);
+            if (!sh) continue;
+            sh->point = vec3(s.transform * glm::vec4(sh->point, 1)), sh->normal = glm::mat3(s.transform) * sh->normal, sh->dynamic = -1;
+            best = RopeContact{*sh, s.id};
+        }
+    return best;
 }
 } // namespace
+
+const glm::mat4* Player::ropeBody(int32_t uid) const {
+    for (const auto& d : col_.dynamics)
+        if (d.id == uid) return &d.transform;
+    if (ropeSolids_)
+        for (const auto& d : *ropeSolids_)
+            if (d.id == uid) return &d.transform;
+    return nullptr;
+}
+
+bool Player::ropeTugging() const { return s_.state == State::GrappleSwing && s_.grappleUid && s_.clip.starts_with("grapple_pull_") && s_.flight > 0; }
 
 vec3 ropePivot(const PlayerState& s) { return s.ropeBends ? s.ropeBend[s.ropeBends - 1u] : s.grappleAnchor; }
 
@@ -96,16 +122,24 @@ float ropeBentLength(const PlayerState& s) {
 // the hand side (each bend whose neighbours see each other slides off, then goes), then bend the pivot -> hand segment
 // where it first touched between last tick's hand and this one. The total rope length stays: the free part between
 // the pivot and the hand takes up what the bends add or give back.
+// A bend on an object rides it (PlayerState::ropeBendOn): 0x6B3570 re-pins a touching bend body to the instance it
+// touches each frame (0x4E1260 with the instance's body +0x274) and a clear one to the world (0x4E1260 with body 0).
 void Player::wrapRope(vec3 oldHand, vec3 hand) {
     auto& s = s_;
+    for (size_t k = 0; k < s.ropeBends; ++k)
+        if (s.ropeBendOn[k]) {
+            if (const glm::mat4* f = ropeBody(s.ropeBendOn[k])) s.ropeBend[k] = vec3(*f * glm::vec4(s.ropeBendLocal[k], 1));
+            else s.ropeBendOn[k] = 0; // its collision is gone: a point in the world
+        }
     vec3 next = hand;
     for (int i = s.ropeBends - 1; i >= 0; --i) {
         const auto k = size_t(i);
         const vec3 prev = i ? s.ropeBend[k - 1] : s.grappleAnchor;
-        if (ropeHit(col_, prev, next, s.grappleUid)) {
+        if (ropeHit(col_, ropeSolids_, prev, next, s.grappleUid)) {
             s.ropeBendClear[k] = 0, next = s.ropeBend[k];
             continue;
         }
+        s.ropeBendOn[k] = 0;
         s.ropeBendClear[k] = uint8_t(std::min(255, s.ropeBendClear[k] + 1));
         const float step = std::clamp(15.0f * s.ropeBendClear[k], 15.0f, 200.0f);
         const vec3 d = next - prev;
@@ -116,24 +150,27 @@ void Player::wrapRope(vec3 oldHand, vec3 hand) {
             next = s.ropeBend[k];
             continue;
         }
-        for (size_t j = k; j + 1 < s.ropeBends; ++j) s.ropeBend[j] = s.ropeBend[j + 1], s.ropeBendClear[j] = s.ropeBendClear[j + 1];
+        for (size_t j = k; j + 1 < s.ropeBends; ++j)
+            s.ropeBend[j] = s.ropeBend[j + 1], s.ropeBendClear[j] = s.ropeBendClear[j + 1], s.ropeBendOn[j] = s.ropeBendOn[j + 1], s.ropeBendLocal[j] = s.ropeBendLocal[j + 1];
         --s.ropeBends;
     }
     while (s.ropeBends < std::min(anims_.grapple.bends, kRopeBends)) {
         const vec3 pivot = ropePivot(s);
-        if (!ropeHit(col_, pivot, hand, s.grappleUid) || ropeHit(col_, pivot, oldHand, s.grappleUid)) break; // [I] blocked already: left
+        if (!ropeHit(col_, ropeSolids_, pivot, hand, s.grappleUid) || ropeHit(col_, ropeSolids_, pivot, oldHand, s.grappleUid)) break; // [I] blocked already: left
         float lo = 0, hi = 1; // where between the two hands the segment first touches
         for (int it = 0; it < 10; ++it) {
             const float mid = 0.5f * (lo + hi);
-            (ropeHit(col_, pivot, glm::mix(oldHand, hand, mid), s.grappleUid) ? hi : lo) = mid;
+            (ropeHit(col_, ropeSolids_, pivot, glm::mix(oldHand, hand, mid), s.grappleUid) ? hi : lo) = mid;
         }
-        const auto h = ropeHit(col_, pivot, glm::mix(oldHand, hand, hi), s.grappleUid);
+        const auto h = ropeHit(col_, ropeSolids_, pivot, glm::mix(oldHand, hand, hi), s.grappleUid);
         if (!h) break;
-        const vec3 bend = h->point + h->normal * kBendLift;
+        const vec3 bend = h->hit.point + h->hit.normal * kBendLift;
         bool apart = true;
         for (int i = 0; i < s.ropeBends && apart; ++i) apart = glm::dot(bend - s.ropeBend[size_t(i)], bend - s.ropeBend[size_t(i)]) >= kBendApart2;
         if (!apart) break;
-        s.ropeBend[s.ropeBends] = bend, s.ropeBendClear[s.ropeBends] = 0;
+        const size_t k = s.ropeBends;
+        s.ropeBend[k] = bend, s.ropeBendClear[k] = 0, s.ropeBendOn[k] = 0;
+        if (const glm::mat4* f = h->on ? ropeBody(h->on) : nullptr) s.ropeBendOn[k] = h->on, s.ropeBendLocal[k] = vec3(glm::inverse(*f) * glm::vec4(bend, 1));
         ++s.ropeBends;
         oldHand = glm::mix(oldHand, hand, lo); // the rest of the sweep from the new pivot
     }
@@ -443,6 +480,7 @@ void Player::grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPre
     // T1387 turns into the hang on its way down) [I: one launch, the ordinary stick jump's].
     const auto feet = col_.groundProbe(s_.pos + vec3(0, 0, 20.0f), 30.0f);
     if (feet && s_.vel.z <= 0 && standable(s_.pos, *feet)) {
+        const float tugLeft = ropeTugging() ? s_.flight : 0.0f; // on the ground `flight` times her tug (ropeTugging)
         s_.flight = 0, s_.savingGrab = 0, s_.wallTime = 0;
         const float m = glm::length(move);
         const vec2 dir = m > 0.2f ? move / m : xy(forward());
@@ -453,6 +491,18 @@ void Player::grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPre
             return;
         }
         s_.vel = vec3(0);
+        // Interact pressed: she braces and tugs the rope toward her last bend for kTugTime (tru.exe under Wine, l4_temple
+        // east ledge roped to post 4951: the pull state, 0.2 s for a 0.2 s tap and 0.215 s with E held 6 s, then the
+        // roped idle; she stays where she is); World::stepPhysics pulls the rope's bends on loose bodies meanwhile [I:
+        // the clip, the mounted pulls' set].
+        if (s_.flight = tugLeft > 0 ? tugLeft - dt : s_.buttons.interact.pressed() ? kTugTime : 0.0f; s_.flight > 0) {
+            const vec3 to = ropePivot(s_) - s_.pos;
+            if (glm::length(xy(to)) > 1.0f) s_.yaw = yawOf(xy(to));
+            play(to.z > 400 + kHandZ ? "grapple_pull_up_light" : to.z < kHandZ - 400 ? "grapple_pull_down_light" : "grapple_pull_mid_light", true);
+            wrapRope(oldHand, s_.pos + vec3(0, 0, kHandZ));
+            return;
+        }
+        s_.flight = 0;
         if (m > 0.2f && ropeBentLength(s_) + glm::distance(s_.pos + vec3(dir * (kRopedWalk * dt), kHandZ), ropePivot(s_)) <= maxRope()) {
             s_.yaw = yawOf(dir);
             groundMove(vec3(dir, 0) * (kRopedWalk * dt), dt);
