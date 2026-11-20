@@ -37,7 +37,7 @@ open-question section.
 |---|---|---|
 | [audit/PHASE01_REPORT.md §9](audit/PHASE01_REPORT.md#9-what-is-still-unknown) | the audit's summary of unknowns: runtime-built native tables, unresolved indirect calls, library tags, unmeasured gameplay values | 5 bullets |
 | [re/ENGINE_ARCHITECTURE.md "Open questions across subsystems"](re/ENGINE_ARCHITECTURE.md#open-questions-across-subsystems) | uncited functions without neighbours, unresolved virtual / indirect calls, large uncited functions next to known subsystems | 3 bullets |
-| [re/FUNCTION_DATABASE.md "Open questions"](re/FUNCTION_DATABASE.md#open-questions) | library-tag confidence, libjpeg location, unresolved vptr call sites, caller-less functions | 6 bullets |
+| [re/FUNCTION_DATABASE.md "Open questions"](re/FUNCTION_DATABASE.md#open-questions) | library-tag confidence, the empty libjpeg message table (libjpeg itself located 2026-11-20), unresolved vptr call sites, caller-less functions | 6 bullets |
 | [re/FUNCTIONS.md "Open hypotheses"](re/FUNCTIONS.md#open-hypotheses-not-in-the-csv-yet) | function roles proposed but not confirmed (per-frame services in `MainG2`, shutdown, ...) | 22 rows |
 | [re/STRUCTURES.md "Mismatches and corrections found"](re/STRUCTURES.md#mismatches-and-corrections-found) | places where repo code or names disagreed with the disassembly (most corrected since, e.g. CameraManager +0x54 in 4b58147) | 14 bullets |
 | [re/STRUCTURES.md "Unknowns"](re/STRUCTURES.md#unknowns) | type sizes, allocators, globals, script-VM / save layouts of the original | 6 bullets |
@@ -47,9 +47,31 @@ open-question section.
 | [re/UI.md §7 "Unknowns"](re/UI.md#7-unknowns) | UI widget and screen details not decoded | 3 bullets |
 | [re/SAVEGAME.md §7 "Unknowns"](re/SAVEGAME.md#7-unknowns) | save buffer / `.TRUSave` details not decoded | 4 bullets |
 | [re/SHUTDOWN.md §5 "Unknowns"](re/SHUTDOWN.md#5-unknowns) | shutdown calls whose role is not decoded | 3 bullets |
-| [re/VERIFICATION.md "Partial results worth follow-up"](re/VERIFICATION.md#partial-results-worth-follow-up) | cited tru.exe claims that the assembly only partly confirms | 11 items |
+| [re/VERIFICATION.md "Batch 10"](re/VERIFICATION.md#batch-10-2026-11-20-settled-rows-and-batch-6-9-citations) | every cited claim now match or mismatch; open: V020 (record-less body damping), V056 (MustDetach limits) and the branches the comments omit (BUGS OU-PLY-016..018, OU-PHY-003, OU-DOC-003) | 2 mismatches, 6 branches |
 | [re/TIMING.md](re/TIMING.md) | per-frame order and clocks: entries marked [I] / [U] in place | inline |
 | [RESEARCH.md "Open questions"](RESEARCH.md#open-questions) | early research questions on the exe, containers and formats (several answered later in docs/formats) | 14 items |
+
+## Evidence tags in game and script code
+
+`tools/re/tag_inventory.py` (2026-11-20, master brief P5-3) lists every function definition in `src/game` and
+`src/script` whose comment block, body comments and header declaration carry no `[O]` / `[I]` / `[U]` tag:
+[`re/db/untagged_paths.tsv`](re/db/untagged_paths.tsv) (path, line range, function, `address-only` when a comment
+cites a tru.exe address without a tag, `trivial` for bodies of at most 3 lines). The parser is a heuristic (braces,
+comments, literals); it does not judge whether a path needs original evidence, and save / restore, loaders and
+test glue have no tru.exe counterpart. Re-run it after code changes; the counts below are from int/batch10.
+
+| | definitions | tagged | address only | untagged | untagged, more than 3 lines |
+|---|---:|---:|---:|---:|---:|
+| src/game (26 files) | 803 | 221 | 79 | 503 | 372 |
+| src/script (Script.cpp, Vm.cpp) | 134 | 23 | 16 | 95 | 74 |
+| total | 937 | 244 | 95 | 598 | 446 |
+
+Largest untagged files (non-trivial definitions): `script/Script.cpp` 50, `game/Objects.cpp` 42, `game/Player.cpp` 40,
+`game/Combat.cpp` 38, `game/ai/Enemy.cpp` 37, `game/Stream.cpp` 29, `script/Vm.cpp` 24, `game/World.cpp` 22. The
+longest untagged bodies: the water simulation step `WaterSim::tick` (155 lines), the save / restore paths
+(`World::restoreRuntime`, `Runtime::restore` / `serialize`, `World::stateParts`, `World::restoreCombat`), the
+lara.drm / tuning loaders (`loadLaraAnims`, `weaponDefaults`, `loadMeleeTuning`, `stateFromJson`) and traversal
+steps (`Player::hurdleTick`, `Player::hangCorner`).
 
 ## File formats
 
