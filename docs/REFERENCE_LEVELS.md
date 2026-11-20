@@ -15,9 +15,9 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 | Chapter | Locomotion | Traversal | Grapple | Swimming / water | Combat / AI | Objects / puzzles | Vehicle | Camera / systems | Self-tests (parked) |
 |---|---|---|---|---|---|---|---|---|---|
 | [01](#01-prologue-no-illusions-prologue---croft-manor) | verified; 1 differs / 1 matches | verified; 2 matches | partial; 1 matches / 2 unmeasured | n/a | n/a | partial; 1 differs; 1 open | n/a | — | 6 (0) |
-| [02](#02-the-path-to-avalon-level-1---mediterranean-sea-part-1) | implemented | unverified | implemented | implemented; 1 matches | partial | partial; 1 differs | n/a | — | 2 (0) |
+| [02](#02-the-path-to-avalon-level-1---mediterranean-sea-part-1) | implemented | unverified | implemented | implemented; 1 matches | partial | partial; 1 differs | n/a | 1 matches | 2 (0) |
 | [03](#03-niflheim-level-1---mediterranean-sea-part-2) | implemented | partial | implemented | unverified | implemented | partial | n/a | — | 2 (0) |
-| [04](#04-the-norse-connection-level-1---mediterranean-sea-part-3) | implemented | unverified | implemented | unverified; 1 matches | n/a | implemented; 1 differs | n/a | 1 matches | 5 (0) |
+| [04](#04-the-norse-connection-level-1---mediterranean-sea-part-3) | implemented | unverified | implemented | unverified; 1 matches | n/a | implemented; 1 differs | n/a | 2 matches | 5 (0) |
 | [05](#05-god-of-thunder-level-1---mediterranean-sea-part-4) | unverified | implemented | n/a | unverified | unverified | n/a | n/a | — | 4 (0) |
 | [06](#06-realm-of-the-dead-level-1---mediterranean-sea-part-5) | unverified | partial; 2 matches | n/a | n/a | n/a | n/a | n/a | — | 4 (0) |
 | [07](#07-the-remnants-level-2---coastal-thailand-part-1) | implemented; 1 differs / 3 matches / 1 unmeasured | partial; 3 matches | unverified | verified; 6 matches | unverified; 1 matches | n/a | n/a | 1 matches | 4 (0) |
@@ -33,8 +33,8 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 | [17](#17-valhalla-level-5---jan-mayen-island-part-2) | implemented | partial | partial | n/a | partial | partial; 1 differs / 1 matches / 1 unmeasured | unverified | — | 2 (0) |
 | [18](#18-rituals-old-level-6---andaman-sea) | unverified | unverified | n/a | n/a | partial | n/a | n/a | — | 2 (1) |
 | [19](#19-helheim-level-7---arctic-sea-part-1) | unverified | implemented | n/a | unverified | partial | partial | n/a | — | 4 (0) |
-| [20](#20-yggdrasil-level-7---arctic-sea-part-2) | unverified | partial | unverified | n/a | partial | partial; 1 open | n/a | — | 7 (0) |
-| [21](#21-out-of-time-level-7---arctic-sea-part-3) | partial | partial | unverified | n/a | partial | unverified; 1 open | n/a | — | 1 (0) |
+| [20](#20-yggdrasil-level-7---arctic-sea-part-2) | unverified | partial | unverified | n/a | partial | partial; 1 open | n/a | 1 matches | 7 (0) |
+| [21](#21-out-of-time-level-7---arctic-sea-part-3) | partial | partial | unverified | n/a | partial | unverified; 1 open | n/a | 1 matches | 1 (0) |
 
 ## 01. Prologue: No Illusions (Prologue - Croft Manor)
 
@@ -66,7 +66,7 @@ Matrix: [02_path_to_avalon.md](matrix/02_path_to_avalon.md). Units: `l1_seatop`,
 | Combat / AI | partial | unmeasured here | — |
 | Objects / puzzles | partial | M104 Jellyfish: differs | — |
 | Vehicle | n/a | unmeasured here | — |
-| Camera / systems | — | unmeasured here | — |
+| Camera / systems | — | — Checkpoint respawn position at a fresh load (OU-SAV-002, 2026-11-20): matches | — |
 
 Self-tests: `ch02_seatop_dive`, `ch02_serpent_door`.
 
@@ -100,7 +100,7 @@ Matrix: [04_norse_connection.md](matrix/04_norse_connection.md). Units: `l1_bald
 | Combat / AI | n/a | unmeasured here | — |
 | Objects / puzzles | implemented | M104 Jellyfish: differs | — |
 | Vehicle | n/a | unmeasured here | — |
-| Camera / systems | — | — Camera trigger cut 0xC (OU-CAM-006, 2026-11-20): matches | — |
+| Camera / systems | — | — Camera trigger cut 0xC (OU-CAM-006, 2026-11-20): matches, — Checkpoint respawn position at a fresh load (OU-SAV-002, 2026-11-20): matches | — |
 
 Self-tests: `ch04_column_hall`, `ch04_column_hall_perches`, `ch04_gate_room`, `ch04_kraken_swing`, `ch04_pillar_entry`.
 
@@ -374,7 +374,7 @@ Matrix: [20_yggdrasil.md](matrix/20_yggdrasil.md). Units: `l7_helheim01`, `l7_he
 | Combat / AI | partial | unmeasured here | — |
 | Objects / puzzles | partial | unmeasured here | OU-PZL-012 |
 | Vehicle | n/a | unmeasured here | — |
-| Camera / systems | — | unmeasured here | — |
+| Camera / systems | — | — Checkpoint respawn position at a fresh load (OU-SAV-002, 2026-11-20): matches | — |
 
 Self-tests: `ch20_helheim01_portal`, `ch20_helheim01_rune_symbols`, `ch20_helheim02_passage`, `ch20_helheim03_hall`, `ch20_yggdrasil_hall_eitr_pit`, `ch20_yggdrasil_hall_slide`, `ch20_yggdrasil_reveal`.
 
@@ -391,7 +391,7 @@ Matrix: [21_out_of_time.md](matrix/21_out_of_time.md). Units: `l7_yggdrasil_end`
 | Combat / AI | partial | unmeasured here | — |
 | Objects / puzzles | unverified | unmeasured here | OU-PZL-012 |
 | Vehicle | n/a | unmeasured here | — |
-| Camera / systems | — | unmeasured here | — |
+| Camera / systems | — | — Checkpoint respawn position at a fresh load (OU-SAV-002, 2026-11-20): matches | — |
 
 Self-tests: `ch21_platform_ride`.
 
