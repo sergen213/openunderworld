@@ -94,23 +94,31 @@ struct FluidBurst {
 struct Bubble { float pos[3]; float radius; float alpha; float seed; float rise = 0; float wobble = 0; };
 // ---- original particle effects (src/fx, docs/formats/EFFECTS.md) ----
 // Camera-facing sprite corner; colour bytes R,G,B,A with 0x80 = 1.0 (shaders scale by 2), drawn tex * colour.
-struct FxVertex { float pos[3]; float uv[2]; uint32_t rgba; };
+// normal / tangent: the sprite's frame as signed bytes x, y, z (127 = 1) for lit material sprites: normal toward the
+// viewer, tangent = -d(pos)/du (tru.exe's particle vertices, rendercap10 bedroom); 0 elsewhere.
+struct FxVertex { float pos[3]; float uv[2]; uint32_t rgba; uint32_t normal = 0, tangent = 0; };
 // `count` vertices (triangle list) from `first`; textureId = SceneData texture id (0 = white); blend:
 // 0 alpha (SRCALPHA/INVSRCALPHA), 1 additive (SRCALPHA/ONE), 2 subtract (REVSUBTRACT), 3 multiply (DESTCOLOR/SRCALPHA).
 // Material particles (fx::ParticleMaterial): distort > 0 draws the scene copy offset by normalId's xy (lib-21 decode:
 // (x, y * a) * 2 - 1) x the texture's alpha x distort screen uv, alpha = texture alpha x colour alpha (blend 0);
-// softScale > 0 fades alpha by sat((scene view depth - fragment view depth - (1 - texture alpha) softBias) softScale).
+// softScale > 0 fades alpha by sat((scene view depth - fragment view depth - (1 - texture alpha) softBias) softScale);
+// lit: normalId in the vertex frame, f = sat(-n.z), s = smoothstep(sat((2f - litLow) / (litHigh - litLow))),
+// rgb = texture x (mix(light1, light0, s) + the raw vertex colour), alpha = texture alpha x raw colour alpha (byte / 255).
 struct FxBatch {
     uint32_t first = 0, count = 0, textureId = 0;
     uint8_t blend = 0;
     uint32_t normalId = 0;
     float distort = 0, softScale = 0, softBias = 0;
+    bool lit = false;
+    float litLow = 0, litHigh = 1;
+    float light0[3] = {0, 0, 0}, light1[3] = {0, 0, 0};
     bool screen() const { return distort > 0 || softScale > 0; } // reads the scene colour / depth copies
 };
 // Original screen filters (class-5 effects with a 0x31C0 filter resource, docs/formats/EFFECTS.md "Screen filters"),
 // summed over the running ones by fx::System::screenFilter. Post pass, on the tonemapped scene:
 //   scene = M1(scene) when colourMatrix; scene = mix(scene, M2(blur(scene, blurA)) x tintA, alphaA [x DOF curve]);
-//   scene += MF(blur(scene, blurC)) x amountC;
+//   scene += (MF(c) + c x alphaB x amountC) x amountC, c = blur(scene, blurC), alphaB = the blur's fraction-pass alpha
+//   (filter.glsl; 0x51AEF0's composite PS, BUGS OU-REN-010);
 //   scene = scene x feedbackKeep + blur(scene, feedbackBlur) zoomed / turned about the centre x feedbackColour x
 //   feedbackAmount (PCFeedbackEffect); scene += tintAdd; scene = mix(scene, tintMix.rgb, tintMix.a);
 //   scene = mix(scene, noiseColour x noise, noiseAlpha) (PCNoiseEffect: 10 x 8 cells of `noiseCells` / 64 of a noise

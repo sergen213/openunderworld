@@ -1149,6 +1149,17 @@ public:
             if (b == scene::Blend::Alpha) vkCmdSetDepthWriteEnable(cmd, drawDepthWrite(s, op));
             else if (b == scene::Blend::Opaque && prepassPipelines_ && !prepassDraw) vkCmdSetDepthWriteEnable(cmd, opaqueWrites);
         };
+        // A submesh's draw with its cull mode; two-sided blended ones as a back-face then a front-face draw (drawSidesApart).
+        auto drawSides = [&](const scene::SubMesh& s, float op) {
+            if (drawSidesApart(s, op, options.cullBackFaces)) {
+                vkCmdSetCullMode(cmd, VK_CULL_MODE_FRONT_BIT);
+                vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+                vkCmdSetCullMode(cmd, VK_CULL_MODE_BACK_BIT);
+            } else {
+                vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+            }
+            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+        };
         auto drawOriginal = [&](const DrawRef& d, const OrigDraw& od, VkPipeline p, bool prepassDraw = false) {
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             if (layout != Bound::Original) {
@@ -1178,9 +1189,8 @@ public:
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);
             clipTo(d.mesh);
-            vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
             depthWrites(s, opacityOf(d.mesh), prepassDraw);
-            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+            drawSides(s, opacityOf(d.mesh));
         };
         auto origDraw = [&](const DrawRef& d) -> const OrigDraw* {
             const OrigDraw* od = originals ? &origDraws_[d.mesh][d.sub] : nullptr;
@@ -1291,11 +1301,10 @@ public:
                 rp.alphaRef = s.alphaRef / 255.0f;
                 rp.opacity = s.blend == scene::Blend::Opaque ? -opacityOf(d.mesh) : opacityOf(d.mesh);
                 vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof rp, &rp);
-                vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
                 depthWrites(s, opacityOf(d.mesh), false);
                 const VkDescriptorSet set = textureSet(s.textureId);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
-                vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+                drawSides(s, opacityOf(d.mesh));
             }
             vkCmdEndRendering(cmd);
             const VkImageMemoryBarrier2 toRead = imageBarrier(reflColor_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -1352,11 +1361,10 @@ public:
             push.rt = (rays && blend == scene::Blend::Opaque ? 1 : 0) | (reflective ? 2 : 0);
             push.opacity = s.blend == scene::Blend::Opaque ? -op : op;
             vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
-            vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
             depthWrites(s, op, false);
             const VkDescriptorSet set = textureSet(s.textureId);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
-            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+            drawSides(s, op);
         };
         // Depth pre-pass over the leading opaque submeshes of `refs` (opaque ones come first in each drawOrder group):
         // depth + the normal target (prepass.frag, the translated programs' OU_PREPASS variant).
@@ -1556,8 +1564,13 @@ public:
                     vkCmdPushConstants(cmd, fxLayout_, kPushStages, 0, sizeof(glm::mat4), &push.viewProj);
                     vkCmdPushConstants(cmd, fxLayout_, kPushStages, sizeof(glm::mat4) + sizeof(glm::vec4), sizeof depthToW, &depthToW);
                 }
-                const glm::vec4 params(b.distort, b.softScale, b.softBias, 0);
+                const glm::vec4 params(b.distort, b.softScale, b.softBias, b.lit ? 1.0f : 0.0f);
                 vkCmdPushConstants(cmd, fxLayout_, kPushStages, sizeof(glm::mat4), sizeof params, &params);
+                if (b.lit) { // after depthToW: light 0 / 1 rgb + litLow / litHigh (fx.frag)
+                    const glm::vec4 lit[2] = {{b.light0[0], b.light0[1], b.light0[2], b.litLow},
+                                              {b.light1[0], b.light1[1], b.light1[2], b.litHigh}};
+                    vkCmdPushConstants(cmd, fxLayout_, kPushStages, sizeof(glm::mat4) + 2 * sizeof(glm::vec4), sizeof lit, lit);
+                }
                 // Set 1 is the water set (the opaque copies, written by recordWaterCopies when FxBatch::screen asked).
                 const VkDescriptorSet sets[3] = {textureSet(b.textureId), waterSets_[frameIndex_], textureSet(b.normalId)};
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxLayout_, 0, 3, sets, 0, nullptr);
@@ -3710,7 +3723,7 @@ private:
         VK_CHECK(vkCreatePipelineLayout(device_, &ll, nullptr, &lineLayout_));
         // set 0 = the sprite texture, 1 = the water set's opaque colour / depth copies, 2 = the normal map (FxBatch).
         const VkDescriptorSetLayout fxSets[3] = {setLayout_, waterSetLayout_, setLayout_};
-        VkPushConstantRange fxPush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4) + 2 * sizeof(glm::vec4)};
+        VkPushConstantRange fxPush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4) + 4 * sizeof(glm::vec4)};
         VkPipelineLayoutCreateInfo fxl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 3, fxSets, 1, &fxPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &fxl, nullptr, &fxLayout_));
         // Under-water composite (recordUwComposite): sets 0 and 1 = one image each (the bloom chain binds only set 0), set
@@ -3833,6 +3846,8 @@ private:
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FxVertex, pos)},
             {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(FxVertex, uv)},
             {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(FxVertex, rgba)},
+            {3, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(FxVertex, normal)},
+            {4, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(FxVertex, tangent)},
         };
         for (size_t b = 0; b < fxPipelines_.size(); ++b)
             fxPipelines_[b] = createPipeline(kFxVert, kFxFrag, fxLayout_, &fxBinding, fxAttrs,
@@ -3983,17 +3998,19 @@ private:
             {4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
         };
         const VkVertexInputBindingDescription fxBinding{0, sizeof(FxVertex), VK_VERTEX_INPUT_RATE_VERTEX};
-        const VkVertexInputAttributeDescription fxAttrs[3] = {
+        const VkVertexInputAttributeDescription fxAttrs[5] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FxVertex, pos)},
             {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(FxVertex, uv)},
             {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(FxVertex, rgba)},
+            {3, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(FxVertex, normal)},
+            {4, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(FxVertex, tangent)},
         };
         VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, nullptr, 0,
                                                 2, meshBindings, 4, meshAttrs};
         switch (kind) {
         case FsrPipeline::Camera: vs = kPostVert, fs = kFsrCameraFrag, layout = fsrCameraLayout_, vi = {vi.sType}; break;
         case FsrPipeline::WeatherReactive: vs = kPostVert, fs = kFsrWeatherFrag, layout = postLayout_, vi = {vi.sType}; break;
-        case FsrPipeline::FxReactive: vs = kFxVert, fs = kFsrFxFrag, layout = fsrFxLayout_, vi = {vi.sType, nullptr, 0, 1, &fxBinding, 3, fxAttrs}; break;
+        case FsrPipeline::FxReactive: vs = kFxVert, fs = kFsrFxFrag, layout = fsrFxLayout_, vi = {vi.sType, nullptr, 0, 1, &fxBinding, 5, fxAttrs}; break;
         case FsrPipeline::SplashReactive: vs = kSplashScreen, fs = kFsrSplashFrag, layout = splashLayout_, vi = {vi.sType}; break;
         default: break;
         }

@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -333,6 +334,29 @@ TEST(RealData, UnitTerrain) {
     size_t skipped = 0;
     for (const auto& w : sc.warnings) skipped += w.find("skipped (no texcoords") != std::string::npos;
     EXPECT_EQ(skipped, 3u); // sections 13938/13941/13944: level-enclosing boxes, material 0xd78
+}
+
+// Terrain normals are SHORT4 with the tangent in each component's low byte (v = 256 normal + tangent + 128, the terrain
+// vertex shaders' decode): both come out unit and perpendicular, the binormal completes the frame.
+TEST(RealData, PackedTerrainNormalsCarryTheTangent) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto sc = formats::loadDrmScene(bf, "pc-w\\l2_cliffclimb.drm");
+    size_t n = 0;
+    for (const auto& m : sc.meshes) {
+        if (m.origin.find("terrain") == std::string::npos) continue;
+        for (const auto& v : m.vertices) {
+            const glm::vec3 nn = glm::make_vec3(v.normal), t = glm::make_vec3(v.tangent), b = glm::make_vec3(v.binormal);
+            if (glm::length(t) < 0.5f) continue; // degenerate frames in the data
+            EXPECT_NEAR(glm::length(nn), 1.0f, 1e-4f);
+            EXPECT_NEAR(glm::length(t), 1.0f, 0.03f);
+            EXPECT_NEAR(glm::dot(nn, t), 0.0f, 0.03f);
+            EXPECT_NEAR(std::abs(glm::dot(b, glm::cross(nn, t))), glm::length(b) * glm::length(glm::cross(nn, t)), 1e-3f);
+            if (++n > 2000) return;
+        }
+    }
+    EXPECT_GT(n, 100u);
 }
 
 // Cell group +0x14 exterior terrains (panorama cylinders), drawn behind everything (tru.exe far depth range).

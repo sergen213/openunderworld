@@ -34,15 +34,20 @@ struct Key {
 
 // Material particle (def +0x168 material or +0x16C list {u32 n, materials[n]}: 0x543F70 takes the material path when
 // either is set, the material's shaders then draw the sprite). Reduced to what the composite pixel shaders do (EFFECTS.md
-// "Material particles"): a colour texture times the vertex colour, a soft depth fade, or a screen-space refraction.
+// "Material particles"): a colour texture times the vertex colour, a soft depth fade, a screen-space refraction, or a
+// sprite lit from below by its effect's light record.
 struct ParticleMaterial {
     uint32_t id = 0;
     uint32_t texture = 0;     // first material texture that is not a normal map (category != 3); 0 = white
-    uint32_t normal = 0;      // category-3 texture: refraction offsets
+    uint32_t normal = 0;      // category-3 texture: refraction offsets / the lit sprite's normal map
     bool additive = false;    // material blend mode 5 (SRCALPHA/ONE); else 2-4 SRCALPHA/INVSRCALPHA
     bool distort = false;     // samples BackBufferTexture (global class 9): drawn as refraction of the scene
     float distortScale = 0;   // screen-uv offset per unit of (normal.xy * mask alpha)
     float softScale = 0, softBias = 0; // DepthBufferTexture (class 10): alpha *= sat((scene - z - (1 - a) bias) * scale)
+    // Lit sprite (the pixel shader reads InstanceParams c133 / c135 = ParticleDef::lights, e.g. smoke 6946): the normal
+    // map's facing down, windowed by MaterialParams c100.x / c100.y, blends light 1 to light 0 (EFFECTS.md).
+    bool lit = false;
+    float litLow = 0, litHigh = 1;
 };
 
 // 0x17C-byte particle emitter definition (GenericFXObject +0x10 array).
@@ -77,6 +82,9 @@ struct ParticleDef {
     std::vector<uint32_t> textures;        // +0x114 -> {u32 n, ids[n]} (wins over +0x110)
     uint8_t atlasCols = 0, atlasRows = 0, atlasFrames = 0, atlasFirst = 0; // +0x174..+0x177
     std::vector<ParticleMaterial> materials; // +0x168 / +0x16C (wins over the textures)
+    // +0x170 -> the effect's light record (three 0x18-byte lights {u8 rgba, ...}; 0x543F70 -> 0x52D4D0 gives the emitter a
+    // slot, 0x53E320 fills its InstanceParams each frame): colours of lights 0 and 1 (c133 / c135 of lit materials).
+    glm::vec3 lights[2]{glm::vec3(0), glm::vec3(0)};
     bool model() const { return flags4 & 0x80; } // model particles (casings, debris): drawn as small sprites [I]
     // Drawn with bubble textures only (fx::isBubbleTexture; Enhanced water hands these to the bubble pass).
     bool bubble() const;

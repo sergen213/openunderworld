@@ -138,7 +138,7 @@ Header fields used (u32, offsets relative to Header) [O]:
   |------|-----------|----------|
   | 0xD2F7D823 | position | [O] float3. Bounding boxes and renders are plausible |
   | 0x36F5E414 | model normal | [O] D3DCOLOR (B,G,R,A); the shader applies `*2−1` |
-  | 0x09B1D4EA | terrain normal | [O] SHORT4, normalized by us |
+  | 0x09B1D4EA | terrain normal + tangent | [O] SHORT4 v = 256·hi + lo per component (lo in 0..255): normal = hi / 127, tangent = (lo − 128) / 127, w = binormal sign (−1 in l2_cliffclimb); the terrain / sea vertex shaders decode it (defs 1/256, 128, 1/127, 256/127; lib 523 slots 160–162, D3D9 call 13364084). Ours: decoded into `Vertex::normal` (normalized), `tangent`, `binormal` = w·cross(n, t); translated programs with that decode repack them (`ShaderTranslate` `ouPackedNormal`; before 2026-11-20 they decoded the normalized normal: normal ≈ 0, tangent ≈ (−1, −1, −1), BUGS OU-WAT-015) |
   | 0x8317902A | texcoord 0 | [O] SHORT2 ÷ 2048. v = 0 is texture row 0 (D3D convention, no flip). Verified by textured CPU renders of Lara (face and clothing land exactly) and of l4_pool |
   | 0x7E7DD623 | colour (`COLOR0`) | [O] baked-lighting input of the pixel shaders, lerped with a light map per material ([MATERIALS.md](MATERIALS.md)); often not a colour (0 on ballcourt ground plants). Not copied to `Vertex::color` |
   | 0x8E54B6F3 | second texcoord | [O] SHORT2, present on Lara (offset 28) and on terrain; decoded to `Vertex::uv1`, the light-map UV of the original shaders (class-1 instance textures; meshes without it: [LIGHTING.md §2](LIGHTING.md#2-light-maps-without-texcoord1-mean-light-map-rule)) |

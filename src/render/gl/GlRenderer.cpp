@@ -261,28 +261,44 @@ const char* kFxVs = R"(#version 460 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aUv;
 layout(location = 2) in vec4 aColor;
+layout(location = 3) in vec3 aNormal;
+layout(location = 4) in vec3 aTangent;
 layout(location = 0) uniform mat4 uViewProj;
-out vec2 vUv; out vec4 vColor;
+out vec2 vUv; out vec4 vColor; out vec4 vRaw; out vec3 vNormal; out vec3 vTangent;
 void main() {
     vUv = aUv;
     vColor = min(aColor * 2.0, vec4(2.0, 2.0, 2.0, 1.0));
+    vRaw = aColor, vNormal = aNormal, vTangent = aTangent;
     gl_Position = uViewProj * vec4(aPos, 1.0);
 })";
 // Material particles (FxBatch): uParams x = refraction screen-uv scale (scene copy offset by the normal map's xy x the
-// texture's alpha; GL's v points up, D3D's down), y / z = soft fade scale / bias against the depth copy.
+// texture's alpha; GL's v points up, D3D's down), y / z = soft fade scale / bias against the depth copy, w > 0 lit
+// (uLit0 / uLit1 = light 0 / 1 rgb + litLow / litHigh; ShaderLib 655's math, FxBatch).
 const char* kFxFs = R"(#version 460 core
-in vec2 vUv; in vec4 vColor;
+in vec2 vUv; in vec4 vColor; in vec4 vRaw; in vec3 vNormal; in vec3 vTangent;
 layout(binding = 0) uniform sampler2D uTex;
 layout(binding = 5) uniform sampler2D uScene;
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 8) uniform sampler2D uNormal;
 layout(location = 1) uniform vec4 uParams;
 layout(location = 2) uniform vec2 uDepthToW;
+layout(location = 3) uniform vec4 uLit0;
+layout(location = 4) uniform vec4 uLit1;
 out vec4 oColor;
 float viewDepth(float d) { return 1.0 / max(d * uDepthToW.x + uDepthToW.y, 1e-6); }
 void main() {
     vec4 t = texture(uTex, vUv);
     vec2 suv = gl_FragCoord.xy / vec2(textureSize(uScene, 0));
+    if (uParams.w > 0.0) {
+        vec4 n = texture(uNormal, vUv);
+        vec2 xy = vec2(n.x, n.y * n.w) * 2.0 - 1.0;
+        vec3 w = clamp(sqrt(abs(1.0 - dot(xy, xy))), 0.0, 1.0) * vNormal + xy.x * vTangent + xy.y * cross(vTangent, vNormal);
+        float f = clamp(-w.z * inversesqrt(max(dot(w, w), 1e-12)), 0.0, 1.0);
+        float s = clamp((2.0 * f - uLit0.w) / (uLit1.w - uLit0.w), 0.0, 1.0);
+        s = s * s * (3.0 - 2.0 * s);
+        oColor = vec4(t.rgb * (mix(uLit1.rgb, uLit0.rgb, s) + vRaw.rgb), t.a * vRaw.a);
+        return;
+    }
     if (uParams.x > 0.0) {
         vec4 n = texture(uNormal, vUv);
         vec2 off = (vec2(n.x, n.y * n.w) * 2.0 - 1.0) * t.a * uParams.x;
@@ -840,6 +856,8 @@ public:
         attrib(r.fxVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(FxVertex, pos));
         attrib(r.fxVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(FxVertex, uv));
         attrib(r.fxVao.get(), 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(FxVertex, rgba));
+        attrib(r.fxVao.get(), 3, 3, GL_BYTE, GL_TRUE, offsetof(FxVertex, normal));
+        attrib(r.fxVao.get(), 4, 3, GL_BYTE, GL_TRUE, offsetof(FxVertex, tangent));
         r.emptyVao = newVertexArray();
         r.lineVao = newVertexArray();
         attrib(r.lineVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(LineVertex, pos));
@@ -1170,7 +1188,6 @@ public:
             }
             if (int(blend) != state) setBlend(state = int(blend));
             if (blend == scene::Blend::Alpha) glDepthMask(drawDepthWrite(s, op) ? GL_TRUE : GL_FALSE);
-            if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
                 if (m.screenSamplers[d.sub]) { // reads the scene drawn so far: after the loop, from the copies
                     deferred_.push_back(d);
@@ -1182,16 +1199,15 @@ public:
                 }
                 glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
                 glBindTextures(0, 16, originalTextures(m, d).data());
-                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
-                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+                drawSides(s, op, options.cullBackFaces, [&] { drawElements(s); });
                 continue;
             }
             glUniform1f(3, s.alphaRef / 255.0f);
             glUniform2f(4, op, s.blend == scene::Blend::Opaque ? 1.0f : 0.0f);
-            drawSubmesh(s);
+            drawSides(s, op, options.cullBackFaces, [&] { drawSubmesh(s); });
         }
         scissorFor(UINT32_MAX, vp); // off: blits obey the scissor
-        if (originals && !deferred_.empty()) drawScreenReaders(vp);
+        if (originals && !deferred_.empty()) drawScreenReaders(vp, options.cullBackFaces);
         setBlend(int(scene::Blend::Opaque));
         if (enhancedWater) {
             drawAgWater(wb.eye.w);
@@ -1490,8 +1506,26 @@ private:
         auto it = res_->textures.find(s.textureId);
         const bool usable = it != res_->textures.end() && !cubes_.contains(s.textureId);
         glBindTextureUnit(0, usable ? it->second : res_->white.get());
+        drawElements(s);
+    }
+    static void drawElements(const scene::SubMesh& s) {
         glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
                        reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+    }
+    // Submesh `s`'s cull state, then `draw`; two-sided blended ones as a back-face then a front-face draw (drawSidesApart).
+    // `cullOff`: single draws never cull (screen readers: the sea is also seen from below).
+    template <class Draw> static void drawSides(const scene::SubMesh& s, float op, bool cullBackFaces, Draw&& draw, bool cullOff = false) {
+        if (drawSidesApart(s, op, cullBackFaces)) {
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_FRONT);
+            draw();
+            glCullFace(GL_BACK);
+        } else if (cullBackFaces && !s.doubleSided && !cullOff) {
+            glEnable(GL_CULL_FACE);
+        } else {
+            glDisable(GL_CULL_FACE);
+        }
+        draw();
     }
 
     // ---- CORTAO ambient occlusion (docs/RENDERING.md "Ambient occlusion"; third_party/cortao, MIT) ----
@@ -2013,7 +2047,7 @@ private:
 
     // Submeshes whose materials sample the back / depth buffer (original::screenSamplers; the sea): copy the scene drawn
     // so far into the single-sample textures, then draw them in draw order with those bound.
-    void drawScreenReaders(Viewport vp) {
+    void drawScreenReaders(Viewport vp, bool cullBackFaces) {
         Resources& r = *res_;
         Targets& t = r.targets;
         glBlitNamedFramebuffer(t.scene.get(), t.opaqueColorFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
@@ -2027,9 +2061,9 @@ private:
             glUseProgram(r.originals[size_t(m.program[d.sub])]);
             glBindVertexArray(m.vao.get());
             scissorFor(d.mesh, vp);
-            const scene::Blend blend = drawBlend(s, d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f);
+            const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;
+            const scene::Blend blend = drawBlend(s, op);
             if (int(blend) != state) setBlend(state = int(blend));
-            glDisable(GL_CULL_FACE); // the sea is also seen from below
             glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(objectSlot(m, d)) * objectStride(), sizeof(sm3::ObjectBlock));
             glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
             auto tex = originalTextures(m, d);
@@ -2038,8 +2072,7 @@ private:
                 if (m.screenSamplers[d.sub] >> (16 + n) & 1) tex[size_t(n)] = t.opaqueDepth.get();
             }
             glBindTextures(0, 16, tex.data());
-            glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
-                           reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+            drawSides(s, op, cullBackFaces, [&] { drawElements(s); }, true);
         }
         scissorFor(UINT32_MAX, vp);
     }
@@ -2121,19 +2154,17 @@ private:
             const scene::Blend blend = drawBlend(s, op);
             if (int(blend) != state) setBlend(state = int(blend));
             if (blend == scene::Blend::Alpha) glDepthMask(drawDepthWrite(s, op) ? GL_TRUE : GL_FALSE);
-            if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
                 glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(litSlot(m, d)) * objectStride(), sizeof(sm3::ObjectBlock));
                 glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
                 glBindTextures(0, 16, m.samplers[d.sub].data());
-                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
-                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+                drawSides(s, op, options.cullBackFaces, [&] { drawElements(s); });
                 continue;
             }
             glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
             glUniform1f(3, s.alphaRef / 255.0f);
             glUniform2f(4, op, s.blend == scene::Blend::Opaque ? 1.0f : 0.0f);
-            drawSubmesh(s);
+            drawSides(s, op, options.cullBackFaces, [&] { drawSubmesh(s); });
         }
         setBlend(int(scene::Blend::Opaque));
         reflecting_ = true;
@@ -2550,7 +2581,11 @@ private:
         for (const auto& b : options.fxBatches) {
             glBindTextureUnit(0, tex(b.textureId));
             glBindTextureUnit(8, tex(b.normalId));
-            glUniform4f(1, b.distort, b.softScale, b.softBias, 0.0f);
+            glUniform4f(1, b.distort, b.softScale, b.softBias, b.lit ? 1.0f : 0.0f);
+            if (b.lit) {
+                glUniform4f(3, b.light0[0], b.light0[1], b.light0[2], b.litLow);
+                glUniform4f(4, b.light1[0], b.light1[1], b.light1[2], b.litHigh);
+            }
             glBlendEquation(b.blend == 2 ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);
             if (b.blend == 0) glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             else if (b.blend == 3) glBlendFunc(GL_DST_COLOR, GL_SRC_ALPHA);

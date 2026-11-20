@@ -93,6 +93,12 @@ inline scene::Blend drawBlend(const scene::SubMesh& s, float opacity) {
 }
 // Whether a blended submesh writes depth (SubMesh::depthWrite); fading instances go to the translucent pass (0x50F7C0).
 inline bool drawDepthWrite(const scene::SubMesh& s, float opacity) { return s.depthWrite && opacity >= 1; }
+// Two-sided blended draws go out as two draws in a row, back faces then front faces (rendercap10: every two-sided
+// translucent batch is a D3DCULL_CCW + D3DCULL_CW pair, the mirror view's flipped; BUGS OU-REN-011), so a mesh that
+// overlaps itself (hair, cloth, foliage cards) blends its far side first. With back-face culling off: one draw.
+inline bool drawSidesApart(const scene::SubMesh& s, float opacity, bool cullBackFaces) {
+    return cullBackFaces && s.doubleSided && drawBlend(s, opacity) != scene::Blend::Opaque;
+}
 // FrameOptions::meshOpacity -> one value per mesh (out stays empty when nothing fades).
 inline void meshOpacities(std::span<const MeshOpacity> list, size_t meshes, std::vector<float>& out) {
     out.clear();

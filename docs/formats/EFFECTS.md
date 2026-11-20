@@ -177,6 +177,19 @@ shaders draw the sprite; we reduce the composite pixel shaders (disassembled) to
 - **Soft sprites** (global class 10 `DepthBufferTexture`: fire 651–653, steam 657–659 / 628–630): texture × colour,
   alpha × sat((scene view depth − sprite view depth − (1 − a)·c100.y) · s) with s = −(the negative MaterialParams
   entry), e.g. fx_fire 6603 (2, 0, −0.01): fades over 100 units. Blend from the material (5 additive).
+- **Lit sprites** [O]: a category-3 normal map without global targets and a pixel shader reading InstanceParams
+  c133 / c135. Of the install's 15 pixel shaders reading both, only ShaderLib 655 is a sprite program (the prologue
+  smoke, material 6946; rendercap10 bedroom, D3D9 call 1504259): the normal map (x, y·a)·2 − 1, z = sat(√|1 − x² − y²|),
+  in the sprite frame (tru.exe's particle vertices: normal toward the viewer, tangent −∂pos/∂u, the VS's binormal
+  cross(tangent, normal) = −∂pos/∂v; rendercap10 VB of call 19971575); f = sat(−n.z) (world down), t =
+  sat((2f − c100.x) / (c100.y − c100.x)), s = t²(3 − 2t); rgb = texture × (mix(c135, c133, s) + vertex colour), alpha
+  = texture alpha × vertex alpha, both raw bytes / 255 (0x5498C0 repacks the particle colour unscaled), then the fog
+  LUT (c22 = 0 for 6946: none). c133 / c135 are the colours of lights 0 and 1 of the effect's light record: def `+0x170`
+  → three 0x18-byte lights `{u8 r, g, b, a, …, +0x14 kind}` (the GenericFXObject header holds them, e.g. 6945 `+0xD8`:
+  (75, 44, 14) and two black lights); 0x543F70 gives the emitter a slot for (owner, record) (0x52D4D0, emitter
+  `+0x18F`, particle `+0xA6`), 0x53E320 fills its 0xA0-byte InstanceParams each frame (direction from the kind, colour
+  bytes / 255; c132 / c134 = light directions, unread by 655), 0x5498C0 hands the slot to the draw. Captured c133 =
+  (0.294, 0.173, 0.055), c135 = 0, c100 = (0, 1) in all 172 smoke draws of the frame.
 - Others: the first non-normal-map texture × colour with the material's blend.
 
 Atlas fields `+0x174..+0x177` select the frame as for textures (fire flipbooks 1792–1794 / 2122 are 8×8). Both
@@ -260,7 +273,7 @@ weight × value (tables + round(t × w), saturating) and is topped up with the i
 |---|---|---|---|
 | +0x0000 | PCColorDOFEffect (sum 0x516E70, draw 0x5177E0) | `+0x130E` enable, `+0x130C` depth curve, `+0x130D` scene matrix, `+0x1300` blur (sum ≤ 4) × device +0x1330 [U, 1 here], `+0x1304` alpha (≤ 1), `+0x1308` tint RGB, `+0x1310` / `+0x1314` depth range (own with `+0x130F`, else the scene's [U]), `+0x0000` scene matrix, `+0x0900` overlay matrix, `+0x1200` depth curve | scene through the scene matrix; half-size copy through the overlay matrix [I: ours after the blur], blurred, × tint, blended over by alpha (× depth curve over the view distance [I: distance, not z]) |
 | +0x1320 | second ColorDOF accumulator | as above | not enabled by the data seen [U] |
-| +0x2640 | PCFinishEffect (sum 0x51AAB0, draw 0x51AEF0) | `+0x909` enable, `+0x900` blur (≤ 4), `+0x904` amount (≤ 2), `+0x90A` curves, `+0x908` all 9 tables (else the diagonal) | half-size copy blurred (0x519F20: down to level ceil(r), back up by 4-tap bilinear steps, the fraction blended), through the curves, added (SRCALPHA/ONE, alpha = amount × 127.5) |
+| +0x2640 | PCFinishEffect (sum 0x51AAB0, draw 0x51AEF0) | `+0x909` enable, `+0x900` blur (≤ 4), `+0x904` amount (≤ 2), `+0x90A` curves, `+0x908` all 9 tables (else the diagonal) | half-size copy blurred (0x519F20: down to level ceil(r), back up by 4-tap bilinear steps, the fraction blended), composited by PS `oC0.rgb = M(c) + c · (c.a · a)`, `oC0.a = a` (rendercap10 calls 1565373 / 13365863), blended SRCALPHA/ONE with a = amount × 127.5 / 255: the frame gains a · (M(c) + α_b · a · c), α_b = w² + (1 − w) after a fraction pass blended at w = 1 − round((ceil(r) − r) · 255) / 255 (the 4-tap passes write their vertex alpha), else 1 (ours since 2026-11-20, BUGS OU-REN-010) |
 | +0x2F74 | PCFeedbackEffect (sum 0x51A190, draw 0x51A530) | floats keep (<= 1), amount (<= 1), blur (<= 4), zoom x / y (<= 4), two angles; `+0x1C` colour, `+0x20` enable | scene x keep, + the (blurred, zoomed / turned) previous frame x colour x amount; ours as well: the post output (before the HUD) is copied at the end of each frame the effect runs into a persistent half-size texture with mips (0x509630 -> 0x51A2E0), the next frame draws it (nothing on the first frame: no copy yet, +0x3D) |
 | +0x2F60 | PCNoiseEffect (sum 0x51B110, draw 0x51B1D0) | `+0` colour, `+4` alpha (<= 255), `+8` cells (<= 255), `+0xC` [U], `+0x10` enable | 10 x 8 quads of a noise texture at random offsets, alpha-blended; ours: hash noise |
 | +0x2FA4 | view fog (0x512D60, always, also with fullscreen effects off) | `+0` enable, `+4` colour R, G, B, `+8` near, `+0xC` far, `+0x10` curve (256), `+0x110`/`+0x114`/`+0x118` height fog near / far / curve | the frame's fog for TRU's shaders (`fx::FogSum`, RENDERING.md "After geometry"); height fog unused |
