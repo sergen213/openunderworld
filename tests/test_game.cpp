@@ -8142,6 +8142,9 @@ TEST(GameReal, CliffSwanDiveIntoTheSea) {
 // 50 over the sea (segment 0, 48..80 along it; the only shelf over open water found in the 97 units). Treading off it
 // with the stick toward it she climbs out into the hug, not the plain swim_climbout: the clip's root stands on the shelf
 // from its first frame and turns her half round, Wall_Hug_Idle after, back to the wall 88.496 in from the ledge.
+// [I] at this site: tru.exe under Wine (2026-11-20, w2/WineCheck10/d) attaches its swim climb-out at 79.0 along, never
+// inside the notch, with clearance 2 and swim_climbout_A/_B/_C (OU-PLY-003 open): this test pins our current behaviour
+// until the swim query's point rule is decoded.
 TEST(GameReal, SwimClimbOutOntoShelf) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
