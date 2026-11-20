@@ -71,6 +71,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-WAT-011 | water render | Water reflections miss off-screen geometry (SSR) | Open (limit) | pre-existing | — |
 | OU-WAT-012 | water render / RT | RT reflection of a shadowed cliff overhang reads too dark | Not reproduced | pre-existing | — |
 | OU-WAT-013 | water render | Geometry swell small outside the tessellated window (coarse TRU sea meshes) | Open (limit) | pre-existing | C-SWELL |
+| OU-WAT-014 | water render | Under-water tint over a level view while swimming at the surface | Fixed-verified | pre-existing | — |
 | OU-REN-001 | render | Dark sky near the chapter 2 cliff | Fixed (sky dome object) | pre-existing | — |
 | OU-REN-002 | render | HDR off by default: bright window highlights band | Open | pre-existing | — |
 | OU-REN-003 | render / cine | `co_*` cutscene actor faces render green | Open | pre-existing | — |
@@ -352,6 +353,18 @@ established) / **Fix** (suggested) / **Test** / **Status · Origin**.
 **OU-WAT-013 Geometry swell small outside the tessellated window** — TRU sea meshes are ~3.5 m quads (RENDERING L542-546);
 only the wave-field window is tessellated (`water.tesc/.tese`), elsewhere relief is normals only (ROADMAP L67).
 Status · Origin: Open (limit) · pre-existing.
+
+**OU-WAT-014 Under-water tint while swimming at the surface** (player report, 2026-11-20)
+- Repro: l2_cliffclimb `--spawn -31946.2,-13857.3,408,43 --camera -32600,-14500,50,-30000,-12000,-150` (a level view
+  just over the sea while she treads): the whole frame was washed blue-green (mean rgb 44 / 133 / 130).
+- Cause (confirmed): ours drew the full-screen under-water pass at 1 − h / 600 whenever the eye was within 600 over
+  the surface. tru.exe 0x6D9DA0 also needs 0x5EA200's view angle: acos(camera matrix row 2 z) > 2.0 rad (0x431CA0 =
+  acos: a quaternion-to-axis-angle caller doubles its result of w), i.e. only looking steeply down into the water.
+- Fix (agent/SurfTint): the look-down test in `EffectsView::water` (`src/app/game/main.cpp`). [U] third gate 0x69E270
+  (water +0x2D0 → +0x2EC flags +0x7C bit 1) not applied.
+- Verified: same view after the fix shows the cliffs untinted (mean rgb 63 / 102 / 94); the default top-down treading
+  camera and an under-water camera are unchanged (Vulkan and GL).
+- Status · Origin: Fixed-verified · pre-existing.
 
 ### Rendering (OU-REN)
 
