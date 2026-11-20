@@ -17,6 +17,20 @@ static HANDLE proc(void) {
     return h;
 }
 static DWORD rd32(HANDLE h, DWORD a) { DWORD v = 0; ReadProcessMemory(h, (void*)a, &v, 4, 0); return v; }
+// One key of a schedule: vk 1 / 2 are the left / right mouse buttons (tru.exe: fire / aim), any other a keyboard key
+// by scan code (arrows extended).
+static void sendKey(int vk, int up) {
+    INPUT in = {0};
+    if (vk == 1 || vk == 2) {
+        in.type = INPUT_MOUSE;
+        in.mi.dwFlags = vk == 1 ? (up ? MOUSEEVENTF_LEFTUP : MOUSEEVENTF_LEFTDOWN) : (up ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_RIGHTDOWN);
+    } else {
+        in.type = INPUT_KEYBOARD; in.ki.wVk = (WORD)vk; in.ki.wScan = MapVirtualKeyA(vk, 0);
+        in.ki.dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0);
+        if (vk >= VK_LEFT && vk <= VK_DOWN) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    SendInput(1, &in, sizeof in);
+}
 int main(int argc, char** argv) {
     if (argc < 2) return 2;
     HANDLE h = proc();
@@ -38,9 +52,7 @@ int main(int argc, char** argv) {
         for (;;) {
             QueryPerformanceCounter(&t); double ms = (t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
             for (int i = 0; i < ne; ++i) if ((st[i] == 0 && ms >= dn[i]) || (st[i] == 1 && ms >= up[i])) {
-                INPUT in = {0}; in.type = INPUT_KEYBOARD; in.ki.wVk = vk[i]; in.ki.wScan = MapVirtualKeyA(vk[i], 0);
-                in.ki.dwFlags = KEYEVENTF_SCANCODE | (st[i] ? KEYEVENTF_KEYUP : 0);
-                SendInput(1, &in, sizeof in); printf("%.1f key %x %s\n", ms, vk[i], st[i] ? "up" : "down"); ++st[i]; }
+                sendKey(vk[i], st[i]); printf("%.1f key %x %s\n", ms, vk[i], st[i] ? "up" : "down"); ++st[i]; }
             if (ms > total) break;
             { static int lifted; if (!lifted && getenv("LIFT")) { float lm, dz; sscanf(getenv("LIFT"), "%f:%f", &lm, &dz);
                 if (ms >= lm) { float zz; ReadProcessMemory(h, (void*)(p + 0x28), &zz, 4, 0); zz += dz; WriteProcessMemory(h, (void*)(p + 0x28), &zz, 4, 0);
@@ -192,10 +204,7 @@ int main(int argc, char** argv) {
         for (;;) {
             QueryPerformanceCounter(&t); double ms = (t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
             for (int i = 0; i < ne; ++i) if ((st[i] == 0 && ms >= dn[i]) || (st[i] == 1 && ms >= up[i] && ms >= at[i] + (up[i] - dn[i]))) { if (st[i] == 0) at[i] = ms;
-                INPUT in = {0}; in.type = INPUT_KEYBOARD; in.ki.wVk = vk[i]; in.ki.wScan = MapVirtualKeyA(vk[i], 0);
-                in.ki.dwFlags = KEYEVENTF_SCANCODE | (st[i] ? KEYEVENTF_KEYUP : 0);
-                if (vk[i] >= VK_LEFT && vk[i] <= VK_DOWN) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
-                SendInput(1, &in, sizeof in); printf("%.1f key %x %s\n", ms, vk[i], st[i] ? "up" : "down"); ++st[i];
+                sendKey(vk[i], st[i]); printf("%.1f key %x %s\n", ms, vk[i], st[i] ? "up" : "down"); ++st[i];
             }
             if (ms > total) break;
             DWORD p = rd32(h, 0xE7F094), c = rd32(h, 0xE80534); float s[14] = {0};
@@ -235,10 +244,7 @@ int main(int argc, char** argv) {
         for (;;) {
             QueryPerformanceCounter(&t); double ms = (t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
             for (int i = 0; i < ne; ++i) if ((st[i] == 0 && ms >= dn[i]) || (st[i] == 1 && ms >= up[i] && ms >= at[i] + (up[i] - dn[i]))) { if (st[i] == 0) at[i] = ms;
-                INPUT in = {0}; in.type = INPUT_KEYBOARD; in.ki.wVk = vk[i]; in.ki.wScan = MapVirtualKeyA(vk[i], 0);
-                in.ki.dwFlags = KEYEVENTF_SCANCODE | (st[i] ? KEYEVENTF_KEYUP : 0);
-                if (vk[i] >= VK_LEFT && vk[i] <= VK_DOWN) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
-                SendInput(1, &in, sizeof in); printf("%.1f key %x %s\n", ms, vk[i], st[i] ? "up" : "down"); ++st[i];
+                sendKey(vk[i], st[i]); printf("%.1f key %x %s\n", ms, vk[i], st[i] ? "up" : "down"); ++st[i];
             }
             if (ms > total) break;
             DWORD p = rd32(h, 0xE7F094), c = rd32(h, 0xE80534), pd = rd32(h, 0xFADB58);
