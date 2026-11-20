@@ -1,9 +1,9 @@
 {
  "version": 1,
  "name": "ch05_natla_room",
- "chapter": "05 God of Thunder: left at the T to the Natla room's window (docs/matrix/05_god_of_thunder.md C05-19, C05-20)",
+ "chapter": "05 God of Thunder: along the hall, left at the T to the Natla room's window (docs/matrix/05_god_of_thunder.md C05-19, C05-20)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/04thunder.html",
- "note": "KNOWN GAP (2026-11-10). After ch05_below_decks's steps she stands at the T (-3870 -8100 17). The left-hand (west) recess ends at a wall or shut door at (-4845 -7911): she cannot go on north there. The right-hand ramp leads down to the engine floor (z -299), where volume 1437 is entered (1288 vt 63) but volume 1436, 790 higher, is not; a 100-high bump with sliding sides at x -2472 .. -2272, y -4900 and a 300-high block at (-3300 -7676) close the other ways. What shuts the west passage (an unopened door of l1_ship_engine_hall / l1_ship_natla_room, or missing streaming of the Natla room) is not yet known. `ProgressionReal` passes volume 1436 by placing her in it. The last step fails today.",
+ "note": "After ch05_below_decks's steps she stands at the west end of the hall beyond the engine room (-3870 -8100 17). The walkthrough's T is not there (that west recess ends at a wall, (-4845 -7911)): the hall runs east and down the ramp onto the engine floor (z -299), north up the corridor in the middle (x -1257) into the V-shaped engine room, whose two wings are the T: the right-hand one a dead end, the left-hand one (north-west, back up to z 17) leads to the Natla room's window, where volume 1436 (engine_hall -2595 -3769 491) plays cinematic 1288 (060_med_natla; skipped here, its events run). Its end lifts her into l1_ship_natla_room (chapter 6's start). The scenario of 2026-11-10 took the west recess for the T.",
  "level": "l1_ship_exterior",
  "spawn": [
   0,
@@ -189,19 +189,78 @@
    ]
   },
   {
-   "step": "left_at_the_t",
+   "step": "up_the_corridor_and_left_at_the_t",
    "plan": [
-    "go -4822 -7950 60",
-    "go -4822 -6800 80"
+    "go -1257 -8000 80",
+    "go -1257 -6000 80",
+    "go -1257 -5000 80",
+    "go -2500 -4300 80",
+    "go -3852 -3886 80"
    ],
-   "duration": 30,
+   "duration": 60,
    "expect": [
     {
      "probe": "step.events",
      "has": [
+      "enter:1437>1437",
       "enter:1436>1436"
      ],
-     "note": "volume 1436 (engine_hall -2595 -3769 491) starts cinematic 1288, 060_med_natla"
+     "note": "the engine floor's volume 1437, then 1436 at the left wing's end (engine_hall -2595 -3769 491)"
+    },
+    {
+     "calls": [
+      "1288:63"
+     ]
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 17,
+     "tol": 6,
+     "note": "back up from the engine floor (z -299) in the left wing"
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "natla_cinematic",
+   "plan": [
+    "wait 20"
+   ],
+   "duration": 40,
+   "until": {
+    "probe": "step.events",
+    "has": [
+     "cinematicend:1288>1288"
+    ]
+   },
+   "expect": [
+    {
+     "probe": "step.events",
+     "seq": [
+      "activate:1436>1288",
+      "cinematicend:1288>1288"
+     ],
+     "note": "volume 1436 plays cinematic 1288 (060_med_natla)"
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l1_ship_natla_room",
+     "note": "the cinematic's end lifts her out of the engine hall: chapter 6 starts in the Natla room"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 1
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
     }
    ]
   }
