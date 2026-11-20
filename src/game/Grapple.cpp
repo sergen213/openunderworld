@@ -161,15 +161,26 @@ static void ropeOnWall(const PlayerState& s, vec3& p, vec3 n) {
     if (const float a = glm::length(along); dist > free && a > 1.0f) p += along * ((dist - free) * dist / (a * a));
 }
 
+// Thrown in the air at an anchor that is not a pull target, the throw does not stop her: tru.exe under Wine
+// (l2_maproom, a running jump off the bridge stub toward wall ring 2595, Grapple near the apex) keeps her on her jump's
+// arc, and the rope, slack at first, takes up its slack until it comes taut at the least distance she reached (2280
+// from the ring, then onto the wall). The roped standing jump there does the same (taut at the least distance, 2690):
+// the jump with the rope (Player::grapple, `jumping`) [O: wine-ref rec traces, OU-GRP-004].
 void Player::attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind, float ropeMax) {
+    const bool inAir = (s_.state == State::Jump || s_.state == State::Fall) && kind != GrappleKind::Mounted;
     s_.grappleUid = uid;
     s_.grappleAnchor = anchor;
     s_.grappleKind = kind;
     s_.ropeMax = ropeMax;
     s_.ropeLength = glm::distance(anchor, s_.pos + vec3(0, 0, kHandZ));
-    s_.vel = vec3(0);
     s_.ledge = -1, s_.ropeBends = 0;
     s_.flight = 0, s_.savingGrab = 0, s_.wallTime = 0; // the swing drive's timers (PlayerState)
+    if (inAir) {
+        s_.state = State::GrappleSwing;
+        play("grapple_rappel_free_jumpon", false);
+        return;
+    }
+    s_.vel = vec3(0);
     s_.state = State::GrappleThrow;
     if (kind == GrappleKind::Mounted) {
         const float dz = anchor.z - s_.pos.z;
@@ -546,9 +557,12 @@ void Player::grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPre
     vec3 p = s_.pos + vel * dt;
     // Her jump with the rope is no hang until it comes down with no ground under her (chart T1387 / T291: velocity
     // downward, GroundDetected 0): until then the rope still follows her.
-    const bool jumping = s_.clip == "grapple_rappel_free_jumpon" && (vel.z > 0 || col_.groundProbe(p + vec3(0, 0, 50.0f), 50.0f + kHangClear));
-    if (jumping)
-        s_.ropeLength = std::clamp(ropeBentLength(s_) + glm::distance(p + vec3(0, 0, kHandZ), pivot), anims_.grapple.minRope, maxRope());
+    // Coming down, the rope takes up its slack as long as she gets nearer the pivot and is taut at the least distance
+    // she reached (attachGrapple: tru.exe under Wine, both l2_maproom jumps toward ring 2595).
+    const float reach = ropeBentLength(s_) + glm::distance(p + vec3(0, 0, kHandZ), pivot);
+    const bool jumping = s_.clip == "grapple_rappel_free_jumpon" &&
+                         (vel.z > 0 || col_.groundProbe(p + vec3(0, 0, 50.0f), 50.0f + kHangClear) || reach < s_.ropeLength - 0.5f);
+    if (jumping) s_.ropeLength = std::clamp(reach, anims_.grapple.minRope, maxRope());
     const float free = std::max(1.0f, s_.ropeLength - ropeBentLength(s_));
     ropeConstrain(s_, p, vel);
     // Feet onto a wall: rappel on it; coming down onto a floor lands her (off a taut rope she lets go; her own jump

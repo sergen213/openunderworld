@@ -1,0 +1,202 @@
+{
+ "version": 1,
+ "name": "ch10_maproom_wall_run",
+ "chapter": "10 A Puppet No Longer: from the near bridge stub onto the west wall on ring 2595 with a running jump and the grapple thrown in the air, wall run, back jump to the far stub (docs/matrix/10_puppet_no_longer.md C10-03, C10-04, C10-05)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/puppet2.html",
+ "note": "The walkthrough's first way: a running jump off the stub's corner toward the ring, Grapple in the air. tru.exe under Wine (2026-11-20, wine-ref rec traces, OU-GRP-004): the throw does not stop her, she keeps the jump's arc, the slack rope is taken up while she nears the ring and comes taut at the least distance she reached (2280 from the ring), and she swings onto the wall with her feet ~300 under the pool's surface, still roped; the roped standing jump (grapple first, then Up + Jump) does the same with 2690 and ends in the pool. Ours stopped her in the air for the throw clip and swung her from rest (OU-GRP-004) until Player::attachGrapple kept the jump. Then reel to 1500, rest with her feet over the water, three runs along the wall, the back jump at the south apex onto the far stub (from the higher arc she lands on its top; the walkthrough's catch of its edge, ledge 652, comes from a lower arc).",
+ "level": "l2_maproom",
+ "spawn": [
+  -20357,
+  29519,
+  -8794,
+  -90
+ ],
+ "steps": [
+  {
+   "step": "corner",
+   "plan": [
+    "go -20450 29000 60",
+    "face -130",
+    "wait 0.5"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "probe": "grapple.offered",
+     "eq": 2595
+    }
+   ]
+  },
+  {
+   "step": "leap",
+   "plan": [
+    "run -130 1.6 jump 0.45",
+    "wait 6"
+   ],
+   "input": [
+    "0.8 grapple 1",
+    "0.95 grapple 0"
+   ],
+   "duration": 9,
+   "until": {
+    "probe": "grapple.on_wall",
+    "eq": true
+   },
+   "expect": [
+    {
+     "probe": "grapple.target",
+     "eq": 2595
+    },
+    {
+     "probe": "grapple.attached",
+     "eq": true
+    },
+    {
+     "probe": "water.in",
+     "over": "all",
+     "eq": false,
+     "note": "tru.exe under Wine: on the wall with the rope, feet ~300 under the surface at most (rope let go only deeper)"
+    }
+   ]
+  },
+  {
+   "step": "reel",
+   "input": [
+    "0 interact 1",
+    "0 forward 1"
+   ],
+   "duration": 12,
+   "until": {
+    "probe": "grapple.rope",
+    "max": 1500
+   },
+   "expect": [
+    {
+     "probe": "grapple.on_wall",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "rest",
+   "duration": 4,
+   "expect": [
+    {
+     "probe": "grapple.on_wall",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.z",
+     "min": -9500,
+     "note": "feet over the water"
+    }
+   ]
+  },
+  {
+   "step": "run_south",
+   "input": [
+    "0 right -1"
+   ],
+   "duration": 5,
+   "until": [
+    {
+     "probe": "player.pos.y",
+     "max": 25700
+    },
+    {
+     "probe": "player.speed",
+     "max": 200
+    }
+   ],
+   "expect": [
+    {
+     "probe": "grapple.wall_run",
+     "over": "any",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "run_north",
+   "input": [
+    "0 right 1"
+   ],
+   "duration": 5,
+   "until": [
+    {
+     "probe": "player.pos.y",
+     "min": 27100
+    },
+    {
+     "probe": "player.speed",
+     "max": 200
+    }
+   ],
+   "expect": [
+    {
+     "probe": "grapple.wall_run",
+     "over": "any",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "run_south_again",
+   "input": [
+    "0 right -1"
+   ],
+   "duration": 5,
+   "until": [
+    {
+     "probe": "player.pos.y",
+     "max": 25350
+    },
+    {
+     "probe": "player.speed",
+     "max": 400
+    }
+   ],
+   "expect": [
+    {
+     "probe": "grapple.on_wall",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "back_jump",
+   "input": [
+    "0.02 jump 1",
+    "0.15 jump 0"
+   ],
+   "duration": 2.5,
+   "expect": [
+    {
+     "clips": [
+      "grapple_rappel_jumpoff_back"
+     ]
+    },
+    {
+     "probe": "grapple.attached",
+     "eq": false
+    },
+    {
+     "probe": "water.in",
+     "over": "all",
+     "eq": false
+    },
+    {
+     "probe": "player.pos.x",
+     "min": -21412,
+     "note": "over the far stub (its west edge, ledge 652, is at x -21412)"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": -8794,
+     "tol": 30,
+     "note": "on the far stub's top"
+    }
+   ]
+  }
+ ]
+}
