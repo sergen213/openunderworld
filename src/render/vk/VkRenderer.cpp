@@ -3079,7 +3079,7 @@ private:
     static constexpr uint32_t kCortaoPush = 128;
     void createCortao() {
         if (!cortaoFeatures_) {
-            cortaoReason_ = "no shaderStorageImageExtendedFormats / shaderStorageImageArrayDynamicIndexing";
+            cortaoReason_ = "no shaderStorageImageExtendedFormats / shaderStorageImageArrayDynamicIndexing / shaderImageGatherExtended";
             std::fprintf(stderr, "[vk] CORTAO ambient occlusion unavailable: %s\n", cortaoReason_.c_str());
             return;
         }
@@ -3489,9 +3489,12 @@ private:
         waterTess_ = supported.tessellationShader && !std::getenv("OU_WATER_NO_TESS");
         f2.features.tessellationShader = waterTess_;
         f2.features.samplerAnisotropy = supported.samplerAnisotropy;
-        // CORTAO (createCortao): r8 / r16f / rg16f storage images, the packed buffer's mips as a storage image array.
-        cortaoFeatures_ = supported.shaderStorageImageExtendedFormats && supported.shaderStorageImageArrayDynamicIndexing;
-        f2.features.shaderStorageImageExtendedFormats = f2.features.shaderStorageImageArrayDynamicIndexing = cortaoFeatures_;
+        // CORTAO (createCortao): r8 / r16f / rg16f storage images, the packed buffer's mips as a storage image array,
+        // textureGatherOffset in cortao_filter.comp (SPIR-V ImageGatherExtended).
+        cortaoFeatures_ = supported.shaderStorageImageExtendedFormats && supported.shaderStorageImageArrayDynamicIndexing &&
+                          supported.shaderImageGatherExtended;
+        f2.features.shaderStorageImageExtendedFormats = f2.features.shaderStorageImageArrayDynamicIndexing =
+            f2.features.shaderImageGatherExtended = cortaoFeatures_;
         f2.features.shaderInt64 = rtStatus_.supported; // 64-bit buffer addresses in scene_rt.frag
         // FSR (docs/RENDERING.md "FSR"): its compute passes read and write storage images without a declared format.
         fsrReason_ = std::getenv("OU_VK_NO_FSR") ? "disabled by OU_VK_NO_FSR" : vkfsr::probe(gpu_);
@@ -4785,7 +4788,10 @@ private:
         for (const auto& [_, r] : batch.buffers) total += aligned(r.size);
         for (const auto& job : batch.images)
             for (const auto& r : job.mips) total += aligned(r.size);
-        if (total == 0) return;
+        if (total == 0) { // nothing to copy; `after` still runs (createWaterField's clear of ripples_ to GENERAL)
+            if (after) oneShot(after);
+            return;
+        }
         LinearAllocator staging;
         staging.init(device_, gpu_, 0);
         Buffer src = createBuffer(staging, total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -6050,11 +6056,22 @@ private:
                                      VK_ACCESS_2_TRANSFER_WRITE_BIT));
         const VkMemoryBarrier2 war{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kAll, 0, kCopy, VK_ACCESS_2_TRANSFER_WRITE_BIT};
         barriers(cmd, b, &war);
+        // An image staged twice (upload() and a fog change both stage the attenuation table) is copied in staging order:
+        // the later copy waits for the earlier (sync validation WRITE_AFTER_WRITE; unordered, either table could win).
+        std::vector<VkImage> copied;
+        const VkMemoryBarrier2 waw{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCopy, VK_ACCESS_2_TRANSFER_WRITE_BIT, kCopy,
+                                   VK_ACCESS_2_TRANSFER_WRITE_BIT};
         for (const Pending& p : pending_) {
             for (const auto& [dst, copy] : p.buffers) vkCmdCopyBuffer(cmd, p.src.buffer, dst, 1, &copy);
-            for (const auto& [image, regions] : p.images)
+            for (const auto& [image, regions] : p.images) {
+                if (std::find(copied.begin(), copied.end(), image) != copied.end()) {
+                    barriers(cmd, {}, &waw);
+                    copied.clear();
+                }
+                copied.push_back(image);
                 vkCmdCopyBufferToImage(cmd, p.src.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t(regions.size()),
                                        regions.data());
+            }
         }
         b.clear();
         const VkPipelineStageFlags2 readers = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
