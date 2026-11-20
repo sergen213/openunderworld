@@ -14,7 +14,7 @@ w.sh, cg.sh), `waterentry-wine/` (weref.c = `src/ref.c`, a superset of `gameplay
 swing.py, session7a.sh / session7b.sh as the session template), `camfollow-wine/` (turn.py), `scratch/climbcam/ouk/
 hook.sh` + `log.sh` (= `camhook.sh`). The per-session copies (`camfollow-wine/`, `musicwine/`, `yachtwine/`, ...)
 differed only in their hard-coded paths and socket names, which `env.sh` now parameterises. Changes made while
-collecting: paths and unit names come from `env.sh`; the compositor runs in a systemd scope and writes its DISPLAY to
+collecting: paths and unit names come from `env.sh`; the compositor runs as a systemd service and writes its DISPLAY to
 `$OU_WREF_DIR/display.env`; `newgame.sh` / `stop.sh` stop only this harness's units and its own prefix's wineserver
 (the old scripts ran `pkill -f tru.exe`, which would kill another agent's session); `ref.c` gained `rec` (breath,
 health, camera and water columns); helpers link statically.
@@ -39,7 +39,13 @@ health, camera and water columns); helpers link statically.
 | `OU_WREF_DIR` | `$OU_WORK/wine-ref` | session directory: `bin/` (helpers), `display.env`, `kwin.log`, `xdg/`, traces |
 | `WINEPREFIX` | `$OU_WREF_DIR/prefix` | the private prefix |
 | `OU_TRU_DIR` | `$OU_WORK/wine-drive/game` | tru.exe's directory |
-| `OU_WREF_NAME` | `wineref` | compositor socket `ou-<name>`, units `ou-<name>-kwin.scope` / `ou-<name>-tru.service` |
+| `OU_WREF_NAME` | `wineref` | compositor socket `ou-<name>`, units `ou-<name>-kwin.service` / `ou-<name>-tru.service` |
+| `OU_WREF_CPUS` | `0-3` | `taskset` CPU list of tru.exe (its CPUCount 0x4A21D0 overflows with 32 CPUs; parallel harnesses each take their own four) |
+
+The compositor runs as a transient systemd service with `KillMode=control-group` (`start-kwin.sh`): stopping it also
+ends what its private D-Bus session activated (xdg-desktop-portal, ksecretd), which a scope left running. Harnesses
+with their own prefix and game copy on NVMe may run side by side; the shared `$OU_WORK/wine` prefix still needs
+`/usr/bin/flock $OU_WORK/wine.lock`.
 
 ## A session
 
@@ -59,6 +65,15 @@ tools/wine-ref/stop.sh                                          # tru.exe, wines
 on the yacht's deck); `sessions/l2_cliffclimb_sharks.sh` watches the l2_cliffclimb sharks around a treading, diving or
 pinned Lara (OU-CMB-003); `$OU_WORK/gameplaygoal/reference/session7a.sh` / `session7b.sh` are the older templates for
 ledge / chimney / grapple placements (they still use the pre-`env.sh` paths).
+
+`sessions/render_capture.sh` records every D3D9 call of a new game with apitrace's `d3d9.dll` wrapper (apitrace 14.0
+win32 release, `lib/wrappers/d3d9.dll`, copied next to tru.exe in a private game copy; it forwards to the prefix's DXVK
+`d3d9.dll`; `tru.sh` passes `TRACE_FILE`). `SCENE=bedroom` (the prologue corridor), `cliffclimb` (the yacht deck after
+`goto l2_cliffclimb`) or `sharks` (Lara treading near the sharks); the view is held still at the end, so the trace's
+last frames are the scene. A session writes 16..22 GB. `py/d3d9_frames.py` reduces it with the Linux `apitrace dump`
+(`APITRACE=…/apitrace-14.0-Linux/bin/apitrace`): `index` once per trace (resources, shader disassembly, Present call
+numbers; ~3 min), then `frame` (pass list of one frame), `sort` (translucent order), `shader`, `lod` (batch LODs by
+primitive totals). docs/re/RENDER_PIPELINE.md §13 is its result.
 
 Rules learnt the hard way (details in docs/REFERENCE_COMPARISON.md "Method"):
 
@@ -110,3 +125,5 @@ Every line is `ms` (since the command started) followed by named fields. The scr
   c176–c212), bound textures and PS bool mask of one material's model draws (detours of 0x526920 and 0x50EFED; the
   material is picked by the first floats of its MaterialParams). Used for SHADERS.md "PSSM on the l2_cliffclimb yacht
   deck".
+- `d3d9_frames.py index | frame | sort | shader | lod TRACE ...`: reduce a `sessions/render_capture.sh` D3D9 trace
+  (above; docs/re/RENDER_PIPELINE.md §13).
