@@ -51,9 +51,15 @@ vec3 ouScreenFilter(vec3 c, vec2 uv) {
         if (a.z > 0.5) k *= ouLut(9, length(ouWorld(uv, texture(uDepth, uv).r, w.invViewProj) - w.eye.xyz) * f.z + f.w).r;
         c = mix(c, ouFilterMatrix(1, ouFilterBlur(uv, a.y)) * t.rgb, k);
     }
-    if (f.x > 0.0) { // 0x51AEF0: the blurred scene (through the finish matrix) added
+    if (f.x > 0.0) { // 0x51AEF0 (PS of D3D9 call 1565373): oC0.rgb = M(c) + c * (c.a * a), blended SRCALPHA / ONE, so
+        // the frame gains a * (M(c) + alphaB * a * c), a = the quad's vertex alpha (f.x). alphaB = the alpha the last
+        // blur pass left in the copy (0x519F20): its 4-tap passes write their vertex alpha unblended (1), except the
+        // fraction pass, which blends level ceil(r) over level ceil(r) - 1 at w = 1 - round((ceil(r) - r) * 255) / 255
+        // (SRCALPHA / INVSRCALPHA on alpha too): w * w + (1 - w) (BUGS OU-REN-010; rendercap10 bedroom 0.839 -> 0.865,
+        // l2_cliffclimb whole level 1). r = 0 (no blur) reads the scene copy's alpha [U: 1 here].
         vec3 b = ouFilterBlur(uv, f.y);
-        c += (t.w > 0.5 ? ouFilterMatrix(2, b) : b) * f.x;
+        float q = round((ceil(f.y) - f.y) * 255.0) / 255.0, alphaB = q > 0.0 ? q + (1.0 - q) * (1.0 - q) : 1.0;
+        c += ((t.w > 0.5 ? ouFilterMatrix(2, b) : b) + b * (alphaB * f.x)) * f.x;
     }
     if ((fb.y > 0.0 || fb.x < 1.0) && w.filters[7].w > 0.5) { // 0x51A530: scene x keep, + the previous frame (copied
         // half size at the end of each frame the effect ran, 0x509630 -> 0x51A2E0) blurred, zoomed / turned about the

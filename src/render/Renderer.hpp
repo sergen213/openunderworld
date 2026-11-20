@@ -110,7 +110,8 @@ struct FxBatch {
 // Original screen filters (class-5 effects with a 0x31C0 filter resource, docs/formats/EFFECTS.md "Screen filters"),
 // summed over the running ones by fx::System::screenFilter. Post pass, on the tonemapped scene:
 //   scene = M1(scene) when colourMatrix; scene = mix(scene, M2(blur(scene, blurA)) x tintA, alphaA [x DOF curve]);
-//   scene += MF(blur(scene, blurC)) x amountC;
+//   scene += (MF(c) + c x alphaB x amountC) x amountC, c = blur(scene, blurC), alphaB = the blur's fraction-pass alpha
+//   (filter.glsl; 0x51AEF0's composite PS, BUGS OU-REN-010);
 //   scene = scene x feedbackKeep + blur(scene, feedbackBlur) zoomed / turned about the centre x feedbackColour x
 //   feedbackAmount (PCFeedbackEffect); scene += tintAdd; scene = mix(scene, tintMix.rgb, tintMix.a);
 //   scene = mix(scene, noiseColour x noise, noiseAlpha) (PCNoiseEffect: 10 x 8 cells of `noiseCells` / 64 of a noise
