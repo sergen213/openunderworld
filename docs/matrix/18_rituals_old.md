@@ -54,7 +54,7 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 - Blast knock-back throwing bodies overboard: ground-pound knock values decoded but unused.
 - No traversal or combat test loads l6_ship_exterior beyond the chapter-start check; chimney alternative (M06) missing; outfit choice (M75).
 
-- Chapter self-tests written: `ch18_bow_deck` (C18-01, -02, -03, -07), `ch18_engine_hall_to_cell` (C18-17, -18). Not played: the container-deck fight and climb, the upper deck, helipad and stern (the autopilot does not fight; an unfought walk dies on the container deck and is stopped on the upper deck at (4660, 2868)), the hallways between the stern doors and the engine hall.
+- Chapter self-tests written: `ch18_bow_deck` (C18-01, -02, -03, -07; its first two soldiers fought and killed by the autopilot's `fight`), `ch18_engine_hall_to_cell` (C18-17, -18); known gap `ch18_container_climb` (C18-10: the lone container and the two-high stack climbed by input, the running jump on to the three-high stack 1766 is out of reach, docs/SELFTEST.md). Not played: the rest of the container climb, the upper deck, helipad and stern (an unfought walk dies on the container deck and is stopped on the upper deck at (4660, 2868)), the hallways between the stern doors and the engine hall.
 
 ### Proposed self-test scenarios
 1. `andaman_hammer_tutorial` — l6_ship_exterior, chapter-6 start. Input: Change Weapon ×2, Fire at the crate ahead; walk onto its spot, Interact. Assert: weapon = hammer after two presses; the crate enters its broken state from one bolt; a health pack is collectable where it stood (expected FAIL: reward) and the HUD count rises.

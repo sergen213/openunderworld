@@ -140,7 +140,7 @@ end to end yet.** Legs that cannot be played are kept under `tests/selftests/kno
 | 15 Land of the Dead | 3 | Rune block 5609 has no joint; the exit switch is not locked without the key (the key itself now arrives) |
 | 16 Gate of the Dead | 3 | The tower's upper tiers and the gate after the base panel |
 | 17 Valhalla | 1 | The hammer chamber's ledge; the timed lever runs have no walkable route in ours |
-| 18 Rituals Old | 2 | The deck fights (the autopilot does not fight) |
+| 18 Rituals Old | 2 | The container climb (`ch18_container_climb`: the jump to the three-high stack); the first deck fight is played by the autopilot's `fight` |
 | 19 Helheim | 4 | The statue wheels, gears, the other stones, the flooded maze |
 | 20 Yggdrasil | 7 | Past the eitr pit and the rune symbols: the hall's later rooms are not played |
 | 21 Out of Time | 0 (+ the arena entry and a start on the lower ring) | The jump from the entry walkway onto a passing stone falls short; the fight's sequence (towers, mounts) is unplayed by input. Mjolnir hits do reach Natla's script |

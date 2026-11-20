@@ -1,0 +1,320 @@
+{
+ "version": 1,
+ "name": "ch18_container_climb",
+ "chapter": "18 Rituals Old: chapter 6 from its start by input: the bow, the first soldiers fought, the container climb (docs/matrix/18_rituals_old.md C18-01 .. C18-10)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/17andaman.html",
+ "note": "Known gap (docs/SELFTEST.md): chapter 6 from chapter select by input, ch18_bow_deck's steps, then the walkthrough's container climb: the lone container (1765) grabbed from the deck and climbed, a running jump north to the two-high stack (1763, re-aimed at its rim), and from its far end the running jump south to the three-high stack (1766): it fails. Take-off at the double's edge (18290) leaves 1410 to the triple's rim, 636 up; the flight is not re-aimed (speed 1975, peak 157) and she lands back on the lone container. Our re-aim stops at tru.exe's measured running range (Player::aimGroundJump: under Wine take-offs from 649 to 1222.9 before a 782-high ledge were re-aimed, from 1243.4 none), and the double's edge is already 1278 from this rim, so the walkthrough's 'blue + grey stack' is probably another stack than 1763 [I]; tru.exe's route here was not measured. After the climb the chapter goes on over the triple stacks (1766 -> 1767 -> 1773, gaps of 600 / 725 at the same height) to the upper deck's front ledge 1775 (1014 beyond 1773, 71 lower) and checkpoint 7666; the upper deck, helipad, stern (checkpoints 7667 .. 7672), the hallways (l6_ship_upper_hallway_a 7636 / 7637) and the engine hall (ch18_engine_hall_to_cell) are not chained yet.",
+ "start_chapter": 6,
+ "steps": [
+  {
+   "step": "on_the_bow",
+   "duration": 1.5,
+   "expect": [
+    {
+     "probe": "world.unit",
+     "eq": "l6_ship_exterior"
+    },
+    {
+     "probe": "world.chapter",
+     "eq": 6
+    },
+    {
+     "probe": "weapon.current",
+     "eq": "pistols"
+    },
+    {
+     "probe": "enemies.count",
+     "eq": 0
+    },
+    {
+     "probe": "world.checkpoint",
+     "eq": 7652
+    }
+   ]
+  },
+  {
+   "step": "change_weapon_once",
+   "input": [
+    "0.2 weapon 1",
+    "0.3 weapon 0"
+   ],
+   "duration": 1.2,
+   "expect": [
+    {
+     "probe": "weapon.current",
+     "ne": "pistols"
+    },
+    {
+     "probe": "weapon.current",
+     "ne": "thorhammer",
+     "note": "the secondary first"
+    }
+   ]
+  },
+  {
+   "step": "change_weapon_twice",
+   "input": [
+    "0.2 weapon 1",
+    "0.3 weapon 0"
+   ],
+   "duration": 1.2,
+   "expect": [
+    {
+     "probe": "weapon.current",
+     "eq": "thorhammer"
+    }
+   ]
+  },
+  {
+   "step": "a_bolt",
+   "input": [
+    "0.2 draw 1",
+    "0.3 draw 0",
+    "1.5 fire 1",
+    "1.6 fire 0"
+   ],
+   "duration": 3.5,
+   "expect": [
+    {
+     "probe": "weapon.drawn",
+     "eq": true
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 1
+    },
+    {
+     "probe": "enemies.count",
+     "eq": 0,
+     "note": "nobody yet"
+    }
+   ]
+  },
+  {
+   "step": "down_the_stairs",
+   "plan": [
+    "go 4249 21702 150",
+    "go 3656 21161 150",
+    "go 2956 21161 150",
+    "go 2256 21161 150",
+    "go 1556 21161 150",
+    "go 956 20761 150",
+    "go 556 20061 150",
+    "go 356 19361 150",
+    "go 356 18661 150",
+    "go 356 17961 150"
+   ],
+   "duration": 60,
+   "until": {
+    "probe": "enemies.count",
+    "min": 1
+   },
+   "expect": [
+    {
+     "probe": "enemies.count",
+     "over": "min",
+     "eq": 0
+    },
+    {
+     "probe": "enemies.count",
+     "min": 1
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    },
+    {
+     "probe": "player.pos.x",
+     "min": -99999
+    },
+    {
+     "probe": "player.pos.y",
+     "min": -99999
+    },
+    {
+     "probe": "step.health_lost",
+     "min": -1
+    },
+    {
+     "probe": "step.moved",
+     "min": 300
+    }
+   ]
+  },
+  {
+   "step": "the_first_soldiers",
+   "plan": [
+    "fight 9000 90 all"
+   ],
+   "duration": 95,
+   "expect": [
+    {
+     "probe": "enemy.7661.alive",
+     "eq": false
+    },
+    {
+     "probe": "enemy.7662.alive",
+     "eq": false
+    },
+    {
+     "probe": "enemies.alive",
+     "eq": 0
+    },
+    {
+     "probe": "weapon.current",
+     "eq": "thorhammer"
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 2
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    },
+    {
+     "probe": "step.health_lost",
+     "max": 300
+    }
+   ]
+  },
+  {
+   "step": "to_the_lone_container",
+   "plan": [
+    "go 1050 17900 60",
+    "go 1050 17590 30",
+    "face -90"
+   ],
+   "duration": 40,
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "near": 3880,
+     "tol": 15,
+     "note": "the container deck"
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "climb_onto_the_lone_container",
+   "input": [
+    "0.1 jump 1",
+    "0.2 jump 0"
+   ],
+   "duration": 4,
+   "until": [
+    {
+     "probe": "player.state",
+     "eq": "idle"
+    },
+    {
+     "probe": "player.pos.z",
+     "min": 4400
+    }
+   ],
+   "expect": [
+    {
+     "clips": [
+      "hurdle_ground_attach_high_150",
+      "hurdle_onto"
+     ],
+     "note": "Jump at its 632-high side: the high climb onto it"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": 4512,
+     "tol": 15
+    }
+   ]
+  },
+  {
+   "step": "turn_back",
+   "plan": [
+    "go 1050 16960 30",
+    "face 90"
+   ],
+   "duration": 20,
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "near": 4512,
+     "tol": 15
+    }
+   ]
+  },
+  {
+   "step": "jump_to_the_double_stack",
+   "plan": [
+    "run 90 1.2 jump 0.32"
+   ],
+   "duration": 3,
+   "until": {
+    "probe": "player.state",
+    "eq": "hang"
+   },
+   "expect": [
+    {
+     "probe": "player.ledge",
+     "eq": 1763,
+     "note": "the two-high stack north of it (628 up, 700 away): the running jump is re-aimed at its rim"
+    }
+   ]
+  },
+  {
+   "step": "onto_the_double_stack",
+   "input": [
+    "0.1 jump 1",
+    "0.2 jump 0"
+   ],
+   "duration": 4,
+   "until": {
+    "probe": "player.state",
+    "eq": "idle"
+   },
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "near": 5140,
+     "tol": 15
+    }
+   ]
+  },
+  {
+   "step": "run_up",
+   "plan": [
+    "go 1050 19550 40",
+    "face -90"
+   ],
+   "duration": 20,
+   "expect": [
+    {
+     "probe": "player.pos.z",
+     "near": 5140,
+     "tol": 15
+    }
+   ]
+  },
+  {
+   "step": "running_jump_to_the_triple_stack",
+   "plan": [
+    "run -90 2 jump 1.1"
+   ],
+   "duration": 4,
+   "until": {
+    "probe": "player.state",
+    "eq": "hang"
+   },
+   "expect": [
+    {
+     "probe": "player.ledge",
+     "eq": 1766,
+     "note": "the walkthrough's 'turn, running jump to grab the triple stack beyond': rim 636 up, 1278 beyond the double's edge"
+    }
+   ]
+  }
+ ]
+}
