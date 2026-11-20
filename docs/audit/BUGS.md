@@ -101,7 +101,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-CAM-004 | camera | Reveal camera blend in/out ours; gamebase time scales not applied | Open | pre-existing | — |
 | OU-PLY-001 | Lara / beams | Beam-walk entry into "about to fall" undecoded | Open | pre-existing | C-CHART |
 | OU-PLY-002 | Lara / wall hug | Wall-hug corners reconstructed, not decoded | Open | pre-existing | C-CHART |
-| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Open: agent/ShelfOut9 added it (chart T1110 / clearance 8 / clip 887), but Wine (agent/WineCheck10) shows tru.exe never attaches inside the 936 notch (79.0 along, +0xEDC 2, `swim_climbout_A/_B/_C`); query point rule [U] | pre-existing | C-CHART |
+| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Open: Wine (agent/WineCheck10) shows tru.exe never attaches inside the 936 notch (79.0 along, +0xEDC 2, `swim_climbout_A/_B/_C`); the 0.58.0 wall-hug climb-out removed, `_A/_B/_C` added; query point rule [U] | pre-existing | C-CHART |
 | OU-PLY-004 | Lara / ladders | No ladder side jumps or reaches | Open | pre-existing | C-CHART |
 | OU-PLY-005 | Lara / jumps | Ledge-aim reach: running-jump rush/arc switch 20-70 farther out | Open | pre-existing | C-MEASURE |
 | OU-PLY-006 | Lara / obstacles | Low-obstacle detection distance (query 96 reach) unknown | Open | pre-existing | C-CHART |
@@ -752,30 +752,27 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
 Open · pre-existing.
 
 **OU-PLY-003 No climb out of water onto a shelf**
-- Expected: `swim_climbout_to_wallhug` (887) onto a shelf when the clearance result is 657 (GAMEPLAY.md "Climb out onto a
-  wall-hug shelf") [O chart].
-- Actual (before): not done; ordinary climb-out only.
-- Evidence: chart S237 T1110 is the first transition (before T1115 `swim_climbout`), conds 0x262 = 610, stick pushed /
-  not back, 0x28A = 657; clearance +0xEDC = 8 from 0x76D270 → 0x76D010 → 0x74E290 → 0x74E160 when 0x74BB50 == 1
-  (decomp). Clip 887: no root translation, root yaw 0 → +π evenly, pelvis from (18, 186, −78) to standing [O clip].
-- Fix: `Player::tryClimbOutToWallHug` before `tryClimbOut`: nearest ledgegrab point in reach whose `shelfAt` holds →
-  root on the shelf (88.496 in) facing the wall, clip 887 turns her, `Wall_Hug_Idle`. [I] the swim query's reach and
-  height band (the plain climb-out's 50..400), the ±60° facing.
-- Test: `GameReal.SwimClimbOutOntoShelf` (l2_cliffclimb ledge 936 seg 0: no l2_puzzleroom shelf lies over water; the
-  survey found only 936 seg 0 / seg 9 and l7_arctic_sea 2073).
+- Expected (chart): `swim_climbout_to_wallhug` (887) onto a shelf when the clearance result is 657 (S237 T1110, conds
+  0x262 = 610, stick pushed / not back, 0x28A = 657; +0xEDC = 8 from 0x76D270 → 0x76D010 → 0x74E290 → 0x74E160 when
+  0x74BB50 == 1) [O chart, decomp]; GAMEPLAY.md "Climb out onto a wall-hug shelf".
+- agent/ShelfOut9 (0.58.0) added it at the nearest ledge point where `shelfAt` holds (test `SwimClimbOutOntoShelf`,
+  l2_cliffclimb ledge 936 seg 0, the only shelf over open water in our survey besides 936 seg 9 / l7_arctic_sea 2073).
 - Wine 2026-11-20 (agent/WineCheck10; `w2/WineCheck10/a/shelf180.txt`, `c/swim1.txt`, `c/swim2.txt`, `d/a30..a110.txt`;
   treading 180 out from 936 seg 0, facing it, Forward held, `ref rec` with `PDX=EDC`): tru.exe does **not** climb into
   the hug there. From 30 / 50 / 64 / 72 along (the notch is 48..80) it attaches at **79.0** along (63 out), from 90 at
   93.9, from 110 at 109.1: no target inside the notch. Clearance +0xEDC = **2** every time (0x74E290: the box ray at 252
   missed within 139, so 0x74E160 and its shelf test never ran; our geometry agrees at 79: the wall at 252 lies ~142 in),
-  and the chart plays `swim_climbout_A` → `_B` → `_C` (requests 890 → 889 → 888), she stands 62 in from the line, still
-  facing the wall, and walks on inland. Ours attaches at the nearest point (64), where `shelfAt` holds (wall ~108 in at
-  252), and plays 887 into the hug. Standing in the notch at 64 along, 40 in, tru.exe and ours both lose her into the
-  sea (no room under the overhang). So the site is a false positive of ours; the rule by which tru.exe's swim query
-  skips the notch's points is not decoded (no direct caller of 0x76D270; the query's point selection) [U], and the
-  `_A / _B / _C` variant is still not played. No code change (a fitted gate would be a guess); `SwimClimbOutOntoShelf`
-  asserts the contradicted behaviour and should be replaced once the query rule is known.
-  Status · Origin: Open (Wine contradicts the only site; agent/ShelfOut9 code kept) · pre-existing.
+  and the chart plays `swim_climbout_A` → `_B` → `_C` (890 → 889 → 888): heading square to the ledge, hang 61..63 out,
+  root 62 in from the line at its height after _C, still facing the wall, then on inland.
+- Fix (agent/WineCheck10): the wall-hug climb-out (`tryClimbOutToWallHug`, its test) removed; `Player::tryClimbOutToLedge`
+  plays `_A / _B / _C` onto a ledge 90+ over her root (player data +0x138 = 90 selects 891 under it) with the Wine
+  geometry (hang placed so _C ends 62 in). [I]: the query's reach (250; tru.exe attached from 214), the 500 upper bound,
+  the reference points of the 90 test, one _B cycle (cond 0xDA), _A's linear carry and the phase timing (ours 0.10 /
+  0.07 / 1.36 s, tru.exe ~0.22 / ~0.15 / ~1.5 s). Test `GameReal.SwimClimbOutOntoHigherLedge` (936 approached at 79).
+- Open: the swim query's point rule (ours the nearest point; tru.exe skips the notch: from 64 along ours attaches at 64,
+  where our collision leaves no room to stand and depenetration moves her on), and so which targets reach T1110 /
+  887 at all (no direct caller of 0x76D270) [U].
+- Status · Origin: Open (wall-hug climb-out not ported; `_A / _B / _C` added) · pre-existing.
 
 **OU-PLY-004 No ladder side jumps or reaches**
 - Expected: ladder side jumps exist (ship escape shafts, ROADMAP L89); clips in lara.drm [I].
@@ -1347,7 +1344,7 @@ Status · Origin: Open · pre-existing.
 4. OU-REN-002 dither the post output (no change to the LDR look).
 5. OU-WAT-002 spray haze fade at the crater centre.
 6. OU-DOC-001 / OU-DOC-002 doc corrections.
-7. OU-PLY-003 shelf climb-out: added on agent/ShelfOut9; the Wine check of ledge 936 (agent/WineCheck10) contradicts it there (tru.exe attaches at 79.0 along, plays `swim_climbout_A/_B/_C`); the swim query's point rule is open.
+7. OU-PLY-003 shelf climb-out: added on agent/ShelfOut9; the Wine check of ledge 936 (agent/WineCheck10) contradicted it (tru.exe attaches at 79.0 along, plays `swim_climbout_A/_B/_C`), so it was removed and `_A/_B/_C` added; the swim query's point rule is open.
 8. OU-GRP-001 throw clip lookup in the grapple DRM (data search, no exe work).
 
 **Needs RE first** (tru.exe decode before code):
