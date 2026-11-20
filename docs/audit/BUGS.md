@@ -119,9 +119,9 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed-verified (0.53.0, 21678c2) | pre-existing | — |
 | OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Fixed-verified (0.54.0, merge bccdaa7: colliders posed after a mid-game rebuild) | pre-existing | — |
-| OU-PLY-016 | Lara | Push / pull MustDetach: four release conditions of 0x73F900 not modelled | Open | pre-existing | — |
-| OU-PLY-017 | Lara | Jump-to-target solver 0x73EDC0: no moving-markup lead, no speed cap | Open | pre-existing | — |
-| OU-PLY-018 | Lara | Fall-damage thresholds: the jump query's override (0x702E90) not modelled | Open | pre-existing | — |
+| OU-PLY-016 | Lara | Push / pull MustDetach: 0x73F900 tests the PushPull proxy's speed, spin and tilt (decoded), ours her grip point's distance | Open (decoded, values from lara.drm; ours has no proxy body) | pre-existing | — |
+| OU-PLY-017 | Lara | Jump-to-target solver 0x73EDC0: no moving-markup lead, no speed cap | Fixed (agent/Contradict11: lead, re-aim every tick, cap +0xC10) | pre-existing | — |
+| OU-PLY-018 | Lara | Fall-damage thresholds: the jump query's override (0x702E90) not modelled | Partly fixed (agent/Contradict11: Wine-verified mechanism, the jumps ours models; the fall states' query [U]) | pre-existing | — |
 | OU-SWM-001 | swimming | Swim turn: symmetric and view-relative (d122a62); the stick is now read against the view, which trails the camera-to-pivot line (look tracker +0x620): circle 46.2 / 47.2 deg/s (tru.exe 46.7 / 48.3), 42.2° off the line (42.1) | Fixed-verified (0.53.0 d122a62; view tracker 0.58.0, merge 1a5bb3b; mode-19 look record Wine-verified, agent/WineCheck10) | pre-existing | — |
 | OU-SWM-002 | swimming | Surface swim velocity lag: 4.96 / 5.07° vs tru.exe 5.44 / 5.6° (0x755A00 blend 0.25 = player data +0x240; the rest is the 30 Hz blend spread over 60 Hz ticks) | Fixed-verified (0.53.0, d122a62; re-measured for 0.58.0) | pre-existing | — |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
@@ -142,7 +142,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed-verified (0.53.0, 30cc49f) | pre-existing | C-VM |
 | OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed-verified (0.53.0, b716e88); pull speed unverified | pre-existing | C-JOINT |
 | OU-PZL-011 | progression | ch17: no pull-up onto the hammer chamber block: hang clearance met the steps' smooth ramp (group 5, flags 0x800), which tru.exe's player rays skip | Fixed-verified (0.59.0, GapsB10; `ch17_hammer_chamber` moved up) | pre-existing | — |
-| OU-PZL-012 | progression | ch21: Natla platform jump from the walkway's edge: tru.exe's stick jump with the passing stone as target leaves after ~3 frames (Wine), ours after 8 | Open (decoded in Wine; jump caught from 154 back: `natla_platform_ride`, `ch21_platform_ride` moved up) | pre-existing | C-VM |
+| OU-PZL-012 | progression | ch21: Natla platform jump from the walkway's edge: tru.exe's press (Up, Space 50 ms later) is the running jump, aimed at the passing stone met in its own frame; ours took the stick jump and tested the stone where it was | Fixed (agent/Contradict11: `natla_platform_ride`, `ch21_platform_ride` from 58 back, as Wine) | pre-existing | C-VM |
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Fixed-verified (6d6c9eb, 0.47.0; ring rides the leaf 0.56.0; landing place chaotic: ours 1.1k flat, tru.exe 656 flat) | pre-existing | C-JOINT |
 | OU-PZL-015 | progression | `multibody` 3/4 bound and saved (caller is l2_maproom planes 2637/2638, not ch08); ch14 throne native still unknown | Partly fixed (0.53.0, 171100e) | pre-existing | C-VM |
@@ -164,7 +164,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
-| OU-DOC-003 | docs | Batch 10 asm checks: wrong citation addresses and branches the comments omit | Open | doc drift | C-DOC |
+| OU-DOC-003 | docs | Batch 10 asm checks: wrong citation addresses and branches the comments omit | Fixed (agent/Contradict11: comments corrected; the omitted branches noted [U]) | doc drift | C-DOC |
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom reported doors 4526 / 4376 as not resumed: a false difference (two colliders per door shared one state-part name) | Fixed-verified (0.59.0, GapsB10; `save_load_bedroom_doors` moved up) | pre-existing | — |
 | OU-AUD-006 | audio | Help on demand picks `sc_0<unit digit>_NN`; the lines are per chapter (`sc_CC`, CC = kChapters index), so the prologue (l3 units) plays Croft Manor's sc_03 lines instead of sc_00 | Open | pre-existing | — |
 | OU-SAV-002 | save/load | Checkpoint respawn at a fresh unit load: under-water intros put Lara on the floor below; 5 l7_yggdrasil_end checkpoints have no floor at the intro; the l1_seatop yacht deck settles 437 below its intro (docs/CHECKPOINTS.md) | Needs-Windows-ref | pre-existing | — |
@@ -1057,29 +1057,68 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
 - Status · Origin: Fixed-verified (0.54.0, merge bccdaa7) · pre-existing.
 
 **OU-PLY-016 Push / pull MustDetach releases on more than distance** (VERIFICATION.md V056, batch 10)
-- tru.exe 0x73F900 (PlayerSC_PushPull::MustDetach) releases her when the grip point leaves her by more than player
-  data `+0xCA0` (level, 0x73F97B) or `+0xCA4` (height, 0x73F9C3), and also on `+0xCB4` (a second distance, 0x73F9EE)
-  and on three angles `+0xCB0`, `+0xCA8`, `+0xCAC` (degrees → sin 0x813680, 0x73FCD1..0x73FD95).
-- OU (`src/game/Objects.cpp:1155`, Game.hpp:184) tests only `+0xCA0` / `+0xCA4`.
-- [U] which object directions the angles compare and the lara.drm values; no behaviour change made.
-- Status · Origin: Open · pre-existing.
+- Decoded (batch 11, 0x73F900 asm and decomp): the tests are on the PushPull proxy body `[0xFAE504]`, not on a
+  distance. Its velocity at the grip anchor (`0xFAE530` through 0x4D8EA0, then 0x4D8F70: v + w x r) releases her when
+  its level part exceeds player data `+0xCA0` = **63.21** (0x73F97B) or its z part exceeds `+0xCA4` = **15.80**
+  (upward only, 0x73F9C3); its angular velocity (0x4D8E70) when longer than `+0xCB4` = **0.3** (0x73F9EE); each of
+  these only while the gripped instance's object flag bit 21 is clear. Then, always: of the gripped instance's three
+  axes the one most parallel to her axis (abs dot, 0x435090) is signed toward it and dotted with her other two axes;
+  the first beyond sin `+0xCB0` = **25°** releases, the second beyond sin `+0xCA8` = **10°** when negative or sin
+  `+0xCAC` = **25°** when positive (0x73FCD1..0x73FD95). Values from lara.drm player data (every outfit).
+- OU (`World::pushUberHandle`, `src/game/Objects.cpp:1155`, `kPushDetachLevel` / `kPushDetachHeight` in Game.hpp)
+  compares her grip point's distance from her with `+0xCA0` / `+0xCA4`: a stand-in, now labelled [I] in both comments.
+  No behaviour change: ours has no proxy body (the push drives the object's joint directly, docs/GAMEPLAY.md "Push and
+  pull objects"), so the proxy's velocity and tilt do not exist to test. [U] the velocity units (taken per 30 Hz
+  frame) and which of her axes are compared; a pushed block in tru.exe never reaches 63.21 a frame, so in the cases
+  measured the release is the tilt / spin of a block falling off an edge, which ours approximates by the distance.
+- Status · Origin: Open (decoded) · pre-existing.
 
 **OU-PLY-017 Jump-to-target solver without lead or cap** (VERIFICATION.md V094, batch 10)
-- tru.exe 0x73EDC0 solves v = (target − pos − ½ g t²) / t (0x73EF16..0x73EF91, g −5.72443, ½ at 0x8413A8) as
-  `jumpVelocity` (`src/game/Player.cpp:170`) does, but its target is the ledge point plus t × the markup's velocity
-  (0x6EC930 output), and the result is clamped to a speed limit from the jump query `+0xD4` else player data
-  `+0xC10` (0x73EE2F / 0x73EE51, clamp 0x73EFA0..0x73EFD6).
-- OU aims at the static point and never caps (Player.cpp:2048, 2054, 2158). Effect expected only on moving ledges
-  and long flings [I]. [U] the limit's value and the comparison metric of 0x4355D0.
-- Status · Origin: Open · pre-existing.
+- tru.exe 0x73EDC0 runs every frame of an aimed flight (from the flight tick 0x752410 with the time left, player
+  `+0x77C`; target markup `+0xA64` / `+0xA68`): target = the markup point (0x5C9310) + t x the velocity of its owner
+  there (0x6EC930) − her offset `+0xA50`; v ← v + (target − (pos + v t + ½ g t²)) / t (0x73EF16..0x73EF91), only while
+  |v|² is under the limit², the result clamped to it (0x73EFA0..0x73EFD6). The limit is the jump query's `+0xD4`
+  when positive, else player data `+0xC10`: every one of lara.drm's 106 query records has `+0xD4` = −1, `+0xC10` =
+  **18963.34** a frame, so the clamp never bites (decoded batch 11).
+- The jump query's markup sweep 0x70F300 meets a markup with an owner in the owner's frame: the candidate segment's
+  velocity (0x5D75B0, per frame; skipped above 500) comes off the arc's velocity and, x the query's `+0xD0` (0 for the
+  ground jumps; 6 q7 / q8, 10 q9 / q28..q31, 14 q10, 13 q48 / q110, 8 q55), off its start (0x70F6F1..0x70F795).
+- Fixed (agent/Contradict11): `Player::ledgeOnArc` tests moving markup in its frame for the aimed ground jumps
+  (`JumpQuery::ownFrame`; per markup, [I] tru.exe per segment); the queries whose flight ours flies in the target's
+  frame (HangJump: the rush, the standing leap, the hang jumps) keep meeting it where it is [I] (self-test
+  `moving_markup` caught later with the own frame there); `aimGroundJump` keeps the target
+  (`PlayerState::aimMarkup` / `aimSeg` / `aimT` / `aimSide` / `aimPerch` / `aimLeft`, saved as `controller.aim`) and
+  aims at the point led by the flight time; `Player::reaimJump` re-aims every tick of State::Jump with the seconds
+  left; `aimVelocity` applies the limit. [I] the time left counts down by the tick (the writer of `+0x77C` is not
+  traced). Verified: `natla_platform_ride` / `ch21_platform_ride` (OU-PZL-012) take off at the Wine take-off point and
+  hang on the passing stone; static targets solve as before (the re-aim keeps a ballistic arc's velocity).
+- Status · Origin: Fixed (agent/Contradict11) · pre-existing.
 
 **OU-PLY-018 Fall-damage threshold override** (VERIFICATION.md V069, batch 10)
 - tru.exe 0x702F10 takes the thresholds from 0x702E90, which starts from player data `+0x4C` / `+0x50` / `+0x54`
-  and replaces all three by the active jump query's `+0xC4` record (0x702EB4..0x702EE6) when it has one.
-- OU `Health::fallDamage` (`src/game/Combat.cpp:326`) always uses the player-data triple. The maximum matches
-  (OU's `t_.max` includes the relic factor 0x5D6170, as 0x702F7C does).
-- [U] which jump queries carry `+0xC4`.
-- Status · Origin: Open · pre-existing.
+  and replaces all three by the `+0xC4` record of the jump query in effect (player `+0xA84`, 0x6F1950) when it has one
+  (0x702EB4..0x702EE6). The maximum matches (OU's `t_.max` includes the relic factor 0x5D6170, as 0x702F7C does).
+- Decoded (batch 11, lara.drm's 106 query records): `+0xC4` points at one of three triples: the player data's own
+  1280.03 / 1817.32 / 2215.55 (q1..q4, q6, q10..q13, q19, q20, q26, q31, q37, q39..q41, q43, q45, q48, q52..q56, q68,
+  q94, q95, q102, q103), **1912.14 / 2449.43 / 2847.66** (the hang side / back jumps q7 / q8 / q9, q16..q18, q21..q23,
+  DICE q28..q30, poles q32..q36, q38, the fall states' q44 / q46 / q47, q51, q64, q69..q71, q98, q106) or 1343.24 /
+  1817.32 / 2215.55 (q107); the other queries have none. `+0xA84` is the last query a state ran into the query block
+  (+0x980; action 423's slots: mode 0x250 / 0x256 every frame, 0x251 on leaving, 0x254 on entering, 0x75EA50 /
+  0x75ED40 / 0x75EDF0; the state change 0x787890 runs the entering slot 0x785AE0, then enter 0x785A30) and stays until
+  another runs.
+- tru.exe under Wine (2026-11-20, l4_ballcourt start, floor −12790.5, `Contradict11-wine/ref/*.txt`): after the
+  unit load `+0xA84` = 45; a fall from rest (`pole lara` +1500) keeps it (the fall enters S1032, which runs no
+  query) and costs 204.8 (the player data's); with `+0xA84` written to 44 the same fall costs **0** and one of 2000
+  costs **81.7** (= 1912.14 / 2449.43 / 2847.66); a standing jump sets 2 and keeps it after the landing; running sets
+  56 every frame [O-runtime].
+- Partly fixed (agent/Contradict11): `Health::fallHeights(query)` has the decoded triples, `Health::fall(height,
+  query)` uses them, `PlayerState::jumpQuery` (saved, hashed) is set where ours runs the same query: the ground jumps
+  (q2 / q43 / q1), the run (q56), the hang jumps (q7 / q8 / q9, q10) and the free leaps off a hang (q7 / q8 / q9).
+  So a hang jump back or sideways that misses now lands with 1912 / 2449 / 2847 (`Combat.FallDamageHeightsOfTheJump
+  QueryInEffect`). Open [U]: which state a walk-off fall enters (S1006..S1012 / S1030 run q44 on entering, S1028 /
+  S1029 q45, S1032 none); ours keeps the query in effect through a fall, so a walk-off after a run lands with the
+  run's (the player data's) heights. The ladder, DICE, pole and wall-hug jumps do not set theirs yet.
+- Status · Origin: Partly fixed (agent/Contradict11) · pre-existing.
 
 ### Swimming (OU-SWM)
 
@@ -1195,7 +1234,7 @@ docs/GAMEPLAY_DEVELOPMENT_REPORT.md §7; regression test = the scenario moved up
 | OU-PZL-009 | l4_ballcourt exit switch 5469, socket empty | locked until keyhole 6501 (modifiable 7 (2)) [O bytecode] | switch usable; ours honours modifiable 7 only for `ar_ei_switch_oneway` | `known_gaps/ch15_ballcourt_exit_switch` |
 | OU-PZL-010 | l4_pool rune block 5609 | dragged | no joint record → nothing drags it | `known_gaps/ch15_pool_rune_block` |
 | OU-PZL-011 | l5_valaskjalf checkpoint 7067 | reach volume 6866 | fixed: the block's 790 face is the render terrain's too (no lower steps exist); the hang clearance's rays now skip TerrainGroupExtra 0x800 groups as tru.exe's player rays (0x2C19E7) do, so group 5's smooth ramp over the steps no longer hides the first tread (class 2, pull-up) | `ch17_hammer_chamber` |
-| OU-PZL-012 | l7_yggdrasil_end entry walkway | jump onto a passing stone (rig 8389) from the edge; towers / mounts | tru.exe under Wine (2026-11-20, tru = ours + (1511.94, 2620.93, 4105.71)): stones circle at radius 4924-5025, origin z 4442-4462, 13.8 degrees/s, ledge loop 401.5 over the origin (= ours); standing 58 back from the walkway's end, Up + Jump as stone 8368 passed 159 degrees: off the floor 0.07-0.11 s after the press (~25 units on), aimed flight 2430 units/s, hang from the stone's ledge (root 490 under it); a stick jump with no target there leaves after 8.3 frames / ~175 units (= our stickJumpFrames). Ours checks the q43 target only at take-off and against the ledge's present position, so from 58 back she walks off the end; from 154 back the aimed jump catches the stone. [U] how the query sees the coming stone (0x7296C0, owner velocity 0x7027B0). Fight towers / mounts by input still open. ROADMAP L95 says Natla cannot be hit (vt 22), REPORT §7 says Mjolnir hits reach her script (OU-DOC-002) | `natla_platform_ride`, `ch21_platform_ride` (from 154 back); `ProgressionReal.NatlaFightByInput` |
+| OU-PZL-012 | l7_yggdrasil_end entry walkway | jump onto a passing stone (rig 8389) from the edge; towers / mounts | tru.exe under Wine (2026-11-20, tru = ours + (1511.94, 2620.93, 4105.71)): stones circle at radius 4924-5025, origin z 4442-4462, 13.8 degrees/s, ledge loop 401.5 over the origin (= ours); standing 58 back from the walkway's end, Up + Jump as stone 8368 passed 159 degrees: off the floor 0.07-0.11 s after the press (~25 units on), aimed flight 2430 units/s, hang from the stone's ledge (root 490 under it); a stick jump with no target there leaves after 8.3 frames / ~175 units (= our stickJumpFrames). Ours checks the q43 target only at take-off and against the ledge's present position, so from 58 back she walks off the end; from 154 back the aimed jump catches the stone. [U] how the query sees the coming stone (0x7296C0, owner velocity 0x7027B0). Fight towers / mounts by input still open. ROADMAP L95 says Natla cannot be hit (vt 22), REPORT §7 says Mjolnir hits reach her script (OU-DOC-002) | fixed: tru.exe under Wine (2026-11-20, tru = ours + (1511.94, 2620.93, 4105.71), w-GapsB10/s2/j1.txt): stones circle at radius 4924-5025, origin z 4442-4462, 13.8 degrees/s, ledge loop 401.5 over the origin (= ours); standing 58 back from the walkway's end, Up then Space 50 ms later as stone 8368 passed 159 degrees: her run state (par 64) had begun, so the press went to the running jump S281 (request 678; the chart's T56 gives the stick jump from the run's start only under full stick, cond 0x191 != 404), off the floor at ours x -6647.0, launched 89 + 41 a frame aimed at the stone, re-aimed every frame, hanging from its ledge 12.5 frames later (root 490 under it). The earlier reading (a stick jump leaving after 3 frames) was wrong: the trace's states are the running jump's. Ours now: the same press is the running jump (`Player::tick`, T56); the query meets a moving markup in its frame (0x70F300: its velocity off the arc's), here at frame 12.39; the box catch's reach (`kRunJumpReach` 1240: l4_temple 1222.9 caught / 1243.4 not, here 1237.4 caught) is measured to the ledge point led by the flight; the flight aims at the led point and re-aims every tick (0x73EDC0, OU-PLY-017): take-off at -6647.2, 2660 units/s level (Wine 2670). Fight towers / mounts by input still open. ROADMAP L95 says Natla cannot be hit (vt 22), REPORT §7 says Mjolnir hits reach her script (OU-DOC-002) | `natla_platform_ride`, `ch21_platform_ride` (from 58 back); `ProgressionReal.NatlaFightByInput` 
 | OU-PZL-013 | level entries with a bike but no placing script (ch14 et al.) | bike present | placed only where a level script places it (REPORT §8.1) | ch14 legs |
 | OU-PZL-014 | prologue ring door pulled by grapple | leaf thrown into the bedroom, lands flat 656 from its frame [O Wine s4.txt] | fixed (6d6c9eb): leaf and ring thrown into the room, flat (1.1k) | `ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` |
 | OU-PZL-015 | ch08 Bhogavati statue / lift; ch14 thrones | statue floor, lift drop, thrones run | `multibody` 3 unbound; thrones stop at an unbound native (REPORT §7) | ch08 / ch14 legs |
@@ -1566,7 +1605,13 @@ Open · pre-existing (test-tool gap).
   `+0x20` plus query-0xDB grapple point (`Combat.cpp:1130`); 0x6108A0 gives both children the slot when r ≥ +0xC + +0xD
   (1 in 101 for blueshark 50 / 50).
 - Fix: comment corrections only, plus a decode of each [U] branch before any behaviour change.
-- Status · Origin: Open · doc drift.
+- Done (agent/Contradict11): Player.cpp / Game.hpp cite 0x441FB0 (0x442786 / 0x44278E fchs); World.cpp / Combat.hpp
+  cite 0x5DA230 for the ramps and 0x7228E0 for the divide; Physics.cpp calls 1.1538 the lag threshold of the overrun
+  accumulator and labels the record-less damping [I] (OU-PHY-003); World.cpp names the vtable slots 27 / 28 and the
+  vt+0x14 record [U], and the 4-entry trigger list [U]; Enemy.hpp gives 0x6391F0 -> 0x60E4C0 and the both-children
+  slot (Enemy.cpp already took Circle there [I]); Combat.cpp notes 0x6FF040's query 0xDE / 0x159 / 0x158 overrides [U].
+  No behaviour change; the [U] branches stay undecoded.
+- Status · Origin: Fixed (agent/Contradict11) · doc drift.
 
 **OU-TST-003 Loaders lack synthetic rejection tests** — listed per format in each `docs/formats/*.md` "Validation"
 section (FormatDocs, 2026-11-16). Examples:
