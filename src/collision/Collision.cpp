@@ -270,7 +270,7 @@ bool CollisionMesh::queryable(const Face& f, uint8_t mask) const {
     return collision::queryable(f, mask) && (f.group >= groupEnabled_.size() || groupEnabled_[f.group]);
 }
 
-std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const {
+std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask, uint8_t skipRays) const {
     const float len = glm::length(dir);
     if (len <= 0 || nodes_.empty()) return std::nullopt;
     const vec3 d = dir / len;
@@ -299,7 +299,7 @@ std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist,
         }
         for (uint32_t i = n.first; i < n.first + n.count; ++i) {
             const Face& f = faces[order_[i]];
-            if (!queryable(f, mask)) continue;
+            if (!queryable(f, mask) || (f.rays & skipRays)) continue;
             const float t = rayTri(origin, d, {vertices[f.v[0]], vertices[f.v[1]], vertices[f.v[2]]});
             if (t >= 0 && t <= bestT) {
                 bestT = t;
@@ -367,6 +367,13 @@ std::optional<Hit> CollisionMesh::raycast(vec3 origin, vec3 dir, float maxDist, 
     auto best = rayFaces(origin, dir, maxDist, mask);
     return withDynamics(best, [&](const CollisionMesh& s, const glm::mat4& inv) {
         return s.rayFaces(vec3(inv * glm::vec4(origin, 1)), glm::mat3(inv) * dir, best ? best->t : maxDist, mask);
+    });
+}
+
+std::optional<Hit> CollisionMesh::playerRay(vec3 origin, vec3 dir, float maxDist) const {
+    auto best = rayFaces(origin, dir, maxDist, kSolidMask, kSkipPlayerRays);
+    return withDynamics(best, [&](const CollisionMesh& s, const glm::mat4& inv) {
+        return s.rayFaces(vec3(inv * glm::vec4(origin, 1)), glm::mat3(inv) * dir, best ? best->t : maxDist, kSolidMask);
     });
 }
 
