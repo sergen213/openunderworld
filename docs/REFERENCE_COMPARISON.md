@@ -368,6 +368,7 @@ the decompiled update 0x793680 / 0x791D10 / 0x792900 (†); ours feeds the same 
 | M64 | Pickups | Reward table: 179 treasures and 6 relics; a relic raises max health | [O-data] † reward records of every unit | `Progress.cpp` reward table | 0 | unmeasured (same data) |
 | M72 | Cutscenes, reveal cameras | Cine streams and the units' camera splines | [O-data] † | `src/cine`, `Camera.cpp` | blends [I] | unmeasured |
 | M73 | Checkpoints, saves | Checkpoint intros; respawn after a 90-frame fade | [O] † 0x75AA50 / 0x75AF90 / 0x6F55A0 | `Stream.cpp`, `save/Save.cpp` | — | unmeasured |
+| — | Checkpoint respawn position at a fresh load (OU-SAV-002, 2026-11-20) | Born exactly on the checkpoint intro (0x5D40C0 with the id in the level data). l1_seafloor 234 (803 over the floor): swims there, **13.4** lower after 0.9 s; l1_seatop 1000: falls **197** onto the yacht deck, carried **586** below by 0.7 s; l7_yggdrasil_end 8242: hangs from a handhold **414** below; 8248: lands **15889** below; l7_helheim03 8844: slides **1890** down the face | [O-runtime] `tools/wine-ref/sessions/checkpoint_respawn.sh`, `Respawn11-wine/ref/s1..s5-*-rec.txt` | `Player::spawn` (under-water spawns kept afloat), `ChaptersReal/CheckpointRespawn.*`: 234 swims at the intro (dz 0), 1000 437 below on the settled deck, 8242 hangs 416 below, 8248 falls 14927, 8844 slides | seafloor: 0 vs 13 (before the fix 803); yacht: settled deck vs the 0.7 s seen | matches (birth on the intro; the moves after it) |
 | M74 | Burning-manor escape | The section-01 units and scripts | [O-data] † | `Stream.cpp` | — | unmeasured |
 | M75 | Outfit / weapon choice | Selection rule 0x5DE2B0 | [O] † | `ui/Ui.cpp` (no per-level screen) | screen missing | unmeasured |
 | M93 | Ending flow | † rules inferred | [I] | `ui/Ui.cpp`, `Progress.cpp` | — | unmeasured |
@@ -477,7 +478,7 @@ placement templates: unit offset from the start position, `tpv` placement checke
 
 ## Counts
 
-172 rows: **65** match (1 of them with a part that differs), **4** differ (M17 slope slide; M79 rollers, M103 fire
-volume 4517, M104 jellyfish first sting), **103** are unmeasured. 76 rows rest on a live measurement of the original
+173 rows: **66** match (1 of them with a part that differs), **4** differ (M17 slope slide; M79 rollers, M103 fire
+volume 4517, M104 jellyfish first sting), **103** are unmeasured. 77 rows rest on a live measurement of the original
 ([O-runtime]); the rest are decoded only (†). (Recounted 2026-11-20 after the hazard / health sweep: M56, M65 live,
-M67, M68, M111 now match; the hazard row split into M68 / M69 / M77 / M79.)
+M67, M68, M111 now match; the hazard row split into M68 / M69 / M77 / M79; then the checkpoint respawn row, OU-SAV-002.)
