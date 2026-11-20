@@ -16,6 +16,7 @@ layout(binding = 4) uniform Water {
     mat4 seaWaves;     // tru.exe's sea waves at the camera (caustics: shaders/waves.glsl)
     vec4 optics[3];    // Enhanced water colour (render::waterOptics; water.frag ouWaterLook): all 0 = the unit's own
     vec4 ocean[2];     // the FFT ocean (caustics: shaders/waves.glsl ouOcean*)
+    vec4 medium;       // the medium's light (render::Underwater::light; uw_medium.glsl agSkyK / agSunK)
 } w;
 #ifdef VULKAN
 layout(set = 1, binding = 1) uniform sampler2D uDepth;
@@ -192,7 +193,7 @@ vec4 agRays(ivec2 hp) {
     float mu = max(dot(rd, sx), 0.0);
     float ph = mix(0.2 + 2.0 * mu * mu * mu, 0.8, kAgZone);
     vec3 wc = mix(kAgWcol + vec3(0.04, 0.07, 0.05), kAgPcol + vec3(0.28, 0.16, 0.12), kAgZone);
-    return vec4(min(acc * dt * sgz * wc * kAgSunc * ph * kAgRays * (1.0 - 0.55 * kAgZone), vec3(20.0)), zl);
+    return vec4(min(acc * dt * sgz * wc * kAgSunc * agSunK() * ph * kAgRays * (1.0 - 0.55 * kAgZone), vec3(20.0)), zl);
 }
 // W_RBLUR: depth-aware 3x3 blur of agRays at half resolution, weights 1 / (.03 + |r.a - c.a| / c.a).
 vec4 agRaysBlur(ivec2 p) {

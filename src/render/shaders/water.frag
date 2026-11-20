@@ -42,6 +42,7 @@ layout(binding = 4) uniform Water {
     uvec4 rays[157]; mat4 seaWaves; // (rays unused here); tru.exe's sea waves at the camera (caustics)
     vec4 optics[3]; // Enhanced water colour (render::waterOptics): [0] extinction/unit + on, [1] in-scatter hue, [2] Kd/unit
     vec4 ocean[2];     // the FFT ocean (render/Water.hpp WaterBlock::ocean)
+    vec4 medium;       // the under-water medium's light (render/Water.hpp WaterBlock::medium; uw_medium.glsl agSkyK / agSunK)
 } w;
 #ifdef VULKAN
 layout(set = 0, binding = 1) uniform sampler2D uScene;
@@ -458,8 +459,8 @@ void main() {
         vec3 rr = refract(V, nb, 1.33);
         float sdot = max(dot(rr, agSunAir()), 0.0);
         float fr = pow(1.0 - sqrt(max(k, 0.0)), 5.0);
-        spec = pow(sdot, 60.0) * 1.3 + pow(sdot, 500.0) * 12.0;
-        vec3 skyC = vec3(0.30, 0.78, 1.0) * 1.3 * clamp(1.0 + 3.8 * (sl.x * 0.6 - sl.y * 0.8), 0.25, 3.0);
+        spec = (pow(sdot, 60.0) * 1.3 + pow(sdot, 500.0) * 12.0) * agSunK(); // ours: x the time of day (agSunK, agSkyK)
+        vec3 skyC = vec3(0.30, 0.78, 1.0) * 1.3 * clamp(1.0 + 3.8 * (sl.x * 0.6 - sl.y * 0.8), 0.25, 3.0) * agSkyK();
         // Ours (the demo has nothing above its surface): what stands above the water (a hull, the shore, Lara) replaces the
         // demo's sky inside the window. The refracted ray rr (world: agDir) traced through the opaque scene, else the scene
         // at the slope-offset pixel within 100 m; both faded in at the screen border (and from 60 m) so the trace's ends

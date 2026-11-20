@@ -186,6 +186,10 @@ struct Underwater {
     float pass[2][4] = {}; // scene::Environment::waterPass (surface rgb + alpha at the eye, deep rgb + full-fog distance)
     bool fog = false;      // below the surface: this fog replaces the unit fog (TRU's shaders, water, atmosphere)
     float fogColor[3] = {}, fogNear = 0, fogFar = 0;
+    // Enhanced water's under-water medium light (shaders/uw_medium.glsl; the time of day, render/TimeOfDay.hpp): rgb x
+    // its sky light (in-scatter, ambient, side light, the sky seen through Snell's window), w x its sun (sun energy,
+    // shafts, glint). 1 = the medium's own daylight.
+    float light[4] = {1, 1, 1, 1};
     // tru.exe's under-water light rays (render::UnderwaterRays): 50 x 50 additive image, rows top-down, 255 = 1, added
     // over the screen (bilinear) x rayWeight; 0 = not drawn this frame. Both water qualities.
     float rayWeight = 0;

@@ -1687,9 +1687,11 @@ struct EffectsView {
         // After the fog set above took the look's own colours (finishFog tints the resolved fog once).
         timeOfDayLook(w);
         fo.sky = todActive ? &sky : nullptr;
-        if (todActive)
+        if (todActive) {
             for (auto& p : underwater.pass)
                 for (int k = 0; k < 3; ++k) p[k] *= tod.fog[k];
+            std::copy(tod.medium, tod.medium + 4, underwater.light);
+        }
         unitFog = {}, effectFog = {};
         for (const auto& [r, k] : waterFilters)
             if (r && k > 0) unitFog.add(*r, k);
@@ -1708,7 +1710,8 @@ struct EffectsView {
             for (const auto& v : fo.waterVolumes)
                 if (eye.x >= v.min[0] && eye.x <= v.max[0] && eye.y >= v.min[1] && eye.y <= v.max[1] && eye.z >= v.min[2] && eye.z <= v.max[2]) {
                     if (rays.rec.follow) rays.rec.origin[0] = lara.x, rays.rec.origin[1] = lara.y;
-                    underwater.rayWeight = rays.draw(cam, aspect, v.waves, underwater.rays) ? 1.0f : 0.0f;
+                    // x the time of day's sun (Underwater::light w; 1 without it): sunlight columns fade with the night
+                    underwater.rayWeight = rays.draw(cam, aspect, v.waves, underwater.rays) ? underwater.light[3] : 0.0f;
                     break;
                 }
         fo.underwater = &underwater; // the colours tint Enhanced water from above too; strength 0 = no pass, no fog

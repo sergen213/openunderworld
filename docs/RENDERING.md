@@ -1136,6 +1136,13 @@ Ours; tru.exe has no time of day. `default` is the game's own lighting (nothing 
   pass) and the backdrop x (0.10, 0.12, 0.20). Sunless outdoor units (lamp-lit) keep more: ambient 0.6, light maps 0.7.
   Local lights (torches, lamps, the flashlight) are untouched. A dark own look (fog luminance below 0.32, e.g.
   l6_ship_exterior's storm) is lifted by day toward it, at most x 2.2.
+- Under water: the fog / water fog sets and TRU's water pass take the fog scale above; Enhanced water's medium
+  (`shaders/uw_medium.glsl`, abyssal-garden's daylight constants) takes `TimeOfDayLight::medium` through
+  `Underwater::light` / `WaterBlock::medium`, applied only to light the medium adds on its own: rgb (the fog scale
+  without the day lift) x its in-scatter (agFogIn), the marine snow's ambient and the sky seen through Snell's window;
+  w (the frame's sun or moon over the unit's own sun, by luminance; the day factor in sunless units) x the shafts, the
+  particles' sun highlights, the glint and tru.exe's light rays (Original water). agRelight keeps the medium's daylight
+  terms (it takes their ratio), so TRU's own night-lit colour stays.
 - Backdrop pass: right after the exterior terrain and its depth clear (or first, without one; also in the planar
   reflection), a full-screen triangle multiplies the frame so far (sky domes, the clear colour) by the backdrop tint,
   then adds a star field (3D cell hash, one cell in 30, ~1.2 px stars, twinkle, fading at the horizon) and the moon disc

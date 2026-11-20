@@ -19,7 +19,7 @@ void main() {
     float m = agSs(1.0, 0.2, length(vUv));
     if (m <= 0.0 || uwSurfaceAt(vP.xyz) < -1e29 || uwOccluded(vP.xyz)) discard;
     vec3 wp = agPos(vP.xyz);
-    vec3 c = (agSunE(wp.y, kAgZone) * ouSunShadowVisibility(vP.xyz) * 0.8 + agAmb(wp, vec3(0.0, 1.0, 0.0), 1.0, kAgZone) * 0.3) *
+    vec3 c = (agSunE(wp.y, kAgZone) * ouSunShadowVisibility(vP.xyz) * 0.8 * agSunK() + agAmb(wp, vec3(0.0, 1.0, 0.0), 1.0, kAgZone) * 0.3 * agSkyK()) *
              mix(vec3(1.0), vec3(0.7, 1.0, 0.9), vA.x);
     oColor = vec4(min(max(c * m * m * vP.w * exp(-kAgSig.g * vA.y), vec3(0.0)), vec3(8.0)), 0.0);
 }

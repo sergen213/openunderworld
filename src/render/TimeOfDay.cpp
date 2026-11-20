@@ -113,6 +113,9 @@ TimeOfDayLight timeOfDayLight(const scene::Environment& unit, double hours, bool
     put(s.lightMaps, lightMaps);
     put(s.probes, ambient);
     put(s.backdrop, fog);
+    put(out.medium, mix3(kNightFog, glm::vec3(1.0f), day) * skyTint);
+    const float ownSun = luminance(glm::make_vec3(unit.sunColor));
+    out.medium[3] = sun && ownSun > 1e-4f ? luminance(glm::make_vec3(s.sunColor)) / ownSun : day;
     const float clear = clearSky ? 1.0f : 0.0f;
     s.stars = clear * (1.0f - day) * (1.0f - day);
     s.moon = clear * smooth(deg(-2.0f), deg(5.0f), -elevation) * (1.0f - 0.7f * day);

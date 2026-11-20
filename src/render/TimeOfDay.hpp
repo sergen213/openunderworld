@@ -39,6 +39,10 @@ struct TimeOfDayLight {
     Sky sky;                        // FrameOptions::sky
     float ambient[3] = {1, 1, 1};   // x the look's ambient (applyTimeOfDay)
     float fog[3] = {1, 1, 1};       // x every fog colour: the look's fog / water fog sets, the filters' fog blocks
+    // Underwater::light (Enhanced water's under-water medium, shaders/uw_medium.glsl): rgb its sky light (the fog scale
+    // without the day lift: by day the medium's own daylight), w its sun (the frame's sun or moon over the unit's own,
+    // by luminance; sunless units: the day factor).
+    float medium[4] = {1, 1, 1, 1};
 };
 TimeOfDayLight timeOfDayLight(const scene::Environment& unit, double hours, bool clearSky);
 // The look's ambient and fog / water fog colours x light's scales.

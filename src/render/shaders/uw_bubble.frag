@@ -27,7 +27,7 @@ void main() {
     float rim = agSs(0.55, 0.98, r);
     float hl = agSs(0.34, 0.0, length(vUv - vec2(-0.36, 0.42))) + 0.5 * agSs(0.2, 0.0, length(vUv - vec2(0.4, -0.42)));
     vec3 wp = agPos(vP.xyz), sun = agSun();
-    vec3 E = agSunE(wp.y, kAgZone) * (0.25 + 0.75 * ouSunShadowVisibility(vP.xyz));
+    vec3 E = agSunE(wp.y, kAgZone) * agSunK() * (0.25 + 0.75 * ouSunShadowVisibility(vP.xyz));
     vec3 hi = agFogIn(wp, vec3(0.0, 1.0, 0.0), 80.0, kAgZone, sun) * 1.5;
     vec3 lo = agFogIn(wp, vec3(0.0, -1.0, 0.0), 80.0, kAgZone, sun);
     vec3 c = mix(lo, hi, agSs(-0.5, 0.8, vUv.y + rim * 0.4)) * (0.5 + 1.2 * rim) + E * hl * 1.6;

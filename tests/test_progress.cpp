@@ -1190,7 +1190,9 @@ TEST(TimeOfDay, ConfigUnitsAndLight) {
         EXPECT_NEAR(native.sky.sunColor[k], sun.sunColor[k], 1e-3f) << k;
         EXPECT_NEAR(native.ambient[k], 1.0f, 1e-3f) << k;
         EXPECT_NEAR(native.sky.lightMaps[k], 1.0f, 1e-3f) << k;
+        EXPECT_NEAR(native.medium[k], 1.0f, 1e-3f) << k; // the under-water medium's own daylight
     }
+    EXPECT_NEAR(native.medium[3], 1.0f, 1e-3f);
     EXPECT_FALSE(native.sky.backdropPass()); // nothing to tint by day under this unit's own (bright) fog
     EXPECT_EQ(render::timeOfDayHours(render::TimeOfDay::Cycle, 0, 24, arc.nativeHour), double(arc.nativeHour));
     EXPECT_NEAR(render::timeOfDayHours(render::TimeOfDay::Cycle, 6 * 60, 24, 20.0), 2.0, 1e-9); // a quarter day, wrapped
@@ -1207,7 +1209,10 @@ TEST(TimeOfDay, ConfigUnitsAndLight) {
         EXPECT_LT(night.ambient[k], 0.5f) << k;
         EXPECT_LT(night.sky.lightMaps[k], 0.6f) << k;
         EXPECT_LT(night.fog[k], 0.3f) << k;
+        EXPECT_LT(night.medium[k], 0.3f) << k; // the under-water medium darkens with it (Enhanced water)
     }
+    EXPECT_GT(night.medium[3], 0.05f); // moonlit, not black
+    EXPECT_LT(night.medium[3], 0.4f);
     EXPECT_GT(night.sky.moonToward[2], 0.3f); // the disc stands where the moonlight comes from
     for (int k = 0; k < 3; ++k) EXPECT_NEAR(night.sky.moonToward[k], -night.sky.sunDirection[k], 1e-4f);
     EXPECT_GT(night.sky.stars, 0.9f);
@@ -1223,6 +1228,7 @@ TEST(TimeOfDay, ConfigUnitsAndLight) {
     const auto sunless = render::timeOfDayLight(indoor, 21.0, true);
     EXPECT_FALSE(sunless.sky.sun);
     EXPECT_GT(sunless.sky.lightMaps[0], night.sky.lightMaps[0]);
+    EXPECT_LT(sunless.medium[3], 0.05f); // no sun, no moon: no sunlight under water
 }
 
 // The l1 sea is two stacked water boxes in separate units (l1_seatop z -7177..1400, l1_seafloor -48412..-6295; values
