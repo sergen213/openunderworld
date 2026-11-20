@@ -2797,7 +2797,8 @@ TEST(GameReal, TrapRoomsPoleFling) {
 
 // l3_main_hall pole 948 (axis z 1861) -> ledge 946, the edge of a platform 1052 ahead and 152 under the axis (floor
 // 1708.6). tru.exe under Wine (openunderworld-work/polefid2/mhsw.txt): the fling lands her on that edge 23.0 frames
-// after she leaves, (35.9 forward, 74.1 up) a frame; q33 as it is (52.10 up) tops out ~230 short of the platform.
+// after she leaves, (35.9 forward, 74.1 up) a frame, aimed at the ledge's point (x 2094.6), where she comes to rest
+// (3678.41 in tru.exe's frame); q33 as it is (52.10 up) tops out ~230 short of the platform.
 TEST(GameReal, MainHallPoleFlingLandsOnPlatform) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -2816,10 +2817,12 @@ TEST(GameReal, MainHallPoleFlingLandsOnPlatform) {
     int air = 0;
     for (; air < 120 && s.state == State::Jump; ++air) w.tick({});
     EXPECT_NEAR(air / 60.0, 23.5 / 30.0, 0.04);
+    EXPECT_NEAR(s.pos.x, 2094.6f, 1); // on the platform's edge, as tru.exe (not 79 past it)
+    EXPECT_NEAR(s.pos.z, 1708.6f, 1);
     for (int i = 0; i < 30; ++i) w.tick({});
     EXPECT_NE(s.state, State::Fall);
-    EXPECT_GT(s.pos.x, 2094.6f); // on the platform, past its edge
-    EXPECT_NEAR(s.pos.z, 1740, 40);
+    EXPECT_NE(s.state, State::Hang) << "she stays on the platform";
+    EXPECT_NEAR(s.pos.x, 2094.6f, 1);
 }
 
 // l2_junglehub ledge 851 (z 7972): the top of a platform across a gap, 353 over the floor the run-up ends on (y ~9850).

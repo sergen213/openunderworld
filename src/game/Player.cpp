@@ -1937,8 +1937,11 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
 // forward, 74.1 up) a frame. Ours: the nearest pole or ledge ahead (300..poleFlingReach out, +-300 aside, +-500 height,
 // crossing the heading), reached kFlingFrames after leaving [I: one time fits both samples within half a frame; the
 // fling query q32's sweep does not]: a pole's hang (HangJump; the root on the hang pose, so the catch has no jump [I]),
-// a ledge with a floor on top: landing on it one capsule radius in from the edge (Jump, [I]: tru.exe touches down 3
-// short of the edge and steps on), a ledge without one: its hang [I]. Nothing ahead: q33 as it is (73.72 forward,
+// a ledge with a floor on top: the ledge's own point at the floor's height [O: polefid2/mhsw.txt, the launch (35.87,
+// 74.1) a frame from (2850.33, -416.17) solves 0x73EDC0's v = (target - pos - g t^2 / 2) / t for l3_main_hall ledge
+// 946's point (3678.41, -230.93; ours 2094.6, 1708.6) at t = 23.09 frames to 0.2 units; she touches down 3.3 short of
+// it, the next tick would be under the floor, and comes to rest on the line, 3678.41], where she lands when the flight
+// time runs out (State::Jump, flight); a ledge without one: its hang [I]. Nothing ahead: q33 as it is (73.72 forward,
 // 52.10 up a frame) [O].
 void Player::poleFling(float dirSign) {
     const vec3 from = pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT);
@@ -1964,7 +1967,7 @@ void Player::poleFling(float dirSign) {
                 const vec3 in = p - vec3(n * (side * t_.radius), 0);
                 if (const auto g = col_.groundProbe(in + vec3(0, 0, 100), 150);
                     g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - p.z) < 50)
-                    land = vec3(xy(in), g->point.z);
+                    land = vec3(xy(p), g->point.z);
                 else if (!openBelow(col_, m, si, t, side)) continue;
             }
             bestFw = fw, bestLi = int(li), bestSeg = si, bestT = t, bestSide = side, landAt = land;
@@ -1974,6 +1977,7 @@ void Player::poleFling(float dirSign) {
     s_.fallStartZ = s_.pos.z;
     if (bestLi < 0) {
         s_.ledge = -1;
+        s_.flight = 0;
         s_.vel = vec3(f * kFlingForward, kFlingUp);
         s_.state = State::Jump;
         return;
@@ -1982,6 +1986,8 @@ void Player::poleFling(float dirSign) {
     if (landAt) {
         s_.ledge = -1;
         s_.vel = jumpVelocity(*landAt - s_.pos, time, t_.gravity);
+        s_.climbTo = *landAt, s_.flight = time; // State::Jump lands her there when the time runs out
+        s_.jumpAimed = true;                    // a markup target: no wall jump (chart cond 0x262)
         s_.state = State::Jump;
         return;
     }
@@ -2548,6 +2554,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (stick && wantsMove) s_.yaw = target;
         s_.vel = forward() * h + vec3(0, 0, running ? t_.runJumpVz : stick ? t_.standMoveJumpVz : t_.jumpVz);
         s_.state = State::Jump;
+        s_.flight = 0; // no pole fling's landing time (below)
         s_.fallStartZ = s_.pos.z;
         // q26 running, q43 with the stick, q2 standing (lara.drm query table) [O]
         const bool aimed = running    ? aimGroundJump({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f), true)
@@ -2589,6 +2596,17 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                  s_.clip == "NG_InAir_Feet_Forward_stage2");
         else if (s_.state == State::Fall && clipDone()) play("NG_InAir_Feet_Forward_stage3", true); // after a let-go clip
         if (s_.state == State::Jump && s_.clip.starts_with("NG_InAir") && tryPoleLeap()) break;
+        // A pole fling onto a platform's ledge (poleFling): down on the ledge's point when its flight time runs out
+        // (tru.exe: the tick before the floor, 3.3 short of it, then on the line [O]).
+        if (s_.state == State::Jump && s_.jumpAimed && s_.flight > 0) {
+            s_.flight -= dt;
+            if (s_.flight < 1e-4f) {
+                s_.flight = 0;
+                s_.pos = s_.climbTo;
+                land(move);
+                break;
+            }
+        }
         {
             // tru.exe's chart tests the wall jump every game frame (half a 30 Hz frame apart at the 60 Hz of the Wine
             // traces, as ours' ticks: chimney4-wine.txt h1 takes the walls 6.0 and 5.5 frames into the rebounds). A jump
@@ -2598,7 +2616,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             // standing jump, q10 hang up, q23 ladder up, q31 DICE up, q35 pole top up, q55 the wall hug's twist), none
             // of the ones with a horizontal launch [O-data]; tru.exe under Wine: a standing jump 111 from l2_junglehub's
             // unflagged column face is a plain 201.6 jump [O-runtime, docs/REFERENCE_COMPARISON.md].
-            if (s_.state == State::Jump && s_.jumpTime == 0 && glm::length(xy(s_.vel)) < 1.0f) s_.jumpAimed = true;
+            if (s_.state == State::Jump && s_.jumpTime == 0 && glm::length(xy(s_.vel)) < 1.0f) s_.jumpAimed = true, s_.flight = 0;
             if (s_.state == State::Jump) airBrake(move);
             if (s_.state == State::Jump) s_.jumpTime += dt;
             const bool test = s_.state == State::Jump && !s_.jumpAimed;
