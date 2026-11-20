@@ -72,6 +72,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-WAT-012 | water render / RT | RT reflection of a shadowed cliff overhang reads too dark | Not reproduced | pre-existing | — |
 | OU-WAT-013 | water render | Geometry swell small outside the tessellated window (coarse TRU sea meshes) | Open (limit) | pre-existing | C-SWELL |
 | OU-WAT-014 | water render | Under-water tint over a level view while swimming at the surface | Fixed-verified (0.58.0, merge 59e367c) | pre-existing | — |
+| OU-WAT-015 | water render | Original-preset l2_cliffclimb sea: smooth mirror reflection and a dark seam where tru.exe shows wave-broken teal water | Reproduced (capture) | pre-existing | — |
 | OU-REN-001 | render | Dark sky near the chapter 2 cliff | Fixed-verified (0.57.0, 471b42e: sky dome object) | pre-existing | — |
 | OU-REN-002 | render | HDR off by default: bright window highlights band | Open | pre-existing | — |
 | OU-REN-003 | render / cine | `co_*` cutscene actor faces render green | Open | pre-existing | — |
@@ -81,6 +82,9 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-REN-007 | render | Blended foliage receives the shadow map under RT; no roughness | Open | pre-existing | — |
 | OU-REN-008 | render / FSR | Translated wind vertex animation has no motion vectors (FSR ghosting) | Open | pre-existing | — |
 | OU-REN-009 | render / log | False `texture 2 not found in loaded DRMs` for back-/depth-buffer samplers | Fixed-verified (0.54.0, f6e4264) | pre-existing | — |
+| OU-REN-010 | render | Finish bloom misses its `c · a` term (0x51AEF0 composite): up to half the original's bloom | Open (capture + shader read) | pre-existing | — |
+| OU-REN-011 | render | Two-sided translucent batches drawn in one cull-off draw; tru.exe draws back faces, then front faces | Open (capture) | pre-existing | — |
+| OU-REN-012 | render / fx | Lit smoke material particles drawn unlit grey (prologue corridor) | Reproduced (capture) | pre-existing | — |
 | OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Open | regression | — |
 | OU-VK-002 | Vulkan AO | CORTAO temporal pass is camera-only (risk of halos on moving meshes) | Not reproduced | new-feature defect (0.51.0) | — |
 | OU-VK-003 | Vulkan | AMD Anti-Lag crash a few frames into cutscenes / loading screen | Fixed-verified | regression (Anti-Lag support) | — |
@@ -366,6 +370,21 @@ Status · Origin: Open (limit) · pre-existing.
   camera and an under-water camera are unchanged (Vulkan and GL).
 - Status · Origin: Fixed-verified · pre-existing.
 
+**OU-WAT-015 Original-preset l2_cliffclimb sea: smooth mirror, dark seam** (render capture, 2026-11-20)
+- Repro: `ou-game --preset original --level 'pc-w\l2_cliffclimb.drm' --spawn -34775.5,-14687.7,225.9,41.7 --camera
+  -35002.4,-15613.9,565.2,-34746.9,-14647.1,569.1,-0.0010,-0.0038,1,45 --frames 150 --screenshot x.ppm` (the yacht
+  deck view of tru.exe's capture `rendercap10/cliffclimb/shot.png`, docs/REFERENCE_COMPARISON.md "Rendering" C1/C2),
+  Vulkan and OpenGL identical.
+- Expected [O-runtime]: tru.exe's sea (material PS of D3D9 call 13277874, drawn in the translucent list) shows teal
+  refraction broken up by small waves; the cliff's reflection is faint and distorted. Its inputs: the half-resolution
+  refraction view (640x360 colour + INTZ depth, user clip plane), the half-resolution mirror view (640x360), two
+  1024² normal maps (samplers 9 / 10), fog LUT; docs/re/RENDER_PIPELINE.md §13.
+- Actual: a strong, nearly undistorted mirror image of the cliff, and a dark horizontal band where the reflection meets
+  the shore. Cause [U]: candidates are the full-resolution refraction / reflection inputs (RENDER_PIPELINE §7.3, §9),
+  the missing ripple map (tru.exe creates three 384² G16R16 dynamic textures for this sea; none was bound in the
+  captured frames) and the reflection plane height.
+- Status · Origin: Reproduced (capture) · pre-existing.
+
 ### Rendering (OU-REN)
 
 **OU-REN-001 Dark sky near the chapter 2 cliff**
@@ -440,6 +459,44 @@ Open · pre-existing.
   (l2_cliffclimb, l2_flushtunnel). ou-game `--level` l3_main_bedroom / l2_cliffclimb and `--chapter 1`: 0 such lines
   (the BugRepro logs had 88, all id 2).
 - Status · Origin: Fixed-verified (0.54.0, f6e4264) · pre-existing (cosmetic).
+
+**OU-REN-010 Finish bloom misses its `c · a` term** (render capture, 2026-11-20)
+- Expected [O-runtime]: tru.exe's Finish composite (PCFinishEffect draw 0x51AEF0; pixel shaders of D3D9 calls 1565373
+  bedroom / 13365863 l2_cliffclimb in `rendercap10/*/tru.trace`) is `oC0.rgb = M(c) + c · (c.a · a)`, `oC0.a = a`,
+  blended SRCALPHA / ONE: the frame gains `a · (M(c) + α_b · a · c)`, c = the blurred half-size copy, M = the finish
+  curves (identity without them), a = the quad's vertex alpha (0x38 / 255 = 0.220 in the bedroom frame), α_b = the
+  alpha the last blur pass left in the copy (1 for whole blur levels; 0.865 in the bedroom frame, where the fraction
+  pass blends level 2 over level 1 at 0.839). The 4-tap blur passes write their vertex alpha, not the scene's.
+- Actual: `filter.glsl` adds `M(c) · amountC` (`amountC` = a): with identity curves 16 % less than tru.exe at the
+  bedroom frame's a / α_b (1 / 1.19), half of it at amount 2 (a = 1: tru.exe 2c, ours c), the strength of the
+  prologue fire's own filter (EFFECTS.md "Screen filters").
+- Fix: add `c · α_b · a` inside the finish term (α_b from the blur fraction) [not done here: changes every
+  filtered frame of both presets; needs the golden scenes re-checked].
+- Status · Origin: Open · pre-existing.
+
+**OU-REN-011 Two-sided translucent batches drawn in one cull-off draw** (render capture, 2026-11-20)
+- Expected [O-runtime]: in both captures every two-sided blended batch is drawn twice in a row, the same draw with
+  D3DCULL_CCW and then D3DCULL_CW (main view; the mirror view swaps them), e.g. Lara's 1315 / 136 / 114 / 208 / 96 /
+  97 / 168 / 10 / 86-primitive blended batches in `bedroom/frame10d.txt` 19975112..19975238: back faces first, then
+  front faces (opaque draws cull CW, so CW faces are back faces).
+- Actual: `SubMesh::doubleSided` blended batches draw once with culling off (VkRenderer.cpp:1181 / 1294 / 1355,
+  GlRenderer.cpp:1173 / 1638): where such a mesh overlaps itself (hair, cloth, foliage cards) the blend order follows
+  the index order. Not seen at the capture distances [I: visible close up].
+- Fix: draw two-sided blended batches as two draws, back then front.
+- Status · Origin: Open · pre-existing.
+
+**OU-REN-012 Lit smoke material particles drawn unlit grey** (render capture, 2026-11-20)
+- Repro: the prologue corridor, `ou-game --chapter 0 --render-hz 60 --frames 2400 --camera
+  -4264.2,7219.1,554.5,-4265.2,5954.9,549.1,0,-0.0043,1,45` (the new-game start, so the cinematic's fireball particles
+  exist), against `rendercap10/bedroom/shot.png` (docs/REFERENCE_COMPARISON.md "Rendering" B1).
+- Expected [O-runtime]: the smoke under the arch is warm brown and dense. Its material pixel shader (D3D9 call 1504259)
+  normal-maps the sprite (sampler 1), lerps PS c135 → c133 by the normal's facing and adds the vertex colour, then
+  applies the fog LUT (s15).
+- Actual: light grey puffs: material particles of the "Others" case are drawn as texture × colour
+  (docs/formats/EFFECTS.md "Material particles"), so the c133 / c135 lighting is lost.
+- Fix: a fourth reduction case for the lit-sprite family (normal map + c133 / c135), or the translated material
+  program for sprites.
+- Status · Origin: Reproduced (capture) · pre-existing.
 
 ### Vulkan, FSR, streaming (OU-VK, OU-STR)
 
