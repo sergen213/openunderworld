@@ -485,6 +485,7 @@ vec3 Player::depenetrate(vec3 pos, float bottom) const {
     return g && standable(p, *g) ? p : pos;
 }
 
+constexpr float kRunOffHold = 3.0f / 30.0f; // chart S11 / S13: T90 / T92 hold while the state time is under 3 frames
 void Player::groundMove(vec3 delta, float dt) {
     delta.z = 0;
     vec3 p = slide(s_.pos, delta, t_.stepUp, true);
@@ -492,18 +493,34 @@ void Player::groundMove(vec3 delta, float dt) {
     if (g && standable(p, *g)) {
         p.z = g->point.z;
         s_.pos = p;
+        s_.runOffHold = 0;
         return;
     }
     s_.pos = p; // walked off an edge, or onto a slope too steep to stand on
     const vec3 vel(xy(delta) / dt, 0);
     if (g && g->normal.z >= t_.slideMinNormalZ) {
+        s_.runOffHold = 0;
         s_.pos.z = g->point.z;
         startSlide(vel, true);
         return;
     }
     // Falling (no floor in reach, or only a face too steep to slide: a wall under the edge, as the side of a boat
-    // rolled by the swell) the safety drop catches the edge's ledge (chart T114: PSCCF_IsFalling).
-    if (!trySafetyDrop(vel)) startFall(vel);
+    // rolled by the swell) the safety drop catches the edge's ledge (chart T114: PSCCF_IsFalling). Running, tru.exe
+    // first holds her in S11 / S13 (T88 / T91 out of the run states on PSCCF_IsFalling): no request, so the run clip
+    // carries her on at its speed, her height kept, and T90 / T92 loop there while the state time (cond 0x14) is under
+    // 3 frames, ahead of T114 and the fall T89 [O-data]. Under Wine (l4_temple ledge 1155, w2/Drop9/s1 back / sprint
+    // and gameplaygoal/inputrules/wine2.txt) that hold lasts 0.10 s: 109 on from a run start, 155 at a sprint, then the
+    // attach blends her back to the edge (dropToHang); walking (no hold state) she attaches at once [O]. Ours holds
+    // only over an edge the safety drop takes [I: tru.exe holds a plain run-off too, before T89's fall].
+    float extra = 0;
+    if (s_.state == State::Run && (s_.runOffHold > 0 || trySafetyDrop(vel, "drop_to_ledgeb", false))) {
+        if (s_.runOffHold <= 0) s_.runOffHold = kRunOffHold;
+        s_.runOffHold -= dt;
+        if (s_.runOffHold > 1e-4f) return;
+        s_.runOffHold = 0;
+        extra = glm::length(xy(vel)) * kRunOffHold; // the ledge she was over when the hold began
+    }
+    if (!trySafetyDrop(vel, "drop_to_ledgeb", true, extra)) startFall(vel);
 }
 
 // The chart's stick quadrants against her heading (cond 0x192: 410 forward, 411 back, 412 / 413 the sides) [I: 45 degrees]
@@ -956,7 +973,7 @@ bool Player::tryDropToHang() {
 // stands roped: off an edge on the grapple line she hangs from the rope (chart T1409, the roped ground states are
 // not T114's sources [O-chart]).
 constexpr float kSafetyReach = 150.0f;
-bool Player::trySafetyDrop(vec3 vel, std::string_view clip) {
+bool Player::trySafetyDrop(vec3 vel, std::string_view clip, bool act, float extra) {
     if (s_.grappleUid || s_.regrabCooldown > 0 || glm::length(xy(vel)) < 1.0f) return false;
     const vec2 heading = glm::normalize(xy(vel));
     int best = -1;
@@ -966,18 +983,26 @@ bool Player::trySafetyDrop(vec3 vel, std::string_view clip) {
         const auto& m = col_.markup[li];
         if (m.type != 1) continue;
         const OnLine o = closestOn(m, s_.pos);
-        if (o.seg < 0 || o.dist > kSafetyReach || o.dist >= bestOn.dist || std::abs(o.q.z - s_.pos.z) > 40.0f) continue;
+        if (o.seg < 0 || o.dist > kSafetyReach + extra || o.dist >= bestOn.dist || std::abs(o.q.z - s_.pos.z) > 40.0f) continue;
         const vec2 dir = segDir(m, o.seg), n(-dir.y, dir.x);
         const float side = glm::dot(heading, n) > 0 ? 1.0f : -1.0f; // hang on the side she is going off
         if (std::abs(glm::dot(heading, n)) < 0.5f || !openBelow(col_, m, o.seg, o.t, side)) continue;
         best = int(li), bestOn = o, bestSide = side;
     }
     if (best < 0) return false;
-    dropToHang(best, bestOn.seg, bestOn.t, bestSide, clip);
+    if (act) dropToHang(best, bestOn.seg, bestOn.t, bestSide, clip, true);
     return true;
 }
 
-void Player::dropToHang(int ledge, int seg, float t, float side, std::string_view clip) {
+// blend: the safety drop's attach states (S542..S544, anim target property 410) carry her from where she is onto the
+// clip's start pose linearly in kDropAttachBlend (tru.exe under Wine, l4_temple ledge 1155, gameplaygoal/inputrules/
+// wine2.txt [O]: walking off, 0.9 back and 13 down, her heading turned 0.57 rad onto the clip's; running off, 117 back
+// from where she had run on to, the same 13 down and the same end - both linear over 10 ticks of the 60 Hz trace, after
+// which the two drops are the same to 0.01). The Crouch drop (another attach state, 0d9da390 in that trace) does not.
+constexpr float kDropAttachBlend = 10.0f / 60.0f;
+void Player::dropToHang(int ledge, int seg, float t, float side, std::string_view clip, bool blend) {
+    const vec3 from = s_.pos;
+    const float fromYaw = s_.yaw;
     const float bestSide = side;
     s_.ledge = ledge, s_.ledgeSeg = seg, s_.ledgeT = t, s_.ledgeSide = side;
     const auto [hang, hangYaw] = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, bestSide);
@@ -991,6 +1016,12 @@ void Player::dropToHang(int ledge, int seg, float t, float side, std::string_vie
         s_.yaw = wrapAngle(base + rootYaw(*c, s_.clipTime, false));
         s_.pos = hang - rotYaw(base, rootTranslation(*c, end, false) - rootTranslation(*c, s_.clipTime, false));
     }
+    s_.flight = 0;
+    if (!blend) return;
+    // the blend: climbFrom / climbYawFrom where she was, climbTo / climbYawTo the clip's start, flight the time left
+    s_.climbFrom = from, s_.climbYawFrom = fromYaw, s_.climbTo = s_.pos, s_.climbYawTo = fromYaw + wrapAngle(s_.yaw - fromYaw);
+    s_.flight = kDropAttachBlend;
+    s_.pos = from, s_.yaw = fromYaw;
 }
 
 // The hang's clearance class, tru.exe 0x74E290 (run on the attached ledgegrab by 0x76D010 in the segment frame of
@@ -1937,8 +1968,11 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
 // forward, 74.1 up) a frame. Ours: the nearest pole or ledge ahead (300..poleFlingReach out, +-300 aside, +-500 height,
 // crossing the heading), reached kFlingFrames after leaving [I: one time fits both samples within half a frame; the
 // fling query q32's sweep does not]: a pole's hang (HangJump; the root on the hang pose, so the catch has no jump [I]),
-// a ledge with a floor on top: landing on it one capsule radius in from the edge (Jump, [I]: tru.exe touches down 3
-// short of the edge and steps on), a ledge without one: its hang [I]. Nothing ahead: q33 as it is (73.72 forward,
+// a ledge with a floor on top: the ledge's own point at the floor's height [O: polefid2/mhsw.txt, the launch (35.87,
+// 74.1) a frame from (2850.33, -416.17) solves 0x73EDC0's v = (target - pos - g t^2 / 2) / t for l3_main_hall ledge
+// 946's point (3678.41, -230.93; ours 2094.6, 1708.6) at t = 23.09 frames to 0.2 units; she touches down 3.3 short of
+// it, the next tick would be under the floor, and comes to rest on the line, 3678.41], where she lands when the flight
+// time runs out (State::Jump, flight); a ledge without one: its hang [I]. Nothing ahead: q33 as it is (73.72 forward,
 // 52.10 up a frame) [O].
 void Player::poleFling(float dirSign) {
     const vec3 from = pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT);
@@ -1961,11 +1995,20 @@ void Player::poleFling(float dirSign) {
             const float side = (glm::dot(n, f) > 0) == pole ? 1.0f : -1.0f;
             std::optional<vec3> land;
             if (!pole) {
-                const vec3 in = p - vec3(n * (side * t_.radius), 0);
+                const vec2 inward = -n * side;
+                const vec3 in = p + vec3(inward * t_.radius, 0);
                 if (const auto g = col_.groundProbe(in + vec3(0, 0, 100), 150);
-                    g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - p.z) < 50)
-                    land = vec3(xy(in), g->point.z);
-                else if (!openBelow(col_, m, si, t, side)) continue;
+                    g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - p.z) < 50) {
+                    // the ledge's point, moved in to where our collision's top begins (it can start a unit or two
+                    // inside the markup line) at that floor's height [I: the inset]
+                    for (float d = 0; d <= t_.radius; d += 1) {
+                        const vec3 q = p + vec3(inward * d, 0);
+                        if (const auto h = col_.groundProbe(q + vec3(0, 0, 100), 150); h && std::abs(h->point.z - p.z) < 50) {
+                            land = vec3(xy(q), h->point.z);
+                            break;
+                        }
+                    }
+                } else if (!openBelow(col_, m, si, t, side)) continue;
             }
             bestFw = fw, bestLi = int(li), bestSeg = si, bestT = t, bestSide = side, landAt = land;
         }
@@ -1974,6 +2017,7 @@ void Player::poleFling(float dirSign) {
     s_.fallStartZ = s_.pos.z;
     if (bestLi < 0) {
         s_.ledge = -1;
+        s_.flight = 0;
         s_.vel = vec3(f * kFlingForward, kFlingUp);
         s_.state = State::Jump;
         return;
@@ -1982,6 +2026,8 @@ void Player::poleFling(float dirSign) {
     if (landAt) {
         s_.ledge = -1;
         s_.vel = jumpVelocity(*landAt - s_.pos, time, t_.gravity);
+        s_.climbTo = *landAt, s_.flight = time; // State::Jump lands her there when the time runs out
+        s_.jumpAimed = true;                    // a markup target: no wall jump (chart cond 0x262)
         s_.state = State::Jump;
         return;
     }
@@ -2201,6 +2247,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     // chart keeps while the jump group's action 917 stays active (the jump flights and the wall-jump states) [I: read
     // from the states' action lists].
     if (s_.state != State::Jump) s_.jumpStart = s_.pos, s_.jumpTime = 0, s_.jumpAimed = false;
+    if (s_.state != State::Run) s_.runOffHold = 0;
     if (s_.state != State::Jump && s_.state != State::JumpPrep && s_.state != State::HangJump && s_.state != State::WallJump) {
         s_.wallJumps = 0;
         const bool hang = (s_.state == State::Hang || s_.state == State::Shimmy) && s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size();
@@ -2518,14 +2565,24 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 enterWater();
             }
         break;
-    case State::DropToHang:
+    case State::DropToHang: {
+        // the safety drop's blend onto the clip's start (dropToHang): the offset from where she was fades out linearly
+        const float w0 = s_.flight > 0 ? s_.flight / kDropAttachBlend : 0.0f;
+        const vec3 off = s_.climbFrom - s_.climbTo;
+        const float offYaw = s_.climbYawFrom - s_.climbYawTo;
+        s_.pos -= off * w0, s_.yaw -= offYaw * w0;
         s_.pos += advanceRoot(dt); // full root motion and turn, no collision (as ClimbUp)
+        s_.flight = s_.flight - dt > 1e-4f ? s_.flight - dt : 0.0f;
+        const float w1 = s_.flight > 0 ? s_.flight / kDropAttachBlend : 0.0f;
+        s_.pos += off * w1, s_.yaw = wrapAngle(s_.yaw + offYaw * w1);
         if (clipDone()) {
+            s_.flight = 0;
             s_.state = State::Hang;
             play("ledgeb_idle", true);
             placeOnLedge();
         }
         break;
+    }
     case State::JumpPrep: {
         // Standing (S248, ng_standing_jump) and running (S280 / S281, ng_running_jump_forwards): the take-off clip from
         // where its request starts it (clipBlend) to its end = 10 and 2 frames; the stick jump: Tuning::stickJumpFrames.
@@ -2548,6 +2605,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (stick && wantsMove) s_.yaw = target;
         s_.vel = forward() * h + vec3(0, 0, running ? t_.runJumpVz : stick ? t_.standMoveJumpVz : t_.jumpVz);
         s_.state = State::Jump;
+        s_.flight = 0; // no pole fling's landing time (below)
         s_.fallStartZ = s_.pos.z;
         // q26 running, q43 with the stick, q2 standing (lara.drm query table) [O]
         const bool aimed = running    ? aimGroundJump({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f), true)
@@ -2589,6 +2647,17 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                  s_.clip == "NG_InAir_Feet_Forward_stage2");
         else if (s_.state == State::Fall && clipDone()) play("NG_InAir_Feet_Forward_stage3", true); // after a let-go clip
         if (s_.state == State::Jump && s_.clip.starts_with("NG_InAir") && tryPoleLeap()) break;
+        // A pole fling onto a platform's ledge (poleFling): down on the ledge's point when its flight time runs out
+        // (tru.exe: the tick before the floor, 3.3 short of it, then on the line [O]).
+        if (s_.state == State::Jump && s_.jumpAimed && s_.flight > 0) {
+            s_.flight -= dt;
+            if (s_.flight < 1e-4f) {
+                s_.flight = 0;
+                s_.pos = s_.climbTo;
+                land(move);
+                break;
+            }
+        }
         {
             // tru.exe's chart tests the wall jump every game frame (half a 30 Hz frame apart at the 60 Hz of the Wine
             // traces, as ours' ticks: chimney4-wine.txt h1 takes the walls 6.0 and 5.5 frames into the rebounds). A jump
@@ -2598,7 +2667,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             // standing jump, q10 hang up, q23 ladder up, q31 DICE up, q35 pole top up, q55 the wall hug's twist), none
             // of the ones with a horizontal launch [O-data]; tru.exe under Wine: a standing jump 111 from l2_junglehub's
             // unflagged column face is a plain 201.6 jump [O-runtime, docs/REFERENCE_COMPARISON.md].
-            if (s_.state == State::Jump && s_.jumpTime == 0 && glm::length(xy(s_.vel)) < 1.0f) s_.jumpAimed = true;
+            if (s_.state == State::Jump && s_.jumpTime == 0 && glm::length(xy(s_.vel)) < 1.0f) s_.jumpAimed = true, s_.flight = 0;
             if (s_.state == State::Jump) airBrake(move);
             if (s_.state == State::Jump) s_.jumpTime += dt;
             const bool test = s_.state == State::Jump && !s_.jumpAimed;

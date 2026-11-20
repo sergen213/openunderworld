@@ -105,8 +105,8 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-004 | Lara / ladders | No ladder side jumps or reaches | Open | pre-existing | C-CHART |
 | OU-PLY-005 | Lara / jumps | Ledge-aim reach: running-jump rush/arc switch 20-70 farther out | Open | pre-existing | C-MEASURE |
 | OU-PLY-006 | Lara / obstacles | Low-obstacle detection distance (query 96 reach) unknown | Open | pre-existing | C-CHART |
-| OU-PLY-007 | Lara / poles | Pole fling onto a platform lands 79 past the edge (tru.exe 3 short) | Open | pre-existing | C-MEASURE |
-| OU-PLY-008 | Lara / ledges | Running safety drop lacks the 82-unit overshoot and take-back | Open | pre-existing | C-MEASURE |
+| OU-PLY-007 | Lara / poles | Pole fling onto a platform lands 79 past the edge (tru.exe 3 short) | Fixed-verified | pre-existing | C-MEASURE |
+| OU-PLY-008 | Lara / ledges | Running safety drop lacks the 82-unit overshoot and take-back | Fixed-verified | pre-existing | C-MEASURE |
 | OU-PLY-009 | Lara / chimney | Chimney wall reach / standoff pair differs (holds 110 vs 119-131) | Open | pre-existing | C-MEASURE |
 | OU-PLY-010 | Lara | Free hang (`ledgeu_*`), beam drops / sprint, pole-to-perch transitions not ported | Open | pre-existing | C-CHART |
 | OU-PLY-011 | Lara | One-handed saving grab recovered by Jump instead of Interact | Fixed-verified | pre-existing | — |
@@ -167,7 +167,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | C-VM | SCMD VM gaps: unimplemented opcode 0x65, natives without bindings, no vector values, partial `modifiable` semantics, no script UI; a stopped handler silently leaves its object idle | OU-SCR-001..005, OU-PZL-009, OU-PZL-012, OU-PZL-013, OU-PZL-015, OU-AUD-004 |
 | C-JOINT | Objects whose motion the data defines outside our joint model: missing joint records, fixed joints / body A motion, freed-section bodies that never get released, joints held by rope tension | OU-PZL-006, OU-PZL-007, OU-PZL-010, OU-PZL-014, OU-GRP-005, OU-PHY-001 |
 | C-CHART | Lara's player state chart is hand-ported per move (AUDIT_A L331 / L433: sub-states keyed on clip names, no transition table); every undecoded condition becomes a guessed rule or a missing move | OU-PLY-001..004, OU-PLY-006, OU-PLY-010, OU-PZL-005 |
-| C-MEASURE | Numbers decoded or fitted but not measured in tru.exe under Wine (`docs/REFERENCE_COMPARISON.md`: 107 of 161 rows unmeasured, "Unmeasured" table lists the session for each) | OU-PLY-005, OU-PLY-007..009, OU-SWM-001, OU-SWM-002, OU-GRP-002, OU-PZL-002, OU-VEH-001, OU-PHY-002 |
+| C-MEASURE | Numbers decoded or fitted but not measured in tru.exe under Wine (`docs/REFERENCE_COMPARISON.md`: 107 of 161 rows unmeasured, "Unmeasured" table lists the session for each) | OU-PLY-005, OU-PLY-009, OU-SWM-001, OU-SWM-002, OU-GRP-002, OU-PZL-002, OU-VEH-001, OU-PHY-002 |
 | C-DOC | Status columns not refreshed when later work landed | OU-DOC-001, OU-DOC-002 |
 
 ## Entries
@@ -767,12 +767,28 @@ at 634..719 (REFERENCE_COMPARISON M13, Differences #3); the 1233 box limit is [O
 - Fix: decode query 96's reach record (property 0x21D, objdata +0x116B0) or Wine-measure hurdle onset distances on
   l2_cliffclimb step 941. Test `CliffclimbObstaclesAndLedgeGrabs`. Status · Origin: Open · pre-existing.
 
-**OU-PLY-007 Pole fling lands 79 past the edge** — tru.exe touches down 3 short and steps on (`polefid2/mhsw.txt`,
-REFERENCE_COMPARISON M07 / Differences #5). Files `Player::poleFling`. Status · Origin: Open · pre-existing.
+**OU-PLY-007 Pole fling lands 79 past the edge** — tru.exe aims the fling at the ledge's own point: the launch (35.87,
+74.1) a frame from (2850.33, -416.17) solves 0x73EDC0's v = (target - pos - g t^2/2) / t for l3_main_hall ledge 946's
+point (3678.41, -230.93) at t = 23.09 frames to 0.2 units; she touches down 3.3 short the tick before the floor and
+rests on the line, 3678.41 (`polefid2/mhsw.txt`, REFERENCE_COMPARISON M07 / Differences #5). Fix (`agent/Drop9`):
+`Player::poleFling` aims at the ledge point at its floor's height (moved in to where our collision top begins, 1 unit
+at 946 [I]) and State::Jump lands her there when the flight time runs out (`flight`, `climbTo`): x 2095.6 against the
+line 2094.6, floor 1708.6, still on the platform 30 ticks later. Remaining: our flight time is the [I] 23.5 frames
+(tru.exe's solve 23.09), so the landing tick is one later. Test `GameReal.MainHallPoleFlingLandsOnPlatform`.
+Status · Origin: Fixed-verified · pre-existing.
 
-**OU-PLY-008 Running safety drop lacks overshoot** — tru.exe overshoots 82 and is taken back, hang ~1.2 s after the line
-(REFERENCE_COMPARISON M03 / Differences #6). Files `Player::trySafetyDrop`. Test self-test `safety_drop`.
-Status · Origin: Open · pre-existing.
+**OU-PLY-008 Running safety drop lacks overshoot** — tru.exe's run states (S63 / S65 / S57 / S58 / S61) go on
+`PSCCF_IsFalling` to S11 (T88; S59 -> S13 by T91), a state with no request whose T90 / T92 loop while the state time
+(cond 0x14) is under 3 frames, ahead of T114 and the fall T89 [O-data]: 0.10 s on at her speed, feet at the top's
+height, then the attach S542 blends her from where she is onto the clip's start linearly in 10 ticks (Wine, l4_temple
+ledge 1155: 12.6 -> 121.4 past the line from a run start, 27.6 -> 182.6 sprinting, walking no hold, 2.5 past;
+`gameplaygoal/inputrules/wine2.txt`, `w2/Drop9/s1` by `tools/wine-ref/sessions/l4_temple_safety_drop.sh`; the old
+"82" was not the root's overshoot). Fix (`agent/Drop9`): `Player::groundMove` holds State::Run 3 / 30 s over an edge
+the safety drop takes (`PlayerState::runOffHold`, saved), `dropToHang(..., blend)` blends 10 / 60 s:
+`GameReal.TempleSafetyDropOffThePlatform` 10.1 -> 116.5 past the line at her full run, walking 5.8, blend 10 ticks.
+Remaining [I]: tru.exe holds a plain run-off without a ledge too (S11 before T89), ours does not; after the blend tru.exe
+moves her to the hang linearly in 24 ticks (her root (−157, −481), heading +π), ours plays `drop_to_ledgeb`'s root
+motion (same end, different path). Test self-test `safety_drop`. Status · Origin: Fixed-verified · pre-existing.
 
 **OU-PLY-009 Chimney reach / standoff** — tru.exe takes walls 24..35 nearer and holds 119..131 out of the face, ours 110
 (third hold 30 high) (REFERENCE_COMPARISON Differences #10, `WallJump.cpp:43`). Test
