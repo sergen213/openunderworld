@@ -14,7 +14,8 @@ w.sh, cg.sh), `waterentry-wine/` (weref.c = `src/ref.c`, a superset of `gameplay
 swing.py, session7a.sh / session7b.sh as the session template), `camfollow-wine/` (turn.py), `scratch/climbcam/ouk/
 hook.sh` + `log.sh` (= `camhook.sh`). The per-session copies (`camfollow-wine/`, `musicwine/`, `yachtwine/`, ...)
 differed only in their hard-coded paths and socket names, which `env.sh` now parameterises. Changes made while
-collecting: paths and unit names come from `env.sh`; the compositor runs in a systemd scope and writes its DISPLAY to
+collecting: paths and unit names come from `env.sh`; the compositor runs as a transient systemd service
+(`KillMode=control-group`, so its session's D-Bus-activated portals end with it) and writes its DISPLAY to
 `$OU_WREF_DIR/display.env`; `newgame.sh` / `stop.sh` stop only this harness's units and its own prefix's wineserver
 (the old scripts ran `pkill -f tru.exe`, which would kill another agent's session); `ref.c` gained `rec` (breath,
 health, camera and water columns); helpers link statically.
@@ -39,7 +40,7 @@ health, camera and water columns); helpers link statically.
 | `OU_WREF_DIR` | `$OU_WORK/wine-ref` | session directory: `bin/` (helpers), `display.env`, `kwin.log`, `xdg/`, traces |
 | `WINEPREFIX` | `$OU_WREF_DIR/prefix` | the private prefix |
 | `OU_TRU_DIR` | `$OU_WORK/wine-drive/game` | tru.exe's directory |
-| `OU_WREF_NAME` | `wineref` | compositor socket `ou-<name>`, units `ou-<name>-kwin.scope` / `ou-<name>-tru.service` |
+| `OU_WREF_NAME` | `wineref` | compositor socket `ou-<name>`, units `ou-<name>-kwin.service` / `ou-<name>-tru.service` |
 
 ## A session
 
@@ -71,6 +72,12 @@ Rules learnt the hard way (details in docs/REFERENCE_COMPARISON.md "Method"):
   SendInput reaches the game up to 35 ms later.
 - Hold her with `tp` (fall state keeps running) or `tpv` (velocity zeroed too); `CAMFOLLOW=dx,dy,dist,h` pins the
   camera so that Forward means world direction (dx, dy).
+- A `goto` can fail silently (she stays in the prologue; seen after deaths before the `goto`, and once on a clean
+  start for l5_valaskjalf): check her position after the load and restart the session (`stop.sh`, `newgame.sh`).
+- Fall damage counts from where the fall state began: a pinned `ref drop` gives none at any height; lift her once
+  with `pole lara x y z` instead.
+- A `goto` unit may lack its enemies: after `goto l4_ballcourt` no panther or poacher exists (born by the chapter's
+  scripts [I]); the sharks of l2_cliffclimb / l1_seafloor are there.
 
 ## Helpers (`src/`, run as `w.sh <tool> args`)
 
@@ -80,7 +87,7 @@ Rules learnt the hard way (details in docs/REFERENCE_COMPARISON.md "Method"):
 | `wkey` | `click <title> <button>` (dialogs), `key <vk> [ms]`, `multi <ms> vk...`, `km <hold> <total> vk...` (keys + camera mode samples), `mouse dx dy steps`, `combo`, `post` |
 | `pole` | `dump uid...` / `raw uid...` (instance position / rotation / words; -1 = player), `watch n ms uid...`, `yaw <rad>`, `lara x y z`, `post` / `postv` (INSTANCE_Post 0x5B3750) |
 | `ref` | `trace <ms> [vk:down:up ...]` (keys + a line per change: pos +0x20, rot +0x30, vel +0x2A0, state pointer, anim +0xC18), `drop x y z pinms ms vx vy vz [keys]` (pin, release with a velocity, trace with chart request / parent, volume top wt and wave surface sf), `rec <ms> [keys]` (trace + water, breath +0x920, health +0x628, camera +0x90 / pivot +0x100 / distance +0x1D4 / mode +0x1E0, look vector `lk` +0x160 (unit, look point − camera), matrix rows `mx` +0x10), `tp` / `tpv x y z ms`, `god`, `mouse dx dy [steps]`, and the `wmem` memory commands |
-| `enemy` | `list` (instances with an AI: uid, position, object), `watch <ms> <period> uid...` (Lara, health with bites as `hurt` and a heal under 600, per enemy position, distance, Lara-sense flags and the EnemyBehavior / EnemyState objects its AI points at; map the vftables with docs/re/db/rtti.tsv), `zones uid...` (guard zones and region as 0x622C80 tests them) |
+| `enemy` | `list` (instances with an AI: uid, position, object), `watch <ms> <period> uid...` (Lara, health with bites as `hurt` and a heal under 600, per enemy position, distance, Lara-sense flags and the EnemyBehavior / EnemyState objects its AI points at; map the vftables with docs/re/db/rtti.tsv), `zones uid...` (guard zones and region as 0x622C80 tests them), `hp <ms> <period> [set]` (Lara's position and health on every change and once a second, drops as `hurt`; `set` writes the health first; env `HEAL=h` refills to 1000 under h: the hazard measurements of docs/REFERENCE_COMPARISON.md, Lara held with `ref tpv`) |
 | `section` | `<n> <ms>`: Lara's anim section 1 (weight / step / target, request playing, bone-mask runs; changed dwords per sample) and her upper-body chart (state, pattern +0x488); docs/GAMEPLAY.md "Script flinch overlay" (l3_main_bedroom fire volume 4529) |
 
 `camhook.sh install` detours CameraManager 0x5E8210 (camera mode requests) into a ring buffer; `camhook.sh log`
