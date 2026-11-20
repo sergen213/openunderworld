@@ -138,7 +138,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PZL-016 | progression | ch06: Crouch on bar 238 does not land on beam 233 | Fixed-verified (0.59.0, GapsA10; hang drop re-aimed at a beam below; Wine trace) | pre-existing | C-CHART |
 | OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed-verified (0.53.0, ecf03db); the fallen ring and the scenario fixed on agent/GapsA10 (1088550) | pre-existing | C-JOINT |
 | OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed-verified (0.53.0, 2e6ef11: test bug) | pre-existing | C-JOINT |
-| OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends don't tug bodies remains (tru.exe's bends are physics bodies, 0x699A50) | Partly fixed ((c) 0.53.0; (a) 0.56.0, merge 02b7a09; (b) open) | pre-existing | — |
+| OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends didn't tug bodies (fixed: bend bodies, tru.exe 0x699A50 / 0x4E1260 / 0x6B3570) | Fixed ((c) 0.53.0; (a) 0.56.0, merge 02b7a09; (b) agent/Rope11, Wine-compared: the head falls after the fifth tug, tru.exe's after the eighth [I tension]) | pre-existing | — |
 | OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed-verified (0.53.0, 30cc49f) | pre-existing | C-VM |
 | OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed-verified (0.53.0, b716e88); pull speed unverified | pre-existing | C-JOINT |
 | OU-PZL-011 | progression | ch17: no pull-up onto the hammer chamber block: hang clearance met the steps' smooth ramp (group 5, flags 0x800), which tru.exe's player rays skip | Fixed-verified (0.59.0, GapsB10; `ch17_hammer_chamber` moved up) | pre-existing | — |
@@ -160,7 +160,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed-verified (0.56.0, merge 02b7a09: poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
 | OU-PHY-003 | physics | Damping of loose bodies without a physics record unproven (template 0.01 never reaches the integrator) | Needs-Windows-ref | pre-existing | C-MEASURE |
-| OU-TST-001 | tests | No walkthrough section plays end to end; 11 parked known-gap scenarios (14 at the audit) | Open | pre-existing | — |
+| OU-TST-001 | tests | No walkthrough section plays end to end; no parked known-gap scenario left (14 at the audit; the last, `ch13_temple_block_topple`, moved up 2026-11-20) | Open | pre-existing | — |
 | OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Open | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
@@ -1191,7 +1191,7 @@ docs/GAMEPLAY_DEVELOPMENT_REPORT.md §7; regression test = the scenario moved up
 | OU-PZL-016 | l1_ship_sinking_hall bar 238 over beam 233 | Crouch flies her onto the beam's line (Wine) | fixed: the hang drop is re-aimed at the beam point nearest her (150 [I]) | `ch06_second_shaft_exit` |
 | OU-PZL-006 | l2_shrineroom after the statue pull; l1/ch08 statue floor | slabs fall, shaft opens | fixed: slabs fall (ecf03db); the ring lies with the toppled statue (1088550) | `ch09_shrine_shaft_descent` |
 | OU-PZL-007 | l4_ballcourt calendar 5477, mask set | jaguar handle turns sections | no joint moves; unlock rule after the mask not decoded | `known_gaps/ch13_ballcourt_calendar_solve` |
-| OU-PZL-008 | l4_temple east ledge | ring 4951 offered; statue head topples | ring offered (agent/Joint8); head not moved by the rope's bend | `known_gaps/ch13_temple_block_topple` |
+| OU-PZL-008 | l4_temple east ledge | ring 4951 offered; statue head topples after eight taps (Wine) | ring offered (agent/Joint8); head toppled after five tugs (agent/Rope11) | `ch13_temple_block_topple`, `ProgressionReal.TempleHeadToppledByTheRopeBend` |
 | OU-PZL-009 | l4_ballcourt exit switch 5469, socket empty | locked until keyhole 6501 (modifiable 7 (2)) [O bytecode] | switch usable; ours honours modifiable 7 only for `ar_ei_switch_oneway` | `known_gaps/ch15_ballcourt_exit_switch` |
 | OU-PZL-010 | l4_pool rune block 5609 | dragged | no joint record → nothing drags it | `known_gaps/ch15_pool_rune_block` |
 | OU-PZL-011 | l5_valaskjalf checkpoint 7067 | reach volume 6866 | fixed: the block's 790 face is the render terrain's too (no lower steps exist); the hang clearance's rays now skip TerrainGroupExtra 0x800 groups as tru.exe's player rays (0x2C19E7) do, so group 5's smooth ramp over the steps no longer hides the first tread (class 2, pull-up) | `ch17_hammer_chamber` |
@@ -1224,6 +1224,13 @@ proving tests there):
   raycast: terrain and `col_.dynamics`) cannot meet the head, a class-34 rigid body with no collider in
   `World::syncObjects` while it is neither loose nor jointed [I from the code path]. So (b) needs the head's own
   collision for the rope, bends round it, and the tension pushing it.
+  Fixed 2026-11-20 (agent/Rope11; docs/GAMEPLAY.md "Rope bends on bodies"): a fourth cause was the rope's anchor: tied
+  at the post's origin (4 under its floor's top), every rope segment from it met that floor, so no bend could form;
+  the rope is now tied at the post's feature (Wine: the rope leaves the post's top). Fixed rigid bodies are rope-only
+  collision; a bend rides the object it touched and enables it (0x6B3570 re-pins the bend body every frame, the joint
+  removal 0x4E9B00 clears the fixed bit); a Jolt bend body pinned to the head takes the rope's pull during each tug
+  (one 0.215 s tug per Interact press, Wine). Wine: eight taps from y −12940 tip it off after the eighth; ours after
+  the fifth (tension 87 kg fitted [I]; the type-6 rope joint's law is not decoded). Scenario moved up.
 - **OU-PZL-015:** multibody 3 = set "fixed" bit 0 at physics +0x15C on every body (inverse of 2). The throne native
   is still unknown.
 - **OU-GRP-005:** moves to C-VM. Vt 46 is not called on rope attach, larabase 26 (0x777C30) is unbound, and our heave
