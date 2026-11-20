@@ -164,7 +164,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
 | OU-PHY-003 | physics | Damping of loose bodies without a physics record unproven (template 0.01 never reaches the integrator) | Needs-Windows-ref | pre-existing | C-MEASURE |
 | OU-TST-001 | tests | No walkthrough section plays end to end; 1 parked known-gap scenario (`ch18_container_climb` chain; 14 at the audit, 11 at 0.58.0; `ch13_temple_block_topple` moved up 2026-11-20) | Open | pre-existing | — |
-| OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Fixed (batch 11: autopilot `fight`; `ch11_stairhall_spiders`, `ch18_bow_deck` `the_first_soldiers`) | pre-existing | — |
+| OU-TST-002 | tests | The self-test autopilot does not fight (blocks combat legs ch11 / ch18) | Fixed-verified (0.60.0, batch 11: autopilot `fight`; `ch11_stairhall_spiders`, `ch18_bow_deck` `the_first_soldiers`) | pre-existing | — |
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
 | OU-DOC-003 | docs | Batch 10 asm checks: wrong citation addresses and branches the comments omit | Fixed (agent/Contradict11: comments corrected; the omitted branches noted [U]) | doc drift | C-DOC |

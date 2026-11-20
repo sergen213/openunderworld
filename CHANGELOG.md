@@ -6,6 +6,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-11-20
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: chapter 13, the statue head in the temple can be pulled off its pillar with the grapple rope wrapped round
+  it (rope bends now pull objects as in the original); every chapter-blocking puzzle scenario now passes.
+- Fixed: chapter 21, the running jump onto Natla's passing platforms works from the walkway's edge as in the original
+  (jumps now aim at where a moving ledge will be).
+- Fixed: a missed jump from a hang lands with the original's higher fall-damage heights.
+- Fixed: respawning at an under-water checkpoint keeps Lara afloat where she was, instead of dropping her to the floor.
+- Fixed: help on demand in the prologue gives the burning-manor hints instead of Croft Manor's.
+- Fixed: a fire volume entered after an overlapping flinch volume burns again each time its sizzle ends, as in the
+  original; scripted waits no longer drift (the jellyfish now stings exactly every 2 seconds).
+- Fixed: rendering closer to the original: stronger bloom (it was up to half as strong), brown lit smoke instead of
+  grey, two-sided transparent meshes drawn back then front, and terrain normal maps decoded correctly (cliffs and
+  walls show their relief; the Original-preset sea breaks into waves instead of a mirror).
+
 ## [0.59.0] - 2026-11-20
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

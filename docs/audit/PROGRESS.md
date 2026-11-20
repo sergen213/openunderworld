@@ -283,3 +283,35 @@ compositors run as transient services (scopes leaked xdg-desktop-portal / ksecre
   enabled (Actions source).
 - **Full ctest on int/batch10** (private kwin, NVMe data, game_vulkan_rt_smoke INCLUDED): 100 % of 1111 passed.
 - Still running at release: WineSweep10 (combat / object / hazard measurements) — goes into batch 11.
+
+## 2026-11-20 — batch 11 (released as 0.60.0)
+
+Picked from BRIEF_COMPLIANCE §16 across phases. Found mid-batch (MenuDriver11): every Wine prefix linked
+drive_c/users/*/{Documents,…} to the user's home, so tru.exe sessions over the past weeks wrote saves into the user's
+real ~/Documents/Eidos/Tomb Raider - Underworld/. All 230 links in every prefix were replaced with empty dirs; the
+user's folder was backed up untouched (`/mnt/4TBNVMEXT4/openunderworld-work/user-tru-saves-backup-20261120-142840`);
+every tools/wine-ref entry point now refuses a prefix with such links (`wref_private_prefix`, `menu.sh setup`).
+
+- **WineSweep10** (Phase 3): hazards / objects / combat sweep; M56, M65, M67, M68, M111 match.
+- **Compliance11:** BRIEF_COMPLIANCE refreshed for 0.59.0 (270 / 48 / 4 / 2); REFERENCE_COMPARISON Counts generated
+  by `tools/progress/comparison_counts.py` with a CI check.
+- **Hazards11:** OU-SCR-006 fixed (script sound wait ends when the voice dies, 0x4AE380 / 0x4ACC30; burn order of
+  overlapping volumes 4517 / 4541 Wine-traced); WAIT carries its overshoot (0x57CE50 / 0x57E970: jellyfish 120 ticks);
+  OU-SCR-007 and OU-CMB-004 re-measured as matching — WineSweep10's `tpv` holds counted 1 ms sleeps that ran long under
+  load (now wall clock); other WineSweep10 rows taken with `tp` / `tpv` holds should be re-checked.
+- **MenuDriver11:** tru.exe menu / save driver (`tools/wine-ref/menu.sh`), l4_ballcourt combat 4 reached from a save;
+  births / health match; OU-CMB-006 (panther engages from 10 950), OU-CMB-007 (pistol 281 ms vs 333 ms, damage),
+  OU-CMB-008 (poachers and door 6505).
+- **Render11:** OU-REN-010 bloom `c · a` term (0x519F20 / 0x51AEF0), OU-REN-011 two-sided draws, OU-REN-012 lit smoke
+  (emitter light records, 0x543F70 / 0x53E320), OU-WAT-015 packed terrain normals (SHORT4 normal + tangent) — also
+  restores terrain normal-map relief in both presets; 6 goldens re-blessed after review.
+- **Contradict11:** OU-PLY-017 moving-ledge lead + per-tick re-aim (0x73EDC0, 0x70F300), OU-PZL-012 Natla running
+  jump from 58 back (Wine-matched), OU-PLY-018 fall heights by jump query (partly), OU-DOC-003 citations; OU-PLY-016
+  decoded (needs a proxy body).
+- **Respawn11:** OU-AUD-006 help lines by chapter; OU-SAV-002 under-water checkpoint respawn afloat; five arena / deck /
+  slide checkpoints Wine-measured as matching.
+- **SelfTest11:** probes (checkpoint, HUD, sounds), SDL-event scenario, fighting autopilot (OU-TST-002); ch18 chain
+  parked at a running jump past the measured reach; OU-CMB-005 (study thralls absent, walkthrough only).
+- **Rope11:** OU-PZL-008 (b): rope bends as 5 kg Jolt bodies jointed to the touched body (0x699A50 / 0x4E1260 /
+  0x6B3570); the ch13 statue head topples ([I] pull 87 kg: fifth tug vs tru.exe's eighth).
+- **Full ctest on int/batch11** (private kwin, NVMe data, game_vulkan_rt_smoke included): 100 % of 1123 passed.
