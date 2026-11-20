@@ -299,6 +299,8 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     // tru.exe 0x5DE2B0: the level loads Lara as the object named by its settings DTP (GAMEPLAY.md "Outfits").
     if (const auto p = names.find(unit.playerObjectId); unit.playerObjectId && p != names.end()) u.playerObject = p->second;
     if (const auto p = names.find(unit.weatherObjectId); unit.weatherObjectId && p != names.end()) u.weatherObject = p->second;
+    if (const auto p = names.find(unit.skyObject); unit.skyObject && p != names.end()) u.skyObject = p->second;
+    u.skyOffsetZ = unit.skyOffsetZ, u.skyClears = unit.skyClears;
     // The reward table index of a reward intro (treasure, urn, relic): intro data +0x30 [O: every one of the 185 has
     // its own, 1..205, and the table lists it in a treasure or relic group; health packs carry no data]. The born
     // treasure records it through its parent (0x4D3B50 hands the urn's intro to the birth, message 0x1E8).

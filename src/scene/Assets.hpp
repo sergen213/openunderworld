@@ -74,6 +74,9 @@ struct SubMesh {
     // geometry wherever it is placed. Renderers draw exterior submeshes first and then clear the depth. It follows the
     // camera (FrameOptions::exteriorOrigin, render::followExterior) and casts no shadows (0x511E20 skips +0xC8 terrain).
     bool exterior = false;
+    // Exterior that follows the eye itself rather than eye - exteriorOrigin: the unit's sky dome object (Unit::skyObject),
+    // which tru.exe moves to the camera + (0, 0, offset) every frame (0x6D4560); its mesh is built at (0, 0, offset).
+    bool followEye = false;
     // Terrain light group (MeshData::lightBoxes index; 0xFFFF = none, lights picked by the mesh's bounding sphere).
     uint16_t lightGroup = 0xFFFF;
 };

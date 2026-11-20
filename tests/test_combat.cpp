@@ -1240,6 +1240,23 @@ TEST(GadgetsReal, TuningLightsAndSpotUnits) {
     EXPECT_TRUE(game::loadLaraAnims(bf).find("g_grenade_thrower:combat_grenade_Throw1"));
 }
 
+// Sky domes (formats::Unit::skyObject, tru.exe 0x6D4480): the unit's own override (S+0x0C) or the shared sky DTP's
+// object; units naming none keep the current dome but still give their offset.
+TEST(LevelReal, SkyDomeObjects) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto cliff = game::loadUnitData(bf, "l2_cliffclimb");
+    EXPECT_EQ(cliff.skyObject, "sa_skydome_c"); // override 438
+    EXPECT_FLOAT_EQ(cliff.skyOffsetZ, -500.0f);
+    EXPECT_EQ(game::loadUnitData(bf, "l4_pool").skyObject, "ca_skydome_a"); // shared sky DTP +0x18 = 567
+    const auto hub = game::loadUnitData(bf, "l2_junglehub"); // its own exterior terrain; keeps a dome it walks in with
+    EXPECT_TRUE(hub.skyObject.empty());
+    EXPECT_FALSE(hub.skyClears);
+    EXPECT_FLOAT_EQ(hub.skyOffsetZ, 50.0f);
+    EXPECT_TRUE(game::loadUnitData(bf, "l1_seatop").skyObject.empty()); // its sky is exterior terrain
+}
+
 // The assault rifle (wp_assault_rifle) and tranquilizer (wp_tranq): Lara's combat_rifle_* clips load with the lengths
 // Combat.cpp times by; chapter secondaries follow the units' weapon objects.
 TEST(CombatReal, RifleAndTranquilizerClips) {

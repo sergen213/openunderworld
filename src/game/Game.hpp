@@ -811,6 +811,9 @@ struct UnitData {
     std::string playerObject; // Lara outfit object of this unit (formats::Unit::playerObjectId name); empty if none
     std::vector<VehicleIntro> vehicles; // `motorcycle` intros (unit frame)
     bool flashlightSpot = false; // formats::Unit::flashlightSpot: the flashlight's spot is on here, else only its omni
+    std::string skyObject;       // formats::Unit::skyObject name; empty = keep the current dome (unless skyClears)
+    float skyOffsetZ = 0;        // formats::Unit::skyOffsetZ
+    bool skyClears = false;      // formats::Unit::skyClears
     std::vector<BendIntro> bends;          // bend_* intros (game/Bend.hpp), unit frame
     std::vector<formats::Unit::Wind> wind; // formats::Unit::wind
     std::string weatherObject;             // formats::Unit::weatherObjectId name; empty = none

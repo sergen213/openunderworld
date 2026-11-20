@@ -71,7 +71,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-WAT-011 | water render | Water reflections miss off-screen geometry (SSR) | Open (limit) | pre-existing | — |
 | OU-WAT-012 | water render / RT | RT reflection of a shadowed cliff overhang reads too dark | Not reproduced | pre-existing | — |
 | OU-WAT-013 | water render | Geometry swell small outside the tessellated window (coarse TRU sea meshes) | Open (limit) | pre-existing | C-SWELL |
-| OU-REN-001 | render | Dark sky near the chapter 2 cliff | Reproduced, Needs-Windows-ref | unknown | — |
+| OU-REN-001 | render | Dark sky near the chapter 2 cliff | Fixed (sky dome object) | pre-existing | — |
 | OU-REN-002 | render | HDR off by default: bright window highlights band | Open | pre-existing | — |
 | OU-REN-003 | render / cine | `co_*` cutscene actor faces render green | Open | pre-existing | — |
 | OU-REN-004 | render | Jointless uber sections drawn in bind pose | Open | pre-existing | — |
@@ -371,7 +371,10 @@ Status · Origin: Open (limit) · pre-existing.
   whatever the clear / fog leaves. `screens/chapters/orig_ch2.png` shows no sky. Wine capture needed: tru.exe at the
   l2_cliffclimb start with the camera pitched up to the NE (camarg method, RENDERING L354), plus its clear colour /
   any sky draw (D3D9 Clear and the first draws of the frame).
-- Status · Origin: Reproduced, Needs-Windows-ref · unknown.
+- Cause (2026-11-19): the unit's sky dome object (Level+0x70 DTP +0x2B4 sky record → `sa_skydome_c`, offset -500;
+  tru.exe 0x6D4480 / 0x6D4560) was never placed; LEVELS.md "Sky dome". Fixed: ou-game draws the one dome behind
+  everything at the camera + offset (sky, clouds and the horizon's island cards; GL and Vulkan).
+- Status · Origin: Fixed · pre-existing.
 
 **OU-REN-002 HDR off by default: highlights band**
 - Repro: default Enhanced, any bright window / sun-lit opening (l3_main_bedroom windows).
@@ -1243,7 +1246,7 @@ Pass of 2026-11-16 on `main` a80bdb8 (agent BugRepro). Binaries: `build-AuditBas
 | OU-WAT-007 | Not reproduced off-hull | rule only reachable airborne between surface and top |
 | OU-WAT-008 | Reproduced (haze) | shafts +16.4 mean luma, no beam structure |
 | OU-WAT-012 | Not reproduced | RT vs SSR water luma within ±1 at four views |
-| OU-REN-001 | Reproduced, Needs-Windows-ref | sky RGB 44/48/47 (Original preset 21/24/30); unit has no exterior terrain |
+| OU-REN-001 | Fixed 2026-11-19 | the unit's sky dome object (`sa_skydome_c`) was never placed; now drawn |
 | OU-REN-006 | Reproduced (log) | 9 sections skipped at the bedroom start |
 | OU-REN-009 (new) | Reproduced | texture 2 = fallback id of back/depth-buffer samplers (materials 8035, 10930, 9544) |
 | OU-VK-002 | Not reproduced | AO difference aligned with geometry on the heaving deck |

@@ -273,6 +273,13 @@ struct Unit {
     // Level+0x70 DTP +0x2B4 -> byte +0x0A: the personal light also turns on its spot ("Both" mode) in this unit, else
     // only its omni light (tru.exe 0x5D3FF0 -> 0x698890 flag 0xED00AA, read by 0x6B17C0). docs/GAMEPLAY.md "Flashlight".
     bool flashlightSpot = false;
+    // Sky dome object (tru.exe 0x5D3FF0 -> 0x6D4480 on the player entering the unit; docs/formats/LEVELS.md "Sky dome"):
+    // Level+0x70 DTP +0x2B4 -> S; S+0x0C byte set: object S+0x0E u16, offset S+0x14 f32, else the shared sky DTP S+0
+    // (resource id): object +0x18 u16, offset +0x20. skyObject 0: keep the current dome (skyClears: remove it; the DTP's
+    // +0x24 byte, 0 in every retail unit). The mode (S+0x10 / DTP +0x1C) is 0 in every retail unit and not decoded.
+    uint16_t skyObject = 0;
+    float skyOffsetZ = 0; // the dome sits at the camera + (0, 0, skyOffsetZ) every frame (0x6D4560)
+    bool skyClears = false;
     // Level+0x70 DTP +0x1C0: the unit script's type id (a type-8 section of the unit DRM), 0 = none. docs/formats/LEVELS.md "Unit script".
     uint32_t scriptId = 0;
     // Level+0x70 DTP +0x2A4 global wind (tru.exe 0x546170 registers it as wind source type 1; game/Bend.hpp): +0x2AC

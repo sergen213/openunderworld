@@ -531,8 +531,17 @@ Unit parseUnit(const cdc::Drm& d) {
         u.playerObjectId = rs.at<uint16_t>(o + 0x294);
         u.scriptId = rs.at<uint32_t>(o + 0x1C0);
         u.weatherObjectId = rs.at<uint16_t>(o + 0x290);
-        if (const auto f = rs.ptrs.find(o + 0x2B4); f != rs.ptrs.end())
-            u.flashlightSpot = View(d, f->second.section).at<uint8_t>(f->second.offset + 0x0A) != 0;
+        if (const auto f = rs.ptrs.find(o + 0x2B4); f != rs.ptrs.end()) {
+            const View sv(d, f->second.section);
+            const uint32_t s = f->second.offset;
+            u.flashlightSpot = sv.at<uint8_t>(s + 0x0A) != 0;
+            // Sky dome (0x6D4480): the unit's own override, else the shared sky DTP (resource id S+0) in this DRM.
+            const cdc::Section* sky = findSection(d, cdc::SectionType::DtpData, sv.at<uint32_t>(s));
+            if (sky && sky->data.size() < 0x28) sky = nullptr;
+            if (sv.at<uint8_t>(s + 0x0C)) u.skyObject = sv.at<uint16_t>(s + 0x0E), u.skyOffsetZ = sv.at<float>(s + 0x14);
+            else if (sky) std::memcpy(&u.skyObject, sky->data.data() + 0x18, 2), std::memcpy(&u.skyOffsetZ, sky->data.data() + 0x20, 4);
+            u.skyClears = u.skyObject == 0 && sky && sky->data[0x24] != 0;
+        }
         if (const auto w = rs.ptrs.find(o + 0x2B0); w != rs.ptrs.end() && rs.at<uint32_t>(o + 0x2AC) < 32) {
             const View wv(d, w->second.section);
             for (uint32_t k = 0; k < rs.at<uint32_t>(o + 0x2AC); ++k) {

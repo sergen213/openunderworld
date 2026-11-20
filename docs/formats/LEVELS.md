@@ -222,6 +222,18 @@ at +0x13C). `SceneCellGroup` vtable +0x44 (0x571D20) returns it; 95 of 97 units 
   checkpoint or save position [I for the last two]) → `FrameOptions::exteriorOrigin` → `render::followExterior` (GL +
   Vulkan). The exterior materials are unfogged (flags 0x1001: VS c22 = 0, 0x506880); the haze is the textures' own.
   Exterior terrain casts no shadows (0x511E20 skips +0xC8 terrain).
+- Sky dome [O: tru.exe disassembly 0x6D4480 / 0x6D4360 / 0x6D4560; instance dump of l3_main_bedroom: `ma_skydome_b`,
+  uid 0x40000017, at Lara's position]: Level+0x70 DTP +0x2B4 → S. On the player entering a unit (0x5D3FF0 →
+  0x6D4480): S+0x0C byte set → object S+0x0E u16, mode S+0x10, offset S+0x14 f32; else the shared sky DTP whose
+  resource id is S+0 (in the unit DRM): object +0x18, mode +0x1C, offset +0x20. Mode and offset are stored first
+  (0xED34C0 / 0xED34C4). Object 0: the DTP's +0x24 byte set removes the dome, else the current one stays (+0x24 is 0 in
+  every retail unit). Another object: the old instance is killed, the object loaded and born at the player (instance
+  +0x18 |= 0x20000) as the one global dome (0xED34CC). Every frame 0x6D4560 moves it to the camera + (0, 0, offset)
+  (mode 1 also lowers it by a global [U]; mode is 0 in every retail unit). 16 units name one (`sa_skydome_b/c/d` in
+  chapter 2, `ma_skydome_b`, `ca_skydome_a` in chapter 4, `ar_skydome_a`); each dome model is the sky plus a ring of
+  horizon cards (distant islands, clouds). Ours: `Unit::skyObject` / `skyOffsetZ` / `skyClears`, ou-game
+  `StreamedScene::updateSky` keeps one dome, drawn as exterior (behind everything, unclipped) following the eye
+  (`SubMesh::followEye`).
 - Terrain group `+0x0C` bit 1: the group is skipped by the colour pass (0x511810) but not by the shadow pass
   (0x511E20, bit 2 only) [O]: `SubMesh::shadowOnly`, left out of the draw order, cast shadows (map + RT shadow
   rays), skipped by other RT rays. l2_junglehub's are the speckled rock sheets (material 10914) above the hub that
@@ -532,7 +544,8 @@ Known deviations [O]:
   Cinematic actors are drawn by the cinematic player only (the persistent 8972 is not introduced) [I].
 - Foliage renders correctly since materials carry blend/alpha-test/two-sided state (MATERIALS.md); the black ground
   plants came from the `COLOR0` attribute (0 on them) being used as a colour.
-- The unit's dependency objects (`ca_skydome_a`, the `g_*`/`wp_*` gear) are not placed.
+- The unit's dependency objects (the `g_*`/`wp_*` gear) are not placed; the sky dome dependency (`ca_skydome_a`) is
+  drawn through the unit's sky record ("Sky dome" above).
 
 `loadLevelScene` warnings on these two units:
 

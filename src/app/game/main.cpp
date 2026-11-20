@@ -865,6 +865,50 @@ struct StreamedScene {
     std::vector<size_t> grenadeIndices;
     ou::scene::SceneData hook;                         // pr_grapplinghook's mesh, posed at the grapple anchor (GadgetView::pose)
     std::vector<size_t> hookIndices;
+    // The sky dome (formats::Unit::skyObject; tru.exe 0x6D4480 / 0x6D4360 / 0x6D4560): one object for the whole world,
+    // picked when Lara enters a unit naming one (a unit naming none keeps the current dome), drawn as exterior that
+    // follows the eye (SubMesh::followEye) at the camera + (0, 0, offset).
+    ou::scene::SceneData sky;
+    std::string skyUnit;           // the unit whose entry last chose
+    std::string skyObject;         // the dome in `sky`; empty = none
+    float skyOffsetZ = 0;
+    // Returns true when the dome changed (the scene needs a rebuild).
+    bool updateSky(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
+        if (w.units().empty()) return false;
+        const auto& u = w.currentUnit().data;
+        if (u.name == skyUnit) return false;
+        skyUnit = u.name;
+        // 0x6D4480 stores the unit's offset before it tests the object: a unit keeping the dome still moves it.
+        std::string want = skyObject;
+        const float z = u.skyOffsetZ;
+        if (!u.skyObject.empty()) want = u.skyObject;
+        else if (u.skyClears) want.clear();
+        if (want == skyObject && z == skyOffsetZ) return false;
+        if (want == skyObject) { // the same dome at another height
+            for (auto& m : sky.meshes) m.transform[14] += z - skyOffsetZ;
+            skyOffsetZ = z;
+            return true;
+        }
+        sky = {};
+        skyObject = want, skyOffsetZ = z;
+        if (want.empty()) return true;
+        try {
+            sky = ou::formats::loadDrmScene(bf, "pc-w\\" + want + ".drm");
+        } catch (const std::exception& e) {
+            warnings.push_back("sky dome pc-w\\" + want + ".drm: " + e.what());
+            sky = {};
+            return true;
+        }
+        for (auto& m : sky.meshes) {
+            m.transform[14] += z;
+            for (auto& s : m.submeshes) s.exterior = s.followEye = true, s.castsShadow = false;
+        }
+        for (auto& x : sky.warnings) warnings.push_back(std::move(x));
+        sky.warnings.clear();
+        ou::scene::assignKeys(sky);
+        std::fprintf(stderr, "ou-game: sky dome %s (offset %.0f) entering %s\n", want.c_str(), z, u.name.c_str());
+        return true;
+    }
     std::vector<ou::scene::Light> reservedLights;      // GadgetView::base + EffectsView slots: the first environment lights
     std::vector<ou::scene::Light> fixtureLights;       // EffectsView::fixtures: appended to the environment lights
     uint64_t fixtureKey = 0;                           // EffectsView::fixtureKey when they were taken
@@ -1040,6 +1084,7 @@ struct StreamedScene {
             append(*units.at(u.data.name), u.offset, nullptr, &u.data.name);
             unitMeshes.emplace_back(first, uint32_t(out.meshes.size()) - first);
         }
+        append(sky, glm::vec3(0), nullptr); // exterior, follows the eye: in no unit's portal clip
         // Draw groups hidden on Lara (Thor's gear, wetsuit dive gear; GAMEPLAY.md). Lara's meshes are the last block of
         // `out` here, so the ones hideDrawGroups emptied are dropped in place.
         hiddenGroups = w.laraHiddenGroups();
@@ -2238,6 +2283,7 @@ int main(int argc, char** argv) {
         effects.reserve(streamed);
         effects.sync(bf, *world, warnings);
         streamed.fixtureLights = effects.fixtures();
+        streamed.updateSky(bf, *world, warnings);
         scene = streamed.build(bf, *world, lara, enemyMeshes, warnings, std::move(scene), effects.textures());
     } catch (const std::exception& e) {
         std::fprintf(stderr, "ou-game: %s\n", e.what());
@@ -3417,6 +3463,7 @@ int main(int argc, char** argv) {
             streamed.laraOutfit = world->outfit; // keep the current meshes, do not retry every frame
         }
         streamed.syncParts(*renderer); // decoded units go to the GPU ahead of their join
+        if (streamed.updateSky(*bigfile, *world, warnings)) streamed.version = ~0ull; // a new dome: rebuild
         if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion ||
             world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion ||
             world->bornVersion() != streamed.bornVersion ||

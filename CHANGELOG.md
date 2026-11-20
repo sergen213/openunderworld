@@ -6,6 +6,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-11-19
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: the sky is back in the coastal Thailand, Mexico jungle, Jan Mayen and Croft Manor bedroom areas. The game's
+  sky domes (clouds, distant islands and mountains on the horizon) were never drawn, leaving a dark grey sky; they now
+  follow the camera as in the original, which switches the sky as Lara moves between areas.
+
 ## [0.56.2] - 2026-11-19
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
