@@ -5,16 +5,23 @@
 //   func_refs.tsv       entry, data_refs, data_reads, data_writes, string_refs, vftable_refs, ptr_refs_to
 //   data_symbols.tsv    address, name, source, block (non-default symbols outside executable blocks)
 //   blocks.tsv          name, start, end, rwx
+//   cfg.tsv             entry, blocks, edges, exits, cyclomatic, back_edges, instructions, returns, calls,
+//                       indirect_jumps (per-function control-flow summary from BasicBlockModel; see cfgSummary)
 // Read-only: changes nothing in the program.
 // @category OpenUnderworld
 import java.io.File;
 import java.io.PrintWriter;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
 import ghidra.app.script.GhidraScript;
+import ghidra.program.model.block.BasicBlockModel;
+import ghidra.program.model.block.CodeBlock;
+import ghidra.program.model.block.CodeBlockIterator;
+import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.data.StringDataInstance;
@@ -51,12 +58,15 @@ public class ExportGraph extends GhidraScript {
             }
         }
         int nf = 0, ne = 0;
+        BasicBlockModel bbm = new BasicBlockModel(currentProgram);
         try (PrintWriter wf = new PrintWriter(new File(dir, "functions_full.tsv"), "UTF-8");
              PrintWriter we = new PrintWriter(new File(dir, "edges.tsv"), "UTF-8");
-             PrintWriter wr = new PrintWriter(new File(dir, "func_refs.tsv"), "UTF-8")) {
+             PrintWriter wr = new PrintWriter(new File(dir, "func_refs.tsv"), "UTF-8");
+             PrintWriter wc = new PrintWriter(new File(dir, "cfg.tsv"), "UTF-8")) {
             wf.println("entry\tname\tnamespace\tsource\tsize\tmin\tmax\tthunk\tthunk_target\tfid\tranges");
             we.println("caller\tcallee\tkind\tsites");
             wr.println("entry\tdata_refs\tdata_reads\tdata_writes\tstring_refs\tvftable_refs\tptr_refs_to");
+            wc.println("entry\tblocks\tedges\texits\tcyclomatic\tback_edges\tinstructions\treturns\tcalls\tindirect_jumps");
             FunctionIterator it = currentProgram.getFunctionManager().getFunctions(true);
             while (it.hasNext()) {
                 monitor.checkCancelled();
@@ -140,6 +150,7 @@ public class ExportGraph extends GhidraScript {
                     }
                 }
                 wr.printf("%s\t%d\t%d\t%d\t%d\t%d\t%d%n", f.getEntryPoint(), data.size(), reads, writes, strs, vft, ptrTo);
+                wc.println(cfgSummary(bbm, f));
             }
         }
         int nd = 0;
@@ -162,6 +173,60 @@ public class ExportGraph extends GhidraScript {
         }
         println("ExportGraph: " + nf + " functions, " + ne + " edges, " + nd + " data symbols, " + fidAddrs.size()
             + " FID bookmarks -> " + dir);
+    }
+
+    // One cfg.tsv row. Basic blocks are BasicBlockModel blocks clipped to the function body (calls do not end a
+    // block). edges = distinct block-to-block flows that stay inside the body (fall-through, jumps, switch cases);
+    // exits = blocks with no such successor (return, tail jump, call to a no-return function);
+    // cyclomatic = edges - blocks + 2 (McCabe, one connected component assumed);
+    // back_edges = edges whose target block starts at or before the source block (address order, a loop proxy);
+    // returns = terminal (RET) instructions; calls = CALL instructions; indirect_jumps = computed JMPs.
+    String cfgSummary(BasicBlockModel bbm, Function f) throws Exception {
+        var body = f.getBody();
+        int nb = 0, nedge = 0, exits = 0, back = 0;
+        CodeBlockIterator bi = bbm.getCodeBlocksContaining(body, monitor);
+        while (bi.hasNext()) {
+            CodeBlock b = bi.next();
+            nb++;
+            Set<Address> to = new HashSet<>();
+            CodeBlockReferenceIterator ri = b.getDestinations(monitor);
+            while (ri.hasNext()) {
+                var ref = ri.next();
+                if (ref.getFlowType().isCall()) {
+                    continue;
+                }
+                Address d = ref.getDestinationAddress();
+                if (body.contains(d)) {
+                    to.add(d);
+                }
+            }
+            if (to.isEmpty()) {
+                exits++;
+            }
+            for (Address d : to) {
+                nedge++;
+                if (d.compareTo(b.getFirstStartAddress()) <= 0) {
+                    back++;
+                }
+            }
+        }
+        int ni = 0, rets = 0, calls = 0, ijmp = 0;
+        for (Instruction ins : currentProgram.getListing().getInstructions(body, true)) {
+            ni++;
+            var ft = ins.getFlowType();
+            if (ft.isTerminal()) {
+                rets++;
+            }
+            else if (ft.isCall()) {
+                calls++;
+            }
+            else if (ft.isJump() && ft.isComputed()) {
+                ijmp++;
+            }
+        }
+        int cyc = nb == 0 ? 0 : nedge - nb + 2;
+        return String.format("%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d", f.getEntryPoint(), nb, nedge, exits, cyc, back,
+            ni, rets, calls, ijmp);
     }
 
     static String clean(String s) {

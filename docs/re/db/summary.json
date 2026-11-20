@@ -2,30 +2,52 @@
  "functions": 18766,
  "function_bytes": 4005555,
  "edges": 43097,
+ "call_edges": {
+  "rows": 44146,
+  "by_kind": {
+   "call": 43773,
+   "jump": 172,
+   "thunk": 201
+  }
+ },
+ "cfg": {
+  "functions": 18766,
+  "blocks": 187741,
+  "edges": 254414,
+  "with_back_edges": 5093,
+  "with_indirect_jumps": 984,
+  "cyclomatic_over_20": 858,
+  "max_cyclomatic": [
+   405,
+   "007be364"
+  ]
+ },
  "status": {
-  "Library": 2374,
-  "Named-only": 704,
-  "Reimplemented-cited": 1321,
-  "Unknown": 14367
+  "Library": 2565,
+  "Named-only": 962,
+  "Reimplemented-cited": 1450,
+  "Unknown": 13789
  },
  "status_bytes": {
-  "Library": 492013,
-  "Named-only": 258561,
-  "Reimplemented-cited": 615926,
-  "Unknown": 2639055
+  "Library": 540872,
+  "Named-only": 288190,
+  "Reimplemented-cited": 652455,
+  "Unknown": 2524038
  },
- "nonlib_bytes": 3513542,
- "cited_bytes": 615926,
- "cited_pct_of_nonlib_bytes": 17.53,
+ "nonlib_bytes": 3464683,
+ "cited_bytes": 652455,
+ "cited_pct_of_nonlib_bytes": 18.83,
  "library_families": {
   "bfx": 509,
   "crt": 650,
-  "fmod": 1232
+  "fmod": 1232,
+  "libjpeg": 195
  },
  "library_family_bytes": {
   "bfx": 111073,
   "crt": 105927,
-  "fmod": 277078
+  "fmod": 277078,
+  "libjpeg": 49158
  },
  "library_evidence": {
   "address-run": 1431,
@@ -33,34 +55,36 @@
   "ghidra-analysis-name": 1,
   "ghidra-fid": 381,
   "imported-symbol": 1,
+  "libjpeg-named": 28,
+  "libjpeg-reach": 167,
   "name-pattern": 13,
   "rtti-vftable": 411,
   "string": 149
  },
  "by_subsystem": {
   "game": {
-   "functions": 683,
-   "bytes": 336378
+   "functions": 774,
+   "bytes": 367471
   },
   "fx": {
    "functions": 87,
    "bytes": 72373
   },
   "formats": {
-   "functions": 126,
-   "bytes": 62375
+   "functions": 123,
+   "bytes": 59727
   },
   "script": {
-   "functions": 227,
-   "bytes": 41721
+   "functions": 263,
+   "bytes": 48440
   },
   "render": {
-   "functions": 47,
-   "bytes": 27995
+   "functions": 45,
+   "bytes": 27106
   },
   "physics": {
-   "functions": 27,
-   "bytes": 21585
+   "functions": 24,
+   "bytes": 20303
   },
   "audio": {
    "functions": 53,
@@ -70,17 +94,17 @@
    "functions": 13,
    "bytes": 11358
   },
+  "re": {
+   "functions": 19,
+   "bytes": 8485
+  },
   "collision": {
-   "functions": 17,
-   "bytes": 7799
+   "functions": 18,
+   "bytes": 7466
   },
   "ui": {
-   "functions": 10,
-   "bytes": 5222
-  },
-  "re": {
    "functions": 9,
-   "bytes": 4261
+   "bytes": 4867
   },
   "anim": {
    "functions": 5,
@@ -107,79 +131,82 @@
    "bytes": 189
   }
  },
- "citations": 7308,
- "citing_files": 218,
+ "citations": 9217,
+ "citing_files": 244,
  "citation_kinds": {
-  "data": 280,
-  "data_symbol": 66,
-  "func_entry": 6751,
-  "func_interior": 173,
-  "vftable": 38
+  "data": 433,
+  "data_symbol": 72,
+  "func_entry": 8348,
+  "func_interior": 296,
+  "string": 1,
+  "vftable": 67
  },
  "distinct_addresses_by_kind": {
-  "data": 152,
+  "data": 241,
   "data_symbol": 23,
-  "func_entry": 2012,
-  "func_interior": 127,
-  "vftable": 35
+  "func_entry": 2396,
+  "func_interior": 186,
+  "string": 1,
+  "vftable": 58
  },
  "citations_by_subsystem": {
-  "game": 1294,
-  "docs/re": 1255,
-  "docs/formats": 1204,
-  "docs/gameplay": 1121,
-  "script": 392,
-  "tests": 222,
+  "docs/re": 2265,
+  "game": 1522,
+  "docs/formats": 1298,
+  "docs/gameplay": 1206,
+  "script": 473,
+  "docs/audit": 384,
+  "tests": 289,
+  "formats": 223,
   "fx": 220,
-  "formats": 219,
   "docs/roadmap": 214,
-  "docs/audit": 149,
   "docs/research": 125,
   "audio": 111,
-  "render": 108,
+  "render": 109,
   "physics": 99,
-  "app/game": 78,
-  "docs/rendering": 76,
-  "docs/reference_comparison": 71,
-  "tests/selftests": 48,
+  "app/game": 87,
+  "docs/reference_comparison": 86,
+  "docs/rendering": 79,
+  "tests/selftests": 71,
+  "collision": 49,
+  "docs/matrix": 48,
   "docs/progression": 46,
-  "docs/matrix": 44,
+  "scene": 33,
   "cine": 32,
-  "collision": 32,
-  "scene": 32,
   "changelog": 30,
+  "tools/wine-ref": 24,
   "ui": 16,
   "locale": 14,
   "docs/saves": 12,
   "anim": 11,
   "cdc": 7,
-  "tests/replays": 5,
-  "docs/underworld_chapter_gameplay_matrix": 5,
+  "docs/underworld_chapter_gameplay_matrix": 7,
+  "tests/replays": 6,
+  "tools/re": 6,
+  "docs/selftest": 5,
   "video": 3,
-  "tools/re": 3,
-  "docs/selftest": 3,
   "tools/ghidra": 3,
   "save": 2,
   "config": 1,
   "tools/ou-audio": 1
  },
- "roots": 1302,
- "reachable_uncited": 7822,
- "reachable_uncited_bytes": 1489893,
- "reachable_uncited_direct_only": 7740,
- "reachable_uncited_direct_only_bytes": 1479235,
+ "roots": 1421,
+ "reachable_uncited": 8086,
+ "reachable_uncited_bytes": 1540049,
+ "reachable_uncited_direct_only": 8009,
+ "reachable_uncited_direct_only_bytes": 1529488,
  "rtti_families": {
   "(global)": {
    "classes": 594,
    "slots": 2386,
-   "cited": 86,
-   "named": 23
+   "cited": 95,
+   "named": 38
   },
   "cdc": {
    "classes": 290,
    "slots": 1318,
-   "cited": 33,
-   "named": 11
+   "cited": 35,
+   "named": 17
   },
   "FMOD": {
    "classes": 51,
@@ -190,13 +217,13 @@
   "bfx": {
    "classes": 35,
    "slots": 125,
-   "cited": 3,
+   "cited": 4,
    "named": 1
   },
   "Screenshots": {
    "classes": 9,
    "slots": 24,
-   "cited": 0,
+   "cited": 1,
    "named": 1
   },
   "PDAMap": {
@@ -208,7 +235,7 @@
   "AsyncTaskManager": {
    "classes": 2,
    "slots": 6,
-   "cited": 0,
+   "cited": 1,
    "named": 1
   },
   "std": {
@@ -242,7 +269,7 @@
    "named": 0
   }
  },
- "applied_names": 202,
+ "applied_names": 284,
  "fid": {
   "vsOlder_x86": {
    "matched": 375,
@@ -340,11 +367,11 @@
    "this:no-class": 184
   }
  },
- "no_direct_caller_nonlib": 6306,
+ "no_direct_caller_nonlib": 6226,
  "no_direct_caller_breakdown": {
   "dynamic_initialiser_run": 6,
-  "none_found": 2000,
-  "pointer_referenced": 760,
+  "none_found": 1983,
+  "pointer_referenced": 697,
   "vftable_slot": 3270,
   "virtual_caller": 270
  },
@@ -379,9 +406,9 @@
   "float": 549
  },
  "confidence": {
-  "none": 8655,
-  "low": 7130,
-  "medium": 2959,
+  "none": 7912,
+  "low": 7293,
+  "medium": 3539,
   "high": 22
  },
  "with_switch": 464,
