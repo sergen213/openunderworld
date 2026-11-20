@@ -726,6 +726,7 @@ private:
     bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
     bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
     void startHangToWallHug();                        // up onto it from the hang (clearance class 8)
+    bool tryClimbOutToWallHug(float reach);           // swimming out onto such a shelf (clearance class 8)
     void wallHug(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     bool wallHugCorner(float ds);           // shimmying ds along the shelf onto a corner: the corner clip round it
     JumpQuery wallHugQuery(int way) const;  // q68 forward (0) / left (1) / right (-1), q55 the twist up (2)

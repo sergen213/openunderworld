@@ -3519,8 +3519,10 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         }
         // Climb out: swimming at an edge with the stick held toward it she climbs out by herself (controls; no button).
         // [I] once the wall is within the clip's reach (its hands start 205.4 ahead of the root) and the stick points
-        // within 45 deg of her heading; the chart's conditions for requests 888-891 are not decoded.
-        if (wantsMove && std::abs(wrapAngle(target - s_.yaw)) < glm::radians(45.0f) && tryClimbOut(t_.swimRadius + 130.0f)) break;
+        // within 45 deg of her heading; the chart's conditions for requests 888-891 are not decoded. Onto a wall-hug
+        // shelf she climbs out into the hug instead (S237's first transition T1110, Player::tryClimbOutToWallHug).
+        if (wantsMove && std::abs(wrapAngle(target - s_.yaw)) < glm::radians(45.0f) &&
+            (tryClimbOutToWallHug(t_.swimRadius + 130.0f) || tryClimbOut(t_.swimRadius + 130.0f))) break;
         // Surface dive (chart S115 -> S106, T887: the crouch button, cond 0x98 = 118, with the water's depth class
         // 0x325, cond 0x323 = 805): only where the water is at least diveDepth (player data +0xB2 = 948) deep.
         if (dropPressed && !col_.groundProbe(vec3(xy(s_.pos), surf + t_.swimSurfaceDepth), t_.diveDepth)) {

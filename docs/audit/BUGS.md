@@ -101,7 +101,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-CAM-004 | camera | Reveal camera blend in/out ours; gamebase time scales not applied | Open | pre-existing | — |
 | OU-PLY-001 | Lara / beams | Beam-walk entry into "about to fall" undecoded | Open | pre-existing | C-CHART |
 | OU-PLY-002 | Lara / wall hug | Wall-hug corners reconstructed, not decoded | Open | pre-existing | C-CHART |
-| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Open | pre-existing | C-CHART |
+| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Fixed on agent/ShelfOut9 (chart T1110 / clearance 8 / clip 887; which ledge [I]; no Wine runtime check) | pre-existing | C-CHART |
 | OU-PLY-004 | Lara / ladders | No ladder side jumps or reaches | Open | pre-existing | C-CHART |
 | OU-PLY-005 | Lara / jumps | Ledge-aim reach: running-jump rush/arc switch 20-70 farther out | Open | pre-existing | C-MEASURE |
 | OU-PLY-006 | Lara / obstacles | Low-obstacle detection distance (query 96 reach) unknown | Open | pre-existing | C-CHART |
@@ -746,10 +746,19 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
 Open · pre-existing.
 
 **OU-PLY-003 No climb out of water onto a shelf**
-- Expected: `swim_climbout_to_wallhug` (887) onto a shelf when the clearance result is 657 (GAMEPLAY.md L1926) [O chart].
-- Actual: not done (GAMEPLAY.md L2614, ROADMAP L75); ordinary climb-out only.
-- Fix: add the shelf branch to the automatic climb-out using the wall-hug shelf test 0x74E160 / 0x74BB50.
-- Test: proposed `GameReal.SwimClimbOutOntoShelf` (l2_puzzleroom shelf). Status · Origin: Open · pre-existing.
+- Expected: `swim_climbout_to_wallhug` (887) onto a shelf when the clearance result is 657 (GAMEPLAY.md "Climb out onto a
+  wall-hug shelf") [O chart].
+- Actual (before): not done; ordinary climb-out only.
+- Evidence: chart S237 T1110 is the first transition (before T1115 `swim_climbout`), conds 0x262 = 610, stick pushed /
+  not back, 0x28A = 657; clearance +0xEDC = 8 from 0x76D270 → 0x76D010 → 0x74E290 → 0x74E160 when 0x74BB50 == 1
+  (decomp). Clip 887: no root translation, root yaw 0 → +π evenly, pelvis from (18, 186, −78) to standing [O clip].
+- Fix: `Player::tryClimbOutToWallHug` before `tryClimbOut`: nearest ledgegrab point in reach whose `shelfAt` holds →
+  root on the shelf (88.496 in) facing the wall, clip 887 turns her, `Wall_Hug_Idle`. [I] the swim query's reach and
+  height band (the plain climb-out's 50..400), the ±60° facing.
+- Test: `GameReal.SwimClimbOutOntoShelf` (l2_cliffclimb ledge 936 seg 0: no l2_puzzleroom shelf lies over water; the
+  survey found only 936 seg 0 / seg 9 and l7_arctic_sea 2073). Open: runtime comparison with tru.exe at 936 (a Wine
+  session was started but not completed: the machine was overloaded, the front end did not take the keys).
+  Status · Origin: Fixed on agent/ShelfOut9 · pre-existing.
 
 **OU-PLY-004 No ladder side jumps or reaches**
 - Expected: ladder side jumps exist (ship escape shafts, ROADMAP L89); clips in lara.drm [I].
@@ -1242,7 +1251,7 @@ Status · Origin: Open · pre-existing.
 4. OU-REN-002 dither the post output (no change to the LDR look).
 5. OU-WAT-002 spray haze fade at the crater centre.
 6. OU-DOC-001 / OU-DOC-002 doc corrections.
-7. OU-PLY-003 shelf climb-out: chart state and shelf test are already decoded (GAMEPLAY.md L1926, L2608).
+7. OU-PLY-003 shelf climb-out: done on agent/ShelfOut9 (Wine check of ledge 936 still open).
 8. OU-GRP-001 throw clip lookup in the grapple DRM (data search, no exe work).
 
 **Needs RE first** (tru.exe decode before code):
