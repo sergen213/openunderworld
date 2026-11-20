@@ -13,6 +13,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 namespace ou::app {
 using nlohmann::json;
@@ -115,7 +116,8 @@ const std::set<std::string_view>& fixedProbes() {
         "bike.pos.z",
         "camera.yaw", "camera.pitch", "camera.distance", "camera.mode", "camera.spline", "camera.field", "camera.pos.x", "camera.pos.y",
         "camera.pos.z",
-        "world.unit", "world.units", "world.chapter", "world.checkpoint", "world.checkpoint_unit", "world.ticks", "world.treasures",
+        "world.unit", "world.units", "world.chapter", "world.checkpoint", "world.checkpoint_unit", "world.checkpoint_pos.x", "world.checkpoint_pos.y",
+        "world.checkpoint_pos.z", "world.checkpoint_distance", "world.ticks", "world.treasures",
         "world.relics", "world.health_packs", "world.streaming", "world.autosaves", "world.flashlight", "world.screen_fade",
         "portable.held", "portable.stowed", "enemies.count", "enemies.alive", "enemies.nearest", "enemies.nearest_uid",
         "camera.mode_name", "inventory.health_packs", "inventory.weapons", "inventory.items", "inventory.grenades", "physics.bodies",
@@ -282,7 +284,8 @@ const std::vector<std::string_view>& selftest::measurementNames() {
     static const std::vector<std::string_view> k = {
         "start.x", "start.y", "start.z", "end.x", "end.y", "end.z", "moved", "distance", "horizontal", "height_gain", "peak_height", "drop",
         "peak_speed", "peak_rise_speed", "peak_fall_speed", "air_time", "air_ticks", "ticks", "seconds", "teleports", "health_start",
-        "health_end", "health_min", "health_lost", "states", "clips", "calls", "events", "pickups", "hazards"};
+        "health_end", "health_min", "health_lost", "states", "clips", "calls", "events", "pickups", "hazards", "sounds", "toasts", "titles",
+        "hints"};
     return k;
 }
 
@@ -313,6 +316,10 @@ Value Measurements::get(std::string_view n) const {
     if (n == "events") return events;
     if (n == "pickups") return pickups;
     if (n == "hazards") return hazards;
+    if (n == "sounds") return sounds;
+    if (n == "toasts") return toasts;
+    if (n == "titles") return titles;
+    if (n == "hints") return hints;
     return {};
 }
 
@@ -333,7 +340,8 @@ const std::vector<std::string_view>& selftest::engineProbeNames() {
         "engine.renderer", "engine.device", "engine.frames", "engine.water", "engine.water_surfaces", "engine.water_as_requested", "engine.ao",
         "engine.ao_requested", "engine.ao_as_requested", "engine.rt_requested", "engine.rt_supported", "engine.rt_active",
         "engine.rt_as_requested", "hud.frames", "hud.health_alpha", "hud.weapons_alpha", "hud.gear_alpha", "hud.health", "hud.bar",
-        "hud.bar_kind", "hud.health_packs", "hud.clip", "audio.on", "audio.voices", "audio.music", "audio.music_state"};
+        "hud.bar_kind", "hud.health_packs", "hud.clip", "hud.reticle", "hud.reticle_slowmo", "hud.toast", "hud.title", "hud.hint", "audio.on",
+        "audio.voices", "audio.music", "audio.music_state"};
     return k;
 }
 
@@ -362,6 +370,11 @@ Value selftest::engineProbe(const Engine& e, std::string_view n) {
         if (n == "hud.bar_kind") return std::string(e.hudBreath ? "breath" : "adrenaline");
         if (n == "hud.health_packs") return num(e.hudHealthPacks);
         if (n == "hud.clip") return num(e.hudClip);
+        if (n == "hud.reticle") return e.reticle;
+        if (n == "hud.reticle_slowmo") return e.reticleSlowMo;
+        if (n == "hud.toast") return e.toast;
+        if (n == "hud.title") return e.title;
+        if (n == "hud.hint") return e.hint;
         return {};
     }
     if (e.frames == 0) return {}; // the rest describe the last drawn frame (none with --draw-last)
@@ -490,7 +503,7 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
         step.id = s["step"].get<std::string>();
         const std::string where = "step '" + step.id + "'";
         if (!ids.insert(step.id).second) bad(where, "the id is used twice");
-        static const std::set<std::string> kStep = {"step", "input", "plan", "duration", "until", "expect", "fixtures", "note"};
+        static const std::set<std::string> kStep = {"step", "input", "plan", "events", "duration", "until", "expect", "fixtures", "note"};
         for (const auto& [key, value] : s.items())
             if (!kStep.contains(key)) bad(where, "unknown key '" + key + "'");
         if (s.contains("input")) {
@@ -504,8 +517,24 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
             }
         }
         if (s.contains("plan")) step.plan = lines(s["plan"], where, "plan");
+        if (s.contains("events")) { // "<seconds> <event> <args>": platform::EventLog lines with seconds from the step's start
+            std::istringstream in(lines(s["events"], where, "events"));
+            for (std::string line; std::getline(in, line);) {
+                const std::string body = line.substr(0, line.find('#'));
+                if (body.find_first_not_of(" \t\r") == std::string::npos) continue;
+                std::istringstream ls(body);
+                double at = 0;
+                std::string rest;
+                if (!(ls >> at)) bad(where, "events line '" + line + "' wants '<seconds> <event> <args>'");
+                std::getline(ls, rest);
+                if (at < 0) bad(where, "events line '" + line + "': negative time");
+                step.events += std::to_string(std::llround(at / game::kTickSeconds)) + rest + "\n";
+            }
+            t.usesEvents_ = true;
+        }
         try {
             (void)game::InputScript::parse(step.input);
+            (void)platform::EventLog::parse(step.events);
             if (!step.plan.empty()) (void)Autopilot::parse(step.plan);
         } catch (const std::exception& e) {
             bad(where, e.what());
@@ -739,6 +768,19 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "chapter") return num(w.chapter);
         if (f == "checkpoint") return num(w.checkpoint() ? w.checkpoint()->id : 0);
         if (f == "checkpoint_unit") return w.checkpoint() ? Value(w.checkpoint()->unit) : Value(std::string());
+        if (f == "checkpoint_pos" || f == "checkpoint_distance") { // the checkpoint marker in the world; null while its unit is not loaded
+            const auto& cp = w.checkpoint();
+            if (!cp) return {};
+            for (const auto& u : w.units())
+                if (u.data.name == cp->unit)
+                    for (const auto& c : u.data.checkpoints)
+                        if (c.id == cp->id) {
+                            const glm::vec3 at = c.pos + u.offset;
+                            if (f == "checkpoint_distance") return num(glm::distance(glm::vec2(at), glm::vec2(s.pos)));
+                            return component(at, p.size() > 2 ? p[2] : "");
+                        }
+            return {};
+        }
         if (f == "ticks") return num(w.ticks());
         if (f == "treasures") return num(w.found[size_t(game::PickupKind::Treasure)]);
         if (f == "relics") return num(w.found[size_t(game::PickupKind::Relic)]);
@@ -983,6 +1025,30 @@ void SelfTest::begin(game::World& w) {
     script_ = game::InputScript::parse(s.input);
     pilot_.reset();
     if (!s.plan.empty()) pilot_ = Autopilot::parse(s.plan);
+    // Every step starts with all inputs released: what the earlier steps' events hold down goes up first.
+    release_.clear();
+    for (const int k : heldKeys_) {
+        SDL_Event e{};
+        e.type = SDL_EVENT_KEY_UP, e.key.scancode = SDL_Scancode(k), e.key.down = false;
+        release_.push_back(e);
+    }
+    for (const int b : heldMouse_) {
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_BUTTON_UP, e.button.button = uint8_t(b), e.button.down = false;
+        release_.push_back(e);
+    }
+    for (const auto& [pad, b] : heldButtons_) {
+        SDL_Event e{};
+        e.type = SDL_EVENT_GAMEPAD_BUTTON_UP, e.gbutton.which = pad, e.gbutton.button = uint8_t(b), e.gbutton.down = false;
+        release_.push_back(e);
+    }
+    for (const auto& [pad, axis] : heldAxes_) {
+        SDL_Event e{};
+        e.type = SDL_EVENT_GAMEPAD_AXIS_MOTION, e.gaxis.which = pad, e.gaxis.axis = uint8_t(axis), e.gaxis.value = 0;
+        release_.push_back(e);
+    }
+    heldKeys_.clear(), heldMouse_.clear(), heldButtons_.clear(), heldAxes_.clear();
+    events_ = platform::EventLog::parse(s.events);
     trackers_.clear();
     for (const auto& c : s.expect) trackers_.emplace_back(c);
     stepTick_ = 0, started_ = true;
@@ -990,7 +1056,39 @@ void SelfTest::begin(game::World& w) {
                  std::string(game::stateName(st.state)).c_str(), st.pos.x, st.pos.y, st.pos.z);
 }
 
-game::Actions SelfTest::actions(game::World& w) {
+std::vector<SDL_Event> SelfTest::deviceEvents(game::World& w) {
+    if (done()) return {};
+    if (!started_) begin(w);
+    std::vector<SDL_Event> out = std::exchange(release_, {});
+    while (const auto e = events_.next(stepTick_)) {
+        switch (e->type) { // what stays held at the step's end is released at the next one's start
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:
+            if (e->key.down) heldKeys_.insert(e->key.scancode);
+            else heldKeys_.erase(e->key.scancode);
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (e->button.down) heldMouse_.insert(e->button.button);
+            else heldMouse_.erase(e->button.button);
+            break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            if (e->gbutton.down) heldButtons_.insert({e->gbutton.which, e->gbutton.button});
+            else heldButtons_.erase({e->gbutton.which, e->gbutton.button});
+            break;
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            if (e->gaxis.value) heldAxes_.insert({e->gaxis.which, e->gaxis.axis});
+            else heldAxes_.erase({e->gaxis.which, e->gaxis.axis});
+            break;
+        default: break;
+        }
+        out.push_back(*e);
+    }
+    return out;
+}
+
+game::Actions SelfTest::actions(game::World& w, const game::Actions& devices) {
     if (done()) return {};
     if (!started_) begin(w);
     game::Actions a = script_.at(stepTick_);
@@ -1001,6 +1099,14 @@ game::Actions SelfTest::actions(game::World& w) {
         a.walk |= p.walk, a.jump |= p.jump, a.drop |= p.drop, a.interact |= p.interact, a.draw |= p.draw, a.fire |= p.fire, a.aim |= p.aim;
         a.switchTarget |= p.switchTarget, a.weapon |= p.weapon, a.heal |= p.heal, a.grapple |= p.grapple, a.sprint |= p.sprint;
         a.light |= p.light, a.grenade |= p.grenade, a.recenter |= p.recenter, a.fieldCamera |= p.fieldCamera;
+    }
+    if (!steps_[cur_].events.empty()) { // the step's SDL events, read through the bindings (readDevices)
+        const game::Actions& d = devices;
+        if (a.move == game::vec2(0)) a.move = d.move;
+        if (a.look == game::vec2(0)) a.look = d.look;
+        a.walk |= d.walk, a.jump |= d.jump, a.drop |= d.drop, a.interact |= d.interact, a.draw |= d.draw, a.fire |= d.fire, a.aim |= d.aim;
+        a.switchTarget |= d.switchTarget, a.weapon |= d.weapon, a.heal |= d.heal, a.grapple |= d.grapple, a.sprint |= d.sprint;
+        a.light |= d.light, a.grenade |= d.grenade, a.recenter |= d.recenter, a.fieldCamera |= d.fieldCamera, a.manualAim |= d.manualAim;
     }
     a.pause = a.pda = false; // the scenario owns the run: no menus from its input (save / load run: usesSaves)
     return a;
@@ -1018,6 +1124,12 @@ void SelfTest::observe(game::World& w) {
     for (const auto& e : w.script().events())
         m_.note(m_.events, std::string(script::eventName(e.kind)) + ":" + std::to_string(e.source) + ">" + std::to_string(e.target));
     for (const auto& pk : w.pickedUp()) m_.note(m_.pickups, std::string(game::pickupKindName(pk.kind)) + ":" + std::to_string(pk.id));
+    if (engine_) { // what ou-game showed / played after the last tick
+        for (const auto& snd : engine_->sounds) m_.note(m_.sounds, snd);
+        if (!engine_->toast.empty()) m_.note(m_.toasts, engine_->toast);
+        if (!engine_->title.empty()) m_.note(m_.titles, engine_->title);
+        if (!engine_->hint.empty()) m_.note(m_.hints, engine_->hint);
+    }
     for (const auto& hit : w.hazardHits()) { // every hit, repeats included
         const auto* o = w.script().find(hit.uid);
         m_.hazards.push_back((o ? o->name : std::to_string(hit.uid)) + ":" + std::to_string(int(hit.damage)));

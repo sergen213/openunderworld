@@ -2,9 +2,11 @@
 
 #include <glm/gtc/constants.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 
@@ -38,7 +40,7 @@ Autopilot Autopilot::parse(std::string_view plan) {
         for (std::string w; ls >> w;) s.args.push_back(w);
         static const std::vector<std::pair<std::string, size_t>> kOps = {{"go", 2}, {"engage", 1}, {"face", 1}, {"press", 0},
                                                                          {"hold", 2}, {"stick", 3}, {"run", 2}, {"push", 3}, {"wait", 1}, {"near", 1},
-                                                                         {"ride", 2}, {"map", 1}, {"swim", 3}};
+                                                                         {"ride", 2}, {"map", 1}, {"swim", 3}, {"fight", 0}};
         const auto it = std::ranges::find(kOps, s.op, &std::pair<std::string, size_t>::first);
         if (it == kOps.end() || s.args.size() < it->second)
             throw std::runtime_error("autopilot plan line " + std::to_string(no) + ": unknown step or missing arguments");
@@ -276,6 +278,69 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             const bool brake = b->speed > 1.25f * limit;
             const float lock = brake && s.args.size() > 5 ? std::stof(s.args[5]) : 1.0f;
             set(tick, "forward", brake ? -1.0f : b->speed > limit ? 0.0f : throttle, a), set(tick, "right", q(std::clamp(-2.5f * err, -lock, lock)), a);
+        }
+    } else if (s.op == "fight") { // fight [R] [SECONDS] [all]: until no foe is within R (default 3000) for a second
+        std::vector<std::string> nums; // R and SECONDS: the arguments other than "all"
+        std::ranges::copy_if(s.args, std::back_inserter(nums), [](const std::string& w) { return w != "all"; });
+        const float range = nums.size() > 0 ? std::stof(nums[0]) : 3000.0f;
+        const uint64_t limit = nums.size() > 1 ? ticks(nums[1]) : 60 * 60;
+        if (t == 0) clearSince_ = 0, healAt_ = 0, lostSince_ = 0, foeUid_ = 0, foeHp_ = 0, hitSince_ = tick;
+        const game::ai::Enemy* foe = nullptr;
+        float dist = 0;
+        // Foes: enemies aware of her (not idle, patrolling, asleep, going home or still clinging to a wall), or the one the
+        // target lock holds; an unaware one behind a wall does not keep the fight going. `all`: every living enemy within
+        // R (hunting them down).
+        using M = game::ai::Mode;
+        for (const auto& e : w.enemies().all()) {
+            const M m = e->state().mode;
+            const bool unaware = m == M::Idle || m == M::Patrol || m == M::Sleep || m == M::Cling || m == M::Return;
+            if (!e->alive() || (unaware && !has("all") && w.combat().target != e.get())) continue;
+            if (const float d = glm::distance(e->state().pos, lara.pos); d <= range && (!foe || d < dist)) foe = e.get(), dist = d;
+        }
+        const auto release = [&] { set(tick, "aim", 0, a), set(tick, "fire", 0, a), set(tick, "interact", 0, a), set(tick, "heal", 0, a); };
+        const auto& c = w.combat();
+        if (!foe) { // the lock stays held for the second: an unaware enemy in sight is still locked onto (and fought)
+            if (!clearSince_) clearSince_ = tick;
+            set(tick, "fire", 0, a), set(tick, "interact", 0, a), set(tick, "heal", 0, a), set(tick, "aim", 1, a), centre();
+            if (tick - clearSince_ >= 60) {
+                release();
+                std::fprintf(stderr, "ou-game: autopilot tick %llu fight: none left within %.0f, health %.0f, shots %d\n", (unsigned long long)tick,
+                             range, w.health().value(), c.shotsFired);
+                next(tick, nullptr);
+            }
+        } else if (t > limit) {
+            release(), centre();
+            next(tick, ("timed out: enemy " + std::to_string(foe->uid()) + " alive " + std::to_string(int(dist)) + " away").c_str());
+        } else {
+            clearSince_ = 0;
+            if (foe->uid() != foeUid_ || foe->state().health < foeHp_) hitSince_ = tick; // a new foe, or this one hurt
+            foeUid_ = foe->uid(), foeHp_ = foe->state().health;
+            const glm::vec2 to = glm::vec2(foe->state().pos) - glm::vec2(lara.pos);
+            const glm::vec2 dir = glm::length(to) > 1 ? glm::normalize(to) : glm::vec2(std::cos(lara.yaw), std::sin(lara.yaw));
+            // A health pack when she is low (one press, then 2 s before the next).
+            const bool heal = w.health().value() < 0.35f * w.health().max() && w.found[size_t(game::PickupKind::HealthPack)] > 0 &&
+                              (!healAt_ || tick - healAt_ > 120);
+            if (heal) healAt_ = tick;
+            set(tick, "heal", heal ? 1.0f : 0.0f, a);
+            if (foe->regenerating()) { // a thrall knocked down: the finishing move (Interact by it, weapons off the lock)
+                set(tick, "aim", 0, a), set(tick, "fire", 0, a);
+                if (glm::length(to) > 130) steer(dir, glm::length(to) < 400);
+                else centre();
+                set(tick, "interact", glm::length(to) < 260 && t % 12 < 6 ? 1.0f : 0.0f, a);
+            } else {
+                set(tick, "interact", 0, a);
+                set(tick, "aim", 1, a); // target lock (draws the weapons)
+                set(tick, "fire", c.drawn && c.target ? 1.0f : 0.0f, a);
+                if (c.target) lostSince_ = 0;
+                else if (!lostSince_) lostSince_ = tick;
+                // Too close: back off. No sight of it for 1.5 s, or 4 s of fire that did not hurt it (cover, a railing in
+                // the way): go nearer for a while.
+                const bool blocked = (lostSince_ && tick - lostSince_ > 90) || tick - hitSince_ > 240;
+                if (dist < 350) steer(-dir, false);
+                else if (blocked && dist > 500) steer(dir, false);
+                else centre();
+                if (tick - hitSince_ > 420) hitSince_ = tick; // 3 s nearer, then fire from there again
+            }
         }
     } else if (s.op == "wait") {
         if (t >= ticks(s.args[0])) next(tick, nullptr);

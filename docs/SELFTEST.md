@@ -114,6 +114,7 @@ Exactly one of `level`, `start_chapter`, `load` enters the game.
 | `step` | id, unique in the scenario (required) |
 | `input` | input-script lines (a string, or an array of lines), times in seconds from the step's start |
 | `plan` | autopilot plan lines (a string or an array), run from the step's start |
+| `events` | SDL device events (a string or an array of lines), times in seconds from the step's start (below) |
 | `duration` | seconds (required, > 0): how long the step runs, or its timeout |
 | `until` | a condition or an array of conditions (all must hold): the step ends on the first tick they hold |
 | `expect` | conditions (required, not empty): all must hold for the step to pass |
@@ -136,9 +137,29 @@ does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [
 motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED; while
 braking the stick stays within BRAKESTEER, default 1: brake + stick past half is the power slide, so long descents
 ride with 0.5), `swim X Y Z [R]` (in water: the stick towards the point, Jump / Drop held while it lies above / below
-her, until within R, default 150, in space; 60 s). Coordinates are world frame. With both `plan`
-and `input`, the plan steers and presses and the input lines add to it (a button is down if either holds it; a
-non-zero stick or look rate from `input` wins).
+her, until within R, default 150, in space; 60 s), `fight [R] [SECONDS] [all]` (below). Coordinates are world frame.
+With both `plan` and `input`, the plan steers and presses and the input lines add to it (a button is down if either
+holds it; a non-zero stick or look rate from `input` wins).
+
+`fight [R] [SECONDS] [all]` fights the enemies within R (default 3000) that are aware of her (not idle, patrolling,
+asleep, going home or clinging to a wall) or that the target lock holds (`all`: every living one, hunted down): Target
+Lock held (it draws the weapon in hand), Fire while a target is locked, backing off inside 350, going nearer for 3 s
+when no target is found for 1.5 s or when 4 s of fire did not hurt the foe (cover, a railing in the way); a knocked-down
+thrall gets the finishing move (Interact by it); a health pack is used below 35 % health. It is done once no foe is
+within R for 1 s (the lock stays held through that second, so an unaware enemy in sight is locked onto and fought)
+and fails after SECONDS (default 60) with a foe alive. It plays the fight; what must come of it (who is dead, how much
+health she lost) is the step's `expect`.
+
+`events` are SDL device events, the `--record-input` / `--replay-input` syntax (`platform::EventLog`,
+`tests/replays/*.events`) with seconds instead of ticks: `<seconds> key <scancode> <0|1>`, `mouse <button> <0|1>`,
+`motion <dx> <dy>`, `padadd <id>`, `padremove <id>`, `button <id> <button> <0|1>`, `axis <id> <axis> <-32768..32767>`
+(SDL numbers: Space 44, Left Ctrl 224; buttons south 0, east 1, west 2, north 3; axes left x / y 0 / 1, right x / y 2 /
+3, triggers 4 / 5). ou-game feeds them through its live input path (`platform::DeviceState`, the bindings,
+`game::readDevices`, the pause key and menu navigation), so a binding or a stick mapping that is broken fails the
+step; the bindings are ou-game's defaults (tru.exe's, `config::InputConfig`) unless `--config` is given. Pads are the
+scenario's (`padadd 1`): no real device reaches a self-test, nor do the desktop's keyboard and mouse. Whatever a
+step's events still hold down at its end is released (key up, button up, axis 0) when the next step starts. A step may
+have `events` with `input` and `plan` (the events' actions add to theirs, as `input` to `plan`).
 
 When a step ends:
 
@@ -286,6 +307,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `world.unit`, `world.units` | the unit Lara is in; the loaded units (list) |
 | `world.chapter` | `game::kChapters` index |
 | `world.checkpoint`, `world.checkpoint_unit` | the last checkpoint's intro id (0 none) and its unit |
+| `world.checkpoint_pos.x/.y/.z`, `world.checkpoint_distance` | that checkpoint marker's position (its intro position in its unit plus the unit's streaming offset); Lara's horizontal distance from it. Unavailable without a checkpoint or while its unit is not loaded |
 | `world.treasures`, `world.relics`, `world.health_packs` | pickups collected per kind |
 | `world.ticks`, `world.streaming`, `world.autosaves` | the World's tick clock; neighbour loads pending; autosaves the scripts asked for |
 | `world.flashlight`, `world.screen_fade` | the light is on; the screen wipe (1 = black) |
@@ -330,6 +352,8 @@ frame probes (`engine.water*`, `engine.ao*`, `engine.rt*`) are unavailable until
 | `hud.health_alpha`, `hud.weapons_alpha`, `hud.gear_alpha` | the HUD groups' opacity 0..1 (`ui::Hud`: they appear on damage, a drawn weapon, a d-pad press, and fade) |
 | `hud.health`, `hud.bar`, `hud.bar_kind` | the health meter's fill 0..1; the green bar's fill and what it shows (`adrenaline` / `breath`) |
 | `hud.health_packs`, `hud.clip` | the d-pad's health pack count; rounds in the drawn weapon's clip(s) |
+| `hud.reticle`, `hud.reticle_slowmo` | the combat reticle the next frame draws (`CombatView::reticle` from the tick's camera; `none` with GAME OPTIONS' reticles hidden): `none free target locked manual`; it shows the head-shot window |
+| `hud.toast`, `hud.title`, `hud.hint` | the HUD's notification (a pickup: `HEALTH PACKS  1`), title card (`CROFT MANOR`) and training popup shown now (`""` none); the popup's text as locals.bin has it, button placeholders (U+1800..) unexpanded |
 | `audio.on`, `audio.voices` | a device (or `--music-wav`) is open; the mixer's active voices |
 | `audio.music`, `audio.music_state` | tracks playing in the music player's slots; `off` / `idle` / `loading` / `playing` |
 
@@ -372,6 +396,8 @@ Recorded for every step and written to the report whether or not anything expect
 | `step.events` | script events as `"<kind>:<source>><target>"` (`enter`, `in`, `out`, `activate`, ...), first-seen order |
 | `step.pickups` | pickups collected as `"<kind>:<id>"` (`treasure`, `relic`, `healthpack`) |
 | `step.hazards` | contact-hazard hits that hurt her as `"<object name>:<damage>"`, one entry per hit in order (`ca_ei_flame_trap:800`; docs/GAMEPLAY.md "Hazards") |
+| `step.sounds` | the sounds ou-game started during the step, by source, first-start order (`app/game/Sound.hpp` `GameSound::started`): `script:<owner>:<member>` (script `sound` native), `slot:<object>:<slot>` (a SoundComponent slot), `anim:<object>:<dtp>` (an animation sound record: `anim:ma_ei_wall_switch_electric:12241`), `marker:<unit>:<marker id>:<sound>` (sfxmarkers), `bark:<uid>:<category>`, `joint:<uid>:<joint>`, `voice:<stream path>`, `drown`, `engine` (the bike). Recorded with or without an audio device (`--no-audio` keeps a device-less mixer) |
+| `step.toasts`, `step.titles`, `step.hints` | the HUD notifications, title cards and training popups shown during the step, first-shown order |
 
 Speeds are measured from her root's displacement per tick, so clip-end root snaps show up in `peak_*_speed` (a
 climb-up's last tick moves the root ~340 units): prefer `player.speed` at the end of a step, `step.horizontal` and
@@ -383,9 +409,14 @@ climb-up's last tick moves the root ~340 units): prefer `player.speed` at the en
 - Per-wheel contact (which wheel); only the count `bike.wheels`.
 - Loose rigid bodies that are not script objects (debris, ragdoll bones) and an object's rotation (`body` is its
   translation only; hinged doors are read through `object.<uid>.joint`).
-- The checkpoint's position.
 - Enemy internals beyond mode / health / clip (its target, cooldowns), melee state, the adrenaline head-shot pip.
-- Sound by sound (which voice plays what); the HUD's reticles, toasts, titles and hints.
+- The mixer's voices one by one (volume, position, what a voice is playing now): `step.sounds` says what was started
+  and by whom, `audio.voices` how many play.
+- The HUD's subtitles and the PDA.
+
+The `engine.*` / `hud.*` / `audio.*` probes and `step.sounds` / `toasts` / `titles` / `hints` read what ou-game did
+after a tick, so they describe the tick before the one tested (a sound started on a step's last tick is in the next
+step's list).
 
 ## Fixtures
 
@@ -501,7 +532,8 @@ tested behaviour happen.
 | `puzzle_pole_block_door` | l4_ballcourt | pole 6503 into lever 6502 (graph 0 -> 1), push block 6504 under it (two pushes), up onto the block, jump to the pole: lever joint slides, door 6505 rises |
 | `push_block` | l4_ballcourt | push block 6504 gripped by its push / pull record: pushed 7 s along her facing (33.2 units a second, her pull strength 1.4), pulled back, moved sideways (80 degrees off forward); the three-axis joint's travel, her obj_block clips |
 | `gauntlet_move` | l2_maproom | Thor door 2661: Interact + stick bare-handed moves nothing; with `g_gauntletleft` given, Interact grips its handle (`thor_engage`) and a sidestep slides it to its limit 663.7; let go: it stays, braked |
-| `combat` | l2_cliffclimb | draw, hard lock, pistols kill three spiders and hit a 700 hp target dummy 8+ times, adrenaline fills |
+| `combat` | l2_cliffclimb | draw, hard lock (the HUD's `locked` reticle), pistols kill three spiders and hit a 700 hp target dummy 8+ times, adrenaline fills |
+| `input_devices` | l3_main_bedroom | keyboard and gamepad through SDL events and the default bindings, no `Actions`: Space jumps and catches ledge 973, Left Ctrl drops; scenario pad 1: the left stick runs her back (> 1000 units/s), the stick released at the next step's start, A jumps (201.6 up), the left trigger draws (free-aim reticle), the right stick turns the camera 71.6 degrees in 0.5 s (2.5 rad/s) |
 | `motorcycle` | l4_trailstart | mount bike 5482, accelerate (wheels on the ground), steer left, brake and hold it with the Vehicle Brake (Space), dismount |
 | `bike_ride` | l4_trailstart | Southern Mexico's first ride by autopilot `ride` lines: bike 5482 over the stair hump, down the valley, through the stone tunnel, off its ramp over the pit (no wheel down, landing beyond x 67700, no damage), to checkpoint 6620 |
 | `chimney_floor_jumps` | l2_junglehub | at column A's unflagged face: a standing jump is a plain jump (no wall jump, apex 201.6); a stick jump plants her feet on the wall ~43 over the floor, and with no press she comes down again (both as tru.exe under Wine, docs/REFERENCE_COMPARISON.md M06) |
@@ -549,7 +581,8 @@ tested behaviour happen.
 | `ch10_maproom_rope_step_off` | l2_maproom | section 10 (C10-03): wall ring 2595 offered and thrown at from the near bridge stub's corner (rope 3404); roped she walks off the stub: the arc takes her under the pool, the rope is let go and she swims (surface root -9662); the far stub's spiders do not bite a swimmer under them |
 | `ch10_maproom_wall_run` | l2_maproom | A Puppet No Longer C10-03..05: a running jump off the near stub's corner, Grapple at ring 2595 in the air (she keeps her arc; the rope takes up its slack, taut at the least distance: tru.exe under Wine), onto the wall over the water, reel to 1500, rest, three runs along the wall, the back jump at the south apex onto the far stub |
 | `ch11_chapel_dais_furnace` | l3_chapel | section 11 (C11-16): onto pressure plate 4834 (joint -50): fire 4818 lit, gates 4830 / 4831 opening; off it: the fire goes out, the gates shut |
-| `ch11_study_gauntlet` | l3_stairhall -> l3_secretchamber | section 11 (C11-24, C11-25): from checkpoint 4699 down the passage into the study: checkpoint 4621, volume 4669, cinematic 4654 (gauntlet), two thralls alive in the room |
+| `ch11_study_gauntlet` | l3_stairhall -> l3_secretchamber | section 11 (C11-24, C11-25): from checkpoint 4699 down the passage into the study: checkpoint 4621 (its marker at the passage's start), volume 4669, cinematic 4654 (gauntlet); the two enemies alive are l3_stairhall spiders: the study's panther thralls do not appear (OU-CMB-005) |
+| `ch11_stairhall_spiders` | l3_stairhall | section 11 (C11-24): from checkpoint 4698 the autopilot's `fight` kills the spider that drops at the stair foot, she climbs and goes round the pit's north side, where six drop and bite (60 lost); the fight kills them; on to checkpoint 4699 |
 | `ch11_rockhall_switch` | l3_chamberrockhall | section 11 (C11-32): the stone door 4528 stops her; switch 4617 used with Interact opens it; through to checkpoint 4453 |
 | `ch12_trailstart_ride_in` | l4_trailstart | section 12 (C12-03, C12-04): the ride of `bike_ride`, then the upper road: plane 6712 starts reveal 6677, which sets her down beside the bike (larabase 54); mount again, ride into the temple courtyard (volumes 6713, 6703) |
 | `ch13_ballcourt_calendar_locked` | l4_ballcourt | Xibalba: at calendar 5477 without the jaguar head a gripped push handle turns nothing (hinge joint 2 stays 0, section 5 waits in state 3) |
@@ -571,7 +604,7 @@ tested behaviour happen.
 | `ch16_tower_base_panel` | l5_valgrind | Gate of the Dead leg 4 (C16-15): after the three power blocks cog wheel 7312's panel gripped (`thor_engage`, facing the tower's axis), the sidestep right (`thor_right`) turns the base from 89 degrees off with her carried round; at the range watch -2..2 degrees the wheel's solved state brakes it against her push and its event lights glyphs 7330 and beam 7331 (calls `7330:55`, `7331:55`) |
 | `ch17_maze_to_relic_door` | l5_valaskjalf_entry | Valhalla: the maze's first half on foot from inside the gate to the relic-room door 7227 (41 000 units, 2530 down), which is shut and stays shut |
 | `ch17_hammer_chamber` | l5_valaskjalf | Valhalla C17-70: from checkpoint 7067 a running jump catches the chamber block's edge 1542 (790 over the floor), the pull-up (clearance class 2: the hang clearance's rays pass terrain group 5, the smooth ramp over the steps, as tru.exe's player rays skip TerrainGroupExtra 0x800 groups), up the steps into volume 6866: 250_val_hammer, chapter 6 in l6_ship_exterior, Mjolnir drawn |
-| `ch18_bow_deck` | chapter 6 start | Rituals Old leg 1: Change Weapon once = the secondary, twice = Mjolnir; a bolt; nobody on the bow, the first soldiers once she heads down to the container deck |
+| `ch18_bow_deck` | chapter 6 start | Rituals Old leg 1: Change Weapon once = the secondary, twice = Mjolnir; a bolt; nobody on the bow, the first soldiers once she heads down to the container deck; `fight 9000 90 all` hunts both (generators 7661 / 7662) down with bolts, unhurt |
 | `ch18_engine_hall_to_cell` | l6_ship_engine_hall | Rituals Old last leg: with the hammer from checkpoint 7557 through the hall firing on the run, volume 7566, plane 7565 -> 270_shp_escape -> chapter 7 in l7_thin_ice, unhurt |
 | `ch19_thin_ice_dive` | chapter 7 start | section 19 (C19-01, C19-02): cinematic 9071 leaves her swimming under the ice in l7_arctic_sea (checkpoint 9094); the unit's constructor sets the puzzle up (wheels 9095 / 9096 vt 62, 9098 / 9103 vt 63); 63 s of diving on the tanks to the front of the building, breath 1.0 throughout (autopilot `swim` lines) |
 | `ch19_arctic_sea_stone_niche` | l7_arctic_sea | section 19 (C19-17, C19-18), swimming: the locked drawbridge wheel 9103 refuses (chains 9114 / 9115 rattle, bridge 9116 stays up); power stone 9273 lifted, carried to niche 9120 and seated (9120 vt 56, rune strip 9137 lit, the unit counts a key); with one stone the wheel still refuses |
@@ -591,6 +624,7 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | known gap | level | fails at | cause |
 |---|---|---|---|
 | `ch13_temple_block_topple` | l4_temple | `walk_until_the_rope_bends` | ring 4951 is offered from the east ledge and the throw holds (OU-PZL-008 (a): the sight ray ends at the post's feature); the run along the ledge wraps no bend on statue head 5236, and a bend that drags a rigid body is not modelled (tru.exe's bends are physics bodies, OU-PZL-008 (b)); the head has no collider the rope's ray could meet, and the scenario's walk stops 850 short of where the rope crosses it |
+| `ch18_container_climb` | chapter 6 start | `running_jump_to_the_triple_stack` | ch18_bow_deck's steps by input, then the container climb: the high climb onto the lone container 1765, the running jump north to the two-high stack 1763 (re-aimed at its rim) and up; from its far end the running jump south to the three-high stack 1766 is not re-aimed: the double's edge is already 1278 from that rim, beyond our running re-aim cap (`kRunJumpReach` 1233, Player.cpp: measured under Wine on one ledge 782 over the floor, 1222.9 re-aimed, 1243.4 not). Whether tru.exe reaches farther for this lower rim (636 up), or the walkthrough's stack is another one, is not measured [U]. Then: the triple stacks to the upper deck's ledge 1775 and checkpoint 7666, the upper deck, helipad and stern (checkpoints 7667 .. 7672), the hallways and ch18_engine_hall_to_cell |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);
@@ -598,6 +632,22 @@ Each shipped scenario fails when its mechanic does not happen (checked by runnin
 input fails at `dive` (states `swimsurface, swimtread`); `motorcycle` without the interact press fails at `mount`;
 `fall_damage` from 1200 instead of 1500 fails `fall_1500` (drop 1199.97, damage 0); `locomotion` expecting a 250-high
 standing jump fails with actual 202.187.
+
+Added 2026-11-20 (batch 11), each probe or tool checked the same way:
+
+- `input_devices` with `--config` binding jump to `Pad b` (A unbound) fails `pad_a_jumps` (states `run, idle`); with
+  `move_stick` / `look_stick` swapped fails `pad_stick_runs_back` (state `idle`).
+- `ch11_stairhall_spiders` and `ch18_bow_deck` with every `fight` line replaced by `wait 20` fail `first_spider` /
+  `the_swarm` (`enemy.4712.alive` / `enemy.4713.alive` true) and `the_first_soldiers` (`enemy.7661.alive` true).
+- `combat` without the `aim` press fails `draw_and_lock` (`hud.reticle` `target`, `combat.locked` false);
+  `ch01_bedroom_new_game` without the switch press fails `switch` (`step.sounds` without the switch's and the door's
+  records); `ch01_hall_first_aid` without the pick-up press fails `pick_up` (`step.toasts` empty).
+- Code mutations (built, run, reverted): the pickup's `hud.notify` removed fails `ch01_hall_first_aid` `pick_up`
+  (`step.toasts` []); the training popup's `hud.hint` and the chapter `hud.title` removed fail `ch01_bedroom_new_game`
+  (`step.titles` [], `step.hints` []); `world.checkpoint_pos` without the unit's streaming offset fails
+  `ch20_helheim01_portal` (y 11928.7, distance 43381.5; l3_secretchamber has no offset, so `ch11_study_gauntlet`
+  does not see it); a respawn 100 off the checkpoint (`World::enterUnit`) fails `checkpoint_respawn` `respawn`
+  (`world.checkpoint_distance` 100).
 
 ## Adding a chapter scenario
 

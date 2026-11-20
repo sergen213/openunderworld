@@ -82,7 +82,8 @@ Abbreviations as in `08_bhogavati.md` (GP, PR, Mnn = `B_mechanics.md`, "sweep" =
 |---|---|---|---|
 | `ch11_chapel_dais_furnace` | l3_chapel checkpoint 4737 | onto the dais pad: furnace lit, both gates opening; off it: out and shut | C11-16 (her own weight) |
 | `grapple_swing` (existing) | l3_chapel column top | ring 4744 thrown at, swing, rope moves | C11-23 (the swing, not the door) |
-| `ch11_study_gauntlet` | l3_stairhall checkpoint 4699 | down the passage into the study, the gauntlet cinematic's calls, two thralls alive | C11-24 (the way), C11-25 |
+| `ch11_stairhall_spiders` | l3_stairhall checkpoint 4698 | the stair hall's spiders fought by the autopilot (`fight`): the first at the stair foot, six round the pit's north side; on to checkpoint 4699 | C11-24 (the spiders) |
+| `ch11_study_gauntlet` | l3_stairhall checkpoint 4699 | down the passage into the study, the gauntlet cinematic's calls; the study's thralls do not appear (OU-CMB-005; the two enemies alive are stair-hall spiders) | C11-24 (the way), C11-25 |
 | `ch11_rockhall_switch` | l3_chamberrockhall checkpoint 4600 | shut stone door, switch 4617, through to checkpoint 4453 | C11-32 |
 | `ch01_main_hall`, `prologue_hall_swing` (the same rooms as the prologue) | l3_main_hall | the burning house's swing and hall | C11-33 (prologue state) |
 

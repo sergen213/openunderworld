@@ -33,6 +33,13 @@ public:
     //                               within BRAKESTEER (default 1; 0.5 = no power slide, which is brake + stick past half)
     //   swim X Y Z [R]              in water: the stick towards (X, Y), Jump / Drop held while the point lies above /
     //                               below her, until within R (default 150) units in space; fails after 60 s
+    //   fight [R] [SECONDS] [all]   fight the enemies within R (default 3000) units that are aware of her (not idle,
+    //                               patrolling, asleep, going home or clinging to a wall) or that the lock holds; `all`:
+    //                               every living one. Target Lock held (it draws), Fire while a target is locked, backing
+    //                               off inside 350, going nearer for 3 s when no target is found for 1.5 s or 4 s of fire
+    //                               did not hurt it; a knocked-down thrall gets the finishing move (Interact by it); a
+    //                               health pack below 35 % health. Done once no foe is within R for 1 s (the lock still
+    //                               held, so an enemy in sight becomes one); fails after SECONDS (default 60)
     // A step that does not finish in 20 s fails the plan (logged; the script so far is still written).
     static Autopilot load(const std::filesystem::path& plan, std::filesystem::path out);
     // The same plan syntax from text, nothing written (ou-game --self-test steps, app/game/SelfTest.hpp). Throws
@@ -61,6 +68,10 @@ private:
     std::filesystem::path out_;
     std::map<std::string, float> held_; // the recorded value of each action
     glm::vec2 rideFrom_{0};             // `ride`: where the step began (a waypoint passed wide still counts)
+    uint64_t clearSince_ = 0, healAt_ = 0, lostSince_ = 0; // `fight`: no enemy since; last heal press; no target since (ticks)
+    uint64_t hitSince_ = 0;  // `fight`: the foe last lost health (or became the foe) at
+    int32_t foeUid_ = 0;     // `fight`: the nearest living enemy, and its health
+    float foeHp_ = 0;
     std::string script_;
     bool written_ = false;
 };

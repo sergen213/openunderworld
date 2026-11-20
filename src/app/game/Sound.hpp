@@ -43,10 +43,18 @@ public:
     // it plays, others restart it. ownerGone: the instance left (streamed out, removed); its slots stop.
     void slotSound(const fx::ObjectFx& fx, uint8_t slot, uint8_t action, int32_t owner, glm::vec3 position, uint8_t material, uint64_t tick);
     void ownerGone(int32_t owner);
+    // --self-test (step.sounds): with `record` set, every sound started is appended to `started` as "<source>:<id>"
+    // ("script:<owner>:<member>", "slot:<object>:<slot>", "anim:<object>:<dtp>", "marker:<unit>:<marker id>:<sound>",
+    // "bark:<uid>:<category>", "joint:<uid>:<joint>", "voice:<stream path>", "drown", "engine"); the caller clears it.
+    bool record = false;
+    std::vector<std::string> started;
     // Whether the script sound of (owner, member) still plays, in game time (the `sound` wait sequences, AUDIO.md §9.3).
     bool scriptSoundBusy(int32_t owner, uint32_t member) const;
 
 private:
+    void note(std::string what) {
+        if (record) started.push_back(std::move(what));
+    }
     // Physics joint sounds (game::World::jointSounds, AUDIO.md §9.16): per (uid, joint) the rolling voice (tru.exe channel
     // 1: Reaction parameters 1 / 2 = linear / angular speed) and the impact voice (channel 0: parameter 0).
     struct JointVoice { audio::SoundPlayer::Handle roll = 0, impact = 0; float impactSpeed = 0; };
