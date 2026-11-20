@@ -1133,13 +1133,22 @@ public:
         int state = -1, program = -1; // -1 = generic scene program
         deferred_.clear();
         const size_t exterior = exteriorCount(r.meshes, std::span<const DrawRef>(r.order));
-        if (!exterior && drawSky(camera, vp, options)) program = -3, boundMesh = UINT32_MAX;
+        // The backdrop tint after the opaque exterior, its stars after the blended exterior (dome cards cover them).
+        const size_t skyAt = exteriorBlendStart(r.meshes, std::span<const DrawRef>(r.order), exterior,
+                                                [&](uint32_t m) { return m < opacity_.size() ? opacity_[m] : 1.0f; });
+        if (!exterior && drawSky(camera, vp, options, 3, false)) program = -3, boundMesh = UINT32_MAX;
         for (const DrawRef& d : r.order) {
-            if (exterior && &d - r.order.data() == std::ptrdiff_t(exterior)) { // exterior drawn: behind everything else
+            const size_t i = size_t(&d - r.order.data());
+            if (exterior && i == skyAt && skyAt < exterior) {
+                scissorFor(UINT32_MAX, vp);
+                if (drawSky(camera, vp, options, 1, true)) program = -3, boundMesh = UINT32_MAX;
+                state = -1;
+            }
+            if (exterior && i == exterior) { // exterior drawn: behind everything else
                 scissorFor(UINT32_MAX, vp);
                 glDepthMask(GL_TRUE);
                 glClear(GL_DEPTH_BUFFER_BIT);
-                if (drawSky(camera, vp, options)) program = -3, boundMesh = UINT32_MAX;
+                if (drawSky(camera, vp, options, skyAt < exterior ? 2 : 3, true)) program = -3, boundMesh = UINT32_MAX;
                 state = -1;
             }
             const GpuMesh& m = r.meshes[d.mesh];
@@ -1707,10 +1716,12 @@ private:
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
 
-    // Time of day backdrop (Sky::backdropPass, shaders/sky.*): right after the exterior terrain and its depth clear (or
-    // first, without exterior terrain), the frame so far (sky domes, the clear colour) x the backdrop tint, then the stars
-    // and the moon added; later draws cover it. Leaves blending, depth writes and the program changed. false = no pass.
-    bool drawSky(const Camera& camera, Viewport vp, const FrameOptions& o) {
+    // Time of day backdrop (Sky::backdropPass, shaders/sky.*): `modes` bit 0 = the tint (the frame so far: opaque
+    // exterior, the clear colour, x the backdrop tint), bit 1 = the stars and the moon, added under the star coverage in
+    // alpha (`exterior`: kept from the opaque exterior's painted scenery and the blended exterior drawn between the two
+    // passes; else cleared by the tint). Right after the opaque exterior, or first without exterior. Leaves blending,
+    // depth writes and the program changed. false = no pass.
+    bool drawSky(const Camera& camera, Viewport vp, const FrameOptions& o, int modes, bool exterior) {
         if (!o.sky || !o.sky->backdropPass()) return false;
         Resources& r = *res_;
         glUseProgram(r.skyProgram.get());
@@ -1720,14 +1731,14 @@ private:
         glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
-        glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
         const float aspect = float(vp.width) / float(std::max(vp.height, 1));
         for (int mode = 0; mode < 2; ++mode) {
-            if (mode == 1 && o.sky->stars <= 0 && o.sky->moon <= 0) break;
-            const SkyPush push = skyPush(camera, aspect, *o.sky, mode, o.time);
+            if (!(modes & (1 << mode)) || (mode == 1 && o.sky->stars <= 0 && o.sky->moon <= 0)) continue;
+            SkyPush push = skyPush(camera, aspect, *o.sky, mode, o.time);
+            push.stars.w = exterior ? 1.0f : 0.0f; // the tint keeps / clears the coverage (sky.frag)
             glNamedBufferSubData(r.skyUbo.get(), 0, sizeof push, &push);
-            if (mode == 0) glBlendFunc(GL_DST_COLOR, GL_ZERO); // dst x tint
-            else glBlendFunc(GL_ONE, GL_ONE);                  // + stars, moon
+            if (mode == 0) glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE), glBlendFunc(GL_DST_COLOR, GL_ZERO); // dst x tint
+            else glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE), glBlendFunc(GL_ONE_MINUS_DST_ALPHA, GL_ONE); // + stars, moon
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
         glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -2081,12 +2092,19 @@ private:
         beginOriginals(refl.camera, half, options);
         int state = -1, program = -2;
         const size_t exterior = exteriorCount(r.meshes, std::span<const DrawRef>(r.order));
-        if (!exterior && drawSky(refl.camera, half, options)) program = -3;
+        const size_t skyAt = exteriorBlendStart(r.meshes, std::span<const DrawRef>(r.order), exterior,
+                                                [&](uint32_t m) { return m < opacity_.size() ? opacity_[m] : 1.0f; });
+        if (!exterior && drawSky(refl.camera, half, options, 3, false)) program = -3;
         for (const DrawRef& d : r.order) {
-            if (exterior && &d - r.order.data() == std::ptrdiff_t(exterior)) { // exterior drawn: behind everything else
+            const size_t i = size_t(&d - r.order.data());
+            if (exterior && i == skyAt && skyAt < exterior) { // the tint after the opaque exterior (drawSky)
+                if (drawSky(refl.camera, half, options, 1, true)) program = -3;
+                state = -1;
+            }
+            if (exterior && i == exterior) { // exterior drawn: behind everything else
                 glDepthMask(GL_TRUE);
                 glClear(GL_DEPTH_BUFFER_BIT);
-                if (drawSky(refl.camera, half, options)) program = -3;
+                if (drawSky(refl.camera, half, options, skyAt < exterior ? 2 : 3, true)) program = -3;
                 state = -1;
             }
             const GpuMesh& m = r.meshes[d.mesh];

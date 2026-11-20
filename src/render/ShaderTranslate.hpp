@@ -59,6 +59,9 @@ struct FrameBlock {
     // Ours: rgb x the colour of programs that read no light register (their light is baked into vertex colours or
     // textures: foliage), so the time of day reaches them; 1 otherwise (original::fillFrame, Sky::lightMaps).
     float unlit[4];
+    // Ours: rgb x the colour of blended exterior draws (sky dome cards, clouds, glows), which renderers draw after the
+    // time of day's backdrop pass so they cover its stars; the pass tints the opaque exterior (Sky::backdrop; 1 otherwise).
+    float backdrop[4];
 };
 struct MaterialBlock {
     float vs[kMaterialVs][4];
@@ -74,7 +77,7 @@ struct ObjectBlock {
     float waves[4][4] = {};
 };
 static_assert(sizeof(FrameBlock) ==
-              (kFrameVs + kFramePs + 16 + 16 + 1 + 1 + kMaxLights * kLightRegs + kIrradianceSlots * kIrradianceRegs + 1) * 16);
+              (kFrameVs + kFramePs + 16 + 16 + 1 + 1 + kMaxLights * kLightRegs + kIrradianceSlots * kIrradianceRegs + 2) * 16);
 static_assert(sizeof(MaterialBlock) == (kMaterialVs + kMaterialPs + 1) * 16);
 
 // Vertex attribute locations of translated vertex shaders (by D3DDECLUSAGE); unlisted inputs read (0, 0, 0, 1).

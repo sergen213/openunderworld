@@ -90,6 +90,9 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     put(f.ps, 148, lmR, lmG, lmB, lmW);
     put(f.ps, 149, lmR, lmG, lmB, lmW);
     f.unlit[0] = lmR, f.unlit[1] = lmG, f.unlit[2] = lmB, f.unlit[3] = 1;
+    const bool tinted = sky && sky->backdropPass();
+    for (int k = 0; k < 3; ++k) f.backdrop[k] = tinted ? sky->backdrop[k] : 1.0f;
+    f.backdrop[3] = 1;
     f.bools[0] = 0; // vs b0-15
     // Sun = light slot 6 (c208 + 5*6): c209 direction, c212 colour (w = luminance), b6 (0x50A5F0, 0x5042B0).
     fillLights(f, env, t, cookies, &eye);

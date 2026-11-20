@@ -46,7 +46,7 @@ struct CineView {
     const fx::FilterResource* unitFilter = nullptr;
     render::Fog fogSet;
     float fogTint[3] = {1, 1, 1}; // x the resolved fog colour (the time of day, render/TimeOfDay.hpp)
-    float farZ = 200000.0f; // camera far plane (Original: the unit look's, as in play)
+    float farZ = 200000.0f; // camera far plane (Original: the unit look's; Enhanced: at least the look's, as in play)
     // The game's running effects (torches, fires, waterfalls and the actors' own emitters, e.g. co_fx_hell_gate in
     // 290_hel_gate): ticked at 60 Hz on the frame clock, the actors' emitters riding on their posed bones (moved back
     // afterwards), drawn by `drawFx` (sprites into the frame) for the cinematic camera. Null: none (--fx off).

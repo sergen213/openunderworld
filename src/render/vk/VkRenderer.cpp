@@ -1186,15 +1186,18 @@ public:
             const OrigDraw* od = originals ? &origDraws_[d.mesh][d.sub] : nullptr;
             return od && od->program >= 0 ? od : nullptr;
         };
-        // Time of day backdrop (Sky::backdropPass, shaders/sky.*): after the exterior terrain and its depth clear (or
-        // first without one), the frame so far x the tint, then the stars and the moon added.
-        auto drawSky = [&](const Camera& c, VkExtent2D ext) {
+        // Time of day backdrop (Sky::backdropPass, shaders/sky.*): `modes` bit 0 = the tint (the frame so far x the tint)
+        // after the opaque exterior (or first without one), bit 1 = the stars and the moon, added under the star coverage
+        // in alpha (`exterior`: kept from the opaque exterior's painted scenery and the blended exterior drawn between the
+        // two passes; else cleared by the tint).
+        auto drawSky = [&](const Camera& c, VkExtent2D ext, int modes, bool exterior) {
             if (!options.sky || !options.sky->backdropPass()) return;
             clipTo(UINT32_MAX);
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
             for (int mode = 0; mode < 2; ++mode) {
-                if (mode == 1 && options.sky->stars <= 0 && options.sky->moon <= 0) break;
-                const SkyPush sp = skyPush(c, float(ext.width) / float(std::max(ext.height, 1u)), *options.sky, mode, options.time);
+                if (!(modes & (1 << mode)) || (mode == 1 && options.sky->stars <= 0 && options.sky->moon <= 0)) continue;
+                SkyPush sp = skyPush(c, float(ext.width) / float(std::max(ext.height, 1u)), *options.sky, mode, options.time);
+                sp.stars.w = exterior ? 1.0f : 0.0f; // the tint keeps the exterior's star coverage, else clears it (sky.frag)
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = skyPipelines_[size_t(mode)]);
                 vkCmdPushConstants(cmd, skyLayout_, kPushStages, 0, sizeof sp, &sp);
                 vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -1259,14 +1262,17 @@ public:
             rp.rt = 0;
             // Exterior terrain first, then a depth clear, as in the main pass (SubMesh::exterior).
             const size_t exterior = exteriorCount(meshes_, std::span<const DrawRef>(order_));
-            if (!exterior) drawSky(reflection->camera, half);
+            const size_t skyAt = exteriorBlendStart(meshes_, std::span<const DrawRef>(order_), exterior, opacityOf);
+            if (!exterior) drawSky(reflection->camera, half, 3, false);
             for (const DrawRef& d : order_) {
-                if (exterior && &d - order_.data() == std::ptrdiff_t(exterior)) {
+                const size_t i = size_t(&d - order_.data());
+                if (exterior && i == skyAt && skyAt < exterior) drawSky(reflection->camera, half, 1, true);
+                if (exterior && i == exterior) {
                     VkClearAttachment clear{VK_IMAGE_ASPECT_DEPTH_BIT};
                     clear.clearValue.depthStencil = {1.0f, 0};
                     const VkClearRect rect{hs, 0, 1};
                     vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
-                    drawSky(reflection->camera, half);
+                    drawSky(reflection->camera, half, skyAt < exterior ? 2 : 3, true);
                 }
                 const GpuMesh& m = meshes_[d.mesh];
                 const scene::SubMesh& s = m.submeshes[d.sub];
@@ -1382,14 +1388,19 @@ public:
         // Not pre-passed: its opaque draws write depth themselves (and get no AO: the clear removes it from the pre-pass).
         const size_t exterior = exteriorCount(meshes_, std::span<const DrawRef>(order_));
         const std::span<const DrawRef> outside(order_.data(), exterior), inside(order_.data() + exterior, order_.size() - exterior);
+        // The backdrop tint after the opaque exterior, its stars after the blended exterior (dome cards cover them).
+        const size_t skyAt = exteriorBlendStart(meshes_, std::span<const DrawRef>(order_), exterior, opacityOf);
         if (exterior) {
-            for (const DrawRef& d : outside) drawMain(d);
+            for (size_t i = 0; i < exterior; ++i) {
+                if (i == skyAt) drawSky(camera, extent_, 1, true);
+                drawMain(outside[i]);
+            }
             VkClearAttachment clear{VK_IMAGE_ASPECT_DEPTH_BIT};
             clear.clearValue.depthStencil = {1.0f, 0};
             const VkClearRect rect{{{0, 0}, extent_}, 0, 1};
             vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
         }
-        drawSky(camera, extent_);
+        drawSky(camera, extent_, !exterior || skyAt == exterior ? 3 : 2, exterior != 0);
         if (prepassPipelines_) {
             vkCmdEndRendering(cmd);
             const VkImage normalImage = prepassNormal_.image;
@@ -3901,10 +3912,12 @@ private:
         else if (kind == PipelineKind::CausticSplat) {
             factors(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE);
             blend.colorWriteMask = VK_COLOR_COMPONENT_G_BIT;
-        } else if (sky) {
+        } else if (sky) { // multiply: rgb x tint, alpha cleared; stars: added under the blended exterior's coverage (sky.frag)
             if (kind == PipelineKind::SkyMultiply) factors(VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_ZERO);
-            else factors(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE);
-            blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+            else {
+                factors(VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA, VK_BLEND_FACTOR_ONE);
+                blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+            }
         }
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         const bool hasColor = colorFormat != VK_FORMAT_UNDEFINED;

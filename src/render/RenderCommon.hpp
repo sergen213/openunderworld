@@ -142,6 +142,14 @@ size_t exteriorCount(const std::vector<GpuMesh>& meshes, std::span<const DrawRef
     while (n < order.size() && meshes[order[n].mesh].submeshes[order[n].sub].exterior) ++n;
     return n;
 }
+// First blended draw among the `exterior` leading refs (drawOrder puts the opaque exterior first): renderers run the
+// time of day's backdrop pass there, so the blended exterior (dome cards, clouds) covers its stars; `exterior` = none.
+template <class GpuMesh, class Opacity>
+size_t exteriorBlendStart(const std::vector<GpuMesh>& meshes, std::span<const DrawRef> order, size_t exterior, Opacity op) {
+    size_t n = 0;
+    while (n < exterior && drawBlend(meshes[order[n].mesh].submeshes[order[n].sub], op(order[n].mesh)) == scene::Blend::Opaque) ++n;
+    return n;
+}
 // Exterior terrain follows the camera (FrameOptions::exteriorOrigin; tru.exe draws the exterior cell group translated
 // by eye - origin, read from its terrain matrices under Wine): moves each exterior mesh's model and centre by the
 // change of that shift since the last frame. Sky domes (SubMesh::followEye) shift by the eye itself. GpuMesh needs

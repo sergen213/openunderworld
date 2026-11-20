@@ -1047,8 +1047,10 @@ brightness, before the underwater effect, which owns the submerged view). `off` 
 - `low`: height fog along the view ray up to the scene, the water surface (above) or 60000 units:
   a haze layer (1/60000 per unit, falloff 1/2200) and a ground mist (1/30000, falloff 1/300) based
   at the nearest water surface or 250 units below the camera, constant below their base so pits stay
-  finite (closed-form integral, no marching). In-scattering = the unit's fog colour plus
-  Henyey-Greenstein (g 0.6) forward scattering of the unit's sun.
+  finite (closed-form integral, no marching). Rays that hit nothing on their way down (the sea past its water volume's
+  box: the Enhanced sea writes no depth, the exterior's depth is cleared) end at that water surface too, not under the
+  sea in the dense mist (a flat beige band below the horizon at l2_cliffclimb). In-scattering = the unit's fog colour
+  plus Henyey-Greenstein (g 0.6) forward scattering of the unit's sun.
 - `medium` (enhanced default): + sun shafts for units with a sun: 24 taps from the pixel toward the
   sun's screen position (jittered), open where the depth is beyond 0.6 of the medium range (sky),
   weighted by a 0.965 decay, HG (g 0.8) and the air in front of the pixel; fades as the sun leaves
@@ -1144,11 +1146,16 @@ Ours; tru.exe has no time of day. `default` is the game's own lighting (nothing 
   sunless units) x the shafts (skipped at 0), the caustic pattern's contrast, the particles' sun highlights, the glint
   and tru.exe's light rays (Original water). agRelight keeps the medium's daylight terms (it takes their ratio), so
   TRU's own night-lit colour stays.
-- Backdrop pass: right after the exterior terrain and its depth clear (or first, without one; also in the planar
-  reflection), a full-screen triangle multiplies the frame so far (sky domes, the clear colour) by the backdrop tint,
-  then adds a star field (3D cell hash, one cell in 30, ~1.2 px stars, twinkle, fading at the horizon) and the moon disc
-  (1 deg) with a glow,
-  under a clear sky only (no Enhanced weather, no unit rain object). Colour writes rgb only.
+- Backdrop pass: a full-screen triangle multiplies the frame so far (the opaque exterior: sky panoramas, the clear
+  colour) by the backdrop tint, then the blended exterior (dome clouds, cards, glows) draws tinted in its shader
+  (`FrameBlock::backdrop`), then a star field (3D cell hash, one cell in 30, ~1.2 px stars, twinkle, fading at the
+  horizon) and the moon disc (1 deg) with a glow are added under a coverage mask in the scene's alpha: the opaque
+  exterior writes it from its own colour (clear blue sky lets stars through; painted islands, mountains and clouds,
+  blue no stronger than red / green, hide them), the tint keeps it (cleared without exterior), blended exterior adds to
+  it (stars x (1 - dst alpha)). Then the exterior's depth clear; without exterior the pass runs first. Same in the
+  planar reflection. Stars and moon only under a clear sky (no Enhanced weather, no unit rain object).
+- Far plane: Enhanced uses 200 000 units but never less than the unit look's (Original takes the look's): a nearer far
+  plane cut l1_seatop's 240 000-unit sky dome and showed the clear colour through a round hole mid-view.
 
 Limits: the cycle clock is not saved (it restarts at the native hour each session); generic-shaded fallback draws keep
 their fixed lambert.

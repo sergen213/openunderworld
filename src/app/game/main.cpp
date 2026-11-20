@@ -867,23 +867,31 @@ struct StreamedScene {
     std::vector<size_t> hookIndices;
     // The sky dome (formats::Unit::skyObject; tru.exe 0x6D4480 / 0x6D4360 / 0x6D4560): one object for the whole world,
     // picked when Lara enters a unit naming one (a unit naming none keeps the current dome), drawn as exterior that
-    // follows the eye (SubMesh::followEye) at the camera + (0, 0, offset).
+    // follows the eye (SubMesh::followEye) at the camera + (0, 0, offset). A level load (new game, chapter, save) ends
+    // every instance of the old level, the dome too (World::levelLoads): it does not carry into the next level.
     ou::scene::SceneData sky;
     std::string skyUnit;           // the unit whose entry last chose
     std::string skyObject;         // the dome in `sky`; empty = none
     float skyOffsetZ = 0;
+    uint64_t skyLevel = 0;         // World::levelLoads() the dome belongs to
     // Returns true when the dome changed (the scene needs a rebuild).
     bool updateSky(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
         if (w.units().empty()) return false;
+        bool changed = false;
+        if (w.levelLoads() != skyLevel) {
+            skyLevel = w.levelLoads();
+            changed = !skyObject.empty();
+            sky = {}, skyObject.clear(), skyUnit.clear(), skyOffsetZ = 0;
+        }
         const auto& u = w.currentUnit().data;
-        if (u.name == skyUnit) return false;
+        if (u.name == skyUnit) return changed;
         skyUnit = u.name;
         // 0x6D4480 stores the unit's offset before it tests the object: a unit keeping the dome still moves it.
         std::string want = skyObject;
         const float z = u.skyOffsetZ;
         if (!u.skyObject.empty()) want = u.skyObject;
         else if (u.skyClears) want.clear();
-        if (want == skyObject && z == skyOffsetZ) return false;
+        if (want == skyObject && (z == skyOffsetZ || want.empty())) return skyOffsetZ = z, changed;
         if (want == skyObject) { // the same dome at another height
             for (auto& m : sky.meshes) m.transform[14] += z - skyOffsetZ;
             skyOffsetZ = z;
@@ -3019,7 +3027,8 @@ int main(int argc, char** argv) {
             v.fog = true, v.unitFilter = effects.unitEntry(world->currentUnit().data).own.get();
             v.fogSet.nearZ = effects.look.fogNear, v.fogSet.farZ = effects.look.fogFar;
             std::copy_n(effects.look.fogColor, 3, v.fogSet.color);
-            if (opt.graphics.preset == "original" && effects.look.farPlane > 0) v.farZ = effects.look.farPlane;
+            if (effects.look.farPlane > 0 && (opt.graphics.preset == "original" || effects.look.farPlane > v.farZ))
+                v.farZ = effects.look.farPlane; // as in play: Enhanced keeps 200 000 but never less than the look's
         }
         effects.timeOfDay = ou::render::TimeOfDay(opt.gfx.timeOfDay), effects.dayLength = opt.gfx.dayLength;
         effects.todSeconds = double(world->ticks()) * ou::game::kTickSeconds;
@@ -3854,7 +3863,11 @@ int main(int argc, char** argv) {
         effects.todClearSky = fo.weather.kind == ou::render::Weather::Kind::None && world->currentUnit().data.weatherObject.empty();
         if (!mainMenu) effects.water(cam, float(w) / float(std::max(1, h)), float(dt), *world, fo, opt.gfx.effects, warnings);
         // Original: the camera's far plane is the blended unit look's (0x5C7CA0 -> view +0x3C; l4_ballcourt 113 570 [O]).
-        if (!mainMenu && fo.unitLook && fo.unitLook->farPlane > 0 && opt.graphics.preset == "original") cam.farZ = fo.unitLook->farPlane;
+        // Enhanced keeps 200 000 but never less than the look's: the exterior (l1_seatop's 240 000-unit sky dome) cut
+        // by a nearer far plane showed the clear colour through a round hole in the middle of the view.
+        if (!mainMenu && fo.unitLook && fo.unitLook->farPlane > 0 &&
+            (opt.graphics.preset == "original" || fo.unitLook->farPlane > cam.farZ))
+            cam.farZ = fo.unitLook->farPlane;
         if (!mainMenu && opt.gfx.effects) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
         // Enhanced water: the effects' bubbles and Lara's breath for the under-water particle pass (render/Water.hpp).
         uwBubbles.clear();

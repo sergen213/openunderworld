@@ -233,7 +233,8 @@ at +0x13C). `SceneCellGroup` vtable +0x44 (0x571D20) returns it; 95 of 97 units 
   chapter 2, `ma_skydome_b`, `ca_skydome_a` in chapter 4, `ar_skydome_a`); each dome model is the sky plus a ring of
   horizon cards (distant islands, clouds). Ours: `Unit::skyObject` / `skyOffsetZ` / `skyClears`, ou-game
   `StreamedScene::updateSky` keeps one dome, drawn as exterior (behind everything, unclipped) following the eye
-  (`SubMesh::followEye`).
+  (`SubMesh::followEye`). A level load (`World::levelLoads`: new game, chapter, save) clears it with the old level's
+  instances [I: whether streaming its birth unit out also kills it in tru.exe is not checked].
 - Terrain group `+0x0C` bit 1: the group is skipped by the colour pass (0x511810) but not by the shadow pass
   (0x511E20, bit 2 only) [O]: `SubMesh::shadowOnly`, left out of the draw order, cast shadows (map + RT shadow
   rays), skipped by other RT rays. l2_junglehub's are the speckled rock sheets (material 10914) above the hub that

@@ -441,6 +441,7 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     joinStreams(true); // a level load waits for the neighbours
     player_.spawn(spawn->pos, spawn->yaw);
     exteriorOrigin_ = spawn->pos;
+    ++levelLoads_; // every instance of the old level is gone (ou-game: the sky dome with them)
     prev_ = player_.state();
     cam_.yaw = spawn->yaw;
     cam_.pitch = CameraState{}.pitch;

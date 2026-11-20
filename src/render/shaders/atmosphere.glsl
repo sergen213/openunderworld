@@ -132,6 +132,11 @@ vec3 ouAtmosphere(vec3 c, vec2 uv) {
     // Height fog: haze + ground mist, in-scattering the unit's fog colour plus forward-scattered sunlight.
     float cosSun = dot(dir, w.sunDir.xyz);
     if (w.haze.w > 0.5) {
+        // A ray that hits nothing on its way down (the sea beyond its water volume's box: the Enhanced sea writes no
+        // depth and the sky dome is cleared from it) ends at the sea plane (the layers' base: the nearest water
+        // surface) like the rays that hit the box top, instead of running on under the sea into the dense ground mist,
+        // which hazed the far sea into a flat band below the horizon.
+        if (sky && dir.z < -1e-5 && w.detail.w > 0.5 && w.eye.z > w.haze.z) airT = min(airT, (w.haze.z - w.eye.z) / dir.z);
         float len = min(airT, far);
         float z1 = w.eye.z + dir.z * len;
         float od = ouLayerDepth(w.haze, w.eye.z, z1, len) + ouLayerDepth(w.mist, w.eye.z, z1, len);

@@ -1100,6 +1100,7 @@ public:
     // tru.exe keeps the exterior cell group's view there: exterior terrain draws translated by (eye - this)
     // (render::FrameOptions::exteriorOrigin; docs/formats/LEVELS.md).
     vec3 exteriorOrigin() const { return exteriorOrigin_; }
+    uint64_t levelLoads() const { return levelLoads_; } // enterUnit calls: level loads (new game, chapter, save)
     std::vector<std::string> warnings;                      // streaming problems (missing neighbours, ...)
     // Background streaming (ou-game): portal neighbours load on a worker thread through `background` (empty = load
     // synchronously, the default) and join the world kStreamTicks after they were asked for, waiting then for a late
@@ -1626,6 +1627,7 @@ private:
     std::string playerUnit_; // unit the scripts were last told Lara is in (Runtime::setPlayerUnit); empty = level load
     std::optional<Spawn> startSpawn_;
     vec3 exteriorOrigin_{0};
+    uint64_t levelLoads_ = 0;
     uint32_t respawns_ = 0;
     std::optional<CheckpointRef> checkpoint_;
     nlohmann::json checkpointSave_; // serializeCheckpoint() of the last checkpoint save

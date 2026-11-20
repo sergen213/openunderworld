@@ -1,6 +1,8 @@
 #version 460
 // Time of day backdrop pass (render/TimeOfDay.hpp): mode 0 (tint.w) outputs the tint, which the blend multiplies into the
-// exterior terrain and the empty sky (dst x src); mode 1 outputs the stars and the moon, added (src + dst). World z up.
+// opaque exterior and the empty sky (dst x src); alpha: stars.w 1 keeps the star coverage the opaque exterior wrote (its
+// painted islands, mountains, clouds; ShaderTranslate), 0 clears it (no exterior). Mode 1 outputs the stars and the moon,
+// added under that coverage (src x (1 - dst alpha) + dst), so the horizon's painted scenery hides them. World z up.
 #ifdef VULKAN
 layout(push_constant) uniform SkyPush { vec4 right, up, forward, tint, stars, moon; } pc;
 #else
@@ -39,7 +41,7 @@ vec3 stars(vec3 d, float pixel) {
 
 void main() {
     if (pc.tint.w < 0.5) {
-        oColor = vec4(pc.tint.rgb, 1.0);
+        oColor = vec4(pc.tint.rgb, pc.stars.w); // alpha x dst alpha: keep (1) or clear (0) the star coverage
         return;
     }
     const vec3 d = normalize(vRay);

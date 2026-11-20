@@ -6,6 +6,16 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.57.1] - 2026-11-19
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: the dark round shape in the middle of the chapter 1 horizon is gone; the view no longer stopped short of the
+  sea's sky dome.
+- Fixed: the flat beige band between the sea and the horizon (with the atmosphere effect on) is gone.
+- Fixed: at night, stars no longer shine through the islands, mountains and clouds painted on the horizon.
+- Fixed: a sky from a previous level (for example chapter 2's islands) no longer carries over into the next level.
+
 ## [0.57.0] - 2026-11-19
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
