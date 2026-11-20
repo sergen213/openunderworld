@@ -12,6 +12,7 @@
                 {"probe": "weapon.current", "eq": "pistols"},
                 {"probe": "combat.locked", "eq": true},
                 {"probe": "combat.target", "ne": 0},
+                {"probe": "hud.reticle", "eq": "locked", "note": "the HUD's locked reticle on the target"},
                 {"probe": "enemies.alive", "min": 7},
                 {"probe": "weapon.shots_fired", "eq": 0}]},
     {"step": "fire", "input": ["0 aim 1", "0 fire 1"], "duration": 6,

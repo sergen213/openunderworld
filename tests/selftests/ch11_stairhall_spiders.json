@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "ch11_stairhall_spiders",
+  "chapter": "11 Protected by the Dead: the dark stair hall's spiders fought by the autopilot on the way to the study passage (docs/matrix/11_protected_by_the_dead.md C11-24)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/10manor.html",
+  "note": "l3_stairhall from checkpoint 4698 at the foot of the stairs. Its small brown spiders (11, enemy data in the unit) cling to the walls and ceiling and drop when Lara comes near. The autopilot's `fight` line (target lock + fire with the chapter's pistols, docs/SELFTEST.md) kills the one that drops at the start, she climbs the stairs and walks round the pit by its north side, where six drop at once and bite (60 lost in this run); the fight kills them, and she walks on to checkpoint 4699 at the study passage (where ch11_study_gauntlet starts). Spiders that stay clinging are not fought. Without the fight lines the scenario fails (the swarm alive, enemy.* expectations).",
+  "level": "l3_stairhall",
+  "spawn": [-13637, 1899, -4600, 180],
+  "steps": [
+    {"step": "first_spider", "plan": ["wait 2", "fight 3000 30"], "duration": 35, "note": "it drops off the wall about 2 s in",
+     "expect": [{"probe": "enemy.4712.alive", "eq": false, "note": "dropped from the stair wall and shot"},
+                {"probe": "weapon.shots_fired", "min": 1},
+                {"probe": "weapon.drawn", "eq": true},
+                {"probe": "player.dead", "eq": false}]},
+    {"step": "up_and_round_the_pit", "plan": ["go -15000 1900 200", "go -16300 1900 200", "go -16300 3800 200", "go -18200 3800 200"], "duration": 60,
+     "expect": [{"probe": "player.pos.z", "near": -3793, "tol": 10, "note": "the hall's upper floor"},
+                {"probe": "player.pos.x", "max": -17900}]},
+    {"step": "the_swarm", "plan": ["fight 3000 60"], "duration": 65,
+     "expect": [{"probe": "enemy.4713.alive", "eq": false}, {"probe": "enemy.4714.alive", "eq": false}, {"probe": "enemy.4716.alive", "eq": false},
+                {"probe": "enemy.4717.alive", "eq": false}, {"probe": "enemy.4718.alive", "eq": false}, {"probe": "enemy.4719.alive", "eq": false},
+                {"probe": "weapon.shots_fired", "min": 7},
+                {"probe": "player.dead", "eq": false},
+                {"probe": "player.health", "min": 700, "note": "a few bites (940 in the run that wrote this)"}]},
+    {"step": "to_the_study_passage", "plan": ["go -18390 1902 150", "fight 3000 30"], "duration": 40,
+     "expect": [{"probe": "world.checkpoint", "eq": 4699},
+                {"probe": "world.checkpoint_distance", "max": 160},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

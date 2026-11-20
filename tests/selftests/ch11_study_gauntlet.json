@@ -3,7 +3,7 @@
   "name": "ch11_study_gauntlet",
   "chapter": "11 Protected by the Dead: from the dark stair hall into Richard Croft's study: the tape cinematic that gives the second gauntlet, and the two thralls (docs/matrix/11_protected_by_the_dead.md C11-24, C11-25)",
   "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/10manor.html",
-  "note": "l3_stairhall from checkpoint 4699 at the hall's west end. She runs west down the passage into l3_secretchamber (checkpoint 4621 at its door); volume 4669 preloads and volume 4666 plays cinematic 4654 (skipped here: its events and placement run), which leaves her in the study with the right gauntlet [O script, ProgressionReal sweep 4666 -> 4654]. The two panther thralls of the study are alive in the room.",
+  "note": "l3_stairhall from checkpoint 4699 at the hall's west end. She runs west down the passage into l3_secretchamber (checkpoint 4621 at its door); volume 4669 preloads and volume 4666 plays cinematic 4654 (skipped here: its events and placement run), which leaves her in the study with the right gauntlet [O script, ProgressionReal sweep 4666 -> 4654]. The two panther thralls the walkthrough has climb down a pillar here do not appear in ours (BUGS OU-CMB-005): the two enemies alive are spiders of l3_stairhall.",
   "level": "l3_stairhall",
   "spawn": [-18390, 1902, -3793, 180],
   "steps": [
@@ -11,13 +11,15 @@
      "until": {"probe": "step.calls", "has": ["4654:57"]},
      "expect": [{"probe": "world.unit", "eq": "l3_secretchamber"},
                 {"probe": "world.checkpoint", "eq": 4621},
+                {"probe": "world.checkpoint_pos.x", "near": -19287.0, "tol": 1, "note": "the marker at the passage's start, in the stair hall's frame with l3_secretchamber's streaming offset"},
+                {"probe": "world.checkpoint_pos.y", "near": 1905.7, "tol": 1}, {"probe": "world.checkpoint_pos.z", "near": -3413.5, "tol": 1},
                 {"probe": "step.events", "has": ["enter:4669>4669"]},
                 {"calls": ["4654:57"]},
                 {"probe": "step.health_lost", "eq": 0}]},
     {"step": "in_the_study", "duration": 4,
      "expect": [{"probe": "player.grounded", "eq": true},
                 {"probe": "player.pos.x", "max": -27000, "note": "in the study"},
-                {"probe": "enemies.alive", "eq": 2, "note": "the two thralls"},
+                {"probe": "enemies.alive", "eq": 2, "note": "two small_brown_spider still clinging in l3_stairhall (4712 at (-17023, 2050)); no panther thrall of the study appears (BUGS OU-CMB-005)"},
                 {"probe": "player.dead", "eq": false}]}
   ]
 }

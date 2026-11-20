@@ -59,6 +59,27 @@
      "eq": 8884
     },
     {
+     "probe": "world.checkpoint_pos.x",
+     "near": -11.1,
+     "tol": 1,
+     "note": "checkpoint 8884's marker in the world: its l7_helheim02 intro position plus that unit's streaming offset (0, -43614, 190 from l7_helheim01)"
+    },
+    {
+     "probe": "world.checkpoint_pos.y",
+     "near": -31685.6,
+     "tol": 1
+    },
+    {
+     "probe": "world.checkpoint_pos.z",
+     "near": 2086.0,
+     "tol": 1
+    },
+    {
+     "probe": "world.checkpoint_distance",
+     "max": 400,
+     "note": "she ends 233 past it down the passage"
+    },
+    {
      "probe": "step.teleports",
      "eq": 0
     }

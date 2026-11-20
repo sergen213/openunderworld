@@ -13,7 +13,9 @@
      "expect": [{"probe": "step.pickups", "has": ["healthpack:4364"]},
                 {"clips": ["gear_weapon_pickup"]},
                 {"probe": "world.health_packs", "eq": 1},
-                {"probe": "player.health", "eq": 400, "note": "stored, not used"}]},
+                {"probe": "player.health", "eq": 400, "note": "stored, not used"},
+                {"probe": "step.toasts", "has": ["HEALTH PACKS  1"], "note": "the HUD notification: the pickup string and the count carried"},
+                {"probe": "hud.health_packs", "eq": 1}]},
     {"step": "heal", "input": ["0.1 heal 1", "0.2 heal 0"], "duration": 2,
      "expect": [{"probe": "weapon.health_packs_used", "eq": 1},
                 {"probe": "player.health", "min": 1000, "note": "a pack restores 640 [O]"}]}

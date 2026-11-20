@@ -3,7 +3,7 @@
  "name": "ch18_bow_deck",
  "chapter": "18 Rituals Old: the bow deck from the chapter start: Mjolnir by Change Weapon, a bolt, down the stairs where the first soldiers appear (docs/matrix/18_rituals_old.md C18-01, C18-02, C18-03, C18-07)",
  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/17andaman.html",
- "note": "Chapter 6 as chapter select starts it: 260_ship_intro (7652; not shown) warps her onto the bow of l6_ship_exterior. Change Weapon cycles pistols -> secondary -> hammer [O tru.exe 0x704930]. No enemy exists while she stays on the bow; going down the stairs towards the container deck brings the first soldiers (generators). The fights and the container climb are not played here: the autopilot does not fight, and walking on to the container deck without fighting the soldiers kill her within seconds (a draft run: 1037 health lost by (359, 17542)).",
+ "note": "Chapter 6 as chapter select starts it: 260_ship_intro (7652; not shown) warps her onto the bow of l6_ship_exterior. Change Weapon cycles pistols -> secondary -> hammer [O tru.exe 0x704930]. No enemy exists while she stays on the bow; going down the stairs towards the container deck brings the first soldiers (generators). The two soldiers (generator 7661 / 7662, merc_generator_run) come up the aisle; the autopilot's `fight ... all` line (target lock + fire with the hammer, docs/SELFTEST.md) hunts them down and kills both with bolts, unhurt in the run that wrote this. Walking on to the container deck without fighting them kills her within seconds (a draft run: 1037 health lost by (359, 17542)). The container climb is not played (docs/matrix/18_rituals_old.md C18-10).",
  "start_chapter": 6,
  "steps": [
   {
@@ -138,6 +138,43 @@
     {
      "probe": "step.moved",
      "min": 300
+    }
+   ]
+  },
+  {
+   "step": "the_first_soldiers",
+   "plan": [
+    "fight 9000 90 all"
+   ],
+   "duration": 95,
+   "expect": [
+    {
+     "probe": "enemy.7661.alive",
+     "eq": false
+    },
+    {
+     "probe": "enemy.7662.alive",
+     "eq": false
+    },
+    {
+     "probe": "enemies.alive",
+     "eq": 0
+    },
+    {
+     "probe": "weapon.current",
+     "eq": "thorhammer"
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 2
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    },
+    {
+     "probe": "step.health_lost",
+     "max": 300
     }
    ]
   }
