@@ -8,6 +8,18 @@ Experimental. OpenUnderworld loads the levels of your own copy of the game and l
 
 It is far from a complete game. Many puzzles and level transitions do not work yet, and a full play-through has not been verified. See [docs/ROADMAP.md](docs/ROADMAP.md) for the status of each area and [docs/PROGRESSION.md](docs/PROGRESSION.md) for the state of each chapter route.
 
+## Progress
+
+[![brief](https://sergen213.github.io/openunderworld/badge-brief.svg)](https://sergen213.github.io/openunderworld/)
+[![bugs](https://sergen213.github.io/openunderworld/badge-bugs.svg)](https://sergen213.github.io/openunderworld/)
+[![vs tru.exe](https://sergen213.github.io/openunderworld/badge-fidelity.svg)](https://sergen213.github.io/openunderworld/)
+[![chapters](https://sergen213.github.io/openunderworld/badge-chapters.svg)](https://sergen213.github.io/openunderworld/)
+[![tru.exe RE](https://sergen213.github.io/openunderworld/badge-re.svg)](https://sergen213.github.io/openunderworld/)
+
+[![Chapter map and per-phase brief compliance](https://sergen213.github.io/openunderworld/progress.svg)](https://sergen213.github.io/openunderworld/)
+
+Counted from the repository's own status documents on every push to `main` ([progress page](https://sergen213.github.io/openunderworld/), [progress history](https://sergen213.github.io/openunderworld/history.html) per release; generator: `tools/progress/progress.py`, see [docs/RELEASING.md](docs/RELEASING.md#progress-site-github-pages)).
+
 ## You need the original game
 
 **You need your own legally owned copy of Tomb Raider: Underworld.** This project contains no game data, extracted assets or original code, and the releases contain none either. OpenUnderworld reads the files of your installation (tested: GOG build, `tru.exe` 1.1.0.0) and never modifies them.

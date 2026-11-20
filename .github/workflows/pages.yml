@@ -1,0 +1,44 @@
+# Progress site (https://sergen213.github.io/openunderworld/): tools/progress/progress.py counts the repository's
+# own status documents (brief compliance, bugs, tru.exe comparison, chapter matrices, RE database, tests) and the
+# same numbers at every release tag (history). Repository setting: Pages source = GitHub Actions.
+name: pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "tests/**"
+      - "tools/progress/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Parser tests
+        run: python3 tools/progress/test_progress.py
+      - name: Generate site
+        run: python3 tools/progress/progress.py site --history
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
