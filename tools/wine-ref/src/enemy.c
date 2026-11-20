@@ -12,7 +12,8 @@
 //                                   index AI+0x3EB8 into the table *0xE92008 (0x58-byte entries: s32 count, instance,
 //                                   radius +0x14, half height +0x18 printed as raw words; 0x620BE0), with Lara's position.
 //  enemy hp <ms> <period> [set]     Lara's health (player data +0x628) every period ms, printed when it changes and
-//                                   every second: position, health, "hurt <amount>" on a drop; [set] writes that
+//                                   every second: position, health, "hurt <amount>" on a drop (and a line whenever she
+//                                   moved 50 or more since the last line: teleports); [set] writes that
 //                                   health first; env HEAL=<h>: put back to 1000 when under h (default: never)
 #include <windows.h>
 #include <math.h>
@@ -93,16 +94,17 @@ int main(int argc, char** argv) {
         DWORD pd0 = rd32(0xFADB58);
         if (argc > 4 && pd0) { float s = (float)atof(argv[4]); WriteProcessMemory(h, (void*)(size_t)(pd0 + 0x628), &s, 4, 0); }
         LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
-        float hp0 = -1; double lastPrint = -2000; timeBeginPeriod(1);
+        float hp0 = -1, px = 0, py = 0, pz = 0; double lastPrint = -2000; timeBeginPeriod(1);
         for (;;) {
             QueryPerformanceCounter(&t); double ms = (t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
             if (ms > total) break;
             DWORD L = rd32(0xE7F094), pd = rd32(0xFADB58);
             float hp = pd ? rdf(pd + 0x628) : -1;
             if (hp0 >= 0 && hp < hp0 - 0.5f) printf("%.1f hurt %.1f\n", ms, hp0 - hp);
-            if (hp != hp0 || ms - lastPrint >= 1000) {
-                printf("%.1f lara %.1f %.1f %.1f hp %.1f\n", ms, rdf(L + 0x20), rdf(L + 0x24), rdf(L + 0x28), hp);
-                lastPrint = ms;
+            const float x = rdf(L + 0x20), y = rdf(L + 0x24), z = rdf(L + 0x28);
+            if (hp != hp0 || ms - lastPrint >= 1000 || fabsf(x - px) + fabsf(y - py) + fabsf(z - pz) >= 50) {
+                printf("%.1f lara %.1f %.1f %.1f hp %.1f\n", ms, x, y, z, hp);
+                lastPrint = ms, px = x, py = y, pz = z;
             }
             hp0 = hp;
             if (pd && hp < heal) { float full = 1000; WriteProcessMemory(h, (void*)(size_t)(pd + 0x628), &full, 4, 0); hp0 = full; printf("%.1f heal\n", ms); }
