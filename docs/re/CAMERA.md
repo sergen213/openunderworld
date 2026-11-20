@@ -208,7 +208,7 @@ relative to the platform.
 | 6 | Camera types switch through a TransitionCamera with per-(from, to) durations from a resource and a fixed 1/30 s step | Reveal splines blend in/out with our own times (OU-CAM-004); no general transition camera | src/game/Camera.cpp; BUGS OU-CAM-004 |
 | 7 | Vehicle: VehicleCamera (type 13) entered via a transition while player +0xF00 is set | `kDistance = 1711` on the bike, our ratio | World.cpp:986 "[I] VehicleCamera"; OU-CAM-003 |
 | 8 | Scope (type 14) and LaraCombatCamera (type 12) are separate cameras | One orbit camera with modes | World.cpp |
-| 9 | Camera trigger volumes (0x5CD520 → 0x5F29A0 / 0x5F2A70 → 0x601D30 / 0x6019D0) override the camera while Lara is inside | Done (OU-CAM-005, OU-CAM-006): distance 2 / 0xD, pitch set by id 1, angle overrides 3–6 (applied when the trigger list or mode changes), look limits 7 / 8, inline force sets 0x17 / 0x18 with their forces, 0x15 (no ray probe), tracker offsets 0x19 / 0x1B (pivot) and 0x1A / 0x1C (look point), level records 0x12; volumes anchored to a moving object ride it. Not modelled: 9, 0xC (cut), 0x14 (focus points), 0x16 (LaraCombatCamera), kind-1 blocks (AnchoredCamera). §9 | Wine `w2/DeckCam6/`, `w2/CamZones7/`, `w2/CamRest8/`; `ScriptRealData.CameraTriggerCommandSurvey`, `StreamReal.CameraRidesTheYachtDeck`, `StreamReal.CameraTriggerVolumeSetsDistanceAndPitch`, `StreamReal.CameraTriggerForceSetEasesPitch`, `StreamReal.CameraTriggerRecordHoldsTheCamera`, `StreamReal.CameraTriggerPitchOverrideAndLimits` |
+| 9 | Camera trigger volumes (0x5CD520 → 0x5F29A0 / 0x5F2A70 → 0x601D30 / 0x6019D0) override the camera while Lara is inside | Done (OU-CAM-005, OU-CAM-006): distance 2 / 0xD, pitch set by id 1, angle overrides 3–6 (applied when the trigger list or mode changes), look limits 7 / 8, cut 0xC (0x6017D0), inline force sets 0x17 / 0x18 with their forces, focus points 0x14 (0x5F0B30..0x5F12F0, 0x6009C0), 0x15 (no ray probe), tracker offsets 0x19 / 0x1B (pivot) and 0x1A / 0x1C (look point), level records 0x12; volumes anchored to a moving object ride it. Not modelled: 9 (no volume carries it), 0x16 (LaraCombatCamera), kind-1 blocks (AnchoredCamera), the focuspoint script type's Enable / Disable. §9 | Wine `w2/DeckCam6/`, `w2/CamZones7/`, `w2/CamRest8/`; `ScriptRealData.CameraTriggerCommandSurvey`, `CollisionRealData.FocusPointSurvey`, `StreamReal.CameraRidesTheYachtDeck`, `StreamReal.CameraTriggerVolumeSetsDistanceAndPitch`, `StreamReal.CameraTriggerForceSetEasesPitch`, `StreamReal.CameraTriggerRecordHoldsTheCamera`, `StreamReal.CameraTriggerFocusPointTurnsTheLook`, `StreamReal.CameraTriggerCutPutsTheCameraAtItsAngles`, `StreamReal.CameraTriggerPitchOverrideAndLimits` |
 
 Camera distance on the l2_cliffclimb yacht deck (OU-CAM-005, tru.exe 948.2 in mode 1, ours was 1264.22): it is the
 target distance +0x1320 (0x5FFB00 returns +0x1D4 to it), set by a **camera trigger volume**. Writers of +0x1320: the
@@ -266,12 +266,13 @@ priority; 9 kind-1 volumes: l1_kraken_room 49 / 291 / 327 / 328 / 353, l2_maproo
 | 3 / 4 | 2 / 7 | yaw / pitch override by id (0x5FE7D0 / 0x5F9910: global data +0x170 / +0x174, 12-byte {angle, speed, hold} → 0x609F10 on +0x1248 / +0x1278): yaw id 7, pitch ids 9 and 1 | done (`kYawOverrides` / `kPitchOverrides`); 4 Wine-verified at 4468 |
 | 5 / 6 | 1 / 15 | inline yaw / pitch override {angle, speed, hold} (0x609F10) | done (same functions as 3 / 4) |
 | 7 / 8 | 1 / 4 | yaw / pitch limits {centre, range} (0x609C00 → 0x607A30 on +0x890 / +0x8C4, as the mode lists' 7 / 8; 0x608700 clamps to centre ± range) | done; 8 Wine-verified at 4349 (7: centre 0 in its one use) |
-| 0xC | 2 | flag → 0x6017D0 at the end of 0x601D30: a cut | not modelled (below) |
+| 9 | 0 | +0x133C (as a mode list's 9, 0x5FF27D), handed by 0x602690 to the object at +0x2800 (its +0x5C) while +0x2814 is set (2 with mode 6: a spline path, 0x5F1EF0) | nothing to model: no volume carries it |
+| 0xC | 2 | flag byte +0xD → 0x6017D0 at the end of 0x601D30: a cut | done (below): l1_krakenstairs_b 599, l7_arctic_sea 9226 |
 | 0xD | 109 | distance +0x1320 (byte +0xC: cap +0x1340, read by 0x6000EF) | done (distance; the cap not) |
 | 0x12 | 116 | level camera record (arg 0 → unit data +0x20C, 0x70 bytes) | done: the unit's record list (CollisionMesh::cameraRecords), in every mode, under a markup's record unless the priority is set |
-| 0x14 | 53 | flags focus point `id` of her unit (unit data +0x200 count / +0x204 records of 0x100 bytes, the `focuspoint` script type 0x7758B0..0x775C20) with 0x20 at +0xFC for this frame (0x5ED2D0; 0x5F1480 clears them) | not modelled (below) |
+| 0x14 | 53 | flags focus point `id` of her unit (unit data +0x200 count / +0x204 records of 0x100 bytes, the `focuspoint` script type 0x7758B0..0x775C20) with 0x20 at +0xFC (0x5ED2D0) until 0x601D30 runs again (0x5FEE10 → 0x5F1480 clears them all first) | done (below; `World::updateFocusPoints`); Wine-verified at 3859 |
 | 0x15 | 33 | clears +0x1338: no on-foot ray probe (0x600591) | done |
-| 0x16 | 54 | LaraCombatCamera distance +0x14C (0x603190 reads the active triggers' 0x16 itself; 0x6019D0 skips it) | not modelled: ours has no LaraCombatCamera (combat aim = mode 23) |
+| 0x16 | 54 | LaraCombatCamera distance cap +0x14C (0x603190 / 0x603150 copy the active triggers' 0x16 into it; 0x6019D0 skips it; 0x603C40 returns min(that camera's distance, +0x14C)) | not modelled: ours has no LaraCombatCamera (combat aim = mode 23) |
 | 0x17 / 0x18 | 24 / 155 | inline yaw / pitch force set {angle, speed, dir, count, forces} (0x609C40); 23 / 66 carry forces (types 2, 3, 5, 7) | done, with their forces |
 | 0x19 / 0x1A | 65 / 73 | (x, y, z) onto the focus / look tracker (+0x3B0 / +0x620 +0x20, 0x5FE730 → 0x608280) | done (every offset is (0, 0, z); world frame [I]) |
 | 0x1B / 0x1C | 47 / 51 | as 0x19 / 0x1A, blending over arg 3 s when byte arg 4 is set (0x608200) | done |
@@ -327,15 +328,53 @@ Wine (2026-11-19, `openunderworld-work/w2/CamRest8/fast.py` / `camz.py`, l3_main
   reset sets the pitch override itself (current angle, 300..400°/s) after the trigger's.
 - 4349 (l3_bedroom_hall, {8 −10 10}): +0x8C4 = centre 1.396 (80°), range 0.175 (10°); the mouse moves the pitch no
   further than 0.00 up and −20.00 down (ours: pitch within [c − r, c + r] as the mode lists' 8).
-- Not verified: 0xC (l1_krakenstairs_b 599: teleported in, the yaw jumped to her heading and the pitch sat at −7.50 = the
-  sets' targets, but the distance eased 1262 → 1092 instead of jumping to 474, and a teleport resets the camera behind
-  her by itself; keys did not reach the game in that session). 0x6017D0: both trackers at once (0x6084A0(1)), override
-  clocks 0.25 (0x607CA0), force switch clocks done (0x607C00), then +0x150 / +0x90 = the pivot + the angles of the
-  active override's target, else the force set's (0x5FA440 / 0x608980), else 90° (0x8555C0), at +0x1320 in the frame
-  +0xD0 (0x435220); with a level record, its point.
-- 0x14 = **focus points** (not a fade record): the 0x100-byte records at unit data +0x200 / +0x204 are the `focuspoint`
-  script type's (NtFocusPoint 0x7B7A00; method 1 0x7758B0 tests +0xFC bit 4 = enabled). 0x5F0B30 gathers up to 32
-  records of the loaded units with +0xFC & 0x24 (enabled, or flagged this frame by a trigger) whose +0 point is within
-  the +0x18 radius (bit 2) / passes the view test 0x5EA3D0 with +0x1C (bit 8) / is not hidden from the camera by
-  0x493330 (bit 1); 0x5F1540 blends their points into the +0x14C0 point that 0x6009C0 turns the look toward by +0x204.
-  Not modelled (a subsystem of its own: the weights 0x5F0DF0..0x5F12F0 are not decoded).
+- **Cut (0xC)**, agent/CamCut9: 0x6019D0 sets the flag byte +0xD of 0x601D30's flags (the same stack struct for the
+  trigger, mode-list and record passes, objdump 601E07..601EAC), and 0x601D30 ends in 0x6017D0: both trackers jump to
+  their goals with their blends done (0x6084A0(1): +0x250 = +0x260, point = goal), override clocks 0.25 (0x607CA0),
+  force switch clocks done with her move history refilled (0x607C00), +0x100 = the look tracker's point, then
+  +0x150 / +0x90 = the pivot + (target distance +0x1320, the angles of the active override's target (+0x1258 /
+  +0x1288; 0x5FA4A0) else the force set's (0x5FA440 → 0x608980 at a full switch: base, or the signed target of a dir
+  set, π/2 with side 0) else π/2), through the frame +0xD0 (0x5E0C20 → 0x435220) [I: her heading frame, as the force
+  sets' angles]; with a level record (0x5FA500), its point +0x12B0. The distance state +0x1D4 and its speed +0x1D8 are
+  not touched, so 0x600200 proposes the point at +0x1D4 again and 0x600710 moves the camera back out to it at the
+  follow speed (3793.1/s): the cut snaps the angles, the camera only flashes in. Wine (w2/CamRest8 k599tp.txt,
+  teleported next to 599): +0x1D4 went on 1262.3 → 1236.3 → … → 1092 toward its 474.1 target while the yaw stepped 17.01
+  → 19.64 and the pitch −7.48 → −7.50 (the set's) as the trigger entered (a teleport also resets the camera, so the
+  angles alone prove little).
+  Ours (`World::updateOrbitCamera`): the same on the tick the trigger list changes with a 0xC in it, without
+  interpolation from the last tick's pose; `StreamReal.CameraTriggerCutPutsTheCameraAtItsAngles` (599: behind her,
+  −7.50°, the camera at 474.1 + one follow step, then back at +0x1D4 four ticks later). Our 599 box test does not
+  contain tru.exe's teleport point (−4300.0, −1765.8, −993.45) (756 off the box centre along x, half extent 447) although
+  tru.exe counted her in it there [U: the box's placement in tru.exe's test 0x5CD520].
+- **Focus points (0x14)**, agent/CamCut9: the 0x100-byte records at unit data +0x200 / +0x204 are the `focuspoint`
+  script type's (NtFocusPoint 0x7B7A00; 1 0x7758B0 IsEnabled tests +0xFC & 0x04, 2 0x775910 Enable sets it, 3 0x775960
+  Disable clears it). Record: +0 point (unit frame, + the unit's offset 0x5C1E20), +0x14 weight %, +0x18 radius, +0x1C
+  view margin, +0x20 falloff distance with its 64-byte curve +0x24, fade in {+0x64 type, +0x68 length, +0x6C curve,
+  +0xAC curved}, fade out {+0xB0, +0xB4, +0xB8, +0xF8}, +0xFC flags (0x01 not hidden, 0x02 radius, 0x04 enabled, 0x08
+  in view, 0x10 falloff, 0x20 flagged by a trigger). Over the 82 units (`CollisionRealData.FocusPointSurvey`): 344
+  records, none with 0x04, so only a trigger's 0x14 (or a script's Enable, one unit's scripts have the type [U which])
+  gathers one; fades of type 0 (73) and 2 (271). Per frame from 0x6022F0, 0x5F1540 (the object at +0x14C0: point at +0,
+  lists at +0x10 / +0x194):
+  - 0x5F0B30 gathers, over the loaded units (stream tracker state 2), up to 32 records with +0xFC & 0x24 that pass the
+    tests their flags ask for: 0x08 in the view frustum (0x5EA3D0: the view planes at DAT_00E91ED0, each distance less
+    the +0x1C margin), 0x02 within the +0x18 radius of her root (instance +0x20), 0x01 not hidden from the camera
+    position (0x493330, ray flags 0x302C5981);
+  - 0x5F0DF0 adds each gathered one (weight 0) to the fading-in list and 0x5F0E90 moves each list entry no longer
+    gathered to the fading-out list, but both loops keep only their last comparison (5F0E17..5F0E39: `dl` = match, no
+    break): with one gathered point that is what it says; with two or more only the last gathered stays and it is added
+    again every frame while another precedes it (up to 32 copies). Ours reproduces the loops as they are;
+  - 0x5F0F70 raises each fading-in weight by its fade-in rate (type 0: stick length (0x5E9830) × dt / length, 1: her
+    move this frame (0x5E97B0: |+0x20 − +0xC0|) / length, 2: dt / length, other: 1), capped at 1, curved by its curve
+    when the byte is set; 0x5F1060 lowers each fading-out weight by its fade-out rate and drops it when it would reach 0;
+    0x5F11C0 runs a third list (+0x330, 32 × 0x80 bytes) that nothing here fills [U];
+  - 0x5F12F0: point = (look tracker point + Σ w p) / (1 + Σ w), w = +0x14 × 0.01 × the curved weight × (flag 0x10)
+    curve +0x24 at clamp(|her root − p| / +0x20, 0, 1); 0x5ED260 adds the third list's;
+  - 0x6009C0: +0x204 moves toward the look-idle weight (0x5FFA90, settings +0xC4 / +0xC8: 0 until 5 s after the last
+    look input, 1 from 7 s) by at most 4 × dt; the look vector +0x160 = mix(look tracker point, +0x14C0, +0x204) − camera.
+  Wine (w2/CamZones7 s3859.txt / s3859b.txt, l2_cliffclimb 3859 {0x14 3}: point 3 weight 65 %, radius 1295.8, margin
+  695.3, Lara 1066 from it): the look vector crosses the pivot → point segment at 0.38..0.42 of the way, as
+  0.65 / 1.65 = 0.394 predicts; after a mouse nudge 0.005 until the look-idle ramp (0.18, 0.36, 0.41 at the next
+  samples). Ours (`World::updateFocusPoints`): 0.394, the ramp and the fade out on leaving;
+  `StreamReal.CameraTriggerFocusPointTurnsTheLook`. [I]: our view test uses the last camera's frustum at the configured
+  vertical FOV and 16:9 and treats the planes as facing out; the sight ray uses the camera mask; the gather order is our
+  unit order (it matters only with two or more points, via the loops above). The scripts' Enable / Disable are not bound.
