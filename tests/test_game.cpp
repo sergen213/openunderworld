@@ -10485,6 +10485,8 @@ TEST(GameReal, CrusherJawsOpenCloseAndKill) {
 
 // l5_valaskjalf: the roller sets (ar_ei_grinders: three rollers of 400 each, overlap volumes) on the walkway of the
 // second hammer row. Running into them costs 400 a touch, once per invulnerability window.
+// tru.exe (Wine 2026-11-20, openunderworld-work/Hazards11-wine/ref/h4-roller*.txt): held in a roller, 400 every 1.016 s
+// for as long as she stays in it (OU-CMB-004).
 TEST(GameReal, RollersCost400ATouch) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     HazardWorld h("l5_valaskjalf", game::Spawn{{-6200, -75221, -6900}, 0.0f});
