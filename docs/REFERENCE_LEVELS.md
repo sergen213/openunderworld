@@ -421,6 +421,6 @@ Rows of REFERENCE_COMPARISON whose evidence names no chapter unit (synthetic sce
 | Combat / AI | 18 unmeasured |
 | Objects / puzzles | 26 unmeasured |
 | Vehicle | 9 unmeasured |
-| Camera / systems | 1 differs / 2 matches / 12 unmeasured |
+| Camera / systems | 3 matches / 12 unmeasured |
 
 Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-GRP-001, OU-GRP-002, OU-GRP-004, OU-PHY-002, OU-PLY-001, OU-PLY-002, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-005, OU-SWM-003, OU-TST-001, OU-TST-002, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
