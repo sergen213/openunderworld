@@ -85,12 +85,12 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-REN-010 | render | Finish bloom misses its `c · a` term (0x51AEF0 composite): up to half the original's bloom | Open (capture + shader read) | pre-existing | — |
 | OU-REN-011 | render | Two-sided translucent batches drawn in one cull-off draw; tru.exe draws back faces, then front faces | Open (capture) | pre-existing | — |
 | OU-REN-012 | render / fx | Lit smoke material particles drawn unlit grey (prologue corridor) | Reproduced (capture) | pre-existing | — |
-| OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Fixed-verified on agent/VkHang10 (stale regex since 0.51.0; no hang on RADV 26.2.6; 0.12/0.13 hang cause unidentified) | test defect + unreproduced hang | — |
+| OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Fixed-verified (0.59.0; stale regex since 0.51.0; no hang on RADV 26.2.6; 0.12/0.13 hang cause unidentified) | test defect + unreproduced hang | — |
 | OU-VK-002 | Vulkan AO | CORTAO temporal pass is camera-only (risk of halos on moving meshes) | Not reproduced | new-feature defect (0.51.0) | — |
 | OU-VK-003 | Vulkan | AMD Anti-Lag crash a few frames into cutscenes / loading screen | Fixed-verified | regression (Anti-Lag support) | — |
 | OU-VK-004 | Vulkan / FSR | `VK_ERROR_OUT_OF_DEVICE_MEMORY` then FSR frame generation context failed | Not reproduced | unknown | — |
 | OU-VK-005 | Vulkan / FSR | FSR SDK validation messages (FG 3-component write, storage formats) | Open (upstream) | pre-existing | — |
-| OU-VK-006 | Vulkan | Validation: wave field image never initialised (UNDEFINED), `shaderImageGatherExtended` not enabled, unordered attenuation-table copies, pre-pass normal transition hazard | Fixed-verified on agent/VkHang10 (1d3b4fe, 5bcf3bc) | pre-existing | — |
+| OU-VK-006 | Vulkan | Validation: wave field image never initialised (UNDEFINED), `shaderImageGatherExtended` not enabled, unordered attenuation-table copies, pre-pass normal transition hazard | Fixed-verified (0.59.0; 1d3b4fe, 5bcf3bc) | pre-existing | — |
 | OU-STR-001 | streaming | 2-9 s `stream scene` stalls at level load | Not reproduced | unknown | — |
 | OU-UI-001 | UI | Game font / button-glyph rendering missing | Fixed-verified | pre-existing | — |
 | OU-UI-002 | UI | Chapter title / letterbox screens, confirmation dialogs, PDA sub-screens not drawn | Open | pre-existing | — |
@@ -128,20 +128,20 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
 | OU-GRP-002 | grapple | Swing dynamics unmeasured (five failed Wine sessions) | Open | pre-existing | C-MEASURE |
 | OU-GRP-003 | grapple | Jump into the gap released the rope; leap off a wall ignored the stick | Fixed-verified | pre-existing | — |
-| OU-GRP-004 | grapple | ch10 leap to wall ring 2595: a throw in the air stopped her for the throw clip; the jump's rope is taut at the least distance (Wine) | Fixed on agent/GapsB10 (`ch10_maproom_wall_run` moved up) | pre-existing | — |
+| OU-GRP-004 | grapple | ch10 leap to wall ring 2595: a throw in the air stopped her for the throw clip; the jump's rope is taut at the least distance (Wine) | Fixed-verified (0.59.0, GapsB10; `ch10_maproom_wall_run` moved up) | pre-existing | — |
 | OU-GRP-005 | grapple | ch12 lever 6695: rope attach calls vt 46, larabase 26 bound, she stays roped while Interact is held | Fixed-verified (0.53.0, f832536) | pre-existing | C-VM |
 | OU-PZL-001 | progression | ch01: no input route into the pocket north of the bedroom beams | Open | pre-existing | — |
-| OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Fixed on agent/GapsA10 (43b506c) | pre-existing | C-MEASURE |
+| OU-PZL-002 | progression | ch04: jump to perch 30 lands on pillar 29 | Fixed-verified (0.59.0, GapsA10; 43b506c) | pre-existing | C-MEASURE |
 | OU-PZL-003 | progression | ch05: west recess from the T junction is shut | Not a bug (wrong route in the scenario; d66d67a) | pre-existing | — |
 | OU-PZL-004 | progression | ch06: hallway roll stops on a 45° floor before plane 1203 | Not a bug (wrong route in the scenario; Wine trace 2026-11-20) | pre-existing | — |
-| OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Fixed on agent/GapsA10 (the lean goes on by itself; Wine trace) | pre-existing | C-CHART |
-| OU-PZL-016 | progression | ch06: Crouch on bar 238 does not land on beam 233 | Fixed on agent/GapsA10 (hang drop re-aimed at a beam below; Wine trace) | pre-existing | C-CHART |
+| OU-PZL-005 | progression | ch06: bar 238 not reached from the top valve wheel | Fixed-verified (0.59.0, GapsA10; the lean goes on by itself; Wine trace) | pre-existing | C-CHART |
+| OU-PZL-016 | progression | ch06: Crouch on bar 238 does not land on beam 233 | Fixed-verified (0.59.0, GapsA10; hang drop re-aimed at a beam below; Wine trace) | pre-existing | C-CHART |
 | OU-PZL-006 | progression | Freed slab bodies stay in place (ch09 shrine, ch08 statue floor) | Fixed-verified (0.53.0, ecf03db); the fallen ring and the scenario fixed on agent/GapsA10 (1088550) | pre-existing | C-JOINT |
 | OU-PZL-007 | progression | ch13: calendar push handle turns nothing after the mask is set | Fixed-verified (0.53.0, 2e6ef11: test bug) | pre-existing | C-JOINT |
 | OU-PZL-008 | progression | ch13 temple: (c) multibody 92/93 bound (1d3a9c1); (a) ring 4951 sight ray ended 4 under the post's floor (fixed: ends at the 0xDE feature); (b) rope bends don't tug bodies remains (tru.exe's bends are physics bodies, 0x699A50) | Partly fixed ((c) 0.53.0; (a) 0.56.0, merge 02b7a09; (b) open) | pre-existing | — |
 | OU-PZL-009 | progression | Switch `modifiable` 7 now honoured for every switch (ch15 exit switch locked until the key) | Fixed-verified (0.53.0, 30cc49f) | pre-existing | C-VM |
 | OU-PZL-010 | progression | ch15: rune block 5609 has no joint record | Fixed-verified (0.53.0, b716e88); pull speed unverified | pre-existing | C-JOINT |
-| OU-PZL-011 | progression | ch17: no pull-up onto the hammer chamber block: hang clearance met the steps' smooth ramp (group 5, flags 0x800), which tru.exe's player rays skip | Fixed on agent/GapsB10 (`ch17_hammer_chamber` moved up) | pre-existing | — |
+| OU-PZL-011 | progression | ch17: no pull-up onto the hammer chamber block: hang clearance met the steps' smooth ramp (group 5, flags 0x800), which tru.exe's player rays skip | Fixed-verified (0.59.0, GapsB10; `ch17_hammer_chamber` moved up) | pre-existing | — |
 | OU-PZL-012 | progression | ch21: Natla platform jump from the walkway's edge: tru.exe's stick jump with the passing stone as target leaves after ~3 frames (Wine), ours after 8 | Open (decoded in Wine; jump caught from 154 back: `natla_platform_ride`, `ch21_platform_ride` moved up) | pre-existing | C-VM |
 | OU-PZL-013 | progression | Motorcycle absent at level entries without a placing script | Open | pre-existing | C-VM |
 | OU-PZL-014 | progression | Freed prologue ring-door leaf stays standing in its doorway | Fixed-verified (6d6c9eb, 0.47.0; ring rides the leaf 0.56.0; landing place chaotic: ours 1.1k flat, tru.exe 656 flat) | pre-existing | C-JOINT |
@@ -162,7 +162,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-DOC-001 | docs | Chapter matrices mark implemented mechanics as NOT IMPLEMENTED | Fixed-verified | doc drift | C-DOC |
 | OU-DOC-002 | docs | Contradictions between ROADMAP rows / RENDERING / REFERENCE_COMPARISON / GAMEPLAY | Open (mostly fixed) | doc drift | C-DOC |
 | OU-DOC-003 | docs | Batch 10 asm checks: wrong citation addresses and branches the comments omit | Open | doc drift | C-DOC |
-| OU-SAV-001 | save/load | Quickload in l3_main_bedroom reported doors 4526 / 4376 as not resumed: a false difference (two colliders per door shared one state-part name) | Fixed on agent/GapsB10 (`save_load_bedroom_doors` moved up) | pre-existing | — |
+| OU-SAV-001 | save/load | Quickload in l3_main_bedroom reported doors 4526 / 4376 as not resumed: a false difference (two colliders per door shared one state-part name) | Fixed-verified (0.59.0, GapsB10; `save_load_bedroom_doors` moved up) | pre-existing | — |
 | OU-AUD-006 | audio | Help on demand picks `sc_0<unit digit>_NN`; the lines are per chapter (`sc_CC`, CC = kChapters index), so the prologue (l3 units) plays Croft Manor's sc_03 lines instead of sc_00 | Open | pre-existing | — |
 | OU-SAV-002 | save/load | Checkpoint respawn at a fresh unit load: under-water intros put Lara on the floor below; 5 l7_yggdrasil_end checkpoints have no floor at the intro; the l1_seatop yacht deck settles 437 below its intro (docs/CHECKPOINTS.md) | Needs-Windows-ref | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
@@ -1170,7 +1170,7 @@ Status · Origin: Fixed · pre-existing.
 
 **OU-GRP-005 ch12 lever 6695 not held by her weight** — known gap `ch12_trailstart_lever_gate` (`let_go`): lever pulled by
 Interact stays out (joint 1264); tru.exe holds it by rope tension and it returns unloaded. Grapple pull heave / rope
-weight unmeasured (M25 / M26). Fixed on int/brief (f832536); `tests/selftests/ch12_trailstart_lever_gate.json`
+weight unmeasured (M25 / M26). Fixed-verified (0.53.0, f832536); `tests/selftests/ch12_trailstart_lever_gate.json`
 passes (4 of 4 steps, re-run 2026-11-20 on agent/GapsB10). Status · Origin: Fixed · pre-existing.
 
 ### Progression blockers (OU-PZL)
@@ -1212,7 +1212,7 @@ proving tests there):
   (`Objects.cpp:651`, `:539`, `:797`).
 - **OU-PZL-008:** split into three causes. (a) The sight ray ended at the named post's origin, 4.4 under the top face
   of its floor; tru.exe ends it at 0x6FF040's query-0xDE feature (117.8 up the post), the filter is not the difference.
-  Fixed on agent/Joint8 (`TempleRingOfferedFromTheEastLedge`; either end seen counts [I]). (b) Rope bends don't tug
+  Fixed-verified (0.59.0, Joint8; `TempleRingOfferedFromTheEastLedge`; either end seen counts [I]). (b) Rope bends don't tug
   the bodies they wrap: tru.exe's bends are small physics bodies chained to the rope (0x6A4D40 → 0x699A50 / 0x699960
   joint 0x4E03F0); needs a Jolt rope chain. (c) multibody 92 / 93 bound. Re-run 2026-11-20 (agent/GapsB10): the
   scenario's walk (`run 90 2.5` = 750 at the roped walk's 300 units/s) ends at y −13609, where the rope (hand → ring
