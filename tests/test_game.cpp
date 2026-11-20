@@ -9073,7 +9073,10 @@ TEST(Game, SafetyDropOffALedgeEdge) {
 }
 
 // l4_temple's high platform (top z 3690) between ledges 1168 (east edge, x -1227) and 1167 (west edge, x -2870):
-// running off the east edge and walking off the west one she turns and hangs from the edge's ledge, no key.
+// running off the east edge and walking off the west one she turns and hangs from the edge's ledge, no key. tru.exe
+// under Wine (l4_temple ledge 1155, openunderworld-work/w2/Drop9/s1, gameplaygoal/inputrules/wine2.txt): running, the
+// chart's S11 hold carries her on 0.10 s at her speed, her feet at the top's height, then the attach takes her back to
+// the edge linearly in 10 ticks; walking there is no hold.
 TEST(GameReal, TempleSafetyDropOffThePlatform) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -9083,8 +9086,24 @@ TEST(GameReal, TempleSafetyDropOffThePlatform) {
         Actions go = forward();
         go.walk = walk;
         std::set<State> seen;
-        const float top = s.pos.z;
-        for (int i = 0; i < 1200 && s.state != State::Hang; ++i) w.tick(go), seen.insert(s.state);
+        const float top = s.pos.z, line = walk ? -2869.6f : -1226.8f, out = walk ? -1.0f : 1.0f;
+        float past = -1e9f, speed = 0, back = 0;
+        int hold = 0, blend = 0;
+        float over = 0, loss = 0;
+        for (int i = 0; i < 1200 && s.state != State::Hang; ++i) {
+            const vec3 before = s.pos;
+            const State was = s.state;
+            w.tick(go), seen.insert(s.state);
+            if (s.state == State::Run || s.state == State::Walk) {
+                past = std::max(past, (s.pos.x - line) * out);
+                if (s.runOffHold > 0) {
+                    if (hold++ == 0) loss = (s.pos.x - line) * out; // the first tick over the edge
+                    EXPECT_NEAR(s.pos.z, top, 1) << "her feet at the top's height";
+                } else speed = std::abs(s.pos.x - before.x) * 60;
+            }
+            if (s.state == State::DropToHang && was != State::DropToHang) over = (s.climbFrom.x - line) * out;
+            if (s.state == State::DropToHang && s.flight > 0) ++blend, back = std::max(back, std::abs(s.pos.x - before.x));
+        }
         ASSERT_EQ(s.state, State::Hang) << walk << " " << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
         EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, walk ? 1167 : 1168);
         EXPECT_TRUE(seen.count(State::DropToHang));
@@ -9094,6 +9113,15 @@ TEST(GameReal, TempleSafetyDropOffThePlatform) {
         EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).z, 3686.5, 1);
         EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).x, walk ? -2869.6 : -1226.8, 1);
         EXPECT_LT(s.pos.z, top - 450);
+        EXPECT_EQ(blend, 10) << walk << ": 10 ticks of the attach's blend";
+        if (walk) {
+            EXPECT_EQ(hold, 0);
+            EXPECT_LT(over, 15) << "she attaches at the edge";
+        } else {
+            EXPECT_EQ(hold, 5) << "6 ticks on over the edge (0.10 s)";
+            EXPECT_NEAR(over - loss, speed * 5 / 60, 10) << "carried on at her speed";
+            EXPECT_GT(back, 8) << "taken back to the edge";
+        }
     }
 }
 

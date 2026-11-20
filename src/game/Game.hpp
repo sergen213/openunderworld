@@ -488,6 +488,7 @@ struct PlayerState {
     Buttons buttons; // input timing (Player::tick)
     int droppedPole = -1; // Fall: the pole (markup index) she let go of with Drop; not caught again in that fall
     float fallStall = 0;  // Fall: seconds held up in place with no floor under her root (Player::airMove)
+    float runOffHold = 0; // Run: seconds left of the run-off hold over an edge with a ledge (Player::groundMove)
     float landTime = 0;   // Land: seconds since she landed (the chart's state time of the landing group S1276)
     float prepTime = 0;   // JumpPrep: seconds since the take-off state began
     bool prepInPlace = false; // JumpPrep off a balance beam: no run-up, the stick is read when the take-off clip ends
@@ -628,8 +629,10 @@ private:
     bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
-    bool trySafetyDrop(vec3 vel, std::string_view clip = "drop_to_ledgeb"); // off an edge that carries a ledge: hang from it
-    void dropToHang(int ledge, int seg, float t, float side, std::string_view clip = "drop_to_ledgeb");
+    // off an edge that carries a ledge: hang from it (act false: only whether there is one; extra: reach beyond the
+    // usual, the run-off hold's travel)
+    bool trySafetyDrop(vec3 vel, std::string_view clip = "drop_to_ledgeb", bool act = true, float extra = 0);
+    void dropToHang(int ledge, int seg, float t, float side, std::string_view clip = "drop_to_ledgeb", bool blend = false);
     bool badAttach(float attachZ) const; // a catch that rests her root at this height is a saving grab
     int hangClearance() const; // tru.exe 0x74E290's class: 2 climb up, 5 crouching, 8 wall-hug shelf, 1 none
     bool tryHangToBeam();      // hanging beside a balance beam: bbeam_ledgeu_climbup onto it

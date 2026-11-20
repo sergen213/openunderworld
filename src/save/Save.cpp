@@ -218,7 +218,7 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"savingGrab", p.savingGrab}, {"flight", p.flight}, {"fallHeight", p.fallHeight},
             {"buttons", {{b.jump.down, b.jump.edge, b.jump.time, b.jump.buffer}, {b.interact.down, b.interact.edge, b.interact.time, b.interact.buffer}, {b.drop.down, b.drop.edge, b.drop.time, b.drop.buffer}, {b.grapple.down, b.grapple.edge, b.grapple.time, b.grapple.buffer}}},
             {"droppedPole", markupRef(w, p.droppedPole)},
-            {"fallStall", p.fallStall},
+            {"fallStall", p.fallStall}, {"runOffHold", p.runOffHold},
             {"landTime", p.landTime},
             {"prepTime", p.prepTime}, {"prepInPlace", p.prepInPlace},
             {"pullWait", p.pullWait},
@@ -263,7 +263,7 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
         }
     }
     p.droppedPole = c.contains("droppedPole") ? ref(c.at("droppedPole")) : -1;
-    p.fallStall = c.value("fallStall", 0.0f);
+    p.fallStall = c.value("fallStall", 0.0f), p.runOffHold = c.value("runOffHold", 0.0f);
     p.landTime = c.value("landTime", 0.0f);
     p.prepTime = c.value("prepTime", 0.0f), p.prepInPlace = c.value("prepInPlace", false);
     p.pullWait = c.value("pullWait", -1.0f);
