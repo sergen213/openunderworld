@@ -7738,22 +7738,22 @@ TEST(GameReal, SwimDodgesMoveAsTheirClips) {
     auto [r, rt] = dodge({1, 0}, false, "swim_submerged_dodge_side");
     EXPECT_NEAR(glm::dot(r, right), 791.6f, 8.0f) << "to her right";
     EXPECT_NEAR(r.z, 7.3f, 1.0f);
-    const auto behind = [&] { // the camera back behind her (the dodges read the stick as on screen)
+    const auto behind = [&] { // the view back behind her (the dodges read the stick as on screen: World::stickYaw)
         Actions c = held(false);
         c.recenter = true;
         w.tick(c);
-        for (int i = 0; i < 240 && std::abs(std::remainder(w.camera().yaw - s.yaw, 6.2831853f)) > 0.05f; ++i) w.tick({});
+        for (int i = 0; i < 240 && std::abs(std::remainder(w.stickYaw() - s.yaw, 6.2831853f)) > 0.05f; ++i) w.tick({});
     };
     behind();
-    ASSERT_LT(std::abs(std::remainder(w.camera().yaw - s.yaw, 6.2831853f)), 0.3f);
+    ASSERT_LT(std::abs(std::remainder(w.stickYaw() - s.yaw, 6.2831853f)), 0.3f);
     auto [l, lt] = dodge({-1, 0}, false, "swim_submerged_dodge_side");
     EXPECT_NEAR(glm::dot(l, right), -791.6f, 8.0f) << "mirrored to her left";
     // side-on: the camera turned a quarter round her
     Actions turn = held(false, false, false);
     turn.look.x = 2;
-    for (int i = 0; i < 200 && std::abs(std::sin(w.camera().yaw - s.yaw)) < 0.95f; ++i) w.tick(turn);
-    ASSERT_GT(std::abs(std::sin(w.camera().yaw - s.yaw)), 0.9f);
-    const float rel = std::remainder(s.yaw - w.camera().yaw, 6.2831853f); // her heading left (+) or right (-) of the view line
+    for (int i = 0; i < 200 && std::abs(std::sin(w.stickYaw() - s.yaw)) < 0.95f; ++i) w.tick(turn);
+    ASSERT_GT(std::abs(std::sin(w.stickYaw() - s.yaw)), 0.9f);
+    const float rel = std::remainder(s.yaw - w.stickYaw(), 6.2831853f); // her heading left (+) or right (-) of the view line
     const vec2 ahead(rel < 0 ? 1.0f : -1.0f, 0);                           // the stick side that runs along her heading
     auto [f, ft] = dodge(ahead, false, "swim_submerged_dodge_forward");
     EXPECT_NEAR(glm::dot(f, fwd), 468.5f, 1.0f);
