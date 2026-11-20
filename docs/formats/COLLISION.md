@@ -74,7 +74,11 @@ TerrainGroup (0x50)
     behind l2_puzzleroom's wall-hug ledge 476 (groups 12 / 13 / 22). Taking them out of her probe rays only (hurdle
     class 0x73DFF0, wall hug 0x74B920, ledge tests) needs a per-query mask in `Player` and changes
     `GameReal.PoolRockGrabNotHurdle`, `PoolDropToHang`, `PuzzleRoomWallHug`, `CombatReal.PoolLedgeHang...` (tried
-    2026-11-10 with the whole group removed: those four and the junglehub series failed). [U] which class rigid
+    2026-11-10 with the whole group removed: those four and the junglehub series failed). The hang clearance's three
+    rays (0x74E290: 0x4935F0 and 0x7144B0 -> 0x70B5A0, ray flags 0x2C19E7) do skip them (`CollisionMesh::playerRay`, faces
+    marked `Face::rays & kSkipPlayerRays`): l5_valaskjalf group 5 (0x6005FB00) is a smooth ramp (mask 1, client
+    flags 0xA0, material 0x14) laid over the hammer chamber's steps from ledge 1542 up; meeting it made that edge
+    clearance class 1 (no pull-up), passing it finds the first tread (class 2; `ch17_hammer_chamber`). [U] which class rigid
     bodies and the bike are (the crusher wall lacks only F 0x2000: the ray class 0x8000 still meets it, [I] the
     dragged block 5884's stop); Jolt's terrain is still built from every face.
 - Face and BIH sections are 3 resp. 2 bytes shorter than count × stride: the last element is stored without

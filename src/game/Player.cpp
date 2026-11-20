@@ -1036,21 +1036,26 @@ void Player::dropToHang(int ledge, int seg, float t, float side, std::string_vie
 // The chart (S530 T558 / T573 / T563, S439): 2 climbs up, 11 jumps up, anything else goes on to S439 (5 crouching,
 // 8 the wall hug, a balance beam as the jump target bbeam_ledgeu_climbup). Classes 0 / 12 (0x7375C0's check of what
 // is under her) are not modelled [I].
+// Its rays are the player code's (0x74E290: 0x4935F0, and 0x72BAE0 / 0x7144B0 -> 0x70B5A0 -> 0x493330; ray flags 0x2C19E7 [O decomp]):
+// they pass terrain groups flagged 0x800 (CollisionMesh::playerRay). l5_valaskjalf's central steps to the hammer
+// chamber carry such a group (5, 0x6005FB00): a smooth ramp over the treads from ledge 1542 up, face mask 1,
+// client flags 0xA0, material 0x14; with it the point 139 over the top is 69.5 up (class 1), without it the first
+// tread at the ledge's height (class 2, the pull-up the walkthrough's "up the central steps" needs).
 int Player::hangClearance() const {
     constexpr float kRayZ = 252.0f, kBack = 100.0f, kOver = 139.0f, kStand = 512.0101f, kCrouch = 260.0f;
     const auto& m = col_.markup[size_t(s_.ledge)];
     const vec3 q = pointOn(m, s_.ledgeSeg, s_.ledgeT);
     const vec3 top = forward();
-    if (col_.raycast(q - top * kBack + vec3(0, 0, kRayZ), top, kBack + kOver)) {
+    if (col_.playerRay(q - top * kBack + vec3(0, 0, kRayZ), top, kBack + kOver)) {
         const vec2 d = segDir(m, s_.ledgeSeg);
         if (glm::dot(vec2(-d.y, d.x), xy(top)) > 0.7f && shelfAt(s_.ledge, s_.ledgeSeg, s_.ledgeT)) return 8;
         return 1; // [I] 0x74BB50's 2 (wall within 88.5) as 1: no up jump without a target
     }
-    const auto floor = col_.raycast(q + top * kOver + vec3(0, 0, kRayZ), vec3(0, 0, -1), kRayZ + 30.0f);
+    const auto floor = col_.playerRay(q + top * kOver + vec3(0, 0, kRayZ), vec3(0, 0, -1), kRayZ + 30.0f);
     const float dz = floor ? floor->point.z - q.z : -30.0f;
     if (!(dz > -30.0f && dz < 40.0f)) return 1;
     const vec3 above = q + top * (kOver * 0.5f) + vec3(0, 0, kRayZ);
-    const auto roof = col_.raycast(above, vec3(0, 0, 1), kStand - kRayZ);
+    const auto roof = col_.playerRay(above, vec3(0, 0, 1), kStand - kRayZ);
     const float room = roof ? kRayZ + roof->t : kStand;
     return room >= kStand ? 2 : room < kCrouch ? 1 : 5;
 }

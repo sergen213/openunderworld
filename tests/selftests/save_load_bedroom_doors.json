@@ -1,8 +1,8 @@
 {
   "version": 1,
   "name": "save_load_bedroom_doors",
-  "chapter": "Known gap: a quicksave and quickload in l3_main_bedroom do not continue the game exactly",
-  "note": "Observed 2026-11-16 (ou-game --self-test, XDG_DATA_HOME redirected): one tick after the load the World's state differs from the state one tick after the save in the moving collision of the bedroom doors 4526 and 4376 (ma_uo_bedroom_door; save.differs = [\"dynamic 4526\", \"dynamic 4376\"]); their own motion is tiny (object.<uid>.body.z -0.003 / -0.006) and it still differs 2, 5 and 30 ticks after. Everything else round-trips (the same steps on the l1_seatop yacht pass: save_load). Fails today at save.restored.",
+  "chapter": "A quicksave and quickload in l3_main_bedroom continue the game exactly (OU-SAV-001)",
+  "note": "The World's state one tick after the save equals the state one tick after the load. The bedroom doors 4526 and 4376 (ma_uo_bedroom_door) each have two colliders (the leaf on its slide and the ring hinged to it, with different transforms); World::stateParts named both \"dynamic <uid>\", and save.restored pairs parts by name, so the leaf's part was compared with the ring's: a false difference (both transforms were bit-identical after the load). The parts now carry their ordinal among the object's colliders (\"dynamic 4526 0\", \"dynamic 4526 1\").",
   "level": "l3_main_bedroom",
   "spawn": [-4264.2, 5958.0, 86.6, -90],
   "steps": [

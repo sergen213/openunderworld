@@ -2037,7 +2037,13 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
         const auto& b = physics_.bodies[i];
         part("body " + std::to_string(i)), add(b.pos), add(b.rot), add(b.vel), add(b.angVel);
     }
-    for (size_t i = 0; i < col_.dynamics.size(); ++i) part("dynamic " + std::to_string(col_.dynamics[i].id)), add(col_.dynamics[i].transform);
+    // An object can have several colliders (an uber object's sections: the bedroom doors' leaf and ring): each part gets
+    // its ordinal among its object's colliders, so a comparison by name (SelfTest save.restored) pairs like with like.
+    std::map<int32_t, int> colliderOrdinal;
+    for (size_t i = 0; i < col_.dynamics.size(); ++i) {
+        const int32_t id = col_.dynamics[i].id;
+        part("dynamic " + std::to_string(id) + " " + std::to_string(colliderOrdinal[id]++)), add(col_.dynamics[i].transform);
+    }
     for (const auto& o : script_.objects()) {
         part("object " + std::to_string(o.uid) + " " + o.name);
         add(o.uid), add(o.state), add(o.t), add(o.pos), add(o.offset), add(o.body), add(o.inside), add(o.hidden), add(o.dead);
