@@ -86,7 +86,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-VK-003 | Vulkan | AMD Anti-Lag crash a few frames into cutscenes / loading screen | Fixed-verified | regression (Anti-Lag support) | — |
 | OU-VK-004 | Vulkan / FSR | `VK_ERROR_OUT_OF_DEVICE_MEMORY` then FSR frame generation context failed | Not reproduced | unknown | — |
 | OU-VK-005 | Vulkan / FSR | FSR SDK validation messages (FG 3-component write, storage formats) | Open (upstream) | pre-existing | — |
-| OU-VK-006 | Vulkan | Validation: wave field image never initialised (UNDEFINED), `shaderImageGatherExtended` not enabled, unordered attenuation-table copies | Fixed-verified on agent/VkHang10 (1d3b4fe) | pre-existing | — |
+| OU-VK-006 | Vulkan | Validation: wave field image never initialised (UNDEFINED), `shaderImageGatherExtended` not enabled, unordered attenuation-table copies, pre-pass normal transition hazard | Fixed-verified on agent/VkHang10 (1d3b4fe, 5bcf3bc) | pre-existing | — |
 | OU-STR-001 | streaming | 2-9 s `stream scene` stalls at level load | Not reproduced | unknown | — |
 | OU-UI-001 | UI | Game font / button-glyph rendering missing | Fixed-verified | pre-existing | — |
 | OU-UI-002 | UI | Chapter title / letterbox screens, confirmation dialogs, PDA sub-screens not drawn | Open | pre-existing | — |
@@ -490,10 +490,14 @@ Open · pre-existing.
   `createWaterField`'s clear never ran and the image was never initialised); sync `WRITE_AFTER_WRITE` on the
   attenuation table (upload() and a fog change stage it in the same frame; the two copies were unordered, either
   table could win).
+  Also (Debug + ASan ctest on RADV, `viewer_vulkan_matches_gl_agx`): 2 × sync `WRITE_AFTER_WRITE` on the pre-pass
+  normal target's UNDEFINED → COLOR_ATTACHMENT transition (source scope compute only, the previous frame's store
+  unordered when the AO passes did not read it).
 - Fix: 1d3b4fe (callback runs in its own one-shot submit; feature enabled with the other CORTAO features; repeated
-  staged images wait for the earlier copy).
+  staged images wait for the earlier copy); 5bcf3bc (transition also waits for colour attachment output / writes).
 - Test: both spots, lavapipe, 20 frames, core + sync validation: before 12 (kraken: 1 + 10 + 1 WAW) / 11 (ballcourt)
-  errors, after 0 / 0.
+  errors, after 0 / 0. ASan ctest `VulkanRenderer|viewer_vulkan|game_render_rate_smoke` with core + sync validation on
+  RADV: 2 errors before 5bcf3bc, 0 after (13/13 passed).
 - Status · Origin: Fixed-verified · pre-existing (wave field 0.13-era 234e10f; CORTAO 0.51.0).
 
 **OU-VK-002 CORTAO temporal is camera-only on Vulkan**
