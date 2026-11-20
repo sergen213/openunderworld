@@ -21,7 +21,9 @@ constexpr float kPi = 3.14159265f;
 // relative to the view, at the run loop's 1.755 rad/s (Tuning::runTurnRate, the same chart steering [I]). On top, she
 // turns at most kSwimTurnAccel / her speed rad/s in the world: with the camera turning after her the press tops out at
 // 118..123 deg/s at 1290..1340 units/s while the angle off the view falls behind its 100 deg/s (camfollow-wine/
-// turn1.txt: 117.5 deg/s at 1348.6) [O-runtime; the 1 / speed form [I]].
+// turn1.txt: 117.5 deg/s at full speed 1348.6) [O-runtime; the 1 / speed form [I]]. The view line is the look point's
+// (World::stickYaw, camera +0x160), which trails the camera-to-pivot line in a turn: the circle settles 44.5 deg off the
+// view, 42.1 off that line (Wine 2026-11-20, w2/Swim9/s3, s4).
 constexpr float kSwimTurnRate = 1.755f, kSwimTurnAccel = 2765.0f;
 // tru.exe 0x755A00: the swim velocity moves this share of the way to heading x swim speed every 30 Hz frame (lara.drm
 // player data +0x240 = 0.25, passed with the difference to 0x6E6FE0 for the controller DAT_00FAE030). In a steady

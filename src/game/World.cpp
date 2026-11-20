@@ -677,8 +677,9 @@ void World::tick(const Actions& input) {
             a = Actions{}, a.look = look;
         }
     }
-    // Stick is camera-relative.
-    const vec2 fwd(std::cos(cam_.yaw), std::sin(cam_.yaw)), right(std::sin(cam_.yaw), -std::cos(cam_.yaw));
+    // Stick is camera-relative (stickYaw: while swimming the view's, elsewhere the orbit's).
+    const float stickYaw = this->stickYaw();
+    const vec2 fwd(std::cos(stickYaw), std::sin(stickYaw)), right(std::sin(stickYaw), -std::cos(stickYaw));
     vec2 move = right * a.move.x + fwd * a.move.y;
     if (glm::length(move) > 1) move = glm::normalize(move);
     if (uberGrip_ != vec3(0)) move = vec2(0); // gripping a push / pull record: the stick moves the object (pushUberHandle)
@@ -704,7 +705,7 @@ void World::tick(const Actions& input) {
     if (!units_.empty() && std::exchange(bikeEntryDue_, false)) bikeEntry();
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
     player_.setWaveSeconds(double(ticks_) * kTickSeconds);
-    player_.setCamera(cam_.yaw, cam_.pitch);
+    player_.setCamera(stickYaw, cam_.pitch);
     const auto playerStart = std::chrono::steady_clock::now();
     // What carries her as the tick begins (tru.exe 0x7027B0: her markup box's owner instance and the item's segment,
     // else the instance and segment she stands on) ...
@@ -1193,10 +1194,24 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // pivot frame +0xD0 / the limits take it out again, is [U] (docs/re/CAMERA.md §6).
     if (carrierMove != vec3(0)) {
         if (focus_) *focus_ += carrierMove;
+        if (lookPoint_) *lookPoint_ += carrierMove;
         if (orbit_.valid) orbit_.desired += carrierMove, cam_.position += carrierMove;
     }
     const bool snap = !focus_ || bike || glm::distance(*focus_, goal) > 2000.0f; // spawns, teleports
     if (snap || cut) focus_ = goal; // a cut: 0x6084A0(1), focus = goal
+    // Look tracker (+0x620, updated with the focus by 0x6022F0: the same 0x609830 -> 0x609440 lag toward the same
+    // goal, without the pivot's 0x19 / 0x1B offset). Its record is the focus record with the right and forward dead
+    // zones swapped (tru.exe under Wine 2026-11-20, camera mode 20, w2/Swim9/s4/cam-*.txt: +0x3B0 +0x1C0 zones
+    // (3.16, 126.42, 252.84), +0x620 +0x1C0 (126.42, 3.16, 252.84), speed +0x210 1896.33 and the ease curve equal), so
+    // in a turn the look point trails the pivot sideways and the view (+0x160, look point - camera) the camera-to-pivot
+    // line: 2.1..2.4 deg in a 46.8 deg/s swim circle (w2/Swim9/s3/under-turn.txt, s4/swim-turn-long.txt), which is the
+    // line the swim stick is read against. Swimming modes only: mode 20 was read; under water (mode 19, record 41: no
+    // focus dead zones) the same look record [I] fits tru.exe settling 42.0 deg off its camera-to-pivot line there too
+    // (w2/WineMeasure/s2/under-turn.txt); the other modes keep the look point on the pivot [U: their look records].
+    const bool lookLags = mode.id == 19 || mode.id == 20;
+    const vec3 lookGoal = goal - orbit_.pivotAdd.now();
+    if (!lookLags) lookPoint_.reset(); // saves outside the water keep their bytes
+    else if (snap || cut || !lookPoint_ || glm::distance(*lookPoint_, lookGoal) > 2000.0f) lookPoint_ = lookGoal; // a cut snaps both trackers (0x6017D0 -> 0x6084A0(1))
     {
         constexpr uint8_t kEase[64] = {0,   1,   2,   2,   2,   3,   3,   3,   4,   5,   6,   8,   10,  13,  16,  20,
                                        24,  29,  34,  40,  46,  52,  58,  65,  72,  79,  86,  93,  101, 109, 118, 127,
@@ -1204,27 +1219,34 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
                                        239, 241, 244, 245, 247, 248, 249, 250, 251, 251, 252, 252, 253, 253, 254, 255};
         constexpr float kSpeed = 1896.3f;
         const vec3 axis[3] = {{std::sin(cam_.yaw), -std::cos(cam_.yaw), 0}, {std::cos(cam_.yaw), std::sin(cam_.yaw), 0}, {0, 0, 1}};
-        const vec3 d = goal - *focus_;
-        for (int i = 0; i < 3; ++i) {
-            const float off = glm::dot(d, axis[i]), dist = std::abs(off), zone = lim.zones[i];
-            if (zone <= 1e-3f) { *focus_ += axis[i] * off; continue; }
-            const float excess = std::max(0.0f, dist - zone), ease = curve64(kEase, dist / zone);
-            const float step = std::min(dist, excess + ease * std::max(0.0f, kSpeed * dt - excess));
-            *focus_ += axis[i] * std::copysign(step, off);
-        }
+        const auto lag = [&](vec3& point, const vec3& to, const vec3& zones) {
+            const vec3 d = to - point;
+            for (int i = 0; i < 3; ++i) {
+                const float off = glm::dot(d, axis[i]), dist = std::abs(off), zone = zones[i];
+                if (zone <= 1e-3f) { point += axis[i] * off; continue; }
+                const float excess = std::max(0.0f, dist - zone), ease = curve64(kEase, dist / zone);
+                const float step = std::min(dist, excess + ease * std::max(0.0f, kSpeed * dt - excess));
+                point += axis[i] * std::copysign(step, off);
+            }
+        };
+        lag(*focus_, goal, lim.zones);
+        if (lookLags) lag(*lookPoint_, lookGoal, vec3(126.42f, 3.16f, 252.84f));
     }
     // Pivot clearance (0x5EA050): when the 474.075 above her root is blocked, the pivot is pulled back toward bone 1 to
     // keep 2 x 13.91 clear of what is in the way. Every camera query sees only what tru.exe's camera collides with
     // (collision::kCameraMask: not the terrain groups it skips, only objects with oflags bit 2).
     constexpr uint8_t kMask = collision::kCameraMask;
-    vec3 target = *focus_;
-    if (col_.raycast(s.pos, {0, 0, 1}, 474.075f, kMask) && bones_.size() > 1) {
-        const vec3 from(model * bones_[1][3]), ray = target - from;
-        if (glm::length(ray) > 1e-3f) {
-            const vec3 dir = glm::normalize(ray);
-            if (const auto h = col_.raycast(from, dir, glm::length(ray) + 2 * kRadius, kMask)) target = from + dir * (h->t - 2 * kRadius);
+    const auto clearance = [&](vec3 p) {
+        if (col_.raycast(s.pos, {0, 0, 1}, 474.075f, kMask) && bones_.size() > 1) {
+            const vec3 from(model * bones_[1][3]), ray = p - from;
+            if (glm::length(ray) > 1e-3f) {
+                const vec3 dir = glm::normalize(ray);
+                if (const auto h = col_.raycast(from, dir, glm::length(ray) + 2 * kRadius, kMask)) p = from + dir * (h->t - 2 * kRadius);
+            }
         }
-    }
+        return p;
+    };
+    const vec3 target = clearance(*focus_);
     const float kDistance = bike ? 1711.0f : mode.distance; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
     const bool reseed = snap || !orbit_.valid || (!cut && (cam_.yaw != orbit_.yaw || cam_.pitch != orbit_.pitch)); // [I] set from outside
     if (reseed) { // where the angles put it (at full distance after a spawn or teleport)
@@ -1435,12 +1457,13 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // Yaw limit (0x608700, command 7 via 0x609C00 / 0x607A30: (0 + 90) deg in her frame = behind her, half-range 90):
     // the camera stays on her back side, its look within yawRange of her heading.
     if (lim.yawRange < 3.14f) cam_.yaw = s.yaw + std::clamp(std::remainder(cam_.yaw - s.yaw, 6.2831853f), -lim.yawRange, lim.yawRange);
-    // It looks at the look tracker's point (0x6009C0): the focus, moved by a trigger's 0x1A / 0x1C offset (Wine, the yacht
-    // deck: +0x160 points 79.01 under the pivot), turned toward the focus points (0x5F1540, updateFocusPoints). Its own
-    // dead-zone lag (+0x620's record) is the focus's [I].
+    // It looks at the look tracker's point (0x6009C0: through the same clearance 0x5FE930 -> 0x5EA050; while swimming
+    // that tracker trails the pivot, above), moved by a trigger's 0x1A / 0x1C offset (Wine, the yacht deck: +0x160
+    // points 79.01 under the pivot), turned toward the focus points: 0x6022F0 hands 0x5F1540 (updateFocusPoints) the
+    // same look point, 0x607F50 -> 0x5FE930, after both trackers' 0x609830 updates.
     pivot_ = target;
-    cam_.target = bike ? target + orbit_.lookAdd.now()
-                       : updateFocusPoints(target + orbit_.lookAdd.now(), last, weight, std::min(1.0f, glm::length(a.move)), glm::length(move), dt);
+    const vec3 look = (lookLags ? clearance(*lookPoint_) : target) + orbit_.lookAdd.now();
+    cam_.target = bike ? look : updateFocusPoints(look, last, weight, std::min(1.0f, glm::length(a.move)), glm::length(move), dt);
     // Distance back toward the mode's (0x5FFB00): its speed accelerates by 1106.36 x clamp((gap - 2 step) / step, -1, 1)
     // per second (step = speed x dt, at least 1) up to 4741.4; it moves by at most last tick's step.
     if (!recordDistance) {

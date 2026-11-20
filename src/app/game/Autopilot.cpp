@@ -80,11 +80,11 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
     const auto centre = [&] {
         set(tick, "forward", 0, a), set(tick, "right", 0, a), set(tick, "walk", 0, a);
     };
-    // Camera-relative stick towards a world heading (World::tick: move = right * x + fwd * y, by the camera's yaw);
+    // Camera-relative stick towards a world heading (World::tick: move = right * x + fwd * y, by World::stickYaw);
     // re-aimed every 4 ticks in 0.05 steps so the script stays short.
     const auto steer = [&](glm::vec2 dir, bool walk) {
         if (t % 4 != 0) return;
-        const float cy = w.camera().yaw;
+        const float cy = w.stickYaw();
         const glm::vec2 fwd(std::cos(cy), std::sin(cy)), right(std::sin(cy), -std::cos(cy));
         const auto q = [](float v) { return std::round(v * 20) / 20; };
         set(tick, "forward", q(glm::dot(dir, fwd)), a), set(tick, "right", q(glm::dot(dir, right)), a);
