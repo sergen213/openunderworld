@@ -325,7 +325,8 @@ void main() {
             // wake focus the sun on the bed), faded where the bed pixel spans several of the field's cells.
             float causFade = 1.0 - smoothstep(1.5, 6.0, fp * kM / max(w.ripple.z, 1.0));
             seen = agRelight(seen, bp, agDir(bnn), agDir(normalize(w.eye.xyz - rbed)),
-                             agCausLod(uAgWater, bp, bd, fp) * ouFieldCaustic(rbed, p.z, w.sunDir.xyz, causFade),
+                             mix(vec3(kAgCausMean), agCausLod(uAgWater, bp, bd, fp) * ouFieldCaustic(rbed, p.z, w.sunDir.xyz, causFade),
+                                 agSat(agSunK())), // ours: the pattern fades with the sun (time of day; none by moonlight)
                              ouSunShadowVisibility(rbed + bnn * (0.35 * kM)));
         }
         vec3 refr = ouAbsorb(seen, path, down, light);

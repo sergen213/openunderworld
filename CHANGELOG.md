@@ -6,6 +6,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.56.2] - 2026-11-19
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: at night, sun rays no longer shine down through the water. The light shafts and the shimmering light pattern
+  on the seabed fade out with the sunset and return at sunrise; moonlight is too weak to make them.
+
 ## [0.56.1] - 2026-11-19
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
