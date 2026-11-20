@@ -3073,13 +3073,17 @@ void World::stepPhysics(float dt) {
         const bool tug = player_.ropeTugging();
         for (size_t k = 0; k < s.ropeBends; ++k) {
             if (!s.ropeBendOn[k] || !looseIds.contains(s.ropeBendOn[k])) continue;
+            // the bend in the body's model frame: ropeBendLocal is in its first collider's frame (Player::ropeBody); a body
+            // turned loose this tick has its colliders from the next one
+            const auto c = std::ranges::find(colliders_, s.ropeBendOn[k], &ObjectCollider::uid);
+            if (c == colliders_.end()) continue;
             const vec3 at = s.ropeBend[k], prev = k ? s.ropeBend[k - 1] : s.grappleAnchor;
             const vec3 next = k + 1 < s.ropeBends ? s.ropeBend[k + 1] : s.pos + vec3(0, 0, 400.0f); // the hand, as Grapple.cpp kHandZ
             vec3 f(0);
             if (tug)
                 for (const vec3 to : {prev, next})
                     if (glm::distance(to, at) > 1.0f) f += glm::normalize(to - at) * (kRopeTug * physics::kJointGravity * 900.0f);
-            ropeBends.push_back({s.ropeBendOn[k], at, f});
+            ropeBends.push_back({s.ropeBendOn[k], at, vec3(c->frame * glm::vec4(s.ropeBendLocal[k], 1)), f});
         }
     }
     physics_.setRopeBends(ropeBends);

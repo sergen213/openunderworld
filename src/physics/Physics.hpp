@@ -334,10 +334,11 @@ public:
     // The grapple rope's bends on loose bodies, for the next steps. tru.exe makes each bend a body of its own (0x6A4D40 ->
     // 0x699A50: a sphere of radius 4.74, 0x4DC770(5.0, 4.74), damping 0.02) held to the instance's body it touched by a
     // type-11 joint at the bend (0x4E1260; 0x6B3570 re-pins it there each frame), and the rope pulls the bends. Ours: a
-    // 5 kg sphere that touches nothing, joined to loose body `on` at world `at` by a point constraint, pulled by `force`
-    // (kg x units / s^2, world) each step. By order: a bend whose body is gone or is no longer near `at` is made anew;
-    // bends on bodies that are not loose are skipped. Empty: none.
-    struct RopeBend { int32_t on = 0; vec3 at{0}, force{0}; };
+    // 5 kg sphere that touches nothing, joined to loose body `on` by a point constraint at `local` (the bend in that
+    // body's model frame: the constraint is the same however often the scene is rebuilt, so a save continues exactly),
+    // made at world `at`, pulled by `force` (kg x units / s^2, world) each step. By order: a bend whose body is gone or is
+    // no longer near `at` is made anew; bends on bodies that are not loose are skipped. Empty: none.
+    struct RopeBend { int32_t on = 0; vec3 at{0}, local{0}, force{0}; };
     void setRopeBends(std::span<const RopeBend> bends);
     // What loose bodies land on: resident unit terrain (static meshes, built once a loose body exists) and the moving
     // object collision (kinematic, following each Dynamic::transform; pass without the loose bodies' own).

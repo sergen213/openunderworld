@@ -1202,15 +1202,17 @@ void Scene::setRopeBends(std::span<const RopeBend> bends) {
         }
         if (j < m.rope.size()) m.dropRope(m.rope[j]);
         Impl::RopeE e{b.on, {}, nullptr, b.force};
-        JPH::BodyCreationSettings s(new JPH::SphereShape(kRadius * kM), Jm(b.at), JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic, kLayerRope);
+        const JPH::RVec3 pin = m.bi->GetCenterOfMassTransform(on->body) * Jm(b.local - on->com); // `at` on the body as it is now
+        JPH::BodyCreationSettings s(new JPH::SphereShape(kRadius * kM), pin, JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic, kLayerRope);
         s.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
         s.mMassPropertiesOverride.mMass = kMass;
         s.mLinearDamping = s.mAngularDamping = kDamping * kFrame;
         s.mAllowSleeping = false;
         e.body = m.add(s, "q" + std::to_string(j), JPH::EActivation::Activate);
-        m.bi->SetLinearVelocity(e.body, m.bi->GetPointVelocity(on->body, Jm(b.at))); // moving with what it is pinned to
-        JPH::PointConstraintSettings p;
-        p.mPoint1 = p.mPoint2 = Jm(b.at);
+        m.bi->SetLinearVelocity(e.body, m.bi->GetPointVelocity(on->body, pin)); // moving with what it is pinned to
+        JPH::PointConstraintSettings p; // in the bodies' own frames: the same constraint whenever it is made (a load)
+        p.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
+        p.mPoint1 = Jm(b.local - on->com), p.mPoint2 = JPH::Vec3::sZero();
         e.pin = m.bi->CreateConstraint(&p, on->body, e.body);
         m.sys.AddConstraint(e.pin);
         next.push_back(std::move(e));
