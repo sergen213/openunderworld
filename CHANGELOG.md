@@ -6,6 +6,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.56.1] - 2026-11-19
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: with the night or day-night cycle time-of-day setting, the sea is now dark at night. Under water the haze,
+  the sky seen through the surface, the sun shafts and the floating specks and bubbles were still lit like midday;
+  they now follow the time of day (moonlight at night).
+
 ## [0.56.0] - 2026-11-19
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
