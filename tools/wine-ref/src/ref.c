@@ -225,6 +225,7 @@ int main(int argc, char** argv) {
         // line: ms pos x y z rot rx ry rz vel vx vy vz (units per 30 Hz frame) st <state> rq <request> par <parent> an <anim>
         //       wt <volume top, player +0x8E0> sf <wt + tru.exe's sine waves at her x, y> air <player +0x920, frames>
         //       hp <player +0x628> cam <camera +0x90> piv <pivot +0x100> d <distance +0x1D4> m <camera mode +0x1E0>
+        //       lk <camera +0x160: look point - camera, 0x6009C0> mx <camera matrix +0x10: rows 0..2, xyz each>
         HWND w = FindWindowA("TOMBRAIDER8", NULL); if (w) SetForegroundWindow(w);
         int total = atoi(argv[2]), ne = argc - 3; WORD vk[32]; int dn[32], up[32], st[32] = {0}; double at[32] = {0};
         for (int i = 0; i < ne && i < 32; ++i) { unsigned v; sscanf(argv[3 + i], "%x:%d:%d", &v, &dn[i], &up[i]); vk[i] = (WORD)v; }
@@ -247,11 +248,12 @@ int main(int argc, char** argv) {
                 float cp[3] = {lp[0] - dx * dist, lp[1] - dy * dist, lp[2] + hz};
                 WriteProcessMemory(h, (void*)(c + 0x90), cp, 12, 0); WriteProcessMemory(h, (void*)(c + 0x150), cp, 12, 0); }
             if (pd && getenv("GOD")) { float hp = 1000.0f; WriteProcessMemory(h, (void*)(pd + 0x628), &hp, 4, 0); }
-            float s[9] = {0}, C[3] = {0}, P[3] = {0}, dist = 0, wt = 0, sf, air = 0, hp = 0; long m = -1;
+            float s[9] = {0}, C[3] = {0}, P[3] = {0}, L[3] = {0}, M[12] = {0}, dist = 0, wt = 0, sf, air = 0, hp = 0; long m = -1;
             if (p) { ReadProcessMemory(h, (void*)(p + 0x20), s, 12, 0); ReadProcessMemory(h, (void*)(p + 0x30), s + 3, 12, 0);
                      ReadProcessMemory(h, (void*)(p + 0x2A0), s + 6, 12, 0); }
             if (c) { ReadProcessMemory(h, (void*)(c + 0x90), C, 12, 0); ReadProcessMemory(h, (void*)(c + 0x100), P, 12, 0);
-                     ReadProcessMemory(h, (void*)(c + 0x1D4), &dist, 4, 0); m = (long)rd32(h, c + 0x1E0); }
+                     ReadProcessMemory(h, (void*)(c + 0x1D4), &dist, 4, 0); m = (long)rd32(h, c + 0x1E0);
+                     ReadProcessMemory(h, (void*)(c + 0x160), L, 12, 0); ReadProcessMemory(h, (void*)(c + 0x10), M, 48, 0); }
             DWORD f10 = pd ? rd32(h, pd + 0xF10) : 0, stp = f10 ? rd32(h, f10 + 0x510) : 0;
             if (pd) { ReadProcessMemory(h, (void*)(pd + 0x8E0), &wt, 4, 0); ReadProcessMemory(h, (void*)(pd + 0x920), &air, 4, 0);
                       ReadProcessMemory(h, (void*)(pd + 0x628), &hp, 4, 0); }
@@ -267,9 +269,10 @@ int main(int argc, char** argv) {
             if (memcmp(cur, last, sizeof cur) || stp != lastSt || an != lastAn || m != lastM) {
                 memcpy(last, cur, sizeof cur); lastSt = stp; lastAn = an; lastM = m;
                 printf("%.1f pos %.2f %.2f %.2f rot %.4f %.4f %.4f vel %.2f %.2f %.2f st %08lx rq %d par %d an %u wt %.2f sf %.2f air %.1f hp %.1f"
-                       " cam %.1f %.1f %.1f piv %.1f %.1f %.1f d %.1f m %ld\n", ms, s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], stp,
+                       " cam %.1f %.1f %.1f piv %.1f %.1f %.1f d %.1f m %ld lk %.2f %.2f %.2f mx %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+                       ms, s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], stp,
                        stp ? (int)(rd32(h, stp + 4) & 0xffff) : -1, stp ? (int)(rd32(h, stp + 4) >> 16) : -1, an, wt, sf, air, hp,
-                       C[0], C[1], C[2], P[0], P[1], P[2], dist, m);
+                       C[0], C[1], C[2], P[0], P[1], P[2], dist, m, L[0], L[1], L[2], M[0], M[1], M[2], M[4], M[5], M[6], M[8], M[9], M[10]);
                 fflush(stdout); }
             Sleep(1);
         }
