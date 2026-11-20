@@ -261,28 +261,44 @@ const char* kFxVs = R"(#version 460 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aUv;
 layout(location = 2) in vec4 aColor;
+layout(location = 3) in vec3 aNormal;
+layout(location = 4) in vec3 aTangent;
 layout(location = 0) uniform mat4 uViewProj;
-out vec2 vUv; out vec4 vColor;
+out vec2 vUv; out vec4 vColor; out vec4 vRaw; out vec3 vNormal; out vec3 vTangent;
 void main() {
     vUv = aUv;
     vColor = min(aColor * 2.0, vec4(2.0, 2.0, 2.0, 1.0));
+    vRaw = aColor, vNormal = aNormal, vTangent = aTangent;
     gl_Position = uViewProj * vec4(aPos, 1.0);
 })";
 // Material particles (FxBatch): uParams x = refraction screen-uv scale (scene copy offset by the normal map's xy x the
-// texture's alpha; GL's v points up, D3D's down), y / z = soft fade scale / bias against the depth copy.
+// texture's alpha; GL's v points up, D3D's down), y / z = soft fade scale / bias against the depth copy, w > 0 lit
+// (uLit0 / uLit1 = light 0 / 1 rgb + litLow / litHigh; ShaderLib 655's math, FxBatch).
 const char* kFxFs = R"(#version 460 core
-in vec2 vUv; in vec4 vColor;
+in vec2 vUv; in vec4 vColor; in vec4 vRaw; in vec3 vNormal; in vec3 vTangent;
 layout(binding = 0) uniform sampler2D uTex;
 layout(binding = 5) uniform sampler2D uScene;
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 8) uniform sampler2D uNormal;
 layout(location = 1) uniform vec4 uParams;
 layout(location = 2) uniform vec2 uDepthToW;
+layout(location = 3) uniform vec4 uLit0;
+layout(location = 4) uniform vec4 uLit1;
 out vec4 oColor;
 float viewDepth(float d) { return 1.0 / max(d * uDepthToW.x + uDepthToW.y, 1e-6); }
 void main() {
     vec4 t = texture(uTex, vUv);
     vec2 suv = gl_FragCoord.xy / vec2(textureSize(uScene, 0));
+    if (uParams.w > 0.0) {
+        vec4 n = texture(uNormal, vUv);
+        vec2 xy = vec2(n.x, n.y * n.w) * 2.0 - 1.0;
+        vec3 w = clamp(sqrt(abs(1.0 - dot(xy, xy))), 0.0, 1.0) * vNormal + xy.x * vTangent + xy.y * cross(vTangent, vNormal);
+        float f = clamp(-w.z * inversesqrt(max(dot(w, w), 1e-12)), 0.0, 1.0);
+        float s = clamp((2.0 * f - uLit0.w) / (uLit1.w - uLit0.w), 0.0, 1.0);
+        s = s * s * (3.0 - 2.0 * s);
+        oColor = vec4(t.rgb * (mix(uLit1.rgb, uLit0.rgb, s) + vRaw.rgb), t.a * vRaw.a);
+        return;
+    }
     if (uParams.x > 0.0) {
         vec4 n = texture(uNormal, vUv);
         vec2 off = (vec2(n.x, n.y * n.w) * 2.0 - 1.0) * t.a * uParams.x;
@@ -840,6 +856,8 @@ public:
         attrib(r.fxVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(FxVertex, pos));
         attrib(r.fxVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(FxVertex, uv));
         attrib(r.fxVao.get(), 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(FxVertex, rgba));
+        attrib(r.fxVao.get(), 3, 3, GL_BYTE, GL_TRUE, offsetof(FxVertex, normal));
+        attrib(r.fxVao.get(), 4, 3, GL_BYTE, GL_TRUE, offsetof(FxVertex, tangent));
         r.emptyVao = newVertexArray();
         r.lineVao = newVertexArray();
         attrib(r.lineVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(LineVertex, pos));
@@ -2563,7 +2581,11 @@ private:
         for (const auto& b : options.fxBatches) {
             glBindTextureUnit(0, tex(b.textureId));
             glBindTextureUnit(8, tex(b.normalId));
-            glUniform4f(1, b.distort, b.softScale, b.softBias, 0.0f);
+            glUniform4f(1, b.distort, b.softScale, b.softBias, b.lit ? 1.0f : 0.0f);
+            if (b.lit) {
+                glUniform4f(3, b.light0[0], b.light0[1], b.light0[2], b.litLow);
+                glUniform4f(4, b.light1[0], b.light1[1], b.light1[2], b.litHigh);
+            }
             glBlendEquation(b.blend == 2 ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);
             if (b.blend == 0) glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             else if (b.blend == 3) glBlendFunc(GL_DST_COLOR, GL_SRC_ALPHA);

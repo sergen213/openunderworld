@@ -177,6 +177,19 @@ shaders draw the sprite; we reduce the composite pixel shaders (disassembled) to
 - **Soft sprites** (global class 10 `DepthBufferTexture`: fire 651–653, steam 657–659 / 628–630): texture × colour,
   alpha × sat((scene view depth − sprite view depth − (1 − a)·c100.y) · s) with s = −(the negative MaterialParams
   entry), e.g. fx_fire 6603 (2, 0, −0.01): fades over 100 units. Blend from the material (5 additive).
+- **Lit sprites** [O]: a category-3 normal map without global targets and a pixel shader reading InstanceParams
+  c133 / c135. Of the install's 15 pixel shaders reading both, only ShaderLib 655 is a sprite program (the prologue
+  smoke, material 6946; rendercap10 bedroom, D3D9 call 1504259): the normal map (x, y·a)·2 − 1, z = sat(√|1 − x² − y²|),
+  in the sprite frame (tru.exe's particle vertices: normal toward the viewer, tangent −∂pos/∂u, the VS's binormal
+  cross(tangent, normal) = −∂pos/∂v; rendercap10 VB of call 19971575); f = sat(−n.z) (world down), t =
+  sat((2f − c100.x) / (c100.y − c100.x)), s = t²(3 − 2t); rgb = texture × (mix(c135, c133, s) + vertex colour), alpha
+  = texture alpha × vertex alpha, both raw bytes / 255 (0x5498C0 repacks the particle colour unscaled), then the fog
+  LUT (c22 = 0 for 6946: none). c133 / c135 are the colours of lights 0 and 1 of the effect's light record: def `+0x170`
+  → three 0x18-byte lights `{u8 r, g, b, a, …, +0x14 kind}` (the GenericFXObject header holds them, e.g. 6945 `+0xD8`:
+  (75, 44, 14) and two black lights); 0x543F70 gives the emitter a slot for (owner, record) (0x52D4D0, emitter
+  `+0x18F`, particle `+0xA6`), 0x53E320 fills its 0xA0-byte InstanceParams each frame (direction from the kind, colour
+  bytes / 255; c132 / c134 = light directions, unread by 655), 0x5498C0 hands the slot to the draw. Captured c133 =
+  (0.294, 0.173, 0.055), c135 = 0, c100 = (0, 1) in all 172 smoke draws of the frame.
 - Others: the first non-normal-map texture × colour with the material's blend.
 
 Atlas fields `+0x174..+0x177` select the frame as for textures (fire flipbooks 1792–1794 / 2122 are 8×8). Both

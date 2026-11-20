@@ -3,6 +3,7 @@
 #include "fx/Fx.hpp"
 
 #include "formats/Formats.hpp"
+#include "formats/Shader.hpp"
 #include "physics/Physics.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -73,6 +74,22 @@ int distortParam(uint32_t pixelLib) {
     }
 }
 
+// Whether the first program of pixel ShaderLib section `lib` reads PS c133 or c135 (InstanceParams 1 / 3).
+bool readsLightColours(const cdc::Drm& drm, uint32_t lib) {
+    const auto s = std::find_if(drm.sections.begin(), drm.sections.end(),
+                                [&](const cdc::Section& x) { return x.type == cdc::SectionType::ShaderLib && x.id == lib; });
+    if (s == drm.sections.end()) return false;
+    try {
+        const auto sl = formats::d3d9::parseShaderLib(s->data);
+        if (!sl.pixel || sl.entries.empty()) return false;
+        for (const auto& i : formats::d3d9::parse(sl.entries.front().bytecode).instructions)
+            for (const auto& r : i.src)
+                if (r.type == formats::d3d9::Reg::Const && (r.num == 133 || r.num == 135)) return true;
+    } catch (const std::exception&) {
+    }
+    return false;
+}
+
 ParticleMaterial particleMaterial(const cdc::Drm& drm, uint32_t id) {
     ParticleMaterial pm;
     pm.id = id;
@@ -98,6 +115,12 @@ ParticleMaterial particleMaterial(const cdc::Drm& drm, uint32_t id) {
         for (size_t i = 0; i < 4; ++i) lo = std::min(lo, param(i));
         pm.softScale = -lo, pm.softBias = param(1);
     }
+    // Lit sprites: the pixel shader reads InstanceParams c133 / c135 (the emitter's light colours, ParticleDef::lights).
+    // Of the install's 15 pixel shaders reading both only one is a sprite program (ShaderLib 655, smoke material 6946):
+    // normal map s1 in the sprite's frame, f = sat(-n.z), s = smoothstep(sat((2f - c100.x) / (c100.y - c100.x))),
+    // rgb = texture x (mix(c135, c133, s) + vertex colour) (rendercap10 bedroom, D3D9 call 1504259; BUGS OU-REN-012).
+    if (!backBuffer && !depth && pm.normal && readsLightColours(drm, libs.pixel))
+        pm.lit = true, pm.litLow = param(0), pm.litHigh = param(1);
     return pm;
 }
 
@@ -327,6 +350,12 @@ static ObjectFx parseFxSections(const cdc::Drm& drm, int ev, int gen, int base, 
                     const auto td = drm.sections[t->second.section].data;
                     for (uint32_t i = 0, cnt = rd<uint32_t>(td, t->second.offset); i < cnt && i < 256; ++i)
                         def.materials.push_back(particleMaterial(drm, rd<uint32_t>(td, t->second.offset + 4 + 4 * i)));
+                }
+                // Light record (+0x170): 0x53E320 copies each light's rgba bytes / 255 into the emitter's InstanceParams.
+                if (const auto t = aptrs.find(uint32_t(off + 0x170)); t != aptrs.end()) {
+                    const auto td = drm.sections[t->second.section].data;
+                    for (int l = 0; l < 2; ++l)
+                        for (int c = 0; c < 3; ++c) def.lights[l][c] = float(rd<uint8_t>(td, t->second.offset + 0x18 * l + c)) / 255.0f;
                 }
                 fx.particles.push_back(std::move(def));
             }
@@ -1122,7 +1151,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
     vertices.clear(), batches.clear();
     if (bubbles) bubbles->clear();
     struct Sprite { float depth; glm::vec3 c; float hw, hh, rot; uint32_t rgba, tex; float u0, v0, u1, v1; uint8_t blend; float pull;
-                    const ParticleMaterial* mat = nullptr;
+                    const ParticleMaterial* mat = nullptr; const glm::vec3* lights = nullptr; // ParticleDef::lights
                     bool quad = false; glm::vec3 q[4]{}; uint32_t corner[4]{}; // quad: world corners + colours (ribbons, bolts)
                     bool flat = false; }; // lying on the world XY plane (ParticleDef::flat)
     std::vector<Sprite> sprites;
@@ -1197,7 +1226,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
             return (size_t(std::max<int>(0, d.animStart)) + size_t(p.age / (2 * d.animRate))) % n;
         };
         if (!d.materials.empty()) { // material path: the material's blend, texture and screen reads; atlas UVs as below
-            sp.mat = &d.materials[d.materials.size() > 1 ? frameOf(d.materials.size()) : 0];
+            sp.mat = &d.materials[d.materials.size() > 1 ? frameOf(d.materials.size()) : 0], sp.lights = d.lights;
             sp.tex = sp.mat->texture;
             sp.blend = uint8_t(sp.mat->distort || !sp.mat->additive ? Blend::Alpha : Blend::Additive);
         }
@@ -1373,12 +1402,34 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         const float uv[4][2] = {{s.u0, s.v1}, {s.u1, s.v1}, {s.u1, s.v0}, {s.u0, s.v0}};
         render::FxBatch b{uint32_t(vertices.size()), 0, s.tex, s.blend};
         if (s.mat && s.mat->distort) b.normalId = s.mat->normal, b.distort = s.mat->distortScale;
-        else if (s.mat) b.softScale = s.mat->softScale, b.softBias = s.mat->softBias;
+        else if (s.mat && s.mat->lit) {
+            b.normalId = s.mat->normal, b.lit = true, b.litLow = s.mat->litLow, b.litHigh = s.mat->litHigh;
+            if (s.lights)
+                for (int c = 0; c < 3; ++c) b.light0[c] = s.lights[0][c], b.light1[c] = s.lights[1][c];
+        } else if (s.mat) b.softScale = s.mat->softScale, b.softBias = s.mat->softBias;
+        // Lit sprites' frame as tru.exe's particle vertices carry it: normal toward the viewer (d(pos)/du x -d(pos)/dv),
+        // tangent -d(pos)/du; the shader's binormal cross(tangent, normal) is then -d(pos)/dv.
+        uint32_t normal = 0, tangent = 0;
+        if (b.lit) {
+            const glm::vec3 du = (q[1] - q[0]) * (s.u1 >= s.u0 ? 1.0f : -1.0f), dv = (q[0] - q[3]) * (s.v1 >= s.v0 ? 1.0f : -1.0f);
+            auto pack = [](glm::vec3 v) {
+                const float len = glm::length(v);
+                if (len < 1e-6f) return 0u;
+                v /= len;
+                uint32_t r = 0;
+                for (int c = 0; c < 3; ++c) r |= uint32_t(uint8_t(int8_t(std::lround(std::clamp(v[c], -1.0f, 1.0f) * 127.0f)))) << (8 * c);
+                return r;
+            };
+            normal = pack(glm::cross(du, -dv)), tangent = pack(-du);
+        }
         const auto& l = batches.empty() ? b : batches.back();
         if (batches.empty() || l.textureId != b.textureId || l.blend != b.blend || l.normalId != b.normalId ||
-            l.distort != b.distort || l.softScale != b.softScale || l.softBias != b.softBias)
+            l.distort != b.distort || l.softScale != b.softScale || l.softBias != b.softBias || l.lit != b.lit ||
+            l.litLow != b.litLow || l.litHigh != b.litHigh || !std::equal(l.light0, l.light0 + 3, b.light0) ||
+            !std::equal(l.light1, l.light1 + 3, b.light1))
             batches.push_back(b);
-        for (int i : {0, 1, 2, 0, 2, 3}) vertices.push_back({{q[i].x, q[i].y, q[i].z}, {uv[i][0], uv[i][1]}, s.quad ? s.corner[i] : s.rgba});
+        for (int i : {0, 1, 2, 0, 2, 3})
+            vertices.push_back({{q[i].x, q[i].y, q[i].z}, {uv[i][0], uv[i][1]}, s.quad ? s.corner[i] : s.rgba, normal, tangent});
         batches.back().count += 6;
     }
 }

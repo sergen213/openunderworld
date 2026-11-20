@@ -553,6 +553,32 @@ TEST(FxReal, PrologueFireScreenFilter) {
     EXPECT_FALSE(out.active());
 }
 
+// The prologue smoke (material 6946, ShaderLib 655 reads InstanceParams c133 / c135) is a lit sprite: its emitter's light
+// record gives light 0 = (75, 44, 14) / 255, light 1 = 0 (rendercap10 bedroom, D3D9 call 19973134), window c100 (0, 1).
+TEST(FxReal, PrologueSmokeIsLitByItsLightRecord) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto unit = cdc::parseDrm(std::move(*bf.read("pc-w\\l3_main_bedroom.drm")));
+    std::shared_ptr<const fx::ObjectFx> smoke;
+    int def = -1;
+    for (const auto& set : fx::parsePointSets(unit))
+        for (size_t k = 0; set.fx && k < set.fx->particles.size() && def < 0; ++k)
+            for (const auto& m : set.fx->particles[k].materials)
+                if (m.id == 6946) smoke = set.fx, def = int(k);
+    ASSERT_TRUE(smoke) << "no point set runs material 6946";
+    const auto& d = smoke->particles[size_t(def)];
+    const auto& m = d.materials.front();
+    EXPECT_TRUE(m.lit);
+    EXPECT_FALSE(m.distort);
+    EXPECT_NE(m.normal, 0u);
+    EXPECT_FLOAT_EQ(m.litLow, 0.0f);
+    EXPECT_FLOAT_EQ(m.litHigh, 1.0f);
+    EXPECT_NEAR(d.lights[0].r, 75 / 255.0f, 1e-6f);
+    EXPECT_NEAR(d.lights[0].g, 44 / 255.0f, 1e-6f);
+    EXPECT_NEAR(d.lights[0].b, 14 / 255.0f, 1e-6f);
+    EXPECT_EQ(d.lights[1], glm::vec3(0));
+}
+
 // Class 1 ribbons follow their tracked owner's two segments: one quad per tick, fading over the face life; class 3
 // lightning draws two bands of `segments` quads and ends with its life.
 TEST(Fx, RibbonsTrailTrackedSegmentsAndBoltsExpire) {
