@@ -370,7 +370,8 @@ CamTick camTick(game::World& w, const Actions& a) {
     const vec3 before = w.camera().position, from = w.player().state().pos;
     w.tick(a);
     const auto& c = w.camera();
-    const float rb = std::atan2(c.target.y - before.y, c.target.x - before.x);
+    const vec3 pivot = w.cameraPivot(); // where the angles are read back from (swimming, the view looks past it)
+    const float rb = std::atan2(pivot.y - before.y, pivot.x - before.x);
     return {std::remainder(c.yaw - rb, 6.2831853f), std::remainder(rb - w.player().state().yaw, 6.2831853f),
             w.player().state().pos - from, rb};
 }

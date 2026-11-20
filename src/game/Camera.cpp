@@ -342,7 +342,8 @@ nlohmann::json World::serializeRuntime() const {
                      w.push_back({uid, s.surface, s.target, s.rate, s.source, s.sink, s.strength, v(s.sourceAt), v(s.sinkAt)});
                  return w;
              }()}};
-    if (lookPoint_) out["camera"]["look"] = v(*lookPoint_); // the swim camera's look point (only then: other saves keep their bytes)
+    // The swim camera's look point and pivot (only then: other saves keep their bytes).
+    if (lookPoint_) out["camera"]["look"] = {v(*lookPoint_), v(swimPivot_)};
     if (!waterDamage_.empty()) { // only where a volume is armed: other saves keep their bytes
         nlohmann::json w = nlohmann::json::array();
         for (const auto& [uid, d] : waterDamage_) w.push_back({uid, d.amount, d.frames});
@@ -438,7 +439,8 @@ void World::restoreRuntime(const nlohmann::json& j) {
         const auto& f = cam.at("focus");
         const std::optional<vec3> focus = f.is_null() ? std::nullopt : std::optional<vec3>(v(f));
         const auto l = cam.find("look"); // older saves: none, the look point starts on its goal
-        const std::optional<vec3> look = l == cam.end() || l->is_null() ? std::nullopt : std::optional<vec3>(v(*l));
+        const std::optional<vec3> look = l == cam.end() || l->is_null() ? std::nullopt : std::optional<vec3>(v(l->at(0)));
+        const vec3 swimPivot = look ? v(l->at(1)) : vec3(0);
         CameraState c = cam_;
         c.position = v(cam.at("position")), c.target = v(cam.at("target")), c.yaw = cam.at("yaw"), c.pitch = cam.at("pitch");
         std::vector<vec3> hair;
@@ -458,7 +460,7 @@ void World::restoreRuntime(const nlohmann::json& j) {
         const auto bones = j.at("bones").get<std::vector<float>>();
         air_ = air, submerged_ = submerged;
         restoreWorldRuntime(j);
-        focus_ = focus, lookPoint_ = look, orbit_ = o, cam_ = prevCam_ = c;
+        focus_ = focus, lookPoint_ = look, swimPivot_ = swimPivot, orbit_ = o, cam_ = prevCam_ = c;
         playerUnit_ = playerUnit; // the scripts heard of this unit already: no level-load vt 13 again (World::tick)
         hair_.setState(hair);
         if (bones.size() == bones_.size() * 16)

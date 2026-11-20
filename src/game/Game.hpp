@@ -1241,8 +1241,9 @@ public:
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
     // The point the orbit camera turns about (LaraCameraRewrite +0x100, the focus tracker's); camera().target is where it
-    // looks, that point moved by a trigger's look offset (commands 0x1A / 0x1C, World.cpp).
-    vec3 cameraPivot() const { return cam_.target - orbit_.lookAdd.now(); }
+    // looks: that point moved by a trigger's look offset (commands 0x1A / 0x1C, World.cpp), or while swimming the look
+    // tracker's point (lookPoint_), which trails it.
+    vec3 cameraPivot() const { return lookPoint_ ? swimPivot_ : cam_.target - orbit_.lookAdd.now(); }
     // The trigger volume whose level camera record (command 0x12) the orbit camera follows now, if any.
     std::optional<int32_t> cameraRecordVolume() const {
         return orbit_.hintMarkup <= -2 ? std::optional<int32_t>(-2 - orbit_.hintMarkup) : std::nullopt;
@@ -1561,6 +1562,7 @@ private:
     CameraState cam_, prevCam_;
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
     std::optional<vec3> lookPoint_; // its look point (+0x620), lagging the same goal while swimming (World.cpp)
+    vec3 swimPivot_{0};             // the pivot (focus after the clearance) while lookPoint_ is set, for cameraPivot()
     // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
     // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
     // its tick).

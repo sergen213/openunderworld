@@ -1400,6 +1400,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // It looks at the look tracker's point (0x6009C0: through the same clearance 0x5FE930 -> 0x5EA050), moved by a
     // trigger's 0x1A / 0x1C offset (Wine, the yacht deck: +0x160 points 79.01 under the pivot).
     cam_.target = (lookLags ? clearance(*lookPoint_) : target) + orbit_.lookAdd.now();
+    if (lookLags) swimPivot_ = target;
     // Distance back toward the mode's (0x5FFB00): its speed accelerates by 1106.36 x clamp((gap - 2 step) / step, -1, 1)
     // per second (step = speed x dt, at least 1) up to 4741.4; it moves by at most last tick's step.
     if (!recordDistance) {
