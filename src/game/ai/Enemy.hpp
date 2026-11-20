@@ -134,12 +134,14 @@ struct EnemyTuning {
     float minFloorNormalZ = 0.7f;
     float gravity = 5.72443f * 900.0f; // units/s^2 (tru.exe 5.72443 units per 30 Hz frame^2)
     float flySpeed = 700.0f;       // [I] flyers, units/s
-    // Aquatic reach (enemy data +0x88; CloseCombat 0x6391F0 / Circle 0x6298C0 -> 0x660640 -> 0x64A5B0): Lara is reachable
-    // when the nearest point of its swim space lies within enemy data +0x84 across and this up / down of her. 0: no test.
+    // Aquatic reach (enemy data +0x88; CloseCombat 0x6391F0 -> 0x60E4C0 and Circle 0x6298C0 reach 0x660640 -> 0x64A5B0):
+    // Lara is reachable when the nearest point of its swim space lies within enemy data +0x84 across and this up / down
+    // of her. 0: no test.
     float reachHeight = 0;
     // EnemyBehavior_CloseCombat's slots (0x6108A0): each lasts the combat record's (node +0xCC) +4 .. +8 counts and gives
-    // its Circle child (r < byte +0xC of rand % 101: none) or its Sidestep child (r < +0xC + +0xD: none) the slot; a shark
-    // has no Sidestep, so a slot not Circle's is a Close pass. Seconds; 0: no limit.
+    // its Circle child (r < byte +0xC of rand % 101: none) or its Sidestep child (r < +0xC + +0xD: none) the slot, or
+    // both when r >= +0xC + +0xD (1 in 101 for blueshark 50 / 50; Enemy::closeCombatSlot takes Circle there [I]); a
+    // shark has no Sidestep, so a slot not Circle's is a Close pass. Seconds; 0: no limit.
     std::array<float, 2> closeTime{};
     std::array<uint8_t, 2> slotShare{}; // record bytes +0xC / +0xD (blueshark 50 / 50)
     std::vector<Attack> attacks;   // every record, node order

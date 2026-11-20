@@ -79,6 +79,22 @@ TEST(Combat, FallDamageThresholds) {
     EXPECT_NEAR(h.fallDamage(1548.7f), 500 * (1548.7f - 1280.03f) / (1817.32f - 1280.03f), 0.01);
 }
 
+// The jump query in effect picks the heights (0x702E90): tru.exe under Wine with +0xA84 = q44, a fall from rest of
+// 1500 did no damage and one of 2000 did 81.7; with q45 the fall of 1500 did 204.8 (BUGS OU-PLY-018).
+TEST(Combat, FallDamageHeightsOfTheJumpQueryInEffect) {
+    const game::Health h;
+    EXPECT_EQ(h.fallDamage(1500, h.fallHeights(44)), 0);
+    EXPECT_NEAR(h.fallDamage(2000, h.fallHeights(44)), 81.7, 0.1);
+    EXPECT_NEAR(h.fallDamage(1500, h.fallHeights(45)), 204.8, 0.1);
+    EXPECT_EQ(h.fallHeights(0), h.fallHeights(56)); // the run's q56 carries the player data's own
+    EXPECT_NEAR(h.fallDamage(2847.6f, h.fallHeights(9)), 1000, 0.1); // a hang jump back: lethal at 2847.66
+    game::Health f;
+    f.fall(1700, 8); // a leap off a hang (q8) from 1700: none; from the ground (q2) 390.8
+    EXPECT_EQ(f.value(), 1000);
+    f.fall(1700, 2);
+    EXPECT_NEAR(f.value(), 1000 - 500 * (1700 - 1280.0253f) / (1817.3199f - 1280.0253f), 0.1);
+}
+
 TEST(Combat, InvulnerabilityWindowAndPriority) {
     game::Health h;
     EXPECT_TRUE(h.damage(100, game::kDamageLight));

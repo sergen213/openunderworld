@@ -139,12 +139,16 @@ public:
     const HealthTuning& tuning() const { return t_; }
 
     // tru.exe 0x6F1790: 0 up to fall[0], then linear to max/2 at fall[1], linear to max at fall[2], max above.
-    float fallDamage(float height) const;
+    float fallDamage(float height) const { return fallDamage(height, fallHeights(0)); }
+    float fallDamage(float height, const std::array<float, 3>& at) const;
+    // The three heights for a landing with jump query `query` in effect (tru.exe player +0xA84; 0x702F10 -> 0x702E90:
+    // the query record's +0xC4 triple, else player data +0x4C..+0x54); 0 = none (player data).
+    std::array<float, 3> fallHeights(int query) const;
     // 0x6F5030 (scaled by damageScale unless type is kDamageAbsolute) and the invulnerability window.
     // Returns false if the hit was ignored.
     bool damage(float amount, int type = kDamageLight);
     // 0x702FC0: fall damage bypasses the window and is never scaled; records type kDamageAbsolute.
-    void fall(float height);
+    void fall(float height, int query = 0);
     void heal(float amount, bool overheal = false); // 0x6F4EF0
     void tick(float dt);                            // 0x6F5160: regeneration, overheal decay, window
     void reset();                                   // 0x700060: full health (level start / respawn)
@@ -371,9 +375,10 @@ struct CombatState {
     bool headShotRequest = false; // World::tick: this tick's Grapple press starts it (the grapple is not thrown)
     float slowMo = 0;         // real seconds left of the head-shot window; 0 = closed
     glm::vec2 pip{0};         // pip offset from the reticle, reticle radii (inside 1 = on target)
-    // tru.exe's two time scales (game loop 0x5DA1C0; ramps 0x78C160 read by 0x78C4E0): `timeScale` = 0xE7F1D4, every
-    // update's time step (adrenaline 0x715020 / 0x7189C0, scripts' gamebase 2 / 24); `worldScale` = 0xE7F1A0 (gamebase
-    // 23), which Lara's own update divides back out (0x622418): the world slows, she does not.
+    // tru.exe's two time scales (ramps in 0x5DA230, called from the game loop 0x5DA1C0; ramp records 0x78C160 read by
+    // 0x78C4E0): `timeScale` = 0xE7F1D4, every update's time step (adrenaline 0x715020 / 0x7189C0, scripts' gamebase 2 /
+    // 24); `worldScale` = 0xE7F1A0 (gamebase 23), which Lara's own update divides back out (0x7228E0): the world slows,
+    // she does not.
     struct TimeRamp { // {target, seconds, from, start}: value = from + (target - from) x ease(elapsed / seconds)
         float target = 1, seconds = -1, from = 1, elapsed = 0; // seconds < 0: idle (0x78C4E0 sets -1 when done)
         float step(float value, float dt);                     // advances by real time; returns the new value

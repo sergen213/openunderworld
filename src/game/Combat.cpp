@@ -323,12 +323,30 @@ std::optional<float> clipLength(const cdc::Drm& drm, std::string_view name) {
 } // namespace
 
 // ---- health -------------------------------------------------------------------------------------
-float Health::fallDamage(float h) const {
-    const float a = t_.fall[0], b = t_.fall[1], c = t_.fall[2], m = t_.max;
+float Health::fallDamage(float h, const std::array<float, 3>& at) const {
+    const float a = at[0], b = at[1], c = at[2], m = t_.max;
     if (h > c) return m;
     if (h > b) return m * 0.5f + m * 0.5f * (h - b) / (c - b);
     if (h > a) return m * 0.5f * (h - a) / (b - a);
     return 0;
+}
+
+// lara.drm's 106 jump query records (object data +0xDE8): +0xC4 points at one of three triples [O-data]: the player
+// data's own (1280.03 / 1817.32 / 2215.55: the ground, running, wall, hang-up q10 and DICE-up q31 jumps, the run q56, ...)
+// or 1912.14 / 2449.43 / 2847.66 (the hang side / back jumps q7 / q8 / q9, ladder q21..q23, DICE sides q28..q30, poles
+// q32..q36, q38, the fall states' q44 / q46 / q47, q51, q64, q69..q71, q98, q106), or 1343.24 / 1817.32 / 2215.55 (q107);
+// the queries without a record keep the player data's. tru.exe under Wine (2026-11-20, l4_ballcourt, Contradict11-wine/
+// ref): with +0xA84 written to q44 a fall from rest of 1500 does no damage and one of 2000 does 81.7 (= this triple),
+// with the level's q45 the same fall of 1500 does 204.8 (= the player data's) [O-runtime].
+std::array<float, 3> Health::fallHeights(int query) const {
+    switch (query) {
+    case 7: case 8: case 9: case 16: case 17: case 18: case 21: case 22: case 23: case 28: case 29: case 30: case 32:
+    case 33: case 34: case 35: case 36: case 38: case 44: case 46: case 47: case 51: case 64: case 69: case 70: case 71:
+    case 98: case 106:
+        return {1912.1366f, 2449.4312f, 2847.6614f};
+    case 107: return {1343.2365f, t_.fall[1], t_.fall[2]};
+    default: return {t_.fall[0], t_.fall[1], t_.fall[2]};
+    }
 }
 
 void Health::hurt(float amount, int type) {
@@ -346,8 +364,8 @@ bool Health::damage(float amount, int type) {
     return true;
 }
 
-void Health::fall(float height) {
-    if (const float d = fallDamage(height); d > 0 && !dead()) hurt(d, kDamageAbsolute);
+void Health::fall(float height, int query) {
+    if (const float d = fallDamage(height, fallHeights(query)); d > 0 && !dead()) hurt(d, kDamageAbsolute);
 }
 
 void Health::heal(float amount, bool overheal) {
@@ -1129,7 +1147,8 @@ std::vector<Damageable*> World::candidates(bool hard) const {
 // A unit's grapple target as it is now, in the world frame. The feature is read off the live instance at every query
 // (0x713090 -> 0x6FF040: instance +0x20 plus its query-0xDB offset) [O decomp]: a pull target's feature moves with the
 // section showing its model (the naga statue 2794's ring lies with the toppled statue). The named anchors keep their
-// intro origin (Stream.cpp).
+// intro origin (Stream.cpp). [U] 0x6FF040 also lets queries 0xDE / 0x159 (before) and 0x158 (after, player flag bit 6)
+// replace the instance's +0x20 and the query-0xDB point; ours does not.
 GrappleTarget World::liveGrapple(const GrappleTarget& g, vec3 offset) const {
     GrappleTarget t = g;
     t.pos += offset, t.sight += offset;
@@ -1426,7 +1445,7 @@ void World::tickCombat(const Actions& a, float dt) {
     hostileBlasts_.clear();
     tickHostile(dt);
     const PlayerState& s = player_.state();
-    if (s.fallHeight > 0) health_.fall(s.fallHeight); // landing (tru.exe 0x75D080 -> 0x702FC0)
+    if (s.fallHeight > 0) health_.fall(s.fallHeight, s.jumpQuery); // landing (tru.exe 0x75D080 -> 0x702FC0 -> 0x702F10)
     health_.tick(dt);
     const bool drawPressed = a.draw && !c.drawHeld, switchPressed = a.switchTarget && !c.switchHeld,
                weaponPressed = a.weapon && !c.weaponHeld, healPressed = a.heal && !c.healHeld,

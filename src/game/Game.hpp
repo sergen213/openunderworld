@@ -181,8 +181,13 @@ int pushWay(vec2 stick);
 // between the forward direction turned toward the stick's side by 180 degrees x (angle - 30) / (165 - 30): a stick
 // square to her facing (90) moves it 80 degrees off forward. 0 without input.
 vec2 pushDirection(vec2 stick);
-// She lets go when her grip point leaves her by more than this [O 0x73F900 "PlayerSC_PushPull::MustDetach", player data
-// +0xCA0 / +0xCA4: 20 cm level, 5 cm in height].
+// She lets go when the body she grips gets away [I: ours measures her grip point's distance from her against these].
+// tru.exe 0x73F900 "PlayerSC_PushPull::MustDetach" tests the PushPull proxy ([0xFAE504]) instead, which ours does not
+// have: its velocity at the grip anchor (0x4D8EA0 / 0x4D8F70: v + w x r) more than player data +0xCA0 = 63.21 level
+// or +0xCA4 = 15.80 upward, its angular speed (0x4D8E70) more than +0xCB4 = 0.3, each unless the gripped object's flag
+// bit 21; or, always, the gripped object's axis nearest her tilted out of her frame (0x73FCD1..0x73FD95) past sin
+// +0xCB0 = 25 degrees one way, +0xCA8 = 10 / +0xCAC = 25 the other (BUGS OU-PLY-016) [O decomp, lara.drm player data;
+// I: the velocities taken per 30 Hz frame].
 inline constexpr float kPushDetachLevel = 63.211128f, kPushDetachHeight = 15.802782f;
 // Her push on a sliding body of `mass` with pull strength `strength` (1; the Thor scripts raise it while she grips)
 // against a joint motor holding it with `brake` (impulse per step, 0 none): the velocity asked is `speed` units a
@@ -265,9 +270,11 @@ struct Tuning {
     // "Jump timing"]: she leaves the ground 8 frames after the state begins (250..267 ms in three traces), carried along
     // the stick meanwhile (128 from rest), turning onto it at ~20 rad/s (2.98 rad in 0.15 s, screens/stairs/j_57.txt).
     // Ours moves her by ng_run_start's root motion (135 in those frames) [I: what S245's request 213 plays is not
-    // decoded]. A Jump within `stickJumpLeadFrames` of the run's start is still this jump, later the running one
-    // (tru.exe: the stick jump 15 ms after her run state began, the running jump 71 ms after it) [I: 2 frames].
-    float stickJumpFrames = 8.0f, stickJumpTurn = 20.0f, stickJumpLeadFrames = 2.0f;
+    // decoded]. A Jump with the stick under full (the walk) within `stickJumpLeadFrames` of the run's start is still
+    // this jump (chart T56 on S64: !cond 0x14 = 3 frames, !cond 0x191 = 404 [O-data]); at full stick, or later, the
+    // running one (tru.exe under Wine: W, which walks, then Jump 15 ms after her run state began gave the stick jump;
+    // the Up arrow then Jump 16 ms after it the running jump, w-GapsB10/s2/j1.txt).
+    float stickJumpFrames = 8.0f, stickJumpTurn = 20.0f, stickJumpLeadFrames = 3.0f;
     float turnRate = 6.0f;                     // rad/s
     float runTurnRate = 1.755f, sprintTurnRate = 1.835f; // rad/s in the run / sprint loops [O Wine, l4_temple]
     float runStopFrames = 15.0f; // frames in the run loop before letting go plays ng_running_stop (chart variable 374)
@@ -419,8 +426,8 @@ struct PlayerState {
     std::string clipMix;
     float mix = 0;
     // `clip` reflected left / right (lara.drm anim request +0x20 bit 0x80, e.g. request 979 = ledgeb_jump_right mirrored:
-    // the jump left; 1009 is the unmirrored one). The pose and the root motion's X are mirrored (tru.exe 0x4428A0 /
-    // 0x441FB0).
+    // the jump left; 1009 is the unmirrored one). The pose and the root motion's X are mirrored (tru.exe 0x441FB0,
+    // reached from 0x4428A0).
     bool mirror = false;
     // Obstacle move in progress (State::ClimbUp hurdle_* clips, Player::tryHurdle / tryHurdleDown): what follows the
     // attach clip, its blend weight and pair (over: the long clips; onto the far side: 65 / 100 cm deep), the
@@ -511,6 +518,17 @@ struct PlayerState {
     // then (tru.exe chart context +0x430 / +0x420, stored on entering the flight by 0x73ECE0).
     vec2 jumpVel0{0};
     float jumpStick0 = 0;
+    // An aimed ground jump's markup target (tru.exe player +0xA64 / +0xA68; the flight time left +0x77C), which the
+    // flight re-aims at every frame (Player::reaimJump, 0x73EDC0): the markup (-1 none), its segment, the point along
+    // it, the hang side, a perch (landed on: the point itself) and the seconds left.
+    int aimMarkup = -1, aimSeg = 0;
+    float aimT = 0, aimSide = 1, aimLeft = 0;
+    bool aimPerch = false;
+    // The jump query in effect (tru.exe player +0xA84): the last one a state ran, kept until another runs (Wine: the
+    // run sets q56 every frame, a standing jump q2, idle and a fall from rest keep it). Its record's three heights rule
+    // the next landing's fall damage (Health::fallHeights). Ours sets it at the jumps it models: the ground jumps (q2,
+    // q43, q1), the run (q56) and the hang jumps (q7 / q8 right / left, q9 back, q10 up); 0 = none (player data).
+    uint8_t jumpQuery = 0;
     // Off balance on a balance beam (Player::beam). `build`: 30 Hz frames the stick has been held across the beam
     // (ours [I]: the escalation into the about-to-fall state). `aboutFall`: the about-to-fall state (chart S895 / S896,
     // bbeam_aboutfall_*) runs tru.exe's balance controller (chart context +0x358: enter 0x742330, update 0x742770, exit
@@ -664,10 +682,16 @@ private:
         int attach = 0;
         float minZ = -1e9f; // ours: ledge points under this do not count
         bool sight = false; // ours: ledge points hidden from the arc's start by solid geometry do not count (WallJump.cpp)
+        bool ownFrame = false; // meet a moving markup in its own frame (0x70F300; ledgeOnArc)
+        vec3 frameVel{0};      // ledgeOnArc: the moving markup's velocity (a frame) taken off `v` for its own frame
     };
     // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
-    // (`record`) passing one of its class record's entries.
+    // (`record`) passing one of its class record's entries. A moving markup is met in its own frame (0x70F300).
     JumpTarget ledgeOnArc(const JumpQuery& q) const;
+    // ledgeOnArc over every markup where it is (only -2), the static markup (-1) or markup `only` alone
+    JumpTarget ledgeOnArcIn(const JumpQuery& q, int only) const;
+    // Markup::velocity at a point of segment `seg` of markup `li` (units/s; 0 for static markup)
+    vec3 markupVelocity(int li, int seg, vec3 at) const;
     // The hang jump queries from the ledge she hangs on (kind 0 up q10, +-1 right / left q7 / q8, 2 back q9)
     JumpQuery hangJumpQuery(int kind) const;
     // A standing jump at a ledge above the obstacle range in front of her: the straight leap onto its hang (Player.cpp)
@@ -680,6 +704,9 @@ private:
     // ground jump query (forward, up a 30 Hz frame; start `up` over the root, +0x2C bit 0x80, cone in radians) meeting a
     // ledge: aim at its hang
     bool aimGroundJump(vec2 query, float up, bool falling, float cone, bool running = false);
+    // State::Jump: an aimed ground jump re-aimed at its markup target (PlayerState::aimMarkup) with the time left
+    // (tru.exe 0x73EDC0 every frame of the flight, 0x752410)
+    void reaimJump(float dt);
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
     // Ledge corners (a polyline joint turning more than 45 degrees): shimmying onto one plays ledgeb_<concave|convex>_
     // right_phase1 into the corner pose (left: mirrored), its idle and leans there, _phase2 round onto the next segment.

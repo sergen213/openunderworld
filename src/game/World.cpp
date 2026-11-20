@@ -615,10 +615,10 @@ void World::tick(const Actions& input) {
     joinStreams(false); // background neighbour loads due this tick (Stream.cpp)
     prev_ = player_.state();
     prevCam_ = cam_;
-    // tru.exe's game loop (0x5DA1C0): both time scales follow their ramps, then every update's step is the frame's x
-    // timeScale x worldScale and Lara's own x timeScale only (0x622418 divides worldScale back out). `dt` = Lara's step,
-    // `wdt` = the world's (enemies, objects, water); the camera and the input clocks keep real time [I]. Scripts run on
-    // their own tick count: their waits are not scaled [U].
+    // tru.exe's game loop (0x5DA1C0 dispatches; the ramps in 0x5DA230): both time scales follow their ramps, then every
+    // update's step is the frame's x timeScale x worldScale and Lara's own x timeScale only (0x7228E0 divides
+    // worldScale back out). `dt` = Lara's step, `wdt` = the world's (enemies, objects, water); the camera and the input
+    // clocks keep real time [I]. Scripts run on their own tick count: their waits are not scaled [U].
     const float real = float(kTickSeconds);
     tickTimeScales(real);
     const float dt = real * combat_.timeScale, wdt = dt * combat_.worldScale;
@@ -969,9 +969,11 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         }
     }();
     // Camera trigger volumes she is inside (tru.exe 0x5CD520 tests her root + 200 against each trigger instance and
-    // calls CameraManager 0x5F29A0 on entering / 0x5F2A70 on leaving: script::Object::inside is the same test) override
-    // what the mode set, in every mode of the gameplay camera (not the bike's VehicleCamera): 0x601D30 applies the mode
-    // list entry, the triggers with priority 0, the mode records, then those with priority != 0, through 0x6019D0
+    // reaches CameraManager 0x5F29A0 on entering / 0x5F2A70 on leaving through its vtable slots 27 / 28, 0x5CD683 /
+    // 0x5CD6AE: script::Object::inside is the same test) override what the mode set, in every mode of the gameplay
+    // camera (not the bike's VehicleCamera): 0x601D30 applies the mode list entry, the triggers with priority 0, the
+    // mode records, then those with priority != 0 (and then the trigger list's vt+0x14 record, 0x601E91..0x601EAF [U]),
+    // through 0x6019D0
     // (0x18-byte commands, jump table 0x601CC0; docs/re/CAMERA.md §9 lists every command and its use in the game):
     // - 2 and 0xD set the distance +0x1320 (0xD with byte +0xC also a cap +0x1340 [U: its reader 0x6000EF]);
     // - 0x17 / 0x18 an inline yaw / pitch force set {angle, speed, dir, count, forces} (0x609C40 on +0x8F8 / +0xDA0;
@@ -1002,7 +1004,8 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     //   stays unmodelled [U].
     // 0x601D30 runs when the mode or the active trigger list changes (enter / leave, 0x5F29A0 / 0x5F2A70; the mode, 0x6020E0),
     // not every frame: the sets, overrides and limits are (re)set then. An override no trigger sets is switched off there
-    // (0x608F10).
+    // (0x608F10). tru.exe's active trigger list holds at most 4 (0x5E85B9); ours takes every volume she is in [U: which
+    // a fifth displaces].
     constexpr int kInlineSet = 1000;
     const script::Object* recordVolume = nullptr; // the last 0x12 of a priority-0 / priority-1 trigger
     const script::Object::CameraCommand* recordCommand = nullptr;
@@ -2019,6 +2022,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.ropeBends), add(s.polePara), add(s.ropeMax);
     add(s.jumpStart), add(s.jumpTime), add(s.jumpAimed), add(s.wallJumps), add(s.wallTime), add(s.jumpLedge), add(s.jumpFromLedge);
     add(s.jumpVel0), add(s.jumpStick0);
+    markup(s.aimMarkup), add(s.aimSeg), add(s.aimT), add(s.aimSide), add(s.aimLeft), add(s.aimPerch), add(s.jumpQuery);
     for (const ButtonTime* b : {&s.buttons.jump, &s.buttons.interact, &s.buttons.drop, &s.buttons.grapple})
         add(b->down), add(b->edge), add(b->time), add(b->buffer);
     add(s.droppedPole), add(s.fallStall), add(s.runOffHold), add(s.landTime), add(s.prepTime), add(s.prepInPlace), add(s.pullWait), add(s.runTime);
