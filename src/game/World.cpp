@@ -134,7 +134,7 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ng_generic_land_forwards", 3, 3}, {"ng_running_land", 2, 1}, {"ng_land_hard", 2, 2}, {"ng_land_rolling", 4, 4},
         {"ng_running_land_stumble", 3, 3}, {"ledgeb_attach_M", 4, 4}, {"ledgeb_idle", 8, 4},
         {"ledgeb_right", 3, 3}, {"ledgeb_right_hustle", 3, 3}, {"ledgeb_climbupflair", 5, 5}, {"ladder_climb_up_fast", 3, 3}, {"ledgeb_climbup_fast", 6, 6}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
-        {"swim_climbout", 12, 6}, {"swim_climbout_to_wallhug", 4, 4}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
+        {"swim_climbout", 12, 6}, {"swim_climbout_A", 4, 1}, {"swim_climbout_B", 2, 2}, {"swim_climbout_C", 4, 8}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
         {"swim_surfaceidle", 8, 6}, {"swim_jump_land", 6, 6}, {"swim_submerged_idle", 10, 10},
         // surface stroke (request 881), swim sprint (896, 934) and its exhaustion (880, 921)
         {"swim_surface_fast_forward", 8, 8}, {"swim_surface_sprint_forward", 8, 8}, {"swim_submerged_sprint", 10, 10},
@@ -294,7 +294,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "swim_jump_land", "swim_surfaceidle",
     "swim_surface", "swim_surfaceidle_to_swim",
     "swim_surfacedive", "swim_submerged_idle", "swim_sub", "swim_sub_up", "swim_sub_down", "swim_climbout",
-    "swim_climbout_to_wallhug", // onto a wall-hug shelf (Player::tryClimbOutToWallHug)
+    "swim_climbout_A", "swim_climbout_B", "swim_climbout_C", // the higher edge (requests 890 -> 889 -> 888, Player::tryClimbOut)
     "bbeam_walk", "bbeam_idle", "bbeam_walk_attach", "bbeam_jumpland", "bbeam_walk_turn180", "drop_to_ledgeb",
     "bbeam_ledgeu_climbup", "ledgeb_jumpuptocrouch", "bbeam_flip_foward", // from the hang by its clearance (Player.cpp State::Hang)
     "bbeam_unbalance_walk_left", "bbeam_unbalance_walk_right", "bbeam_idle_wobble_fwd", // off balance (Player::beam)
@@ -1205,9 +1205,10 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // (3.16, 126.42, 252.84), +0x620 +0x1C0 (126.42, 3.16, 252.84), speed +0x210 1896.33 and the ease curve equal), so
     // in a turn the look point trails the pivot sideways and the view (+0x160, look point - camera) the camera-to-pivot
     // line: 2.1..2.4 deg in a 46.8 deg/s swim circle (w2/Swim9/s3/under-turn.txt, s4/swim-turn-long.txt), which is the
-    // line the swim stick is read against. Swimming modes only: mode 20 was read; under water (mode 19, record 41: no
-    // focus dead zones) the same look record [I] fits tru.exe settling 42.0 deg off its camera-to-pivot line there too
-    // (w2/WineMeasure/s2/under-turn.txt); the other modes keep the look point on the pivot [U: their look records].
+    // line the swim stick is read against. Swimming modes only: under water (mode 19) the look record is the same
+    // (Wine 2026-11-20, w2/WineCheck10/a/cam-under.bin, cam-dive1.bin: +0x620 +0x1C0 (126.42,
+    // 3.16, 252.84), speed 1896.33, ease curve byte-equal to mode 20's; the focus record +0x3B0 +0x1C0 has no dead zones,
+    // record 41); the other modes keep the look point on the pivot [U: their look records].
     const bool lookLags = mode.id == 19 || mode.id == 20;
     const vec3 lookGoal = goal - orbit_.pivotAdd.now();
     if (!lookLags) lookPoint_.reset(); // saves outside the water keep their bytes
@@ -1258,15 +1259,17 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         const vec3 look = glm::normalize(target - orbit_.desired);
         cam_.yaw = std::atan2(look.y, look.x), cam_.pitch = std::asin(std::clamp(look.z, -1.0f, 1.0f));
     }
-    // A cut moves only the camera (+0x90, 0x6017D0) to the target distance +0x1320 at its angles; the distance state +0x1D4
-    // and its return speed +0x1D8 stay, so 0x600200 proposes the point at +0x1D4 again and 0x600710 brings the camera
-    // back to it at the follow speed while +0x1D4 returns toward +0x1320 (Wine, l1_krakenstairs_b 599 {0xC}: entering
-    // stepped the yaw 17.01 -> 19.64 and the pitch -7.48 -> -7.50 (the set's), while +0x1D4 went on 1262.3 -> 1236.3 toward
-    // the 474.1 target; it was teleported in, which resets the camera too; w2/CamRest8/k599tp.txt).
+    // A cut puts the camera (+0x90) and its proposed point (+0x150) at the target distance +0x1320 at its angles (0x6017D0
+    // ends +0x150 = point, +0x90 = +0x150); the distance state +0x1D4 and its return speed +0x1D8 stay. The same frame's
+    // 0x600200 then proposes the point at +0x1D4 again, and 0x600710's step (follow speed + how far the proposed point moved
+    // from +0x150) takes the camera straight there: the cut shows its angles at the distance state, which goes on toward
+    // +0x1320 at its own speed. Wine 2026-11-20 (l1_krakenstairs_b, walked into 599 {0xC} from the unit start,
+    // w2/WineCheck10/b/walk1.txt): mid-frame +0x90 at 474.1 behind her (yaw = hers, pitch -7.50), by the frame's end at
+    // +0x1D4 = 1097.6 at those angles, +0x1D4 1111.8 -> 1097.6 -> ... -> 939.4 (~1030 units/s) while she stayed in.
     if (cut) {
         cam_.yaw = cutYaw, cam_.pitch = cutPitch;
         const vec3 dir(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw), std::sin(cam_.pitch));
-        orbit_.desired = target - dir * orbit_.dist, cam_.position = target - dir * kDistance;
+        cam_.position = orbit_.desired = target - dir * kDistance;
     }
     // Forces (0x5FFB00 -> 0x608B60 per controller, x the look-idle weight 0x5FFA90: 0 until 5 s after the last look
     // input, 1 from 7 s, settings +0xC4 / +0xC8; the clock +0x1E4 runs at +0xCC = 1 x dt also while she moves and caps

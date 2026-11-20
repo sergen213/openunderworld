@@ -704,6 +704,7 @@ private:
     vec3 swimSlide(vec3 pos, vec3 delta, bool clampToSurface = true) const;
     void waterEntry(float dt); // State::SwimSplash: the entry from the air (Tuning "Water entry")
     bool tryClimbOut(float reach);
+    bool tryClimbOutToLedge();                // swim_climbout_A -> _B -> _C onto a ledge 90+ over her root
     bool startDodge(vec2 stick); // under water, target lock held: swim_submerged_dodge_* by the stick (State::SwimDodge)
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
     bool tryClimb(bool fromAir);
@@ -726,7 +727,6 @@ private:
     bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
     bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
     void startHangToWallHug();                        // up onto it from the hang (clearance class 8)
-    bool tryClimbOutToWallHug(float reach);           // swimming out onto such a shelf (clearance class 8)
     void wallHug(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     bool wallHugCorner(float ds);           // shimmying ds along the shelf onto a corner: the corner clip round it
     JumpQuery wallHugQuery(int way) const;  // q68 forward (0) / left (1) / right (-1), q55 the twist up (2)

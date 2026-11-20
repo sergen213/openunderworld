@@ -8137,52 +8137,45 @@ TEST(GameReal, CliffSwanDiveIntoTheSea) {
     EXPECT_EQ(w.health().value(), w.health().max()) << "a 5900-unit fall into the sea costs nothing";
 }
 
-// Climb out of the water onto a wall-hug shelf (OU-PLY-003; chart S237 T1110 -> swim_climbout_to_wallhug, request 887,
-// on clearance result 8 = tru.exe 0x74E290 / 0x74E160 / 0x74BB50 == 1): l2_cliffclimb ledge 936 has a 95-deep notch
-// 50 over the sea (segment 0, 48..80 along it; the only shelf over open water found in the 97 units). Treading off it
-// with the stick toward it she climbs out into the hug, not the plain swim_climbout: the clip's root stands on the shelf
-// from its first frame and turns her half round, Wall_Hug_Idle after, back to the wall 88.496 in from the ledge.
-TEST(GameReal, SwimClimbOutOntoShelf) {
+// Climb out of the sea onto a ledge 90+ over her root: swim_climbout_A -> _B -> _C (requests 890 -> 889 -> 888). tru.exe
+// under Wine (2026-11-20, l2_cliffclimb ledge 936 segment 0, treading 180 out facing it, Forward held;
+// w2/WineCheck10/a/shelf180.txt, c/swim*.txt, d/a*.txt): its heading set square to the ledge, carried into the hang
+// 61..63 out, _C ending 62 in from the line at its height (z 158 here), still facing the wall, then on inland with the
+// stick held. The approach is at 79 along, the point tru.exe attached at (ours takes the nearest point; tru.exe's point
+// rule from elsewhere along the notch is not decoded, OU-PLY-003).
+TEST(GameReal, SwimClimbOutOntoHigherLedge) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    // in the sea off the notch (ledge 936 segment 0, 64 along: (-24233.5, -3181.8, 158), top side (0.986, -0.164))
     UnitGame g(bf, "l2_cliffclimb", {{-24411, -3152, 158}, -0.165f});
     auto& w = g.w;
     const auto* m = markupById(w, 1, 936);
     ASSERT_TRUE(m);
-    const vec2 d = glm::normalize(vec2(m->points[1] - m->points[0])), shelf(-d.y, d.x);
-    const vec3 q = m->points[0] + vec3(d * 64.0f, 0.0f);
+    const vec3 p0 = m->points[0], p1 = m->points[1]; // copies: streaming may grow the markup list
+    const vec2 d = glm::normalize(vec2(p1 - p0)), in(-d.y, d.x);
+    const vec3 q = p0 + vec3(d * 79.0f, 0.0f);
     const auto& s = w.player().state();
     for (int i = 0; i < 900 && s.state != State::SwimTread; ++i) w.tick(held(false, true)); // up to the surface
     for (int i = 0; i < 30; ++i) w.tick({});
-    ASSERT_EQ(s.state, State::SwimTread) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
-    // The swell carries her along the cliff while she rises: treading 180 out from the notch again (the rock under it
-    // stops her stroke ~170 out), facing it.
+    ASSERT_EQ(s.state, State::SwimTread) << game::stateName(s.state);
     game::PlayerState st = s;
-    st.pos = vec3(vec2(q) - shelf * 180.0f, st.pos.z), st.yaw = std::atan2(shelf.y, shelf.x), st.vel = vec3(0);
+    st.pos = vec3(vec2(q) - in * 180.0f, st.pos.z), st.yaw = std::atan2(in.y, in.x), st.vel = vec3(0);
     w.restore(st, st.yaw, -0.25f);
-    bool hug = false, plain = false;
-    for (int i = 0; i < 60 && s.state != State::WallHug; ++i) {
-        w.tick(worldStick(w, shelf));
-        plain |= s.state == State::SwimClimbOut;
+    std::vector<std::string> clips;
+    float hangOut = 0;
+    for (int i = 0; i < 200 && (clips.empty() || s.state == State::SwimClimbOut); ++i) {
+        w.tick(worldStick(w, in));
+        if (s.state != State::SwimClimbOut) continue;
+        if (clips.empty() || clips.back() != s.clip) clips.push_back(s.clip);
+        if (s.clip == "swim_climbout_B") hangOut = -glm::dot(vec2(s.pos - q), in);
+        EXPECT_NEAR(glm::dot(vec2(std::cos(s.yaw), std::sin(s.yaw)), in), 1.0f, 1e-3f) << "square to the ledge";
     }
-    ASSERT_EQ(s.state, State::WallHug) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
-    EXPECT_FALSE(plain);
-    EXPECT_EQ(s.clip, "swim_climbout_to_wallhug");
-    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 936);
-    EXPECT_LT(glm::distance(s.pos, q + vec3(shelf * 88.496f, 0.0f)), 20.0f) << "on the shelf from the clip's first frame";
-    EXPECT_GT(glm::dot(vec2(std::cos(s.yaw), std::sin(s.yaw)), shelf), 0.9f) << "facing the wall as the clip starts";
-    for (int i = 0; i < 400 && s.clip == "swim_climbout_to_wallhug"; ++i) {
-        w.tick({});
-        hug |= s.clip == "Wall_Hug_Idle";
-    }
-    for (int i = 0; i < 30; ++i) w.tick({});
-    hug |= s.clip == "Wall_Hug_Idle";
-    EXPECT_TRUE(hug) << s.clip;
-    EXPECT_EQ(s.state, State::WallHug);
-    EXPECT_NEAR(glm::dot(vec2(std::cos(s.yaw), std::sin(s.yaw)), -shelf), 1, 1e-3) << "back to the wall";
-    EXPECT_LT(glm::distance(s.pos, q + vec3(shelf * 88.496f, 0.0f)), 20.0f);
+    EXPECT_EQ(clips, (std::vector<std::string>{"swim_climbout_A", "swim_climbout_B", "swim_climbout_C"}));
+    EXPECT_NEAR(hangOut, 62.0f, 1.5f) << "the hang (tru.exe 61..63 out)";
+    EXPECT_NE(s.state, State::SwimClimbOut);
     EXPECT_LT(s.water, 0);
+    EXPECT_NEAR(glm::dot(vec2(s.pos - q), in), 62.0f, 2.0f) << "62 in from the line (tru.exe 62)";
+    EXPECT_NEAR(s.pos.z, q.z, 2.0f);
+    EXPECT_NEAR(glm::dot(vec2(std::cos(s.yaw), std::sin(s.yaw)), in), 1.0f, 1e-3f) << "still facing the wall";
 }
 
 // l7_yggdrasil_end volume 8309: SetLevel (watervolumebase 1) lowers the surface by script; Lara treading on it goes

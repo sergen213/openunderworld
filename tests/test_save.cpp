@@ -1013,11 +1013,12 @@ TEST(StreamReal, CameraTriggerFocusPointTurnsTheLook) {
 }
 
 // Trigger command 0xC (a cut): l1_krakenstairs_b 599 is one of the two volumes that carry it (with l7_arctic_sea 9226).
-// Entering it runs 0x601D30, which ends in 0x6017D0: the focus jumps to its goal and the camera (+0x90) is put at the
-// target distance +0x1320 at the angles of the active override, else the force set's target, else behind her, level;
-// the distance state +0x1D4 stays, so the camera then follows back out to it while it returns toward +0x1320 (Wine:
-// +0x1D4 1262.3 -> 1236.3 toward 474.1 after entering, the yaw at 19.64 = behind her, the pitch at the set's -7.50;
-// w2/CamRest8/k599tp.txt).
+// Entering it runs 0x601D30, which ends in 0x6017D0: the focus jumps to its goal and the camera (+0x90) and its proposed
+// point (+0x150) are put at the target distance +0x1320 at the angles of the active override, else the force set's
+// target, else behind her, level; the distance state +0x1D4 stays, so the same frame's follow (0x600710: follow speed +
+// how far the proposed point moved) takes the camera straight back to +0x1D4 at those angles. Wine 2026-11-20, walked in
+// from the unit start (w2/WineCheck10/b/walk1.txt): mid-frame at 474.1, at the frame's end 1097.6 = +0x1D4, yaw = hers,
+// pitch -7.50, +0x1D4 then easing 1111.8 -> 939.4 toward 474.1 at ~1030 units/s while she stays in.
 TEST(StreamReal, CameraTriggerCutPutsTheCameraAtItsAngles) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1056,16 +1057,17 @@ TEST(StreamReal, CameraTriggerCutPutsTheCameraAtItsAngles) {
     w.restore(s, w.camera().yaw, w.camera().pitch);
     w.tick({});
     ASSERT_TRUE(w.script().find(599)->inside);
-    // The cut: behind her (yaw set 11's target), at the on-foot pitch set 4's -7.5 deg, the camera at 474.08 plus the one
-    // follow step it has made back out this tick (3793.1 / 60); the distance state as it was.
+    // The cut: behind her (yaw set 11's target), at the on-foot pitch set 4's -7.5 deg, at the distance state, which
+    // stays as it was and then eases in toward 474.08.
     EXPECT_NEAR(glm::degrees(std::remainder(w.camera().yaw - w.player().state().yaw, 6.2831853f)), 0.0f, 0.1f);
     EXPECT_NEAR(glm::degrees(w.camera().pitch), -7.5f, 0.05f);
-    const float cutDistance = glm::distance(w.camera().position, w.cameraPivot());
-    EXPECT_GT(cutDistance, 474.0f);
-    EXPECT_LT(cutDistance, 474.1f + 3793.1f / 60.0f + 1.0f);
-    EXPECT_NEAR(w.cameraDistance(), distBefore, 2.0f) << "+0x1D4 stays (Wine: 1262.3 -> 1236.3 easing toward 474.1)";
+    EXPECT_NEAR(w.cameraDistance(), distBefore, 2.0f) << "+0x1D4 stays";
+    EXPECT_NEAR(glm::distance(w.camera().position, w.cameraPivot()), w.cameraDistance(), 1.0f)
+        << "shown at the distance state (Wine: 1097.6 = +0x1D4 at the frame's end, not 474.1)";
+    const float cutDistance = w.cameraDistance();
     for (int i = 0; i < 4; ++i) w.tick({});
-    EXPECT_NEAR(glm::distance(w.camera().position, w.cameraPivot()), w.cameraDistance(), 1.0f) << "the camera follows back out";
+    EXPECT_NEAR(glm::distance(w.camera().position, w.cameraPivot()), w.cameraDistance(), 1.0f);
+    EXPECT_LT(w.cameraDistance(), cutDistance - 1.0f) << "easing in toward 474.08";
     EXPECT_NEAR(glm::degrees(std::remainder(w.camera().yaw - w.player().state().yaw, 6.2831853f)), 0.0f, 0.1f);
 }
 
