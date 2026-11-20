@@ -801,7 +801,10 @@ l1_seafloor: ret-patching 0x6D8C20 removes all the blue, and with filter 5292's 
 without the pass but stays blue with it, alpha 0.56 at Lara):
 - Full-screen pass [O]: 0x5D4AB0 → 0x6DA130 registers the unit data `+0x160` count / `+0x164` 0x100-byte records
   (UnderWaterRayDrawable). Each frame 0x6D9DA0 sets "under water" (0x5EA200: camera below Lara's water surface; also
-  less than 600 units above it, strength 1 − h / 600) and draws the camera unit's records with `+0x84` bit 0 through
+  less than 600 units above it while the camera looks down into the water, acos(camera matrix row 2 z) > 2.0 rad
+  (0x5EA200 → 0x431CA0 = acos), strength 1 − h / 600; before 0.58.0 ours skipped the view test, so a level view while
+  treading was tinted; [U] the third gate 0x69E270, water +0x2D0 → +0x2EC flags +0x7C bit 1) and draws the camera
+  unit's records with `+0x84` bit 0 through
   0x6D8C20: the `+0x74` material (l1 5767, l7 19575; PS lib 410 slot 0) over the screen, alpha-blended. Its
   MaterialParams c100 = surface colour + alpha at the eye (l1 0.235 / 0.455 / 0.608, 0.6), c101 = deep colour + full-fog
   distance (l1 0.031 / 0.118 / 0.157, 45000; l7 0.216 / 0.408 / 0.663, 0.5 and 0 / 0.059 / 0.176, 60000). Colour =
