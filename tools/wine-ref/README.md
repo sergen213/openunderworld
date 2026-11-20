@@ -40,6 +40,7 @@ health, camera and water columns); helpers link statically.
 | `WINEPREFIX` | `$OU_WREF_DIR/prefix` | the private prefix |
 | `OU_TRU_DIR` | `$OU_WORK/wine-drive/game` | tru.exe's directory |
 | `OU_WREF_NAME` | `wineref` | compositor socket `ou-<name>`, units `ou-<name>-kwin.scope` / `ou-<name>-tru.service` |
+| `OU_WREF_CPUS` | `0-3` | CPUs `tru.sh` pins tru.exe to (`taskset -c`; at most 4: its CPUCount 0x4A21D0 overflows with 32); concurrent harnesses take separate sets |
 
 ## A session
 

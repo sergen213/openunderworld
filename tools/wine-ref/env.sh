@@ -3,6 +3,7 @@
 # WINEPREFIX    a private Wine prefix with DXVK's d3d9.dll installed (see README "Prerequisites")
 # OU_TRU_DIR    a writable copy of the game install (tru.exe's directory) with D3D9.dll renamed away
 # OU_WREF_NAME  name used for the compositor socket and the systemd units (unique per concurrent harness)
+# OU_WREF_CPUS  CPUs tru.exe is pinned to (taskset -c; default 0-3: its CPUCount 0x4A21D0 overflows with 32 CPUs)
 # The caller sets WREF_SRC (this directory) before sourcing.
 : "${OU_WORK:=/mnt/1st4TB/Projects/openunderworld-work}"
 : "${OU_WREF_DIR:=$OU_WORK/wine-ref}"
