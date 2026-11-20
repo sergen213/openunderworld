@@ -580,10 +580,12 @@ TEST(Game, SwimTurnLagsLikeTru) {
     for (int i = 0; i < 90; ++i) w->tick(forward());
     ASSERT_EQ(s.state, State::SwimSurface);
     ASSERT_NEAR(glm::length(s.vel), 1348.6f, 1);
-    float lag = 0, slowest = 1e9f, prevCam = w->camera().yaw;
+    // The swim stick is read against the view (World::stickYaw: the look point's line): the stick toward world +x under it.
+    const auto viewYaw = [&] { return w->stickYaw(); };
+    float lag = 0, slowest = 1e9f, prevCam = viewYaw();
     for (int i = 0; i < 60; ++i) {
-        Actions turn; // the stick toward world +x under the current camera
-        const float cy = w->camera().yaw;
+        Actions turn;
+        const float cy = viewYaw();
         turn.move = {std::sin(cy), std::cos(cy)};
         const float y0 = s.yaw, v0 = glm::length(glm::vec2(s.vel)), carried = std::abs(std::remainder(cy - prevCam, 6.2831853f));
         prevCam = cy;
@@ -604,14 +606,15 @@ TEST(Game, SwimTurnLagsLikeTru) {
 // tru.exe under Wine (2026-11-16; w2/WineMeasure/s1/swim-turn.txt at the surface, s2/under-turn.txt under water):
 // Forward + Right / Left held 3 s with the camera free (it drags after her and swings behind her, yaw set 11), then
 // Right / Left let go:
-// - her heading's angle off the view line runs to the stick's 45 deg at a constant ~100 deg/s (3.3 deg a 33 ms
-//   sample), both ways; on the release back to 0 at ~101 deg/s, the world turn rate 61 deg/s over the first 0.21 s
+// - her heading's angle off the camera-to-pivot line runs to 42 deg at 95..97 deg/s over the first 0.2 s, both ways;
+//   on the release back to 1.5 deg past 0 in 0.40..0.43 s, the world turn rate 61 deg/s over the first 0.21 s
 //   (52.2 over the 0.25 s window that starts 38 ms before the release) and 73 over the next 0.25 s;
-// - the circle settles at 46.7 / 46.4 deg/s (surface), 48.3 / 48.0 deg/s (under water), the same both ways;
-// - her velocity trails her heading by 5.4 deg (surface) / 5.6 deg (under water) in it.
-// Ours settles ~2 deg/s faster: tru.exe stops 2.9 deg short of 45 off its camera-to-pivot line (42.1 deg in both
-// traces, and 1.5 deg past 0 after the release), ours 0.8 deg (one tick of the camera's turn), so her velocity crosses
-// the view a little faster and drags the camera round faster [U: what line tru.exe's stick is read against].
+// - the circle settles at 46.7 / 46.4 deg/s (surface), 48.3 / 48.0 deg/s (under water), the same both ways, 42.1 / 42.0
+//   deg off the camera-to-pivot line: the stick is read against the view (+0x160), which trails that line by 2.1..2.4
+//   deg in the turn (2026-11-20, w2/Swim9/s3 and s4: she settles 44.5 off the view) because the look tracker lags the
+//   pivot sideways (World::updateOrbitCamera, look tracker);
+// - her velocity trails her heading by 5.4 deg (surface) / 5.6 deg (under water) in it (ours 0.4..0.5 less: the 0.25
+//   blend of a 30 Hz frame spread over two 60 Hz ticks).
 TEST(Game, SwimCircleTurnsLikeTru) {
     struct Run { float press, steady, offView, velLag, releaseWorld, releaseClose; };
     const auto run = [](bool under, float side) {
@@ -658,12 +661,12 @@ TEST(Game, SwimCircleTurnsLikeTru) {
         const Run right = run(under, 1), left = run(under, -1);
         for (const Run& r : {right, left}) {
             const char* where = under ? "under water" : "at the surface";
-            EXPECT_NEAR(r.press * deg, 100.6f, 1.5f) << where << ": the angle off the view line runs at 1.755 rad/s";
-            EXPECT_NEAR(r.steady * deg, under ? 48.2f : 46.6f, 2.5f) << where << ": the circle";
-            EXPECT_NEAR(r.offView * deg, 44.2f, 0.3f) << where << ": settled at the stick's angle (tru.exe 42.1)";
-            EXPECT_NEAR(r.velLag * deg, under ? 5.6f : 5.4f, 0.5f) << where << ": the velocity trails her heading";
-            EXPECT_NEAR(r.releaseWorld * deg, 61.0f, 6.0f) << where << ": the turn back on the release";
-            EXPECT_NEAR(r.releaseClose, 0.45f, 0.06f) << where << ": back on the view line (tru.exe 0.40..0.43 s)";
+            EXPECT_NEAR(r.press * deg, 96.0f, 1.5f) << where << ": the angle off the camera-to-pivot line (tru.exe 95..97)";
+            EXPECT_NEAR(r.steady * deg, under ? 48.2f : 46.6f, 1.5f) << where << ": the circle";
+            EXPECT_NEAR(r.offView * deg, 42.1f, 0.3f) << where << ": settled off the camera-to-pivot line";
+            EXPECT_NEAR(r.velLag * deg, under ? 5.6f : 5.4f, 0.6f) << where << ": the velocity trails her heading";
+            EXPECT_NEAR(r.releaseWorld * deg, 61.0f, 4.0f) << where << ": the turn back on the release";
+            EXPECT_NEAR(r.releaseClose, 0.42f, 0.03f) << where << ": back on the line (tru.exe 0.40..0.43 s)";
         }
         EXPECT_NEAR(right.steady, left.steady, glm::radians(0.1f)) << "the same both ways";
         EXPECT_NEAR(right.releaseWorld, left.releaseWorld, glm::radians(0.1f));

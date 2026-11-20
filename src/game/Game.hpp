@@ -918,6 +918,12 @@ public:
     const Player& player() const { return player_; }
     const PlayerState& previous() const { return prev_; }
     const CameraState& camera() const { return cam_; }
+    // The yaw the stick is read against (World::tick): while swimming the view's (the look point's line, which trails
+    // the camera-to-pivot line in a turn), elsewhere the orbit's.
+    float stickYaw() const {
+        const vec2 view(cam_.target - cam_.position);
+        return lookPoint_ && glm::length(view) > 1e-3f ? std::atan2(view.y, view.x) : cam_.yaw;
+    }
     const CameraState& previousCamera() const { return prevCam_; }
     // Field camera view (World::tick): on, and its zoom 0..1 (the app draws the g_binoculars viewfinder).
     bool fieldCamera() const { return fieldCamera_; }
@@ -1554,6 +1560,7 @@ private:
     std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
+    std::optional<vec3> lookPoint_; // its look point (+0x620), lagging the same goal while swimming (World.cpp)
     // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
     // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
     // its tick).
