@@ -24,11 +24,11 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 | [08](#08-bhogavati-level-2---coastal-thailand-part-2) | unverified | partial | partial | n/a | partial | partial | n/a | — | 4 (0) |
 | [09](#09-the-ancient-world-level-2---coastal-thailand-part-3) | unverified | unverified | unverified; 2 matches | n/a | unverified | partial | n/a | — | 4 (0) |
 | [10](#10-a-puppet-no-longer-level-2---coastal-thailand-part-4) | unverified; 1 unmeasured | unverified; 1 matches | unverified; 2 matches | partial; 6 matches | unverified; 1 matches | partial | n/a | 1 matches | 2 (0) |
-| [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 1 matches / 2 unmeasured | n/a | partial; 1 open | partial; 1 differs; 1 open | n/a | — | 4 (0) |
-| [12](#12-the-unnamed-days-level-4---southern-mexico-part-1) | unverified; 2 matches | unverified | partial | n/a | unverified | partial; 1 matches / 1 unmeasured | partial | — | 2 (0) |
-| [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 4 matches | implemented; 1 matches | partial | n/a | partial | unverified; 1 matches / 1 unmeasured | unverified | — | 5 (1) |
+| [11](#11-protected-by-the-dead-level-3---croft-manor) | unverified; 1 differs / 1 matches | implemented; 2 matches | verified; 1 matches / 2 unmeasured | n/a | partial | partial; 1 differs; 1 open | n/a | — | 4 (0) |
+| [12](#12-the-unnamed-days-level-4---southern-mexico-part-1) | unverified; 2 matches | unverified | partial | n/a | unverified; 3 differs / 1 matches / 1 unmeasured; 2 open | partial; 1 matches / 1 unmeasured | partial | — | 2 (0) |
+| [13](#13-xibalba-level-4---southern-mexico-part-2) | unverified; 4 matches | implemented; 1 matches | partial | n/a | partial; 3 differs / 1 matches / 1 unmeasured; 2 open | unverified; 1 matches / 1 unmeasured | unverified | — | 5 (1) |
 | [14](#14-the-midgard-serpent-level-4---southern-mexico-part-3) | partial | partial; 2 matches | partial | n/a; 1 matches | partial | partial; 2 matches | partial | — | 5 (0) |
-| [15](#15-land-of-the-dead-level-4---southern-mexico-part-4) | unverified; 1 matches | unverified; 2 matches | partial | n/a; 1 matches | partial | partial; 3 matches / 1 unmeasured | unverified | — | 5 (0) |
+| [15](#15-land-of-the-dead-level-4---southern-mexico-part-4) | unverified; 1 matches | unverified; 2 matches | partial | n/a; 1 matches | partial; 3 differs / 1 matches / 1 unmeasured; 2 open | partial; 3 matches / 1 unmeasured | unverified | — | 5 (0) |
 | [16](#16-gate-of-the-dead-level-5---jan-mayen-island-part-1) | unverified | unverified | n/a | n/a | partial | partial; 1 unmeasured | unverified | — | 3 (0) |
 | [17](#17-valhalla-level-5---jan-mayen-island-part-2) | implemented | partial | partial | n/a | partial | partial; 1 differs / 1 matches / 1 unmeasured | unverified | — | 2 (0) |
 | [18](#18-rituals-old-level-6---andaman-sea) | unverified | unverified | n/a | n/a | partial | n/a | n/a | — | 2 (1) |
@@ -216,7 +216,7 @@ Matrix: [11_protected_by_the_dead.md](matrix/11_protected_by_the_dead.md). Units
 | Traversal | implemented | M02 Free leaps off a hang: matches, M07 Pole fling onto a platform: matches | — |
 | Grapple | verified | M20 Rope she hangs on after a jump with the rope: matches, M20 Swing with Forward held: growth and limit: unmeasured, M20 Roped walk, walking off the edge: unmeasured | — |
 | Swimming / water | n/a | unmeasured here | — |
-| Combat / AI | partial | unmeasured here | OU-CMB-005 |
+| Combat / AI | partial | unmeasured here | — |
 | Objects / puzzles | partial | M103 Fire / script death volumes: differs | OU-PZL-001 |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
@@ -233,7 +233,7 @@ Matrix: [12_unnamed_days.md](matrix/12_unnamed_days.md). Units: `l4_trailstart`,
 | Traversal | unverified | unmeasured here | — |
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
-| Combat / AI | unverified | unmeasured here | — |
+| Combat / AI | unverified | M31 Pistol damage in play (2026-11-20): differs, M40..M46, M82..M84 Enemies (bats, nagas, spiders, cats, poachers, thralls, mercenaries, sharks): unmeasured, M44 / M45 l4_ballcourt "combat 4": births and health (2026-11-20): matches, M44 l4_ballcourt panther 6532 against Lara (2026-11-20): differs, M45 l4_ballcourt poachers 6538 / 6539 without Lara (2026-11-20): differs | OU-CMB-006, OU-CMB-008 |
 | Objects / puzzles | partial | M52 Pole lever by hanging weight: unmeasured, M56 Push / pull blocks: matches | — |
 | Vehicle | partial | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
@@ -250,7 +250,7 @@ Matrix: [13_xibalba.md](matrix/13_xibalba.md). Units: `l4_ballcourt`, `l4_temple
 | Traversal | implemented | M03 Drop to hang: matches | — |
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
-| Combat / AI | partial | unmeasured here | — |
+| Combat / AI | partial | M31 Pistol damage in play (2026-11-20): differs, M40..M46, M82..M84 Enemies (bats, nagas, spiders, cats, poachers, thralls, mercenaries, sharks): unmeasured, M44 / M45 l4_ballcourt "combat 4": births and health (2026-11-20): matches, M44 l4_ballcourt panther 6532 against Lara (2026-11-20): differs, M45 l4_ballcourt poachers 6538 / 6539 without Lara (2026-11-20): differs | OU-CMB-006, OU-CMB-008 |
 | Objects / puzzles | unverified | M52 Pole lever by hanging weight: unmeasured, M56 Push / pull blocks: matches | — |
 | Vehicle | unverified | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
@@ -285,7 +285,7 @@ Matrix: [15_land_of_the_dead.md](matrix/15_land_of_the_dead.md). Units: `l4_pool
 | Traversal | unverified | M07 Pole grab from a jump: matches, M07 Pole fling to the next pole: matches | — |
 | Grapple | partial | unmeasured here | — |
 | Swimming / water | n/a | M66 Deadly liquid (eitr): matches | — |
-| Combat / AI | partial | unmeasured here | — |
+| Combat / AI | partial | M31 Pistol damage in play (2026-11-20): differs, M40..M46, M82..M84 Enemies (bats, nagas, spiders, cats, poachers, thralls, mercenaries, sharks): unmeasured, M44 / M45 l4_ballcourt "combat 4": births and health (2026-11-20): matches, M44 l4_ballcourt panther 6532 against Lara (2026-11-20): differs, M45 l4_ballcourt poachers 6538 / 6539 without Lara (2026-11-20): differs | OU-CMB-006, OU-CMB-008 |
 | Objects / puzzles | partial | M52 Pole lever by hanging weight: unmeasured, M56 Push / pull blocks: matches, M67 Crushers: matches, M68 Flame jets: matches | — |
 | Vehicle | unverified | unmeasured here | — |
 | Camera / systems | — | unmeasured here | — |
@@ -405,9 +405,9 @@ Rows of REFERENCE_COMPARISON whose evidence names no chapter unit (synthetic sce
 | Traversal | 17 matches / 15 unmeasured |
 | Grapple | 9 unmeasured |
 | Swimming / water | 5 matches / 7 unmeasured |
-| Combat / AI | 1 matches / 17 unmeasured |
+| Combat / AI | 1 differs / 1 matches / 15 unmeasured |
 | Objects / puzzles | 22 unmeasured |
 | Vehicle | 9 unmeasured |
 | Camera / systems | 4 matches / 12 unmeasured |
 
-Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-CMB-004, OU-DOC-003, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PHY-003, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PLY-016, OU-PLY-017, OU-PLY-018, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-005, OU-SCR-006, OU-SCR-007, OU-SWM-003, OU-TST-001, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
+Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-CMB-004, OU-CMB-007, OU-DOC-003, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PHY-003, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PLY-016, OU-PLY-017, OU-PLY-018, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-005, OU-SCR-006, OU-SCR-007, OU-SWM-003, OU-TST-001, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.

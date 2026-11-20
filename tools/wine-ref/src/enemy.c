@@ -15,6 +15,11 @@
 //                                   every second: position, health, "hurt <amount>" on a drop (and a line whenever she
 //                                   moved 50 or more since the last line: teleports); [set] writes that
 //                                   health first; env HEAL=<h>: put back to 1000 when under h (default: never)
+//  enemy fight <ms> <period> uid... every period ms (5 for timings), printed when it changes: Lara's health ("hurt
+//                                   <amount>"), each enemy's health (AI + 0x2C64, float: "hit <uid> <amount> -> <health>"),
+//                                   the player data's ammo words (u16 at +0x51C + 2 slot, slots 0..7: "ammo ..."),
+//                                   her upper-body anim word (+0xC18 of the player instance) and every 100 ms the positions
+//                                   (Lara, then each enemy with its distance). env HEAL=<h>: Lara back to 1000 under h.
 #include <windows.h>
 #include <math.h>
 #include <stdio.h>
@@ -145,6 +150,43 @@ int main(int argc, char** argv) {
         timeEndPeriod(1);
         return 0;
     }
-    puts("usage: enemy list | enemy watch <ms> <period> uid... | enemy zones uid... | enemy hp <ms> <period> [set]");
+    if (argc > 4 && !strcmp(argv[1], "fight")) {
+        int total = atoi(argv[2]), period = atoi(argv[3]), ne = argc - 4 < MAXE ? argc - 4 : MAXE;
+        long uid[MAXE]; float eh[MAXE]; for (int k = 0; k < ne; ++k) uid[k] = atol(argv[4 + k]), eh[k] = -1e9f;
+        float heal = getenv("HEAL") ? (float)atof(getenv("HEAL")) : -1e9f;
+        LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
+        float hp0 = -1; unsigned short am0[8] = {0xFFFF}; DWORD an0 = 0xFFFFFFFF; double lastPos = -1000; timeBeginPeriod(1);
+        for (;;) {
+            QueryPerformanceCounter(&t); double ms = (t.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
+            if (ms > total) break;
+            DWORD L = rd32(0xE7F094), pd = rd32(0xFADB58);
+            float lx = rdf(L + 0x20), ly = rdf(L + 0x24), lz = rdf(L + 0x28), hp = pd ? rdf(pd + 0x628) : -1;
+            if (hp0 >= 0 && hp < hp0 - 0.05f) printf("%.1f hurt %.2f -> %.2f\n", ms, hp0 - hp, hp);
+            hp0 = hp;
+            if (pd && hp < heal) { float full = 1000; WriteProcessMemory(h, (void*)(size_t)(pd + 0x628), &full, 4, 0); hp0 = full; printf("%.1f heal\n", ms); }
+            unsigned short am[8] = {0}; if (pd) ReadProcessMemory(h, (void*)(size_t)(pd + 0x51C), am, sizeof am, 0);
+            if (memcmp(am, am0, sizeof am)) { printf("%.1f ammo %u %u %u %u %u %u %u %u\n", ms, am[0], am[1], am[2], am[3], am[4], am[5], am[6], am[7]); memcpy(am0, am, sizeof am); }
+            DWORD an = rd32(L + 0xC18);
+            if (an != an0) { printf("%.1f an %lu\n", ms, an); an0 = an; }
+            const int pos = ms - lastPos >= 100;
+            if (pos) printf("%.1f lara %.1f %.1f %.1f hp %.1f\n", ms, lx, ly, lz, hp), lastPos = ms;
+            for (int k = 0; k < ne; ++k) {
+                DWORD i = find(uid[k]), c = i ? rd32(i + 0x2D0) : 0, ai = c ? rd32(rd32(c) + 0x2EC) : 0;
+                float eh1 = ai ? rdf(ai + 0x2C64) : -1;
+                if (eh[k] > -1e8f && eh1 != eh[k]) printf("%.1f hit %ld %.2f -> %.2f\n", ms, uid[k], eh[k] - eh1, eh1);
+                eh[k] = eh1;
+                if (pos && i) {
+                    float x = rdf(i + 0x20), y = rdf(i + 0x24), z = rdf(i + 0x28);
+                    printf("%.1f e %ld %.1f %.1f %.1f rz %.3f d %.1f h %.2f\n", ms, uid[k], x, y, z, rdf(i + 0x38),
+                           sqrtf((x - lx) * (x - lx) + (y - ly) * (y - ly) + (z - lz) * (z - lz)), eh1);
+                }
+            }
+            fflush(stdout);
+            Sleep(period);
+        }
+        timeEndPeriod(1);
+        return 0;
+    }
+    puts("usage: enemy list | enemy watch <ms> <period> uid... | enemy fight <ms> <period> uid... | enemy zones uid... | enemy hp <ms> <period> [set]");
     return 2;
 }

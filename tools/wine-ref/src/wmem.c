@@ -147,6 +147,20 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    if (!strcmp(argv[1], "state")) { // state: main state, front-end sub-state, the gameTracker's unit name, the player, Lara
+        // mainTracker 0xE7ED60 +0 (MAIN_ProcessMainState 0x5E0090: 1 play, 2 level load, 9 paused frame, 10 front end);
+        // front-end sub-state byte 0xFAE8DA (MAIN_FrontEnd 0x5DAE20: 0 legal, 1 intro movie, 2 press start, 3 main menu,
+        // 4 starting a new game, 6 / 7 attract mode, 8 new-game movie); unit = gameTracker 0xE7F088 + 0x38; flags =
+        // gameTracker + 0x2C (bit 0x10000000 while the pause menu is open [O Wine 2026-11-20: set on Escape in play,
+        // cleared on the next])
+        char nm[33] = {0}; ReadProcessMemory(h, (void*)0xE7F0C0, nm, 32, 0);
+        unsigned char fe = 0; ReadProcessMemory(h, (void*)0xFAE8DA, &fe, 1, 0);
+        DWORD p = rd32(h, 0xE7F094); float L[3] = {0};
+        if (p) ReadProcessMemory(h, (void*)(p + 0x20), L, 12, 0);
+        printf("main %lu fe %u flags %08lx unit %s player %08lx pos %.1f %.1f %.1f\n", rd32(h, 0xE7ED60), fe, rd32(h, 0xE7F0B4),
+               nm[0] ? nm : "-", p, L[0], L[1], L[2]);
+        return 0;
+    }
     if (!strcmp(argv[1], "mask")) {
         DWORD p = rd32(h, 0xE7F094);
         printf("player %08lx mask23C %08lx mask240 %08lx\n", p, p ? rd32(h, p + 0x23C) : 0, p ? rd32(h, p + 0x240) : 0);

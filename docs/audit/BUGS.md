@@ -156,7 +156,9 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-CMB-001 | combat | Head shot opened below a full adrenaline meter | Fixed-verified | pre-existing | — |
 | OU-CMB-002 | AI | No enemy jump-over (NavPower links), flyers patrol straight, poacher rifle undrawn | Open | pre-existing | — |
 | OU-CMB-004 | hazards | Valaskjalf rollers hurt whenever she is in them; tru.exe's stop after a 4-hit burst | Reproduced (Wine, one trial) | pre-existing | — |
-| OU-CMB-005 | AI | The study's two panther thralls (l3_secretchamber) never appear after the gauntlet cinematic 4654 | Reproduced (ours; the original from the walkthrough only) | pre-existing | — |
+| OU-CMB-006 | AI | l4_ballcourt panther 6532 alerts on Lara 10 950 units away at its birth and charges; tru.exe's keeps patrolling the lower court | Reproduced (Wine, three runs) | pre-existing | — |
+| OU-CMB-007 | combat | Pistols fire every 333 ms (tru.exe 281 ms) and hit 6..8 harder at 1800..3600 away | Reproduced (Wine, one fight) | pre-existing | — |
+| OU-CMB-008 | AI | l4_ballcourt poachers 6538 / 6539 never reach door 6505; in tru.exe they can walk into it and are crushed | Reproduced (Wine, one of two runs) | pre-existing | — |
 | OU-VEH-001 | motorcycle | Brake strength, slopes, coasting, top speed, pit jump unmeasured | Open | pre-existing | C-MEASURE |
 | OU-PHY-001 | physics | Body-A motion and fixed riders on a freed body A not simulated (fixed joints done, ecf03db) | Fixed-verified (0.56.0, merge 02b7a09: poses follow body A; fixed riders follow a freed body A [I: mass not merged]) | pre-existing | C-JOINT |
 | OU-PHY-002 | physics | Push-block / Thor-mechanism speed fitted to one block trace | Open | pre-existing | C-MEASURE |
@@ -1497,22 +1499,53 @@ Open · pre-existing.
 - Test: proposed: the burst length against the Wine trace once the trigger is known.
 - Status · Origin: Reproduced (Wine, one trial) · pre-existing.
 
-**OU-CMB-005 The study's panther thralls never appear**
-- Repro: self-test `ch11_study_gauntlet` (l3_stairhall checkpoint 4699 → l3_secretchamber, volume 4666 → cinematic
-  4654, skipped: its events and placement run), then 25 s standing in the study (a draft step; `enemies.count`,
-  `enemy.<uid>.type`).
-- Expected: the walkthrough (C11-25 / C11-26, details/manor7.html): two tiger thralls climb down a pillar after the
-  cinematic and attack; the enemy survey (docs/GAMEPLAY.md "Enemies per chapter") places `panther_thrall` ×2 in
-  l3_secretchamber. Not measured under Wine.
-- Actual: `enemies.count` 2 throughout, both `small_brown_spider` still clinging in l3_stairhall (4712 at (−17023,
-  2050)); no thrall is spawned. The scenario's old note counted those two as "the two thralls".
-- Files: the enemy spawning of placed intros (`src/game/ai`, World enemy births), l3_secretchamber's scripts after
-  4654.
-- Cause: [U] what births the two placed thralls (an intro flag, a script activation after the cinematic, or the
-  pillar-climb animation's start) is not decoded.
-- Fix: none made. Test: once they spawn, `fight` them in `ch11_study_gauntlet` (the autopilot's finishing move ends a
-  downed thrall).
-- Status · Origin: Reproduced (ours; the original from the walkthrough only) · pre-existing.
+**OU-CMB-006 l4_ballcourt panther 6532 engages Lara from 10 950 units**
+- Repro: l4_ballcourt, Lara spawned at ours (−32783, 3585), yaw −0.471, Forward 0.5..3.8 s over trigger plane 6543
+  ("combat 4": dispatcher 6536 births panther 6532 and poachers 6537..6539 at 1.13 s), then standing. World probe
+  output `openunderworld-work/MenuDriver11-wine/ours/idle-6543.txt` (on NVMe, `/mnt/4TBNVMEXT4/...`).
+- Expected (tru.exe under Wine 2026-11-20, `tools/wine-ref/sessions/l4_ballcourt_combat.sh` from a chapter-4 save,
+  tru = ours + (5881.3, −10787.3, −15435.9); traces `MenuDriver11-wine/ref/bc-idle-run1.txt`, `bc-idle-run2.txt`,
+  `bc-lowercourt-run1.txt`): the same births at 1.09..1.13 s, then the panther patrols the lower court (z ≈ ours 2500)
+  8500..14 000 from Lara for 70 s (two runs) and never turns to her; with Lara placed on that court it stays 2200..4600
+  off for 50 s; shot with the pistols it closed to 2350 and walked away again. No blow in any run.
+- Actual: Patrol, then Alert 2.5 s after the birth with Lara **10950** away, Chase, at her in 7 s, blows of 50 every
+  1.50..1.72 s; she dies at 40 s.
+- Files: `src/game/ai/Enemy.cpp` (senses, alert), `src/game/ai/EnemyData.cpp` (the cat's senses / guard records).
+- Cause: [U]. An alert at 10 950 is far outside any decoded senses range (combat senses, lose-track 2528): either a
+  scripted awareness in combat 4's dispatcher reaches ours as "sees Lara", or the guard zone / region of 6532 that keeps
+  tru.exe's panther on its court (`enemy zones 6532` was not logged) is not applied. Trace both first.
+- Fix: none made. Test: proposed: a World test of the probe's placement, the panther not in Chase / Attack within 60 s
+  while Lara stands past 6543.
+- Status · Origin: Reproduced (Wine, three runs) · pre-existing.
+
+**OU-CMB-007 Pistol refire and damage**
+- Repro: same encounter; Lara at ours (−20981, 9412) on the lower court, target lock + fire held (World probe:
+  `MenuDriver11-wine/ours/pistols-6543.txt`, draw 7.0 s, aim 7.3 s, fire 7.5..20 s).
+- Expected (Wine 2026-11-20, `MenuDriver11-wine/ref/bc-pistols-run1.txt`, G + H held 7.2 s at panther 6532, health
+  700): a hit every **281.0 ms** (21 intervals, 252..302 ms), hands alternating; damage 27.28 / 28.19 / 27.99 / 27.40 /
+  26.77 / 26.17 at 2350..3460 away, then 25.50..25.61 at 3623..3646, one extra 9.60 between two regular hits;
+  poacher_long_range 6537 at 1834: 27.13.
+- Actual: `WeaponDef::refire` = the fire clip's 10 keys / 30 = **333.3 ms** (shots exactly 20 ticks apart);
+  `WeaponDef::damageAt` linear 40 → 30 over 0..4000 gives 34.1..30.9 at those distances (35.4 at 1834).
+- Files: `src/game/Combat.cpp` (`refire`, `damageAt`, `strike`).
+- Cause: [U]. Refire: tru.exe starts the next shot ~8.4 frames (at 30 Hz) after the last, before the 10-key clip ends
+  (the clip rate or an earlier re-trigger event is not decoded). Damage: not a fixed factor (×0.77..0.85); the
+  distance tru.exe feeds the falloff (muzzle, hit point), hit-zone scaling and the 9.6 hit are not decoded.
+- Fix: none made; decode the fire chart's re-trigger and 0x6C9E50's damage inputs first. Reload, draw and the other
+  weapons are unmeasured (the save carries pistols only).
+- Status · Origin: Reproduced (Wine, one fight) · pre-existing.
+
+**OU-CMB-008 l4_ballcourt poachers and door 6505**
+- Repro: as OU-CMB-006, 120 s standing.
+- Expected (Wine 2026-11-20, `bc-idle-run1.txt`): poachers 6539 and 6538 walk to the pole-lever door 6505
+  (`ca_rb_wall_hpole_door`, crush 200, GAMEPLAY.md hazards table) and die there at 27.8 s / 38.5 s, each by 200, 200 and 100
+  within 33 ms, then fall to the floor below (z −12226 against −11901); in run 2 6539 came near the door again
+  and both lived 70 s. No poacher fired at Lara in three runs.
+- Actual: 6538 Idle, 6539 / 6537 Patrol elsewhere; all alive after 120 s; nobody goes near the door.
+- Files: `src/game/ai/Enemy.cpp` (patrol paths / zones), `src/game/Hazards.cpp` (crush plates against enemies).
+- Cause: [U]: which path / zone sends tru.exe's poachers to the door, and whether the crush comes from the door
+  moving or from their walking into its plate, are not traced. One run of two: possibly random.
+- Fix: none made. Status · Origin: Reproduced (Wine, one of two runs) · pre-existing.
 
 **OU-VEH-001 Motorcycle unmeasured** — brake strength, slopes, coasting, top speed, pit jump, crash rules, water,
 ramming, dismount position, respawn with the bike (ROADMAP L77, L96; Wine session in REFERENCE_COMPARISON
