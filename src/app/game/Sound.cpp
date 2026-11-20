@@ -74,8 +74,11 @@ void GameSound::attach(game::World& world) {
         if (anchor)
             if (const auto* a = world.script().find(anchor)) pos = a->pos;
         // Play / Play3D (0x4AE290 / 0x4AE380) leave a sound that still plays on the member alone: scripts call them every
-        // tick to keep a loop going (l3_main_bedroom's firetriggervolumes).
-        if (const auto it = scriptHandles_.find(key); it != scriptHandles_.end() && player_.active(it->second)) {
+        // tick to keep a loop going (l3_main_bedroom's firetriggervolumes). "Still plays" is the member's sound instance
+        // being alive, the same test the sequence latent's IsActive (0x4ACC30) makes, so it is scriptSoundBusy's rule:
+        // the burn sequence of a fire volume starts its next sound as soon as its wait ended, not when the mixer's voice
+        // drained (with SDL's dummy driver never: the volume then burnt every invulnerability window).
+        if (const auto it = scriptHandles_.find(key); it != scriptHandles_.end() && player_.busy(it->second)) {
             if (pos) player_.setPosition(it->second, *pos);
             return true;
         }
