@@ -33,8 +33,8 @@ Unit lists come from each matrix's "Our units" line, or the units its requiremen
 | [17](#17-valhalla-level-5---jan-mayen-island-part-2) | implemented | partial | partial | n/a | partial | partial; 1 differs / 1 matches / 1 unmeasured | unverified | — | 2 (0) |
 | [18](#18-rituals-old-level-6---andaman-sea) | unverified | unverified | n/a | n/a | partial | n/a | n/a | — | 2 (1) |
 | [19](#19-helheim-level-7---arctic-sea-part-1) | unverified | implemented | n/a | unverified | partial | partial | n/a | — | 4 (0) |
-| [20](#20-yggdrasil-level-7---arctic-sea-part-2) | unverified | partial | unverified | n/a | partial | partial; 1 open | n/a | 1 matches | 7 (0) |
-| [21](#21-out-of-time-level-7---arctic-sea-part-3) | partial | partial | unverified | n/a | partial | unverified; 1 open | n/a | 1 matches | 1 (0) |
+| [20](#20-yggdrasil-level-7---arctic-sea-part-2) | unverified; 1 matches | partial | unverified | n/a | partial | partial | n/a | 1 matches | 7 (0) |
+| [21](#21-out-of-time-level-7---arctic-sea-part-3) | partial; 1 matches | partial | unverified | n/a | partial | unverified | n/a | 1 matches | 1 (0) |
 
 ## 01. Prologue: No Illusions (Prologue - Croft Manor)
 
@@ -366,12 +366,12 @@ Matrix: [20_yggdrasil.md](matrix/20_yggdrasil.md). Units: `l7_helheim01`, `l7_he
 
 | Subsystem | Ours (matrix) | Measured against tru.exe | Open bugs |
 |---|---|---|---|
-| Locomotion | unverified | unmeasured here | — |
+| Locomotion | unverified | M13 Which jump a press gives just after the stick: matches | — |
 | Traversal | partial | unmeasured here | — |
 | Grapple | unverified | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | partial | unmeasured here | OU-PZL-012 |
+| Objects / puzzles | partial | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | — Checkpoint respawn position at a fresh load (OU-SAV-002, 2026-11-20): matches | — |
 
@@ -383,12 +383,12 @@ Matrix: [21_out_of_time.md](matrix/21_out_of_time.md). Units: `l7_yggdrasil_end`
 
 | Subsystem | Ours (matrix) | Measured against tru.exe | Open bugs |
 |---|---|---|---|
-| Locomotion | partial | unmeasured here | — |
+| Locomotion | partial | M13 Which jump a press gives just after the stick: matches | — |
 | Traversal | partial | unmeasured here | — |
 | Grapple | unverified | unmeasured here | — |
 | Swimming / water | n/a | unmeasured here | — |
 | Combat / AI | partial | unmeasured here | — |
-| Objects / puzzles | unverified | unmeasured here | OU-PZL-012 |
+| Objects / puzzles | unverified | unmeasured here | — |
 | Vehicle | n/a | unmeasured here | — |
 | Camera / systems | — | — Checkpoint respawn position at a fresh load (OU-SAV-002, 2026-11-20): matches | — |
 
@@ -409,4 +409,4 @@ Rows of REFERENCE_COMPARISON whose evidence names no chapter unit (synthetic sce
 | Vehicle | 9 unmeasured |
 | Camera / systems | 4 matches / 12 unmeasured |
 
-Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-CMB-004, OU-CMB-007, OU-DOC-003, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PHY-003, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PLY-016, OU-PLY-017, OU-PLY-018, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-005, OU-SCR-006, OU-SCR-007, OU-SWM-003, OU-TST-001, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
+Open bugs not tied to a chapter unit: OU-AUD-002, OU-AUD-004, OU-AUD-005, OU-CAM-003, OU-CAM-004, OU-CMB-002, OU-CMB-004, OU-CMB-007, OU-GRP-001, OU-GRP-002, OU-PHY-002, OU-PHY-003, OU-PLY-001, OU-PLY-002, OU-PLY-003, OU-PLY-004, OU-PLY-005, OU-PLY-006, OU-PLY-009, OU-PLY-010, OU-PLY-016, OU-PZL-013, OU-REN-002, OU-REN-003, OU-REN-004, OU-REN-005, OU-REN-006, OU-REN-007, OU-REN-008, OU-SCR-005, OU-SCR-006, OU-SCR-007, OU-SWM-003, OU-TST-001, OU-TST-003, OU-UI-002, OU-UI-003, OU-VEH-001, OU-VK-005, OU-WAT-002, OU-WAT-008, OU-WAT-011, OU-WAT-013.
