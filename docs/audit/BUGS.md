@@ -101,7 +101,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-CAM-004 | camera | Reveal camera blend in/out ours; gamebase time scales not applied | Open | pre-existing | — |
 | OU-PLY-001 | Lara / beams | Beam-walk entry into "about to fall" undecoded | Open | pre-existing | C-CHART |
 | OU-PLY-002 | Lara / wall hug | Wall-hug corners reconstructed, not decoded | Open | pre-existing | C-CHART |
-| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Fixed on agent/ShelfOut9 (chart T1110 / clearance 8 / clip 887; which ledge [I]; no Wine runtime check) | pre-existing | C-CHART |
+| OU-PLY-003 | Lara / water | No climb out of water onto a wall-hug shelf | Open: agent/ShelfOut9 added it (chart T1110 / clearance 8 / clip 887), but Wine (agent/WineCheck10) shows tru.exe never attaches inside the 936 notch (79.0 along, +0xEDC 2, `swim_climbout_A/_B/_C`); query point rule [U] | pre-existing | C-CHART |
 | OU-PLY-004 | Lara / ladders | No ladder side jumps or reaches | Open | pre-existing | C-CHART |
 | OU-PLY-005 | Lara / jumps | Ledge-aim reach: running-jump rush/arc switch 20-70 farther out | Open | pre-existing | C-MEASURE |
 | OU-PLY-006 | Lara / obstacles | Low-obstacle detection distance (query 96 reach) unknown | Open | pre-existing | C-CHART |
@@ -114,7 +114,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-PLY-013 | Lara | Slope-slide upper bound (V002) — not a bug: 0x5DCE20 reads the 28° limit via the query record from 0x71B910 (fc669b5) | Not a bug | — | — |
 | OU-PLY-014 | Lara | Ledge wall-side limit loosened to 0.5236 on a moving ledge (V042) | Fixed on int/brief (21678c2; full ctest pending) | pre-existing | — |
 | OU-PLY-015 | Lara | On the dropping yacht deck Lara enters State::Land once; tru.exe stays in one state | Fixed on agent/DeckCam6 (colliders posed after a mid-game rebuild) | pre-existing | — |
-| OU-SWM-001 | swimming | Swim turn: symmetric and view-relative (d122a62); the stick is now read against the view, which trails the camera-to-pivot line (look tracker +0x620): circle 46.2 / 47.2 deg/s (tru.exe 46.7 / 48.3), 42.2° off the line (42.1) | Fixed on agent/Swim9 | pre-existing | — |
+| OU-SWM-001 | swimming | Swim turn: symmetric and view-relative (d122a62); the stick is now read against the view, which trails the camera-to-pivot line (look tracker +0x620): circle 46.2 / 47.2 deg/s (tru.exe 46.7 / 48.3), 42.2° off the line (42.1) | Fixed on agent/Swim9; mode-19 look record Wine-verified (agent/WineCheck10) | pre-existing | — |
 | OU-SWM-002 | swimming | Surface swim velocity lag: 4.96 / 5.07° vs tru.exe 5.44 / 5.6° (0x755A00 blend 0.25 = player data +0x240; the rest is the 30 Hz blend spread over 60 Hz ticks) | Fixed (d122a62; re-measured on agent/Swim9) | pre-existing | — |
 | OU-SWM-003 | swimming | Scuba slot not read live; grenades under water unchanged | Open | pre-existing | — |
 | OU-GRP-001 | grapple | Throw uses a stand-in clip; hook attaches at once | Open | pre-existing | — |
@@ -154,7 +154,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-SAV-001 | save/load | Quickload in l3_main_bedroom does not resume doors 4526 / 4376 exactly | Reproduced | pre-existing | — |
 | OU-TST-003 | tests | Loaders lack synthetic rejection tests (corrupt / truncated input) in most formats | Open | pre-existing | — |
 | OU-CAM-005 | camera | Yacht deck camera distance 1264.2 vs tru.exe 948.2 | Fixed on agent/DeckCam6 (camera trigger volumes, Wine-verified at two spots) | pre-existing | — |
-| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861), agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349) and agent/CamCut9 (0xC cut, 0x14 focus points Wine-verified at 3859; 9 carried by no volume); 0x16 (no LaraCombatCamera) and kind 1 open | pre-existing | — |
+| OU-CAM-006 | camera | Camera trigger commands beyond distance / pitch ignored; yacht volumes stay at their intro place | Fixed on agent/CamZones7 (0x12 / 0x15 / 0x17-0x1C with forces, riding volumes; Wine-verified at 3852 / 3859 / 3861), agent/CamRest8 (1, 3-6 overrides, 7 / 8 limits; Wine-verified at 4468 / 4349) and agent/CamCut9 (0xC cut, 0x14 focus points Wine-verified at 3859; 9 carried by no volume); 0xC Wine-verified walking into 599, shown at the distance state (agent/WineCheck10); 0x16 (no LaraCombatCamera) and kind 1 open | pre-existing | — |
 | OU-CMB-003 | AI | l2_cliffclimb sharks attack within 5 s of entering the water (tru.exe: no bite while treading; only a Lara 497+ under the top is in reach) | Fixed on agent/SharkAi6 (76cc040); presence, CloseCombat slots, bite range on agent/EnemySpawn7 | pre-existing | — |
 
 ## Root-cause clusters
@@ -674,9 +674,15 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
     distance +0x1320 at the active override's / force set's target angles (else behind her, level), or at a level
     record's point; the distance state +0x1D4 and its speed stay, so the camera follows back out (Wine k599tp: +0x1D4
     1262.3 → 1236.3 toward 474.1). Ours on the tick the trigger list changes; `StreamReal.CameraTriggerCutPutsTheCameraAtItsAngles`.
-    [I] the frame +0xD0 = her heading frame (as the force sets'). The angles' Wine check stays confounded by the
-    teleport's own reset, and tru.exe counted her in 599 at a point our box test leaves out (756 off its centre, half
-    extent 447) [U].
+    [I] the frame +0xD0 = her heading frame (as the force sets').
+  - Wine walk-in 2026-11-20 (agent/WineCheck10, `w2/WineCheck10/b/walk1.txt`, `walk2.txt`: Forward held from the unit
+    start into 599): the cut point (474.1 behind her, pitch −7.50) exists only mid-frame — 0x6017D0 also sets the proposed
+    point +0x150 to it, so the same frame's 0x600710 step (follow speed + the proposed point's move) puts the camera back
+    at +0x1D4 (1111.8 → 1097.6, repeat 1207.8 → 1193.7) at the cut angles; +0x1D4 then eases in at ~1030 units/s and the
+    pitch holds −7.50 while she is inside. Ours set only +0x90 and walked the camera out over 6 ticks from 549.6 (a visible
+    pop-in). Fix: the cut sets `orbit_.desired` too; ours now shows the cut at the distance state on its tick (walked in:
+    1022.7, yaw = hers, −7.50). Entry / exit points agree with our box (x −8043.5 in, −8058.9..−8067.2 out; edge −8057.9):
+    the old mismatch was the teleport's.
   - 0x14: focus points (unit data +0x200 / +0x204, 0x100-byte records; none enabled in the data) gathered by flags /
     radius / view / sight (0x5F0B30), faded in and out (0x5F0DF0..0x5F1060, their last-comparison-only loops kept),
     blended with the look point (0x5F12F0) and mixed in by the look-idle weight (0x6009C0); flags last until 0x601D30
@@ -690,7 +696,7 @@ inline force sets without forces; the l2_cliffclimb yacht volumes (3851..3854) w
 - Still open: 0x16 (needs the LaraCombatCamera); the focuspoint script type's Enable / Disable (0x775910 / 0x775960,
   one unit's scripts); the third focus list (+0x330, 0x5F11C0 / 0x5ED260); kind 1 (AnchoredCamera, one usable record
   of 9); the frame of x / y tracker offsets; a volume record of type 1 / 2 off a markup (her place 0 [I]); the look
-  tracker's own lag (ours uses the focus's); 599's box placement. OU-CAM-004 (reveal blends) not touched.
+  tracker's own lag (ours uses the focus's). OU-CAM-004 (reveal blends) not touched.
 - Status · Origin: Fixed on agent/CamZones7 + agent/CamRest8 + agent/CamCut9 (partial: see open) · pre-existing.
 
 **OU-CMB-003 Shark aggression**
@@ -756,9 +762,20 @@ Open · pre-existing.
   root on the shelf (88.496 in) facing the wall, clip 887 turns her, `Wall_Hug_Idle`. [I] the swim query's reach and
   height band (the plain climb-out's 50..400), the ±60° facing.
 - Test: `GameReal.SwimClimbOutOntoShelf` (l2_cliffclimb ledge 936 seg 0: no l2_puzzleroom shelf lies over water; the
-  survey found only 936 seg 0 / seg 9 and l7_arctic_sea 2073). Open: runtime comparison with tru.exe at 936 (a Wine
-  session was started but not completed: the machine was overloaded, the front end did not take the keys).
-  Status · Origin: Fixed on agent/ShelfOut9 · pre-existing.
+  survey found only 936 seg 0 / seg 9 and l7_arctic_sea 2073).
+- Wine 2026-11-20 (agent/WineCheck10; `w2/WineCheck10/a/shelf180.txt`, `c/swim1.txt`, `c/swim2.txt`, `d/a30..a110.txt`;
+  treading 180 out from 936 seg 0, facing it, Forward held, `ref rec` with `PDX=EDC`): tru.exe does **not** climb into
+  the hug there. From 30 / 50 / 64 / 72 along (the notch is 48..80) it attaches at **79.0** along (63 out), from 90 at
+  93.9, from 110 at 109.1: no target inside the notch. Clearance +0xEDC = **2** every time (0x74E290: the box ray at 252
+  missed within 139, so 0x74E160 and its shelf test never ran; our geometry agrees at 79: the wall at 252 lies ~142 in),
+  and the chart plays `swim_climbout_A` → `_B` → `_C` (requests 890 → 889 → 888), she stands 62 in from the line, still
+  facing the wall, and walks on inland. Ours attaches at the nearest point (64), where `shelfAt` holds (wall ~108 in at
+  252), and plays 887 into the hug. Standing in the notch at 64 along, 40 in, tru.exe and ours both lose her into the
+  sea (no room under the overhang). So the site is a false positive of ours; the rule by which tru.exe's swim query
+  skips the notch's points is not decoded (no direct caller of 0x76D270; the query's point selection) [U], and the
+  `_A / _B / _C` variant is still not played. No code change (a fitted gate would be a guess); `SwimClimbOutOntoShelf`
+  asserts the contradicted behaviour and should be replaced once the query rule is known.
+  Status · Origin: Open (Wine contradicts the only site; agent/ShelfOut9 code kept) · pre-existing.
 
 **OU-PLY-004 No ladder side jumps or reaches**
 - Expected: ladder side jumps exist (ship escape shafts, ROADMAP L89); clips in lara.drm [I].
@@ -951,9 +968,11 @@ bad-attach / wrestle clips of poles, ladders, pillars, free-climb wrestle (ROADM
   the line, press 96 deg/s (tru.exe 95..97), release 64 / 63 deg/s over 0.21 s (61), back on the line in 0.43 s
   (0.40..0.43); in game (settled) 47.3 / 47.1 at the surface (+1.2 / +1.6 %), 47.8 / 47.1 under water (−1.0 / −1.9 %),
   0.5 s press 105.4 / 104.6 (104.5..104.8), release 63.2 then 76.4 (61 then 73).
-- Open: under water (mode 19) the look record was not read (the dive key never reached tru.exe in three sessions under
-  load); ours uses the surface one [I], which matches tru.exe's 42.0° there. Other camera modes keep the look point on
-  the pivot [U: their look records]. The in-game Right-first asymmetry remains when the self-test turns before the
+- Wine-verified under water (2026-11-20, `w2/WineCheck10/a/cam-under.bin`, `cam-dive1.bin`, `cam-tread.bin`; the
+  camera object read in mode 19 after a Ctrl dive and in mode 20 treading): the look tracker record +0x620 +0x1C0 is
+  (126.42, 3.16, 252.84), speed 1896.33, the ease curve byte-equal in both modes, while the focus record has no dead
+  zones in mode 19 (record 41): ours (the same look record in modes 19 / 20) matches. Other camera modes keep the look
+  point on the pivot [U: their look records]. The in-game Right-first asymmetry remains when the self-test turns before the
   camera's look-idle clock (+0x1E4) is full; tru.exe's value of that clock at a level start is [U].
 - Status · Origin: Fixed on agent/Swim9 · pre-existing.
 
@@ -1276,7 +1295,7 @@ Status · Origin: Open · pre-existing.
 4. OU-REN-002 dither the post output (no change to the LDR look).
 5. OU-WAT-002 spray haze fade at the crater centre.
 6. OU-DOC-001 / OU-DOC-002 doc corrections.
-7. OU-PLY-003 shelf climb-out: done on agent/ShelfOut9 (Wine check of ledge 936 still open).
+7. OU-PLY-003 shelf climb-out: added on agent/ShelfOut9; the Wine check of ledge 936 (agent/WineCheck10) contradicts it there (tru.exe attaches at 79.0 along, plays `swim_climbout_A/_B/_C`); the swim query's point rule is open.
 8. OU-GRP-001 throw clip lookup in the grapple DRM (data search, no exe work).
 
 **Needs RE first** (tru.exe decode before code):
