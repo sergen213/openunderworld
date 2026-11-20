@@ -1955,8 +1955,23 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   on cond 0xDA, or `swim_climbout_to_wallhug` (887) onto a shelf (clearance result 657). Ours: swimming at the surface
   with the stick within 45° of her heading, a wall within 230 ahead (the clip's hands start 205.4 before the root)
   whose top is 50..400 over the water starts `swim_climbout` (`Player::tryClimbOut`: geometry, not the ledge markup
-  [I]); Jump no longer does it. The `_A / _B / _C` variant for the higher edge and the wall-hug exit are not played
-  [U: 0x756FF0's reference points]. Test `Game.SwimEnterCrossClimbOut` (rewritten: the stick alone).
+  [I]); Jump no longer does it. The `_A / _B / _C` variant for the higher edge is not played [U: 0x756FF0's reference
+  points]. Test `Game.SwimEnterCrossClimbOut` (rewritten: the stick alone).
+- **Climb out onto a wall-hug shelf** [O chart, decomp, clip; I which ledge]: S237's first transition T1110 (ahead of
+  T1115 `swim_climbout` and T1117 `_A`) → S1253 `swim_climbout_to_wallhug` (request 887: blend 4, start frame 4) →
+  S1250 T2045 → `Wall_Hug_Idle`; it needs the swim query's target to be a ledgegrab (0x262 = 610), the stick pushed
+  and not back, and clearance result 8 (cond 0x28A = 657, player +0xEDC). 0x76D270 → 0x76D010 → 0x74E290 compute it
+  on the target at the query point: when the ray 252 over the ledge from 100 on her side to 139 over the top hits,
+  0x74E160 runs the shelf test 0x74BB50 and its 1 sets +0xEDC = 8 (2 sets 11, else 1) — the wall-hug shelf of "Wall
+  hug". The clip has no root translation: the root stands on the shelf from its first frame, facing the wall, and its
+  yaw turns evenly +π (to her left) to the hug; her pelvis starts 186 out over the water and 78 under the root.
+  Ours (`Player::tryClimbOutToWallHug`, tried before `tryClimbOut`): the nearest ledgegrab point within the plain
+  climb-out's reach, 50..400 over the water [I: the query's reach and band are not decoded], she on its hang side
+  facing it (±60°), `shelfAt` there; the root goes 88.496 in from the line at its height facing the wall, the clip
+  turns her, `Wall_Hug_Idle` after. Shelves over open water (survey of the 97 units with our collision and water
+  volumes): l2_cliffclimb ledge 936 segment 0 (48..80 along, 50 over the sea's rest top; the swell lowers the surface
+  up to ~370) and segment 9, l7_arctic_sea 2073 (159 over). Test `GameReal.SwimClimbOutOntoShelf` (936). Not
+  compared with tru.exe at runtime (a Wine session at 936 was not completed).
 - **Weapons in the water** [O data, I rule]: the weapon stats have no under-water flag (S+0x88: 0x80 infinite, 0x40,
   0x20 dual, 0x08 two-handed); every wp_* DRM has Lara's `combat_water_submerged_equip / _unequip` and
   `combat_water_surface_equip / _unequip` clips (wp_handgun and wp_uzi reloads of both too), a `fire_submerged` gun
@@ -2642,7 +2657,7 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   behind it. 92 of the 1 227 ledgegrab markups in 26 units have such stretches. Walking along the stick onto one within
   30 / 200 of it (query 96's rule): `bbeam_walk_turn180` (request 193) turns her back to the wall, `Wall_Hug_Idle`;
   sideways `Wall_Hug_Shimmy_Left` (mirrored to the right [I]); where the shelf ends `Wall_Hug_Walk_Off` (mirrored);
-  She stands 88.496 in from the line [I]. Not done: the swim climb-out onto a shelf (`swim_climbout_to_wallhug`), the
+  She stands 88.496 in from the line [I]. Out of the water onto one: "Climb out onto a wall-hug shelf". Not done: the
   jump-landing attach and its bad-attach clips (`bbeam_idle_adjust_fwd` → `Wall_Hug_attach_bad_*`), the stick-forward
   / back wobble states (S1233 / S1234), combat in the hug (S1272).
 - Wall-hug corners [O: chart S1236 / S1237 T2076 / T2078 / T2079 / T2081; tru.exe 0x764AA0 → 0x733E00, radians ×
@@ -4492,7 +4507,7 @@ No side-by-side comparison with the original game was made.
   bad-attach/wrestle clips. Ladders (9, rung to rung), perches (13, turning), pillars (15, onto top perches), poles
   (parallel hang, hand over hand, turns, phased swing stops), wall hug on shelves and rail slides (8) work (see their
   sections); ropes, vertical poles and zip lines do not exist in TRU ("Ladders, pillars, perches, wall hug"). Still
-  missing: the wall-hug swim climb-out and jump-landing attach, pole-to-perch / pole-to-ledge (`hpole_para_to_perch`, `hpole_perch_*`),
+  missing: the wall-hug jump-landing attach, pole-to-perch / pole-to-ledge (`hpole_para_to_perch`, `hpole_perch_*`),
   beam sprint, the beam drops (`bbeam_drop_*`), `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
   the bad-attach / wrestle clips of poles, ladders and pillars. Root motion of the jump, attach and fling clips is not applied (the flight is
   ballistic), so their poses can sit off the computed path.

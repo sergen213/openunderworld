@@ -134,7 +134,7 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ng_generic_land_forwards", 3, 3}, {"ng_running_land", 2, 1}, {"ng_land_hard", 2, 2}, {"ng_land_rolling", 4, 4},
         {"ng_running_land_stumble", 3, 3}, {"ledgeb_attach_M", 4, 4}, {"ledgeb_idle", 8, 4},
         {"ledgeb_right", 3, 3}, {"ledgeb_right_hustle", 3, 3}, {"ledgeb_climbupflair", 5, 5}, {"ladder_climb_up_fast", 3, 3}, {"ledgeb_climbup_fast", 6, 6}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
-        {"swim_climbout", 12, 6}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
+        {"swim_climbout", 12, 6}, {"swim_climbout_to_wallhug", 4, 4}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
         {"swim_surfaceidle", 8, 6}, {"swim_jump_land", 6, 6}, {"swim_submerged_idle", 10, 10},
         // surface stroke (request 881), swim sprint (896, 934) and its exhaustion (880, 921)
         {"swim_surface_fast_forward", 8, 8}, {"swim_surface_sprint_forward", 8, 8}, {"swim_submerged_sprint", 10, 10},
@@ -294,6 +294,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "swim_jump_land", "swim_surfaceidle",
     "swim_surface", "swim_surfaceidle_to_swim",
     "swim_surfacedive", "swim_submerged_idle", "swim_sub", "swim_sub_up", "swim_sub_down", "swim_climbout",
+    "swim_climbout_to_wallhug", // onto a wall-hug shelf (Player::tryClimbOutToWallHug)
     "bbeam_walk", "bbeam_idle", "bbeam_walk_attach", "bbeam_jumpland", "bbeam_walk_turn180", "drop_to_ledgeb",
     "bbeam_ledgeu_climbup", "ledgeb_jumpuptocrouch", "bbeam_flip_foward", // from the hang by its clearance (Player.cpp State::Hang)
     "bbeam_unbalance_walk_left", "bbeam_unbalance_walk_right", "bbeam_idle_wobble_fwd", // off balance (Player::beam)

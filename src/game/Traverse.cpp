@@ -819,6 +819,56 @@ void Player::startHangToWallHug() {
     play("bbeam_flip_foward", false);
 }
 
+// Swimming out onto a wall-hug shelf: the chart's S101 T882 -> S237 T1110 -> S1253 swim_climbout_to_wallhug (request
+// 887) -> S1250 T2045 -> Wall_Hug_Idle [O: lara.drm chart]. T1110 is S237's first transition, ahead of swim_climbout
+// (T1115) and swim_climbout_A (T1117), and needs the markup-query target to be a ledgegrab (cond 0x262 = 610), the stick
+// pushed and not back (0x191 != 401, 0x192 != 411) and clearance result 8 (cond 0x28A = 657, player +0xEDC). tru.exe
+// sets that for the target at the query point (0x76D270 -> 0x76D010 -> 0x74E290): the ray 252 over the line from 100 on
+// the hang side to 139 over the top hits the wall, and 0x74E160 runs the shelf test 0x74BB50, whose 1 gives 8 (2 gives
+// 11) [O: decomp] — shelfAt. Which ledge the swim query finds is not decoded: ours takes the nearest ledgegrab point
+// within tryClimbOut's reach (the sweep's `reach` plus the swim sphere) whose line lies 50..400 over the water, she
+// on its hang side facing it [I: tryClimbOut's band]. The clip has no root translation: its root stands on the shelf
+// from the first frame, facing the wall, and its yaw turns half round (+pi, to the left) to the hug; the body starts
+// 186 out over the water and 78 under the root (pelvis, segment 1) and rises onto it [O: clip]. So the root is put
+// kShelfDepth in from the line at its height (where the hug stands, [I] as the walk-on) facing the wall.
+bool Player::tryClimbOutToWallHug(float reach) {
+    if (!anims_.find("swim_climbout_to_wallhug")) return false;
+    const float surf = surfaceZ() + t_.swimSurfaceDepth;
+    const vec2 fwd = xy(forward());
+    int bestL = -1, bestS = 0;
+    float bestT = 0, bestD = reach + t_.swimRadius;
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 1) continue;
+        for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
+            const vec2 d = ledgeDir(m, si), shelf(-d.y, d.x);
+            if (glm::dot(fwd, shelf) < 0.5f) continue; // facing across it onto the top
+            const float len = ledgeLen(m, si);
+            const float t = std::clamp(glm::dot(xy(s_.pos - m.points[size_t(si)]), d), 0.0f, len);
+            const vec3 q = ledgePoint(m, si, t);
+            const float h = q.z - surf, side = glm::dot(xy(q - s_.pos), shelf), dist = glm::length(xy(q - s_.pos));
+            if (h < 50.0f || h > 400.0f || side <= 0 || dist >= bestD || !shelfAt(int(li), si, t)) continue;
+            bestL = int(li), bestS = si, bestT = t, bestD = dist;
+        }
+    }
+    if (bestL < 0) return false;
+    const auto& m = col_.markup[size_t(bestL)];
+    const vec2 d = ledgeDir(m, bestS);
+    const vec3 shelf(-d.y, d.x, 0), q = ledgePoint(m, bestS, bestT);
+    s_.ledge = bestL, s_.ledgeSeg = bestS, s_.ledgeT = bestT;
+    s_.climbFrom = s_.pos, s_.climbTo = q + shelf * kShelfDepth;
+    s_.climbYawFrom = s_.yaw, s_.climbYawTo = yawOf(-xy(shelf));
+    s_.pos = s_.climbTo;
+    s_.water = -1, s_.pitch = 0;
+    s_.vel = vec3(0);
+    s_.state = State::WallHug;
+    play("swim_climbout_to_wallhug", false);
+    // facing the wall, turned on by the clip's yaw at the request's start frame (4); the yaw runs evenly 0 -> pi [O: clip]
+    const double dur = anims_.find("swim_climbout_to_wallhug")->durationSeconds();
+    s_.yaw = wrapAngle(yawOf(xy(shelf)) + glm::pi<float>() * float(std::clamp(s_.clipTime / dur, 0.0, 1.0)));
+    return true;
+}
+
 namespace {
 // Corners [O: lara.drm chart S1236 / S1237 T2076 / T2078 / T2079 / T2081; tru.exe 0x764AA0 -> 0x733E00 (the angle,
 // radians x 57.29578) compared by 0x783BD0 (mode 1: >=, mode 2: <=)]: while shimmying with the stick held, a corner
@@ -922,6 +972,11 @@ void Player::wallHug(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const float left = mag > 0.5f ? glm::dot(move, xy(rotYaw(s_.yaw, vec3(1, 0, 0)))) / mag : 0.0f; // model +X = her left
     if (clip == "bbeam_walk_turn180" || clip == "bbeam_flip_foward") {
         if (!warpStep(dt)) return;
+        play("Wall_Hug_Idle", true);
+    } else if (clip == "swim_climbout_to_wallhug") { // the root stays on the shelf; its yaw turns her half round
+        advanceRoot(dt);
+        if (!clipDone()) return;
+        s_.yaw = s_.climbYawTo;
         play("Wall_Hug_Idle", true);
     } else if (clip.starts_with("Wall_Hug_Shimmy_to_")) { // round a corner: the clip carries her onto the next segment
         if (!warpStep(dt)) return;
