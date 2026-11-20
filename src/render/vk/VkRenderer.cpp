@@ -1404,9 +1404,12 @@ public:
         if (prepassPipelines_) {
             vkCmdEndRendering(cmd);
             const VkImage normalImage = prepassNormal_.image;
+            // After the AO passes' reads of the last frame's normals, or its pre-pass store when they did not run (sync
+            // validation WRITE_AFTER_WRITE on the layout transition, viewer_vulkan_matches_gl_agx).
             const VkImageMemoryBarrier2 toTarget = imageBarrier(
-                normalImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+                normalImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kColorOut,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
             barriers(cmd, {&toTarget, 1});
             VkRenderingAttachmentInfo pn{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
             pn.imageView = prepassNormal_.view;
