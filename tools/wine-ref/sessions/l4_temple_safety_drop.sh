@@ -9,7 +9,7 @@
 #   sprint.txt  D (right) + Shift held: sprints ~580 along -y off the south face
 #   walk.txt    Walk (Alt) + S: walks off the west face
 # Usage: OU_WREF_DIR=... WINEPREFIX=... OUT=dir sessions/l4_temple_safety_drop.sh
-WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"
+WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 : "${OUT:=$OU_WREF_DIR/out}"; mkdir -p "$OUT"
 W="$WREF_SRC/w.sh"
 R() { "$W" ref "$@"; }

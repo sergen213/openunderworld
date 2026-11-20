@@ -10,7 +10,7 @@
 #   camhook.txt      the camera mode requests (camhook.sh log) of the deck part
 # Usage: OU_WREF_DIR=... WINEPREFIX=... OUT=dir sessions/l2_cliffclimb_sea.sh [parts...]
 # parts: repro tread swim breath under drown deck (default: repro tread swim breath deck)
-WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"
+WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 : "${OUT:=$OU_WREF_DIR/out}"; mkdir -p "$OUT"
 W="$WREF_SRC/w.sh"
 R() { "$W" ref "$@"; }
