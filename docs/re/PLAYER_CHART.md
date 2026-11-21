@@ -200,8 +200,8 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
 timeMult = 30 x the fixed tick, ignoring the combat time scale [I]) and logs each run where the chart's requested clip
 differs from the controller's clip; the summary at `--frames` end lists the most evaluated unported conditions. The
 support foot (player +0xF3C, condition 0x12D) comes from the anim events 0x34 / 0x35 / 0x36 of the clip Lara's layer
-plays (lara.drm's event DTPs): the chart's own pattern clip on the runtime's clip clock, or for a kind-2 request (a clip
-the game fills at run time) our controller's clip [I].
+plays (lara.drm's event DTPs): the chart's own pattern clip on the runtime's clip clock, or for a kind-2 request (an
+anim-graph node, below) our controller's clip [I].
 `--chart-trace FILE` writes the shared TSV (`tick state parent request stateTicks px py pz vx vy vz yaw inputs`, then
 `t30=` the chart state time and `var_anim=` the chart clip clock): tick = the frame's index (`World::ticks() - 1`
 after it: the tick the input script addressed), stateTicks = 60 Hz ticks since entering the state (0 on the entry tick,
@@ -217,6 +217,46 @@ on the next frame's row, and that row already shows the transition it causes (ru
 S40 -> S63). Ours in the same order within one tick: `--input-script` / the devices give tick N's `Actions`, then
 `World::tick`, then the shadow's input timing and the charts; the trace labels the row N. (Before this the trace wrote
 `World::ticks()` after the tick, N + 1, which looked like a one-tick input lag.)
+
+**Input sources** (what each `ChartContext` read in `ChartShadow.cpp` is computed from). After cutover the chart drives
+the controller, so a read taken from the controller's own state (its `State`, clip, aim or stamina) would feed the
+chart its own past decisions. Rows marked *rebased* now come from geometry, physics, input or the chart's own stores;
+the others are marked [I] with what blocks them.
+
+| Read | Source before | tru.exe physical source | Now / plan |
+|---|---|---|---|
+| `noFloor()` (bit 19; 0x1F8, 0x1F6, ...) | controller state Jump / Fall / HangJump | ground check 0x71B910 -> 0x5DCE20: ray from half her height over her feet; floor within 0 under them on terrain, half her height on an instance (+0x610); bit 19 + message 0x1CC when none | *rebased*: `Player::groundCheck` on her root every tick (`Impl::groundCheck`), skipped while collision mask 0xFADA74 lacks bit 8 (the flight's actions' `CollisionMask` effects: rising) as 0x71B910 does |
+| event 455 (landing handlers S288, S1004, S1292, ...) | posted when the controller left its free flight | message 0x1C7 from every check that finds a floor (0x5DCE20 flag 2), passed to the chart by 0x76FC30 -> 0x787CD0, which also zeroes agent +0x8C | *rebased*: posted every tick the ground check finds a floor (after the chart tick [I]); agent +0x8C reset there and counted by `ChartRuntime::tick` (with +0x3C4, +0x3C8, +0x94, 0x787E60) |
+| wall-slide stamp (agent +0x90; 0x206) | `Player::steepUnder` (geometry, controller's probe span) | message 0x1C9 from the same ground check (a too-steep face) | *rebased*: the shadow's ground check (`ground.steep`) |
+| `fallDistance()` (0x1E) | controller `PlayerState::fallStartZ` (set on its Fall entry) | player +0x6DC, written by chart actions 515 Entry (0x72FBF0) / 508 Exit (0x75C550) and message 0x2A (0x71FFE0 -> 0x700060) | *rebased*: the chart's store `playerFloat(0x6DC)` (Ground.cpp action 515), seeded with her z at the shadow's start (message 0x2A); action 508 Exit is family work |
+| `wallJumpProbe()` / `wallJumpAnticipate()` gate | controller state Jump | asked by the flight's conditions; 0x7594C0 / 0x759260 read instance velocity | *rebased gate*: no floor by the ground check; the probes themselves still use `Player`'s launch velocity [I: needs +0x2A0, below] |
+| `velocity()` (+0x2A0; 0x197, 0x20C, ...) | her displacement this tick x 2 | instance +0x2A0 from the physics integration (gravity 0x70E100 / 0x70E050, re-aim 0x73EDC0) | [I] kept: displacement is her real motion (mover output), not a controller flag, but includes root motion and carrier moves; an integrated velocity needs the chart-driven mover (cutover) |
+| `boneRise()` (0x1F) | root z delta | bone 0 z now - previous (+0x90 / +0x94) | [I] kept: root z delta; bone 0 needs the posed skeleton of the chart's clip |
+| `supportFoot()` (0x12D), pattern requests | chart clip on the runtime clock | events 0x34 / 0x35 / 0x36 of the layer's clip (0x716F30) | physical already (the chart's own clip) |
+| `supportFoot()`, kind-2 requests | controller clip and clip time | the clip the anim graph node picks (below) | [I] blocked: the anim-graph VM (below) |
+| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller) | [I] blocked: the anim-graph VM; S245 (request 213) waits for it (stick jump) |
+| `attachedMarkup()` (+0xC94) | controller `attachedMarkup()` / ledge seg / t, empty in HangJump | written by the markup attach actions (0x76D010 ...) | [I] blocked: attach actions (group B) must write a chart-side slot |
+| `jumpTarget()` (+0xA64), `jumpQueryFlags()` (+0xAC0), `jumpTargetType()` (+0xA80) | controller `aimMarkup` / `aimFlags` / `aimClass` | take-off query (+0xA84) and action 230 (0x772CA0) promoting the candidates +0x3A0 / +0x3E0 | [I] partly: `chartJumpTarget` (agent/ChartJ df3c1da, not merged here) moves it to the chart side; the controller fallback goes then |
+| `takeoffAim()` | controller `groundJumpAim` | the take-off jump query (0x751FC0 / 0x72B5C0) on geometry | [I] geometry query run through the controller's aim code; needs the query split out of `Player` |
+| `ledgeClearanceClass()` | controller ledge / `hangClearanceClass` | the hang clearance probe on the attached ledge | [I] blocked with `attachedMarkup` |
+| `jumpCandidates()` | her root and heading | 0x710380 from the move sweep 0x5D7FA0 | physical (geometry at her pose) |
+| `grapple()` | controller Grapple* states or `grappleUid` | the rope object (player gadget state) | [I] blocked: the grapple's rope state lives in `PlayerState`; needs a world-side rope record |
+| `canSprint()` (0x205) | controller `sprintUsed` stamina | the sprint meter the chart's sprint actions run down (0x74FD70) | [I] blocked: the stamina actions are unported |
+| `wallJumpAttach()` (0x203) | controller `wallJumpWall()` | the wall probe result 0x7594C0 stores | [I] blocked: the probe's stored result (chart-side) |
+| `lowCeiling()` | `Player::roomToStand` (capsule test at her pose) | tru.exe's head-room test [U address] | physical (geometry) |
+| `water()` / `waterFlags()` | `Player::waterAt(pos)` + wave surface + ground probe | 0x5D3860 against the water volume | physical (geometry) |
+| `position()` / `heading()` / `controlYaw()` | her root, yaw, the stick's camera yaw | instance +0x20 / +0x38, camera | physical / input |
+| `combatMode()`, `combatFlag()`, `gearSlot()`, `carrying()` | `World` combat and held portable | the weapon / adrenaline / portable states | world state (not the traversal controller) |
+| family conditions reading `ctx.player()` | 0x1FD `State::Slide`; 0xA `jumpQuery`; 0x197 `PlayerState::vel` | slope flags +0x11D0 / +0x11CF; +0xA84 (the chart's queries); +0x2A0 | [I] family work (Ground.cpp): listed here so cutover catches them |
+
+**Kind-2 requests: the anim graph** [O, not ported]. 0x444BA0 kind 2 calls 0x443720(id, mirror) -> 0x43E250: the
+request id indexes the object's graph node table (ObjectBase +0x50: 8-byte entries {DTP id of the node program, 0};
+lara.drm request 213 -> DTP 2248, 408 bytes; request 99 -> DTP 2134, 13 KB). A node is a program for a stack VM (0x432B20:
+opcode = high byte; 0x02 push the next word, 0x01 pop, 0x47..0x5C float / bool arithmetic and compares, 0x63 jump,
+0x64 jump if false, 0x65 call native [class, method] from table 0x8AC128, 0x7B return; 0x4370C0 pushes a frame). The
+natives decide which pattern plays [I] (e.g. class 0 method 1, 0x43B390, tests whether pattern N plays within a time span).
+Which clip a node picks therefore needs the VM and its native classes: until then kind-2 requests have no clip on the
+chart side (support foot from the controller's clip [I], no AnimationEnded).
 
 ### In-flight jump targets [O, not ported]
 
