@@ -550,7 +550,7 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_game_tests DISCOVERY_TIMEOUT 30)
   # Lara's state chart runtime (src/game/Chart.cpp; docs/re/PLAYER_CHART.md "Runtime"): loader counts and evaluation
   # order on lara.drm (OU_GAME_DIR), runtime semantics on synthetic charts.
-  add_executable(ou_chart_tests tests/test_chart.cpp)
+  add_executable(ou_chart_tests tests/test_chart.cpp tests/test_chart_ground.cpp)
   target_link_libraries(ou_chart_tests PRIVATE ou_game GTest::gtest_main)
   gtest_discover_tests(ou_chart_tests DISCOVERY_TIMEOUT 30)
   # The ballcourt lever replay at 30 Hz and 240 Hz render rates (360 ticks each, both processes at once) must end on the
