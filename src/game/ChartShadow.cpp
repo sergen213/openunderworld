@@ -161,7 +161,8 @@ struct Shadow::Impl : ChartContext {
         return w->player().state().sprintUsed <= t.sprintSeconds - t.sprintResume;
     }
     std::optional<bool> wallJumpAttach() const override { return w->player().wallJumpWall().has_value(); }
-    // Agent +0x90: game ms of the last too-steep ground contact (message 0x1C9; ours Player::steepUnder each tick).
+    // Agent +0x90: game ms of the last too-steep ground contact (message 0x1C9 from the ground check 0x5DCE20; ours the
+    // shadow's own ground check, `ground.steep`).
     std::optional<bool> wallSlideRecent() const override { return lastSteepMs > 0 && nowMs - lastSteepMs <= 99; }
     bool aimHeld = false;
     uint32_t nowMs = 0, lastSteepMs = 0;
@@ -213,9 +214,32 @@ struct Shadow::Impl : ChartContext {
         return upper->propBool(id).value_or(false);
     }
     // ---- end group A ----
-    float fallDistance() const override {
-        const PlayerState& s = w->player().state();
-        return s.fallStartZ - s.pos.z;
+    // Player +0x6DC - z. +0x6DC is the chart's own store (playerFloat): actions 515 Entry (0x72FBF0, Ground.cpp) /
+    // 508 Exit (0x75C550) write her root z, and the player mode's message 0x2A (0x71FFE0 -> 0x700060) on placement,
+    // which the shadow does at its start.
+    float fallDistance() const override { return const_cast<Impl*>(this)->playerFloat(0x6DC) - w->player().state().pos.z; }
+    // The ground check (tru.exe 0x71B910 -> 0x5DCE20), run here on her root each tick, independent of the controller's
+    // state. The ray starts half her height (player data +0x10 x 0.5) over her feet [O: 0x71B910's first span, at least
+    // that]; a face counts as floor only within the second span under her feet: half her height while she stands on an
+    // instance (support handle +0x610, set when the last check's hit was an instance, result 2) and 0 on the terrain
+    // [O: 0x71B910 / 0x5DCE20]. Ours: an instance = a dynamic body; 1 unit instead of 0 for float error; the +0x11CC /
+    // +0x11D8 overrides and move mode 0x14's quarter height are not modelled [I]. So a walk off a step lower than her
+    // feet finds no floor at once, as tru.exe's does.
+    game::Player::GroundCheck ground;
+    bool supportBody = false;
+    // 0x71B910 runs the check only while collision mask 0xFADA74 has bit 8 (0x768B60 starts it at 0x48; the flight's
+    // actions 503 / 510 set 0x49 / 0x81 / 0xC9 and clear 0x48 while she rises, Jump.cpp's CollisionMask effects); a
+    // skipped check drops her support (0x5D76B0: +0x610 = 0), posts nothing and finds no floor.
+    uint32_t collisionMask = 0x48;
+    void groundCheck(const Charts& c) {
+        if (!(collisionMask & 8)) {
+            ground = {}, supportBody = false;
+            return;
+        }
+        const float half = c.data<float>(0x10) * 0.5f;
+        const glm::vec3 feet = w->player().state().pos;
+        ground = w->player().groundCheck(feet, half, supportBody ? half : 1.0f);
+        supportBody = ground.floor && ground.onBody;
     }
     const PlayerState* player() const override { return &w->player().state(); }
     const World* world() const override { return w; }
@@ -299,12 +323,8 @@ struct Shadow::Impl : ChartContext {
     // ---- end group B ----
 
     // ---- group J ----
-    // Ours runs no ground check in flight; tru.exe's 0x5DCE20 clears bit 19 every check and sets it when it finds no
-    // floor (posting 0x1CC). [I] her free-flight states are its "no floor".
-    std::optional<bool> noFloor() const override {
-        const game::State st = w->player().state().state;
-        return st == game::State::Jump || st == game::State::Fall || st == game::State::HangJump;
-    }
+    // 0x5DCE20 clears bit 19 every check and sets it when it finds no floor (posting 0x1CC): the shadow's ground check.
+    std::optional<bool> noFloor() const override { return !ground.floor; }
     // Instance velocity +0x2A0 per 30 Hz frame [I: her displacement this 60 Hz tick x 2, root motion included].
     std::optional<glm::vec3> velocity() const override { return (w->player().state().pos - w->previous().pos) * 2.0f; }
     // Bone 0 z now minus previous frame's (+0x90 / +0x94, docs/re/CAMERA.md) [I: bone 0 moves with her root].
@@ -316,7 +336,7 @@ struct Shadow::Impl : ChartContext {
     }
     std::optional<bool> carrying() const override { return w->heldPortable() != 0; }
     std::optional<bool> wallJumpAnticipate(float frames) const override {
-        return w->player().state().state == game::State::Jump && w->player().wallJumpAnticipate(frames);
+        return !ground.floor && w->player().wallJumpAnticipate(frames);
     }
     // 0x710380 over ours' markup: ledges and hurdles (MUD 0x40010000) whose nearest point to P = her root + forward x
     // player data float +0x61C lies (vertically) within (short +0xC44, short +0xC46) of her z, nearest two by horizontal
@@ -361,10 +381,9 @@ struct Shadow::Impl : ChartContext {
         if (a.target.markup < 0) return Aim{};
         return Aim{slot(a.target.markup, a.target.seg, a.target.t), a.flags, a.cls, a.target.frames};
     }
-    // 0x7594C0 (Player::wallJumpProbe), asked in her free flights only (ours keeps no launch velocity elsewhere) [I].
-    std::optional<int> wallJumpProbe() const override {
-        return w->player().state().state == game::State::Jump ? w->player().wallJumpProbe() : 0;
-    }
+    // 0x7594C0 (Player::wallJumpProbe), asked while the ground check finds no floor (ours keeps no launch velocity on
+    // the ground) [I].
+    std::optional<int> wallJumpProbe() const override { return !ground.floor ? w->player().wallJumpProbe() : 0; }
     // The aimed jump's +0xAC0 / +0xA80 (PlayerState::aimFlags / aimClass, set by Player::aimGroundJump) while a jump
     // target is held.
     std::optional<uint32_t> jumpQueryFlags() const override { return jumpTarget() ? w->player().state().aimFlags : 0u; }
@@ -384,8 +403,13 @@ struct Shadow::Impl : ChartContext {
         return Water{true, waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds) - s.pos.z};
     }
     std::array<uint32_t, size_t(JEffect::kCount)> effects{};
-    bool wasAir = false; // the last tick's noFloor, for the landing event
-    void effect(JEffect e, float) override { ++effects[size_t(e)]; }
+    void effect(JEffect e, float v) override {
+        ++effects[size_t(e)];
+        if (e == JEffect::CollisionMask) { // +-0x48: or / clear (0x752410); anything else: the new mask
+            const int x = int(v);
+            collisionMask = x == 0x48 ? collisionMask | 0x48u : x == -0x48 ? collisionMask & ~0x48u : uint32_t(x);
+        }
+    }
     // ---- end group J ----
 
     // ---- group CD ----
@@ -467,12 +491,14 @@ void Shadow::tick(const World& world, const Actions& a) {
     }
     m.aimHeld = a.aim;
     m.nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
-    if (world.player().steepUnder()) m.lastSteepMs = std::max<uint32_t>(m.nowMs, 1);
+    m.groundCheck(*charts_);
+    if (m.ground.steep) m.lastSteepMs = std::max<uint32_t>(m.nowMs, 1);
     const float yaw = world.stickYaw();
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     m.stickWorld = right * a.move.x + fwd * a.move.y;
     m.stickLen = std::min(1.0f, glm::length(a.move));
     if (!m.started) {
+        m.playerFloat(0x6DC) = world.player().state().pos.z; // placement: message 0x2A -> 0x700060
         rt_->start(m), upper_->start(m), m.started = true;
     } else {
         rt_->tick(m, dt * 30.0f);   // 0x768C50: agent 0 (Lara) ...
@@ -508,12 +534,14 @@ void Shadow::tick(const World& world, const Actions& a) {
     // ---- end group CD ----
     m.updateFoot(*rt_, *charts_, world.player().state());
     // ---- group J ----
-    // Chart event 455 (0x1C7): her landing, posted when the ground check finds a floor under her again after a flight
-    // (the handlers in S288 / S1004 / S1292: T16 -> S1275 the landing group) [I: the message that posts it is not
-    // decoded; ours posts it on the tick the controller leaves its free-flight states].
-    const bool air = m.noFloor().value_or(false);
-    if (m.wasAir && !air) rt_->post(m, 455);
-    m.wasAir = air;
+    // Message 0x1C7 = chart event 455, posted by every ground check that finds a floor (0x5DCE20 with flag 2; the
+    // player's message handler 0x76FC30 zeroes agent +0x8C and passes it to the chart, 0x787CD0). Only flight / landing
+    // states handle it (S288, S1004, S1292, ...), so on the ground it does nothing. [I] the player call's flag 2 and the
+    // check's place in the frame against the chart tick (ours after it).
+    if (m.ground.floor) {
+        rt_->field(0x8C) = 0;
+        rt_->post(m, 455);
+    }
     // ---- end group J ----
 
     const ChartRuntime& rt = *rt_;

@@ -81,6 +81,11 @@ ChartContext::MarkupSlot gameTarget(ChartContext& ctx) {
     return ctx.handedTarget >= 0 ? ChartContext::MarkupSlot{} : t;
 }
 ChartContext::MarkupSlot jt(ChartContext& ctx) { return ctx.chartTarget.target ? ctx.chartTarget.target : gameTarget(ctx); }
+} // namespace
+
+ChartContext::MarkupSlot chartJumpTarget(ChartContext& ctx) { return jt(ctx); }
+
+namespace {
 std::optional<uint32_t> jtFlags(ChartContext& ctx) {
     if (ctx.chartTarget.target) return ctx.chartTarget.flags;
     return gameTarget(ctx) ? ctx.jumpQueryFlags() : std::optional<uint32_t>(0u);

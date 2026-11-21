@@ -451,6 +451,17 @@ bool Player::steepUnder() const {
     return g && floorKind(*g) == Floor::Steep;
 }
 
+Player::GroundCheck Player::groundCheck(vec3 feet, float above, float below) const {
+    GroundCheck r;
+    if (const auto g = col_.groundProbe(feet + vec3(0, 0, above), above + below)) {
+        r.z = g->point.z;
+        r.steep = floorKind(*g) == Floor::Steep;
+        r.floor = !r.steep;
+        r.onBody = g->dynamic >= 0;
+    }
+    return r;
+}
+
 // A floor hit under `p` supports standing: by the original's rule (floorKind), and [I] a too-steep sliver / seam
 // with a standable face within 20 units of its height 60 units to a side (floor bumps; narrow steep strips).
 // ponytail: four fixed probes; a footprint sweep would catch narrower walkable bits.

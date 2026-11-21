@@ -629,6 +629,7 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
     if (!active_) return;
     totalTime_ += ctx.timeMult, stateTime_ += ctx.timeMult;
     animCounter_ += animCounter_ < 1 ? -1 : 1;
+    for (const int f : {0x3C4, 0x3C8, 0x8C, 0x94}) ++fields_[f]; // agent frame counters (0x787E60; +0x8C: since a floor)
     runProcess(ctx, state_);
     if (active_ && data_.state(state_)) evaluate(ctx);
     // The requested clip's clock [I: the anim system's notification order relative to the chart tick is not pinned]:
