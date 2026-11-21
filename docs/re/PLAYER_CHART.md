@@ -165,6 +165,20 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
   them every tick through its agent +0x51C callback 0x770ED0 while property 414 holds, or the shimmy lookahead never
   sees the shimmy states' property 499. 0x195's class is 0x6F89A0's (stick against a frame; 0 under the dead zone).
   Player fields live in `ChartContext::playerInt / playerFloat` keyed by the tru.exe offset.
+- Group CD (`src/game/chart/Climb.cpp`, ChartContext block `group CD`): the shared gates 0xCA (critical section),
+  0x1F5 (InWater; value 1 = player +0x8EC without 0x400, the catalog's reading is inverted), 0x204 (mantle probe,
+  lara.drm +0xD9C..+0xDB8; +0xDB8 = 0 accepts only an instance's still physics body, so static tops never mantle) and
+  0x836 ((player +0x500) +0x134, -1 = empty hands); conditions 0xCB, 0xCE, 0x196, 0x1A8, 0x1A9, 0x1AA, 0x1AC, 0x1F6,
+  0x210, 0x219, 0x21C, 0x282, 0x283, 0x29F, 0x2A0, 0x2B0, 0x2B1, 0x2B2, 0x2B5, 0x321, 0x324, 0x326, 0x32E, 0x415,
+  0x5AE; actions 212 (entry), 214, 235, 239, 401 (exit), 405, 414 (entry), 427, 512 (exit), 573, 803, 1409. The
+  file's register comment lists the CD ids left unported and why. **Critical section** [O]: anim event commands
+  0x13 / 0x14 on the chart's section (0x716F30) set / clear player +0x78 and agent +0x53C (the flag-7 deferral, so
+  this is +0x53C's writer); 0x768C50 copies +0x78 to agent +0x6C after the chart tick. Shadow mapping [I]: the chart
+  clip's command events (`clipEvents`, lara.drm anim list) over the frames its clock ran each tick, after the tick;
+  +0x8EC = 0x400 outside `Player::waterAt`, else 0x5D3860's classes from her root / the floor under her against the
+  wave surface (the volume bits 0x800..0x4000 are not computed); gear slot = the drawn weapon (0 pistols, 2 Thor's
+  hammer, 1 others), -1 with empty hands, unknown while carrying; rays = `CollisionMesh::playerRay` (kind 2 for a
+  dynamic body, whose stillness is unknown).
 - Porting a family: add `src/game/chart/<Family>.cpp` with `void register<Family>(Registry& player, Registry& upper)`
   and one line in `Families.cpp`. A condition is `bool fn(ChartContext&, const Cond&)` returning the raw truth (the
   runtime negates); it reads the agent through `ctx.chart()` (`stateTime()`, `value(c)` / `valueF(c)` with the
