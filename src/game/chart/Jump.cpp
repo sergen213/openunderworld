@@ -407,11 +407,10 @@ void airEnter(ChartContext& ctx, uint16_t) {
     ctx.effect(JEffect::CollisionMask, rising ? 0x81 : 0xC9);
     if (const auto t = jt(ctx); t && !rising && (t.flags & 0x20800000)) ctx.chartTarget = {}, ctx.effect(JEffect::ClearJumpTarget);
 }
-// [I] the flight's target ends with the flight (tru.exe clears it on the attach / landing paths, 0x707500).
-void airExit(ChartContext& ctx, uint16_t) {
-    if (jt(ctx)) ctx.handedTarget = ctx.jumpTarget().markup; // -1 when the game holds none
-    ctx.chartTarget = {};
-}
+// Action 510's exit 0x72FB90 keeps the jump target [O]: tru.exe clears +0xA64 in 510's enter / update (0x7522A0 /
+// 0x752410 -> 0x707500, ported in airEnter / airUpdate) and when an attach takes it (0x707730 / 0x707530: +0xA64 = 0
+// after +0xC94 = it; attachChartMarkup hands it on), so the attach state S613 still sees the flight's target.
+void airExit(ChartContext&, uint16_t) {}
 void airUpdate(ChartContext& ctx, uint16_t) {
     ctx.agentFloat(0x3E8) += ctx.timeMult;
     // 0x752410 re-solves the flight with the time left +0x77C (0x73EDC0); it runs down with the flight [I: the decrement's
@@ -623,6 +622,8 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
         ctx.chartTarget = {};
     }
     if (cls) ctx.effect(JEffect::AttachTarget, float(cls)); // the class handler that would run (not ported here)
+    // the setters of these classes detach the old markup and attach the jump target (0x74ED30 ...: 0x6FDBE0, 0x707B90)
+    if (attachTargetClass(cls)) attachChartMarkup(ctx, jt(ctx));
 }
 
 // 2001 (0x75EF70: camera vfunc +0xB0 (0)), 2002 (0x75EF90: +0xB0 (1)), 2005 (enter and exit 0x75EF50: +0xB4); 2001 /

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <unordered_map>
@@ -119,6 +120,11 @@ struct Shadow::Impl : ChartContext {
     bool log = false, started = false, lastMatch = true;
     uint64_t ticks = 0, matched = 0, diverged = 0, divergences = 0, lastChanges = 0;
     int lastState = -1, stateTicks = 0;
+    // ---- group B ---- the controller clip bridging kind-2 requests' animation end (Shadow::tick)
+    std::string ctlClip;
+    bool ctlLoop = true;
+    uint64_t ctlClipSince = 0, kind2Since = 0;
+    int kind2State = -1;
 
     int button(int id) const {
         switch (id) { // generalbank action map DTP 47 (docs/GAMEPLAY.md "Button timing", "Rope inputs", Melee.cpp)
@@ -267,12 +273,23 @@ struct Shadow::Impl : ChartContext {
         r.normal = -glm::vec3(std::cos(yaw), std::sin(yaw), 0); // [I] outward: she faces the markup
         return r;
     }
-    MarkupSlot attachedMarkup() const override {
+    // The game's attached markup (Player::attachedMarkup) as a slot.
+    MarkupSlot gameAttached() const {
         const PlayerState& s = w->player().state();
         const int m = w->player().attachedMarkup();
         if (m < 0 || s.state == game::State::HangJump) return {};
         if (s.state == game::State::Climb) return slot(m, 0, 0);
         return slot(m, s.ledgeSeg, s.ledgeT);
+    }
+    // +0xC94 is the chart's own (chartAttached, attached by its actions): the controller attaches on its own frame
+    // (a caught ledge is hung from the tick the flight meets it), tru.exe only in the attach state's action 230. Its
+    // geometry (param, point) follows the controller while both hold the same markup.
+    MarkupSlot attachedMarkup() const override {
+        if (!chartAttached) return gameAttached();
+        const MarkupSlot& c = *chartAttached;
+        if (!c) return {};
+        const MarkupSlot g = gameAttached();
+        return g.markup == c.markup ? g : c;
     }
     MarkupSlot jumpTarget() const override {
         const PlayerState& s = w->player().state();
@@ -468,6 +485,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
     upper_ = std::make_unique<ChartRuntime>(*charts_, charts_->upper, Registry::upper());
     impl_->upper = upper_.get();
     impl_->log = log;
+    impl_->chartAttached = ChartContext::MarkupSlot{}; // +0xC94 is the chart's own (Impl::attachedMarkup)
     impl_->footClips = footEvents(bigfile);
     if (trace) {
         impl_->trace.open(*trace);
@@ -501,6 +519,23 @@ void Shadow::tick(const World& world, const Actions& a) {
     } else {
         rt_->tick(m, dt * 30.0f);   // 0x768C50: agent 0 (Lara) ...
         upper_->tick(m, dt * 30.0f); // ... then agent 1 (upper body)
+    }
+    // ---- group B ---- A kind-2 request (an anim-graph node, 0x443720 -> 0x43E250) has no clip on the chart's clock
+    // (docs Runtime "Kind-2 requests"). [I] Its end (0x768CF0 from the anim controller) is taken from our controller: the
+    // one-shot clips it plays from the chart's state on ending in a loop (the controller settles: ledgeb_attach_M ->
+    // ledgeb_idle). Run_jump S533 (request 22, the hang attach): ledgeb_attach_M runs 31 ticks, Wine's S533 31. The
+    // standing jump's S535 (same node, flight + attach) runs 38 in Wine, ours 47: the graph node is not the
+    // controller's clips (needs the anim-graph VM).
+    {
+        const PlayerState& ps = world.player().state();
+        const int st = rt_->state();
+        if (st != m.kind2State) m.kind2State = st, m.kind2Since = world.ticks();
+        if (ps.clip != m.ctlClip) {
+            const State* cs = rt_->data().state(st);
+            if (m.started && cs && cs->requestKind == 2 && !m.ctlClip.empty() && !m.ctlLoop && ps.loop && m.ctlClipSince + 1 >= m.kind2Since)
+                rt_->animEnded(m);
+            m.ctlClip = ps.clip, m.ctlLoop = ps.loop, m.ctlClipSince = world.ticks();
+        }
     }
     // ---- group CD ---- 0x768C50 after the chart tick: agent +0x6C = player +0x78. Then the chart clip's events over the
     // frames its clock ran this tick (0x716F30): command 0x13 opens the critical section (+0x78 = 1, agent +0x53C = 1),

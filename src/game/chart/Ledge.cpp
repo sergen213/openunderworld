@@ -549,6 +549,29 @@ void markupAttachInit(ChartContext& ctx) {
     if (a.flags & (0x400000 | 0x10000 | 0x2000000 | 0x8000000)) ++ctx.chart().stats.unportedActions[420];
 }
 
+void detachChartMarkup(ChartContext& ctx) {
+    if (!ctx.chartAttached) return;
+    if (const auto& a = *ctx.chartAttached) ctx.playerInt(0xEA0) = a.markup + 1, ctx.playerFloat(0xEA4) = a.param; // ours: index + 1
+    ctx.chartAttached = ChartContext::MarkupSlot{};
+}
+
+void attachChartMarkup(ChartContext& ctx, const ChartContext::MarkupSlot& slot) {
+    if (!ctx.chartAttached || !slot) return;
+    detachChartMarkup(ctx);
+    ctx.chartAttached = slot;
+    // 0x707730 / 0x707530 then copy the search block and clear the jump target (+0xA64 = 0): the chart's own target
+    // goes, and the game's target (the same markup, until the game drops it) counts as handed on.
+    ctx.chartTarget = {};
+    ctx.handedTarget = slot.markup;
+}
+
+bool attachTargetClass(int cls) {
+    switch (cls) {
+    case 600: case 601: case 603: case 605: case 606: case 610: case 614: case 621: case 624: case 625: case 626: case 627: return true;
+    default: return false;
+    }
+}
+
 namespace {
 
 // ---- actions ----
@@ -570,15 +593,14 @@ void hurdleOverBlend(ChartContext& ctx, uint16_t) {
 
 // Action 232 preenter / prereenter 0x749E90 (with a jump target and an attached markup): blend x as 0x749A10 over
 // properties 230 / 229 / 231, then detach (0x6FDBE0: player +0xEA0 / +0xEA4 the markup and param left) and attach the
-// jump target (0x707B90: +0xC94 / +0xC98 / +0xCA0). Recorded in the chart-side store (ours: markup indices).
+// jump target (0x707B90: +0xC94 / +0xC98 / +0xCA0), chart-side (attachChartMarkup).
 void hurdleReattach(ChartContext& ctx, uint16_t) {
     const auto a = ctx.attachedMarkup();
     const auto t = ctx.jumpTarget();
     if (!a || !t) return;
     ctx.animBlend.x = spanSigned(glm::length(glm::vec2(t.point - a.point)), propF(ctx, 230), propF(ctx, 229), propF(ctx, 231));
-    ctx.playerInt(0xEA0) = a.markup, ctx.playerFloat(0xEA4) = a.param;
-    ctx.playerInt(0xC94) = t.markup, ctx.playerFloat(0xC98) = t.param;
-    ctx.playerFloat(0xCA0) = t.point.x, ctx.playerFloat(0xCA4) = t.point.y, ctx.playerFloat(0xCA8) = t.point.z;
+    ctx.playerInt(0xEA0) = a.markup + 1, ctx.playerFloat(0xEA4) = a.param;
+    attachChartMarkup(ctx, t);
 }
 
 // 0x72A5F0: the beam controller (agent +0x358): which way she faces along the attached segment floor(+0xC98)
