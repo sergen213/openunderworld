@@ -496,6 +496,7 @@ void detachMarkupExit(ChartContext& ctx, uint16_t) {
     ctx.playerInt(0xEA8) = 0x13;
     ctx.playerInt(0xC94) = 0; // recorded detach (ours: -1 none would be the markup index; 0 = tru's null pointer)
     ctx.playerInt(0xEAC) = 0;
+    detachChartMarkup(ctx);
 }
 
 // Action 411 (PSCAF_GrabHelperObject). PreAnimEntry 0x75E590: player +0xEE8 = 1 when the jump target's owner object

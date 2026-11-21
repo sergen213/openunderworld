@@ -221,3 +221,24 @@ TEST(ChartLedge, OwnedConditionsRegistered) {
     for (uint16_t id : {205, 213, 232, 301, 303, 404, 408, 506, 513, 514, 516, 606, 613, 2003, 2004})
         EXPECT_NE(r.action(id), nullptr) << id;
 }
+
+// Action 230's attach (0x74ED30 -> 0x6FDBE0 / 0x707B90 -> 0x707730): the chart-side +0xC94 takes the jump target, the
+// old markup goes to +0xEA0 (index + 1), and the jump target is handed on (+0xA64 = 0).
+TEST(ChartLedge, ChartSideAttachHandsTheJumpTargetOn) {
+    LedgeContext ctx;
+    ChartContext::MarkupSlot t;
+    t.markup = 7, t.flags = 0x40000000, t.param = 0.25f;
+    attachChartMarkup(ctx, t); // the context keeps no chart-side slot: nothing happens
+    EXPECT_FALSE(ctx.chartAttached);
+    ctx.chartAttached = ChartContext::MarkupSlot{};
+    ctx.chartTarget.target = t;
+    attachChartMarkup(ctx, t);
+    ASSERT_TRUE(ctx.chartAttached && *ctx.chartAttached);
+    EXPECT_EQ(ctx.chartAttached->markup, 7);
+    EXPECT_FALSE(ctx.chartTarget.target);
+    EXPECT_EQ(ctx.handedTarget, 7);
+    detachChartMarkup(ctx);
+    EXPECT_FALSE(*ctx.chartAttached);
+    EXPECT_EQ(ctx.playerInt(0xEA0), 8);
+    EXPECT_TRUE(attachTargetClass(610) && attachTargetClass(627) && !attachTargetClass(611) && !attachTargetClass(628));
+}

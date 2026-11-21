@@ -206,6 +206,10 @@ public:
     glm::vec2 animBlend{0};
     float animRate = 1;
     int cameraMode = -1;
+    // The chart's own attached markup (player +0xC94 as the chart's actions set it: the class setters of action 230 and
+    // action 232 attach the jump target through 0x707B90, 0x6FDBE0 detaches; see attachChartMarkup). Engaged: it
+    // answers attachedMarkup() (an empty slot = none) instead of the game; nullopt: the context's game state answers.
+    std::optional<MarkupSlot> chartAttached;
     // ---- end group B ----
     // ---- group A ----
     // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
@@ -372,6 +376,14 @@ void registerFamilies(Registry& player, Registry& upper); // src/game/chart/Fami
 // by action 420's entry.
 void markupContactProbe(ChartContext& ctx);
 void markupAttachInit(ChartContext& ctx);
+// 0x707B90 after 0x6FDBE0: detach the chart's attached markup (player +0xEA0 / +0xEA4 keep it and its param) and
+// attach `slot` (the jump target), when the context keeps a chart-side attached markup (ChartContext::chartAttached).
+void attachChartMarkup(ChartContext& ctx, const ChartContext::MarkupSlot& slot);
+void detachChartMarkup(ChartContext& ctx); // 0x6FDBE0 alone
+// Action 230's target classes whose setter attaches the jump target (the callers of 0x707B90 in its class switch:
+// 600 0x753510, 601 0x750F00, 603 0x74C8D0, 605 0x751130, 606 0x753F80, 610 0x74ED30 / 0x7571B0, 614 0x7503B0, 621
+// 0x74E5A0, 624 / 626 0x75F1B0, 625 0x74C110, 627 0x73DD70) [O].
+bool attachTargetClass(int cls);
 // ---- end group B ----
 
 // tru.exe 0x7607C0's value of an action: 1 on the press tick, frames held + 1 while down, -1 on the release tick,
