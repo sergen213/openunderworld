@@ -35,8 +35,12 @@ All offsets below are from the start of the player data block.
   -> {s16 transition, s16}[count]}.
 - Chart variables: a run of 400 pointers to tuning records, pointed at by data +0x18CC (at run time tru.exe reaches
   the same table through the instance's object, 0x782B40 / 0x7820E0). E.g. variable 344 = 632.11, 347 = 4.0, 193 = 10.
-- Anim request = the object's anim pattern of that index (anim::animPatterns; e.g. S1280 request 39 =
-  `ng_land_hard`). [I] all three request kinds index the patterns.
+- Anim request: kinds 0 / 1 index the object's anim patterns (0x444BA0 -> 0x4428A0; anim::animPatterns; e.g. S1280
+  request 39 = `ng_land_hard`); kind 2 asks the anim graph for a node instead (0x443720 -> 0x43E250), so it is no
+  pattern index (S65's request 99 is not `obj_no`). A pattern's clip starts at (start - blend) frames (0x441FB0), so
+  that it stands at the pattern's start frame when the crossfade ends: `ng_standing_jump` (blend 6, start 6) plays all
+  its 10 frames, `ng_run_start` (4 / 6) from its frame 2. A negative lead is cut to 0 for `ng_running_jump_forwards`
+  (2 / 1) and kept (the clip held at its first frame) for the wall jump's clips [U which branch decides].
 
 ### Function registry [O]
 
@@ -47,11 +51,15 @@ condition function, +0x1C property handler, +0x20 Entry, +0x24 Reentry, +0x28 Pr
 an entry/exit balance byte (warnings only). Tables (filled by 0x784EE0 / 0x784F60 / 0x784FE0 for the base,
 0x785120 / 0x785390 / 0x785600 per agent, from 0x768B60):
 
-| | conditions {id, group, fn} | property handlers {id, fn} | actions {id, Entry, Reentry, PreAnimEntry, PreAnimReentry, Exit, Process} |
+| | conditions {id, group, fn} | property handlers {id, fn} | actions {id, Entry, Reentry, Exit, Process, PreAnimEntry, PreAnimReentry} |
 |---|---|---|---|
 | base | 0x8B57E0 | 0x8B6650 | 0x8B4200 |
 | Lara (agent 0) | 0x8B2CE8 | 0x8B2280 | 0x8B0A50 |
 | upper body (agent 1) | 0x8B2838 | 0x8B26E0 | 0x8B1E00 |
+
+The action tables' column order is not the node's: 0x784FE0 -> 0x7843A0 stores record words 1..6 at node +0x20 Entry,
++0x24 Reentry, +0x30 Exit, +0x34 Process, +0x28 PreAnimEntry, +0x2C PreAnimReentry. `ActionFns` follows the node
+order; register a table row as `{w1, w2, w5, w6, w3, w4}`.
 
 An agent table entry copies the base node's functions, then overrides its own. Base entries that are only
 placeholders point at 0x782140, which logs "unhandled" and returns **true**; every id Lara's chart uses is overridden
@@ -152,6 +160,24 @@ px py pz vx vy vz yaw inputs`, then `t30=` the chart state time and `var_anim=` 
 60 Hz ticks since entering the state (0 on the entry tick, also on a re-entry), position / velocity (units/s) / yaw
 (degrees) are ours, `inputs` is the hex mask of the same tick's actions (1 Fwd, 2 Back, 4 Left, 8 Right, 0x10 Jump,
 0x20 Interact, 0x40 Crouch, 0x80 Sprint, 0x100 Walk, 0x200 Grapple).
+
+### In-flight jump targets [O, not ported]
+
+tru.exe keeps a free flight's jump target (player +0xA64 markup, +0xA68 param, +0x9F0 point) up to date while she is
+in the air, where ours aims only at take-off:
+
+- **Per frame**: action 510 (PSCAF_Airborne, on the flight chain S287) has Process **0x752410**: every frame it
+  re-solves the velocity toward the target with the flight time left (+0x77C) through 0x73EDC0, and while a target is
+  set and the time left exceeds player data +0xC24 it refines it with 0x751FC0 (0x751D10 + the markup lookahead
+  0x72B5C0, rewriting +0xA74 / +0x77C and the target frame +0xA20..+0xA3C); it drops a jump-landing / beam target
+  once she is falling (0x707500) and handles markup flagged 0x80000 through 0x769020.
+- **New targets in flight**: action 230 (PSCPF_MarkUpAttach_SetAnimTarget, also on S287) runs **0x772CA0** as its
+  PreAnimEntry and PreAnimReentry, i.e. on every state change inside the flight chain (S287 -> S288 -> S289 / S294
+  ...): when bool property 0x199 is set and no target is held, it promotes the pending candidate player +0x3A0 (or
+  +0x3E0, by a distance compare against her facing [I]) into +0xA64, with the target class from property 0x1A4 (else 0x19A).
+  Transitions such as S289 T305 / the stick jump's S535 attach then see it through condition 0x262 (target class).
+  Only these store to +0xA64 besides 0x741050 (a markup hand-off) and 0x771DB0 (reached from 0x6C0800, not the
+  flight). [U]: the per-frame writer of the candidate slots +0x3A0 / +0x3E0 (no direct store found; a computed base).
 
 Open [U]: what sets agent +0x53C; the frame order of 0x768C50 against animation and physics; the exact notification
 that ends a looping clip; state +8; field +0x51C; property type 0x2B between linked charts (ours ignores it).
