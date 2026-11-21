@@ -134,6 +134,9 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
   0x785920, `change` = 0x787890, `post` = 0x787CD0, `animEnded` = 0x768CF0. The requested clip's clock is kept by the
   runtime itself (pattern start frame, rate, length from the clip header) and calls `animEnded` when a one-shot clip
   reaches its end or a loop wraps [I: notification order].
+- One time step: `ChartRuntime::tick(ctx, timeMult)` stores it in `ctx.timeMult` (gameTracker_timeMult, 30 Hz frames)
+  before anything runs; conditions and actions read `ctx.timeMult`, never a clock of their own. `ChartRuntime::enter`
+  puts the chart in a state without a transition (tests / tools).
 - Generic conditions ported (`src/game/chart/Generic.cpp`): 0x1, 0x14, 0xC9, 0x65..0x6E, 0x96..0x99 / 0x9E, 0x1E,
   0x191. Everything else waits for its family.
 - Porting a family: add `src/game/chart/<Family>.cpp` with `void register<Family>(Registry& player, Registry& upper)`
