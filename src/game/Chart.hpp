@@ -180,7 +180,8 @@ public:
     };
     virtual MarkupSlot attachedMarkup() const { return {}; }
     virtual MarkupSlot jumpTarget() const { return {}; }
-    // 0x5C3AA0: segment `seg` of markup `m` (start, end); nullopt when it has none.
+    // 0x5C3AA0: segment `seg` of markup `m` (start, end); an index past the last segment gives the last one; nullopt
+    // when it has none.
     virtual std::optional<std::pair<glm::vec3, glm::vec3>> markupSegment(int, int) const { return {}; }
     virtual int markupSegmentCount(int) const { return 0; }
     // 0x493330 with ray flags 0x2C19E7 (the player code's line query) from a to b: the hit's distance from a, nullopt
@@ -195,7 +196,81 @@ public:
     // The hang clearance class tru.exe 0x74E290 computes for the attached ledge (1, 2, 5, 8, 11, 12); 0 = unknown.
     // markupAttachInit (0x76D010) stores it in playerInt(0xEDC).
     virtual int ledgeClearanceClass() const { return 0; }
+    // 0x751230 / 0x74BB50 == 1: the ledge point at `param` of markup `m` tops a wall-hug shelf; nullopt unknown.
+    virtual std::optional<bool> ledgeShelf(int, float) const { return {}; }
+    // 0x73DFF0's class of what lies past ledge point q along f (player +0x6C); nullopt unknown.
+    virtual std::optional<int> hurdlePastClass(glm::vec3, glm::vec2) const { return {}; }
+    // Effects the chart's actions have on the animation and camera (shadow: recorded only): the played clip's 2D
+    // blend parameters (anim section +0x8C / +0x90), every layer's rate (0x438C40), the camera mode pushed by
+    // CameraManager vfunc +0xB0 (-1 none, popped by +0xB4).
+    glm::vec2 animBlend{0};
+    float animRate = 1;
+    int cameraMode = -1;
     // ---- end group B ----
+    // ---- group A ----
+    // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
+    // unported).
+    // Seconds since action `id` was last pressed (the action record's +8 press time against the input clock +0x1C).
+    virtual std::optional<float> sincePress(int) const { return std::nullopt; }
+    // !0x7145D0: a ceiling lower than the standing height (player data +0x10 = 512.01) over her (condition 0x1F7).
+    virtual std::optional<bool> lowCeiling() const { return std::nullopt; }
+    // 0x6F2800: the combat stance (weapon drawn / aiming; condition 0x1FA).
+    virtual std::optional<bool> combatMode() const { return std::nullopt; }
+    // 0x74FD70: the sprint stamina allows a sprint (condition 0x205).
+    virtual std::optional<bool> canSprint() const { return std::nullopt; }
+    // 0x7594C0 == 2: a wall to plant her feet on ahead of the jump (condition 0x203).
+    virtual std::optional<bool> wallJumpAttach() const { return std::nullopt; }
+    // Agent +0x90 (game ms of the last message 0x1C9, too-steep ground; handler 0x76FC30) set and at most 99 ms ago
+    // (condition 0x206).
+    virtual std::optional<bool> wallSlideRecent() const { return std::nullopt; }
+    // Player +0x68 bit 30, the fly cheat (condition 0x207); ours has no such mode.
+    virtual bool cheatMode() const { return false; }
+    // Effects the ground actions have on her anim layer, recorded chart-side (shadow mode does not apply them):
+    // 0x438C40 playback rate of every sub-layer, the blend parameters +0x8C / +0x90 of the chart's anim section, the
+    // procedural lean (player +0xF18 controller +0x40) and the root alignment blend of action 231 (0x75F550).
+    struct AnimEffects {
+        float rate = 1;
+        float blend8C = 0, blend90 = 0;
+        float lean = 0;
+        struct Align { bool active = false, positionOnly = false; float duration = 0; glm::vec3 pos{0}; } align;
+    } anim;
+    // ---- end group A ----
+
+    // ---- group J ----
+    // Jump / air / combat-edge / carry / water-depth reads of the group-J conditions (src/game/chart/Jump.cpp). nullopt
+    // = the context cannot answer (the condition counts as unported, never a guess).
+    virtual std::optional<bool> noFloor() const { return {}; }       // instance +0x14 bit 19: 0x5DCE20 found no floor
+    virtual std::optional<glm::vec3> velocity() const { return {}; } // instance +0x2A0, units per 30 Hz frame
+    virtual std::optional<float> boneRise() const { return {}; }     // bone 0 z of matrices +0x90 minus previous +0x94
+    virtual std::optional<int> wallJumpProbe() const { return {}; }  // 0x7594C0: 0 no wall, 1 wall not jumpable, 2 jump
+    virtual std::optional<bool> combatFlag(int) const { return {}; } // (player +0x504) +0x1FC bit n
+    virtual std::optional<int> combatObjectMode() const { return {}; } // (player +0x504) +0x50
+    virtual std::optional<bool> upperProp(uint16_t) const { return {}; } // upper chart's current-state bool property (0x6EEF00)
+    virtual std::optional<bool> carrying() const { return {}; }      // player +0x858 (portable) != 0
+    // The grapple component (owner queries 0x175 / 0x176): attached = query 0x17C non-null, the attach point
+    // (0x4D8D90 +0x80), rope length (+0xCC) and its limit (+0xC8).
+    struct Grapple {
+        bool component = false, attached = false;
+        glm::vec3 anchor{0};
+        float rope = 0, ropeMax = 0;
+    };
+    virtual std::optional<Grapple> grapple() const { return {}; }
+    // Water under her (0x764340 / 0x764550): inWater = player's water block present; depth = -(player +0x914) + waves.
+    struct Water {
+        bool inWater = false;
+        float depth = 0;
+    };
+    virtual std::optional<Water> water() const { return {}; }
+    // Effects of group-J actions and side-effect conditions on the game. Shadow mode records them (never applied to
+    // the live Player); `value` is the effect's parameter.
+    enum class JEffect : uint8_t {
+        CameraPush, CameraPop, CarriedPost, WeaponFlag, AnimEvent, PlayResource, StateMessage, LandDamage,
+        LandImpulse, HeldLaunch, InteractNotify, PairedAttack, RollNotify, WrestleHelper, HairFrame, TuningValue,
+        WaterDamage, AirMeter, CollisionMask, ClearJumpTarget, DetachMarkup, Rotation, CameraVariation, YawLimit,
+        ComboMeter, kCount
+    };
+    virtual void effect(JEffect, float = 0) {}
+    // ---- end group J ----
 
 private:
     friend class ChartRuntime;

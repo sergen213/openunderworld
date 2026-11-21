@@ -446,6 +446,11 @@ Player::Floor Player::floorKind(const collision::Hit& g) const {
     return Floor::Stand;
 }
 
+bool Player::steepUnder() const {
+    const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
+    return g && floorKind(*g) == Floor::Steep;
+}
+
 // A floor hit under `p` supports standing: by the original's rule (floorKind), and [I] a too-steep sliver / seam
 // with a standable face within 20 units of its height 60 units to a side (floor bumps; narrow steep strips).
 // ponytail: four fixed probes; a footprint sweep would catch narrower walkable bits.
@@ -1213,6 +1218,8 @@ vec3 faceEdge(const collision::CollisionMesh& col, vec3 from, vec3 q, vec2 out) 
     return q;
 }
 } // namespace
+
+int hurdlePastClass(const collision::CollisionMesh& col, vec3 q, vec2 f) { return hurdleClass(col, q, f).cls; }
 
 bool Player::tryHurdle(bool jumped) {
     for (size_t li = 0; li < col_.markup.size(); ++li) {

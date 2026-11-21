@@ -36,8 +36,10 @@ unsigned inputMask(const Actions& a) {
 
 // The chart's view of World / Player: input actions timed here from the same Actions the world got.
 struct Shadow::Impl : ChartContext {
-    enum Button { Jump, Crouch, Sprint, Interact, Grapple, ManualAim, Grenade, kButtons };
+    enum Button { Jump, Crouch, Sprint, Interact, Grapple, ManualAim, Grenade, ReAim, kButtons };
     std::array<ButtonTime, kButtons> buttons;
+    // Seconds since each button's last press (never pressed: as long ago as tru.exe's zeroed press time can be).
+    std::array<float, kButtons> sincePressed = [] { std::array<float, kButtons> t; t.fill(1e9f); return t; }();
     const World* w = nullptr;
     glm::vec2 stickWorld{0};
     float stickLen = 0;
@@ -46,23 +48,50 @@ struct Shadow::Impl : ChartContext {
     uint64_t ticks = 0, matched = 0, diverged = 0, divergences = 0, lastChanges = 0;
     int lastState = -1, stateTicks = 0;
 
-    Action action(int id) const override {
-        int b = -1;
-        switch (id) { // generalbank action map (docs/GAMEPLAY.md "Button timing", "Rope inputs", Melee.cpp)
-        case 52: case 47: b = Jump; break;
-        case 50: case 51: case 101: b = Crouch; break;
-        case 42: b = Sprint; break;
-        case 99: case 32: case 44: case 48: case 75: b = Interact; break;
-        case 46: b = Grapple; break;
-        case 25: case 37: b = ManualAim; break;
-        case 102: b = Grenade; break;
-        default: return {};
+    int button(int id) const {
+        switch (id) { // generalbank action map DTP 47 (docs/GAMEPLAY.md "Button timing", "Rope inputs", Melee.cpp)
+        case 52: case 47: return Jump;
+        case 50: case 51: case 101: return Crouch;
+        case 42: return Sprint;
+        // 112 (context 14), 34 (context 17), 79 (context 0): control 2 = virtual button 0, Interact
+        // (openunderworld-work/gameplaygoal/melee/am.txt A89 / A103 / A119) [O]; the contexts are not modelled [I].
+        case 99: case 32: case 44: case 48: case 75: case 112: case 34: case 79: return Interact;
+        case 46: return Grapple;
+        case 25: case 37: return ManualAim;
+        case 102: return Grenade;
+        // 28 (context 0): control 29 = virtual button 8 (ours "recenter", Q / pad left stick click), second control 9 =
+        // virtual button 9 (Manual Aim) (am.txt A118) [O].
+        case 28: return ReAim;
+        default: return -1;
         }
+    }
+    Action action(int id) const override {
+        const int b = button(id);
+        if (b < 0) return {};
         const ButtonTime& t = buttons[size_t(b)];
         return {true, t.down, t.edge, t.time};
     }
     float stickLevel() const override { return stickLen; }
     glm::vec2 stick() const override { return stickWorld; }
+    // ---- group A ----
+    std::optional<float> sincePress(int id) const override {
+        const int b = button(id);
+        return b < 0 ? std::nullopt : std::optional<float>(sincePressed[size_t(b)]);
+    }
+    std::optional<bool> lowCeiling() const override { return !w->player().roomToStand(); }
+    // 0x6F2800 [I]: ours a weapon in hand (or being drawn) or the target lock held (input 33, Target Lock).
+    std::optional<bool> combatMode() const override { return w->combat().drawn || aimHeld; }
+    // 0x74FD70 [I]: ours the run's sprint rule (Player.cpp: stamina spent within sprintSeconds - sprintResume).
+    std::optional<bool> canSprint() const override {
+        const auto& t = w->player().tuning();
+        return w->player().state().sprintUsed <= t.sprintSeconds - t.sprintResume;
+    }
+    std::optional<bool> wallJumpAttach() const override { return w->player().wallJumpWall().has_value(); }
+    // Agent +0x90: game ms of the last too-steep ground contact (message 0x1C9; ours Player::steepUnder each tick).
+    std::optional<bool> wallSlideRecent() const override { return lastSteepMs > 0 && nowMs - lastSteepMs <= 99; }
+    bool aimHeld = false;
+    uint32_t nowMs = 0, lastSteepMs = 0;
+    // ---- end group A ----
     float fallDistance() const override {
         const PlayerState& s = w->player().state();
         return s.fallStartZ - s.pos.z;
@@ -111,8 +140,10 @@ struct Shadow::Impl : ChartContext {
         const auto& col = w->collision();
         if (m < 0 || size_t(m) >= col.markup.size()) return {};
         const auto& p = col.markup[size_t(m)].points;
-        if (seg < 0 || size_t(seg) + 1 >= p.size()) return {};
-        return std::pair{p[size_t(seg)], p[size_t(seg) + 1]};
+        // 0x5C3AA0 takes an index past the last segment as the last one (with a debug print)
+        if (seg < 0 || p.size() < 2) return {};
+        const size_t s = std::min(size_t(seg), p.size() - 2);
+        return std::pair{p[s], p[s + 1]};
     }
     int markupSegmentCount(int m) const override {
         const auto& col = w->collision();
@@ -135,7 +166,51 @@ struct Shadow::Impl : ChartContext {
         if (s.ledge < 0 || size_t(s.ledge) >= w->collision().markup.size() || w->collision().markup[size_t(s.ledge)].type != 1) return 0;
         return w->player().hangClearanceClass();
     }
+    std::optional<bool> ledgeShelf(int m, float param) const override {
+        const auto& col = w->collision();
+        if (m < 0 || size_t(m) >= col.markup.size() || col.markup[size_t(m)].points.size() < 2) return {};
+        const auto& p = col.markup[size_t(m)].points;
+        const int seg = std::clamp(int(param), 0, int(p.size()) - 2);
+        const float t = (param - float(seg)) * glm::length(p[size_t(seg) + 1] - p[size_t(seg)]);
+        return w->player().ledgeShelf(m, seg, t);
+    }
+    std::optional<int> hurdlePastClass(glm::vec3 q, glm::vec2 f) const override { return game::hurdlePastClass(w->collision(), q, f); }
     // ---- end group B ----
+
+    // ---- group J ----
+    // Ours runs no ground check in flight; tru.exe's 0x5DCE20 clears bit 19 every check and sets it when it finds no
+    // floor (posting 0x1CC). [I] her free-flight states are its "no floor".
+    std::optional<bool> noFloor() const override {
+        const game::State st = w->player().state().state;
+        return st == game::State::Jump || st == game::State::Fall || st == game::State::HangJump;
+    }
+    // Instance velocity +0x2A0 per 30 Hz frame [I: her displacement this 60 Hz tick x 2, root motion included].
+    std::optional<glm::vec3> velocity() const override { return (w->player().state().pos - w->previous().pos) * 2.0f; }
+    // Bone 0 z now minus previous frame's (+0x90 / +0x94, docs/re/CAMERA.md) [I: bone 0 moves with her root].
+    std::optional<float> boneRise() const override { return w->player().state().pos.z - w->previous().pos.z; }
+    std::optional<bool> combatFlag(int bit) const override {
+        if (bit == 22) return w->combat().headShotReady; // 0x400000 (0x6E6630), Combat.hpp
+        if (bit == 27) return w->combat().adrenalineMode; // 0x8000000 (focused fire)
+        return {};
+    }
+    std::optional<bool> carrying() const override { return w->heldPortable() != 0; }
+    std::optional<ChartContext::Grapple> grapple() const override {
+        const PlayerState& s = w->player().state();
+        const game::State st = s.state;
+        const bool on = st == game::State::GrappleThrow || st == game::State::GrappleSwing || st == game::State::GrapplePull ||
+                        st == game::State::GrappleRappel || s.grappleUid != 0;
+        if (!on) return ChartContext::Grapple{};
+        return ChartContext::Grapple{true, true, s.grappleAnchor, s.ropeLength, w->player().maxRope()};
+    }
+    std::optional<Water> water() const override {
+        const PlayerState& s = w->player().state();
+        const int m = w->player().waterAt(s.pos);
+        if (m < 0) return Water{};
+        return Water{true, waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds) - s.pos.z};
+    }
+    std::array<uint32_t, size_t(JEffect::kCount)> effects{};
+    void effect(JEffect e, float) override { ++effects[size_t(e)]; }
+    // ---- end group J ----
 };
 
 Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log) : impl_(std::make_unique<Impl>()) {
@@ -156,8 +231,14 @@ void Shadow::tick(const World& world, const Actions& a) {
     Impl& m = *impl_;
     m.w = &world;
     const float dt = float(kTickSeconds); // [I] real time: the chart's timeMult ignores the combat time scale here
-    const bool down[Impl::kButtons] = {a.jump, a.drop, a.sprint, a.interact, a.grapple, a.manualAim, a.grenade};
-    for (size_t i = 0; i < Impl::kButtons; ++i) m.buttons[i].update(down[i], dt, 0.0f);
+    const bool down[Impl::kButtons] = {a.jump, a.drop, a.sprint, a.interact, a.grapple, a.manualAim, a.grenade, a.recenter || a.manualAim};
+    for (size_t i = 0; i < Impl::kButtons; ++i) {
+        m.buttons[i].update(down[i], dt, 0.0f);
+        m.sincePressed[i] = m.buttons[i].pressed() ? 0.0f : m.sincePressed[i] + dt;
+    }
+    m.aimHeld = a.aim;
+    m.nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
+    if (world.player().steepUnder()) m.lastSteepMs = std::max<uint32_t>(m.nowMs, 1);
     const float yaw = world.stickYaw();
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     m.stickWorld = right * a.move.x + fwd * a.move.y;

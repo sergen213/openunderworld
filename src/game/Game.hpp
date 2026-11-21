@@ -555,6 +555,9 @@ struct PlayerState {
 // The rope's pivot (its last bend, else the anchor) and its length from the anchor to the pivot along the bends.
 vec3 ropePivot(const PlayerState& s);
 float ropeBentLength(const PlayerState& s);
+// What lies past ledge point q for a hurdle along f (tru.exe 0x73DFF0's class, player +0x6C): -1 blocked, 0 over,
+// 1 onto, 2 onto the far side into a hang (Player.cpp hurdleClass; the flair classes 3..5 are not modelled).
+int hurdlePastClass(const collision::CollisionMesh& col, vec3 q, vec2 f);
 
 class Player {
 public:
@@ -576,6 +579,7 @@ public:
     // tru.exe 0x74E290's hang clearance class of the ledge she hangs on, as player +0xEDC holds it: 2 climb up, 5
     // crouching, 8 wall-hug shelf, 11 a wall in front of the top (0x74E160), 1 none (hangClearance plays 11 as 1).
     int hangClearanceClass() const;
+    bool ledgeShelf(int markup, int seg, float t) const { return shelfAt(markup, seg, t); } // tru.exe 0x74BB50 == 1
     void rideFrame(const glm::mat4& d);
     void addVelocity(vec3 v) { s_.vel += v; }
     void letGo() { startFall(vec3(0)); } // what she held or stood on is gone (a breakable broke): she falls from here
@@ -633,6 +637,13 @@ public:
     bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab" && s_.clip != "thor_engage"; } // grab clip done
     // Water: the volume overlapping the water probe box at `feet` (index into the collision markup), else -1.
     int waterAt(vec3 feet) const;
+    bool roomToStand() const; // the crouched capsule can grow to the standing one (no PSCCF_LowCeiling)
+    // tru.exe 0x7594C0 == 2 as tryWallJump tests it (WallJump.cpp): the wall hit of the lower ray, nullopt when no wall
+    // a free jump can plant her feet on is ahead (chart condition 0x203 reads it too).
+    std::optional<collision::Hit> wallJumpWall() const;
+    // tru.exe 0x5DCE20 posting message 0x1C9 (too steep) for the face under her root, as floorKind judges it (the chart's
+    // wall-slide stamp, agent +0x90, condition 0x206).
+    bool steepUnder() const;
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
@@ -646,7 +657,6 @@ private:
     vec3 forward() const;
     vec3 toWorld(vec3 model) const; // model-space vector -> world, by yaw
     float capHeight() const;        // capsule height (crouched or standing)
-    bool roomToStand() const;       // the crouched capsule can grow to the standing one (no PSCCF_LowCeiling)
     enum class Floor { Stand, Slide, Steep };
     Floor floorKind(const collision::Hit& g) const;        // tru.exe 0x5DCE20's verdict on the face under her
     bool standable(vec3 p, const collision::Hit& g) const; // floor hit under p supports standing
