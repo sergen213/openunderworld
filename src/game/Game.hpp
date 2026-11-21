@@ -2064,6 +2064,8 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad);
 // Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load, draw, fire, aim, switch,
 // weapon, heal, grapple, sprint (0/1), lookx, looky (rad/s).
 // A value persists until changed; times map to tick round(seconds * 60). '#' starts a comment.
+// Or JSON (first character '[' / '{'): the chart contract's [[tick, mask], ...] at 60 Hz, or a Wine corpus case object
+// with that array in "input" (shifted by spawn.hold_ticks); see InputScript::parse in Input.cpp.
 class InputScript {
 public:
     static InputScript parse(std::string_view text); // throws std::runtime_error with the line number
