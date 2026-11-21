@@ -306,3 +306,4 @@ TEST(InputScriptMask, ContractMasks) {
     EXPECT_EQ(c.at(70).move.y, 1.0f);
     EXPECT_THROW(ou::game::InputScript::parse("[[1]]"), std::runtime_error);
 }
+
