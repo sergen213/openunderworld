@@ -3,13 +3,17 @@
 # Ledge 973 (the prologue wall, GameReal.HangLeapsMatchTruTraces): every hang case starts with the standing jump from
 # ours (-8484.3, -4330, 244) facing the wall (tru yaw 0 = ours -90 deg; tru forward (sin yaw, -cos yaw) = -y), which
 # catches the ledge ~57 ticks after the press; the action keys start at tick 100. Camera pinned behind her (0,-1).
-# Needs a running session in the prologue (newgame.sh); run with the session's OU_WREF_DIR / OU_WREF_NAME exported.
+# Needs a running session in the prologue (newgame.sh, or `load`: a fresh session); run with the session's OU_WREF_DIR / OU_WREF_NAME exported.
 # The spawn stands in a fire trigger: GOD (default) keeps her health full.
 WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 . "$WREF_SRC/sessions/chart_lib.sh"
 UNIT=l3_main_bedroom; OFF=9622,333,-2977
-"$WREF_SRC/w.sh" wmem state | grep -qi "unit l3_main_bedroom" || { echo "not in l3_main_bedroom: run newgame.sh" >&2; exit 1; }
+[ "$1" = load ] && { cunit l3_main_bedroom || exit 1; }
+"$WREF_SRC/w.sh" wmem state | grep -qi "unit l3_main_bedroom" || { echo "not in l3_main_bedroom: run newgame.sh (or pass load)" >&2; exit 1; }
 S=1137.7,-3997,-2733,0; C=0,-1; J=20:10:14; HOLD=${HOLD:-60}
+# Warm-up (unrecorded): right after the new game the first jumps at 973 found no ledge (plain jump and landing in three
+# cases in a row, 2026-11-21); two unrecorded grabs first.
+for i in 1 2; do SPAWN=$S HOLD=$HOLD CAMFOLLOW=$C,1264,300 "$WREF_SRC/w.sh" chart trace 200 $J 11:150:154 > /dev/null; done
 F=ledge
 ccase $F hang_grab $S 160 $C "standing jump at ledge 973 from ~137 short of its line: catch and settle into the hang" $J
 ccase $F hang_shimmy_left $S 300 $C "hang, Left held 100..250: shimmy" $J 25:100:250
