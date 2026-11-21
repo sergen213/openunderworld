@@ -122,6 +122,7 @@ struct Shadow::Impl : ChartContext {
     int lastState = -1, stateTicks = 0;
     // ---- group B ---- the controller clip bridging kind-2 requests' animation end (Shadow::tick)
     std::string ctlClip;
+    bool ctlLoop = true;
     uint64_t ctlClipSince = 0, kind2Since = 0;
     int kind2State = -1;
 
@@ -497,16 +498,19 @@ void Shadow::tick(const World& world, const Actions& a) {
     }
     // ---- group B ---- A kind-2 request (an anim-graph node, 0x443720 -> 0x43E250) has no clip on the chart's clock
     // (docs Runtime "Kind-2 requests"). [I] Its end (0x768CF0 from the anim controller) is taken from our controller: the
-    // one-shot clip it started no earlier than the chart's state ending this tick (the clip changing away). Run_jump
-    // S533 (request 22, the hang attach): the controller's ledgeb_attach_M runs 31 ticks, Wine's S533 31.
+    // one-shot clips it plays from the chart's state on ending in a loop (the controller settles: ledgeb_attach_M ->
+    // ledgeb_idle). Run_jump S533 (request 22, the hang attach): ledgeb_attach_M runs 31 ticks, Wine's S533 31. The
+    // standing jump's S535 (same node, flight + attach) runs 38 in Wine, ours 47: the graph node is not the
+    // controller's clips (needs the anim-graph VM).
     {
         const PlayerState& ps = world.player().state();
         const int st = rt_->state();
         if (st != m.kind2State) m.kind2State = st, m.kind2Since = world.ticks();
         if (ps.clip != m.ctlClip) {
             const State* cs = rt_->data().state(st);
-            if (m.started && cs && cs->requestKind == 2 && !m.ctlClip.empty() && m.ctlClipSince + 1 >= m.kind2Since) rt_->animEnded(m);
-            m.ctlClip = ps.clip, m.ctlClipSince = world.ticks();
+            if (m.started && cs && cs->requestKind == 2 && !m.ctlClip.empty() && !m.ctlLoop && ps.loop && m.ctlClipSince + 1 >= m.kind2Since)
+                rt_->animEnded(m);
+            m.ctlClip = ps.clip, m.ctlLoop = ps.loop, m.ctlClipSince = world.ticks();
         }
     }
     // ---- group CD ---- 0x768C50 after the chart tick: agent +0x6C = player +0x78. Then the chart clip's events over the
