@@ -296,6 +296,14 @@ public:
         std::optional<bool> stillBody, flag8000000;
     };
     virtual std::optional<RayHit> rayHit(glm::vec3, glm::vec3, uint32_t) const { return {}; }
+    // -(player +0x910) [U what: the catalog's floor depth, group J's head height]; 0x764550's class 805 needs it >= +0xB2.
+    virtual std::optional<float> waterFloorDepth() const { return {}; }
+    // Effects of group-CD actions, recorded chart-side (shadow mode never applies them): action 214's second blend slot
+    // (anim section +0x3AC / +0x3B0), action 803's audio flag 0xCCDEA4 (fades a bus while set), action 1409's global
+    // deadline 0x8B083C (game ms; condition 0x5AE).
+    glm::vec2 blendLatch{0};
+    bool audioFade = false;
+    float deadline8B083C = 0;
     // ---- end group CD ----
 
 private:

@@ -15,15 +15,23 @@ namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }
 
 struct CDContext : ChartContext {
-    std::optional<uint32_t> water;
+    std::optional<uint32_t> flags8EC;
     std::optional<int> gear;
     bool tracks = false, world = false;
     glm::vec3 pos{0};
     float yaw = 0;
     std::function<std::optional<RayHit>(glm::vec3, glm::vec3)> ray;
+    glm::vec2 stickDir{0};
+    std::optional<Water> pool;
+    std::optional<float> floorDepth;
+    uint32_t ms = 0;
     Action action(int) const override { return {}; }
-    float stickLevel() const override { return 0; }
-    std::optional<uint32_t> waterFlags() const override { return water; }
+    float stickLevel() const override { return glm::length(stickDir); }
+    glm::vec2 stick() const override { return stickDir; }
+    std::optional<Water> water() const override { return pool; }
+    std::optional<float> waterFloorDepth() const override { return floorDepth; }
+    uint32_t gameMs() const override { return ms; }
+    std::optional<uint32_t> waterFlags() const override { return flags8EC; }
     std::optional<int> gearSlot() const override { return gear; }
     bool tracksCriticalSection() const override { return tracks; }
     bool hasCollision() const override { return world; }
@@ -64,17 +72,17 @@ TEST(ChartCD, InWaterReadsTheDryBit) {
     auto c = real();
     if (!c) GTEST_SKIP() << "OU_GAME_DIR not set";
     Rig r(std::move(*c));
-    r.ctx.water = 0x400; // dry
+    r.ctx.flags8EC = 0x400; // dry
     EXPECT_TRUE(r.eval({500, 0x1F5, 0, 0}));
     EXPECT_FALSE(r.eval({500, 0x1F5, 1, 0}));
     EXPECT_TRUE(r.eval({500, 0x1F5, 1, 1})); // !in water: every S0 exit
-    r.ctx.water = 0x100;                    // wading
+    r.ctx.flags8EC = 0x100;                 // wading
     EXPECT_TRUE(r.eval({500, 0x1F5, 1, 0}));
     EXPECT_FALSE(r.eval({500, 0x1F5, 0, 0}));
-    r.ctx.water = 0; // no handler: false whatever the negation
+    r.ctx.flags8EC = 0; // no handler: false whatever the negation
     EXPECT_FALSE(r.eval({500, 0x1F5, 1, 1}));
     EXPECT_FALSE(r.eval({500, 0x1F5, 0, 0}));
-    r.ctx.water = 0x400; // unhandled mode: false whatever the negation
+    r.ctx.flags8EC = 0x400; // unhandled mode: false whatever the negation
     EXPECT_FALSE(r.eval({500, 0x1F5, 7, 1}));
 }
 
@@ -126,6 +134,40 @@ TEST(ChartCD, MantleProbeAcceptsOnlyStillInstances) {
     EXPECT_NEAR(r.ctx.agentFloat(0x3F0), 100, 1e-3); // pulled back by |(+0xD9C, +0xDA0, +0xDA4)| = 130
     still = false;
     EXPECT_FALSE(r.eval({500, 0x204, 1, 0}));
+}
+
+} // namespace
+
+namespace {
+
+// Pillar jump arcs (0x1A9 / 0x1AA, degrees; + = her left), the wall jump count (0x21C, lara.drm +0x843 = 5), the
+// swim depth classes (0x326 class >= value; 805 needs -(player +0x910)), action 1409's deadline (0x5AE).
+TEST(ChartCD, StickArcsWallJumpsDepthAndDeadline) {
+    auto c = real();
+    if (!c) GTEST_SKIP() << "OU_GAME_DIR not set";
+    Rig r(std::move(*c));
+    r.ctx.stickDir = {0, 1}; // her heading 0 = +x: the stick to her left, +90 degrees
+    EXPECT_TRUE(r.eval({20, 0x1A9, 78, 0}));
+    EXPECT_TRUE(r.eval({20, 0x1AA, 112, 0}));
+    EXPECT_FALSE(r.eval({20, 0x1AA, 78, 0}));
+    r.rt->field(0x4EC) = 4;
+    EXPECT_TRUE(r.eval({500, 0x21C, 1, 0}));
+    r.rt->field(0x4EC) = 5;
+    EXPECT_FALSE(r.eval({500, 0x21C, 1, 0}));
+    r.ctx.pool = ChartContext::Water{true, 500};
+    EXPECT_TRUE(r.eval({800, 0x326, 802, 0}));
+    EXPECT_FALSE(r.eval({800, 0x326, 805, 0}));
+    r.ctx.pool = ChartContext::Water{true, 1000};
+    EXPECT_FALSE(r.eval({800, 0x326, 805, 0})); // 804 or 805: +0x910 unknown, unported
+    EXPECT_TRUE(r.eval({800, 0x326, 804, 0}));  // either passes
+    r.ctx.floorDepth = 1200;
+    EXPECT_TRUE(r.eval({800, 0x326, 805, 0}));
+    r.ctx.pool = ChartContext::Water{false, 0};
+    EXPECT_TRUE(r.eval({800, 0x321, 800, 0}));
+    r.ctx.ms = 10000;
+    EXPECT_TRUE(r.eval({1450, 0x5AE, 0, 1})); // deadline 0 is past
+    r.ctx.deadline8B083C = 10000 + 3500;
+    EXPECT_TRUE(r.eval({1450, 0x5AE, 0, 0}));
 }
 
 } // namespace
