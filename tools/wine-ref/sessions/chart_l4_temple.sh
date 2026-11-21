@@ -32,7 +32,7 @@ for J in 50 55 60 65 70 75 80 85 90; do
 done
 ccase $F t1204_stand_jump_far "-4400.9,-1800,-22714.71,3.14159" 200 $CY "standing jump 424 short of ledge 1204 (M13 standing catch limit 424)" 20:10:14
 ccase $F t1204_stick_jump "-4400.9,-2100,-22714.71,3.14159" 200 $CY "stick jump (Up + Jump at 10) 724 short of ledge 1204" 26:10:60 20:10:14
-F=pillar
+F=pillar; RESET=260; RESETKEYS="28:5:220 11:225:229"   # a pillar hold survives the teleport: slide down and let go first
 PF=-2659.80,-1512.94,-22230,3.14159
 ccase $F t1194_attach_ground $PF 200 $CY "200 south of pillar 1194's axis facing it, Jump at 10: attach from the floor (pillar_attach_ground)" 20:10:14
 ccase $F t1194_climb_up $PF 400 $CY "attach, then Up held 100..300: climb (312 units/s)" 20:10:14 26:100:300

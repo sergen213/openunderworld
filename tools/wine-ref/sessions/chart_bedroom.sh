@@ -31,3 +31,12 @@ S2=1137.7,-3497,-2733,0
 ccase $F stand_jump_open $S2 140 $C "standing jump ~637 short of ledge 973 (out of reach): plain jump and landing" 20:10:14
 ccase $F stick_jump_open $S2 160 $C "Up + Jump at tick 10 (stick jump) towards ledge 973 from ~637 short" 26:10:60 20:10:14
 ccase $F run_jump_bedroom "1137.7,-2600,-2733,0" 220 $C "run 10..70 then Jump at 40 towards the ledge 973 wall from ~1534 short" 26:10:70 20:40:46
+F=drop
+# From the top of ledge 973's wall: grab (standing jump at 10), pull up at 100 (Up + Jump, S456 49 ticks), on top at
+# ~155 facing -y (away from the corridor); then leave the top back over 973.
+PU="26:100:130 20:106:112"
+ccase $F b973_top_back_run $S 460 $C "grab, pull up, then Down held 200..400: turn and run back off over 973: running safety drop (M03)" $J $PU 28:200:400
+ccase $F b973_top_walk_back $S 560 $C "grab, pull up, then Walk (Alt) + Down held 200..520: walk back off over 973 (walking safety drop)" $J $PU a4:200:520 28:200:520
+ccase $F b973_top_crouch_back $S 520 $C "grab, pull up, then Crouch held 200..480 + Down 215..480: crouch back off over 973" $J $PU 11:200:480 28:215:480
+ccase $F b973_top_turn_drop $S 460 $C "grab, pull up, then Down 200..208 (turn round), Crouch 260..264: drop to hang (drop_to_ledgeb)" $J $PU 28:200:208 11:260:264
+ccase $F b973_top_run_fwd $S 460 $C "grab, pull up, then Up held 200..400: run on away from 973 (what lies beyond the wall top)" $J $PU 26:200:400

@@ -25,7 +25,8 @@
 //   tick = frame - first frame (fixed 60 Hz steps); state = index into the chart's state table (S###); request /
 //   parent from the state record; stateTicks = frames since the state was entered, 0 on the entry tick (a transition
 //   back into the same state counts as an entry); p = Instance +0x20 minus OFFSET (OFFSET=dx,dy,dz, tru = ours + d:
-//   our unit frame), v = Instance +0x2A0 x 30 (units/s), yaw = Instance +0x38 - 90 deg in degrees (our frame);
+//   our unit frame), v = world velocity in units/s (Instance +0x2A0 is local: x left, y -forward; x 30), yaw =
+//   Instance +0x38 - 90 deg in degrees (our frame), var_lvx / var_lvy the raw local +0x2A0 x / y (units per 30 Hz frame);
 //   inputs = hex mask of the keys held while this frame was simulated (1 Fwd 2 Back 4 Left 8 Right 0x10 Jump 0x20
 //   Interact 0x40 Crouch 0x80 Sprint 0x100 Walk 0x200 Grapple). Extra columns: t30 (chart +0x508, state time in 30 Hz
 //   frames, as ChartCore's), var_frame (gameTracker +0x24), var_tr (index of the last transition taken, +0x518), var_q
@@ -42,6 +43,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #define GT 0xE7F088u
 #define HOOK 0x5E003Fu
@@ -107,7 +109,7 @@ static DWORD hook(void) {
     B(0x74); int jOut = n; B(0);                     // je out
     B(0xF3); B(0x90);                                // pause
     B(0x49);                                         // dec ecx
-    B(0x75); B((unsigned char)(L - (n + 1)));        // jnz L
+    B(0x75); { int rel8 = L - (n + 1); B(rel8); }     // jnz L
     B(0xC7); B(0x05); D(en); D(0);                   // mov dword [en],0 (tracer gone: stop waiting)
     s[jOut] = (unsigned char)(n - (jOut + 1));
     B(0x59); B(0x58);                                // out: pop ecx; pop eax
@@ -213,6 +215,7 @@ int main(int argc, char** argv) {
     float sp[4] = {0}; int nsp = getenv("SPAWN") ? sscanf(getenv("SPAWN"), "%f,%f,%f,%f", sp, sp + 1, sp + 2, sp + 3) : 0;
     float off[3] = {0, 0, 0}; if (getenv("OFFSET")) sscanf(getenv("OFFSET"), "%f,%f,%f", off, off + 1, off + 2);
     if (nsp < 3) hold = 0;
+    int settle = getenv("SETTLE") ? atoi(getenv("SETTLE")) : 0; // free, unrecorded frames between the pin and tick 0
     float cf[4]; int cam = getenv("CAMFOLLOW") && sscanf(getenv("CAMFOLLOW"), "%f,%f,%f,%f", cf, cf + 1, cf + 2, cf + 3) == 4;
     Var vars[16]; int nv = 0;
     if (getenv("VARS")) { char buf[512]; strncpy(buf, getenv("VARS"), 511); buf[511] = 0;
@@ -229,7 +232,7 @@ int main(int argc, char** argv) {
     w32(AK, 0); w32(PO, 0); w32(EN, 1);
     LARGE_INTEGER fq, t0, tn; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&t0);
     printf("tick\tstate\tparent\trequest\tstateTicks\tpx\tpy\tpz\tvx\tvy\tvz\tyaw\tinputs\n"); fflush(stdout);
-    DWORD f0 = 0, lastSt = 0, lastTr = 0; int t = -hold - 1, stTicks = 0; unsigned mask = 0; int lost = 0;
+    DWORD f0 = 0, lastSt = 0, lastTr = 0; int t = -hold - settle - 1, stTicks = 0; unsigned mask = 0; int lost = 0;
     while (t < ticks) {
         // wait for the next published frame (or the cave giving up)
         DWORD f;
@@ -245,7 +248,7 @@ int main(int argc, char** argv) {
         ++t;
         if (t == 0) f0 = f;
         DWORD p = rd32(0xE7F094), pd = rd32(0xFADB58), c1 = pd ? rd32(pd + 0xF10) : 0, c2 = pd ? rd32(pd + 0xF14) : 0;
-        if (t < 0) { // holding at the spawn: position, velocity, heading, proxy capsule (+0x288 +0x640/+0x680/+0x6D0)
+        if (t < -settle) { // holding at the spawn: position, velocity, heading, proxy capsule (+0x288 +0x640/+0x680/+0x6D0)
             float z[3] = {0, 0, 0}, cc[3] = {sp[0], sp[1], sp[2] + 315.4f}; DWORD q = rd32(p + 0x288);
             WriteProcessMemory(h, (void*)(p + 0x20), sp, 12, 0); WriteProcessMemory(h, (void*)(p + 0x2A0), z, 12, 0);
             if (nsp > 3) WriteProcessMemory(h, (void*)(p + 0x38), sp + 3, 4, 0);
@@ -265,10 +268,14 @@ int main(int argc, char** argv) {
             float t30 = c1 ? rdf(c1 + 0x508) : 0, yawDeg = (s[6] - 1.5707963f) * 57.29578f;
             while (yawDeg > 180) yawDeg -= 360;
             while (yawDeg <= -180) yawDeg += 360;
+            // +0x2A0 is kept in her local frame (x = left, y = -forward, z up; checked against the position steps of
+            // the running jump, the hang leaps back / aside): world = forward * -y + left * x, our heading psi.
+            float ps = (yawDeg / 57.29578f), fx = cosf(ps), fy = sinf(ps);
+            float wvx = (-s[4] * fx - s[3] * fy) * 30, wvy = (-s[4] * fy + s[3] * fx) * 30;
             printf("%d\t%d\t%d\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.1f\t%.1f\t%.1f\t%.3f\t%x\tt30=%.3f\tvar_frame=%lu\tvar_tr=%d\tvar_q=%d\tvar_ub=%d\tvar_an=%u"
-                   "\tvar_tpx=%.2f\tvar_tpy=%.2f\tvar_tpz=%.2f\tvar_tyaw=%.4f\tvar_ms=%.0f",
-                   t, a.idx, a.par, a.req, stTicks, s[0] - off[0], s[1] - off[1], s[2] - off[2], s[3] * 30, s[4] * 30, s[5] * 30,
-                   yawDeg, mask, t30, f, a.trIdx, a.qIdx, b.idx, an, s[0], s[1], s[2], s[6],
+                   "\tvar_tpx=%.2f\tvar_tpy=%.2f\tvar_tpz=%.2f\tvar_tyaw=%.4f\tvar_lvx=%.2f\tvar_lvy=%.2f\tvar_ms=%.0f",
+                   t, a.idx, a.par, a.req, stTicks, s[0] - off[0], s[1] - off[1], s[2] - off[2], wvx, wvy, s[5] * 30,
+                   yawDeg, mask, t30, f, a.trIdx, a.qIdx, b.idx, an, s[0], s[1], s[2], s[6], s[3], s[4],
                    (tn.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart);
             for (int i = 0; i < nv; ++i) {
                 DWORD base = vars[i].base == 'p' ? p : vars[i].base == 'c' ? c1 : pd, v = base ? rd32(base + vars[i].off) : 0;
