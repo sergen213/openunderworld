@@ -147,8 +147,9 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
 
 // The chart contract's form (docs/re/PLAYER_CHART.md "Shadow mode"): a JSON array [[tick, mask], ...] or a Wine corpus
 // case object (openunderworld-work/chart/wine/<family>/*.case.json) whose "input" is that array; each mask holds until
-// the next. Ticks are 60 Hz game ticks; a case's are shifted by its spawn.hold_ticks (the Wine trace starts after the
-// hold), so our trace tick = case tick + hold. Mask bits: 1 Fwd, 2 Back, 4 Left, 8 Right (stick axes), 0x10 Jump,
+// the next. Ticks are 60 Hz game ticks (a frame's index: the trace's tick column); a case's are shifted by its
+// spawn.hold_ticks + spawn.settle_ticks (the Wine trace's tick 0 is the first frame after both), so our trace tick =
+// case tick + hold + settle. Mask bits: 1 Fwd, 2 Back, 4 Left, 8 Right (stick axes), 0x10 Jump,
 // 0x20 Interact, 0x40 Crouch (drop), 0x80 Sprint, 0x100 Walk, 0x200 Grapple.
 namespace {
 bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out) {
@@ -162,7 +163,9 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
     }
     uint64_t shift = 0;
     if (j.is_object()) {
-        if (j.contains("spawn") && j["spawn"].contains("hold_ticks")) shift = j["spawn"]["hold_ticks"].get<uint64_t>();
+        if (j.contains("spawn"))
+            for (const char* k : {"hold_ticks", "settle_ticks"})
+                if (j["spawn"].contains(k)) shift += j["spawn"][k].get<uint64_t>();
         if (!j.contains("input")) throw std::runtime_error("input script: case object without \"input\"");
         j = j["input"];
     }
