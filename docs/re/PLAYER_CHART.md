@@ -185,8 +185,9 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
 0x408 read), after every `World::tick` with the same `Actions` and world (input action timings kept by the shadow;
 timeMult = 30 x the fixed tick, ignoring the combat time scale [I]) and logs each run where the chart's requested clip
 differs from the controller's clip; the summary at `--frames` end lists the most evaluated unported conditions. The
-support foot (player +0xF3C, condition 0x12D) comes from the anim events 0x34 / 0x35 / 0x36 of the clip the chart
-requests, fired on the runtime's clip clock (lara.drm's event DTPs; a state without a pattern clock keeps the foot).
+support foot (player +0xF3C, condition 0x12D) comes from the anim events 0x34 / 0x35 / 0x36 of the clip Lara's layer
+plays (lara.drm's event DTPs): the chart's own pattern clip on the runtime's clip clock, or for a kind-2 request (a clip
+the game fills at run time) our controller's clip [I].
 `--chart-trace FILE` writes the shared TSV (`tick state parent request stateTicks px py pz vx vy vz yaw inputs`, then
 `t30=` the chart state time and `var_anim=` the chart clip clock): tick = the frame's index (`World::ticks() - 1`
 after it: the tick the input script addressed), stateTicks = 60 Hz ticks since entering the state (0 on the entry tick,
