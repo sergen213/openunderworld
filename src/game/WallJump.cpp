@@ -45,10 +45,32 @@ constexpr float kQueryOut = 79.0139f, kQueryHang = 372.9456f; // q12's target ty
 // the root. A terrain face with client flag 0x80 is no wall for it (0x5D3BA0; 45 % of the
 // faces of the game's units carry it); 0x758F70 wants the wall within 7 degrees of vertical, her horizontal velocity
 // (her heading when she has none) within 45 and her heading within 65 degrees of square to it.
+// 0x7594C0 answers 1 once the upper ray met a wall face that 0x758F70 accepts, whatever fails after it (the vertical
+// velocity window, the lower ray, the floor, the reach), 2 when all pass; 0 otherwise [O: decomp]. The order of the
+// tests does not change wallJumpWall's answer.
 std::optional<collision::Hit> Player::wallJumpWall() const {
-    if (s_.vel.z < t_.wallJumpMinVz || s_.vel.z > t_.wallJumpMaxVz) return std::nullopt;
+    int r = 0;
+    auto h = wallJumpTest(r, t_.wallJumpLook, false);
+    return r == 2 ? h : std::nullopt;
+}
+int Player::wallJumpProbe() const {
+    int r = 0;
+    wallJumpTest(r, t_.wallJumpLook, false);
+    return r;
+}
+// tru.exe 0x759260 (chart condition 0x20B, PSCCF_WallJumpAnticipate): the vertical velocity window first, then the same
+// two rays to where 0x758DD0 expects her player data byte +0x820 frames on (lara.drm: 0), no floor or reach test [O:
+// decomp]. With 0 frames the rays have no length: no wall [I: 0x4935F0 on an empty segment meets nothing].
+bool Player::wallJumpAnticipate(float lookFrames) const {
+    if (s_.vel.z < t_.wallJumpMinVz || s_.vel.z > t_.wallJumpMaxVz) return false;
+    int r = 0;
+    wallJumpTest(r, lookFrames, true);
+    return r == 2;
+}
+std::optional<collision::Hit> Player::wallJumpTest(int& result, float n, bool anticipate) const {
+    result = 0;
     const vec3 f = forward();
-    const float n = t_.wallJumpLook, frameG = t_.gravity / 900.0f;
+    const float frameG = t_.gravity / 900.0f;
     // the launch velocity: the take-off's horizontal part (airBrake keeps it) and the vertical before gravity
     const float launch = glm::length(vec3(s_.jumpVel0, s_.vel.z + t_.gravity * s_.jumpTime));
     const vec3 ahead = f * (n * launch / 30.0f) - vec3(0, 0, 0.5f * frameG * n * n);
@@ -72,10 +94,14 @@ std::optional<collision::Hit> Player::wallJumpWall() const {
         return hit;
     };
     if (!wall(t_.wallJumpHigh)) return std::nullopt;
+    result = 1;
+    if (s_.vel.z < t_.wallJumpMinVz || s_.vel.z > t_.wallJumpMaxVz) return std::nullopt;
     const auto low = wall(t_.wallJumpLow);
     if (!low) return std::nullopt;
+    if (anticipate) return result = 2, low;
     if (col_.raycast(s_.pos, vec3(0, 0, -1), t_.wallJumpFloor)) return std::nullopt;         // 0x7591E0
     if (glm::length(xy(low->point) - xy(s_.jumpStart)) > t_.wallJumpReach) return std::nullopt; // 0x758B00
+    result = 2;
     return low;
 }
 

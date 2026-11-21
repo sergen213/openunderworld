@@ -244,10 +244,29 @@ public:
     virtual std::optional<glm::vec3> velocity() const { return {}; } // instance +0x2A0, units per 30 Hz frame
     virtual std::optional<float> boneRise() const { return {}; }     // bone 0 z of matrices +0x90 minus previous +0x94
     virtual std::optional<int> wallJumpProbe() const { return {}; }  // 0x7594C0: 0 no wall, 1 wall not jumpable, 2 jump
+    virtual std::optional<bool> wallJumpAnticipate(float) const { return {}; } // 0x759260 with that many frames' lookahead
+    // 0x710380: the two markup candidate slots player +0x3A0 / +0x3E0 (ledges and hurdles, flags 0x40010000) the move
+    // sweep refreshes every frame; empty slots have markup -1. nullopt: not known.
+    struct Candidates { MarkupSlot a, b; };
+    virtual std::optional<Candidates> jumpCandidates() const { return {}; }
+    // The take-off states' jump query (0x6C0800 -> 0x7725A0 -> 0x771DB0 fill player +0xA64 while she takes off): kind 0
+    // standing (q2), 1 with the stick (q43), 2 running (q26); the target with its +0xAC0 flags and +0xA80 type.
+    struct Aim { MarkupSlot target; uint32_t flags = 0; int type = 0; float frames = 0; }; // frames: 30 Hz frames to the hit
+    virtual std::optional<Aim> takeoffAim(int) const { return {}; }
+    // The chart's own jump target (player +0xA64 as the chart's actions set it: action 504's take-off query, action
+    // 230's promotion); empty: the context's jumpTarget() answers.
+    Aim chartTarget;
+    // The game's jump-target markup the chart already handed on when its flight ended (tru.exe moves +0xA64 to the
+    // attached slot +0xC94 on the attach, 0x741050 / 0x707500) [I]; ignored as +0xA64 until the game's target changes.
+    int handedTarget = -1;
     virtual std::optional<bool> combatFlag(int) const { return {}; } // (player +0x504) +0x1FC bit n
     virtual std::optional<int> combatObjectMode() const { return {}; } // (player +0x504) +0x50
     virtual std::optional<bool> upperProp(uint16_t) const { return {}; } // upper chart's current-state bool property (0x6EEF00)
     virtual std::optional<bool> carrying() const { return {}; }      // player +0x858 (portable) != 0
+    // The jump target's query result flags (player +0x980 +0x140 = +0xAC0, cond 0x2BA) and target type (+0xA80, cond 0x294
+    // group 661), both 0 without a target; nullopt: the chart-side stores (playerInt) answer.
+    virtual std::optional<uint32_t> jumpQueryFlags() const { return {}; }
+    virtual std::optional<int> jumpTargetType() const { return {}; }
     // The grapple component (owner queries 0x175 / 0x176): attached = query 0x17C non-null, the attach point
     // (0x4D8D90 +0x80), rope length (+0xCC) and its limit (+0xC8).
     struct Grapple {
@@ -268,7 +287,7 @@ public:
         CameraPush, CameraPop, CarriedPost, WeaponFlag, AnimEvent, PlayResource, StateMessage, LandDamage,
         LandImpulse, HeldLaunch, InteractNotify, PairedAttack, RollNotify, WrestleHelper, HairFrame, TuningValue,
         WaterDamage, AirMeter, CollisionMask, ClearJumpTarget, DetachMarkup, Rotation, CameraVariation, YawLimit,
-        ComboMeter, kCount
+        ComboMeter, TargetPromote, AttachTarget, ReAim, kCount
     };
     virtual void effect(JEffect, float = 0) {}
     // ---- end group J ----

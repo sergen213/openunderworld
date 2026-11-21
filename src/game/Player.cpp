@@ -2200,19 +2200,56 @@ void Player::poleTop(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
 // kQueryStep or more over the root count [I: lower ones are landed on, vaulted or caught as they are]. Under Wine, a
 // standing jump on the far side of l3_main_hall's 817-high ledge 944 rose its plain 201.6 (the wall-side test refuses
 // it) [O]. Returns false (no ledge met).
-bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone, bool running) {
-    constexpr float kQueryStep = 158.0f, kHangTarget = 505.69f, kRush = 11.0f / 60.0f;
+Player::JumpQuery Player::groundJumpQuery(vec2 query, float up, bool falling, float cone) const {
+    constexpr float kQueryStep = 158.0f, kHangTarget = 505.69f;
     const vec2 f = xy(forward());
     JumpQuery q;
     q.start = s_.pos + vec3(0, 0, up), q.hang = s_.pos + vec3(0, 0, kHangTarget), q.root = s_.pos;
     q.v = vec3(f * query.x, query.y), q.dir = f, q.cone = cone, q.falling = falling, q.minZ = s_.pos.z + kQueryStep;
     q.record = JumpRecord::Ground, q.classify = true, q.base = s_.pos; // q2 / q26 / q43: record 0x2AB8C, +0x2C bit 0x40
     q.ownFrame = true; // the aimed flight does not ride its target: meet a moving markup where it will be
+    return q;
+}
+// The query's result record (+0x9C, lara.drm 0x2AA8C for q1 / q2 / q26 / q43) flags the hit for the chart (player
+// +0x980 +0x140 = +0xAC0, cond 0x2BA; 0x7296C0 -> 0x729540 -> 0x729420 sets each passing entry's flags) [O-data]: flag
+// 2 when the hit lies within 550 (horizontally) of the query's base point, or within 448 and under 9 frames; flag 9
+// needs point source 34 [U: not decoded, never set here]. The target type (+0xA80, cond 0x294 group 661) is the ledge
+// class (ledgeClassOf). For the chart only; the controller does not read them.
+Player::GroundAim Player::groundAim(const JumpQuery& q, const JumpTarget& j) const {
+    GroundAim a;
+    a.target = j;
+    if (j.markup < 0) return a;
+    const auto& m = col_.markup[size_t(j.markup)];
+    const vec3 hit = pointOn(m, j.seg, j.t);
+    const float dist = glm::length(xy(hit - q.base));
+    a.flags = (dist < 550.0f || (j.frames < 9.0f && dist < 448.0f)) ? uint16_t(1u << 2) : uint16_t(0);
+    // +0xA80 = the query object's +0x100, copied from the chosen candidate's +0xC0 (0x770240), which the ledge class table
+    // fills [O: decomp]. ledgeClassOf's 4 is its "none of the bands" answer, for which tru.exe left 0 on l3_main_bedroom
+    // ledge 973 (Wine run_jump_bedroom: S289 T313 = cond 0x294 group 661 value 0) [I: one observation].
+    const vec2 sd = segDir(m, j.seg);
+    const int cls = m.type == 13 ? 0 : ledgeClassOf(col_, hit, vec2(-sd.y, sd.x) * j.side, s_.pos, q.dir);
+    a.cls = int8_t(cls == 4 ? 0 : cls);
+    return a;
+}
+// The take-off states' queries as aimGroundJump runs them (kind 0 standing q2, 1 with the stick q43, 2 running q26), as
+// a pure query for the state chart's shadow.
+Player::GroundAim Player::groundJumpAim(int kind) const {
+    const JumpQuery q = kind == 2 ? groundJumpQuery({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f))
+                      : kind == 1 ? groundJumpQuery({40.0f, 50.0f}, 0.0f, false, glm::radians(90.0f))
+                                  : groundJumpQuery({0.0f, 48.04f}, 300.0f, true, glm::radians(120.0f));
+    return groundAim(q, ledgeOnArc(q));
+}
+bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone, bool running) {
+    constexpr float kRush = 11.0f / 60.0f;
+    const vec2 f = xy(forward());
+    const JumpQuery q = groundJumpQuery(query, up, falling, cone);
     const JumpTarget j = ledgeOnArc(q);
     if (j.markup < 0) return false;
     const auto& m = col_.markup[size_t(j.markup)];
     const bool perch = m.type == 13; // landed on: her root arrives on the perch point (tryPerch from the air catches it)
     const vec3 hit = pointOn(m, j.seg, j.t), goal = perch ? hit : attachPose(j.markup, j.seg, j.t, j.side).first;
+    const GroundAim aim = groundAim(q, j);
+    s_.aimFlags = aim.flags, s_.aimClass = aim.cls;
     if (running && !perch) {
         const vec2 sd = segDir(m, j.seg), out = vec2(-sd.y, sd.x) * j.side;
         const int cls = ledgeClassOf(col_, hit, out, s_.pos, f);

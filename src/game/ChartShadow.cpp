@@ -315,6 +315,60 @@ struct Shadow::Impl : ChartContext {
         return {};
     }
     std::optional<bool> carrying() const override { return w->heldPortable() != 0; }
+    std::optional<bool> wallJumpAnticipate(float frames) const override {
+        return w->player().state().state == game::State::Jump && w->player().wallJumpAnticipate(frames);
+    }
+    // 0x710380 over ours' markup: ledges and hurdles (MUD 0x40010000) whose nearest point to P = her root + forward x
+    // player data float +0x61C lies (vertically) within (short +0xC44, short +0xC46) of her z, nearest two by horizontal
+    // distance under short +0xC48 [O: decomp; the nearest point per polyline is ours, 0x709500's second point not ported].
+    std::optional<Candidates> jumpCandidates() const override {
+        const Charts& d = chart().charts();
+        const PlayerState& s = w->player().state();
+        const glm::vec2 fwd(std::cos(s.yaw), std::sin(s.yaw));
+        const glm::vec3 p = s.pos + glm::vec3(fwd * d.data<float>(0x61C), 0);
+        const float lo = float(d.data<int16_t>(0xC44)), hi = float(d.data<int16_t>(0xC46));
+        float best[2] = {float(d.data<int16_t>(0xC48)), float(d.data<int16_t>(0xC48))};
+        Candidates c;
+        const auto& col = w->collision();
+        for (size_t m = 0; m < col.markup.size(); ++m) {
+            const auto& mk = col.markup[m];
+            if (!(collision::markupFlags(mk.type) & 0x40010000u) || mk.points.size() < 2) continue;
+            float bd = 1e30f, bt = 0;
+            int bs = 0;
+            glm::vec3 bp{0};
+            for (size_t i = 0; i + 1 < mk.points.size(); ++i) {
+                const glm::vec3 a = mk.points[i], b = mk.points[i + 1];
+                const glm::vec2 ab(b - a);
+                const float l2 = glm::dot(ab, ab);
+                const float t = l2 > 0 ? std::clamp(glm::dot(glm::vec2(p - a), ab) / l2, 0.0f, 1.0f) : 0.0f;
+                const glm::vec3 q = a + (b - a) * t;
+                const float dd = glm::length(glm::vec2(q - p));
+                if (dd < bd) bd = dd, bt = t * std::sqrt(l2), bs = int(i), bp = q;
+            }
+            const float dz = std::abs(s.pos.z - bp.z);
+            if (!(dz > lo && dz < hi)) continue;
+            MarkupSlot slot = this->slot(int(m), bs, bt);
+            const glm::vec3 seg = mk.points[size_t(bs) + 1] - mk.points[size_t(bs)];
+            const glm::vec2 n = glm::length(glm::vec2(seg)) > 0 ? glm::normalize(glm::vec2(-seg.y, seg.x)) : glm::vec2(0);
+            slot.normal = glm::vec3(n, 0);
+            if (bd < best[0]) best[1] = best[0], c.b = c.a, best[0] = bd, c.a = slot;
+            else if (bd < best[1]) best[1] = bd, c.b = slot;
+        }
+        return c;
+    }
+    std::optional<Aim> takeoffAim(int kind) const override {
+        const auto a = w->player().groundJumpAim(kind);
+        if (a.target.markup < 0) return Aim{};
+        return Aim{slot(a.target.markup, a.target.seg, a.target.t), a.flags, a.cls, a.target.frames};
+    }
+    // 0x7594C0 (Player::wallJumpProbe), asked in her free flights only (ours keeps no launch velocity elsewhere) [I].
+    std::optional<int> wallJumpProbe() const override {
+        return w->player().state().state == game::State::Jump ? w->player().wallJumpProbe() : 0;
+    }
+    // The aimed jump's +0xAC0 / +0xA80 (PlayerState::aimFlags / aimClass, set by Player::aimGroundJump) while a jump
+    // target is held.
+    std::optional<uint32_t> jumpQueryFlags() const override { return jumpTarget() ? w->player().state().aimFlags : 0u; }
+    std::optional<int> jumpTargetType() const override { return jumpTarget() ? int(w->player().state().aimClass) : 0; }
     std::optional<ChartContext::Grapple> grapple() const override {
         const PlayerState& s = w->player().state();
         const game::State st = s.state;
@@ -330,6 +384,7 @@ struct Shadow::Impl : ChartContext {
         return Water{true, waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds) - s.pos.z};
     }
     std::array<uint32_t, size_t(JEffect::kCount)> effects{};
+    bool wasAir = false; // the last tick's noFloor, for the landing event
     void effect(JEffect e, float) override { ++effects[size_t(e)]; }
     // ---- end group J ----
 
@@ -452,6 +507,14 @@ void Shadow::tick(const World& world, const Actions& a) {
     m.clipChanges = rt_->stats.changes, m.clipRequest = rt_->request();
     // ---- end group CD ----
     m.updateFoot(*rt_, *charts_, world.player().state());
+    // ---- group J ----
+    // Chart event 455 (0x1C7): her landing, posted when the ground check finds a floor under her again after a flight
+    // (the handlers in S288 / S1004 / S1292: T16 -> S1275 the landing group) [I: the message that posts it is not
+    // decoded; ours posts it on the tick the controller leaves its free-flight states].
+    const bool air = m.noFloor().value_or(false);
+    if (m.wasAir && !air) rt_->post(m, 455);
+    m.wasAir = air;
+    // ---- end group J ----
 
     const ChartRuntime& rt = *rt_;
     if (rt.state() != m.lastState || rt.stats.changes != m.lastChanges) m.stateTicks = 0;
