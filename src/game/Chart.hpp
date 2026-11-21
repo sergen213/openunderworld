@@ -111,6 +111,11 @@ struct Charts {
     ChartData player, upper;     // +0x12500 Lara (agent 0), +0x12528 upper body / weapons (agent 1)
     std::vector<Variable> variables; // pointer table at player data +0x18CC (400 entries)
     std::vector<Request> requests;
+    // Kind-2 anim requests (0x444BA0 -> 0x443720 -> 0x43E250) name a node of the object's anim graph: ObjectBase
+    // +0x4C count / +0x50 table of {u32 DTP section id, u32}; each node is a DTP of the anim graph VM's bytecode
+    // (0x432B20) whose header +4 / +8 point at its enter / exit programs. code: the node's words; enter: word index.
+    struct GraphNode { std::vector<uint32_t> code; uint32_t enter = 0; };
+    std::vector<GraphNode> graph;
     // The player data block's bytes and its same-section pointers, for families that follow property pointers.
     std::vector<uint8_t> bytes;
     std::unordered_map<uint32_t, uint32_t> pointers;
@@ -406,7 +411,8 @@ public:
     float animFrames() const { return animFrames_; }       // the requested clip's time (ours: chart-side clock)
     float animLengthFrames() const;                        // 0 = unknown / none (no pattern, kind-2 request)
     bool animLoops() const;
-    const Request* pattern() const;                        // the state's request as an anim pattern, null when none
+    const Request* pattern() const;                        // the pattern playing for the state's request, null when none
+    int playingPattern() const { return playing_ ? playingIndex_ : -1; }
 
     int value(const Cond& c) const { return charts_.value(c); }
     float valueF(const Cond& c) const { return charts_.valueF(c); }
@@ -429,7 +435,7 @@ public:
     struct Stats {
         std::map<int16_t, uint64_t> unportedConds;  // condition id -> evaluations
         std::map<uint16_t, uint64_t> unportedActions;
-        uint64_t evaluations = 0, changes = 0;
+        uint64_t evaluations = 0, changes = 0, chainCaps = 0; // chainCaps: frames whose 0x65 chaining hit ours' cap
     } stats;
 
 private:
@@ -451,6 +457,12 @@ private:
     const Registry& reg_;
     bool active_ = false, mirror_ = false;
     int state_ = -1, queued_ = -1, lastTransition_ = -1, animCounter_ = 0;
+    // The pattern the state's request resolved to (kinds 0 / 1: the request; kind 2: what its graph node played), with
+    // the play mode the node gave it. Empty: none (no request, or a node that plays nothing ours can resolve).
+    std::optional<Request> playing_;
+    int playingIndex_ = -1;
+    bool playingMirror_ = false; // the mirror request the playing clip started with
+    bool resolveRequest();
     float stateTime_ = 0, totalTime_ = 0, animFrames_ = 0;
     uint32_t frame_ = 0, stamp_ = 0;
     bool unportedHit_ = false;

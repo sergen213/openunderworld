@@ -36,8 +36,20 @@ All offsets below are from the start of the player data block.
 - Chart variables: a run of 400 pointers to tuning records, pointed at by data +0x18CC (at run time tru.exe reaches
   the same table through the instance's object, 0x782B40 / 0x7820E0). E.g. variable 344 = 632.11, 347 = 4.0, 193 = 10.
 - Anim request: kinds 0 / 1 index the object's anim patterns (0x444BA0 -> 0x4428A0; anim::animPatterns; e.g. S1280
-  request 39 = `ng_land_hard`); kind 2 asks the anim graph for a node instead (0x443720 -> 0x43E250), so it is no
-  pattern index (S65's request 99 is not `obj_no`). A pattern's clip starts at (start - blend) frames (0x441FB0), so
+  request 39 = `ng_land_hard`). Kind 2 is no pattern index (S65's request 99 is not `obj_no`): 0x443720 -> 0x43E250
+  selects node `request` of the object's anim graph, ObjectBase +0x4C count / +0x50 table of {u32 DTP id, u32} (lara:
+  218 nodes; not the cdc AnimGraph of ObjectBase +0x64 / +0x68, which stays 0), and runs the node's enter program
+  (DTP header +4; exit program +8) on the anim graph VM 0x432B20 (stack bytecode: 2 push, 0x47..0x52 arithmetic /
+  compares, 0x63 / 0x64 jumps, 0x65 native call, 0x7B return). Module 0's natives (0x8AC128 -> 0x88F238): 0 Play
+  (0x448100: pattern, flags & 7 = play mode, two floats), 1 IsPlaying (0x43B390: pattern or -1, frame range, flags), 5 /
+  6 open / close a blend node. E.g. node 213 (S245, the stick jump): if pattern 52 (`ng_standing_jump`) is playing,
+  Play 680 (`ng_planted_jump_forward`) flags 1, else flags 2 [O: data, decomp]; either way 680 plays through once and
+  from its negative lead (start 1 - blend 4), 8 frames: Wine's S245 lasts 15 ticks [I: flags & 7 is not the pattern's
+  once / loop mode; the kind-2 path keeps the negative lead]. Node 46 (S40 idle) plays 685 or 691 by module 1's native
+  76 (0x6EA1E0: a test on a float triple at player-agent +0x460 via 0x74FD70, not decoded); node 99 (S65) asks it first.
+  A node that plays nothing keeps the clip and its clock. Ours: `ChartRuntime::resolveRequest` runs the program (both
+  ways on an unported native's value, resolved when they agree); an unresolved node has no clip clock. Our script VM
+  (src/script) shares the opcode numbering but is not this VM (its 0x65 calls a method on a receiver). A pattern's clip starts at (start - blend) frames (0x441FB0), so
   that it stands at the pattern's start frame when the crossfade ends: `ng_standing_jump` (blend 6, start 6) plays all
   its 10 frames, `ng_run_start` (4 / 6) from its frame 2. A negative lead is cut to 0 for `ng_running_jump_forwards`
   (2 / 1) and kept (the clip held at its first frame) for the wall jump's clips [U which branch decides].
@@ -200,8 +212,8 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
 timeMult = 30 x the fixed tick, ignoring the combat time scale [I]) and logs each run where the chart's requested clip
 differs from the controller's clip; the summary at `--frames` end lists the most evaluated unported conditions. The
 support foot (player +0xF3C, condition 0x12D) comes from the anim events 0x34 / 0x35 / 0x36 of the clip Lara's layer
-plays (lara.drm's event DTPs): the chart's own pattern clip on the runtime's clip clock, or for a kind-2 request (a clip
-the game fills at run time) our controller's clip [I].
+plays (lara.drm's event DTPs): the chart's own pattern clip on the runtime's clip clock (for a kind-2 request the pattern its node
+plays), or when that is unresolved (S40's node 46) our controller's clip [I].
 `--chart-trace FILE` writes the shared TSV (`tick state parent request stateTicks px py pz vx vy vz yaw inputs`, then
 `t30=` the chart state time and `var_anim=` the chart clip clock): tick = the frame's index (`World::ticks() - 1`
 after it: the tick the input script addressed), stateTicks = 60 Hz ticks since entering the state (0 on the entry tick,

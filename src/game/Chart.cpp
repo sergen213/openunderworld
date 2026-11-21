@@ -193,6 +193,24 @@ std::optional<Charts> loadCharts(const ObjData& o) {
         }
         c.requests.push_back(std::move(r));
     }
+    // The anim graph's nodes (kind-2 requests): ObjectBase +0x4C count, +0x50 -> {u32 DTP id, u32} [O-data, lara: 218].
+    const auto& base = o.drm.sections[o.base];
+    if (base.data.size() >= 0x54)
+        if (const auto table = cdc::internalPointer(base, 0x50)) {
+            const uint32_t n = rd<uint32_t>(base.data, 0x4C);
+            for (uint32_t i = 0; i < n && *table + 8 * i + 4 <= base.data.size(); ++i) {
+                Charts::GraphNode g;
+                const uint32_t id = rd<uint32_t>(base.data, *table + 8 * i);
+                for (const auto& sec : o.drm.sections)
+                    if (sec.type == cdc::SectionType::DtpData && sec.id == id && sec.data.size() >= 0x10) {
+                        g.code.resize(sec.data.size() / 4);
+                        std::memcpy(g.code.data(), sec.data.data(), g.code.size() * 4);
+                        if (const auto e = cdc::internalPointer(sec, 4)) g.enter = *e / 4;
+                        break;
+                    }
+                c.graph.push_back(std::move(g));
+            }
+        }
     return c;
 }
 
@@ -256,13 +274,8 @@ int ChartRuntime::request() const {
     const State* s = data_.state(state_);
     return s ? s->request : -1;
 }
-// The state's request as an anim pattern: request kinds 0 / 1 (0x444BA0 -> 0x4428A0). Kind 2 asks the anim graph for a
-// node instead (0x443720 -> 0x43E250): not a pattern, so the chart keeps no clip clock for it.
-const Request* ChartRuntime::pattern() const {
-    const State* s = data_.state(state_);
-    if (!s || s->request < 0 || s->requestKind == 2 || size_t(s->request) >= charts_.requests.size()) return nullptr;
-    return &charts_.requests[size_t(s->request)];
-}
+// The pattern the state's request plays (resolveRequest).
+const Request* ChartRuntime::pattern() const { return playing_ ? &*playing_ : nullptr; }
 float ChartRuntime::animLengthFrames() const {
     const Request* p = pattern();
     return p ? p->seconds * 30.0f : 0.0f;
@@ -270,6 +283,132 @@ float ChartRuntime::animLengthFrames() const {
 bool ChartRuntime::animLoops() const {
     const Request* p = pattern();
     return p && p->mode == 2;
+}
+
+namespace {
+// tru.exe's anim graph VM (0x432B20) over one node program, enough to learn which pattern a kind-2 node plays: the stack
+// opcodes (1 pop, 2 push the next word, 0x47..0x52 float arithmetic / compares / logic, 0x5A round, 0x5C int to float,
+// 0x63 jump, 0x64 jump if false, 0x7B return) and module 0's natives (table 0x8AC128 -> 0x88F238): 0 Play (0x448100:
+// pattern, flags, two floats), 1 IsPlaying (0x43B390: pattern or -1, from / to frame (-1 open), flags; flags & 1: false
+// unless the mirror request differs from the playing clip's), 2 / 3 / 4 the node's result slot (0x434EE0 store /
+// 0x434F00 commit / 0x434F30 push a selector), 5 / 6 open / close a blend node (0x434F50 / 0x444950) [O: decomp,
+// natives disassembled]. Module 1's 76 (0x6EA1E0, a player +0xF10 component test via 0x74FD70, pops nothing) is not
+// ported: its value is unknown and a branch on it runs both ways; the run resolves when both agree. Any other native
+// leaves it unresolved. The first Play wins [I: lara's nodes that queue several (a blend's transition clip, then its
+// loop) start with the one that plays first].
+enum class GraphOutcome { Played, Nothing, Unresolved };
+struct GraphRun {
+    GraphOutcome outcome = GraphOutcome::Unresolved;
+    int pattern = -1;
+    bool operator==(const GraphRun& o) const { return outcome == o.outcome && pattern == o.pattern; }
+};
+struct GraphVm {
+    const Charts::GraphNode& g;
+    int playing;
+    float frame;
+    bool mirrorChange;
+    struct V { uint32_t v; bool known; };
+    GraphRun run(size_t pc, std::vector<V> st, int depth) const {
+        auto f = [](uint32_t v) { float x; std::memcpy(&x, &v, 4); return x; };
+        auto u = [](float x) { uint32_t v; std::memcpy(&v, &x, 4); return v; };
+        auto pop = [&]() { const V v = st.empty() ? V{0, true} : st.back(); if (!st.empty()) st.pop_back(); return v; };
+        auto push = [&](uint32_t v, bool known = true) { st.push_back({v, known}); };
+        for (int steps = 0; steps < 4096 && pc < g.code.size(); ++steps) {
+            const uint32_t w = g.code[pc++];
+            const int32_t rel = int32_t(w << 8) >> 8;
+            const uint32_t op = w >> 24;
+            switch (op) {
+            case 0x01: pop(); break;
+            case 0x02: push(pc < g.code.size() ? g.code[pc] : 0), ++pc; break;
+            case 0x47: { const V a = pop(); push(u(-f(a.v)), a.known); break; }
+            case 0x48: case 0x49: case 0x4A: case 0x4B: case 0x4C: case 0x4D: case 0x4E: {
+                const V vb = pop(), va = pop();
+                const float b = f(vb.v), a = f(va.v);
+                const bool known = va.known && vb.known;
+                if (op >= 0x4C) push(op == 0x4C ? a < b : op == 0x4D ? a <= b : a == b, known);
+                else push(u(op == 0x48 ? a + b : op == 0x49 ? a - b : op == 0x4A ? a * b
+                          : b != 0 ? a / b : a > 0 ? 3.4028235e38f : a < 0 ? -3.4028235e38f : 0.0f), known);
+                break;
+            }
+            case 0x50: { const V a = pop(); push((a.v & 0xFF) == 0, a.known); break; }
+            case 0x51: case 0x52: {
+                const V b = pop(), a = pop();
+                const bool ab = a.v & 0xFF, bb = b.v & 0xFF;
+                // a known operand can decide it alone (false for and, true for or)
+                const bool dec = op == 0x51 ? (a.known && !ab) || (b.known && !bb) : (a.known && ab) || (b.known && bb);
+                push(op == 0x51 ? ab && bb : ab || bb, (a.known && b.known) || dec);
+                break;
+            }
+            case 0x5A: { const V a = pop(); push(uint32_t(int32_t(std::lround(f(a.v)))), a.known); break; }
+            case 0x5C: { const V a = pop(); push(u(float(int32_t(a.v))), a.known); break; }
+            case 0x63: pc = size_t(int64_t(pc) + rel); break;
+            case 0x64: {
+                const V c = pop();
+                const size_t taken = size_t(int64_t(pc) + rel);
+                if (c.known) {
+                    if ((c.v & 0xFF) == 0) pc = taken;
+                    break;
+                }
+                if (depth >= 8) return {};
+                const GraphRun x = run(pc, st, depth + 1), y = run(taken, st, depth + 1);
+                return x == y ? x : GraphRun{};
+            }
+            case 0x65: {
+                const uint32_t fn = pop().v, module = pop().v;
+                if (module == 1 && fn == 76) {
+                    push(0, false);
+                } else if (module != 0) {
+                    return {};
+                } else if (fn == 0) { // Play
+                    pop(), pop(), pop();
+                    const V pat = pop();
+                    if (!pat.known) return {};
+                    return {GraphOutcome::Played, int32_t(pat.v)};
+                } else if (fn == 1) { // IsPlaying
+                    const V flags = pop(), to = pop(), from = pop(), pat = pop();
+                    const int p = int32_t(pat.v);
+                    bool on = (p == -1 || p == playing) && (f(from.v) == -1.0f || f(from.v) <= frame) &&
+                              (f(to.v) == -1.0f || frame < f(to.v));
+                    if ((flags.v & 1) && !mirrorChange) on = false;
+                    push(on, flags.known && to.known && from.known && pat.known);
+                } else if (fn == 2) {
+                    pop();
+                } else if (fn == 4) {
+                    push(0x88F26C);
+                } else if (fn != 3 && fn != 5 && fn != 6) {
+                    return {};
+                }
+                break;
+            }
+            case 0x7B: return {GraphOutcome::Nothing, -1};
+            default: break; // tru.exe's switch ignores other opcodes
+            }
+        }
+        return {};
+    }
+};
+} // namespace
+
+// The state's request (0x444BA0): kinds 0 / 1 play that pattern (0x4428A0); kind 2 runs its anim graph node's enter
+// program (0x443720 -> 0x43E250 -> 0x4370C0 -> 0x432B20) against the clip playing until now: the pattern its Play
+// native starts is what plays, in the pattern's own mode [U: Play's flags & 7 (0x448100) is not that mode: node 213's
+// else branch passes 2, yet Wine ends S245 once ng_planted_jump_forward has played through]. A node that plays nothing
+// leaves the clip and its clock running (false: no restart). Unresolved: no clip.
+bool ChartRuntime::resolveRequest() {
+    const State* s = data_.state(state_);
+    int pat = s ? s->request : -1;
+    if (s && s->requestKind == 2) {
+        const GraphRun r = size_t(s->request) < charts_.graph.size()
+            ? GraphVm{charts_.graph[size_t(s->request)], playing_ ? playingIndex_ : -1, animFrames_, mirror_ != playingMirror_}
+                  .run(charts_.graph[size_t(s->request)].enter, {}, 0)
+            : GraphRun{};
+        if (r.outcome == GraphOutcome::Nothing && playing_) return false;
+        pat = r.outcome == GraphOutcome::Played ? r.pattern : -1;
+    }
+    playing_.reset(), playingIndex_ = -1;
+    if (pat < 0 || size_t(pat) >= charts_.requests.size()) return true;
+    playing_ = charts_.requests[size_t(pat)], playingIndex_ = pat, playingMirror_ = mirror_;
+    return true;
 }
 const Property* ChartRuntime::property(uint16_t id) const {
     const auto it = props_.find(id);
@@ -417,8 +556,13 @@ void ChartRuntime::applyProperties(ChartContext& ctx, int state) {
 // to 0 (ng_running_jump_forwards 2 / 1 under Wine) [U: the wall jump's clips keep it, held at their first frame].
 void ChartRuntime::enterAnim() {
     animCounter_ = 0;
+    if (!resolveRequest()) return;
     const Request* p = pattern();
-    animFrames_ = p ? float(std::max(0, int(p->start) - int(p->blend))) : 0.0f;
+    // A kind-2 node's Play (0x448100 -> 0x446BD0) keeps a negative lead: S245's ng_planted_jump_forward (start 1, blend
+    // 4) ends after 7.5 frames under Wine (stick_jump_open: S245 -> S535 15 ticks after the press) = 5 - (1 - 4) [I].
+    const State* s = data_.state(state_);
+    const int lead = p ? int(p->start) - int(p->blend) : 0;
+    animFrames_ = p ? float(s && s->requestKind == 2 ? lead : std::max(0, lead)) : 0.0f;
 }
 
 // 0x787890
@@ -453,6 +597,9 @@ void ChartRuntime::evaluate(ChartContext& ctx) {
     const int orig = state_;
     int s = state_;
     bool chain;
+    // Ours caps the chaining (tru.exe has no cap): a cycle that tru.exe's game state would break (an attach the shadow's
+    // controller has not made) must not hang the frame. Counted in stats.chainCaps.
+    int links = 0;
     do {
         chain = false;
         const int t = find(ctx, s);
@@ -460,6 +607,10 @@ void ChartRuntime::evaluate(ChartContext& ctx) {
         change(ctx, t);
         if (active_ && state_ != orig && state_ != s && propBool(0x65).value_or(false)) ++frame_, chain = true;
         s = state_;
+        if (chain && ++links >= 64) {
+            ++stats.chainCaps;
+            return;
+        }
     } while (chain);
 }
 
@@ -696,3 +847,4 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
 }
 
 } // namespace ou::game::chart
+
