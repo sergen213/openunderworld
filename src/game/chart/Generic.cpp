@@ -69,7 +69,8 @@ bool fall(ChartContext& ctx, const Cond& c) { return ctx.fallDistance() >= ctx.c
 bool animationEnded(ChartContext& ctx, const Cond& c) {
     ChartRuntime& rt = ctx.chart();
     int v = rt.animCounter();
-    if (const float len = rt.animLengthFrames(); len > 0 && !rt.animLoops() && rt.animFrames() >= len && v < 2) v = 1;
+    // 0x783840: the channel time (0x438910) past the clip's last key time (0x438930) counts as ended.
+    if (const float len = rt.animLengthFrames(); len > 0 && !rt.animLoops() && rt.animFrames() > len && v < 2) v = 1;
     switch (mode(c)) {
     case 0: return v < 1;
     case 1: return v > 0;

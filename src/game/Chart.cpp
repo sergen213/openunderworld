@@ -256,13 +256,20 @@ int ChartRuntime::request() const {
     const State* s = data_.state(state_);
     return s ? s->request : -1;
 }
+// The state's request as an anim pattern: request kinds 0 / 1 (0x444BA0 -> 0x4428A0). Kind 2 asks the anim graph for a
+// node instead (0x443720 -> 0x43E250): not a pattern, so the chart keeps no clip clock for it.
+const Request* ChartRuntime::pattern() const {
+    const State* s = data_.state(state_);
+    if (!s || s->request < 0 || s->requestKind == 2 || size_t(s->request) >= charts_.requests.size()) return nullptr;
+    return &charts_.requests[size_t(s->request)];
+}
 float ChartRuntime::animLengthFrames() const {
-    const int r = request();
-    return r >= 0 && size_t(r) < charts_.requests.size() ? charts_.requests[size_t(r)].seconds * 30.0f : 0.0f;
+    const Request* p = pattern();
+    return p ? p->seconds * 30.0f : 0.0f;
 }
 bool ChartRuntime::animLoops() const {
-    const int r = request();
-    return r >= 0 && size_t(r) < charts_.requests.size() && charts_.requests[size_t(r)].mode == 2;
+    const Request* p = pattern();
+    return p && p->mode == 2;
 }
 const Property* ChartRuntime::property(uint16_t id) const {
     const auto it = props_.find(id);
@@ -405,11 +412,13 @@ void ChartRuntime::applyProperties(ChartContext& ctx, int state) {
     }
 }
 
-// 0x783470: the state's anim request plays; the animation-end counter restarts.
+// 0x783470: the state's anim request plays; the animation-end counter restarts. 0x4428A0 -> 0x441FB0 starts the clip at
+// (start - blend) frames, so that it stands at the pattern's start frame when the crossfade ends; a negative lead is cut
+// to 0 (ng_running_jump_forwards 2 / 1 under Wine) [U: the wall jump's clips keep it, held at their first frame].
 void ChartRuntime::enterAnim() {
     animCounter_ = 0;
-    const int r = request();
-    animFrames_ = r >= 0 && size_t(r) < charts_.requests.size() ? float(charts_.requests[size_t(r)].start) : 0.0f;
+    const Request* p = pattern();
+    animFrames_ = p ? float(std::max(0, int(p->start) - int(p->blend))) : 0.0f;
 }
 
 // 0x787890
@@ -465,19 +474,32 @@ void ChartRuntime::start(ChartContext& ctx) {
 
 void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
     ctx.chart_ = this;
+    ctx.timeMult = timeMult; // the tick's one time step: conditions and actions read ctx.timeMult
     if (!active_) return;
-    totalTime_ += timeMult, stateTime_ += timeMult;
+    totalTime_ += ctx.timeMult, stateTime_ += ctx.timeMult;
     animCounter_ += animCounter_ < 1 ? -1 : 1;
     runProcess(ctx, state_);
     if (active_ && data_.state(state_)) evaluate(ctx);
     // The requested clip's clock [I: the anim system's notification order relative to the chart tick is not pinned]:
     // a clip played to its end (once) or across a loop wrap notifies the end (0x7181A0 reasons 1 / 2 -> 0x768CF0).
-    const int r = request();
-    const float rate = r >= 0 && size_t(r) < charts_.requests.size() ? charts_.requests[size_t(r)].rate : 1.0f;
+    const Request* p = pattern();
     const float len = animLengthFrames(), before = animFrames_;
-    animFrames_ += timeMult * rate;
+    animFrames_ += ctx.timeMult * (p ? p->rate : 1.0f);
     if (len > 0 && (animLoops() ? std::floor(animFrames_ / len) > std::floor(before / len) : before < len && animFrames_ >= len))
         animEnded(ctx);
+}
+
+void ChartRuntime::enter(ChartContext& ctx, int state) {
+    ctx.chart_ = this;
+    if (!data_.state(state)) return;
+    const int old = state_;
+    runExit(ctx, old, state);
+    state_ = state, active_ = true;
+    applyProperties(ctx, state);
+    runEnter(ctx, state, old, true);
+    enterAnim();
+    runEnter(ctx, state, old, false);
+    stateTime_ = 0, queued_ = -1, lastTransition_ = -1;
 }
 
 void ChartRuntime::animEnded(ChartContext& ctx) {
