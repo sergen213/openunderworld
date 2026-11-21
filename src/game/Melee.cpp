@@ -63,12 +63,10 @@ T rd(std::span<const uint8_t> d, size_t o) {
     return v;
 }
 
+} // namespace
+
 // The ObjectBase animation list (+0x54 count, +0x58 {i16 anim, i16, u32 event-list DTP id, char* name}): each clip's
 // command events (records with info & 3 == 2: +8 i16 command, +0xA i16 parameter, +2 frame) and its animation id.
-struct ClipEvents {
-    uint32_t animId = 0;
-    std::vector<std::array<int, 3>> commands; // {command, parameter, frame}
-};
 std::map<std::string, ClipEvents, std::less<>> clipEvents(const ObjData& o) {
     std::map<std::string, ClipEvents, std::less<>> out;
     const auto& s = o.drm.sections[o.base];
@@ -100,6 +98,8 @@ std::map<std::string, ClipEvents, std::less<>> clipEvents(const ObjData& o) {
     }
     return out;
 }
+
+namespace {
 
 bool ended(const AnimLibrary& lib, const PlayerState& s) {
     const anim::Clip* c = lib.find(s.clip);

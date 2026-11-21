@@ -271,6 +271,32 @@ public:
     };
     virtual void effect(JEffect, float = 0) {}
     // ---- end group J ----
+    // ---- group CD ----
+    // Climb / ladder / pillar / perch / pole / beam / wall hug / slide / climb-out reads (src/game/chart/Climb.cpp).
+    // nullopt = the context cannot say (the condition counts as unported).
+    // Player +0x8EC, the water flags owner message 9 returns (0x5B36F0 -> case 9): 0x700530 stores 0x400 (dry) outside
+    // water (player globals 0xFADA74 bit 0x40 clear), else 0x5D77E0 -> 0x5D3860's class (0x10 / 0x20 / 0x40 swimming,
+    // 0x80, 0x100 wading, 0x200 shallow, 0x400 dry) with the volume bits 0x800 / 0x1000 / 0x2000 / 0x4000.
+    virtual std::optional<uint32_t> waterFlags() const { return {}; }
+    // (player +0x500) +0x134, the inventory slot in her hands: -1 none (0x6E8FC0 holsters), 0 pistols, 1 the secondary,
+    // 2 Thor's hammer (weapon data +0xDC; 0x704A40 draws), 3 / 7 / 12 other items [U which].
+    virtual std::optional<int> gearSlot() const { return {}; }
+    // Player +0x78 is set / cleared by anim event commands 0x13 / 0x14 on the chart's anim section (0x716F30, which also
+    // sets / clears agent +0x53C); 0x768C50 copies it to agent +0x6C after the chart tick. Kept chart-side in
+    // playerInt(0x78) and ChartRuntime::field(0x6C) by whoever plays the chart's clip; false = nobody does.
+    virtual bool tracksCriticalSection() const { return false; }
+    // 0x493330 from a to b with ray flags `flags` (0x442C11E3, 0x2C19E7 ...): kind 1 = static world (record +0 == 1), 2 =
+    // an instance (== 2), with the hit point (+0x10) and normal (+0x20). `stillBody`: kind 2 only, the instance has a
+    // physics body (0x4D9380 +0x274) at rest (velocity and spin squared < 1, 0x4D9C80 / 0x4D8E70) and not 0x4D9300;
+    // `flag8000000`: its object type flags +0x10 -> +0 bit 0x8000000. nullopt fields: unknown. No value: no hit
+    // (hasCollision() tells whether there is a world to ask).
+    struct RayHit {
+        int kind = 1;
+        glm::vec3 point{0}, normal{0};
+        std::optional<bool> stillBody, flag8000000;
+    };
+    virtual std::optional<RayHit> rayHit(glm::vec3, glm::vec3, uint32_t) const { return {}; }
+    // ---- end group CD ----
 
 private:
     friend class ChartRuntime;
