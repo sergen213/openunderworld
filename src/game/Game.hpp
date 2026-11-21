@@ -655,6 +655,11 @@ public:
     // tru.exe 0x5DCE20 posting message 0x1C9 (too steep) for the face under her root, as floorKind judges it (the chart's
     // wall-slide stamp, agent +0x90, condition 0x206).
     bool steepUnder() const;
+    // tru.exe's ground check 0x5DCE20 as the player process calls it (0x71B910), on `feet` alone (no controller state):
+    // a ray from `above` over her feet down to `below` under them. floor: a face that supports standing within that span
+    // (message 0x1C7, chart event 455); steep: a too-steep face there (0x1C9); neither: no floor (0x1CC, bit 19).
+    struct GroundCheck { bool floor = false, steep = false, onBody = false; float z = 0; }; // onBody: a dynamic body's face
+    GroundCheck groundCheck(vec3 feet, float above, float below) const;
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
