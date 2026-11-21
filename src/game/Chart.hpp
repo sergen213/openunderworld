@@ -249,6 +249,13 @@ public:
     // sweep refreshes every frame; empty slots have markup -1. nullopt: not known.
     struct Candidates { MarkupSlot a, b; };
     virtual std::optional<Candidates> jumpCandidates() const { return {}; }
+    // The take-off states' jump query (0x6C0800 -> 0x7725A0 -> 0x771DB0 fill player +0xA64 while she takes off): kind 0
+    // standing (q2), 1 with the stick (q43), 2 running (q26); the target with its +0xAC0 flags and +0xA80 type.
+    struct Aim { MarkupSlot target; uint32_t flags = 0; int type = 0; };
+    virtual std::optional<Aim> takeoffAim(int) const { return {}; }
+    // The chart's own jump target (player +0xA64 as the chart's actions set it: action 504's take-off query, action
+    // 230's promotion); empty: the context's jumpTarget() answers.
+    Aim chartTarget;
     virtual std::optional<bool> combatFlag(int) const { return {}; } // (player +0x504) +0x1FC bit n
     virtual std::optional<int> combatObjectMode() const { return {}; } // (player +0x504) +0x50
     virtual std::optional<bool> upperProp(uint16_t) const { return {}; } // upper chart's current-state bool property (0x6EEF00)

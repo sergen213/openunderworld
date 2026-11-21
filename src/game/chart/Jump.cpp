@@ -73,6 +73,17 @@ bool edge(ChartContext& ctx, const Cond& c, F pred) {
     }
 }
 
+// Player +0xA64 as the chart sees it: the target its own actions set (ChartContext::chartTarget), else the game's.
+ChartContext::MarkupSlot jt(ChartContext& ctx) { return ctx.chartTarget.target ? ctx.chartTarget.target : ctx.jumpTarget(); }
+std::optional<uint32_t> jtFlags(ChartContext& ctx) {
+    if (ctx.chartTarget.target) return ctx.chartTarget.flags;
+    return ctx.jumpQueryFlags();
+}
+std::optional<int> jtType(ChartContext& ctx) {
+    if (ctx.chartTarget.target) return ctx.chartTarget.type;
+    return ctx.jumpTargetType();
+}
+
 // ---- conditions ----
 
 // 0x1F (0x76F5D0): bone 0 z of the current matrices (instance +0x90 +0x38) minus the previous ones' (+0x94) >= value
@@ -187,12 +198,12 @@ bool markupClass(ChartContext& ctx, const Cond& c, const ChartContext::MarkupSlo
 }
 // 0x262 (0x763EB0): the class of the jump-target markup (player +0xA64 / +0xA68). Registry name
 // "JumpTargetSameAsAttached" belongs to a neighbour; this is the class test.
-bool jumpTargetClass(ChartContext& ctx, const Cond& c) { return markupClass(ctx, c, ctx.jumpTarget()); }
+bool jumpTargetClass(ChartContext& ctx, const Cond& c) { return markupClass(ctx, c, jt(ctx)); }
 
 // 0x26D (0x762410 -> 0x7622D0 on M = player +0xA64): bits {0 M has an owning object (M +0xC -> +0x10), 1 player +0xED4
 // == 0, 2 +0xED4 != +0xED8, 3 the owner's class flags & 0x100, 4 M valid}; value 690..694 tests bit value - 690.
 bool jumpTargetBits(ChartContext& ctx, const Cond& c) {
-    const auto m = ctx.jumpTarget();
+    const auto m = jt(ctx);
     switch (mode(c)) {
     case 690: return m && m.live; // [I] ours: markup moved by an object = owned by one
     case 691: return ctx.playerInt(0xED4) == 0;
@@ -206,7 +217,7 @@ bool jumpTargetBits(ChartContext& ctx, const Cond& c) {
 // 0x294 (0x7649A0): group 661 -> player +0xA80 (jump target type) == value; else by value: 660..663 agent +0x340 ==
 // 0..3, 673 / 674 / 675 +0xA80 == 2 / 1 / 4, 670 / 671 / 672 / 676 the segment-junction probe 0x737040 (not ported).
 bool markupGeometry(ChartContext& ctx, const Cond& c) {
-    const int a80 = ctx.jumpTargetType().value_or(ctx.jumpTarget() ? ctx.jumpTarget().type : 0);
+    const int a80 = jtType(ctx).value_or(jt(ctx) ? jt(ctx).type : 0);
     if (c.group == 0x295) return a80 == c.value;
     switch (mode(c)) {
     case 660: case 661: case 662: case 663: return ctx.chart().field(0x340) == mode(c) - 660;
@@ -226,7 +237,7 @@ bool segmentPitch(ChartContext& ctx, const Cond& c) {
     auto& cache = rt.cache(c.id);
     if (cache.frame != rt.frame()) {
         auto m = ctx.attachedMarkup();
-        if (!m) m = ctx.jumpTarget();
+        if (!m) m = jt(ctx);
         if (!m) return false;
         const auto s = ctx.markupSegment(m.markup, int(std::lround(m.param)));
         if (!s) return rt.unported(c);
@@ -242,7 +253,7 @@ bool segmentPitch(ChartContext& ctx, const Cond& c) {
 // flags (cleared with the target by 0x707500): the context's, else the chart-side store.
 bool queryFlag(ChartContext& ctx, const Cond& c) {
     const int v = ctx.chart().value(c);
-    if (const auto f = ctx.jumpQueryFlags(); f && v >= 0 && v < 32) return (*f >> v) & 1;
+    if (const auto f = jtFlags(ctx); f && v >= 0 && v < 32) return (*f >> v) & 1;
     const int word = ctx.playerInt(0xAC0 + (v >> 4) * 2);
     return (word >> (v & 15)) & 1;
 }
@@ -337,8 +348,22 @@ bool fireEvent38(ChartContext& ctx, const Cond&) {
 // 504 (enter 0x76BD30, update 0x76BF00, exit 0x75BD00): take-off. Chart-side: agent +0x98 air time from 0, collision
 // mask 0xFADA74 = 0x49; jump type +0xA84 == 0x12 forces the end counter +0x24 = 1 (not representable: recorded).
 // [U] the take-off heading (0x76B210 / 0x76B380) needs the anim root-rotation flag: not ported.
+// The take-off state's query kind (the states that run q2 / q43 / q26 in lara.drm's chart: S248 standing, S245 / S247
+// with the stick, S249 / S280 / S281 running) [O-data, Player::aimGroundJump]; -1 none.
+int takeoffKind(int state) {
+    switch (state) {
+    case 248: return 0;
+    case 245: case 247: return 1;
+    case 249: case 280: case 281: return 2;
+    default: return -1;
+    }
+}
 void takeoffEnter(ChartContext& ctx, uint16_t) {
     ctx.agentFloat(0x98) = 0;
+    // [I] tru.exe's query runs every frame of the take-off (0x6C0800, through a pointer); ours once, on entering it.
+    ctx.chartTarget = {};
+    if (const int k = takeoffKind(ctx.chart().state()); k >= 0)
+        if (const auto a = ctx.takeoffAim(k)) ctx.chartTarget = *a;
     ctx.effect(JEffect::CollisionMask, 0x49);
 }
 void takeoffUpdate(ChartContext& ctx, uint16_t) { ctx.agentFloat(0x98) += ctx.timeMult; }
@@ -358,14 +383,16 @@ void airEnter(ChartContext& ctx, uint16_t) {
     const auto v = ctx.velocity();
     const bool rising = v && v->z > 0;
     ctx.effect(JEffect::CollisionMask, rising ? 0x81 : 0xC9);
-    if (const auto t = ctx.jumpTarget(); t && !rising && (t.flags & 0x20800000)) ctx.effect(JEffect::ClearJumpTarget);
+    if (const auto t = jt(ctx); t && !rising && (t.flags & 0x20800000)) ctx.chartTarget = {}, ctx.effect(JEffect::ClearJumpTarget);
 }
+// [I] the flight's target ends with the flight (tru.exe clears it on the attach / landing paths, 0x707500).
+void airExit(ChartContext& ctx, uint16_t) { ctx.chartTarget = {}; }
 void airUpdate(ChartContext& ctx, uint16_t) {
     ctx.agentFloat(0x3E8) += ctx.timeMult;
     const auto v = ctx.velocity();
     const bool rising = v && v->z > 0;
     ctx.effect(JEffect::CollisionMask, rising ? -0x48 : 0x48);
-    if (const auto t = ctx.jumpTarget(); t && !rising && (t.flags & 0x20830000 & 0x20800000)) ctx.effect(JEffect::ClearJumpTarget);
+    if (const auto t = jt(ctx); t && !rising && (t.flags & 0x20830000 & 0x20800000)) ctx.chartTarget = {}, ctx.effect(JEffect::ClearJumpTarget);
 }
 
 // 511 (enter 0x73ECE0, update 0x750040): free-jump steering. Enter keeps the stick heading (agent +0x448 / +0x424 /
@@ -383,10 +410,10 @@ void steerEnter(ChartContext& ctx, uint16_t) {
     ctx.agentFloat(0x44C) = y;
     ctx.agentFloat(0x440) = 0;
     ctx.chart().field(0x444) = -1;
-    ctx.chart().field(0x450) = ctx.jumpTarget().markup + 1;
+    ctx.chart().field(0x450) = jt(ctx).markup + 1;
 }
 void steerUpdate(ChartContext& ctx, uint16_t) {
-    if (ctx.jumpTarget()) return;
+    if (jt(ctx)) return;
     ctx.agentFloat(0x440) += ctx.timeMult;
 }
 
@@ -534,8 +561,7 @@ void messageExit(ChartContext& ctx, uint16_t) {
 // class: prop 0x1A4 (type 0x23, "alt") else prop 0x19A. With bool prop 0x199 and no jump target (player +0xA64) it
 // promotes the candidate slot +0x3A0, or when +0x3E0 is filled too the one whose direction (+0x20) lies more along her
 // heading (0x4320A0 dot of 0x49F5D0(yaw)), into the target (+0xA64 markup, +0xA68 param, +0x9F0 point; +0xA6C =
-// 0x6EC440(markup), +0xA74 = 2.0). Chart-side: stored in playerInt(0xA64) (markup + 1) / playerFloat(0xA68); the live
-// target stays the controller's in shadow mode. Prop 400 / 401 (0x75F2D0) and the per-class anim-target functions
+// 0x6EC440(markup), +0xA74 = 2.0), kept as ChartContext::chartTarget. Prop 400 / 401 (0x75F2D0) and the per-class anim-target functions
 // (0x74FDF0, 0x74ED30 ...) belong to the attach families: recorded with the class, not run. [O] prop 0x199 is true only
 // in the hang attach states S542..S544, so no free flight promotes a candidate.
 void markupAttachTarget(ChartContext& ctx, uint16_t) {
@@ -544,15 +570,14 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     if (const Property* p = rt.property(0x1A4); p && p->type == 0x23) cls = int(p->raw);
     else if (const Property* q = rt.property(0x19A); q && q->type == 0x23) cls = int(q->raw);
     const bool promote = rt.propBool(0x199).value_or(false);
-    if (promote && !ctx.jumpTarget() && ctx.playerInt(0xA64) == 0) {
+    if (promote && !jt(ctx)) {
         if (const auto cand = ctx.jumpCandidates(); cand && cand->a) {
             const ChartContext::MarkupSlot* pick = &cand->a;
             if (cand->b) {
                 const glm::vec2 h(std::cos(ctx.heading()), std::sin(ctx.heading()));
                 if (glm::dot(h, glm::vec2(cand->a.normal)) < glm::dot(h, glm::vec2(cand->b.normal))) pick = &cand->b;
             }
-            ctx.playerInt(0xA64) = pick->markup + 1;
-            ctx.playerFloat(0xA68) = pick->param;
+            ctx.chartTarget = {*pick, 0, 0}; // [I] the promoted slot carries no query flags / type
             ctx.playerFloat(0xA74) = 2.0f;
             ctx.effect(JEffect::TargetPromote, float(pick->markup));
         }
@@ -609,7 +634,7 @@ void registerJump(Registry& player, Registry&) {
 
     player.action(230, {nullptr, nullptr, markupAttachTarget, markupAttachTarget, nullptr, nullptr}, "MarkUpAttach_SetAnimTarget", fam);
     player.action(504, {takeoffEnter, nullptr, nullptr, nullptr, nullptr, takeoffUpdate}, "JumpTakeoffHeading", fam);
-    player.action(510, {airEnter, airEnter, nullptr, nullptr, nullptr, airUpdate}, "Airborne", fam);
+    player.action(510, {airEnter, airEnter, nullptr, nullptr, airExit, airUpdate}, "Airborne", fam);
     player.action(511, {steerEnter, nullptr, nullptr, nullptr, nullptr, steerUpdate}, "AirSteer", fam);
     player.action(572, {yawLimitEnter, nullptr, nullptr, nullptr, yawLimitExit, nullptr}, "YawConstraintFrame", fam);
     player.action(802, {airMeterEnter, airMeterReenter, nullptr, nullptr, airMeterReenter, airMeterUpdate}, "AirMeter", fam);

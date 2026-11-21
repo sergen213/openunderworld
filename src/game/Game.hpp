@@ -739,6 +739,13 @@ private:
     // ground jump query (forward, up a 30 Hz frame; start `up` over the root, +0x2C bit 0x80, cone in radians) meeting a
     // ledge: aim at its hang
     bool aimGroundJump(vec2 query, float up, bool falling, float cone, bool running = false);
+    JumpQuery groundJumpQuery(vec2 query, float up, bool falling, float cone) const; // aimGroundJump's query
+    struct GroundAim { JumpTarget target; uint16_t flags = 0; int8_t cls = 0; };    // + the chart's +0xAC0 / +0xA80
+    GroundAim groundAim(const JumpQuery& q, const JumpTarget& j) const;
+public:
+    // The take-off query (0 standing, 1 stick, 2 running) as aimGroundJump runs it, without acting on it (chart shadow).
+    GroundAim groundJumpAim(int kind) const;
+private:
     // State::Jump: an aimed ground jump re-aimed at its markup target (PlayerState::aimMarkup) with the time left
     // (tru.exe 0x73EDC0 every frame of the flight, 0x752410)
     void reaimJump(float dt);

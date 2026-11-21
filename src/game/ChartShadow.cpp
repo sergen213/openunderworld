@@ -331,6 +331,11 @@ struct Shadow::Impl : ChartContext {
         }
         return c;
     }
+    std::optional<Aim> takeoffAim(int kind) const override {
+        const auto a = w->player().groundJumpAim(kind);
+        if (a.target.markup < 0) return Aim{};
+        return Aim{slot(a.target.markup, a.target.seg, a.target.t), a.flags, a.cls};
+    }
     // 0x7594C0 (Player::wallJumpProbe), asked in her free flights only (ours keeps no launch velocity elsewhere) [I].
     std::optional<int> wallJumpProbe() const override {
         return w->player().state().state == game::State::Jump ? w->player().wallJumpProbe() : 0;
