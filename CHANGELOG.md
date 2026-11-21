@@ -6,6 +6,15 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.60.2] - 2026-11-21
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Changed: the loading screen (New Game, PLAY GAME, LOAD GAME, the next chapter) now stays on screen and keeps
+  drawing until the level has finished loading, as in the original, instead of freezing after one frame. The window
+  stays responsive and can be closed while it loads. When the load is done the game fades in from black over a
+  second, as the original does.
+
 ## [0.60.1] - 2026-11-20
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
