@@ -155,6 +155,16 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
   floor (0x1F8) = the controller's Jump / Fall / HangJump; instance velocity = her displacement per 30 Hz frame; bone 0
   rise = her root's; water depth from `Player::waterAt` / `waterSurface`; carry = `World::heldPortable`; combat flag bits
   22 / 27 = `CombatState::headShotReady` / `adrenalineMode`.
+- Group B (`src/game/chart/Ledge.cpp`, ledge / hang / shimmy / hurdle): conditions 0x15, 0x20, 0xD0, 0xD1, 0xD6..0xD8,
+  0x195, 0x199, 0x19B, 0x19C, 0x1D1, 0x1FF, 0x200, 0x201, 0x213, 0x263, 0x26C, 0x280, 0x281, 0x284, 0x28A, 0x2B4,
+  0x3EB, 0x960 (0x264, the type-27 markup query, is not); actions 205 (entry / exit), 213, 232, 303, 404, 408, 506
+  (without the clip-speed properties), 513, 514, 516, 606, 613, 2003, 2004; 301 and 205's update count as unported.
+  Shared with action 420: `markupContactProbe` = 0x770BA0 (agent +0xF0 lookahead bits; the ledge lookahead 0x735970
+  returns 4 markup end within +0x6DC, 8 / 0x10 a corner, 1 a ray along the walk hit [O: its epilogue ORs 1 when either
+  0x493330 ray hits]) and `markupAttachInit` = 0x76D010 (player +0xEDC = 0x74E290's class). Action 420 must also run
+  them every tick through its agent +0x51C callback 0x770ED0 while property 414 holds, or the shimmy lookahead never
+  sees the shimmy states' property 499. 0x195's class is 0x6F89A0's (stick against a frame; 0 under the dead zone).
+  Player fields live in `ChartContext::playerInt / playerFloat` keyed by the tru.exe offset.
 - Porting a family: add `src/game/chart/<Family>.cpp` with `void register<Family>(Registry& player, Registry& upper)`
   and one line in `Families.cpp`. A condition is `bool fn(ChartContext&, const Cond&)` returning the raw truth (the
   runtime negates); it reads the agent through `ctx.chart()` (`stateTime()`, `value(c)` / `valueF(c)` with the

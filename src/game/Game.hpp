@@ -555,6 +555,9 @@ struct PlayerState {
 // The rope's pivot (its last bend, else the anchor) and its length from the anchor to the pivot along the bends.
 vec3 ropePivot(const PlayerState& s);
 float ropeBentLength(const PlayerState& s);
+// What lies past ledge point q for a hurdle along f (tru.exe 0x73DFF0's class, player +0x6C): -1 blocked, 0 over,
+// 1 onto, 2 onto the far side into a hang (Player.cpp hurdleClass; the flair classes 3..5 are not modelled).
+int hurdlePastClass(const collision::CollisionMesh& col, vec3 q, vec2 f);
 
 class Player {
 public:
@@ -576,6 +579,7 @@ public:
     // tru.exe 0x74E290's hang clearance class of the ledge she hangs on, as player +0xEDC holds it: 2 climb up, 5
     // crouching, 8 wall-hug shelf, 11 a wall in front of the top (0x74E160), 1 none (hangClearance plays 11 as 1).
     int hangClearanceClass() const;
+    bool ledgeShelf(int markup, int seg, float t) const { return shelfAt(markup, seg, t); } // tru.exe 0x74BB50 == 1
     void rideFrame(const glm::mat4& d);
     void addVelocity(vec3 v) { s_.vel += v; }
     void letGo() { startFall(vec3(0)); } // what she held or stood on is gone (a breakable broke): she falls from here

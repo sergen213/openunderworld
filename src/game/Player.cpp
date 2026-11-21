@@ -1219,6 +1219,8 @@ vec3 faceEdge(const collision::CollisionMesh& col, vec3 from, vec3 q, vec2 out) 
 }
 } // namespace
 
+int hurdlePastClass(const collision::CollisionMesh& col, vec3 q, vec2 f) { return hurdleClass(col, q, f).cls; }
+
 bool Player::tryHurdle(bool jumped) {
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
