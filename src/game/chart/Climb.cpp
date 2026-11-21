@@ -425,10 +425,10 @@ bool deadlinePast(ChartContext& ctx, const Cond& c) {
 
 // 212 (0x75CC90 / 0x75CCA0): enter zeroes the anim section's blend parameters +0x8C / +0x90. The update steers them by
 // the raw input axes 0 / 2 / 3 (0x754BF0), which ours does not have: counted unported.
-void beamStickBlendEnter(ChartContext& ctx, uint16_t) { ctx.anim.blend8C = 0, ctx.anim.blend90 = 0; }
+void beamStickBlendEnter(ChartContext& ctx, uint16_t) { ctx.animBlend = glm::vec2(0); }
 // 214 (0x755100 / 0x7550D0): the second blend slot +0x3AC / +0x3B0 cleared on entry and exit, = +0x8C / +0x90 each tick.
 void latchBlendClear(ChartContext& ctx, uint16_t) { ctx.blendLatch = {0, 0}; }
-void latchBlendUpdate(ChartContext& ctx, uint16_t) { ctx.blendLatch = {ctx.anim.blend8C, ctx.anim.blend90}; }
+void latchBlendUpdate(ChartContext& ctx, uint16_t) { ctx.blendLatch = ctx.animBlend; }
 // 235 (0x75CA60) exit: agent +0x4A0 = 0.
 void clearAgent4A0(ChartContext& ctx, uint16_t) { ctx.agentFloat(0x4A0) = 0; }
 // 405 (0x6457A0): an empty debug stub.
