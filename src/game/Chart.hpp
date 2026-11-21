@@ -193,6 +193,16 @@ public:
     // The hang clearance class tru.exe 0x74E290 computes for the attached ledge (1, 2, 5, 8, 11, 12); 0 = unknown.
     // markupAttachInit (0x76D010) stores it in playerInt(0xEDC).
     virtual int ledgeClearanceClass() const { return 0; }
+    // 0x751230 / 0x74BB50 == 1: the ledge point at `param` of markup `m` tops a wall-hug shelf; nullopt unknown.
+    virtual std::optional<bool> ledgeShelf(int, float) const { return {}; }
+    // 0x73DFF0's class of what lies past ledge point q along f (player +0x6C); nullopt unknown.
+    virtual std::optional<int> hurdlePastClass(glm::vec3, glm::vec2) const { return {}; }
+    // Effects the chart's actions have on the animation and camera (shadow: recorded only): the played clip's 2D
+    // blend parameters (anim section +0x8C / +0x90), every layer's rate (0x438C40), the camera mode pushed by
+    // CameraManager vfunc +0xB0 (-1 none, popped by +0xB4).
+    glm::vec2 animBlend{0};
+    float animRate = 1;
+    int cameraMode = -1;
     // ---- end group B ----
 
 private:

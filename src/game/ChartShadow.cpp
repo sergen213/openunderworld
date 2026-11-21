@@ -135,6 +135,15 @@ struct Shadow::Impl : ChartContext {
         if (s.ledge < 0 || size_t(s.ledge) >= w->collision().markup.size() || w->collision().markup[size_t(s.ledge)].type != 1) return 0;
         return w->player().hangClearanceClass();
     }
+    std::optional<bool> ledgeShelf(int m, float param) const override {
+        const auto& col = w->collision();
+        if (m < 0 || size_t(m) >= col.markup.size() || col.markup[size_t(m)].points.size() < 2) return {};
+        const auto& p = col.markup[size_t(m)].points;
+        const int seg = std::clamp(int(param), 0, int(p.size()) - 2);
+        const float t = (param - float(seg)) * glm::length(p[size_t(seg) + 1] - p[size_t(seg)]);
+        return w->player().ledgeShelf(m, seg, t);
+    }
+    std::optional<int> hurdlePastClass(glm::vec3 q, glm::vec2 f) const override { return game::hurdlePastClass(w->collision(), q, f); }
     // ---- end group B ----
 };
 
