@@ -1,0 +1,669 @@
+// Group A: Lara's ground locomotion and landing conditions and actions (docs/re/PLAYER_CHART.md "Conditions",
+// "Actions"; ownership openunderworld-work/chart/{conditions,actions}_owner.json by_group.A). Behaviour after tru.exe,
+// one function per registry entry, the decompiled tests in their order. A condition returns the raw truth (the runtime
+// applies the negation); where the game cannot answer it returns ctx.chart().unported(c). Actions record their effect
+// on Lara chart-side (ChartContext player / agent stores, ChartContext::anim); shadow mode never applies them to the
+// live Player. A branch an action cannot run here (a markup system, a spawned helper object, a search not ported) bumps
+// stats.unportedActions for that action, so the summary still shows it.
+//
+// Group A ids ported elsewhere: 0x1, 0x65, 0x66, 0x68, 0x69, 0x6A, 0x6B, 0x96, 0x98, 0xC9, 0x191 (Generic.cpp).
+// Group A ids not ported (the game state they read is not modelled; they stay unregistered and count as unported):
+//   0x12D foot support (player +0xF3C from anim events 0x34 / 0x36), 0x12E / 0x131 foot-lock controllers (+0xF20..),
+//   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
+//   combo move history, 0x1E5 / 0x1EA / 0x1EB / 0x1EF / 0x1F0 the player +0x31C probe record, 0x1FB the gear slot's
+//   instance, 0x206 the wall-slide contact stamp (agent +0x90), 0x208 the stairs byte +0x11D4, 0x20B the wall-jump
+//   anticipation rays (0x759260, n = 0 frames), 0x20D the combat component flags +0x1FC bit 11.
+#include "game/Chart.hpp"
+#include "game/Game.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <numbers>
+
+namespace ou::game::chart {
+
+namespace {
+
+constexpr float kPi = std::numbers::pi_v<float>;
+constexpr float kDegToRad = 0.017453292f;
+
+// Her heading, instance +0x38 (ours: forward = (cos yaw, sin yaw)).
+float playerYaw(const PlayerState& s) { return s.yaw; }
+
+// 0x781FF0: a condition's mode; group 1000 makes it 1000 (no case matches it).
+int mode(const Cond& c) { return c.fromVariable() ? 1000 : c.value; }
+
+// 0x431D70: an angle wrapped into (-pi, pi] (x / 2pi minus its floor, times 2pi, then down by 2pi above pi).
+float wrapPi(float a) {
+    const float t = a / 6.2831855f;
+    float r = (t - std::floor(t)) * 6.2831854820251465f;
+    if (r > 3.1415927410125732f) r -= 6.2831854820251465f;
+    return r;
+}
+
+// 0x814D20: x87 round to nearest (even).
+int roundX87(float x) { return int(std::nearbyint(x)); }
+
+// 0x784BF0: a float property in force, the default when the chain never set it.
+float propF(ChartRuntime& rt, uint16_t id, float def = 0) { return rt.propFloat(id).value_or(def); }
+
+void unportedPart(ChartContext& ctx, uint16_t action) { ++ctx.chart().stats.unportedActions[action]; }
+
+// The stick's direction relative to her heading, *(*(0xFADFB0 + 0xB0) + 0x10) [I: radians, + = her left, 0 with the
+// stick at rest]. nullopt without a player.
+std::optional<float> stickAngle(ChartContext& ctx) {
+    const PlayerState* s = ctx.player();
+    if (!s) return std::nullopt;
+    const glm::vec2 v = ctx.stick();
+    if (glm::dot(v, v) < 1e-12f) return 0.0f;
+    return wrapPi(std::atan2(v.y, v.x) - playerYaw(*s));
+}
+
+// The edge-coded bool of 0x763830 / 0x763C50 / 0x782D70 (and 0x762B40 with prevIsCur): cache bit 0 = this update's
+// value, bit 1 = the previous update's; recomputed once per agent update stamp. A fresh cache holds 0, except for
+// 0x762B40, whose first evaluation takes the previous value equal to the current one.
+bool edge(ChartContext& ctx, const Cond& c, bool cur, bool prevIsCur = false) {
+    ChartRuntime& rt = ctx.chart();
+    auto& cache = rt.cache(c.id);
+    if (cache.frame != rt.frame()) {
+        const bool fresh = cache.frame == ~0u;
+        const int prev = fresh && prevIsCur ? int(cur) : (cache.value & 1);
+        cache = {rt.frame(), (prev << 1) | int(cur)};
+    }
+    const int bits = cache.value & 3;
+    switch (mode(c)) {
+    case 0: return !(bits & 1);
+    case 1: return bits & 1;
+    case 2: return bits == 2; // just turned off
+    case 3: return bits == 1; // just turned on
+    default: return false;    // "--- ... unhandled condition"
+    }
+}
+
+// ---- conditions ---------------------------------------------------------------------------------------------------
+
+// 0xA (0x762B10 -> 0x782B40 mode 0): value == (s16) player +0xA84, the jump query in effect (docs/GAMEPLAY.md
+// "Saving grab": +0xA84 is the query a state last ran) [O]; ours PlayerState::jumpQuery [I: the queries ours models].
+bool jumpQueryIs(ChartContext& ctx, const Cond& c) {
+    const PlayerState* s = ctx.player();
+    if (!s) return ctx.chart().unported(c);
+    return ctx.chart().value(c) == int(int16_t(s->jumpQuery));
+}
+
+// 0x16 (0x764B80 -> 0x782B40 mode 1): round(agent +0x504 - agent +0x78) >= value; +0x78 = the total time action 501
+// last stamped (0x75BD30 at 0x75C079).
+bool timeSinceMarker(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    return rt.value(c) <= roundX87(rt.totalTime() - ctx.agentFloat(0x78));
+}
+
+// 0x9B (0x760D20): frames the button has been held (now - press time, ms x 30 / 1000, + 1; 0 when up) > the state's
+// float property 911 (0x38F). Input disabled counts as not held.
+bool heldLongerThanProperty(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    const ChartContext::Action a = ctx.action(rt.value(c));
+    if (!a.known) return rt.unported(c);
+    const auto threshold = rt.propFloat(0x38F);
+    if (!threshold) return rt.unported(c);
+    const int held = a.down ? int(a.seconds * 1000.0f * 30.0f / 1000.0f) + 1 : 0;
+    return *threshold < float(held);
+}
+
+// 0x9C (0x760E60, id 0x9C): frames since the button's last press (ms x 30 / 1000) < the state's float property 991
+// (0x3DF).
+bool pressedWithin(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    const int id = rt.value(c);
+    const auto since = ctx.sincePress(id);
+    const auto prop = rt.propFloat(0x3DF);
+    if (!since || !prop) return rt.unported(c);
+    return float(int(*since * 1000.0f * 30.0f / 1000.0f)) < *prop;
+}
+
+// 0xD5 (0x783950, id 0xD5 -> 0x782B40 mode 1): round(anim time / 100) >= value. The anim time runs 100 a 30 Hz frame;
+// ours is the runtime's clip clock in frames.
+bool animFrameAtLeast(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    auto& cache = rt.cache(c.id);
+    if (cache.frame != rt.frame()) cache = {rt.frame(), roundX87(rt.animFrames())};
+    return rt.value(c) <= cache.value;
+}
+
+// 0x785FB0, the MoveDir quadrant classifier: sector bounds A..D = wrapPi(rad(float properties 501..504)), hysteresis
+// H = rad(property 507) widening the last sector (agent +0x70, 0 = 1) on both sides; the angle flips sign when the
+// chart's anim section plays mirrored and bool property 207 is set. Sector 1 = [D, A], 4 = [A, B], 8 = [C, D], else 2.
+// Property 508 with the gear slot-0 instance takes the bounds from that instance (message 0x35): not modelled.
+std::optional<int> moveDirZone(ChartContext& ctx, float angle) {
+    ChartRuntime& rt = ctx.chart();
+    const bool mirrorFlip = rt.propBool(0xCF).value_or(false);
+    if (rt.propBool(0x1FC).value_or(false)) return std::nullopt; // the gear instance's bounds [U]
+    const auto p501 = rt.propFloat(0x1F5), p502 = rt.propFloat(0x1F6), p503 = rt.propFloat(0x1F7), p504 = rt.propFloat(0x1F8),
+               p507 = rt.propFloat(0x1FB);
+    if (!p501 || !p502 || !p503 || !p504 || !p507) return std::nullopt; // the debug print path reads garbage
+    float a = wrapPi(*p501 * kDegToRad), b = wrapPi(*p502 * kDegToRad), cc = wrapPi(*p503 * kDegToRad), d = wrapPi(*p504 * kDegToRad);
+    const float h = *p507 * kDegToRad;
+    int& last = rt.field(0x70);
+    const int z = last == 0 ? 1 : last;
+    if (z & 2) b -= h, cc += h;
+    if (z & 1) d -= h, a += h;
+    if (z & 4) a -= h, b += h;
+    if (z & 8) cc -= h, d += h;
+    if (rt.mirrored() && mirrorFlip) angle = -angle;
+    int zone;
+    if (!(a < angle) && !(d > angle)) zone = 1;
+    else if (!(b < angle) && !(a > angle)) zone = 4;
+    else if (!(cc > angle) && !(d < angle)) zone = 8;
+    else zone = 2;
+    last = zone;
+    return zone;
+}
+
+// The MoveDir values: 410 / 414 / 418 / 423 / 425 / 429 sector 1, 411 / 415 / 419 / 422 / 426 / 430 sector 2,
+// 412 / 416 / 420 / 427 / 431 sector 4, 413 / 417 / 421 / 428 / 432 sector 8 (0x785FB0's switch).
+int zoneBit(int v) {
+    switch (v) {
+    case 0x19A: case 0x19E: case 0x1A2: case 0x1A7: case 0x1A9: case 0x1AD: return 1;
+    case 0x19B: case 0x19F: case 0x1A3: case 0x1A6: case 0x1AA: case 0x1AE: return 2;
+    case 0x19C: case 0x1A0: case 0x1A4: case 0x1AB: case 0x1AF: return 4;
+    case 0x19D: case 0x1A1: case 0x1A5: case 0x1AC: case 0x1B0: return 8;
+    default: return 0;
+    }
+}
+
+// 0x192 (0x7612D0): the angle by value, then 0x785FB0. 410..413, 422, 423: the stick against her heading. 414..417
+// (the player +0x800 point), 418..421 (the wall / slide normal 0x730790), 424 (stick field +8 with 0x782E60), 425..428
+// (the attached markup's normal) and 429..432 (stick field +0x14) read state ours does not model.
+bool moveDir(ChartContext& ctx, const Cond& c) {
+    const int v = mode(c);
+    if (!((v >= 0x19A && v <= 0x19D) || v == 0x1A6 || v == 0x1A7)) return ctx.chart().unported(c);
+    const auto angle = stickAngle(ctx);
+    if (!angle) return ctx.chart().unported(c);
+    const auto zone = moveDirZone(ctx, *angle);
+    if (!zone) return ctx.chart().unported(c);
+    return (*zone & zoneBit(v)) != 0;
+}
+
+// 0x194 (0x761520 -> 0x7868F0, PSCCF_MoveDirLeftOrRight): the stick angle on her left (sector 4) or right (8),
+// cached per update. Bounds [0, 180] / [-180, 0] as literal numbers against a radian angle, widened by rad(property
+// 507) on the side of the last sector (agent +0x70; 0 keeps none); mirrored by property 207 like 0x785FB0.
+bool moveDirLeftRight(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    auto& cache = rt.cache(c.id);
+    if (cache.frame != rt.frame()) {
+        const auto angle = stickAngle(ctx);
+        const auto p507 = rt.propFloat(0x1FB);
+        if (!angle || !p507) return rt.unported(c);
+        const bool mirrorFlip = rt.propBool(0xCF).value_or(false);
+        const float h = *p507 * kDegToRad;
+        float lo4 = 0, hi4 = 180, lo8 = -180, hi8 = 0;
+        int& last = rt.field(0x70);
+        if (last & 4) lo4 = 0.0f - h, hi4 = h + 180.0f;
+        if (last & 8) lo8 = -180.0f - h, hi8 = h + 0.0f;
+        float a = *angle;
+        if (rt.mirrored() && mirrorFlip) a = -a;
+        int zone = 0;
+        if (!(hi4 < a) && !(lo4 > a)) zone = 4;
+        else if (!(lo8 > a) && a <= hi8) zone = 8;
+        cache = {rt.frame(), zone};
+        last = zone;
+    }
+    switch (mode(c)) {
+    case 0x19C: return cache.value & 4;
+    case 0x19D: return cache.value & 8;
+    default: return false; // "--- PSCCF_MoveDirLeftOrRight unhandled condition"
+    }
+}
+
+// 0x197 (0x761560): the direction of her velocity (instance +0x2A0 plus the carrier's) in her own frame, through
+// 0x785FB0 (values 410..413). Ours: PlayerState::vel [I: its ground velocity]; 414..417 (against the player +0x800
+// point) are not modelled.
+bool moveDirMomentum(ChartContext& ctx, const Cond& c) {
+    const int v = mode(c);
+    const PlayerState* s = ctx.player();
+    if (v < 0x19A || v > 0x19D || !s) return ctx.chart().unported(c);
+    const float angle = wrapPi(std::atan2(s->vel.y, s->vel.x) - playerYaw(*s));
+    const auto zone = moveDirZone(ctx, angle);
+    if (!zone) return ctx.chart().unported(c);
+    return (*zone & zoneBit(v)) != 0;
+}
+
+// 0x19E (0x7619B0, PSCCF_MoveDirSpherical): without a jump target (player +0xA64 == 0) the function returns the negate
+// bit itself, i.e. a raw false. With one, the target's yaw / pitch against her (0x786490) is not ported.
+bool moveDirSpherical(ChartContext& ctx, const Cond& c) {
+    if (!ctx.jumpTarget()) return false;
+    return ctx.chart().unported(c);
+}
+
+// 0x1F7 (0x762B40, PSCCF_LowCeiling): cur = !0x7145D0 (the standing height's clearance over her is short), edge-coded,
+// the first evaluation taking the previous value equal to the current one.
+bool lowCeiling(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    if (rt.cache(c.id).frame == rt.frame()) return edge(ctx, c, false, true); // cached: cur is not read again
+    const auto low = ctx.lowCeiling();
+    if (!low) return rt.unported(c);
+    return edge(ctx, c, *low, true);
+}
+
+// 0x1FA (0x763C50, PSCCF_InCombatMode): cur = 0x6F2800, edge-coded.
+bool inCombatMode(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    if (rt.cache(c.id).frame == rt.frame()) return edge(ctx, c, false);
+    const auto combat = ctx.combatMode();
+    if (!combat) return rt.unported(c);
+    return edge(ctx, c, *combat);
+}
+
+// 0x1FC (0x764940): byte agent +0x345; 0 -> clear, 1 -> set.
+bool agentFlag345(ChartContext& ctx, const Cond& c) {
+    const bool f = ctx.chart().field(0x345) != 0;
+    switch (mode(c)) {
+    case 0: return !f;
+    case 1: return f;
+    default: return false;
+    }
+}
+
+// 0x1FD (0x763670, PSCCF_OnSlopeSlide): counter agent +0x3C4; on a sliding slope (player +0x11D0 > 0 and byte
+// +0x11CF) a counter >= 0 becomes -4, off it a negative counter becomes 0. 0: c >= 0, 1: c < 0, 2: c == 0, 3: c == -4.
+// Ours: on a sliding slope = State::Slide [I].
+bool onSlopeSlide(ChartContext& ctx, const Cond& c) {
+    const PlayerState* s = ctx.player();
+    if (!s) return ctx.chart().unported(c);
+    int& counter = ctx.chart().field(0x3C4);
+    if (s->state == ou::game::State::Slide) {
+        if (counter >= 0) counter = -4;
+    } else if (counter < 0) {
+        counter = 0;
+    }
+    switch (mode(c)) {
+    case 0: return counter >= 0;
+    case 1: return counter < 0;
+    case 2: return counter == 0;
+    case 3: return counter == -4;
+    default: return false;
+    }
+}
+
+// 0x203 (0x7633E0, PSCCF_WallJumpAttach): cur = 0x7594C0 == 2 (cached). 0 -> !cur, 1 -> cur.
+bool wallJumpAttach(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    auto& cache = rt.cache(c.id);
+    if (cache.frame != rt.frame()) {
+        const auto w = ctx.wallJumpAttach();
+        if (!w) return rt.unported(c);
+        cache = {rt.frame(), int(*w)};
+    }
+    switch (mode(c)) {
+    case 0: return !cache.value;
+    case 1: return cache.value;
+    default: return false;
+    }
+}
+
+// 0x205 (0x752220, CanSprint): 0x74FD70 on the sprint stamina block agent +0x460. 0 -> !cur, 1 -> cur.
+bool canSprint(ChartContext& ctx, const Cond& c) {
+    const auto can = ctx.canSprint();
+    if (!can) return ctx.chart().unported(c);
+    switch (mode(c)) {
+    case 0: return !*can;
+    case 1: return *can;
+    default: return false;
+    }
+}
+
+// 0x207 (0x763830, PSCCF_IsInCheatMode): cur = player +0x68 bit 30, edge-coded (a fresh cache holds 0).
+bool isInCheatMode(ChartContext& ctx, const Cond& c) { return edge(ctx, c, ctx.cheatMode()); }
+
+// 0x214 (0x762D00 -> 0x782D70, callback 0x762CE0): bool property 2200 (0x898, 0x6EEF00 mode 2, default false),
+// edge-coded.
+bool stateFlag898(ChartContext& ctx, const Cond& c) { return edge(ctx, c, ctx.chart().propBool(0x898).value_or(false)); }
+
+// ---- actions ------------------------------------------------------------------------------------------------------
+
+// 0x6457A0: the stripped debug print (actions 7, 409, and the empty slots of others).
+void noop(ChartContext&, uint16_t) {}
+
+// Action 201 (PSCAF_LocomotionLeanBlend). Entry 0x75CCB0: agent +0x40 / +0x50 = her position (previous-position
+// samples), the blend parameters +0x8C / +0x90 = 0. Exit 0x754F60: +0x8C / +0x90 = 0. Process 0x76C0A0 projects the
+// desired move (player +0x600, which action 502 / 0x755A00 writes) onto her axes: not ported.
+void leanBlendEntry(ChartContext& ctx, uint16_t) {
+    if (const PlayerState* s = ctx.player()) {
+        for (int i = 0; i < 3; ++i) ctx.agentFloat(0x40 + 4 * i) = ctx.agentFloat(0x50 + 4 * i) = s->pos[i];
+        ctx.agentFloat(0x4C) = ctx.agentFloat(0x5C) = 1.0f; // the w of the vec4 0x4D9C20 copies [I]
+    }
+    ctx.anim.blend8C = ctx.anim.blend90 = 0;
+}
+void leanBlendExit(ChartContext& ctx, uint16_t) { ctx.anim.blend8C = ctx.anim.blend90 = 0; }
+void leanBlendProcess(ChartContext& ctx, uint16_t id) { unportedPart(ctx, id); }
+
+// Action 207 (PSCAF_MarkupLengthBlend) Process 0x744FD0: segment 0 of the attached markup, L its length; +0x8C =
+// clamp01((L - pd +0x800) / (pd +0x804 - pd +0x800)) (0 when they are equal), +0x90 = 1 when the markup rides a live
+// instance (0x5BE2D0) else 0.
+void markupLengthBlend(ChartContext& ctx, uint16_t id) {
+    const auto m = ctx.attachedMarkup();
+    const auto seg = m ? ctx.markupSegment(m.markup, 0) : std::nullopt;
+    if (!seg) return unportedPart(ctx, id); // tru.exe reads a null markup here
+    const float lo = ctx.chart().charts().data<float>(0x800), hi = ctx.chart().charts().data<float>(0x804);
+    const float len = glm::length(seg->second - seg->first);
+    ctx.anim.blend8C = hi == lo ? 0.0f : std::clamp((len - lo) / (hi - lo), 0.0f, 1.0f);
+    ctx.anim.blend90 = m.live ? 1.0f : 0.0f;
+}
+
+// Action 210 (PSCAF_HurdleHeightBlendAndSpeed). PreAnimEntry / PreAnimReentry 0x749B80: point A = her position,
+// B = the jump target's point (+0x9F0) when there is one, else the attached markup's (+0xCA0), else nothing; target
+// types 8..10 lower A by a type-specific height (+0xAE8 / +0xE88, not modelled); +0x8C = clamp01((B.z - A.z - p230) /
+// (p231 - p230)) via 0x749980 (0 when p231 < p230). Entry / Process 0x72F140: s = property 238 (default 1); s >= 1:
+// rate = (1 - +0x8C) (s - 1) + 1.
+void hurdleHeightBlend(ChartContext& ctx, uint16_t id) {
+    const PlayerState* s = ctx.player();
+    const auto jt = ctx.jumpTarget();
+    const auto at = jt ? jt : ctx.attachedMarkup();
+    if (!at) return;
+    if (!s || (at.type >= 8 && at.type <= 10)) return unportedPart(ctx, id);
+    ChartRuntime& rt = ctx.chart();
+    const float p230 = propF(rt, 0xE6), p231 = propF(rt, 0xE7);
+    float x = 0;
+    if (!(p231 < p230)) {
+        const float d = p231 - p230;
+        x = d > 0 ? std::clamp((at.point.z - s->pos.z - p230) / d, 0.0f, 1.0f) : 0.0f; // [I] 0x749980 on d == 0
+    }
+    ctx.anim.blend8C = x;
+}
+void hurdleSpeed(ChartContext& ctx, uint16_t) {
+    const float sp = propF(ctx.chart(), 0xEE, 1.0f);
+    if (sp >= 1.0f) ctx.anim.rate = (1.0f - ctx.anim.blend8C) * (sp - 1.0f) + 1.0f;
+}
+
+// Action 221 (PSCAF_RunLeanToStick). Entry 0x75CDA0: agent +0x7C = 0. Process 0x75CDB0: max = property 217 (deg),
+// gain = 218, rate = clamp01(219 x timeMult); target = clamp(wrapPi(stick angle) x gain, +-rad(max)) when max and gain
+// are positive, else 0; lean += rate (target - lean) into +0x7C and the lean controller (+0xF18 -> +0x40). Exit
+// 0x75CF30: +0x7C = 0, the controller's lean 0.
+void runLeanEntry(ChartContext& ctx, uint16_t) { ctx.agentFloat(0x7C) = 0; }
+void runLeanProcess(ChartContext& ctx, uint16_t id) {
+    ChartRuntime& rt = ctx.chart();
+    float maxDeg = propF(rt, 0xD9), gain = propF(rt, 0xDA);
+    const float rate = std::clamp(ctx.timeMult * propF(rt, 0xDB), 0.0f, 1.0f);
+    float target = 0;
+    if (maxDeg > 0 && gain > 0) {
+        const auto angle = stickAngle(ctx);
+        if (!angle) return unportedPart(ctx, id);
+        const float lim = maxDeg * kDegToRad;
+        target = std::clamp(wrapPi(*angle) * gain, -lim, lim);
+    }
+    float& lean = ctx.agentFloat(0x7C);
+    lean += rate * (target - lean);
+    ctx.anim.lean = lean;
+}
+void runLeanExit(ChartContext& ctx, uint16_t) { ctx.agentFloat(0x7C) = 0, ctx.anim.lean = 0; }
+
+// Action 222 (PSCAF_TorsoTwistTowardHeading). Entry 0x75CF60: agent +0x88 = 0 (and the spine controllers of type 14
+// removed). Process 0x76C9B0: max = property 220 (deg), gain 221, rate clamp01(222 x timeMult), source 223 (default
+// 203; 204 = the yaw of the player +0x1270 target rotation against hers, not modelled; else the stick angle);
+// target = clamp(wrapPi(e) x gain, +-rad(max)); twist = wrapPi(wrapPi(target - twist) x rate + twist); |twist| <= 0.01:
+// twist 0, player +0x7D8 = wrapPi(yaw + twist) and +0x7DC = 0; else +0x7D4 = wrapPi(yaw + twist) the first time
+// (+0x7DC set) and +0x7D8 = wrapPi(yaw + target). Exit 0x75CFD0: +0x88 = 0, +0x7D8 = her yaw, +0x7DC = 0.
+void twistEntry(ChartContext& ctx, uint16_t) { ctx.agentFloat(0x88) = 0; }
+void twistProcess(ChartContext& ctx, uint16_t id) {
+    ChartRuntime& rt = ctx.chart();
+    const PlayerState* s = ctx.player();
+    if (!s) return unportedPart(ctx, id);
+    const float maxDeg = propF(rt, 0xDC), gain = propF(rt, 0xDD);
+    const float rate = std::clamp(ctx.timeMult * propF(rt, 0xDE), 0.0f, 1.0f);
+    const int source = rt.propInt(0xDF).value_or(0xCB);
+    float e = 0;
+    if (source == 0xCC) return unportedPart(ctx, id); // the +0x1270 target rotation
+    const auto angle = stickAngle(ctx);
+    if (!angle) return unportedPart(ctx, id);
+    e = *angle;
+    float target = 0;
+    if (maxDeg > 0 && gain > 0) {
+        const float lim = maxDeg * kDegToRad;
+        target = std::clamp(wrapPi(e) * gain, -lim, lim);
+    }
+    const float yaw = playerYaw(*s);
+    float twist = ctx.agentFloat(0x88);
+    twist = wrapPi(wrapPi(target - twist) * rate + twist);
+    const float toTarget = wrapPi(yaw + target), toTwist = wrapPi(yaw + twist);
+    if (std::abs(twist) <= 0.01f) {
+        ctx.playerFloat(0x7D8) = toTwist;
+        twist = 0;
+        ctx.playerInt(0x7DC) = 0;
+    } else {
+        if (!ctx.playerInt(0x7DC)) ctx.playerFloat(0x7D4) = wrapPi(toTwist), ctx.playerInt(0x7DC) = 1;
+        ctx.playerFloat(0x7D8) = toTarget;
+    }
+    ctx.agentFloat(0x88) = twist;
+}
+void twistExit(ChartContext& ctx, uint16_t) {
+    ctx.agentFloat(0x88) = 0;
+    if (const PlayerState* s = ctx.player()) ctx.playerFloat(0x7D8) = playerYaw(*s);
+    ctx.playerInt(0x7DC) = 0;
+}
+
+// Action 231 (PSCAF_AlignToTargetOverAnim) Entry 0x75F550: the root blends onto player +0x1260 (position) / +0x1270
+// (rotation) over property 283 frames (type 0x23 value 225: the current anim's length) x 100, or the anim's length
+// when under one frame; bool property 285 = position only (mode 2) else position and rotation (mode 3).
+void alignToTarget(ChartContext& ctx, uint16_t) {
+    ChartRuntime& rt = ctx.chart();
+    float frames = 0;
+    if (const Property* p = rt.property(0x11B); p && p->type == 0x23 && rt.charts().propInt(*p) == 225)
+        frames = float(roundX87(rt.animLengthFrames()));
+    else
+        frames = float(rt.propInt(0x11B).value_or(0));
+    auto& al = ctx.anim.align;
+    al.active = true;
+    al.positionOnly = rt.propBool(0x11D).value_or(false);
+    al.duration = frames >= 1 ? frames : rt.animLengthFrames();
+    al.pos = {ctx.playerFloat(0x1260), ctx.playerFloat(0x1264), ctx.playerFloat(0x1268)};
+}
+
+// Action 407 (PSCAF_DetachMarkupOnExit) Exit 0x75DC00: with an attached markup, its linked objects get NtMarkup
+// OnDetach (game side, not in shadow mode), player +0xEA0 = the markup, +0xEA4 = its param, +0xEA8 = 0x13, +0xC94 = 0,
+// +0xEAC = 0.
+void detachMarkupExit(ChartContext& ctx, uint16_t) {
+    const auto m = ctx.attachedMarkup();
+    if (!m) return;
+    ctx.playerInt(0xEA0) = m.markup;
+    ctx.playerFloat(0xEA4) = m.param;
+    ctx.playerInt(0xEA8) = 0x13;
+    ctx.playerInt(0xC94) = 0; // recorded detach (ours: -1 none would be the markup index; 0 = tru's null pointer)
+    ctx.playerInt(0xEAC) = 0;
+}
+
+// Action 411 (PSCAF_GrabHelperObject). PreAnimEntry 0x75E590: player +0xEE8 = 1 when the jump target's owner object
+// has flag bit 0 of +0x50 (not modelled: counted with a jump target). Entry 0x75E5C0 / Reentry 0x75E6C0 (the latter
+// only with +0xEE8 == 1): +0xEE8 != 1 -> agent +0x340 = 0, player +0xEEC = 0; else the helper object is born (game
+// side, counted). Exit 0x75E6E0 releases it: player +0x74C = 0, agent +0x340 = 0, +0xEEC = 0, and +0x8C = 0 under the
+// attached markup's flag test (0x733F60 not modelled: counted with a markup). Process 0x76DB40 needs the markup.
+void grabHelperPre(ChartContext& ctx, uint16_t id) {
+    if (ctx.jumpTarget()) unportedPart(ctx, id);
+}
+void grabHelperEntry(ChartContext& ctx, uint16_t id) {
+    if (ctx.playerInt(0xEE8) != 1) {
+        ctx.chart().field(0x340) = 0;
+        ctx.playerInt(0xEEC) = 0;
+        return;
+    }
+    unportedPart(ctx, id);
+}
+void grabHelperReentry(ChartContext& ctx, uint16_t id) {
+    if (ctx.playerInt(0xEE8) == 1) unportedPart(ctx, id);
+}
+void grabHelperExit(ChartContext& ctx, uint16_t id) {
+    ctx.playerFloat(0x74C) = 0;
+    ctx.chart().field(0x340) = 0;
+    ctx.playerInt(0xEEC) = 0;
+    if (ctx.attachedMarkup()) unportedPart(ctx, id);
+}
+void grabHelperProcess(ChartContext& ctx, uint16_t id) {
+    if (ctx.attachedMarkup()) unportedPart(ctx, id);
+}
+
+// Action 415 (PSCAF_FlexMarkupSag). Entry 0x740D10 / Exit 0x740F70: agent +0x3D4 = +0x3D8 = 0, +0x3DC = the delay
+// of the sag tuning block (pd +0xCEC, or +0xD0C for a flat flexible markup) +0x14; exit also clears the bend of the
+// markup object (game side). Process 0x740D70 only acts on a flexible markup (flag 0x1000000): not ported.
+void flexSagReset(ChartContext& ctx, uint16_t id) {
+    ctx.agentFloat(0x3D4) = ctx.agentFloat(0x3D8) = 0;
+    if (const auto m = ctx.attachedMarkup(); m && (m.flags & 0x1000000)) return unportedPart(ctx, id); // which block [U]
+    ctx.agentFloat(0x3DC) = ctx.chart().charts().data<float>(0xCEC + 0x14);
+}
+void flexSagProcess(ChartContext& ctx, uint16_t id) {
+    if (const auto m = ctx.attachedMarkup(); m && (m.flags & 0x1000000)) unportedPart(ctx, id);
+}
+
+// Action 423 (PSCAF_ScheduledJumpTargetSearch): two searches (0x7296C0 on player +0x980 with profile +0xB00, and on
+// +0xB10 with +0xC90), each run in the slots its schedule property (479 / 480, type 0x23) names: 592 PreAnimEntry +
+// Process, 593 PreAnimEntry + Exit, 594 Entry + Reentry, 595 Entry + Exit, 596 PreAnimEntry, 597 Entry, 598 Process,
+// 599 Exit, 600 Reentry. The PreAnim / Entry / Reentry slots first record the jump reference height (0x72FBF0) when
+// bool property 565 is set. The search itself is not ported here (counted when a slot runs it).
+enum Slot { PreEntry, Entry, Reentry, Process, Exit };
+bool scheduleRuns(int schedule, Slot slot) {
+    switch (slot) {
+    case PreEntry: return schedule == 593 || schedule == 596 || schedule == 592;
+    case Entry: return schedule == 597 || schedule == 594 || schedule == 595;
+    case Reentry: return schedule == 600 || schedule == 594;
+    case Process: return schedule == 598 || schedule == 592;
+    case Exit: return schedule == 599 || schedule == 595 || schedule == 593;
+    }
+    return false;
+}
+void recordJumpRefHeight(ChartContext& ctx) { // 0x72FBF0
+    if (const PlayerState* s = ctx.player()) ctx.playerFloat(0x6DC) = s->pos.z;
+    ctx.playerFloat(0x6E0) = ctx.attachedMarkup() ? ctx.playerFloat(0xCE8) : 0.0f;
+}
+template <Slot S>
+void scheduledSearch(ChartContext& ctx, uint16_t id) {
+    ChartRuntime& rt = ctx.chart();
+    if constexpr (S == PreEntry || S == Entry || S == Reentry)
+        if (rt.propBool(0x235).value_or(false)) recordJumpRefHeight(ctx);
+    for (const uint16_t prop : {uint16_t(0x1DF), uint16_t(0x1E0)})
+        if (const auto schedule = rt.propInt(prop); schedule && scheduleRuns(*schedule, S)) unportedPart(ctx, id);
+}
+
+// Action 425 (PSCAF_LookAtAttachPoint). Process 0x76E190 acts only with an attached markup (the look-at target from
+// player +0xBC0 / +0xC14, not modelled: counted). Exit 0x75EEB0 posts message 0x69 (clear the look-at; game side).
+void lookAtProcess(ChartContext& ctx, uint16_t id) {
+    if (ctx.attachedMarkup()) unportedPart(ctx, id);
+}
+
+// Action 501 (PSCAF_StickScaledAnimRate) Process 0x75BD30: thresholds T1..T3 = properties 522..524, hysteresis
+// H1..H3 = 525..527, rate pairs 512..519, band 521 (type int). m = the stick level. 402: t = clamp01((m - (T1 - H1)) /
+// ((H2 + T2) - (T1 - H1))), rate = lerp(p512, p513). 403: t over [T2 - H2, H3 + T3], lerp(p514, p515); 404: over
+// [T3 - H3, 1], lerp(p516, p517); 405 the same t, lerp(p518, p519); 403..405 stamp agent +0x78 = +0x504. A rate in
+// (0, 2] plays as is; above 2 it is a speed: / the clip's root speed (-root y x 100 / length), clamped to [0.5, 2];
+// 0 or no band: 1. Then every sub-layer's rate (0x438C40). [U] 0x702AC0 when agent +0xC == 1.
+void stickScaledAnimRate(ChartContext& ctx, uint16_t id) {
+    ChartRuntime& rt = ctx.chart();
+    const float t1 = propF(rt, 0x20A), t2 = propF(rt, 0x20B), t3 = propF(rt, 0x20C);
+    const float h1 = propF(rt, 0x20D), h2 = propF(rt, 0x20E), h3 = propF(rt, 0x20F);
+    float r[8];
+    for (int i = 0; i < 8; ++i) r[i] = propF(rt, uint16_t(0x200 + i));
+    const int band = rt.propInt(0x209).value_or(0);
+    const float m = ctx.stickLevel();
+    const auto t01 = [](float x) { return x < 0 ? 0.0f : x > 1 ? 1.0f : x; };
+    float rate = 1, out = 0;
+    switch (band) {
+    case 0x192: out = r[0] + t01((m - (t1 - h1)) / ((h2 + t2) - (t1 - h1))) * (r[1] - r[0]); break;
+    case 0x193: out = r[2] + t01((m - (t2 - h2)) / ((h3 + t3) - (t2 - h2))) * (r[3] - r[2]); break;
+    case 0x194: out = r[4] + t01((m - (t3 - h3)) / (1.0f - (t3 - h3))) * (r[5] - r[4]); break;
+    case 0x195: out = r[6] + t01((m - (t3 - h3)) / (1.0f - (t3 - h3))) * (r[7] - r[6]); break;
+    default: ctx.anim.rate = 1; return;
+    }
+    if (band != 0x192) ctx.agentFloat(0x78) = rt.totalTime();
+    if (out != 0) {
+        if (out <= 2) rate = out;
+        else return unportedPart(ctx, id); // the clip's root speed (0x4389C0) is not known chart-side
+    }
+    ctx.anim.rate = rate;
+}
+
+// Action 509 (PSCAF_SetAnimRate), every slot 0x75E9D0: rate = float property 225 (at least 0.001); 1 when it is
+// missing or bool-typed.
+void setAnimRate(ChartContext& ctx, uint16_t) {
+    const Property* p = ctx.chart().property(0xE1);
+    ctx.anim.rate = !p || p->type == 2 ? 1.0f : std::max(0.001f, ctx.chart().charts().propFloat(*p));
+}
+
+// Action 515 (PSCAF_RecordJumpRefHeight): Entry 0x72FBF0 records player +0x6DC = her z, +0x6E0 = the attached
+// markup's grab offset z (+0xCE8) or 0; Reentry 0x72FC40 the same when bool property 565 is set.
+void jumpRefEntry(ChartContext& ctx, uint16_t) { recordJumpRefHeight(ctx); }
+void jumpRefReentry(ChartContext& ctx, uint16_t) {
+    if (ctx.chart().propBool(0x235).value_or(false)) recordJumpRefHeight(ctx);
+}
+
+// Action 517 (PSCAF_ClearJumpTarget) PreAnimEntry 0x75F9E0 (= 0x707500): player +0xA64 = 0, +0xA6C = 0, (u16) +0xAC0
+// = 0, +0xA74 = 0.
+void clearJumpTarget(ChartContext& ctx, uint16_t) {
+    ctx.playerInt(0xA64) = 0, ctx.playerInt(0xA6C) = 0, ctx.playerInt(0xAC0) = 0;
+    ctx.playerFloat(0xA74) = 0;
+}
+
+// Action 571 (PSCAF_PoleControlFrame): Entry 0x75E3A0, Process 0x75E3C0 and Exit 0x75E3E0 act only with an attached
+// markup (the pole-relative control frame, not modelled: counted).
+void poleControlFrame(ChartContext& ctx, uint16_t id) {
+    if (ctx.attachedMarkup()) unportedPart(ctx, id);
+}
+
+// Markup-bound actions whose every slot needs the attached markup / jump target systems (counted each time a slot runs):
+// 220 (0x75C790 / 0x75CA20 IK target bone), 230 (0x772CA0 markup anim target), 236 (0x745100 root-motion warp), 323
+// (0x75E930 / 0x76E080 gear attachments), 402 (0x76D470 / 0x76D210 attach frame), 403 (0x76D4A0 / 0x76D240 jump target
+// frame), 420 (0x75DBC0 / 0x7712A0 / 0x771320 / 0x771330 markup attach), 426 (0x72BD40 limb IK), 502 (0x75C540 ->
+// 0x755A00 analog velocity), 505 (0x74D980 / 0x734920 ladder rung), 508 (0x76BF40 / 0x75C620 / 0x75C550 slide speed).
+void unportedSlot(ChartContext& ctx, uint16_t id) { unportedPart(ctx, id); }
+
+} // namespace
+
+void registerGround(Registry& player, Registry&) {
+    const char* g = "ground";
+    player.condition(0xA, jumpQueryIs, "PSCCF_LowCeiling (jump query +0xA84)", g);
+    player.condition(0x16, timeSinceMarker, "PSCCF_TimeSinceMarkerAtLeast", g);
+    player.condition(0x9B, heldLongerThanProperty, "PSCCF_ButtonHeldLongerThanProperty", g);
+    player.condition(0x9C, pressedWithin, "PSCCF_ButtonPressedWithin", g);
+    player.condition(0xD5, animFrameAtLeast, "SCCondFunction_AnimFrame_AtLeast", g);
+    player.condition(0x192, moveDir, "PSCCF_MoveDir", g);
+    player.condition(0x194, moveDirLeftRight, "PSCCF_MoveDirLeftOrRight", g);
+    player.condition(0x197, moveDirMomentum, "PSCCF_MoveDirMomentum", g);
+    player.condition(0x19E, moveDirSpherical, "PSCCF_MoveDirSpherical", g);
+    player.condition(0x1F7, lowCeiling, "PSCCF_LowCeiling", g);
+    player.condition(0x1FA, inCombatMode, "PSCCF_InCombatMode", g);
+    player.condition(0x1FC, agentFlag345, "PSCCF_AgentFlag345", g);
+    player.condition(0x1FD, onSlopeSlide, "PSCCF_OnSlopeSlide", g);
+    player.condition(0x203, wallJumpAttach, "PSCCF_WallJumpAttach", g);
+    player.condition(0x205, canSprint, "CanSprint", g);
+    player.condition(0x207, isInCheatMode, "PSCCF_IsInCheatMode", g);
+    player.condition(0x214, stateFlag898, "PSCCF_StateFlag898", g);
+
+    player.action(7, {noop}, "PSCAF_NoOp7", g);
+    player.action(409, {noop, nullptr, nullptr, nullptr, noop, noop}, "PSCAF_Noop", g);
+    player.action(201, {leanBlendEntry, nullptr, nullptr, nullptr, leanBlendExit, leanBlendProcess}, "PSCAF_LocomotionLeanBlend", g);
+    player.action(207, {.process = markupLengthBlend}, "PSCAF_MarkupLengthBlend", g);
+    player.action(210, {hurdleSpeed, nullptr, hurdleHeightBlend, hurdleHeightBlend, nullptr, hurdleSpeed}, "PSCAF_HurdleHeightBlendAndSpeed", g);
+    player.action(221, {runLeanEntry, nullptr, nullptr, nullptr, runLeanExit, runLeanProcess}, "PSCAF_RunLeanToStick", g);
+    player.action(222, {twistEntry, nullptr, nullptr, nullptr, twistExit, twistProcess}, "PSCAF_TorsoTwistTowardHeading", g);
+    player.action(231, {.entry = alignToTarget}, "PSCAF_AlignToTargetOverAnim", g);
+    player.action(407, {noop, nullptr, nullptr, nullptr, detachMarkupExit}, "PSCAF_DetachMarkupOnExit", g);
+    player.action(411, {grabHelperEntry, grabHelperReentry, grabHelperPre, grabHelperPre, grabHelperExit, grabHelperProcess}, "PSCAF_GrabHelperObject", g);
+    player.action(415, {flexSagReset, nullptr, nullptr, nullptr, flexSagReset, flexSagProcess}, "PSCAF_FlexMarkupSag", g);
+    player.action(423, {scheduledSearch<Entry>, scheduledSearch<Reentry>, scheduledSearch<PreEntry>, scheduledSearch<PreEntry>,
+                        scheduledSearch<Exit>, scheduledSearch<Process>}, "PSCAF_ScheduledJumpTargetSearch", g);
+    player.action(425, {nullptr, nullptr, nullptr, nullptr, noop, lookAtProcess}, "PSCAF_LookAtAttachPoint", g);
+    player.action(501, {.process = stickScaledAnimRate}, "PSCAF_StickScaledAnimRate", g);
+    player.action(509, {setAnimRate, setAnimRate, nullptr, nullptr, setAnimRate, setAnimRate}, "PSCAF_SetAnimRate", g);
+    player.action(515, {jumpRefEntry, jumpRefReentry, nullptr, nullptr, noop, noop}, "PSCAF_RecordJumpRefHeight", g);
+    player.action(517, {.preEntry = clearJumpTarget}, "PSCAF_ClearJumpTarget", g);
+    player.action(571, {poleControlFrame, nullptr, nullptr, nullptr, poleControlFrame, poleControlFrame}, "PSCAF_PoleControlFrame", g);
+    // Every slot the registry fills runs unportedSlot (slots_table in actions.json).
+    player.action(220, {.preEntry = unportedSlot, .preReentry = unportedSlot, .process = unportedSlot}, "PSCAF_ResolveIKTargetBone", g);
+    player.action(230, {.preEntry = unportedSlot, .preReentry = unportedSlot}, "PSCPF_MarkUpAttach_SetAnimTarget", g);
+    player.action(236, {.entry = unportedSlot}, "PSCAF_AlignRootMotionToTarget", g);
+    player.action(323, {.preEntry = unportedSlot, .exit = unportedSlot}, "PSCAF_GearAttachmentVisibility", g);
+    player.action(402, {unportedSlot, nullptr, nullptr, nullptr, noop, unportedSlot}, "PSCAF_AttachToMarkupFrame", g);
+    player.action(403, {unportedSlot, nullptr, nullptr, nullptr, noop, unportedSlot}, "PSCAF_JumpTargetOrientAndTrack", g);
+    player.action(420, {unportedSlot, unportedSlot, unportedSlot, nullptr, unportedSlot}, "PSCAF_MarkupAttachFrame", g);
+    player.action(426, {.process = unportedSlot}, "PSCAF_LimbIKOffNearSegmentEnd", g);
+    player.action(502, {.process = unportedSlot}, "PSCAF_AnalogLocomotionVelocity", g);
+    player.action(505, {.preEntry = unportedSlot, .preReentry = unportedSlot, .exit = unportedSlot, .process = noop}, "PSCAF_LadderRungAlign", g);
+    player.action(508, {unportedSlot, nullptr, nullptr, nullptr, unportedSlot, unportedSlot}, "PSCAF_SlideSpeedController", g);
+}
+
+} // namespace ou::game::chart

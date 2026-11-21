@@ -194,6 +194,33 @@ public:
     // markupAttachInit (0x76D010) stores it in playerInt(0xEDC).
     virtual int ledgeClearanceClass() const { return 0; }
     // ---- end group B ----
+    // ---- group A ----
+    // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
+    // unported).
+    // gameTracker_timeMult of the tick running (30 Hz frames; the shadow sets it before ChartRuntime::tick).
+    float timeMult = 0.5f;
+    // Seconds since action `id` was last pressed (the action record's +8 press time against the input clock +0x1C).
+    virtual std::optional<float> sincePress(int) const { return std::nullopt; }
+    // !0x7145D0: a ceiling lower than the standing height (player data +0x10 = 512.01) over her (condition 0x1F7).
+    virtual std::optional<bool> lowCeiling() const { return std::nullopt; }
+    // 0x6F2800: the combat stance (weapon drawn / aiming; condition 0x1FA).
+    virtual std::optional<bool> combatMode() const { return std::nullopt; }
+    // 0x74FD70: the sprint stamina allows a sprint (condition 0x205).
+    virtual std::optional<bool> canSprint() const { return std::nullopt; }
+    // 0x7594C0 == 2: a wall to plant her feet on ahead of the jump (condition 0x203).
+    virtual std::optional<bool> wallJumpAttach() const { return std::nullopt; }
+    // Player +0x68 bit 30, the fly cheat (condition 0x207); ours has no such mode.
+    virtual bool cheatMode() const { return false; }
+    // Effects the ground actions have on her anim layer, recorded chart-side (shadow mode does not apply them):
+    // 0x438C40 playback rate of every sub-layer, the blend parameters +0x8C / +0x90 of the chart's anim section, the
+    // procedural lean (player +0xF18 controller +0x40) and the root alignment blend of action 231 (0x75F550).
+    struct AnimEffects {
+        float rate = 1;
+        float blend8C = 0, blend90 = 0;
+        float lean = 0;
+        struct Align { bool active = false, positionOnly = false; float duration = 0; glm::vec3 pos{0}; } align;
+    } anim;
+    // ---- end group A ----
 
 private:
     friend class ChartRuntime;

@@ -36,8 +36,10 @@ unsigned inputMask(const Actions& a) {
 
 // The chart's view of World / Player: input actions timed here from the same Actions the world got.
 struct Shadow::Impl : ChartContext {
-    enum Button { Jump, Crouch, Sprint, Interact, Grapple, ManualAim, Grenade, kButtons };
+    enum Button { Jump, Crouch, Sprint, Interact, Grapple, ManualAim, Grenade, ReAim, kButtons };
     std::array<ButtonTime, kButtons> buttons;
+    // Seconds since each button's last press (never pressed: as long ago as tru.exe's zeroed press time can be).
+    std::array<float, kButtons> sincePressed = [] { std::array<float, kButtons> t; t.fill(1e9f); return t; }();
     const World* w = nullptr;
     glm::vec2 stickWorld{0};
     float stickLen = 0;
@@ -46,23 +48,47 @@ struct Shadow::Impl : ChartContext {
     uint64_t ticks = 0, matched = 0, diverged = 0, divergences = 0, lastChanges = 0;
     int lastState = -1, stateTicks = 0;
 
-    Action action(int id) const override {
-        int b = -1;
-        switch (id) { // generalbank action map (docs/GAMEPLAY.md "Button timing", "Rope inputs", Melee.cpp)
-        case 52: case 47: b = Jump; break;
-        case 50: case 51: case 101: b = Crouch; break;
-        case 42: b = Sprint; break;
-        case 99: case 32: case 44: case 48: case 75: b = Interact; break;
-        case 46: b = Grapple; break;
-        case 25: case 37: b = ManualAim; break;
-        case 102: b = Grenade; break;
-        default: return {};
+    int button(int id) const {
+        switch (id) { // generalbank action map DTP 47 (docs/GAMEPLAY.md "Button timing", "Rope inputs", Melee.cpp)
+        case 52: case 47: return Jump;
+        case 50: case 51: case 101: return Crouch;
+        case 42: return Sprint;
+        // 112 (context 14), 34 (context 17), 79 (context 0): control 2 = virtual button 0, Interact
+        // (openunderworld-work/gameplaygoal/melee/am.txt A89 / A103 / A119) [O]; the contexts are not modelled [I].
+        case 99: case 32: case 44: case 48: case 75: case 112: case 34: case 79: return Interact;
+        case 46: return Grapple;
+        case 25: case 37: return ManualAim;
+        case 102: return Grenade;
+        // 28 (context 0): control 29 = virtual button 8 (ours "recenter", Q / pad left stick click), second control 9 =
+        // virtual button 9 (Manual Aim) (am.txt A118) [O].
+        case 28: return ReAim;
+        default: return -1;
         }
+    }
+    Action action(int id) const override {
+        const int b = button(id);
+        if (b < 0) return {};
         const ButtonTime& t = buttons[size_t(b)];
         return {true, t.down, t.edge, t.time};
     }
     float stickLevel() const override { return stickLen; }
     glm::vec2 stick() const override { return stickWorld; }
+    // ---- group A ----
+    std::optional<float> sincePress(int id) const override {
+        const int b = button(id);
+        return b < 0 ? std::nullopt : std::optional<float>(sincePressed[size_t(b)]);
+    }
+    std::optional<bool> lowCeiling() const override { return !w->player().roomToStand(); }
+    // 0x6F2800 [I]: ours a weapon in hand (or being drawn) or the target lock held (input 33, Target Lock).
+    std::optional<bool> combatMode() const override { return w->combat().drawn || aimHeld; }
+    // 0x74FD70 [I]: ours the run's sprint rule (Player.cpp: stamina spent within sprintSeconds - sprintResume).
+    std::optional<bool> canSprint() const override {
+        const auto& t = w->player().tuning();
+        return w->player().state().sprintUsed <= t.sprintSeconds - t.sprintResume;
+    }
+    std::optional<bool> wallJumpAttach() const override { return w->player().wallJumpWall().has_value(); }
+    bool aimHeld = false;
+    // ---- end group A ----
     float fallDistance() const override {
         const PlayerState& s = w->player().state();
         return s.fallStartZ - s.pos.z;
@@ -89,8 +115,13 @@ void Shadow::tick(const World& world, const Actions& a) {
     Impl& m = *impl_;
     m.w = &world;
     const float dt = float(kTickSeconds); // [I] real time: the chart's timeMult ignores the combat time scale here
-    const bool down[Impl::kButtons] = {a.jump, a.drop, a.sprint, a.interact, a.grapple, a.manualAim, a.grenade};
-    for (size_t i = 0; i < Impl::kButtons; ++i) m.buttons[i].update(down[i], dt, 0.0f);
+    const bool down[Impl::kButtons] = {a.jump, a.drop, a.sprint, a.interact, a.grapple, a.manualAim, a.grenade, a.recenter || a.manualAim};
+    for (size_t i = 0; i < Impl::kButtons; ++i) {
+        m.buttons[i].update(down[i], dt, 0.0f);
+        m.sincePressed[i] = m.buttons[i].pressed() ? 0.0f : m.sincePressed[i] + dt;
+    }
+    m.aimHeld = a.aim;
+    m.timeMult = dt * 30.0f;
     const float yaw = world.stickYaw();
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     m.stickWorld = right * a.move.x + fwd * a.move.y;

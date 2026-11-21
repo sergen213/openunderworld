@@ -630,6 +630,10 @@ public:
     bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab" && s_.clip != "thor_engage"; } // grab clip done
     // Water: the volume overlapping the water probe box at `feet` (index into the collision markup), else -1.
     int waterAt(vec3 feet) const;
+    bool roomToStand() const; // the crouched capsule can grow to the standing one (no PSCCF_LowCeiling)
+    // tru.exe 0x7594C0 == 2 as tryWallJump tests it (WallJump.cpp): the wall hit of the lower ray, nullopt when no wall
+    // a free jump can plant her feet on is ahead (chart condition 0x203 reads it too).
+    std::optional<collision::Hit> wallJumpWall() const;
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
@@ -643,7 +647,6 @@ private:
     vec3 forward() const;
     vec3 toWorld(vec3 model) const; // model-space vector -> world, by yaw
     float capHeight() const;        // capsule height (crouched or standing)
-    bool roomToStand() const;       // the crouched capsule can grow to the standing one (no PSCCF_LowCeiling)
     enum class Floor { Stand, Slide, Steep };
     Floor floorKind(const collision::Hit& g) const;        // tru.exe 0x5DCE20's verdict on the face under her
     bool standable(vec3 p, const collision::Hit& g) const; // floor hit under p supports standing

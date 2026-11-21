@@ -45,15 +45,15 @@ constexpr float kQueryOut = 79.0139f, kQueryHang = 372.9456f; // q12's target ty
 // the root. A terrain face with client flag 0x80 is no wall for it (0x5D3BA0; 45 % of the
 // faces of the game's units carry it); 0x758F70 wants the wall within 7 degrees of vertical, her horizontal velocity
 // (her heading when she has none) within 45 and her heading within 65 degrees of square to it.
-bool Player::tryWallJump() {
-    if (s_.vel.z < t_.wallJumpMinVz || s_.vel.z > t_.wallJumpMaxVz) return false;
+std::optional<collision::Hit> Player::wallJumpWall() const {
+    if (s_.vel.z < t_.wallJumpMinVz || s_.vel.z > t_.wallJumpMaxVz) return std::nullopt;
     const vec3 f = forward();
     const float n = t_.wallJumpLook, frameG = t_.gravity / 900.0f;
     // the launch velocity: the take-off's horizontal part (airBrake keeps it) and the vertical before gravity
     const float launch = glm::length(vec3(s_.jumpVel0, s_.vel.z + t_.gravity * s_.jumpTime));
     const vec3 ahead = f * (n * launch / 30.0f) - vec3(0, 0, 0.5f * frameG * n * n);
     const float len = glm::length(ahead);
-    if (len < 1e-3f) return false;
+    if (len < 1e-3f) return std::nullopt;
     const vec3 pelvis = s_.pos + vec3(0, 0, anims_.bind.size() > 1 ? anims_.bind[1].z : kPelvis);
     // tru.exe tests the velocity the jump was given (+0x2A0 keeps its 40 a frame forward while she is against the
     // wall: Wine, l2_junglehub); ours has had its horizontal part clipped by the contact by then, leaving a remnant
@@ -71,11 +71,17 @@ bool Player::tryWallJump() {
         if (glm::dot(xy(in), xy(f)) < std::cos(glm::radians(t_.wallJumpFaceCone))) return std::nullopt;
         return hit;
     };
-    if (!wall(t_.wallJumpHigh)) return false;
+    if (!wall(t_.wallJumpHigh)) return std::nullopt;
     const auto low = wall(t_.wallJumpLow);
+    if (!low) return std::nullopt;
+    if (col_.raycast(s_.pos, vec3(0, 0, -1), t_.wallJumpFloor)) return std::nullopt;         // 0x7591E0
+    if (glm::length(xy(low->point) - xy(s_.jumpStart)) > t_.wallJumpReach) return std::nullopt; // 0x758B00
+    return low;
+}
+
+bool Player::tryWallJump() {
+    const auto low = wallJumpWall();
     if (!low) return false;
-    if (col_.raycast(s_.pos, vec3(0, 0, -1), t_.wallJumpFloor)) return false;         // 0x7591E0
-    if (glm::length(xy(low->point) - xy(s_.jumpStart)) > t_.wallJumpReach) return false; // 0x758B00
     const vec2 out = glm::normalize(xy(low->normal));
     s_.climbNormal = vec3(out, 0);
     s_.climbFrom = s_.pos, s_.climbTo = vec3(xy(low->point) + out * t_.wallJumpStandoff, s_.pos.z);
