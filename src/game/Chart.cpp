@@ -292,24 +292,37 @@ namespace {
 // pattern, flags, two floats), 1 IsPlaying (0x43B390: pattern or -1, from / to frame (-1 open), flags; flags & 1: false
 // unless the mirror request differs from the playing clip's), 2 / 3 / 4 the node's result slot (0x434EE0 store /
 // 0x434F00 commit / 0x434F30 push a selector), 5 / 6 open / close a blend node (0x434F50 / 0x444950) [O: decomp,
-// natives disassembled]. Module 1's 76 (0x6EA1E0, pops nothing) pushes 0x74FD70 on Lara's agent +0x460, the sprint
-// stamina record: the same test as condition 0x205, ctx.canSprint(). A native value the context cannot give is unknown
-// and a branch on it runs both ways; the run resolves when both agree. Any other native leaves it unresolved. The first Play wins [I: lara's nodes that queue several (a blend's transition clip, then its
-// loop) start with the one that plays first].
+// natives disassembled]. Module 1's natives (table 0x8ABF90) pop nothing and push one player value (Module1, filled
+// from the context): 4 (0x6E9680) +0xA80 the jump target type; 5 (0x6E96A0) 1 when the jump target +0xA64 has an owner
+// object (+0x24) with flag bit 0 of +0x50, else +0xEE8; 7 (0x6E9700) +0xED4 == 0 and not bit 26 of game flags
+// (0xE7F094 -> +0x50 -> +0xB90); 8 (0x6E9760) +0xEDC; 16 (0x6E98F0) the context's held object (VM context +0x24 ->
+// first word, 0 until module 1's 17 sets it; consumed by the result slot); 76 (0x6EA1E0) 0x74FD70 on Lara's agent +0x460,
+// the sprint stamina record = condition 0x205, ctx.canSprint(). A native value the context cannot give is unknown and a
+// branch on it runs both ways; the run resolves when both agree. Any other native leaves it unresolved. Every Play is
+// collected in queue order (a blend node's records are queued in turn by 0x4482C0); the first plays, the rest follow.
 enum class GraphOutcome { Played, Nothing, Unresolved };
 struct GraphRun {
     GraphOutcome outcome = GraphOutcome::Unresolved;
-    int pattern = -1;
-    bool operator==(const GraphRun& o) const { return outcome == o.outcome && pattern == o.pattern; }
+    std::vector<int> queue; // the patterns queued, in play order
+    bool operator==(const GraphRun& o) const { return outcome == o.outcome && queue == o.queue; }
 };
 struct GraphVm {
     const Charts::GraphNode& g;
     int playing;
     float frame;
     bool mirrorChange;
-    std::optional<bool> sprint; // module 1's 76 (0x6EA1E0): 0x74FD70 on the stamina record agent +0x460 = ctx.canSprint()
+    const std::unordered_map<uint32_t, std::optional<uint32_t>>& module1; // fn -> value (nullopt unknown)
     struct V { uint32_t v; bool known; };
-    GraphRun run(size_t pc, std::vector<V> st, int depth) const {
+    // The node's play state: the result slot (fn 2 stores a selector, fn 4's static one picks a random entry, 0x448320;
+    // module 1's 16 the context's held one), its entries (one blend node each, fn 5 / fn 6), and the anim queue.
+    struct Ctx {
+        std::vector<V> st;
+        bool active = false, random = false, inNode = false;
+        std::vector<std::vector<int>> entries;
+        std::vector<int> node, queue;
+    };
+    GraphRun run(size_t pc, Ctx c, int depth) const {
+        auto& st = c.st;
         auto f = [](uint32_t v) { float x; std::memcpy(&x, &v, 4); return x; };
         auto u = [](float x) { uint32_t v; std::memcpy(&v, &x, 4); return v; };
         auto pop = [&]() { const V v = st.empty() ? V{0, true} : st.back(); if (!st.empty()) st.pop_back(); return v; };
@@ -344,27 +357,32 @@ struct GraphVm {
             case 0x5C: { const V a = pop(); push(u(float(int32_t(a.v))), a.known); break; }
             case 0x63: pc = size_t(int64_t(pc) + rel); break;
             case 0x64: {
-                const V c = pop();
+                const V cond = pop();
                 const size_t taken = size_t(int64_t(pc) + rel);
-                if (c.known) {
-                    if ((c.v & 0xFF) == 0) pc = taken;
+                if (cond.known) {
+                    if ((cond.v & 0xFF) == 0) pc = taken;
                     break;
                 }
                 if (depth >= 8) return {};
-                const GraphRun x = run(pc, st, depth + 1), y = run(taken, st, depth + 1);
+                const GraphRun x = run(pc, c, depth + 1), y = run(taken, c, depth + 1);
                 return x == y ? x : GraphRun{};
             }
             case 0x65: {
                 const uint32_t fn = pop().v, module = pop().v;
-                if (module == 1 && fn == 76) {
-                    push(sprint.value_or(false), sprint.has_value());
+                if (const auto m1 = module == 1 ? module1.find(fn) : module1.end(); m1 != module1.end()) {
+                    push(m1->second.value_or(0), m1->second.has_value());
                 } else if (module != 0) {
                     return {};
-                } else if (fn == 0) { // Play
-                    pop(), pop(), pop();
-                    const V pat = pop();
-                    if (!pat.known) return {};
-                    return {GraphOutcome::Played, int32_t(pat.v)};
+                } else if (fn == 0) { // Play (0x448100): into the open blend node, else queued (0x446BD0; type 2 flushes)
+                    pop(), pop();
+                    const V flags = pop(), pat = pop();
+                    if (!pat.known || !flags.known) return {};
+                    if (c.active && c.inNode) {
+                        c.node.push_back(int32_t(pat.v));
+                    } else {
+                        if ((flags.v & 7) == 2) c.queue.clear();
+                        c.queue.push_back(int32_t(pat.v));
+                    }
                 } else if (fn == 1) { // IsPlaying
                     const V flags = pop(), to = pop(), from = pop(), pat = pop();
                     const int p = int32_t(pat.v);
@@ -372,16 +390,28 @@ struct GraphVm {
                               (f(to.v) == -1.0f || frame < f(to.v));
                     if ((flags.v & 1) && !mirrorChange) on = false;
                     push(on, flags.known && to.known && from.known && pat.known);
-                } else if (fn == 2) {
-                    pop();
+                } else if (fn == 2) { // 0x434EE0: the result slot holds the selector
+                    const V sel = pop();
+                    c.active = true, c.random = sel.v == 0x88F26C, c.entries.clear();
+                } else if (fn == 3) { // 0x434F00: the selector plays one entry (0x448320 picks it at random)
+                    if (c.active && !c.entries.empty()) {
+                        for (const auto& e : c.entries)
+                            if (e != c.entries[0]) return {}; // [U] which entry the random pick takes
+                        c.queue.insert(c.queue.end(), c.entries[0].begin(), c.entries[0].end()); // 0x4482C0 queues it
+                    }
+                    c.active = false, c.entries.clear();
                 } else if (fn == 4) {
                     push(0x88F26C);
-                } else if (fn != 3 && fn != 5 && fn != 6) {
+                } else if (fn == 5) { // 0x434F50
+                    if (c.active) c.inNode = true, c.node.clear();
+                } else if (fn == 6) { // 0x444950
+                    if (c.active && c.inNode) c.entries.push_back(c.node), c.inNode = false;
+                } else {
                     return {};
                 }
                 break;
             }
-            case 0x7B: return {GraphOutcome::Nothing, -1};
+            case 0x7B: return c.queue.empty() ? GraphRun{GraphOutcome::Nothing, {}} : GraphRun{GraphOutcome::Played, c.queue};
             default: break; // tru.exe's switch ignores other opcodes
             }
         }
@@ -395,17 +425,43 @@ struct GraphVm {
 // native starts is what plays, in the pattern's own mode [U: Play's flags & 7 (0x448100) is not that mode: node 213's
 // else branch passes 2, yet Wine ends S245 once ng_planted_jump_forward has played through]. A node that plays nothing
 // leaves the clip and its clock running (false: no restart). Unresolved: no clip.
+// Module 1's native values for one node run (GraphVm), from the chart-side stores: the jump target as the chart sees it
+// (chartJumpTarget; its type from the chart's own query, else the game's), playerInt(0xEE8 / 0xED4 / 0xEDC).
+std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext& ctx) {
+    std::unordered_map<uint32_t, std::optional<uint32_t>> v;
+    const auto t = chartJumpTarget(ctx);
+    std::optional<int> type = 0;
+    if (ctx.chartTarget.target) type = ctx.chartTarget.type;
+    else if (t) type = ctx.jumpTargetType();
+    if (type) v[4] = uint32_t(*type);
+    else v[4] = std::nullopt;
+    // [I] an owner object = a markup riding a live instance (MarkupSlot::live); its +0x50 bit 0 is not modelled
+    if (t && t.live) v[5] = std::nullopt;
+    else v[5] = uint32_t(ctx.playerInt(0xEE8));
+    // the game flag bit is not modelled: known only when +0xED4 != 0 decides it
+    if (ctx.playerInt(0xED4) != 0) v[7] = 0u;
+    else v[7] = std::nullopt;
+    v[8] = uint32_t(ctx.playerInt(0xEDC));
+    v[16] = 0u;
+    if (const auto c = ctx.canSprint()) v[76] = uint32_t(*c);
+    else v[76] = std::nullopt;
+    return v;
+}
+
 bool ChartRuntime::resolveRequest(ChartContext& ctx) {
     const State* s = data_.state(state_);
     int pat = s ? s->request : -1;
     if (s && s->requestKind == 2) {
         const GraphRun r = size_t(s->request) < charts_.graph.size()
             ? GraphVm{charts_.graph[size_t(s->request)], playing_ ? playingIndex_ : -1, animFrames_, mirror_ != playingMirror_,
-                      ctx.canSprint()}
-                  .run(charts_.graph[size_t(s->request)].enter, {}, 0)
+                      module1Values(ctx)}
+                  .run(charts_.graph[size_t(s->request)].enter, GraphVm::Ctx{}, 0)
             : GraphRun{};
         if (r.outcome == GraphOutcome::Nothing && playing_) return false;
-        pat = r.outcome == GraphOutcome::Played ? r.pattern : -1;
+        pat = r.outcome == GraphOutcome::Played ? r.queue[0] : -1;
+        queue_.assign(r.queue.size() > 1 ? r.queue.begin() + 1 : r.queue.end(), r.queue.end());
+    } else {
+        queue_.clear();
     }
     playing_.reset(), playingIndex_ = -1;
     if (pat < 0 || size_t(pat) >= charts_.requests.size()) return true;
@@ -638,8 +694,21 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
     const Request* p = pattern();
     const float len = animLengthFrames(), before = animFrames_;
     animFrames_ += ctx.timeMult * (p ? p->rate : 1.0f);
-    if (len > 0 && (animLoops() ? std::floor(animFrames_ / len) > std::floor(before / len) : before < len && animFrames_ >= len))
-        animEnded(ctx);
+    if (len > 0 && (animLoops() ? std::floor(animFrames_ / len) > std::floor(before / len) : before < len && animFrames_ >= len)) {
+        // A queued pattern follows (0x43E0C0 -> 0x443430 plays the next record through 0x4428A0); the chart hears the
+        // end only when the queue has drained (0x43E0C0 calls the saved callback +0x304 then) [O].
+        if (!queue_.empty()) {
+            const int next = queue_.front();
+            queue_.erase(queue_.begin());
+            if (next >= 0 && size_t(next) < charts_.requests.size()) {
+                playing_ = charts_.requests[size_t(next)], playingIndex_ = next, playingMirror_ = mirror_;
+                animFrames_ = clipStart_ = float(std::max(0, int(playing_->start) - int(playing_->blend)));
+                ++clipStarts_;
+            }
+        } else {
+            animEnded(ctx);
+        }
+    }
 }
 
 void ChartRuntime::enter(ChartContext& ctx, int state) {

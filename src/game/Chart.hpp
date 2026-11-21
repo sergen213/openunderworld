@@ -485,6 +485,7 @@ private:
     bool playingMirror_ = false; // the mirror request the playing clip started with
     bool resolveRequest(ChartContext& ctx);
     uint64_t clipStarts_ = 0;
+    std::vector<int> queue_; // patterns a kind-2 node queued after the playing one (0x446BD0 ring)
     float clipStart_ = 0;
     float stateTime_ = 0, totalTime_ = 0, animFrames_ = 0;
     uint32_t frame_ = 0, stamp_ = 0;

@@ -158,6 +158,14 @@ TEST(ChartReal, ClipClockStartsAtStartMinusBlend) {
     // unknown stamina leaves it unresolved (no clip clock, never a guess).
     rt.enter(ctx, 40);
     EXPECT_EQ(rt.pattern(), nullptr);
+    // Node 22 (S533 / S535, the hang attach): with +0xED4 != 0 it queues 1460 trans_pose_U, then the attach clip; with
+    // +0xED4 == 0 native 7 also needs a game flag (0xE7F094 -> +0x50 -> +0xB90 bit 26) ours lacks: unresolved.
+    ctx.playerInt(0xED4) = 2;
+    rt.enter(ctx, 533);
+    EXPECT_EQ(rt.playingPattern(), 1460);
+    ctx.playerInt(0xED4) = 0;
+    rt.enter(ctx, 533);
+    EXPECT_FALSE(rt.resolved());
     // Stamina left: ng_idle / ng_run_start; spent: ng_idle_break_hot / ng_run_exhaust (node 99 asks 76 first).
     for (const auto& [sprint, idle, run] : {std::tuple{true, 685, 716}, std::tuple{false, 691, 717}}) {
         ctx.sprint = sprint;

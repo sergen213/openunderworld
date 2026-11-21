@@ -260,7 +260,7 @@ the others are marked [I] with what blocks them.
 | `boneRise()` (0x1F) | root z delta | bone 0 z now - previous (+0x90 / +0x94) | [I] kept: root z delta; bone 0 needs the posed skeleton of the chart's clip |
 | `supportFoot()` (0x12D), pattern requests | chart clip on the runtime clock | events 0x34 / 0x35 / 0x36 of the layer's clip (0x716F30) | physical already (the chart's own clip) |
 | `supportFoot()`, kind-2 requests | controller clip and clip time | the clip the anim graph node picks (below) | *physical*: the pattern `resolveRequest` gets from the node (S245 -> 680, S40 -> 685 / 691); the controller clip only when a node does not resolve (unknown stamina) |
-| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller; 0xC9 itself polls the layer clip's time against 0x438930's length) | *rebased* where the node resolves: its pattern on the clip clock [U: S245 10 ticks vs Wine 15]. Unresolved nodes (node 22: S533 / S535, module 1 natives 4 / 5 / 7 / 8 / 16 not ported) use the row below |
+| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller; 0xC9 itself polls the layer clip's time against 0x438930's length) | *rebased* where the node resolves: its pattern on the clip clock [U: S245 10 ticks vs Wine 15]. Node 22 (S533 / S535) resolves only with +0xED4 != 0 (then trans_pose_U, then the attach clip, the end after both); with +0xED4 == 0 (the shadow's case) native 7 needs the game flag word (0xE7F094 -> +0x50 -> +0xB90 bit 26), unresolved: the row below |
 | animation end of an unresolved kind-2 node (group B bridge, `Shadow::tick`) | — | as above | *controller-derived* [I]: `animEnded` when our controller's one-shot clip, started within a tick of the state, settles into a loop (S533 31 ticks = Wine; S535 47 vs Wine 38); gated on `!ChartRuntime::resolved()` so resolved nodes get no second end |
 | `attachedMarkup()` (+0xC94) | controller `attachedMarkup()` / ledge seg / t, empty in HangJump | written by the markup attach actions (0x76D010 ...) | [I] blocked: attach actions (group B) must write a chart-side slot |
 | `jumpTarget()` (+0xA64), `jumpQueryFlags()` (+0xAC0), `jumpTargetType()` (+0xA80) | controller `aimMarkup` / `aimFlags` / `aimClass` | take-off query (+0xA84) and action 230 (0x772CA0) promoting the candidates +0x3A0 / +0x3E0 | [I] partly: `chartJumpTarget` (df3c1da) keeps it chart-side, re-queried every take-off frame; prop 400's attach (0x75F2D0) consumes it; the controller fallback goes then |
@@ -281,8 +281,12 @@ indexes the object's graph node table (ObjectBase +0x50: 8-byte entries {DTP id 
 request 213 -> DTP 2248, 408 bytes; request 99 -> DTP 2134, 13 KB). A node is a program for a stack VM (0x432B20:
 opcode = high byte; 0x02 push the next word, 0x01 pop, 0x47..0x5C float / bool arithmetic and compares, 0x63 jump,
 0x64 jump if false, 0x65 call native [class, method] from table 0x8AC128, 0x7B return; 0x4370C0 pushes a frame). The
-natives and how ours runs them: Runtime, "Anim request" above (`ChartRuntime::resolveRequest`). Not ported: module
-1's natives other than 76 (= `canSprint()`), the selector object fn 4 pushes (0x88F26C; node 46's
+natives and how ours runs them: Runtime, "Anim request" above (`ChartRuntime::resolveRequest`). Module 1's natives
+(table 0x8ABF90) push one player value: 4 +0xA80, 5 the jump target's owner flag else +0xEE8, 7 +0xED4 == 0 and not
+game flag bit 26, 8 +0xEDC, 16 the context's held selector, 76 `canSprint()`. A selector's entries are blend nodes;
+committing it (fn 3) queues one entry's records in order (0x4482C0 -> 0x446BD0; fn 4's static selector picks at random,
+0x448320), and the chart hears the end when the queue drains (0x43E0C0). Not ported: the owner flag, game flag bit
+26, a random pick between different entries, the selector object fn 4 pushes (0x88F26C; node 46's
 891 branch queues three transition/loop pairs and fn 3 commits one), Play's two float arguments and flags.
 
 ### In-flight jump targets [O, not ported]
