@@ -2,6 +2,7 @@
 // interpolates between the last two ticks. Docs: docs/GAMEPLAY.md.
 #include <algorithm>
 #include <bit>
+#include <iostream>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -41,6 +42,7 @@
 #include "fx/Breath.hpp"
 #include "fx/Fx.hpp"
 #include "game/Game.hpp"
+#include "game/Chart.hpp"
 #include "script/Vm.hpp"
 #include "game/Weather.hpp"
 #include "locale/Locale.hpp"
@@ -78,6 +80,10 @@ struct Options {
     // --self-test FILE.json [--self-test-report OUT.json] [--self-test-trace]: a gameplay scenario (docs/SELFTEST.md)
     std::filesystem::path selfTest, selfTestReport;
     bool selfTestTrace = false;
+    // --chart-shadow / --chart-trace FILE: Lara's state chart runs beside the controller, logging where its clip
+    // differs from hers / writing the per-tick TSV (docs/re/PLAYER_CHART.md "Shadow mode").
+    bool chartShadow = false;
+    std::string chartTrace;
     std::filesystem::path recordInput, replayInput; // --record-input / --replay-input FILE: device events (platform::EventLog)
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script / --replay-input
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
@@ -113,6 +119,8 @@ void usage() {
                  "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
                  "               [--self-test FILE.json [--self-test-report OUT.json] [--self-test-trace]] (a gameplay scenario, docs/SELFTEST.md;\n"
                  "                exit 0: every step passed, 1: a step failed, 2: malformed scenario)\n"
+                 "               [--chart-shadow] [--chart-trace FILE.tsv] (Lara's state chart beside the controller, docs/re/PLAYER_CHART.md)\n"
+                 "       ou-game chart-dump [--game-dir DIR] [--state N] [--coverage] [--upper] [--names conditions.json]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-cinematics] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
                  "               [--report-objects UID,...] (with --frames: the script calls to / from them and their state at exit; 0 = every object)\n"
@@ -179,6 +187,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--no-cinematics") { o.noCinematics = true; continue; }
         if (a == "--draw-last") { o.drawLast = true; continue; }
         if (a == "--self-test-trace") { o.selfTestTrace = true; continue; }
+        if (a == "--chart-shadow") { o.chartShadow = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         const char* v = argv[++i];
@@ -205,6 +214,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--autopilot") o.autopilot = v;
         else if (a == "--self-test") o.selfTest = v;
         else if (a == "--self-test-report") o.selfTestReport = v;
+        else if (a == "--chart-trace") o.chartTrace = v;
         else if (a == "--report-objects") {
             for (const char* p = v; *p;) {
                 char* end = nullptr;
@@ -2123,6 +2133,29 @@ private:
 
 int main(int argc, char** argv) {
     Options opt;
+    if (argc > 1 && std::string_view(argv[1]) == "chart-dump") { // the state chart as text / its port coverage
+        std::optional<int> state;
+        bool coverage = false, upper = false;
+        std::optional<std::filesystem::path> names;
+        std::filesystem::path dir = std::getenv("OU_GAME_DIR") ? std::getenv("OU_GAME_DIR") : "";
+        for (int i = 2; i < argc; ++i) {
+            const std::string_view a = argv[i];
+            if (a == "--coverage") coverage = true;
+            else if (a == "--upper") upper = true;
+            else if (a == "--state" && i + 1 < argc) state = std::atoi(argv[++i]);
+            else if (a == "--game-dir" && i + 1 < argc) dir = argv[++i];
+            else if (a == "--names" && i + 1 < argc) names = argv[++i];
+            else { usage(); return 2; }
+        }
+        if (dir.empty()) dir = opt.gameDir;
+        try {
+            const ou::cdc::BigfileSet bf(dir, ou::locale::specMask(*ou::locale::parseLanguage(opt.game.language)));
+            return ou::game::chart::dump(bf, state, coverage, upper, names ? &*names : nullptr, std::cout);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game chart-dump: %s\n", e.what());
+            return 1;
+        }
+    }
     if (!parseArgs(argc, argv, opt)) { usage(); return 2; }
     // --self-test: the scenario names how the game is entered; a malformed one ends the run before anything loads.
     std::optional<ou::app::SelfTest> selfTest;
@@ -2160,6 +2193,7 @@ int main(int argc, char** argv) {
     std::optional<ou::platform::EventLog> replay; // --replay-input: recorded device events instead of the devices
     std::ofstream record;                         // --record-input
     std::unique_ptr<ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
+    std::unique_ptr<ou::game::chart::Shadow> chartShadow; // --chart-shadow / --chart-trace
     // Text, voice and subtitle language (config game.language / --lang; AUDIO/VISUAL > LANGUAGE switches it live):
     // the archives' spec mask (voice streams, cinematics), locals.bin (locale::textLanguage) and the subtitle lines.
     ou::locale::Language language = *ou::locale::parseLanguage(opt.game.language);
@@ -2193,6 +2227,9 @@ int main(int argc, char** argv) {
         }
         bigfile = std::make_unique<ou::cdc::BigfileSet>(opt.gameDir, ou::locale::specMask(language));
         const auto& bf = *bigfile;
+        if (opt.chartShadow || !opt.chartTrace.empty())
+            chartShadow = std::make_unique<ou::game::chart::Shadow>(
+                bf, opt.chartTrace.empty() ? std::nullopt : std::optional<std::filesystem::path>(opt.chartTrace), opt.chartShadow);
         strings = ou::locale::loadStrings(opt.gameDir, ou::locale::textLanguage(language));
         if (!strings) throw std::runtime_error("pc-w\\local\\locals.bin not in bigfile");
         std::string why;
@@ -3341,6 +3378,7 @@ int main(int argc, char** argv) {
             else
                 ou::game::setSeaSwell(nullptr, nullptr);
             world->tick(a);
+            if (chartShadow && !menus.mainMenu()) chartShadow->tick(*world, a);
             // A death restored the checkpoint save: the level reload stops every sound (tru.exe 0x5DAB40 -> 0x593D10) and
             // the music / reverb are the save's again, as after a load.
             if (world->respawns() != respawnsBefore) resetAudio("respawn"), resumeAudio("respawn");
@@ -4005,6 +4043,7 @@ int main(int argc, char** argv) {
                          std::string(ou::game::stateName(fs.state)).c_str(), fs.pos.x, fs.pos.y, fs.pos.z, glm::degrees(fs.yaw), fs.clip.c_str(),
                          (unsigned long long)world->stateHash(), effects.system.particleCount());
             if (autopilot) autopilot->finish(appTicks);
+            if (chartShadow) std::fprintf(stderr, "ou-game: %s\n", chartShadow->summary().c_str());
             { // receptacle replays (tests/replays/*_insert.txt) check these
                 std::string list;
                 for (const auto& o : world->script().objects())
