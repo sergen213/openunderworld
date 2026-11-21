@@ -573,6 +573,9 @@ public:
     // none. rideFrame: that markup's frame moved by `d` this tick: her root, heading and the world-space points of
     // her move in progress go with it. addVelocity: World::tick, when she leaves what carried her into free flight.
     int attachedMarkup() const;
+    // tru.exe 0x74E290's hang clearance class of the ledge she hangs on, as player +0xEDC holds it: 2 climb up, 5
+    // crouching, 8 wall-hug shelf, 11 a wall in front of the top (0x74E160), 1 none (hangClearance plays 11 as 1).
+    int hangClearanceClass() const;
     void rideFrame(const glm::mat4& d);
     void addVelocity(vec3 v) { s_.vel += v; }
     void letGo() { startFall(vec3(0)); } // what she held or stood on is gone (a breakable broke): she falls from here
