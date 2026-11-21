@@ -5,10 +5,12 @@ namespace ou::game::chart {
 
 void registerGeneric(Registry& player, Registry& upper);
 void registerGround(Registry& player, Registry& upper);
+void registerJump(Registry& player, Registry& upper);
 
 void registerFamilies(Registry& player, Registry& upper) {
     registerGeneric(player, upper);
     registerGround(player, upper);
+    registerJump(player, upper);
 }
 
 } // namespace ou::game::chart
