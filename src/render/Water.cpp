@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
+#include <unordered_map>
 
 namespace ou::render {
 
@@ -121,6 +123,21 @@ glm::mat4 waterWaves(glm::vec3 center, float radius, std::span<const WaterVolume
     glm::mat4 m;
     std::memcpy(&m, o.waves, sizeof m);
     return m;
+}
+
+float waterRestZ(const scene::MeshData& m, const std::unordered_map<uint32_t, const scene::Material*>& materials) {
+    std::unordered_map<int32_t, uint32_t> counts; // z rounded to whole units
+    for (const auto& s : m.submeshes) {
+        const auto it = materials.find(s.materialId);
+        if (it == materials.end() || !original::reflectionSamplers(*it->second)) continue;
+        for (uint32_t i = s.firstIndex; i < s.firstIndex + s.indexCount && i < m.indices.size(); ++i)
+            ++counts[int32_t(std::lround(m.vertices[m.indices[i]].position[2]))];
+    }
+    if (counts.empty()) return std::numeric_limits<float>::max();
+    const auto best = std::max_element(counts.begin(), counts.end(), [](const auto& a, const auto& b) {
+        return a.second != b.second ? a.second < b.second : a.first > b.first; // ties: the lower plane
+    });
+    return float(best->first);
 }
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes) {

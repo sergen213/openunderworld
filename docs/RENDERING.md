@@ -417,6 +417,10 @@ Water surfaces are meshes whose object name contains `watersurface` [I], e.g.
 with `original::reflectionSamplers` of a mesh whose reflection plane lies in a water volume (`render::reflectsWater`;
 l2_cliffclimb's sea is such a submesh of one terrain mesh). `water.vert` lowers those by the sea's waves exactly as
 their original vertex shader (`render::waterWaves`, columns c60-c63), so the yacht deck stays above the drawn sea.
+It first clamps the mesh to its rest height (`render::waterRestZ`: the most common mesh-local z of the reflective
+submeshes' vertices; a push constant / uniform per draw), with the clamped vertices' normals straight up: TRU's
+l2_cliffclimb sea (z 108) curls up into a rim to z 5062 from ~98 000 units out, which under the Enhanced shading stood
+over the horizon as a flat fog-coloured band in front of the sky dome's islands. Flat seas are unchanged.
 
 Technique (`water.frag` header lists the sources; credits in docs/RESEARCH.md §8.8). Lengths in metres × `kM` = 290
 TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma scene copy goes to linear and back).

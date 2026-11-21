@@ -73,6 +73,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-WAT-013 | water render | Geometry swell small outside the tessellated window (coarse TRU sea meshes) | Open (limit) | pre-existing | C-SWELL |
 | OU-WAT-014 | water render | Under-water tint over a level view while swimming at the surface | Fixed-verified (0.58.0, merge 59e367c) | pre-existing | — |
 | OU-WAT-015 | water render | Original-preset l2_cliffclimb sea: smooth mirror reflection and a dark seam where tru.exe shows wave-broken teal water | Fixed-verified (agent/Render11 e3c340d: packed terrain normals) | pre-existing | — |
+| OU-WAT-016 | water render | Enhanced l2_cliffclimb sea: flat fog-coloured band over the horizon (the sea mesh's upturned rim) | Fixed-verified (2026-11-20, rim clamped to the rest height) | pre-existing | — |
 | OU-REN-001 | render | Dark sky near the chapter 2 cliff | Fixed-verified (0.57.0, 471b42e: sky dome object) | pre-existing | — |
 | OU-REN-002 | render | HDR off by default: bright window highlights band | Open | pre-existing | — |
 | OU-REN-003 | render / cine | `co_*` cutscene actor faces render green | Open | pre-existing | — |
@@ -85,6 +86,7 @@ Sources harvested: `docs/ROADMAP.md` "Known deviations" column (cited as `ROADMA
 | OU-REN-010 | render | Finish bloom misses its `c · a` term (0x51AEF0 composite): up to half the original's bloom | Fixed-verified (agent/Render11 d1f21fe) | pre-existing | — |
 | OU-REN-011 | render | Two-sided translucent batches drawn in one cull-off draw; tru.exe draws back faces, then front faces | Fixed (agent/Render11 c31d3bf; code + unit test, not visible at the capture distances) | pre-existing | — |
 | OU-REN-012 | render / fx | Lit smoke material particles drawn unlit grey (prologue corridor) | Fixed-verified (agent/Render11 f831c65; colour, density gap R2 remains) | pre-existing | — |
+| OU-REN-013 | render | l1_seatop by day: dark-blue patch with straight right / bottom edges at the left screen edge; pale strip with a hard top edge in the sky over the sea | Open (0.60.0 too) | pre-existing | — |
 | OU-VK-001 | Vulkan RT | `game_vulkan_rt_smoke` hangs the GPU (l1_kraken_room) | Fixed-verified (0.59.0; stale regex since 0.51.0; no hang on RADV 26.2.6; 0.12/0.13 hang cause unidentified) | test defect + unreproduced hang | — |
 | OU-VK-002 | Vulkan AO | CORTAO temporal pass is camera-only (risk of halos on moving meshes) | Not reproduced | new-feature defect (0.51.0) | — |
 | OU-VK-003 | Vulkan | AMD Anti-Lag crash a few frames into cutscenes / loading screen | Fixed-verified | regression (Anti-Lag support) | — |
@@ -411,7 +413,27 @@ Status · Origin: Open (limit) · pre-existing.
   still approximated (RENDER_PIPELINE §7.2, §7.3, §9).
 - Status · Origin: Fixed-verified (agent/Render11) · pre-existing.
 
+**OU-WAT-016 Enhanced l2_cliffclimb sea: band over the horizon** (user report, 2026-11-20)
+- Repro: `ou-game --level 'pc-w\l2_cliffclimb.drm' --spawn -23868,-4146,400,0 --camera
+  -23868,-4146,600,-23868,-24146,300 --time-of-day day|night`, Enhanced water, Vulkan and OpenGL.
+- Actual (before): a flat cyan (day) / pale blue (night) strip ~1° high between the sea and the sky dome's islands,
+  with or without the dome, atmosphere, ocean; `--water-debug 5` marks it as water.
+- Cause: the sea is submesh 5 of terrain section 11280: flat at z 108 to ~98 000 units, then curled up to z 5062 out
+  to ±172 000. The rim rises over eye level and the Enhanced shading turns it into a grazing sky-colour strip.
+  (It also drags `original::reflectionPlaneZ`'s mean to 267; not changed.)
+- Fix: `render::waterRestZ` (most common mesh-local z of the planar-reflection vertices), `water.vert` clamps to it
+  with up normals. All 75 units swept: the only other reflective seas (l1 seatop / cineseatop / ship_exterior /
+  cine_ship_sinking, z 1673) are single-height, so they are unchanged (l1_seatop old/new frames match). Original water
+  still shows the rim (tru.exe frame of this view not captured).
+
 ### Rendering (OU-REN)
+
+**OU-REN-013 l1_seatop daytime sky artefacts** (seen 2026-11-20, unchanged since 0.60.0)
+- Repro: `ou-game --level 'pc-w\l1_seatop.drm' --time-of-day day` (default spawn view).
+- A dark-blue patch at the left edge (~x 0-96, y 250-290 at 1920x1080) whose top is curved but whose right and bottom
+  edges are straight: [I] far geometry cut by a portal scissor (`clipPixels` / `scissorFor`), possibly l1_cineseatop's
+  sea (z 1673) through its portal. Also a pale strip with a hard top edge in the sky just above the sea horizon
+  (exterior dome / horizon cards; not visible at night). Needs a tru.exe frame.
 
 **OU-REN-001 Dark sky near the chapter 2 cliff**
 - Repro: `--chapter 2` (l2_cliffclimb start), Vulkan Enhanced, look up / out along the cliff.

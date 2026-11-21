@@ -24,11 +24,12 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUv;
 layout(location = 3) in vec4 aColor;
 #ifdef VULKAN
-layout(push_constant) uniform Push { mat4 model; mat4 waves; } pc;
+layout(push_constant) uniform Push { mat4 model; mat4 waves; vec4 rest; } pc;
 #define uWaves pc.waves
 #else
 layout(location = 0) uniform mat4 uModel;
 layout(location = 1) uniform mat4 uWaves; // render::waterWaves: columns c60-c63 (zero = flat)
+layout(location = 2) uniform float uRestZ;
 #endif
 layout(location = 0) out vec3 vWorld;
 layout(location = 1) out vec3 vNormal;
@@ -39,13 +40,18 @@ layout(location = 4) flat out float vSea;
 #include "shaders/water_surface.glsl"
 
 void main() {
+    // The mesh's rest height (render::waterRestZ, mesh-local z, rounded to a unit: + 0.5): TRU curls l2_cliffclimb's sea
+    // up into a rim ~100 000 units out; drawn as water it stood over the horizon as a fog-coloured band. Flattened, the
+    // sea runs out to the horizon under the sky dome.
 #ifdef VULKAN
-    vec4 world = pc.model * vec4(aPos, 1.0);
-    vNormal = mat3(pc.model) * aNormal;
+    float restZ = pc.rest.x + 0.5;
+    mat4 model = pc.model;
 #else
-    vec4 world = uModel * vec4(aPos, 1.0);
-    vNormal = mat3(uModel) * aNormal;
+    float restZ = uRestZ + 0.5;
+    mat4 model = uModel;
 #endif
+    vec4 world = model * vec4(aPos.xy, min(aPos.z, restZ), 1.0);
+    vNormal = mat3(model) * (aPos.z > restZ ? vec3(0.0, 0.0, 1.0) : aNormal);
     // The surface (shaders/water_surface.glsl): a sea's waves as its original vertex shader (tru.exe 0x69DFB0: lowered by
     // sum c63 (1 - sin(x c60 + y c61 + c62)); the gameplay surface follows the same waves, game::waveRegisters), Godot's
     // height layers or on open seas the FFT ocean / afl_ext's waves, capped at the rest plane, plus the interactive wave

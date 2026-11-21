@@ -452,6 +452,7 @@ struct GpuMesh {
     uint32_t lightMask = ~0u; // scene::MeshData::lightMask
     std::vector<std::vector<std::array<float, 6>>> lightBoxes; // terrain light groups (scene::MeshData::lightBoxes)
     float reflectZ = std::numeric_limits<float>::quiet_NaN(); // original::reflectionPlaneZ (NaN: nothing reflects)
+    float waterRestZ = std::numeric_limits<float>::max(); // render::waterRestZ (max: none), the Enhanced water's clamp
     std::vector<uint8_t> reflective; // per submesh: a planar-reflection material (render::reflectsWater candidates)
     // Ray tracing (empty without RT support): one BLAS geometry per traced submesh (Opaque + Alpha
     // blends, as the shadow map). Skinned meshes are refitted, others rebuilt, on updateVertices.
@@ -1506,7 +1507,9 @@ public:
                 bindMesh(mi);
                 clipTo(mi);
                 const glm::mat4 wp[2] = {m.model, waterWaves(m.center, m.radius, options.waterVolumes)};
+                const glm::vec4 rest(m.waterRestZ, 0.0f, 0.0f, 0.0f);
                 vkCmdPushConstants(cmd, waterLayout_, waterPushStages(), 0, sizeof wp, wp);
+                vkCmdPushConstants(cmd, waterLayout_, waterPushStages(), sizeof wp, sizeof rest, &rest);
                 for (uint32_t s = 0; s < m.submeshes.size(); ++s)
                     if (waterDraw(mi, s)) vkCmdDrawIndexed(cmd, m.submeshes[s].indexCount, 1, m.submeshes[s].firstIndex, 0, 0), ++rtStatus_.waterSurfaces;
             }
@@ -2365,6 +2368,7 @@ private:
             if (meshSlot_[si] < meshes_.size()) {
                 GpuMesh& g = meshes_[meshSlot_[si]];
                 g.reflectZ = original::reflectionPlaneZ(scene.meshes[si], g.model, prep.materials);
+                g.waterRestZ = waterRestZ(scene.meshes[si], prep.materials);
                 g.reflective.clear();
                 for (const auto& s : g.submeshes) {
                     const auto it = prep.materials.find(s.materialId);
@@ -3681,7 +3685,8 @@ private:
         }
         VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 10, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
-        VkPushConstantRange modelPush{waterPushStages(), 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves (.tese: the waves)
+        // model, render::waterWaves (.tese: the waves), x: render::waterRestZ (water.vert)
+        VkPushConstantRange modelPush{waterPushStages(), 0, 2 * sizeof(glm::mat4) + sizeof(glm::vec4)};
         // 1: sun shadow (caustics); 2 (RT devices): the scene TLAS for water_rt.frag's reflections.
         const VkDescriptorSetLayout waterSets[3] = {waterSetLayout_, shadowSetLayout_, rtSetLayout_};
         VkPipelineLayoutCreateInfo wpl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 3u : 2u, waterSets, 1,

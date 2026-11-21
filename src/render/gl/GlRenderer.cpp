@@ -488,6 +488,7 @@ struct GpuMesh {
     // reflecting submeshes' plane (NaN: none).
     std::vector<uint32_t> reflection;
     float reflectZ = std::numeric_limits<float>::quiet_NaN();
+    float waterRestZ = std::numeric_limits<float>::max(); // render::waterRestZ (max: none), the Enhanced water's clamp
     glm::mat4 model;
     glm::vec3 exteriorShift{0.0f};      // exterior terrain: translation added to `model` (followExterior)
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
@@ -1931,6 +1932,7 @@ private:
         g.irradiance = false;
         for (const auto& s : g.submeshes) addOriginal(g, s);
         g.reflectZ = original::reflectionPlaneZ(m, g.model, prepared_.materials);
+        g.waterRestZ = waterRestZ(m, prepared_.materials);
         for (const auto& s : g.submeshes) {
             const auto it = prepared_.materials.find(s.materialId);
             g.reflective.push_back(it != prepared_.materials.end() && original::reflectionSamplers(*it->second) != 0);
@@ -2383,6 +2385,7 @@ private:
             glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(m.model));
             const glm::mat4 waves = waterWaves(m.center, m.radius, options.waterVolumes);
             glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(waves));
+            glUniform1f(2, m.waterRestZ); // water.vert uRestZ (render::waterRestZ)
             glBindVertexArray(m.vao.get());
             for (uint32_t s = 0; s < m.submeshes.size(); ++s)
                 if (waterDraw(i, s)) {

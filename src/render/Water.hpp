@@ -12,6 +12,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace ou::render {
 
@@ -23,6 +24,11 @@ bool isWaterSurface(std::string_view meshOrigin);
 bool reflectsWater(glm::vec3 center, float radius, float reflectZ, std::span<const WaterVolume> volumes);
 // The sea waves water.vert lowers such a mesh by (columns c60-c63 as original::fillWaves; zero = flat).
 glm::mat4 waterWaves(glm::vec3 center, float radius, std::span<const WaterVolume> volumes);
+// The rest height of such a mesh's water (mesh-local z; float max: none): the most common z of the vertices of its
+// planar-reflection submeshes (as original::reflectionPlaneZ, whose mean the rim drags up). water.vert clamps the
+// surface to it: l2_cliffclimb's sea (z 108) curls up to z 5062 from ~98 000 units out, a rim that rose over the horizon
+// as a flat fog-coloured band under the Enhanced water's shading.
+float waterRestZ(const scene::MeshData& m, const std::unordered_map<uint32_t, const scene::Material*>& materials);
 
 // std140 block shared by the water, splash and post (underwater, atmosphere, weather) shaders. GL: UBO binding 4.
 // Vulkan: water set 0 / post set 1, binding 0. Shaders may declare a prefix of it (splash stops at `ambient`).
