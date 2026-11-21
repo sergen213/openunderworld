@@ -1,15 +1,86 @@
 // Shadow mode: Lara's chart beside the controller (Chart.hpp Shadow; docs/re/PLAYER_CHART.md "Shadow mode").
 #include "game/Chart.hpp"
+#include "cdc/Cdc.hpp"
 #include "game/Game.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <sstream>
+#include <unordered_map>
 
 namespace ou::game::chart {
 
 namespace {
+
+std::string lower(std::string_view s) {
+    std::string o(s);
+    for (char& ch : o) ch = char(std::tolower(uint8_t(ch)));
+    return o;
+}
+
+// The support-foot events (commands 0x34 / 0x35 / 0x36, handler 0x716F30) of every clip of lara.drm's animation list
+// (object DTP +0x54 count, +0x58 -> 12-byte entries {s16 anim, u32 event DTP id, -> name}); an event DTP is a run of
+// records {u16 info, u16 frame, ...} of 8 + (info >> 12) x 4 bytes, info & 3 == 2 a command with its id at +8,
+// ended by info 0xFFFF [O, openunderworld-work/gameplaygoal/melee/ev.cpp]. Frames are 30 Hz keys.
+struct FootClip {
+    float frames = 0; // clip length in 30 Hz frames
+    std::vector<std::pair<float, int>> events; // (frame, command), by frame
+};
+std::unordered_map<std::string, FootClip> footEvents(const cdc::BigfileSet& bf) {
+    std::unordered_map<std::string, FootClip> out;
+    auto bytes = bf.read("pc-w\\lara.drm");
+    if (!bytes) return out;
+    const auto d = cdc::parseDrm(std::move(*bytes));
+    const auto rd16 = [](std::span<const uint8_t> v, size_t o) { uint16_t x = 0; if (o + 2 <= v.size()) std::memcpy(&x, v.data() + o, 2); return x; };
+    const auto rd32 = [](std::span<const uint8_t> v, size_t o) { uint32_t x = 0; if (o + 4 <= v.size()) std::memcpy(&x, v.data() + o, 4); return x; };
+    uint32_t base = 0;
+    for (const auto& s : d.sections)
+        if (s.type == cdc::SectionType::Object) { base = rd32(s.data, 0); break; }
+    for (uint32_t i = 0; i < d.sections.size(); ++i) {
+        const auto& s = d.sections[i];
+        if (s.type != cdc::SectionType::DtpData || s.id != base) continue;
+        const auto ptrs = cdc::sectionPointers(d, i);
+        const auto list = ptrs.find(0x58);
+        if (list == ptrs.end()) break;
+        const auto& ls = d.sections[list->second.section];
+        const auto lptrs = cdc::sectionPointers(d, list->second.section);
+        const uint32_t n = rd32(s.data, 0x54);
+        for (uint32_t k = 0; k < n; ++k) {
+            const uint32_t e = list->second.offset + 12 * k;
+            const auto name = lptrs.find(e + 8);
+            if (name == lptrs.end()) continue;
+            std::string nm;
+            const auto& nd = d.sections[name->second.section].data;
+            for (size_t c = name->second.offset; c < nd.size() && nd[c]; ++c) nm += char(nd[c]);
+            const int16_t animId = int16_t(rd16(ls.data, e));
+            const uint32_t evId = rd32(ls.data, e + 4);
+            FootClip fc;
+            for (const auto& x : d.sections)
+                if (x.type == cdc::SectionType::Animation && x.id == uint32_t(animId)) {
+                    fc.frames = float(anim::decodeClip(x.data).durationSeconds() * 30.0);
+                    break;
+                }
+            for (const auto& x : d.sections) {
+                if (x.type != cdc::SectionType::DtpData || x.id != evId) continue;
+                for (size_t at = 4; at + 8 <= x.data.size();) {
+                    const uint16_t info = rd16(x.data, at);
+                    if (info == 0xFFFF) break;
+                    if ((info & 3) == 2)
+                        if (const int cmd = int16_t(rd16(x.data, at + 8)); cmd >= 0x34 && cmd <= 0x36) fc.events.emplace_back(float(rd16(x.data, at + 2)), cmd);
+                    at += 8 + size_t(info >> 12) * 4;
+                }
+                break;
+            }
+            std::ranges::stable_sort(fc.events, {}, &std::pair<float, int>::first);
+            out.emplace(lower(nm), std::move(fc));
+        }
+        break;
+    }
+    return out;
+}
+
 
 bool sameClip(std::string_view a, std::string_view b) {
     return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return std::tolower(x) == std::tolower(y); });
@@ -91,6 +162,29 @@ struct Shadow::Impl : ChartContext {
     std::optional<bool> wallSlideRecent() const override { return lastSteepMs > 0 && nowMs - lastSteepMs <= 99; }
     bool aimHeld = false;
     uint32_t nowMs = 0, lastSteepMs = 0;
+    // Player +0xF3C from the support-foot events of the clip our controller plays (fired as its time passes them).
+    std::unordered_map<std::string, FootClip> footClips;
+    std::string footClip;
+    float footFrame = 0;
+    int foot = 0;
+    std::optional<int> supportFoot() const override { return footClips.empty() ? std::nullopt : std::optional<int>(foot); }
+    void updateFoot(const PlayerState& s) {
+        const auto it = footClips.find(lower(s.clip));
+        if (it == footClips.end()) return;
+        const FootClip& fc = it->second;
+        float f = float(s.clipTime * 30.0);
+        if (s.loop && fc.frames > 0) f = std::fmod(f, fc.frames);
+        const auto fire = [&](float lo, bool loInclusive, float hi) {
+            for (const auto& [at, cmd] : fc.events)
+                if ((loInclusive ? at >= lo : at > lo) && at <= hi)
+                    foot = cmd == 0x35 ? 0 : ((cmd == 0x34) != s.mirror ? 1 : 2); // 0x716F30 with 0x6EDD00
+        };
+        const std::string key = it->first;
+        if (key != footClip) fire(0, true, f);              // a new clip: its events up to now
+        else if (f >= footFrame) fire(footFrame, false, f); // passed since the last tick
+        else fire(footFrame, false, fc.frames), fire(0, true, f); // looped
+        footClip = key, footFrame = f;
+    }
     // ---- end group A ----
     float fallDistance() const override {
         const PlayerState& s = w->player().state();
@@ -219,6 +313,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
     charts_ = std::make_unique<Charts>(std::move(*c));
     rt_ = std::make_unique<ChartRuntime>(*charts_, charts_->player, Registry::player());
     impl_->log = log;
+    impl_->footClips = footEvents(bigfile);
     if (trace) {
         impl_->trace.open(*trace);
         if (!impl_->trace) throw std::runtime_error("chart shadow: cannot write " + trace->string());
@@ -239,6 +334,7 @@ void Shadow::tick(const World& world, const Actions& a) {
     m.aimHeld = a.aim;
     m.nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
     if (world.player().steepUnder()) m.lastSteepMs = std::max<uint32_t>(m.nowMs, 1);
+    m.updateFoot(world.player().state());
     const float yaw = world.stickYaw();
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     m.stickWorld = right * a.move.x + fwd * a.move.y;

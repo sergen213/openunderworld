@@ -170,3 +170,25 @@ TEST(ChartGround, StickRateMarksTimeForCondition16) {
     EXPECT_EQ(rt.state(), 1); // the marker is restamped every frame at band 403
     EXPECT_FLOAT_EQ(ctx.animRate, 1.5f); // m = 1 at the top of the band: lerp(p514, p515) = 1.5
 }
+
+TEST(ChartGround, FootSupportReadsSupportFoot) {
+    struct FootContext : GroundContext {
+        int f = 0;
+        std::optional<int> supportFoot() const override { return f; }
+    };
+    Charts c;
+    c.player.states.resize(4);
+    for (size_t i = 1; i < 4; ++i) c.player.states[i].parent = 0;
+    c.player.transitions = {{1, {}, {{300, 0x12D, 301, 0}}}, {2, {}, {{300, 0x12D, 302, 0}}}, {3, {}, {{300, 0x12D, 305, 0}}}};
+    c.player.states[0].transitions = {0, 1};
+    c.player.states[1].transitions = {2};
+    c.player.states[2].transitions = {2};
+    ChartRuntime rt(c, c.player, Registry::player());
+    FootContext ctx;
+    ctx.f = 2;
+    rt.start(ctx);
+    EXPECT_EQ(rt.state(), 2); // foot 2: 302
+    ctx.f = 0;
+    rt.tick(ctx, 0.5f);
+    EXPECT_EQ(rt.state(), 3); // none: 305
+}

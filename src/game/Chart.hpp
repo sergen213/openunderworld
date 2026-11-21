@@ -223,6 +223,9 @@ public:
     // Agent +0x90 (game ms of the last message 0x1C9, too-steep ground; handler 0x76FC30) set and at most 99 ms ago
     // (condition 0x206).
     virtual std::optional<bool> wallSlideRecent() const { return std::nullopt; }
+    // Player +0xF3C, the support foot (0x6EB630): animation events 0x34 / 0x36 of her clip set 1 / 2 (swapped while the
+    // clip plays mirrored, 0x6EDD00), 0x35 sets 0 (handler 0x716F30). Condition 0x12D.
+    virtual std::optional<int> supportFoot() const { return std::nullopt; }
     // Player +0x68 bit 30, the fly cheat (condition 0x207); ours has no such mode.
     virtual bool cheatMode() const { return false; }
     // Effects the ground actions have on her anim layer beyond group B's animBlend / animRate, recorded chart-side

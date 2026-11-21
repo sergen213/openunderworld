@@ -8,7 +8,7 @@
 //
 // Group A ids ported elsewhere: 0x1, 0x65, 0x66, 0x68, 0x69, 0x6A, 0x6B, 0x96, 0x98, 0xC9, 0x191 (Generic.cpp).
 // Group A ids not ported (the game state they read is not modelled; they stay unregistered and count as unported):
-//   0x12D foot support (player +0xF3C from anim events 0x34 / 0x36), 0x12E / 0x131 foot-lock controllers (+0xF20..),
+//   0x12E / 0x131 foot-lock controllers (+0xF20.., their lock bytes +0x10A / +0x10B set through 0x7000F0 by anim events),
 //   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
 //   combo move history, 0x1E5 / 0x1EA / 0x1EB / 0x1EF / 0x1F0 the player +0x31C probe record, 0x1FB the gear slot's
 //   instance, 0x208 the stairs byte +0x11D4, 0x20B the wall-jump
@@ -296,6 +296,24 @@ bool wallJumpAttach(ChartContext& ctx, const Cond& c) {
     switch (mode(c)) {
     case 0: return !cache.value;
     case 1: return cache.value;
+    default: return false;
+    }
+}
+
+// 0x12D (0x760FB0, PSCCF_FootSupport): f = player +0xF3C (0x6EB630), cached per update; 301 -> f == 1, 302 -> f == 2,
+// 305 -> f == 0, else "unhandled", false.
+bool footSupport(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    auto& cache = rt.cache(c.id);
+    if (cache.frame != rt.frame()) {
+        const auto f = ctx.supportFoot();
+        if (!f) return rt.unported(c);
+        cache = {rt.frame(), *f};
+    }
+    switch (mode(c)) {
+    case 301: return cache.value == 1;
+    case 302: return cache.value == 2;
+    case 305: return cache.value == 0;
     default: return false;
     }
 }
@@ -728,6 +746,7 @@ void registerGround(Registry& player, Registry&) {
     player.condition(0x9B, heldLongerThanProperty, "PSCCF_ButtonHeldLongerThanProperty", g);
     player.condition(0x9C, pressedWithin, "PSCCF_ButtonPressedWithin", g);
     player.condition(0xD5, animFrameAtLeast, "SCCondFunction_AnimFrame_AtLeast", g);
+    player.condition(0x12D, footSupport, "PSCCF_FootSupport", g);
     player.condition(0x192, moveDir, "PSCCF_MoveDir", g);
     player.condition(0x194, moveDirLeftRight, "PSCCF_MoveDirLeftOrRight", g);
     player.condition(0x197, moveDirMomentum, "PSCCF_MoveDirMomentum", g);
