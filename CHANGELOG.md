@@ -6,6 +6,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.60.1] - 2026-11-20
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
 - Fixed: chapter 2, no flat light band along the horizon where the sea meets the sky (Enhanced water): the sea's
   upturned far rim is laid flat, so the water runs out to the horizon under the distant islands.
 
