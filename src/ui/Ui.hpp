@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -59,11 +60,16 @@ public:
     void image(int image, float x, float y, float w, float h, float u0, float v0, float u1, float v1, uint32_t color);
     // Art texture `id` centred at virtual (cx, cy), `w` x `h` virtual pixels; flipX/flipY mirror it.
     void sprite(uint32_t id, float cx, float cy, float w, float h, uint32_t color, bool flipX = false, bool flipY = false);
+    // sprite turned by `radians` about its centre (clockwise on screen for positive angles).
+    void spriteRotated(uint32_t id, float cx, float cy, float w, float h, float radians, uint32_t color);
     // Original font at virtual (x, y) = top-left of the glyph cells; `scale` multiplies the font's own scale; `tracking`
     // adds virtual pixels per glyph. As tru.exe's text draw (0x476D80): "\x1B" toggles the highlight colour (bound key
     // names), 0x01 / 0x02 draw nothing, '\\' draws '/', pad icons (U+1800..U+18AF but U+1820/1821) keep only `color`'s
     // alpha (0x476540). Returns the advance (Font_GetTextWidth 0x4758C0): sum of (spacing + width) * scale - 1 per glyph.
-    float fontText(float x, float y, float scale, std::string_view utf8, uint32_t color, float tracking = 0);
+    // `reveal`: visible characters, as UIText's count (tru.exe 0x477360): characters past it are not drawn, the last one
+    // only to its fractional part of its width (a left-to-right wipe as the count grows).
+    float fontText(float x, float y, float scale, std::string_view utf8, uint32_t color, float tracking = 0,
+                   float reveal = std::numeric_limits<float>::infinity());
     float fontWidth(std::string_view utf8, float scale, float tracking = 0) const;
 
     std::vector<TextVertex> vertices;
@@ -249,8 +255,12 @@ struct GraphicsOptions {
 
 // Loading screen background of a chapter (kChapters index): pc-w\image\<name>.raw [I mapping by area].
 std::string_view loadingImage(int chapter);
-// tru.exe loading screen: `image` = uiImages[1] (loadingImage), chapter title 51.. and story 59.. (docs "Menus").
-void drawLoading(Canvas& c, const locale::Strings& s, int chapter);
+// tru.exe loading screen: `image` = uiImages[1] (loadingImage), chapter title 51.. and story 59.. (docs "Menus"),
+// `seconds` after it appeared: the emblem turns and the texts are revealed character by character (kLoadSpin,
+// kLoadReveal); `alpha` scales it all (the fade out over the game after the load).
+void drawLoading(Canvas& c, const locale::Strings& s, int chapter, float seconds, float alpha = 1);
+// Seconds after the loading screen appeared at which drawLoading has revealed all of chapter's texts.
+float loadingRevealSeconds(const locale::Strings& s, int chapter);
 
 // Stack of screens; Back pops back to the item that opened the screen (from Pause or the PDA it resumes; from Main
 // it does nothing). Accept on an item runs its action or opens its screen; the app executes actions. Main and Pause

@@ -2768,19 +2768,27 @@ int main(int argc, char** argv) {
         if (pad != padActive) padActive = pad, refreshPrompts();
     };
     // The loading screen stays up until its level load is done: World::onLoadWait redraws it while the units load
-    // (tru.exe 0x5DDDF0 each Sleep(5)); then the game fades in from black over 30 frames (0x5DE040's end:
-    // GAMELOOP_SetScreenWipe(9, 100, 0), (9, 0, 30); frames at 30/s as the death wipe's [I]).
+    // (tru.exe 0x5DDDF0 each Sleep(5)), its emblem turning and its texts revealed (ui::drawLoading). Then the game fades
+    // in from black over 30 frames (0x5DE040's end: GAMELOOP_SetScreenWipe(9, 100, 0), (9, 0, 30); frames at 30/s as
+    // the death wipe's [I]) while the loading screen fades out over it, still animating [O-runtime Wine captures: the
+    // loading screen seen over the dark game for ~1 s; I: 1 s, linear].
+    bool running = true;
     int loadingChapter = -1; // the loading screen shown, until World::levelLoads moves past loadingLoads; -1 = none
     uint64_t loadingLoads = 0;
-    float loadFade = 0; // 1 = black
-    constexpr float kLoadFadeSeconds = 30 / 30.0f;
+    uint64_t loadingSince = 0; // SDL_GetTicksNS at showLoading
+    int loadingFrames = 0;     // frames drawn while the load waited (World::onLoadWait)
+    float loadFade = 0;        // 1 = black
+    int fadingChapter = -1;    // the loading screen fading out over the game after its load; -1 = none
+    uint64_t fadingSince = 0;  // SDL_GetTicksNS when the load was done
+    constexpr float kLoadFadeSeconds = 30 / 30.0f, kLoadOutSeconds = 1.0f;
+    const auto secondsSince = [](uint64_t ns) { return float(double(SDL_GetTicksNS() - ns) * 1e-9); };
     auto drawLoadingFrame = [&] { // black without a loading screen (a respawn's reload: the death wipe is black)
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window.get(), &w, &h);
         ou::ui::Canvas cv(w, h, &*art);
         cv.prompts = &prompts;
         cv.rect(0, 0, float(w), float(h), 0xFF000000u);
-        if (loadingChapter >= 0) ou::ui::drawLoading(cv, *strings, loadingChapter);
+        if (loadingChapter >= 0) ou::ui::drawLoading(cv, *strings, loadingChapter, secondsSince(loadingSince));
         ou::render::FrameOptions fo{};
         fo.ui = cv.vertices;
         fo.uiImages = {ou::render::RgbaImage{art->rgba, art->width, art->height, art->version},
@@ -2788,21 +2796,43 @@ int main(int argc, char** argv) {
         renderer->drawFrame(ou::render::Camera{}, {w, h}, fo);
         renderer->present();
     };
-    int loadingFrames = 0;     // frames drawn while the load waited (World::onLoadWait)
-    uint64_t loadingSince = 0; // SDL_GetTicksNS at showLoading
     auto showLoading = [&](int chapter) {
         useScreenImage(ou::ui::loadingImage(chapter));
-        loadingChapter = chapter, loadingLoads = world->levelLoads();
+        loadingChapter = chapter, loadingLoads = world->levelLoads(), fadingChapter = -1;
         loadingFrames = 0, loadingSince = SDL_GetTicksNS();
         drawLoadingFrame();
         std::fprintf(stderr, "ou-game: loading screen chapter %d (%s)\n", chapter, screenName.c_str());
     };
+    // After the load the screen stays until its texts are revealed (ui::loadingRevealSeconds; our loads take well under
+    // the original's seconds, user choice 2026-11-21); a key, mouse or pad button press skips the rest. Interactive
+    // runs and input scripts only: replays, autopilot and self-tests go on at once.
+    const bool holdLoading = !replay && !autopilot && !selfTest;
+    auto holdLoadingScreen = [&] {
+        const float until = ou::ui::loadingRevealSeconds(*strings, loadingChapter);
+        bool skip = false;
+        while (running && !skip && secondsSince(loadingSince) < until) {
+            SDL_PumpEvents();
+            SDL_Event e;
+            while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) > 0) running = false;
+            // presses are taken (a key's auto-repeat, e.g. the menu's Return still held, does not count); their releases
+            // stay queued for the game. Pointer, wheel and stick motion are dropped: the game would take ~10 s of it as
+            // one look delta.
+            for (const SDL_EventType t : {SDL_EVENT_KEY_DOWN, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_GAMEPAD_BUTTON_DOWN})
+                while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, t, t) > 0) skip = skip || t != SDL_EVENT_KEY_DOWN || !e.key.repeat;
+            for (const SDL_EventType t : {SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_WHEEL, SDL_EVENT_GAMEPAD_AXIS_MOTION})
+                SDL_FlushEvent(t);
+            if (!skip) drawLoadingFrame(), SDL_Delay(5);
+        }
+        std::fprintf(stderr, "ou-game: loading screen held to %.1f s of %.1f%s\n", secondsSince(loadingSince), until,
+                     skip ? " (skipped)" : "");
+    };
     auto finishLoading = [&] { // after the load (or its failure: no fade, the old level stays)
         if (loadingChapter < 0) return;
         const bool loaded = world->levelLoads() != loadingLoads;
-        if (loaded) loadFade = 1;
         std::fprintf(stderr, "ou-game: loading screen chapter %d up %.0f ms, %d frames while loading%s\n", loadingChapter,
                      double(SDL_GetTicksNS() - loadingSince) * 1e-6, loadingFrames, loaded ? "" : " (load failed)");
+        if (loaded && holdLoading) holdLoadingScreen();
+        if (loaded) loadFade = 1, fadingChapter = loadingChapter, fadingSince = SDL_GetTicksNS();
         loadingChapter = -1;
     };
     auto saveChapter = [&](const std::string& slot) { // for its loading screen
@@ -2812,7 +2842,6 @@ int main(int argc, char** argv) {
             return world->chapter;
         }
     };
-    bool running = true;
     // While a level load waits for its units: the window keeps answering (only quits are taken; input waits for the
     // game), decoded unit scenes go to the GPU and the loading screen is drawn again (tru.exe 0x5DDDF0, Sleep(5)).
     world->onLoadWait = [&] {
@@ -3791,6 +3820,16 @@ int main(int argc, char** argv) {
         ou::render::FrameOptions fo{};
         fo.lighting = true, fo.cullBackFaces = true;
         fo.overlay = lines, fo.debugLines = mainMenu ? std::span<const ou::render::DebugLine>{} : std::span<const ou::render::DebugLine>(frameLines);
+        if (fadingChapter >= 0) { // the loading screen fading out over the game (uiImages[1] = screenImage outside menus)
+            const float t = secondsSince(fadingSince);
+            if (t >= kLoadOutSeconds) fadingChapter = -1;
+            else if (shownScreen == ou::ui::Screen::None) {
+                // the frame whose events left the main menu began as a menu frame (`mainMenu`): its slot 1 held the menu
+                // movie, drawn under the opaque loading image now
+                if (mainMenu) movieImage = {screenImage.rgba, screenImage.width, screenImage.height, screenVersion};
+                ou::ui::drawLoading(canvas, *strings, fadingChapter, secondsSince(loadingSince), 1 - t / kLoadOutSeconds);
+            }
+        }
         fo.ui = canvas.vertices;
         if (const std::string name = menus.extrasImage(); !name.empty() && name != extrasName) { // EXTRAS preview / view
             extrasName = name;

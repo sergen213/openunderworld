@@ -80,6 +80,20 @@ void Canvas::sprite(uint32_t id, float cx, float cy, float w, float h, uint32_t 
     image(0, sx(cx - w / 2), sy(cy - h / 2), w * unit(), h * unit(), u0, v0, u1, v1, c);
 }
 
+void Canvas::spriteRotated(uint32_t id, float cx, float cy, float w, float h, float radians, uint32_t c) {
+    const AtlasRect* r = art ? art->find(id) : nullptr;
+    if (!r) return;
+    const float cs = std::cos(radians), sn = std::sin(radians), hx = w * unit() / 2, hy = h * unit() / 2;
+    const float px = sx(cx), py = sy(cy);
+    using V = decltype(vertices)::value_type;
+    const auto at = [&](float x, float y, float u, float v) { // y down: positive angles turn clockwise
+        return V{px + x * cs - y * sn, py + x * sn + y * cs, u + 2, v, c};
+    };
+    const V a = at(-hx, -hy, r->u0, r->v0), b = at(hx, -hy, r->u1, r->v0), d = at(hx, hy, r->u1, r->v1),
+            e = at(-hx, hy, r->u0, r->v1);
+    vertices.insert(vertices.end(), {a, b, d, a, d, e});
+}
+
 float Canvas::fontWidth(std::string_view utf8, float scale, float tracking) const {
     if (!art) return 0;
     const std::string expanded = prompts ? expandPrompts(utf8, *prompts) : std::string();
@@ -91,7 +105,7 @@ float Canvas::fontWidth(std::string_view utf8, float scale, float tracking) cons
     return w;
 }
 
-float Canvas::fontText(float x, float y, float scale, std::string_view utf8, uint32_t c, float tracking) {
+float Canvas::fontText(float x, float y, float scale, std::string_view utf8, uint32_t c, float tracking, float reveal) {
     if (!art) return 0;
     // Key names: tru.exe 0x476D80 sets 0x7D6932 (alpha kept), (50, 105, 125) doubled on screen [O captures (99, 209, 247)].
     constexpr uint32_t kHighlight = 0x00F7D163u;
@@ -102,7 +116,10 @@ float Canvas::fontText(float x, float y, float scale, std::string_view utf8, uin
     bool highlight = false;
     for (char32_t cp : decodeUtf8(prompts ? std::string_view(expanded) : utf8)) {
         if (cp == 0x1B) highlight = !highlight;
-        if (cp == 1 || cp == 2 || cp == 0x1B) continue;
+        if (cp == 0x1B) continue;
+        reveal -= 1; // tru.exe 0x477360: every character but 0x1B counts down the text's visible-character count
+        if (reveal < 0) break;
+        if (cp == 1 || cp == 2) continue;
         if (cp == '\\') cp = '/';
         const Glyph* g = f.find(uint32_t(cp));
         if (!g) continue;
@@ -112,8 +129,10 @@ float Canvas::fontText(float x, float y, float scale, std::string_view utf8, uin
             const float du = (p->u1 - p->u0) / float(p->width), dv = (p->v1 - p->v0) / float(p->height);
             const float u0 = p->u0 + float(g->x) * du, v0 = p->v0 + float(g->y) * dv;
             const float w = float(g->width) * f.scaleX * scale;
+            const float part = std::min(reveal, 1.0f); // 0x476540: the last visible glyph is cut at that fraction of its width
             // Half-texel inset: bilinear taps at large scales would pick up the neighbouring glyphs' edges.
-            image(0, sx(x), sy(y), w * unit(), h * unit(), u0 + du / 2, v0 + dv / 2, u0 + (float(g->width) - 0.5f) * du,
+            const float gu0 = u0 + du / 2, gu1 = u0 + (float(g->width) - 0.5f) * du;
+            image(0, sx(x), sy(y), w * part * unit(), h * unit(), gu0, v0 + dv / 2, gu0 + (gu1 - gu0) * part,
                   v0 + (float(f.cellHeight) - 0.5f) * dv, col);
         }
         x += float(f.spacing + g->width) * f.scaleX * scale - 1 + tracking;
@@ -448,24 +467,42 @@ std::string_view loadingImage(int chapter) {
     return kImages[size_t(std::clamp(chapter, 0, 8))];
 }
 
-void drawLoading(Canvas& c, const locale::Strings& s, int chapter) {
+// [O-runtime, tru.exe under Wine 2026-11-21, captures in openunderworld-work/w-loadscr]: the emblem turns clockwise at
+// ~18 deg/s (polar cross-correlation over 14 s of the chapter 0 screen); the story is revealed left to right at ~24
+// characters/s (the wipe front over chapter 1's line: ~200 px/s at 1280x720), starting ~1.9 s after the screen appears,
+// the title already shown by then [I: the same rate from the start]. tru.exe's UIText count (0x477360 / 0x476540) draws
+// the first floor(n) characters and the next one cut at the fractional part of its width.
+constexpr float kLoadSpin = 18.0f * 3.14159265f / 180.0f, kLoadReveal = 24.0f, kLoadStoryDelay = 1.9f;
+
+void drawLoading(Canvas& c, const locale::Strings& s, int chapter, float seconds, float alpha) {
     const float w = float(c.width), h = float(c.height);
     const float k = std::max(w / 640, h / 360); // 640x360 image, covering the window
-    c.image(1, (w - 640 * k) / 2, (h - 360 * k) / 2, 640 * k, 360 * k, 0, 0, 1, 1, kWhite);
+    const auto a = [&](uint32_t col, float f = 1) { return withAlpha(col, f * alpha); };
+    c.image(1, (w - 640 * k) / 2, (h - 360 * k) / 2, 640 * k, 360 * k, 0, 0, 1, 1, a(kWhite));
     const float b0 = c.sy(kLoadBand0), b1 = c.sy(kLoadBand1);
-    c.rect(0, 0, w, b0, withAlpha(kBlack, 0.69f)); // ~0.31 outside the band, ~0.92 inside [O captures]
-    c.rect(0, b1, w, h - b1, withAlpha(kBlack, 0.69f));
-    c.rect(0, b0, w, b1 - b0, withAlpha(kBlack, 0.08f));
-    c.rect(0, b0, w, 2.2f * c.unit(), withAlpha(kWhite, 0.3f));
-    c.rect(0, b1 - 2.2f * c.unit(), w, 2.2f * c.unit(), withAlpha(kWhite, 0.3f));
-    c.sprite(kEmblem, 320, 240, 345, 345, withAlpha(kWhite, 0.35f));
+    c.rect(0, 0, w, b0, a(kBlack, 0.69f)); // ~0.31 outside the band, ~0.92 inside [O captures]
+    c.rect(0, b1, w, h - b1, a(kBlack, 0.69f));
+    c.rect(0, b0, w, b1 - b0, a(kBlack, 0.08f));
+    c.rect(0, b0, w, 2.2f * c.unit(), a(kWhite, 0.3f));
+    c.rect(0, b1 - 2.2f * c.unit(), w, 2.2f * c.unit(), a(kWhite, 0.3f));
+    c.spriteRotated(kEmblem, 320, 240, 345, 345, seconds * kLoadSpin, a(kWhite, 0.35f));
     const int ch = std::clamp(chapter, 0, 7);
     const std::string title(s.get(int16_t(51 + ch)));
-    capText(c, 320 - c.fontWidth(title, kLoadTitleScale) / 2, kLoadTitleCap, kLoadTitleScale, title, kWhite);
-    c.sprite(kLine, 320, kLoadLine, kListLineW, 1.8f, kWhite);
-    float y = kLoadTextCap;
-    for (const auto& l : fontWrap(c, s.get(int16_t(59 + ch)), kLoadTextW, kLoadTextScale))
-        capText(c, 320 - c.fontWidth(l, kLoadTextScale) / 2, y, kLoadTextScale, l, kWhite), y += kLoadTextStep;
+    c.fontText(320 - c.fontWidth(title, kLoadTitleScale) / 2, kLoadTitleCap - kCapTop * kLoadTitleScale, kLoadTitleScale, title,
+               a(kWhite), 0, seconds * kLoadReveal);
+    c.sprite(kLine, 320, kLoadLine, kListLineW, 1.8f, a(kWhite));
+    float y = kLoadTextCap, reveal = (seconds - kLoadStoryDelay) * kLoadReveal;
+    for (const auto& l : fontWrap(c, s.get(int16_t(59 + ch)), kLoadTextW, kLoadTextScale)) {
+        if (reveal <= 0) break;
+        c.fontText(320 - c.fontWidth(l, kLoadTextScale) / 2, y - kCapTop * kLoadTextScale, kLoadTextScale, l, a(kWhite), 0, reveal);
+        reveal -= float(decodeUtf8(l).size() + 1), y += kLoadTextStep; // + the space or newline the wrap broke at
+    }
+}
+
+float loadingRevealSeconds(const locale::Strings& s, int chapter) {
+    const int ch = std::clamp(chapter, 0, 7);
+    const auto chars = [&](int16_t id) { return float(decodeUtf8(s.get(id)).size()); };
+    return std::max(chars(int16_t(51 + ch)) / kLoadReveal, kLoadStoryDelay + chars(int16_t(59 + ch)) / kLoadReveal);
 }
 
 void Menus::open(Screen s) {

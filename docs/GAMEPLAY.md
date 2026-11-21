@@ -4898,13 +4898,26 @@ between two 0x1B: on the keyboard its key name, drawn in the highlight 0x7D6932 
   until the level load is done [V-exe]: tru.exe's loads (0x5DE040, 0x5DDED0) loop `Sleep(5)` + MainG2_LoadingFrame
   (0x5DDDF0: platform update, input, time, stream queue, one frame) until STREAM_PollLoadQueue is idle; ours loads the
   units on the background streamer and `World::onLoadWait` redraws the screen, sends decoded scenes to the GPU and
-  takes only window-close requests (a respawn's reload draws black). After the load 0x5DE040 sets screen wipe 9 to 100
-  then 0 over 30 frames: the game fades in from black, ours over 1 s [I: 30 frames at 30/s, as the death wipe] after
-  every load that showed a loading screen (not `--level` / `--load` starts or respawns [U: whether the original fades
-  those]). Not reproduced [U]: 0x5DDDF0 bounces the font colour's alpha 64–128 by the frame time but sets the colour to
-  0x80808080 before anything draws (no visible pulse found); 0x5DE040 holds the screen at least 15 s when flag 0x8B40F0
-  is set, which uigamedata 17 (0x77BB70: byte 0xFAE8DB, level changes fade to white) sets with a non-zero argument
-  [U: which scripts call it; the chapter 1 yacht cinematic reads it with 18].
+  takes only window-close requests (a respawn's reload draws black). Animation [O-runtime: tru.exe under Wine
+  2026-11-21, frame captures of a New Game, a LOAD GAME and a `wmem goto l1_seatop` in openunderworld-work/w-loadscr]:
+  the emblem turns clockwise at ~18°/s (polar cross-correlation over 14 s); the texts are revealed character by
+  character, left to right, at ~24 characters/s (the wipe front over chapter 1's story line, ~200 px/s at 1280×720), the
+  story starting ~1.9 s after the screen appears, the title already complete by then [I: the title at the same rate
+  from the start]. The mechanism [V-exe]: UIText's visible-character count (font block +0xD8, flushed by 0x477360)
+  draws the first floor(n) characters (each but 0x1B counts, newlines and spaces too) and cuts the next one at the
+  fractional part of its width (0x476540), so each letter wipes in from its left edge (`Canvas::fontText` `reveal`).
+  What drives the count (script data or native) was not traced. Our loads take well under a second, the original's
+  several: the screen stays after the load until both texts are revealed (`ui::loadingRevealSeconds`, user choice
+  2026-11-21), a key, mouse or pad button press skipping the rest (not with replays, `--autopilot` or self-tests).
+  After the load 0x5DE040 sets screen wipe 9 to 100 then 0 over 30 frames: the game fades in from black, ours over 1 s
+  [I: 30 frames at 30/s, as the death wipe], while the loading screen fades out over it, still turning [O-runtime: seen
+  over the dark game for ~1 s; I: 1 s, linear], after every load that showed a loading screen (not `--level` /
+  `--load` starts or respawns [U: whether the original fades those]). In the Wine captures the screen itself also
+  faded in from black over several seconds, at the game's few frames per second while loading [U: its duration in
+  game time]; ours appears at once. Not reproduced [U]: 0x5DDDF0 bounces the font colour's alpha 64–128 by the frame
+  time but sets the colour to 0x80808080 before anything draws (no visible pulse found); 0x5DE040 holds the screen at
+  least 15 s when flag 0x8B40F0 is set, which uigamedata 17 (0x77BB70: byte 0xFAE8DB, level changes fade to white) sets
+  with a non-zero argument [U: which scripts call it; the chapter 1 yacht cinematic reads it with 18].
 Keys: arrows/WASD, Enter/Space accept, E = Alt (accept; PDA TASK), Esc back, Backspace/Delete delete; pad d-pad,
 South accept, West Alt, North delete, East/Start back. Replays drive menus with `forward`/`right` ±1, `jump` (accept),
 `interact` (Alt), `drop`/`pause` (back), `pda`; the script clock keeps running in menus. Not reproduced: the attract
