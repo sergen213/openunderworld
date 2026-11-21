@@ -1,4 +1,6 @@
 #!/bin/sh
+# Status 2026-11-21: the step-941 run from ours y -2450 (d900) and the sprint case started in the sea (swim states);
+# the start-minus-intro offset measured in this session differs from the doc's by (-190, -13, +246) [U].
 # Chart reference corpus, l2_cliffclimb (goto unit: tru = ours + (12446.2, 59357.3, -19003.8), REFERENCE_COMPARISON M29).
 # Obstacles (GameReal.CliffclimbObstaclesAndLedgeGrabs): waist-high step 941 run into from ours (-28152, -1550, 3100)
 # facing +y (tru yaw pi, camera (0,1)); chest-high block 939 jumped at from ours (-28029, -650, 3300); the 614-high

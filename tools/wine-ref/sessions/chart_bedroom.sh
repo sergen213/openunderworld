@@ -11,9 +11,14 @@ UNIT=l3_main_bedroom; OFF=9622,333,-2977
 [ "$1" = load ] && { cunit l3_main_bedroom || exit 1; }
 "$WREF_SRC/w.sh" wmem state | grep -qi "unit l3_main_bedroom" || { echo "not in l3_main_bedroom: run newgame.sh (or pass load)" >&2; exit 1; }
 S=1137.7,-3997,-2733,0; C=0,-1; J=20:10:14; HOLD=${HOLD:-60}
-# Warm-up (unrecorded): right after the new game the first jumps at 973 found no ledge (plain jump and landing in three
-# cases in a row, 2026-11-21); two unrecorded grabs first.
-for i in 1 2; do SPAWN=$S HOLD=$HOLD CAMFOLLOW=$C,1264,300 "$WREF_SRC/w.sh" chart trace 200 $J 11:150:154 > /dev/null; done
+# Warm-up: in two fresh sessions (2026-11-21) the first jumps at 973 found no ledge (a plain jump and landing in the
+# first three cases, ~70 s of game time after the prologue began, also after two unrecorded jumps); later cases caught
+# it. [U] what enables it (a prologue script?). Wait until the prologue has run 3 minutes, and probe with a grab.
+[ "$1" = load ] && sleep 150
+until SPAWN=$S HOLD=$HOLD CAMFOLLOW=$C,1264,300 "$WREF_SRC/w.sh" chart trace 120 $J | tr -d '\r' | awk -F'\t' '$2==535{f=1} END{exit !f}'; do
+    i=$((${i:-0}+1)); [ $i -gt 10 ] && { echo "ledge 973 never caught" >&2; exit 1; }
+    SPAWN=$S HOLD=10 "$WREF_SRC/w.sh" chart trace 60 11:5:9 > /dev/null; sleep 10; done
+SPAWN=$S HOLD=10 "$WREF_SRC/w.sh" chart trace 120 11:5:9 > /dev/null
 F=ledge
 ccase $F hang_grab $S 160 $C "standing jump at ledge 973 from ~137 short of its line: catch and settle into the hang" $J
 ccase $F hang_shimmy_left $S 300 $C "hang, Left held 100..250: shimmy" $J 25:100:250

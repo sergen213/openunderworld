@@ -1,4 +1,7 @@
 #!/bin/sh
+# Status 2026-11-21: with this offset (tru start - our intro: [U] whether the start is the intro) the beam placement
+# caught a ledge instead (traces re-filed as chart/wine/ledge/ch_hang_*), and the loop-1009 pins fell to a floor: the
+# offset is likely wrong. Measure it from a known instance (e.g. beam 1031's markup via `wmem inst`) before re-running.
 # Chart reference corpus, l3_chapel (goto unit: tru = ours + (3817.47, -3091.84, 3143.17) (ChartCore: our 'player' intro 4928.4 200.5 -4740.8; tru start 8745.87 -2891.34 -1597.63)).
 # Balance beam 1031 (63 wide, x 4708.6 ours, top z -6163) with ledge loop 1009 round its top (x 4740.6 / 4677.4)
 # (GameReal.BeamFallsCatchScaffoldLedge, ChapelHangClimbsOntoBalanceBeam). Beam cases: dropped 40 onto the beam at ours

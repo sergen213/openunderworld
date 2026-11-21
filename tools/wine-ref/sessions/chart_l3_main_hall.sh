@@ -1,4 +1,6 @@
 #!/bin/sh
+# Status 2026-11-21: the goto left the game without frames ("no frame for 20 s", gameTracker flag 1, Lara still at the
+# prologue position); nothing recorded. Re-run in a fresh session.
 # Chart reference corpus, l3_main_hall (goto unit: tru = ours + (1583.82, 1911.28, -1939.49), docs/REFERENCE_COMPARISON.md).
 # Pole 948 (axis z 1861 ours) -> ledge 946 on a platform 1052 ahead (GameReal.MainHallPoleFlingLandsOnPlatform;
 # polefid2/mhsw.txt started from tru (2626.38, -2000, -708.52), the idle hang's root): pinned 250 over it she falls

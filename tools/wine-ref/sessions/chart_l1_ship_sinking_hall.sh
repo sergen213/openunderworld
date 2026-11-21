@@ -1,4 +1,7 @@
 #!/bin/sh
+# Status 2026-11-21: the start-minus-intro offset (34604.6, 3795.9, 12724.6) put her in a fall, not at ladder 234
+# (no ladder states reached; traces discarded): the unit's start is not its 'player' intro. Measure the offset from an
+# instance before re-running.
 # Chart reference corpus, l1_ship_sinking_hall ladder 234 (GameReal.ShipSinkingHallLadder): in the valve wall's plane
 # (y 29 ours, open side -y), 158 wide from x 1401; she comes onto it out of the air in front of it (the shaft has no
 # floor) from ours (1480, -120, 1100) facing +y with the stick forward. The offset (tru = ours + d) is measured here

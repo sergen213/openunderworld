@@ -164,6 +164,7 @@ Rules learnt the hard way (details in docs/REFERENCE_COMPARISON.md "Method"):
 | `ref` | `trace <ms> [vk:down:up ...]` (keys + a line per change: pos +0x20, rot +0x30, vel +0x2A0, state pointer, anim +0xC18), `drop x y z pinms ms vx vy vz [keys]` (pin, release with a velocity, trace with chart request / parent, volume top wt and wave surface sf), `rec <ms> [keys]` (trace + water, breath +0x920, health +0x628, camera +0x90 / pivot +0x100 / distance +0x1D4 / mode +0x1E0, look vector `lk` +0x160 (unit, look point − camera), matrix rows `mx` +0x10; `PDX=<hex>` adds a `px` line with the player-data dword at that offset, e.g. `PDX=EDC` the clearance result), `tp` / `tpv x y z ms` (held for ms of wall time; before 2026-11-20 they counted 1 ms sleeps, which last several ms on a loaded machine, so older holds ran out early), `god`, `mouse dx dy [steps]`, and the `wmem` memory commands |
 | `enemy` | `list` (instances with an AI: uid, position, object), `watch <ms> <period> uid...` (Lara, health with bites as `hurt` and a heal under 600, per enemy position, distance, Lara-sense flags and the EnemyBehavior / EnemyState objects its AI points at; map the vftables with docs/re/db/rtti.tsv), `fight <ms> <period> uid...` (on change: Lara's health drops as `hurt`, each enemy's health AI + 0x2C64 as `hit <uid> <amount> -> <health>`, the ammo words +0x51C, her anim word; positions and distances every 100 ms; `HEAL=h`), `zones uid...` (guard zones and region as 0x622C80 tests them), `hp <ms> <period> [set]` (Lara's position and health on every change and once a second, drops as `hurt`; `set` writes the health first; env `HEAL=h` refills to 1000 under h: the hazard measurements of docs/REFERENCE_COMPARISON.md, Lara held with `ref tpv`) |
 | `section` | `<n> <ms>`: Lara's anim section 1 (weight / step / target, request playing, bone-mask runs; changed dwords per sample) and her upper-body chart (state, pattern +0x488); docs/GAMEPLAY.md "Script flinch overlay" (l3_main_bedroom fire volume 4529) |
+| `chart` | `info` (locomotion / upper-body chart: header, current state index, request, parent, last / queued transition, frame counter, step mode), `hook` / `unhook` (the lockstep detour at 0x5E003F), `trace <ticks> [vk:down:up ...]` (one TSV row per game frame at a fixed 60 Hz step, key times in ticks; env `SPAWN`, `HOLD`, `SETTLE`, `OFFSET`, `CAMFOLLOW`, `VARS`; "Chart traces" below) |
 
 `camhook.sh install` detours CameraManager 0x5E8210 (camera mode requests) into a ring buffer; `camhook.sh log`
 prints the requests as `mode@caller`.
@@ -173,6 +174,18 @@ Keys are Windows virtual-key codes in hex with press / release times in ms from 
 (docs/GAMEPLAY.md "Controls"): arrows move (Up 26, Left 25, Right 27, Down 28; W 57 also walks forward in the old
 traces), Space 20 jump / swim up, Ctrl 11 crouch / dive, LShift a0 sprint, Q 51 grapple, G 47 (or right mouse) target
 lock, which draws, H 48 (or left mouse) shoot, R 52 change weapon, Esc 1B pause.
+
+## Chart traces (player state chart corpus)
+
+`chart trace` runs tru.exe in lockstep: a detour of the frame-counter increment at the end of `GAMELOOP_Frame`
+(0x5E003F) publishes each frame and waits for the tracer, and the trace forces the fixed 16 667 µs step
+(gameTracker +0xC8 = 0, +0x120 = 3; docs/re/TIMING.md), so every row is one 60 Hz game tick and key presses land
+between two known ticks. Columns (the contract shared with `ou-game --chart-trace`): `tick state parent request
+stateTicks px py pz vx vy vz yaw inputs` + `t30=` and `var_*=` columns; positions in our unit frame (`OFFSET`), world
+velocity in units/s (Instance +0x2A0 is local: x left, y −forward), yaw in our degrees. `sessions/chart_lib.sh` (`ccase`,
+`cground`, `cunit`) records cases with their `.case.json` (`py/chart_case.py write`); `sessions/chart_*.sh` are the
+per-unit sessions; `py/chart_case.py summary | index | worldvel` reduce them. The corpus and its index live in the work
+directory, `chart/wine/` (README.md there).
 
 ## Reading traces
 

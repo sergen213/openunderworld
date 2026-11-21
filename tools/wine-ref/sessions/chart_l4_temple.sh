@@ -1,4 +1,8 @@
 #!/bin/sh
+# Status 2026-11-21: the 1204 running-jump sweep and the 1155 air grab / pull up are in the corpus. Pillar 1194: a first
+# run (no SETTLE) attached by walking in (S1186 pillar_attach_ground, S1202 idle, S1198 climb, S1219 / S1220 slide,
+# S1208 / S1217 jump back, S1196 round), but those traces were overwritten by re-runs with SETTLE in which Forward
+# (Up) never moved her from the spawn while the other keys did [U]; the pillar family is empty until re-recorded.
 # Chart reference corpus, l4_temple (goto unit: tru = ours + (500.70, 9432.76, -19909.81), docs/REFERENCE_COMPARISON.md).
 #   ledge 1155: block west face x 334.8 (tru), ledge z -17381.41, floor -18211.21; hang root off the west face
 #     (173.65, y, -17875.24); on top after the pull up (404.6, -2416.6) facing +x (tru yaw pi/2). The safety-drop session
@@ -33,11 +37,12 @@ ccase $F t1204_stand_jump_far "-4400.9,-1800,-22714.71,3.14159" 200 $CY "standin
 ccase $F t1204_stick_jump "-4400.9,-2100,-22714.71,3.14159" 200 $CY "stick jump (Up + Jump at 10) 724 short of ledge 1204" 26:10:60 20:10:14
 fi
 if part pillar; then
+# Keys from tick 100: with SETTLE, keys at tick 10 were not taken in the 2026-11-21 re-run (no motion at all) [U].
 F=pillar; RESET=260; RESETKEYS="28:5:220 11:225:229"   # a pillar hold survives the teleport: slide down and let go first
 PF=-2659.80,-1512.94,-22230,3.14159
-ccase $F t1194_climb_up $PF 360 $CY "Up held 10..300: walks into pillar 1194, attaches (pillar_attach_ground), climbs (312 units/s)" 26:10:300
-ccase $F t1194_slide_down $PF 420 $CY "Up 10..220 (attach, climb), then Down 260..380: slide down" 26:10:220 28:260:380
-ccase $F t1194_round_left $PF 360 $CY "Up 10..60 walks into the pillar (attach), then Left held 120..300: round the shaft" 26:10:60 25:120:300
-ccase $F t1194_jump_back $PF 360 $CY "Up 10..150 (attach, climb), then Down 200..260 + Jump 210..214: jump off backwards (q48)" 26:10:150 28:200:260 20:210:214
-ccase $F t1194_walk_into $PF 200 $CY "200 south of the axis, Up held 10..120: walk / run into the pillar" 26:10:120
+ccase $F t1194_climb_up $PF 400 $CY "Up held 100..340: walks into pillar 1194, attaches (pillar_attach_ground), climbs (312 units/s)" 26:100:340
+ccase $F t1194_slide_down $PF 460 $CY "Up 100..260 (attach, climb), then Down 300..420: slide down" 26:100:260 28:300:420
+ccase $F t1194_round_left $PF 400 $CY "Up 100..160 walks into the pillar (attach), then Left held 200..380: round the shaft" 26:100:160 25:200:380
+ccase $F t1194_jump_back $PF 400 $CY "Up 100..240 (attach, climb), then Down 280..340 + Jump 290..294: jump off backwards (q48)" 26:100:240 28:280:340 20:290:294
+ccase $F t1194_walk_into $PF 260 $CY "200 south of the axis, Up held 100..220: walk / run into the pillar" 26:100:220
 fi

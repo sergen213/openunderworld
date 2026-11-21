@@ -5,12 +5,13 @@
 # Each case first runs an unrecorded reset (RESET ticks, default 150: pinned at the spawn for HOLD ticks, then free with
 # RESETKEYS, default Crouch 5..9 = let go): a hang survives a teleport (she stays attached to her ledge), so the reset
 # drops her out of it; a fall left by the previous case has ended in the idle before the recorded hold begins.
-# Env per case: HOLD (ticks pinned at the spawn, default 30), SETTLE (free frames after the pin before tick 0, not
+# ONLY="case names": record only those cases of a session. Env per case: HOLD (ticks pinned at the spawn, default 30), SETTLE (free frames after the pin before tick 0, not
 # recorded, default 0: tick 0 then starts in the idle the landing ends in), CAMDIST / CAMH (default 1264 / 300), VARS.
 : "${OU_CHART_DIR:=$OU_WORK/chart/wine}"
 CHART_PY="$WREF_SRC/py/chart_case.py"
 ccase() {
     fam=$1; name=$2; sp=$3; ticks=$4; cam=$5; notes=$6; shift 6
+    if [ -n "$ONLY" ]; then case " $ONLY " in *" $name "*) ;; *) return 0 ;; esac; fi   # ONLY="name ...": just those cases
     d="$OU_CHART_DIR/$fam"; mkdir -p "$d"
     cf=""; [ -n "$cam" ] && cf="$cam,${CAMDIST:-1264},${CAMH:-300}"
     [ "${RESET:-150}" -gt 0 ] && SPAWN="$sp" HOLD="${HOLD:-30}" CAMFOLLOW="$cf" "$WREF_SRC/w.sh" chart trace "${RESET:-150}" \
