@@ -364,18 +364,26 @@ int takeoffKind(int state) {
     default: return -1;
     }
 }
-void takeoffEnter(ChartContext& ctx, uint16_t) {
-    ctx.agentFloat(0x98) = 0;
-    // [I] tru.exe's query runs every frame of the take-off (0x6C0800, through a pointer); ours once, on entering it.
+// The take-off state's query, every frame of the take-off as tru.exe's 0x6C0800 runs it (through a pointer, from her
+// mode's process), so the target follows her while the take-off clip carries her (stick_jump_open: she moves ~250
+// along the stick in S245 and the hit comes within 448 of her, flag 2 -> S289 T323 -> S535, as under Wine).
+void takeoffQuery(ChartContext& ctx) {
     ctx.chartTarget = {};
     if (const int k = takeoffKind(ctx.chart().state()); k >= 0)
         if (const auto a = ctx.takeoffAim(k)) ctx.chartTarget = *a;
     // Player +0x77C, the flight time to the target (30 Hz frames; 0x751FC0 / 0x73EDC0 time the re-aim by it, cond 0x2B0
     // tests it) [O]; ours from the query's hit frame.
     ctx.playerFloat(0x77C) = ctx.chartTarget.target ? ctx.chartTarget.frames : 0.0f;
+}
+void takeoffEnter(ChartContext& ctx, uint16_t) {
+    ctx.agentFloat(0x98) = 0;
+    takeoffQuery(ctx);
     ctx.effect(JEffect::CollisionMask, 0x49);
 }
-void takeoffUpdate(ChartContext& ctx, uint16_t) { ctx.agentFloat(0x98) += ctx.timeMult; }
+void takeoffUpdate(ChartContext& ctx, uint16_t) {
+    ctx.agentFloat(0x98) += ctx.timeMult;
+    takeoffQuery(ctx);
+}
 
 // 510 (enter / reenter 0x7522A0, update 0x752410, exit 0x72FB90): airborne. Enter: detach the attached markup
 // (0x6FDBE0: +0xEA0 keeps it), agent +0x3E8 = 0, mask 0xC9 (0x81 rising); falling with a jump target of flags
@@ -601,6 +609,13 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
             ctx.playerFloat(0xA74) = 2.0f;
             ctx.effect(JEffect::TargetPromote, float(pick->markup));
         }
+    }
+    // Prop 400 (bool): 0x75F2D0 attaches her to the target markup (+0xA64 / +0x9F0 / +0xA68) [O: the call]; the chart's
+    // target is consumed by it: the game's attach holds it from here (+0xC94) [I: 0x75F2D0's callees not decoded].
+    if (rt.propBool(400).value_or(false) && jt(ctx)) {
+        ctx.effect(JEffect::AttachTarget, float(jt(ctx).markup));
+        ctx.handedTarget = ctx.jumpTarget().markup;
+        ctx.chartTarget = {};
     }
     if (cls) ctx.effect(JEffect::AttachTarget, float(cls)); // the class handler that would run (not ported here)
 }
