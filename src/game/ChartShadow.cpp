@@ -2,6 +2,7 @@
 #include "game/Chart.hpp"
 #include "cdc/Cdc.hpp"
 #include "game/Game.hpp"
+#include "game/ObjData.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -164,28 +165,52 @@ struct Shadow::Impl : ChartContext {
     std::optional<bool> wallSlideRecent() const override { return lastSteepMs > 0 && nowMs - lastSteepMs <= 99; }
     bool aimHeld = false;
     uint32_t nowMs = 0, lastSteepMs = 0;
-    // Player +0xF3C from the support-foot events of the clip our controller plays (fired as its time passes them).
+    // Player +0xF3C from the support-foot events of the clip Lara's anim layer plays (0x716F30 handles that layer's
+    // events). For a pattern request that is the chart's own clip, on the runtime's clip clock (0x783470) [O]. A kind-2
+    // request (0x443720) plays a clip the game fills at run time; the Wine corpus shows its events firing (stick_jump_open:
+    // S39 ng_1foot_idle sets foot 1, then S40's runtime idle clip, whose 0x36 / 0x35 leave foot 0, and S246 falls to
+    // T295) [O-runtime]; ours takes that clip and its time from our controller [I]. Fired as the clock passes them (the
+    // anim update's order against the chart tick [U]: ours after it).
     std::unordered_map<std::string, FootClip> footClips;
+    uint64_t footChanges = ~0ull;
     std::string footClip;
     float footFrame = 0;
     int foot = 0;
     std::optional<int> supportFoot() const override { return footClips.empty() ? std::nullopt : std::optional<int>(foot); }
-    void updateFoot(const PlayerState& s) {
-        const auto it = footClips.find(lower(s.clip));
+    void updateFoot(const ChartRuntime& rt, const Charts& c, const PlayerState& s) {
+        const int r = rt.request();
+        const float len = rt.animLengthFrames();
+        const bool pattern = r >= 0 && size_t(r) < c.requests.size() && len > 0;
+        const std::string name = lower(pattern ? std::string_view(c.requests[size_t(r)].clip) : std::string_view(s.clip));
+        const auto it = footClips.find(name);
         if (it == footClips.end()) return;
         const FootClip& fc = it->second;
-        float f = float(s.clipTime * 30.0);
-        if (s.loop && fc.frames > 0) f = std::fmod(f, fc.frames);
+        const float total = pattern ? len : fc.frames;
+        float f = pattern ? rt.animFrames() : float(s.clipTime * 30.0);
+        if ((pattern ? rt.animLoops() : s.loop) && total > 0) f = std::fmod(f, total);
+        const bool mirror = pattern ? rt.mirrored() : s.mirror;
         const auto fire = [&](float lo, bool loInclusive, float hi) {
             for (const auto& [at, cmd] : fc.events)
                 if ((loInclusive ? at >= lo : at > lo) && at <= hi)
-                    foot = cmd == 0x35 ? 0 : ((cmd == 0x34) != s.mirror ? 1 : 2); // 0x716F30 with 0x6EDD00
+                    foot = cmd == 0x35 ? 0 : ((cmd == 0x34) != mirror ? 1 : 2); // 0x716F30 with 0x6EDD00
         };
-        const std::string key = it->first;
-        if (key != footClip) fire(0, true, f);              // a new clip: its events up to now
-        else if (f >= footFrame) fire(footFrame, false, f); // passed since the last tick
-        else fire(footFrame, false, fc.frames), fire(0, true, f); // looped
-        footClip = key, footFrame = f;
+        // A pattern clip restarts with every state change; the controller's clip only when it changes.
+        if ((pattern && rt.stats.changes != footChanges) || name != footClip) {
+            const float start = pattern ? float(std::max(0, int(c.requests[size_t(r)].start) - int(c.requests[size_t(r)].blend))) : 0.0f;
+            fire(start, true, f);
+        } else if (f >= footFrame) {
+            fire(footFrame, false, f);
+        } else {
+            fire(footFrame, false, total), fire(0, true, f); // looped
+        }
+        footChanges = rt.stats.changes, footClip = name, footFrame = f;
+    }
+    // The upper-body chart (agent 1, player +0xF14), ticked after Lara's as 0x768C50 does: conditions 0x401 / 0x404 /
+    // 0x408 read its current state's bool property (0x6EEF00 mode 1, false when absent; ours the value in force [I]).
+    const ChartRuntime* upper = nullptr;
+    std::optional<bool> upperProp(uint16_t id) const override {
+        if (!upper) return std::nullopt;
+        return upper->propBool(id).value_or(false);
     }
     // ---- end group A ----
     float fallDistance() const override {
@@ -362,6 +387,55 @@ struct Shadow::Impl : ChartContext {
     bool wasAir = false; // the last tick's noFloor, for the landing event
     void effect(JEffect e, float) override { ++effects[size_t(e)]; }
     // ---- end group J ----
+
+    // ---- group CD ----
+    // Player +0x8EC: 0x400 outside a water volume (ours Player::waterAt at her feet); inside one 0x5D3860's class from
+    // her root (+0x20) and the floor under her (+0x24) against the wave surface, lara.drm +0xAC / +0xAE / +0xB0 / +0xB2.
+    // [I] +0x20 / +0x24 = root z / floor z minus the surface; the in-volume test also takes the floor when player +0x8DC
+    // (the volume) is set, which it is here. [U] the volume-extent bits 0x800..0x4000 (+0x2C against volume +0x28 /
+    // +0xC8 and the bone matrices) are not computed: values 2 / 3 of 0x1F5 read them.
+    std::optional<uint32_t> waterFlags() const override {
+        const PlayerState& s = w->player().state();
+        const int m = w->player().waterAt(s.pos);
+        if (m < 0) return 0x400u;
+        const float surface = waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds);
+        const float root = s.pos.z - surface;
+        const auto g = w->collision().groundProbe(s.pos + glm::vec3(0, 0, 50), 50 + 4000);
+        const float floor = g ? g->point.z - surface : -1e9f;
+        const Charts& d = chart().charts();
+        const float ac = d.data<int16_t>(0xAC), ae = d.data<int16_t>(0xAE), b0 = d.data<int16_t>(0xB0), b2 = d.data<int16_t>(0xB2);
+        if (!(root <= 0 || floor <= 0)) return 0x400u;
+        if (!(floor <= -ac)) return 0x200u;
+        if (!(floor <= -ae)) return 0x100u;
+        if (!(floor <= -b0)) return 0x80u;
+        if (-b2 < floor || -b0 < root) return 0x40u;
+        return root <= -b2 ? 0x10u : 0x20u;
+    }
+    // (player +0x500) +0x134: the drawn weapon's slot (weapon data +0xDC: 0 pistols, 2 Thor's hammer, 1 the rest), -1
+    // with empty hands; carrying a portable the slot is not known [U: 3?].
+    std::optional<int> gearSlot() const override {
+        const CombatState& c = w->combat();
+        if (c.drawn) return c.weapon == Weapon::Pistols ? 0 : c.weapon == Weapon::ThorHammer ? 2 : 1;
+        if (w->heldPortable() != 0) return std::nullopt;
+        return -1;
+    }
+    bool tracksCriticalSection() const override { return true; }
+    std::optional<RayHit> rayHit(glm::vec3 a, glm::vec3 b, uint32_t) const override {
+        const float d = glm::length(b - a);
+        if (d <= 0) return {};
+        const auto h = w->collision().playerRay(a, (b - a) / d, d); // [I] one ray mask for every tru.exe flag set
+        if (!h) return {};
+        RayHit r;
+        r.point = h->point, r.normal = h->normal;
+        if (h->dynamic >= 0) r.kind = 2; // stillBody / flag8000000 unknown for ours
+        return r;
+    }
+    // The chart clip's command events (lara.drm anim list) and how far its clock had run.
+    std::map<std::string, ClipEvents, std::less<>> clipCommands;
+    uint64_t clipChanges = ~0ull;
+    int clipRequest = -1;
+    float clipFrame = 0;
+    // ---- end group CD ----
 };
 
 Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log) : impl_(std::make_unique<Impl>()) {
@@ -369,6 +443,8 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
     if (!c) throw std::runtime_error("chart shadow: lara.drm player data not found");
     charts_ = std::make_unique<Charts>(std::move(*c));
     rt_ = std::make_unique<ChartRuntime>(*charts_, charts_->player, Registry::player());
+    upper_ = std::make_unique<ChartRuntime>(*charts_, charts_->upper, Registry::upper());
+    impl_->upper = upper_.get();
     impl_->log = log;
     impl_->footClips = footEvents(bigfile);
     if (trace) {
@@ -376,6 +452,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
         if (!impl_->trace) throw std::runtime_error("chart shadow: cannot write " + trace->string());
         impl_->trace << "tick\tstate\tparent\trequest\tstateTicks\tpx\tpy\tpz\tvx\tvy\tvz\tyaw\tinputs\n";
     }
+    if (const auto o = objData(bigfile, "lara")) impl_->clipCommands = clipEvents(*o); // group CD: critical sections
 }
 Shadow::~Shadow() = default;
 
@@ -391,13 +468,45 @@ void Shadow::tick(const World& world, const Actions& a) {
     m.aimHeld = a.aim;
     m.nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
     if (world.player().steepUnder()) m.lastSteepMs = std::max<uint32_t>(m.nowMs, 1);
-    m.updateFoot(world.player().state());
     const float yaw = world.stickYaw();
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     m.stickWorld = right * a.move.x + fwd * a.move.y;
     m.stickLen = std::min(1.0f, glm::length(a.move));
-    if (!m.started) rt_->start(m), m.started = true;
-    else rt_->tick(m, dt * 30.0f);
+    if (!m.started) {
+        rt_->start(m), upper_->start(m), m.started = true;
+    } else {
+        rt_->tick(m, dt * 30.0f);   // 0x768C50: agent 0 (Lara) ...
+        upper_->tick(m, dt * 30.0f); // ... then agent 1 (upper body)
+    }
+    // ---- group CD ---- 0x768C50 after the chart tick: agent +0x6C = player +0x78. Then the chart clip's events over the
+    // frames its clock ran this tick (0x716F30): command 0x13 opens the critical section (+0x78 = 1, agent +0x53C = 1),
+    // 0x14 closes it. [I] the anim update runs after the chart tick (the order is not pinned, docs Runtime "Open").
+    rt_->field(0x6C) = m.playerInt(0x78);
+    if (const Request* p = rt_->pattern()) {
+        const float cur = rt_->animFrames(), len = rt_->animLengthFrames();
+        const bool fresh = rt_->stats.changes != m.clipChanges || rt_->request() != m.clipRequest;
+        const float prev = fresh ? float(std::max(0, int(p->start) - int(p->blend))) - 1e-4f : m.clipFrame;
+        const auto ev = m.clipCommands.find(p->clip);
+        if (ev != m.clipCommands.end() && cur > prev) {
+            auto apply = [&](float lo, float hi) { // events with lo < frame <= hi, in stored order
+                for (const auto& e : ev->second.commands)
+                    if (float(e[2]) > lo && float(e[2]) <= hi && (e[0] == 0x13 || e[0] == 0x14)) {
+                        m.playerInt(0x78) = e[0] == 0x13;
+                        rt_->deferFlag7 = e[0] == 0x13;
+                    }
+            };
+            if (rt_->animLoops() && len > 0) {
+                for (float k = std::floor(prev / len); k <= std::floor(cur / len); k += 1)
+                    apply(std::max(prev - k * len, -1.0f), std::min(cur - k * len, len));
+            } else {
+                apply(prev, cur);
+            }
+        }
+        m.clipFrame = cur;
+    }
+    m.clipChanges = rt_->stats.changes, m.clipRequest = rt_->request();
+    // ---- end group CD ----
+    m.updateFoot(*rt_, *charts_, world.player().state());
     // ---- group J ----
     // Chart event 455 (0x1C7): her landing, posted when the ground check finds a floor under her again after a flight
     // (the handlers in S288 / S1004 / S1292: T16 -> S1275 the landing group) [I: the message that posts it is not
@@ -418,16 +527,16 @@ void Shadow::tick(const World& world, const Actions& a) {
     (match ? m.matched : m.diverged)++;
     if (match != m.lastMatch || m.ticks == 0) {
         if (!match) ++m.divergences;
-        if (m.log)
+        if (m.log) // tick = the frame's index (the input script's tick, tru.exe's frame counter during the frame)
             std::fprintf(stderr, "ou-game: chart tick %llu %s S%d (parent %d, req %d %s, T%d) | ours %s clip %s\n",
-                         (unsigned long long)world.ticks(), match ? "matches" : "DIVERGES", rt.state(), rt.parent(), r, chartClip.c_str(),
+                         (unsigned long long)(world.ticks() - 1), match ? "matches" : "DIVERGES", rt.state(), rt.parent(), r, chartClip.c_str(),
                          rt.lastTransition(), std::string(stateName(s.state)).c_str(), s.clip.c_str());
     }
     m.lastMatch = match;
     if (m.trace) {
         char row[512];
         std::snprintf(row, sizeof row, "%llu\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%x\tt30=%.3f\tvar_anim=%.3f\n",
-                      (unsigned long long)world.ticks(), rt.state(), rt.parent(), r, m.stateTicks, s.pos.x, s.pos.y, s.pos.z, s.vel.x,
+                      (unsigned long long)(world.ticks() - 1), rt.state(), rt.parent(), r, m.stateTicks, s.pos.x, s.pos.y, s.pos.z, s.vel.x,
                       s.vel.y, s.vel.z, glm::degrees(s.yaw), inputMask(a), rt.stateTime(), rt.animFrames());
         m.trace << row;
     }
