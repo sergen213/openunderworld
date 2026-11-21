@@ -121,8 +121,10 @@ struct Shadow::Impl : ChartContext {
 
     int button(int id) const {
         switch (id) { // generalbank action map DTP 47 (docs/GAMEPLAY.md "Button timing", "Rope inputs", Melee.cpp)
-        case 52: case 47: return Jump;
-        case 50: case 51: case 101: return Crouch;
+        // 136 (context 8) and 115 (context 9) share control 0 with 52, 135 (context 12) and 72 (context 19) control 1
+        // with 50 (am.txt A0 / A1 / A86 / A126) [O]; contexts not modelled [I].
+        case 52: case 47: case 136: case 115: return Jump;
+        case 50: case 51: case 101: case 135: case 72: return Crouch;
         case 42: return Sprint;
         // 112 (context 14), 34 (context 17), 79 (context 0): control 2 = virtual button 0, Interact
         // (openunderworld-work/gameplaygoal/melee/am.txt A89 / A103 / A119) [O]; the contexts are not modelled [I].
