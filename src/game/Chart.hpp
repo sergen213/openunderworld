@@ -203,7 +203,7 @@ public:
     virtual std::optional<float> boneRise() const { return {}; }     // bone 0 z of matrices +0x90 minus previous +0x94
     virtual std::optional<int> wallJumpProbe() const { return {}; }  // 0x7594C0: 0 no wall, 1 wall not jumpable, 2 jump
     virtual std::optional<bool> combatFlag(int) const { return {}; } // (player +0x504) +0x1FC bit n
-    virtual std::optional<int> combatMode() const { return {}; }     // (player +0x504) +0x50
+    virtual std::optional<int> combatObjectMode() const { return {}; } // (player +0x504) +0x50
     virtual std::optional<bool> upperProp(uint16_t) const { return {}; } // upper chart's current-state bool property (0x6EEF00)
     virtual std::optional<bool> carrying() const { return {}; }      // player +0x858 (portable) != 0
     // The grapple component (owner queries 0x175 / 0x176): attached = query 0x17C non-null, the attach point

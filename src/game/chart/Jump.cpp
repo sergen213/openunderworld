@@ -125,7 +125,7 @@ bool combatFlag27(ChartContext& ctx, const Cond& c) { return edge(ctx, c, [&] { 
 // 0x385 (0x763BA0, cb 0x763B80): (player +0x504) +0x50 != 0. 0x386 (0x763BE0, cb 0x763BC0): == 4.
 bool combatMode(ChartContext& ctx, const Cond& c) {
     return edge(ctx, c, [&]() -> std::optional<bool> {
-        const auto m = ctx.combatMode();
+        const auto m = ctx.combatObjectMode();
         if (!m) return std::nullopt;
         return c.id == 0x385 ? *m != 0 : *m == 4;
     });
