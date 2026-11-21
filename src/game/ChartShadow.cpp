@@ -87,7 +87,10 @@ struct Shadow::Impl : ChartContext {
         return w->player().state().sprintUsed <= t.sprintSeconds - t.sprintResume;
     }
     std::optional<bool> wallJumpAttach() const override { return w->player().wallJumpWall().has_value(); }
+    // Agent +0x90: game ms of the last too-steep ground contact (message 0x1C9; ours Player::steepUnder each tick).
+    std::optional<bool> wallSlideRecent() const override { return lastSteepMs > 0 && nowMs - lastSteepMs <= 99; }
     bool aimHeld = false;
+    uint32_t nowMs = 0, lastSteepMs = 0;
     // ---- end group A ----
     float fallDistance() const override {
         const PlayerState& s = w->player().state();
@@ -122,6 +125,8 @@ void Shadow::tick(const World& world, const Actions& a) {
     }
     m.aimHeld = a.aim;
     m.timeMult = dt * 30.0f;
+    m.nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
+    if (world.player().steepUnder()) m.lastSteepMs = std::max<uint32_t>(m.nowMs, 1);
     const float yaw = world.stickYaw();
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     m.stickWorld = right * a.move.x + fwd * a.move.y;

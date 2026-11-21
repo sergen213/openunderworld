@@ -209,6 +209,9 @@ public:
     virtual std::optional<bool> canSprint() const { return std::nullopt; }
     // 0x7594C0 == 2: a wall to plant her feet on ahead of the jump (condition 0x203).
     virtual std::optional<bool> wallJumpAttach() const { return std::nullopt; }
+    // Agent +0x90 (game ms of the last message 0x1C9, too-steep ground; handler 0x76FC30) set and at most 99 ms ago
+    // (condition 0x206).
+    virtual std::optional<bool> wallSlideRecent() const { return std::nullopt; }
     // Player +0x68 bit 30, the fly cheat (condition 0x207); ours has no such mode.
     virtual bool cheatMode() const { return false; }
     // Effects the ground actions have on her anim layer, recorded chart-side (shadow mode does not apply them):

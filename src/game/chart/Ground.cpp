@@ -11,7 +11,7 @@
 //   0x12D foot support (player +0xF3C from anim events 0x34 / 0x36), 0x12E / 0x131 foot-lock controllers (+0xF20..),
 //   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
 //   combo move history, 0x1E5 / 0x1EA / 0x1EB / 0x1EF / 0x1F0 the player +0x31C probe record, 0x1FB the gear slot's
-//   instance, 0x206 the wall-slide contact stamp (agent +0x90), 0x208 the stairs byte +0x11D4, 0x20B the wall-jump
+//   instance, 0x208 the stairs byte +0x11D4, 0x20B the wall-jump
 //   anticipation rays (0x759260, n = 0 frames), 0x20D the combat component flags +0x1FC bit 11.
 #include "game/Chart.hpp"
 #include "game/Game.hpp"
@@ -298,6 +298,16 @@ bool wallJumpAttach(ChartContext& ctx, const Cond& c) {
     case 1: return cache.value;
     default: return false;
     }
+}
+
+// 0x206 (0x763740, PSCCF_IsWallSlide): now = agent +0x90 != 0 and (0xE7F15C - +0x90) <= 99 ms, +0x90 being stamped by
+// message 0x1C9 (too-steep ground, 0x76FC30); edge-coded (a fresh cache holds 0).
+bool isWallSlide(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    if (rt.cache(c.id).frame == rt.frame()) return edge(ctx, c, false);
+    const auto recent = ctx.wallSlideRecent();
+    if (!recent) return rt.unported(c);
+    return edge(ctx, c, *recent);
 }
 
 // 0x205 (0x752220, CanSprint): 0x74FD70 on the sprint stamina block agent +0x460. 0 -> !cur, 1 -> cur.
@@ -630,6 +640,7 @@ void registerGround(Registry& player, Registry&) {
     player.condition(0x1FD, onSlopeSlide, "PSCCF_OnSlopeSlide", g);
     player.condition(0x203, wallJumpAttach, "PSCCF_WallJumpAttach", g);
     player.condition(0x205, canSprint, "CanSprint", g);
+    player.condition(0x206, isWallSlide, "PSCCF_IsWallSlide", g);
     player.condition(0x207, isInCheatMode, "PSCCF_IsInCheatMode", g);
     player.condition(0x214, stateFlag898, "PSCCF_StateFlag898", g);
 

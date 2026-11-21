@@ -634,6 +634,9 @@ public:
     // tru.exe 0x7594C0 == 2 as tryWallJump tests it (WallJump.cpp): the wall hit of the lower ray, nullopt when no wall
     // a free jump can plant her feet on is ahead (chart condition 0x203 reads it too).
     std::optional<collision::Hit> wallJumpWall() const;
+    // tru.exe 0x5DCE20 posting message 0x1C9 (too steep) for the face under her root, as floorKind judges it (the chart's
+    // wall-slide stamp, agent +0x90, condition 0x206).
+    bool steepUnder() const;
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
