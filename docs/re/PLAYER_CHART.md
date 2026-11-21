@@ -128,6 +128,14 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
   reaches its end or a loop wraps [I: notification order].
 - Generic conditions ported (`src/game/chart/Generic.cpp`): 0x1, 0x14, 0xC9, 0x65..0x6E, 0x96..0x99 / 0x9E, 0x1E,
   0x191. Everything else waits for its family.
+- Group J (`src/game/chart/Jump.cpp`, ChartContext block `group J`): conditions 0x1F, 0x1F8, 0x20A, 0x20C, 0x217,
+  0x21A, 0x262, 0x26D, 0x294, 0x2A2, 0x2A3, 0x2BA, 0x2BE, 0x2C6, 0x2C7, 0x322, 0x323, 0x325, 0x385, 0x386, 0x401,
+  0x403, 0x404, 0x408, 0x417, 0x5DD, 0x5E0, 0x7D1, 0x8FC, 0x8FE, 0x900; actions 504, 510, 511, 572, 802, 917, 1002,
+  1011, 1053, 1304, 1800, 2001, 2002, 2005, 2101 (chart-side fields; game effects go through `ChartContext::effect`,
+  which shadow mode only counts). The file's header lists the J ids left unported and why. Shadow mapping [I]: no
+  floor (0x1F8) = the controller's Jump / Fall / HangJump; instance velocity = her displacement per 30 Hz frame; bone 0
+  rise = her root's; water depth from `Player::waterAt` / `waterSurface`; carry = `World::heldPortable`; combat flag bits
+  22 / 27 = `CombatState::headShotReady` / `adrenalineMode`.
 - Porting a family: add `src/game/chart/<Family>.cpp` with `void register<Family>(Registry& player, Registry& upper)`
   and one line in `Families.cpp`. A condition is `bool fn(ChartContext&, const Cond&)` returning the raw truth (the
   runtime negates); it reads the agent through `ctx.chart()` (`stateTime()`, `value(c)` / `valueF(c)` with the
