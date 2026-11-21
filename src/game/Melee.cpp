@@ -30,6 +30,8 @@
 #include <cmath>
 #include <cstring>
 
+#include "game/ObjData.hpp"
+
 namespace ou::game {
 
 const std::vector<std::string_view> kMeleeClipNames = {
@@ -59,29 +61,6 @@ T rd(std::span<const uint8_t> d, size_t o) {
     T v{};
     if (o + sizeof(T) <= d.size()) std::memcpy(&v, d.data() + o, sizeof(T));
     return v;
-}
-
-// An object's ObjectBase section and its data block (ObjectBase +0xC8).
-struct ObjData {
-    cdc::Drm drm;
-    uint32_t base = 0, section = 0, offset = 0;
-};
-std::optional<ObjData> objData(const cdc::BigfileSet& bf, std::string_view object) {
-    auto bytes = bf.read("pc-w\\" + std::string(object) + ".drm");
-    if (!bytes) return std::nullopt;
-    ObjData o{cdc::parseDrm(std::move(*bytes))};
-    const auto obj = std::ranges::find_if(o.drm.sections, [](const cdc::Section& s) { return s.type == cdc::SectionType::Object; });
-    if (obj == o.drm.sections.end() || obj->data.size() < 4) return std::nullopt;
-    const uint32_t baseId = rd<uint32_t>(obj->data, 0);
-    for (uint32_t i = 0; i < o.drm.sections.size(); ++i) {
-        if (o.drm.sections[i].type != cdc::SectionType::DtpData || o.drm.sections[i].id != baseId) continue;
-        const auto ptrs = cdc::sectionPointers(o.drm, i);
-        const auto it = ptrs.find(0xC8);
-        if (it == ptrs.end()) return std::nullopt;
-        o.base = i, o.section = it->second.section, o.offset = it->second.offset;
-        return o;
-    }
-    return std::nullopt;
 }
 
 // The ObjectBase animation list (+0x54 count, +0x58 {i16 anim, i16, u32 event-list DTP id, char* name}): each clip's
@@ -138,6 +117,24 @@ float axisDistance(vec3 p, const Damageable& t) {
 nlohmann::json vecJson(vec3 v) { return {v.x, v.y, v.z}; }
 vec3 vecJson(const nlohmann::json& j) { return {j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>()}; }
 } // namespace
+
+std::optional<ObjData> objData(const cdc::BigfileSet& bf, std::string_view object) {
+    auto bytes = bf.read("pc-w\\" + std::string(object) + ".drm");
+    if (!bytes) return std::nullopt;
+    ObjData o{cdc::parseDrm(std::move(*bytes))};
+    const auto obj = std::ranges::find_if(o.drm.sections, [](const cdc::Section& s) { return s.type == cdc::SectionType::Object; });
+    if (obj == o.drm.sections.end() || obj->data.size() < 4) return std::nullopt;
+    const uint32_t baseId = rd<uint32_t>(obj->data, 0);
+    for (uint32_t i = 0; i < o.drm.sections.size(); ++i) {
+        if (o.drm.sections[i].type != cdc::SectionType::DtpData || o.drm.sections[i].id != baseId) continue;
+        const auto ptrs = cdc::sectionPointers(o.drm, i);
+        const auto it = ptrs.find(0xC8);
+        if (it == ptrs.end()) return std::nullopt;
+        o.base = i, o.section = it->second.section, o.offset = it->second.offset;
+        return o;
+    }
+    return std::nullopt;
+}
 
 // ---- data ---------------------------------------------------------------------------------------
 std::optional<MeleeTuning> loadMeleeTuning(const cdc::BigfileSet& bigfile) {
