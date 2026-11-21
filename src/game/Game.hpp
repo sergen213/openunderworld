@@ -630,6 +630,13 @@ public:
     bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab" && s_.clip != "thor_engage"; } // grab clip done
     // Water: the volume overlapping the water probe box at `feet` (index into the collision markup), else -1.
     int waterAt(vec3 feet) const;
+    bool roomToStand() const; // the crouched capsule can grow to the standing one (no PSCCF_LowCeiling)
+    // tru.exe 0x7594C0 == 2 as tryWallJump tests it (WallJump.cpp): the wall hit of the lower ray, nullopt when no wall
+    // a free jump can plant her feet on is ahead (chart condition 0x203 reads it too).
+    std::optional<collision::Hit> wallJumpWall() const;
+    // tru.exe 0x5DCE20 posting message 0x1C9 (too steep) for the face under her root, as floorKind judges it (the chart's
+    // wall-slide stamp, agent +0x90, condition 0x206).
+    bool steepUnder() const;
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
@@ -643,7 +650,6 @@ private:
     vec3 forward() const;
     vec3 toWorld(vec3 model) const; // model-space vector -> world, by yaw
     float capHeight() const;        // capsule height (crouched or standing)
-    bool roomToStand() const;       // the crouched capsule can grow to the standing one (no PSCCF_LowCeiling)
     enum class Floor { Stand, Slide, Steep };
     Floor floorKind(const collision::Hit& g) const;        // tru.exe 0x5DCE20's verdict on the face under her
     bool standable(vec3 p, const collision::Hit& g) const; // floor hit under p supports standing
@@ -2064,6 +2070,8 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad);
 // Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load, draw, fire, aim, switch,
 // weapon, heal, grapple, sprint (0/1), lookx, looky (rad/s).
 // A value persists until changed; times map to tick round(seconds * 60). '#' starts a comment.
+// Or JSON (first character '[' / '{'): the chart contract's [[tick, mask], ...] at 60 Hz, or a Wine corpus case object
+// with that array in "input" (shifted by spawn.hold_ticks); see InputScript::parse in Input.cpp.
 class InputScript {
 public:
     static InputScript parse(std::string_view text); // throws std::runtime_error with the line number

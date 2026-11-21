@@ -525,7 +525,8 @@ endif()
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp src/game/Ik.cpp src/game/Aim.cpp
   src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/WallJump.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/ai/Nav.cpp src/game/Progress.cpp
   src/game/Vehicle.cpp src/game/Weather.cpp src/game/Gadgets.cpp src/game/Camera.cpp src/game/Bend.cpp src/game/Feedback.cpp
-  src/game/Melee.cpp src/game/Chart.cpp src/game/ChartShadow.cpp src/game/chart/Families.cpp src/game/chart/Generic.cpp)
+  src/game/Melee.cpp src/game/Chart.cpp src/game/ChartShadow.cpp src/game/chart/Families.cpp src/game/chart/Generic.cpp
+  src/game/chart/Ground.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine ou_input glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)
@@ -549,7 +550,7 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_game_tests DISCOVERY_TIMEOUT 30)
   # Lara's state chart runtime (src/game/Chart.cpp; docs/re/PLAYER_CHART.md "Runtime"): loader counts and evaluation
   # order on lara.drm (OU_GAME_DIR), runtime semantics on synthetic charts.
-  add_executable(ou_chart_tests tests/test_chart.cpp)
+  add_executable(ou_chart_tests tests/test_chart.cpp tests/test_chart_ground.cpp)
   target_link_libraries(ou_chart_tests PRIVATE ou_game GTest::gtest_main)
   gtest_discover_tests(ou_chart_tests DISCOVERY_TIMEOUT 30)
   # The ballcourt lever replay at 30 Hz and 240 Hz render rates (360 ticks each, both processes at once) must end on the

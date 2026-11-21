@@ -159,9 +159,78 @@ public:
     // The runtime evaluating (valid inside condition / action / property calls).
     ChartRuntime& chart() const { return *chart_; }
 
+    // ---- group B ----
+    // Chart-side copies of tru.exe player fields (player globals 0xFADB58 + offset: +0xEDC clearance class, +0xED4 /
+    // +0xED8 attach surface class, +0x6C hurdle class, ...), written by the chart's actions and read by its
+    // conditions. Shadow mode records action effects here instead of applying them to the live Player. Unset = 0.
+    int& playerInt(int offset) { return playerInt_[offset]; }
+    float& playerFloat(int offset) { return playerFloat_[offset]; }
+    // Float fields of the chart agent (+0x374, +0x390, +0xF4, +0xF8, ...; ChartRuntime::field holds the int ones).
+    float& agentFloat(int offset) { return agentFloat_[offset]; }
+    // A tru.exe markup slot of the player: attached (+0xC94 markup, +0xC98 param, +0xCA0 grab point, +0xCC0 normal)
+    // or jump target (+0xA64, +0xA68, +0x9F0, +0xA6C query result flags, +0xA80 target type).
+    struct MarkupSlot {
+        int markup = -1;          // index into World::collision().markup; -1 none (pointer 0)
+        uint32_t flags = 0;       // markup +0x28 (collision::markupFlags of its type)
+        float param = 0;          // segment index + fraction along it
+        glm::vec3 point{0}, normal{0};
+        int result = 0, type = 0; // jump target only: +0xA6C, +0xA80
+        bool live = false;        // 0x5BE2D0: the markup rides a live instance (ours: moving markup)
+        explicit operator bool() const { return markup >= 0; }
+    };
+    virtual MarkupSlot attachedMarkup() const { return {}; }
+    virtual MarkupSlot jumpTarget() const { return {}; }
+    // 0x5C3AA0: segment `seg` of markup `m` (start, end); nullopt when it has none.
+    virtual std::optional<std::pair<glm::vec3, glm::vec3>> markupSegment(int, int) const { return {}; }
+    virtual int markupSegmentCount(int) const { return 0; }
+    // 0x493330 with ray flags 0x2C19E7 (the player code's line query) from a to b: the hit's distance from a, nullopt
+    // without a hit. hasCollision() false: there is no world to ask (conditions using it count as unported).
+    virtual std::optional<float> playerRay(glm::vec3, glm::vec3) const { return {}; }
+    virtual bool hasCollision() const { return false; }
+    virtual glm::vec3 position() const { return {}; }          // instance +0x20 (her root)
+    virtual float heading() const { return 0; }                // instance +0x38, radians (forward = (cos, sin))
+    virtual glm::vec3 rootBone() const { return position(); }  // instance bone matrices +0x90 -> +0x70
+    virtual float controlYaw() const { return heading(); }     // 0x6EBA90 on 0xFADFB0 +0x50 (camera control yaw)
+    virtual uint32_t gameMs() const { return 0; }              // 0xE7F154 game time, ms
+    // The hang clearance class tru.exe 0x74E290 computes for the attached ledge (1, 2, 5, 8, 11, 12); 0 = unknown.
+    // markupAttachInit (0x76D010) stores it in playerInt(0xEDC).
+    virtual int ledgeClearanceClass() const { return 0; }
+    // ---- end group B ----
+    // ---- group A ----
+    // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
+    // unported).
+    // Seconds since action `id` was last pressed (the action record's +8 press time against the input clock +0x1C).
+    virtual std::optional<float> sincePress(int) const { return std::nullopt; }
+    // !0x7145D0: a ceiling lower than the standing height (player data +0x10 = 512.01) over her (condition 0x1F7).
+    virtual std::optional<bool> lowCeiling() const { return std::nullopt; }
+    // 0x6F2800: the combat stance (weapon drawn / aiming; condition 0x1FA).
+    virtual std::optional<bool> combatMode() const { return std::nullopt; }
+    // 0x74FD70: the sprint stamina allows a sprint (condition 0x205).
+    virtual std::optional<bool> canSprint() const { return std::nullopt; }
+    // 0x7594C0 == 2: a wall to plant her feet on ahead of the jump (condition 0x203).
+    virtual std::optional<bool> wallJumpAttach() const { return std::nullopt; }
+    // Agent +0x90 (game ms of the last message 0x1C9, too-steep ground; handler 0x76FC30) set and at most 99 ms ago
+    // (condition 0x206).
+    virtual std::optional<bool> wallSlideRecent() const { return std::nullopt; }
+    // Player +0x68 bit 30, the fly cheat (condition 0x207); ours has no such mode.
+    virtual bool cheatMode() const { return false; }
+    // Effects the ground actions have on her anim layer, recorded chart-side (shadow mode does not apply them):
+    // 0x438C40 playback rate of every sub-layer, the blend parameters +0x8C / +0x90 of the chart's anim section, the
+    // procedural lean (player +0xF18 controller +0x40) and the root alignment blend of action 231 (0x75F550).
+    struct AnimEffects {
+        float rate = 1;
+        float blend8C = 0, blend90 = 0;
+        float lean = 0;
+        struct Align { bool active = false, positionOnly = false; float duration = 0; glm::vec3 pos{0}; } align;
+    } anim;
+    // ---- end group A ----
+
 private:
     friend class ChartRuntime;
     ChartRuntime* chart_ = nullptr;
+    std::unordered_map<int, int> playerInt_;
+    std::unordered_map<int, float> playerFloat_;
+    std::unordered_map<int, float> agentFloat_;
 };
 
 using CondFn = bool (*)(ChartContext&, const Cond&); // the raw truth; the runtime applies the negation
@@ -196,6 +265,13 @@ private:
     std::map<uint16_t, PropEntry> props_;
 };
 void registerFamilies(Registry& player, Registry& upper); // src/game/chart/Families.cpp
+// ---- group B ----
+// Shared ports in src/game/chart/Ledge.cpp: 0x770BA0 (action 404's body: agent +0xF0 low 6 bits, the markup contact /
+// lookahead probe) and 0x76D010 (per-markup-class attach init: player +0xEDC clearance class, agent +0x3E4), both run
+// by action 420's entry.
+void markupContactProbe(ChartContext& ctx);
+void markupAttachInit(ChartContext& ctx);
+// ---- end group B ----
 
 // tru.exe 0x7607C0's value of an action: 1 on the press tick, frames held + 1 while down, -1 on the release tick,
 // -1 - frames while up (frames = 30 Hz frames since the change, at least 1).
