@@ -154,6 +154,8 @@ public:
     virtual float fallDistance() const { return 0; } // player +0x6DC (z on leaving the ground) - z
     virtual const PlayerState* player() const { return nullptr; }
     virtual const World* world() const { return nullptr; }
+    // gameTracker_timeMult of the tick running (30 Hz frames; the shadow sets it before ChartRuntime::tick).
+    float timeMult = 0.5f;
     // The runtime evaluating (valid inside condition / action / property calls).
     ChartRuntime& chart() const { return *chart_; }
 
@@ -285,6 +287,9 @@ public:
     void tick(ChartContext& ctx, float timeMult);     // 0x787E60: one game frame (timeMult = 30 Hz frames, 0.5 at 60 Hz)
     bool post(ChartContext& ctx, uint32_t event);     // 0x787CD0: an event; true when handled
     void animEnded(ChartContext& ctx);                // 0x768CF0: the requested animation ended
+    // Puts the chart in `state` as a change would (exit / properties / entry / anim request) without a transition:
+    // tests and tools that start from a state the unported conditions cannot reach.
+    void enter(ChartContext& ctx, int state);
 
     const Charts& charts() const { return charts_; }
     const ChartData& data() const { return data_; }
@@ -300,8 +305,9 @@ public:
     int queued() const { return queued_; }                 // +0x514
     uint32_t frame() const { return frame_; }              // +0x50C: condition caches go stale when it moves
     float animFrames() const { return animFrames_; }       // the requested clip's time (ours: chart-side clock)
-    float animLengthFrames() const;                        // 0 = unknown / none
+    float animLengthFrames() const;                        // 0 = unknown / none (no pattern, kind-2 request)
     bool animLoops() const;
+    const Request* pattern() const;                        // the state's request as an anim pattern, null when none
 
     int value(const Cond& c) const { return charts_.value(c); }
     float valueF(const Cond& c) const { return charts_.valueF(c); }

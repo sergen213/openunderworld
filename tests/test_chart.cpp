@@ -110,6 +110,50 @@ TEST(ChartReal, StandingStateTransitionOrder) {
     EXPECT_EQ(t.conds[4].id, 0x192); EXPECT_EQ(t.conds[4].value, 411); EXPECT_TRUE(t.conds[4].negate());
 }
 
+// The request's clip starts at (start - blend) frames (0x4428A0 -> 0x441FB0): ng_standing_jump (request 52, blend 6,
+// start 6, 10 frames) plays all 10 frames, so S248 leaves (S278 T256, AnimationEnded) 19 ticks after the tick that
+// entered it, as under Wine (W/chart/diff/J: press tick 10, flight tick 29); ng_run_start (716, 4 / 6, 27 frames) from
+// its frame 2: S63 -> S65 (T246, ended + full stick) 25 frames on. enter() stands for the entering tick minus its own
+// clock step, hence one tick more here.
+TEST(ChartReal, ClipClockStartsAtStartMinusBlend) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    const auto c = loadCharts(bf);
+    ASSERT_TRUE(c);
+    const Registry& reg = Registry::player();
+    TestContext ctx;
+    for (const int a : {52, 50, 51, 42, 99, 32, 112, 34, 25, 28, 79}) ctx.actions[a] = {true, false, false, 1.0f};
+    const auto leaves = [&](int state, float stick, int& ticks) {
+        ChartRuntime rt(*c, c->player, reg);
+        ctx.stick = stick;
+        rt.enter(ctx, state);
+        ticks = 0;
+        while (rt.state() == state && ticks < 200) rt.tick(ctx, 0.5f), ++ticks;
+        return rt.lastTransition();
+    };
+    int ticks = 0;
+    EXPECT_EQ(leaves(248, 0.0f, ticks), 256);
+    EXPECT_EQ(ticks, 20);
+    EXPECT_EQ(leaves(63, 1.0f, ticks), 246);
+    EXPECT_EQ(ticks, 50);
+    // Kind-2 requests name an anim graph node (0x443720), not a pattern: S65's request 99 has no clip clock.
+    ChartRuntime rt(*c, c->player, reg);
+    rt.enter(ctx, 65);
+    EXPECT_EQ(rt.pattern(), nullptr);
+    EXPECT_EQ(rt.animLengthFrames(), 0.0f);
+}
+
+TEST(ChartRuntime, TickSetsContextTimeMult) {
+    Charts c = testCharts();
+    const Registry reg = testRegistry();
+    ChartRuntime rt(c, c.player, reg);
+    TestContext ctx;
+    rt.start(ctx);
+    rt.tick(ctx, 0.25f);
+    EXPECT_EQ(ctx.timeMult, 0.25f);
+    EXPECT_EQ(rt.stateTime(), 0.25f);
+}
+
 TEST(ChartReal, DumpAndCoverageRun) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const ou::cdc::BigfileSet bf(gameDir());
