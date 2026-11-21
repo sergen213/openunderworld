@@ -6,6 +6,15 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.60.3] - 2026-11-21
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Changed: the loading screen is animated as in the original: the emblem in the middle turns slowly clockwise, and
+  the chapter title and story are written in letter by letter from left to right, each letter wiping in from its
+  left edge (speeds measured from the Windows game). The screen now stays up until the whole text has appeared; press
+  any key, mouse button or pad button to go on sooner. It then fades out over the game as the game fades in.
+
 ## [0.60.2] - 2026-11-21
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
