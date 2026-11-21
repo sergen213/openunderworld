@@ -292,9 +292,9 @@ namespace {
 // pattern, flags, two floats), 1 IsPlaying (0x43B390: pattern or -1, from / to frame (-1 open), flags; flags & 1: false
 // unless the mirror request differs from the playing clip's), 2 / 3 / 4 the node's result slot (0x434EE0 store /
 // 0x434F00 commit / 0x434F30 push a selector), 5 / 6 open / close a blend node (0x434F50 / 0x444950) [O: decomp,
-// natives disassembled]. Module 1's 76 (0x6EA1E0, a player +0xF10 component test via 0x74FD70, pops nothing) is not
-// ported: its value is unknown and a branch on it runs both ways; the run resolves when both agree. Any other native
-// leaves it unresolved. The first Play wins [I: lara's nodes that queue several (a blend's transition clip, then its
+// natives disassembled]. Module 1's 76 (0x6EA1E0, pops nothing) pushes 0x74FD70 on Lara's agent +0x460, the sprint
+// stamina record: the same test as condition 0x205, ctx.canSprint(). A native value the context cannot give is unknown
+// and a branch on it runs both ways; the run resolves when both agree. Any other native leaves it unresolved. The first Play wins [I: lara's nodes that queue several (a blend's transition clip, then its
 // loop) start with the one that plays first].
 enum class GraphOutcome { Played, Nothing, Unresolved };
 struct GraphRun {
@@ -307,6 +307,7 @@ struct GraphVm {
     int playing;
     float frame;
     bool mirrorChange;
+    std::optional<bool> sprint; // module 1's 76 (0x6EA1E0): 0x74FD70 on the stamina record agent +0x460 = ctx.canSprint()
     struct V { uint32_t v; bool known; };
     GraphRun run(size_t pc, std::vector<V> st, int depth) const {
         auto f = [](uint32_t v) { float x; std::memcpy(&x, &v, 4); return x; };
@@ -356,7 +357,7 @@ struct GraphVm {
             case 0x65: {
                 const uint32_t fn = pop().v, module = pop().v;
                 if (module == 1 && fn == 76) {
-                    push(0, false);
+                    push(sprint.value_or(false), sprint.has_value());
                 } else if (module != 0) {
                     return {};
                 } else if (fn == 0) { // Play
@@ -394,12 +395,13 @@ struct GraphVm {
 // native starts is what plays, in the pattern's own mode [U: Play's flags & 7 (0x448100) is not that mode: node 213's
 // else branch passes 2, yet Wine ends S245 once ng_planted_jump_forward has played through]. A node that plays nothing
 // leaves the clip and its clock running (false: no restart). Unresolved: no clip.
-bool ChartRuntime::resolveRequest() {
+bool ChartRuntime::resolveRequest(ChartContext& ctx) {
     const State* s = data_.state(state_);
     int pat = s ? s->request : -1;
     if (s && s->requestKind == 2) {
         const GraphRun r = size_t(s->request) < charts_.graph.size()
-            ? GraphVm{charts_.graph[size_t(s->request)], playing_ ? playingIndex_ : -1, animFrames_, mirror_ != playingMirror_}
+            ? GraphVm{charts_.graph[size_t(s->request)], playing_ ? playingIndex_ : -1, animFrames_, mirror_ != playingMirror_,
+                      ctx.canSprint()}
                   .run(charts_.graph[size_t(s->request)].enter, {}, 0)
             : GraphRun{};
         if (r.outcome == GraphOutcome::Nothing && playing_) return false;
@@ -554,15 +556,14 @@ void ChartRuntime::applyProperties(ChartContext& ctx, int state) {
 // 0x783470: the state's anim request plays; the animation-end counter restarts. 0x4428A0 -> 0x441FB0 starts the clip at
 // (start - blend) frames, so that it stands at the pattern's start frame when the crossfade ends; a negative lead is cut
 // to 0 (ng_running_jump_forwards 2 / 1 under Wine) [U: the wall jump's clips keep it, held at their first frame].
-void ChartRuntime::enterAnim() {
+void ChartRuntime::enterAnim(ChartContext& ctx) {
     animCounter_ = 0;
-    if (!resolveRequest()) return;
+    if (!resolveRequest(ctx)) return;
+    ++clipStarts_;
     const Request* p = pattern();
-    // A kind-2 node's Play (0x448100 -> 0x446BD0) keeps a negative lead: S245's ng_planted_jump_forward (start 1, blend
-    // 4) ends after 7.5 frames under Wine (stick_jump_open: S245 -> S535 15 ticks after the press) = 5 - (1 - 4) [I].
-    const State* s = data_.state(state_);
+    // Kind 2 reaches the same start: Play (0x448100) queues a record (0x446BD0) that 0x443430 plays through 0x4428A0 [O].
     const int lead = p ? int(p->start) - int(p->blend) : 0;
-    animFrames_ = p ? float(s && s->requestKind == 2 ? lead : std::max(0, lead)) : 0.0f;
+    animFrames_ = clipStart_ = float(std::max(0, lead));
 }
 
 // 0x787890
@@ -585,7 +586,7 @@ void ChartRuntime::change(ChartContext& ctx, int t) {
     else if (tr->hasFlag(5)) mirror_ = false;
     applyProperties(ctx, target);
     runEnter(ctx, target, old, true);
-    enterAnim();
+    enterAnim(ctx);
     runEnter(ctx, target, old, false);
     stateTime_ = 0, queued_ = -1, lastTransition_ = t;
     ++stats.changes;
@@ -618,7 +619,7 @@ void ChartRuntime::start(ChartContext& ctx) {
     ctx.chart_ = this;
     state_ = data_.root, active_ = true, queued_ = lastTransition_ = -1, stateTime_ = totalTime_ = 0;
     applyProperties(ctx, state_);
-    enterAnim();
+    enterAnim(ctx);
     runEnter(ctx, state_, -1, false);
     evaluate(ctx);
 }
@@ -649,7 +650,7 @@ void ChartRuntime::enter(ChartContext& ctx, int state) {
     state_ = state, active_ = true;
     applyProperties(ctx, state);
     runEnter(ctx, state, old, true);
-    enterAnim();
+    enterAnim(ctx);
     runEnter(ctx, state, old, false);
     stateTime_ = 0, queued_ = -1, lastTransition_ = -1;
 }

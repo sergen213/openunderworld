@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <set>
 #include <sstream>
+#include <tuple>
 
 using namespace ou::game::chart;
 
@@ -26,6 +27,8 @@ struct TestContext : ChartContext {
         return it == actions.end() ? Action{} : it->second;
     }
     float stickLevel() const override { return stick; }
+    std::optional<bool> sprint;
+    std::optional<bool> canSprint() const override { return sprint; }
 };
 bool flagCond(ChartContext& ctx, const Cond& c) { return static_cast<TestContext&>(ctx).flags.contains(c.value); }
 Cond flag(int16_t n, bool neg = false) { return {0, 0x7000, n, uint8_t(neg ? 1 : 0)}; }
@@ -137,26 +140,32 @@ TEST(ChartReal, ClipClockStartsAtStartMinusBlend) {
     EXPECT_EQ(leaves(63, 1.0f, ticks), 246);
     EXPECT_EQ(ticks, 50);
     // Kind-2 requests name an anim graph node (0x443720 -> 0x43E250), not a pattern: the node's program picks the pattern.
-    // S245's node 213 plays 680 ng_planted_jump_forward (start 1, blend 4, 5 frames) whatever played before; from the
-    // negative lead it ends after 8 frames (Wine stick_jump_open: S245 -> S289 15 ticks after the press).
+    // S245's node 213 plays 680 ng_planted_jump_forward (start 1, blend 4, 5 frames) whatever played before; Play queues
+    // it for 0x4428A0, whose lead is cut to 0: 5 frames here [U: Wine's S245 lasts 15 ticks; the queue's end callback
+    // (0x43E0C0) and 0x4428A0's crossfade branch are not modelled].
     ChartRuntime rt(*c, c->player, reg);
     rt.enter(ctx, 245);
     EXPECT_EQ(rt.playingPattern(), 680);
     ASSERT_NE(rt.pattern(), nullptr);
     EXPECT_EQ(rt.pattern()->clip, "ng_planted_jump_forward");
     EXPECT_EQ(leaves(245, 0.0f, ticks), 256);
-    EXPECT_EQ(ticks, 16);
+    EXPECT_EQ(ticks, 10);
     rt.enter(ctx, 248);
     EXPECT_EQ(rt.playingPattern(), 52);
     rt.enter(ctx, 245); // IsPlaying(52) branch
     EXPECT_EQ(rt.playingPattern(), 680);
-    // S40's node 46 plays 685 or 691 by module 1's native 76 (0x6EA1E0, not ported) and S65's node 99 asks it first:
-    // unresolved, no clip clock (never a guess).
+    // S40's node 46 plays 685 or 691 by module 1's native 76 (0x6EA1E0 = 0x74FD70 on the sprint stamina, ctx.canSprint());
+    // unknown stamina leaves it unresolved (no clip clock, never a guess).
     rt.enter(ctx, 40);
     EXPECT_EQ(rt.pattern(), nullptr);
-    rt.enter(ctx, 65);
-    EXPECT_EQ(rt.pattern(), nullptr);
-    EXPECT_EQ(rt.animLengthFrames(), 0.0f);
+    // Stamina left: ng_idle / ng_run_start; spent: ng_idle_break_hot / ng_run_exhaust (node 99 asks 76 first).
+    for (const auto& [sprint, idle, run] : {std::tuple{true, 685, 716}, std::tuple{false, 691, 717}}) {
+        ctx.sprint = sprint;
+        rt.enter(ctx, 245), rt.enter(ctx, 40);
+        EXPECT_EQ(rt.playingPattern(), idle);
+        rt.enter(ctx, 65);
+        EXPECT_EQ(rt.playingPattern(), run);
+    }
 }
 
 TEST(ChartRuntime, TickSetsContextTimeMult) {

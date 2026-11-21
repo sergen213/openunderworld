@@ -167,22 +167,22 @@ struct Shadow::Impl : ChartContext {
     bool aimHeld = false;
     uint32_t nowMs = 0, lastSteepMs = 0;
     // Player +0xF3C from the support-foot events of the clip Lara's anim layer plays (0x716F30 handles that layer's
-    // events). For a pattern request that is the chart's own clip, on the runtime's clip clock (0x783470) [O]. A kind-2
-    // request (0x443720) plays a clip the game fills at run time; the Wine corpus shows its events firing (stick_jump_open:
-    // S39 ng_1foot_idle sets foot 1, then S40's runtime idle clip, whose 0x36 / 0x35 leave foot 0, and S246 falls to
-    // T295) [O-runtime]; ours takes that clip and its time from our controller [I]. Fired as the clock passes them (the
-    // anim update's order against the chart tick [U]: ours after it).
+    // events): the chart's clip on the runtime's clip clock (0x783470) [O], for a kind-2 request the pattern its anim
+    // graph node plays (ChartRuntime::resolveRequest; stick_jump_open: S39 ng_1foot_idle sets foot 1, S40's node plays its
+    // idle, whose 0x36 / 0x35 leave foot 0, and S246 falls to T295 under Wine [O-runtime]). Only while a request resolves
+    // to no pattern does ours take our controller's clip and time [I]. Fired as the clock passes them (the anim update's
+    // order against the chart tick [U]: ours after it).
     std::unordered_map<std::string, FootClip> footClips;
     uint64_t footChanges = ~0ull;
     std::string footClip;
     float footFrame = 0;
     int foot = 0;
     std::optional<int> supportFoot() const override { return footClips.empty() ? std::nullopt : std::optional<int>(foot); }
-    void updateFoot(const ChartRuntime& rt, const Charts& c, const PlayerState& s) {
-        const int r = rt.request();
+    void updateFoot(const ChartRuntime& rt, const PlayerState& s) {
+        const Request* p = rt.pattern();
         const float len = rt.animLengthFrames();
-        const bool pattern = r >= 0 && size_t(r) < c.requests.size() && len > 0;
-        const std::string name = lower(pattern ? std::string_view(c.requests[size_t(r)].clip) : std::string_view(s.clip));
+        const bool pattern = p && len > 0;
+        const std::string name = lower(pattern ? std::string_view(p->clip) : std::string_view(s.clip));
         const auto it = footClips.find(name);
         if (it == footClips.end()) return;
         const FootClip& fc = it->second;
@@ -195,16 +195,15 @@ struct Shadow::Impl : ChartContext {
                 if ((loInclusive ? at >= lo : at > lo) && at <= hi)
                     foot = cmd == 0x35 ? 0 : ((cmd == 0x34) != mirror ? 1 : 2); // 0x716F30 with 0x6EDD00
         };
-        // A pattern clip restarts with every state change; the controller's clip only when it changes.
-        if ((pattern && rt.stats.changes != footChanges) || name != footClip) {
-            const float start = pattern ? float(std::max(0, int(c.requests[size_t(r)].start) - int(c.requests[size_t(r)].blend))) : 0.0f;
-            fire(start, true, f);
+        // A chart clip restarts when the runtime starts it (clipStarts); the controller's clip only when it changes.
+        if ((pattern && rt.clipStarts() != footChanges) || name != footClip) {
+            fire(pattern ? rt.clipStartFrame() : 0.0f, true, f);
         } else if (f >= footFrame) {
             fire(footFrame, false, f);
         } else {
             fire(footFrame, false, total), fire(0, true, f); // looped
         }
-        footChanges = rt.stats.changes, footClip = name, footFrame = f;
+        footChanges = pattern ? rt.clipStarts() : ~0ull, footClip = name, footFrame = f;
     }
     // The upper-body chart (agent 1, player +0xF14), ticked after Lara's as 0x768C50 does: conditions 0x401 / 0x404 /
     // 0x408 read its current state's bool property (0x6EEF00 mode 1, false when absent; ours the value in force [I]).
@@ -457,7 +456,6 @@ struct Shadow::Impl : ChartContext {
     // The chart clip's command events (lara.drm anim list) and how far its clock had run.
     std::map<std::string, ClipEvents, std::less<>> clipCommands;
     uint64_t clipChanges = ~0ull;
-    int clipRequest = -1;
     float clipFrame = 0;
     // ---- end group CD ----
 };
@@ -510,8 +508,8 @@ void Shadow::tick(const World& world, const Actions& a) {
     rt_->field(0x6C) = m.playerInt(0x78);
     if (const Request* p = rt_->pattern()) {
         const float cur = rt_->animFrames(), len = rt_->animLengthFrames();
-        const bool fresh = rt_->stats.changes != m.clipChanges || rt_->request() != m.clipRequest;
-        const float prev = fresh ? float(std::max(0, int(p->start) - int(p->blend))) - 1e-4f : m.clipFrame;
+        const bool fresh = rt_->clipStarts() != m.clipChanges;
+        const float prev = fresh ? rt_->clipStartFrame() - 1e-4f : m.clipFrame;
         const auto ev = m.clipCommands.find(p->clip);
         if (ev != m.clipCommands.end() && cur > prev) {
             auto apply = [&](float lo, float hi) { // events with lo < frame <= hi, in stored order
@@ -530,9 +528,9 @@ void Shadow::tick(const World& world, const Actions& a) {
         }
         m.clipFrame = cur;
     }
-    m.clipChanges = rt_->stats.changes, m.clipRequest = rt_->request();
+    m.clipChanges = rt_->clipStarts();
     // ---- end group CD ----
-    m.updateFoot(*rt_, *charts_, world.player().state());
+    m.updateFoot(*rt_, world.player().state());
     // ---- group J ----
     // Message 0x1C7 = chart event 455, posted by every ground check that finds a floor (0x5DCE20 with flag 2; the
     // player's message handler 0x76FC30 zeroes agent +0x8C and passes it to the chart, 0x787CD0). Only flight / landing

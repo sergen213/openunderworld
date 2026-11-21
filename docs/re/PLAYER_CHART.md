@@ -41,18 +41,25 @@ All offsets below are from the start of the player data block.
   218 nodes; not the cdc AnimGraph of ObjectBase +0x64 / +0x68, which stays 0), and runs the node's enter program
   (DTP header +4; exit program +8) on the anim graph VM 0x432B20 (stack bytecode: 2 push, 0x47..0x52 arithmetic /
   compares, 0x63 / 0x64 jumps, 0x65 native call, 0x7B return). Module 0's natives (0x8AC128 -> 0x88F238): 0 Play
-  (0x448100: pattern, flags & 7 = play mode, two floats), 1 IsPlaying (0x43B390: pattern or -1, frame range, flags), 5 /
+  (0x448100: pattern, flags, two floats), 1 IsPlaying (0x43B390: pattern or -1, frame range, flags), 5 /
   6 open / close a blend node. E.g. node 213 (S245, the stick jump): if pattern 52 (`ng_standing_jump`) is playing,
-  Play 680 (`ng_planted_jump_forward`) flags 1, else flags 2 [O: data, decomp]; either way 680 plays through once and
-  from its negative lead (start 1 - blend 4), 8 frames: Wine's S245 lasts 15 ticks [I: flags & 7 is not the pattern's
-  once / loop mode; the kind-2 path keeps the negative lead]. Node 46 (S40 idle) plays 685 or 691 by module 1's native
-  76 (0x6EA1E0: a test on a float triple at player-agent +0x460 via 0x74FD70, not decoded); node 99 (S65) asks it first.
+  Play 680 (`ng_planted_jump_forward`) flags 1, else flags 2 [O: data, decomp]. Play (0x448100) builds a 7-word record
+  (pattern, flags, its two float arguments rounded to override the pattern's start +0x1A / blend +0x19 when >= 0) and
+  queues it (0x446BD0: flags & 7 = 1 start in phase with the playing clip, 2 flush the queue first, 4 conditional, 0
+  queue); 0x444EA0 hooks the layer's end callback (0x43E0C0) and 0x443430 plays each record through 0x4428A0, so a
+  kind-2 clip starts like a pattern request (lead start - blend, cut to 0 when no crossfade runs) [O]; the chart's end
+  notification comes when the queue drains [I]. Ours: lead cut to 0, end at the clip's end; S245 then lasts 10 ticks
+  where Wine's lasts 15 [U: the queue / crossfade timing]. Node 46 (S40 idle) plays 685 `ng_idle` with sprint
+  stamina left, else 691 `ng_idle_break_hot`; node 99 (S65) 716 `ng_run_start`, else 717 `ng_run_exhaust`: module 1's
+  native 76 (0x6EA1E0) is 0x74FD70 on the stamina record at agent +0x460, condition 0x205's test (ctx.canSprint()).
   A node that plays nothing keeps the clip and its clock. Ours: `ChartRuntime::resolveRequest` runs the program (both
   ways on an unported native's value, resolved when they agree); an unresolved node has no clip clock. Our script VM
   (src/script) shares the opcode numbering but is not this VM (its 0x65 calls a method on a receiver). A pattern's clip starts at (start - blend) frames (0x441FB0), so
   that it stands at the pattern's start frame when the crossfade ends: `ng_standing_jump` (blend 6, start 6) plays all
   its 10 frames, `ng_run_start` (4 / 6) from its frame 2. A negative lead is cut to 0 for `ng_running_jump_forwards`
-  (2 / 1) and kept (the clip held at its first frame) for the wall jump's clips [U which branch decides].
+  (2 / 1) and kept (the clip held at its first frame) for the wall jump's clips [U which branch decides; 0x4428A0
+  subtracts the blend from the start (cut at 0) only when the layer's blend weight test passes, else the clip starts
+  at its start frame and crossfades over the blend: not modelled].
 
 ### Function registry [O]
 
@@ -245,8 +252,8 @@ the others are marked [I] with what blocks them.
 | `velocity()` (+0x2A0; 0x197, 0x20C, ...) | her displacement this tick x 2 | instance +0x2A0 from the physics integration (gravity 0x70E100 / 0x70E050, re-aim 0x73EDC0) | [I] kept: displacement is her real motion (mover output), not a controller flag, but includes root motion and carrier moves; an integrated velocity needs the chart-driven mover (cutover) |
 | `boneRise()` (0x1F) | root z delta | bone 0 z now - previous (+0x90 / +0x94) | [I] kept: root z delta; bone 0 needs the posed skeleton of the chart's clip |
 | `supportFoot()` (0x12D), pattern requests | chart clip on the runtime clock | events 0x34 / 0x35 / 0x36 of the layer's clip (0x716F30) | physical already (the chart's own clip) |
-| `supportFoot()`, kind-2 requests | controller clip and clip time | the clip the anim graph node picks (below) | *physical where resolved*: the pattern `resolveRequest` gets from the node (S245 -> 680); controller clip when unresolved (S40 node 46: native 1/76) |
-| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller) | *rebased*: the node's pattern on the clip clock (S245 leaves on Wine's tick); none when unresolved |
+| `supportFoot()`, kind-2 requests | controller clip and clip time | the clip the anim graph node picks (below) | *physical*: the pattern `resolveRequest` gets from the node (S245 -> 680, S40 -> 685 / 691); the controller clip only when a node does not resolve (unknown stamina) |
+| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller) | *rebased*: the node's pattern on the clip clock; none when unresolved [U: S245 10 ticks vs Wine 15, the queue's end timing] |
 | `attachedMarkup()` (+0xC94) | controller `attachedMarkup()` / ledge seg / t, empty in HangJump | written by the markup attach actions (0x76D010 ...) | [I] blocked: attach actions (group B) must write a chart-side slot |
 | `jumpTarget()` (+0xA64), `jumpQueryFlags()` (+0xAC0), `jumpTargetType()` (+0xA80) | controller `aimMarkup` / `aimFlags` / `aimClass` | take-off query (+0xA84) and action 230 (0x772CA0) promoting the candidates +0x3A0 / +0x3E0 | [I] partly: `chartJumpTarget` (df3c1da) keeps it chart-side, re-queried every take-off frame; prop 400's attach (0x75F2D0) consumes it; the controller fallback goes then |
 | `takeoffAim()` | controller `groundJumpAim` | the take-off jump query (0x751FC0 / 0x72B5C0) on geometry | [I] geometry query run through the controller's aim code; needs the query split out of `Player` |
@@ -267,7 +274,7 @@ request 213 -> DTP 2248, 408 bytes; request 99 -> DTP 2134, 13 KB). A node is a 
 opcode = high byte; 0x02 push the next word, 0x01 pop, 0x47..0x5C float / bool arithmetic and compares, 0x63 jump,
 0x64 jump if false, 0x65 call native [class, method] from table 0x8AC128, 0x7B return; 0x4370C0 pushes a frame). The
 natives and how ours runs them: Runtime, "Anim request" above (`ChartRuntime::resolveRequest`). Not ported: module
-1's natives (76 = 0x6EA1E0 decides S40's idle variant), the selector object fn 4 pushes (0x88F26C; node 46's
+1's natives other than 76 (= `canSprint()`), the selector object fn 4 pushes (0x88F26C; node 46's
 891 branch queues three transition/loop pairs and fn 3 commits one), Play's two float arguments and flags.
 
 ### In-flight jump targets [O, not ported]

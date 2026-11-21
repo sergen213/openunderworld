@@ -419,6 +419,8 @@ public:
     bool animLoops() const;
     const Request* pattern() const;                        // the pattern playing for the state's request, null when none
     int playingPattern() const { return playing_ ? playingIndex_ : -1; }
+    float clipStartFrame() const { return clipStart_; }  // the clip clock's frame when the clip started
+    uint64_t clipStarts() const { return clipStarts_; } // counts clip (re)starts; a kind-2 node that plays nothing keeps the clip
 
     int value(const Cond& c) const { return charts_.value(c); }
     float valueF(const Cond& c) const { return charts_.valueF(c); }
@@ -451,7 +453,7 @@ private:
     void evaluate(ChartContext& ctx);            // 0x787C50
     int fire(ChartContext& ctx, int state, uint32_t event, int& found); // 0x7876E0
     void applyProperties(ChartContext& ctx, int state); // 0x785E70 / 0x785CC0
-    void enterAnim();                            // 0x783470
+    void enterAnim(ChartContext& ctx);           // 0x783470
     void runExit(ChartContext& ctx, int from, int to);
     void runEnter(ChartContext& ctx, int to, int from, bool preAnim);
     void runProcess(ChartContext& ctx, int state);
@@ -468,7 +470,9 @@ private:
     std::optional<Request> playing_;
     int playingIndex_ = -1;
     bool playingMirror_ = false; // the mirror request the playing clip started with
-    bool resolveRequest();
+    bool resolveRequest(ChartContext& ctx);
+    uint64_t clipStarts_ = 0;
+    float clipStart_ = 0;
     float stateTime_ = 0, totalTime_ = 0, animFrames_ = 0;
     uint32_t frame_ = 0, stamp_ = 0;
     bool unportedHit_ = false;
