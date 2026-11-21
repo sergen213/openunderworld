@@ -168,5 +168,5 @@ TEST(ChartGround, StickRateMarksTimeForCondition16) {
     ASSERT_EQ(rt.state(), 1);
     for (int i = 0; i < 20; ++i) rt.tick(ctx, 0.5f);
     EXPECT_EQ(rt.state(), 1); // the marker is restamped every frame at band 403
-    EXPECT_FLOAT_EQ(ctx.anim.rate, 1.5f); // m = 1 at the top of the band: lerp(p514, p515) = 1.5
+    EXPECT_FLOAT_EQ(ctx.animRate, 1.5f); // m = 1 at the top of the band: lerp(p514, p515) = 1.5
 }

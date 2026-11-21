@@ -225,12 +225,10 @@ public:
     virtual std::optional<bool> wallSlideRecent() const { return std::nullopt; }
     // Player +0x68 bit 30, the fly cheat (condition 0x207); ours has no such mode.
     virtual bool cheatMode() const { return false; }
-    // Effects the ground actions have on her anim layer, recorded chart-side (shadow mode does not apply them):
-    // 0x438C40 playback rate of every sub-layer, the blend parameters +0x8C / +0x90 of the chart's anim section, the
-    // procedural lean (player +0xF18 controller +0x40) and the root alignment blend of action 231 (0x75F550).
+    // Effects the ground actions have on her anim layer beyond group B's animBlend / animRate, recorded chart-side
+    // (shadow mode does not apply them): the procedural lean (player +0xF18 controller +0x40) and the root alignment
+    // blend of action 231 (0x75F550).
     struct AnimEffects {
-        float rate = 1;
-        float blend8C = 0, blend90 = 0;
         float lean = 0;
         struct Align { bool active = false, positionOnly = false; float duration = 0; glm::vec3 pos{0}; } align;
     } anim;

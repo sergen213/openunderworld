@@ -341,9 +341,9 @@ void leanBlendEntry(ChartContext& ctx, uint16_t) {
         for (int i = 0; i < 3; ++i) ctx.agentFloat(0x40 + 4 * i) = ctx.agentFloat(0x50 + 4 * i) = s->pos[i];
         ctx.agentFloat(0x4C) = ctx.agentFloat(0x5C) = 1.0f; // the w of the vec4 0x4D9C20 copies [I]
     }
-    ctx.anim.blend8C = ctx.anim.blend90 = 0;
+    ctx.animBlend = glm::vec2(0);
 }
-void leanBlendExit(ChartContext& ctx, uint16_t) { ctx.anim.blend8C = ctx.anim.blend90 = 0; }
+void leanBlendExit(ChartContext& ctx, uint16_t) { ctx.animBlend = glm::vec2(0); }
 void leanBlendProcess(ChartContext& ctx, uint16_t id) { unportedPart(ctx, id); }
 
 // Action 207 (PSCAF_MarkupLengthBlend) Process 0x744FD0: segment 0 of the attached markup, L its length; +0x8C =
@@ -355,8 +355,8 @@ void markupLengthBlend(ChartContext& ctx, uint16_t id) {
     if (!seg) return unportedPart(ctx, id); // tru.exe reads a null markup here
     const float lo = ctx.chart().charts().data<float>(0x800), hi = ctx.chart().charts().data<float>(0x804);
     const float len = glm::length(seg->second - seg->first);
-    ctx.anim.blend8C = hi == lo ? 0.0f : std::clamp((len - lo) / (hi - lo), 0.0f, 1.0f);
-    ctx.anim.blend90 = m.live ? 1.0f : 0.0f;
+    ctx.animBlend.x = hi == lo ? 0.0f : std::clamp((len - lo) / (hi - lo), 0.0f, 1.0f);
+    ctx.animBlend.y = m.live ? 1.0f : 0.0f;
 }
 
 // Action 210 (PSCAF_HurdleHeightBlendAndSpeed). PreAnimEntry / PreAnimReentry 0x749B80: point A = her position,
@@ -377,11 +377,11 @@ void hurdleHeightBlend(ChartContext& ctx, uint16_t id) {
         const float d = p231 - p230;
         x = d > 0 ? std::clamp((at.point.z - s->pos.z - p230) / d, 0.0f, 1.0f) : 0.0f; // [I] 0x749980 on d == 0
     }
-    ctx.anim.blend8C = x;
+    ctx.animBlend.x = x;
 }
 void hurdleSpeed(ChartContext& ctx, uint16_t) {
     const float sp = propF(ctx.chart(), 0xEE, 1.0f);
-    if (sp >= 1.0f) ctx.anim.rate = (1.0f - ctx.anim.blend8C) * (sp - 1.0f) + 1.0f;
+    if (sp >= 1.0f) ctx.animRate = (1.0f - ctx.animBlend.x) * (sp - 1.0f) + 1.0f;
 }
 
 // Action 221 (PSCAF_RunLeanToStick). Entry 0x75CDA0: agent +0x7C = 0. Process 0x75CDB0: max = property 217 (deg),
@@ -577,21 +577,21 @@ void stickScaledAnimRate(ChartContext& ctx, uint16_t id) {
     case 0x193: out = r[2] + t01((m - (t2 - h2)) / ((h3 + t3) - (t2 - h2))) * (r[3] - r[2]); break;
     case 0x194: out = r[4] + t01((m - (t3 - h3)) / (1.0f - (t3 - h3))) * (r[5] - r[4]); break;
     case 0x195: out = r[6] + t01((m - (t3 - h3)) / (1.0f - (t3 - h3))) * (r[7] - r[6]); break;
-    default: ctx.anim.rate = 1; return;
+    default: ctx.animRate = 1; return;
     }
     if (band != 0x192) ctx.agentFloat(0x78) = rt.totalTime();
     if (out != 0) {
         if (out <= 2) rate = out;
         else return unportedPart(ctx, id); // the clip's root speed (0x4389C0) is not known chart-side
     }
-    ctx.anim.rate = rate;
+    ctx.animRate = rate;
 }
 
 // Action 509 (PSCAF_SetAnimRate), every slot 0x75E9D0: rate = float property 225 (at least 0.001); 1 when it is
 // missing or bool-typed.
 void setAnimRate(ChartContext& ctx, uint16_t) {
     const Property* p = ctx.chart().property(0xE1);
-    ctx.anim.rate = !p || p->type == 2 ? 1.0f : std::max(0.001f, ctx.chart().charts().propFloat(*p));
+    ctx.animRate = !p || p->type == 2 ? 1.0f : std::max(0.001f, ctx.chart().charts().propFloat(*p));
 }
 
 // Action 515 (PSCAF_RecordJumpRefHeight): Entry 0x72FBF0 records player +0x6DC = her z, +0x6E0 = the attached
