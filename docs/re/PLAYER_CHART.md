@@ -134,6 +134,14 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
   0x785920, `change` = 0x787890, `post` = 0x787CD0, `animEnded` = 0x768CF0. The requested clip's clock is kept by the
   runtime itself (pattern start frame, rate, length from the clip header) and calls `animEnded` when a one-shot clip
   reaches its end or a loop wraps [I: notification order].
+- **Units**: the chart's times (+0x508 state time, condition 0x14, clip clock, flags of 0x783840) count 30 Hz frames;
+  a 60 Hz game tick adds timeMult = 0.5. Traces count 60 Hz ticks (`stateTicks`), so N chart frames = 2N ticks.
+  Example, Wine `run_jump_bedroom` (W/chart/wine/jump): S63 `ng_run_start` from tick 10, the Jump press at tick 40
+  leaves it for S281: a dwell of 30 ticks = 15 frames, ended by the press, not by the clip. The clip (request 716,
+  27 frames from frame 2) would end it after 25 frames = 50 ticks (T246 -> S65, tick 60). Ours, with the clip clock
+  starting at (start - blend), dwells the same up to the press (checked by driving S63 with the case's inputs); before
+  that fix the clip was taken from frame 6 and S65 came after 4 ticks. Taking the jump itself needs S63 T47 / T172
+  and S64 T60 / T52, whose conditions 0x836, 0x192, 0x12D are family work.
 - One time step: `ChartRuntime::tick(ctx, timeMult)` stores it in `ctx.timeMult` (gameTracker_timeMult, 30 Hz frames)
   before anything runs; conditions and actions read `ctx.timeMult`, never a clock of their own. `ChartRuntime::enter`
   puts the chart in a state without a transition (tests / tools).
@@ -180,7 +188,16 @@ in the air, where ours aims only at take-off:
   +0x3E0, by a distance compare against her facing [I]) into +0xA64, with the target class from property 0x1A4 (else 0x19A).
   Transitions such as S289 T305 / the stick jump's S535 attach then see it through condition 0x262 (target class).
   Only these store to +0xA64 besides 0x741050 (a markup hand-off) and 0x771DB0 (reached from 0x6C0800, not the
-  flight). [U]: the per-frame writer of the candidate slots +0x3A0 / +0x3E0 (no direct store found; a computed base).
+  flight).
+- **Candidate slots, every frame** [O]: the two 0x40-byte slots player +0x3A0 / +0x3E0 (markup, +4 param, +0x10
+  point, +0x34 a float the player constructor 0x71C2D0 sets to -1) are filled by **0x710380**(instance, player +0x3A0,
+  player +0x3E0, ...), called twice from the move sweep **0x5D7FA0** (mode 6), which runs from **0x7002D0** inside
+  **0x71BFA0**, a process function listed in the player modes' table at 0x8ABA40 (0x1C-byte rows; it appears in
+  36 rows). So the candidates are refreshed every frame by her collision move [I: in the air as on the ground, which
+  rows are the flight modes not checked], and action 230 promotes one when a flight state is entered. Found through
+  the address computations `add eax, 0x3A0` at 0x5D826A / 0x5D8C62 (the call sites); the condition at 0x764F51 reads
+  both slots the same way (0x759850); no direct store at those offsets exists. [I] 0x710380 is a markup query (it
+  returns a count; 0 clears player +0x2C8).
 
 Open [U]: what sets agent +0x53C; the frame order of 0x768C50 against animation and physics; the exact notification
 that ends a looping clip; state +8; field +0x51C; property type 0x2B between linked charts (ours ignores it).
