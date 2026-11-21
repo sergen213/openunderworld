@@ -181,14 +181,27 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
 
 ### Shadow mode
 
-`ou-game ... --chart-shadow` runs Lara's chart after every `World::tick` with the same `Actions` and world (input
-action timings kept by the shadow; timeMult = 30 x the fixed tick, ignoring the combat time scale [I]) and logs each
-run where the chart's requested clip differs from the controller's clip; the summary at `--frames` end lists the
-most evaluated unported conditions. `--chart-trace FILE` writes the shared TSV (`tick state parent request stateTicks
-px py pz vx vy vz yaw inputs`, then `t30=` the chart state time and `var_anim=` the chart clip clock): stateTicks =
-60 Hz ticks since entering the state (0 on the entry tick, also on a re-entry), position / velocity (units/s) / yaw
-(degrees) are ours, `inputs` is the hex mask of the same tick's actions (1 Fwd, 2 Back, 4 Left, 8 Right, 0x10 Jump,
-0x20 Interact, 0x40 Crouch, 0x80 Sprint, 0x100 Walk, 0x200 Grapple).
+`ou-game ... --chart-shadow` runs Lara's chart, then the upper-body chart (agent 1, which conditions 0x401 / 0x404 /
+0x408 read), after every `World::tick` with the same `Actions` and world (input action timings kept by the shadow;
+timeMult = 30 x the fixed tick, ignoring the combat time scale [I]) and logs each run where the chart's requested clip
+differs from the controller's clip; the summary at `--frames` end lists the most evaluated unported conditions. The
+support foot (player +0xF3C, condition 0x12D) comes from the anim events 0x34 / 0x35 / 0x36 of the clip the chart
+requests, fired on the runtime's clip clock (lara.drm's event DTPs; a state without a pattern clock keeps the foot).
+`--chart-trace FILE` writes the shared TSV (`tick state parent request stateTicks px py pz vx vy vz yaw inputs`, then
+`t30=` the chart state time and `var_anim=` the chart clip clock): tick = the frame's index (`World::ticks() - 1`
+after it: the tick the input script addressed), stateTicks = 60 Hz ticks since entering the state (0 on the entry tick,
+also on a re-entry), position / velocity (units/s) / yaw (degrees) are ours, `inputs` is the hex mask of the same
+tick's actions (1 Fwd, 2 Back, 4 Left, 8 Right, 0x10 Jump, 0x20 Interact, 0x40 Crouch, 0x80 Sprint, 0x100 Walk, 0x200
+Grapple).
+
+**Frame order** [O-runtime, U the poll's address]: tru.exe's `GAMELOOP_Frame` (0x5DFFE0) pumps the window messages (the
+input actions' records +0 flags / +4 change time / +8 press time against the input clock 0xA02B68 +0x1C are updated
+from them) before the game update, which runs the charts (0x768C50: agent 0, then agent 1), and increments the frame
+counter gameTracker +0x24 at its end (0x5E003F). The Wine corpus injects a key between two frames and records it as held
+on the next frame's row, and that row already shows the transition it causes (run_jump_bedroom tick 10: inputs 1 and
+S40 -> S63). Ours in the same order within one tick: `--input-script` / the devices give tick N's `Actions`, then
+`World::tick`, then the shadow's input timing and the charts; the trace labels the row N. (Before this the trace wrote
+`World::ticks()` after the tick, N + 1, which looked like a one-tick input lag.)
 
 ### In-flight jump targets [O, not ported]
 

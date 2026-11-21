@@ -422,6 +422,7 @@ private:
     std::unique_ptr<Impl> impl_;
     std::unique_ptr<Charts> charts_;
     std::unique_ptr<ChartRuntime> rt_;
+    std::unique_ptr<ChartRuntime> upper_; // the upper-body chart (agent 1), ticked after Lara's
 };
 
 // ou-game chart-dump: the chart as text (one state, or all), and the coverage of conditions / actions reachable from
