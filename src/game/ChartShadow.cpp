@@ -2,6 +2,7 @@
 #include "game/Chart.hpp"
 #include "cdc/Cdc.hpp"
 #include "game/Game.hpp"
+#include "game/ObjData.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -307,6 +308,55 @@ struct Shadow::Impl : ChartContext {
     std::array<uint32_t, size_t(JEffect::kCount)> effects{};
     void effect(JEffect e, float) override { ++effects[size_t(e)]; }
     // ---- end group J ----
+
+    // ---- group CD ----
+    // Player +0x8EC: 0x400 outside a water volume (ours Player::waterAt at her feet); inside one 0x5D3860's class from
+    // her root (+0x20) and the floor under her (+0x24) against the wave surface, lara.drm +0xAC / +0xAE / +0xB0 / +0xB2.
+    // [I] +0x20 / +0x24 = root z / floor z minus the surface; the in-volume test also takes the floor when player +0x8DC
+    // (the volume) is set, which it is here. [U] the volume-extent bits 0x800..0x4000 (+0x2C against volume +0x28 /
+    // +0xC8 and the bone matrices) are not computed: values 2 / 3 of 0x1F5 read them.
+    std::optional<uint32_t> waterFlags() const override {
+        const PlayerState& s = w->player().state();
+        const int m = w->player().waterAt(s.pos);
+        if (m < 0) return 0x400u;
+        const float surface = waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds);
+        const float root = s.pos.z - surface;
+        const auto g = w->collision().groundProbe(s.pos + glm::vec3(0, 0, 50), 50 + 4000);
+        const float floor = g ? g->point.z - surface : -1e9f;
+        const Charts& d = chart().charts();
+        const float ac = d.data<int16_t>(0xAC), ae = d.data<int16_t>(0xAE), b0 = d.data<int16_t>(0xB0), b2 = d.data<int16_t>(0xB2);
+        if (!(root <= 0 || floor <= 0)) return 0x400u;
+        if (!(floor <= -ac)) return 0x200u;
+        if (!(floor <= -ae)) return 0x100u;
+        if (!(floor <= -b0)) return 0x80u;
+        if (-b2 < floor || -b0 < root) return 0x40u;
+        return root <= -b2 ? 0x10u : 0x20u;
+    }
+    // (player +0x500) +0x134: the drawn weapon's slot (weapon data +0xDC: 0 pistols, 2 Thor's hammer, 1 the rest), -1
+    // with empty hands; carrying a portable the slot is not known [U: 3?].
+    std::optional<int> gearSlot() const override {
+        const CombatState& c = w->combat();
+        if (c.drawn) return c.weapon == Weapon::Pistols ? 0 : c.weapon == Weapon::ThorHammer ? 2 : 1;
+        if (w->heldPortable() != 0) return std::nullopt;
+        return -1;
+    }
+    bool tracksCriticalSection() const override { return true; }
+    std::optional<RayHit> rayHit(glm::vec3 a, glm::vec3 b, uint32_t) const override {
+        const float d = glm::length(b - a);
+        if (d <= 0) return {};
+        const auto h = w->collision().playerRay(a, (b - a) / d, d); // [I] one ray mask for every tru.exe flag set
+        if (!h) return {};
+        RayHit r;
+        r.point = h->point, r.normal = h->normal;
+        if (h->dynamic >= 0) r.kind = 2; // stillBody / flag8000000 unknown for ours
+        return r;
+    }
+    // The chart clip's command events (lara.drm anim list) and how far its clock had run.
+    std::map<std::string, ClipEvents, std::less<>> clipCommands;
+    uint64_t clipChanges = ~0ull;
+    int clipRequest = -1;
+    float clipFrame = 0;
+    // ---- end group CD ----
 };
 
 Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log) : impl_(std::make_unique<Impl>()) {
@@ -321,6 +371,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
         if (!impl_->trace) throw std::runtime_error("chart shadow: cannot write " + trace->string());
         impl_->trace << "tick\tstate\tparent\trequest\tstateTicks\tpx\tpy\tpz\tvx\tvy\tvz\tyaw\tinputs\n";
     }
+    if (const auto o = objData(bigfile, "lara")) impl_->clipCommands = clipEvents(*o); // group CD: critical sections
 }
 Shadow::~Shadow() = default;
 
@@ -343,6 +394,34 @@ void Shadow::tick(const World& world, const Actions& a) {
     m.stickLen = std::min(1.0f, glm::length(a.move));
     if (!m.started) rt_->start(m), m.started = true;
     else rt_->tick(m, dt * 30.0f);
+    // ---- group CD ---- 0x768C50 after the chart tick: agent +0x6C = player +0x78. Then the chart clip's events over the
+    // frames its clock ran this tick (0x716F30): command 0x13 opens the critical section (+0x78 = 1, agent +0x53C = 1),
+    // 0x14 closes it. [I] the anim update runs after the chart tick (the order is not pinned, docs Runtime "Open").
+    rt_->field(0x6C) = m.playerInt(0x78);
+    if (const Request* p = rt_->pattern()) {
+        const float cur = rt_->animFrames(), len = rt_->animLengthFrames();
+        const bool fresh = rt_->stats.changes != m.clipChanges || rt_->request() != m.clipRequest;
+        const float prev = fresh ? float(std::max(0, int(p->start) - int(p->blend))) - 1e-4f : m.clipFrame;
+        const auto ev = m.clipCommands.find(p->clip);
+        if (ev != m.clipCommands.end() && cur > prev) {
+            auto apply = [&](float lo, float hi) { // events with lo < frame <= hi, in stored order
+                for (const auto& e : ev->second.commands)
+                    if (float(e[2]) > lo && float(e[2]) <= hi && (e[0] == 0x13 || e[0] == 0x14)) {
+                        m.playerInt(0x78) = e[0] == 0x13;
+                        rt_->deferFlag7 = e[0] == 0x13;
+                    }
+            };
+            if (rt_->animLoops() && len > 0) {
+                for (float k = std::floor(prev / len); k <= std::floor(cur / len); k += 1)
+                    apply(std::max(prev - k * len, -1.0f), std::min(cur - k * len, len));
+            } else {
+                apply(prev, cur);
+            }
+        }
+        m.clipFrame = cur;
+    }
+    m.clipChanges = rt_->stats.changes, m.clipRequest = rt_->request();
+    // ---- end group CD ----
 
     const ChartRuntime& rt = *rt_;
     if (rt.state() != m.lastState || rt.stats.changes != m.lastChanges) m.stateTicks = 0;
