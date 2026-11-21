@@ -74,14 +74,20 @@ bool edge(ChartContext& ctx, const Cond& c, F pred) {
 }
 
 // Player +0xA64 as the chart sees it: the target its own actions set (ChartContext::chartTarget), else the game's.
-ChartContext::MarkupSlot jt(ChartContext& ctx) { return ctx.chartTarget.target ? ctx.chartTarget.target : ctx.jumpTarget(); }
+// A game target the chart handed on (handedTarget) no longer counts.
+ChartContext::MarkupSlot gameTarget(ChartContext& ctx) {
+    const auto t = ctx.jumpTarget();
+    if (ctx.handedTarget >= 0 && t.markup != ctx.handedTarget) ctx.handedTarget = -1;
+    return ctx.handedTarget >= 0 ? ChartContext::MarkupSlot{} : t;
+}
+ChartContext::MarkupSlot jt(ChartContext& ctx) { return ctx.chartTarget.target ? ctx.chartTarget.target : gameTarget(ctx); }
 std::optional<uint32_t> jtFlags(ChartContext& ctx) {
     if (ctx.chartTarget.target) return ctx.chartTarget.flags;
-    return ctx.jumpQueryFlags();
+    return gameTarget(ctx) ? ctx.jumpQueryFlags() : std::optional<uint32_t>(0u);
 }
 std::optional<int> jtType(ChartContext& ctx) {
     if (ctx.chartTarget.target) return ctx.chartTarget.type;
-    return ctx.jumpTargetType();
+    return gameTarget(ctx) ? ctx.jumpTargetType() : std::optional<int>(0);
 }
 
 // ---- conditions ----
@@ -386,7 +392,10 @@ void airEnter(ChartContext& ctx, uint16_t) {
     if (const auto t = jt(ctx); t && !rising && (t.flags & 0x20800000)) ctx.chartTarget = {}, ctx.effect(JEffect::ClearJumpTarget);
 }
 // [I] the flight's target ends with the flight (tru.exe clears it on the attach / landing paths, 0x707500).
-void airExit(ChartContext& ctx, uint16_t) { ctx.chartTarget = {}; }
+void airExit(ChartContext& ctx, uint16_t) {
+    if (jt(ctx)) ctx.handedTarget = ctx.jumpTarget().markup; // -1 when the game holds none
+    ctx.chartTarget = {};
+}
 void airUpdate(ChartContext& ctx, uint16_t) {
     ctx.agentFloat(0x3E8) += ctx.timeMult;
     const auto v = ctx.velocity();
