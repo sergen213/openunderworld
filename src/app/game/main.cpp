@@ -2767,21 +2767,43 @@ int main(int argc, char** argv) {
     auto useDevice = [&](bool pad) {
         if (pad != padActive) padActive = pad, refreshPrompts();
     };
-    auto showLoading = [&](int chapter) {
-        useScreenImage(ou::ui::loadingImage(chapter));
+    // The loading screen stays up until its level load is done: World::onLoadWait redraws it while the units load
+    // (tru.exe 0x5DDDF0 each Sleep(5)); then the game fades in from black over 30 frames (0x5DE040's end:
+    // GAMELOOP_SetScreenWipe(9, 100, 0), (9, 0, 30); frames at 30/s as the death wipe's [I]).
+    int loadingChapter = -1; // the loading screen shown, until World::levelLoads moves past loadingLoads; -1 = none
+    uint64_t loadingLoads = 0;
+    float loadFade = 0; // 1 = black
+    constexpr float kLoadFadeSeconds = 30 / 30.0f;
+    auto drawLoadingFrame = [&] { // black without a loading screen (a respawn's reload: the death wipe is black)
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window.get(), &w, &h);
         ou::ui::Canvas cv(w, h, &*art);
         cv.prompts = &prompts;
         cv.rect(0, 0, float(w), float(h), 0xFF000000u);
-        ou::ui::drawLoading(cv, *strings, chapter);
+        if (loadingChapter >= 0) ou::ui::drawLoading(cv, *strings, loadingChapter);
         ou::render::FrameOptions fo{};
         fo.ui = cv.vertices;
         fo.uiImages = {ou::render::RgbaImage{art->rgba, art->width, art->height, art->version},
                        ou::render::RgbaImage{screenImage.rgba, screenImage.width, screenImage.height, screenVersion}};
         renderer->drawFrame(ou::render::Camera{}, {w, h}, fo);
         renderer->present();
+    };
+    int loadingFrames = 0;     // frames drawn while the load waited (World::onLoadWait)
+    uint64_t loadingSince = 0; // SDL_GetTicksNS at showLoading
+    auto showLoading = [&](int chapter) {
+        useScreenImage(ou::ui::loadingImage(chapter));
+        loadingChapter = chapter, loadingLoads = world->levelLoads();
+        loadingFrames = 0, loadingSince = SDL_GetTicksNS();
+        drawLoadingFrame();
         std::fprintf(stderr, "ou-game: loading screen chapter %d (%s)\n", chapter, screenName.c_str());
+    };
+    auto finishLoading = [&] { // after the load (or its failure: no fade, the old level stays)
+        if (loadingChapter < 0) return;
+        const bool loaded = world->levelLoads() != loadingLoads;
+        if (loaded) loadFade = 1;
+        std::fprintf(stderr, "ou-game: loading screen chapter %d up %.0f ms, %d frames while loading%s\n", loadingChapter,
+                     double(SDL_GetTicksNS() - loadingSince) * 1e-6, loadingFrames, loaded ? "" : " (load failed)");
+        loadingChapter = -1;
     };
     auto saveChapter = [&](const std::string& slot) { // for its loading screen
         try {
@@ -2791,6 +2813,16 @@ int main(int argc, char** argv) {
         }
     };
     bool running = true;
+    // While a level load waits for its units: the window keeps answering (only quits are taken; input waits for the
+    // game), decoded unit scenes go to the GPU and the loading screen is drawn again (tru.exe 0x5DDDF0, Sleep(5)).
+    world->onLoadWait = [&] {
+        SDL_PumpEvents();
+        SDL_Event e;
+        while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) > 0) running = false;
+        streamed.syncParts(*renderer);
+        drawLoadingFrame(), ++loadingFrames;
+        SDL_Delay(5);
+    };
     // What the player reached across games (save::Profile): chapter ends and the ending (TREASURE HUNT, EXTRAS unlocks),
     // and the EXTRAS OUTFITS choice (World::costume).
     ou::save::Profile profile = ou::save::readProfile();
@@ -2848,6 +2880,7 @@ int main(int argc, char** argv) {
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: chapter %d: %s\n", n, e.what());
         }
+        finishLoading();
     };
     auto act = [&](ou::ui::Action action) {
         using ou::ui::Action;
@@ -2860,6 +2893,7 @@ int main(int argc, char** argv) {
                 showLoading(saveChapter(slot));
                 if (!loadGame(slot, "continue")) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
                 shownChapter = world->chapter;
+                finishLoading();
                 autosaveHere();
                 break;
             }
@@ -2927,6 +2961,7 @@ int main(int argc, char** argv) {
             showLoading(saveChapter(menus.selectedSave()));
             if (!loadGame(menus.selectedSave(), "load")) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
             shownChapter = world->chapter;
+            finishLoading();
             autosaveHere();
             break;
         case Action::PlayMovie: // EXTRAS TRAILERS & CREDITS; in play the game is left after it (471)
@@ -3409,6 +3444,8 @@ int main(int argc, char** argv) {
             }
             if (audioOn) music.update(float(ou::game::kTickSeconds), world->script().gameValues(), tick);
             if (sound) sound->tick(*world);
+            if (loadingChapter >= 0 && world->levelLoads() != loadingLoads) finishLoading(); // a level end's chapter
+            loadFade = std::max(0.0f, loadFade - float(ou::game::kTickSeconds) / kLoadFadeSeconds);
             hud.tick(ou::game::kTickSeconds);
             hud.update(CombatView::hudState(*world), ou::game::kTickSeconds);
             if (selfTest) { // the HUD and the mixer after this tick (hud.* / audio.* probes)
@@ -3770,7 +3807,7 @@ int main(int argc, char** argv) {
         fo.rtGi = opt.gfx.rtGi;
         fo.ao = ou::render::AmbientOcclusion(opt.gfx.ao), fo.aoSamples = opt.gfx.aoSamples;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
-        fo.brightness = opt.gfx.brightness, fo.screenFade = world->screenFade();
+        fo.brightness = opt.gfx.brightness, fo.screenFade = std::max(world->screenFade(), loadFade);
         fo.tonemap = ou::render::Tonemap(opt.gfx.tonemap);
         fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;
         fo.fsrQuality = opt.gfx.fsrQuality, fo.sharpness = opt.gfx.sharpness, fo.frameGeneration = opt.gfx.frameGeneration;

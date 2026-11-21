@@ -153,6 +153,11 @@ public:
         results_.erase(name);
         std::erase_if(queue_, [&](const auto& j) { return j.first == name; });
     }
+    bool ready(const std::string& name) { // take would not wait (also: never queued, take loads it itself)
+        const std::lock_guard lock(m_);
+        const auto it = results_.find(name);
+        return it == results_.end() || it->second.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    }
     UnitData take(const std::string& name) { // waits; rethrows what the loader threw
         std::future<UnitData> f;
         {
@@ -416,8 +421,18 @@ LoadedUnit* World::findUnit(const std::string& name) {
     return nullptr;
 }
 
+// A level load with onLoadWait set (ou-game: its loading screen) loads on the streamer's worker thread and calls
+// onLoadWait until each load it needs is done, as tru.exe's level loads loop Sleep(5) + MainG2_LoadingFrame (0x5DDDF0:
+// one frame, input and the stream queue) until STREAM_PollLoadQueue is idle (0x5DE040, 0x5DDED0).
+UnitData World::loadWaiting(const std::string& name) {
+    if (!streamer_ || !onLoadWait) return loader_(name);
+    streamer_->request(name);
+    while (!streamer_->ready(name)) onLoadWait();
+    return streamer_->take(name);
+}
+
 void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32_t checkpointId) {
-    LoadedUnit base{loader_(unit), vec3(0), 0}; // may throw: keep the current stream until it succeeds
+    LoadedUnit base{loadWaiting(unit), vec3(0), 0}; // may throw: keep the current stream until it succeeds
     if (!spawn)
         for (const auto& c : base.data.checkpoints)
             if (c.id == checkpointId) spawn = Spawn{c.pos, c.yaw, true};
@@ -438,6 +453,8 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     fresh.buttons.hold(); // a key still down gives no press edge on the first tick
     player_.restore(fresh);
     streamAround(0, true);
+    if (streamer_ && onLoadWait)
+        while (!std::ranges::all_of(pending_, [&](const PendingUnit& p) { return streamer_->ready(p.name); })) onLoadWait();
     joinStreams(true); // a level load waits for the neighbours
     player_.spawn(spawn->pos, spawn->yaw);
     exteriorOrigin_ = spawn->pos;

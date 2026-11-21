@@ -1238,6 +1238,10 @@ public:
     // A level end leaves the chapter: called after its cinematic and its scripts' last events, right before
     // startChapter(next) builds the next one (tru.exe 0x5DF760 -> 0x593D10 stops every sound and the music there).
     std::function<void(int next)> onLevelChange;
+    // Called again and again while a level load (enterUnit: new game, chapter, save, respawn) waits for its units on the
+    // background streamer (setAsyncStreaming); it should sleep a few ms. ou-game redraws its loading screen there
+    // (tru.exe 0x5DDDF0 MainG2_LoadingFrame). Unset, or without async streaming, level loads block (synchronous).
+    std::function<void()> onLoadWait;
     const std::vector<Pickup>& pickedUp() const { return pickedUp_; } // last tick (world-frame positions)
 
     // An object's physical data by name for worlds without a bigfile (tools, synthetic levels); with one it is read
@@ -1441,6 +1445,7 @@ private:
     // Load (or queue) portal neighbours of units_[center], unload the rest; `fresh`: units_ was replaced (level load).
     void streamAround(size_t center, bool fresh = false);
     void joinStreams(bool now);       // queued neighbours due by now (all: `now`) join units_ (Stream.cpp)
+    UnitData loadWaiting(const std::string& name); // a level load's unit: on the streamer, calling onLoadWait meanwhile
     bool attach(UnitData d, const std::string& from); // relocated against loaded unit `from` (else the current one)
     // After units_ changed: collision, cinematic ends, Lara's ledge / water markup (kept by (unit, local index)).
     void unitsChanged(const std::optional<std::pair<std::string, int>>& ledge, const std::optional<std::pair<std::string, int>>& water);

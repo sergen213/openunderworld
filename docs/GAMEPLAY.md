@@ -4894,7 +4894,17 @@ between two 0x1B: on the keyboard its key name, drawn in the highlight 0x7D6932 
   0.08 inside, white 0.3 band edges 2.2 tall, emblem 5 (345², 0.35); title 51 + chapter cap 220.4 scale 1.17, line 105
   at 242.4, story 59 + chapter at scale 0.66 from cap 256.9 every 13.15, wrapped at 540. Image per chapter [I by area]:
   mansion, medsea, thailand, dungeon (Croft Manor), mexico, snow (Jan Mayen), ship, arcticsea (and the epilogue). Shown
-  for one frame before New Game, PLAY GAME / LOAD (the save's chapter) and after a level end's cinematic (chapter + 1).
+  before New Game, PLAY GAME / LOAD (the save's chapter) and after a level end's cinematic (chapter + 1), and kept up
+  until the level load is done [V-exe]: tru.exe's loads (0x5DE040, 0x5DDED0) loop `Sleep(5)` + MainG2_LoadingFrame
+  (0x5DDDF0: platform update, input, time, stream queue, one frame) until STREAM_PollLoadQueue is idle; ours loads the
+  units on the background streamer and `World::onLoadWait` redraws the screen, sends decoded scenes to the GPU and
+  takes only window-close requests (a respawn's reload draws black). After the load 0x5DE040 sets screen wipe 9 to 100
+  then 0 over 30 frames: the game fades in from black, ours over 1 s [I: 30 frames at 30/s, as the death wipe] after
+  every load that showed a loading screen (not `--level` / `--load` starts or respawns [U: whether the original fades
+  those]). Not reproduced [U]: 0x5DDDF0 bounces the font colour's alpha 64–128 by the frame time but sets the colour to
+  0x80808080 before anything draws (no visible pulse found); 0x5DE040 holds the screen at least 15 s when flag 0x8B40F0
+  is set, which uigamedata 17 (0x77BB70: byte 0xFAE8DB, level changes fade to white) sets with a non-zero argument
+  [U: which scripts call it; the chapter 1 yacht cinematic reads it with 18].
 Keys: arrows/WASD, Enter/Space accept, E = Alt (accept; PDA TASK), Esc back, Backspace/Delete delete; pad d-pad,
 South accept, West Alt, North delete, East/Start back. Replays drive menus with `forward`/`right` ±1, `jump` (accept),
 `interact` (Alt), `drop`/`pause` (back), `pda`; the script clock keeps running in menus. Not reproduced: the attract
