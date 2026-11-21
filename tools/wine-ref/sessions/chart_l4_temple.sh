@@ -2,7 +2,7 @@
 # Status 2026-11-21: the 1204 running-jump sweep and the 1155 air grab / pull up are in the corpus. Pillar 1194: a first
 # run (no SETTLE) attached by walking in (S1186 pillar_attach_ground, S1202 idle, S1198 climb, S1219 / S1220 slide,
 # S1208 / S1217 jump back, S1196 round), but those traces were overwritten by re-runs with SETTLE in which Forward
-# (Up) never moved her from the spawn while the other keys did [U]; the pillar family is empty until re-recorded.
+# (Up) never moved her from the spawn while the other keys did [U]; pillar 1194 / perch cases are now recorded by chart_l4_temple_pillars.sh (separate takes).
 # Chart reference corpus, l4_temple (goto unit: tru = ours + (500.70, 9432.76, -19909.81), docs/REFERENCE_COMPARISON.md).
 #   ledge 1155: block west face x 334.8 (tru), ledge z -17381.41, floor -18211.21; hang root off the west face
 #     (173.65, y, -17875.24); on top after the pull up (404.6, -2416.6) facing +x (tru yaw pi/2). The safety-drop session

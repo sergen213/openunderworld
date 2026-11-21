@@ -1,33 +1,36 @@
 #!/bin/sh
-# Status 2026-11-21: with this offset (tru start - our intro: [U] whether the start is the intro) the beam placement
-# caught a ledge instead (traces re-filed as chart/wine/ledge/ch_hang_*), and the loop-1009 pins fell to a floor: the
-# offset is likely wrong. Measure it from a known instance (e.g. beam 1031's markup via `wmem inst`) before re-running.
-# Chart reference corpus, l3_chapel (goto unit: tru = ours + (3817.47, -3091.84, 3143.17) (ChartCore: our 'player' intro 4928.4 200.5 -4740.8; tru start 8745.87 -2891.34 -1597.63)).
-# Balance beam 1031 (63 wide, x 4708.6 ours, top z -6163) with ledge loop 1009 round its top (x 4740.6 / 4677.4)
-# (GameReal.BeamFallsCatchScaffoldLedge, ChapelHangClimbsOntoBalanceBeam). Beam cases: dropped 40 onto the beam at ours
-# (4708.6, 4594.8) facing -y (tru yaw 0, camera (0,-1)). Hang cases: pinned 600 over loop 1009's +x side hang root.
+# Chart reference corpus, l3_chapel balance beam 1031 (63 wide, axis x 4708.6 ours, Lara's root on it at z -6163) with
+# ledge loop 1009 round its top (x 4740.6 / 4677.4 ours) (GameReal.BeamFallsCatchScaffoldLedge,
+# ChapelHangClimbsOntoBalanceBeam). The offset is measured after the goto from the instances present in both frames
+# (cmeasure; the 2026-11-21 first run used "tru start - our intro", which put her elsewhere). Spawns are given in our
+# frame (tru()).
+#   beam: from the hang on 1009's +x side (pinned 600 over the hang root, 6 out: the fall's air grab), Jump climbs
+#   onto the beam (S439 T698 -> S882 -> S885 by the chart); the beam cases chain their keys after that (tick 200+),
+#   facing -y along the beam (camera (0,-1) is set after the climb by turning: the beam faces -y, Lara faces it).
+#   drop: pinned 23 over the beam's axis facing -y: lands on it (or grabs the loop).
 # Usage (session dir exported, see chart_lib.sh): sessions/chart_l3_chapel.sh [noload]
 WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 . "$WREF_SRC/sessions/chart_lib.sh"
-UNIT=l3_chapel; OFF=3817.47,-3091.84,3143.17
+UNIT=l3_chapel
 [ "$1" = noload ] || cunit $UNIT || exit 1
+cmeasure $UNIT || exit 1
 HOLD=${HOLD:-60}
 F=beam
-B=8526.07,1502.96,-2979.8,0; CB=0,-1
-ccase $F ch_beam_land $B 200 $CB "dropped 40 onto beam 1031: lands into the beam idle?"
-cground $F ch_beam_walk $B 360 $CB "on the beam, Up held 60..300: bbeam_walk (140 units/s by the clip, M10)" 26:60:300
-cground $F ch_beam_walk_left_fall $B 700 $CB "Up + Left held 60..660: balance, about to fall, fall to the left, catch loop 1009 (OU-PLY-001)" 26:60:660 25:60:660
-cground $F ch_beam_walk_right_fall $B 700 $CB "Up + Right held 60..660: fall to the right" 26:60:660 27:60:660
-cground $F ch_beam_left_hold $B 700 $CB "Left held 60..660 standing on the beam: lean / about to fall" 25:60:660
-cground $F ch_beam_right_hold $B 700 $CB "Right held 60..660 standing on the beam" 27:60:660
-cground $F ch_beam_left_recover $B 500 $CB "Up + Left 60..200, then Right 200..300: off balance and recover" 26:60:300 25:60:200 27:200:300
-cground $F ch_beam_jump $B 300 $CB "Jump 80..84 on the beam" 20:80:84
-cground $F ch_beam_run_jump $B 360 $CB "Up 60..200 + Jump 120..124 on the beam" 26:60:200 20:120:124
-cground $F ch_beam_turn $B 300 $CB "Down 60..120 on the beam: turn round" 28:60:120
-cground $F ch_beam_crouch $B 300 $CB "Crouch 60..64 on the beam: drop off to the hang?" 11:60:64
-cground $F ch_beam_sprint $B 400 $CB "Up + Shift 60..300: beam sprint? (M10 unmeasured)" 26:60:300 a0:60:300
-F=ledge
-H=8724.1,1408.2,-2913.8,-1.5708
-ccase $F ch_loop1009_hang $H 240 -1,0 "pinned 600 over loop 1009's +x side hang root facing -x: falls, catches the loop"
-ccase $F ch_loop1009_jump_onto_beam $H 360 -1,0 "catch, Jump 150..154: bbeam_ledgeu_climbup onto the beam (S439 T698 -> S882 -> S885)" 20:150:154
-ccase $F ch_loop1009_shimmy $H 400 -1,0 "catch, Right held 150..380: shimmy round the loop" 27:150:380
+H=$(tru 4907.6 4594.8 -6063 180); CH=-1,0          # 600 over 1009's +x hang root (161 out of x 4740.6), facing -x
+ON="20:120:124"                                    # Jump from the hang: onto the beam
+ccase $F ch_loop_hang $H 200 $CH "pinned 600 over loop 1009's +x hang root: falls, air grab"
+ccase $F ch_beam_climb_on $H 300 $CH "hang on 1009, Jump 120..124: bbeam_ledgeu_climbup onto beam 1031, beam idle" $ON
+ccase $F ch_beam_walk $H 520 $CH "on the beam (Jump 120), then Left held 220..480: walks along the beam (camera -x: Left = -y)" $ON 25:220:480
+ccase $F ch_beam_walk_back $H 520 $CH "on the beam, then Right held 220..480 (+y)" $ON 27:220:480
+ccase $F ch_beam_across_fwd $H 700 $CH "on the beam, then Up held 220..660 (across the beam, -x): off balance, about to fall, fall / catch" $ON 26:220:660
+ccase $F ch_beam_across_back $H 700 $CH "on the beam, then Down held 220..660 (across, +x)" $ON 28:220:660
+ccase $F ch_beam_walk_across $H 700 $CH "on the beam, Left held 220..660 + Up held 260..660: walking with the stick across: about to fall" $ON 25:220:660 26:260:660
+ccase $F ch_beam_recover $H 700 $CH "on the beam, Left 220..600 + Up 260..360 then Down 360..460: off balance and recover" $ON 25:220:600 26:260:360 28:360:460
+ccase $F ch_beam_sprint $H 560 $CH "on the beam, Left + Shift held 220..500: beam sprint" $ON 25:220:500 a0:220:500
+ccase $F ch_beam_jump $H 420 $CH "on the beam, Jump 240..244: jump on / off the beam" $ON 20:240:244
+ccase $F ch_beam_jump_along $H 460 $CH "on the beam, Left 220..300 + Jump 250..254: jump along the beam" $ON 25:220:300 20:250:254
+ccase $F ch_beam_crouch $H 420 $CH "on the beam, Crouch 240..244: beam drop (bbeam_drop_* to the hang)" $ON 11:240:244
+ccase $F ch_beam_crouch_walk $H 460 $CH "on the beam, Left 220..400 + Crouch 260..264: drop while walking" $ON 25:220:400 11:260:264
+B=$(tru 4708.6 4594.8 -6140 -90); CB=0,-1
+ccase $F ch_beam_drop_on $B 260 $CB "pinned 23 over the beam's axis facing -y, released: lands on the beam or grabs the loop"
+ccase $F ch_beam_drop_on_walk $B 400 $CB "dropped onto the beam, then Up held 120..360 (along -y)" 26:120:360

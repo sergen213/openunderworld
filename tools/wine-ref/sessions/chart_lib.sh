@@ -51,10 +51,25 @@ cunit() {
         sleep 10; i=$((i+1)); done
     "$WREF_SRC/w.sh" wmem state | grep -qi "unit l3_main_bedroom" || { echo "new game did not reach the prologue" >&2; return 1; }
     [ "$1" = l3_main_bedroom ] && return 0
-    sleep 10; "$WREF_SRC/w.sh" wmem goto "$1"; sleep 100
+    # 2026-11-21: a goto 10 s after play began, while gameTracker flag 1 was still set (the prologue's opening
+    # cinematic), left the game without frames (l3_main_hall): wait for the flags to clear first.
+    i=0; until "$WREF_SRC/w.sh" wmem state | tr -d '\r' | grep -q " flags 00000000 " || [ $i -ge 60 ]; do sleep 5; i=$((i+1)); done
+    sleep 20; "$WREF_SRC/w.sh" wmem goto "$1"; sleep 100
     i=0; until "$WREF_SRC/w.sh" wmem state | grep -qi "unit $1 " || [ $i -ge 12 ]; do sleep 10; i=$((i+1)); done
     "$WREF_SRC/w.sh" wmem state | tr -d '\r' | grep -i "unit $1 " || { echo "goto $1 failed" >&2; return 1; }
 }
 # cground: ccase with SETTLE (default 90) free frames before tick 0, for cases that start standing (the pin's landing
 # has ended in the idle); cases that start with a fall or catch (hangs, holds, ladders) use ccase.
 cground() { _s=${SETTLE:-0}; SETTLE=${GSETTLE:-90}; ccase "$@"; SETTLE=$_s; }
+# cmeasure UNIT: OFF (tru = ours + d) from the instances present in both frames: `wmem inst` after the goto against
+# our intros of the unit (ours/intros.cpp, its binary at $OU_INTROS, default $OU_WREF_DIR/intros/intros), solved by
+# py/offset.py. Writes $OU_WREF_DIR/offset_UNIT.txt; returns 1 when too few instances agree.
+cmeasure() {
+    d="$OU_WREF_DIR/intros"; mkdir -p "$d"
+    [ -s "$d/$1.txt" ] || "${OU_INTROS:-$d/intros}" "${OU_GAME:-/mnt/1st4TB/Tomb Raider Underworld}" "$1" > "$d/$1.txt" || return 1
+    "$WREF_SRC/w.sh" wmem inst | tr -d '\r' > "$OU_WREF_DIR/inst_$1.txt"
+    r=$(python3 "$WREF_SRC/py/offset.py" "$d/$1.txt" "$OU_WREF_DIR/inst_$1.txt") || { echo "$r" >&2; return 1; }
+    echo "$1 $r" | tee "$OU_WREF_DIR/offset_$1.txt"; OFF=${r%% *}
+}
+# tru X Y Z YAWDEG: a spawn given in our frame (as the GameReal tests give it) as the tru frame "x,y,z,yawrad" for ccase.
+tru() { echo "$OFF" | awk -F, -v x="$1" -v y="$2" -v z="$3" -v w="$4" '{printf "%.2f,%.2f,%.2f,%.5f", x+$1, y+$2, z+$3, (w+90)*3.14159265/180}'; }
