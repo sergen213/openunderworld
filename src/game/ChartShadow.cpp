@@ -359,6 +359,7 @@ struct Shadow::Impl : ChartContext {
         return Water{true, waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds) - s.pos.z};
     }
     std::array<uint32_t, size_t(JEffect::kCount)> effects{};
+    bool wasAir = false; // the last tick's noFloor, for the landing event
     void effect(JEffect e, float) override { ++effects[size_t(e)]; }
     // ---- end group J ----
 };
@@ -397,6 +398,14 @@ void Shadow::tick(const World& world, const Actions& a) {
     m.stickLen = std::min(1.0f, glm::length(a.move));
     if (!m.started) rt_->start(m), m.started = true;
     else rt_->tick(m, dt * 30.0f);
+    // ---- group J ----
+    // Chart event 455 (0x1C7): her landing, posted when the ground check finds a floor under her again after a flight
+    // (the handlers in S288 / S1004 / S1292: T16 -> S1275 the landing group) [I: the message that posts it is not
+    // decoded; ours posts it on the tick the controller leaves its free-flight states].
+    const bool air = m.noFloor().value_or(false);
+    if (m.wasAir && !air) rt_->post(m, 455);
+    m.wasAir = air;
+    // ---- end group J ----
 
     const ChartRuntime& rt = *rt_;
     if (rt.state() != m.lastState || rt.stats.changes != m.lastChanges) m.stateTicks = 0;
