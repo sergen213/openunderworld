@@ -2,6 +2,7 @@
 // (docs/re/PLAYER_CHART.md "Runtime").
 #include "cdc/Cdc.hpp"
 #include "game/Chart.hpp"
+#include "game/Game.hpp"
 
 #include <gtest/gtest.h>
 
@@ -214,4 +215,25 @@ TEST(ChartRuntime, ButtonTimingValues) {
     EXPECT_EQ(actionValue({true, true, false, 0.5f}), 16);
     EXPECT_EQ(actionValue({true, false, true, 0}), -1);
     EXPECT_EQ(actionValue({true, false, false, 0.5f}), -16);
+}
+
+// --input-script's chart-contract form: [[tick, mask], ...] and a Wine case object shifted by its hold.
+TEST(InputScriptMask, ContractMasks) {
+    const auto s = ou::game::InputScript::parse("[[0,0],[10,1],[40,17],[46,1],[70,0]]");
+    EXPECT_EQ(s.at(9).move.y, 0.0f);
+    EXPECT_EQ(s.at(10).move.y, 1.0f);
+    EXPECT_FALSE(s.at(39).jump);
+    EXPECT_TRUE(s.at(40).jump);
+    EXPECT_FALSE(s.at(46).jump);
+    EXPECT_EQ(s.at(70).move.y, 0.0f);
+    const auto m = ou::game::InputScript::parse("[[0,2],[5,12],[6,960]]");
+    EXPECT_EQ(m.at(0).move.y, -1.0f);
+    EXPECT_EQ(m.at(5).move.x, 0.0f); // left + right cancel
+    const auto b = m.at(6);
+    EXPECT_TRUE(b.sprint && b.walk && b.grapple && b.drop);
+    EXPECT_FALSE(b.jump || b.interact);
+    const auto c = ou::game::InputScript::parse(R"({"spawn":{"hold_ticks":60},"input":[[0,0],[10,1]]})");
+    EXPECT_EQ(c.at(69).move.y, 0.0f);
+    EXPECT_EQ(c.at(70).move.y, 1.0f);
+    EXPECT_THROW(ou::game::InputScript::parse("[[1]]"), std::runtime_error);
 }

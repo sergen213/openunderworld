@@ -3,12 +3,14 @@
 #include "locale/Locale.hpp"
 
 #include <SDL3/SDL.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 namespace ou::game {
 
@@ -143,11 +145,53 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
     });
 }
 
+// The chart contract's form (docs/re/PLAYER_CHART.md "Shadow mode"): a JSON array [[tick, mask], ...] or a Wine corpus
+// case object (openunderworld-work/chart/wine/<family>/*.case.json) whose "input" is that array; each mask holds until
+// the next. Ticks are 60 Hz game ticks; a case's are shifted by its spawn.hold_ticks (the Wine trace starts after the
+// hold), so our trace tick = case tick + hold. Mask bits: 1 Fwd, 2 Back, 4 Left, 8 Right (stick axes), 0x10 Jump,
+// 0x20 Interact, 0x40 Crouch (drop), 0x80 Sprint, 0x100 Walk, 0x200 Grapple.
+namespace {
+bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out) {
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos || (text[first] != '[' && text[first] != '{')) return false;
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(text);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("input script: ") + e.what());
+    }
+    uint64_t shift = 0;
+    if (j.is_object()) {
+        if (j.contains("spawn") && j["spawn"].contains("hold_ticks")) shift = j["spawn"]["hold_ticks"].get<uint64_t>();
+        if (!j.contains("input")) throw std::runtime_error("input script: case object without \"input\"");
+        j = j["input"];
+    }
+    if (!j.is_array()) throw std::runtime_error("input script: expected [[tick, mask], ...]");
+    static constexpr std::pair<unsigned, const char*> kBits[] = {{0x10, "jump"}, {0x20, "interact"}, {0x40, "drop"},
+                                                                 {0x80, "sprint"}, {0x100, "walk"}, {0x200, "grapple"}};
+    for (const auto& e : j) {
+        if (!e.is_array() || e.size() < 2 || !e[0].is_number_unsigned() || !e[1].is_number_unsigned())
+            throw std::runtime_error("input script: entry " + e.dump() + " is not [tick, mask]");
+        const uint64_t tick = e[0].get<uint64_t>() + shift;
+        const unsigned m = e[1].get<unsigned>();
+        out.emplace_back(tick, "forward", float((m & 1) != 0) - float((m & 2) != 0));
+        out.emplace_back(tick, "right", float((m & 8) != 0) - float((m & 4) != 0));
+        for (const auto& [bit, name] : kBits) out.emplace_back(tick, name, float((m & bit) != 0));
+    }
+    return true;
+}
+} // namespace
+
 InputScript InputScript::parse(std::string_view text) {
     static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact", "save",
                                                     "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda",
                                                     "light", "grenade", "recenter", "camera", "manual"};
     InputScript s;
+    if (std::vector<std::tuple<uint64_t, std::string, float>> mask; parseMaskScript(text, mask)) {
+        for (auto& [tick, action, value] : mask) s.events_.push_back({tick, std::move(action), value});
+        std::stable_sort(s.events_.begin(), s.events_.end(), [](const Event& a, const Event& b) { return a.tick < b.tick; });
+        return s;
+    }
     std::istringstream in{std::string(text)};
     std::string line;
     for (int no = 1; std::getline(in, line); ++no) {
