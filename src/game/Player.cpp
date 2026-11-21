@@ -2223,8 +2223,12 @@ Player::GroundAim Player::groundAim(const JumpQuery& q, const JumpTarget& j) con
     const vec3 hit = pointOn(m, j.seg, j.t);
     const float dist = glm::length(xy(hit - q.base));
     a.flags = (dist < 550.0f || (j.frames < 9.0f && dist < 448.0f)) ? uint16_t(1u << 2) : uint16_t(0);
+    // +0xA80 = the query object's +0x100, copied from the chosen candidate's +0xC0 (0x770240), which the ledge class table
+    // fills [O: decomp]. ledgeClassOf's 4 is its "none of the bands" answer, for which tru.exe left 0 on l3_main_bedroom
+    // ledge 973 (Wine run_jump_bedroom: S289 T313 = cond 0x294 group 661 value 0) [I: one observation].
     const vec2 sd = segDir(m, j.seg);
-    a.cls = m.type == 13 ? int8_t(0) : int8_t(ledgeClassOf(col_, hit, vec2(-sd.y, sd.x) * j.side, s_.pos, q.dir));
+    const int cls = m.type == 13 ? 0 : ledgeClassOf(col_, hit, vec2(-sd.y, sd.x) * j.side, s_.pos, q.dir);
+    a.cls = int8_t(cls == 4 ? 0 : cls);
     return a;
 }
 // The take-off states' queries as aimGroundJump runs them (kind 0 standing q2, 1 with the stick q43, 2 running q26), as
