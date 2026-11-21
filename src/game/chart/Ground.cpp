@@ -619,6 +619,14 @@ void poleControlFrame(ChartContext& ctx, uint16_t id) {
 // (0x75E930 / 0x76E080 gear attachments), 402 (0x76D470 / 0x76D210 attach frame), 403 (0x76D4A0 / 0x76D240 jump target
 // frame), 420 (0x75DBC0 / 0x7712A0 / 0x771320 / 0x771330 markup attach), 426 (0x72BD40 limb IK), 502 (0x75C540 ->
 // 0x755A00 analog velocity), 505 (0x74D980 / 0x734920 ladder rung), 508 (0x76BF40 / 0x75C620 / 0x75C550 slide speed).
+// Integration contract with group B (src/game/chart/Ledge.cpp: markupContactProbe = 0x770BA0, markupAttachInit =
+// 0x76D010): 420 Entry 0x7712A0 = playerInt(0xED8) = playerInt(0xED4), +0xED4 = the attach surface class (0x75D6C0),
+// field(0xF0) &= ~0x3F, markupContactProbe, markupAttachInit, and installs agent +0x51C = 0x770ED0, a per-tick callback
+// (run by 0x781D90 every chart tick, reinstalled on Reentry 0x771320) that while bool property 414 (0x19E) holds runs
+// markupContactProbe and markupAttachInit EVERY tick (then the +0xF0 & 0x1C / & 0x40 handling and 0x75D6C0) - without
+// it the shimmy lookahead bits (condition 0x280) never refresh (Wine hang_shimmy_right_long: S454 T595 -> S450);
+// 420 Exit 0x771330 = +0xED8 = +0xED4, +0xED4 = 2, field(0xF0) &= ~0x3F, the callback removed. 402 Entry / Process
+// (0x76D470 / 0x76D210) end in markupAttachInit.
 void unportedSlot(ChartContext& ctx, uint16_t id) { unportedPart(ctx, id); }
 
 } // namespace
