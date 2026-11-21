@@ -124,7 +124,6 @@ void Shadow::tick(const World& world, const Actions& a) {
         m.sincePressed[i] = m.buttons[i].pressed() ? 0.0f : m.sincePressed[i] + dt;
     }
     m.aimHeld = a.aim;
-    m.timeMult = dt * 30.0f;
     m.nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
     if (world.player().steepUnder()) m.lastSteepMs = std::max<uint32_t>(m.nowMs, 1);
     const float yaw = world.stickYaw();

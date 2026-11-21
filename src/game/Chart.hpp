@@ -199,8 +199,6 @@ public:
     // ---- group A ----
     // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
     // unported).
-    // gameTracker_timeMult of the tick running (30 Hz frames; the shadow sets it before ChartRuntime::tick).
-    float timeMult = 0.5f;
     // Seconds since action `id` was last pressed (the action record's +8 press time against the input clock +0x1C).
     virtual std::optional<float> sincePress(int) const { return std::nullopt; }
     // !0x7145D0: a ceiling lower than the standing height (player data +0x10 = 512.01) over her (condition 0x1F7).
