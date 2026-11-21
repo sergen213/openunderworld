@@ -370,6 +370,9 @@ void takeoffEnter(ChartContext& ctx, uint16_t) {
     ctx.chartTarget = {};
     if (const int k = takeoffKind(ctx.chart().state()); k >= 0)
         if (const auto a = ctx.takeoffAim(k)) ctx.chartTarget = *a;
+    // Player +0x77C, the flight time to the target (30 Hz frames; 0x751FC0 / 0x73EDC0 time the re-aim by it, cond 0x2B0
+    // tests it) [O]; ours from the query's hit frame.
+    ctx.playerFloat(0x77C) = ctx.chartTarget.target ? ctx.chartTarget.frames : 0.0f;
     ctx.effect(JEffect::CollisionMask, 0x49);
 }
 void takeoffUpdate(ChartContext& ctx, uint16_t) { ctx.agentFloat(0x98) += ctx.timeMult; }
@@ -398,6 +401,14 @@ void airExit(ChartContext& ctx, uint16_t) {
 }
 void airUpdate(ChartContext& ctx, uint16_t) {
     ctx.agentFloat(0x3E8) += ctx.timeMult;
+    // 0x752410 re-solves the flight with the time left +0x77C (0x73EDC0); it runs down with the flight [I: the decrement's
+    // site is not found in the decomp; 0x751FC0 rewrites it while refining, which ours does not port]. The velocity
+    // itself is the controller's (Player::reaimJump), recorded here only.
+    if (jt(ctx)) {
+        float& left = ctx.playerFloat(0x77C);
+        left = std::max(0.0f, left - ctx.timeMult);
+        ctx.effect(JEffect::ReAim, left);
+    }
     const auto v = ctx.velocity();
     const bool rising = v && v->z > 0;
     ctx.effect(JEffect::CollisionMask, rising ? -0x48 : 0x48);

@@ -251,7 +251,7 @@ public:
     virtual std::optional<Candidates> jumpCandidates() const { return {}; }
     // The take-off states' jump query (0x6C0800 -> 0x7725A0 -> 0x771DB0 fill player +0xA64 while she takes off): kind 0
     // standing (q2), 1 with the stick (q43), 2 running (q26); the target with its +0xAC0 flags and +0xA80 type.
-    struct Aim { MarkupSlot target; uint32_t flags = 0; int type = 0; };
+    struct Aim { MarkupSlot target; uint32_t flags = 0; int type = 0; float frames = 0; }; // frames: 30 Hz frames to the hit
     virtual std::optional<Aim> takeoffAim(int) const { return {}; }
     // The chart's own jump target (player +0xA64 as the chart's actions set it: action 504's take-off query, action
     // 230's promotion); empty: the context's jumpTarget() answers.
@@ -287,7 +287,7 @@ public:
         CameraPush, CameraPop, CarriedPost, WeaponFlag, AnimEvent, PlayResource, StateMessage, LandDamage,
         LandImpulse, HeldLaunch, InteractNotify, PairedAttack, RollNotify, WrestleHelper, HairFrame, TuningValue,
         WaterDamage, AirMeter, CollisionMask, ClearJumpTarget, DetachMarkup, Rotation, CameraVariation, YawLimit,
-        ComboMeter, TargetPromote, AttachTarget, kCount
+        ComboMeter, TargetPromote, AttachTarget, ReAim, kCount
     };
     virtual void effect(JEffect, float = 0) {}
     // ---- end group J ----
