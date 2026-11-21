@@ -1063,6 +1063,11 @@ void Player::dropToHang(int ledge, int seg, float t, float side, std::string_vie
 // client flags 0xA0, material 0x14; with it the point 139 over the top is 69.5 up (class 1), without it the first
 // tread at the ledge's height (class 2, the pull-up the walkthrough's "up the central steps" needs).
 int Player::hangClearance() const {
+    const int c = hangClearanceClass();
+    return c == 11 ? 1 : c; // [I] the controller has no up jump without a target: 11 plays as 1
+}
+
+int Player::hangClearanceClass() const {
     constexpr float kRayZ = 252.0f, kBack = 100.0f, kOver = 139.0f, kStand = 512.0101f, kCrouch = 260.0f;
     const auto& m = col_.markup[size_t(s_.ledge)];
     const vec3 q = pointOn(m, s_.ledgeSeg, s_.ledgeT);
@@ -1070,7 +1075,7 @@ int Player::hangClearance() const {
     if (col_.playerRay(q - top * kBack + vec3(0, 0, kRayZ), top, kBack + kOver)) {
         const vec2 d = segDir(m, s_.ledgeSeg);
         if (glm::dot(vec2(-d.y, d.x), xy(top)) > 0.7f && shelfAt(s_.ledge, s_.ledgeSeg, s_.ledgeT)) return 8;
-        return 1; // [I] 0x74BB50's 2 (wall within 88.5) as 1: no up jump without a target
+        return 11; // 0x74E160: 0x74BB50's 2 (a wall in front of the top)
     }
     const auto floor = col_.playerRay(q + top * kOver + vec3(0, 0, kRayZ), vec3(0, 0, -1), kRayZ + 30.0f);
     const float dz = floor ? floor->point.z - q.z : -30.0f;
