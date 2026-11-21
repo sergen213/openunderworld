@@ -2213,6 +2213,17 @@ bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone, bool 
     const auto& m = col_.markup[size_t(j.markup)];
     const bool perch = m.type == 13; // landed on: her root arrives on the perch point (tryPerch from the air catches it)
     const vec3 hit = pointOn(m, j.seg, j.t), goal = perch ? hit : attachPose(j.markup, j.seg, j.t, j.side).first;
+    // The query's result record (+0x9C, lara.drm 0x2AA8C for q1 / q2 / q26 / q43) flags the hit for the chart (player
+    // +0x980 +0x140 = +0xAC0, cond 0x2BA; 0x7296C0 -> 0x729540 -> 0x729420 sets each passing entry's flags) [O-data]:
+    // flag 2 when the hit lies within 550 (horizontally) of the query's base point, or within 448 and under 9 frames;
+    // flag 9 needs point source 34 [U: not decoded, never set here]. The target type (+0xA80, cond 0x294 group 661) is the
+    // ledge class (ledgeClassOf). Recorded for the chart only; the controller does not read them.
+    {
+        const float dist = glm::length(xy(hit - q.base));
+        s_.aimFlags = (dist < 550.0f || (j.frames < 9.0f && dist < 448.0f)) ? uint16_t(1u << 2) : uint16_t(0);
+        const vec2 sd = segDir(m, j.seg);
+        s_.aimClass = perch ? int8_t(0) : int8_t(ledgeClassOf(col_, hit, vec2(-sd.y, sd.x) * j.side, s_.pos, f));
+    }
     if (running && !perch) {
         const vec2 sd = segDir(m, j.seg), out = vec2(-sd.y, sd.x) * j.side;
         const int cls = ledgeClassOf(col_, hit, out, s_.pos, f);

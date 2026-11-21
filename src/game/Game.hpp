@@ -529,6 +529,10 @@ struct PlayerState {
     int aimMarkup = -1, aimSeg = 0;
     float aimT = 0, aimSide = 1, aimLeft = 0;
     bool aimPerch = false;
+    // The aimed jump's result flags (player +0xAC0, the query's +0x9C record; bit 2 close) and target type (+0xA80, the
+    // ledge class), for the state chart only (Player::aimGroundJump); not saved, not read by the controller.
+    uint16_t aimFlags = 0;
+    int8_t aimClass = 0;
     // The jump query in effect (tru.exe player +0xA84): the last one a state ran, kept until another runs (Wine: the
     // run sets q56 every frame, a standing jump q2, idle and a fall from rest keep it). Its record's three heights rule
     // the next landing's fall damage (Health::fallHeights). Ours sets it at the jumps it models: the ground jumps (q2,
@@ -641,6 +645,13 @@ public:
     // tru.exe 0x7594C0 == 2 as tryWallJump tests it (WallJump.cpp): the wall hit of the lower ray, nullopt when no wall
     // a free jump can plant her feet on is ahead (chart condition 0x203 reads it too).
     std::optional<collision::Hit> wallJumpWall() const;
+    // tru.exe 0x7594C0's whole answer: 0 the upper ray meets no wall to jump at, 1 it does but the rest of the test fails
+    // (chart condition 0x217), 2 = wallJumpWall.
+    int wallJumpProbe() const;
+    bool wallJumpAnticipate(float lookFrames) const; // tru.exe 0x759260 (chart condition 0x20B), WallJump.cpp
+private:
+    std::optional<collision::Hit> wallJumpTest(int& result, float lookFrames, bool anticipate) const;
+public:
     // tru.exe 0x5DCE20 posting message 0x1C9 (too steep) for the face under her root, as floorKind judges it (the chart's
     // wall-slide stamp, agent +0x90, condition 0x206).
     bool steepUnder() const;
