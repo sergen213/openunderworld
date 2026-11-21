@@ -373,6 +373,12 @@ void registerFamilies(Registry& player, Registry& upper); // src/game/chart/Fami
 void markupContactProbe(ChartContext& ctx);
 void markupAttachInit(ChartContext& ctx);
 // ---- end group B ----
+// ---- group J ----
+// Player +0xA64 as the chart sees it (src/game/chart/Jump.cpp): the target the chart's own actions set
+// (ChartContext::chartTarget: action 504's take-off query, action 230's promotion), else the game's jumpTarget() unless
+// the chart already handed that one on when its flight ended (ChartContext::handedTarget).
+ChartContext::MarkupSlot chartJumpTarget(ChartContext& ctx);
+// ---- end group J ----
 
 // tru.exe 0x7607C0's value of an action: 1 on the press tick, frames held + 1 while down, -1 on the release tick,
 // -1 - frames while up (frames = 30 Hz frames since the change, at least 1).
