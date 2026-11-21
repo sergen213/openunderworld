@@ -426,6 +426,10 @@ LoadedUnit* World::findUnit(const std::string& name) {
 // one frame, input and the stream queue) until STREAM_PollLoadQueue is idle (0x5DE040, 0x5DDED0).
 UnitData World::loadWaiting(const std::string& name) {
     if (!streamer_ || !onLoadWait) return loader_(name);
+    // The old level's queued neighbours would run first (one FIFO worker): drop them. A failed load keeps pending_;
+    // joinStreams then loads a cancelled name itself (UnitStreamer::take).
+    for (const auto& p : pending_)
+        if (p.name != name) streamer_->cancel(p.name);
     streamer_->request(name);
     while (!streamer_->ready(name)) onLoadWait();
     return streamer_->take(name);
