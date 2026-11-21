@@ -4900,7 +4900,9 @@ between two 0x1B: on the keyboard its key name, drawn in the highlight 0x7D6932 
   units on the background streamer and `World::onLoadWait` redraws the screen, sends decoded scenes to the GPU and
   takes only window-close requests (a respawn's reload draws black). Animation [O-runtime: tru.exe under Wine
   2026-11-21, frame captures of a New Game, a LOAD GAME and a `wmem goto l1_seatop` in openunderworld-work/w-loadscr]:
-  the emblem turns clockwise at ~18°/s (polar cross-correlation over 14 s); the texts are revealed character by
+  the emblem turns clockwise at ~18°/s (polar cross-correlation over 14 s; in the New Game capture it stood still until
+  ~6.8 s after the screen appeared, ~2 s after that capture's slow fade-in ended [U: one capture, Wine frame rate;
+  ours turns from the start]); the texts are revealed character by
   character, left to right, at ~24 characters/s (the wipe front over chapter 1's story line, ~200 px/s at 1280×720), the
   story starting ~1.9 s after the screen appears, the title already complete by then [I: the title at the same rate
   from the start]. The mechanism [V-exe]: UIText's visible-character count (font block +0xD8, flushed by 0x477360)
