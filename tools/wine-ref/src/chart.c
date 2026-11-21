@@ -1,0 +1,310 @@
+// chart.exe: per-frame trace of Lara's player state chart in tru.exe, in lockstep with the game (docs/re/PLAYER_CHART.md,
+// tools/wine-ref/README.md "Chart traces"). Subcommands:
+//   chart info                      chart object, header, current state / parent / request / transition
+//   chart hook | unhook             install / remove the lockstep detour at the frame-counter increment (0x5E003F)
+//   chart trace <ticks> [vk:down:up ...]   lockstep trace; key times are TICKS (game frames) from the trace start
+//
+// Chart runtime [O: 0x787570 FindTransition, 0x7874D0 / 0x787E00 reset / enter, the ChangeState body at 0x789040..,
+// 0x785920 transition conditions, 0x783470 state anim request]: the locomotion chart object is *(playerData 0xFADB58 +
+// 0xF10) (the upper-body chart +0xF14); chart +4 -> the chart header in lara.drm (s16 +0 initial state, s16 +2 agent id,
+// u16 +8 states, u16 +0xA transitions, +0xC state pointer table, +0x10 transition pointer table); chart +0x510 the
+// current state record (0x28 bytes: s16 +4 anim request, s16 +6 parent), +0x514 the queued transition, +0x518 the
+// transition taken last (pointer into the transition records, 0x14 bytes, s16 +0 target state), +0x50C the chart's
+// update stamp (condition caches compare it), +0x51C cleared on every state change.
+// Frame [O: GAMELOOP_Frame 0x5DFFE0]: ... GAMELOOP_UpdateTime 0x5DA230; gameTracker (0xE7F088) +0x24 += 1 at 0x5E003F
+// (`add dword [esi+0x24],1; pop esi; ret`, 6 bytes). The detour replaces those bytes with a jump to a cave that does
+// the add, publishes the new frame number and spins (pause loop, ~5 s cap, after which it disables itself) until the
+// tracer acknowledges it. So the tracer sees every frame exactly once, between the frame's UpdateTime and the next
+// frame's simulation, and its key presses land between two known frames.
+// Fixed step [O: TIMING.md, 0x5DA230]: gameTracker +0xC8 variableTimestep = 0 with frameRateLock +0x120 = 3 makes every
+// frame a 16 667 us step (timeMult 0.5): the trace is then a 60 Hz tick sequence independent of the render rate.
+// trace writes both while it runs (FIXED=0: leave the variable step) and restores the variable step at the end.
+//
+// Output (contract TSV, W/chart/wine/README.md): one header line, then one row per frame:
+//   tick state parent request stateTicks px py pz vx vy vz yaw inputs [var_<name>=value ...]
+//   tick = frame - first frame (fixed 60 Hz steps); state = index into the chart's state table (S###); request /
+//   parent from the state record; stateTicks = frames since the state was entered, 0 on the entry tick (a transition
+//   back into the same state counts as an entry); p = Instance +0x20 minus OFFSET (OFFSET=dx,dy,dz, tru = ours + d:
+//   our unit frame), v = world velocity in units/s (Instance +0x2A0 is local: x left, y -forward; x 30), yaw =
+//   Instance +0x38 - 90 deg in degrees (our frame), var_lvx / var_lvy the raw local +0x2A0 x / y (units per 30 Hz frame);
+//   inputs = hex mask of the keys held while this frame was simulated (1 Fwd 2 Back 4 Left 8 Right 0x10 Jump 0x20
+//   Interact 0x40 Crouch 0x80 Sprint 0x100 Walk 0x200 Grapple). Extra columns: t30 (chart +0x508, state time in 30 Hz
+//   frames, as ChartCore's), var_frame (gameTracker +0x24), var_tr (index of the last transition taken, +0x518), var_q
+//   (queued transition +0x514, -1 none), var_ub (upper-body chart state), var_an (Instance +0xC18 anim word),
+//   var_tpx/tpy/tpz/tyaw (raw tru position / yaw in radians), var_ms (wall ms), and VARS=name:base:hexoff[:f],...
+//   (base pd = player data, p = instance, c = chart object; :f prints the dword as a float).
+//   SCANAT=tick SCANV=x,y (debug): list where instance / proxy / player data hold the float pair (x, y) at that tick.
+// Env: SPAWN=x,y,z[,yaw] (written with zero velocity while paused for HOLD ticks, default 20, before tick 0),
+//   CAMFOLLOW=dx,dy,dist,h (camera pinned behind her every frame: Forward means world (dx,dy)), GOD (default 1: health
+//   kept full), KEYWAIT=ms (default 40: the frame is held this long after a key change so that the press is queued
+//   before the next frame's message pump), FIXED (default 1).
+#include <windows.h>
+#include <tlhelp32.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#define GT 0xE7F088u
+#define HOOK 0x5E003Fu
+static HANDLE h;
+static DWORD rd32(DWORD a) { DWORD v = 0; ReadProcessMemory(h, (void*)a, &v, 4, 0); return v; }
+static short rd16(DWORD a) { short v = 0; ReadProcessMemory(h, (void*)a, &v, 2, 0); return v; }
+static float rdf(DWORD a) { float v = 0; ReadProcessMemory(h, (void*)a, &v, 4, 0); return v; }
+static void w32(DWORD a, DWORD v) { WriteProcessMemory(h, (void*)a, &v, 4, 0); }
+
+static int patchSuspended(DWORD a, const unsigned char* v, int n) { // as wmem wbs: no thread inside [a, a+n)
+    const DWORD pid = GetProcessId(h);
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        HANDLE th[256]; int k = 0, clear = 1;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        THREADENTRY32 te = {sizeof te};
+        for (BOOL ok = Thread32First(snap, &te); ok && k < 256; ok = Thread32Next(snap, &te)) {
+            if (te.th32OwnerProcessID != pid) continue;
+            HANDLE t = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, te.th32ThreadID);
+            if (!t) continue;
+            SuspendThread(t); th[k++] = t;
+            CONTEXT c = {0}; c.ContextFlags = CONTEXT_CONTROL;
+            if (GetThreadContext(t, &c) && c.Eip >= a && c.Eip < a + (DWORD)n) clear = 0;
+        }
+        CloseHandle(snap);
+        int ok = 0;
+        if (clear) {
+            DWORD old; VirtualProtectEx(h, (void*)a, n, PAGE_EXECUTE_READWRITE, &old);
+            ok = WriteProcessMemory(h, (void*)a, v, n, 0); FlushInstructionCache(h, (void*)a, n);
+        }
+        for (int i = 0; i < k; ++i) ResumeThread(th[i]), CloseHandle(th[i]);
+        if (clear) return ok;
+        Sleep(1);
+    }
+    return 0;
+}
+
+static const unsigned char kOrig[6] = {0x83, 0x46, 0x24, 0x01, 0x5E, 0xC3};
+// Cave data: +0x100 enabled, +0x104 posted frame, +0x108 acknowledged frame.
+static DWORD caveOf(void) {
+    unsigned char b[6]; ReadProcessMemory(h, (void*)HOOK, b, 6, 0);
+    if (b[0] != 0xE9) return 0;
+    DWORD rel; memcpy(&rel, b + 1, 4); return HOOK + 5 + rel;
+}
+static DWORD hook(void) {
+    DWORD c = caveOf();
+    if (c) return c;
+    unsigned char b[6]; ReadProcessMemory(h, (void*)HOOK, b, 6, 0);
+    if (memcmp(b, kOrig, 6)) { puts("unexpected bytes at 0x5E003F"); exit(1); }
+    c = (DWORD)(size_t)VirtualAllocEx(h, 0, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    DWORD en = c + 0x100, po = c + 0x104, ak = c + 0x108;
+    unsigned char s[96]; int n = 0;
+#define B(x) s[n++] = (unsigned char)(x)
+#define D(x) do { DWORD v_ = (x); memcpy(s + n, &v_, 4); n += 4; } while (0)
+    B(0x83); B(0x46); B(0x24); B(0x01);              // add dword [esi+0x24],1
+    B(0x83); B(0x3D); D(en); B(0x00);                // cmp dword [en],0
+    B(0x74); int jDone = n; B(0);                    // je done
+    B(0x50); B(0x51);                                // push eax; push ecx
+    B(0x8B); B(0x46); B(0x24);                       // mov eax,[esi+0x24]
+    B(0xA3); D(po);                                  // mov [po],eax
+    B(0xB9); D(0x10000000);                          // mov ecx,0x10000000
+    int L = n;
+    B(0x39); B(0x05); D(ak);                         // cmp [ak],eax
+    B(0x74); int jOut = n; B(0);                     // je out
+    B(0xF3); B(0x90);                                // pause
+    B(0x49);                                         // dec ecx
+    B(0x75); { int rel8 = L - (n + 1); B(rel8); }     // jnz L
+    B(0xC7); B(0x05); D(en); D(0);                   // mov dword [en],0 (tracer gone: stop waiting)
+    s[jOut] = (unsigned char)(n - (jOut + 1));
+    B(0x59); B(0x58);                                // out: pop ecx; pop eax
+    s[jDone] = (unsigned char)(n - (jDone + 1));
+    B(0x5E); B(0xC3);                                // done: pop esi; ret
+    WriteProcessMemory(h, (void*)(size_t)c, s, n, 0);
+    w32(en, 0); w32(po, 0); w32(ak, 0);
+    unsigned char j[6] = {0xE9, 0, 0, 0, 0, 0x90}; DWORD rel = c - (HOOK + 5); memcpy(j + 1, &rel, 4);
+    if (!patchSuspended(HOOK, j, 6)) { puts("patch failed"); exit(1); }
+    return c;
+}
+
+// Index of a pointer in a table of n pointers (state or transition table), -1 if absent.
+static DWORD tab[4][4096]; static DWORD tabAt[4]; static int tabN[4];
+static int indexIn(int slot, DWORD table, int n, DWORD ptr) {
+    if (!table || !ptr) return -1;
+    if (n > 4096) n = 4096;
+    if (tabAt[slot] != table || tabN[slot] != n) {
+        memset(tab[slot], 0, sizeof tab[slot]); ReadProcessMemory(h, (void*)table, tab[slot], n * 4, 0);
+        tabAt[slot] = table; tabN[slot] = n;
+    }
+    for (int i = 0; i < n; ++i) if (tab[slot][i] == ptr) return i;
+    return -1;
+}
+typedef struct { DWORD chart, hdr, st, tr, q; int idx, trIdx, qIdx, req, par; } Chart;
+static Chart readChart(DWORD chart, int slot) {
+    Chart c = {0}; c.chart = chart; c.idx = c.trIdx = c.qIdx = c.req = c.par = -1;
+    if (!chart) return c;
+    c.hdr = rd32(chart + 4); c.st = rd32(chart + 0x510); c.q = rd32(chart + 0x514); c.tr = rd32(chart + 0x518);
+    if (!c.hdr) return c;
+    int ns = (unsigned short)rd16(c.hdr + 8), nt = (unsigned short)rd16(c.hdr + 0xA);
+    c.idx = indexIn(slot * 2, rd32(c.hdr + 0xC), ns, c.st);
+    c.trIdx = indexIn(slot * 2 + 1, rd32(c.hdr + 0x10), nt, c.tr);
+    c.qIdx = c.q ? indexIn(slot * 2 + 1, rd32(c.hdr + 0x10), nt, c.q) : -1;
+    if (c.st) { c.req = rd16(c.st + 4); c.par = rd16(c.st + 6); }
+    return c;
+}
+
+static void sendKey(int vk, int up) { // as ref.c: 1 / 2 mouse buttons, else a scan-code key (arrows extended)
+    INPUT in = {0};
+    if (vk == 1 || vk == 2) {
+        in.type = INPUT_MOUSE;
+        in.mi.dwFlags = vk == 1 ? (up ? MOUSEEVENTF_LEFTUP : MOUSEEVENTF_LEFTDOWN) : (up ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_RIGHTDOWN);
+    } else {
+        in.type = INPUT_KEYBOARD; in.ki.wVk = (WORD)vk; in.ki.wScan = MapVirtualKeyA(vk, 0);
+        in.ki.dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0);
+        if (vk >= VK_LEFT && vk <= VK_DOWN) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    SendInput(1, &in, sizeof in);
+}
+static unsigned maskOf(int vk) {
+    switch (vk) {
+    case 0x26: case 0x57: return 0x1;    // Up / W: forward
+    case 0x28: case 0x53: return 0x2;    // Down / S
+    case 0x25: case 0x41: return 0x4;    // Left / A
+    case 0x27: case 0x44: return 0x8;    // Right / D
+    case 0x20: return 0x10;              // Space: jump
+    case 0x45: return 0x20;              // E: interact
+    case 0x11: case 0xA2: return 0x40;   // Ctrl: crouch / drop
+    case 0xA0: case 0x10: return 0x80;   // LShift: sprint
+    case 0xA4: case 0x12: return 0x100;  // LAlt: walk
+    case 0x51: return 0x200;             // Q: grapple
+    }
+    return 0;
+}
+
+typedef struct { char name[24]; char base; DWORD off; int isF; } Var;
+
+int main(int argc, char** argv) {
+    if (argc < 2) return 2;
+    HWND w = FindWindowA("TOMBRAIDER8", NULL);
+    if (!w) { puts("no window"); return 1; }
+    DWORD pid; GetWindowThreadProcessId(w, &pid);
+    h = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+    if (!h) { puts("no process"); return 1; }
+    if (!strcmp(argv[1], "info")) {
+        DWORD pd = rd32(0xFADB58), p = rd32(0xE7F094);
+        for (int k = 0; k < 2; ++k) {
+            DWORD ch = pd ? rd32(pd + 0xF10 + 4 * k) : 0; Chart c = readChart(ch, k);
+            printf("chart%d %08lx hdr %08lx init %d agent %d states %u trans %u stab %08lx ttab %08lx | state %08lx S%d req %d par %d"
+                   " tr %d q %d stamp %lu 51c %08lx\n", k, ch, c.hdr, c.hdr ? rd16(c.hdr) : -1, c.hdr ? rd16(c.hdr + 2) : -1,
+                   c.hdr ? (unsigned short)rd16(c.hdr + 8) : 0, c.hdr ? (unsigned short)rd16(c.hdr + 0xA) : 0,
+                   c.hdr ? rd32(c.hdr + 0xC) : 0, c.hdr ? rd32(c.hdr + 0x10) : 0, c.st, c.idx, c.req, c.par, c.trIdx, c.qIdx,
+                   ch ? rd32(ch + 0x50C) : 0, ch ? rd32(ch + 0x51C) : 0);
+        }
+        printf("frame %lu varstep %lu lock %lu pos %.2f %.2f %.2f yaw %.4f hook %08lx\n", rd32(GT + 0x24), rd32(GT + 0xC8),
+               rd32(GT + 0x120), rdf(p + 0x20), rdf(p + 0x24), rdf(p + 0x28), rdf(p + 0x38), caveOf());
+        return 0;
+    }
+    if (!strcmp(argv[1], "hook")) { printf("cave %08lx\n", hook()); return 0; }
+    if (!strcmp(argv[1], "unhook")) {
+        DWORD c = caveOf(); if (!c) { puts("not hooked"); return 0; }
+        w32(c + 0x100, 0); w32(c + 0x108, rd32(c + 0x104));
+        int ok = patchSuspended(HOOK, kOrig, 6); puts(ok ? "unhooked" : "unhook failed"); return !ok;
+    }
+    if (strcmp(argv[1], "trace") || argc < 3) return 2;
+
+    int ticks = atoi(argv[2]), ne = argc - 3; if (ne > 64) ne = 64;
+    WORD vk[64]; int dn[64], up[64], st[64] = {0};
+    for (int i = 0; i < ne; ++i) { unsigned k; sscanf(argv[3 + i], "%x:%d:%d", &k, &dn[i], &up[i]); vk[i] = (WORD)k; }
+    int hold = getenv("HOLD") ? atoi(getenv("HOLD")) : 20, keyWait = getenv("KEYWAIT") ? atoi(getenv("KEYWAIT")) : 40;
+    int god = !getenv("GOD") || atoi(getenv("GOD")), fixed = !getenv("FIXED") || atoi(getenv("FIXED"));
+    float sp[4] = {0}; int nsp = getenv("SPAWN") ? sscanf(getenv("SPAWN"), "%f,%f,%f,%f", sp, sp + 1, sp + 2, sp + 3) : 0;
+    float off[3] = {0, 0, 0}; if (getenv("OFFSET")) sscanf(getenv("OFFSET"), "%f,%f,%f", off, off + 1, off + 2);
+    if (nsp < 3) hold = 0;
+    int settle = getenv("SETTLE") ? atoi(getenv("SETTLE")) : 0; // free, unrecorded frames between the pin and tick 0
+    float cf[4]; int cam = getenv("CAMFOLLOW") && sscanf(getenv("CAMFOLLOW"), "%f,%f,%f,%f", cf, cf + 1, cf + 2, cf + 3) == 4;
+    Var vars[16]; int nv = 0;
+    if (getenv("VARS")) { char buf[512]; strncpy(buf, getenv("VARS"), 511); buf[511] = 0;
+        for (char* t = strtok(buf, ","); t && nv < 16; t = strtok(0, ",")) {
+            Var v = {{0}}; char b[8] = {0}, f[4] = {0}; unsigned off;
+            if (sscanf(t, "%23[^:]:%7[^:]:%x:%3s", v.name, b, &off, f) >= 3) { v.base = b[0]; v.off = off; v.isF = f[0] == 'f'; vars[nv++] = v; } } }
+
+    SetForegroundWindow(w); timeBeginPeriod(1);
+    DWORD cave = hook(), EN = cave + 0x100, PO = cave + 0x104, AK = cave + 0x108;
+    DWORD oldVar = rd32(GT + 0xC8), oldLock = rd32(GT + 0x120);
+    if (fixed) { w32(GT + 0x120, 3); w32(GT + 0xC8, 0); }
+    // Arm: release a frame a killed tracer left waiting, then the next frame end publishes its number and waits for us.
+    w32(EN, 0); w32(AK, rd32(PO)); Sleep(100);
+    w32(AK, 0); w32(PO, 0); w32(EN, 1);
+    LARGE_INTEGER fq, t0, tn; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&t0);
+    printf("tick\tstate\tparent\trequest\tstateTicks\tpx\tpy\tpz\tvx\tvy\tvz\tyaw\tinputs\n"); fflush(stdout);
+    DWORD f0 = 0, lastSt = 0, lastTr = 0; int t = -hold - settle - 1, stTicks = 0; unsigned mask = 0; int lost = 0;
+    while (t < ticks) {
+        // wait for the next published frame (or the cave giving up)
+        DWORD f;
+        for (int spin = 0;; ++spin) {
+            f = rd32(PO);
+            if (f && f != rd32(AK)) break;
+            if (!rd32(EN)) { fprintf(stderr, "lockstep lost (cave timed out)\n"); lost = 1; break; }
+            if (spin > 20000) { fprintf(stderr, "no frame for 20 s\n"); lost = 1; break; }
+            Sleep(0);
+            if (spin > 200) Sleep(1);
+        }
+        if (lost) break;
+        ++t;
+        if (t == 0) f0 = f;
+        DWORD p = rd32(0xE7F094), pd = rd32(0xFADB58), c1 = pd ? rd32(pd + 0xF10) : 0, c2 = pd ? rd32(pd + 0xF14) : 0;
+        if (t < -settle) { // holding at the spawn: position, velocity, heading, proxy capsule (+0x288 +0x640/+0x680/+0x6D0)
+            float z[3] = {0, 0, 0}, cc[3] = {sp[0], sp[1], sp[2] + 315.4f}; DWORD q = rd32(p + 0x288);
+            WriteProcessMemory(h, (void*)(p + 0x20), sp, 12, 0); WriteProcessMemory(h, (void*)(p + 0x2A0), z, 12, 0);
+            if (nsp > 3) WriteProcessMemory(h, (void*)(p + 0x38), sp + 3, 4, 0);
+            if (q) for (int o = 0; o < 3; ++o) WriteProcessMemory(h, (void*)(q + (o == 0 ? 0x640 : o == 1 ? 0x680 : 0x6D0)), cc, 12, 0);
+        }
+        if (god && pd) { float hp = 1000.0f; WriteProcessMemory(h, (void*)(pd + 0x628), &hp, 4, 0); }
+        if (cam) { DWORD cm = rd32(0xE80534); if (cm && p) { float lp[3]; ReadProcessMemory(h, (void*)(p + 0x20), lp, 12, 0);
+            float cp[3] = {lp[0] - cf[0] * cf[2], lp[1] - cf[1] * cf[2], lp[2] + cf[3]};
+            WriteProcessMemory(h, (void*)(cm + 0x90), cp, 12, 0); WriteProcessMemory(h, (void*)(cm + 0x150), cp, 12, 0); } }
+        if (t >= 0) {
+            Chart a = readChart(c1, 0), b = readChart(c2, 1);
+            if (a.st != lastSt || (a.tr != lastTr && a.tr && rd16(a.tr) == a.idx)) stTicks = 0; else ++stTicks;
+            lastSt = a.st; lastTr = a.tr;
+            float s[7] = {0}; if (p) { ReadProcessMemory(h, (void*)(p + 0x20), s, 12, 0); ReadProcessMemory(h, (void*)(p + 0x2A0), s + 3, 12, 0); s[6] = rdf(p + 0x38); }
+            unsigned short an = 0; if (p) ReadProcessMemory(h, (void*)(p + 0xC18), &an, 2, 0);
+            QueryPerformanceCounter(&tn);
+            float t30 = c1 ? rdf(c1 + 0x508) : 0, yawDeg = (s[6] - 1.5707963f) * 57.29578f;
+            while (yawDeg > 180) yawDeg -= 360;
+            while (yawDeg <= -180) yawDeg += 360;
+            // +0x2A0 is kept in her local frame (x = left, y = -forward, z up; checked against the position steps of
+            // the running jump, the hang leaps back / aside): world = forward * -y + left * x, our heading psi.
+            float ps = (yawDeg / 57.29578f), fx = cosf(ps), fy = sinf(ps);
+            float wvx = (-s[4] * fx - s[3] * fy) * 30, wvy = (-s[4] * fy + s[3] * fx) * 30;
+            printf("%d\t%d\t%d\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.1f\t%.1f\t%.1f\t%.3f\t%x\tt30=%.3f\tvar_frame=%lu\tvar_tr=%d\tvar_q=%d\tvar_ub=%d\tvar_an=%u"
+                   "\tvar_tpx=%.2f\tvar_tpy=%.2f\tvar_tpz=%.2f\tvar_tyaw=%.4f\tvar_lvx=%.2f\tvar_lvy=%.2f\tvar_ms=%.0f",
+                   t, a.idx, a.par, a.req, stTicks, s[0] - off[0], s[1] - off[1], s[2] - off[2], wvx, wvy, s[5] * 30,
+                   yawDeg, mask, t30, f, a.trIdx, a.qIdx, b.idx, an, s[0], s[1], s[2], s[6], s[3], s[4],
+                   (tn.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart);
+            for (int i = 0; i < nv; ++i) {
+                DWORD base = vars[i].base == 'p' ? p : vars[i].base == 'c' ? c1 : pd, v = base ? rd32(base + vars[i].off) : 0;
+                if (vars[i].isF) { float fv; memcpy(&fv, &v, 4); printf("\tvar_%s=%g", vars[i].name, fv); }
+                else printf("\tvar_%s=%lx", vars[i].name, v);
+            }
+        if (getenv("SCANAT") && t == atoi(getenv("SCANAT"))) { // debug: where else is a position (x, y) stored?
+            float sx, sy; sscanf(getenv("SCANV"), "%f,%f", &sx, &sy);
+            DWORD bases[3] = {p, p ? rd32(p + 0x288) : 0, pd}; const char* bn[3] = {"p", "q", "pd"};
+            for (int k = 0; k < 3; ++k) { static float buf[0x1000]; if (!bases[k]) continue;
+                memset(buf, 0, sizeof buf); ReadProcessMemory(h, (void*)bases[k], buf, sizeof buf, 0);
+                for (int i = 0; i + 1 < 0x1000; ++i) if (buf[i] > sx - 2 && buf[i] < sx + 2 && buf[i + 1] > sy - 2 && buf[i + 1] < sy + 2)
+                    fprintf(stderr, "scan %s+%x %g %g %g\n", bn[k], i * 4, buf[i], buf[i + 1], buf[i + 2]); }
+        }
+            putchar('\n'); fflush(stdout);
+        }
+        // keys for the next frame (tick t + 1): a key is down over [down, up)
+        int changed = 0;
+        for (int i = 0; i < ne; ++i) {
+            if (st[i] == 0 && t + 1 >= dn[i]) { sendKey(vk[i], 0); mask |= maskOf(vk[i]); st[i] = 1; changed = 1; }
+            if (st[i] == 1 && t + 1 >= up[i]) { sendKey(vk[i], 1); mask &= ~maskOf(vk[i]); st[i] = 2; changed = 1; }
+        }
+        if (changed && keyWait > 0) Sleep(keyWait);
+        w32(AK, f);
+    }
+    for (int i = 0; i < ne; ++i) if (st[i] == 1) sendKey(vk[i], 1);
+    w32(EN, 0); w32(AK, rd32(PO));
+    if (fixed) { w32(GT + 0xC8, oldVar); w32(GT + 0x120, oldLock); }
+    timeEndPeriod(1);
+    (void)f0;
+    return lost;
+}
