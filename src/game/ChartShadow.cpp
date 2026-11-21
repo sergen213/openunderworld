@@ -520,19 +520,17 @@ void Shadow::tick(const World& world, const Actions& a) {
         rt_->tick(m, dt * 30.0f);   // 0x768C50: agent 0 (Lara) ...
         upper_->tick(m, dt * 30.0f); // ... then agent 1 (upper body)
     }
-    // ---- group B ---- A kind-2 request (an anim-graph node, 0x443720 -> 0x43E250) has no clip on the chart's clock
-    // (docs Runtime "Kind-2 requests"). [I] Its end (0x768CF0 from the anim controller) is taken from our controller: the
-    // one-shot clips it plays from the chart's state on ending in a loop (the controller settles: ledgeb_attach_M ->
-    // ledgeb_idle). Run_jump S533 (request 22, the hang attach): ledgeb_attach_M runs 31 ticks, Wine's S533 31. The
-    // standing jump's S535 (same node, flight + attach) runs 38 in Wine, ours 47: the graph node is not the
-    // controller's clips (needs the anim-graph VM).
+    // ---- group B ---- A kind-2 request (an anim-graph node, 0x443720 -> 0x43E250) that ChartRuntime::resolveRequest
+    // cannot resolve has no clip on the chart's clock (docs Runtime "Anim request"). [I] Its end (0x768CF0 from the anim
+    // controller) is then taken from our controller: the one-shot clips it plays from the chart's state on ending in a
+    // loop (the controller settles: ledgeb_attach_M -> ledgeb_idle). A resolved node ends on the chart's own clip clock.
     {
         const PlayerState& ps = world.player().state();
         const int st = rt_->state();
         if (st != m.kind2State) m.kind2State = st, m.kind2Since = world.ticks();
         if (ps.clip != m.ctlClip) {
             const State* cs = rt_->data().state(st);
-            if (m.started && cs && cs->requestKind == 2 && !m.ctlClip.empty() && !m.ctlLoop && ps.loop && m.ctlClipSince + 1 >= m.kind2Since)
+            if (m.started && cs && cs->requestKind == 2 && !rt_->resolved() && !m.ctlClip.empty() && !m.ctlLoop && ps.loop && m.ctlClipSince + 1 >= m.kind2Since)
                 rt_->animEnded(m);
             m.ctlClip = ps.clip, m.ctlLoop = ps.loop, m.ctlClipSince = world.ticks();
         }

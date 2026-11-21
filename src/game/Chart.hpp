@@ -431,6 +431,7 @@ public:
     bool animLoops() const;
     const Request* pattern() const;                        // the pattern playing for the state's request, null when none
     int playingPattern() const { return playing_ ? playingIndex_ : -1; }
+    bool resolved() const { return playing_.has_value(); } // the state's request plays a known pattern (kind 2: its node resolved)
     float clipStartFrame() const { return clipStart_; }  // the clip clock's frame when the clip started
     uint64_t clipStarts() const { return clipStarts_; } // counts clip (re)starts; a kind-2 node that plays nothing keeps the clip
 

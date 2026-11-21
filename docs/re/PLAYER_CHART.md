@@ -57,9 +57,16 @@ All offsets below are from the start of the player data block.
   (src/script) shares the opcode numbering but is not this VM (its 0x65 calls a method on a receiver). A pattern's clip starts at (start - blend) frames (0x441FB0), so
   that it stands at the pattern's start frame when the crossfade ends: `ng_standing_jump` (blend 6, start 6) plays all
   its 10 frames, `ng_run_start` (4 / 6) from its frame 2. A negative lead is cut to 0 for `ng_running_jump_forwards`
-  (2 / 1) and kept (the clip held at its first frame) for the wall jump's clips [U which branch decides; 0x4428A0
-  subtracts the blend from the start (cut at 0) only when the layer's blend weight test passes, else the clip starts
-  at its start frame and crossfades over the blend: not modelled].
+  (2 / 1) and kept (the clip held at its first frame) for the wall jump's clips [U which branch decides]. Decoded
+  [O]: 0x4428A0 takes blend = pattern +0x19 (or the previous pattern's +0x1B when >= 0), start = +0x1A; when the
+  layer's blend test passes (+0xA4 == 0, or +0xA8 > 0 with +0xAC == 0) it sets the layer fade (0x433D40) and, if
+  +0xA4 stays 0, start -= blend, blend = 0, start cut at 0; else start and blend stay. For the first clip, a blend > 0
+  with time per key (+0x34) > 100 and start below one key moves start to that key and lengthens the blend by the
+  difference; 0x441FB0 then subtracts the blend from the start (no cut) on a channel that is not the layer's first,
+  else crossfades from the start; 0x432850 sets the clip time = start; AnimationEnded (0xC9, 0x783840) polls that
+  time against 0x438930 (keys x time per key, rounded up to whole keys). None of these branches gives S245's 15 ticks
+  for 680 (5 keys of 100, start 1, blend 4: 10 or 8 ticks) nor the wall jump's held clips [U: what +0xA4 / +0xA8 /
+  +0xAC hold for Lara's layer and which channel 0x441FB0 sees].
 
 ### Function registry [O]
 
@@ -253,7 +260,8 @@ the others are marked [I] with what blocks them.
 | `boneRise()` (0x1F) | root z delta | bone 0 z now - previous (+0x90 / +0x94) | [I] kept: root z delta; bone 0 needs the posed skeleton of the chart's clip |
 | `supportFoot()` (0x12D), pattern requests | chart clip on the runtime clock | events 0x34 / 0x35 / 0x36 of the layer's clip (0x716F30) | physical already (the chart's own clip) |
 | `supportFoot()`, kind-2 requests | controller clip and clip time | the clip the anim graph node picks (below) | *physical*: the pattern `resolveRequest` gets from the node (S245 -> 680, S40 -> 685 / 691); the controller clip only when a node does not resolve (unknown stamina) |
-| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller) | *rebased*: the node's pattern on the clip clock; none when unresolved [U: S245 10 ticks vs Wine 15, the queue's end timing] |
+| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller; 0xC9 itself polls the layer clip's time against 0x438930's length) | *rebased* where the node resolves: its pattern on the clip clock [U: S245 10 ticks vs Wine 15]. Unresolved nodes (node 22: S533 / S535, module 1 natives 4 / 5 / 7 / 8 / 16 not ported) use the row below |
+| animation end of an unresolved kind-2 node (group B bridge, `Shadow::tick`) | — | as above | *controller-derived* [I]: `animEnded` when our controller's one-shot clip, started within a tick of the state, settles into a loop (S533 31 ticks = Wine; S535 47 vs Wine 38); gated on `!ChartRuntime::resolved()` so resolved nodes get no second end |
 | `attachedMarkup()` (+0xC94) | controller `attachedMarkup()` / ledge seg / t, empty in HangJump | written by the markup attach actions (0x76D010 ...) | [I] blocked: attach actions (group B) must write a chart-side slot |
 | `jumpTarget()` (+0xA64), `jumpQueryFlags()` (+0xAC0), `jumpTargetType()` (+0xA80) | controller `aimMarkup` / `aimFlags` / `aimClass` | take-off query (+0xA84) and action 230 (0x772CA0) promoting the candidates +0x3A0 / +0x3E0 | [I] partly: `chartJumpTarget` (df3c1da) keeps it chart-side, re-queried every take-off frame; prop 400's attach (0x75F2D0) consumes it; the controller fallback goes then |
 | `takeoffAim()` | controller `groundJumpAim` | the take-off jump query (0x751FC0 / 0x72B5C0) on geometry | [I] geometry query run through the controller's aim code; needs the query split out of `Player` |

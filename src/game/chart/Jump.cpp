@@ -614,13 +614,6 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
             ctx.effect(JEffect::TargetPromote, float(pick->markup));
         }
     }
-    // Prop 400 (bool): 0x75F2D0 attaches her to the target markup (+0xA64 / +0x9F0 / +0xA68) [O: the call]; the chart's
-    // target is consumed by it: the game's attach holds it from here (+0xC94) [I: 0x75F2D0's callees not decoded].
-    if (rt.propBool(400).value_or(false) && jt(ctx)) {
-        ctx.effect(JEffect::AttachTarget, float(jt(ctx).markup));
-        ctx.handedTarget = ctx.jumpTarget().markup;
-        ctx.chartTarget = {};
-    }
     if (cls) ctx.effect(JEffect::AttachTarget, float(cls)); // the class handler that would run (not ported here)
     // the setters of these classes detach the old markup and attach the jump target (0x74ED30 ...: 0x6FDBE0, 0x707B90)
     if (attachTargetClass(cls)) attachChartMarkup(ctx, jt(ctx));
