@@ -111,8 +111,10 @@ struct Shadow::Impl : ChartContext {
         const auto& col = w->collision();
         if (m < 0 || size_t(m) >= col.markup.size()) return {};
         const auto& p = col.markup[size_t(m)].points;
-        if (seg < 0 || size_t(seg) + 1 >= p.size()) return {};
-        return std::pair{p[size_t(seg)], p[size_t(seg) + 1]};
+        // 0x5C3AA0 takes an index past the last segment as the last one (with a debug print)
+        if (seg < 0 || p.size() < 2) return {};
+        const size_t s = std::min(size_t(seg), p.size() - 2);
+        return std::pair{p[s], p[s + 1]};
     }
     int markupSegmentCount(int m) const override {
         const auto& col = w->collision();

@@ -178,7 +178,8 @@ public:
     };
     virtual MarkupSlot attachedMarkup() const { return {}; }
     virtual MarkupSlot jumpTarget() const { return {}; }
-    // 0x5C3AA0: segment `seg` of markup `m` (start, end); nullopt when it has none.
+    // 0x5C3AA0: segment `seg` of markup `m` (start, end); an index past the last segment gives the last one; nullopt
+    // when it has none.
     virtual std::optional<std::pair<glm::vec3, glm::vec3>> markupSegment(int, int) const { return {}; }
     virtual int markupSegmentCount(int) const { return 0; }
     // 0x493330 with ray flags 0x2C19E7 (the player code's line query) from a to b: the hit's distance from a, nullopt

@@ -41,8 +41,9 @@ struct LedgeContext : ChartContext {
         return s;
     }
     std::optional<std::pair<glm::vec3, glm::vec3>> markupSegment(int m, int seg) const override {
-        if (m != 0 || seg < 0 || seg + 1 >= int(pts.size())) return {};
-        return std::pair{pts[size_t(seg)], pts[size_t(seg) + 1]};
+        if (m != 0 || seg < 0) return {};
+        const size_t i = std::min(size_t(seg), pts.size() - 2); // 0x5C3AA0 clamps past the last segment
+        return std::pair{pts[i], pts[i + 1]};
     }
     int markupSegmentCount(int m) const override { return m == 0 ? int(pts.size()) - 1 : 0; }
     std::optional<float> playerRay(glm::vec3 a, glm::vec3 b) const override {
