@@ -136,6 +136,41 @@ struct Shadow::Impl : ChartContext {
         return w->player().hangClearanceClass();
     }
     // ---- end group B ----
+
+    // ---- group J ----
+    // Ours runs no ground check in flight; tru.exe's 0x5DCE20 clears bit 19 every check and sets it when it finds no
+    // floor (posting 0x1CC). [I] her free-flight states are its "no floor".
+    std::optional<bool> noFloor() const override {
+        const game::State st = w->player().state().state;
+        return st == game::State::Jump || st == game::State::Fall || st == game::State::HangJump;
+    }
+    // Instance velocity +0x2A0 per 30 Hz frame [I: her displacement this 60 Hz tick x 2, root motion included].
+    std::optional<glm::vec3> velocity() const override { return (w->player().state().pos - w->previous().pos) * 2.0f; }
+    // Bone 0 z now minus previous frame's (+0x90 / +0x94, docs/re/CAMERA.md) [I: bone 0 moves with her root].
+    std::optional<float> boneRise() const override { return w->player().state().pos.z - w->previous().pos.z; }
+    std::optional<bool> combatFlag(int bit) const override {
+        if (bit == 22) return w->combat().headShotReady; // 0x400000 (0x6E6630), Combat.hpp
+        if (bit == 27) return w->combat().adrenalineMode; // 0x8000000 (focused fire)
+        return {};
+    }
+    std::optional<bool> carrying() const override { return w->heldPortable() != 0; }
+    std::optional<ChartContext::Grapple> grapple() const override {
+        const PlayerState& s = w->player().state();
+        const game::State st = s.state;
+        const bool on = st == game::State::GrappleThrow || st == game::State::GrappleSwing || st == game::State::GrapplePull ||
+                        st == game::State::GrappleRappel || s.grappleUid != 0;
+        if (!on) return ChartContext::Grapple{};
+        return ChartContext::Grapple{true, true, s.grappleAnchor, s.ropeLength, w->player().maxRope()};
+    }
+    std::optional<Water> water() const override {
+        const PlayerState& s = w->player().state();
+        const int m = w->player().waterAt(s.pos);
+        if (m < 0) return Water{};
+        return Water{true, waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds) - s.pos.z};
+    }
+    std::array<uint32_t, size_t(JEffect::kCount)> effects{};
+    void effect(JEffect e, float) override { ++effects[size_t(e)]; }
+    // ---- end group J ----
 };
 
 Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log) : impl_(std::make_unique<Impl>()) {

@@ -195,6 +195,42 @@ public:
     virtual int ledgeClearanceClass() const { return 0; }
     // ---- end group B ----
 
+    // ---- group J ----
+    // Jump / air / combat-edge / carry / water-depth reads of the group-J conditions (src/game/chart/Jump.cpp). nullopt
+    // = the context cannot answer (the condition counts as unported, never a guess).
+    virtual std::optional<bool> noFloor() const { return {}; }       // instance +0x14 bit 19: 0x5DCE20 found no floor
+    virtual std::optional<glm::vec3> velocity() const { return {}; } // instance +0x2A0, units per 30 Hz frame
+    virtual std::optional<float> boneRise() const { return {}; }     // bone 0 z of matrices +0x90 minus previous +0x94
+    virtual std::optional<int> wallJumpProbe() const { return {}; }  // 0x7594C0: 0 no wall, 1 wall not jumpable, 2 jump
+    virtual std::optional<bool> combatFlag(int) const { return {}; } // (player +0x504) +0x1FC bit n
+    virtual std::optional<int> combatMode() const { return {}; }     // (player +0x504) +0x50
+    virtual std::optional<bool> upperProp(uint16_t) const { return {}; } // upper chart's current-state bool property (0x6EEF00)
+    virtual std::optional<bool> carrying() const { return {}; }      // player +0x858 (portable) != 0
+    // The grapple component (owner queries 0x175 / 0x176): attached = query 0x17C non-null, the attach point
+    // (0x4D8D90 +0x80), rope length (+0xCC) and its limit (+0xC8).
+    struct Grapple {
+        bool component = false, attached = false;
+        glm::vec3 anchor{0};
+        float rope = 0, ropeMax = 0;
+    };
+    virtual std::optional<Grapple> grapple() const { return {}; }
+    // Water under her (0x764340 / 0x764550): inWater = player's water block present; depth = -(player +0x914) + waves.
+    struct Water {
+        bool inWater = false;
+        float depth = 0;
+    };
+    virtual std::optional<Water> water() const { return {}; }
+    // Effects of group-J actions and side-effect conditions on the game. Shadow mode records them (never applied to
+    // the live Player); `value` is the effect's parameter.
+    enum class JEffect : uint8_t {
+        CameraPush, CameraPop, CarriedPost, WeaponFlag, AnimEvent, PlayResource, StateMessage, LandDamage,
+        LandImpulse, HeldLaunch, InteractNotify, PairedAttack, RollNotify, WrestleHelper, HairFrame, TuningValue,
+        WaterDamage, AirMeter, CollisionMask, ClearJumpTarget, DetachMarkup, Rotation, CameraVariation, YawLimit,
+        ComboMeter, kCount
+    };
+    virtual void effect(JEffect, float = 0) {}
+    // ---- end group J ----
+
 private:
     friend class ChartRuntime;
     ChartRuntime* chart_ = nullptr;
