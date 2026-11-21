@@ -616,18 +616,108 @@ void poleControlFrame(ChartContext& ctx, uint16_t id) {
 
 // Markup-bound actions whose every slot needs the attached markup / jump target systems (counted each time a slot runs):
 // 220 (0x75C790 / 0x75CA20 IK target bone), 230 (0x772CA0 markup anim target), 236 (0x745100 root-motion warp), 323
-// (0x75E930 / 0x76E080 gear attachments), 402 (0x76D470 / 0x76D210 attach frame), 403 (0x76D4A0 / 0x76D240 jump target
-// frame), 420 (0x75DBC0 / 0x7712A0 / 0x771320 / 0x771330 markup attach), 426 (0x72BD40 limb IK), 502 (0x75C540 ->
-// 0x755A00 analog velocity), 505 (0x74D980 / 0x734920 ladder rung), 508 (0x76BF40 / 0x75C620 / 0x75C550 slide speed).
-// Integration contract with group B (src/game/chart/Ledge.cpp: markupContactProbe = 0x770BA0, markupAttachInit =
-// 0x76D010): 420 Entry 0x7712A0 = playerInt(0xED8) = playerInt(0xED4), +0xED4 = the attach surface class (0x75D6C0),
-// field(0xF0) &= ~0x3F, markupContactProbe, markupAttachInit, and installs agent +0x51C = 0x770ED0, a per-tick callback
-// (run by 0x781D90 every chart tick, reinstalled on Reentry 0x771320) that while bool property 414 (0x19E) holds runs
-// markupContactProbe and markupAttachInit EVERY tick (then the +0xF0 & 0x1C / & 0x40 handling and 0x75D6C0) - without
-// it the shimmy lookahead bits (condition 0x280) never refresh (Wine hang_shimmy_right_long: S454 T595 -> S450);
-// 420 Exit 0x771330 = +0xED8 = +0xED4, +0xED4 = 2, field(0xF0) &= ~0x3F, the callback removed. 402 Entry / Process
-// (0x76D470 / 0x76D210) end in markupAttachInit.
+// (0x75E930 / 0x76E080 gear attachments), 403 (0x76D4A0 / 0x76D240 jump target frame), 426 (0x72BD40 limb IK), 502
+// (0x75C540 -> 0x755A00 analog velocity), 505 (0x74D980 / 0x734920 ladder rung), 508 (0x76BF40 / 0x75C620 / 0x75C550
+// slide speed).
 void unportedSlot(ChartContext& ctx, uint16_t id) { unportedPart(ctx, id); }
+
+// 0x5BE2F0: a markup is usable unless flagged 0x80000000 (or its owner instance is hidden / flagged 2, 0x20000000,
+// 0x800: [I] ours has no hidden markup owners).
+bool usable(const ChartContext::MarkupSlot& m) { return m && !(m.flags & 0x80000000u); }
+
+// 0x75D6C0: the attach surface class, player +0xED8 = the old +0xED4, then +0xED4 by the markup's flags: none of
+// 0x4F400010 -> 2; 0x400000 with her root not 110.62 (Lara data +0x770) below segment 1's end (0x75D650) -> 0; 0x10
+// -> 1. The rest goes through the markup-type tables (0x74B5F0 / 0x731A50, 0x741720 / 0x731B00, 0x733F80, 0x733F60,
+// 0x74F480) ours does not model: counted as action 420's, +0xED4 kept.
+void attachSurfaceClass(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
+    ctx.playerInt(0xED8) = ctx.playerInt(0xED4);
+    if (!(m.flags & 0x4F400010u)) {
+        ctx.playerInt(0xED4) = 2;
+        return;
+    }
+    if (m.flags & 0x400000u) {
+        const auto seg = ctx.markupSegment(m.markup, 1);
+        if (!seg) return unportedPart(ctx, 420);
+        if (!(ctx.position().z - seg->first.z < -ctx.chart().charts().data<float>(0x770))) {
+            ctx.playerInt(0xED4) = 0;
+            return;
+        }
+    }
+    if (m.flags & 0x10u) {
+        ctx.playerInt(0xED4) = 1;
+        return;
+    }
+    unportedPart(ctx, 420);
+}
+
+// 0x75D8D0: the class of the attached markup (+0xC94), else of the jump target (+0xA64), when usable.
+void classifyAttach(ChartContext& ctx) {
+    const auto a = ctx.attachedMarkup();
+    const auto m = a ? a : ctx.jumpTarget();
+    if (usable(m)) attachSurfaceClass(ctx, m);
+}
+
+// 0x76D270 on the attached markup: the attach frame (agent +0xB0: edge-aligned 0x737D60, box 0x6EBEF0 or from the
+// normal / edge direction; ours: group B's markupContactProbe builds its own frame [I]), player +0xEDC = 0, then
+// 0x76D010 (markupAttachInit).
+void attachFrameInit(ChartContext& ctx) {
+    if (!usable(ctx.attachedMarkup())) return;
+    ctx.playerInt(0xEDC) = 0;
+    markupAttachInit(ctx);
+}
+
+bool prop414(ChartContext& ctx) { return ctx.chart().propBool(0x19E).value_or(false); }
+
+// Action 420 (PSCAF_MarkupAttachFrame).
+// PreAnimEntry 0x75DBC0: with bool property 414 the attach surface class (0x75D8D0).
+void attachPre(ChartContext& ctx, uint16_t) {
+    if (prop414(ctx)) classifyAttach(ctx);
+}
+// Entry 0x7712A0: installs agent +0x51C = 0x770ED0 (0x781D80); with property 414: the class, agent +0xF0 &= ~0x3F,
+// group B's markupContactProbe (0x770BA0) and the attach frame 0x76D270. Reentry 0x771320 only reinstalls +0x51C.
+// +0x51C is cleared on every state change and run by 0x781D90 on message 0xA6, which Lara's update 0x71BFA0 posts
+// every frame: so the callback runs every frame while 420 is in the state's chain; ours runs it as 420's Process slot
+// [I: its place in the frame against the chart tick].
+void attachEntry(ChartContext& ctx, uint16_t) {
+    if (!prop414(ctx)) return;
+    classifyAttach(ctx);
+    ctx.chart().field(0xF0) &= ~0x3F;
+    markupContactProbe(ctx);
+    attachFrameInit(ctx);
+}
+// The callback 0x770ED0. Grab offset: property 422 (0x1A6, not bool) -> player +0xCE8 = it + agent +0x3D4 (the flex
+// sag); property 421 (0x1A5, not bool) -> +0xCE8 = it. With property 414: markupContactProbe, 0x76D010 on the attached
+// point (markupAttachInit), the +0xF0 bit 0x40 (secondary markup +0xEAC handed to the attach update instead) cleared;
+// then 0x708830 (the attach update with the property 412 / 413 / 425 / 429 / 418 / 434 / 415 / 424 / 426 / 390 / 391
+// switches: not ported, counted) and with property 414 the attach surface class of the attached markup.
+void attachTick(ChartContext& ctx, uint16_t id) {
+    ChartRuntime& rt = ctx.chart();
+    if (const Property* p = rt.property(0x1A6); p && p->type != 2) ctx.playerFloat(0xCE8) = rt.charts().propFloat(*p) + ctx.agentFloat(0x3D4);
+    if (const Property* p = rt.property(0x1A5); p && p->type != 2) ctx.playerFloat(0xCE8) = rt.charts().propFloat(*p);
+    const bool on = prop414(ctx);
+    if (on) {
+        markupContactProbe(ctx);
+        markupAttachInit(ctx);
+        rt.field(0xF0) &= ~0x40;
+    }
+    if (ctx.attachedMarkup()) unportedPart(ctx, id); // 0x708830
+    if (on)
+        if (const auto a = ctx.attachedMarkup()) attachSurfaceClass(ctx, a);
+}
+// Exit 0x771330: with property 414, 0x770AD0 (agent +0xB0 frame back to identity, player +0xED8 = +0xED4, +0xED4 = 2)
+// and agent +0xF0 &= ~0x3F.
+void attachExit(ChartContext& ctx, uint16_t) {
+    if (!prop414(ctx)) return;
+    for (int i = 0; i < 16; ++i) ctx.agentFloat(0xB0 + 4 * i) = i % 5 == 0 ? 1.0f : 0.0f;
+    ctx.playerInt(0xED8) = ctx.playerInt(0xED4);
+    ctx.playerInt(0xED4) = 2;
+    ctx.chart().field(0xF0) &= ~0x3F;
+}
+
+// Action 402 (PSCAF_AttachToMarkupFrame): Entry 0x76D470 = 0x76D270 on the attached markup, Process 0x76D210 =
+// 0x76D010 on the attached point (markupAttachInit); Exit 0x6457A0.
+void attachFrameEntry(ChartContext& ctx, uint16_t) { attachFrameInit(ctx); }
+void attachFrameProcess(ChartContext& ctx, uint16_t) { markupAttachInit(ctx); }
 
 } // namespace
 
@@ -676,9 +766,10 @@ void registerGround(Registry& player, Registry&) {
     player.action(230, {.preEntry = unportedSlot, .preReentry = unportedSlot}, "PSCPF_MarkUpAttach_SetAnimTarget", g);
     player.action(236, {.entry = unportedSlot}, "PSCAF_AlignRootMotionToTarget", g);
     player.action(323, {.preEntry = unportedSlot, .exit = unportedSlot}, "PSCAF_GearAttachmentVisibility", g);
-    player.action(402, {unportedSlot, nullptr, nullptr, nullptr, noop, unportedSlot}, "PSCAF_AttachToMarkupFrame", g);
+    player.action(402, {attachFrameEntry, nullptr, nullptr, nullptr, noop, attachFrameProcess}, "PSCAF_AttachToMarkupFrame", g);
     player.action(403, {unportedSlot, nullptr, nullptr, nullptr, noop, unportedSlot}, "PSCAF_JumpTargetOrientAndTrack", g);
-    player.action(420, {unportedSlot, unportedSlot, unportedSlot, nullptr, unportedSlot}, "PSCAF_MarkupAttachFrame", g);
+    // Reentry 0x771320 only reinstalls the callback, which ours runs as the Process slot.
+    player.action(420, {attachEntry, noop, attachPre, nullptr, attachExit, attachTick}, "PSCAF_MarkupAttachFrame", g);
     player.action(426, {.process = unportedSlot}, "PSCAF_LimbIKOffNearSegmentEnd", g);
     player.action(502, {.process = unportedSlot}, "PSCAF_AnalogLocomotionVelocity", g);
     player.action(505, {.preEntry = unportedSlot, .preReentry = unportedSlot, .exit = unportedSlot, .process = noop}, "PSCAF_LadderRungAlign", g);
