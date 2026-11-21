@@ -501,6 +501,8 @@ public:
     Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log);
     ~Shadow();
     void tick(const World& world, const Actions& a); // after World::tick
+    // The chart enters `state` (ChartRuntime::enter) on the first tick at or after world tick `tick` (--chart-state).
+    void enterAt(int state, uint64_t tick);
     std::string summary() const;
     const ChartRuntime& runtime() const { return *rt_; }
 

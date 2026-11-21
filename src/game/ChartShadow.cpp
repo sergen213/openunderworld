@@ -474,6 +474,9 @@ struct Shadow::Impl : ChartContext {
     std::map<std::string, ClipEvents, std::less<>> clipCommands;
     uint64_t clipChanges = ~0ull;
     float clipFrame = 0;
+    // --chart-state N@T: the chart enters state N at world tick T (Shadow::enterAt); -1 none.
+    int enterState = -1;
+    uint64_t enterTick = 0;
     // ---- end group CD ----
 };
 
@@ -494,6 +497,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
     }
     if (const auto o = objData(bigfile, "lara")) impl_->clipCommands = clipEvents(*o); // group CD: critical sections
 }
+void Shadow::enterAt(int state, uint64_t tick) { impl_->enterState = state, impl_->enterTick = tick; }
 Shadow::~Shadow() = default;
 
 void Shadow::tick(const World& world, const Actions& a) {
@@ -520,6 +524,9 @@ void Shadow::tick(const World& world, const Actions& a) {
         rt_->tick(m, dt * 30.0f);   // 0x768C50: agent 0 (Lara) ...
         upper_->tick(m, dt * 30.0f); // ... then agent 1 (upper body)
     }
+    // Wine corpus cases that begin in the previous case's state (case.json start.state): put the chart there at the
+    // given world tick, as a change would (ChartRuntime::enter), without a transition.
+    if (m.enterState >= 0 && world.ticks() >= m.enterTick) rt_->enter(m, m.enterState), m.enterState = -1;
     // ---- group B ---- A kind-2 request (an anim-graph node, 0x443720 -> 0x43E250) has no clip on the chart's clock
     // (docs Runtime "Kind-2 requests"). [I] Its end (0x768CF0 from the anim controller) is taken from our controller: the
     // one-shot clips it plays from the chart's state on ending in a loop (the controller settles: ledgeb_attach_M ->

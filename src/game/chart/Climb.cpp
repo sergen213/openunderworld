@@ -279,7 +279,7 @@ bool markupAngle(ChartContext& ctx, const Cond& c, const ChartContext::MarkupSlo
     return moveDirSector(ctx, d) == sectorOf(mode(c));
 }
 // 0x1A8 (0x76ECC0): the jump target (+0xA64, +0xA68).
-bool markupAngleJumpTarget(ChartContext& ctx, const Cond& c) { return markupAngle(ctx, c, ctx.jumpTarget()); }
+bool markupAngleJumpTarget(ChartContext& ctx, const Cond& c) { return markupAngle(ctx, c, chartJumpTarget(ctx)); }
 // 0x1AC (0x76ECF0): the attached markup (+0xC94, +0xC98).
 bool markupAngleAttached(ChartContext& ctx, const Cond& c) { return markupAngle(ctx, c, ctx.attachedMarkup()); }
 
@@ -338,7 +338,7 @@ bool attachAngle(ChartContext& ctx, const Cond& c) {
 
 // 0x2B0 (0x764D80): a jump target and player float +0x77C (its time to go) <= timeMult * 0.5. 0 / 1.
 bool jumpTargetReached(ChartContext& ctx, const Cond& c) {
-    const bool b = ctx.jumpTarget() && ctx.playerFloat(0x77C) <= ctx.timeMult * 0.5f;
+    const bool b = chartJumpTarget(ctx) && ctx.playerFloat(0x77C) <= ctx.timeMult * 0.5f;
     switch (mode(c)) {
     case 0: return !b;
     case 1: return b;
@@ -354,7 +354,7 @@ bool markupLinked(ChartContext& ctx, const Cond&) {
 
 // 0x2B2 (0x763F10): jump target (+0xA64) == attached markup (+0xC94) (both absent counts as equal), edge-coded.
 bool jumpTargetIsAttached(ChartContext& ctx, const Cond& c) {
-    return edge(ctx, c, ctx.jumpTarget().markup == ctx.attachedMarkup().markup);
+    return edge(ctx, c, chartJumpTarget(ctx).markup == ctx.attachedMarkup().markup);
 }
 
 // 0x2B5 (0x762D20 -> 0x731EA0), cached: an attached markup and its param within 0.05 of round(param) or round + 1.
@@ -463,7 +463,7 @@ void stampDeadline(ChartContext& ctx, uint16_t) { ctx.deadline8B083C = float(ctx
 // x lara.drm s16 +0x112 (63), z + s16 +0x114 (-151), no higher than the water surface (player +0x8DC volume +0x58 [U]);
 // +0x1270 the facing quaternion (from (0, -1, 0) to -n) is kept as the yaw in +0x1270. Without a jump target nothing.
 void climbOutTarget(ChartContext& ctx, uint16_t id) {
-    const auto t = ctx.jumpTarget();
+    const auto t = chartJumpTarget(ctx);
     if (!t) return;
     const Charts& d = ctx.chart().charts();
     glm::vec3 p = t.point + glm::vec3(glm::vec2(t.normal), 0) * float(d.data<int16_t>(0x112));
