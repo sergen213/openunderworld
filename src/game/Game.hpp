@@ -804,6 +804,10 @@ private:
         uint8_t recordFlags = 0, resultRecordFlags = 0;     // their +8 (bit 1: the list excludes)
         bool strict = false;
         mutable bool unknown = false;
+        // The data-driven tests' input frame: the stick's world direction (point source 8, 0xFADFB0 +0xB0 +8) and the
+        // control yaw (kind 9, 0x6EBA90); markupSearch fills them.
+        vec2 stickDir{0};
+        float controlYaw = 0;
     };
     // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
     // (`record`) passing one of its class record's entries. A moving markup is met in its own frame (0x70F300).
