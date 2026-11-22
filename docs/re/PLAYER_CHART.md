@@ -213,8 +213,9 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
   Known knife-edge [O-runtime vs ours]: the strict sweep insets beam candidates by 0x6FE040's class-record +0x98 /
   +0x9A (48), so in ch_beam_walk ours grips exactly 48.0 from beam 1031's end and the lookahead's `walked < +0x9A` holds
   only by rounding (a small root change, 059b62e, flips it: S935 instead of S917 at t243). tru's grip in that take sits
-  at the end (walked 0); in jump_along 48.16 in. 0x6FE040 skips the insets for markups with MUD bit 0x4, and ours
-  derives MUD flags from the type only (beam 1031 is 0x00010009 in tru); revisit with the real per-markup flags.
+  at the end (walked 0); in jump_along 48.16 in. 0x6FE040 skips the insets only for closed markups (MUD bit 0x4,
+  `collision::mud`: 0x5BE650 sets it when the first point equals the last); beams 1031 and 759 are open, so the insets
+  stay and tru's end grip in ch_beam_walk is still unexplained (another candidate source, not the flags).
   Player fields live in `ChartContext::playerInt / playerFloat` keyed by the tru.exe offset.
 - Group CD (`src/game/chart/Climb.cpp`, ChartContext block `group CD`): the shared gates 0xCA (critical section),
   0x1F5 (InWater; value 1 = player +0x8EC without 0x400, the catalog's reading is inverted), 0x204 (mantle probe,
