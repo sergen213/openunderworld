@@ -110,7 +110,7 @@ unsigned inputMask(const Actions& a) {
 
 // The chart's view of World / Player: input actions timed here from the same Actions the world got.
 struct Shadow::Impl : ChartContext, PlayerDriver {
-    enum Button { Jump, Crouch, Sprint, Interact, Grapple, ManualAim, Grenade, ReAim, kButtons };
+    enum Button { Jump, Crouch, Sprint, Interact, Grapple, ManualAim, Grenade, ReAim, Shoot, TargetLock, kButtons };
     std::array<ButtonTime, kButtons> buttons;
     // Seconds since each button's last press (never pressed: as long ago as tru.exe's zeroed press time can be).
     std::array<float, kButtons> sincePressed = [] { std::array<float, kButtons> t; t.fill(1e9f); return t; }();
@@ -131,8 +131,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         switch (id) { // generalbank action map DTP 47 (docs/GAMEPLAY.md "Button timing", "Rope inputs", Melee.cpp)
         // 136 (context 8) and 115 (context 9) share control 0 with 52, 135 (context 12) and 72 (context 19) control 1
         // with 50 (am.txt A0 / A1 / A86 / A126) [O]; contexts not modelled [I].
-        case 52: case 47: case 136: case 115: return Jump;
-        case 50: case 51: case 101: case 135: case 72: return Crouch;
+        // 119 / 118 (context 10): control 0 (button 3, Jump) / control 1 (button 2, Crouch) (am.txt A77 / A76) [O].
+        case 52: case 47: case 136: case 115: case 119: return Jump;
+        case 50: case 51: case 101: case 135: case 72: case 118: return Crouch;
         case 42: return Sprint;
         // 112 (context 14), 34 (context 17), 79 (context 0): control 2 = virtual button 0, Interact
         // (openunderworld-work/gameplaygoal/melee/am.txt A89 / A103 / A119) [O]; the contexts are not modelled [I].
@@ -140,6 +141,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         case 46: return Grapple;
         case 25: case 37: return ManualAim;
         case 102: return Grenade;
+        // 33 (context 17): control 4 = button 5, Shoot (context 18: control 46 = button 21, the vehicle's; ours folds
+        // contexts); 35 (context 17): control 22 = button 4, Target Lock (am.txt A100 / A102 / A111; control records B4 /
+        // B22 / B46 code 5 / 4 / 0x15) [O]; contexts not modelled [I].
+        case 33: return Shoot;
+        case 35: return TargetLock;
         // 28 (context 0): control 29 = virtual button 8 (ours "recenter", Q / pad left stick click), second control 9 =
         // virtual button 9 (Manual Aim) (am.txt A118) [O].
         case 28: return ReAim;
@@ -222,7 +228,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         std::optional<glm::vec3> lift;
         if (p.bone > 0)
             if (const auto b = w->boneWorld(p.bone), r = w->boneWorld(0); b && r) lift = *b - *r;
-        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift,
+        // player +0xEA0 (action 510's enter, chart/Jump.cpp airEnter: markup index + 1, 0 none)
+        const int released = const_cast<Impl*>(this)->playerInt(0xEA0) - 1;
+        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift, released,
                                                 p.velocityMode == 1 ? queryVelocity : std::nullopt, searchAttach());
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
@@ -329,6 +337,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // actions 503 / 510 set 0x49 / 0x81 / 0xC9 and clear 0x48 while she rises, Jump.cpp's CollisionMask effects); a
     // skipped check drops her support (0x5D76B0: +0x610 = 0), posts nothing and finds no floor.
     uint32_t collisionMask = 0x48;
+    std::optional<bool> stairsByte = false; // Lara +0x11D4 (ChartContext::onStairs), kept while the check is skipped
     void groundCheck(const Charts& c) {
         if (!(collisionMask & 8)) {
             ground = {}, supportBody = false;
@@ -338,7 +347,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const glm::vec3 feet = w->player().state().pos;
         ground = w->player().groundCheck(feet, half, supportBody ? half : 1.0f);
         supportBody = ground.floor && ground.onBody;
+        stairsByte = ground.stairs;
     }
+    std::optional<bool> onStairs() const override { return stairsByte; }
     const PlayerState* player() const override { return &w->player().state(); }
     const World* world() const override { return w; }
 
@@ -426,7 +437,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     std::optional<float> playerRay(glm::vec3 a, glm::vec3 b) const override {
         const float d = glm::length(b - a);
         if (d <= 0) return {};
-        if (const auto h = w->collision().playerRay(a, (b - a) / d, d)) return h->t;
+        if (const auto h = w->collision().playerRay(a, (b - a) / d, d, true)) return h->t;
         return {};
     }
     bool hasCollision() const override { return w != nullptr; }
@@ -482,8 +493,16 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     std::optional<bool> carrying() const override { return w->heldPortable() != 0; }
     std::optional<bool> carriedEncumbers() const override { return w->heldPortable() != 0 && w->player().state().encumbered; }
+    // 0x759260 / 0x7594C0 answer no wall while the jump query in effect (player +0xA84, 0x6F1950) has +0x2C flag 0x80
+    // [O: decomp]; ours: the profile chartMarkupSearch last ran (0 none: the rays run).
+    bool queryComingDown() const {
+        const int id = const_cast<Impl*>(this)->playerInt(0xA84);
+        if (id <= 0) return false;
+        const auto p = decodeProfile(chart().charts(), id);
+        return p && (p->flags & 0x80);
+    }
     std::optional<bool> wallJumpAnticipate(float frames) const override {
-        return !ground.floor && w->player().wallJumpAnticipate(frames);
+        return !ground.floor && !queryComingDown() && w->player().wallJumpAnticipate(frames);
     }
     // 0x710380 over ours' markup: ledges and hurdles (MUD 0x40010000) whose nearest point to P = her root + forward x
     // player data float +0x61C lies (vertically) |dz| in [short +0xC44, short +0xC46) of her z, nearest two by horizontal
@@ -533,7 +552,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     // 0x7594C0 (Player::wallJumpProbe), asked while the ground check finds no floor (ours keeps no launch velocity on
     // the ground) [I].
-    std::optional<int> wallJumpProbe() const override { return !ground.floor ? w->player().wallJumpProbe() : 0; }
+    std::optional<int> wallJumpProbe() const override { return !ground.floor && !queryComingDown() ? w->player().wallJumpProbe() : 0; }
     // The aimed jump's +0xAC0 / +0xA80 (PlayerState::aimFlags / aimClass, set by Player::aimGroundJump) while a jump
     // target is held.
     std::optional<uint32_t> jumpQueryFlags() const override { return jumpTarget() ? w->player().state().aimFlags : 0u; }
@@ -612,7 +631,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     std::optional<RayHit> rayHit(glm::vec3 a, glm::vec3 b, uint32_t) const override {
         const float d = glm::length(b - a);
         if (d <= 0) return {};
-        const auto h = w->collision().playerRay(a, (b - a) / d, d); // [I] one ray mask for every tru.exe flag set
+        const auto h = w->collision().playerRay(a, (b - a) / d, d, true); // [I] one ray mask for every tru.exe flag set
         if (!h) return {};
         RayHit r;
         r.point = h->point, r.normal = h->normal;
@@ -660,7 +679,8 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     void inputs(const World& world, const Actions& a, glm::vec2 stickW, float stickL) {
         w = &world;
         const float dt = float(kTickSeconds); // [I] real time: the chart's timeMult ignores the combat time scale here
-        const bool down[kButtons] = {a.jump, a.drop, a.sprint, a.interact, a.grapple, a.manualAim, a.grenade, a.recenter || a.manualAim};
+        const bool down[kButtons] = {a.jump, a.drop, a.sprint, a.interact, a.grapple, a.manualAim, a.grenade, a.recenter || a.manualAim,
+                                     a.fire, a.aim};
         for (size_t i = 0; i < kButtons; ++i) {
             buttons[i].update(down[i], dt, 0.0f);
             sincePressed[i] = buttons[i].pressed() ? 0.0f : sincePressed[i] + dt;
@@ -1137,7 +1157,7 @@ void Shadow::Impl::seedAttach() {
 void Shadow::Impl::restartChart() {
     started = false, parked = false, launched = false;
     blend = {};
-    chartAttached = MarkupSlot{}, chartTarget = {}, handedTarget = -1;
+    chartAttached = MarkupSlot{}, chartTarget = {}, targetPoint = glm::vec3(0), handedTarget = -1;
     collisionMask = 0x48;
 }
 
@@ -1431,7 +1451,15 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
                          rt->state(), rt->request(), p - ch->requests.data(), p->clip.c_str(), d.mirror ? " (mirrored)" : "",
                          rt->clipStartFrame());
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
-        if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
+        if (d.restart) {
+            d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
+            // the pattern's window mode for a state's own request (kind 1); a graph node's play keeps mode 1: its clip
+            // starts at -blend in tru.exe (Wine hang_shimmy_left S432 ledgeb_right_3: ~1 unit through the window, then
+            // the clip from frame 0) where ours starts it at start - blend = 0, so mode 0 would carry the clip's first
+            // frames' root [U: the node Play's start / blend (0x444F30 -> 0x441FB0) is not decoded].
+            const State* sd = rt->charts().player.state(rt->state());
+            d.window = sd && sd->requestKind == 1 ? p->window : uint8_t(1);
+        }
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
         // them by +0x8C / +0x90 = animBlend, which the state's actions wrote this tick) [O].
         lastLayerType = int(p->blendType);

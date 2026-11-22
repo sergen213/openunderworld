@@ -789,7 +789,7 @@ void attachChartMarkup(ChartContext& ctx, const ChartContext::MarkupSlot& slot) 
     ctx.chartAttached = slot;
     // 0x707730 / 0x707530 then copy the search block and clear the jump target (+0xA64 = 0): the chart's own target
     // goes, and the game's target (the same markup, until the game drops it) counts as handed on.
-    ctx.chartTarget = {};
+    clearChartTarget(ctx);
     ctx.handedTarget = slot.markup;
 }
 
@@ -966,10 +966,11 @@ float spanSigned(float v, float a, float lo, float hi) { return hi < lo ? 0.0f :
 
 // Action 213 preenter / prereenter 0x749CD0: the hurdle-over clip's blend from the attached grab point (+0xCA0) to the
 // jump target point (+0x9F0): x by their horizontal distance (properties 230 / 231, or signed with 229 > 0), y by the
-// target's height over her (233 / 234) [O].
+// target's height over her (233 / 234) [O]. The point is +0x9F0 as it stands: the attach (action 236, the same state)
+// has cleared the target but not its point (chartTargetPoint) [O].
 void hurdleOverBlend(ChartContext& ctx, uint16_t) {
     const float p229 = propF(ctx, 229), p230 = propF(ctx, 230), p231 = propF(ctx, 231), p233 = propF(ctx, 233), p234 = propF(ctx, 234);
-    const glm::vec3 a = ctx.attachedMarkup().point, b = ctx.jumpTarget().point;
+    const glm::vec3 a = ctx.attachedMarkup().point, b = chartTargetPoint(ctx);
     const float d = glm::length(glm::vec2(b - a));
     ctx.animBlend.x = p229 <= 0 ? span01(d, p230, p231) : spanSigned(d, p230, p229, p231);
     ctx.animBlend.y = span01(b.z - ctx.position().z - p233, 0, p234 - p233);

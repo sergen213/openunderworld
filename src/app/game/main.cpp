@@ -74,6 +74,7 @@ struct Options {
     int width = 1280, height = 720;
     float fov = 60.0f;
     bool vsync = true, fullscreen = false, noOverlay = false, showCollision = false, showTriggers = false, showEnemies = false;
+    bool noEnemies = false; // --no-enemies: enemy AI frozen (Wine replays without enemy contact; tools/chart-replay.sh)
     int frames = 0; // 0 = until closed
     int waterDebug = 0; // Enhanced water debug view (render::kWaterDebugViews; F7 cycles)
     std::filesystem::path screenshot, inputScript;
@@ -131,6 +132,7 @@ void usage() {
                  "               [--report-objects UID,...] (with --frames: the script calls to / from them and their state at exit; 0 = every object)\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
+                 "               [--no-enemies] (replay harness: enemy AI frozen, for Wine takes without enemy contact)\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
                  "               [--shaders original|generic]\n"
                  "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0] [--tonemap original|agx]\n"
@@ -186,6 +188,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--show-collision") { o.showCollision = true; continue; }
         if (a == "--show-triggers") { o.showTriggers = true; continue; }
         if (a == "--show-enemies") { o.showEnemies = true; continue; }
+        if (a == "--no-enemies") { o.noEnemies = true; continue; }
         if (a == "--intro") { o.intro = true; continue; }
         if (a == "--no-audio") { o.noAudio = true; continue; }
         if (a == "--sync-loads") { o.syncLoads = true; continue; }
@@ -2363,6 +2366,7 @@ int main(int argc, char** argv) {
         world = std::make_unique<ou::game::World>([&bf](const std::string& n) { return ou::game::loadUnitData(bf, n); }, unit,
                                                   ou::game::loadLaraAnims(bf, "lara", chartDrive), spawn);
         if (chartShadow) world->setPlayerDriver(chartShadow->driver());
+        if (opt.noEnemies) world->freezeEnemies(true);
         if (script) world->pinStickYaw(script->cameraYaw()); // a Wine case's CAMFOLLOW (camera_follow): the stick's world yaw
         if (script) world->pinCamera(script->cameraFollow()); // and the camera itself, as the harness wrote it every frame
         if (script) world->seedCamera(script->cameraSeed()); // an unpinned take: tru.exe's free camera at its key tick
@@ -3783,6 +3787,8 @@ int main(int argc, char** argv) {
             out << report.dump(2) << "\n";
             if (!out) std::fprintf(stderr, "ou-game: cannot write %s\n", opt.selfTestReport.string().c_str());
             else std::fprintf(stderr, "ou-game: self-test report %s\n", opt.selfTestReport.string().c_str());
+            // the chart's tallies (unported conditions / actions), as a --frames run prints them at its end
+            if (chartShadow) std::fprintf(stderr, "ou-game: %s\n", chartShadow->summary().c_str());
             exitCode = selfTest->passed() && out ? 0 : 1;
             break;
         }

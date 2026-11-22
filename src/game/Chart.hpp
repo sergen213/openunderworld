@@ -104,6 +104,12 @@ struct Request {
     // +0x17: the anim layer's blend type (layer +0xF9, anim::layerBlendWeights) and every anim of the pattern by name
     // (sub-layer i plays clips[i]; clips[0] = clip).
     uint8_t blendType = 0;
+    // +0x18: the crossfade window's motion (0x441FB0 records r = *(L+0x7C) by it, 0x43B870 moves her by it each step
+    // while the window runs) [O decomp]. 0: the incoming clip's root displacement over the window (r+0x10 = root at
+    // start - blend, r+0x20 = root at start, 0x4358E0), spread by the curve's step. 1: lerp(|outgoing root speed|,
+    // |incoming root speed at its start|) along her forward axis. 2: the same lerp with both velocities as vectors (the
+    // outgoing in the incoming's frame). 3: a carried global velocity [U, not ported: falls back to 1].
+    uint8_t window = 1;
     std::vector<std::string> clips;
     std::vector<uint16_t> clipKeys; // each clip's key count (+0x32; 0 unknown), for 0x433360's synced rates
     // The first clip's root speed in units per 30 Hz frame as action 501 (0x75BD30) reads it through 0x4389C0: -(header
@@ -298,6 +304,10 @@ public:
         float lean = 0;
         struct Align { bool active = false, positionOnly = false; float duration = 0; glm::vec3 pos{0}; } align;
     } anim;
+    // Lara +0x11D4 (0x208 PSCCF_OnStairs): written only by the ground check 0x5DCE20 when it runs (cleared, then set from
+    // its floor hit through 0x5D3AF0(hit, 0x100, 0x20)), kept otherwise; nullopt: the last check stood on an object
+    // whose own flags the context does not model.
+    virtual std::optional<bool> onStairs() const { return std::nullopt; }
     // ---- end group A ----
 
     // ---- group J ----
@@ -334,6 +344,10 @@ public:
     // Player +0xA40 (the query object's +0xC0): the velocity a mode-1 search profile flies (0x76FFC0), as 0x74C850
     // writes it from 0x744310 before its profile-27 search; nullopt: the search keeps its own source (group J).
     std::optional<glm::vec3> queryVelocity;
+    // Player +0x9F0, the jump target's point: clearing the target (+0xA64 = 0: the attach 0x707730, the flight's drop,
+    // the take-off's new query) leaves it [O: 0x749CD0 reads it after action 236's attach cleared +0xA64]; the last
+    // target's point (chartTargetPoint answers with the live target's while there is one).
+    glm::vec3 targetPoint{0};
     // The game's jump-target markup the chart already handed on when its flight ended (tru.exe moves +0xA64 to the
     // attached slot +0xC94 on the attach, 0x741050 / 0x707500) [I]; ignored as +0xA64 until the game's target changes.
     int handedTarget = -1;
@@ -500,6 +514,10 @@ void beamBalanceTick(ChartContext& ctx, bool init);
 // (ChartContext::chartTarget: action 504's take-off query, action 230's promotion), else the game's jumpTarget() unless
 // the chart already handed that one on when its flight ended (ChartContext::handedTarget).
 ChartContext::MarkupSlot chartJumpTarget(ChartContext& ctx);
+// Clears the chart's jump target (+0xA64 = 0), keeping its point as +0x9F0 (ChartContext::targetPoint).
+void clearChartTarget(ChartContext& ctx);
+// Player +0x9F0: the live jump target's point, else the last one's.
+glm::vec3 chartTargetPoint(ChartContext& ctx);
 // 0x733F60 -> 0x733EC0: markup flags +0x28 & 0xA000000 and its first segment's pitch |atan2(-dz, |dxy|)| within the
 // global limit *(0xE7EE50)+0x184 = 40 degrees [O-runtime: Wine, l4_traprooms] (a level enough pole).
 bool markupLevel(ChartContext& ctx, const ChartContext::MarkupSlot& m);

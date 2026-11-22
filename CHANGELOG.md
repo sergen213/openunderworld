@@ -6,6 +6,24 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-11-22
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added (experimental, off by default): a new traversal controller that runs Lara's climbing and movement from the
+  original game's own player state chart instead of our hand-written controller. Turn it on with `--traversal chart`
+  or `"game": { "traversal": "chart" }` in `~/.config/openunderworld/config.json`. It is far from finished: ledge
+  catches, hangs and pole grabs mostly work, ladders, beams and free climbing are rough, and 85 of 133 gameplay
+  self-tests pass in this mode. Reports of what breaks are welcome.
+- Changed: the movement stick now follows the original's input filter. Buttons act at once; an arrow key or a fast
+  stick flick reaches Lara one frame later, as in tru.exe. Movement can feel a frame softer than in 0.61.
+- Changed: after a spawn or load the camera starts as if it had already been idle for 7 seconds, as in the original.
+- Changed: the camera on horizontal poles uses the pole's own camera settings from the level (a fixed distance of
+  about 1738 units with a slight downward tilt).
+- Fixed (chart traversal): streaming in a level section or a script switching collision no longer restarts the chart.
+- Known issues: two self-tests fail with the default controller (the gate-room roll reaches the closing door one
+  frame late; the grapple-swing jump-off lands differently), both from the new stick timing.
+
 ## [0.61.0] - 2026-11-22
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

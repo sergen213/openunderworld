@@ -170,6 +170,11 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
 - **Ours.**
   - **Filter.** `StickRateFilter` (Game.hpp) runs on the move axes every tick, in the app. The rate comes from `moveStickRate` (lara.drm +0x658), and dt is 0.5, a 60 Hz tick in 30 Hz frames. tru.exe measures wall time [I].
   - **Exception.** Recorded-stick scripts (`"stick"`) are already this filter's output and skip it.
+- **Run-jump side (S280 / S281).** The running jump's left- or right-foot state depends on the support foot (+0xF3C) and the mirror bit (0x10 of the u16 at +0xF4 of 0x716F30's first stack argument, read by 0x6EDD00) at the jump press. Both follow where the run clip is when the press lands.
+  - **Mirror mapping.** With the mirror bit set, foot event 0x34 sets foot 2 and 0x36 sets foot 1; with it clear the mapping is reversed.
+  - **Run start.** The run's start tick depends on the frame the key press reaches the stick (the filter above, measured in wall time), so it varies between takes with the same input.
+  - **Wine evidence** (t1204_run_jump_j55, W/chart/wine/runjump/t1204_run_jump_j55_foot2.tsv): one take entered S63 at tick 11 and jumped through S280; others entered at 10 and took S281, with the run mirrored from tick 15 until the S281 entry.
+  - **Consequence.** tru.exe itself picks S280 or S281 for the same input. A replay comparison that differs only in that choice is not a divergence in our chart.
 
 ### Ours
 
@@ -334,6 +339,12 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   state whose request plays a `swim` / `grapple` / `rope` / `death` / `bike` / `portable` clip (the traversal subgraph's
   boundary families). The chart is parked and restarts from the root (0x787E00, settling in the idle) when the
   controller hands her back; a placement (`Player::spawn` / `restore`: spawn, load, teleport) restarts it too.
+  **Open (hits):** a hit handing her to the legacy `hitReact` and restarting the chart is wrong. In tru.exe a hit
+  reaction runs inside the chart (a damage message delivered as one of the chart's 69 events, taking a transition
+  into the hit states); which event and states are involved is not yet identified [U]. Seen in Wine-replay
+  `ledge/cc_wall911_stick_jump_climb`: spiders 4038/4039 attack at world tick 53, and the chart restarts at S39 (tick
+  73) and S0 (tick 193). Replays of takes without enemy contact opt into `--no-enemies` (case key `no_enemies`,
+  tools/chart-replay.sh) until this is ported.
 - **Order per tick** (inside `World::tick`): the input actions' timing, the ground check on her pose (0x71B910), the
   charts (0x768C50: Lara, then the upper body), then the motion, then the chart clip's command events (critical
   section) and the support foot, then event 455 when the check found a floor. Shadow mode had the controller's motion
@@ -400,11 +411,62 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   blendWeights`; `World::updatePose` blends the poses (phase-synced, normalised weights [I: 0x4361C0's accumulation])
   and `Player::drive` the root motion the same way [I: tru.exe takes the blended pose's root]; command events stay
   sub-layer 0's [I]; the clip clock follows 0x433360 for types 2 / 3 / 4 / 9. Legacy never sets it.
-- **Crossfade** (0x441FB0 at a new request, layer mode +0x64 = 1, over the pattern's blend frames): the window holds
-  the new clip's lead at its first frame and moves her along the forward axis (DAT_008C9F30) at lerp(|outgoing root
-  speed| r+0x50, |incoming root speed at its start| r+0x60, w), w linear at each step's midpoint (0x43B870 case 1 via
-  0x43C8E0); the clip's own root motion counts after the window. S245: 0 -> 85.05 per 30 Hz frame over 4 frames = 170.1
-  (WineChartTrace) [O].
+- **Crossfade** (0x441FB0 at a new request, over the pattern's blend frames): the window holds the new clip's lead at
+  its first frame; the clip's own root motion counts after the window. How she moves through it is the pattern's
+  **window mode, +0x18** (0x4428A0 copies it to every sub-layer channel's +0x64, 0x441FB0 to +0x60; 0x43B870 switches on
+  it each step via 0x43C8E0, w linear at each step's midpoint, 0x4332C0 without a curve) [O decomp]. lara.drm: 1235
+  patterns mode 0, 47 mode 2, 122 mode 3, the rest 1 (`chart-dump` lists them).
+  - 1: along the forward axis (DAT_008C9F30) at lerp(|outgoing root speed| r+0x50, |incoming root speed at its start|
+    r+0x60, w). S245: 0 -> 85.05 per 30 Hz frame over 4 frames = 170.1 (WineChartTrace) [O].
+  - 2: the same lerp of the two root velocities as vectors (the outgoing in the incoming clip's frame) [O decomp].
+  - 0: the incoming clip's root displacement over the window, r+0x20 - r+0x10 (0x4358E0 from 0 to start / start -
+    blend, the time before the clip counting as the origin), times each step's share: a constant speed. Wine
+    ch_beam_walk_back S943 bbeam_stepback (start 5, blend 5): 4.356 a tick backward for 10 ticks = its root at 500
+    time units (43.56), then the clip's last 27.0 [O-runtime]. The rotation part (r+0x50 / r+0x60 in this mode) is not
+    ported [U].
+  - 3: an **alignment target** [O decomp]. 0x437120(Q, V) stores a pending rotation (DAT_008C9F20) and displacement
+    (DAT_008C7020); 0x441FB0's case 3 takes them into r+0x20 / r+0x60 (r+0x50 = 0, V's x and Q's y / z negated when
+    the request's mirror differs from the agent's) and clears V; 0x43B870's case 3 moves her by V x each step's share
+    of the window, turned by Q slerped from identity by w. The setters: 0x702BA0(Q, target) (V = the target less her
+    root in her frame, Q relative to her rotation), reached through 0x702D20 (target less the clip's own root offset /
+    rotation at the aligned frame) from the attach / settle actions' AnimTarget functions (0x741130 ledge, 0x74DCD0 /
+    0x74D980 / 0x744B70 ladder, 0x753F80 pillar, 0x753510, 0x753A90, 0x754370, 0x750C90, 0x73E350, 0x73FE10, ...),
+    plus 0x75D9D0 (V = (agent +0xF4, 0, 0), Q identity) and 0x753440 (V = player +0xEC0 less her root and the clip
+    offset). lara.drm's 122 mode-3 patterns are those attaches and settles (pillar / perch / ladder / DICE / ledge
+    reach settles, drop_to_*). Ours takes it as mode 1; the drive's attach blend and Player::familyPose stand in for
+    these targets.
+  - **Mode-3 port plan** (ChartBlend, in progress; keep this list current so anyone can finish it):
+    - Mechanism: a ChartContext pending alignment = 0x437120 (V in her frame, Q as a yaw delta; V cleared when a mode-3
+      request starts, as 0x441FB0 does). The drive step carries it on the request's restart; `Player::drive` mode 3
+      moves her by V x each step's share of the window and turns her by the yaw delta by w. A helper for 0x702D20 aims
+      a kind-1 request at a target root and yaw at the clip's end, using the request clip's whole root translation
+      (0x435EC0) and turn (0x435F20).
+    - For kind-2 (graph-node) requests the AnimTarget functions take another path: 0x74DCD0's request kind 2 builds
+      an alignment object (0x74BF90 -> 0x6F0FF0), not 0x437120 [O decomp, not decoded further]. Kind-1 families come
+      first.
+    - Families, in order, with their setters and what each replaces:
+      1. Ladder (kind 1: S1061 drop_to_ladder, S1062 ladder_run_off_grab, S1063 ladder_attach_ground_top, S1066
+         ladder_attach_ground_bottom, S1117 ladder_attach_air_bad, S1255 lad_attach_down). Setter: action 230's
+         ladder class 602 / 611, 0x74DCD0 (target = the rung root from 0x7350B0 at +0x9F0, facing -normal), and
+         505's 0x74D980. Replaces: `stateEntered`'s attach blend and `Player::familyPose`'s rung choice for these
+         states. Status: mechanism and the 0x74DCD0 call on branch agent/ChartBlend-m3wip (6bdde4a, not merged).
+         The window now carries the attach the way Wine does (lad_a234_attach: a constant 19.5 a tick down to the rung,
+         position error mean 48 -> 7). But its target is familyPose's rungPos, z 933.9, where tru.exe's 0x7350B0
+         puts the rung root at 940.24. One rung-rounding step is lost, so climb_up / fast_up / top_exit reach S1085
+         19 ticks late. Next: port 0x7350B0 (the +0x9F0 point snapped by 0x734C00, plus +0x784 along the ladder
+         axis and +0x780 along the normal from 0x734830's frame) as the target.
+      2. Pillar (kind 1: S1185-S1187, S1189, S1230). Setter: 0x753F80 (PillarAttachGroundAnimTarget) and kin.
+         `seededOffset` (ChartDrive 6bd15fa) stays for seeded `--chart-state` starts. Status: not started.
+      3. Perch (kind 1: S827, S829-S832, S872). Setters among 0x753510 / 0x753A90 / 0x754370 / 0x750C90. Status:
+         not started.
+      4. Ledge (kind 2: ledgeb_attach_down, the reach settles, drop_to_ledgeb / _ledgeu, the runoffs; S277
+         ledge_mantle is kind 1). Setter: 0x741130. Graph-node plays start at start - blend as kind-1 ones do (WineChartTrace
+         drop/maproom_south_run_birth_anim: R995 at -4, R954 at -4) [O-runtime]; waits on 0x6F0FF0 (the kind-2
+         alignment object). Status: blocked.
+      5. DICE (kind 2: R116 / R117 / R201 / R202). Same blockers as ledge. Status: blocked.
+    - Stays as it is: the holds after the attach (Motion::Hang, the 420 chains, the beam pin / grip follow), seeded
+      starts, legacy.
+    - Each family lands as its own commit, checked on its corpus family and the gate set against the same base.
 - **Family holds** (`Player::familyPose`): an attach to a ladder blends onto a rung (Traverse.cpp rungPos; the
   ladder_attach_ground_bottom attach takes the lowest rung, Wine lad_a234 rung 2 at z 940 [I]; else the rung nearest
   where the attach clip ends, rungAt = the 0x74DCD0 alignment [O]), facing the ladder; a pillar onto its axis at her

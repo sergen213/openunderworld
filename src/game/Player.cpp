@@ -512,6 +512,8 @@ Player::GroundCheck Player::groundCheck(vec3 feet, float above, float below) con
         r.steep = floorKind(*g) == Floor::Steep;
         r.floor = !r.steep;
         r.onBody = g->dynamic >= 0;
+        if (r.onBody) r.stairs = std::nullopt; // an object's own flags & 0x20 [U]
+        else r.stairs = g->face < col_.faces.size() && (col_.faces[g->face].clientFlags & 0x0100) != 0;
     }
     return r;
 }
@@ -2130,10 +2132,31 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         const bool climb = q.strict && (m.type == 9 || m.type == 15 || m.type == 4 || m.type == 5 || m.type == 6 || m.type == 2 ||
                                         m.type == 14 || hold);
         if (m.type >= 16 && m.type <= 20 && !hold) continue;
-        if ((m.type != 1 && !perch && !climb) || int(li) == s_.ledge) continue;
+        // 0x771830's skip list (0x6F9660 in the sweep): the attached markup unless the profile's +0x2C bit 0x10, the
+        // whole markup with bit 0x20 or a one-segment markup (+0x34 0), else only the attached segment (0x814D20 of
+        // the attach point, segment + fraction) [O: decomp]; and the markup the airborne action's entry released
+        // (player +0xEA0, 0x7522A0 -> 0x6FDBE0) whole, with bit 0x200, or 0x8000 while nothing is attached [O: decomp
+        // 0x771830]. Built-in records skip the attached markup whole.
+        // +0xC94: the caller's attach (the chart's) when given, else her controller's ledge
+        const bool callerAttach = q.attachMarkup != -2;
+        const int atM = callerAttach ? q.attachMarkup : s_.ledge, atSeg = callerAttach ? q.attachSeg : s_.ledgeSeg;
+        const bool attachedHere = int(li) == atM && (!q.strict || !(q.profileFlags & 0x10));
+        const bool skipWhole = attachedHere && (!q.strict || (q.profileFlags & 0x20) || m.points.size() <= 2);
+        int skipSeg = -1;
+        if (attachedHere && !skipWhole && atSeg >= 0 && size_t(atSeg) + 1 < m.points.size()) {
+            const vec3 sa = m.points[size_t(atSeg)], sb = m.points[size_t(atSeg) + 1];
+            const float sl = glm::distance(sa, sb);
+            // the attach point's distance along its segment (ledgeT; a caller's: its point projected)
+            const float at = callerAttach ? (sl > 1e-4f ? glm::dot(q.attachPoint - sa, sb - sa) / sl : 0.0f) : s_.ledgeT;
+            skipSeg = atSeg + (sl > 1e-4f && at / sl >= 0.5f ? 1 : 0);
+        }
+        const bool released = q.strict && int(li) == q.lastDetached &&
+                              ((q.profileFlags & 0x200) || ((q.profileFlags & 0x8000) && atM < 0));
+        if ((m.type != 1 && !perch && !climb) || skipWhole || released) continue;
         if (only >= 0 ? int(li) != only : only == -1 && !m.velocity.empty()) continue; // moving: in its own frame
         const int last = int(m.points.size()) - 2;
         for (int si = 0; si <= last; ++si) {
+            if (si == skipSeg) continue;
             const vec3 a = m.points[size_t(si)], b = m.points[size_t(si) + 1];
             const float len = glm::distance(a, b);
             // a pillar's polyline is its vertical axis: no flat length, kept (its slot then names the axis's first
@@ -2648,8 +2671,8 @@ Player::GroundAim Player::groundJumpAim(int kind) const {
 // (bone bases, other velocity modes, headings 0 / 11..16 / 19, the +0xB0 / +0xB4 snaps, a model-X velocity) leaves the
 // answer unknown. [I] a mirrored chart state reverses the attached-segment heading (17).
 Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
-                                         std::optional<vec3> boneLift, std::optional<vec3> objectVelocity,
-                                         std::optional<SearchAttach> attach) const {
+                                         std::optional<vec3> boneLift, int lastDetached,
+                                         std::optional<vec3> objectVelocity, std::optional<SearchAttach> attach) const {
     MarkupFound out;
     // 0x76FFC0: a fixed record velocity (+0 bit 0, mode 0); record bit 0 clear or mode 3 take her instance velocity
     // (+0x2A0 x player +0x6E4), mode 1 the query object's stored +0xC0 (player +0xA40, the take-off's velocity),
@@ -2719,10 +2742,11 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone), q.beamInset[0] = float(p.beamInset[0]), q.beamInset[1] = float(p.beamInset[1]);
     q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
-    q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
+    q.falling = p.flags & 0x80, q.classify = p.flags & 0x40, q.profileFlags = p.flags, q.lastDetached = lastDetached;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(atM)].type) : 0;
     q.attachMarkup = attached ? atM : -1, q.attachSeg = atSeg;
+    if (attached) q.attachPoint = attach ? attach->point : pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT);
     q.record = p.classRecord == 0x1C0C ? JumpRecord::Ground : JumpRecord::None; // lara.drm 0x2AB8C: perches swept too
     q.ownFrame = true; // 0x70F300 meets a moving markup in its own frame
     q.classes = p.classes, q.result = p.result;
@@ -4311,19 +4335,27 @@ void Player::drive(const DriveStep& d, float dt) {
         const bool fresh = d.restart || s_.clip != d.clip || s_.mirror != d.mirror;
         if (fresh) {
             t0 = d.start;
-            // The crossfade (tru.exe 0x441FB0 at the new request, layer mode +0x64 = 1, the pattern's blend frames): the
-            // window holds the new clip's lead at its first frame and moves her along the forward axis (DAT_008C9F30) at
-            // lerp(|outgoing root speed| r+0x50, |incoming root speed at its start| r+0x60, w), w linear at each step's
-            // midpoint (0x43B870 case 1 via 0x43C8E0, 0x4332C0 without a curve); the clip's own root motion counts
-            // after the window [O: WineChartTrace, W/chart/wine/README.md "Drive-mode findings"; S245: 0 -> 85.05 per
-            // frame over 4 frames = 170.1].
+            // The crossfade (tru.exe 0x441FB0 at the new request, over the pattern's blend frames): the window holds the
+            // new clip's lead at its first frame and moves her by the pattern's window mode (+0x18 -> channel +0x64 ->
+            // +0x60, 0x4428A0 / 0x441FB0) each step of 0x43B870 (via 0x43C8E0), w linear at each step's midpoint (0x4332C0
+            // without a curve); the clip's own root motion counts after the window [O decomp]:
+            // - 1: along her forward axis (DAT_008C9F30) at lerp(|outgoing root speed| r+0x50, |incoming root speed at its
+            //   start| r+0x60, w) [O: WineChartTrace, W/chart/wine/README.md "Drive-mode findings"; S245: 0 -> 85.05 per
+            //   frame over 4 frames = 170.1]. Mode 3 (a carried global velocity, DAT_008C7020) is taken as 1 [U].
+            // - 2: the same lerp of the two root velocities as vectors.
+            // - 0: the incoming clip's root displacement from the window's start to its end (r+0x10 / r+0x20 = 0x4358E0
+            //   from 0 to start - blend / start, the time before the clip counting as the origin), times each step's
+            //   share of the window: a constant speed (Wine ch_beam_walk_back S943 bbeam_stepback, start 5 blend 5: 4.356
+            //   a tick backward for 10 ticks = its root at 500 time units, 43.56, then the clip's last 27.0) [O-runtime].
             const anim::Clip* oc = anims_.find(s_.clip);
             const anim::Clip* nc = anims_.find(d.clip);
             if (d.crossfade > 0 && oc && nc) {
                 constexpr double h = 1.0 / 60.0;
-                const auto speed = [&](const anim::Clip& c, double t, bool loop) {
+                const auto velocity = [&](const anim::Clip& c, double t, bool loop, bool mirror) {
                     const double a = loop ? t : std::clamp(t, 0.0, std::max(0.0, c.durationSeconds() - h));
-                    return glm::length(rootTranslation(c, a + h, loop) - rootTranslation(c, a, loop)) / float(h);
+                    vec3 v = (rootTranslation(c, a + h, loop) - rootTranslation(c, a, loop)) / float(h);
+                    if (mirror) v.x = -v.x;
+                    return v;
                 };
                 // the outgoing clip still in its own fade-in window has not moved her root yet: what carries out is
                 // the window's own speed (her actual motion), not the held clip's nominal root speed (a one-tick S65
@@ -4333,23 +4365,32 @@ void Player::drive(const DriveStep& d, float dt) {
                 const bool held = s_.clipTime < rootLead_.start + double(rootLead_.hold) - 1e-6;
                 const float heldOut = fade_.left > 0 ? glm::mix(fade_.vOut, fade_.vIn, 1.0f - fade_.left / fade_.total) : 0.0f;
                 fade_ = {s_.clip, s_.clipTime, s_.loop, s_.mirror, d.crossfade, d.crossfade};
-                // r+0x60: the incoming clip's root speed over the last frame of the window, the root before the clip's
-                // first key counting as the origin: S245's window ends at ng_planted_jump_forward's frame 1, its frame
-                // 0 root is 85.05 forward of the origin -> 85.05 per frame (WineChartTrace; ChartA's key-0 offset) [O]
-                const double frame = 1.0 / 30.0, ts = t0 + fade_.total - frame;
+                fade_.mode = d.window == 0 || d.window == 2 ? d.window : uint8_t(1);
                 // Out of the flight (a landing) the key-0 offset does not count: Wine runjump/t1204_stick_jump_stick
                 // lands at 5.31 then 15.92 a tick after 20.0 in the air, below the flight speed, where the origin rule
                 // gave ng_running_land 85 a frame (jump_brake peaked at 2229 vs the flight's 1975; ChartBlend) [O-runtime]
                 const bool landing = s_.state == State::Jump || s_.state == State::Fall || s_.state == State::HangJump;
+                // the incoming clip's root from the origin: nothing before its start (but for a landing, above)
                 const auto at = [&](double t) {
-                    return t < -1e-4 && !landing ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop);
+                    vec3 r = t < -1e-4 && !landing ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop);
+                    if (d.mirror) r.x = -r.x;
+                    return r;
                 };
-                const float vIn = glm::length(at(ts) - at(ts - frame)) / float(frame);
+                // r+0x60: the incoming clip's root velocity over the last frame of the window, the root before the
+                // clip's first key counting as the origin: S245's window ends at ng_planted_jump_forward's frame 1, its
+                // frame 0 root is 85.05 forward of the origin -> 85.05 per frame (WineChartTrace; ChartA's key-0 offset) [O]
+                const double frame = 1.0 / 30.0, ts = t0 + fade_.total - frame;
+                fade_.vInV = (at(ts) - at(ts - frame)) / float(frame), fade_.vIn = glm::length(fade_.vInV);
                 // a once clip at its last frame (the chart's AnimationEnded rounds the length to whole keys) has no root
                 // speed left to carry out (Wine b973_top_run_fwd S57 -> S40: 3.3 on the change's tick, then 0; ours
                 // drifted ~50 units through ng_idle's 25-frame window) [O-runtime]
                 const bool ended = !s_.loop && s_.clipTime >= oc->durationSeconds() - 1.0 / 30.0;
-                fade_.vOut = held ? heldOut : ended ? 0.0f : speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
+                // (a held outgoing clip carries the window's own speed along her forward axis, above)
+                fade_.vOutV = held ? vec3(0, -heldOut, 0) : ended ? vec3(0) : velocity(*oc, s_.clipTime, s_.loop, s_.mirror);
+                fade_.vOut = glm::length(fade_.vOutV);
+                // mode 0: 0x4358E0 from 0 to t sums the root's motion from the origin (0 at t <= 0)
+                const auto fromOrigin = [&](double t) { return t <= 1e-6 ? vec3(0) : at(t); };
+                fade_.disp = fromOrigin(t0 + fade_.total) - fromOrigin(t0);
             } else {
                 fade_ = {};
             }
@@ -4392,7 +4433,9 @@ void Player::drive(const DriveStep& d, float dt) {
         const float step = std::min(dt, fade_.left);
         const float w = 1.0f - (fade_.left - 0.5f * step) / fade_.total; // the step's midpoint
         fade_.left = std::max(0.0f, fade_.left - dt);
-        world += toWorld(vec3(0, -1, 0) * (glm::mix(fade_.vOut, fade_.vIn, w) * step));
+        if (fade_.mode == 0) world += toWorld(fade_.disp * (step / fade_.total)); // 0x43B870 case 0
+        else if (fade_.mode == 2) world += toWorld(glm::mix(fade_.vOutV, fade_.vInV, w) * step); // case 2
+        else world += toWorld(vec3(0, -1, 0) * (glm::mix(fade_.vOut, fade_.vIn, w) * step)); // case 1
     }
     if (d.steer) s_.yaw = approachAngle(s_.yaw, *d.steer, d.steerRate * dt);
     s_.state = d.coarse;
