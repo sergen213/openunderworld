@@ -193,17 +193,18 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         if (r > 3.1415927410125732f) r -= 6.2831854820251465f;
         return r;
     }
-    // The live camera's axes (World::camera: forward = position -> target, right = forward x z, up = right x forward),
-    // and the pad from the move input as the keyboard path builds it [O-runtime: Wine stick dumps].
-    std::optional<CameraAxes> cameraAxes() const override {
-        const CameraState& c = w->camera();
+    // The live camera's axes as tru.exe's g_camera +0x10 rows (0x5E0900: look = position -> look point, right = down x
+    // look with down the world's -z, then orthonormal; row 1 = the camera's down), and the pad from the move input as
+    // the keyboard path builds it [O-runtime: Wine stick dumps].
+    std::optional<CameraAxes> cameraAxes() const override { return cameraRows(w->camera()); }
+    static std::optional<CameraAxes> cameraRows(const CameraState& c) {
         glm::vec3 f = c.target - c.position;
         if (glm::dot(f, f) < 1e-6f) return std::nullopt;
         f = glm::normalize(f);
         glm::vec3 r = glm::cross(f, glm::vec3(0, 0, 1));
         if (glm::dot(r, r) < 1e-8f) return std::nullopt;
         r = glm::normalize(r);
-        return CameraAxes{r, f, glm::cross(r, f)};
+        return CameraAxes{r, glm::cross(f, r), f};
     }
     std::optional<glm::vec2> pad() const override {
         if (glm::dot(moveIn, moveIn) < 1e-12f) return glm::vec2(0);
@@ -725,11 +726,20 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         }
         lastMatch = match;
         if (trace) {
-            char row[512];
-            std::snprintf(row, sizeof row, "%llu\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%x\tt30=%.3f\tvar_anim=%.3f\n",
-                          (unsigned long long)(w->ticks() - 1), rt->state(), rt->parent(), r, stateTicks, s.pos.x, s.pos.y, s.pos.z, s.vel.x,
-                          s.vel.y, s.vel.z, glm::degrees(s.yaw), inputMask(a), rt->stateTime(), rt->animFrames());
-            trace << row;
+            char row[1024];
+            int n = std::snprintf(row, sizeof row, "%llu\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%x\tt30=%.3f\tvar_anim=%.3f",
+                                  (unsigned long long)(w->ticks() - 1), rt->state(), rt->parent(), r, stateTicks, s.pos.x, s.pos.y, s.pos.z, s.vel.x,
+                                  s.vel.y, s.vel.z, glm::degrees(s.yaw), inputMask(a), rt->stateTime(), rt->animFrames());
+            // The camera the chart read this tick (last tick's), as the Wine corpus' CAMDUMP var_cam38: rows right, down,
+            // look (cameraRows), then the position, our frame.
+            const CameraState& c = w->camera();
+            if (const auto ax = cameraRows(c); ax && n > 0 && size_t(n) < sizeof row) {
+                const vec3 pv = w->cameraPivot(); // the orbit's pivot (focus after clearance), last tick's
+                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_cam38=0:%g,%g,%g,0,%g,%g,%g,0,%g,%g,%g,0,%g,%g,%g,1\tvar_piv=%g,%g,%g",
+                                   ax->right.x, ax->right.y, ax->right.z, ax->down.x, ax->down.y, ax->down.z, ax->look.x, ax->look.y,
+                                   ax->look.z, c.position.x, c.position.y, c.position.z, pv.x, pv.y, pv.z);
+            }
+            trace << row << '\n';
         }
         ++ticks;
     }
