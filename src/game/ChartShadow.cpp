@@ -680,14 +680,15 @@ bool Shadow::Impl::isBoundary(int st) const {
 }
 
 // --chart-state into a hold state in drive mode: +0xC94 = the markup point nearest her hands (her root + the hang hands'
-// offset, lara.drm ledgeb_idle), within 300 units; no root alignment (the corpus had her in the hold already).
+// offset, lara.drm ledgeb_idle), within 900 units (the corpus pins her up to 600 over the hang root and its own air grab
+// took the ledge during the hold); a ledge (markup type 1) also puts her in its hang pose (attachPose).
 void Shadow::Impl::seedAttach() {
     const PlayerState& s = w->player().state();
     const glm::vec3 h = w->anims().hangHandOffset;
     const float c = std::cos(s.yaw + 1.5707964f), sn = std::sin(s.yaw + 1.5707964f);
     const glm::vec3 hands = s.pos + glm::vec3(c * h.x - sn * h.y, sn * h.x + c * h.y, h.z);
     const auto& col = w->collision();
-    float best = 300;
+    float best = 900;
     MarkupSlot pick;
     for (size_t m = 0; m < col.markup.size(); ++m) {
         const auto& p = col.markup[m].points;
@@ -699,7 +700,18 @@ void Shadow::Impl::seedAttach() {
             if (d < best) best = d, pick = slot(int(m), int(i), t * std::sqrt(l2));
         }
     }
-    if (pick) chartAttached = pick, attachedBefore = pick.markup;
+    if (!pick) return;
+    chartAttached = pick, attachedBefore = pick.markup;
+    if (pm && col.markup[size_t(pick.markup)].type == 1) {
+        const auto& p = col.markup[size_t(pick.markup)].points;
+        const int seg = std::clamp(int(pick.param), 0, int(p.size()) - 2);
+        const float t = (pick.param - float(seg)) * glm::length(p[size_t(seg) + 1] - p[size_t(seg)]);
+        const auto [root, yaw] = pm->hangPose(pick.markup, seg, t, hangSide(pick.markup, seg, pick.point));
+        PlayerState ps = s;
+        ps.pos = root, ps.yaw = yaw, ps.vel = glm::vec3(0);
+        pm->restore(ps);
+        placements = pm->placements(); // ours, not a placement that restarts the chart
+    }
 }
 
 // The chart (re)starts with her where she is (0x787E00 from the root, which settles in the idle by itself).
@@ -881,9 +893,6 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.rate = animRate;
     }
     driveClipStarts = rt->clipStarts();
-    if (std::getenv("OU_DRIVE_DEBUG"))
-        std::fprintf(stderr, "drive S%d req %d resolved %d clip %s mirror %d attach %d\n", rt->state(), rt->request(), rt->resolved(),
-                     d.clip.c_str(), d.mirror, chartAttached && *chartAttached ? chartAttached->markup : -1);
     const int st = rt->state();
     const MarkupSlot att = chartAttached ? *chartAttached : MarkupSlot{};
     if (blend.on && (blend.state != st || !att)) blend.on = false;
