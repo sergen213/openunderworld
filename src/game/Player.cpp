@@ -2102,8 +2102,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         if (m.type >= 16 && m.type <= 20 && !hold) continue;
         // 0x771830's skip list (0x6F9660 in the sweep): the attached markup unless the profile's +0x2C bit 0x10, the
         // whole markup with bit 0x20 or a one-segment markup (+0x34 0), else only the attached segment (0x814D20 of
-        // the attach point, segment + fraction) [O: decomp]. The last-detached markup (+0xEA0, bits
-        // 0x200 / 0x8000) is not kept by ours [U]. Built-in records skip the attached markup whole.
+        // the attach point, segment + fraction) [O: decomp]; and the markup the airborne action's entry released
+        // (player +0xEA0, 0x7522A0 -> 0x6FDBE0) whole, with bit 0x200, or 0x8000 while nothing is attached [O: decomp
+        // 0x771830]. Built-in records skip the attached markup whole.
         const bool attachedHere = int(li) == s_.ledge && (!q.strict || !(q.profileFlags & 0x10));
         const bool skipWhole = attachedHere && (!q.strict || (q.profileFlags & 0x20) || m.points.size() <= 2);
         int skipSeg = -1;
@@ -2111,7 +2112,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             const float sl = glm::distance(m.points[size_t(s_.ledgeSeg)], m.points[size_t(s_.ledgeSeg) + 1]);
             skipSeg = s_.ledgeSeg + (sl > 1e-4f && s_.ledgeT / sl >= 0.5f ? 1 : 0); // ledgeT: distance along it
         }
-        if ((m.type != 1 && !perch && !climb) || skipWhole) continue;
+        const bool released = q.strict && int(li) == q.lastDetached &&
+                              ((q.profileFlags & 0x200) || ((q.profileFlags & 0x8000) && s_.ledge < 0));
+        if ((m.type != 1 && !perch && !climb) || skipWhole || released) continue;
         if (only >= 0 ? int(li) != only : only == -1 && !m.velocity.empty()) continue; // moving: in its own frame
         const int last = int(m.points.size()) - 2;
         for (int si = 0; si <= last; ++si) {
@@ -2630,7 +2633,7 @@ Player::GroundAim Player::groundJumpAim(int kind) const {
 // (bone bases, other velocity modes, headings 0 / 11..16 / 19, the +0xB0 / +0xB4 snaps, a model-X velocity) leaves the
 // answer unknown. [I] a mirrored chart state reverses the attached-segment heading (17).
 Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
-                                         std::optional<vec3> boneLift) const {
+                                         std::optional<vec3> boneLift, int lastDetached) const {
     MarkupFound out;
     // 0x76FFC0: a fixed record velocity (+0 bit 0, mode 0); record bit 0 clear or mode 3 take her instance velocity
     // (+0x2A0 x player +0x6E4), mode 1 the query object's stored +0xC0 (player +0xA40, the take-off's velocity),
@@ -2696,7 +2699,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone), q.beamInset[0] = float(p.beamInset[0]), q.beamInset[1] = float(p.beamInset[1]);
     q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
-    q.falling = p.flags & 0x80, q.classify = p.flags & 0x40, q.profileFlags = p.flags;
+    q.falling = p.flags & 0x80, q.classify = p.flags & 0x40, q.profileFlags = p.flags, q.lastDetached = lastDetached;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(s_.ledge)].type) : 0;
     q.record = p.classRecord == 0x1C0C ? JumpRecord::Ground : JumpRecord::None; // lara.drm 0x2AB8C: perches swept too
