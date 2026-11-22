@@ -33,8 +33,10 @@ mode=(--traversal chart); [ -n "${SHADOW:-}" ] && mode=(--chart-shadow)
 for c in $CASES; do
   J=$W/chart/wine_startpos/$c.case.json; [ -f "$J" ] || J=$W/chart/wine_settle/$c.case.json; [ -f "$J" ] || J=$W/chart/wine/$c.case.json
   b=$(basename "$c")
-  # the case's own trace carries the stick record (var_stick): replay its pad instead of the mask's direction bits
-  python3 "$HERE/tools/chart-stick-record.py" "$J" "$W/chart/wine/$c.tsv" "$OUT/$b.case.json" 2>/dev/null && J=$OUT/$b.case.json
+  # the case's own trace carries the stick record (var_stick): replay its pad instead of the mask's direction bits; the
+  # record comes from the same take as the chosen case JSON (wine_settle's trace beside it, else the wine one)
+  T=${J%.case.json}.tsv; [ -f "$T" ] || T=$W/chart/wine/$c.tsv
+  python3 "$HERE/tools/chart-stick-record.py" "$J" "$T" "$OUT/$b.case.json" 2>/dev/null && J=$OUT/$b.case.json
   args=$(python3 - "$J" "$W/chart/wine/$c.tsv" <<'PY'
 import csv, json, sys
 d = json.load(open(sys.argv[1])); s = d['spawn']; st = d.get('start', {})
