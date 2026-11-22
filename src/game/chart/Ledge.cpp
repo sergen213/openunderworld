@@ -915,6 +915,38 @@ void poleAttachSetter(ChartContext& ctx, bool alt) {
     else if (side < -0.15f) rt.setMirror(false);
 }
 
+// 0x74C110: action 230's class-625 setter (a beam, MUD 0xB010000) [O decomp]. With a jump target (+0xA64) it detaches
+// the old markup (0x6FDBE0) and attaches the target (0x707B90); without one it keeps the attached markup. On a
+// 0xB010000 markup: segment floor(+0xC98), its flat direction d; facing = her heading (instance +0x38) when the markup
+// held before was neither a ledge (0x40000000) nor 0xB010000 - for those it adds 0x6EB630's side / the camera record's
+// +0x10 [U: counted as action 230's]; dot(facing, d) >= 0: +0xED0 1, +0xCDC 0, else 2 / pi and d reversed; agent +0x360
+// = the segment, +0x35C = the angle of d (ours: wrapPi(yaw + +0xCDC), as 0x72A5F0); +0xCB0 = d, +0xCC0 = d x up. The
+// alignment onto the beam (0x74BF90 / 0x741130 / 0x6F0FF0) is the drive's attach blend (not here). Unlike 0x72A5F0
+// it draws no random numbers, so 0x742770 finds +0x360 already on the segment (Wine h759: no 0x72A5F0 draws, the beam
+// angle +0x35C 4.712 from S935's first tick).
+void beamAttachSetter(ChartContext& ctx) {
+    ChartRuntime& rt = ctx.chart();
+    const auto prev = ctx.attachedMarkup();
+    const bool wasLedge = prev && (prev.flags & 0x40000000u), wasBeam = prev && !wasLedge && (prev.flags & 0xB010000u);
+    if (const auto t = chartJumpTarget(ctx)) attachChartMarkup(ctx, t);
+    const auto a = ctx.attachedMarkup();
+    if (!a || !(a.flags & 0xB010000u)) return;
+    const int seg = int(std::floor(a.param));
+    const auto s = ctx.markupSegment(a.markup, seg);
+    if (!s) return;
+    glm::vec2 d(s->second - s->first);
+    d = glm::length(d) > 0 ? glm::normalize(d) : glm::vec2(0);
+    if (wasLedge || wasBeam) return ++rt.stats.unportedActions[230], void();
+    const float h = ctx.heading();
+    const bool along = glm::dot(glm::vec2(std::cos(h), std::sin(h)), d) >= 0;
+    ctx.playerInt(0xED0) = along ? 1 : 2;
+    ctx.playerFloat(0xCDC) = along ? 0.0f : kPi;
+    rt.field(0x360) = seg;
+    ctx.agentFloat(0x35C) = wrapPi(yawOf(d) + ctx.playerFloat(0xCDC));
+    ctx.playerFloat(0xCB0) = d.x, ctx.playerFloat(0xCB4) = d.y, ctx.playerFloat(0xCB8) = 0;
+    ctx.playerFloat(0xCC0) = d.y, ctx.playerFloat(0xCC4) = -d.x, ctx.playerFloat(0xCC8) = 0; // (d.x, d.y, 0) x (0, 0, 1)
+}
+
 // 602 / 611 (0x74DCD0) attach only a ladder target (MUD 0x400000): markupAttachTarget checks it.
 bool attachTargetClass(int cls) {
     switch (cls) {

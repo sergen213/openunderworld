@@ -475,6 +475,9 @@ std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot
 // 0x1A4). Attaches the jump target, decides how she takes the pole (agent +0x344), the side byte agent +0x345 for the
 // anim graph VM (ChartContext::vmPoleSide) and the layer mirror (+0xF4 0x20, ChartRuntime::setMirror).
 void poleAttachSetter(ChartContext& ctx, bool alt);
+// 0x74C110: the class-625 (beam) attach setter of action 230: attaches the jump target, sets the facing along the beam
+// (+0xED0 / +0xCDC), the beam controller's segment and angle (agent +0x360 / +0x35C) and +0xCB0 / +0xCC0.
+void beamAttachSetter(ChartContext& ctx);
 // 0x743900: action 205's per-tick beam balance steer (init on entry): agent +0x3A0 lean, +0x3A4 walk amount, +0x28
 // heading target, the layer blend (ChartContext::setLayerBlend) and mirror (src/game/chart/Ledge.cpp).
 void beamBalanceTick(ChartContext& ctx, bool init);

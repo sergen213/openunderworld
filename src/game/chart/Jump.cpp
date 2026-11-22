@@ -729,6 +729,7 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     // 602 / 611's 0x74DCD0 only a ladder (+0xA64 MUD & 0x400000), with +0xCDC = 0
     const bool ladderOnly = cls == 602 || cls == 611;
     if (cls == 603) poleAttachSetter(ctx, alt); // 0x74C8D0 (group B)
+    else if (cls == 625) beamAttachSetter(ctx); // 0x74C110 (group B)
     else if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
 }
 
