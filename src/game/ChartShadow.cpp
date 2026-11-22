@@ -436,6 +436,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         return {};
     }
     std::optional<bool> carrying() const override { return w->heldPortable() != 0; }
+    std::optional<bool> carriedEncumbers() const override { return w->heldPortable() != 0 && w->player().state().encumbered; }
     std::optional<bool> wallJumpAnticipate(float frames) const override {
         return !ground.floor && w->player().wallJumpAnticipate(frames);
     }
@@ -761,7 +762,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
 // Traversal chart boundary [I]: states whose request plays a swim / grapple / death / bike / carried-portable clip
 // (docs/re/PLAYER_CHART.md "Traversal subgraph": the boundary families) hand Lara to the controller.
 bool Shadow::Impl::isBoundary(int st) const {
-    static constexpr std::string_view kPrefix[] = {"swim", "grapple", "rope", "death", "die_", "dead", "bike", "moto", "portable", "carry"};
+    // The carrying set (portable_encumbered_*, S1313..S1328) is the chart's own (0x5DD / 0x5DE / 0x5DF); the swim
+    // carry clips stay with the swim boundary, the pickup / put-down are World's interaction clips (controller Use).
+    static constexpr std::string_view kPrefix[] = {"swim", "grapple", "rope", "death", "die_", "dead", "bike", "moto", "carry"};
     const auto bad = [](std::string_view clip) {
         const std::string c = lower(clip);
         for (const auto p : kPrefix)
@@ -971,10 +974,10 @@ void Shadow::Impl::stateEntered(int from, int to) {
     // and what its node queued, ChartRuntime::remainingFrames).
     const int now = chartAttached && *chartAttached ? chartAttached->markup : -1;
     if (now >= 0 && now != attachedBefore) {
-        const MarkupSlot& a = *chartAttached;
+        MarkupSlot& a = *chartAttached;
         const auto& p = w->collision().markup[size_t(a.markup)].points;
         if (p.size() >= 2) {
-            const int seg = std::clamp(int(a.param), 0, int(p.size()) - 2);
+            int seg = std::clamp(int(a.param), 0, int(p.size()) - 2);
             const float t = (a.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
             const auto [root, yaw] = pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
             const PlayerState& s = w->player().state();

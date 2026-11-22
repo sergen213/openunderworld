@@ -329,6 +329,15 @@ bool swimDepth(ChartContext& ctx, const Cond& c) {
 
 // 0x5DD (0x7301C0, cb 0x730120): player +0x858 (the carried portable) != 0.
 bool carrying(ChartContext& ctx, const Cond& c) { return edge(ctx, c, [&] { return ctx.carrying(); }); }
+// 0x5DE / 0x5DF (0x7301E0): b = the carried portable (player +0x858) has its object data byte +0x18 set (+0x858 ->
+// +0x50 -> +0x18: the portable encumbers her, PortableDef::encumbers); value 0 -> !b, 1 -> b, else false [O]. The
+// chart's carrying set (S1318 portable_encumbered_idle from S3 T33, S705 T1328) waits on it.
+bool carriedEncumbers(ChartContext& ctx, const Cond& c) {
+    const auto b = ctx.carriedEncumbers();
+    if (!b) return ctx.chart().unported(c);
+    const int v = ctx.chart().value(c);
+    return v == 0 ? !*b : v == 1 ? *b : false;
+}
 // 0x5E0 (0x730250, cb 0x730140): bool property 1501 of the current state (0x6EEF00 mode 2), false when absent.
 bool prop1501(ChartContext& ctx, const Cond& c) {
     return edge(ctx, c, [&]() -> std::optional<bool> { return ctx.chart().propBool(1501).value_or(false); });
@@ -669,6 +678,8 @@ void registerJump(Registry& player, Registry&) {
     player.condition(0x403, combatFlag10, "CombatFlag10", fam);
     player.condition(0x417, combatFlag27, "CombatFlag27", fam);
     player.condition(0x5DD, carrying, "HasCarriedObject", fam);
+    player.condition(0x5DE, carriedEncumbers, "PSCCF_CarriedObjectFlag18", fam);
+    player.condition(0x5DF, carriedEncumbers, "PSCCF_PortableFlag18", fam);
     player.condition(0x5E0, prop1501, "Prop1501", fam);
     player.condition(0x7D1, meleeAllowed, "MeleeAllowed", fam);
     player.condition(0x8FC, postCarried, "Do_PostPortable156", fam);

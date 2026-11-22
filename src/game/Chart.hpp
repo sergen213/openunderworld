@@ -315,6 +315,7 @@ public:
     virtual std::optional<int> combatObjectMode() const { return {}; } // (player +0x504) +0x50
     virtual std::optional<bool> upperProp(uint16_t) const { return {}; } // upper chart's current-state bool property (0x6EEF00)
     virtual std::optional<bool> carrying() const { return {}; }      // player +0x858 (portable) != 0
+    virtual std::optional<bool> carriedEncumbers() const { return {}; } // the carried portable's data byte +0x18 (encumbers her)
     // The jump target's query result flags (player +0x980 +0x140 = +0xAC0, cond 0x2BA) and target type (+0xA80, cond 0x294
     // group 661), both 0 without a target; nullopt: the chart-side stores (playerInt) answer.
     virtual std::optional<uint32_t> jumpQueryFlags() const { return {}; }
