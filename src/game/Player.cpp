@@ -2100,10 +2100,22 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         const bool climb = q.strict && (m.type == 9 || m.type == 15 || m.type == 4 || m.type == 5 || m.type == 6 || m.type == 2 ||
                                         m.type == 14 || hold);
         if (m.type >= 16 && m.type <= 20 && !hold) continue;
-        if ((m.type != 1 && !perch && !climb) || int(li) == s_.ledge) continue;
+        // 0x771830's skip list (0x6F9660 in the sweep): the attached markup unless the profile's +0x2C bit 0x10, the
+        // whole markup with bit 0x20 or a one-segment markup (+0x34 0), else only the attached segment (0x814D20 of
+        // the attach point, segment + fraction) [O: decomp]. The last-detached markup (+0xEA0, bits
+        // 0x200 / 0x8000) is not kept by ours [U]. Built-in records skip the attached markup whole.
+        const bool attachedHere = int(li) == s_.ledge && (!q.strict || !(q.profileFlags & 0x10));
+        const bool skipWhole = attachedHere && (!q.strict || (q.profileFlags & 0x20) || m.points.size() <= 2);
+        int skipSeg = -1;
+        if (attachedHere && !skipWhole && size_t(s_.ledgeSeg) + 1 < m.points.size()) {
+            const float sl = glm::distance(m.points[size_t(s_.ledgeSeg)], m.points[size_t(s_.ledgeSeg) + 1]);
+            skipSeg = s_.ledgeSeg + (sl > 1e-4f && s_.ledgeT / sl >= 0.5f ? 1 : 0); // ledgeT: distance along it
+        }
+        if ((m.type != 1 && !perch && !climb) || skipWhole) continue;
         if (only >= 0 ? int(li) != only : only == -1 && !m.velocity.empty()) continue; // moving: in its own frame
         const int last = int(m.points.size()) - 2;
         for (int si = 0; si <= last; ++si) {
+            if (si == skipSeg) continue;
             const vec3 a = m.points[size_t(si)], b = m.points[size_t(si) + 1];
             const float len = glm::distance(a, b);
             // a pillar's polyline is its vertical axis: no flat length, kept (its slot then names the axis's first
@@ -2678,7 +2690,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone), q.beamInset[0] = float(p.beamInset[0]), q.beamInset[1] = float(p.beamInset[1]);
     q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
-    q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
+    q.falling = p.flags & 0x80, q.classify = p.flags & 0x40, q.profileFlags = p.flags;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(s_.ledge)].type) : 0;
     q.record = p.classRecord == 0x1C0C ? JumpRecord::Ground : JumpRecord::None; // lara.drm 0x2AB8C: perches swept too

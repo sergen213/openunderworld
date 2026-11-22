@@ -874,6 +874,7 @@ private:
         std::span<const uint8_t> recordTypes, resultTypes; // the records' own type lists (0x7232E0)
         uint8_t recordFlags = 0, resultRecordFlags = 0;     // their +8 (bit 1: the list excludes)
         bool strict = false;
+        uint32_t profileFlags = 0; // data-driven searches: the profile's +0x2C (0x771830's skip list reads bits 0x10 / 0x20)
         mutable bool unknown = false;
         // The data-driven tests' input frame: the stick's world direction (point source 8, 0xFADFB0 +0xB0 +8) and the
         // control yaw (kind 9, 0x6EBA90); markupSearch fills them.
