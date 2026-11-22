@@ -76,6 +76,8 @@ struct Measurements {
     int ticks = 0, airTicks = 0, teleports = 0;
     float healthStart = 0, healthEnd = 0, healthMin = 0;
     float speed = 0, vspeed = 0;    // the last tick's
+    float ropeMin = 0, ropeMax = 0; // grapple.rope's range over the step's roped ticks (step.rope_change)
+    bool ropeSeen = false;
     std::vector<std::string> states, clips; // distinct in the order entered (a state re-entered is listed again)
     std::vector<std::string> calls;         // script virtual calls "callee:vt", first-call order
     std::vector<std::string> events;        // script events "kind:source>target", in order (repeats kept once)
@@ -88,6 +90,7 @@ struct Measurements {
     void begin(glm::vec3 pos, std::string_view state, std::string_view clip, float health);
     void tick(glm::vec3 pos, std::string_view state, std::string_view clip, bool airborne, float health);
     void note(std::vector<std::string>& list, std::string entry); // appended unless already there
+    void rope(float length); // a roped tick's rope length (begin and every tick while roped)
     Value get(std::string_view name) const; // "moved", "peak_height", "states", ...; monostate = no such measurement
     nlohmann::json json() const;
 };

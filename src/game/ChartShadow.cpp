@@ -196,7 +196,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // The live camera's axes as tru.exe's g_camera +0x10 rows (0x5E0900: look = position -> look point, right = down x
     // look with down the world's -z, then orthonormal; row 1 = the camera's down), and the pad from the move input as
     // the keyboard path builds it [O-runtime: Wine stick dumps].
-    std::optional<CameraAxes> cameraAxes() const override { return cameraRows(w->camera()); }
+    std::optional<CameraAxes> cameraAxes() const override {
+        if (const auto& p = w->cameraRowsPin()) return CameraAxes{(*p)[0], (*p)[1], (*p)[2]}; // a take's var_cam38 rows
+        return cameraRows(w->camera());
+    }
     static std::optional<CameraAxes> cameraRows(const CameraState& c) {
         glm::vec3 f = c.target - c.position;
         if (glm::dot(f, f) < 1e-6f) return std::nullopt;
@@ -360,7 +363,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         // divides by the x/y length; the 3-D one made it short on a sloped ledge: bedroom 973 (13.2 drop over 852.9)
         // caught 79 in from its end gave 0.90728, tru.exe's +0xC98 0.90739 (Wine probe) = the end inset in the
         // segment's own measure, as ours' hit is (Player::ledgeOnArcIn insets along the 3-D line) [O].
-        const float len = glm::length(glm::vec2(b - a));
+        // A vertical segment (pillars 15, vertical poles) has no x/y length: there t is the 3-D distance along it (the
+        // grip's height on the column; a fraction of 0 put every pillar grip at the top point, Wine t1194 holds 0.267).
+        const float len2 = glm::length(glm::vec2(b - a)), len = len2 > 1e-3f ? len2 : glm::length(b - a);
         const float f = len > 0 ? std::clamp(t / len, 0.0f, 1.0f) : 0.0f;
         r.param = float(s) + f;
         r.point = a + (b - a) * f;
@@ -551,9 +556,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // mask bits 0xA00 are set: property 566).
     int sweepRecord = -1;
     bool sweepCand = false;
+    std::optional<bool> sweepFreshNow = false; // byte +0x320 (Chart.hpp sweepFresh)
     void moveSweep();
     std::optional<int> moveSweepRecord() const override { return sweepRecord; }
     std::optional<bool> sweepCandidates() const override { return sweepCand; }
+    std::optional<bool> sweepFresh() const override { return sweepFreshNow; }
     std::array<uint32_t, size_t(JEffect::kCount)> effects{};
     void stateEntered(int from, int to) override;
     void effect(JEffect e, float v) override {
@@ -632,6 +639,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // (PlayerState::vel), bone rise = the last move's, attach = the chart's own +0xC94 only, jump target = the chart's own
     // +0xA64 only (the controller's aim is gone).
     bool driving = false;
+    int seededOffset = -1; // the markup whose grab offset +0xCE0 seedAttach wrote (a pillar case's start)
     Player* pm = nullptr;
     std::optional<int> lastLayerType; // the anim layer's +0xF9 as the last played pattern left it (layerBlendType)
     uint32_t placements = ~0u;
@@ -768,6 +776,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         rt->field(0x8C) = 0;
         rt->post(*this, 455);
     }
+    glm::vec2 traceKeys{0}; // the move keys before the filter (Shadow::tick `keys`), for the inputs column
     void traceRow(const Actions& a) {
         if (rt->state() != lastState || rt->stats.changes != lastChanges) stateTicks = 0;
         else ++stateTicks;
@@ -789,7 +798,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             char row[1024];
             int n = std::snprintf(row, sizeof row, "%llu\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%x\tt30=%.3f\tvar_anim=%.3f",
                                   (unsigned long long)(w->ticks() - 1), rt->state(), rt->parent(), r, stateTicks, s.pos.x, s.pos.y, s.pos.z, s.vel.x,
-                                  s.vel.y, s.vel.z, glm::degrees(s.yaw), inputMask(a), rt->stateTime(), rt->animFrames());
+                                  s.vel.y, s.vel.z, glm::degrees(s.yaw), inputMask([&] { Actions k = a; k.move = traceKeys; return k; }()), rt->stateTime(), rt->animFrames());
             // The camera the chart read this tick (last tick's), as the Wine corpus' CAMDUMP var_cam38: rows right, down,
             // look (cameraRows), then the position, our frame.
             const CameraState& c = w->camera();
@@ -892,7 +901,10 @@ bool Shadow::Impl::isBoundary(int st) const {
 // read), the carried-object branch (+0x8DC), cast mask 0x442C11E3 | 0x100000 (ours kSolidMask), 0x5D7A80's last two
 // arguments (the call passes six: a record testing +0x14 / +0x18 / +0x1C that could win leaves +0x31C as it was [U]).
 void Shadow::Impl::moveSweep() {
-    if (!(collisionMask & 0xA00) || !ch) return;
+    // +0x320: 0x7002D0 clears it when mask bits 0xA00 are clear (+0x2C1 / +0x2C0 = bits 0x200 / 0x800, no sweep).
+    if (!(collisionMask & 0xA00)) { sweepFreshNow = false; return; }
+    sweepFreshNow = std::nullopt;
+    if (!ch) return;
     const Charts& c = *ch;
     const auto base = c.pointer(c.dataOffset + 0x630);
     const int n = c.data<int32_t>(0x62C);
@@ -1028,6 +1040,7 @@ void Shadow::Impl::moveSweep() {
         if (pick >= 0 && score > bestScore) best = pick, bestScore = score;
     }
     if (unknown) return;
+    sweepFreshNow = best >= 0; // 0x5D7FA0: a stored record sets +0x320 = 1, none leaves it 0 (LAB_005d988e)
     if (best >= 0) sweepRecord = best;
 }
 
@@ -1064,7 +1077,11 @@ void Shadow::Impl::seedAttach() {
         const bool hang = type == 1 || type == 12, pole = type == 4 || type == 6;
         // a beam (14) is held overhead: her hands straight above the root at the hang height (Wine l3_chapel ch_hang_*:
         // the S447 root lies under the beam line), where the ledge probe's forward reach found a ledge 137 higher
-        const glm::vec3 probe = hang ? hangHands : pole ? poleHands : type == 14 ? s.pos + glm::vec3(0, 0, hangHands.z - s.pos.z) : s.pos;
+        // A pillar (15) is gripped at her hands, Lara data +0x7F6 (316) over the root bone: the height 0x753D30's
+        // lookahead casts from. Wine t1194: the case's root 338 under the top, and S1198 -> S1201 -> S1207 (lookahead
+        // 642 = grab point over the top, less +0x98 22) on the first frames, so +0xCA8 sits at the top, not at the root.
+        const glm::vec3 probe = hang ? hangHands : pole ? poleHands : type == 14 ? s.pos + glm::vec3(0, 0, hangHands.z - s.pos.z)
+                              : type == 15 ? s.pos + glm::vec3(0, 0, float(ch->data<int16_t>(0x7F6))) : s.pos;
         const auto& p = col.markup[m].points;
         for (size_t i = 0; i + 1 < p.size(); ++i) {
             const glm::vec3 ab = p[i + 1] - p[i];
@@ -1073,11 +1090,16 @@ void Shadow::Impl::seedAttach() {
             // loop 1009's corner on every tick; at 0.0 the wall-under-hang ray grazed face 8762's edge and braced her) [O-runtime].
             const float t = l2 > 0 ? std::clamp(glm::dot(probe - p[i], ab) / l2, 0.0001f, 0.9999f) : 0.0f;
             const float d = glm::length(probe - (p[i] + ab * t));
-            if (d < best) best = d, pick = slot(int(m), int(i), t * glm::length(glm::vec2(ab))), hangGrip = type == 1;
+            const float hl = glm::length(glm::vec2(ab)), along = t * (hl > 1e-3f ? hl : glm::length(ab)); // slot()'s measure
+            if (d < best) best = d, pick = slot(int(m), int(i), along), hangGrip = type == 1;
         }
     }
     if (!pick) return;
     chartAttached = pick, attachedBefore = pick.markup;
+    // the pin (0x6FDC90: root = grip point - her rotation x +0xCE0) keeps the root under a pillar grip [I: the seed
+    // has no attach action to write +0xCE0; the offset is the root's own, so it stays where the case began]
+    if (col.markup[size_t(pick.markup)].type == 15)
+        playerFloat(0xCE0) = 0, playerFloat(0xCE4) = 0, playerFloat(0xCE8) = pick.point.z - s.pos.z, seededOffset = pick.markup;
     {
         const auto& mk = col.markup[size_t(pick.markup)];
         std::fprintf(stderr, "ou-game: chart seed attach markup %d id %u type %d param %.3f best %.1f p0 %.1f %.1f %.1f p1 %.1f %.1f %.1f\n",
@@ -1405,8 +1427,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.start = rt->clipStartFrame() / 30.0, d.time = rt->animFrames() / 30.0;
         d.restart = rt->clipStarts() != driveClipStarts;
         if (d.restart && std::getenv("OU_CHART_CHANGES"))
-            std::fprintf(stderr, "ou-game: chart clip tick %llu S%d req %d %s%s start %.1f\n", (unsigned long long)w->ticks(), rt->state(),
-                         rt->request(), p->clip.c_str(), d.mirror ? " (mirrored)" : "", rt->clipStartFrame());
+            std::fprintf(stderr, "ou-game: chart clip tick %llu S%d req %d pattern %td %s%s start %.1f\n", (unsigned long long)w->ticks(),
+                         rt->state(), rt->request(), p - ch->requests.data(), p->clip.c_str(), d.mirror ? " (mirrored)" : "",
+                         rt->clipStartFrame());
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
         if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
@@ -1446,6 +1469,10 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         // 0x770ED0 builds 0x708830's record from the state's properties [O]: 412 (0x19C) enum 0x298 -> +0x46 (the root
         // set on the attached point, 0x6FDC90; the beams' S873: 412 = 664), 418 (0x1A2) -> +0x47 (the grip projection
         // 0x708210). The offset is player +0xCE0..+0xCE8 (property 421 / 422 grab offsets, attachTick).
+        // the seeded pillar offset belongs to that grip: another markup's attach starts from none (Wine t1194 perch S865
+        // stays at the perch height; it kept the pillar's 316 and sank under the perch) [I]
+        if (seededOffset >= 0 && (!att || att.markup != seededOffset))
+            playerFloat(0xCE0) = 0, playerFloat(0xCE4) = 0, playerFloat(0xCE8) = 0, seededOffset = -1;
         if (!d.snap)
             if (const Property* p = rt->property(0x19C); p && p->type == 0x23 && p->raw == 0x298) {
                 d.pin = true;
@@ -1477,7 +1504,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         const auto& p = world.collision().markup[size_t(att.markup)].points;
         if (p.size() >= 2) {
             d.markup = att.markup, d.seg = std::clamp(int(att.param), 0, int(p.size()) - 2);
-            d.t = (att.param - float(d.seg)) * glm::length(glm::vec2(p[size_t(d.seg) + 1] - p[size_t(d.seg)]));
+            const glm::vec3 ab = p[size_t(d.seg) + 1] - p[size_t(d.seg)];
+            const float hl = glm::length(glm::vec2(ab));
+            d.t = (att.param - float(d.seg)) * (hl > 1e-3f ? hl : glm::length(ab)); // 3-D along a vertical segment (pillars)
             d.side = hangSide(att.markup, d.seg, att.point);
         }
     }
@@ -1516,7 +1545,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     // in the flight state (ch02_serpent_door: S294 for 700 ticks) [I].
     if (d.motion == M::Air && player.driveLanded() && !ground.floor) ground.floor = true;
     // +0xC94's geometry follows her grip (shimmy)
-    if (att && player.state().ledge == att.markup) {
+    // only when this tick's motion held her on it (Hang / Blend set PlayerState::ledgeT from d.t): a tick in another
+    // motion leaves ledgeT stale and wrote grip 0 back (t1194 pillar: 0.267 -> 0 at S1202 tick 211, the top point)
+    if (att && (d.motion == M::Hang || d.motion == M::Blend) && player.state().ledge == att.markup) {
         MarkupSlot n = slot(att.markup, player.state().ledgeSeg, player.state().ledgeT);
         n.normal = att.normal;
         chartAttached = n;
@@ -1615,9 +1646,10 @@ void Shadow::feedRng(std::vector<uint32_t> draws) { impl_->rngFeed.assign(draws.
 Shadow::~Shadow() = default;
 PlayerDriver* Shadow::driver() { return impl_->driving ? impl_.get() : nullptr; }
 
-void Shadow::tick(const World& world, const Actions& a) {
+void Shadow::tick(const World& world, const Actions& a, std::optional<glm::vec2> keys) {
     Impl& m = *impl_;
     m.w = &world;
+    m.traceKeys = keys.value_or(a.move);
     if (m.driving) { // the chart ran in World::tick's player slot (Impl::driveTick); here only the trace
         if (m.started) m.traceRow(a);
         return;

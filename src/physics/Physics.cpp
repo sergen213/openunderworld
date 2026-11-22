@@ -584,10 +584,12 @@ struct Scene::Impl {
     std::vector<LooseE> loose;
     struct VehicleE { int32_t id; const VehicleSpec* spec; JPH::BodyID body; vec3 com; JPH::Ref<JPH::VehicleConstraint> c; VehicleDrive drive; vec3 shift, kick; };
     std::vector<VehicleE> vehicles;
-    // `query`: the face-indexed shape of castSegments (meshShape faces), built on its first query.
-    struct TerrainE { Terrain t; JPH::RefConst<JPH::Shape> shape; JPH::BodyID body; bool built = false; JPH::RefConst<JPH::Shape> query; };
+    // `query`: the face-indexed shape of castSegments (meshShape faces), built on its first query; `ok`: per face
+    // whether it is collision::queryable with `okMask` (castSegments / SegmentCaster), built on the first query with it.
+    struct QueryFaces { std::shared_ptr<const std::vector<uint8_t>> ok; int okMask = -1; };
+    struct TerrainE { Terrain t; JPH::RefConst<JPH::Shape> shape; JPH::BodyID body; bool built = false; JPH::RefConst<JPH::Shape> query; QueryFaces faces{}; };
     std::vector<TerrainE> terrain;
-    struct ProxyE { std::shared_ptr<const collision::CollisionMesh> shape; mat4 transform; JPH::BodyID body; JPH::RefConst<JPH::Shape> query; };
+    struct ProxyE { std::shared_ptr<const collision::CollisionMesh> shape; mat4 transform; JPH::BodyID body; JPH::RefConst<JPH::Shape> query; QueryFaces faces{}; };
     std::vector<ProxyE> proxies;
     std::vector<Weight> weights;          // Scene::setPlates, for the next step
     std::map<uint64_t, std::vector<collision::Dynamic>> plateMeshes; // Scene::setPlates: plate joint key -> collision
@@ -958,53 +960,91 @@ Scene& Scene::operator=(Scene&&) noexcept = default;
 uint32_t Scene::bodyCount() const { return impl_->sys.GetNumBodies(); }
 uint32_t Scene::activeBodyCount() const { return impl_->sys.GetNumActiveBodies(JPH::EBodyType::RigidBody); }
 
+struct Scene::SegmentCaster::Part {
+    JPH::RefConst<JPH::Shape> shape;                // face-indexed (meshShape faces)
+    mat4 frame{1};
+    std::shared_ptr<const std::vector<uint8_t>> ok; // per face: collision::queryable with the caster's mask
+    const collision::CollisionMesh* col = nullptr;  // for castSegments' hits only (a snapshot's leave mesh null)
+    bool dynamic = false;
+};
+Scene::SegmentCaster::SegmentCaster() = default;
+Scene::SegmentCaster::~SegmentCaster() = default;
+
 namespace {
-// Closest ray hit on a face-indexed mesh shape (meshShape faces) whose face passes collision::queryable(mask).
+// Closest ray hit on a face-indexed mesh shape (meshShape faces) whose face is queryable (`ok`).
 struct QueryableHit final : JPH::CastRayCollector {
     const JPH::MeshShape* mesh = nullptr;
-    const collision::CollisionMesh* col = nullptr;
-    uint8_t mask = collision::kSolidMask;
+    const std::vector<uint8_t>* ok = nullptr;
     JPH::RayCastResult hit;
     bool had = false;
     void AddHit(const JPH::RayCastResult& r) override {
         if (r.mFraction >= GetEarlyOutFraction()) return;
         const uint32_t face = mesh->GetTriangleUserData(r.mSubShapeID2);
-        if (face >= col->faces.size() || !collision::queryable(col->faces[face], mask)) return;
+        if (face >= ok->size() || !(*ok)[face]) return;
         hit = r, had = true;
         UpdateEarlyOutFraction(r.mFraction);
     }
 };
-} // namespace
 
-void Scene::castSegments(std::span<const Segment> segments, std::span<std::optional<SegmentHit>> hits, uint8_t mask) const {
-    Impl& m = *impl_;
-    for (auto& t : m.terrain)
-        if (!t.query && t.t.mesh) t.query = meshShape(*t.t.mesh, glm::translate(mat4(1), t.t.offset), true);
-    for (auto& p : m.proxies)
-        if (!p.query && p.shape) p.query = meshShape(*p.shape, mat4(1), true);
+void castParts(std::span<const Scene::SegmentCaster::Part> parts, std::span<const Scene::Segment> segments,
+               std::span<std::optional<Scene::SegmentHit>> hits) {
     JPH::RayCastSettings rs;
     rs.SetBackFaceMode(JPH::EBackFaceMode::CollideWithBackFaces);
     for (size_t i = 0; i < segments.size() && i < hits.size(); ++i) {
-        const Segment& s = segments[i];
+        const Scene::Segment& s = segments[i];
         const JPH::RRayCast ray(Jm(s.from), Jm(s.to - s.from));
-        std::optional<SegmentHit> best;
-        const auto cast = [&](const JPH::Shape* shape, const collision::CollisionMesh* col, const mat4& frame, bool dynamic) {
-            if (!shape || !col) return;
-            const JPH::TransformedShape ts(Jm(vec3(frame[3])), J(glm::normalize(glm::quat_cast(mat3(frame)))), shape, JPH::BodyID());
+        std::optional<Scene::SegmentHit> best;
+        for (const auto& part : parts) {
+            const JPH::TransformedShape ts(Jm(vec3(part.frame[3])), J(glm::normalize(glm::quat_cast(mat3(part.frame)))),
+                                           part.shape.GetPtr(), JPH::BodyID());
             QueryableHit c;
-            c.mesh = static_cast<const JPH::MeshShape*>(shape), c.col = col, c.mask = mask;
+            c.mesh = static_cast<const JPH::MeshShape*>(part.shape.GetPtr()), c.ok = part.ok.get();
             c.ResetEarlyOutFraction(best ? best->fraction : 1.0f + FLT_EPSILON);
             ts.CastRay(ray, rs, c);
-            if (!c.had || (best && c.hit.mFraction >= best->fraction)) return;
+            if (!c.had || (best && c.hit.mFraction >= best->fraction)) continue;
             const JPH::Vec3 p = ray.GetPointOnRay(c.hit.mFraction);
             vec3 n = G(ts.GetWorldSpaceSurfaceNormal(c.hit.mSubShapeID2, p));
             if (glm::dot(n, s.to - s.from) > 0) n = -n; // facing the query, as collision::Hit
-            best = SegmentHit{G(p) * kUnitsPerMetre, n, c.hit.mFraction, col, c.mesh->GetTriangleUserData(c.hit.mSubShapeID2), dynamic};
-        };
-        for (const auto& t : m.terrain) cast(t.query.GetPtr(), t.t.mesh, mat4(1), false);
-        for (const auto& p : m.proxies) cast(p.query.GetPtr(), p.shape.get(), p.transform, true);
+            best = Scene::SegmentHit{G(p) * kUnitsPerMetre, n, c.hit.mFraction, part.col, c.mesh->GetTriangleUserData(c.hit.mSubShapeID2), part.dynamic};
+        }
         hits[i] = best;
     }
+}
+} // namespace
+
+std::shared_ptr<const Scene::SegmentCaster> Scene::segmentCaster(uint8_t mask) const {
+    Impl& m = *impl_;
+    const auto faces = [mask](Impl::QueryFaces& q, const collision::CollisionMesh& col) {
+        if (!q.ok || q.okMask != mask) {
+            auto ok = std::make_shared<std::vector<uint8_t>>(col.faces.size());
+            for (size_t f = 0; f < col.faces.size(); ++f) (*ok)[f] = collision::queryable(col.faces[f], mask) ? 1 : 0;
+            q.ok = std::move(ok), q.okMask = mask;
+        }
+        return q.ok;
+    };
+    auto c = std::make_shared<SegmentCaster>();
+    c->parts_.reserve(m.terrain.size() + m.proxies.size());
+    for (auto& t : m.terrain) {
+        if (!t.t.mesh) continue;
+        if (!t.query) t.query = meshShape(*t.t.mesh, glm::translate(mat4(1), t.t.offset), true);
+        if (t.query) c->parts_.push_back({t.query, mat4(1), faces(t.faces, *t.t.mesh), t.t.mesh, false});
+    }
+    for (auto& p : m.proxies) {
+        if (!p.shape) continue;
+        if (!p.query) p.query = meshShape(*p.shape, mat4(1), true);
+        if (p.query) c->parts_.push_back({p.query, p.transform, faces(p.faces, *p.shape), p.shape.get(), true});
+    }
+    return c;
+}
+
+void Scene::SegmentCaster::cast(std::span<const Segment> segments, std::span<std::optional<SegmentHit>> hits) const {
+    castParts(parts_, segments, hits);
+    for (size_t i = 0; i < segments.size() && i < hits.size(); ++i)
+        if (hits[i]) hits[i]->mesh = nullptr; // the mesh may be gone by now
+}
+
+void Scene::castSegments(std::span<const Segment> segments, std::span<std::optional<SegmentHit>> hits, uint8_t mask) const {
+    castParts(segmentCaster(mask)->parts_, segments, hits);
 }
 
 int Scene::addBody(const MassProps& m, const mat4& model) {
@@ -1311,7 +1351,7 @@ void Scene::setColliders(std::span<const collision::Dynamic> dynamics) {
     for (const auto& d : dynamics) {
         if (!d.shape) continue;
         const auto it = std::ranges::find(m.proxies, d.shape, &Impl::ProxyE::shape);
-        if (it != m.proxies.end()) next.push_back({std::move(it->shape), d.transform, it->body, std::move(it->query)}), it->body = JPH::BodyID();
+        if (it != m.proxies.end()) next.push_back({std::move(it->shape), d.transform, it->body, std::move(it->query), std::move(it->faces)}), it->body = JPH::BodyID();
         else next.push_back({d.shape, d.transform, {}});
     }
     for (auto& p : m.proxies) m.remove(p.body);

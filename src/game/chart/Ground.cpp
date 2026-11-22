@@ -10,14 +10,16 @@
 // Group A ids not ported (the game state they read is not modelled; they stay unregistered and count as unported):
 //   0x12E / 0x131 foot-lock controllers (+0xF20.., their lock bytes +0x10A / +0x10B set through 0x7000F0 by anim events),
 //   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
-//   combo move history, 0x1E5 / 0x1EA / 0x1EF the player +0x31C probe record (0x1EB / 0x1F0: Jump.cpp), 0x1FB the gear slot's
-//   instance, 0x208 the stairs byte +0x11D4, 0x20B the wall-jump
+//   combo move history, 0x208 the stairs
+//   byte +0x11D4, 0x20B the wall-jump
 //   anticipation rays (0x759260, n = 0 frames), 0x20D the combat component flags +0x1FC bit 11.
 #include "game/Chart.hpp"
 #include "game/Game.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <numbers>
 
 namespace ou::game::chart {
@@ -275,6 +277,85 @@ bool inCombatMode(ChartContext& ctx, const Cond& c) {
     const auto combat = ctx.combatMode();
     if (!combat) return rt.unported(c);
     return edge(ctx, c, *combat);
+}
+
+// 0x1FB (0x763D70, PSCCF_UsingGear): cur = the int at (player +0x500) +0x134 is non-zero and 0x6E8E30(slot) holds: the
+// slot's instance handle ((player +0x500) + slot * 0x10 + 4) is live and its message 0x36 (0x5B36F0) answers 0;
+// edge-coded. With empty hands the slot byte is -1 and 0x6E8E30 returns 0, so cur is false [O]; a held item's message
+// 0x36 is not modelled [U], nor the int's upper bytes for slot 0, so those stay unported. The first evaluation takes
+// the previous value equal to the current one (uVar6 = cur ? 2 : 0).
+bool usingGear(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    if (rt.cache(c.id).frame == rt.frame()) return edge(ctx, c, false, true);
+    const auto slot = ctx.gearSlot();
+    if (!slot || *slot != -1) return rt.unported(c);
+    return edge(ctx, c, false, true);
+}
+
+// 0x1EA (0x764FD0) / 0x1EF (0x764E00) / 0x1E5 (0x7651E0): an s16 of the move sweep's record (player +0x31C, ChartJ's
+// moveSweepRecord: Lara data +0x630's 0x84-byte records), read only when the record is set and, for these ids, byte
+// +0x320 is (sweepFresh: this update's sweep stored it; the sibling ids 0x1EB / 0x1F0 / 0x1E6 skip that byte), else
+// 0. offs are by state int property 532 (0x214) i = 1 / 0 / 2 (Jump.cpp sweepSlot, the same layout). nullopt: the
+// context cannot say.
+std::optional<int16_t> freshSweepField(ChartContext& ctx, uint16_t off) {
+    const auto rec = ctx.moveSweepRecord();
+    const auto fresh = ctx.sweepFresh();
+    if (!rec || !fresh) return std::nullopt;
+    if (*rec < 0 || !*fresh) return int16_t(0);
+    const Charts& d = ctx.chart().charts();
+    const auto base = d.pointer(d.dataOffset + 0x630);
+    if (!base) return std::nullopt;
+    int16_t v = 0;
+    const size_t at = size_t(*base) + size_t(*rec) * 0x84 + off;
+    if (at + 2 <= d.bytes.size()) std::memcpy(&v, d.bytes.data() + at, 2);
+    return v;
+}
+std::optional<int16_t> freshSweepSlot(ChartContext& ctx, const std::array<uint16_t, 3>& offs) {
+    const int i = ctx.chart().propInt(0x214).value_or(0);
+    if (i < 0 || i > 2) { // no field for an index outside 0..2 (as Jump.cpp sweepSlot)
+        if (!ctx.moveSweepRecord() || !ctx.sweepFresh()) return std::nullopt;
+        return int16_t(0);
+    }
+    return freshSweepField(ctx, offs[size_t(i == 1 ? 0 : i == 0 ? 1 : 2)]);
+}
+// 0x1EA: grapple {+0x5C, +0x5A, +0x58}; else by byte +0x2C5 (sweepCandidates) and combat (0x6F2800):
+// {+0x3C, +0x3A, +0x38} / {+0x4C, +0x4A, +0x48} with a candidate, {+0x44, +0x42, +0x40} / {+0x54, +0x52, +0x50}
+// without. Equal to the value [O].
+bool envProbeClass(ChartContext& ctx, const Cond& c) {
+    const auto g = ctx.grapple();
+    const auto w = ctx.combatMode();
+    const auto cv = ctx.sweepCandidates();
+    if (!g || !w || !cv) return ctx.chart().unported(c);
+    using Offs = std::array<uint16_t, 3>;
+    const Offs offs = g->attached ? Offs{0x5C, 0x5A, 0x58}
+                      : *cv       ? (*w ? Offs{0x4C, 0x4A, 0x48} : Offs{0x3C, 0x3A, 0x38})
+                                  : (*w ? Offs{0x54, 0x52, 0x50} : Offs{0x44, 0x42, 0x40});
+    const auto s = freshSweepSlot(ctx, offs);
+    if (!s) return ctx.chart().unported(c);
+    return *s == ctx.chart().value(c);
+}
+// 0x1EF: grapple {+0x74, +0x72, +0x70}, combat {+0x6C, +0x6A, +0x68}, else {+0x64, +0x62, +0x60}; then unless 0x759850
+// holds for either candidate slot (+0x3A0 / +0x3E0; ours a candidate now, as Jump.cpp 0x1F0 [I]) 2 -> 0 and 9 -> 7.
+bool envProbeClassB(ChartContext& ctx, const Cond& c) {
+    const auto g = ctx.grapple();
+    const auto w = ctx.combatMode();
+    if (!g || !w) return ctx.chart().unported(c);
+    using Offs = std::array<uint16_t, 3>;
+    const Offs offs = g->attached ? Offs{0x74, 0x72, 0x70} : *w ? Offs{0x6C, 0x6A, 0x68} : Offs{0x64, 0x62, 0x60};
+    auto s = freshSweepSlot(ctx, offs);
+    if (!s) return ctx.chart().unported(c);
+    if (*s == 2 || *s == 9) {
+        const auto cand = ctx.jumpCandidates();
+        if (!cand) return ctx.chart().unported(c);
+        if (!cand->a && !cand->b) s = int16_t(*s == 2 ? 0 : 7);
+    }
+    return *s == ctx.chart().value(c);
+}
+// 0x1E5: the record's s16 +0x32 (one field, no slot index). Equal to the value [O].
+bool envProbeClass32(ChartContext& ctx, const Cond& c) {
+    const auto s = freshSweepField(ctx, 0x32);
+    if (!s) return ctx.chart().unported(c);
+    return *s == ctx.chart().value(c);
 }
 
 // 0x1FC (0x764940): byte agent +0x345; 0 -> clear, 1 -> set.
@@ -913,6 +994,10 @@ void registerGround(Registry& player, Registry&) {
     player.condition(0x19E, moveDirSpherical, "PSCCF_MoveDirSpherical", g);
     player.condition(0x1F7, lowCeiling, "PSCCF_LowCeiling", g);
     player.condition(0x1FA, inCombatMode, "PSCCF_InCombatMode", g);
+    player.condition(0x1FB, usingGear, "PSCCF_UsingGear", g); // empty hands only; a held item stays unported
+    player.condition(0x1E5, envProbeClass32, "PSCCF_EnvProbeClass32", g);
+    player.condition(0x1EA, envProbeClass, "PSCCF_EnvProbeClass", g);
+    player.condition(0x1EF, envProbeClassB, "PSCCF_EnvProbeClassB", g);
     player.condition(0x1FC, agentFlag345, "PSCCF_AgentFlag345", g);
     player.condition(0x1FD, onSlopeSlide, "PSCCF_OnSlopeSlide", g);
     player.condition(0x203, wallJumpAttach, "PSCCF_WallJumpAttach", g);

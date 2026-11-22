@@ -1220,6 +1220,11 @@ public:
     // Input replays of Wine corpus cases (InputScript::cameraYaw): the stick reads against this world yaw every tick, as
     // tru.exe's pinned camera had it; nullopt (default): the camera's.
     void pinStickYaw(std::optional<float> yaw) { stickYawPin_ = yaw; }
+    // Input replays of Wine takes with the camera matrix (InputScript::cameraRows, var_cam38 rows right / down / look):
+    // tru.exe's g_camera +0x10 rows that frame, which the chart's stick class (0x6F89A0 -> 0x195) reads; nullopt
+    // (default): the live camera's.
+    void pinCameraRows(std::optional<std::array<vec3, 3>> rows) { cameraRowsPin_ = rows; }
+    const std::optional<std::array<vec3, 3>>& cameraRowsPin() const { return cameraRowsPin_; }
     // Replays only (--camera-follow, a case's camera_follow): the Wine harness's CAMFOLLOW, the orbit camera's position
     // and proposed point put at her position - (dx, dy) x dist + (0, 0, height) before every update, as chart.c writes
     // g_camera +0x90 / +0x150 between frames; the update then runs as in play from there. nullopt (default): play.
@@ -1880,6 +1885,7 @@ private:
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
     std::optional<vec3> lookPoint_; // its look point (+0x620), lagging the same goal while swimming (World.cpp)
     std::optional<float> stickYawPin_; // pinStickYaw
+    std::optional<std::array<vec3, 3>> cameraRowsPin_; // pinCameraRows
     std::optional<CameraFollow> cameraPin_; // pinCamera
     std::optional<CameraSeed> cameraSeed_;  // seedCamera
     vec3 pivot_{0}; // cameraPivot(): the orbit camera's pivot this tick (output only, recomputed by every update)
@@ -2374,6 +2380,13 @@ public:
         return cameraFollow_ ? std::optional<float>(std::atan2(cameraFollow_->dy, cameraFollow_->dx)) : std::nullopt;
     }
     bool cameraYawRecord() const { return !cameraYaw_.empty(); } // "camera_yaw" present: the pin follows it per tick
+    // tru.exe's camera rows right / down / look at `tick` ("camera_rows", the latest entry at or before it; before the
+    // first, the first); nullopt without the record.
+    std::optional<std::array<vec3, 3>> cameraRows(uint64_t tick) const {
+        if (cameraRows_.empty()) return std::nullopt;
+        auto it = cameraRows_.upper_bound(tick);
+        return it == cameraRows_.begin() ? it->second : std::prev(it)->second;
+    }
     // The script carries tru.exe's recorded stick ("stick"): its move axes are already the filtered stick record, so the
     // app does not run StickRateFilter on them.
     bool stickRecord() const { return stickRecord_; }
@@ -2391,6 +2404,7 @@ private:
     bool stickRecord_ = false;
     std::map<uint64_t, float> frameDt_;
     std::map<uint64_t, float> cameraYaw_; // "camera_yaw"
+    std::map<uint64_t, std::array<vec3, 3>> cameraRows_; // "camera_rows"
 };
 
 } // namespace ou::game

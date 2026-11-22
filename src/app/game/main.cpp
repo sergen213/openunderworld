@@ -41,6 +41,7 @@
 #include "formats/Formats.hpp"
 #include "fx/Breath.hpp"
 #include "fx/Fx.hpp"
+#include "fx/Precip.hpp"
 #include "game/Game.hpp"
 #include "game/Chart.hpp"
 #include "script/Vm.hpp"
@@ -139,6 +140,7 @@ void usage() {
                  "               [--water original|enhanced] [--water-detail auto|standard|high] [--ocean fft|procedural] [--water-debug 0-6]\n"
                  "               [--water-color auto|original|emerald|coral_lagoon|pelagic_cobalt|mineral_jade|subpolar_slate|clear]\n"
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
+                 "               [--snow-accumulation on|off]\n"
                  "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"
                  "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only) [--fx on|off] [--anti-lag on|off]\n"
                  "               [--lang en|fr|de|it|es|nl|pl|ru|cs|hu] (text, voice, subtitles)\n"
@@ -348,12 +350,14 @@ void poseBikes(const ou::game::World& w, double alpha, const BikeIndices& bikes,
 struct LaraMeshes {
     std::vector<size_t> meshIndices; // into the uploaded scene
     std::vector<ou::scene::Vertex> scratch;
+    glm::vec3 lo{0}, hi{0}; // world bounds of the last pose (the Enhanced snow coat's body capsule)
 
     void pose(const ou::game::World& world, const ou::game::PlayerState& s, double alpha, const ou::scene::SceneData& scene,
               ou::render::Renderer& r) {
         const auto palette = ou::anim::skinPalette(world.anims().skeleton, world.pose(alpha));
         const glm::mat4 m = world.player().modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
         const auto& wet = world.wetness().bone;
+        lo = glm::vec3(1e30f), hi = glm::vec3(-1e30f);
         for (const size_t i : meshIndices) {
             const auto& mesh = scene.meshes[i];
             ou::anim::skinVertices(mesh, palette, scratch, m);
@@ -365,6 +369,10 @@ struct LaraMeshes {
                 for (int j = 0; j < 4; ++j)
                     if (k.bone[j] < wet.size()) x += float(k.weight[j]) * wet[k.bone[j]];
                 scratch[v].color0 = uint32_t(std::lround(std::min(x, 255.0f)));
+            }
+            for (const auto& v : scratch) {
+                const glm::vec3 p(v.position[0], v.position[1], v.position[2]);
+                lo = glm::min(lo, p), hi = glm::max(hi, p);
             }
             r.updateVertices(i, scratch);
         }
@@ -1268,7 +1276,20 @@ struct EffectsView {
     const ou::fx::WeatherDef* weatherDef = nullptr;
     std::shared_ptr<const ou::fx::ObjectFx> weatherFx;
     float weatherAspect = 16.0f / 9.0f; // the last frame's
-    bool drawWeather = true;            // off while the Enhanced weather layer shows the unit's rain / snow
+    bool drawWeather = true;            // off while the Enhanced weather (fx::Precip) shows rain / snow
+    // Enhanced weather (docs/RENDERING.md "Weather"): world-space drops / flakes, their cover grid and Lara's snow coat.
+    // The cover queries and the particle build run on fx::PrecipWorker, one frame behind (frame() draws the previous
+    // frame's job and submits this one's).
+    ou::fx::PrecipWorker precipWorker;
+    ou::fx::SnowCoat snowCoat;
+    ou::fx::Precip::Frame precipFrame; // this frame's (kind None: not drawn)
+    ou::fx::Precip::Query precipQuery; // this frame's cover query (a SegmentCaster snapshot), for the job
+    std::optional<glm::vec2> coatProbe; // the column above Lara, whose cover the next job reports
+    std::optional<float> coatCover;     // its cover, from the last collected job
+    size_t precipCount = 0;             // particles drawn this frame
+    // Exit-log costs, summed per job: main thread (collect + append + submit), worker (cover queries, build).
+    double precipMainMs = 0, precipWorkerCoverMs = 0, precipWorkerBuildMs = 0;
+    uint64_t precipJobs = 0;
     std::pair<int32_t, int32_t> loggedWeather{0, 0}; // script snow / rain % last logged
     static ou::fx::Weather::Camera weatherCamera(const ou::render::Camera& c, float aspect) {
         ou::fx::Weather::Camera w;
@@ -1340,6 +1361,7 @@ struct EffectsView {
     void sync(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
         if (!library) {
             library.emplace(bf);
+            for (auto& t : ou::fx::precipTextures()) library->addTexture(std::move(t)); // Enhanced weather (fx::Precip)
             if (const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt"))
                 names = ou::formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
         }
@@ -1611,6 +1633,42 @@ struct EffectsView {
         if (fo.water != ou::render::WaterQuality::Enhanced) bubbles.clear();
         weatherAspect = aspect;
         if (drawWeather && weatherDef) weather.build(*weatherDef, weatherCamera(cam, aspect), vertices, batches);
+        if (precipFrame.kind != ou::fx::Precip::Kind::None || snowCoat.clumps()) {
+            // Lit by the unit look: its fog colour (the sky / air light the drops catch) over a floor, as the post pass did.
+            glm::vec3 light(0.7f);
+            if (fo.unitLook) {
+                const glm::vec3 fog(fo.unitLook->fogColor[0], fo.unitLook->fogColor[1], fo.unitLook->fogColor[2]);
+                const float lum = glm::dot(fog, glm::vec3(0.3f, 0.59f, 0.11f));
+                // A black fog colour means the look has no fog (l7_thin_ice): keep the neutral light, not a dark grey.
+                if (lum > 0.03f)
+                    light = glm::mix(glm::vec3(1), fog / lum, 0.25f) * (0.55f + 0.45f * std::clamp(lum * 2.0f, 0.0f, 1.0f));
+                else
+                    light = glm::vec3(0.85f);
+            }
+            precipFrame.light = glm::clamp(light, glm::vec3(0.05f), glm::vec3(1.2f));
+        }
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            const auto& r = precipWorker.collect();
+            precipCount = 0;
+            if (r.valid) {
+                const auto base = uint32_t(vertices.size());
+                vertices.insert(vertices.end(), r.vertices.begin(), r.vertices.end());
+                for (auto b : r.batches) b.first += base, batches.push_back(b);
+                precipCount = r.count;
+                coatCover = r.probes.empty() ? std::nullopt : r.probes[0];
+                precipWorkerCoverMs += r.coverMs, precipWorkerBuildMs += r.buildMs, ++precipJobs;
+            }
+            if (precipFrame.kind != ou::fx::Precip::Kind::None) {
+                ou::fx::PrecipWorker::Job job{precipFrame, std::move(precipQuery), 2048, {}};
+                if (coatProbe) job.probes.push_back(*coatProbe);
+                precipWorker.submit(std::move(job));
+            }
+            precipQuery = nullptr;
+            if (r.valid || precipFrame.kind != ou::fx::Precip::Kind::None)
+                precipMainMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        }
+        snowCoat.build(precipFrame, vertices, batches);
         fo.fxVertices = vertices, fo.fxBatches = batches;
         // Sun-glare filters fade while the owner point is occluded (0x535C50): a collision ray from the camera [I].
         const glm::mat4 viewProj = cam.projection(aspect) * cam.view();
@@ -2510,6 +2568,12 @@ int main(int argc, char** argv) {
     std::map<std::string, ou::game::UnitWeather> unitWeathers;
     std::optional<ou::fx::Library> weatherFx; // the weather objects' particle definitions (their columns)
     float shelter = 0;
+    double precipSnapshotSum = 0;        // summed main-thread time making the cover query snapshot (Scene::segmentCaster)
+    uint64_t precipFrames = 0;           // frames that drew the Enhanced weather
+    double coatTime = 0;                 // game time of the last SnowCoat tick
+    glm::vec3 coatPos = world->player().state().pos;
+    ou::render::SnowLayer snowLayer; // Enhanced snow accumulation (FrameOptions::snow), filled per frame
+    float snowAmount = 0;            // the area's built-up snow so far (SnowLayer::seed): grows while snowing, melts after
     const auto& sp = world->player().state();
     std::fprintf(stderr, "ou-game: %s | chapter %d | spawn %s at %.1f %.1f %.1f yaw %.1f\n", world->currentUnit().data.name.c_str(),
                  world->chapter,
@@ -3371,6 +3435,7 @@ int main(int argc, char** argv) {
             // last update in 30 Hz frames: live, this frame's time on its first tick (the devices were read once for the
             // frame; later ticks see no step); a Wine case's recorded dt ("frame_dt"); else a tick (0.5). A script carrying
             // the recorded stick record replays the filter's output already.
+            const glm::vec2 keyMove = a.move; // before the filter: the trace's inputs column (the keys, as Wine's)
             if (moveFilter && (selfTest || !script || !script->stickRecord())) {
                 const bool live = !selfTest && !script && !autopilot && !replay;
                 const float tickDt = float(ou::game::kTickSeconds * 30.0);
@@ -3382,6 +3447,8 @@ int main(int argc, char** argv) {
             // A take's recorded camera heading ("camera_yaw"): tru.exe's free camera turns during the take and the stick
             // is read against it, so the pin follows it per tick (harness only; the camera view itself stays pinned).
             if (script && script->cameraYawRecord()) world->pinStickYaw(script->cameraYaw(appTicks));
+            if (script) // and its camera matrix rows ("camera_rows"): the chart's camera axes (stick class 0x6F89A0)
+                if (auto rows = script->cameraRows(appTicks)) world->pinCameraRows(rows);
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)
@@ -3452,7 +3519,7 @@ int main(int argc, char** argv) {
             else
                 ou::game::setSeaSwell(nullptr, nullptr);
             world->tick(a);
-            if (chartShadow && !menus.mainMenu()) chartShadow->tick(*world, a);
+            if (chartShadow && !menus.mainMenu()) chartShadow->tick(*world, a, keyMove);
             // A death restored the checkpoint save: the level reload stops every sound (tru.exe 0x5DAB40 -> 0x593D10) and
             // the music / reverb are the save's again, as after a load.
             if (world->respawns() != respawnsBefore) resetAudio("respawn"), resumeAudio("respawn");
@@ -4054,7 +4121,14 @@ int main(int argc, char** argv) {
                 uw.kind = it->second.kind;
                 uw.intensity = it->second.intensity * ou::game::weatherCoverage(it->second, cam.position - unit.offset);
             }
-            effects.drawWeather = uw.kind == P::None;
+            // Script weather (prologue rain, ...) shows through the same world-space particles in Enhanced: the original
+            // camera-relative pools (fx::Weather) stay for the Original preset.
+            const auto& sw = world->script().weather();
+            if (sw.rain > 0 && uw.kind != P::Snow)
+                uw.kind = P::Rain, uw.intensity = std::max(uw.intensity, std::min(1.0f, float(sw.rain) / 100.0f));
+            else if (sw.snow > 0 && uw.kind != P::Rain)
+                uw.kind = P::Snow, uw.intensity = std::max(uw.intensity, std::min(1.0f, float(sw.snow) / 100.0f));
+            effects.drawWeather = uw.kind == P::None || uw.intensity <= 0;
             const ou::physics::Scene::Segment up{cam.position, cam.position + glm::vec3(0, 0, 3000.0f)};
             std::optional<ou::physics::Scene::SegmentHit> roofHit;
             world->physics().castSegments({&up, 1}, {&roofHit, 1}); // Jolt narrow phase on the scene's terrain / colliders
@@ -4062,7 +4136,105 @@ int main(int argc, char** argv) {
             shelter += (float(roof) - shelter) * (1.0f - std::exp(-3.0f * float(dt))); // same fade at any render rate
             fo.weather.kind = uw.kind == P::Rain ? ou::render::Weather::Kind::Rain
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
+            // The post pass keeps only the wet look (darkening); the particles are world space (fx::Precip), so they keep
+            // falling outside a door while the camera stands under the roof: the cover grid hides them under roofs.
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
+            auto& pf = effects.precipFrame;
+            pf.kind = uw.kind == P::Rain ? ou::fx::Precip::Kind::Rain : uw.kind == P::Snow ? ou::fx::Precip::Kind::Snow : ou::fx::Precip::Kind::None;
+            pf.intensity = uw.intensity;
+            pf.time = waveSeconds;
+            pf.eye = cam.position, pf.forward = cam.forward();
+            pf.tanHalfFovY = std::tan(glm::radians(cam.verticalFovDeg) * 0.5f), pf.viewportHeight = float(h);
+            {
+                const auto& cu = world->currentUnit();
+                const glm::vec2 bw = world->bends().wind(cu.data.name, cam.position);
+                const float wl = glm::length(bw);
+                pf.wind = (wl > 0 ? bw / wl * std::min(wl, 1.0f) : glm::vec2(0)) * (pf.kind == ou::fx::Precip::Kind::Snow ? 60.0f : 140.0f);
+            }
+            if (pf.kind != ou::fx::Precip::Kind::None && pf.intensity > 0) {
+                // The worker's cover query (fx::PrecipWorker): a frozen copy of the Jolt query shapes and the water
+                // volumes, so it never touches the live scene.
+                const auto t0 = std::chrono::steady_clock::now();
+                auto water = std::make_shared<std::vector<ou::collision::Markup>>();
+                for (const auto& m : world->collision().markup)
+                    if (m.type == 10 && m.points.size() >= 2) water->push_back(m);
+                effects.precipQuery = [caster = world->physics().segmentCaster(), water = std::shared_ptr<const std::vector<ou::collision::Markup>>(std::move(water))](
+                                          std::span<const glm::vec3> from, std::span<const glm::vec3> to, std::span<std::optional<float>> hits) {
+                    std::vector<ou::physics::Scene::Segment> segs(from.size());
+                    std::vector<std::optional<ou::physics::Scene::SegmentHit>> out(from.size());
+                    for (size_t i = 0; i < from.size(); ++i) segs[i] = {from[i], to[i]};
+                    caster->cast(segs, out);
+                    for (size_t i = 0; i < from.size(); ++i) {
+                        hits[i] = out[i] ? std::optional(out[i]->point.z) : std::nullopt;
+                        // Water volumes are no collision: their surface tops the column too (drops splash and ripple
+                        // on it instead of falling through to the bed).
+                        for (const auto& m : *water) {
+                            const float wz = m.points[1].z;
+                            if (wz > from[i].z || wz < to[i].z || (hits[i] && *hits[i] >= wz)) continue;
+                            if (ou::game::insideWater(m, {from[i].x, from[i].y, wz - 1})) hits[i] = wz;
+                        }
+                    }
+                };
+                precipSnapshotSum += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                ++precipFrames;
+            }
+        } else {
+            effects.precipFrame.kind = ou::fx::Precip::Kind::None;
+        }
+        // Snow on Lara (fx::SnowCoat): builds while she stands in snowfall under open sky, fades / sheds with motion.
+        if (!mainMenu) {
+            const auto& ps = world->player().state();
+            const double gt = waveSeconds;
+            const float gdt = float(std::clamp(gt - coatTime, 0.0, 0.1));
+            coatTime = gt;
+            using S = ou::game::State;
+            const S st = ps.state;
+            // Her body from the posed skin's world bounds (the model's origin is not at her feet): feet = the bounds' base
+            // centre, height = their span.
+            const bool posed = lara.hi.z > lara.lo.z;
+            const glm::vec3 feet = posed ? glm::vec3((lara.lo.x + lara.hi.x) * 0.5f, (lara.lo.y + lara.hi.y) * 0.5f, lara.lo.z) : ps.pos;
+            ou::fx::SnowCoat::Input in;
+            in.time = gt, in.dt = gdt, in.position = feet;
+            if (posed) in.height = lara.hi.z - lara.lo.z;
+            in.velocity = gdt > 0 ? (ps.pos - coatPos) / gdt : glm::vec3(0);
+            coatPos = ps.pos;
+            in.grounded = !(st == S::Jump || st == S::Fall || st == S::HangJump || st == S::WallJump || st == S::GrappleSwing);
+            in.climbing = st == S::Hang || st == S::Shimmy || st == S::ClimbUp || st == S::Climb || st == S::Ladder ||
+                          st == S::Pillar || st == S::PoleHang || st == S::DropToHang || st == S::GrappleRappel ||
+                          (st >= S::SwimSplash && st <= S::SwimClimbOut);
+            const auto& pf = effects.precipFrame;
+            const bool accumulate = opt.gfx.snowAccumulation && opt.gfx.weather;
+            effects.coatProbe.reset();
+            if (pf.kind == ou::fx::Precip::Kind::Snow && accumulate) {
+                effects.coatProbe = glm::vec2(feet); // the next job reports this column (fx::PrecipWorker, a frame late)
+                const auto top = effects.coatCover;
+                in.snowfall = top && *top <= feet.z + in.height + 30.0f ? pf.intensity : 0.0f;
+            }
+            if (in.velocity.z > 20000 || glm::length(in.velocity) > 20000) in.velocity = glm::vec3(0); // teleport / load
+            effects.snowCoat.tick(in, [&](const glm::vec3& p) -> std::optional<float> {
+                const ou::physics::Scene::Segment seg{p + glm::vec3(0, 0, 10), p - glm::vec3(0, 0, 600)};
+                std::optional<ou::physics::Scene::SegmentHit> hit;
+                world->physics().castSegments({&seg, 1}, {&hit, 1});
+                return hit ? std::optional(hit->point.z) : std::nullopt;
+            });
+            // The snow layer (render/Snow.hpp): about a minute of full snowfall to cover the open top surfaces, four to
+            // melt once it stops [I]; Lara's coat by region at her feet.
+            fo.snow = nullptr;
+            if (accumulate) {
+                const bool snowing = pf.kind == ou::fx::Precip::Kind::Snow && pf.intensity > 0;
+                snowLayer.grow = snowing ? pf.intensity / 60.0f : 0.0f;
+                snowLayer.melt = snowing ? 0.0f : 1.0f / 240.0f;
+                snowAmount = std::clamp(snowAmount + (snowLayer.grow - snowLayer.melt) * gdt, 0.0f, 1.0f);
+                snowLayer.seed = snowAmount, snowLayer.dt = gdt;
+                for (int k = 0; k < 3; ++k) snowLayer.light[k] = effects.precipFrame.light[k] * 0.95f;
+                const auto& coat = effects.snowCoat.coverage();
+                std::copy(coat.begin(), coat.end(), snowLayer.lara);
+                snowLayer.laraFeet[0] = feet.x, snowLayer.laraFeet[1] = feet.y, snowLayer.laraFeet[2] = feet.z;
+                snowLayer.laraHeight = in.height;
+                if (snowing || snowAmount > 0 || std::any_of(coat.begin(), coat.end(), [](float c) { return c > 0; })) fo.snow = &snowLayer;
+            } else {
+                snowAmount = 0;
+            }
         }
         // Time of day (render/TimeOfDay.hpp): the cycle runs on game time (paused with the game); stars and moon only
         // under a clear sky (no Enhanced weather, no unit rain object).
@@ -4119,6 +4291,18 @@ int main(int argc, char** argv) {
                          world->checkpoint() ? world->checkpoint()->id : 0, world->found[0], world->found[1], world->found[2],
                          std::string(ou::game::stateName(fs.state)).c_str(), fs.pos.x, fs.pos.y, fs.pos.z, glm::degrees(fs.yaw), fs.clip.c_str(),
                          (unsigned long long)world->stateHash(), effects.system.particleCount());
+            if (precipFrames)
+                std::fprintf(stderr, "ou-game: weather %s intensity %.2f light %.2f %.2f %.2f particles %zu clumps %zu coat %.2f/%.2f/%.2f/%.2f | "
+                             "main thread %.3f ms (query snapshot %.3f, collect+append+submit %.3f) worker cover %.3f ms build %.3f ms per frame (%llu frames, %llu jobs)\n",
+                             effects.precipFrame.kind == ou::fx::Precip::Kind::Rain ? "rain" : effects.precipFrame.kind == ou::fx::Precip::Kind::Snow ? "snow" : "none",
+                             effects.precipFrame.intensity, effects.precipFrame.light.x, effects.precipFrame.light.y, effects.precipFrame.light.z,
+                             effects.precipCount, effects.snowCoat.clumps(),
+                             effects.snowCoat.coverage()[0], effects.snowCoat.coverage()[1], effects.snowCoat.coverage()[2],
+                             effects.snowCoat.coverage()[3], (precipSnapshotSum + effects.precipMainMs) / double(precipFrames),
+                             precipSnapshotSum / double(precipFrames), effects.precipMainMs / double(precipFrames),
+                             effects.precipJobs ? effects.precipWorkerCoverMs / double(effects.precipJobs) : 0.0,
+                             effects.precipJobs ? effects.precipWorkerBuildMs / double(effects.precipJobs) : 0.0,
+                             (unsigned long long)precipFrames, (unsigned long long)effects.precipJobs);
             if (autopilot) autopilot->finish(appTicks);
             if (chartShadow) std::fprintf(stderr, "ou-game: %s\n", chartShadow->summary().c_str());
             { // receptacle replays (tests/replays/*_insert.txt) check these

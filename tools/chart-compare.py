@@ -102,7 +102,15 @@ def compare(rundir, c):
     else:
         res = ('match (drag)' if drag else 'MATCH') if full else f'{k}/{len(ws)}'
     if drag: res += f' WARNING unmarked drag at tick {dt}'
+    # a take with neither the stick record (var_stick) nor the input update's time (var_inms): whether a key reached the
+    # stick on its own tick or the next depends on tru.exe's frame gap (the move stick filter 0x483520 passes it at once
+    # only when 0.4 x dt >= 1), which the replay cannot know; a one-tick key lag there is not a chart difference (note
+    # only, the verdict is unchanged)
+    if not key_timing(wt): res += ' (key timing unknown)'
     return f'| {c} | {res} (dt max {max(timing) if timing else 0}) | {div} | {pe} | {ye} |', ws, os_, full and not drag, inv is not None
+def key_timing(tsv):
+    with open(tsv, errors='replace') as f:
+        return any('var_stick=' in line or 'var_inms=' in line for line in f)
 if __name__ == '__main__':
     d = sys.argv[1]
     print('| case | states (tick slip) | first divergence | position error (units) | yaw err max (deg) |')

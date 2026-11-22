@@ -83,6 +83,7 @@ inline ui::GraphicsOptions graphicsMenu(const config::GraphicsConfig& g, const D
     m.water = indexOf(kWater, g.water), m.waterDetail = indexOf(kWaterDetail, g.waterDetail), m.ocean = indexOf(kOcean, g.ocean);
     m.waterColor = indexOf(config::kWaterColors, g.waterColor);
     m.atmosphere = indexOf(kAtmosphere, g.atmosphere), m.lightShafts = toTri(g.lightShafts), m.cineDof = toTri(g.cineDof), m.weather = indexOf(kWeather, g.weather);
+    m.snowAccumulation = toTri(g.snowAccumulation);
     m.fsr = g.upscaler == "fsr", m.fsrQuality = indexOf(kFsrQuality, g.fsrQuality), m.sharpness = sharpnessStep(g.sharpness);
     m.frameGeneration = g.frameGeneration, m.effects = g.effects, m.antiLag = g.antiLag, m.tonemap = indexOf(kTonemap, g.tonemap);
     m.timeOfDay = indexOf(config::kTimesOfDay, g.timeOfDay), m.dayLength = dayLengthStep(g.dayLength);
@@ -109,6 +110,7 @@ inline void applyGraphicsMenu(const ui::GraphicsOptions& m, config::GraphicsConf
     g.water = at(kWater, m.water), g.waterDetail = at(kWaterDetail, m.waterDetail), g.ocean = at(kOcean, m.ocean);
     g.waterColor = at(config::kWaterColors, m.waterColor);
     g.atmosphere = at(kAtmosphere, m.atmosphere), g.lightShafts = fromTri(m.lightShafts), g.cineDof = fromTri(m.cineDof), g.weather = at(kWeather, m.weather);
+    g.snowAccumulation = fromTri(m.snowAccumulation);
     g.upscaler = m.fsr ? "fsr" : "off", g.fsrQuality = at(kFsrQuality, m.fsrQuality);
     g.tonemap = at(kTonemap, m.tonemap);
     if (m.sharpness != sharpnessStep(g.sharpness)) g.sharpness = float(std::clamp(m.sharpness, 0, 10)) / 10;

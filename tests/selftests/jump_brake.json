@@ -48,9 +48,18 @@
      "visits": [
       "run",
       "jumpprep",
-      "jump",
-      "run"
+      "jump"
      ]
+    },
+    {
+     "clips": [
+      "ng_running_land"
+     ],
+     "note": "the running landing with the stick held, then she stops when it is let go: tru stays in the landing S1284 while the stick is held and goes to S57 (stop) on its release, never back to the run [O Wine wallhug_attempt/tr_pole_ground_run_jump: S1284 @87 held, S57 @121 on release, S40 @154]; legacy files the same clip under its run state"
+    },
+    {
+     "probe": "player.state",
+     "eq": "idle"
     },
     {
      "probe": "step.peak_height",
@@ -106,9 +115,18 @@
      "visits": [
       "run",
       "jumpprep",
-      "jump",
-      "run"
+      "jump"
      ]
+    },
+    {
+     "clips": [
+      "ng_running_land"
+     ],
+     "note": "as in jump_tapped [O Wine wallhug_attempt/tr_pole_ground_run_jump]"
+    },
+    {
+     "probe": "player.state",
+     "eq": "idle"
     },
     {
      "probe": "step.peak_height",

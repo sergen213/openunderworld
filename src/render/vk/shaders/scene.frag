@@ -10,6 +10,7 @@
 #define OU_RT_SET 2
 #endif
 #define OU_SHADOW_SET 1
+#define OU_SNOW 1 // sun.glsl ouSnowApply (the Enhanced snow layer)
 layout(location = 0) in vec3 vNormal;
 layout(location = 1) in vec2 vUv;
 layout(location = 2) in vec4 vColor;
@@ -25,6 +26,9 @@ layout(location = 0) out vec4 oColor;
 
 void main() {
     vec4 c = texture(uTex, vUv) * vColor;
+    vec3 face = cross(dFdx(vWorld), dFdy(vWorld)); // before the discard (uniform control flow): the snow layer's normal
+    face = dot(face, face) > 0.0 ? normalize(face) : vec3(0.0, 0.0, 1.0);
+    if (dot(face, ouShadow.eye.xyz - vWorld) < 0.0) face = -face;
     float len = length(vNormal);
     vec3 n = len > 1e-6 ? (gl_FrontFacing ? 1.0 : -1.0) * vNormal / len : vec3(0.0);
     float ndl = max(dot(n, ouShadow.sun.xyz), 0.0);
@@ -39,5 +43,6 @@ void main() {
     if ((pc.rt & 1) != 0) c.rgb = ouIndirect(c.rgb); // RT sun bounce (opaque, pre-passed draws only; RT AO is in ouAo)
     if ((pc.rt & 2) != 0 && len > 1e-6) c = ouRtWater(c, vWorld, n, pc.lighting != 0, 1.0);
 #endif
+    if ((pc.rt & 2) == 0) c = ouSnowApply(c, vWorld, face); // not on water draws
     oColor = c;
 }
