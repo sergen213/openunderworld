@@ -453,19 +453,23 @@ std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext
     v[8] = uint32_t(ctx.playerInt(0xEDC));
     v[16] = 0u;
     // 13 (0x6E9780): an attached markup (+0xC94) that 0x733F60 accepts (0x733EC0: markup flags & 0xA000000 and the
-    // pitch of its first segment, |atan2(-dz, |dxy|)|, within the global limit *(0xE7EE50)+0x184 degrees) and whose
-    // first segment runs along her facing (0x733690: |dot| of the flattened unit segment and model -Y over
-    // cos(object float +0x740 degrees)) [O: decomp]. The global limit is not known here [U]: true only answers when a
-    // test that does not need it fails first.
-    v[13] = std::nullopt;
-    if (const auto a = ctx.attachedMarkup(); !a || !(a.flags & 0xA000000)) {
-        v[13] = 0u;
-    } else if (const auto seg = ctx.markupSegment(a.markup, 0)) {
-        const glm::vec2 d(seg->second - seg->first);
-        const float h = ctx.heading(), lim = ctx.chart().charts().data<float>(0x740);
-        const glm::vec2 f(std::cos(h), std::sin(h));
-        if (glm::length(d) > 1e-4f && std::abs(glm::dot(glm::normalize(d), f)) <= std::cos(glm::radians(lim))) v[13] = 0u;
-    }
+    // pitch of its first segment, |atan2(-dz, |dxy|)| wrapped to (-pi, pi], within the global limit *(0xE7EE50)+0x184
+    // = 40 degrees [O-runtime: Wine, l4_traprooms]) and whose first segment runs along her facing (0x733690: |dot| of
+    // the flattened unit segment and model -Y over cos(object float +0x740 degrees); a segment with no horizontal part
+    // passes with dot 1) [O: decomp].
+    v[13] = 0u;
+    if (const auto a = ctx.attachedMarkup(); a && (a.flags & 0xA000000))
+        if (const auto seg = ctx.markupSegment(a.markup, 0)) {
+            const glm::vec3 d = seg->first - seg->second;
+            const float pitch = std::abs(std::atan2(-d.z, glm::length(glm::vec2(d))));
+            if (pitch <= glm::radians(40.0f)) {
+                const glm::vec2 dir(seg->second - seg->first);
+                const float h = ctx.heading(), lim = ctx.chart().charts().data<float>(0x740);
+                const glm::vec2 f(std::cos(h), std::sin(h));
+                const float dot = glm::length(dir) > 1e-2f ? std::abs(glm::dot(glm::normalize(dir), f)) : 1.0f;
+                v[13] = uint32_t(glm::length(dir) <= 1e-2f || dot > std::cos(glm::radians(lim)));
+            }
+        }
     // 64 (0x6EA050): the byte the class-603 attach setter 0x74C8D0 stores in the VM context (+0x24 -> +0x10): the side
     // she takes the pole on (the layer's +0xF4 0x20 it sets alongside) [O]; that setter is not ported: unknown.
     v[64] = std::nullopt;
