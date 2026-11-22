@@ -13,6 +13,9 @@
 # trace's t30 column); the input script is the case JSON itself (its keys, the settle shift and camera_follow, which
 # pins the stick's world yaw, InputScript::cameraYaw); frames = hold + settle + ticks. Runs headless in a private
 # kwin_wayland --virtual under systemd-run (MemoryMax, KillMode=control-group), never on the user's desktop.
+# A case JSON with "no_enemies": true (set only for a take whose Wine trace shows no enemy contact; the case cites why)
+# also gets --no-enemies (enemy AI frozen): our enemies would attack where tru's did not, and the hand-off to the legacy
+# hit reaction restarts the chart. Never on by default.
 set -u
 W=/mnt/1st4TB/Projects/openunderworld-work
 G="/mnt/1st4TB/Tomb Raider Underworld"
@@ -76,6 +79,7 @@ PY
   # tru.exe's recorded generator draws for the case (W/chart/wine/<family>/<case>.rng: one value per token, in call
   # order; replay only, ou-game --chart-rng)
   RNG=$W/chart/wine/$c.rng; [ -f "$RNG" ] && extra+=(--chart-rng "$RNG")
+  python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("no_enemies") is True else 1)' "$J" && extra+=(--no-enemies)
   timeout 300 "$BIN" --game-dir "$G" --level "pc-w\\$unit.drm" --spawn "$sp" --input-script "$J" "${mode[@]}" \
     --chart-trace "$OUT/$b.tsv" --frames "$n" --no-audio --no-movies --no-cinematics --renderer opengl \
     --width 320 --height 180 "${extra[@]}" > "$OUT/$b.log" 2>&1

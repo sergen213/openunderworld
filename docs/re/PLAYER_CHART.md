@@ -325,6 +325,12 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   state whose request plays a `swim` / `grapple` / `rope` / `death` / `bike` / `portable` clip (the traversal subgraph's
   boundary families). The chart is parked and restarts from the root (0x787E00, settling in the idle) when the
   controller hands her back; a placement (`Player::spawn` / `restore`: spawn, load, teleport) restarts it too.
+  **Open (hits):** a hit handing her to the legacy `hitReact` and restarting the chart is wrong. In tru.exe a hit
+  reaction runs inside the chart (a damage message delivered as one of the chart's 69 events, taking a transition
+  into the hit states); which event and states are involved is not yet identified [U]. Seen in Wine-replay
+  `ledge/cc_wall911_stick_jump_climb`: spiders 4038/4039 attack at world tick 53, and the chart restarts at S39 (tick
+  73) and S0 (tick 193). Replays of takes without enemy contact opt into `--no-enemies` (case key `no_enemies`,
+  tools/chart-replay.sh) until this is ported.
 - **Order per tick** (inside `World::tick`): the input actions' timing, the ground check on her pose (0x71B910), the
   charts (0x768C50: Lara, then the upper body), then the motion, then the chart clip's command events (critical
   section) and the support foot, then event 455 when the check found a floor. Shadow mode had the controller's motion
