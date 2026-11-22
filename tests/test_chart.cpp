@@ -140,16 +140,23 @@ TEST(ChartReal, ClipClockStartsAtStartMinusBlend) {
     EXPECT_EQ(leaves(63, 1.0f, ticks), 246);
     EXPECT_EQ(ticks, 50);
     // Kind-2 requests name an anim graph node (0x443720 -> 0x43E250), not a pattern: the node's program picks the pattern.
-    // S245's node 213 plays 680 ng_planted_jump_forward (start 1, blend 4, 5 frames) whatever played before; Play queues
-    // it for 0x4428A0, whose lead is cut to 0: 5 frames here [U: Wine's S245 lasts 15 ticks; the queue's end callback
-    // (0x43E0C0) and 0x4428A0's crossfade branch are not modelled].
+    // S245's node 213 plays 680 ng_planted_jump_forward (start 1, blend 4, 5 keys of 100) whatever played before; its
+    // clip starts at start - blend = -3 frames, uncut (Wine stick_jump_open_anim: 0x441FB0 (100, 400), clip time -250
+    // after the entry tick, S245 15 ticks; enter() counts one tick more, as for S248).
     ChartRuntime rt(*c, c->player, reg);
     rt.enter(ctx, 245);
     EXPECT_EQ(rt.playingPattern(), 680);
     ASSERT_NE(rt.pattern(), nullptr);
     EXPECT_EQ(rt.pattern()->clip, "ng_planted_jump_forward");
     EXPECT_EQ(leaves(245, 0.0f, ticks), 256);
-    EXPECT_EQ(ticks, 10);
+    EXPECT_EQ(ticks, 16);
+    // The start rule against the recorded 0x441FB0 arguments: 678 (100, 200) -> -1 frame, 52 (600, 600) -> 0, 1463
+    // (start 2 inside a 207-unit first key: bumped to (207, 207)) -> 0; lengths by 0x438930.
+    EXPECT_FLOAT_EQ(c->requests[678].startFrame(), -1.0f);
+    EXPECT_FLOAT_EQ(c->requests[52].startFrame(), 0.0f);
+    EXPECT_FLOAT_EQ(c->requests[1463].startFrame(), 0.0f);
+    EXPECT_FLOAT_EQ(c->requests[680].lengthFrames(), 5.0f);
+    EXPECT_FLOAT_EQ(c->requests[52].lengthFrames(), 10.0f);
     rt.enter(ctx, 248);
     EXPECT_EQ(rt.playingPattern(), 52);
     rt.enter(ctx, 245); // IsPlaying(52) branch
@@ -158,14 +165,16 @@ TEST(ChartReal, ClipClockStartsAtStartMinusBlend) {
     // unknown stamina leaves it unresolved (no clip clock, never a guess).
     rt.enter(ctx, 40);
     EXPECT_EQ(rt.pattern(), nullptr);
-    // Node 22 (S533 / S535, the hang attach): with +0xED4 != 0 it queues 1460 trans_pose_U, then the attach clip; with
-    // +0xED4 == 0 native 7 also needs a game flag (0xE7F094 -> +0x50 -> +0xB90 bit 26) ours lacks: unresolved.
+    // Node 22 (S533 / S535, the hang attach), default branch (no owner flag, target type 0, +0xEDC != 2): after 1461 /
+    // 1462 / 73 / 74 / 75 it plays 952 ledgeb_attach_M, else 1460 trans_pose_U then 952; with +0xED4 != 0, 1014 instead
+    // of 952. Wine: run_jump S533 (after S296's 1461) 952; stick S535 (after 680) 1460 then 952 at tick 39.
+    ctx.playerInt(0xED4) = 0;
+    rt.enter(ctx, 245), rt.enter(ctx, 535);
+    EXPECT_EQ(rt.playingPattern(), 1460);
     ctx.playerInt(0xED4) = 2;
-    rt.enter(ctx, 533);
+    rt.enter(ctx, 245), rt.enter(ctx, 533);
     EXPECT_EQ(rt.playingPattern(), 1460);
     ctx.playerInt(0xED4) = 0;
-    rt.enter(ctx, 533);
-    EXPECT_FALSE(rt.resolved());
     // Stamina left: ng_idle / ng_run_start; spent: ng_idle_break_hot / ng_run_exhaust (node 99 asks 76 first).
     for (const auto& [sprint, idle, run] : {std::tuple{true, 685, 716}, std::tuple{false, 691, 717}}) {
         ctx.sprint = sprint;
