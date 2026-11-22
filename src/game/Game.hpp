@@ -564,6 +564,47 @@ float ropeBentLength(const PlayerState& s);
 // 1 onto, 2 onto the far side into a hang (Player.cpp hurdleClass; the flair classes 3..5 are not modelled).
 int hurdlePastClass(const collision::CollisionMesh& col, vec3 q, vec2 f);
 
+// A lara.drm markup-query class record's test and entry (tru.exe 0x729540 / 0x729420 / 0x728F00): a test {kind, point
+// sources a1 / a2, flags: bit 0 the value given, bit 1 negated, bit 2 active, value}; an entry {flags: 0x10 candidate
+// type gate (0x01 the list excludes), 0x04 attached type gate (0x08 excludes), 0x02 active; type / attach lists, tests,
+// the flag bits it sets on a candidate that passes (`bits`: bit n of word n >> 4 at candidate +0xA0)} [O: decomp].
+struct MarkupTest { uint8_t kind, a1, a2, flags; float value; };
+struct MarkupEntry {
+    uint8_t flags;
+    std::span<const uint8_t> types, attach;
+    std::span<const MarkupTest> tests;
+    std::span<const uint16_t> bits = {};
+};
+// One lara.drm query profile (object data +0xDE4 count, +0xDE8 {id, record}; tru.exe 0x6F1950) decoded for the
+// data-driven markup search 0x7296C0 (chart/Ground.cpp decodeProfile -> Player::markupSearch). Fields as 0x771830 /
+// 0x76FFC0 / 0x724F50 / 0x7296C0 read them [O: decomp, lara.drm records].
+struct MarkupProfile {
+    int id = -1;
+    uint32_t base = 0;            // +0xCC: the query's base point source (0 her root or bone +0xC8, 1 the attach point, ...)
+    int bone = 0;                 // +0xC8 low byte: the bone over the root (0 none)
+    vec3 offset{0};               // +0x58 up, +0x5C along -model Y (her facing), +0x60 along model X
+    float lead = 0;               // +0xD0 > 0: the start led by that many frames of the velocity
+    bool fixedVelocity = false;   // record +0 bit 0 and +4 mode 0: the velocity is +0x08..+0x10 itself
+    uint32_t velocityMode = 0;    // +4 (0x76FFC0: 1 the query object's, 2 a bone's motion, 3 her own, 4 the stick's)
+    vec3 velocity{0};             // +0x08..+0x10: model (x, along the heading, up), a 30 Hz frame
+    uint32_t heading = 0;         // +0xA0: the heading source (0x724F50)
+    float snap[3] = {0, 0, 0};    // +0xAC / +0xB0 / +0xB4: 0x724F50's snaps to her yaw (degrees)
+    float minT = 0, coneDeg = 0;  // +0x20 (frames), +0x24
+    int minDist = 0;              // +0x28 (short)
+    uint32_t flags = 0;           // +0x2C (0x80 coming down, 0x40 the ledge class table, 0x400 no gravity)
+    int frames = 0;               // +0xA4, else object data +0xBDE
+    struct Start { int type; float up, out; };
+    std::vector<Start> starts;    // +0x8C (+0x88 count): per target type, offsets from the base point
+    uint32_t classRecord = 0;     // +0x94's offset in the player data block (0: none)
+    uint8_t recordFlags = 0, resultRecordFlags = 0; // the class / result records' +8 (bit 1: their type list excludes)
+    std::vector<uint8_t> recordTypes, resultTypes;  // their +0xC / +0x10 (0x7232E0)
+    std::vector<MarkupEntry> classes, result; // +0x94's entries, +0x9C's (the result record setting +0xAC0's bits)
+    // backing storage of the entries' spans (stable addresses)
+    std::vector<std::unique_ptr<std::vector<MarkupTest>>> testStore;
+    std::vector<std::unique_ptr<std::vector<uint8_t>>> listStore;
+    std::vector<std::unique_ptr<std::vector<uint16_t>>> bitStore;
+};
+
 class Player {
 public:
     Player(const collision::CollisionMesh& col, const AnimLibrary& anims, Tuning tuning = defaultTuning());
@@ -728,8 +769,9 @@ private:
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
     // A ledge (markup 1) to jump onto: segment point, hang side, and the jump query frame it is met at.
-    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; }; // entry: the class
-    // record entry that passed (-1: the default checks)
+    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; uint16_t resultFlags = 0; };
+    // entry: the class record entry that passed (-1: the default checks); resultFlags: the result record's bits for the
+    // hit (JumpQuery::result: candidate +0xA0 word 0, which becomes player +0xAC0)
     JumpTarget hangJumpTarget(int kind) const; // startHangJump's target; markup -1 = none
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge)
     // A jump query's arc (lara.drm query table; tru.exe 0x771830 builds it, 0x70F300 / 0x70EC60 test it, Player.cpp):
@@ -746,6 +788,7 @@ private:
         vec3 start{0}, hang{0}, root{0}, v{0}, base{0};
         vec2 dir{0, 1};
         float frames = 40, minT = 1, cone = 3.1415927f, minDist = 20;
+        float gravity = 5.72443f; // a 30 Hz frame^2 (0x771830: 5.72443, +0x2C bit 0x400 0.001)
         bool falling = false, classify = false;
         JumpRecord record = JumpRecord::None;
         int attach = 0;
@@ -753,6 +796,14 @@ private:
         bool sight = false; // ours: ledge points hidden from the arc's start by solid geometry do not count (WallJump.cpp)
         bool ownFrame = false; // meet a moving markup in its own frame (0x70F300; ledgeOnArc)
         vec3 frameVel{0};      // ledgeOnArc: the moving markup's velocity (a frame) taken off `v` for its own frame
+        // A data-driven class record (MarkupProfile, Player::markupSearch) instead of `record`'s built-in table, and its
+        // result record; `strict`: a test kind or candidate type ours does not evaluate sets `unknown` (the answer is
+        // then not tru.exe's) instead of passing.
+        std::span<const MarkupEntry> classes, result;
+        std::span<const uint8_t> recordTypes, resultTypes; // the records' own type lists (0x7232E0)
+        uint8_t recordFlags = 0, resultRecordFlags = 0;     // their +8 (bit 1: the list excludes)
+        bool strict = false;
+        mutable bool unknown = false;
     };
     // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
     // (`record`) passing one of its class record's entries. A moving markup is met in its own frame (0x70F300).
@@ -779,6 +830,13 @@ private:
 public:
     // The take-off query (0 standing, 1 stick, 2 running) as aimGroundJump runs it, without acting on it (chart shadow).
     GroundAim groundJumpAim(int kind) const;
+    // tru.exe's markup search 0x7296C0 on one decoded lara.drm query profile (chartMarkupSearch), without acting on it:
+    // the query 0x771830 builds from the profile, swept (ledgeOnArc) against its class record's entries, the hit's
+    // result-record bits (+0xAC0) and ledge class (+0xA80). `known` false: the profile needs a source, test kind or
+    // candidate type ours does not model, so the answer would not be tru.exe's.
+    struct MarkupFound { JumpTarget target; uint16_t flags = 0; int8_t cls = 0; bool known = false; };
+    // controlYaw / stickOn: the camera-relative stick heading (0x6EBA90) and whether the stick is off rest
+    MarkupFound markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn) const;
 private:
     // State::Jump: an aimed ground jump re-aimed at its markup target (PlayerState::aimMarkup) with the time left
     // (tru.exe 0x73EDC0 every frame of the flight, 0x752410)

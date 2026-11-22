@@ -90,6 +90,55 @@ TEST(ChartGroundReal, StartStateStaysWithoutCheatMode) {
     EXPECT_NE(rt.state(), 1);
 }
 
+// lara.drm query profiles as 0x6F1950 / 0x771830 read them: q7 (hang jump right) and its records, the values Player.cpp's
+// hand-built hangJumpQuery and class tables were taken from (0x2AA4C side record, 0x2AA8C result record).
+TEST(ChartGroundReal, DecodesQueryProfiles) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    const auto c = loadCharts(bf);
+    ASSERT_TRUE(c);
+    const auto q7 = decodeProfile(*c, 7);
+    ASSERT_TRUE(q7);
+    EXPECT_TRUE(q7->fixedVelocity);
+    EXPECT_NEAR(q7->velocity.y, 70.80f, 0.01f);
+    EXPECT_NEAR(q7->velocity.z, 34.77f, 0.01f);
+    EXPECT_FLOAT_EQ(q7->coneDeg, 45.0f);
+    EXPECT_EQ(q7->minDist, 553);
+    EXPECT_EQ(q7->flags, 0x3850u);
+    EXPECT_EQ(q7->heading, 17u);
+    EXPECT_EQ(q7->base, 1u);
+    EXPECT_NEAR(q7->offset.x, -474.08f, 0.01f);
+    EXPECT_NEAR(q7->offset.y, -63.21f, 0.01f);
+    EXPECT_FLOAT_EQ(q7->lead, 6.0f);
+    ASSERT_EQ(q7->starts.size(), 2u);
+    EXPECT_EQ(q7->starts[0].type, 1);
+    EXPECT_NEAR(q7->starts[0].up, -474.08f, 0.01f);
+    EXPECT_EQ(q7->starts[1].type, 3);
+    // its class record: the four entries of Player.cpp kSide (entry 1: hold types, 12 tests, first kind 4 = 700 rise)
+    ASSERT_EQ(q7->classes.size(), 4u);
+    EXPECT_EQ(q7->classes[0].flags, 0x12);
+    ASSERT_EQ(q7->classes[0].types.size(), 1u);
+    EXPECT_EQ(q7->classes[0].types[0], 14);
+    ASSERT_EQ(q7->classes[1].tests.size(), 12u);
+    EXPECT_EQ(q7->classes[1].tests[0].kind, 4);
+    EXPECT_FLOAT_EQ(q7->classes[1].tests[0].value, 700.0f);
+    EXPECT_EQ(q7->classes[1].tests[0].flags, 5);
+    // its result record 0x2AA8C: entry 0 (type 1, within 550 of the base point) sets bit 2 (+0xAC0 flag 4)
+    ASSERT_EQ(q7->result.size(), 4u);
+    ASSERT_EQ(q7->result[0].bits.size(), 1u);
+    EXPECT_EQ(q7->result[0].bits[0], 2);
+    EXPECT_FLOAT_EQ(q7->result[0].tests[0].value, 550.0f);
+    // q2's class record is 0x2AB8C (kGround, five entries); q96 (the hurdle query) names one of eight entries
+    const auto q2 = decodeProfile(*c, 2);
+    ASSERT_TRUE(q2);
+    EXPECT_EQ(q2->classRecord, 0x1C0Cu);
+    EXPECT_EQ(q2->classes.size(), 5u);
+    const auto q96 = decodeProfile(*c, 96);
+    ASSERT_TRUE(q96);
+    EXPECT_EQ(q96->classes.size(), 8u);
+    EXPECT_FALSE(decodeProfile(*c, 100000));
+}
+
 TEST(ChartGround, MoveDirSectorsAndHysteresis) {
     Charts c = moveDirCharts();
     ChartRuntime rt(c, c.player, Registry::player());

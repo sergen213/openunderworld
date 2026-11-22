@@ -546,7 +546,9 @@ void flexSagProcess(ChartContext& ctx, uint16_t id) {
 // +0xB10 with +0xC90), each run in the slots its schedule property (479 / 480, type 0x23) names: 592 PreAnimEntry +
 // Process, 593 PreAnimEntry + Exit, 594 Entry + Reentry, 595 Entry + Exit, 596 PreAnimEntry, 597 Entry, 598 Process,
 // 599 Exit, 600 Reentry. The PreAnim / Entry / Reentry slots first record the jump reference height (0x72FBF0) when
-// bool property 565 is set. The search itself is not ported here (counted when a slot runs it).
+// bool property 565 is set. The profiles are properties 541 (+0xB00) and 546 (+0xC90) of the state chain [O-data: the
+// states naming 480 name 546 with it, S435 / S436 / S449 / S450]. The primary search is chartMarkupSearch into player
+// +0xA64; the secondary's object +0xB10 has no chart-side store yet (counted), nor has a search ours cannot model.
 enum Slot { PreEntry, Entry, Reentry, Process, Exit };
 bool scheduleRuns(int schedule, Slot slot) {
     switch (slot) {
@@ -567,8 +569,11 @@ void scheduledSearch(ChartContext& ctx, uint16_t id) {
     ChartRuntime& rt = ctx.chart();
     if constexpr (S == PreEntry || S == Entry || S == Reentry)
         if (rt.propBool(0x235).value_or(false)) recordJumpRefHeight(ctx);
-    for (const uint16_t prop : {uint16_t(0x1DF), uint16_t(0x1E0)})
-        if (const auto schedule = rt.propInt(prop); schedule && scheduleRuns(*schedule, S)) unportedPart(ctx, id);
+    if (const auto schedule = rt.propInt(0x1DF); schedule && scheduleRuns(*schedule, S)) {
+        const auto profile = rt.propInt(0x21D);
+        if (!profile || !chartMarkupSearch(ctx, *profile)) unportedPart(ctx, id);
+    }
+    if (const auto schedule = rt.propInt(0x1E0); schedule && scheduleRuns(*schedule, S)) unportedPart(ctx, id);
 }
 
 // Action 425 (PSCAF_LookAtAttachPoint). Process 0x76E190 acts only with an attached markup (the look-at target from
@@ -741,6 +746,111 @@ void attachFrameEntry(ChartContext& ctx, uint16_t) { attachFrameInit(ctx); }
 void attachFrameProcess(ChartContext& ctx, uint16_t) { markupAttachInit(ctx); }
 
 } // namespace
+
+// 0x6F1950: the profile table, object data +0xDE4 count and +0xDE8 {id, record} pairs. Record fields as 0x771830 /
+// 0x76FFC0 / 0x724F50 / 0x7296C0 read them (Game.hpp MarkupProfile). Class records (0x729540): +0 / +4 the flag bits
+// set when an entry passes, +8 flags, +0xC / +0x10 the type list (0x7232E0), +0x14 / +0x18 the entries; an entry
+// (0x729420): +0xC / +0x10 its bits, +0x14 flags, +0x18 / +0x1C types, +0x20 / +0x24 attach types, +0x28 / +0x2C its
+// tests; a test (0x728F00): +0 kind, +4 / +8 point sources, +0xC value, +0x18 flags [O: decomp, lara.drm records].
+std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
+    const auto u32 = [&](uint32_t at) {
+        uint32_t v = 0;
+        if (at + 4 <= c.bytes.size()) std::memcpy(&v, c.bytes.data() + at, 4);
+        return v;
+    };
+    const auto f32 = [&](uint32_t at) {
+        const uint32_t v = u32(at);
+        float f;
+        std::memcpy(&f, &v, 4);
+        return f;
+    };
+    const auto byte = [&](uint32_t at) { return at < c.bytes.size() ? c.bytes[at] : uint8_t(0); };
+    const uint32_t d = c.dataOffset;
+    const auto table = c.pointer(d + 0xDE8);
+    if (!table) return std::nullopt;
+    std::optional<uint32_t> rec;
+    for (uint32_t k = 0, n = u32(d + 0xDE4); k < n && k < 4096; ++k)
+        if (int(u32(*table + 8 * k)) == id) {
+            rec = c.pointer(*table + 8 * k + 4);
+            break;
+        }
+    if (!rec) return std::nullopt;
+    const uint32_t r = *rec;
+    MarkupProfile p;
+    p.id = id;
+    p.base = u32(r + 0xCC), p.bone = byte(r + 0xC8);
+    p.offset = vec3(f32(r + 0x58), f32(r + 0x5C), f32(r + 0x60));
+    p.lead = f32(r + 0xD0);
+    p.velocityMode = u32(r + 4);
+    p.fixedVelocity = (u32(r) & 1) && p.velocityMode == 0;
+    p.velocity = vec3(f32(r + 8), f32(r + 0xC), f32(r + 0x10));
+    p.heading = u32(r + 0xA0);
+    p.snap[0] = f32(r + 0xAC), p.snap[1] = f32(r + 0xB0), p.snap[2] = f32(r + 0xB4);
+    p.minT = f32(r + 0x20), p.coneDeg = f32(r + 0x24);
+    p.minDist = int16_t(u32(r + 0x28) & 0xFFFF);
+    p.flags = u32(r + 0x2C);
+    const int frames = int32_t(u32(r + 0xA4));
+    p.frames = frames >= 1 ? frames : c.data<int16_t>(0xBDE);
+    if (const auto s = c.pointer(r + 0x8C))
+        for (uint32_t k = 0, n = u32(r + 0x88); k < n && k < 16; ++k)
+            p.starts.push_back({int(u32(*s + 12 * k)), f32(*s + 12 * k + 4), f32(*s + 12 * k + 8)});
+    const auto list8 = [&](uint32_t countAt, uint32_t ptrAt) {
+        auto v = std::make_unique<std::vector<uint8_t>>();
+        if (const auto pl = c.pointer(ptrAt))
+            for (uint32_t k = 0, n = u32(countAt); k < n && k < 256; ++k) v->push_back(byte(*pl + k));
+        p.listStore.push_back(std::move(v));
+        return std::span<const uint8_t>(*p.listStore.back());
+    };
+    // One record's entries into `out`; its own type list and flags. False: malformed.
+    const auto record = [&](uint32_t at, std::vector<MarkupEntry>& out, std::vector<uint8_t>& types, uint8_t& flags) {
+        flags = byte(at + 8);
+        const auto t = list8(at + 0xC, at + 0x10);
+        types.assign(t.begin(), t.end());
+        const auto ents = c.pointer(at + 0x18);
+        const uint32_t n = u32(at + 0x14);
+        if (n && !ents) return false;
+        for (uint32_t e = 0; e < n && e < 64; ++e) {
+            const auto en = c.pointer(*ents + 4 * e);
+            if (!en) return false;
+            MarkupEntry me{};
+            me.flags = byte(*en + 0x14);
+            me.types = list8(*en + 0x18, *en + 0x1C);
+            me.attach = list8(*en + 0x20, *en + 0x24);
+            auto bits = std::make_unique<std::vector<uint16_t>>();
+            if (const auto bl = c.pointer(*en + 0xC))
+                for (uint32_t k = 0, m = u32(*en + 0x10); k < m && k < 64; ++k) bits->push_back(uint16_t(u32(*bl + 4 * k)));
+            p.bitStore.push_back(std::move(bits));
+            me.bits = *p.bitStore.back();
+            auto tests = std::make_unique<std::vector<MarkupTest>>();
+            const auto tl = c.pointer(*en + 0x2C);
+            for (uint32_t k = 0, m = u32(*en + 0x28); tl && k < m && k < 64; ++k) {
+                const auto ts = c.pointer(*tl + 4 * k);
+                if (!ts) return false;
+                tests->push_back({uint8_t(u32(*ts)), uint8_t(u32(*ts + 4)), uint8_t(u32(*ts + 8)), uint8_t(u32(*ts + 0x18)), f32(*ts + 0xC)});
+            }
+            p.testStore.push_back(std::move(tests));
+            me.tests = *p.testStore.back();
+            out.push_back(me);
+        }
+        return true;
+    };
+    if (const auto cr = c.pointer(r + 0x94)) {
+        p.classRecord = *cr - d;
+        if (!record(*cr, p.classes, p.recordTypes, p.recordFlags)) p.classes.clear();
+    }
+    if (const auto rr = c.pointer(r + 0x9C))
+        if (!record(*rr, p.result, p.resultTypes, p.resultRecordFlags)) p.result.clear();
+    return p;
+}
+
+std::optional<bool> chartMarkupSearch(ChartContext& ctx, int profile) {
+    const auto p = decodeProfile(ctx.chart().charts(), profile);
+    if (!p) return std::nullopt;
+    const auto a = ctx.markupSearch(*p);
+    if (!a) return std::nullopt;
+    ctx.chartTarget = a->target ? *a : ChartContext::Aim{};
+    return bool(a->target);
+}
 
 void registerGround(Registry& player, Registry&) {
     const char* g = "ground";
