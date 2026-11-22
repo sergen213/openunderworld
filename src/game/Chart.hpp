@@ -31,6 +31,7 @@ struct PlayerState;
 struct Actions;
 class Player;
 class World;
+class PlayerDriver;
 } // namespace ou::game
 
 namespace ou::game::chart {
@@ -96,6 +97,7 @@ struct Request {
     uint16_t keys = 0, keyTime = 0;         // the first clip's key count (+0x32) and time per key (+0x34; 100 = a frame)
     uint8_t mode = 1, start = 0, blend = 0; // mode 1 once, 2 loop; frames at 30 Hz
     uint8_t nextBlend = 0xFF;               // +0x1B: the next pattern's blend frames instead of its own (0xFF none)
+    bool mirror = false;                    // +0x20 bit 0x80: a mirrored request (the clip reflected, XOR the agent's bit)
     // 0x4428A0 -> 0x441FB0: the clip's time when it starts, in 30 Hz frames: start - blend, uncut, after the first clip's
     // key bump (blend > 0, a key longer than a frame, start inside the first key: start = that key, blend += the move).
     // blendOverride: the previous pattern's +0x1B (layer +0x314) when it set one.
@@ -187,6 +189,10 @@ public:
     float& playerFloat(int offset) { return playerFloat_[offset]; }
     // Float fields of the chart agent (+0x374, +0x390, +0xF4, +0xF8, ...; ChartRuntime::field holds the int ones).
     float& agentFloat(int offset) { return agentFloat_[offset]; }
+    // The stores as a whole (a save's chart state, ChartShadow.cpp).
+    const std::unordered_map<int, int>& storedInts() const { return playerInt_; }
+    const std::unordered_map<int, float>& storedFloats() const { return playerFloat_; }
+    const std::unordered_map<int, float>& storedAgentFloats() const { return agentFloat_; }
     // A tru.exe markup slot of the player: attached (+0xC94 markup, +0xC98 param, +0xCA0 grab point, +0xCC0 normal)
     // or jump target (+0xA64, +0xA68, +0x9F0, +0xA6C query result flags, +0xA80 target type).
     struct MarkupSlot {
@@ -314,6 +320,12 @@ public:
         ComboMeter, TargetPromote, AttachTarget, ReAim, kCount
     };
     virtual void effect(JEffect, float = 0) {}
+    // Drive mode (ChartShadow.cpp Drive): called by ChartRuntime::change / enter after the new state's anim request
+    // started (0x783470) and before its actions' Entry / Reentry (0x785A30), so that what the drive applies on a state
+    // change (the flight's launch velocity) is in force when the new state's Entry reads it (action 510's 0x7522A0
+    // tests the instance velocity's z) [I: tru.exe's launch site is not found; Wine shows the velocity on the
+    // flight state's first row].
+    virtual void stateEntered(int /*from*/, int /*to*/) {}
     // ---- end group J ----
     // ---- group CD ----
     // Climb / ladder / pillar / perch / pole / beam / wall hug / slide / climb-out reads (src/game/chart/Climb.cpp).
@@ -427,6 +439,21 @@ public:
     // Puts the chart in `state` as a change would (exit / properties / entry / anim request) without a transition:
     // tests and tools that start from a state the unported conditions cannot reach.
     void enter(ChartContext& ctx, int state);
+    // A save's chart state (ChartDrive, docs/SAVES.md "chart"): restore() puts the agent back in `state` with its
+    // times, end counter, queued / last transition, mirror bit, scratch fields and clip clock, applying the state's
+    // properties and anim request as a change does but running none of its actions (they ran before the save).
+    struct Snapshot {
+        int state = -1, queued = -1, lastTransition = -1, animCounter = 0;
+        float stateTime = 0, totalTime = 0, animFrames = 0;
+        bool mirror = false, deferFlag7 = false;
+        std::unordered_map<int, int> fields;
+    };
+    Snapshot snapshot() const;
+    void restore(ChartContext& ctx, const Snapshot& s);
+    // Drive mode: the requested clip's clock also runs at the anim layer's rate (0x438C40, ChartContext::animRate, which
+    // actions 501 / 509 set), as the layer's clip does [O: 0x438C40 scales every layer]. Shadow mode leaves it off: there
+    // the rate is only recorded.
+    bool layerRate = false;
 
     const Charts& charts() const { return charts_; }
     const ChartData& data() const { return data_; }
@@ -448,6 +475,9 @@ public:
     int playingPattern() const { return playing_ ? playingIndex_ : -1; }
     bool resolved() const { return playing_.has_value(); } // the state's request plays a known pattern (kind 2: its node resolved)
     float clipStartFrame() const { return clipStart_; }  // the clip clock's frame when the clip started
+    // 30 Hz frames until the chart hears its clip end: the playing pattern's rest plus every pattern its node queued
+    // after it (0x446BD0; the end comes when the queue drains, 0x43E0C0); 0 when none plays.
+    float remainingFrames() const;
     uint64_t clipStarts() const { return clipStarts_; } // counts clip (re)starts; a kind-2 node that plays nothing keeps the clip
 
     int value(const Cond& c) const { return charts_.value(c); }
@@ -517,14 +547,16 @@ private:
 // the same input and world; divergences of the requested clip from hers are logged, the contract TSV is written.
 class Shadow {
 public:
-    Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log);
+    // drive: the chart decides Lara's traversal (--traversal chart, docs/re/PLAYER_CHART.md "Drive mode"); World calls
+    // driver() in the controller's place, tick() only writes the trace.
+    Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log, bool drive = false);
     ~Shadow();
     void tick(const World& world, const Actions& a); // after World::tick
     // The chart enters `state` (ChartRuntime::enter) on the first tick at or after world tick `tick` (--chart-state).
     void enterAt(int state, uint64_t tick);
     std::string summary() const;
     const ChartRuntime& runtime() const { return *rt_; }
-
+    PlayerDriver* driver(); // null unless constructed with drive
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

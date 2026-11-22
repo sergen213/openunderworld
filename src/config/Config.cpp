@@ -304,6 +304,8 @@ Config load(const fs::path& path) {
             c.game.tailoring = g->value("tailoring", c.game.tailoring);
             for (const int level : c.game.tailoring)
                 if (level < 0 || level > 2) throw std::runtime_error("game.tailoring levels must be 0..2");
+            c.game.traversal = g->value("traversal", c.game.traversal);
+            if (c.game.traversal != "legacy" && c.game.traversal != "chart") throw std::runtime_error("game.traversal must be legacy or chart");
         }
     } catch (const std::exception& e) {
         throw std::runtime_error(path.string() + ": " + e.what());
@@ -350,7 +352,8 @@ void save(const fs::path& path, const Config& c) {
                      {"look_stick", c.controls.lookStick}, {"bindings", c.controls.bindings}};
     j["game"] = {{"sfx_volume", c.game.sfxVolume}, {"music_volume", c.game.musicVolume}, {"cinematic_volume", c.game.cinematicVolume},
                  {"subtitles", c.game.subtitles}, {"reticles", c.game.reticles}, {"helper_buttons", c.game.helperButtons},
-                 {"training_text", c.game.trainingText}, {"language", c.game.language}, {"tailoring", c.game.tailoring}};
+                 {"training_text", c.game.trainingText}, {"language", c.game.language}, {"tailoring", c.game.tailoring},
+                 {"traversal", c.game.traversal}};
     if (path.has_parent_path()) fs::create_directories(path.parent_path());
     fs::path tmp = path;
     tmp += ".tmp";

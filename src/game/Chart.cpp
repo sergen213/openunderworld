@@ -182,7 +182,7 @@ std::optional<Charts> loadCharts(const ObjData& o) {
         if (s.type == cdc::SectionType::Animation) clips.emplace(s.id, &s);
     for (const auto& p : anim::animPatterns(o.drm)) {
         Request r;
-        r.rate = p.rate, r.mode = p.mode, r.start = p.start, r.blend = p.blend, r.nextBlend = p.nextBlend;
+        r.rate = p.rate, r.mode = p.mode, r.start = p.start, r.blend = p.blend, r.nextBlend = p.nextBlend, r.mirror = p.mirror;
         if (!p.anims.empty() && p.anims[0] < list.size()) {
             const auto& e = list[p.anims[0]];
             r.clip = e.name;
@@ -284,6 +284,14 @@ float ChartRuntime::animLengthFrames() const {
 bool ChartRuntime::animLoops() const {
     const Request* p = pattern();
     return p && p->mode == 2;
+}
+float ChartRuntime::remainingFrames() const {
+    const Request* p = pattern();
+    if (!p) return 0.0f;
+    float f = std::max(0.0f, p->lengthFrames() - animFrames_);
+    for (const int q : queue_)
+        if (q >= 0 && size_t(q) < charts_.requests.size()) f += std::max(0.0f, charts_.requests[size_t(q)].lengthFrames() - charts_.requests[size_t(q)].startFrame());
+    return f;
 }
 
 namespace {
@@ -444,6 +452,10 @@ std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext
     v[7] = uint32_t(ctx.playerInt(0xED4) == 0);
     v[8] = uint32_t(ctx.playerInt(0xEDC));
     v[16] = 0u;
+    // 3 (0x6E9660): byte player +0xEE0, which property 205's handler 0x767900 sets (a bool property's byte, else 1) [O:
+    // disassembly, Lara's property table 0x8B2280]; the pull up's node 26 (S456) reads it. Ours: playerInt(0xEE0),
+    // Generic.cpp's handler.
+    v[3] = uint32_t(ctx.playerInt(0xEE0) != 0);
     if (const auto c = ctx.canSprint()) v[76] = uint32_t(*c);
     else v[76] = std::nullopt;
     return v;
@@ -652,6 +664,7 @@ void ChartRuntime::change(ChartContext& ctx, int t) {
     applyProperties(ctx, target);
     runEnter(ctx, target, old, true);
     enterAnim(ctx);
+    ctx.stateEntered(old, target);
     runEnter(ctx, target, old, false);
     stateTime_ = 0, queued_ = -1, lastTransition_ = t;
     ++stats.changes;
@@ -702,7 +715,7 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
     // a clip played to its end (once) or across a loop wrap notifies the end (0x7181A0 reasons 1 / 2 -> 0x768CF0).
     const Request* p = pattern();
     const float len = animLengthFrames(), before = animFrames_;
-    animFrames_ += ctx.timeMult * (p ? p->rate : 1.0f);
+    animFrames_ += ctx.timeMult * (p ? p->rate : 1.0f) * (layerRate ? ctx.animRate : 1.0f);
     if (len > 0 && (animLoops() ? std::floor(animFrames_ / len) > std::floor(before / len) : before < len && animFrames_ >= len)) {
         // A queued pattern follows (0x43E0C0 -> 0x443430 plays the next record through 0x4428A0); the chart hears the
         // end only when the queue has drained (0x43E0C0 calls the saved callback +0x304 then) [O].
@@ -729,8 +742,24 @@ void ChartRuntime::enter(ChartContext& ctx, int state) {
     applyProperties(ctx, state);
     runEnter(ctx, state, old, true);
     enterAnim(ctx);
+    ctx.stateEntered(old, state);
     runEnter(ctx, state, old, false);
     stateTime_ = 0, queued_ = -1, lastTransition_ = -1;
+}
+
+ChartRuntime::Snapshot ChartRuntime::snapshot() const {
+    return {state_, queued_, lastTransition_, animCounter_, stateTime_, totalTime_, animFrames_, mirror_, deferFlag7, fields_};
+}
+
+void ChartRuntime::restore(ChartContext& ctx, const Snapshot& s) {
+    ctx.chart_ = this;
+    if (!data_.state(s.state)) return;
+    state_ = s.state, active_ = true, mirror_ = s.mirror;
+    applyProperties(ctx, state_);
+    enterAnim(ctx);
+    queued_ = s.queued, lastTransition_ = s.lastTransition, animCounter_ = s.animCounter;
+    stateTime_ = s.stateTime, totalTime_ = s.totalTime, animFrames_ = s.animFrames;
+    deferFlag7 = s.deferFlag7, fields_ = s.fields;
 }
 
 void ChartRuntime::animEnded(ChartContext& ctx) {

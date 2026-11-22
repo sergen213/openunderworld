@@ -121,6 +121,7 @@ void usage() {
                  "               [--self-test FILE.json [--self-test-report OUT.json] [--self-test-trace]] (a gameplay scenario, docs/SELFTEST.md;\n"
                  "                exit 0: every step passed, 1: a step failed, 2: malformed scenario)\n"
                  "               [--chart-shadow] [--chart-trace FILE.tsv] [--chart-state N[@TICK]] (Lara's state chart beside the controller, docs/re/PLAYER_CHART.md)\n"
+                 "               [--traversal legacy|chart] (who decides Lara's traversal; config game.traversal, default legacy)\n"
                  "       ou-game chart-dump [--game-dir DIR] [--state N] [--coverage] [--upper] [--names conditions.json]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-cinematics] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
@@ -217,6 +218,10 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--self-test-report") o.selfTestReport = v;
         else if (a == "--chart-trace") o.chartTrace = v;
         else if (a == "--chart-state") o.chartState = v;
+        else if (a == "--traversal") {
+            if (std::string(v) != "legacy" && std::string(v) != "chart") throw std::runtime_error("--traversal: legacy or chart");
+            o.game.traversal = v;
+        }
         else if (a == "--report-objects") {
             for (const char* p = v; *p;) {
                 char* end = nullptr;
@@ -2229,9 +2234,11 @@ int main(int argc, char** argv) {
         }
         bigfile = std::make_unique<ou::cdc::BigfileSet>(opt.gameDir, ou::locale::specMask(language));
         const auto& bf = *bigfile;
-        if (opt.chartShadow || !opt.chartTrace.empty())
+        // --traversal chart: the chart drives her (docs/re/PLAYER_CHART.md "Drive mode"); it also writes --chart-trace.
+        const bool chartDrive = opt.game.traversal == "chart";
+        if (opt.chartShadow || !opt.chartTrace.empty() || chartDrive)
             chartShadow = std::make_unique<ou::game::chart::Shadow>(
-                bf, opt.chartTrace.empty() ? std::nullopt : std::optional<std::filesystem::path>(opt.chartTrace), opt.chartShadow);
+                bf, opt.chartTrace.empty() ? std::nullopt : std::optional<std::filesystem::path>(opt.chartTrace), opt.chartShadow, chartDrive);
         if (chartShadow && !opt.chartState.empty()) {
             const auto at = opt.chartState.find('@');
             chartShadow->enterAt(std::stoi(opt.chartState.substr(0, at)), at == std::string::npos ? 0 : std::stoull(opt.chartState.substr(at + 1)));
@@ -2255,7 +2262,8 @@ int main(int argc, char** argv) {
         std::optional<ou::game::Spawn> spawn;
         if (opt.spawn) spawn = ou::game::Spawn{{(*opt.spawn)[0], (*opt.spawn)[1], (*opt.spawn)[2]}, glm::radians((*opt.spawn)[3])};
         world = std::make_unique<ou::game::World>([&bf](const std::string& n) { return ou::game::loadUnitData(bf, n); }, unit,
-                                                  ou::game::loadLaraAnims(bf), spawn);
+                                                  ou::game::loadLaraAnims(bf, "lara", chartDrive), spawn);
+        if (chartShadow) world->setPlayerDriver(chartShadow->driver());
         // Neighbour units (and their render scenes) load on a worker thread (World::setAsyncStreaming); --sync-loads: inline.
         if (!opt.syncLoads)
             world->setAsyncStreaming([b = bigfile.get(), &spirvWarm, decoded = streamed.decoded](const std::string& n) {

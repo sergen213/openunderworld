@@ -34,6 +34,9 @@ struct SaveGame {
     float cameraYaw = 0, cameraPitch = -0.25f;
     std::optional<float> cameraSeenYaw; // Player::seenCameraYaw (the swim turn's view yaw of the tick before); missing = none
     nlohmann::json runtime; // World::serializeRuntime() (orbit camera lag, hair, scripts' player unit); null (older saves) = seeded afresh
+    // --traversal chart: Lara's chart state (PlayerDriver::save: state, times, stores, attach); null (older saves, legacy
+    // traversal) = the chart starts afresh from where she stands.
+    nlohmann::json chart;
     std::optional<game::CheckpointRef> checkpoint;
     nlohmann::json checkpointSave; // World::checkpointSave() (what a death restores); null (version 2) = the state at the load
     std::set<int32_t> collected; // World::collected (pickup intro ids)

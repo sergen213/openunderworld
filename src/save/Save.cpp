@@ -64,6 +64,7 @@ json toJson(const SaveGame& s) {
              return c;
          }()},
         {"runtime", s.runtime},
+        {"chart", s.chart},
         {"checkpoint", cp},
         {"checkpointSave", s.checkpointSave},
         {"collected", s.collected},
@@ -138,6 +139,7 @@ SaveGame fromJson(const json& j) {
         s.cameraPitch = c->at("pitch").get<float>();
         if (const auto seen = c->find("seen"); seen != c->end()) s.cameraSeenYaw = seen->get<float>();
         s.runtime = j.value("runtime", json(nullptr)); // written beside the camera angles
+        s.chart = j.value("chart", json(nullptr));
     } else {
         s.cameraYaw = ps.yaw;
     }
@@ -336,6 +338,7 @@ SaveGame capture(const game::World& world) {
     s.cameraPitch = world.camera().pitch;
     s.cameraSeenYaw = world.player().seenCameraYaw();
     s.runtime = world.serializeRuntime();
+    if (const auto* d = world.playerDriver()) s.chart = d->save();
     s.checkpoint = world.checkpoint();
     s.checkpointSave = world.checkpointSave();
     s.collected = world.collected;
@@ -394,6 +397,8 @@ void apply(const SaveGame& save, game::World& world) {
         world.restore(p, save.cameraYaw, save.cameraPitch);
         world.restoreRuntime(save.runtime);
     }
+    // --traversal chart: the chart's state as saved (an airborne save restarts it at the checkpoint)
+    if (auto* d = world.playerDriver()) d->load(airborne ? json(nullptr) : save.chart);
     world.setCheckpoint(save.checkpoint);
     world.setCheckpointSave(save.checkpointSave);
     world.collected = save.collected;

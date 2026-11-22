@@ -57,6 +57,7 @@ struct AnimPattern {
     float rate = 1;
     uint8_t mode = 1;
     uint8_t blend = 0, start = 0, nextBlend = 0xFF;
+    bool mirror = false; // +0x20 bit 0x80: the clip plays reflected (0x4428A0 -> controller +0xF4 0x200)
 };
 std::vector<AnimPattern> animPatterns(const cdc::Drm& drm);
 

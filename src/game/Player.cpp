@@ -325,6 +325,7 @@ vec3 Player::advanceRoot(float dt) {
 
 void Player::spawn(vec3 feet, float yaw) {
     s_ = PlayerState{};
+    ++placements_;
     s_.pos = feet;
     s_.yaw = yaw;
     // tru.exe 0x5D40C0 -> 0x698180 births her on the intro's position. Ours drops a dry spawn onto the floor under it
@@ -3812,6 +3813,138 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         }
         break;
     default: break;
+    }
+}
+
+// ---- chart drive (docs/re/PLAYER_CHART.md "Drive mode") ----------------------------------------------------------
+// Lara's chart (ChartShadow.cpp Drive) decided the state; this applies it with her collision. The clip stands where the
+// chart's clock has it (ChartRuntime::animFrames, 30 Hz frames / 30 = clip seconds), so its root motion is the clip's
+// between the previous tick's time and this one's (a fresh clip: from where it started). Clips that turn the root turn
+// her and carry their translation in the frame they started in (advanceRoot's rule).
+void Player::drive(const DriveStep& d, float dt) {
+    s_.fallHeight = 0;
+    s_.regrabCooldown = std::max(0.0f, s_.regrabCooldown - dt);
+    // Sprint stamina as Player::tick runs it (the chart reads it through condition 0x205 and nodes 46 / 99) [I: tru.exe's
+    // stamina actions 0x74FD70 are not ported].
+    if (s_.clip == "sprint_loop") s_.sprintUsed += dt;
+    else if (s_.clip != "ng_sprint_to_exhaust" && s_.clip != "ng_run_exhaust") s_.sprintUsed = std::max(0.0f, s_.sprintUsed - dt);
+    double t0 = s_.clipTime, t1 = t0;
+    if (!d.clip.empty()) {
+        const bool fresh = d.restart || s_.clip != d.clip || s_.mirror != d.mirror;
+        if (fresh) {
+            t0 = d.start;
+            // The clip it replaces plays on under the crossfade (tru.exe 0x4428A0 -> 0x433D40 sets the layer fade over
+            // the pattern's blend frames; the new clip's lead runs at its first frame meanwhile) [O], so the root
+            // motion fades from the old clip's into the new one's [I: the linear weight].
+            if (d.crossfade > 0 && anims_.find(s_.clip)) fade_ = {s_.clip, s_.clipTime, s_.loop, s_.mirror, d.crossfade, d.crossfade};
+            else fade_ = {};
+        }
+        s_.clip = d.clip, s_.loop = d.loop, s_.mirror = d.mirror, s_.clipRate = 1;
+        s_.clipMix.clear(), s_.mix = 0;
+        t1 = d.time;
+    } else if (const anim::Clip* c = anims_.find(s_.clip)) {
+        t1 = t0 + double(d.rate) * dt;
+        if (!s_.loop) t1 = std::clamp(t1, std::min(t0, 0.0), c->durationSeconds());
+    }
+    s_.clipTime = t1;
+    vec3 root(0), world(0);
+    if (const anim::Clip* c = anims_.find(s_.clip)) {
+        const float k = s_.mirror ? -1.0f : 1.0f;
+        root = rootDelta(anims_, s_, *c, t0, t1);
+        const bool turns = std::abs(rootYaw(*c, c->durationSeconds(), false) - rootYaw(*c, 0, false)) > 1e-3f;
+        if (turns) {
+            const float base = s_.yaw - k * rootYaw(*c, t0, s_.loop);
+            world = rotYaw(base, root);
+            s_.yaw = wrapAngle(base + k * rootYaw(*c, t1, s_.loop));
+        } else {
+            world = toWorld(root);
+        }
+    }
+    if (fade_.left > 0) {
+        if (const anim::Clip* o = anims_.find(fade_.clip)) {
+            double o1 = fade_.time + dt;
+            if (!fade_.loop) o1 = std::min(o1, o->durationSeconds());
+            vec3 od = rootTranslation(*o, o1, fade_.loop) - rootTranslation(*o, fade_.time, fade_.loop);
+            if (fade_.mirror) od.x = -od.x;
+            fade_.time = o1;
+            fade_.left = std::max(0.0f, fade_.left - dt);
+            const float wNew = 1.0f - fade_.left / fade_.total;
+            world = glm::mix(toWorld(od), world, wNew);
+        } else {
+            fade_ = {};
+        }
+    }
+    if (d.steer) s_.yaw = approachAngle(s_.yaw, *d.steer, d.steerRate * dt);
+    s_.state = d.coarse;
+    switch (d.motion) {
+    case DriveStep::Motion::Ground: {
+        s_.pos = depenetrate(s_.pos, t_.stepUp);
+        world.z = 0;
+        vec3 p = slide(s_.pos, world, t_.stepUp, true);
+        // the floor within the snap window keeps her on it; without one she keeps her height (the chart's ground check
+        // finds no floor and its states take her into the air: S11 / S13 hold her height, tru.exe [O-data])
+        if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown); g && g->normal.z >= t_.slideMinNormalZ)
+            p.z = g->point.z;
+        s_.vel = vec3(xy(p - s_.pos) / std::max(dt, 1e-6f), 0);
+        s_.pos = p;
+        s_.ledge = -1;
+        break;
+    }
+    case DriveStep::Motion::Air: {
+        // tru.exe integrator 0x5DB370 (airMove's), the capsule's contacts clip the velocity; a floor stops the descent
+        // (the chart's landing comes from its ground check, event 455).
+        vec3 dd = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt) + vec3(xy(world), 0);
+        s_.vel.z -= t_.gravity * dt;
+        vec3 p = s_.pos;
+        for (int iter = 0; iter < 4 && glm::dot(dd, dd) > 1e-8f; ++iter) {
+            const auto hit = col_.sweepCapsule(p + vec3(0, 0, t_.radius), p + vec3(0, 0, capHeight() - t_.radius), t_.radius, dd);
+            if (!hit || (hit->t == 0 && glm::dot(dd, hit->normal) >= 0)) { p += dd; break; }
+            const vec3 n = hit->normal;
+            p += dd * hit->t + n * kSkin;
+            if (n.z >= t_.slideMinNormalZ && s_.vel.z <= 0)
+                if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2)) {
+                    p.z = g->point.z, s_.vel.z = 0;
+                    break;
+                }
+            const vec3 rest = dd * (1 - hit->t);
+            dd = rest - n * std::min(0.0f, glm::dot(rest, n));
+            s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
+        }
+        if (s_.vel.z <= 0)
+            if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2); g && p.z <= g->point.z + 1)
+                p.z = g->point.z, s_.vel.z = 0;
+        s_.pos = p;
+        s_.ledge = -1;
+        break;
+    }
+    case DriveStep::Motion::Hang: {
+        s_.vel = world / std::max(dt, 1e-6f);
+        if (d.markup < 0 || size_t(d.markup) >= col_.markup.size() || col_.markup[size_t(d.markup)].points.size() < 2) {
+            s_.pos += world;
+            break;
+        }
+        const auto& m = col_.markup[size_t(d.markup)];
+        s_.ledge = d.markup, s_.ledgeSeg = std::clamp(d.seg, 0, int(m.points.size()) - 2), s_.ledgeSide = d.side;
+        s_.ledgeT = std::clamp(d.t, 0.0f, segLen(m, s_.ledgeSeg));
+        if (!d.snap) { // a take-off or the pull up: the clip carries her off the hang pose, no collision (as ClimbUp)
+            s_.pos += world;
+            break;
+        }
+        // hands on the markup: the root motion's part along it moves the grip (shimmy), the rest is the hang pose
+        moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
+        placeOnLedge();
+        s_.vel = vec3(0);
+        break;
+    }
+    case DriveStep::Motion::Blend: {
+        const float f = std::clamp(d.blend, 0.0f, 1.0f);
+        s_.pos = glm::mix(d.blendFrom, d.blendTo, f);
+        s_.yaw = wrapAngle(d.yawFrom + wrapAngle(d.yawTo - d.yawFrom) * f);
+        s_.vel = vec3(0);
+        if (d.markup >= 0 && size_t(d.markup) < col_.markup.size())
+            s_.ledge = d.markup, s_.ledgeSeg = d.seg, s_.ledgeT = d.t, s_.ledgeSide = d.side;
+        break;
+    }
     }
 }
 

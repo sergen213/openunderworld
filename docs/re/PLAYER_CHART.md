@@ -286,6 +286,60 @@ committing it (fn 3) queues one entry's records in order (0x4482C0 -> 0x446BD0; 
 0x448320), and the chart hears the end when the queue drains (0x43E0C0). Game flag bit 26 is taken as clear (every Wine recording) [I elsewhere]. Not ported: the owner flag, a random pick between different entries, the selector object fn 4 pushes (0x88F26C; node 46's
 891 branch queues three transition/loop pairs and fn 3 commits one), Play's two float arguments and flags.
 
+### Drive mode
+
+`ou-game --traversal chart` (config `game.traversal: "chart"`, default `"legacy"`; read at start) lets Lara's chart decide
+her traversal (`Shadow` constructed with `drive`, `ChartShadow.cpp` `Impl::driveTick`, `Player::drive`). `World::tick`
+asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the controller keeps the tick:
+
+- **Boundary** [I]: her controller state is a swim, rope, bike, death, hit, interaction, push-block or close-combat
+  state (World started it: `die`, `hitReact`, `use`, `act`, `attachGrapple`, `enterWater` ...), or the chart enters a
+  state whose request plays a `swim` / `grapple` / `rope` / `death` / `bike` / `portable` clip (the traversal subgraph's
+  boundary families). The chart is parked and restarts from the root (0x787E00, settling in the idle) when the
+  controller hands her back; a placement (`Player::spawn` / `restore`: spawn, load, teleport) restarts it too.
+- **Order per tick** (inside `World::tick`): the input actions' timing, the ground check on her pose (0x71B910), the
+  charts (0x768C50: Lara, then the upper body), then the motion, then the chart clip's command events (critical
+  section) and the support foot, then event 455 when the check found a floor. Shadow mode had the controller's motion
+  before the chart; both evaluate the chart right after a ground check on her latest pose.
+- **Clip**: the pattern the state's request resolved to, at the chart's own clip clock (`animFrames` / 30 s; in drive
+  mode the clock also runs at the anim layer rate, `ChartRuntime::layerRate`, actions 501 / 509), mirrored by the agent
+  bit, the pattern's +0x20 bit 0x80 (XOR) and the shimmy states' bool props 201 / 202 [I]. Root motion is the clip's
+  between the previous tick's time and this one's; turning clips turn her (advanceRoot's frame rule). A fresh clip's
+  blend (start - startFrame) crossfades the root motion from the replaced clip, which plays on meanwhile (0x4428A0 ->
+  0x433D40) [O: the fade; I: linear weight]. An unresolved kind-2 node keeps the current clip at the layer rate. Every
+  clip of lara.drm's anim list is loaded in drive mode (`loadLaraAnims(..., allClips)`).
+- **Motion** by the chain: *Blend* from the tick an attach (actions 230 / 232 setting +0xC94) happens until the state
+  changes, over `ChartRuntime::remainingFrames` (the clip plus its node's queue): from her pose onto the hang pose of
+  the attached point (action 236 AlignRootMotionToTarget, unported) [I]. *Hang* while +0xC94 is set and the chain runs
+  action 420: `ledgeb_*` clips (not jumps / climbs) keep her hands on the markup, the root motion along it moving the
+  grip (`moveAlong`, `placeOnLedge`); take-offs and the pull up move freely by root motion. *Air* while the chain runs
+  action 510: the instance velocity under gravity (0x5DB370) with the capsule's contacts; a floor stops the descent and
+  the chart lands through its ground check (event 455). Each flight tick with a jump target re-aims the velocity onto
+  its hang root with the time left (+0x77C, 0x73EDC0 [O]: aimAt). *Ground* otherwise: root motion with her ground
+  collision, snapped to the floor in the step window, her height kept without one (S11 / S13 hold). Action 601's
+  steering (0x76AB20, unported) turns her toward the camera-relative stick at prop 601 / 605 (0x75B330) read as degrees
+  per 30 Hz frame [I].
+- **Launch** (`ChartContext::stateEntered`, after the new state's anim request and before its Entry, so action 510's
+  0x7522A0 reads the rising velocity and clears the ground check's mask bit) [I: tru.exe's launch call 0x7726D0 is not
+  among the chart's actions; Wine shows the take-off velocity on the flight state's first row]: entering a chain with
+  action 510 from one without. From a take-off state (action 504's chain, also when the 0x65 chaining passes a link
+  state such as S289): S248 standing (Tuning::jumpVz), S245 / S247 with the stick (standJumpSpeed / standMoveJumpVz,
+  heading = the stick), S249 / S280 / S281 running (runJumpSpeed / runJumpVz); with a jump target aimed at it over its
+  hit frame. From a hang take-off clip: `ledgeb_jump_back` out from the wall, `ledgeb_jump_right*` to her right
+  (mirrored: left) at Tuning::hangLeap*, `ledgeb_jump_up` up (hangJumpUpVz, aimed). Leaving the flight chain zeroes the
+  velocity.
+- **Coarse state**: `PlayerState::state` is set from the motion and clip (Jump / Fall, Hang / Shimmy / ClimbUp, Land,
+  Crouch, Roll, Walk, Run, Turn, Idle) for World's subsystems (camera, interactions, carriers).
+- **Input sources** (the table above) in drive mode: `velocity()` = PlayerState::vel / 30 (the drive's own integrated
+  velocity), `boneRise()` = the last move's root rise, `attachedMarkup()` = the chart's +0xC94 only (its param / point
+  follow her grip), `jumpTarget()` empty (the chart's own +0xA64, chartTarget, only); the kind-2 controller bridge is
+  off. `takeoffAim`, `jumpCandidates`, `water*`, `lowCeiling`, `wallJump*` stay geometry queries at her pose.
+- **Saves**: SAVES.md `chart` (`ChartRuntime::snapshot` / `restore`, the stores, +0xC94's param).
+- **Anim graph native 1/3** (0x6E9660) = player byte +0xEE0, set by property 205's handler 0x767900 (bool byte, else 1)
+  [O]: the pull up's node 26 resolves with it. Native 1/78 (0x6EA460) = player +0xBF4 != 0 (a float written by
+  0x580800..0x580B11) is not ported: S435's node 23 stays unresolved.
+- Replays: `W/chart/diff/drive` (`go.sh`, `run.sh`, `compare.py`, `SUMMARY.md`).
+
 ### In-flight jump targets [O, not ported]
 
 tru.exe keeps a free flight's jump target (player +0xA64 markup, +0xA68 param, +0x9F0 point) up to date while she is

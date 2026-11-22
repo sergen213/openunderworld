@@ -154,6 +154,9 @@ struct GameConfig {
     // PLAYER TAILORING levels a game starts with (0 lenient .. 2 hard; 1 = the original's defaults): enemy health,
     // ammunition capacity, damage to Lara, time for saving grabs. ou-game's menus write the player's choice back.
     std::array<int, 4> tailoring{1, 1, 1, 1};
+    // Who decides Lara's traversal: "legacy" (the hand-written controller, Player::tick) or "chart" (her lara.drm state
+    // chart, docs/re/PLAYER_CHART.md "Drive mode"); read when the game starts (ou-game --traversal overrides it).
+    std::string traversal = "legacy";
     bool operator==(const GameConfig&) const = default;
 };
 

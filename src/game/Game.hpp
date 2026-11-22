@@ -152,7 +152,8 @@ struct ClipBlend { float blendSeconds; double startSeconds; };
 ClipBlend clipBlend(std::string_view from, std::string_view to);
 // Skeleton + kLaraClipNames clips from pc-w\<outfit>.drm, each weapon's weaponClipNames + stats. Throws
 // cdc::FormatError / std::runtime_error.
-AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& outfit = "lara");
+// allClips: also every other clip of the outfit's anim list (--traversal chart: the chart requests any of them).
+AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& outfit = "lara", bool allClips = false);
 // Replaces `lib`'s skeleton, hair rig and hand offsets with those of outfit DRM `drm` (pc-w\lara_*.drm). The
 // outfits' clips are byte-identical to lara.drm's; their skeletons share its topology with other pivots
 // (docs/GAMEPLAY.md "Outfits"). Throws std::runtime_error without a skeleton.
@@ -603,7 +604,8 @@ public:
     // Load / stream / placement. `s.buttons` comes with it: a save keeps them, and whoever builds a fresh state marks
     // them held (Buttons::hold) so that a key still down gives no press edge on the next tick. Every ground tick first
     // pushes her out of walls she is in (depenetrate).
-    void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false; }
+    void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false, ++placements_; }
+    uint32_t placements() const { return placements_; } // spawn() / restore() calls: a chart driving her restarts
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
@@ -660,6 +662,33 @@ public:
     // (message 0x1C7, chart event 455); steep: a too-steep face there (0x1C9); neither: no floor (0x1CC, bit 19).
     struct GroundCheck { bool floor = false, steep = false, onBody = false; float z = 0; }; // onBody: a dynamic body's face
     GroundCheck groundCheck(vec3 feet, float above, float below) const;
+    // ---- chart drive (--traversal chart; ChartShadow.cpp Drive, docs/re/PLAYER_CHART.md "Drive mode") ----
+    // What Lara's chart decided for this tick, applied by drive() with her collision: the clip on the chart's own clock
+    // and its root motion, the motion mode, the heading.
+    struct DriveStep {
+        std::string clip;     // the chart's clip; empty: the current clip runs on at its own rate (an unresolved node)
+        bool loop = false, mirror = false, restart = false;
+        double start = 0, time = 0; // the chart clip clock (s): where the clip (re)started, where it stands now
+        float rate = 1;             // the anim layer rate (empty clip only)
+        float crossfade = 0;        // a fresh clip's blend (s): the replaced clip's root motion fades out over it
+        // Ground: root motion with her ground collision (no fall: the chart's ground check decides that). Air: the
+        // instance velocity under gravity (tru.exe 0x5DB370) with the capsule's contacts. Hang: on the chart's attached
+        // markup (markup, seg, t, side), the root motion along it (snap) or free (take-offs, the pull up). Blend: from
+        // blendFrom / yawFrom onto blendTo / yawTo by `blend` (the attach's root alignment, action 236 [I]).
+        enum class Motion : uint8_t { Ground, Air, Hang, Blend } motion = Motion::Ground;
+        std::optional<float> steer; // heading the stick asks for (action 601), approached at steerRate rad/s
+        float steerRate = 0;
+        int markup = -1, seg = 0;
+        float t = 0, side = 1;
+        bool snap = false;
+        vec3 blendFrom{0}, blendTo{0};
+        float yawFrom = 0, yawTo = 0, blend = 0;
+        State coarse = State::Idle; // what World's subsystems read as her state (camera, interactions, carriers)
+    };
+    void drive(const DriveStep& d, float dt);
+    void setVelocity(vec3 v) { s_.vel = v; }
+    void setYaw(float yaw) { s_.yaw = yaw; }
+    std::pair<vec3, float> hangPose(int markup, int seg, float t, float side) const { return attachPose(markup, seg, t, side); }
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
@@ -829,6 +858,9 @@ private:
     PlayerState s_;
     bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
     bool reseated_ = false; // this tick only (takeReseat)
+    uint32_t placements_ = 0; // placements()
+    // drive(): the clip a fresh chart clip replaced, playing on under the crossfade (its root motion fades out)
+    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0; } fade_;
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch, prevCameraYaw_ = 0;
@@ -979,6 +1011,18 @@ struct HazardHit { int32_t uid = 0; float damage = 0; uint64_t tick = 0; };
 // Distance from the segment a-b to the shape's surface (negative inside a sphere / capsule, 0 inside a box).
 float hazardDistance(const HazardShape& h, vec3 a, vec3 b);
 
+// Traversal driven by something else than Player::tick (config `traversal: "chart"` / --traversal chart: Lara's state
+// chart, src/game/ChartShadow.cpp, docs/re/PLAYER_CHART.md "Drive mode"). World::tick asks it in Player::tick's place;
+// drive() returns false where the controller keeps the tick (the chart's boundary: swimming, the grapple, the bike,
+// death, hit reactions, interactions, close combat), and the controller runs as before.
+class PlayerDriver {
+public:
+    virtual ~PlayerDriver() = default;
+    virtual bool drive(World& world, Player& player, vec2 move, const Actions& a, float dt) = 0;
+    virtual nlohmann::json save() const = 0;           // the chart state for a save (docs/SAVES.md "chart")
+    virtual void load(const nlohmann::json& j) = 0;    // null: start afresh
+};
+
 class World {
 public:
     World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tuning tuning = defaultTuning());
@@ -996,6 +1040,9 @@ public:
     const collision::CollisionMesh& collision() const { return col_; }
     const AnimLibrary& anims() const { return anims_; }
     const Player& player() const { return player_; }
+    // --traversal chart: who decides Lara's traversal (PlayerDriver); null = Player::tick (legacy).
+    void setPlayerDriver(PlayerDriver* d) { driver_ = d; }
+    PlayerDriver* playerDriver() const { return driver_; }
     const PlayerState& previous() const { return prev_; }
     const CameraState& camera() const { return cam_; }
     // The yaw the stick is read against (World::tick): while swimming the view's (the look point's line, which trails
@@ -1648,6 +1695,7 @@ private:
     collision::CollisionMesh col_;
     AnimLibrary anims_;
     Player player_;
+    PlayerDriver* driver_ = nullptr; // setPlayerDriver
     PlayerState prev_;
     anim::AnimController anim_{anims_.skeleton};
     anim::HairSim hair_;

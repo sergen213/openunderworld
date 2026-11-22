@@ -114,6 +114,10 @@ bool moveSpeed(ChartContext& ctx, const Cond& c) {
     }
 }
 
+// Property 205 (handler 0x767900, Lara's property table 0x8B2280 [O: disassembly]): player byte +0xEE0 = the property's
+// byte when it is a bool (type 2), else 1. Anim graph native 1/3 (0x6E9660) pushes it (Chart.cpp module1Values).
+void prop205(ChartContext& ctx, const Property& p) { ctx.playerInt(0xEE0) = p.type == 2 ? int(p.raw & 0xFF) : 1; }
+
 } // namespace
 
 void registerGeneric(Registry& player, Registry& upper) {
@@ -126,6 +130,7 @@ void registerGeneric(Registry& player, Registry& upper) {
     for (const int16_t id : {0x96, 0x97, 0x98, 0x99, 0x9E}) player.condition(id, actionFlag, "ActionFlag", "generic");
     player.condition(0x1E, fall, "FallDistance", "generic");
     player.condition(0x191, moveSpeed, "MoveSpeed", "generic");
+    player.property(205, prop205, "Prop205_PlayerEE0", "generic");
 }
 
 } // namespace ou::game::chart

@@ -472,7 +472,7 @@ void rigOutfit(AnimLibrary& lib, const cdc::Drm& drm) {
         lib.ragdoll.reset();
 }
 
-AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& outfit) {
+AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& outfit, bool allClips) {
     const std::string path = "pc-w\\" + outfit + ".drm";
     auto bytes = bigfile.read(path);
     if (!bytes) throw std::runtime_error(path + " not in bigfile");
@@ -493,6 +493,15 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
     };
     loadClips(drm, kLaraClipNames, path, "");
     loadClips(drm, kMeleeClipNames, path, ""); // close combat / carried objects (Melee.cpp)
+    if (allClips) // the chart's requests name any clip of the list (pattern clips, kind-2 nodes' plays)
+        for (const auto& e : anim::animList(drm)) {
+            if (lib.clips.contains(e.name)) continue;
+            for (const auto& s : drm.sections)
+                if (s.type == cdc::SectionType::Animation && s.id == e.animId) {
+                    lib.clips.emplace(e.name, anim::decodeClip(s.data));
+                    break;
+                }
+        }
     { // her anim patterns, as script anim requests name them (World::tickFlinch)
         const auto list = anim::animList(drm);
         for (const auto& p : anim::animPatterns(drm)) {
@@ -723,7 +732,7 @@ void World::tick(const Actions& input) {
         }
     }
     player_.setRopeSolids(&ropeSolids_);
-    if (!onBike) player_.tick(move, a, dt);
+    if (!onBike && !(driver_ && driver_->drive(*this, player_, move, a, dt))) player_.tick(move, a, dt);
     tickTimes.playerMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - playerStart).count();
     hingePull_.clear();
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
