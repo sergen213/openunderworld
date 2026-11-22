@@ -604,7 +604,8 @@ void messageExit(ChartContext& ctx, uint16_t) {
 void markupAttachTarget(ChartContext& ctx, uint16_t) {
     ChartRuntime& rt = ctx.chart();
     int cls = 0;
-    if (const Property* p = rt.property(0x1A4); p && p->type == 0x23) cls = int(p->raw);
+    bool alt = false; // 0x772CA0's setter argument: the class came from property 0x1A4
+    if (const Property* p = rt.property(0x1A4); p && p->type == 0x23) cls = int(p->raw), alt = true;
     else if (const Property* q = rt.property(0x19A); q && q->type == 0x23) cls = int(q->raw);
     const bool promote = rt.propBool(0x199).value_or(false);
     if (promote && !jt(ctx)) {
@@ -621,7 +622,8 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     }
     if (cls) ctx.effect(JEffect::AttachTarget, float(cls)); // the class handler that would run (not ported here)
     // the setters of these classes detach the old markup and attach the jump target (0x74ED30 ...: 0x6FDBE0, 0x707B90)
-    if (attachTargetClass(cls)) attachChartMarkup(ctx, jt(ctx));
+    if (cls == 603) poleAttachSetter(ctx, alt); // 0x74C8D0 (group B)
+    else if (attachTargetClass(cls)) attachChartMarkup(ctx, jt(ctx));
 }
 
 // 2001 (0x75EF70: camera vfunc +0xB0 (0)), 2002 (0x75EF90: +0xB0 (1)), 2005 (enter and exit 0x75EF50: +0xB4); 2001 /

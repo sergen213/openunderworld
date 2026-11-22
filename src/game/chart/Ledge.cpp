@@ -9,6 +9,7 @@
 // Already registered by Generic.cpp (owned by B in the catalog, same functions): 0x14 (0x783B70), 0x67 / 0x6E
 // (0x760A70 / 0x760B30 -> 0x7607C0), 0x9E (0x760C40).
 #include "game/Chart.hpp"
+#include "game/Game.hpp"
 
 #include <glm/gtc/constants.hpp>
 
@@ -732,6 +733,74 @@ std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot
     if (lc == 4 && seg == count - 1) lat = -std::min(float(pd(ctx, 0x704)), (1.0f - f) * 0.8f * len);
     else if (lc == 3 && seg == 0) lat = std::min(float(pd(ctx, 0x704)), f * 0.8f * len);
     return braceRay(ctx, e, n, p, lat);
+}
+
+// 0x74C8D0 [O: decomp + disasm 0x74C9D6..0x74D38B]. With alt (0x1A4) it re-attaches +0xC94 at +0xC98 and returns
+// before the VM byte and the mirror (0x74D282): nothing here changes. Else:
+//  - d = the jump target point (+0x9F0) - her root, flattened, when a markup was attached (then detached, 0x6FDBE0);
+//    0x707B90 attaches the jump target (attachChartMarkup).
+//  - 0x733690: f = her facing (model -Y, flattened), s = the first segment's flattened direction; dot = s.f (1 when f
+//    is degenerate); along = |dot| >= cos(Lara data float +0x740 degrees). d degenerate (0x49AFA0) -> d = f.
+//  - properties 430 / 431 (0x6EEF00 mode 2, false when absent): +0x344 = !431 && (430 || !along).
+//  - +0x344 = 0: n = the markup normal (+0xCB0), its xy negated when n.d >= 0 (+0xED0 = 1, else 2); +0x345 = 0.
+//    +0x344 = 1: n = +0xCC0 (0x6FE7E0: a horizontal pole's cross(segment, up), 0x72B4A0), negated when n.d > 0;
+//    +0x345 = 0 when (stick magnitude < Lara data float +0x748 and player +0xEE8 == 0) or the jump query profile
+//    (+0xA84, 0x6F1950) has +0x2C flag 0x100 or 0x80, else 1.
+//  - side = cross(up, n).d: > 0.15 mirror on; < -0.15 off (for +0x344 = 0; for 1 only when not > 0.15 and < -0.15:
+//    off), else the mirror stays. [I] the pole branch of 0x6FE7E0 for flag 0x8000000 takes 0x72B4A0 when 0x733F60
+//    accepts it (pitch within *(0xE7EE50)+0x184 [U]); horizontal poles assumed accepted.
+// Not ported (counted as action 230's): the heading targets +0xCDC / agent +0x244 / +0x234, the +0x1250 / +0x1260
+// frames, 0x74BF90's helper object, +0xCC0 for markups other than horizontal poles.
+void poleAttachSetter(ChartContext& ctx, bool alt) {
+    ChartRuntime& rt = ctx.chart();
+    if (alt) return;
+    const auto prev = ctx.attachedMarkup();
+    const auto t = ctx.jumpTarget();
+    glm::vec2 d(0);
+    if (prev && t) d = glm::vec2(t.point - ctx.position());
+    if (t) attachChartMarkup(ctx, t);
+    const auto a = ctx.attachedMarkup();
+    if (!a) return;
+    ++rt.stats.unportedActions[230];
+    const float h = ctx.heading();
+    const glm::vec2 f(std::cos(h), std::sin(h));
+    float dot = 1;
+    bool along = true;
+    if (const auto seg = ctx.markupSegment(a.markup, 0); seg && glm::dot(f, f) >= 0.0001f) {
+        glm::vec2 sd(seg->second - seg->first);
+        sd = glm::length(sd) > 0 ? glm::normalize(sd) : glm::vec2(0);
+        dot = glm::dot(sd, glm::normalize(f));
+        along = std::abs(dot) >= std::cos(glm::radians(rt.charts().data<float>(0x740)));
+    }
+    if (std::abs(d.x) <= 1e-6f && std::abs(d.y) <= 1e-6f) d = f;
+    const bool p430 = fullBodyProp(ctx, 430).value_or(false), p431 = fullBodyProp(ctx, 431).value_or(false);
+    const bool vertical = !p431 && (p430 || !along); // agent +0x344
+    glm::vec2 n;
+    if (!vertical) {
+        n = glm::vec2(a.normal);
+        ctx.playerInt(0xED0) = glm::dot(n, d) < 0 ? 2 : 1;
+        if (ctx.playerInt(0xED0) == 1) n = -n;
+        ctx.vmPoleSide = 0;
+    } else {
+        ctx.playerInt(0xED0) = 0;
+        if (!(a.flags & 0x8000000) && !(a.flags & 0x2000000)) return; // +0xCC0 of other markups: not ported
+        const auto seg = ctx.markupSegment(a.markup, 0);
+        if (!seg) return;
+        const glm::vec3 sd = seg->second - seg->first;
+        n = glm::length(glm::vec2(sd.y, -sd.x)) > 0 ? glm::normalize(glm::vec2(sd.y, -sd.x)) : glm::vec2(0);
+        if (glm::dot(n, d) > 0) n = -n;
+        // 0x74CC8A..0x74CCDC: the stick test first; the profile record is read only when it does not decide
+        if (ctx.stickLevel() < rt.charts().data<float>(0x748) && ctx.playerInt(0xEE8) == 0) ctx.vmPoleSide = 0;
+        else {
+            const PlayerState* ps = ctx.player();
+            const auto prof = ps ? decodeProfile(rt.charts(), int(int16_t(ps->jumpQuery))) : std::nullopt;
+            if (!prof) ctx.vmPoleSide = std::nullopt;
+            else ctx.vmPoleSide = (prof->flags & 0x180) ? 0 : 1;
+        }
+    }
+    const float side = -n.y * d.x + n.x * d.y;
+    if (side > 0.15f) rt.setMirror(true);
+    else if (side < -0.15f) rt.setMirror(false);
 }
 
 bool attachTargetClass(int cls) {

@@ -988,12 +988,15 @@ void Shadow::Impl::stateEntered(int from, int to) {
 bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const Actions& a, float dt) {
     using M = Player::DriveStep::Motion;
     w = &world, pm = &player;
-    // A ledge hang's root 161 out of the line (Wine, ledges 973 and 1155; REFERENCE_COMPARISON M01) where ledgeb_idle's
-    // wrists (bones 55 / 80) reach 141.7: the wrists hang in front of the edge, the fingers over it. [O-runtime; the
-    // tru.exe term is not located: 0x76D270's attach frame has the markup point (+0xCA0) as its origin and the normal /
-    // edge rows +0xCC0 / +0xCB0, ledgeb_idle has no root translation, the alignment target +0x1260 (239 / 1012, read by
-    // 236) is not traced.]
-    player.setLedgeGripOut(161.0f - 141.7f);
+    // A ledge hang's root (tru.exe 0x74ED30, S533 / S535 action 230 with prop 410 = 610): T = P + d*n - h*z, P the
+    // segment point (+0xCA0), n the hang side's normal (+0xCC0), d = -(s16) player data +0x250 = 160 (+0xCE4, prop 421
+    // overrides), h = (s16) +0x252 = 498 (+0xCE8, prop 422); 0x741130 makes T the alignment target +0x1260. The hang
+    // clips' root motion after the alignment adds 1.19 out and 4.16 up: settled S445 161.19 out, 493.84 under at both
+    // ledges (WineChartTrace, W/chart/wine/README.md "Drive-mode findings") [O]. No sideways offset.
+    {
+        const float d = -float(ch->data<int16_t>(0x250)), h = float(ch->data<int16_t>(0x252));
+        player.setLedgeHang(glm::vec3(0.0f, -(d + 1.19f), h - 4.16f));
+    }
     const PlayerState& s0 = player.state();
     // The controller keeps what lies outside the traversal chart (swimming, the rope, the bike, death, hit reactions,
     // interactions, close combat); a placement (spawn, load, teleport) restarts the chart.

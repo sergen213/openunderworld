@@ -240,6 +240,9 @@ public:
     std::optional<MarkupSlot> chartAttached;
     // The upper-body chart (player +0xF14) for 0x6EEF00 mode 2's fallback (0x6EEDA0); null when there is none.
     virtual const ChartRuntime* upperChart() const { return nullptr; }
+    // Agent +0x345, the pole side byte 0x74C8D0 hands the anim graph VM context (0x6E9EB0, VM context +0x10) that
+    // native 64 (0x6EA050) reads; nullopt until the setter ran with an answer.
+    std::optional<uint8_t> vmPoleSide;
     // ---- end group B ----
     // ---- group A ----
     // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
@@ -439,6 +442,10 @@ bool attachTargetClass(int cls);
 // 40 into either segment; nullopt without collision. 0x75D6C0 makes the attach surface class (+0xED4) !result for
 // ledges (no wall: 1, a free hang).
 std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot& slot);
+// 0x74C8D0: the class-603 attach setter of action 230 (PreAnimEntry 0x772CA0, `alt` = the class came from property
+// 0x1A4). Attaches the jump target, decides how she takes the pole (agent +0x344), the side byte agent +0x345 for the
+// anim graph VM (ChartContext::vmPoleSide) and the layer mirror (+0xF4 0x20, ChartRuntime::setMirror).
+void poleAttachSetter(ChartContext& ctx, bool alt);
 // ---- end group B ----
 // ---- group J ----
 // Player +0xA64 as the chart sees it (src/game/chart/Jump.cpp): the target the chart's own actions set
@@ -502,6 +509,7 @@ public:
     float totalTime() const { return totalTime_; }   // +0x504
     int animCounter() const { return animCounter_; } // +0x24: < 0 playing, 1 the end tick, > 1 after
     bool mirrored() const { return mirror_; }
+    void setMirror(bool m) { mirror_ = m; } // the layer's +0xF4 0x20 written outside a transition (0x74C8D0)
     int lastTransition() const { return lastTransition_; } // +0x518
     int queued() const { return queued_; }                 // +0x514
     uint32_t frame() const { return frame_; }              // +0x50C: condition caches go stale when it moves
