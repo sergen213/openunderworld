@@ -62,8 +62,14 @@ struct SunShadowBlock {
     // Local-light shadow rays (sun.glsl ouLightsBegin): x / y = shadow-light bits over the light table (env.lights 0-31 /
     // 32-63, scene::Light::shadow), z = rays per light and pixel (0 = off), w unused.
     glm::uvec4 lights{0};
+    // Enhanced snow layer (render/Snow.hpp, sun.glsl ouSnowApply), zero = off: snowMap = top-down map origin xy, 1 /
+    // extent, 1 on; snowZ = map z low, z span, mask texel size, mask texels; snowLight = lit snow rgb, sparkle; laraSnow
+    // = Lara's per-region coverage (fx::SnowCoat: head + shoulders, arms, torso, legs); laraBody = her feet xyz, height
+    // (0 = no coat); snowFog = the frame's fog colour rgb, near; snowFogFar.x = far (the fog the translated programs use:
+    // FrameOptions::fog, else the under-water / unit fog), so snow fogs like the surface it covers in every shader.
+    glm::vec4 snowMap{0}, snowZ{0}, snowLight{0}, laraSnow{0}, laraBody{0}, snowFog{0}, snowFogFar{0};
 };
-static_assert(sizeof(SunShadowBlock) == kShadowCascades * 64 + 7 * 16);
+static_assert(sizeof(SunShadowBlock) == kShadowCascades * 64 + 14 * 16);
 struct SunShadow {
     glm::mat4 lightViewProj[kShadowCascades]; // per cascade tile, GL clip convention (backends remap z as needed)
     SunShadowBlock block;

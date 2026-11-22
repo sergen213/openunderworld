@@ -54,6 +54,7 @@ struct GraphicsConfig {
     std::optional<bool> lightShafts;        // sun shafts of medium / high; unset = on
     std::optional<bool> cineDof;            // cutscene depth of field (cameras' focus; retail draws none); unset = off
     std::string weather = "auto";           // "auto" (enhanced -> the unit's own rain / snow) | "off" | "rain" | "snow"
+    std::optional<bool> snowAccumulation;   // Enhanced weather: snow builds up on surfaces and on Lara; unset = on
     float brightness = 1.0f;                // 0.5..2.0, post-pass gamma (out = in^(1/brightness)); 1 = neutral
     // Global tone mapping in the post pass (docs/RENDERING.md "Tone mapping"): "original" = the scene as drawn (with hdr:
     // the ACES fit) | "agx" = Oklab gamut compression + hue-constant highlight desaturation + AgX-style display curve.
@@ -105,6 +106,7 @@ struct GraphicsSettings {
     int aoSamples = 12;   // CORTAO sample count 8 / 12 / 16 / 32 (render::FrameOptions::aoSamples); last, as above
     int timeOfDay = 0;    // render::TimeOfDay: 0 default, 1 day, 2 night, 3 cycle; last, as above
     float dayLength = 24; // real minutes per cycle day (render::TimeOfDay::Cycle); last, as above
+    bool snowAccumulation = true; // Enhanced snow builds up (render::FrameOptions::snow, fx::SnowCoat); last, as above
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, ao, aoQuality, upscaler, fsrQuality, tonemap or

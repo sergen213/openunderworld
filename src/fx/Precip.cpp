@@ -248,7 +248,7 @@ void SnowCoat::shed(const Input& in, int region, float amount, const Ground& gro
         const float a = rnd() * 6.2831853f;
         c.pos = in.position + glm::vec3(std::cos(a) * kR[region] * rnd(), std::sin(a) * kR[region] * rnd(), kZ[region] * in.height);
         c.vel = in.velocity * 0.6f + glm::vec3(std::cos(a), std::sin(a), 0.5f + rnd()) * (20.0f + 30.0f * rnd());
-        c.size = 0.8f + 1.4f * rnd();
+        c.size = 1.8f + 2.2f * rnd();
         c.life = 2.0f + 2.0f * rnd();
         const auto g = ground(c.pos);
         c.rest = g ? *g : c.pos.z - 400.0f;
@@ -273,13 +273,13 @@ void SnowCoat::tick(const Input& in, const Ground& ground) {
     }
     // Strong motion sheds clumps: running, jumping / falling, landing, climbing.
     float strong = 0;
-    if (speed > 330.0f) strong = std::max(strong, (speed - 330.0f) / 300.0f);
+    if (speed > 330.0f) strong = std::max(strong, std::min((speed - 330.0f) / 600.0f, 1.0f)); // a sprint sheds ~45 % a second
     if (!in.grounded || in.climbing) strong = std::max(strong, 0.6f);
     if (landed) strong = 1.5f;
-    strong = std::max(strong, std::clamp((glm::length(accel) - 1200.0f) / 3000.0f, 0.0f, 1.0f));
+    strong = std::max(strong, std::clamp((glm::length(accel) - 2500.0f) / 4000.0f, 0.0f, 1.0f));
     if (strong > 0) {
         for (int r = 0; r < kRegions; ++r) {
-            const float lose = std::min(amount_[r], amount_[r] * std::min(1.0f, strong * dt * (landed ? 30.0f : 1.6f)));
+            const float lose = std::min(amount_[r], amount_[r] * std::min(1.0f, strong * dt * (landed ? 30.0f : 0.6f)));
             if (lose <= 0) continue;
             amount_[r] -= lose;
             // a clump per ~4 % lost, at most a few per tick

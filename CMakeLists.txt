@@ -57,7 +57,7 @@ target_include_directories(ou_placeholder PUBLIC src)
 # RenderCommon + the D3D9 SM3 -> GLSL translator of the Original Fidelity path (docs/formats/SHADERS.md).
 add_library(ou_render_common STATIC src/render/RenderCommon.cpp src/render/ShaderTranslate.cpp src/render/OriginalShading.cpp
   src/render/Water.cpp src/render/Ocean.cpp src/render/WaterField.cpp src/render/Fluid.cpp src/render/Cortao.cpp
-  src/render/TimeOfDay.cpp)
+  src/render/TimeOfDay.cpp src/render/Snow.cpp)
 target_include_directories(ou_render_common PUBLIC src)
 # CORTAO ambient occlusion (third_party/cortao, MIT): CORTAOParameters.h for render/Cortao.cpp only.
 target_include_directories(ou_render_common PRIVATE third_party/cortao/src)
@@ -76,7 +76,7 @@ foreach(s water.vert water.tesc water.tese water.frag splash.vert splash_splat.f
         underwater.glsl uw_medium.glsl atmosphere.glsl filter.glsl waves.glsl tonemap.glsl ocean.comp fluid.glsl fluid.comp
         water_surface.glsl water_field.comp uw_particles.glsl uw_light.glsl uw_snow.vert uw_snow.frag uw_bubble.vert uw_bubble.frag
         uw_shafts.frag uw_shafts_blur.frag uw_water.frag uw_caustics.vert uw_caustics.frag uw_bloom.frag uw_grade.frag
-        sky.vert sky.frag)
+        sky.vert sky.frag snow_mask.comp)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${src})
   file(READ ${src} OU_WATER_SRC)
@@ -172,6 +172,12 @@ foreach(s uw_shafts.frag uw_shafts_blur.frag)
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
+# Enhanced snow mask (render/Snow.hpp): the same compute source as GL, Vulkan bindings under VULKAN.
+add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/snow_mask.comp.inc
+                   COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/snow_mask.comp.inc
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/snow_mask.comp
+                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/snow_mask.comp VERBATIM)
+list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/snow_mask.comp.inc)
 # Enhanced water's animated water texture (abyssal-garden W_WATER; render/Water.hpp agWaterSource), with post.vert.
 add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/uw_water.frag.inc
                    COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/uw_water.frag.inc ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/uw_water.frag

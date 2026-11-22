@@ -10,6 +10,7 @@
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
 #include "render/TimeOfDay.hpp"
+#include "render/Snow.hpp"
 #include "render/vk/AntiLag.hpp"
 #include "render/vk/VkFsr.hpp"
 
@@ -76,6 +77,9 @@ const uint32_t kFluidComp[] = { // the splash fluid (render/Fluid.hpp)
 };
 const uint32_t kWaterFieldComp[] = { // the interactive wave field (render/WaterField.hpp)
 #include "water_field.comp.inc"
+};
+const uint32_t kSnowMaskComp[] = { // the Enhanced snow mask (render/Snow.hpp)
+#include "snow_mask.comp.inc"
 };
 const uint32_t kPrepassVert[] = {
 #include "prepass.vert.inc"
@@ -1008,6 +1012,9 @@ public:
         SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
                                   shadowMap, rtOn ? (options.rtReflections ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
         sun.block.screen.w = float((rtAo ? 1 : 0) | (rtStatus_.gi ? 2 : 0) | (cortao ? 4 : 0)); // sun.glsl ouAo / ouIndirect
+        const snow::Map snowMap = snow::map(camera.position, camera.forward()); // Enhanced snow layer (render/Snow.hpp)
+        const bool snowOn = options.snow && snowPipeline_;
+        snow::fillBlock(sun.block, snowMap, snowOn ? options.snow : nullptr, environment_, options.underwater, options.fog);
         std::memcpy(shadowUbo_[frameIndex_].mapped, &sun.block, sizeof sun.block); // host-coherent
         // Local-light shadows (sun.glsl ouLightsBegin): the shadow lights of the table (scene::Light::shadow, tru.exe
         // DTP +0x144C: the flashlight's spot, fixtures), half the sun's rays per light (each pixel may trace 4 lights).
@@ -1022,6 +1029,7 @@ public:
         }
         std::memcpy(shadowUbo_[frameIndex_].mapped + offsetof(SunShadowBlock, lights), &rtLights, sizeof rtLights);
         if (shadowMap) recordShadowPass(cmd, sun, zRemap);
+        if (snowOn) recordSnow(cmd, snowMap, *options.snow, zRemap);
         // Original preset: tru.exe's own sun shadows for the translated programs (they read lit otherwise).
         original::Pssm pssm;
         if (options.pssm && options.originalShaders && !origPrograms_.empty()) {
@@ -2032,6 +2040,7 @@ public:
             destroyImage(font_);
             destroyImage(shadow_);
             destroyImage(pssm_);
+            destroySnow();
             destroyImage(attenuation_);
             destroyImage(cookies_);
             destroyImage(blackCube_);
@@ -2520,6 +2529,140 @@ private:
             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
         barriers(cmd, {&toRead, 1});
+    }
+
+    // Enhanced snow layer (render/Snow.hpp): the top-down depth of the opaque / alpha-tested casters around the camera
+    // (the shadow pipeline into snowTop_), then shaders/snow_mask.comp grows snowMask_ from it. Both are in every frame's
+    // shadow set (bindings 5 / 6), so the scene's translated programs read them (sun.glsl ouSnowApply).
+    void recordSnow(VkCommandBuffer cmd, const snow::Map& m, const SnowLayer& s, const glm::mat4& zRemap) {
+        constexpr VkPipelineStageFlags2 kDepthStages =
+            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        constexpr VkPipelineStageFlags2 kReaders = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        const VkImageMemoryBarrier2 toDepth = imageBarrier(
+            snowTop_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, kReaders, 0, kDepthStages,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        barriers(cmd, {&toDepth, 1});
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = snowTop_.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil = {1.0f, 0};
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {uint32_t(snow::kTopSize), uint32_t(snow::kTopSize)}};
+        ri.layerCount = 1;
+        ri.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &ri);
+        vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+        const VkViewport viewport{0, 0, float(snow::kTopSize), float(snow::kTopSize), 0, 1};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &ri.renderArea);
+        ScenePush push{};
+        push.viewProj = zRemap * m.viewProj;
+        for (const auto& mesh : meshes_) {
+            if (!lodShown(mesh, lodEye_) || outsideOrtho(m.viewProj, mesh.center, mesh.radius)) continue;
+            const VkDeviceSize zero = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &zero);
+            vkCmdBindIndexBuffer(cmd, mesh.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+            push.model = mesh.model;
+            for (const auto& sm : mesh.submeshes) {
+                if (sm.blend != scene::Blend::Opaque && sm.blend != scene::Blend::Alpha) continue;
+                push.alphaRef = (sm.blend == scene::Blend::Alpha ? std::max<int>(sm.alphaRef, 128) : sm.alphaRef) / 255.0f;
+                vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
+                const VkDescriptorSet set = textureSet(sm.textureId);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
+                vkCmdDrawIndexed(cmd, sm.indexCount, 1, sm.firstIndex, 0, 0);
+            }
+        }
+        vkCmdEndRendering(cmd);
+        const VkImageMemoryBarrier2 toRead = imageBarrier(
+            snowTop_.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kDepthStages,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        barriers(cmd, {&toRead, 1});
+        // The mask: after earlier frames' scene reads, before this frame's.
+        constexpr VkAccessFlags2 kRw = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+        const VkMemoryBarrier2 war{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kReaders, kRw, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, kRw};
+        barriers(cmd, {}, &war);
+        const snow::MaskPush mp = snow::maskPush(m, s);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, snowPipeline_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, snowLayout_, 0, 1, &snowSet_, 0, nullptr);
+        vkCmdPushConstants(cmd, snowLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof mp, &mp);
+        vkCmdDispatch(cmd, uint32_t((snow::kMaskSize + 7) / 8), uint32_t((snow::kMaskSize + 7) / 8), 1);
+        const VkMemoryBarrier2 done{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, kRw, kReaders, kRw};
+        barriers(cmd, {}, &done);
+    }
+
+    // Snow layer resources (always: the shadow sets reference them): snowTop_ in the shadow map's format (the shadow
+    // pipeline renders it), SHADER_READ_ONLY between passes; snowMask_ GENERAL, cleared to "no world texel".
+    void createSnow() {
+        snowTop_ = createImage(staticMemory_, shadowFormat_, snow::kTopSize, snow::kTopSize, 1,
+                               VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        snowMask_ = createImage(staticMemory_, VK_FORMAT_R32G32B32A32_SFLOAT, snow::kMaskSize, snow::kMaskSize, 1,
+                                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                VK_IMAGE_ASPECT_COLOR_BIT);
+        oneShot([&](VkCommandBuffer cmd) {
+            const VkImageMemoryBarrier2 b[2] = {
+                imageBarrier(snowTop_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT),
+                imageBarrier(snowMask_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                             VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)};
+            barriers(cmd, b);
+            VkClearColorValue none{};
+            none.float32[2] = none.float32[3] = 1e9f; // no world texel: every texel enters on the first update
+            const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cmd, snowMask_.image, VK_IMAGE_LAYOUT_GENERAL, &none, 1, &all);
+            const VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                                      VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                      VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT};
+            barriers(cmd, {}, &mb);
+        });
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            const VkDescriptorImageInfo ii[2] = {{fontSampler_, snowTop_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                                 {fontSampler_, snowMask_.view, VK_IMAGE_LAYOUT_GENERAL}};
+            VkWriteDescriptorSet w[2];
+            for (uint32_t b = 0; b < 2; ++b) {
+                w[b] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w[b].dstSet = shadowSets_[i], w[b].dstBinding = 5 + b, w[b].descriptorCount = 1;
+                w[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, w[b].pImageInfo = &ii[b];
+            }
+            vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
+        }
+        constexpr VkShaderStageFlags cs = VK_SHADER_STAGE_COMPUTE_BIT;
+        const VkDescriptorSetLayoutBinding b[2] = {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, cs, nullptr},
+                                                   {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, cs, nullptr}};
+        VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, b};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &dl, nullptr, &snowSetLayout_));
+        const VkPushConstantRange push{cs, 0, sizeof(snow::MaskPush)};
+        VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &snowSetLayout_, 1, &push};
+        VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &snowLayout_));
+        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shaderModule(kSnowMaskComp),
+                    "main", nullptr};
+        ci.layout = snowLayout_;
+        VK_CHECK(vkCreateComputePipelines(device_, pipelineCache_, 1, &ci, nullptr, &snowPipeline_));
+        vkDestroyShaderModule(device_, ci.stage.module, nullptr);
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 2, ps};
+        VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &snowPool_));
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, snowPool_, 1, &snowSetLayout_};
+        VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &snowSet_));
+        const VkDescriptorImageInfo top{fontSampler_, snowTop_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo img{VK_NULL_HANDLE, snowMask_.view, VK_IMAGE_LAYOUT_GENERAL};
+        VkWriteDescriptorSet w[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+        w[0].dstSet = w[1].dstSet = snowSet_, w[0].descriptorCount = w[1].descriptorCount = 1;
+        w[0].dstBinding = 0, w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, w[0].pImageInfo = &top;
+        w[1].dstBinding = 1, w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, w[1].pImageInfo = &img;
+        vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
+    }
+    void destroySnow() {
+        vkDestroyPipeline(device_, std::exchange(snowPipeline_, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipelineLayout(device_, std::exchange(snowLayout_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorPool(device_, std::exchange(snowPool_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorSetLayout(device_, std::exchange(snowSetLayout_, VK_NULL_HANDLE), nullptr);
+        if (snowTop_.image) destroyImage(snowTop_);
+        if (snowMask_.image) destroyImage(snowMask_);
     }
 
     // tru.exe's PSSM atlas (original::Pssm): cleared to 1 (the area outside the split tiles is the ShadowLights' lit
@@ -3618,14 +3761,17 @@ private:
         // Binding 2 / 3: the RT AO / GI composite map and its geometry (sun.glsl ouIndirect; createIndirectTargets).
         constexpr VkShaderStageFlags fcs = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // + rt_indirect.comp
         // Binding 4: the screen-space AO map (sun.glsl ouAoMap; createCortaoTargets), always written.
-        const VkDescriptorSetLayoutBinding sb[5] = {
+        // Binding 5 / 6: the Enhanced snow layer's top-down depth and mask (sun.glsl ouSnowApply; createSnow), always written.
+        const VkDescriptorSetLayoutBinding sb[7] = {
             {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
             {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, fcs, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
             {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
             {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
+            {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
+            {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
         };
-        VkDescriptorSetLayoutCreateInfo sl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 5, sb};
+        VkDescriptorSetLayoutCreateInfo sl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 7, sb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &sl, nullptr, &shadowSetLayout_));
         if (rtStatus_.supported) {
             constexpr VkShaderStageFlags fs = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // + rt_indirect.comp
@@ -4445,7 +4591,7 @@ private:
         // post, white, font, the three UI images, the under-water composite's 1 + kUwBloomLevels images + the per-frame sun
         // shadow sets (atlas + OuShadow UBO + the RT AO / GI map and geometry).
         constexpr uint32_t kUwSets = 1 + kUwBloomLevels;
-        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 + kUwSets + 4 * kFramesInFlight},
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 + kUwSets + 6 * kFramesInFlight},
                                             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 6 + kUwSets + kFramesInFlight, 2, ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &staticPool_));
@@ -4471,6 +4617,7 @@ private:
             w[1].pBufferInfo = &bi;
             vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
         }
+        createSnow();
         // tru.exe's PSSM atlas: sampled only after a frame's pass cleared and filled it (frame bools.z), so not cleared here.
         pssm_ = createImage(staticMemory_, shadowFormat_, original::kPssmWidth, original::kPssmHeight, 1,
                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -6479,6 +6626,13 @@ private:
     VkDescriptorSetLayout shadowSetLayout_ = VK_NULL_HANDLE;           // sun.glsl: atlas + OuShadow UBO
     std::array<Buffer, kFramesInFlight> shadowUbo_{};                 // OuShadow, host-coherent
     std::array<VkDescriptorSet, kFramesInFlight> shadowSets_{};
+    // Enhanced snow layer (render/Snow.hpp; createSnow / recordSnow): top-down depth, world-anchored mask, the mask's compute.
+    GpuImage snowTop_, snowMask_;
+    VkDescriptorSetLayout snowSetLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout snowLayout_ = VK_NULL_HANDLE;
+    VkPipeline snowPipeline_ = VK_NULL_HANDLE;
+    VkDescriptorPool snowPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet snowSet_ = VK_NULL_HANDLE;
     Bounds bounds_;
     std::vector<DrawRef> order_;
     std::vector<float> opacity_; // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)

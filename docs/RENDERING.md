@@ -1076,20 +1076,65 @@ The original's own particle effects, glows and effect lights run separately (`sr
 drawn in every preset; effect lights use 4 reserved environment-light slots after the gadget lights, linear
 falloff, and endless effect lights born with placed objects join the scene lights; material particles read a
 single-sample copy of the scene colour / depth taken once before the effects — GL `drawFx`, Vulkan the second pass's
-`recordWaterCopies` — for refraction and soft depth fades, FxBatch::screen). ou-game eases the intensity to 0 while
-collision lies within 3000 units above the camera (roofs, caves: one segment through `physics::Scene::castSegments`,
-Jolt's narrow phase on the physics scene's terrain and collider shapes [I: ours]). tru.exe has no unit-wide weather: the snow / rain
-objects are particle emitters, so `auto` shows a source's weather only inside its column (`game::weatherCoverage`):
+`recordWaterCopies` — for refraction and soft depth fades, FxBatch::screen). tru.exe has no unit-wide weather: the snow /
+rain objects are particle emitters, so `auto` shows a source's weather only inside its column (`game::weatherCoverage`):
 within the definitions' spawn radius + horizontal drift (velocity × life) of the intro, from that radius above it down
 to the fall depth (radius + downward velocity × life) below, easing out over the outer fifth (l5_valaskjalf: eight
 `fx_snow_falling_valask_*` columns of radius 3161 under the broken roof, depth 8861; the rest of the hall stays dry).
-Post pass, same file: four layers on camera-centred cylinders (radius 110, 240, 500, 1000), anchored
-in azimuth and world height so turning does not drag them; each layer is skipped where the scene is
-nearer (depth-tested against walls and roofs). Rain: thin wind-slanted streaks falling 1100 units/s,
-antialiased with `fwidth`; snow: soft flakes falling 85 units/s with a sinusoidal drift. Rain also
-darkens upward-facing surfaces (normals from depth derivatives; water surfaces from the volume
-intersection) and draws expanding splash rings on them. Skipped [I]: lens droplets, wet specular,
-snow accumulation.
+Script rain / snow (the prologue's rain, globaleffect 8) drive the same Enhanced weather; the original's camera-relative
+pools (below) are then not drawn.
+
+**World-space drops and flakes** (`fx::Precip`, ours, both renderers as effect sprites). Why the original looks tied to
+the camera: tru.exe keeps its drops (0x5346A0) and flakes (0x539EF0 / 0x534DF0) in a 512-slot pool spawned inside the
+view frustum each frame from screen positions (0x539C00) and culled when they leave it, and its rain streaks stretch with
+the camera's own motion (DAT_00B04680); our old Enhanced layer drew four camera-centred cylinders. Both move and turn with
+the view. Now every particle belongs to a fixed world cell (rain: 500 × 500 units × a 1000-unit layer, 320 per cell at
+intensity 1, 900 ± 120 units/s; snow: 400 × 400 × 800, 240 per cell, 75 ± 25 units/s with a two-sine sway): its offset,
+phase, speed and size are hashes of the cell and of its fall cycle, and its position is a closed form of the game time
+(drifting with the unit's wind, wrapped inside its tile). The camera only selects the cells within the draw radius (rain
+1800, snow 1300; faded over the outer third and inside 30 units), so moving and turning show true parallax and nothing is
+simulated per particle (`FxPrecip.WorldAnchoredNotViewLocked`). Rain drops are velocity-aligned quads of speed × 1/111 s
+(~16 units, 16 cm), at least 0.35 units or 0.7 px wide (alpha scaled down when widened), with a procedural texture: a
+darker core and bright rims along the drop. Flakes are soft discs of 1.2-3 units (at least 0.7 px).
+
+**Cover and splashes**: a world-anchored grid (32-unit cells, 192 × 192 around the camera) of each column's top surface,
+filled nearest first by batched downward segments (from 6000 above the eye to 4000 below; Jolt's narrow phase through
+`physics::Scene::castSegments`, 2048 a frame, refreshed when the eye moved 1500 units in height) plus the water volumes'
+surfaces (no collision of their own). Particles below their column's top are hidden, so it does not rain under roofs
+while it keeps falling outside a door as seen from inside; columns not queried yet show nothing. A drop that passed its
+column's top within the last 0.28 s draws a splash there, from the same closed form: an additive ring growing to ~8
+units and two droplets thrown up and out (`FxPrecip.DropsCoverAndSplashes`). The post pass keeps only the wet look:
+upward-facing surfaces darken by 14 % × intensity within 2500 units (normals from depth derivatives; water from the
+volumes), eased out while collision lies within 3000 units above the camera (one Jolt segment). Removed: the four
+view-anchored layers, the procedural splash rings and the FSR weather reactivity pass (the drops are fx sprites, which
+the FSR fx reactive pass already covers).
+
+**Snow accumulation** (`graphics.snow_accumulation`, `--snow-accumulation on|off`, GRAPHICS > SNOW BUILD-UP; live;
+`render::SnowLayer`, render/Snow.hpp, shaders/snow_mask.comp, sun.glsl `ouSnowApply`): each frame with snow on, the
+backend renders the opaque / alpha-tested casters into a top-down orthographic depth map (2048² over 6144 units, centred
+0.3 × 6144 ahead of the camera along its horizontal view, z from the eye − 4000 to + 6000) with the shadow pipeline, then
+a compute pass updates a world-anchored 512² mask (12-unit texels addressed by world texel mod 512, rgba32f = top-surface
+z, snow, world texel): a texel that entered the map starts at the area's built-up amount; when something comes onto a
+column (Lara, a moved object: its top rises by more than 24 units) the column's snow waits under it (stored negated:
+not drawn, not growing), and when it leaves (the top drops back) half remains, once — a trodden trail behind Lara
+through deep snow, which then fills in again [I: objects that stay keep their column covered]; the rest grow
+(intensity / 60 per s while snowing) or melt (1 / 240 per s once it stops). The scene shaders — the translated programs
+at `ouSunEnd` and the generic scene shaders — blend snow where the fragment is its column's top surface (within
+−16..−5 units of the depth map's top), by its face normal (smoothstep 0.45..0.85 of n.z) × the mask (bilinear) × a fade
+over the map's outer 30 %, broken up by world-space
+noise at partial cover; lit like the surface it covers (its luminance), darker in the sun shadow, a sparse view-dependent
+glint, fogged with the frame's fog (block `snowFog`). Covered columns (roofs, caves) never collect; walls and overhang
+undersides do not either. Nothing changes in the Original preset (no SnowLayer: no passes, the shaders return their
+colour unchanged).
+
+**Snow on Lara** (`fx::SnowCoat`): four regions (head + shoulders, arms, torso, legs) collect while she stands in
+snowfall with open sky above her (the cover grid): about a minute to full on the head and shoulders, less on the arms
+and legs, less while moving. Walking fades it over about half a minute, out of the snow it melts in about two. Running
+(> 330 units/s), being airborne, climbing / hanging / swimming, hard acceleration and landings (> 250 units/s down) shed
+it as clumps (one per ~4 % lost): soft sprites thrown from the region's height with her velocity, falling under gravity
+with drag and settling on the ground found below them by a Jolt segment, then melting away (`FxSnowCoat.BuildsFadesAndSheds`).
+The scene shaders give fragments inside her body capsule (42 units around her root, 0.05-1.08 of her height) her
+region's coverage instead of the ground mask [I: a capsule, not a per-draw flag; walls she touches share it].
 
 The original weather itself (drawn in every preset, docs/formats/EFFECTS.md "Weather"): script rain as tru.exe's
 camera-relative streak sheets (0x545950 / 0x5346A0), stopped by the units' precipitation height map (Level+0x54,
