@@ -1109,6 +1109,17 @@ volumes), eased out while collision lies within 3000 units above the camera (one
 view-anchored layers, the procedural splash rings and the FSR weather reactivity pass (the drops are fx sprites, which
 the FSR fx reactive pass already covers).
 
+**Off the main thread** (`fx::PrecipWorker`): the cover queries and the particle build run on one worker thread, one
+frame behind and double-buffered — each frame collects the job the previous frame submitted (drawn this frame) and
+submits its own, so rendering never waits for this frame's build; Lara's coat reads her column's cover from the
+collected job. The worker never touches the live physics: the main thread hands it `physics::Scene::segmentCaster()`,
+a frozen copy of the castSegments query shapes (reference-counted, immutable Jolt mesh shapes, separate from the
+bodies; their frames and per-face queryable flags) plus a copy of the water volumes, so `PhysicsSystem::Update` and
+body adds / removes on the main thread cannot race it. Deterministic: the grid and the quads depend only on the jobs,
+in submit order (`FxPrecip.WorkerMatchesDirectBuildOneFrameBehind`, `Physics.SegmentQueriesStopUnderCover`). The main
+thread keeps the snapshot (a few dozen shape references and the water markups), the collect and the append of the
+quads into the frame's fx vertices.
+
 **Snow accumulation** (`graphics.snow_accumulation`, `--snow-accumulation on|off`, GRAPHICS > SNOW BUILD-UP; live;
 `render::SnowLayer`, render/Snow.hpp, shaders/snow_mask.comp, sun.glsl `ouSnowApply`): each frame with snow on, the
 backend renders the opaque / alpha-tested casters into a top-down orthographic depth map (2048² over 6144 units, centred
