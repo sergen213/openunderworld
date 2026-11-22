@@ -150,6 +150,27 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
 0x20F (0.02 each) above the last frame's zone and lowered below it; values 401..404 test zones 1 / 2 / 4 / 8 (405
 "sprint" tests 8). Fall 0x1E (0x764B40): player +0x6DC - z >= value (float compare).
 
+**Frame order and the move stick filter [O: decomp; O-runtime: Wine stick records].**
+- **Loop.** MainG2 (0x5E0190) loops over three steps:
+  - `MAIN_ProcessMainState`: the game, including the chart tick, which reads the input of the previous frame.
+  - `STREAM_PollLoadQueue`.
+  - `MainG2_PlatformUpdate` (0x47AFD0). It runs sound, then the input system update 0x483520 on InputSystem 0xA02B68, and `PumpWindowMessages` (0x47AC30) last.
+- **Sampling.** Input for frame N+1 is therefore sampled at the end of frame N, before that frame's messages are pumped.
+- **Keyboard.** The keyboard device (PCKeyboardDevice, vtable 0x844F5C) reads DirectInput buffered data (0x486020; GetDeviceState fallback 0x485F10). Each key event becomes a button record.
+- **Remap.** The remap device (InputRemapDevice 0x488C70) turns bound key pairs into axis events: max of the positive key, minus max of the negative.
+- **Update 0x483520.** The update proceeds in four steps:
+  1. **Buttons.** Before the poll, each button's previous state takes its current one; button events then set the current state.
+  2. **Axes.** Before the poll, each axis (stride 0x30) sets output +0x04 to the last output, and current +0x00 to its pending raw value +0x08. Axis events then write the new raw value.
+  3. **Filter.** For each axis pair (x, y), d = |raw − pending|. If d > rate (+0x0C) × dt, the pair's current value reverts to the last output. dt is the elapsed ms × 30 / 1000. The pending value takes the raw value either way, so a large step lands one frame late.
+  4. **Actions.** The action state machine 0x482C20 runs last.
+- **Rates.** Every axis starts at FLT_MAX (0x480FC0). On Lara's birth, 0x721F80 sets the move stick axes 0 and 1 to Lara's data +0x658, 0.4, when that value is positive.
+- **Effect.** At 60 fps (dt 0.5) a key press reaches the stick record (0x706540 +0x18) one frame after its button would. Same-tick Up + Jump from idle therefore takes S248, the standing jump, not S281.
+  - **Wine evidence.** WineChartTrace measured this in 4 of 5 same-tick takes. The fifth was the first take after a checkpoint birth: a long frame let the step through.
+  - **Gamepad.** Gamepad sticks go through the same filter: a sweep faster than 0.2 per frame holds until the motion slows.
+- **Ours.**
+  - **Filter.** `StickRateFilter` (Game.hpp) runs on the move axes every tick, in the app. The rate comes from `moveStickRate` (lara.drm +0x658), and dt is 0.5, a 60 Hz tick in 30 Hz frames. tru.exe measures wall time [I].
+  - **Exception.** Recorded-stick scripts (`"stick"`) are already this filter's output and skip it.
+
 ### Ours
 
 - `ChartRuntime` follows the order above: `tick` = 0x787E60, `evaluate` = 0x787C50, `find` = 0x787570, `holds` =
