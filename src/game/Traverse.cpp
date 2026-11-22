@@ -48,16 +48,6 @@ vec3 rungPos(const collision::Markup& m, int r, vec3 out) {
 int rungAt(const collision::Markup& m, float z) {
     return std::clamp(int(std::floor((m.points[0].z - z - kRungTop) / kRungSpacing + 0.5f)), 0, lowestRung(m));
 }
-// A ladder's outward direction; zero without a third point. The third point is the bottom's other corner: points[2] -
-// points[1] runs across the ladder (158 .. 243 wide in the seven real ladders) and the wall faces (width x up) [O data:
-// l1_ship_sinking_hall 234 / 236 / 235 lie in their valve walls' planes (y = 29, -1247) whose open side is -Y; l7_arctic_sea's
-// 2044 / 2045 (wall y = -47421, width -X) and 2046 / 2047 (wall y = -45082, width +X) face each other across their
-// chamber]. The rungs' middle is half the width from the line (rungPos).
-vec3 ladderOut(const collision::Markup& m) {
-    if (m.points.size() < 3) return vec3(0);
-    const vec3 w = m.points[2] - m.points[1];
-    return unitXY(vec3(w.y, -w.x, 0), vec3(0));
-}
 
 // Pillars: the root on the axis, the clips holding her body round the shaft (tru.exe under Wine, l4_temple 1189 / 1194:
 // Lara's instance stays on the axis while on a pillar) [O]; she attaches within kPillarReach of it [I]; from the floor
@@ -95,6 +85,16 @@ int perchOnTop(const collision::CollisionMesh& col, const collision::Markup& p, 
     return -1;
 }
 } // namespace
+// A ladder's outward direction; zero without a third point. The third point is the bottom's other corner: points[2] -
+// points[1] runs across the ladder (158 .. 243 wide in the seven real ladders) and the wall faces (width x up) [O data:
+// l1_ship_sinking_hall 234 / 236 / 235 lie in their valve walls' planes (y = 29, -1247) whose open side is -Y; l7_arctic_sea's
+// 2044 / 2045 (wall y = -47421, width -X) and 2046 / 2047 (wall y = -45082, width +X) face each other across their
+// chamber]. The rungs' middle is half the width from the line (rungPos).
+vec3 ladderOut(const collision::Markup& m) {
+    if (m.points.size() < 3) return vec3(0);
+    const vec3 w = m.points[2] - m.points[1];
+    return unitXY(vec3(w.y, -w.x, 0), vec3(0));
+}
 
 // Attach to a ladder (9) or pillar (15) within reach, facing it; climbNormal = outward from it. On the ground at a
 // ladder's top, facing out over it: ladder_attach_ground_top turns her round onto the top rung.

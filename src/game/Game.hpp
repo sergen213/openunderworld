@@ -563,6 +563,8 @@ float ropeBentLength(const PlayerState& s);
 // What lies past ledge point q for a hurdle along f (tru.exe 0x73DFF0's class, player +0x6C): -1 blocked, 0 over,
 // 1 onto, 2 onto the far side into a hang (Player.cpp hurdleClass; the flair classes 3..5 are not modelled).
 int hurdlePastClass(const collision::CollisionMesh& col, vec3 q, vec2 f);
+// A ladder's (markup 9) outward direction from its wall, flat; zero without a third point (Traverse.cpp).
+vec3 ladderOut(const collision::Markup& m);
 
 // A lara.drm markup-query class record's test and entry (tru.exe 0x729540 / 0x729420 / 0x728F00): a test {kind, point
 // sources a1 / a2, flags: bit 0 the value given, bit 1 negated, bit 2 active, value}; an entry {flags: 0x10 candidate
@@ -815,6 +817,9 @@ private:
         // control yaw (kind 9, 0x6EBA90); markupSearch fills them.
         vec2 stickDir{0};
         float controlYaw = 0;
+        // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).
+        std::array<std::pair<int, vec3>, 8> typeStart{};
+        int typeStarts = 0;
     };
     // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
     // (`record`) passing one of its class record's entries. A moving markup is met in its own frame (0x70F300).
