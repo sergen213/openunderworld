@@ -231,6 +231,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // (the input-sources table: circular in drive mode).
     std::optional<bool> onSlideFloor() const override {
         if (!driving) return std::nullopt;
+        // a launched flight off the slope (slope_jump*) is not on it: the jump leaves +0x11D0 cleared until a landing
+        // contact sets it again, else T12 (OnSlopeSlide) took her straight back into slope_landfront on the take-off
+        // frame (self-test ch20_yggdrasil_hall_slide) [I: which action clears +0x11D0 is not decoded]
+        if (launched && w->player().state().vel.z > 0) return false;
         return w->player().slideUnder();
     }
     // 0x6F2800 [I]: ours a weapon in hand (or being drawn) or the target lock held (input 33, Target Lock).
@@ -1058,7 +1062,18 @@ void Shadow::Impl::seedAttach() {
     // A seeded ledge hang starts on its hang pose and holds it through the attach clip, as 0x741130's alignment target
     // (+0x1260) warps the S533 / S535 clip onto it (Wine ch_hang_*: the root stays at the pose while S533 plays; ours
     // drifted 59 out and 139 up by the clip's root motion, which flipped the camera clamp's side at tick 60) [O-runtime].
-    if (pm && hangGrip) {
+    // Only for a state that hangs from the ledge (its request's clip: ledgeb_ / ledgeu_ / trans_pose, the catch S533 /
+    // S535 and the hang family): a hurdle attach (S480 hurdle_ground_attach_mid_100, ch_beam_across_*) keeps her where the
+    // case starts (ChartB: moving her 210 to ledge 1009's hang pose lost the beam jump at t120).
+    const auto hangsFromLedge = [&] {
+        const auto* st = ch->player.state(enterState);
+        if (!st) return false;
+        const int r = st->request;
+        if (r < 0 || size_t(r) >= ch->requests.size()) return rt->chainHasAction(enterState, 420);
+        const std::string c = lower(ch->requests[size_t(r)].clip);
+        return c.starts_with("ledgeb_") || c.starts_with("ledgeu_") || c.starts_with("trans_pose");
+    };
+    if (pm && hangGrip && hangsFromLedge()) {
         const auto& p = col.markup[size_t(pick.markup)].points;
         const int seg = std::clamp(int(pick.param), 0, int(p.size()) - 2);
         const float t = (pick.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
@@ -1215,6 +1230,18 @@ void Shadow::Impl::launch(int from) {
         pm->setFlight(glm::vec3(right * (s.mirror ? -1.0f : 1.0f) * t.hangLeapSide, t.hangLeapVz));
     } else if (clip == "ledgeb_jump_up") {
         pm->setFlight(glm::vec3(0, 0, t.hangJumpUpVz));
+        if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
+    } else if (clip.starts_with("slope_jump")) {
+        // The slope jumps (S805 slope_jumpF; slope_jumpL / R / U from slope_transitionto): launch 0x7726D0 -> 0x76FFC0 with
+        // the state's jump query (prop 541) +8 / +0xC / +0x10 = right / forward / up per 30 Hz frame in her frame,
+        // unscaled, nothing of the slide's velocity kept: q3 (0, 69.53, 34.77), q40 (-48, 30, 53) left, q41 its mirror,
+        // q39 (0, 30, 70) [O chart + lara.drm query table; the values legacy State::Slide uses]
+        glm::vec3 q(0.0f, 69.53f, 34.77f);
+        if (clip == "slope_jumpl") q = glm::vec3(-48.0f, 30.0f, 53.0f);
+        else if (clip == "slope_jumpr") q = glm::vec3(48.0f, 30.0f, 53.0f);
+        else if (clip == "slope_jumpu") q = glm::vec3(0.0f, 30.0f, 70.0f);
+        const glm::vec3 r(f.y, -f.x, 0);
+        pm->setFlight((r * q.x + f * q.y + glm::vec3(0, 0, q.z)) * 30.0f);
         if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
     } else {
         launched = false;
