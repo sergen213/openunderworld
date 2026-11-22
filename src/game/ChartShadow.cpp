@@ -855,7 +855,9 @@ void Shadow::Impl::seedAttach() {
         for (size_t i = 0; i + 1 < p.size(); ++i) {
             const glm::vec3 ab = p[i + 1] - p[i];
             const float l2 = glm::dot(ab, ab);
-            const float t = l2 > 0 ? std::clamp(glm::dot(probe - p[i], ab) / l2, 0.0f, 1.0f) : 0.0f;
+            // A seed at a segment end grips 0.0001 inside it, as tru.exe's catch does (Wine ch_beam_walk: +0xC98 0.0001 at
+            // loop 1009's corner on every tick; at 0.0 the wall-under-hang ray grazed face 8762's edge and braced her) [O-runtime].
+            const float t = l2 > 0 ? std::clamp(glm::dot(probe - p[i], ab) / l2, 0.0001f, 0.9999f) : 0.0f;
             const float d = glm::length(probe - (p[i] + ab * t));
             if (d < best) best = d, pick = slot(int(m), int(i), t * glm::length(glm::vec2(ab))), hangGrip = type == 1;
         }
