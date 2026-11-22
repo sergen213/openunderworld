@@ -152,7 +152,15 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const ButtonTime& t = buttons[size_t(b)];
         return {true, t.down, t.edge, t.time};
     }
-    float stickLevel() const override { return stickLen; }
+    // The walk modifier (input 0x220 / the device's walk button, which tru.exe folds into the stick magnitude it hands
+    // the chart, 0xFADFB0 -> +0xB0 -> +0x18 [U: the fold]) holds a full stick in the walk zone: the middle of the
+    // state's 0x20A..0x20B band (SCCTest_MoveSpeed's walk zone) [I].
+    float stickLevel() const override {
+        if (!walkHeld || !rt) return stickLen;
+        const auto t0 = rt->propFloat(0x20A), t1 = rt->propFloat(0x20B);
+        return t0 && t1 ? std::min(stickLen, 0.5f * (*t0 + *t1)) : stickLen;
+    }
+    bool walkHeld = false;
     glm::vec2 stick() const override { return stickWorld; }
     // ---- group A ----
     std::optional<float> sincePress(int id) const override {
@@ -527,7 +535,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
         groundCheck(*ch);
         if (ground.steep) lastSteepMs = std::max<uint32_t>(nowMs, 1);
-        stickWorld = stickW, stickLen = stickL;
+        stickWorld = stickW, stickLen = stickL, walkHeld = a.walk;
     }
     // 0x768C50: agent 0 (Lara), then agent 1 (the upper body); --chart-state's entry.
     void chartTick() {
