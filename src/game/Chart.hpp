@@ -491,9 +491,9 @@ public:
     };
     Snapshot snapshot() const;
     void restore(ChartContext& ctx, const Snapshot& s);
-    // Drive mode: the requested clip's clock also runs at the anim layer's rate (0x438C40, ChartContext::animRate, which
-    // actions 501 / 509 set), as the layer's clip does [O: 0x438C40 scales every layer]. Shadow mode leaves it off: there
-    // the rate is only recorded.
+    // Drive mode: the requested clip's clock runs at the anim layer's rate (0x438C40, ChartContext::animRate): the
+    // pattern's own rate where the request starts it (0x444BA0), replaced by what actions 501 / 509 write after [O:
+    // 0x438C40 stores, it does not scale]. Shadow mode leaves it off: there the clock runs at the pattern's rate.
     bool layerRate = false;
 
     const Charts& charts() const { return charts_; }

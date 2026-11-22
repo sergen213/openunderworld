@@ -678,6 +678,9 @@ void ChartRuntime::enterAnim(ChartContext& ctx) {
     // Kind 2 reaches the same start: Play (0x448100) queues a record (0x446BD0) that 0x443430 plays through 0x4428A0 [O].
     if (p) startClip(*p);
     else animFrames_ = clipStart_ = 0.0f;
+    // 0x444BA0 hands the pattern's rate (+0x14 / 4096) to every sub-layer (0x438C40), the store actions 501 / 509 write
+    // after it (S634..S637's 509: 1.0, so Hpole_PerptoPara runs 45 frames as under Wine, not 45 / 1.709) [O: decomp].
+    if (p && layerRate) ctx.animRate = p->rate;
 }
 
 // 0x787890
@@ -752,7 +755,7 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
     // a clip played to its end (once) or across a loop wrap notifies the end (0x7181A0 reasons 1 / 2 -> 0x768CF0).
     const Request* p = pattern();
     const float len = animLengthFrames(), before = animFrames_;
-    animFrames_ += ctx.timeMult * (p ? p->rate : 1.0f) * (layerRate ? ctx.animRate : 1.0f);
+    animFrames_ += ctx.timeMult * (layerRate ? ctx.animRate : p ? p->rate : 1.0f);
     if (len > 0 && (animLoops() ? std::floor(animFrames_ / len) > std::floor(before / len) : before < len && animFrames_ >= len)) {
         // A queued pattern follows (0x43E0C0 -> 0x443430 plays the next record through 0x4428A0); the chart hears the
         // end only when the queue has drained (0x43E0C0 calls the saved callback +0x304 then) [O].
@@ -762,6 +765,7 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
             if (next >= 0 && size_t(next) < charts_.requests.size()) {
                 playing_ = charts_.requests[size_t(next)], playingIndex_ = next, playingMirror_ = mirror_;
                 startClip(*playing_);
+                if (layerRate) ctx.animRate = playing_->rate; // the record's rate (0x448100 +8) [I: 0x443430 applies it]
                 ++clipStarts_;
             }
         } else {
