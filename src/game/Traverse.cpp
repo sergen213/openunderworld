@@ -248,6 +248,25 @@ vec3 Player::ladderCatch(int markup, int rung) const {
     return rungPos(m, rung, out) - rotYaw(yawOf(-xy(out)), clipMove(anims_, "ladder_attach_M"));
 }
 
+// The chart drive's hold pose on a ladder, pillar or perch it attached (nullopt for other markup): a ladder's rung
+// nearest her root height (rungPos / rungAt: 0x74DCD0's rung alignment, facing the ladder) [O]; a pillar's axis at her
+// height (the instance stays on the axis, Wine l4_temple) keeping her heading [O-runtime]; a perch's point [I].
+std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, float yaw) const {
+    if (markup < 0 || size_t(markup) >= col_.markup.size()) return std::nullopt;
+    const auto& m = col_.markup[size_t(markup)];
+    if (m.points.empty()) return std::nullopt;
+    if (m.type == 9 && m.points.size() >= 2) {
+        const vec3 out = ladderOut(m);
+        return std::pair{rungPos(m, rungAt(m, from.z), out), yawOf(-xy(out))};
+    }
+    if (m.type == 15 && m.points.size() >= 2) {
+        const float lo = std::min(m.points[0].z, m.points[1].z), hi = std::max(m.points[0].z, m.points[1].z);
+        return std::pair{vec3(xy(m.points[0]), std::clamp(from.z, lo, hi)), yaw};
+    }
+    if (m.type == 13) return std::pair{m.points[0], yaw};
+    return std::nullopt;
+}
+
 void Player::catchLadder() {
     const auto& m = col_.markup[size_t(s_.ledge)];
     const vec3 out = ladderOut(m);

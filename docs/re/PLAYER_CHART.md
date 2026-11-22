@@ -348,6 +348,10 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   speed| r+0x50, |incoming root speed at its start| r+0x60, w), w linear at each step's midpoint (0x43B870 case 1 via
   0x43C8E0); the clip's own root motion counts after the window. S245: 0 -> 85.05 per 30 Hz frame over 4 frames = 170.1
   (WineChartTrace) [O].
+- **Family holds** (`Player::familyPose`): an attach to a ladder blends onto the rung nearest her height (Traverse.cpp
+  rungPos / rungAt, the 0x74DCD0 rung alignment, facing the ladder) [O]; a pillar onto its axis at her height,
+  heading kept [O-runtime]; a perch onto its point [I]. Attached to one of them she is held (Motion::Hang) even where
+  the chain lacks action 420 [I]. Poles, beams, DICE and chimney walls still use the ledge pose / free root motion.
 - **Attach alignment target** (for the family poses, not ported): 0x741130 (and the ladder's 0x744B70) writes player
   +0x1260 / +0x1270, which action 236 warps the attach clip to: target = the family's point (in the attach frame
   agent +0xB0, built by 0x76D270 / 0x76D010 per markup flags: 0x40000000 edge frame 0x737D60, 0x8000 box frame,

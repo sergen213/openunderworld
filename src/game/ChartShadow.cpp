@@ -437,6 +437,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         return {};
     }
     std::optional<bool> carrying() const override { return w->heldPortable() != 0; }
+    std::optional<bool> carriedEncumbers() const override { return w->heldPortable() != 0 && w->player().state().encumbered; }
     std::optional<bool> wallJumpAnticipate(float frames) const override {
         return !ground.floor && w->player().wallJumpAnticipate(frames);
     }
@@ -771,7 +772,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
 // Traversal chart boundary [I]: states whose request plays a swim / grapple / death / bike / carried-portable clip
 // (docs/re/PLAYER_CHART.md "Traversal subgraph": the boundary families) hand Lara to the controller.
 bool Shadow::Impl::isBoundary(int st) const {
-    static constexpr std::string_view kPrefix[] = {"swim", "grapple", "rope", "death", "die_", "dead", "bike", "moto", "portable", "carry"};
+    // The carrying set (portable_encumbered_*, S1313..S1328) is the chart's own (0x5DD / 0x5DE / 0x5DF); the swim
+    // carry clips stay with the swim boundary, the pickup / put-down are World's interaction clips (controller Use).
+    static constexpr std::string_view kPrefix[] = {"swim", "grapple", "rope", "death", "die_", "dead", "bike", "moto", "carry"};
     const auto bad = [](std::string_view clip) {
         const std::string c = lower(clip);
         for (const auto p : kPrefix)
@@ -981,13 +984,16 @@ void Shadow::Impl::stateEntered(int from, int to) {
     // and what its node queued, ChartRuntime::remainingFrames).
     const int now = chartAttached && *chartAttached ? chartAttached->markup : -1;
     if (now >= 0 && now != attachedBefore) {
-        const MarkupSlot& a = *chartAttached;
+        MarkupSlot& a = *chartAttached;
         const auto& p = w->collision().markup[size_t(a.markup)].points;
         if (p.size() >= 2) {
-            const int seg = std::clamp(int(a.param), 0, int(p.size()) - 2);
+            int seg = std::clamp(int(a.param), 0, int(p.size()) - 2);
             const float t = (a.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
-            const auto [root, yaw] = pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
             const PlayerState& s = w->player().state();
+            // a ladder / pillar / perch has its own hold pose (rung, axis, point: Player::familyPose); a ledge, cover or
+            // beam hang the ledge pose
+            const auto fam = pm->familyPose(a.markup, s.pos, s.yaw);
+            const auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
             blend = {true, to, s.pos, root, s.yaw, yaw, std::max(1.0f, rt->remainingFrames()), 0};
             pm->setVelocity(glm::vec3(0));
         }
@@ -1056,7 +1062,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.motion = M::Blend;
         d.blendFrom = blend.from, d.blendTo = blend.to, d.yawFrom = blend.yawFrom, d.yawTo = blend.yawTo;
         d.blend = blend.t / blend.frames;
-    } else if (att && rt->chainHasAction(st, 420)) {
+    } else if (att && (rt->chainHasAction(st, 420) || pm->familyPose(att.markup, player.state().pos, player.state().yaw))) {
+        // a ladder / pillar / perch keeps her held too (ChartCD: in perch S827 she fell to z -1758) [I: their hold
+        // actions are not ported]
         d.motion = M::Hang;
         const std::string c = lower(d.clip.empty() ? player.state().clip : d.clip);
         d.snap = c.starts_with("ledgeb_") && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
@@ -1092,6 +1100,10 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     d.coarse = coarse(d.motion);
     player.drive(d, dt);
     lastRise = player.state().pos.z - z0;
+    // The air motion's capsule set her down on a floor that the chart's ground check missed (its ray masked off in the
+    // flight, or an object floor): the landing still reaches the chart (event 455), else she slid on through the level
+    // in the flight state (ch02_serpent_door: S294 for 700 ticks) [I].
+    if (d.motion == M::Air && player.driveLanded() && !ground.floor) ground.floor = true;
     // +0xC94's geometry follows her grip (shimmy)
     if (att && player.state().ledge == att.markup) {
         MarkupSlot n = slot(att.markup, player.state().ledgeSeg, player.state().ledgeT);
