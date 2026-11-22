@@ -156,6 +156,9 @@ public:
         // a hold state's markup is seeded from where she stands), for a spawn the original reaches only through a
         // traversal the scenario skips (standing on a beam) [I: harness only]. Legacy traversal ignores it.
         int chartState = -1;
+        // "chart_spawn": with --traversal chart, this spawn instead of "spawn" (a Wine take's standing start the legacy
+        // controller does not handle the same way); legacy keeps "spawn" [I: harness only].
+        std::optional<std::array<float, 4>> chartSpawn;
     };
     const Entry& entry() const { return entry_; }
     const std::string& name() const { return name_; }
