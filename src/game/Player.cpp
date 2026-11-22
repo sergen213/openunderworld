@@ -2674,11 +2674,11 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     q.recordTypes = p.recordTypes, q.recordFlags = p.recordFlags;
     q.resultTypes = p.resultTypes, q.resultRecordFlags = p.resultRecordFlags;
     q.strict = true;
-    // kind 9's control yaw: the camera's (0x6EBA90; World::setCamera's stick yaw); source 8's stick yaw: the stick's
-    // world heading while it is pushed, else that same camera yaw [I: the input record keeps its last heading]
-    q.controlYaw = cameraKnown_ ? cameraYaw_ : s_.yaw;
-    const float stickYaw = stickOn ? controlYaw : q.controlYaw;
-    q.stickDir = vec2(std::cos(stickYaw), std::sin(stickYaw));
+    // kind 9's control yaw is 0x6EBA90, the same call heading sources 5..8 make (0x728F00 case 9, 0x724F50 case 5):
+    // the caller's controlYaw; source 8's stick yaw: the stick's world heading while it is pushed, else that same yaw
+    // [I: the input record keeps its last heading]
+    q.controlYaw = controlYaw;
+    q.stickDir = vec2(std::cos(controlYaw), std::sin(controlYaw));
     const JumpTarget j = ledgeOnArc(q);
     out.known = !q.unknown;
     out.target = j;
