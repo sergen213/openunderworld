@@ -407,8 +407,14 @@ int takeoffKind(int state) {
 // along the stick in S245 and the hit comes within 448 of her, flag 2 -> S289 T323 -> S535, as under Wine).
 void takeoffQuery(ChartContext& ctx) {
     ctx.chartTarget = {};
-    if (const int k = takeoffKind(ctx.chart().state()); k >= 0)
-        if (const auto a = ctx.takeoffAim(k)) ctx.chartTarget = *a;
+    if (const int k = takeoffKind(ctx.chart().state()); k >= 0) {
+        // 0x6C0800 runs the take-off state's own profile (player +0xB00, property 541: S248 2, S245 / S247 43, S249 26)
+        // through 0x7296C0; the data-driven search answers where it can (a pole for the standing jump, Wine
+        // tr_pole_drop_birth: S248 -> S305 at 29), else the take-off states' modelled queries.
+        const int profile = ctx.chart().field(0xB00);
+        if (!(profile > 0 && chartMarkupSearch(ctx, profile)))
+            if (const auto a = ctx.takeoffAim(k)) ctx.chartTarget = *a;
+    }
     // Player +0x77C, the flight time to the target (30 Hz frames; 0x751FC0 / 0x73EDC0 time the re-aim by it, cond 0x2B0
     // tests it) [O]; ours from the query's hit frame.
     ctx.playerFloat(0x77C) = ctx.chartTarget.target ? ctx.chartTarget.frames : 0.0f;
