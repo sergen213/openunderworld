@@ -64,40 +64,83 @@ void Autopilot::set(uint64_t tick, const std::string& action, float value, game:
 }
 
 void Autopilot::next(uint64_t tick, const char* why) {
+    // A step ending on a release the stick filter holds a tick (centre(): StickRateFilter, tru.exe 0x483520) ends once it
+    // has landed, as it did on its own tick without the filter; the next step then starts with her stopped.
+    if (!why && releaseUntil_ > tick + 1 && !finishAt_) {
+        finishAt_ = tick + 1;
+        return;
+    }
     if (why) std::fprintf(stderr, "ou-game: autopilot plan line %d (%s) failed at tick %llu: %s\n", steps_[step_].line,
                           steps_[step_].op.c_str(), (unsigned long long)tick, why);
     if (why) failed_ = true, failure_ = "line " + std::to_string(steps_[step_].line) + " (" + steps_[step_].op + "): " + why, step_ = steps_.size();
     else ++step_;
     started_ = reported_ = false;
+    runLag_ = -1, aimPhase_ = -1, pressSettled_ = false, settleWait_ = 0;
 }
 
 game::Actions Autopilot::step(uint64_t tick, game::World& w) {
     game::Actions a = script_.empty() ? game::Actions{} : game::InputScript::parse(script_).at(tick);
     if (done()) return a;
+    if (finishAt_ && tick >= finishAt_) { // the finished step's release has landed: the next step starts on the next tick
+        finishAt_ = 0;
+        next(tick, nullptr);
+        return a;
+    }
     const Step& s = steps_[step_];
     if (!started_) started_ = true, stepStart_ = tick;
     const uint64_t t = tick - stepStart_;
     const auto& lara = w.player().state();
+    // Her motion this tick; the stick lands a tick late through StickRateFilter (tru.exe 0x483520) when it steps by more
+    // than 0.2, so `go` / `engage` aim from where she will be a tick on (pos + this tick's motion).
+    // A unit switch re-expresses the world around the new unit (World::streamAround): her position jumps by the origin
+    // change, so a plan's points (written in the unit frame of the step) are shifted along with it.
+    const std::string& unitNow = w.currentUnit().data.name;
+    glm::vec2 jump = hasLastPos_ ? glm::vec2(lara.pos) - lastPos_ : glm::vec2(0);
+    if (hasLastPos_ && unitNow != lastUnit_ && glm::length(jump) > 200.0f) rebase_ += jump, jump = glm::vec2(0);
+    lastUnit_ = unitNow;
+    const glm::vec2 motion = jump;
+    const float groundStep = glm::length(motion); // units this tick
+    const float yawStep = hasLastPos_ ? std::remainder(lara.yaw - lastYaw_, glm::two_pi<float>()) : 0.0f; // turn this tick
+    lastPos_ = glm::vec2(lara.pos), lastYaw_ = lara.yaw, hasLastPos_ = true;
     const auto has = [&](const char* word) { return std::ranges::find(s.args, word) != s.args.end(); };
+    // A walk change made with a stick step over 0.2 waits a tick: the step lands a tick late (StickRateFilter), and
+    // the walk button would otherwise act on the old stick (releasing it a tick early starts a run along the old
+    // heading, then a wide turn).
+    if (walkDue_ && tick >= walkDue_->first) set(tick, "walk", walkDue_->second, a), walkDue_.reset();
+    const auto stickTo = [&](float fwd, float right, float walk) {
+        const auto held = [&](const char* k) { const auto it = held_.find(k); return it == held_.end() ? 0.0f : it->second; };
+        const bool big = glm::length(glm::vec2(right - held("right"), fwd - held("forward"))) > 0.2f;
+        set(tick, "forward", fwd, a), set(tick, "right", right, a);
+        if (big && walk != held("walk")) walkDue_ = std::pair{tick + 1, walk};
+        else walkDue_.reset(), set(tick, "walk", walk, a);
+        return big;
+    };
+    // A release held a tick by the filter would be overwritten by the next step's first aim before it ever landed (she
+    // would never stop); the next aim waits until the release has been the stick for a tick, as without the filter.
     const auto centre = [&] {
-        set(tick, "forward", 0, a), set(tick, "right", 0, a), set(tick, "walk", 0, a);
+        if (stickTo(0, 0, 0)) releaseUntil_ = tick + 2;
     };
     // Camera-relative stick towards a world heading (World::tick: move = right * x + fwd * y, by World::stickYaw);
-    // re-aimed every 4 ticks in 0.05 steps so the script stays short.
-    const auto steer = [&](glm::vec2 dir, bool walk) {
-        if (t % 4 != 0) return;
+    // re-aimed every 4 ticks in 0.05 steps so the script stays short. Returns -1 when it did not aim this tick, else 1
+    // when the aim lands a tick late (a step over 0.2), 0 when at once.
+    // Re-aims follow the first aim's landing tick: an aim stepping over 0.2 lands a tick late, the small re-aims after it
+    // at once, so they keep their 4-tick phase to her motion.
+    const auto steer = [&](glm::vec2 dir, bool walk) -> int {
+        if (tick < releaseUntil_) return -1;
+        if (aimPhase_ >= 0 && tick != releaseUntil_ && (int64_t(t) <= aimPhase_ || (int64_t(t) - aimPhase_) % 4 != 0)) return -1;
         const float cy = w.stickYaw();
         const glm::vec2 fwd(std::cos(cy), std::sin(cy)), right(std::sin(cy), -std::cos(cy));
         const auto q = [](float v) { return std::round(v * 20) / 20; };
-        set(tick, "forward", q(glm::dot(dir, fwd)), a), set(tick, "right", q(glm::dot(dir, right)), a);
-        set(tick, "walk", walk ? 1.0f : 0.0f, a);
+        const bool late = stickTo(q(glm::dot(dir, fwd)), q(glm::dot(dir, right)), walk ? 1.0f : 0.0f);
+        if (aimPhase_ < 0 || tick == releaseUntil_) aimPhase_ = int64_t(t) + (late ? 1 : 0);
+        return late ? 1 : 0;
     };
     if (s.op == "go" || s.op == "engage") {
         glm::vec2 to(0);
         int32_t uid = 0;
         size_t walkArg = 2;
         if (s.op == "go") {
-            to = {std::stof(s.args[0]), std::stof(s.args[1])};
+            to = glm::vec2(std::stof(s.args[0]), std::stof(s.args[1])) + rebase_;
         } else {
             uid = std::stoi(s.args[0]);
             if (const auto spot = w.bikeMountSpot(uid)) { // a parked motorcycle: to where Interact mounts it
@@ -132,7 +175,7 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
                 reported_ = true, std::fprintf(stderr, "ou-game: autopilot tick %llu engage %d (%s) at %.1f %.1f %.1f (target %.1f %.1f), Lara at %.1f %.1f %.1f\n",
                              (unsigned long long)tick, uid, o->name.c_str(), o->pos.x, o->pos.y, o->pos.z, to.x, to.y, lara.pos.x, lara.pos.y, lara.pos.z);
         const float radius = s.op == "go" && s.args.size() > walkArg && s.args[walkArg] != "walk" ? std::stof(s.args[walkArg]) : s.op == "go" ? 40.0f : 30.0f;
-        const glm::vec2 d = to - glm::vec2(lara.pos);
+        const glm::vec2 d = to - (glm::vec2(lara.pos) + motion); // from a tick on: the stick's change lands then
         const float dist = glm::length(d);
         if (uid && w.engaged().uid == uid) {
             centre();
@@ -140,7 +183,22 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
                          lara.pos.x, lara.pos.y, lara.pos.z, glm::degrees(lara.yaw));
             next(tick, nullptr);
         } else if (dist <= radius) {
-            centre();
+            // Another coarse point (both radii >= 80) straight on (within 30 deg of where she is going: her motion, else
+            // her heading; aiming she strafes facing elsewhere): keep the stick and re-aim at once. Without the filter the
+            // release lasted one tick and she ran on; held (StickRateFilter, tru.exe 0x483520) and then left to land it
+            // would stop her for two. Fine placements (either point) and turns still stop her first (ch05_container_deck's
+            // 1600 -> 900 leg ends at a radius-60 point).
+            bool chained = false;
+            const Step* nx = step_ + 1 < steps_.size() ? &steps_[step_ + 1] : nullptr;
+            if (!uid && radius >= 80.0f && nx && nx->op == "go" && nx->args.size() >= 3 && nx->args[2] != "walk" &&
+                std::stof(nx->args[2]) >= 80.0f) {
+                const glm::vec2 nextTo = glm::vec2(std::stof(nx->args[0]), std::stof(nx->args[1])) + rebase_;
+                const glm::vec2 dn = nextTo - glm::vec2(lara.pos);
+                const float going = groundStep > 2.0f ? std::atan2(motion.y, motion.x) : lara.yaw;
+                chained = glm::length(dn) > 1.0f &&
+                          std::abs(std::remainder(std::atan2(dn.y, dn.x) - going, glm::two_pi<float>())) < glm::radians(30.0f);
+            }
+            if (!chained) centre();
             if (uid) next(tick, "reached the point without engaging");
             else next(tick, nullptr);
         } else if (t > kTimeout) {
@@ -150,12 +208,15 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             // In water she turns toward the stick at 1.755 rad/s whatever her speed (Player::swim, swimTurn), so at full
             // speed she circles ~770 units wide and can be carried past the point, over a sill she then cannot swim back
             // across (l7_arctic_sea's niches); a player eases off the stick until she faces it, as this does.
+            // On land a run turns ~1.7 deg a tick at ~21 units a tick (a circle ~720 units across), so a point behind her
+            // and nearer than that is orbited for good; a player lets go until she stops, then pushes towards it (she
+            // turns on the spot from a stand). The stick's one-tick hold (StickRateFilter, tru.exe 0x483520) can leave her
+            // still running when a step starts (the last step's release lands a tick late).
+            const float err = std::abs(std::remainder(std::atan2(d.y, d.x) - lara.yaw, glm::two_pi<float>()));
             float ease = 1;
-            if (lara.water >= 0) {
-                const float err = std::abs(std::remainder(std::atan2(d.y, d.x) - lara.yaw, glm::two_pi<float>()));
-                ease = std::clamp(std::cos(err), 0.25f, 1.0f);
-            }
-            steer(d / dist * ease, has("walk") || dist < 250);
+            if (lara.water >= 0) ease = std::clamp(std::cos(err), 0.25f, 1.0f);
+            if (lara.water < 0 && err > glm::half_pi<float>() && groundStep > 10.0f) centre();
+            else steer(d / dist * ease, has("walk") || dist < 250);
         }
     } else if (s.op == "swim") { // swim X Y Z [R]: in water, the stick towards (X, Y), Jump / Drop held to rise / sink
         const glm::vec3 d = glm::vec3(std::stof(s.args[0]), std::stof(s.args[1]), std::stof(s.args[2])) - lara.pos;
@@ -172,13 +233,28 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             set(tick, "jump", d.z > radius * 0.5f ? 1.0f : 0.0f, a), set(tick, "drop", d.z < -radius * 0.5f ? 1.0f : 0.0f, a);
         }
     } else if (s.op == "face") {
+        // The release lands a tick late (StickRateFilter, tru.exe 0x483520) and she turns on meanwhile: stop once the
+        // yaw a tick on is within 8 deg while the current one is within 12, else (a slowing turn) on the current one.
         const float yaw = glm::radians(std::stof(s.args[0]));
-        if (std::abs(std::remainder(lara.yaw - yaw, glm::two_pi<float>())) < glm::radians(8.0f)) centre(), next(tick, nullptr);
+        const float now = std::abs(std::remainder(lara.yaw - yaw, glm::two_pi<float>()));
+        const float soon = std::abs(std::remainder(lara.yaw + yawStep - yaw, glm::two_pi<float>()));
+        if (now < glm::radians(8.0f) || (soon < glm::radians(8.0f) && now < glm::radians(12.0f))) centre(), next(tick, nullptr);
         else if (t > kTimeout) centre(), next(tick, "timed out");
         else steer({std::cos(yaw), std::sin(yaw)}, true);
     } else if (s.op == "press" || s.op == "hold") {
         const std::string action = s.args.empty() ? "interact" : s.args[0];
         const uint64_t length = s.op == "press" ? kPressTicks : ticks(s.args[1]);
+        // A press made while she is still moving or stopping goes nowhere in tru.exe's chart (run-stop S57 has no
+        // Interact edge; only the idle S40's ActionFlag 32 -> S741 takes it): wait until she has stopped, then press.
+        if (t == 0 && !pressSettled_) {
+            const bool moving = lara.state == game::State::Walk || lara.state == game::State::Run || lara.state == game::State::Stop ||
+                                lara.state == game::State::Turn;
+            if (moving && settleWait_++ < kTimeout) {
+                stepStart_ = tick + 1; // t stays 0 until she stops
+                return a;
+            }
+            pressSettled_ = true;
+        }
         if (t == 0) set(tick, action, 1, a);
         else if (t == length) set(tick, action, 0, a);
         else if (t >= length + (s.op == "press" ? kPressTicks : 0)) {
@@ -187,10 +263,16 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             next(tick, nullptr);
         }
     } else if (s.op == "stick") { // stick FORWARD RIGHT SECONDS [ACTION AT]: ACTION pressed AT seconds in (running jumps)
-        if (t == 0) set(tick, "forward", std::stof(s.args[0]), a), set(tick, "right", std::stof(s.args[1]), a);
-        if (s.args.size() >= 5 && t == ticks(s.args[4])) set(tick, s.args[3], 1, a);
-        if (s.args.size() >= 5 && t == ticks(s.args[4]) + kPressTicks) set(tick, s.args[3], 0, a);
-        if (t >= ticks(s.args[2])) {
+        // AT counts from when the stick lands (a step over 0.2 lands a tick late: StickRateFilter, tru.exe 0x483520)
+        if (t == 0) {
+            const auto held = [&](const char* k) { const auto it = held_.find(k); return it == held_.end() ? 0.0f : it->second; };
+            const float f = std::stof(s.args[0]), r = std::stof(s.args[1]);
+            runLag_ = glm::length(glm::vec2(r - held("right"), f - held("forward"))) > 0.2f ? 1 : 0;
+            set(tick, "forward", f, a), set(tick, "right", r, a);
+        }
+        if (s.args.size() >= 5 && runLag_ >= 0 && t == ticks(s.args[4]) + uint64_t(runLag_)) set(tick, s.args[3], 1, a);
+        if (s.args.size() >= 5 && runLag_ >= 0 && t == ticks(s.args[4]) + uint64_t(runLag_) + kPressTicks) set(tick, s.args[3], 0, a);
+        if (t >= ticks(s.args[2]) + uint64_t(std::max(runLag_, 0))) {
             centre();
             if (s.args.size() >= 5) set(tick, s.args[3], 0, a);
             std::fprintf(stderr, "ou-game: autopilot tick %llu stick: state %s at %.1f %.1f %.1f\n", (unsigned long long)tick,
@@ -198,10 +280,13 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             next(tick, nullptr);
         }
     } else if (s.op == "run") { // run YAWDEG SECONDS [ACTION AT]: run along a world heading, ACTION pressed AT seconds in
-        steer({std::cos(glm::radians(std::stof(s.args[0]))), std::sin(glm::radians(std::stof(s.args[0])))}, false);
-        if (s.args.size() >= 4 && t == ticks(s.args[3])) set(tick, s.args[2], 1, a);
-        if (s.args.size() >= 4 && t == ticks(s.args[3]) + kPressTicks) set(tick, s.args[2], 0, a);
-        if (t >= ticks(s.args[1])) {
+        // AT counts from when the stick lands: a first aim stepping over 0.2 lands a tick late (StickRateFilter), and an
+        // action pressed with it would read the old stick (a jump on the press tick goes the way she faced).
+        const int aimed = steer({std::cos(glm::radians(std::stof(s.args[0]))), std::sin(glm::radians(std::stof(s.args[0])))}, false);
+        if (aimed >= 0 && runLag_ < 0) runLag_ = int(t) + aimed;
+        if (s.args.size() >= 4 && runLag_ >= 0 && t == ticks(s.args[3]) + uint64_t(runLag_)) set(tick, s.args[2], 1, a);
+        if (s.args.size() >= 4 && runLag_ >= 0 && t == ticks(s.args[3]) + uint64_t(runLag_) + kPressTicks) set(tick, s.args[2], 0, a);
+        if (runLag_ >= 0 && t >= ticks(s.args[1]) + uint64_t(runLag_)) {
             centre();
             if (s.args.size() >= 4) set(tick, s.args[2], 0, a);
             std::fprintf(stderr, "ou-game: autopilot tick %llu run: state %s at %.1f %.1f %.1f\n", (unsigned long long)tick,
@@ -212,8 +297,13 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
         const std::string action = s.args.size() > 3 ? s.args[3] : "interact";
         const uint64_t length = ticks(s.args[2]);
         if (t == 0) set(tick, action, 1, a);
-        if (t == kPressTicks) set(tick, "forward", std::stof(s.args[0]), a), set(tick, "right", std::stof(s.args[1]), a);
-        if (t >= length) {
+        if (t == kPressTicks) { // the push counts from when the stick lands (a step over 0.2 lands a tick late)
+            const auto held = [&](const char* k) { const auto it = held_.find(k); return it == held_.end() ? 0.0f : it->second; };
+            const float f = std::stof(s.args[0]), r = std::stof(s.args[1]);
+            runLag_ = glm::length(glm::vec2(r - held("right"), f - held("forward"))) > 0.2f ? 1 : 0;
+            set(tick, "forward", f, a), set(tick, "right", r, a);
+        }
+        if (t >= length + uint64_t(std::max(runLag_, 0))) {
             centre(), set(tick, action, 0, a);
             std::fprintf(stderr, "ou-game: autopilot tick %llu push: state %s at %.1f %.1f %.1f\n", (unsigned long long)tick,
                          std::string(game::stateName(lara.state)).c_str(), lara.pos.x, lara.pos.y, lara.pos.z);

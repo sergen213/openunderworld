@@ -7,10 +7,14 @@
 #define OU_SHADOW_UBO layout(std140, set = OU_SHADOW_SET, binding = 1)
 #define OU_SHADOW_TEX layout(set = OU_SHADOW_SET, binding = 0)
 #define OU_AO_TEX layout(set = OU_SHADOW_SET, binding = 4)
+#define OU_SNOW_TOP layout(set = OU_SHADOW_SET, binding = 5)
+#define OU_SNOW_MASK layout(set = OU_SHADOW_SET, binding = 6)
 #else
 #define OU_SHADOW_UBO layout(std140, binding = 3)
 #define OU_SHADOW_TEX layout(binding = 16)
 #define OU_AO_TEX layout(binding = 17)
+#define OU_SNOW_TOP layout(binding = 19)
+#define OU_SNOW_MASK layout(binding = 20)
 #endif
 // render::SunShadowBlock (RenderCommon.hpp).
 OU_SHADOW_UBO uniform OuShadow {
@@ -21,6 +25,11 @@ OU_SHADOW_UBO uniform OuShadow {
     vec4 screen;      // 1 / width, 1 / height, ray tracing (0 off, 1 shadows, 2 + water reflections), w = bits: 1 RT AO and
                       // 2 RT sun GI in ouIndirectMap (OU_RT), 4 screen-space AO in ouAoMap (CORTAO, both renderers)
     uvec4 lights;     // local-light shadow rays: x / y shadow-light bits (light table 0-31 / 32-63), z rays per light (0 off)
+    // Enhanced snow layer (render/Snow.hpp; all zero = off): snowMap = top-down map origin xy, 1 / extent, w 1 = on;
+    // snowZ = map z low, z span, mask texel size, mask texels; snowLight = lit snow rgb, sparkle; laraSnow = Lara's
+    // coverage per region (head + shoulders, arms, torso, legs); laraBody = her feet xyz, height (0 = no coat);
+    // snowFog = fog colour rgb, near; snowFogFar.x = fog far (0: none).
+    vec4 snowMap, snowZ, snowLight, laraSnow, laraBody, snowFog, snowFogFar;
 } ouShadow;
 OU_SHADOW_TEX uniform sampler2DShadow ouShadowMap; // atlas: the 3 cascades side by side
 // Screen-space ambient occlusion (CORTAO, RENDERING.md "Ambient occlusion"): render-resolution map, same orientation as
@@ -291,6 +300,75 @@ float ouAo() {
     return 1.0;
 }
 
+#if defined(OU_SUN) || defined(OU_SNOW)
+// Enhanced snow layer (render/Snow.hpp, FrameOptions::snow), for the translated programs (ouSunEnd) and the generic scene
+// shaders (OU_SNOW): snow on the fragment where it is its column's top surface in the top-down depth map (ouSnowTop), by
+// the world-anchored mask (ouSnowMask: rgba = top z, snow, world texel xy) and its normal . up; Lara's fragments (inside
+// her body capsule, laraBody) take her coat's region coverage instead. Lit like the surface it covers and by the sun
+// shadow, fogged with the frame's fog (snowFog, linear as TRU's VS c22), a sparse view-dependent glint. Off (snowMap.w
+// 0): c unchanged.
+OU_SNOW_TOP uniform sampler2D ouSnowTop;
+OU_SNOW_MASK uniform sampler2D ouSnowMask;
+float ouSnowHash(vec3 q) {
+    uvec3 u = uvec3(ivec3(floor(q)) + 32768);
+    uint n = (u.x * 1597334677u) ^ (u.y * 3812015801u) ^ (u.z * 2798796415u);
+    n = (n ^ (n >> 15)) * 2246822519u;
+    return float(n >> 8) * (1.0 / 16777216.0);
+}
+float ouSnowMaskAt(vec2 xy) { // bilinear over the mask's world texels (a texel of another world texel counts 0)
+    const float texel = ouShadow.snowZ.z;
+    const int n = int(ouShadow.snowZ.w);
+    vec2 g = xy / texel - 0.5;
+    ivec2 b = ivec2(floor(g));
+    vec2 f = g - vec2(b);
+    float s[4];
+    for (int i = 0; i < 4; ++i) {
+        ivec2 w = b + ivec2(i & 1, i >> 1);
+        vec4 m = texelFetch(ouSnowMask, (w % n + n) % n, 0);
+        s[i] = ivec2(m.zw) == w ? max(m.y, 0.0) : 0.0; // y < 0: something stands on the column (shaders/snow_mask.comp)
+    }
+    return mix(mix(s[0], s[1], f.x), mix(s[2], s[3], f.x), f.y);
+}
+vec4 ouSnowApply(vec4 c, vec3 p, vec3 n) {
+    if (ouShadow.snowMap.w < 0.5) return c;
+    float cover = 0.0;
+    const vec4 body = ouShadow.laraBody;
+    const vec2 fromAxis = p.xy - body.xy;
+    const float h = (p.z - body.z) / max(body.w, 1.0);
+    if (body.w > 0.0 && dot(fromAxis, fromAxis) < 42.0 * 42.0 && h > 0.05 && h < 1.08) {
+        // Lara: head + shoulders above 0.78 of her height, arms away from her axis, torso, legs below 0.46 [I].
+        const float r = length(fromAxis);
+        const int region = h > 0.78 ? 0 : (h > 0.42 && r > 17.0) ? 1 : h > 0.46 ? 2 : 3;
+        cover = ouShadow.laraSnow[region] * smoothstep(0.05, 0.55, n.z);
+    } else {
+        const vec2 uv = (p.xy - ouShadow.snowMap.xy) * ouShadow.snowMap.z;
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return c;
+        const float edge = smoothstep(0.0, 0.3, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
+        const float d = textureLod(ouSnowTop, uv, 0.0).r;
+        const float top = ouShadow.snowZ.x + (1.0 - d) * ouShadow.snowZ.y;
+        const float exposed = d < 1.0 ? smoothstep(-16.0, -5.0, p.z - top) : 0.0; // within a depth texel's slope of the top
+        cover = ouSnowMaskAt(p.xy) * exposed * edge * smoothstep(0.45, 0.85, n.z);
+    }
+    if (cover <= 0.0) return c;
+    // Break the edge up with a little world-space noise: thin cover lies in patches.
+    const float noise = ouSnowHash(p * 0.07) * 0.6 + ouSnowHash(p * 0.31) * 0.4;
+    cover = clamp(cover * 1.35 - noise * 0.35, 0.0, 1.0);
+    const float sunVis = ouShadow.sun.w != 0.0 ? ouShadowMapVisibility(p) : 1.0;
+    // Lit like the surface it covers: its own brightness stands in for the light it receives (shadows, AO, light maps).
+    const float lit = clamp(0.45 + dot(c.rgb, vec3(0.3, 0.59, 0.11)) * 0.9, 0.5, 1.1);
+    const float grain = 0.9 + 0.06 * ouSnowHash(p * 0.12) + 0.04 * ouSnowHash(p * 0.6);
+    vec3 snow = ouShadow.snowLight.rgb * lit * grain * mix(0.72, 1.0, sunVis) * (0.88 + 0.12 * n.z);
+    const vec3 v = normalize(ouShadow.eye.xyz - p);
+    const float glint = step(0.985, ouSnowHash(p * 1.7)) * pow(max(dot(reflect(-v, n), ouShadow.sun.xyz), 0.0), 24.0);
+    snow += vec3(glint * ouShadow.snowLight.a * 1.5 * sunVis);
+    // The frame's distance fog, linear between near and far (the translated VS's c22).
+    if (ouShadow.snowFogFar.x > ouShadow.snowFog.w) {
+        const float fog = clamp((length(p - ouShadow.eye.xyz) - ouShadow.snowFog.w) / (ouShadow.snowFogFar.x - ouShadow.snowFog.w), 0.0, 1.0);
+        snow = mix(snow, ouShadow.snowFog.rgb, fog);
+    }
+    return vec4(mix(c.rgb, snow, cover), c.a);
+}
+#endif
 #ifdef OU_SUN
 // Translated original pixel shaders: position from gl_FragCoord (exact view depth 1 / gl_FragCoord.w along the camera
 // ray), face normal from its derivatives, both computed first thing in main() (uniform control flow, before texkill).
@@ -353,16 +431,20 @@ void ouLightsBegin(uint slots, out float vis[6]) {
 #endif
 }
 // After the program: RT water reflections on materials the backend flags reflective (fixedParams.w bit 2); RT AO /
-// sun bounce on the rest (the ray-traced variant draws only opaque, pre-passed submeshes and reflective ones).
+// sun bounce on the rest (the ray-traced variant draws only opaque, pre-passed submeshes and reflective ones); the
+// Enhanced snow layer on the non-reflective ones.
 vec4 ouSunEnd(vec4 c) {
 #ifdef OU_PREPASS
     vec3 n = dot(ouPrepassNormal, ouPrepassNormal) > 1.0e-6 ? normalize(ouPrepassNormal) : ouN;
     ouPrepassOut = ouOctEncode(dot(n, ouN) < 0.0 ? -n : n); // the side facing the viewer (two-sided meshes)
-#endif
+    return c;
+#else
 #ifdef OU_RT
     if ((int(ouMat.fixedParams.w) & 4) != 0 && ouShadow.screen.z >= 2.0) return ouRtWater(c, ouP, ouN, true, 2.0);
     if ((int(ouMat.fixedParams.w) & 4) == 0) c.rgb = ouIndirect(c.rgb);
 #endif
+    if ((int(ouMat.fixedParams.w) & 4) == 0) c = ouSnowApply(c, ouP, ouN);
     return c;
+#endif
 }
 #endif

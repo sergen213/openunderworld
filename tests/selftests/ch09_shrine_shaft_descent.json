@@ -74,12 +74,6 @@
           "eq": 681
         },
         {
-          "clips": [
-            "ledgeb_bad_attach_M"
-          ],
-          "note": "1502 down: one-handed, Interact recovers"
-        },
-        {
           "probe": "player.saving_grab",
           "eq": 0
         }

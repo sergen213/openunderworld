@@ -239,6 +239,7 @@ struct GraphicsOptions {
     int lightShafts = 0;                           // tri-state
     int cineDof = 0;                               // tri-state (default off)
     int weather = 0;                               // 0 auto, 1 off, 2 rain, 3 snow
+    int snowAccumulation = 0;                      // tri-state (default on)
     bool fsr = false;                              // upscaler fsr
     int fsrQuality = 1;                            // 0 native, 1 quality, 2 balanced, 3 performance, 4 ultra performance
     int sharpness = 5;                             // 0..10 slider = config sharpness * 10

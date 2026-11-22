@@ -7,7 +7,7 @@
 // lara.drm, catalog usage). A condition whose game state the context cannot give returns unported().
 //
 // Not registered (they stay counted unported in ChartRuntime::stats), with the reason:
-//   0x2BD (grapple component item type), 0x2C4 (global 0xFAE440), 0x2D0 (needs the ray hit's normal), 0x2D4 / 0x2D6 /
+//   0x2C4 (global 0xFAE440), 0x2D0 (needs the ray hit's normal), 0x2D4 / 0x2D6 /
 //   0x2D7 / 0x2FE (grapple rope geometry ours does not keep), 0x2AF (markup move vector +0x6F0), 0x32F (anim root
 //   offset), 0x591 / 0x60F (engagement context +0x854), 0x5DE / 0x5DF (portable data +0x18), 0x7D3 / 0x7D7 / 0x7D8 /
 //   0x7DA / 0x7DB (targeting slots 5 / 6), 0x8A0 (tru.exe inventory slot index). Registered but answered by the
@@ -188,6 +188,38 @@ bool markupUpright(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
     const glm::vec3 d = s->first - s->second;
     const float pitch = std::abs(std::atan2(-d.z, glm::length(glm::vec2(d))));
     return std::abs(pitch - glm::radians(90.0f)) <= glm::radians(40.0f);
+}
+
+// 0x6EC440: the class word of a markup (what 0x770240 stores in the jump target's +0xA6C): 0x8000000 when 0x5D5770
+// passes (flags & 0xE000000 and 0x741720 / 0x733F60: segment 0 near upright / near level), else the first of the flag
+// bits 0x1000000, 0x800000, 0x20000000, 0x400000, 0x40000000, 0x80000, 0x40000, 0x20000, 0x10, 0x8000 it carries, else
+// flags & 0x10000 [O: disassembly; 0x741720 as markupUpright, I].
+uint32_t markupClassWord(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
+    const uint32_t f = m.flags;
+    if ((f & 0xE000000u) && (markupUpright(ctx, m) || markupLevel(ctx, m))) return 0x8000000u;
+    for (const uint32_t b : {0x1000000u, 0x800000u, 0x20000000u, 0x400000u, 0x40000000u, 0x80000u, 0x40000u, 0x20000u,
+                             0x10u, 0x8000u})
+        if (f & b) return b;
+    return f & 0x10000u;
+}
+
+// 0x264 (0x7641D0 -> 0x74C850): query profile 27 (0x6F1950(0x1B); 0x744310's stick-relative direction into +0xA40 is
+// the search's control yaw, Player::markupSearch) through 0x7296C0 on player +0x980; with a target (+0xA64) r = its
+// class word +0xA6C (0x770240 = 0x6EC440) & 0xFFFFFC10, else 0. value 0: r == 0 or r < 0; 1: r != 0 and r >= 0; else
+// false [O: decomp]. The search sets the chart's jump target as 0x7296C0 does.
+bool dropDownTarget(ChartContext& ctx, const Cond& c) {
+    const auto found = chartMarkupSearch(ctx, 0x1B);
+    if (!found) return ctx.chart().unported(c);
+    int32_t r = 0;
+    if (*found && ctx.chartTarget.target) {
+        ctx.chartTarget.target.result = int(markupClassWord(ctx, ctx.chartTarget.target));
+        r = int32_t(uint32_t(ctx.chartTarget.target.result) & 0xFFFFFC10u);
+    }
+    switch (mode(c)) {
+    case 0: return r == 0 || r < 0;
+    case 1: return r != 0 && r >= 0;
+    default: return false;
+    }
 }
 
 // 0x782810 (via 0x782AD0 / 0x763EB0 for 0x262): the class test of markup flags F (+0x28; 0 without a valid markup).
@@ -407,6 +439,17 @@ bool sweepArmedSlot(ChartContext& ctx, const Cond& c) { // 0x1F0
         if (!cand->a && !cand->b) s = int16_t(*s == 2 ? 0 : 7);
     }
     return *s == ctx.chart().value(c);
+}
+// 0x2BD (0x72CE20): b = the item type of owner message 0x175's component (+0x2D0 -> [0] -> +0x2EC -> +0x74 -> +4) lies
+// in 1..7; value 0 -> !b, 1 -> b, else false [O: disassembly]. Ours: that type is not modelled; with nothing in her
+// hands (no weapon drawn or aimed, combatMode false, and no carried portable) b is false [I: Wine
+// ch_beam_roll_walk_crouch_birth: a walk with nothing held takes T51 (value 0) to S86], otherwise unknown.
+bool holdingItemType(ChartContext& ctx, const Cond& c) {
+    const auto w = ctx.combatMode();
+    const auto carry = ctx.carrying();
+    if (!w || !carry || *w || *carry) return ctx.chart().unported(c);
+    const int v = ctx.chart().value(c);
+    return v == 0;
 }
 // 0x5E0 (0x730250, cb 0x730140): bool property 1501 of the current state (0x6EEF00 mode 2), false when absent.
 bool prop1501(ChartContext& ctx, const Cond& c) {
@@ -737,6 +780,7 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     // 602 / 611's 0x74DCD0 only a ladder (+0xA64 MUD & 0x400000), with +0xCDC = 0
     const bool ladderOnly = cls == 602 || cls == 611;
     if (cls == 603) poleAttachSetter(ctx, alt); // 0x74C8D0 (group B)
+    else if (cls == 625) beamAttachSetter(ctx); // 0x74C110 (group B)
     else if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
 }
 
@@ -782,6 +826,8 @@ void registerJump(Registry& player, Registry&) {
     player.condition(0x417, combatFlag27, "CombatFlag27", fam);
     player.condition(0x5DD, carrying, "HasCarriedObject", fam);
     player.condition(0x1EB, sweepAnimSlot, "PSCCF_ContextAnimSlot", fam);
+    player.condition(0x2BD, holdingItemType, "PSCCF_HoldingItemType1to7", fam);
+    player.condition(0x264, dropDownTarget, "PSCCF_DropDownTargetFound", fam);
     player.condition(0x1F0, sweepArmedSlot, "PSCCF_ArmedStateSelect", fam);
     player.condition(0x5DE, carriedEncumbers, "PSCCF_CarriedObjectFlag18", fam);
     player.condition(0x5DF, carriedEncumbers, "PSCCF_PortableFlag18", fam);

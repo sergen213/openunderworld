@@ -174,6 +174,9 @@ void decodeMarkup(Unit& u, Pointer level, CollisionMesh& out, std::vector<std::s
             mk.centre = sum / float(n);
             mk.boxMin = lo - mk.centre, mk.boxMax = hi - mk.centre;
         }
+        // 0x5BE650: item +0x4C 0 takes the type's MUD bits (the markup manager's vfuncs +0x1C | +0x20 = 0x5D6F90 |
+        // 0x5D70A0); every box gets 0x8 and a closed polyline 0x4 (collision::mud) [O disassembly]
+        mk.mud = (u.at<uint8_t>(*item, 0x4C) == 0 ? markupFlags(mk.type) : 0u) | (mud(mk) & 0xCu);
         // Camera commands {u32 command, args} x 0x18 bytes (+0x64 count, +0x68 list; tru.exe 0x5FE800 -> 0x6019D0):
         // all of them are kept (Markup::cameraCommands); command 0x12 points at one of the unit's camera records.
         if (const uint32_t nc = u.at<uint32_t>(*item, 0x64); nc && nc < 64)
@@ -213,6 +216,17 @@ uint32_t markupFlags(uint8_t type) {
     const uint32_t a = type < 21 ? kType[type] : 0;
     const uint32_t b = type == 10 || type == 21 ? 0 : type >= 16 && type <= 20 ? 0x8001 : type >= 1 && type <= 15 ? 1 : 0x80000000;
     return a | b;
+}
+
+uint32_t mud(const Markup& m) {
+    if (m.mud) return m.mud;
+    uint32_t f = markupFlags(m.type) | 0x8u;
+    if (m.points.size() >= 2) {
+        const vec3 d = m.points.front() - m.points.back();
+        constexpr float e = 6.1035156e-05f; // 0x49AFA0
+        if (std::abs(d.x) < e && std::abs(d.y) < e && std::abs(d.z) < e) f |= 0x4u;
+    }
+    return f;
 }
 
 std::string_view markupTypeName(uint8_t type) {

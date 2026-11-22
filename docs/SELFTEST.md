@@ -392,6 +392,7 @@ Recorded for every step and written to the report whether or not anything expect
 | `step.ticks`, `step.seconds` | the step's length |
 | `step.teleports` | relocations: ticks that moved her more than 600 units, and respawns (leaving the dead state). They are not counted as motion |
 | `step.health_start`, `step.health_end`, `step.health_min`, `step.health_lost` | health; lost = start - min |
+| `step.rope_change` | the grapple rope's length range over the step's roped ticks (max - min of `grapple.rope`); unavailable when she was never roped. States "the rope did not change" independently of where a swing left it |
 | `step.states` | the states she was in, in order (a state re-entered is listed again) |
 | `step.clips` | the clips she played, in order |
 | `step.calls` | script virtual calls made during the step as `"<callee uid>:<vt>"`, first-call order (`-1` = constructor; negative callees are unit / global scripts) |
@@ -652,6 +653,18 @@ Added 2026-11-20 (batch 11), each probe or tool checked the same way:
   `ch20_helheim01_portal` (y 11928.7, distance 43381.5; l3_secretchamber has no offset, so `ch11_study_gauntlet`
   does not see it); a respawn 100 off the checkpoint (`World::enterUnit`) fails `checkpoint_respawn` `respawn`
   (`world.checkpoint_distance` 100).
+
+## Chart-default switch
+
+Input changes to apply when `--traversal chart` becomes the default. Each reproduces the input of a tru.exe reference
+take; while the legacy controller is the default they stay unapplied, because legacy cannot take them (it pivots in
+place where tru starts a turning run, and it lands differently from a raised spawn).
+
+| case | take (W/chart/wine) | input change |
+|---|---|---|
+| `ch01_bedroom_ring_door` `under_the_beams` | `drop/ch_beam_roll_run_crouch_birth` (and `_walk_crouch_birth`: a crouch during a walk only blips S86 / S87) | Face away from the beam, then turn into the run towards it and press Crouch 9 ticks after the stick (take: facing -90, camera on +y, Up 20, Crouch 29: S48 @21, roll S7 @29..81 under the beam line). In the plan: `face 90`, `run -90 1.2 drop 0.15` in place of `face -90`, `stick 1 0 1.2 drop 0.15`. tru rolls only from the turning run starts S48 / S42; the straight start S63 has crouch but no roll. |
+| `ch01_ring_door_walk_through` `under_the_beams` | same | same as above |
+| `ch01_hall_floor_collapse` | `runjump/hall_floor_collapse_run_birth` | Spawn on the floor where checkpoint 4344 bears her, standing (S40): `[-3519.06, -3644.89, 1743.19, -0.275]` in place of z 1800, which drops her 57 into a landing (S39) that goes straight to the full run. Take: Up from 10, run-stop S39 @51 at x -2876.9, held in S40 until 110. Keep the -2868 expectation. |
 
 ## Adding a chapter scenario
 

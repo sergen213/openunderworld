@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -264,6 +265,9 @@ public:
     virtual void setLayerBlend(float p8C, float p90) { (void)p8C, (void)p90; }
     // Instance +0x38 set outright (the beam balance's turn-around, 0x743D85..0x743E0A).
     virtual void setHeading(float yaw) { (void)yaw; }
+    // Replay only (--chart-rng): tru.exe's generator results (0x597780, the generator object 0x8A9C78) recorded under Wine,
+    // in call order, for the actions that draw from it (action 301's wobble). Empty: ours' own generator (live play).
+    std::deque<uint32_t> rngFeed;
     // ---- end group B ----
     // ---- group A ----
     // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
@@ -481,6 +485,9 @@ std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot
 // 0x1A4). Attaches the jump target, decides how she takes the pole (agent +0x344), the side byte agent +0x345 for the
 // anim graph VM (ChartContext::vmPoleSide) and the layer mirror (+0xF4 0x20, ChartRuntime::setMirror).
 void poleAttachSetter(ChartContext& ctx, bool alt);
+// 0x74C110: the class-625 (beam) attach setter of action 230: attaches the jump target, sets the facing along the beam
+// (+0xED0 / +0xCDC), the beam controller's segment and angle (agent +0x360 / +0x35C) and +0xCB0 / +0xCC0.
+void beamAttachSetter(ChartContext& ctx);
 // 0x743900: action 205's per-tick beam balance steer (init on entry): agent +0x3A0 lean, +0x3A4 walk amount, +0x28
 // heading target, the layer blend (ChartContext::setLayerBlend) and mirror (src/game/chart/Ledge.cpp).
 void beamBalanceTick(ChartContext& ctx, bool init);
@@ -646,6 +653,8 @@ public:
     // `at` (x, y, z, yaw degrees): where she was in the Wine case when it began in a hold (case.json start.ours); the hold's
     // markup is seeded from there [I: harness only].
     void enterAt(int state, uint64_t tick, std::optional<glm::vec4> at = std::nullopt, float elapsed = 0);
+    // --chart-rng (replay only, harness): tru.exe's recorded generator results, consumed in order (ChartContext::rngFeed).
+    void feedRng(std::vector<uint32_t> draws);
     std::string summary() const;
     const ChartRuntime& runtime() const { return *rt_; }
     PlayerDriver* driver(); // null unless constructed with drive

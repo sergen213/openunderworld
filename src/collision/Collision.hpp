@@ -135,9 +135,17 @@ struct Markup {
     // +0x4C (World::tickObjectMarkup places the centre with the points; the extents stay as stored). Read by the markup
     // search's point source 1 and its box-height test (0x723AB0 case 1, 0x725870).
     vec3 centre{0}, boxMin{0}, boxMax{0};
+    // The MarkUp box's MUD flags +0x28 as loaded (unit markup: 0x5BE650; object markup: the model item's own +0x28);
+    // 0 = not loaded, collision::mud derives them.
+    uint32_t mud = 0;
 };
-// MUD flag bits tru.exe derives from the type (switch 0x5D6F90 | 0x5D70A0).
+// MUD flag bits tru.exe derives from the type (switch 0x5D6F90 | 0x5D70A0; 0x5BE650 calls them through the markup
+// manager's vfuncs +0x1C / +0x20).
 uint32_t markupFlags(uint8_t type);
+// A markup's MUD flags +0x28: Markup::mud when loaded, else 0x5BE650's: the type's bits (markupFlags), 0x8 on every box,
+// and 0x4 when the polyline is closed (its first point equals its last, 0x49AFA0 within 6.1e-5) [O disassembly
+// 0x5BE650..0x5BE727; Wine: beam 1031 0x00010009, a closed ledge 0x4000000D].
+uint32_t mud(const Markup& m);
 std::string_view markupTypeName(uint8_t type); // "ledgegrab", ..., "unknown"
 
 inline constexpr uint16_t kClientSlide = 0x0044;      // slope-slide surface (0x04 kind 2, 0x40 kind 1)

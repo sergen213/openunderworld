@@ -9,7 +9,7 @@
     {"step": "settle", "duration": 0.5, "expect": [{"probe": "player.state", "eq": "idle"}]},
     {"step": "standing_takeoff", "input": ["0.1 jump 1", "0.2 jump 0"], "duration": 2,
      "until": {"probe": "player.state", "eq": "jump"},
-     "expect": [{"visits": ["idle", "jumpprep", "jump"]}, {"clips": ["ng_idle", "ng_standing_jump", "NG_InAir_Feet_Forward_stage1_standing"]},
+     "expect": [{"visits": ["idle", "jumpprep", "jump"]}, {"clips": ["ng_standing_jump"], "note": "the standing jump's clip is the point; the idle variant before it (ng_idle / ng_1foot_idle) is not"},
                 {"probe": "step.seconds", "near": 0.45, "tol": 0.02, "note": "0.1 s + 10 frames (333 ms) [O Wine: 342..359 ms from the key]"},
                 {"probe": "step.moved", "max": 1}]},
     {"step": "standing_flight", "duration": 1.5,
@@ -30,15 +30,15 @@
                 {"probe": "player.grounded", "eq": true}]},
     {"step": "running_takeoff", "fixtures": [{"teleport": [-4264.2, 5958.0, 86.6, -90]}], "input": ["0.1 forward 1", "0.9 jump 1", "1.0 jump 0"], "duration": 2,
      "until": {"probe": "player.state", "eq": "jump"},
-     "expect": [{"visits": ["idle", "run", "jumpprep", "jump"]}, {"clips": ["ng_idle", "ng_run_start", "ng_running_jump_forwards", "NG_InAir_Feet_Forward_stage1"]},
+     "expect": [{"visits": ["idle", "run", "jumpprep", "jump"], "note": "the running jump (ng_running_jump_forwards / _lft by foot) is checked by its timing here and its apex in running_flight"},
                 {"probe": "step.seconds", "near": 0.983, "tol": 0.02, "note": "0.9 s + 2 frames (67 ms) [O Wine: 70..109 ms from the key]"}]},
     {"step": "running_flight", "input": ["1.2 forward 0"], "duration": 2.5,
      "expect": [{"probe": "step.peak_height", "near": 158.0, "tol": 3, "note": "apex 158.0 [O Wine]"},
                 {"probe": "player.grounded", "eq": true}]},
     {"step": "run_start", "fixtures": [{"teleport": [-4264.2, 5958.0, 86.6, -90]}], "input": ["0.1 forward 1"], "duration": 0.5,
-     "note": "tru.exe: 255 units 0.4 s and 385 units 0.5 s after the key, her run state beginning 37..41 ms after it (three traces): ~303 units 0.4 s into the run [O Wine, jumpfid/hold_run.txt, sprint.txt]. ng_run_start from its frame 2.",
-     "expect": [{"clips": ["ng_idle", "ng_run_start"]},
-                {"probe": "step.horizontal", "near": 303, "tol": 25}]},
+     "note": "tru.exe: 255 units 0.4 s and 385 units 0.5 s after the key [O Wine, jumpfid/hold_run.txt, sprint.txt]; the step measures 0.4 s after the key, which reaches the stick a frame late through the move stick filter (0x483520, StickRateFilter) as in those takes (ours 267; the old near 303 was 0.4 s into the run). ng_run_start from its frame 2.",
+     "expect": [{"visits": ["idle", "run"], "note": "from a stand into the run; the start clip (ng_run_start, or a foot variant in the chart) is not the point"},
+                {"probe": "step.horizontal", "near": 255, "tol": 25}]},
     {"step": "stop", "input": ["0 forward 0"], "duration": 1.5, "expect": [{"probe": "player.grounded", "eq": true}]}
   ]
 }
