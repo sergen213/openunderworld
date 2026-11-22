@@ -236,7 +236,7 @@ bool animMirrored(ChartContext& ctx, const Cond& c) {
 // ---- markup ---------------------------------------------------------------------------------------------------------
 
 // 0x196 (0x7642C0), cached: c = 0 without an attached markup (+0xC94); with one whose flags +0x28 have 0x1000000 or
-// pass 0x733F60 (the per-segment table at markup data +0x184, not modelled: unported), 0x733210: param +0xC98 clamped
+// pass 0x733F60 (markupLevel: flags & 0xA000000, first segment within 40 degrees of level), 0x733210: param +0xC98 clamped
 // under the segment count, the segment at round(param) s (normalised), heading hv; dn = -n.hv, ds = s.hv; |dn| > |ds|:
 // 1 (dn >= 0) or 2, else 4 (ds >= 0) or 3. 450..454 test 1, 2, 3, 4, 0; others false.
 bool markupFacing(ChartContext& ctx, const Cond& c) {
@@ -246,7 +246,10 @@ bool markupFacing(ChartContext& ctx, const Cond& c) {
         const auto m = ctx.attachedMarkup();
         int f = 0;
         if (m) {
-            if (!(m.flags & 0x1000000)) return rt.unported(c);
+            if (!(m.flags & 0x1000000) && !markupLevel(ctx, m)) { // 0x733F60 (Chart.cpp markupLevel)
+                k = {rt.frame(), 0};
+                return mode(c) == 454;
+            }
             const int n = ctx.markupSegmentCount(m.markup);
             float param = m.param;
             if (float(n) <= param) param = float(n) - 0.0001f;

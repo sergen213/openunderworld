@@ -313,7 +313,8 @@ enum class GraphOutcome { Played, Nothing, Unresolved };
 struct GraphRun {
     GraphOutcome outcome = GraphOutcome::Unresolved;
     std::vector<int> queue; // the patterns queued, in play order
-    bool operator==(const GraphRun& o) const { return outcome == o.outcome && queue == o.queue; }
+    bool afterCurrent = false; // the head was queued with Play flags & 7 == 4: it waits for the playing clip to end
+    bool operator==(const GraphRun& o) const { return outcome == o.outcome && queue == o.queue && afterCurrent == o.afterCurrent; }
 };
 struct GraphVm {
     const Charts::GraphNode& g;
@@ -329,6 +330,7 @@ struct GraphVm {
         bool active = false, random = false, inNode = false;
         std::vector<std::vector<int>> entries;
         std::vector<int> node, queue;
+        bool afterCurrent = false;
     };
     GraphRun run(size_t pc, Ctx c, int depth) const {
         auto& st = c.st;
@@ -389,7 +391,10 @@ struct GraphVm {
                     if (c.active && c.inNode) {
                         c.node.push_back(int32_t(pat.v));
                     } else {
-                        if ((flags.v & 7) == 2) c.queue.clear();
+                        // 0x446BD0: types 2 and 4 flush the ring (0x4388B0); 0x444EA0 starts the head at once
+                        // (0x443430) unless its type is 4, which waits for the playing clip's end (0x43E0C0)
+                        if ((flags.v & 7) == 2 || (flags.v & 7) == 4) c.queue.clear();
+                        if (c.queue.empty()) c.afterCurrent = (flags.v & 7) == 4;
                         c.queue.push_back(int32_t(pat.v));
                     }
                 } else if (fn == 1) { // IsPlaying
@@ -420,7 +425,7 @@ struct GraphVm {
                 }
                 break;
             }
-            case 0x7B: return c.queue.empty() ? GraphRun{GraphOutcome::Nothing, {}} : GraphRun{GraphOutcome::Played, c.queue};
+            case 0x7B: return c.queue.empty() ? GraphRun{GraphOutcome::Nothing, {}} : GraphRun{GraphOutcome::Played, c.queue, c.afterCurrent};
             default: break; // tru.exe's switch ignores other opcodes
             }
         }
@@ -434,6 +439,14 @@ struct GraphVm {
 // native starts is what plays, in the pattern's own mode [U: Play's flags & 7 (0x448100) is not that mode: node 213's
 // else branch passes 2, yet Wine ends S245 once ng_planted_jump_forward has played through]. A node that plays nothing
 // leaves the clip and its clock running (false: no restart). Unresolved: no clip.
+bool markupLevel(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
+    if (!m || !(m.flags & 0xA000000)) return false;
+    const auto seg = ctx.markupSegment(m.markup, 0);
+    if (!seg) return false;
+    const glm::vec3 d = seg->first - seg->second;
+    return std::abs(std::atan2(-d.z, glm::length(glm::vec2(d)))) <= glm::radians(40.0f);
+}
+
 // Module 1's native values for one node run (GraphVm), from the chart-side stores: the jump target as the chart sees it
 // (chartJumpTarget; its type from the chart's own query, else the game's), playerInt(0xEE8 / 0xED4 / 0xEDC).
 std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext& ctx) {
@@ -458,11 +471,9 @@ std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext
     // the flattened unit segment and model -Y over cos(object float +0x740 degrees); a segment with no horizontal part
     // passes with dot 1) [O: decomp].
     v[13] = 0u;
-    if (const auto a = ctx.attachedMarkup(); a && (a.flags & 0xA000000))
+    if (const auto a = ctx.attachedMarkup(); a && markupLevel(ctx, a))
         if (const auto seg = ctx.markupSegment(a.markup, 0)) {
-            const glm::vec3 d = seg->first - seg->second;
-            const float pitch = std::abs(std::atan2(-d.z, glm::length(glm::vec2(d))));
-            if (pitch <= glm::radians(40.0f)) {
+            {
                 const glm::vec2 dir(seg->second - seg->first);
                 const float h = ctx.heading(), lim = ctx.chart().charts().data<float>(0x740);
                 const glm::vec2 f(std::cos(h), std::sin(h));
@@ -493,6 +504,10 @@ bool ChartRuntime::resolveRequest(ChartContext& ctx) {
                   .run(charts_.graph[size_t(s->request)].enter, GraphVm::Ctx{}, 0)
             : GraphRun{};
         if (r.outcome == GraphOutcome::Nothing && playing_) return false;
+        if (r.outcome == GraphOutcome::Played && r.afterCurrent && playing_) { // the playing clip runs on, then the queue
+            queue_ = r.queue;
+            return false;
+        }
         pat = r.outcome == GraphOutcome::Played ? r.queue[0] : -1;
         queue_.assign(r.queue.size() > 1 ? r.queue.begin() + 1 : r.queue.end(), r.queue.end());
     } else {
@@ -663,6 +678,9 @@ void ChartRuntime::enterAnim(ChartContext& ctx) {
     // Kind 2 reaches the same start: Play (0x448100) queues a record (0x446BD0) that 0x443430 plays through 0x4428A0 [O].
     if (p) startClip(*p);
     else animFrames_ = clipStart_ = 0.0f;
+    // 0x444BA0 hands the pattern's rate (+0x14 / 4096) to every sub-layer (0x438C40), the store actions 501 / 509 write
+    // after it (S634..S637's 509: 1.0, so Hpole_PerptoPara runs 45 frames as under Wine, not 45 / 1.709) [O: decomp].
+    if (p && layerRate) ctx.animRate = p->rate;
 }
 
 // 0x787890
@@ -737,7 +755,7 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
     // a clip played to its end (once) or across a loop wrap notifies the end (0x7181A0 reasons 1 / 2 -> 0x768CF0).
     const Request* p = pattern();
     const float len = animLengthFrames(), before = animFrames_;
-    animFrames_ += ctx.timeMult * (p ? p->rate : 1.0f) * (layerRate ? ctx.animRate : 1.0f);
+    animFrames_ += ctx.timeMult * (layerRate ? ctx.animRate : p ? p->rate : 1.0f);
     if (len > 0 && (animLoops() ? std::floor(animFrames_ / len) > std::floor(before / len) : before < len && animFrames_ >= len)) {
         // A queued pattern follows (0x43E0C0 -> 0x443430 plays the next record through 0x4428A0); the chart hears the
         // end only when the queue has drained (0x43E0C0 calls the saved callback +0x304 then) [O].
@@ -747,6 +765,7 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
             if (next >= 0 && size_t(next) < charts_.requests.size()) {
                 playing_ = charts_.requests[size_t(next)], playingIndex_ = next, playingMirror_ = mirror_;
                 startClip(*playing_);
+                if (layerRate) ctx.animRate = playing_->rate; // the record's rate (0x448100 +8) [I: 0x443430 applies it]
                 ++clipStarts_;
             }
         } else {
@@ -997,4 +1016,5 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
 }
 
 } // namespace ou::game::chart
+
 
