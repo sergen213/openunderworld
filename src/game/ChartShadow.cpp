@@ -219,7 +219,8 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         std::optional<glm::vec3> lift;
         if (p.bone > 0)
             if (const auto b = w->boneWorld(p.bone), r = w->boneWorld(0); b && r) lift = *b - *r;
-        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift);
+        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift,
+                                                p.velocityMode == 1 ? queryVelocity : std::nullopt, searchAttach());
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
         return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};
@@ -382,6 +383,12 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // +0xC94 is the chart's own (chartAttached, attached by its actions): the controller attaches on its own frame
     // (a caught ledge is hung from the tick the flight meets it), tru.exe only in the attach state's action 230. Its
     // geometry (param, point) follows the controller while both hold the same markup.
+    // +0xC94 for Player::markupSearch: the chart's attached markup (drive mode: the chart's own)
+    game::Player::SearchAttach searchAttach() const {
+        const MarkupSlot a = attachedMarkup();
+        if (!a) return {};
+        return {a.markup, int(a.param), a.point};
+    }
     MarkupSlot attachedMarkup() const override {
         if (driving) return chartAttached ? *chartAttached : MarkupSlot{};
         if (!chartAttached) return gameAttached();
@@ -474,8 +481,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         return !ground.floor && w->player().wallJumpAnticipate(frames);
     }
     // 0x710380 over ours' markup: ledges and hurdles (MUD 0x40010000) whose nearest point to P = her root + forward x
-    // player data float +0x61C lies (vertically) within (short +0xC44, short +0xC46) of her z, nearest two by horizontal
+    // player data float +0x61C lies (vertically) |dz| in [short +0xC44, short +0xC46) of her z, nearest two by horizontal
     // distance under short +0xC48 [O: decomp; the nearest point per polyline is ours, 0x709500's second point not ported].
+    // The low bound is inclusive: 0x710380 tests (float)C44 < dz != ((float)C44 == dz), i.e. C44 <= dz, so a ledge level
+    // with her root (dz 0) is a candidate [O: decomp; Wine maproom_south_run_birth keeps +0x2C5 = 1 at ticks 81-93 with
+    // her z equal to the slot point's z (4683.89) through S11 -> S542].
     std::optional<Candidates> jumpCandidates() const override {
         const Charts& d = chart().charts();
         const PlayerState& s = w->player().state();
@@ -501,7 +511,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
                 if (dd < bd) bd = dd, bt = t * std::sqrt(l2), bs = int(i), bp = q;
             }
             const float dz = std::abs(s.pos.z - bp.z);
-            if (!(dz > lo && dz < hi)) continue;
+            if (!(dz >= lo && dz < hi)) continue;
             MarkupSlot slot = this->slot(int(m), bs, bt);
             const glm::vec3 seg = mk.points[size_t(bs) + 1] - mk.points[size_t(bs)];
             const glm::vec2 n = glm::length(glm::vec2(seg)) > 0 ? glm::normalize(glm::vec2(-seg.y, seg.x)) : glm::vec2(0);
@@ -1038,7 +1048,18 @@ void Shadow::Impl::seedAttach() {
     float best = 900;
     MarkupSlot pick;
     bool hangGrip = false;
-    for (size_t m = 0; m < col.markup.size(); ++m) {
+    // A free-climb state (S570's chain) holds a hold (16..20, live with 3 points), which 0x707C60 grips with her root
+    // 158.025 under its point 0 [I: ChartCD's reading]; the hold whose point 0 lies nearest that grip.
+    bool freeClimb = false;
+    for (const auto* st = ch->player.state(enterState); st; st = st->parent >= 0 ? ch->player.state(st->parent) : nullptr)
+        if (st == ch->player.state(570)) { freeClimb = true; break; }
+    for (size_t m = 0; freeClimb && m < col.markup.size(); ++m) {
+        const auto& mk = col.markup[m];
+        if (mk.type < 16 || mk.type > 20 || mk.points.size() != 3) continue;
+        const float d = glm::length(mk.points[0] - (s.pos + glm::vec3(0, 0, 158.025f)));
+        if (d < best) best = d, pick = slot(int(m), 0, 0);
+    }
+    for (size_t m = 0; !freeClimb && m < col.markup.size(); ++m) {
         const uint8_t type = col.markup[m].type;
         const bool hang = type == 1 || type == 12, pole = type == 4 || type == 6;
         // a beam (14) is held overhead: her hands straight above the root at the hang height (Wine l3_chapel ch_hang_*:

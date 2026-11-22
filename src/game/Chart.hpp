@@ -331,6 +331,9 @@ public:
     // The chart's own jump target (player +0xA64 as the chart's actions set it: action 504's take-off query, action
     // 230's promotion); empty: the context's jumpTarget() answers.
     Aim chartTarget;
+    // Player +0xA40 (the query object's +0xC0): the velocity a mode-1 search profile flies (0x76FFC0), as 0x74C850
+    // writes it from 0x744310 before its profile-27 search; nullopt: the search keeps its own source (group J).
+    std::optional<glm::vec3> queryVelocity;
     // The game's jump-target markup the chart already handed on when its flight ended (tru.exe moves +0xA64 to the
     // attached slot +0xC94 on the attach, 0x741050 / 0x707500) [I]; ignored as +0xA64 until the game's target changes.
     int handedTarget = -1;

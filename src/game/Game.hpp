@@ -863,6 +863,7 @@ private:
         bool falling = false, classify = false;
         JumpRecord record = JumpRecord::None;
         int attach = 0;
+        int attachMarkup = -2, attachSeg = 0; // +0xC94's markup / segment (-1 none); -2: her controller's ledge
         float minZ = -1e9f; // ours: ledge points under this do not count
         bool sight = false; // ours: ledge points hidden from the arc's start by solid geometry do not count (WallJump.cpp)
         bool ownFrame = false; // meet a moving markup in its own frame (0x70F300; ledgeOnArc)
@@ -917,10 +918,16 @@ public:
     // result-record bits (+0xAC0) and ledge class (+0xA80). `known` false: the profile needs a source, test kind or
     // candidate type ours does not model, so the answer would not be tru.exe's.
     struct MarkupFound { JumpTarget target; uint16_t flags = 0, uncertain = 0; int8_t cls = 0; bool known = false; };
+    // The markup the search counts her attached to (tru.exe player +0xC94, its segment and point +0xCA0); markup -1 none.
+    struct SearchAttach { int markup = -1; int seg = 0; vec3 point{0}; };
     // controlYaw / stickOn: the camera-relative stick heading (0x6EBA90) and whether the stick is off rest
-    // boneLift: profile bone +0xC8's world origin minus the root segment's (World::boneWorld) for a bone-based query
+    // boneLift: profile bone +0xC8's world origin minus the root segment's (World::boneWorld) for a bone-based query;
+    // objectVelocity: the query object's +0xC0 (player +0xA40) for a velocity-mode-1 profile, per 30 Hz frame, world;
+    // attach: the caller's +0xC94 (the chart's attached markup), else her controller's ledge
     MarkupFound markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
-                             std::optional<vec3> boneLift = std::nullopt) const;
+                             std::optional<vec3> boneLift = std::nullopt,
+                             std::optional<vec3> objectVelocity = std::nullopt,
+                             std::optional<SearchAttach> attach = std::nullopt) const;
 private:
     // State::Jump: an aimed ground jump re-aimed at its markup target (PlayerState::aimMarkup) with the time left
     // (tru.exe 0x73EDC0 every frame of the flight, 0x752410)
