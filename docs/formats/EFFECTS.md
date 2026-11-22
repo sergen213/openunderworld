@@ -478,15 +478,21 @@ not re-checked with the cinematic played]. Bloom around the flames: not comparab
 ## Weather [O unless marked]
 
 Code: `src/fx/Weather.*` (`fx::Weather`, `fx::WeatherDef`), `ou-game` `EffectsView::weatherTick`. Tests
-`Fx.WeatherRainFillsFallsAndFlashes`, `FxReal.WeatherObjectAndRainMap`.
+`Fx.WeatherRainFillsFallsAndFlashes`, `Fx.WeatherSnowFlakesFillTheView`, `FxReal.WeatherObjectAndRainMap`,
+`FxReal.WeatherEmittersFromData`, `Physics.SegmentQueriesStopUnderCover`.
 
 tru.exe's weather (0x546FC0 each frame, after the prims) is a legacy system beside the GenericFXObject effects:
 - Amounts come from scripts: `globaleffect` 11 Rain(%) (0x4A4FC0 -> 0x53AB30, DAT_00AE4D84 = % x 1024 / 100), 8
   Snow(%) (0x4A4F90 -> 0x52E130, DAT_00AE4D80; each clears the other), 12 Lightning(min s, max s) (0x4A4FD0 -> 0x52E080;
   default 20 / 30 s, 0x539A60). Command types 7 / 8 of 0x547B40 call the same setters (no data uses them). Under Wine
   l4_ballcourt runs rain 40 % (0x199) with 509 of the 512 drops alive; `script::Runtime::weather` keeps the values
-  (saved). No script sets snow in the units checked (l5_startsnow reads 0 under Wine): the snow there is the placed
-  `fx_snow_*` particle objects; the flake pool (0x539EF0 / 0x539CD0, drawn by 0x534DF0) is not reimplemented.
+  (saved). Every level load resets them (0x5DDED0 / 0x5DE480 / 0x5D5680 -> 0x53CAF0 -> 0x539A60: rain, snow 0, the
+  pool cleared, lightning 600 / 900 frames) and the new level's scripts set their own: under Wine the prologue
+  bedroom reads rain 0xCC (l3_mansion_exterior_afterburn's Rain 20) and a `wmem goto` away reads 0 (2026-11-21). Ours:
+  `script::Runtime::resetWeather` from `World::enterUnit`, `fx::Weather::clear` on `World::levelLoads` (before, the
+  prologue's rain carried into every later chapter). No script sets snow in the snow units: `ou-game` logs every
+  script weather change, and l5_startsnow / l5_valaskjalf / l7_thin_ice / l7_himalaya_end and the chapter 5 / 7 starts
+  log none (2026-11-21); the snow there is the placed `fx_snow_*` particle objects (below).
 - The weather object: Level+0x70 DTP +0x290 (objectlist id; l4_ballcourt / temple / templepath / trailstart
   `rainfx_mex`, l6_ship_upper_hallway `rainfx`), else the always-loaded `rainfx` (0x8AA774, the 0x8AA768 name table).
   Its ObjectBase +0xC8 data block (Object +0x5C at run time) is `fx::WeatherDef`: +0x00 three sheet textures (3711 /
@@ -513,7 +519,35 @@ tru.exe's weather (0x546FC0 each frame, after the prims) is a legacy system besi
 - Splashes (0x53A860): (ramp x level x 10) >> 22 a frame (3 at 40 %): a vertical screen line at depth 512..4607 meets
   the height map, a segment +-128 there finds the surface; the weather object's event 0x2E runs on Lara at the hit,
   filtered by its material (rainfx_mex: particles 0 and 2, 1 on material 2, and a sound); half as many behind the
-  camera run event 0x2F (sounds only). Ours: `fx::System::runEvent`.
+  camera run event 0x2F (sounds only). Ours: `fx::System::runEvent`. The segment (0x4935F0, flags 0x10003) is the only
+  geometry query of tru.exe's weather; ours casts it with Jolt (`physics::Scene::castSegments`: TransformedShape::CastRay
+  on face-indexed copies of the physics scene's terrain and collider mesh shapes, faces filtered by
+  `collision::queryable(kSolidMask)` like `CollisionMesh::raycast`; no body is added) [I: Jolt as the backend; the
+  0x10003 class is not decoded beyond terrain + level solids]. A few segments a frame: well under the 0.01 ms
+  resolution of the tick timings.
+- Snow (0x539EF0 spawn, 0x539CD0 fall, 0x534DF0 draw), in the same 28-byte pool as the drops (they share its 512
+  records): up to snow / 2 flakes (512 at 100 %), at most 20 + |yaw change| x 2048 (<= 50) new a frame; a flake starts
+  at screen y 5 (anywhere while the camera turns faster than 16 / 4096 rad a frame), x `rand & 0x1FF`, 1024 .. 13311
+  deep (0x539C00; 0x401910, its y divisor, returns 1), falls 14 .. 17 units a 60 Hz frame for 300 frames with a sway
+  phase (+0x10) walking by `rand & 63` - fall / 2 and drawn at x + cos(phase) / 128, y - cos(phase) / 128 (0x52EF50:
+  cos x 4096), its two twinkle bytes (+0x18 / +0x19, one 127 .. 253, the other 0) stepping by 8. The draw keeps a
+  flake only within +-1.1 of the projected view and 1024 .. 12288 deep and otherwise sets z = ground, so the next fall
+  restarts it at a random point of the view (0x52DF00): the pool always fills the view. A glow-texture quad
+  (particle.drm model 0 frame 3), half size 12 x proj / depth + 0.5 virtual pixels (<= 2.5), x / y scaled by the
+  twinkle bytes' triangle wave / 128 (>= 16, more nearer than 1536), grey 0x40, alpha 0x80, faded in over 8 frames.
+  Coordinates are kept as s16 in tru.exe's frame (ftol + movsx), so they wrap beyond +-32768. tru.exe calls the
+  height map 0x5C32C0 at every start but drops its result (asm 0x539E18, 0x53A0AE, 0x53A159: the x87 compare reads the
+  point's own z): flakes only need z > -29968 there and fall through roofs; the camera's z >= -29872 turns 80 % of
+  the flakes started nearer than 1536 into "drift" flakes with screen coordinates, which 0x534DF0 draws unprojected,
+  so they never show and only hold records. Ours: `fx::Weather::setSnow` and the flake pool, 1:1 [I: 0x49F730's
+  projection taken through the rain sheets' view space (y x 7/6); additive like the drops].
+- Placed snow / rain emitters (`fx_snow_*`, `fx_rain_*`, `rainfx*` particle defs) do not collide with the level in
+  tru.exe: the particle update (0x54D810 -> 0x54C300) clips a particle only at a floor height found at its birth
+  (particle +0xBC, flag 0x4000000: a water instance's surface from the 0x5C3FA0 rays down 3160 / 12642 / 25284,
+  0x540B80), and kills it inside / outside instance-relative boxes (flags 0x4020, +0x8C). The emitter flags for
+  rain-driven rates (def +0x88 & 0x80: rate lerped by the rain %, stopped without rain) and for open-sky emission
+  (def +0x89 & 2: only while the height map at the instance is not above it) exist in 0x540B80 but no particle
+  definition in the data sets either (survey of every object, 2026-11-21) [O].
 - Lightning (0x545950 -> 0x53A650, 0x53A550): every min..max seconds a flash of one of six patterns (0x8A3804
   intensities / 4096 per 30 Hz frame; 2-4 twice, 5 reversed, 6 short) on a light of the +0x4C colour and +0x54
   radius, and the object's event 0x30 there (particles 3 and 6, bolt 0, screen filter 1, thunder). Ours: the light
@@ -527,7 +561,8 @@ tru.exe's weather (0x546FC0 each frame, after the prims) is a legacy system besi
   82 read 0) and no `.mus` reads variable 2: in retail it stays 0. Ours writes it from `Weather::musicVar`.
 - Unit flag 0x20000 (Level+0x2C, also none set): drops start rand % 18000 deep and fall faster only beyond 8192
   (× depth / 8192). Ours: `Weather::World::unitFlags`.
-- Not done: 0x539A60's reset at load.
+- Not done: the other two callers of the reset (0x5D5680, main state 7; 0x5DE480, a load wait) [I: whether either is
+  a save load]; ours restores a save's own amounts (saved since 0.30).
 
 Same-camera pair l4_ballcourt (Wine capture `orig_bc.png`, 1280x720, `postfx/cmp.py`): region |diff| 8.8 -> 8.2
 (Vulkan), 7.9 (OpenGL); the streak sheets now show as in the capture.
