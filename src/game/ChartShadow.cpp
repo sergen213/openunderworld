@@ -730,6 +730,7 @@ void Shadow::Impl::seedAttach() {
         PlayerState ps = w->player().state();
         ps.pos = glm::vec3(*enterPose), ps.yaw = glm::radians(enterPose->w), ps.vel = glm::vec3(0);
         pm->restore(ps);
+        placements = pm->placements(); // ours: the drive must not restart the chart for this placement
     }
     const PlayerState& s = w->player().state();
     const float c = std::cos(s.yaw + 1.5707964f), sn = std::sin(s.yaw + 1.5707964f);
