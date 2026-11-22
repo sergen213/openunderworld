@@ -159,6 +159,8 @@ Clip decodeClip(std::span<const uint8_t> data) {
     c.id = uint32_t(r.s16(0x30));
     c.keyCount = r.u16(0x32);
     c.timePerKey = r.u16(0x34);
+    c.alignPos = {r.f32(0x18), r.f32(0x1C), r.f32(0x20)};
+    c.alignRot = {r.f32(0x24), r.f32(0x28), r.f32(0x2C)};
     const uint32_t segments = r.u8(0x36), sections = r.u8(0x37);
     if (sections != 1) throw FormatError("section count " + std::to_string(sections) + " (only 1 supported)");
     if (c.keyCount == 0 || c.timePerKey == 0) throw FormatError("empty clip");

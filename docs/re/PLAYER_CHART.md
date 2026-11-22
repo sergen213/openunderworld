@@ -316,10 +316,14 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   action 420: `ledgeb_*` clips (not jumps / climbs) keep her hands on the markup; only the shimmy states (S459, S432,
   S441) let the root motion along it move the grip +0xC98 (`moveAlong`, `placeOnLedge`): the attach and idle clips'
   sideways motion leaves it, and the ledge end S448 stops her dead (Wine 973: +0xC98 stays 0.907 until the stick
-  press, so the end bit 642 holds) [O-runtime]. The hang root sits 161 out of the ledge line (Wine 973 / 1155, M01;
-  `Player::setLedgeGripOut`, 19.3 more than ledgeb_idle's wrist reach; legacy keeps the wrists on the line) [O-runtime:
-  the tru.exe term is not located; 0x76D270's attach frame has the markup point +0xCA0 as origin]. Take-offs and the
-  pull up move freely by root motion. *Air* while the chain runs
+  press, so the end bit 642 holds) [O-runtime]. The ledge hang root (0x74ED30, S533 / S535 action 230 with prop 410 =
+  610): T = P + d*n - h*z with P the segment point +0xCA0, n the hang side's normal +0xCC0, d = -(s16) player data
+  +0x250 = 160 (+0xCE4, prop 421 overrides), h = (s16) +0x252 = 498 (+0xCE8, prop 422); 0x741130 writes T to +0x1260
+  (and the quaternion to +0x1270); action 231 / 0x438DC0 sets the layer alignment record (target = T minus the attach
+  clip's remaining root motion, 0x43B870 moves a step/(end - t) share of the gap). The hang clips' root motion after
+  the alignment adds 1.19 out / 4.16 up: settled 161.19 out, 493.84 under, no sideways offset (ledges 973 / 1155;
+  WineChartTrace, W/chart/wine/README.md "Drive-mode findings") [O]; ours `Player::setLedgeHang` in drive mode, legacy
+  keeps ledgeb_idle's hands on the line. Take-offs and the pull up move freely by root motion. *Air* while the chain runs
   action 510: the instance velocity under gravity (0x5DB370) with the capsule's contacts; a floor stops the descent and
   the chart lands through its ground check (event 455). Each flight tick with a jump target re-aims the velocity onto
   its hang root with the time left (+0x77C, 0x73EDC0 [O]: aimAt). *Ground* otherwise: root motion with her ground
@@ -339,6 +343,18 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   Crouch, Roll, Walk, Run, Turn, Idle; the families by clip set: Beam `bbeam_`, PoleHang `hpole_`, Ladder, Perch,
   Pillar, Climb `DICE_`, DropToHang, HangJump `ledgeb_jump*` in the air) for World's subsystems (camera, interactions,
   carriers) [I].
+- **Crossfade** (0x441FB0 at a new request, layer mode +0x64 = 1, over the pattern's blend frames): the window holds
+  the new clip's lead at its first frame and moves her along the forward axis (DAT_008C9F30) at lerp(|outgoing root
+  speed| r+0x50, |incoming root speed at its start| r+0x60, w), w linear at each step's midpoint (0x43B870 case 1 via
+  0x43C8E0); the clip's own root motion counts after the window. S245: 0 -> 85.05 per 30 Hz frame over 4 frames = 170.1
+  (WineChartTrace) [O].
+- **Attach alignment target** (for the family poses, not ported): 0x741130 (and the ladder's 0x744B70) writes player
+  +0x1260 / +0x1270, which action 236 warps the attach clip to: target = the family's point (in the attach frame
+  agent +0xB0, built by 0x76D270 / 0x76D010 per markup flags: 0x40000000 edge frame 0x737D60, 0x8000 box frame,
+  0x400000 0x7352A0, else normal +0xCC0 / edge +0xCB0 / point +0xCA0) minus R x the attach clip's alignment
+  translation (0x702D20; 0x435D70 / 0x435E10 read the pattern's first anim's section header +0x18..+0x2C =
+  `anim::Clip::alignPos / alignRot`, the clip's whole root displacement). Ladder 0x744B70: point = rung
+  (+0x770 x rung + +0x784 along the segment) - normal x +0x778 [O].
 - **Walk**: the walk button holds the stick level at the middle of the state's 0x20A..0x20B band, SCCTest_MoveSpeed's
   walk zone (tru.exe folds it into the magnitude 0x191 reads, 0xFADFB0 -> +0xB0 -> +0x18 [U]) [I].
 - **Input sources** (the table above) in drive mode: `velocity()` = PlayerState::vel / 30 (the drive's own integrated

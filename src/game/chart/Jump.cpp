@@ -416,12 +416,15 @@ void airExit(ChartContext&, uint16_t) {}
 void airUpdate(ChartContext& ctx, uint16_t) {
     ctx.agentFloat(0x3E8) += ctx.timeMult;
     // 0x752410 re-solves the flight with the time left +0x77C (0x73EDC0); it runs down with the flight [I: the decrement's
-    // site is not found in the decomp; 0x751FC0 rewrites it while refining, which ours does not port]. The velocity
-    // itself is the controller's (Player::reaimJump), recorded here only.
+    // site is not found in the decomp]. With a jump target and more time left than object data short +0xC24, it
+    // refines: 0x751FC0 runs short +0xC20 passes of 0x72B5C0 aiming the instance's velocity (0x70E050, gravity 5.724)
+    // at the target over the time left, +0x77C kept (its 3rd argument 0) [O: decomp]. ReAim(left) asks the driver for
+    // that velocity (drive mode: Shadow aimAt); the shadow's controller keeps its own (Player::reaimJump).
     if (jt(ctx)) {
         float& left = ctx.playerFloat(0x77C);
         left = std::max(0.0f, left - ctx.timeMult);
-        ctx.effect(JEffect::ReAim, left);
+        const auto& c = ctx.chart().charts();
+        if (left > float(c.data<int16_t>(0xC24)) && c.data<int16_t>(0xC20) > 0) ctx.effect(JEffect::ReAim, left);
     }
     const auto v = ctx.velocity();
     const bool rising = v && v->z > 0;
@@ -601,7 +604,8 @@ void messageExit(ChartContext& ctx, uint16_t) {
 void markupAttachTarget(ChartContext& ctx, uint16_t) {
     ChartRuntime& rt = ctx.chart();
     int cls = 0;
-    if (const Property* p = rt.property(0x1A4); p && p->type == 0x23) cls = int(p->raw);
+    bool alt = false; // 0x772CA0's setter argument: the class came from property 0x1A4
+    if (const Property* p = rt.property(0x1A4); p && p->type == 0x23) cls = int(p->raw), alt = true;
     else if (const Property* q = rt.property(0x19A); q && q->type == 0x23) cls = int(q->raw);
     const bool promote = rt.propBool(0x199).value_or(false);
     if (promote && !jt(ctx)) {
@@ -620,7 +624,8 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     // the setters of these classes detach the old markup and attach the jump target (0x74ED30 ...: 0x6FDBE0, 0x707B90);
     // 602 / 611's 0x74DCD0 only a ladder (+0xA64 MUD & 0x400000), with +0xCDC = 0
     const bool ladderOnly = cls == 602 || cls == 611;
-    if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
+    if (cls == 603) poleAttachSetter(ctx, alt); // 0x74C8D0 (group B)
+    else if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
 }
 
 // 2001 (0x75EF70: camera vfunc +0xB0 (0)), 2002 (0x75EF90: +0xB0 (1)), 2005 (enter and exit 0x75EF50: +0xB4); 2001 /

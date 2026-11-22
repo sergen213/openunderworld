@@ -731,10 +731,13 @@ public:
     };
     void drive(const DriveStep& d, float dt);
     void setVelocity(vec3 v) { s_.vel = v; }
+    // The drive's launch: the flight the wall probe (WallJump.cpp, 0x7594C0) reads: take-off point, launch velocity, time.
+    void setFlight(vec3 v) { s_.vel = v, s_.jumpStart = s_.pos, s_.jumpVel0 = vec2(v), s_.jumpTime = 0; }
     void setYaw(float yaw) { s_.yaw = yaw; }
     std::pair<vec3, float> hangPose(int markup, int seg, float t, float side) const { return attachPose(markup, seg, t, side); }
-    // Extra distance of a ledge hang's root out of the ledge line (attachPose); the chart drive sets Wine's (0 = legacy).
-    void setLedgeGripOut(float out) { ledgeGripOut_ = out; }
+    // A ledge hang's root offset from the ledge point in her frame (x right, y forward, z up; attachPose's hand offset):
+    // the chart drive sets tru.exe's (0x74ED30), legacy keeps ledgeb_idle's hands (unset).
+    void setLedgeHang(vec3 off) { ledgeHang_ = off; }
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
@@ -930,9 +933,11 @@ private:
     bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
     bool reseated_ = false; // this tick only (takeReseat)
     uint32_t placements_ = 0; // placements()
-    float ledgeGripOut_ = 0; // setLedgeGripOut()
-    // drive(): the clip a fresh chart clip replaced, playing on under the crossfade (its root motion fades out)
-    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0; vec3 offset{0}; } fade_;
+    std::optional<vec3> ledgeHang_; // setLedgeHang()
+    // drive(): the crossfade window of a fresh chart clip (0x441FB0: |outgoing root speed| -> |incoming at its start|)
+    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0, vOut = 0, vIn = 0; } fade_;
+    // drive(): the current clip's start time and the seconds its lead holds the first frame (the fade) for root motion
+    struct RootLead { double start = 0; float hold = 0; } rootLead_;
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch, prevCameraYaw_ = 0;

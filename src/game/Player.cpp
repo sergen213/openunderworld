@@ -860,11 +860,9 @@ std::pair<vec3, float> Player::attachPose(int markup, int seg, float t, float si
     para = pole && para;
     const float yaw = yawOf(para ? dir * side : pole ? out : -out);
     vec3 off = para ? anims_.poleParaHandOffset : pole ? anims_.poleHandOffset : anims_.hangHandOffset;
-    // The chart drive sets ledgeGripOut_ (setLedgeGripOut): a ledge hang's root out of the line by that much more than
-    // ledgeb_idle's wrist reach. Legacy keeps 0 (its hand IK puts the wrists on the line; ik_pose checks that).
-    // The drive also hangs her with no sideways offset: tru.exe's attach frame origin x (0x744E90) equals her root x in
-    // the bedroom and chapel logs (ChartB), where ledgeb_idle's wrists sit 6.3 to the side [O-runtime].
-    if (!pole && ledgeGripOut_ != 0) off.y -= ledgeGripOut_, off.x = 0;
+    // The chart drive sets tru.exe's ledge hang offset (setLedgeHang, 0x74ED30); legacy keeps ledgeb_idle's hands on
+    // the line (its hand IK and ik_pose depend on that).
+    if (!pole && ledgeHang_) off = *ledgeHang_;
     return {pointOn(m, seg, t) - rotYaw(yaw, off), yaw};
 }
 
@@ -4043,24 +4041,35 @@ void Player::drive(const DriveStep& d, float dt) {
         const bool fresh = d.restart || s_.clip != d.clip || s_.mirror != d.mirror;
         if (fresh) {
             t0 = d.start;
-            // The clip it replaces plays on under the crossfade (tru.exe 0x4428A0 -> 0x433D40 sets the layer fade over
-            // the pattern's blend frames; the new clip's lead runs at its first frame meanwhile) [O], so the root
-            // motion fades from the old clip's into the new one's [I: the linear weight].
-            if (d.crossfade > 0 && anims_.find(s_.clip)) {
+            // The crossfade (tru.exe 0x441FB0 at the new request, layer mode +0x64 = 1, the pattern's blend frames): the
+            // window holds the new clip's lead at its first frame and moves her along the forward axis (DAT_008C9F30) at
+            // lerp(|outgoing root speed| r+0x50, |incoming root speed at its start| r+0x60, w), w linear at each step's
+            // midpoint (0x43B870 case 1 via 0x43C8E0, 0x4332C0 without a curve); the clip's own root motion counts
+            // after the window [O: WineChartTrace, W/chart/wine/README.md "Drive-mode findings"; S245: 0 -> 85.05 per
+            // frame over 4 frames = 170.1].
+            const anim::Clip* oc = anims_.find(s_.clip);
+            const anim::Clip* nc = anims_.find(d.clip);
+            if (d.crossfade > 0 && oc && nc) {
+                constexpr double h = 1.0 / 60.0;
+                const auto speed = [&](const anim::Clip& c, double t, bool loop) {
+                    const double a = loop ? t : std::clamp(t, 0.0, std::max(0.0, c.durationSeconds() - h));
+                    return glm::length(rootTranslation(c, a + h, loop) - rootTranslation(c, a, loop)) / float(h);
+                };
                 fade_ = {s_.clip, s_.clipTime, s_.loop, s_.mirror, d.crossfade, d.crossfade};
-                // The key-0 root offset between the two clips (the new clip's against the old one's) carries her over
-                // the fade, twice over, on an ease-in (w^2): Wine S245 moves 2 x ng_planted_jump_forward's key-0 offset
-                // 85.1 (ng_idle's 0) in its 4-frame fade, per tick 170 x (2k - 1) / 64 (ChartA, W/chart/diff/A/SUMMARY.md)
-                // [O-runtime; the mechanism in tru.exe's layer blend 0x4428A0 / 0x441FB0 is not traced: U].
-                if (const anim::Clip* nc = anims_.find(d.clip); nc && anims_.find(s_.clip)) {
-                    vec3 on = rootTranslation(*nc, 0, false), oo = rootTranslation(*anims_.find(s_.clip), 0, false);
-                    if (d.mirror) on.x = -on.x;
-                    if (s_.mirror) oo.x = -oo.x;
-                    fade_.offset = 2.0f * (on - oo);
-                }
+                // r+0x60: the incoming clip's root speed over the last frame of the window, the root before the clip's
+                // first key counting as the origin: S245's window ends at ng_planted_jump_forward's frame 1, its frame
+                // 0 root is 85.05 forward of the origin -> 85.05 per frame (WineChartTrace; ChartA's key-0 offset) [O]
+                const double frame = 1.0 / 30.0, ts = t0 + fade_.total - frame;
+                const auto at = [&](double t) { return t < -1e-4 ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop); };
+                const float vIn = glm::length(at(ts) - at(ts - frame)) / float(frame);
+                fade_.vOut = speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
             } else {
                 fade_ = {};
             }
+            // The new clip's lead holds its first frame while the fade runs (0x433D40's layer fade): its root motion
+            // starts once the fade is done (Wine S432: 6 ticks of ~0.2 units, then the shimmy clip from its start;
+            // ours ran the clip at once and led Wine by those 6 ticks, reaching S448 early) [O-runtime].
+            rootLead_ = {t0, fade_.total};
         }
         s_.clip = d.clip, s_.loop = d.loop, s_.mirror = d.mirror, s_.clipRate = 1;
         s_.clipMix.clear(), s_.mix = 0;
@@ -4073,30 +4082,25 @@ void Player::drive(const DriveStep& d, float dt) {
     vec3 root(0), world(0);
     if (const anim::Clip* c = anims_.find(s_.clip)) {
         const float k = s_.mirror ? -1.0f : 1.0f;
-        root = rootDelta(anims_, s_, *c, t0, t1);
+        // root motion counts from the window's end on the clip's own clock (the window spans the blend length before
+        // the start frame; the clip runs on from there)
+        const auto lead = [&](double t) { return std::max(t, rootLead_.start + double(rootLead_.hold)); };
+        const double r0 = lead(t0), r1 = lead(t1);
+        root = rootDelta(anims_, s_, *c, r0, r1);
         const bool turns = std::abs(rootYaw(*c, c->durationSeconds(), false) - rootYaw(*c, 0, false)) > 1e-3f;
         if (turns) {
-            const float base = s_.yaw - k * rootYaw(*c, t0, s_.loop);
+            const float base = s_.yaw - k * rootYaw(*c, r0, s_.loop);
             world = rotYaw(base, root);
-            s_.yaw = wrapAngle(base + k * rootYaw(*c, t1, s_.loop));
+            s_.yaw = wrapAngle(base + k * rootYaw(*c, r1, s_.loop));
         } else {
             world = toWorld(root);
         }
     }
     if (fade_.left > 0) {
-        if (const anim::Clip* o = anims_.find(fade_.clip)) {
-            double o1 = fade_.time + dt;
-            if (!fade_.loop) o1 = std::min(o1, o->durationSeconds());
-            vec3 od = rootTranslation(*o, o1, fade_.loop) - rootTranslation(*o, fade_.time, fade_.loop);
-            if (fade_.mirror) od.x = -od.x;
-            fade_.time = o1;
-            fade_.left = std::max(0.0f, fade_.left - dt);
-            const float wOld = 1.0f - (fade_.left + std::min(dt, fade_.total - fade_.left)) / fade_.total;
-            const float wNew = 1.0f - fade_.left / fade_.total;
-            world = glm::mix(toWorld(od), world, wNew) + toWorld(fade_.offset * (wNew * wNew - std::max(0.0f, wOld) * std::max(0.0f, wOld)));
-        } else {
-            fade_ = {};
-        }
+        const float step = std::min(dt, fade_.left);
+        const float w = 1.0f - (fade_.left - 0.5f * step) / fade_.total; // the step's midpoint
+        fade_.left = std::max(0.0f, fade_.left - dt);
+        world += toWorld(vec3(0, -1, 0) * (glm::mix(fade_.vOut, fade_.vIn, w) * step));
     }
     if (d.steer) s_.yaw = approachAngle(s_.yaw, *d.steer, d.steerRate * dt);
     s_.state = d.coarse;
@@ -4139,6 +4143,7 @@ void Player::drive(const DriveStep& d, float dt) {
                 p.z = g->point.z, s_.vel.z = 0;
         s_.pos = p;
         s_.ledge = -1;
+        s_.jumpTime += dt; // the flight's time for the wall probe (setFlight)
         break;
     }
     case DriveStep::Motion::Hang: {
