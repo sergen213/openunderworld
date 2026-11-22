@@ -44,7 +44,16 @@ def case(c):
         if os.path.exists(p): break
     # the Wine take the case JSON came from (a settle take has its own trace beside it), else the original take
     t = os.path.join(os.path.dirname(p), os.path.basename(c) + '.tsv')
-    return json.load(open(p)), t if os.path.exists(t) else f'{W}/chart/wine/{c}.tsv'
+    j = json.load(open(p))
+    # the validity marks have one source of truth, the original W/chart/wine/<case>.case.json (the wine_startpos /
+    # wine_settle copies predate them): whichever copy supplies the script and positions, the marks come from there
+    orig = f'{W}/chart/wine/{c}.case.json'
+    if p != orig and os.path.exists(orig):
+        o = json.load(open(orig))
+        for k in ('invalid_from', 'invalid_until', 'invalid_reason', 'drag_checked'):
+            j.pop(k, None)
+            if k in o: j[k] = o[k]
+    return j, t if os.path.exists(t) else f'{W}/chart/wine/{c}.tsv'
 def compare(rundir, c):
     j, wt = case(c)
     sp = j['spawn']; shift = sp['hold_ticks'] + sp.get('settle_ticks', 0)
@@ -86,7 +95,7 @@ def compare(rundir, c):
     # an unmarked mechanical drag before any invalid_from: not a full match until the case JSON marks it (invalid_from)
     # or clears it ("drag_checked": true)
     dt = None if j.get('drag_checked') else drag_tick(wt)
-    drag = dt is not None and (inv is None or dt < inv)
+    drag = dt is not None and (inv is None or dt + 2 < inv)  # the whole 3-tick run before the mark
     if inv is not None:  # a harness-truncated take: never a full match, reported on its own
         span = f'ticks {inv}..{j["invalid_until"]} skipped' if j.get('invalid_until') is not None else f'to tick {inv}'
         res = f'match {span} (truncated)' if full else f'{k}/{len(ws)} {span} (truncated)'
