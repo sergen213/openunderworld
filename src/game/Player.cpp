@@ -4420,18 +4420,31 @@ void Player::drive(const DriveStep& d, float dt) {
         }
         const auto& m = col_.markup[size_t(d.markup)];
         s_.ledge = d.markup, s_.ledgeSeg = std::clamp(d.seg, 0, int(m.points.size()) - 2), s_.ledgeSide = d.side;
-        s_.ledgeT = std::clamp(d.t, 0.0f, segLen(m, s_.ledgeSeg));
+        // the grip's measure along the segment: x/y as the ledges have it, 3-D on a vertical one (pillars: their height)
+        const auto gripLen = [&](int seg) {
+            const float h = segLen(m, seg);
+            return h > 1e-3f ? h : glm::length(m.points[size_t(seg) + 1] - m.points[size_t(seg)]);
+        };
+        s_.ledgeT = std::clamp(d.t, 0.0f, gripLen(s_.ledgeSeg));
         if (!d.snap) {
             if (d.pin) {
                 // 0x708830 flag +0x47 (0x708210): the root motion's part along the markup moves the grip (to the
                 // segment end, then the next); flag +0x46 (0x6FDC90): the root is the point at the grip minus her
                 // rotation x the offset +0xCE0. Nothing else of the root motion moves her (l2_hubhall beam 759 S935:
                 // y stays on the line in Wine h759) [O].
-                if (d.pinFollow) moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
+                if (d.pinFollow) {
+                    if (segLen(m, s_.ledgeSeg) > 1e-3f)
+                        moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
+                    else { // a vertical segment (pillar): moveAlong's x/y measure is 0 there and clamped the grip to the top
+                        const vec3 e = m.points[size_t(s_.ledgeSeg) + 1] - m.points[size_t(s_.ledgeSeg)];
+                        const float el = glm::length(e);
+                        if (el > 1e-4f) s_.ledgeT = std::clamp(s_.ledgeT + glm::dot(world, e / el), 0.0f, el);
+                    }
+                }
                 // flag +0x41 / +0x40 (property 425): her yaw onto / toward the markup's heading (0x701FA0)
                 if (d.pinYaw)
                     s_.yaw = d.pinTurn < 0 ? wrapAngle(*d.pinYaw) : approachAngle(s_.yaw, *d.pinYaw, d.pinTurn * dt * 30.0f);
-                const float len = segLen(m, s_.ledgeSeg);
+                const float len = gripLen(s_.ledgeSeg);
                 const vec3 a = m.points[size_t(s_.ledgeSeg)], b = m.points[size_t(s_.ledgeSeg) + 1];
                 const vec3 q = glm::mix(a, b, len > 1e-4f ? s_.ledgeT / len : 0.0f);
                 const vec3 p = q - rotYaw(s_.yaw, d.pinOffset);
