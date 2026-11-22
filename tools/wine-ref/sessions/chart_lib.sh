@@ -57,6 +57,10 @@ cunit() {
     sleep 20; "$WREF_SRC/w.sh" wmem goto "$1"; sleep 100
     i=0; until "$WREF_SRC/w.sh" wmem state | grep -qi "unit $1 " || [ $i -ge 12 ]; do sleep 10; i=$((i+1)); done
     "$WREF_SRC/w.sh" wmem state | tr -d '\r' | grep -i "unit $1 " || { echo "goto $1 failed" >&2; return 1; }
+    # 2026-11-22: about half the l3_chapel gotos end with gameTracker flags 0x4000 and no frames advancing (every trace
+    # S-1, or the next SPAWN lands in a stale state): wait up to 2 min for the flags to clear, else fail (callers retry)
+    i=0; until "$WREF_SRC/w.sh" wmem state | tr -d '\r' | grep -q " flags 00000000 " || [ $i -ge 12 ]; do sleep 10; i=$((i+1)); done
+    "$WREF_SRC/w.sh" wmem state | tr -d '\r' | grep -q " flags 00000000 " || { echo "goto $1: flags stay set" >&2; return 1; }
 }
 # cground: ccase with SETTLE (default 90) free frames before tick 0, for cases that start standing (the pin's landing
 # has ended in the idle); cases that start with a fall or catch (hangs, holds, ladders) use ccase.
