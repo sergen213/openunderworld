@@ -70,11 +70,14 @@ private:
     glm::vec2 rideFrom_{0};             // `ride`: where the step began (a waypoint passed wide still counts)
     glm::vec2 lastPos_{0};              // her position on the previous tick (ground speed for `go` / `engage`)
     bool hasLastPos_ = false;
+    float lastYaw_ = 0;                 // her yaw on the previous tick (`face` stops on the yaw a tick on)
     int64_t aimPhase_ = -1;             // the step tick a re-aim lands in phase with (first aim's landing); -1 none yet
     std::optional<std::pair<uint64_t, float>> walkDue_; // a walk change waiting for its stick step to land (tick, value)
     uint64_t releaseUntil_ = 0; // a held stick release lands by then: no re-aim before it
     uint64_t finishAt_ = 0;     // a finished step's held release lands then: the step ends on that tick
     int runLag_ = -1;           // `run` / `stick`: the step tick its stick lands on (actions count from it); -1 not yet
+    bool pressSettled_ = false; // `press` / `hold`: she has stopped moving (the press is made from then)
+    uint64_t settleWait_ = 0;   // `press` / `hold`: ticks waited for her to stop
     uint64_t clearSince_ = 0, healAt_ = 0, lostSince_ = 0; // `fight`: no enemy since; last heal press; no target since (ticks)
     uint64_t hitSince_ = 0;  // `fight`: the foe last lost health (or became the foe) at
     int32_t foeUid_ = 0;     // `fight`: the nearest living enemy, and its health

@@ -75,7 +75,7 @@ void Autopilot::next(uint64_t tick, const char* why) {
     if (why) failed_ = true, failure_ = "line " + std::to_string(steps_[step_].line) + " (" + steps_[step_].op + "): " + why, step_ = steps_.size();
     else ++step_;
     started_ = reported_ = false;
-    runLag_ = -1, aimPhase_ = -1;
+    runLag_ = -1, aimPhase_ = -1, pressSettled_ = false, settleWait_ = 0;
 }
 
 game::Actions Autopilot::step(uint64_t tick, game::World& w) {
@@ -94,7 +94,8 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
     // than 0.2, so `go` / `engage` aim from where she will be a tick on (pos + this tick's motion).
     const glm::vec2 motion = hasLastPos_ ? glm::vec2(lara.pos) - lastPos_ : glm::vec2(0);
     const float groundStep = glm::length(motion); // units this tick
-    lastPos_ = glm::vec2(lara.pos), hasLastPos_ = true;
+    const float yawStep = hasLastPos_ ? std::remainder(lara.yaw - lastYaw_, glm::two_pi<float>()) : 0.0f; // turn this tick
+    lastPos_ = glm::vec2(lara.pos), lastYaw_ = lara.yaw, hasLastPos_ = true;
     const auto has = [&](const char* word) { return std::ranges::find(s.args, word) != s.args.end(); };
     // A walk change made with a stick step over 0.2 waits a tick: the step lands a tick late (StickRateFilter), and
     // the walk button would otherwise act on the old stick (releasing it a tick early starts a run along the old
@@ -211,13 +212,28 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             set(tick, "jump", d.z > radius * 0.5f ? 1.0f : 0.0f, a), set(tick, "drop", d.z < -radius * 0.5f ? 1.0f : 0.0f, a);
         }
     } else if (s.op == "face") {
+        // The release lands a tick late (StickRateFilter, tru.exe 0x483520) and she turns on meanwhile: stop once the
+        // yaw a tick on is within 8 deg while the current one is within 12, else (a slowing turn) on the current one.
         const float yaw = glm::radians(std::stof(s.args[0]));
-        if (std::abs(std::remainder(lara.yaw - yaw, glm::two_pi<float>())) < glm::radians(8.0f)) centre(), next(tick, nullptr);
+        const float now = std::abs(std::remainder(lara.yaw - yaw, glm::two_pi<float>()));
+        const float soon = std::abs(std::remainder(lara.yaw + yawStep - yaw, glm::two_pi<float>()));
+        if (now < glm::radians(8.0f) || (soon < glm::radians(8.0f) && now < glm::radians(12.0f))) centre(), next(tick, nullptr);
         else if (t > kTimeout) centre(), next(tick, "timed out");
         else steer({std::cos(yaw), std::sin(yaw)}, true);
     } else if (s.op == "press" || s.op == "hold") {
         const std::string action = s.args.empty() ? "interact" : s.args[0];
         const uint64_t length = s.op == "press" ? kPressTicks : ticks(s.args[1]);
+        // A press made while she is still moving or stopping goes nowhere in tru.exe's chart (run-stop S57 has no
+        // Interact edge; only the idle S40's ActionFlag 32 -> S741 takes it): wait until she has stopped, then press.
+        if (t == 0 && !pressSettled_) {
+            const bool moving = lara.state == game::State::Walk || lara.state == game::State::Run || lara.state == game::State::Stop ||
+                                lara.state == game::State::Turn;
+            if (moving && settleWait_++ < kTimeout) {
+                stepStart_ = tick + 1; // t stays 0 until she stops
+                return a;
+            }
+            pressSettled_ = true;
+        }
         if (t == 0) set(tick, action, 1, a);
         else if (t == length) set(tick, action, 0, a);
         else if (t >= length + (s.op == "press" ? kPressTicks : 0)) {
