@@ -1113,6 +1113,9 @@ public:
     virtual bool drive(World& world, Player& player, vec2 move, const Actions& a, float dt) = 0;
     virtual nlohmann::json save() const = 0;           // the chart state for a save (docs/SAVES.md "chart")
     virtual void load(const nlohmann::json& j) = 0;    // null: start afresh
+    // The gameplay camera mode the chart's states last asked for (state property 1102, tru.exe message 0x44E ->
+    // CameraManager RequestMode 0x5E8210); -1 while it does not drive her or no state asked yet.
+    virtual int cameraModeRequest() const { return -1; }
 };
 
 class World {
@@ -1477,6 +1480,8 @@ public:
     // from the pivot (ou-game --self-test probes).
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
+    // The camera mode and the active camera trigger volumes (uids, CameraManager +0x8C order) the last 0x601D30 saw.
+    const std::vector<int32_t>& cameraTriggerList() const { return orbit_.triggers; }
     // The point the orbit camera turns about (LaraCameraRewrite +0x100, the focus tracker's) as its last update left it;
     // camera().target is where it looks: that point (while swimming the look tracker's point, which trails it) moved by
     // a trigger's look offset (commands 0x1A / 0x1C) and turned toward the focus points (World.cpp).
