@@ -15,7 +15,7 @@
                 {"probe": "water.in", "eq": false}]},
     {"step": "over_the_side", "plan": ["go -23835 -3900 150"], "duration": 10,
      "until": {"probe": "player.clip", "eq": "ledgeb_idle"},
-     "expect": [{"visits": ["run", "droptohang", "hang"]},
+     "expect": [{"visits": ["run", "hang"], "note": "off the side into a hang: legacy droptohang, tru S11 -> S542 (fall then hang)"},
                 {"probe": "step.health_lost", "eq": 0}]},
     {"step": "into_the_sea", "input": ["0.2 drop 1", "0.3 drop 0"], "duration": 4,
      "expect": [{"visits": ["hang", "fall", "swimsplash", "swimtread"], "note": "tru.exe (Wine, waterentry-wine traces of drops from 300 to 3000 and a running jump): swim_jump_land (S104) ends at the rest level and goes straight to the surface group S111 (request 192), no surfacing"},
