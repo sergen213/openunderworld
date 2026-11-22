@@ -1691,9 +1691,11 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         // +0x2C bit 0x80, the arc coming down (0x6EC3D0): a default check (0x70EC60), not in the class record path
         // (0x7296C0) [O: decomp]; ours keeps it for both to time the re-aimed flight (the record path's box test holds
         // at every time, its first hit is the take-off) [I]
-        // a perch (13) is landed on, the [I] step rule (q.minZ) is the ledges'
+        // a perch (13) is landed on, the [I] step rule (q.minZ) is the ledges' (1) alone
         const bool perch = col_.markup[size_t(li)].type == 13;
-        if ((!perch && h.z < q.minZ) || t >= best.frames || (q.falling && q.v.z - q.gravity * t >= 0.05f)) return;
+        if ((col_.markup[size_t(li)].type == 1 && h.z < q.minZ) || t >= best.frames ||
+            (q.falling && q.v.z - q.gravity * t >= 0.05f))
+            return;
         if (q.sight) { // a ledge on the far side of what she jumps at is none (a ledge point lies on its wall: 100 short)
             const vec3 d = h - from;
             const float len = glm::length(d);
@@ -1738,11 +1740,20 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             const auto point = [&](uint8_t src) {
                 switch (src) {
                 case 0: return s_.pos; // her root (her instance's position)
+                case 1: // 0x723AB0 case 1: the MarkUp box's centre (+0x34), in the world (the built-in records: the hit)
+                    return q.strict ? m.centre : h;
                 // 5: 0x728F00's point, her root plus the test's offset turned by her rotation [I: the offset is 0]
                 case 5: return s_.pos;
                 case 8: return vec3(q.stickDir, 0); // 0x49F5D0 of the stick's world yaw (0xFADFB0 +0xB0 +8)
                 case 9: return vec3(xy(forward()), 0); // her facing axis (instance matrix +0x10, negated)
-                case 11: return vec3(n * side, 0); // 0x6FE7E0: the ledge's horizontal normal, out toward her
+                case 11: // 0x6FE7E0, the markup's normal by its MUD flags
+                    if (m.type == 9) return ladderOut(m); // 0x400000: 0x72BA40 [I: its manager call untraced; ours' wall side]
+                    if (m.type == 15) { // 0x10 (default branch): her root less the point, off the segment's axis
+                        const vec3 axis = unitOr(m.points[size_t(si)] - m.points[size_t(si) + 1], vec3(0, 0, 1));
+                        const vec3 r = s_.pos - h;
+                        return unitOr(r - axis * glm::dot(r, axis), vec3(xy(forward()), 0));
+                    }
+                    return vec3(n * side, 0); // 0x40000000: the ledge's horizontal normal, out toward her
                 // 14 / 15: 0x6E5A10, her velocity's direction (14 flattened); none: straight down
                 case 14: return unitOr(vec3(xy(s_.vel), 0), vec3(0, 0, -1));
                 case 15: return unitOr(s_.vel, vec3(0, 0, -1));
@@ -1766,17 +1777,18 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 if (!(c.flags & 4)) return true;
                 const bool given = c.flags & 1;
                 bool r = true, neg = c.flags & 2;
+                // 0x725870 with a2 = source 1 (kinds 3 / 4 / 5 alike): a1's z strictly within the MarkUp box's height
+                // (centre +0x34 plus +0x48 .. +0x54) grown by v
+                if (q.strict && c.kind >= 3 && c.kind <= 5 && c.a2 == 1) {
+                    const float z = point(c.a1).z;
+                    r = m.centre.z + m.boxMin.z - c.value < z && z < m.centre.z + m.boxMax.z + c.value;
+                    return r != neg;
+                }
                 switch (c.kind) {
                 case 1: r = glm::length(xy(point(c.a2) - point(c.a1))) < (given ? c.value : q.minDist); break;
                 case 0: r = glm::length(point(c.a2) - point(c.a1)) < (given ? c.value : q.minDist); break; // 0x7256F0: 3-D
                 case 4: r = point(c.a2).z - point(c.a1).z <= c.value; break;
-                case 5: // 0x725870 kind 5: z(a2) - z(a1) > -v; source 1 as a2 (the capsule's band) not modelled
-                    if (c.a2 == 1) {
-                        if (q.strict) q.unknown = true;
-                        break;
-                    }
-                    r = point(c.a2).z - point(c.a1).z > -c.value;
-                    break;
+                case 5: r = point(c.a2).z - point(c.a1).z > -c.value; break; // 0x725870 kind 5
                 case 2: case 9: { // 0x725610: |yaw - the heading from a1 to a2| < v degrees (no way: 0); kind 2 her
                     // heading (instance +0x38), kind 9 the control yaw (0x6EBA90)
                     const vec2 d = xy(point(c.a2) - point(c.a1));
@@ -1867,14 +1879,18 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     // The sweep takes every markup; the class record's entries gate them by type (lara.drm 0x2AB8C lists 14, 15, 2, 13,
     // 4 and 1) [O-data]. Ours sweeps ledges (1) and, for the ground jumps' record (its entry 3 names 2 / 13), perches
     // (13): a perch is met by the root's arc alone, at its nearest point (no end insets) [I: the perch's own markup
-    // record (target types, insets) is not decoded]. Jump landings (2), beams (14), pillars (15) and the other records'
-    // non-ledge candidates are not swept [U].
+    // record (target types, insets) is not decoded]. The data-driven searches (strict) also sweep ladders (9) and
+    // pillars (15), every polyline segment with no end insets, from the profile's arc start for that type (+0x8C,
+    // else the query's start) [I: as the perch]. Jump landings (2), beams (14) and the other records' non-ledge
+    // candidates are not swept [U].
     const vec3 end = arcAt(q.start, q.frames);
     const vec2 sLo = glm::min(xy(q.start), xy(end)), sHi = glm::max(xy(q.start), xy(end));
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
-        const bool perch = m.type == 13 && q.record == JumpRecord::Ground;
-        if ((m.type != 1 && !perch) || int(li) == s_.ledge) continue;
+        // perches: the ground record's (0x2AB8C) and every data-driven search's (a pillar's top perch, S1201 T2009)
+        const bool perch = m.type == 13 && (q.record == JumpRecord::Ground || q.strict);
+        const bool climb = q.strict && (m.type == 9 || m.type == 15);
+        if ((m.type != 1 && !perch && !climb) || int(li) == s_.ledge) continue;
         if (only >= 0 ? int(li) != only : only == -1 && !m.velocity.empty()) continue; // moving: in its own frame
         const int last = int(m.points.size()) - 2;
         for (int si = 0; si <= last; ++si) {
@@ -1885,11 +1901,19 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                               glm::any(glm::lessThan(glm::max(xy(a), xy(b)) + kSweepPad, sLo))))
                 continue;
             const vec3 u = (b - a) / len;
-            const float inset = perch ? 0.0f : kLedgeInset;
+            const float inset = perch || climb ? 0.0f : kLedgeInset;
             const float lo = si == 0 ? inset : 0, hi = len - (si == last ? inset : 0);
             const auto perp = [&](vec3 w) { return w - u * glm::dot(w, u); };
-            for (const vec3& from : {q.hang, q.root}) {
-                if (perch && from != q.root) continue;
+            vec3 starts[2] = {q.hang, q.root};
+            int nStarts = 2;
+            if (perch) starts[0] = q.root, nStarts = 1;
+            if (climb) {
+                starts[0] = q.start, nStarts = 1;
+                for (int k = 0; k < q.typeStarts; ++k)
+                    if (q.typeStart[size_t(k)].first == m.type) starts[0] = q.typeStart[size_t(k)].second;
+            }
+            for (int fi = 0; fi < nStarts; ++fi) {
+                const vec3 from = starts[fi];
                 float ts[2];
                 const int nt = arcMinima(perp(from - a), perp(q.v), perp(a2), q.frames, ts);
                 for (int k = 0; k < nt; ++k) {
@@ -1909,7 +1933,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     // markup passes (`only` >= 0: one markup, which says nothing of the other types).
     if (q.strict && only < 0 && best.markup < 0 && !record.empty())
         for (int type = 0; type < 64 && !q.unknown; ++type) {
-            if (type == 1 || (type == 13 && q.record == JumpRecord::Ground)) continue;
+            if (type == 1 || type == 13 || type == 9 || type == 15) continue; // swept above (strict: all four)
             if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
             if (std::any_of(record.begin(), record.end(), [&](const ClassEntry& e) { return entryGate(e, type); })) q.unknown = true;
         }
@@ -2400,6 +2424,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
         const vec3 at = base + vec3(f * s.out, s.up);
         if (s.type == 3) q.hang = at, hang = true;
         else if (s.type == 1) q.root = at, root = true;
+        if (q.typeStarts < int(q.typeStart.size())) q.typeStart[size_t(q.typeStarts++)] = {s.type, at};
     }
     if (hang && !root) q.root = q.hang;
     if (root && !hang) q.hang = q.root;
@@ -2428,7 +2453,8 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (q.classify) {
         const auto& m = col_.markup[size_t(j.markup)];
         const vec2 sd = segDir(m, j.seg);
-        const int cls = m.type == 13 ? 0 : ledgeClassOf(col_, pointOn(m, j.seg, j.t), vec2(-sd.y, sd.x) * j.side, s_.pos, q.dir);
+        // only a ledge's class tests fill +0xC0 (0x728A80); a perch, ladder or pillar keeps 0
+        const int cls = m.type != 1 ? 0 : ledgeClassOf(col_, pointOn(m, j.seg, j.t), vec2(-sd.y, sd.x) * j.side, s_.pos, q.dir);
         out.cls = int8_t(cls == 4 ? 0 : cls);
     }
     return out;
