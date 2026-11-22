@@ -823,6 +823,7 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
             if (!en) return false;
             MarkupEntry me{};
             me.flags = byte(*en + 0x14);
+            me.offset = {f32(*en), f32(*en + 4), f32(*en + 8)};
             me.types = list8(*en + 0x18, *en + 0x1C);
             me.attach = list8(*en + 0x20, *en + 0x24);
             auto bits = std::make_unique<std::vector<uint16_t>>();

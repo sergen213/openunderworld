@@ -576,6 +576,9 @@ struct MarkupEntry {
     std::span<const uint8_t> types, attach;
     std::span<const MarkupTest> tests;
     std::span<const uint16_t> bits = {};
+    // +0 / +4 / +8: the entry's point offset in her model frame (x, y, z): 0x728F00's point source 5 is her root plus
+    // it turned by her rotation (0x729420 takes it while the query's own +0x90 offset is zero)
+    vec3 offset{0};
 };
 // One lara.drm query profile (object data +0xDE4 count, +0xDE8 {id, record}; tru.exe 0x6F1950) decoded for the
 // data-driven markup search 0x7296C0 (chart/Ground.cpp decodeProfile -> Player::markupSearch). Fields as 0x771830 /
