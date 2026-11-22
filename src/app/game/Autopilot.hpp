@@ -68,6 +68,8 @@ private:
     std::filesystem::path out_;
     std::map<std::string, float> held_; // the recorded value of each action
     glm::vec2 rideFrom_{0};             // `ride`: where the step began (a waypoint passed wide still counts)
+    glm::vec2 rebase_{0};               // this step's points shifted by unit switches since it began (World::streamAround)
+    std::string lastUnit_;              // the unit she was in on the previous tick
     glm::vec2 lastPos_{0};              // her position on the previous tick (ground speed for `go` / `engage`)
     bool hasLastPos_ = false;
     float lastYaw_ = 0;                 // her yaw on the previous tick (`face` stops on the yaw a tick on)
