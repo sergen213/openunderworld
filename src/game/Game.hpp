@@ -604,6 +604,10 @@ struct MarkupProfile {
     // the ledge markup-class record's (Lara data +0x584, 0x5D5930) short +0x9E: how near a segment end a candidate
     // must lie for the corner tests 0x737B30 / 0x723540 (kinds 28..30)
     int cornerZone = 0;
+    // 0x6FE040 [O decomp]: an open markup's candidate range starts its class record's short +0x98 in from its first
+    // point and ends +0x9A in from its last (along the segment). Here the beam record (Lara data +0x5BC, MUD 0x10000):
+    // Wine ch_beam_walk met beam 1031 at +0xA68 0.945235 = 48.0 = +0x9A in from its end.
+    int beamInset[2] = {0, 0};
     // The markup-class records' capsules (0x5D57A0: Lara data +0x594 a horizontal pole, +0x58C an upright one, +0x5B8
     // a free-climb hold (MUD 0x8000); record +0x30 / +0x34 / +0x38 the offset in her model frame, +0x54 height, +0x58
     // radius) for kind 10 (0x6FCB10)
@@ -795,6 +799,7 @@ public:
     void setLedgeHang(vec3 off) { ledgeHang_ = off; }
     // drive(): this tick's air motion set her down on a floor (the capsule's floor contact)
     bool driveLanded() const { return driveLanded_; }
+    void setFallHeight(float h) { s_.fallHeight = h; } // the chart drive's landing fall (World::tickCombat's damage)
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
@@ -875,6 +880,7 @@ private:
         vec2 stickDir{0};
         float controlYaw = 0;
         float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
+        float beamInset[2] = {0, 0}; // MarkupProfile::beamInset (strict sweeps of beams, type 14)
         MarkupProfile::Capsule poleH, poleV, hold; // MarkupProfile's class-record capsules (kind 10 on poles / holds)
         float ladderFaceDeg = 0;                   // MarkupProfile::ladderFaceDeg (kind 21 on ladders)
         // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).
@@ -2355,6 +2361,11 @@ public:
     // The script carries tru.exe's recorded stick ("stick"): its move axes are already the filtered stick record, so the
     // app does not run StickRateFilter on them.
     bool stickRecord() const { return stickRecord_; }
+    // The dt tru.exe's input update used for the frame `tick` reads, in 30 Hz frames ("frame_dt"); nullopt: not recorded.
+    std::optional<float> frameDt(uint64_t tick) const {
+        const auto it = frameDt_.find(tick);
+        return it == frameDt_.end() ? std::nullopt : std::optional<float>(it->second);
+    }
 
 private:
     struct Event { uint64_t tick; std::string action; float value; };
@@ -2362,6 +2373,7 @@ private:
     std::optional<CameraFollow> cameraFollow_;
     std::optional<CameraSeed> cameraSeed_;
     bool stickRecord_ = false;
+    std::map<uint64_t, float> frameDt_;
 };
 
 } // namespace ou::game

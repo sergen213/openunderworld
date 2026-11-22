@@ -16,7 +16,9 @@
 #include "game/Chart.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <numbers>
 
 namespace ou::game::chart {
@@ -349,6 +351,55 @@ bool carriedEncumbers(ChartContext& ctx, const Cond& c) {
     const int v = ctx.chart().value(c);
     return v == 0 ? !*b : v == 1 ? *b : false;
 }
+
+// 0x1EB (0x764FD0) / 0x1F0 (0x764E00): an s16 of the move sweep's record (player +0x31C, Chart.hpp moveSweepRecord) by
+// state int property 532 (0x214) i, the grapple's handle (owner messages 0x175 -> 0x176 -> +100: ours the grapple
+// attached [I]) and 0x6F2800 (combatMode). The record test passes on +0x31C alone (the "+0x320 fresh" byte is asked
+// only for the function's other ids). 0x1EB: grapple {+0x5C, +0x5A, +0x58}; else by byte +0x2C5 (sweepCandidates) and
+// combat: {+0x3C, +0x3A, +0x38} / {+0x4C, +0x4A, +0x48} with a candidate, {+0x44, +0x42, +0x40} / {+0x54, +0x52,
+// +0x50} without (for i = 1 / 0 / 2). 0x1F0: grapple {+0x74, +0x72, +0x70}, combat {+0x6C, +0x6A, +0x68}, else {+0x64,
+// +0x62, +0x60}; then unless 0x759850 holds for either candidate slot (+0x3A0 / +0x3E0: one found within data float
+// +0x624 = 7 of game time; ours a candidate now [I]) 2 -> 0 and 9 -> 7. No record: 0. Equal to the value [O].
+std::optional<int16_t> sweepSlot(ChartContext& ctx, const std::array<uint16_t, 3>& offs) {
+    const auto rec = ctx.moveSweepRecord();
+    if (!rec) return std::nullopt;
+    if (*rec < 0) return int16_t(0);
+    const Charts& d = ctx.chart().charts();
+    const auto base = d.pointer(d.dataOffset + 0x630);
+    const int i = ctx.chart().propInt(0x214).value_or(0);
+    if (!base || i < 0 || i > 2) return int16_t(0);
+    int16_t v = 0;
+    const size_t at = size_t(*base) + size_t(*rec) * 0x84 + offs[size_t(i == 1 ? 0 : i == 0 ? 1 : 2)];
+    if (at + 2 <= d.bytes.size()) std::memcpy(&v, d.bytes.data() + at, 2);
+    return v;
+}
+using Offs = std::array<uint16_t, 3>;
+bool sweepAnimSlot(ChartContext& ctx, const Cond& c) { // 0x1EB
+    const auto g = ctx.grapple();
+    const auto w = ctx.combatMode();
+    const auto cv = ctx.sweepCandidates();
+    if (!g || !w || !cv) return ctx.chart().unported(c);
+    const Offs offs = g->attached ? Offs{0x5C, 0x5A, 0x58}
+                      : *cv       ? (*w ? Offs{0x4C, 0x4A, 0x48} : Offs{0x3C, 0x3A, 0x38})
+                                  : (*w ? Offs{0x54, 0x52, 0x50} : Offs{0x44, 0x42, 0x40});
+    const auto s = sweepSlot(ctx, offs);
+    if (!s) return ctx.chart().unported(c);
+    return *s == ctx.chart().value(c);
+}
+bool sweepArmedSlot(ChartContext& ctx, const Cond& c) { // 0x1F0
+    const auto g = ctx.grapple();
+    const auto w = ctx.combatMode();
+    if (!g || !w) return ctx.chart().unported(c);
+    const Offs offs = g->attached ? Offs{0x74, 0x72, 0x70} : *w ? Offs{0x6C, 0x6A, 0x68} : Offs{0x64, 0x62, 0x60};
+    auto s = sweepSlot(ctx, offs);
+    if (!s) return ctx.chart().unported(c);
+    if (*s == 2 || *s == 9) {
+        const auto cand = ctx.jumpCandidates();
+        if (!cand) return ctx.chart().unported(c);
+        if (!cand->a && !cand->b) s = int16_t(*s == 2 ? 0 : 7);
+    }
+    return *s == ctx.chart().value(c);
+}
 // 0x5E0 (0x730250, cb 0x730140): bool property 1501 of the current state (0x6EEF00 mode 2), false when absent.
 bool prop1501(ChartContext& ctx, const Cond& c) {
     return edge(ctx, c, [&]() -> std::optional<bool> { return ctx.chart().propBool(1501).value_or(false); });
@@ -383,6 +434,22 @@ void searchProfileProp(ChartContext& ctx, const Property& p) {
     if (v <= 0) return;
     ctx.chart().field(p.id == 0x222 ? 0xC90 : 0xB00) = v;
     if (v == 0x13) ctx.playerInt(0xA84) = 0x13;
+}
+
+// Property 566 (0x236, handler 0x7684C0 in Lara's property table 0x8B2280) [O: disassembly]: a bool; true turns the
+// move sweep on (collision mask 0xFADA74 |= 0xA00: 0x7002D0 runs 0x5D7FA0, its +0x2C1 / +0x2C0 from bits 9 / 11) and
+// clears player bytes +0x2C4 / +0x2C3 / +0x2C7, +0x2C2 = (int property 532 == 1); false clears the bits and sets
+// +0x2C4 = 1.
+void moveSweepProp(ChartContext& ctx, const Property& p) {
+    if (p.type != 2) return;
+    if (ctx.chart().charts().propBool(p)) {
+        ctx.effect(JEffect::CollisionMask, 0xA00);
+        ctx.playerInt(0x2C4) = 0, ctx.playerInt(0x2C3) = 0, ctx.playerInt(0x2C7) = 0;
+        ctx.playerInt(0x2C2) = ctx.chart().propInt(0x214).value_or(0) == 1;
+    } else {
+        ctx.effect(JEffect::CollisionMask, -0xA00);
+        ctx.playerInt(0x2C4) = 1;
+    }
 }
 
 // ---- actions ----
@@ -662,6 +729,7 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     // 602 / 611's 0x74DCD0 only a ladder (+0xA64 MUD & 0x400000), with +0xCDC = 0
     const bool ladderOnly = cls == 602 || cls == 611;
     if (cls == 603) poleAttachSetter(ctx, alt); // 0x74C8D0 (group B)
+    else if (cls == 625) beamAttachSetter(ctx); // 0x74C110 (group B)
     else if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
 }
 
@@ -706,6 +774,8 @@ void registerJump(Registry& player, Registry&) {
     player.condition(0x403, combatFlag10, "CombatFlag10", fam);
     player.condition(0x417, combatFlag27, "CombatFlag27", fam);
     player.condition(0x5DD, carrying, "HasCarriedObject", fam);
+    player.condition(0x1EB, sweepAnimSlot, "PSCCF_ContextAnimSlot", fam);
+    player.condition(0x1F0, sweepArmedSlot, "PSCCF_ArmedStateSelect", fam);
     player.condition(0x5DE, carriedEncumbers, "PSCCF_CarriedObjectFlag18", fam);
     player.condition(0x5DF, carriedEncumbers, "PSCCF_PortableFlag18", fam);
     player.condition(0x5E0, prop1501, "Prop1501", fam);
@@ -715,6 +785,7 @@ void registerJump(Registry& player, Registry&) {
     player.condition(0x900, fireEvent38, "Do_FireAnimEvent38", fam);
 
     player.property(0x21D, searchProfileProp, "SearchProfileB00", fam);
+    player.property(0x236, moveSweepProp, "MoveSweepEnable", fam);
     player.property(0x222, searchProfileProp, "SearchProfileC90", fam);
     player.action(230, {nullptr, nullptr, markupAttachTarget, markupAttachTarget, nullptr, nullptr}, "MarkUpAttach_SetAnimTarget", fam);
     player.action(504, {takeoffEnter, nullptr, nullptr, nullptr, nullptr, takeoffUpdate}, "JumpTakeoffHeading", fam);

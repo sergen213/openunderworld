@@ -1846,19 +1846,24 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 // point, in the world [O: 0x723AB0 cases 2 / 3]
                 case 2: return m.points.front();
                 case 3: return m.points[size_t(si)];
-                case 28: return q.base;
-                // 29: 0x723AB0 case 0x1D, the query block's base (+0xA0) plus t times its velocity (+0x30 = the query
-                // object's +0x20, 0x771830's velocity) plus the candidate's +0x90 (taken as 0, as for 28) [O decomp]
-                case 29: return q.base + q.v * t;
-                case 21: { // 0x723AB0 case 0x15 -> 0x711530 by the candidate's MUD flags & 0xFFFFFC10: the candidate point for
-                    // 0x800000 / 0x40000 / 0x20000 / 0x10000 / 0x1000000 / 0x20000000 / 0x40000000 [O decomp]; the
-                    // other types (holds, poles, 0x80000 / 0x400000 / 0x10 / 0x4000000) are not ported
+                // 28 / 29: 0x723AB0 cases 0x1C / 0x1D, the query block's +0xA0 = the profile's start (base plus its
+                // offset, q.start) [O-runtime: Wine ch_beam_walk frame 120, source 29 x 8000.73 = her attach point
+                // less 63.21 along her facing, profile 84's offset], 29 plus t times its velocity (+0x30 = the query
+                // object's +0x20, 0x771830's velocity), both plus the candidate's +0x90 (taken as 0) [O decomp]
+                case 28: return q.start;
+                case 29: return q.start + q.v * t;
+                case 21: { // 0x723AB0 case 0x15 -> 0x711530 by the candidate's MUD flags & 0xFFFFFC10, then 0x431FD0 against
+                    // the block's base (+0xA0, with t x its velocity +0x30): for 0x800000 / 0x40000 / 0x20000 / 0x10000 /
+                    // 0x1000000 / 0x20000000 / 0x40000000 the candidate point less source 29 [O decomp + O-runtime: Wine
+                    // ch_beam_walk frame 120, beam 1031: source 21 = (-95.23, 55.60, -0.02) = source 4 (7905.50, 1754.03)
+                    // - source 29 (8000.73, 1698.43)]; the other types (holds, poles, 0x80000 / 0x400000 / 0x10 / 0x4000000)
+                    // are not ported
                     const uint32_t mf = collision::markupFlags(m.type);
                     const uint32_t k = mf & 0xFFFFFC10u;
                     const bool plain = !(mf & 0x8000) && (k == 0x800000 || k == 0x40000 || k == 0x20000 || k == 0x10000 ||
                                                           k == 0x1000000 || k == 0x20000000 || k == 0x40000000);
                     if (!plain && q.strict) q.unknown = true;
-                    return h;
+                    return h - (q.start + q.v * t);
                 }
                 case 4: case 31: return h;
                 default: // 33: a hold's point; ledges are no holds
@@ -2106,8 +2111,11 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                               glm::any(glm::lessThan(glm::max(xy(a), xy(b)) + kSweepPad, sLo))))
                 continue;
             const vec3 u = (b - a) / len;
+            // beams (strict): 0x6FE040's class-record insets, +0x98 at the first point, +0x9A at the last [O decomp]
+            const bool beam = m.type == 14 && q.strict;
             const float inset = perch || climb ? 0.0f : kLedgeInset;
-            const float lo = si == 0 ? inset : 0, hi = len - (si == last ? inset : 0);
+            const float lo = si == 0 ? (beam ? q.beamInset[0] : inset) : 0,
+                        hi = len - (si == last ? (beam ? q.beamInset[1] : inset) : 0);
             const auto perp = [&](vec3 w) { return w - u * glm::dot(w, u); };
             vec3 starts[2] = {q.hang, q.root};
             int nStarts = 2;
@@ -2666,7 +2674,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (hang && !root) q.root = q.hang;
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
-    q.cornerZone = float(p.cornerZone);
+    q.cornerZone = float(p.cornerZone), q.beamInset[0] = float(p.beamInset[0]), q.beamInset[1] = float(p.beamInset[1]);
     q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
@@ -4278,9 +4286,19 @@ void Player::drive(const DriveStep& d, float dt) {
                 // first key counting as the origin: S245's window ends at ng_planted_jump_forward's frame 1, its frame
                 // 0 root is 85.05 forward of the origin -> 85.05 per frame (WineChartTrace; ChartA's key-0 offset) [O]
                 const double frame = 1.0 / 30.0, ts = t0 + fade_.total - frame;
-                const auto at = [&](double t) { return t < -1e-4 ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop); };
+                // Out of the flight (a landing) the key-0 offset does not count: Wine runjump/t1204_stick_jump_stick
+                // lands at 5.31 then 15.92 a tick after 20.0 in the air, below the flight speed, where the origin rule
+                // gave ng_running_land 85 a frame (jump_brake peaked at 2229 vs the flight's 1975; ChartBlend) [O-runtime]
+                const bool landing = s_.state == State::Jump || s_.state == State::Fall || s_.state == State::HangJump;
+                const auto at = [&](double t) {
+                    return t < -1e-4 && !landing ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop);
+                };
                 const float vIn = glm::length(at(ts) - at(ts - frame)) / float(frame);
-                fade_.vOut = speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
+                // a once clip at its last frame (the chart's AnimationEnded rounds the length to whole keys) has no root
+                // speed left to carry out (Wine b973_top_run_fwd S57 -> S40: 3.3 on the change's tick, then 0; ours
+                // drifted ~50 units through ng_idle's 25-frame window) [O-runtime]
+                const bool ended = !s_.loop && s_.clipTime >= oc->durationSeconds() - 1.0 / 30.0;
+                fade_.vOut = ended ? 0.0f : speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
             } else {
                 fade_ = {};
             }
@@ -4342,11 +4360,14 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     case DriveStep::Motion::Slide: {
-        // the chart's slope states (S801..S821): legacy State::Slide's integration down the fall line; a standable or no
-        // floor leaves her where she is (the chart's ground check and stumble-off states take it from there)
+        // the chart's slope states (S801..S821): legacy State::Slide's integration down the fall line. Off the slide's end
+        // (no floor) she keeps her slide velocity, so she leaves the edge and the chart's ground check takes her into the
+        // fall (self-test ch20_yggdrasil_hall_eitr_pit stopped at the edge in the slide); on a standable floor she stops
+        // (the stumble-off state).
         const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
         const float dl = g ? glm::length(xy(g->normal)) : 0.0f;
         if (g && !standable(s_.pos, *g) && dl >= 1e-4f) slideStep(*g, dl, dt);
+        else if (!g) s_.pos = slide(s_.pos, vec3(xy(s_.vel) * dt, 0), t_.stepUp, true);
         else s_.vel = vec3(0);
         s_.fallStartZ = s_.pos.z;
         s_.ledge = -1;
@@ -4439,6 +4460,11 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     }
+    // The water entry hands her to the swim controller (the chart's swim states are its boundary): from the air once
+    // her root passes the volume's top, on foot past swimDepth (enterWater, tru.exe 0x5D77E0's depth class [O]); the
+    // next drive tick sees SwimSplash / SwimTread and parks the chart (self-test ch20_yggdrasil_hall_eitr_pit fell
+    // through the eitr without entering it).
+    if (d.motion == DriveStep::Motion::Air || d.motion == DriveStep::Motion::Ground || d.motion == DriveStep::Motion::Slide) enterWater();
 }
 
 } // namespace ou::game

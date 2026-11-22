@@ -29,7 +29,7 @@
      "expect": [{"probe": "grapple.swinging", "over": "all", "eq": true},
                 {"clips": ["grapple_rappel_free_swing_forward"]},
                 {"probe": "step.peak_height", "min": 1000, "note": "Forward held drives the swing higher every pass (tru.exe 0x746F60: the push follows her motion)"},
-                {"probe": "step.peak_speed", "min": 4000},
+                {"probe": "step.peak_speed", "min": 3500, "note": "re-measured under the move stick filter (0x483520, StickRateFilter): 3893.7 (4422.2 before, min 4000): the earlier steps' keys land a frame late, so Forward meets the swing at another phase; the bound keeps its margin (min / measured 0.90)"},
                 {"probe": "grapple.rope", "near": 2998.2, "tol": 5}]},
     {"step": "die_down", "duration": 6,
      "expect": [{"probe": "grapple.swinging", "over": "all", "eq": true},
