@@ -1991,7 +1991,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     // markup passes (`only` >= 0: one markup, which says nothing of the other types).
     if (q.strict && only < 0 && best.markup < 0 && !record.empty())
         for (int type = 0; type < 64 && !q.unknown; ++type) {
-            if (type == 1 || type == 13 || type == 9 || type == 15 || type == 4 || type == 6) continue; // swept above (strict)
+            // swept above (strict); type 0 carries MUD 0x80000000 (disabled: markupFlags, 0x5D6F90 | 0x5D70A0), which
+            // the sweep never takes as a candidate [I: the disabled bit's reader in 0x70F300 not traced]
+            if (type == 0 || type == 1 || type == 13 || type == 9 || type == 15 || type == 4 || type == 6) continue;
             if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
             if (std::any_of(record.begin(), record.end(), [&](const ClassEntry& e) { return entryGate(e, type); })) q.unknown = true;
         }
