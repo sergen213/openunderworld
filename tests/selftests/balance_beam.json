@@ -5,6 +5,7 @@
   "note": "l4_temple beam 1079 (GameReal.TempleBalanceBeamWalkAndJump); off balance she falls off sideways and catches ledge 1136 (0x742330 / 0x742770 balance controller, q64).",
   "level": "l4_temple",
   "spawn": [-5500, -8099, 3100, 0],
+  "chart_state": 918,
   "steps": [
     {"step": "on_the_beam", "duration": 0.2,
      "expect": [{"probe": "player.state", "eq": "beam"}, {"probe": "player.ledge", "eq": 1079}]},

@@ -2199,6 +2199,7 @@ int main(int argc, char** argv) {
         if (en.seaSwell) opt.graphics.water = "enhanced";
         opt.gfx = ou::config::resolve(opt.graphics);
         selfTest->trace = opt.selfTestTrace;
+        if (en.chartState >= 0 && opt.chartState.empty() && opt.game.traversal == "chart") opt.chartState = std::to_string(en.chartState) + "@0";
         // save / load input runs ou-game's quicksave: only into a redirected data directory, never the user's saves.
         if (const std::string why = ou::app::selftest::unsafeSaveReason(); selfTest->usesSaves() && !why.empty()) {
             std::fprintf(stderr, "ou-game: self-test %s: its save / load input needs XDG_DATA_HOME redirected (%s)\n", opt.selfTest.string().c_str(),

@@ -152,6 +152,10 @@ public:
         // Default false: the run sees tru.exe's own waves only (ou-game draws them with --ocean procedural), so
         // scenarios measured against tru.exe under Wine keep its numbers whatever the config's ocean.
         bool seaSwell = false;
+        // "chart_state": with --traversal chart, the chart enters this state when the run starts (as --chart-state N@0:
+        // a hold state's markup is seeded from where she stands), for a spawn the original reaches only through a
+        // traversal the scenario skips (standing on a beam) [I: harness only]. Legacy traversal ignores it.
+        int chartState = -1;
     };
     const Entry& entry() const { return entry_; }
     const std::string& name() const { return name_; }
