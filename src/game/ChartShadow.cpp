@@ -1090,6 +1090,12 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.restart = rt->clipStarts() != driveClipStarts;
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
         if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
+        // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
+        // them by +0x8C / +0x90 = animBlend, which the state's actions wrote this tick) [O].
+        if (p->clips.size() > 1) {
+            d.blendClips.assign(p->clips.begin() + 1, p->clips.end());
+            d.blendWeights = anim::layerBlendWeights(p->blendType, animBlend.x, animBlend.y, p->clips.size());
+        }
     } else {
         d.rate = animRate;
     }

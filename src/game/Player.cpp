@@ -266,6 +266,7 @@ void Player::play(std::string_view clip, bool loop, float rate, bool mirror) {
     s_.clipTime = t;
     s_.clipMix.clear();
     s_.mix = 0;
+    s_.blendClips.clear(), s_.blendWeights.clear();
 }
 
 void Player::playMix(std::string_view clip, std::string_view other, float mix) {
@@ -278,7 +279,20 @@ void Player::playMix(std::string_view clip, std::string_view other, float mix) {
 // Root motion of the clip between t0 and t1, its blend-space partner phase-synced and weighted in.
 static vec3 rootDelta(const AnimLibrary& anims, const PlayerState& s, const anim::Clip& c, double t0, double t1) {
     vec3 d = rootTranslation(c, t1, s.loop) - rootTranslation(c, t0, s.loop);
-    if (const anim::Clip* m = s.mix > 0 ? anims.find(s.clipMix) : nullptr) {
+    if (!s.blendWeights.empty()) {
+        // The anim layer blend (chart drive): each sub-layer's root motion at its phase-synced time, weighted as its pose
+        // (anim::layerBlendWeights) and normalised [I: tru.exe takes the blended pose's root, 0x4385A0 -> 0x4361C0].
+        vec3 sum = s.blendWeights[0] * d;
+        float total = s.blendWeights[0];
+        for (size_t i = 1; i < s.blendWeights.size() && i <= s.blendClips.size(); ++i) {
+            const anim::Clip* m = s.blendWeights[i] > 0 ? anims.find(s.blendClips[i - 1]) : nullptr;
+            if (!m) continue;
+            const double a = anim::partnerTime(c, *m, t0), b = anim::partnerTime(c, *m, t1);
+            sum += s.blendWeights[i] * (rootTranslation(*m, b, s.loop) - rootTranslation(*m, a, s.loop));
+            total += s.blendWeights[i];
+        }
+        if (total > 0) d = sum / total;
+    } else if (const anim::Clip* m = s.mix > 0 ? anims.find(s.clipMix) : nullptr) {
         const double k = m->durationSeconds() / c.durationSeconds();
         d = glm::mix(d, rootTranslation(*m, t1 * k, s.loop) - rootTranslation(*m, t0 * k, s.loop), s.mix);
     }
@@ -4145,6 +4159,8 @@ void Player::drive(const DriveStep& d, float dt) {
         }
         s_.clip = d.clip, s_.loop = d.loop, s_.mirror = d.mirror, s_.clipRate = 1;
         s_.clipMix.clear(), s_.mix = 0;
+        // the anim layer blend's sub-layers and this tick's weights (tru.exe writes +0x84 each tick, 0x437BA0)
+        s_.blendClips = d.blendClips, s_.blendWeights = d.blendWeights;
         t1 = d.time;
     } else if (const anim::Clip* c = anims_.find(s_.clip)) {
         t1 = t0 + double(d.rate) * dt;

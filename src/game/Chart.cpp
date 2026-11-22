@@ -183,6 +183,8 @@ std::optional<Charts> loadCharts(const ObjData& o) {
     for (const auto& p : anim::animPatterns(o.drm)) {
         Request r;
         r.rate = p.rate, r.mode = p.mode, r.start = p.start, r.blend = p.blend, r.nextBlend = p.nextBlend, r.mirror = p.mirror;
+        r.blendType = p.blendType;
+        for (const uint16_t a : p.anims) r.clips.push_back(a < list.size() ? list[a].name : std::string());
         if (!p.anims.empty() && p.anims[0] < list.size()) {
             const auto& e = list[p.anims[0]];
             r.clip = e.name;
@@ -925,6 +927,13 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
         const State& s = ch.states[size_t(i)];
         std::snprintf(buf, sizeof buf, "S%d req %d/k%d [%s] parent %d w8 %u", i, s.request, s.requestKind, clip(i).c_str(), s.parent, unsigned(s.word8));
         out << buf;
+        // the anim layer blend of a pattern request (+0x17 type; sub-layer clips)
+        if (s.requestKind != 2 && s.request >= 0 && size_t(s.request) < charts->requests.size())
+            if (const Request& r = charts->requests[size_t(s.request)]; r.clips.size() > 1 || r.blendType) {
+                out << " blend " << int(r.blendType) << " {";
+                for (const auto& c : r.clips) out << " " << c;
+                out << " }";
+            }
         out << " props [";
         for (const auto& p : s.props) out << " " << p.id << ":" << p.type << "=" << (p.target >= 0 ? "->" + hex(int(p.target)) : std::to_string(int32_t(p.raw)));
         out << " ] acts [";
@@ -959,6 +968,14 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
         showState(*only);
     } else if (!coverage) {
         for (size_t i = 0; i < ch.states.size(); ++i) showState(int(i));
+        // the patterns that play more than one anim: the anim layer blend's sub-layers (pattern +0x17 type)
+        out << "requests with sub-layers (index type clips):\n";
+        for (size_t i = 0; i < charts->requests.size(); ++i)
+            if (const Request& r = charts->requests[i]; r.clips.size() > 1) {
+                out << "  R" << i << " " << int(r.blendType) << " {";
+                for (const auto& c : r.clips) out << " " << c;
+                out << " }\n";
+            }
     }
     if (!coverage) return 0;
     // Reachable from the root: every transition a state can take (its own, its ancestors', its events' and the root
