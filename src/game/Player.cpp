@@ -4262,7 +4262,13 @@ void Player::drive(const DriveStep& d, float dt) {
                 // first key counting as the origin: S245's window ends at ng_planted_jump_forward's frame 1, its frame
                 // 0 root is 85.05 forward of the origin -> 85.05 per frame (WineChartTrace; ChartA's key-0 offset) [O]
                 const double frame = 1.0 / 30.0, ts = t0 + fade_.total - frame;
-                const auto at = [&](double t) { return t < -1e-4 ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop); };
+                // Out of the flight (a landing) the key-0 offset does not count: Wine runjump/t1204_stick_jump_stick
+                // lands at 5.31 then 15.92 a tick after 20.0 in the air, below the flight speed, where the origin rule
+                // gave ng_running_land 85 a frame (jump_brake peaked at 2229 vs the flight's 1975; ChartBlend) [O-runtime]
+                const bool landing = s_.state == State::Jump || s_.state == State::Fall || s_.state == State::HangJump;
+                const auto at = [&](double t) {
+                    return t < -1e-4 && !landing ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop);
+                };
                 const float vIn = glm::length(at(ts) - at(ts - frame)) / float(frame);
                 fade_.vOut = speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
             } else {
