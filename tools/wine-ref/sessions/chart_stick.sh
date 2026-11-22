@@ -35,5 +35,21 @@ for part in ${*:-chapel bedroom}; do
             CAMDUMP= VARS="$VARS,yaw_bits:p:38,fadf90_bits:a:FADF90,fadf94_bits:a:FADF94" \
                 creplay "$OU_CHART_DIR/runjump/t1204_run_jump_j$j.case.json" t1204_run_jump_j${j}_stick
         done ;;
+    temple2)
+        # ChartA (canonical replay drives the move axes from var_stick +0x00 / +0x04): stick takes of more t1204 cases
+        UNIT=l4_temple; OFF=500.69,9432.76,-19909.81
+        cunit l4_temple || exit 1
+        for n in t1204_stick_jump t1204_run_jump_j80 t1204_run_jump_j85 t1204_run_jump_j90; do
+            CAMDUMP= creplay "${CASEDIR:-$OU_CHART_DIR}/runjump/$n.case.json" ${n}_stick runjump
+        done ;;
+    sjo)
+        UNIT=l3_main_bedroom; OFF=9622,333,-2977
+        cunit l3_main_bedroom || exit 1
+        S=1137.7,-3997,-2733,0; i=0   # warm-up: the first jumps after a new game miss ledge 973
+        until SPAWN=$S HOLD=60 CAMFOLLOW=0,-1,1264,300 "$WREF_SRC/w.sh" chart trace 120 20:10:14 | tr -d '\r' | awk -F'\t' '$2==535{f=1} END{exit !f}'; do
+            i=$((i+1)); [ $i -gt 20 ] && { echo "ledge 973 never caught" >&2; exit 1; }
+            SPAWN=$S HOLD=10 "$WREF_SRC/w.sh" chart trace 60 11:5:9 > /dev/null; sleep 10; done
+        SPAWN=$S HOLD=10 "$WREF_SRC/w.sh" chart trace 120 11:5:9 > /dev/null
+        CAMDUMP= creplay "${CASEDIR:-$OU_CHART_DIR}/jump/stick_jump_open.case.json" stick_jump_open_stick jump ;;
     esac
 done

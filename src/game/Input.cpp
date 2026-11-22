@@ -152,7 +152,8 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
 // case tick + hold + settle. Mask bits: 1 Fwd, 2 Back, 4 Left, 8 Right (stick axes), 0x10 Jump,
 // 0x20 Interact, 0x40 Crouch (drop), 0x80 Sprint, 0x100 Walk, 0x200 Grapple.
 namespace {
-bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out, std::optional<float>& cameraYaw) {
+bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out, std::optional<CameraFollow>& follow,
+                     std::optional<CameraSeed>& seed) {
     const auto first = text.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos || (text[first] != '[' && text[first] != '{')) return false;
     nlohmann::json j;
@@ -167,14 +168,29 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
         if (j.contains("spawn"))
             for (const char* k : {"hold_ticks", "settle_ticks"})
                 if (j["spawn"].contains(k)) shift += j["spawn"][k].get<uint64_t>();
-        // "camera_follow": "dx,dy,dist,height" (the corpus' CAMFOLLOW, Forward = (dx, dy) in the world); a string whose
-        // first two fields are not numbers is a note (no pin).
+        // "camera_follow": "dx,dy,dist,height" (the corpus' CAMFOLLOW, Forward = (dx, dy) in the world; dist / height
+        // default 1264 / 300 as the corpus records them); a string whose first two fields are not numbers is a note (no pin).
         if (j.contains("camera_follow") && j["camera_follow"].is_string()) {
             const std::string cf = j["camera_follow"].get<std::string>();
-            float dx = 0, dy = 0;
+            CameraFollow f;
             char sep = 0;
             std::istringstream cs(cf);
-            if ((cs >> dx >> sep >> dy) && sep == ',' && (dx != 0 || dy != 0)) cameraYaw = std::atan2(dy, dx);
+            if ((cs >> f.dx >> sep >> f.dy) && sep == ',' && (f.dx != 0 || f.dy != 0)) {
+                if (cs >> sep >> f.dist && sep == ',') cs >> sep >> f.height;
+                follow = f;
+            }
+        }
+        // "camera_at_key" (WineChartTrace's unpinned takes): tru.exe's free camera at that case tick, tru frame. A replay
+        // starts its camera there (World::seedCamera), as its own camera history before the case is not reproducible.
+        if (j.contains("camera_at_key") && j["camera_at_key"].is_object() && j.contains("offset_tru_minus_ours")) {
+            const auto& k = j["camera_at_key"];
+            const auto& o = j["offset_tru_minus_ours"];
+            if (k.contains("tick") && k.contains("camera_pos_tru") && k["camera_pos_tru"].size() == 3 && o.size() == 3) {
+                CameraSeed sd;
+                for (int i = 0; i < 3; ++i) sd.pos[i] = k["camera_pos_tru"][i].get<float>() - o[i].get<float>();
+                sd.tick = k["tick"].get<uint64_t>() + shift + 1; // that frame's end: the next update starts from it
+                seed = sd;
+            }
         }
         if (!j.contains("input")) throw std::runtime_error("input script: case object without \"input\"");
         // "stick": [[tick, x, y], ...], the stick record tru.exe's chart read (0xFADFB0 +0xB0 +0x00 / +0x04: x right, y
@@ -218,7 +234,7 @@ InputScript InputScript::parse(std::string_view text) {
                                                     "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda",
                                                     "light", "grenade", "recenter", "camera", "manual"};
     InputScript s;
-    if (std::vector<std::tuple<uint64_t, std::string, float>> mask; parseMaskScript(text, mask, s.cameraYaw_)) {
+    if (std::vector<std::tuple<uint64_t, std::string, float>> mask; parseMaskScript(text, mask, s.cameraFollow_, s.cameraSeed_)) {
         for (auto& [tick, action, value] : mask) s.events_.push_back({tick, std::move(action), value});
         std::stable_sort(s.events_.begin(), s.events_.end(), [](const Event& a, const Event& b) { return a.tick < b.tick; });
         return s;

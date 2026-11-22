@@ -577,7 +577,7 @@ struct MarkupEntry {
     std::span<const MarkupTest> tests;
     std::span<const uint16_t> bits = {};
     // +0 / +4 / +8: the entry's point offset in her model frame (x, y, z): 0x728F00's point source 5 is her root plus
-    // it turned by her rotation (0x729420 takes it while the query's own +0x90 offset is zero)
+    // it turned by her rotation (0x729420 takes it while the query's own +0x90 offset is zero, as 0x716220 leaves it)
     vec3 offset{0};
 };
 // One lara.drm query profile (object data +0xDE4 count, +0xDE8 {id, record}; tru.exe 0x6F1950) decoded for the
@@ -596,6 +596,13 @@ struct MarkupProfile {
     float snap[3] = {0, 0, 0};    // +0xAC / +0xB0 / +0xB4: 0x724F50's snaps to her yaw (degrees)
     float minT = 0, coneDeg = 0;  // +0x20 (frames), +0x24
     int minDist = 0;              // +0x28 (short)
+    // the ledge markup-class record's (Lara data +0x584, 0x5D5930) short +0x9E: how near a segment end a candidate
+    // must lie for the corner tests 0x737B30 / 0x723540 (kinds 28..30)
+    int cornerZone = 0;
+    // The pole markup-class records' capsules (0x5D57A0: Lara data +0x594 a horizontal pole, +0x58C an upright one;
+    // record +0x30 / +0x34 / +0x38 the offset in her model frame, +0x54 height, +0x58 radius) for kind 10 (0x6FCB10)
+    struct Capsule { vec3 offset{0}; float height = 0, radius = 0; };
+    Capsule poleH, poleV;
     uint32_t flags = 0;           // +0x2C (0x80 coming down, 0x40 the ledge class table, 0x400 no gravity)
     int frames = 0;               // +0xA4, else object data +0xBDE
     struct Start { int type; float up, out; };
@@ -825,6 +832,8 @@ private:
         // control yaw (kind 9, 0x6EBA90); markupSearch fills them.
         vec2 stickDir{0};
         float controlYaw = 0;
+        float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
+        MarkupProfile::Capsule poleH, poleV; // MarkupProfile's pole capsules (kind 10 on poles)
         // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).
         std::array<std::pair<int, vec3>, 8> typeStart{};
         int typeStarts = 0;
@@ -960,6 +969,13 @@ struct CameraState {
     vec3 up{0, 0, 1};              // spline cameras roll
     float fovDeg = 0;              // vertical; 0 = World::fovDeg (spline cameras use their own)
 };
+// The Wine harness's CAMFOLLOW (tools/wine-ref/src/chart.c): every frame end it writes g_camera +0x90 (position) and
+// +0x150 (proposed point) = her position - (dx, dy, 0) x dist + (0, 0, height); tru.exe's next camera update reads its
+// angles back from there (0x600200 -> 0x5FF320), keeps its distance state +0x1D4, and follows (0x600710).
+struct CameraFollow { float dx = 0, dy = -1, dist = 1264, height = 300; };
+// A Wine unpinned take's camera (case "camera_at_key", our frame): the replay's orbit camera starts its update of trace
+// tick `tick` from `pos` (World::seedCamera), its distance state the distance to the pivot.
+struct CameraSeed { vec3 pos{0}; uint64_t tick = 0; };
 struct SplineCamera; // a unit camera spline playing (Camera.cpp)
 
 // ---- world ------------------------------------------------------------------------------------
@@ -1141,6 +1157,11 @@ public:
     // Input replays of Wine corpus cases (InputScript::cameraYaw): the stick reads against this world yaw every tick, as
     // tru.exe's pinned camera had it; nullopt (default): the camera's.
     void pinStickYaw(std::optional<float> yaw) { stickYawPin_ = yaw; }
+    // Replays only (--camera-follow, a case's camera_follow): the Wine harness's CAMFOLLOW, the orbit camera's position
+    // and proposed point put at her position - (dx, dy) x dist + (0, 0, height) before every update, as chart.c writes
+    // g_camera +0x90 / +0x150 between frames; the update then runs as in play from there. nullopt (default): play.
+    void pinCamera(std::optional<CameraFollow> f) { cameraPin_ = f; }
+    void seedCamera(std::optional<CameraSeed> s) { cameraSeed_ = s; }
     const CameraState& previousCamera() const { return prevCam_; }
     // Field camera view (World::tick): on, and its zoom 0..1 (the app draws the g_binoculars viewfinder).
     bool fieldCamera() const { return fieldCamera_; }
@@ -1794,6 +1815,8 @@ private:
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
     std::optional<vec3> lookPoint_; // its look point (+0x620), lagging the same goal while swimming (World.cpp)
     std::optional<float> stickYawPin_; // pinStickYaw
+    std::optional<CameraFollow> cameraPin_; // pinCamera
+    std::optional<CameraSeed> cameraSeed_;  // seedCamera
     vec3 pivot_{0}; // cameraPivot(): the orbit camera's pivot this tick (output only, recomputed by every update)
     // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
     // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
@@ -2246,14 +2269,19 @@ public:
     static InputScript parse(std::string_view text); // throws std::runtime_error with the line number
     static InputScript load(const std::filesystem::path& path);
     Actions at(uint64_t tick) const; // state after applying every event with tick <= `tick`
-    // A Wine case's "camera_follow" ("dx,dy,dist,height": tru.exe's CAMFOLLOW pins the camera behind her along (dx, dy),
-    // so Forward is that world direction): the stick yaw atan2(dy, dx) the world reads input against; nullopt without.
-    std::optional<float> cameraYaw() const { return cameraYaw_; }
+    // A Wine case's "camera_follow" ("dx,dy,dist,height"): the pin (World::pinCamera), and the stick yaw atan2(dy, dx) the
+    // world reads input against (World::pinStickYaw); nullopt without.
+    std::optional<CameraFollow> cameraFollow() const { return cameraFollow_; }
+    std::optional<CameraSeed> cameraSeed() const { return cameraSeed_; } // a freecam take's "camera_at_key"
+    std::optional<float> cameraYaw() const {
+        return cameraFollow_ ? std::optional<float>(std::atan2(cameraFollow_->dy, cameraFollow_->dx)) : std::nullopt;
+    }
 
 private:
     struct Event { uint64_t tick; std::string action; float value; };
     std::vector<Event> events_; // sorted by tick (stable)
-    std::optional<float> cameraYaw_;
+    std::optional<CameraFollow> cameraFollow_;
+    std::optional<CameraSeed> cameraSeed_;
 };
 
 } // namespace ou::game

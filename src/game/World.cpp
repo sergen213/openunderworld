@@ -929,6 +929,16 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     const Bike* bike = ridden();
     const PlayerState& s = player_.state();
     const CameraState last = cam_; // the camera the focus points' view / sight tests see (g_camera, last frame's)
+    // Replays: the Wine harness's CAMFOLLOW (pinCamera) wrote +0x90 / +0x150 at the last frame's end from her position
+    // then (prev_), after the chart read that frame's camera matrix; the distance state +0x1D4 and the angles' cache stay.
+    if (cameraPin_ && orbit_.valid && !bike) {
+        const CameraFollow& f = *cameraPin_;
+        cam_.position = orbit_.desired = prev_.pos + vec3(-f.dx * f.dist, -f.dy * f.dist, f.height);
+    }
+    // Replays of an unpinned take (seedCamera): tru.exe's free camera at the key tick, as its history before the case
+    // cannot be reproduced; the update then runs as in play.
+    const bool seeded = cameraSeed_ && orbit_.valid && !bike && ticks_ == cameraSeed_->tick;
+    if (seeded) cam_.position = orbit_.desired = cameraSeed_->pos;
     // Camera mode: the player's state machine requests it through CameraManager 0xE804F0's slot 17 (message 0x44E ->
     // 0x7683B0 -> 0x5E8210; Wine, hooked at 0x5E8210 while she acted: on foot, jumping and falling 1, free climb 4, ledge hang and
     // shimmy 11, surface swim 20, under water 19), and what its mode-list entry sets; a mode without command 10 / 2
@@ -943,18 +953,26 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         bool floorProbe = true;                                   // command 0x13
         float yawRange = 3.1415927f, pitchLo = -1.2f, pitchHi = 0.7f; // commands 7 / 8 ([I] our free on-foot pitch)
         bool pullIn = false;                                      // command 15: 0x5F0810 instead of the collider
+        // Command 7's soft yaw limit (0x607A30: with its flag byte arg 4, +0x18 = arg 2 deg, +0x1C = arg 3 deg/s; without,
+        // +0x18 = the range, +0x1C = 100000): 0x600200's 0x608560 takes the proposed yaw beyond +0x18 back toward it by at
+        // most +0x1C x dt per frame (after the hard clamp to the range). Mode list (camera DTP 0x14 +0x154, 25 entries):
+        // modes 11 / 14 / 15, 21 / 22, 37 / 38 / 39, 10, 4, 47 carry {0, 90, 70, 25, 1}: soft 70 deg at 25 deg/s.
+        float yawSoft = 3.1415927f, yawSoftSpeed = 0;
     } mode;
     const float k55 = glm::radians(55.0f), k90 = glm::radians(90.0f), kFree = mode.yawRange;
+    const float k70 = glm::radians(70.0f), k25 = glm::radians(25.0f);
     const vec3 rec1 = mode.offset, zones = mode.zones;
     switch (s.state) {
-    case State::Climb: mode = {4, {0, 0, 79.01f}, zones, 1264.22f, false, k90, -k55, k55, true}; break; // record 10
+    case State::Climb: mode = {4, {0, 0, 79.01f}, zones, 1264.22f, false, k90, -k55, k55, true, k70, k25}; break; // record 10
+    // Hang states request mode 37 (shimmy and the idle hangs S434 / S436 / S443 / S446 / S447 / S506, state property 1102)
+    // or 11 (S254 / S257..S260 / S452 / S505): one mode-list entry ({37, 39, 38} and {11, 15, 14} carry the same commands).
     case State::Hang: case State::Shimmy: case State::DropToHang: case State::ClimbUp: // [I] the last two
-        mode = {11, {0, 63.21f, 316.06f}, zones, 1896.3f, false, k90, -k55, k55, true}; break; // record 8, distance 1896.3
+        mode = {11, {0, 63.21f, 316.06f}, zones, 1896.3f, false, k90, -k55, k55, true, k70, k25}; break; // record 8, distance 1896.3
     case State::SwimSurface: case State::SwimTread: case State::SwimSplash: // command 8 (-40, 30)
         mode = {20, rec1, zones, 1264.22f, false, kFree, glm::radians(-70.0f), glm::radians(-10.0f)}; break;
     case State::SwimUnder: case State::SwimDive: case State::Surfacing: case State::SwimDodge: // record 41 (no dead zones), command 8 (-5, 80)
         mode = {19, vec3(0), vec3(0), 1264.22f, false, kFree, glm::radians(-85.0f), glm::radians(75.0f)}; break;
-    case State::Ladder: mode = {10, rec1, zones, 1896.3f, false, k90, -k55, k55, true}; break; // distance 1896.3
+    case State::Ladder: mode = {10, rec1, zones, 1896.3f, false, k90, -k55, k55, true, k70, k25}; break; // distance 1896.3
     case State::Perch: mode = {16, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
     case State::Pillar: mode = {17, rec1, zones, 1264.22f, false, kFree, -k55, k55, true}; break;
     case State::Beam: mode = {3, rec1, zones, 1264.22f, true, kFree, -1.2f, 0.7f, true}; break;
@@ -1060,7 +1078,11 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
                         case 4: pitchOverride = camOverride(kPitchOverrides, std::size(kPitchOverrides), id); break;
                         case 5: yawOverride = c.arg; break;
                         case 6: pitchOverride = c.arg; break;
-                        case 7: mode.yawRange = glm::radians(c.arg[1]); break; // centre c.arg[0] 0 (behind her) in its one use
+                        case 7: // centre c.arg[0] 0 (behind her) in its one use; soft limit with the flag byte (0x607A30)
+                            mode.yawRange = glm::radians(c.arg[1]);
+                            if (std::bit_cast<uint32_t>(c.arg[4]) & 0xFF) mode.yawSoft = glm::radians(c.arg[2]), mode.yawSoftSpeed = glm::radians(c.arg[3]);
+                            else mode.yawSoft = mode.yawRange, mode.yawSoftSpeed = 0;
+                            break;
                         case 8: mode.pitchLo = glm::radians(c.arg[0] - c.arg[1]), mode.pitchHi = glm::radians(c.arg[0] + c.arg[1]); break;
                         case 2: case 0xD: mode.distance = c.arg[0]; break;
                         case 0x15: mode.floorProbe = false; break;
@@ -1264,6 +1286,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         return p;
     };
     const vec3 target = clearance(*focus_);
+    if (seeded) orbit_.dist = glm::distance(orbit_.desired, target), orbit_.speed = 0; // +0x1D4 = |+0x150 - focus| (0x5FE9A0)
     const float kDistance = bike ? 1711.0f : mode.distance; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
     const bool reseed = snap || !orbit_.valid || (!cut && (cam_.yaw != orbit_.yaw || cam_.pitch != orbit_.pitch)); // [I] set from outside
     if (reseed) { // where the angles put it (at full distance after a spawn or teleport)
@@ -1476,6 +1499,12 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // Yaw limit (0x608700, command 7 via 0x609C00 / 0x607A30: (0 + 90) deg in her frame = behind her, half-range 90):
     // the camera stays on her back side, its look within yawRange of her heading.
     if (lim.yawRange < 3.14f) cam_.yaw = s.yaw + std::clamp(std::remainder(cam_.yaw - s.yaw, 6.2831853f), -lim.yawRange, lim.yawRange);
+    // Then the soft limit (0x608560's tail, in 0x600200 only when the frame is not turned by look input): beyond the mode's
+    // soft half-range the yaw goes back toward it by at most its speed x dt [I: not blended with the hard limits' 0.25 s].
+    if (!looking && mode.yawSoftSpeed > 0 && lim.yawRange < 3.14f) {
+        const float off = std::remainder(cam_.yaw - s.yaw, 6.2831853f), over = std::abs(off) - mode.yawSoft;
+        if (over > 0) cam_.yaw -= std::copysign(std::min(over, mode.yawSoftSpeed * dt), off);
+    }
     // It looks at the look tracker's point (0x6009C0: through the same clearance 0x5FE930 -> 0x5EA050; while swimming
     // that tracker trails the pivot, above), moved by a trigger's 0x1A / 0x1C offset (Wine, the yacht deck: +0x160
     // points 79.01 under the pivot), turned toward the focus points: 0x6022F0 hands 0x5F1540 (updateFocusPoints) the
