@@ -240,6 +240,8 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
             collision::Markup k;
             k.type = type, k.id = at<uint16_t>(*m, q + 0x2E);
             for (uint32_t j = 0; j < n; ++j) k.points.push_back(vec(*m, *pl + 0x10 + 0x10 * j));
+            // the box (+0x34 centre, +0x40 / +0x4C min / max corner from it), in the segment's space like the points
+            k.centre = vec(*m, q + 0x34), k.boxMin = vec(*m, q + 0x40), k.boxMax = vec(*m, q + 0x4C);
             o.markup.push_back(std::move(k));
             o.markupSegment.push_back(at<int16_t>(*m, q + 0x30));
         }

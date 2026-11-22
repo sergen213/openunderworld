@@ -142,6 +142,7 @@ void World::tickBreakableMarkup() {
                 if (added) {
                     collision::Markup m = markup[j];
                     for (vec3& q : m.points) q = vec3(b.frame * glm::vec4(q, 1));
+                    m.centre = vec3(b.frame * glm::vec4(m.centre, 1));
                     col_.markup.push_back(std::move(m));
                 }
                 if (size_t(it->second) < col_.markup.size()) col_.markup[size_t(it->second)].type = whole ? markup[j].type : 0;

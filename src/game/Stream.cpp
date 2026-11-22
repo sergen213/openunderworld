@@ -652,6 +652,7 @@ void World::rebuildCollision() {
             // first three and the two markers are positions.
             const bool box = m.type == 10 && m.points.size() >= 5;
             for (size_t i = 0; i < (box ? 3 : m.points.size()); ++i) m.points[i] += u.offset;
+            m.centre += u.offset;
             if (box && m.points.size() > kWaterIds) {
                 m.points[kWaterSink] += u.offset, m.points[kWaterSource] += u.offset;
                 applyWaterState(m, u.offset);

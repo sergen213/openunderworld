@@ -3,6 +3,7 @@
 #include "collision/Collision.hpp"
 
 #include <cstring>
+#include <limits>
 #include <map>
 
 namespace ou::collision {
@@ -167,6 +168,11 @@ void decodeMarkup(Unit& u, Pointer level, CollisionMesh& out, std::vector<std::s
                 const vec3 p = vec(u, pts, 32 * size_t(k)); // +16: (0,0,1000,0) in every point seen, unknown
                 mk.points.push_back(r0 * p.x + r1 * p.y + r2 * p.z + r3);
             }
+            // 0x5C9DA0: the box's centre is the transformed points' mean, its corners their bounds less the centre
+            vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max()), sum(0);
+            for (const vec3& p : mk.points) lo = glm::min(lo, p), hi = glm::max(hi, p), sum += p;
+            mk.centre = sum / float(n);
+            mk.boxMin = lo - mk.centre, mk.boxMax = hi - mk.centre;
         }
         // Camera commands {u32 command, args} x 0x18 bytes (+0x64 count, +0x68 list; tru.exe 0x5FE800 -> 0x6019D0):
         // command 0x12 points at one of the unit's camera records.
