@@ -4264,7 +4264,11 @@ void Player::drive(const DriveStep& d, float dt) {
                 const double frame = 1.0 / 30.0, ts = t0 + fade_.total - frame;
                 const auto at = [&](double t) { return t < -1e-4 ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop); };
                 const float vIn = glm::length(at(ts) - at(ts - frame)) / float(frame);
-                fade_.vOut = speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
+                // a once clip at its last frame (the chart's AnimationEnded rounds the length to whole keys) has no root
+                // speed left to carry out (Wine b973_top_run_fwd S57 -> S40: 3.3 on the change's tick, then 0; ours
+                // drifted ~50 units through ng_idle's 25-frame window) [O-runtime]
+                const bool ended = !s_.loop && s_.clipTime >= oc->durationSeconds() - 1.0 / 30.0;
+                fade_.vOut = ended ? 0.0f : speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
             } else {
                 fade_ = {};
             }
