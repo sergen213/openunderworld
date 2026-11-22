@@ -1,4 +1,5 @@
 #include "fx/Weather.hpp"
+#include "fx/Fx.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -60,9 +61,19 @@ void Weather::setScript(int32_t rainPercent, int32_t lightningMin, int32_t light
     }
 }
 
+void Weather::setSnow(int32_t percent) {
+    snow_ = percent * 0x400 / 100; // 0x52E130: snow clears the rain (music variable 2 to 0 when it was raining)
+    if (percent) {
+        if (rain_) musicVar_ = 0;
+        rain_ = ramp_ = 0;
+    }
+}
+
 void Weather::clear() {
     drops_ = {};
     live_ = 0;
+    flakeSlots_ = {};
+    flakes_ = 0;
     ramp_ = timer_ = kind_ = step_ = 0;
     flashOn_ = false;
     ticks_ = 0;
@@ -79,8 +90,14 @@ void Weather::tick(const WeatherDef* def, const Camera& cam, const World& world,
     events_.clear();
     eyeDelta_ = ticks_++ ? cam.eye - prevEye_ : glm::vec3(0);
     prevEye_ = cam.eye;
+    exeOrigin_ = world.exeOrigin;
     if (rain_) musicVar_ = uint8_t((world.unitFlags & 2) != 0); // 0x545950 every rain frame
     if (!def) return; // 0x546FC0: no weather object, no weather
+    if (flakes_) snowFall(cam); // 0x546FC0's order: flakes fall, spawn, then the drops
+    if (snow_) {
+        musicVar_ = uint8_t((world.unitFlags & 2) != 0); // 0x539EF0 every snow frame
+        snowSpawn(cam, world);
+    }
     if (live_) // 0x52DFA0, one 60 Hz step
         for (auto& d : drops_) {
             if (!d.life) continue;
@@ -106,6 +123,7 @@ void Weather::tick(const WeatherDef* def, const Camera& cam, const World& world,
         else intensity_ = float(v) / 4096.0f, ++step_;
     }
     if (rain_) splashes(cam, world);
+    if (flakes_ && !cinematic) snowCull(cam); // the draw (0x534DF0, skipped in cinematics) right after this tick
 }
 
 // 0x545950: refill the 512 drops at up to 32 a frame, at the top of the view (screen y 5), below the precipitation
@@ -120,7 +138,7 @@ void Weather::spawn(const WeatherDef& def, const Camera& cam, const World& world
     // up to 0x1FFF and beyond 4096 (x depth / 4096).
     const bool deep = world.unitFlags & 0x20000;
     const auto depthRand = [&] { return float(deep ? rand() % 18000 : rand() & 0x1FFF) * depthScale; };
-    const size_t n = std::min<size_t>(kDrops - live_, 32);
+    const size_t n = std::min<size_t>(kDrops - live_ - flakes_, 32); // drops and flakes share the 512 records
     for (size_t k = 0; k < n; ++k) {
         float sx = float(rand() % (spread + 512) - spread / 2), depth = depthRand();
         glm::vec3 p = fromScreen(cam, sx, 5, depth);
@@ -143,6 +161,124 @@ void Weather::spawn(const WeatherDef& def, const Camera& cam, const World& world
                  int16_t(30 - int32_t(depth * -45.0f / 8000.0f)), uint8_t(rand() & 3)};
         ++live_;
     }
+}
+
+namespace {
+// tru.exe's ftol (0x814D20, truncating) of a flake coordinate, kept through movsx as an s16 (0x539EF0, 0x539CD0).
+int32_t flakeCoord(float v) { return int32_t(int16_t(int32_t(v))); }
+// 0x52EF50: cos of a 4096-unit angle, x 4096 (the table at 0x8A0840).
+int32_t cos12(int32_t a) { return int32_t(std::lround(std::cos(float(a & 0xFFF) * (6.2831853f / 4096.0f)) * 4096.0f)); }
+uint8_t twinkle(uint8_t v) { const int32_t n = v + 8; return uint8_t(n > 0xFF ? n - 0xFF : n); }
+} // namespace
+
+// 0x539CD0, one 60 Hz frame: falling flakes drop by +0x14 and sway (the phase walks by rand & 63 - fall / 2); drifting
+// ones move by (+0x10, +0x12). A flake whose z reaches its ground + 32 (0x534DF0 sets z = ground when it leaves the
+// view) starts again at a random point of the view (0x52DF00 -> 0x539C00) while snow is on, else ends. tru.exe calls the
+// precipitation height map there (0x5C32C0) but drops its result: only the point's own z must exceed -29968 in its
+// frame, so flakes fall through roofs [O: asm 0x539E18 .. 0x539E2F].
+void Weather::snowFall(const Camera& cam) {
+    for (auto& f : flakeSlots_) {
+        if (!f.life) continue;
+        if (!f.drift) {
+            f.z += f.vz;
+            f.phase = int16_t(f.phase + (rand() & 0x3F) - f.vz / 2);
+            if (!f.a) f.b = twinkle(f.b);
+            else f.a = twinkle(f.a);
+        } else {
+            f.x += f.phase, f.y += f.drift;
+        }
+        if (f.z <= f.ground + 32) {
+            if (!snow_) { f.life = 0, --flakes_; continue; }
+            glm::vec3 p(0);
+            bool placed = false;
+            for (int attempt = 0; attempt < 2 && !placed; ++attempt) {
+                const float sx = float(rand() & 0x1FF), sy = float(rand() % 0x1C0), depth = float(rand() % 0x3000 + 0x400);
+                p = fromScreen(cam, sx, sy, depth) - exeOrigin_;
+                placed = p.z >= -29968.0f;
+            }
+            if (!placed) { f.life = 0, --flakes_; continue; }
+            f.x = flakeCoord(p.x), f.y = flakeCoord(p.y), f.z = flakeCoord(p.z), f.ground = -30000;
+            f.variant = uint8_t(rand() & 7);
+            if (f.drift) f.a = f.b = 0; // 0x52DF50
+            else if ((rand() & 0xFFF) < 0xC00) f.a = 0, f.b = uint8_t((rand() & 0x7F) + 0x7F);
+            else f.b = 0, f.a = uint8_t((rand() & 0x7F) + 0x7F);
+        }
+        if (f.life > 0) --f.life;
+        if (f.life <= 0) f.life = 0, --flakes_;
+    }
+}
+
+// 0x539EF0: up to snow / 2 flakes (512 at 100 %), at most 20 + |yaw change| x 4096 / 2 (<= 50) new a frame, at the top
+// of the view (screen y 5; anywhere while the camera turns by more than 16 / 4096 rad a frame), 1024 .. 13311 deep,
+// falling 14 .. 17 units a frame for 300 frames. 80 % of those nearer than 1536 (while the camera's z is above -29872)
+// get screen coordinates and a screen drift instead; 0x534DF0 draws them unprojected, so they leave the +-1.1 view
+// test at once and only hold their record (and turn up again as invisible respawns) [O: asm 0x53A17E .. 0x53A2A6].
+void Weather::snowSpawn(const Camera& cam, const World& world) {
+    const float yaw = std::atan2(cam.forward.x, cam.forward.y);
+    float turn = std::abs(yaw - prevYaw_);
+    if (turn > 3.14159265f) turn = 6.2831853f - turn;
+    turn *= 4096.0f;
+    prevYaw_ = yaw;
+    int32_t n = snow_ / 2 - int32_t(flakes_);
+    if (n <= 0) return;
+    n = std::min(n, std::min(50, 20 - int32_t(turn * -0.5f)));
+    const bool nearDrift = cam.eye.z - world.exeOrigin.z >= -29872.0f;
+    for (int32_t k = 0; k < n; ++k) {
+        int16_t phase = int16_t(rand() & 0xFFF), drift = 0, vz = int16_t(-14 - (rand() & 3));
+        glm::vec3 p(0), screen(0);
+        bool placed = false;
+        for (int attempt = 0; attempt < 2 && !placed; ++attempt) {
+            screen.x = float(rand() & 0x1FF);
+            screen.y = turn < 16.0f ? 5.0f : float(rand() % 0x1C0);
+            screen.z = float(rand() % 0x3000 + 0x400);
+            p = fromScreen(cam, screen.x, screen.y, screen.z) - world.exeOrigin;
+            placed = attempt == 0 ? p.z >= -29968.0f : p.z > -29968.0f;
+        }
+        if (!placed) continue;
+        int32_t ground = -30000;
+        if (nearDrift && screen.z < 1536.0f && (rand() & 0x3FF) > 200) {
+            const float d = screen.z - 1024.0f;
+            phase = int16_t(int32_t(d / 32.0f - 20.0f - float(rand() & 3)));
+            drift = int16_t(int32_t(14.0f - d / 64.0f + float(rand() & 3)));
+            vz = 0;
+            p.x = float(rand() & 0x3FF), p.y = 0;
+            if (p.x >= 512.0f) p.x = 511.0f, p.y = float(rand() % 0x1C0);
+            p.z = float((rand() & 0x3FF) + 0x480);
+            ground = int32_t(p.z - 448.0f);
+        }
+        if (live_ + flakes_ >= kDrops) return; // 0x52DE50: no free record
+        Flake& f = *std::find_if(flakeSlots_.begin(), flakeSlots_.end(), [](const Flake& s) { return !s.life; });
+        f.x = flakeCoord(p.x), f.y = flakeCoord(p.y), f.z = flakeCoord(p.z), f.ground = ground;
+        f.phase = phase, f.drift = drift, f.vz = vz, f.life = kFlakeLife;
+        f.variant = uint8_t(rand() & 7);
+        if (f.drift) f.a = f.b = 0;
+        else if ((rand() & 0xFFF) < 0xC00) f.a = 0, f.b = uint8_t((rand() & 0x7F) + 0x7F);
+        else f.b = 0, f.a = uint8_t((rand() & 0x7F) + 0x7F);
+        ++flakes_;
+    }
+}
+
+// 0x534DF0's position and view test: a falling flake at (x + cos(phase) / 128, y - cos(phase) / 128, z), projected; a
+// drifting one takes its coordinates as projected ones. Kept only within +-1.1 of the view and 1024 .. 12288 deep.
+bool Weather::flakeView(const Flake& f, const Camera& cam, glm::vec3& view) const {
+    if (f.drift) view = glm::vec3(float(f.x), float(f.y), float(f.z));
+    else {
+        const float c = float(cos12(f.phase)) / 128.0f;
+        const glm::vec3 rel = glm::vec3(float(f.x) + c, float(f.y) - c, float(f.z)) + exeOrigin_ - cam.eye;
+        const float depth = glm::dot(cam.forward, rel), proj = 192.0f / cam.tanHalfFovY;
+        if (!(depth > 0)) return false;
+        // [I] 0x49F730 is taken to project through the same scaled view space as the rain sheets (y x kViewY), so
+        // y = +-1 is the screen's edge; the quad's own height uses 0x401910 = 1 [O]
+        view = {viewX(cam.aspect) * glm::dot(cam.right, rel) * proj / (256.0f * depth),
+                kViewY * glm::dot(cam.down, rel) * proj / (224.0f * depth), depth};
+    }
+    return !(std::abs(view.x) > 1.1f || std::abs(view.y) > 1.1f || view.z < 1024.0f || view.z > 12288.0f);
+}
+
+void Weather::snowCull(const Camera& cam) {
+    glm::vec3 v;
+    for (auto& f : flakeSlots_)
+        if (f.life && !flakeView(f, cam, v)) f.z = f.ground;
 }
 
 // 0x545950's lightning timer -> 0x53A650: a far light (and the weather object's event 0x30) every lightningMin..Max.
@@ -200,6 +336,40 @@ void Weather::splashes(const Camera& cam, const World& world) {
 // half, cross-faded by alpha). Additive [I: device draw flags 0x611045 not decoded; black sheets].
 void Weather::build(const WeatherDef& def, const Camera& cam, std::vector<render::FxVertex>& vertices,
                     std::vector<render::FxBatch>& batches) const {
+    if (flakes_) { // 0x534DF0: a quad of particle.drm model 0 frame 3 (0x52B0B0(0x8AA77C, 0, 3): the glow texture) per flake
+        const float proj = 192.0f / cam.tanHalfFovY, ax = viewX(cam.aspect);
+        std::vector<render::FxVertex> quads;
+        for (const Flake& f : flakeSlots_) {
+            glm::vec3 v;
+            if (!f.life || f.z <= f.ground + 32 || !flakeView(f, cam, v)) continue;
+            // half size in virtual pixels: 12 x proj / depth + 0.5 (depth floored at 1024), at most 2.5; the twinkle bytes
+            // scale x (+0x18) and y (+0x19) by their triangle wave / 128 (>= 16, +1/16 per unit nearer than 1536)
+            const float s = std::min(2.5f, 12.0f * proj / std::max(v.z, 1024.0f) + 0.5f);
+            const auto wave = [&](uint8_t b) {
+                float w = b > 127 ? 255.0f - float(b) : float(b);
+                if (v.z < 1536.0f) w = std::min(128.0f, (1536.0f - v.z) * 0.0625f + w);
+                return std::max(w, 16.0f);
+            };
+            const float sx = f.a ? wave(f.a) * s / 128.0f : s, sy = f.b ? wave(f.b) * s / 128.0f : s;
+            int32_t g = f.z - f.ground >= 128 ? 0x40 : (f.z - f.ground) / 2; // [I] the ftol below 128 is not decoded
+            if (f.life < 2) g = f.life * g / 2;
+            else if (kFlakeLife - f.life < 8) g = (kFlakeLife - f.life) * g / 8;
+            const uint32_t rgba = rgbaOf(0x80000000u | uint32_t(g) * 0x10101u);
+            const float w = v.z / proj; // world units per virtual pixel at this depth
+            const glm::vec3 c = cam.eye + cam.forward * v.z + cam.right * (v.x * 256.0f / ax * w) + cam.down * (v.y * 224.0f / kViewY * w);
+            const glm::vec3 r = cam.right * (sx * w), d = cam.down * (sy / kViewY * w);
+            const glm::vec3 q[4] = {c - r - d, c + r - d, c + r + d, c - r + d};
+            static constexpr float kQuv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+            for (const int k : {0, 1, 2, 0, 2, 3}) quads.push_back({{q[k].x, q[k].y, q[k].z}, {kQuv[k][0], kQuv[k][1]}, rgba});
+        }
+        if (!quads.empty()) {
+            render::FxBatch b;
+            b.first = uint32_t(vertices.size()), b.count = uint32_t(quads.size());
+            b.textureId = kGlowTexture, b.blend = 1;
+            vertices.insert(vertices.end(), quads.begin(), quads.end());
+            batches.push_back(b);
+        }
+    }
     if (!live_) return;
     const float t = float(rain_) / 1024.0f;
     const auto& L = def.levels;
