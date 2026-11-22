@@ -446,7 +446,8 @@ update from her previous position, after the chart has read the last camera.
 
 **Look-idle clock at a reset (D + data).** The reset (vt 0x8 0x600C10 / vt 0xC 0x600E30 → 0x5FF7F0; vt 0x6C / 0x74
 0x602290) sets +0x1E4 = settings +0xC4 + +0xC8 = 5 + 2 s: the full look-idle weight, so forces and a markup's level
-camera record act from the first frame after a spawn or teleport. Ours started it at 0 (5 s of no forces).
+camera record act from the first frame after a spawn or teleport. Ours starts it at 0 (5 s of no forces): the port
+(4e5008d) was reverted (5e907ac) because six legacy self-tests calibrated on the delay fail with it [U: review them].
 
 **Unpinned takes (WineChartTrace, `<family>/*_freecam`, tru.exe's own camera, CAMDUMP every tick).** Replayed with the
 camera seeded at the case's `camera_at_key` (`World::seedCamera`), error after the key tick, ours tick t + 1 vs
@@ -466,7 +467,8 @@ Wine t (`openunderworld-work/tcam/camcmp.py`):
 | ledge/ch_hang_right_hold_freecam | 1014.5 / 1837.9 | 66.20° / 79.6° | tru.exe S451 (push 2004) where ours runs S431 |
 | pillar/t1194_climb_up_t1_freecam | 574.5 / 907.3 | 26.40° / 36.3° | |
 
-Before the reset fix the bedroom hang takes were 20° off (the record waited 5 s). The 0x195 class from each camera
+The table was measured with the reset port (4e5008d); without it the bedroom hang takes are 20° off (the record waits
+5 s). The 0x195 class from each camera
 (markup frame with the take's held key) agrees on every held tick of every take but tr_pole_hoh_right (224 / 260).
 [U]: the chapel and pillar placements (tru.exe's camera much nearer the pivot: a collider or camera-mask difference, or
 the pushes of actions 2001..2005, which ours does not port), the pole distance.
