@@ -446,6 +446,9 @@ void poleAttachSetter(ChartContext& ctx, bool alt);
 // (ChartContext::chartTarget: action 504's take-off query, action 230's promotion), else the game's jumpTarget() unless
 // the chart already handed that one on when its flight ended (ChartContext::handedTarget).
 ChartContext::MarkupSlot chartJumpTarget(ChartContext& ctx);
+// 0x733F60 -> 0x733EC0: markup flags +0x28 & 0xA000000 and its first segment's pitch |atan2(-dz, |dxy|)| within the
+// global limit *(0xE7EE50)+0x184 = 40 degrees [O-runtime: Wine, l4_traprooms] (a level enough pole).
+bool markupLevel(ChartContext& ctx, const ChartContext::MarkupSlot& m);
 // ---- end group J ----
 // ---- group A ----
 // lara.drm's query profile `id` (object data +0xDE4 / +0xDE8, tru.exe 0x6F1950) with its class (+0x94) and result

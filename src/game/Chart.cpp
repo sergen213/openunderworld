@@ -434,6 +434,14 @@ struct GraphVm {
 // native starts is what plays, in the pattern's own mode [U: Play's flags & 7 (0x448100) is not that mode: node 213's
 // else branch passes 2, yet Wine ends S245 once ng_planted_jump_forward has played through]. A node that plays nothing
 // leaves the clip and its clock running (false: no restart). Unresolved: no clip.
+bool markupLevel(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
+    if (!m || !(m.flags & 0xA000000)) return false;
+    const auto seg = ctx.markupSegment(m.markup, 0);
+    if (!seg) return false;
+    const glm::vec3 d = seg->first - seg->second;
+    return std::abs(std::atan2(-d.z, glm::length(glm::vec2(d)))) <= glm::radians(40.0f);
+}
+
 // Module 1's native values for one node run (GraphVm), from the chart-side stores: the jump target as the chart sees it
 // (chartJumpTarget; its type from the chart's own query, else the game's), playerInt(0xEE8 / 0xED4 / 0xEDC).
 std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext& ctx) {
@@ -458,11 +466,9 @@ std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext
     // the flattened unit segment and model -Y over cos(object float +0x740 degrees); a segment with no horizontal part
     // passes with dot 1) [O: decomp].
     v[13] = 0u;
-    if (const auto a = ctx.attachedMarkup(); a && (a.flags & 0xA000000))
+    if (const auto a = ctx.attachedMarkup(); a && markupLevel(ctx, a))
         if (const auto seg = ctx.markupSegment(a.markup, 0)) {
-            const glm::vec3 d = seg->first - seg->second;
-            const float pitch = std::abs(std::atan2(-d.z, glm::length(glm::vec2(d))));
-            if (pitch <= glm::radians(40.0f)) {
+            {
                 const glm::vec2 dir(seg->second - seg->first);
                 const float h = ctx.heading(), lim = ctx.chart().charts().data<float>(0x740);
                 const glm::vec2 f(std::cos(h), std::sin(h));
