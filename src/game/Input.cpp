@@ -162,6 +162,7 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
         throw std::runtime_error(std::string("input script: ") + e.what());
     }
     uint64_t shift = 0;
+    bool stickRecord = false;
     if (j.is_object()) {
         if (j.contains("spawn"))
             for (const char* k : {"hold_ticks", "settle_ticks"})
@@ -176,6 +177,22 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
             if ((cs >> dx >> sep >> dy) && sep == ',' && (dx != 0 || dy != 0)) cameraYaw = std::atan2(dy, dx);
         }
         if (!j.contains("input")) throw std::runtime_error("input script: case object without \"input\"");
+        // "stick": [[tick, x, y], ...], the stick record tru.exe's chart read (0xFADFB0 +0xB0 +0x00 / +0x04: x right, y
+        // down; WineChartTrace var_stick), each holding until the next. When present the move axes come from it, not
+        // from the mask's direction bits: under Wine the arrow keys' axis reaches the record a frame after the key in
+        // some takes (t1204 j50 / j55: mask Fwd at tick 10, record (0, -1) from 11) while buttons land on their tick.
+        if (j.contains("stick")) {
+            const auto& st = j["stick"];
+            if (!st.is_array()) throw std::runtime_error("input script: \"stick\" is not [[tick, x, y], ...]");
+            for (const auto& e : st) {
+                if (!e.is_array() || e.size() < 3 || !e[0].is_number_unsigned() || !e[1].is_number() || !e[2].is_number())
+                    throw std::runtime_error("input script: stick entry " + e.dump() + " is not [tick, x, y]");
+                const uint64_t tick = e[0].get<uint64_t>() + shift;
+                out.emplace_back(tick, "forward", -e[2].get<float>());
+                out.emplace_back(tick, "right", e[1].get<float>());
+            }
+            stickRecord = true;
+        }
         j = j["input"];
     }
     if (!j.is_array()) throw std::runtime_error("input script: expected [[tick, mask], ...]");
@@ -186,8 +203,10 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
             throw std::runtime_error("input script: entry " + e.dump() + " is not [tick, mask]");
         const uint64_t tick = e[0].get<uint64_t>() + shift;
         const unsigned m = e[1].get<unsigned>();
-        out.emplace_back(tick, "forward", float((m & 1) != 0) - float((m & 2) != 0));
-        out.emplace_back(tick, "right", float((m & 8) != 0) - float((m & 4) != 0));
+        if (!stickRecord) {
+            out.emplace_back(tick, "forward", float((m & 1) != 0) - float((m & 2) != 0));
+            out.emplace_back(tick, "right", float((m & 8) != 0) - float((m & 4) != 0));
+        }
         for (const auto& [bit, name] : kBits) out.emplace_back(tick, name, float((m & bit) != 0));
     }
     return true;

@@ -20,7 +20,9 @@ def case(c):
     for d in ('wine_startpos', 'wine_settle', 'wine'):
         p = f'{W}/chart/{d}/{c}.case.json'
         if os.path.exists(p): break
-    return json.load(open(p)), f'{W}/chart/wine/{c}.tsv'
+    # the Wine take the case JSON came from (a settle take has its own trace beside it), else the original take
+    t = os.path.join(os.path.dirname(p), os.path.basename(c) + '.tsv')
+    return json.load(open(p)), t if os.path.exists(t) else f'{W}/chart/wine/{c}.tsv'
 def compare(rundir, c):
     j, wt = case(c)
     sp = j['spawn']; shift = sp['hold_ticks'] + sp.get('settle_ticks', 0)

@@ -376,6 +376,14 @@ TEST(InputScriptMask, ContractMasks) {
     EXPECT_EQ(c.at(69).move.y, 0.0f);
     EXPECT_EQ(c.at(70).move.y, 1.0f);
     EXPECT_THROW(ou::game::InputScript::parse("[[1]]"), std::runtime_error);
+    // a recorded stick replaces the mask's direction bits (t1204 j50_stick: Fwd at 10, the record reads it from 11)
+    const auto r = ou::game::InputScript::parse(
+        R"({"spawn":{"hold_ticks":60},"stick":[[0,0,0],[11,-4.371139e-8,-1]],"input":[[0,0],[10,17],[14,1]]})");
+    EXPECT_EQ(r.at(70).move.y, 0.0f);
+    EXPECT_TRUE(r.at(70).jump);
+    EXPECT_EQ(r.at(71).move.y, 1.0f);
+    EXPECT_FALSE(r.at(74).jump);
+    EXPECT_EQ(r.at(74).move.y, 1.0f);
 }
 
 
