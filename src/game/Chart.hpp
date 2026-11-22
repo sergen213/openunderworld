@@ -100,6 +100,10 @@ struct Request {
     uint8_t mode = 1, start = 0, blend = 0; // mode 1 once, 2 loop; frames at 30 Hz
     uint8_t nextBlend = 0xFF;               // +0x1B: the next pattern's blend frames instead of its own (0xFF none)
     bool mirror = false;                    // +0x20 bit 0x80: a mirrored request (the clip reflected, XOR the agent's bit)
+    // +0x17: the anim layer's blend type (layer +0xF9, anim::layerBlendWeights) and every anim of the pattern by name
+    // (sub-layer i plays clips[i]; clips[0] = clip).
+    uint8_t blendType = 0;
+    std::vector<std::string> clips;
     // 0x4428A0 -> 0x441FB0: the clip's time when it starts, in 30 Hz frames: start - blend, uncut, after the first clip's
     // key bump (blend > 0, a key longer than a frame, start inside the first key: start = that key, blend += the move).
     // blendOverride: the previous pattern's +0x1B (layer +0x314) when it set one.
