@@ -874,6 +874,8 @@ private:
         std::span<const uint8_t> recordTypes, resultTypes; // the records' own type lists (0x7232E0)
         uint8_t recordFlags = 0, resultRecordFlags = 0;     // their +8 (bit 1: the list excludes)
         bool strict = false;
+        uint32_t profileFlags = 0; // data-driven searches: the profile's +0x2C (0x771830's skip list reads bits 0x10 / 0x20)
+        int lastDetached = -1;     // and player +0xEA0 (bits 0x200 / 0x8000)
         mutable bool unknown = false;
         // The data-driven tests' input frame: the stick's world direction (point source 8, 0xFADFB0 +0xB0 +8) and the
         // control yaw (kind 9, 0x6EBA90); markupSearch fills them.
@@ -919,8 +921,9 @@ public:
     struct MarkupFound { JumpTarget target; uint16_t flags = 0, uncertain = 0; int8_t cls = 0; bool known = false; };
     // controlYaw / stickOn: the camera-relative stick heading (0x6EBA90) and whether the stick is off rest
     // boneLift: profile bone +0xC8's world origin minus the root segment's (World::boneWorld) for a bone-based query
+    // lastDetached: the markup action 510's entry released (player +0xEA0, 0x6FDBE0), -1 none
     MarkupFound markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
-                             std::optional<vec3> boneLift = std::nullopt) const;
+                             std::optional<vec3> boneLift = std::nullopt, int lastDetached = -1) const;
 private:
     // State::Jump: an aimed ground jump re-aimed at its markup target (PlayerState::aimMarkup) with the time left
     // (tru.exe 0x73EDC0 every frame of the flight, 0x752410)

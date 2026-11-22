@@ -170,6 +170,11 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
 - **Ours.**
   - **Filter.** `StickRateFilter` (Game.hpp) runs on the move axes every tick, in the app. The rate comes from `moveStickRate` (lara.drm +0x658), and dt is 0.5, a 60 Hz tick in 30 Hz frames. tru.exe measures wall time [I].
   - **Exception.** Recorded-stick scripts (`"stick"`) are already this filter's output and skip it.
+- **Run-jump side (S280 / S281).** The running jump's left- or right-foot state depends on the support foot (+0xF3C) and the mirror bit (0x10 of the u16 at +0xF4 of 0x716F30's first stack argument, read by 0x6EDD00) at the jump press. Both follow where the run clip is when the press lands.
+  - **Mirror mapping.** With the mirror bit set, foot event 0x34 sets foot 2 and 0x36 sets foot 1; with it clear the mapping is reversed.
+  - **Run start.** The run's start tick depends on the frame the key press reaches the stick (the filter above, measured in wall time), so it varies between takes with the same input.
+  - **Wine evidence** (t1204_run_jump_j55, W/chart/wine/runjump/t1204_run_jump_j55_foot2.tsv): one take entered S63 at tick 11 and jumped through S280; others entered at 10 and took S281, with the run mirrored from tick 15 until the S281 entry.
+  - **Consequence.** tru.exe itself picks S280 or S281 for the same input. A replay comparison that differs only in that choice is not a divergence in our chart.
 
 ### Ours
 
