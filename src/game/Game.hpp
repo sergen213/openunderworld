@@ -864,7 +864,7 @@ private:
     uint32_t placements_ = 0; // placements()
     float ledgeGripOut_ = 0; // setLedgeGripOut()
     // drive(): the clip a fresh chart clip replaced, playing on under the crossfade (its root motion fades out)
-    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0; } fade_;
+    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0; vec3 offset{0}; } fade_;
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch, prevCameraYaw_ = 0;

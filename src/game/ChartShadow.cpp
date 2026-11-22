@@ -776,7 +776,8 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion) const {
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
     if (motion == M::Hang || motion == M::Blend) {
         if (has("climb")) return GS::ClimbUp;
-        return has("shimmy") ? GS::Shimmy : GS::Hang;
+        const int st = rt ? rt->state() : -1; // the shimmy states (the grip moves: S459, S432, S441)
+        return has("shimmy") || st == 459 || st == 432 || st == 441 ? GS::Shimmy : GS::Hang;
     }
     if (clip.find("land") != std::string::npos) return GS::Land;
     if (clip.find("crouch") != std::string::npos) return GS::Crouch;
