@@ -119,7 +119,10 @@ bool pressedWithin(ChartContext& ctx, const Cond& c) {
     const auto since = ctx.sincePress(id);
     const auto prop = rt.propFloat(0x3DF);
     if (!since || !prop) return rt.unported(c);
-    return float(int(*since * 1000.0f * 30.0f / 1000.0f)) < *prop;
+    // never pressed: our timer holds 1e9 s, whose frame count would overflow int (UB; x87 gives INT_MIN, which made
+    // every "pressed within" true: a landing took the running jump S280 without Jump) -> clamp first
+    const double frames = std::min(double(*since) * 30.0, 1e9);
+    return float(int(frames)) < *prop;
 }
 
 // 0xD5 (0x783950, id 0xD5 -> 0x782B40 mode 1): round(anim time / 100) >= value. The anim time runs 100 a 30 Hz frame;
