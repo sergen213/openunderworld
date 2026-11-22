@@ -1896,7 +1896,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         for (int si = 0; si <= last; ++si) {
             const vec3 a = m.points[size_t(si)], b = m.points[size_t(si) + 1];
             const float len = glm::distance(a, b);
-            if (len < 1e-2f || segLen(m, si) < 1e-2f) continue;
+            // a pillar's polyline is its vertical axis: no flat length, kept (its slot then names the axis's first
+            // point, pointOn) [I]; a ladder's vertical side is not (its bottom segment carries the hit: lad_a234)
+            if (len < 1e-2f || (m.type != 15 && segLen(m, si) < 1e-2f)) continue;
             if (!record.empty() && (glm::any(glm::greaterThan(glm::min(xy(a), xy(b)) - kSweepPad, sHi)) ||
                               glm::any(glm::lessThan(glm::max(xy(a), xy(b)) + kSweepPad, sLo))))
                 continue;
