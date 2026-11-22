@@ -1230,6 +1230,39 @@ TEST(FxPrecip, DropsCoverAndSplashes) {
     EXPECT_TRUE(b.empty());
 }
 
+// PrecipWorker (the off-main-thread build): each collect() returns exactly what Precip would have built for the job the
+// previous frame submitted (cover queries then build, in submit order), with the probed column's cover.
+TEST(FxPrecip, WorkerMatchesDirectBuildOneFrameBehind) {
+    ou::fx::Precip direct;
+    ou::fx::PrecipWorker worker;
+    EXPECT_FALSE(worker.collect().valid); // nothing submitted yet
+    const auto query = flatCover(-150, 400);
+    std::vector<ou::render::FxVertex> expectV;
+    std::vector<ou::render::FxBatch> expectB;
+    for (int frame = 0; frame < 8; ++frame) {
+        const auto& r = worker.collect();
+        if (frame > 0) {
+            ASSERT_TRUE(r.valid);
+            ASSERT_EQ(r.vertices.size(), expectV.size()) << frame;
+            EXPECT_EQ(0, std::memcmp(r.vertices.data(), expectV.data(), expectV.size() * sizeof(expectV[0]))) << frame;
+            ASSERT_EQ(r.batches.size(), expectB.size());
+            for (size_t i = 0; i < expectB.size(); ++i) {
+                EXPECT_EQ(r.batches[i].first, expectB[i].first);
+                EXPECT_EQ(r.batches[i].count, expectB[i].count);
+            }
+            ASSERT_EQ(r.probes.size(), 1u);
+            ASSERT_TRUE(r.probes[0]);
+            EXPECT_EQ(*r.probes[0], -150.0f);
+        }
+        auto f = frameAt({frame * 40.0f, 0, 0}, ou::fx::Precip::Kind::Rain);
+        f.time += frame / 60.0;
+        direct.updateCover(f.eye, query, 512);
+        expectV.clear(), expectB.clear();
+        direct.build(f, expectV, expectB);
+        worker.submit({f, query, 512, {glm::vec2(f.eye) + glm::vec2(8)}}); // the eye's column: queried first
+    }
+}
+
 // Snow on Lara builds while she stands in snowfall, fades slowly while she walks, and running / landing sheds clumps
 // that fall and settle on the ground the query reports.
 TEST(FxSnowCoat, BuildsFadesAndSheds) {

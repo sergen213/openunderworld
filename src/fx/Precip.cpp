@@ -1,6 +1,7 @@
 #include "fx/Precip.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -232,6 +233,73 @@ void Precip::build(const Frame& f, std::vector<render::FxVertex>& vertices, std:
     add(main, snow ? kPrecipFlakeTexture : kPrecipDropTexture, 0);
     add(splash, kPrecipRingTexture, 1);
     add(drops, kPrecipFlakeTexture, 1);
+}
+
+PrecipWorker::PrecipWorker() : thread_([this] { run(); }) {}
+
+PrecipWorker::~PrecipWorker() {
+    {
+        std::lock_guard lock(mutex_);
+        quit_ = true;
+    }
+    wake_.notify_one();
+    thread_.join();
+}
+
+const PrecipWorker::Result& PrecipWorker::collect() {
+    std::unique_lock lock(mutex_);
+    done_.wait(lock, [this] { return !job_ && !busy_; });
+    Result& back = results_[1 - front_];
+    if (back.valid) {
+        front_ = 1 - front_;
+        results_[1 - front_].valid = false; // the old front: the worker's next buffer
+    } else {
+        results_[front_].valid = false; // nothing new: report none
+    }
+    return results_[front_];
+}
+
+void PrecipWorker::submit(Job job) {
+    {
+        std::lock_guard lock(mutex_);
+        job_ = std::move(job);
+    }
+    wake_.notify_one();
+}
+
+void PrecipWorker::run() {
+    using Clock = std::chrono::steady_clock;
+    for (;;) {
+        Job job;
+        Result* out = nullptr;
+        {
+            std::unique_lock lock(mutex_);
+            wake_.wait(lock, [this] { return quit_ || job_; });
+            if (quit_) return;
+            job = std::move(*job_);
+            job_.reset();
+            busy_ = true;
+            out = &results_[1 - front_]; // collect() swaps only while no job is pending or running
+        }
+        const auto t0 = Clock::now();
+        const bool live = job.frame.kind != Precip::Kind::None && job.frame.intensity > 0;
+        if (live && job.query) precip_.updateCover(job.frame.eye, job.query, job.budget);
+        const auto t1 = Clock::now();
+        out->vertices.clear(), out->batches.clear();
+        precip_.build(job.frame, out->vertices, out->batches);
+        out->count = precip_.lastCount();
+        out->probes.resize(job.probes.size());
+        for (size_t i = 0; i < job.probes.size(); ++i) out->probes[i] = precip_.cover(job.probes[i]);
+        const auto t2 = Clock::now();
+        out->coverMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        out->buildMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+        {
+            std::lock_guard lock(mutex_);
+            out->valid = true;
+            busy_ = false;
+        }
+        done_.notify_all();
+    }
 }
 
 // ---- snow on Lara ----

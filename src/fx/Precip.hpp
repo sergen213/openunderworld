@@ -20,10 +20,13 @@
 #include "scene/Assets.hpp"
 
 #include <array>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <thread>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -71,6 +74,48 @@ private:
     struct Cell { int32_t x = INT32_MIN, y = INT32_MIN; float height = 0, fromZ = 0; };
     std::vector<Cell> cover_ = std::vector<Cell>(size_t(kCoverSize) * kCoverSize);
     mutable size_t count_ = 0;
+};
+
+// Precip off the main thread: one worker thread owns a Precip (its cover grid) and runs, per submitted job, the cover
+// queries then the particle build into its own buffers. Double-buffered, one frame behind: the frame collect()s the job
+// the previous frame submitted (finished by then; collect waits only if it is not) and submit()s its own, so drawing
+// never waits for this frame's build. Deterministic: the grid and the quads depend only on the jobs, in submit order
+// (the query is a frozen snapshot, physics::Scene::SegmentCaster).
+class PrecipWorker {
+public:
+    struct Job {
+        Precip::Frame frame;
+        Precip::Query query;             // called on the worker: must not touch main-thread state
+        size_t budget = 2048;            // cover segments this job
+        std::vector<glm::vec2> probes;   // columns whose cover the result reports (Lara's snow coat)
+    };
+    struct Result {
+        std::vector<render::FxVertex> vertices;
+        std::vector<render::FxBatch> batches; // first: into `vertices`
+        size_t count = 0;                     // live particles
+        std::vector<std::optional<float>> probes; // Precip::cover of Job::probes
+        double coverMs = 0, buildMs = 0;      // worker time of this job
+        bool valid = false;                   // false: nothing collected (no job was pending)
+    };
+    PrecipWorker();
+    ~PrecipWorker();
+    PrecipWorker(const PrecipWorker&) = delete;
+    PrecipWorker& operator=(const PrecipWorker&) = delete;
+    // Waits for the pending job, if any, and returns its result (valid until the next collect; `valid` false when none).
+    const Result& collect();
+    // Hands the worker a job; collect() the previous one first.
+    void submit(Job job);
+
+private:
+    void run();
+    Precip precip_;
+    Result results_[2];
+    int front_ = 0;                 // results_[front_]: the collected one; the worker writes the other
+    std::optional<Job> job_;        // guarded by mutex_
+    bool busy_ = false, quit_ = false;
+    std::mutex mutex_;
+    std::condition_variable wake_, done_;
+    std::thread thread_;
 };
 
 // Snow on Lara (Enhanced weather): per region the coverage 0..1 the scene shaders blend in (render::SnowLayer), the
