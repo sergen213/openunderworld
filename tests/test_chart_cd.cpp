@@ -171,3 +171,19 @@ TEST(ChartCD, StickArcsWallJumpsDepthAndDeadline) {
 }
 
 } // namespace
+
+#include "game/Game.hpp"
+
+namespace {
+
+// A Wine case's camera_follow pins the stick's world yaw (Forward = (dx, dy)); a note string pins nothing.
+TEST(InputScriptCase, CameraFollowPinsStickYaw) {
+    const auto s = ou::game::InputScript::parse(R"({"spawn":{"hold_ticks":0},"camera_follow":"0,1,1264,300","input":[[0,0]]})");
+    ASSERT_TRUE(s.cameraYaw());
+    EXPECT_NEAR(*s.cameraYaw(), 1.5707964f, 1e-6f);
+    const auto n = ou::game::InputScript::parse(R"({"camera_follow":"attach, then Up held","input":[[0,0]]})");
+    EXPECT_FALSE(n.cameraYaw());
+    EXPECT_FALSE(ou::game::InputScript::parse("[[0,1]]").cameraYaw());
+}
+
+} // namespace
