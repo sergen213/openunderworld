@@ -826,6 +826,8 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
     p.minT = f32(r + 0x20), p.coneDeg = f32(r + 0x24);
     p.minDist = int16_t(u32(r + 0x28) & 0xFFFF);
     if (const auto lr = c.pointer(d + 0x584)) p.cornerZone = int16_t(u32(*lr + 0x9E) & 0xFFFF); // 0x737B30's +0x9E
+    if (const auto br = c.pointer(d + 0x5BC)) // 0x6FE040's end insets on the beam class record
+        p.beamInset[0] = int16_t(u32(*br + 0x98) & 0xFFFF), p.beamInset[1] = int16_t(u32(*br + 0x98) >> 16);
     const auto capsuleOf = [&](uint32_t slot, MarkupProfile::Capsule& out) {
         if (const auto cr = c.pointer(d + slot))
             out = {vec3(f32(*cr + 0x30), f32(*cr + 0x34), f32(*cr + 0x38)), f32(*cr + 0x54), f32(*cr + 0x58)};

@@ -655,9 +655,12 @@ int ladderLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a, int lc
 // 0x7327F0: the beam / hurdle lookahead (markup flag 0x10000) [O decomp]. d = property 561 (0x231, default 200),
 // negated with player +0xED0 == 2 and again for limb class (0x787EF0 on property 499) 2 / 6. 0x5D0090 walks the
 // markup from the grip (+0xC98) |d| along it in d's direction (segment by segment, 0x6FE790): reaching the last point
-// records an end (type 1) at the walked distance; joints to other markups (0x5C9170, mask 0x3010000, types 2..6) are
-// not in ours' markup data [U: never recorded]. A record nearer than the markup-class record's +0x9A (0x5D57A0:
-// Lara data +0x5BC for 0x10000) sets 4 (an end) / 0x18 (a joint); the first record's distance -> agent +0xF4 (else d).
+// records an end (type 1) at the walked distance; at each vertex on the way 0x5C9170 (markups whose flags meet
+// 0x4B010000) compares the 2-D directions of the segment left and the next: |cross| > 0.5 records a corner (type 2 for
+// a negative cross, 3 positive) there and ends the walk [O decomp; I: the cross's operand order, so 2 / 3 may be
+// swapped]. Joints are within one markup (0x6FE790's next segment), so ours' markup data has them. A record nearer
+// than the markup-class record's +0x9A (0x5D57A0: Lara data +0x5BC for 0x10000) sets 4 (an end) / 0x18 (types 2..6);
+// the first record's distance -> agent +0xF4 (else d).
 // Then two player rays (0x493330, flags 0x2C19E7) from her position raised by Lara data +0xE90, d along her facing
 // (-row1 of instance +0x90) and d backward: a forward hit sets 1 (only within 126.42 when past +0xF4, which it
 // otherwise shortens); a backward hit within +0xF8 shortens it.
@@ -693,6 +696,21 @@ int beamLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a) {
                 if (walked < float(r9A)) bits |= 4;
                 f4 = walked;
                 break;
+            }
+            if (a.flags & 0x4B010000u) { // 0x5C9170 at the vertex between seg and next
+                const auto n = ctx.markupSegment(a.markup, next);
+                if (n) {
+                    const glm::vec2 u0 = glm::vec2(s->second - s->first) * dir, u1 = glm::vec2(n->second - n->first) * dir;
+                    const float l0 = glm::length(u0), l1 = glm::length(u1);
+                    if (l0 > 0 && l1 > 0) {
+                        const float cross = (u0.x * u1.y - u0.y * u1.x) / (l0 * l1);
+                        if (std::abs(cross) > 0.5f) {
+                            if (walked < float(r9A)) bits |= 0x18;
+                            f4 = walked;
+                            break;
+                        }
+                    }
+                }
             }
             seg = next, share = 1.0f;
         }

@@ -604,6 +604,10 @@ struct MarkupProfile {
     // the ledge markup-class record's (Lara data +0x584, 0x5D5930) short +0x9E: how near a segment end a candidate
     // must lie for the corner tests 0x737B30 / 0x723540 (kinds 28..30)
     int cornerZone = 0;
+    // 0x6FE040 [O decomp]: an open markup's candidate range starts its class record's short +0x98 in from its first
+    // point and ends +0x9A in from its last (along the segment). Here the beam record (Lara data +0x5BC, MUD 0x10000):
+    // Wine ch_beam_walk met beam 1031 at +0xA68 0.945235 = 48.0 = +0x9A in from its end.
+    int beamInset[2] = {0, 0};
     // The markup-class records' capsules (0x5D57A0: Lara data +0x594 a horizontal pole, +0x58C an upright one, +0x5B8
     // a free-climb hold (MUD 0x8000); record +0x30 / +0x34 / +0x38 the offset in her model frame, +0x54 height, +0x58
     // radius) for kind 10 (0x6FCB10)
@@ -872,6 +876,7 @@ private:
         vec2 stickDir{0};
         float controlYaw = 0;
         float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
+        float beamInset[2] = {0, 0}; // MarkupProfile::beamInset (strict sweeps of beams, type 14)
         MarkupProfile::Capsule poleH, poleV, hold; // MarkupProfile's class-record capsules (kind 10 on poles / holds)
         // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).
         std::array<std::pair<int, vec3>, 8> typeStart{};

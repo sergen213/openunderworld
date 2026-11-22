@@ -1843,10 +1843,12 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 // point, in the world [O: 0x723AB0 cases 2 / 3]
                 case 2: return m.points.front();
                 case 3: return m.points[size_t(si)];
-                case 28: return q.base;
-                // 29: 0x723AB0 case 0x1D, the query block's base (+0xA0) plus t times its velocity (+0x30 = the query
-                // object's +0x20, 0x771830's velocity) plus the candidate's +0x90 (taken as 0, as for 28) [O decomp]
-                case 29: return q.base + q.v * t;
+                // 28 / 29: 0x723AB0 cases 0x1C / 0x1D, the query block's +0xA0 = the profile's start (base plus its
+                // offset, q.start) [O-runtime: Wine ch_beam_walk frame 120, source 29 x 8000.73 = her attach point
+                // less 63.21 along her facing, profile 84's offset], 29 plus t times its velocity (+0x30 = the query
+                // object's +0x20, 0x771830's velocity), both plus the candidate's +0x90 (taken as 0) [O decomp]
+                case 28: return q.start;
+                case 29: return q.start + q.v * t;
                 case 21: { // 0x723AB0 case 0x15 -> 0x711530 by the candidate's MUD flags & 0xFFFFFC10, then 0x431FD0 against
                     // the block's base (+0xA0, with t x its velocity +0x30): for 0x800000 / 0x40000 / 0x20000 / 0x10000 /
                     // 0x1000000 / 0x20000000 / 0x40000000 the candidate point less source 29 [O decomp + O-runtime: Wine
@@ -1858,7 +1860,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     const bool plain = !(mf & 0x8000) && (k == 0x800000 || k == 0x40000 || k == 0x20000 || k == 0x10000 ||
                                                           k == 0x1000000 || k == 0x20000000 || k == 0x40000000);
                     if (!plain && q.strict) q.unknown = true;
-                    return h - (q.base + q.v * t);
+                    return h - (q.start + q.v * t);
                 }
                 case 4: case 31: return h;
                 default: // 33: a hold's point; ledges are no holds
@@ -2093,8 +2095,11 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                               glm::any(glm::lessThan(glm::max(xy(a), xy(b)) + kSweepPad, sLo))))
                 continue;
             const vec3 u = (b - a) / len;
+            // beams (strict): 0x6FE040's class-record insets, +0x98 at the first point, +0x9A at the last [O decomp]
+            const bool beam = m.type == 14 && q.strict;
             const float inset = perch || climb ? 0.0f : kLedgeInset;
-            const float lo = si == 0 ? inset : 0, hi = len - (si == last ? inset : 0);
+            const float lo = si == 0 ? (beam ? q.beamInset[0] : inset) : 0,
+                        hi = len - (si == last ? (beam ? q.beamInset[1] : inset) : 0);
             const auto perp = [&](vec3 w) { return w - u * glm::dot(w, u); };
             vec3 starts[2] = {q.hang, q.root};
             int nStarts = 2;
@@ -2653,7 +2658,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (hang && !root) q.root = q.hang;
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
-    q.cornerZone = float(p.cornerZone);
+    q.cornerZone = float(p.cornerZone), q.beamInset[0] = float(p.beamInset[0]), q.beamInset[1] = float(p.beamInset[1]);
     q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
