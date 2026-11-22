@@ -8,7 +8,7 @@
   "steps": [
     {"step": "start_sprinting", "input": ["0 forward 1", "0.5 sprint 1"], "duration": 3,
      "until": {"probe": "player.clip", "eq": "sprint_loop"},
-     "expect": [{"clips": ["ng_run_start", "sprint_loop"]}, {"probe": "player.sprint_left", "min": 9.0}]},
+     "expect": [{"clips": ["sprint_loop"], "note": "the sprint clip is the point; the run start before it (ng_run_start or a foot variant) is not"}, {"probe": "player.sprint_left", "min": 9.0}]},
     {"step": "sprint_until_exhausted", "input": ["0 forward 1", "0 sprint 1"], "duration": 12,
      "until": {"probe": "player.clip", "eq": "ng_sprint_to_exhaust"},
      "expect": [{"probe": "step.seconds", "near": 9.7, "tol": 0.25, "note": "9.5..9.9 s [O Wine]"},
@@ -16,7 +16,7 @@
                 {"probe": "player.sprint_left", "max": 0.05}]},
     {"step": "exhausted", "input": ["0 forward 1", "0 sprint 1"], "duration": 4,
      "until": {"probe": "player.clip", "eq": "sprint_loop"},
-     "expect": [{"clips": ["ng_sprint_to_exhaust", "ng_run_exhaust", "ng_run", "sprint_loop"]},
+     "expect": [{"clips": ["ng_sprint_to_exhaust", "ng_run_exhaust", "sprint_loop"], "note": "exhaustion and the next sprint are the point; the plain run between (ng_run or a foot variant) is not"},
                 {"probe": "step.seconds", "near": 2.2, "tol": 0.25, "note": "~2.2 s running [O Wine]"}]},
     {"step": "second_sprint", "input": ["0 forward 1", "0 sprint 1"], "duration": 3,
      "until": {"probe": "player.clip", "eq": "ng_sprint_to_exhaust"},

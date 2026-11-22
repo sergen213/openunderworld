@@ -280,12 +280,17 @@ void Measurements::note(std::vector<std::string>& list, std::string entry) {
     if (std::ranges::find(list, entry) == list.end()) list.push_back(std::move(entry));
 }
 
+void Measurements::rope(float length) {
+    ropeMin = ropeSeen ? std::min(ropeMin, length) : length, ropeMax = ropeSeen ? std::max(ropeMax, length) : length;
+    ropeSeen = true;
+}
+
 const std::vector<std::string_view>& selftest::measurementNames() {
     static const std::vector<std::string_view> k = {
         "start.x", "start.y", "start.z", "end.x", "end.y", "end.z", "moved", "distance", "horizontal", "height_gain", "peak_height", "drop",
         "peak_speed", "peak_rise_speed", "peak_fall_speed", "air_time", "air_ticks", "ticks", "seconds", "teleports", "health_start",
         "health_end", "health_min", "health_lost", "states", "clips", "calls", "events", "pickups", "hazards", "sounds", "toasts", "titles",
-        "hints"};
+        "hints", "rope_change"};
     return k;
 }
 
@@ -310,6 +315,7 @@ Value Measurements::get(std::string_view n) const {
     if (n == "health_end") return double(healthEnd);
     if (n == "health_min") return double(healthMin);
     if (n == "health_lost") return double(healthStart - healthMin);
+    if (n == "rope_change") return ropeSeen ? Value(double(ropeMax - ropeMin)) : Value(); // unavailable: never roped
     if (n == "states") return states;
     if (n == "clips") return clips;
     if (n == "calls") return calls;
@@ -1035,6 +1041,7 @@ void SelfTest::begin(game::World& w) {
     for (const auto& f : s.fixtures) applyFixture(w, f, s.id);
     const auto& st = w.player().state();
     m_.begin(st.pos, game::stateName(st.state), st.clip, w.health().value());
+    if (roped(st.state)) m_.rope(st.ropeLength);
     script_ = game::InputScript::parse(s.input);
     pilot_.reset();
     if (!s.plan.empty()) pilot_ = Autopilot::parse(s.plan);
@@ -1134,6 +1141,7 @@ void SelfTest::observe(game::World& w) {
     const auto& st = w.player().state();
     ++stepTick_, ++totalTicks_;
     m_.tick(st.pos, game::stateName(st.state), st.clip, airborne(st.state), w.health().value());
+    if (roped(st.state)) m_.rope(st.ropeLength);
     for (const auto& e : w.script().events())
         m_.note(m_.events, std::string(script::eventName(e.kind)) + ":" + std::to_string(e.source) + ">" + std::to_string(e.target));
     for (const auto& pk : w.pickedUp()) m_.note(m_.pickups, std::string(game::pickupKindName(pk.kind)) + ":" + std::to_string(pk.id));

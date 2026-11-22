@@ -10,8 +10,8 @@
 // Group A ids not ported (the game state they read is not modelled; they stay unregistered and count as unported):
 //   0x12E / 0x131 foot-lock controllers (+0xF20.., their lock bytes +0x10A / +0x10B set through 0x7000F0 by anim events),
 //   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
-//   combo move history, 0x1E5 / 0x1EA / 0x1EF the player +0x31C probe record (0x1EB / 0x1F0: Jump.cpp), 0x1FB the gear slot's
-//   instance, 0x208 the stairs byte +0x11D4, 0x20B the wall-jump
+//   combo move history, 0x1E5 / 0x1EA / 0x1EF the player +0x31C probe record (0x1EB / 0x1F0: Jump.cpp), 0x208 the stairs
+//   byte +0x11D4, 0x20B the wall-jump
 //   anticipation rays (0x759260, n = 0 frames), 0x20D the combat component flags +0x1FC bit 11.
 #include "game/Chart.hpp"
 #include "game/Game.hpp"
@@ -275,6 +275,19 @@ bool inCombatMode(ChartContext& ctx, const Cond& c) {
     const auto combat = ctx.combatMode();
     if (!combat) return rt.unported(c);
     return edge(ctx, c, *combat);
+}
+
+// 0x1FB (0x763D70, PSCCF_UsingGear): cur = the int at (player +0x500) +0x134 is non-zero and 0x6E8E30(slot) holds: the
+// slot's instance handle ((player +0x500) + slot * 0x10 + 4) is live and its message 0x36 (0x5B36F0) answers 0;
+// edge-coded. With empty hands the slot byte is -1 and 0x6E8E30 returns 0, so cur is false [O]; a held item's message
+// 0x36 is not modelled [U], nor the int's upper bytes for slot 0, so those stay unported. The first evaluation takes
+// the previous value equal to the current one (uVar6 = cur ? 2 : 0).
+bool usingGear(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    if (rt.cache(c.id).frame == rt.frame()) return edge(ctx, c, false, true);
+    const auto slot = ctx.gearSlot();
+    if (!slot || *slot != -1) return rt.unported(c);
+    return edge(ctx, c, false, true);
 }
 
 // 0x1FC (0x764940): byte agent +0x345; 0 -> clear, 1 -> set.
@@ -913,6 +926,7 @@ void registerGround(Registry& player, Registry&) {
     player.condition(0x19E, moveDirSpherical, "PSCCF_MoveDirSpherical", g);
     player.condition(0x1F7, lowCeiling, "PSCCF_LowCeiling", g);
     player.condition(0x1FA, inCombatMode, "PSCCF_InCombatMode", g);
+    player.condition(0x1FB, usingGear, "PSCCF_UsingGear", g); // empty hands only; a held item stays unported
     player.condition(0x1FC, agentFlag345, "PSCCF_AgentFlag345", g);
     player.condition(0x1FD, onSlopeSlide, "PSCCF_OnSlopeSlide", g);
     player.condition(0x203, wallJumpAttach, "PSCCF_WallJumpAttach", g);

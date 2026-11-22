@@ -681,6 +681,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.label = "SUN SHAFTS", .choice = &g.lightShafts, .choices = {"DEFAULT", "ON", "OFF"}},
                 {.label = "CUTSCENE DEPTH OF FIELD", .choice = &g.cineDof, .choices = {"DEFAULT", "ON", "OFF"}},
                 {.label = "WEATHER", .choice = &g.weather, .choices = {"AUTO", "OFF", "RAIN", "SNOW"}},
+                {.label = "SNOW BUILD-UP", .choice = &g.snowAccumulation, .choices = {"DEFAULT", "ON", "OFF"}},
                 {.label = "TIME OF DAY", .choice = &g.timeOfDay, .choices = {"DEFAULT", "DAY", "NIGHT", "CYCLE"}}, // config::kTimesOfDay
                 {.label = "DAY LENGTH", .greyed = g.timeOfDay != 3, .choice = &g.dayLength, // app::graphics_detail::kDayLengths
                  .choices = {"12 MINUTES", "24 MINUTES", "48 MINUTES", "96 MINUTES"}},

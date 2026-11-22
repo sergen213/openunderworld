@@ -388,6 +388,16 @@ TEST(InputScriptMask, ContractMasks) {
     const auto fd = ou::game::InputScript::parse(R"({"spawn":{"hold_ticks":60},"frame_dt":[[10,1.77]],"input":[[0,0],[10,1]]})");
     EXPECT_FLOAT_EQ(fd.frameDt(70).value_or(0), 1.77f);
     EXPECT_FALSE(fd.frameDt(71).has_value());
+    // "camera_yaw": the stick's world yaw per tick, each entry holding until the next (shifted like the input); before
+    // the first entry, the first; it overrides camera_follow
+    const auto cy = ou::game::InputScript::parse(
+        R"({"spawn":{"hold_ticks":60},"camera_follow":"1,0","camera_yaw":[[0,-2.9],[20,-3.0]],"input":[[0,0]]})");
+    EXPECT_TRUE(cy.cameraYawRecord());
+    EXPECT_FLOAT_EQ(cy.cameraYaw(10).value_or(0), -2.9f);
+    EXPECT_FLOAT_EQ(cy.cameraYaw(79).value_or(0), -2.9f);
+    EXPECT_FLOAT_EQ(cy.cameraYaw(80).value_or(0), -3.0f);
+    EXPECT_FLOAT_EQ(cy.cameraYaw(500).value_or(0), -3.0f);
+    EXPECT_FALSE(fd.cameraYawRecord());
 }
 
 // tru.exe 0x483520's move stick pair filter: a key's 0 -> 1 step (over rate 0.4 x dt 0.5) holds the old output for one

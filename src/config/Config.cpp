@@ -79,6 +79,7 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     else throw std::runtime_error("atmosphere must be auto, off, low, medium or high, got " + g.atmosphere);
     s.lightShafts = g.lightShafts.value_or(true);
     s.cineDof = g.cineDof.value_or(false);
+    s.snowAccumulation = g.snowAccumulation.value_or(true);
     if (g.weather == "auto") s.weather = enhanced ? 1 : 0;
     else if (g.weather == "off") s.weather = 0;
     else if (g.weather == "rain") s.weather = 2;
@@ -110,9 +111,10 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
 }
 
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value) {
-    if (flag == "--shadows" || flag == "--fxaa" || flag == "--hdr" || flag == "--shafts") {
+    if (flag == "--shadows" || flag == "--fxaa" || flag == "--hdr" || flag == "--shafts" || flag == "--snow-accumulation") {
         if (value != "on" && value != "off") throw std::runtime_error(std::string(flag) + " wants on or off");
-        (flag == "--shadows" ? g.shadows : flag == "--fxaa" ? g.fxaa : flag == "--hdr" ? g.hdr : g.lightShafts) = value == "on";
+        (flag == "--shadows" ? g.shadows : flag == "--fxaa" ? g.fxaa : flag == "--hdr" ? g.hdr
+                                         : flag == "--shafts" ? g.lightShafts : g.snowAccumulation) = value == "on";
     } else if (flag == "--shaders") {
         if (value != "original" && value != "generic") throw std::runtime_error("--shaders wants original or generic");
         g.originalShaders = value == "original";
@@ -257,6 +259,7 @@ Config load(const fs::path& path) {
             c.graphics.weather = g->value("weather", c.graphics.weather);
             if (g->contains("light_shafts")) c.graphics.lightShafts = g->at("light_shafts").get<bool>();
             if (g->contains("cine_dof")) c.graphics.cineDof = g->at("cine_dof").get<bool>();
+            if (g->contains("snow_accumulation")) c.graphics.snowAccumulation = g->at("snow_accumulation").get<bool>();
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
             if (g->contains("rt_lights")) c.graphics.rtLights = g->at("rt_lights").get<bool>();
             if (g->contains("rt_reflections")) c.graphics.rtReflections = g->at("rt_reflections").get<bool>();
@@ -345,6 +348,7 @@ void save(const fs::path& path, const Config& c) {
     if (c.graphics.rtGi) g["rt_gi"] = *c.graphics.rtGi;
     if (c.graphics.lightShafts) g["light_shafts"] = *c.graphics.lightShafts;
     if (c.graphics.cineDof) g["cine_dof"] = *c.graphics.cineDof;
+    if (c.graphics.snowAccumulation) g["snow_accumulation"] = *c.graphics.snowAccumulation;
     if (c.graphics.rtLights) g["rt_lights"] = *c.graphics.rtLights;
     if (c.graphics.rtReflections) g["rt_reflections"] = *c.graphics.rtReflections;
     j["controls"] = {{"mouse_sensitivity", c.controls.mouseSensitivity}, {"invert_y", c.controls.invertY},

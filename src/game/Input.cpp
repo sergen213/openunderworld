@@ -165,7 +165,8 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
 // 0x20 Interact, 0x40 Crouch (drop), 0x80 Sprint, 0x100 Walk, 0x200 Grapple.
 namespace {
 bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out, std::optional<CameraFollow>& follow,
-                     std::optional<CameraSeed>& seed, bool& stickRecord, std::map<uint64_t, float>& frameDt) {
+                     std::optional<CameraSeed>& seed, bool& stickRecord, std::map<uint64_t, float>& frameDt,
+                     std::map<uint64_t, float>& cameraYaw) {
     const auto first = text.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos || (text[first] != '[' && text[first] != '{')) return false;
     nlohmann::json j;
@@ -232,6 +233,19 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
                 frameDt[e[0].get<uint64_t>() + shift] = e[1].get<float>();
             }
         }
+        // "camera_yaw": [[tick, yaw], ...], tru.exe's camera heading the stick is read against at that tick (our yaw, rad:
+        // atan2 of the camera matrix's forward row, WineChartTrace var_cam38 row 2; tru's heading is ours + 90 deg, B+0x5C),
+        // each holding until the next. The replay pins the stick's world yaw to it per tick (World::pinStickYaw) instead
+        // of the case's fixed camera_follow, as tru's free camera turns during a take.
+        if (j.contains("camera_yaw")) {
+            const auto& cy = j["camera_yaw"];
+            if (!cy.is_array()) throw std::runtime_error("input script: \"camera_yaw\" is not [[tick, yaw], ...]");
+            for (const auto& e : cy) {
+                if (!e.is_array() || e.size() < 2 || !e[0].is_number_unsigned() || !e[1].is_number())
+                    throw std::runtime_error("input script: camera_yaw entry " + e.dump() + " is not [tick, yaw]");
+                cameraYaw[e[0].get<uint64_t>() + shift] = e[1].get<float>();
+            }
+        }
         j = j["input"];
     }
     if (!j.is_array()) throw std::runtime_error("input script: expected [[tick, mask], ...]");
@@ -257,7 +271,8 @@ InputScript InputScript::parse(std::string_view text) {
                                                     "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda",
                                                     "light", "grenade", "recenter", "camera", "manual"};
     InputScript s;
-    if (std::vector<std::tuple<uint64_t, std::string, float>> mask; parseMaskScript(text, mask, s.cameraFollow_, s.cameraSeed_, s.stickRecord_, s.frameDt_)) {
+    if (std::vector<std::tuple<uint64_t, std::string, float>> mask;
+        parseMaskScript(text, mask, s.cameraFollow_, s.cameraSeed_, s.stickRecord_, s.frameDt_, s.cameraYaw_)) {
         for (auto& [tick, action, value] : mask) s.events_.push_back({tick, std::move(action), value});
         std::stable_sort(s.events_.begin(), s.events_.end(), [](const Event& a, const Event& b) { return a.tick < b.tick; });
         return s;

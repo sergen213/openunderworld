@@ -2,6 +2,7 @@
 #include "formats/Formats.hpp"
 #include "fx/Breath.hpp"
 #include "fx/Fx.hpp"
+#include "fx/Precip.hpp"
 
 #include <gtest/gtest.h>
 
@@ -1138,4 +1139,153 @@ TEST(FxBreath, DeterministicRisingAndGoneAtTheSurface) {
     for (double t = 0; t <= 4.0; t += 1.0 / 60) b.tick(t, mouth, true, true, 0.0f); // time jumped back: restarts
     b.append(4.0, out);
     EXPECT_FALSE(out.empty());
+}
+
+// ---- Enhanced weather (fx::Precip, fx::SnowCoat) ----
+namespace {
+// Cover query: a flat ground at `groundZ` everywhere, a roof at `roofZ` where x < 0 (none: +inf).
+ou::fx::Precip::Query flatCover(float groundZ, float roofZ = INFINITY) {
+    return [=](std::span<const glm::vec3> from, std::span<const glm::vec3>, std::span<std::optional<float>> hits) {
+        for (size_t i = 0; i < from.size(); ++i) hits[i] = std::isfinite(roofZ) && from[i].x < 0 ? roofZ : groundZ;
+    };
+}
+std::vector<glm::vec3> quadCentres(const std::vector<ou::render::FxVertex>& v, const ou::render::FxBatch& b) {
+    std::vector<glm::vec3> out;
+    for (uint32_t i = b.first; i + 6 <= b.first + b.count; i += 6) { // two triangles 0 1 2 / 0 2 3: corners 0, 1, 2, 5
+        const uint32_t k[4] = {i, i + 1, i + 2, i + 5};
+        glm::vec3 c{0};
+        for (const uint32_t j : k) c += glm::make_vec3(v[j].pos);
+        out.push_back(c / 4.0f);
+    }
+    return out;
+}
+ou::fx::Precip::Frame frameAt(glm::vec3 eye, ou::fx::Precip::Kind kind, double t = 10.0) {
+    ou::fx::Precip::Frame f;
+    f.kind = kind, f.intensity = 1, f.time = t, f.eye = eye, f.forward = {0, 1, 0}, f.viewportHeight = 720;
+    return f;
+}
+} // namespace
+
+// The particles belong to world cells, not to the camera: moving the eye leaves every flake seen from both positions where
+// it was (no sliding with the camera), and the same time draws the same flakes however the camera got there.
+TEST(FxPrecip, WorldAnchoredNotViewLocked) {
+    ou::fx::Precip p;
+    for (int i = 0; i < 20; ++i) p.updateCover({0, 0, 0}, flatCover(-5000), 1 << 16);
+    auto centres = [&](glm::vec3 eye) {
+        std::vector<ou::render::FxVertex> v;
+        std::vector<ou::render::FxBatch> b;
+        p.build(frameAt(eye, ou::fx::Precip::Kind::Snow), v, b);
+        EXPECT_FALSE(b.empty());
+        return b.empty() ? std::vector<glm::vec3>{} : quadCentres(v, b[0]);
+    };
+    const auto a = centres({0, 0, 0}), b = centres({120, 40, 0});
+    ASSERT_GT(a.size(), 1000u);
+    size_t shared = 0, found = 0;
+    for (const glm::vec3& c : a) {
+        if (glm::distance(c, glm::vec3(0, 400, 0)) > 250) continue; // well inside both views and radii
+        ++shared;
+        found += std::any_of(b.begin(), b.end(), [&](const glm::vec3& d) { return glm::distance(c, d) < 0.01f; });
+    }
+    ASSERT_GT(shared, 50u);
+    EXPECT_EQ(found, shared);
+    // Time moves them (falling), the camera does not.
+    std::vector<ou::render::FxVertex> v;
+    std::vector<ou::render::FxBatch> bb;
+    p.build(frameAt({0, 0, 0}, ou::fx::Precip::Kind::Snow, 10.5), v, bb);
+    const auto later = quadCentres(v, bb[0]);
+    size_t same = 0;
+    for (size_t i = 0; i < std::min<size_t>(200, a.size()); ++i)
+        same += std::any_of(later.begin(), later.end(), [&](const glm::vec3& d) { return glm::distance(a[i], d) < 0.01f; });
+    EXPECT_LT(same, 5u);
+}
+
+// Rain drops are short velocity-aligned quads (a few cm, not streaks across the view) and drawn near the camera too;
+// under a roof (the cover grid's top surface above them) there are none, and drops reaching the ground splash there.
+TEST(FxPrecip, DropsCoverAndSplashes) {
+    ou::fx::Precip p;
+    for (int i = 0; i < 20; ++i) p.updateCover({0, 0, 0}, flatCover(-150, 400), 1 << 16);
+    std::vector<ou::render::FxVertex> v;
+    std::vector<ou::render::FxBatch> b;
+    p.build(frameAt({0, 0, 0}, ou::fx::Precip::Kind::Rain), v, b);
+    ASSERT_GE(b.size(), 2u);
+    EXPECT_EQ(b[0].textureId, ou::fx::kPrecipDropTexture);
+    size_t near = 0;
+    for (uint32_t i = b[0].first; i + 6 <= b[0].first + b[0].count; i += 6) {
+        const glm::vec3 c0 = glm::make_vec3(v[i].pos), c2 = glm::make_vec3(v[i + 2].pos);
+        EXPECT_LT(glm::distance(c0, c2), 25.0f); // at most ~20 units (20 cm) head to tail
+        const glm::vec3 c = (c0 + c2) * 0.5f;
+        if (c.x < -20.0f) EXPECT_GE(c.z, 380.0f) << "a drop under the roof (x < 0, roof at 400)";
+        EXPECT_GE(c.z, -151.0f) << "a drop below the ground";
+        near += glm::length(c) < 250.0f;
+    }
+    EXPECT_GT(near, 10u); // half the space near the eye is under the roof
+    const auto ring = std::find_if(b.begin(), b.end(), [](const auto& x) { return x.textureId == ou::fx::kPrecipRingTexture; });
+    ASSERT_NE(ring, b.end());
+    for (const glm::vec3& c : quadCentres(v, *ring)) // on the ground, or on the roof where it covers (x < 0)
+        EXPECT_NEAR(c.z, c.x < 0 ? 400.6f : -149.4f, 0.01f);
+    // Columns not queried yet show nothing (no rain inside before the grid knows the roofs).
+    ou::fx::Precip empty;
+    v.clear(), b.clear();
+    empty.build(frameAt({0, 0, 0}, ou::fx::Precip::Kind::Rain), v, b);
+    EXPECT_TRUE(b.empty());
+}
+
+// PrecipWorker (the off-main-thread build): each collect() returns exactly what Precip would have built for the job the
+// previous frame submitted (cover queries then build, in submit order), with the probed column's cover.
+TEST(FxPrecip, WorkerMatchesDirectBuildOneFrameBehind) {
+    ou::fx::Precip direct;
+    ou::fx::PrecipWorker worker;
+    EXPECT_FALSE(worker.collect().valid); // nothing submitted yet
+    const auto query = flatCover(-150, 400);
+    std::vector<ou::render::FxVertex> expectV;
+    std::vector<ou::render::FxBatch> expectB;
+    for (int frame = 0; frame < 8; ++frame) {
+        const auto& r = worker.collect();
+        if (frame > 0) {
+            ASSERT_TRUE(r.valid);
+            ASSERT_EQ(r.vertices.size(), expectV.size()) << frame;
+            EXPECT_EQ(0, std::memcmp(r.vertices.data(), expectV.data(), expectV.size() * sizeof(expectV[0]))) << frame;
+            ASSERT_EQ(r.batches.size(), expectB.size());
+            for (size_t i = 0; i < expectB.size(); ++i) {
+                EXPECT_EQ(r.batches[i].first, expectB[i].first);
+                EXPECT_EQ(r.batches[i].count, expectB[i].count);
+            }
+            ASSERT_EQ(r.probes.size(), 1u);
+            ASSERT_TRUE(r.probes[0]);
+            EXPECT_EQ(*r.probes[0], -150.0f);
+        }
+        auto f = frameAt({frame * 40.0f, 0, 0}, ou::fx::Precip::Kind::Rain);
+        f.time += frame / 60.0;
+        direct.updateCover(f.eye, query, 512);
+        expectV.clear(), expectB.clear();
+        direct.build(f, expectV, expectB);
+        worker.submit({f, query, 512, {glm::vec2(f.eye) + glm::vec2(8)}}); // the eye's column: queried first
+    }
+}
+
+// Snow on Lara builds while she stands in snowfall, fades slowly while she walks, and running / landing sheds clumps
+// that fall and settle on the ground the query reports.
+TEST(FxSnowCoat, BuildsFadesAndSheds) {
+    ou::fx::SnowCoat c;
+    const auto ground = [](const glm::vec3&) -> std::optional<float> { return 0.0f; };
+    ou::fx::SnowCoat::Input in;
+    in.dt = 1.0f / 60, in.snowfall = 1;
+    for (int i = 0; i < 60 * 60; ++i) in.time += in.dt, c.tick(in, ground);
+    EXPECT_GT(c.coverage()[0], 0.9f);
+    EXPECT_GT(c.coverage()[0], c.coverage()[3]); // the head and shoulders collect more than the legs
+    const float full = c.coverage()[0];
+    in.snowfall = 0, in.velocity = {150, 0, 0}; // walking out of the snow: slow fade, no clumps
+    for (int i = 0; i < 60 * 5; ++i) in.time += in.dt, in.position += in.velocity * in.dt, c.tick(in, ground);
+    EXPECT_LT(c.coverage()[0], full);
+    EXPECT_GT(c.coverage()[0], 0.4f * full);
+    EXPECT_EQ(c.clumps(), 0u);
+    in.velocity = {600, 0, 0}; // running
+    for (int i = 0; i < 30; ++i) in.time += in.dt, in.position += in.velocity * in.dt, c.tick(in, ground);
+    EXPECT_GT(c.clumps(), 0u);
+    for (int i = 0; i < 90; ++i) in.time += in.dt, in.velocity = {}, c.tick(in, ground); // they fall and settle
+    std::vector<ou::render::FxVertex> v;
+    std::vector<ou::render::FxBatch> b;
+    c.build(frameAt({0, -500, 100}, ou::fx::Precip::Kind::Snow), v, b);
+    ASSERT_EQ(b.size(), 1u);
+    for (const glm::vec3& q : quadCentres(v, b[0])) EXPECT_NEAR(q.z, 0.4f, 0.5f);
 }

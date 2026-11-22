@@ -6,6 +6,25 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-11-22
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Changed (Enhanced preset): rain and snow now fall in the world instead of moving with the camera. Turning or moving
+  the camera leaves the drops and flakes where they are. The Original preset keeps the original's camera-tied look.
+- Changed (Enhanced preset): rain falls as short individual drops instead of long streaks, with a ring and droplets
+  where each drop lands; roofs and overhangs keep it off.
+- Added (Enhanced preset): snow builds up on open, upward-facing ground and objects while it snows, and melts away
+  a few minutes after it stops. It never settles under roofs, in caves or on walls. Lara leaves a trodden trail in
+  deep snow that fills in again.
+- Added (Enhanced preset): snow collects on Lara's head, shoulders, arms and legs while she stands in the open.
+  Walking slowly brushes it off; running, jumping, landing and climbing shed it in clumps that fall to the ground.
+- Added: GRAPHICS > SNOW BUILD-UP turns the settling snow on or off (applies at once; on by default in Enhanced).
+  Command line: `--snow-accumulation on|off`.
+- Fixed: snowflakes in the thin-ice level drew as dark grey dots; they are white now.
+- Changed: the rain and snow work runs on a background thread, so it costs the main thread well under 0.2 ms a frame
+  (it was about 2.3 ms).
+
 ## [0.60.4] - 2026-11-21
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

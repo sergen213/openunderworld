@@ -148,11 +148,27 @@ struct ScreenFilter {
 // Height fog (haze + ground mist) integrated along the view ray up to the scene or the nearest water surface,
 // plus screen-space sun shafts from Medium up. Off = the post pass leaves the image untouched.
 enum class Atmosphere : uint8_t { Off, Low, Medium, High };
-// Screen-space precipitation layers, depth-tested against the scene; rain adds splash rings on upward surfaces.
+// Enhanced weather in the post pass: rain darkens wet upward-facing surfaces (the drops and flakes themselves are world-
+// space effect sprites, fx::Precip).
 struct Weather {
     enum class Kind : uint8_t { None, Rain, Snow } kind = Kind::None;
     float intensity = 0; // 0..1, already reduced where the camera is sheltered
     float wind[2] = {0.25f, 0.1f}; // world xy drift per unit of fall
+};
+// Enhanced snow accumulation (render/Snow.hpp, docs/RENDERING.md "Weather"): the backend renders a top-down depth map of
+// the scene around the camera and grows a world-anchored snow mask from it (the top surface of each column collects;
+// a column whose top surface changes height starts bare: footprints, moved objects); the scene shaders blend snow in
+// by normal . up x mask x being that top surface. Lara's coat is per body region (fx::SnowCoat).
+struct SnowLayer {
+    float grow = 0;        // mask added per second on open top surfaces (0: not snowing)
+    float melt = 0;        // removed per second
+    float seed = 0;        // 0..1: the cover a column entering the map starts with (the area's amount so far)
+    float dt = 0;          // game seconds since the last frame (0: paused, the mask holds)
+    float light[3] = {0.9f, 0.9f, 0.95f}; // lit snow colour (the scene's ambient light)
+    float sparkle = 1;
+    float lara[4] = {};    // coverage: head + shoulders, arms, torso, legs
+    float laraFeet[3] = {};
+    float laraHeight = 0;  // 0: no coat
 };
 
 // Time of day (render/TimeOfDay.hpp, docs/RENDERING.md "Time of day"): what the frame changes in the uploaded unit's
@@ -266,6 +282,7 @@ struct FrameOptions {
     Atmosphere atmosphere = Atmosphere::Off;
     bool lightShafts = true;  // sun shafts of Atmosphere Medium / High
     Weather weather;
+    const SnowLayer* snow = nullptr; // null: no snow layer (no passes, the shaders skip it)
     // AMD FSR (Vulkan only, docs/RENDERING.md "FSR"): the scene renders at the quality mode's resolution with sub-pixel
     // jitter and FSR upscales it (MSAA and FXAA are then off); the UI is drawn after the upscale. frameGeneration also
     // presents one generated frame between real ones. Backends without FSR ignore it (Renderer::upscalerSummary).
