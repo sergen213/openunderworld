@@ -4101,9 +4101,12 @@ void Player::drive(const DriveStep& d, float dt) {
         root = rootDelta(anims_, s_, *c, r0, r1);
         const bool turns = std::abs(rootYaw(*c, c->durationSeconds(), false) - rootYaw(*c, 0, false)) > 1e-3f;
         if (turns) {
-            const float base = s_.yaw - k * rootYaw(*c, r0, s_.loop);
+            // the root's turn runs on the clip's own clock through the crossfade window (Wine tr_pole_hoh_right, S637
+            // Hpole_PerptoPara: yaw 90 -> 58.8 five ticks in, 0 by 25, while the translation holds) [O-runtime]; the
+            // translation is in the clip's origin frame
+            const float base = s_.yaw - k * rootYaw(*c, t0, s_.loop);
             world = rotYaw(base, root);
-            s_.yaw = wrapAngle(base + k * rootYaw(*c, r1, s_.loop));
+            s_.yaw = wrapAngle(base + k * rootYaw(*c, t1, s_.loop));
         } else {
             world = toWorld(root);
         }
