@@ -414,12 +414,15 @@ void airExit(ChartContext&, uint16_t) {}
 void airUpdate(ChartContext& ctx, uint16_t) {
     ctx.agentFloat(0x3E8) += ctx.timeMult;
     // 0x752410 re-solves the flight with the time left +0x77C (0x73EDC0); it runs down with the flight [I: the decrement's
-    // site is not found in the decomp; 0x751FC0 rewrites it while refining, which ours does not port]. The velocity
-    // itself is the controller's (Player::reaimJump), recorded here only.
+    // site is not found in the decomp]. With a jump target and more time left than object data short +0xC24, it
+    // refines: 0x751FC0 runs short +0xC20 passes of 0x72B5C0 aiming the instance's velocity (0x70E050, gravity 5.724)
+    // at the target over the time left, +0x77C kept (its 3rd argument 0) [O: decomp]. ReAim(left) asks the driver for
+    // that velocity (drive mode: Shadow aimAt); the shadow's controller keeps its own (Player::reaimJump).
     if (jt(ctx)) {
         float& left = ctx.playerFloat(0x77C);
         left = std::max(0.0f, left - ctx.timeMult);
-        ctx.effect(JEffect::ReAim, left);
+        const auto& c = ctx.chart().charts();
+        if (left > float(c.data<int16_t>(0xC24)) && c.data<int16_t>(0xC20) > 0) ctx.effect(JEffect::ReAim, left);
     }
     const auto v = ctx.velocity();
     const bool rising = v && v->z > 0;

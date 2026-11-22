@@ -729,6 +729,8 @@ public:
     };
     void drive(const DriveStep& d, float dt);
     void setVelocity(vec3 v) { s_.vel = v; }
+    // The drive's launch: the flight the wall probe (WallJump.cpp, 0x7594C0) reads: take-off point, launch velocity, time.
+    void setFlight(vec3 v) { s_.vel = v, s_.jumpStart = s_.pos, s_.jumpVel0 = vec2(v), s_.jumpTime = 0; }
     void setYaw(float yaw) { s_.yaw = yaw; }
     std::pair<vec3, float> hangPose(int markup, int seg, float t, float side) const { return attachPose(markup, seg, t, side); }
     // Extra distance of a ledge hang's root out of the ledge line (attachPose); the chart drive sets Wine's (0 = legacy).

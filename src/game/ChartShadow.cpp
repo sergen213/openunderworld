@@ -194,7 +194,15 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const auto& t = w->player().tuning();
         return w->player().state().sprintUsed <= t.sprintSeconds - t.sprintResume;
     }
-    std::optional<bool> wallJumpAttach() const override { return w->player().wallJumpWall().has_value(); }
+    // 0x7633E0 asks the wall probe itself (0x7594C0 == 2) [O]; drive mode does so (no controller wall-jump state to
+    // read), the shadow keeps reading our controller's wall [I].
+    std::optional<bool> wallJumpAttach() const override {
+        if (driving) {
+            const auto p = wallJumpProbe();
+            return p ? std::optional<bool>(*p == 2) : std::nullopt;
+        }
+        return w->player().wallJumpWall().has_value();
+    }
     // Agent +0x90: game ms of the last too-steep ground contact (message 0x1C9 from the ground check 0x5DCE20; ours the
     // shadow's own ground check, `ground.steep`).
     std::optional<bool> wallSlideRecent() const override { return lastSteepMs > 0 && nowMs - lastSteepMs <= 99; }
@@ -467,6 +475,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             const int x = int(v);
             collisionMask = x == 0x48 ? collisionMask | 0x48u : x == -0x48 ? collisionMask & ~0x48u : uint32_t(x);
         }
+        // 0x752410's refine (0x751FC0 -> 0x72B5C0 -> 0x70E050): drive mode aims her velocity at the chart's jump target
+        // over the time left; the shadow leaves our controller's flight alone.
+        if (e == JEffect::ReAim && driving && pm && chartTarget.target) aimAt(chartJumpTarget(*this), v);
     }
     // ---- end group J ----
 
@@ -578,7 +589,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             // Drive mode: a hold state (its chain runs action 420) needs +0xC94; the Wine case began attached (a hold
             // survives the corpus' teleport), so the markup nearest her hands is attached as the state's actions would
             // have [I: harness only, W/chart/wine/README.md "Harness limits"].
-            if (driving && rt->chainHasAction(enterState, 420)) seedAttach();
+            // A state whose chain attaches the jump target in its PreAnim actions (230's class setters, S619's pole air
+            // grab) began held as well.
+            if (driving && (rt->chainHasAction(enterState, 420) || rt->chainHasAction(enterState, 230))) seedAttach();
             rt->enter(*this, enterState), enterState = -1;
             if (enterElapsed > 0) rt->fastForward(enterElapsed); // the Wine case's state time at its start (t30)
         }
@@ -730,6 +743,7 @@ void Shadow::Impl::seedAttach() {
         PlayerState ps = w->player().state();
         ps.pos = glm::vec3(*enterPose), ps.yaw = glm::radians(enterPose->w), ps.vel = glm::vec3(0);
         pm->restore(ps);
+        placements = pm->placements(); // ours, not a placement that restarts the chart
     }
     const PlayerState& s = w->player().state();
     const float c = std::cos(s.yaw + 1.5707964f), sn = std::sin(s.yaw + 1.5707964f);
@@ -881,7 +895,7 @@ void Shadow::Impl::launch(int from) {
         case 249: case 280: case 281: v = f * t.runJumpSpeed + glm::vec3(0, 0, t.runJumpVz); break;
         default: break;
         }
-        pm->setVelocity(v);
+        pm->setFlight(v);
         if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
         return;
     }
@@ -890,12 +904,12 @@ void Shadow::Impl::launch(int from) {
     glm::vec2 out = -glm::vec2(f);
     if (at) out = glm::length(glm::vec2(s.pos - at.point)) > 1 ? glm::normalize(glm::vec2(s.pos - at.point)) : out;
     if (clip == "ledgeb_jump_back") {
-        pm->setVelocity(glm::vec3(out * t.hangLeapBack, t.hangLeapVz));
+        pm->setFlight(glm::vec3(out * t.hangLeapBack, t.hangLeapVz));
     } else if (clip.starts_with("ledgeb_jump_right")) {
         const glm::vec2 face = -out, right(face.y, -face.x);
-        pm->setVelocity(glm::vec3(right * (s.mirror ? -1.0f : 1.0f) * t.hangLeapSide, t.hangLeapVz));
+        pm->setFlight(glm::vec3(right * (s.mirror ? -1.0f : 1.0f) * t.hangLeapSide, t.hangLeapVz));
     } else if (clip == "ledgeb_jump_up") {
-        pm->setVelocity(glm::vec3(0, 0, t.hangJumpUpVz));
+        pm->setFlight(glm::vec3(0, 0, t.hangJumpUpVz));
         if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
     } else {
         launched = false;

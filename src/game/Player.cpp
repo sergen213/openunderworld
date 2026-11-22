@@ -4053,6 +4053,7 @@ void Player::drive(const DriveStep& d, float dt) {
                 p.z = g->point.z, s_.vel.z = 0;
         s_.pos = p;
         s_.ledge = -1;
+        s_.jumpTime += dt; // the flight's time for the wall probe (setFlight)
         break;
     }
     case DriveStep::Motion::Hang: {
