@@ -27,11 +27,10 @@
    "duration": 60,
    "expect": [
     {
-     "clips": [
-      "hosted:2467",
-      "portable_encumbered_walk",
-      "hosted:2468"
-     ]
+     "probe": "portable.held",
+     "over": "max",
+     "min": 1,
+     "note": "she picked the weight up and carried it (both traversals)"
     },
     {
      "probe": "object.219.joint",

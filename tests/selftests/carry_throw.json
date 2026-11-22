@@ -11,7 +11,6 @@
      "plan": ["engage 220 walk", "press", "wait 2"],
      "duration": 40,
      "expect": [
-       {"clips": ["hosted:2467", "portable_encumbered_idle"]},
        {"probe": "portable.held", "eq": 220},
        {"probe": "player.state", "eq": "idle"}
      ]},

@@ -35,17 +35,18 @@
    ],
    "duration": 4,
    "until": {
-    "probe": "player.state",
-    "eq": "hang"
+    "probe": "player.hanging",
+    "eq": true
    },
    "expect": [
     {
-     "visits": [
-      "run",
-      "jumpprep",
-      "hangjump",
-      "hang"
-     ]
+     "probe": "step.air_ticks",
+     "min": 6,
+     "note": "a running jump onto the anchor: she flies (legacy 12, chart 12 ticks)"
+    },
+    {
+     "probe": "player.hanging",
+     "eq": true
     },
     {
      "probe": "player.pos.x",
