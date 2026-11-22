@@ -739,6 +739,9 @@ public:
         float t = 0, side = 1;
         bool snap = false;
         bool slide = false; // Hang + snap: the root motion along the markup moves the grip (the shimmy)
+        // Hang + snap, the hang idles (prop 551): tru.exe 0x708830 -> 0x708210 each frame projects the clip's root
+        // displacement off the hang root onto the markup and moves the grip by its part along it (to the segment end)
+        bool follow = false;
         vec3 blendFrom{0}, blendTo{0};
         float yawFrom = 0, yawTo = 0, blend = 0;
         State coarse = State::Idle; // what World's subsystems read as her state (camera, interactions, carriers)

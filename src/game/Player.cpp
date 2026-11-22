@@ -4267,6 +4267,16 @@ void Player::drive(const DriveStep& d, float dt) {
         // hands on the markup: in the shimmy (d.slide) the root motion's part along it moves the grip; otherwise the
         // grip stays (tru.exe +0xC98) and the rest of the clip's motion is the hang pose
         if (d.slide) moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
+        else if (d.follow)
+            // 0x708830 -> 0x708210 [O]: the root's displacement this frame (instance +0x20 - +0xC0, the clip having
+            // placed its root off the projected hang root) along the markup moves the grip; past the room to the end
+            // (no next segment, 0x6FE790) it clamps there. Wine l3_chapel S447: (79.7, -303, 41.7) a frame, grip
+            // 0.898 -> 0.9999 on the first frame. Ours: the clip's root translation at its time in her frame [I].
+            if (const anim::Clip* c = anims_.find(s_.clip)) {
+                vec3 r = rootTranslation(*c, s_.clipTime, s_.loop);
+                if (s_.mirror) r.x = -r.x;
+                moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(rotYaw(s_.yaw, r)), segDir(m, s_.ledgeSeg)));
+            }
         placeOnLedge();
         s_.vel = vec3(0);
         break;

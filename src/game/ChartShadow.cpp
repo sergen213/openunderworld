@@ -1126,6 +1126,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         // clips' sideways root motion leaves it where it is, and the ledge end S448 stops her dead (ChartB, Wine 973:
         // +0xC98 0.907 stays until the stick press, so the end bit 642 holds and S458 -> S450) [O-runtime].
         d.slide = st == 459 || st == 432 || st == 441;
+        // the hang idles (prop 551 set: S445 / S447) run 0x708830's grip projection (its +0x47 flag) [I: the flag's
+        // source in 0x770ED0 is not decoded; S533 lacks 551 and does not call 0x708210, Wine ch_hang_snap_*]
+        d.follow = !d.slide && rt->propBool(551).value_or(false);
     } else if (rt->chainHasAction(st, 510)) {
         d.motion = M::Air;
         // 0x752410: the flight re-aimed at its target with the time left (+0x77C, action 510's update) [O]
