@@ -2290,6 +2290,7 @@ int main(int argc, char** argv) {
         if (chartShadow) world->setPlayerDriver(chartShadow->driver());
         if (script) world->pinStickYaw(script->cameraYaw()); // a Wine case's CAMFOLLOW (camera_follow): the stick's world yaw
         if (script) world->pinCamera(script->cameraFollow()); // and the camera itself, as the harness wrote it every frame
+        if (script) world->seedCamera(script->cameraSeed()); // an unpinned take: tru.exe's free camera at its key tick
         // Neighbour units (and their render scenes) load on a worker thread (World::setAsyncStreaming); --sync-loads: inline.
         if (!opt.syncLoads)
             world->setAsyncStreaming([b = bigfile.get(), &spirvWarm, decoded = streamed.decoded](const std::string& n) {

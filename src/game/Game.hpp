@@ -958,6 +958,9 @@ struct CameraState {
 // +0x150 (proposed point) = her position - (dx, dy, 0) x dist + (0, 0, height); tru.exe's next camera update reads its
 // angles back from there (0x600200 -> 0x5FF320), keeps its distance state +0x1D4, and follows (0x600710).
 struct CameraFollow { float dx = 0, dy = -1, dist = 1264, height = 300; };
+// A Wine unpinned take's camera (case "camera_at_key", our frame): the replay's orbit camera starts its update of trace
+// tick `tick` from `pos` (World::seedCamera), its distance state the distance to the pivot.
+struct CameraSeed { vec3 pos{0}; uint64_t tick = 0; };
 struct SplineCamera; // a unit camera spline playing (Camera.cpp)
 
 // ---- world ------------------------------------------------------------------------------------
@@ -1143,6 +1146,7 @@ public:
     // and proposed point put at her position - (dx, dy) x dist + (0, 0, height) before every update, as chart.c writes
     // g_camera +0x90 / +0x150 between frames; the update then runs as in play from there. nullopt (default): play.
     void pinCamera(std::optional<CameraFollow> f) { cameraPin_ = f; }
+    void seedCamera(std::optional<CameraSeed> s) { cameraSeed_ = s; }
     const CameraState& previousCamera() const { return prevCam_; }
     // Field camera view (World::tick): on, and its zoom 0..1 (the app draws the g_binoculars viewfinder).
     bool fieldCamera() const { return fieldCamera_; }
@@ -1797,6 +1801,7 @@ private:
     std::optional<vec3> lookPoint_; // its look point (+0x620), lagging the same goal while swimming (World.cpp)
     std::optional<float> stickYawPin_; // pinStickYaw
     std::optional<CameraFollow> cameraPin_; // pinCamera
+    std::optional<CameraSeed> cameraSeed_;  // seedCamera
     vec3 pivot_{0}; // cameraPivot(): the orbit camera's pivot this tick (output only, recomputed by every update)
     // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
     // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
@@ -2252,6 +2257,7 @@ public:
     // A Wine case's "camera_follow" ("dx,dy,dist,height"): the pin (World::pinCamera), and the stick yaw atan2(dy, dx) the
     // world reads input against (World::pinStickYaw); nullopt without.
     std::optional<CameraFollow> cameraFollow() const { return cameraFollow_; }
+    std::optional<CameraSeed> cameraSeed() const { return cameraSeed_; } // a freecam take's "camera_at_key"
     std::optional<float> cameraYaw() const {
         return cameraFollow_ ? std::optional<float>(std::atan2(cameraFollow_->dy, cameraFollow_->dx)) : std::nullopt;
     }
@@ -2260,6 +2266,7 @@ private:
     struct Event { uint64_t tick; std::string action; float value; };
     std::vector<Event> events_; // sorted by tick (stable)
     std::optional<CameraFollow> cameraFollow_;
+    std::optional<CameraSeed> cameraSeed_;
 };
 
 } // namespace ou::game

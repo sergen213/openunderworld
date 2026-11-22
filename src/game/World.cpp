@@ -935,6 +935,10 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         const CameraFollow& f = *cameraPin_;
         cam_.position = orbit_.desired = prev_.pos + vec3(-f.dx * f.dist, -f.dy * f.dist, f.height);
     }
+    // Replays of an unpinned take (seedCamera): tru.exe's free camera at the key tick, as its history before the case
+    // cannot be reproduced; the update then runs as in play.
+    const bool seeded = cameraSeed_ && orbit_.valid && !bike && ticks_ == cameraSeed_->tick;
+    if (seeded) cam_.position = orbit_.desired = cameraSeed_->pos;
     // Camera mode: the player's state machine requests it through CameraManager 0xE804F0's slot 17 (message 0x44E ->
     // 0x7683B0 -> 0x5E8210; Wine, hooked at 0x5E8210 while she acted: on foot, jumping and falling 1, free climb 4, ledge hang and
     // shimmy 11, surface swim 20, under water 19), and what its mode-list entry sets; a mode without command 10 / 2
@@ -1282,6 +1286,7 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         return p;
     };
     const vec3 target = clearance(*focus_);
+    if (seeded) orbit_.dist = glm::distance(orbit_.desired, target), orbit_.speed = 0; // +0x1D4 = |+0x150 - focus| (0x5FE9A0)
     const float kDistance = bike ? 1711.0f : mode.distance; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
     const bool reseed = snap || !orbit_.valid || (!cut && (cam_.yaw != orbit_.yaw || cam_.pitch != orbit_.pitch)); // [I] set from outside
     if (reseed) { // where the angles put it (at full distance after a spawn or teleport)
