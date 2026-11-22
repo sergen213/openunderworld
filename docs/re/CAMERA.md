@@ -383,3 +383,63 @@ Wine (2026-11-19, `openunderworld-work/w2/CamRest8/fast.py` / `camz.py`, l3_main
   `StreamReal.CameraTriggerFocusPointTurnsTheLook`. [I]: our view test uses the last camera's frustum at the configured
   vertical FOV and 16:9 and treats the planes as facing out; the sight ray uses the camera mask; the gather order is our
   unit order (it matters only with two or more points, via the loops above). The scripts' Enable / Disable are not bound.
+
+## 10. Traversal states: mode, mode list, pushes, matrix (agent/TraversalCam)
+
+**Matrix rows (V-data + D).** The camera matrix (+0x10, vt 0x38 / 0x5E7850) is built at the end of 0x602690 by
+0x5E0970 → 0x5E0900 → 0x49B820 from the position +0x90 and the look vector +0x160 (0x6009C0): row 0 right =
+down × look, row 1 the camera's **down**, row 2 the **look** direction, row 3 the position; +0x50 its inverse (vt 0x3C /
+0x5E7870). Checked on the Wine CAMDUMP of a camera pinned 1264 behind her and 300 up: row 2 = (0, −0.996, 0.092)
+points from the camera at the pivot, row 1 = (0, −0.092, −0.996). The stick record's markup frame (0x6F8050, the
+chart's cond 0x195) projects onto (right, down), the screen plane, and tests the look row's z (+0x196). Ours:
+`ChartContext::CameraAxes{right, down, look}` (`Shadow::Impl::cameraRows`); before this it passed (right, look, up),
+which put our "up" z near 1 where tru.exe's look z is 0.1..0.3.
+
+**Which mode a traversal state asks for [O-data].** State property 1102 (0x44E) is the camera mode request
+(traversal_states.json): ledge S434 / S436 / S443 / S446 / S447 / S506 (shimmy, idle hangs) 37; S254 / S257..S260 /
+S452 / S505 11; S456 46; S542 42; S1197 / S1184 (pillar) / S1131 17; ladder S1051 10; poles S626 / S679 9; perch S825
+16; beam S874 3, S155 / S1397 19, S1239 21, S1262 / S1265 and wall hug S1263 / S1264 22, S1043 / S1248 56, S525 57;
+53 (= "the markup's mode", 0x5E8210) on beams S1003 / S1032..S1039, hurdle S512, landing S519, S276; aiming 23; and 1
+on the states that leave them (S431 / S432 / S440..S442 ledge, S670 pole, S867 perch, S1064 / S1075 ladder, S1204 /
+S1221 pillar, landings S1275 / S1276 / S1282, wall jump S1292 …). A state without the property keeps the last mode.
+
+**Mode list [O-data: camera DTP 0x14 = pc-w\generalbank.drm DTP section 20, +0x144 count 25, +0x148 entries {n,
+modes, n, commands (0x18 bytes)}].** {11, 15, 14} and {37, 39, 38} carry the same commands: 7 {0, 90, 70, 25, flag 1},
+force set 0x10 15, look record 11 → 51, focus record 10 → 8, 8 {0, 55}, 15 (pull-in), 2 1896.33. {21, 22}: the same
+with records 7 / 50 and distance 1580.28. 10 (ladder): 8 {0, 55}, 7 {0, 90, 70, 25, 1}, 2 1896.33, records 1 / 3,
+15, pitch set 16. 4 (free climb): 8 {0, 55, 20, 200, flag 0}, 7 {0, 90, 70, 25, 1}, records 10 / 11, 15, yaw set 15.
+17 (pillar): pitch set 16, 15, yaw set 1, 8 {0, 55}. 16 (perch): yaw set 5, pitch set 17, 15, look record 26. 9
+(pole): yaw set 4, 15. 3 (beam): yaw set 6, look record 25, 15, 0x13. 47: records 53 / 54, 2 1580.28, yaw set 12, 7
+{0, 90, 70, 25, 1}, pitch set 12, 15, 0x13. 5: records 56 / 57, 2 1580.28, yaw set 10, 7 {0, 70, 180, 30, 1}. 42 / 57:
+inline yaw override 5 {0, 500, 0.25}, records 8 / 51. 46: records 1 / 3, pitch override id 8. 43: 0x14 158.03, pitch
+override id 6. 18: pitch override id 10, pitch set 15. 7: pitch set 11, yaw set 9, records 48 / 49, 15. 6: 9 = 1.0,
+yaw set 7, pitch set 8. 8: 2 948.17, records 2 / 0. 41: 0xE. 20: 8 {−40, 30}. 19: record 41, 8 {−5, 80}. 23: 2
+632.11, records 22 / 35. 1 / 2: pitch set 4, records 1 / 3, 0x13.
+
+**Soft yaw limit (D).** 0x607A30 stores command 7 as centre (c + 90°), half-range r, and with its flag byte a soft
+half-range (arg 2) and speed (arg 3, deg/s), else soft = r, speed 100000. 0x600200 runs the proposed yaw through
+0x608560 when the frame is not turned by look input: clamp to centre ± r, then beyond the soft range back toward it by
+at most speed × dt. So hanging, shimmying, free climbing and on ladders the camera may sit up to 90° off behind her but
+drifts back inside 70° at 25°/s. Ours: `Mode::yawSoft` / `yawSoftSpeed` (modes 4 / 11 / 10 and trigger command 7);
+not blended over the limits' 0.25 s [I]. The pivot frame +0xD0 is her yaw (0x6022F0: Euler (0, 0, instance +0x38),
+rate-limited by +0x132C when +0x1339 is set).
+
+**Pushes (actions 2001..2005, D).** CameraManager vt 0xB0 / 0xB4 (0x5E8530 / 0x5E8570) call the Lara camera's vt
+0x58 / 0x5C: 0x5FE9D0 stores the record id in +0x1F4 with a 0.1 s delay +0x1F8; 0x6025E0 then finds that id in the
+settings' record table (+0x20C, 0x68-byte entries, count +0x3AC) and applies it (0x601340 → +0x134C): type 1 an offset
+in the pivot frame onto a tracker (0x5E9920, with a blend), type 2 the same plus a yaw override by id (its side
+mirrored to the camera's, 0x5F9860 / 0x5E8DA0) and a pitch override by id. 0x5FF3A0 (exit) clears it. States: 2001
+(record 0) S434 / S435 / S1197 / S1198 ledge, S1052 ladder, S1233 beam, hurdles S486..S489 / S1166; 2002 (1) S436 /
+S457, S1221 pillar, S1234 beam, S482..S485, S1168; 2003 (4) S448 / S449 / S453, S1241, S1147 / S1164; 2004 (5) S450 /
+S451 / S454, S1240, S1148 / S1165; 2005 (pop) S517 / S518. Not ported (the chart's JEffect::CameraPush has no
+consumer) [U: the record table's contents].
+
+**The Wine harness's CAMFOLLOW (chart.c).** Every published frame it writes +0x90 and +0x150 = her position −
+(dx, dy) × dist + (0, 0, height), not the matrix. The next update reads the angles back from there (0x600200 →
+0x5FF320), keeps +0x1D4 and its speed, proposes, collides and follows (0x600710: the step includes how far the proposal
+moved from the pinned +0x150, so it lands on the proposal). The corpus' CAMDUMP cameras are therefore tru.exe's update
+from a pinned start, not its free camera: with the pin in front of her (chapel `ch_hang_*`, camera_follow (0, −1) while
+she faces +y) the readback lands ~180° off her back, the hard ±90° clamp picks a side by the sign of the pivot's
+sideways offset from her root, and the pull-in leaves the camera ~100 from the pivot. Replays reproduce it with
+`World::pinCamera` (--camera-follow DX,DY,DIST,HEIGHT and a case's camera_follow), applied at the start of the orbit
+update from her previous position, after the chart has read the last camera.
