@@ -216,7 +216,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // a neutral stick adds no angle [I: +0xC and +0x190 taken as 0 then], so her heading; pushed, the stick's world yaw.
     std::optional<Aim> markupSearch(const MarkupProfile& p) const override {
         const float yaw = stickLen > 0.0f ? std::atan2(stickWorld.y, stickWorld.x) : heading();
-        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f);
+        std::optional<glm::vec3> lift;
+        if (p.bone > 0)
+            if (const auto b = w->boneWorld(p.bone), r = w->boneWorld(0); b && r) lift = *b - *r;
+        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift);
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
         return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};

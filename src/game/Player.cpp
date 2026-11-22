@@ -2617,7 +2617,8 @@ Player::GroundAim Player::groundJumpAim(int kind) const {
 // base point [O: decomp]. Ours runs ledgeOnArc strictly with the profile's class and result records; anything else
 // (bone bases, other velocity modes, headings 0 / 11..16 / 19, the +0xB0 / +0xB4 snaps, a model-X velocity) leaves the
 // answer unknown. [I] a mirrored chart state reverses the attached-segment heading (17).
-Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn) const {
+Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
+                                         std::optional<vec3> boneLift) const {
     MarkupFound out;
     // 0x76FFC0: a fixed record velocity (+0 bit 0, mode 0); record bit 0 clear or mode 3 take her instance velocity
     // (+0x2A0 x player +0x6E4), mode 1 the query object's stored +0xC0 (player +0xA40, the take-off's velocity),
@@ -2630,6 +2631,10 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     const bool attached = s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size();
     vec3 base;
     if (p.base == 0 && p.bone == 0) base = s_.pos;
+    // base 0 with bone +0xC8 (0x771830): her position plus that segment's world matrix translation minus segment 0's
+    // (instance +0x90 matrices, 0x40 each from +0x30), then offset +0x58 as for the root [O: decomp; our posed
+    // skeleton's matrices, World::boneWorld, I]
+    else if (p.base == 0 && boneLift) base = s_.pos + *boneLift;
     else if (p.base == 1) base = attached ? pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT) : s_.pos;
     else return out;
     const float yaw = s_.yaw, pi = 3.14159265f, half = 1.57079633f;
