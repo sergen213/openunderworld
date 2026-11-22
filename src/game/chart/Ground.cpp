@@ -119,7 +119,10 @@ bool pressedWithin(ChartContext& ctx, const Cond& c) {
     const auto since = ctx.sincePress(id);
     const auto prop = rt.propFloat(0x3DF);
     if (!since || !prop) return rt.unported(c);
-    return float(int(*since * 1000.0f * 30.0f / 1000.0f)) < *prop;
+    // never pressed: our timer holds 1e9 s, whose frame count would overflow int (UB; x87 gives INT_MIN, which made
+    // every "pressed within" true: a landing took the running jump S280 without Jump) -> clamp first
+    const double frames = std::min(double(*since) * 30.0, 1e9);
+    return float(int(frames)) < *prop;
 }
 
 // 0xD5 (0x783950, id 0xD5 -> 0x782B40 mode 1): round(anim time / 100) >= value. The anim time runs 100 a 30 Hz frame;
@@ -173,13 +176,22 @@ int zoneBit(int v) {
 }
 
 // 0x192 (0x7612D0): the angle by value, then 0x785FB0. 410..413, 422, 423: the stick against her heading. 414..417
-// (the player +0x800 point), 418..421 (the wall / slide normal 0x730790), 424 (stick field +8 with 0x782E60), 425..428
-// (the attached markup's normal) and 429..432 (stick field +0x14) read state ours does not model.
+// (the player +0x800 point), 418..421 (the wall / slide normal 0x730790), 424 (stick field +8 with 0x782E60) and
+// 429..432 (stick field +0x14) read state ours does not model. 425..428: 0x6EBB40 = the stick's world yaw (stick record
+// +0x8) minus the yaw of the attached markup's reversed normal (player +0xCC0, latched into the controller's +0x160 while
+// attached and +0x170 is clear) [O decomp]; ours: +0x8 = the stick against her heading plus her heading [I: the
+// controller's latch is the current normal; a centred stick reads along her heading]. No attached markup: unported.
 bool moveDir(ChartContext& ctx, const Cond& c) {
     const int v = mode(c);
-    if (!((v >= 0x19A && v <= 0x19D) || v == 0x1A6 || v == 0x1A7)) return ctx.chart().unported(c);
-    const auto angle = stickAngle(ctx);
+    const bool vsNormal = v >= 0x1A9 && v <= 0x1AC;
+    if (!((v >= 0x19A && v <= 0x19D) || v == 0x1A6 || v == 0x1A7 || vsNormal)) return ctx.chart().unported(c);
+    auto angle = stickAngle(ctx);
     if (!angle) return ctx.chart().unported(c);
+    if (vsNormal) {
+        const auto a = ctx.attachedMarkup();
+        if (!a || glm::length(glm::vec2(a.normal)) < 1e-6f) return ctx.chart().unported(c);
+        angle = wrapPi(*angle + ctx.heading() - std::atan2(-a.normal.y, -a.normal.x));
+    }
     const auto zone = moveDirZone(ctx, *angle);
     if (!zone) return ctx.chart().unported(c);
     return (*zone & zoneBit(v)) != 0;
@@ -277,12 +289,14 @@ bool agentFlag345(ChartContext& ctx, const Cond& c) {
 
 // 0x1FD (0x763670, PSCCF_OnSlopeSlide): counter agent +0x3C4; on a sliding slope (player +0x11D0 > 0 and byte
 // +0x11CF) a counter >= 0 becomes -4, off it a negative counter becomes 0. 0: c >= 0, 1: c < 0, 2: c == 0, 3: c == -4.
-// Ours: on a sliding slope = State::Slide [I].
+// Ours: on a sliding slope = the floor under her is a slide face when the context can tell (drive mode,
+// ChartContext::onSlideFloor), else State::Slide (shadow) [I].
 bool onSlopeSlide(ChartContext& ctx, const Cond& c) {
     const PlayerState* s = ctx.player();
-    if (!s) return ctx.chart().unported(c);
+    const auto floor = ctx.onSlideFloor();
+    if (!s && !floor) return ctx.chart().unported(c);
     int& counter = ctx.chart().field(0x3C4);
-    if (s->state == ou::game::State::Slide) {
+    if (floor ? *floor : s->state == ou::game::State::Slide) {
         if (counter >= 0) counter = -4;
     } else if (counter < 0) {
         counter = 0;

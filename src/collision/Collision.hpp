@@ -61,6 +61,12 @@ inline constexpr uint8_t kCameraMask = 0xA2;
 // its terrain from every face).
 inline constexpr uint8_t kSolidMask = 0x77;
 inline constexpr uint8_t kSkipPlayerRays = 0x01; // Face::rays: TerrainGroupExtra 0x800
+// Objects tru.exe's player rays meet (0x493330 flags 0x2C19E7 query instances with flags & 0x180 through the filter
+// 0x48EBC0 [O disassembly]): an instance body passes only with ObjectBase oflags bit 0x08 (flags & 0x40 -> (*data) & 8),
+// the bit physics::solidShape marks as kSightObjectMask; Lara's own / attached / held instances, instances with +0x18
+// & 0x24000000 or +0x14 & 0x40 and object data +4 & 0x200000 are skipped too (not ours: such instances carry no
+// dynamic shape).
+inline constexpr uint8_t kPlayerRayObjectMask = 0x40;
 inline constexpr uint8_t kNotPlayerCameraBit = 0x80, kNotPlayerSightBit = 0x08;
 inline constexpr uint8_t kTerrainMask = 0x07; // Lara's terrain faces only (no objects: physics::kObjectMask 0x10)
 // Query mask of tru.exe's line-of-sight ray for targeting (0x713200 -> 0x713090: ray flags 0xC5AC1983 -> 0x4935F0 ->
@@ -176,7 +182,8 @@ public:
     // raycast as tru.exe's player code casts its rays (0x493330 with ray flags 0x2C19E7: terrain faces with mask bit 1,
     // and the ray filter 0x48EF50 drops terrain groups flagged 0x800 for rays with class bit 0x4 [O disassembly]): the
     // faces of those groups (Face::rays & kSkipPlayerRays) are passed. Her capsule and ground check still meet them
-    // (their query class is not decoded: kSolidMask's note).
+    // (their query class is not decoded: kSolidMask's note). Object shapes (dynamics) count only with
+    // kPlayerRayObjectMask (oflags bit 0x08, tru.exe's object filter 0x48EBC0).
     std::optional<Hit> playerRay(vec3 origin, vec3 dir, float maxDist) const;
     // First contact of a sphere / capsule (segment a-b, radius r) translated by `delta`.
     // Already-touching shapes hit at t = 0, unless `flags` has kSweepSkipLeaving: then a face touched (or overlapped)

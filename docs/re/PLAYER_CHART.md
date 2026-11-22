@@ -150,6 +150,27 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
 0x20F (0.02 each) above the last frame's zone and lowered below it; values 401..404 test zones 1 / 2 / 4 / 8 (405
 "sprint" tests 8). Fall 0x1E (0x764B40): player +0x6DC - z >= value (float compare).
 
+**Frame order and the move stick filter [O: decomp; O-runtime: Wine stick records].**
+- **Loop.** MainG2 (0x5E0190) loops over three steps:
+  - `MAIN_ProcessMainState`: the game, including the chart tick, which reads the input of the previous frame.
+  - `STREAM_PollLoadQueue`.
+  - `MainG2_PlatformUpdate` (0x47AFD0). It runs sound, then the input system update 0x483520 on InputSystem 0xA02B68, and `PumpWindowMessages` (0x47AC30) last.
+- **Sampling.** Input for frame N+1 is therefore sampled at the end of frame N, before that frame's messages are pumped.
+- **Keyboard.** The keyboard device (PCKeyboardDevice, vtable 0x844F5C) reads DirectInput buffered data (0x486020; GetDeviceState fallback 0x485F10). Each key event becomes a button record.
+- **Remap.** The remap device (InputRemapDevice 0x488C70) turns bound key pairs into axis events: max of the positive key, minus max of the negative.
+- **Update 0x483520.** The update proceeds in four steps:
+  1. **Buttons.** Before the poll, each button's previous state takes its current one; button events then set the current state.
+  2. **Axes.** Before the poll, each axis (stride 0x30) sets output +0x04 to the last output, and current +0x00 to its pending raw value +0x08. Axis events then write the new raw value.
+  3. **Filter.** For each axis pair (x, y), d = |raw − pending|. If d > rate (+0x0C) × dt, the pair's current value reverts to the last output. dt is the elapsed ms × 30 / 1000. The pending value takes the raw value either way, so a large step lands one frame late.
+  4. **Actions.** The action state machine 0x482C20 runs last.
+- **Rates.** Every axis starts at FLT_MAX (0x480FC0). On Lara's birth, 0x721F80 sets the move stick axes 0 and 1 to Lara's data +0x658, 0.4, when that value is positive.
+- **Effect.** At 60 fps (dt 0.5) a key press reaches the stick record (0x706540 +0x18) one frame after its button would. Same-tick Up + Jump from idle therefore takes S248, the standing jump, not S281.
+  - **Wine evidence.** WineChartTrace measured this in 4 of 5 same-tick takes. The fifth was the first take after a checkpoint birth: a long frame let the step through.
+  - **Gamepad.** Gamepad sticks go through the same filter: a sweep faster than 0.2 per frame holds until the motion slows.
+- **Ours.**
+  - **Filter.** `StickRateFilter` (Game.hpp) runs on the move axes every tick, in the app. The rate comes from `moveStickRate` (lara.drm +0x658), and dt is 0.5, a 60 Hz tick in 30 Hz frames. tru.exe measures wall time [I].
+  - **Exception.** Recorded-stick scripts (`"stick"`) are already this filter's output and skip it.
+
 ### Ours
 
 - `ChartRuntime` follows the order above: `tick` = 0x787E60, `evaluate` = 0x787C50, `find` = 0x787570, `holds` =
@@ -343,6 +364,25 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   Crouch, Roll, Walk, Run, Turn, Idle; the families by clip set: Beam `bbeam_`, PoleHang `hpole_`, Ladder, Perch,
   Pillar, Climb `DICE_`, DropToHang, HangJump `ledgeb_jump*` in the air) for World's subsystems (camera, interactions,
   carriers) [I].
+- **Layer blend** [O unless noted]: a pattern lists up to n anims (+0xC {u16 anim, u8} x +0x10, else +4 u16 x +8);
+  0x4428A0 gives each one a sub-layer (layer +0x80, 0x70 each, count +0xF6): sub-layer 0 starts with the crossfade
+  (0x441FB0), sub-layer i at t_0 / len_0 x len_i with rate keys_i / keys_0 (0x43C9C0), and the pattern's +0x17 goes to
+  the layer's blend type +0xF9. Every tick 0x4385A0 -> 0x438520 turns +0x8C (x) / +0x90 (y) (/ +0x94) into one weight
+  per sub-layer (+0x84): types < 0x14 in 0x437BA0 (2 / 8 {1-x, x}; 3; 4 bilinear; 5 a 3 x 2 grid, x in [-1, 1]; 6 / 7
+  three-way {-, centre, +} orders; 9 diamond; 10 3 x 3; 11 strip; else {1, 0..}), types >= 0x14 through the layer's
+  callback +0xDC, Lara's 0x7162C0 (table 0x7163EC on type - 0x15): 21 = 6, 22 = 5, 23 = 0x6EAAA0 (3 x 3, x / y in
+  [-1, 1]: the beam walk R192 {unbalance_walk_left, walk, unbalance_walk_right} per row, ng_walk R738), 30 = 0x7055F0
+  (3 x 2 x 2 with +0x94), 24..29 / 31..35 not ported [U]. Types 2 / 3 / 4 / 9 then set every sub-layer's rate to
+  keys_i / sum w_j keys_j (0x433360), overriding 0x438C40's layer rate. Lara's beam patterns: idle / wobble / jumpup /
+  consider_detach / jumpland_unbalanced type 5 {fwd x3, _90 x3}; aboutfall / stepforward / stepback / flip / somersault
+  type 7 {centre, left, right}; falls type 2 {ledge, no ledge}. Wine (W/chart/wine/beam/t1079_walk_turn.tsv, SPAWN
+  take): S918 count 6, +0xF9 5, +0x8C 0, +0x90 0.73..0.80, w1 = 1 - +0x90; after the turn +0x90 1 and w0..w3 0; S922
+  count 3, +0xF9 7, w0 1 [O-runtime: matches 0x437BA0]. Ours (`anim::layerBlendWeights`, `Request::clips` /
+  `blendType`, chart-dump's "requests with sub-layers"): the drive context answers `layerBlendType()` (the playing
+  pattern's +0x17), `setLayerBlend` writes `animBlend`, driveTick weighs the sub-layers into `DriveStep::blendClips /
+  blendWeights`; `World::updatePose` blends the poses (phase-synced, normalised weights [I: 0x4361C0's accumulation])
+  and `Player::drive` the root motion the same way [I: tru.exe takes the blended pose's root]; command events stay
+  sub-layer 0's [I]; the clip clock follows 0x433360 for types 2 / 3 / 4 / 9. Legacy never sets it.
 - **Crossfade** (0x441FB0 at a new request, layer mode +0x64 = 1, over the pattern's blend frames): the window holds
   the new clip's lead at its first frame and moves her along the forward axis (DAT_008C9F30) at lerp(|outgoing root
   speed| r+0x50, |incoming root speed at its start| r+0x60, w), w linear at each step's midpoint (0x43B870 case 1 via
@@ -356,6 +396,16 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
 - **Seeded hangs** (a corpus case starting in S533 / S535 / a hold): the seed puts her on the 0x74ED30 hang pose and
   holds it over the entered clip's remaining frames, as 0x741130's alignment target does (chapel ch_hang_*: the root
   stays put through S533 in Wine) [O-runtime].
+- **Hang grip projection** (0x708830 -> 0x708210, decoded): with its +0x47 flag set (the hang idles; S533 not), each
+  frame takes v = the root displacement (0x6FE3E0: instance +0x20 - +0xC0 - player +0x6F0) and d = v . +0xCB0; within
+  the room to the segment end the grip +0xC98 moves by d / len, past it 0x6FE790's next segment or the clamp at
+  count - 0.0001; the point +0xCA0 follows [O]. Wine l3_chapel S447: v = (79.7, -303, 41.7) on its first frame, grip
+  0.898 -> 0.9999 (the 79-unit snap). Ours `DriveStep::follow` (prop 551 as the gate [I]) uses the playing clip's root
+  translation in her frame; our S447 clip has no such sideways offset yet, so the chapel snap is still missing.
+- **Slopes**: 0x1FD reads the floor under her (a slide face, `Player::slideUnder`) in drive mode; the slope_ states
+  slide with `Player::slideStep` (legacy State::Slide's integration) [I].
+- **Placements**: a spawn / teleport within 64 units over a floor is set on it before the chart restarts (legacy spawn
+  heights) [I].
 - **Attach alignment target** (for the family poses, not ported): 0x741130 (and the ladder's 0x744B70) writes player
   +0x1260 / +0x1270, which action 236 warps the attach clip to: target = the family's point (in the attach frame
   agent +0xB0, built by 0x76D270 / 0x76D010 per markup flags: 0x40000000 edge frame 0x737D60, 0x8000 box frame,

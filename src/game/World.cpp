@@ -1884,20 +1884,26 @@ void World::updatePose(float dt, bool reset) {
     // full pose they left every other bone at bind, Lara in a T-pose (swimming: shark bites). They go on top of what
     // is showing (anim::AnimController additive layer).
     const bool overlay = s.clip.starts_with("hit_light_");
+    // The chart drive's anim layer blend: sub-layer clips (the pattern's further anims) and this tick's weights.
+    std::vector<const anim::Clip*> partners;
+    for (const auto& n : s.blendClips) partners.push_back(anims_.find(n));
     if (reset) {
         anim_ = anim::AnimController(anims_.skeleton);
         if (overlay) anim_.play(anims_.find(s.water >= 0 ? "swim_submerged_idle" : "ng_idle"), 0, true); // [I] a base under it
-        anim_.play(anims_.find(s.clip), 0, s.loop, s.clipRate, s.clipTime, overlay, anims_.find(s.clipMix), s.mix, s.mirror);
+        anim_.play(anims_.find(s.clip), 0, s.loop, s.clipRate, s.clipTime, overlay, anims_.find(s.clipMix), s.mix, s.mirror,
+                   std::move(partners), s.blendWeights);
         hair_ = anim::HairSim(anims_.hair, anims_.skeleton, laraHair());
     } else {
         anim_.update(dt);
         // Player::play changed the clip (or restarted it): fade the new one in over what is showing.
         if (s.clip != prev_.clip || s.loop != prev_.loop || s.clipRate != prev_.clipRate || s.clipTime < prev_.clipTime ||
-            s.clipMix != prev_.clipMix || s.mix != prev_.mix || s.mirror != prev_.mirror)
+            s.clipMix != prev_.clipMix || s.mix != prev_.mix || s.mirror != prev_.mirror || s.blendClips != prev_.blendClips)
             anim_.play(anims_.find(s.clip), clipBlend(prev_.clip, s.clip).blendSeconds, s.loop, s.clipRate, s.clipTime, overlay,
-                       anims_.find(s.clipMix), s.mix, s.mirror);
-        else
+                       anims_.find(s.clipMix), s.mix, s.mirror, std::move(partners), s.blendWeights);
+        else {
             anim_.setTime(s.clipTime); // the player's clock is authoritative (root motion comes from it)
+            if (s.blendWeights != prev_.blendWeights) anim_.setWeights(s.blendWeights); // the chart moves them every tick
+        }
     }
     auto local = anim_.pose();
     flinchLayer(local); // anim section 1 (the weapon layer replaces the upper body on top of it)

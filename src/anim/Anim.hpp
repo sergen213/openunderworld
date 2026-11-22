@@ -61,6 +61,7 @@ struct AnimPattern {
     uint8_t mode = 1;
     uint8_t blend = 0, start = 0, nextBlend = 0xFF;
     bool mirror = false; // +0x20 bit 0x80: the clip plays reflected (0x4428A0 -> controller +0xF4 0x200)
+    uint8_t blendType = 0; // +0x17: the layer's blend type (0x4428A0 -> layer +0xF9; layerBlendWeights)
 };
 std::vector<AnimPattern> animPatterns(const cdc::Drm& drm);
 
@@ -95,6 +96,31 @@ LocalTransform blend(const LocalTransform& a, const LocalTransform& b, float w);
 void blendPoses(std::span<const LocalTransform> a, std::span<const LocalTransform> b, float w, std::span<LocalTransform> out);
 // Phase sync for looping locomotion: the time in `to` at the same cycle fraction as `fromTime` in `from`.
 double syncedStartTime(const Clip& from, double fromTime, const Clip& to);
+// The anim layer's blend (tru.exe 0x4428A0 copies the pattern's +0x17 to layer +0xF9; every tick 0x4385A0 -> 0x438520
+// -> 0x437BA0 turns the layer's parameters +0x8C (x) / +0x90 (y) into one weight per sub-layer, +0x84[i], sub-layer i
+// playing the pattern's i-th anim). Types >= 0x14 call the layer's weight callback +0xDC: Lara's 0x7162C0 maps 21 / 22
+// to 0x437BA0's 6 / 5, 23 to a 3 x 3 grid (0x6EAAA0: x, y in [-1, 1], the beam walk R192 / ng_walk R738) and 30 to a
+// 3 x 2 x 2 box (0x7055F0, z = +0x94); 24..29 and 31..35 are not ported (weights {1, 0..}) [U].
+// Exact port of 0x437BA0 [O]: 0 / 1 / other: {1, 0..}; 2, 8: {1-x, x}; 3: {(1-x)(1-y), x(1-y), y}; 4: bilinear
+// {(1-x)(1-y), x(1-y), (1-x)y, xy}; 5: a 3 x 2 grid, x in [-1, 1] over the columns {-1, 0, +1}, y in [0, 1] over the
+// rows; 6: {-x, 1+x, 0} for x < 0 else {0, 1-x, x}; 7: {1+x, -x, 0} for x < 0 else {1-x, 0, x}; 9: a diamond, |x|+|y|
+// clamped to 1: {1-|x|-|y|, max(-x,0), max(x,0), max(-y,0), max(y,0)}; 10: a 3 x 3 grid (y doubled), 11: a 3 + 1
+// strip. `count` = the sub-layers (the pattern's anims); slots beyond it are dropped, missing ones are 0.
+std::vector<float> layerBlendWeights(uint8_t type, float x, float y, size_t count, float z = 0);
+// Types whose sub-layer rates follow the weights (0x433360 after 0x437BA0: types 2, 3, 4, 9): rate_i = keys_i /
+// sum_j w_j keys_j, so every sub-layer runs one cycle in the weighted mean length. Others keep the rates 0x4428A0
+// gave them (keys_i / keys_0, sub-layer 0 at 1) [O].
+bool layerBlendSyncsRates(uint8_t type);
+// Weighted pose of several poses: the incremental normalised blend (pose_k mixed in at w_k / (w_0 + .. + w_k));
+// zero weights skipped; all zero gives poses[0] [I: tru.exe's accumulation 0x4361C0 is not decoded beyond its weight
+// argument +0xA4 x +0x84[i]; the weights of every type sum to 1].
+std::vector<LocalTransform> blendPosesWeighted(std::span<const std::vector<LocalTransform>> poses, std::span<const float> weights);
+// Sub-layer i's time when sub-layer 0 (clip `first`) stands at `t` seconds: the same cycle fraction (0x4428A0 starts
+// sub-layer i at t_0 / len_0 x len_i with rate keys_i / keys_0; equal per-key times keep them in phase) [O].
+inline double partnerTime(const Clip& first, const Clip& partner, double t) {
+    const double d0 = first.durationSeconds();
+    return d0 > 0 ? t / d0 * partner.durationSeconds() : t;
+}
 // Left/right twin of every bone: the bone whose bind position is this one's reflected in X (within 1 unit), else
 // itself [I: tru.exe's cdc::AnimMirrorNode (Mirror.dtp) table is not decoded; Lara's legs / arms mirror in X].
 std::vector<uint32_t> mirrorBones(const scene::Skeleton& skeleton);
@@ -113,9 +139,12 @@ public:
     // `mixClip` / `mix`: the second clip of a blend-space request, weighted `mix` and phase-synced to `clip`.
     // `mirror`: the clip reflected left / right (anim request +0x20 bit 0x80, tru.exe 0x4428A0 -> controller +0xF4 0x200).
     void play(const Clip* clip, float blendSeconds, bool loop, float rate = 1, double startTime = 0, bool additive = false,
-              const Clip* mixClip = nullptr, float mix = 0, bool mirror = false);
+              const Clip* mixClip = nullptr, float mix = 0, bool mirror = false, std::vector<const Clip*> partners = {},
+              std::vector<float> weights = {});
     void update(double dt);                // advances every layer and the fades
     void setTime(double seconds);          // newest layer's time (when the caller owns the clock)
+    // The newest layer's blend weights (layerBlendWeights) without restarting it: the chart writes them every tick.
+    void setWeights(std::vector<float> weights);
     std::vector<LocalTransform> pose() const;
     float weight() const;                  // newest layer's fade-in weight, 1 = no blend in progress
     size_t layers() const { return layers_.size(); }
@@ -128,6 +157,10 @@ public:
         const Clip* mixClip;
         float mix;
         bool mirror = false;
+        // The anim layer blend (layerBlendWeights): `clip` is sub-layer 0, `partners` the pattern's further anims
+        // (phase-synced, partnerTime), `weights` one per sub-layer. Empty: `clip` (with mixClip / mix) alone.
+        std::vector<const Clip*> partners{};
+        std::vector<float> weights{};
         float weight() const { return fade <= 0 ? 1.0f : std::min(1.0f, elapsed / fade); }
     };
     // Saves: the crossfade in progress (oldest first); setLayers replaces it.

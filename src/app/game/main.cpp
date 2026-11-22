@@ -2213,6 +2213,7 @@ int main(int argc, char** argv) {
 
     // ---- load: simulation data first (no window needed to fail early) ----
     std::optional<ou::game::InputScript> script;
+    std::optional<ou::game::StickRateFilter> moveFilter; // tru.exe 0x483520's move stick pair filter (Game.hpp)
     std::optional<ou::app::Autopilot> autopilot; // --autopilot: steers Lara by a plan and records the input script
     std::vector<std::pair<int32_t, int16_t>> reportedCalls; // --report-objects
     std::optional<ou::platform::EventLog> replay; // --replay-input: recorded device events instead of the devices
@@ -2251,6 +2252,7 @@ int main(int argc, char** argv) {
             record << "# ou-game input recording (docs/GAMEPLAY.md \"Recorded input\"): <tick> <event> <args>\n";
         }
         bigfile = std::make_unique<ou::cdc::BigfileSet>(opt.gameDir, ou::locale::specMask(language));
+        if (const auto rate = ou::game::moveStickRate(*bigfile)) moveFilter.emplace(*rate);
         const auto& bf = *bigfile;
         // --traversal chart: the chart drives her (docs/re/PLAYER_CHART.md "Drive mode"); it also writes --chart-trace.
         const bool chartDrive = opt.game.traversal == "chart";
@@ -3351,6 +3353,10 @@ int main(int argc, char** argv) {
                                   : script    ? script->at(appTicks)
                                   : autopilot ? autopilot->step(appTicks, *world)
                                               : ou::game::readDevices(opt.controls, devices);
+            // tru.exe samples the frame's input (0x483520) with the move stick pair filter; a script carrying the recorded
+            // stick record replays its output already
+            if (moveFilter && (selfTest || !script || !script->stickRecord()))
+                a.move = moveFilter->step(a.move, float(ou::game::kTickSeconds * 30.0));
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)
