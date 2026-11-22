@@ -162,17 +162,53 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     bool walkHeld = false;
     glm::vec2 stick() const override { return stickWorld; }
-    // The stick record's angle (0xFADFB0 -> +0xB0 -> +0x10), 0x6F7C10: +0x10 = 0x49F270(+0x8, the yaw 0x6F7F40 stored),
-    // i.e. wrapPi(stick yaw - that yaw). With the record's mode byte +0xB0 at 0, +0x8 = the pad angle (pi/2 - atan2 over
-    // the pad axes, y down) + that yaw - pi, so +0x10 is the pad's own direction: Forward 0, Left +pi/2, Right -pi/2
-    // whatever the camera or her heading [O: decomp]. The other modes add the camera yaw (0x5E78F0) [O] and are not
-    // modelled: ours takes mode 0 everywhere [I; O-runtime for perches: Wine p1190_turn_right, her heading -178.4 with
-    // the camera pinned along +y, Right -> 0x194 sector 8 (T1512 S863), where the her-relative angle +178.4 would give
-    // sector 4 (T1510 S864)].
-    glm::vec2 pad{0};
+    // The stick record's angle (0xFADFB0 -> +0xB0 -> +0x10), 0x6F7C10 in single precision (D3D9 leaves the x87 in
+    // 24-bit precision, so every step rounds to float): a = atan2(pad y, pad x) with the pad y down; v = frac((pi/2 - a)
+    // / 2pi) * 2pi; on the ground the record's mode byte +0xB0 is 3 [O-runtime: Wine STICKDUMP, t1204 run jumps], so
+    // +0x8 = frac((C + v) / 2pi) * 2pi with C the camera yaw (0x5E78F0), and +0x10 = 0x431D70(+0x8 - Y), Y the yaw
+    // 0x6F7F40 stored at 0xFADF90 (her instance +0x38) [O: decomp]: the stick against her heading through the live
+    // camera. Wine j50 / j55 (identical keys, her yaw 0x40490FD0 both): C + v = 3.14563 / 2.87339, so Forward read
+    // +0.004 (T151) / -0.268 (T149): the sign of a straight Forward is the camera's, which the corpus's CAMFOLLOW does
+    // not pin (it moves the camera, not its yaw). The keyboard's pad is (cos t, -sin t) of the key direction t
+    // [O-runtime: Forward (-4.371e-8, -1), Left (-1, 8.742278e-8)]. Ours: C = World::stickYaw - pi/2 and Y = heading +
+    // pi/2 in tru.exe's convention (a camera along her heading reads C = Y - pi) [I: our camera's bits are not
+    // tru.exe's]; the +0xEC bit 1 lock branch is not modelled [I].
+    glm::vec2 moveIn{0}; // this tick's move input (x right, y forward)
+    float ctrlYaw = 0;
     std::optional<float> stickRelative() const override {
-        if (glm::dot(pad, pad) < 1e-12f) return 0.0f;
-        return std::atan2(-pad.x, pad.y);
+        if (glm::dot(moveIn, moveIn) < 1e-12f) return 0.0f;
+        const auto frac2pi = [](float x) {
+            const float t = x / 6.2831855f;
+            return (t - std::floor(t)) * 6.2831855f;
+        };
+        const float t = std::atan2(moveIn.y, moveIn.x); // the key / stick direction, right 0, forward pi/2
+        const float px = std::cos(t), py = -std::sin(t);
+        const float a = std::atan2(py, px);
+        const float v = frac2pi(1.5707964f - a);
+        const float c = ctrlYaw - 1.5707964f;
+        const float y = w->player().state().yaw + 1.5707964f;
+        const float s = frac2pi(c + v);
+        const float u = (s - y) / 6.2831855f;
+        float r = (u - std::floor(u)) * 6.2831854820251465f;
+        if (r > 3.1415927410125732f) r -= 6.2831854820251465f;
+        return r;
+    }
+    // The live camera's axes (World::camera: forward = position -> target, right = forward x z, up = right x forward),
+    // and the pad from the move input as the keyboard path builds it [O-runtime: Wine stick dumps].
+    std::optional<CameraAxes> cameraAxes() const override {
+        const CameraState& c = w->camera();
+        glm::vec3 f = c.target - c.position;
+        if (glm::dot(f, f) < 1e-6f) return std::nullopt;
+        f = glm::normalize(f);
+        glm::vec3 r = glm::cross(f, glm::vec3(0, 0, 1));
+        if (glm::dot(r, r) < 1e-8f) return std::nullopt;
+        r = glm::normalize(r);
+        return CameraAxes{r, f, glm::cross(r, f)};
+    }
+    std::optional<glm::vec2> pad() const override {
+        if (glm::dot(moveIn, moveIn) < 1e-12f) return glm::vec2(0);
+        const float t = std::atan2(moveIn.y, moveIn.x);
+        return glm::vec2(std::cos(t), -std::sin(t));
     }
     // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw (0x6EBA90).
     std::optional<Aim> markupSearch(const MarkupProfile& p) const override {
@@ -571,7 +607,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         groundCheck(*ch);
         if (ground.steep) lastSteepMs = std::max<uint32_t>(nowMs, 1);
         stickWorld = stickW, stickLen = stickL, walkHeld = a.walk;
-        pad = a.move;
+        moveIn = a.move, ctrlYaw = world.stickYaw();
     }
     // 0x768C50: agent 0 (Lara), then agent 1 (the upper body); --chart-state's entry.
     void chartTick() {

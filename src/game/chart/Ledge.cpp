@@ -206,27 +206,78 @@ bool animTime(ChartContext& ctx, const Cond& c) {
     }
 }
 
-// The input controller's direction class (0xFADFB0 +0xB0 +0x24, set by 0x6F89A0): the stick against a frame (the
-// screen in mode 0, else built from the camera and a reference direction): u along its forward axis (+0x100), w along
-// its side axis (+0x110 = forward turned a quarter to the right); class 3 / 4 (w < 0 / >= 0) when |u| <= |w|, else
-// 1 / 2 (u >= 0 / < 0); 0 under the dead zone (+0xD8) [O: decomp, the tie going to the side]. On a markup 0x6F89A0
-// builds the frame from one reference (+0x70) and, when an angle comes under +0xB4 degrees, rebuilds it from another
-// (+0xB8, flag +0x195) [O: decomp; the references and the angle are not decoded]. Ours [I] from tru.exe under Wine:
-// with the camera behind her (bedroom hang_jump_left, camera pinned along her facing) the forward axis is her facing
-// (Left = her left -> class 3, T628 S459); with the camera facing her (l3_chapel ch_hang_* on ledge 61) it is her left
-// (Left = her right -> class 2 T599 S436, Right -> 1 T604 S434, Forward + Left -> 3 T550 S432, Forward + Right -> 1).
-// The switch is taken at 90 degrees between the control yaw and her facing [I: threshold +0xB4 not decoded]; the
-// diagonals' ties follow the frame's float rounding. Off a markup the camera control yaw [I]; dead zone 0.10 (the
-// move-speed zone 1 threshold); no re-classing hysteresis (+0x174) [I].
+// The input controller's direction class (0xFADFB0 +0xB0 +0x24, set by 0x6F89A0): the pad (x right, y down) against
+// a frame: u along its forward axis (+0x100), w along its side axis (+0x110); class 3 / 4 (w < 0 / >= 0) when
+// |u| <= |w|, else 1 / 2 (u >= 0 / < 0) [O: decomp, the tie going to the side]; 0 under the dead zone +0xD8.
+// On a markup the record runs mode 2 (+0xB0 = 2, +0xB1 = +0xB2 = 1, +0xDC = 1, +0xB4 = 30, +0xD8 = 0.05) [O-runtime:
+// Wine stick dumps, chapel ch_hang_left_hold and bedroom hang_shimmy_right / hang_grab], and 0x6F8050 builds the
+// frame from two references in her frame (+0x120 rows: her right, her forward, up): forward +0x70 = (0, 0.707,
+// 0.707), side +0x80 = (1, 0, 0). With the camera's up axis cz rising (+0x196: +0xDC and cz.z > 0) the forward's y is
+// scaled by 1 - cz.z, and the side's x by 1 - cz.z sqrt|l| and its z set to 2 l cz.z, l = (R0.s, -R1.s, R2.s) . cz;
+// both normalized. Each goes to camera space (0x6F7A10: the 0x5E7870 matrix; x = camera right, y = camera
+// forward), z dropped, normalized. When the two axes come within +0xB4 degrees (acos |f . s|), 0x6F89A0 rebuilds
+// from +0xB8 = (0, 1, 0) / +0xC8 = (1, 0, 0) (+0x195): the side's x scaled by 1 - |l|, its z = sign(l) cz.z [O: decomp,
+// the formula checked against the dumps' +0x100 / +0x110 with their camera matrices]. Ours runs it on the live
+// camera (ChartContext::cameraAxes), whose placement in a hang is not tru.exe's [I]. Off a markup: the camera control
+// yaw [I]; dead zone 0.10 (the move-speed zone 1 threshold); no re-classing hysteresis (+0x174) [I].
+std::optional<std::pair<glm::vec2, glm::vec2>> markupFrame(const ChartContext::CameraAxes& cam, float heading) {
+    const glm::vec3 R[3] = {{std::sin(heading), -std::cos(heading), 0}, {std::cos(heading), std::sin(heading), 0}, {0, 0, 1}};
+    const auto world = [&](glm::vec3 r) { return r.x * R[0] + r.y * R[1] + r.z * R[2]; };
+    const auto lOf = [&](glm::vec3 r) { return glm::dot(glm::vec3(glm::dot(R[0], r), -glm::dot(R[1], r), glm::dot(R[2], r)), cam.up); };
+    const auto unit = [](glm::vec3 v) { const float n = glm::length(v); return n > 0 ? v / n : v; };
+    const auto flat = [&](glm::vec3 v) -> std::optional<glm::vec2> {
+        const glm::vec2 c(glm::dot(v, cam.right), glm::dot(v, cam.forward));
+        const float n = glm::length(c);
+        if (n < 1e-6f) return std::nullopt;
+        return c / n;
+    };
+    const float z = cam.up.z;
+    const bool tilt = z > 0;
+    const auto build = [&](bool alt) -> std::optional<std::pair<glm::vec2, glm::vec2>> {
+        glm::vec3 f = alt ? glm::vec3(0, 1, 0) : glm::vec3(0, 0.70710677f, 0.70710677f), s(1, 0, 0);
+        if (tilt) {
+            const float l = lOf(s);
+            if (!alt) {
+                const float l50 = lOf(f);
+                if (l != 0) {
+                    s.x *= 1.0f - z * std::sqrt(std::abs(l));
+                    if (s.z == 0) s.z = 2.0f * l * z;
+                }
+                s = unit(s);
+                f.y *= 1.0f - z;
+                if (f.z == 0) f.z = l50 * -2.0f * z;
+                f = unit(f);
+            } else {
+                if (l != 0) s.x *= 1.0f - std::abs(l);
+                if (s.z == 0) s.z = (l < 0 ? -1.0f : 1.0f) * z;
+                s = unit(s);
+            }
+        }
+        const auto f2 = flat(world(f)), s2 = flat(world(s));
+        if (!f2 || !s2) return std::nullopt;
+        return std::pair{*f2, *s2};
+    };
+    auto fr = build(false);
+    if (fr && std::acos(std::min(1.0f, std::abs(glm::dot(fr->first, fr->second)))) < 30.0f * 0.017453292f) fr = build(true);
+    return fr;
+}
 int stickDirClass(ChartContext& ctx) {
+    if (ctx.attachedMarkup()) {
+        const auto cam = ctx.cameraAxes();
+        const auto pad = ctx.pad();
+        if (cam && pad) {
+            if (ctx.stickLevel() <= 0.05f) return 0;
+            const auto fr = markupFrame(*cam, ctx.heading());
+            if (fr) {
+                const float u = glm::dot(fr->first, *pad), w = glm::dot(fr->second, *pad);
+                if (std::abs(u) <= std::abs(w)) return w >= 0 ? 4 : 3;
+                return u >= 0 ? 1 : 2;
+            }
+        }
+    }
     if (ctx.stickLevel() < 0.10f) return 0;
     const glm::vec2 s = ctx.stick();
-    float yaw = ctx.controlYaw();
-    if (ctx.attachedMarkup()) {
-        const float h = ctx.heading();
-        const bool facingCamera = std::cos(ctx.controlYaw() - h) < 0;
-        yaw = facingCamera ? h + 1.5707964f : h;
-    }
+    const float yaw = ctx.controlYaw();
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     const float u = glm::dot(s, fwd), v = glm::dot(s, right);
     if (std::abs(u) <= std::abs(v)) return v >= 0 ? 4 : 3;

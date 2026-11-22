@@ -296,6 +296,12 @@ public:
     // target: none) with its +0xAC0 flags and +0xA80 type; nullopt: the context cannot model this search
     // (chartMarkupSearch).
     virtual std::optional<Aim> markupSearch(const MarkupProfile&) const { return {}; }
+    // The camera's axes in world space as tru.exe's camera matrix rows hold them (0x5E7850, g_camera +0x10: row 0
+    // right, row 1 forward, row 2 up) and the stick record's pad (+0x00 / +0x04: x right, y down; a key direction t
+    // reads (cos t, -sin t)); nullopt: not modelled.
+    struct CameraAxes { glm::vec3 right{1, 0, 0}, forward{0, 1, 0}, up{0, 0, 1}; };
+    virtual std::optional<CameraAxes> cameraAxes() const { return {}; }
+    virtual std::optional<glm::vec2> pad() const { return {}; }
     // The chart's own jump target (player +0xA64 as the chart's actions set it: action 504's take-off query, action
     // 230's promotion); empty: the context's jumpTarget() answers.
     Aim chartTarget;

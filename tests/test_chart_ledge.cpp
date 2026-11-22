@@ -53,9 +53,14 @@ struct LedgeContext : ChartContext {
     }
     bool hasCollision() const override { return true; }
     glm::vec3 position() const override { return attachedMarkup().point + glm::vec3(0, -50, -500); }
-    float heading() const override { return glm::half_pi<float>(); } // facing +y
+    float yaw = glm::half_pi<float>(); // facing +y
+    float heading() const override { return yaw; }
     float ctl = glm::half_pi<float>(); // the camera behind her
     float controlYaw() const override { return ctl; }
+    std::optional<CameraAxes> cam;   // nullopt: no camera (the off-markup frame)
+    glm::vec2 padIn{0};              // the stick record's pad (x right, y down)
+    std::optional<CameraAxes> cameraAxes() const override { return cam; }
+    std::optional<glm::vec2> pad() const override { return cam ? std::optional<glm::vec2>(padIn) : std::nullopt; }
     int ledgeClearanceClass() const override { return clearance; }
     uint32_t gameMs() const override { return ms; }
 };
@@ -112,25 +117,27 @@ TEST(ChartLedge, AttachInitStoresTheClearanceClass) {
     EXPECT_EQ(ctx.playerInt(0xEDC), 5);
 }
 
-// On a markup the class frame follows the camera: behind her, her facing (bedroom hang_jump_left: Left -> class 3);
-// facing her, her left (l3_chapel ch_hang_*: Left = her right -> class 2, Right = her left -> class 1). Ties to the side.
+// The markup frame (0x6F8050 mode 2) on the cameras tru.exe used in the Wine stick dumps: the chapel hang (her facing
+// +y, the camera above her looking down toward -x) classes Left 2 and Right 1, the bedroom hang (facing -y, the
+// camera above and behind her) Right 4 - the dumps' +0x24.
 TEST(ChartLedge, StickDirectionClassesOnAMarkup) {
-    LedgeContext ctx; // hanging, facing +y, camera behind
+    LedgeContext ctx;
     ctx.stickLen = 1;
-    ctx.stickDir = {-1, 0}; // world -x = her left
-    EXPECT_TRUE(OneShot({cond(0x195, 452, false, 400)}).fires(ctx));
-    EXPECT_FALSE(OneShot({cond(0x195, 453, false, 400)}).fires(ctx));
+    ctx.cam = ChartContext::CameraAxes{{0.00221f, 1.0f, 0}, {-0.31001f, 0.00068f, -0.95073f}, {-0.95073f, 0.0021f, 0.31001f}};
+    ctx.padIn = {-1.0f, 8.742278e-8f}; // Left
+    EXPECT_TRUE(OneShot({cond(0x195, 451, false, 400)}).fires(ctx));
+    ctx.padIn = {1.0f, 0.0f}; // Right
+    EXPECT_TRUE(OneShot({cond(0x195, 450, false, 400)}).fires(ctx));
+    ctx.yaw = -glm::half_pi<float>();
+    ctx.cam = ChartContext::CameraAxes{{-0.99997f, 0.00716f, 0}, {-0.0017f, -0.23694f, -0.97152f}, {-0.00695f, -0.9715f, 0.23695f}};
+    EXPECT_TRUE(OneShot({cond(0x195, 453, false, 400)}).fires(ctx));
+    ctx.padIn = {-4.371139e-8f, -1.0f}; // Forward: along the frame's forward axis
+    EXPECT_TRUE(OneShot({cond(0x195, 450, false, 400)}).fires(ctx));
+    // without a camera: the off-markup frame against the control yaw
+    ctx.cam.reset();
+    ctx.yaw = glm::half_pi<float>();
     ctx.stickDir = {0, 1};
     EXPECT_TRUE(OneShot({cond(0x195, 450, false, 400)}).fires(ctx));
-    ctx.ctl = -glm::half_pi<float>(); // the camera facing her
-    ctx.stickDir = {-1, 0};
-    EXPECT_TRUE(OneShot({cond(0x195, 450, false, 400)}).fires(ctx));
-    ctx.stickDir = {1, 0}; // her right
-    EXPECT_TRUE(OneShot({cond(0x195, 451, false, 400)}).fires(ctx));
-    ctx.stickDir = {0, 1}; // toward the wall she faces
-    EXPECT_TRUE(OneShot({cond(0x195, 453, false, 400)}).fires(ctx));
-    ctx.stickDir = {0, -1}; // away from it
-    EXPECT_TRUE(OneShot({cond(0x195, 452, false, 400)}).fires(ctx));
     ctx.stickLen = 0;
     EXPECT_TRUE(OneShot({cond(0x195, 454, false, 400)}).fires(ctx));
     EXPECT_FALSE(OneShot({cond(0x195, 411, true, 400)}).fires(ctx)); // other values: false even negated
