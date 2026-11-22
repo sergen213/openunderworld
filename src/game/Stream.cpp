@@ -630,7 +630,7 @@ void World::unitsChanged(const std::optional<std::pair<std::string, int>>& ledge
     s.ledge = ledgeOwner ? markupIndex(ledgeOwner->first, ledgeOwner->second) : -1;
     s.water = waterOwner ? markupIndex(waterOwner->first, waterOwner->second) : -1; // its unit is Lara's or a neighbour: kept
     if (s.ledge < 0 && (s.state == State::Hang || s.state == State::Shimmy || s.state == State::ClimbUp)) s.state = State::Fall;
-    player_.restore(s);
+    player_.reindex(s); // the markup renumbered: not a placement (a driving chart keeps going)
     syncVehicles();
     ++unitsVersion_;
 }

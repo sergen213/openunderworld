@@ -606,6 +606,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     Player* pm = nullptr;
     std::optional<int> lastLayerType; // the anim layer's +0xF9 as the last played pattern left it (layerBlendType)
     uint32_t placements = ~0u;
+    uint32_t reindexes = 0;     // Player::reindexes() seen
     bool parked = false;        // the controller holds her (a boundary state): the chart restarts when she comes back
     float lastRise = 0;         // the last drive move's root z rise (bone 0 [I])
     int attachedBefore = -1;    // +0xC94's markup as the tick began (an attach made by this tick's change starts a blend)
@@ -1079,7 +1080,17 @@ void Shadow::Impl::stateEntered(int from, int to) {
             // beam hang the ledge pose
             const Request* rq = rt->pattern();
             const auto fam = pm->familyPose(a.markup, s.pos, s.yaw, rq ? std::string_view(rq->clip) : std::string_view{});
-            const auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
+            auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
+            if (!fam && (a.flags & 0x10000)) {
+                // a beam (markup flag 0x10000): the pose its attach update holds (0x708830 +0x46 at the grip, offset 0 on
+                // the beam states) facing along it, +0xCDC = 0 / pi by her heading against the segment (0x72A5F0); Wine
+                // h759 S878: yaw -165.6 -> -180 over the mount [O-runtime; I: a linear blend over the mount clip]
+                const glm::vec2 e(p[size_t(seg) + 1] - p[size_t(seg)]);
+                const float len = glm::length(e);
+                root = glm::mix(p[size_t(seg)], p[size_t(seg) + 1], len > 1e-4f ? t / len : 0.0f);
+                yaw = std::atan2(e.y, e.x);
+                if (glm::dot(e, glm::vec2(std::cos(s.yaw), std::sin(s.yaw))) < 0) yaw += 3.14159265f;
+            }
             blend = {true, to, s.pos, root, s.yaw, yaw, std::max(1.0f, rt->remainingFrames()), 0};
             std::fprintf(stderr, "ou-game: chart attach S%d markup %d type %d clip %s from %.1f %.1f %.1f to %.1f %.1f %.1f over %.0f\n",
                          to, a.markup, int(w->collision().markup[size_t(a.markup)].type), rq ? rq->clip.c_str() : "-",
@@ -1126,6 +1137,16 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
                 player.restore(ps);
             }
         restartChart(), placements = player.placements();
+    }
+    // A collision rebuild renumbered the markup (Player::reindex: streaming, a script terrain-group toggle): the chart
+    // keeps running, its attached markup follows her ledge's new index (gone: detached) [I: tru.exe keeps markup
+    // pointers, so it has nothing to remap].
+    if (player.reindexes() != reindexes) {
+        reindexes = player.reindexes();
+        if (const auto [from, to] = player.lastReindex(); chartAttached && chartAttached->markup >= 0 && chartAttached->markup == from) {
+            if (to >= 0) chartAttached->markup = to;
+            else *chartAttached = MarkupSlot{};
+        }
     }
     if (loadDue) applyLoad(pendingLoad), loadDue = false, pendingLoad = nullptr;
     inputs(world, a, move, std::min(1.0f, glm::length(move)));
@@ -1328,7 +1349,7 @@ void Shadow::Impl::applyLoad(const nlohmann::json& j) {
     }
     launched = j.value("launched", false), collisionMask = j.value("mask", 0x48u);
     rt->restore(*this, snap(j.at("lara"))), up->restore(*this, snap(j.at("upper")));
-    started = true, placements = pm ? pm->placements() : placements;
+    started = true, placements = pm ? pm->placements() : placements, reindexes = pm ? pm->reindexes() : reindexes;
 }
 
 Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log, bool drive)

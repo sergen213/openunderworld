@@ -665,6 +665,15 @@ public:
     // pushes her out of walls she is in (depenetrate).
     void restore(const PlayerState& s) { s_ = s, cameraKnown_ = false, ++placements_; }
     uint32_t placements() const { return placements_; } // spawn() / restore() calls: a chart driving her restarts
+    // A collision rebuild renumbered the markup (World::unitsChanged, a script terrain-group toggle): her state with its
+    // markup indices remapped, not a placement (no chart restart). The ledge's old -> new index (new -1: it is gone)
+    // counts in reindexes() for a chart that keeps its own copy (the drive's attached markup).
+    void reindex(const PlayerState& s) {
+        if (s.ledge != s_.ledge) lastReindex_ = {s_.ledge, s.ledge}, ++reindexes_;
+        s_ = s, cameraKnown_ = false; // as restore() did for these callers (legacy unchanged)
+    }
+    uint32_t reindexes() const { return reindexes_; }
+    std::pair<int, int> lastReindex() const { return lastReindex_; }
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
@@ -980,6 +989,8 @@ private:
     bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
     bool reseated_ = false; // this tick only (takeReseat)
     uint32_t placements_ = 0; // placements()
+    uint32_t reindexes_ = 0; // reindexes()
+    std::pair<int, int> lastReindex_{-1, -1};
     std::optional<vec3> ledgeHang_; // setLedgeHang()
     bool driveLanded_ = false; // driveLanded()
     // drive(): the crossfade window of a fresh chart clip (0x441FB0: |outgoing root speed| -> |incoming at its start|)
