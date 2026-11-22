@@ -1757,7 +1757,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         const vec3 nn = unitOr(vec3(xy(c), 0), vec3(xy(forward()), 0));
                         return glm::dot(xy(s_.pos - h), xy(nn)) < 0 ? -nn : nn;
                     }
-                    if (m.type == 15) { // 0x10 (default branch): her root less the point, off the segment's axis
+                    if (m.type == 15 || m.type == 5) { // 0x10 / 0x4000000 (default branch): her root less the point, off the segment's axis
                         const vec3 axis = unitOr(m.points[size_t(si)] - m.points[size_t(si) + 1], vec3(0, 0, 1));
                         const vec3 r = s_.pos - h;
                         return unitOr(r - axis * glm::dot(r, axis), vec3(xy(forward()), 0));
@@ -1817,7 +1817,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 15: r = ledgeClass() == 4; break;                                          // 0x728A80
                 case 17: { const int k = ledgeClass(); r = k == 0 || k == 1 || k == 2 || k == 12; break; } // 0x728A80
                 case 10: // 0x725B50 -> 0x6FCB10 with the markup's class record (0x5D57A0)
-                    if (q.strict && (m.type == 4 || m.type == 6)) {
+                    if (q.strict && (m.type == 4 || m.type == 6 || m.type == 5)) {
                         // a pole's record: horizontal (MUD 0x2000000, or 0x8000000 that 0x733F60 accepts) +0x594, else
                         // +0x58C [O: 0x733F60's limit 40 degrees from level (Wine, Chart.cpp markupLevel); 0x74B5F0 not ported]; the capsule round the
                         // arc point plus the record's offset in her model frame (X left, Y back, Z up) against the hit
@@ -1847,9 +1847,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 19: r = ledgeClass() == 5; break;
                 case 20: r = ledgeClass() >= 8 && ledgeClass() <= 10; break;
                 case 21: // 0x725D00 -> 0x6FC6B0 both ways, which switches on the candidate's MUD flags
-                    if (q.strict && (m.type == 4 || m.type == 6 || m.type == 15 || m.type == 13)) {
+                    if (q.strict && (m.type == 4 || m.type == 5 || m.type == 6 || m.type == 15 || m.type == 13 || m.type == 14 || m.type == 2)) {
                         // poles (0x8000000 unless 0x74B5F0 claims it [I: not ported, taken as no]; 0x2000000 /
-                        // 0x4000000), pillars (0x10) and perches (0x20000) pass
+                        // 0x4000000), pillars (0x10), perches (0x20000), balance beams (0x10000) and jump landings (0x20000000) pass
                         r = true;
                     } else if (q.strict && m.type == 9) { // 0x400000: 0x72B860 of the way in against the ladder's
                         q.unknown = true;                  // normal, not ported
@@ -1952,7 +1952,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         const auto& m = col_.markup[li];
         // perches: the ground record's (0x2AB8C) and every data-driven search's (a pillar's top perch, S1201 T2009)
         const bool perch = m.type == 13 && (q.record == JumpRecord::Ground || q.strict);
-        const bool climb = q.strict && (m.type == 9 || m.type == 15 || m.type == 4 || m.type == 6);
+        const bool climb = q.strict && (m.type == 9 || m.type == 15 || m.type == 4 || m.type == 5 || m.type == 6 || m.type == 2 || m.type == 14);
         if ((m.type != 1 && !perch && !climb) || int(li) == s_.ledge) continue;
         if (only >= 0 ? int(li) != only : only == -1 && !m.velocity.empty()) continue; // moving: in its own frame
         const int last = int(m.points.size()) - 2;
@@ -1976,7 +1976,8 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 // a pole is met by the hands' arc (target type 3, +0x8C), as a ledge's hang [I: tr_pole_fling, Wine meets
                 // pole 1337 from the hang start 633 over the root]; ladders / pillars from their own type's start, else
                 // the query's start
-                starts[0] = m.type == 4 || m.type == 6 ? q.hang : q.start, nStarts = 1;
+                // jump landings (2) and balance beams (14) are landed on: the root's arc [I: as a perch]
+                starts[0] = m.type == 4 || m.type == 5 || m.type == 6 ? q.hang : m.type == 2 || m.type == 14 ? q.root : q.start, nStarts = 1;
                 for (int k = 0; k < q.typeStarts; ++k)
                     if (q.typeStart[size_t(k)].first == m.type) starts[0] = q.typeStart[size_t(k)].second;
             }
@@ -1995,18 +1996,22 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             }
         }
     }
-    // Strict (data-driven) searches: ours sweeps ledges (and perches for the ground record) only, so "nothing met" is
-    // tru.exe's answer only when the record admits no other candidate type (0x7232E0 and an entry's gate) [I: a hit of
-    // another type earlier than ours would also win; kept]. Judged on the whole sweep, not on ledgeOnArc's per-moving-
-    // markup passes (`only` >= 0: one markup, which says nothing of the other types).
-    if (q.strict && only < 0 && best.markup < 0 && !record.empty())
-        for (int type = 0; type < 64 && !q.unknown; ++type) {
-            // swept above (strict); type 0 carries MUD 0x80000000 (disabled: markupFlags, 0x5D6F90 | 0x5D70A0), which
-            // the sweep never takes as a candidate [I: the disabled bit's reader in 0x70F300 not traced]
-            if (type == 0 || type == 1 || type == 13 || type == 9 || type == 15 || type == 4 || type == 6) continue;
+    // Strict (data-driven) searches: "nothing met" is tru.exe's answer only when no markup of a type ours does not sweep
+    // could have been met: such a type admitted by the record (0x7232E0 and an entry's gate) and present in the level
+    // makes the answer unknown [I: a hit of another type earlier than ours would also win; kept]. Judged on the whole
+    // sweep, not on ledgeOnArc's per-moving-markup passes (`only` >= 0: one markup, which says nothing of the others).
+    // Type 0 carries MUD 0x80000000 (disabled: markupFlags), never a candidate.
+    if (q.strict && only < 0 && best.markup < 0 && !record.empty()) {
+        uint64_t present = 0;
+        for (const auto& m : col_.markup)
+            if (m.type < 64) present |= uint64_t(1) << m.type;
+        for (int type = 1; type < 64 && !q.unknown; ++type) {
+            if (!(present >> type & 1)) continue;
+            if (type == 1 || type == 2 || type == 13 || type == 14 || type == 9 || type == 15 || type == 4 || type == 5 || type == 6) continue;
             if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
             if (std::any_of(record.begin(), record.end(), [&](const ClassEntry& e) { return entryGate(e, type); })) q.unknown = true;
         }
+    }
     if (best.markup < 0) best.frames = 0;
     return best;
 }
@@ -2450,7 +2455,13 @@ Player::GroundAim Player::groundJumpAim(int kind) const {
 // answer unknown. [I] a mirrored chart state reverses the attached-segment heading (17).
 Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn) const {
     MarkupFound out;
-    if (p.classes.empty() || !p.fixedVelocity || p.velocity.x != 0 || p.snap[1] > 0 || p.snap[2] > 0)
+    // 0x76FFC0: a fixed record velocity (+0 bit 0, mode 0); record bit 0 clear or mode 3 take her instance velocity
+    // (+0x2A0 x player +0x6E4), mode 1 the query object's stored +0xC0 (player +0xA40, the take-off's velocity),
+    // mode 2 a bone's motion, 4 the stick's. Ours: modes 1 / 3 / bit-0-clear = her live velocity per 30 Hz frame
+    // [I: +0xA40 / +0x2A0 as her flight velocity]; 2 and 4 unknown.
+    const bool liveVelocity = !p.fixedVelocity && p.velocityMode != 2 && p.velocityMode != 4;
+    if (p.classes.empty() || (!p.fixedVelocity && !liveVelocity) || (p.fixedVelocity && p.velocity.x != 0) || p.snap[1] > 0 ||
+        p.snap[2] > 0)
         return out;
     const bool attached = s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size();
     vec3 base;
@@ -2469,6 +2480,9 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     case 8: th = controlYaw + pi; break;
     case 9: th = stickOn ? controlYaw : yaw + pi; break;
     case 10: th = stickOn ? controlYaw : yaw; break;
+    // 12: the query object's +0xFC = player +0xA7C, which the running take-off 0x7726D0 sets to heading source 5
+    // (the control yaw, 0x6EBA90) right before it searches [O: decomp 0x724F50 case 0xC, 0x7726D0]
+    case 12: th = controlYaw; break;
     case 17:
         if (attached) {
             const vec2 d = segDir(col_.markup[size_t(s_.ledge)], s_.ledgeSeg);
@@ -2483,7 +2497,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (p.snap[0] > 0 && std::abs(wrapAngle(th - yaw)) <= glm::radians(p.snap[0])) th = yaw;
     const vec2 f = xy(forward()), left(-f.y, f.x), hd(std::cos(th), std::sin(th));
     JumpQuery q;
-    q.v = vec3(hd * p.velocity.y, p.velocity.z);
+    q.v = liveVelocity ? s_.vel / 30.0f : vec3(hd * p.velocity.y, p.velocity.z);
     q.dir = hd;
     q.base = base;
     q.start = base + vec3(f * p.offset.y + left * p.offset.z, p.offset.x);
