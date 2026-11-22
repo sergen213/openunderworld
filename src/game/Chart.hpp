@@ -104,6 +104,12 @@ struct Request {
     // +0x17: the anim layer's blend type (layer +0xF9, anim::layerBlendWeights) and every anim of the pattern by name
     // (sub-layer i plays clips[i]; clips[0] = clip).
     uint8_t blendType = 0;
+    // +0x18: the crossfade window's motion (0x441FB0 records r = *(L+0x7C) by it, 0x43B870 moves her by it each step
+    // while the window runs) [O decomp]. 0: the incoming clip's root displacement over the window (r+0x10 = root at
+    // start - blend, r+0x20 = root at start, 0x4358E0), spread by the curve's step. 1: lerp(|outgoing root speed|,
+    // |incoming root speed at its start|) along her forward axis. 2: the same lerp with both velocities as vectors (the
+    // outgoing in the incoming's frame). 3: a carried global velocity [U, not ported: falls back to 1].
+    uint8_t window = 1;
     std::vector<std::string> clips;
     std::vector<uint16_t> clipKeys; // each clip's key count (+0x32; 0 unknown), for 0x433360's synced rates
     // The first clip's root speed in units per 30 Hz frame as action 501 (0x75BD30) reads it through 0x4389C0: -(header
@@ -298,6 +304,10 @@ public:
         float lean = 0;
         struct Align { bool active = false, positionOnly = false; float duration = 0; glm::vec3 pos{0}; } align;
     } anim;
+    // Lara +0x11D4 (0x208 PSCCF_OnStairs): written only by the ground check 0x5DCE20 when it runs (cleared, then set from
+    // its floor hit through 0x5D3AF0(hit, 0x100, 0x20)), kept otherwise; nullopt: the last check stood on an object
+    // whose own flags the context does not model.
+    virtual std::optional<bool> onStairs() const { return std::nullopt; }
     // ---- end group A ----
 
     // ---- group J ----
@@ -331,6 +341,10 @@ public:
     // The chart's own jump target (player +0xA64 as the chart's actions set it: action 504's take-off query, action
     // 230's promotion); empty: the context's jumpTarget() answers.
     Aim chartTarget;
+    // Player +0x9F0, the jump target's point: clearing the target (+0xA64 = 0: the attach 0x707730, the flight's drop,
+    // the take-off's new query) leaves it [O: 0x749CD0 reads it after action 236's attach cleared +0xA64]; the last
+    // target's point (chartTargetPoint answers with the live target's while there is one).
+    glm::vec3 targetPoint{0};
     // The game's jump-target markup the chart already handed on when its flight ended (tru.exe moves +0xA64 to the
     // attached slot +0xC94 on the attach, 0x741050 / 0x707500) [I]; ignored as +0xA64 until the game's target changes.
     int handedTarget = -1;
@@ -373,10 +387,20 @@ public:
     // flight state's first row].
     virtual void stateEntered(int /*from*/, int /*to*/) {}
     // Player +0x31C: the move sweep's record (0x5D7FA0 -> 0x5D7A80), an index into Lara data +0x630's 0x84-byte
-    // records (count +0x62C); kept from the last sweep that found one (tru.exe never clears it), -1 none yet;
+    // records (count +0x62C); kept from the last sweep that found one, -1 none yet. tru.exe also clears it [O, not
+    // modelled]: a sweep that finds no record after the direction loop cleared local_334 (the edge / wall push block,
+    // local_331 && push depth local_324 > 0) falls into 0x5D7FA0's (param_3 & 4) block, which stores +0x31C = 0 with
+    // +0x320 = 1; ours keeps the old record there. Ours runs no push-depth block, so it cannot tell that path [U];
     // nullopt: the context does not run the sweep. Byte +0x2C5: the sweep's jump-candidate query (0x710380) found one.
     virtual std::optional<int> moveSweepRecord() const { return {}; }
     virtual std::optional<bool> sweepCandidates() const { return {}; }
+    // Byte +0x320 (0x5D7FA0, written by group A's request): 1 when this update's sweep stored its record in +0x31C, 0
+    // when it found none or did not run (0x7002D0 copies collision mask bits 0x200 / 0x800 into +0x2C1 / +0x2C0; both
+    // clear: no sweep, +0x320 = 0). nullopt: this update's sweep ended on a case the context does not resolve. Not
+    // modelled [U]: the tail's alternate stores (local_2e9 -> the re-cast record, local_32a -> local_2e4) and, with
+    // local_334 cleared, 0x5D7FA0's (param_3 & 4) block writing +0x31C = the (empty) record with +0x320 = 1 — both
+    // give the +0x320 readers a record of 0 there.
+    virtual std::optional<bool> sweepFresh() const { return {}; }
     // ---- end group J ----
     // ---- group CD ----
     // Climb / ladder / pillar / perch / pole / beam / wall hug / slide / climb-out reads (src/game/chart/Climb.cpp).
@@ -487,6 +511,10 @@ void beamBalanceTick(ChartContext& ctx, bool init);
 // (ChartContext::chartTarget: action 504's take-off query, action 230's promotion), else the game's jumpTarget() unless
 // the chart already handed that one on when its flight ended (ChartContext::handedTarget).
 ChartContext::MarkupSlot chartJumpTarget(ChartContext& ctx);
+// Clears the chart's jump target (+0xA64 = 0), keeping its point as +0x9F0 (ChartContext::targetPoint).
+void clearChartTarget(ChartContext& ctx);
+// Player +0x9F0: the live jump target's point, else the last one's.
+glm::vec3 chartTargetPoint(ChartContext& ctx);
 // 0x733F60 -> 0x733EC0: markup flags +0x28 & 0xA000000 and its first segment's pitch |atan2(-dz, |dxy|)| within the
 // global limit *(0xE7EE50)+0x184 = 40 degrees [O-runtime: Wine, l4_traprooms] (a level enough pole).
 bool markupLevel(ChartContext& ctx, const ChartContext::MarkupSlot& m);
@@ -634,7 +662,9 @@ public:
     // driver() in the controller's place, tick() only writes the trace.
     Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log, bool drive = false);
     ~Shadow();
-    void tick(const World& world, const Actions& a); // after World::tick
+    // After World::tick. `keys`: the move input before the move stick filter (0x483520), for the trace's inputs column,
+    // which records the keys as the Wine corpus' does (the filtered stick can land a tick later); default: a.move.
+    void tick(const World& world, const Actions& a, std::optional<glm::vec2> keys = std::nullopt);
     // The chart enters `state` (ChartRuntime::enter) on the first tick at or after world tick `tick` (--chart-state).
     // `at` (x, y, z, yaw degrees): where she was in the Wine case when it began in a hold (case.json start.ours); the hold's
     // markup is seeded from there [I: harness only].
