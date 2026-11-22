@@ -88,6 +88,7 @@ struct Options {
     std::filesystem::path recordInput, replayInput; // --record-input / --replay-input FILE: device events (platform::EventLog)
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script / --replay-input
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
+    std::optional<std::array<float, 2>> cameraFollow; // --camera-follow DX,DY[,DIST,HEIGHT]: the stick's frame pinned along (DX, DY) (World::pinStickYaw)
     std::optional<std::array<float, 11>> camera; // --camera: fixed view (eye, target, up, vertical FOV, near; 0 = default) for screenshots
     bool intro = false;  // --intro: play Movies/intro.bik first (skippable)
     int introFrames = -1; // --intro-frames N: stop the intro / the New Game movie after N frames
@@ -240,6 +241,11 @@ bool parseArgs(int argc, char** argv, Options& o) {
             std::array<float, 4> s{};
             if (std::sscanf(v, "%f,%f,%f,%f", &s[0], &s[1], &s[2], &s[3]) != 4) { std::fprintf(stderr, "--spawn wants X,Y,Z,YAWDEG\n"); return false; }
             o.spawn = s;
+        }
+        else if (a == "--camera-follow") { // the Wine corpus's camera_follow; only the direction is used
+            std::array<float, 2> d{};
+            if (std::sscanf(v, "%f,%f", &d[0], &d[1]) != 2 || (d[0] == 0 && d[1] == 0)) { std::fprintf(stderr, "--camera-follow wants DX,DY[,DIST,HEIGHT]\n"); return false; }
+            o.cameraFollow = d;
         }
         else if (a == "--camera") { // eye, target[, up (tru.exe camera matrix row 1)[, vertical FOV deg[, near]]]
             std::array<float, 11> c{0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0};
@@ -2328,6 +2334,7 @@ int main(int argc, char** argv) {
         // --level with --chapter: a unit of two chapters (the manor: prologue and the return) plays in the one named
         world->chapter = opt.level.empty() ? std::max(opt.chapter, 0) : opt.chapter >= 0 ? opt.chapter : std::max(0, ou::game::chapterOfUnit(unit));
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
+        if (opt.cameraFollow) world->pinStickYaw(std::atan2((*opt.cameraFollow)[1], (*opt.cameraFollow)[0]));
         world->script().setPlayerObjects(ou::game::chapterGear(world->chapter)); // a direct chapter start
         world->chapterLoadout(world->chapter);
         if (opt.level.empty() && opt.chapter >= 0 && opt.loadSlot.empty()) world->announceChapter(); // its intro (World::startChapter)

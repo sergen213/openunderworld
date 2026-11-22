@@ -256,6 +256,10 @@ public:
     // Player +0xF3C, the support foot (0x6EB630): animation events 0x34 / 0x36 of her clip set 1 / 2 (swapped while the
     // clip plays mirrored, 0x6EDD00), 0x35 sets 0 (handler 0x716F30). Condition 0x12D.
     virtual std::optional<int> supportFoot() const { return std::nullopt; }
+    // The stick record's angle relative to her heading (0xFADFB0 -> +0xB0 -> +0x10, radians, + = her left), composed
+    // as tru.exe does: the pad direction in the camera frame plus the control yaw against her heading. nullopt: derive
+    // it from stick() (world space).
+    virtual std::optional<float> stickRelative() const { return std::nullopt; }
     // Player +0x68 bit 30, the fly cheat (condition 0x207); ours has no such mode.
     virtual bool cheatMode() const { return false; }
     // Effects the ground actions have on her anim layer beyond group B's animBlend / animRate, recorded chart-side

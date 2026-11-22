@@ -154,6 +154,18 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     float stickLevel() const override { return stickLen; }
     glm::vec2 stick() const override { return stickWorld; }
+    // The stick record's angle (0xFADFB0 -> +0xB0 -> +0x10) as tru.exe composes it: the pad's own direction in the
+    // camera frame (0x706660 / 0x6F89A0: forward 0) plus the control yaw against her heading. Kept apart so a camera
+    // pinned along her heading (the Wine harness's CAMFOLLOW, ours --camera-follow) gives exactly 0 for Forward, which
+    // the sector tests read with inclusive bounds (0x194: angle >= 0 is her left).
+    glm::vec2 pad{0};
+    float ctrlYaw = 0;
+    std::optional<float> stickRelative() const override {
+        if (glm::dot(pad, pad) < 1e-12f) return 0.0f;
+        float rel = ctrlYaw - w->player().state().yaw;
+        rel = std::remainder(rel, 6.2831855f);
+        return std::atan2(-pad.x, pad.y) + rel;
+    }
     // ---- group A ----
     std::optional<float> sincePress(int id) const override {
         const int b = button(id);
@@ -526,6 +538,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         groundCheck(*ch);
         if (ground.steep) lastSteepMs = std::max<uint32_t>(nowMs, 1);
         stickWorld = stickW, stickLen = stickL;
+        pad = a.move, ctrlYaw = world.stickYaw();
     }
     // 0x768C50: agent 0 (Lara), then agent 1 (the upper body); --chart-state's entry.
     void chartTick() {

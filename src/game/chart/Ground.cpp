@@ -49,11 +49,13 @@ float propF(ChartRuntime& rt, uint16_t id, float def = 0) { return rt.propFloat(
 
 void unportedPart(ChartContext& ctx, uint16_t action) { ++ctx.chart().stats.unportedActions[action]; }
 
-// The stick's direction relative to her heading, *(*(0xFADFB0 + 0xB0) + 0x10) [I: radians, + = her left, 0 with the
-// stick at rest]. nullopt without a player.
+// The stick's direction relative to her heading, *(*(0xFADFB0 + 0xB0) + 0x10) [radians, + = her left, 0 with the
+// stick at rest]: the context's composed angle when it has one (ChartContext::stickRelative), else from the world-space
+// stick. nullopt without a player.
 std::optional<float> stickAngle(ChartContext& ctx) {
     const PlayerState* s = ctx.player();
     if (!s) return std::nullopt;
+    if (const auto r = ctx.stickRelative()) return wrapPi(*r);
     const glm::vec2 v = ctx.stick();
     if (glm::dot(v, v) < 1e-12f) return 0.0f;
     return wrapPi(std::atan2(v.y, v.x) - playerYaw(*s));
