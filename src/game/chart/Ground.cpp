@@ -610,8 +610,10 @@ void lookAtProcess(ChartContext& ctx, uint16_t id) {
 // H1..H3 = 525..527, rate pairs 512..519, band 521 (type int). m = the stick level. 402: t = clamp01((m - (T1 - H1)) /
 // ((H2 + T2) - (T1 - H1))), rate = lerp(p512, p513). 403: t over [T2 - H2, H3 + T3], lerp(p514, p515); 404: over
 // [T3 - H3, 1], lerp(p516, p517); 405 the same t, lerp(p518, p519); 403..405 stamp agent +0x78 = +0x504. A rate in
-// (0, 2] plays as is; above 2 it is a speed: / the clip's root speed (-root y x 100 / length), clamped to [0.5, 2];
-// 0 or no band: 1. Then every sub-layer's rate (0x438C40). [U] 0x702AC0 when agent +0xC == 1.
+// (0, 2] plays as is; above 2 it is a speed in units per 30 Hz frame: / sub-layer 0's clip root speed (0x4389C0:
+// -header +0x1C x 100 / (keys x time per key), Request::rootSpeed), clamped to [0.5, 2] (beam walk R192: 4.725 -> 1.714
+// in Wine h759, 4.0 units per 60 Hz tick) [O]; 0 or no band: 1. Then every sub-layer's rate (0x438C40). [U] 0x702AC0
+// when agent +0xC == 1.
 void stickScaledAnimRate(ChartContext& ctx, uint16_t id) {
     ChartRuntime& rt = ctx.chart();
     const float t1 = propF(rt, 0x20A), t2 = propF(rt, 0x20B), t3 = propF(rt, 0x20C);
@@ -632,7 +634,9 @@ void stickScaledAnimRate(ChartContext& ctx, uint16_t id) {
     if (band != 0x192) ctx.agentFloat(0x78) = rt.totalTime();
     if (out != 0) {
         if (out <= 2) rate = out;
-        else return unportedPart(ctx, id); // the clip's root speed (0x4389C0) is not known chart-side
+        else if (const Request* p = rt.pattern(); p && p->rootSpeed > 0) // sub-layer 0's clip (0x4389C0, layer +0xF8 = 0)
+            rate = std::clamp(out / p->rootSpeed, 0.5f, 2.0f);
+        else if (!p) return unportedPart(ctx, id); // an unresolved node: its clip's root speed is not known chart-side
     }
     ctx.animRate = rate;
 }

@@ -105,6 +105,9 @@ struct Request {
     uint8_t blendType = 0;
     std::vector<std::string> clips;
     std::vector<uint16_t> clipKeys; // each clip's key count (+0x32; 0 unknown), for 0x433360's synced rates
+    // The first clip's root speed in units per 30 Hz frame as action 501 (0x75BD30) reads it through 0x4389C0: -(header
+    // +0x1C, the clip's whole root displacement y) x 100 / (keys x time per key); 0 unknown.
+    float rootSpeed = 0;
     // 0x4428A0 -> 0x441FB0: the clip's time when it starts, in 30 Hz frames: start - blend, uncut, after the first clip's
     // key bump (blend > 0, a key longer than a frame, start inside the first key: start = that key, blend += the move).
     // blendOverride: the previous pattern's +0x1B (layer +0x314) when it set one.
