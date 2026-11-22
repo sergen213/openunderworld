@@ -286,7 +286,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const int n = int(mk.points.size());
         const int s = std::clamp(seg, 0, std::max(0, n - 2));
         const glm::vec3 a = mk.points[size_t(s)], b = mk.points[size_t(std::min(s + 1, n - 1))];
-        const float len = glm::length(b - a);
+        // The controller's ledge t is an x/y distance along the segment (Player.cpp segLen / pointOn), so the fraction
+        // divides by the x/y length; the 3-D one made it short on a sloped ledge: bedroom 973 (13.2 drop over 852.9)
+        // caught 79 in from its end gave 0.90728, tru.exe's +0xC98 0.90739 (Wine probe) = the end inset in the
+        // segment's own measure, as ours' hit is (Player::ledgeOnArcIn insets along the 3-D line) [O].
+        const float len = glm::length(glm::vec2(b - a));
         const float f = len > 0 ? std::clamp(t / len, 0.0f, 1.0f) : 0.0f;
         r.param = float(s) + f;
         r.point = a + (b - a) * f;
@@ -511,6 +515,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     int enterState = -1;
     std::optional<glm::vec4> enterPose; // --chart-state N@T@x,y,z,yaw: her case start for seedAttach
     uint64_t enterTick = 0;
+    float enterElapsed = 0; // --chart-state N@T@pose@F: F frames of the state already run under Wine
     // ---- end group CD ----
 
     // ---- drive (--traversal chart; docs/re/PLAYER_CHART.md "Drive mode") ----
@@ -567,6 +572,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             // have [I: harness only, W/chart/wine/README.md "Harness limits"].
             if (driving && rt->chainHasAction(enterState, 420)) seedAttach();
             rt->enter(*this, enterState), enterState = -1;
+            if (enterElapsed > 0) rt->fastForward(enterElapsed); // the Wine case's state time at its start (t30)
         }
     }
     // ---- group B ---- A kind-2 request (an anim-graph node, 0x443720 -> 0x43E250) that ChartRuntime::resolveRequest
@@ -728,7 +734,7 @@ void Shadow::Impl::seedAttach() {
             const float l2 = glm::dot(ab, ab);
             const float t = l2 > 0 ? std::clamp(glm::dot(hands - p[i], ab) / l2, 0.0f, 1.0f) : 0.0f;
             const float d = glm::length(hands - (p[i] + ab * t));
-            if (d < best) best = d, pick = slot(int(m), int(i), t * std::sqrt(l2));
+            if (d < best) best = d, pick = slot(int(m), int(i), t * glm::length(glm::vec2(ab)));
         }
     }
     if (!pick) return;
@@ -736,7 +742,7 @@ void Shadow::Impl::seedAttach() {
     if (pm && col.markup[size_t(pick.markup)].type == 1) {
         const auto& p = col.markup[size_t(pick.markup)].points;
         const int seg = std::clamp(int(pick.param), 0, int(p.size()) - 2);
-        const float t = (pick.param - float(seg)) * glm::length(p[size_t(seg) + 1] - p[size_t(seg)]);
+        const float t = (pick.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
         const auto [root, yaw] = pm->hangPose(pick.markup, seg, t, hangSide(pick.markup, seg, pick.point));
         PlayerState ps = s;
         ps.pos = root, ps.yaw = yaw, ps.vel = glm::vec3(0);
@@ -1074,7 +1080,9 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
     }
     if (const auto o = objData(bigfile, "lara")) impl_->clipCommands = clipEvents(*o); // group CD: critical sections
 }
-void Shadow::enterAt(int state, uint64_t tick, std::optional<glm::vec4> at) { impl_->enterState = state, impl_->enterTick = tick, impl_->enterPose = at; }
+void Shadow::enterAt(int state, uint64_t tick, std::optional<glm::vec4> at, float elapsed) {
+    impl_->enterState = state, impl_->enterTick = tick, impl_->enterPose = at, impl_->enterElapsed = elapsed;
+}
 Shadow::~Shadow() = default;
 PlayerDriver* Shadow::driver() { return impl_->driving ? impl_.get() : nullptr; }
 
