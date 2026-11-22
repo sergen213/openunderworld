@@ -807,6 +807,7 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
     p.snap[0] = f32(r + 0xAC), p.snap[1] = f32(r + 0xB0), p.snap[2] = f32(r + 0xB4);
     p.minT = f32(r + 0x20), p.coneDeg = f32(r + 0x24);
     p.minDist = int16_t(u32(r + 0x28) & 0xFFFF);
+    if (const auto lr = c.pointer(d + 0x584)) p.cornerZone = int16_t(u32(*lr + 0x9E) & 0xFFFF); // 0x737B30's +0x9E
     p.flags = u32(r + 0x2C);
     const int frames = int32_t(u32(r + 0xA4));
     p.frames = frames >= 1 ? frames : c.data<int16_t>(0xBDE);

@@ -1742,7 +1742,8 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 1: // 0x723AB0 case 1: the MarkUp box's centre (+0x34), in the world (the built-in records: the hit)
                     return q.strict ? m.centre : h;
                 case 5: { // 0x729420 / 0x728F00: her root plus the entry's offset turned by her rotation (model X = left,
-                    // -Y = facing, Z = up) [O: disasm 0x729443..0x72947C; the query's own +0x90 offset taken as 0 [I]]
+                    // -Y = facing, Z = up) [O: disasm 0x729443..0x72947C; the query state 0x7296C0 builds on its stack
+                    // is constructed by 0x716220, which zeroes +0x90..+0x9C, and nothing in the search writes them]
                     const vec3 o = curEntry ? curEntry->offset : vec3(0);
                     const vec2 f = xy(forward()), left(-f.y, f.x);
                     return s_.pos + vec3(left * o.x - f * o.y, o.z);
@@ -1843,6 +1844,29 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 36: { // the markups and her base are static here
                     const vec3 a = point(c.a1), b = point(c.a2);
                     r = glm::length(xy(b - a)) < c.value + std::max(0.0f, a.z - b.z);
+                    break;
+                }
+                case 28: case 29: case 30: { // 0x723540 (data-driven searches; the built-in records pass)
+                    if (!q.strict) break;
+                    // a ledge (0x5BE340 == 1) whose candidate lies within the class record's +0x9E of a segment end
+                    // that turns by more than 30 degrees (0x737B30: |2-D cross| > 0.5) onto the neighbour segment
+                    // (0x72BC40: the one before when the fraction is under 0.5, else after; none past the ends)
+                    r = false;
+                    if (m.type != 1) break;
+                    const int nSeg = int(m.points.size()) - 1;
+                    const float slen = segLen(m, si), len3 = glm::distance(m.points[size_t(si)], m.points[size_t(si) + 1]);
+                    const float frac = slen > 1e-4f ? glm::length(xy(h - m.points[size_t(si)])) / slen : 0.0f;
+                    const int nb = frac < 0.5f ? si - 1 : si + 1;
+                    if (nb < 0 || nb >= nSeg || len3 <= 0) break;
+                    const vec2 sd = segDir(m, si), nd = segDir(m, nb);
+                    const float turn = sd.x * nd.y - sd.y * nd.x;
+                    if (std::abs(turn) <= 0.5f) break;
+                    const float zone = q.cornerZone / len3;
+                    if (frac < 0.5f ? !(frac < zone) : !(0.99999f - zone < frac)) break;
+                    // the corner's turn seen walking from the candidate's segment onto the neighbour (negated when the
+                    // neighbour lies before); 29 left of sin 60 degrees (0x813680(pi / 3)), 30 right of it
+                    const float cross = nb == si - 1 ? -turn : turn;
+                    r = c.kind == 28 || (c.kind == 29 ? cross > 0.8660254f : cross < -0.8660254f);
                     break;
                 }
                 case 33: // 0x726420's value against v, read for ledge classes 5 / 6 only; any other class passes
@@ -2441,6 +2465,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (hang && !root) q.root = q.hang;
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
+    q.cornerZone = float(p.cornerZone);
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(s_.ledge)].type) : 0;
