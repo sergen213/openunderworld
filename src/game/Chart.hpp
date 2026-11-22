@@ -416,6 +416,10 @@ void detachChartMarkup(ChartContext& ctx); // 0x6FDBE0 alone
 // 600 0x753510, 601 0x750F00, 603 0x74C8D0, 605 0x751130, 606 0x753F80, 610 0x74ED30 / 0x7571B0, 614 0x7503B0, 621
 // 0x74E5A0, 624 / 626 0x75F1B0, 625 0x74C110, 627 0x73DD70) [O].
 bool attachTargetClass(int cls);
+// 0x74F480: a wall under the hang at the markup point (`slot.param`): the ray 0x744E90 in the segment's frame, at a vertex
+// 40 into either segment; nullopt without collision. 0x75D6C0 makes the attach surface class (+0xED4) !result for
+// ledges (no wall: 1, a free hang).
+std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot& slot);
 // ---- end group B ----
 // ---- group J ----
 // Player +0xA64 as the chart sees it (src/game/chart/Jump.cpp): the target the chart's own actions set

@@ -1050,11 +1050,15 @@ public:
     const PlayerState& previous() const { return prev_; }
     const CameraState& camera() const { return cam_; }
     // The yaw the stick is read against (World::tick): while swimming the view's (the look point's line, which trails
-    // the camera-to-pivot line in a turn), elsewhere the orbit's.
+    // the camera-to-pivot line in a turn), elsewhere the orbit's; a pinned yaw (pinStickYaw) instead when set.
     float stickYaw() const {
+        if (stickYawPin_) return *stickYawPin_;
         const vec2 view(cam_.target - cam_.position);
         return lookPoint_ && glm::length(view) > 1e-3f ? std::atan2(view.y, view.x) : cam_.yaw;
     }
+    // Input replays of Wine corpus cases (InputScript::cameraYaw): the stick reads against this world yaw every tick, as
+    // tru.exe's pinned camera had it; nullopt (default): the camera's.
+    void pinStickYaw(std::optional<float> yaw) { stickYawPin_ = yaw; }
     const CameraState& previousCamera() const { return prevCam_; }
     // Field camera view (World::tick): on, and its zoom 0..1 (the app draws the g_binoculars viewfinder).
     bool fieldCamera() const { return fieldCamera_; }
@@ -1707,6 +1711,7 @@ private:
     CameraState cam_, prevCam_;
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
     std::optional<vec3> lookPoint_; // its look point (+0x620), lagging the same goal while swimming (World.cpp)
+    std::optional<float> stickYawPin_; // pinStickYaw
     vec3 pivot_{0}; // cameraPivot(): the orbit camera's pivot this tick (output only, recomputed by every update)
     // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
     // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
@@ -2159,10 +2164,14 @@ public:
     static InputScript parse(std::string_view text); // throws std::runtime_error with the line number
     static InputScript load(const std::filesystem::path& path);
     Actions at(uint64_t tick) const; // state after applying every event with tick <= `tick`
+    // A Wine case's "camera_follow" ("dx,dy,dist,height": tru.exe's CAMFOLLOW pins the camera behind her along (dx, dy),
+    // so Forward is that world direction): the stick yaw atan2(dy, dx) the world reads input against; nullopt without.
+    std::optional<float> cameraYaw() const { return cameraYaw_; }
 
 private:
     struct Event { uint64_t tick; std::string action; float value; };
     std::vector<Event> events_; // sorted by tick (stable)
+    std::optional<float> cameraYaw_;
 };
 
 } // namespace ou::game
