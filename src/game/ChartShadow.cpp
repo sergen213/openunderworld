@@ -790,7 +790,8 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             }
             if (n > 0 && size_t(n) < sizeof row) { // the anim layer's blend parameters and the grip, as the Wine corpus logs them
                 const float c98 = chartAttached && *chartAttached ? chartAttached->param : 0.0f;
-                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_l8c=%g\tvar_l90=%g\tvar_c98=%g", animBlend.x, animBlend.y, c98);
+                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_l8c=%g\tvar_l90=%g\tvar_c98=%g\tvar_f0=%x", animBlend.x, animBlend.y, c98,
+                                   unsigned(rt->field(0xF0) & 0x3F));
             }
             trace << row << '\n';
         }

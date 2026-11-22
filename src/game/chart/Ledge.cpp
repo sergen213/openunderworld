@@ -629,7 +629,7 @@ int pillarLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a, int lc
 // the rung count (0x734B70: trunc(trunc(the first segment's length) / spacing) + 1), as Traverse.cpp places her on
 // them; up: rung < 1 -> 4; down: rung >= count - byte +0x774 -> 4. Then the pillar's cast (0x70B5A0 in her root
 // bone's frame, moved by -row1 x s): up s = +0x78C from local z +0x78E to +0x78E + +0x78A, down s = +0x792 from
-// +0x794 to +0x794 - +0x790; a hit -> 2 (up) / 1 (down).
+// +0x794 to +0x794 - +0x790; a hit returns 2 (up) / 1 (down) alone, the rung-end 4 dropped [O: 0x744920's early return].
 int ladderLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a, int lc) {
     if (lc != 5 && lc != 6) return 0;
     const auto seg = ctx.markupSegment(a.markup, 0);
@@ -647,7 +647,7 @@ int ladderLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a, int lc
         const float h = ctx.heading();
         const glm::vec3 back(-std::cos(h), -std::sin(h), 0);
         const glm::vec3 o = ctx.rootBone() - back * s;
-        if (ctx.playerRay(o + glm::vec3(0, 0, from), o + glm::vec3(0, 0, from + reach))) bits |= lc == 5 ? 2 : 1;
+        if (ctx.playerRay(o + glm::vec3(0, 0, from), o + glm::vec3(0, 0, from + reach))) return lc == 5 ? 2 : 1;
     }
     return bits;
 }
