@@ -35,6 +35,9 @@ struct Clip {
     // tracks[segment][channel]: keyCount values, or empty = default (rot 0, scale 1, trans = bind pivot).
     // Rotations are axis-angle vectors (direction = axis, length = angle in radians).
     std::vector<std::array<std::vector<float>, kChannels>> tracks;
+    // Header +0x18..+0x20 / +0x24..+0x2C: the clip's alignment translation and rotation, read by tru.exe 0x435D70 /
+    // 0x435E10 for an attach's alignment target (0x741130 -> 0x702D20: target = markup point - R(rot) x pos) [O].
+    std::array<float, 3> alignPos{}, alignRot{};
     double durationSeconds() const { return double(keyCount) * timePerKey / kTimeUnitsPerSecond; }
 };
 

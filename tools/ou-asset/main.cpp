@@ -428,6 +428,8 @@ void animDump(const cdc::Drm& drm, std::optional<uint32_t> clipId) {
             }
             std::printf("clip %u: %u keys, %u time units per key (%.3f s), %zu segments, %zu animated tracks\n", c.id,
                         c.keyCount, c.timePerKey, c.durationSeconds(), c.tracks.size(), animated);
+            std::printf("align pos (%.3f %.3f %.3f) rot (%.4f %.4f %.4f)\n", c.alignPos[0], c.alignPos[1], c.alignPos[2],
+                        c.alignRot[0], c.alignRot[1], c.alignRot[2]);
             for (size_t seg = 0; seg < c.tracks.size(); ++seg)
                 for (int ch = 0; ch < anim::kChannels; ++ch) {
                     const auto& t = c.tracks[seg][size_t(ch)];

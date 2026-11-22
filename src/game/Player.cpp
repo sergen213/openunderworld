@@ -3975,6 +3975,10 @@ void Player::drive(const DriveStep& d, float dt) {
             } else {
                 fade_ = {};
             }
+            // The new clip's lead holds its first frame while the fade runs (0x433D40's layer fade): its root motion
+            // starts once the fade is done (Wine S432: 6 ticks of ~0.2 units, then the shimmy clip from its start;
+            // ours ran the clip at once and led Wine by those 6 ticks, reaching S448 early) [O-runtime].
+            rootLead_ = {t0, fade_.total};
         }
         s_.clip = d.clip, s_.loop = d.loop, s_.mirror = d.mirror, s_.clipRate = 1;
         s_.clipMix.clear(), s_.mix = 0;
@@ -3987,12 +3991,14 @@ void Player::drive(const DriveStep& d, float dt) {
     vec3 root(0), world(0);
     if (const anim::Clip* c = anims_.find(s_.clip)) {
         const float k = s_.mirror ? -1.0f : 1.0f;
-        root = rootDelta(anims_, s_, *c, t0, t1);
+        const auto lead = [&](double t) { return rootLead_.start + std::max(0.0, t - rootLead_.start - double(rootLead_.hold)); };
+        const double r0 = lead(t0), r1 = lead(t1);
+        root = rootDelta(anims_, s_, *c, r0, r1);
         const bool turns = std::abs(rootYaw(*c, c->durationSeconds(), false) - rootYaw(*c, 0, false)) > 1e-3f;
         if (turns) {
-            const float base = s_.yaw - k * rootYaw(*c, t0, s_.loop);
+            const float base = s_.yaw - k * rootYaw(*c, r0, s_.loop);
             world = rotYaw(base, root);
-            s_.yaw = wrapAngle(base + k * rootYaw(*c, t1, s_.loop));
+            s_.yaw = wrapAngle(base + k * rootYaw(*c, r1, s_.loop));
         } else {
             world = toWorld(root);
         }
