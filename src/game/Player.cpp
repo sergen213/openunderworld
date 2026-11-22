@@ -508,7 +508,7 @@ bool Player::slideStep(const collision::Hit& g, float dl, float dt) {
 Player::GroundCheck Player::groundCheck(vec3 feet, float above, float below) const {
     GroundCheck r;
     if (const auto g = col_.groundProbe(feet + vec3(0, 0, above), above + below)) {
-        r.z = g->point.z;
+        r.z = g->point.z, r.normal = g->normal;
         r.steep = floorKind(*g) == Floor::Steep;
         r.floor = !r.steep;
         r.onBody = g->dynamic >= 0;

@@ -347,6 +347,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         stairsByte = ground.stairs;
     }
     std::optional<bool> onStairs() const override { return stairsByte; }
+    std::optional<glm::vec3> groundNormal() const override { return ground.normal; }
     const PlayerState* player() const override { return &w->player().state(); }
     const World* world() const override { return w; }
 
@@ -898,8 +899,8 @@ bool Shadow::Impl::isBoundary(int st) const {
 // direction whose point lies most ahead of her (local_330: [I] the horizontal unit direction to the point . her
 // facing, > 0) keeps its record in +0x31C (+0x320 = 1). Not ported [I]: surface material flags (0x5D3AF0 bits 0x44 /
 // 0x20 -> 0x2000 / 0x1000: none ours), the ledge-top re-cast after a wall (+0x330..+0x35C, which only the climb records
-// read), the carried-object branch (+0x8DC), cast mask 0x442C11E3 | 0x100000 (ours kSolidMask), 0x5D7A80's last two
-// arguments (the call passes six: a record testing +0x14 / +0x18 / +0x1C that could win leaves +0x31C as it was [U]).
+// read), the carried-object branch (+0x8DC), cast mask 0x442C11E3 | 0x100000 (ours kSolidMask), 0x5D7A80's 8th
+// argument (the ledge-top re-cast height, record +0x1C; the 7th, the wall normal's angle, is in the group A block).
 void Shadow::Impl::moveSweep() {
     // +0x320: 0x7002D0 clears it when mask bits 0xA00 are clear (+0x2C1 / +0x2C0 = bits 0x200 / 0x800, no sweep).
     if (!(collisionMask & 0xA00)) { sweepFreshNow = false; return; }
@@ -956,12 +957,13 @@ void Shadow::Impl::moveSweep() {
         const glm::vec2 dir(std::cos(a), std::sin(a));
         glm::vec3 probe(glm::vec2(p) + dir * ahead, z);
         std::optional<glm::vec3> wall; // local_1d0: the forward casts' hit (argument 4), else none
+        glm::vec3 wallNrm(0);          // local_200: that hit's normal (argument 7), else the zero vector
         const int heights = c.data<int16_t>(0x620);
         const float hTop = z + c.data<float>(0x610), hLow = z + c.data<float>(0x60C);
         for (int k = 0; k < heights && !wall; ++k) {
             const float hz = heights < 2 ? hLow : hTop + float(k) * (hLow - hTop) / float(heights - 1);
             if (const auto hit = cast({p.x, p.y, hz}, {probe.x, probe.y, hz})) {
-                wall = hit->point;
+                wall = hit->point, wallNrm = hit->normal;
                 probe = glm::vec3(glm::vec2(hit->point) + dir * wallIn, z);
             }
         }
@@ -991,6 +993,18 @@ void Shadow::Impl::moveSweep() {
         const float d4 = glm::length(glm::vec2(wall.value_or(glm::vec3(0)) - p));
         const float d5 = glm::length(glm::vec2(p5.value_or(glm::vec3(0)) - p));
         const float wz = wall.value_or(glm::vec3(0)).z - z;
+        // ---- group A: 0x5D7A80's 7th / 8th arguments (call 0x5D93F3 pushes eight; ChartJ agreed) ----
+        // arg 7 = &local_200, the forward cast's wall normal: 0x49F530 takes its angle (degrees) against her instance's
+        // segment-0 matrix row +0x10, the zero vector (0x49AFA0) giving 0 and failing the record tests that read it.
+        // That row is -her facing in tru.exe's frame (a z rotation by tru's yaw = ours + 90 deg, row 1 = (-sin, cos)
+        // of it) [I]. Record +0x14 caps the angle; +0x18 (with the drop above the wall height) is its minimum.
+        // arg 8 = local_2a0's low float, the ledge-top re-cast height ((fStack_318 - local_98) - data +0x618), which
+        // record +0x1C must exceed: not modelled [U] (lara.drm's enabled records leave +0x1C at 0; the disabled 15 /
+        // 19 use it).
+        const glm::vec3 backAxis(-std::cos(s.yaw), -std::sin(s.yaw), 0.0f);
+        const bool hasNrm = glm::dot(wallNrm, wallNrm) > 1e-8f;
+        const float wallAngle = hasNrm ? glm::degrees(std::acos(std::clamp(glm::dot(backAxis, glm::normalize(wallNrm)), -1.0f, 1.0f))) : 0.0f;
+        // ---- end group A ----
         int pick = -1;
         bool pickUnknown = false;
         for (int i = 0; i < n; ++i) {
@@ -1002,12 +1016,10 @@ void Shadow::Impl::moveSweep() {
             if ((need & flags) != need) continue;
             if (f(r, 0x20) > 0 && !(d4 <= f(r, 0x20))) continue;
             if (f(r, 0x24) > 0 && !(d5 <= f(r, 0x24))) continue;
-            bool open = f(r, 0x14) > 0 || f(r, 0x1C) > 0; // tests on the 7th / 8th arguments [U]
+            bool open = f(r, 0x1C) > 0; // the 8th argument's test [U]
+            if (f(r, 0x14) > 0 && !(hasNrm && wallAngle <= f(r, 0x14))) continue;
             if (!(f(r, 0xC) <= 0 || (drop > 0 && f(r, 0xC) < drop))) continue;
-            if (f(r, 0x18) > 0 && wz < drop) {
-                if (!(drop > 0)) continue;
-                open = true; // its angle reads the 7th argument [U]
-            }
+            if (f(r, 0x18) > 0 && wz < drop && !(drop > 0 && hasNrm && f(r, 0x18) <= wallAngle)) continue;
             if (!(f(r, 0x10) <= 0 || (wz < drop && drop > 0 && drop <= f(r, 0x10)))) continue;
             if (f(r, 4) > 0 && !(drop <= -f(r, 4))) continue;
             if (f(r, 8) > 0 && !(f(r, 8) <= slope)) continue;

@@ -242,6 +242,25 @@ bool moveDirMomentum(ChartContext& ctx, const Cond& c) {
     return (*zone & zoneBit(v)) != 0;
 }
 
+// 0x198 (0x761660, PSCCF_MoveDirDownhill): 0x7308B0's downhill vector through 0x785FB0 as 0x197 (values 410..413).
+// 0x7308B0: an attached markup flagged 0x800000 gives player +0xCB0 (not modelled); else u = Z x n, d = u x n =
+// (nx nz, ny nz, -(nx^2 + ny^2)) from the support normal +0x5F0 when its x / y are not both 0 [O: decomp], so the
+// heading is that of (nx, ny) when nz > 0. A flat +0x5F0 falls back to +0x600 (not modelled [U]); 414..417 (against
+// the player +0x800 point) are not modelled.
+bool moveDirDownhill(ChartContext& ctx, const Cond& c) {
+    const int v = mode(c);
+    const PlayerState* s = ctx.player();
+    if (v < 0x19A || v > 0x19D || !s) return ctx.chart().unported(c);
+    if (const auto am = ctx.attachedMarkup(); am.markup >= 0 && (am.flags & 0x800000)) return ctx.chart().unported(c);
+    const auto n = ctx.groundNormal();
+    if (!n || (n->x == 0.0f && n->y == 0.0f)) return ctx.chart().unported(c);
+    const glm::vec3 d(n->x * n->z, n->y * n->z, -(n->x * n->x + n->y * n->y));
+    const float angle = wrapPi(std::atan2(d.y, d.x) - playerYaw(*s));
+    const auto zone = moveDirZone(ctx, angle);
+    if (!zone) return ctx.chart().unported(c);
+    return (*zone & zoneBit(v)) != 0;
+}
+
 // 0x19E (0x7619B0, PSCCF_MoveDirSpherical): without a jump target (player +0xA64 == 0) the function returns the negate
 // bit itself, i.e. a raw false. With one, the target's yaw / pitch against her (0x786490) is not ported.
 bool moveDirSpherical(ChartContext& ctx, const Cond& c) {
@@ -1002,6 +1021,7 @@ void registerGround(Registry& player, Registry&) {
     player.condition(0x192, moveDir, "PSCCF_MoveDir", g);
     player.condition(0x194, moveDirLeftRight, "PSCCF_MoveDirLeftOrRight", g);
     player.condition(0x197, moveDirMomentum, "PSCCF_MoveDirMomentum", g);
+    player.condition(0x198, moveDirDownhill, "PSCCF_MoveDirDownhill", g);
     player.condition(0x19E, moveDirSpherical, "PSCCF_MoveDirSpherical", g);
     player.condition(0x1F7, lowCeiling, "PSCCF_LowCeiling", g);
     player.condition(0x1FA, inCombatMode, "PSCCF_InCombatMode", g);
