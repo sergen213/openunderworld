@@ -2035,7 +2035,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         // poles (0x8000000 unless 0x74B5F0 claims it [I: not ported, taken as no]; 0x2000000 /
                         // 0x4000000), pillars (0x10), perches (0x20000), balance beams (0x10000) and jump landings (0x20000000) pass
                         r = true;
-                    } else if (q.strict && ((m.type >= 16 && m.type <= 20) || m.type == 9)) {
+                    } else if (q.strict && ((m.type >= 16 && m.type <= 20) || m.type == 9 || m.type == 1)) {
                         // 0x725D00 hands 0x6FC6B0 two ways: her own velocity's direction (0x6E5A10, normalized, else
                         // straight down) and the query start less the hit led by the motion (0x7233E0; normalized,
                         // else straight down); 0x6FC6B0 takes the first flattened (not renormalized), the second
@@ -2046,6 +2046,14 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         if (glm::dot(way, way) < 1e-12f) way = vec3(xy(unitOr(from - h, vec3(0, 0, -1))), 0);
                         if (glm::dot(way, way) < 1e-12f) {
                             r = true;
+                        } else if (m.type == 1) {
+                            // 0x40000000: the way, renormalized (0x49D420), . the ledge's outward normal (0x737D60,
+                            // normalized) <= 0.2618, 0.5236 while the ledge moves, as the default check's wallSide [O:
+                            // disasm 0x6FCA6D..0x6FCAFD]. Before that 0x6FC6B0 passes when the hit stands above her root
+                            // z + tunable 0x1AC (0x6EEED0) + (0xE7F094+0x50)+0x728 (0x731C30) and 0x7511C0's shelf
+                            // test (0x74BB50 == 1) holds [I: not ported, taken as no]
+                            const float limit = ledgeSpeed() > 3.1605f * 30.0f ? 0.5235988f : 0.2617994f;
+                            r = glm::dot(glm::normalize(xy(way)), n * side) <= limit;
                         } else if (m.type == 9) {
                             // 0x400000: 0x72B860(normal . way): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
                             // 0x72B860..0x72B8B8]; the normal (0x5C3CC0) the ladder's wall side, ladderOut [I]
