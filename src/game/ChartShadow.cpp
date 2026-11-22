@@ -211,11 +211,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const float t = std::atan2(moveIn.y, moveIn.x);
         return glm::vec2(std::cos(t), -std::sin(t));
     }
-    // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw (0x6EBA90: the
-    // stick's angle (input record +0xC) on top of its base yaw; a neutral stick adds none [I], so the base, ours the
-    // yaw the stick reads against; atan2 of a zero stick was no yaw at all).
+    // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw. 0x6EBA90 (not in
+    // stick mode 3): input record +0xC (the stick's angle) + input +0x190 + her instance's heading (+0x38) [O: decomp];
+    // a neutral stick adds no angle [I: +0xC and +0x190 taken as 0 then], so her heading; pushed, the stick's world yaw.
     std::optional<Aim> markupSearch(const MarkupProfile& p) const override {
-        const float yaw = stickLen > 0.0f ? std::atan2(stickWorld.y, stickWorld.x) : controlYaw();
+        const float yaw = stickLen > 0.0f ? std::atan2(stickWorld.y, stickWorld.x) : heading();
         const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f);
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
