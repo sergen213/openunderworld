@@ -886,8 +886,9 @@ void World::tick(const Actions& input) {
         const bool thor = !(uberHandle_.hold && !uberHandle_.gear);
         player_.grip(uberGrip_, pushed ? uberMoving_ : 0, thor);
     }
-    enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height, player_.tuning().radius, player_.state().water >= 0},
-                  [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, wdt);
+    if (!enemiesFrozen_)
+        enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height, player_.tuning().radius, player_.state().water >= 0},
+                      [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, wdt);
     syncRagdolls(false); // bodies for this tick's starting ragdolls, so a save between ticks holds them
     updateCamera(a, real); // Camera.cpp: a playing spline camera, else the orbit camera
     if (std::exchange(cameraCut_, false)) prevCam_ = cam_; // a spline camera cuts in

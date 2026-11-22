@@ -1004,6 +1004,7 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
 std::optional<bool> chartMarkupSearch(ChartContext& ctx, int profile) {
     const auto p = decodeProfile(ctx.chart().charts(), profile);
     if (!p) return std::nullopt;
+    ctx.playerInt(0xA84) = profile; // the jump query in effect: the profile a state last ran [O: docs/GAMEPLAY.md "Saving grab"]
     const auto a = ctx.markupSearch(*p);
     if (!a) return std::nullopt;
     ctx.chartTarget = a->target ? *a : ChartContext::Aim{};

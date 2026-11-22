@@ -228,7 +228,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         std::optional<glm::vec3> lift;
         if (p.bone > 0)
             if (const auto b = w->boneWorld(p.bone), r = w->boneWorld(0); b && r) lift = *b - *r;
-        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift);
+        // player +0xEA0 (action 510's enter, chart/Jump.cpp airEnter: markup index + 1, 0 none)
+        const int released = const_cast<Impl*>(this)->playerInt(0xEA0) - 1;
+        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift, released);
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
         return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};
@@ -429,7 +431,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     std::optional<float> playerRay(glm::vec3 a, glm::vec3 b) const override {
         const float d = glm::length(b - a);
         if (d <= 0) return {};
-        if (const auto h = w->collision().playerRay(a, (b - a) / d, d)) return h->t;
+        if (const auto h = w->collision().playerRay(a, (b - a) / d, d, true)) return h->t;
         return {};
     }
     bool hasCollision() const override { return w != nullptr; }
@@ -485,8 +487,16 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     std::optional<bool> carrying() const override { return w->heldPortable() != 0; }
     std::optional<bool> carriedEncumbers() const override { return w->heldPortable() != 0 && w->player().state().encumbered; }
+    // 0x759260 / 0x7594C0 answer no wall while the jump query in effect (player +0xA84, 0x6F1950) has +0x2C flag 0x80
+    // [O: decomp]; ours: the profile chartMarkupSearch last ran (0 none: the rays run).
+    bool queryComingDown() const {
+        const int id = const_cast<Impl*>(this)->playerInt(0xA84);
+        if (id <= 0) return false;
+        const auto p = decodeProfile(chart().charts(), id);
+        return p && (p->flags & 0x80);
+    }
     std::optional<bool> wallJumpAnticipate(float frames) const override {
-        return !ground.floor && w->player().wallJumpAnticipate(frames);
+        return !ground.floor && !queryComingDown() && w->player().wallJumpAnticipate(frames);
     }
     // 0x710380 over ours' markup: ledges and hurdles (MUD 0x40010000) whose nearest point to P = her root + forward x
     // player data float +0x61C lies (vertically) within (short +0xC44, short +0xC46) of her z, nearest two by horizontal
@@ -533,7 +543,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     // 0x7594C0 (Player::wallJumpProbe), asked while the ground check finds no floor (ours keeps no launch velocity on
     // the ground) [I].
-    std::optional<int> wallJumpProbe() const override { return !ground.floor ? w->player().wallJumpProbe() : 0; }
+    std::optional<int> wallJumpProbe() const override { return !ground.floor && !queryComingDown() ? w->player().wallJumpProbe() : 0; }
     // The aimed jump's +0xAC0 / +0xA80 (PlayerState::aimFlags / aimClass, set by Player::aimGroundJump) while a jump
     // target is held.
     std::optional<uint32_t> jumpQueryFlags() const override { return jumpTarget() ? w->player().state().aimFlags : 0u; }
@@ -612,7 +622,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     std::optional<RayHit> rayHit(glm::vec3 a, glm::vec3 b, uint32_t) const override {
         const float d = glm::length(b - a);
         if (d <= 0) return {};
-        const auto h = w->collision().playerRay(a, (b - a) / d, d); // [I] one ray mask for every tru.exe flag set
+        const auto h = w->collision().playerRay(a, (b - a) / d, d, true); // [I] one ray mask for every tru.exe flag set
         if (!h) return {};
         RayHit r;
         r.point = h->point, r.normal = h->normal;
@@ -1138,7 +1148,7 @@ void Shadow::Impl::seedAttach() {
 void Shadow::Impl::restartChart() {
     started = false, parked = false, launched = false;
     blend = {};
-    chartAttached = MarkupSlot{}, chartTarget = {}, handedTarget = -1;
+    chartAttached = MarkupSlot{}, chartTarget = {}, targetPoint = glm::vec3(0), handedTarget = -1;
     collisionMask = 0x48;
 }
 
@@ -1432,7 +1442,15 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
                          rt->state(), rt->request(), p - ch->requests.data(), p->clip.c_str(), d.mirror ? " (mirrored)" : "",
                          rt->clipStartFrame());
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
-        if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
+        if (d.restart) {
+            d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
+            // the pattern's window mode for a state's own request (kind 1); a graph node's play keeps mode 1: its clip
+            // starts at -blend in tru.exe (Wine hang_shimmy_left S432 ledgeb_right_3: ~1 unit through the window, then
+            // the clip from frame 0) where ours starts it at start - blend = 0, so mode 0 would carry the clip's first
+            // frames' root [U: the node Play's start / blend (0x444F30 -> 0x441FB0) is not decoded].
+            const State* sd = rt->charts().player.state(rt->state());
+            d.window = sd && sd->requestKind == 1 ? p->window : uint8_t(1);
+        }
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
         // them by +0x8C / +0x90 = animBlend, which the state's actions wrote this tick) [O].
         lastLayerType = int(p->blendType);

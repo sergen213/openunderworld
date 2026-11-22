@@ -752,6 +752,7 @@ public:
         double start = 0, time = 0; // the chart clip clock (s): where the clip (re)started, where it stands now
         float rate = 1;             // the anim layer rate (empty clip only)
         float crossfade = 0;        // a fresh clip's blend (s): the replaced clip's root motion fades out over it
+        uint8_t window = 1;         // the pattern's crossfade window mode (+0x18, Request::window)
         // The anim layer blend (anim::layerBlendWeights of the pattern's +0x17 type over the chart's +0x8C / +0x90):
         // the pattern's further anims (sub-layers 1..) and one weight per sub-layer (`clip` first); empty: `clip` alone.
         std::vector<std::string> blendClips;
@@ -877,6 +878,8 @@ private:
         std::span<const uint8_t> recordTypes, resultTypes; // the records' own type lists (0x7232E0)
         uint8_t recordFlags = 0, resultRecordFlags = 0;     // their +8 (bit 1: the list excludes)
         bool strict = false;
+        uint32_t profileFlags = 0; // data-driven searches: the profile's +0x2C (0x771830's skip list reads bits 0x10 / 0x20)
+        int lastDetached = -1;     // and player +0xEA0 (bits 0x200 / 0x8000)
         mutable bool unknown = false;
         // The data-driven tests' input frame: the stick's world direction (point source 8, 0xFADFB0 +0xB0 +8) and the
         // control yaw (kind 9, 0x6EBA90); markupSearch fills them.
@@ -922,8 +925,9 @@ public:
     struct MarkupFound { JumpTarget target; uint16_t flags = 0, uncertain = 0; int8_t cls = 0; bool known = false; };
     // controlYaw / stickOn: the camera-relative stick heading (0x6EBA90) and whether the stick is off rest
     // boneLift: profile bone +0xC8's world origin minus the root segment's (World::boneWorld) for a bone-based query
+    // lastDetached: the markup action 510's entry released (player +0xEA0, 0x6FDBE0), -1 none
     MarkupFound markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
-                             std::optional<vec3> boneLift = std::nullopt) const;
+                             std::optional<vec3> boneLift = std::nullopt, int lastDetached = -1) const;
 private:
     // State::Jump: an aimed ground jump re-aimed at its markup target (PlayerState::aimMarkup) with the time left
     // (tru.exe 0x73EDC0 every frame of the flight, 0x752410)
@@ -1008,8 +1012,17 @@ private:
     std::pair<int, int> lastReindex_{-1, -1};
     std::optional<vec3> ledgeHang_; // setLedgeHang()
     bool driveLanded_ = false; // driveLanded()
-    // drive(): the crossfade window of a fresh chart clip (0x441FB0: |outgoing root speed| -> |incoming at its start|)
-    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0, vOut = 0, vIn = 0; } fade_;
+    // The crossfade window (0x441FB0's record r = *(L+0x7C), moved through by 0x43B870 by the pattern's +0x18 mode):
+    // mode 1 the speeds vOut / vIn along her forward axis, mode 2 the velocities vOutV / vInV (her frame), mode 0 the
+    // incoming clip's root displacement `disp` (her frame) over the window.
+    struct Fade {
+        std::string clip;
+        double time = 0;
+        bool loop = false, mirror = false;
+        float left = 0, total = 0, vOut = 0, vIn = 0;
+        uint8_t mode = 1;
+        vec3 vOutV{0}, vInV{0}, disp{0};
+    } fade_;
     // drive(): the current clip's start time and the seconds its lead holds the first frame (the fade) for root motion
     struct RootLead { double start = 0; float hold = 0; } rootLead_;
     // (the press edges of jump / drop live in PlayerState::buttons)
@@ -1195,6 +1208,9 @@ public:
     World& operator=(const World&) = delete;
 
     void tick(const Actions& a); // one kTickSeconds step; keeps the previous state for interpolation
+    // Replay harness only (ou-game --no-enemies, chart-replay's per-case "no_enemies"): enemy AI is not ticked, so a
+    // Wine take without enemy contact is not interrupted by attacks ours would make.
+    void freezeEnemies(bool f) { enemiesFrozen_ = f; }
     // CPU time accumulated by tick() in Player::tick, the script runtime and the physics step (ou-game --frames reports the means).
     struct TickTimes { double scriptMs = 0, physicsMs = 0, playerMs = 0; } tickTimes; // playerMs: Player::tick (her mover)
 
@@ -1955,6 +1971,7 @@ private:
     CameraState blendFrom_; // last spline camera pose, blended out of over kCameraBlendSeconds
     float blendOut_ = 0;    // seconds of blend-out left
     bool cameraCut_ = false; // the spline camera started this tick: no interpolation from the previous tick
+    bool enemiesFrozen_ = false; // freezeEnemies
     uint64_t ticks_ = 0;
     UnitLoader loader_;
     std::shared_ptr<UnitStreamer> streamer_; // setAsyncStreaming; null = synchronous loads (shared_ptr: incomplete type)

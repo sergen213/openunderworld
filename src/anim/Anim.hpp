@@ -62,6 +62,9 @@ struct AnimPattern {
     uint8_t blend = 0, start = 0, nextBlend = 0xFF;
     bool mirror = false; // +0x20 bit 0x80: the clip plays reflected (0x4428A0 -> controller +0xF4 0x200)
     uint8_t blendType = 0; // +0x17: the layer's blend type (0x4428A0 -> layer +0xF9; layerBlendWeights)
+    // +0x18: the crossfade window's motion mode, copied to every sub-layer channel's +0x64 (0x4428A0) and from there to
+    // +0x60 by 0x441FB0 [O]; 0x43B870 moves her through the window by it (Chart.hpp Request::window).
+    uint8_t window = 1;
 };
 std::vector<AnimPattern> animPatterns(const cdc::Drm& drm);
 
