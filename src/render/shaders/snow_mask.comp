@@ -1,0 +1,38 @@
+#version 460
+// Enhanced snow mask update (render/Snow.hpp): one invocation per mask texel, read-modify-write of its own texel only.
+// Mask texel t holds the world mask texel w = window + ((t - window) mod N): rgba = (ground z, snow, w.x, w.y); snow < 0
+// while something stands on the column (its snow is -y, kept for when it leaves).
+layout(local_size_x = 8, local_size_y = 8) in;
+#ifdef VULKAN
+layout(set = 0, binding = 0) uniform sampler2D uTop;                // top-down depth (render/Snow.hpp Map)
+layout(set = 0, binding = 1, rgba32f) uniform image2D uMask;
+layout(push_constant) uniform Push { vec4 map; vec4 z; ivec4 window; vec4 rate; } p;
+#else
+layout(binding = 0) uniform sampler2D uTop;
+layout(binding = 1, rgba32f) uniform image2D uMask;
+layout(std140, binding = 8) uniform Push { vec4 map; vec4 z; ivec4 window; vec4 rate; } p;
+#endif
+void main() {
+    const int n = int(p.z.z);
+    const ivec2 t = ivec2(gl_GlobalInvocationID.xy);
+    if (t.x >= n || t.y >= n) return;
+    const ivec2 w = p.window.xy + ((t - p.window.xy) % n + n) % n;
+    // The highest of the depth texels under this mask texel (top-down: smaller depth = higher).
+    const vec2 uv = ((vec2(w) + 0.5) * p.z.y - p.map.xy) * p.map.z;
+    const vec4 g = textureGather(uTop, uv, 0);
+    const float d = min(min(g.x, g.y), min(g.z, g.w));
+    const float top = p.map.w + (1.0 - d) * p.z.x;
+    vec4 m = imageLoad(uMask, t);
+    if (ivec2(m.zw) != w) m = vec4(top, p.rate.z, vec2(w)); // entered the map: the area's amount so far
+    const bool covered = m.y < 0.0;
+    float snow = abs(m.y);
+    if (!covered && top > m.x + p.z.w) {
+        m.y = -snow; // something came onto the column (Lara, a moved object): the ground's snow waits under it
+    } else if (covered && top < m.x + p.z.w) {
+        m.y = snow * 0.5; // it left: the revealed ground was trodden, half the snow remains (a trail, which fills again)
+    } else if (!covered) {
+        m.x = top; // the ground itself (settles slowly, slopes under a scrolling map)
+        m.y = d >= 1.0 ? 0.0 : clamp(snow + p.rate.x - p.rate.y, 0.0, 1.0);
+    }
+    imageStore(uMask, t, m);
+}

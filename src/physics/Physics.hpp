@@ -421,6 +421,22 @@ public:
     };
     void castSegments(std::span<const Segment> segments, std::span<std::optional<SegmentHit>> hits,
                       uint8_t mask = collision::kSolidMask) const;
+    // A frozen copy of castSegments' query geometry as of this call (the shapes, held by reference count, their frames
+    // and per-face queryable flags for `mask`): it casts exactly as castSegments did then, from any thread, while the
+    // scene goes on changing (the Enhanced weather's worker, fx::PrecipWorker). Its hits leave `mesh` null (the
+    // collision mesh may be gone by then); `face` / `dynamic` stay.
+    class SegmentCaster {
+    public:
+        struct Part; // Physics.cpp
+        SegmentCaster();
+        ~SegmentCaster();
+        void cast(std::span<const Segment> segments, std::span<std::optional<SegmentHit>> hits) const;
+
+    private:
+        friend class Scene;
+        std::vector<Part> parts_;
+    };
+    std::shared_ptr<const SegmentCaster> segmentCaster(uint8_t mask = collision::kSolidMask) const;
     // The scene's state for a save: body IDs by entity, constraint zeros and Jolt's recorded state (bodies, contact
     // cache, constraints). restore() drops the scene; as the caller re-creates the same entities they get the saved IDs
     // and zeros, and the next step() applies the recorded state, so the run continues bit for bit. false: not a state
