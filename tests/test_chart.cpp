@@ -295,6 +295,55 @@ TEST(ChartRuntime, AnimEndTransitionsWaitAndUnportedConditionsFail) {
     EXPECT_GT(rt.stats.unportedConds.at(0x5555), 0u);
 }
 
+// Drive mode's hook: ChartContext::stateEntered runs after the new state's PreAnim actions and before its Entry (the
+// launch must be in force when action 510's Entry reads the velocity).
+struct HookContext : TestContext {
+    void stateEntered(int from, int to) override { trail.push_back("hook" + std::to_string(from) + ">" + std::to_string(to)); }
+};
+TEST(ChartRuntime, StateEnteredBetweenPreAnimAndEntry) {
+    Charts c = testCharts();
+    addTransition(c, 0, 1, {flag(9)});
+    addTransition(c, 1, 3, {flag(1)});
+    const Registry reg = testRegistry();
+    ChartRuntime rt(c, c.player, reg);
+    HookContext ctx;
+    ctx.flags = {9};
+    rt.start(ctx);
+    trail.clear();
+    ctx.flags = {1};
+    rt.tick(ctx, 0.5f);
+    EXPECT_EQ(trail, (std::vector<std::string>{"pre1", "pre2", "pre3", "hook1>3", "reentry1", "reentry2", "entry3"}));
+}
+
+// A save's chart state comes back without running the state's actions (ChartRuntime::snapshot / restore).
+TEST(ChartRuntime, SnapshotRestoresWithoutActions) {
+    Charts c = testCharts();
+    addTransition(c, 0, 1, {flag(9)});
+    addTransition(c, 1, 3, {flag(1)});
+    const Registry reg = testRegistry();
+    ChartRuntime rt(c, c.player, reg);
+    TestContext ctx;
+    ctx.flags = {9};
+    rt.start(ctx);
+    ctx.flags = {1};
+    rt.tick(ctx, 0.5f);
+    rt.tick(ctx, 0.5f);
+    rt.field(0x4EC) = 3;
+    const ChartRuntime::Snapshot s = rt.snapshot();
+    ChartRuntime back(c, c.player, reg);
+    TestContext ctx2;
+    trail.clear();
+    back.restore(ctx2, s);
+    EXPECT_TRUE(trail.empty());
+    EXPECT_EQ(back.state(), 3);
+    EXPECT_EQ(back.stateTime(), rt.stateTime());
+    EXPECT_EQ(back.totalTime(), rt.totalTime());
+    EXPECT_EQ(back.field(0x4EC), 3);
+    ctx2.flags = {};
+    back.tick(ctx2, 0.5f); // runs on from there
+    EXPECT_EQ(back.stateTime(), rt.stateTime() + 0.5f);
+}
+
 TEST(ChartRuntime, ButtonTimingValues) {
     EXPECT_EQ(actionValue({true, true, true, 0}), 1);
     EXPECT_EQ(actionValue({true, true, false, 0.01f}), 2);  // at least one frame held
