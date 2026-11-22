@@ -51,5 +51,14 @@ for part in ${*:-chapel bedroom}; do
             SPAWN=$S HOLD=10 "$WREF_SRC/w.sh" chart trace 60 11:5:9 > /dev/null; sleep 10; done
         SPAWN=$S HOLD=10 "$WREF_SRC/w.sh" chart trace 120 11:5:9 > /dev/null
         CAMDUMP= creplay "${CASEDIR:-$OU_CHART_DIR}/jump/stick_jump_open.case.json" stick_jump_open_stick jump ;;
+    ladder)
+        # TraversalCam: the pinned ladder originals again (same CAMFOLLOW 0,1,1264,300, same keys) with CAMDUMP + STICKDUMP
+        # (the camera matrix and stick record +0x100 / +0x110 at tick 140, S1084); the 2026-11-21 session order: cunit,
+        # cmeasure, the attach probe first
+        UNIT=l1_ship_sinking_hall; OFF=34604.60,3795.87,12744.02
+        cunit $UNIT || exit 1; cmeasure $UNIT
+        CAMDUMP= STICKDUMP= creplay "${CASEDIR:-$OU_CHART_DIR}/ladder/lad_a234_attach.case.json" lad_a234_attach_warm ladder
+        for n in lad_a234_left_hold lad_a234_climb_up; do
+            CAMDUMP=1 creplay "${CASEDIR:-$OU_CHART_DIR}/ladder/$n.case.json" ${n}_stick ladder; done ;;
     esac
 done

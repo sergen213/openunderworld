@@ -133,26 +133,33 @@ static DWORD hook(void) {
 // `var_calls=fn:ecx:a1:a2:a3:a4:a5[:d0:d1:d2:d3]...^ret[=r0:..:r7]@frame;...` (dwords in hex; floats are their bit
 // patterns; `=?` a call that had not returned). All begin with `push ebp; mov ebp,esp; and esp,-16` (6 bytes), which
 // the cave replays before jumping back. Per function a 0x200 block (entry +0, exit stub +0x100, vars +0x1F0); the
-// cave keeps the list (+0x1E00 count, +0x1E04 functions, +0x1E80 the 6 original bytes per function) for callunhook.
+// cave keeps the list (+0x1E00 count, +0x1E04 functions, +0x1D00 + 16 f the original bytes, +0x1EC0 their length) for callunhook.
 // A copy spec may add `+hex` (`:1+20` copies from argument 1 + 0x20, `:R1+20` likewise on return); up to three entry
 // copies (the third lands after the result in the slot). Besides the frame prologue, entries beginning
 // `mov ecx,[esp+8]; mov edx,[ecx]` (8B 4C 24 08 8B 11, e.g. 0x60F680) are accepted: both are position independent.
 static DWORD gFn[8] = {0x441FB0, 0x432850, 0x4428A0}; static int gDeref[8][3], gDOff[8][3], gRes[8], gROff[8], gN = 3;
-static unsigned char gOrig[8][6]; static int gFiltArg[8]; static DWORD gFiltAt[8]; // :Fk=hex: log when argument k == *(hex)
+static unsigned char gOrig[8][16]; static int gOrigLen[8], gForceLen[8], gFiltArg[8]; static DWORD gFiltAt[8]; // :Fk=hex: log when argument k == *(hex)
+// :L=n (n 5..16): copy the first n bytes verbatim, unchecked (the caller has verified they are whole, position-independent
+// instructions). Copy spec `P` in place of an argument number: the player data *(0xFADB58) (`:P+C94`, `:RP+C94`).
 static const unsigned char kProlog[6] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0};
 static const unsigned char kProlog2[6] = {0x8B, 0x4C, 0x24, 0x08, 0x8B, 0x11};
+static const unsigned char kProlog3[7] = {0x8B, 0x44, 0x24, 0x04, 0xD9, 0x40, 0x08}; // mov eax,[esp+4]; fld dword [eax+8] (0x7234A0)
+static const unsigned char kProlog4[6] = {0x8B, 0x0D, 0x58, 0xDB, 0xFA, 0x00}; // mov ecx,[0xFADB58] (0x75E5C0)
+static const unsigned char kProlog5[6] = {0x51, 0xA1, 0x58, 0xDB, 0xFA, 0x00}; // push ecx; mov eax,[0xFADB58] (0x76DB40)
+static const unsigned char kProlog6[11] = {0xA1, 0x58, 0xDB, 0xFA, 0x00, 0x8B, 0x88, 0x54, 0x08, 0x00, 0x00}; // mov eax,[0xFADB58]; mov ecx,[eax+0x854] (0x772C00)
 static void callList(void) {
     if (!getenv("CALLFN")) return;
     char buf[256]; strncpy(buf, getenv("CALLFN"), 255); buf[255] = 0; gN = 0;
     for (char* t = strtok(buf, ","); t && gN < 8; t = strtok(0, ",")) {
         gFn[gN] = (DWORD)strtoul(t, 0, 16); memset(gDeref[gN], 0, sizeof gDeref[gN]); memset(gDOff[gN], 0, sizeof gDOff[gN]);
-        gRes[gN] = gROff[gN] = gFiltArg[gN] = 0; gFiltAt[gN] = 0; int nd = 0;
+        gRes[gN] = gROff[gN] = gFiltArg[gN] = gForceLen[gN] = 0; gFiltAt[gN] = 0; int nd = 0;
         for (char* q = strchr(t, ':'); q; q = strchr(q + 1, ':')) {
             char* p = q + 1; int isR = *p == 'R'; if (isR) ++p;
             if (*p == 'F') { int k = atoi(p + 1); char* eq = strchr(p, '='); if (k >= 1 && k <= 5 && eq) { gFiltArg[gN] = k; gFiltAt[gN] = (DWORD)strtoul(eq + 1, 0, 16); } continue; }
-            int k = atoi(p); char* pl = strchr(p, '+'); char* nx = strchr(p, ':');
+            if (*p == 'L' && p[1] == '=') { int L = atoi(p + 2); if (L >= 5 && L <= 16) gForceLen[gN] = L; continue; }
+            int k = *p == 'P' ? 9 : atoi(p); char* pl = strchr(p, '+'); char* nx = strchr(p, ':');
             int off = (pl && (!nx || pl < nx)) ? (int)strtol(pl + 1, 0, 16) : 0;
-            if (k < 1 || k > 5) continue;
+            if ((k < 1 || k > 6) && k != 9) continue;
             if (isR) { gRes[gN] = k; gROff[gN] = off; }
             else if (nd < 3) { gDeref[gN][nd] = k; gDOff[gN][nd++] = off; } }
         ++gN; }
@@ -165,12 +172,15 @@ static DWORD callCaveOf(void) { // the ring's cave: from the first function's ju
 static DWORD callhook(void) {
     DWORD c = callCaveOf();
     if (c) return c;
-    for (int f = 0; f < gN; ++f) { ReadProcessMemory(h, (void*)gFn[f], gOrig[f], 6, 0);
-        if (memcmp(gOrig[f], kProlog, 6) && memcmp(gOrig[f], kProlog2, 6)) { printf("unexpected bytes at %08lx\n", gFn[f]); exit(1); } }
+    for (int f = 0; f < gN; ++f) { ReadProcessMemory(h, (void*)gFn[f], gOrig[f], 16, 0);
+        gOrigLen[f] = gForceLen[f] ? gForceLen[f] : !memcmp(gOrig[f], kProlog, 6) || !memcmp(gOrig[f], kProlog2, 6) || !memcmp(gOrig[f], kProlog4, 6)
+            || !memcmp(gOrig[f], kProlog5, 6) ? 6 : !memcmp(gOrig[f], kProlog3, 7) ? 7 : !memcmp(gOrig[f], kProlog6, 11) ? 11 : 0;
+        if (!gOrigLen[f]) { printf("unexpected bytes at %08lx\n", gFn[f]); exit(1); } }
     c = (DWORD)(size_t)VirtualAllocEx(h, 0, 0x10000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     DWORD wpos = c + 0x1F00, ring = c + 0x2000;
     w32(wpos, 0); w32(c + 0x1E00, gN);
-    for (int f = 0; f < gN; ++f) { w32(c + 0x1E04 + 4 * f, gFn[f]); WriteProcessMemory(h, (void*)(size_t)(c + 0x1E80 + 8 * f), gOrig[f], 6, 0); }
+    for (int f = 0; f < gN; ++f) { w32(c + 0x1E04 + 4 * f, gFn[f]); w32(c + 0x1EC0 + 4 * f, gOrigLen[f]);
+        WriteProcessMemory(h, (void*)(size_t)(c + 0x1D00 + 16 * f), gOrig[f], 16, 0); }
     for (int f = 0; f < gN; ++f) {
         unsigned char s[512]; int n = 0; DWORD at = c + 0x200 * f, ex = at + 0x100, vRet = at + 0x1F0, vSlot = at + 0x1F4, vRes = at + 0x1F8;
         B(0x50); B(0x52); B(0x51);                         // push eax; push edx; push ecx
@@ -195,7 +205,8 @@ static DWORD callhook(void) {
         B(0x8B); B(0x54); B(0x24); B(12);                  // mov edx,[esp+12] (return address)
         B(0x89); B(0x50); B(32);                           // mov [eax+32],edx
         for (int d = 0; d < 3; ++d) if (gDeref[f][d]) {
-            B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gDeref[f][d] - 1)); // mov edx,[esp+16+4(k-1)] (the pointer)
+            if (gDeref[f][d] == 9) { B(0x8B); B(0x15); D(0xFADB58); } // mov edx,[0xFADB58] (player data)
+            else { B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gDeref[f][d] - 1)); } // mov edx,[esp+16+4(k-1)] (the pointer)
             if (gDOff[f][d]) { B(0x81); B(0xC2); D((DWORD)gDOff[f][d]); } // add edx,off
             int at0 = d < 2 ? 36 + 16 * d : 104;           // slot dwords 9..12, 13..16, 26..29
             for (int j = 0; j < 4; ++j) { B(0x8B); B(0x4A); B(4 * j); B(0x89); B(0x48); B(at0 + 4 * j); } // mov ecx,[edx+4j]; mov [eax+at0+4j],ecx
@@ -203,7 +214,8 @@ static DWORD callhook(void) {
         if (gRes[f]) {
             B(0xC7); B(0x40); B(100); D(0);                // mov dword [eax+100],0 (not returned yet)
             B(0xA3); D(vSlot);                             // mov [vSlot],eax
-            B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gRes[f] - 1));                      // mov edx,[esp+16+4(n-1)]
+            if (gRes[f] == 9) { B(0x8B); B(0x15); D(0xFADB58); }                          // mov edx,[0xFADB58]
+            else { B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gRes[f] - 1)); }                // mov edx,[esp+16+4(n-1)]
             if (gROff[f]) { B(0x81); B(0xC2); D((DWORD)gROff[f]); }                   // add edx,off
             B(0x89); B(0x15); D(vRes);                                                // mov [vRes],edx
             B(0x8B); B(0x54); B(0x24); B(12); B(0x89); B(0x15); D(vRet); // mov edx,[esp+12]; mov [vRet],edx
@@ -212,8 +224,8 @@ static DWORD callhook(void) {
         B(0xFF); B(0x05); D(wpos);                         // inc dword [wpos]
         if (jSkip >= 0) { DWORD rel = (DWORD)(n - (jSkip + 4)); memcpy(s + jSkip, &rel, 4); } // skip:
         B(0x59); B(0x5A); B(0x58);                         // pop ecx; pop edx; pop eax
-        memcpy(s + n, gOrig[f], 6); n += 6;                // the replaced first instructions
-        B(0xE9); D(gFn[f] + 6 - (at + n + 4));             // jmp fn+6
+        memcpy(s + n, gOrig[f], gOrigLen[f]); n += gOrigLen[f]; // the replaced first instructions
+        B(0xE9); D(gFn[f] + gOrigLen[f] - (at + n + 4));   // jmp past them
         WriteProcessMemory(h, (void*)(size_t)at, s, n, 0);
         if (gRes[f]) { // exit stub: copy 8 result dwords into the slot, flag it, return to the saved address
             n = 0;
@@ -222,14 +234,15 @@ static DWORD callhook(void) {
             B(0x8B); B(0x15); D(vRes);                     // mov edx,[vRes]
             for (int j = 0; j < 8; ++j) { B(0x8B); B(0x4A); B(4 * j); B(0x89); B(0x48); B(68 + 4 * j); } // mov ecx,[edx+4j]; mov [eax+68+4j],ecx
             B(0xC7); B(0x40); B(100); D(1);                // mov dword [eax+100],1
+            B(0x8B); B(0x4C); B(0x24); B(8); B(0x89); B(0x48); B(120); // mov ecx,[esp+8] (the return value); mov [eax+120],ecx
             B(0x59); B(0x5A); B(0x58);                     // pop ecx; pop edx; pop eax
             B(0xFF); B(0x25); D(vRet);                     // jmp [vRet]
             WriteProcessMemory(h, (void*)(size_t)ex, s, n, 0);
         }
     }
     for (int f = gN - 1; f >= 0; --f) { // the first function last: callCaveOf finds the cave by it
-        unsigned char j[6] = {0xE9, 0, 0, 0, 0, 0x90}; DWORD rel = (c + 0x200 * f) - (gFn[f] + 5); memcpy(j + 1, &rel, 4);
-        if (!patchSuspended(gFn[f], j, 6)) { puts("call patch failed"); exit(1); }
+        unsigned char j[16]; memset(j, 0x90, sizeof j); j[0] = 0xE9; DWORD rel = (c + 0x200 * f) - (gFn[f] + 5); memcpy(j + 1, &rel, 4);
+        if (!patchSuspended(gFn[f], j, gOrigLen[f])) { puts("call patch failed"); exit(1); }
     }
     return c;
 }
@@ -380,8 +393,8 @@ int main(int argc, char** argv) {
     if (!strcmp(argv[1], "callunhook")) {
         DWORD c = callCaveOf(); if (!c) { puts("not hooked"); return 0; }
         int ok = 1, n = (int)rd32(c + 0x1E00);
-        for (int f = 0; f < n && f < 8; ++f) { unsigned char o[6]; ReadProcessMemory(h, (void*)(size_t)(c + 0x1E80 + 8 * f), o, 6, 0);
-            ok &= patchSuspended(rd32(c + 0x1E04 + 4 * f), o, 6); }
+        for (int f = 0; f < n && f < 8; ++f) { unsigned char o[16]; ReadProcessMemory(h, (void*)(size_t)(c + 0x1D00 + 16 * f), o, 16, 0);
+            int len = (int)rd32(c + 0x1EC0 + 4 * f); ok &= patchSuspended(rd32(c + 0x1E04 + 4 * f), o, len >= 6 && len <= 16 ? len : 6); }
         puts(ok ? "unhooked" : "unhook failed"); return !ok;
     }
     if (!strcmp(argv[1], "unhook")) {
@@ -401,9 +414,12 @@ int main(int argc, char** argv) {
     if (nsp < 3) hold = 0;
     int settle = getenv("SETTLE") ? atoi(getenv("SETTLE")) : 0; // free, unrecorded frames between the pin and tick 0
     float cf[4]; int cam = getenv("CAMFOLLOW") && sscanf(getenv("CAMFOLLOW"), "%f,%f,%f,%f", cf, cf + 1, cf + 2, cf + 3) == 4;
-    // CAMUNTIL=S: the CAMFOLLOW pin is released from the first recorded tick whose chart state is S (column var_campin
-    // 1 while pinned; stderr "camera released at tick N")
-    int camUntil = getenv("CAMUNTIL") ? atoi(getenv("CAMUNTIL")) : -1000, camOn = cam;
+    // CAMUNTIL=S[,S2...] (up to 8): the CAMFOLLOW pin is released from the first recorded tick whose chart state is one
+    // of them (column var_campin 1 while pinned; stderr "camera released at tick N")
+    int camUntilN = 0, camUntilS[8], camUntil = -1000, camOn = cam;
+    if (getenv("CAMUNTIL")) { char cb[128]; strncpy(cb, getenv("CAMUNTIL"), 127); cb[127] = 0;
+        for (char* tk = strtok(cb, ","); tk && camUntilN < 8; tk = strtok(0, ",")) camUntilS[camUntilN++] = atoi(tk);
+        if (camUntilN) camUntil = camUntilS[0]; }
     // VARS bases: pd player data, p instance, c chart, L Lara's main anim layer *(*(p+0x280)+0x14) (its +0x00..+0x24 is the
     // alignment record 0x43E480 / 0x43E370 write: +0 target position, +0x10 rotation, +0x20 end time, +0x24 mode), r the
     // layer's crossfade record *(L+0x7C) (0x441FB0: +0x50 outgoing root velocity, +0x60 incoming), k channel 0 *(L+0x80),
@@ -495,7 +511,7 @@ int main(int argc, char** argv) {
             WriteProcessMemory(h, (void*)(cm + 0x90), cp, 12, 0); WriteProcessMemory(h, (void*)(cm + 0x150), cp, 12, 0); } }
         if (t >= 0) {
             Chart a = readChart(c1, 0), b = readChart(c2, 1);
-            if (camOn && a.idx == camUntil) { camOn = 0; fprintf(stderr, "camera released at tick %d\n", t); }
+            if (camOn) for (int k = 0; k < camUntilN; ++k) if (a.idx == camUntilS[k]) { camOn = 0; fprintf(stderr, "camera released at tick %d\n", t); break; }
             if (a.st != lastSt || (a.tr != lastTr && a.tr && rd16(a.tr) == a.idx)) stTicks = 0; else ++stTicks;
             lastSt = a.st; lastTr = a.tr;
             float s[7] = {0}; if (p) { ReadProcessMemory(h, (void*)(p + 0x20), s, 12, 0); ReadProcessMemory(h, (void*)(p + 0x2A0), s + 3, 12, 0); s[6] = rdf(p + 0x38); }
@@ -559,7 +575,7 @@ int main(int argc, char** argv) {
                     if (fi >= 0) for (int d = 0; d < 3; ++d) if (gDeref[fi][d]) { int b0 = d < 2 ? 9 + 4 * d : 26;
                         printf(":%lx:%lx:%lx:%lx", r[b0], r[b0 + 1], r[b0 + 2], r[b0 + 3]); }
                     printf("^%lx", r[8]);
-                    if (fi >= 0 && gRes[fi]) { if (r[25]) { printf("="); for (int k = 0; k < 8; ++k) printf(k ? ":%lx" : "%lx", r[17 + k]); } else printf("=?"); }
+                    if (fi >= 0 && gRes[fi]) { if (r[25]) { printf("="); for (int k = 0; k < 8; ++k) printf(k ? ":%lx" : "%lx", r[17 + k]); printf("|eax%lx", r[30]); } else printf("=?"); }
                     printf("@%lu;", r[7]);
                 }
             }
@@ -567,7 +583,7 @@ int main(int argc, char** argv) {
             for (int i = 0; i < nv; ++i) {
                 char bc = vars[i].base;
                 DWORD base = bc == 'd' ? pd : bc == 'p' ? p : bc == 'c' ? c1 : bc == 'L' ? L : bc == 'r' ? (L ? rd32(L + 0x7C) : 0)
-                           : bc == 'k' ? (L ? rd32(L + 0x80) : 0) : bc == 's' ? sc : bc == 'm' ? rd32(0xE80534) : 0;
+                           : bc == 'k' ? (L ? rd32(L + 0x80) : 0) : bc == 'w' ? (L ? rd32(L + 0x84) : 0) : bc == 's' ? sc : bc == 'm' ? rd32(0xE80534) : 0;
                 DWORD v = bc == 'a' ? rd32(vars[i].off) : base ? rd32(base + vars[i].off) : 0; // a: absolute address
                 if (vars[i].isF) { float fv; memcpy(&fv, &v, 4); printf("\tvar_%s=%g", vars[i].name, fv); }
                 else printf("\tvar_%s=%lx", vars[i].name, v);
