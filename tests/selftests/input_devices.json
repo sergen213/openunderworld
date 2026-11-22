@@ -38,11 +38,11 @@
      "duration": 1.5,
      "expect": [{"probe": "weapon.drawn", "eq": true},
                 {"probe": "hud.reticle", "eq": "free", "note": "nobody to lock: the free-aim reticle"},
-                {"probe": "camera.yaw", "near": -80.1, "tol": 3, "note": "where the run left the camera"}]},
+                {"probe": "camera.yaw", "near": -97.3, "tol": 3, "note": "where the run left the camera (its forces act from the spawn: tru.exe's look-idle clock starts at 7 s, 0x5FF7F0)"}]},
     {"step": "pad_right_stick_looks",
      "events": ["0.1 axis 1 2 32767", "0.6 axis 1 2 0"],
      "duration": 1,
-     "expect": [{"probe": "camera.yaw", "near": -151.8, "tol": 3, "note": "0.5 s at full deflection x 2.5 rad/s (game/Input.cpp kPadLookRate) = 71.6 degrees to the right from -80.1"},
+     "expect": [{"probe": "camera.yaw", "near": -168.9, "tol": 3, "note": "0.5 s at full deflection x 2.5 rad/s (game/Input.cpp kPadLookRate) = 71.6 degrees to the right from -97.3"},
                 {"probe": "player.state", "eq": "idle"}]}
   ]
 }
