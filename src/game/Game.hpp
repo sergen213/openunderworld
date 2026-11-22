@@ -772,9 +772,10 @@ private:
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
     // A ledge (markup 1) to jump onto: segment point, hang side, and the jump query frame it is met at.
-    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; uint16_t resultFlags = 0; };
+    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; uint16_t resultFlags = 0, resultUncertain = 0; };
     // entry: the class record entry that passed (-1: the default checks); resultFlags: the result record's bits for the
-    // hit (JumpQuery::result: candidate +0xA0 word 0, which becomes player +0xAC0)
+    // hit (JumpQuery::result: candidate +0xA0 word 0, which becomes player +0xAC0); resultUncertain: the bits of result
+    // entries whose tests ours cannot evaluate (strict searches; the rest of the answer stands)
     JumpTarget hangJumpTarget(int kind) const; // startHangJump's target; markup -1 = none
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge)
     // A jump query's arc (lara.drm query table; tru.exe 0x771830 builds it, 0x70F300 / 0x70EC60 test it, Player.cpp):
@@ -807,6 +808,10 @@ private:
         uint8_t recordFlags = 0, resultRecordFlags = 0;     // their +8 (bit 1: the list excludes)
         bool strict = false;
         mutable bool unknown = false;
+        // The data-driven tests' input frame: the stick's world direction (point source 8, 0xFADFB0 +0xB0 +8) and the
+        // control yaw (kind 9, 0x6EBA90); markupSearch fills them.
+        vec2 stickDir{0};
+        float controlYaw = 0;
     };
     // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
     // (`record`) passing one of its class record's entries. A moving markup is met in its own frame (0x70F300).
@@ -837,7 +842,7 @@ public:
     // the query 0x771830 builds from the profile, swept (ledgeOnArc) against its class record's entries, the hit's
     // result-record bits (+0xAC0) and ledge class (+0xA80). `known` false: the profile needs a source, test kind or
     // candidate type ours does not model, so the answer would not be tru.exe's.
-    struct MarkupFound { JumpTarget target; uint16_t flags = 0; int8_t cls = 0; bool known = false; };
+    struct MarkupFound { JumpTarget target; uint16_t flags = 0, uncertain = 0; int8_t cls = 0; bool known = false; };
     // controlYaw / stickOn: the camera-relative stick heading (0x6EBA90) and whether the stick is off rest
     MarkupFound markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn) const;
 private:

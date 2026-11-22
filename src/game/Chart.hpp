@@ -288,7 +288,8 @@ public:
     virtual std::optional<Candidates> jumpCandidates() const { return {}; }
     // The take-off states' jump query (0x6C0800 -> 0x7725A0 -> 0x771DB0 fill player +0xA64 while she takes off): kind 0
     // standing (q2), 1 with the stick (q43), 2 running (q26); the target with its +0xAC0 flags and +0xA80 type.
-    struct Aim { MarkupSlot target; uint32_t flags = 0; int type = 0; float frames = 0; }; // frames: 30 Hz frames to the hit
+    // frames: 30 Hz frames to the hit; uncertain: +0xAC0 bits ours could not settle (their result entries' tests)
+    struct Aim { MarkupSlot target; uint32_t flags = 0; int type = 0; float frames = 0; uint32_t uncertain = 0; };
     virtual std::optional<Aim> takeoffAim(int) const { return {}; }
     // ---- group A ---- tru.exe 0x7296C0 on a decoded query profile (Player::markupSearch): the target met (an empty
     // target: none) with its +0xAC0 flags and +0xA80 type; nullopt: the context cannot model this search

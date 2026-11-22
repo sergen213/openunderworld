@@ -1700,7 +1700,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             if (len > 100.0f && col_.raycast(from, d / len, len - 100.0f)) return;
         }
         int entry = -1;
-        uint16_t resultBits = 0;
+        uint16_t resultBits = 0, resultUncertain = 0;
         const auto& m = col_.markup[size_t(li)];
         const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
         constexpr float side = kLedgeSide;
@@ -1734,9 +1734,25 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 if (cls < 0) cls = q.classify ? ledgeClassOf(col_, h, n * side, s_.pos, q.dir) : 0;
                 return cls;
             };
+            const auto unitOr = [](vec3 v, vec3 none) { return glm::length(v) > 1e-4f ? glm::normalize(v) : none; };
             const auto point = [&](uint8_t src) {
                 switch (src) {
                 case 0: return s_.pos; // her root (her instance's position)
+                // 5: 0x728F00's point, her root plus the test's offset turned by her rotation [I: the offset is 0]
+                case 5: return s_.pos;
+                case 8: return vec3(q.stickDir, 0); // 0x49F5D0 of the stick's world yaw (0xFADFB0 +0xB0 +8)
+                case 9: return vec3(xy(forward()), 0); // her facing axis (instance matrix +0x10, negated)
+                case 11: return vec3(n * side, 0); // 0x6FE7E0: the ledge's horizontal normal, out toward her
+                // 14 / 15: 0x6E5A10, her velocity's direction (14 flattened); none: straight down
+                case 14: return unitOr(vec3(xy(s_.vel), 0), vec3(0, 0, -1));
+                case 15: return unitOr(s_.vel, vec3(0, 0, -1));
+                // 22 / 23: the hit less the start led by the markup's own motion (0x7233E0; static here), as a direction
+                // [I: 0x16 / 0x17 told apart by a step Ghidra folded]; none: straight down
+                case 22: case 23: return unitOr(h - q.start, vec3(0, 0, -1));
+                case 34: { // 0x5C3AA0: the markup's two ends; the one nearer the candidate point
+                    const vec3 e0 = m.points.front(), e1 = m.points.back();
+                    return glm::distance(e1, h) < glm::distance(e0, h) ? e1 : e0;
+                }
                 case 13: return arcAt(from, t);
                 case 24: return h - (q.start + q.v * t);
                 case 28: return q.base;
@@ -1752,7 +1768,33 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 bool r = true, neg = c.flags & 2;
                 switch (c.kind) {
                 case 1: r = glm::length(xy(point(c.a2) - point(c.a1))) < (given ? c.value : q.minDist); break;
+                case 0: r = glm::length(point(c.a2) - point(c.a1)) < (given ? c.value : q.minDist); break; // 0x7256F0: 3-D
                 case 4: r = point(c.a2).z - point(c.a1).z <= c.value; break;
+                case 5: // 0x725870 kind 5: z(a2) - z(a1) > -v; source 1 as a2 (the capsule's band) not modelled
+                    if (c.a2 == 1) {
+                        if (q.strict) q.unknown = true;
+                        break;
+                    }
+                    r = point(c.a2).z - point(c.a1).z > -c.value;
+                    break;
+                case 2: case 9: { // 0x725610: |yaw - the heading from a1 to a2| < v degrees (no way: 0); kind 2 her
+                    // heading (instance +0x38), kind 9 the control yaw (0x6EBA90)
+                    const vec2 d = xy(point(c.a2) - point(c.a1));
+                    const float yaw = c.kind == 9 ? q.controlYaw : s_.yaw;
+                    const float x = glm::length(d) > 1e-4f ? std::abs(wrapAngle(yaw - std::atan2(d.y, d.x))) : 0.0f;
+                    r = x < glm::radians(c.value);
+                    break;
+                }
+                case 6: case 7: { // 0x725980: the angle between the two points as vectors (6: flattened) under v
+                    // degrees; either one nil passes
+                    vec3 a = point(c.a1), b = point(c.a2);
+                    if (c.kind == 6) a.z = 0, b.z = 0;
+                    r = glm::length(a) < 1e-4f || glm::length(b) < 1e-4f ||
+                        glm::dot(glm::normalize(a), glm::normalize(b)) > std::cos(glm::radians(c.value));
+                    break;
+                }
+                case 15: r = ledgeClass() == 4; break;                                          // 0x728A80
+                case 17: { const int k = ledgeClass(); r = k == 0 || k == 1 || k == 2 || k == 12; break; } // 0x728A80
                 case 10: r = capsule(arcAt(from, t), h); break;
                 case 12:
                     if (!given && !q.falling) break;
@@ -1799,16 +1841,26 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             if (hit == record.end()) return;
             entry = int(hit - record.begin());
             // The result record on the hit (0x7296C0 -> 0x729540 with every entry): each passing entry's bits of word 0
-            // (candidate +0xA0, copied to player +0xAC0) [O: decomp]
-            resultBits = 0;
+            // (candidate +0xA0, copied to player +0xAC0) [O: decomp]. An entry ours cannot evaluate (strict) leaves its
+            // own bits uncertain, not the whole answer.
+            resultBits = 0, resultUncertain = 0;
             if (!q.result.empty() && recordGate(q.resultTypes, q.resultRecordFlags, m.type))
-                for (const ClassEntry& e : q.result)
-                    if (entryGate(e, m.type) && std::all_of(e.tests.begin(), e.tests.end(), pass))
-                        for (const uint16_t b : e.bits)
-                            if ((b >> 4) == 0) resultBits |= uint16_t(1u << (b & 15));
+                for (const ClassEntry& e : q.result) {
+                    if (!entryGate(e, m.type)) continue;
+                    const bool wasUnknown = std::exchange(q.unknown, false);
+                    const bool ok = std::all_of(e.tests.begin(), e.tests.end(), pass);
+                    const bool unsure = std::exchange(q.unknown, wasUnknown);
+                    if (!ok && !unsure) continue;
+                    for (const uint16_t b : e.bits)
+                        if ((b >> 4) == 0) (unsure ? resultUncertain : resultBits) |= uint16_t(1u << (b & 15));
+                }
+            resultUncertain &= uint16_t(~resultBits);
         }
         const float along = glm::length(xy(h - m.points[size_t(si)]));
-        if (perch || openBelow(col_, m, si, along, side)) best = {li, si, along, side, t, entry, resultBits};
+        // ours' room-to-hang rule (openBelow, [I]) is not 0x7296C0's: the data-driven record's own tests decide there
+        // (its hurdle classes 5..11 are ledges with no drop) [O: decomp, lara.drm 0x19AC / 0x17AC]
+        if (perch || q.strict || openBelow(col_, m, si, along, side))
+            best = {li, si, along, side, t, entry, resultBits, resultUncertain};
     };
     // The class path's candidates: the markup sweep-and-prune pass over x / y (0x70F300 -> 0x463DE0, axes mask 3) of
     // the query's start -> start + its whole-range displacement against each ledge segment's box grown by kSweepPad.
@@ -1853,8 +1905,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     }
     // Strict (data-driven) searches: ours sweeps ledges (and perches for the ground record) only, so "nothing met" is
     // tru.exe's answer only when the record admits no other candidate type (0x7232E0 and an entry's gate) [I: a hit of
-    // another type earlier than ours would also win; kept].
-    if (q.strict && best.markup < 0 && !record.empty())
+    // another type earlier than ours would also win; kept]. Judged on the whole sweep, not on ledgeOnArc's per-moving-
+    // markup passes (`only` >= 0: one markup, which says nothing of the other types).
+    if (q.strict && only < 0 && best.markup < 0 && !record.empty())
         for (int type = 0; type < 64 && !q.unknown; ++type) {
             if (type == 1 || (type == 13 && q.record == JumpRecord::Ground)) continue;
             if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
@@ -2360,11 +2413,16 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     q.recordTypes = p.recordTypes, q.recordFlags = p.recordFlags;
     q.resultTypes = p.resultTypes, q.resultRecordFlags = p.resultRecordFlags;
     q.strict = true;
+    // kind 9's control yaw: the camera's (0x6EBA90; World::setCamera's stick yaw); source 8's stick yaw: the stick's
+    // world heading while it is pushed, else that same camera yaw [I: the input record keeps its last heading]
+    q.controlYaw = cameraKnown_ ? cameraYaw_ : s_.yaw;
+    const float stickYaw = stickOn ? controlYaw : q.controlYaw;
+    q.stickDir = vec2(std::cos(stickYaw), std::sin(stickYaw));
     const JumpTarget j = ledgeOnArc(q);
     out.known = !q.unknown;
     out.target = j;
     if (j.markup < 0) return out;
-    out.flags = j.resultFlags;
+    out.flags = j.resultFlags, out.uncertain = j.resultUncertain;
     // +0xA80 = the candidate's +0xC0, which only the ledge class table fills (+0x2C bit 0x40) [O: decomp]; the class
     // table's "none of the bands" (ours 4) left 0 under Wine (groundAim) [I]
     if (q.classify) {
