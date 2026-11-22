@@ -392,6 +392,7 @@ Recorded for every step and written to the report whether or not anything expect
 | `step.ticks`, `step.seconds` | the step's length |
 | `step.teleports` | relocations: ticks that moved her more than 600 units, and respawns (leaving the dead state). They are not counted as motion |
 | `step.health_start`, `step.health_end`, `step.health_min`, `step.health_lost` | health; lost = start - min |
+| `step.rope_change` | the grapple rope's length range over the step's roped ticks (max - min of `grapple.rope`); unavailable when she was never roped. States "the rope did not change" independently of where a swing left it |
 | `step.states` | the states she was in, in order (a state re-entered is listed again) |
 | `step.clips` | the clips she played, in order |
 | `step.calls` | script virtual calls made during the step as `"<callee uid>:<vt>"`, first-call order (`-1` = constructor; negative callees are unit / global scripts) |
