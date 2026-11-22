@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <cstring>
 
 namespace ou::game::chart {
 
@@ -303,14 +304,15 @@ bool onGround(ChartContext& ctx, const Cond& c) {
 }
 
 // 0x765F40 (0x213): bool property 1705 (callback 0x765F10: 0x6EEF00(0x6A9, &b, 2), absent = true), edge-coded.
-// 0x6EEDA0 mode 2 [O]: Lara's chart (player +0xF10) answers when its current state has properties of its own (state
-// +0x8 != 0); else the upper-body chart (+0xF14) does, falling back to Lara's when it lacks the property or holds it
-// with type 0x2B (property +0x2). 0x6E5C10 = the property in force on that chart [I: same lookup as ours].
+// 0x6EEDA0 mode 2 [O]: Lara's chart (player +0xF10) answers when its current state record's +0x8 word is nonzero
+// (State::word8; 0 in every lara.drm state), else the upper-body chart (+0xF14) does, falling back to Lara's when it
+// lacks the property or holds it with type 0x2B (property +0x2: the upper chart's root S0 declares most properties so,
+// 1705 itself as bool 0). 0x6E5C10 = the property in force on that chart [I: same lookup as ours].
 std::optional<bool> fullBodyProp(ChartContext& ctx, uint16_t id) {
     const ChartRuntime& rt = ctx.chart();
     const State* st = rt.data().state(rt.state());
     const ChartRuntime* up = ctx.upperChart();
-    if ((!st || st->props.empty()) && up)
+    if ((!st || st->word8 == 0) && up)
         if (const Property* p = up->property(id); p && p->type != 0x2B) return up->charts().propBool(*p);
     return rt.propBool(id);
 }
@@ -521,6 +523,42 @@ int ledgeLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a) {
 // the wall-hug shelf when property 497 is 628), poles 0x7327F0 / 0x7337F0, hurdles 0x7327F0, ladders 0x744920,
 // pillars 0x753D30, holds 0x74B640, boxes 0x72AD70. [I] the frame ours builds: X along the segment, Y the outward
 // normal, Z up at the grab point. Only the ledge lookahead is ported; the others count action 404 as unported.
+// 0x753D30: the pillar lookahead (markup flag 0x10), limb class 5 (up, property 499 = 450) / 6 (down, 451) [O].
+// The pillar's z extent: 0x6F94F0 / 0x7347C0 = the higher / lower z of its first and last point, less / plus the
+// markup-class record's +0x98 / +0x9A (0x5D5930 -> 0x5D57A0: flag 0x10 = Lara data +0x590's record; 22 / 284) and
+// 0.3164. Up: the grab point (+0xCA8) over the top -> 4; down: at or under the bottom -> 4. Then 0x70B5A0 casts in her
+// root bone's frame (instance +0x90), moved by -row1 x (s - Lara data +0x7E0) (0x753390), from local z +0x7F6 to
+// +0x7F6 + +0x7F2 (up, s = +0x7F4) or +0x7FC to +0x7FC - +0x7F8 (down, s = +0x7FA): a hit -> 2 (up) / 1 (down).
+// 0x7538D0 (the hit's ledge point into player +0xEC0..+0xECC) is not ported (counted as action 404's).
+// [I] row1 of the bone frame = backward (-forward): her hands are at local -y (AnimLibrary::hangHandOffset).
+int pillarLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a, int lc) {
+    if (lc != 5 && lc != 6) return 0;
+    const int count = ctx.markupSegmentCount(a.markup);
+    const auto first = ctx.markupSegment(a.markup, 0), last = ctx.markupSegment(a.markup, std::max(count - 1, 0));
+    if (!first || !last) return 0;
+    const auto& d = ctx.chart().charts();
+    int16_t r98 = 0, r9A = 0;
+    if (const auto r = d.pointer(d.dataOffset + 0x590); r && size_t(*r) + 0x9C <= d.bytes.size())
+        std::memcpy(&r98, d.bytes.data() + *r + 0x98, 2), std::memcpy(&r9A, d.bytes.data() + *r + 0x9A, 2);
+    const float z0 = first->first.z, z1 = last->second.z;
+    const float top = std::max(z0, z1) - float(r98) - 0.31640562f, bottom = std::min(z0, z1) + float(r9A) + 0.31640562f;
+    const float grabZ = a.point.z;
+    int bits = 0;
+    if (lc == 5 ? top < grabZ : grabZ <= bottom) bits = 4;
+    const float s = float(pd(ctx, lc == 5 ? 0x7F4 : 0x7FA)), from = float(pd(ctx, lc == 5 ? 0x7F6 : 0x7FC));
+    const float reach = lc == 5 ? float(pd(ctx, 0x7F2)) : -float(pd(ctx, 0x7F8));
+    if (reach != 0 && ctx.hasCollision()) {
+        const float h = ctx.heading();
+        const glm::vec3 back(-std::cos(h), -std::sin(h), 0);
+        const glm::vec3 o = ctx.rootBone() - back * (s - float(pd(ctx, 0x7E0)));
+        if (ctx.playerRay(o + glm::vec3(0, 0, from), o + glm::vec3(0, 0, from + reach))) {
+            bits |= lc == 5 ? 2 : 1;
+            ++ctx.chart().stats.unportedActions[404]; // 0x7538D0
+        }
+    }
+    return bits;
+}
+
 void markupContactProbe(ChartContext& ctx) {
     int& out = ctx.chart().field(0xF0);
     const auto a = ctx.attachedMarkup();
@@ -537,8 +575,12 @@ void markupContactProbe(ChartContext& ctx) {
             const auto shelf = ctx.ledgeShelf(a.markup, a.param);
             if (propI(ctx, 0x1F1) == 628 && shelf.value_or(false)) ++ctx.chart().stats.unportedActions[404]; // 0x74BCF0
             else bits |= ledgeLookahead(ctx, a);
-        } else if ((m & (0x1000000 | 0x10000 | 0x400000 | 0x10)) != 0 || (m & 0x8000000)) {
-            ++ctx.chart().stats.unportedActions[404];
+        } else if ((m & (0x1000000 | 0x10000 | 0x400000)) != 0) {
+            ++ctx.chart().stats.unportedActions[404]; // 0x7327F0 / 0x7337F0, 0x744920
+        } else if (m & 0x10) {
+            bits |= pillarLookahead(ctx, a, limbClass(ctx));
+        } else if (m & 0x8000000) {
+            ++ctx.chart().stats.unportedActions[404]; // 0x741720 -> 0x74B640
         }
     }
     if (m & 0x8000) ++ctx.chart().stats.unportedActions[404]; // 0x72AD70

@@ -210,6 +210,18 @@ TEST(ChartLedgeReal, PlayerDataConstants) {
     EXPECT_EQ(c->data<int16_t>(0x250), -160);
     for (uint32_t o : {0x6DC, 0x6F2, 0x6F4, 0x6F6, 0x6F8, 0x6FC, 0x6FE, 0x700, 0x702, 0x706, 0x708})
         std::printf("lara data +0x%X = %d\n", o, c->data<int16_t>(o));
+    // the pillar lookahead (0x753D30): Lara data +0x7E0 / +0x7F2..+0x7FC and the flag-0x10 record (+0x590) +0x98 / +0x9A
+    EXPECT_EQ(c->data<int16_t>(0x7E0), 31);
+    EXPECT_EQ(c->data<int16_t>(0x7F2), 126);
+    EXPECT_EQ(c->data<int16_t>(0x7F4), -63);
+    EXPECT_EQ(c->data<int16_t>(0x7F6), 316);
+    EXPECT_EQ(c->data<int16_t>(0x7F8), 189);
+    const auto rec = c->pointer(c->dataOffset + 0x590);
+    ASSERT_TRUE(rec);
+    int16_t r98 = 0, r9A = 0;
+    std::memcpy(&r98, c->bytes.data() + *rec + 0x98, 2), std::memcpy(&r9A, c->bytes.data() + *rec + 0x9A, 2);
+    EXPECT_EQ(r98, 22);
+    EXPECT_EQ(r9A, 284);
 }
 
 // Every B-owned condition id the chart uses is registered (0x264 excepted: the type-27 markup query is not ported).
