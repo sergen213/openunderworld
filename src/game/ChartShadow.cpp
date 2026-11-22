@@ -266,7 +266,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const int n = int(mk.points.size());
         const int s = std::clamp(seg, 0, std::max(0, n - 2));
         const glm::vec3 a = mk.points[size_t(s)], b = mk.points[size_t(std::min(s + 1, n - 1))];
-        const float len = glm::length(b - a);
+        // t is Player's ledgeT: a distance in the ground plane (Player.cpp segLen), so the fraction is over that length
+        // (a 3D length here shrank the grip every tick the drive fed +0xC98 back, d.t = param x the plane length)
+        const float len = glm::length(glm::vec2(b - a));
         const float f = len > 0 ? std::clamp(t / len, 0.0f, 1.0f) : 0.0f;
         r.param = float(s) + f;
         r.point = a + (b - a) * f;
@@ -335,7 +337,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         if (m < 0 || size_t(m) >= col.markup.size() || col.markup[size_t(m)].points.size() < 2) return {};
         const auto& p = col.markup[size_t(m)].points;
         const int seg = std::clamp(int(param), 0, int(p.size()) - 2);
-        const float t = (param - float(seg)) * glm::length(p[size_t(seg) + 1] - p[size_t(seg)]);
+        const float t = (param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
         return w->player().ledgeShelf(m, seg, t);
     }
     std::optional<int> hurdlePastClass(glm::vec3 q, glm::vec2 f) const override { return game::hurdlePastClass(w->collision(), q, f); }
@@ -679,33 +681,40 @@ bool Shadow::Impl::isBoundary(int st) const {
     return bad(ch->requests[size_t(s->request)].clip);
 }
 
-// --chart-state into a hold state in drive mode: +0xC94 = the markup point nearest her hands (her root + the hang hands'
-// offset, lara.drm ledgeb_idle), within 900 units (the corpus pins her up to 600 over the hang root and its own air grab
-// took the ledge during the hold); a ledge (markup type 1) also puts her in its hang pose (attachPose).
+// --chart-state into a hold state in drive mode: +0xC94 = the markup nearest her grip, by family: a ledge (type 1),
+// cover (12) or beam (14, the hang under it) by the hang hands (lara.drm ledgeb_idle), a horizontal pole (4 / 6) by
+// the pole hang's hands (HPole_idleHangPerp), a vertical pole, ladder, perch or pillar (5 / 9 / 13 / 15) by her root;
+// within 900 units (the corpus pins her up to 600 over a hang root: its own air grab took the ledge during the hold).
+// The corpus spawns her in the held pose (case start.ours), so she stays put unless the grip is a ledge hang more than
+// 60 units off: then she goes to its hang pose (attachPose).
 void Shadow::Impl::seedAttach() {
     const PlayerState& s = w->player().state();
-    const glm::vec3 h = w->anims().hangHandOffset;
     const float c = std::cos(s.yaw + 1.5707964f), sn = std::sin(s.yaw + 1.5707964f);
-    const glm::vec3 hands = s.pos + glm::vec3(c * h.x - sn * h.y, sn * h.x + c * h.y, h.z);
+    const auto at = [&](const glm::vec3& h) { return s.pos + glm::vec3(c * h.x - sn * h.y, sn * h.x + c * h.y, h.z); };
+    const glm::vec3 hangHands = at(w->anims().hangHandOffset), poleHands = at(w->anims().poleHandOffset);
     const auto& col = w->collision();
     float best = 900;
     MarkupSlot pick;
+    bool hangGrip = false;
     for (size_t m = 0; m < col.markup.size(); ++m) {
+        const uint8_t type = col.markup[m].type;
+        const bool hang = type == 1 || type == 12 || type == 14, pole = type == 4 || type == 6;
+        const glm::vec3 probe = hang ? hangHands : pole ? poleHands : s.pos;
         const auto& p = col.markup[m].points;
         for (size_t i = 0; i + 1 < p.size(); ++i) {
             const glm::vec3 ab = p[i + 1] - p[i];
             const float l2 = glm::dot(ab, ab);
-            const float t = l2 > 0 ? std::clamp(glm::dot(hands - p[i], ab) / l2, 0.0f, 1.0f) : 0.0f;
-            const float d = glm::length(hands - (p[i] + ab * t));
-            if (d < best) best = d, pick = slot(int(m), int(i), t * std::sqrt(l2));
+            const float t = l2 > 0 ? std::clamp(glm::dot(probe - p[i], ab) / l2, 0.0f, 1.0f) : 0.0f;
+            const float d = glm::length(probe - (p[i] + ab * t));
+            if (d < best) best = d, pick = slot(int(m), int(i), t * glm::length(glm::vec2(ab))), hangGrip = type == 1;
         }
     }
     if (!pick) return;
     chartAttached = pick, attachedBefore = pick.markup;
-    if (pm && col.markup[size_t(pick.markup)].type == 1) {
+    if (pm && hangGrip && best > 60) {
         const auto& p = col.markup[size_t(pick.markup)].points;
         const int seg = std::clamp(int(pick.param), 0, int(p.size()) - 2);
-        const float t = (pick.param - float(seg)) * glm::length(p[size_t(seg) + 1] - p[size_t(seg)]);
+        const float t = (pick.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
         const auto [root, yaw] = pm->hangPose(pick.markup, seg, t, hangSide(pick.markup, seg, pick.point));
         PlayerState ps = s;
         ps.pos = root, ps.yaw = yaw, ps.vel = glm::vec3(0);
@@ -746,10 +755,20 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion) const {
     using M = Player::DriveStep::Motion;
     using GS = game::State;
     const std::string clip = lower(w->player().state().clip);
-    if (motion == M::Air) return launched ? GS::Jump : GS::Fall;
+    const auto has = [&](std::string_view s) { return clip.find(s) != std::string::npos; };
+    // The traversal families by the clip set the chart plays (lara.drm prefixes bbeam_, hpole_, ladder_, perch_,
+    // pillar_, DICE_, wall_hug), so World's subsystems (camera, interactions) see the family [I: mapping].
+    if (clip.starts_with("bbeam")) return GS::Beam;
+    if (clip.starts_with("hpole")) return motion == M::Air ? GS::HangJump : GS::PoleHang;
+    if (clip.starts_with("ladder")) return GS::Ladder;
+    if (clip.starts_with("perch")) return GS::Perch;
+    if (clip.starts_with("pillar")) return GS::Pillar;
+    if (clip.starts_with("dice")) return GS::Climb;
+    if (has("drop_to_ledgeb")) return GS::DropToHang;
+    if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
     if (motion == M::Hang || motion == M::Blend) {
-        if (clip.find("climb") != std::string::npos) return GS::ClimbUp;
-        return clip.find("shimmy") != std::string::npos ? GS::Shimmy : GS::Hang;
+        if (has("climb")) return GS::ClimbUp;
+        return has("shimmy") ? GS::Shimmy : GS::Hang;
     }
     if (clip.find("land") != std::string::npos) return GS::Land;
     if (clip.find("crouch") != std::string::npos) return GS::Crouch;
@@ -852,6 +871,12 @@ void Shadow::Impl::stateEntered(int from, int to) {
 bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const Actions& a, float dt) {
     using M = Player::DriveStep::Motion;
     w = &world, pm = &player;
+    // A ledge hang's root 161 out of the line (Wine, ledges 973 and 1155; REFERENCE_COMPARISON M01) where ledgeb_idle's
+    // wrists (bones 55 / 80) reach 141.7: the wrists hang in front of the edge, the fingers over it. [O-runtime; the
+    // tru.exe term is not located: 0x76D270's attach frame has the markup point (+0xCA0) as its origin and the normal /
+    // edge rows +0xCC0 / +0xCB0, ledgeb_idle has no root translation, the alignment target +0x1260 (239 / 1012, read by
+    // 236) is not traced.]
+    player.setLedgeGripOut(161.0f - 141.7f);
     const PlayerState& s0 = player.state();
     // The controller keeps what lies outside the traversal chart (swimming, the rope, the bike, death, hit reactions,
     // interactions, close combat); a placement (spawn, load, teleport) restarts the chart.
@@ -905,6 +930,10 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.motion = M::Hang;
         const std::string c = lower(d.clip.empty() ? player.state().clip : d.clip);
         d.snap = c.starts_with("ledgeb_") && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
+        // The grip (+0xC98) moves only with the shimmy (S459 start, S432 shimmy, S441 hustle): the attach and idle
+        // clips' sideways root motion leaves it where it is, and the ledge end S448 stops her dead (ChartB, Wine 973:
+        // +0xC98 0.907 stays until the stick press, so the end bit 642 holds and S458 -> S450) [O-runtime].
+        d.slide = st == 459 || st == 432 || st == 441;
     } else if (rt->chainHasAction(st, 510)) {
         d.motion = M::Air;
         // 0x752410: the flight re-aimed at its target with the time left (+0x77C, action 510's update) [O]
@@ -990,7 +1019,7 @@ void Shadow::Impl::applyLoad(const nlohmann::json& j) {
         if (m >= 0 && size_t(m) < w->collision().markup.size() && w->collision().markup[size_t(m)].points.size() >= 2) {
             const auto& p = w->collision().markup[size_t(m)].points;
             const int seg = std::clamp(int(param), 0, int(p.size()) - 2);
-            chartAttached = slot(m, seg, (param - float(seg)) * glm::length(p[size_t(seg) + 1] - p[size_t(seg)]));
+            chartAttached = slot(m, seg, (param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)])));
         }
     }
     launched = j.value("launched", false), collisionMask = j.value("mask", 0x48u);
