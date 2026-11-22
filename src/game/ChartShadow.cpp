@@ -154,6 +154,25 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     float stickLevel() const override { return stickLen; }
     glm::vec2 stick() const override { return stickWorld; }
+    // The stick record's angle (0xFADFB0 -> +0xB0 -> +0x10) as tru.exe composes it: the pad's own direction in the
+    // camera frame (0x706660 / 0x6F89A0: forward 0) plus the control yaw against her heading. Kept apart so a camera
+    // pinned along her heading (the Wine harness's CAMFOLLOW, ours --camera-follow) gives exactly 0 for Forward, which
+    // the sector tests read with inclusive bounds (0x194: angle >= 0 is her left).
+    glm::vec2 pad{0};
+    float ctrlYaw = 0;
+    std::optional<float> stickRelative() const override {
+        if (glm::dot(pad, pad) < 1e-12f) return 0.0f;
+        float rel = ctrlYaw - w->player().state().yaw;
+        rel = std::remainder(rel, 6.2831855f);
+        return std::atan2(-pad.x, pad.y) + rel;
+    }
+    // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw (0x6EBA90).
+    std::optional<Aim> markupSearch(const MarkupProfile& p) const override {
+        const auto f = w->player().markupSearch(p, rt->mirrored(), std::atan2(stickWorld.y, stickWorld.x), stickLen > 0.0f);
+        if (!f.known) return std::nullopt;
+        if (f.target.markup < 0) return Aim{};
+        return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames};
+    }
     // ---- group A ----
     std::optional<float> sincePress(int id) const override {
         const int b = button(id);
@@ -526,6 +545,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         groundCheck(*ch);
         if (ground.steep) lastSteepMs = std::max<uint32_t>(nowMs, 1);
         stickWorld = stickW, stickLen = stickL;
+        pad = a.move, ctrlYaw = world.stickYaw();
     }
     // 0x768C50: agent 0 (Lara), then agent 1 (the upper body); --chart-state's entry.
     void chartTick() {
@@ -649,7 +669,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     bool driveTick(World& world, Player& player, glm::vec2 move, const Actions& a, float dt);
     void launch(int from);
     void aimAt(const MarkupSlot& target, float frames);
-    float steerRate() const;
+    float turnRateGoal() const;
+    float steerRate(float desired);
+    bool turning601 = false; // in action 601's control mode (0x6ED910 mode 1)
+    float turnRate = 0;      // player +0x240, 1/4096 turn per 30 Hz frame
+    float turnPrev = 0;      // action 601's +0x2C: the last wrapped yaw difference
     game::State coarse(Player::DriveStep::Motion motion) const;
     float hangSide(int m, int seg, glm::vec3 point) const;
     void seedAttach();
@@ -733,13 +757,30 @@ float Shadow::Impl::hangSide(int m, int seg, glm::vec3 point) const {
     return glm::dot(n, glm::vec2(w->player().state().pos - point)) >= 0 ? 1.0f : -1.0f;
 }
 
-// Action 601's turn rate (0x75B330: prop 601 when 0 < it < prop 605, else prop 605) [O]; the props hold degrees per 30 Hz
-// frame [I], so rad/s = deg x 30 x pi / 180.
-float Shadow::Impl::steerRate() const {
-    const auto p601 = rt->propFloat(601), p605 = rt->propFloat(605);
-    float deg = p605.value_or(0);
-    if (p601 && *p601 > 0 && (!p605 || *p601 < *p605)) deg = *p601;
-    return glm::radians(deg) * 30.0f;
+// 0x75B330: the turn rate's goal, in 1/4096 turn per 30 Hz frame: the tuning default (short *0xFAD764 + 0x234, Lara's
+// object data = the chart's player data block), prop 605 instead when the state chain has it; prop 601 when 0 < it < that
+// [O: decomp].
+float Shadow::Impl::turnRateGoal() const {
+    float base = float(rt->charts().data<int16_t>(0x234));
+    if (const auto p605 = rt->propFloat(605)) base = *p605;
+    const float p601 = rt->propFloat(601).value_or(0.0f);
+    return p601 > 0 && p601 < base ? p601 : base;
+}
+
+// Action 601's turn (PSCAF_GroundTurnToStick) as rad/s for Player::drive. Entry: control mode 1 (0x6ED910 clears the
+// rate +0x240), then +0x240 = 0x75B330 (the sibling updates 0x76B6A0 / 0x76B640 show the pattern [I: 0x75B430 itself
+// not in the export]). Update 0x76A860 against the stick's world yaw: with prop 643 (0x283) > 0, +0x240 eases toward
+// the goal by (1 - p643) per update while the turn keeps its sign (player +0x2C, the last wrapped difference), else
+// resets to 1.0 [O]. Mode 1's turn (0x6ED710, every tick the stick is off rest): a zero +0x240 takes the tuning
+// default; her yaw approaches the control yaw by +0x240 x timeMult / 4096 turns (0x4A0190) [O].
+float Shadow::Impl::steerRate(float desired) {
+    if (!turning601) turning601 = true, turnRate = turnRateGoal(), turnPrev = 0;
+    const float diff = std::remainder(desired - w->player().state().yaw, 6.2831855f);
+    if (const float p643 = rt->propFloat(643).value_or(0.0f); p643 > 0)
+        turnRate = diff * turnPrev >= 0 ? (1.0f - p643) * turnRateGoal() + turnRate * p643 : 1.0f;
+    turnPrev = diff;
+    const float r = turnRate == 0 ? float(rt->charts().data<int16_t>(0x234)) : turnRate;
+    return r / 4096.0f * 6.2831855f * 30.0f;
 }
 
 game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion) const {
@@ -918,10 +959,17 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
             d.side = hangSide(att.markup, d.seg, att.point);
         }
     }
-    // Action 601 (PSCAF_GroundTurnToStick, 0x76AB20 [O]: toward the camera-relative stick heading 0x6EBA90); a clip that
-    // turns the root turns her instead (player +0x23C, prop 602) [I: not modelled, both run].
-    if (d.motion == M::Ground && rt->chainHasAction(st, 601) && stickLen > 0.1f)
-        d.steer = std::atan2(stickWorld.y, stickWorld.x), d.steerRate = steerRate();
+    // Action 601 (PSCAF_GroundTurnToStick, 0x76AB20 [O]: toward the camera-relative stick heading 0x6EBA90, at the rate
+    // steerRate ports); a clip that turns the root turns her instead (player +0x23C, prop 602) [I: not modelled, both
+    // run]. [I] off rest only: the rate's update also runs at rest in tru.exe, against the stick record's resting yaw.
+    if (d.motion == M::Ground && rt->chainHasAction(st, 601)) {
+        if (stickLen > 0.0f) {
+            const float yaw = std::atan2(stickWorld.y, stickWorld.x);
+            d.steer = yaw, d.steerRate = steerRate(yaw);
+        }
+    } else {
+        turning601 = false;
+    }
     const float z0 = player.state().pos.z;
     d.coarse = coarse(d.motion);
     player.drive(d, dt);
