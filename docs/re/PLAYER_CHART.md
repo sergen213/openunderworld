@@ -200,13 +200,21 @@ thresholds of properties 0x20A / 0x20B / 0x20C (Lara: 0.10 / 0.70 / 0.91), raise
   22 / 27 = `CombatState::headShotReady` / `adrenalineMode`.
 - Group B (`src/game/chart/Ledge.cpp`, ledge / hang / shimmy / hurdle): conditions 0x15, 0x20, 0xD0, 0xD1, 0xD6..0xD8,
   0x195, 0x199, 0x19B, 0x19C, 0x1D1, 0x1FF, 0x200, 0x201, 0x213, 0x263, 0x26C, 0x280, 0x281, 0x284, 0x28A, 0x2B4,
-  0x3EB, 0x960 (0x264, the type-27 markup query, is not); actions 205 (entry / exit), 213, 232, 303, 404, 408, 506
-  (without the clip-speed properties), 513, 514, 516, 606, 613, 2003, 2004; 301 and 205's update count as unported.
+  0x3EB, 0x960 (0x264, the type-27 markup query, is not); actions 205, 213, 232, 301 (with a replay-only feed of tru's
+  generator draws, `--chart-rng`), 303, 404, 408, 506 (without the clip-speed properties), 513, 514, 516, 606, 611 (group
+  J's id, ported here: the pole / beam turn target 0x76BC70 / 0x75BC20), 613, 2003, 2004, and action 230's class-625
+  setter 0x74C110 (`beamAttachSetter`: the beam controller's segment / angle agent +0x360 / +0x35C on attach).
   Shared with action 420: `markupContactProbe` = 0x770BA0 (agent +0xF0 lookahead bits; the ledge lookahead 0x735970
   returns 4 markup end within +0x6DC, 8 / 0x10 a corner, 1 a ray along the walk hit [O: its epilogue ORs 1 when either
-  0x493330 ray hits]) and `markupAttachInit` = 0x76D010 (player +0xEDC = 0x74E290's class). Action 420 must also run
-  them every tick through its agent +0x51C callback 0x770ED0 while property 414 holds, or the shimmy lookahead never
-  sees the shimmy states' property 499. 0x195's class is 0x6F89A0's (stick against a frame; 0 under the dead zone).
+  0x493330 ray hits]; the beam lookahead 0x7327F0 the same against the beam class record's +0x9A, corners from
+  0x5C9170 within the one markup) and `markupAttachInit` = 0x76D010 (player +0xEDC = 0x74E290's class). Action 420 must
+  also run them every tick through its agent +0x51C callback 0x770ED0 while property 414 holds, or the shimmy lookahead
+  never sees the shimmy states' property 499. 0x195's class is 0x6F89A0's (stick against a frame; 0 under the dead zone).
+  Known knife-edge [O-runtime vs ours]: the strict sweep insets beam candidates by 0x6FE040's class-record +0x98 /
+  +0x9A (48), so in ch_beam_walk ours grips exactly 48.0 from beam 1031's end and the lookahead's `walked < +0x9A` holds
+  only by rounding (a small root change, 059b62e, flips it: S935 instead of S917 at t243). tru's grip in that take sits
+  at the end (walked 0); in jump_along 48.16 in. 0x6FE040 skips the insets for markups with MUD bit 0x4, and ours
+  derives MUD flags from the type only (beam 1031 is 0x00010009 in tru); revisit with the real per-markup flags.
   Player fields live in `ChartContext::playerInt / playerFloat` keyed by the tru.exe offset.
 - Group CD (`src/game/chart/Climb.cpp`, ChartContext block `group CD`): the shared gates 0xCA (critical section),
   0x1F5 (InWater; value 1 = player +0x8EC without 0x400, the catalog's reading is inverted), 0x204 (mantle probe,
