@@ -104,6 +104,7 @@ struct Request {
     // (sub-layer i plays clips[i]; clips[0] = clip).
     uint8_t blendType = 0;
     std::vector<std::string> clips;
+    std::vector<uint16_t> clipKeys; // each clip's key count (+0x32; 0 unknown), for 0x433360's synced rates
     // 0x4428A0 -> 0x441FB0: the clip's time when it starts, in 30 Hz frames: start - blend, uncut, after the first clip's
     // key bump (blend > 0, a key longer than a frame, start inside the first key: start = that key, blend += the move).
     // blendOverride: the previous pattern's +0x1B (layer +0x314) when it set one.
