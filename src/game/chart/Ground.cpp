@@ -546,8 +546,8 @@ void flexSagProcess(ChartContext& ctx, uint16_t id) {
 // +0xB10 with +0xC90), each run in the slots its schedule property (479 / 480, type 0x23) names: 592 PreAnimEntry +
 // Process, 593 PreAnimEntry + Exit, 594 Entry + Reentry, 595 Entry + Exit, 596 PreAnimEntry, 597 Entry, 598 Process,
 // 599 Exit, 600 Reentry. The PreAnim / Entry / Reentry slots first record the jump reference height (0x72FBF0) when
-// bool property 565 is set. The profiles are properties 541 (+0xB00) and 546 (+0xC90) of the state chain [O-data: the
-// states naming 480 name 546 with it, S435 / S436 / S449 / S450]. The primary search is chartMarkupSearch into player
+// bool property 565 is set. The profiles are player +0xB00 / +0xC90, which properties 541 / 546 set when a state names
+// one (0x766EC0) and which persist until another does. The primary search is chartMarkupSearch into player
 // +0xA64; the secondary's object +0xB10 has no chart-side store yet (counted), nor has a search ours cannot model.
 enum Slot { PreEntry, Entry, Reentry, Process, Exit };
 bool scheduleRuns(int schedule, Slot slot) {
@@ -570,8 +570,8 @@ void scheduledSearch(ChartContext& ctx, uint16_t id) {
     if constexpr (S == PreEntry || S == Entry || S == Reentry)
         if (rt.propBool(0x235).value_or(false)) recordJumpRefHeight(ctx);
     if (const auto schedule = rt.propInt(0x1DF); schedule && scheduleRuns(*schedule, S)) {
-        const auto profile = rt.propInt(0x21D);
-        if (!profile || !chartMarkupSearch(ctx, *profile)) unportedPart(ctx, id);
+        const auto it = rt.field(0xB00); // player +0xB00, set by properties 541 (Jump.cpp searchProfileProp, 0x766EC0)
+        if (!it || !chartMarkupSearch(ctx, it)) unportedPart(ctx, id);
     }
     if (const auto schedule = rt.propInt(0x1E0); schedule && scheduleRuns(*schedule, S)) unportedPart(ctx, id);
 }

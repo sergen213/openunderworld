@@ -354,6 +354,17 @@ bool fireEvent38(ChartContext& ctx, const Cond&) {
     return true;
 }
 
+// Properties 541 / 546 (handler 0x766EC0, Lara's property table 0x8B2280) [O: disassembly]: a value > 0 becomes the
+// search profile id of action 423's primary search (player +0xB00) / its secondary (+0xC90), kept until another state
+// names one (the jump container S282 names none: its search takes the profile the take-off state set, S662's 17 for
+// the pole fling); 0x13 also sets the jump query +0xA84 = 0x13.
+void searchProfileProp(ChartContext& ctx, const Property& p) {
+    const int v = ctx.chart().charts().propInt(p);
+    if (v <= 0) return;
+    ctx.chart().field(p.id == 0x222 ? 0xC90 : 0xB00) = v;
+    if (v == 0x13) ctx.playerInt(0xA84) = 0x13;
+}
+
 // ---- actions ----
 
 // Process functions step by gameTracker_timeMult (ctx.timeMult, 30 Hz frames), as tru.exe's.
@@ -673,6 +684,8 @@ void registerJump(Registry& player, Registry&) {
     player.condition(0x8FE, setWeaponFlag, "SetWeaponFlag", fam);
     player.condition(0x900, fireEvent38, "Do_FireAnimEvent38", fam);
 
+    player.property(0x21D, searchProfileProp, "SearchProfileB00", fam);
+    player.property(0x222, searchProfileProp, "SearchProfileC90", fam);
     player.action(230, {nullptr, nullptr, markupAttachTarget, markupAttachTarget, nullptr, nullptr}, "MarkUpAttach_SetAnimTarget", fam);
     player.action(504, {takeoffEnter, nullptr, nullptr, nullptr, nullptr, takeoffUpdate}, "JumpTakeoffHeading", fam);
     player.action(510, {airEnter, airEnter, nullptr, nullptr, airExit, airUpdate}, "Airborne", fam);
