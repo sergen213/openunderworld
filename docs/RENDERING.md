@@ -1161,8 +1161,8 @@ Gap list against modern-wow-renderer (read for techniques only, no code; RESEARC
 | Two-layer analytic height fog, HG lobe, rolling noise | none | atmosphere low+ (no noise layer) |
 | Sun shafts (screen-space radial there) | none | shadow-map ray march, medium/high (handles off-screen occluders) |
 | Low-res atmosphere + temporal reprojection, local fog field, contact shadows | none | skipped (full-res single pass is cheap enough; no temporal history) |
-| Depth-tested rain / snow layers, roof occlusion | none | weather: 4 layers, depth test, camera shelter ray |
-| Surface splashes, wetness | none | rain rings + darkening |
+| Depth-tested rain / snow layers, roof occlusion | none | weather: world-space drops / flakes (fx::Precip), Jolt cover grid, splashes, snow build-up |
+| Surface splashes, wetness | none | drop splashes (ring + droplets) + darkening |
 | Lens droplets, sandstorm, weather audio | none | skipped (TRU has no sandstorm; lens/audio not requested by data) |
 
 Cost (2026-10-28, RX 7900 XTX, 1280x720, ou-viewer frame-time average over 289 frames in an invisible KWin):
