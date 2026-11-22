@@ -8,7 +8,7 @@
 # Files: ledge/<case>_probe. Usage (session dir exported, see chart_lib.sh): sessions/chart_hangprobe.sh [chapel|bedroom]...
 WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 . "$WREF_SRC/sessions/chart_lib.sh"
-export RAY=1 VARS=pd_ed4:pd:ED4,pd_ed8:pd:ED8,pd_edc:pd:EDC,pd_c98:pd:C98:f,p_ed4:p:ED4,p_ed8:p:ED8,p_edc:p:EDC,p_c98:p:C98:f
+export RAY=1 VARS=pd_ed4:pd:ED4,pd_ed8:pd:ED8,pd_edc:pd:EDC,pd_c94:pd:C94,pd_c98:pd:C98:f,p_ed4:p:ED4,p_ed8:p:ED8,p_edc:p:EDC,p_c98:p:C98:f
 C="$OU_CHART_DIR/ledge"
 for part in ${*:-chapel bedroom}; do
     case $part in
