@@ -1075,7 +1075,7 @@ void Shadow::Impl::seedAttach() {
 void Shadow::Impl::restartChart() {
     started = false, parked = false, launched = false;
     blend = {};
-    chartAttached = MarkupSlot{}, chartTarget = {}, handedTarget = -1;
+    chartAttached = MarkupSlot{}, chartTarget = {}, targetPoint = glm::vec3(0), handedTarget = -1;
     collisionMask = 0x48;
 }
 

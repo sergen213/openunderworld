@@ -333,6 +333,10 @@ public:
     virtual std::optional<bool> combatFlag(int) const { return {}; } // (player +0x504) +0x1FC bit n
     virtual std::optional<int> combatObjectMode() const { return {}; } // (player +0x504) +0x50
     virtual std::optional<bool> upperProp(uint16_t) const { return {}; } // upper chart's current-state bool property (0x6EEF00)
+    // Player +0x9F0, the jump target's point: clearing the target (+0xA64 = 0: the attach 0x707730, the flight's drop,
+    // the take-off's new query) leaves it [O: 0x749CD0 reads it after action 236's attach cleared +0xA64]; the last
+    // target's point (chartTargetPoint answers with the live target's while there is one).
+    glm::vec3 targetPoint{0};
     virtual std::optional<bool> carrying() const { return {}; }      // player +0x858 (portable) != 0
     virtual std::optional<bool> carriedEncumbers() const { return {}; } // the carried portable's data byte +0x18 (encumbers her)
     // The jump target's query result flags (player +0x980 +0x140 = +0xAC0, cond 0x2BA) and target type (+0xA80, cond 0x294
@@ -486,6 +490,10 @@ bool markupLevel(ChartContext& ctx, const ChartContext::MarkupSlot& m);
 // ---- end group J ----
 // ---- group A ----
 // lara.drm's query profile `id` (object data +0xDE4 / +0xDE8, tru.exe 0x6F1950) with its class (+0x94) and result
+// Clears the chart's jump target (+0xA64 = 0), keeping its point as +0x9F0 (ChartContext::targetPoint).
+void clearChartTarget(ChartContext& ctx);
+// Player +0x9F0: the live jump target's point, else the last one's.
+glm::vec3 chartTargetPoint(ChartContext& ctx);
 // (+0x9C) records decoded (src/game/chart/Ground.cpp); nullopt: no such profile.
 std::optional<MarkupProfile> decodeProfile(const Charts& charts, int id);
 // tru.exe's markup search 0x7296C0 on query profile `profile` (action 423's slots with player +0xB00 / +0xC90 = props

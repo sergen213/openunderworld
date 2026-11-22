@@ -86,6 +86,14 @@ ChartContext::MarkupSlot jt(ChartContext& ctx) { return ctx.chartTarget.target ?
 } // namespace
 
 ChartContext::MarkupSlot chartJumpTarget(ChartContext& ctx) { return jt(ctx); }
+void clearChartTarget(ChartContext& ctx) {
+    if (const auto t = jt(ctx)) ctx.targetPoint = t.point;
+    ctx.chartTarget = {};
+}
+glm::vec3 chartTargetPoint(ChartContext& ctx) {
+    const auto t = jt(ctx);
+    return t ? t.point : ctx.targetPoint;
+}
 
 namespace {
 std::optional<uint32_t> jtFlags(ChartContext& ctx) {
@@ -473,7 +481,7 @@ int takeoffKind(int state) {
 // mode's process), so the target follows her while the take-off clip carries her (stick_jump_open: she moves ~250
 // along the stick in S245 and the hit comes within 448 of her, flag 2 -> S289 T323 -> S535, as under Wine).
 void takeoffQuery(ChartContext& ctx) {
-    ctx.chartTarget = {};
+    clearChartTarget(ctx);
     if (const int k = takeoffKind(ctx.chart().state()); k >= 0) {
         // 0x6C0800 runs the take-off state's own profile (player +0xB00, property 541: S248 2, S245 / S247 43, S249 26)
         // through 0x7296C0; the data-driven search answers where it can (a pole for the standing jump, Wine
@@ -511,7 +519,7 @@ void airEnter(ChartContext& ctx, uint16_t) {
     const auto v = ctx.velocity();
     const bool rising = v && v->z > 0;
     ctx.effect(JEffect::CollisionMask, rising ? 0x81 : 0xC9);
-    if (const auto t = jt(ctx); t && !rising && (t.flags & 0x20800000)) ctx.chartTarget = {}, ctx.effect(JEffect::ClearJumpTarget);
+    if (const auto t = jt(ctx); t && !rising && (t.flags & 0x20800000)) clearChartTarget(ctx), ctx.effect(JEffect::ClearJumpTarget);
 }
 // Action 510's exit 0x72FB90 keeps the jump target [O]: tru.exe clears +0xA64 in 510's enter / update (0x7522A0 /
 // 0x752410 -> 0x707500, ported in airEnter / airUpdate) and when an attach takes it (0x707730 / 0x707530: +0xA64 = 0
@@ -533,7 +541,7 @@ void airUpdate(ChartContext& ctx, uint16_t) {
     const auto v = ctx.velocity();
     const bool rising = v && v->z > 0;
     ctx.effect(JEffect::CollisionMask, rising ? -0x48 : 0x48);
-    if (const auto t = jt(ctx); t && !rising && (t.flags & 0x20830000 & 0x20800000)) ctx.chartTarget = {}, ctx.effect(JEffect::ClearJumpTarget);
+    if (const auto t = jt(ctx); t && !rising && (t.flags & 0x20830000 & 0x20800000)) clearChartTarget(ctx), ctx.effect(JEffect::ClearJumpTarget);
 }
 
 // 511 (enter 0x73ECE0, update 0x750040): free-jump steering. Enter keeps the stick heading (agent +0x448 / +0x424 /
