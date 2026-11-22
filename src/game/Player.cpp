@@ -1742,7 +1742,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     const auto recordGate = [](std::span<const uint8_t> types, uint8_t flags, int type) {
         return listed(types, type, false) ? !(flags & 2) : (flags & 2) != 0;
     };
+    // 0x729540 walks a record's entries: 0x723330 (types, +0x14 bit 0x10 / 1), 0x723380 (attach types, bit 4 / 8, open
+    // while she is attached to nothing), then 0x729420, which passes no entry without +0x14 bit 2 [O: decomp]
     const auto entryGate = [&](const ClassEntry& e, int type) {
+        if (!(e.flags & 2)) return false;
         if ((e.flags & 0x10) && !listed(e.types, type, e.flags & 1)) return false;
         return !((e.flags & 4) && q.attach != 0 && !listed(e.attach, q.attach, e.flags & 8));
     };
