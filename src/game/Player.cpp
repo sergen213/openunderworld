@@ -1846,7 +1846,17 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 18: r = ledgeClass() == 6; break;
                 case 19: r = ledgeClass() == 5; break;
                 case 20: r = ledgeClass() >= 8 && ledgeClass() <= 10; break;
-                case 21: r = wallSide(); break;
+                case 21: // 0x725D00 -> 0x6FC6B0 both ways, which switches on the candidate's MUD flags
+                    if (q.strict && (m.type == 4 || m.type == 6 || m.type == 15 || m.type == 13)) {
+                        // poles (0x8000000 unless 0x74B5F0 claims it [I: not ported, taken as no]; 0x2000000 /
+                        // 0x4000000), pillars (0x10) and perches (0x20000) pass
+                        r = true;
+                    } else if (q.strict && m.type == 9) { // 0x400000: 0x72B860 of the way in against the ladder's
+                        q.unknown = true;                  // normal, not ported
+                    } else {
+                        r = wallSide();
+                    }
+                    break;
                 case 22: r = cone(given ? c.value : q.cone); break;
                 case 3: r = std::abs(point(c.a2).z - point(c.a1).z) <= c.value; break;
                 case 16: r = ledgeClass() >= 5 && ledgeClass() <= 11; break;
@@ -1991,7 +2001,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     // markup passes (`only` >= 0: one markup, which says nothing of the other types).
     if (q.strict && only < 0 && best.markup < 0 && !record.empty())
         for (int type = 0; type < 64 && !q.unknown; ++type) {
-            if (type == 1 || type == 13 || type == 9 || type == 15 || type == 4 || type == 6) continue; // swept above (strict)
+            // swept above (strict); type 0 carries MUD 0x80000000 (disabled: markupFlags, 0x5D6F90 | 0x5D70A0), which
+            // the sweep never takes as a candidate [I: the disabled bit's reader in 0x70F300 not traced]
+            if (type == 0 || type == 1 || type == 13 || type == 9 || type == 15 || type == 4 || type == 6) continue;
             if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
             if (std::any_of(record.begin(), record.end(), [&](const ClassEntry& e) { return entryGate(e, type); })) q.unknown = true;
         }
