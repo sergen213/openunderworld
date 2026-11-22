@@ -7,7 +7,7 @@
   "spawn": [-8484.3, -4330, 244, -90],
   "steps": [
     {"step": "jump_and_grab", "input": ["0.1 jump 1", "0.2 jump 0"], "duration": 3,
-     "until": [{"probe": "player.hanging", "eq": true}, {"probe": "player.pos.z", "near": 312.9, "tol": 3}, {"probe": "player.speed", "max": 1, "note": "settled in the hang"}],
+     "until": [{"probe": "player.hanging", "eq": true}, {"probe": "player.pos.z", "near": 312.9, "tol": 3}, {"probe": "player.speed", "max": 1}, {"probe": "step.seconds", "min": 1.25, "note": "settled in the hang (attach done: legacy 1.23 s, chart 1.08 s)"}],
      "expect": [{"probe": "player.pos.z", "near": 312.9, "tol": 3, "note": "the hang root: Wine (W/chart/wine/ledge/hang_grab, tick 67) 312.85"},
                 {"probe": "step.height_gain", "min": 60},
                 {"probe": "player.ledge", "eq": 973},
