@@ -375,6 +375,16 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
 - **Seeded hangs** (a corpus case starting in S533 / S535 / a hold): the seed puts her on the 0x74ED30 hang pose and
   holds it over the entered clip's remaining frames, as 0x741130's alignment target does (chapel ch_hang_*: the root
   stays put through S533 in Wine) [O-runtime].
+- **Hang grip projection** (0x708830 -> 0x708210, decoded): with its +0x47 flag set (the hang idles; S533 not), each
+  frame takes v = the root displacement (0x6FE3E0: instance +0x20 - +0xC0 - player +0x6F0) and d = v . +0xCB0; within
+  the room to the segment end the grip +0xC98 moves by d / len, past it 0x6FE790's next segment or the clamp at
+  count - 0.0001; the point +0xCA0 follows [O]. Wine l3_chapel S447: v = (79.7, -303, 41.7) on its first frame, grip
+  0.898 -> 0.9999 (the 79-unit snap). Ours `DriveStep::follow` (prop 551 as the gate [I]) uses the playing clip's root
+  translation in her frame; our S447 clip has no such sideways offset yet, so the chapel snap is still missing.
+- **Slopes**: 0x1FD reads the floor under her (a slide face, `Player::slideUnder`) in drive mode; the slope_ states
+  slide with `Player::slideStep` (legacy State::Slide's integration) [I].
+- **Placements**: a spawn / teleport within 64 units over a floor is set on it before the chart restarts (legacy spawn
+  heights) [I].
 - **Attach alignment target** (for the family poses, not ported): 0x741130 (and the ladder's 0x744B70) writes player
   +0x1260 / +0x1270, which action 236 warps the attach clip to: target = the family's point (in the attach frame
   agent +0xB0, built by 0x76D270 / 0x76D010 per markup flags: 0x40000000 edge frame 0x737D60, 0x8000 box frame,
