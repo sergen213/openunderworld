@@ -11,7 +11,7 @@
     {"step": "save", "input": ["0.2 save 1", "0.3 save 0"], "duration": 1,
      "expect": [{"probe": "save.saves", "eq": 1}]},
     {"step": "walk_away", "input": ["0 forward 1", "0 walk 1", "2 forward 0"], "duration": 3,
-     "expect": [{"probe": "step.horizontal", "min": 600}]},
+     "expect": [{"probe": "step.horizontal", "min": 450, "note": "she walked away from the save point: tru walks 4.51 a 60 Hz tick (271 units/s) in S75 after a ~10-tick start [O Wine wallhug_attempt/ph476_walk_enter], ~520 in the 2 s of stick; 450 leaves the margin. Measured 556 (chart), 696 (legacy, which walks faster). The old 600 was ours"}]},
     {"step": "load", "input": ["0.2 load 1", "0.3 load 0"], "duration": 1,
      "expect": [{"probe": "save.loads", "eq": 1},
                 {"probe": "save.restored", "eq": true},
