@@ -407,7 +407,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     std::optional<float> playerRay(glm::vec3 a, glm::vec3 b) const override {
         const float d = glm::length(b - a);
         if (d <= 0) return {};
-        if (const auto h = w->collision().playerRay(a, (b - a) / d, d)) return h->t;
+        if (const auto h = w->collision().playerRay(a, (b - a) / d, d, true)) return h->t;
         return {};
     }
     bool hasCollision() const override { return w != nullptr; }
@@ -588,7 +588,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     std::optional<RayHit> rayHit(glm::vec3 a, glm::vec3 b, uint32_t) const override {
         const float d = glm::length(b - a);
         if (d <= 0) return {};
-        const auto h = w->collision().playerRay(a, (b - a) / d, d); // [I] one ray mask for every tru.exe flag set
+        const auto h = w->collision().playerRay(a, (b - a) / d, d, true); // [I] one ray mask for every tru.exe flag set
         if (!h) return {};
         RayHit r;
         r.point = h->point, r.normal = h->normal;

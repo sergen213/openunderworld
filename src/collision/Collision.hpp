@@ -184,7 +184,12 @@ public:
     // faces of those groups (Face::rays & kSkipPlayerRays) are passed. Her capsule and ground check still meet them
     // (their query class is not decoded: kSolidMask's note). Object shapes (dynamics) count only with
     // kPlayerRayObjectMask (oflags bit 0x08, tru.exe's object filter 0x48EBC0).
-    std::optional<Hit> playerRay(vec3 origin, vec3 dir, float maxDist) const;
+    // objectFrontFaces (the chart drive): an object shape's face counts only when the ray enters through it, so a ray
+    // starting inside an object's primitive box passes out of it [O-runtime: l1_ship_sinking_hall's hallway 1056 boxes
+    // enclose ladder 234's lower rungs; Wine's 0x744920 down / up casts from inside them miss (lad_a234_climb_down
+    // S1059 -> S1088, climb_up S1055 loops to the top) where ours met their far faces at z 921 / 1419.7]. [I: tru.exe's
+    // primitive ray test under 0x4EE2B0's shapes is not decoded; legacy callers keep the double-sided test.]
+    std::optional<Hit> playerRay(vec3 origin, vec3 dir, float maxDist, bool objectFrontFaces = false) const;
     // First contact of a sphere / capsule (segment a-b, radius r) translated by `delta`.
     // Already-touching shapes hit at t = 0, unless `flags` has kSweepSkipLeaving: then a face touched (or overlapped)
     // at t = 0 that `delta` does not close on (moving away from it or along it) is no hit, so the faces ahead still are.
@@ -222,7 +227,8 @@ private:
     };
     template <class Visit> void overlap(vec3 lo, vec3 hi, Visit&& visit) const;
     // Terrain faces only; the public queries add `dynamics`.
-    std::optional<Hit> rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask, uint8_t skipRays = 0) const;
+    // frontOnly: faces whose (CCW) normal faces the ray only
+    std::optional<Hit> rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask, uint8_t skipRays = 0, bool frontOnly = false) const;
     std::optional<Hit> sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask, uint8_t flags = 0) const;
     std::optional<Hit> closestFaces(vec3 p, float maxDist, uint8_t mask) const;
     void overlapFaces(vec3 a, vec3 b, float radius, uint8_t mask, std::vector<Hit>& out) const;
