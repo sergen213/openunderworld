@@ -162,17 +162,17 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     bool walkHeld = false;
     glm::vec2 stick() const override { return stickWorld; }
-    // The stick record's angle (0xFADFB0 -> +0xB0 -> +0x10) as tru.exe composes it: the pad's own direction in the
-    // camera frame (0x706660 / 0x6F89A0: forward 0) plus the control yaw against her heading. Kept apart so a camera
-    // pinned along her heading (the Wine harness's CAMFOLLOW, ours --camera-follow) gives exactly 0 for Forward, which
-    // the sector tests read with inclusive bounds (0x194: angle >= 0 is her left).
+    // The stick record's angle (0xFADFB0 -> +0xB0 -> +0x10), 0x6F7C10: +0x10 = 0x49F270(+0x8, the yaw 0x6F7F40 stored),
+    // i.e. wrapPi(stick yaw - that yaw). With the record's mode byte +0xB0 at 0, +0x8 = the pad angle (pi/2 - atan2 over
+    // the pad axes, y down) + that yaw - pi, so +0x10 is the pad's own direction: Forward 0, Left +pi/2, Right -pi/2
+    // whatever the camera or her heading [O: decomp]. The other modes add the camera yaw (0x5E78F0) [O] and are not
+    // modelled: ours takes mode 0 everywhere [I; O-runtime for perches: Wine p1190_turn_right, her heading -178.4 with
+    // the camera pinned along +y, Right -> 0x194 sector 8 (T1512 S863), where the her-relative angle +178.4 would give
+    // sector 4 (T1510 S864)].
     glm::vec2 pad{0};
-    float ctrlYaw = 0;
     std::optional<float> stickRelative() const override {
         if (glm::dot(pad, pad) < 1e-12f) return 0.0f;
-        float rel = ctrlYaw - w->player().state().yaw;
-        rel = std::remainder(rel, 6.2831855f);
-        return std::atan2(-pad.x, pad.y) + rel;
+        return std::atan2(-pad.x, pad.y);
     }
     // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw (0x6EBA90).
     std::optional<Aim> markupSearch(const MarkupProfile& p) const override {
@@ -560,7 +560,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         groundCheck(*ch);
         if (ground.steep) lastSteepMs = std::max<uint32_t>(nowMs, 1);
         stickWorld = stickW, stickLen = stickL, walkHeld = a.walk;
-        pad = a.move, ctrlYaw = world.stickYaw();
+        pad = a.move;
     }
     // 0x768C50: agent 0 (Lara), then agent 1 (the upper body); --chart-state's entry.
     void chartTick() {
