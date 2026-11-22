@@ -808,6 +808,11 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
     p.minT = f32(r + 0x20), p.coneDeg = f32(r + 0x24);
     p.minDist = int16_t(u32(r + 0x28) & 0xFFFF);
     if (const auto lr = c.pointer(d + 0x584)) p.cornerZone = int16_t(u32(*lr + 0x9E) & 0xFFFF); // 0x737B30's +0x9E
+    const auto capsuleOf = [&](uint32_t slot, MarkupProfile::Capsule& out) {
+        if (const auto cr = c.pointer(d + slot))
+            out = {vec3(f32(*cr + 0x30), f32(*cr + 0x34), f32(*cr + 0x38)), f32(*cr + 0x54), f32(*cr + 0x58)};
+    };
+    capsuleOf(0x594, p.poleH), capsuleOf(0x58C, p.poleV);
     p.flags = u32(r + 0x2C);
     const int frames = int32_t(u32(r + 0xA4));
     p.frames = frames >= 1 ? frames : c.data<int16_t>(0xBDE);

@@ -1816,7 +1816,25 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 }
                 case 15: r = ledgeClass() == 4; break;                                          // 0x728A80
                 case 17: { const int k = ledgeClass(); r = k == 0 || k == 1 || k == 2 || k == 12; break; } // 0x728A80
-                case 10: r = capsule(arcAt(from, t), h); break;
+                case 10: // 0x725B50 -> 0x6FCB10 with the markup's class record (0x5D57A0)
+                    if (q.strict && (m.type == 4 || m.type == 6)) {
+                        // a pole's record: horizontal (MUD 0x2000000, or 0x8000000 that 0x733F60 accepts) +0x594, else
+                        // +0x58C [I: 0x733F60 / 0x74B5F0 taken as "flatter than 30 degrees"]; the capsule round the
+                        // arc point plus the record's offset in her model frame (X left, Y back, Z up) against the hit
+                        const vec3 d = m.points[size_t(si) + 1] - m.points[size_t(si)];
+                        const bool flat = m.type == 6 || std::abs(d.z) < 0.5f * glm::length(d);
+                        const MarkupProfile::Capsule& k = flat ? q.poleH : q.poleV;
+                        const vec2 f = xy(forward()), left(-f.y, f.x);
+                        const vec3 c0 = arcAt(from, t) + vec3(left * k.offset.x - f * k.offset.y, k.offset.z);
+                        const float hh = 0.5f * k.height;
+                        const float dist = h.z > c0.z + hh ? glm::distance(h, c0 + vec3(0, 0, hh))
+                                           : h.z < c0.z - hh ? glm::distance(h, c0 - vec3(0, 0, hh))
+                                                             : glm::length(xy(h - c0));
+                        r = dist <= k.radius;
+                        break;
+                    }
+                    r = capsule(arcAt(from, t), h);
+                    break;
                 case 12:
                     if (!given && !q.falling) break;
                     if (!given) neg = true; // 0x728F00 forces the negation with -1
@@ -1944,7 +1962,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             int nStarts = 2;
             if (perch) starts[0] = q.root, nStarts = 1;
             if (climb) {
-                starts[0] = q.start, nStarts = 1;
+                // a pole is met by the hands' arc (target type 3, +0x8C), as a ledge's hang [I: tr_pole_fling, Wine meets
+                // pole 1337 from the hang start 633 over the root]; ladders / pillars from their own type's start, else
+                // the query's start
+                starts[0] = m.type == 4 || m.type == 6 ? q.hang : q.start, nStarts = 1;
                 for (int k = 0; k < q.typeStarts; ++k)
                     if (q.typeStart[size_t(k)].first == m.type) starts[0] = q.typeStart[size_t(k)].second;
             }
@@ -2466,6 +2487,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone);
+    q.poleH = p.poleH, q.poleV = p.poleV;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(s_.ledge)].type) : 0;
