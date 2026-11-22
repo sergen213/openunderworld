@@ -152,7 +152,7 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
 // case tick + hold + settle. Mask bits: 1 Fwd, 2 Back, 4 Left, 8 Right (stick axes), 0x10 Jump,
 // 0x20 Interact, 0x40 Crouch (drop), 0x80 Sprint, 0x100 Walk, 0x200 Grapple.
 namespace {
-bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out) {
+bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out, std::optional<float>& cameraYaw) {
     const auto first = text.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos || (text[first] != '[' && text[first] != '{')) return false;
     nlohmann::json j;
@@ -166,6 +166,15 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
         if (j.contains("spawn"))
             for (const char* k : {"hold_ticks", "settle_ticks"})
                 if (j["spawn"].contains(k)) shift += j["spawn"][k].get<uint64_t>();
+        // "camera_follow": "dx,dy,dist,height" (the corpus' CAMFOLLOW, Forward = (dx, dy) in the world); a string whose
+        // first two fields are not numbers is a note (no pin).
+        if (j.contains("camera_follow") && j["camera_follow"].is_string()) {
+            const std::string cf = j["camera_follow"].get<std::string>();
+            float dx = 0, dy = 0;
+            char sep = 0;
+            std::istringstream cs(cf);
+            if ((cs >> dx >> sep >> dy) && sep == ',' && (dx != 0 || dy != 0)) cameraYaw = std::atan2(dy, dx);
+        }
         if (!j.contains("input")) throw std::runtime_error("input script: case object without \"input\"");
         j = j["input"];
     }
@@ -190,7 +199,7 @@ InputScript InputScript::parse(std::string_view text) {
                                                     "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda",
                                                     "light", "grenade", "recenter", "camera", "manual"};
     InputScript s;
-    if (std::vector<std::tuple<uint64_t, std::string, float>> mask; parseMaskScript(text, mask)) {
+    if (std::vector<std::tuple<uint64_t, std::string, float>> mask; parseMaskScript(text, mask, s.cameraYaw_)) {
         for (auto& [tick, action, value] : mask) s.events_.push_back({tick, std::move(action), value});
         std::stable_sort(s.events_.begin(), s.events_.end(), [](const Event& a, const Event& b) { return a.tick < b.tick; });
         return s;
