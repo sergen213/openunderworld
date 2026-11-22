@@ -93,7 +93,22 @@ struct Variable {
 struct Request {
     std::string clip;
     float seconds = 0, rate = 1;
+    uint16_t keys = 0, keyTime = 0;         // the first clip's key count (+0x32) and time per key (+0x34; 100 = a frame)
     uint8_t mode = 1, start = 0, blend = 0; // mode 1 once, 2 loop; frames at 30 Hz
+    uint8_t nextBlend = 0xFF;               // +0x1B: the next pattern's blend frames instead of its own (0xFF none)
+    // 0x4428A0 -> 0x441FB0: the clip's time when it starts, in 30 Hz frames: start - blend, uncut, after the first clip's
+    // key bump (blend > 0, a key longer than a frame, start inside the first key: start = that key, blend += the move).
+    // blendOverride: the previous pattern's +0x1B (layer +0x314) when it set one.
+    float startFrame(int blendOverride = -1) const {
+        int st = start * 100, bl = (blendOverride >= 0 ? blendOverride : blend) * 100;
+        if (bl > 0 && keyTime > 100 && st < keyTime) bl += keyTime - st, st = keyTime;
+        return float(st - bl) / 100.0f;
+    }
+    // 0x438930: the clip length AnimationEnded tests the time against, keys x time per key rounded up to whole keys.
+    float lengthFrames() const {
+        if (!keys || !keyTime) return seconds * 30.0f;
+        return float((int(keys) * (keyTime + 1) - 1) / keyTime * keyTime) / 100.0f;
+    }
 };
 
 // One chart header (0x28 bytes, player data +0x12500 / +0x12528): {s16 root, s16 agent, -> linked chart, u16 states,
@@ -487,6 +502,8 @@ private:
     uint64_t clipStarts_ = 0;
     std::vector<int> queue_; // patterns a kind-2 node queued after the playing one (0x446BD0 ring)
     float clipStart_ = 0;
+    int nextBlend_ = -1; // layer +0x314: the last started pattern's +0x1B, the next start's blend (-1 none)
+    void startClip(const Request& r);
     float stateTime_ = 0, totalTime_ = 0, animFrames_ = 0;
     uint32_t frame_ = 0, stamp_ = 0;
     bool unportedHit_ = false;

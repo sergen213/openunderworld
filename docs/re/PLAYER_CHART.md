@@ -47,26 +47,22 @@ All offsets below are from the start of the player data block.
   (pattern, flags, its two float arguments rounded to override the pattern's start +0x1A / blend +0x19 when >= 0) and
   queues it (0x446BD0: flags & 7 = 1 start in phase with the playing clip, 2 flush the queue first, 4 conditional, 0
   queue); 0x444EA0 hooks the layer's end callback (0x43E0C0) and 0x443430 plays each record through 0x4428A0, so a
-  kind-2 clip starts like a pattern request (lead start - blend, cut to 0 when no crossfade runs) [O]; the chart's end
-  notification comes when the queue drains [I]. Ours: lead cut to 0, end at the clip's end; S245 then lasts 10 ticks
-  where Wine's lasts 15 [U: the queue / crossfade timing]. Node 46 (S40 idle) plays 685 `ng_idle` with sprint
+  kind-2 clip starts like a pattern request (below) [O]; the chart's end notification comes when the queue drains
+  (0x43E0C0) [O]. Node 46 (S40 idle) plays 685 `ng_idle` with sprint
   stamina left, else 691 `ng_idle_break_hot`; node 99 (S65) 716 `ng_run_start`, else 717 `ng_run_exhaust`: module 1's
   native 76 (0x6EA1E0) is 0x74FD70 on the stamina record at agent +0x460, condition 0x205's test (ctx.canSprint()).
   A node that plays nothing keeps the clip and its clock. Ours: `ChartRuntime::resolveRequest` runs the program (both
   ways on an unported native's value, resolved when they agree); an unresolved node has no clip clock. Our script VM
-  (src/script) shares the opcode numbering but is not this VM (its 0x65 calls a method on a receiver). A pattern's clip starts at (start - blend) frames (0x441FB0), so
-  that it stands at the pattern's start frame when the crossfade ends: `ng_standing_jump` (blend 6, start 6) plays all
-  its 10 frames, `ng_run_start` (4 / 6) from its frame 2. A negative lead is cut to 0 for `ng_running_jump_forwards`
-  (2 / 1) and kept (the clip held at its first frame) for the wall jump's clips [U which branch decides]. Decoded
-  [O]: 0x4428A0 takes blend = pattern +0x19 (or the previous pattern's +0x1B when >= 0), start = +0x1A; when the
-  layer's blend test passes (+0xA4 == 0, or +0xA8 > 0 with +0xAC == 0) it sets the layer fade (0x433D40) and, if
-  +0xA4 stays 0, start -= blend, blend = 0, start cut at 0; else start and blend stay. For the first clip, a blend > 0
-  with time per key (+0x34) > 100 and start below one key moves start to that key and lengthens the blend by the
-  difference; 0x441FB0 then subtracts the blend from the start (no cut) on a channel that is not the layer's first,
-  else crossfades from the start; 0x432850 sets the clip time = start; AnimationEnded (0xC9, 0x783840) polls that
-  time against 0x438930 (keys x time per key, rounded up to whole keys). None of these branches gives S245's 15 ticks
-  for 680 (5 keys of 100, start 1, blend 4: 10 or 8 ticks) nor the wall jump's held clips [U: what +0xA4 / +0xA8 /
-  +0xAC hold for Lara's layer and which channel 0x441FB0 sees].
+  (src/script) shares the opcode numbering but is not this VM (its 0x65 calls a method on a receiver). A pattern's
+  clip starts at (start - blend) frames, uncut (`Request::startFrame`), so that it stands at the pattern's start frame
+  when the crossfade ends [O-runtime, W/chart/wine/*_anim: 0x441FB0's (start, blend) arguments and the clip time they
+  leave: 680 (100, 400) -> -300 (S245 15 ticks), 678 (100, 200) -> -100, 52 (600, 600) -> 0, 954 (400, 300) -> 100].
+  The blend is the previous pattern's +0x1B when it set one (layer +0x314, 0x4428A0; 1460 trans_pose_U -> 952 at blend
+  0, time 400: S535 38 ticks). For the first clip a blend > 0 with a key longer than a frame and start inside it moves
+  start to that key and lengthens the blend by the move (1463: (207, 207)). 0x4428A0's other branch (start - blend cut
+  at 0, blend 0) needs the layer's +0xA4 == 0 or +0xA8 > 0 with +0xAC == 0; Lara's layer reads 1 / 0 / 1 in every
+  recording, so ours never takes it. AnimationEnded (0xC9, 0x783840) polls the clip time against 0x438930 (keys x time
+  per key, rounded up to whole keys, `Request::lengthFrames`).
 
 ### Function registry [O]
 
@@ -262,7 +258,7 @@ the others are marked [I] with what blocks them.
 | `boneRise()` (0x1F) | root z delta | bone 0 z now - previous (+0x90 / +0x94) | [I] kept: root z delta; bone 0 needs the posed skeleton of the chart's clip |
 | `supportFoot()` (0x12D), pattern requests | chart clip on the runtime clock | events 0x34 / 0x35 / 0x36 of the layer's clip (0x716F30) | physical already (the chart's own clip) |
 | `supportFoot()`, kind-2 requests | controller clip and clip time | the clip the anim graph node picks (below) | *physical*: the pattern `resolveRequest` gets from the node (S245 -> 680, S40 -> 685 / 691); the controller clip only when a node does not resolve (unknown stamina) |
-| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller; 0xC9 itself polls the layer clip's time against 0x438930's length) | *rebased* where the node resolves: its pattern on the clip clock [U: S245 10 ticks vs Wine 15]. Node 22 (S533 / S535) resolves only with +0xED4 != 0 (then trans_pose_U, then the attach clip, the end after both); with +0xED4 == 0 (the shadow's case) native 7 needs the game flag word (0xE7F094 -> +0x50 -> +0xB90 bit 26), unresolved: the row below |
+| AnimationEnded (0xC9) etc. for kind-2 requests | none (no clip clock since 1b8a247) | the graph node's clip ending (0x768CF0 from the anim controller; 0xC9 itself polls the layer clip's time against 0x438930's length) | *rebased* where the node resolves: its pattern on the clip clock (S245 15 ticks, S535 38 = Wine). Node 22 (S533 / S535) resolves with game flag bit 26 clear (var_gb90 0x78004000 in every recording): after 1461 it plays 952, else 1460 trans_pose_U then 952; unresolved nodes use the row below |
 | animation end of an unresolved kind-2 node (group B bridge, `Shadow::tick`) | — | as above | *controller-derived* [I]: `animEnded` when our controller's one-shot clip, started within a tick of the state, settles into a loop (S533 31 ticks = Wine; S535 47 vs Wine 38); gated on `!ChartRuntime::resolved()` so resolved nodes get no second end |
 | `attachedMarkup()` (+0xC94) | controller `attachedMarkup()` / ledge seg / t, empty in HangJump | written by the markup attach actions (0x76D010 ...) | [I] blocked: attach actions (group B) must write a chart-side slot |
 | `jumpTarget()` (+0xA64), `jumpQueryFlags()` (+0xAC0), `jumpTargetType()` (+0xA80) | controller `aimMarkup` / `aimFlags` / `aimClass` | take-off query (+0xA84) and action 230 (0x772CA0) promoting the candidates +0x3A0 / +0x3E0 | [I] partly: `chartJumpTarget` (df3c1da) keeps it chart-side, re-queried every take-off frame; prop 400's attach (0x75F2D0) consumes it; the controller fallback goes then |
@@ -287,8 +283,7 @@ natives and how ours runs them: Runtime, "Anim request" above (`ChartRuntime::re
 (table 0x8ABF90) push one player value: 4 +0xA80, 5 the jump target's owner flag else +0xEE8, 7 +0xED4 == 0 and not
 game flag bit 26, 8 +0xEDC, 16 the context's held selector, 76 `canSprint()`. A selector's entries are blend nodes;
 committing it (fn 3) queues one entry's records in order (0x4482C0 -> 0x446BD0; fn 4's static selector picks at random,
-0x448320), and the chart hears the end when the queue drains (0x43E0C0). Not ported: the owner flag, game flag bit
-26, a random pick between different entries, the selector object fn 4 pushes (0x88F26C; node 46's
+0x448320), and the chart hears the end when the queue drains (0x43E0C0). Game flag bit 26 is taken as clear (every Wine recording) [I elsewhere]. Not ported: the owner flag, a random pick between different entries, the selector object fn 4 pushes (0x88F26C; node 46's
 891 branch queues three transition/loop pairs and fn 3 commits one), Play's two float arguments and flags.
 
 ### In-flight jump targets [O, not ported]

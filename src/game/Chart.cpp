@@ -182,13 +182,14 @@ std::optional<Charts> loadCharts(const ObjData& o) {
         if (s.type == cdc::SectionType::Animation) clips.emplace(s.id, &s);
     for (const auto& p : anim::animPatterns(o.drm)) {
         Request r;
-        r.rate = p.rate, r.mode = p.mode, r.start = p.start, r.blend = p.blend;
+        r.rate = p.rate, r.mode = p.mode, r.start = p.start, r.blend = p.blend, r.nextBlend = p.nextBlend;
         if (!p.anims.empty() && p.anims[0] < list.size()) {
             const auto& e = list[p.anims[0]];
             r.clip = e.name;
             if (const auto it = clips.find(e.animId); it != clips.end() && it->second->data.size() >= 0x36) {
                 const auto& cd = it->second->data;
                 r.seconds = float(double(rd<uint16_t>(cd, 0x32)) * rd<uint16_t>(cd, 0x34) / anim::kTimeUnitsPerSecond);
+                r.keys = rd<uint16_t>(cd, 0x32), r.keyTime = rd<uint16_t>(cd, 0x34);
             }
         }
         c.requests.push_back(std::move(r));
@@ -278,7 +279,7 @@ int ChartRuntime::request() const {
 const Request* ChartRuntime::pattern() const { return playing_ ? &*playing_ : nullptr; }
 float ChartRuntime::animLengthFrames() const {
     const Request* p = pattern();
-    return p ? p->seconds * 30.0f : 0.0f;
+    return p ? p->lengthFrames() : 0.0f;
 }
 bool ChartRuntime::animLoops() const {
     const Request* p = pattern();
@@ -438,9 +439,9 @@ std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext
     // [I] an owner object = a markup riding a live instance (MarkupSlot::live); its +0x50 bit 0 is not modelled
     if (t && t.live) v[5] = std::nullopt;
     else v[5] = uint32_t(ctx.playerInt(0xEE8));
-    // the game flag bit is not modelled: known only when +0xED4 != 0 decides it
-    if (ctx.playerInt(0xED4) != 0) v[7] = 0u;
-    else v[7] = std::nullopt;
+    // game flag bit 26 (0xE7F094 -> +0x50 -> +0xB90) is clear in every Wine anim recording (var_gb90 0x78004000, the
+    // bedroom and chimney units) [O-runtime there, I elsewhere]: 7 = +0xED4 == 0
+    v[7] = uint32_t(ctx.playerInt(0xED4) == 0);
     v[8] = uint32_t(ctx.playerInt(0xEDC));
     v[16] = 0u;
     if (const auto c = ctx.canSprint()) v[76] = uint32_t(*c);
@@ -610,16 +611,24 @@ void ChartRuntime::applyProperties(ChartContext& ctx, int state) {
 }
 
 // 0x783470: the state's anim request plays; the animation-end counter restarts. 0x4428A0 -> 0x441FB0 starts the clip at
-// (start - blend) frames, so that it stands at the pattern's start frame when the crossfade ends; a negative lead is cut
-// to 0 (ng_running_jump_forwards 2 / 1 under Wine) [U: the wall jump's clips keep it, held at their first frame].
+// (start - blend) frames, uncut, so that it stands at the pattern's start frame when the crossfade ends (Request::
+// startFrame). Lara's layer always takes 0x4428A0's crossfade branch: +0xA4 1, +0xA8 0, +0xAC 1 in every Wine anim
+// recording; its other branch (start - blend cut at 0, blend 0) is not ours to take [O-runtime: W/chart/wine/*_anim:
+// 0x441FB0 (100, 400) -> 680's time -300; (100, 200) -> 678's -100; (600, 600) -> 52's 0; (207, 207) -> 1463's 0].
+// 0x4428A0: the blend is the previous pattern's +0x1B when it set one (layer +0x314, then replaced by this one's).
+void ChartRuntime::startClip(const Request& r) {
+    animFrames_ = clipStart_ = r.startFrame(nextBlend_);
+    nextBlend_ = r.nextBlend == 0xFF ? -1 : int(r.nextBlend);
+}
+
 void ChartRuntime::enterAnim(ChartContext& ctx) {
     animCounter_ = 0;
     if (!resolveRequest(ctx)) return;
     ++clipStarts_;
     const Request* p = pattern();
     // Kind 2 reaches the same start: Play (0x448100) queues a record (0x446BD0) that 0x443430 plays through 0x4428A0 [O].
-    const int lead = p ? int(p->start) - int(p->blend) : 0;
-    animFrames_ = clipStart_ = float(std::max(0, lead));
+    if (p) startClip(*p);
+    else animFrames_ = clipStart_ = 0.0f;
 }
 
 // 0x787890
@@ -702,7 +711,7 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
             queue_.erase(queue_.begin());
             if (next >= 0 && size_t(next) < charts_.requests.size()) {
                 playing_ = charts_.requests[size_t(next)], playingIndex_ = next, playingMirror_ = mirror_;
-                animFrames_ = clipStart_ = float(std::max(0, int(playing_->start) - int(playing_->blend)));
+                startClip(*playing_);
                 ++clipStarts_;
             }
         } else {
