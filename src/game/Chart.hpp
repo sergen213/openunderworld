@@ -298,6 +298,10 @@ public:
         float lean = 0;
         struct Align { bool active = false, positionOnly = false; float duration = 0; glm::vec3 pos{0}; } align;
     } anim;
+    // Lara +0x11D4 (0x208 PSCCF_OnStairs): written only by the ground check 0x5DCE20 when it runs (cleared, then set from
+    // its floor hit through 0x5D3AF0(hit, 0x100, 0x20)), kept otherwise; nullopt: the last check stood on an object
+    // whose own flags the context does not model.
+    virtual std::optional<bool> onStairs() const { return std::nullopt; }
     // ---- end group A ----
 
     // ---- group J ----
