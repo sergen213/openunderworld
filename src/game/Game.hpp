@@ -716,6 +716,9 @@ public:
     // tru.exe 0x5DCE20 posting message 0x1C9 (too steep) for the face under her root, as floorKind judges it (the chart's
     // wall-slide stamp, agent +0x90, condition 0x206).
     bool steepUnder() const;
+    bool slideUnder() const; // the floor under her is a slide face (floorKind Slide: tru.exe player +0x11D0 / +0x11CF)
+    // One slide step on floor hit g (dl its horizontal normal length); false off the slide's end (no floor).
+    bool slideStep(const collision::Hit& g, float dl, float dt);
     // tru.exe's ground check 0x5DCE20 as the player process calls it (0x71B910), on `feet` alone (no controller state):
     // a ray from `above` over her feet down to `below` under them. floor: a face that supports standing within that span
     // (message 0x1C7, chart event 455); steep: a too-steep face there (0x1C9); neither: no floor (0x1CC, bit 19).
@@ -738,13 +741,17 @@ public:
         // instance velocity under gravity (tru.exe 0x5DB370) with the capsule's contacts. Hang: on the chart's attached
         // markup (markup, seg, t, side), the root motion along it (snap) or free (take-offs, the pull up). Blend: from
         // blendFrom / yawFrom onto blendTo / yawTo by `blend` (the attach's root alignment, action 236 [I]).
-        enum class Motion : uint8_t { Ground, Air, Hang, Blend } motion = Motion::Ground;
+        // Slide: down the fall line of a slide / too-steep floor (slideStep, legacy State::Slide's integration).
+        enum class Motion : uint8_t { Ground, Air, Hang, Blend, Slide } motion = Motion::Ground;
         std::optional<float> steer; // heading the stick asks for (action 601), approached at steerRate rad/s
         float steerRate = 0;
         int markup = -1, seg = 0;
         float t = 0, side = 1;
         bool snap = false;
         bool slide = false; // Hang + snap: the root motion along the markup moves the grip (the shimmy)
+        // Hang + snap, the hang idles (prop 551): tru.exe 0x708830 -> 0x708210 each frame projects the clip's root
+        // displacement off the hang root onto the markup and moves the grip by its part along it (to the segment end)
+        bool follow = false;
         vec3 blendFrom{0}, blendTo{0};
         float yawFrom = 0, yawTo = 0, blend = 0;
         State coarse = State::Idle; // what World's subsystems read as her state (camera, interactions, carriers)
@@ -758,6 +765,8 @@ public:
     // The chart drive's hold pose on an attached ladder (rung where the attach clip `clip` ends), pillar (axis) or perch
     // (Traverse.cpp); nullopt else.
     std::optional<std::pair<vec3, float>> familyPose(int markup, vec3 from, float yaw, std::string_view clip = {}) const;
+    // The walkable floor under her root within maxDrop (and the step-up over it), or nullopt.
+    std::optional<float> floorBelow(float maxDrop) const;
     // A ledge hang's root offset from the ledge point in her frame (x right, y forward, z up; attachPose's hand offset):
     // the chart drive sets tru.exe's (0x74ED30), legacy keeps ledgeb_idle's hands (unset).
     void setLedgeHang(vec3 off) { ledgeHang_ = off; }

@@ -119,7 +119,10 @@ bool pressedWithin(ChartContext& ctx, const Cond& c) {
     const auto since = ctx.sincePress(id);
     const auto prop = rt.propFloat(0x3DF);
     if (!since || !prop) return rt.unported(c);
-    return float(int(*since * 1000.0f * 30.0f / 1000.0f)) < *prop;
+    // never pressed: our timer holds 1e9 s, whose frame count would overflow int (UB; x87 gives INT_MIN, which made
+    // every "pressed within" true: a landing took the running jump S280 without Jump) -> clamp first
+    const double frames = std::min(double(*since) * 30.0, 1e9);
+    return float(int(frames)) < *prop;
 }
 
 // 0xD5 (0x783950, id 0xD5 -> 0x782B40 mode 1): round(anim time / 100) >= value. The anim time runs 100 a 30 Hz frame;
@@ -286,12 +289,14 @@ bool agentFlag345(ChartContext& ctx, const Cond& c) {
 
 // 0x1FD (0x763670, PSCCF_OnSlopeSlide): counter agent +0x3C4; on a sliding slope (player +0x11D0 > 0 and byte
 // +0x11CF) a counter >= 0 becomes -4, off it a negative counter becomes 0. 0: c >= 0, 1: c < 0, 2: c == 0, 3: c == -4.
-// Ours: on a sliding slope = State::Slide [I].
+// Ours: on a sliding slope = the floor under her is a slide face when the context can tell (drive mode,
+// ChartContext::onSlideFloor), else State::Slide (shadow) [I].
 bool onSlopeSlide(ChartContext& ctx, const Cond& c) {
     const PlayerState* s = ctx.player();
-    if (!s) return ctx.chart().unported(c);
+    const auto floor = ctx.onSlideFloor();
+    if (!s && !floor) return ctx.chart().unported(c);
     int& counter = ctx.chart().field(0x3C4);
-    if (s->state == ou::game::State::Slide) {
+    if (floor ? *floor : s->state == ou::game::State::Slide) {
         if (counter >= 0) counter = -4;
     } else if (counter < 0) {
         counter = 0;

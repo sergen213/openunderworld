@@ -245,6 +245,12 @@ bool Player::roomToStand() const {
                               vec3(0, 0, t_.capsuleTop - t_.crouchHeight));
 }
 
+std::optional<float> Player::floorBelow(float maxDrop) const {
+    if (const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + maxDrop); g && g->normal.z >= t_.slideMinNormalZ)
+        return g->point.z;
+    return std::nullopt;
+}
+
 void Player::play(std::string_view clip, bool loop, float rate, bool mirror) {
     if (s_.clip == clip && s_.loop == loop && s_.clipRate == rate && s_.mirror == mirror) return;
     // A new clip starts at the original request's start frame (clipBlend); swapping between the looping
@@ -464,6 +470,39 @@ Player::Floor Player::floorKind(const collision::Hit& g) const {
 bool Player::steepUnder() const {
     const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
     return g && floorKind(*g) == Floor::Steep;
+}
+
+bool Player::slideUnder() const {
+    const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
+    return g && floorKind(*g) == Floor::Slide;
+}
+
+// One slide step down the fall line of floor hit `g` (dl = its horizontal normal length): heading downhill, the speed
+// along the slope by the chart's slide controller on a slide face (0x73FF50, S814's props [O]) or gravity on a
+// too-steep one, then the move and the floor under the new spot. False when there is none (off the slide's end).
+bool Player::slideStep(const collision::Hit& g, float dl, float dt) {
+    const vec2 dir = xy(g.normal) / dl; // the normal leans downhill
+    s_.yaw = yawOf(dir);
+    const float nz = std::max(g.normal.z, 1e-3f), sn = std::sqrt(std::max(0.0f, 1 - nz * nz));
+    float along; // speed along the slope
+    if (floorKind(g) == Floor::Slide) {
+        const float f = std::clamp((glm::degrees(std::acos(std::min(nz, 1.0f))) - t_.slideAngleMin) / (t_.slideAngleMax - t_.slideAngleMin), 0.0f, 1.0f);
+        // slope_landfront: at rest for the clip (Wine, l2_junglehub 45-degree face: 0.40 s still, then +1.25 a tick)
+        const float want = s_.clip == "slope_landfront" ? 0.0f
+                           : s_.clip == "slope_transitionto" ? t_.slideEnterSpeed : glm::mix(t_.slideSpeedMin, t_.slideSpeedMax, f);
+        along = glm::length(s_.vel);
+        along += std::clamp(want - along, -t_.slideDecel * dt, t_.slideAccel * dt);
+    } else {
+        along = std::max(0.0f, glm::dot(xy(s_.vel), dir)) / nz + t_.gravity * sn * dt;
+    }
+    const float speed = along * nz; // horizontal part
+    s_.vel = vec3(dir * speed, -along * sn); // z: the descent, carried into a fall
+    vec3 p = slide(s_.pos, vec3(xy(s_.vel) * dt, 0), t_.stepUp, true);
+    const auto g2 = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown + speed * dt * 3);
+    s_.pos = p;
+    if (!g2) return false;
+    s_.pos.z = g2->point.z;
+    return true;
 }
 
 Player::GroundCheck Player::groundCheck(vec3 feet, float above, float below) const {
@@ -3066,33 +3105,12 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             } else land(move);
             break;
         }
-        const vec2 dir = xy(g->normal) / dl; // the normal leans downhill
-        s_.yaw = yawOf(dir);
-        const float nz = std::max(g->normal.z, 1e-3f), sn = std::sqrt(std::max(0.0f, 1 - nz * nz));
-        float along; // speed along the slope
-        if (floorKind(*g) == Floor::Slide) {
-            const float f = std::clamp((glm::degrees(std::acos(std::min(nz, 1.0f))) - t_.slideAngleMin) / (t_.slideAngleMax - t_.slideAngleMin), 0.0f, 1.0f);
-            // slope_landfront: at rest for the clip (Wine, l2_junglehub 45-degree face: 0.40 s still, then +1.25 a tick)
-            const float want = s_.clip == "slope_landfront" ? 0.0f
-                               : s_.clip == "slope_transitionto" ? t_.slideEnterSpeed : glm::mix(t_.slideSpeedMin, t_.slideSpeedMax, f);
-            along = glm::length(s_.vel);
-            along += std::clamp(want - along, -t_.slideDecel * dt, t_.slideAccel * dt);
-        } else {
-            along = std::max(0.0f, glm::dot(xy(s_.vel), dir)) / nz + t_.gravity * sn * dt;
-        }
-        const float speed = along * nz; // horizontal part
-        s_.vel = vec3(dir * speed, -along * sn); // z: the descent, carried into a fall
-        vec3 p = slide(s_.pos, vec3(xy(s_.vel) * dt, 0), t_.stepUp, true);
-        const auto g2 = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown + speed * dt * 3);
-        s_.pos = p;
-        if (!g2) {
+        if (!slideStep(*g, dl, dt)) {
             // Off the slide's end: an edge that carries a ledge is caught as from any ground state (T1713 -> S534, the
             // safety drop's attach states [O-chart]; Wine, l2_junglehub: off a 45-degree face she turned and hung);
             // [I] with slope_slide_off_to_ledgeb (request 1480, which no chart state names).
             if (!trySafetyDrop(s_.vel, "slope_slide_off_to_ledgeb")) startFall(s_.vel);
-            break;
         }
-        s_.pos.z = g2->point.z;
         break;
     }
     case State::RailSlide:
@@ -4307,6 +4325,17 @@ void Player::drive(const DriveStep& d, float dt) {
         s_.ledge = -1;
         break;
     }
+    case DriveStep::Motion::Slide: {
+        // the chart's slope states (S801..S821): legacy State::Slide's integration down the fall line; a standable or no
+        // floor leaves her where she is (the chart's ground check and stumble-off states take it from there)
+        const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
+        const float dl = g ? glm::length(xy(g->normal)) : 0.0f;
+        if (g && !standable(s_.pos, *g) && dl >= 1e-4f) slideStep(*g, dl, dt);
+        else s_.vel = vec3(0);
+        s_.fallStartZ = s_.pos.z;
+        s_.ledge = -1;
+        break;
+    }
     case DriveStep::Motion::Air: {
         // tru.exe integrator 0x5DB370 (airMove's), the capsule's contacts clip the velocity; a floor stops the descent
         // (the chart's landing comes from its ground check, event 455).
@@ -4352,6 +4381,16 @@ void Player::drive(const DriveStep& d, float dt) {
         // hands on the markup: in the shimmy (d.slide) the root motion's part along it moves the grip; otherwise the
         // grip stays (tru.exe +0xC98) and the rest of the clip's motion is the hang pose
         if (d.slide) moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
+        else if (d.follow)
+            // 0x708830 -> 0x708210 [O]: the root's displacement this frame (instance +0x20 - +0xC0, the clip having
+            // placed its root off the projected hang root) along the markup moves the grip; past the room to the end
+            // (no next segment, 0x6FE790) it clamps there. Wine l3_chapel S447: (79.7, -303, 41.7) a frame, grip
+            // 0.898 -> 0.9999 on the first frame. Ours: the clip's root translation at its time in her frame [I].
+            if (const anim::Clip* c = anims_.find(s_.clip)) {
+                vec3 r = rootTranslation(*c, s_.clipTime, s_.loop);
+                if (s_.mirror) r.x = -r.x;
+                moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(rotYaw(s_.yaw, r)), segDir(m, s_.ledgeSeg)));
+            }
         placeOnLedge();
         s_.vel = vec3(0);
         break;

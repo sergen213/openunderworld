@@ -263,6 +263,9 @@ public:
     virtual std::optional<float> sincePress(int) const { return std::nullopt; }
     // !0x7145D0: a ceiling lower than the standing height (player data +0x10 = 512.01) over her (condition 0x1F7).
     virtual std::optional<bool> lowCeiling() const { return std::nullopt; }
+    // 0x1FD's "on a sliding slope" (player +0x11D0 > 0 and byte +0x11CF): drive mode asks the floor under her (a slide
+    // face); nullopt = take it from the controller's state (shadow).
+    virtual std::optional<bool> onSlideFloor() const { return std::nullopt; }
     // 0x6F2800: the combat stance (weapon drawn / aiming; condition 0x1FA).
     virtual std::optional<bool> combatMode() const { return std::nullopt; }
     // 0x74FD70: the sprint stamina allows a sprint (condition 0x205).
