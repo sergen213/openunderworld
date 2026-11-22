@@ -1330,6 +1330,10 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // with its frame rate). Wine, the same swim with the stick held right (camera +0x8F8 = yaw set 11, +0xDA0 pitch
     // none): after a mouse nudge the camera circles her at 60 deg/s for 5 s, then 101 deg/s from 7 s (the swing adds
     // 41 deg/s; set 11 from tru.exe's own heading / velocity there predicts 41-43).
+    // A camera reset (LaraCameraRewrite vt 0x8 0x600C10 / vt 0xC 0x600E30 -> 0x5FF7F0; vt 0x6C / 0x74 0x602290) starts the
+    // clock at settings +0xC4 + +0xC8 = 5 + 2 s, the full look-idle weight: forces and level camera records act at
+    // once after a spawn or teleport, not 5 s later [O decomp + camera DTP 0x14].
+    if (snap && !bike) orbit_.idle = 7.0f;
     orbit_.idle = a.look.x != 0 || a.look.y != 0 ? 0.0f : std::min(1000.0f, orbit_.idle + dt);
     // her move less the carrier's (0x5E7EF0)
     const vec3 move = dt > 0 && orbit_.valid ? (s.pos - carrierMove - orbit_.lastPos) / (dt * 60.0f) : vec3(0);
