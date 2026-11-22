@@ -547,7 +547,14 @@ tru.exe's weather (0x546FC0 each frame, after the prims) is a legacy system besi
   0x540B80), and kills it inside / outside instance-relative boxes (flags 0x4020, +0x8C). The emitter flags for
   rain-driven rates (def +0x88 & 0x80: rate lerped by the rain %, stopped without rain) and for open-sky emission
   (def +0x89 & 2: only while the height map at the instance is not above it) exist in 0x540B80 but no particle
-  definition in the data sets either (survey of every object, 2026-11-21) [O].
+  definition in the data sets either (survey of every object, 2026-11-21) [O]. l5_startsnow's snow is its 17
+  `fx_snow_blizzard_arc_startsnow_ist` intros (`FxReal.WeatherEmittersFromData`): veils of speckle sheets (defs 1 / 3:
+  textures 349 / 165 alpha-blended, key blend 1 [O 0x52AE60]; 146 / 150 additive) blown 79 units a 30 Hz frame along
+  the emitter's +y through its segment -3 frame (yaw -2.6 rad), plus faint texture-145 dots within 4741. At the
+  snowlight camera ours draws about 277 speckle sheets and 95 additive dot sheets in view after 400 ticks. Open [U]:
+  the Wine capture there (`weatherfx/orig_snow.png`) shows finer, denser speckles over the far ice wall than ours,
+  and why is not decoded (blend, texture filtering, or the sheets' count / placement). Under Wine the chapter-5 start
+  plays the l5_startsnow intro into l5_valgrind_tunnel with script snow and rain both 0 (2026-11-21).
 - Lightning (0x545950 -> 0x53A650, 0x53A550): every min..max seconds a flash of one of six patterns (0x8A3804
   intensities / 4096 per 30 Hz frame; 2-4 twice, 5 reversed, 6 short) on a light of the +0x4C colour and +0x54
   radius, and the object's event 0x30 there (particles 3 and 6, bolt 0, screen filter 1, thunder). Ours: the light
