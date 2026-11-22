@@ -140,7 +140,8 @@ static DWORD hook(void) {
 static DWORD gFn[8] = {0x441FB0, 0x432850, 0x4428A0}; static int gDeref[8][3], gDOff[8][3], gRes[8], gROff[8], gN = 3;
 static unsigned char gOrig[8][16]; static int gOrigLen[8], gForceLen[8], gFiltArg[8]; static DWORD gFiltAt[8]; // :Fk=hex: log when argument k == *(hex)
 // :L=n (n 5..16): copy the first n bytes verbatim, unchecked (the caller has verified they are whole, position-independent
-// instructions). Copy spec `P` in place of an argument number: the player data *(0xFADB58) (`:P+C94`, `:RP+C94`).
+// instructions). Copy spec `P` in place of an argument number: the player data *(0xFADB58) (`:P+C94`, `:RP+C94`); `Y`:
+// Lara's main anim layer *(*(*(0xE7F094)+0x280)+0x14) (`:Y+8C`, `:RY+8C`).
 static const unsigned char kProlog[6] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0};
 static const unsigned char kProlog2[6] = {0x8B, 0x4C, 0x24, 0x08, 0x8B, 0x11};
 static const unsigned char kProlog3[7] = {0x8B, 0x44, 0x24, 0x04, 0xD9, 0x40, 0x08}; // mov eax,[esp+4]; fld dword [eax+8] (0x7234A0)
@@ -157,9 +158,9 @@ static void callList(void) {
             char* p = q + 1; int isR = *p == 'R'; if (isR) ++p;
             if (*p == 'F') { int k = atoi(p + 1); char* eq = strchr(p, '='); if (k >= 1 && k <= 5 && eq) { gFiltArg[gN] = k; gFiltAt[gN] = (DWORD)strtoul(eq + 1, 0, 16); } continue; }
             if (*p == 'L' && p[1] == '=') { int L = atoi(p + 2); if (L >= 5 && L <= 16) gForceLen[gN] = L; continue; }
-            int k = *p == 'P' ? 9 : atoi(p); char* pl = strchr(p, '+'); char* nx = strchr(p, ':');
+            int k = *p == 'P' ? 9 : *p == 'Y' ? 8 : atoi(p); char* pl = strchr(p, '+'); char* nx = strchr(p, ':');
             int off = (pl && (!nx || pl < nx)) ? (int)strtol(pl + 1, 0, 16) : 0;
-            if ((k < 1 || k > 6) && k != 9) continue;
+            if ((k < 1 || k > 6) && k != 9 && k != 8) continue;
             if (isR) { gRes[gN] = k; gROff[gN] = off; }
             else if (nd < 3) { gDeref[gN][nd] = k; gDOff[gN][nd++] = off; } }
         ++gN; }
@@ -206,6 +207,7 @@ static DWORD callhook(void) {
         B(0x89); B(0x50); B(32);                           // mov [eax+32],edx
         for (int d = 0; d < 3; ++d) if (gDeref[f][d]) {
             if (gDeref[f][d] == 9) { B(0x8B); B(0x15); D(0xFADB58); } // mov edx,[0xFADB58] (player data)
+            else if (gDeref[f][d] == 8) { B(0x8B); B(0x15); D(0xE7F094); B(0x8B); B(0x92); D(0x280); B(0x8B); B(0x52); B(0x14); } // edx = *(*(*(0xE7F094)+0x280)+0x14) (layer)
             else { B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gDeref[f][d] - 1)); } // mov edx,[esp+16+4(k-1)] (the pointer)
             if (gDOff[f][d]) { B(0x81); B(0xC2); D((DWORD)gDOff[f][d]); } // add edx,off
             int at0 = d < 2 ? 36 + 16 * d : 104;           // slot dwords 9..12, 13..16, 26..29
@@ -215,6 +217,7 @@ static DWORD callhook(void) {
             B(0xC7); B(0x40); B(100); D(0);                // mov dword [eax+100],0 (not returned yet)
             B(0xA3); D(vSlot);                             // mov [vSlot],eax
             if (gRes[f] == 9) { B(0x8B); B(0x15); D(0xFADB58); }                          // mov edx,[0xFADB58]
+            else if (gRes[f] == 8) { B(0x8B); B(0x15); D(0xE7F094); B(0x8B); B(0x92); D(0x280); B(0x8B); B(0x52); B(0x14); } // the layer
             else { B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gRes[f] - 1)); }                // mov edx,[esp+16+4(n-1)]
             if (gROff[f]) { B(0x81); B(0xC2); D((DWORD)gROff[f]); }                   // add edx,off
             B(0x89); B(0x15); D(vRes);                                                // mov [vRes],edx
@@ -583,7 +586,8 @@ int main(int argc, char** argv) {
             for (int i = 0; i < nv; ++i) {
                 char bc = vars[i].base;
                 DWORD base = bc == 'd' ? pd : bc == 'p' ? p : bc == 'c' ? c1 : bc == 'L' ? L : bc == 'r' ? (L ? rd32(L + 0x7C) : 0)
-                           : bc == 'k' ? (L ? rd32(L + 0x80) : 0) : bc == 'w' ? (L ? rd32(L + 0x84) : 0) : bc == 's' ? sc : bc == 'm' ? rd32(0xE80534) : 0;
+                           : bc == 'k' ? (L ? rd32(L + 0x80) : 0) : bc == 'w' ? (L ? rd32(L + 0x84) : 0) : bc == 's' ? sc : bc == 'S' ? rd32(0xFADFB0)
+                           : bc == 'm' ? rd32(0xE80534) : 0;
                 DWORD v = bc == 'a' ? rd32(vars[i].off) : base ? rd32(base + vars[i].off) : 0; // a: absolute address
                 if (vars[i].isF) { float fv; memcpy(&fv, &v, 4); printf("\tvar_%s=%g", vars[i].name, fv); }
                 else printf("\tvar_%s=%lx", vars[i].name, v);
