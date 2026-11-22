@@ -957,7 +957,7 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     if (clip.starts_with("perch")) return GS::Perch;
     if (clip.starts_with("pillar")) return GS::Pillar;
     if (has("slide_stumble_off")) return GS::Land; // S821, the slide's run-out onto standable floor (legacy Land)
-    if (clip.starts_with("slope")) return GS::Slide; // slope_landfront / slope_transitionto / slope_slidefront (S801..S812)
+    if (clip.starts_with("slope") && motion != M::Air) return GS::Slide; // slope_landfront / _transitionto / _slidefront (S801..S812); off its end she falls
     if (clip.starts_with("dice")) return GS::Climb;
     if (has("drop_to_ledgeb")) return GS::DropToHang;
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
@@ -977,6 +977,7 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     // a take-off on the ground (ng_running_jump_forwards_lft, ng_standing_jump...) before run / walk: the running jump's
     // clip names hold "run" too
     if (clip.find("jump") != std::string::npos) return GS::JumpPrep;
+    if (has("running_stop") || has("walk_stop")) return GS::Stop; // S57 ng_running_stop (legacy State::Stop)
     if (clip.find("walk") != std::string::npos) return GS::Walk;
     if (clip.find("run") != std::string::npos || clip.find("sprint") != std::string::npos) return GS::Run;
     if (clip.find("turn") != std::string::npos) return GS::Turn;

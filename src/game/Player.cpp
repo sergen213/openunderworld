@@ -4326,11 +4326,14 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     case DriveStep::Motion::Slide: {
-        // the chart's slope states (S801..S821): legacy State::Slide's integration down the fall line; a standable or no
-        // floor leaves her where she is (the chart's ground check and stumble-off states take it from there)
+        // the chart's slope states (S801..S821): legacy State::Slide's integration down the fall line. Off the slide's end
+        // (no floor) she keeps her slide velocity, so she leaves the edge and the chart's ground check takes her into the
+        // fall (self-test ch20_yggdrasil_hall_eitr_pit stopped at the edge in the slide); on a standable floor she stops
+        // (the stumble-off state).
         const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
         const float dl = g ? glm::length(xy(g->normal)) : 0.0f;
         if (g && !standable(s_.pos, *g) && dl >= 1e-4f) slideStep(*g, dl, dt);
+        else if (!g) s_.pos = slide(s_.pos, vec3(xy(s_.vel) * dt, 0), t_.stepUp, true);
         else s_.vel = vec3(0);
         s_.fallStartZ = s_.pos.z;
         s_.ledge = -1;
@@ -4405,6 +4408,11 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     }
+    // The water entry hands her to the swim controller (the chart's swim states are its boundary): from the air once
+    // her root passes the volume's top, on foot past swimDepth (enterWater, tru.exe 0x5D77E0's depth class [O]); the
+    // next drive tick sees SwimSplash / SwimTread and parks the chart (self-test ch20_yggdrasil_hall_eitr_pit fell
+    // through the eitr without entering it).
+    if (d.motion == DriveStep::Motion::Air || d.motion == DriveStep::Motion::Ground || d.motion == DriveStep::Motion::Slide) enterWater();
 }
 
 } // namespace ou::game
