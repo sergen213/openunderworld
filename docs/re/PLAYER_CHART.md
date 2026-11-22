@@ -413,7 +413,17 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
     ch_beam_walk_back S943 bbeam_stepback (start 5, blend 5): 4.356 a tick backward for 10 ticks = its root at 500
     time units (43.56), then the clip's last 27.0 [O-runtime]. The rotation part (r+0x50 / r+0x60 in this mode) is not
     ported [U].
-  - 3: a carried global velocity (DAT_008C7020, flipped by the mirror bits) [U]; ours takes it as mode 1.
+  - 3: an **alignment target** [O decomp]. 0x437120(Q, V) stores a pending rotation (DAT_008C9F20) and displacement
+    (DAT_008C7020); 0x441FB0's case 3 takes them into r+0x20 / r+0x60 (r+0x50 = 0, V's x and Q's y / z negated when
+    the request's mirror differs from the agent's) and clears V; 0x43B870's case 3 moves her by V x each step's share
+    of the window, turned by Q slerped from identity by w. The setters: 0x702BA0(Q, target) (V = the target less her
+    root in her frame, Q relative to her rotation), reached through 0x702D20 (target less the clip's own root offset /
+    rotation at the aligned frame) from the attach / settle actions' AnimTarget functions (0x741130 ledge, 0x74DCD0 /
+    0x74D980 / 0x744B70 ladder, 0x753F80 pillar, 0x753510, 0x753A90, 0x754370, 0x750C90, 0x73E350, 0x73FE10, ...),
+    plus 0x75D9D0 (V = (agent +0xF4, 0, 0), Q identity) and 0x753440 (V = player +0xEC0 less her root and the clip
+    offset). lara.drm's 122 mode-3 patterns are those attaches and settles (pillar / perch / ladder / DICE / ledge
+    reach settles, drop_to_*). Ours takes it as mode 1; the drive's attach blend and Player::familyPose stand in for
+    these targets.
 - **Family holds** (`Player::familyPose`): an attach to a ladder blends onto a rung (Traverse.cpp rungPos; the
   ladder_attach_ground_bottom attach takes the lowest rung, Wine lad_a234 rung 2 at z 940 [I]; else the rung nearest
   where the attach clip ends, rungAt = the 0x74DCD0 alignment [O]), facing the ladder; a pillar onto its axis at her
