@@ -604,10 +604,11 @@ struct MarkupProfile {
     // the ledge markup-class record's (Lara data +0x584, 0x5D5930) short +0x9E: how near a segment end a candidate
     // must lie for the corner tests 0x737B30 / 0x723540 (kinds 28..30)
     int cornerZone = 0;
-    // The pole markup-class records' capsules (0x5D57A0: Lara data +0x594 a horizontal pole, +0x58C an upright one;
-    // record +0x30 / +0x34 / +0x38 the offset in her model frame, +0x54 height, +0x58 radius) for kind 10 (0x6FCB10)
+    // The markup-class records' capsules (0x5D57A0: Lara data +0x594 a horizontal pole, +0x58C an upright one, +0x5B8
+    // a free-climb hold (MUD 0x8000); record +0x30 / +0x34 / +0x38 the offset in her model frame, +0x54 height, +0x58
+    // radius) for kind 10 (0x6FCB10)
     struct Capsule { vec3 offset{0}; float height = 0, radius = 0; };
-    Capsule poleH, poleV;
+    Capsule poleH, poleV, hold;
     uint32_t flags = 0;           // +0x2C (0x80 coming down, 0x40 the ledge class table, 0x400 no gravity)
     int frames = 0;               // +0xA4, else object data +0xBDE
     struct Start { int type; float up, out; };
@@ -842,7 +843,7 @@ private:
         vec2 stickDir{0};
         float controlYaw = 0;
         float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
-        MarkupProfile::Capsule poleH, poleV; // MarkupProfile's pole capsules (kind 10 on poles)
+        MarkupProfile::Capsule poleH, poleV, hold; // MarkupProfile's class-record capsules (kind 10 on poles / holds)
         // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).
         std::array<std::pair<int, vec3>, 8> typeStart{};
         int typeStarts = 0;

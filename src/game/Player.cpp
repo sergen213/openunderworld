@@ -1689,6 +1689,15 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                                          : glm::length(xy(h - c));
         return d <= kCapsuleRadius;
     };
+    // a free-climb hold's triangle (3 points, parallel to the rock) normal, flattened, out toward her root (Climb.cpp
+    // holdNormal)
+    const auto holdOut = [&](const collision::Markup& m) {
+        vec3 c = glm::cross(m.points[2] - m.points[0], m.points[1] - m.points[0]);
+        c.z = 0;
+        if (glm::dot(c, c) < 1e-6f) return vec3(xy(forward()), 0);
+        c = glm::normalize(c);
+        return glm::dot(xy(s_.pos - m.points[0]), xy(c)) < 0 ? -c : c;
+    };
     const std::span<const ClassEntry> record = !q.classes.empty() ? q.classes : classRecord(int(q.record));
     // 0x7232E0: a record's own type list gates the candidate (listed: !(flags bit 1), else flags bit 1)
     const auto recordGate = [](std::span<const uint8_t> types, uint8_t flags, int type) {
@@ -1771,6 +1780,8 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         const vec3 nn = unitOr(vec3(xy(c), 0), vec3(xy(forward()), 0));
                         return glm::dot(xy(s_.pos - h), xy(nn)) < 0 ? -nn : nn;
                     }
+                    if (m.type >= 16 && m.type <= 20) // 0x8000: 0x5C3CC0, the manager's normal [I: the hold triangle's, out toward her]
+                        return holdOut(m);
                     if (m.type == 15 || m.type == 5) { // 0x10 / 0x4000000 (default branch): her root less the point, off the segment's axis
                         const vec3 axis = unitOr(m.points[size_t(si)] - m.points[size_t(si) + 1], vec3(0, 0, 1));
                         const vec3 r = s_.pos - h;
@@ -1789,6 +1800,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 }
                 case 13: return arcAt(from, t);
                 case 24: return h - (q.start + q.v * t);
+                // 2 / 3: MarkUpBox_GetSegmentPos (0x5C39D0) of point 0 / of the candidate's segment (+0x34): the polyline's
+                // point, in the world [O: 0x723AB0 cases 2 / 3]
+                case 2: return m.points.front();
+                case 3: return m.points[size_t(si)];
                 case 28: return q.base;
                 case 4: case 31: return h;
                 default: // 33: a hold's point; ledges are no holds
@@ -1848,6 +1863,17 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         r = dist <= k.radius;
                         break;
                     }
+                    if (q.strict && m.type >= 16 && m.type <= 20) { // a hold's record +0x5B8, as a pole's capsule
+                        const MarkupProfile::Capsule& k = q.hold;
+                        const vec2 f = xy(forward()), left(-f.y, f.x);
+                        const vec3 c0 = arcAt(from, t) + vec3(left * k.offset.x - f * k.offset.y, k.offset.z);
+                        const float hh = 0.5f * k.height;
+                        const float dist = h.z > c0.z + hh ? glm::distance(h, c0 + vec3(0, 0, hh))
+                                           : h.z < c0.z - hh ? glm::distance(h, c0 - vec3(0, 0, hh))
+                                                             : glm::length(xy(h - c0));
+                        r = dist <= k.radius;
+                        break;
+                    }
                     r = capsule(arcAt(from, t), h);
                     break;
                 case 12:
@@ -1865,6 +1891,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         // poles (0x8000000 unless 0x74B5F0 claims it [I: not ported, taken as no]; 0x2000000 /
                         // 0x4000000), pillars (0x10), perches (0x20000), balance beams (0x10000) and jump landings (0x20000000) pass
                         r = true;
+                    } else if (q.strict && m.type >= 16 && m.type <= 20) {
+                        // 0x8000: the manager's normal (0x5C3CC0) against 0x725D00's direction under 0.2 [I: the way
+                        // from the arc's start to the hit; the normal the hold triangle's, out toward her]
+                        r = glm::dot(holdOut(m), unitOr(h - from, vec3(0, 0, -1))) < 0.2f;
                     } else if (q.strict && m.type == 9) { // 0x400000: 0x72B860 of the way in against the ladder's
                         q.unknown = true;                  // normal, not ported
                     } else {
@@ -1966,7 +1996,11 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         const auto& m = col_.markup[li];
         // perches: the ground record's (0x2AB8C) and every data-driven search's (a pillar's top perch, S1201 T2009)
         const bool perch = m.type == 13 && (q.record == JumpRecord::Ground || q.strict);
-        const bool climb = q.strict && (m.type == 9 || m.type == 15 || m.type == 4 || m.type == 5 || m.type == 6 || m.type == 2 || m.type == 14);
+        // free-climb holds (16..20, MUD 0x8000 + a sub-bit): live only with exactly 3 points (0x5D6F00 disables the rest)
+        const bool hold = m.type >= 16 && m.type <= 20 && m.points.size() == 3;
+        const bool climb = q.strict && (m.type == 9 || m.type == 15 || m.type == 4 || m.type == 5 || m.type == 6 || m.type == 2 ||
+                                        m.type == 14 || hold);
+        if (m.type >= 16 && m.type <= 20 && !hold) continue;
         if ((m.type != 1 && !perch && !climb) || int(li) == s_.ledge) continue;
         if (only >= 0 ? int(li) != only : only == -1 && !m.velocity.empty()) continue; // moving: in its own frame
         const int last = int(m.points.size()) - 2;
@@ -1991,7 +2025,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 // pole 1337 from the hang start 633 over the root]; ladders / pillars from their own type's start, else
                 // the query's start
                 // jump landings (2) and balance beams (14) are landed on: the root's arc [I: as a perch]
-                starts[0] = m.type == 4 || m.type == 5 || m.type == 6 ? q.hang : m.type == 2 || m.type == 14 ? q.root : q.start, nStarts = 1;
+                // free-climb holds by the hands' arc too [I: 0x707C60 puts her root 158.025 under the hold's point 0]
+                starts[0] = m.type == 4 || m.type == 5 || m.type == 6 || hold ? q.hang : m.type == 2 || m.type == 14 ? q.root : q.start,
+                nStarts = 1;
                 for (int k = 0; k < q.typeStarts; ++k)
                     if (q.typeStart[size_t(k)].first == m.type) starts[0] = q.typeStart[size_t(k)].second;
             }
@@ -2021,7 +2057,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             if (m.type < 64) present |= uint64_t(1) << m.type;
         for (int type = 1; type < 64 && !q.unknown; ++type) {
             if (!(present >> type & 1)) continue;
-            if (type == 1 || type == 2 || type == 13 || type == 14 || type == 9 || type == 15 || type == 4 || type == 5 || type == 6) continue;
+            if (type == 1 || type == 2 || type == 13 || type == 14 || type == 9 || type == 15 || type == 4 || type == 5 || type == 6 ||
+                (type >= 16 && type <= 20))
+                continue;
             if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
             if (std::any_of(record.begin(), record.end(), [&](const ClassEntry& e) { return entryGate(e, type); })) q.unknown = true;
         }
@@ -2528,7 +2566,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone);
-    q.poleH = p.poleH, q.poleV = p.poleV;
+    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(s_.ledge)].type) : 0;
