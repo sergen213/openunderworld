@@ -617,8 +617,10 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
         }
     }
     if (cls) ctx.effect(JEffect::AttachTarget, float(cls)); // the class handler that would run (not ported here)
-    // the setters of these classes detach the old markup and attach the jump target (0x74ED30 ...: 0x6FDBE0, 0x707B90)
-    if (attachTargetClass(cls)) attachChartMarkup(ctx, jt(ctx));
+    // the setters of these classes detach the old markup and attach the jump target (0x74ED30 ...: 0x6FDBE0, 0x707B90);
+    // 602 / 611's 0x74DCD0 only a ladder (+0xA64 MUD & 0x400000), with +0xCDC = 0
+    const bool ladderOnly = cls == 602 || cls == 611;
+    if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
 }
 
 // 2001 (0x75EF70: camera vfunc +0xB0 (0)), 2002 (0x75EF90: +0xB0 (1)), 2005 (enter and exit 0x75EF50: +0xB4); 2001 /

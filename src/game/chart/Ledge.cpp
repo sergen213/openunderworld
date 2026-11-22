@@ -683,9 +683,11 @@ std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot
     return braceRay(ctx, e, n, p, lat);
 }
 
+// 602 / 611 (0x74DCD0) attach only a ladder target (MUD 0x400000): markupAttachTarget checks it.
 bool attachTargetClass(int cls) {
     switch (cls) {
-    case 600: case 601: case 603: case 605: case 606: case 610: case 614: case 621: case 624: case 625: case 626: case 627: return true;
+    case 600: case 601: case 602: case 603: case 605: case 606: case 610: case 611: case 614: case 621: case 624: case 625:
+    case 626: case 627: return true;
     default: return false;
     }
 }
