@@ -624,6 +624,34 @@ int pillarLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a, int lc
     return bits;
 }
 
+// 0x744920: the ladder lookahead (markup flag 0x400000), limb class 5 (up) / 6 (down) [O]. The rung she holds
+// (0x72B8C0: her root's depth under the top point less Lara data float +0x784, over the spacing +0x770, rounded) and
+// the rung count (0x734B70: trunc(trunc(the first segment's length) / spacing) + 1), as Traverse.cpp places her on
+// them; up: rung < 1 -> 4; down: rung >= count - byte +0x774 -> 4. Then the pillar's cast (0x70B5A0 in her root
+// bone's frame, moved by -row1 x s): up s = +0x78C from local z +0x78E to +0x78E + +0x78A, down s = +0x792 from
+// +0x794 to +0x794 - +0x790; a hit -> 2 (up) / 1 (down).
+int ladderLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a, int lc) {
+    if (lc != 5 && lc != 6) return 0;
+    const auto seg = ctx.markupSegment(a.markup, 0);
+    if (!seg) return 0;
+    const auto& d = ctx.chart().charts();
+    const float spacing = d.data<float>(0x770);
+    if (!(spacing > 0)) return 0;
+    const int rung = int(std::floor((seg->first.z - ctx.position().z - d.data<float>(0x784)) / spacing + 0.5f));
+    const int count = int(std::trunc(std::trunc(glm::length(seg->second - seg->first)) / spacing)) + 1;
+    int bits = 0;
+    if (lc == 5 ? rung < 1 : count - int(d.data<uint8_t>(0x774)) <= rung) bits = 4;
+    const float s = float(pd(ctx, lc == 5 ? 0x78C : 0x792)), from = float(pd(ctx, lc == 5 ? 0x78E : 0x794));
+    const float reach = lc == 5 ? float(pd(ctx, 0x78A)) : -float(pd(ctx, 0x790));
+    if (reach != 0 && ctx.hasCollision()) {
+        const float h = ctx.heading();
+        const glm::vec3 back(-std::cos(h), -std::sin(h), 0);
+        const glm::vec3 o = ctx.rootBone() - back * s;
+        if (ctx.playerRay(o + glm::vec3(0, 0, from), o + glm::vec3(0, 0, from + reach))) bits |= lc == 5 ? 2 : 1;
+    }
+    return bits;
+}
+
 void markupContactProbe(ChartContext& ctx) {
     int& out = ctx.chart().field(0xF0);
     const auto a = ctx.attachedMarkup();
@@ -640,8 +668,10 @@ void markupContactProbe(ChartContext& ctx) {
             const auto shelf = ctx.ledgeShelf(a.markup, a.param);
             if (propI(ctx, 0x1F1) == 628 && shelf.value_or(false)) ++ctx.chart().stats.unportedActions[404]; // 0x74BCF0
             else bits |= ledgeLookahead(ctx, a);
-        } else if ((m & (0x1000000 | 0x10000 | 0x400000)) != 0) {
-            ++ctx.chart().stats.unportedActions[404]; // 0x7327F0 / 0x7337F0, 0x744920
+        } else if ((m & 0x400000) != 0) {
+            bits |= ladderLookahead(ctx, a, limbClass(ctx));
+        } else if ((m & (0x1000000 | 0x10000)) != 0) {
+            ++ctx.chart().stats.unportedActions[404]; // 0x7327F0 / 0x7337F0
         } else if (m & 0x10) {
             bits |= pillarLookahead(ctx, a, limbClass(ctx));
         } else if (m & 0x8000000) {

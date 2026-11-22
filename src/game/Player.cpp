@@ -1735,17 +1735,27 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 return cls;
             };
             const auto unitOr = [](vec3 v, vec3 none) { return glm::length(v) > 1e-4f ? glm::normalize(v) : none; };
+            const ClassEntry* curEntry = nullptr; // the entry whose tests run (point source 5's offset)
             const auto point = [&](uint8_t src) {
                 switch (src) {
                 case 0: return s_.pos; // her root (her instance's position)
                 case 1: // 0x723AB0 case 1: the MarkUp box's centre (+0x34), in the world (the built-in records: the hit)
                     return q.strict ? m.centre : h;
-                // 5: 0x728F00's point, her root plus the test's offset turned by her rotation [I: the offset is 0]
-                case 5: return s_.pos;
+                case 5: { // 0x729420 / 0x728F00: her root plus the entry's offset turned by her rotation (model X = left,
+                    // -Y = facing, Z = up) [O: disasm 0x729443..0x72947C; the query's own +0x90 offset taken as 0 [I]]
+                    const vec3 o = curEntry ? curEntry->offset : vec3(0);
+                    const vec2 f = xy(forward()), left(-f.y, f.x);
+                    return s_.pos + vec3(left * o.x - f * o.y, o.z);
+                }
                 case 8: return vec3(q.stickDir, 0); // 0x49F5D0 of the stick's world yaw (0xFADFB0 +0xB0 +8)
                 case 9: return vec3(xy(forward()), 0); // her facing axis (instance matrix +0x10, negated)
                 case 11: // 0x6FE7E0, the markup's normal by its MUD flags
                     if (m.type == 9) return ladderOut(m); // 0x400000: 0x72BA40 [I: its manager call untraced; ours' wall side]
+                    if (m.type == 4 || m.type == 6) { // 0x8000000 / 0x2000000: 0x72B4A0, cross(segment, up), toward her [I sign]
+                        const vec3 c = glm::cross(m.points[size_t(si) + 1] - m.points[size_t(si)], vec3(0, 0, 1));
+                        const vec3 nn = unitOr(vec3(xy(c), 0), vec3(xy(forward()), 0));
+                        return glm::dot(xy(s_.pos - h), xy(nn)) < 0 ? -nn : nn;
+                    }
                     if (m.type == 15) { // 0x10 (default branch): her root less the point, off the segment's axis
                         const vec3 axis = unitOr(m.points[size_t(si)] - m.points[size_t(si) + 1], vec3(0, 0, 1));
                         const vec3 r = s_.pos - h;
@@ -1846,6 +1856,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             };
             if (!q.classes.empty() && !recordGate(q.recordTypes, q.recordFlags, m.type)) return;
             const auto hit = std::find_if(record.begin(), record.end(), [&](const ClassEntry& e) {
+                curEntry = &e;
                 return entryGate(e, m.type) && std::all_of(e.tests.begin(), e.tests.end(), pass);
             });
             if (hit == record.end()) return;
@@ -1857,6 +1868,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             if (!q.result.empty() && recordGate(q.resultTypes, q.resultRecordFlags, m.type))
                 for (const ClassEntry& e : q.result) {
                     if (!entryGate(e, m.type)) continue;
+                    curEntry = &e;
                     const bool wasUnknown = std::exchange(q.unknown, false);
                     const bool ok = std::all_of(e.tests.begin(), e.tests.end(), pass);
                     const bool unsure = std::exchange(q.unknown, wasUnknown);
@@ -1887,7 +1899,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         const auto& m = col_.markup[li];
         // perches: the ground record's (0x2AB8C) and every data-driven search's (a pillar's top perch, S1201 T2009)
         const bool perch = m.type == 13 && (q.record == JumpRecord::Ground || q.strict);
-        const bool climb = q.strict && (m.type == 9 || m.type == 15);
+        const bool climb = q.strict && (m.type == 9 || m.type == 15 || m.type == 4 || m.type == 6);
         if ((m.type != 1 && !perch && !climb) || int(li) == s_.ledge) continue;
         if (only >= 0 ? int(li) != only : only == -1 && !m.velocity.empty()) continue; // moving: in its own frame
         const int last = int(m.points.size()) - 2;
@@ -1933,7 +1945,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     // markup passes (`only` >= 0: one markup, which says nothing of the other types).
     if (q.strict && only < 0 && best.markup < 0 && !record.empty())
         for (int type = 0; type < 64 && !q.unknown; ++type) {
-            if (type == 1 || type == 13 || type == 9 || type == 15) continue; // swept above (strict: all four)
+            if (type == 1 || type == 13 || type == 9 || type == 15 || type == 4 || type == 6) continue; // swept above (strict)
             if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
             if (std::any_of(record.begin(), record.end(), [&](const ClassEntry& e) { return entryGate(e, type); })) q.unknown = true;
         }
