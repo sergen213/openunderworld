@@ -1943,14 +1943,25 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         // poles (0x8000000 unless 0x74B5F0 claims it [I: not ported, taken as no]; 0x2000000 /
                         // 0x4000000), pillars (0x10), perches (0x20000), balance beams (0x10000) and jump landings (0x20000000) pass
                         r = true;
-                    } else if (q.strict && m.type >= 16 && m.type <= 20) {
-                        // 0x8000: the manager's normal (0x5C3CC0) against 0x725D00's direction under 0.2 [I: the way
-                        // from the arc's start to the hit; the normal the hold triangle's, out toward her]
-                        r = glm::dot(holdOut(m), unitOr(h - from, vec3(0, 0, -1))) < 0.2f;
-                    } else if (q.strict && m.type == 9) {
-                        // 0x400000: 0x72B860(normal . way in): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
-                        // 0x72B860..0x72B8B8]; the normal the ladder's wall side (ladderOut), the way in as for holds [I]
-                        r = std::cos(glm::radians(q.ladderFaceDeg)) < -glm::dot(ladderOut(m), unitOr(h - from, vec3(0, 0, -1)));
+                    } else if (q.strict && ((m.type >= 16 && m.type <= 20) || m.type == 9)) {
+                        // 0x725D00 hands 0x6FC6B0 two ways: her own velocity's direction (0x6E5A10, normalized, else
+                        // straight down) and the query start less the hit led by the motion (0x7233E0; normalized,
+                        // else straight down); 0x6FC6B0 takes the first flattened (not renormalized), the second
+                        // flattened when that is nil (0x49AF50), and passes when both are nil [O: decomp 0x725D00,
+                        // 0x6FC6B0]
+                        vec3 way = unitOr(s_.vel, vec3(0, 0, -1));
+                        way.z = 0;
+                        if (glm::dot(way, way) < 1e-12f) way = vec3(xy(unitOr(from - h, vec3(0, 0, -1))), 0);
+                        if (glm::dot(way, way) < 1e-12f) {
+                            r = true;
+                        } else if (m.type == 9) {
+                            // 0x400000: 0x72B860(normal . way): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
+                            // 0x72B860..0x72B8B8]; the normal (0x5C3CC0) the ladder's wall side, ladderOut [I]
+                            r = std::cos(glm::radians(q.ladderFaceDeg)) < -glm::dot(ladderOut(m), way);
+                        } else {
+                            // 0x8000: normal . way under 0.2 [O]; the normal the hold triangle's, out toward her [I]
+                            r = glm::dot(holdOut(m), way) < 0.2f;
+                        }
                     } else {
                         r = wallSide();
                     }
