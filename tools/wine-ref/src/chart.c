@@ -338,7 +338,7 @@ int main(int argc, char** argv) {
     if (getenv("VARS")) { char buf[512]; strncpy(buf, getenv("VARS"), 511); buf[511] = 0;
         for (char* t = strtok(buf, ","); t && nv < 16; t = strtok(0, ",")) {
             Var v = {{0}}; char b[8] = {0}, f[4] = {0}; unsigned off;
-            if (sscanf(t, "%23[^:]:%7[^:]:%x:%3s", v.name, b, &off, f) >= 3) { v.base = b[0]; v.off = off; v.isF = f[0] == 'f'; vars[nv++] = v; } } }
+            if (sscanf(t, "%23[^:]:%7[^:]:%x:%3s", v.name, b, &off, f) >= 3) { v.base = !strcmp(b, "pd") ? 'd' : b[0]; v.off = off; v.isF = f[0] == 'f'; vars[nv++] = v; } } }
 
     SetForegroundWindow(w); timeBeginPeriod(1);
     DWORD cave = hook(), EN = cave + 0x100, PO = cave + 0x104, AK = cave + 0x108;
@@ -441,7 +441,7 @@ int main(int argc, char** argv) {
                 }
             }
             for (int i = 0; i < nv; ++i) {
-                DWORD base = vars[i].base == 'p' ? p : vars[i].base == 'c' ? c1 : pd, v = base ? rd32(base + vars[i].off) : 0;
+                DWORD base = vars[i].base == 'd' ? pd : vars[i].base == 'p' ? p : vars[i].base == 'c' ? c1 : 0, v = base ? rd32(base + vars[i].off) : 0;
                 if (vars[i].isF) { float fv; memcpy(&fv, &v, 4); printf("\tvar_%s=%g", vars[i].name, fv); }
                 else printf("\tvar_%s=%lx", vars[i].name, v);
             }
