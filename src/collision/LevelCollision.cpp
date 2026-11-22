@@ -175,15 +175,31 @@ void decodeMarkup(Unit& u, Pointer level, CollisionMesh& out, std::vector<std::s
             mk.boxMin = lo - mk.centre, mk.boxMax = hi - mk.centre;
         }
         // Camera commands {u32 command, args} x 0x18 bytes (+0x64 count, +0x68 list; tru.exe 0x5FE800 -> 0x6019D0):
-        // command 0x12 points at one of the unit's camera records.
-        if (const uint32_t nc = u.at<uint32_t>(*item, 0x64); nc && records)
+        // all of them are kept (Markup::cameraCommands); command 0x12 points at one of the unit's camera records.
+        if (const uint32_t nc = u.at<uint32_t>(*item, 0x64); nc && nc < 64)
             if (const auto cmds = u.ptr({item->section, item->offset + 0x68}))
-                for (uint32_t k = 0; k < nc; ++k)
-                    if (u.at<uint32_t>(*cmds, 0x18 * k) == 0x12)
-                        if (const auto r = u.ptr({cmds->section, cmds->offset + 0x18 * k + 4});
+                for (uint32_t k = 0; k < nc; ++k) {
+                    const uint32_t at = 0x18 * k;
+                    Markup::CameraCommand cc;
+                    cc.command = u.at<uint32_t>(*cmds, at);
+                    for (uint32_t i = 0; i < 5; ++i) cc.arg[i] = u.at<float>(*cmds, at + 4 + 4 * i);
+                    if (cc.command == 0x17 || cc.command == 0x18) // {angle, speed, dir, count, forces*}
+                        if (const uint32_t nf = u.at<uint32_t>(*cmds, at + 0x10); nf && nf < 16)
+                            if (const auto f = u.ptr({cmds->section, cmds->offset + at + 0x14}))
+                                for (uint32_t i = 0; i < nf; ++i) {
+                                    Markup::CameraForce force;
+                                    force.type = u.at<uint32_t>(*f, 0x44 * i);
+                                    force.k = u.at<float>(*f, 0x44 * i + 4);
+                                    for (uint32_t j = 0; j < 64; ++j) force.curve[j] = u.at<uint8_t>(*f, 0x44 * i + 4 + j);
+                                    cc.forces.push_back(force);
+                                }
+                    if (cc.command == 0x12 && records)
+                        if (const auto r = u.ptr({cmds->section, cmds->offset + at + 4});
                             r && r->section == records->section && r->offset >= records->offset &&
                             (r->offset - records->offset) % 0x70 == 0 && (r->offset - records->offset) / 0x70 < numRecords)
                             mk.camera = record(*r);
+                    mk.cameraCommands.push_back(std::move(cc));
+                }
         out.markup.push_back(std::move(mk));
     }
 }
