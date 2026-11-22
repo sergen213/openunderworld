@@ -859,7 +859,12 @@ std::pair<vec3, float> Player::attachPose(int markup, int seg, float t, float si
     const bool pole = isPole(m);
     para = pole && para;
     const float yaw = yawOf(para ? dir * side : pole ? out : -out);
-    const vec3 off = para ? anims_.poleParaHandOffset : pole ? anims_.poleHandOffset : anims_.hangHandOffset;
+    vec3 off = para ? anims_.poleParaHandOffset : pole ? anims_.poleHandOffset : anims_.hangHandOffset;
+    // The chart drive sets ledgeGripOut_ (setLedgeGripOut): a ledge hang's root out of the line by that much more than
+    // ledgeb_idle's wrist reach. Legacy keeps 0 (its hand IK puts the wrists on the line; ik_pose checks that).
+    // The drive also hangs her with no sideways offset: tru.exe's attach frame origin x (0x744E90) equals her root x in
+    // the bedroom and chapel logs (ChartB), where ledgeb_idle's wrists sit 6.3 to the side [O-runtime].
+    if (!pole && ledgeGripOut_ != 0) off.y -= ledgeGripOut_, off.x = 0;
     return {pointOn(m, seg, t) - rotYaw(yaw, off), yaw};
 }
 
@@ -3955,8 +3960,21 @@ void Player::drive(const DriveStep& d, float dt) {
             // The clip it replaces plays on under the crossfade (tru.exe 0x4428A0 -> 0x433D40 sets the layer fade over
             // the pattern's blend frames; the new clip's lead runs at its first frame meanwhile) [O], so the root
             // motion fades from the old clip's into the new one's [I: the linear weight].
-            if (d.crossfade > 0 && anims_.find(s_.clip)) fade_ = {s_.clip, s_.clipTime, s_.loop, s_.mirror, d.crossfade, d.crossfade};
-            else fade_ = {};
+            if (d.crossfade > 0 && anims_.find(s_.clip)) {
+                fade_ = {s_.clip, s_.clipTime, s_.loop, s_.mirror, d.crossfade, d.crossfade};
+                // The key-0 root offset between the two clips (the new clip's against the old one's) carries her over
+                // the fade, twice over, on an ease-in (w^2): Wine S245 moves 2 x ng_planted_jump_forward's key-0 offset
+                // 85.1 (ng_idle's 0) in its 4-frame fade, per tick 170 x (2k - 1) / 64 (ChartA, W/chart/diff/A/SUMMARY.md)
+                // [O-runtime; the mechanism in tru.exe's layer blend 0x4428A0 / 0x441FB0 is not traced: U].
+                if (const anim::Clip* nc = anims_.find(d.clip); nc && anims_.find(s_.clip)) {
+                    vec3 on = rootTranslation(*nc, 0, false), oo = rootTranslation(*anims_.find(s_.clip), 0, false);
+                    if (d.mirror) on.x = -on.x;
+                    if (s_.mirror) oo.x = -oo.x;
+                    fade_.offset = 2.0f * (on - oo);
+                }
+            } else {
+                fade_ = {};
+            }
         }
         s_.clip = d.clip, s_.loop = d.loop, s_.mirror = d.mirror, s_.clipRate = 1;
         s_.clipMix.clear(), s_.mix = 0;
@@ -3987,8 +4005,9 @@ void Player::drive(const DriveStep& d, float dt) {
             if (fade_.mirror) od.x = -od.x;
             fade_.time = o1;
             fade_.left = std::max(0.0f, fade_.left - dt);
+            const float wOld = 1.0f - (fade_.left + std::min(dt, fade_.total - fade_.left)) / fade_.total;
             const float wNew = 1.0f - fade_.left / fade_.total;
-            world = glm::mix(toWorld(od), world, wNew);
+            world = glm::mix(toWorld(od), world, wNew) + toWorld(fade_.offset * (wNew * wNew - std::max(0.0f, wOld) * std::max(0.0f, wOld)));
         } else {
             fade_ = {};
         }
@@ -4049,8 +4068,9 @@ void Player::drive(const DriveStep& d, float dt) {
             s_.pos += world;
             break;
         }
-        // hands on the markup: the root motion's part along it moves the grip (shimmy), the rest is the hang pose
-        moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
+        // hands on the markup: in the shimmy (d.slide) the root motion's part along it moves the grip; otherwise the
+        // grip stays (tru.exe +0xC98) and the rest of the clip's motion is the hang pose
+        if (d.slide) moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
         placeOnLedge();
         s_.vel = vec3(0);
         break;

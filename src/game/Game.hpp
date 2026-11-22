@@ -722,6 +722,7 @@ public:
         int markup = -1, seg = 0;
         float t = 0, side = 1;
         bool snap = false;
+        bool slide = false; // Hang + snap: the root motion along the markup moves the grip (the shimmy)
         vec3 blendFrom{0}, blendTo{0};
         float yawFrom = 0, yawTo = 0, blend = 0;
         State coarse = State::Idle; // what World's subsystems read as her state (camera, interactions, carriers)
@@ -730,6 +731,8 @@ public:
     void setVelocity(vec3 v) { s_.vel = v; }
     void setYaw(float yaw) { s_.yaw = yaw; }
     std::pair<vec3, float> hangPose(int markup, int seg, float t, float side) const { return attachPose(markup, seg, t, side); }
+    // Extra distance of a ledge hang's root out of the ledge line (attachPose); the chart drive sets Wine's (0 = legacy).
+    void setLedgeGripOut(float out) { ledgeGripOut_ = out; }
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
@@ -917,8 +920,9 @@ private:
     bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
     bool reseated_ = false; // this tick only (takeReseat)
     uint32_t placements_ = 0; // placements()
+    float ledgeGripOut_ = 0; // setLedgeGripOut()
     // drive(): the clip a fresh chart clip replaced, playing on under the crossfade (its root motion fades out)
-    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0; } fade_;
+    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0; vec3 offset{0}; } fade_;
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch, prevCameraYaw_ = 0;

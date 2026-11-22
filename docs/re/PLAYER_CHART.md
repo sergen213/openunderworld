@@ -313,8 +313,13 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
 - **Motion** by the chain: *Blend* from the tick an attach (actions 230 / 232 setting +0xC94) happens until the state
   changes, over `ChartRuntime::remainingFrames` (the clip plus its node's queue): from her pose onto the hang pose of
   the attached point (action 236 AlignRootMotionToTarget, unported) [I]. *Hang* while +0xC94 is set and the chain runs
-  action 420: `ledgeb_*` clips (not jumps / climbs) keep her hands on the markup, the root motion along it moving the
-  grip (`moveAlong`, `placeOnLedge`); take-offs and the pull up move freely by root motion. *Air* while the chain runs
+  action 420: `ledgeb_*` clips (not jumps / climbs) keep her hands on the markup; only the shimmy states (S459, S432,
+  S441) let the root motion along it move the grip +0xC98 (`moveAlong`, `placeOnLedge`): the attach and idle clips'
+  sideways motion leaves it, and the ledge end S448 stops her dead (Wine 973: +0xC98 stays 0.907 until the stick
+  press, so the end bit 642 holds) [O-runtime]. The hang root sits 161 out of the ledge line (Wine 973 / 1155, M01;
+  `Player::setLedgeGripOut`, 19.3 more than ledgeb_idle's wrist reach; legacy keeps the wrists on the line) [O-runtime:
+  the tru.exe term is not located; 0x76D270's attach frame has the markup point +0xCA0 as origin]. Take-offs and the
+  pull up move freely by root motion. *Air* while the chain runs
   action 510: the instance velocity under gravity (0x5DB370) with the capsule's contacts; a floor stops the descent and
   the chart lands through its ground check (event 455). Each flight tick with a jump target re-aims the velocity onto
   its hang root with the time left (+0x77C, 0x73EDC0 [O]: aimAt). *Ground* otherwise: root motion with her ground
@@ -331,7 +336,11 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   (mirrored: left) at Tuning::hangLeap*, `ledgeb_jump_up` up (hangJumpUpVz, aimed). Leaving the flight chain zeroes the
   velocity.
 - **Coarse state**: `PlayerState::state` is set from the motion and clip (Jump / Fall, Hang / Shimmy / ClimbUp, Land,
-  Crouch, Roll, Walk, Run, Turn, Idle) for World's subsystems (camera, interactions, carriers).
+  Crouch, Roll, Walk, Run, Turn, Idle; the families by clip set: Beam `bbeam_`, PoleHang `hpole_`, Ladder, Perch,
+  Pillar, Climb `DICE_`, DropToHang, HangJump `ledgeb_jump*` in the air) for World's subsystems (camera, interactions,
+  carriers) [I].
+- **Walk**: the walk button holds the stick level at the middle of the state's 0x20A..0x20B band, SCCTest_MoveSpeed's
+  walk zone (tru.exe folds it into the magnitude 0x191 reads, 0xFADFB0 -> +0xB0 -> +0x18 [U]) [I].
 - **Input sources** (the table above) in drive mode: `velocity()` = PlayerState::vel / 30 (the drive's own integrated
   velocity), `boneRise()` = the last move's root rise, `attachedMarkup()` = the chart's +0xC94 only (its param / point
   follow her grip), `jumpTarget()` empty (the chart's own +0xA64, chartTarget, only); the kind-2 controller bridge is

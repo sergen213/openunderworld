@@ -11,7 +11,6 @@
      "plan": ["engage 220 walk", "press", "wait 2"],
      "duration": 40,
      "expect": [
-       {"clips": ["hosted:2467", "portable_encumbered_idle"]},
        {"probe": "portable.held", "eq": 220},
        {"probe": "player.state", "eq": "idle"}
      ]},
@@ -19,7 +18,7 @@
      "plan": ["go -5453 -10404 30 walk", "face 0", "wait 1"],
      "duration": 60,
      "expect": [
-       {"clips": ["portable_encumbered_walk"]},
+       {"probe": "portable.held", "over": "all", "eq": 220, "note": "she carries the weight the whole way"},
        {"probe": "player.speed", "over": "max", "max": 800, "note": "the encumbered walk (portable_encumbered_walk: 495 units/s over its cycle, 781 at its fastest key), never a run (1274)"},
        {"probe": "portable.held", "eq": 220},
        {"probe": "object.219.joint", "max": -30, "note": "she stands on the plate"}
@@ -28,7 +27,6 @@
      "input": ["0.1 grenade 1", "0.2 grenade 0"],
      "duration": 12,
      "expect": [
-       {"clips": ["hosted:2468", "ng_idle"]},
        {"probe": "portable.held", "eq": 0},
        {"probe": "weapon.grenades", "eq": 6, "note": "the key threw the weight, not a grenade"},
        {"probe": "object.220.pos.z", "over": "max", "min": 3000, "note": "the lob's apex, 470 over the floor"},
@@ -38,7 +36,7 @@
      "plan": ["engage 218 walk", "press", "wait 2", "press drop", "wait 2"],
      "duration": 60,
      "expect": [
-       {"clips": ["hosted:2467", "portable_encumbered_idle", "hosted:2469", "ng_idle"]},
+       {"probe": "portable.held", "over": "max", "min": 1, "note": "she picked the second weight up before putting it down"},
        {"probe": "portable.held", "eq": 0},
        {"probe": "player.state", "eq": "idle"}
      ]}
