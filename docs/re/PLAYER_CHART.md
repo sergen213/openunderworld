@@ -444,14 +444,20 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
          ladder_attach_ground_bottom, S1117 ladder_attach_air_bad, S1255 lad_attach_down). Setter: action 230's
          ladder class 602 / 611, 0x74DCD0 (target = the rung root from 0x7350B0 at +0x9F0, facing -normal), and
          505's 0x74D980. Replaces: `stateEntered`'s attach blend and `Player::familyPose`'s rung choice for these
-         states. Status: not started.
+         states. Status: mechanism and the 0x74DCD0 call on branch agent/ChartBlend-m3wip (6bdde4a, not merged).
+         The window now carries the attach the way Wine does (lad_a234_attach: a constant 19.5 a tick down to the rung,
+         position error mean 48 -> 7). But its target is familyPose's rungPos, z 933.9, where tru.exe's 0x7350B0
+         puts the rung root at 940.24. One rung-rounding step is lost, so climb_up / fast_up / top_exit reach S1085
+         19 ticks late. Next: port 0x7350B0 (the +0x9F0 point snapped by 0x734C00, plus +0x784 along the ladder
+         axis and +0x780 along the normal from 0x734830's frame) as the target.
       2. Pillar (kind 1: S1185-S1187, S1189, S1230). Setter: 0x753F80 (PillarAttachGroundAnimTarget) and kin.
          `seededOffset` (ChartDrive 6bd15fa) stays for seeded `--chart-state` starts. Status: not started.
       3. Perch (kind 1: S827, S829-S832, S872). Setters among 0x753510 / 0x753A90 / 0x754370 / 0x750C90. Status:
          not started.
       4. Ledge (kind 2: ledgeb_attach_down, the reach settles, drop_to_ledgeb / _ledgeu, the runoffs; S277
-         ledge_mantle is kind 1). Setter: 0x741130. Waits on the node start (WineChartTrace maproom ANIM take) and on
-         0x6F0FF0. Status: blocked.
+         ledge_mantle is kind 1). Setter: 0x741130. Graph-node plays start at start - blend as kind-1 ones do (WineChartTrace
+         drop/maproom_south_run_birth_anim: R995 at -4, R954 at -4) [O-runtime]; waits on 0x6F0FF0 (the kind-2
+         alignment object). Status: blocked.
       5. DICE (kind 2: R116 / R117 / R201 / R202). Same blockers as ledge. Status: blocked.
     - Stays as it is: the holds after the attach (Motion::Hang, the 420 chains, the beam pin / grip follow), seeded
       starts, legacy.
