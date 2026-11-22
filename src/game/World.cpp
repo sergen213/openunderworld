@@ -962,21 +962,61 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     const float k55 = glm::radians(55.0f), k90 = glm::radians(90.0f), kFree = mode.yawRange;
     const float k70 = glm::radians(70.0f), k25 = glm::radians(25.0f);
     const vec3 rec1 = mode.offset, zones = mode.zones;
+    // The mode: legacy traversal picks it by her state class; when the chart drives her, by what its states ask for
+    // (state property 1102 -> message 0x44E -> 0x7683B0 -> RequestMode 0x5E8210: the last request holds while a state
+    // without the property runs) [O: traversal_states.json]. 53 / 56 / 57 take the mode of the markup she hangs on or
+    // (56 / 57) stands on (0x5E7D70 / 0x5E7D40 -> 0x5E7DB0: ledge 1 -> 11, ladder 9 -> 10, pillar 15 -> 17, perch 13 ->
+    // 16, beam 14 -> 3, free-climb 16..20 -> 4, pole 4 / 6 -> 9, else 1).
+    int want = 1;
     switch (s.state) {
-    case State::Climb: mode = {4, {0, 0, 79.01f}, zones, 1264.22f, false, k90, -k55, k55, true, k70, k25}; break; // record 10
+    case State::Climb: want = 4; break;
+    case State::Hang: case State::Shimmy: case State::DropToHang: case State::ClimbUp: want = 11; break; // [I] the last two
+    case State::SwimSurface: case State::SwimTread: case State::SwimSplash: want = 20; break;
+    case State::SwimUnder: case State::SwimDive: case State::Surfacing: case State::SwimDodge: want = 19; break;
+    case State::Ladder: want = 10; break;
+    case State::Perch: want = 16; break;
+    case State::Pillar: want = 17; break;
+    case State::Beam: want = 3; break;
+    case State::PoleHang: want = 9; break;
+    default: break;
+    }
+    if (const int r = driver_ ? driver_->cameraModeRequest() : -1; r >= 0) {
+        const auto markupMode = [&](bool standing) {
+            const int m = s.state == State::Climb ? s.climbHold : s.ledge;
+            if (m < 0 || size_t(m) >= col_.markup.size()) return standing ? want : 1;
+            switch (col_.markup[size_t(m)].type) {
+            case 1: return 11;
+            case 9: return 10;
+            case 15: return 17;
+            case 13: return 16;
+            case 14: return 3;
+            case 16: case 17: case 18: case 19: case 20: return 4;
+            case 4: case 6: return 9;
+            default: return 1;
+            }
+        };
+        switch (r) {
+        case 14: case 15: case 37: case 38: case 39: case 21: case 22: case 42: case 57: want = 11; break; // [I] 21 / 22 / 42 / 57 by 11's
+        case 2: want = 1; break;
+        case 53: want = markupMode(false); break;
+        case 56: want = markupMode(true); break;
+        case 1: case 3: case 4: case 9: case 10: case 11: case 16: case 17: case 19: case 20: want = r; break;
+        default: break; // modes ours has no entry for (5, 6, 7, 8, 18, 43, 46, 47) keep her state class's [U]
+        }
+    }
+    switch (want) {
+    case 4: mode = {4, {0, 0, 79.01f}, zones, 1264.22f, false, k90, -k55, k55, true, k70, k25}; break; // record 10
     // Hang states request mode 37 (shimmy and the idle hangs S434 / S436 / S443 / S446 / S447 / S506, state property 1102)
     // or 11 (S254 / S257..S260 / S452 / S505): one mode-list entry ({37, 39, 38} and {11, 15, 14} carry the same commands).
-    case State::Hang: case State::Shimmy: case State::DropToHang: case State::ClimbUp: // [I] the last two
-        mode = {11, {0, 63.21f, 316.06f}, zones, 1896.3f, false, k90, -k55, k55, true, k70, k25}; break; // record 8, distance 1896.3
-    case State::SwimSurface: case State::SwimTread: case State::SwimSplash: // command 8 (-40, 30)
-        mode = {20, rec1, zones, 1264.22f, false, kFree, glm::radians(-70.0f), glm::radians(-10.0f)}; break;
-    case State::SwimUnder: case State::SwimDive: case State::Surfacing: case State::SwimDodge: // record 41 (no dead zones), command 8 (-5, 80)
+    case 11: mode = {11, {0, 63.21f, 316.06f}, zones, 1896.3f, false, k90, -k55, k55, true, k70, k25}; break; // record 8, distance 1896.3
+    case 20: mode = {20, rec1, zones, 1264.22f, false, kFree, glm::radians(-70.0f), glm::radians(-10.0f)}; break; // command 8 (-40, 30)
+    case 19: // record 41 (no dead zones), command 8 (-5, 80)
         mode = {19, vec3(0), vec3(0), 1264.22f, false, kFree, glm::radians(-85.0f), glm::radians(75.0f)}; break;
-    case State::Ladder: mode = {10, rec1, zones, 1896.3f, false, k90, -k55, k55, true, k70, k25}; break; // distance 1896.3
-    case State::Perch: mode = {16, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
-    case State::Pillar: mode = {17, rec1, zones, 1264.22f, false, kFree, -k55, k55, true}; break;
-    case State::Beam: mode = {3, rec1, zones, 1264.22f, true, kFree, -1.2f, 0.7f, true}; break;
-    case State::PoleHang: mode = {9, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
+    case 10: mode = {10, rec1, zones, 1896.3f, false, k90, -k55, k55, true, k70, k25}; break; // distance 1896.3
+    case 16: mode = {16, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
+    case 17: mode = {17, rec1, zones, 1264.22f, false, kFree, -k55, k55, true}; break;
+    case 3: mode = {3, rec1, zones, 1264.22f, true, kFree, -1.2f, 0.7f, true}; break;
+    case 9: mode = {9, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
     default: break; // mode 1: record 1, command 0x13
     }
     // Manual aim (player state S718 and its siblings request camera mode 23, state property 1102; mode list entry 20:
@@ -1058,52 +1098,72 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
         else active[i] = active.back(), active.pop_back();
     for (const auto& o : script_.objects())
         if (isActive(&o) && std::ranges::find(active, o.uid) == active.end()) active.push_back(o.uid);
+    static const std::map<uint8_t, std::vector<int>> kMarkupModes = {{1, {11, 14, 15, 42, 37, 38, 39, 21, 22}}, {14, {3, 43}},
+        {9, {10}}, {13, {16}}, {15, {17}}, {4, {9, 3}}, {16, {4}}, {17, {4}}, {18, {4}}, {19, {4}}, {20, {4}}};
+    const int on = s.state == State::Climb ? s.climbHold : s.ledge;
+    const collision::Markup* onMarkup = on >= 0 && size_t(on) < col_.markup.size() ? &col_.markup[size_t(on)] : nullptr;
+    // The markup she is on carries a command block applied as a mode record (0x601D30: 0x5FE800 -> +0x1348, after the
+    // priority-0 triggers and before the others) when the settings' markup-type table lists the camera mode for its type
+    // (0x5F9960, kMarkupModes) [O decomp]. Its 0x12 is the level record below (onMarkup->camera).
+    const collision::Markup* blockMarkup = nullptr;
+    if (onMarkup && !bike && !onMarkup->cameraCommands.empty())
+        if (const auto g = kMarkupModes.find(onMarkup->type); g != kMarkupModes.end() && std::ranges::find(g->second, mode.id) != g->second.end())
+            blockMarkup = onMarkup;
     std::vector<int32_t> triggers{mode.id};
     triggers.insert(triggers.end(), active.begin(), active.end());
-    const auto inlineSet = [](OrbitState::InlineSet& set, const script::Object::CameraCommand& c) {
+    if (blockMarkup) triggers.push_back(-1000 - on); // 0x601D30 runs again when the block changes
+    const auto inlineSet = [](OrbitState::InlineSet& set, const auto& c) {
         set.angle = c.arg[0], set.speed = c.arg[1], set.dir = uint8_t(std::bit_cast<uint32_t>(c.arg[2]));
         set.count = uint8_t(std::min<size_t>(c.forces.size(), 2));
         for (size_t i = 0; i < set.count; ++i) set.force[i] = {uint8_t(c.forces[i].type), c.forces[i].k, c.forces[i].curve};
     };
     bool cutAsked = false;      // a 0xC
     std::vector<int> focusIds;  // the focus points 0x14 flags
-    for (const bool late : {false, true})
+    // One command of a block (0x6019D0, jump table 0x601CC0); `o` the volume it came from (null: a markup's block).
+    const auto apply = [&](const auto& c, const script::Object* o, bool late) {
+        const uint32_t id = std::bit_cast<uint32_t>(c.arg[0]);
+        switch (c.command) {
+        case 1: pitchSet = int(id); break;
+        case 3: yawOverride = camOverride(kYawOverrides, std::size(kYawOverrides), id); break;
+        case 4: pitchOverride = camOverride(kPitchOverrides, std::size(kPitchOverrides), id); break;
+        case 5: yawOverride = c.arg; break;
+        case 6: pitchOverride = c.arg; break;
+        case 7: // centre c.arg[0] 0 (behind her) in its one use; soft limit with the flag byte (0x607A30)
+            mode.yawRange = glm::radians(c.arg[1]);
+            if (std::bit_cast<uint32_t>(c.arg[4]) & 0xFF) mode.yawSoft = glm::radians(c.arg[2]), mode.yawSoftSpeed = glm::radians(c.arg[3]);
+            else mode.yawSoft = mode.yawRange, mode.yawSoftSpeed = 0;
+            break;
+        case 8: mode.pitchLo = glm::radians(c.arg[0] - c.arg[1]), mode.pitchHi = glm::radians(c.arg[0] + c.arg[1]); break;
+        case 2: case 0xD: mode.distance = c.arg[0]; break;
+        case 0x15: mode.floorProbe = false; break;
+        case 0x17: inlineSet(orbit_.yawInline, c), yawSet = kInlineSet; break;
+        case 0x18: inlineSet(orbit_.pitchInline, c), pitchSet = kInlineSet; break;
+        case 0x19: case 0x1B:
+            pivotAdd = {c.arg[0], c.arg[1], c.arg[2]};
+            pivotTime = c.command == 0x1B && std::bit_cast<uint32_t>(c.arg[4]) & 0xFF ? c.arg[3] : 0.0f;
+            break;
+        case 0x1A: case 0x1C:
+            lookAdd = {c.arg[0], c.arg[1], c.arg[2]};
+            lookTime = c.command == 0x1C && std::bit_cast<uint32_t>(c.arg[4]) & 0xFF ? c.arg[3] : 0.0f;
+            break;
+        case 0x12:
+            if constexpr (requires { c.record; })
+                if (o) recordVolume = o, recordCommand = &c, recordLate = late;
+            break;
+        case 0xC: cutAsked = true; break;
+        case 0x14:
+            if (id != 0xFFFFFFFFu) focusIds.push_back(int(id));
+            break;
+        default: break;
+        }
+    };
+    for (const bool late : {false, true}) {
         for (const int32_t uid : active)
             if (const script::Object& o = *script_.find(uid); o.cameraLate == late)
-                for (const auto& c : o.camera) {
-                        const uint32_t id = std::bit_cast<uint32_t>(c.arg[0]);
-                        switch (c.command) {
-                        case 1: pitchSet = int(id); break;
-                        case 3: yawOverride = camOverride(kYawOverrides, std::size(kYawOverrides), id); break;
-                        case 4: pitchOverride = camOverride(kPitchOverrides, std::size(kPitchOverrides), id); break;
-                        case 5: yawOverride = c.arg; break;
-                        case 6: pitchOverride = c.arg; break;
-                        case 7: // centre c.arg[0] 0 (behind her) in its one use; soft limit with the flag byte (0x607A30)
-                            mode.yawRange = glm::radians(c.arg[1]);
-                            if (std::bit_cast<uint32_t>(c.arg[4]) & 0xFF) mode.yawSoft = glm::radians(c.arg[2]), mode.yawSoftSpeed = glm::radians(c.arg[3]);
-                            else mode.yawSoft = mode.yawRange, mode.yawSoftSpeed = 0;
-                            break;
-                        case 8: mode.pitchLo = glm::radians(c.arg[0] - c.arg[1]), mode.pitchHi = glm::radians(c.arg[0] + c.arg[1]); break;
-                        case 2: case 0xD: mode.distance = c.arg[0]; break;
-                        case 0x15: mode.floorProbe = false; break;
-                        case 0x17: inlineSet(orbit_.yawInline, c), yawSet = kInlineSet; break;
-                        case 0x18: inlineSet(orbit_.pitchInline, c), pitchSet = kInlineSet; break;
-                        case 0x19: case 0x1B:
-                            pivotAdd = {c.arg[0], c.arg[1], c.arg[2]};
-                            pivotTime = c.command == 0x1B && std::bit_cast<uint32_t>(c.arg[4]) & 0xFF ? c.arg[3] : 0.0f;
-                            break;
-                        case 0x1A: case 0x1C:
-                            lookAdd = {c.arg[0], c.arg[1], c.arg[2]};
-                            lookTime = c.command == 0x1C && std::bit_cast<uint32_t>(c.arg[4]) & 0xFF ? c.arg[3] : 0.0f;
-                            break;
-                        case 0x12: recordVolume = &o, recordCommand = &c, recordLate = late; break;
-                        case 0xC: cutAsked = true; break;
-                        case 0x14:
-                            if (id != 0xFFFFFFFFu) focusIds.push_back(int(id));
-                            break;
-                        default: break;
-                        }
-                }
+                for (const auto& c : o.camera) apply(c, &o, late);
+        if (!late && blockMarkup)
+            for (const auto& c : blockMarkup->cameraCommands) apply(c, nullptr, false);
+    }
     for (auto [add, to, time] : {std::tuple{&orbit_.pivotAdd, pivotAdd, pivotTime}, std::tuple{&orbit_.lookAdd, lookAdd, lookTime}}) {
         if (to != add->to) add->from = add->now(), add->to = to, add->t = 0, add->time = time;
         add->t += dt;
@@ -1330,6 +1390,10 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // with its frame rate). Wine, the same swim with the stick held right (camera +0x8F8 = yaw set 11, +0xDA0 pitch
     // none): after a mouse nudge the camera circles her at 60 deg/s for 5 s, then 101 deg/s from 7 s (the swing adds
     // 41 deg/s; set 11 from tru.exe's own heading / velocity there predicts 41-43).
+    // A camera reset (LaraCameraRewrite vt 0x8 0x600C10 / vt 0xC 0x600E30 -> 0x5FF7F0; vt 0x6C / 0x74 0x602290) starts the
+    // clock at settings +0xC4 + +0xC8 = 5 + 2 s, the full look-idle weight: forces and level camera records act at
+    // once after a spawn or teleport, not 5 s later [O decomp + camera DTP 0x14].
+    if (snap && !bike) orbit_.idle = 7.0f;
     orbit_.idle = a.look.x != 0 || a.look.y != 0 ? 0.0f : std::min(1000.0f, orbit_.idle + dt);
     // her move less the carrier's (0x5E7EF0)
     const vec3 move = dt > 0 && orbit_.valid ? (s.pos - carrierMove - orbit_.lastPos) / (dt * 60.0f) : vec3(0);
@@ -1376,10 +1440,6 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     // place of the forces and of the distance return (0x5FFB00). Strength = product of its forces (0x605980 ->
     // 0x5F2180: type 5 = min(1, k x dt), 7 = min(1, k x her mean move), others 0 [I]). Wine, l2_cliffclimb hold wall
     // (record type 3, 300 deg/s, force 5 x 0.2): after 5 s without looking the camera turns 1.0 deg/s toward its point.
-    static const std::map<uint8_t, std::vector<int>> kMarkupModes = {{1, {11, 14, 15, 42, 37, 38, 39, 21, 22}}, {14, {3, 43}},
-        {9, {10}}, {13, {16}}, {15, {17}}, {4, {9, 3}}, {16, {4}}, {17, {4}}, {18, {4}}, {19, {4}}, {20, {4}}};
-    const int on = s.state == State::Climb ? s.climbHold : s.ledge;
-    const collision::Markup* onMarkup = on >= 0 && size_t(on) < col_.markup.size() ? &col_.markup[size_t(on)] : nullptr;
     const collision::CameraRecord* rec = nullptr;
     int recKey = on;     // what the record hangs off (orbit_.hintMarkup)
     vec3 recOffset(0);   // a volume's record is in its unit's frame (a markup's already in the world's)

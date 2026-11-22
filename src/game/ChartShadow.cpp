@@ -745,6 +745,12 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
                                    ax->right.x, ax->right.y, ax->right.z, ax->down.x, ax->down.y, ax->down.z, ax->look.x, ax->look.y,
                                    ax->look.z, c.position.x, c.position.y, c.position.z, pv.x, pv.y, pv.z);
             }
+            if (n > 0 && size_t(n) < sizeof row) { // distance state, camera mode, active trigger volumes (uids)
+                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_camdist=%g\tvar_cammode=%d\tvar_camtrig=", w->cameraDistance(), w->cameraMode());
+                const auto& tl = w->cameraTriggerList();
+                for (size_t i = 1; i < tl.size() && n > 0 && size_t(n) < sizeof row; ++i)
+                    n += std::snprintf(row + n, sizeof row - size_t(n), i > 1 ? ",%d" : "%d", tl[i]);
+            }
             trace << row << '\n';
         }
         ++ticks;
@@ -773,6 +779,18 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     void applyLoad(const nlohmann::json& j);
     nlohmann::json pendingLoad;
     bool loadDue = false;
+    // State property 1102 (0x44E): the camera mode a state asks for on entry; the last one holds.
+    int cameraModeRequest() const override {
+        if (!driving || !rt || !ch) return -1;
+        if (const int st = rt->state(); st != camReqState) {
+            camReqState = st;
+            if (const State* sr = ch->player.state(st))
+                for (const auto& p : sr->props)
+                    if (p.id == 1102) camReq = ch->propInt(p);
+        }
+        return camReq;
+    }
+    mutable int camReqState = -2, camReq = -1;
 };
 
 // Traversal chart boundary [I]: states whose request plays a swim / grapple / death / bike / carried-portable clip

@@ -101,10 +101,15 @@
   {
    "step": "turn_onto_the_first_link",
    "input": [
-    "0 lookx -1",
-    "0.95 lookx 0"
+    "0 lookx -1"
    ],
    "duration": 1.3,
+   "note": "the look stick held until the camera is on the link, as for the second one: the walk before it leaves the camera a degree off (the camera's forces act from her spawn, tru.exe's look-idle clock starting at 7 s)",
+   "until": {
+    "probe": "camera.yaw",
+    "near": -11.0,
+    "tol": 0.8
+   },
    "expect": [
     {
      "probe": "combat.manual_aim",
@@ -241,9 +246,40 @@
    ]
   },
   {
+   "step": "raise_the_aim",
+   "input": [
+    "0 lookx 0",
+    "0 looky 1"
+   ],
+   "duration": 2,
+   "note": "the look stick up until the camera is level with the link: the on-foot pitch force (set 4, toward -7.5 deg) has acted on the walk since the spawn (tru.exe's look-idle clock starts at 7 s, 0x5FF7F0), leaving the aim 11 deg under the link",
+   "until": {
+    "probe": "camera.pitch",
+    "near": 1.8,
+    "tol": 0.8
+   },
+   "expect": [
+    {
+     "probe": "combat.manual_aim",
+     "eq": true
+    },
+    {
+     "probe": "camera.yaw",
+     "near": -159.5,
+     "tol": 1.5
+    },
+    {
+     "probe": "camera.pitch",
+     "near": 1.8,
+     "tol": 1.5
+    }
+   ]
+  },
+  {
    "step": "shoot_the_second_link",
    "input": [
     "0 lookx 0",
+    "0 looky 0",
     "0 fire 1"
    ],
    "duration": 6,
