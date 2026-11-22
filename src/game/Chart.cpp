@@ -313,7 +313,8 @@ enum class GraphOutcome { Played, Nothing, Unresolved };
 struct GraphRun {
     GraphOutcome outcome = GraphOutcome::Unresolved;
     std::vector<int> queue; // the patterns queued, in play order
-    bool operator==(const GraphRun& o) const { return outcome == o.outcome && queue == o.queue; }
+    bool afterCurrent = false; // the head was queued with Play flags & 7 == 4: it waits for the playing clip to end
+    bool operator==(const GraphRun& o) const { return outcome == o.outcome && queue == o.queue && afterCurrent == o.afterCurrent; }
 };
 struct GraphVm {
     const Charts::GraphNode& g;
@@ -329,6 +330,7 @@ struct GraphVm {
         bool active = false, random = false, inNode = false;
         std::vector<std::vector<int>> entries;
         std::vector<int> node, queue;
+        bool afterCurrent = false;
     };
     GraphRun run(size_t pc, Ctx c, int depth) const {
         auto& st = c.st;
@@ -389,7 +391,10 @@ struct GraphVm {
                     if (c.active && c.inNode) {
                         c.node.push_back(int32_t(pat.v));
                     } else {
-                        if ((flags.v & 7) == 2) c.queue.clear();
+                        // 0x446BD0: types 2 and 4 flush the ring (0x4388B0); 0x444EA0 starts the head at once
+                        // (0x443430) unless its type is 4, which waits for the playing clip's end (0x43E0C0)
+                        if ((flags.v & 7) == 2 || (flags.v & 7) == 4) c.queue.clear();
+                        if (c.queue.empty()) c.afterCurrent = (flags.v & 7) == 4;
                         c.queue.push_back(int32_t(pat.v));
                     }
                 } else if (fn == 1) { // IsPlaying
@@ -420,7 +425,7 @@ struct GraphVm {
                 }
                 break;
             }
-            case 0x7B: return c.queue.empty() ? GraphRun{GraphOutcome::Nothing, {}} : GraphRun{GraphOutcome::Played, c.queue};
+            case 0x7B: return c.queue.empty() ? GraphRun{GraphOutcome::Nothing, {}} : GraphRun{GraphOutcome::Played, c.queue, c.afterCurrent};
             default: break; // tru.exe's switch ignores other opcodes
             }
         }
@@ -499,6 +504,10 @@ bool ChartRuntime::resolveRequest(ChartContext& ctx) {
                   .run(charts_.graph[size_t(s->request)].enter, GraphVm::Ctx{}, 0)
             : GraphRun{};
         if (r.outcome == GraphOutcome::Nothing && playing_) return false;
+        if (r.outcome == GraphOutcome::Played && r.afterCurrent && playing_) { // the playing clip runs on, then the queue
+            queue_ = r.queue;
+            return false;
+        }
         pat = r.outcome == GraphOutcome::Played ? r.queue[0] : -1;
         queue_.assign(r.queue.size() > 1 ? r.queue.begin() + 1 : r.queue.end(), r.queue.end());
     } else {
@@ -1003,4 +1012,5 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
 }
 
 } // namespace ou::game::chart
+
 
