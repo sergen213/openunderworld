@@ -929,6 +929,12 @@ void World::updateOrbitCamera(const Actions& a, float dt, vec3 carrierMove) {
     const Bike* bike = ridden();
     const PlayerState& s = player_.state();
     const CameraState last = cam_; // the camera the focus points' view / sight tests see (g_camera, last frame's)
+    // Replays: the Wine harness's CAMFOLLOW (pinCamera) wrote +0x90 / +0x150 at the last frame's end from her position
+    // then (prev_), after the chart read that frame's camera matrix; the distance state +0x1D4 and the angles' cache stay.
+    if (cameraPin_ && orbit_.valid && !bike) {
+        const CameraFollow& f = *cameraPin_;
+        cam_.position = orbit_.desired = prev_.pos + vec3(-f.dx * f.dist, -f.dy * f.dist, f.height);
+    }
     // Camera mode: the player's state machine requests it through CameraManager 0xE804F0's slot 17 (message 0x44E ->
     // 0x7683B0 -> 0x5E8210; Wine, hooked at 0x5E8210 while she acted: on foot, jumping and falling 1, free climb 4, ledge hang and
     // shimmy 11, surface swim 20, under water 19), and what its mode-list entry sets; a mode without command 10 / 2

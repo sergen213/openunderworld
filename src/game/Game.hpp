@@ -951,6 +951,10 @@ struct CameraState {
     vec3 up{0, 0, 1};              // spline cameras roll
     float fovDeg = 0;              // vertical; 0 = World::fovDeg (spline cameras use their own)
 };
+// The Wine harness's CAMFOLLOW (tools/wine-ref/src/chart.c): every frame end it writes g_camera +0x90 (position) and
+// +0x150 (proposed point) = her position - (dx, dy, 0) x dist + (0, 0, height); tru.exe's next camera update reads its
+// angles back from there (0x600200 -> 0x5FF320), keeps its distance state +0x1D4, and follows (0x600710).
+struct CameraFollow { float dx = 0, dy = -1, dist = 1264, height = 300; };
 struct SplineCamera; // a unit camera spline playing (Camera.cpp)
 
 // ---- world ------------------------------------------------------------------------------------
@@ -1132,6 +1136,10 @@ public:
     // Input replays of Wine corpus cases (InputScript::cameraYaw): the stick reads against this world yaw every tick, as
     // tru.exe's pinned camera had it; nullopt (default): the camera's.
     void pinStickYaw(std::optional<float> yaw) { stickYawPin_ = yaw; }
+    // Replays only (--camera-follow, a case's camera_follow): the Wine harness's CAMFOLLOW, the orbit camera's position
+    // and proposed point put at her position - (dx, dy) x dist + (0, 0, height) before every update, as chart.c writes
+    // g_camera +0x90 / +0x150 between frames; the update then runs as in play from there. nullopt (default): play.
+    void pinCamera(std::optional<CameraFollow> f) { cameraPin_ = f; }
     const CameraState& previousCamera() const { return prevCam_; }
     // Field camera view (World::tick): on, and its zoom 0..1 (the app draws the g_binoculars viewfinder).
     bool fieldCamera() const { return fieldCamera_; }
@@ -1785,6 +1793,7 @@ private:
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
     std::optional<vec3> lookPoint_; // its look point (+0x620), lagging the same goal while swimming (World.cpp)
     std::optional<float> stickYawPin_; // pinStickYaw
+    std::optional<CameraFollow> cameraPin_; // pinCamera
     vec3 pivot_{0}; // cameraPivot(): the orbit camera's pivot this tick (output only, recomputed by every update)
     // Her root's displacement by what carried her this tick (tickObjects: the object markup she is on, else the dynamic
     // she stands on). The orbit camera rides it (updateCamera takes it, so it is never applied twice and never outlives
@@ -2237,14 +2246,17 @@ public:
     static InputScript parse(std::string_view text); // throws std::runtime_error with the line number
     static InputScript load(const std::filesystem::path& path);
     Actions at(uint64_t tick) const; // state after applying every event with tick <= `tick`
-    // A Wine case's "camera_follow" ("dx,dy,dist,height": tru.exe's CAMFOLLOW pins the camera behind her along (dx, dy),
-    // so Forward is that world direction): the stick yaw atan2(dy, dx) the world reads input against; nullopt without.
-    std::optional<float> cameraYaw() const { return cameraYaw_; }
+    // A Wine case's "camera_follow" ("dx,dy,dist,height"): the pin (World::pinCamera), and the stick yaw atan2(dy, dx) the
+    // world reads input against (World::pinStickYaw); nullopt without.
+    std::optional<CameraFollow> cameraFollow() const { return cameraFollow_; }
+    std::optional<float> cameraYaw() const {
+        return cameraFollow_ ? std::optional<float>(std::atan2(cameraFollow_->dy, cameraFollow_->dx)) : std::nullopt;
+    }
 
 private:
     struct Event { uint64_t tick; std::string action; float value; };
     std::vector<Event> events_; // sorted by tick (stable)
-    std::optional<float> cameraYaw_;
+    std::optional<CameraFollow> cameraFollow_;
 };
 
 } // namespace ou::game
