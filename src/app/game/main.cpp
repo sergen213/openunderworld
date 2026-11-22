@@ -2192,6 +2192,7 @@ int main(int argc, char** argv) {
         }
         const auto& en = selfTest->entry();
         opt.level = en.level, opt.spawn = en.spawn, opt.chapter = en.chapter >= 0 ? en.chapter : en.levelChapter, opt.loadSlot = en.load;
+        if (en.chartSpawn && opt.game.traversal == "chart") opt.spawn = en.chartSpawn; // the chart's own (Wine take) spawn
         opt.noCinematics = !en.cinematics, opt.noMovies = true;
         // The sim's sea (game::setSeaSwell): tru.exe's waves only unless the scenario opts into the drawn swell, so
         // Wine-measured bounds hold whatever the config's ocean; opted in, Enhanced water draws the FFT ocean it rides.

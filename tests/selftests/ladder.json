@@ -2,9 +2,10 @@
   "version": 1,
   "name": "ladder",
   "chapter": "Core mechanics: ladder attach from the ground, climb up, climb down, step off",
-  "note": "l1_ship_sinking_hall ladder 234 (GameReal.ShipSinkingHallLadder): it lies in its valve wall's plane (y = 29) and is climbed from the wall's open side, -Y.",
+  "note": "l1_ship_sinking_hall ladder 234 (GameReal.ShipSinkingHallLadder): it lies in its valve wall's plane (y = 29) and is climbed from the wall's open side, -Y. chart_spawn: the Wine take ladder/lad_a234_attach's standing start (start.ours 1480, -85.5, 1478.99, yaw 90; tru.exe stands there in S63). The legacy spawn (y -120) lies under a ceiling tru.exe's 0x7144B0 probe reads as low (447 over 0.1 h), where the chart crouches; the legacy controller does not attach from the Wine spot.",
   "level": "l1_ship_sinking_hall",
   "spawn": [1480, -120, 960, 90],
+  "chart_spawn": [1480, -85.5, 1478.99, 90],
   "steps": [
     {"step": "attach", "input": ["0 forward 1"], "duration": 2,
      "until": {"probe": "player.state", "eq": "ladder"},
