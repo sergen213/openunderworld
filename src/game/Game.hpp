@@ -740,7 +740,8 @@ public:
     // (message 0x1C7, chart event 455); steep: a too-steep face there (0x1C9); neither: no floor (0x1CC, bit 19).
     // onBody: a dynamic body's face. stairs: 0x5DCE20's Lara +0x11D4, 0x5D3AF0(hit, 0x100, 0x20): a terrain face's
     // client flags & 0x0100 (an object's: its own flags & 0x20, not modelled: nullopt); false without a floor hit.
-    struct GroundCheck { bool floor = false, steep = false, onBody = false; float z = 0; std::optional<bool> stairs = false; };
+    // normal: the floor hit's normal (zero without a hit).
+    struct GroundCheck { bool floor = false, steep = false, onBody = false; float z = 0; std::optional<bool> stairs = false; vec3 normal{0}; };
     GroundCheck groundCheck(vec3 feet, float above, float below) const;
     // ---- chart drive (--traversal chart; ChartShadow.cpp Drive, docs/re/PLAYER_CHART.md "Drive mode") ----
     // What Lara's chart decided for this tick, applied by drive() with her collision: the clip on the chart's own clock
