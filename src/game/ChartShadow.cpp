@@ -527,13 +527,22 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         if (m < 0) return Water{};
         return Water{true, waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds) - s.pos.z};
     }
+    // Player +0x31C / +0x2C5: the move sweep's record and jump-candidate byte (moveSweep, run each tick while collision
+    // mask bits 0xA00 are set: property 566).
+    int sweepRecord = -1;
+    bool sweepCand = false;
+    void moveSweep();
+    std::optional<int> moveSweepRecord() const override { return sweepRecord; }
+    std::optional<bool> sweepCandidates() const override { return sweepCand; }
     std::array<uint32_t, size_t(JEffect::kCount)> effects{};
     void stateEntered(int from, int to) override;
     void effect(JEffect e, float v) override {
         ++effects[size_t(e)];
-        if (e == JEffect::CollisionMask) { // +-0x48: or / clear (0x752410); anything else: the new mask
+        if (e == JEffect::CollisionMask) { // +-0x48 / +-0xA00: or / clear (0x752410, property 566); else the new mask
             const int x = int(v);
-            collisionMask = x == 0x48 ? collisionMask | 0x48u : x == -0x48 ? collisionMask & ~0x48u : uint32_t(x);
+            collisionMask = x == 0x48 || x == 0xA00     ? collisionMask | uint32_t(x)
+                            : x == -0x48 || x == -0xA00 ? collisionMask & ~uint32_t(-x)
+                                                        : uint32_t(x);
         }
         // 0x752410's refine (0x751FC0 -> 0x72B5C0 -> 0x70E050): drive mode aims her velocity at the chart's jump target
         // over the time left; the shadow leaves our controller's flight alone.
@@ -631,6 +640,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
         groundCheck(*ch);
         if (ground.steep) lastSteepMs = std::max<uint32_t>(nowMs, 1);
+        if (rt) moveSweep();
         stickWorld = stickW, stickLen = stickL, walkHeld = a.walk;
         moveIn = a.move, ctrlYaw = world.stickYaw();
     }
@@ -842,6 +852,162 @@ bool Shadow::Impl::isBoundary(int st) const {
 // cover (12) or beam (14, the hang under it) by the hang hands (lara.drm ledgeb_idle), a horizontal pole (4 / 6) by
 // the pole hang's hands (HPole_idleHangPerp), a vertical pole, ladder, perch or pillar (5 / 9 / 13 / 15) by her root;
 // within 900 units (the corpus pins her up to 600 over a hang root: its own air grab took the ledge during the hold).
+// The move sweep (tru.exe 0x7002D0 -> 0x5D7FA0 -> 0x5D7A80) on our collision (Jolt-backed CollisionMesh casts, no
+// new physics): run while collision mask bits 0xA00 are set (property 566). 0x7002D0 sizes the down probe by the
+// enabled records (+0x630, count +0x62C): depth 10 x the largest drop +4; its top over her feet is a level global's
+// s16 (*(0xE7F094) +0x50 +0x254) [U], ours Lara data +0x610 (the probe's highest height, 331.86) [I]. 0x5D7FA0: +0x2C5
+// = the jump-candidate query (0x710380, ours jumpCandidates) found one; the ground under her (cast down from the top);
+// probe directions (data s16 +0x600 = 1 -> step pi; +0x628 bit 0x4000 adds the stick probe first: from heading - pi,
+// the control yaw (0x6EBA90) when it lies within (heading - pi, heading), else her heading); per direction: the
+// forward casts at data s16 +0x620 = 2 heights (+0x610 and +0x60C over her root [I: root bone z = her root z]) to
+// +0x5F0 = 252.85 ahead (a wall moves the probe point to the hit + 63.21 (+0x618) along the direction); the down cast
+// there; a drop below her by more than +0x5FC = 64 casts back at that height toward her (+0x5F8 = 16 short) for the
+// edge face, a step above her casts from her at the step height for the riser; then 0x5D7A80 picks a record; the
+// direction whose point lies most ahead of her (local_330: [I] the horizontal unit direction to the point . her
+// facing, > 0) keeps its record in +0x31C (+0x320 = 1). Not ported [I]: surface material flags (0x5D3AF0 bits 0x44 /
+// 0x20 -> 0x2000 / 0x1000: none ours), the ledge-top re-cast after a wall (+0x330..+0x35C, which only the climb records
+// read), the carried-object branch (+0x8DC), cast mask 0x442C11E3 | 0x100000 (ours kSolidMask), 0x5D7A80's last two
+// arguments (the call passes six: a record testing +0x14 / +0x18 / +0x1C that could win leaves +0x31C as it was [U]).
+void Shadow::Impl::moveSweep() {
+    if (!(collisionMask & 0xA00) || !ch) return;
+    const Charts& c = *ch;
+    const auto base = c.pointer(c.dataOffset + 0x630);
+    const int n = c.data<int32_t>(0x62C);
+    if (!base || n <= 0 || size_t(*base) + size_t(n) * 0x84 > c.bytes.size()) return;
+    const auto rec = [&](int i) { return c.bytes.data() + *base + size_t(i) * 0x84; };
+    const auto f = [](const uint8_t* r, int off) { float v; std::memcpy(&v, r + off, 4); return v; };
+    float maxDrop = 0;
+    for (int i = 0; i < n; ++i)
+        if (rec(i)[0]) maxDrop = std::max(maxDrop, f(rec(i), 4));
+    const auto cand = jumpCandidates();
+    sweepCand = cand && (cand->a || cand->b);
+    const PlayerState& s = w->player().state();
+    const auto& col = w->collision();
+    const glm::vec3 p = s.pos;
+    const float z = p.z, top = z + c.data<float>(0x610), bottom = z - maxDrop * 10.0f;
+    const auto cast = [&](glm::vec3 a, glm::vec3 b) -> std::optional<collision::Hit> {
+        const glm::vec3 d = b - a;
+        const float len = glm::length(d);
+        if (len < 1e-4f) return std::nullopt;
+        return col.raycast(a, d / len, len);
+    };
+    float groundZ = z; // local_2c8
+    if (const auto g = cast({p.x, p.y, top}, {p.x, p.y, bottom})) groundZ = g->point.z;
+    const glm::vec2 fwd(std::cos(s.yaw), std::sin(s.yaw));
+    // the directions (0x5D7FA0's loop, count 1: i from -1 with the stick flag, step pi)
+    std::vector<float> dirs;
+    {
+        const float step = 3.14159265f, h = s.yaw;
+        const bool stickFlag = c.data<uint16_t>(0x628) & 0x4000;
+        bool overridden = false;
+        for (int i = stickFlag ? -1 : 0; i < std::max<int>(1, c.data<int16_t>(0x600)); ++i) {
+            float a = float(i) * step + h;
+            if (stickFlag && !overridden) {
+                float d = (ctrlYaw - a) / 6.2831855f;
+                d = (d - std::floor(d)) * 6.2831855f;
+                if (d == 0.0f) ++i, a += step;
+                else if (step <= d) a += step;
+                else overridden = true, a = ctrlYaw;
+            }
+            dirs.push_back(a);
+        }
+    }
+    const float ahead = c.data<float>(0x5F0), lip = c.data<float>(0x5FC), back = c.data<float>(0x5F8);
+    const float wallIn = c.data<float>(0x618);
+    int best = -1;
+    float bestScore = 0;
+    bool unknown = false;
+    for (const float a : dirs) {
+        const glm::vec2 dir(std::cos(a), std::sin(a));
+        glm::vec3 probe(glm::vec2(p) + dir * ahead, z);
+        std::optional<glm::vec3> wall; // local_1d0: the forward casts' hit (argument 4), else none
+        const int heights = c.data<int16_t>(0x620);
+        const float hTop = z + c.data<float>(0x610), hLow = z + c.data<float>(0x60C);
+        for (int k = 0; k < heights && !wall; ++k) {
+            const float hz = heights < 2 ? hLow : hTop + float(k) * (hLow - hTop) / float(heights - 1);
+            if (const auto hit = cast({p.x, p.y, hz}, {probe.x, probe.y, hz})) {
+                wall = hit->point;
+                probe = glm::vec3(glm::vec2(hit->point) + dir * wallIn, z);
+            }
+        }
+        glm::vec3 pt(probe.x, probe.y, top), nrm(0, 0, 1);
+        bool dynamic = false;
+        if (const auto d = cast({probe.x, probe.y, top}, {probe.x, probe.y, bottom}))
+            pt = d->point, nrm = d->normal, dynamic = d->dynamic >= 0;
+        std::optional<glm::vec3> face; // local_160 (argument 5 without a candidate)
+        if (pt.z <= z + lip + 1.0f) {
+            if (pt.z < z - lip) { // the drop: back toward her at the lip height for the edge face
+                const glm::vec3 from(probe.x, probe.y, z - lip);
+                const glm::vec3 to(glm::vec2(p) + dir * back, std::min(z - lip, groundZ - lip));
+                if (const auto e = cast(from, to)) face = e->point, pt = glm::vec3(e->point.x, e->point.y, pt.z);
+                else pt = to;
+            }
+        } else if (const auto r = cast({p.x, p.y, pt.z - lip}, {probe.x, probe.y, pt.z - lip})) { // a step: its riser
+            face = r->point;
+            pt = glm::vec3(r->point.x, r->point.y, pt.z);
+            nrm = r->normal, dynamic = r->dynamic >= 0;
+        }
+        std::optional<glm::vec3> p5 = face;
+        if (sweepCand) p5 = cand->a ? cand->a.point : cand->b.point; // +0x3B0
+        const uint16_t flags = dynamic ? 0x8000 : 0; // [I] an instance hit as object type 2
+        // 0x5D7A80: the points' distances from her (a missing one is the zero vector, tru.exe's local_e0)
+        const float drop = pt.z - z;
+        const float slope = glm::degrees(std::acos(std::clamp(nrm.z, -1.0f, 1.0f)));
+        const float d4 = glm::length(glm::vec2(wall.value_or(glm::vec3(0)) - p));
+        const float d5 = glm::length(glm::vec2(p5.value_or(glm::vec3(0)) - p));
+        const float wz = wall.value_or(glm::vec3(0)).z - z;
+        int pick = -1;
+        bool pickUnknown = false;
+        for (int i = 0; i < n; ++i) {
+            const uint8_t* r = rec(i);
+            if (!r[0]) continue;
+            uint16_t need;
+            std::memcpy(&need, r + 0x30, 2);
+            need = uint16_t((need & 0xFFFB) * 0x1000);
+            if ((need & flags) != need) continue;
+            if (f(r, 0x20) > 0 && !(d4 <= f(r, 0x20))) continue;
+            if (f(r, 0x24) > 0 && !(d5 <= f(r, 0x24))) continue;
+            bool open = f(r, 0x14) > 0 || f(r, 0x1C) > 0; // tests on the 7th / 8th arguments [U]
+            if (!(f(r, 0xC) <= 0 || (drop > 0 && f(r, 0xC) < drop))) continue;
+            if (f(r, 0x18) > 0 && wz < drop) {
+                if (!(drop > 0)) continue;
+                open = true; // its angle reads the 7th argument [U]
+            }
+            if (!(f(r, 0x10) <= 0 || (wz < drop && drop > 0 && drop <= f(r, 0x10)))) continue;
+            if (f(r, 4) > 0 && !(drop <= -f(r, 4))) continue;
+            if (f(r, 8) > 0 && !(f(r, 8) <= slope)) continue;
+            if (r[0x2E]) { // the side of the surface normal the point lies on, less its part along her up axis
+                const glm::vec3 v(pt.x - p.x, pt.y - p.y, 0.0f);
+                if ((r[0x2E] == 1) != (glm::dot(v, nrm) < 0)) continue;
+            }
+            if (open) {
+                pickUnknown = true;
+                continue;
+            }
+            if (pick < 0) {
+                pick = i;
+                continue;
+            }
+            const uint8_t* q = rec(pick);
+            int16_t pr, pq;
+            std::memcpy(&pr, r + 0x34, 2), std::memcpy(&pq, q + 0x34, 2);
+            if (pq < pr) pick = i;
+            else if (pr == pq) { // ties: the larger +0x0C, then +0x1C, then +0x04, then (equal +0x04) +0x08
+                if (f(r, 0xC) > f(q, 0xC)) pick = i;
+                else if (f(r, 0x1C) > f(q, 0x1C)) pick = i;
+                else if (f(r, 4) > f(q, 4)) pick = i;
+                else if (f(q, 4) == f(r, 4) && f(q, 8) < f(r, 8)) pick = i;
+            }
+        }
+        const glm::vec2 to(pt - p);
+        const float score = glm::length(to) > 1e-4f ? glm::dot(glm::normalize(to), fwd) : 0.0f;
+        if (pickUnknown && score > bestScore) unknown = true;
+        if (pick >= 0 && score > bestScore) best = pick, bestScore = score;
+    }
+    if (unknown) return;
+    if (best >= 0) sweepRecord = best;
+}
+
 // The corpus spawns her in the held pose (case start.ours), so she stays put unless the grip is a ledge hang more than
 // 60 units off: then she goes to its hang pose (attachPose).
 void Shadow::Impl::seedAttach() {
@@ -966,6 +1132,8 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
     if (motion == M::Hang || motion == M::Blend) {
         if (has("climb")) return GS::ClimbUp;
+        // S542: the run off the edge into the hang (T122 from S11, node 21) [I: mapping]
+        if (rt && rt->state() == 542) return GS::DropToHang;
         // held on a pole (markup type 4, the horizontal poles' type) whatever the clip: the attach's lead-in plays
         // node 44's trans_pose_U before Hpole_perp_attach_U
         if (chartAttached && *chartAttached && size_t(chartAttached->markup) < w->collision().markup.size() &&

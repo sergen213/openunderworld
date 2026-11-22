@@ -10,7 +10,7 @@
 // Group A ids not ported (the game state they read is not modelled; they stay unregistered and count as unported):
 //   0x12E / 0x131 foot-lock controllers (+0xF20.., their lock bytes +0x10A / +0x10B set through 0x7000F0 by anim events),
 //   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
-//   combo move history, 0x1E5 / 0x1EA / 0x1EB / 0x1EF / 0x1F0 the player +0x31C probe record, 0x1FB the gear slot's
+//   combo move history, 0x1E5 / 0x1EA / 0x1EF the player +0x31C probe record (0x1EB / 0x1F0: Jump.cpp), 0x1FB the gear slot's
 //   instance, 0x208 the stairs byte +0x11D4, 0x20B the wall-jump
 //   anticipation rays (0x759260, n = 0 frames), 0x20D the combat component flags +0x1FC bit 11.
 #include "game/Chart.hpp"
