@@ -577,7 +577,7 @@ struct MarkupEntry {
     std::span<const MarkupTest> tests;
     std::span<const uint16_t> bits = {};
     // +0 / +4 / +8: the entry's point offset in her model frame (x, y, z): 0x728F00's point source 5 is her root plus
-    // it turned by her rotation (0x729420 takes it while the query's own +0x90 offset is zero)
+    // it turned by her rotation (0x729420 takes it while the query's own +0x90 offset is zero, as 0x716220 leaves it)
     vec3 offset{0};
 };
 // One lara.drm query profile (object data +0xDE4 count, +0xDE8 {id, record}; tru.exe 0x6F1950) decoded for the
@@ -596,6 +596,13 @@ struct MarkupProfile {
     float snap[3] = {0, 0, 0};    // +0xAC / +0xB0 / +0xB4: 0x724F50's snaps to her yaw (degrees)
     float minT = 0, coneDeg = 0;  // +0x20 (frames), +0x24
     int minDist = 0;              // +0x28 (short)
+    // the ledge markup-class record's (Lara data +0x584, 0x5D5930) short +0x9E: how near a segment end a candidate
+    // must lie for the corner tests 0x737B30 / 0x723540 (kinds 28..30)
+    int cornerZone = 0;
+    // The pole markup-class records' capsules (0x5D57A0: Lara data +0x594 a horizontal pole, +0x58C an upright one;
+    // record +0x30 / +0x34 / +0x38 the offset in her model frame, +0x54 height, +0x58 radius) for kind 10 (0x6FCB10)
+    struct Capsule { vec3 offset{0}; float height = 0, radius = 0; };
+    Capsule poleH, poleV;
     uint32_t flags = 0;           // +0x2C (0x80 coming down, 0x40 the ledge class table, 0x400 no gravity)
     int frames = 0;               // +0xA4, else object data +0xBDE
     struct Start { int type; float up, out; };
@@ -824,6 +831,8 @@ private:
         // control yaw (kind 9, 0x6EBA90); markupSearch fills them.
         vec2 stickDir{0};
         float controlYaw = 0;
+        float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
+        MarkupProfile::Capsule poleH, poleV; // MarkupProfile's pole capsules (kind 10 on poles)
         // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).
         std::array<std::pair<int, vec3>, 8> typeStart{};
         int typeStarts = 0;
