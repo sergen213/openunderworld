@@ -13,7 +13,7 @@ ccase() {
     fam=$1; name=$2; sp=$3; ticks=$4; cam=$5; notes=$6; shift 6
     if [ -n "$ONLY" ]; then case " $ONLY " in *" $name "*) ;; *) return 0 ;; esac; fi   # ONLY="name ...": just those cases
     d="$OU_CHART_DIR/$fam"; mkdir -p "$d"
-    cf=""; [ -n "$cam" ] && cf="$cam,${CAMDIST:-1264},${CAMH:-300}"
+    cf=""; [ -n "$cam" ] && [ -z "$NOCAM" ] && cf="$cam,${CAMDIST:-1264},${CAMH:-300}"   # NOCAM=1: tru's own camera, unpinned
     [ "${RESET:-150}" -gt 0 ] && SPAWN="$sp" HOLD="${HOLD:-30}" CAMFOLLOW="$cf" "$WREF_SRC/w.sh" chart trace "${RESET:-150}" \
         ${RESETKEYS-11:5:9} > /dev/null
     SPAWN="$sp" HOLD="${HOLD:-30}" SETTLE="${SETTLE:-0}" OFFSET="$OFF" CAMFOLLOW="$cf" "$WREF_SRC/w.sh" chart trace "$ticks" "$@" \
@@ -85,5 +85,5 @@ print('_notes="replay of %s with extra columns"' % sys.argv[1].split('/')[-1][:-
 PY
 )"
     fam=${3:-$(basename "$(dirname "$1")")}
-    HOLD=$_ho SETTLE=$_se ccase "$fam" "$2" "$_sp" "$_ti" "$_cam" "$_notes" $_keys
+    HOLD=$_ho SETTLE=${CSETTLE:-$_se} ccase "$fam" "$2" "$_sp" "$_ti" "$_cam" "$_notes" $_keys   # CSETTLE: override the case's settle
 }

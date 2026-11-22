@@ -124,20 +124,27 @@ static DWORD hook(void) {
 
 // Call log (CALLS=1, `chart callhook` / `callunhook`): detours at the entry of a list of functions, by default the anim
 // functions 0x441FB0 (start a clip on a channel, with its crossfade), 0x432850 (set a channel's clip time) and 0x4428A0
-// (a layer's blend test); CALLFN=hex[:k],... replaces the list (up to 8; each must begin with the 6-byte prologue
-// below), `:k` (1..5) also copying the 4 dwords argument k points to. Each entry records the function, ECX, the first
-// five stack arguments, the frame number and the copied dwords into a 256-entry ring (64-byte slots) in the cave; the
-// tracer prints the new entries of each tick as `var_calls=fn:ecx:a1:a2:a3:a4:a5[:d0:d1:d2:d3]@frame;...` (dwords in
-// hex; floats are their bit patterns). All begin with `push ebp; mov ebp,esp; and esp,-16` (6 bytes), which the cave
-// replays before jumping back. The cave keeps the list (+0xE00 count, +0xE04 functions, +0xE24 deref) for callunhook.
-static DWORD gFn[8] = {0x441FB0, 0x432850, 0x4428A0}; static int gDeref[8], gN = 3;
+// (a layer's blend test); CALLFN=hex[:k[:k2]][:Rn],... replaces the list (up to 8; each must begin with the 6-byte
+// prologue below): `:k` (1..5, up to two) also copies the 4 dwords argument k points to at entry, `:Rn` copies the 8
+// dwords argument n points to when the call returns (the entry swaps the return address for an exit stub; not
+// reentrant: a nested call of the same function loses the outer result). Each entry records the function, ECX, the
+// first five stack arguments, the frame number, the return address and the copies into a 256-entry ring (128-byte
+// slots) in the cave; the tracer prints the new entries of each tick as
+// `var_calls=fn:ecx:a1:a2:a3:a4:a5[:d0:d1:d2:d3]...^ret[=r0:..:r7]@frame;...` (dwords in hex; floats are their bit
+// patterns; `=?` a call that had not returned). All begin with `push ebp; mov ebp,esp; and esp,-16` (6 bytes), which
+// the cave replays before jumping back. Per function a 0x200 block (entry +0, exit stub +0x100, vars +0x1F0); the
+// cave keeps the list (+0x1E00 count, +0x1E04 functions, +0x1E24 / +0x1E44 derefs, +0x1E64 result arg) for callunhook.
+static DWORD gFn[8] = {0x441FB0, 0x432850, 0x4428A0}; static int gDeref[8][2], gRes[8], gN = 3;
 static const unsigned char kProlog[6] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0};
 static void callList(void) {
     if (!getenv("CALLFN")) return;
     char buf[256]; strncpy(buf, getenv("CALLFN"), 255); buf[255] = 0; gN = 0;
     for (char* t = strtok(buf, ","); t && gN < 8; t = strtok(0, ",")) {
-        unsigned a = 0; int k = 0; if (sscanf(t, "%x:%d", &a, &k) < 1) continue;
-        gFn[gN] = a; gDeref[gN] = k >= 1 && k <= 5 ? k : 0; ++gN; }
+        gFn[gN] = (DWORD)strtoul(t, 0, 16); gDeref[gN][0] = gDeref[gN][1] = gRes[gN] = 0; int nd = 0;
+        for (char* q = strchr(t, ':'); q; q = strchr(q + 1, ':')) {
+            if (q[1] == 'R') { int k = atoi(q + 2); if (k >= 1 && k <= 5) gRes[gN] = k; }
+            else { int k = atoi(q + 1); if (k >= 1 && k <= 5 && nd < 2) gDeref[gN][nd++] = k; } }
+        ++gN; }
 }
 static DWORD callCaveOf(void) { // the ring's cave: from the first function's jump (cave code block 0 at +0)
     unsigned char b[6]; ReadProcessMemory(h, (void*)gFn[0], b, 6, 0);
@@ -149,16 +156,17 @@ static DWORD callhook(void) {
     if (c) return c;
     for (int f = 0; f < gN; ++f) { unsigned char b[6]; ReadProcessMemory(h, (void*)gFn[f], b, 6, 0);
         if (memcmp(b, kProlog, 6)) { printf("unexpected bytes at %08lx\n", gFn[f]); exit(1); } }
-    c = (DWORD)(size_t)VirtualAllocEx(h, 0, 0x8000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    DWORD wpos = c + 0xF00, ring = c + 0x1000;
-    w32(wpos, 0); w32(c + 0xE00, gN);
-    for (int f = 0; f < gN; ++f) { w32(c + 0xE04 + 4 * f, gFn[f]); w32(c + 0xE24 + 4 * f, gDeref[f]); }
+    c = (DWORD)(size_t)VirtualAllocEx(h, 0, 0x10000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    DWORD wpos = c + 0x1F00, ring = c + 0x2000;
+    w32(wpos, 0); w32(c + 0x1E00, gN);
+    for (int f = 0; f < gN; ++f) { w32(c + 0x1E04 + 4 * f, gFn[f]); w32(c + 0x1E24 + 4 * f, gDeref[f][0]);
+        w32(c + 0x1E44 + 4 * f, gDeref[f][1]); w32(c + 0x1E64 + 4 * f, gRes[f]); }
     for (int f = 0; f < gN; ++f) {
-        unsigned char s[192]; int n = 0; DWORD at = c + 0x100 * f;
+        unsigned char s[512]; int n = 0; DWORD at = c + 0x200 * f, ex = at + 0x100, vRet = at + 0x1F0, vSlot = at + 0x1F4, vRes = at + 0x1F8;
         B(0x50); B(0x52); B(0x51);                         // push eax; push edx; push ecx
         B(0xA1); D(wpos);                                  // mov eax,[wpos]
         B(0x25); D(0xFF);                                  // and eax,255
-        B(0xC1); B(0xE0); B(6);                            // shl eax,6
+        B(0xC1); B(0xE0); B(7);                            // shl eax,7
         B(0x05); D(ring);                                  // add eax,ring
         B(0xC7); B(0x00); D(gFn[f]);                       // mov dword [eax],fn
         B(0x89); B(0x48); B(4);                            // mov [eax+4],ecx
@@ -168,18 +176,38 @@ static DWORD callhook(void) {
         }
         B(0x8B); B(0x15); D(GT + 0x24);                    // mov edx,[gameTracker+0x24]
         B(0x89); B(0x50); B(28);                           // mov [eax+28],edx
-        if (gDeref[f]) {
-            B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gDeref[f] - 1)); // mov edx,[esp+16+4(k-1)] (the pointer)
-            for (int j = 0; j < 4; ++j) { B(0x8B); B(0x4A); B(4 * j); B(0x89); B(0x48); B(32 + 4 * j); } // mov ecx,[edx+4j]; mov [eax+32+4j],ecx
+        B(0x8B); B(0x54); B(0x24); B(12);                  // mov edx,[esp+12] (return address)
+        B(0x89); B(0x50); B(32);                           // mov [eax+32],edx
+        for (int d = 0; d < 2; ++d) if (gDeref[f][d]) {
+            B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gDeref[f][d] - 1)); // mov edx,[esp+16+4(k-1)] (the pointer)
+            for (int j = 0; j < 4; ++j) { B(0x8B); B(0x4A); B(4 * j); B(0x89); B(0x48); B(36 + 16 * d + 4 * j); } // mov ecx,[edx+4j]; mov [eax+36+16d+4j],ecx
+        }
+        if (gRes[f]) {
+            B(0xC7); B(0x40); B(100); D(0);                // mov dword [eax+100],0 (not returned yet)
+            B(0xA3); D(vSlot);                             // mov [vSlot],eax
+            B(0x8B); B(0x54); B(0x24); B(16 + 4 * (gRes[f] - 1)); B(0x89); B(0x15); D(vRes); // mov edx,[esp+16+4(n-1)]; mov [vRes],edx
+            B(0x8B); B(0x54); B(0x24); B(12); B(0x89); B(0x15); D(vRet); // mov edx,[esp+12]; mov [vRet],edx
+            B(0xC7); B(0x44); B(0x24); B(12); D(ex);       // mov dword [esp+12],exit stub
         }
         B(0xFF); B(0x05); D(wpos);                         // inc dword [wpos]
         B(0x59); B(0x5A); B(0x58);                         // pop ecx; pop edx; pop eax
         memcpy(s + n, kProlog, 6); n += 6;                 // the replaced prologue
         B(0xE9); D(gFn[f] + 6 - (at + n + 4));             // jmp fn+6
         WriteProcessMemory(h, (void*)(size_t)at, s, n, 0);
+        if (gRes[f]) { // exit stub: copy 8 result dwords into the slot, flag it, return to the saved address
+            n = 0;
+            B(0x50); B(0x52); B(0x51);                     // push eax; push edx; push ecx
+            B(0xA1); D(vSlot);                             // mov eax,[vSlot]
+            B(0x8B); B(0x15); D(vRes);                     // mov edx,[vRes]
+            for (int j = 0; j < 8; ++j) { B(0x8B); B(0x4A); B(4 * j); B(0x89); B(0x48); B(68 + 4 * j); } // mov ecx,[edx+4j]; mov [eax+68+4j],ecx
+            B(0xC7); B(0x40); B(100); D(1);                // mov dword [eax+100],1
+            B(0x59); B(0x5A); B(0x58);                     // pop ecx; pop edx; pop eax
+            B(0xFF); B(0x25); D(vRet);                     // jmp [vRet]
+            WriteProcessMemory(h, (void*)(size_t)ex, s, n, 0);
+        }
     }
     for (int f = gN - 1; f >= 0; --f) { // the first function last: callCaveOf finds the cave by it
-        unsigned char j[6] = {0xE9, 0, 0, 0, 0, 0x90}; DWORD rel = (c + 0x100 * f) - (gFn[f] + 5); memcpy(j + 1, &rel, 4);
+        unsigned char j[6] = {0xE9, 0, 0, 0, 0, 0x90}; DWORD rel = (c + 0x200 * f) - (gFn[f] + 5); memcpy(j + 1, &rel, 4);
         if (!patchSuspended(gFn[f], j, 6)) { puts("call patch failed"); exit(1); }
     }
     return c;
@@ -330,7 +358,7 @@ int main(int argc, char** argv) {
     }
     if (!strcmp(argv[1], "callunhook")) {
         DWORD c = callCaveOf(); if (!c) { puts("not hooked"); return 0; }
-        int ok = 1, n = (int)rd32(c + 0xE00); for (int f = 0; f < n && f < 8; ++f) ok &= patchSuspended(rd32(c + 0xE04 + 4 * f), kProlog, 6);
+        int ok = 1, n = (int)rd32(c + 0x1E00); for (int f = 0; f < n && f < 8; ++f) ok &= patchSuspended(rd32(c + 0x1E04 + 4 * f), kProlog, 6);
         puts(ok ? "unhooked" : "unhook failed"); return !ok;
     }
     if (!strcmp(argv[1], "unhook")) {
@@ -363,7 +391,7 @@ int main(int argc, char** argv) {
 
     SetForegroundWindow(w); timeBeginPeriod(1);
     DWORD cave = hook(), EN = cave + 0x100, PO = cave + 0x104, AK = cave + 0x108;
-    DWORD callCave = (getenv("CALLS") && atoi(getenv("CALLS"))) ? callhook() : 0, callRead = callCave ? rd32(callCave + 0xF00) : 0;
+    DWORD callCave = (getenv("CALLS") && atoi(getenv("CALLS"))) ? callhook() : 0, callRead = callCave ? rd32(callCave + 0x1F00) : 0;
     DWORD rayCave = (getenv("RAY") && atoi(getenv("RAY"))) ? rayhook() : 0, rayRead = rayCave ? rd32(rayCave + 0xF00) : 0;
     DWORD oldVar = rd32(GT + 0xC8), oldLock = rd32(GT + 0x120);
     if (fixed) { w32(GT + 0x120, 3); w32(GT + 0xC8, 0); }
@@ -454,12 +482,15 @@ int main(int argc, char** argv) {
                 }
             }
             if (callCave) { // CALLS=1: the call-log ring's entries since the last tick
-                DWORD wp = rd32(callCave + 0xF00); if (wp - callRead > 256) callRead = wp - 256;
+                DWORD wp = rd32(callCave + 0x1F00); if (wp - callRead > 256) callRead = wp - 256;
                 printf("\tvar_calls=");
                 for (; callRead < wp; ++callRead) {
-                    DWORD r[16]; ReadProcessMemory(h, (void*)(callCave + 0x1000 + 64 * (callRead & 255)), r, 64, 0);
+                    DWORD r[32]; ReadProcessMemory(h, (void*)(callCave + 0x2000 + 128 * (callRead & 255)), r, 128, 0);
                     printf("%lx:%lx:%lx:%lx:%lx:%lx:%lx", r[0], r[1], r[2], r[3], r[4], r[5], r[6]);
-                    for (int f = 0; f < gN; ++f) if (gFn[f] == r[0] && gDeref[f]) printf(":%lx:%lx:%lx:%lx", r[8], r[9], r[10], r[11]);
+                    int fi = -1; for (int f = 0; f < gN; ++f) if (gFn[f] == r[0]) fi = f;
+                    if (fi >= 0) for (int d = 0; d < 2; ++d) if (gDeref[fi][d]) printf(":%lx:%lx:%lx:%lx", r[9 + 4 * d], r[10 + 4 * d], r[11 + 4 * d], r[12 + 4 * d]);
+                    printf("^%lx", r[8]);
+                    if (fi >= 0 && gRes[fi]) { if (r[25]) { printf("="); for (int k = 0; k < 8; ++k) printf(k ? ":%lx" : "%lx", r[17 + k]); } else printf("=?"); }
                     printf("@%lu;", r[7]);
                 }
             }
