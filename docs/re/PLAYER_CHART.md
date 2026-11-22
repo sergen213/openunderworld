@@ -377,7 +377,10 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   consider_detach / jumpland_unbalanced type 5 {fwd x3, _90 x3}; aboutfall / stepforward / stepback / flip / somersault
   type 7 {centre, left, right}; falls type 2 {ledge, no ledge}. Wine (W/chart/wine/beam/t1079_walk_turn.tsv, SPAWN
   take): S918 count 6, +0xF9 5, +0x8C 0, +0x90 0.73..0.80, w1 = 1 - +0x90; after the turn +0x90 1 and w0..w3 0; S922
-  count 3, +0xF9 7, w0 1 [O-runtime: matches 0x437BA0]. Ours (`anim::layerBlendWeights`, `Request::clips` /
+  count 3, +0xF9 7, w0 1 [O-runtime: matches 0x437BA0]. Clean walk (h759_walk_sweep_birth.tsv, l2_hubhall beam 759,
+  S935): +0xF9 0x17, 9 sub-layers, +0x90 0, +0x8C 0 -> 0.99, w4 = 1 - +0x8C, w5 = +0x8C, 4.0 units per tick, channel 0
+  rate 1.714 [O-runtime: matches 0x6EAAA0]; its +0x8C comes from action 301 (PSCAF_BalanceWobble, update 0x75E8D0 ->
+  0x742770 on agent +0x358), about +0.0125 per tick (h759_watch8c_birth.tsv) [O-runtime]. Ours (`anim::layerBlendWeights`, `Request::clips` /
   `blendType`, chart-dump's "requests with sub-layers"): the drive context answers `layerBlendType()` (the playing
   pattern's +0x17), `setLayerBlend` writes `animBlend`, driveTick weighs the sub-layers into `DriveStep::blendClips /
   blendWeights`; `World::updatePose` blends the poses (phase-synced, normalised weights [I: 0x4361C0's accumulation])

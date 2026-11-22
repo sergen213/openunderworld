@@ -1042,6 +1042,304 @@ void beamSteerEnter(ChartContext& ctx, uint16_t) {
 void beamSteerUpdate(ChartContext& ctx, uint16_t) { beamBalance(ctx, false); }
 void clearBlend(ChartContext& ctx, uint16_t) { ctx.animBlend = glm::vec2(0); }
 
+// Action 301 PSCAF_BalanceWobble on the beam controller B = agent +0x358 (enter 0x742330, reenter 0x72A510, update
+// 0x742770, exit 0x72A5E0; Ghidra decompile W/chart/ghidra/B/00742770 [O]). B fields (offsets from B): +4 the beam
+// angle, +8 the segment, +0xC the clock, +0x10 / +0x14 the wobble re-roll timers, +0x18 the stick-held clock, +0x1C
+// the off-balance clock, +0x20 the balanced clock, +0x24 the wobble delay, +0x28, +0x2C the wobble rate, +0x30 the
+// wobble angle, +0x34 the error, +0x38, +0x3C the lean target, +0x40 its rate, +0x44 the lean (layer +0x8C), +0x48 the
+// slope (+0x90 on type 23), +0x50 / +0x54 / +0x58 the stick sway history, +0x5C the held stick heading, +0x60 the
+// side (1 / 2), +0x64 the wobble sign, +0x65 lose balance, +0x66 the layer mirror, +0x68 the sway direction.
+namespace wobble {
+float& B(ChartContext& ctx, int off) { return ctx.agentFloat(0x358 + off); }
+int& BI(ChartContext& ctx, int off) { return ctx.chart().field(0x358 + off); }
+// 0x72A430: the tuning block in Lara's data: property 521 (0x209) 404 -> +0xF4C, 401 -> +0xF88; else the attached
+// markup's type (0x5BE340) 4 / 6 -> +0xED4, 7 -> +0xF10; default +0xE98.
+uint32_t block(ChartContext& ctx) {
+    const int p = propI(ctx, 0x209, 0);
+    if (p == 0x194) return 0xF4C;
+    if (p == 0x191) return 0xF88;
+    const auto a = ctx.attachedMarkup();
+    if (!a) return 0xE98;
+    if (a.flags & (0x8000000 | 0x2000000)) return 0xED4;
+    if (a.flags & 0x1000000) return 0xF10;
+    return 0xE98;
+}
+float tf(ChartContext& ctx, uint32_t t, uint32_t off) { return ctx.chart().charts().data<float>(t + off); }
+float ts(ChartContext& ctx, uint32_t t, uint32_t off) { return float(ctx.chart().charts().data<int16_t>(t + off)); }
+// 0x4A2B80 on the generator 0x8A9C78: uniform in [lo, hi] [I: ours' own generator]
+float rnd(float lo, float hi) {
+    static std::minstd_rand rng(0x742770);
+    return lo + (hi - lo) * std::uniform_real_distribution<float>(0, 1)(rng);
+}
+bool stickOn(ChartContext& ctx) { return ctx.stickLevel() > 0; }
+float stickYaw(ChartContext& ctx) { return yawOf(ctx.stick()); } // stick record +0x8 [I: ours' convention]
+// 0x7326D0(B, alt): the stick against the beam angle; alt: asin(sin|d| x the stick's magnitude), folded past pi/2
+float stickVsBeam(ChartContext& ctx, bool alt) {
+    if (!stickOn(ctx)) return B(ctx, 0x50);
+    const float d = wrapPi(stickYaw(ctx) - B(ctx, 4));
+    if (!alt) return d;
+    const float ad = std::abs(d);
+    const float v = std::asin(std::clamp(std::sin(ad) * ctx.stickLevel(), -1.0f, 1.0f));
+    return ad > kHalfPi ? -wrapPi(v + kPi) : v;
+}
+bool altStick(ChartContext& ctx) { return (ctx.chart().charts().data<uint8_t>(0xE94) >> 1) & 1; }
+// The layer's +0x8C / +0x90 by its blend type (0x742770's tail, 0x72A510): 7 x only, 23 both, 5 / 0 none, else zeroed.
+void writeLayer(ChartContext& ctx, std::optional<float> x, std::optional<float> y) {
+    const auto type = ctx.layerBlendType();
+    if (!type) return;
+    if (*type == 7) ctx.setLayerBlend(*x, ctx.animBlend.y);
+    else if (*type == 23) ctx.setLayerBlend(*x, y ? *y : ctx.animBlend.y);
+    else if (*type != 5 && *type != 0) B(ctx, 0x44) = B(ctx, 0x48) = 0, ctx.setLayerBlend(0, 0);
+}
+} // namespace wobble
+
+// 0x742330 (enter and, through 0x75E8B0, reenter's first call 0x72A510 below): reset the controller.
+void wobbleEnter(ChartContext& ctx, uint16_t) {
+    using namespace wobble;
+    ChartRuntime& rt = ctx.chart();
+    const uint32_t t = block(ctx);
+    const bool enabled = propI(ctx, 0x390, 0x390) != 0x390; // property 912 present with another value
+    B(ctx, 0x5C) = stickOn(ctx) ? stickYaw(ctx) : B(ctx, 0x5C); // [I] a centred stick keeps the last heading
+    BI(ctx, 0x65) = 0;
+    for (const int o : {0xC, 0x18, 0x1C, 0x20, 0x34, 0x38, 0x28}) B(ctx, o) = 0;
+    B(ctx, 0x50) = stickVsBeam(ctx, altStick(ctx));
+    B(ctx, 0x24) = enabled ? ts(ctx, t, 0x30) : 0.0f;
+    B(ctx, 0x54) = 0;
+    BI(ctx, 0x68) = 0;
+    B(ctx, 0x58) = (2.0f - tf(ctx, t, 0x1C)) * tf(ctx, t, 0x20);
+    B(ctx, 0x10) = rnd(ts(ctx, t, 0xC), ts(ctx, t, 0xE));
+    B(ctx, 0x14) = rnd(ts(ctx, t, 0x10), ts(ctx, t, 0x12));
+    const float sign = rnd(0, 1);
+    const float rate = enabled ? rnd(glm::radians(tf(ctx, t, 4)), glm::radians(tf(ctx, t, 8))) : 0.0f;
+    B(ctx, 0x2C) = rate;
+    BI(ctx, 0x64) = sign < 0.5f;
+    if (sign < 0.5f) B(ctx, 0x2C) = -rate;
+    B(ctx, 0x30) = 0, BI(ctx, 0x60) = 0;
+    for (const int o : {0x40, 0x3C, 0x44, 0x48}) B(ctx, o) = 0;
+    BI(ctx, 0x66) = rt.mirrored();
+    ctx.setLayerBlend(0, 0);
+    if (enabled) return;
+    // No random wobble: start leaning by her heading off the beam angle (folded to within pi/2), side +0x60.
+    float e = wrapPi(ctx.heading() - B(ctx, 4));
+    B(ctx, 0x50) = e;
+    if (std::abs(e) > kHalfPi) B(ctx, 0x50) = e = wrapPi(e + kPi);
+    float l = std::clamp(std::abs(e) / kHalfPi, 0.0f, 1.0f);
+    if (e > 0) BI(ctx, 0x60) = 1, l = -l;
+    else if (e < 0) BI(ctx, 0x60) = 2;
+    l = std::clamp(l, -1.0f, 1.0f);
+    const bool keep = ctx.chart().charts().data<uint8_t>(0xE94) & 1;
+    B(ctx, 0x3C) = keep ? l : 0.0f;
+    if (!keep) B(ctx, 0x24) = 1000.0f;
+    B(ctx, 0x44) = l;
+    ctx.setLayerBlend(l, 0);
+}
+
+// 0x72A510 (reenter): the layer mirror flipped since: the lean and its target change sign and the layer is rewritten.
+void wobbleReenter(ChartContext& ctx, uint16_t) {
+    using namespace wobble;
+    const bool m = ctx.chart().mirrored();
+    if (bool(BI(ctx, 0x66)) == m) return;
+    BI(ctx, 0x66) = m;
+    B(ctx, 0x44) = -B(ctx, 0x44), B(ctx, 0x3C) = -B(ctx, 0x3C);
+    const auto type = ctx.layerBlendType();
+    if (!type) return;
+    if (*type == 7) ctx.setLayerBlend(B(ctx, 0x44), ctx.animBlend.y);
+    else if (*type == 23) ctx.setLayerBlend(B(ctx, 0x44), B(ctx, 0x48));
+    else if (*type != 5 && *type != 0) B(ctx, 0x3C) = B(ctx, 0x44) = B(ctx, 0x48) = 0, ctx.setLayerBlend(0, 0);
+}
+
+void wobbleExit(ChartContext& ctx, uint16_t) { wobble::BI(ctx, 0x65) = 0; } // 0x72A5E0
+
+// 0x742770 (update): the wobble angle, the balance error, the lose-balance flag and the lean.
+void wobbleUpdate(ChartContext& ctx, uint16_t) {
+    using namespace wobble;
+    ChartRuntime& rt = ctx.chart();
+    const uint32_t t = block(ctx);
+    const auto att = ctx.attachedMarkup();
+    if (!att) return ++rt.stats.unportedActions[301], void();
+    if (roundI(std::floor(att.param)) != BI(ctx, 8)) beamFacing(ctx);
+    const float tm = ctx.timeMult;
+    B(ctx, 0xC) += tm;
+    bool delayed = false, retarget = false;
+    if (B(ctx, 0x24) <= 0) B(ctx, 0x28) += tm, B(ctx, 0x10) -= tm, B(ctx, 0x14) -= tm;
+    else delayed = true, B(ctx, 0x24) -= tm;
+    if (rt.field(0x3E4) != 0) return ++rt.stats.unportedActions[301], void(); // 0x5D5930 +0x9A vs agent +0xF4 [U]
+    const auto jt = chartJumpTarget(ctx);
+    if (jt && jt.markup != att.markup) {
+        retarget = true;
+        if (B(ctx, 0x24) <= 0) B(ctx, 0x24) = ts(ctx, t, 0x30);
+    }
+    float lim = glm::radians(tf(ctx, t, 0));
+    const float rLo = glm::radians(tf(ctx, t, 4)), rHi = glm::radians(tf(ctx, t, 8));
+    float safe = glm::radians(tf(ctx, t, 0x14)), edge = glm::radians(tf(ctx, t, 0x18));
+    float maxT = propF(ctx, 0x38F, 0.0f);
+    if (maxT <= 0) maxT = ts(ctx, t, 0x34);
+    float holdT = ts(ctx, t, 0x38);
+    const auto reroll = [&](bool toggle) {
+        const float r = rnd(rLo, rHi);
+        if (toggle) BI(ctx, 0x64) = !BI(ctx, 0x64);
+        B(ctx, 0x2C) = BI(ctx, 0x64) ? -r : r;
+        if (toggle) B(ctx, 0x10) = rnd(ts(ctx, t, 0xC), ts(ctx, t, 0xE));
+        B(ctx, 0x14) = rnd(ts(ctx, t, 0x10), ts(ctx, t, 0x12));
+    };
+    if (retarget) {
+        B(ctx, 0x30) = 0;
+    } else if (!delayed) {
+        const bool sgn = BI(ctx, 0x64);
+        const float w = B(ctx, 0x30);
+        if (sgn ? w < -lim : w > lim) {
+            B(ctx, 0x30) = (w > 0 ? 1.0f : w < 0 ? -1.0f : 0.0f) * lim; // 0x464410
+            reroll(true);
+        } else if (B(ctx, 0x10) <= 0) {
+            reroll(true);
+        } else if (B(ctx, 0x14) <= 0) {
+            reroll(false);
+        }
+        B(ctx, 0x30) += B(ctx, 0x2C) * tm;
+    }
+    if (stickOn(ctx)) B(ctx, 0x5C) = stickYaw(ctx);
+    // 0x7422D0: the heading the balance follows
+    const float follow = !stickOn(ctx) ? B(ctx, 0x5C) : !altStick(ctx) ? stickYaw(ctx) : stickVsBeam(ctx, true) + B(ctx, 4);
+    const float off = wrapPi(follow - B(ctx, 4));
+    float err = wrapPi(follow - (B(ctx, 4) + B(ctx, 0x30)));
+    float aerr = std::abs(err);
+    int side = 0;
+    float push = 0, sway = 0;
+    if (!delayed && !retarget) {
+        if (aerr < std::abs(wrapPi(B(ctx, 0x50) - B(ctx, 0x30))) || B(ctx, 0x28) < B(ctx, 0x1C)) B(ctx, 0x28) = 0;
+        const float dd = wrapPi(off - B(ctx, 0x50));
+        bool turned = false;
+        if (dd < -0.1f) turned = BI(ctx, 0x68) == 1, BI(ctx, 0x68) = 2, B(ctx, 0x50) = off;
+        else if (dd > 0.1f) turned = BI(ctx, 0x68) == 2, BI(ctx, 0x68) = 1, B(ctx, 0x50) = off;
+        const float since = B(ctx, 0xC) - B(ctx, 0x54);
+        if (turned) {
+            const float k = tf(ctx, t, 0x1C);
+            B(ctx, 0x58) = B(ctx, 0x58) * k + (1.0f - k) * since;
+            B(ctx, 0x54) = B(ctx, 0xC);
+        }
+        const float p8 = tf(ctx, t, 0x20);
+        if (B(ctx, 0x58) < p8 && since < p8) { // swaying the stick quickly: the safe zone and the limits shrink
+            const float d = (p8 - B(ctx, 0x58)) / p8 * tf(ctx, t, 0x24);
+            maxT *= 1.0f - d, holdT *= 1.0f - d;
+            const float safe0 = safe;
+            safe = std::clamp(safe - d, safe0 * 0.25f, safe0);
+            sway = d;
+            edge = std::clamp(edge - d, safe, edge);
+        }
+        if (aerr <= safe) {
+            B(ctx, 0x20) += tm;
+        } else {
+            const float span = edge - safe;
+            push = std::clamp(span <= 0 ? (aerr - safe) / kPi : (aerr - safe) / span, 0.0f, 1.0f);
+            if (err > safe) side = 1, push = -push;
+            else if (err < -safe) side = 2;
+            float bal = 0;
+            if ((ctx.chart().charts().data<uint8_t>(t + 0x3A) & 2) && edge > aerr && BI(ctx, 0x60) != 0 &&
+                side != BI(ctx, 0x60))
+                push = 0, bal = B(ctx, 0x20) + tm, side = BI(ctx, 0x60);
+            B(ctx, 0x20) = bal;
+            const float off1c = B(ctx, 0x1C) + tm;
+            B(ctx, 0x1C) = off1c;
+            B(ctx, 0x34) = err;
+            const bool settled = std::abs(B(ctx, 0x44)) < 0.99f;
+            bool held = true;
+            if (!settled) {
+                B(ctx, 0x18) += tm;
+                if (stickOn(ctx) && B(ctx, 0x18) < holdT) held = false;
+            }
+            const bool recover = ctx.chart().charts().data<uint8_t>(0xE94) & 8;
+            const auto fall = [&] { BI(ctx, 0x65) = !((recover && settled) || !held); };
+            if (edge < aerr) fall();
+            if (ts(ctx, t, 0x32) < B(ctx, 0x28)) fall();
+            if (maxT <= off1c) fall();
+        }
+    } else {
+        B(ctx, 0x20) += tm;
+    }
+    if (B(ctx, 0x20) > 0) {
+        if (ts(ctx, t, 0x36) < B(ctx, 0x20) && B(ctx, 0x1C) > 0) {
+            B(ctx, 0x1C) = 0, BI(ctx, 0x60) = 0, B(ctx, 0x18) = 0, BI(ctx, 0x65) = 0;
+            const float w = B(ctx, 0x30);
+            if ((ctx.chart().charts().data<uint8_t>(t + 0x3A) & 1) && (BI(ctx, 0x64) ? w < 0 : w > 0)) {
+                // the wobble turns back toward the beam: a new rate signed against the wobble angle, new timers
+                const float r = rnd(rLo, rHi);
+                BI(ctx, 0x64) = w > 0;
+                B(ctx, 0x2C) = w > 0 ? -r : r;
+                B(ctx, 0x10) = rnd(ts(ctx, t, 0xC), ts(ctx, t, 0xE));
+                B(ctx, 0x14) = rnd(ts(ctx, t, 0x10), ts(ctx, t, 0x12));
+            }
+        }
+        B(ctx, 0x28) = 0;
+        B(ctx, 0x34) = off;
+        if (retarget) B(ctx, 0x30) = std::clamp(off, -lim, lim);
+    }
+    if (side != 0 && side != BI(ctx, 0x60)) BI(ctx, 0x60) = side;
+    // The slope along her facing: -asin(n.z x (flat n . f)) of the attached segment (as 0x743900's)
+    float slope = 0;
+    if (const auto s = ctx.markupSegment(att.markup, roundI(std::floor(att.param)))) {
+        const glm::vec3 v = s->second - s->first;
+        const glm::vec3 n = glm::length(v) > 0 ? glm::normalize(v) : glm::vec3(0);
+        glm::vec2 fl(v);
+        fl = glm::length(fl) > 0 ? glm::normalize(fl) : fl;
+        const glm::vec2 f(std::cos(B(ctx, 4)), std::sin(B(ctx, 4)));
+        slope = std::asin(std::clamp(n.z * glm::dot(fl, f), -1.0f, 1.0f));
+    }
+    // The lean's gain by how far past the safe zone, and its rate cap (property 0xD1, else Lara data +0xE84, else 1)
+    const float g0 = tf(ctx, t, 0x28), g1 = tf(ctx, t, 0x2C);
+    float gain = 1;
+    if (g1 == g0) {
+        if (g0 > 0) gain = g0;
+    } else if (safe < aerr) {
+        gain = edge > aerr ? (g1 - g0) * (aerr - safe) / (edge - safe) + g0 : g1;
+    } else {
+        gain = g0;
+    }
+    float cap = 1;
+    if (const float p = propF(ctx, 0xD1, 0.0f); p > 0) cap = p;
+    else if (const float q = ctx.chart().charts().data<float>(0xE84); q > 0) cap = q;
+    const bool mirror = rt.mirrored();
+    BI(ctx, 0x66) = mirror;
+    if (mirror) push = -push;
+    float tgt;
+    const float kOff = ctx.chart().charts().data<float>(0xE78), kLean = ctx.chart().charts().data<float>(0xE7C);
+    if (!BI(ctx, 0x65)) {
+        float clock = B(ctx, 0x1C) / maxT;
+        if (push < 0) clock = -clock;
+        tgt = kLean * clock + kOff * push;
+    } else { // losing balance: lean into the error
+        float c = std::clamp(-err / kHalfPi, -1.0f, 1.0f);
+        if (mirror) c = -c;
+        tgt = B(ctx, 0x44) * kLean + kOff * (c >= 0 ? 1.0f : -1.0f) * std::sqrt(std::abs(c)); // 0x813770 [I: sqrt]
+    }
+    tgt = std::clamp(tgt, -1.0f, 1.0f);
+    B(ctx, 0x3C) = tgt;
+    float step = ctx.chart().charts().data<float>(0xE80) * tm;
+    if (sway > 0) {
+        if (std::abs(B(ctx, 0x44)) < std::abs(tgt)) step *= sway + 1.0f, cap *= sway + 1.0f;
+        else step *= std::clamp(1.0f - sway, 0.1f, 1.0f);
+    }
+    const float lean = B(ctx, 0x44);
+    const float want = std::clamp((tgt - lean) * gain, -cap, cap) * ctx.timeMult;
+    float& vel = B(ctx, 0x40);
+    if (step <= 0) vel = want;
+    else if (want > vel) vel = std::min(vel + step, want);
+    else if (want < vel) vel = std::max(vel - step, want);
+    else vel = vel > 0 ? std::max(vel - step, 0.0f) : vel < 0 ? std::min(vel + step, 0.0f) : 0.0f;
+    const float l = std::clamp(vel * ctx.timeMult + lean, -1.0f, 1.0f);
+    B(ctx, 0x44) = l;
+    B(ctx, 0x38) = (edge - safe) * l * (mirror ? 1.0f : -1.0f);
+    const auto type = ctx.layerBlendType();
+    if (!type) return ++rt.stats.unportedActions[301], void();
+    if (*type == 23) {
+        float y = std::clamp(-slope / 0.5235988f, -1.0f, 1.0f);
+        y = std::clamp(y, B(ctx, 0x48) - 1.0f, B(ctx, 0x48) + 1.0f);
+        B(ctx, 0x48) = y;
+        ctx.setLayerBlend(l, y);
+    } else {
+        writeLayer(ctx, l, std::nullopt);
+    }
+}
+
 // Action 303 update 0x75D630 -> 0x72A8F0: on a markup riding a live instance, 0x72A5F0; when the beam angle changed,
 // the segment's horizontal direction -> player +0xCB0.
 void beamTrack(ChartContext& ctx, uint16_t) {
@@ -1219,7 +1517,7 @@ void registerLedge(Registry& player, Registry&) {
     r.action(205, {beamSteerEnter, nullptr, nullptr, nullptr, clearBlend, beamSteerUpdate}, "PSCAF_BeamBalanceSteerBlend", f);
     r.action(213, {nullptr, nullptr, hurdleOverBlend, hurdleOverBlend, nullptr, nullptr}, "PSCAF_HurdleOverBlendParams", f);
     r.action(232, {nullptr, nullptr, hurdleReattach, hurdleReattach, nullptr, nullptr}, "PSCAF_HurdleReattachToJumpTarget", f);
-    r.action(301, {unportedSlot, unportedSlot, nullptr, nullptr, unportedSlot, unportedSlot}, "PSCAF_BalanceWobble", f);
+    r.action(301, {wobbleEnter, wobbleReenter, nullptr, nullptr, wobbleExit, wobbleUpdate}, "PSCAF_BalanceWobble", f);
     r.action(303, {nullptr, nullptr, nullptr, nullptr, nullptr, beamTrack}, "PSCAF_BeamDirectionTrack", f);
     r.action(404, {contactEnter, nullptr, nullptr, nullptr, contactExit, contactUpdate}, "PSCAF_MarkupContactProbeFlags", f);
     r.action(408, {noop, nullptr, nullptr, nullptr, noop, noop}, "PSCAF_Noop408", f);

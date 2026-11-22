@@ -609,6 +609,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     Player* pm = nullptr;
     std::optional<int> lastLayerType; // the anim layer's +0xF9 as the last played pattern left it (layerBlendType)
     uint32_t placements = ~0u;
+    uint32_t reindexes = 0;     // Player::reindexes() seen
     bool parked = false;        // the controller holds her (a boundary state): the chart restarts when she comes back
     float lastRise = 0;         // the last drive move's root z rise (bone 0 [I])
     int attachedBefore = -1;    // +0xC94's markup as the tick began (an attach made by this tick's change starts a blend)
@@ -776,6 +777,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
                 const auto& tl = w->cameraTriggerList();
                 for (size_t i = 1; i < tl.size() && n > 0 && size_t(n) < sizeof row; ++i)
                     n += std::snprintf(row + n, sizeof row - size_t(n), i > 1 ? ",%d" : "%d", tl[i]);
+            }
+            if (n > 0 && size_t(n) < sizeof row) { // the anim layer's blend parameters and the grip, as the Wine corpus logs them
+                const float c98 = chartAttached && *chartAttached ? chartAttached->param : 0.0f;
+                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_l8c=%g\tvar_l90=%g\tvar_c98=%g", animBlend.x, animBlend.y, c98);
             }
             trace << row << '\n';
         }
@@ -1078,7 +1083,17 @@ void Shadow::Impl::stateEntered(int from, int to) {
             // beam hang the ledge pose
             const Request* rq = rt->pattern();
             const auto fam = pm->familyPose(a.markup, s.pos, s.yaw, rq ? std::string_view(rq->clip) : std::string_view{});
-            const auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
+            auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
+            if (!fam && (a.flags & 0x10000)) {
+                // a beam (markup flag 0x10000): the pose its attach update holds (0x708830 +0x46 at the grip, offset 0 on
+                // the beam states) facing along it, +0xCDC = 0 / pi by her heading against the segment (0x72A5F0); Wine
+                // h759 S878: yaw -165.6 -> -180 over the mount [O-runtime; I: a linear blend over the mount clip]
+                const glm::vec2 e(p[size_t(seg) + 1] - p[size_t(seg)]);
+                const float len = glm::length(e);
+                root = glm::mix(p[size_t(seg)], p[size_t(seg) + 1], len > 1e-4f ? t / len : 0.0f);
+                yaw = std::atan2(e.y, e.x);
+                if (glm::dot(e, glm::vec2(std::cos(s.yaw), std::sin(s.yaw))) < 0) yaw += 3.14159265f;
+            }
             blend = {true, to, s.pos, root, s.yaw, yaw, std::max(1.0f, rt->remainingFrames()), 0};
             std::fprintf(stderr, "ou-game: chart attach S%d markup %d type %d clip %s from %.1f %.1f %.1f to %.1f %.1f %.1f over %.0f\n",
                          to, a.markup, int(w->collision().markup[size_t(a.markup)].type), rq ? rq->clip.c_str() : "-",
@@ -1126,6 +1141,16 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
             }
         restartChart(), placements = player.placements();
     }
+    // A collision rebuild renumbered the markup (Player::reindex: streaming, a script terrain-group toggle): the chart
+    // keeps running, its attached markup follows her ledge's new index (gone: detached) [I: tru.exe keeps markup
+    // pointers, so it has nothing to remap].
+    if (player.reindexes() != reindexes) {
+        reindexes = player.reindexes();
+        if (const auto [from, to] = player.lastReindex(); chartAttached && chartAttached->markup >= 0 && chartAttached->markup == from) {
+            if (to >= 0) chartAttached->markup = to;
+            else *chartAttached = MarkupSlot{};
+        }
+    }
     if (loadDue) applyLoad(pendingLoad), loadDue = false, pendingLoad = nullptr;
     inputs(world, a, move, std::min(1.0f, glm::length(move)));
     attachedBefore = chartAttached && *chartAttached ? chartAttached->markup : -1;
@@ -1157,6 +1182,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.clip = p->clip, d.loop = rt->animLoops(), d.mirror = mirror != p->mirror;
         d.start = rt->clipStartFrame() / 30.0, d.time = rt->animFrames() / 30.0;
         d.restart = rt->clipStarts() != driveClipStarts;
+        if (d.restart && std::getenv("OU_CHART_CHANGES"))
+            std::fprintf(stderr, "ou-game: chart clip tick %llu S%d req %d %s%s start %.1f\n", (unsigned long long)w->ticks(), rt->state(),
+                         rt->request(), p->clip.c_str(), d.mirror ? " (mirrored)" : "", rt->clipStartFrame());
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
         if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
@@ -1183,7 +1211,8 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         // actions are not ported]
         d.motion = M::Hang;
         const std::string c = lower(d.clip.empty() ? player.state().clip : d.clip);
-        d.snap = c.starts_with("ledgeb_") && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
+        // the wall hang (ledgeb_) and the free hang without a wall under it (ledgeu_, l3_chapel's S533 / S447) alike
+        d.snap = (c.starts_with("ledgeb_") || c.starts_with("ledgeu_")) && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
         // The grip (+0xC98) moves only with the shimmy (S459 start, S432 shimmy, S441 hustle): the attach and idle
         // clips' sideways root motion leaves it where it is, and the ledge end S448 stops her dead (ChartB, Wine 973:
         // +0xC98 0.907 stays until the stick press, so the end bit 642 holds and S458 -> S450) [O-runtime].
@@ -1191,6 +1220,31 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         // the hang idles (prop 551 set: S445 / S447) run 0x708830's grip projection (its +0x47 flag) [I: the flag's
         // source in 0x770ED0 is not decoded; S533 lacks 551 and does not call 0x708210, Wine ch_hang_snap_*]
         d.follow = !d.slide && rt->propBool(551).value_or(false);
+        // 0x770ED0 builds 0x708830's record from the state's properties [O]: 412 (0x19C) enum 0x298 -> +0x46 (the root
+        // set on the attached point, 0x6FDC90; the beams' S873: 412 = 664), 418 (0x1A2) -> +0x47 (the grip projection
+        // 0x708210). The offset is player +0xCE0..+0xCE8 (property 421 / 422 grab offsets, attachTick).
+        if (!d.snap)
+            if (const Property* p = rt->property(0x19C); p && p->type == 0x23 && p->raw == 0x298) {
+                d.pin = true;
+                d.pinFollow = rt->propBool(0x1A2).value_or(false);
+                d.pinOffset = glm::vec3(playerFloat(0xCE0), playerFloat(0xCE4), playerFloat(0xCE8));
+                // property 425 (0x1A9): 0x29D -> +0x41, her yaw = atan2(+0xCB0) + +0xCDC; 0x29C -> +0x40, toward it
+                // (0x701FA0) at min(6, 3 + 3 |d| / pd+0x708) degrees per frame [O]; +0xCB0 = the segment's direction
+                // (0x6FECA0) [I: 0x5BE390's line test taken as true on every markup with a segment]
+                if (const Property* h = rt->property(0x1A9); h && h->type == 0x23 && (h->raw == 0x29C || h->raw == 0x29D))
+                    if (const auto s = markupSegment(att.markup, int(std::floor(att.param)))) {
+                        const glm::vec2 e(s->second - s->first);
+                        if (glm::length(e) > 1e-4f) {
+                            const float target = std::atan2(e.y, e.x) + playerFloat(0xCDC);
+                            d.pinYaw = target;
+                            if (h->raw == 0x29C) {
+                                float diff = std::remainder(heading() - target, 6.2831853f);
+                                const float lim = float(ch->data<int16_t>(0x708)) * 0.017453292f;
+                                d.pinTurn = std::min(0.10471976f, (lim > 0 ? std::abs(diff) / lim : 0.0f) * 0.05235988f + 0.05235988f);
+                            }
+                        }
+                    }
+            }
     } else if (rt->chainHasAction(st, 510)) {
         d.motion = M::Air;
         // 0x752410: the flight re-aimed at its target with the time left (+0x77C, action 510's update) [O]
@@ -1298,7 +1352,7 @@ void Shadow::Impl::applyLoad(const nlohmann::json& j) {
     }
     launched = j.value("launched", false), collisionMask = j.value("mask", 0x48u);
     rt->restore(*this, snap(j.at("lara"))), up->restore(*this, snap(j.at("upper")));
-    started = true, placements = pm ? pm->placements() : placements;
+    started = true, placements = pm ? pm->placements() : placements, reindexes = pm ? pm->reindexes() : reindexes;
 }
 
 Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log, bool drive)
