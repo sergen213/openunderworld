@@ -460,6 +460,45 @@ in the air, where ours aims only at take-off:
   both slots the same way (0x759850); no direct store at those offsets exists. [I] 0x710380 is a markup query (it
   returns a count; 0 clears player +0x2C8).
 
+### Foot locks: conditions 0x12E / 0x131 [O decode, open: not ported]
+
+Open item: **idle slip-off T135..T138** (S39 / S40 -> S35 NG_InAir_Feet_Forward_stage2). Each needs no stick
+(0x191 401), one foot's lock wanted (0x12E 301 / 302) and the other foot's lock lost (0x131: +0x10A && mode +0x114 != 2);
+these are the only uses of 0x12E / 0x131 in the traversal chart, so they fire only when a planted foot loses its ground
+(the many unported evaluations are idle frames testing them).
+
+- **Controllers**: player +0xF20 / +0xF24 / +0xF28 / +0xF2C point into the limb list +0xF34 (count +0xF30), built
+  from Lara data +0x5C8 (count) / +0x5CC (records) as 0x160-byte cdc::GenericLimbLockController objects (0x445160;
+  RTTI vtable 0x445350, 0x43EEB0, 0x4455B0, 0x4341A0, 0x4439F0, 0x434220). +0xF20 / +0xF24 are the limbs whose
+  config record (+0x154) has chain id +0xC = 0x30 / 0x31 (the feet), +0xF28 / +0xF2C the records with id 6 / 7.
+  Config record fields: +4 target mode (vfunc 5 0x434220 -> controller +0x10), +8 mode (-> +0x114), +0x10..+0x18
+  (-> +0x120 / +0x124 / +0x128: normal-z threshold and the ray's reach up / down), +0x2C blend frames (-> +0x10F,
+  +0x10E), +0x30 / +0x3C the other chains, +0x34 bone override, +0x36 bone, +0x38 / +0x3E event entries (0x30 bytes,
+  +0x28 bit 0 = lock), +0x40 flags (bit 0 enabled, 0x8 object floors, 0x10 / 0x20 target handling).
+- **Locked** (vfunc +0xC = 0x4341A0): byte +0x109. **Lock** (vfunc 0, 0x445350): with +0x108 and record +0x40 bit 0,
+  tests the target with 0x4390D0: +0x10B = 0, +0x10A = (no target), the record's other chains blend out (0x43A7E0 mode
+  2), +0x109 = 1, and a valid target is handed to IK chain +0x148 (0x43A260 -> chain slot +0x90). **Unlock** (vfunc 1,
+  0x43EEB0): clears +0x109 / +0x10A / +0x10B and blends chain +0x148 out over +0x10F frames. **Per frame** (vfunc 2,
+  0x4455B0): while locked, re-tests the target (lost or record bit 0x20 -> +0x10A = 1; reacquired -> +0x10A = +0x10B = 0)
+  and sets +0x10B when the chain reports done (0x434E00 third output / the slot's +0x1C vs +4 compare).
+- **Lock wanted W** (0x4395D0): enabled (+0x108, record +0x40 bit 0) and (locked, or chain +0x148 blending in / out:
+  0x434E00). 0x12E's sets: W & ~(B | C) with B = +0x10B, C = +0x10A && +0x114 != 2; 0x12F B | C, 0x130 B, 0x131 C.
+- **IK chain slots** (owner +0x104 -> +0x2E0, 0x120 bytes each): +0xA0 off, +0xAC 1 blending in / 2 out, +0xA8
+  weight, +0xA4 1 / frames (0x434E00 reads, 0x43A7E0 starts the blend-out or turns the slot off with 0 frames).
+- **Who locks**: anim event command **0x7000F0** -> 0x439470(event id) on every limb of +0xF34; an entry of the config
+  record with that id locks (entry +0x28 bit 0 set, not locked) or unlocks (bit clear, locked).
+- **Target** (0x4390D0): a callback +0x14C when set (0x434150 sets it only for type-5 limbs: 0x732EC0, the nearest end
+  of the current markup segments player +0xC94 / +0xEA0 plus an offset, the hands on a ledge; valid unless the
+  result is the zero vector, 0x49AFA0); else mode +0x10 1 / 2 (the owner's matrix +0x20 / +0x10) or the stored +0xE0;
+  the feet end in **0x438F60**: a ray (mask 0x2C19E7, 0x4935F0) through the limb's bone (+0x10D, or record +0x34) along
+  the given direction from +reach up to -reach down; valid when it hits ground (hit type 5, or 3 with record +0x40
+  bit 8 and an object) whose normal z exceeds +0x120, the target then the hit point + normal x +0x138.
+- **1:1 model plan** (chart-only, ChartShadow + one family file, no Player / legacy change): load the limb records
+  from Lara data +0x5C8 / +0x5CC; feed the anim event 0x7000F0 commands of the chart's anim section into 0x439470's
+  id match (lock / unlock; not decoded by the drive today, the largest piece); per foot keep locked / lost / released
+  and a blend state with its frame counter; cast 0x438F60's floor ray on Jolt with the record's reaches and normal
+  threshold; answer 0x12E..0x131 from those bits. Parked (low payoff: one rare idle slip-off).
+
 Open [U]: what sets agent +0x53C; the frame order of 0x768C50 against animation and physics; the exact notification
 that ends a looping clip; state +8; field +0x51C; property type 0x2B between linked charts (ours ignores it).
 
