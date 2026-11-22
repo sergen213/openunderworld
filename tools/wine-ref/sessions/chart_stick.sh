@@ -6,7 +6,9 @@
 # Usage (session dir exported, see chart_lib.sh): sessions/chart_stick.sh [chapel|bedroom]...
 WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_prefix
 . "$WREF_SRC/sessions/chart_lib.sh"
-export STICKDUMP=416 VARS=s_b0:s:B0,s_dc:s:DC,s_194:s:194,s_b4:s:B4:f,s_d8:s:D8:f
+# CAMDUMP=1 (chart.c): byte 0xE8EEC8, the matrices 0x5E7850 / 0x5E7870 return (var_cam38 / var_cam3c = address:16
+# floats), floats 0x8AC298 / 0x8B0444 / 0x8B0448, for ChartA's camera-space check of +0x100 / +0x110.
+export STICKDUMP=416 CAMDUMP=1 VARS=s_b0:s:B0,s_dc:s:DC,s_194:s:194,s_b4:s:B4:f,s_d8:s:D8:f
 C="$OU_CHART_DIR/ledge"
 for part in ${*:-chapel bedroom}; do
     case $part in
@@ -24,5 +26,14 @@ for part in ${*:-chapel bedroom}; do
         SPAWN=$S HOLD=10 "$WREF_SRC/w.sh" chart trace 120 11:5:9 > /dev/null
         creplay "$C/hang_shimmy_right.case.json" hang_shimmy_right_stick
         creplay "$C/hang_grab.case.json" hang_grab_stick ;;
+    temple)
+        # ChartA: runjump/t1204_run_jump_j50 / j55 (same case files: j50 takes T151, j55..j75 T149) with the stick
+        # dump and her yaw *(Instance+0x38), 0xFADF90 (the 0x6F7F40 yaw) and 0xFADF94 as exact bits.
+        UNIT=l4_temple; OFF=500.69,9432.76,-19909.81
+        cunit l4_temple || exit 1
+        for j in 50 55; do
+            CAMDUMP= VARS="$VARS,yaw_bits:p:38,fadf90_bits:a:FADF90,fadf94_bits:a:FADF94" \
+                creplay "$OU_CHART_DIR/runjump/t1204_run_jump_j$j.case.json" t1204_run_jump_j${j}_stick
+        done ;;
     esac
 done

@@ -352,7 +352,9 @@ int main(int argc, char** argv) {
     float cf[4]; int cam = getenv("CAMFOLLOW") && sscanf(getenv("CAMFOLLOW"), "%f,%f,%f,%f", cf, cf + 1, cf + 2, cf + 3) == 4;
     // VARS bases: pd player data, p instance, c chart, L Lara's main anim layer *(*(p+0x280)+0x14) (its +0x00..+0x24 is the
     // alignment record 0x43E480 / 0x43E370 write: +0 target position, +0x10 rotation, +0x20 end time, +0x24 mode), r the
-    // layer's crossfade record *(L+0x7C) (0x441FB0: +0x50 outgoing root velocity, +0x60 incoming), k channel 0 *(L+0x80).
+    // layer's crossfade record *(L+0x7C) (0x441FB0: +0x50 outgoing root velocity, +0x60 incoming), k channel 0 *(L+0x80),
+    // s the stick controller *(*(0xFADFB0)+0xB0), a an absolute address (the offset is the address). Without :f the
+    // dword is printed as raw hex (e.g. a float's exact bits).
     Var vars[64]; int nv = 0;
     if (getenv("VARS")) { static char buf[4096]; strncpy(buf, getenv("VARS"), 4095); buf[4095] = 0;
         for (char* t = strtok(buf, ","); t && nv < 64; t = strtok(0, ",")) {
@@ -465,7 +467,8 @@ int main(int argc, char** argv) {
             for (int i = 0; i < nv; ++i) {
                 char bc = vars[i].base;
                 DWORD base = bc == 'd' ? pd : bc == 'p' ? p : bc == 'c' ? c1 : bc == 'L' ? L : bc == 'r' ? (L ? rd32(L + 0x7C) : 0)
-                           : bc == 'k' ? (L ? rd32(L + 0x80) : 0) : bc == 's' ? sc : 0, v = base ? rd32(base + vars[i].off) : 0;
+                           : bc == 'k' ? (L ? rd32(L + 0x80) : 0) : bc == 's' ? sc : 0;
+                DWORD v = bc == 'a' ? rd32(vars[i].off) : base ? rd32(base + vars[i].off) : 0; // a: absolute address
                 if (vars[i].isF) { float fv; memcpy(&fv, &v, 4); printf("\tvar_%s=%g", vars[i].name, fv); }
                 else printf("\tvar_%s=%lx", vars[i].name, v);
             }
@@ -473,6 +476,21 @@ int main(int argc, char** argv) {
                 int len = atoi(getenv("STICKDUMP")); if (len < 0 || len > 0x400) len = 0x1A0;
                 unsigned char b[0x400] = {0}; if (sc) ReadProcessMemory(h, (void*)sc, b, len, 0);
                 printf("\tvar_stick=%lx:", sc); for (int i = 0; i < len; ++i) printf("%02x", b[i]);
+            }
+            if (getenv("CAMDUMP") && atoi(getenv("CAMDUMP"))) { // CAMDUMP=1 (ChartA): the matrices 0x5E7850 / 0x5E7870 return, flag and floats
+                // 0x5E7850 / 0x5E7870: if byte 0xE8EEC8 then 0xE8EE30 / 0xE8EE70, else g_camera (*(0xE80534)) vtable +0x38 /
+                // +0x3C; those getters are decoded as `lea eax,[ecx+d8|d32]; ret` (else their first bytes are printed).
+                unsigned char fl = 0; ReadProcessMemory(h, (void*)0xE8EEC8, &fl, 1, 0);
+                DWORD cm = rd32(0xE80534), m[2] = {0xE8EE30, 0xE8EE70};
+                if (!fl) for (int k = 0; k < 2; ++k) {
+                    DWORD fn = cm ? rd32(rd32(cm) + 0x38 + 4 * k) : 0; unsigned char b[8] = {0}; if (fn) ReadProcessMemory(h, (void*)fn, b, 8, 0);
+                    m[k] = b[0] == 0x8D && b[1] == 0x41 && b[3] == 0xC3 ? cm + (signed char)b[2]
+                         : b[0] == 0x8D && b[1] == 0x81 && b[6] == 0xC3 ? cm + (b[2] | b[3] << 8 | b[4] << 16 | (DWORD)b[5] << 24) : 0;
+                    if (!m[k]) { printf("\tvar_camfn%d=%lx:", k, fn); for (int i = 0; i < 8; ++i) printf("%02x", b[i]); }
+                }
+                printf("\tvar_camflag=%u\tvar_cam=%lx\tvar_f8ac298=%g\tvar_f8b0444=%g\tvar_f8b0448=%g", fl, cm, rdf(0x8AC298), rdf(0x8B0444), rdf(0x8B0448));
+                for (int k = 0; k < 2; ++k) { float mm[16] = {0}; if (m[k]) ReadProcessMemory(h, (void*)m[k], mm, 64, 0);
+                    printf("\tvar_cam%s=%lx:", k ? "3c" : "38", m[k]); for (int i = 0; i < 16; ++i) printf(i ? ",%g" : "%g", mm[i]); }
             }
         if (getenv("SCANAT") && t == atoi(getenv("SCANAT"))) { // debug: where else is a position (x, y) stored?
             float sx, sy; sscanf(getenv("SCANV"), "%f,%f", &sx, &sy);

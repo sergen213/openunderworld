@@ -50,7 +50,9 @@ for part in ${*:-bedroom temple}; do
         # side -y, root 161 out and 498 under), facing the wall (+y), falls, air grab, hang.
         UNIT=l3_chapel; OFF=3196.89,-2412.27,3634.58
         cunit l3_chapel || exit 1
-        HOLD=60 SETTLE=0 ccase ledge ch_hang_land "$(tru 5129.6 2938.3 -6693.1 90)" 200 0,1 \
-            "pinned 600 over static ledge 1063's hang root (middle of the line, 161 out on the -y side, 498 under): falls, air grab, hang" ;;
+        # HOLD=2: with a longer pin the air grab already takes the ledge during the hold (the first take at HOLD=60
+        # started in S533), so the fall would not be recorded.
+        HOLD=2 SETTLE=0 ccase ledge ch_hang_land "$(tru 5129.6 2938.3 -6693.1 90)" 200 0,1 \
+            "placed (2-tick pin) 600 over static ledge 1063's hang root (middle of the line, 161 out on the -y side, 498 under): falls, air grab, hang" ;;
     esac
 done
