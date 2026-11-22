@@ -1858,7 +1858,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     // ch_beam_walk frame 120, beam 1031: source 21 = (-95.23, 55.60, -0.02) = source 4 (7905.50, 1754.03)
                     // - source 29 (8000.73, 1698.43)]; the other types (holds, poles, 0x80000 / 0x400000 / 0x10 / 0x4000000)
                     // are not ported
-                    const uint32_t mf = collision::markupFlags(m.type);
+                    const uint32_t mf = collision::mud(m);
                     const uint32_t k = mf & 0xFFFFFC10u;
                     const bool plain = !(mf & 0x8000) && (k == 0x800000 || k == 0x40000 || k == 0x20000 || k == 0x10000 ||
                                                           k == 0x1000000 || k == 0x20000000 || k == 0x40000000);
@@ -1992,7 +1992,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     vec3 a = point(c.a1), b = point(c.a2);
                     if (s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size()) {
                         const collision::Markup& am = col_.markup[size_t(s_.ledge)];
-                        const uint32_t k = collision::markupFlags(am.type) & 0xFFFFFC10u;
+                        const uint32_t k = collision::mud(am) & 0xFFFFFC10u;
                         const int as = std::clamp(s_.ledgeSeg, 0, std::max(0, int(am.points.size()) - 2));
                         if (am.points.size() >= 2 && (k == 0x40000000 || k == 0x40000 || k == 0x10000)) {
                             const vec3 nn = glm::cross(am.points[size_t(as) + 1] - am.points[size_t(as)], vec3(0, 0, 1));
@@ -2111,8 +2111,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                               glm::any(glm::lessThan(glm::max(xy(a), xy(b)) + kSweepPad, sLo))))
                 continue;
             const vec3 u = (b - a) / len;
-            // beams (strict): 0x6FE040's class-record insets, +0x98 at the first point, +0x9A at the last [O decomp]
-            const bool beam = m.type == 14 && q.strict;
+            // beams (strict): 0x6FE040's class-record insets, +0x98 at the first point, +0x9A at the last, skipped for a
+            // closed markup (MUD bit 0x4, `flags >> 2 & 1`) [O decomp]
+            const bool beam = m.type == 14 && q.strict && !(collision::mud(m) & 0x4u);
             const float inset = perch || climb ? 0.0f : kLedgeInset;
             const float lo = si == 0 ? (beam ? q.beamInset[0] : inset) : 0,
                         hi = len - (si == last ? (beam ? q.beamInset[1] : inset) : 0);
