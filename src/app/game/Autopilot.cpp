@@ -183,13 +183,16 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
                          lara.pos.x, lara.pos.y, lara.pos.z, glm::degrees(lara.yaw));
             next(tick, nullptr);
         } else if (dist <= radius) {
-            // Another coarse point (radius >= 80) straight on (within 30 deg of where she is going: her motion, else her
-            // heading; aiming she strafes facing elsewhere): keep the stick and re-aim at once. Without the filter the
+            // Another coarse point (both radii >= 80) straight on (within 30 deg of where she is going: her motion, else
+            // her heading; aiming she strafes facing elsewhere): keep the stick and re-aim at once. Without the filter the
             // release lasted one tick and she ran on; held (StickRateFilter, tru.exe 0x483520) and then left to land it
-            // would stop her for two. Fine placements and turns still stop her first.
+            // would stop her for two. Fine placements (either point) and turns still stop her first (ch05_container_deck's
+            // 1600 -> 900 leg ends at a radius-60 point).
             bool chained = false;
-            if (!uid && radius >= 80.0f && step_ + 1 < steps_.size() && steps_[step_ + 1].op == "go" && steps_[step_ + 1].args.size() >= 2) {
-                const glm::vec2 nextTo = glm::vec2(std::stof(steps_[step_ + 1].args[0]), std::stof(steps_[step_ + 1].args[1])) + rebase_;
+            const Step* nx = step_ + 1 < steps_.size() ? &steps_[step_ + 1] : nullptr;
+            if (!uid && radius >= 80.0f && nx && nx->op == "go" && nx->args.size() >= 3 && nx->args[2] != "walk" &&
+                std::stof(nx->args[2]) >= 80.0f) {
+                const glm::vec2 nextTo = glm::vec2(std::stof(nx->args[0]), std::stof(nx->args[1])) + rebase_;
                 const glm::vec2 dn = nextTo - glm::vec2(lara.pos);
                 const float going = groundStep > 2.0f ? std::atan2(motion.y, motion.x) : lara.yaw;
                 chained = glm::length(dn) > 1.0f &&
