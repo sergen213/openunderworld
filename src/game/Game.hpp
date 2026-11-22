@@ -752,6 +752,17 @@ public:
         // Hang + snap, the hang idles (prop 551): tru.exe 0x708830 -> 0x708210 each frame projects the clip's root
         // displacement off the hang root onto the markup and moves the grip by its part along it (to the segment end)
         bool follow = false;
+        // Hang without snap, the attach update's pin (0x770ED0 -> 0x708830 flag +0x46: property 412 = 0x298, the beam
+        // states S873..): her root is set on the attached point (+0xCA0, at the grip +0xC98) minus her rotation x the
+        // offset +0xCE0..+0xCE8 (0x6FDC90) every frame; with flag +0x47 (property 418) the root motion's part along the
+        // markup first moves the grip (0x708210). The rest of the root motion is dropped.
+        bool pin = false, pinFollow = false;
+        vec3 pinOffset{0};
+        // 0x708830's heading (property 425, 0x1A9): flag +0x41 (0x29D) sets her yaw to `pinYaw` (the markup edge
+        // +0xCB0's yaw + player +0xCDC), flag +0x40 (0x29C) turns her toward it by at most `pinTurn` rad per 30 Hz
+        // frame (0x701FA0). nullopt: her yaw is left alone.
+        std::optional<float> pinYaw;
+        float pinTurn = -1; // < 0: set outright
         vec3 blendFrom{0}, blendTo{0};
         float yawFrom = 0, yawTo = 0, blend = 0;
         State coarse = State::Idle; // what World's subsystems read as her state (camera, interactions, carriers)
