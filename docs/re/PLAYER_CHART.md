@@ -339,6 +339,16 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   Crouch, Roll, Walk, Run, Turn, Idle; the families by clip set: Beam `bbeam_`, PoleHang `hpole_`, Ladder, Perch,
   Pillar, Climb `DICE_`, DropToHang, HangJump `ledgeb_jump*` in the air) for World's subsystems (camera, interactions,
   carriers) [I].
+- **Fade lead**: a fresh clip's root motion starts once its fade is done (0x433D40 holds the lead at frame 0; Wine
+  S432's first 6 ticks move ~0.2 units) [O-runtime]; the fade adds 2 x the key-0 root offset difference on a w^2 ease
+  (ChartA's S245 fit) [O-runtime, mechanism U].
+- **Attach alignment target** (for the family poses, not ported): 0x741130 (and the ladder's 0x744B70) writes player
+  +0x1260 / +0x1270, which action 236 warps the attach clip to: target = the family's point (in the attach frame
+  agent +0xB0, built by 0x76D270 / 0x76D010 per markup flags: 0x40000000 edge frame 0x737D60, 0x8000 box frame,
+  0x400000 0x7352A0, else normal +0xCC0 / edge +0xCB0 / point +0xCA0) minus R x the attach clip's alignment
+  translation (0x702D20; 0x435D70 / 0x435E10 read the pattern's first anim's section header +0x18..+0x2C =
+  `anim::Clip::alignPos / alignRot`, the clip's whole root displacement). Ladder 0x744B70: point = rung
+  (+0x770 x rung + +0x784 along the segment) - normal x +0x778 [O].
 - **Walk**: the walk button holds the stick level at the middle of the state's 0x20A..0x20B band, SCCTest_MoveSpeed's
   walk zone (tru.exe folds it into the magnitude 0x191 reads, 0xFADFB0 -> +0xB0 -> +0x18 [U]) [I].
 - **Input sources** (the table above) in drive mode: `velocity()` = PlayerState::vel / 30 (the drive's own integrated
