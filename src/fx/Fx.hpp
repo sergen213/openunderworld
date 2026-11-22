@@ -594,6 +594,10 @@ public:
     const PointSet* effectList(const cdc::Drm& unit, const std::string& unitName, uint32_t listId,
                                std::vector<std::string>* warnings = nullptr);
     const std::vector<scene::TextureData>& textures() const { return textures_; }
+    // Adds a texture the effects draw that no DRM holds (fx::precipTextures); ignored when the id is already present.
+    void addTexture(scene::TextureData t) {
+        if (textureIds_.insert(t.id).second) textures_.push_back(std::move(t));
+    }
 
 private:
     struct Entry { std::shared_ptr<const ObjectFx> fx; uint32_t flags = 0; std::vector<uint8_t> data; std::optional<WeatherDef> weather; bool weatherRead = false; };

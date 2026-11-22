@@ -40,6 +40,7 @@
 #include "formats/Formats.hpp"
 #include "fx/Breath.hpp"
 #include "fx/Fx.hpp"
+#include "fx/Precip.hpp"
 #include "game/Game.hpp"
 #include "script/Vm.hpp"
 #include "game/Weather.hpp"
@@ -1243,7 +1244,12 @@ struct EffectsView {
     const ou::fx::WeatherDef* weatherDef = nullptr;
     std::shared_ptr<const ou::fx::ObjectFx> weatherFx;
     float weatherAspect = 16.0f / 9.0f; // the last frame's
-    bool drawWeather = true;            // off while the Enhanced weather layer shows the unit's rain / snow
+    bool drawWeather = true;            // off while the Enhanced weather (fx::Precip) shows rain / snow
+    // Enhanced weather (docs/RENDERING.md "Weather"): world-space drops / flakes, their cover grid and Lara's snow coat.
+    ou::fx::Precip precip;
+    ou::fx::SnowCoat snowCoat;
+    ou::fx::Precip::Frame precipFrame; // this frame's (kind None: not drawn)
+    double precipBuildMs = 0;          // summed fx::Precip::build CPU time (the exit log's per-frame cost)
     std::pair<int32_t, int32_t> loggedWeather{0, 0}; // script snow / rain % last logged
     static ou::fx::Weather::Camera weatherCamera(const ou::render::Camera& c, float aspect) {
         ou::fx::Weather::Camera w;
@@ -1315,6 +1321,7 @@ struct EffectsView {
     void sync(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
         if (!library) {
             library.emplace(bf);
+            for (auto& t : ou::fx::precipTextures()) library->addTexture(std::move(t)); // Enhanced weather (fx::Precip)
             if (const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt"))
                 names = ou::formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
         }
@@ -1586,6 +1593,22 @@ struct EffectsView {
         if (fo.water != ou::render::WaterQuality::Enhanced) bubbles.clear();
         weatherAspect = aspect;
         if (drawWeather && weatherDef) weather.build(*weatherDef, weatherCamera(cam, aspect), vertices, batches);
+        if (precipFrame.kind != ou::fx::Precip::Kind::None || snowCoat.clumps()) {
+            // Lit by the unit look: its fog colour (the sky / air light the drops catch) over a floor, as the post pass did.
+            glm::vec3 light(0.7f);
+            if (fo.unitLook) {
+                const glm::vec3 fog(fo.unitLook->fogColor[0], fo.unitLook->fogColor[1], fo.unitLook->fogColor[2]);
+                const float lum = glm::dot(fog, glm::vec3(0.3f, 0.59f, 0.11f));
+                light = glm::mix(glm::vec3(1), fog / std::max(lum, 1e-3f), 0.25f) * (0.55f + 0.45f * std::clamp(lum * 2.0f, 0.0f, 1.0f));
+            }
+            precipFrame.light = glm::clamp(light, glm::vec3(0.05f), glm::vec3(1.2f));
+        }
+        if (precipFrame.kind != ou::fx::Precip::Kind::None) {
+            const auto t0 = std::chrono::steady_clock::now();
+            precip.build(precipFrame, vertices, batches);
+            precipBuildMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        }
+        snowCoat.build(precipFrame, vertices, batches);
         fo.fxVertices = vertices, fo.fxBatches = batches;
         // Sun-glare filters fade while the owner point is occluded (0x535C50): a collision ray from the camera [I].
         const glm::mat4 viewProj = cam.projection(aspect) * cam.view();
@@ -2425,6 +2448,10 @@ int main(int argc, char** argv) {
     std::map<std::string, ou::game::UnitWeather> unitWeathers;
     std::optional<ou::fx::Library> weatherFx; // the weather objects' particle definitions (their columns)
     float shelter = 0;
+    double precipCoverSum = 0;           // summed cover-grid segment query time (fx::Precip::updateCover)
+    uint64_t precipFrames = 0;           // frames that drew the Enhanced weather
+    double coatTime = 0;                 // game time of the last SnowCoat tick
+    glm::vec3 coatPos = world->player().state().pos;
     const auto& sp = world->player().state();
     std::fprintf(stderr, "ou-game: %s | chapter %d | spawn %s at %.1f %.1f %.1f yaw %.1f\n", world->currentUnit().data.name.c_str(),
                  world->chapter,
@@ -3953,7 +3980,14 @@ int main(int argc, char** argv) {
                 uw.kind = it->second.kind;
                 uw.intensity = it->second.intensity * ou::game::weatherCoverage(it->second, cam.position - unit.offset);
             }
-            effects.drawWeather = uw.kind == P::None;
+            // Script weather (prologue rain, ...) shows through the same world-space particles in Enhanced: the original
+            // camera-relative pools (fx::Weather) stay for the Original preset.
+            const auto& sw = world->script().weather();
+            if (sw.rain > 0 && uw.kind != P::Snow)
+                uw.kind = P::Rain, uw.intensity = std::max(uw.intensity, std::min(1.0f, float(sw.rain) / 100.0f));
+            else if (sw.snow > 0 && uw.kind != P::Rain)
+                uw.kind = P::Snow, uw.intensity = std::max(uw.intensity, std::min(1.0f, float(sw.snow) / 100.0f));
+            effects.drawWeather = uw.kind == P::None || uw.intensity <= 0;
             const ou::physics::Scene::Segment up{cam.position, cam.position + glm::vec3(0, 0, 3000.0f)};
             std::optional<ou::physics::Scene::SegmentHit> roofHit;
             world->physics().castSegments({&up, 1}, {&roofHit, 1}); // Jolt narrow phase on the scene's terrain / colliders
@@ -3961,7 +3995,77 @@ int main(int argc, char** argv) {
             shelter += (float(roof) - shelter) * (1.0f - std::exp(-3.0f * float(dt))); // same fade at any render rate
             fo.weather.kind = uw.kind == P::Rain ? ou::render::Weather::Kind::Rain
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
+            // The post pass keeps only the wet look (darkening); the particles are world space (fx::Precip), so they keep
+            // falling outside a door while the camera stands under the roof: the cover grid hides them under roofs.
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
+            auto& pf = effects.precipFrame;
+            pf.kind = uw.kind == P::Rain ? ou::fx::Precip::Kind::Rain : uw.kind == P::Snow ? ou::fx::Precip::Kind::Snow : ou::fx::Precip::Kind::None;
+            pf.intensity = uw.intensity;
+            pf.time = waveSeconds;
+            pf.eye = cam.position, pf.forward = cam.forward();
+            pf.tanHalfFovY = std::tan(glm::radians(cam.verticalFovDeg) * 0.5f), pf.viewportHeight = float(h);
+            {
+                const auto& cu = world->currentUnit();
+                const glm::vec2 bw = world->bends().wind(cu.data.name, cam.position);
+                const float wl = glm::length(bw);
+                pf.wind = (wl > 0 ? bw / wl * std::min(wl, 1.0f) : glm::vec2(0)) * (pf.kind == ou::fx::Precip::Kind::Snow ? 60.0f : 140.0f);
+            }
+            if (pf.kind != ou::fx::Precip::Kind::None && pf.intensity > 0) {
+                const auto t0 = std::chrono::steady_clock::now();
+                effects.precip.updateCover(cam.position, [&](std::span<const glm::vec3> from, std::span<const glm::vec3> to,
+                                                             std::span<std::optional<float>> hits) {
+                    std::vector<ou::physics::Scene::Segment> segs(from.size());
+                    std::vector<std::optional<ou::physics::Scene::SegmentHit>> out(from.size());
+                    for (size_t i = 0; i < from.size(); ++i) segs[i] = {from[i], to[i]};
+                    world->physics().castSegments(segs, out);
+                    std::vector<const ou::collision::Markup*> water;
+                    for (const auto& m : world->collision().markup)
+                        if (m.type == 10 && m.points.size() >= 2) water.push_back(&m);
+                    for (size_t i = 0; i < from.size(); ++i) {
+                        hits[i] = out[i] ? std::optional(out[i]->point.z) : std::nullopt;
+                        // Water volumes are no collision: their surface tops the column too (drops splash and ripple
+                        // on it instead of falling through to the bed).
+                        for (const auto* m : water) {
+                            const float wz = m->points[1].z;
+                            if (wz > from[i].z || wz < to[i].z || (hits[i] && *hits[i] >= wz)) continue;
+                            if (ou::game::insideWater(*m, {from[i].x, from[i].y, wz - 1})) hits[i] = wz;
+                        }
+                    }
+                }, 2048);
+                precipCoverSum += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                ++precipFrames;
+            }
+        } else {
+            effects.precipFrame.kind = ou::fx::Precip::Kind::None;
+        }
+        // Snow on Lara (fx::SnowCoat): builds while she stands in snowfall under open sky, fades / sheds with motion.
+        if (!mainMenu) {
+            const auto& ps = world->player().state();
+            const double gt = waveSeconds;
+            const float gdt = float(std::clamp(gt - coatTime, 0.0, 0.1));
+            coatTime = gt;
+            using S = ou::game::State;
+            const S st = ps.state;
+            ou::fx::SnowCoat::Input in;
+            in.time = gt, in.dt = gdt, in.position = ps.pos;
+            in.velocity = gdt > 0 ? (ps.pos - coatPos) / gdt : glm::vec3(0);
+            coatPos = ps.pos;
+            in.grounded = !(st == S::Jump || st == S::Fall || st == S::HangJump || st == S::WallJump || st == S::GrappleSwing);
+            in.climbing = st == S::Hang || st == S::Shimmy || st == S::ClimbUp || st == S::Climb || st == S::Ladder ||
+                          st == S::Pillar || st == S::PoleHang || st == S::DropToHang || st == S::GrappleRappel ||
+                          (st >= S::SwimSplash && st <= S::SwimClimbOut);
+            const auto& pf = effects.precipFrame;
+            if (pf.kind == ou::fx::Precip::Kind::Snow) {
+                const auto top = effects.precip.cover(glm::vec2(ps.pos));
+                in.snowfall = top && *top <= ps.pos.z + in.height + 30.0f ? pf.intensity : 0.0f;
+            }
+            if (in.velocity.z > 20000 || glm::length(in.velocity) > 20000) in.velocity = glm::vec3(0); // teleport / load
+            effects.snowCoat.tick(in, [&](const glm::vec3& p) -> std::optional<float> {
+                const ou::physics::Scene::Segment seg{p + glm::vec3(0, 0, 10), p - glm::vec3(0, 0, 600)};
+                std::optional<ou::physics::Scene::SegmentHit> hit;
+                world->physics().castSegments({&seg, 1}, {&hit, 1});
+                return hit ? std::optional(hit->point.z) : std::nullopt;
+            });
         }
         // Time of day (render/TimeOfDay.hpp): the cycle runs on game time (paused with the game); stars and moon only
         // under a clear sky (no Enhanced weather, no unit rain object).
@@ -4018,6 +4122,13 @@ int main(int argc, char** argv) {
                          world->checkpoint() ? world->checkpoint()->id : 0, world->found[0], world->found[1], world->found[2],
                          std::string(ou::game::stateName(fs.state)).c_str(), fs.pos.x, fs.pos.y, fs.pos.z, glm::degrees(fs.yaw), fs.clip.c_str(),
                          (unsigned long long)world->stateHash(), effects.system.particleCount());
+            if (precipFrames)
+                std::fprintf(stderr, "ou-game: weather %s intensity %.2f particles %zu clumps %zu coat %.2f/%.2f/%.2f/%.2f | cover %.3f ms build %.3f ms per frame (%llu frames)\n",
+                             effects.precipFrame.kind == ou::fx::Precip::Kind::Rain ? "rain" : effects.precipFrame.kind == ou::fx::Precip::Kind::Snow ? "snow" : "none",
+                             effects.precipFrame.intensity, effects.precip.lastCount(), effects.snowCoat.clumps(),
+                             effects.snowCoat.coverage()[0], effects.snowCoat.coverage()[1], effects.snowCoat.coverage()[2],
+                             effects.snowCoat.coverage()[3], precipCoverSum / double(precipFrames),
+                             effects.precipBuildMs / double(precipFrames), (unsigned long long)precipFrames);
             if (autopilot) autopilot->finish(appTicks);
             { // receptacle replays (tests/replays/*_insert.txt) check these
                 std::string list;

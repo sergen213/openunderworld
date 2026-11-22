@@ -239,9 +239,6 @@ const uint32_t kFsrFxFrag[] = { // FSR reactivity of fx sprites, splashes, rain 
 const uint32_t kFsrSplashFrag[] = {
 #include "fsr_splash.frag.inc"
 };
-const uint32_t kFsrWeatherFrag[] = {
-#include "fsr_weather.frag.inc"
-};
 const uint32_t kFxVert[] = { // original particle effects (src/fx)
 #include "fx.vert.inc"
 };
@@ -1604,7 +1601,7 @@ public:
         const bool particles = enhancedWater && uwParticlesOn(wb) && uwSnowPipeline_; // counted in the "fx" GPU time
         if (particles) recordUwParticles(cmd, camera, wb, options, flipped, scissor);
         gpuMark(cmd, 8);
-        if (fsrOn) recordFsrMasks(cmd, options, splashDrawn, wb.weather.x > 0.5f, push.viewProj, currentVP,
+        if (fsrOn) recordFsrMasks(cmd, options, splashDrawn, push.viewProj, currentVP,
                                   jitter / glm::vec2(extent_.width, extent_.height), enhancedWater, options.cullBackFaces);
         gpuMark(cmd, 9);
         // Submerged in Enhanced water (UwGrade): post.frag writes the linear frame into uwHdr_, the bloom chain and the
@@ -3987,11 +3984,11 @@ private:
     // ---- AMD FSR (docs/RENDERING.md "FSR") ----
     // Mask pass pipelines: attachment 0 = motion (RG16F), 1 = reactivity (R8), the scene depth read-only. Motion: moving
     // meshes over the camera motion (LEQUAL, pulled toward the camera: the translated programs' positions differ in the
-    // last bits). Reactive*: max-blended into attachment 1 (meshes; fx sprites from their own vertex stream; rain / snow
-    // and the splash fluid (its blurred splat target) fullscreen). Camera: fullscreen, writes both, no depth.
-    enum class FsrPipeline { Motion, Reactive, Camera, FxReactive, SplashReactive, WeatherReactive };
+    // last bits). Reactive*: max-blended into attachment 1 (meshes; fx sprites, the Enhanced rain / snow among them, from
+    // their own vertex stream; the splash fluid (its blurred splat target) fullscreen). Camera: fullscreen, writes both, no depth.
+    enum class FsrPipeline { Motion, Reactive, Camera, FxReactive, SplashReactive };
     VkPipeline createFsrPipeline(FsrPipeline kind) {
-        const bool fullscreen = kind == FsrPipeline::Camera || kind == FsrPipeline::WeatherReactive || kind == FsrPipeline::SplashReactive;
+        const bool fullscreen = kind == FsrPipeline::Camera || kind == FsrPipeline::SplashReactive;
         const bool reactive = kind != FsrPipeline::Motion && kind != FsrPipeline::Camera;
         std::span<const uint32_t> vs = kFsrMaskVert, fs = kFsrMaskFrag;
         VkPipelineLayout layout = fsrMaskLayout_;
@@ -4014,7 +4011,6 @@ private:
                                                 2, meshBindings, 4, meshAttrs};
         switch (kind) {
         case FsrPipeline::Camera: vs = kPostVert, fs = kFsrCameraFrag, layout = fsrCameraLayout_, vi = {vi.sType}; break;
-        case FsrPipeline::WeatherReactive: vs = kPostVert, fs = kFsrWeatherFrag, layout = postLayout_, vi = {vi.sType}; break;
         case FsrPipeline::FxReactive: vs = kFxVert, fs = kFsrFxFrag, layout = fsrFxLayout_, vi = {vi.sType, nullptr, 0, 1, &fxBinding, 5, fxAttrs}; break;
         case FsrPipeline::SplashReactive: vs = kSplashScreen, fs = kFsrSplashFrag, layout = splashLayout_, vi = {vi.sType}; break;
         default: break;
@@ -4104,7 +4100,6 @@ private:
         fsrCameraPipeline_ = createFsrPipeline(FsrPipeline::Camera);
         fsrFxPipeline_ = createFsrPipeline(FsrPipeline::FxReactive);
         fsrSplashPipeline_ = createFsrPipeline(FsrPipeline::SplashReactive);
-        fsrWeatherPipeline_ = createFsrPipeline(FsrPipeline::WeatherReactive);
         const VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 1, &ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &fsrPool_));
@@ -4114,8 +4109,7 @@ private:
 
     void destroyFsr() {
         fsr_.destroy();
-        for (VkPipeline* p : {&fsrMotionPipeline_, &fsrReactivePipeline_, &fsrCameraPipeline_, &fsrFxPipeline_, &fsrSplashPipeline_,
-                              &fsrWeatherPipeline_})
+        for (VkPipeline* p : {&fsrMotionPipeline_, &fsrReactivePipeline_, &fsrCameraPipeline_, &fsrFxPipeline_, &fsrSplashPipeline_})
             vkDestroyPipeline(device_, std::exchange(*p, VK_NULL_HANDLE), nullptr);
         for (VkPipelineLayout* l : {&fsrMaskLayout_, &fsrCameraLayout_, &fsrFxLayout_})
             vkDestroyPipelineLayout(device_, std::exchange(*l, VK_NULL_HANDLE), nullptr);
@@ -4166,7 +4160,7 @@ private:
 
     // Motion vectors + reactivity at the render resolution after the scene (docs/RENDERING.md "FSR"). depth_ goes
     // DEPTH_ATTACHMENT -> DEPTH_READ_ONLY (tested + sampled here) -> SHADER_READ_ONLY with motion_ / reactive_ for FSR.
-    void recordFsrMasks(VkCommandBuffer cmd, const FrameOptions& options, bool splashDrawn, bool weather,
+    void recordFsrMasks(VkCommandBuffer cmd, const FrameOptions& options, bool splashDrawn,
                         const glm::mat4& jitteredVP, const glm::mat4& currentVP, glm::vec2 jitterUv,
                         bool enhancedWater, bool cullBackFaces) {
         constexpr VkPipelineStageFlags2 kDepthStages =
@@ -4215,12 +4209,6 @@ private:
         vkCmdPushConstants(cmd, fsrCameraLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof cam, &cam);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrCameraLayout_, 0, 1, &fsrDepthSet_, 0, nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
-        if (weather && fsr_.reactiveUsed()) { // rain / snow coverage, as the post pass will draw it (its sets 1 + 2)
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrWeatherPipeline_);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 1, 1, &postWaterSets_[frameIndex_], 0, nullptr);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 2, 1, &shadowSets_[frameIndex_], 0, nullptr);
-            vkCmdDraw(cmd, 3, 1, 0, 0);
-        }
 
         const VkViewport flipped{0, float(extent_.height), float(extent_.width), -float(extent_.height), 0, 1};
         vkCmdSetViewport(cmd, 0, 1, &flipped);
@@ -6611,7 +6599,7 @@ private:
     glm::dvec3 cortaoPrevEye_{0.0};
     GpuImage motion_, reactive_, fsrInput_, fsrOutput_, fsrGenerated_;
     VkPipelineLayout fsrMaskLayout_ = VK_NULL_HANDLE, fsrCameraLayout_ = VK_NULL_HANDLE, fsrFxLayout_ = VK_NULL_HANDLE;
-    VkPipeline fsrFxPipeline_ = VK_NULL_HANDLE, fsrSplashPipeline_ = VK_NULL_HANDLE, fsrWeatherPipeline_ = VK_NULL_HANDLE;
+    VkPipeline fsrFxPipeline_ = VK_NULL_HANDLE, fsrSplashPipeline_ = VK_NULL_HANDLE;
     VkPipeline fsrMotionPipeline_ = VK_NULL_HANDLE, fsrReactivePipeline_ = VK_NULL_HANDLE, fsrCameraPipeline_ = VK_NULL_HANDLE;
     VkDescriptorPool fsrPool_ = VK_NULL_HANDLE;
     VkDescriptorSet fsrDepthSet_ = VK_NULL_HANDLE;
