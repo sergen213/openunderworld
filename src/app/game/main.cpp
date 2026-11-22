@@ -85,6 +85,7 @@ struct Options {
     bool chartShadow = false;
     std::string chartTrace;
     std::string chartState; // --chart-state N[@T[@pose[@F]]]: the shadow chart enters state N at world tick T (a Wine case's start.state), F frames into it
+    std::filesystem::path chartRng; // --chart-rng FILE: replay only, tru.exe's recorded generator results (hex / decimal, one per token, # comments)
     std::filesystem::path recordInput, replayInput; // --record-input / --replay-input FILE: device events (platform::EventLog)
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script / --replay-input
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
@@ -121,7 +122,7 @@ void usage() {
                  "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
                  "               [--self-test FILE.json [--self-test-report OUT.json] [--self-test-trace]] (a gameplay scenario, docs/SELFTEST.md;\n"
                  "                exit 0: every step passed, 1: a step failed, 2: malformed scenario)\n"
-                 "               [--chart-shadow] [--chart-trace FILE.tsv] [--chart-state N[@TICK[@X,Y,Z,YAW[@FRAMES]]]] (Lara's state chart beside the controller, docs/re/PLAYER_CHART.md)\n"
+                 "               [--chart-shadow] [--chart-trace FILE.tsv] [--chart-state N[@TICK[@X,Y,Z,YAW[@FRAMES]]]] [--chart-rng FILE] (Lara's state chart beside the controller, docs/re/PLAYER_CHART.md)\n"
                  "               [--traversal legacy|chart] (who decides Lara's traversal; config game.traversal, default legacy)\n"
                  "       ou-game chart-dump [--game-dir DIR] [--state N] [--coverage] [--upper] [--names conditions.json]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
@@ -219,6 +220,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--self-test-report") o.selfTestReport = v;
         else if (a == "--chart-trace") o.chartTrace = v;
         else if (a == "--chart-state") o.chartState = v;
+        else if (a == "--chart-rng") o.chartRng = v;
         else if (a == "--traversal") {
             if (std::string(v) != "legacy" && std::string(v) != "chart") throw std::runtime_error("--traversal: legacy or chart");
             o.game.traversal = v;
@@ -2270,6 +2272,17 @@ int main(int argc, char** argv) {
                 if (const auto at3 = opt.chartState.find('@', at2 + 1); at3 != std::string::npos) elapsed = std::stof(opt.chartState.substr(at3 + 1));
             }
             chartShadow->enterAt(std::stoi(opt.chartState.substr(0, at)), at == std::string::npos ? 0 : std::stoull(opt.chartState.substr(at + 1, at2 == std::string::npos ? std::string::npos : at2 - at - 1)), pose, elapsed);
+        }
+        if (chartShadow && !opt.chartRng.empty()) {
+            std::ifstream in(opt.chartRng);
+            std::vector<uint32_t> draws;
+            for (std::string line; std::getline(in, line);) {
+                line = line.substr(0, line.find('#'));
+                std::istringstream ss(line);
+                for (std::string tok; ss >> tok;) draws.push_back(uint32_t(std::stoul(tok, nullptr, 0)));
+            }
+            std::fprintf(stderr, "ou-game: chart rng feed: %zu draws from %s\n", draws.size(), opt.chartRng.string().c_str());
+            chartShadow->feedRng(std::move(draws));
         }
         strings = ou::locale::loadStrings(opt.gameDir, ou::locale::textLanguage(language));
         if (!strings) throw std::runtime_error("pc-w\\local\\locals.bin not in bigfile");

@@ -255,6 +255,11 @@ Grapple). `--chart-state N[@TICK[@X,Y,Z,YAW[@FRAMES]]]` puts the shadow chart in
 FRAMES (the Wine row's `t30` at the case's tick 0) runs the state's time and its clip clock on through the node's queue
 (`ChartRuntime::fastForward`): l3_chapel's ch_hang_* begin 33.5 frames into S533. Our controller is not placed in that
 state, so holds (beam, pillar, pole, ledge) leave at once without an attached markup (drive mode seeds the hold).
+`--chart-rng FILE` (replay only, harness [I]) feeds tru.exe's recorded generator results (0x597780 on the shared generator
+0x8A9C78: hex or decimal tokens in call order, `#` comments) to the chart's draws (`ChartContext::rngFeed`, action 301's
+wobble 0x742330 / 0x4A2B80); `tools/chart-replay.sh` passes `W/chart/wine/<family>/<case>.rng` when it exists. Live play
+keeps ours' own generator: tru.exe's is a 55-word lagged additive generator every system shares, so porting it could not
+reproduce its sequence.
 
 **Frame order** [O-runtime, U the poll's address]: tru.exe's `GAMELOOP_Frame` (0x5DFFE0) pumps the window messages (the
 input actions' records +0 flags / +4 change time / +8 press time against the input clock 0xA02B68 +0x1C are updated

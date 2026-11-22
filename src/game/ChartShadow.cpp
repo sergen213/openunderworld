@@ -1544,6 +1544,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
 void Shadow::enterAt(int state, uint64_t tick, std::optional<glm::vec4> at, float elapsed) {
     impl_->enterState = state, impl_->enterTick = tick, impl_->enterPose = at, impl_->enterElapsed = elapsed;
 }
+void Shadow::feedRng(std::vector<uint32_t> draws) { impl_->rngFeed.assign(draws.begin(), draws.end()); }
 Shadow::~Shadow() = default;
 PlayerDriver* Shadow::driver() { return impl_->driving ? impl_.get() : nullptr; }
 

@@ -652,6 +652,67 @@ int ladderLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a, int lc
     return bits;
 }
 
+// 0x7327F0: the beam / hurdle lookahead (markup flag 0x10000) [O decomp]. d = property 561 (0x231, default 200),
+// negated with player +0xED0 == 2 and again for limb class (0x787EF0 on property 499) 2 / 6. 0x5D0090 walks the
+// markup from the grip (+0xC98) |d| along it in d's direction (segment by segment, 0x6FE790): reaching the last point
+// records an end (type 1) at the walked distance; joints to other markups (0x5C9170, mask 0x3010000, types 2..6) are
+// not in ours' markup data [U: never recorded]. A record nearer than the markup-class record's +0x9A (0x5D57A0:
+// Lara data +0x5BC for 0x10000) sets 4 (an end) / 0x18 (a joint); the first record's distance -> agent +0xF4 (else d).
+// Then two player rays (0x493330, flags 0x2C19E7) from her position raised by Lara data +0xE90, d along her facing
+// (-row1 of instance +0x90) and d backward: a forward hit sets 1 (only within 126.42 when past +0xF4, which it
+// otherwise shortens); a backward hit within +0xF8 shortens it.
+int beamLookahead(ChartContext& ctx, const ChartContext::MarkupSlot& a) {
+    const auto& d = ctx.chart().charts();
+    const float dist = propF(ctx, 0x231, 200.0f);
+    float signedD = dist;
+    if (ctx.playerInt(0xED0) == 2) signedD = -signedD;
+    const int p499 = propI(ctx, 0x1F3, 0);
+    if (p499 == 0x19B || p499 == 0x19F || p499 == 0x1C3) signedD = -signedD; // 0x787EF0 -> 2 / 6
+    int16_t r9A = 0;
+    if (const auto r = d.pointer(d.dataOffset + 0x5BC); r && size_t(*r) + 0x9C <= d.bytes.size())
+        std::memcpy(&r9A, d.bytes.data() + *r + 0x9A, 2);
+    float& f4 = ctx.agentFloat(0xF4);
+    float& f8 = ctx.agentFloat(0xF8);
+    f4 = f8 = dist;
+    int bits = 0;
+    // 0x5D0090: the end of the markup within |d|
+    const int count = ctx.markupSegmentCount(a.markup);
+    int seg = roundI(std::floor(a.param));
+    if (signedD != 0 && count > 0 && seg >= 0 && seg < count) {
+        const float dir = signedD > 0 ? 1.0f : -1.0f;
+        float left = std::abs(signedD), walked = 0, frac = a.param - float(seg);
+        float share = dir > 0 ? 1.0f - frac : frac;
+        for (;;) {
+            const auto s = ctx.markupSegment(a.markup, seg);
+            if (!s) break;
+            const float leg = share * glm::length(s->second - s->first);
+            if (left < leg) break; // the walk ends inside this segment: no record
+            left -= leg, walked += leg;
+            const int next = seg + int(dir);
+            if (next < 0 || next >= count) { // the last point: an end record (type 1) [I: ours' markup is never closed]
+                if (walked < float(r9A)) bits |= 4;
+                f4 = walked;
+                break;
+            }
+            seg = next, share = 1.0f;
+        }
+    }
+    if (ctx.hasCollision()) {
+        const float h = ctx.heading();
+        const glm::vec3 fwd(std::cos(h), std::sin(h), 0);
+        const glm::vec3 o = ctx.position() + glm::vec3(0, 0, d.data<float>(0xE90));
+        if (const auto t = ctx.playerRay(o, o + fwd * dist)) {
+            if (f4 < *t) {
+                if (*t < 126.42f) bits |= 1;
+            } else {
+                f4 = *t, bits |= 1;
+            }
+        }
+        if (const auto t = ctx.playerRay(o, o - fwd * dist); t && *t <= f8) f8 = *t;
+    }
+    return bits;
+}
+
 void markupContactProbe(ChartContext& ctx) {
     int& out = ctx.chart().field(0xF0);
     const auto a = ctx.attachedMarkup();
@@ -670,8 +731,10 @@ void markupContactProbe(ChartContext& ctx) {
             else bits |= ledgeLookahead(ctx, a);
         } else if ((m & 0x400000) != 0) {
             bits |= ladderLookahead(ctx, a, limbClass(ctx));
-        } else if ((m & (0x1000000 | 0x10000)) != 0) {
-            ++ctx.chart().stats.unportedActions[404]; // 0x7327F0 / 0x7337F0
+        } else if ((m & 0x10000) != 0) {
+            bits |= beamLookahead(ctx, a);
+        } else if ((m & 0x1000000) != 0) {
+            ++ctx.chart().stats.unportedActions[404]; // 0x7337F0
         } else if (m & 0x10) {
             bits |= pillarLookahead(ctx, a, limbClass(ctx));
         } else if (m & 0x8000000) {
@@ -1066,8 +1129,15 @@ uint32_t block(ChartContext& ctx) {
 }
 float tf(ChartContext& ctx, uint32_t t, uint32_t off) { return ctx.chart().charts().data<float>(t + off); }
 float ts(ChartContext& ctx, uint32_t t, uint32_t off) { return float(ctx.chart().charts().data<int16_t>(t + off)); }
-// 0x4A2B80 on the generator 0x8A9C78: uniform in [lo, hi] [I: ours' own generator]
-float rnd(float lo, float hi) {
+// 0x4A2B80 on the generator 0x8A9C78 (0x597780, a 55-word lagged additive generator shared by every system): uniform in
+// [lo, hi] = lo + (hi - lo) x (draw & 0x7FFFFF) / 8388607 (0x8457D0) [O]. Replay (--chart-rng) takes tru.exe's recorded
+// draws in order (ChartContext::rngFeed); live play draws from ours' own generator [I].
+float rnd(ChartContext& ctx, float lo, float hi) {
+    if (!ctx.rngFeed.empty()) {
+        const uint32_t v = ctx.rngFeed.front() & 0x7FFFFF;
+        ctx.rngFeed.pop_front();
+        return float(double(hi - lo) * (double(v) / 8388607.0) + lo);
+    }
     static std::minstd_rand rng(0x742770);
     return lo + (hi - lo) * std::uniform_real_distribution<float>(0, 1)(rng);
 }
@@ -1107,10 +1177,10 @@ void wobbleEnter(ChartContext& ctx, uint16_t) {
     B(ctx, 0x54) = 0;
     BI(ctx, 0x68) = 0;
     B(ctx, 0x58) = (2.0f - tf(ctx, t, 0x1C)) * tf(ctx, t, 0x20);
-    B(ctx, 0x10) = rnd(ts(ctx, t, 0xC), ts(ctx, t, 0xE));
-    B(ctx, 0x14) = rnd(ts(ctx, t, 0x10), ts(ctx, t, 0x12));
-    const float sign = rnd(0, 1);
-    const float rate = enabled ? rnd(glm::radians(tf(ctx, t, 4)), glm::radians(tf(ctx, t, 8))) : 0.0f;
+    B(ctx, 0x10) = rnd(ctx, ts(ctx, t, 0xC), ts(ctx, t, 0xE));
+    B(ctx, 0x14) = rnd(ctx, ts(ctx, t, 0x10), ts(ctx, t, 0x12));
+    const float sign = rnd(ctx, 0, 1);
+    const float rate = enabled ? rnd(ctx, glm::radians(tf(ctx, t, 4)), glm::radians(tf(ctx, t, 8))) : 0.0f;
     B(ctx, 0x2C) = rate;
     BI(ctx, 0x64) = sign < 0.5f;
     if (sign < 0.5f) B(ctx, 0x2C) = -rate;
@@ -1176,11 +1246,11 @@ void wobbleUpdate(ChartContext& ctx, uint16_t) {
     if (maxT <= 0) maxT = ts(ctx, t, 0x34);
     float holdT = ts(ctx, t, 0x38);
     const auto reroll = [&](bool toggle) {
-        const float r = rnd(rLo, rHi);
+        const float r = rnd(ctx, rLo, rHi);
         if (toggle) BI(ctx, 0x64) = !BI(ctx, 0x64);
         B(ctx, 0x2C) = BI(ctx, 0x64) ? -r : r;
-        if (toggle) B(ctx, 0x10) = rnd(ts(ctx, t, 0xC), ts(ctx, t, 0xE));
-        B(ctx, 0x14) = rnd(ts(ctx, t, 0x10), ts(ctx, t, 0x12));
+        if (toggle) B(ctx, 0x10) = rnd(ctx, ts(ctx, t, 0xC), ts(ctx, t, 0xE));
+        B(ctx, 0x14) = rnd(ctx, ts(ctx, t, 0x10), ts(ctx, t, 0x12));
     };
     if (retarget) {
         B(ctx, 0x30) = 0;
@@ -1262,11 +1332,11 @@ void wobbleUpdate(ChartContext& ctx, uint16_t) {
             const float w = B(ctx, 0x30);
             if ((ctx.chart().charts().data<uint8_t>(t + 0x3A) & 1) && (BI(ctx, 0x64) ? w < 0 : w > 0)) {
                 // the wobble turns back toward the beam: a new rate signed against the wobble angle, new timers
-                const float r = rnd(rLo, rHi);
+                const float r = rnd(ctx, rLo, rHi);
                 BI(ctx, 0x64) = w > 0;
                 B(ctx, 0x2C) = w > 0 ? -r : r;
-                B(ctx, 0x10) = rnd(ts(ctx, t, 0xC), ts(ctx, t, 0xE));
-                B(ctx, 0x14) = rnd(ts(ctx, t, 0x10), ts(ctx, t, 0x12));
+                B(ctx, 0x10) = rnd(ctx, ts(ctx, t, 0xC), ts(ctx, t, 0xE));
+                B(ctx, 0x14) = rnd(ctx, ts(ctx, t, 0x10), ts(ctx, t, 0x12));
             }
         }
         B(ctx, 0x28) = 0;
