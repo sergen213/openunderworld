@@ -989,8 +989,11 @@ void Shadow::Impl::stateEntered(int from, int to) {
         if (p.size() >= 2) {
             int seg = std::clamp(int(a.param), 0, int(p.size()) - 2);
             const float t = (a.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
-            const auto [root, yaw] = pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
             const PlayerState& s = w->player().state();
+            // a ladder / pillar / perch has its own hold pose (rung, axis, point: Player::familyPose); a ledge, cover or
+            // beam hang the ledge pose
+            const auto fam = pm->familyPose(a.markup, s.pos, s.yaw);
+            const auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
             blend = {true, to, s.pos, root, s.yaw, yaw, std::max(1.0f, rt->remainingFrames()), 0};
             pm->setVelocity(glm::vec3(0));
         }
@@ -1059,7 +1062,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.motion = M::Blend;
         d.blendFrom = blend.from, d.blendTo = blend.to, d.yawFrom = blend.yawFrom, d.yawTo = blend.yawTo;
         d.blend = blend.t / blend.frames;
-    } else if (att && rt->chainHasAction(st, 420)) {
+    } else if (att && (rt->chainHasAction(st, 420) || pm->familyPose(att.markup, player.state().pos, player.state().yaw))) {
+        // a ladder / pillar / perch keeps her held too (ChartCD: in perch S827 she fell to z -1758) [I: their hold
+        // actions are not ported]
         d.motion = M::Hang;
         const std::string c = lower(d.clip.empty() ? player.state().clip : d.clip);
         d.snap = c.starts_with("ledgeb_") && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
