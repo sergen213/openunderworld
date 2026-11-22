@@ -292,6 +292,45 @@ TEST(Physics, LooseBodiesLandStackAndTumble) {
     EXPECT_FALSE(s.loose(1));
 }
 
+// Scene::castSegments (the weather's splash segment, the Enhanced shelter test): Jolt rays on the terrain and collider
+// shapes stop at the nearest queryable face (a roof over a floor shelters the floor), report its face (material), skip
+// faces outside the mask, hit a moved collider where its transform puts it, and add no body to the scene.
+TEST(Physics, SegmentQueriesStopUnderCover) {
+    collision::CollisionMesh level;
+    collision::addBox(level, glm::translate(glm::mat4(1), {0, 0, -50}), {6000, 6000, 100});  // floor, top at z 0
+    collision::addBox(level, glm::translate(glm::mat4(1), {0, 0, 1000}), {1000, 1000, 40});  // roof over the middle
+    collision::addBox(level, glm::translate(glm::mat4(1), {2000, 0, 1000}), {500, 500, 40}, 0); // outside the mask
+    for (size_t f = 12; f < 24; ++f) level.faces[f].material = 7;                              // the roof's faces
+    level.build();
+    auto block = std::make_shared<collision::CollisionMesh>();
+    collision::addBox(*block, glm::mat4(1), {200, 200, 200});
+    block->build();
+    physics::Scene s;
+    const std::vector<physics::Scene::Terrain> terrain{{"level", &level, vec3(0)}};
+    s.setTerrain(terrain);
+    s.setColliders(std::vector<collision::Dynamic>{{9, block, glm::translate(glm::mat4(1), {-2000, 0, 100})}});
+    const std::vector<physics::Scene::Segment> rays{
+        {{0, 0, 3000}, {0, 0, -100}},        // onto the roof
+        {{0, 0, 500}, {0, 0, -100}},         // under it: the floor
+        {{2000, 0, 3000}, {2000, 0, -100}},  // through the masked-out roof onto the floor
+        {{-2000, 0, 3000}, {-2000, 0, -100}}, // onto the collider block (top at 200)
+        {{4000, 0, 3000}, {4000, 0, 2000}}}; // nothing
+    std::vector<std::optional<physics::Scene::SegmentHit>> hits(rays.size());
+    s.castSegments(rays, hits);
+    ASSERT_TRUE(hits[0] && hits[1] && hits[2] && hits[3]);
+    EXPECT_NEAR(hits[0]->point.z, 1020, 0.5f);
+    EXPECT_EQ(hits[0]->mesh, &level);
+    EXPECT_EQ(level.faces[hits[0]->face].material, 7);
+    EXPECT_NEAR(hits[0]->normal.z, 1, 1e-3f);
+    EXPECT_NEAR(hits[1]->point.z, 0, 0.5f);
+    EXPECT_NE(level.faces[hits[1]->face].material, 7);
+    EXPECT_NEAR(hits[2]->point.z, 0, 0.5f);
+    EXPECT_NEAR(hits[3]->point.z, 200, 0.5f);
+    EXPECT_TRUE(hits[3]->dynamic);
+    EXPECT_FALSE(hits[4]);
+    EXPECT_EQ(s.bodyCount(), 0u);
+}
+
 // Scene::save / restore: a scene saved mid-tumble (bodies in contact, a body removed earlier so IDs are not in creation
 // order) and restored into a fresh scene whose caller re-creates the same entities continues bit for bit.
 TEST(Physics, SavedSceneContinuesBitIdentically) {

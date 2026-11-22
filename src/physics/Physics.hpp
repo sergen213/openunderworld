@@ -406,6 +406,21 @@ public:
     void step(float dt); // one fixed tick
     uint32_t bodyCount() const;       // Jolt bodies in the scene, of every kind (ou-game --self-test physics.bodies)
     uint32_t activeBodyCount() const; // of them the rigid bodies awake (not sleeping, not static)
+    // Segment queries against what setTerrain / setColliders last gave (the resident units' terrain and the moving level
+    // solids): the closest hit of each segment `from` -> `to` on a face that is collision::queryable with `mask`, by
+    // Jolt's narrow phase (TransformedShape::CastRay) on the same mesh shapes the terrain / collider bodies use. Shapes
+    // are built on first use and kept; no body is added, so the simulation and its recorded state do not change.
+    // `mesh` / `face`: the hit face (`dynamic` false: a terrain unit's mesh, faces[face] its material).
+    struct Segment { vec3 from{0}, to{0}; };
+    struct SegmentHit {
+        vec3 point{0}, normal{0};
+        float fraction = 1;
+        const collision::CollisionMesh* mesh = nullptr;
+        uint32_t face = 0;
+        bool dynamic = false;
+    };
+    void castSegments(std::span<const Segment> segments, std::span<std::optional<SegmentHit>> hits,
+                      uint8_t mask = collision::kSolidMask) const;
     // The scene's state for a save: body IDs by entity, constraint zeros and Jolt's recorded state (bodies, contact
     // cache, constraints). restore() drops the scene; as the caller re-creates the same entities they get the saved IDs
     // and zeros, and the next step() applies the recorded state, so the run continues bit for bit. false: not a state

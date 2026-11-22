@@ -455,7 +455,9 @@ JPH::RefConst<JPH::Shape> made(const JPH::ShapeSettings& s) {
 }
 
 // Triangles of `mesh` (each vertex through `to`, then in metres) as a Jolt mesh shape; null without triangles.
-JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, const mat4& to) {
+// `faces`: each triangle keeps its face index as Jolt per-triangle user data (Scene::castSegments; kept apart from the
+// bodies' shapes, whose sanitising would otherwise keep duplicate triangles that differ only in it).
+JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, const mat4& to, bool faces = false) {
     JPH::VertexList v;
     JPH::IndexedTriangleList t;
     v.reserve(mesh.vertices.size()), t.reserve(mesh.faces.size());
@@ -463,8 +465,14 @@ JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, const 
         const vec3 q = vec3(to * glm::vec4(p, 1)) * kM;
         v.push_back({q.x, q.y, q.z});
     }
-    for (const auto& f : mesh.faces) t.push_back({f.v[0], f.v[1], f.v[2]});
-    return t.empty() ? nullptr : made(JPH::MeshShapeSettings(std::move(v), std::move(t)));
+    for (uint32_t i = 0; i < mesh.faces.size(); ++i) {
+        const auto& f = mesh.faces[i];
+        t.push_back({f.v[0], f.v[1], f.v[2], 0, faces ? i : 0u});
+    }
+    if (t.empty()) return nullptr;
+    JPH::MeshShapeSettings s(std::move(v), std::move(t));
+    s.mPerTriangleUserData = faces;
+    return made(s);
 }
 
 // A loose body's collision: every primitive of its model, as tru.exe builds the rigid body from all of them (0x497270;
@@ -574,9 +582,10 @@ struct Scene::Impl {
     std::vector<LooseE> loose;
     struct VehicleE { int32_t id; const VehicleSpec* spec; JPH::BodyID body; vec3 com; JPH::Ref<JPH::VehicleConstraint> c; VehicleDrive drive; vec3 shift, kick; };
     std::vector<VehicleE> vehicles;
-    struct TerrainE { Terrain t; JPH::RefConst<JPH::Shape> shape; JPH::BodyID body; bool built = false; };
+    // `query`: the face-indexed shape of castSegments (meshShape faces), built on its first query.
+    struct TerrainE { Terrain t; JPH::RefConst<JPH::Shape> shape; JPH::BodyID body; bool built = false; JPH::RefConst<JPH::Shape> query; };
     std::vector<TerrainE> terrain;
-    struct ProxyE { std::shared_ptr<const collision::CollisionMesh> shape; mat4 transform; JPH::BodyID body; };
+    struct ProxyE { std::shared_ptr<const collision::CollisionMesh> shape; mat4 transform; JPH::BodyID body; JPH::RefConst<JPH::Shape> query; };
     std::vector<ProxyE> proxies;
     std::vector<Weight> weights;          // Scene::setPlates, for the next step
     std::map<uint64_t, std::vector<collision::Dynamic>> plateMeshes; // Scene::setPlates: plate joint key -> collision
@@ -947,6 +956,55 @@ Scene& Scene::operator=(Scene&&) noexcept = default;
 uint32_t Scene::bodyCount() const { return impl_->sys.GetNumBodies(); }
 uint32_t Scene::activeBodyCount() const { return impl_->sys.GetNumActiveBodies(JPH::EBodyType::RigidBody); }
 
+namespace {
+// Closest ray hit on a face-indexed mesh shape (meshShape faces) whose face passes collision::queryable(mask).
+struct QueryableHit final : JPH::CastRayCollector {
+    const JPH::MeshShape* mesh = nullptr;
+    const collision::CollisionMesh* col = nullptr;
+    uint8_t mask = collision::kSolidMask;
+    JPH::RayCastResult hit;
+    bool had = false;
+    void AddHit(const JPH::RayCastResult& r) override {
+        if (r.mFraction >= GetEarlyOutFraction()) return;
+        const uint32_t face = mesh->GetTriangleUserData(r.mSubShapeID2);
+        if (face >= col->faces.size() || !collision::queryable(col->faces[face], mask)) return;
+        hit = r, had = true;
+        UpdateEarlyOutFraction(r.mFraction);
+    }
+};
+} // namespace
+
+void Scene::castSegments(std::span<const Segment> segments, std::span<std::optional<SegmentHit>> hits, uint8_t mask) const {
+    Impl& m = *impl_;
+    for (auto& t : m.terrain)
+        if (!t.query && t.t.mesh) t.query = meshShape(*t.t.mesh, glm::translate(mat4(1), t.t.offset), true);
+    for (auto& p : m.proxies)
+        if (!p.query && p.shape) p.query = meshShape(*p.shape, mat4(1), true);
+    JPH::RayCastSettings rs;
+    rs.SetBackFaceMode(JPH::EBackFaceMode::CollideWithBackFaces);
+    for (size_t i = 0; i < segments.size() && i < hits.size(); ++i) {
+        const Segment& s = segments[i];
+        const JPH::RRayCast ray(Jm(s.from), Jm(s.to - s.from));
+        std::optional<SegmentHit> best;
+        const auto cast = [&](const JPH::Shape* shape, const collision::CollisionMesh* col, const mat4& frame, bool dynamic) {
+            if (!shape || !col) return;
+            const JPH::TransformedShape ts(Jm(vec3(frame[3])), J(glm::normalize(glm::quat_cast(mat3(frame)))), shape, JPH::BodyID());
+            QueryableHit c;
+            c.mesh = static_cast<const JPH::MeshShape*>(shape), c.col = col, c.mask = mask;
+            c.ResetEarlyOutFraction(best ? best->fraction : 1.0f + FLT_EPSILON);
+            ts.CastRay(ray, rs, c);
+            if (!c.had || (best && c.hit.mFraction >= best->fraction)) return;
+            const JPH::Vec3 p = ray.GetPointOnRay(c.hit.mFraction);
+            vec3 n = G(ts.GetWorldSpaceSurfaceNormal(c.hit.mSubShapeID2, p));
+            if (glm::dot(n, s.to - s.from) > 0) n = -n; // facing the query, as collision::Hit
+            best = SegmentHit{G(p) * kUnitsPerMetre, n, c.hit.mFraction, col, c.mesh->GetTriangleUserData(c.hit.mSubShapeID2), dynamic};
+        };
+        for (const auto& t : m.terrain) cast(t.query.GetPtr(), t.t.mesh, mat4(1), false);
+        for (const auto& p : m.proxies) cast(p.query.GetPtr(), p.shape.get(), p.transform, true);
+        hits[i] = best;
+    }
+}
+
 int Scene::addBody(const MassProps& m, const mat4& model) {
     Body b;
     if (m.mass > 0) b.invMass = 1 / m.mass, b.invInertia = glm::inverse(m.inertia);
@@ -1251,7 +1309,7 @@ void Scene::setColliders(std::span<const collision::Dynamic> dynamics) {
     for (const auto& d : dynamics) {
         if (!d.shape) continue;
         const auto it = std::ranges::find(m.proxies, d.shape, &Impl::ProxyE::shape);
-        if (it != m.proxies.end()) next.push_back({std::move(it->shape), d.transform, it->body}), it->body = JPH::BodyID();
+        if (it != m.proxies.end()) next.push_back({std::move(it->shape), d.transform, it->body, std::move(it->query)}), it->body = JPH::BodyID();
         else next.push_back({d.shape, d.transform, {}});
     }
     for (auto& p : m.proxies) m.remove(p.body);
