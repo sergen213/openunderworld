@@ -1154,6 +1154,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.clip = p->clip, d.loop = rt->animLoops(), d.mirror = mirror != p->mirror;
         d.start = rt->clipStartFrame() / 30.0, d.time = rt->animFrames() / 30.0;
         d.restart = rt->clipStarts() != driveClipStarts;
+        if (d.restart && std::getenv("OU_CHART_CHANGES"))
+            std::fprintf(stderr, "ou-game: chart clip tick %llu S%d req %d %s%s start %.1f\n", (unsigned long long)w->ticks(), rt->state(),
+                         rt->request(), p->clip.c_str(), d.mirror ? " (mirrored)" : "", rt->clipStartFrame());
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
         if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
@@ -1180,7 +1183,8 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         // actions are not ported]
         d.motion = M::Hang;
         const std::string c = lower(d.clip.empty() ? player.state().clip : d.clip);
-        d.snap = c.starts_with("ledgeb_") && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
+        // the wall hang (ledgeb_) and the free hang without a wall under it (ledgeu_, l3_chapel's S533 / S447) alike
+        d.snap = (c.starts_with("ledgeb_") || c.starts_with("ledgeu_")) && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
         // The grip (+0xC98) moves only with the shimmy (S459 start, S432 shimmy, S441 hustle): the attach and idle
         // clips' sideways root motion leaves it where it is, and the ledge end S448 stops her dead (ChartB, Wine 973:
         // +0xC98 0.907 stays until the stick press, so the end bit 642 holds and S458 -> S450) [O-runtime].

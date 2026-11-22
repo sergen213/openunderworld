@@ -24,6 +24,7 @@ if [ -z "${CHART_REPLAY_INNER:-}" ]; then
   mkdir -p "$OUT"
   exec systemd-run --user --wait --collect --pipe -q --same-dir -p MemoryMax="${MEMMAX:-8G}" -p KillMode=control-group \
     --setenv=CHART_REPLAY_INNER=1 --setenv=OUT="$OUT" --setenv=CASES="$*" --setenv=BIN="$BIN" --setenv=SHADOW="${SHADOW:-}" \
+    ${OU_CHART_CHANGES:+--setenv=OU_CHART_CHANGES=1} \
     --setenv=SDL_VIDEODRIVER=wayland \
     dbus-run-session kwin_wayland --virtual --xwayland --socket "${SOCK:-ou-replay-$(id -un)-$$}" --width 1280 --height 720 \
     --exit-with-session "$(realpath "$0")" > "$OUT/kwin.log" 2>&1
@@ -57,6 +58,11 @@ if hold:
     except OSError:
         pass
     out.append(f"{state}@{lead}@{','.join(str(x) for x in st['ours'])}@{t30}")
+elif state in (35, 40) and 'state' in st:
+    # an idle start past the 1-foot idle: the take's tick 0 is later than her birth / settle (Wine birth takes are
+    # S40 from tick 0; the trace starts after the load), while our chart restarts in S39 at the placement and reaches
+    # S40 only when ng_1foot_idle ends (T274, 30 frames): enter the recorded idle at the case start, no pose
+    out.append(f"{state}@{lead}")
 print(' '.join(out))
 PY
 )
