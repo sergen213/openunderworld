@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(OpenUnderworld VERSION 0.60.3 LANGUAGES CXX)
+project(OpenUnderworld VERSION 0.60.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

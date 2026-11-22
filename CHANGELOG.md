@@ -6,6 +6,18 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.60.4] - 2026-11-21
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: the rain and lightning of the prologue's mansion no longer follow Lara into every later chapter. As in the
+  original, every level load now clears the weather.
+- Changed: where a raindrop splashes, and the Enhanced preset's "under a roof" test, now use Jolt Physics ray
+  queries against the level (the original's only geometry check in its weather; snow flakes never collide in the
+  original either).
+- Added: the original's scripted snowfall (a flake pool shared with the rain drops), ready for any level that turns
+  it on; the shipped levels use placed snow emitters, which already match the original's counts, sizes and blending.
+
 ## [0.60.3] - 2026-11-21
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
