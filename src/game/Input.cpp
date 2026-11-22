@@ -1,5 +1,6 @@
 // Device mapping (SDL3) and scripted input replays.
 #include "game/Game.hpp"
+#include "game/ObjData.hpp"
 #include "locale/Locale.hpp"
 
 #include <SDL3/SDL.h>
@@ -11,6 +12,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
+#include <cstring>
 
 namespace ou::game {
 
@@ -62,6 +64,16 @@ Actions readDevices(const Controls& c, const platform::DeviceState& d) {
     a.hint = on(A::Hint), a.answer = on(A::Answer), a.pda = on(A::Pda), a.light = on(A::Light), a.grenade = on(A::Grenade);
     a.recenter = on(A::Recenter), a.fieldCamera = on(A::Camera);
     return a;
+}
+
+std::optional<float> moveStickRate(const cdc::BigfileSet& bigfile) {
+    const auto o = objData(bigfile, "lara");
+    if (!o) return std::nullopt;
+    const auto& d = o->drm.sections[o->section].data;
+    if (size_t(o->offset) + 0x658 + 4 > d.size()) return std::nullopt;
+    float rate = 0;
+    std::memcpy(&rate, d.data() + o->offset + 0x658, 4);
+    return rate > 0 ? std::optional<float>(rate) : std::nullopt; // 0x721F80 sets it only when positive
 }
 
 namespace {
@@ -153,7 +165,7 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
 // 0x20 Interact, 0x40 Crouch (drop), 0x80 Sprint, 0x100 Walk, 0x200 Grapple.
 namespace {
 bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out, std::optional<CameraFollow>& follow,
-                     std::optional<CameraSeed>& seed) {
+                     std::optional<CameraSeed>& seed, bool& stickRecord) {
     const auto first = text.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos || (text[first] != '[' && text[first] != '{')) return false;
     nlohmann::json j;
@@ -163,7 +175,7 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
         throw std::runtime_error(std::string("input script: ") + e.what());
     }
     uint64_t shift = 0;
-    bool stickRecord = false;
+    stickRecord = false;
     if (j.is_object()) {
         if (j.contains("spawn"))
             for (const char* k : {"hold_ticks", "settle_ticks"})
@@ -234,7 +246,7 @@ InputScript InputScript::parse(std::string_view text) {
                                                     "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda",
                                                     "light", "grenade", "recenter", "camera", "manual"};
     InputScript s;
-    if (std::vector<std::tuple<uint64_t, std::string, float>> mask; parseMaskScript(text, mask, s.cameraFollow_, s.cameraSeed_)) {
+    if (std::vector<std::tuple<uint64_t, std::string, float>> mask; parseMaskScript(text, mask, s.cameraFollow_, s.cameraSeed_, s.stickRecord_)) {
         for (auto& [tick, action, value] : mask) s.events_.push_back({tick, std::move(action), value});
         std::stable_sort(s.events_.begin(), s.events_.end(), [](const Event& a, const Event& b) { return a.tick < b.tick; });
         return s;

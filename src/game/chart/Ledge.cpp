@@ -786,7 +786,7 @@ void poleAttachSetter(ChartContext& ctx, bool alt) {
     ChartRuntime& rt = ctx.chart();
     if (alt) return;
     const auto prev = ctx.attachedMarkup();
-    const auto t = ctx.jumpTarget();
+    const auto t = chartJumpTarget(ctx); // +0xA64: the chart's own target in drive mode (the take-off query's)
     glm::vec2 d(0);
     if (prev && t) d = glm::vec2(t.point - ctx.position());
     if (t) attachChartMarkup(ctx, t);

@@ -604,10 +604,11 @@ struct MarkupProfile {
     // the ledge markup-class record's (Lara data +0x584, 0x5D5930) short +0x9E: how near a segment end a candidate
     // must lie for the corner tests 0x737B30 / 0x723540 (kinds 28..30)
     int cornerZone = 0;
-    // The pole markup-class records' capsules (0x5D57A0: Lara data +0x594 a horizontal pole, +0x58C an upright one;
-    // record +0x30 / +0x34 / +0x38 the offset in her model frame, +0x54 height, +0x58 radius) for kind 10 (0x6FCB10)
+    // The markup-class records' capsules (0x5D57A0: Lara data +0x594 a horizontal pole, +0x58C an upright one, +0x5B8
+    // a free-climb hold (MUD 0x8000); record +0x30 / +0x34 / +0x38 the offset in her model frame, +0x54 height, +0x58
+    // radius) for kind 10 (0x6FCB10)
     struct Capsule { vec3 offset{0}; float height = 0, radius = 0; };
-    Capsule poleH, poleV;
+    Capsule poleH, poleV, hold;
     uint32_t flags = 0;           // +0x2C (0x80 coming down, 0x40 the ledge class table, 0x400 no gravity)
     int frames = 0;               // +0xA4, else object data +0xBDE
     struct Start { int type; float up, out; };
@@ -715,6 +716,9 @@ public:
     // tru.exe 0x5DCE20 posting message 0x1C9 (too steep) for the face under her root, as floorKind judges it (the chart's
     // wall-slide stamp, agent +0x90, condition 0x206).
     bool steepUnder() const;
+    bool slideUnder() const; // the floor under her is a slide face (floorKind Slide: tru.exe player +0x11D0 / +0x11CF)
+    // One slide step on floor hit g (dl its horizontal normal length); false off the slide's end (no floor).
+    bool slideStep(const collision::Hit& g, float dl, float dt);
     // tru.exe's ground check 0x5DCE20 as the player process calls it (0x71B910), on `feet` alone (no controller state):
     // a ray from `above` over her feet down to `below` under them. floor: a face that supports standing within that span
     // (message 0x1C7, chart event 455); steep: a too-steep face there (0x1C9); neither: no floor (0x1CC, bit 19).
@@ -737,13 +741,17 @@ public:
         // instance velocity under gravity (tru.exe 0x5DB370) with the capsule's contacts. Hang: on the chart's attached
         // markup (markup, seg, t, side), the root motion along it (snap) or free (take-offs, the pull up). Blend: from
         // blendFrom / yawFrom onto blendTo / yawTo by `blend` (the attach's root alignment, action 236 [I]).
-        enum class Motion : uint8_t { Ground, Air, Hang, Blend } motion = Motion::Ground;
+        // Slide: down the fall line of a slide / too-steep floor (slideStep, legacy State::Slide's integration).
+        enum class Motion : uint8_t { Ground, Air, Hang, Blend, Slide } motion = Motion::Ground;
         std::optional<float> steer; // heading the stick asks for (action 601), approached at steerRate rad/s
         float steerRate = 0;
         int markup = -1, seg = 0;
         float t = 0, side = 1;
         bool snap = false;
         bool slide = false; // Hang + snap: the root motion along the markup moves the grip (the shimmy)
+        // Hang + snap, the hang idles (prop 551): tru.exe 0x708830 -> 0x708210 each frame projects the clip's root
+        // displacement off the hang root onto the markup and moves the grip by its part along it (to the segment end)
+        bool follow = false;
         vec3 blendFrom{0}, blendTo{0};
         float yawFrom = 0, yawTo = 0, blend = 0;
         State coarse = State::Idle; // what World's subsystems read as her state (camera, interactions, carriers)
@@ -757,6 +765,8 @@ public:
     // The chart drive's hold pose on an attached ladder (rung where the attach clip `clip` ends), pillar (axis) or perch
     // (Traverse.cpp); nullopt else.
     std::optional<std::pair<vec3, float>> familyPose(int markup, vec3 from, float yaw, std::string_view clip = {}) const;
+    // The walkable floor under her root within maxDrop (and the step-up over it), or nullopt.
+    std::optional<float> floorBelow(float maxDrop) const;
     // A ledge hang's root offset from the ledge point in her frame (x right, y forward, z up; attachPose's hand offset):
     // the chart drive sets tru.exe's (0x74ED30), legacy keeps ledgeb_idle's hands (unset).
     void setLedgeHang(vec3 off) { ledgeHang_ = off; }
@@ -842,7 +852,7 @@ private:
         vec2 stickDir{0};
         float controlYaw = 0;
         float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
-        MarkupProfile::Capsule poleH, poleV; // MarkupProfile's pole capsules (kind 10 on poles)
+        MarkupProfile::Capsule poleH, poleV, hold; // MarkupProfile's class-record capsules (kind 10 on poles / holds)
         // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).
         std::array<std::pair<int, vec3>, 8> typeStart{};
         int typeStarts = 0;
@@ -2242,6 +2252,32 @@ struct Controls {
     int menuNav(const platform::InputRef& r) const;
 };
 Actions readDevices(const Controls& controls, const platform::DeviceState& devices);
+// tru.exe's input system update (0x483520, InputSystem 0xA02B68, once per frame at the end of the frame in
+// MainG2_PlatformUpdate, before PumpWindowMessages) filters each stick axis pair: before the poll, output (+0x04)
+// <- the last output and the axis takes its pending raw value (+0x08); the device's events (the remap device 0x488C70
+// turns bound keys into axis events, key pairs as max / -max) write the new raw value; then if the pair's raw step
+// |raw - pending| exceeds the axis rate (+0x0C) x dt, dt = elapsed ms x 30 / 1000, the pair keeps its previous output
+// for this frame; pending <- raw either way, so the step lands one frame later. Buttons are not filtered. The move
+// stick (axes 0 / 1) gets rate = Lara's data +0x658 (0.4, 0x721F80 when > 0); every other axis keeps FLT_MAX (0x480FC0)
+// [O: decomp]. A key press therefore reaches the stick record (0x706540 +0x18) a frame after its button would, as
+// WineChartTrace measured (4 of 5 takes; the fifth, the first after a checkpoint birth, had a long frame and passed).
+// Ours runs it per 60 Hz tick with dt = 0.5 (a tick in 30 Hz frames) [I: tru.exe measures wall time].
+class StickRateFilter {
+public:
+    explicit StickRateFilter(float rate) : rate_(rate) {}
+    glm::vec2 step(glm::vec2 raw, float dtFrames) {
+        const glm::vec2 prev = out_, last = pending_;
+        pending_ = raw;
+        out_ = rate_ * dtFrames < glm::length(raw - last) ? prev : raw;
+        return out_;
+    }
+
+private:
+    float rate_;
+    glm::vec2 out_{0}, pending_{0};
+};
+// Lara's move stick rate (lara.drm data +0x658), nullopt without the object or when not positive (no filter).
+std::optional<float> moveStickRate(const cdc::BigfileSet& bigfile);
 // What button placeholders in locals.bin text name (ui::PromptNames, tru.exe 0x5A7C20): per tru.exe virtual button
 // 0..24 (GAMEPLAY.md "Controls") and the keys Return / Escape / BackSpace (25..27: menu_accept / menu_back / menu_delete),
 // the control bound in `controls` on the device in use. Keyboard: the first key, else the mouse button ("L Mouse",
@@ -2290,12 +2326,16 @@ public:
     std::optional<float> cameraYaw() const {
         return cameraFollow_ ? std::optional<float>(std::atan2(cameraFollow_->dy, cameraFollow_->dx)) : std::nullopt;
     }
+    // The script carries tru.exe's recorded stick ("stick"): its move axes are already the filtered stick record, so the
+    // app does not run StickRateFilter on them.
+    bool stickRecord() const { return stickRecord_; }
 
 private:
     struct Event { uint64_t tick; std::string action; float value; };
     std::vector<Event> events_; // sorted by tick (stable)
     std::optional<CameraFollow> cameraFollow_;
     std::optional<CameraSeed> cameraSeed_;
+    bool stickRecord_ = false;
 };
 
 } // namespace ou::game

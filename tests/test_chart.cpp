@@ -386,4 +386,20 @@ TEST(InputScriptMask, ContractMasks) {
     EXPECT_EQ(r.at(74).move.y, 1.0f);
 }
 
+// tru.exe 0x483520's move stick pair filter: a key's 0 -> 1 step (over rate 0.4 x dt 0.5) holds the old output for one
+// tick and lands on the next; a step within the rate passes at once; buttons are not involved. Lara's rate is 0.4.
+TEST(StickRateFilter, KeyStepLandsATickLate) {
+    ou::game::StickRateFilter f(0.4f);
+    EXPECT_EQ(f.step({0, 0}, 0.5f), glm::vec2(0, 0));
+    EXPECT_EQ(f.step({0, 1}, 0.5f), glm::vec2(0, 0)); // the press: held
+    EXPECT_EQ(f.step({0, 1}, 0.5f), glm::vec2(0, 1)); // one tick later
+    EXPECT_EQ(f.step({0, 0.9f}, 0.5f), glm::vec2(0, 0.9f)); // 0.1 <= 0.2: at once
+    EXPECT_EQ(f.step({0, 0}, 0.5f), glm::vec2(0, 0.9f));    // the release: held too
+    EXPECT_EQ(f.step({0, 0}, 0.5f), glm::vec2(0, 0));
+    EXPECT_EQ(f.step({0, 1}, 3.0f), glm::vec2(0, 1)); // a long frame (dt 3: 1.2 >= 1) passes
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    EXPECT_FLOAT_EQ(ou::game::moveStickRate(bf).value_or(0), 0.4f);
+}
+
 
