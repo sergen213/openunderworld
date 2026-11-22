@@ -7,7 +7,7 @@
 // lara.drm, catalog usage). A condition whose game state the context cannot give returns unported().
 //
 // Not registered (they stay counted unported in ChartRuntime::stats), with the reason:
-//   0x2BD (grapple component item type), 0x2C4 (global 0xFAE440), 0x2D0 (needs the ray hit's normal), 0x2D4 / 0x2D6 /
+//   0x2C4 (global 0xFAE440), 0x2D0 (needs the ray hit's normal), 0x2D4 / 0x2D6 /
 //   0x2D7 / 0x2FE (grapple rope geometry ours does not keep), 0x2AF (markup move vector +0x6F0), 0x32F (anim root
 //   offset), 0x591 / 0x60F (engagement context +0x854), 0x5DE / 0x5DF (portable data +0x18), 0x7D3 / 0x7D7 / 0x7D8 /
 //   0x7DA / 0x7DB (targeting slots 5 / 6), 0x8A0 (tru.exe inventory slot index). Registered but answered by the
@@ -400,6 +400,17 @@ bool sweepArmedSlot(ChartContext& ctx, const Cond& c) { // 0x1F0
     }
     return *s == ctx.chart().value(c);
 }
+// 0x2BD (0x72CE20): b = the item type of owner message 0x175's component (+0x2D0 -> [0] -> +0x2EC -> +0x74 -> +4) lies
+// in 1..7; value 0 -> !b, 1 -> b, else false [O: disassembly]. Ours: that type is not modelled; with nothing in her
+// hands (no weapon drawn or aimed, combatMode false, and no carried portable) b is false [I: Wine
+// ch_beam_roll_walk_crouch_birth: a walk with nothing held takes T51 (value 0) to S86], otherwise unknown.
+bool holdingItemType(ChartContext& ctx, const Cond& c) {
+    const auto w = ctx.combatMode();
+    const auto carry = ctx.carrying();
+    if (!w || !carry || *w || *carry) return ctx.chart().unported(c);
+    const int v = ctx.chart().value(c);
+    return v == 0;
+}
 // 0x5E0 (0x730250, cb 0x730140): bool property 1501 of the current state (0x6EEF00 mode 2), false when absent.
 bool prop1501(ChartContext& ctx, const Cond& c) {
     return edge(ctx, c, [&]() -> std::optional<bool> { return ctx.chart().propBool(1501).value_or(false); });
@@ -774,6 +785,7 @@ void registerJump(Registry& player, Registry&) {
     player.condition(0x417, combatFlag27, "CombatFlag27", fam);
     player.condition(0x5DD, carrying, "HasCarriedObject", fam);
     player.condition(0x1EB, sweepAnimSlot, "PSCCF_ContextAnimSlot", fam);
+    player.condition(0x2BD, holdingItemType, "PSCCF_HoldingItemType1to7", fam);
     player.condition(0x1F0, sweepArmedSlot, "PSCCF_ArmedStateSelect", fam);
     player.condition(0x5DE, carriedEncumbers, "PSCCF_CarriedObjectFlag18", fam);
     player.condition(0x5DF, carriedEncumbers, "PSCCF_PortableFlag18", fam);
