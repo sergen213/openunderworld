@@ -745,6 +745,7 @@ public:
         double start = 0, time = 0; // the chart clip clock (s): where the clip (re)started, where it stands now
         float rate = 1;             // the anim layer rate (empty clip only)
         float crossfade = 0;        // a fresh clip's blend (s): the replaced clip's root motion fades out over it
+        uint8_t window = 1;         // the pattern's crossfade window mode (+0x18, Request::window)
         // The anim layer blend (anim::layerBlendWeights of the pattern's +0x17 type over the chart's +0x8C / +0x90):
         // the pattern's further anims (sub-layers 1..) and one weight per sub-layer (`clip` first); empty: `clip` alone.
         std::vector<std::string> blendClips;
@@ -997,8 +998,17 @@ private:
     std::pair<int, int> lastReindex_{-1, -1};
     std::optional<vec3> ledgeHang_; // setLedgeHang()
     bool driveLanded_ = false; // driveLanded()
-    // drive(): the crossfade window of a fresh chart clip (0x441FB0: |outgoing root speed| -> |incoming at its start|)
-    struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0, vOut = 0, vIn = 0; } fade_;
+    // The crossfade window (0x441FB0's record r = *(L+0x7C), moved through by 0x43B870 by the pattern's +0x18 mode):
+    // mode 1 the speeds vOut / vIn along her forward axis, mode 2 the velocities vOutV / vInV (her frame), mode 0 the
+    // incoming clip's root displacement `disp` (her frame) over the window.
+    struct Fade {
+        std::string clip;
+        double time = 0;
+        bool loop = false, mirror = false;
+        float left = 0, total = 0, vOut = 0, vIn = 0;
+        uint8_t mode = 1;
+        vec3 vOutV{0}, vInV{0}, disp{0};
+    } fade_;
     // drive(): the current clip's start time and the seconds its lead holds the first frame (the fade) for root motion
     struct RootLead { double start = 0; float hold = 0; } rootLead_;
     // (the press edges of jump / drop live in PlayerState::buttons)

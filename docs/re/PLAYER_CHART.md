@@ -386,11 +386,20 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   blendWeights`; `World::updatePose` blends the poses (phase-synced, normalised weights [I: 0x4361C0's accumulation])
   and `Player::drive` the root motion the same way [I: tru.exe takes the blended pose's root]; command events stay
   sub-layer 0's [I]; the clip clock follows 0x433360 for types 2 / 3 / 4 / 9. Legacy never sets it.
-- **Crossfade** (0x441FB0 at a new request, layer mode +0x64 = 1, over the pattern's blend frames): the window holds
-  the new clip's lead at its first frame and moves her along the forward axis (DAT_008C9F30) at lerp(|outgoing root
-  speed| r+0x50, |incoming root speed at its start| r+0x60, w), w linear at each step's midpoint (0x43B870 case 1 via
-  0x43C8E0); the clip's own root motion counts after the window. S245: 0 -> 85.05 per 30 Hz frame over 4 frames = 170.1
-  (WineChartTrace) [O].
+- **Crossfade** (0x441FB0 at a new request, over the pattern's blend frames): the window holds the new clip's lead at
+  its first frame; the clip's own root motion counts after the window. How she moves through it is the pattern's
+  **window mode, +0x18** (0x4428A0 copies it to every sub-layer channel's +0x64, 0x441FB0 to +0x60; 0x43B870 switches on
+  it each step via 0x43C8E0, w linear at each step's midpoint, 0x4332C0 without a curve) [O decomp]. lara.drm: 1235
+  patterns mode 0, 47 mode 2, 122 mode 3, the rest 1 (`chart-dump` lists them).
+  - 1: along the forward axis (DAT_008C9F30) at lerp(|outgoing root speed| r+0x50, |incoming root speed at its start|
+    r+0x60, w). S245: 0 -> 85.05 per 30 Hz frame over 4 frames = 170.1 (WineChartTrace) [O].
+  - 2: the same lerp of the two root velocities as vectors (the outgoing in the incoming clip's frame) [O decomp].
+  - 0: the incoming clip's root displacement over the window, r+0x20 - r+0x10 (0x4358E0 from 0 to start / start -
+    blend, the time before the clip counting as the origin), times each step's share: a constant speed. Wine
+    ch_beam_walk_back S943 bbeam_stepback (start 5, blend 5): 4.356 a tick backward for 10 ticks = its root at 500
+    time units (43.56), then the clip's last 27.0 [O-runtime]. The rotation part (r+0x50 / r+0x60 in this mode) is not
+    ported [U].
+  - 3: a carried global velocity (DAT_008C7020, flipped by the mirror bits) [U]; ours takes it as mode 1.
 - **Family holds** (`Player::familyPose`): an attach to a ladder blends onto a rung (Traverse.cpp rungPos; the
   ladder_attach_ground_bottom attach takes the lowest rung, Wine lad_a234 rung 2 at z 940 [I]; else the rung nearest
   where the attach clip ends, rungAt = the 0x74DCD0 alignment [O]), facing the ladder; a pillar onto its axis at her

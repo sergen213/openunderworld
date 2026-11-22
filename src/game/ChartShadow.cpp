@@ -1355,7 +1355,15 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
             std::fprintf(stderr, "ou-game: chart clip tick %llu S%d req %d %s%s start %.1f\n", (unsigned long long)w->ticks(), rt->state(),
                          rt->request(), p->clip.c_str(), d.mirror ? " (mirrored)" : "", rt->clipStartFrame());
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
-        if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
+        if (d.restart) {
+            d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
+            // the pattern's window mode for a state's own request (kind 1); a graph node's play keeps mode 1: its clip
+            // starts at -blend in tru.exe (Wine hang_shimmy_left S432 ledgeb_right_3: ~1 unit through the window, then
+            // the clip from frame 0) where ours starts it at start - blend = 0, so mode 0 would carry the clip's first
+            // frames' root [U: the node Play's start / blend (0x444F30 -> 0x441FB0) is not decoded].
+            const State* sd = rt->charts().player.state(rt->state());
+            d.window = sd && sd->requestKind == 1 ? p->window : uint8_t(1);
+        }
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
         // them by +0x8C / +0x90 = animBlend, which the state's actions wrote this tick) [O].
         lastLayerType = int(p->blendType);
