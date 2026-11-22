@@ -760,6 +760,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         rt->field(0x8C) = 0;
         rt->post(*this, 455);
     }
+    glm::vec2 traceKeys{0}; // the move keys before the filter (Shadow::tick `keys`), for the inputs column
     void traceRow(const Actions& a) {
         if (rt->state() != lastState || rt->stats.changes != lastChanges) stateTicks = 0;
         else ++stateTicks;
@@ -781,7 +782,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             char row[1024];
             int n = std::snprintf(row, sizeof row, "%llu\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%x\tt30=%.3f\tvar_anim=%.3f",
                                   (unsigned long long)(w->ticks() - 1), rt->state(), rt->parent(), r, stateTicks, s.pos.x, s.pos.y, s.pos.z, s.vel.x,
-                                  s.vel.y, s.vel.z, glm::degrees(s.yaw), inputMask(a), rt->stateTime(), rt->animFrames());
+                                  s.vel.y, s.vel.z, glm::degrees(s.yaw), inputMask([&] { Actions k = a; k.move = traceKeys; return k; }()), rt->stateTime(), rt->animFrames());
             // The camera the chart read this tick (last tick's), as the Wine corpus' CAMDUMP var_cam38: rows right, down,
             // look (cameraRows), then the position, our frame.
             const CameraState& c = w->camera();
@@ -1600,9 +1601,10 @@ void Shadow::feedRng(std::vector<uint32_t> draws) { impl_->rngFeed.assign(draws.
 Shadow::~Shadow() = default;
 PlayerDriver* Shadow::driver() { return impl_->driving ? impl_.get() : nullptr; }
 
-void Shadow::tick(const World& world, const Actions& a) {
+void Shadow::tick(const World& world, const Actions& a, std::optional<glm::vec2> keys) {
     Impl& m = *impl_;
     m.w = &world;
+    m.traceKeys = keys.value_or(a.move);
     if (m.driving) { // the chart ran in World::tick's player slot (Impl::driveTick); here only the trace
         if (m.started) m.traceRow(a);
         return;

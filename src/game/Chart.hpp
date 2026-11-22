@@ -641,7 +641,9 @@ public:
     // driver() in the controller's place, tick() only writes the trace.
     Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log, bool drive = false);
     ~Shadow();
-    void tick(const World& world, const Actions& a); // after World::tick
+    // After World::tick. `keys`: the move input before the move stick filter (0x483520), for the trace's inputs column,
+    // which records the keys as the Wine corpus' does (the filtered stick can land a tick later); default: a.move.
+    void tick(const World& world, const Actions& a, std::optional<glm::vec2> keys = std::nullopt);
     // The chart enters `state` (ChartRuntime::enter) on the first tick at or after world tick `tick` (--chart-state).
     // `at` (x, y, z, yaw degrees): where she was in the Wine case when it began in a hold (case.json start.ours); the hold's
     // markup is seeded from there [I: harness only].
