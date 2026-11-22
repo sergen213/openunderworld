@@ -948,6 +948,11 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion) const {
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
     if (motion == M::Hang || motion == M::Blend) {
         if (has("climb")) return GS::ClimbUp;
+        // held on a pole (markup type 4, the horizontal poles' type) whatever the clip: the attach's lead-in plays
+        // node 44's trans_pose_U before Hpole_perp_attach_U
+        if (chartAttached && *chartAttached && size_t(chartAttached->markup) < w->collision().markup.size() &&
+            w->collision().markup[size_t(chartAttached->markup)].type == 4)
+            return GS::PoleHang;
         const int st = rt ? rt->state() : -1; // the shimmy states (the grip moves: S459, S432, S441)
         return has("shimmy") || st == 459 || st == 432 || st == 441 ? GS::Shimmy : GS::Hang;
     }
