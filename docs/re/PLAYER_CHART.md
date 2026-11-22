@@ -343,6 +343,23 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   Crouch, Roll, Walk, Run, Turn, Idle; the families by clip set: Beam `bbeam_`, PoleHang `hpole_`, Ladder, Perch,
   Pillar, Climb `DICE_`, DropToHang, HangJump `ledgeb_jump*` in the air) for World's subsystems (camera, interactions,
   carriers) [I].
+- **Layer blend** [O unless noted]: a pattern lists up to n anims (+0xC {u16 anim, u8} x +0x10, else +4 u16 x +8);
+  0x4428A0 gives each one a sub-layer (layer +0x80, 0x70 each, count +0xF6): sub-layer 0 starts with the crossfade
+  (0x441FB0), sub-layer i at t_0 / len_0 x len_i with rate keys_i / keys_0 (0x43C9C0), and the pattern's +0x17 goes to
+  the layer's blend type +0xF9. Every tick 0x4385A0 -> 0x438520 turns +0x8C (x) / +0x90 (y) (/ +0x94) into one weight
+  per sub-layer (+0x84): types < 0x14 in 0x437BA0 (2 / 8 {1-x, x}; 3; 4 bilinear; 5 a 3 x 2 grid, x in [-1, 1]; 6 / 7
+  three-way {-, centre, +} orders; 9 diamond; 10 3 x 3; 11 strip; else {1, 0..}), types >= 0x14 through the layer's
+  callback +0xDC, Lara's 0x7162C0 (table 0x7163EC on type - 0x15): 21 = 6, 22 = 5, 23 = 0x6EAAA0 (3 x 3, x / y in
+  [-1, 1]: the beam walk R192 {unbalance_walk_left, walk, unbalance_walk_right} per row, ng_walk R738), 30 = 0x7055F0
+  (3 x 2 x 2 with +0x94), 24..29 / 31..35 not ported [U]. Types 2 / 3 / 4 / 9 then set every sub-layer's rate to
+  keys_i / sum w_j keys_j (0x433360), overriding 0x438C40's layer rate. Lara's beam patterns: idle / wobble / jumpup /
+  consider_detach / jumpland_unbalanced type 5 {fwd x3, _90 x3}; aboutfall / stepforward / stepback / flip / somersault
+  type 7 {centre, left, right}; falls type 2 {ledge, no ledge}. Ours (`anim::layerBlendWeights`, `Request::clips` /
+  `blendType`, chart-dump's "requests with sub-layers"): the drive context answers `layerBlendType()` (the playing
+  pattern's +0x17), `setLayerBlend` writes `animBlend`, driveTick weighs the sub-layers into `DriveStep::blendClips /
+  blendWeights`; `World::updatePose` blends the poses (phase-synced, normalised weights [I: 0x4361C0's accumulation])
+  and `Player::drive` the root motion the same way [I: tru.exe takes the blended pose's root]; command events stay
+  sub-layer 0's [I]; the clip clock follows 0x433360 for types 2 / 3 / 4 / 9. Legacy never sets it.
 - **Crossfade** (0x441FB0 at a new request, layer mode +0x64 = 1, over the pattern's blend frames): the window holds
   the new clip's lead at its first frame and moves her along the forward axis (DAT_008C9F30) at lerp(|outgoing root
   speed| r+0x50, |incoming root speed at its start| r+0x60, w), w linear at each step's midpoint (0x43B870 case 1 via
