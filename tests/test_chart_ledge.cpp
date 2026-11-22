@@ -111,18 +111,20 @@ TEST(ChartLedge, AttachInitStoresTheClearanceClass) {
     EXPECT_EQ(ctx.playerInt(0xEDC), 5);
 }
 
-TEST(ChartLedge, StickDirectionClassesAgainstHerFacing) {
+// On a markup the class frame's forward axis is her left, its side axis her facing (tru.exe under Wine, l3_chapel
+// ch_hang_*: Left on the screen = her right -> class 2, Right = her left -> class 1, the tie going to the side).
+TEST(ChartLedge, StickDirectionClassesAlongHerLeft) {
     LedgeContext ctx; // hanging, facing +y
     ctx.stickLen = 1;
     ctx.stickDir = {-1, 0}; // world -x = her left
-    EXPECT_TRUE(OneShot({cond(0x195, 452, false, 400)}).fires(ctx));
-    EXPECT_FALSE(OneShot({cond(0x195, 453, false, 400)}).fires(ctx));
-    ctx.stickDir = {1, 0};
-    EXPECT_TRUE(OneShot({cond(0x195, 453, false, 400)}).fires(ctx));
-    ctx.stickDir = {0, 1};
     EXPECT_TRUE(OneShot({cond(0x195, 450, false, 400)}).fires(ctx));
-    ctx.stickDir = {0, -1};
+    EXPECT_FALSE(OneShot({cond(0x195, 452, false, 400)}).fires(ctx));
+    ctx.stickDir = {1, 0}; // her right
     EXPECT_TRUE(OneShot({cond(0x195, 451, false, 400)}).fires(ctx));
+    ctx.stickDir = {0, 1}; // toward the wall she faces
+    EXPECT_TRUE(OneShot({cond(0x195, 453, false, 400)}).fires(ctx));
+    ctx.stickDir = {0, -1}; // away from it
+    EXPECT_TRUE(OneShot({cond(0x195, 452, false, 400)}).fires(ctx));
     ctx.stickLen = 0;
     EXPECT_TRUE(OneShot({cond(0x195, 454, false, 400)}).fires(ctx));
     EXPECT_FALSE(OneShot({cond(0x195, 411, true, 400)}).fires(ctx)); // other values: false even negated

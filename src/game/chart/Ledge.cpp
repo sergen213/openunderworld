@@ -206,17 +206,21 @@ bool animTime(ChartContext& ctx, const Cond& c) {
 }
 
 // The input controller's direction class (0xFADFB0 +0xB0 +0x24, set by 0x6F89A0): the stick against a frame (the
-// screen in mode 0, else built from the camera and a reference direction), 1 / 2 along +- its forward axis, 3 / 4
-// along -+ its side axis whichever is larger, 0 under the dead zone (+0xD8). [I] ours: the frame is her facing when
-// she is on a markup, else the camera control yaw; dead zone 0.10 (the move-speed zone 1 threshold); no re-classing
-// hysteresis (+0x174).
+// screen in mode 0, else built from the camera and a reference direction): u along its forward axis (+0x100), w along
+// its side axis (+0x110 = forward turned a quarter to the right); class 3 / 4 (w < 0 / >= 0) when |u| <= |w|, else
+// 1 / 2 (u >= 0 / < 0); 0 under the dead zone (+0xD8) [O: decomp, the tie going to the side]. On a markup the forward
+// axis is her left (heading + 90 degrees), the side axis her facing [O-runtime: tru.exe under Wine, l3_chapel
+// ch_hang_* (ledge 61, camera pinned facing her): Left -> class 2 (T599 S436), Right -> class 1 (T604 S434),
+// Forward + Left -> 3 (T550 S432), Forward + Right -> 1; I: other markups and camera angles not recorded, the
+// diagonals' ties follow the frame's float rounding]. Off a markup the camera control yaw [I]; dead zone 0.10 (the
+// move-speed zone 1 threshold); no re-classing hysteresis (+0x174) [I].
 int stickDirClass(ChartContext& ctx) {
     if (ctx.stickLevel() < 0.10f) return 0;
     const glm::vec2 s = ctx.stick();
-    const float yaw = ctx.attachedMarkup() ? ctx.heading() : ctx.controlYaw();
+    const float yaw = ctx.attachedMarkup() ? ctx.heading() + 1.5707964f : ctx.controlYaw();
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     const float u = glm::dot(s, fwd), v = glm::dot(s, right);
-    if (std::abs(u) < std::abs(v)) return v >= 0 ? 4 : 3;
+    if (std::abs(u) <= std::abs(v)) return v >= 0 ? 4 : 3;
     return u >= 0 ? 1 : 2;
 }
 // 0x764270 (0x195): values 450..453 test classes 1..4, 454 class 0; other values are false whatever the negation.
