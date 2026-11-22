@@ -2744,7 +2744,7 @@ void World::tickInserted(float dt) {
         m.type = 6; // horizpole (MUD 0x2000000): Lara hangs and swings on it (Player::pole)
         m.points = {vec3(*frame * glm::vec4(a, 1)), vec3(*frame * glm::vec4(b, 1))};
         if (in.markup < 0 || size_t(in.markup) >= col_.markup.size()) in.markup = int(col_.markup.size()), col_.markup.push_back(m);
-        else col_.markup[size_t(in.markup)].type = m.type, col_.markup[size_t(in.markup)].points = m.points;
+        else col_.markup[size_t(in.markup)].type = m.type, col_.markup[size_t(in.markup)].points = m.points, col_.markup[size_t(in.markup)].mud = m.mud;
     }
 }
 

@@ -44,58 +44,6 @@ float ouSunTap(vec3 p) {
     return 1.0;
 }
 float ouSunTapVisibility(vec3 p) { return ouShadow.sun.w != 0.0 ? ouSunTap(p) : 1.0; } // underwater.glsl shafts
-// One precipitation layer on a camera-centred cylinder of radius `radius`; azimuth and world height anchor it, so
-// turning the camera does not drag it along. Returns (rgb premultiplied, alpha).
-vec4 ouPrecipLayer(vec3 dir, float sceneT, float radius, float layer, bool snow, float amount) {
-    float horiz = max(length(dir.xy), 1e-3);
-    float t = radius / horiz;
-    float z = w.eye.z + dir.z * t;
-    float az = atan(dir.y, dir.x);
-    float cellX = snow ? 26.0 : 7.0, cellZ = snow ? 26.0 : 150.0;
-    float speed = snow ? 85.0 : 1100.0;
-    float around = floor(6.2831853 * radius / cellX);
-    float fall = z + w.eye.w * speed + layer * 977.0;
-    vec2 tangent = vec2(-sin(az), cos(az));
-    float slant = dot(w.weather.zw, tangent) * (snow ? 0.6 : 1.0);
-    vec2 g = vec2(az / 6.2831853 * around + slant * fall / cellX, fall / cellZ);
-    float aa = max(fwidth(g.x), 1e-4); // before any per-pixel return: derivatives need uniform control flow
-    if (t >= sceneT || t > 8.0 * radius) return vec4(0); // behind the scene (roofs, walls) or too steep
-    vec2 cell = floor(g), f = fract(g);
-    cell.x = mod(cell.x, around);
-    float rnd = ouHashCell(cell, layer);
-    if (rnd > amount) return vec4(0);
-    float x0 = 0.2 + 0.6 * ouHashCell(cell, layer + 31.0);
-    float a;
-    vec3 col;
-    if (snow) {
-        x0 += 0.18 * sin(w.eye.w * (0.9 + rnd) + rnd * 40.0);
-        float y0 = 0.25 + 0.5 * ouHashCell(cell, layer + 57.0);
-        float r = 0.05 + 0.05 * rnd, d = length(vec2(f.x - x0, (f.y - y0) * cellZ / cellX));
-        a = (1.0 - smoothstep(r * 0.4, r + aa, d)) * 0.85;
-        col = vec3(0.92, 0.95, 1.0);
-    } else {
-        float width = max(0.07, aa);
-        float len = 0.35 + 0.3 * rnd;
-        a = (1.0 - smoothstep(0.0, width, abs(f.x - x0))) * (0.07 / width) *
-            smoothstep(0.0, 0.08, f.y) * (1.0 - smoothstep(len - 0.2, len, f.y)) * 0.32;
-        col = vec3(0.70, 0.75, 0.80);
-    }
-    a *= exp(-t / (snow ? 1800.0 : 2600.0));
-    return vec4(col * a, a);
-}
-// Precipitation layers, near to far (depth-tested against the scene): premultiplied colour (lit) + coverage. Also the
-// FSR reactivity source (vk/shaders/fsr_weather.frag).
-vec4 ouPrecipitation(vec3 dir, float sceneT, bool snow, float amount) {
-    const float radii[4] = float[4](110.0, 240.0, 500.0, 1000.0);
-    float density = snow ? 0.12 + 0.4 * amount : 0.25 + 0.55 * amount;
-    float light = 0.55 + 0.45 * clamp(dot(w.fogColor.rgb, vec3(0.3, 0.59, 0.11)) * 2.0, 0.0, 1.0);
-    vec4 acc = vec4(0);
-    for (int i = 0; i < 4; ++i) {
-        vec4 l = ouPrecipLayer(dir, sceneT, radii[i], float(i), snow, density);
-        acc += l * (1.0 - acc.a);
-    }
-    return vec4(acc.rgb * light, acc.a);
-}
 vec3 ouAtmosphere(vec3 c, vec2 uv) {
     if ((w.haze.w < 0.5 && w.weather.x < 0.5) || w.fogColor.w > 0.5) return c;
     float d = texture(uDepth, uv).r;
@@ -109,24 +57,15 @@ vec3 ouAtmosphere(vec3 c, vec2 uv) {
     float airT = min(sceneT, waterT); // the medium ends at the scene or at the water surface
     const float far = 60000.0; // medium depth [I]; TRU fog ranges reach 1e6 units and would fog everything
     float amount = w.weather.y;
-    bool rain = w.weather.x > 0.5 && w.weather.x < 1.5, snow = w.weather.x > 1.5;
+    bool rain = w.weather.x > 0.5 && w.weather.x < 1.5;
 
-    // Rain: splash rings and darkening on upward-facing surfaces (water surfaces count as upward).
+    // Rain: wet upward-facing surfaces darken (water surfaces count as upward). The drops, splashes and ripples are
+    // world-space effect sprites (fx::Precip), not drawn here.
     if (rain && airT < 2500.0) {
-        vec3 sp = waterT < sceneT ? w.eye.xyz + dir * waterT : p;
         vec3 n = waterT < sceneT ? vec3(0, 0, 1) : normalize(cross(dpx, dpy));
         if (n.z < 0.0) n = -n;
         float up = smoothstep(0.7, 0.9, n.z) * (1.0 - airT / 2500.0);
-        if (up > 0.0) {
-            const float cell = 34.0;
-            vec2 id = floor(sp.xy / cell);
-            float r0 = ouHashCell(id, 3.0);
-            float phase = fract(w.eye.w * 1.7 + r0);
-            vec2 centre = (id + 0.25 + 0.5 * vec2(r0, ouHashCell(id, 5.0))) * cell;
-            float ring = 1.0 - smoothstep(0.0, 1.6, abs(length(sp.xy - centre) - phase * cell * 0.4));
-            c *= 1.0 - 0.14 * amount * up;
-            c += vec3(0.55, 0.6, 0.65) * (ring * (1.0 - phase) * 0.45 * amount * up * step(r0, 0.25 + 0.6 * amount));
-        }
+        c *= 1.0 - 0.14 * amount * up;
     }
 
     // Height fog: haze + ground mist, in-scattering the unit's fog colour plus forward-scattered sunlight.
@@ -157,12 +96,6 @@ vec3 ouAtmosphere(vec3 c, vec2 uv) {
             float air = 1.0 - exp(-march / 7000.0);
             c += w.sunColor.rgb * (lit / float(steps) * air * ouPhase(cosSun, 0.7) * 0.3);
         }
-    }
-
-    // Precipitation layers, near to far (depth-tested against the scene).
-    if (rain || snow) {
-        vec4 pr = ouPrecipitation(dir, sceneT, snow, amount);
-        c = c * (1.0 - pr.a) + pr.rgb;
     }
     return c;
 }

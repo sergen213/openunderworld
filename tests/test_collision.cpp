@@ -276,6 +276,16 @@ TEST(Collision, ClosestPointAndMarkupFlags) {
     EXPECT_EQ(collision::markupFlags(16), 0x4000u | 0x8001u);
     EXPECT_EQ(collision::markupFlags(30), 0x80000000u); // unknown -> disabled
     EXPECT_EQ(collision::markupTypeName(14), "balancebeam");
+    // 0x5BE650: the type's bits, 0x8 on every box, 0x4 for a closed polyline (Wine: beam 1031 0x00010009, a closed
+    // ledge 0x4000000D); a loaded word wins
+    collision::Markup beam;
+    beam.type = 14, beam.points = {{0, 0, 0}, {100, 0, 0}};
+    EXPECT_EQ(collision::mud(beam), 0x00010009u);
+    collision::Markup loop;
+    loop.type = 1, loop.points = {{0, 0, 0}, {100, 0, 0}, {100, 100, 0}, {0, 0, 0}};
+    EXPECT_EQ(collision::mud(loop), 0x4000000Du);
+    loop.mud = 0x40000001u;
+    EXPECT_EQ(collision::mud(loop), 0x40000001u);
 }
 
 // ---- Real data (skipped without OU_GAME_DIR) -------------------------------------------

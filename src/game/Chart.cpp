@@ -497,6 +497,22 @@ std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext
     // she takes the pole on (the layer's +0xF4 0x20 it sets alongside) [O]; ChartContext::vmPoleSide (poleAttachSetter).
     v[64] = std::nullopt;
     if (ctx.vmPoleSide) v[64] = uint32_t(*ctx.vmPoleSide);
+    // 65 (0x6EA070): the attached markup's (+0xC94) class from its flags +0x28 & 0xFFFF7C10: 0x4000 -> 1, 0x2000 -> 2,
+    // 0x1000 -> 3, 0x800 -> 4, 0x400 -> 5, else (or none attached) -1 [O: disassembly]. Hold states' node 172 (S600 /
+    // S591) switches its attach clip on it.
+    {
+        const auto a = ctx.attachedMarkup();
+        uint32_t r = uint32_t(-1);
+        if (a) switch (a.flags & 0xFFFF7C10u) {
+            case 0x4000: r = 1; break;
+            case 0x2000: r = 2; break;
+            case 0x1000: r = 3; break;
+            case 0x800: r = 4; break;
+            case 0x400: r = 5; break;
+            default: break;
+        }
+        v[65] = r;
+    }
     // 3 (0x6E9660): byte player +0xEE0, which property 205's handler 0x767900 sets (a bool property's byte, else 1) [O:
     // disassembly, Lara's property table 0x8B2280]; the pull up's node 26 (S456) reads it. Ours: playerInt(0xEE0),
     // Generic.cpp's handler.

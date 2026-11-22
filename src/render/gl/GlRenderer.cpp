@@ -6,6 +6,7 @@
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
 #include "render/TimeOfDay.hpp"
+#include "render/Snow.hpp"
 
 #include <algorithm>
 #include <array>
@@ -103,6 +104,7 @@ void main() {
 
 // Fragment shader = kSceneFsHead + sunGlsl() + kSceneFsMain.
 const char* kSceneFsHead = R"(#version 460 core
+#define OU_SNOW 1
 in vec3 vNormal; in vec2 vUv; in vec4 vColor; in vec3 vWorld;
 layout(location = 2) uniform int uLighting;
 layout(location = 3) uniform float uAlphaRef;
@@ -113,6 +115,9 @@ out vec4 oColor;
 const char* kSceneFsMain = R"(
 void main() {
     vec4 c = texture(uTex, vUv) * vColor;
+    vec3 face = cross(dFdx(vWorld), dFdy(vWorld)); // before the discard (uniform control flow): the snow layer's normal
+    face = dot(face, face) > 0.0 ? normalize(face) : vec3(0.0, 0.0, 1.0);
+    if (dot(face, ouShadow.eye.xyz - vWorld) < 0.0) face = -face;
     if (c.a < uAlphaRef) discard;
     if (uFade.x < 1.0) c.a = (uFade.y > 0.5 ? 1.0 : c.a) * uFade.x;
     float len = length(vNormal);
@@ -121,7 +126,7 @@ void main() {
         float ndl = max(dot(n, ouShadow.sun.xyz), 0.0);
         c.rgb *= 0.45 * ouAo() + 0.55 * ndl * ouSunVisibility(vWorld, n, ndl > 0.0, false); // AO: ambient only
     }
-    oColor = c; // alpha matters for blended submeshes only
+    oColor = ouSnowApply(c, vWorld, face); // alpha matters for blended submeshes only
 })";
 
 // Shadow map: depth only, alpha-tested like the scene.
@@ -614,6 +619,13 @@ struct Resources {
     Buffer shadowUbo; // render/sun.glsl OuShadow (UBO binding 3); the shadow map is texture unit 16
     GLint uboAlign = 256;
     Framebuffer shadowFbo, pssmFbo;
+    // Enhanced snow layer (render/Snow.hpp): top-down depth (unit 19 in the scene), the world-anchored mask (unit 20; an
+    // image for shaders/snow_mask.comp), its push block at UBO 8. Created on the first frame with FrameOptions::snow.
+    Texture snowTop, snowMask;
+    Framebuffer snowFbo;
+    Program snowProgram;
+    Buffer snowUbo;
+    bool snowTried = false;
     VertexArray textVao, lineVao, emptyVao;
     Buffer textVbo, lineVbo;
     const DebugLine* lineSource = nullptr; // cached upload of FrameOptions::debugLines
@@ -1114,8 +1126,9 @@ public:
         std::erase_if(r.order, [&](const DrawRef& d) { return clippedAway(d.mesh); });
         // No ray tracing here: a requested RT mode renders with the shadow map (as Vulkan without RT support).
         const bool shadows = options.shadows || options.rt != RayTracing::Off;
-        const SunShadow sun = sunShadow(camera, vp, r.bounds, sunToward(environment_), false, shadows, 0, 0);
+        SunShadow sun = sunShadow(camera, vp, r.bounds, sunToward(environment_), false, shadows, 0, 0);
         if (shadows) drawShadowMap(sun);
+        drawSnow(options, camera, sun.block); // fills the block's snow fields (zero without FrameOptions::snow)
         glNamedBufferSubData(r.shadowUbo.get(), 0, sizeof sun.block, &sun.block);
         glBindBufferBase(GL_UNIFORM_BUFFER, 3, r.shadowUbo.get());
         glBindTextureUnit(16, r.shadowMap.get());
@@ -1749,6 +1762,68 @@ private:
             }
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
+    }
+
+    // Enhanced snow layer (render/Snow.hpp): the top-down depth of the opaque / alpha-tested casters around the camera,
+    // then shaders/snow_mask.comp grows the mask from it; both bound for the scene (units 19, 20). Fills `block`'s
+    // snow fields (zero = off) whatever happens. Leaves the framebuffer, program and depth state changed.
+    void drawSnow(const FrameOptions& o, const Camera& camera, SunShadowBlock& block) {
+        const snow::Map m = snow::map(camera.position, camera.forward());
+        Resources& r = *res_;
+        if (o.snow && !r.snowTried) {
+            r.snowTried = true;
+            std::string error;
+            r.snowProgram = linkCompute(snow::maskComputeSource(), error);
+            if (!r.snowProgram.get()) std::fprintf(stderr, "ou: snow layer unavailable (%s)\n", error.c_str());
+            r.snowTop = newTexture();
+            glTextureStorage2D(r.snowTop.get(), 1, GL_DEPTH_COMPONENT32F, snow::kTopSize, snow::kTopSize);
+            for (const GLenum p : {GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER}) glTextureParameteri(r.snowTop.get(), p, GL_NEAREST);
+            for (const GLenum p : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T}) glTextureParameteri(r.snowTop.get(), p, GL_CLAMP_TO_EDGE);
+            glTextureParameteri(r.snowTop.get(), GL_TEXTURE_COMPARE_MODE, GL_NONE);
+            r.snowFbo = newFramebuffer();
+            glNamedFramebufferTexture(r.snowFbo.get(), GL_DEPTH_ATTACHMENT, r.snowTop.get(), 0);
+            glNamedFramebufferDrawBuffer(r.snowFbo.get(), GL_NONE);
+            r.snowMask = newTexture();
+            glTextureStorage2D(r.snowMask.get(), 1, GL_RGBA32F, snow::kMaskSize, snow::kMaskSize);
+            for (const GLenum p : {GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER}) glTextureParameteri(r.snowMask.get(), p, GL_NEAREST);
+            const float none[4] = {0, 0, 1e9f, 1e9f}; // no world texel: every texel enters on the first update
+            glClearTexImage(r.snowMask.get(), 0, GL_RGBA, GL_FLOAT, none);
+            r.snowUbo = newBuffer();
+            glNamedBufferStorage(r.snowUbo.get(), sizeof(snow::MaskPush), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        }
+        if (!o.snow || !r.snowProgram.get()) return snow::fillBlock(block, m, nullptr, environment_, o.underwater, o.fog);
+        snow::fillBlock(block, m, o.snow, environment_, o.underwater, o.fog);
+        glBindFramebuffer(GL_FRAMEBUFFER, r.snowFbo.get());
+        glViewport(0, 0, snow::kTopSize, snow::kTopSize);
+        glDisable(GL_SCISSOR_TEST);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glUseProgram(r.shadowProgram.get());
+        glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(m.viewProj));
+        for (const auto& mesh : r.meshes) {
+            if (!lodShown(mesh, lodEye_) || outsideOrtho(m.viewProj, mesh.center, mesh.radius)) continue;
+            glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(mesh.model));
+            glBindVertexArray(mesh.vao.get());
+            for (const auto& s : mesh.submeshes) {
+                if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
+                glUniform1f(3, (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f);
+                drawSubmesh(s);
+            }
+        }
+        const snow::MaskPush push = snow::maskPush(m, *o.snow);
+        glNamedBufferSubData(r.snowUbo.get(), 0, sizeof push, &push);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 8, r.snowUbo.get());
+        glUseProgram(r.snowProgram.get());
+        glBindTextureUnit(0, r.snowTop.get());
+        glBindImageTexture(1, r.snowMask.get(), 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+        glDispatchCompute(GLuint((snow::kMaskSize + 7) / 8), GLuint((snow::kMaskSize + 7) / 8), 1);
+        glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        glBindTextureUnit(19, r.snowTop.get());
+        glBindTextureUnit(20, r.snowMask.get());
     }
 
     // Time of day backdrop (Sky::backdropPass, shaders/sky.*): `modes` bit 0 = the tint (the frame so far: opaque

@@ -915,6 +915,38 @@ void poleAttachSetter(ChartContext& ctx, bool alt) {
     else if (side < -0.15f) rt.setMirror(false);
 }
 
+// 0x74C110: action 230's class-625 setter (a beam, MUD 0xB010000) [O decomp]. With a jump target (+0xA64) it detaches
+// the old markup (0x6FDBE0) and attaches the target (0x707B90); without one it keeps the attached markup. On a
+// 0xB010000 markup: segment floor(+0xC98), its flat direction d; facing = her heading (instance +0x38) when the markup
+// held before was neither a ledge (0x40000000) nor 0xB010000 - for those it adds 0x6EB630's side / the camera record's
+// +0x10 [U: counted as action 230's]; dot(facing, d) >= 0: +0xED0 1, +0xCDC 0, else 2 / pi and d reversed; agent +0x360
+// = the segment, +0x35C = the angle of d (ours: wrapPi(yaw + +0xCDC), as 0x72A5F0); +0xCB0 = d, +0xCC0 = d x up. The
+// alignment onto the beam (0x74BF90 / 0x741130 / 0x6F0FF0) is the drive's attach blend (not here). Unlike 0x72A5F0
+// it draws no random numbers, so 0x742770 finds +0x360 already on the segment (Wine h759: no 0x72A5F0 draws, the beam
+// angle +0x35C 4.712 from S935's first tick).
+void beamAttachSetter(ChartContext& ctx) {
+    ChartRuntime& rt = ctx.chart();
+    const auto prev = ctx.attachedMarkup();
+    const bool wasLedge = prev && (prev.flags & 0x40000000u), wasBeam = prev && !wasLedge && (prev.flags & 0xB010000u);
+    if (const auto t = chartJumpTarget(ctx)) attachChartMarkup(ctx, t);
+    const auto a = ctx.attachedMarkup();
+    if (!a || !(a.flags & 0xB010000u)) return;
+    const int seg = int(std::floor(a.param));
+    const auto s = ctx.markupSegment(a.markup, seg);
+    if (!s) return;
+    glm::vec2 d(s->second - s->first);
+    d = glm::length(d) > 0 ? glm::normalize(d) : glm::vec2(0);
+    if (wasLedge || wasBeam) return ++rt.stats.unportedActions[230], void();
+    const float h = ctx.heading();
+    const bool along = glm::dot(glm::vec2(std::cos(h), std::sin(h)), d) >= 0;
+    ctx.playerInt(0xED0) = along ? 1 : 2;
+    ctx.playerFloat(0xCDC) = along ? 0.0f : kPi;
+    rt.field(0x360) = seg;
+    ctx.agentFloat(0x35C) = wrapPi(yawOf(d) + ctx.playerFloat(0xCDC));
+    ctx.playerFloat(0xCB0) = d.x, ctx.playerFloat(0xCB4) = d.y, ctx.playerFloat(0xCB8) = 0;
+    ctx.playerFloat(0xCC0) = d.y, ctx.playerFloat(0xCC4) = -d.x, ctx.playerFloat(0xCC8) = 0; // (d.x, d.y, 0) x (0, 0, 1)
+}
+
 // 602 / 611 (0x74DCD0) attach only a ladder target (MUD 0x400000): markupAttachTarget checks it.
 bool attachTargetClass(int cls) {
     switch (cls) {
@@ -1549,6 +1581,83 @@ void turnToJumpUpdate(ChartContext& ctx, uint16_t id) {
     ctx.agentFloat(0x2C) = wrapPi(ctx.playerFloat(0xA7C) + glm::radians(propF(ctx, 607))); // 0x76A860's target
 }
 
+// Action 611 PSCAF_PoleBeamTurnTarget (enter 0x76BC70, exit 0x75BC20; decomp W/chart/bundles/act_0611.txt, disassembly
+// 0x76BC70 / 0x72A350 / 0x733580 / 0x75BC20 [O]). With an attached markup and property 606 (type 0x23):
+//  481 0x733580 (this = agent +0x350): the side class c of 0x733210 (dominant of dot(-player +0xCC0, f) - 1 / 2 by its
+//      sign - against dot(f, the segment floor(+0xC98)) - 3 / 4) and the stick class s (0xFADFB0 +0xB0 +0x24): s a
+//      quarter turn from c -> heading +- pi/2 (c 1: s 3 +, s 4 -; c 2: 4 + / 3 -; c 3: 2 + / 1 -; c 4: 1 + / 2 -), s
+//      opposite c (0x72A000: 1-2, 3-4) -> heading + pi, else +0x350 kept; +0xCDC = +0x350;
+//  483 0x75BAF0: heading - pi/2 with s 4, else + pi/2; 484 0x75BBC0 + pi/2; 485 0x75BBF0 - pi/2 (all -> agent +0x3CC
+//      and +0xCDC);
+//  other 0x72A350 (this = the beam controller B, agent +0x358): s 2 -> the beam angle B+4 + pi, 4 -> - pi/2, 3 ->
+//      + pi/2, else B+4 (-> B+0, wrapped to [0, 2pi) by 0x431D20).
+// Then the timed turn 0x76AB70(target, blend, clip, not toward) (timedTurn). Exit: 481 nothing; 483 0x75BB50 her yaw =
+// agent +0x3CC; else 0x732B90 on B: within 10 degrees of B+0 (no wrap) her yaw snaps to it; B+4 -= +0xCDC, +0xED0 1 <->
+// 2 with +0xCDC pi / 0, B+4 += +0xCDC (the beam controller now faces the way she turned).
+// [I] ours: f = (cos, sin) of her heading, angles in ours' yaw convention (tru's minus pi/2, so the +-pi/2 / pi steps
+// carry over); 0x733210's clamp of +0xC98 below the point count is not written back.
+float wrap2Pi(float a) { a = std::fmod(a, kTwoPi); return a < 0 ? a + kTwoPi : a; }
+int poleSideClass(ChartContext& ctx, const ChartContext::MarkupSlot& a) { // 0x733210
+    const auto s = ctx.markupSegment(a.markup, std::clamp(int(std::floor(a.param)), 0, std::max(0, ctx.markupSegmentCount(a.markup) - 1)));
+    const float h = ctx.heading();
+    const glm::vec2 f(std::cos(h), std::sin(h));
+    const glm::vec2 cc0(ctx.playerFloat(0xCC0), ctx.playerFloat(0xCC4));
+    const float side = glm::dot(-cc0, f);
+    const float along = s ? glm::dot(f, glm::vec2(s->second - s->first)) : 0.0f;
+    if (std::abs(side) <= std::abs(along)) return along >= 0 ? 4 : 3;
+    return side >= 0 ? 1 : 2;
+}
+void turnTargetEnter(ChartContext& ctx, uint16_t) {
+    const auto a = ctx.attachedMarkup();
+    if (!a) return;
+    const auto v = ctx.chart().propInt(606);
+    if (!v) return;
+    const float h = ctx.heading();
+    const int s = stickDirClass(ctx);
+    float target;
+    switch (*v) {
+    case 481: {
+        float& keep = ctx.agentFloat(0x350);
+        const int c = poleSideClass(ctx, a);
+        const bool plus = (c == 1 && s == 3) || (c == 2 && s == 4) || (c == 3 && s == 2) || (c == 4 && s == 1);
+        const bool minus = (c == 1 && s == 4) || (c == 2 && s == 3) || (c == 3 && s == 1) || (c == 4 && s == 2);
+        const bool back = (c == 1 && s == 2) || (c == 2 && s == 1) || (c == 3 && s == 4) || (c == 4 && s == 3);
+        if (plus) keep = wrap2Pi(h + kHalfPi);
+        else if (minus) keep = wrap2Pi(h - kHalfPi);
+        else if (back) keep = wrap2Pi(h + kPi);
+        ctx.playerFloat(0xCDC) = keep;
+        target = keep;
+        break;
+    }
+    case 483: case 484: case 485:
+        target = *v == 484 || (*v == 483 && s != 4) ? h + kHalfPi : h - kHalfPi;
+        ctx.agentFloat(0x3CC) = target, ctx.playerFloat(0xCDC) = target;
+        break;
+    default: {
+        const float b4 = ctx.agentFloat(0x35C);
+        // s 2 / 4 / 3 wrap to [0, 2pi); the default keeps B+4 as is (0x72A41B)
+        target = s == 2 ? wrap2Pi(b4 + kPi) : s == 4 ? wrap2Pi(b4 - kHalfPi) : s == 3 ? wrap2Pi(b4 + kHalfPi) : b4;
+        ctx.agentFloat(0x358) = target;
+    }
+    }
+    timedTurn(ctx, target, true, true, false);
+}
+void turnTargetExit(ChartContext& ctx, uint16_t) {
+    if (!ctx.attachedMarkup()) return;
+    const auto v = ctx.chart().propInt(606);
+    if (!v || *v == 481) return;
+    if (*v == 483) return ctx.setHeading(ctx.agentFloat(0x3CC));
+    const float b0 = ctx.agentFloat(0x358);
+    // [I] tru compares the raw [0, 2pi) values; ours' heading is in (-pi, pi], so the difference is wrapped
+    if (std::abs(wrapPi(b0 - ctx.heading())) < 0.17453292f) ctx.setHeading(b0);
+    float& b4 = ctx.agentFloat(0x35C);
+    b4 -= ctx.playerFloat(0xCDC);
+    const bool along = ctx.playerInt(0xED0) != 1;
+    ctx.playerInt(0xED0) = along ? 1 : 2;
+    ctx.playerFloat(0xCDC) = along ? 0.0f : kPi;
+    b4 += ctx.playerFloat(0xCDC);
+}
+
 // Action 613 entry 0x75B720 (and every update before 0x76A860 steps toward the stick's control yaw): no attach
 // surface class (player +0xED4 == 0): mode 0; else start yaw +0x244 = heading, mode 14, rate +0x240 = 0x75B330.
 // [U] +0x23C (0x75B3E0) is not ported.
@@ -1614,6 +1723,7 @@ void registerLedge(Registry& player, Registry&) {
     r.action(514, {nullptr, nullptr, promoteSearch, nullptr, nullptr, nullptr}, "PSCAF_PromoteSecondarySearch", f);
     r.action(516, {jumpStart, nullptr, nullptr, nullptr, jumpEnd, nullptr}, "PSCAF_JumpTimestamps", f);
     r.action(606, {turnToJumpEnter, turnToJumpReenter, nullptr, nullptr, turnToJumpExit, turnToJumpUpdate}, "PSCAF_TurnToJumpHeading", f);
+    r.action(611, {turnTargetEnter, nullptr, nullptr, nullptr, turnTargetExit, nullptr}, "PSCAF_PoleBeamTurnTarget", f);
     r.action(613, {turnToStickEnter, nullptr, nullptr, nullptr, nullptr, turnToStickUpdate}, "PSCAF_TurnToStickOnAttach", f);
     r.action(2003, {camera4, nullptr, nullptr, nullptr, cameraPop, noop}, "PSCAF_CameraMode4", f);
     r.action(2004, {camera5, nullptr, nullptr, nullptr, cameraPop, noop}, "PSCAF_CameraMode5", f);

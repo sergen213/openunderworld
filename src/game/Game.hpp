@@ -918,7 +918,9 @@ public:
     // candidate type ours does not model, so the answer would not be tru.exe's.
     struct MarkupFound { JumpTarget target; uint16_t flags = 0, uncertain = 0; int8_t cls = 0; bool known = false; };
     // controlYaw / stickOn: the camera-relative stick heading (0x6EBA90) and whether the stick is off rest
-    MarkupFound markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn) const;
+    // boneLift: profile bone +0xC8's world origin minus the root segment's (World::boneWorld) for a bone-based query
+    MarkupFound markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
+                             std::optional<vec3> boneLift = std::nullopt) const;
 private:
     // State::Jump: an aimed ground jump re-aimed at its markup target (PlayerState::aimMarkup) with the time left
     // (tru.exe 0x73EDC0 every frame of the flight, 0x752410)

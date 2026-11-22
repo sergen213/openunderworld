@@ -1605,7 +1605,7 @@ constexpr float kLedgeSide = -1; // a ledge's hang side: right of its direction 
 // is {kind, point source a1, a2, value, flags: bit 0 the value given, else the query's own (kind 1: +0x28, 13: +0x20,
 // 22: +0x24 = query state +0x50 / +0x4C / +0x54), bit 1 negated, bit 2 active} [O: decomp]. Point sources (0x723AB0):
 // 0 her root, 4 / 31 the hit (the ledge point), 9 / 10 the query's heading / right, 13 the target type's arc at the
-// hit time, 24 the hit less the query start and linear motion, 28 the query's base point, 33 the target markup's point
+// hit time, 24 the hit less the query start (22 / 23 its direction), 28 the query's base point, 33 the target markup's point
 // (holds). Kinds: 1 horizontal distance a1..a2 < v; 4 z(a2) - z(a1) <= v; 10 the ledge record's capsule round source
 // 13 holds the hit (0x725B50 -> 0x6FCB10); 11 a moving markup's angle (static: passes, 0x6EC2E0); 12 the arc's vertical
 // speed at the hit < v (no value: only for +0x2C bit 0x80); 13 hit time < v; 14 / 18 / 19 / 20 the ledge class (0x728A80:
@@ -1742,7 +1742,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     const auto recordGate = [](std::span<const uint8_t> types, uint8_t flags, int type) {
         return listed(types, type, false) ? !(flags & 2) : (flags & 2) != 0;
     };
+    // 0x729540 walks a record's entries: 0x723330 (types, +0x14 bit 0x10 / 1), 0x723380 (attach types, bit 4 / 8, open
+    // while she is attached to nothing), then 0x729420, which passes no entry without +0x14 bit 2 [O: decomp]
     const auto entryGate = [&](const ClassEntry& e, int type) {
+        if (!(e.flags & 2)) return false;
         if ((e.flags & 0x10) && !listed(e.types, type, e.flags & 1)) return false;
         return !((e.flags & 4) && q.attach != 0 && !listed(e.attach, q.attach, e.flags & 8));
     };
@@ -1838,7 +1841,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     return glm::distance(e1, h) < glm::distance(e0, h) ? e1 : e0;
                 }
                 case 13: return arcAt(from, t);
-                case 24: return h - (q.start + q.v * t);
+                // 24: the same vector as 22 / 23 unnormalized (0x723AB0 cases 0x16..0x18 share it: the hit plus the
+                // candidate's +0x70 motion less 0x7233E0, the start plus that same motion) [O: decomp]
+                case 24: return h - q.start;
                 // 2 / 3: MarkUpBox_GetSegmentPos (0x5C39D0) of point 0 / of the candidate's segment (+0x34): the polyline's
                 // point, in the world [O: 0x723AB0 cases 2 / 3]
                 case 2: return m.points.front();
@@ -1855,7 +1860,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     // ch_beam_walk frame 120, beam 1031: source 21 = (-95.23, 55.60, -0.02) = source 4 (7905.50, 1754.03)
                     // - source 29 (8000.73, 1698.43)]; the other types (holds, poles, 0x80000 / 0x400000 / 0x10 / 0x4000000)
                     // are not ported
-                    const uint32_t mf = collision::markupFlags(m.type);
+                    const uint32_t mf = collision::mud(m);
                     const uint32_t k = mf & 0xFFFFFC10u;
                     const bool plain = !(mf & 0x8000) && (k == 0x800000 || k == 0x40000 || k == 0x20000 || k == 0x10000 ||
                                                           k == 0x1000000 || k == 0x20000000 || k == 0x40000000);
@@ -1989,7 +1994,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     vec3 a = point(c.a1), b = point(c.a2);
                     if (s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size()) {
                         const collision::Markup& am = col_.markup[size_t(s_.ledge)];
-                        const uint32_t k = collision::markupFlags(am.type) & 0xFFFFFC10u;
+                        const uint32_t k = collision::mud(am) & 0xFFFFFC10u;
                         const int as = std::clamp(s_.ledgeSeg, 0, std::max(0, int(am.points.size()) - 2));
                         if (am.points.size() >= 2 && (k == 0x40000000 || k == 0x40000 || k == 0x10000)) {
                             const vec3 nn = glm::cross(am.points[size_t(as) + 1] - am.points[size_t(as)], vec3(0, 0, 1));
@@ -2108,8 +2113,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                               glm::any(glm::lessThan(glm::max(xy(a), xy(b)) + kSweepPad, sLo))))
                 continue;
             const vec3 u = (b - a) / len;
-            // beams (strict): 0x6FE040's class-record insets, +0x98 at the first point, +0x9A at the last [O decomp]
-            const bool beam = m.type == 14 && q.strict;
+            // beams (strict): 0x6FE040's class-record insets, +0x98 at the first point, +0x9A at the last, skipped for a
+            // closed markup (MUD bit 0x4, `flags >> 2 & 1`) [O decomp]
+            const bool beam = m.type == 14 && q.strict && !(collision::mud(m) & 0x4u);
             const float inset = perch || climb ? 0.0f : kLedgeInset;
             const float lo = si == 0 ? (beam ? q.beamInset[0] : inset) : 0,
                         hi = len - (si == last ? (beam ? q.beamInset[1] : inset) : 0);
@@ -2611,7 +2617,8 @@ Player::GroundAim Player::groundJumpAim(int kind) const {
 // base point [O: decomp]. Ours runs ledgeOnArc strictly with the profile's class and result records; anything else
 // (bone bases, other velocity modes, headings 0 / 11..16 / 19, the +0xB0 / +0xB4 snaps, a model-X velocity) leaves the
 // answer unknown. [I] a mirrored chart state reverses the attached-segment heading (17).
-Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn) const {
+Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
+                                         std::optional<vec3> boneLift) const {
     MarkupFound out;
     // 0x76FFC0: a fixed record velocity (+0 bit 0, mode 0); record bit 0 clear or mode 3 take her instance velocity
     // (+0x2A0 x player +0x6E4), mode 1 the query object's stored +0xC0 (player +0xA40, the take-off's velocity),
@@ -2624,6 +2631,10 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     const bool attached = s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size();
     vec3 base;
     if (p.base == 0 && p.bone == 0) base = s_.pos;
+    // base 0 with bone +0xC8 (0x771830): her position plus that segment's world matrix translation minus segment 0's
+    // (instance +0x90 matrices, 0x40 each from +0x30), then offset +0x58 as for the root [O: decomp; our posed
+    // skeleton's matrices, World::boneWorld, I]
+    else if (p.base == 0 && boneLift) base = s_.pos + *boneLift;
     else if (p.base == 1) base = attached ? pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT) : s_.pos;
     else return out;
     const float yaw = s_.yaw, pi = 3.14159265f, half = 1.57079633f;
@@ -4278,6 +4289,13 @@ void Player::drive(const DriveStep& d, float dt) {
                     const double a = loop ? t : std::clamp(t, 0.0, std::max(0.0, c.durationSeconds() - h));
                     return glm::length(rootTranslation(c, a + h, loop) - rootTranslation(c, a, loop)) / float(h);
                 };
+                // the outgoing clip still in its own fade-in window has not moved her root yet: what carries out is
+                // the window's own speed (her actual motion), not the held clip's nominal root speed (a one-tick S65
+                // between a walk and S39 carried ng_run_start's 20 units a tick into the stop; Wine's walk stop
+                // jh_ledge2_walk S75 -> S39 stands dead, its run stop at a crawl lad_a234_climb_up_stick slides ~1 a
+                // tick) [O-runtime]
+                const bool held = s_.clipTime < rootLead_.start + double(rootLead_.hold) - 1e-6;
+                const float heldOut = fade_.left > 0 ? glm::mix(fade_.vOut, fade_.vIn, 1.0f - fade_.left / fade_.total) : 0.0f;
                 fade_ = {s_.clip, s_.clipTime, s_.loop, s_.mirror, d.crossfade, d.crossfade};
                 // r+0x60: the incoming clip's root speed over the last frame of the window, the root before the clip's
                 // first key counting as the origin: S245's window ends at ng_planted_jump_forward's frame 1, its frame
@@ -4295,7 +4313,7 @@ void Player::drive(const DriveStep& d, float dt) {
                 // speed left to carry out (Wine b973_top_run_fwd S57 -> S40: 3.3 on the change's tick, then 0; ours
                 // drifted ~50 units through ng_idle's 25-frame window) [O-runtime]
                 const bool ended = !s_.loop && s_.clipTime >= oc->durationSeconds() - 1.0 / 30.0;
-                fade_.vOut = ended ? 0.0f : speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
+                fade_.vOut = held ? heldOut : ended ? 0.0f : speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
             } else {
                 fade_ = {};
             }
@@ -4407,18 +4425,31 @@ void Player::drive(const DriveStep& d, float dt) {
         }
         const auto& m = col_.markup[size_t(d.markup)];
         s_.ledge = d.markup, s_.ledgeSeg = std::clamp(d.seg, 0, int(m.points.size()) - 2), s_.ledgeSide = d.side;
-        s_.ledgeT = std::clamp(d.t, 0.0f, segLen(m, s_.ledgeSeg));
+        // the grip's measure along the segment: x/y as the ledges have it, 3-D on a vertical one (pillars: their height)
+        const auto gripLen = [&](int seg) {
+            const float h = segLen(m, seg);
+            return h > 1e-3f ? h : glm::length(m.points[size_t(seg) + 1] - m.points[size_t(seg)]);
+        };
+        s_.ledgeT = std::clamp(d.t, 0.0f, gripLen(s_.ledgeSeg));
         if (!d.snap) {
             if (d.pin) {
                 // 0x708830 flag +0x47 (0x708210): the root motion's part along the markup moves the grip (to the
                 // segment end, then the next); flag +0x46 (0x6FDC90): the root is the point at the grip minus her
                 // rotation x the offset +0xCE0. Nothing else of the root motion moves her (l2_hubhall beam 759 S935:
                 // y stays on the line in Wine h759) [O].
-                if (d.pinFollow) moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
+                if (d.pinFollow) {
+                    if (segLen(m, s_.ledgeSeg) > 1e-3f)
+                        moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(world), segDir(m, s_.ledgeSeg)));
+                    else { // a vertical segment (pillar): moveAlong's x/y measure is 0 there and clamped the grip to the top
+                        const vec3 e = m.points[size_t(s_.ledgeSeg) + 1] - m.points[size_t(s_.ledgeSeg)];
+                        const float el = glm::length(e);
+                        if (el > 1e-4f) s_.ledgeT = std::clamp(s_.ledgeT + glm::dot(world, e / el), 0.0f, el);
+                    }
+                }
                 // flag +0x41 / +0x40 (property 425): her yaw onto / toward the markup's heading (0x701FA0)
                 if (d.pinYaw)
                     s_.yaw = d.pinTurn < 0 ? wrapAngle(*d.pinYaw) : approachAngle(s_.yaw, *d.pinYaw, d.pinTurn * dt * 30.0f);
-                const float len = segLen(m, s_.ledgeSeg);
+                const float len = gripLen(s_.ledgeSeg);
                 const vec3 a = m.points[size_t(s_.ledgeSeg)], b = m.points[size_t(s_.ledgeSeg) + 1];
                 const vec3 q = glm::mix(a, b, len > 1e-4f ? s_.ledgeT / len : 0.0f);
                 const vec3 p = q - rotYaw(s_.yaw, d.pinOffset);
