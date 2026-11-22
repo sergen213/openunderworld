@@ -211,9 +211,12 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const float t = std::atan2(moveIn.y, moveIn.x);
         return glm::vec2(std::cos(t), -std::sin(t));
     }
-    // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw (0x6EBA90).
+    // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw (0x6EBA90: the
+    // stick's angle (input record +0xC) on top of its base yaw; a neutral stick adds none [I], so the base, ours the
+    // yaw the stick reads against; atan2 of a zero stick was no yaw at all).
     std::optional<Aim> markupSearch(const MarkupProfile& p) const override {
-        const auto f = w->player().markupSearch(p, rt->mirrored(), std::atan2(stickWorld.y, stickWorld.x), stickLen > 0.0f);
+        const float yaw = stickLen > 0.0f ? std::atan2(stickWorld.y, stickWorld.x) : controlYaw();
+        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f);
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
         return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};
@@ -228,6 +231,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // (the input-sources table: circular in drive mode).
     std::optional<bool> onSlideFloor() const override {
         if (!driving) return std::nullopt;
+        // a launched flight off the slope (slope_jump*) is not on it: the jump leaves +0x11D0 cleared until a landing
+        // contact sets it again, else T12 (OnSlopeSlide) took her straight back into slope_landfront on the take-off
+        // frame (self-test ch20_yggdrasil_hall_slide) [I: which action clears +0x11D0 is not decoded]
+        if (launched && w->player().state().vel.z > 0) return false;
         return w->player().slideUnder();
     }
     // 0x6F2800 [I]: ours a weapon in hand (or being drawn) or the target lock held (input 33, Target Lock).
@@ -527,13 +534,22 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         if (m < 0) return Water{};
         return Water{true, waterSurface(w->collision().markup[size_t(m)], glm::vec2(s.pos), double(w->ticks()) * kTickSeconds) - s.pos.z};
     }
+    // Player +0x31C / +0x2C5: the move sweep's record and jump-candidate byte (moveSweep, run each tick while collision
+    // mask bits 0xA00 are set: property 566).
+    int sweepRecord = -1;
+    bool sweepCand = false;
+    void moveSweep();
+    std::optional<int> moveSweepRecord() const override { return sweepRecord; }
+    std::optional<bool> sweepCandidates() const override { return sweepCand; }
     std::array<uint32_t, size_t(JEffect::kCount)> effects{};
     void stateEntered(int from, int to) override;
     void effect(JEffect e, float v) override {
         ++effects[size_t(e)];
-        if (e == JEffect::CollisionMask) { // +-0x48: or / clear (0x752410); anything else: the new mask
+        if (e == JEffect::CollisionMask) { // +-0x48 / +-0xA00: or / clear (0x752410, property 566); else the new mask
             const int x = int(v);
-            collisionMask = x == 0x48 ? collisionMask | 0x48u : x == -0x48 ? collisionMask & ~0x48u : uint32_t(x);
+            collisionMask = x == 0x48 || x == 0xA00     ? collisionMask | uint32_t(x)
+                            : x == -0x48 || x == -0xA00 ? collisionMask & ~uint32_t(-x)
+                                                        : uint32_t(x);
         }
         // 0x752410's refine (0x751FC0 -> 0x72B5C0 -> 0x70E050): drive mode aims her velocity at the chart's jump target
         // over the time left; the shadow leaves our controller's flight alone.
@@ -606,6 +622,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     Player* pm = nullptr;
     std::optional<int> lastLayerType; // the anim layer's +0xF9 as the last played pattern left it (layerBlendType)
     uint32_t placements = ~0u;
+    uint32_t reindexes = 0;     // Player::reindexes() seen
     bool parked = false;        // the controller holds her (a boundary state): the chart restarts when she comes back
     float lastRise = 0;         // the last drive move's root z rise (bone 0 [I])
     int attachedBefore = -1;    // +0xC94's markup as the tick began (an attach made by this tick's change starts a blend)
@@ -631,6 +648,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         nowMs = uint32_t(double(world.ticks()) * kTickSeconds * 1000.0);
         groundCheck(*ch);
         if (ground.steep) lastSteepMs = std::max<uint32_t>(nowMs, 1);
+        if (rt) moveSweep();
         stickWorld = stickW, stickLen = stickL, walkHeld = a.walk;
         moveIn = a.move, ctrlYaw = world.stickYaw();
     }
@@ -774,6 +792,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
                 for (size_t i = 1; i < tl.size() && n > 0 && size_t(n) < sizeof row; ++i)
                     n += std::snprintf(row + n, sizeof row - size_t(n), i > 1 ? ",%d" : "%d", tl[i]);
             }
+            if (n > 0 && size_t(n) < sizeof row) { // the anim layer's blend parameters and the grip, as the Wine corpus logs them
+                const float c98 = chartAttached && *chartAttached ? chartAttached->param : 0.0f;
+                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_l8c=%g\tvar_l90=%g\tvar_c98=%g\tvar_f0=%x", animBlend.x, animBlend.y, c98,
+                                   unsigned(rt->field(0xF0) & 0x3F));
+            }
             trace << row << '\n';
         }
         ++ticks;
@@ -794,6 +817,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     float hangSide(int m, int seg, glm::vec3 point) const;
     void seedAttach();
     bool seedHold = false; // seedAttach placed her on a hang pose: hold it through the entered state's clip
+    float damagedFallStart = std::numeric_limits<float>::quiet_NaN(); // the +0x6DC whose fall already hurt her
     uint64_t driveClipStarts = ~0ull; // the chart's clip starts the drive last applied
     // PlayerDriver
     bool drive(World& world, Player& player, glm::vec2 move, const Actions& a, float dt) override;
@@ -838,6 +862,162 @@ bool Shadow::Impl::isBoundary(int st) const {
 // cover (12) or beam (14, the hang under it) by the hang hands (lara.drm ledgeb_idle), a horizontal pole (4 / 6) by
 // the pole hang's hands (HPole_idleHangPerp), a vertical pole, ladder, perch or pillar (5 / 9 / 13 / 15) by her root;
 // within 900 units (the corpus pins her up to 600 over a hang root: its own air grab took the ledge during the hold).
+// The move sweep (tru.exe 0x7002D0 -> 0x5D7FA0 -> 0x5D7A80) on our collision (Jolt-backed CollisionMesh casts, no
+// new physics): run while collision mask bits 0xA00 are set (property 566). 0x7002D0 sizes the down probe by the
+// enabled records (+0x630, count +0x62C): depth 10 x the largest drop +4; its top over her feet is a level global's
+// s16 (*(0xE7F094) +0x50 +0x254) [U], ours Lara data +0x610 (the probe's highest height, 331.86) [I]. 0x5D7FA0: +0x2C5
+// = the jump-candidate query (0x710380, ours jumpCandidates) found one; the ground under her (cast down from the top);
+// probe directions (data s16 +0x600 = 1 -> step pi; +0x628 bit 0x4000 adds the stick probe first: from heading - pi,
+// the control yaw (0x6EBA90) when it lies within (heading - pi, heading), else her heading); per direction: the
+// forward casts at data s16 +0x620 = 2 heights (+0x610 and +0x60C over her root [I: root bone z = her root z]) to
+// +0x5F0 = 252.85 ahead (a wall moves the probe point to the hit + 63.21 (+0x618) along the direction); the down cast
+// there; a drop below her by more than +0x5FC = 64 casts back at that height toward her (+0x5F8 = 16 short) for the
+// edge face, a step above her casts from her at the step height for the riser; then 0x5D7A80 picks a record; the
+// direction whose point lies most ahead of her (local_330: [I] the horizontal unit direction to the point . her
+// facing, > 0) keeps its record in +0x31C (+0x320 = 1). Not ported [I]: surface material flags (0x5D3AF0 bits 0x44 /
+// 0x20 -> 0x2000 / 0x1000: none ours), the ledge-top re-cast after a wall (+0x330..+0x35C, which only the climb records
+// read), the carried-object branch (+0x8DC), cast mask 0x442C11E3 | 0x100000 (ours kSolidMask), 0x5D7A80's last two
+// arguments (the call passes six: a record testing +0x14 / +0x18 / +0x1C that could win leaves +0x31C as it was [U]).
+void Shadow::Impl::moveSweep() {
+    if (!(collisionMask & 0xA00) || !ch) return;
+    const Charts& c = *ch;
+    const auto base = c.pointer(c.dataOffset + 0x630);
+    const int n = c.data<int32_t>(0x62C);
+    if (!base || n <= 0 || size_t(*base) + size_t(n) * 0x84 > c.bytes.size()) return;
+    const auto rec = [&](int i) { return c.bytes.data() + *base + size_t(i) * 0x84; };
+    const auto f = [](const uint8_t* r, int off) { float v; std::memcpy(&v, r + off, 4); return v; };
+    float maxDrop = 0;
+    for (int i = 0; i < n; ++i)
+        if (rec(i)[0]) maxDrop = std::max(maxDrop, f(rec(i), 4));
+    const auto cand = jumpCandidates();
+    sweepCand = cand && (cand->a || cand->b);
+    const PlayerState& s = w->player().state();
+    const auto& col = w->collision();
+    const glm::vec3 p = s.pos;
+    const float z = p.z, top = z + c.data<float>(0x610), bottom = z - maxDrop * 10.0f;
+    const auto cast = [&](glm::vec3 a, glm::vec3 b) -> std::optional<collision::Hit> {
+        const glm::vec3 d = b - a;
+        const float len = glm::length(d);
+        if (len < 1e-4f) return std::nullopt;
+        return col.raycast(a, d / len, len);
+    };
+    float groundZ = z; // local_2c8
+    if (const auto g = cast({p.x, p.y, top}, {p.x, p.y, bottom})) groundZ = g->point.z;
+    const glm::vec2 fwd(std::cos(s.yaw), std::sin(s.yaw));
+    // the directions (0x5D7FA0's loop, count 1: i from -1 with the stick flag, step pi)
+    std::vector<float> dirs;
+    {
+        const float step = 3.14159265f, h = s.yaw;
+        const bool stickFlag = c.data<uint16_t>(0x628) & 0x4000;
+        bool overridden = false;
+        for (int i = stickFlag ? -1 : 0; i < std::max<int>(1, c.data<int16_t>(0x600)); ++i) {
+            float a = float(i) * step + h;
+            if (stickFlag && !overridden) {
+                float d = (ctrlYaw - a) / 6.2831855f;
+                d = (d - std::floor(d)) * 6.2831855f;
+                if (d == 0.0f) ++i, a += step;
+                else if (step <= d) a += step;
+                else overridden = true, a = ctrlYaw;
+            }
+            dirs.push_back(a);
+        }
+    }
+    const float ahead = c.data<float>(0x5F0), lip = c.data<float>(0x5FC), back = c.data<float>(0x5F8);
+    const float wallIn = c.data<float>(0x618);
+    int best = -1;
+    float bestScore = 0;
+    bool unknown = false;
+    for (const float a : dirs) {
+        const glm::vec2 dir(std::cos(a), std::sin(a));
+        glm::vec3 probe(glm::vec2(p) + dir * ahead, z);
+        std::optional<glm::vec3> wall; // local_1d0: the forward casts' hit (argument 4), else none
+        const int heights = c.data<int16_t>(0x620);
+        const float hTop = z + c.data<float>(0x610), hLow = z + c.data<float>(0x60C);
+        for (int k = 0; k < heights && !wall; ++k) {
+            const float hz = heights < 2 ? hLow : hTop + float(k) * (hLow - hTop) / float(heights - 1);
+            if (const auto hit = cast({p.x, p.y, hz}, {probe.x, probe.y, hz})) {
+                wall = hit->point;
+                probe = glm::vec3(glm::vec2(hit->point) + dir * wallIn, z);
+            }
+        }
+        glm::vec3 pt(probe.x, probe.y, top), nrm(0, 0, 1);
+        bool dynamic = false;
+        if (const auto d = cast({probe.x, probe.y, top}, {probe.x, probe.y, bottom}))
+            pt = d->point, nrm = d->normal, dynamic = d->dynamic >= 0;
+        std::optional<glm::vec3> face; // local_160 (argument 5 without a candidate)
+        if (pt.z <= z + lip + 1.0f) {
+            if (pt.z < z - lip) { // the drop: back toward her at the lip height for the edge face
+                const glm::vec3 from(probe.x, probe.y, z - lip);
+                const glm::vec3 to(glm::vec2(p) + dir * back, std::min(z - lip, groundZ - lip));
+                if (const auto e = cast(from, to)) face = e->point, pt = glm::vec3(e->point.x, e->point.y, pt.z);
+                else pt = to;
+            }
+        } else if (const auto r = cast({p.x, p.y, pt.z - lip}, {probe.x, probe.y, pt.z - lip})) { // a step: its riser
+            face = r->point;
+            pt = glm::vec3(r->point.x, r->point.y, pt.z);
+            nrm = r->normal, dynamic = r->dynamic >= 0;
+        }
+        std::optional<glm::vec3> p5 = face;
+        if (sweepCand) p5 = cand->a ? cand->a.point : cand->b.point; // +0x3B0
+        const uint16_t flags = dynamic ? 0x8000 : 0; // [I] an instance hit as object type 2
+        // 0x5D7A80: the points' distances from her (a missing one is the zero vector, tru.exe's local_e0)
+        const float drop = pt.z - z;
+        const float slope = glm::degrees(std::acos(std::clamp(nrm.z, -1.0f, 1.0f)));
+        const float d4 = glm::length(glm::vec2(wall.value_or(glm::vec3(0)) - p));
+        const float d5 = glm::length(glm::vec2(p5.value_or(glm::vec3(0)) - p));
+        const float wz = wall.value_or(glm::vec3(0)).z - z;
+        int pick = -1;
+        bool pickUnknown = false;
+        for (int i = 0; i < n; ++i) {
+            const uint8_t* r = rec(i);
+            if (!r[0]) continue;
+            uint16_t need;
+            std::memcpy(&need, r + 0x30, 2);
+            need = uint16_t((need & 0xFFFB) * 0x1000);
+            if ((need & flags) != need) continue;
+            if (f(r, 0x20) > 0 && !(d4 <= f(r, 0x20))) continue;
+            if (f(r, 0x24) > 0 && !(d5 <= f(r, 0x24))) continue;
+            bool open = f(r, 0x14) > 0 || f(r, 0x1C) > 0; // tests on the 7th / 8th arguments [U]
+            if (!(f(r, 0xC) <= 0 || (drop > 0 && f(r, 0xC) < drop))) continue;
+            if (f(r, 0x18) > 0 && wz < drop) {
+                if (!(drop > 0)) continue;
+                open = true; // its angle reads the 7th argument [U]
+            }
+            if (!(f(r, 0x10) <= 0 || (wz < drop && drop > 0 && drop <= f(r, 0x10)))) continue;
+            if (f(r, 4) > 0 && !(drop <= -f(r, 4))) continue;
+            if (f(r, 8) > 0 && !(f(r, 8) <= slope)) continue;
+            if (r[0x2E]) { // the side of the surface normal the point lies on, less its part along her up axis
+                const glm::vec3 v(pt.x - p.x, pt.y - p.y, 0.0f);
+                if ((r[0x2E] == 1) != (glm::dot(v, nrm) < 0)) continue;
+            }
+            if (open) {
+                pickUnknown = true;
+                continue;
+            }
+            if (pick < 0) {
+                pick = i;
+                continue;
+            }
+            const uint8_t* q = rec(pick);
+            int16_t pr, pq;
+            std::memcpy(&pr, r + 0x34, 2), std::memcpy(&pq, q + 0x34, 2);
+            if (pq < pr) pick = i;
+            else if (pr == pq) { // ties: the larger +0x0C, then +0x1C, then +0x04, then (equal +0x04) +0x08
+                if (f(r, 0xC) > f(q, 0xC)) pick = i;
+                else if (f(r, 0x1C) > f(q, 0x1C)) pick = i;
+                else if (f(r, 4) > f(q, 4)) pick = i;
+                else if (f(q, 4) == f(r, 4) && f(q, 8) < f(r, 8)) pick = i;
+            }
+        }
+        const glm::vec2 to(pt - p);
+        const float score = glm::length(to) > 1e-4f ? glm::dot(glm::normalize(to), fwd) : 0.0f;
+        if (pickUnknown && score > bestScore) unknown = true;
+        if (pick >= 0 && score > bestScore) best = pick, bestScore = score;
+    }
+    if (unknown) return;
+    if (best >= 0) sweepRecord = best;
+}
+
 // The corpus spawns her in the held pose (case start.ours), so she stays put unless the grip is a ledge hang more than
 // 60 units off: then she goes to its hang pose (attachPose).
 void Shadow::Impl::seedAttach() {
@@ -883,7 +1063,18 @@ void Shadow::Impl::seedAttach() {
     // A seeded ledge hang starts on its hang pose and holds it through the attach clip, as 0x741130's alignment target
     // (+0x1260) warps the S533 / S535 clip onto it (Wine ch_hang_*: the root stays at the pose while S533 plays; ours
     // drifted 59 out and 139 up by the clip's root motion, which flipped the camera clamp's side at tick 60) [O-runtime].
-    if (pm && hangGrip) {
+    // Only for a state that hangs from the ledge (its request's clip: ledgeb_ / ledgeu_ / trans_pose, the catch S533 /
+    // S535 and the hang family): a hurdle attach (S480 hurdle_ground_attach_mid_100, ch_beam_across_*) keeps her where the
+    // case starts (ChartB: moving her 210 to ledge 1009's hang pose lost the beam jump at t120).
+    const auto hangsFromLedge = [&] {
+        const auto* st = ch->player.state(enterState);
+        if (!st) return false;
+        const int r = st->request;
+        if (r < 0 || size_t(r) >= ch->requests.size()) return rt->chainHasAction(enterState, 420);
+        const std::string c = lower(ch->requests[size_t(r)].clip);
+        return c.starts_with("ledgeb_") || c.starts_with("ledgeu_") || c.starts_with("trans_pose");
+    };
+    if (pm && hangGrip && hangsFromLedge()) {
         const auto& p = col.markup[size_t(pick.markup)].points;
         const int seg = std::clamp(int(pick.param), 0, int(p.size()) - 2);
         const float t = (pick.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
@@ -956,12 +1147,14 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     if (clip.starts_with("perch")) return GS::Perch;
     if (clip.starts_with("pillar")) return GS::Pillar;
     if (has("slide_stumble_off")) return GS::Land; // S821, the slide's run-out onto standable floor (legacy Land)
-    if (clip.starts_with("slope")) return GS::Slide; // slope_landfront / slope_transitionto / slope_slidefront (S801..S812)
+    if (clip.starts_with("slope") && motion != M::Air) return GS::Slide; // slope_landfront / _transitionto / _slidefront (S801..S812); off its end she falls
     if (clip.starts_with("dice")) return GS::Climb;
     if (has("drop_to_ledgeb")) return GS::DropToHang;
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
     if (motion == M::Hang || motion == M::Blend) {
         if (has("climb")) return GS::ClimbUp;
+        // S542: the run off the edge into the hang (T122 from S11, node 21) [I: mapping]
+        if (rt && rt->state() == 542) return GS::DropToHang;
         // held on a pole (markup type 4, the horizontal poles' type) whatever the clip: the attach's lead-in plays
         // node 44's trans_pose_U before Hpole_perp_attach_U
         if (chartAttached && *chartAttached && size_t(chartAttached->markup) < w->collision().markup.size() &&
@@ -976,6 +1169,7 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     // a take-off on the ground (ng_running_jump_forwards_lft, ng_standing_jump...) before run / walk: the running jump's
     // clip names hold "run" too
     if (clip.find("jump") != std::string::npos) return GS::JumpPrep;
+    if (has("running_stop") || has("walk_stop")) return GS::Stop; // S57 ng_running_stop (legacy State::Stop)
     if (clip.find("walk") != std::string::npos) return GS::Walk;
     if (clip.find("run") != std::string::npos || clip.find("sprint") != std::string::npos) return GS::Run;
     if (clip.find("turn") != std::string::npos) return GS::Turn;
@@ -1038,6 +1232,18 @@ void Shadow::Impl::launch(int from) {
     } else if (clip == "ledgeb_jump_up") {
         pm->setFlight(glm::vec3(0, 0, t.hangJumpUpVz));
         if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
+    } else if (clip.starts_with("slope_jump")) {
+        // The slope jumps (S805 slope_jumpF; slope_jumpL / R / U from slope_transitionto): launch 0x7726D0 -> 0x76FFC0 with
+        // the state's jump query (prop 541) +8 / +0xC / +0x10 = right / forward / up per 30 Hz frame in her frame,
+        // unscaled, nothing of the slide's velocity kept: q3 (0, 69.53, 34.77), q40 (-48, 30, 53) left, q41 its mirror,
+        // q39 (0, 30, 70) [O chart + lara.drm query table; the values legacy State::Slide uses]
+        glm::vec3 q(0.0f, 69.53f, 34.77f);
+        if (clip == "slope_jumpl") q = glm::vec3(-48.0f, 30.0f, 53.0f);
+        else if (clip == "slope_jumpr") q = glm::vec3(48.0f, 30.0f, 53.0f);
+        else if (clip == "slope_jumpu") q = glm::vec3(0.0f, 30.0f, 70.0f);
+        const glm::vec3 r(f.y, -f.x, 0);
+        pm->setFlight((r * q.x + f * q.y + glm::vec3(0, 0, q.z)) * 30.0f);
+        if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
     } else {
         launched = false;
     }
@@ -1075,7 +1281,17 @@ void Shadow::Impl::stateEntered(int from, int to) {
             // beam hang the ledge pose
             const Request* rq = rt->pattern();
             const auto fam = pm->familyPose(a.markup, s.pos, s.yaw, rq ? std::string_view(rq->clip) : std::string_view{});
-            const auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
+            auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
+            if (!fam && (a.flags & 0x10000)) {
+                // a beam (markup flag 0x10000): the pose its attach update holds (0x708830 +0x46 at the grip, offset 0 on
+                // the beam states) facing along it, +0xCDC = 0 / pi by her heading against the segment (0x72A5F0); Wine
+                // h759 S878: yaw -165.6 -> -180 over the mount [O-runtime; I: a linear blend over the mount clip]
+                const glm::vec2 e(p[size_t(seg) + 1] - p[size_t(seg)]);
+                const float len = glm::length(e);
+                root = glm::mix(p[size_t(seg)], p[size_t(seg) + 1], len > 1e-4f ? t / len : 0.0f);
+                yaw = std::atan2(e.y, e.x);
+                if (glm::dot(e, glm::vec2(std::cos(s.yaw), std::sin(s.yaw))) < 0) yaw += 3.14159265f;
+            }
             blend = {true, to, s.pos, root, s.yaw, yaw, std::max(1.0f, rt->remainingFrames()), 0};
             std::fprintf(stderr, "ou-game: chart attach S%d markup %d type %d clip %s from %.1f %.1f %.1f to %.1f %.1f %.1f over %.0f\n",
                          to, a.markup, int(w->collision().markup[size_t(a.markup)].type), rq ? rq->clip.c_str() : "-",
@@ -1123,6 +1339,16 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
             }
         restartChart(), placements = player.placements();
     }
+    // A collision rebuild renumbered the markup (Player::reindex: streaming, a script terrain-group toggle): the chart
+    // keeps running, its attached markup follows her ledge's new index (gone: detached) [I: tru.exe keeps markup
+    // pointers, so it has nothing to remap].
+    if (player.reindexes() != reindexes) {
+        reindexes = player.reindexes();
+        if (const auto [from, to] = player.lastReindex(); chartAttached && chartAttached->markup >= 0 && chartAttached->markup == from) {
+            if (to >= 0) chartAttached->markup = to;
+            else *chartAttached = MarkupSlot{};
+        }
+    }
     if (loadDue) applyLoad(pendingLoad), loadDue = false, pendingLoad = nullptr;
     inputs(world, a, move, std::min(1.0f, glm::length(move)));
     attachedBefore = chartAttached && *chartAttached ? chartAttached->markup : -1;
@@ -1154,6 +1380,9 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.clip = p->clip, d.loop = rt->animLoops(), d.mirror = mirror != p->mirror;
         d.start = rt->clipStartFrame() / 30.0, d.time = rt->animFrames() / 30.0;
         d.restart = rt->clipStarts() != driveClipStarts;
+        if (d.restart && std::getenv("OU_CHART_CHANGES"))
+            std::fprintf(stderr, "ou-game: chart clip tick %llu S%d req %d %s%s start %.1f\n", (unsigned long long)w->ticks(), rt->state(),
+                         rt->request(), p->clip.c_str(), d.mirror ? " (mirrored)" : "", rt->clipStartFrame());
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
         if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
@@ -1180,14 +1409,41 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         // actions are not ported]
         d.motion = M::Hang;
         const std::string c = lower(d.clip.empty() ? player.state().clip : d.clip);
-        d.snap = c.starts_with("ledgeb_") && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
+        // the wall hang (ledgeb_) and the free hang without a wall under it (ledgeu_, l3_chapel's S533 / S447) alike
+        d.snap = (c.starts_with("ledgeb_") || c.starts_with("ledgeu_")) && c.find("jump") == std::string::npos && c.find("climb") == std::string::npos;
         // The grip (+0xC98) moves only with the shimmy (S459 start, S432 shimmy, S441 hustle): the attach and idle
         // clips' sideways root motion leaves it where it is, and the ledge end S448 stops her dead (ChartB, Wine 973:
         // +0xC98 0.907 stays until the stick press, so the end bit 642 holds and S458 -> S450) [O-runtime].
         d.slide = st == 459 || st == 432 || st == 441;
-        // the hang idles (prop 551 set: S445 / S447) run 0x708830's grip projection (its +0x47 flag) [I: the flag's
-        // source in 0x770ED0 is not decoded; S533 lacks 551 and does not call 0x708210, Wine ch_hang_snap_*]
-        d.follow = !d.slide && rt->propBool(551).value_or(false);
+        // 0x770ED0 fills 0x708830's record from the state's properties (ChartBlend's decode [O]): +0x47 = bool 418
+        // (0x1A2), +0x48 = bool 434 (0x1B2); 0x708210 runs with +0x48, or +0x47 without it. [I] +0x48's source, player
+        // +0x940 instead of the root displacement, is not modelled: both use the root here.
+        d.follow = !d.slide && (rt->propBool(418).value_or(false) || rt->propBool(434).value_or(false));
+        // 0x770ED0 builds 0x708830's record from the state's properties [O]: 412 (0x19C) enum 0x298 -> +0x46 (the root
+        // set on the attached point, 0x6FDC90; the beams' S873: 412 = 664), 418 (0x1A2) -> +0x47 (the grip projection
+        // 0x708210). The offset is player +0xCE0..+0xCE8 (property 421 / 422 grab offsets, attachTick).
+        if (!d.snap)
+            if (const Property* p = rt->property(0x19C); p && p->type == 0x23 && p->raw == 0x298) {
+                d.pin = true;
+                d.pinFollow = rt->propBool(0x1A2).value_or(false);
+                d.pinOffset = glm::vec3(playerFloat(0xCE0), playerFloat(0xCE4), playerFloat(0xCE8));
+                // property 425 (0x1A9): 0x29D -> +0x41, her yaw = atan2(+0xCB0) + +0xCDC; 0x29C -> +0x40, toward it
+                // (0x701FA0) at min(6, 3 + 3 |d| / pd+0x708) degrees per frame [O]; +0xCB0 = the segment's direction
+                // (0x6FECA0) [I: 0x5BE390's line test taken as true on every markup with a segment]
+                if (const Property* h = rt->property(0x1A9); h && h->type == 0x23 && (h->raw == 0x29C || h->raw == 0x29D))
+                    if (const auto s = markupSegment(att.markup, int(std::floor(att.param)))) {
+                        const glm::vec2 e(s->second - s->first);
+                        if (glm::length(e) > 1e-4f) {
+                            const float target = std::atan2(e.y, e.x) + playerFloat(0xCDC);
+                            d.pinYaw = target;
+                            if (h->raw == 0x29C) {
+                                float diff = std::remainder(heading() - target, 6.2831853f);
+                                const float lim = float(ch->data<int16_t>(0x708)) * 0.017453292f;
+                                d.pinTurn = std::min(0.10471976f, (lim > 0 ? std::abs(diff) / lim : 0.0f) * 0.05235988f + 0.05235988f);
+                            }
+                        }
+                    }
+            }
     } else if (rt->chainHasAction(st, 510)) {
         d.motion = M::Air;
         // 0x752410: the flight re-aimed at its target with the time left (+0x77C, action 510's update) [O]
@@ -1222,6 +1478,15 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     d.coarse = coarse(d.motion, d.clip);
     player.drive(d, dt);
     lastRise = player.state().pos.z - z0;
+    // A landing hurts by the fall the chart measured (player +0x6DC - z, the store its entry actions 515 keep; the
+    // landing's damage tru.exe 0x75D080 -> 0x702FC0 -> 0x702F10 [O]): World::tickCombat reads PlayerState::fallHeight,
+    // which drive() clears every tick [I: the landing hook is ours' Air floor contact].
+    // Once per fall: +0x6DC stays until the next fall's entry action stores it, and the capsule can touch down again
+    // (a bounce, a slope) within the same fall [I].
+    if (player.driveLanded() && playerFloat(0x6DC) != damagedFallStart) {
+        player.setFallHeight(std::max(0.0f, fallDistance()));
+        damagedFallStart = playerFloat(0x6DC);
+    }
     // The air motion's capsule set her down on a floor that the chart's ground check missed (its ray masked off in the
     // flight, or an object floor): the landing still reaches the chart (event 455), else she slid on through the level
     // in the flight state (ch02_serpent_door: S294 for 700 ticks) [I].
@@ -1295,7 +1560,7 @@ void Shadow::Impl::applyLoad(const nlohmann::json& j) {
     }
     launched = j.value("launched", false), collisionMask = j.value("mask", 0x48u);
     rt->restore(*this, snap(j.at("lara"))), up->restore(*this, snap(j.at("upper")));
-    started = true, placements = pm ? pm->placements() : placements;
+    started = true, placements = pm ? pm->placements() : placements, reindexes = pm ? pm->reindexes() : reindexes;
 }
 
 Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::path> trace, bool log, bool drive)
@@ -1322,6 +1587,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
 void Shadow::enterAt(int state, uint64_t tick, std::optional<glm::vec4> at, float elapsed) {
     impl_->enterState = state, impl_->enterTick = tick, impl_->enterPose = at, impl_->enterElapsed = elapsed;
 }
+void Shadow::feedRng(std::vector<uint32_t> draws) { impl_->rngFeed.assign(draws.begin(), draws.end()); }
 Shadow::~Shadow() = default;
 PlayerDriver* Shadow::driver() { return impl_->driving ? impl_.get() : nullptr; }
 

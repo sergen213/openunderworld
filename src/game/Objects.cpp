@@ -1564,7 +1564,7 @@ void World::bindTerrain() {
         s.ledge = ledgeOwner ? markupIndex(ledgeOwner->first, ledgeOwner->second) : -1;
         s.water = waterOwner ? markupIndex(waterOwner->first, waterOwner->second) : -1;
         s.climbHold = holdOwner ? markupIndex(holdOwner->first, holdOwner->second) : -1;
-        player_.restore(s);
+        player_.reindex(s); // the markup renumbered: not a placement
         return true;
     });
 }

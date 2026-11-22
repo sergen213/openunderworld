@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -105,6 +106,9 @@ struct Request {
     uint8_t blendType = 0;
     std::vector<std::string> clips;
     std::vector<uint16_t> clipKeys; // each clip's key count (+0x32; 0 unknown), for 0x433360's synced rates
+    // The first clip's root speed in units per 30 Hz frame as action 501 (0x75BD30) reads it through 0x4389C0: -(header
+    // +0x1C, the clip's whole root displacement y) x 100 / (keys x time per key); 0 unknown.
+    float rootSpeed = 0;
     // 0x4428A0 -> 0x441FB0: the clip's time when it starts, in 30 Hz frames: start - blend, uncut, after the first clip's
     // key bump (blend > 0, a key longer than a frame, start inside the first key: start = that key, blend += the move).
     // blendOverride: the previous pattern's +0x1B (layer +0x314) when it set one.
@@ -255,6 +259,9 @@ public:
     virtual void setLayerBlend(float p8C, float p90) { (void)p8C, (void)p90; }
     // Instance +0x38 set outright (the beam balance's turn-around, 0x743D85..0x743E0A).
     virtual void setHeading(float yaw) { (void)yaw; }
+    // Replay only (--chart-rng): tru.exe's generator results (0x597780, the generator object 0x8A9C78) recorded under Wine,
+    // in call order, for the actions that draw from it (action 301's wobble). Empty: ours' own generator (live play).
+    std::deque<uint32_t> rngFeed;
     // ---- end group B ----
     // ---- group A ----
     // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
@@ -365,6 +372,11 @@ public:
     // tests the instance velocity's z) [I: tru.exe's launch site is not found; Wine shows the velocity on the
     // flight state's first row].
     virtual void stateEntered(int /*from*/, int /*to*/) {}
+    // Player +0x31C: the move sweep's record (0x5D7FA0 -> 0x5D7A80), an index into Lara data +0x630's 0x84-byte
+    // records (count +0x62C); kept from the last sweep that found one (tru.exe never clears it), -1 none yet;
+    // nullopt: the context does not run the sweep. Byte +0x2C5: the sweep's jump-candidate query (0x710380) found one.
+    virtual std::optional<int> moveSweepRecord() const { return {}; }
+    virtual std::optional<bool> sweepCandidates() const { return {}; }
     // ---- end group J ----
     // ---- group CD ----
     // Climb / ladder / pillar / perch / pole / beam / wall hug / slide / climb-out reads (src/game/chart/Climb.cpp).
@@ -624,6 +636,8 @@ public:
     // `at` (x, y, z, yaw degrees): where she was in the Wine case when it began in a hold (case.json start.ours); the hold's
     // markup is seeded from there [I: harness only].
     void enterAt(int state, uint64_t tick, std::optional<glm::vec4> at = std::nullopt, float elapsed = 0);
+    // --chart-rng (replay only, harness): tru.exe's recorded generator results, consumed in order (ChartContext::rngFeed).
+    void feedRng(std::vector<uint32_t> draws);
     std::string summary() const;
     const ChartRuntime& runtime() const { return *rt_; }
     PlayerDriver* driver(); // null unless constructed with drive

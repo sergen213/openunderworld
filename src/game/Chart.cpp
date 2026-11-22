@@ -199,6 +199,9 @@ std::optional<Charts> loadCharts(const ObjData& o) {
                 const auto& cd = it->second->data;
                 r.seconds = float(double(rd<uint16_t>(cd, 0x32)) * rd<uint16_t>(cd, 0x34) / anim::kTimeUnitsPerSecond);
                 r.keys = rd<uint16_t>(cd, 0x32), r.keyTime = rd<uint16_t>(cd, 0x34);
+                // 0x75BD30: -(+0x1C) x 100 / (+0x34 x +0x32) (s16 products)
+                const float span = float(int(rd<int16_t>(cd, 0x34)) * int(rd<int16_t>(cd, 0x32)));
+                if (span > 0) r.rootSpeed = -rd<float>(cd, 0x1C) * 100.0f / span;
             }
         }
         c.requests.push_back(std::move(r));
@@ -985,12 +988,12 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
     } else if (!coverage) {
         for (size_t i = 0; i < ch.states.size(); ++i) showState(int(i));
         // the patterns that play more than one anim: the anim layer blend's sub-layers (pattern +0x17 type)
-        out << "requests with sub-layers (index type clips):\n";
+        out << "requests with sub-layers (index type clips:keys, first clip's root speed per frame):\n";
         for (size_t i = 0; i < charts->requests.size(); ++i)
             if (const Request& r = charts->requests[i]; r.clips.size() > 1) {
                 out << "  R" << i << " " << int(r.blendType) << " {";
-                for (const auto& c : r.clips) out << " " << c;
-                out << " }\n";
+                for (size_t k = 0; k < r.clips.size(); ++k) out << " " << r.clips[k] << ":" << (k < r.clipKeys.size() ? r.clipKeys[k] : 0);
+                out << " } " << r.rootSpeed << "\n";
             }
     }
     if (!coverage) return 0;

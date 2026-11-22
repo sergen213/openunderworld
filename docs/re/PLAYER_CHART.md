@@ -255,6 +255,11 @@ Grapple). `--chart-state N[@TICK[@X,Y,Z,YAW[@FRAMES]]]` puts the shadow chart in
 FRAMES (the Wine row's `t30` at the case's tick 0) runs the state's time and its clip clock on through the node's queue
 (`ChartRuntime::fastForward`): l3_chapel's ch_hang_* begin 33.5 frames into S533. Our controller is not placed in that
 state, so holds (beam, pillar, pole, ledge) leave at once without an attached markup (drive mode seeds the hold).
+`--chart-rng FILE` (replay only, harness [I]) feeds tru.exe's recorded generator results (0x597780 on the shared generator
+0x8A9C78: hex or decimal tokens in call order, `#` comments) to the chart's draws (`ChartContext::rngFeed`, action 301's
+wobble 0x742330 / 0x4A2B80); `tools/chart-replay.sh` passes `W/chart/wine/<family>/<case>.rng` when it exists. Live play
+keeps ours' own generator: tru.exe's is a 55-word lagged additive generator every system shares, so porting it could not
+reproduce its sequence.
 
 **Frame order** [O-runtime, U the poll's address]: tru.exe's `GAMELOOP_Frame` (0x5DFFE0) pumps the window messages (the
 input actions' records +0 flags / +4 change time / +8 press time against the input clock 0xA02B68 +0x1C are updated
@@ -377,7 +382,10 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   consider_detach / jumpland_unbalanced type 5 {fwd x3, _90 x3}; aboutfall / stepforward / stepback / flip / somersault
   type 7 {centre, left, right}; falls type 2 {ledge, no ledge}. Wine (W/chart/wine/beam/t1079_walk_turn.tsv, SPAWN
   take): S918 count 6, +0xF9 5, +0x8C 0, +0x90 0.73..0.80, w1 = 1 - +0x90; after the turn +0x90 1 and w0..w3 0; S922
-  count 3, +0xF9 7, w0 1 [O-runtime: matches 0x437BA0]. Ours (`anim::layerBlendWeights`, `Request::clips` /
+  count 3, +0xF9 7, w0 1 [O-runtime: matches 0x437BA0]. Clean walk (h759_walk_sweep_birth.tsv, l2_hubhall beam 759,
+  S935): +0xF9 0x17, 9 sub-layers, +0x90 0, +0x8C 0 -> 0.99, w4 = 1 - +0x8C, w5 = +0x8C, 4.0 units per tick, channel 0
+  rate 1.714 [O-runtime: matches 0x6EAAA0]; its +0x8C comes from action 301 (PSCAF_BalanceWobble, update 0x75E8D0 ->
+  0x742770 on agent +0x358), about +0.0125 per tick (h759_watch8c_birth.tsv) [O-runtime]. Ours (`anim::layerBlendWeights`, `Request::clips` /
   `blendType`, chart-dump's "requests with sub-layers"): the drive context answers `layerBlendType()` (the playing
   pattern's +0x17), `setLayerBlend` writes `animBlend`, driveTick weighs the sub-layers into `DriveStep::blendClips /
   blendWeights`; `World::updatePose` blends the poses (phase-synced, normalised weights [I: 0x4361C0's accumulation])

@@ -10,7 +10,7 @@
 // Group A ids not ported (the game state they read is not modelled; they stay unregistered and count as unported):
 //   0x12E / 0x131 foot-lock controllers (+0xF20.., their lock bytes +0x10A / +0x10B set through 0x7000F0 by anim events),
 //   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
-//   combo move history, 0x1E5 / 0x1EA / 0x1EB / 0x1EF / 0x1F0 the player +0x31C probe record, 0x1FB the gear slot's
+//   combo move history, 0x1E5 / 0x1EA / 0x1EF the player +0x31C probe record (0x1EB / 0x1F0: Jump.cpp), 0x1FB the gear slot's
 //   instance, 0x208 the stairs byte +0x11D4, 0x20B the wall-jump
 //   anticipation rays (0x759260, n = 0 frames), 0x20D the combat component flags +0x1FC bit 11.
 #include "game/Chart.hpp"
@@ -610,8 +610,10 @@ void lookAtProcess(ChartContext& ctx, uint16_t id) {
 // H1..H3 = 525..527, rate pairs 512..519, band 521 (type int). m = the stick level. 402: t = clamp01((m - (T1 - H1)) /
 // ((H2 + T2) - (T1 - H1))), rate = lerp(p512, p513). 403: t over [T2 - H2, H3 + T3], lerp(p514, p515); 404: over
 // [T3 - H3, 1], lerp(p516, p517); 405 the same t, lerp(p518, p519); 403..405 stamp agent +0x78 = +0x504. A rate in
-// (0, 2] plays as is; above 2 it is a speed: / the clip's root speed (-root y x 100 / length), clamped to [0.5, 2];
-// 0 or no band: 1. Then every sub-layer's rate (0x438C40). [U] 0x702AC0 when agent +0xC == 1.
+// (0, 2] plays as is; above 2 it is a speed in units per 30 Hz frame: / sub-layer 0's clip root speed (0x4389C0:
+// -header +0x1C x 100 / (keys x time per key), Request::rootSpeed), clamped to [0.5, 2] (beam walk R192: 4.725 -> 1.714
+// in Wine h759, 4.0 units per 60 Hz tick) [O]; 0 or no band: 1. Then every sub-layer's rate (0x438C40). [U] 0x702AC0
+// when agent +0xC == 1.
 void stickScaledAnimRate(ChartContext& ctx, uint16_t id) {
     ChartRuntime& rt = ctx.chart();
     const float t1 = propF(rt, 0x20A), t2 = propF(rt, 0x20B), t3 = propF(rt, 0x20C);
@@ -632,7 +634,9 @@ void stickScaledAnimRate(ChartContext& ctx, uint16_t id) {
     if (band != 0x192) ctx.agentFloat(0x78) = rt.totalTime();
     if (out != 0) {
         if (out <= 2) rate = out;
-        else return unportedPart(ctx, id); // the clip's root speed (0x4389C0) is not known chart-side
+        else if (const Request* p = rt.pattern(); p && p->rootSpeed > 0) // sub-layer 0's clip (0x4389C0, layer +0xF8 = 0)
+            rate = std::clamp(out / p->rootSpeed, 0.5f, 2.0f);
+        else if (!p) return unportedPart(ctx, id); // an unresolved node: its clip's root speed is not known chart-side
     }
     ctx.animRate = rate;
 }
@@ -822,11 +826,14 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
     p.minT = f32(r + 0x20), p.coneDeg = f32(r + 0x24);
     p.minDist = int16_t(u32(r + 0x28) & 0xFFFF);
     if (const auto lr = c.pointer(d + 0x584)) p.cornerZone = int16_t(u32(*lr + 0x9E) & 0xFFFF); // 0x737B30's +0x9E
+    if (const auto br = c.pointer(d + 0x5BC)) // 0x6FE040's end insets on the beam class record
+        p.beamInset[0] = int16_t(u32(*br + 0x98) & 0xFFFF), p.beamInset[1] = int16_t(u32(*br + 0x98) >> 16);
     const auto capsuleOf = [&](uint32_t slot, MarkupProfile::Capsule& out) {
         if (const auto cr = c.pointer(d + slot))
             out = {vec3(f32(*cr + 0x30), f32(*cr + 0x34), f32(*cr + 0x38)), f32(*cr + 0x54), f32(*cr + 0x58)};
     };
     capsuleOf(0x594, p.poleH), capsuleOf(0x58C, p.poleV), capsuleOf(0x5B8, p.hold);
+    p.ladderFaceDeg = float(byte(d + 0x775));
     p.flags = u32(r + 0x2C);
     const int frames = int32_t(u32(r + 0xA4));
     p.frames = frames >= 1 ? frames : c.data<int16_t>(0xBDE);
