@@ -260,8 +260,13 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
         const std::string action = s.args.size() > 3 ? s.args[3] : "interact";
         const uint64_t length = ticks(s.args[2]);
         if (t == 0) set(tick, action, 1, a);
-        if (t == kPressTicks) set(tick, "forward", std::stof(s.args[0]), a), set(tick, "right", std::stof(s.args[1]), a);
-        if (t >= length) {
+        if (t == kPressTicks) { // the push counts from when the stick lands (a step over 0.2 lands a tick late)
+            const auto held = [&](const char* k) { const auto it = held_.find(k); return it == held_.end() ? 0.0f : it->second; };
+            const float f = std::stof(s.args[0]), r = std::stof(s.args[1]);
+            runLag_ = glm::length(glm::vec2(r - held("right"), f - held("forward"))) > 0.2f ? 1 : 0;
+            set(tick, "forward", f, a), set(tick, "right", r, a);
+        }
+        if (t >= length + uint64_t(std::max(runLag_, 0))) {
             centre(), set(tick, action, 0, a);
             std::fprintf(stderr, "ou-game: autopilot tick %llu push: state %s at %.1f %.1f %.1f\n", (unsigned long long)tick,
                          std::string(game::stateName(lara.state)).c_str(), lara.pos.x, lara.pos.y, lara.pos.z);
