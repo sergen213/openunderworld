@@ -32,6 +32,7 @@ struct Actions;
 class Player;
 class World;
 class PlayerDriver;
+struct MarkupProfile;
 } // namespace ou::game
 
 namespace ou::game::chart {
@@ -256,6 +257,10 @@ public:
     // Player +0xF3C, the support foot (0x6EB630): animation events 0x34 / 0x36 of her clip set 1 / 2 (swapped while the
     // clip plays mirrored, 0x6EDD00), 0x35 sets 0 (handler 0x716F30). Condition 0x12D.
     virtual std::optional<int> supportFoot() const { return std::nullopt; }
+    // The stick record's angle relative to her heading (0xFADFB0 -> +0xB0 -> +0x10, radians, + = her left), composed
+    // as tru.exe does: the pad direction in the camera frame plus the control yaw against her heading. nullopt: derive
+    // it from stick() (world space).
+    virtual std::optional<float> stickRelative() const { return std::nullopt; }
     // Player +0x68 bit 30, the fly cheat (condition 0x207); ours has no such mode.
     virtual bool cheatMode() const { return false; }
     // Effects the ground actions have on her anim layer beyond group B's animBlend / animRate, recorded chart-side
@@ -283,6 +288,10 @@ public:
     // standing (q2), 1 with the stick (q43), 2 running (q26); the target with its +0xAC0 flags and +0xA80 type.
     struct Aim { MarkupSlot target; uint32_t flags = 0; int type = 0; float frames = 0; }; // frames: 30 Hz frames to the hit
     virtual std::optional<Aim> takeoffAim(int) const { return {}; }
+    // ---- group A ---- tru.exe 0x7296C0 on a decoded query profile (Player::markupSearch): the target met (an empty
+    // target: none) with its +0xAC0 flags and +0xA80 type; nullopt: the context cannot model this search
+    // (chartMarkupSearch).
+    virtual std::optional<Aim> markupSearch(const MarkupProfile&) const { return {}; }
     // The chart's own jump target (player +0xA64 as the chart's actions set it: action 504's take-off query, action
     // 230's promotion); empty: the context's jumpTarget() answers.
     Aim chartTarget;
@@ -427,6 +436,17 @@ std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot
 // the chart already handed that one on when its flight ended (ChartContext::handedTarget).
 ChartContext::MarkupSlot chartJumpTarget(ChartContext& ctx);
 // ---- end group J ----
+// ---- group A ----
+// lara.drm's query profile `id` (object data +0xDE4 / +0xDE8, tru.exe 0x6F1950) with its class (+0x94) and result
+// (+0x9C) records decoded (src/game/chart/Ground.cpp); nullopt: no such profile.
+std::optional<MarkupProfile> decodeProfile(const Charts& charts, int id);
+// tru.exe's markup search 0x7296C0 on query profile `profile` (action 423's slots with player +0xB00 / +0xC90 = props
+// 541 / its pair, ground locomotion's query 96 through prop 0x21D, ...): sets ChartContext::chartTarget (player +0xA64
+// target, +0xAC0 flags, +0xA80 type) to what it finds (cleared when nothing is met). nullopt: the search could not be
+// answered (no profile, or ChartContext::markupSearch cannot model it) and chartTarget is left as it was; callers count
+// the condition / action unported then.
+std::optional<bool> chartMarkupSearch(ChartContext& ctx, int profile);
+// ---- end group A ----
 
 // tru.exe 0x7607C0's value of an action: 1 on the press tick, frames held + 1 while down, -1 on the release tick,
 // -1 - frames while up (frames = 30 Hz frames since the change, at least 1).

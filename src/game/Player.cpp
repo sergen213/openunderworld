@@ -1558,8 +1558,8 @@ constexpr float kLedgeSide = -1; // a ledge's hang side: right of its direction 
 // ledge record's is 0); 33 for classes 5 / 6 the class table's +0xA4 value > v; 34 source a1 along direction a2 < v
 // (0x7256F0 0x22); 36 horizontal distance < v + the drop when the hit is below her, applied only while neither she
 // (query state +0x30, her base's velocity) nor the markup moves faster than 3.1605 a frame (0x725F40) [O: decomp].
-struct ClassTest { uint8_t kind, a1, a2, flags; float value; };
-struct ClassEntry { uint8_t flags; std::span<const uint8_t> types, attach; std::span<const ClassTest> tests; };
+using ClassTest = MarkupTest;
+using ClassEntry = MarkupEntry;
 constexpr uint8_t kHoldTypes[] = {16, 17, 18, 19, 20}, kHoldTypes15[] = {16, 17, 18, 19, 20, 15};
 constexpr uint8_t kT14[] = {14}, kT15[] = {15}, kT14_15_2_13[] = {14, 15, 2, 13}, kT2_13[] = {2, 13}, kT4_1[] = {4, 1};
 constexpr uint8_t kT14_15[] = {14, 15};
@@ -1659,7 +1659,7 @@ constexpr float kRunJumpReach = 1240.0f;
 // has room under it (openBelow) and keeps the earliest hit [I: 0x710100 keeps the first of its list]. Queries naming
 // a class record (`record`) take its entries instead of 0x70EC60's checks (above the anonymous namespace's tables).
 Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
-    const vec3 a2(0, 0, -0.5f * kQueryG), dir3(q.dir, 0);
+    const vec3 a2(0, 0, -0.5f * q.gravity), dir3(q.dir, 0);
     const vec2 right(q.dir.y, -q.dir.x);
     const auto arcAt = [&](vec3 from, float t) { return from + q.v * t + a2 * (t * t); };
     JumpTarget best;
@@ -1672,7 +1672,15 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                                          : glm::length(xy(h - c));
         return d <= kCapsuleRadius;
     };
-    const std::span<const ClassEntry> record = classRecord(int(q.record));
+    const std::span<const ClassEntry> record = !q.classes.empty() ? q.classes : classRecord(int(q.record));
+    // 0x7232E0: a record's own type list gates the candidate (listed: !(flags bit 1), else flags bit 1)
+    const auto recordGate = [](std::span<const uint8_t> types, uint8_t flags, int type) {
+        return listed(types, type, false) ? !(flags & 2) : (flags & 2) != 0;
+    };
+    const auto entryGate = [&](const ClassEntry& e, int type) {
+        if ((e.flags & 0x10) && !listed(e.types, type, e.flags & 1)) return false;
+        return !((e.flags & 4) && q.attach != 0 && !listed(e.attach, q.attach, e.flags & 8));
+    };
     // from: the target type's arc start the hit time t belongs to
     const auto check = [&](int li, int si, float t, vec3 h, vec3 from) {
         // +0x2C bit 0x80, the arc coming down (0x6EC3D0): a default check (0x70EC60), not in the class record path
@@ -1680,13 +1688,14 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         // at every time, its first hit is the take-off) [I]
         // a perch (13) is landed on, the [I] step rule (q.minZ) is the ledges'
         const bool perch = col_.markup[size_t(li)].type == 13;
-        if ((!perch && h.z < q.minZ) || t >= best.frames || (q.falling && q.v.z - kQueryG * t >= 0.05f)) return;
+        if ((!perch && h.z < q.minZ) || t >= best.frames || (q.falling && q.v.z - q.gravity * t >= 0.05f)) return;
         if (q.sight) { // a ledge on the far side of what she jumps at is none (a ledge point lies on its wall: 100 short)
             const vec3 d = h - from;
             const float len = glm::length(d);
             if (len > 100.0f && col_.raycast(from, d / len, len - 100.0f)) return;
         }
         int entry = -1;
+        uint16_t resultBits = 0;
         const auto& m = col_.markup[size_t(li)];
         const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
         constexpr float side = kLedgeSide;
@@ -1726,7 +1735,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 13: return arcAt(from, t);
                 case 24: return h - (q.start + q.v * t);
                 case 28: return q.base;
-                default: return h; // 4, 31 (33: a hold's point; ledges are no holds)
+                case 4: case 31: return h;
+                default: // 33: a hold's point; ledges are no holds
+                    if (q.strict && src != 33) q.unknown = true;
+                    return h;
                 }
             };
             const auto pass = [&](const ClassTest& c) {
@@ -1740,7 +1752,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 12:
                     if (!given && !q.falling) break;
                     if (!given) neg = true; // 0x728F00 forces the negation with -1
-                    r = q.v.z - kQueryG * t < (given ? c.value : -1.0f);
+                    r = q.v.z - q.gravity * t < (given ? c.value : -1.0f);
                     break;
                 case 13: r = t < (given ? c.value : q.minT); break;
                 case 14: r = ledgeClass() != 3 && ledgeClass() < 11; break;
@@ -1766,20 +1778,32 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     r = glm::length(xy(b - a)) < c.value + std::max(0.0f, a.z - b.z);
                     break;
                 }
-                default: break; // 11 (a static markup), 33 ([U]: 0x726420's value)
+                case 33: // 0x726420's value against v, read for ledge classes 5 / 6 only; any other class passes
+                    if (q.strict && (ledgeClass() == 5 || ledgeClass() == 6)) q.unknown = true;
+                    break;
+                default: // 11 (a static markup)
+                    if (q.strict && c.kind != 11) q.unknown = true;
+                    break;
                 }
                 return r != neg;
             };
+            if (!q.classes.empty() && !recordGate(q.recordTypes, q.recordFlags, m.type)) return;
             const auto hit = std::find_if(record.begin(), record.end(), [&](const ClassEntry& e) {
-                if ((e.flags & 0x10) && !listed(e.types, m.type, e.flags & 1)) return false;
-                if ((e.flags & 4) && q.attach != 0 && !listed(e.attach, q.attach, e.flags & 8)) return false;
-                return std::all_of(e.tests.begin(), e.tests.end(), pass);
+                return entryGate(e, m.type) && std::all_of(e.tests.begin(), e.tests.end(), pass);
             });
             if (hit == record.end()) return;
             entry = int(hit - record.begin());
+            // The result record on the hit (0x7296C0 -> 0x729540 with every entry): each passing entry's bits of word 0
+            // (candidate +0xA0, copied to player +0xAC0) [O: decomp]
+            resultBits = 0;
+            if (!q.result.empty() && recordGate(q.resultTypes, q.resultRecordFlags, m.type))
+                for (const ClassEntry& e : q.result)
+                    if (entryGate(e, m.type) && std::all_of(e.tests.begin(), e.tests.end(), pass))
+                        for (const uint16_t b : e.bits)
+                            if ((b >> 4) == 0) resultBits |= uint16_t(1u << (b & 15));
         }
         const float along = glm::length(xy(h - m.points[size_t(si)]));
-        if (perch || openBelow(col_, m, si, along, side)) best = {li, si, along, side, t, entry};
+        if (perch || openBelow(col_, m, si, along, side)) best = {li, si, along, side, t, entry, resultBits};
     };
     // The class path's candidates: the markup sweep-and-prune pass over x / y (0x70F300 -> 0x463DE0, axes mask 3) of
     // the query's start -> start + its whole-range displacement against each ledge segment's box grown by kSweepPad.
@@ -1822,6 +1846,15 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             }
         }
     }
+    // Strict (data-driven) searches: ours sweeps ledges (and perches for the ground record) only, so "nothing met" is
+    // tru.exe's answer only when the record admits no other candidate type (0x7232E0 and an entry's gate) [I: a hit of
+    // another type earlier than ours would also win; kept].
+    if (q.strict && best.markup < 0 && !record.empty())
+        for (int type = 0; type < 64 && !q.unknown; ++type) {
+            if (type == 1 || (type == 13 && q.record == JumpRecord::Ground)) continue;
+            if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
+            if (std::any_of(record.begin(), record.end(), [&](const ClassEntry& e) { return entryGate(e, type); })) q.unknown = true;
+        }
     if (best.markup < 0) best.frames = 0;
     return best;
 }
@@ -1854,6 +1887,7 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
         JumpQuery r = q;
         r.v -= vm, r.frameVel = vm;
         const JumpTarget j = ledgeOnArcIn(r, int(li));
+        q.unknown = q.unknown || r.unknown;
         if (j.markup >= 0 && (best.markup < 0 || j.frames < best.frames)) best = j;
     }
     return best;
@@ -2250,6 +2284,91 @@ Player::GroundAim Player::groundJumpAim(int kind) const {
                       : kind == 1 ? groundJumpQuery({40.0f, 50.0f}, 0.0f, false, glm::radians(90.0f))
                                   : groundJumpQuery({0.0f, 48.04f}, 300.0f, true, glm::radians(120.0f));
     return groundAim(q, ledgeOnArc(q));
+}
+// 0x7296C0 on one decoded query profile. The query (0x771830): base point by +0xCC (0 her root, +0xC8 a bone over it;
+// 1 the attach point player +0xCA0 while attached (+0xC94), else her root), then up +0x58, +0x5C along her model -Y
+// axis (her facing) and +0x60 along model X (rotYaw: her left), led by +0xD0 frames of the velocity; the velocity
+// (0x76FFC0) +0x08..+0x10 when record +0 bit 0 is set and +4 is 0, its +0x0C along the heading 0x724F50 picks by +0xA0
+// (1 her yaw, 2 / 4 yaw + pi, 3 yaw - pi/2, 5 the control yaw, 6 / 7 / 8 that + pi/2 / - pi/2 / + pi, 9 / 10 the control
+// yaw with the stick off rest, else yaw + pi / yaw, 17 the attached segment's direction (+0xCC0), else her yaw, 18 0),
+// snapped to her yaw within +0xAC degrees; gravity 5.72443 (+0x2C 0x400: -0.001); frames +0x20 .. +0xA4 (else
+// object data +0xBDE); cone +0x24; +0x28 the distance tests' default; target-type starts +0x8C {type, up, out} from the
+// base point [O: decomp]. Ours runs ledgeOnArc strictly with the profile's class and result records; anything else
+// (bone bases, other velocity modes, headings 0 / 11..16 / 19, the +0xB0 / +0xB4 snaps, a model-X velocity) leaves the
+// answer unknown. [I] a mirrored chart state reverses the attached-segment heading (17).
+Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn) const {
+    MarkupFound out;
+    if (p.classes.empty() || !p.fixedVelocity || p.velocity.x != 0 || p.snap[1] > 0 || p.snap[2] > 0)
+        return out;
+    const bool attached = s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size();
+    vec3 base;
+    if (p.base == 0 && p.bone == 0) base = s_.pos;
+    else if (p.base == 1) base = attached ? pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT) : s_.pos;
+    else return out;
+    const float yaw = s_.yaw, pi = 3.14159265f, half = 1.57079633f;
+    float th;
+    switch (p.heading) {
+    case 1: th = yaw; break;
+    case 2: case 4: th = yaw + pi; break;
+    case 3: th = yaw - half; break;
+    case 5: th = controlYaw; break;
+    case 6: th = controlYaw + half; break;
+    case 7: th = controlYaw - half; break;
+    case 8: th = controlYaw + pi; break;
+    case 9: th = stickOn ? controlYaw : yaw + pi; break;
+    case 10: th = stickOn ? controlYaw : yaw; break;
+    case 17:
+        if (attached) {
+            const vec2 d = segDir(col_.markup[size_t(s_.ledge)], s_.ledgeSeg);
+            th = std::atan2(d.y, d.x) + (mirrored ? pi : 0.0f);
+        } else {
+            th = yaw;
+        }
+        break;
+    case 18: th = 0; break;
+    default: return out;
+    }
+    if (p.snap[0] > 0 && std::abs(wrapAngle(th - yaw)) <= glm::radians(p.snap[0])) th = yaw;
+    const vec2 f = xy(forward()), left(-f.y, f.x), hd(std::cos(th), std::sin(th));
+    JumpQuery q;
+    q.v = vec3(hd * p.velocity.y, p.velocity.z);
+    q.dir = hd;
+    q.base = base;
+    q.start = base + vec3(f * p.offset.y + left * p.offset.z, p.offset.x);
+    if (p.lead > 0) q.start += p.lead * q.v;
+    q.hang = q.root = q.start;
+    bool hang = false, root = false;
+    for (const auto& s : p.starts) {
+        const vec3 at = base + vec3(f * s.out, s.up);
+        if (s.type == 3) q.hang = at, hang = true;
+        else if (s.type == 1) q.root = at, root = true;
+    }
+    if (hang && !root) q.root = q.hang;
+    if (root && !hang) q.hang = q.root;
+    q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
+    q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
+    q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
+    q.attach = attached ? int(col_.markup[size_t(s_.ledge)].type) : 0;
+    q.record = p.classRecord == 0x1C0C ? JumpRecord::Ground : JumpRecord::None; // lara.drm 0x2AB8C: perches swept too
+    q.ownFrame = true; // 0x70F300 meets a moving markup in its own frame
+    q.classes = p.classes, q.result = p.result;
+    q.recordTypes = p.recordTypes, q.recordFlags = p.recordFlags;
+    q.resultTypes = p.resultTypes, q.resultRecordFlags = p.resultRecordFlags;
+    q.strict = true;
+    const JumpTarget j = ledgeOnArc(q);
+    out.known = !q.unknown;
+    out.target = j;
+    if (j.markup < 0) return out;
+    out.flags = j.resultFlags;
+    // +0xA80 = the candidate's +0xC0, which only the ledge class table fills (+0x2C bit 0x40) [O: decomp]; the class
+    // table's "none of the bands" (ours 4) left 0 under Wine (groundAim) [I]
+    if (q.classify) {
+        const auto& m = col_.markup[size_t(j.markup)];
+        const vec2 sd = segDir(m, j.seg);
+        const int cls = m.type == 13 ? 0 : ledgeClassOf(col_, pointOn(m, j.seg, j.t), vec2(-sd.y, sd.x) * j.side, s_.pos, q.dir);
+        out.cls = int8_t(cls == 4 ? 0 : cls);
+    }
+    return out;
 }
 bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone, bool running) {
     constexpr float kRush = 11.0f / 60.0f;
