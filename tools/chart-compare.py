@@ -29,10 +29,14 @@ def compare(rundir, c):
     ot = f'{rundir}/{os.path.basename(c)}.tsv'
     if not os.path.exists(ot): return f'| {c} | no trace | | | |'
     w = rows(wt); o = [(t - shift, *x) for t, *x in rows(ot) if t - shift >= 0]
-    # a case JSON's "invalid_from" (a harness artefact in the Wine take, e.g. the post-SPAWN carry): score only before it
+    # a case JSON's "invalid_from" (a harness artefact in the Wine take, e.g. the post-SPAWN carry, "invalid_reason"):
+    # the ticks from it on are not scored; with "invalid_until" only [invalid_from, invalid_until) is skipped (the take is
+    # valid again after it, e.g. ch_hang_land's catch at S533)
     inv = j.get('invalid_from')
     if inv is not None:
-        w = [r for r in w if r[0] < inv]; o = [r for r in o if r[0] < inv]
+        until = j.get('invalid_until')
+        ok = (lambda t: t < inv or t >= until) if until is not None else (lambda t: t < inv)
+        w = [r for r in w if ok(r[0])]; o = [r for r in o if ok(r[0])]
     ws, os_ = seq(w), seq(o)
     # state match: Wine's sequence states in order with ticks; first divergence
     k = 0; div = ''
@@ -58,7 +62,8 @@ def compare(rundir, c):
     ye = f'{max(yerr):.0f}' if yerr else ''
     full = k == len(ws) and len(os_) == len(ws)
     if inv is not None:  # a harness-truncated take: never a full match, reported on its own
-        res = f'match to tick {inv} (truncated)' if full else f'{k}/{len(ws)} to tick {inv} (truncated)'
+        span = f'ticks {inv}..{j["invalid_until"]} skipped' if j.get('invalid_until') is not None else f'to tick {inv}'
+        res = f'match {span} (truncated)' if full else f'{k}/{len(ws)} {span} (truncated)'
     else:
         res = 'MATCH' if full else f'{k}/{len(ws)}'
     return f'| {c} | {res} (dt max {max(timing) if timing else 0}) | {div} | {pe} | {ye} |', ws, os_, full, inv is not None
