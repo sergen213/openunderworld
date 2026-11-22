@@ -129,7 +129,7 @@ std::optional<Charts> loadCharts(const ObjData& o) {
         for (uint32_t i = 0; i < ns; ++i) {
             State s;
             if (const auto so = ptr(*sa + 4 * i)) {
-                s.requestKind = rd<int16_t>(d, *so + 2), s.request = rd<int16_t>(d, *so + 4), s.parent = rd<int16_t>(d, *so + 6);
+                s.requestKind = rd<int16_t>(d, *so + 2), s.request = rd<int16_t>(d, *so + 4), s.parent = rd<int16_t>(d, *so + 6); s.word8 = rd<uint16_t>(d, *so + 8);
                 const uint32_t np = rd<uint16_t>(d, *so + 0xA), na = rd<uint16_t>(d, *so + 0xC);
                 const uint32_t ntr = rd<uint16_t>(d, *so + 0xE), nev = rd<uint16_t>(d, *so + 0x10);
                 if (const auto pp = ptr(*so + 0x14))
@@ -882,7 +882,7 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
     char buf[512];
     const auto showState = [&](int i) {
         const State& s = ch.states[size_t(i)];
-        std::snprintf(buf, sizeof buf, "S%d req %d/k%d [%s] parent %d", i, s.request, s.requestKind, clip(i).c_str(), s.parent);
+        std::snprintf(buf, sizeof buf, "S%d req %d/k%d [%s] parent %d w8 %u", i, s.request, s.requestKind, clip(i).c_str(), s.parent, unsigned(s.word8));
         out << buf;
         out << " props [";
         for (const auto& p : s.props) out << " " << p.id << ":" << p.type << "=" << (p.target >= 0 ? "->" + hex(int(p.target)) : std::to_string(int32_t(p.raw)));

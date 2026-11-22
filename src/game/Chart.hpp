@@ -79,6 +79,7 @@ struct Event {
 // +0xE/+0x1C transitions, +0x10/+0x20 events.
 struct State {
     int16_t requestKind = 0, request = -1, parent = -1;
+    uint16_t word8 = 0; // record +0x8: 0x6EEDA0 mode 2 asks Lara's chart only when it is nonzero [U meaning]
     std::vector<Property> props;
     std::vector<uint16_t> actions;
     std::vector<int16_t> transitions, events;
