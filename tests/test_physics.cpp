@@ -1,11 +1,13 @@
 #include "physics/Physics.hpp"
 
 #include "engine/FrameClock.hpp"
+#include "cdc/Cdc.hpp"
 #include "formats/Formats.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -731,4 +733,41 @@ TEST(PhysicsRealData, SwitchesCarryOneUseRecord) {
     // an anim-graph object keeps its list (+0x68): the default set is not added to it
     const auto eye = physics::loadObjectPhysics(cdc::parseDrm(*bf->read("pc-w\\ms_ani_eye_puzzle_piece.drm")));
     EXPECT_FALSE(eye.engagements.empty());
+}
+
+// Scene::castSegments against the level collision it stands in for (CollisionMesh::raycast): 4096 vertical segments over
+// l4_ballcourt hit the same faces at the same heights (and the time per ray, printed: 0.22 us Jolt, 0.43 us ours there).
+TEST(PhysicsReal, SegmentQueriesMatchLevelCollision) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP();
+    const cdc::BigfileSet bf(g);
+    const auto drm = cdc::parseDrm(std::move(*bf.read("pc-w\\l4_ballcourt.drm")));
+    const collision::CollisionMesh col = collision::loadLevelCollision(drm);
+    physics::Scene s;
+    const std::vector<physics::Scene::Terrain> terrain{{"bc", &col, vec3(0)}};
+    s.setTerrain(terrain);
+    std::vector<physics::Scene::Segment> segs;
+    uint32_t r = 1;
+    auto rnd = [&] { r = r * 1103515245u + 12345u; return float((r >> 8) & 0xFFFF) / 65535.0f; };
+    for (int i = 0; i < 4096; ++i) {
+        const vec3 p(27431 + (rnd() - 0.5f) * 8000, 23521 + (rnd() - 0.5f) * 8000, 2556);
+        segs.push_back({p + vec3(0, 0, 3000), p - vec3(0, 0, 3000)});
+    }
+    std::vector<std::optional<physics::Scene::SegmentHit>> hits(segs.size());
+    s.castSegments({segs.data(), 1}, {hits.data(), 1}); // builds the query shape
+    auto t0 = std::chrono::steady_clock::now();
+    s.castSegments(segs, hits);
+    auto t1 = std::chrono::steady_clock::now();
+    int nj = 0, nc = 0, agree = 0;
+    for (size_t i = 0; i < segs.size(); ++i) {
+        const auto h = col.raycast(segs[i].from, {0, 0, -1}, 6000);
+        nj += hits[i].has_value(), nc += h.has_value();
+        agree += hits[i].has_value() == h.has_value() && (!h || std::abs(h->point.z - hits[i]->point.z) < 1.0f);
+    }
+    auto t2 = std::chrono::steady_clock::now();
+    EXPECT_EQ(agree, int(segs.size()));
+    EXPECT_GT(nj, 1000);
+    std::printf("faces %zu: jolt %.3f us/ray, collision %.3f us/ray; hits %d / %d, agree %d / %zu\n", col.faces.size(),
+                std::chrono::duration<double, std::micro>(t1 - t0).count() / segs.size(),
+                std::chrono::duration<double, std::micro>(t2 - t1).count() / segs.size(), nj, nc, agree, segs.size());
 }
