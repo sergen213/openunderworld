@@ -122,6 +122,54 @@ static DWORD hook(void) {
     return c;
 }
 
+// Call log (CALLS=1, `chart callhook` / `callunhook`): detours at the entry of the anim functions 0x441FB0 (start a
+// clip on a channel), 0x432850 (set a channel's clip time) and 0x4428A0 (a layer's blend test) record ECX, the first
+// five stack arguments and the frame number into a 256-entry ring in the cave; the tracer prints the new entries of
+// each tick as `var_calls=fn:ecx:a1:a2:a3:a4:a5;...` (dwords in hex; floats are their bit patterns). All three begin
+// with `push ebp; mov ebp,esp; and esp,-16` (6 bytes), which the cave replays before jumping back.
+static const DWORD kCallFn[3] = {0x441FB0, 0x432850, 0x4428A0};
+static const unsigned char kProlog[6] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0};
+static DWORD callCaveOf(void) { // the ring's cave: from 0x441FB0's jump (cave code block 0 at +0)
+    unsigned char b[6]; ReadProcessMemory(h, (void*)kCallFn[0], b, 6, 0);
+    if (b[0] != 0xE9) return 0;
+    DWORD rel; memcpy(&rel, b + 1, 4); return kCallFn[0] + 5 + rel;
+}
+static DWORD callhook(void) {
+    DWORD c = callCaveOf();
+    if (c) return c;
+    for (int f = 0; f < 3; ++f) { unsigned char b[6]; ReadProcessMemory(h, (void*)kCallFn[f], b, 6, 0);
+        if (memcmp(b, kProlog, 6)) { printf("unexpected bytes at %08lx\n", kCallFn[f]); exit(1); } }
+    c = (DWORD)(size_t)VirtualAllocEx(h, 0, 0x4000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    DWORD wpos = c + 0xF00, ring = c + 0x1000;
+    w32(wpos, 0);
+    for (int f = 0; f < 3; ++f) {
+        unsigned char s[128]; int n = 0; DWORD at = c + 0x100 * f;
+        B(0x50); B(0x52);                                  // push eax; push edx
+        B(0xA1); D(wpos);                                  // mov eax,[wpos]
+        B(0x25); D(0xFF);                                  // and eax,255
+        B(0xC1); B(0xE0); B(5);                            // shl eax,5
+        B(0x05); D(ring);                                  // add eax,ring
+        B(0xC7); B(0x00); D(kCallFn[f]);                   // mov dword [eax],fn
+        B(0x89); B(0x48); B(4);                            // mov [eax+4],ecx
+        for (int k = 0; k < 5; ++k) {                      // args: [esp+12+4k] (2 pushes + return address)
+            B(0x8B); B(0x54); B(0x24); B(12 + 4 * k);      // mov edx,[esp+12+4k]
+            B(0x89); B(0x50); B(8 + 4 * k);                // mov [eax+8+4k],edx
+        }
+        B(0x8B); B(0x15); D(GT + 0x24);                    // mov edx,[gameTracker+0x24]
+        B(0x89); B(0x50); B(28);                           // mov [eax+28],edx
+        B(0xFF); B(0x05); D(wpos);                         // inc dword [wpos]
+        B(0x5A); B(0x58);                                  // pop edx; pop eax
+        memcpy(s + n, kProlog, 6); n += 6;                 // the replaced prologue
+        B(0xE9); D(kCallFn[f] + 6 - (at + n + 4));         // jmp fn+6
+        WriteProcessMemory(h, (void*)(size_t)at, s, n, 0);
+    }
+    for (int f = 2; f >= 0; --f) { // 0x441FB0 last: callCaveOf finds the cave by it
+        unsigned char j[6] = {0xE9, 0, 0, 0, 0, 0x90}; DWORD rel = (c + 0x100 * f) - (kCallFn[f] + 5); memcpy(j + 1, &rel, 4);
+        if (!patchSuspended(kCallFn[f], j, 6)) { puts("call patch failed"); exit(1); }
+    }
+    return c;
+}
+
 // Index of a pointer in a table of n pointers (state or transition table), -1 if absent.
 static DWORD tab[4][4096]; static DWORD tabAt[4]; static int tabN[4];
 static int indexIn(int slot, DWORD table, int n, DWORD ptr) {
@@ -200,6 +248,12 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (!strcmp(argv[1], "hook")) { printf("cave %08lx\n", hook()); return 0; }
+    if (!strcmp(argv[1], "callhook")) { printf("call cave %08lx\n", callhook()); return 0; }
+    if (!strcmp(argv[1], "callunhook")) {
+        if (!callCaveOf()) { puts("not hooked"); return 0; }
+        int ok = 1; for (int f = 0; f < 3; ++f) ok &= patchSuspended(kCallFn[f], kProlog, 6);
+        puts(ok ? "unhooked" : "unhook failed"); return !ok;
+    }
     if (!strcmp(argv[1], "unhook")) {
         DWORD c = caveOf(); if (!c) { puts("not hooked"); return 0; }
         w32(c + 0x100, 0); w32(c + 0x108, rd32(c + 0x104));
@@ -225,6 +279,7 @@ int main(int argc, char** argv) {
 
     SetForegroundWindow(w); timeBeginPeriod(1);
     DWORD cave = hook(), EN = cave + 0x100, PO = cave + 0x104, AK = cave + 0x108;
+    DWORD callCave = (getenv("CALLS") && atoi(getenv("CALLS"))) ? callhook() : 0, callRead = callCave ? rd32(callCave + 0xF00) : 0;
     DWORD oldVar = rd32(GT + 0xC8), oldLock = rd32(GT + 0x120);
     if (fixed) { w32(GT + 0x120, 3); w32(GT + 0xC8, 0); }
     // Arm: release a frame a killed tracer left waiting, then the next frame end publishes its number and waits for us.
@@ -277,6 +332,40 @@ int main(int argc, char** argv) {
                    t, a.idx, a.par, a.req, stTicks, s[0] - off[0], s[1] - off[1], s[2] - off[2], wvx, wvy, s[5] * 30,
                    yawDeg, mask, t30, f, a.trIdx, a.qIdx, b.idx, an, s[0], s[1], s[2], s[6], s[3], s[4],
                    (tn.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart);
+            // ANIM=1: Lara's main anim layer L = *(*(Instance+0x280)+0x14) (the layer 0x43B390 tests; spec by ChartJ):
+            // L +0x44 s32 current pattern, +0xA4 / +0xA8 / +0xAC floats (0x4428A0's blend test), +0x314 s8 next-blend
+            // override, +0xF6 u8 channel count, +0xF8 u8 current channel, +0x300 u8 queue busy, +0x2F4 / +0x2F8 s32 queue
+            // read / write, +0x80 channel array, +0x310 object; per channel k (Ch = *(L+0x80) + 0x70 k): own = whether
+            // *(Ch+0x20)+0x80 == Ch (0x441FB0 crossfades only then), clip *(Ch+0x24) with its keys (clip +0x32 u16) and
+            // time per key (+0x34 u16), +0x28 clip time (100 = one 30 Hz frame), +0x2C, +0x50 floats, +0x58 u16 flags.
+            if (getenv("ANIM") && p) {
+                { DWORD g = rd32(p + 0x50); printf("\tvar_gb90=%lx", g ? rd32(g + 0xB90) : 0); } // *(*(Instance+0x50)+0xB90): bit 0x4000000 read by the anim graph's module-1 native 7
+                DWORD comp = rd32(p + 0x280), L = comp ? rd32(comp + 0x14) : 0;
+                if (L) {
+                    unsigned char b8[4] = {0}; ReadProcessMemory(h, (void*)(L + 0xF6), b8, 3, 0);
+                    unsigned char ov = 0, busy = 0; ReadProcessMemory(h, (void*)(L + 0x314), &ov, 1, 0); ReadProcessMemory(h, (void*)(L + 0x300), &busy, 1, 0);
+                    DWORD chs = rd32(L + 0x80);
+                    printf("\tvar_L=%lx\tvar_Lpat=%ld\tvar_La4=%.4f\tvar_La8=%.4f\tvar_Lac=%.4f\tvar_Lovr=%d\tvar_Lnch=%u\tvar_Lcur=%u"
+                           "\tvar_Lbusy=%u\tvar_Lqr=%ld\tvar_Lqw=%ld\tvar_Lch=%lx\tvar_Lobj=%lx",
+                           L, (long)rd32(L + 0x44), rdf(L + 0xA4), rdf(L + 0xA8), rdf(L + 0xAC), (int)(signed char)ov, b8[0], b8[2], busy,
+                           (long)rd32(L + 0x2F4), (long)rd32(L + 0x2F8), chs, rd32(L + 0x310));
+                    for (int k = 0; k < b8[0] && k < 8 && chs; ++k) {
+                        DWORD ch = chs + 0x70u * k, own = rd32(ch + 0x20), clip = rd32(ch + 0x24);
+                        printf("\tvar_c%down=%d\tvar_c%dclip=%lx\tvar_c%dkeys=%u\tvar_c%dkt=%u\tvar_c%dt=%.3f\tvar_c%d2c=%.4f\tvar_c%d50=%.4f\tvar_c%dfl=%x",
+                               k, own ? rd32(own + 0x80) == ch : 0, k, clip, k, clip ? (unsigned short)rd16(clip + 0x32) : 0,
+                               k, clip ? (unsigned short)rd16(clip + 0x34) : 0, k, rdf(ch + 0x28), k, rdf(ch + 0x2C), k, rdf(ch + 0x50),
+                               k, (unsigned short)rd16(ch + 0x58));
+                    }
+                }
+            }
+            if (callCave) { // CALLS=1: the call-log ring's entries since the last tick
+                DWORD wp = rd32(callCave + 0xF00); if (wp - callRead > 256) callRead = wp - 256;
+                printf("\tvar_calls=");
+                for (; callRead < wp; ++callRead) {
+                    DWORD r[8]; ReadProcessMemory(h, (void*)(callCave + 0x1000 + 32 * (callRead & 255)), r, 32, 0);
+                    printf("%lx:%lx:%lx:%lx:%lx:%lx:%lx@%lu;", r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+                }
+            }
             for (int i = 0; i < nv; ++i) {
                 DWORD base = vars[i].base == 'p' ? p : vars[i].base == 'c' ? c1 : pd, v = base ? rd32(base + vars[i].off) : 0;
                 if (vars[i].isF) { float fv; memcpy(&fv, &v, 4); printf("\tvar_%s=%g", vars[i].name, fv); }
