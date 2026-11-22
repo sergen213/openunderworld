@@ -3382,6 +3382,8 @@ int main(int argc, char** argv) {
             // A take's recorded camera heading ("camera_yaw"): tru.exe's free camera turns during the take and the stick
             // is read against it, so the pin follows it per tick (harness only; the camera view itself stays pinned).
             if (script && script->cameraYawRecord()) world->pinStickYaw(script->cameraYaw(appTicks));
+            if (script) // and its camera matrix rows ("camera_rows"): the chart's camera axes (stick class 0x6F89A0)
+                if (auto rows = script->cameraRows(appTicks)) world->pinCameraRows(rows);
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)

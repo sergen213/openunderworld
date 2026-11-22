@@ -196,7 +196,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // The live camera's axes as tru.exe's g_camera +0x10 rows (0x5E0900: look = position -> look point, right = down x
     // look with down the world's -z, then orthonormal; row 1 = the camera's down), and the pad from the move input as
     // the keyboard path builds it [O-runtime: Wine stick dumps].
-    std::optional<CameraAxes> cameraAxes() const override { return cameraRows(w->camera()); }
+    std::optional<CameraAxes> cameraAxes() const override {
+        if (const auto& p = w->cameraRowsPin()) return CameraAxes{(*p)[0], (*p)[1], (*p)[2]}; // a take's var_cam38 rows
+        return cameraRows(w->camera());
+    }
     static std::optional<CameraAxes> cameraRows(const CameraState& c) {
         glm::vec3 f = c.target - c.position;
         if (glm::dot(f, f) < 1e-6f) return std::nullopt;
@@ -538,9 +541,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // mask bits 0xA00 are set: property 566).
     int sweepRecord = -1;
     bool sweepCand = false;
+    std::optional<bool> sweepFreshNow = false; // byte +0x320 (Chart.hpp sweepFresh)
     void moveSweep();
     std::optional<int> moveSweepRecord() const override { return sweepRecord; }
     std::optional<bool> sweepCandidates() const override { return sweepCand; }
+    std::optional<bool> sweepFresh() const override { return sweepFreshNow; }
     std::array<uint32_t, size_t(JEffect::kCount)> effects{};
     void stateEntered(int from, int to) override;
     void effect(JEffect e, float v) override {
@@ -879,7 +884,10 @@ bool Shadow::Impl::isBoundary(int st) const {
 // read), the carried-object branch (+0x8DC), cast mask 0x442C11E3 | 0x100000 (ours kSolidMask), 0x5D7A80's last two
 // arguments (the call passes six: a record testing +0x14 / +0x18 / +0x1C that could win leaves +0x31C as it was [U]).
 void Shadow::Impl::moveSweep() {
-    if (!(collisionMask & 0xA00) || !ch) return;
+    // +0x320: 0x7002D0 clears it when mask bits 0xA00 are clear (+0x2C1 / +0x2C0 = bits 0x200 / 0x800, no sweep).
+    if (!(collisionMask & 0xA00)) { sweepFreshNow = false; return; }
+    sweepFreshNow = std::nullopt;
+    if (!ch) return;
     const Charts& c = *ch;
     const auto base = c.pointer(c.dataOffset + 0x630);
     const int n = c.data<int32_t>(0x62C);
@@ -1015,6 +1023,7 @@ void Shadow::Impl::moveSweep() {
         if (pick >= 0 && score > bestScore) best = pick, bestScore = score;
     }
     if (unknown) return;
+    sweepFreshNow = best >= 0; // 0x5D7FA0: a stored record sets +0x320 = 1, none leaves it 0 (LAB_005d988e)
     if (best >= 0) sweepRecord = best;
 }
 

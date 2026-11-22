@@ -166,7 +166,7 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
 namespace {
 bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std::string, float>>& out, std::optional<CameraFollow>& follow,
                      std::optional<CameraSeed>& seed, bool& stickRecord, std::map<uint64_t, float>& frameDt,
-                     std::map<uint64_t, float>& cameraYaw) {
+                     std::map<uint64_t, float>& cameraYaw, std::map<uint64_t, std::array<glm::vec3, 3>>& cameraRows) {
     const auto first = text.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos || (text[first] != '[' && text[first] != '{')) return false;
     nlohmann::json j;
@@ -246,6 +246,21 @@ bool parseMaskScript(std::string_view text, std::vector<std::tuple<uint64_t, std
                 cameraYaw[e[0].get<uint64_t>() + shift] = e[1].get<float>();
             }
         }
+        // "camera_rows": [[tick, rx, ry, rz, dx, dy, dz, lx, ly, lz], ...], tru.exe's g_camera +0x10 rows right / down /
+        // look at that tick (var_cam38 rows 0 / 1 / 2), each holding until the next; the replay pins the chart's camera
+        // axes to them (World::pinCameraRows), which the stick class (0x6F89A0 -> 0x195) reads.
+        if (j.contains("camera_rows")) {
+            const auto& cr = j["camera_rows"];
+            if (!cr.is_array()) throw std::runtime_error("input script: \"camera_rows\" is not [[tick, 9 floats], ...]");
+            for (const auto& e : cr) {
+                if (!e.is_array() || e.size() < 10 || !e[0].is_number_unsigned())
+                    throw std::runtime_error("input script: camera_rows entry " + e.dump() + " is not [tick, 9 floats]");
+                std::array<glm::vec3, 3> rows;
+                for (int r = 0; r < 3; ++r)
+                    for (int k = 0; k < 3; ++k) rows[size_t(r)][k] = e[size_t(1 + r * 3 + k)].get<float>();
+                cameraRows[e[0].get<uint64_t>() + shift] = rows;
+            }
+        }
         j = j["input"];
     }
     if (!j.is_array()) throw std::runtime_error("input script: expected [[tick, mask], ...]");
@@ -272,7 +287,7 @@ InputScript InputScript::parse(std::string_view text) {
                                                     "light", "grenade", "recenter", "camera", "manual"};
     InputScript s;
     if (std::vector<std::tuple<uint64_t, std::string, float>> mask;
-        parseMaskScript(text, mask, s.cameraFollow_, s.cameraSeed_, s.stickRecord_, s.frameDt_, s.cameraYaw_)) {
+        parseMaskScript(text, mask, s.cameraFollow_, s.cameraSeed_, s.stickRecord_, s.frameDt_, s.cameraYaw_, s.cameraRows_)) {
         for (auto& [tick, action, value] : mask) s.events_.push_back({tick, std::move(action), value});
         std::stable_sort(s.events_.begin(), s.events_.end(), [](const Event& a, const Event& b) { return a.tick < b.tick; });
         return s;
