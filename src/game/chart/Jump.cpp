@@ -169,17 +169,15 @@ bool combatMode(ChartContext& ctx, const Cond& c) {
 // same id (0x6EEF00 on player +0xF14), false when absent.
 bool upperProp(ChartContext& ctx, const Cond& c) { return edge(ctx, c, [&] { return ctx.upperProp(uint16_t(c.id)); }); }
 
-// 0x733EC0 / 0x741670: |pitch| of a pole's first segment (0x5C3AA0 ends, 0x49F0B0 angle from the horizontal) against
-// the global markup settings' +0x184 (flat) / +0x180 (upright) degrees [I: those settings are not decoded; 30 degrees,
-// as the kind-10 pole capsule choice in Player.cpp].
-constexpr float kPolePitchLimit = 0.5235988f;
-std::optional<float> polePitch(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
+// 0x741670: a pole's first segment (0x5C3AA0 ends, 0x49F0B0 angle from the horizontal) within the global markup
+// settings' +0x180 degrees of upright [I: +0x180 not read; taken as +0x184's 40 degrees (markupLevel)].
+bool markupUpright(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
+    if (!m || !(m.flags & 0xC000000)) return false;
     const auto s = ctx.markupSegment(m.markup, 0);
-    if (!s) return std::nullopt;
-    const glm::vec3 d = s->second - s->first;
-    const float flat = glm::length(glm::vec2(d));
-    if (flat < 1e-6f && std::abs(d.z) < 1e-6f) return std::nullopt;
-    return std::abs(std::atan2(d.z, flat));
+    if (!s) return false;
+    const glm::vec3 d = s->first - s->second;
+    const float pitch = std::abs(std::atan2(-d.z, glm::length(glm::vec2(d))));
+    return std::abs(pitch - glm::radians(90.0f)) <= glm::radians(40.0f);
 }
 
 // 0x782810 (via 0x782AD0 / 0x763EB0 for 0x262): the class test of markup flags F (+0x28; 0 without a valid markup).
@@ -190,22 +188,18 @@ bool markupClass(ChartContext& ctx, const Cond& c, const ChartContext::MarkupSlo
     case 0: return f == 0 || f < 0;
     case 1: return f != 0 && f >= 0;
     case 600: return u & 0x10;
-    case 601: // F & 0x4000000, or F & 0x8000000 and 0x741720(M): segment 0 within the threshold of upright (0x741670)
+    case 601: // F & 0x4000000, or F & 0x8000000 and 0x741720(M): segment 0 near upright (0x741670)
         if (u & 0x4000000) return true;
-        if (!(u & 0x8000000)) return false;
-        if (const auto p = polePitch(ctx, m)) return std::abs(*p - 1.5707964f) <= kPolePitchLimit;
-        return ctx.chart().unported(c);
+        return (u & 0x8000000) && markupUpright(ctx, m);
     case 602: { // F & 0x400000 and 0x735000: her z above markup point 0's z - 101.136
         if (!(u & 0x400000)) return false;
         const auto s = ctx.markupSegment(m.markup, 0);
         if (!s) return ctx.chart().unported(c);
         return s->first.z - 101.136f < ctx.position().z;
     }
-    case 603: // F & 0x2000000, or F & 0x8000000 and 0x733F60(M): segment 0 within the threshold of flat (0x733EC0)
+    case 603: // F & 0x2000000, or F & 0x8000000 and 0x733F60(M): segment 0 within 40 degrees of level (markupLevel)
         if (u & 0x2000000) return true;
-        if (!(u & 0x8000000)) return false;
-        if (const auto p = polePitch(ctx, m)) return *p <= kPolePitchLimit;
-        return ctx.chart().unported(c);
+        return (u & 0x8000000) && markupLevel(ctx, m);
     case 610: return u & 0x40000000;
     case 611: return u & 0x400000;
     case 612: return u & 0x8000000;

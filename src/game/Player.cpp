@@ -1819,10 +1819,11 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 10: // 0x725B50 -> 0x6FCB10 with the markup's class record (0x5D57A0)
                     if (q.strict && (m.type == 4 || m.type == 6)) {
                         // a pole's record: horizontal (MUD 0x2000000, or 0x8000000 that 0x733F60 accepts) +0x594, else
-                        // +0x58C [I: 0x733F60 / 0x74B5F0 taken as "flatter than 30 degrees"]; the capsule round the
+                        // +0x58C [O: 0x733F60's limit 40 degrees from level (Wine, Chart.cpp markupLevel); 0x74B5F0 not ported]; the capsule round the
                         // arc point plus the record's offset in her model frame (X left, Y back, Z up) against the hit
                         const vec3 d = m.points[size_t(si) + 1] - m.points[size_t(si)];
-                        const bool flat = m.type == 6 || std::abs(d.z) < 0.5f * glm::length(d);
+                        const bool flat = m.type == 6 ||
+                                          std::abs(std::atan2(std::abs(d.z), glm::length(xy(d)))) <= glm::radians(40.0f);
                         const MarkupProfile::Capsule& k = flat ? q.poleH : q.poleV;
                         const vec2 f = xy(forward()), left(-f.y, f.x);
                         const vec3 c0 = arcAt(from, t) + vec3(left * k.offset.x - f * k.offset.y, k.offset.z);
