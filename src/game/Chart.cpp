@@ -467,8 +467,9 @@ std::unordered_map<uint32_t, std::optional<uint32_t>> module1Values(ChartContext
         if (glm::length(d) > 1e-4f && std::abs(glm::dot(glm::normalize(d), f)) <= std::cos(glm::radians(lim))) v[13] = 0u;
     }
     // 64 (0x6EA050): the byte the class-603 attach setter 0x74C8D0 stores in the VM context (+0x24 -> +0x10): the side
-    // she takes the pole on (the layer's +0xF4 0x20 it sets alongside) [O]; that setter is not ported: unknown.
+    // she takes the pole on (the layer's +0xF4 0x20 it sets alongside) [O]; ChartContext::vmPoleSide (poleAttachSetter).
     v[64] = std::nullopt;
+    if (ctx.vmPoleSide) v[64] = uint32_t(*ctx.vmPoleSide);
     // 3 (0x6E9660): byte player +0xEE0, which property 205's handler 0x767900 sets (a bool property's byte, else 1) [O:
     // disassembly, Lara's property table 0x8B2280]; the pull up's node 26 (S456) reads it. Ours: playerInt(0xEE0),
     // Generic.cpp's handler.
