@@ -809,6 +809,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     float hangSide(int m, int seg, glm::vec3 point) const;
     void seedAttach();
     bool seedHold = false; // seedAttach placed her on a hang pose: hold it through the entered state's clip
+    float damagedFallStart = std::numeric_limits<float>::quiet_NaN(); // the +0x6DC whose fall already hurt her
     uint64_t driveClipStarts = ~0ull; // the chart's clip starts the drive last applied
     // PlayerDriver
     bool drive(World& world, Player& player, glm::vec2 move, const Actions& a, float dt) override;
@@ -1127,7 +1128,7 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     if (clip.starts_with("perch")) return GS::Perch;
     if (clip.starts_with("pillar")) return GS::Pillar;
     if (has("slide_stumble_off")) return GS::Land; // S821, the slide's run-out onto standable floor (legacy Land)
-    if (clip.starts_with("slope")) return GS::Slide; // slope_landfront / slope_transitionto / slope_slidefront (S801..S812)
+    if (clip.starts_with("slope") && motion != M::Air) return GS::Slide; // slope_landfront / _transitionto / _slidefront (S801..S812); off its end she falls
     if (clip.starts_with("dice")) return GS::Climb;
     if (has("drop_to_ledgeb")) return GS::DropToHang;
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
@@ -1149,6 +1150,7 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     // a take-off on the ground (ng_running_jump_forwards_lft, ng_standing_jump...) before run / walk: the running jump's
     // clip names hold "run" too
     if (clip.find("jump") != std::string::npos) return GS::JumpPrep;
+    if (has("running_stop") || has("walk_stop")) return GS::Stop; // S57 ng_running_stop (legacy State::Stop)
     if (clip.find("walk") != std::string::npos) return GS::Walk;
     if (clip.find("run") != std::string::npos || clip.find("sprint") != std::string::npos) return GS::Run;
     if (clip.find("turn") != std::string::npos) return GS::Turn;
@@ -1382,9 +1384,10 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         // clips' sideways root motion leaves it where it is, and the ledge end S448 stops her dead (ChartB, Wine 973:
         // +0xC98 0.907 stays until the stick press, so the end bit 642 holds and S458 -> S450) [O-runtime].
         d.slide = st == 459 || st == 432 || st == 441;
-        // the hang idles (prop 551 set: S445 / S447) run 0x708830's grip projection (its +0x47 flag) [I: the flag's
-        // source in 0x770ED0 is not decoded; S533 lacks 551 and does not call 0x708210, Wine ch_hang_snap_*]
-        d.follow = !d.slide && rt->propBool(551).value_or(false);
+        // 0x770ED0 fills 0x708830's record from the state's properties (ChartBlend's decode [O]): +0x47 = bool 418
+        // (0x1A2), +0x48 = bool 434 (0x1B2); 0x708210 runs with +0x48, or +0x47 without it. [I] +0x48's source, player
+        // +0x940 instead of the root displacement, is not modelled: both use the root here.
+        d.follow = !d.slide && (rt->propBool(418).value_or(false) || rt->propBool(434).value_or(false));
         // 0x770ED0 builds 0x708830's record from the state's properties [O]: 412 (0x19C) enum 0x298 -> +0x46 (the root
         // set on the attached point, 0x6FDC90; the beams' S873: 412 = 664), 418 (0x1A2) -> +0x47 (the grip projection
         // 0x708210). The offset is player +0xCE0..+0xCE8 (property 421 / 422 grab offsets, attachTick).
@@ -1444,6 +1447,15 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     d.coarse = coarse(d.motion, d.clip);
     player.drive(d, dt);
     lastRise = player.state().pos.z - z0;
+    // A landing hurts by the fall the chart measured (player +0x6DC - z, the store its entry actions 515 keep; the
+    // landing's damage tru.exe 0x75D080 -> 0x702FC0 -> 0x702F10 [O]): World::tickCombat reads PlayerState::fallHeight,
+    // which drive() clears every tick [I: the landing hook is ours' Air floor contact].
+    // Once per fall: +0x6DC stays until the next fall's entry action stores it, and the capsule can touch down again
+    // (a bounce, a slope) within the same fall [I].
+    if (player.driveLanded() && playerFloat(0x6DC) != damagedFallStart) {
+        player.setFallHeight(std::max(0.0f, fallDistance()));
+        damagedFallStart = playerFloat(0x6DC);
+    }
     // The air motion's capsule set her down on a floor that the chart's ground check missed (its ray masked off in the
     // flight, or an object floor): the landing still reaches the chart (event 455), else she slid on through the level
     // in the flight state (ch02_serpent_door: S294 for 700 ticks) [I].

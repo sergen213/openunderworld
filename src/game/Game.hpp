@@ -792,6 +792,7 @@ public:
     void setLedgeHang(vec3 off) { ledgeHang_ = off; }
     // drive(): this tick's air motion set her down on a floor (the capsule's floor contact)
     bool driveLanded() const { return driveLanded_; }
+    void setFallHeight(float h) { s_.fallHeight = h; } // the chart drive's landing fall (World::tickCombat's damage)
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)

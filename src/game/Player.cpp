@@ -4265,7 +4265,13 @@ void Player::drive(const DriveStep& d, float dt) {
                 // first key counting as the origin: S245's window ends at ng_planted_jump_forward's frame 1, its frame
                 // 0 root is 85.05 forward of the origin -> 85.05 per frame (WineChartTrace; ChartA's key-0 offset) [O]
                 const double frame = 1.0 / 30.0, ts = t0 + fade_.total - frame;
-                const auto at = [&](double t) { return t < -1e-4 ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop); };
+                // Out of the flight (a landing) the key-0 offset does not count: Wine runjump/t1204_stick_jump_stick
+                // lands at 5.31 then 15.92 a tick after 20.0 in the air, below the flight speed, where the origin rule
+                // gave ng_running_land 85 a frame (jump_brake peaked at 2229 vs the flight's 1975; ChartBlend) [O-runtime]
+                const bool landing = s_.state == State::Jump || s_.state == State::Fall || s_.state == State::HangJump;
+                const auto at = [&](double t) {
+                    return t < -1e-4 && !landing ? vec3(0) : rootTranslation(*nc, std::max(t, 0.0), d.loop);
+                };
                 const float vIn = glm::length(at(ts) - at(ts - frame)) / float(frame);
                 // a once clip at its last frame (the chart's AnimationEnded rounds the length to whole keys) has no root
                 // speed left to carry out (Wine b973_top_run_fwd S57 -> S40: 3.3 on the change's tick, then 0; ours
@@ -4333,11 +4339,14 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     case DriveStep::Motion::Slide: {
-        // the chart's slope states (S801..S821): legacy State::Slide's integration down the fall line; a standable or no
-        // floor leaves her where she is (the chart's ground check and stumble-off states take it from there)
+        // the chart's slope states (S801..S821): legacy State::Slide's integration down the fall line. Off the slide's end
+        // (no floor) she keeps her slide velocity, so she leaves the edge and the chart's ground check takes her into the
+        // fall (self-test ch20_yggdrasil_hall_eitr_pit stopped at the edge in the slide); on a standable floor she stops
+        // (the stumble-off state).
         const auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown);
         const float dl = g ? glm::length(xy(g->normal)) : 0.0f;
         if (g && !standable(s_.pos, *g) && dl >= 1e-4f) slideStep(*g, dl, dt);
+        else if (!g) s_.pos = slide(s_.pos, vec3(xy(s_.vel) * dt, 0), t_.stepUp, true);
         else s_.vel = vec3(0);
         s_.fallStartZ = s_.pos.z;
         s_.ledge = -1;
@@ -4430,6 +4439,11 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     }
+    // The water entry hands her to the swim controller (the chart's swim states are its boundary): from the air once
+    // her root passes the volume's top, on foot past swimDepth (enterWater, tru.exe 0x5D77E0's depth class [O]); the
+    // next drive tick sees SwimSplash / SwimTread and parks the chart (self-test ch20_yggdrasil_hall_eitr_pit fell
+    // through the eitr without entering it).
+    if (d.motion == DriveStep::Motion::Air || d.motion == DriveStep::Motion::Ground || d.motion == DriveStep::Motion::Slide) enterWater();
 }
 
 } // namespace ou::game
