@@ -1085,6 +1085,10 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     d.coarse = coarse(d.motion);
     player.drive(d, dt);
     lastRise = player.state().pos.z - z0;
+    // The air motion's capsule set her down on a floor that the chart's ground check missed (its ray masked off in the
+    // flight, or an object floor): the landing still reaches the chart (event 455), else she slid on through the level
+    // in the flight state (ch02_serpent_door: S294 for 700 ticks) [I].
+    if (d.motion == M::Air && player.driveLanded() && !ground.floor) ground.floor = true;
     // +0xC94's geometry follows her grip (shimmy)
     if (att && player.state().ledge == att.markup) {
         MarkupSlot n = slot(att.markup, player.state().ledgeSeg, player.state().ledgeT);

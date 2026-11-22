@@ -4136,6 +4136,7 @@ void Player::drive(const DriveStep& d, float dt) {
         vec3 dd = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt) + vec3(xy(world), 0);
         s_.vel.z -= t_.gravity * dt;
         vec3 p = s_.pos;
+        driveLanded_ = false;
         for (int iter = 0; iter < 4 && glm::dot(dd, dd) > 1e-8f; ++iter) {
             const auto hit = col_.sweepCapsule(p + vec3(0, 0, t_.radius), p + vec3(0, 0, capHeight() - t_.radius), t_.radius, dd);
             if (!hit || (hit->t == 0 && glm::dot(dd, hit->normal) >= 0)) { p += dd; break; }
@@ -4143,7 +4144,7 @@ void Player::drive(const DriveStep& d, float dt) {
             p += dd * hit->t + n * kSkin;
             if (n.z >= t_.slideMinNormalZ && s_.vel.z <= 0)
                 if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2)) {
-                    p.z = g->point.z, s_.vel.z = 0;
+                    p.z = g->point.z, s_.vel.z = 0, driveLanded_ = true;
                     break;
                 }
             const vec3 rest = dd * (1 - hit->t);
@@ -4152,7 +4153,7 @@ void Player::drive(const DriveStep& d, float dt) {
         }
         if (s_.vel.z <= 0)
             if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2); g && p.z <= g->point.z + 1)
-                p.z = g->point.z, s_.vel.z = 0;
+                p.z = g->point.z, s_.vel.z = 0, driveLanded_ = true;
         s_.pos = p;
         s_.ledge = -1;
         s_.jumpTime += dt; // the flight's time for the wall probe (setFlight)

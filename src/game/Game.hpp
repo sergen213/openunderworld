@@ -741,6 +741,8 @@ public:
     // A ledge hang's root offset from the ledge point in her frame (x right, y forward, z up; attachPose's hand offset):
     // the chart drive sets tru.exe's (0x74ED30), legacy keeps ledgeb_idle's hands (unset).
     void setLedgeHang(vec3 off) { ledgeHang_ = off; }
+    // drive(): this tick's air motion set her down on a floor (the capsule's floor contact)
+    bool driveLanded() const { return driveLanded_; }
 
 private:
     void actTick(float dt);                                   // State::Melee / Knocked (Melee.cpp)
@@ -937,6 +939,7 @@ private:
     bool reseated_ = false; // this tick only (takeReseat)
     uint32_t placements_ = 0; // placements()
     std::optional<vec3> ledgeHang_; // setLedgeHang()
+    bool driveLanded_ = false; // driveLanded()
     // drive(): the crossfade window of a fresh chart clip (0x441FB0: |outgoing root speed| -> |incoming at its start|)
     struct Fade { std::string clip; double time = 0; bool loop = false, mirror = false; float left = 0, total = 0, vOut = 0, vIn = 0; } fade_;
     // drive(): the current clip's start time and the seconds its lead holds the first frame (the fade) for root motion
