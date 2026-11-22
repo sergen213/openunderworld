@@ -1071,6 +1071,16 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     inputs(world, a, move, std::min(1.0f, glm::length(move)));
     attachedBefore = chartAttached && *chartAttached ? chartAttached->markup : -1;
     chartTick();
+    // A case that begins in a hold (--chart-state with a pose) keeps her in that pose until the state is entered: the
+    // Wine take began there pinned [I: harness only]; the chart's idle start would otherwise drop her from a pole pose
+    // into the hall below (mh_pole_airgrab: a fatal fall, respawn and chart restart at tick ~100).
+    if (enterState >= 0 && enterPose) {
+        PlayerState ps = player.state();
+        ps.pos = glm::vec3(*enterPose), ps.yaw = glm::radians(enterPose->w), ps.vel = glm::vec3(0);
+        player.restore(ps);
+        placements = player.placements();
+        return true;
+    }
     if (isBoundary(rt->state())) { // the chart hands her over at its boundary edge: the controller decides from here
         player.setVelocity(s0.vel);
         parked = true;
