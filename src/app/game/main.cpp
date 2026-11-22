@@ -1261,6 +1261,7 @@ struct EffectsView {
     std::shared_ptr<const ou::fx::ObjectFx> weatherFx;
     float weatherAspect = 16.0f / 9.0f; // the last frame's
     bool drawWeather = true;            // off while the Enhanced weather layer shows the unit's rain / snow
+    std::pair<int32_t, int32_t> loggedWeather{0, 0}; // script snow / rain % last logged
     static ou::fx::Weather::Camera weatherCamera(const ou::render::Camera& c, float aspect) {
         ou::fx::Weather::Camera w;
         w.eye = c.position, w.forward = c.forward();
@@ -1272,13 +1273,20 @@ struct EffectsView {
     // Placed instances whose object list has event-0x2E records, per loaded unit (only rainfx / rainfx_mex in the data;
     // l6_ship_exterior places rainfx 7719): rain starting runs them (tru.exe 0x53AB30 -> 0x5BA000 on every instance).
     std::map<std::string, std::vector<std::tuple<std::shared_ptr<const ou::fx::ObjectFx>, glm::mat4, int32_t>>> rainIntros;
+    uint64_t weatherLevel = 0; // World::levelLoads() the drops / flakes belong to
     // Returns music variable 2 as the weather wrote it (fx::Weather::musicVar) for the script's music variables.
     std::optional<uint8_t> weatherTick(const ou::game::World& w, const ou::render::Camera& cam) {
         if (!library || w.units().empty()) return std::nullopt;
         const auto& unit = w.currentUnit().data;
+        if (w.levelLoads() != weatherLevel) weatherLevel = w.levelLoads(), weather.clear(); // 0x53CAF0 -> 0x539A60 / 0x52DDD0
         if (const std::string name = unit.weatherObject.empty() ? "rainfx" : unit.weatherObject; name != weatherObject)
             weatherObject = name, weatherDef = library->weather(name), weatherFx = library->get(name);
         const auto& s = w.script().weather();
+        if (s.snow != loggedWeather.first || s.rain != loggedWeather.second) {
+            loggedWeather = {s.snow, s.rain};
+            std::fprintf(stderr, "ou-game: script weather snow %d%% rain %d%% (unit %s)\n", s.snow, s.rain, unit.name.c_str());
+        }
+        weather.setSnow(s.snow);
         weather.setScript(s.rain, s.lightningMin, s.lightningMax);
         if (weather.started())
             for (const auto& [u, list] : rainIntros)
@@ -1304,15 +1312,18 @@ struct EffectsView {
             return std::nullopt;
         };
         q.wind = [&w, &unit](glm::vec3 p) { return w.bends().wind(unit.name, p); };
+        // The splash segment (0x4935F0 flags 0x10003): Jolt's narrow phase on the physics scene's terrain and collider
+        // shapes (physics::Scene::castSegments); dynamic solids carry no material (0), as collision::Hit's.
         q.ray = [&w](glm::vec3 a, glm::vec3 b) -> std::optional<std::pair<glm::vec3, uint8_t>> {
-            const glm::vec3 d = b - a;
-            const float len = glm::length(d);
-            if (len < 1) return std::nullopt;
-            const auto h = w.collision().raycast(a, d / len, len);
+            if (glm::distance(a, b) < 1) return std::nullopt;
+            const ou::physics::Scene::Segment seg{a, b};
+            std::optional<ou::physics::Scene::SegmentHit> h;
+            w.physics().castSegments({&seg, 1}, {&h, 1});
             if (!h) return std::nullopt;
-            return std::pair{h->point, material(w.collision(), *h)};
+            return std::pair{h->point, uint8_t(h->dynamic ? 0 : h->mesh->faces[h->face].material)};
         };
         q.unitFlags = unit.levelFlags;
+        q.exeOrigin = w.currentUnit().offset + unit.rainMap.origin;
         weather.tick(weatherDef, weatherCamera(cam, weatherAspect), q);
         for (const auto& e : weather.events()) system.runEvent(weatherFx, e.event, glm::translate(glm::mat4(1), e.pos), -1, e.material);
         return weather.musicVar();
@@ -3995,7 +4006,10 @@ int main(int argc, char** argv) {
                 uw.intensity = it->second.intensity * ou::game::weatherCoverage(it->second, cam.position - unit.offset);
             }
             effects.drawWeather = uw.kind == P::None;
-            const bool roof = world->collision().raycast(cam.position, {0, 0, 1}, 3000.0f).has_value();
+            const ou::physics::Scene::Segment up{cam.position, cam.position + glm::vec3(0, 0, 3000.0f)};
+            std::optional<ou::physics::Scene::SegmentHit> roofHit;
+            world->physics().castSegments({&up, 1}, {&roofHit, 1}); // Jolt narrow phase on the scene's terrain / colliders
+            const bool roof = roofHit.has_value();
             shelter += (float(roof) - shelter) * (1.0f - std::exp(-3.0f * float(dt))); // same fade at any render rate
             fo.weather.kind = uw.kind == P::Rain ? ou::render::Weather::Kind::Rain
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;

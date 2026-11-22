@@ -618,6 +618,9 @@ public:
     // interval seconds (tru.exe's defaults 20 / 30 s, 0x53AB30's init).
     struct Weather { int32_t snow = 0, rain = 0, lightningMin = 20, lightningMax = 30; };
     const Weather& weather() const { return weather_; }
+    // A level load (World::enterUnit): tru.exe's loads reset the effects system (0x5DDED0 / 0x5DE480 / 0x5D5680 ->
+    // 0x53CAF0 -> 0x539A60: rain, snow 0, lightning 600 / 900 frames), and the new level's scripts set their own.
+    void resetWeather() { weather_ = {}; }
     // globaleffect FadeOut/FadeIn screen wipe: 0 = clear, 1 = black; moves by 1/frames each tick.
     float screenFade() const { return fade_; }
     // gamebase 27 SetColourRamp(slot, r, g, b, seconds) (0x797D90 -> 0x776130 -> 0x773290): the slot's target colour

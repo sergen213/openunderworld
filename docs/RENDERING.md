@@ -1077,7 +1077,8 @@ drawn in every preset; effect lights use 4 reserved environment-light slots afte
 falloff, and endless effect lights born with placed objects join the scene lights; material particles read a
 single-sample copy of the scene colour / depth taken once before the effects — GL `drawFx`, Vulkan the second pass's
 `recordWaterCopies` — for refraction and soft depth fades, FxBatch::screen). ou-game eases the intensity to 0 while
-collision lies within 3000 units above the camera (roofs, caves). tru.exe has no unit-wide weather: the snow / rain
+collision lies within 3000 units above the camera (roofs, caves: one segment through `physics::Scene::castSegments`,
+Jolt's narrow phase on the physics scene's terrain and collider shapes [I: ours]). tru.exe has no unit-wide weather: the snow / rain
 objects are particle emitters, so `auto` shows a source's weather only inside its column (`game::weatherCoverage`):
 within the definitions' spawn radius + horizontal drift (velocity × life) of the intro, from that radius above it down
 to the fall depth (radius + downward velocity × life) below, easing out over the outer fifth (l5_valaskjalf: eight
@@ -1089,6 +1090,14 @@ antialiased with `fwidth`; snow: soft flakes falling 85 units/s with a sinusoida
 darkens upward-facing surfaces (normals from depth derivatives; water surfaces from the volume
 intersection) and draws expanding splash rings on them. Skipped [I]: lens droplets, wet specular,
 snow accumulation.
+
+The original weather itself (drawn in every preset, docs/formats/EFFECTS.md "Weather"): script rain as tru.exe's
+camera-relative streak sheets (0x545950 / 0x5346A0), stopped by the units' precipitation height map (Level+0x54,
+0x5C32C0) [O]; its splash segment (0x4935F0) goes to Jolt (`physics::Scene::castSegments`, the same faces and query
+mask as the level collision) [O: where; I: Jolt as the backend]; script snow as tru.exe's flake pool (0x539EF0 /
+0x539CD0 / 0x534DF0), which ignores roofs as tru.exe does (it calls the height map and drops the result) [O]; placed
+snow / rain emitters are GenericFX particles with no level collision in tru.exe (0x54C300 clips only at a water surface
+found at birth) [O]. Original and Enhanced share this behaviour; Enhanced adds the layer above.
 
 Gap list against modern-wow-renderer (read for techniques only, no code; RESEARCH.md §8.6):
 

@@ -48,6 +48,9 @@ public:
         // Collision segment `from` -> `to`: hit point and surface material (0x4935F0 flags 0x10003).
         std::function<std::optional<std::pair<glm::vec3, uint8_t>>(glm::vec3, glm::vec3)> ray;
         uint32_t unitFlags = 0; // the camera unit's Level+0x2C (formats::Unit::flags): 2 music variable 2, 0x20000 deep drops
+        // World position of tru.exe's frame origin (the camera unit's streaming offset + Level+0x80): the flakes keep
+        // their positions there as s16 (0x539EF0 stores ftol results through movsx), so they wrap beyond +-32768.
+        glm::vec3 exeOrigin{0};
     };
     // An object event the weather runs on Lara with the weather object's list (0x5BA000): 0x2E splash in view, 0x2F
     // splash behind the camera, 0x30 lightning; at `pos`, records filtered by `material`.
@@ -56,6 +59,8 @@ public:
 
     // Script amounts (script::Runtime::Weather): rain %, lightning interval seconds (a min change != 0 restarts it).
     void setScript(int32_t rainPercent, int32_t lightningMin, int32_t lightningMax);
+    // Script snow % (globaleffect 8 -> 0x52E130, DAT_00AE4D80 = % x 1024 / 100): the flake pool of 0x539EF0 / 0x539CD0.
+    void setSnow(int32_t percent);
     // This tick's setScript started rain from none: tru.exe 0x53AB30 runs event 0x2E on every instance (0x5BA000).
     bool started() const { return started_; }
     // Music variable 2 (the rain bus, 0x583D30(2, ..)) as the weather last wrote it: 0 when rain stops, unit flag 2 every
@@ -64,26 +69,43 @@ public:
     // One 60 Hz tick with the weather object's data (null: none loaded): drops fall and spawn, splashes and lightning
     // go to events(). `cinematic`: 0x5EA390 (no new lightning light, no drawing).
     void tick(const WeatherDef* def, const Camera& cam, const World& world, bool cinematic = false);
-    // The drops as additive quads (0x5346A0), appended.
+    // The drops (0x5346A0) and flakes (0x534DF0) as additive quads, appended.
     void build(const WeatherDef& def, const Camera& cam, std::vector<render::FxVertex>& vertices,
                std::vector<render::FxBatch>& batches) const;
     const std::vector<Event>& events() const { return events_; }
     std::optional<Flash> flash() const;
     size_t dropCount() const { return live_; }
+    size_t flakeCount() const { return flakes_; }
     int32_t rain() const { return rain_; } // 0..1024
+    int32_t snow() const { return snow_; } // 0..1024
     void clear();
 
 private:
     struct Drop { int32_t x = 0, y = 0, z = 0, ground = 0; int16_t vx = 0, vy = 0, vz = 0, life = 0; uint8_t variant = 0; };
+    // A snow flake (the same 28-byte pool records, 0xAD7E00): +0x10 sway phase, +0x12 screen drift (0: a falling flake),
+    // +0x14 fall per 60 Hz frame, +0x16 life, +0x18 / +0x19 the twinkle bytes, +0x1A variant.
+    struct Flake { int32_t x = 0, y = 0, z = 0, ground = 0; int16_t phase = 0, drift = 0, vz = 0, life = 0; uint8_t a = 0, b = 0, variant = 0; };
     static constexpr size_t kDrops = 0x200;
+    static constexpr int32_t kFlakeLife = 300;
     int32_t rand(); // the CRT rand() tru.exe's weather calls (0x814118)
     glm::vec3 fromScreen(const Camera& cam, float sx, float sy, float depth) const; // 0x539C00
     void spawn(const WeatherDef& def, const Camera& cam, const World& world);
+    void snowFall(const Camera& cam);                      // 0x539CD0 (one 60 Hz frame)
+    void snowSpawn(const Camera& cam, const World& world); // 0x539EF0
+    void snowCull(const Camera& cam);                      // 0x534DF0's off-view test
+    // A falling flake's draw position (0x534DF0): view (x, y normalised to the 512 x 448 screen's half, depth); false
+    // where the draw drops it.
+    bool flakeView(const Flake& f, const Camera& cam, glm::vec3& view) const;
     void splashes(const Camera& cam, const World& world);
     void lightning(const WeatherDef* def, const Camera& cam, bool cinematic);
     uint32_t seed_ = 1;
     std::array<Drop, kDrops> drops_{};
     size_t live_ = 0;
+    std::array<Flake, kDrops> flakeSlots_{};
+    size_t flakes_ = 0;                    // DAT_00AE4D94
+    int32_t snow_ = 0;                     // DAT_00AE4D80
+    float prevYaw_ = 0;                    // DAT_00C36F00: the camera's yaw last frame (flakes fill the view when turning)
+    glm::vec3 exeOrigin_{0};               // World::exeOrigin as of the last tick (flakes are kept in that frame)
     int32_t rain_ = 0, ramp_ = 0;          // DAT_00AE4D84 (% x 1024 / 100), DAT_00AE4D8C (0..4096 fade in)
     bool started_ = false;
     std::optional<uint8_t> musicVar_;

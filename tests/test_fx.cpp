@@ -845,6 +845,51 @@ TEST(Fx, WeatherRainFillsFallsAndFlashes) {
     EXPECT_GT(farthest(0x20002), 9000.0f);
 }
 
+// fx::Weather snow (tru.exe 0x539EF0 / 0x539CD0 / 0x534DF0): script snow fills the shared pool to snow / 2 flakes at
+// <= 20 a still frame, every flake drawn as a glow-texture quad inside the view 1024 .. 12288 deep, under a roof as well
+// (tru.exe drops the height map's answer); snow clears the rain; nothing spawns below z -29968 of tru.exe's frame;
+// snow off lets the flakes end.
+TEST(Fx, WeatherSnowFlakesFillTheView) {
+    fx::WeatherDef d;
+    d.textures = {3711, 757, 3712};
+    fx::Weather w;
+    fx::Weather::World q;
+    q.ceiling = [](glm::vec3) { return 100000; }; // a roof over everything: the flakes ignore it
+    fx::Weather::Camera cam;
+    cam.eye = {0, 0, 300};
+    w.setScript(40, 0, 0);
+    w.setSnow(100);
+    EXPECT_EQ(w.snow(), 1024);
+    EXPECT_EQ(w.rain(), 0);
+    w.tick(&d, cam, q);
+    EXPECT_EQ(w.flakeCount(), 20u); // 0x539EF0: 20 + turn / 2 a frame
+    for (int t = 0; t < 120; ++t) w.tick(&d, cam, q);
+    EXPECT_GT(w.flakeCount(), 480u);
+    EXPECT_LE(w.flakeCount(), 512u);
+    std::vector<render::FxVertex> v;
+    std::vector<render::FxBatch> b;
+    w.build(d, cam, v, b);
+    ASSERT_EQ(b.size(), 1u);
+    EXPECT_EQ(b[0].textureId, fx::kGlowTexture);
+    EXPECT_GT(b[0].count, 6u * 400u);
+    const float tanY = cam.tanHalfFovY;
+    for (const auto& p : v) {
+        const glm::vec3 r = glm::make_vec3(p.pos) - cam.eye;
+        const float depth = glm::dot(r, cam.forward);
+        EXPECT_GT(depth, 1000.0f);
+        EXPECT_LT(depth, 12300.0f);
+        EXPECT_LT(std::abs(glm::dot(r, cam.down)), depth * tanY * 1.2f); // inside the view (+-1.1 and the quad)
+    }
+    fx::Weather deep;
+    q.exeOrigin = {0, 0, 40000}; // the camera at z -39700 in tru.exe's frame: the whole view below -29968
+    deep.setSnow(100);
+    for (int t = 0; t < 10; ++t) deep.tick(&d, cam, q);
+    EXPECT_EQ(deep.flakeCount(), 0u);
+    w.setSnow(0);
+    for (int t = 0; t < 320; ++t) w.tick(&d, cam, q);
+    EXPECT_EQ(w.flakeCount(), 0u);
+}
+
 // The weather objects' data blocks (ObjectBase +0xC8) and the l4 units' weather object / height map (Level+0x70 DTP
 // +0x290, Level+0x54), against tru.exe's memory under Wine (weather object +0x5C, 0x546FC0's 0xAE4DA0).
 TEST(FxReal, WeatherObjectAndRainMap) {
@@ -882,6 +927,36 @@ TEST(FxReal, WeatherObjectAndRainMap) {
     EXPECT_EQ(std::count_if(rain->events.begin(), rain->events.end(), [](const auto& e) { return e.event == 0x2E && e.effect(); }), 3);
     const auto ship = formats::parseUnit(cdc::parseDrm(std::move(*bf.read("pc-w\\l6_ship_exterior.drm"))));
     EXPECT_TRUE(std::any_of(ship.intros.begin(), ship.intros.end(), [](const auto& in) { return in.uniqueId == 7719; }));
+}
+
+// The snow the original shows in l5_startsnow is its 17 placed fx_snow_blizzard_arc_startsnow_ist emitters (GenericFX
+// particles, no level collision: tru.exe's particle update 0x54C300 only clips at a water surface found at birth) plus,
+// when a script sets Snow, the flake pool (fx::Weather). Emitter numbers from the data (per 30 Hz frame, units).
+TEST(FxReal, WeatherEmittersFromData) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    fx::Library lib(bf);
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    const auto u = formats::parseUnit(cdc::parseDrm(std::move(*bf.read("pc-w\\l5_startsnow.drm"))));
+    EXPECT_EQ(std::count_if(u.intros.begin(), u.intros.end(), [&](const auto& in) {
+                  const auto it = names.find(in.objectId);
+                  return it != names.end() && it->second == "fx_snow_blizzard_arc_startsnow_ist";
+              }), 17);
+    const auto fx = lib.get("fx_snow_blizzard_arc_startsnow_ist");
+    ASSERT_TRUE(fx);
+    ASSERT_EQ(fx->particles.size(), 7u);
+    const auto& haze = fx->particles[1]; // the drifting veils: 3 a frame within 3793, while the camera is within 15803
+    EXPECT_FLOAT_EQ(haze.rate, 3.0f);
+    EXPECT_EQ(haze.life, 50);
+    EXPECT_NEAR(haze.radiusMax, 3793, 1);
+    EXPECT_NEAR(haze.maxDistance, 15803, 1);
+    EXPECT_NEAR(haze.velocity.y, 79.0f, 0.1f); // blown along the emitter's +y (its yaw: -2.60 rad for most)
+    EXPECT_NEAR(haze.velocity.z, -6.3f, 0.1f);
+    const auto& dots = fx->particles[4]; // the small flakes: texture 145, size 63 .. 0, alpha 0x14 at most
+    EXPECT_EQ(dots.texture, 145u);
+    EXPECT_NEAR(dots.maxDistance, 4741, 1);
 }
 
 // Clip variant records (0x43C9C0 -> 0x5B26C0): a fixture's clip start / leave records, and Lara's class-7 model
@@ -1064,4 +1139,3 @@ TEST(FxBreath, DeterministicRisingAndGoneAtTheSurface) {
     b.append(4.0, out);
     EXPECT_FALSE(out.empty());
 }
-
