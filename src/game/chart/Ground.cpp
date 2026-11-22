@@ -827,6 +827,7 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
             out = {vec3(f32(*cr + 0x30), f32(*cr + 0x34), f32(*cr + 0x38)), f32(*cr + 0x54), f32(*cr + 0x58)};
     };
     capsuleOf(0x594, p.poleH), capsuleOf(0x58C, p.poleV), capsuleOf(0x5B8, p.hold);
+    p.ladderFaceDeg = float(byte(d + 0x775));
     p.flags = u32(r + 0x2C);
     const int frames = int32_t(u32(r + 0xA4));
     p.frames = frames >= 1 ? frames : c.data<int16_t>(0xBDE);

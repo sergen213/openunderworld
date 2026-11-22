@@ -609,6 +609,9 @@ struct MarkupProfile {
     // radius) for kind 10 (0x6FCB10)
     struct Capsule { vec3 offset{0}; float height = 0, radius = 0; };
     Capsule poleH, poleV, hold;
+    // Lara data byte +0x775: the ladder class test's angle in degrees (0x72B860: the way in against the ladder's
+    // normal, cos of it < -dot)
+    float ladderFaceDeg = 0;
     uint32_t flags = 0;           // +0x2C (0x80 coming down, 0x40 the ledge class table, 0x400 no gravity)
     int frames = 0;               // +0xA4, else object data +0xBDE
     struct Start { int type; float up, out; };
@@ -853,6 +856,7 @@ private:
         float controlYaw = 0;
         float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
         MarkupProfile::Capsule poleH, poleV, hold; // MarkupProfile's class-record capsules (kind 10 on poles / holds)
+        float ladderFaceDeg = 0;                   // MarkupProfile::ladderFaceDeg (kind 21 on ladders)
         // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).
         std::array<std::pair<int, vec3>, 8> typeStart{};
         int typeStarts = 0;

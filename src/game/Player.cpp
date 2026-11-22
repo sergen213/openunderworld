@@ -1947,8 +1947,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         // 0x8000: the manager's normal (0x5C3CC0) against 0x725D00's direction under 0.2 [I: the way
                         // from the arc's start to the hit; the normal the hold triangle's, out toward her]
                         r = glm::dot(holdOut(m), unitOr(h - from, vec3(0, 0, -1))) < 0.2f;
-                    } else if (q.strict && m.type == 9) { // 0x400000: 0x72B860 of the way in against the ladder's
-                        q.unknown = true;                  // normal, not ported
+                    } else if (q.strict && m.type == 9) {
+                        // 0x400000: 0x72B860(normal . way in): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
+                        // 0x72B860..0x72B8B8]; the normal the ladder's wall side (ladderOut), the way in as for holds [I]
+                        r = std::cos(glm::radians(q.ladderFaceDeg)) < -glm::dot(ladderOut(m), unitOr(h - from, vec3(0, 0, -1)));
                     } else {
                         r = wallSide();
                     }
@@ -2651,7 +2653,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone);
-    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold;
+    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(s_.ledge)].type) : 0;
