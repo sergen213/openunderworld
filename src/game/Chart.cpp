@@ -733,6 +733,25 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
     }
 }
 
+void ChartRuntime::fastForward(float frames) {
+    stateTime_ += frames, totalTime_ += frames;
+    for (float left = frames; left > 0 && playing_;) {
+        const float rate = playing_->rate > 0 ? playing_->rate : 1.0f;
+        const float need = std::max(0.0f, animLengthFrames() - animFrames_) / rate; // state frames to this clip's end
+        if (left <= need || animLoops() || queue_.empty()) {
+            animFrames_ += left * rate;
+            break;
+        }
+        animFrames_ += need * rate, left -= need;
+        const int next = queue_.front(); // a queued pattern follows the one that ended (0x43E0C0 -> 0x443430)
+        queue_.erase(queue_.begin());
+        if (next < 0 || size_t(next) >= charts_.requests.size()) break;
+        playing_ = charts_.requests[size_t(next)], playingIndex_ = next, playingMirror_ = mirror_;
+        startClip(*playing_);
+        ++clipStarts_;
+    }
+}
+
 void ChartRuntime::enter(ChartContext& ctx, int state) {
     ctx.chart_ = this;
     if (!data_.state(state)) return;

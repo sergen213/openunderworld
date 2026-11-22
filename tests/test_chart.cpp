@@ -171,6 +171,11 @@ TEST(ChartReal, ClipClockStartsAtStartMinusBlend) {
     ctx.playerInt(0xED4) = 0;
     rt.enter(ctx, 245), rt.enter(ctx, 535);
     EXPECT_EQ(rt.playingPattern(), 1460);
+    // 1460 (2 keys, start 1 - blend 6) lasts 7 frames, then 952 starts at its start 4 with 1460's next blend 0
+    // (fastForward: a Wine case that begins inside the state).
+    rt.fastForward(8.0f);
+    EXPECT_EQ(rt.playingPattern(), 952);
+    EXPECT_NEAR(rt.animFrames(), 5.0f, 1e-4f);
     ctx.playerInt(0xED4) = 2;
     rt.enter(ctx, 245), rt.enter(ctx, 533);
     EXPECT_EQ(rt.playingPattern(), 1460);

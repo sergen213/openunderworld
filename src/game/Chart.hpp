@@ -465,6 +465,9 @@ public:
     // Puts the chart in `state` as a change would (exit / properties / entry / anim request) without a transition:
     // tests and tools that start from a state the unported conditions cannot reach.
     void enter(ChartContext& ctx, int state);
+    // Harness: the state's time and its clip clock (through the node's queue) run on `frames` as if that long had
+    // passed since enter(), without evaluating or posting the end (a Wine case that begins `frames` into its state).
+    void fastForward(float frames);
     // A save's chart state (ChartDrive, docs/SAVES.md "chart"): restore() puts the agent back in `state` with its
     // times, end counter, queued / last transition, mirror bit, scratch fields and clip clock, applying the state's
     // properties and anim request as a change does but running none of its actions (they ran before the save).
@@ -581,7 +584,7 @@ public:
     // The chart enters `state` (ChartRuntime::enter) on the first tick at or after world tick `tick` (--chart-state).
     // `at` (x, y, z, yaw degrees): where she was in the Wine case when it began in a hold (case.json start.ours); the hold's
     // markup is seeded from there [I: harness only].
-    void enterAt(int state, uint64_t tick, std::optional<glm::vec4> at = std::nullopt);
+    void enterAt(int state, uint64_t tick, std::optional<glm::vec4> at = std::nullopt, float elapsed = 0);
     std::string summary() const;
     const ChartRuntime& runtime() const { return *rt_; }
     PlayerDriver* driver(); // null unless constructed with drive

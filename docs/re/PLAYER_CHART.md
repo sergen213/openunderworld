@@ -229,9 +229,11 @@ plays), or when that is unresolved (S40's node 46) our controller's clip [I].
 after it: the tick the input script addressed), stateTicks = 60 Hz ticks since entering the state (0 on the entry tick,
 also on a re-entry), position / velocity (units/s) / yaw (degrees) are ours, `inputs` is the hex mask of the same
 tick's actions (1 Fwd, 2 Back, 4 Left, 8 Right, 0x10 Jump, 0x20 Interact, 0x40 Crouch, 0x80 Sprint, 0x100 Walk, 0x200
-Grapple). `--chart-state N[@TICK]` puts the shadow chart in state N at world tick TICK (`ChartRuntime::enter`, no
-transition) for Wine cases that begin in the previous case's state (case.json `start.state`); our controller is not
-placed in that state, so holds (beam, pillar, pole, ledge) leave at once without an attached markup.
+Grapple). `--chart-state N[@TICK[@X,Y,Z,YAW[@FRAMES]]]` puts the shadow chart in state N at world tick TICK
+(`ChartRuntime::enter`, no transition) for Wine cases that begin in the previous case's state (case.json `start.state`);
+FRAMES (the Wine row's `t30` at the case's tick 0) runs the state's time and its clip clock on through the node's queue
+(`ChartRuntime::fastForward`): l3_chapel's ch_hang_* begin 33.5 frames into S533. Our controller is not placed in that
+state, so holds (beam, pillar, pole, ledge) leave at once without an attached markup (drive mode seeds the hold).
 
 **Frame order** [O-runtime, U the poll's address]: tru.exe's `GAMELOOP_Frame` (0x5DFFE0) pumps the window messages (the
 input actions' records +0 flags / +4 change time / +8 press time against the input clock 0xA02B68 +0x1C are updated
