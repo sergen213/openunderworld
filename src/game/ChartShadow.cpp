@@ -613,8 +613,14 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         }
         clipName.clear();
         if (const Request* p = rt->pattern()) {
-            const float cur = rt->animFrames(), len = rt->animLengthFrames();
-            const float prev = fresh ? rt->clipStartFrame() - 1e-4f : clipFrame;
+            const float len = rt->animLengthFrames();
+            // A fresh clip's playhead starts at its start frame, start - blend, which may lie before frame 0 (S48
+            // ng_run_start_180: -0.268). Its frame-0 events run on the clip's first update, before the next chart tick
+            // [O-Wine: S48 opens its critical section with 0x13 at frame 0 and dwells 12 ticks (T147 !0xCA waits); a
+            // playhead still short of 0 would leave 0xCA false and T147 firing at once] [I: as if the lead only weighted
+            // the crossfade].
+            const float cur = fresh ? std::max(rt->animFrames(), 0.0f) : rt->animFrames();
+            const float prev = fresh ? std::min(rt->clipStartFrame(), 0.0f) - 1e-4f : clipFrame;
             if (cur > prev) {
                 if (rt->animLoops() && len > 0) {
                     for (float k = std::floor(prev / len); k <= std::floor(cur / len); k += 1)
