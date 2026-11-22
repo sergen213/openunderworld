@@ -474,6 +474,12 @@ struct Shadow::Impl : ChartContext {
     std::map<std::string, ClipEvents, std::less<>> clipCommands;
     uint64_t clipChanges = ~0ull;
     float clipFrame = 0;
+    std::string clipName; // the clip whose events ran last tick, its length (30 Hz frames), loop flag and rate
+    float clipLen = 0, clipRate = 1;
+    bool clipLoops = false;
+    // --chart-state N@T: the chart enters state N at world tick T (Shadow::enterAt); -1 none.
+    int enterState = -1;
+    uint64_t enterTick = 0;
     // ---- end group CD ----
 };
 
@@ -494,6 +500,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
     }
     if (const auto o = objData(bigfile, "lara")) impl_->clipCommands = clipEvents(*o); // group CD: critical sections
 }
+void Shadow::enterAt(int state, uint64_t tick) { impl_->enterState = state, impl_->enterTick = tick; }
 Shadow::~Shadow() = default;
 
 void Shadow::tick(const World& world, const Actions& a) {
@@ -520,6 +527,9 @@ void Shadow::tick(const World& world, const Actions& a) {
         rt_->tick(m, dt * 30.0f);   // 0x768C50: agent 0 (Lara) ...
         upper_->tick(m, dt * 30.0f); // ... then agent 1 (upper body)
     }
+    // Wine corpus cases that begin in the previous case's state (case.json start.state): put the chart there at the
+    // given world tick, as a change would (ChartRuntime::enter), without a transition.
+    if (m.enterState >= 0 && world.ticks() >= m.enterTick) rt_->enter(m, m.enterState), m.enterState = -1;
     // ---- group B ---- A kind-2 request (an anim-graph node, 0x443720 -> 0x43E250) that ChartRuntime::resolveRequest
     // cannot resolve has no clip on the chart's clock (docs Runtime "Anim request"). [I] Its end (0x768CF0 from the anim
     // controller) is then taken from our controller: the one-shot clips it plays from the chart's state on ending in a
@@ -539,27 +549,44 @@ void Shadow::tick(const World& world, const Actions& a) {
     // frames its clock ran this tick (0x716F30): command 0x13 opens the critical section (+0x78 = 1, agent +0x53C = 1),
     // 0x14 closes it. [I] the anim update runs after the chart tick (the order is not pinned, docs Runtime "Open").
     rt_->field(0x6C) = m.playerInt(0x78);
-    if (const Request* p = rt_->pattern()) {
-        const float cur = rt_->animFrames(), len = rt_->animLengthFrames();
+    {
+        // Commands 0x13 / 0x14 of `clip` with lo < frame <= hi, in frame order.
+        auto apply = [&](const std::string& clip, float lo, float hi) {
+            const auto ev = m.clipCommands.find(clip);
+            if (ev == m.clipCommands.end()) return;
+            std::vector<std::array<int, 3>> hits;
+            for (const auto& e : ev->second.commands)
+                if ((e[0] == 0x13 || e[0] == 0x14) && float(e[2]) > lo && float(e[2]) <= hi) hits.push_back(e);
+            std::ranges::stable_sort(hits, {}, [](const std::array<int, 3>& e) { return e[2]; });
+            for (const auto& e : hits) m.playerInt(0x78) = e[0] == 0x13, rt_->deferFlag7 = e[0] == 0x13;
+        };
         const bool fresh = rt_->clipStarts() != m.clipChanges;
-        const float prev = fresh ? rt_->clipStartFrame() - 1e-4f : m.clipFrame;
-        const auto ev = m.clipCommands.find(p->clip);
-        if (ev != m.clipCommands.end() && cur > prev) {
-            auto apply = [&](float lo, float hi) { // events with lo < frame <= hi, in stored order
-                for (const auto& e : ev->second.commands)
-                    if (float(e[2]) > lo && float(e[2]) <= hi && (e[0] == 0x13 || e[0] == 0x14)) {
-                        m.playerInt(0x78) = e[0] == 0x13;
-                        rt_->deferFlag7 = e[0] == 0x13;
-                    }
-            };
-            if (rt_->animLoops() && len > 0) {
-                for (float k = std::floor(prev / len); k <= std::floor(cur / len); k += 1)
-                    apply(std::max(prev - k * len, -1.0f), std::min(cur - k * len, len));
-            } else {
-                apply(prev, cur);
-            }
+        // The clip a change replaced played to its end (its clock ran out this tick, or the transition taken tests
+        // AnimationEnded 0xC9 v1): its remaining events run first, as the anim update reaches them; events lie inside
+        // the clip, so every one past the playhead counts. wall_jump_attach_air's 0x14 sits on frame 6, its last, while
+        // the chart's clock leaves S1291 at 2.5 frames [core: clip clock]; without the 0x14 agent +0x53C stays set and
+        // every flag-7 exit of S1294 waits forever (Wine jh_stick_jump_rebound). [I] a change mid-clip runs none.
+        if (fresh && !m.clipName.empty() && !m.clipLoops) {
+            bool ended = m.clipLen > 0 && m.clipFrame + m.timeMult * m.clipRate >= m.clipLen;
+            const int t = rt_->lastTransition();
+            if (t >= 0 && size_t(t) < rt_->data().transitions.size())
+                for (const Cond& c : rt_->data().transitions[size_t(t)].conds) ended |= c.id == 0xC9 && c.value == 1 && !c.negate();
+            if (ended) apply(m.clipName, m.clipFrame, 1e9f);
         }
-        m.clipFrame = cur;
+        m.clipName.clear();
+        if (const Request* p = rt_->pattern()) {
+            const float cur = rt_->animFrames(), len = rt_->animLengthFrames();
+            const float prev = fresh ? rt_->clipStartFrame() - 1e-4f : m.clipFrame;
+            if (cur > prev) {
+                if (rt_->animLoops() && len > 0) {
+                    for (float k = std::floor(prev / len); k <= std::floor(cur / len); k += 1)
+                        apply(p->clip, std::max(prev - k * len, -1.0f), std::min(cur - k * len, len));
+                } else {
+                    apply(p->clip, prev, cur);
+                }
+            }
+            m.clipFrame = cur, m.clipName = p->clip, m.clipLen = len, m.clipLoops = rt_->animLoops(), m.clipRate = p->rate;
+        }
     }
     m.clipChanges = rt_->clipStarts();
     // ---- end group CD ----
