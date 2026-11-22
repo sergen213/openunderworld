@@ -2329,6 +2329,11 @@ public:
     // The script carries tru.exe's recorded stick ("stick"): its move axes are already the filtered stick record, so the
     // app does not run StickRateFilter on them.
     bool stickRecord() const { return stickRecord_; }
+    // The dt tru.exe's input update used for the frame `tick` reads, in 30 Hz frames ("frame_dt"); nullopt: not recorded.
+    std::optional<float> frameDt(uint64_t tick) const {
+        const auto it = frameDt_.find(tick);
+        return it == frameDt_.end() ? std::nullopt : std::optional<float>(it->second);
+    }
 
 private:
     struct Event { uint64_t tick; std::string action; float value; };
@@ -2336,6 +2341,7 @@ private:
     std::optional<CameraFollow> cameraFollow_;
     std::optional<CameraSeed> cameraSeed_;
     bool stickRecord_ = false;
+    std::map<uint64_t, float> frameDt_;
 };
 
 } // namespace ou::game
