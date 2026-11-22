@@ -13,6 +13,8 @@ WREF_SRC=$(cd "$(dirname "$0")/.." && pwd); . "$WREF_SRC/env.sh"; wref_private_p
 W="$WREF_SRC/w.sh"
 birth() { # UNIT CHECKPOINT_UID
     cunit l3_main_bedroom || return 1
+    # 2026-11-22: a goto while the prologue cinematic still runs (gameTracker flag 1) never happens: wait it out first
+    i=0; until "$W" wmem state | tr -d '\r' | grep -q " flags 00000000 " || [ $i -ge 60 ]; do sleep 5; i=$((i+1)); done
     P=$("$W" wmem rd C59264 4 | tr -d ' \r\n' | sed 's/\(..\)\(..\)\(..\)\(..\)/\4\3\2\1/'); U=$(printf %X "$2")
     wl() { "$W" wmem w32 "$(printf %X $((0x$P + 0x90)))" "$U" > /dev/null; "$W" wmem w32 "$(printf %X $((0x$P + 0x114)))" "$U" > /dev/null; }
     wl; "$W" wmem goto "$1"
@@ -28,6 +30,13 @@ pole|polecd)
     # idle control: 90 ticks, camera pinned, no keys (drift must stay < 5)
     CAMFOLLOW=$CF "$W" chart trace 90 | tr -d '\r' > "$OU_WREF_DIR/birth_pole_idle.tsv"
     echo "after idle $(pos)" >> "$L"
+    # 2026-11-22: on the x 7256 line something pushes her back ~650 near y 4100-4300 (4 runs); tr_pole_drop_birth started at
+    # x 7515: walk +x (camera 1,0) to x >= 7500 first, then +y
+    n=0; while :; do x=$(pos | awk '{print $1}'); echo "walk x $x" >> "$L"
+        awk -v x="$x" 'BEGIN{exit !(x >= 7500)}' && break
+        n=$((n+1)); [ $n -gt 30 ] && break
+        CAMFOLLOW=1,0,1264,300 "$W" chart trace 10 26:0:10 A4:0:10 > /dev/null; done
+    CAMFOLLOW=$CF "$W" chart trace 40 > /dev/null
     # walk +y (Alt walk + Up) in 10-tick steps until y >= T - 10, T = 4946.06 - STANDOFF (default 0: under 1336's axis,
     # where tr_pole_drop_birth started; 2026-11-22 an Up + Jump from 420 short climbed a step past the pole, Down steps
     # back turned her round and overshot, and 3-tick steps never got her walking)
