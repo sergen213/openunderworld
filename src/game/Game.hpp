@@ -1202,6 +1202,9 @@ public:
     World& operator=(const World&) = delete;
 
     void tick(const Actions& a); // one kTickSeconds step; keeps the previous state for interpolation
+    // Replay harness only (ou-game --no-enemies, chart-replay's per-case "no_enemies"): enemy AI is not ticked, so a
+    // Wine take without enemy contact is not interrupted by attacks ours would make.
+    void freezeEnemies(bool f) { enemiesFrozen_ = f; }
     // CPU time accumulated by tick() in Player::tick, the script runtime and the physics step (ou-game --frames reports the means).
     struct TickTimes { double scriptMs = 0, physicsMs = 0, playerMs = 0; } tickTimes; // playerMs: Player::tick (her mover)
 
@@ -1956,6 +1959,7 @@ private:
     CameraState blendFrom_; // last spline camera pose, blended out of over kCameraBlendSeconds
     float blendOut_ = 0;    // seconds of blend-out left
     bool cameraCut_ = false; // the spline camera started this tick: no interpolation from the previous tick
+    bool enemiesFrozen_ = false; // freezeEnemies
     uint64_t ticks_ = 0;
     UnitLoader loader_;
     std::shared_ptr<UnitStreamer> streamer_; // setAsyncStreaming; null = synchronous loads (shared_ptr: incomplete type)
