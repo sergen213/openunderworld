@@ -286,3 +286,33 @@ TEST(ChartLedge, LedgeBraceWallUnderTheHang) {
     ctx.wallY = 40.0f; // beyond +0x6E6 = 20
     EXPECT_EQ(ledgeBrace(ctx, a), std::optional<bool>(false));
 }
+
+// 0x743900 on a layer of blend type 2: the stick 60 degrees off the beam asks amount (pi/3) / (pi/2) = 2/3, the first
+// tick within the rate (timeMult 0.5 x prop 0xD1's default 1) of the previous 0; the heading target is the stick's.
+// Without a modelled layer the amount is kept but no blend or mirror is written.
+struct BeamContext : LedgeContext {
+    std::optional<int> type = 2;
+    glm::vec2 blend{-1};
+    std::optional<int> layerBlendType() const override { return type; }
+    void setLayerBlend(float a, float b) override { blend = {a, b}; }
+};
+TEST(ChartLedge, BeamBalanceWalkAmountAndBlend) {
+    BeamContext ctx;
+    ctx.yaw = 0, ctx.flags = 0x10; // facing along the beam (+x)
+    OneShot s({cond(0x1, 1, false, 500)});
+    ASSERT_TRUE(s.fires(ctx));
+    ctx.agentFloat(0x35C) = 0; // the beam angle
+    beamBalanceTick(ctx, true);
+    EXPECT_FLOAT_EQ(ctx.agentFloat(0x3B4), 0.0f);
+    EXPECT_EQ(ctx.blend, glm::vec2(0));
+    ctx.stickLen = 1, ctx.stickDir = {std::cos(glm::radians(60.0f)), std::sin(glm::radians(60.0f))};
+    beamBalanceTick(ctx, false);
+    EXPECT_NEAR(ctx.agentFloat(0x28), glm::radians(60.0f), 1e-5f);
+    EXPECT_NEAR(ctx.agentFloat(0x3A4), 0.5f, 1e-5f);
+    EXPECT_NEAR(ctx.blend.x, 0.5f, 1e-5f);
+    beamBalanceTick(ctx, false);
+    EXPECT_NEAR(ctx.agentFloat(0x3A4), 2.0f / 3.0f, 1e-5f);
+    ctx.type = std::nullopt, ctx.blend = glm::vec2(-1);
+    beamBalanceTick(ctx, false);
+    EXPECT_EQ(ctx.blend, glm::vec2(-1));
+}

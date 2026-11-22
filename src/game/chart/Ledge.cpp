@@ -22,7 +22,7 @@ namespace ou::game::chart {
 
 namespace {
 
-constexpr float kPi = glm::pi<float>(), kTwoPi = glm::two_pi<float>();
+constexpr float kPi = glm::pi<float>(), kTwoPi = glm::two_pi<float>(), kHalfPi = glm::half_pi<float>();
 
 // tru.exe 0x781FF0: the mode a condition reads from its value; group 1000 makes it 1000 (no mode case matches).
 int mode(const Cond& c) { return c.fromVariable() ? 1000 : c.value; }
@@ -909,15 +909,137 @@ bool beamFacing(ChartContext& ctx) {
     return true;
 }
 
-// Action 205 enter 0x75D600: 0x72A5F0 then 0x743900 with init: the lean (+0x3A4 / +0x3A8) and the blend cleared, the
-// held heading +0x3B4 = her heading. Exit 0x754F60 clears the blend. [U] the per-tick balance 0x743900 (update) is
-// not ported.
+// 0x743900 (thiscall on the beam controller agent +0x358; disassembled 0x743900..0x74430D [O]): the per-tick balance
+// steer. Fields: +0x358 the beam heading in [0, 2pi) after a turn-around, +0x35C the beam angle, +0x3A0 the lean,
+// +0x3A4 the walk amount, +0x3A8 the target off the beam angle, +0x3B4 the held heading; the layer (instance +0x280 ->
+// +0x14) mirror bit +0xF4 0x20 (ChartRuntime mirror) and blend parameters +0x8C / +0x90.
+//  1. want = the mirror bit; prop 0x227 (bool) p227; idle = Lara data byte +0xE94 & 0x10 and the stick magnitude
+//     (0xFADFB0 -> +0xB0 -> +0x18) == 0.
+//  2. init: +0x3A0 = +0x3A4 = 0, the blend 0 / 0, +0x3B4 = her heading; dh = wrap(heading - beam angle):
+//     dh < -0.1 -> want on, dh > 0.1 -> off.
+//  3. +0x3B4 = the stick's world heading (+0x8) while the stick is off zero; target = p227 || idle ? wrap(beam angle)
+//     : +0x3B4 -> agent +0x28 (the heading target); +0x3A8 = wrap(target - beam angle); Wb = wrap(beam angle),
+//     d = wrap(wrap(target) - Wb); with combat aim flags (player +0x504 -> +0x1FC bit 9 / 10) the target is the aim
+//     point player +0x800 instead (0x49F030 [I: ours the heading from her to it]).
+//  4. rate = 0.1 x timeMult, or prop 0xD1 x timeMult (at most 1) when prop 0xD1 > 0; prev = +0x3A4;
+//     e = wrap(heading - Wb).
+//  5. 1.5808 < |d| < 2.0944, (1 - rate) <= |prev|, |prev| > 0.5 and |e| < 0.01: turn around: heading = beam angle + pi
+//     in [0, 2pi) (also +0x358), +0x35C -= +0xCDC, +0xED0 1 <-> 2 with +0xCDC pi / 0, +0x35C += +0xCDC; d =
+//     wrap(Wt - new angle); prev -= 2 sign(prev), clamped to [-1 - rate, 1 + rate]; want = !mirror; player +0xF3C
+//     1 <-> 2 (else 0).
+//     Else |d| > pi/2: d = sign(d) pi/2 (clamped).
+//  6. amount = d / (pi/2), outside init clamped to prev +- rate. Unless clamped with |d| > pi/2 and |prev| < 1 - rate:
+//     amount zeroed when its sign is against want (want off: amount < 0; on: amount > 0).
+//  7. No attached markup: the blend 0 / 0, done. Else the lean = -asin(n.z x (flat n . f)) / (pi/6) clamped to [-1, 1]
+//     (n the attached segment's unit direction, flat n its unit horizontal, f her facing), outside init within
+//     +0x3A0 +- 1.
+//  8. Layer type 2: +0x3A4 = amount, +0x8C = |amount|, the mirror = want. 7: +0x3A4 = amount, +0x3A0 = lean, +0x8C =
+//     lean, +0x90 = |amount|. 5: as 7, and the mirror = want.
+// prop 0x261 is read (into a byte nothing tests).
+void beamBalance(ChartContext& ctx, bool init) {
+    ChartRuntime& rt = ctx.chart();
+    const auto& cd = rt.charts();
+    bool want = rt.mirrored();
+    const bool mirror = want;
+    const bool p227 = propB(ctx, 0x227);
+    const float stick = ctx.stickLevel();
+    const bool idle = (cd.data<uint8_t>(0xE94) & 0x10) && stick == 0;
+    float& beamHeading = ctx.agentFloat(0x358);
+    float& angle = ctx.agentFloat(0x35C);
+    float& lean = ctx.agentFloat(0x3A0);
+    float& walk = ctx.agentFloat(0x3A4);
+    float& held = ctx.agentFloat(0x3B4);
+    if (init) {
+        lean = walk = 0;
+        ctx.setLayerBlend(0, 0);
+        held = ctx.heading();
+        const float dh = wrapPi(held - angle);
+        if (dh < -0.1f) want = true;
+        else if (dh > 0.1f) want = false;
+    }
+    if (stick > 0) held = yawOf(ctx.stick()); // [I] ours: the stick's world direction
+    float target = held;
+    if (p227 || idle) target = wrapPi(angle);
+    ctx.agentFloat(0x28) = target;
+    ctx.agentFloat(0x3A8) = wrapPi(target - angle);
+    const float wb = wrapPi(angle);
+    float wt = wrapPi(target);
+    float d = wrapPi(wt - wb);
+    float rate = ctx.timeMult * 0.1f;
+    const float prev0 = walk;
+    float prev = prev0;
+    if (const float p = propF(ctx, 0xD1, 1.0f); p > 0) rate = std::min(p * ctx.timeMult, 1.0f);
+    if (ctx.combatFlag(9).value_or(false) || ctx.combatFlag(10).value_or(false)) {
+        const glm::vec2 aim(ctx.playerFloat(0x800), ctx.playerFloat(0x804));
+        wt = wrapPi(yawOf(aim - glm::vec2(ctx.position())));
+        d = wrapPi(wt - wb);
+    }
+    float e = wrapPi(ctx.heading() - wb);
+    (void)propB(ctx, 0x261);
+    bool clamped = false;
+    const float ad = std::abs(d);
+    if (ad > 1.5807964f && ad < 2.0943952f && 1.0f - rate <= std::abs(prev) && std::abs(prev) > 0.5f && std::abs(e) < 0.01f) {
+        const float v = (angle + kPi) / kTwoPi;
+        const float turned = (v - std::floor(v)) * kTwoPi;
+        beamHeading = turned;
+        ctx.setHeading(turned);
+        angle -= ctx.playerFloat(0xCDC);
+        if (ctx.playerInt(0xED0) == 1) ctx.playerInt(0xED0) = 2, ctx.playerFloat(0xCDC) = kPi;
+        else ctx.playerInt(0xED0) = 1, ctx.playerFloat(0xCDC) = 0;
+        angle += ctx.playerFloat(0xCDC);
+        d = wrapPi(wt - angle);
+        prev -= 2.0f * (prev >= 0 ? 1.0f : -1.0f);
+        prev = std::clamp(prev, -1.0f - rate, 1.0f + rate);
+        want = !mirror;
+        int& f3c = ctx.playerInt(0xF3C);
+        f3c = f3c == 1 ? 2 : f3c == 2 ? 1 : 0;
+    } else if (std::abs(d) > kHalfPi) {
+        d = (d >= 0 ? 1.0f : -1.0f) * kHalfPi;
+        clamped = true;
+    }
+    float amount = d / kHalfPi;
+    if (!init) amount = std::clamp(amount, prev - rate, prev + rate);
+    const bool keep = clamped && std::abs(d) > kHalfPi && std::abs(prev) < 1.0f - rate;
+    if (!keep && (want ? amount > 0 : amount < 0)) amount = 0;
+    const auto a = ctx.attachedMarkup();
+    if (!a) {
+        ctx.setLayerBlend(0, 0);
+        return;
+    }
+    float l = 0;
+    if (const auto s = ctx.markupSegment(a.markup, roundI(std::floor(a.param)))) {
+        const glm::vec3 n = glm::length(s->second - s->first) > 0 ? glm::normalize(s->second - s->first) : glm::vec3(0);
+        glm::vec2 fl(n);
+        fl = glm::length(fl) > 0 ? glm::normalize(fl) : fl;
+        const glm::vec2 f(std::cos(ctx.heading()), std::sin(ctx.heading()));
+        l = std::clamp(-std::asin(std::clamp(n.z * glm::dot(fl, f), -1.0f, 1.0f)) / 0.52359879f, -1.0f, 1.0f);
+    }
+    if (!init) l = std::clamp(l, lean - 1.0f, lean + 1.0f);
+    const auto type = ctx.layerBlendType();
+    if (!type) {
+        ++rt.stats.unportedActions[205]; // no anim layer blend to drive
+        walk = amount;
+        return;
+    }
+    if (*type == 2) {
+        walk = amount;
+        ctx.setLayerBlend(std::abs(amount), 0);
+        if (want != mirror) rt.setMirror(want);
+    } else if (*type == 7 || *type == 5) {
+        walk = amount, lean = l;
+        ctx.setLayerBlend(l, std::abs(amount));
+        if (*type == 5 && want != mirror) rt.setMirror(want);
+    }
+}
+
+// Action 205 enter 0x75D600: 0x72A5F0, then 0x743900 with init (beamBalance). Update: 0x743900 (beamBalance). Exit
+// 0x754F60 clears the blend.
 void beamSteerEnter(ChartContext& ctx, uint16_t) {
     beamFacing(ctx);
-    ctx.agentFloat(0x3A4) = ctx.agentFloat(0x3A8) = 0;
     ctx.animBlend = glm::vec2(0);
-    ctx.agentFloat(0x3B4) = ctx.heading();
+    beamBalance(ctx, true);
 }
+void beamSteerUpdate(ChartContext& ctx, uint16_t) { beamBalance(ctx, false); }
 void clearBlend(ChartContext& ctx, uint16_t) { ctx.animBlend = glm::vec2(0); }
 
 // Action 303 update 0x75D630 -> 0x72A8F0: on a markup riding a live instance, 0x72A5F0; when the beam angle changed,
@@ -1062,6 +1184,8 @@ void cameraPop(ChartContext& ctx, uint16_t) { ctx.cameraMode = -1; }
 
 } // namespace
 
+void beamBalanceTick(ChartContext& ctx, bool init) { beamBalance(ctx, init); }
+
 void registerLedge(Registry& player, Registry&) {
     auto& r = player;
     const std::string f = "ledge";
@@ -1092,7 +1216,7 @@ void registerLedge(Registry& player, Registry&) {
     r.condition(0x960, throttledEffect, "PSCCF_ThrottledEffectTrigger", f);
     // 0x264 (0x7641D0, the type-27 drop-down markup query 0x7296C0) is not ported: no pure markup-query port yet.
 
-    r.action(205, {beamSteerEnter, nullptr, nullptr, nullptr, clearBlend, unportedSlot}, "PSCAF_BeamBalanceSteerBlend", f);
+    r.action(205, {beamSteerEnter, nullptr, nullptr, nullptr, clearBlend, beamSteerUpdate}, "PSCAF_BeamBalanceSteerBlend", f);
     r.action(213, {nullptr, nullptr, hurdleOverBlend, hurdleOverBlend, nullptr, nullptr}, "PSCAF_HurdleOverBlendParams", f);
     r.action(232, {nullptr, nullptr, hurdleReattach, hurdleReattach, nullptr, nullptr}, "PSCAF_HurdleReattachToJumpTarget", f);
     r.action(301, {unportedSlot, unportedSlot, nullptr, nullptr, unportedSlot, unportedSlot}, "PSCAF_BalanceWobble", f);
