@@ -56,19 +56,28 @@ def compare(rundir, c):
             yerr.append(abs((yaw - oyaw + 180) % 360 - 180))
     pe = f'rel mean {sum(rel)/len(rel):.0f} max {max(rel):.0f} end {rel[-1]:.0f} (raw max {max(errs):.0f})' if errs else ''
     ye = f'{max(yerr):.0f}' if yerr else ''
-    res = 'MATCH' if k == len(ws) and len(os_) == len(ws) else f'{k}/{len(ws)}'
-    if inv is not None:  # a match over the valid span counts as a match
-        res += f' (valid span < {inv}: {j.get("invalid_reason", "invalid_from")})'
-    return f'| {c} | {res} (dt max {max(timing) if timing else 0}) | {div} | {pe} | {ye} |', ws, os_
+    full = k == len(ws) and len(os_) == len(ws)
+    if inv is not None:  # a harness-truncated take: never a full match, reported on its own
+        res = f'match to tick {inv} (truncated)' if full else f'{k}/{len(ws)} to tick {inv} (truncated)'
+    else:
+        res = 'MATCH' if full else f'{k}/{len(ws)}'
+    return f'| {c} | {res} (dt max {max(timing) if timing else 0}) | {div} | {pe} | {ye} |', ws, os_, full, inv is not None
 if __name__ == '__main__':
     d = sys.argv[1]
     print('| case | states (tick slip) | first divergence | position error (units) | yaw err max (deg) |')
     print('|---|---|---|---|---|')
     det = []
+    total = fullm = trunc = 0
     for c in sys.argv[2:]:
         r = compare(d, c)
+        total += 1
         if isinstance(r, str): print(r); continue
         print(r[0]); det.append((c, r[1], r[2]))
+        fullm += r[3] and not r[4]
+        trunc += r[3] and r[4]
+    # totals: only full-span matches count as MATCH; harness-truncated takes (invalid_from) matching their valid span apart
+    print(f'\nfull-span MATCH {fullm} / {total}')
+    print(f'match to invalid_from (truncated, not counted) {trunc}')
     if os.environ.get('SEQ'):
         for c, a, b in det:
             print(f'\n{c}\n  wine {" ".join(f"{s}@{t}" for t, s in a)}\n  ours {" ".join(f"{s}@{t}" for t, s in b[:40])}')
