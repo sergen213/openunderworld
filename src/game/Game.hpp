@@ -426,6 +426,11 @@ struct PlayerState {
     // `clipMix` is the other, weighted `mix`, phase-synced; root motion is blended the same way. Empty = single clip.
     std::string clipMix;
     float mix = 0;
+    // The anim layer blend (chart drive only; anim::layerBlendWeights, tru.exe layer +0xF9 / +0x8C / +0x90 / +0x84):
+    // `clip` is sub-layer 0, `blendClips` the pattern's further anims, `blendWeights` one weight per sub-layer (`clip`
+    // first), rewritten every tick from the chart's parameters. Empty = `clip` alone (legacy never sets it).
+    std::vector<std::string> blendClips;
+    std::vector<float> blendWeights;
     // `clip` reflected left / right (lara.drm anim request +0x20 bit 0x80, e.g. request 979 = ledgeb_jump_right mirrored:
     // the jump left; 1009 is the unmirrored one). The pose and the root motion's X are mirrored (tru.exe 0x441FB0,
     // reached from 0x4428A0).
@@ -727,6 +732,10 @@ public:
         double start = 0, time = 0; // the chart clip clock (s): where the clip (re)started, where it stands now
         float rate = 1;             // the anim layer rate (empty clip only)
         float crossfade = 0;        // a fresh clip's blend (s): the replaced clip's root motion fades out over it
+        // The anim layer blend (anim::layerBlendWeights of the pattern's +0x17 type over the chart's +0x8C / +0x90):
+        // the pattern's further anims (sub-layers 1..) and one weight per sub-layer (`clip` first); empty: `clip` alone.
+        std::vector<std::string> blendClips;
+        std::vector<float> blendWeights;
         // Ground: root motion with her ground collision (no fall: the chart's ground check decides that). Air: the
         // instance velocity under gravity (tru.exe 0x5DB370) with the capsule's contacts. Hang: on the chart's attached
         // markup (markup, seg, t, side), the root motion along it (snap) or free (take-offs, the pull up). Blend: from
@@ -1132,6 +1141,9 @@ public:
     virtual bool drive(World& world, Player& player, vec2 move, const Actions& a, float dt) = 0;
     virtual nlohmann::json save() const = 0;           // the chart state for a save (docs/SAVES.md "chart")
     virtual void load(const nlohmann::json& j) = 0;    // null: start afresh
+    // The gameplay camera mode the chart's states last asked for (state property 1102, tru.exe message 0x44E ->
+    // CameraManager RequestMode 0x5E8210); -1 while it does not drive her or no state asked yet.
+    virtual int cameraModeRequest() const { return -1; }
 };
 
 class World {
@@ -1496,6 +1508,8 @@ public:
     // from the pivot (ou-game --self-test probes).
     int cameraMode() const { return orbit_.mode; }
     float cameraDistance() const { return orbit_.dist; }
+    // The camera mode and the active camera trigger volumes (uids, CameraManager +0x8C order) the last 0x601D30 saw.
+    const std::vector<int32_t>& cameraTriggerList() const { return orbit_.triggers; }
     // The point the orbit camera turns about (LaraCameraRewrite +0x100, the focus tracker's) as its last update left it;
     // camera().target is where it looks: that point (while swimming the look tracker's point, which trails it) moved by
     // a trigger's look offset (commands 0x1A / 0x1C) and turned toward the focus points (World.cpp).

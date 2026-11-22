@@ -445,7 +445,7 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
     t.file_ = std::move(file);
     const std::string top = "scenario";
     if (!j.is_object()) bad(top, "the scenario is an object");
-    static const std::set<std::string> kTop = {"version", "name", "chapter", "walkthrough", "level", "spawn", "start_chapter", "level_chapter", "load",
+    static const std::set<std::string> kTop = {"version", "name", "chapter", "walkthrough", "level", "spawn", "chart_state", "start_chapter", "level_chapter", "load",
                                                "cinematics", "sea_swell", "stop_on_fail", "fixtures", "steps", "note"};
     for (const auto& [key, value] : j.items())
         if (!kTop.contains(key)) bad(top, "unknown key '" + key + "'");
@@ -475,6 +475,10 @@ SelfTest SelfTest::parse(const json& j, std::string file) {
         const auto& s = j["spawn"];
         if (!s.is_array() || s.size() != 4 || !std::ranges::all_of(s, [](const json& v) { return v.is_number(); })) bad(top, "'spawn' wants [x, y, z, yawDeg]");
         t.entry_.spawn = std::array<float, 4>{s[0].get<float>(), s[1].get<float>(), s[2].get<float>(), s[3].get<float>()};
+    }
+    if (j.contains("chart_state")) {
+        if (!j["chart_state"].is_number_integer() || j["chart_state"].get<int>() < 0) bad(top, "'chart_state' wants a state index");
+        t.entry_.chartState = j["chart_state"].get<int>();
     }
     const int entries = int(!t.entry_.level.empty()) + int(t.entry_.chapter >= 0) + int(!t.entry_.load.empty());
     if (entries != 1) bad(top, "exactly one of 'level', 'start_chapter', 'load' enters the game");

@@ -598,3 +598,58 @@ TEST(Anim, TwoBoneIkOutOfReachStretchesTowardsTheTargetAndWeightsPartWay) {
     EXPECT_FALSE(anim::solveTwoBone(sk, local, world, 3, from, 0));
     EXPECT_FALSE(anim::solveTwoBone(sk, local, world, 1, from));
 }
+
+// tru.exe 0x437BA0: the anim layer's sub-layer weights by blend type (+0xF9) over +0x8C (x) / +0x90 (y).
+TEST(Anim, LayerBlendWeightsMatchTheOriginal) {
+    const auto near = [](const std::vector<float>& a, const std::vector<float>& b) {
+        ASSERT_EQ(a.size(), b.size());
+        for (size_t i = 0; i < a.size(); ++i) EXPECT_NEAR(a[i], b[i], 1e-6f) << i;
+    };
+    near(anim::layerBlendWeights(0, 0.7f, 0.3f, 3), {1, 0, 0});
+    near(anim::layerBlendWeights(2, 0.25f, 0, 2), {0.75f, 0.25f});
+    near(anim::layerBlendWeights(3, 0.5f, 0.25f, 3), {0.375f, 0.375f, 0.25f});
+    near(anim::layerBlendWeights(4, 0.25f, 0.5f, 4), {0.375f, 0.125f, 0.375f, 0.125f});
+    // 5: columns {-1, 0, +1} x rows {0, 1} (bbeam_idle {fwd x3, _90 x3}: lean x, walk y)
+    near(anim::layerBlendWeights(5, 0.5f, 0.25f, 6), {0, 0.375f, 0.375f, 0, 0.125f, 0.125f});
+    near(anim::layerBlendWeights(5, -0.5f, 0.25f, 6), {0.375f, 0.375f, 0, 0.125f, 0.125f, 0});
+    // 6 / 7: {centre, -, +} orders (bbeam_aboutfall {centre, left, right} is 7)
+    near(anim::layerBlendWeights(6, -0.25f, 0, 3), {0.25f, 0.75f, 0});
+    near(anim::layerBlendWeights(6, 0.25f, 0, 3), {0, 0.75f, 0.25f});
+    near(anim::layerBlendWeights(7, -0.25f, 0, 3), {0.75f, 0.25f, 0});
+    near(anim::layerBlendWeights(7, 0.25f, 0, 3), {0.75f, 0, 0.25f});
+    near(anim::layerBlendWeights(8, 0.6f, 0, 2), {0.4f, 0.6f});
+    // 9: the diamond, |x| + |y| > 1 renormalised
+    near(anim::layerBlendWeights(9, 0.25f, -0.25f, 5), {0.5f, 0, 0.25f, 0.25f, 0});
+    near(anim::layerBlendWeights(9, 1, 1, 5), {0, 0, 0.5f, 0, 0.5f});
+    // 10: 3 x 3, y doubled: y 0.75 -> the upper cell at v 0.5
+    near(anim::layerBlendWeights(10, 0.5f, 0.75f, 9), {0, 0, 0, 0, 0.25f, 0.25f, 0, 0.25f, 0.25f});
+    near(anim::layerBlendWeights(11, 0.75f, 0.5f, 4), {0, 0.25f, 0.25f, 0.5f});
+    near(anim::layerBlendWeights(11, -1, 0.5f, 4), {0.5f, 0, 0, 0.5f});
+    // Lara's callback types (0x7162C0): 21 = 6, 22 = 5, 23 = 0x6EAAA0 (3 x 3), 30 = 0x7055F0 (3 x 2 x 2)
+    near(anim::layerBlendWeights(21, -0.25f, 0, 3), anim::layerBlendWeights(6, -0.25f, 0, 3));
+    near(anim::layerBlendWeights(22, 0.5f, 0.25f, 6), anim::layerBlendWeights(5, 0.5f, 0.25f, 6));
+    near(anim::layerBlendWeights(23, 0, 0, 9), {0, 0, 0, 0, 1, 0, 0, 0, 0}); // the beam walk R192: bbeam_walk
+    near(anim::layerBlendWeights(23, -0.25f, 0, 9), {0, 0, 0, 0.25f, 0.75f, 0, 0, 0, 0});
+    near(anim::layerBlendWeights(23, 0.5f, -0.5f, 9), {0, 0.25f, 0.25f, 0, 0.25f, 0.25f, 0, 0, 0});
+    near(anim::layerBlendWeights(30, 0.5f, 0.5f, 12, 0.5f), {0.125f, 0.125f, 0, 0.125f, 0.125f, 0, 0.125f, 0.125f, 0, 0.125f, 0.125f, 0});
+    near(anim::layerBlendWeights(30, -1, 2, 12, -1), {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0});
+    // fewer sub-layers than the type writes: the rest dropped; more: zero
+    near(anim::layerBlendWeights(7, 0.5f, 0, 2), {0.5f, 0});
+    near(anim::layerBlendWeights(2, 0.5f, 0, 3), {0.5f, 0.5f, 0});
+    for (const uint8_t t : {2, 3, 4, 9}) EXPECT_TRUE(anim::layerBlendSyncsRates(t));
+    for (const uint8_t t : {0, 5, 6, 7, 8, 10, 11}) EXPECT_FALSE(anim::layerBlendSyncsRates(t));
+}
+
+TEST(Anim, WeightedPoseBlendNormalisesAndSkipsZeroWeights) {
+    std::vector<anim::LocalTransform> a(1), b(1), c(1);
+    a[0].trans = glm::vec3(0), b[0].trans = glm::vec3(10, 0, 0), c[0].trans = glm::vec3(0, 20, 0);
+    const std::vector<std::vector<anim::LocalTransform>> poses{a, b, c};
+    const std::vector<float> w{0.5f, 0.25f, 0.25f};
+    const auto out = anim::blendPosesWeighted(poses, w);
+    EXPECT_NEAR(out[0].trans.x, 2.5f, 1e-5f);
+    EXPECT_NEAR(out[0].trans.y, 5.0f, 1e-5f);
+    const std::vector<float> only{0, 2, 0};
+    EXPECT_NEAR(anim::blendPosesWeighted(poses, only)[0].trans.x, 10.0f, 1e-5f);
+    const std::vector<float> none{0, 0, 0};
+    EXPECT_NEAR(anim::blendPosesWeighted(poses, none)[0].trans.x, 0.0f, 1e-5f);
+}

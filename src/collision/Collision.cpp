@@ -373,7 +373,7 @@ std::optional<Hit> CollisionMesh::raycast(vec3 origin, vec3 dir, float maxDist, 
 std::optional<Hit> CollisionMesh::playerRay(vec3 origin, vec3 dir, float maxDist) const {
     auto best = rayFaces(origin, dir, maxDist, kSolidMask, kSkipPlayerRays);
     return withDynamics(best, [&](const CollisionMesh& s, const glm::mat4& inv) {
-        return s.rayFaces(vec3(inv * glm::vec4(origin, 1)), glm::mat3(inv) * dir, best ? best->t : maxDist, kSolidMask);
+        return s.rayFaces(vec3(inv * glm::vec4(origin, 1)), glm::mat3(inv) * dir, best ? best->t : maxDist, kPlayerRayObjectMask);
     });
 }
 

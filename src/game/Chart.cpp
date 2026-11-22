@@ -183,6 +183,15 @@ std::optional<Charts> loadCharts(const ObjData& o) {
     for (const auto& p : anim::animPatterns(o.drm)) {
         Request r;
         r.rate = p.rate, r.mode = p.mode, r.start = p.start, r.blend = p.blend, r.nextBlend = p.nextBlend, r.mirror = p.mirror;
+        r.blendType = p.blendType;
+        for (const uint16_t a : p.anims) {
+            r.clips.push_back(a < list.size() ? list[a].name : std::string());
+            uint16_t keys = 0;
+            if (a < list.size())
+                if (const auto it = clips.find(list[a].animId); it != clips.end() && it->second->data.size() >= 0x36)
+                    keys = rd<uint16_t>(it->second->data, 0x32);
+            r.clipKeys.push_back(keys);
+        }
         if (!p.anims.empty() && p.anims[0] < list.size()) {
             const auto& e = list[p.anims[0]];
             r.clip = e.name;
@@ -755,7 +764,16 @@ void ChartRuntime::tick(ChartContext& ctx, float timeMult) {
     // a clip played to its end (once) or across a loop wrap notifies the end (0x7181A0 reasons 1 / 2 -> 0x768CF0).
     const Request* p = pattern();
     const float len = animLengthFrames(), before = animFrames_;
-    animFrames_ += ctx.timeMult * (layerRate ? ctx.animRate : p ? p->rate : 1.0f);
+    float rate = layerRate ? ctx.animRate : p ? p->rate : 1.0f;
+    // Drive: blend types 2 / 3 / 4 / 9 rewrite every sub-layer's rate each tick (0x433360, after 0x437BA0 in 0x4385A0),
+    // over the layer rate: sub-layer 0 runs at keys_0 / sum_i w_i keys_i [O].
+    if (layerRate && p && p->clips.size() > 1 && p->clipKeys.size() == p->clips.size() && anim::layerBlendSyncsRates(p->blendType)) {
+        const auto w = anim::layerBlendWeights(p->blendType, ctx.animBlend.x, ctx.animBlend.y, p->clips.size());
+        float mean = 0;
+        for (size_t i = 0; i < w.size(); ++i) mean += w[i] * float(p->clipKeys[i]);
+        if (mean > 0) rate = float(p->clipKeys[0]) / mean;
+    }
+    animFrames_ += ctx.timeMult * rate;
     if (len > 0 && (animLoops() ? std::floor(animFrames_ / len) > std::floor(before / len) : before < len && animFrames_ >= len)) {
         // A queued pattern follows (0x43E0C0 -> 0x443430 plays the next record through 0x4428A0); the chart hears the
         // end only when the queue has drained (0x43E0C0 calls the saved callback +0x304 then) [O].
@@ -925,6 +943,13 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
         const State& s = ch.states[size_t(i)];
         std::snprintf(buf, sizeof buf, "S%d req %d/k%d [%s] parent %d w8 %u", i, s.request, s.requestKind, clip(i).c_str(), s.parent, unsigned(s.word8));
         out << buf;
+        // the anim layer blend of a pattern request (+0x17 type; sub-layer clips)
+        if (s.requestKind != 2 && s.request >= 0 && size_t(s.request) < charts->requests.size())
+            if (const Request& r = charts->requests[size_t(s.request)]; r.clips.size() > 1 || r.blendType) {
+                out << " blend " << int(r.blendType) << " {";
+                for (const auto& c : r.clips) out << " " << c;
+                out << " }";
+            }
         out << " props [";
         for (const auto& p : s.props) out << " " << p.id << ":" << p.type << "=" << (p.target >= 0 ? "->" + hex(int(p.target)) : std::to_string(int32_t(p.raw)));
         out << " ] acts [";
@@ -959,6 +984,14 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
         showState(*only);
     } else if (!coverage) {
         for (size_t i = 0; i < ch.states.size(); ++i) showState(int(i));
+        // the patterns that play more than one anim: the anim layer blend's sub-layers (pattern +0x17 type)
+        out << "requests with sub-layers (index type clips):\n";
+        for (size_t i = 0; i < charts->requests.size(); ++i)
+            if (const Request& r = charts->requests[i]; r.clips.size() > 1) {
+                out << "  R" << i << " " << int(r.blendType) << " {";
+                for (const auto& c : r.clips) out << " " << c;
+                out << " }\n";
+            }
     }
     if (!coverage) return 0;
     // Reachable from the root: every transition a state can take (its own, its ancestors', its events' and the root

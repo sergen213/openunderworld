@@ -100,6 +100,11 @@ struct Request {
     uint8_t mode = 1, start = 0, blend = 0; // mode 1 once, 2 loop; frames at 30 Hz
     uint8_t nextBlend = 0xFF;               // +0x1B: the next pattern's blend frames instead of its own (0xFF none)
     bool mirror = false;                    // +0x20 bit 0x80: a mirrored request (the clip reflected, XOR the agent's bit)
+    // +0x17: the anim layer's blend type (layer +0xF9, anim::layerBlendWeights) and every anim of the pattern by name
+    // (sub-layer i plays clips[i]; clips[0] = clip).
+    uint8_t blendType = 0;
+    std::vector<std::string> clips;
+    std::vector<uint16_t> clipKeys; // each clip's key count (+0x32; 0 unknown), for 0x433360's synced rates
     // 0x4428A0 -> 0x441FB0: the clip's time when it starts, in 30 Hz frames: start - blend, uncut, after the first clip's
     // key bump (blend > 0, a key longer than a frame, start inside the first key: start = that key, blend += the move).
     // blendOverride: the previous pattern's +0x1B (layer +0x314) when it set one.
@@ -243,6 +248,13 @@ public:
     // Agent +0x345, the pole side byte 0x74C8D0 hands the anim graph VM context (0x6E9EB0, VM context +0x10) that
     // native 64 (0x6EA050) reads; nullopt until the setter ran with an answer.
     std::optional<uint8_t> vmPoleSide;
+    // The anim layer the beam balance (0x743900) drives: instance +0x280 -> +0x14. Its blend type (+0xF9: 2 one axis,
+    // 5 / 7 two axes; nullopt: no layer blend modelled) and its blend parameters +0x8C / +0x90. The default context
+    // has none (the balance then only keeps its own state).
+    virtual std::optional<int> layerBlendType() const { return std::nullopt; }
+    virtual void setLayerBlend(float p8C, float p90) { (void)p8C, (void)p90; }
+    // Instance +0x38 set outright (the beam balance's turn-around, 0x743D85..0x743E0A).
+    virtual void setHeading(float yaw) { (void)yaw; }
     // ---- end group B ----
     // ---- group A ----
     // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
@@ -451,6 +463,9 @@ std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot
 // 0x1A4). Attaches the jump target, decides how she takes the pole (agent +0x344), the side byte agent +0x345 for the
 // anim graph VM (ChartContext::vmPoleSide) and the layer mirror (+0xF4 0x20, ChartRuntime::setMirror).
 void poleAttachSetter(ChartContext& ctx, bool alt);
+// 0x743900: action 205's per-tick beam balance steer (init on entry): agent +0x3A0 lean, +0x3A4 walk amount, +0x28
+// heading target, the layer blend (ChartContext::setLayerBlend) and mirror (src/game/chart/Ledge.cpp).
+void beamBalanceTick(ChartContext& ctx, bool init);
 // ---- end group B ----
 // ---- group J ----
 // Player +0xA64 as the chart sees it (src/game/chart/Jump.cpp): the target the chart's own actions set

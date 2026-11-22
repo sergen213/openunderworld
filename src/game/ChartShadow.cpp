@@ -406,6 +406,18 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     bool hasCollision() const override { return w != nullptr; }
     glm::vec3 position() const override { return w->player().state().pos; }
     float heading() const override { return w->player().state().yaw; }
+    // The anim layer (instance +0x280 -> +0x14) the beam balance 0x743900 drives: its blend type +0xF9 = the playing
+    // pattern's +0x17 (0x4428A0; an unresolved kind-2 node keeps the last pattern's), its parameters +0x8C / +0x90
+    // (animBlend, weighed into the sub-layers by anim::layerBlendWeights in driveTick) [O]. Heading: instance +0x38
+    // outright, in drive mode only (shadow mode records the chart's effects without moving her).
+    std::optional<int> layerBlendType() const override {
+        if (const Request* p = rt ? rt->pattern() : nullptr) return int(p->blendType);
+        return lastLayerType;
+    }
+    void setLayerBlend(float p8C, float p90) override { animBlend = glm::vec2(p8C, p90); }
+    void setHeading(float yaw) override {
+        if (driving && pm) pm->setYaw(yaw);
+    }
     float controlYaw() const override { return w->stickYaw(); }
     uint32_t gameMs() const override { return uint32_t(double(w->ticks()) * kTickSeconds * 1000.0); }
     int ledgeClearanceClass() const override {
@@ -588,6 +600,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // +0xA64 only (the controller's aim is gone).
     bool driving = false;
     Player* pm = nullptr;
+    std::optional<int> lastLayerType; // the anim layer's +0xF9 as the last played pattern left it (layerBlendType)
     uint32_t placements = ~0u;
     bool parked = false;        // the controller holds her (a boundary state): the chart restarts when she comes back
     float lastRise = 0;         // the last drive move's root z rise (bone 0 [I])
@@ -751,6 +764,12 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
                                    ax->right.x, ax->right.y, ax->right.z, ax->down.x, ax->down.y, ax->down.z, ax->look.x, ax->look.y,
                                    ax->look.z, c.position.x, c.position.y, c.position.z, pv.x, pv.y, pv.z);
             }
+            if (n > 0 && size_t(n) < sizeof row) { // distance state, camera mode, active trigger volumes (uids)
+                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_camdist=%g\tvar_cammode=%d\tvar_camtrig=", w->cameraDistance(), w->cameraMode());
+                const auto& tl = w->cameraTriggerList();
+                for (size_t i = 1; i < tl.size() && n > 0 && size_t(n) < sizeof row; ++i)
+                    n += std::snprintf(row + n, sizeof row - size_t(n), i > 1 ? ",%d" : "%d", tl[i]);
+            }
             trace << row << '\n';
         }
         ++ticks;
@@ -779,6 +798,18 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     void applyLoad(const nlohmann::json& j);
     nlohmann::json pendingLoad;
     bool loadDue = false;
+    // State property 1102 (0x44E): the camera mode a state asks for on entry; the last one holds.
+    int cameraModeRequest() const override {
+        if (!driving || !rt || !ch) return -1;
+        if (const int st = rt->state(); st != camReqState) {
+            camReqState = st;
+            if (const State* sr = ch->player.state(st))
+                for (const auto& p : sr->props)
+                    if (p.id == 1102) camReq = ch->propInt(p);
+        }
+        return camReq;
+    }
+    mutable int camReqState = -2, camReq = -1;
 };
 
 // Traversal chart boundary [I]: states whose request plays a swim / grapple / death / bike / carried-portable clip
@@ -830,7 +861,9 @@ void Shadow::Impl::seedAttach() {
         for (size_t i = 0; i + 1 < p.size(); ++i) {
             const glm::vec3 ab = p[i + 1] - p[i];
             const float l2 = glm::dot(ab, ab);
-            const float t = l2 > 0 ? std::clamp(glm::dot(probe - p[i], ab) / l2, 0.0f, 1.0f) : 0.0f;
+            // A seed at a segment end grips 0.0001 inside it, as tru.exe's catch does (Wine ch_beam_walk: +0xC98 0.0001 at
+            // loop 1009's corner on every tick; at 0.0 the wall-under-hang ray grazed face 8762's edge and braced her) [O-runtime].
+            const float t = l2 > 0 ? std::clamp(glm::dot(probe - p[i], ab) / l2, 0.0001f, 0.9999f) : 0.0f;
             const float d = glm::length(probe - (p[i] + ab * t));
             if (d < best) best = d, pick = slot(int(m), int(i), t * glm::length(glm::vec2(ab))), hangGrip = type == 1;
         }
@@ -925,6 +958,11 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
     if (motion == M::Hang || motion == M::Blend) {
         if (has("climb")) return GS::ClimbUp;
+        // held on a pole (markup type 4, the horizontal poles' type) whatever the clip: the attach's lead-in plays
+        // node 44's trans_pose_U before Hpole_perp_attach_U
+        if (chartAttached && *chartAttached && size_t(chartAttached->markup) < w->collision().markup.size() &&
+            w->collision().markup[size_t(chartAttached->markup)].type == 4)
+            return GS::PoleHang;
         const int st = rt ? rt->state() : -1; // the shimmy states (the grip moves: S459, S432, S441)
         return has("shimmy") || st == 459 || st == 432 || st == 441 ? GS::Shimmy : GS::Hang;
     }
@@ -1085,6 +1123,16 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     inputs(world, a, move, std::min(1.0f, glm::length(move)));
     attachedBefore = chartAttached && *chartAttached ? chartAttached->markup : -1;
     chartTick();
+    // A case that begins in a hold (--chart-state with a pose) keeps her in that pose until the state is entered: the
+    // Wine take began there pinned [I: harness only]; the chart's idle start would otherwise drop her from a pole pose
+    // into the hall below (mh_pole_airgrab: a fatal fall, respawn and chart restart at tick ~100).
+    if (enterState >= 0 && enterPose) {
+        PlayerState ps = player.state();
+        ps.pos = glm::vec3(*enterPose), ps.yaw = glm::radians(enterPose->w), ps.vel = glm::vec3(0);
+        player.restore(ps);
+        placements = player.placements();
+        return true;
+    }
     if (isBoundary(rt->state())) { // the chart hands her over at its boundary edge: the controller decides from here
         player.setVelocity(s0.vel);
         parked = true;
@@ -1104,6 +1152,13 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.restart = rt->clipStarts() != driveClipStarts;
         // the blend the clip started with: its lead before the pattern's start frame (Request::startFrame = start - blend)
         if (d.restart) d.crossfade = std::max(0.0f, float(p->start) - rt->clipStartFrame()) / 30.0f;
+        // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
+        // them by +0x8C / +0x90 = animBlend, which the state's actions wrote this tick) [O].
+        lastLayerType = int(p->blendType);
+        if (p->clips.size() > 1) {
+            d.blendClips.assign(p->clips.begin() + 1, p->clips.end());
+            d.blendWeights = anim::layerBlendWeights(p->blendType, animBlend.x, animBlend.y, p->clips.size());
+        }
     } else {
         d.rate = animRate;
     }
