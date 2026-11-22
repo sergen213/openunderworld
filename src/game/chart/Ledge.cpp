@@ -213,26 +213,27 @@ bool animTime(ChartContext& ctx, const Cond& c) {
 // On a markup the record runs mode 2 (+0xB0 = 2, +0xB1 = +0xB2 = 1, +0xDC = 1, +0xB4 = 30, +0xD8 = 0.05) [O-runtime:
 // Wine stick dumps, chapel ch_hang_left_hold and bedroom hang_shimmy_right / hang_grab], and 0x6F8050 builds the
 // frame from two references in her frame (+0x120 rows: her right, her forward, up): forward +0x70 = (0, 0.707,
-// 0.707), side +0x80 = (1, 0, 0). With the camera's up axis cz rising (+0x196: +0xDC and cz.z > 0) the forward's y is
+// 0.707), side +0x80 = (1, 0, 0). With the camera looking up (+0x196: +0xDC and the look row's z cz.z > 0) the forward's y is
 // scaled by 1 - cz.z, and the side's x by 1 - cz.z sqrt|l| and its z set to 2 l cz.z, l = (R0.s, -R1.s, R2.s) . cz;
-// both normalized. Each goes to camera space (0x6F7A10: the 0x5E7870 matrix; x = camera right, y = camera
-// forward), z dropped, normalized. When the two axes come within +0xB4 degrees (acos |f . s|), 0x6F89A0 rebuilds
+// both normalized. Each goes to camera space (0x6F7A10: the 0x5E7870 matrix, the inverse of g_camera +0x10; x =
+// camera right, y = camera down: the screen plane), z (depth) dropped, normalized. When the two axes come within +0xB4
+// degrees (acos |f . s|), 0x6F89A0 rebuilds
 // from +0xB8 = (0, 1, 0) / +0xC8 = (1, 0, 0) (+0x195): the side's x scaled by 1 - |l|, its z = sign(l) cz.z [O: decomp,
 // the formula checked against the dumps' +0x100 / +0x110 with their camera matrices]. Ours runs it on the live
-// camera (ChartContext::cameraAxes), whose placement in a hang is not tru.exe's [I]. Off a markup: the camera control
+// camera (ChartContext::cameraAxes: right, down, look as tru.exe's rows). Off a markup: the camera control
 // yaw [I]; dead zone 0.10 (the move-speed zone 1 threshold); no re-classing hysteresis (+0x174) [I].
 std::optional<std::pair<glm::vec2, glm::vec2>> markupFrame(const ChartContext::CameraAxes& cam, float heading) {
     const glm::vec3 R[3] = {{std::sin(heading), -std::cos(heading), 0}, {std::cos(heading), std::sin(heading), 0}, {0, 0, 1}};
     const auto world = [&](glm::vec3 r) { return r.x * R[0] + r.y * R[1] + r.z * R[2]; };
-    const auto lOf = [&](glm::vec3 r) { return glm::dot(glm::vec3(glm::dot(R[0], r), -glm::dot(R[1], r), glm::dot(R[2], r)), cam.up); };
+    const auto lOf = [&](glm::vec3 r) { return glm::dot(glm::vec3(glm::dot(R[0], r), -glm::dot(R[1], r), glm::dot(R[2], r)), cam.look); };
     const auto unit = [](glm::vec3 v) { const float n = glm::length(v); return n > 0 ? v / n : v; };
     const auto flat = [&](glm::vec3 v) -> std::optional<glm::vec2> {
-        const glm::vec2 c(glm::dot(v, cam.right), glm::dot(v, cam.forward));
+        const glm::vec2 c(glm::dot(v, cam.right), glm::dot(v, cam.down));
         const float n = glm::length(c);
         if (n < 1e-6f) return std::nullopt;
         return c / n;
     };
-    const float z = cam.up.z;
+    const float z = cam.look.z;
     const bool tilt = z > 0;
     const auto build = [&](bool alt) -> std::optional<std::pair<glm::vec2, glm::vec2>> {
         glm::vec3 f = alt ? glm::vec3(0, 1, 0) : glm::vec3(0, 0.70710677f, 0.70710677f), s(1, 0, 0);
