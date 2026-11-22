@@ -2242,6 +2242,32 @@ struct Controls {
     int menuNav(const platform::InputRef& r) const;
 };
 Actions readDevices(const Controls& controls, const platform::DeviceState& devices);
+// tru.exe's input system update (0x483520, InputSystem 0xA02B68, once per frame at the end of the frame in
+// MainG2_PlatformUpdate, before PumpWindowMessages) filters each stick axis pair: before the poll, output (+0x04)
+// <- the last output and the axis takes its pending raw value (+0x08); the device's events (the remap device 0x488C70
+// turns bound keys into axis events, key pairs as max / -max) write the new raw value; then if the pair's raw step
+// |raw - pending| exceeds the axis rate (+0x0C) x dt, dt = elapsed ms x 30 / 1000, the pair keeps its previous output
+// for this frame; pending <- raw either way, so the step lands one frame later. Buttons are not filtered. The move
+// stick (axes 0 / 1) gets rate = Lara's data +0x658 (0.4, 0x721F80 when > 0); every other axis keeps FLT_MAX (0x480FC0)
+// [O: decomp]. A key press therefore reaches the stick record (0x706540 +0x18) a frame after its button would, as
+// WineChartTrace measured (4 of 5 takes; the fifth, the first after a checkpoint birth, had a long frame and passed).
+// Ours runs it per 60 Hz tick with dt = 0.5 (a tick in 30 Hz frames) [I: tru.exe measures wall time].
+class StickRateFilter {
+public:
+    explicit StickRateFilter(float rate) : rate_(rate) {}
+    glm::vec2 step(glm::vec2 raw, float dtFrames) {
+        const glm::vec2 prev = out_, last = pending_;
+        pending_ = raw;
+        out_ = rate_ * dtFrames < glm::length(raw - last) ? prev : raw;
+        return out_;
+    }
+
+private:
+    float rate_;
+    glm::vec2 out_{0}, pending_{0};
+};
+// Lara's move stick rate (lara.drm data +0x658), nullopt without the object or when not positive (no filter).
+std::optional<float> moveStickRate(const cdc::BigfileSet& bigfile);
 // What button placeholders in locals.bin text name (ui::PromptNames, tru.exe 0x5A7C20): per tru.exe virtual button
 // 0..24 (GAMEPLAY.md "Controls") and the keys Return / Escape / BackSpace (25..27: menu_accept / menu_back / menu_delete),
 // the control bound in `controls` on the device in use. Keyboard: the first key, else the mouse button ("L Mouse",
@@ -2290,12 +2316,16 @@ public:
     std::optional<float> cameraYaw() const {
         return cameraFollow_ ? std::optional<float>(std::atan2(cameraFollow_->dy, cameraFollow_->dx)) : std::nullopt;
     }
+    // The script carries tru.exe's recorded stick ("stick"): its move axes are already the filtered stick record, so the
+    // app does not run StickRateFilter on them.
+    bool stickRecord() const { return stickRecord_; }
 
 private:
     struct Event { uint64_t tick; std::string action; float value; };
     std::vector<Event> events_; // sorted by tick (stable)
     std::optional<CameraFollow> cameraFollow_;
     std::optional<CameraSeed> cameraSeed_;
+    bool stickRecord_ = false;
 };
 
 } // namespace ou::game
