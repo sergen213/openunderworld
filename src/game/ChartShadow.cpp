@@ -270,6 +270,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     const World* world() const override { return w; }
 
     // ---- group B ----
+    const ChartRuntime* upperChart() const override { return upper; }
     // The live controller's markup state as tru.exe's player slots: the attached markup (+0xC94) while she hangs /
     // shimmies / climbs up / is on a pole, beam, ladder, perch, pillar or hold (Player::attachedMarkup), the jump target
     // (+0xA64) of an aimed ground jump (PlayerState::aimMarkup) or of a hang jump in flight (its ledge).
@@ -508,6 +509,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     bool clipLoops = false;
     // --chart-state N@T: the chart enters state N at world tick T (Shadow::enterAt); -1 none.
     int enterState = -1;
+    std::optional<glm::vec4> enterPose; // --chart-state N@T@x,y,z,yaw: her case start for seedAttach
     uint64_t enterTick = 0;
     // ---- end group CD ----
 
@@ -707,6 +709,11 @@ bool Shadow::Impl::isBoundary(int st) const {
 // offset, lara.drm ledgeb_idle), within 900 units (the corpus pins her up to 600 over the hang root and its own air grab
 // took the ledge during the hold); a ledge (markup type 1) also puts her in its hang pose (attachPose).
 void Shadow::Impl::seedAttach() {
+    if (enterPose && pm) { // the Wine case's start: the hold it began in is the markup nearest her hands there
+        PlayerState ps = w->player().state();
+        ps.pos = glm::vec3(*enterPose), ps.yaw = glm::radians(enterPose->w), ps.vel = glm::vec3(0);
+        pm->restore(ps);
+    }
     const PlayerState& s = w->player().state();
     const glm::vec3 h = w->anims().hangHandOffset;
     const float c = std::cos(s.yaw + 1.5707964f), sn = std::sin(s.yaw + 1.5707964f);
@@ -1067,7 +1074,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
     }
     if (const auto o = objData(bigfile, "lara")) impl_->clipCommands = clipEvents(*o); // group CD: critical sections
 }
-void Shadow::enterAt(int state, uint64_t tick) { impl_->enterState = state, impl_->enterTick = tick; }
+void Shadow::enterAt(int state, uint64_t tick, std::optional<glm::vec4> at) { impl_->enterState = state, impl_->enterTick = tick, impl_->enterPose = at; }
 Shadow::~Shadow() = default;
 PlayerDriver* Shadow::driver() { return impl_->driving ? impl_.get() : nullptr; }
 

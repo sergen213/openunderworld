@@ -237,6 +237,8 @@ public:
     // action 232 attach the jump target through 0x707B90, 0x6FDBE0 detaches; see attachChartMarkup). Engaged: it
     // answers attachedMarkup() (an empty slot = none) instead of the game; nullopt: the context's game state answers.
     std::optional<MarkupSlot> chartAttached;
+    // The upper-body chart (player +0xF14) for 0x6EEF00 mode 2's fallback (0x6EEDA0); null when there is none.
+    virtual const ChartRuntime* upperChart() const { return nullptr; }
     // ---- end group B ----
     // ---- group A ----
     // Ground locomotion / landing (src/game/chart/Ground.cpp). nullopt = the game cannot say (the condition counts as
@@ -577,7 +579,9 @@ public:
     ~Shadow();
     void tick(const World& world, const Actions& a); // after World::tick
     // The chart enters `state` (ChartRuntime::enter) on the first tick at or after world tick `tick` (--chart-state).
-    void enterAt(int state, uint64_t tick);
+    // `at` (x, y, z, yaw degrees): where she was in the Wine case when it began in a hold (case.json start.ours); the hold's
+    // markup is seeded from there [I: harness only].
+    void enterAt(int state, uint64_t tick, std::optional<glm::vec4> at = std::nullopt);
     std::string summary() const;
     const ChartRuntime& runtime() const { return *rt_; }
     PlayerDriver* driver(); // null unless constructed with drive

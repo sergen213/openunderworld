@@ -121,7 +121,7 @@ void usage() {
                  "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
                  "               [--self-test FILE.json [--self-test-report OUT.json] [--self-test-trace]] (a gameplay scenario, docs/SELFTEST.md;\n"
                  "                exit 0: every step passed, 1: a step failed, 2: malformed scenario)\n"
-                 "               [--chart-shadow] [--chart-trace FILE.tsv] [--chart-state N[@TICK]] (Lara's state chart beside the controller, docs/re/PLAYER_CHART.md)\n"
+                 "               [--chart-shadow] [--chart-trace FILE.tsv] [--chart-state N[@TICK[@X,Y,Z,YAW]]] (Lara's state chart beside the controller, docs/re/PLAYER_CHART.md)\n"
                  "               [--traversal legacy|chart] (who decides Lara's traversal; config game.traversal, default legacy)\n"
                  "       ou-game chart-dump [--game-dir DIR] [--state N] [--coverage] [--upper] [--names conditions.json]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
@@ -2257,8 +2257,13 @@ int main(int argc, char** argv) {
             chartShadow = std::make_unique<ou::game::chart::Shadow>(
                 bf, opt.chartTrace.empty() ? std::nullopt : std::optional<std::filesystem::path>(opt.chartTrace), opt.chartShadow, chartDrive);
         if (chartShadow && !opt.chartState.empty()) {
-            const auto at = opt.chartState.find('@');
-            chartShadow->enterAt(std::stoi(opt.chartState.substr(0, at)), at == std::string::npos ? 0 : std::stoull(opt.chartState.substr(at + 1)));
+            const auto at = opt.chartState.find('@'), at2 = at == std::string::npos ? at : opt.chartState.find('@', at + 1);
+            std::optional<glm::vec4> pose;
+            if (at2 != std::string::npos) {
+                glm::vec4 v(0);
+                if (std::sscanf(opt.chartState.c_str() + at2 + 1, "%f,%f,%f,%f", &v.x, &v.y, &v.z, &v.w) == 4) pose = v;
+            }
+            chartShadow->enterAt(std::stoi(opt.chartState.substr(0, at)), at == std::string::npos ? 0 : std::stoull(opt.chartState.substr(at + 1, at2 == std::string::npos ? std::string::npos : at2 - at - 1)), pose);
         }
         strings = ou::locale::loadStrings(opt.gameDir, ou::locale::textLanguage(language));
         if (!strings) throw std::runtime_error("pc-w\\local\\locals.bin not in bigfile");
