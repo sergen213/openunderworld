@@ -1786,6 +1786,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 }
                 case 13: return arcAt(from, t);
                 case 24: return h - (q.start + q.v * t);
+                // 2 / 3: MarkUpBox_GetSegmentPos (0x5C39D0) of point 0 / of the candidate's segment (+0x34): the polyline's
+                // point, in the world [O: 0x723AB0 cases 2 / 3]
+                case 2: return m.points.front();
+                case 3: return m.points[size_t(si)];
                 case 28: return q.base;
                 case 4: case 31: return h;
                 default: // 33: a hold's point; ledges are no holds
