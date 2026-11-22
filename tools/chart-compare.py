@@ -29,6 +29,10 @@ def compare(rundir, c):
     ot = f'{rundir}/{os.path.basename(c)}.tsv'
     if not os.path.exists(ot): return f'| {c} | no trace | | | |'
     w = rows(wt); o = [(t - shift, *x) for t, *x in rows(ot) if t - shift >= 0]
+    # a case JSON's "invalid_from" (a harness artefact in the Wine take, e.g. the post-SPAWN carry): score only before it
+    inv = j.get('invalid_from')
+    if inv is not None:
+        w = [r for r in w if r[0] < inv]; o = [r for r in o if r[0] < inv]
     ws, os_ = seq(w), seq(o)
     # state match: Wine's sequence states in order with ticks; first divergence
     k = 0; div = ''
@@ -53,6 +57,8 @@ def compare(rundir, c):
     pe = f'rel mean {sum(rel)/len(rel):.0f} max {max(rel):.0f} end {rel[-1]:.0f} (raw max {max(errs):.0f})' if errs else ''
     ye = f'{max(yerr):.0f}' if yerr else ''
     res = 'MATCH' if k == len(ws) and len(os_) == len(ws) else f'{k}/{len(ws)}'
+    if inv is not None:  # a match over the valid span counts as a match
+        res += f' (valid span < {inv}: {j.get("invalid_reason", "invalid_from")})'
     return f'| {c} | {res} (dt max {max(timing) if timing else 0}) | {div} | {pe} | {ye} |', ws, os_
 if __name__ == '__main__':
     d = sys.argv[1]
