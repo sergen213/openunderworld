@@ -1946,12 +1946,25 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         // poles (0x8000000 unless 0x74B5F0 claims it [I: not ported, taken as no]; 0x2000000 /
                         // 0x4000000), pillars (0x10), perches (0x20000), balance beams (0x10000) and jump landings (0x20000000) pass
                         r = true;
-                    } else if (q.strict && m.type >= 16 && m.type <= 20) {
-                        // 0x8000: the manager's normal (0x5C3CC0) against 0x725D00's direction under 0.2 [I: the way
-                        // from the arc's start to the hit; the normal the hold triangle's, out toward her]
-                        r = glm::dot(holdOut(m), unitOr(h - from, vec3(0, 0, -1))) < 0.2f;
-                    } else if (q.strict && m.type == 9) { // 0x400000: 0x72B860 of the way in against the ladder's
-                        q.unknown = true;                  // normal, not ported
+                    } else if (q.strict && ((m.type >= 16 && m.type <= 20) || m.type == 9)) {
+                        // 0x725D00 hands 0x6FC6B0 two ways: her own velocity's direction (0x6E5A10, normalized, else
+                        // straight down) and the query start less the hit led by the motion (0x7233E0; normalized,
+                        // else straight down); 0x6FC6B0 takes the first flattened (not renormalized), the second
+                        // flattened when that is nil (0x49AF50), and passes when both are nil [O: decomp 0x725D00,
+                        // 0x6FC6B0]
+                        vec3 way = unitOr(s_.vel, vec3(0, 0, -1));
+                        way.z = 0;
+                        if (glm::dot(way, way) < 1e-12f) way = vec3(xy(unitOr(from - h, vec3(0, 0, -1))), 0);
+                        if (glm::dot(way, way) < 1e-12f) {
+                            r = true;
+                        } else if (m.type == 9) {
+                            // 0x400000: 0x72B860(normal . way): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
+                            // 0x72B860..0x72B8B8]; the normal (0x5C3CC0) the ladder's wall side, ladderOut [I]
+                            r = std::cos(glm::radians(q.ladderFaceDeg)) < -glm::dot(ladderOut(m), way);
+                        } else {
+                            // 0x8000: normal . way under 0.2 [O]; the normal the hold triangle's, out toward her [I]
+                            r = glm::dot(holdOut(m), way) < 0.2f;
+                        }
                     } else {
                         r = wallSide();
                     }
@@ -2654,7 +2667,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone);
-    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold;
+    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(s_.ledge)].type) : 0;
@@ -2664,11 +2677,11 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     q.recordTypes = p.recordTypes, q.recordFlags = p.recordFlags;
     q.resultTypes = p.resultTypes, q.resultRecordFlags = p.resultRecordFlags;
     q.strict = true;
-    // kind 9's control yaw: the camera's (0x6EBA90; World::setCamera's stick yaw); source 8's stick yaw: the stick's
-    // world heading while it is pushed, else that same camera yaw [I: the input record keeps its last heading]
-    q.controlYaw = cameraKnown_ ? cameraYaw_ : s_.yaw;
-    const float stickYaw = stickOn ? controlYaw : q.controlYaw;
-    q.stickDir = vec2(std::cos(stickYaw), std::sin(stickYaw));
+    // kind 9's control yaw is 0x6EBA90, the same call heading sources 5..8 make (0x728F00 case 9, 0x724F50 case 5):
+    // the caller's controlYaw; source 8's stick yaw: the stick's world heading while it is pushed, else that same yaw
+    // [I: the input record keeps its last heading]
+    q.controlYaw = controlYaw;
+    q.stickDir = vec2(std::cos(controlYaw), std::sin(controlYaw));
     const JumpTarget j = ledgeOnArc(q);
     out.known = !q.unknown;
     out.target = j;
