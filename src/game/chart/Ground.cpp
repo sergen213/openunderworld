@@ -646,8 +646,8 @@ bool usable(const ChartContext::MarkupSlot& m) { return m && !(m.flags & 0x80000
 
 // 0x75D6C0: the attach surface class, player +0xED8 = the old +0xED4, then +0xED4 by the markup's flags: none of
 // 0x4F400010 -> 2; 0x400000 with her root not 110.62 (Lara data +0x770) below segment 1's end (0x75D650) -> 0; 0x10
-// -> 1. The rest goes through the markup-type tables (0x74B5F0 / 0x731A50, 0x741720 / 0x731B00, 0x733F80, 0x733F60,
-// 0x74F480) ours does not model: counted as action 420's, +0xED4 kept.
+// -> 1. Then the markup-type tables (0x74B5F0 / 0x731A50, 0x741720 / 0x731B00, 0x733F80, 0x733F60) for markups with
+// those table flags (unported: counted as action 420's, +0xED4 kept), else !0x74F480 (ledgeBrace).
 void attachSurfaceClass(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
     ctx.playerInt(0xED8) = ctx.playerInt(0xED4);
     if (!(m.flags & 0x4F400010u)) {
@@ -665,6 +665,15 @@ void attachSurfaceClass(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
     if (m.flags & 0x10u) {
         ctx.playerInt(0xED4) = 1;
         return;
+    }
+    // 0x74B5F0 / 0x741720 / 0x733F80 / 0x733F60 test the markup data's attribute tables (+0x180 / +0x184) only for
+    // markups flagged 0xC000000 / 0xA000000 (0x741670 / 0x733EC0); without those all four fail and the class is
+    // !0x74F480 (group B's ledgeBrace: no wall under the hang = 1).
+    if (!(m.flags & 0xE000000u)) {
+        if (const auto brace = ledgeBrace(ctx, m)) {
+            ctx.playerInt(0xED4) = *brace ? 0 : 1;
+            return;
+        }
     }
     unportedPart(ctx, 420);
 }

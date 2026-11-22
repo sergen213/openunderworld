@@ -25,7 +25,7 @@ struct LedgeContext : ChartContext {
     glm::vec2 stickDir{0};
     bool attached = true;
     uint32_t flags = 0x40000000; // ledge
-    std::optional<float> wallX;
+    std::optional<float> wallX, wallY;
     int clearance = 2;
     uint32_t ms = 0;
     Action action(int) const override { return {}; }
@@ -47,6 +47,7 @@ struct LedgeContext : ChartContext {
     }
     int markupSegmentCount(int m) const override { return m == 0 ? int(pts.size()) - 1 : 0; }
     std::optional<float> playerRay(glm::vec3 a, glm::vec3 b) const override {
+        if (wallY && (a.y - *wallY) * (b.y - *wallY) <= 0 && a.y != b.y) return std::abs(*wallY - a.y) / std::abs(b.y - a.y) * glm::length(b - a);
         if (!wallX || (a.x - *wallX) * (b.x - *wallX) > 0 || a.x == b.x) return {};
         return std::abs(*wallX - a.x) / std::abs(b.x - a.x) * glm::length(b - a);
     }
@@ -241,4 +242,19 @@ TEST(ChartLedge, ChartSideAttachHandsTheJumpTargetOn) {
     EXPECT_FALSE(*ctx.chartAttached);
     EXPECT_EQ(ctx.playerInt(0xEA0), 8);
     EXPECT_TRUE(attachTargetClass(610) && attachTargetClass(627) && !attachTargetClass(611) && !attachTargetClass(628));
+}
+
+// 0x74F480 / 0x744E90: a wall under the hang (the ray from 90 out to Lara data +0x6E6 behind the ledge line, in the
+// segment frame) makes the attach surface class 0 (braced), none 1 (free hang, chapel S447).
+TEST(ChartLedge, LedgeBraceWallUnderTheHang) {
+    LedgeContext ctx;
+    OneShot s({cond(0x1, 1, false, 500)});
+    s.pd16(0x6E4, 200), s.pd16(0x6E6, 20), s.pd16(0x252, 498), s.pd16(0x704, 100);
+    ASSERT_TRUE(s.fires(ctx)); // the runtime is current for the property / data reads
+    const auto a = ctx.attachedMarkup();
+    EXPECT_EQ(ledgeBrace(ctx, a), std::optional<bool>(false));
+    ctx.wallY = 10.0f; // a wall face just behind the ledge line (the ledge runs +x: its frame's outward normal is -y)
+    EXPECT_EQ(ledgeBrace(ctx, a), std::optional<bool>(true));
+    ctx.wallY = 40.0f; // beyond +0x6E6 = 20
+    EXPECT_EQ(ledgeBrace(ctx, a), std::optional<bool>(false));
 }

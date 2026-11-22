@@ -565,6 +565,60 @@ void attachChartMarkup(ChartContext& ctx, const ChartContext::MarkupSlot& slot) 
     ctx.handedTarget = slot.markup;
 }
 
+// 0x744E90: one ray in the frame `rows` (x along the edge, y the edge's outward normal, z up, origin) from (lat, 90, h)
+// to (lat, -Lara data +0x6E6, h), h = +0x6E4 - +0x252 (0x4935F0, ray flags 0x2C19E7): a hit = a wall under the hang.
+namespace {
+bool braceRay(ChartContext& ctx, glm::vec3 e, glm::vec3 n, glm::vec3 o, float lat) {
+    const float h = float(pd(ctx, 0x6E4)) - float(pd(ctx, 0x252));
+    const glm::vec3 up = glm::cross(e, n);
+    const glm::vec3 a = o + e * lat + n * 90.0f + up * h, b = o + e * lat - n * float(pd(ctx, 0x6E6)) + up * h;
+    return bool(ctx.playerRay(a, b));
+}
+// The frame 0x74F480 builds on a segment: n = the horizontal edge direction turned -90 degrees (0x49C8B0), e =
+// cross(n, up), up = cross(e, n).
+void braceFrame(glm::vec3 d, glm::vec3& e, glm::vec3& n) {
+    glm::vec2 h(d.x, d.y);
+    h = glm::length(h) > 0 ? glm::normalize(h) : glm::vec2(1, 0);
+    n = glm::vec3(h.y, -h.x, 0);
+    e = glm::cross(n, glm::vec3(0, 0, 1));
+}
+} // namespace
+
+std::optional<bool> ledgeBrace(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
+    const int count = ctx.markupSegmentCount(m.markup);
+    if (count <= 0 || !ctx.hasCollision()) return std::nullopt;
+    const bool closed = m.flags & 4; // markup +0x28 bit 2: the polyline wraps
+    const int seg = std::clamp(int(std::floor(m.param)), 0, count - 1);
+    const float f = m.param - std::floor(m.param);
+    int other = seg;
+    if (f > 0.99f) other = seg < count - 1 ? seg + 1 : closed ? 0 : seg;
+    else if (f < 0.01f) other = seg >= 1 ? seg - 1 : closed ? count - 1 : seg;
+    const auto s = ctx.markupSegment(m.markup, seg);
+    if (!s) return std::nullopt;
+    const glm::vec3 p = s->first + (s->second - s->first) * f;
+    glm::vec3 e, n;
+    braceFrame(s->second - s->first, e, n);
+    if (other != seg) { // at a vertex: 40 into this segment ("segment"), else 40 into the other one ("otherSegment")
+        const bool forward = other == seg + 1 || (closed && seg == count - 1 && other == 0);
+        const glm::vec3 back = glm::normalize(s->first - s->second) * 40.0f;
+        if (braceRay(ctx, e, n, forward ? p + back : p - back, 0)) return true;
+        const auto so = ctx.markupSegment(m.markup, other);
+        if (!so) return std::nullopt;
+        glm::vec3 e2, n2;
+        braceFrame(so->second - so->first, e2, n2);
+        const glm::vec3 back2 = glm::normalize(so->first - so->second) * 40.0f;
+        return braceRay(ctx, e2, n2, forward ? p - back2 : p + back2, 0);
+    }
+    // limb class 4 (right) on the last segment / 3 (left) on the first: the ray moves up to Lara data +0x704 toward the
+    // end, at most 0.8 of what is left of the segment
+    float lat = 0;
+    const float len = glm::length(s->second - s->first);
+    const int lc = limbClass(ctx);
+    if (lc == 4 && seg == count - 1) lat = -std::min(float(pd(ctx, 0x704)), (1.0f - f) * 0.8f * len);
+    else if (lc == 3 && seg == 0) lat = std::min(float(pd(ctx, 0x704)), f * 0.8f * len);
+    return braceRay(ctx, e, n, p, lat);
+}
+
 bool attachTargetClass(int cls) {
     switch (cls) {
     case 600: case 601: case 603: case 605: case 606: case 610: case 614: case 621: case 624: case 625: case 626: case 627: return true;
