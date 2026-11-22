@@ -354,7 +354,9 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
   (3 x 2 x 2 with +0x94), 24..29 / 31..35 not ported [U]. Types 2 / 3 / 4 / 9 then set every sub-layer's rate to
   keys_i / sum w_j keys_j (0x433360), overriding 0x438C40's layer rate. Lara's beam patterns: idle / wobble / jumpup /
   consider_detach / jumpland_unbalanced type 5 {fwd x3, _90 x3}; aboutfall / stepforward / stepback / flip / somersault
-  type 7 {centre, left, right}; falls type 2 {ledge, no ledge}. Ours (`anim::layerBlendWeights`, `Request::clips` /
+  type 7 {centre, left, right}; falls type 2 {ledge, no ledge}. Wine (W/chart/wine/beam/t1079_walk_turn.tsv, SPAWN
+  take): S918 count 6, +0xF9 5, +0x8C 0, +0x90 0.73..0.80, w1 = 1 - +0x90; after the turn +0x90 1 and w0..w3 0; S922
+  count 3, +0xF9 7, w0 1 [O-runtime: matches 0x437BA0]. Ours (`anim::layerBlendWeights`, `Request::clips` /
   `blendType`, chart-dump's "requests with sub-layers"): the drive context answers `layerBlendType()` (the playing
   pattern's +0x17), `setLayerBlend` writes `animBlend`, driveTick weighs the sub-layers into `DriveStep::blendClips /
   blendWeights`; `World::updatePose` blends the poses (phase-synced, normalised weights [I: 0x4361C0's accumulation])
