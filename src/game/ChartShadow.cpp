@@ -349,6 +349,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         r.point = a + (b - a) * f;
         const float yaw = w->player().state().yaw;
         r.normal = -glm::vec3(std::cos(yaw), std::sin(yaw), 0); // [I] outward: she faces the markup
+        if (r.flags & 0x10000) { // beams: 0x6FE7E0 (0x6FEBD9 branch) n = unit cross(p1 - p0, up) (0x432120) [O decomp]
+            const glm::vec3 n = glm::cross(b - a, glm::vec3(0, 0, 1));
+            if (glm::length(n) > 0) r.normal = glm::normalize(n);
+        }
         return r;
     }
     // The game's attached markup (Player::attachedMarkup) as a slot.

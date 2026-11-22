@@ -173,13 +173,22 @@ int zoneBit(int v) {
 }
 
 // 0x192 (0x7612D0): the angle by value, then 0x785FB0. 410..413, 422, 423: the stick against her heading. 414..417
-// (the player +0x800 point), 418..421 (the wall / slide normal 0x730790), 424 (stick field +8 with 0x782E60), 425..428
-// (the attached markup's normal) and 429..432 (stick field +0x14) read state ours does not model.
+// (the player +0x800 point), 418..421 (the wall / slide normal 0x730790), 424 (stick field +8 with 0x782E60) and
+// 429..432 (stick field +0x14) read state ours does not model. 425..428: 0x6EBB40 = the stick's world yaw (stick record
+// +0x8) minus the yaw of the attached markup's reversed normal (player +0xCC0, latched into the controller's +0x160 while
+// attached and +0x170 is clear) [O decomp]; ours: +0x8 = the stick against her heading plus her heading [I: the
+// controller's latch is the current normal; a centred stick reads along her heading]. No attached markup: unported.
 bool moveDir(ChartContext& ctx, const Cond& c) {
     const int v = mode(c);
-    if (!((v >= 0x19A && v <= 0x19D) || v == 0x1A6 || v == 0x1A7)) return ctx.chart().unported(c);
-    const auto angle = stickAngle(ctx);
+    const bool vsNormal = v >= 0x1A9 && v <= 0x1AC;
+    if (!((v >= 0x19A && v <= 0x19D) || v == 0x1A6 || v == 0x1A7 || vsNormal)) return ctx.chart().unported(c);
+    auto angle = stickAngle(ctx);
     if (!angle) return ctx.chart().unported(c);
+    if (vsNormal) {
+        const auto a = ctx.attachedMarkup();
+        if (!a || glm::length(glm::vec2(a.normal)) < 1e-6f) return ctx.chart().unported(c);
+        angle = wrapPi(*angle + ctx.heading() - std::atan2(-a.normal.y, -a.normal.x));
+    }
     const auto zone = moveDirZone(ctx, *angle);
     if (!zone) return ctx.chart().unported(c);
     return (*zone & zoneBit(v)) != 0;
