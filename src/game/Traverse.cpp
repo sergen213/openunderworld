@@ -249,15 +249,21 @@ vec3 Player::ladderCatch(int markup, int rung) const {
 }
 
 // The chart drive's hold pose on a ladder, pillar or perch it attached (nullopt for other markup): a ladder's rung
-// nearest her root height (rungPos / rungAt: 0x74DCD0's rung alignment, facing the ladder) [O]; a pillar's axis at her
+// nearest her root height where the attach clip `clip` ends (rungPos / rungAt: 0x74DCD0's rung alignment, facing the
+// ladder; Wine lad_a234_attach: from z 1479 her attach from the top ends on the rung at 940) [O]; a pillar's axis at her
 // height (the instance stays on the axis, Wine l4_temple) keeping her heading [O-runtime]; a perch's point [I].
-std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, float yaw) const {
+std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, float yaw, std::string_view clip) const {
     if (markup < 0 || size_t(markup) >= col_.markup.size()) return std::nullopt;
     const auto& m = col_.markup[size_t(markup)];
     if (m.points.empty()) return std::nullopt;
     if (m.type == 9 && m.points.size() >= 2) {
         const vec3 out = ladderOut(m);
-        return std::pair{rungPos(m, rungAt(m, from.z), out), yawOf(-xy(out))};
+        // an attach from the ground at the bottom (ladder_attach_ground_bottom) takes the lowest rung (Wine
+        // lad_a234_attach: rung 2 at z 940 from the floor at 1479, where 0x74DCD0's nearest-rung formula clamps to rung 0
+        // at 1161) [I: which caller picks the bottom is not decoded]; else the rung nearest where the clip ends
+        if (clip.find("bottom") != std::string_view::npos) return std::pair{rungPos(m, lowestRung(m), out), yawOf(-xy(out))};
+        const float z = from.z + (clip.empty() ? 0.0f : clipMove(anims_, clip).z);
+        return std::pair{rungPos(m, rungAt(m, z), out), yawOf(-xy(out))};
     }
     if (m.type == 15 && m.points.size() >= 2) {
         const float lo = std::min(m.points[0].z, m.points[1].z), hi = std::max(m.points[0].z, m.points[1].z);
