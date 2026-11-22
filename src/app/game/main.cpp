@@ -3358,7 +3358,7 @@ int main(int argc, char** argv) {
         if (opt.frames && frameTimesPath) allFrameMs.push_back(double(now - last) * 1e-6);
         last = now;
 
-        for (int n = clock.advance(dt); n > 0 && running; --n) {
+        for (int n = clock.advance(dt), first = n; n > 0 && running; --n) {
             if (replay)
                 while (const auto ev = replay->next(appTicks)) handleInput(*ev);
             if (selfTest) // a step's SDL events: the same handling as live ones (device state, bindings, menus)
@@ -3367,10 +3367,18 @@ int main(int argc, char** argv) {
                                   : script    ? script->at(appTicks)
                                   : autopilot ? autopilot->step(appTicks, *world)
                                               : ou::game::readDevices(opt.controls, devices);
-            // tru.exe samples the frame's input (0x483520) with the move stick pair filter; a script carrying the recorded
-            // stick record replays its output already
-            if (moveFilter && (selfTest || !script || !script->stickRecord()))
-                a.move = moveFilter->step(a.move, float(ou::game::kTickSeconds * 30.0));
+            // tru.exe samples the frame's input (0x483520) with the move stick pair filter, dt = the wall time since its
+            // last update in 30 Hz frames: live, this frame's time on its first tick (the devices were read once for the
+            // frame; later ticks see no step); a Wine case's recorded dt ("frame_dt"); else a tick (0.5). A script carrying
+            // the recorded stick record replays the filter's output already.
+            if (moveFilter && (selfTest || !script || !script->stickRecord())) {
+                const bool live = !selfTest && !script && !autopilot && !replay;
+                const float tickDt = float(ou::game::kTickSeconds * 30.0);
+                const float fdt = live && n == first             ? float(dt * 30.0)
+                                  : !selfTest && script          ? script->frameDt(appTicks).value_or(tickDt)
+                                                                 : tickDt;
+                a.move = moveFilter->step(a.move, fdt);
+            }
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)

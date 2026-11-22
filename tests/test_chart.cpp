@@ -384,6 +384,10 @@ TEST(InputScriptMask, ContractMasks) {
     EXPECT_EQ(r.at(71).move.y, 1.0f);
     EXPECT_FALSE(r.at(74).jump);
     EXPECT_EQ(r.at(74).move.y, 1.0f);
+    // "frame_dt": the dt tru.exe's input update used per tick (shifted like the input); absent ticks: nullopt
+    const auto fd = ou::game::InputScript::parse(R"({"spawn":{"hold_ticks":60},"frame_dt":[[10,1.77]],"input":[[0,0],[10,1]]})");
+    EXPECT_FLOAT_EQ(fd.frameDt(70).value_or(0), 1.77f);
+    EXPECT_FALSE(fd.frameDt(71).has_value());
 }
 
 // tru.exe 0x483520's move stick pair filter: a key's 0 -> 1 step (over rate 0.4 x dt 0.5) holds the old output for one
