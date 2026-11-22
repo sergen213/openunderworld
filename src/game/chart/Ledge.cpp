@@ -302,9 +302,19 @@ bool onGround(ChartContext& ctx, const Cond& c) {
     }
 }
 
-// 0x765F40 (0x213): bool property 1705 of the current state (0x6EEF00 mode 2; absent = true), edge-coded.
-// [I] the main chart's state answers (the property is a full-body one).
-bool contextualAllowed(ChartContext& ctx, const Cond& c) { return edge(ctx, c, propB(ctx, 0x6A9, true)); }
+// 0x765F40 (0x213): bool property 1705 (callback 0x765F10: 0x6EEF00(0x6A9, &b, 2), absent = true), edge-coded.
+// 0x6EEDA0 mode 2 [O]: Lara's chart (player +0xF10) answers when its current state has properties of its own (state
+// +0x8 != 0); else the upper-body chart (+0xF14) does, falling back to Lara's when it lacks the property or holds it
+// with type 0x2B (property +0x2). 0x6E5C10 = the property in force on that chart [I: same lookup as ours].
+std::optional<bool> fullBodyProp(ChartContext& ctx, uint16_t id) {
+    const ChartRuntime& rt = ctx.chart();
+    const State* st = rt.data().state(rt.state());
+    const ChartRuntime* up = ctx.upperChart();
+    if ((!st || st->props.empty()) && up)
+        if (const Property* p = up->property(id); p && p->type != 0x2B) return up->charts().propBool(*p);
+    return rt.propBool(id);
+}
+bool contextualAllowed(ChartContext& ctx, const Cond& c) { return edge(ctx, c, fullBodyProp(ctx, 0x6A9).value_or(true)); }
 
 // 0x762250 (0x263): the class of the attached markup (+0xC94) by 0x782810.
 bool attachedClass(ChartContext& ctx, const Cond& c) { return markupClass(ctx, c, ctx.attachedMarkup()); }
