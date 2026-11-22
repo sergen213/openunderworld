@@ -407,7 +407,7 @@ int main(int argc, char** argv) {
     // VARS bases: pd player data, p instance, c chart, L Lara's main anim layer *(*(p+0x280)+0x14) (its +0x00..+0x24 is the
     // alignment record 0x43E480 / 0x43E370 write: +0 target position, +0x10 rotation, +0x20 end time, +0x24 mode), r the
     // layer's crossfade record *(L+0x7C) (0x441FB0: +0x50 outgoing root velocity, +0x60 incoming), k channel 0 *(L+0x80),
-    // s the stick controller *(*(0xFADFB0)+0xB0), a an absolute address (the offset is the address). Without :f the
+    // s the stick controller *(*(0xFADFB0)+0xB0), m the gameplay camera g_camera *(0xE80534), a an absolute address (the offset is the address). Without :f the
     // dword is printed as raw hex (e.g. a float's exact bits).
     Var vars[64]; int nv = 0;
     if (getenv("VARS")) { static char buf[4096]; strncpy(buf, getenv("VARS"), 4095); buf[4095] = 0;
@@ -567,7 +567,7 @@ int main(int argc, char** argv) {
             for (int i = 0; i < nv; ++i) {
                 char bc = vars[i].base;
                 DWORD base = bc == 'd' ? pd : bc == 'p' ? p : bc == 'c' ? c1 : bc == 'L' ? L : bc == 'r' ? (L ? rd32(L + 0x7C) : 0)
-                           : bc == 'k' ? (L ? rd32(L + 0x80) : 0) : bc == 's' ? sc : 0;
+                           : bc == 'k' ? (L ? rd32(L + 0x80) : 0) : bc == 's' ? sc : bc == 'm' ? rd32(0xE80534) : 0;
                 DWORD v = bc == 'a' ? rd32(vars[i].off) : base ? rd32(base + vars[i].off) : 0; // a: absolute address
                 if (vars[i].isF) { float fv; memcpy(&fv, &v, 4); printf("\tvar_%s=%g", vars[i].name, fv); }
                 else printf("\tvar_%s=%lx", vars[i].name, v);
