@@ -1605,7 +1605,7 @@ constexpr float kLedgeSide = -1; // a ledge's hang side: right of its direction 
 // is {kind, point source a1, a2, value, flags: bit 0 the value given, else the query's own (kind 1: +0x28, 13: +0x20,
 // 22: +0x24 = query state +0x50 / +0x4C / +0x54), bit 1 negated, bit 2 active} [O: decomp]. Point sources (0x723AB0):
 // 0 her root, 4 / 31 the hit (the ledge point), 9 / 10 the query's heading / right, 13 the target type's arc at the
-// hit time, 24 the hit less the query start and linear motion, 28 the query's base point, 33 the target markup's point
+// hit time, 24 the hit less the query start (22 / 23 its direction), 28 the query's base point, 33 the target markup's point
 // (holds). Kinds: 1 horizontal distance a1..a2 < v; 4 z(a2) - z(a1) <= v; 10 the ledge record's capsule round source
 // 13 holds the hit (0x725B50 -> 0x6FCB10); 11 a moving markup's angle (static: passes, 0x6EC2E0); 12 the arc's vertical
 // speed at the hit < v (no value: only for +0x2C bit 0x80); 13 hit time < v; 14 / 18 / 19 / 20 the ledge class (0x728A80:
@@ -1841,7 +1841,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     return glm::distance(e1, h) < glm::distance(e0, h) ? e1 : e0;
                 }
                 case 13: return arcAt(from, t);
-                case 24: return h - (q.start + q.v * t);
+                // 24: the same vector as 22 / 23 unnormalized (0x723AB0 cases 0x16..0x18 share it: the hit plus the
+                // candidate's +0x70 motion less 0x7233E0, the start plus that same motion) [O: decomp]
+                case 24: return h - q.start;
                 // 2 / 3: MarkUpBox_GetSegmentPos (0x5C39D0) of point 0 / of the candidate's segment (+0x34): the polyline's
                 // point, in the world [O: 0x723AB0 cases 2 / 3]
                 case 2: return m.points.front();
@@ -1858,7 +1860,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     // ch_beam_walk frame 120, beam 1031: source 21 = (-95.23, 55.60, -0.02) = source 4 (7905.50, 1754.03)
                     // - source 29 (8000.73, 1698.43)]; the other types (holds, poles, 0x80000 / 0x400000 / 0x10 / 0x4000000)
                     // are not ported
-                    const uint32_t mf = collision::markupFlags(m.type);
+                    const uint32_t mf = collision::mud(m);
                     const uint32_t k = mf & 0xFFFFFC10u;
                     const bool plain = !(mf & 0x8000) && (k == 0x800000 || k == 0x40000 || k == 0x20000 || k == 0x10000 ||
                                                           k == 0x1000000 || k == 0x20000000 || k == 0x40000000);
@@ -1992,7 +1994,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     vec3 a = point(c.a1), b = point(c.a2);
                     if (s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size()) {
                         const collision::Markup& am = col_.markup[size_t(s_.ledge)];
-                        const uint32_t k = collision::markupFlags(am.type) & 0xFFFFFC10u;
+                        const uint32_t k = collision::mud(am) & 0xFFFFFC10u;
                         const int as = std::clamp(s_.ledgeSeg, 0, std::max(0, int(am.points.size()) - 2));
                         if (am.points.size() >= 2 && (k == 0x40000000 || k == 0x40000 || k == 0x10000)) {
                             const vec3 nn = glm::cross(am.points[size_t(as) + 1] - am.points[size_t(as)], vec3(0, 0, 1));
@@ -2111,8 +2113,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                               glm::any(glm::lessThan(glm::max(xy(a), xy(b)) + kSweepPad, sLo))))
                 continue;
             const vec3 u = (b - a) / len;
-            // beams (strict): 0x6FE040's class-record insets, +0x98 at the first point, +0x9A at the last [O decomp]
-            const bool beam = m.type == 14 && q.strict;
+            // beams (strict): 0x6FE040's class-record insets, +0x98 at the first point, +0x9A at the last, skipped for a
+            // closed markup (MUD bit 0x4, `flags >> 2 & 1`) [O decomp]
+            const bool beam = m.type == 14 && q.strict && !(collision::mud(m) & 0x4u);
             const float inset = perch || climb ? 0.0f : kLedgeInset;
             const float lo = si == 0 ? (beam ? q.beamInset[0] : inset) : 0,
                         hi = len - (si == last ? (beam ? q.beamInset[1] : inset) : 0);

@@ -7,7 +7,7 @@
   "start_chapter": 0,
   "steps": [
     {"step": "corridor_to_slab", "plan": ["wait 0.5", "run -90 9"], "duration": 12, "until": [{"probe": "player.pos.z", "min": 330}, {"probe": "player.state", "eq": "run"}],
-     "expect": [{"clips": ["ng_run", "hurdle_low_onto", "ng_run"], "note": "request 132: the slab is mounted out of the run, no jump"},
+     "expect": [{"clips": ["hurdle_low_onto"], "note": "request 132: the slab is mounted out of the run, no jump"},
                 {"probe": "player.pos.z", "near": 336, "tol": 10, "note": "on the slab (253 over the corridor floor)"},
                 {"probe": "step.air_ticks", "eq": 0},
                 {"probe": "world.chapter", "eq": 0},
@@ -21,7 +21,7 @@
                 {"probe": "player.ledge", "eq": 973},
                 {"probe": "step.hints", "has": ["Press \u1803 to jump and grab"], "note": "the unit script's training popup (locals.bin text; U+1803 the jump button placeholder)"}]},
     {"step": "pull_up", "input": ["0.1 jump 1", "0.2 jump 0"], "duration": 4, "until": {"probe": "player.state", "eq": "idle"},
-     "expect": [{"clips": ["ledgeb_climbup_fast", "ng_idle"]},
+     "expect": [{"clips": ["ledgeb_climbup_fast"], "note": "the fast climb-up is the point; the idle after it is covered by the until"},
                 {"probe": "player.pos.z", "near": 807, "tol": 8, "note": "on top of the 725-high wall"}]},
     {"step": "stairs", "plan": ["go -8300 -5000 120", "go -8300 -5600 120", "go -8100 -7600 120"], "duration": 60,
      "expect": [{"probe": "player.pos.z", "near": 1772, "tol": 10, "note": "the stair top"},

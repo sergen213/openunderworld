@@ -92,7 +92,13 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
     const auto& lara = w.player().state();
     // Her motion this tick; the stick lands a tick late through StickRateFilter (tru.exe 0x483520) when it steps by more
     // than 0.2, so `go` / `engage` aim from where she will be a tick on (pos + this tick's motion).
-    const glm::vec2 motion = hasLastPos_ ? glm::vec2(lara.pos) - lastPos_ : glm::vec2(0);
+    // A unit switch re-expresses the world around the new unit (World::streamAround): her position jumps by the origin
+    // change, so a plan's points (written in the unit frame of the step) are shifted along with it.
+    const std::string& unitNow = w.currentUnit().data.name;
+    glm::vec2 jump = hasLastPos_ ? glm::vec2(lara.pos) - lastPos_ : glm::vec2(0);
+    if (hasLastPos_ && unitNow != lastUnit_ && glm::length(jump) > 200.0f) rebase_ += jump, jump = glm::vec2(0);
+    lastUnit_ = unitNow;
+    const glm::vec2 motion = jump;
     const float groundStep = glm::length(motion); // units this tick
     const float yawStep = hasLastPos_ ? std::remainder(lara.yaw - lastYaw_, glm::two_pi<float>()) : 0.0f; // turn this tick
     lastPos_ = glm::vec2(lara.pos), lastYaw_ = lara.yaw, hasLastPos_ = true;
@@ -134,7 +140,7 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
         int32_t uid = 0;
         size_t walkArg = 2;
         if (s.op == "go") {
-            to = {std::stof(s.args[0]), std::stof(s.args[1])};
+            to = glm::vec2(std::stof(s.args[0]), std::stof(s.args[1])) + rebase_;
         } else {
             uid = std::stoi(s.args[0]);
             if (const auto spot = w.bikeMountSpot(uid)) { // a parked motorcycle: to where Interact mounts it
@@ -177,7 +183,19 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
                          lara.pos.x, lara.pos.y, lara.pos.z, glm::degrees(lara.yaw));
             next(tick, nullptr);
         } else if (dist <= radius) {
-            centre();
+            // Another coarse point (radius >= 80) straight on (within 30 deg of where she is going: her motion, else her
+            // heading; aiming she strafes facing elsewhere): keep the stick and re-aim at once. Without the filter the
+            // release lasted one tick and she ran on; held (StickRateFilter, tru.exe 0x483520) and then left to land it
+            // would stop her for two. Fine placements and turns still stop her first.
+            bool chained = false;
+            if (!uid && radius >= 80.0f && step_ + 1 < steps_.size() && steps_[step_ + 1].op == "go" && steps_[step_ + 1].args.size() >= 2) {
+                const glm::vec2 nextTo = glm::vec2(std::stof(steps_[step_ + 1].args[0]), std::stof(steps_[step_ + 1].args[1])) + rebase_;
+                const glm::vec2 dn = nextTo - glm::vec2(lara.pos);
+                const float going = groundStep > 2.0f ? std::atan2(motion.y, motion.x) : lara.yaw;
+                chained = glm::length(dn) > 1.0f &&
+                          std::abs(std::remainder(std::atan2(dn.y, dn.x) - going, glm::two_pi<float>())) < glm::radians(30.0f);
+            }
+            if (!chained) centre();
             if (uid) next(tick, "reached the point without engaging");
             else next(tick, nullptr);
         } else if (t > kTimeout) {

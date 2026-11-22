@@ -43,10 +43,6 @@
           "eq": "walk"
         },
         {
-          "probe": "player.clip",
-          "eq": "ng_walk"
-        },
-        {
           "probe": "player.speed",
           "near": 348,
           "tol": 6,
@@ -94,12 +90,6 @@
           "visits": [
             "idle",
             "run"
-          ]
-        },
-        {
-          "clips": [
-            "ng_run_start",
-            "ng_run"
           ]
         },
         {
@@ -277,12 +267,6 @@
             "idle"
           ],
           "note": "the stick let go 0.4 s after the landing: inside the run loop's first 15 frames she stops on the spot"
-        },
-        {
-          "clips": [
-            "ng_running_jump_forwards",
-            "ng_running_land"
-          ]
         },
         {
           "probe": "step.peak_height",

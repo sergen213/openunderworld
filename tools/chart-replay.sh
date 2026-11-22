@@ -37,7 +37,9 @@ for c in $CASES; do
   b=$(basename "$c")
   # the Wine take the case JSON came from (a settle take has its own trace beside it), else the original take
   TSV=$(dirname "$J")/$b.tsv; [ -f "$TSV" ] || TSV=$W/chart/wine/$c.tsv
-  # the take's trace carries the stick record (var_stick): replay its pad instead of the mask's direction bits
+  # the take's recorded input (tools/chart-stick-record.py): the stick record (var_stick) replaces the mask's direction
+  # bits, var_inms gives the filter's per-frame dt (frame_dt), var_cam38 the camera heading the stick is read against
+  # per tick (camera_yaw)
   python3 "$HERE/tools/chart-stick-record.py" "$J" "$TSV" "$OUT/$b.case.json" 2>/dev/null && J=$OUT/$b.case.json
   args=$(python3 - "$J" "$TSV" <<'PY'
 import csv, json, sys

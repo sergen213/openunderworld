@@ -238,7 +238,7 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
             const uint32_t n = at<uint32_t>(*m, *pl);
             if (n < 2 || n > 1024) continue;
             collision::Markup k;
-            k.type = type, k.id = at<uint16_t>(*m, q + 0x2E);
+            k.type = type, k.id = at<uint16_t>(*m, q + 0x2E), k.mud = flags; // 0: collision::mud derives them
             for (uint32_t j = 0; j < n; ++j) k.points.push_back(vec(*m, *pl + 0x10 + 0x10 * j));
             // the box (+0x34 centre, +0x40 / +0x4C min / max corner from it), in the segment's space like the points
             k.centre = vec(*m, q + 0x34), k.boxMin = vec(*m, q + 0x40), k.boxMax = vec(*m, q + 0x4C);

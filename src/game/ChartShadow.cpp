@@ -346,7 +346,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const auto& mk = col.markup[size_t(m)];
         MarkupSlot r;
         r.markup = m;
-        r.flags = collision::markupFlags(mk.type);
+        r.flags = collision::mud(mk); // MarkUp +0x28
         r.live = !mk.velocity.empty();
         if (mk.points.empty()) return r;
         const int n = int(mk.points.size());
@@ -484,7 +484,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const auto& col = w->collision();
         for (size_t m = 0; m < col.markup.size(); ++m) {
             const auto& mk = col.markup[m];
-            if (!(collision::markupFlags(mk.type) & 0x40010000u) || mk.points.size() < 2) continue;
+            if (!(collision::mud(mk) & 0x40010000u) || mk.points.size() < 2) continue;
             float bd = 1e30f, bt = 0;
             int bs = 0;
             glm::vec3 bp{0};
