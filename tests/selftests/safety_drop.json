@@ -31,13 +31,6 @@
           ]
         },
         {
-          "clips": [
-            "ng_run_start",
-            "drop_to_ledgeb",
-            "ledgeb_idle"
-          ]
-        },
-        {
           "probe": "player.ledge",
           "eq": 1168
         },

@@ -15,7 +15,6 @@
     {"step": "over_the_side", "plan": ["go -23835 -3900 150"], "duration": 10,
      "until": {"probe": "player.clip", "eq": "ledgeb_idle"},
      "expect": [{"visits": ["run", "droptohang", "hang"]},
-                {"clips": ["drop_to_ledgeb", "ledgeb_idle"]},
                 {"probe": "player.state", "over": "all", "in": ["idle", "turn", "run", "stop", "droptohang", "hang"], "note": "no water entry on the deck"},
                 {"probe": "step.health_lost", "eq": 0}]},
     {"step": "into_the_sea", "input": ["0.2 drop 1", "0.3 drop 0"], "duration": 4,

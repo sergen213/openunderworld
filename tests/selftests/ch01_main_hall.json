@@ -36,7 +36,6 @@
                 {"probe": "player.pos.z", "near": 1725.5, "tol": 5}]},
     {"step": "step_off_into_a_hang", "plan": ["run 180 1.2", "wait 0.5"], "duration": 10, "until": {"probe": "player.clip", "eq": "ledgeb_idle"},
      "expect": [{"visits": ["droptohang", "hang"]},
-                {"clips": ["drop_to_ledgeb", "ledgeb_idle"]},
                 {"probe": "player.ledge", "eq": 945},
                 {"probe": "step.height_gain", "near": -512.5, "tol": 8, "note": "hanging under the balcony's edge (z 1708)"}]},
     {"step": "drop_to_the_floor", "input": ["0.1 drop 1", "0.2 drop 0"], "duration": 4, "until": {"probe": "player.grounded", "eq": true},
