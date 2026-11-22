@@ -368,6 +368,11 @@ public:
     // tests the instance velocity's z) [I: tru.exe's launch site is not found; Wine shows the velocity on the
     // flight state's first row].
     virtual void stateEntered(int /*from*/, int /*to*/) {}
+    // Player +0x31C: the move sweep's record (0x5D7FA0 -> 0x5D7A80), an index into Lara data +0x630's 0x84-byte
+    // records (count +0x62C); kept from the last sweep that found one (tru.exe never clears it), -1 none yet;
+    // nullopt: the context does not run the sweep. Byte +0x2C5: the sweep's jump-candidate query (0x710380) found one.
+    virtual std::optional<int> moveSweepRecord() const { return {}; }
+    virtual std::optional<bool> sweepCandidates() const { return {}; }
     // ---- end group J ----
     // ---- group CD ----
     // Climb / ladder / pillar / perch / pole / beam / wall hug / slide / climb-out reads (src/game/chart/Climb.cpp).
