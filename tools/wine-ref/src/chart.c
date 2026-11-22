@@ -401,6 +401,9 @@ int main(int argc, char** argv) {
     if (nsp < 3) hold = 0;
     int settle = getenv("SETTLE") ? atoi(getenv("SETTLE")) : 0; // free, unrecorded frames between the pin and tick 0
     float cf[4]; int cam = getenv("CAMFOLLOW") && sscanf(getenv("CAMFOLLOW"), "%f,%f,%f,%f", cf, cf + 1, cf + 2, cf + 3) == 4;
+    // CAMUNTIL=S: the CAMFOLLOW pin is released from the first recorded tick whose chart state is S (column var_campin
+    // 1 while pinned; stderr "camera released at tick N")
+    int camUntil = getenv("CAMUNTIL") ? atoi(getenv("CAMUNTIL")) : -1000, camOn = cam;
     // VARS bases: pd player data, p instance, c chart, L Lara's main anim layer *(*(p+0x280)+0x14) (its +0x00..+0x24 is the
     // alignment record 0x43E480 / 0x43E370 write: +0 target position, +0x10 rotation, +0x20 end time, +0x24 mode), r the
     // layer's crossfade record *(L+0x7C) (0x441FB0: +0x50 outgoing root velocity, +0x60 incoming), k channel 0 *(L+0x80),
@@ -441,16 +444,58 @@ int main(int argc, char** argv) {
         DWORD p = rd32(0xE7F094), pd = rd32(0xFADB58), c1 = pd ? rd32(pd + 0xF10) : 0, c2 = pd ? rd32(pd + 0xF14) : 0;
         if (t < -settle) { // holding at the spawn: position, velocity, heading, proxy capsule (+0x288 +0x640/+0x680/+0x6D0)
             float z[3] = {0, 0, 0}, cc[3] = {sp[0], sp[1], sp[2] + 315.4f}; DWORD q = rd32(p + 0x288);
+            // Stale copies (2026-11-22, l4_traprooms carry): after a pin to a distant spot the game walked her back toward
+            // where she stood before, ~316 units a tick at zero velocity; SCANAT found the old position still in the
+            // instance at +0xF0, +0x3E0, +0x600, +0x6A0, +0x6D0, +0x9C0, +0xCB0, +0xFA0. On the first held frame the
+            // offsets of SPAWNSYNC (hex list; SPAWNSYNC=1 uses those; unset / 0 off) that hold her current position are picked,
+            // and every held frame writes the spawn position there too.
+            static int syncN = -1; static DWORD syncOff[16];
+            if (syncN < 0) { syncN = 0; const char* e = getenv("SPAWNSYNC"); char buf[256];
+                strncpy(buf, e ? (strcmp(e, "1") ? e : "F0,3E0,600,6A0,6D0,9C0,CB0,FA0") : "0", 255); buf[255] = 0;
+                if (strcmp(buf, "0")) { float cur[3]; ReadProcessMemory(h, (void*)(p + 0x20), cur, 12, 0);
+                    for (char* tk = strtok(buf, ","); tk && syncN < 16; tk = strtok(0, ",")) { DWORD o = (DWORD)strtoul(tk, 0, 16); float v[3];
+                        ReadProcessMemory(h, (void*)(p + o), v, 12, 0);
+                        if (fabsf(v[0] - cur[0]) < 1 && fabsf(v[1] - cur[1]) < 1 && fabsf(v[2] - cur[2]) < 1) syncOff[syncN++] = o; }
+                    fprintf(stderr, "spawnsync:"); for (int i = 0; i < syncN; ++i) fprintf(stderr, " +%lx", syncOff[i]); fprintf(stderr, "\n"); } }
+            // SPAWNSCAN (opt-in, SPAWNSCAN=1; neither stopped the carry, 2026-11-22): on the first held frame (the game waits in the lockstep cave) every committed page is
+            // searched for her current x, y bits; each copy whose z lies within 600 of hers is moved with her (same z
+            // offset) every held frame. The carry's target sits outside the instance, proxy and player data.
+            static int scanN = -1; static DWORD scanAt[64]; static float scanDz[64];
+            if (scanN < 0) { scanN = 0;
+                if (getenv("SPAWNSCAN") && atoi(getenv("SPAWNSCAN"))) {
+                    float cur[3]; ReadProcessMemory(h, (void*)(p + 0x20), cur, 12, 0);
+                    MEMORY_BASIC_INFORMATION mi; unsigned char* a = 0; static unsigned char buf[1 << 20];
+                    while (VirtualQueryEx(h, a, &mi, sizeof mi) && (size_t)a < 0x7FFF0000u && scanN < 64) {
+                        if (mi.State == MEM_COMMIT && !(mi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) && (mi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
+                            for (size_t off = 0; off < mi.RegionSize; off += sizeof buf - 16) {
+                                SIZE_T n = mi.RegionSize - off < sizeof buf ? mi.RegionSize - off : sizeof buf, got = 0;
+                                ReadProcessMemory(h, (unsigned char*)mi.BaseAddress + off, buf, n, &got);
+                                for (SIZE_T i = 0; i + 12 <= got && scanN < 64; i += 4) {
+                                    if (memcmp(buf + i, cur, 8)) continue;
+                                    DWORD at = (DWORD)(size_t)((unsigned char*)mi.BaseAddress + off + i); float zz; memcpy(&zz, buf + i + 8, 4);
+                                    if (at == p + 0x20 || fabsf(zz - cur[2]) > 600) continue;
+                                    int dup = 0; for (int k = 0; k < scanN; ++k) dup |= scanAt[k] == at;
+                                    if (!dup) { scanAt[scanN] = at; scanDz[scanN++] = zz - cur[2]; } }
+                                if (n < sizeof buf) break; } }
+                        a = (unsigned char*)mi.BaseAddress + mi.RegionSize; }
+                    fprintf(stderr, "spawnscan:"); for (int i = 0; i < scanN; ++i) fprintf(stderr, " %08lx(%+.1f)", scanAt[i], scanDz[i]); fprintf(stderr, "\n"); } }
+            // PDRING=n (experimental): player data +0xF60.. holds a ring of n float4 positions (31: +0xF60..+0x1140, all =
+            // her position on a still frame, SCANAT 2026-11-22); write the spawn into all of them every held frame.
+            if (getenv("PDRING") && pd) { int nr = atoi(getenv("PDRING")); for (int i = 0; i < nr && i < 64; ++i) {
+                float v[3] = {sp[0], sp[1], sp[2]}; WriteProcessMemory(h, (void*)(size_t)(pd + 0xF60 + 0x10 * i), v, 12, 0); } }
             WriteProcessMemory(h, (void*)(p + 0x20), sp, 12, 0); WriteProcessMemory(h, (void*)(p + 0x2A0), z, 12, 0);
+            for (int i = 0; i < syncN; ++i) WriteProcessMemory(h, (void*)(p + syncOff[i]), sp, 12, 0);
+            for (int i = 0; i < scanN; ++i) { float v[3] = {sp[0], sp[1], sp[2] + scanDz[i]}; WriteProcessMemory(h, (void*)(size_t)scanAt[i], v, 12, 0); }
             if (nsp > 3) WriteProcessMemory(h, (void*)(p + 0x38), sp + 3, 4, 0);
             if (q) for (int o = 0; o < 3; ++o) WriteProcessMemory(h, (void*)(q + (o == 0 ? 0x640 : o == 1 ? 0x680 : 0x6D0)), cc, 12, 0);
         }
         if (god && pd) { float hp = 1000.0f; WriteProcessMemory(h, (void*)(pd + 0x628), &hp, 4, 0); }
-        if (cam) { DWORD cm = rd32(0xE80534); if (cm && p) { float lp[3]; ReadProcessMemory(h, (void*)(p + 0x20), lp, 12, 0);
+        if (camOn) { DWORD cm = rd32(0xE80534); if (cm && p) { float lp[3]; ReadProcessMemory(h, (void*)(p + 0x20), lp, 12, 0);
             float cp[3] = {lp[0] - cf[0] * cf[2], lp[1] - cf[1] * cf[2], lp[2] + cf[3]};
             WriteProcessMemory(h, (void*)(cm + 0x90), cp, 12, 0); WriteProcessMemory(h, (void*)(cm + 0x150), cp, 12, 0); } }
         if (t >= 0) {
             Chart a = readChart(c1, 0), b = readChart(c2, 1);
+            if (camOn && a.idx == camUntil) { camOn = 0; fprintf(stderr, "camera released at tick %d\n", t); }
             if (a.st != lastSt || (a.tr != lastTr && a.tr && rd16(a.tr) == a.idx)) stTicks = 0; else ++stTicks;
             lastSt = a.st; lastTr = a.tr;
             float s[7] = {0}; if (p) { ReadProcessMemory(h, (void*)(p + 0x20), s, 12, 0); ReadProcessMemory(h, (void*)(p + 0x2A0), s + 3, 12, 0); s[6] = rdf(p + 0x38); }
@@ -527,6 +572,7 @@ int main(int argc, char** argv) {
                 if (vars[i].isF) { float fv; memcpy(&fv, &v, 4); printf("\tvar_%s=%g", vars[i].name, fv); }
                 else printf("\tvar_%s=%lx", vars[i].name, v);
             }
+            if (cam && camUntil != -1000) printf("\tvar_campin=%d", camOn);
             if (getenv("STICKDUMP")) { // STICKDUMP=len: hex bytes of the stick controller *(*(0xFADFB0)+0xB0) from +0
                 int len = atoi(getenv("STICKDUMP")); if (len < 0 || len > 0x400) len = 0x1A0;
                 unsigned char b[0x400] = {0}; if (sc) ReadProcessMemory(h, (void*)sc, b, len, 0);
