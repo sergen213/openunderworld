@@ -211,9 +211,12 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const float t = std::atan2(moveIn.y, moveIn.x);
         return glm::vec2(std::cos(t), -std::sin(t));
     }
-    // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw (0x6EBA90).
+    // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw (0x6EBA90: the
+    // stick's angle (input record +0xC) on top of its base yaw; a neutral stick adds none [I], so the base, ours the
+    // yaw the stick reads against; atan2 of a zero stick was no yaw at all).
     std::optional<Aim> markupSearch(const MarkupProfile& p) const override {
-        const auto f = w->player().markupSearch(p, rt->mirrored(), std::atan2(stickWorld.y, stickWorld.x), stickLen > 0.0f);
+        const float yaw = stickLen > 0.0f ? std::atan2(stickWorld.y, stickWorld.x) : controlYaw();
+        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f);
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
         return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};
@@ -228,6 +231,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // (the input-sources table: circular in drive mode).
     std::optional<bool> onSlideFloor() const override {
         if (!driving) return std::nullopt;
+        // a launched flight off the slope (slope_jump*) is not on it: the jump leaves +0x11D0 cleared until a landing
+        // contact sets it again, else T12 (OnSlopeSlide) took her straight back into slope_landfront on the take-off
+        // frame (self-test ch20_yggdrasil_hall_slide) [I: which action clears +0x11D0 is not decoded]
+        if (launched && w->player().state().vel.z > 0) return false;
         return w->player().slideUnder();
     }
     // 0x6F2800 [I]: ours a weapon in hand (or being drawn) or the target lock held (input 33, Target Lock).
@@ -787,7 +794,8 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             }
             if (n > 0 && size_t(n) < sizeof row) { // the anim layer's blend parameters and the grip, as the Wine corpus logs them
                 const float c98 = chartAttached && *chartAttached ? chartAttached->param : 0.0f;
-                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_l8c=%g\tvar_l90=%g\tvar_c98=%g", animBlend.x, animBlend.y, c98);
+                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_l8c=%g\tvar_l90=%g\tvar_c98=%g\tvar_f0=%x", animBlend.x, animBlend.y, c98,
+                                   unsigned(rt->field(0xF0) & 0x3F));
             }
             trace << row << '\n';
         }
@@ -809,6 +817,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     float hangSide(int m, int seg, glm::vec3 point) const;
     void seedAttach();
     bool seedHold = false; // seedAttach placed her on a hang pose: hold it through the entered state's clip
+    float damagedFallStart = std::numeric_limits<float>::quiet_NaN(); // the +0x6DC whose fall already hurt her
     uint64_t driveClipStarts = ~0ull; // the chart's clip starts the drive last applied
     // PlayerDriver
     bool drive(World& world, Player& player, glm::vec2 move, const Actions& a, float dt) override;
@@ -1054,7 +1063,18 @@ void Shadow::Impl::seedAttach() {
     // A seeded ledge hang starts on its hang pose and holds it through the attach clip, as 0x741130's alignment target
     // (+0x1260) warps the S533 / S535 clip onto it (Wine ch_hang_*: the root stays at the pose while S533 plays; ours
     // drifted 59 out and 139 up by the clip's root motion, which flipped the camera clamp's side at tick 60) [O-runtime].
-    if (pm && hangGrip) {
+    // Only for a state that hangs from the ledge (its request's clip: ledgeb_ / ledgeu_ / trans_pose, the catch S533 /
+    // S535 and the hang family): a hurdle attach (S480 hurdle_ground_attach_mid_100, ch_beam_across_*) keeps her where the
+    // case starts (ChartB: moving her 210 to ledge 1009's hang pose lost the beam jump at t120).
+    const auto hangsFromLedge = [&] {
+        const auto* st = ch->player.state(enterState);
+        if (!st) return false;
+        const int r = st->request;
+        if (r < 0 || size_t(r) >= ch->requests.size()) return rt->chainHasAction(enterState, 420);
+        const std::string c = lower(ch->requests[size_t(r)].clip);
+        return c.starts_with("ledgeb_") || c.starts_with("ledgeu_") || c.starts_with("trans_pose");
+    };
+    if (pm && hangGrip && hangsFromLedge()) {
         const auto& p = col.markup[size_t(pick.markup)].points;
         const int seg = std::clamp(int(pick.param), 0, int(p.size()) - 2);
         const float t = (pick.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
@@ -1127,7 +1147,7 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     if (clip.starts_with("perch")) return GS::Perch;
     if (clip.starts_with("pillar")) return GS::Pillar;
     if (has("slide_stumble_off")) return GS::Land; // S821, the slide's run-out onto standable floor (legacy Land)
-    if (clip.starts_with("slope")) return GS::Slide; // slope_landfront / slope_transitionto / slope_slidefront (S801..S812)
+    if (clip.starts_with("slope") && motion != M::Air) return GS::Slide; // slope_landfront / _transitionto / _slidefront (S801..S812); off its end she falls
     if (clip.starts_with("dice")) return GS::Climb;
     if (has("drop_to_ledgeb")) return GS::DropToHang;
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
@@ -1149,6 +1169,7 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     // a take-off on the ground (ng_running_jump_forwards_lft, ng_standing_jump...) before run / walk: the running jump's
     // clip names hold "run" too
     if (clip.find("jump") != std::string::npos) return GS::JumpPrep;
+    if (has("running_stop") || has("walk_stop")) return GS::Stop; // S57 ng_running_stop (legacy State::Stop)
     if (clip.find("walk") != std::string::npos) return GS::Walk;
     if (clip.find("run") != std::string::npos || clip.find("sprint") != std::string::npos) return GS::Run;
     if (clip.find("turn") != std::string::npos) return GS::Turn;
@@ -1210,6 +1231,18 @@ void Shadow::Impl::launch(int from) {
         pm->setFlight(glm::vec3(right * (s.mirror ? -1.0f : 1.0f) * t.hangLeapSide, t.hangLeapVz));
     } else if (clip == "ledgeb_jump_up") {
         pm->setFlight(glm::vec3(0, 0, t.hangJumpUpVz));
+        if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
+    } else if (clip.starts_with("slope_jump")) {
+        // The slope jumps (S805 slope_jumpF; slope_jumpL / R / U from slope_transitionto): launch 0x7726D0 -> 0x76FFC0 with
+        // the state's jump query (prop 541) +8 / +0xC / +0x10 = right / forward / up per 30 Hz frame in her frame,
+        // unscaled, nothing of the slide's velocity kept: q3 (0, 69.53, 34.77), q40 (-48, 30, 53) left, q41 its mirror,
+        // q39 (0, 30, 70) [O chart + lara.drm query table; the values legacy State::Slide uses]
+        glm::vec3 q(0.0f, 69.53f, 34.77f);
+        if (clip == "slope_jumpl") q = glm::vec3(-48.0f, 30.0f, 53.0f);
+        else if (clip == "slope_jumpr") q = glm::vec3(48.0f, 30.0f, 53.0f);
+        else if (clip == "slope_jumpu") q = glm::vec3(0.0f, 30.0f, 70.0f);
+        const glm::vec3 r(f.y, -f.x, 0);
+        pm->setFlight((r * q.x + f * q.y + glm::vec3(0, 0, q.z)) * 30.0f);
         if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
     } else {
         launched = false;
@@ -1382,9 +1415,10 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         // clips' sideways root motion leaves it where it is, and the ledge end S448 stops her dead (ChartB, Wine 973:
         // +0xC98 0.907 stays until the stick press, so the end bit 642 holds and S458 -> S450) [O-runtime].
         d.slide = st == 459 || st == 432 || st == 441;
-        // the hang idles (prop 551 set: S445 / S447) run 0x708830's grip projection (its +0x47 flag) [I: the flag's
-        // source in 0x770ED0 is not decoded; S533 lacks 551 and does not call 0x708210, Wine ch_hang_snap_*]
-        d.follow = !d.slide && rt->propBool(551).value_or(false);
+        // 0x770ED0 fills 0x708830's record from the state's properties (ChartBlend's decode [O]): +0x47 = bool 418
+        // (0x1A2), +0x48 = bool 434 (0x1B2); 0x708210 runs with +0x48, or +0x47 without it. [I] +0x48's source, player
+        // +0x940 instead of the root displacement, is not modelled: both use the root here.
+        d.follow = !d.slide && (rt->propBool(418).value_or(false) || rt->propBool(434).value_or(false));
         // 0x770ED0 builds 0x708830's record from the state's properties [O]: 412 (0x19C) enum 0x298 -> +0x46 (the root
         // set on the attached point, 0x6FDC90; the beams' S873: 412 = 664), 418 (0x1A2) -> +0x47 (the grip projection
         // 0x708210). The offset is player +0xCE0..+0xCE8 (property 421 / 422 grab offsets, attachTick).
@@ -1444,6 +1478,15 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     d.coarse = coarse(d.motion, d.clip);
     player.drive(d, dt);
     lastRise = player.state().pos.z - z0;
+    // A landing hurts by the fall the chart measured (player +0x6DC - z, the store its entry actions 515 keep; the
+    // landing's damage tru.exe 0x75D080 -> 0x702FC0 -> 0x702F10 [O]): World::tickCombat reads PlayerState::fallHeight,
+    // which drive() clears every tick [I: the landing hook is ours' Air floor contact].
+    // Once per fall: +0x6DC stays until the next fall's entry action stores it, and the capsule can touch down again
+    // (a bounce, a slope) within the same fall [I].
+    if (player.driveLanded() && playerFloat(0x6DC) != damagedFallStart) {
+        player.setFallHeight(std::max(0.0f, fallDistance()));
+        damagedFallStart = playerFloat(0x6DC);
+    }
     // The air motion's capsule set her down on a floor that the chart's ground check missed (its ray masked off in the
     // flight, or an object floor): the landing still reaches the chart (event 455), else she slid on through the level
     // in the flight state (ch02_serpent_door: S294 for 700 ticks) [I].
@@ -1544,6 +1587,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
 void Shadow::enterAt(int state, uint64_t tick, std::optional<glm::vec4> at, float elapsed) {
     impl_->enterState = state, impl_->enterTick = tick, impl_->enterPose = at, impl_->enterElapsed = elapsed;
 }
+void Shadow::feedRng(std::vector<uint32_t> draws) { impl_->rngFeed.assign(draws.begin(), draws.end()); }
 Shadow::~Shadow() = default;
 PlayerDriver* Shadow::driver() { return impl_->driving ? impl_.get() : nullptr; }
 

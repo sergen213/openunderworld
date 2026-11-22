@@ -26,7 +26,7 @@
     {"step": "rappel_up", "input": ["0 interact 1", "0 forward 1"], "duration": 0.6,
      "expect": [{"clips": ["grapple_rappel_up"]},
                 {"probe": "grapple.rappel", "over": "all", "eq": true},
-                {"probe": "grapple.rope", "near": 990.6, "tol": 30, "note": "Interact + forward: 34.77 per frame = 1043 units/s [O +0x924]"},
+                {"probe": "grapple.rope", "near": 1034.1, "tol": 30, "note": "Interact + forward: 34.77 per frame = 1043 units/s [O +0x924]; Forward reaches the stick a frame after Interact through the move stick filter (0x483520, StickRateFilter): re-measured 1034.1 (994.6 before the filter, near 990.6)"},
                 {"probe": "step.height_gain", "min": 250, "max": 700}]},
     {"step": "leap_off", "input": ["0.5 jump 1", "0.6 jump 0"], "duration": 1.2,
      "expect": [{"visits": ["grapplerappel", "jump"]},

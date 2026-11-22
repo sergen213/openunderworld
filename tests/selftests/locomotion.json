@@ -110,9 +110,9 @@
         },
         {
           "probe": "step.horizontal",
-          "near": 940,
+          "near": 898,
           "tol": 25,
-          "note": "0.9 s from rest, ng_run_start from its frame 2 (request 716: start 6 - blend 4). tru.exe under Wine: 770 units 0.8 s and ~898 0.9 s after the key, her run state beginning 37..41 ms after it: ~945 [O Wine, docs/REFERENCE_COMPARISON.md M94]"
+          "note": "0.9 s after the key, from rest: tru.exe under Wine 770 units 0.8 s and ~898 0.9 s after the key [O Wine, docs/REFERENCE_COMPARISON.md M94]; the key reaches the stick a frame late through tru.exe's move stick filter (0x483520, StickRateFilter), as in those takes (ours 911; 932 before the filter against the old near 940 = run start + 0.9 s)"
         }
       ]
     },

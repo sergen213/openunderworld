@@ -68,6 +68,9 @@ PY
 )
   read -r unit sp n cs <<< "$args"
   extra=(); [ -n "${cs:-}" ] && extra=(--chart-state "$cs")
+  # tru.exe's recorded generator draws for the case (W/chart/wine/<family>/<case>.rng: one value per token, in call
+  # order; replay only, ou-game --chart-rng)
+  RNG=$W/chart/wine/$c.rng; [ -f "$RNG" ] && extra+=(--chart-rng "$RNG")
   timeout 300 "$BIN" --game-dir "$G" --level "pc-w\\$unit.drm" --spawn "$sp" --input-script "$J" "${mode[@]}" \
     --chart-trace "$OUT/$b.tsv" --frames "$n" --no-audio --no-movies --no-cinematics --renderer opengl \
     --width 320 --height 180 "${extra[@]}" > "$OUT/$b.log" 2>&1
