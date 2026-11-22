@@ -430,6 +430,32 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
     offset). lara.drm's 122 mode-3 patterns are those attaches and settles (pillar / perch / ladder / DICE / ledge
     reach settles, drop_to_*). Ours takes it as mode 1; the drive's attach blend and Player::familyPose stand in for
     these targets.
+  - **Mode-3 port plan** (ChartBlend, in progress; keep this list current so anyone can finish it):
+    - Mechanism: a ChartContext pending alignment = 0x437120 (V in her frame, Q as a yaw delta; V cleared when a mode-3
+      request starts, as 0x441FB0 does). The drive step carries it on the request's restart; `Player::drive` mode 3
+      moves her by V x each step's share of the window and turns her by the yaw delta by w. A helper for 0x702D20 aims
+      a kind-1 request at a target root and yaw at the clip's end, using the request clip's whole root translation
+      (0x435EC0) and turn (0x435F20).
+    - For kind-2 (graph-node) requests the AnimTarget functions take another path: 0x74DCD0's request kind 2 builds
+      an alignment object (0x74BF90 -> 0x6F0FF0), not 0x437120 [O decomp, not decoded further]. Kind-1 families come
+      first.
+    - Families, in order, with their setters and what each replaces:
+      1. Ladder (kind 1: S1061 drop_to_ladder, S1062 ladder_run_off_grab, S1063 ladder_attach_ground_top, S1066
+         ladder_attach_ground_bottom, S1117 ladder_attach_air_bad, S1255 lad_attach_down). Setter: action 230's
+         ladder class 602 / 611, 0x74DCD0 (target = the rung root from 0x7350B0 at +0x9F0, facing -normal), and
+         505's 0x74D980. Replaces: `stateEntered`'s attach blend and `Player::familyPose`'s rung choice for these
+         states. Status: not started.
+      2. Pillar (kind 1: S1185-S1187, S1189, S1230). Setter: 0x753F80 (PillarAttachGroundAnimTarget) and kin.
+         `seededOffset` (ChartDrive 6bd15fa) stays for seeded `--chart-state` starts. Status: not started.
+      3. Perch (kind 1: S827, S829-S832, S872). Setters among 0x753510 / 0x753A90 / 0x754370 / 0x750C90. Status:
+         not started.
+      4. Ledge (kind 2: ledgeb_attach_down, the reach settles, drop_to_ledgeb / _ledgeu, the runoffs; S277
+         ledge_mantle is kind 1). Setter: 0x741130. Waits on the node start (WineChartTrace maproom ANIM take) and on
+         0x6F0FF0. Status: blocked.
+      5. DICE (kind 2: R116 / R117 / R201 / R202). Same blockers as ledge. Status: blocked.
+    - Stays as it is: the holds after the attach (Motion::Hang, the 420 chains, the beam pin / grip follow), seeded
+      starts, legacy.
+    - Each family lands as its own commit, checked on its corpus family and the gate set against the same base.
 - **Family holds** (`Player::familyPose`): an attach to a ladder blends onto a rung (Traverse.cpp rungPos; the
   ladder_attach_ground_bottom attach takes the lowest rung, Wine lad_a234 rung 2 at z 940 [I]; else the rung nearest
   where the attach clip ends, rungAt = the 0x74DCD0 alignment [O]), facing the ladder; a pillar onto its axis at her
