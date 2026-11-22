@@ -443,3 +443,30 @@ she faces +y) the readback lands ~180° off her back, the hard ±90° clamp pick
 sideways offset from her root, and the pull-in leaves the camera ~100 from the pivot. Replays reproduce it with
 `World::pinCamera` (--camera-follow DX,DY,DIST,HEIGHT and a case's camera_follow), applied at the start of the orbit
 update from her previous position, after the chart has read the last camera.
+
+**Look-idle clock at a reset (D + data).** The reset (vt 0x8 0x600C10 / vt 0xC 0x600E30 → 0x5FF7F0; vt 0x6C / 0x74
+0x602290) sets +0x1E4 = settings +0xC4 + +0xC8 = 5 + 2 s: the full look-idle weight, so forces and a markup's level
+camera record act from the first frame after a spawn or teleport. Ours started it at 0 (5 s of no forces).
+
+**Unpinned takes (WineChartTrace, `<family>/*_freecam`, tru.exe's own camera, CAMDUMP every tick).** Replayed with the
+camera seeded at the case's `camera_at_key` (`World::seedCamera`), error after the key tick, ours tick t + 1 vs
+Wine t (`openunderworld-work/tcam/camcmp.py`):
+
+| case | camera position error mean / max | look direction error mean / max | note |
+|---|---|---|---|
+| ledge/hang_grab_freecam (bedroom 973) | 45.8 / 219.6 | 1.56° / 5.4° | ledge 973's record: 2 points, 100°/s, distance driven at 2528.45 /s, force 5 × 20 |
+| ledge/hang_shimmy_left_freecam | 53.4 / 220.5 | 2.54° / 5.1° | |
+| ledge/hang_shimmy_right_freecam | 20.6 / 225.9 | 0.88° / 5.2° | |
+| ledge/hang_pullup_freecam | 175.1 / 592.0 | 6.72° / 15.5° | the climb up (S456) and standing after it |
+| pole/tr_pole_grab_freecam | 415.3 / 481.3 | 2.10° / 2.8° | tru.exe's distance stays ~1900, ours returns to 1264.22 (mode 9 has no command 2) [U] |
+| pole/tr_pole_swing_freecam | 422.1 / 719.9 | 3.20° / 4.8° | as above |
+| pole/tr_pole_hoh_right_freecam | 302.6 / 749.2 | 8.86° / 20.5° | |
+| chimney/jh_stick_jump_wall_freecam | 126.3 / 263.2 | 5.58° / 6.5° | |
+| ledge/ch_hang_left_hold_freecam (chapel 1063) | 1140.8 / 1445.9 | 18.79° / 28.3° | no record on 1063; tru.exe holds ~590 from the pivot, 23° down |
+| ledge/ch_hang_right_hold_freecam | 1014.5 / 1837.9 | 66.20° / 79.6° | tru.exe S451 (push 2004) where ours runs S431 |
+| pillar/t1194_climb_up_t1_freecam | 574.5 / 907.3 | 26.40° / 36.3° | |
+
+Before the reset fix the bedroom hang takes were 20° off (the record waited 5 s). The 0x195 class from each camera
+(markup frame with the take's held key) agrees on every held tick of every take but tr_pole_hoh_right (224 / 260).
+[U]: the chapel and pillar placements (tru.exe's camera much nearer the pivot: a collider or camera-mask difference, or
+the pushes of actions 2001..2005, which ours does not port), the pole distance.
