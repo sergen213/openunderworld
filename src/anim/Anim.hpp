@@ -98,13 +98,15 @@ void blendPoses(std::span<const LocalTransform> a, std::span<const LocalTransfor
 double syncedStartTime(const Clip& from, double fromTime, const Clip& to);
 // The anim layer's blend (tru.exe 0x4428A0 copies the pattern's +0x17 to layer +0xF9; every tick 0x4385A0 -> 0x438520
 // -> 0x437BA0 turns the layer's parameters +0x8C (x) / +0x90 (y) into one weight per sub-layer, +0x84[i], sub-layer i
-// playing the pattern's i-th anim). Types >= 0x14 call the layer's weight callback +0xDC (not ported: weights {1, 0..}).
+// playing the pattern's i-th anim). Types >= 0x14 call the layer's weight callback +0xDC: Lara's 0x7162C0 maps 21 / 22
+// to 0x437BA0's 6 / 5, 23 to a 3 x 3 grid (0x6EAAA0: x, y in [-1, 1], the beam walk R192 / ng_walk R738) and 30 to a
+// 3 x 2 x 2 box (0x7055F0, z = +0x94); 24..29 and 31..35 are not ported (weights {1, 0..}) [U].
 // Exact port of 0x437BA0 [O]: 0 / 1 / other: {1, 0..}; 2, 8: {1-x, x}; 3: {(1-x)(1-y), x(1-y), y}; 4: bilinear
 // {(1-x)(1-y), x(1-y), (1-x)y, xy}; 5: a 3 x 2 grid, x in [-1, 1] over the columns {-1, 0, +1}, y in [0, 1] over the
 // rows; 6: {-x, 1+x, 0} for x < 0 else {0, 1-x, x}; 7: {1+x, -x, 0} for x < 0 else {1-x, 0, x}; 9: a diamond, |x|+|y|
 // clamped to 1: {1-|x|-|y|, max(-x,0), max(x,0), max(-y,0), max(y,0)}; 10: a 3 x 3 grid (y doubled), 11: a 3 + 1
 // strip. `count` = the sub-layers (the pattern's anims); slots beyond it are dropped, missing ones are 0.
-std::vector<float> layerBlendWeights(uint8_t type, float x, float y, size_t count);
+std::vector<float> layerBlendWeights(uint8_t type, float x, float y, size_t count, float z = 0);
 // Types whose sub-layer rates follow the weights (0x433360 after 0x437BA0: types 2, 3, 4, 9): rate_i = keys_i /
 // sum_j w_j keys_j, so every sub-layer runs one cycle in the weighted mean length. Others keep the rates 0x4428A0
 // gave them (keys_i / keys_0, sub-layer 0 at 1) [O].

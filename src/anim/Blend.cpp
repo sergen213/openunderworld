@@ -45,7 +45,7 @@ double syncedStartTime(const Clip& from, double fromTime, const Clip& to) {
     return phase * dt;
 }
 
-std::vector<float> layerBlendWeights(uint8_t type, float x, float y, size_t count) {
+std::vector<float> layerBlendWeights(uint8_t type, float x, float y, size_t count, float z) {
     // tru.exe 0x437BA0, case by case; the slots each case writes (0x433330 zeroes the rest).
     std::vector<float> w;
     switch (type) {
@@ -88,7 +88,33 @@ std::vector<float> layerBlendWeights(uint8_t type, float x, float y, size_t coun
             w = {0, (1 - y) * (1 - f), (1 - y) * f, y};
         } else w = {0, 0, 1 - y, y};
         break;
-    default: w = {1}; break; // 0, 1, 12..0x13; >= 0x14: the layer's callback +0xDC [U]
+    // >= 0x14: the layer's callback +0xDC; the player installs 0x7162C0 (on her four layers, 0x433B50), which switches
+    // on type - 0x15 (table 0x7163EC) [O]: 21 = 0x437BA0's 6, 22 = its 5, 23 = 0x6EAAA0, 30 = 0x7055F0 ported; 24..29 /
+    // 31..35 (0x6EABA0, 0x6EAC80, ...) are not [U].
+    case 21: return layerBlendWeights(6, x, y, count);
+    case 22: return layerBlendWeights(5, x, y, count);
+    case 23: {
+        // 0x6EAAA0: a 3 x 3 grid (index = row x 3 + column), x over the columns {-1, 0, +1}, y over the rows {-1, 0, +1}
+        // (R192 bbeam walk: {unbalance_walk_left, walk, unbalance_walk_right} per row; x = y = 0 -> bbeam_walk)
+        w.assign(9, 0.0f);
+        const float f = x >= 0 ? x : x + 1, g = y >= 0 ? y : y + 1;
+        const size_t c = (x >= 0 ? 1 : 0) + (y >= 0 ? 3 : 0);
+        w[c] = (1 - g) * (1 - f), w[c + 1] = (1 - g) * f, w[c + 3] = (1 - f) * g, w[c + 4] = g * f;
+        break;
+    }
+    case 30: {
+        // 0x7055F0: a 3 x 2 x 2 box over x in [-1, 1], y = +0x90 and z = +0x94 clamped to [0, 1] (DICE / pillar attach)
+        w.assign(12, 0.0f);
+        const float b = std::clamp(y, 0.0f, 1.0f), c = std::clamp(z, 0.0f, 1.0f);
+        const bool neg = x < 0;
+        const float f = neg ? x + 1 : x;
+        const size_t o = neg ? 1 : 0;
+        const float a0 = (1 - b) * f, a1 = (1 - f) * (1 - b), a3 = b * f, a4 = b * (1 - f);
+        w[o] = (1 - c) * a0, w[o + 1] = (1 - c) * a1, w[o + 3] = (1 - c) * a3, w[o + 4] = (1 - c) * a4;
+        w[o + 6] = c * a0, w[o + 7] = c * a1, w[o + 9] = c * a3, w[o + 10] = c * a4;
+        break;
+    }
+    default: w = {1}; break; // 0, 1, 12..0x13, the unported callback types
     }
     w.resize(count, 0.0f);
     return w;
