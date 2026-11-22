@@ -3435,6 +3435,7 @@ int main(int argc, char** argv) {
             // last update in 30 Hz frames: live, this frame's time on its first tick (the devices were read once for the
             // frame; later ticks see no step); a Wine case's recorded dt ("frame_dt"); else a tick (0.5). A script carrying
             // the recorded stick record replays the filter's output already.
+            const glm::vec2 keyMove = a.move; // before the filter: the trace's inputs column (the keys, as Wine's)
             if (moveFilter && (selfTest || !script || !script->stickRecord())) {
                 const bool live = !selfTest && !script && !autopilot && !replay;
                 const float tickDt = float(ou::game::kTickSeconds * 30.0);
@@ -3446,6 +3447,8 @@ int main(int argc, char** argv) {
             // A take's recorded camera heading ("camera_yaw"): tru.exe's free camera turns during the take and the stick
             // is read against it, so the pin follows it per tick (harness only; the camera view itself stays pinned).
             if (script && script->cameraYawRecord()) world->pinStickYaw(script->cameraYaw(appTicks));
+            if (script) // and its camera matrix rows ("camera_rows"): the chart's camera axes (stick class 0x6F89A0)
+                if (auto rows = script->cameraRows(appTicks)) world->pinCameraRows(rows);
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)
@@ -3516,7 +3519,7 @@ int main(int argc, char** argv) {
             else
                 ou::game::setSeaSwell(nullptr, nullptr);
             world->tick(a);
-            if (chartShadow && !menus.mainMenu()) chartShadow->tick(*world, a);
+            if (chartShadow && !menus.mainMenu()) chartShadow->tick(*world, a, keyMove);
             // A death restored the checkpoint save: the level reload stops every sound (tru.exe 0x5DAB40 -> 0x593D10) and
             // the music / reverb are the save's again, as after a load.
             if (world->respawns() != respawnsBefore) resetAudio("respawn"), resumeAudio("respawn");

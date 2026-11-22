@@ -398,6 +398,14 @@ TEST(InputScriptMask, ContractMasks) {
     EXPECT_FLOAT_EQ(cy.cameraYaw(80).value_or(0), -3.0f);
     EXPECT_FLOAT_EQ(cy.cameraYaw(500).value_or(0), -3.0f);
     EXPECT_FALSE(fd.cameraYawRecord());
+    // "camera_rows": tru's camera rows right / down / look per tick (shifted like the input), each holding until the next
+    const auto cr = ou::game::InputScript::parse(
+        R"({"spawn":{"hold_ticks":60},"camera_rows":[[0,0,1,0,-0.3,0,-0.95,-0.95,0,0.3],[20,1,0,0,0,0,-1,0,1,0]],"input":[[0,0]]})");
+    ASSERT_TRUE(cr.cameraRows(70).has_value());
+    EXPECT_FLOAT_EQ((*cr.cameraRows(70))[0].y, 1.0f);
+    EXPECT_FLOAT_EQ((*cr.cameraRows(70))[2].x, -0.95f);
+    EXPECT_FLOAT_EQ((*cr.cameraRows(80))[0].x, 1.0f);
+    EXPECT_FALSE(fd.cameraRows(70).has_value());
 }
 
 // tru.exe 0x483520's move stick pair filter: a key's 0 -> 1 step (over rate 0.4 x dt 0.5) holds the old output for one
