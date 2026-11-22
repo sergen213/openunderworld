@@ -839,8 +839,8 @@ private:
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
     // A ledge (markup 1) to jump onto: segment point, hang side, and the jump query frame it is met at.
-    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; uint16_t resultFlags = 0, resultUncertain = 0; };
-    // entry: the class record entry that passed (-1: the default checks); resultFlags: the result record's bits for the
+    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; uint16_t resultFlags = 0, resultUncertain = 0; vec3 from{0}; };
+    // from: the arc start (the hit's target type) the hit time belongs to; entry: the class record entry that passed (-1: the default checks); resultFlags: the result record's bits for the
     // hit (JumpQuery::result: candidate +0xA0 word 0, which becomes player +0xAC0); resultUncertain: the bits of result
     // entries whose tests ours cannot evaluate (strict searches; the rest of the answer stands)
     JumpTarget hangJumpTarget(int kind) const; // startHangJump's target; markup -1 = none
@@ -972,7 +972,13 @@ private:
     void pillar(vec2 move, vec2 stick, bool jumpPressed, bool dropPressed, float dt); // stick: camera-relative
     bool tryPerch(bool fromAir);
     void perch(vec2 move, bool jumpPressed, bool dropPressed, float dt);
-    bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
+    bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74B920 == 1)
+    int shelfClass(int markup, int seg, float t) const; // 0x74B920: 0 no wall over the top, 1 a shelf, 2 neither
+    // The ledge class table (0x728650) on a candidate: hit h on markup / seg (`along` its distance from the segment start),
+    // out the hang side, dir for kind 2's facing, and its query arc (start, launch velocity per 30 Hz frame, gravity,
+    // hit time); nullopt when an entry ours cannot evaluate decides it.
+    struct LedgeArc { vec3 from{0}, v{0}; float gravity = 0, t = 0; };
+    std::optional<int> ledgeClassTable(int markup, int seg, float along, vec3 h, vec2 out, vec2 dir, const LedgeArc& arc) const;
     bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
     void startHangToWallHug();                        // up onto it from the hang (clearance class 8)
     void wallHug(vec2 move, bool jumpPressed, bool dropPressed, float dt);
