@@ -16,6 +16,28 @@ def seq(rs):
     for t, st, *_ in rs:
         if st != last: s.append((t, st)); last = st
     return s
+# Hold-state id ranges (attached families move by alignment, not by the recorded velocity): ledge hangs, poles, perch /
+# pillar, beams, ladders.
+HOLDS = [(420, 470), (530, 545), (610, 700), (820, 880), (880, 960), (1050, 1100), (1180, 1240)]
+def drag_tick(p):
+    """A mechanical drag in the Wine take (the harness carrying her): >= 3 consecutive ticks whose horizontal step is
+    over 40 units and over 3 x the recorded horizontal speed / 60 + 20, outside hold states. The first such tick, or None."""
+    prev, run, first = None, 0, None
+    for r in csv.reader(open(p), delimiter='\t'):
+        if not r or r[0] == 'tick': continue
+        try: t, st, x, y, vx, vy = int(r[0]), int(r[1]), float(r[5]), float(r[6]), float(r[8]), float(r[9])
+        except (ValueError, IndexError): continue
+        if prev is not None:
+            step = math.hypot(x - prev[0], y - prev[1])
+            hold = any(a <= st < b for a, b in HOLDS)
+            if not hold and step > 40 and step > 3 * math.hypot(vx, vy) / 60 + 20:
+                run += 1
+                if run == 1: first = t
+                if run >= 3: return first
+            else:
+                run = 0
+        prev = (x, y)
+    return None
 def case(c):
     for d in ('wine_startpos', 'wine_settle', 'wine'):
         p = f'{W}/chart/{d}/{c}.case.json'
@@ -61,12 +83,17 @@ def compare(rundir, c):
     pe = f'rel mean {sum(rel)/len(rel):.0f} max {max(rel):.0f} end {rel[-1]:.0f} (raw max {max(errs):.0f})' if errs else ''
     ye = f'{max(yerr):.0f}' if yerr else ''
     full = k == len(ws) and len(os_) == len(ws)
+    # an unmarked mechanical drag before any invalid_from: not a full match until the case JSON marks it (invalid_from)
+    # or clears it ("drag_checked": true)
+    dt = None if j.get('drag_checked') else drag_tick(wt)
+    drag = dt is not None and (inv is None or dt < inv)
     if inv is not None:  # a harness-truncated take: never a full match, reported on its own
         span = f'ticks {inv}..{j["invalid_until"]} skipped' if j.get('invalid_until') is not None else f'to tick {inv}'
         res = f'match {span} (truncated)' if full else f'{k}/{len(ws)} {span} (truncated)'
     else:
-        res = 'MATCH' if full else f'{k}/{len(ws)}'
-    return f'| {c} | {res} (dt max {max(timing) if timing else 0}) | {div} | {pe} | {ye} |', ws, os_, full, inv is not None
+        res = ('match (drag)' if drag else 'MATCH') if full else f'{k}/{len(ws)}'
+    if drag: res += f' WARNING unmarked drag at tick {dt}'
+    return f'| {c} | {res} (dt max {max(timing) if timing else 0}) | {div} | {pe} | {ye} |', ws, os_, full and not drag, inv is not None
 if __name__ == '__main__':
     d = sys.argv[1]
     print('| case | states (tick slip) | first divergence | position error (units) | yaw err max (deg) |')
