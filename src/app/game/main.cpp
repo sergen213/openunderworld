@@ -3787,6 +3787,8 @@ int main(int argc, char** argv) {
             out << report.dump(2) << "\n";
             if (!out) std::fprintf(stderr, "ou-game: cannot write %s\n", opt.selfTestReport.string().c_str());
             else std::fprintf(stderr, "ou-game: self-test report %s\n", opt.selfTestReport.string().c_str());
+            // the chart's tallies (unported conditions / actions), as a --frames run prints them at its end
+            if (chartShadow) std::fprintf(stderr, "ou-game: %s\n", chartShadow->summary().c_str());
             exitCode = selfTest->passed() && out ? 0 : 1;
             break;
         }

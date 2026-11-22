@@ -10,8 +10,7 @@
 // Group A ids not ported (the game state they read is not modelled; they stay unregistered and count as unported):
 //   0x12E / 0x131 foot-lock controllers (+0xF20.., their lock bytes +0x10A / +0x10B set through 0x7000F0 by anim events),
 //   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
-//   combo move history, 0x208 the stairs
-//   byte +0x11D4, 0x20B the wall-jump
+//   combo move history, 0x20B the wall-jump
 //   anticipation rays (0x759260, n = 0 frames), 0x20D the combat component flags +0x1FC bit 11.
 #include "game/Chart.hpp"
 #include "game/Game.hpp"
@@ -356,6 +355,18 @@ bool envProbeClass32(ChartContext& ctx, const Cond& c) {
     const auto s = freshSweepField(ctx, 0x32);
     if (!s) return ctx.chart().unported(c);
     return *s == ctx.chart().value(c);
+}
+
+// 0x208 (0x7635F0, PSCCF_OnStairs): byte Lara +0x11D4 (ChartContext::onStairs: the ground check 0x5DCE20's floor hit
+// through 0x5D3AF0(hit, 0x100, 0x20), a terrain face's client flags 0x0100); 0 -> clear, 1 -> set, other -> false [O].
+bool onStairs(ChartContext& ctx, const Cond& c) {
+    const auto s = ctx.onStairs();
+    if (!s) return ctx.chart().unported(c);
+    switch (mode(c)) {
+    case 0: return !*s;
+    case 1: return *s;
+    default: return false;
+    }
 }
 
 // 0x1FC (0x764940): byte agent +0x345; 0 -> clear, 1 -> set.
@@ -1000,6 +1011,7 @@ void registerGround(Registry& player, Registry&) {
     player.condition(0x1EA, envProbeClass, "PSCCF_EnvProbeClass", g);
     player.condition(0x1EF, envProbeClassB, "PSCCF_EnvProbeClassB", g);
     player.condition(0x1FC, agentFlag345, "PSCCF_AgentFlag345", g);
+    player.condition(0x208, onStairs, "PSCCF_OnStairs", g);
     player.condition(0x1FD, onSlopeSlide, "PSCCF_OnSlopeSlide", g);
     player.condition(0x203, wallJumpAttach, "PSCCF_WallJumpAttach", g);
     player.condition(0x205, canSprint, "CanSprint", g);

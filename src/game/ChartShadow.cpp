@@ -110,7 +110,7 @@ unsigned inputMask(const Actions& a) {
 
 // The chart's view of World / Player: input actions timed here from the same Actions the world got.
 struct Shadow::Impl : ChartContext, PlayerDriver {
-    enum Button { Jump, Crouch, Sprint, Interact, Grapple, ManualAim, Grenade, ReAim, kButtons };
+    enum Button { Jump, Crouch, Sprint, Interact, Grapple, ManualAim, Grenade, ReAim, Shoot, TargetLock, kButtons };
     std::array<ButtonTime, kButtons> buttons;
     // Seconds since each button's last press (never pressed: as long ago as tru.exe's zeroed press time can be).
     std::array<float, kButtons> sincePressed = [] { std::array<float, kButtons> t; t.fill(1e9f); return t; }();
@@ -131,8 +131,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         switch (id) { // generalbank action map DTP 47 (docs/GAMEPLAY.md "Button timing", "Rope inputs", Melee.cpp)
         // 136 (context 8) and 115 (context 9) share control 0 with 52, 135 (context 12) and 72 (context 19) control 1
         // with 50 (am.txt A0 / A1 / A86 / A126) [O]; contexts not modelled [I].
-        case 52: case 47: case 136: case 115: return Jump;
-        case 50: case 51: case 101: case 135: case 72: return Crouch;
+        // 119 / 118 (context 10): control 0 (button 3, Jump) / control 1 (button 2, Crouch) (am.txt A77 / A76) [O].
+        case 52: case 47: case 136: case 115: case 119: return Jump;
+        case 50: case 51: case 101: case 135: case 72: case 118: return Crouch;
         case 42: return Sprint;
         // 112 (context 14), 34 (context 17), 79 (context 0): control 2 = virtual button 0, Interact
         // (openunderworld-work/gameplaygoal/melee/am.txt A89 / A103 / A119) [O]; the contexts are not modelled [I].
@@ -140,6 +141,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         case 46: return Grapple;
         case 25: case 37: return ManualAim;
         case 102: return Grenade;
+        // 33 (context 17): control 4 = button 5, Shoot (context 18: control 46 = button 21, the vehicle's; ours folds
+        // contexts); 35 (context 17): control 22 = button 4, Target Lock (am.txt A100 / A102 / A111; control records B4 /
+        // B22 / B46 code 5 / 4 / 0x15) [O]; contexts not modelled [I].
+        case 33: return Shoot;
+        case 35: return TargetLock;
         // 28 (context 0): control 29 = virtual button 8 (ours "recenter", Q / pad left stick click), second control 9 =
         // virtual button 9 (Manual Aim) (am.txt A118) [O].
         case 28: return ReAim;
@@ -330,6 +336,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // actions 503 / 510 set 0x49 / 0x81 / 0xC9 and clear 0x48 while she rises, Jump.cpp's CollisionMask effects); a
     // skipped check drops her support (0x5D76B0: +0x610 = 0), posts nothing and finds no floor.
     uint32_t collisionMask = 0x48;
+    std::optional<bool> stairsByte = false; // Lara +0x11D4 (ChartContext::onStairs), kept while the check is skipped
     void groundCheck(const Charts& c) {
         if (!(collisionMask & 8)) {
             ground = {}, supportBody = false;
@@ -339,7 +346,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const glm::vec3 feet = w->player().state().pos;
         ground = w->player().groundCheck(feet, half, supportBody ? half : 1.0f);
         supportBody = ground.floor && ground.onBody;
+        stairsByte = ground.stairs;
     }
+    std::optional<bool> onStairs() const override { return stairsByte; }
     const PlayerState* player() const override { return &w->player().state(); }
     const World* world() const override { return w; }
 
@@ -660,7 +669,8 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     void inputs(const World& world, const Actions& a, glm::vec2 stickW, float stickL) {
         w = &world;
         const float dt = float(kTickSeconds); // [I] real time: the chart's timeMult ignores the combat time scale here
-        const bool down[kButtons] = {a.jump, a.drop, a.sprint, a.interact, a.grapple, a.manualAim, a.grenade, a.recenter || a.manualAim};
+        const bool down[kButtons] = {a.jump, a.drop, a.sprint, a.interact, a.grapple, a.manualAim, a.grenade, a.recenter || a.manualAim,
+                                     a.fire, a.aim};
         for (size_t i = 0; i < kButtons; ++i) {
             buttons[i].update(down[i], dt, 0.0f);
             sincePressed[i] = buttons[i].pressed() ? 0.0f : sincePressed[i] + dt;

@@ -512,6 +512,8 @@ Player::GroundCheck Player::groundCheck(vec3 feet, float above, float below) con
         r.steep = floorKind(*g) == Floor::Steep;
         r.floor = !r.steep;
         r.onBody = g->dynamic >= 0;
+        if (r.onBody) r.stairs = std::nullopt; // an object's own flags & 0x20 [U]
+        else r.stairs = g->face < col_.faces.size() && (col_.faces[g->face].clientFlags & 0x0100) != 0;
     }
     return r;
 }
