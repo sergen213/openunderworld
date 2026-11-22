@@ -448,6 +448,7 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     if (!costume.empty() || !base.data.playerObject.empty()) wear(costume);
     for (const auto& p : pending_) streamer_->cancel(p.name);
     pending_.clear();
+    script_.resetWeather(); // tru.exe 0x539A60 on every level load; the new units' scripts set theirs (a save restores its own)
     units_.clear();
     units_.push_back(std::move(base));
     current_ = 0;

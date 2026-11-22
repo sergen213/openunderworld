@@ -577,6 +577,9 @@ TEST(ScriptRealData, ResidentUnitScriptWaitsForItsUnit) {
     EXPECT_EQ(r.weather().rain, 0);
     r.setUnits({loaded, resident});
     EXPECT_EQ(r.weather().rain, 20);
+    r.resetWeather(); // the next level load (World::enterUnit, tru.exe 0x539A60): the prologue's rain ends there
+    EXPECT_EQ(r.weather().rain, 0);
+    EXPECT_EQ(r.weather().lightningMin, 20);
 }
 
 TEST(ScriptRealData, BedroomSwitchOpensHouseDoor) {

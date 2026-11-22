@@ -1256,10 +1256,12 @@ struct EffectsView {
     // Placed instances whose object list has event-0x2E records, per loaded unit (only rainfx / rainfx_mex in the data;
     // l6_ship_exterior places rainfx 7719): rain starting runs them (tru.exe 0x53AB30 -> 0x5BA000 on every instance).
     std::map<std::string, std::vector<std::tuple<std::shared_ptr<const ou::fx::ObjectFx>, glm::mat4, int32_t>>> rainIntros;
+    uint64_t weatherLevel = 0; // World::levelLoads() the drops / flakes belong to
     // Returns music variable 2 as the weather wrote it (fx::Weather::musicVar) for the script's music variables.
     std::optional<uint8_t> weatherTick(const ou::game::World& w, const ou::render::Camera& cam) {
         if (!library || w.units().empty()) return std::nullopt;
         const auto& unit = w.currentUnit().data;
+        if (w.levelLoads() != weatherLevel) weatherLevel = w.levelLoads(), weather.clear(); // 0x53CAF0 -> 0x539A60 / 0x52DDD0
         if (const std::string name = unit.weatherObject.empty() ? "rainfx" : unit.weatherObject; name != weatherObject)
             weatherObject = name, weatherDef = library->weather(name), weatherFx = library->get(name);
         const auto& s = w.script().weather();

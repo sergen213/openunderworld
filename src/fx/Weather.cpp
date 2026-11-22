@@ -75,6 +75,8 @@ void Weather::clear() {
     flakeSlots_ = {};
     flakes_ = 0;
     ramp_ = timer_ = kind_ = step_ = 0;
+    rain_ = snow_ = 0; // 0x539A60: the next setScript / setSnow starts them afresh (rain from none runs event 0x2E)
+    lightningMin_ = 600, lightningMax_ = 900;
     flashOn_ = false;
     ticks_ = 0;
     events_.clear();

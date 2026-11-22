@@ -1139,4 +1139,3 @@ TEST(FxBreath, DeterministicRisingAndGoneAtTheSurface) {
     b.append(4.0, out);
     EXPECT_FALSE(out.empty());
 }
-
