@@ -48,21 +48,26 @@ lead = s['hold_ticks'] + s.get('settle_ticks', 0)
 # the --chart-state seeding only for a hold
 pose = st['ours'] if 'ours' in st else s['ours']
 out = [d['unit'], ','.join(str(x) for x in pose), str(lead + d['ticks'])]
-if hold:
-    t30 = '0'
+def t30():  # Wine's elapsed frames in the start state at case tick 0
     try:
         for r in csv.reader(open(sys.argv[2]), delimiter='\t'):
             if r and r[0] == '0':
-                t30 = next((x.split('=')[1] for x in r if x.startswith('t30=')), '0')
-                break
+                return next((x.split('=')[1] for x in r if x.startswith('t30=')), '0')
     except OSError:
         pass
-    out.append(f"{state}@{lead}@{','.join(str(x) for x in st['ours'])}@{t30}")
+    return '0'
+if hold:
+    out.append(f"{state}@{lead}@{','.join(str(x) for x in st['ours'])}@{t30()}")
 elif state in (35, 40) and 'state' in st:
     # an idle start past the 1-foot idle: the take's tick 0 is later than her birth / settle (Wine birth takes are
     # S40 from tick 0; the trace starts after the load), while our chart restarts in S39 at the placement and reaches
     # S40 only when ng_1foot_idle ends (T274, 30 frames): enter the recorded idle at the case start, no pose
     out.append(f"{state}@{lead}")
+elif state == 39 and 'state' in st:
+    # a take that starts in the 1-foot idle, part way through ng_1foot_idle (t1204 j50_inms t30 14: S40 at tick 2 by
+    # T274 AnimationEnded; j50_stick t30 9.5: still S39 at tick 10, then T156 -> S37): enter it at the case start that
+    # many frames in, no pose ('-' is no pose to --chart-state)
+    out.append(f"39@{lead}@-@{t30()}")
 print(' '.join(out))
 PY
 )
