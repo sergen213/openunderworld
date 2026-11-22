@@ -1847,15 +1847,18 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 // 29: 0x723AB0 case 0x1D, the query block's base (+0xA0) plus t times its velocity (+0x30 = the query
                 // object's +0x20, 0x771830's velocity) plus the candidate's +0x90 (taken as 0, as for 28) [O decomp]
                 case 29: return q.base + q.v * t;
-                case 21: { // 0x723AB0 case 0x15 -> 0x711530 by the candidate's MUD flags & 0xFFFFFC10: the candidate point for
-                    // 0x800000 / 0x40000 / 0x20000 / 0x10000 / 0x1000000 / 0x20000000 / 0x40000000 [O decomp]; the
-                    // other types (holds, poles, 0x80000 / 0x400000 / 0x10 / 0x4000000) are not ported
+                case 21: { // 0x723AB0 case 0x15 -> 0x711530 by the candidate's MUD flags & 0xFFFFFC10, then 0x431FD0 against
+                    // the block's base (+0xA0, with t x its velocity +0x30): for 0x800000 / 0x40000 / 0x20000 / 0x10000 /
+                    // 0x1000000 / 0x20000000 / 0x40000000 the candidate point less source 29 [O decomp + O-runtime: Wine
+                    // ch_beam_walk frame 120, beam 1031: source 21 = (-95.23, 55.60, -0.02) = source 4 (7905.50, 1754.03)
+                    // - source 29 (8000.73, 1698.43)]; the other types (holds, poles, 0x80000 / 0x400000 / 0x10 / 0x4000000)
+                    // are not ported
                     const uint32_t mf = collision::markupFlags(m.type);
                     const uint32_t k = mf & 0xFFFFFC10u;
                     const bool plain = !(mf & 0x8000) && (k == 0x800000 || k == 0x40000 || k == 0x20000 || k == 0x10000 ||
                                                           k == 0x1000000 || k == 0x20000000 || k == 0x40000000);
                     if (!plain && q.strict) q.unknown = true;
-                    return h;
+                    return h - (q.base + q.v * t);
                 }
                 case 4: case 31: return h;
                 default: // 33: a hold's point; ledges are no holds
