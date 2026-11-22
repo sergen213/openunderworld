@@ -54,7 +54,8 @@ struct LedgeContext : ChartContext {
     bool hasCollision() const override { return true; }
     glm::vec3 position() const override { return attachedMarkup().point + glm::vec3(0, -50, -500); }
     float heading() const override { return glm::half_pi<float>(); } // facing +y
-    float controlYaw() const override { return glm::half_pi<float>(); }
+    float ctl = glm::half_pi<float>(); // the camera behind her
+    float controlYaw() const override { return ctl; }
     int ledgeClearanceClass() const override { return clearance; }
     uint32_t gameMs() const override { return ms; }
 };
@@ -111,14 +112,19 @@ TEST(ChartLedge, AttachInitStoresTheClearanceClass) {
     EXPECT_EQ(ctx.playerInt(0xEDC), 5);
 }
 
-// On a markup the class frame's forward axis is her left, its side axis her facing (tru.exe under Wine, l3_chapel
-// ch_hang_*: Left on the screen = her right -> class 2, Right = her left -> class 1, the tie going to the side).
-TEST(ChartLedge, StickDirectionClassesAlongHerLeft) {
-    LedgeContext ctx; // hanging, facing +y
+// On a markup the class frame follows the camera: behind her, her facing (bedroom hang_jump_left: Left -> class 3);
+// facing her, her left (l3_chapel ch_hang_*: Left = her right -> class 2, Right = her left -> class 1). Ties to the side.
+TEST(ChartLedge, StickDirectionClassesOnAMarkup) {
+    LedgeContext ctx; // hanging, facing +y, camera behind
     ctx.stickLen = 1;
     ctx.stickDir = {-1, 0}; // world -x = her left
+    EXPECT_TRUE(OneShot({cond(0x195, 452, false, 400)}).fires(ctx));
+    EXPECT_FALSE(OneShot({cond(0x195, 453, false, 400)}).fires(ctx));
+    ctx.stickDir = {0, 1};
     EXPECT_TRUE(OneShot({cond(0x195, 450, false, 400)}).fires(ctx));
-    EXPECT_FALSE(OneShot({cond(0x195, 452, false, 400)}).fires(ctx));
+    ctx.ctl = -glm::half_pi<float>(); // the camera facing her
+    ctx.stickDir = {-1, 0};
+    EXPECT_TRUE(OneShot({cond(0x195, 450, false, 400)}).fires(ctx));
     ctx.stickDir = {1, 0}; // her right
     EXPECT_TRUE(OneShot({cond(0x195, 451, false, 400)}).fires(ctx));
     ctx.stickDir = {0, 1}; // toward the wall she faces
