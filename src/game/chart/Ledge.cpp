@@ -206,17 +206,29 @@ bool animTime(ChartContext& ctx, const Cond& c) {
 }
 
 // The input controller's direction class (0xFADFB0 +0xB0 +0x24, set by 0x6F89A0): the stick against a frame (the
-// screen in mode 0, else built from the camera and a reference direction), 1 / 2 along +- its forward axis, 3 / 4
-// along -+ its side axis whichever is larger, 0 under the dead zone (+0xD8). [I] ours: the frame is her facing when
-// she is on a markup, else the camera control yaw; dead zone 0.10 (the move-speed zone 1 threshold); no re-classing
-// hysteresis (+0x174).
+// screen in mode 0, else built from the camera and a reference direction): u along its forward axis (+0x100), w along
+// its side axis (+0x110 = forward turned a quarter to the right); class 3 / 4 (w < 0 / >= 0) when |u| <= |w|, else
+// 1 / 2 (u >= 0 / < 0); 0 under the dead zone (+0xD8) [O: decomp, the tie going to the side]. On a markup 0x6F89A0
+// builds the frame from one reference (+0x70) and, when an angle comes under +0xB4 degrees, rebuilds it from another
+// (+0xB8, flag +0x195) [O: decomp; the references and the angle are not decoded]. Ours [I] from tru.exe under Wine:
+// with the camera behind her (bedroom hang_jump_left, camera pinned along her facing) the forward axis is her facing
+// (Left = her left -> class 3, T628 S459); with the camera facing her (l3_chapel ch_hang_* on ledge 61) it is her left
+// (Left = her right -> class 2 T599 S436, Right -> 1 T604 S434, Forward + Left -> 3 T550 S432, Forward + Right -> 1).
+// The switch is taken at 90 degrees between the control yaw and her facing [I: threshold +0xB4 not decoded]; the
+// diagonals' ties follow the frame's float rounding. Off a markup the camera control yaw [I]; dead zone 0.10 (the
+// move-speed zone 1 threshold); no re-classing hysteresis (+0x174) [I].
 int stickDirClass(ChartContext& ctx) {
     if (ctx.stickLevel() < 0.10f) return 0;
     const glm::vec2 s = ctx.stick();
-    const float yaw = ctx.attachedMarkup() ? ctx.heading() : ctx.controlYaw();
+    float yaw = ctx.controlYaw();
+    if (ctx.attachedMarkup()) {
+        const float h = ctx.heading();
+        const bool facingCamera = std::cos(ctx.controlYaw() - h) < 0;
+        yaw = facingCamera ? h + 1.5707964f : h;
+    }
     const glm::vec2 fwd(std::cos(yaw), std::sin(yaw)), right(std::sin(yaw), -std::cos(yaw));
     const float u = glm::dot(s, fwd), v = glm::dot(s, right);
-    if (std::abs(u) < std::abs(v)) return v >= 0 ? 4 : 3;
+    if (std::abs(u) <= std::abs(v)) return v >= 0 ? 4 : 3;
     return u >= 0 ? 1 : 2;
 }
 // 0x764270 (0x195): values 450..453 test classes 1..4, 454 class 0; other values are false whatever the negation.
