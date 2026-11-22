@@ -3379,6 +3379,9 @@ int main(int argc, char** argv) {
                                                                  : tickDt;
                 a.move = moveFilter->step(a.move, fdt);
             }
+            // A take's recorded camera heading ("camera_yaw"): tru.exe's free camera turns during the take and the stick
+            // is read against it, so the pin follows it per tick (harness only; the camera view itself stays pinned).
+            if (script && script->cameraYawRecord()) world->pinStickYaw(script->cameraYaw(appTicks));
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)

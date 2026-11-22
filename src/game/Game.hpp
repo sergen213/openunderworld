@@ -2355,9 +2355,16 @@ public:
     // world reads input against (World::pinStickYaw); nullopt without.
     std::optional<CameraFollow> cameraFollow() const { return cameraFollow_; }
     std::optional<CameraSeed> cameraSeed() const { return cameraSeed_; } // a freecam take's "camera_at_key"
-    std::optional<float> cameraYaw() const {
+    // The stick's world yaw at `tick`: a take's recorded camera heading ("camera_yaw", the latest entry at or before
+    // `tick`; before the first, the first), else camera_follow's atan2(dy, dx); nullopt without either.
+    std::optional<float> cameraYaw(uint64_t tick = 0) const {
+        if (!cameraYaw_.empty()) {
+            auto it = cameraYaw_.upper_bound(tick);
+            return it == cameraYaw_.begin() ? it->second : std::prev(it)->second;
+        }
         return cameraFollow_ ? std::optional<float>(std::atan2(cameraFollow_->dy, cameraFollow_->dx)) : std::nullopt;
     }
+    bool cameraYawRecord() const { return !cameraYaw_.empty(); } // "camera_yaw" present: the pin follows it per tick
     // The script carries tru.exe's recorded stick ("stick"): its move axes are already the filtered stick record, so the
     // app does not run StickRateFilter on them.
     bool stickRecord() const { return stickRecord_; }
@@ -2374,6 +2381,7 @@ private:
     std::optional<CameraSeed> cameraSeed_;
     bool stickRecord_ = false;
     std::map<uint64_t, float> frameDt_;
+    std::map<uint64_t, float> cameraYaw_; // "camera_yaw"
 };
 
 } // namespace ou::game

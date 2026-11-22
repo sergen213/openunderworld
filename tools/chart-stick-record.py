@@ -8,11 +8,15 @@
 #    the input update 0x483520, hex): the dt in 30 Hz frames that update used, (inms[t] - inms[t-1]) x 30 / 1000, for
 #    the frame of row t. Row t's update is the one row t's stick record reads (WineChartTrace _inms takes: the key at
 #    tick 10 lands on row 10 when row 10's gap is 95 ms, 0.4 x 2.85 >= 1, and on row 11 when it is 70..72 ms).
-# usage: tools/chart-stick-record.py CASE_JSON TRACE_TSV OUT_JSON; exit 1 (no file written) when the trace has neither.
-import csv, json, struct, sys
+#  - "camera_yaw": [[tick, yaw], ...] from var_cam38 (the camera's 4x4 world matrix, WineChartTrace CAMDUMP): yaw =
+#    atan2 of its forward row 2 (x, y) in our frame (tru's stick heading B+0x5C is that + 90 deg; ChartB checked
+#    h759_rng_birth t86 / t150 against var_a3b4 within 0.002 rad), one entry per change. The replay pins the stick's
+#    world yaw to it per tick instead of the case's fixed camera_follow, as tru's free camera turns during a take.
+# usage: tools/chart-stick-record.py CASE_JSON TRACE_TSV OUT_JSON; exit 1 (no file written) when the trace has none.
+import csv, json, math, struct, sys
 
 case_json, trace, out = sys.argv[1:4]
-stick, last, inms = [], None, {}
+stick, last, inms, cam_yaw, last_yaw = [], None, {}, [], None
 for r in csv.reader(open(trace), delimiter='\t'):
     if not r or not r[0].isdigit():
         continue
@@ -26,12 +30,22 @@ for r in csv.reader(open(trace), delimiter='\t'):
             last = (x, y)
     if 'var_inms' in cols:
         inms[t] = int(cols['var_inms'].split(':')[-1], 16)
+    c = cols.get('var_cam38')
+    if c and ':' in c:
+        m = [float(f) for f in c.split(':', 1)[1].split(',')]
+        if len(m) == 16 and (m[8] or m[9]):
+            yaw = round(math.atan2(m[9], m[8]), 5)
+            if yaw != last_yaw:
+                cam_yaw.append([t, yaw])
+                last_yaw = yaw
 frame_dt = [[t, (inms[t] - inms[t - 1]) * 30 / 1000] for t in sorted(inms) if t - 1 in inms]
-if not stick and not frame_dt:
+if not stick and not frame_dt and not cam_yaw:
     sys.exit(1)
 d = json.load(open(case_json))
 if stick:
     d['stick'] = stick
 if frame_dt:
     d['frame_dt'] = frame_dt
+if cam_yaw:
+    d['camera_yaw'] = cam_yaw
 json.dump(d, open(out, 'w'), indent=1)

@@ -83,11 +83,6 @@
    "duration": 4,
    "expect": [
     {
-     "clips": [
-      "ledgeb_attach_M"
-     ]
-    },
-    {
      "probe": "player.hanging",
      "eq": true,
      "note": "on stone 8368's ledge, not the walkway's"

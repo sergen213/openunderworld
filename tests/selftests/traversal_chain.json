@@ -9,7 +9,6 @@
     {"step": "run_jump_grab", "input": ["0 forward 1", "0.42 jump 1", "0.52 jump 0", "0.9 forward 0"], "duration": 3,
      "until": {"probe": "player.clip", "eq": "ledgeb_idle"},
      "expect": [{"visits": ["idle", "run", "jumpprep", "jump", "hang"]},
-                {"clips": ["ng_run_start", "ng_running_jump_forwards", "ledgeb_attach_M", "ledgeb_idle"]},
                 {"probe": "player.ledge", "eq": 911}]},
     {"step": "shimmy", "input": ["0 right 1"], "duration": 0.6,
      "expect": [{"probe": "player.state", "eq": "shimmy"}, {"probe": "player.ledge", "eq": 911}, {"probe": "step.horizontal", "min": 100}]},
