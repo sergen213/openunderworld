@@ -182,6 +182,38 @@ bool markupUpright(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
     return std::abs(pitch - glm::radians(90.0f)) <= glm::radians(40.0f);
 }
 
+// 0x6EC440: the class word of a markup (what 0x770240 stores in the jump target's +0xA6C): 0x8000000 when 0x5D5770
+// passes (flags & 0xE000000 and 0x741720 / 0x733F60: segment 0 near upright / near level), else the first of the flag
+// bits 0x1000000, 0x800000, 0x20000000, 0x400000, 0x40000000, 0x80000, 0x40000, 0x20000, 0x10, 0x8000 it carries, else
+// flags & 0x10000 [O: disassembly; 0x741720 as markupUpright, I].
+uint32_t markupClassWord(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
+    const uint32_t f = m.flags;
+    if ((f & 0xE000000u) && (markupUpright(ctx, m) || markupLevel(ctx, m))) return 0x8000000u;
+    for (const uint32_t b : {0x1000000u, 0x800000u, 0x20000000u, 0x400000u, 0x40000000u, 0x80000u, 0x40000u, 0x20000u,
+                             0x10u, 0x8000u})
+        if (f & b) return b;
+    return f & 0x10000u;
+}
+
+// 0x264 (0x7641D0 -> 0x74C850): query profile 27 (0x6F1950(0x1B); 0x744310's stick-relative direction into +0xA40 is
+// the search's control yaw, Player::markupSearch) through 0x7296C0 on player +0x980; with a target (+0xA64) r = its
+// class word +0xA6C (0x770240 = 0x6EC440) & 0xFFFFFC10, else 0. value 0: r == 0 or r < 0; 1: r != 0 and r >= 0; else
+// false [O: decomp]. The search sets the chart's jump target as 0x7296C0 does.
+bool dropDownTarget(ChartContext& ctx, const Cond& c) {
+    const auto found = chartMarkupSearch(ctx, 0x1B);
+    if (!found) return ctx.chart().unported(c);
+    int32_t r = 0;
+    if (*found && ctx.chartTarget.target) {
+        ctx.chartTarget.target.result = int(markupClassWord(ctx, ctx.chartTarget.target));
+        r = int32_t(uint32_t(ctx.chartTarget.target.result) & 0xFFFFFC10u);
+    }
+    switch (mode(c)) {
+    case 0: return r == 0 || r < 0;
+    case 1: return r != 0 && r >= 0;
+    default: return false;
+    }
+}
+
 // 0x782810 (via 0x782AD0 / 0x763EB0 for 0x262): the class test of markup flags F (+0x28; 0 without a valid markup).
 bool markupClass(ChartContext& ctx, const Cond& c, const ChartContext::MarkupSlot& m) {
     const int32_t f = m ? int32_t(m.flags) : 0;
@@ -787,6 +819,7 @@ void registerJump(Registry& player, Registry&) {
     player.condition(0x5DD, carrying, "HasCarriedObject", fam);
     player.condition(0x1EB, sweepAnimSlot, "PSCCF_ContextAnimSlot", fam);
     player.condition(0x2BD, holdingItemType, "PSCCF_HoldingItemType1to7", fam);
+    player.condition(0x264, dropDownTarget, "PSCCF_DropDownTargetFound", fam);
     player.condition(0x1F0, sweepArmedSlot, "PSCCF_ArmedStateSelect", fam);
     player.condition(0x5DE, carriedEncumbers, "PSCCF_CarriedObjectFlag18", fam);
     player.condition(0x5DF, carriedEncumbers, "PSCCF_PortableFlag18", fam);
