@@ -114,6 +114,12 @@ struct Markup {
     uint16_t id = 0;
     std::vector<vec3> points;
     std::optional<CameraRecord> camera; // item +0x64 / +0x68 camera commands: the record command 0x12 selects
+    // The whole command list (0x18-byte {u32 command, 5 args}; 0x17 / 0x18 with their 0x44-byte force records): tru.exe
+    // applies it through 0x6019D0 as a camera "mode record" (0x5FE800 -> +0x1348) when the settings' markup-type table
+    // lists the camera mode for this type (0x5F9960), between the priority-0 and the priority-1 trigger volumes.
+    struct CameraForce { uint32_t type = 0; float k = 0; std::array<uint8_t, 64> curve{}; };
+    struct CameraCommand { uint32_t command = 0; float arg[5]{}; std::vector<CameraForce> forces; };
+    std::vector<CameraCommand> cameraCommands;
     uint16_t intro = 0; // unit item +0x4A -> MarkUp +0x2C: tru.exe's "introID" of a markup box (0x5C41A0's debug text)
     // Units per second of each point as its owner moved it on the last tick (empty: static; game::World fills it for
     // object markup). tru.exe keeps the same at a ledge candidate's attach point, candidate +0x80 (0x6F6C50 / 0x6EC930).

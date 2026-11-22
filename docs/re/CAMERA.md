@@ -424,15 +424,38 @@ drifts back inside 70° at 25°/s. Ours: `Mode::yawSoft` / `yawSoftSpeed` (modes
 not blended over the limits' 0.25 s [I]. The pivot frame +0xD0 is her yaw (0x6022F0: Euler (0, 0, instance +0x38),
 rate-limited by +0x132C when +0x1339 is set).
 
-**Pushes (actions 2001..2005, D).** CameraManager vt 0xB0 / 0xB4 (0x5E8530 / 0x5E8570) call the Lara camera's vt
-0x58 / 0x5C: 0x5FE9D0 stores the record id in +0x1F4 with a 0.1 s delay +0x1F8; 0x6025E0 then finds that id in the
-settings' record table (+0x20C, 0x68-byte entries, count +0x3AC) and applies it (0x601340 → +0x134C): type 1 an offset
-in the pivot frame onto a tracker (0x5E9920, with a blend), type 2 the same plus a yaw override by id (its side
-mirrored to the camera's, 0x5F9860 / 0x5E8DA0) and a pitch override by id. 0x5FF3A0 (exit) clears it. States: 2001
-(record 0) S434 / S435 / S1197 / S1198 ledge, S1052 ladder, S1233 beam, hurdles S486..S489 / S1166; 2002 (1) S436 /
-S457, S1221 pillar, S1234 beam, S482..S485, S1168; 2003 (4) S448 / S449 / S453, S1241, S1147 / S1164; 2004 (5) S450 /
-S451 / S454, S1240, S1148 / S1165; 2005 (pop) S517 / S518. Not ported (the chart's JEffect::CameraPush has no
-consumer) [U: the record table's contents].
+**Pushes (actions 2001..2005, D + data): dead in the retail data.** CameraManager vt 0xB0 / 0xB4 (0x5E8530 /
+0x5E8570) call the Lara camera's vt 0x58 / 0x5C: 0x5FE9D0 stores an id in +0x1F4 with a 0.1 s delay +0x1F8; 0x6025E0
+then looks that id up among the camera's "antics" (+0x20C, 0x68-byte entries, count +0x3AC, at most 4: "exceeded
+kMaxAntics") and applies the match (0x601340 → +0x134C): type 1 an offset in the pivot frame onto a tracker (0x5E9920,
+with a blend), type 2 the same plus a yaw override by id (its side mirrored to the camera's, 0x5F9860 / 0x5E8DA0) and a
+pitch override by id. 0x5FF3A0 (exit) clears it. The only writer of the antics is 0x5FEC00, called by command 0x11
+{id} of a mode list entry or trigger block (0x6019D0 / 0x5FF080: global data +0x160 record id × 0x68), and the reset
+0x5FEE10 empties them. No command 0x11 occurs in camera DTP 0x14's 25 mode-list entries nor in any camera trigger
+volume of the 82 units (§9 survey), so +0x3AC stays 0 and every push finds nothing. States: 2001 (id 0) S434 / S435 /
+S1197 / S1198 ledge, S1052 ladder, S1233 beam, hurdles S486..S489 / S1166; 2002 (1) S436 / S457, S1221 pillar, S1234
+beam, S482..S485, S1168; 2003 (4) S448 / S449 / S453, S1241, S1147 / S1164; 2004 (5) S450 / S451 / S454, S1240, S1148
+/ S1165; 2005 (pop) S517 / S518. Ours: not ported (no effect to port).
+
+**Mode from the chart.** With `--traversal chart` the orbit camera takes the mode the chart's states ask for
+(`PlayerDriver::cameraModeRequest`, state property 1102, the last request holding; 53 / 56 the markup's mode), not her
+state class; modes without an entry of ours (5, 6, 7, 8, 18, 43, 46, 47) keep the state class's [U].
+
+**Markup camera blocks (D + O-runtime).** 0x601D30 applies, after the priority-0 trigger volumes and before the
+others, the "mode records" +0x1348 / +0x1344 (0x5FE800 / 0x5FE8C0): the command block of the markup she is on
+(CameraManager +0x74 → +0x24 → markup item +0x58: count +0x64, list +0x68) when the settings' markup-type table lists
+the current mode for its type (0x5F9960), else a registered camera instance's. The whole block runs through 0x6019D0,
+not only its 0x12. l4_traprooms pole 1336: {6 pitch override −15° at 60°/s, hold 1}, {0x14 focus point 20}, {2
+1738.31}; WineChartTrace's `pole/tr_pole_swing_freecam` re-take shows g_camera +0x1320 = 1738.31 in mode 9 with no
+trigger and no level record (CameraManager +0x10C = 0, +0x12D0 = −1). Pillar 1194: {0x12 record}, {0x14 focus 6};
+ledge 973: {0x12}; chapel ledge 1063 and ladder 234 carry none. Ours: `collision::Markup::cameraCommands`, applied in
+that slot (`World::updateOrbitCamera`); pole takes: camera position error 422 → 40, look 3.2° → 0.9°.
+
+**Chapel hang placement.** The re-take of `ledge/ch_hang_left_hold_freecam` holds the distance state at 592..641 with
++0x1320 = 1896.33, mode 11 / 37, no trigger, no record: the pull-in (0x5F0810) stops on geometry ~600 behind her pivot,
+the camera 22.3° above it. Ours from the same seeded camera reaches 1896 at 9..14° because her hang root (and so the
+pivot) sits ~105 higher and later 300..860 along the ledge from tru.exe's (the chart's chapel placement, not the
+camera) [U until that placement matches].
 
 **The Wine harness's CAMFOLLOW (chart.c).** Every published frame it writes +0x90 and +0x150 = her position −
 (dx, dy) × dist + (0, 0, height), not the matrix. The next update reads the angles back from there (0x600200 →

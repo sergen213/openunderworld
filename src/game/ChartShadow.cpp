@@ -632,6 +632,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             if (driving && (rt->chainHasAction(enterState, 420) || rt->chainHasAction(enterState, 230))) seedAttach();
             rt->enter(*this, enterState), enterState = -1;
             if (enterElapsed > 0) rt->fastForward(enterElapsed); // the Wine case's state time at its start (t30)
+            if (seedHold) { // hold the seeded hang pose over what is left of the attach clip
+                const PlayerState& s = w->player().state();
+                blend = {true, rt->state(), s.pos, s.pos, s.yaw, s.yaw, std::max(1.0f, rt->remainingFrames()), 0};
+                seedHold = false;
+            }
         }
     }
     // ---- group B ---- A kind-2 request (an anim-graph node, 0x443720 -> 0x43E250) that ChartRuntime::resolveRequest
@@ -740,6 +745,12 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
                                    ax->right.x, ax->right.y, ax->right.z, ax->down.x, ax->down.y, ax->down.z, ax->look.x, ax->look.y,
                                    ax->look.z, c.position.x, c.position.y, c.position.z, pv.x, pv.y, pv.z);
             }
+            if (n > 0 && size_t(n) < sizeof row) { // distance state, camera mode, active trigger volumes (uids)
+                n += std::snprintf(row + n, sizeof row - size_t(n), "\tvar_camdist=%g\tvar_cammode=%d\tvar_camtrig=", w->cameraDistance(), w->cameraMode());
+                const auto& tl = w->cameraTriggerList();
+                for (size_t i = 1; i < tl.size() && n > 0 && size_t(n) < sizeof row; ++i)
+                    n += std::snprintf(row + n, sizeof row - size_t(n), i > 1 ? ",%d" : "%d", tl[i]);
+            }
             trace << row << '\n';
         }
         ++ticks;
@@ -759,6 +770,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     game::State coarse(Player::DriveStep::Motion motion) const;
     float hangSide(int m, int seg, glm::vec3 point) const;
     void seedAttach();
+    bool seedHold = false; // seedAttach placed her on a hang pose: hold it through the entered state's clip
     uint64_t driveClipStarts = ~0ull; // the chart's clip starts the drive last applied
     // PlayerDriver
     bool drive(World& world, Player& player, glm::vec2 move, const Actions& a, float dt) override;
@@ -767,6 +779,18 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     void applyLoad(const nlohmann::json& j);
     nlohmann::json pendingLoad;
     bool loadDue = false;
+    // State property 1102 (0x44E): the camera mode a state asks for on entry; the last one holds.
+    int cameraModeRequest() const override {
+        if (!driving || !rt || !ch) return -1;
+        if (const int st = rt->state(); st != camReqState) {
+            camReqState = st;
+            if (const State* sr = ch->player.state(st))
+                for (const auto& p : sr->props)
+                    if (p.id == 1102) camReq = ch->propInt(p);
+        }
+        return camReq;
+    }
+    mutable int camReqState = -2, camReq = -1;
 };
 
 // Traversal chart boundary [I]: states whose request plays a swim / grapple / death / bike / carried-portable clip
@@ -810,8 +834,10 @@ void Shadow::Impl::seedAttach() {
     bool hangGrip = false;
     for (size_t m = 0; m < col.markup.size(); ++m) {
         const uint8_t type = col.markup[m].type;
-        const bool hang = type == 1 || type == 12 || type == 14, pole = type == 4 || type == 6;
-        const glm::vec3 probe = hang ? hangHands : pole ? poleHands : s.pos;
+        const bool hang = type == 1 || type == 12, pole = type == 4 || type == 6;
+        // a beam (14) is held overhead: her hands straight above the root at the hang height (Wine l3_chapel ch_hang_*:
+        // the S447 root lies under the beam line), where the ledge probe's forward reach found a ledge 137 higher
+        const glm::vec3 probe = hang ? hangHands : pole ? poleHands : type == 14 ? s.pos + glm::vec3(0, 0, hangHands.z - s.pos.z) : s.pos;
         const auto& p = col.markup[m].points;
         for (size_t i = 0; i + 1 < p.size(); ++i) {
             const glm::vec3 ab = p[i + 1] - p[i];
@@ -823,7 +849,16 @@ void Shadow::Impl::seedAttach() {
     }
     if (!pick) return;
     chartAttached = pick, attachedBefore = pick.markup;
-    if (pm && hangGrip && best > 60) {
+    {
+        const auto& mk = col.markup[size_t(pick.markup)];
+        std::fprintf(stderr, "ou-game: chart seed attach markup %d id %u type %d param %.3f best %.1f p0 %.1f %.1f %.1f p1 %.1f %.1f %.1f\n",
+                     pick.markup, unsigned(mk.id), int(mk.type), pick.param, best, mk.points[0].x, mk.points[0].y, mk.points[0].z,
+                     mk.points.back().x, mk.points.back().y, mk.points.back().z);
+    }
+    // A seeded ledge hang starts on its hang pose and holds it through the attach clip, as 0x741130's alignment target
+    // (+0x1260) warps the S533 / S535 clip onto it (Wine ch_hang_*: the root stays at the pose while S533 plays; ours
+    // drifted 59 out and 139 up by the clip's root motion, which flipped the camera clamp's side at tick 60) [O-runtime].
+    if (pm && hangGrip) {
         const auto& p = col.markup[size_t(pick.markup)].points;
         const int seg = std::clamp(int(pick.param), 0, int(p.size()) - 2);
         const float t = (pick.param - float(seg)) * glm::length(glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]));
@@ -832,6 +867,7 @@ void Shadow::Impl::seedAttach() {
         ps.pos = root, ps.yaw = yaw, ps.vel = glm::vec3(0);
         pm->restore(ps);
         placements = pm->placements(); // ours, not a placement that restarts the chart
+        seedHold = true;
     }
 }
 
@@ -992,9 +1028,13 @@ void Shadow::Impl::stateEntered(int from, int to) {
             const PlayerState& s = w->player().state();
             // a ladder / pillar / perch has its own hold pose (rung, axis, point: Player::familyPose); a ledge, cover or
             // beam hang the ledge pose
-            const auto fam = pm->familyPose(a.markup, s.pos, s.yaw);
+            const Request* rq = rt->pattern();
+            const auto fam = pm->familyPose(a.markup, s.pos, s.yaw, rq ? std::string_view(rq->clip) : std::string_view{});
             const auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
             blend = {true, to, s.pos, root, s.yaw, yaw, std::max(1.0f, rt->remainingFrames()), 0};
+            std::fprintf(stderr, "ou-game: chart attach S%d markup %d type %d clip %s from %.1f %.1f %.1f to %.1f %.1f %.1f over %.0f\n",
+                         to, a.markup, int(w->collision().markup[size_t(a.markup)].type), rq ? rq->clip.c_str() : "-",
+                         s.pos.x, s.pos.y, s.pos.z, root.x, root.y, root.z, rt->remainingFrames());
             pm->setVelocity(glm::vec3(0));
         }
     }
@@ -1031,6 +1071,16 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     inputs(world, a, move, std::min(1.0f, glm::length(move)));
     attachedBefore = chartAttached && *chartAttached ? chartAttached->markup : -1;
     chartTick();
+    // A case that begins in a hold (--chart-state with a pose) keeps her in that pose until the state is entered: the
+    // Wine take began there pinned [I: harness only]; the chart's idle start would otherwise drop her from a pole pose
+    // into the hall below (mh_pole_airgrab: a fatal fall, respawn and chart restart at tick ~100).
+    if (enterState >= 0 && enterPose) {
+        PlayerState ps = player.state();
+        ps.pos = glm::vec3(*enterPose), ps.yaw = glm::radians(enterPose->w), ps.vel = glm::vec3(0);
+        player.restore(ps);
+        placements = player.placements();
+        return true;
+    }
     if (isBoundary(rt->state())) { // the chart hands her over at its boundary edge: the controller decides from here
         player.setVelocity(s0.vel);
         parked = true;

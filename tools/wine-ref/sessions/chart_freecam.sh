@@ -47,6 +47,14 @@ for part in ${*:-bedroom chapel ship traprooms temple junglehub}; do
         # TraversalCam: pinned until S1066 (the first ladder state), then tru's camera free
         NOCAM= CAMUNTIL=1066 fc ladder lad_a234_climb_up lad_a234_climb_up_freecam
         NOCAM= CAMUNTIL=1066 fc ladder lad_a234_left_hold lad_a234_side_freecam ;;
+    tc2_*) # TraversalCam: unpinned re-takes with the camera's distance / mode / trigger fields (g_camera base m; the
+        # CameraManager 0xE804F0 by absolute address: +0x54 mode, +0x74 markup, +0x10C trigger count, entries +0xA4 + 0x20 i)
+        export VARS=c_1d4:m:1D4:f,c_1d8:m:1D8:f,c_1320:m:1320:f,c_1340:m:1340:f,c_1e0:m:1E0,c_1328:m:1328,c_1e4:m:1E4:f,c_100:m:100:f,c_104:m:104:f,c_108:m:108:f,c_150:m:150:f,c_154:m:154:f,c_158:m:158:f,c_12d0:m:12D0,c_12d4:m:12D4,mgr_54:a:E80544,mgr_74:a:E80564,mgr_10c:a:E805FC,mgr_e0:a:E80594,mgr_e1:a:E805B4,mgr_e2:a:E805D4,mgr_e3:a:E805F4
+        case $part in
+        tc2_pole) UNIT=l4_traprooms; OFF=-7342.10,25801.50,-7298.09; cunit $UNIT || exit 1; fc pole tr_pole_swing ;;
+        tc2_chapel) UNIT=l3_chapel; OFF=3196.89,-2412.27,3634.58; cunit $UNIT || exit 1; fc ledge ch_hang_left_hold ;;
+        tc2_pillar) UNIT=l4_temple; OFF=500.69,9432.76,-19909.81; cunit $UNIT || exit 1; fc pillar t1194_climb_up_t1 ;;
+        esac; unset VARS ;;
     traprooms) UNIT=l4_traprooms; OFF=-7342.10,25801.50,-7298.09; cunit $UNIT || exit 1
         for n in tr_pole_grab tr_pole_hoh_right tr_pole_swing; do fc pole $n; done ;;
     temple) UNIT=l4_temple; OFF=500.69,9432.76,-19909.81; cunit $UNIT || exit 1
