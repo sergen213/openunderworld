@@ -183,7 +183,7 @@ std::optional<Charts> loadCharts(const ObjData& o) {
     for (const auto& p : anim::animPatterns(o.drm)) {
         Request r;
         r.rate = p.rate, r.mode = p.mode, r.start = p.start, r.blend = p.blend, r.nextBlend = p.nextBlend, r.mirror = p.mirror;
-        r.blendType = p.blendType;
+        r.blendType = p.blendType, r.window = p.window;
         for (const uint16_t a : p.anims) {
             r.clips.push_back(a < list.size() ? list[a].name : std::string());
             uint16_t keys = 0;
@@ -1011,6 +1011,10 @@ int dump(const cdc::BigfileSet& bigfile, std::optional<int> only, bool coverage,
                 for (size_t k = 0; k < r.clips.size(); ++k) out << " " << r.clips[k] << ":" << (k < r.clipKeys.size() ? r.clipKeys[k] : 0);
                 out << " } " << r.rootSpeed << "\n";
             }
+        // the crossfade window modes (pattern +0x18) other than 1
+        out << "requests by crossfade window mode (+0x18 != 1):\n";
+        for (size_t i = 0; i < charts->requests.size(); ++i)
+            if (const Request& r = charts->requests[i]; r.window != 1) out << "  R" << i << " " << int(r.window) << " " << r.clip << "\n";
     }
     if (!coverage) return 0;
     // Reachable from the root: every transition a state can take (its own, its ancestors', its events' and the root

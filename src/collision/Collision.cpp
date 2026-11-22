@@ -270,7 +270,7 @@ bool CollisionMesh::queryable(const Face& f, uint8_t mask) const {
     return collision::queryable(f, mask) && (f.group >= groupEnabled_.size() || groupEnabled_[f.group]);
 }
 
-std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask, uint8_t skipRays) const {
+std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask, uint8_t skipRays, bool frontOnly) const {
     const float len = glm::length(dir);
     if (len <= 0 || nodes_.empty()) return std::nullopt;
     const vec3 d = dir / len;
@@ -302,9 +302,12 @@ std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist,
             if (!queryable(f, mask) || (f.rays & skipRays)) continue;
             const float t = rayTri(origin, d, {vertices[f.v[0]], vertices[f.v[1]], vertices[f.v[2]]});
             if (t >= 0 && t <= bestT) {
-                bestT = t;
                 vec3 nrm = faceNormal(order_[i]);
-                if (dot(nrm, d) > 0) nrm = -nrm;
+                if (dot(nrm, d) > 0) {
+                    if (frontOnly) continue; // leaving through it
+                    nrm = -nrm;
+                }
+                bestT = t;
                 best = Hit{t, origin + d * t, nrm, order_[i]};
             }
         }
@@ -370,10 +373,11 @@ std::optional<Hit> CollisionMesh::raycast(vec3 origin, vec3 dir, float maxDist, 
     });
 }
 
-std::optional<Hit> CollisionMesh::playerRay(vec3 origin, vec3 dir, float maxDist) const {
+std::optional<Hit> CollisionMesh::playerRay(vec3 origin, vec3 dir, float maxDist, bool objectFrontFaces) const {
     auto best = rayFaces(origin, dir, maxDist, kSolidMask, kSkipPlayerRays);
     return withDynamics(best, [&](const CollisionMesh& s, const glm::mat4& inv) {
-        return s.rayFaces(vec3(inv * glm::vec4(origin, 1)), glm::mat3(inv) * dir, best ? best->t : maxDist, kPlayerRayObjectMask);
+        return s.rayFaces(vec3(inv * glm::vec4(origin, 1)), glm::mat3(inv) * dir, best ? best->t : maxDist, kPlayerRayObjectMask, 0,
+                          objectFrontFaces);
     });
 }
 
