@@ -7,7 +7,8 @@
 #        SHADOW=1 (--chart-shadow instead of --traversal chart), MEMMAX (default 8G)
 #
 # Per case: the case JSON from W/chart/wine_startpos, else wine_settle (120 more settle ticks), else wine; spawn at
-# start.ours when the case begins in a hold (start.state not an idle 35 / 39 / 40), else spawn.ours; a hold case gets
+# start.ours whenever the case records it (idle starts too), else spawn.ours; a hold case (start.state not an idle
+# 35 / 39 / 40) also gets
 # --chart-state STATE@(hold + settle ticks)@start.ours@t30 (Wine's elapsed frames in that state at case tick 0, the
 # trace's t30 column); the input script is the case JSON itself (its keys, the settle shift and camera_follow, which
 # pins the stick's world yaw, InputScript::cameraYaw); frames = hold + settle + ticks. Runs headless in a private
@@ -42,7 +43,9 @@ import csv, json, sys
 d = json.load(open(sys.argv[1])); s = d['spawn']; st = d.get('start', {})
 state = st.get('state', 40); hold = state not in (35, 39, 40) and 'ours' in st
 lead = s['hold_ticks'] + s.get('settle_ticks', 0)
-pose = st['ours'] if hold else s['ours']
+# Wine's pose at case tick 0 whenever the case records one (idle starts too: step941 starts 135 units from spawn.ours);
+# the --chart-state seeding only for a hold
+pose = st['ours'] if 'ours' in st else s['ours']
 out = [d['unit'], ','.join(str(x) for x in pose), str(lead + d['ticks'])]
 if hold:
     t30 = '0'
