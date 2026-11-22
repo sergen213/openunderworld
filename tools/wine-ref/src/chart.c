@@ -170,6 +170,63 @@ static DWORD callhook(void) {
     return c;
 }
 
+// Ray log (RAY=1, `chart rayhook` / `rayunhook`): tru.exe's wall-under-hang ray 0x744E90(matrix*, float, arg3) (called
+// by 0x74F480; it builds two points from the matrix and player tuning +0x6E4 / +0x6E6 and casts 0x4935F0 with ray
+// flags 0x2C19E7, returning result+0x10 != 0). Entry detour (the 6-byte prologue as in callhook): tag 1, frame, the
+// three arguments and the matrix's 16 dwords. Exit detour at 0x744FBB (`add esp,0x24; xor eax,eax`, after the ray
+// call, result struct at esp+0x40): tag 2, frame, the result's 24 dwords (0x4935F0: +0x10 kind, 3 = hit, 0 = none;
+// +0..+8 / +0xC, +0x18, +0x40.. +0x58 the hit's fields). 128-byte slots in a 256-slot ring; printed per tick as
+// var_ray=E@frame:a1:a2:a3:m0..m15;R@frame:kind:r0..r23;... (raw hex dwords).
+#define RAYEXIT 0x744FBBu
+static const unsigned char kRayExit[5] = {0x83, 0xC4, 0x24, 0x33, 0xC0};
+static DWORD rayCaveOf(void) {
+    unsigned char b[6]; ReadProcessMemory(h, (void*)RAYEXIT, b, 5, 0);
+    if (b[0] != 0xE9) return 0;
+    DWORD rel; memcpy(&rel, b + 1, 4); return RAYEXIT + 5 + rel - 0x100; // exit code sits at cave + 0x100
+}
+static DWORD rayhook(void) {
+    DWORD c = rayCaveOf();
+    if (c) return c;
+    unsigned char b[6]; ReadProcessMemory(h, (void*)0x744E90, b, 6, 0);
+    if (memcmp(b, kProlog, 6)) { puts("unexpected bytes at 744e90"); exit(1); }
+    ReadProcessMemory(h, (void*)RAYEXIT, b, 5, 0);
+    if (memcmp(b, kRayExit, 5)) { puts("unexpected bytes at 744fbb"); exit(1); }
+    c = (DWORD)(size_t)VirtualAllocEx(h, 0, 0x10000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    DWORD wpos = c + 0xF00, ring = c + 0x1000;
+    w32(wpos, 0);
+    for (int f = 0; f < 2; ++f) {
+        unsigned char s[512]; int n = 0; DWORD at = c + 0x100 * f;
+        if (f == 1) { B(0x83); B(0xC4); B(0x24); }        // add esp,0x24 (replaced)
+        B(0x50); B(0x51); B(0x52);                         // push eax; push ecx; push edx
+        B(0xA1); D(wpos);                                  // mov eax,[wpos]
+        B(0x25); D(0xFF);                                  // and eax,255
+        B(0xC1); B(0xE0); B(7);                            // shl eax,7
+        B(0x05); D(ring);                                  // add eax,ring
+        B(0xC7); B(0x00); D(f + 1);                        // mov dword [eax],tag
+        B(0x8B); B(0x15); D(GT + 0x24);                    // mov edx,[frame]
+        B(0x89); B(0x50); B(4);                            // mov [eax+4],edx
+        if (f == 0) {
+            B(0x8B); B(0x54); B(0x24); B(16);              // mov edx,[esp+16] (a1)
+            B(0x89); B(0x50); B(8);
+            B(0x8B); B(0x4C); B(0x24); B(20); B(0x89); B(0x48); B(12);   // a2
+            B(0x8B); B(0x4C); B(0x24); B(24); B(0x89); B(0x48); B(16);   // a3
+            for (int k = 0; k < 16; ++k) { B(0x8B); B(0x4A); B(4 * k); B(0x89); B(0x48); B(20 + 4 * k); } // matrix
+        } else {
+            for (int k = 0; k < 24; ++k) { B(0x8B); B(0x8C); B(0x24); D(0x4C + 4 * k); B(0x89); B(0x48); B(8 + 4 * k); }
+        }
+        B(0xFF); B(0x05); D(wpos);                         // inc dword [wpos]
+        B(0x5A); B(0x59); B(0x58);                         // pop edx; pop ecx; pop eax
+        if (f == 0) { memcpy(s + n, kProlog, 6); n += 6; B(0xE9); D(0x744E96 - (at + n + 4)); }
+        else { B(0x33); B(0xC0); B(0xE9); D(0x744FC0 - (at + n + 4)); } // xor eax,eax (replaced); jmp on
+        WriteProcessMemory(h, (void*)(size_t)at, s, n, 0);
+    }
+    unsigned char j[6] = {0xE9, 0, 0, 0, 0, 0x90}; DWORD rel = (c + 0x100) - (RAYEXIT + 5); memcpy(j + 1, &rel, 4);
+    if (!patchSuspended(RAYEXIT, j, 5)) { puts("ray patch failed"); exit(1); }
+    rel = c - (0x744E90 + 5); memcpy(j + 1, &rel, 4);
+    if (!patchSuspended(0x744E90, j, 6)) { puts("ray patch failed"); exit(1); }
+    return c;
+}
+
 // Index of a pointer in a table of n pointers (state or transition table), -1 if absent.
 static DWORD tab[4][4096]; static DWORD tabAt[4]; static int tabN[4];
 static int indexIn(int slot, DWORD table, int n, DWORD ptr) {
@@ -249,6 +306,12 @@ int main(int argc, char** argv) {
     }
     if (!strcmp(argv[1], "hook")) { printf("cave %08lx\n", hook()); return 0; }
     if (!strcmp(argv[1], "callhook")) { printf("call cave %08lx\n", callhook()); return 0; }
+    if (!strcmp(argv[1], "rayhook")) { printf("ray cave %08lx\n", rayhook()); return 0; }
+    if (!strcmp(argv[1], "rayunhook")) {
+        if (!rayCaveOf()) { puts("not hooked"); return 0; }
+        int ok = patchSuspended(0x744E90, kProlog, 6) & patchSuspended(RAYEXIT, kRayExit, 5);
+        puts(ok ? "unhooked" : "unhook failed"); return !ok;
+    }
     if (!strcmp(argv[1], "callunhook")) {
         if (!callCaveOf()) { puts("not hooked"); return 0; }
         int ok = 1; for (int f = 0; f < 3; ++f) ok &= patchSuspended(kCallFn[f], kProlog, 6);
@@ -280,6 +343,7 @@ int main(int argc, char** argv) {
     SetForegroundWindow(w); timeBeginPeriod(1);
     DWORD cave = hook(), EN = cave + 0x100, PO = cave + 0x104, AK = cave + 0x108;
     DWORD callCave = (getenv("CALLS") && atoi(getenv("CALLS"))) ? callhook() : 0, callRead = callCave ? rd32(callCave + 0xF00) : 0;
+    DWORD rayCave = (getenv("RAY") && atoi(getenv("RAY"))) ? rayhook() : 0, rayRead = rayCave ? rd32(rayCave + 0xF00) : 0;
     DWORD oldVar = rd32(GT + 0xC8), oldLock = rd32(GT + 0x120);
     if (fixed) { w32(GT + 0x120, 3); w32(GT + 0xC8, 0); }
     // Arm: release a frame a killed tracer left waiting, then the next frame end publishes its number and waits for us.
@@ -356,6 +420,16 @@ int main(int argc, char** argv) {
                                k, clip ? (unsigned short)rd16(clip + 0x34) : 0, k, rdf(ch + 0x28), k, rdf(ch + 0x2C), k, rdf(ch + 0x50),
                                k, (unsigned short)rd16(ch + 0x58));
                     }
+                }
+            }
+            if (rayCave) { // RAY=1: the wall-under-hang ray's calls and results since the last tick
+                DWORD wp = rd32(rayCave + 0xF00); if (wp - rayRead > 256) rayRead = wp - 256;
+                printf("\tvar_ray=");
+                for (; rayRead < wp; ++rayRead) {
+                    DWORD r[32]; ReadProcessMemory(h, (void*)(rayCave + 0x1000 + 128 * (rayRead & 255)), r, 128, 0);
+                    if (r[0] == 1) { printf("E@%lu", r[1]); for (int k = 2; k < 21; ++k) printf(":%lx", r[k]); }
+                    else { printf("R@%lu:%lx", r[1], r[2 + 4]); for (int k = 2; k < 26; ++k) printf(":%lx", r[k]); }
+                    putchar(';');
                 }
             }
             if (callCave) { // CALLS=1: the call-log ring's entries since the last tick

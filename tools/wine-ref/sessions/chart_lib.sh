@@ -73,3 +73,17 @@ cmeasure() {
 }
 # tru X Y Z YAWDEG: a spawn given in our frame (as the GameReal tests give it) as the tru frame "x,y,z,yawrad" for ccase.
 tru() { echo "$OFF" | awk -F, -v x="$1" -v y="$2" -v z="$3" -v w="$4" '{printf "%.2f,%.2f,%.2f,%.5f", x+$1, y+$2, z+$3, (w+90)*3.14159265/180}'; }
+# creplay CASE.json NEWNAME [FAMILY]: record a case again from its .case.json (spawn.tru, hold, settle, camera, keys) with
+# the current env columns (VARS, ANIM, CALLS, RAY) under FAMILY/NEWNAME (default: the case's own family).
+creplay() {
+    eval "$(python3 - "$1" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); s = c['spawn']
+print('_sp=%s _ho=%d _se=%d _ti=%d _cam=%s _keys="%s"' % (','.join('%g' % v for v in s['tru']), s.get('hold_ticks', 30),
+      s.get('settle_ticks', 0), c['ticks'], ','.join((c.get('camera_follow') or '').split(',')[:2]), ' '.join(c['keys_vk_down_up_ticks'])))
+print('_notes="replay of %s with extra columns"' % sys.argv[1].split('/')[-1][:-10])
+PY
+)"
+    fam=${3:-$(basename "$(dirname "$1")")}
+    HOLD=$_ho SETTLE=$_se ccase "$fam" "$2" "$_sp" "$_ti" "$_cam" "$_notes" $_keys
+}
