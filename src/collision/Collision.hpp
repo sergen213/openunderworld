@@ -118,6 +118,11 @@ struct Markup {
     // Units per second of each point as its owner moved it on the last tick (empty: static; game::World fills it for
     // object markup). tru.exe keeps the same at a ledge candidate's attach point, candidate +0x80 (0x6F6C50 / 0x6EC930).
     std::vector<vec3> velocity;
+    // The MarkUp box (tru.exe MarkUp +0x34 centre, +0x40 / +0x4C its min / max corner as offsets from the centre): unit
+    // markup 0x5C9DA0 (the points' mean and their bounds round it), object markup the model item's own +0x34 / +0x40 /
+    // +0x4C (World::tickObjectMarkup places the centre with the points; the extents stay as stored). Read by the markup
+    // search's point source 1 and its box-height test (0x723AB0 case 1, 0x725870).
+    vec3 centre{0}, boxMin{0}, boxMax{0};
 };
 // MUD flag bits tru.exe derives from the type (switch 0x5D6F90 | 0x5D70A0).
 uint32_t markupFlags(uint8_t type);

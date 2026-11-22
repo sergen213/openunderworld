@@ -2773,6 +2773,7 @@ void World::tickObjectMarkup(float dt) {
             if (seg < p.segments.size()) frame = frame * p.segments[seg];
             collision::Markup m = p.markup[size_t(k)];
             for (vec3& q : m.points) q = vec3(frame * glm::vec4(q, 1));
+            m.centre = vec3(frame * glm::vec4(m.centre, 1)); // its extents stay in the segment's axes [I]
             if (o.hidden || o.dead) m.type = 0; // "none"
             const std::pair<int32_t, int> key{o.uid, model * 100 + k};
             seen.insert(key);
@@ -2786,7 +2787,7 @@ void World::tickObjectMarkup(float dt) {
                 old.velocity.clear();
                 if (dt > 0 && old.points.size() == m.points.size())
                     for (size_t i = 0; i < m.points.size(); ++i) old.velocity.push_back((m.points[i] - old.points[i]) / dt);
-                old.points = std::move(m.points), old.type = m.type;
+                old.points = std::move(m.points), old.type = m.type, old.centre = m.centre;
             }
         }
     };

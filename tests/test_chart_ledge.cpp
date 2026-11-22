@@ -261,7 +261,8 @@ TEST(ChartLedge, ChartSideAttachHandsTheJumpTargetOn) {
     detachChartMarkup(ctx);
     EXPECT_FALSE(*ctx.chartAttached);
     EXPECT_EQ(ctx.playerInt(0xEA0), 8);
-    EXPECT_TRUE(attachTargetClass(610) && attachTargetClass(627) && !attachTargetClass(611) && !attachTargetClass(628));
+    // 611 (and 602) attach too, a ladder target only (0x74DCD0; markupAttachTarget checks the MUD flag)
+    EXPECT_TRUE(attachTargetClass(610) && attachTargetClass(627) && attachTargetClass(611) && !attachTargetClass(628));
 }
 
 // 0x74F480 / 0x744E90: a wall under the hang (the ray from 90 out to Lara data +0x6E6 behind the ledge line, in the
