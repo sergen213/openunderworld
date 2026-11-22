@@ -1695,7 +1695,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             if (len > 100.0f && col_.raycast(from, d / len, len - 100.0f)) return;
         }
         int entry = -1;
-        uint16_t resultBits = 0;
+        uint16_t resultBits = 0, resultUncertain = 0;
         const auto& m = col_.markup[size_t(li)];
         const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
         constexpr float side = kLedgeSide;
@@ -1744,6 +1744,10 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 // 22 / 23: the hit less the start led by the markup's own motion (0x7233E0; static here), as a direction
                 // [I: 0x16 / 0x17 told apart by a step Ghidra folded]; none: straight down
                 case 22: case 23: return unitOr(h - q.start, vec3(0, 0, -1));
+                case 34: { // 0x5C3AA0: the markup's two ends; the one nearer the candidate point
+                    const vec3 e0 = m.points.front(), e1 = m.points.back();
+                    return glm::distance(e1, h) < glm::distance(e0, h) ? e1 : e0;
+                }
                 case 13: return arcAt(from, t);
                 case 24: return h - (q.start + q.v * t);
                 case 28: return q.base;
@@ -1832,16 +1836,26 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             if (hit == record.end()) return;
             entry = int(hit - record.begin());
             // The result record on the hit (0x7296C0 -> 0x729540 with every entry): each passing entry's bits of word 0
-            // (candidate +0xA0, copied to player +0xAC0) [O: decomp]
-            resultBits = 0;
+            // (candidate +0xA0, copied to player +0xAC0) [O: decomp]. An entry ours cannot evaluate (strict) leaves its
+            // own bits uncertain, not the whole answer.
+            resultBits = 0, resultUncertain = 0;
             if (!q.result.empty() && recordGate(q.resultTypes, q.resultRecordFlags, m.type))
-                for (const ClassEntry& e : q.result)
-                    if (entryGate(e, m.type) && std::all_of(e.tests.begin(), e.tests.end(), pass))
-                        for (const uint16_t b : e.bits)
-                            if ((b >> 4) == 0) resultBits |= uint16_t(1u << (b & 15));
+                for (const ClassEntry& e : q.result) {
+                    if (!entryGate(e, m.type)) continue;
+                    const bool wasUnknown = std::exchange(q.unknown, false);
+                    const bool ok = std::all_of(e.tests.begin(), e.tests.end(), pass);
+                    const bool unsure = std::exchange(q.unknown, wasUnknown);
+                    if (!ok && !unsure) continue;
+                    for (const uint16_t b : e.bits)
+                        if ((b >> 4) == 0) (unsure ? resultUncertain : resultBits) |= uint16_t(1u << (b & 15));
+                }
+            resultUncertain &= uint16_t(~resultBits);
         }
         const float along = glm::length(xy(h - m.points[size_t(si)]));
-        if (perch || openBelow(col_, m, si, along, side)) best = {li, si, along, side, t, entry, resultBits};
+        // ours' room-to-hang rule (openBelow, [I]) is not 0x7296C0's: the data-driven record's own tests decide there
+        // (its hurdle classes 5..11 are ledges with no drop) [O: decomp, lara.drm 0x19AC / 0x17AC]
+        if (perch || q.strict || openBelow(col_, m, si, along, side))
+            best = {li, si, along, side, t, entry, resultBits, resultUncertain};
     };
     // The class path's candidates: the markup sweep-and-prune pass over x / y (0x70F300 -> 0x463DE0, axes mask 3) of
     // the query's start -> start + its whole-range displacement against each ledge segment's box grown by kSweepPad.
@@ -1886,8 +1900,9 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     }
     // Strict (data-driven) searches: ours sweeps ledges (and perches for the ground record) only, so "nothing met" is
     // tru.exe's answer only when the record admits no other candidate type (0x7232E0 and an entry's gate) [I: a hit of
-    // another type earlier than ours would also win; kept].
-    if (q.strict && best.markup < 0 && !record.empty())
+    // another type earlier than ours would also win; kept]. Judged on the whole sweep, not on ledgeOnArc's per-moving-
+    // markup passes (`only` >= 0: one markup, which says nothing of the other types).
+    if (q.strict && only < 0 && best.markup < 0 && !record.empty())
         for (int type = 0; type < 64 && !q.unknown; ++type) {
             if (type == 1 || (type == 13 && q.record == JumpRecord::Ground)) continue;
             if (!recordGate(q.recordTypes, q.recordFlags, type)) continue;
@@ -2402,7 +2417,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     out.known = !q.unknown;
     out.target = j;
     if (j.markup < 0) return out;
-    out.flags = j.resultFlags;
+    out.flags = j.resultFlags, out.uncertain = j.resultUncertain;
     // +0xA80 = the candidate's +0xC0, which only the ledge class table fills (+0x2C bit 0x40) [O: decomp]; the class
     // table's "none of the bands" (ours 4) left 0 under Wine (groundAim) [I]
     if (q.classify) {

@@ -171,7 +171,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         const auto f = w->player().markupSearch(p, rt->mirrored(), std::atan2(stickWorld.y, stickWorld.x), stickLen > 0.0f);
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
-        return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames};
+        return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};
     }
     // ---- group A ----
     std::optional<float> sincePress(int id) const override {

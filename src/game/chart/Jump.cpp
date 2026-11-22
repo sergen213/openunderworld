@@ -264,6 +264,8 @@ bool segmentPitch(ChartContext& ctx, const Cond& c) {
 // flags (cleared with the target by 0x707500): the context's, else the chart-side store.
 bool queryFlag(ChartContext& ctx, const Cond& c) {
     const int v = ctx.chart().value(c);
+    // a bit the chart's own search could not settle (Aim::uncertain: its result entry's tests not modelled)
+    if (ctx.chartTarget.target && v >= 0 && v < 32 && ((ctx.chartTarget.uncertain >> v) & 1)) return ctx.chart().unported(c);
     if (const auto f = jtFlags(ctx); f && v >= 0 && v < 32) return (*f >> v) & 1;
     const int word = ctx.playerInt(0xAC0 + (v >> 4) * 2);
     return (word >> (v & 15)) & 1;
