@@ -1805,6 +1805,19 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 2: return m.points.front();
                 case 3: return m.points[size_t(si)];
                 case 28: return q.base;
+                // 29: 0x723AB0 case 0x1D, the query block's base (+0xA0) plus t times its velocity (+0x30 = the query
+                // object's +0x20, 0x771830's velocity) plus the candidate's +0x90 (taken as 0, as for 28) [O decomp]
+                case 29: return q.base + q.v * t;
+                case 21: { // 0x723AB0 case 0x15 -> 0x711530 by the candidate's MUD flags & 0xFFFFFC10: the candidate point for
+                    // 0x800000 / 0x40000 / 0x20000 / 0x10000 / 0x1000000 / 0x20000000 / 0x40000000 [O decomp]; the
+                    // other types (holds, poles, 0x80000 / 0x400000 / 0x10 / 0x4000000) are not ported
+                    const uint32_t mf = collision::markupFlags(m.type);
+                    const uint32_t k = mf & 0xFFFFFC10u;
+                    const bool plain = !(mf & 0x8000) && (k == 0x800000 || k == 0x40000 || k == 0x20000 || k == 0x10000 ||
+                                                          k == 0x1000000 || k == 0x20000000 || k == 0x40000000);
+                    if (!plain && q.strict) q.unknown = true;
+                    return h;
+                }
                 case 4: case 31: return h;
                 default: // 33: a hold's point; ledges are no holds
                     if (q.strict && src != 33) q.unknown = true;
@@ -1907,6 +1920,30 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 case 25: { // 0x725980: the angle between her motion (15) and the way from the arc's linear point to the
                     // hit (23), both flattened (the instance's up axis), under v degrees; either one nil passes
                     const vec2 a = xy(q.v), b = xy(h - (q.start + q.v * t));
+                    r = glm::length(a) < 1e-4f || glm::length(b) < 1e-4f ||
+                        glm::dot(glm::normalize(a), glm::normalize(b)) > std::cos(glm::radians(c.value));
+                    break;
+                }
+                case 24: { // 0x725980 kind 0x18: a1 and a2 as directions, each less its part along the attached markup's
+                    // normal (0x6FE7E0 on the query block's +0x280 record = player +0xC94 / +0xC98 / +0xCA0; skipped when
+                    // she is not attached or the normal is nil), then their angle under v degrees; either one nil passes
+                    // [O decomp]. The normal is ported for ledges / beams (0x40000000 / 0x40000 / 0x10000: cross(segment, up),
+                    // 0x6FEBD9) only.
+                    vec3 a = point(c.a1), b = point(c.a2);
+                    if (s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size()) {
+                        const collision::Markup& am = col_.markup[size_t(s_.ledge)];
+                        const uint32_t k = collision::markupFlags(am.type) & 0xFFFFFC10u;
+                        const int as = std::clamp(s_.ledgeSeg, 0, std::max(0, int(am.points.size()) - 2));
+                        if (am.points.size() >= 2 && (k == 0x40000000 || k == 0x40000 || k == 0x10000)) {
+                            const vec3 nn = glm::cross(am.points[size_t(as) + 1] - am.points[size_t(as)], vec3(0, 0, 1));
+                            if (glm::length(nn) > 0) {
+                                const vec3 u = glm::normalize(nn);
+                                a -= glm::dot(a, u) * u, b -= glm::dot(b, u) * u;
+                            }
+                        } else if (q.strict) {
+                            q.unknown = true;
+                        }
+                    }
                     r = glm::length(a) < 1e-4f || glm::length(b) < 1e-4f ||
                         glm::dot(glm::normalize(a), glm::normalize(b)) > std::cos(glm::radians(c.value));
                     break;
@@ -2031,16 +2068,25 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 for (int k = 0; k < q.typeStarts; ++k)
                     if (q.typeStart[size_t(k)].first == m.type) starts[0] = q.typeStart[size_t(k)].second;
             }
+            // A data-driven (strict) search also meets a markup whose nearest approach is the arc's start (the distance
+            // only grows from t = 0: no minimum inside the range): beam 1031 level with hang ledge 1009 at l3_chapel, met
+            // by profile 84's straight up probe from the attach point (Wine ch_beam_walk: S439 -> S882 on JumpTargetClass
+            // 625 at the jump press) [I: tru.exe's sweep 0x70F300 -> 0x463DE0 candidate times not decoded]
+            const auto minima = [&](vec3 r0, vec3 r1, vec3 r2, float out[2]) {
+                const int n = arcMinima(r0, r1, r2, q.frames, out);
+                if (n == 0 && q.strict && glm::dot(r0, r1) >= 0) out[0] = 0, out[1] = 0;
+                return n == 0 && q.strict && glm::dot(r0, r1) >= 0 ? 1 : n;
+            };
             for (int fi = 0; fi < nStarts; ++fi) {
                 const vec3 from = starts[fi];
                 float ts[2];
-                const int nt = arcMinima(perp(from - a), perp(q.v), perp(a2), q.frames, ts);
+                const int nt = minima(perp(from - a), perp(q.v), perp(a2), ts);
                 for (int k = 0; k < nt; ++k) {
                     const float s = glm::dot(arcAt(from, ts[k]) - a, u);
                     if (lo <= hi && s >= lo && s <= hi) { check(int(li), si, ts[k], a + u * s, from); continue; }
                     const vec3 e = a + u * (lo > hi ? 0.5f * len : std::clamp(s, lo, hi)); // past an end: that end
                     float te[2];
-                    const int ne = arcMinima(from - e, q.v, a2, q.frames, te);
+                    const int ne = minima(from - e, q.v, a2, te);
                     for (int j = 0; j < ne; ++j) check(int(li), si, te[j], e, from);
                 }
             }
