@@ -236,12 +236,22 @@ bool moveDirSpherical(ChartContext& ctx, const Cond& c) {
     return ctx.chart().unported(c);
 }
 
-// 0x1F7 (0x762B40, PSCCF_LowCeiling): cur = !0x7145D0 (the standing height's clearance over her is short), edge-coded,
-// the first evaluation taking the previous value equal to the current one.
+// 0x1F7 (0x762B40, PSCCF_LowCeiling): cur = !0x7145D0, edge-coded, the first evaluation taking the previous value equal
+// to the current one. 0x7145D0: 0x7144B0 -> 0x70B5A0 casts the player line query (0x493330, flags 0x2C19E7) from
+// her origin (instance +0x20) + 0.1 h up to + h, h = player data +0x10 (the standing height, 512.01); the clearance
+// is h unless it hits, and cur is clearance != h, so any hit is a low ceiling [O: decomp]. Without a world to ask, the
+// context's own answer (ChartContext::lowCeiling).
 bool lowCeiling(ChartContext& ctx, const Cond& c) {
     ChartRuntime& rt = ctx.chart();
     if (rt.cache(c.id).frame == rt.frame()) return edge(ctx, c, false, true); // cached: cur is not read again
-    const auto low = ctx.lowCeiling();
+    std::optional<bool> low;
+    if (ctx.hasCollision()) {
+        const float h = rt.charts().data<float>(0x10);
+        const glm::vec3 o = ctx.position();
+        low = ctx.playerRay(o + glm::vec3(0, 0, 0.1f * h), o + glm::vec3(0, 0, h)).has_value();
+    } else {
+        low = ctx.lowCeiling();
+    }
     if (!low) return rt.unported(c);
     return edge(ctx, c, *low, true);
 }
