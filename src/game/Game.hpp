@@ -738,8 +738,9 @@ public:
     void setFlight(vec3 v) { s_.vel = v, s_.jumpStart = s_.pos, s_.jumpVel0 = vec2(v), s_.jumpTime = 0; }
     void setYaw(float yaw) { s_.yaw = yaw; }
     std::pair<vec3, float> hangPose(int markup, int seg, float t, float side) const { return attachPose(markup, seg, t, side); }
-    // The chart drive's hold pose on an attached ladder (rung), pillar (axis) or perch (Traverse.cpp); nullopt else.
-    std::optional<std::pair<vec3, float>> familyPose(int markup, vec3 from, float yaw) const;
+    // The chart drive's hold pose on an attached ladder (rung where the attach clip `clip` ends), pillar (axis) or perch
+    // (Traverse.cpp); nullopt else.
+    std::optional<std::pair<vec3, float>> familyPose(int markup, vec3 from, float yaw, std::string_view clip = {}) const;
     // A ledge hang's root offset from the ledge point in her frame (x right, y forward, z up; attachPose's hand offset):
     // the chart drive sets tru.exe's (0x74ED30), legacy keeps ledgeb_idle's hands (unset).
     void setLedgeHang(vec3 off) { ledgeHang_ = off; }
