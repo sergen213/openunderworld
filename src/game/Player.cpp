@@ -4260,6 +4260,13 @@ void Player::drive(const DriveStep& d, float dt) {
                     const double a = loop ? t : std::clamp(t, 0.0, std::max(0.0, c.durationSeconds() - h));
                     return glm::length(rootTranslation(c, a + h, loop) - rootTranslation(c, a, loop)) / float(h);
                 };
+                // the outgoing clip still in its own fade-in window has not moved her root yet: what carries out is
+                // the window's own speed (her actual motion), not the held clip's nominal root speed (a one-tick S65
+                // between a walk and S39 carried ng_run_start's 20 units a tick into the stop; Wine's walk stop
+                // jh_ledge2_walk S75 -> S39 stands dead, its run stop at a crawl lad_a234_climb_up_stick slides ~1 a
+                // tick) [O-runtime]
+                const bool held = s_.clipTime < rootLead_.start + double(rootLead_.hold) - 1e-6;
+                const float heldOut = fade_.left > 0 ? glm::mix(fade_.vOut, fade_.vIn, 1.0f - fade_.left / fade_.total) : 0.0f;
                 fade_ = {s_.clip, s_.clipTime, s_.loop, s_.mirror, d.crossfade, d.crossfade};
                 // r+0x60: the incoming clip's root speed over the last frame of the window, the root before the clip's
                 // first key counting as the origin: S245's window ends at ng_planted_jump_forward's frame 1, its frame
@@ -4271,7 +4278,7 @@ void Player::drive(const DriveStep& d, float dt) {
                 // speed left to carry out (Wine b973_top_run_fwd S57 -> S40: 3.3 on the change's tick, then 0; ours
                 // drifted ~50 units through ng_idle's 25-frame window) [O-runtime]
                 const bool ended = !s_.loop && s_.clipTime >= oc->durationSeconds() - 1.0 / 30.0;
-                fade_.vOut = ended ? 0.0f : speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
+                fade_.vOut = held ? heldOut : ended ? 0.0f : speed(*oc, s_.clipTime, s_.loop), fade_.vIn = vIn;
             } else {
                 fade_ = {};
             }
