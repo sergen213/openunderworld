@@ -551,10 +551,22 @@ tru.exe's weather (0x546FC0 each frame, after the prims) is a legacy system besi
   `fx_snow_blizzard_arc_startsnow_ist` intros (`FxReal.WeatherEmittersFromData`): veils of speckle sheets (defs 1 / 3:
   textures 349 / 165 alpha-blended, key blend 1 [O 0x52AE60]; 146 / 150 additive) blown 79 units a 30 Hz frame along
   the emitter's +y through its segment -3 frame (yaw -2.6 rad), plus faint texture-145 dots within 4741. At the
-  snowlight camera ours draws about 277 speckle sheets and 95 additive dot sheets in view after 400 ticks. Open [U]:
-  the Wine capture there (`weatherfx/orig_snow.png`) shows finer, denser speckles over the far ice wall than ours,
-  and why is not decoded (blend, texture filtering, or the sheets' count / placement). Under Wine the chapter-5 start
-  plays the l5_startsnow intro into l5_valgrind_tunnel with script snow and rain both 0 (2026-11-21).
+  snowlight camera ours draws about 277 speckle sheets and 95 additive dot sheets in view after 400 ticks. Live
+  tru.exe pool at the same spot (particle pool `*(0xAD7D08)`, 4096 × 0x130: +0x10 position, +0x20 size, +0x38
+  texture, +0x3C ARGB, +0x112 owner; Wine 2026-11-21): ~1460 snow particles, 349 / 165 ~510 / ~530 with median size
+  ~315 and alpha up to 0x4F, 146 / 150 ~170 each (alpha up to 0x31), 145 ~85 (size 63) [O]: the counts, sizes and
+  alphas match ours. The sheets' textures are white with the dots in alpha only (349: 5 % of texels above alpha 32,
+  peak 115; 165: 4.6 %, peak 232; 146 / 150: 0.3 %). Their PCD9 flags are address modes, not a filter (TEXTURES.md:
+  0 = clamp for 349 / 165 / 145, 3 = wrap for 146 / 150); the filter is the BestTextureFilter setting for every
+  texture (2 = trilinear in the capture prefix). Speck shape matches: the mean peak profile has 0.35 of the peak at
+  ±1 px in tru.exe and 0.29 / 0.31 in ours (trilinear); point sampling would give 0.15. Speck counts per 10 000 px
+  (local maxima of a 9-px high-pass above 4 / 8 / 12 / 16 / 24) over the far ice wall at the snowlight camera:
+  `orig_snow.png` 224 / 140 / 77 / 41 / 12, ours 210 / 122 / 73 / 42 / 13, ours without effects 186 / 103 / 65 /
+  40 / 12 [O measured]: the remaining gap is the faint specks (up to −13 % above 8) [U: no cause found in counts,
+  sizes, alphas, blend, filter or addressing]. The 2026-11-21 capture at the Wine-pinned camera
+  (`weather/wine/cap4/shot2.png`) shows far more specks, but over the black, fogless background of a partly streamed
+  l5_startsnow, so it does not compare with a loaded, fogged scene. Under Wine the chapter-5 start plays the
+  l5_startsnow intro into l5_valgrind_tunnel with script snow and rain both 0 (2026-11-21).
 - Lightning (0x545950 -> 0x53A650, 0x53A550): every min..max seconds a flash of one of six patterns (0x8A3804
   intensities / 4096 per 30 Hz frame; 2-4 twice, 5 reversed, 6 short) on a light of the +0x4C colour and +0x54
   radius, and the object's event 0x30 there (particles 3 and 6, bolt 0, screen filter 1, thunder). Ours: the light

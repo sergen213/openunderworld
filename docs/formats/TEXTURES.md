@@ -27,7 +27,7 @@ Labels: **[O]** observed in game data or tru.exe, **[I]** inference, **[U]** unk
 | 0x12 | u16 | height [O] |
 | 0x14 | u8  | bits per pixel: 32 for 0x15, 0 for DXT [O] |
 | 0x15 | u8  | mip levels − 1 [O] (tru.exe 0x515B40 and the size check below) |
-| 0x16 | u16 | flags; 0x8000 = cube map with 6 faces [O]. Other observed values: 0, 1, 3 (meaning [U]) |
+| 0x16 | u16 | flags; 0x8000 = cube map with 6 faces [O]. Bits 0 / 1 / 2 = wrap U / V / W, else clamp (0, 1, 3 observed) [O]: PCTexture_ReceiveData 0x515B40 keeps flags & 0x7FFF at PCTexture +0x1C (setter 0x515D40 rewrites the low 3 bits); binding a texture (0x5076E0) passes vfunc +0x34 (0x515D30: +0x1C & 7) to 0x526800, which sets D3DSAMP_ADDRESSU / V / W (1 / 2 / 3) to WRAP (1) where the bit is set and CLAMP (3) where it is clear. The filter is not per texture: callers request 0x100, capped by the BestTextureFilter setting (device +0x1AC; FUN_00526670 modes 0 point, 1 bilinear + point mip, 2 trilinear, 3+ anisotropic) |
 
 - [O] Pixel data: mip levels largest-first. Each level is `max(1,w>>i) × max(1,h>>i)`. BCn levels
   are rounded up to 4×4 blocks of 8 bytes (DXT1) or 16 bytes (DXT3/DXT5).
@@ -80,7 +80,8 @@ Gap: no test for the palette and unknown-format rejections; the install survey (
 
 ## Open questions
 
-- [U] What flags bits 0/1 mean. They are common (25 511 textures have flags = 3).
+- [U] Ours samples every texture with REPEAT addressing; the textures with bits 0 / 1 clear (clamp in tru.exe) differ
+  only in the border texels of their bilinear footprint. 25 511 textures have flags = 3 (wrap U / V).
 - [U] The cube face order (assumed D3D +X −X +Y −Y +Z −Z; used by the original shaders' environment reflections).
 - [I] There are many small white 32bpp textures with low alpha, e.g. `co_satchel` 0x1850. They are probably
   alpha/specular masks. Material category semantics are discussed in MESHES.md.
