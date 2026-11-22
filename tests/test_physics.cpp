@@ -331,6 +331,26 @@ TEST(Physics, SegmentQueriesStopUnderCover) {
     EXPECT_TRUE(hits[3]->dynamic);
     EXPECT_FALSE(hits[4]);
     EXPECT_EQ(s.bodyCount(), 0u);
+    // A frozen SegmentCaster (the Enhanced weather's worker) casts as castSegments did when it was taken, with no mesh
+    // pointer, even after the collider moved and the terrain was dropped.
+    const auto caster = s.segmentCaster();
+    s.setColliders(std::vector<collision::Dynamic>{{9, block, glm::translate(glm::mat4(1), {-2000, 0, 900})}});
+    s.setTerrain({});
+    std::vector<std::optional<physics::Scene::SegmentHit>> frozen(rays.size());
+    caster->cast(rays, frozen);
+    for (size_t i = 0; i < rays.size(); ++i) {
+        ASSERT_EQ(bool(frozen[i]), bool(hits[i])) << i;
+        if (!hits[i]) continue;
+        EXPECT_EQ(frozen[i]->point, hits[i]->point) << i;
+        EXPECT_EQ(frozen[i]->face, hits[i]->face) << i;
+        EXPECT_EQ(frozen[i]->dynamic, hits[i]->dynamic) << i;
+        EXPECT_EQ(frozen[i]->mesh, nullptr);
+    }
+    std::vector<std::optional<physics::Scene::SegmentHit>> live(rays.size());
+    s.castSegments(rays, live);
+    ASSERT_TRUE(live[3]);
+    EXPECT_NEAR(live[3]->point.z, 1000, 0.5f); // the live scene: only the moved block (top at 1000)
+    EXPECT_FALSE(live[1]);
 }
 
 // Scene::save / restore: a scene saved mid-tumble (bodies in contact, a body removed earlier so IDs are not in creation
