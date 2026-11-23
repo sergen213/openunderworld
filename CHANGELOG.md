@@ -6,6 +6,28 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.62.2] - 2026-11-23
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: when a fall kills Lara, her body now goes limp at once with the death animation, as in the original (it
+  waited for the animation to end, so the level reset first). Her joints knocking against their limits now play the
+  original's impact sounds, louder and higher the faster the joint swings.
+- Changed (chart traversal): ladders follow the original's timing. She holds at the original's height and distance
+  (decoded, no longer fitted), climbs rung to rung without pauses, and the top exit lands on the last rung.
+- Changed (chart traversal): dropping from a ledge into a hang below now blends onto the hang the way the original
+  does; three of the bedroom drop recordings now match the original in full.
+- Changed (chart traversal): free-climb holds pick the same handhold as the original (it checks that the jump to it
+  is clear), the jump when she lets go of a handhold matches the original's, and she turns onto a handhold's angle.
+- Fixed: animations whose turn crosses ±180° turned her the long way round (seen on the beam's turn-around); they
+  now turn the short way, as in the original.
+- Changed (chart traversal): finishing an animation on the tick the state changes no longer drops its last step (the
+  beam walk replays match the original). In the air, touching a wall keeps her speed instead of stopping her, and
+  ground too steep to stand on is reported to the chart.
+- Fixed (self-tests): seven later-chapter routes ran straight into walls, which now stop Lara in chart mode as in the
+  original; they now turn before the wall. Chart mode passes 86 of 135 gameplay self-tests (79 in 0.62.1); the
+  default controller passes 133 of 135, the same two as before.
+
 ## [0.62.1] - 2026-11-23
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
