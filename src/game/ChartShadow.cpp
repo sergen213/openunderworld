@@ -234,7 +234,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
                                                 p.velocityMode == 1 ? queryVelocity : std::nullopt, searchAttach());
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
-        return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};
+        const Aim aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};
+        if (const auto& mk = w->collision().markup[size_t(f.target.markup)];
+            mk.type >= 16 && mk.type <= 20 && mk.points.size() == 3 && !attachedMarkup())
+            const_cast<Impl*>(this)->grabbedHold = aim.target;
+        return aim;
     }
     // ---- group A ----
     std::optional<float> sincePress(int id) const override {
@@ -338,6 +342,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // skipped check drops her support (0x5D76B0: +0x610 = 0), posts nothing and finds no floor.
     uint32_t collisionMask = 0x48;
     std::optional<bool> stairsByte = false; // Lara +0x11D4 (ChartContext::onStairs), kept while the check is skipped
+    // The last free-climb hold a markup search found while nothing was attached (a falling grab's +0xA64): the hold a
+    // Wine case that began in a free-climb state had been grabbed onto (seedAttach) [I: harness only]
+    MarkupSlot grabbedHold;
     void groundCheck(const Charts& c) {
         if (!(collisionMask & 8)) {
             ground = {}, supportBody = false;
@@ -1098,12 +1105,25 @@ void Shadow::Impl::seedAttach() {
     float best = 900;
     MarkupSlot pick;
     bool hangGrip = false;
-    // A free-climb state (S570's chain) holds a hold (16..20, live with 3 points), which 0x707C60 grips with her root
-    // 158.025 under its point 0 [I: ChartCD's reading]; the hold whose point 0 lies nearest that grip.
+    // A free-climb state (S570's chain) holds a hold (16..20, live with 3 points): the one the case's own air grab took
+    // (the chart's attached hold, else its jump target +0xA64, else the last hold a search found unattached: Wine
+    // cc_dice_* fall onto hold 898's point 0, which profile 45 meets), which 0x707C60 grips with her root 158.025 under
+    // its point 0 [I: ChartCD's reading]; without one, the hold whose point 0 lies nearest that grip.
     bool freeClimb = false;
     for (const auto* st = ch->player.state(enterState); st; st = st->parent >= 0 ? ch->player.state(st->parent) : nullptr)
         if (st == ch->player.state(570)) { freeClimb = true; break; }
-    for (size_t m = 0; freeClimb && m < col.markup.size(); ++m) {
+    const auto isHold = [&](const MarkupSlot& h) {
+        if (!h || size_t(h.markup) >= col.markup.size()) return false;
+        const auto& mk = col.markup[size_t(h.markup)];
+        return mk.type >= 16 && mk.type <= 20 && mk.points.size() == 3;
+    };
+    if (freeClimb) {
+        if (chartAttached && isHold(*chartAttached)) pick = slot(chartAttached->markup, 0, 0), best = 0;
+        else if (const MarkupSlot t = jumpTarget(); isHold(t)) pick = slot(t.markup, 0, 0), best = 0;
+        else if (isHold(grabbedHold)) pick = slot(grabbedHold.markup, 0, 0), best = 0;
+    }
+    const bool chosen = bool(pick);
+    for (size_t m = 0; freeClimb && !chosen && m < col.markup.size(); ++m) {
         const auto& mk = col.markup[m];
         if (mk.type < 16 || mk.type > 20 || mk.points.size() != 3) continue;
         const float d = glm::length(mk.points[0] - (s.pos + glm::vec3(0, 0, 158.025f)));

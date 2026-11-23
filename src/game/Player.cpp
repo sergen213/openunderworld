@@ -2190,22 +2190,36 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             // A data-driven (strict) search also meets a markup whose nearest approach is the arc's start (the distance
             // only grows from t = 0: no minimum inside the range): beam 1031 level with hang ledge 1009 at l3_chapel, met
             // by profile 84's straight up probe from the attach point (Wine ch_beam_walk: S439 -> S882 on JumpTargetClass
-            // 625 at the jump press) [I: tru.exe's sweep 0x70F300 -> 0x463DE0 candidate times not decoded]
-            const auto minima = [&](vec3 r0, vec3 r1, vec3 r2, float out[2]) {
+            // 625 at the jump press) [I: 0x6F9940's polyline times not decoded; gating it on bit 0x10000 as the point
+            // test lost that beam]. The point test 0x6F96C0 (holds) clamps a closest approach before the start to t = 0
+            // only when the profile's +0x2C has bit 0x10000 (byte +0x2E bit 0, its last argument) [O: decomp].
+            const auto minima = [&](vec3 r0, vec3 r1, vec3 r2, float out[2], bool clamp) {
                 const int n = arcMinima(r0, r1, r2, q.frames, out);
-                if (n == 0 && q.strict && glm::dot(r0, r1) >= 0) out[0] = 0, out[1] = 0;
-                return n == 0 && q.strict && glm::dot(r0, r1) >= 0 ? 1 : n;
+                if (n == 0 && clamp && glm::dot(r0, r1) >= 0) out[0] = 0, out[1] = 0;
+                return n == 0 && clamp && glm::dot(r0, r1) >= 0 ? 1 : n;
             };
+            const bool pointClamp = q.strict && (q.profileFlags & 0x10000u);
             for (int fi = 0; fi < nStarts; ++fi) {
                 const vec3 from = starts[fi];
+                // A record whose +0x74 is 1 (the free-climb hold record, Lara data +0x5B8; lara.drm: the only one) meets
+                // the arc at the candidate segment's two end points (0x70F300: 0x5C3AA0 of the segment, 0x6F96C0 on each):
+                // the arc's 3-D closest approaches to the point, which is the hit [O: decomp]
+                if (hold && q.strict) {
+                    for (const vec3 e : {a, b}) {
+                        float te[2];
+                        const int ne = minima(from - e, q.v, a2, te, pointClamp);
+                        for (int j = 0; j < ne; ++j) check(int(li), si, te[j], e, from);
+                    }
+                    continue;
+                }
                 float ts[2];
-                const int nt = minima(perp(from - a), perp(q.v), perp(a2), ts);
+                const int nt = minima(perp(from - a), perp(q.v), perp(a2), ts, q.strict);
                 for (int k = 0; k < nt; ++k) {
                     const float s = glm::dot(arcAt(from, ts[k]) - a, u);
                     if (lo <= hi && s >= lo && s <= hi) { check(int(li), si, ts[k], a + u * s, from); continue; }
                     const vec3 e = a + u * (lo > hi ? 0.5f * len : std::clamp(s, lo, hi)); // past an end: that end
                     float te[2];
-                    const int ne = minima(from - e, q.v, a2, te);
+                    const int ne = minima(from - e, q.v, a2, te, q.strict);
                     for (int j = 0; j < ne; ++j) check(int(li), si, te[j], e, from);
                 }
             }
@@ -2708,10 +2722,28 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     // 12: the query object's +0xFC = player +0xA7C, which the running take-off 0x7726D0 sets to heading source 5
     // (the control yaw, 0x6EBA90) right before it searches [O: decomp 0x724F50 case 0xC, 0x7726D0]
     case 12: th = controlYaw; break;
-    case 17:
+    // 14 / 16 / 17 (jump table 0x7255BC entries 13 / 15 / 16: 0x7251C4 / 0x7252E5 / 0x725280): A(n) = 0x49EFC0(+0xCC0) =
+    // atan2(-n.y, -n.x) - pi/2 (0x8133CA _CIatan2 of the negated components), the yaw that faces along n; 14 takes it,
+    // 16 adds pi, 17 subtracts pi/2 (0x842EE0); her yaw without an attached markup (+0xC94 0) [O: disassembly]. A yaw A
+    // flies the record velocity along (sin A, -cos A) (0x70F300 rotates 0x771830's (x, -y, z) by it), so in ours'
+    // heading terms 14 = atan2(n), 16 = atan2(n) + pi, 17 = atan2(n) - pi/2. +0xCC0 of a ledge, beam or 0x40000 markup is
+    // unit cross(segment, up) (0x74ED30 / 0x738050 / 0x707730 via 0x6FE7E0) [O], so 17 is the segment reversed: a hang's
+    // side leap (profile 7) flies against the ledge's point order, whichever way the chart state is mirrored. Other
+    // markups' +0xCC0 (0x707990's negated 0x5C3CC0, poles' 0x72B4A0) [I]: 17 keeps the segment heading, reversed in a
+    // mirrored chart state; 14 / 16 unknown.
+    case 14: case 16: case 17:
         if (attached) {
-            const vec2 d = segDir(col_.markup[size_t(atM)], atSeg);
-            th = std::atan2(d.y, d.x) + (mirrored ? pi : 0.0f);
+            const collision::Markup& am = col_.markup[size_t(atM)];
+            const vec2 d = segDir(am, atSeg);
+            const uint32_t k = collision::mud(am) & 0xFFFFFC10u;
+            if (k == 0x40000000u || k == 0x40000u || k == 0x10000u) {
+                const float tn = std::atan2(-d.x, d.y); // n = (d.y, -d.x)
+                th = p.heading == 14 ? tn : p.heading == 16 ? tn + pi : tn - half;
+            } else if (p.heading == 17) {
+                th = std::atan2(d.y, d.x) + (mirrored ? pi : 0.0f);
+            } else {
+                return out;
+            }
         } else {
             th = yaw;
         }
@@ -2728,7 +2760,9 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     q.dir = hd;
     q.base = base;
     q.start = base + vec3(f * p.offset.y + left * p.offset.z, p.offset.x);
-    if (p.lead > 0) q.start += p.lead * q.v;
+    // +0xD0 leads the start by that many frames of the CARRIER's velocity (0x771830's param_4 = 0x7694B0: the velocity of
+    // the instance she rides, Player_GetCarrierVelocity on an empty handle, or with +0x2C bit 0x4000 the query object's
+    // +0x120; under 3.1605 a frame it is 0) [O: decomp], not the arc's: ours models no carrier here, so no lead [I].
     q.hang = q.root = q.start;
     bool hang = false, root = false;
     for (const auto& s : p.starts) {
