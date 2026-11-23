@@ -445,8 +445,9 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
     - Mechanism: a ChartContext pending alignment = 0x437120 (V in her frame, Q as a yaw delta; V cleared when a mode-3
       request starts, as 0x441FB0 does). The drive step carries it on the request's restart; `Player::drive` mode 3
       moves her by V x each step's share of the window and turns her by the yaw delta by w. A helper for 0x702D20 aims
-      a kind-1 request at a target root and yaw at the clip's end, using the request clip's whole root translation
-      (0x435EC0) and turn (0x435F20).
+      a kind-1 request at a target root and yaw at the clip's end, using the request clip's header alignment
+      (0x435EC0 / 0x435F20 -> 0x435D70 / 0x435E10: section header +0x18 / +0x24, the whole clip's root motion from
+      frame 0, x and the turn negated when mirrored; `Player::clipAlign`) [O].
     - For kind-2 (graph-node) requests the AnimTarget functions take another path: 0x74DCD0's request kind 2 builds
       an alignment object (0x74BF90 -> 0x6F0FF0), not 0x437120 [O decomp, not decoded further]. Kind-1 families come
       first.
@@ -455,16 +456,36 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
          ladder_attach_ground_bottom, S1117 ladder_attach_air_bad, S1255 lad_attach_down). Setter: action 230's
          ladder class 602 / 611, 0x74DCD0 (target = the rung root from 0x7350B0 at +0x9F0, facing -normal), and
          505's 0x74D980. Replaces: `stateEntered`'s attach blend and `Player::familyPose`'s rung choice for these
-         states. Status: mechanism and the 0x74DCD0 call on branch agent/ChartBlend-m3wip (6bdde4a, not merged).
-         The window now carries the attach the way Wine does (lad_a234_attach: a constant 19.5 a tick down to the rung,
-         position error mean 48 -> 7). But its target is familyPose's rungPos, z 933.9, where tru.exe's 0x7350B0
-         puts the rung root at 940.24. One rung-rounding step is lost, so climb_up / fast_up / top_exit reach S1085
-         19 ticks late. Next: port 0x7350B0 (the +0x9F0 point snapped by 0x734C00, plus +0x784 along the ladder
-         axis and +0x780 along the normal from 0x734830's frame) as the target.
+         states. Status: landed (agent/ChartBlend). 0x7350B0 / 0x734C00 in `familyPose`: the +0x9F0 point's nearest
+         rung point, at most the lowest; with her root a rung or more under the top a ray from her root 20.54 up ..
+         +0x784 + 20.54 down (flags 0x187), a hit +0x784 up becoming the lowest if higher; root = rung point - +0x784 z
+         - +0x780 n. lara.drm player data: +0x770 110.619, byte +0x774 6, +0x778 -110.619, +0x77C 575.221, +0x780
+         -110.619, +0x784 575.221 [O]. Wine (WineChartTrace-2, ladder/lad_a234_attach_ray*.tsv, W/w2/WineChartTrace/
+         ladray.txt, ladray2.txt): the 0x187 ray misses (from her root + 20.54); +0x9F0 = (1401.3, 29.43, 1507.2); so
+         tru's target is the lowest rung's 933.91, and S1066 carries her linearly (19.46 a tick) onto it. Ours casts
+         over terrain only [I]. At the window's end (clip time 1400, t28) tru then snaps 6.25 out / 6.34 up and holds
+         at 940.24 / 116.94 off the wall (rung 0: 1161.40); the snap is not 0x43B870's step (its output there is the
+         ordinary -19.46) but a second path at the window end (0x4358E0 called with a4 = 1400) [O-runtime,
+         ladsnap_table.txt]; ours adds it to the target as a fitted +6.33 / +6.32 [I] until that path is decoded.
+         Climb: action 505 (0x74D980) arms the LadderRungAlignAnimTarget; the climb node's next mode-3 clip
+         (ladder_climb_up R1169, _down R1168) takes V = the rung root nearest her root (0x744B70 via 0x72B8C0:
+         round((top - (z + +0x784)) / +0x770)) less her root [O decomp], the 0x702D20 clip offset left at 0 [I: with the
+         clip's 110.62-up header alignment every cycle would sink a rung]. Wine S1055: the window moves her (0.08,
+         -0.999, -1.05) a tick for 6 ticks (the dip onto the rung root), then the clip's root motion 6.12, 7.87, 9.63 a
+         tick without pauses [O-runtime]; ours now dips and rises to 1124.1 (Wine 1124) and reaches S1085 on Wine's
+         tick. Open: the top exit's snap to 1161.40 (S1087), the hall floor (Wine stands on terrain at 1478.97 that
+         l1_ship_sinking_hall's own collision lacks; some loads slide off onto the hallway section instead).
+         Gate / corpus numbers: see the landing commit.
       2. Pillar (kind 1: S1185-S1187, S1189, S1230). Setter: 0x753F80 (PillarAttachGroundAnimTarget) and kin.
-         `seededOffset` (ChartDrive 6bd15fa) stays for seeded `--chart-state` starts. Status: not started.
-      3. Perch (kind 1: S827, S829-S832, S872). Setters among 0x753510 / 0x753A90 / 0x754370 / 0x750C90. Status:
-         not started.
+         `seededOffset` (ChartDrive 6bd15fa) stays for seeded `--chart-state` starts. Status: 606 -> 0x753F80 kind 1
+         ported on agent/ChartBlend-m3wip (6d606c2; the point on the pillar segment nearest root + R x alignment +
+         (0, 0, short +0x7EE)); not landed: no corpus case reaches the ground attach S1186.
+      3. Perch (kind 1: S827, S829-S832, S872). 624 (S828's 410) -> 0x75F1B0 (+0xCA0 less +0xCE0 through 0x702BA0,
+         no clip offset); 600 -> 0x753510. Status: 624 ported on m3wip; not landed (the perch cases start on the
+         perch, traces identical).
+      3b. Drop-to-hang (drop_to_* patterns, S542; class 0xE7 -> 0x74FDF0 family): Wine b973 plays ~36 ticks of clip
+         root motion with a 180 degree turn onto the hang (z 312.86) where ours descends 6.67 a tick and snaps 32
+         ticks later (ChartJ). Cases drop/b973_top_back_run, b973_top_walk_back. Status: not started.
       4. Ledge (kind 2: ledgeb_attach_down, the reach settles, drop_to_ledgeb / _ledgeu, the runoffs; S277
          ledge_mantle is kind 1). Setter: 0x741130. Graph-node plays start at start - blend as kind-1 ones do (WineChartTrace
          drop/maproom_south_run_birth_anim: R995 at -4, R954 at -4) [O-runtime]; waits on 0x6F0FF0 (the kind-2

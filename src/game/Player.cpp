@@ -306,6 +306,26 @@ static vec3 rootDelta(const AnimLibrary& anims, const PlayerState& s, const anim
     return d;
 }
 
+std::optional<std::pair<vec3, float>> Player::rootSpan(std::string_view clip, double t0, double t1, bool mirror) const {
+    const anim::Clip* c = anims_.find(clip);
+    if (!c) return std::nullopt;
+    const double d = c->durationSeconds();
+    t0 = std::clamp(t0, 0.0, d), t1 = std::clamp(t1, 0.0, d);
+    vec3 r = rootTranslation(*c, t1, false) - rootTranslation(*c, t0, false);
+    float turn = rootYaw(*c, t1, false) - rootYaw(*c, t0, false);
+    if (mirror) r.x = -r.x, turn = -turn;
+    return std::pair{r, turn};
+}
+
+std::optional<std::pair<vec3, float>> Player::clipAlign(std::string_view clip, bool mirror) const {
+    const anim::Clip* c = anims_.find(clip);
+    if (!c) return std::nullopt;
+    vec3 r(c->alignPos[0], c->alignPos[1], c->alignPos[2]);
+    float turn = c->alignRot[2];
+    if (mirror) r.x = -r.x, turn = -turn;
+    return std::pair{r, turn};
+}
+
 vec3 Player::rootLeft() const {
     const anim::Clip* c = anims_.find(s_.clip);
     return c ? rootDelta(anims_, s_, *c, s_.clipTime, c->durationSeconds()) : vec3(0);
@@ -4553,6 +4573,10 @@ void Player::drive(const DriveStep& d, float dt) {
                 // mode 0: 0x4358E0 from 0 to t sums the root's motion from the origin (0 at t <= 0)
                 const auto fromOrigin = [&](double t) { return t <= 1e-6 ? vec3(0) : at(t); };
                 fade_.disp = fromOrigin(t0 + fade_.total) - fromOrigin(t0);
+                // mode 3 with an alignment taken from the context (a ported AnimTarget setter); without one ours keeps
+                // mode 1 (the families not ported yet, docs "Mode-3 port plan")
+                if (d.window == 3 && d.align)
+                    fade_.mode = 3, fade_.disp = vec3(*d.align), fade_.turn = d.align->w, fade_.baseYaw = s_.yaw;
             } else {
                 fade_ = {};
             }
@@ -4597,7 +4621,10 @@ void Player::drive(const DriveStep& d, float dt) {
         fade_.left = std::max(0.0f, fade_.left - dt);
         if (fade_.mode == 0) world += toWorld(fade_.disp * (step / fade_.total)); // 0x43B870 case 0
         else if (fade_.mode == 2) world += toWorld(glm::mix(fade_.vOutV, fade_.vInV, w) * step); // case 2
-        else world += toWorld(vec3(0, -1, 0) * (glm::mix(fade_.vOut, fade_.vIn, w) * step)); // case 1
+        else if (fade_.mode == 3) { // case 3: the alignment's share of the step, in the frame the window began in
+            world += rotYaw(fade_.baseYaw, fade_.disp * (step / fade_.total));
+            s_.yaw = wrapAngle(s_.yaw + fade_.turn * (step / fade_.total));
+        } else world += toWorld(vec3(0, -1, 0) * (glm::mix(fade_.vOut, fade_.vIn, w) * step)); // case 1
     }
     if (d.steer) s_.yaw = approachAngle(s_.yaw, *d.steer, d.steerRate * dt);
     s_.state = d.coarse;

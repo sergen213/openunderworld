@@ -753,6 +753,8 @@ public:
         float rate = 1;             // the anim layer rate (empty clip only)
         float crossfade = 0;        // a fresh clip's blend (s): the replaced clip's root motion fades out over it
         uint8_t window = 1;         // the pattern's crossfade window mode (+0x18, Request::window)
+        // window mode 3's alignment (ChartContext::align): xyz the displacement in her frame, w the turn (radians)
+        std::optional<glm::vec4> align;
         // The anim layer blend (anim::layerBlendWeights of the pattern's +0x17 type over the chart's +0x8C / +0x90):
         // the pattern's further anims (sub-layers 1..) and one weight per sub-layer (`clip` first); empty: `clip` alone.
         std::vector<std::string> blendClips;
@@ -795,7 +797,16 @@ public:
     std::pair<vec3, float> hangPose(int markup, int seg, float t, float side) const { return attachPose(markup, seg, t, side); }
     // The chart drive's hold pose on an attached ladder (rung where the attach clip `clip` ends), pillar (axis) or perch
     // (Traverse.cpp); nullopt else.
-    std::optional<std::pair<vec3, float>> familyPose(int markup, vec3 from, float yaw, std::string_view clip = {}) const;
+    // `body`: her root for a ladder attach's floor ray (0x734C00 casts from the instance, `from` is player +0x9F0).
+    std::optional<std::pair<vec3, float>> familyPose(int markup, vec3 from, float yaw, std::string_view clip = {},
+                                                     std::optional<vec3> body = {}) const;
+    // A clip's root motion between t0 and t1 (s, played once): model-space translation (x reflected when mirrored) and
+    // turn (radians, negated when mirrored); nullopt for an unknown clip.
+    std::optional<std::pair<vec3, float>> rootSpan(std::string_view clip, double t0, double t1, bool mirror) const;
+    // 0x702D20's clip offset for a mode-3 alignment: the clip header's alignment translation and turn (+0x18 / +0x24,
+    // 0x435D70 / 0x435E10: the whole clip's root motion from its frame 0, whatever frame the request starts on), x and
+    // the turn negated when mirrored (0x435EC0 / 0x435F20) [O]; nullopt for an unknown clip.
+    std::optional<std::pair<vec3, float>> clipAlign(std::string_view clip, bool mirror) const;
     // The walkable floor under her root within maxDrop (and the step-up over it), or nullopt.
     std::optional<float> floorBelow(float maxDrop) const;
     // A ledge hang's root offset from the ledge point in her frame (x right, y forward, z up; attachPose's hand offset):
@@ -1036,6 +1047,7 @@ private:
         float left = 0, total = 0, vOut = 0, vIn = 0;
         uint8_t mode = 1;
         vec3 vOutV{0}, vInV{0}, disp{0};
+        float turn = 0, baseYaw = 0; // mode 3: the alignment's turn and her yaw when the window began (disp's frame)
     } fade_;
     // drive(): the current clip's start time and the seconds its lead holds the first frame (the fade) for root motion
     struct RootLead { double start = 0; float hold = 0; } rootLead_;
