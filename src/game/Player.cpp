@@ -1674,23 +1674,18 @@ bool listed(std::span<const uint8_t> list, int type, bool exclude) {
     return (std::find(list.begin(), list.end(), uint8_t(type)) != list.end()) != exclude;
 }
 constexpr float kPlayerDepth = 1583.4387f; // player data +0xC18 (kind 31) [O-data]
-// The ledge class table (objdata +0x121C0, 0x728650; only for queries with +0x2C bit 0x40): the floor 94.815 out of the
-// face below the ledge point (+0xA8) in bands: 0..154.87 down class 11; 154.87..312.90 / ..474.08 / ..635.27 down 5 /
-// 6 / 7, or 8 / 9 / 10 when she stands on the ledge (kind 2: the point < 6.33 over her, facing out of its face), each
-// with the clearance test 0 (0x727BF0, ledgeClear); later entries need a moving markup (class 0, entry 7), the player
-// chart's test 1 (0x74BB50, class 4, entry 8) or the value of 0x726420 (+0xA4) [O-data, decomp]. Ours: 4 for the rest
-// [I: test 1 not decoded; the Wine standing jumps that caught 782..907 ledges need a class kind 14 admits, which a
-// fall to class 12 (floor over 632.1 down) or 3 would not].
-int ledgeClassOf(const collision::CollisionMesh& col, vec3 h, vec2 out, vec3 self, vec2 dir) {
-    const auto floor = col.groundProbe(vec3(xy(h) + out * kFloorOut, h.z + 31.605f), kBand3 + 400.0f);
-    if (!floor) return 4;
-    const float d = floor->point.z - h.z;
-    const bool onIt = h.z - self.z < 6.3281126f && glm::dot(dir, out) > -0.1f;
-    const int band = d > -kBand0 && d < 0 ? 0 : d > -kBand1 && d < -kBand0 ? 1 : d > -kBand2 && d < -kBand1 ? 2
-                     : d > -kBand3 && d < -kBand2 ? 3 : -1;
-    if (band < 0 || !ledgeClear(col, h, out)) return 4;
-    return band == 0 ? 11 : (onIt ? 7 : 4) + band;
-}
+// The ledge class table (0x728650; only for queries with +0x2C bit 0x40; lara.drm objdata +0x116B0: enabled +0x8C,
+// entries +0x90 = objdata +0x121C0, count +0x94 = 18): {class, min, max, kind (0x7260B0), test (0x728500)}, first entry
+// whose kind and test hold (and class != 13) wins, none = 0 (0x728A73) [O-data, decomp].
+struct LedgeClassRow { int cls; float min, max; int kind, test; };
+constexpr LedgeClassRow kLedgeClasses[] = {
+    {11, -154.86726f, 0, 1, 0},       {8, -312.89508f, -154.86726f, 2, 0},  {5, -312.89508f, -154.86726f, 1, 0},
+    {9, -474.08347f, -312.89508f, 2, 0}, {6, -474.08347f, -312.89508f, 1, 0}, {10, -635.27185f, -474.08347f, 2, 0},
+    {7, -635.27185f, -474.08347f, 1, 0}, {0, 0, 0, 4, 4},                   {4, 0, 0, 5, 1},
+    {4, -316.056f, 505.689f, 0, 1},   {0, 0, 0, 3, 4},                      {2, -252.845f, 63.2111f, 0, 0},
+    {0, -948.167f, 63.2111f, 0, 0},   {0, -948.167f, 63.2111f, 0, 2},       {12, -284450.0f, -632.111f, 1, 0},
+    {12, -284450.0f, -632.111f, 1, 2}, {0, -948.167f, 63.2111f, 0, 3},      {3, -316.056f, 15802.8f, 6, 4},
+};
 constexpr float kSweepPad = 424.5f;
 // A running jump's box catch (record 0x2AB8C entry 4) reaches a ledge up to this far (horizontally, root at take-off ->
 // the ledge point where it will be at the hit, Markup::velocity x the hit time) [O: tru.exe under Wine, l4_temple
@@ -1699,6 +1694,88 @@ constexpr float kSweepPad = 424.5f;
 // tru.exe sets it, the middle of 1237.4 .. 1243.4]
 constexpr float kRunJumpReach = 1240.0f;
 } // namespace
+
+// 0x728650 on one candidate [O: decomp 0x728650 / 0x7260B0 / 0x728500 / 0x726420, lara.drm]:
+// - the floor: 0x493330 from 94.815 out of the hang side, 31.605 over the ledge point down to 31.605 under the lowest
+//   kind-1 band (284450); kinds 0 / 1 / 2 / 3 / 4 read d = its z - the point's.
+// - kind 0: +0xA4 (0x726420, below) inside (min, max), a floor and d < -628.94; 1 / 2: d inside (min, max), 2 also her
+//   standing on it (the point < 6.33 over her, facing out of its face, as before [I: ours' facing]); 3 / 4 / 5: the
+//   query's launch velocity (candidate +0xC0, 0x724BB0 copies the query's +0xB0) under 9.4815 a frame horizontally,
+//   then 5 its vz < 9.4815, 4 its vz > 9.4815 and 3 / 4 a floor with d < -628.94; 6 passes.
+// - tests (each run once per candidate): 0 0x727BF0 (ledgeClear), 1 0x74BB50 (the shelf 0x74B920 == 1; at a segment
+//   junction, within 0.05 of it, both sides' shelf answers, which differing go to state property 499 and 0x741B30:
+//   not ported [U]), 2 0x727960 (test 0's first three segments: ours applies the two over the top, as test 0 does),
+//   3 0x727880 (test 0's first segment up to 31.605: not applied by ours, unknown [U]), 4 passes.
+// - +0xA4: ledges only; 0 unless the launch moves 10 a frame horizontally; the arc height over the ledge point as if
+//   launched from her root (her z - the arc start's z added): at the hit time when the segment is degenerate or the
+//   motion runs within 75 degrees of the ledge line (|cos| under cos(1.3089969), 0x85E4C0 through the CRT at 0x813420
+//   [I: cos]), else where the arc's straight motion meets the ledge's vertical plane (0x6FAD70).
+std::optional<int> Player::ledgeClassTable(int li, int si, float along, vec3 h, vec2 out, vec2 dir, const LedgeArc& arc) const {
+    const auto& m = col_.markup[size_t(li)];
+    const auto floor = col_.groundProbe(vec3(xy(h) + out * kFloorOut, h.z + 31.605f), 31.605f + 284450.0f + 31.605f);
+    const std::optional<float> d = floor ? std::optional<float>(floor->point.z - h.z) : std::nullopt;
+    const vec2 vh = xy(arc.v);
+    const bool slow = glm::dot(vh, vh) < 89.89886f;
+    const auto a4 = [&]() -> float {
+        if (m.type != 1 || glm::length(vh) < 10.0f) return 0;
+        const vec3 lead = markupVelocity(li, si, h) * (arc.t / 30.0f);
+        const vec3 hh = h + lead, seg = m.points[size_t(si) + 1] - m.points[size_t(si)];
+        const auto zAt = [&](float t) { return arc.from.z + arc.v.z * t - 0.5f * arc.gravity * t * t; };
+        const auto value = [&](float z) { return z + s_.pos.z - arc.from.z - hh.z; };
+        if (glm::length(xy(seg)) < 1e-6f) return value(zAt(arc.t));
+        const vec2 sd = glm::normalize(xy(seg)), n(sd.y, -sd.x);
+        if (std::abs(glm::dot(glm::normalize(vh), n)) < std::cos(1.3089969f)) return value(zAt(arc.t));
+        const float den = glm::dot(vh, n);
+        if (std::abs(den) < 1.1920929e-7f) return 0;
+        return value(zAt((glm::dot(xy(hh), n) - glm::dot(xy(arc.from), n)) / den));
+    };
+    std::optional<float> a4v;
+    const auto kind = [&](const LedgeClassRow& r) {
+        switch (r.kind) {
+        case 0:
+            if (!a4v) a4v = a4();
+            return *a4v > r.min && *a4v < r.max && d && *d < -628.9395f;
+        case 1: case 2:
+            if (!d || !(*d > r.min && *d < r.max)) return false;
+            return r.kind == 1 || (h.z - s_.pos.z < 6.3281126f && glm::dot(dir, out) > -0.1f);
+        case 3: case 4: case 5:
+            if (!slow) return false;
+            if (r.kind == 5) return arc.v.z < 9.481501f;
+            if (r.kind == 4 && arc.v.z <= 9.481501f) return false;
+            return d && *d < -628.9395f;
+        default: return true;
+        }
+    };
+    std::array<int, 5> tests{}; // 0 not run, 1 passes, 2 fails, 3 unknown
+    const auto test = [&](int id) {
+        int& r = tests[size_t(id)];
+        if (r) return r;
+        const auto clear = [&](vec3 a, vec3 b) { const vec3 v = b - a; return !col_.raycast(a, glm::normalize(v), glm::length(v)); };
+        const auto p = [&](float y, float z) { return h + vec3(out * y, z); };
+        switch (id) {
+        case 0: r = ledgeClear(col_, h, out) ? 1 : 2; break;
+        case 1: {
+            const float len = segLen(m, si), frac = len > 1e-4f ? along / len : 0.0f;
+            const int other = frac < 0.05f && si > 0 ? si - 1 : frac > 0.95f && size_t(si) + 2 < m.points.size() ? si + 1 : -1;
+            const int here = shelfClass(li, si, along);
+            if (other < 0) r = here == 1 ? 1 : 2;
+            else r = here != shelfClass(li, other, other < si ? segLen(m, other) : 0.0f) ? 3 : here == 1 ? 1 : 2;
+            break;
+        }
+        case 2: r = clear(p(100, 252), p(-139, 252)) && clear(p(-139, 252), p(100, 252)) ? 1 : 2; break;
+        case 3: r = 3; break;
+        default: r = 1; break;
+        }
+        return r;
+    };
+    for (const LedgeClassRow& r : kLedgeClasses) {
+        if (!kind(r)) continue;
+        const int t = test(r.test);
+        if (t == 3) return std::nullopt;
+        if (t == 1 && r.cls != 13) return r.cls;
+    }
+    return 0;
+}
 
 // Jump queries meeting ledges [O: tru.exe 0x70F300 sweep, 0x70EC60 checks, 0x6FCB10 capsule; lara.drm player data
 // +0x584]. For each of the ledge record's target types (3, 1) the arc from that type's start (the query's +0x8C entry
@@ -1798,7 +1875,12 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         } else {
             int cls = -1; // the ledge class, worked out on first use (0x728A80)
             const auto ledgeClass = [&] {
-                if (cls < 0) cls = q.classify ? ledgeClassOf(col_, h, n * side, s_.pos, q.dir) : 0;
+                if (cls >= 0) return cls;
+                if (!q.classify) return cls = 0;
+                const auto c = ledgeClassTable(li, si, glm::length(xy(h - m.points[size_t(si)])), h, n * side, q.dir,
+                                               {from, q.v, q.gravity, t});
+                if (!c && q.strict) q.unknown = true; // an entry ours cannot evaluate decides the class
+                cls = c.value_or(0);
                 return cls;
             };
             const auto unitOr = [](vec3 v, vec3 none) { return glm::length(v) > 1e-4f ? glm::normalize(v) : none; };
@@ -1979,25 +2061,44 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         // poles (0x8000000 unless 0x74B5F0 claims it [I: not ported, taken as no]; 0x2000000 /
                         // 0x4000000), pillars (0x10), perches (0x20000), balance beams (0x10000) and jump landings (0x20000000) pass
                         r = true;
-                    } else if (q.strict && ((m.type >= 16 && m.type <= 20) || m.type == 9)) {
-                        // 0x725D00 hands 0x6FC6B0 two ways: her own velocity's direction (0x6E5A10, normalized, else
-                        // straight down) and the query start less the hit led by the motion (0x7233E0; normalized,
-                        // else straight down); 0x6FC6B0 takes the first flattened (not renormalized), the second
-                        // flattened when that is nil (0x49AF50), and passes when both are nil [O: decomp 0x725D00,
-                        // 0x6FC6B0]
-                        vec3 way = unitOr(s_.vel, vec3(0, 0, -1));
-                        way.z = 0;
-                        if (glm::dot(way, way) < 1e-12f) way = vec3(xy(unitOr(from - h, vec3(0, 0, -1))), 0);
-                        if (glm::dot(way, way) < 1e-12f) {
-                            r = true;
-                        } else if (m.type == 9) {
-                            // 0x400000: 0x72B860(normal . way): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
-                            // 0x72B860..0x72B8B8]; the normal (0x5C3CC0) the ladder's wall side, ladderOut [I]
-                            r = std::cos(glm::radians(q.ladderFaceDeg)) < -glm::dot(ladderOut(m), way);
-                        } else {
+                    } else if (q.strict && ((m.type >= 16 && m.type <= 20) || m.type == 9 || m.type == 1)) {
+                        // 0x725D00 builds two ways and calls 0x6FC6B0 twice with them swapped; both calls must pass
+                        // [O: disasm 0x725EF0 / 0x725F12]:
+                        // - vel: her own velocity (0x6E5A10) flattened, then normalized; (0,0,-1) when nil (0x4354D0);
+                        // - hit: the hit (plus the candidate's +0x70 motion) less 0x7233E0 (the query start plus the
+                        //   candidate's +0x80, the markup's own velocity, times its +0xC), normalized, (0,0,-1) when nil,
+                        //   as point source 22 / 23 (static markup here [I]); when its x/y are nil (0x49AF50) the
+                        //   direction 0x49F5D0 makes of the query's +0x48 [I: taken as the query's facing q.dir].
+                        // 0x6FC6B0 takes its third argument flattened, the second flattened when that one's x/y are
+                        // nil, and passes when both are [O: decomp 0x6FC6B0]
+                        const auto nilXY = [](const vec3& v) {
+                            return std::abs(v.x) < 6.1035156e-05f && std::abs(v.y) < 6.1035156e-05f;
+                        };
+                        const vec3 velWay = unitOr(vec3(xy(s_.vel), 0), vec3(0, 0, -1));
+                        vec3 hitWay = unitOr(h - q.start, vec3(0, 0, -1));
+                        if (nilXY(hitWay)) hitWay = vec3(q.dir, 0);
+                        const auto check = [&](const vec3& second, const vec3& third) {
+                            vec3 way(xy(third), 0);
+                            if (nilXY(way)) way = vec3(xy(second), 0);
+                            if (nilXY(way)) return true;
+                            if (m.type == 1) {
+                                // 0x40000000: the way, renormalized (0x49D420), . the ledge's outward normal (0x737D60,
+                                // normalized) <= 0.2618, 0.5236 while the ledge moves, as the default check's wallSide
+                                // [O: disasm 0x6FCA6D..0x6FCAFD]. Before that 0x6FC6B0 passes when the hit stands above
+                                // her root z + tunable 0x1AC (0x6EEED0) + (0xE7F094+0x50)+0x728 (0x731C30) and 0x7511C0's
+                                // shelf test (0x74BB50 == 1) holds [I: not ported, taken as no]
+                                const float limit = ledgeSpeed() > 3.1605f * 30.0f ? 0.5235988f : 0.2617994f;
+                                return glm::dot(glm::normalize(xy(way)), n * side) <= limit;
+                            }
+                            if (m.type == 9) {
+                                // 0x400000: 0x72B860(normal . way): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
+                                // 0x72B860..0x72B8B8]; the normal (0x5C3CC0) the ladder's wall side, ladderOut [I]
+                                return std::cos(glm::radians(q.ladderFaceDeg)) < -glm::dot(ladderOut(m), way);
+                            }
                             // 0x8000: normal . way under 0.2 [O]; the normal the hold triangle's, out toward her [I]
-                            r = glm::dot(holdOut(m), way) < 0.2f;
-                        }
+                            return glm::dot(holdOut(m), way) < 0.2f;
+                        };
+                        r = check(hitWay, velWay) && check(velWay, hitWay);
                     } else {
                         r = wallSide();
                     }
@@ -2110,7 +2211,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
         // ours' room-to-hang rule (openBelow, [I]) is not 0x7296C0's: the data-driven record's own tests decide there
         // (its hurdle classes 5..11 are ledges with no drop) [O: decomp, lara.drm 0x19AC / 0x17AC]
         if (perch || q.strict || openBelow(col_, m, si, along, side))
-            best = {li, si, along, side, t, entry, resultBits, resultUncertain};
+            best = {li, si, along, side, t, entry, resultBits, resultUncertain, from};
     };
     // The class path's candidates: the markup sweep-and-prune pass over x / y (0x70F300 -> 0x463DE0, axes mask 3) of
     // the query's start -> start + its whole-range displacement against each ledge segment's box grown by kSweepPad.
@@ -2648,7 +2749,7 @@ Player::JumpQuery Player::groundJumpQuery(vec2 query, float up, bool falling, fl
 // +0x980 +0x140 = +0xAC0, cond 0x2BA; 0x7296C0 -> 0x729540 -> 0x729420 sets each passing entry's flags) [O-data]: flag
 // 2 when the hit lies within 550 (horizontally) of the query's base point, or within 448 and under 9 frames; flag 9
 // needs point source 34 [U: not decoded, never set here]. The target type (+0xA80, cond 0x294 group 661) is the ledge
-// class (ledgeClassOf). For the chart only; the controller does not read them.
+// class (ledgeClassTable). For the chart only; the controller does not read them.
 Player::GroundAim Player::groundAim(const JumpQuery& q, const JumpTarget& j) const {
     GroundAim a;
     a.target = j;
@@ -2658,11 +2759,11 @@ Player::GroundAim Player::groundAim(const JumpQuery& q, const JumpTarget& j) con
     const float dist = glm::length(xy(hit - q.base));
     a.flags = (dist < 550.0f || (j.frames < 9.0f && dist < 448.0f)) ? uint16_t(1u << 2) : uint16_t(0);
     // +0xA80 = the query object's +0x100, copied from the chosen candidate's +0xC0 (0x770240), which the ledge class table
-    // fills [O: decomp]. ledgeClassOf's 4 is its "none of the bands" answer, for which tru.exe left 0 on l3_main_bedroom
-    // ledge 973 (Wine run_jump_bedroom: S289 T313 = cond 0x294 group 661 value 0) [I: one observation].
+    // fills [O: decomp; Wine run_jump_bedroom ledge 973: S289 T313 = cond 0x294 group 661 value 0]. A class ours cannot
+    // settle reads 0 here [U]: the legacy aim keeps no uncertainty.
     const vec2 sd = segDir(m, j.seg);
-    const int cls = m.type == 13 ? 0 : ledgeClassOf(col_, hit, vec2(-sd.y, sd.x) * j.side, s_.pos, q.dir);
-    a.cls = int8_t(cls == 4 ? 0 : cls);
+    a.cls = int8_t(m.type == 13 ? 0 : ledgeClassTable(j.markup, j.seg, j.t, hit, vec2(-sd.y, sd.x) * j.side, q.dir,
+                                                      {j.from, q.v, q.gravity, j.frames}).value_or(0));
     return a;
 }
 // The take-off states' queries as aimGroundJump runs them (kind 0 standing q2, 1 with the stick q43, 2 running q26), as
@@ -2803,8 +2904,12 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
         const auto& m = col_.markup[size_t(j.markup)];
         const vec2 sd = segDir(m, j.seg);
         // only a ledge's class tests fill +0xC0 (0x728A80); a perch, ladder or pillar keeps 0
-        const int cls = m.type != 1 ? 0 : ledgeClassOf(col_, pointOn(m, j.seg, j.t), vec2(-sd.y, sd.x) * j.side, s_.pos, q.dir);
-        out.cls = int8_t(cls == 4 ? 0 : cls);
+        if (m.type == 1) {
+            const auto c = ledgeClassTable(j.markup, j.seg, j.t, pointOn(m, j.seg, j.t), vec2(-sd.y, sd.x) * j.side, q.dir,
+                                           {j.from, q.v, q.gravity, j.frames});
+            if (!c) out.known = false; // the target's class rests on an entry ours cannot evaluate
+            out.cls = int8_t(c.value_or(0));
+        }
     }
     return out;
 }
@@ -2821,7 +2926,7 @@ bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone, bool 
     s_.aimFlags = aim.flags, s_.aimClass = aim.cls;
     if (running && !perch) {
         const vec2 sd = segDir(m, j.seg), out = vec2(-sd.y, sd.x) * j.side;
-        const int cls = ledgeClassOf(col_, hit, out, s_.pos, f);
+        const int cls = ledgeClassTable(j.markup, j.seg, j.t, hit, out, f, {j.from, q.v, q.gravity, j.frames}).value_or(0);
         if (j.entry == 2 && (cls < 5 || cls > 7)) { // the capsule entry: S535's straight rush onto the hang
             s_.ledge = j.markup, s_.ledgeSeg = j.seg, s_.ledgeT = j.t, s_.ledgeSide = j.side, s_.polePara = false;
             s_.vel = (goal - s_.pos) / kRush;

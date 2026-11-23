@@ -269,6 +269,12 @@ Grapple). `--chart-state N[@TICK[@X,Y,Z,YAW[@FRAMES]]]` puts the shadow chart in
 FRAMES (the Wine row's `t30` at the case's tick 0) runs the state's time and its clip clock on through the node's queue
 (`ChartRuntime::fastForward`): l3_chapel's ch_hang_* begin 33.5 frames into S533. Our controller is not placed in that
 state, so holds (beam, pillar, pole, ledge) leave at once without an attached markup (drive mode seeds the hold).
+With a pose (`N@T@X,Y,Z,YAW`) drive mode pins her at the case start until tick T [I: harness only; tru never stood
+pinned there]. When state N is not a hold (its chain runs neither action 420 nor 230, the states the seed attaches), the
+chart runs no markup search while pinned (`markupSearch` answers none) and its attached markup (+0xC94) is put back after
+each tick, so a grab made at the pin's zero speed cannot carry into the case as the attached markup the searches skip
+(lad_a234_attach took the ladder while pinned and missed Wine's S1066 at the start). A hold start keeps the pinned
+searches: the Wine take began held, and freeclimb cc_dice_* (S600 entered from the pinned ledge hang) need that history.
 `--chart-rng FILE` (replay only, harness [I]) feeds tru.exe's recorded generator results (0x597780 on the shared generator
 0x8A9C78: hex or decimal tokens in call order, `#` comments) to the chart's draws (`ChartContext::rngFeed`, action 301's
 wobble 0x742330 / 0x4A2B80); `tools/chart-replay.sh` passes `W/chart/wine/<family>/<case>.rng` when it exists. Live play

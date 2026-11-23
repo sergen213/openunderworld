@@ -13,6 +13,8 @@
 # trace's t30 column); the input script is the case JSON itself (its keys, the settle shift and camera_follow, which
 # pins the stick's world yaw, InputScript::cameraYaw); frames = hold + settle + ticks. Runs headless in a private
 # kwin_wayland --virtual under systemd-run (MemoryMax, KillMode=control-group), never on the user's desktop.
+# Until the --chart-state tick drive mode pins her at start.ours; before a non-hold start state it runs no markup search
+# and keeps the attach unchanged (docs/re/PLAYER_CHART.md, --chart-state; harness only, tru never stood pinned there).
 # A case JSON with "no_enemies": true (set only for a take whose Wine trace shows no enemy contact; the case cites why)
 # also gets --no-enemies (enemy AI frozen): our enemies would attack where tru's did not, and the hand-off to the legacy
 # hit reaction restarts the chart. Never on by default.
