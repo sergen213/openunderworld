@@ -4673,8 +4673,11 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     case DriveStep::Motion::Air: {
-        // tru.exe integrator 0x5DB370 (airMove's), the capsule's contacts clip the velocity; a floor stops the descent
-        // (the chart's landing comes from its ground check, event 455).
+        // tru.exe integrator 0x5DB370 (airMove's); a floor stops the descent (the chart's landing comes from its ground
+        // check, event 455). A wall or overhang the capsule meets moves only her position: the flight's velocity keeps
+        // pushing into it, so she slides along a leaning face [O-runtime: Wine jh_stick_jump_rebound ticks 90..105, vx
+        // 1404.2 on every row while column B's overhang (normal -0.98, 0, -0.18) holds her and carries her 37 out as she
+        // falls; ours, clipping it, stopped dead and fell straight; I: ceilings taken alike]. Floor-like contacts clip it.
         vec3 dd = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt) + vec3(xy(world), 0);
         s_.vel.z -= t_.gravity * dt;
         vec3 p = s_.pos;
@@ -4691,7 +4694,7 @@ void Player::drive(const DriveStep& d, float dt) {
                 }
             const vec3 rest = dd * (1 - hit->t);
             dd = rest - n * std::min(0.0f, glm::dot(rest, n));
-            s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
+            if (n.z >= t_.slideMinNormalZ) s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
         }
         if (s_.vel.z <= 0)
             if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2); g && p.z <= g->point.z + 1)
