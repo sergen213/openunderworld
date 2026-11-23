@@ -2197,6 +2197,65 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             });
             if (hit == record.end()) return;
             entry = int(hit - record.begin());
+            // 0x728C30 keeps a passing candidate only when 0x728320 clears it. Profile +0xE8 0 / 1 sweep every one (3:
+            // only the attached markup and segment, 4: the attached markup; others pass unswept) [O: asm 0x728320].
+            // 0x727F50 builds the flight from the arc's start to the root she would hold it with (FreeClimb_RootFromHold:
+            // a hold's point 0 less 158.025): start velocity the query's plus +0x14; with +0x2C bit 0x1000 and a static
+            // markup, 0x7236E0 solves a gravity flight (-5.72443) keeping that vertical speed, its time the later root of
+            // z(t) = dz, the earlier root instead when the flat reach |d.xy| is under +0xB8 / data +0xC04 (0x7238A0) and
+            // the speed allows it, at least +0xBC / data +0xC08 frames (then the vertical speed is re-solved for that
+            // time); the candidate time becomes the flight's [O: decomp; Wine cc_dice_right: hold 898's 13.48 -> 15.547,
+            // as this solves]. 0x727100 sweeps it with player line queries (flags 0x3E11E7) offset by +0xEC: her root to
+            // the start, then every 3 frames from frame 1 (4, 7, ...) to the end; a static hit farther than 31.605 from the
+            // flight's end drops the candidate [O: decomp; Wine cc_dice_right: hold 894's candidates dropped (AL 1), 898
+            // kept]. Ours for holds with a static markup and bit 0x400 clear; the others pass unswept [I: their roots,
+            // 0x723850 (moving) / 0x727070 (0x400) and the object hits (local_f4) are not ported]; ours' rays are
+            // playerRay [I: 0x3E11E7's class not decoded].
+            if (q.strict && q.flight && m.type >= 16 && m.type <= 20 && m.points.size() == 3 && m.velocity.empty() &&
+                !(q.profileFlags & 0x400)) {
+                const auto& f = *q.flight;
+                const bool sweep = f.mode == 0 || f.mode == 1 || (f.mode == 3 && int(li) == q.attachMarkup && si == q.attachSeg) ||
+                                   (f.mode == 4 && int(li) == q.attachMarkup);
+                if (sweep) {
+                    const vec3 root = m.points[0] - vec3(0, 0, 158.025f), d = root - from;
+                    vec3 v = q.v + f.v0;
+                    float T = t;
+                    if ((q.profileFlags & 0x1000) && t > 0) {
+                        const float a = -kQueryG * 0.5f;
+                        float vz = v.z;
+                        bool near = glm::length(vec2(d)) < f.flatReach;
+                        if (-d.z == 0.0f) { near = false; if (vz <= 0.1f) vz = 0.1f; }
+                        const float disc = vz * vz - 4.0f * a * -d.z;
+                        if (disc >= 0) {
+                            const float s = std::sqrt(disc);
+                            float tt = (!near || vz <= s ? -vz - s : s - vz) / (a + a);
+                            if (tt >= 0) {
+                                if (tt <= f.minFrames) tt = f.minFrames, vz = d.z / tt - tt * a;
+                                T = tt, v = vec3(d.x / tt, d.y / tt, vz);
+                            }
+                        }
+                    }
+                    T = std::max(T, f.minFrames);
+                    const auto at = [&](float k) { return from + v * k + vec3(0, 0, -kQueryG * 0.5f * k * k); };
+                    const vec3 end = at(T);
+                    vec3 p0 = s_.pos + f.offset, p1 = from + f.offset;
+                    float k = 0;
+                    bool blocked = false;
+                    while (!blocked) {
+                        if (k >= 1.0f) k = std::min(k + 3.0f, T), p1 = at(k) + f.offset;
+                        else k = 1.0f;
+                        const vec3 seg = p1 - p0;
+                        const float len = glm::length(seg);
+                        if (len > 1e-4f)
+                            if (const auto rh = col_.playerRay(p0, seg / len, len); rh && glm::distance(p0 + seg / len * rh->t, end) > 31.605f)
+                                blocked = true;
+                        p0 = p1;
+                        if (k >= T) break;
+                    }
+                    if (blocked) return;
+                    t = T;
+                }
+            }
             // The result record on the hit (0x7296C0 -> 0x729540 with every entry): each passing entry's bits of word 0
             // (candidate +0xA0, copied to player +0xAC0) [O: decomp]. An entry ours cannot evaluate (strict) leaves its
             // own bits uncertain, not the whole answer.
@@ -2947,7 +3006,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone), q.beamInset[0] = float(p.beamInset[0]), q.beamInset[1] = float(p.beamInset[1]);
-    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
+    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg, q.flight = &p.flight;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40, q.profileFlags = p.flags, q.lastDetached = lastDetached;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(atM)].type) : 0;

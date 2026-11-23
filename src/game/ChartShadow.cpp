@@ -1152,11 +1152,17 @@ void Shadow::Impl::seedAttach() {
         return mk.type >= 16 && mk.type <= 20 && mk.points.size() == 3;
     };
     if (freeClimb) {
+        // A start pose already hung from a hold (her root 158.025 under its point 0, within 5 units) names it: the Wine
+        // take began after the grab had moved on (cc_dice_up_hold: S571 1.7 off hold 894's, while the spawn grab took
+        // 898) [I: harness only]
+        for (size_t m = 0; m < col.markup.size() && !pick; ++m)
+            if (isHold(slot(int(m), 0, 0)) && glm::length(col.markup[m].points[0] - (s.pos + glm::vec3(0, 0, 158.025f))) < 5.0f)
+                pick = slot(int(m), 0, 0), best = 0;
         // The spawn hold's falling grab: tru.exe runs profile 45 once, on the hold's first frame, from the spawn pose
         // (Wine cc_dice_right: one 0x70F300 arc from spawn.ours' hang height, 6.78 frames down at -0.01; it takes hold
         // 898) [O-runtime]; ours runs that search from Shadow::grabAt's pose, then she goes back to the case start
         // [I: harness only]
-        if (grabPose && pm)
+        if (!pick && grabPose && pm)
             if (const auto prof = decodeProfile(*ch, 45)) {
                 const PlayerState was = w->player().state();
                 PlayerState ps = was;

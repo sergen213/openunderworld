@@ -1051,6 +1051,11 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
     capsuleOf(0x594, p.poleH), capsuleOf(0x58C, p.poleV), capsuleOf(0x5B8, p.hold);
     p.ladderFaceDeg = float(byte(d + 0x775));
     p.flags = u32(r + 0x2C);
+    {
+        const float reach = f32(r + 0xB8), minF = f32(r + 0xBC);
+        p.flight = {vec3(f32(r + 0x14), f32(r + 0x18), f32(r + 0x1C)), reach > 0 ? reach : f32(d + 0xC04),
+                    minF > 0 ? minF : f32(d + 0xC08), u32(r + 0xE8), vec3(f32(r + 0xEC), f32(r + 0xF0), f32(r + 0xF4))};
+    }
     const int frames = int32_t(u32(r + 0xA4));
     p.frames = frames >= 1 ? frames : c.data<int16_t>(0xBDE);
     if (const auto s = c.pointer(r + 0x8C))
