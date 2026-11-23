@@ -87,10 +87,24 @@ vec3 rootChannels(const anim::Clip& c, double t, bool loop, int first) {
     if (c.tracks.empty() || c.keyCount == 0 || c.timePerKey == 0) return vec3(0);
     const auto& tr = c.tracks[0];
     const int n = c.keyCount;
-    auto key = [&](int i) {
+    auto raw = [&](int i) {
         vec3 v(0);
         for (int a = 0; a < 3; ++a)
             if (!tr[size_t(first + a)].empty()) v[a] = tr[size_t(first + a)][size_t(i)];
+        return v;
+    };
+    // Rotation keys take the short way round between keys: bbeam_walk_turn180's root Z keys run 1.927 -> -3.142 (its
+    // 180 stored as -180), which Wine plays as +17.4 deg a tick into S935's 90 (ch_beam_walk_back_rng t278..t282), not
+    // -72.6 a tick the long way back [O-runtime]. Unwrapped cumulatively so the cycle and the end value agree.
+    const bool rot = first == anim::RotX;
+    auto key = [&](int i) {
+        if (!rot) return raw(i);
+        vec3 v = raw(0), p = v;
+        for (int j = 1; j <= i; ++j) {
+            const vec3 q = raw(j);
+            for (int a = 0; a < 3; ++a) v[a] += wrapAngle(q[a] - p[a]);
+            p = q;
+        }
         return v;
     };
     const double dur = c.durationSeconds();
@@ -4532,6 +4546,7 @@ void Player::drive(const DriveStep& d, float dt) {
     if (s_.clip == "sprint_loop") s_.sprintUsed += dt;
     else if (s_.clip != "ng_sprint_to_exhaust" && s_.clip != "ng_run_exhaust") s_.sprintUsed = std::max(0.0f, s_.sprintUsed - dt);
     double t0 = s_.clipTime, t1 = t0;
+    vec3 tail(0); // the ending clip's last step on the tick the chart leaves it (below)
     if (!d.clip.empty()) {
         const bool fresh = d.restart || s_.clip != d.clip || s_.mirror != d.mirror;
         if (fresh) {
@@ -4551,6 +4566,26 @@ void Player::drive(const DriveStep& d, float dt) {
             //   a tick backward for 10 ticks = its root at 500 time units, 43.56, then the clip's last 27.0) [O-runtime].
             const anim::Clip* oc = anims_.find(s_.clip);
             const anim::Clip* nc = anims_.find(d.clip);
+            // A once clip that ends on this tick (the change by AnimationEnded): tru.exe's anim update moves her root
+            // through the clip's last step before the chart switches on that frame, and the new clip's first step
+            // comes on the next frame (Wine ch_beam_walk_back_rng S943 bbeam_stepback -> S944 at t254: +13.51 on t253
+            // and again on t254, the clip's last 27.0; ours dropped the second half and stayed 13.5 behind on the beam).
+            if (oc && !s_.loop) {
+                const double dur = oc->durationSeconds();
+                const double a = std::max(s_.clipTime, rootLead_.start + double(rootLead_.hold));
+                const double b = std::min(dur, s_.clipTime + double(s_.clipRate) * dt);
+                if (b >= dur - 1e-6 && b > a) {
+                    const vec3 r = rootDelta(anims_, s_, *oc, a, b);
+                    const float k = s_.mirror ? -1.0f : 1.0f;
+                    if (std::abs(rootYaw(*oc, dur, false) - rootYaw(*oc, 0, false)) > 1e-3f) {
+                        const float base = s_.yaw - k * rootYaw(*oc, a, false);
+                        tail = rotYaw(base, r);
+                        s_.yaw = wrapAngle(base + k * rootYaw(*oc, b, false));
+                    } else {
+                        tail = toWorld(r);
+                    }
+                }
+            }
             if (d.crossfade > 0 && oc && nc) {
                 constexpr double h = 1.0 / 60.0;
                 const auto velocity = [&](const anim::Clip& c, double t, bool loop, bool mirror) {
@@ -4631,6 +4666,7 @@ void Player::drive(const DriveStep& d, float dt) {
             world = toWorld(root);
         }
     }
+    world += tail;
     if (fade_.left > 0) {
         const float step = std::min(dt, fade_.left);
         const float w = 1.0f - (fade_.left - 0.5f * step) / fade_.total; // the step's midpoint
