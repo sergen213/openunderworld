@@ -5,6 +5,7 @@
 #include "collision/Collision.hpp"
 #include "formats/Formats.hpp"
 #include "formats/Shader.hpp"
+#include "physics/Physics.hpp"
 #include "script/Script.hpp"
 #include "ui/Art.hpp"
 
@@ -777,6 +778,18 @@ int main(int argc, char** argv) try {
         collisionDump(loadDrm(bf, path), out);
     } else if (cmd == "anim") {
         animDump(loadDrm(bf, path), pos.size() > 3 ? std::optional(uint32_t(std::stoul(pos[3], nullptr, 0))) : std::nullopt);
+    } else if (cmd == "physics") { // physics <gameDir> <objectDrm> [model]: collision primitives and segment frames
+        const auto p = physics::loadObjectPhysics(loadDrm(bf, path), pos.size() > 3 ? uint32_t(std::stoul(pos[3], nullptr, 0)) : 0u);
+        std::printf("oflags 0x%x, %zu segments, %zu prims\n", p.oflags, p.segments.size(), p.prims.size());
+        for (size_t s = 0; s < p.segments.size(); ++s) {
+            const auto& m = p.segments[s];
+            std::printf("seg %zu pos (%.2f %.2f %.2f) X (%.4f %.4f %.4f) Z (%.4f %.4f %.4f)\n", s, m[3].x, m[3].y, m[3].z, m[0].x, m[0].y,
+                        m[0].z, m[2].x, m[2].y, m[2].z);
+        }
+        for (const auto& q : p.prims)
+            std::printf("prim %u kind %d seg %d head %02x %02x %02x %02x pos (%.2f %.2f %.2f) rot (w %.4f %.4f %.4f %.4f) size (%.2f %.2f %.2f) r %.2f len %.2f\n",
+                        q.id, int(q.kind), q.segment, q.head[0], q.head[1], q.head[2], q.head[3], q.pos.x, q.pos.y, q.pos.z, q.rot.w, q.rot.x,
+                        q.rot.y, q.rot.z, q.size.x, q.size.y, q.size.z, q.radius, q.length);
     } else if (cmd == "materials") {
         materialsDump(loadDrm(bf, path));
     } else if (cmd == "script") {
