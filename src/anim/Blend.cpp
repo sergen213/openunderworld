@@ -137,6 +137,16 @@ std::vector<LocalTransform> blendPosesWeighted(std::span<const std::vector<Local
 }
 
 std::vector<uint32_t> mirrorBones(const scene::Skeleton& skeleton) {
+    // The model's own mirror table, as tru.exe swaps the reflected segments (0x433540) [O]; the bind-position guess is
+    // for skeletons without one (it left Lara's elbows and forearms 53 / 54 unpaired: a mirrored run twisted her arms).
+    if (!skeleton.mirrorSwaps.empty()) {
+        std::vector<uint32_t> twins(skeleton.bones.size());
+        for (size_t i = 0; i < twins.size(); ++i) twins[i] = uint32_t(i);
+        for (const auto& [a, b, n] : skeleton.mirrorSwaps)
+            for (uint32_t k = 0; k < n && size_t(a) + k < twins.size() && size_t(b) + k < twins.size(); ++k)
+                std::swap(twins[size_t(a) + k], twins[size_t(b) + k]);
+        return twins;
+    }
     const auto bind = bindPositions(skeleton);
     std::vector<uint32_t> twins(bind.size());
     for (size_t i = 0; i < bind.size(); ++i) {

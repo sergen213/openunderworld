@@ -788,17 +788,21 @@ constexpr float kShelfRayZ = 252.0f, kShelfRayBack = 100.0f, kShelfWall = 139.0f
 constexpr float kHugReachZ = 30.0f, kHugReach = 200.0f;
 } // namespace
 
-bool Player::shelfAt(int markup, int seg, float t) const {
+// 0x74B920's answer: 0 no wall within 139 over the top, 2 a wall within 88.496 or no floor at ledge height there, 1 the
+// shelf [O: decomp, disasm 0x74B920..0x74BB3C].
+int Player::shelfClass(int markup, int seg, float t) const {
     const auto& m = col_.markup[size_t(markup)];
     const vec2 d = ledgeDir(m, seg);
     const vec3 shelf(-d.y, d.x, 0), q = ledgePoint(m, seg, t);
     const vec3 from = q - shelf * kShelfRayBack + vec3(0, 0, kShelfRayZ);
     const auto wall = col_.raycast(from, shelf, kShelfRayBack + kShelfWall);
-    if (!wall || wall->t <= kShelfRayBack + kShelfDepth) return false;
+    if (!wall) return 0;
+    if (wall->t <= kShelfRayBack + kShelfDepth) return 2;
     const auto floor = col_.raycast(q + shelf * kShelfDepth + vec3(0, 0, kShelfRayZ), vec3(0, 0, -1), kShelfRayZ + 30.0f);
     const float dz = floor ? floor->point.z - q.z : -30.0f;
-    return dz > -30.0f && dz < 40.0f;
+    return dz > -30.0f && dz < 40.0f ? 1 : 2;
 }
+bool Player::shelfAt(int markup, int seg, float t) const { return shelfClass(markup, seg, t) == 1; }
 
 // Walking onto a shelf along it: bbeam_walk_turn180 (request 193) turns her back to the wall, Wall_Hug_Idle (1421)
 // [O: the chart's S11 / S61 / S63 / S64 -> S1249 -> S1235]. She stands kShelfDepth in from the line [I].

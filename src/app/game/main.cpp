@@ -114,6 +114,7 @@ struct Options {
     ou::config::GameConfig game;         // --config "game": in-game menu settings
     std::filesystem::path configPath;    // --config FILE: the menus write their settings back to it
     ou::config::InputConfig configInput; // its controls as last read / written
+    ou::config::Config configWritten;    // the whole file as last read / written (config::saveChanges' base)
     ou::config::GraphicsSettings gfx;    // resolved
 };
 
@@ -173,7 +174,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
             const auto c = ou::config::load(argv[i + 1]);
             o.gameDir = c.gameDir, o.renderer = c.renderer, o.width = c.width, o.height = c.height;
             o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen, o.graphics = c.graphics;
-            o.game = c.game, o.configPath = argv[i + 1], o.input = o.configInput = c.controls;
+            o.game = c.game, o.configPath = argv[i + 1], o.input = o.configInput = c.controls, o.configWritten = c;
             o.controls = ou::game::Controls(c.controls);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "--config: %s\n", e.what());
@@ -1495,21 +1496,33 @@ struct EffectsView {
     // Clip events of one animated instance between the last tick and this one (30 Hz frames, looping clips wrap). A new
     // clip (tru.exe 0x43C9C0) first runs the left clip's variant-2 records and its own variant-1 records, whatever their
     // frame (light fixtures' `on` / `off`, Lara's clip-start sounds).
+    // Each advance fires the records of frames in [time before, time after) (0x43CC10 -> 0x5B26C0, times in frames
+    // x 0.01); a clip (re)started this tick (`start`: its time at the start, Lara's PlayerState::clipStart) counts from
+    // there, and the lead before frame 0 (a request's blend, negative time) fires nothing [O decomp]. Without `start`
+    // a new clip counts from before frame 0.
+    unsigned long long logTick = 0; // OU_ANIM_EVENTS log: the tick events() runs for
     void clipEvents(const std::shared_ptr<const ou::fx::ObjectFx>& fx, const std::string& clip, const std::string& prevClip,
                     double prevT, double t, double duration, uint8_t mat, const glm::mat4& world,
-                    const std::function<std::vector<glm::mat4>()>& bones, int32_t owner = -1) {
+                    const std::function<std::vector<glm::mat4>()>& bones, int32_t owner = -1, std::optional<double> start = {}) {
         const auto* ev = fx ? fx->clip(clip) : nullptr;
         std::vector<glm::mat4> b;
         if (clip != prevClip) {
+            if (owner == kLaraOwner && std::getenv("OU_ANIM_EVENTS"))
+                std::fprintf(stderr, "ou-game: tick %llu lara clip %s (left %s) t %.3f\n", logTick, clip.c_str(), prevClip.c_str(), t);
             variant(fx, prevClip, 2, mat, world, b, bones, owner);
             variant(fx, clip, 1, mat, world, b, bones, owner);
         }
-        if (!ev || duration <= 0) return;
-        const float f1 = float(std::fmod(t, duration) * 30.0);
-        float f0 = clip == prevClip ? float(std::fmod(prevT, duration) * 30.0) : -1.0f;
-        std::vector<std::pair<float, float>> spans{{f0, f1}};
-        if (f1 < f0) spans = {{f0, 1e9f}, {-1.0f, f1}}; // wrapped
-        if (f0 < 0 && f1 <= 0) spans = {{-1.0f, 0.5f}};  // just started
+        if (!ev) return;
+        const auto spans = ou::fx::clipEventSpans(prevT, t, duration, clip == prevClip, start);
+        static const bool logEvents = std::getenv("OU_ANIM_EVENTS") != nullptr;
+        if (logEvents && owner == kLaraOwner)
+            for (const auto& [a, z] : spans)
+                for (const auto& e : *ev)
+                    if ((e.effect() || e.isSound() || e.slotSound()) && float(e.frame) >= a && float(e.frame) < z)
+                        std::fprintf(stderr,
+                                     "ou-game: tick %llu lara event %s%s frame %u info 0x%X ev 0x%02X kind %d recmat %u mat %u%s window [%.2f, %.2f) t %.3f prev %s %.3f\n",
+                                     logTick, clip.c_str(), e.isSound() ? " sound" : "", e.frame, e.info, e.event, e.isSound() ? e.sound.kind : -1,
+                                     e.material(), mat, e.matches(mat) ? "" : " (skipped)", a, z, t, prevClip.c_str(), prevT);
         for (const auto& [a, z] : spans)
             if (std::any_of(ev->begin(), ev->end(), [&](const auto& e) {
                     return (e.runsOn(mat) || e.soundOn(mat) || (e.slotSound() && e.matches(mat))) && float(e.frame) >= a && float(e.frame) < z;
@@ -1536,6 +1549,7 @@ struct EffectsView {
         if (const auto* list = it->second.first->clip("pickup")) system.runVariant(it->second.first, *list, it->second.second, uid, 1);
     }
     void events(const ou::game::World& w) {
+        logTick = (unsigned long long)w.ticks();
         if (!library) return;
         const auto& c = w.combat();
         const std::string gun(ou::game::weaponObject(c.weapon));
@@ -1568,7 +1582,7 @@ struct EffectsView {
             if (follows(lara)) pose = w.pose(1.0), system.track(kLaraOwner, model, pose);
             clipEvents(lara, split(ps.clip), pp.clip.substr(0, pp.clip.find(':')) == ps.clip.substr(0, colon) ? split(pp.clip) : std::string(),
                        pp.clipTime, ps.clipTime, clip->durationSeconds(), mat, model, [&] { return pose.empty() ? w.pose(1.0) : pose; },
-                       kLaraOwner);
+                       kLaraOwner, ps.clipSerial != pp.clipSerial ? std::optional<double>(ps.clipStart) : std::nullopt);
         }
         // The combat upper-body clip (reload / equip / unequip): Lara's and the weapon object's lists for that clip
         // name (tru.exe keeps weapon-handling sounds in the weapon object's lists, e.g. wp_handgun "reload").
@@ -2735,25 +2749,30 @@ int main(int argc, char** argv) {
         applyControls();
         if (menus.brightness != menuBrightness) menuBrightness = menus.brightness, opt.gfx.brightness = 0.5f * std::exp2(float(menus.brightness) / 5);
         if (menus.graphics != appliedGraphics) applyGraphics();
-        const ou::config::GameConfig g{menus.sfxVolume, menus.musicVolume, menus.cinematicVolume, menus.subtitles,
-                                       menus.reticles, menus.helperButtons, menus.trainingText,
-                                       std::string(ou::locale::languageCode(language)), userTailor};
+        // Only the menu fields: the rest of GameConfig (traversal: no menu, --traversal is per run) stays as read.
+        ou::config::GameConfig g = opt.game;
+        g.sfxVolume = menus.sfxVolume, g.musicVolume = menus.musicVolume, g.cinematicVolume = menus.cinematicVolume;
+        g.subtitles = menus.subtitles, g.reticles = menus.reticles, g.helperButtons = menus.helperButtons, g.trainingText = menus.trainingText;
+        g.language = std::string(ou::locale::languageCode(language)), g.tailoring = userTailor;
         world->setHints(menus.trainingText, menus.helperButtons); // the scripts read both (uiexperienceadjustmentmenu 11 / 12)
         if (opt.configPath.empty() ||
             (g == opt.game && opt.input == opt.configInput && opt.gfx.brightness == opt.graphics.brightness && !graphicsDirty))
             return;
-        try { // re-read: the launcher may have changed other keys meanwhile
-            auto c = ou::config::load(opt.configPath);
-            c.game = opt.game = g;
-            c.controls = opt.configInput = opt.input;
+        try { // only what the menus changed: keys the launcher, a hand edit or --traversal touched stay as on disk
+            auto after = opt.configWritten;
+            const std::string traversal = after.game.traversal;
+            after.game = opt.game = g;
+            after.game.traversal = traversal;
+            after.controls = opt.configInput = opt.input;
             if (graphicsDirty) {
-                c.graphics = opt.graphics;
-                c.renderer = opt.renderer, c.width = opt.width, c.height = opt.height, c.fullscreen = opt.fullscreen;
-                c.fov = opt.fov, c.vsync = opt.vsync;
+                after.graphics = opt.graphics;
+                after.renderer = opt.renderer, after.width = opt.width, after.height = opt.height, after.fullscreen = opt.fullscreen;
+                after.fov = opt.fov, after.vsync = opt.vsync;
                 graphicsDirty = false;
             }
-            c.graphics.brightness = opt.graphics.brightness = opt.gfx.brightness;
-            ou::config::save(opt.configPath, c);
+            after.graphics.brightness = opt.graphics.brightness = opt.gfx.brightness;
+            ou::config::saveChanges(opt.configPath, opt.configWritten, after);
+            opt.configWritten = after;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: saving settings to %s: %s\n", opt.configPath.string().c_str(), e.what());
             opt.configPath.clear();

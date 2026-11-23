@@ -420,6 +420,11 @@ struct PlayerState {
     float swimSpeed = -1; // the swim speed the velocity is pulled to (tru.exe player globals +0x8E8); < 0: from vel
     std::string clip;
     double clipTime = 0; // unbounded for looping clips (anim time = fmod(clipTime, duration))
+    // Where `clip` last (re)started on its own clock (a request's lead is negative) and a count of those starts:
+    // the animation-event window of a clip's first tick runs from its start (tru.exe 0x43CC10 -> 0x5B26C0 fires the
+    // events of frames in [time before, time after) of each advance; nothing in the lead before frame 0).
+    double clipStart = 0;
+    uint32_t clipSerial = 0;
     float clipRate = 1;
     bool loop = true;
     // Blend space: `clip` is the first clip of a multi-clip lara.drm anim request (hurdles: obstacle height / depth);
@@ -785,6 +790,9 @@ public:
         float pinTurn = -1; // < 0: set outright
         vec3 blendFrom{0}, blendTo{0};
         float yawFrom = 0, yawTo = 0, blend = 0;
+        // Added to the root motion this tick (Ground / free Hang): action 231's alignment (0x75F550 -> 0x43B870) moving
+        // her onto a hurdle's AnimTarget (0x73DD70) by a share of the gap per step [I: linear share, see ChartShadow].
+        vec3 align{0};
         State coarse = State::Idle; // what World's subsystems read as her state (camera, interactions, carriers)
     };
     void drive(const DriveStep& d, float dt);
@@ -843,8 +851,8 @@ private:
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
     // A ledge (markup 1) to jump onto: segment point, hang side, and the jump query frame it is met at.
-    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; uint16_t resultFlags = 0, resultUncertain = 0; };
-    // entry: the class record entry that passed (-1: the default checks); resultFlags: the result record's bits for the
+    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; uint16_t resultFlags = 0, resultUncertain = 0; vec3 from{0}; };
+    // from: the arc start (the hit's target type) the hit time belongs to; entry: the class record entry that passed (-1: the default checks); resultFlags: the result record's bits for the
     // hit (JumpQuery::result: candidate +0xA0 word 0, which becomes player +0xAC0); resultUncertain: the bits of result
     // entries whose tests ours cannot evaluate (strict searches; the rest of the answer stands)
     JumpTarget hangJumpTarget(int kind) const; // startHangJump's target; markup -1 = none
@@ -984,7 +992,13 @@ private:
     void pillar(vec2 move, vec2 stick, bool jumpPressed, bool dropPressed, float dt); // stick: camera-relative
     bool tryPerch(bool fromAir);
     void perch(vec2 move, bool jumpPressed, bool dropPressed, float dt);
-    bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
+    bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74B920 == 1)
+    int shelfClass(int markup, int seg, float t) const; // 0x74B920: 0 no wall over the top, 1 a shelf, 2 neither
+    // The ledge class table (0x728650) on a candidate: hit h on markup / seg (`along` its distance from the segment start),
+    // out the hang side, dir for kind 2's facing, and its query arc (start, launch velocity per 30 Hz frame, gravity,
+    // hit time); nullopt when an entry ours cannot evaluate decides it.
+    struct LedgeArc { vec3 from{0}, v{0}; float gravity = 0, t = 0; };
+    std::optional<int> ledgeClassTable(int markup, int seg, float along, vec3 h, vec2 out, vec2 dir, const LedgeArc& arc) const;
     bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
     void startHangToWallHug();                        // up onto it from the hang (clearance class 8)
     void wallHug(vec2 move, bool jumpPressed, bool dropPressed, float dt);

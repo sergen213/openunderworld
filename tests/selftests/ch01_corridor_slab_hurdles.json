@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "ch01_corridor_slab_hurdles",
+  "chapter": "01 Prologue: New Game, the corridor's debris slab up and down (regression: hurdles sinking her under the floor, the slab not climbed)",
+  "note": "New Game (start_chapter 0). Up: the run onto the 253-high debris slab (ledge 974, S958 -> S974 hurdle_low_onto; action 210's height blend from the jump target, +0x8C ~0.57, adds the _100 sub-layer). Down: off the slab's far end (S997 -> S996 hurdle_down_low_50, action 231's 3-frame alignment onto 0x73DD70's target). The chart drive once blended both hurdle attaches onto the ledge hang root, 258 / 493 under the edge (user log 2026-11-22 18:30), and read no jump target for the height blend (she rose 167 and fell back off the slab). Her root never goes under the corridor floor (87.2).",
+  "start_chapter": 0,
+  "steps": [
+    {"step": "onto_the_slab", "plan": ["wait 0.5", "run -90 9"], "duration": 12, "until": [{"probe": "player.pos.z", "min": 330}, {"probe": "player.state", "eq": "run"}],
+     "expect": [{"clips": ["hurdle_low_onto"]},
+                {"probe": "player.pos.z", "near": 336, "tol": 10, "note": "on the slab"},
+                {"probe": "player.pos.z", "over": "min", "min": 85, "note": "never under the corridor floor"},
+                {"probe": "step.air_ticks", "eq": 0}]},
+    {"step": "off_the_far_end", "plan": ["go -4700 -300 260", "go -6000 -300 260", "go -6900 -260 200"], "duration": 40,
+     "expect": [{"probe": "player.pos.z", "over": "min", "min": 85, "note": "never under the floor"},
+                {"probe": "player.pos.z", "near": 87.2, "tol": 6, "note": "back on the corridor floor past the slab"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}
