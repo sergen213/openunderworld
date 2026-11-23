@@ -946,8 +946,9 @@ bool Shadow::Impl::isBoundary(int st) const {
 // = the jump-candidate query (0x710380, ours jumpCandidates) found one; the ground under her (cast down from the top);
 // probe directions (data s16 +0x600 = 1 -> step pi; +0x628 bit 0x4000 adds the stick probe first: from heading - pi,
 // the control yaw (0x6EBA90) when it lies within (heading - pi, heading), else her heading); per direction: the
-// forward casts at data s16 +0x620 = 2 heights (local_21c = +0x610 over her instance z, local_204 = +0x60C over her
-// segment-0 matrix translation z, instance +0x90 +0x78 [O: decomp 0x5D7FA0]: ours World::boneWorld(0)) to
+// forward casts at data s16 +0x620 = 2 heights (local_21c = +0x610 over her instance z, local_204 = +0x60C over
+// instance +0x90 +0x78 [O: decomp 0x5D7FA0], skeleton segment 1 = ours World::boneWorld(1) [O-runtime: Wine
+// cc_dice_up_hold t100, 0x76F630's +0x70 = ours boneWorld(1) within 3 units; boneWorld(0), her root, is 129 lower]) to
 // +0x5F0 = 252.85 ahead (a wall moves the probe point to the hit + 63.21 (+0x618) along the direction); the down cast
 // there; a drop below her by more than +0x5FC = 64 casts back at that height toward her (+0x5F8 = 16 short) for the
 // edge face, a step above her casts from her at the step height for the riser; then 0x5D7A80 picks a record; the
@@ -1015,7 +1016,7 @@ void Shadow::Impl::moveSweep() {
         std::optional<glm::vec3> wall; // local_1d0: the forward casts' hit (argument 4), else none
         glm::vec3 wallNrm(0);          // local_200: that hit's normal (argument 7), else the zero vector
         const int heights = c.data<int16_t>(0x620);
-        const auto root = w->boneWorld(0);
+        const auto root = w->boneWorld(1);
         const float hTop = z + c.data<float>(0x610), hLow = (root ? root->z : z) + c.data<float>(0x60C);
         for (int k = 0; k < heights && !wall; ++k) {
             const float hz = heights < 2 ? hLow : hTop + float(k) * (hLow - hTop) / float(heights - 1);
@@ -1062,14 +1063,16 @@ void Shadow::Impl::moveSweep() {
         const float wz = wall.value_or(glm::vec3(0)).z - z;
         // ---- group A: 0x5D7A80's 7th argument (call 0x5D93F3 pushes eight; ChartJ agreed) and its zero-vector gates ----
         // arg 7 = &local_200, the forward cast's wall normal: 0x49F530 takes its angle (degrees) against her instance's
-        // segment-0 matrix row +0x10 when the normal is not the zero vector (0x49AFA0), else 0. That row is her facing:
-        // 0x5D7FA0 loads it as local_180 (+0x10 / +0x14 / +0x18) for the "most ahead" score, our fwd [O: decomp]; so a
-        // wall met head on (normal back toward her) reads 180, and record 5's cap (20) needs a normal along her facing.
+        // segment-0 matrix row +0x10 when the normal is not the zero vector (0x49AFA0), else 0. That row is minus her
+        // facing [O: decomp 0x5D7FA0]: a probe at tru angle a runs along (sin a, -cos a) (local_130 / fStack_12c), the
+        // stick override writes (-sin c, cos c) into local_180 for the control yaw c, and the "most ahead" score
+        // multiplies local_180 by local_40 = -1. So a wall met head on (normal back toward her) reads 0 deg, and record
+        // 5 (class 11, wall within 158, cap 20) is a wall straight ahead (Wine: cc_block939_run reaches S987).
         // Record +0x14 caps that angle; +0x18 reads acos(normal z) (0x431CA0(arg7 +8)), the wall's own slope [O].
         // Each record test first checks its vector with 0x49AFA0 [O: asm, ecx before every call]: +0x20 / +0x1C the
         // wall point (arg 4), +0x24 arg 5, +0x14 the normal, +0xC / +0x18 / +0x10 / +4 / +8 the point (arg 3, never
         // the zero vector here); without a wall +0xC / +0x18 are skipped and a +0x10 record fails.
-        const glm::vec3 faceAxis(std::cos(s.yaw), std::sin(s.yaw), 0.0f);
+        const glm::vec3 faceAxis(-std::cos(s.yaw), -std::sin(s.yaw), 0.0f); // row +0x10 = -facing
         const bool hasNrm = glm::dot(wallNrm, wallNrm) > 1e-8f;
         const float wallAngle = hasNrm ? glm::degrees(std::acos(std::clamp(glm::dot(faceAxis, glm::normalize(wallNrm)), -1.0f, 1.0f))) : 0.0f;
         const float wallSlope = glm::degrees(std::acos(std::clamp(wallNrm.z, -1.0f, 1.0f)));
