@@ -619,6 +619,10 @@ nodes resolved in memory; l3_main_bedroom jump, run-jump, hang / pull-up, drop, 
 - **Pain**: the bedroom fire trigger hurt neither game; spawns from +1500 / +2500 above the bedroom corridor land on the
   house roof (z ~1404, 34 degree slope) and slide off its eave in ours, and the Wine takes of those falls carry the
   "carry after SPAWN" drift in rows 0..4 (LegacyFix), so they are no pain reference; `--die` does not kill in the prologue.
+  l4_ballcourt "combat 4" (crossing plane 6543, as `l4_ballcourt_combat.sh`): tru.exe births panther 6532 and poachers
+  6537..6539 but in 40 s / 80 s standing past the plane, or pinned 600 units from 6539, none hit her (S40 throughout);
+  ours, the same walk, hits her from tick ~540 every 90 ticks (hit_light_front/side/back, frame-1 records DTP 956,
+  2299, 953, 954, 957), so the pain sounds are still not compared [U]; the attack gap is the enemy AI's (OU-CMB-006..8).
 - Not compared: hints / script voice lines (tru plays them from the PDA's FIELD ASSISTANCE menu only; a 30 s idle at
   l1_seatop starts no Lara line in ours), the voice bus, rolloff and reverb (the hooks see the start, not FMOD's mix).
 
