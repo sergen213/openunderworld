@@ -1308,7 +1308,7 @@ void Shadow::Impl::seedAttach() {
 // The chart (re)starts with her where she is (0x787E00 from the root, which settles in the idle by itself).
 void Shadow::Impl::restartChart() {
     started = false, parked = false, launched = false;
-    blend = {}, hurdleAlign = {};
+    blend = {}, hurdleAlign = {}, holdTurn = {};
     chartAttached = MarkupSlot{}, chartTarget = {}, targetPoint = glm::vec3(0), align = {}, handedTarget = -1;
     collisionMask = 0x48;
 }
