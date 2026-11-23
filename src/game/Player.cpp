@@ -2457,11 +2457,21 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     // could have been met: such a type admitted by the record (0x7232E0 and an entry's gate) and present in the level
     // makes the answer unknown [I: a hit of another type earlier than ours would also win; kept]. Judged on the whole
     // sweep, not on ledgeOnArc's per-moving-markup passes (`only` >= 0: one markup, which says nothing of the others).
-    // Type 0 carries MUD 0x80000000 (disabled: markupFlags), never a candidate.
+    // Type 0 carries MUD 0x80000000 (disabled: markupFlags), never a candidate. Only a markup within the sweep's own
+    // bounds (the prefilter the swept types pass, kSweepPad round the arc's horizontal extent) counts: its points, or for
+    // MUD 0x100000 (type 10) the MarkUp box's diagonal, centre + min to centre + max, the segment 0x70F300 sweeps for it
+    // (0x706770) [O: decomp; I: the bound]
     if (q.strict && only < 0 && best.markup < 0 && !record.empty()) {
         uint64_t present = 0;
-        for (const auto& m : col_.markup)
-            if (m.type < 64) present |= uint64_t(1) << m.type;
+        for (const auto& m : col_.markup) {
+            if (m.type >= 64 || m.points.empty()) continue;
+            vec2 lo = xy(m.points.front()), hi = lo;
+            for (const vec3& p : m.points) lo = glm::min(lo, xy(p)), hi = glm::max(hi, xy(p));
+            if (collision::mud(m) & 0x100000u) lo = xy(m.centre + m.boxMin), hi = xy(m.centre + m.boxMax);
+            if (glm::any(glm::greaterThan(glm::min(lo, hi) - kSweepPad, sHi)) || glm::any(glm::lessThan(glm::max(lo, hi) + kSweepPad, sLo)))
+                continue;
+            present |= uint64_t(1) << m.type;
+        }
         for (int type = 1; type < 64 && !q.unknown; ++type) {
             if (!(present >> type & 1)) continue;
             if (type == 1 || type == 2 || type == 13 || type == 14 || type == 9 || type == 15 || type == 4 || type == 5 || type == 6 ||
@@ -4805,8 +4815,11 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     case DriveStep::Motion::Air: {
-        // tru.exe integrator 0x5DB370 (airMove's), the capsule's contacts clip the velocity; a floor stops the descent
-        // (the chart's landing comes from its ground check, event 455).
+        // tru.exe integrator 0x5DB370 (airMove's); a floor stops the descent (the chart's landing comes from its ground
+        // check, event 455). A wall or overhang the capsule meets moves only her position: the flight's velocity keeps
+        // pushing into it, so she slides along a leaning face [O-runtime: Wine jh_stick_jump_rebound ticks 90..105, vx
+        // 1404.2 on every row while column B's overhang (normal -0.98, 0, -0.18) holds her and carries her 37 out as she
+        // falls; ours, clipping it, stopped dead and fell straight; I: ceilings taken alike]. Floor-like contacts clip it.
         vec3 dd = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt) + vec3(xy(world), 0);
         s_.vel.z -= t_.gravity * dt;
         vec3 p = s_.pos;
@@ -4823,7 +4836,7 @@ void Player::drive(const DriveStep& d, float dt) {
                 }
             const vec3 rest = dd * (1 - hit->t);
             dd = rest - n * std::min(0.0f, glm::dot(rest, n));
-            s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
+            if (n.z >= t_.slideMinNormalZ) s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
         }
         if (s_.vel.z <= 0)
             if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2); g && p.z <= g->point.z + 1)
