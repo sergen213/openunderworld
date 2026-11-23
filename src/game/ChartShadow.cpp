@@ -337,6 +337,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // skipped check drops her support (0x5D76B0: +0x610 = 0), posts nothing and finds no floor.
     uint32_t collisionMask = 0x48;
     std::optional<bool> stairsByte = false; // Lara +0x11D4 (ChartContext::onStairs), kept while the check is skipped
+    // Lara +0x600: the support normal, written by 0x71B910 from the check's hit (+0x20) when 0x5DCE20 reports ground
+    // (result bit 0), kept otherwise [O]. +0x5F0: written only by the player message handler 0x76FC30 on 0x1C9 (too
+    // steep) / 0x1CA, from +0x600 for a terrain face (an object's own +0x20 otherwise [U]; ours takes the face normal),
+    // kept otherwise [O].
+    glm::vec3 supportNormal{0}, steepNormal{0};
     void groundCheck(const Charts& c) {
         if (!(collisionMask & 8)) {
             ground = {}, supportBody = false;
@@ -347,9 +352,12 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         ground = w->player().groundCheck(feet, half, supportBody ? half : 1.0f);
         supportBody = ground.floor && ground.onBody;
         stairsByte = ground.stairs;
+        if (ground.floor || ground.steep) supportNormal = ground.normal;
+        if (ground.steep) steepNormal = ground.normal;
     }
     std::optional<bool> onStairs() const override { return stairsByte; }
-    std::optional<glm::vec3> groundNormal() const override { return ground.normal; }
+    std::optional<glm::vec3> steepFaceNormal() const override { return steepNormal; }
+    std::optional<glm::vec3> supportFaceNormal() const override { return supportNormal; }
     const PlayerState* player() const override { return &w->player().state(); }
     const World* world() const override { return w; }
 
