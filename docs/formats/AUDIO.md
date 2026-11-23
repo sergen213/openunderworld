@@ -612,9 +612,10 @@ nodes resolved in memory; l3_main_bedroom jump, run-jump, hang / pull-up, drop, 
   0x4F2A26 channel 0 = impact, 0x4F28D5 channel 1 = rolling), i.e. Lara's ragdoll joints are registered joints (the
   registration call is not decoded [U]). Ours (`physics::Scene::ragdollJoints`, `World::collectJointSounds`): each joint
   whose limit acts in a step after not acting is an impact at last step's relative angular speed (degrees/s), DTP 961
-  via `JointSound::dtp` [I: Havok's speed along the axis vs our whole relative spin]. Caveat: our Lara ragdoll starts
-  only when the death clip ends, and death_toknee outlasts the 3 s fade (`--die` in l2_cliffclimb respawned first), while
-  tru built it at once on the fatal landing (death types 3 / 4, DeathState_Entry 0x75AA50) [U: which deaths those are].
+  via `JointSound::dtp` [I: Havok's speed along the axis vs our whole relative spin]. Fatal landings build the ragdoll
+  with the death clip (death type 4, `World` pose; DeathState_Entry 0x75AA50) as tru did: ours, l4_pool 2600-unit fall
+  (the death_respawn self-test's): death_fall_normal at tick 62, joint impacts from tick 64 [O, log]; other deaths keep
+  the ragdoll for the clip's end [U: their death types].
 - **Pain**: not compared: the bedroom fire trigger hurt neither game, our high bedroom spawns land elsewhere / fall out
   of the world (`--spawn -8484.3,-3830,2744`), `--die` does not kill in the prologue.
 - Not compared: hints / script voice lines (tru plays them from the PDA's FIELD ASSISTANCE menu only; a 30 s idle at
