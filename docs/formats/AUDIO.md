@@ -589,6 +589,28 @@ motorcycle.drm), enemy clips (cat_panther, poacher, panther_thrall vocals), weap
 footstep / shot / reload waves are gone. Replays [O, logs]: panther_fight 254 wp_handgun, 89 cat_panther, 42 bullet_hit,
 40 lara, 24 poacher sounds; pool_to_ragnarok lara footsteps DTP 953/954/956 at material 17, panther_thrall DTP 12660.
 
+Lara, compared with tru.exe (Wine call log of 0x5935D0 / 0x5953E0 / 0x5B99C0 per tick, `W/LaraSound/wine/corpus/sounds`,
+nodes resolved in memory; l3_main_bedroom jump, run-jump, hang / pull-up, drop, falls) [O-runtime]:
+- **Which records, when**: the same records as ours for each clip pass (EFFECTS.md "Frame records"); tru's 60 Hz step is
+  0.50001 frames, so a record at frame k fires on the tick reaching k (`fx::clipEventSpans` kEdge). Chart replays match
+  tick for tick from the jump to the hang; the remaining offsets are landing times (traversal).
+- **Material** (record filter and MaterialList input): instance +0x186, the contact face of her last collision update
+  (0x5DCE20), 0xFF with no contact: every record of S1033 (falling) and the landing's frame 0 ran with 255, standing 1
+  (bedroom floor), hanging 1. Ours: the previous tick's floor contact, 0xFF in the air, the last floor's while hanging /
+  climbing [I: tru takes the ledge face].
+- **Selector key** (0x583490 with 0x583440): the worn outfit's index in GlobalInfo's outfit list (generalbank +0xC8 -> +4
+  {i16 n, i16* ids}: ids 8..35, index = id - 8). lara.drm 2296 (jump effort): -1 -> 2276, 10 / 11 -> 2462, 1 -> silent.
+  Ours used key 0 (always the default) [fixed: `SoundPlayer::selectorKey`, `audio::parseOutfitList`].
+- **The outfit's own DTPs**: the player object is the worn outfit, and each outfit DRM carries its own copies of Lara's
+  sound DTPs and Waves (lara_casual = lara.drm's; lara_wetsuit_warm: 2462 = a shuffled ChoiceList of the wetsuit efforts
+  at volume 0.5, Waves 545..). Ours played lara.drm's for every outfit [fixed: GameSound adds the worn outfit's DRM over lara.drm,
+  `PlexBank::add(drm, true)`].
+- **Death**: S1281 (hard landing) frame records, then the death clip's (2290, 2292, 2288, 2295, 2318), then ~70 starts of
+  lara.drm DTP 961 (Overlap -> Reaction -> Assignment category 42, max distance 7000 -> 2288) through 0x593C90 while the
+  ragdoll moves: rigid-body contact sounds, not done in ours (§9.16).
+- Not compared: hints / script voice lines (no hint condition in the bedroom), the voice bus, rolloff and reverb (the
+  hooks see the start, not FMOD's mix).
+
 ### 9.8 Bike engine [V-data; I: inputs]
 
 motorcycle.drm DTP 13589 = Overlap of five layers (SV650 low 05, mid 03, a Sequence, mid 16, mid 15), each

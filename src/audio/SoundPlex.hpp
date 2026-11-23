@@ -74,11 +74,14 @@ Plex parsePlex(const cdc::Drm& drm, uint32_t section, uint32_t offset);
 // DTP id -> SoundPlex graph at offset 0 of that DTP section, parsed on first use.
 class PlexBank {
 public:
-    void add(std::shared_ptr<const cdc::Drm> drm); // indexes its DTP sections (first DRM added wins an id)
+    // Indexes its DTP sections (first DRM added wins an id; `replace`: this DRM's win, e.g. the worn outfit's copies of
+    // lara.drm's sound DTPs). Graphs parsed before a replace stay alive (playing sounds point into them).
+    void add(std::shared_ptr<const cdc::Drm> drm, bool replace = false);
     const Plex* find(uint32_t dtpId);              // null if unknown or not a SoundPlex
 private:
     std::map<uint32_t, std::pair<std::shared_ptr<const cdc::Drm>, uint32_t>> sections_;
     std::map<uint32_t, std::unique_ptr<Plex>> parsed_;
+    std::vector<std::unique_ptr<Plex>> retired_; // graphs a replace superseded
 };
 
 // ---- sfxmarker (unit data +0xAC count / +0xB0 pointers, 0x3C bytes each; trigger update 0x594A80) ----
@@ -125,6 +128,9 @@ Pcm oscillator(uint8_t wave, float hz, float seconds, uint32_t rate, uint32_t se
 // one ([16]); a voice runs its category's DSP, then each parent's [V-exe 0x58DD80 / 0x5832C0; I: the group order].
 struct SoundCategory { int32_t parent = -1; Effect effect; };
 std::vector<SoundCategory> parseSoundCategories(const cdc::Drm& globalsoundinfo); // Throws FormatError
+// generalbank's GlobalInfo (object data, tru.exe DAT_00e7ee50) +4 {i16 n, i16* ids}: the player outfit object ids
+// (retail: 8..35) whose index is the Selector key (SoundPlayer::selectorKey). Throws FormatError.
+std::vector<uint16_t> parseOutfitList(const cdc::Drm& generalbank);
 
 // Help on demand (AUDIO.md §9.5): generalbank's line for the unit script's "hint_NN" condition, vo\lara\sc_CC_NN_hint|answer
 // with CC = the kChapters index being played (sc_00 = the burning manor prologue, whose l3 units share the level digit
@@ -158,6 +164,11 @@ public:
     struct Line { std::string path, subtitle; };
     std::vector<Line> lines;
     uint32_t language = 0;
+    // Selector key (tru.exe 0x583490 with 0x583440): the index of the worn outfit (gameTracker +0x140, 0xE7F1C8) in
+    // GlobalInfo's outfit list (+4 {i16 n, i16* object ids}: ids 8..35, so object id - 8) [O decomp]. Lara's effort
+    // DTPs pick per outfit (lara.drm DTP 2296: indices 10 / 11 = the Arctic drysuit / the Mediterranean wetsuit -> 2462,
+    // 1 -> silent, any other -> 2276).
+    uint32_t selectorKey = 0;
     std::vector<std::string> waves; // "0x<id>" of every wave started, for logs; cleared by the caller
 private:
     // An Envelope / Reaction / Effect above a voice and when it started; also an Assignment with a max distance or a
