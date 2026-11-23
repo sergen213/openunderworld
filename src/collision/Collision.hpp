@@ -198,6 +198,10 @@ public:
     // S1059 -> S1088, climb_up S1055 loops to the top) where ours met their far faces at z 921 / 1419.7]. [I: tru.exe's
     // primitive ray test under 0x4EE2B0's shapes is not decoded; legacy callers keep the double-sided test.]
     std::optional<Hit> playerRay(vec3 origin, vec3 dir, float maxDist, bool objectFrontFaces = false) const;
+    // playerRay one-sided as 0x493330 casts it (0x4E8FC0 -> 0x46C450 -> 0x461640: a face counts only when the ray meets
+    // its front, -dot(dir, n) > 0 [O, the kSweepOneSided note]), terrain and object faces alike [I: the objects' primitive
+    // test is not decoded]. The chart's ledge class tests (0x7277E0's casts) use it.
+    std::optional<Hit> playerRayOneSided(vec3 origin, vec3 dir, float maxDist) const;
     // First contact of a sphere / capsule (segment a-b, radius r) translated by `delta`.
     // Already-touching shapes hit at t = 0, unless `flags` has kSweepSkipLeaving: then a face touched (or overlapped)
     // at t = 0 that `delta` does not close on (moving away from it or along it) is no hit, so the faces ahead still are.
