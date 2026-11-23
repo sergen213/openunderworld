@@ -121,6 +121,9 @@ struct AnimLibrary {
     // Mean of the hand bones (55, 80) relative to the root segment in `clip` at `t` (model space, root
     // translation removed); nullopt without a full skeleton.
     std::optional<vec3> handsAt(const anim::Clip& clip, double t) const;
+    // Bone `bone`'s position relative to the root in `clip` at `t` (model space, the root segment's own track included);
+    // nullopt without that bone.
+    std::optional<vec3> boneAt(const anim::Clip& clip, double t, size_t bone) const;
 };
 // Lara's script flinch overlay (World::tickFlinch; docs/GAMEPLAY.md "Script flinch overlay"). tru.exe: her upper-body
 // chart (player data +0x12530) in state S90 plays chart +0x488 (the pattern larabase 21 / 22 stored) on anim section 1;

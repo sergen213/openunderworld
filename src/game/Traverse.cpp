@@ -294,17 +294,25 @@ std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, 
     return std::nullopt;
 }
 
-// [I] fitted: the ladder hold lies 6.33 higher and 6.32 further out than 0x7350B0's / 0x734920's rung root. WineChartTrace-2
-// ladwatch (lad_a234_attach t28, climb_up t177): the writer is 0x708830 (the action 420 attach update, called from
-// 0x771267 against the ladder markup) from the attach window's end on, every frame: root = the attached point at grip
-// 0.280 less a per-markup offset (world (-78.77, 117.11, 568.90) where 0x74DCD0's +0xCE0..+0xCE8 give (79.01, -110.62,
-// 575.22)); which frame or offset 0x708830 uses there is not decoded yet.
+// The ladder hold's offset over the rung root. WineChartTrace-2 ladwatch (lad_a234_attach t28, climb_up t177): from the
+// attach window's end on, every frame, 0x708830 (action 420's attach update, from 0x771267) sets her root through its
+// record +0x4D branch [O decomp]: root = the attached point +0xCA0 (on the ladder's edge line at the grip +0xC98)
+// - R x +0xCF0 (0x74DCD0: half the width along) - (bone [player data +0x214] = 107, less her root, in the current
+// pose). So the hold puts bone 107 on the ladder's centre at the rung point. Ours takes bone 107 from ladder_idle's
+// first frame [I: tru re-places her every frame from the playing pose] and returns that root less the rung root
+// (+0x784 under, +0x778 out). Wine lad_a234: (-78.77, 117.11, 568.90) from the edge point, 6.33 up / 6.32 out over the
+// rung root.
 vec3 Player::ladderHoldFit(int markup) const {
     if (markup < 0 || size_t(markup) >= col_.markup.size()) return vec3(0);
     const auto& m = col_.markup[size_t(markup)];
     if (m.type != 9 || m.points.size() < 3) return vec3(0);
-    constexpr float kHoldUp = 6.33f, kHoldOut = 6.32f;
-    return ladderOut(m) * kHoldOut + vec3(0, 0, kHoldUp);
+    const anim::Clip* idle = anims_.find("ladder_idle");
+    const auto bone = idle ? anims_.boneAt(*idle, 0, 107) : std::nullopt;
+    if (!bone) return vec3(0);
+    const vec3 out = ladderOut(m);
+    // bone 107 in the hold frame: facing the wall (-out), model -Y forward
+    const vec3 b = rotYaw(yawOf(-xy(out)), *bone);
+    return -b + vec3(0, 0, kRungTop) - out * kLadderBack;
 }
 
 void Player::catchLadder() {

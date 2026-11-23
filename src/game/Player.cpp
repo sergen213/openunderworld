@@ -217,6 +217,13 @@ std::optional<vec3> AnimLibrary::handsAt(const anim::Clip& clip, double t) const
     return (vec3(w[55][3]) + vec3(w[80][3])) * 0.5f;
 }
 
+std::optional<vec3> AnimLibrary::boneAt(const anim::Clip& clip, double t, size_t bone) const {
+    if (skeleton.bones.size() <= bone) return std::nullopt;
+    auto local = anim::sample(clip, skeleton, t, false);
+    local[0] = anim::bindPose(skeleton)[0]; // as rendered: root motion lives in the player position
+    return vec3(anim::worldMatrices(skeleton, local)[bone][3]);
+}
+
 vec3 rootTranslation(const anim::Clip& c, double t, bool loop) { return rootChannels(c, t, loop, anim::TransX); }
 
 Player::Player(const collision::CollisionMesh& col, const AnimLibrary& anims, Tuning tuning)
