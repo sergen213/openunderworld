@@ -2038,32 +2038,43 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                         // 0x4000000), pillars (0x10), perches (0x20000), balance beams (0x10000) and jump landings (0x20000000) pass
                         r = true;
                     } else if (q.strict && ((m.type >= 16 && m.type <= 20) || m.type == 9 || m.type == 1)) {
-                        // 0x725D00 hands 0x6FC6B0 two ways: her own velocity's direction (0x6E5A10, normalized, else
-                        // straight down) and the query start less the hit led by the motion (0x7233E0; normalized,
-                        // else straight down); 0x6FC6B0 takes the first flattened (not renormalized), the second
-                        // flattened when that is nil (0x49AF50), and passes when both are nil [O: decomp 0x725D00,
-                        // 0x6FC6B0]
-                        vec3 way = unitOr(s_.vel, vec3(0, 0, -1));
-                        way.z = 0;
-                        if (glm::dot(way, way) < 1e-12f) way = vec3(xy(unitOr(from - h, vec3(0, 0, -1))), 0);
-                        if (glm::dot(way, way) < 1e-12f) {
-                            r = true;
-                        } else if (m.type == 1) {
-                            // 0x40000000: the way, renormalized (0x49D420), . the ledge's outward normal (0x737D60,
-                            // normalized) <= 0.2618, 0.5236 while the ledge moves, as the default check's wallSide [O:
-                            // disasm 0x6FCA6D..0x6FCAFD]. Before that 0x6FC6B0 passes when the hit stands above her root
-                            // z + tunable 0x1AC (0x6EEED0) + (0xE7F094+0x50)+0x728 (0x731C30) and 0x7511C0's shelf
-                            // test (0x74BB50 == 1) holds [I: not ported, taken as no]
-                            const float limit = ledgeSpeed() > 3.1605f * 30.0f ? 0.5235988f : 0.2617994f;
-                            r = glm::dot(glm::normalize(xy(way)), n * side) <= limit;
-                        } else if (m.type == 9) {
-                            // 0x400000: 0x72B860(normal . way): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
-                            // 0x72B860..0x72B8B8]; the normal (0x5C3CC0) the ladder's wall side, ladderOut [I]
-                            r = std::cos(glm::radians(q.ladderFaceDeg)) < -glm::dot(ladderOut(m), way);
-                        } else {
+                        // 0x725D00 builds two ways and calls 0x6FC6B0 twice with them swapped; both calls must pass
+                        // [O: disasm 0x725EF0 / 0x725F12]:
+                        // - vel: her own velocity (0x6E5A10) flattened, then normalized; (0,0,-1) when nil (0x4354D0);
+                        // - hit: the hit (plus the candidate's +0x70 motion) less 0x7233E0 (the query start plus the
+                        //   candidate's +0x80, the markup's own velocity, times its +0xC), normalized, (0,0,-1) when nil,
+                        //   as point source 22 / 23 (static markup here [I]); when its x/y are nil (0x49AF50) the
+                        //   direction 0x49F5D0 makes of the query's +0x48 [I: taken as the query's facing q.dir].
+                        // 0x6FC6B0 takes its third argument flattened, the second flattened when that one's x/y are
+                        // nil, and passes when both are [O: decomp 0x6FC6B0]
+                        const auto nilXY = [](const vec3& v) {
+                            return std::abs(v.x) < 6.1035156e-05f && std::abs(v.y) < 6.1035156e-05f;
+                        };
+                        const vec3 velWay = unitOr(vec3(xy(s_.vel), 0), vec3(0, 0, -1));
+                        vec3 hitWay = unitOr(h - q.start, vec3(0, 0, -1));
+                        if (nilXY(hitWay)) hitWay = vec3(q.dir, 0);
+                        const auto check = [&](const vec3& second, const vec3& third) {
+                            vec3 way(xy(third), 0);
+                            if (nilXY(way)) way = vec3(xy(second), 0);
+                            if (nilXY(way)) return true;
+                            if (m.type == 1) {
+                                // 0x40000000: the way, renormalized (0x49D420), . the ledge's outward normal (0x737D60,
+                                // normalized) <= 0.2618, 0.5236 while the ledge moves, as the default check's wallSide
+                                // [O: disasm 0x6FCA6D..0x6FCAFD]. Before that 0x6FC6B0 passes when the hit stands above
+                                // her root z + tunable 0x1AC (0x6EEED0) + (0xE7F094+0x50)+0x728 (0x731C30) and 0x7511C0's
+                                // shelf test (0x74BB50 == 1) holds [I: not ported, taken as no]
+                                const float limit = ledgeSpeed() > 3.1605f * 30.0f ? 0.5235988f : 0.2617994f;
+                                return glm::dot(glm::normalize(xy(way)), n * side) <= limit;
+                            }
+                            if (m.type == 9) {
+                                // 0x400000: 0x72B860(normal . way): cos(Lara data byte +0x775 degrees) < -dot [O: disasm
+                                // 0x72B860..0x72B8B8]; the normal (0x5C3CC0) the ladder's wall side, ladderOut [I]
+                                return std::cos(glm::radians(q.ladderFaceDeg)) < -glm::dot(ladderOut(m), way);
+                            }
                             // 0x8000: normal . way under 0.2 [O]; the normal the hold triangle's, out toward her [I]
-                            r = glm::dot(holdOut(m), way) < 0.2f;
-                        }
+                            return glm::dot(holdOut(m), way) < 0.2f;
+                        };
+                        r = check(hitWay, velWay) && check(velWay, hitWay);
                     } else {
                         r = wallSide();
                     }
