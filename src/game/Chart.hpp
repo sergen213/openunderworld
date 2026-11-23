@@ -308,9 +308,11 @@ public:
     // its floor hit through 0x5D3AF0(hit, 0x100, 0x20)), kept otherwise; nullopt: the last check stood on an object
     // whose own flags the context does not model.
     virtual std::optional<bool> onStairs() const { return std::nullopt; }
-    // Player +0x5F0 (0x198's downhill vector, 0x7308B0): the support normal [I: the ground check's floor hit normal],
-    // zero without one; nullopt: the context cannot say.
-    virtual std::optional<glm::vec3> groundNormal() const { return std::nullopt; }
+    // 0x198's downhill vector (0x7308B0) reads player +0x5F0, the normal of the last too-steep face (message 0x1C9,
+    // kept until the next), then +0x600, the last ground check's support normal (kept while no ground is found); both
+    // zero until written. nullopt: the context cannot say.
+    virtual std::optional<glm::vec3> steepFaceNormal() const { return std::nullopt; }
+    virtual std::optional<glm::vec3> supportFaceNormal() const { return std::nullopt; }
     // ---- end group A ----
 
     // ---- group J ----

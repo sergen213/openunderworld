@@ -45,12 +45,15 @@
      "expect": [{"clips": ["grapple_rappel_free_ascend"]},
                 {"probe": "step.rope_change", "near": 699.3, "tol": 5, "note": "Interact + forward: 23.70 per 30 Hz frame = 711.1 units/s [O +0x9E4], for 59 of the step's 60 ticks: the stick's forward lands a tick late through the move stick filter (0x483520) while Interact acts at once, 711.1 - 11.85. Measured 699.27 with the filter, 711.12 without it. The rope's change, not its absolute length, which depends on where the slide and settle left it"},
                 {"probe": "step.height_gain", "near": 699.3, "tol": 8}]},
-    {"step": "jump_off", "input": ["0.5 jump 1", "0.6 jump 0"], "duration": 5, "until": {"probe": "player.state", "eq": "land"},
-     "expect": [{"visits": ["grappleswing", "jump", "land"]},
-                {"clips": ["grapple_rappel_free_jumpoff", "ng_land_hard"], "note": "the leap off the long rope comes down more than 1264.22 (she loses health): the chart's hard landing (S1275 / S1276), not ng_generic_land_forwards"},
+    {"step": "jump_off", "input": ["0.5 jump 1", "0.6 jump 0"], "duration": 3,
+     "note": "tru.exe under Wine, GOD=0 (W/chart/wine/grapple/chapel_swing_jump_off_birth_hp.tsv, these steps' keys; this step = take ticks 1518..1698): the climb's momentum carries her up the rope to z -4686.9 by the jump (1548); she leaves the rope at 1561 (S294, z -4674.5), peaks at -4482.4, meets the wall under the ledge at x -10307 at 1616 (S1033, a straight fall from z -5481.8), lands on the chapel floor at z -6956.58 at 1661 (S1281 ng_land_hard: 2282 below where she left the rope) with health still 1000, and dies 8 ticks later (1669: health 0, state -1, ragdoll). Ours hangs ~451 higher on the rope (tru's distance to ring 4744 is 451 longer at the same ticks 1212 / 1458, set by jump_into_gap: tru leaps ~18 ticks after the press after a run-up, ours at once), so ours leaves at z -4201.8, lands on the ledge at z -5056.9 (855 below) and lives: this step fails until jump_into_gap leaves tru's rope",
+     "expect": [{"visits": ["grappleswing", "jump", "land", "dead"]},
+                {"clips": ["grapple_rappel_free_jumpoff", "ng_land_hard"], "note": "tru S1281 ng_land_hard (the take, 1661)"},
                 {"probe": "grapple.attached", "eq": false},
                 {"probe": "grapple.target", "eq": 0},
-                {"probe": "step.peak_speed", "min": 1800, "note": "the leap off the rope: 63.21 per frame = 1896 units/s along her facing [O +0xA48]"},
-                {"probe": "player.dead", "eq": false}]}
+                {"probe": "step.peak_speed", "min": 1800, "note": "the leap off the rope: 63.21 per frame = 1896 units/s along her facing [O +0xA48]; the take: 158.03 per 5 ticks = 1896.4"},
+                {"probe": "step.drop", "near": 2109.9, "tol": 30, "note": "the take: z -4846.65 at the step's start (1518) to the floor at -6956.58"},
+                {"probe": "player.fall_height", "over": "max", "min": 2215.55, "note": "a lethal fall by the curve 0x6F1790 (GAMEPLAY.md Fall damage): the take dies on this landing"},
+                {"probe": "player.dead", "eq": true, "note": "the take: health 0 and death 8 ticks after touchdown (1661 -> 1669)"}]}
   ]
 }
