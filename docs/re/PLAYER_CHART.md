@@ -541,6 +541,26 @@ in the air, where ours aims only at take-off:
   use the player ray flags 0x2C19E7 (the mode-6 caller sets DAT_00E7F14D) [O], so they skip kSkipPlayerRays groups.
   Ported in ChartShadow.cpp moveSweep. Row +0x10 is her facing (0x5D7FA0 loads it as local_180 for the "most ahead"
   score) [O], so a wall met head on reads 180 deg; record 5 (class 11, cap 20) wants a normal along her facing.
+- **Markup search details** (0x7296C0 -> 0x771830 -> 0x70F300; Player::markupSearch / ledgeOnArcIn) [O: decomp +
+  disassembly]:
+  - Heading sources: 0x724F50 dispatches on +0xA0 - 1 through the jump table 0x7255BC (Ghidra's case labels sit one
+    off). 14 / 16 / 17 read the attach normal +0xCC0 through 0x49EFC0 (`atan2(-n.y, -n.x) - pi/2`, the yaw that faces
+    along n): 14 that yaw, 16 plus pi, 17 minus pi/2. A ledge / beam / 0x40000 attach writes +0xCC0 = unit
+    cross(segment, up) (0x74ED30, 0x738050, 0x707730 via 0x6FE7E0). So heading 17 flies against the ledge's point
+    order, whichever way the chart state is mirrored. Profile 7 (S257, the hang side leap) uses heading 17: Wine
+    hang_jump_left catches 973 77 in from its end.
+  - +0xD0 leads the start by frames of the carrier velocity (0x7694B0 = Player_GetCarrierVelocity, zeroed under
+    3.1605 a frame), not of the arc velocity.
+  - Records with +0x74 = 1 (only the free-climb hold record, Lara data +0x5B8) meet the arc at the candidate
+    segment's two end points (0x5C3AA0, then 0x6F96C0 on each point: the arc's 3-D closest approaches). +0x74 = 2
+    (record +0x5B0) is the box test (0x6EBEF0 / 0x6FAEB0); 0 means polylines (0x6F9940).
+  - The point test 0x6F96C0 clamps a closest approach before the arc's start to t = 0 only when profile +0x2C has
+    bit 0x10000. Ours' polyline sweep keeps its [I] start rule (0x6F9940's times are not decoded): gating it the same
+    way lost the beam 1031 hit of profile 84 (ch_beam_* regressed).
+  - Open (cc_dice_*): Wine's falling grab (profile 45) lands S600 on hold 898's point 0. Ours meets hang ledge 934 at
+    its own start first, through that polyline start rule (gated, profile 45 found 898). Ours also seeds and holds her
+    root at the hold's point 0, where Wine puts it 158 under, so profile 27's base differs and the cases diverge at
+    T778 / T782. The seed now takes a hold a search found (ChartShadow grabbedHold) before the nearest one.
 
 ### Foot locks: conditions 0x12E / 0x131 [O decode, open: not ported]
 

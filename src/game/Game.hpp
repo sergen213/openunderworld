@@ -593,7 +593,7 @@ struct MarkupProfile {
     uint32_t base = 0;            // +0xCC: the query's base point source (0 her root or bone +0xC8, 1 the attach point, ...)
     int bone = 0;                 // +0xC8 low byte: the bone over the root (0 none)
     vec3 offset{0};               // +0x58 up, +0x5C along -model Y (her facing), +0x60 along model X
-    float lead = 0;               // +0xD0 > 0: the start led by that many frames of the velocity
+    float lead = 0;               // +0xD0 > 0: the start led by that many frames of the carrier's velocity (markupSearch)
     bool fixedVelocity = false;   // record +0 bit 0 and +4 mode 0: the velocity is +0x08..+0x10 itself
     uint32_t velocityMode = 0;    // +4 (0x76FFC0: 1 the query object's, 2 a bone's motion, 3 her own, 4 the stick's)
     vec3 velocity{0};             // +0x08..+0x10: model (x, along the heading, up), a 30 Hz frame
