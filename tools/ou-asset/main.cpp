@@ -379,7 +379,7 @@ void collisionDump(const cdc::Drm& drm, const std::string& out) {
     for (const auto& m : mesh.markup) {
         std::printf("%6u %5u %-12s %4zu %6u", m.id, m.type, std::string(collision::markupTypeName(m.type)).c_str(),
                     m.points.size(), m.intro);
-        if (!m.points.empty()) std::printf(" (%.1f %.1f %.1f)", m.points[0].x, m.points[0].y, m.points[0].z);
+        for (const auto& p : m.points) std::printf(" (%.2f %.2f %.2f)", p.x, p.y, p.z);
         if (m.camera) std::printf(" camera type %u, %zu spline points", m.camera->type, m.camera->pos.size());
         std::printf("\n");
     }
@@ -656,6 +656,16 @@ int main(int argc, char** argv) try {
 
     if (cmd == "sections") {
         const auto drm = loadDrm(bf, path);
+        if (pos.size() >= 5) { // sections <gameDir> <drm> <idx> <offset> [count]: section bytes as f32 / i32
+            const auto& d = drm.sections.at(std::stoul(pos[3], nullptr, 0)).data;
+            const size_t off = std::stoul(pos[4], nullptr, 0), n = pos.size() > 5 ? std::stoul(pos[5], nullptr, 0) : 1;
+            for (size_t i = 0; i < n && off + 4 * i + 4 <= d.size(); ++i) {
+                float f; int32_t v;
+                std::memcpy(&f, d.data() + off + 4 * i, 4), std::memcpy(&v, d.data() + off + 4 * i, 4);
+                std::printf("+0x%zx %g %d\n", off + 4 * i, f, v);
+            }
+            return 0;
+        }
         std::printf("version %u, %zu sections, dependencies:", drm.version, drm.sections.size());
         for (const auto& d : drm.dependencies) std::printf(" %s", d.c_str());
         std::printf("\n%5s %-15s %4s %8s %10s %9s\n", "idx", "type", "res", "id", "size", "relocB");
