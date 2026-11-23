@@ -824,7 +824,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // flag 2; the player's message handler 0x76FC30 zeroes agent +0x8C and passes it to the chart, 0x787CD0). Only
     // flight / landing states handle it (S288, S1004, S1292, ...), so on the ground it does nothing. [I] the player call's
     // flag 2 and the check's place in the frame against the chart tick (ours after it).
+    // Message 0x1C9 (too-steep ground, the same check) = event 457: 0x76FC30 stamps agent +0x90 (wallSlideRecent) and
+    // +0x5F0, and passes it on through 0x787CD0 like every message [O: decomp]; the air states take it into the wall
+    // slide (S288 / S1004 event 457 -> S1015; Wine jh_stick_jump_rebound S294 -> S1033 at 106). [I] its order against 455.
     void postFloor() {
+        if (ground.steep) rt->post(*this, 457);
         if (!ground.floor) return;
         rt->field(0x8C) = 0;
         rt->post(*this, 455);

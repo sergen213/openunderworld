@@ -2375,11 +2375,21 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     // could have been met: such a type admitted by the record (0x7232E0 and an entry's gate) and present in the level
     // makes the answer unknown [I: a hit of another type earlier than ours would also win; kept]. Judged on the whole
     // sweep, not on ledgeOnArc's per-moving-markup passes (`only` >= 0: one markup, which says nothing of the others).
-    // Type 0 carries MUD 0x80000000 (disabled: markupFlags), never a candidate.
+    // Type 0 carries MUD 0x80000000 (disabled: markupFlags), never a candidate. Only a markup within the sweep's own
+    // bounds (the prefilter the swept types pass, kSweepPad round the arc's horizontal extent) counts: its points, or for
+    // MUD 0x100000 (type 10) the MarkUp box's diagonal, centre + min to centre + max, the segment 0x70F300 sweeps for it
+    // (0x706770) [O: decomp; I: the bound]
     if (q.strict && only < 0 && best.markup < 0 && !record.empty()) {
         uint64_t present = 0;
-        for (const auto& m : col_.markup)
-            if (m.type < 64) present |= uint64_t(1) << m.type;
+        for (const auto& m : col_.markup) {
+            if (m.type >= 64 || m.points.empty()) continue;
+            vec2 lo = xy(m.points.front()), hi = lo;
+            for (const vec3& p : m.points) lo = glm::min(lo, xy(p)), hi = glm::max(hi, xy(p));
+            if (collision::mud(m) & 0x100000u) lo = xy(m.centre + m.boxMin), hi = xy(m.centre + m.boxMax);
+            if (glm::any(glm::greaterThan(glm::min(lo, hi) - kSweepPad, sHi)) || glm::any(glm::lessThan(glm::max(lo, hi) + kSweepPad, sLo)))
+                continue;
+            present |= uint64_t(1) << m.type;
+        }
         for (int type = 1; type < 64 && !q.unknown; ++type) {
             if (!(present >> type & 1)) continue;
             if (type == 1 || type == 2 || type == 13 || type == 14 || type == 9 || type == 15 || type == 4 || type == 5 || type == 6 ||
