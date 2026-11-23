@@ -1173,6 +1173,44 @@ TEST(AudioReal, MaterialListAndEngineReaction) {
     EXPECT_TRUE(r.maps[1].add);
 }
 
+// tru.exe 0x583490 / 0x583440: a Selector picks by the worn outfit's index in GlobalInfo's outfit list (generalbank
+// +0xC8 -> +4: object ids 8..35). lara.drm DTP 2296 (the jump effort): keys -1 -> 2276, 10 / 11 -> 2462, 1 -> silent.
+// 2462 exists only in the outfits that use it (lara_wetsuit_warm.drm, index 11), whose DRM replaces lara.drm's DTPs.
+TEST(AudioReal, SelectorPicksByOutfitIndex) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    const auto general = ou::cdc::parseDrm(*bf.read("pc-w\\generalbank.drm"));
+    const auto outfits = ou::audio::parseOutfitList(general);
+    ASSERT_EQ(outfits.size(), 28u);
+    for (size_t i = 0; i < outfits.size(); ++i) EXPECT_EQ(outfits[i], 8 + i);
+    auto lara = std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\lara.drm")));
+    auto wetsuit = std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\lara_wetsuit_warm.drm")));
+    PlexBank bank;
+    bank.add(lara);
+    Mixer m;
+    m.addWaves(*lara);
+    SoundPlayer sp(m, [&](uint32_t id) { return bank.find(id); }, nullptr);
+    const auto play = [&](uint32_t key) {
+        const Plex* effort = bank.find(2296);
+        EXPECT_TRUE(effort && effort->type == PlexType::Selector);
+        if (!effort) return std::vector<std::string>{};
+        sp.selectorKey = key;
+        sp.waves.clear();
+        sp.start(*effort, glm::vec3(0), 1, 1);
+        sp.update(1);
+        return sp.waves;
+    };
+    EXPECT_FALSE(play(2).empty()); // casual: the default entry, 2276
+    EXPECT_TRUE(play(1).empty());  // key 1: DTP 0
+    EXPECT_TRUE(play(11).empty()); // 2462 is not in lara.drm
+    EXPECT_FALSE(bank.find(2462));
+    bank.add(wetsuit, true), m.addWaves(*wetsuit);
+    ASSERT_TRUE(bank.find(2462));
+    const auto wet = play(11);
+    ASSERT_FALSE(wet.empty());
+    for (const auto& w : wet) EXPECT_GE(std::stoul(w), 545u) << w; // the wetsuit's own Waves 545..
+}
+
 // GameSound asks for the bike engine before it loads motorcycle.drm: the miss must not stick after the add.
 TEST(AudioReal, BankFindsDtpAddedAfterMiss) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

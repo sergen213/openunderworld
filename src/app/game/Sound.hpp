@@ -88,6 +88,10 @@ private:
     std::map<std::string, uint32_t> helpLines_; // generalbank stream path -> its DTP
     audio::SoundPlayer::Handle help_ = 0;
     std::string lastCondition_;
+    std::vector<uint16_t> outfitIds_;           // GlobalInfo's outfit list (audio::parseOutfitList)
+    std::map<std::string, uint16_t> objectIds_; // objectlist.txt name -> id
+    std::string outfit_;                        // the outfit whose sounds and Selector key are set
+    std::map<std::string, std::shared_ptr<const cdc::Drm>> outfitDrms_; // pc-w\<outfit>.drm, loaded when first worn
     std::map<std::tuple<const cdc::Drm*, uint32_t, uint32_t>, std::unique_ptr<audio::Plex>> eventPlex_; // kind-0 graphs
     std::set<const cdc::Drm*> eventDrms_; // object DRMs whose DTPs / Waves joined the bank and the mixer
     std::map<std::tuple<int32_t, const cdc::Drm*, uint8_t>, audio::SoundPlayer::Handle> slots_; // (owner, object, slot)

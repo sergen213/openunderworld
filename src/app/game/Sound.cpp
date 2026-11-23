@@ -1,5 +1,6 @@
 // ou-game sound events. Evidence: docs/formats/AUDIO.md §9.
 #include "app/game/Sound.hpp"
+#include "formats/Formats.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -33,12 +34,18 @@ GameSound::GameSound(const cdc::BigfileSet& bigfile, audio::Mixer& mixer)
     for (const char* name : {"pc-w\\lara.drm", "pc-w\\generalbank.drm"})
         try {
             if (auto drm = load(bf_, name)) {
-                if (std::string_view(name).ends_with("generalbank.drm")) mixer_.addWaves(*drm); // the menu sounds
+                if (std::string_view(name).ends_with("generalbank.drm")) {
+                    mixer_.addWaves(*drm);                    // the menu sounds
+                    outfitIds_ = audio::parseOutfitList(*drm); // Selector keys (SoundPlayer::selectorKey)
+                }
                 bank_.add(std::move(drm));
             }
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: sound bank %s: %s\n", name, e.what());
         }
+    if (const auto list = bf_.read("\\tr8\\pc-w\\objectlist.txt")) // outfit object names -> objectlist ids
+        for (const auto& [id, n] : formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()}))
+            objectIds_.try_emplace(n, id);
     for (uint32_t id = 200; id < 1000; ++id) // generalbank hint/answer lines: single-stream DTPs (AUDIO.md §9.5)
         if (const audio::Plex* p = bank_.find(id); p && p->type == audio::PlexType::Assignment && p->children.size() == 1 &&
                                                    p->children[0].type == audio::PlexType::Stream)
@@ -357,6 +364,23 @@ void GameSound::syncUnits(const game::World& world) {
 void GameSound::tick(game::World& world) {
     const auto tick = (unsigned long long)world.ticks();
     if (world.unitsVersion() != unitsVersion_) syncUnits(world), unitsVersion_ = world.unitsVersion();
+    if (world.outfit != outfit_) {
+        outfit_ = world.outfit;
+        // The player object is the worn outfit (gameTracker +0x140): its DRM's copies of Lara's sound DTPs and Waves are
+        // the ones that play (lara_wetsuit_warm.drm DTP 2462 = the wetsuit efforts at half volume; lara.drm has none)
+        // [O data]. Replaces whatever the previous outfit added (lara.drm itself when back to "lara").
+        auto& drm = outfitDrms_[outfit_];
+        if (!drm) try { drm = load(bf_, "pc-w\\" + outfit_ + ".drm"); } catch (const std::exception& e) {
+                std::fprintf(stderr, "ou-game: outfit sounds %s: %s\n", outfit_.c_str(), e.what());
+            }
+        if (drm) mixer_.addWaves(*drm), bank_.add(drm, true);
+        // The worn outfit's index in GlobalInfo's list keys Selector nodes (0x583440).
+        const auto id = objectIds_.find(outfit_);
+        const auto at = id == objectIds_.end() ? outfitIds_.end() : std::find(outfitIds_.begin(), outfitIds_.end(), id->second);
+        player_.selectorKey = at == outfitIds_.end() ? ~0u : uint32_t(at - outfitIds_.begin());
+        std::fprintf(stderr, "ou-game: tick %llu sound outfit %s (selector key %d)%s\n", tick, outfit_.c_str(), int(player_.selectorKey),
+                     drm ? "" : " (no DRM)");
+    }
     const glm::vec3 lara = world.player().state().pos;
     // Enemies' slot sounds (owners -(0x10000000 | uid), ou-game's EffectsView) end with the enemy (0x58D740 stops a
     // SoundComponent's sounds when its instance goes).
