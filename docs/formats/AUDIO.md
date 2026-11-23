@@ -616,8 +616,9 @@ nodes resolved in memory; l3_main_bedroom jump, run-jump, hang / pull-up, drop, 
   with the death clip (death type 4, `World` pose; DeathState_Entry 0x75AA50) as tru did: ours, l4_pool 2600-unit fall
   (the death_respawn self-test's): death_fall_normal at tick 62, joint impacts from tick 64 [O, log]; other deaths keep
   the ragdoll for the clip's end [U: their death types].
-- **Pain**: not compared: the bedroom fire trigger hurt neither game, our high bedroom spawns land elsewhere / fall out
-  of the world (`--spawn -8484.3,-3830,2744`), `--die` does not kill in the prologue.
+- **Pain**: the bedroom fire trigger hurt neither game; spawns from +1500 / +2500 above the bedroom corridor land on the
+  house roof (z ~1404, 34 degree slope) and slide off its eave in ours, and the Wine takes of those falls carry the
+  "carry after SPAWN" drift in rows 0..4 (LegacyFix), so they are no pain reference; `--die` does not kill in the prologue.
 - Not compared: hints / script voice lines (tru plays them from the PDA's FIELD ASSISTANCE menu only; a 30 s idle at
   l1_seatop starts no Lara line in ours), the voice bus, rolloff and reverb (the hooks see the start, not FMOD's mix).
 
