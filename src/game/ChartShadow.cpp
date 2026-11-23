@@ -222,11 +222,17 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     // Before a posed case's start tick she stands pinned at the case start (driveTick) [I: harness only]
     bool pinned() const { return enterState >= 0 && enterPose.has_value(); }
+    // ... and the case does not begin in a hold (its chain runs no 420 / 230, the states seedAttach seeds): tru never stood
+    // pinned there, so the chart runs no markup search and keeps what it holds. A hold start keeps the pinned searches:
+    // the Wine take began held, and the freeclimb cc_dice_* cases (S600 from a ledge hang) need that hang's history.
+    bool pinFrozen() const {
+        return pinned() && !rt->chainHasAction(enterState, 420) && !rt->chainHasAction(enterState, 230);
+    }
     // 0x7296C0 on a decoded profile (Player::markupSearch) against her live pose and the control yaw. 0x6EBA90 (not in
     // stick mode 3): input record +0xC (the stick's angle) + input +0x190 + her instance's heading (+0x38) [O: decomp];
     // a neutral stick adds no angle [I: +0xC and +0x190 taken as 0 then], so her heading; pushed, the stick's world yaw.
     std::optional<Aim> markupSearch(const MarkupProfile& p) const override {
-        if (pinned()) return Aim{}; // no search while pinned (driveTick's pin: tru never stood there)
+        if (pinFrozen()) return Aim{}; // no search while pinned before a non-hold start (driveTick's pin)
         const float yaw = stickLen > 0.0f ? std::atan2(stickWorld.y, stickWorld.x) : heading();
         std::optional<glm::vec3> lift;
         if (p.bone > 0)
@@ -1405,11 +1411,11 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     // A case that begins in a hold (--chart-state with a pose) keeps her in that pose until the state is entered: the
     // Wine take began there pinned [I: harness only]; the chart's idle start would otherwise drop her from a pole pose
     // into the hall below (mh_pole_airgrab: a fatal fall, respawn and chart restart at tick ~100).
-    // tru never stood pinned there, so while pinned the chart neither searches for markup (markupSearch answers none)
+    // While pinned before a non-hold start (pinFrozen) the chart neither searches for markup (markupSearch answers none)
     // nor changes what it holds (+0xC94 put back): a pinned grab would otherwise carry into the case as the attached
     // markup the searches skip (lad_a234_attach took the ladder at zero speed and missed Wine's S1066 at the start).
     if (pinned()) {
-        chartAttached = attachedAtPin;
+        if (pinFrozen()) chartAttached = attachedAtPin;
         PlayerState ps = player.state();
         ps.pos = glm::vec3(*enterPose), ps.yaw = glm::radians(enterPose->w), ps.vel = glm::vec3(0);
         player.restore(ps);
