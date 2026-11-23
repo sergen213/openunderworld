@@ -241,6 +241,9 @@ struct Skeleton {
     std::vector<Bone> bones;   // parents come before children
     uint32_t renderModelId = 0; // cdc render-model section the skeleton deforms
     std::string origin;
+    // The model's mirror table (DTP +0x4C -> {u8 a, u8 b, u8 count} records, count 0 ends it): a mirrored pose swaps
+    // segments a.. and b.. (count each) after reflecting every segment (tru.exe 0x433540). Empty: the model has none.
+    std::vector<std::array<uint8_t, 3>> mirrorSwaps;
 };
 
 struct MeshData {
