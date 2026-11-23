@@ -99,6 +99,11 @@ std::vector<scene::Skeleton> decodeSkeletons(const cdc::Drm& drm, std::vector<st
                     throw FormatError("segment " + std::to_string(i) + " parent " + std::to_string(parent));
                 sk.bones.push_back({parent, {r.f32(o + 0x20), r.f32(o + 0x24), r.f32(o + 0x28)}});
             }
+            // The mirror table (model +0x4C, tru.exe 0x433540 reads it through the anim controller's model +0x88):
+            // 3-byte {first, second, count} records until a zero count [O decomp].
+            if (const auto mt = cdc::internalPointer(s, 0x4C))
+                for (uint32_t k = 0; k < 64 && *mt + 3 * k + 2 < s.data.size() && s.data[*mt + 3 * k + 2]; ++k)
+                    sk.mirrorSwaps.push_back({s.data[*mt + 3 * k], s.data[*mt + 3 * k + 1], s.data[*mt + 3 * k + 2]});
             if (const auto it = renderModels.find(sk.renderModelId); it != renderModels.end())
                 appendChains(*it->second, sk, warnings);
         } catch (const FormatError& e) {
