@@ -17,16 +17,18 @@ Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (G
   (decoded, no longer fitted), climbs rung to rung without pauses, and the top exit lands on the last rung.
 - Changed (chart traversal): dropping from a ledge into a hang below now blends onto the hang the way the original
   does; three of the bedroom drop recordings now match the original in full.
-- Changed (chart traversal): free-climb holds pick the same handhold as the original (it checks that the jump to it
-  is clear), the jump when she lets go of a handhold matches the original's, and she turns onto a handhold's angle.
-- Fixed: animations whose turn crosses ±180° turned her the long way round (seen on the beam's turn-around); they
-  now turn the short way, as in the original.
-- Changed (chart traversal): finishing an animation on the tick the state changes no longer drops its last step (the
-  beam walk replays match the original). In the air, touching a wall keeps her speed instead of stopping her, and
+- Changed (chart traversal): free-climb handholds: the jump to a handhold must be clear, as in the original (the
+  hold-up replay now follows the original's path), the jump when she lets go of a handhold matches the original's,
+  and she turns onto a handhold's angle. Two free-climb reach replays still pick a different handhold.
+- Changed (chart traversal): in the air, touching a wall or overhang keeps her speed instead of stopping her, and
   ground too steep to stand on is reported to the chart.
 - Fixed (self-tests): seven later-chapter routes ran straight into walls, which now stop Lara in chart mode as in the
   original; they now turn before the wall. Chart mode passes 86 of 135 gameplay self-tests (79 in 0.62.1); the
   default controller passes 133 of 135, the same two as before.
+- Known issues (chart traversal, off by default): of 0.62.1's nine regressed self-tests, two remain: running up the
+  slope-slide face climbs too high (the original's slide speed control is not yet applied there), and the maproom
+  rope step's expected rope length still needs the original's value. The ring-door roll under the beams needs a
+  different input in chart mode.
 
 ## [0.62.1] - 2026-11-23
 
