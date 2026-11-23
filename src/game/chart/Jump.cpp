@@ -807,6 +807,9 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
         // 0x74DCD0's kind-1 branch (request +2 == 1): the rung root and the ladder facing, through 0x702D20, become
         // 0x437120's alignment for the request's mode-3 window [O decomp]
         if (ladderOnly && ctx.chartAttached && *ctx.chartAttached) ctx.alignToHold(*ctx.chartAttached);
+        // 0x74ED30's kind-2 branch (a graph-node request): 0x74BF90's PrimAirAttachAnimTarget, whose slot 1 0x750780
+        // aims the node's next clip at the hang root through 0x741130 [O decomp]
+        if (cls == 610 && ctx.chartAttached && *ctx.chartAttached) ctx.ledgeHangAlign();
     }
 }
 

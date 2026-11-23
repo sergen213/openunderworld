@@ -471,6 +471,11 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         align.v = worldToModel(s.yaw, before - s.pos), align.yaw = wrapRad(yawBefore - s.yaw), align.pending = true;
     }
     void ladderRungAlign() override { if (driving) align.ladderRung = true; }
+    void ladderRungSnap() override { if (driving) rungSnap = true; }
+    void ledgeHangAlign() override {
+        const State* sd = driving ? rt->charts().player.state(rt->state()) : nullptr;
+        if (sd && sd->requestKind == 2) align.ledgeHang = true;
+    }
     // model space (-Y forward) by yaw into world (as Player's rotYaw) and back
     static glm::vec3 rotYawWorld(float yaw, glm::vec3 m) {
         const float c = std::cos(yaw + 1.5707963f), sn = std::sin(yaw + 1.5707963f);
@@ -727,6 +732,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     bool parked = false;        // the controller holds her (a boundary state): the chart restarts when she comes back
     float lastRise = 0;         // the last drive move's root z rise (bone 0 [I])
     int attachedBefore = -1;    // +0xC94's markup as the tick began (an attach made by this tick's change starts a blend)
+    bool rungSnap = false;      // action 505's exit (0x734920) ran in this change: stateEntered puts her on the rung
     bool launched = false;      // this flight was launched by a take-off (Jump) rather than walked off (Fall)
     int takeoffState = -1;      // the take-off state (action 504) the chart left last, and on which world tick
     uint64_t takeoffTick = ~0ull;
@@ -1431,13 +1437,22 @@ void Shadow::Impl::stateEntered(int from, int to) {
                      w->player().state().pos.z, int(playerRay(w->player().state().pos + glm::vec3(0, 0, 51.2f), w->player().state().pos + glm::vec3(0, 0, 512.0f)).value_or(-1.0f)),
                      sincePressed[Jump], int(ground.floor), fallDistance(),
                      ch->variables[344].asFloat(), ch->variables[345].asFloat(), ch->variables[346].asFloat());
+    // Action 505's exit (0x734920) set her root on the nearest rung root as the state left; the 0x708830 hold puts the
+    // fitted offset on it from the next frame (Wine climb_up: S1085 at 1155.15, S1087 at 1161.40) [O; offset I]
+    if (rungSnap) {
+        rungSnap = false;
+        const PlayerState& s = w->player().state();
+        if (chartAttached && *chartAttached)
+            if (const auto pose = pm->familyPose(chartAttached->markup, s.pos, s.yaw))
+                blend = {true, to, s.pos, pose->first + pm->ladderHoldFit(chartAttached->markup), s.yaw, pose->second, 0.01f, 0}; // at once
+    }
     // An attach made by this change's PreAnim actions (230 / 232: +0xC94 = the jump target) starts the attach clip's
     // root alignment onto the hang pose (action 236 PSCAF_AlignRootMotionToTarget, unported: [I] a blend over the clip
     // and what its node queued, ChartRuntime::remainingFrames).
     const int now = chartAttached && *chartAttached ? chartAttached->markup : -1;
     // a ported AnimTarget setter (alignToHold) left a mode-3 alignment: the request's window carries her (docs
     // "Mode-3 port plan"), not this blend
-    if (now >= 0 && now != attachedBefore && !align.pending) {
+    if (now >= 0 && now != attachedBefore && !align.pending && !align.ledgeHang) {
         MarkupSlot& a = *chartAttached;
         const auto& p = w->collision().markup[size_t(a.markup)].points;
         if (p.size() >= 2) {
@@ -1581,6 +1596,24 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
                     d.window = 3, d.align = glm::vec4(worldToModel(s.yaw, pose->first - s.pos), wrapRad(pose->second - s.yaw));
                     align.ladderRung = false;
                 }
+            }
+            // a graph node's clip under 0x74ED30's PrimAirAttachAnimTarget (slot 1 0x750780 -> 0x741130): the hang root
+            // (0x74ED30's T, hangPose) less the clip's header alignment turned into the hang's frame (0x702D20) into the
+            // pattern's mode-3 window (drop_to_ledgeb R1069, drop_to_ledgeu R1070, ledgeb_attach_down R951) [O decomp]
+            if (align.ledgeHang && sd && sd->requestKind == 2) {
+                const MarkupSlot* a = chartAttached && *chartAttached ? &*chartAttached : nullptr;
+                const auto span = pm->clipAlign(p->clip, d.mirror);
+                if (a && p->window == 3 && d.crossfade > 0 && span && w->collision().markup[size_t(a->markup)].points.size() >= 2) {
+                    const auto& mp = w->collision().markup[size_t(a->markup)].points;
+                    const PlayerState& s = w->player().state();
+                    const int seg = std::clamp(int(a->param), 0, int(mp.size()) - 2);
+                    const float t = (a->param - float(seg)) * glm::length(glm::vec2(mp[size_t(seg) + 1] - mp[size_t(seg)]));
+                    const auto [root, yaw] = pm->hangPose(a->markup, seg, t, hangSide(a->markup, seg, a->point));
+                    const float yawBefore = yaw - span->second;
+                    const glm::vec3 before = root - rotYawWorld(yawBefore, span->first);
+                    d.window = 3, d.align = glm::vec4(worldToModel(s.yaw, before - s.pos), wrapRad(yawBefore - s.yaw));
+                }
+                align.ledgeHang = false; // the target is used up by the node's next start (0x4428A0 clears layer +0x3C)
             }
         }
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs

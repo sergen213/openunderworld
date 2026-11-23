@@ -283,11 +283,7 @@ std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, 
         }
         const float drop = at > lowest ? lowest : kRungSpacing * float(std::clamp(int(std::lround(at / kRungSpacing)), 0, count - 1));
         const vec3 hint = m.points.size() >= 3 ? m.points[2] - m.points[1] : vec3(0);
-        // [I] fitted, not decoded: Wine lad_a234 carries her linearly (19.46 a tick) onto this root, then at the
-        // window's end (tick 28) snaps 6.0 out and 6.33 up and holds there (940.24 / 116.94 off the wall; rung 0
-        // 1161.40 alike). The source is open (the ledge hang's 1.19 / 4.16 is the same kind); replace once decoded.
-        constexpr float kHoldUp = 6.33f, kHoldOut = 6.32f;
-        return std::pair{top - vec3(0, 0, drop + kRungTop - kHoldUp) + vec3(xy(hint) * 0.5f, 0) + out * (kLadderBack + kHoldOut),
+        return std::pair{top - vec3(0, 0, drop + kRungTop) + vec3(xy(hint) * 0.5f, 0) + out * kLadderBack + ladderHoldFit(markup),
                          yawOf(-xy(out))};
     }
     if (m.type == 15 && m.points.size() >= 2) {
@@ -296,6 +292,19 @@ std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, 
     }
     if (m.type == 13) return std::pair{m.points[0], yaw};
     return std::nullopt;
+}
+
+// [I] fitted: the ladder hold lies 6.33 higher and 6.32 further out than 0x7350B0's / 0x734920's rung root. WineChartTrace-2
+// ladwatch (lad_a234_attach t28, climb_up t177): the writer is 0x708830 (the action 420 attach update, called from
+// 0x771267 against the ladder markup) from the attach window's end on, every frame: root = the attached point at grip
+// 0.280 less a per-markup offset (world (-78.77, 117.11, 568.90) where 0x74DCD0's +0xCE0..+0xCE8 give (79.01, -110.62,
+// 575.22)); which frame or offset 0x708830 uses there is not decoded yet.
+vec3 Player::ladderHoldFit(int markup) const {
+    if (markup < 0 || size_t(markup) >= col_.markup.size()) return vec3(0);
+    const auto& m = col_.markup[size_t(markup)];
+    if (m.type != 9 || m.points.size() < 3) return vec3(0);
+    constexpr float kHoldUp = 6.33f, kHoldOut = 6.32f;
+    return ladderOut(m) * kHoldOut + vec3(0, 0, kHoldUp);
 }
 
 void Player::catchLadder() {

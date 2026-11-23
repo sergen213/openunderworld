@@ -800,6 +800,8 @@ public:
     // `body`: her root for a ladder attach's floor ray (0x734C00 casts from the instance, `from` is player +0x9F0).
     std::optional<std::pair<vec3, float>> familyPose(int markup, vec3 from, float yaw, std::string_view clip = {},
                                                      std::optional<vec3> body = {}) const;
+    // The fitted offset of a ladder hold over the rung root (Traverse.cpp; zero for other markup) [I].
+    vec3 ladderHoldFit(int markup) const;
     // A clip's root motion between t0 and t1 (s, played once): model-space translation (x reflected when mirrored) and
     // turn (radians, negated when mirrored); nullopt for an unknown clip.
     std::optional<std::pair<vec3, float>> rootSpan(std::string_view clip, double t0, double t1, bool mirror) const;
