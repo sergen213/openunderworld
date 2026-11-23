@@ -683,6 +683,11 @@ public:
     // `at` (x, y, z, yaw degrees): where she was in the Wine case when it began in a hold (case.json start.ours); the hold's
     // markup is seeded from there [I: harness only].
     void enterAt(int state, uint64_t tick, std::optional<glm::vec4> at = std::nullopt, float elapsed = 0);
+    // `grab` (x, y, z, yaw degrees; --chart-state's fifth field): where the Wine case's spawn hold put her (case.json
+    // spawn.ours). tru.exe's falling grab search runs there once, on the hold's first frame, before she reaches the case
+    // start (Wine cc_dice_right: 0x70F300's arc from spawn.ours' hang height) [O-runtime]; a free-climb seed runs that
+    // search (profile 45) from there and holds what it takes [I: harness only].
+    void grabAt(glm::vec4 grab);
     // --chart-rng (replay only, harness): tru.exe's recorded generator results, consumed in order (ChartContext::rngFeed).
     void feedRng(std::vector<uint32_t> draws);
     std::string summary() const;
