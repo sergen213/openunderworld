@@ -48,14 +48,22 @@ constexpr float kQueryOut = 79.0139f, kQueryHang = 372.9456f; // q12's target ty
 // 0x7594C0 answers 1 once the upper ray met a wall face that 0x758F70 accepts, whatever fails after it (the vertical
 // velocity window, the lower ray, the floor, the reach), 2 when all pass; 0 otherwise [O: decomp]. The order of the
 // tests does not change wallJumpWall's answer.
+// The face normal out of the wall (toward her: 0x4935F0's one-sided ray meets the face from its front) [I: ours' hit
+// normal is the face's whatever side the ray came from].
+void Player::storeWallJumpNormal(const collision::Hit& h) const {
+    const vec3 n = glm::dot(xy(h.normal), xy(s_.pos - h.point)) < 0 ? -h.normal : h.normal;
+    wallJumpNormal_ = n;
+}
 std::optional<collision::Hit> Player::wallJumpWall() const {
     int r = 0;
     auto h = wallJumpTest(r, t_.wallJumpLook, false);
+    if (r == 2 && h) storeWallJumpNormal(*h); // 0x7594C0's store of player +0x5D0 on a 2
     return r == 2 ? h : std::nullopt;
 }
 int Player::wallJumpProbe() const {
     int r = 0;
-    wallJumpTest(r, t_.wallJumpLook, false);
+    const auto h = wallJumpTest(r, t_.wallJumpLook, false);
+    if (r == 2 && h) storeWallJumpNormal(*h);
     return r;
 }
 // tru.exe 0x759260 (chart condition 0x20B, PSCCF_WallJumpAnticipate): the vertical velocity window first, then the same

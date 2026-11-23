@@ -239,7 +239,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
             if (const auto b = w->boneWorld(p.bone), r = w->boneWorld(0); b && r) lift = *b - *r;
         // player +0xEA0 (action 510's enter, chart/Jump.cpp airEnter: markup index + 1, 0 none)
         const int released = const_cast<Impl*>(this)->playerInt(0xEA0) - 1;
-        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift, released);
+        // property 499 (0x1F3) of the state asking: the ledge class table's junction shelf test (0x74BB50 -> 0x784BC0)
+        const int moveZone = rt->propInt(0x1F3).value_or(-1);
+        const auto f = w->player().markupSearch(p, rt->mirrored(), yaw, stickLen > 0.0f, lift, released, moveZone);
         if (!f.known) return std::nullopt;
         if (f.target.markup < 0) return Aim{};
         return Aim{slot(f.target.markup, f.target.seg, f.target.t), f.flags, f.cls, f.target.frames, f.uncertain};
@@ -1203,6 +1205,10 @@ game::State Shadow::Impl::coarse(Player::DriveStep::Motion motion, const std::st
     if (has("slide_stumble_off")) return GS::Land; // S821, the slide's run-out onto standable floor (legacy Land)
     if (clip.starts_with("slope") && motion != M::Air) return GS::Slide; // slope_landfront / _transitionto / _slidefront (S801..S812); off its end she falls
     if (clip.starts_with("dice")) return GS::Climb;
+    // the chimney wall jump (S1291 wall_jump_attach_air, S1294 wall_jump_idle, the jump back off the wall) as the
+    // legacy controller's State::WallJump (WallJump.cpp); its detach (S1296 wall_jump_detach_fall) falls through to the
+    // air states [I: mapping]
+    if (clip.starts_with("wall_jump") && !has("detach")) return GS::WallJump;
     if (has("drop_to_ledgeb")) return GS::DropToHang;
     if (motion == M::Air) return clip.starts_with("ledgeb_jump") ? GS::HangJump : launched ? GS::Jump : GS::Fall;
     if (motion == M::Hang || motion == M::Blend) {
@@ -1298,6 +1304,17 @@ void Shadow::Impl::launch(int from) {
         const glm::vec3 r(f.y, -f.x, 0);
         pm->setFlight((r * q.x + f * q.y + glm::vec3(0, 0, q.z)) * 30.0f);
         if (const MarkupSlot tg = chartJumpTarget(*this); tg && chartTarget.target) aimAt(tg, chartTarget.frames);
+    } else if (clip == "wall_jump_jump_back") {
+        // S1295 (prop 541 = 12): the same launch from its jump query's fixed velocity (right / forward / up per 30 Hz frame
+        // in her frame): q12 (0, 46.81, 77.27) [O-data lara.drm q12; O-runtime Wine jh_stick_jump_rebound: S294's
+        // first rows (1404.2, -4.6, 2146.3) per s = q12 x 30 less two frames of gravity]
+        const auto q = decodeProfile(*ch, rt->field(0xB00));
+        if (q && q->fixedVelocity) {
+            const glm::vec3 r(f.y, -f.x, 0);
+            pm->setFlight((r * q->velocity.x + f * q->velocity.y + glm::vec3(0, 0, q->velocity.z)) * 30.0f);
+        } else {
+            launched = false;
+        }
     } else {
         launched = false;
     }
@@ -1547,6 +1564,12 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     if (d.motion == M::Ground) {
         const std::string lc = lower(d.clip.empty() ? player.state().clip : d.clip);
         if (lc.starts_with("slope") && lc.find("jump") == std::string::npos) d.motion = M::Slide;
+    }
+    // The chimney wall jump's hold (wall_jump_attach_air / _idle / _jump_back): her height held at the wall, the clip's
+    // root motion only (DriveStep::hover); the detach falls by the chart's air states
+    if (d.motion == M::Ground) {
+        const std::string lc = lower(d.clip.empty() ? player.state().clip : d.clip);
+        d.hover = lc.starts_with("wall_jump") && lc.find("detach") == std::string::npos;
     }
     const float z0 = player.state().pos.z;
     d.coarse = coarse(d.motion, d.clip);

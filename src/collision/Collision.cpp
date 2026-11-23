@@ -381,6 +381,13 @@ std::optional<Hit> CollisionMesh::playerRay(vec3 origin, vec3 dir, float maxDist
     });
 }
 
+std::optional<Hit> CollisionMesh::playerRayOneSided(vec3 origin, vec3 dir, float maxDist) const {
+    auto best = rayFaces(origin, dir, maxDist, kSolidMask, kSkipPlayerRays, true);
+    return withDynamics(best, [&](const CollisionMesh& s, const glm::mat4& inv) {
+        return s.rayFaces(vec3(inv * glm::vec4(origin, 1)), glm::mat3(inv) * dir, best ? best->t : maxDist, kPlayerRayObjectMask, 0, true);
+    });
+}
+
 std::optional<Hit> CollisionMesh::sweepCapsule(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask, uint8_t flags) const {
     return withDynamics(sweepFaces(a, b, radius, delta, mask, flags), [&](const CollisionMesh& s, const glm::mat4& inv) {
         return s.sweepFaces(vec3(inv * glm::vec4(a, 1)), vec3(inv * glm::vec4(b, 1)), radius, glm::mat3(inv) * delta, mask, flags);

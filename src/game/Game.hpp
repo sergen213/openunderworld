@@ -728,6 +728,10 @@ public:
     bool wallJumpAnticipate(float lookFrames) const; // tru.exe 0x759260 (chart condition 0x20B), WallJump.cpp
 private:
     std::optional<collision::Hit> wallJumpTest(int& result, float lookFrames, bool anticipate) const;
+    // player +0x5D0: the wall face's normal 0x7594C0 stores when it answers 2 (kept until the next such answer); the
+    // jump queries' heading source 0x13 (0x724F50) reads it (q12, the jump back off the wall)
+    mutable std::optional<vec3> wallJumpNormal_;
+    void storeWallJumpNormal(const collision::Hit& h) const;
 public:
     // tru.exe 0x5DCE20 posting message 0x1C9 (too steep) for the face under her root, as floorKind judges it (the chart's
     // wall-slide stamp, agent +0x90, condition 0x206).
@@ -776,6 +780,10 @@ public:
         // offset +0xCE0..+0xCE8 (0x6FDC90) every frame; with flag +0x47 (property 418) the root motion's part along the
         // markup first moves the grip (0x708210). The rest of the root motion is dropped.
         bool pin = false, pinFollow = false;
+        // Ground without the floor: the chimney wall jump's hold (S1291 / S1294 / S1295, wall_jump_ clips) keeps the height
+        // she reached the wall at and moves by the clip's root motion only (Wine jh_stick_jump_rebound: root z 4463.34 on
+        // every row from the attach to the jump back) [O-runtime; I: the hold's own action not found]
+        bool hover = false;
         vec3 pinOffset{0};
         // 0x708830's heading (property 425, 0x1A9): flag +0x41 (0x29D) sets her yaw to `pinYaw` (the markup edge
         // +0xCB0's yaw + player +0xCDC), flag +0x40 (0x29C) turns her toward it by at most `pinTurn` rad per 30 Hz
@@ -885,6 +893,7 @@ private:
         vec2 stickDir{0};
         float controlYaw = 0;
         float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
+        int moveZone = -1;    // the chart state's property 499 (0x1F3) markupSearch is asked under; < 0 not known
         float beamInset[2] = {0, 0}; // MarkupProfile::beamInset (strict sweeps of beams, type 14)
         MarkupProfile::Capsule poleH, poleV, hold; // MarkupProfile's class-record capsules (kind 10 on poles / holds)
         float ladderFaceDeg = 0;                   // MarkupProfile::ladderFaceDeg (kind 21 on ladders)
@@ -925,8 +934,9 @@ public:
     // controlYaw / stickOn: the camera-relative stick heading (0x6EBA90) and whether the stick is off rest
     // boneLift: profile bone +0xC8's world origin minus the root segment's (World::boneWorld) for a bone-based query
     // lastDetached: the markup action 510's entry released (player +0xEA0, 0x6FDBE0), -1 none
+    // moveZone: the chart state's property 499 (0x1F3), read by the ledge class table's junction shelf test (0x74BB50)
     MarkupFound markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
-                             std::optional<vec3> boneLift = std::nullopt, int lastDetached = -1) const;
+                             std::optional<vec3> boneLift = std::nullopt, int lastDetached = -1, int moveZone = -1) const;
 private:
     // State::Jump: an aimed ground jump re-aimed at its markup target (PlayerState::aimMarkup) with the time left
     // (tru.exe 0x73EDC0 every frame of the flight, 0x752410)
@@ -980,7 +990,9 @@ private:
     // The ledge class table (0x728650) on a candidate: hit h on markup / seg (`along` its distance from the segment start),
     // out the hang side, dir for kind 2's facing, and its query arc (start, launch velocity per 30 Hz frame, gravity,
     // hit time); nullopt when an entry ours cannot evaluate decides it.
-    struct LedgeArc { vec3 from{0}, v{0}; float gravity = 0, t = 0; };
+    // cornerZone: the ledge class record's +0x9E (0x737B30's corner reach; <= 0 not known: every differing corner
+    // junction is unknown); moveZone: the chart state's property 499 (0x1F3, EnumSCCondComparison_MoveZone; < 0 not known)
+    struct LedgeArc { vec3 from{0}, v{0}; float gravity = 0, t = 0; float cornerZone = -1; int moveZone = -1; };
     std::optional<int> ledgeClassTable(int markup, int seg, float along, vec3 h, vec2 out, vec2 dir, const LedgeArc& arc) const;
     bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
     void startHangToWallHug();                        // up onto it from the hang (clearance class 8)

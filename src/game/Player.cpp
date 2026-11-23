@@ -1702,10 +1702,14 @@ constexpr float kRunJumpReach = 1240.0f;
 //   standing on it (the point < 6.33 over her, facing out of its face, as before [I: ours' facing]); 3 / 4 / 5: the
 //   query's launch velocity (candidate +0xC0, 0x724BB0 copies the query's +0xB0) under 9.4815 a frame horizontally,
 //   then 5 its vz < 9.4815, 4 its vz > 9.4815 and 3 / 4 a floor with d < -628.94; 6 passes.
-// - tests (each run once per candidate): 0 0x727BF0 (ledgeClear), 1 0x74BB50 (the shelf 0x74B920 == 1; at a segment
-//   junction, within 0.05 of it, both sides' shelf answers, which differing go to state property 499 and 0x741B30:
-//   not ported [U]), 2 0x727960 (test 0's first three segments: ours applies the two over the top, as test 0 does),
-//   3 0x727880 (test 0's first segment up to 31.605: not applied by ours, unknown [U]), 4 passes.
+// - tests (each run once per candidate), 0 / 2 / 3 the casts of 0x7277E0 in the ledge's frame (y along `out`, up), each
+//   a one-sided player ray (0x4935F0 -> 0x493330, flags 0x2C19E7 -> 0x461640: a face counts only met from its front, so
+//   the cast up from 252 under the ledge passes the floors it starts under) [O: decomp 0x727BF0 / 0x727960 / 0x727880;
+//   the frame's axes as ledgeClear reads them [I]]: 0 0x727BF0 = up at 100 out from 252 under to 252 over, over the
+//   top to 139 onto it and back, and the column 69.5 onto the top from 31.605 to 543.6 over it; 1 0x74BB50 (the shelf
+//   0x74B920 == 1; at a corner junction both sides' shelf answers, which differing go to state property 499 and
+//   0x741B30, below [I: 0x731DD0's first side taken as the candidate's own]); 2 0x727960 = test 0's first three casts;
+//   3 0x727880 = its first cast up to 31.605 over the ledge; 4 passes.
 // - +0xA4: ledges only; 0 unless the launch moves 10 a frame horizontally; the arc height over the ledge point as if
 //   launched from her root (her z - the arc start's z added): at the hit time when the segment is degenerate or the
 //   motion runs within 75 degrees of the ledge line (|cos| under cos(1.3089969), 0x85E4C0 through the CRT at 0x813420
@@ -1750,20 +1754,37 @@ std::optional<int> Player::ledgeClassTable(int li, int si, float along, vec3 h, 
     const auto test = [&](int id) {
         int& r = tests[size_t(id)];
         if (r) return r;
-        const auto clear = [&](vec3 a, vec3 b) { const vec3 v = b - a; return !col_.raycast(a, glm::normalize(v), glm::length(v)); };
+        const auto clear = [&](vec3 a, vec3 b) { const vec3 v = b - a; return !col_.playerRayOneSided(a, glm::normalize(v), glm::length(v)); };
         const auto p = [&](float y, float z) { return h + vec3(out * y, z); };
+        const auto top = [&] { return clear(p(100, -252), p(100, 252)) && clear(p(100, 252), p(-139, 252)) && clear(p(-139, 252), p(100, 252)); };
         switch (id) {
-        case 0: r = ledgeClear(col_, h, out) ? 1 : 2; break;
-        case 1: {
+        case 0: r = top() && clear(p(-69.5f, 31.605f), p(-69.5f, 512.0f + 31.605f)) ? 1 : 2; break;
+        case 1: { // 0x74BB50
             const float len = segLen(m, si), frac = len > 1e-4f ? along / len : 0.0f;
-            const int other = frac < 0.05f && si > 0 ? si - 1 : frac > 0.95f && size_t(si) + 2 < m.points.size() ? si + 1 : -1;
             const int here = shelfClass(li, si, along);
-            if (other < 0) r = here == 1 ? 1 : 2;
-            else r = here != shelfClass(li, other, other < si ? segLen(m, other) : 0.0f) ? 3 : here == 1 ? 1 : 2;
+            const auto plain = [&] { return here == 1 ? 1 : 2; };
+            // 0x731EA0: within 0.05 of a segment end; 0x737B30: a corner there (ours' markup is never closed, +0x28 bit
+            // 2): the neighbour (0x72BC40, before when the fraction is under 0.5) turns by over 30 degrees (|2-D cross|
+            // > 0.5) and the candidate lies within the class record's +0x9E of that end [O: decomp]
+            const int nb = frac < 0.5f ? si - 1 : si + 1;
+            if (!(frac < 0.05f || frac > 0.95f) || nb < 0 || size_t(nb) + 2 > m.points.size()) { r = plain(); break; }
+            const vec2 sd = segDir(m, si), nd = segDir(m, nb);
+            if (std::abs(sd.x * nd.y - sd.y * nd.x) <= 0.5f) { r = plain(); break; }
+            const int there = shelfClass(li, nb, nb < si ? segLen(m, nb) : 0.0f);
+            if (arc.cornerZone <= 0) { r = here != there ? 3 : plain(); break; } // the record's +0x9E not known here
+            const float len3 = glm::distance(m.points[size_t(si)], m.points[size_t(si) + 1]), zone = len3 > 0 ? arc.cornerZone / len3 : 0.0f;
+            if (frac < 0.5f ? !(frac < zone) : !(0.99999f - zone < frac)) { r = plain(); break; }
+            if (here == there) { r = plain(); break; }
+            // the two sides differ: state property 499 (0x784BC0); 0x1C2 fails; else 0x741B30 (WallHugCheckClearance)
+            // picks a side: true -> the neighbour's answer, false -> this one's. 0x741B30: 0x1C5 true, any value but
+            // 0x1C4 / 0x1C6 true (its "invalid MoveZone" branch), 0x1C4 / 0x1C6 its clearance casts [U: not ported]
+            if (arc.moveZone < 0 || arc.moveZone == 0x1C4 || arc.moveZone == 0x1C6) r = 3;
+            else if (arc.moveZone == 0x1C2) r = 2;
+            else r = there == 1 ? 1 : 2;
             break;
         }
-        case 2: r = clear(p(100, 252), p(-139, 252)) && clear(p(-139, 252), p(100, 252)) ? 1 : 2; break;
-        case 3: r = 3; break;
+        case 2: r = top() ? 1 : 2; break;
+        case 3: r = clear(p(100, -252), p(100, 31.605f)) ? 1 : 2; break;
         default: r = 1; break;
         }
         return r;
@@ -1878,7 +1899,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 if (cls >= 0) return cls;
                 if (!q.classify) return cls = 0;
                 const auto c = ledgeClassTable(li, si, glm::length(xy(h - m.points[size_t(si)])), h, n * side, q.dir,
-                                               {from, q.v, q.gravity, t});
+                                               {from, q.v, q.gravity, t, q.cornerZone, q.moveZone});
                 if (!c && q.strict) q.unknown = true; // an entry ours cannot evaluate decides the class
                 cls = c.value_or(0);
                 return cls;
@@ -2736,7 +2757,7 @@ Player::GroundAim Player::groundJumpAim(int kind) const {
 // (bone bases, other velocity modes, headings 0 / 11..16 / 19, the +0xB0 / +0xB4 snaps, a model-X velocity) leaves the
 // answer unknown. [I] a mirrored chart state reverses the attached-segment heading (17).
 Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, float controlYaw, bool stickOn,
-                                         std::optional<vec3> boneLift, int lastDetached) const {
+                                         std::optional<vec3> boneLift, int lastDetached, int moveZone) const {
     MarkupFound out;
     // 0x76FFC0: a fixed record velocity (+0 bit 0, mode 0); record bit 0 clear or mode 3 take her instance velocity
     // (+0x2A0 x player +0x6E4), mode 1 the query object's stored +0xC0 (player +0xA40, the take-off's velocity),
@@ -2779,6 +2800,11 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
         }
         break;
     case 18: th = 0; break;
+    // 19: player +0x5D0, the wall normal 0x7594C0 stored (0x724F50 case 0x13: its yaw) [O: decomp]; none stored: unknown
+    case 19:
+        if (!wallJumpNormal_ || glm::length(xy(*wallJumpNormal_)) < 1e-4f) return out;
+        th = std::atan2(wallJumpNormal_->y, wallJumpNormal_->x);
+        break;
     default: return out;
     }
     if (p.snap[0] > 0 && std::abs(wrapAngle(th - yaw)) <= glm::radians(p.snap[0])) th = yaw;
@@ -2801,6 +2827,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     if (root && !hang) q.hang = q.root;
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone), q.beamInset[0] = float(p.beamInset[0]), q.beamInset[1] = float(p.beamInset[1]);
+    q.moveZone = moveZone;
     q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40, q.profileFlags = p.flags, q.lastDetached = lastDetached;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
@@ -4503,13 +4530,15 @@ void Player::drive(const DriveStep& d, float dt) {
     s_.state = d.coarse;
     switch (d.motion) {
     case DriveStep::Motion::Ground: {
-        s_.pos = depenetrate(s_.pos, t_.stepUp);
+        if (!d.hover) s_.pos = depenetrate(s_.pos, t_.stepUp);
         world.z = 0;
         vec3 p = slide(s_.pos, world, t_.stepUp, true);
         // the floor within the snap window keeps her on it; without one she keeps her height (the chart's ground check
-        // finds no floor and its states take her into the air: S11 / S13 hold her height, tru.exe [O-data])
-        if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown); g && g->normal.z >= t_.slideMinNormalZ)
-            p.z = g->point.z;
+        // finds no floor and its states take her into the air: S11 / S13 hold her height, tru.exe [O-data]); a hover
+        // (the wall jump's hold) keeps her height over any floor
+        if (!d.hover)
+            if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown); g && g->normal.z >= t_.slideMinNormalZ)
+                p.z = g->point.z;
         s_.vel = vec3(xy(p - s_.pos) / std::max(dt, 1e-6f), 0);
         s_.pos = p;
         s_.ledge = -1;
