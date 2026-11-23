@@ -606,10 +606,19 @@ nodes resolved in memory; l3_main_bedroom jump, run-jump, hang / pull-up, drop, 
   at volume 0.5, Waves 545..). Ours played lara.drm's for every outfit [fixed: GameSound adds the worn outfit's DRM over lara.drm,
   `PlexBank::add(drm, true)`].
 - **Death**: S1281 (hard landing) frame records, then the death clip's (2290, 2292, 2288, 2295, 2318), then ~70 starts of
-  lara.drm DTP 961 (Overlap -> Reaction -> Assignment category 42, max distance 7000 -> 2288) through 0x593C90 while the
-  ragdoll moves: rigid-body contact sounds, not done in ours (§9.16).
-- Not compared: hints / script voice lines (no hint condition in the bedroom), the voice bus, rolloff and reverb (the
-  hooks see the start, not FMOD's mix).
+  lara.drm DTP 961 (Overlap -> Reaction on parameter 0 only: impact 30..100 -> volume 0.3..0.5, pitch -1..+3 semitones,
+  nothing below 30 -> Assignment category 42, max distance 7000 -> 2288) while the ragdoll tumbles. A second Wine take
+  with 0x593C90 / 0x4F2840 hooked: every 961 start comes from the joint-sound manager's contact channels (returns
+  0x4F2A26 channel 0 = impact, 0x4F28D5 channel 1 = rolling), i.e. Lara's ragdoll joints are registered joints (the
+  registration call is not decoded [U]). Ours (`physics::Scene::ragdollJoints`, `World::collectJointSounds`): each joint
+  whose limit acts in a step after not acting is an impact at last step's relative angular speed (degrees/s), DTP 961
+  via `JointSound::dtp` [I: Havok's speed along the axis vs our whole relative spin]. Caveat: our Lara ragdoll starts
+  only when the death clip ends, and death_toknee outlasts the 3 s fade (`--die` in l2_cliffclimb respawned first), while
+  tru built it at once on the fatal landing (death types 3 / 4, DeathState_Entry 0x75AA50) [U: which deaths those are].
+- **Pain**: not compared: the bedroom fire trigger hurt neither game, our high bedroom spawns land elsewhere / fall out
+  of the world (`--spawn -8484.3,-3830,2744`), `--die` does not kill in the prologue.
+- Not compared: hints / script voice lines (tru plays them from the PDA's FIELD ASSISTANCE menu only; a 30 s idle at
+  l1_seatop starts no Lara line in ours), the voice bus, rolloff and reverb (the hooks see the start, not FMOD's mix).
 
 ### 9.8 Bike engine [V-data; I: inputs]
 

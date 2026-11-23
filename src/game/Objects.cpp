@@ -3356,6 +3356,24 @@ void World::collectJointSounds(float dt) {
         track(o.uid, -1, x, v, moving, p->jointLimitOn || plates_.contains(o.uid), lo, hi, hinge ? 0.25f : 0.5f, o.name,
               *p->jointSound, at, hinge);
     }
+    // Lara's death ragdoll: tru.exe hears its joints through the same manager (Wine death fall, l3_main_bedroom: ~70
+    // starts of lara.drm DTP 961 from 0x4F2840 while she tumbles, channel 0 = 0x4F2A26 and channel 1 = 0x4F28D5) [O-runtime].
+    // 961 maps only parameter 0 (impact 30..100 degrees/s -> volume 0.3..0.5, pitch -1..+3 semitones, nothing below 30)
+    // [O data], so the rolling voice is silent and each limit hit is a knock. Ours: a joint whose limit acted in this step
+    // after not acting in the last is an impact at last step's relative angular speed (LimitHit's rule); awake while the
+    // ragdoll simulates [I: Havok's axis speed vs ours the whole relative spin].
+    if (combat_.ragdollPhase == 2)
+        for (const auto& j : physics_.ragdollJoints(kLaraRagdoll)) {
+            auto& m = jointMotion_[{kLaraRagdoll, j.bone}];
+            live.insert({kLaraRagdoll, j.bone});
+            std::optional<float> impact;
+            if (j.atLimit && !m.limit.state && m.seen) impact = m.v;
+            m.limit.state = j.atLimit ? 1 : 0;
+            m.v = j.angular, m.seen = true;
+            JointSound s{kLaraRagdoll, j.bone, "lara", {}, j.at};
+            s.angular = j.angular, s.impact = impact, s.dtp = 961;
+            jointSounds_.push_back(std::move(s));
+        }
     std::erase_if(jointMotion_, [&](const auto& e) { return !live.contains(e.first); });
 }
 

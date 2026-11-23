@@ -403,6 +403,11 @@ public:
     // World frame of each bone's start segment as of the last step; asleep: every body of it sleeps.
     struct RagdollPose { std::vector<mat4> frames; bool asleep = false; };
     std::optional<RagdollPose> ragdoll(int32_t id) const;
+    // Per joint of ragdoll `id` as of the last step (a query: nothing changes): the child bone, its body's position, the
+    // child's angular speed relative to its parent (degrees/s) and whether a limited rotation axis's limit acted in the
+    // step (its constraint lambda) - what tru.exe's joint-sound manager hears (0x4E76A0 impacts -> 0x4F2840).
+    struct RagdollJoint { int bone = 0; vec3 at{0}; float angular = 0; bool atLimit = false; };
+    std::vector<RagdollJoint> ragdollJoints(int32_t id) const;
     void step(float dt); // one fixed tick
     uint32_t bodyCount() const;       // Jolt bodies in the scene, of every kind (ou-game --self-test physics.bodies)
     uint32_t activeBodyCount() const; // of them the rigid bodies awake (not sleeping, not static)
