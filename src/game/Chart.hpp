@@ -508,6 +508,12 @@ void poleAttachSetter(ChartContext& ctx, bool alt);
 // 0x74C110: the class-625 (beam) attach setter of action 230: attaches the jump target, sets the facing along the beam
 // (+0xED0 / +0xCDC), the beam controller's segment and angle (agent +0x360 / +0x35C) and +0xCB0 / +0xCC0.
 void beamAttachSetter(ChartContext& ctx);
+// 0x752870: the class-618 (`high` false) / 619 (`high` true) free-climb hold attach setter of action 230: attaches the
+// jump target when it is a hold (MUD 0x8000) and grips it (holdGrip).
+void holdAttachSetter(ChartContext& ctx, bool high);
+// 0x752870's grip on hold `s` (3 points): +0xC98 / +0xCA0 = the higher of points 1 / 2 (param 1.0 / 1.99999), +0xCC0
+// = the hold's normal, and the root offset +0xCE0 / +0xCE8, so the pin (0x6FDC90) holds her root 158.025 under point 0.
+void holdGrip(ChartContext& ctx, ChartContext::MarkupSlot& s, bool high);
 // 0x743900: action 205's per-tick beam balance steer (init on entry): agent +0x3A0 lean, +0x3A4 walk amount, +0x28
 // heading target, the layer blend (ChartContext::setLayerBlend) and mirror (src/game/chart/Ledge.cpp).
 void beamBalanceTick(ChartContext& ctx, bool init);

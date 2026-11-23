@@ -1167,6 +1167,9 @@ void Shadow::Impl::seedAttach() {
         }
     }
     if (!pick) return;
+    // the hold is gripped as 0x752870 grips it (the higher of points 1 / 2, the root offset +0xCE0 / +0xCE8 that keeps
+    // her root 158.025 under point 0 through the pin) [O: Ledge.cpp holdGrip]
+    if (freeClimb) holdGrip(*this, pick, false), seededOffset = pick.markup;
     chartAttached = pick, attachedBefore = pick.markup;
     // the pin (0x6FDC90: root = grip point - her rotation x +0xCE0) keeps the root under a pillar grip [I: the seed
     // has no attach action to write +0xCE0; the offset is the root's own, so it stays where the case began]
