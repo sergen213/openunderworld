@@ -736,7 +736,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     bool launched = false;      // this flight was launched by a take-off (Jump) rather than walked off (Fall)
     int takeoffState = -1;      // the take-off state (action 504) the chart left last, and on which world tick
     uint64_t takeoffTick = ~0ull;
-    struct Blend { bool on = false; int state = -1; glm::vec3 from{0}, to{0}; float yawFrom = 0, yawTo = 0, frames = 1, t = 0; } blend;
+    struct Blend {
+        bool on = false; int state = -1; glm::vec3 from{0}, to{0}; float yawFrom = 0, yawTo = 0, frames = 1, t = 0;
+        std::string clip; bool mirror = false; float f0 = 0, f1 = 0; // when set: paced by the clip's root motion over [f0, f1]
+    } blend;
     ChartRuntime* rt = nullptr;   // Lara's chart (agent 0) and the upper body's (agent 1), Shadow's
     ChartRuntime* up = nullptr;
     const Charts* ch = nullptr;
@@ -1451,8 +1454,8 @@ void Shadow::Impl::stateEntered(int from, int to) {
     // and what its node queued, ChartRuntime::remainingFrames).
     const int now = chartAttached && *chartAttached ? chartAttached->markup : -1;
     // a ported AnimTarget setter (alignToHold) left a mode-3 alignment: the request's window carries her (docs
-    // "Mode-3 port plan"), not this blend
-    if (now >= 0 && now != attachedBefore && !align.pending && !align.ledgeHang) {
+    // "Mode-3 port plan"), not this blend (a ledge-hang target replaces it in driveTick when the node's clip is mode 3)
+    if (now >= 0 && now != attachedBefore && !align.pending) {
         MarkupSlot& a = *chartAttached;
         const auto& p = w->collision().markup[size_t(a.markup)].points;
         if (p.size() >= 2) {
@@ -1597,21 +1600,33 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
                     align.ladderRung = false;
                 }
             }
-            // a graph node's clip under 0x74ED30's PrimAirAttachAnimTarget (slot 1 0x750780 -> 0x741130): the hang root
-            // (0x74ED30's T, hangPose) less the clip's header alignment turned into the hang's frame (0x702D20) into the
-            // pattern's mode-3 window (drop_to_ledgeb R1069, drop_to_ledgeu R1070, ledgeb_attach_down R951) [O decomp]
+            // a graph node's clip under 0x74ED30's PrimAirAttachAnimTarget (slot 1 0x750780 -> 0x741130): the node's next
+            // mode-3 clip (drop_to_ledgeb R1069, drop_to_ledgeu R1070, ledgeb_attach_down R951, ledgeu_runoff) is aimed
+            // at the hang root [O decomp]. The attach hold (Motion::Hang) pins her to the hang pose, so ours carries her
+            // there paced by that clip's own root motion instead of stateEntered's blend over the node's clips [I: the
+            // window's V and the clip's motion as one blend onto hangPose; the 0x702D20 header alignment folded into it].
+            // Wine b973_top_back_run / maproom_south_run_birth: the drop clip's descent lands on the hang [O-runtime].
             if (align.ledgeHang && sd && sd->requestKind == 2) {
                 const MarkupSlot* a = chartAttached && *chartAttached ? &*chartAttached : nullptr;
-                const auto span = pm->clipAlign(p->clip, d.mirror);
-                if (a && p->window == 3 && d.crossfade > 0 && span && w->collision().markup[size_t(a->markup)].points.size() >= 2) {
+                const PlayerState& s = w->player().state();
+                // the ledge hang pose only: a beam (flag 0x10000) and the ladder / pillar / perch holds keep stateEntered's
+                // blend [I: their 0x741130 targets are not ported]
+                const bool ledge = a && !(a->flags & 0x10000) && !pm->familyPose(a->markup, s.pos, s.yaw);
+                if (ledge && p->window == 3 && d.crossfade > 0 && w->collision().markup[size_t(a->markup)].points.size() >= 2) {
                     const auto& mp = w->collision().markup[size_t(a->markup)].points;
-                    const PlayerState& s = w->player().state();
                     const int seg = std::clamp(int(a->param), 0, int(mp.size()) - 2);
                     const float t = (a->param - float(seg)) * glm::length(glm::vec2(mp[size_t(seg) + 1] - mp[size_t(seg)]));
                     const auto [root, yaw] = pm->hangPose(a->markup, seg, t, hangSide(a->markup, seg, a->point));
-                    const float yawBefore = yaw - span->second;
-                    const glm::vec3 before = root - rotYawWorld(yawBefore, span->first);
-                    d.window = 3, d.align = glm::vec4(worldToModel(s.yaw, before - s.pos), wrapRad(yawBefore - s.yaw));
+                    // paced by the clip's root motion from its start frame (ledgeb_runoff descends from frame 1: Wine
+                    // maproom_south_run_birth), or over the window (30 Hz frames) when the clip holds still past it
+                    // (ledgeu_runoff drops at frames 7-10 but Wine ch_beam_recover reaches the hang 6 ticks after S542)
+                    // [O-runtime; I: the pacing rule]
+                    blend = {true, rt->state(), s.pos, root, s.yaw, yaw, d.crossfade * 30.0f, 0};
+                    const float f0 = float(p->start), f1 = rt->animLengthFrames();
+                    const auto total = f1 > f0 ? pm->rootSpan(p->clip, f0 / 30.0, f1 / 30.0, d.mirror) : std::nullopt;
+                    const auto lead = f1 > f0 ? pm->rootSpan(p->clip, f0 / 30.0, std::min(f0 + 2.0f, f1) / 30.0, d.mirror) : std::nullopt;
+                    if (total && lead && glm::dot(lead->first, total->first) > 0.01f * glm::dot(total->first, total->first))
+                        blend.clip = p->clip, blend.mirror = d.mirror, blend.f0 = f0, blend.f1 = f1;
                 }
                 align.ledgeHang = false; // the target is used up by the node's next start (0x4428A0 clears layer +0x3C)
             }
@@ -1635,6 +1650,13 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.motion = M::Blend;
         d.blendFrom = blend.from, d.blendTo = blend.to, d.yawFrom = blend.yawFrom, d.yawTo = blend.yawTo;
         d.blend = blend.t / blend.frames;
+        if (!blend.clip.empty() && blend.f1 > blend.f0) {
+            const auto total = player.rootSpan(blend.clip, blend.f0 / 30.0, blend.f1 / 30.0, blend.mirror);
+            const float now = std::clamp(rt->animFrames(), blend.f0, blend.f1);
+            const auto done = player.rootSpan(blend.clip, blend.f0 / 30.0, now / 30.0, blend.mirror);
+            const float len2 = total ? glm::dot(total->first, total->first) : 0.0f;
+            if (len2 > 1.0f && done) d.blend = std::clamp(glm::dot(done->first, total->first) / len2, 0.0f, 1.0f);
+        }
     } else if (att && (rt->chainHasAction(st, 420) || pm->familyPose(att.markup, player.state().pos, player.state().yaw))) {
         // a ladder / pillar / perch keeps her held too (ChartCD: in perch S827 she fell to z -1758) [I: their hold
         // actions are not ported]

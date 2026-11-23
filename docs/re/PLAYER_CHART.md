@@ -463,19 +463,22 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
          -110.619, +0x784 575.221 [O]. Wine (WineChartTrace-2, ladder/lad_a234_attach_ray*.tsv, W/w2/WineChartTrace/
          ladray.txt, ladray2.txt): the 0x187 ray misses (from her root + 20.54); +0x9F0 = (1401.3, 29.43, 1507.2); so
          tru's target is the lowest rung's 933.91, and S1066 carries her linearly (19.46 a tick) onto it. Ours casts
-         over terrain only [I]. At the window's end (clip time 1400, t28) tru then snaps 6.25 out / 6.34 up and holds
-         at 940.24 / 116.94 off the wall (rung 0: 1161.40); the snap is not 0x43B870's step (its output there is the
-         ordinary -19.46) but a second path at the window end (0x4358E0 called with a4 = 1400) [O-runtime,
-         ladsnap_table.txt]; ours adds it to the target as a fitted +6.33 / +6.32 [I] until that path is decoded.
-         Climb: action 505 (0x74D980) arms the LadderRungAlignAnimTarget; the climb node's next mode-3 clip
-         (ladder_climb_up R1169, _down R1168) takes V = the rung root nearest her root (0x744B70 via 0x72B8C0:
-         round((top - (z + +0x784)) / +0x770)) less her root [O decomp], the 0x702D20 clip offset left at 0 [I: with the
-         clip's 110.62-up header alignment every cycle would sink a rung]. Wine S1055: the window moves her (0.08,
-         -0.999, -1.05) a tick for 6 ticks (the dip onto the rung root), then the clip's root motion 6.12, 7.87, 9.63 a
-         tick without pauses [O-runtime]; ours now dips and rises to 1124.1 (Wine 1124) and reaches S1085 on Wine's
-         tick. Open: the top exit's snap to 1161.40 (S1087), the hall floor (Wine stands on terrain at 1478.97 that
-         l1_ship_sinking_hall's own collision lacks; some loads slide off onto the hallway section instead).
-         Gate / corpus numbers: see the landing commit.
+         over terrain only [I]. At the window's end (t28) tru then puts her 6.25 out / 6.34 up and holds at 940.24 /
+         116.94 off the wall (rung 0: 1161.40). WineChartTrace-2 ladwatch: the writer is 0x708830 (action 420's
+         attach update, from 0x771267), every frame from then on, through its record +0x4D branch [O decomp]: root =
+         +0xCA0 (the edge-line point at the grip) - R x +0xCF0 (0x74DCD0: half the width) - (bone [player data +0x214]
+         = 107 less her root, in the current pose): bone 107 held on the ladder's centre at the rung point.
+         `Player::ladderHoldFit` computes that offset from ladder_idle's first frame [I: tru re-places her every frame
+         from the playing pose]. Climb: action 505 (0x74D980) arms the LadderRungAlignAnimTarget; the climb node's next
+         mode-3 clip (ladder_climb_up R1169, _down R1168) takes V = the rung root nearest her root (0x744B70 via
+         0x72B8C0: round((top - (z + +0x784)) / +0x770)) less her root [O decomp], the 0x702D20 clip offset left at 0
+         [I: with the clip's 110.62-up header alignment every cycle would sink a rung]. Wine S1055: the window moves her
+         (0.08, -0.999, -1.05) a tick for 6 ticks (the dip onto the rung root), then the clip's root motion 6.12, 7.87,
+         9.63 a tick without pauses [O-runtime]; ours dips and rises to 1124.1 (Wine 1124) and reaches S1085 on Wine's
+         tick. Top exit: 505's exit 0x734920 sets her root on the nearest rung root (Wine t176: 1124 -> 1155.15), the
+         0x708830 hold adds its offset from t177 (1161.40); ours lands on rung root + hold offset at the change. Open:
+         the hall floor (Wine stands on terrain at 1478.97 that l1_ship_sinking_hall's own collision lacks; some loads
+         slide off onto the hallway section instead). Gate / corpus numbers: see the landing commits.
       2. Pillar (kind 1: S1185-S1187, S1189, S1230). Setter: 0x753F80 (PillarAttachGroundAnimTarget) and kin.
          `seededOffset` (ChartDrive 6bd15fa) stays for seeded `--chart-state` starts. Status: 606 -> 0x753F80 kind 1
          ported on agent/ChartBlend-m3wip (6d606c2; the point on the pillar segment nearest root + R x alignment +
@@ -483,13 +486,20 @@ asks the `PlayerDriver` in `Player::tick`'s slot; it returns false where the con
       3. Perch (kind 1: S827, S829-S832, S872). 624 (S828's 410) -> 0x75F1B0 (+0xCA0 less +0xCE0 through 0x702BA0,
          no clip offset); 600 -> 0x753510. Status: 624 ported on m3wip; not landed (the perch cases start on the
          perch, traces identical).
-      3b. Drop-to-hang (drop_to_* patterns, S542; class 0xE7 -> 0x74FDF0 family): Wine b973 plays ~36 ticks of clip
-         root motion with a 180 degree turn onto the hang (z 312.86) where ours descends 6.67 a tick and snaps 32
-         ticks later (ChartJ). Cases drop/b973_top_back_run, b973_top_walk_back. Status: not started.
+      3b. Drop-to-hang (drop_to_* patterns, S542): S542's action 230 has class 610 (0x74ED30, the ledge setter), whose
+         kind-2 branch builds a PrimAirAttachAnimTarget (0x74BF90 -> 0x6F0FF0); its slot 1 0x750780 aims the node's
+         next clip at the hang root through 0x741130 (0x702D20 with the clip's header alignment) [O decomp]. (0xE7 ->
+         0x74FDF0 is the InAirAnimTarget, the flight arc.) Ours: `ledgeHangAlign` arms it; for a ledge (not a beam or
+         a family hold) the node's next mode-3 clip carries her onto hangPose as one blend in place of stateEntered's
+         attach blend, because the attach hold pins her at once [I: the window V and the clip motion folded together].
+         It is paced by the clip's root motion from its start frame (ledgeb_runoff, the drop_to_* clips), or over the
+         window when the clip holds still for its first 2 frames (ledgeu_runoff drops at frames 7-10, but Wine
+         ch_beam_recover reaches the hang 6 ticks after S542) [O-runtime; I: the pacing rule]. Status:
+         agent/ChartBlend-drop; the numbers are in the landing commit.
       4. Ledge (kind 2: ledgeb_attach_down, the reach settles, drop_to_ledgeb / _ledgeu, the runoffs; S277
-         ledge_mantle is kind 1). Setter: 0x741130. Graph-node plays start at start - blend as kind-1 ones do (WineChartTrace
-         drop/maproom_south_run_birth_anim: R995 at -4, R954 at -4) [O-runtime]; waits on 0x6F0FF0 (the kind-2
-         alignment object). Status: blocked.
+         ledge_mantle is kind 1). Setter: 0x741130 through 0x750780 (3b's mechanism covers every class-610 graph-node
+         attach whose next clip is mode 3). Graph-node plays start at start - blend as kind-1 ones do (WineChartTrace
+         drop/maproom_south_run_birth_anim: R995 at -4, R954 at -4) [O-runtime]. Status: with 3b.
       5. DICE (kind 2: R116 / R117 / R201 / R202). Same blockers as ledge. Status: blocked.
     - Stays as it is: the holds after the attach (Motion::Hang, the 420 chains, the beam pin / grip follow), seeded
       starts, legacy.
