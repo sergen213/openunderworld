@@ -25,6 +25,7 @@ struct JointSound {
     float angular = 0;     // parameter 2 (+0x30): speed about the axis, degrees/s, signed
     std::optional<float> impact; // parameter 0 (+0x28): the joint reached a limit this tick at this speed (units/s or
                                  // degrees/s, signed; 0x4E76A0 -> 0x48E1C0 -> 0x4F2E40 -> 0x4F2200)
+    uint32_t dtp = 0; // non-zero: a SoundPlex DTP of the sound bank instead of `sound` (Lara's ragdoll joints: DTP 961)
 };
 
 // Limit state of one joint axis (Havok constraint +0xE4: 0 inside, 1 at the lower, 2 at the upper limit; 0x4E76A0).

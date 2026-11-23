@@ -609,7 +609,7 @@ struct Scene::Impl {
     uint32_t pendingConstraints = 0;
 
     // Ragdolls (Scene::setRagdolls), by id: a body per bone (keys "r<id>.<bone>"), a joint per bone with a parent.
-    struct RagdollE { int32_t id; std::vector<JPH::BodyID> bodies; std::vector<JPH::Ref<JPH::Constraint>> joints; };
+    struct RagdollE { int32_t id; std::vector<JPH::BodyID> bodies; std::vector<JPH::Ref<JPH::Constraint>> joints; std::vector<int> jointBones; };
     std::vector<RagdollE> ragdolls;
     void dropRagdoll(RagdollE& r) {
         for (auto& c : r.joints) sys.RemoveConstraint(c);
@@ -1977,7 +1977,7 @@ void Scene::setRagdolls(std::span<const Ragdoll> ragdolls) {
         if (!r->def || r->def->bones.empty() || r->frames.size() < r->def->bones.size()) continue;
         const RagdollDef& d = *r->def;
         const size_t n = d.bones.size();
-        Impl::RagdollE e{r->id, {}, {}};
+        Impl::RagdollE e{r->id, {}, {}, {}};
         JPH::Ref<JPH::GroupFilterTable> filter = new JPH::GroupFilterTable(uint32_t(n));
         for (size_t b = 0; b < n; ++b)
             if (d.bones[b].parent >= 0) filter->DisableCollision(JPH::CollisionGroup::SubGroupID(b), JPH::CollisionGroup::SubGroupID(d.bones[b].parent));
@@ -2026,7 +2026,7 @@ void Scene::setRagdolls(std::span<const Ragdoll> ragdolls) {
             for (const A a : {A::RotationX, A::RotationY, A::RotationZ}) s.mMaxFriction[a] = o.friction * kFrame * kSolver * kM * kM;
             JPH::Ref<JPH::Constraint> c = m.bi->CreateConstraint(&s, e.bodies[size_t(o.parent)], e.bodies[b]);
             m.sys.AddConstraint(c);
-            e.joints.push_back(c);
+            e.joints.push_back(c), e.jointBones.push_back(int(b));
         }
         size_t hit = 0; // the bone nearest the hit point takes the impulse
         for (size_t b = 0; b < n; ++b) {
@@ -2056,6 +2056,24 @@ std::optional<Scene::RagdollPose> Scene::ragdoll(int32_t id) const {
         if (impl_->bi->IsActive(b)) p.asleep = false;
     }
     return p;
+}
+
+std::vector<Scene::RagdollJoint> Scene::ragdollJoints(int32_t id) const {
+    std::vector<RagdollJoint> out;
+    const auto it = std::ranges::find(impl_->ragdolls, id, &Impl::RagdollE::id);
+    if (it == impl_->ragdolls.end()) return out;
+    using A = JPH::SixDOFConstraintSettings::EAxis;
+    for (size_t k = 0; k < it->joints.size() && k < it->jointBones.size(); ++k) {
+        auto* c = static_cast<JPH::SixDOFConstraint*>(it->joints[k].GetPtr());
+        const JPH::BodyID parent = c->GetBody1()->GetID(), child = c->GetBody2()->GetID();
+        const JPH::Vec3 w = impl_->bi->GetAngularVelocity(child) - impl_->bi->GetAngularVelocity(parent);
+        const JPH::Vec3 lambda = c->GetTotalLambdaRotation();
+        bool limit = false;
+        for (const A a : {A::RotationX, A::RotationY, A::RotationZ})
+            if (!c->IsFixedAxis(a) && !c->IsFreeAxis(a) && std::abs(lambda[int(a) - int(A::RotationX)]) > 1e-7f) limit = true;
+        out.push_back({it->jointBones[k], G(impl_->bi->GetCenterOfMassPosition(child)) * kUnitsPerMetre, glm::degrees(w.Length()), limit});
+    }
+    return out;
 }
 
 } // namespace ou::physics

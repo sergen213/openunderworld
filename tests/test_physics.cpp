@@ -648,6 +648,45 @@ TEST(Physics, RagdollFallsDownAStepJointsHoldAndSaves) {
     EXPECT_FALSE(a.ragdoll(4));
 }
 
+// Scene::ragdollJoints (Lara's death-ragdoll joint sounds, tru.exe 0x4F2840 with lara.drm DTP 961): one entry per
+// jointed bone, the child's spin relative to its parent, and the limits acting when the chain folds on landing.
+TEST(Physics, RagdollJointsReportSpinAndLimitHits) {
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {0, 0, -50}), {6000, 6000, 100});
+    collision::addBox(floor, glm::translate(glm::mat4(1), {-1500, 0, 150}), {3000, 6000, 300});
+    floor.build();
+    physics::RagdollDef def;
+    def.mass = 60;
+    physics::RagdollBone root, hinge, cone;
+    root.segment = 0, root.endSegment = 1, root.massShare = 50, root.radius = 30;
+    hinge.segment = 1, hinge.endSegment = 2, hinge.parent = 0, hinge.massShare = 30, hinge.radius = 20, hinge.joint = 1;
+    hinge.axis1 = {1, 0, 0}, hinge.limits[0] = -90, hinge.limits[1] = 0, hinge.friction = 10;
+    cone.segment = 2, cone.endSegment = 3, cone.parent = 1, cone.massShare = 20, cone.radius = 15, cone.joint = 3;
+    cone.axis1 = {1, 0, 0}, cone.limits[0] = -20, cone.limits[1] = 20, cone.limits[4] = 40, cone.friction = 10;
+    def.bones = {root, hinge, cone};
+    const std::vector<vec3> bind{{0, 0, 0}, {0, 0, 200}, {0, 0, 400}, {0, 0, 550}};
+    const glm::mat4 lie = glm::rotate(glm::mat4(1), 1.5707964f, vec3(0, 1, 0));
+    std::vector<glm::mat4> frames;
+    for (const vec3& b : {bind[0], bind[1], bind[2]}) frames.push_back(glm::translate(glm::mat4(1), vec3(-250, 0, 500)) * lie * glm::translate(glm::mat4(1), b));
+    const std::vector<vec3> velocity(3, vec3(0));
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    const physics::Scene::Ragdoll r{4, &def, bind, frames, velocity, vec3(0, 0, 500), vec3(0, 0, -3000)};
+    physics::Scene s;
+    EXPECT_TRUE(s.ragdollJoints(4).empty());
+    int limited = 0;
+    float fastest = 0;
+    for (int i = 0; i < 240; ++i) {
+        s.setTerrain(terrain), s.setRagdolls({&r, 1}), s.step(kDt);
+        const auto joints = s.ragdollJoints(4);
+        ASSERT_EQ(joints.size(), 2u);
+        EXPECT_EQ(joints[0].bone, 1);
+        EXPECT_EQ(joints[1].bone, 2);
+        for (const auto& j : joints) limited += j.atLimit, fastest = std::max(fastest, j.angular);
+    }
+    EXPECT_GT(limited, 0) << "a limit acted while the chain folded over the ledge";
+    EXPECT_GT(fastest, 30.0f) << "fast enough for DTP 961's impact band (30..100 degrees/s)";
+}
+
 // Poacher ragdoll record (ObjectBase +0x7C): 15 bones, mass shares summing to 100, the pelvis root on segments 2 -> 3.
 TEST(PhysicsRealData, PoacherRagdoll) {
     const auto* bf = bigfile();
