@@ -1914,12 +1914,17 @@ void World::updatePose(float dt, bool reset) {
     auto m = anim::worldMatrices(anims_.skeleton, local);
     limbLocks(local, m);
     // Her death ragdoll (combat_.ragdoll*) starts from the death clip's last pose once it is done: tru.exe's death state
-    // builds it (0x6F1400 -> 0x4F1920) on message 1 (0x75B000; [I] sent at the clip's end) or at once for death
-    // types 3 / 4 (DeathState_Entry 0x75AA50; which deaths those are [U]). Each segment then follows its nearest
-    // ancestor-or-self that starts a bone, with its offset in that pose (as ai::Enemy). Respawn timing is unchanged.
+    // builds it (0x6F1400 -> 0x4F1920) on message 1 (0x75B000; [I] sent at the clip's end), or at once for death types 3 /
+    // 4 (DeathState_Entry 0x75AA50: 3 builds it, 4 plays the death request Lara data +0xB9C and builds it, both a 90-frame
+    // wipe; 1 is a 210-frame one with no ragdoll; < 0 a request of its own) [O decomp]. A fatal landing is type 4: the Wine
+    // death fall (l3_main_bedroom, fall 2500) entered the death state at tick 45, ran the death clip's sound records at
+    // 45..48 and the ragdoll's joint sounds from tick 52 [O-runtime]; ours: kDamageAbsolute deaths (fall damage) start
+    // it with the clip [I: the types of the other deaths, e.g. gunfire, are not decoded]. Each segment then follows its
+    // nearest ancestor-or-self that starts a bone, with its offset in that pose (as ai::Enemy). Respawn timing is unchanged.
     if (const auto& rd = anims_.ragdoll; rd && s.state == State::Dead) {
         const anim::Clip* clip = anims_.find(s.clip);
-        if (!combat_.ragdollPhase && (!clip || s.clipTime >= clip->durationSeconds())) {
+        const bool atOnce = health_.lastType() == kDamageAbsolute;
+        if (!combat_.ragdollPhase && (atOnce || !clip || s.clipTime >= clip->durationSeconds())) {
             combat_.ragdoll.clear();
             for (const auto& b : rd->bones) combat_.ragdoll.push_back(m[size_t(b.segment)]);
             combat_.ragdollPhase = 1;

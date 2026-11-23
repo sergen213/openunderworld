@@ -266,10 +266,59 @@ bool moveDirDownhill(ChartContext& ctx, const Cond& c) {
 }
 
 // 0x19E (0x7619B0, PSCCF_MoveDirSpherical): without a jump target (player +0xA64 == 0) the function returns the negate
-// bit itself, i.e. a raw false. With one, the target's yaw / pitch against her (0x786490) is not ported.
+// bit itself, i.e. a raw false. With one and +0xC94 attached, the vector d from the grip (+0xCA0) to the target point
+// (+0x9F0) goes into her frame (0x4A0410 on instance +0x90: row 0 her right, row 1 minus her facing, row 2 up; ours by
+// her heading [I]), its local x negated when she is mirrored and bool 0xCF holds, and 0x786490 classes it [O: decomp]:
+// yaw a = wrap(atan2(-ly, -lx) - pi/2) (0x49EFC0, x87 atan2 of the negated components [O: asm]; 0x431D70 wraps to
+// (-pi, pi]): 0 ahead, + to her right. Against the state's float props in degrees: bit 1 (410 / 414 / 418) for 0x1F8
+// <= a <= 0x1F5, 4 (412 / 416 / 420) for 0x1F5 <= a <= 0x1F6, 8 (413 / 417 / 421) for 0x1F7 <= a <= 0x1F8, else 2
+// (411 / 415 / 419). Pitch p = -atan2(lz, |l.xy|) (0x49F140 [O: asm], positive below her): bit 0x10 (423) for p <=
+// 0x1F9, 0x20 (422) for p above both 0x1F9 and 0x1FA [O: decomp]. Unattached, the target point goes through 0x814D20
+// / 0x7114F0 first (not decoded): unported.
 bool moveDirSpherical(ChartContext& ctx, const Cond& c) {
-    if (!ctx.jumpTarget()) return false;
-    return ctx.chart().unported(c);
+    const auto t = ctx.jumpTarget();
+    if (!t) return false;
+    ChartRuntime& rt = ctx.chart();
+    const auto a = ctx.attachedMarkup();
+    if (!a) return rt.unported(c);
+    const glm::vec3 d = t.point - a.point;
+    const float h = ctx.heading();
+    float right = d.x * std::sin(h) - d.y * std::cos(h);
+    const float fwd = d.x * std::cos(h) + d.y * std::sin(h);
+    if (rt.mirrored() && rt.propBool(0xCF).value_or(false)) right = -right;
+    const float r = 0.017453292f;
+    const auto deg = [&](uint16_t id) -> std::optional<float> {
+        const auto f = rt.propFloat(id);
+        return f ? std::optional<float>(wrapPi(*f * r)) : std::nullopt;
+    };
+    switch (rt.value(c)) {
+    case 0x1A6: case 0x1A7: {
+        const auto f12 = deg(0x1F9), f4 = deg(0x1FA);
+        if (!f12 || !f4) return rt.unported(c);
+        const float p = wrapPi(-std::atan2(d.z, std::hypot(right, fwd)));
+        const int bits = p > *f12 ? (p > *f4 ? 0x20 : 0) : 0x10;
+        return (bits & (rt.value(c) == 0x1A6 ? 0x20 : 0x10)) != 0;
+    }
+    default: break;
+    }
+    int bit;
+    switch (rt.value(c)) {
+    case 0x19A: case 0x19E: case 0x1A2: bit = 1; break;
+    case 0x19B: case 0x19F: case 0x1A3: bit = 2; break;
+    case 0x19C: case 0x1A0: case 0x1A4: bit = 4; break;
+    case 0x19D: case 0x1A1: case 0x1A5: bit = 8; break;
+    default: return rt.unported(c);
+    }
+    const auto a1 = deg(0x1F5), a11 = deg(0x1F6), a2 = deg(0x1F7), a3 = deg(0x1F8);
+    if (!a1 || !a11 || !a2 || !a3) return rt.unported(c);
+    // local frame (lx, ly) = (right, -fwd): atan2(-ly, -lx) = atan2(fwd, -right)
+    const float yaw = wrapPi(std::atan2(fwd, -right) - 1.5707964f);
+    int cls;
+    if (!(yaw > *a1 || yaw < *a3)) cls = 1;
+    else if (!(yaw > *a11 || yaw < *a1)) cls = 4;
+    else if (yaw < *a2 || yaw > *a3) cls = 2;
+    else cls = 8;
+    return cls == bit; // raw: the runtime applies the negate bit (0x786490's own flip)
 }
 
 // 0x1F7 (0x762B40, PSCCF_LowCeiling): cur = !0x7145D0, edge-coded, the first evaluation taking the previous value equal
@@ -1002,6 +1051,11 @@ std::optional<MarkupProfile> decodeProfile(const Charts& c, int id) {
     capsuleOf(0x594, p.poleH), capsuleOf(0x58C, p.poleV), capsuleOf(0x5B8, p.hold);
     p.ladderFaceDeg = float(byte(d + 0x775));
     p.flags = u32(r + 0x2C);
+    {
+        const float reach = f32(r + 0xB8), minF = f32(r + 0xBC);
+        p.flight = {vec3(f32(r + 0x14), f32(r + 0x18), f32(r + 0x1C)), reach > 0 ? reach : f32(d + 0xC04),
+                    minF > 0 ? minF : f32(d + 0xC08), u32(r + 0xE8), vec3(f32(r + 0xEC), f32(r + 0xF0), f32(r + 0xF4))};
+    }
     const int frames = int32_t(u32(r + 0xA4));
     p.frames = frames >= 1 ? frames : c.data<int16_t>(0xBDE);
     if (const auto s = c.pointer(r + 0x8C))

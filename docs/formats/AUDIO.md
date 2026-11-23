@@ -589,6 +589,43 @@ motorcycle.drm), enemy clips (cat_panther, poacher, panther_thrall vocals), weap
 footstep / shot / reload waves are gone. Replays [O, logs]: panther_fight 254 wp_handgun, 89 cat_panther, 42 bullet_hit,
 40 lara, 24 poacher sounds; pool_to_ragnarok lara footsteps DTP 953/954/956 at material 17, panther_thrall DTP 12660.
 
+Lara, compared with tru.exe (Wine call log of 0x5935D0 / 0x5953E0 / 0x5B99C0 per tick, `W/LaraSound/wine/corpus/sounds`,
+nodes resolved in memory; l3_main_bedroom jump, run-jump, hang / pull-up, drop, falls) [O-runtime]:
+- **Which records, when**: the same records as ours for each clip pass (EFFECTS.md "Frame records"); tru's 60 Hz step is
+  0.50001 frames, so a record at frame k fires on the tick reaching k (`fx::clipEventSpans` kEdge). Chart replays match
+  tick for tick from the jump to the hang; the remaining offsets are landing times (traversal).
+- **Material** (record filter and MaterialList input): instance +0x186, the contact face of her last collision update
+  (0x5DCE20), 0xFF with no contact: every record of S1033 (falling) and the landing's frame 0 ran with 255, standing 1
+  (bedroom floor), hanging 1. Ours: the previous tick's floor contact, 0xFF in the air, the last floor's while hanging /
+  climbing [I: tru takes the ledge face].
+- **Selector key** (0x583490 with 0x583440): the worn outfit's index in GlobalInfo's outfit list (generalbank +0xC8 -> +4
+  {i16 n, i16* ids}: ids 8..35, index = id - 8). lara.drm 2296 (jump effort): -1 -> 2276, 10 / 11 -> 2462, 1 -> silent.
+  Ours used key 0 (always the default) [fixed: `SoundPlayer::selectorKey`, `audio::parseOutfitList`].
+- **The outfit's own DTPs**: the player object is the worn outfit, and each outfit DRM carries its own copies of Lara's
+  sound DTPs and Waves (lara_casual = lara.drm's; lara_wetsuit_warm: 2462 = a shuffled ChoiceList of the wetsuit efforts
+  at volume 0.5, Waves 545..). Ours played lara.drm's for every outfit [fixed: GameSound adds the worn outfit's DRM over lara.drm,
+  `PlexBank::add(drm, true)`].
+- **Death**: S1281 (hard landing) frame records, then the death clip's (2290, 2292, 2288, 2295, 2318), then ~70 starts of
+  lara.drm DTP 961 (Overlap -> Reaction on parameter 0 only: impact 30..100 -> volume 0.3..0.5, pitch -1..+3 semitones,
+  nothing below 30 -> Assignment category 42, max distance 7000 -> 2288) while the ragdoll tumbles. A second Wine take
+  with 0x593C90 / 0x4F2840 hooked: every 961 start comes from the joint-sound manager's contact channels (returns
+  0x4F2A26 channel 0 = impact, 0x4F28D5 channel 1 = rolling), i.e. Lara's ragdoll joints are registered joints (the
+  registration call is not decoded [U]). Ours (`physics::Scene::ragdollJoints`, `World::collectJointSounds`): each joint
+  whose limit acts in a step after not acting is an impact at last step's relative angular speed (degrees/s), DTP 961
+  via `JointSound::dtp` [I: Havok's speed along the axis vs our whole relative spin]. Fatal landings build the ragdoll
+  with the death clip (death type 4, `World` pose; DeathState_Entry 0x75AA50) as tru did: ours, l4_pool 2600-unit fall
+  (the death_respawn self-test's): death_fall_normal at tick 62, joint impacts from tick 64 [O, log]; other deaths keep
+  the ragdoll for the clip's end [U: their death types].
+- **Pain**: the bedroom fire trigger hurt neither game; spawns from +1500 / +2500 above the bedroom corridor land on the
+  house roof (z ~1404, 34 degree slope) and slide off its eave in ours, and the Wine takes of those falls carry the
+  "carry after SPAWN" drift in rows 0..4 (LegacyFix), so they are no pain reference; `--die` does not kill in the prologue.
+  l4_ballcourt "combat 4" (crossing plane 6543, as `l4_ballcourt_combat.sh`): tru.exe births panther 6532 and poachers
+  6537..6539 but in 40 s / 80 s standing past the plane, or pinned 600 units from 6539, none hit her (S40 throughout);
+  ours, the same walk, hits her from tick ~540 every 90 ticks (hit_light_front/side/back, frame-1 records DTP 956,
+  2299, 953, 954, 957), so the pain sounds are still not compared [U]; the attack gap is the enemy AI's (OU-CMB-006..8).
+- Not compared: hints / script voice lines (tru plays them from the PDA's FIELD ASSISTANCE menu only; a 30 s idle at
+  l1_seatop starts no Lara line in ours), the voice bus, rolloff and reverb (the hooks see the start, not FMOD's mix).
+
 ### 9.8 Bike engine [V-data; I: inputs]
 
 motorcycle.drm DTP 13589 = Overlap of five layers (SV650 low 05, mid 03, a Sequence, mid 16, mid 15), each

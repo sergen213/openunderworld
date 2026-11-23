@@ -872,6 +872,32 @@ bool System::startFilter(const std::shared_ptr<const ObjectFx>& fx, int def, con
     return true;
 }
 
+std::vector<std::pair<float, float>> clipEventSpans(double prevT, double t, double duration, bool sameClip, std::optional<double> start) {
+    if (duration <= 0) return {};
+    // tru.exe's fixed 60 Hz step advances a layer by timeMult 0.50001 frames (16 667 us; Wine anim traces: clip time
+    // 50.001, 100.002, 150.003 x 0.01 frames after its first ticks), so a record at frame k fires on the tick that
+    // reaches k, not the next one (Wine stand_jump_open sound log: ng_standing_jump frame 1 on the jump's second tick)
+    // [O-runtime]. Ours steps exactly 0.5: both window ends move up by kEdge (the start of a fresh window stays).
+    constexpr double kEdge = 1e-3;
+    const double len = duration * 30.0, to = t * 30.0;
+    const bool fresh = start || !sameClip;
+    double from = start ? *start * 30.0 : sameClip ? prevT * 30.0 : -1.0;
+    // A clock kept inside the clip (script objects' loops: fmod, Objects.cpp) went back past its end: the rest of the
+    // cycle, then its start (Lara's and enemies' clocks are unbounded; a restart of Lara's clip comes with `start`).
+    if (!start && sameClip && to < from)
+        return {{float(std::fmod(std::max(from, 0.0), len) + kEdge), 1e9f}, {-1.0f, float(std::fmod(std::max(to, 0.0), len) + kEdge)}};
+    // A new clip standing at its first frame fires nothing yet: its first advance, [0, step), reaches frame 0 (tru.exe
+    // fires nothing for an empty advance either).
+    if (to <= 0 || to <= from) return {};
+    if (from < 0) from = -1.0; // the lead before frame 0 holds no records
+    const double base = from < 0 ? 0.0 : std::floor(from / len) * len; // a looping clip: the cycle `from` is in
+    // (a window from exactly 0 is inclusive: frame 0 of a clip that stood at its start for a tick, legacy Player::play)
+    const float a = float(from - base + (fresh || from <= 0 ? 0.0 : kEdge));
+    if (to - base < len) return {{a, float(to - base + kEdge)}};
+    if (to - base > len) return {{a, 1e9f}, {-1.0f, float(to - base - len + kEdge)}}; // wrapped
+    return {{a, 1e9f}};                                                                 // at its end
+}
+
 int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
                       int32_t owner, uint8_t material, float from, float to, std::span<const glm::mat4> bones) {
     int n = 0;

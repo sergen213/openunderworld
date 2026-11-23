@@ -1289,3 +1289,60 @@ TEST(FxSnowCoat, BuildsFadesAndSheds) {
     ASSERT_EQ(b.size(), 1u);
     for (const glm::vec3& q : quadCentres(v, b[0])) EXPECT_NEAR(q.z, 0.4f, 0.5f);
 }
+
+// tru.exe 0x43CC10 -> 0x5B26C0: each clip record fires once, when an advance's [time before, time after) reaches its
+// frame; the lead before frame 0 fires nothing; a restart counts from its start (no rest of the old pass) [O decomp].
+TEST(Fx, ClipEventSpansFireEachFrameOnceFromTheClipStart) {
+    const auto fired = [](const std::vector<std::pair<float, float>>& spans, int frame) {
+        int n = 0;
+        for (const auto& [a, z] : spans) n += float(frame) >= a && float(frame) < z;
+        return n;
+    };
+    const double dt = 1.0 / 60.0, dur = 20.0 / 30.0; // a once clip of 20 frames, 60 Hz ticks
+    // A chart request's lead: start - blend = -3 frames; time = start + advance on its first tick, clamped at the end.
+    for (const double start : {-3.0 / 30.0, 0.0, 5.0 / 30.0}) {
+        std::map<int, int> count;
+        double prev = 0, t = start + dt;
+        for (int tick = 0; tick < 80; ++tick) {
+            const auto s = ou::fx::clipEventSpans(prev, t, dur, tick > 0, tick == 0 ? std::optional<double>(start) : std::nullopt);
+            for (int f = 0; f <= 20; ++f) count[f] += fired(s, f);
+            prev = t, t = std::min(t + dt, dur);
+        }
+        for (int f = 0; f <= 20; ++f) EXPECT_EQ(count[f], f >= std::lround(std::max(start, 0.0) * 30) ? 1 : 0) << "start " << start << " frame " << f;
+    }
+    // No record of the lead: still before frame 0 after the start tick.
+    EXPECT_TRUE(ou::fx::clipEventSpans(-0.1, -0.0833, dur, true, std::nullopt).empty());
+    EXPECT_TRUE(ou::fx::clipEventSpans(0, -0.0833, dur, false, -0.1).empty());
+    // Restarted (S431 <-> S432 mirror swap of ledgeb_right_3) half way: from its start, not the old pass's rest.
+    const auto r = ou::fx::clipEventSpans(0.5, 1.0 / 60.0, dur, true, 0.0);
+    for (int f = 1; f <= 20; ++f) EXPECT_EQ(fired(r, f), 0) << f;
+    EXPECT_EQ(fired(r, 0), 1);
+    // A loop wraps: the rest of the cycle, then its start.
+    const auto w = ou::fx::clipEventSpans(dur - dt / 2, dur + dt / 2, dur, true, std::nullopt);
+    EXPECT_EQ(fired(w, 0), 1);
+    EXPECT_EQ(fired(w, 19), 0);
+}
+
+// Enemies and script objects (no `start`): a new clip standing at 0 fires frame 0 once, on its first advance (it fired
+// twice before: at 0 and again from 0); a script object's loop clock (fmod, World::tickUber) wraps.
+TEST(Fx, ClipEventSpansNewClipAtZeroAndWrappedObjectLoop) {
+    const auto fired = [](const std::vector<std::pair<float, float>>& spans, int frame) {
+        int n = 0;
+        for (const auto& [a, z] : spans) n += float(frame) >= a && float(frame) < z;
+        return n;
+    };
+    const double dt = 1.0 / 60.0, dur = 20.0 / 30.0;
+    int zero = 0;
+    zero += fired(ou::fx::clipEventSpans(0.3, 0.0, dur, false, std::nullopt), 0); // new clip, standing at 0
+    zero += fired(ou::fx::clipEventSpans(0.0, dt, dur, true, std::nullopt), 0);   // its first advance
+    zero += fired(ou::fx::clipEventSpans(dt, 2 * dt, dur, true, std::nullopt), 0);
+    EXPECT_EQ(zero, 1);
+    const auto w = ou::fx::clipEventSpans(dur - dt / 2, dt / 2, dur, true, std::nullopt); // fmod'd clock went back
+    EXPECT_EQ(fired(w, 19), 0);
+    EXPECT_EQ(fired(w, 0), 1);
+    EXPECT_EQ(fired(w, 20), 1);
+    // a restarted enemy clip (start 0): nothing of the old pass
+    const auto r = ou::fx::clipEventSpans(0.5, dt, dur, true, 0.0);
+    EXPECT_EQ(fired(r, 0), 1);
+    EXPECT_EQ(fired(r, 16), 0);
+}

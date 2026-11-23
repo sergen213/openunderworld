@@ -204,7 +204,8 @@ TEST(AnimReal, LaraMirrorTwins) {
         if (s.renderModelId == 2366) sk = &s;
     ASSERT_NE(sk, nullptr);
     const auto twins = anim::mirrorBones(*sk);
-    for (auto [a, b] : {std::pair{4u, 9u}, {8u, 13u}, {52u, 77u}, {55u, 80u}}) {
+    EXPECT_FALSE(sk->mirrorSwaps.empty()) << "the model's mirror table (+0x4C)";
+    for (auto [a, b] : {std::pair{4u, 9u}, {8u, 13u}, {52u, 77u}, {53u, 78u}, {54u, 79u}, {55u, 80u}}) {
         EXPECT_EQ(twins[a], b);
         EXPECT_EQ(twins[b], a);
     }
@@ -225,6 +226,35 @@ TEST(AnimReal, LaraMirrorTwins) {
         EXPECT_EQ(twice[i].rot, pose[i].rot);
         EXPECT_EQ(twice[i].trans, pose[i].trans);
     }
+}
+
+// A mirrored pose is the reflection of the pose in the model's X: every segment's model-space origin lands on its
+// twin's reflected origin (the chart plays mirrored runs and idles, Wine t1204 "run mirrored from tick 15"; a wrong
+// mirror twisted her arms in the chart-driven run).
+TEST(AnimReal, LaraMirrorReflectsWorldPose) {
+    const Lara* l = lara();
+    if (!l) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const scene::Skeleton* sk = nullptr;
+    for (const auto& s : l->skeletons)
+        if (s.renderModelId == 2366) sk = &s;
+    ASSERT_NE(sk, nullptr);
+    const auto twins = anim::mirrorBones(*sk);
+    size_t checked = 0;
+    for (const auto& s : l->drm.sections) {
+        if (s.type != cdc::SectionType::Animation || s.id % 40) continue;
+        const anim::Clip c = anim::decodeClip(s.data);
+        auto pose = anim::sample(c, *sk, c.durationSeconds() * 0.5, true);
+        pose[0] = {{0, 0, 0}, {1, 1, 1}, pose[0].trans};
+        auto mirrored = pose;
+        anim::mirrorPose(mirrored, twins);
+        const auto a = anim::worldMatrices(*sk, pose), b = anim::worldMatrices(*sk, mirrored);
+        for (size_t i = 0; i < 116 && i < a.size(); ++i) {
+            const glm::vec3 want(-a[twins[i]][3].x, a[twins[i]][3].y, a[twins[i]][3].z);
+            EXPECT_LT(glm::distance(glm::vec3(b[i][3]), want), 0.5f) << "anim " << s.id << " segment " << i << " twin " << twins[i];
+        }
+        ++checked;
+    }
+    EXPECT_GT(checked, 10u);
 }
 
 TEST(AnimReal, AllLaraClipsDecodeAndKeepBoneLengths) {

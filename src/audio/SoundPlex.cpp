@@ -223,12 +223,40 @@ std::vector<SoundCategory> parseSoundCategories(const cdc::Drm& drm) {
     throw FormatError("globalsoundinfo: no object data");
 }
 
-void PlexBank::add(std::shared_ptr<const cdc::Drm> drm) {
-    for (uint32_t i = 0; i < drm->sections.size(); ++i)
-        if (drm->sections[i].type == cdc::SectionType::DtpData && sections_.try_emplace(drm->sections[i].id, drm, i).second)
-            // find() caches misses: an id asked for before its DRM was added must be looked up again (the motorcycle
-            // engine DTP 13589 stayed missing, and ou-game re-read motorcycle.drm every tick, 35 ms, while riding).
-            if (const auto it = parsed_.find(drm->sections[i].id); it != parsed_.end() && !it->second) parsed_.erase(it);
+std::vector<uint16_t> parseOutfitList(const cdc::Drm& drm) {
+    Reader r{drm, {}};
+    uint32_t baseId = ~0u; // the Object section's +0: its ObjectBase DTP id
+    for (const auto& s : drm.sections)
+        if (s.type == cdc::SectionType::Object && s.data.size() >= 4) { std::memcpy(&baseId, s.data.data(), 4); break; }
+    for (uint32_t s = 0; s < drm.sections.size(); ++s) {
+        if (drm.sections[s].type != cdc::SectionType::DtpData || drm.sections[s].id != baseId) continue;
+        const auto info = r.need({s, 0xC8}); // ObjectBase +0xC8: GlobalInfo
+        const auto list = r.need(Reader::at(info, 4));
+        const uint32_t n = r.u32(list) & 0xFFFF;
+        if (n > 256) throw FormatError("generalbank: outfit count");
+        const auto ids = r.need(Reader::at(list, 4));
+        std::vector<uint16_t> out;
+        for (uint32_t i = 0; i < n; ++i)
+            out.push_back(uint16_t(r.u8(Reader::at(ids, 2 * i)) | r.u8(Reader::at(ids, 2 * i + 1)) << 8));
+        return out;
+    }
+    throw FormatError("generalbank: no object data");
+}
+
+void PlexBank::add(std::shared_ptr<const cdc::Drm> drm, bool replace) {
+    for (uint32_t i = 0; i < drm->sections.size(); ++i) {
+        if (drm->sections[i].type != cdc::SectionType::DtpData) continue;
+        const uint32_t id = drm->sections[i].id;
+        const auto [at, fresh] = sections_.try_emplace(id, drm, i);
+        if (!fresh && !replace) continue;
+        if (!fresh) at->second = {drm, i};
+        // find() caches misses: an id asked for before its DRM was added must be looked up again (the motorcycle
+        // engine DTP 13589 stayed missing, and ou-game re-read motorcycle.drm every tick, 35 ms, while riding).
+        if (const auto it = parsed_.find(id); it != parsed_.end()) {
+            if (it->second) retired_.push_back(std::move(it->second));
+            parsed_.erase(it);
+        }
+    }
 }
 
 const Plex* PlexBank::find(uint32_t id) {
@@ -433,7 +461,7 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, c
         return p.delay;
     }
     case PlexType::MaterialList: case PlexType::Selector: { // the entry for the key, else the default (material 0 / key -1)
-        const uint32_t want = p.type == PlexType::MaterialList ? in.material : 0, def = p.type == PlexType::MaterialList ? 0 : ~0u;
+        const uint32_t want = p.type == PlexType::MaterialList ? in.material : selectorKey, def = p.type == PlexType::MaterialList ? 0 : ~0u;
         size_t pick = SIZE_MAX;
         for (size_t k = 0; k < p.keys.size(); ++k) {
             if (p.keys[k] == want) { pick = k; break; }

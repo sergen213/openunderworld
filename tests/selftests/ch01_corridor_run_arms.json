@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "ch01_corridor_run_arms",
+  "chapter": "01 Prologue: New Game, the run down the burning corridor (regression: arms while running)",
+  "note": "New Game (start_chapter 0), the run down the corridor floor (z 87.2) before the slab. The chart drive plays her run mirrored (agent +0xF4 0x20 from S63 on, as tru.exe: Wine t1204 'run mirrored from tick 15'); a mirror that paired the elbows / forearms (segments 53 / 54) with themselves twisted her arms up over her head (hand segments 80 / 55 at ~510 over her root). tru.exe's mirror swaps the model's mirror-table ranges (0x433540): hands stay below the shoulders (~420 over the root) through the run.",
+  "start_chapter": 0,
+  "steps": [
+    {"step": "run", "plan": ["wait 0.5", "run -90 3"], "duration": 5,
+     "expect": [{"probe": "player.state", "eq": "run", "over": "any", "note": "she runs"},
+                {"probe": "player.pos.z", "over": "max", "max": 90, "note": "on the corridor floor (87.2) throughout"},
+                {"probe": "pose.bone.80.z", "over": "max", "max": 527, "note": "right hand under 440 over the floor"},
+                {"probe": "pose.bone.55.z", "over": "max", "max": 527, "note": "left hand under 440 over the floor"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

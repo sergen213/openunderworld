@@ -357,6 +357,13 @@ std::optional<PointSet> parseEffectList(const cdc::Drm& unit, uint32_t listId, s
 enum class Blend : uint8_t { Alpha, Additive, Subtract, Multiply };
 Blend blendFor(uint8_t keyBlend); // tru.exe 0x52AE60: 1 -> mode 4, 2 -> 5, 3 -> 0, 4 -> 6, 5 -> 7, else 5
 
+// The frame windows [a, z) of a clip's records one tick fires (System::runEvents), 30 Hz frames: tru.exe 0x43CC10 ->
+// 0x5B26C0 fires the records of frames in [time before, time after) of each advance (times in frames x 0.01) [O]. A clip
+// (re)started this tick counts from `start` (its time at the start; a request's lead before frame 0, negative, holds
+// none); `sameClip` without `start`: from `prevT`; else a new clip counts from before frame 0 (standing at 0: nothing
+// until its first advance). Looping clips (unbounded time) wrap; a window reaching the end takes the last frame.
+std::vector<std::pair<float, float>> clipEventSpans(double prevT, double t, double duration, bool sameClip, std::optional<double> start);
+
 class System {
 public:
     explicit System(uint32_t seed = 0x3039) : seed_(seed) {}
