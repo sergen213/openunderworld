@@ -450,6 +450,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     }
     bool hasCollision() const override { return w != nullptr; }
     glm::vec3 position() const override { return w->player().state().pos; }
+    // instance +0x90 -> +0x70: skeleton segment 1's matrix translation, ours World::boneWorld(1) [O-runtime: Wine
+    // cc_dice_up_hold t100 +0x70 = ours (-24546.7, -3071.5, 2451.2), boneWorld(1) (-24544.4, -3069.1, 2449.9) on the
+    // same hold pose; boneWorld(0) is her root]
+    glm::vec3 rootBone() const override { return w->boneWorld(1).value_or(position()); }
     float heading() const override { return w->player().state().yaw; }
     // The anim layer (instance +0x280 -> +0x14) the beam balance 0x743900 drives: its blend type +0xF9 = the playing
     // pattern's +0x17 (0x4428A0; an unresolved kind-2 node keeps the last pattern's), its parameters +0x8C / +0x90

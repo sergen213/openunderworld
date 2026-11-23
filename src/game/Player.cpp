@@ -2729,6 +2729,44 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     // skeleton's matrices, World::boneWorld, I]
     else if (p.base == 0 && boneLift) base = s_.pos + *boneLift;
     else if (p.base == 1) base = !attached ? s_.pos : attach ? attach->point : pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT);
+    // 3..7 with +0xC94 attached (0x771830; her root otherwise): 3 the centre of 0x6EBEF0's box (0x72AD10; ours for a
+    // hold only, as point source 25), 4 / 5 the higher / lower end of segment 1 (0x5C3AA0(1): the second point when
+    // its z is not below the first's, for 4), 6 / 7 points 1 / 2 (MarkUpBox_GetSegmentPos) [O: decomp]. 2 (the jump
+    // target's point +0x9F0) is not passed in: unknown.
+    else if (p.base >= 3 && p.base <= 7 && !attached) base = s_.pos;
+    else if (p.base >= 3 && p.base <= 7) {
+        const auto& am = col_.markup[size_t(atM)];
+        const size_t n = am.points.size();
+        if (p.base == 3) {
+            if (!(am.type >= 16 && am.type <= 20 && n == 3)) return out;
+            // the hold triangle's normal flattened, as point source 25's (the centre does not depend on its sign)
+            vec3 nrm = glm::cross(am.points[2] - am.points[0], am.points[1] - am.points[0]);
+            nrm.z = 0;
+            if (glm::dot(nrm, nrm) < 1e-6f) return out;
+            nrm = glm::normalize(nrm);
+            vec3 a1 = glm::cross(nrm, vec3(0, 0, 1));
+            if (glm::dot(a1, a1) < 1e-12f) a1 = am.points[1] - am.points[0];
+            a1 = glm::normalize(a1);
+            const vec3 a2 = glm::normalize(glm::cross(a1, nrm));
+            float lo1 = 0, hi1 = 0, lo2 = 0, hi2 = 0;
+            for (size_t i = 1; i < n; ++i) {
+                vec3 r = am.points[i] - am.points[0];
+                r -= glm::dot(r, nrm) * nrm;
+                const float c1 = glm::dot(r, a1), c2 = glm::dot(r, a2);
+                lo1 = std::min(lo1, c1), hi1 = std::max(hi1, c1), lo2 = std::min(lo2, c2), hi2 = std::max(hi2, c2);
+            }
+            base = am.points[0] + a1 * (0.5f * (lo1 + hi1)) + a2 * (0.5f * (lo2 + hi2));
+        } else if (p.base == 6 || p.base == 7) {
+            if (n < size_t(p.base - 4)) return out;
+            base = am.points[size_t(p.base - 5)];
+        } else {
+            if (n < 2) return out;
+            const size_t s1 = n >= 3 ? 1 : 0; // 0x5C3AA0 clamps the segment index to the last
+            const vec3 a = am.points[s1], b = am.points[s1 + 1];
+            const bool bLower = b.z < a.z;
+            base = (p.base == 4) == bLower ? a : b;
+        }
+    }
     else return out;
     const float yaw = s_.yaw, pi = 3.14159265f, half = 1.57079633f;
     float th;
