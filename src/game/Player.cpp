@@ -269,7 +269,8 @@ void Player::play(std::string_view clip, bool loop, float rate, bool mirror) {
     s_.loop = loop;
     s_.clipRate = rate;
     s_.mirror = mirror;
-    s_.clipTime = t;
+    s_.clipTime = s_.clipStart = t;
+    ++s_.clipSerial;
     s_.clipMix.clear();
     s_.mix = 0;
     s_.blendClips.clear(), s_.blendWeights.clear();
@@ -3456,7 +3457,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         const auto climb = [&](std::string_view clip, bool whole = false) {
             s_.state = State::ClimbUp;
             play(clip, false);
-            if (whole) s_.clipTime = 0;
+            if (whole) s_.clipTime = s_.clipStart = 0;
             const anim::Clip* c = anims_.find(s_.clip);
             if (const auto h = c ? anims_.handsAt(*c, s_.clipTime) : std::nullopt) {
                 const float rise = rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z;
@@ -3971,7 +3972,7 @@ bool Player::enterWater() {
         const bool swan = swanClip(s_.clip) && anims_.find("swim_swan_land");
         s_.state = State::SwimSplash;
         play(swan ? "swim_swan_land" : "swim_jump_land", false);
-        s_.clipTime = 0; // both play from their first frame for their whole length (Tuning "Water entry")
+        s_.clipTime = s_.clipStart = 0; // both play from their first frame for their whole length (Tuning "Water entry")
     } else if (s_.pos.z <= surf - t_.swimDepth) { // placed deep (275_hel_explosion's end): stays under, swimming
         s_.vel = vec3(0);
         s_.state = State::SwimUnder;
@@ -4334,7 +4335,8 @@ void Player::drive(const DriveStep& d, float dt) {
     if (!d.clip.empty()) {
         const bool fresh = d.restart || s_.clip != d.clip || s_.mirror != d.mirror;
         if (fresh) {
-            t0 = d.start;
+            t0 = s_.clipStart = d.start;
+            ++s_.clipSerial;
             // The crossfade (tru.exe 0x441FB0 at the new request, over the pattern's blend frames): the window holds the
             // new clip's lead at its first frame and moves her by the pattern's window mode (+0x18 -> channel +0x64 ->
             // +0x60, 0x4428A0 / 0x441FB0) each step of 0x43B870 (via 0x43C8E0), w linear at each step's midpoint (0x4332C0

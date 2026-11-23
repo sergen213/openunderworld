@@ -420,6 +420,11 @@ struct PlayerState {
     float swimSpeed = -1; // the swim speed the velocity is pulled to (tru.exe player globals +0x8E8); < 0: from vel
     std::string clip;
     double clipTime = 0; // unbounded for looping clips (anim time = fmod(clipTime, duration))
+    // Where `clip` last (re)started on its own clock (a request's lead is negative) and a count of those starts:
+    // the animation-event window of a clip's first tick runs from its start (tru.exe 0x43CC10 -> 0x5B26C0 fires the
+    // events of frames in [time before, time after) of each advance; nothing in the lead before frame 0).
+    double clipStart = 0;
+    uint32_t clipSerial = 0;
     float clipRate = 1;
     bool loop = true;
     // Blend space: `clip` is the first clip of a multi-clip lara.drm anim request (hurdles: obstacle height / depth);
