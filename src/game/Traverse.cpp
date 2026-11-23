@@ -248,22 +248,43 @@ vec3 Player::ladderCatch(int markup, int rung) const {
     return rungPos(m, rung, out) - rotYaw(yawOf(-xy(out)), clipMove(anims_, "ladder_attach_M"));
 }
 
-// The chart drive's hold pose on a ladder, pillar or perch it attached (nullopt for other markup): a ladder's rung
-// nearest her root height where the attach clip `clip` ends (rungPos / rungAt: 0x74DCD0's rung alignment, facing the
-// ladder; Wine lad_a234_attach: from z 1479 her attach from the top ends on the rung at 940) [O]; a pillar's axis at her
-// height (the instance stays on the axis, Wine l4_temple) keeping her heading [O-runtime]; a perch's point [I].
-std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, float yaw, std::string_view clip) const {
+// The chart drive's hold pose on a ladder, pillar or perch it attached (nullopt for other markup). A ladder with an
+// attach clip `clip`: 0x74DCD0's target, the rung root 0x7350B0 gives for the point `from` (player +0x9F0, the jump
+// target's point) [O decomp]: 0x734C00 takes the rung point nearest the point's projection on the ladder line (rounded;
+// rung count from 0x734B70), at most the lowest (count - byte +0x774); when her root `body` (instance +0x20) is a rung
+// or more under the top it first casts a ray from 20.54 above her down +0x784 + 20.54 (0x493330 flags 0x187) and a
+// hit's point +0x784 up, if higher up the ladder, becomes that lowest; a point beyond the lowest takes it unrounded.
+// The root is the rung point less +0x784 (575.221) down and +0x780 (-110.619) along the normal, centred on the width,
+// facing the ladder (the player data values in lara.drm) [O]. Wine lad_a234_attach (WineChartTrace-2, ladray.txt): the
+// 0x187 ray from her root + 20.54 misses (the hallway floor she stands on included), +0x9F0 = (1401.3, 29.43, 1507.2):
+// the lowest rung, root z 933.91 [O-runtime]; the ray here meets terrain only [I: 0x187 lacks the object-filter bit
+// 0x40 of the player rays, and the miss over the hallway box agrees]. Wine then holds at 940.24, 6.33 higher and 6.33
+// further out: the attach / hold clips' own motion after the alignment, as on ledges [U]. Without a clip the rung
+// nearest her root. A pillar's axis at her height (the instance stays on the axis, Wine l4_temple) keeping her heading
+// [O-runtime]; a perch's point [I].
+std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, float yaw, std::string_view clip,
+                                                         std::optional<vec3> body) const {
     if (markup < 0 || size_t(markup) >= col_.markup.size()) return std::nullopt;
     const auto& m = col_.markup[size_t(markup)];
     if (m.points.empty()) return std::nullopt;
     if (m.type == 9 && m.points.size() >= 2) {
         const vec3 out = ladderOut(m);
-        // an attach from the ground at the bottom (ladder_attach_ground_bottom) takes the lowest rung (Wine
-        // lad_a234_attach: rung 2 at z 940 from the floor at 1479, where 0x74DCD0's nearest-rung formula clamps to rung 0
-        // at 1161) [I: which caller picks the bottom is not decoded]; else the rung nearest where the clip ends
-        if (clip.find("bottom") != std::string_view::npos) return std::pair{rungPos(m, lowestRung(m), out), yawOf(-xy(out))};
-        const float z = from.z + (clip.empty() ? 0.0f : clipMove(anims_, clip).z);
-        return std::pair{rungPos(m, rungAt(m, z), out), yawOf(-xy(out))};
+        if (clip.empty()) return std::pair{rungPos(m, rungAt(m, from.z), out), yawOf(-xy(out))};
+        // 0x734C00 works on the rung points (the root lies +0x784 under them): drops under the top point
+        const vec3 top = m.points[0], axis = glm::normalize(m.points[1] - m.points[0]);
+        const int count = int(std::trunc(std::trunc(glm::length(m.points[1] - m.points[0])) / kRungSpacing)) + 1; // 0x734B70
+        const float at = top.z - from.z;
+        float lowest = kRungSpacing * float(lowestRung(m));
+        const vec3 root = body.value_or(from);
+        if (root.z <= top.z - kRungSpacing) {
+            constexpr float kLead = 20.543251f;
+            if (const auto hit = col_.raycast(root - axis * kLead, axis, kRungTop + 2.0f * kLead, collision::kTerrainMask))
+                lowest = std::min(lowest, top.z - (hit->point.z + kRungTop));
+        }
+        const float drop = at > lowest ? lowest : kRungSpacing * float(std::clamp(int(std::lround(at / kRungSpacing)), 0, count - 1));
+        const vec3 hint = m.points.size() >= 3 ? m.points[2] - m.points[1] : vec3(0);
+        return std::pair{top - vec3(0, 0, drop + kRungTop) + vec3(xy(hint) * 0.5f, 0) + out * kLadderBack + ladderHoldFit(markup),
+                         yawOf(-xy(out))};
     }
     if (m.type == 15 && m.points.size() >= 2) {
         const float lo = std::min(m.points[0].z, m.points[1].z), hi = std::max(m.points[0].z, m.points[1].z);
@@ -271,6 +292,27 @@ std::optional<std::pair<vec3, float>> Player::familyPose(int markup, vec3 from, 
     }
     if (m.type == 13) return std::pair{m.points[0], yaw};
     return std::nullopt;
+}
+
+// The ladder hold's offset over the rung root. WineChartTrace-2 ladwatch (lad_a234_attach t28, climb_up t177): from the
+// attach window's end on, every frame, 0x708830 (action 420's attach update, from 0x771267) sets her root through its
+// record +0x4D branch [O decomp]: root = the attached point +0xCA0 (on the ladder's edge line at the grip +0xC98)
+// - R x +0xCF0 (0x74DCD0: half the width along) - (bone [player data +0x214] = 107, less her root, in the current
+// pose). So the hold puts bone 107 on the ladder's centre at the rung point. Ours takes bone 107 from ladder_idle's
+// first frame [I: tru re-places her every frame from the playing pose] and returns that root less the rung root
+// (+0x784 under, +0x778 out). Wine lad_a234: (-78.77, 117.11, 568.90) from the edge point, 6.33 up / 6.32 out over the
+// rung root.
+vec3 Player::ladderHoldFit(int markup) const {
+    if (markup < 0 || size_t(markup) >= col_.markup.size()) return vec3(0);
+    const auto& m = col_.markup[size_t(markup)];
+    if (m.type != 9 || m.points.size() < 3) return vec3(0);
+    const anim::Clip* idle = anims_.find("ladder_idle");
+    const auto bone = idle ? anims_.boneAt(*idle, 0, 107) : std::nullopt;
+    if (!bone) return vec3(0);
+    const vec3 out = ladderOut(m);
+    // bone 107 in the hold frame: facing the wall (-out), model -Y forward
+    const vec3 b = rotYaw(yawOf(-xy(out)), *bone);
+    return -b + vec3(0, 0, kRungTop) - out * kLadderBack;
 }
 
 void Player::catchLadder() {

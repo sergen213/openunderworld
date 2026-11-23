@@ -5,6 +5,7 @@
 #include "collision/Collision.hpp"
 #include "formats/Formats.hpp"
 #include "formats/Shader.hpp"
+#include "physics/Physics.hpp"
 #include "script/Script.hpp"
 #include "ui/Art.hpp"
 
@@ -379,7 +380,7 @@ void collisionDump(const cdc::Drm& drm, const std::string& out) {
     for (const auto& m : mesh.markup) {
         std::printf("%6u %5u %-12s %4zu %6u", m.id, m.type, std::string(collision::markupTypeName(m.type)).c_str(),
                     m.points.size(), m.intro);
-        if (!m.points.empty()) std::printf(" (%.1f %.1f %.1f)", m.points[0].x, m.points[0].y, m.points[0].z);
+        for (const auto& p : m.points) std::printf(" (%.2f %.2f %.2f)", p.x, p.y, p.z);
         if (m.camera) std::printf(" camera type %u, %zu spline points", m.camera->type, m.camera->pos.size());
         std::printf("\n");
     }
@@ -656,6 +657,16 @@ int main(int argc, char** argv) try {
 
     if (cmd == "sections") {
         const auto drm = loadDrm(bf, path);
+        if (pos.size() >= 5) { // sections <gameDir> <drm> <idx> <offset> [count]: section bytes as f32 / i32
+            const auto& d = drm.sections.at(std::stoul(pos[3], nullptr, 0)).data;
+            const size_t off = std::stoul(pos[4], nullptr, 0), n = pos.size() > 5 ? std::stoul(pos[5], nullptr, 0) : 1;
+            for (size_t i = 0; i < n && off + 4 * i + 4 <= d.size(); ++i) {
+                float f; int32_t v;
+                std::memcpy(&f, d.data() + off + 4 * i, 4), std::memcpy(&v, d.data() + off + 4 * i, 4);
+                std::printf("+0x%zx %g %d\n", off + 4 * i, f, v);
+            }
+            return 0;
+        }
         std::printf("version %u, %zu sections, dependencies:", drm.version, drm.sections.size());
         for (const auto& d : drm.dependencies) std::printf(" %s", d.c_str());
         std::printf("\n%5s %-15s %4s %8s %10s %9s\n", "idx", "type", "res", "id", "size", "relocB");
@@ -767,6 +778,18 @@ int main(int argc, char** argv) try {
         collisionDump(loadDrm(bf, path), out);
     } else if (cmd == "anim") {
         animDump(loadDrm(bf, path), pos.size() > 3 ? std::optional(uint32_t(std::stoul(pos[3], nullptr, 0))) : std::nullopt);
+    } else if (cmd == "physics") { // physics <gameDir> <objectDrm> [model]: collision primitives and segment frames
+        const auto p = physics::loadObjectPhysics(loadDrm(bf, path), pos.size() > 3 ? uint32_t(std::stoul(pos[3], nullptr, 0)) : 0u);
+        std::printf("oflags 0x%x, %zu segments, %zu prims\n", p.oflags, p.segments.size(), p.prims.size());
+        for (size_t s = 0; s < p.segments.size(); ++s) {
+            const auto& m = p.segments[s];
+            std::printf("seg %zu pos (%.2f %.2f %.2f) X (%.4f %.4f %.4f) Z (%.4f %.4f %.4f)\n", s, m[3].x, m[3].y, m[3].z, m[0].x, m[0].y,
+                        m[0].z, m[2].x, m[2].y, m[2].z);
+        }
+        for (const auto& q : p.prims)
+            std::printf("prim %u kind %d seg %d head %02x %02x %02x %02x pos (%.2f %.2f %.2f) rot (w %.4f %.4f %.4f %.4f) size (%.2f %.2f %.2f) r %.2f len %.2f\n",
+                        q.id, int(q.kind), q.segment, q.head[0], q.head[1], q.head[2], q.head[3], q.pos.x, q.pos.y, q.pos.z, q.rot.w, q.rot.x,
+                        q.rot.y, q.rot.z, q.size.x, q.size.y, q.size.z, q.radius, q.length);
     } else if (cmd == "materials") {
         materialsDump(loadDrm(bf, path));
     } else if (cmd == "script") {

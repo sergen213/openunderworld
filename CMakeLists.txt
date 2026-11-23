@@ -355,7 +355,7 @@ add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/
             src/formats/Shader.cpp src/formats/Uber.cpp src/formats/AnimGraph.cpp src/formats/Births.cpp)
 target_link_libraries(ou_formats PUBLIC ou_cdc ou_anim)
 add_executable(ou-asset tools/ou-asset/main.cpp)
-target_link_libraries(ou-asset PRIVATE ou_formats)
+target_link_libraries(ou-asset PRIVATE ou_formats ou_physics)
 if(OU_BUILD_TESTS)
   add_executable(ou_formats_tests tests/test_formats.cpp)
   target_link_libraries(ou_formats_tests PRIVATE ou_formats GTest::gtest_main)

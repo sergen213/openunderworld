@@ -450,6 +450,47 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         if (s.state == game::State::HangJump) return slot(s.ledge, s.ledgeSeg, s.ledgeT);
         return {};
     }
+    // 0x702D20 -> 0x702BA0 -> 0x437120 for the state's kind-1 request [O decomp]: the root before the clip's own root
+    // motion is the hold pose less the clip header's alignment (0x435EC0 / 0x435F20: the whole clip's root motion from
+    // frame 0, `Player::clipAlign`, not from the frame the request starts on) turned into the hold's frame; v = that root
+    // less hers in her frame, yaw = the turn onto it. [I: the clip motion's turn is applied at the window's end.]
+    void alignToHold(const MarkupSlot& m) override {
+        if (!driving || !pm || !m) return;
+        const State* sd = rt->charts().player.state(rt->state());
+        if (!sd || sd->requestKind != 1 || sd->request < 0 || size_t(sd->request) >= rt->charts().requests.size()) return;
+        const Request& r = rt->charts().requests[size_t(sd->request)];
+        if (r.window != 3) return;
+        const PlayerState& s = w->player().state();
+        const bool mirror = rt->mirrored() != r.mirror;
+        const auto span = pm->clipAlign(r.clip, mirror);
+        if (!span) return;
+        // a ladder's 0x7350B0 runs on player +0x9F0, the jump target's point (0x74DCD0 reads it before the attach; ours
+        // the attached slot's point: lad_a234 940.25 where Wine's is 1507.2, both past the lowest rung), its floor ray
+        // from her root
+        const auto& mk = w->collision().markup;
+        const bool ladder = size_t(m.markup) < mk.size() && mk[size_t(m.markup)].type == 9;
+        const auto pose = pm->familyPose(m.markup, ladder ? m.point : s.pos, s.yaw, r.clip, s.pos);
+        if (!pose) return;
+        const float yawBefore = pose->second - span->second;
+        const glm::vec3 before = pose->first - rotYawWorld(yawBefore, span->first);
+        align.v = worldToModel(s.yaw, before - s.pos), align.yaw = wrapRad(yawBefore - s.yaw), align.pending = true;
+    }
+    void ladderRungAlign() override { if (driving) align.ladderRung = true; }
+    void ladderRungSnap() override { if (driving) rungSnap = true; }
+    void ledgeHangAlign() override {
+        const State* sd = driving ? rt->charts().player.state(rt->state()) : nullptr;
+        if (sd && sd->requestKind == 2) align.ledgeHang = true;
+    }
+    // model space (-Y forward) by yaw into world (as Player's rotYaw) and back
+    static glm::vec3 rotYawWorld(float yaw, glm::vec3 m) {
+        const float c = std::cos(yaw + 1.5707963f), sn = std::sin(yaw + 1.5707963f);
+        return {c * m.x - sn * m.y, sn * m.x + c * m.y, m.z};
+    }
+    static glm::vec3 worldToModel(float yaw, glm::vec3 v) {
+        const float c = std::cos(yaw + 1.5707963f), sn = std::sin(yaw + 1.5707963f);
+        return {c * v.x + sn * v.y, -sn * v.x + c * v.y, v.z};
+    }
+    static float wrapRad(float a) { return std::remainder(a, 6.2831853f); }
     std::optional<std::pair<glm::vec3, glm::vec3>> markupSegment(int m, int seg) const override {
         const auto& col = w->collision();
         if (m < 0 || size_t(m) >= col.markup.size()) return {};
@@ -701,13 +742,17 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     bool parked = false;        // the controller holds her (a boundary state): the chart restarts when she comes back
     float lastRise = 0;         // the last drive move's root z rise (bone 0 [I])
     int attachedBefore = -1;    // +0xC94's markup as the tick began (an attach made by this tick's change starts a blend)
+    bool rungSnap = false;      // action 505's exit (0x734920) ran in this change: stateEntered puts her on the rung
     bool launched = false;      // this flight was launched by a take-off (Jump) rather than walked off (Fall)
     int takeoffState = -1;      // the take-off state (action 504) the chart left last, and on which world tick
     uint64_t takeoffTick = ~0ull;
-    struct Blend { bool on = false; int state = -1; glm::vec3 from{0}, to{0}; float yawFrom = 0, yawTo = 0, frames = 1, t = 0; } blend;
+    struct Blend {
+        bool on = false; int state = -1; glm::vec3 from{0}, to{0}; float yawFrom = 0, yawTo = 0, frames = 1, t = 0;
+        std::string clip; bool mirror = false; float f0 = 0, f1 = 0; // when set: paced by the clip's root motion over [f0, f1]
+    } blend;
     // Action 231's alignment onto a hurdle's AnimTarget (0x73DD70): x/y (and the yaw unless prop 285) approach `to` by
     // the share of the gap each step leaves on top of the clip's root motion, over `frames` (prop 283).
-    struct Align { bool on = false; int state = -1; glm::vec3 to{0}; float yawTo = 0; bool yaw = false; float left = 0; } align;
+    struct HurdleAlign { bool on = false; int state = -1; glm::vec3 to{0}; float yawTo = 0; bool yaw = false; float left = 0; } hurdleAlign;
     struct HoldTurn { float to = 0, left = 0; } holdTurn; // action 231's rotation blend onto a hold's +0x1270
     ChartRuntime* rt = nullptr;   // Lara's chart (agent 0) and the upper body's (agent 1), Shadow's
     ChartRuntime* up = nullptr;
@@ -1263,8 +1308,8 @@ void Shadow::Impl::seedAttach() {
 // The chart (re)starts with her where she is (0x787E00 from the root, which settles in the idle by itself).
 void Shadow::Impl::restartChart() {
     started = false, parked = false, launched = false;
-    blend = {}, align = {};
-    chartAttached = MarkupSlot{}, chartTarget = {}, targetPoint = glm::vec3(0), handedTarget = -1;
+    blend = {}, hurdleAlign = {};
+    chartAttached = MarkupSlot{}, chartTarget = {}, targetPoint = glm::vec3(0), align = {}, handedTarget = -1;
     collisionMask = 0x48;
 }
 
@@ -1454,11 +1499,22 @@ void Shadow::Impl::stateEntered(int from, int to) {
                      w->player().state().pos.z, int(playerRay(w->player().state().pos + glm::vec3(0, 0, 51.2f), w->player().state().pos + glm::vec3(0, 0, 512.0f)).value_or(-1.0f)),
                      sincePressed[Jump], int(ground.floor), fallDistance(),
                      ch->variables[344].asFloat(), ch->variables[345].asFloat(), ch->variables[346].asFloat());
+    // Action 505's exit (0x734920) set her root on the nearest rung root as the state left; the 0x708830 hold puts the
+    // fitted offset on it from the next frame (Wine climb_up: S1085 at 1155.15, S1087 at 1161.40) [O; offset I]
+    if (rungSnap) {
+        rungSnap = false;
+        const PlayerState& s = w->player().state();
+        if (chartAttached && *chartAttached)
+            if (const auto pose = pm->familyPose(chartAttached->markup, s.pos, s.yaw))
+                blend = {true, to, s.pos, pose->first + pm->ladderHoldFit(chartAttached->markup), s.yaw, pose->second, 0.01f, 0}; // at once
+    }
     // An attach made by this change's PreAnim actions (230 / 232: +0xC94 = the jump target) starts the attach clip's
     // root alignment onto the hang pose (action 236 PSCAF_AlignRootMotionToTarget, unported: [I] a blend over the clip
     // and what its node queued, ChartRuntime::remainingFrames).
     const int now = chartAttached && *chartAttached ? chartAttached->markup : -1;
-    if (now >= 0 && now != attachedBefore) {
+    // a ported AnimTarget setter (alignToHold) left a mode-3 alignment: the request's window carries her (docs
+    // "Mode-3 port plan"), not this blend (a ledge-hang target replaces it in driveTick when the node's clip is mode 3)
+    if (now >= 0 && now != attachedBefore && !align.pending) {
         MarkupSlot& a = *chartAttached;
         const auto& p = w->collision().markup[size_t(a.markup)].points;
         if (p.size() >= 2) {
@@ -1490,15 +1546,15 @@ void Shadow::Impl::stateEntered(int from, int to) {
                 const glm::vec2 xy = glm::vec2(a.point) + rt->propFloat(281).value_or(0.0f) * dir;
                 const glm::vec3 tgt(xy, s.pos.z + rt->propFloat(282).value_or(0.0f));
                 const float yawTo = std::atan2(-dir.y, -dir.x) + glm::radians(p284);
-                align = {};
+                hurdleAlign = {};
                 if (rt->chainHasAction(to, 231)) {
                     const Property* p283 = rt->property(283);
                     float frames = rt->remainingFrames();
                     if (p283 && !(p283->type == 0x23 && p283->raw == 225)) frames = float(rt->propInt(283).value_or(0));
-                    if (frames >= 1) align = {true, to, tgt, yawTo, !rt->propBool(285).value_or(false), frames};
+                    if (frames >= 1) hurdleAlign = {true, to, tgt, yawTo, !rt->propBool(285).value_or(false), frames};
                 }
                 std::fprintf(stderr, "ou-game: chart attach S%d markup %d hurdle target %.1f %.1f %.1f yaw %.1f align %.0f\n", to, a.markup,
-                             xy.x, xy.y, tgt.z, glm::degrees(yawTo), align.on ? align.left : 0.0f);
+                             xy.x, xy.y, tgt.z, glm::degrees(yawTo), hurdleAlign.on ? hurdleAlign.left : 0.0f);
             } else {
                 auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
                 if (!fam && (a.flags & 0x10000)) {
@@ -1634,6 +1690,53 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
             // frames' root [U: the node Play's start / blend (0x444F30 -> 0x441FB0) is not decoded].
             const State* sd = rt->charts().player.state(rt->state());
             d.window = sd && sd->requestKind == 1 ? p->window : uint8_t(1);
+            // mode 3 takes the pending alignment (0x441FB0 case 3 reads 0x437120's and clears it); no window (blend 0)
+            // leaves it pending as tru.exe's crossfade-less start does
+            if (d.window == 3 && align.pending && d.crossfade > 0)
+                d.align = glm::vec4(align.v, align.yaw), align.pending = false;
+            // a graph node's clip under action 505's LadderRungAlignAnimTarget (0x744B70): the rung root nearest her
+            // root (0x72B8C0: round((top - (z + +0x784)) / +0x770), at most the lowest; +0x770 x rung + +0x784 down,
+            // half the width along, -+0x778 out, facing the wall) through 0x702D20 into the pattern's mode-3 window
+            // (ladder_climb_up R1169 / _down R1168 are mode 3) [O decomp]. [I] The clip offset 0x702D20 takes off
+            // is left at 0: with ladder_climb_up's header alignment (110.62 up) every cycle would sink back a rung;
+            // Wine S1055 dips ~4 at the start (the hold over the rung root) and then rises continuously.
+            if (align.ladderRung && sd && sd->requestKind == 2 && p->window == 3 && d.crossfade > 0 && chartAttached && *chartAttached) {
+                const PlayerState& s = w->player().state();
+                if (const auto pose = pm->familyPose(chartAttached->markup, s.pos, s.yaw)) {
+                    d.window = 3, d.align = glm::vec4(worldToModel(s.yaw, pose->first - s.pos), wrapRad(pose->second - s.yaw));
+                    align.ladderRung = false;
+                }
+            }
+            // a graph node's clip under 0x74ED30's PrimAirAttachAnimTarget (slot 1 0x750780 -> 0x741130): the node's next
+            // mode-3 clip (drop_to_ledgeb R1069, drop_to_ledgeu R1070, ledgeb_attach_down R951, ledgeu_runoff) is aimed
+            // at the hang root [O decomp]. The attach hold (Motion::Hang) pins her to the hang pose, so ours carries her
+            // there paced by that clip's own root motion instead of stateEntered's blend over the node's clips [I: the
+            // window's V and the clip's motion as one blend onto hangPose; the 0x702D20 header alignment folded into it].
+            // Wine b973_top_back_run / maproom_south_run_birth: the drop clip's descent lands on the hang [O-runtime].
+            if (align.ledgeHang && sd && sd->requestKind == 2) {
+                const MarkupSlot* a = chartAttached && *chartAttached ? &*chartAttached : nullptr;
+                const PlayerState& s = w->player().state();
+                // the ledge hang pose only: a beam (flag 0x10000) and the ladder / pillar / perch holds keep stateEntered's
+                // blend [I: their 0x741130 targets are not ported]
+                const bool ledge = a && !(a->flags & 0x10000) && !pm->familyPose(a->markup, s.pos, s.yaw);
+                if (ledge && p->window == 3 && d.crossfade > 0 && w->collision().markup[size_t(a->markup)].points.size() >= 2) {
+                    const auto& mp = w->collision().markup[size_t(a->markup)].points;
+                    const int seg = std::clamp(int(a->param), 0, int(mp.size()) - 2);
+                    const float t = (a->param - float(seg)) * glm::length(glm::vec2(mp[size_t(seg) + 1] - mp[size_t(seg)]));
+                    const auto [root, yaw] = pm->hangPose(a->markup, seg, t, hangSide(a->markup, seg, a->point));
+                    // paced by the clip's root motion from its start frame (ledgeb_runoff descends from frame 1: Wine
+                    // maproom_south_run_birth), or over the window (30 Hz frames) when the clip holds still past it
+                    // (ledgeu_runoff drops at frames 7-10 but Wine ch_beam_recover reaches the hang 6 ticks after S542)
+                    // [O-runtime; I: the pacing rule]
+                    blend = {true, rt->state(), s.pos, root, s.yaw, yaw, d.crossfade * 30.0f, 0};
+                    const float f0 = float(p->start), f1 = rt->animLengthFrames();
+                    const auto total = f1 > f0 ? pm->rootSpan(p->clip, f0 / 30.0, f1 / 30.0, d.mirror) : std::nullopt;
+                    const auto lead = f1 > f0 ? pm->rootSpan(p->clip, f0 / 30.0, std::min(f0 + 2.0f, f1) / 30.0, d.mirror) : std::nullopt;
+                    if (total && lead && glm::dot(lead->first, total->first) > 0.01f * glm::dot(total->first, total->first))
+                        blend.clip = p->clip, blend.mirror = d.mirror, blend.f0 = f0, blend.f1 = f1;
+                }
+                align.ledgeHang = false; // the target is used up by the node's next start (0x4428A0 clears layer +0x3C)
+            }
         }
         // The anim layer blend (0x4428A0: layer +0xF9 = pattern +0x17, one sub-layer per anim; 0x437BA0 each tick weighs
         // them by +0x8C / +0x90 = animBlend, which the state's actions wrote this tick) [O].
@@ -1654,6 +1757,13 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         d.motion = M::Blend;
         d.blendFrom = blend.from, d.blendTo = blend.to, d.yawFrom = blend.yawFrom, d.yawTo = blend.yawTo;
         d.blend = blend.t / blend.frames;
+        if (!blend.clip.empty() && blend.f1 > blend.f0) {
+            const auto total = player.rootSpan(blend.clip, blend.f0 / 30.0, blend.f1 / 30.0, blend.mirror);
+            const float now = std::clamp(rt->animFrames(), blend.f0, blend.f1);
+            const auto done = player.rootSpan(blend.clip, blend.f0 / 30.0, now / 30.0, blend.mirror);
+            const float len2 = total ? glm::dot(total->first, total->first) : 0.0f;
+            if (len2 > 1.0f && done) d.blend = std::clamp(glm::dot(done->first, total->first) / len2, 0.0f, 1.0f);
+        }
     } else if (att && (rt->chainHasAction(st, 420) || pm->familyPose(att.markup, player.state().pos, player.state().yaw))) {
         // a ladder / pillar / perch keeps her held too (ChartCD: in perch S827 she fell to z -1758) [I: their hold
         // actions are not ported]
@@ -1738,14 +1848,15 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     }
     // Action 231's alignment onto the hurdle target (0x43B870 moves a step / (end - t) share of the gap, on top of the
     // clip's root motion) [O decomp; I: the gap taken from her root, not less the clip's remaining root motion]
-    if (align.on && (align.state != st || !(d.motion == M::Ground || (d.motion == M::Hang && !d.snap && !d.pin)))) align.on = false;
-    if (align.on) {
-        const float share = std::min(1.0f, timeMult / align.left);
+    if (hurdleAlign.on && (hurdleAlign.state != st || !(d.motion == M::Ground || (d.motion == M::Hang && !d.snap && !d.pin))))
+        hurdleAlign.on = false;
+    if (hurdleAlign.on) {
+        const float share = std::min(1.0f, timeMult / hurdleAlign.left);
         const PlayerState& s = player.state();
-        d.align = glm::vec3((glm::vec2(align.to) - glm::vec2(s.pos)) * share, 0.0f);
-        if (align.yaw) pm->setYaw(s.yaw + std::remainder(align.yawTo - s.yaw, 6.2831853f) * share);
-        align.left -= timeMult;
-        if (align.left <= 0) align.on = false;
+        d.hurdleAlign = glm::vec3((glm::vec2(hurdleAlign.to) - glm::vec2(s.pos)) * share, 0.0f);
+        if (hurdleAlign.yaw) pm->setYaw(s.yaw + std::remainder(hurdleAlign.yawTo - s.yaw, 6.2831853f) * share);
+        hurdleAlign.left -= timeMult;
+        if (hurdleAlign.left <= 0) hurdleAlign.on = false;
     }
     const float z0 = player.state().pos.z;
     d.coarse = coarse(d.motion, d.clip);

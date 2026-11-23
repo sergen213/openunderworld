@@ -353,6 +353,26 @@ public:
     // the take-off's new query) leaves it [O: 0x749CD0 reads it after action 236's attach cleared +0xA64]; the last
     // target's point (chartTargetPoint answers with the live target's while there is one).
     glm::vec3 targetPoint{0};
+    // 0x437120's pending alignment (DAT_008C9F20 / DAT_008C7020), as a kind-1 AnimTarget setter leaves it through
+    // 0x702D20: the displacement v in her frame and the turn `yaw` (radians) that the next mode-3 request's crossfade
+    // window carries her through (docs "Crossfade", mode 3); taken (pending cleared) when that window starts.
+    // `ladderRung`: action 505 (0x74D980) armed a LadderRungAlignAnimTarget for the state's graph-node clip;
+    // `ledgeHang`: 0x74ED30's kind-2 branch armed a PrimAirAttachAnimTarget (0x74BF90) for it.
+    struct Align { glm::vec3 v{0}; float yaw = 0; bool pending = false, ladderRung = false, ledgeHang = false; } align;
+    // 0x702D20 for the state's kind-1 request: aim it at the hold pose of the markup just attached (the family's
+    // AnimTarget: 0x74DCD0 for a ladder), so the request's window and the clip's own root motion end there. The drive
+    // context answers; elsewhere nothing.
+    virtual void alignToHold(const MarkupSlot&) {}
+    // Action 505 on entry / re-entry (0x74D980, kind 2 -> 0x6F0FF0 with a LadderRungAlignAnimTarget, whose slot 1
+    // 0x744B70 aims the graph node's next clip at the rung she holds). The drive context answers.
+    virtual void ladderRungAlign() {}
+    // Action 505's exit (0x734920): her root onto the rung root nearest it (0x72B8C0), facing the wall. The drive
+    // context answers.
+    virtual void ladderRungSnap() {}
+    // Action 230's ledge class 610 (0x74ED30) for a state whose request is a graph node (kind 2): 0x74BF90 builds a
+    // PrimAirAttachAnimTarget whose slot 1 (0x750780 -> 0x741130) aims the node's next clip at the hang root. The
+    // drive context answers.
+    virtual void ledgeHangAlign() {}
     // The game's jump-target markup the chart already handed on when its flight ended (tru.exe moves +0xA64 to the
     // attached slot +0xC94 on the attach, 0x741050 / 0x707500) [I]; ignored as +0xA64 until the game's target changes.
     int handedTarget = -1;

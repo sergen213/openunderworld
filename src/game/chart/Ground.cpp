@@ -1180,7 +1180,12 @@ void registerGround(Registry& player, Registry&) {
     player.action(420, {attachEntry, noop, attachPre, nullptr, attachExit, attachTick}, "PSCAF_MarkupAttachFrame", g);
     player.action(426, {.process = unportedSlot}, "PSCAF_LimbIKOffNearSegmentEnd", g);
     player.action(502, {.process = unportedSlot}, "PSCAF_AnalogLocomotionVelocity", g);
-    player.action(505, {.preEntry = unportedSlot, .preReentry = unportedSlot, .exit = unportedSlot, .process = noop}, "PSCAF_LadderRungAlign", g);
+    // 0x74D980 on entry / re-entry: the state's request kind 2 arms a LadderRungAlignAnimTarget (0x6F0FF0) for the
+    // graph node's clip (S1055 / S1057 / S1060, the only states with 505) [O]
+    const auto rungAlign = [](ChartContext& ctx, uint16_t) { ctx.ladderRungAlign(); };
+    // exit 0x734920: her root onto the nearest rung root (Wine climb_up t176: 1124 -> 1155.15, the hold +6.25 after) [O]
+    const auto rungSnap = [](ChartContext& ctx, uint16_t) { ctx.ladderRungSnap(); };
+    player.action(505, {.preEntry = rungAlign, .preReentry = rungAlign, .exit = rungSnap, .process = noop}, "PSCAF_LadderRungAlign", g);
     player.action(508, {unportedSlot, nullptr, nullptr, nullptr, unportedSlot, unportedSlot}, "PSCAF_SlideSpeedController", g);
 }
 

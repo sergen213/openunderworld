@@ -826,7 +826,16 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     if (cls == 603) poleAttachSetter(ctx, alt); // 0x74C8D0 (group B)
     else if (cls == 625) beamAttachSetter(ctx); // 0x74C110 (group B)
     else if (cls == 618 || cls == 619) holdAttachSetter(ctx, cls == 619); // 0x752870 (0x772CA0 cases 0x26A / 0x26B)
-    else if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
+    else if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) {
+        const ChartContext::MarkupSlot slot = jt(ctx);
+        attachChartMarkup(ctx, slot);
+        // 0x74DCD0's kind-1 branch (request +2 == 1): the rung root and the ladder facing, through 0x702D20, become
+        // 0x437120's alignment for the request's mode-3 window [O decomp]
+        if (ladderOnly && ctx.chartAttached && *ctx.chartAttached) ctx.alignToHold(*ctx.chartAttached);
+        // 0x74ED30's kind-2 branch (a graph-node request): 0x74BF90's PrimAirAttachAnimTarget, whose slot 1 0x750780
+        // aims the node's next clip at the hang root through 0x741130 [O decomp]
+        if (cls == 610 && ctx.chartAttached && *ctx.chartAttached) ctx.ledgeHangAlign();
+    }
 }
 
 // 2001 (0x75EF70: camera vfunc +0xB0 (0)), 2002 (0x75EF90: +0xB0 (1)), 2005 (enter and exit 0x75EF50: +0xB4); 2001 /
