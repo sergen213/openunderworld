@@ -1538,6 +1538,8 @@ struct EffectsView {
     static bool follows(const std::shared_ptr<const ou::fx::ObjectFx>& fx) { return fx && (!fx->ribbons.empty() || !fx->bolts.empty()); }
     struct ObjectClipAt { std::string object, clip; double t = 0; glm::mat4 model{1}; };
     std::map<std::pair<int32_t, int>, ObjectClipAt> objectClipAt; // (script object uid, uber section) -> last tick's clip
+    std::map<int32_t, uint32_t> enemyStarts; // enemy uid -> Enemy::clipStarts() as events() last saw it
+    uint8_t laraFloorMat = 0; // Lara's last floor contact material (events(): kept while she hangs / climbs)
     // Placed objects with class-7 fades (rewards, keys): intro uid -> effects, world matrix.
     std::map<int32_t, std::pair<std::shared_ptr<const ou::fx::ObjectFx>, glm::mat4>> intros;
     // A reward picked up: its "pickup" list's variant-1 records (tru.exe 0x5B26C0 with variant 0x400 [I: the pickup
@@ -1570,8 +1572,24 @@ struct EffectsView {
         };
         const auto &ps = w.player().state(), &pp = w.previous();
         if (const auto* clip = w.anims().find(ps.clip)) {
-            // Lara's material (0x6F06B0): the floor face's, 2 with the feet under a water surface [I: swimming], 3 under water [I].
-            const uint8_t mat = w.submerged() ? 3 : ps.water >= 0 ? 2 : floorMaterial(ps.pos);
+            // Lara's material (0x6F06B0 reads instance +0x186): the floor face's, 2 with the feet under a water surface
+            // [I: swimming], 3 under water [I]. +0x186 is the contact face's material from her last collision update
+            // (0x5DCE20), 0xFF with no contact: in the air and on the landing tick (Wine fall / jump sound logs: material
+            // 255 for S1033's records and the landing's frame 0, 1 once standing) [O]. Ours: the previous tick's contact
+            // (feet within 4 units of the floor); hanging / climbing keeps the last floor's [I: tru takes the ledge's
+            // face; the bedroom wall read 1 as its floor].
+            const auto st = pp.state;
+            const bool attached = st == ou::game::State::Hang || st == ou::game::State::Shimmy || st == ou::game::State::ClimbUp ||
+                                  st == ou::game::State::DropToHang || st == ou::game::State::PoleHang || st == ou::game::State::Climb ||
+                                  st == ou::game::State::Ladder || st == ou::game::State::Perch || st == ou::game::State::Pillar ||
+                                  st == ou::game::State::GrappleThrow || st == ou::game::State::GrappleSwing;
+            uint8_t mat = 0;
+            if (w.submerged()) mat = 3;
+            else if (ps.water >= 0) mat = 2;
+            else if (attached) mat = laraFloorMat;
+            else if (const auto h = w.collision().groundProbe(pp.pos + glm::vec3(0, 0, 50), 250); h && pp.pos.z - h->point.z <= 4)
+                mat = laraFloorMat = material(w.collision(), *h);
+            else mat = 0xFF;
             // Vehicle clips ("object:clip", e.g. motorcycle mount / dismount) run that object's lists.
             const auto colon = ps.clip.find(':');
             const auto split = [&](const std::string& c) { return c.find(':') == std::string::npos ? c : c.substr(c.find(':') + 1); };
@@ -1581,7 +1599,7 @@ struct EffectsView {
             if (follows(lara)) pose = w.pose(1.0), system.track(kLaraOwner, model, pose);
             clipEvents(lara, split(ps.clip), pp.clip.substr(0, pp.clip.find(':')) == ps.clip.substr(0, colon) ? split(pp.clip) : std::string(),
                        pp.clipTime, ps.clipTime, clip->durationSeconds(), mat, model, [&] { return pose.empty() ? w.pose(1.0) : pose; },
-                       kLaraOwner, ps.clipSerial != pp.clipSerial ? std::optional<double>(ps.clipStart) : std::nullopt);
+                       kLaraOwner, ps.clipSerial != pp.clipSerial || pp.clipTime == ps.clipStart ? std::optional<double>(ps.clipStart) : std::nullopt);
         }
         // The combat upper-body clip (reload / equip / unequip): Lara's and the weapon object's lists for that clip
         // name (tru.exe keeps weapon-handling sounds in the weapon object's lists, e.g. wp_handgun "reload").
@@ -1609,8 +1627,12 @@ struct EffectsView {
             const glm::mat4 model = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip, s.tilt);
             std::vector<glm::mat4> pose;
             if (follows(fx)) pose = e->pose(1.0), system.track(enemyOwner(e->uid()), model, pose);
+            // a replayed once clip (Enemy::playClip) restarts at 0 under the same name: its window counts from there
+            const auto [st, fresh] = enemyStarts.try_emplace(e->uid(), e->clipStarts());
+            const bool restarted = !fresh && st->second != e->clipStarts();
+            st->second = e->clipStarts();
             clipEvents(fx, s.clip, p.clip, p.clipTime, s.clipTime, it->second.durationSeconds(), floorMaterial(s.pos), model,
-                       [&] { return pose.empty() ? e->pose(1.0) : pose; }, enemyOwner(e->uid()));
+                       [&] { return pose.empty() ? e->pose(1.0) : pose; }, enemyOwner(e->uid()), restarted ? std::optional<double>(0.0) : std::nullopt);
         }
         // Script objects (switches, doors, uber objects, anim-graph objects such as light fixtures): their clips' events
         // as the characters' (tru.exe runs every instance's animation events, 0x5BA0D0), owner = intro uid.

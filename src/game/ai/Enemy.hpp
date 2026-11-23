@@ -465,6 +465,7 @@ public:
     int32_t uid() const { return uid_; }
     const EnemyType& type() const { return *type_; }
     const EnemyState& state() const { return s_; }
+    uint32_t clipStarts() const { return clipSerial_; } // playClip count (a once clip replayed restarts at 0)
     const EnemyState& previous() const { return prev_; }
     std::string unit;     // owning unit (streaming); "" = added by hand
     int32_t generator = 0; // spawned by this generator intro (0 = placed)
