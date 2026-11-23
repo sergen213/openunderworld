@@ -346,6 +346,9 @@ public:
     // The chart's own jump target (player +0xA64 as the chart's actions set it: action 504's take-off query, action
     // 230's promotion); empty: the context's jumpTarget() answers.
     Aim chartTarget;
+    // Player +0xA40 (the query object's +0xC0): the velocity a mode-1 search profile flies (0x76FFC0), as 0x74C850
+    // writes it from 0x744310 before its profile-27 search; nullopt: the search keeps its own source (group J).
+    std::optional<glm::vec3> queryVelocity;
     // Player +0x9F0, the jump target's point: clearing the target (+0xA64 = 0: the attach 0x707730, the flight's drop,
     // the take-off's new query) leaves it [O: 0x749CD0 reads it after action 236's attach cleared +0xA64]; the last
     // target's point (chartTargetPoint answers with the live target's while there is one).
@@ -507,6 +510,12 @@ void poleAttachSetter(ChartContext& ctx, bool alt);
 // 0x74C110: the class-625 (beam) attach setter of action 230: attaches the jump target, sets the facing along the beam
 // (+0xED0 / +0xCDC), the beam controller's segment and angle (agent +0x360 / +0x35C) and +0xCB0 / +0xCC0.
 void beamAttachSetter(ChartContext& ctx);
+// 0x752870: the class-618 (`high` false) / 619 (`high` true) free-climb hold attach setter of action 230: attaches the
+// jump target when it is a hold (MUD 0x8000) and grips it (holdGrip).
+void holdAttachSetter(ChartContext& ctx, bool high);
+// 0x752870's grip on hold `s` (3 points): +0xC98 / +0xCA0 = the higher of points 1 / 2 (param 1.0 / 1.99999), +0xCC0
+// = the hold's normal, and the root offset +0xCE0 / +0xCE8, so the pin (0x6FDC90) holds her root 158.025 under point 0.
+void holdGrip(ChartContext& ctx, ChartContext::MarkupSlot& s, bool high);
 // 0x743900: action 205's per-tick beam balance steer (init on entry): agent +0x3A0 lean, +0x3A4 walk amount, +0x28
 // heading target, the layer blend (ChartContext::setLayerBlend) and mirror (src/game/chart/Ledge.cpp).
 void beamBalanceTick(ChartContext& ctx, bool init);

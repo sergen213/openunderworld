@@ -13,6 +13,7 @@
 //   0x7DA / 0x7DB (targeting slots 5 / 6), 0x8A0 (tru.exe inventory slot index). Registered but answered by the
 //   context, nullopt in shadow mode: 0x217 (the wall probe), 0x385 / 0x386 (combat object +0x50), 0x403 (combat flag
 //   bit 10), 0x401 / 0x404 / 0x408 (the upper chart is not run beside Lara's).
+#include "game/Game.hpp"
 #include "game/Chart.hpp"
 
 #include <algorithm>
@@ -207,8 +208,26 @@ uint32_t markupClassWord(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
 // the search's control yaw, Player::markupSearch) through 0x7296C0 on player +0x980; with a target (+0xA64) r = its
 // class word +0xA6C (0x770240 = 0x6EC440) & 0xFFFFFC10, else 0. value 0: r == 0 or r < 0; 1: r != 0 and r >= 0; else
 // false [O: decomp]. The search sets the chart's jump target as 0x7296C0 does.
+// 0x744310 (profile `p`'s velocity +0x10 = s): with a = the stick record's angle +0xC (wrapped, 0x431D70; 0 = pad up,
+// + = left), s * (cos a * her up axis + sin a * her model X axis), the matrix rows of her instance +0x90 normalized
+// (0x49D420); y negated at the end, as 0x76FFC0's own velocity sources do (ours: world, unnegated) [O: decomp]. Not
+// ported: the attached markup's surface term (0x6EBEF0 axes x clamp(cos a, +-data +0xE50) / 2 and clamp(sin a, +-data
+// +0xE54) / 2 over profile +0xA4: at most 0.03 a frame for profile 27, against s = 50.57) [I]. Pad: (x right, y down),
+// a = atan2(-x, -y); at rest 0 [I].
+std::optional<glm::vec3> stickQueryVelocity(ChartContext& ctx, float s) {
+    const auto pad = ctx.pad();
+    if (!pad) return std::nullopt;
+    const float a = glm::dot(*pad, *pad) > 1e-12f ? std::atan2(-pad->x, -pad->y) : 0.0f;
+    const float h = ctx.heading();
+    const glm::vec3 up(0, 0, 1), modelX(-std::sin(h), std::cos(h), 0); // model X = her left (she faces model -Y)
+    return s * (std::cos(a) * up + std::sin(a) * modelX);
+}
+
 bool dropDownTarget(ChartContext& ctx, const Cond& c) {
+    // 0x74C850: player +0xA40 = 0x744310(profile 27, its +0x10: 50.5689) before the search
+    if (const auto p = decodeProfile(ctx.chart().charts(), 0x1B)) ctx.queryVelocity = stickQueryVelocity(ctx, p->velocity.z);
     const auto found = chartMarkupSearch(ctx, 0x1B);
+    ctx.queryVelocity.reset();
     if (!found) return ctx.chart().unported(c);
     int32_t r = 0;
     if (*found && ctx.chartTarget.target) {
@@ -781,6 +800,7 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     const bool ladderOnly = cls == 602 || cls == 611;
     if (cls == 603) poleAttachSetter(ctx, alt); // 0x74C8D0 (group B)
     else if (cls == 625) beamAttachSetter(ctx); // 0x74C110 (group B)
+    else if (cls == 618 || cls == 619) holdAttachSetter(ctx, cls == 619); // 0x752870 (0x772CA0 cases 0x26A / 0x26B)
     else if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
 }
 

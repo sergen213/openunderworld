@@ -947,6 +947,57 @@ void beamAttachSetter(ChartContext& ctx) {
     ctx.playerFloat(0xCC0) = d.y, ctx.playerFloat(0xCC4) = -d.x, ctx.playerFloat(0xCC8) = 0; // (d.x, d.y, 0) x (0, 0, 1)
 }
 
+// 0x752870 [O: decomp]: the hold's points p0..p2 (0x5C3AA0 / MarkUpBox_GetSegmentPos 0..2) and 0x6EBEF0's box (origin O,
+// extent vectors along a2 = a1 x n and a1 = unit(n x up), n the hold's normal 0x5C3CC0). +0xCE0..+0xCEC = 0, +0xCE8 =
+// 316.05. Then:
+//  - p1.z <= p2.z: +0xC98 = 1.99999 (0x3FFFFCB9), +0xCA0 = p2; mode 0 (`high` false): +0xCE0 = -|O + E1 - p0|_xy;
+//  - else: +0xC98 = 1.0, +0xCA0 = p1; mode 0: +0xCE0 = |O - p0|_xy.
+// Mode 0 also sets +0xCE8 = (+0xCA0 - p0).z + 158.025 (0x432190 [I: read as the z difference]). +0xCC0 = n, +0xCDC = 0.
+// The pin then holds root = +0xCA0 - her rotation x +0xCE0: her left x +0xCE0 and the grip less +0xCE8 in z, i.e. 158.025
+// under p0 [O, checked: Wine cc_dice_* on hold 898: p2 branch, |O + E1 - p0|_xy 76.6, her root 2166.25 = 2324.2 -
+// 158.0]. n = unit(cross(p1 - p0, p2 - p0)) [I: 0x5C3CC0's own formula is not decoded; this sign gives the Wine offset,
+// the opposite one 79.2].
+void holdGrip(ChartContext& ctx, ChartContext::MarkupSlot& s, bool high) {
+    const auto s0 = ctx.markupSegment(s.markup, 0), s1 = ctx.markupSegment(s.markup, 1);
+    if (!s0 || !s1) return;
+    const glm::vec3 p0 = s0->first, p1 = s0->second, p2 = s1->second;
+    glm::vec3 n = glm::cross(p1 - p0, p2 - p0);
+    if (glm::length(n) < 1e-6f) return;
+    n = glm::normalize(n);
+    glm::vec3 a1 = glm::cross(n, glm::vec3(0, 0, 1));
+    a1 = glm::length(a1) > 1e-6f ? glm::normalize(a1) : glm::normalize(p1 - p0);
+    const glm::vec3 a2 = glm::normalize(glm::cross(a1, n));
+    float lo1 = 0, hi1 = 0, lo2 = 0;
+    for (const glm::vec3& p : {p1, p2}) {
+        glm::vec3 r = p - p0;
+        r -= glm::dot(r, n) * n;
+        const float c1 = glm::dot(r, a1), c2 = glm::dot(r, a2);
+        lo1 = std::min(lo1, c1), hi1 = std::max(hi1, c1), lo2 = std::min(lo2, c2);
+    }
+    const glm::vec3 origin = p0 + a2 * lo2 + a1 * lo1, e1 = a1 * (hi1 - lo1);
+    const bool upper = p1.z <= p2.z;
+    s.param = upper ? 1.99999f : 1.0f;
+    s.point = upper ? p2 : p1;
+    s.normal = n;
+    ctx.playerFloat(0xCE0) = 0, ctx.playerFloat(0xCE4) = 0, ctx.playerFloat(0xCE8) = 316.05002f;
+    if (!high) {
+        const glm::vec3 d = upper ? origin + e1 - p0 : origin - p0;
+        const float h = glm::length(glm::vec2(d));
+        ctx.playerFloat(0xCE0) = upper ? -h : h;
+        ctx.playerFloat(0xCE8) = (s.point - p0).z + 158.025f;
+    }
+    ctx.playerFloat(0xCC0) = n.x, ctx.playerFloat(0xCC4) = n.y, ctx.playerFloat(0xCC8) = n.z;
+    ctx.playerFloat(0xCDC) = 0;
+}
+
+// 0x752870's entry: the markup 0x72AFB0 picks (the jump target; ours: else the attached one), only a hold (MUD
+// 0x8000); the attach (0x7512A0) and its alignment onto the grip are the drive's.
+void holdAttachSetter(ChartContext& ctx, bool high) {
+    if (const auto t = chartJumpTarget(ctx); t && (t.flags & 0x8000)) attachChartMarkup(ctx, t);
+    if (!ctx.chartAttached || !*ctx.chartAttached || !(ctx.chartAttached->flags & 0x8000)) return;
+    holdGrip(ctx, *ctx.chartAttached, high);
+}
+
 // 602 / 611 (0x74DCD0) attach only a ladder target (MUD 0x400000): markupAttachTarget checks it.
 bool attachTargetClass(int cls) {
     switch (cls) {

@@ -430,6 +430,15 @@ clip already playing runs variant 3, 0xC00); effects, sounds and slot sounds ali
 and weapons'. Ours (`EffectsView::clipEvents`, `fx::System::runVariant`): Lara, enemies and script objects; a script
 object's clip that ends runs its variant 2 then. Variant 3 is not run [I: re-requests are not visible to ou-game].
 
+Frame records [O 0x43CC10 -> 0x5B26C0]: each advance of a sub-layer whose events are on fires the variant-0 records
+of frames in [time before, time after) (layer times in frames × 0.01), so each record fires once per pass; a clip
+starts at (start − blend) frames, and the lead before frame 0 fires nothing. Ours (`fx::clipEventSpans`, test
+`Fx.ClipEventSpansFireEachFrameOnceFromTheClipStart`): Lara's window counts from `PlayerState::clipStart` on a
+(re)start (`clipSerial`). Before this fix a negative start fired the whole clip on its first tick and frame 0 on
+every tick of the lead, a legacy start at time 0 fired frame 0 twice, and a same-name restart (chart S431 <-> S432
+`ledgeb_right_3` mirror swap) fired the rest of the old pass: 16 Lara sounds per restart, 508 sounds in the chart
+replay `maproom_south_run_birth` against 160 after (legacy 47 -> 38) [ours, OU_ANIM_EVENTS=1 logs; no Wine audio capture].
+
 ## Instance fades
 
 Class 7 records (`+0x44` count, `+0x48` records of 0x0C bytes) [O 0x52C920]: `+0x00` / `+0x02` s16 fade from / to
