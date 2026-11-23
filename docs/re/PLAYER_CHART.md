@@ -555,10 +555,14 @@ in the air, where ours aims only at take-off:
   - The point test 0x6F96C0 clamps a closest approach before the arc's start to t = 0 only when profile +0x2C has
     bit 0x10000. Ours' polyline sweep keeps its [I] start rule (0x6F9940's times are not decoded): gating it the same
     way lost the beam 1031 hit of profile 84 (ch_beam_* regressed).
+  - Free-climb grip, ported (Ledge.cpp holdGrip / holdAttachSetter, action 230 classes 618 / 619 = 0x752870): +0xCA0
+    is the higher of points 1 / 2, and +0xCE0 / +0xCE8 is the root offset the pin (0x6FDC90) applies, which keeps her
+    root 158.025 under point 0. In Wine cc_dice_up_hold ours' S571 root is now within 0.02 in z and 5 in xy.
   - Open (cc_dice_*): Wine's falling grab (profile 45) lands S600 on hold 898's point 0. Ours meets hang ledge 934 at
-    its own start first, through that polyline start rule (gated, profile 45 found 898). Ours also seeds and holds her
-    root at the hold's point 0, where Wine puts it 158 under, so profile 27's base differs and the cases diverge at
-    T778 / T782. The seed now takes a hold a search found (ChartShadow grabbedHold) before the nearest one.
+    its own start first, through that polyline start rule. So cc_dice_right / up_jump seed hold 894, the nearest one;
+    when that rule is gated, profile 45 finds 898. In cc_dice_up_hold T781 (S569 -> S578) fails on 0x20
+    VerticalClearance: the 711-unit ray up from the root bone (moved a third of the way toward +0xCA0) hits geometry
+    295 above, where Wine passes.
 
 ### Foot locks: conditions 0x12E / 0x131 [O decode, open: not ported]
 

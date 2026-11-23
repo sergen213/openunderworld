@@ -800,6 +800,7 @@ void markupAttachTarget(ChartContext& ctx, uint16_t) {
     const bool ladderOnly = cls == 602 || cls == 611;
     if (cls == 603) poleAttachSetter(ctx, alt); // 0x74C8D0 (group B)
     else if (cls == 625) beamAttachSetter(ctx); // 0x74C110 (group B)
+    else if (cls == 618 || cls == 619) holdAttachSetter(ctx, cls == 619); // 0x752870 (0x772CA0 cases 0x26A / 0x26B)
     else if (attachTargetClass(cls) && (!ladderOnly || (jt(ctx) && (jt(ctx).flags & 0x400000)))) attachChartMarkup(ctx, jt(ctx));
 }
 
