@@ -552,6 +552,54 @@ TEST(Config, RoundTripAndDefaults) {
     fs::remove_all(p.parent_path());
 }
 
+// The launcher and ou-game write only their own changes: a hand edit (game.traversal "chart"), unknown keys and other
+// keys changed on disk since survive; a malformed file or an invalid result is left untouched.
+TEST(Config, SaveChangesKeepsEditsMadeElsewhere) {
+    fs::path p = fs::temp_directory_path() / ("ou_config_merge_" + std::to_string(::getpid()) + "/config.json");
+    fs::remove_all(p.parent_path());
+    ou::config::Config base;
+    ou::config::save(p, base);
+    // Edited by hand while the launcher was open: traversal, weather, a key no Config field knows.
+    auto j = nlohmann::json::parse(std::ifstream(p));
+    j["game"]["traversal"] = "chart";
+    j["graphics"]["weather"] = "snow";
+    j["future_key"] = {{"x", 1}};
+    std::ofstream(p) << j.dump();
+    // The launcher changed the width, one binding and the launch options (from its stale view, `base`).
+    auto edited = base;
+    edited.width = 1920;
+    edited.controls.bindings["jump"] = {"J"};
+    edited.gameArgs = "--no-movies --spawn '1, 2'";
+    const auto merged = ou::config::saveChanges(p, base, edited);
+    EXPECT_EQ(merged.game.traversal, "chart");
+    EXPECT_EQ(merged.graphics.weather, "snow");
+    EXPECT_EQ(merged.width, 1920);
+    EXPECT_EQ(merged.controls.bindings.at("jump"), std::vector<std::string>{"J"});
+    EXPECT_EQ(merged.controls.bindings.at("forward"), base.controls.bindings.at("forward"));
+    EXPECT_EQ(merged.gameArgs, edited.gameArgs);
+    const auto d = ou::config::load(p);
+    EXPECT_EQ(d.game.traversal, "chart");
+    EXPECT_EQ(d.gameArgs, edited.gameArgs);
+    EXPECT_EQ(nlohmann::json::parse(std::ifstream(p))["future_key"]["x"], 1);
+    // An optional field set and then unset again: written, then erased; the hand edit stays throughout.
+    auto withShadows = merged;
+    withShadows.graphics.shadows = false;
+    ou::config::saveChanges(p, merged, withShadows);
+    EXPECT_EQ(ou::config::load(p).graphics.shadows, std::optional(false));
+    ou::config::saveChanges(p, withShadows, merged);
+    EXPECT_FALSE(ou::config::load(p).graphics.shadows);
+    EXPECT_EQ(ou::config::load(p).game.traversal, "chart");
+    // A broken hand edit is never overwritten, nor is a file the result would not load.
+    const auto text = [&p] { std::ifstream f(p); return std::string(std::istreambuf_iterator<char>(f), {}); };
+    std::ofstream(p) << R"({"game": {"traversal": "chart",}})";
+    EXPECT_THROW(ou::config::saveChanges(p, base, edited), std::runtime_error);
+    EXPECT_EQ(text(), R"({"game": {"traversal": "chart",}})");
+    std::ofstream(p) << R"({"game": {"traversal": "sideways"}})";
+    EXPECT_THROW(ou::config::saveChanges(p, base, edited), std::runtime_error);
+    EXPECT_EQ(text(), R"({"game": {"traversal": "sideways"}})");
+    fs::remove_all(p.parent_path());
+}
+
 TEST(Config, ControlsOverridePerActionAndRoundTrip) {
     fs::path p = fs::temp_directory_path() / ("ou_config_ctl_" + std::to_string(::getpid()) + "/config.json");
     fs::create_directories(p.parent_path());
