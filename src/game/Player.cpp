@@ -87,10 +87,24 @@ vec3 rootChannels(const anim::Clip& c, double t, bool loop, int first) {
     if (c.tracks.empty() || c.keyCount == 0 || c.timePerKey == 0) return vec3(0);
     const auto& tr = c.tracks[0];
     const int n = c.keyCount;
-    auto key = [&](int i) {
+    auto raw = [&](int i) {
         vec3 v(0);
         for (int a = 0; a < 3; ++a)
             if (!tr[size_t(first + a)].empty()) v[a] = tr[size_t(first + a)][size_t(i)];
+        return v;
+    };
+    // Rotation keys take the short way round between keys: bbeam_walk_turn180's root Z keys run 1.927 -> -3.142 (its
+    // 180 stored as -180), which Wine plays as +17.4 deg a tick into S935's 90 (ch_beam_walk_back_rng t278..t282), not
+    // -72.6 a tick the long way back [O-runtime]. Unwrapped cumulatively so the cycle and the end value agree.
+    const bool rot = first == anim::RotX;
+    auto key = [&](int i) {
+        if (!rot) return raw(i);
+        vec3 v = raw(0), p = v;
+        for (int j = 1; j <= i; ++j) {
+            const vec3 q = raw(j);
+            for (int a = 0; a < 3; ++a) v[a] += wrapAngle(q[a] - p[a]);
+            p = q;
+        }
         return v;
     };
     const double dur = c.durationSeconds();
