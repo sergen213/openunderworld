@@ -4508,6 +4508,7 @@ void Player::drive(const DriveStep& d, float dt) {
     if (s_.clip == "sprint_loop") s_.sprintUsed += dt;
     else if (s_.clip != "ng_sprint_to_exhaust" && s_.clip != "ng_run_exhaust") s_.sprintUsed = std::max(0.0f, s_.sprintUsed - dt);
     double t0 = s_.clipTime, t1 = t0;
+    vec3 tail(0); // the ending clip's last step on the tick the chart leaves it (below)
     if (!d.clip.empty()) {
         const bool fresh = d.restart || s_.clip != d.clip || s_.mirror != d.mirror;
         if (fresh) {
@@ -4527,6 +4528,26 @@ void Player::drive(const DriveStep& d, float dt) {
             //   a tick backward for 10 ticks = its root at 500 time units, 43.56, then the clip's last 27.0) [O-runtime].
             const anim::Clip* oc = anims_.find(s_.clip);
             const anim::Clip* nc = anims_.find(d.clip);
+            // A once clip that ends on this tick (the change by AnimationEnded): tru.exe's anim update moves her root
+            // through the clip's last step before the chart switches on that frame, and the new clip's first step
+            // comes on the next frame (Wine ch_beam_walk_back_rng S943 bbeam_stepback -> S944 at t254: +13.51 on t253
+            // and again on t254, the clip's last 27.0; ours dropped the second half and stayed 13.5 behind on the beam).
+            if (oc && !s_.loop) {
+                const double dur = oc->durationSeconds();
+                const double a = std::max(s_.clipTime, rootLead_.start + double(rootLead_.hold));
+                const double b = std::min(dur, s_.clipTime + double(s_.clipRate) * dt);
+                if (b >= dur - 1e-6 && b > a) {
+                    const vec3 r = rootDelta(anims_, s_, *oc, a, b);
+                    const float k = s_.mirror ? -1.0f : 1.0f;
+                    if (std::abs(rootYaw(*oc, dur, false) - rootYaw(*oc, 0, false)) > 1e-3f) {
+                        const float base = s_.yaw - k * rootYaw(*oc, a, false);
+                        tail = rotYaw(base, r);
+                        s_.yaw = wrapAngle(base + k * rootYaw(*oc, b, false));
+                    } else {
+                        tail = toWorld(r);
+                    }
+                }
+            }
             if (d.crossfade > 0 && oc && nc) {
                 constexpr double h = 1.0 / 60.0;
                 const auto velocity = [&](const anim::Clip& c, double t, bool loop, bool mirror) {
@@ -4607,6 +4628,7 @@ void Player::drive(const DriveStep& d, float dt) {
             world = toWorld(root);
         }
     }
+    world += tail;
     if (fade_.left > 0) {
         const float step = std::min(dt, fade_.left);
         const float w = 1.0f - (fade_.left - 0.5f * step) / fade_.total; // the step's midpoint
