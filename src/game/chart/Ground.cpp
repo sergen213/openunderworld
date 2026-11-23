@@ -9,9 +9,8 @@
 // Group A ids ported elsewhere: 0x1, 0x65, 0x66, 0x68, 0x69, 0x6A, 0x6B, 0x96, 0x98, 0xC9, 0x191 (Generic.cpp).
 // Group A ids not ported (the game state they read is not modelled; they stay unregistered and count as unported):
 //   0x12E / 0x131 foot-lock controllers (+0xF20.., their lock bytes +0x10A / +0x10B set through 0x7000F0 by anim events),
-//   0x193 / 0x19A the player +0x800 target point, 0x198 the downhill vector (ground normal +0x5F0 / +0x600), 0x1E0 the
-//   combo move history, 0x20B the wall-jump
-//   anticipation rays (0x759260, n = 0 frames), 0x20D the combat component flags +0x1FC bit 11.
+//   0x193 / 0x19A the player +0x800 target point, 0x20B the wall-jump anticipation rays (0x759260, n = 0 frames), 0x20D
+//   the combat component flags +0x1FC bit 11.
 #include "game/Chart.hpp"
 #include "game/Game.hpp"
 
@@ -242,6 +241,30 @@ bool moveDirMomentum(ChartContext& ctx, const Cond& c) {
     return (*zone & zoneBit(v)) != 0;
 }
 
+// 0x198 (0x761660, PSCCF_MoveDirDownhill): 0x7308B0's downhill vector through 0x785FB0 as 0x197 (values 410..413).
+// 0x7308B0: an attached markup flagged 0x800000 gives player +0xCB0 (not modelled); else d = (Z x n) x n =
+// (nx nz, ny nz, -(nx^2 + ny^2)) from +0x5F0 (the last too-steep face's normal, written only on message 0x1C9 /
+// 0x1CA by 0x76FC30, so it outlives the slope) when its x / y are not both 0, else from +0x600 (the last support
+// normal, 0x71B910) when its x / y are not both 0 [O: decomp]; the heading is that of (nx, ny) when nz > 0. Both flat:
+// (0, 0, owner +0x38), whose heading through 0x70B7C0 / 0x49EFC0 is not decoded [U]; 414..417 (against the player
+// +0x800 point) are not modelled.
+bool moveDirDownhill(ChartContext& ctx, const Cond& c) {
+    const int v = mode(c);
+    const PlayerState* s = ctx.player();
+    if (v < 0x19A || v > 0x19D || !s) return ctx.chart().unported(c);
+    if (const auto am = ctx.attachedMarkup(); am.markup >= 0 && (am.flags & 0x800000)) return ctx.chart().unported(c);
+    const auto steep = ctx.steepFaceNormal(), support = ctx.supportFaceNormal();
+    if (!steep || !support) return ctx.chart().unported(c);
+    const auto sloped = [](const glm::vec3& n) { return n.x != 0.0f || n.y != 0.0f; };
+    const glm::vec3* n = sloped(*steep) ? &*steep : sloped(*support) ? &*support : nullptr;
+    if (!n) return ctx.chart().unported(c);
+    const glm::vec3 d(n->x * n->z, n->y * n->z, -(n->x * n->x + n->y * n->y));
+    const float angle = wrapPi(std::atan2(d.y, d.x) - playerYaw(*s));
+    const auto zone = moveDirZone(ctx, angle);
+    if (!zone) return ctx.chart().unported(c);
+    return (*zone & zoneBit(v)) != 0;
+}
+
 // 0x19E (0x7619B0, PSCCF_MoveDirSpherical): without a jump target (player +0xA64 == 0) the function returns the negate
 // bit itself, i.e. a raw false. With one, the target's yaw / pitch against her (0x786490) is not ported.
 bool moveDirSpherical(ChartContext& ctx, const Cond& c) {
@@ -289,6 +312,58 @@ bool usingGear(ChartContext& ctx, const Cond& c) {
     const auto slot = ctx.gearSlot();
     if (!slot || *slot != -1) return rt.unported(c);
     return edge(ctx, c, false, true);
+}
+
+// 0x1E0 (0x72FAF0 -> 0x72F730 with ecx = agent +0x46C, the combo history action 1002 keeps: Jump.cpp comboAppend,
+// count +0x484) [O: decomp + asm]. No history: false. Else per entry of Lara data +0xFE0 (count +0xFDC, 0x14 bytes:
+// +4 enabled, +8 record count, +0xC records of 0x18 bytes) the records before the history's last position must equal
+// the history (s16 +0); the record at that position must have +2 == the condition's raw value, +0 == the current
+// state's int property 0x3F2 (type 0xE, else 0) and +0xC < the state time (+0x508) <= +0x10; then for each of its +4
+// alternatives (s16 input action ids at +8): the action is active (input table 0xA02B68 +0x18 flags 0x10 or 2, while
+// DAT_008AB4E6 is set (default 1), 0xE7F144 bit 0 clear and 0xE7F143 != 4: [I] ours = held) and 0x72F6D0 holds (the
+// stick angle, player globals +0xB0 +0x10, through 0x785FB0 with the record's s16 +0x14) -> true. The entry's scan ends
+// at that record either way.
+bool comboMove(ChartContext& ctx, const Cond& c) {
+    ChartRuntime& rt = ctx.chart();
+    const int len = rt.field(0x484);
+    if (len <= 0) return false;
+    const Charts& d = rt.charts();
+    const auto table = d.pointer(d.dataOffset + 0xFE0);
+    if (!table) return false;
+    const Property* p = rt.property(0x3F2);
+    const int combo = p && p->type == 0xE ? int(p->raw) : 0;
+    const float t = rt.stateTime();
+    const uint32_t n = d.data<uint32_t>(0xFDC);
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t e = *table - d.dataOffset + i * 0x14;
+        if (d.data<int32_t>(e + 4) == 0) continue;
+        const uint32_t count = d.data<uint32_t>(e + 8);
+        const auto seq = d.pointer(d.dataOffset + e + 0xC);
+        if (!seq) continue;
+        for (uint32_t k = 0; k < count; ++k) {
+            const uint32_t r = *seq - d.dataOffset + k * 0x18;
+            if (int(k) >= len - 1) {
+                const uint32_t alts = d.data<uint32_t>(r + 4);
+                if (d.data<int16_t>(r + 2) == c.value && d.data<int16_t>(r) == combo && d.data<float>(r + 0xC) < t &&
+                    t <= d.data<float>(r + 0x10) && alts != 0) {
+                    const auto list = d.pointer(d.dataOffset + r + 8);
+                    if (!list) return rt.unported(c);
+                    const auto angle = stickAngle(ctx);
+                    const auto zone = angle ? moveDirZone(ctx, *angle) : std::nullopt;
+                    for (uint32_t j = 0; j < alts; ++j) {
+                        const ChartContext::Action a = ctx.action(d.data<int16_t>(*list - d.dataOffset + j * 2));
+                        if (!a.known) return rt.unported(c);
+                        if (!a.down) continue;
+                        if (!zone) return rt.unported(c);
+                        if (*zone & zoneBit(d.data<int16_t>(r + 0x14))) return true;
+                    }
+                }
+                break;
+            }
+            if (d.data<int16_t>(r) != rt.field(0x46C + int(k) * 4)) break;
+        }
+    }
+    return false;
 }
 
 // 0x1EA (0x764FD0) / 0x1EF (0x764E00) / 0x1E5 (0x7651E0): an s16 of the move sweep's record (player +0x31C, ChartJ's
@@ -1003,10 +1078,12 @@ void registerGround(Registry& player, Registry&) {
     player.condition(0x192, moveDir, "PSCCF_MoveDir", g);
     player.condition(0x194, moveDirLeftRight, "PSCCF_MoveDirLeftOrRight", g);
     player.condition(0x197, moveDirMomentum, "PSCCF_MoveDirMomentum", g);
+    player.condition(0x198, moveDirDownhill, "PSCCF_MoveDirDownhill", g);
     player.condition(0x19E, moveDirSpherical, "PSCCF_MoveDirSpherical", g);
     player.condition(0x1F7, lowCeiling, "PSCCF_LowCeiling", g);
     player.condition(0x1FA, inCombatMode, "PSCCF_InCombatMode", g);
     player.condition(0x1FB, usingGear, "PSCCF_UsingGear", g); // empty hands only; a held item stays unported
+    player.condition(0x1E0, comboMove, "PSCCF_ComboMove", g);
     player.condition(0x1E5, envProbeClass32, "PSCCF_EnvProbeClass32", g);
     player.condition(0x1EA, envProbeClass, "PSCCF_EnvProbeClass", g);
     player.condition(0x1EF, envProbeClassB, "PSCCF_EnvProbeClassB", g);

@@ -872,6 +872,22 @@ bool System::startFilter(const std::shared_ptr<const ObjectFx>& fx, int def, con
     return true;
 }
 
+std::vector<std::pair<float, float>> clipEventSpans(double prevT, double t, double duration, bool sameClip, std::optional<double> start) {
+    if (duration <= 0) return {};
+    const double len = duration * 30.0, to = t * 30.0;
+    double from = start ? *start * 30.0 : sameClip ? prevT * 30.0 : -1.0;
+    if (to <= 0 || to <= from) {
+        if (!start && !sameClip && t == 0) return {{-1.0f, 0.5f}}; // a new clip standing at its first frame
+        return {};
+    }
+    if (from < 0) from = -1.0; // the lead before frame 0 holds no records
+    const double base = from < 0 ? 0.0 : std::floor(from / len) * len; // a looping clip: the cycle `from` is in
+    const float a = float(from - base);
+    if (to - base < len) return {{a, float(to - base)}};
+    if (to - base > len) return {{a, 1e9f}, {-1.0f, float(to - base - len)}}; // wrapped
+    return {{a, 1e9f}};                                                       // at its end
+}
+
 int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
                       int32_t owner, uint8_t material, float from, float to, std::span<const glm::mat4> bones) {
     int n = 0;

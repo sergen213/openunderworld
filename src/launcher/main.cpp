@@ -33,6 +33,7 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSpinBox>
 #include <QSysInfo>
 #include <QTabWidget>
@@ -62,6 +63,41 @@ QString q(const std::string& s) { return QString::fromStdString(s); }
 QString q(const fs::path& p) { return QString::fromStdString(p.string()); }
 QString q(const char* t) { return QString::fromUtf8(t); }
 std::string s(const QString& t) { return t.toStdString(); }
+
+// Launch options -> arguments, split like a POSIX shell (no expansion): blanks separate words, '…' is literal, "…" keeps
+// blanks (\" \\ \$ \` escape inside), a backslash outside quotes escapes the next character. Throws on an unclosed quote.
+QStringList splitArgs(const QString& line) {
+    QStringList out;
+    QString word;
+    bool inWord = false;
+    for (qsizetype i = 0; i < line.size(); ++i) {
+        const QChar c = line[i];
+        if (c == ' ' || c == '\t' || c == '\n') {
+            if (inWord) out << word, word.clear(), inWord = false;
+            continue;
+        }
+        inWord = true;
+        if (c == '\\') {
+            if (++i < line.size()) word += line[i];
+        } else if (c == '\'') {
+            const qsizetype end = line.indexOf('\'', i + 1);
+            if (end < 0) throw std::runtime_error("Launch options: unclosed ' quote");
+            word += line.mid(i + 1, end - i - 1);
+            i = end;
+        } else if (c == '"') {
+            for (++i;; ++i) {
+                if (i >= line.size()) throw std::runtime_error("Launch options: unclosed \" quote");
+                if (line[i] == '"') break;
+                if (line[i] == '\\' && i + 1 < line.size() && QString("\"\\$`").contains(line[i + 1])) ++i;
+                word += line[i];
+            }
+        } else {
+            word += c;
+        }
+    }
+    if (inWord) out << word;
+    return out;
+}
 
 // "Preset default" / "On" / "Off" for an optional<bool> override.
 QComboBox* overrideCombo(std::optional<bool> v) {
@@ -234,7 +270,8 @@ public:
     Launcher(Paths paths, const QString& gameDirOverride) : paths_(std::move(paths)) {
         setWindowTitle("OpenUnderworld Launcher");
         setWindowIcon(QIcon::fromTheme("openunderworld"));
-        try { cfg_ = written_ = ou::config::load(paths_.config); } catch (const std::exception& e) { startupNote_ = "config ignored: " + q(e.what()); }
+        try { cfg_ = ou::config::load(paths_.config); } catch (const std::exception& e) { startupNote_ = "config ignored: " + q(e.what()); }
+        const std::string loadedGameDir = cfg_.gameDir;
         if (!gameDirOverride.isEmpty()) cfg_.gameDir = s(gameDirOverride);
 
         tabs_ = new QTabWidget;
@@ -270,6 +307,11 @@ public:
         lay->addWidget(tabs_);
         lay->addLayout(bar);
         resize(900, 640);
+        // The base Save diffs against: the file as the widgets show it (their normalization is no edit), except an
+        // override game directory, which Save keeps.
+        collect();
+        shown_ = cfg_;
+        shown_.gameDir = loadedGameDir;
 
         try {
             if (auto r = ou::update::recover(paths_.installRoot); !r.empty()) startupNote_ += " update recovery: " + q(r);
@@ -283,7 +325,7 @@ public:
 
 private:
     Paths paths_;
-    ou::config::Config cfg_, written_; // written_: as last loaded from / saved to paths_.config
+    ou::config::Config cfg_, shown_; // shown_: config.json as the widgets showed it when loaded / last saved
     QString startupNote_, lastScanSummary_;
     QTabWidget* tabs_;
     QLabel* status_;
@@ -296,6 +338,8 @@ private:
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_, *ao_, *aoQuality_;
     QComboBox *water_, *waterDetail_, *waterColor_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_, *tonemap_;
     QComboBox* language_; // config game.language (also ou-game's AUDIO/VISUAL > LANGUAGE)
+    QComboBox* traversal_; // config game.traversal
+    QLineEdit* gameArgs_;  // config launcher.game_args
     QComboBox* timeOfDay_; // config graphics.time_of_day (also ou-game's WATER & SKY > TIME OF DAY)
     QDoubleSpinBox* dayLength_;
     QCheckBox *frameGeneration_, *antiLag_;
@@ -345,10 +389,24 @@ private:
         auto* langRow = new QHBoxLayout;
         langRow->addWidget(new QLabel("Language (text, voice, subtitles):"));
         langRow->addWidget(language_, 1);
+        traversal_ = new QComboBox;
+        traversal_->addItem("Default (hand-written)", "legacy");
+        traversal_->addItem("Chart (experimental)", "chart");
+        traversal_->setToolTip("Who decides Lara's traversal: the hand-written controller or her lara.drm state chart "
+                               "(config game.traversal; ou-game --traversal overrides it)");
+        traversal_->setCurrentIndex(std::max(0, traversal_->findData(q(cfg_.game.traversal))));
+        gameArgs_ = new QLineEdit(q(cfg_.gameArgs));
+        gameArgs_->setPlaceholderText("e.g. --no-movies --time-of-day night");
+        gameArgs_->setToolTip("Extra ou-game arguments, appended after --config on Play (quotes group words; not passed to "
+                              "the Viewer). Config launcher.game_args.");
+        auto* gameplay = new QFormLayout;
+        gameplay->addRow("Traversal", traversal_);
+        gameplay->addRow("Launch options", gameArgs_);
         auto* lay = new QVBoxLayout(w);
         lay->addWidget(new QLabel("<b>Install / import</b> — OpenUnderworld reads your own legally obtained copy of the game."));
         lay->addLayout(row);
         lay->addLayout(langRow);
+        lay->addLayout(gameplay);
         lay->addWidget(hashFiles_);
         lay->addWidget(scanBtn_);
         lay->addWidget(scanOut_, 1);
@@ -1011,6 +1069,8 @@ private:
             for (const QString& n : splitInputs(bindings_->item(i, 0)->text())) names.push_back(s(n));
         }
         cfg_.game.language = s(language_->currentData().toString());
+        cfg_.game.traversal = s(traversal_->currentData().toString());
+        cfg_.gameArgs = s(gameArgs_->text().trimmed());
         cfg_.controls.mouseSensitivity = float(mouseSensitivity_->value());
         cfg_.controls.invertY = invertY_->isChecked();
         cfg_.controls.invertX = invertX_->isChecked();
@@ -1019,15 +1079,18 @@ private:
         cfg_.controls.lookStick = s(lookStick_->currentData().toString());
     }
 
-    bool saveConfig() {
-        // ou-game writes its menu settings into this file (config::GameConfig, look Y inversion, brightness, AUDIO/VISUAL >
-        // GRAPHICS display + graphics keys): adopt what it changed since this launcher last loaded or saved it, so Play
-        // does not undo them.
-        try {
-            const auto disk = ou::config::load(paths_.config);
-            cfg_.game = disk.game;
-            if (disk.game.language != written_.game.language) language_->setCurrentIndex(std::max(0, language_->findData(q(disk.game.language))));
-            const auto &dc = disk.controls, &oc = written_.controls; // ou-game's CONTROL / GAMEPAD CONFIGURATION
+    // Shows `disk`'s values in the widgets where they differ from `old` (what the widgets showed).
+    void showConfig(const ou::config::Config& disk, const ou::config::Config& old) {
+        {
+            if (disk.gameDir != old.gameDir) gameDir_->setText(q(disk.gameDir));
+            if (disk.drm != old.drm) drm_->setText(q(disk.drm));
+            if (disk.gameArgs != old.gameArgs) gameArgs_->setText(q(disk.gameArgs));
+            if (disk.updatesEnabled != old.updatesEnabled) updatesEnabled_->setChecked(disk.updatesEnabled);
+            if (disk.updateChannel != old.updateChannel) channel_->setCurrentText(q(disk.updateChannel));
+            if (disk.updateManifestUrl != old.updateManifestUrl) manifestUrl_->setText(q(disk.updateManifestUrl));
+            if (disk.game.language != old.game.language) language_->setCurrentIndex(std::max(0, language_->findData(q(disk.game.language))));
+            if (disk.game.traversal != old.game.traversal) traversal_->setCurrentIndex(std::max(0, traversal_->findData(q(disk.game.traversal))));
+            const auto &dc = disk.controls, &oc = old.controls; // ou-game's CONTROL / GAMEPAD CONFIGURATION
             if (dc.invertY != oc.invertY) invertY_->setChecked(dc.invertY);
             if (dc.invertX != oc.invertX) invertX_->setChecked(dc.invertX);
             if (dc.vibration != oc.vibration) vibration_->setChecked(dc.vibration);
@@ -1035,15 +1098,15 @@ private:
             if (dc.moveStick != oc.moveStick) moveStick_->setCurrentIndex(std::max(0, moveStick_->findData(q(dc.moveStick))));
             if (dc.lookStick != oc.lookStick) lookStick_->setCurrentIndex(std::max(0, lookStick_->findData(q(dc.lookStick))));
             if (dc.bindings != oc.bindings) showBindings(dc);
-            const auto &d = disk.graphics, &o = written_.graphics;
+            const auto &d = disk.graphics, &o = old.graphics;
             const auto pick = [](QComboBox* c, const QVariant& v) { c->setCurrentIndex(std::max(0, c->findData(v))); };
             const auto tri = [](QComboBox* c, std::optional<bool> v) { c->setCurrentIndex(!v ? 0 : *v ? 1 : 2); }; // overrideCombo
-            if (disk.renderer != written_.renderer) pick(renderer_, q(disk.renderer));
-            if (disk.width != written_.width) width_->setValue(disk.width);
-            if (disk.height != written_.height) height_->setValue(disk.height);
-            if (disk.fullscreen != written_.fullscreen) fullscreen_->setChecked(disk.fullscreen);
-            if (disk.fov != written_.fov) fov_->setValue(disk.fov);
-            if (disk.vsync != written_.vsync) vsync_->setChecked(disk.vsync);
+            if (disk.renderer != old.renderer) pick(renderer_, q(disk.renderer));
+            if (disk.width != old.width) width_->setValue(disk.width);
+            if (disk.height != old.height) height_->setValue(disk.height);
+            if (disk.fullscreen != old.fullscreen) fullscreen_->setChecked(disk.fullscreen);
+            if (disk.fov != old.fov) fov_->setValue(disk.fov);
+            if (disk.vsync != old.vsync) vsync_->setChecked(disk.vsync);
             if (d.preset != o.preset) pick(gfxPreset_, q(d.preset));
             if (d.rt != o.rt) pick(rt_, q(d.rt));
             if (d.rtQuality != o.rtQuality) pick(rtQuality_, q(d.rtQuality));
@@ -1072,25 +1135,34 @@ private:
             if (d.sharpness != o.sharpness) sharpness_->setValue(d.sharpness);
             if (d.frameGeneration != o.frameGeneration) frameGeneration_->setChecked(d.frameGeneration);
             if (d.antiLag != o.antiLag) antiLag_->setChecked(d.antiLag);
-            if (d.effects != o.effects) cfg_.graphics.effects = d.effects; // no widget: collect() keeps it
-        } catch (const std::exception&) {} // unreadable: ours overwrites it
+        }
+    }
+
+    // Writes what was changed here since the config was loaded or last saved into config.json as it is on disk now
+    // (config::saveChanges): whatever ou-game's menus, a hand edit or another tool changed meanwhile, and keys this
+    // launcher does not know, are kept, and the widgets then show the file's values.
+    bool saveConfig() {
         collect();
         try {
             ou::config::resolve(cfg_.graphics); // the apps reject what this rejects
             for (const auto& [action, names] : cfg_.controls.bindings)
                 for (const auto& n : names)
                     if (!ou::platform::parseInput(n)) throw std::runtime_error("control " + action + ": unknown input '" + n + "'");
+            splitArgs(q(cfg_.gameArgs)); // an unclosed quote: refuse instead of starting the game with half of them
         } catch (const std::exception& e) {
             status_->setText("Not saved: " + q(e.what()));
             return false;
         }
         try {
-            ou::config::save(paths_.config, cfg_);
-            written_ = cfg_;
+            const auto shown = cfg_;
+            cfg_ = ou::config::saveChanges(paths_.config, shown_, shown);
+            showConfig(cfg_, shown);
+            collect();
+            shown_ = cfg_;
             status_->setText("Saved " + q(paths_.config));
             return true;
         } catch (const std::exception& e) {
-            status_->setText("Saving config failed: " + q(e.what()));
+            status_->setText("Not saved (config.json left as it is): " + q(e.what()));
             return false;
         }
     }
@@ -1104,6 +1176,8 @@ private:
     }
 
     // Saves the config, then starts `name` (ou-game / ou-viewer) --config <it>, logging to logs/<game|viewer>-<time>.log.
+    // ou-game also gets the Launch options (launcher.game_args, split like a shell: quotes group words). The command
+    // line is the log's first line and shows in the status line.
     // As an AppImage it runs through $APPIMAGE (AppRun's game / viewer subcommands), not this launcher's mount: after an
     // in-place update that is the new version, while the running launcher's own binaries are still the old one.
     void launch(const char* name) {
@@ -1113,14 +1187,31 @@ private:
         fs::path log = paths_.logs / s(tool + "-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".log");
         const bool appImage = !paths_.appImage.empty() && ::access(paths_.appImage.c_str(), X_OK) == 0;
         const fs::path bin = appImage ? paths_.appImage : toolPath(name);
+        QStringList args = appImage ? QStringList{tool, "--config", q(paths_.config)} : QStringList{"--config", q(paths_.config)};
+        if (tool == "game") args += splitArgs(q(cfg_.gameArgs));
+        QStringList shown{shellQuote(q(bin))};
+        for (const QString& a : args) shown << shellQuote(a);
+        const QString command = shown.join(' ');
+        {
+            std::ofstream out(log, std::ios::trunc);
+            out << "launcher: " << s(command) << '\n';
+        }
         QProcess p;
         p.setProgram(q(bin));
-        p.setArguments(appImage ? QStringList{tool, "--config", q(paths_.config)} : QStringList{"--config", q(paths_.config)});
-        p.setStandardOutputFile(q(log));
-        p.setStandardErrorFile(q(log));
+        p.setArguments(args);
+        p.setStandardOutputFile(q(log), QIODevice::Append);
+        p.setStandardErrorFile(q(log), QIODevice::Append);
         qint64 pid = 0;
-        if (p.startDetached(&pid)) status_->setText(QString("Started %1 (pid %2), log %3").arg(name).arg(pid).arg(q(log)));
-        else status_->setText("Could not start " + q(bin));
+        if (p.startDetached(&pid)) status_->setText(QString("Started %1 (pid %2): %3 — log %4").arg(name).arg(pid).arg(command, q(log)));
+        else status_->setText("Could not start " + command);
+    }
+
+    // `a` as one POSIX shell word (for showing commands).
+    static QString shellQuote(const QString& a) {
+        static const QRegularExpression plain("^[A-Za-z0-9_@%+=:,./-]+$");
+        if (plain.match(a).hasMatch()) return a;
+        QString t = a;
+        return "'" + t.replace("'", "'\\''") + "'";
     }
 };
 

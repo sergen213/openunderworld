@@ -536,6 +536,50 @@ in the air, where ours aims only at take-off:
   the address computations `add eax, 0x3A0` at 0x5D826A / 0x5D8C62 (the call sites); the condition at 0x764F51 reads
   both slots the same way (0x759850); no direct store at those offsets exists. [I] 0x710380 is a markup query (it
   returns a count; 0 clears player +0x2C8).
+- **Record pick 0x5D7A80** [O: decomp + asm] (the sweep's +0x31C, read by 0x1E5 / 0x1EA / 0x1EF): eight arguments
+  (the call at 0x5D93F3 pushes eight; Ghidra shows six): player, hit flags, arg 3 the point, arg 4 the forward
+  cast's wall point, arg 5 the edge face / candidate, arg 6 the floor normal, arg 7 the wall normal (local_200),
+  arg 8 the ledge-top re-cast depth (local_2a0, 100000 unless a wall and a floor hit, then the floor z minus the z
+  of a down cast from the floor point moved -normal x data +0x614, from + 0x618 down to - the largest enabled
+  +0x1C). Each record test checks its vector with 0x49AFA0 (zero vector) first: +0x20 / +0x1C need a wall, +0x24
+  arg 5, +0x14 the normal (its angle against her instance row +0x10, 0x49F530); +0xC / +0x18 / +0x10 apply only
+  with a wall (without one a +0x10 record fails); +0x18 compares acos(wall normal z). The sweep's casts (0x493330)
+  use the player ray flags 0x2C19E7 (the mode-6 caller sets DAT_00E7F14D) [O], so they skip kSkipPlayerRays groups.
+  Ported in ChartShadow.cpp moveSweep. Row +0x10 is her facing (0x5D7FA0 loads it as local_180 for the "most ahead"
+  score) [O], so a wall met head on reads 180 deg; record 5 (class 11, cap 20) wants a normal along her facing.
+- **Markup search details** (0x7296C0 -> 0x771830 -> 0x70F300; Player::markupSearch / ledgeOnArcIn) [O: decomp +
+  disassembly]:
+  - Heading sources: 0x724F50 dispatches on +0xA0 - 1 through the jump table 0x7255BC (Ghidra's case labels sit one
+    off). 14 / 16 / 17 read the attach normal +0xCC0 through 0x49EFC0 (`atan2(-n.y, -n.x) - pi/2`, the yaw that faces
+    along n): 14 that yaw, 16 plus pi, 17 minus pi/2. A ledge / beam / 0x40000 attach writes +0xCC0 = unit
+    cross(segment, up) (0x74ED30, 0x738050, 0x707730 via 0x6FE7E0). So heading 17 flies against the ledge's point
+    order, whichever way the chart state is mirrored. Profile 7 (S257, the hang side leap) uses heading 17: Wine
+    hang_jump_left catches 973 77 in from its end.
+  - +0xD0 leads the start by frames of the carrier velocity (0x7694B0 = Player_GetCarrierVelocity, zeroed under
+    3.1605 a frame), not of the arc velocity.
+  - Records with +0x74 = 1 (only the free-climb hold record, Lara data +0x5B8) meet the arc at the candidate
+    segment's two end points (0x5C3AA0, then 0x6F96C0 on each point: the arc's 3-D closest approaches). +0x74 = 2
+    (record +0x5B0) is the box test (0x6EBEF0 / 0x6FAEB0); 0 means polylines (0x6F9940).
+  - Candidate times, 0x6F9940 (polyline segment, after 0x6FE040's end insets): the real roots of the cubic
+    r . r' = 0, with r the arc's offset perpendicular to the segment line (0x6EBBE0). A root before the start is
+    clamped to t = 0 unconditionally, one past the last frame to it. A root counts when r'.r' + r.r'' > 0 at the
+    clamped time, at most two. So the start counts alongside any later minimum, whenever r . r' >= 0 and
+    r'.r' + r.r'' > 0 there. When the arc point's nearest segment point is an end (0x46AB60 fraction 0 / 1), the
+    point test 0x6F96C0 runs on that end. 0x6F96C0 clamps a root before the start only with profile +0x2C bit
+    0x10000, else drops it. A class record's +0x78 / +0x7C is the segment window: the hold record's +0x78 = 1 leaves
+    segment 1 only. Ported: the polyline rule, the point gate for holds, and the window. [I] At a polyline's inset end,
+    ours keeps the polyline clamp: the 0x10000 gate there lost profile 84's beam 1031 hit 48 in from its end
+    (ch_beam_walk / _walk_back / _jump_along), which Wine makes. So ours' inset or fraction test still differs from
+    0x6FE040 / 0x46AB60 there.
+  - Free-climb grip, ported (Ledge.cpp holdGrip / holdAttachSetter, action 230 classes 618 / 619 = 0x752870): +0xCA0
+    is the higher of points 1 / 2, and +0xCE0 / +0xCE8 is the root offset the pin (0x6FDC90) applies, which keeps her
+    root 158.025 under point 0. In Wine cc_dice_up_hold ours' S571 root is now within 0.02 in z and 5 in xy.
+  - Open (cc_dice_*): Wine's falling grab (profile 45) lands S600 on hold 898. Under tru's own polyline rule profile
+    45 also meets hang ledge 934 at its start (v = 0: r . r' = 0, r'.r' + r.r'' = r0 . a > 0), so the difference lies
+    in the class tests or the start (ours passes 934 at entry 3). cc_dice_right / up_jump seed hold 894, the nearest
+    one. In cc_dice_up_hold T781 (S569 -> S578) fails on 0x20
+    VerticalClearance: the 711-unit ray up from the root bone (moved a third of the way toward +0xCA0) hits geometry
+    295 above, where Wine passes.
 
 ### Foot locks: conditions 0x12E / 0x131 [O decode, open: not ported]
 
