@@ -682,6 +682,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     std::optional<glm::vec4> enterPose; // --chart-state N@T@x,y,z,yaw: her case start for seedAttach
     uint64_t enterTick = 0;
     float enterElapsed = 0; // --chart-state N@T@pose@F: F frames of the state already run under Wine
+    std::optional<glm::vec4> grabPose; // --chart-state ...@F@x,y,z,yaw: the spawn hold's pose (Shadow::grabAt, seedAttach)
     // ---- end group CD ----
 
     // ---- drive (--traversal chart; docs/re/PLAYER_CHART.md "Drive mode") ----
@@ -1151,9 +1152,26 @@ void Shadow::Impl::seedAttach() {
         return mk.type >= 16 && mk.type <= 20 && mk.points.size() == 3;
     };
     if (freeClimb) {
-        if (chartAttached && isHold(*chartAttached)) pick = slot(chartAttached->markup, 0, 0), best = 0;
-        else if (const MarkupSlot t = jumpTarget(); isHold(t)) pick = slot(t.markup, 0, 0), best = 0;
-        else if (isHold(grabbedHold)) pick = slot(grabbedHold.markup, 0, 0), best = 0;
+        // The spawn hold's falling grab: tru.exe runs profile 45 once, on the hold's first frame, from the spawn pose
+        // (Wine cc_dice_right: one 0x70F300 arc from spawn.ours' hang height, 6.78 frames down at -0.01; it takes hold
+        // 898) [O-runtime]; ours runs that search from Shadow::grabAt's pose, then she goes back to the case start
+        // [I: harness only]
+        if (grabPose && pm)
+            if (const auto prof = decodeProfile(*ch, 45)) {
+                const PlayerState was = w->player().state();
+                PlayerState ps = was;
+                ps.pos = glm::vec3(*grabPose), ps.yaw = glm::radians(grabPose->w), ps.vel = glm::vec3(0);
+                pm->restore(ps);
+                const std::optional<Aim> g = markupSearch(*prof);
+                pm->restore(was);
+                placements = pm->placements();
+                if (g && isHold(g->target)) pick = slot(g->target.markup, 0, 0), best = 0;
+            }
+        if (!pick) {
+            if (chartAttached && isHold(*chartAttached)) pick = slot(chartAttached->markup, 0, 0), best = 0;
+            else if (const MarkupSlot t = jumpTarget(); isHold(t)) pick = slot(t.markup, 0, 0), best = 0;
+            else if (isHold(grabbedHold)) pick = slot(grabbedHold.markup, 0, 0), best = 0;
+        }
     }
     const bool chosen = bool(pick);
     for (size_t m = 0; freeClimb && !chosen && m < col.markup.size(); ++m) {
@@ -1791,6 +1809,7 @@ Shadow::Shadow(const cdc::BigfileSet& bigfile, std::optional<std::filesystem::pa
 void Shadow::enterAt(int state, uint64_t tick, std::optional<glm::vec4> at, float elapsed) {
     impl_->enterState = state, impl_->enterTick = tick, impl_->enterPose = at, impl_->enterElapsed = elapsed;
 }
+void Shadow::grabAt(glm::vec4 grab) { impl_->grabPose = grab; }
 void Shadow::feedRng(std::vector<uint32_t> draws) { impl_->rngFeed.assign(draws.begin(), draws.end()); }
 Shadow::~Shadow() = default;
 PlayerDriver* Shadow::driver() { return impl_->driving ? impl_.get() : nullptr; }

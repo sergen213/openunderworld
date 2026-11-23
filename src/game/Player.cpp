@@ -2007,7 +2007,13 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     break;
                 }
                 case 6: case 7: { // 0x725980: the angle between the two points as vectors (6: flattened) under v
-                    // degrees; either one nil passes
+                    // degrees; either one nil passes. A limit of 180 passes any pair short of exactly opposite (cos 180 =
+                    // -1, strict), so the screen-space sources 6 / 7 (the camera-projected point 0x48A3F0 / 0x5E7900, the
+                    // stick direction 0x49F5D0, unported) are not read for it [O-runtime: Wine cc_dice_up_hold t100,
+                    // profile 80's kind 6 on 7 / 6 limit 180: AL 1 on all 8 candidates, source 7 (0, 1, 0), source 6
+                    // (-122.0, -1804.4, 463.5)]
+                    const auto screen = [](int s) { return s == 6 || s == 7; };
+                    if ((screen(c.a1) || screen(c.a2)) && c.value >= 180.0f) { r = true; break; }
                     vec3 a = point(c.a1), b = point(c.a2);
                     if (c.kind == 6) a.z = 0, b.z = 0;
                     r = glm::length(a) < 1e-4f || glm::length(b) < 1e-4f ||
@@ -2299,9 +2305,12 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             // When the arc's nearest point on the segment is an end (0x46AB60 fraction 0 / 1), or for a point record
             // (+0x74 = 1), 0x6F96C0 runs on the point: the same cubic in 3-D, with a root before the start clamped to 0
             // only when the profile's +0x2C has bit 0x10000 (byte +0x2E bit 0, its last argument), else dropped [O:
-            // decomp]. Ours gates the point records (holds) so; a polyline's inset end keeps the polyline's clamp [I:
-            // gating it lost profile 84's beam 1031 hit 48 in from its end (ch_beam_walk / _walk_back / _jump_along),
-            // which Wine makes: ours' end inset or the fraction test differs from 0x6FE040 / 0x46AB60 there].
+            // decomp]. Ours gates the point records (holds) and the polyline ends so [O-runtime: Wine cc_dice_right's
+            // spawn grab, profile 45 (no 0x10000): 0x6F9940 on hang ledge 934's segment 2 trimmed 79 at its last point
+            // returns no time, the arc 627 along a 599 segment, 30 under it and moving down]; a beam's inset end keeps
+            // the polyline's clamp [I: gating it lost profile 84's beam 1031 hit 48 in from its end (ch_beam_walk /
+            // _walk_back / _jump_along), which Wine makes: ours' beam insets or the fraction test differ from 0x6FE040 /
+            // 0x46AB60 there].
             const auto lineTimes = [&](vec3 r0, vec3 r1, vec3 r2, float out[2]) {
                 float in[2];
                 const int n = arcMinima(r0, r1, r2, q.frames, in);
@@ -2344,7 +2353,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     if (lo <= hi && s >= lo && s <= hi) { check(int(li), si, ts[k], a + u * s, from); continue; }
                     const vec3 e = a + u * (lo > hi ? 0.5f * len : std::clamp(s, lo, hi)); // past an end: that end
                     float te[2];
-                    const int ne = lineTimes(from - e, q.v, a2, te);
+                    const int ne = beam ? lineTimes(from - e, q.v, a2, te) : pointTimes(from - e, q.v, a2, te);
                     for (int j = 0; j < ne; ++j) check(int(li), si, te[j], e, from);
                 }
             }
