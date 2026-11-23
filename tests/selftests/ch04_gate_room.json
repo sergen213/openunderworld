@@ -152,6 +152,7 @@
   {
    "step": "second_block_on_the_gate_pad",
    "plan": [
+    "go -480 -10560 40 walk",
     "engage 218 walk",
     "press",
     "wait 2",
@@ -217,6 +218,7 @@
    "plan": [
     "press drop",
     "wait 1",
+    "go -450 -10560 60",
     "go 0 -12600 80",
     "go 0 -14300 150",
     "wait 3"

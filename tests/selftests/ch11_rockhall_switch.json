@@ -15,7 +15,7 @@
      "expect": [{"visits": ["use"]},
                 {"probe": "step.events", "has": ["use:4617>4617"]},
                 {"probe": "object.4528.uber.0", "ne": 0, "note": "the door's section left its shut state"}]},
-    {"step": "through_the_door", "plan": ["go -7938 -12746 120"], "duration": 30,
+    {"step": "through_the_door", "plan": ["go -9450 -12840 40", "go -7938 -12746 120"], "duration": 30,
      "expect": [{"probe": "player.pos.x", "min": -8100, "note": "beyond the door"},
                 {"probe": "world.checkpoint", "eq": 4453},
                 {"probe": "step.teleports", "eq": 0},

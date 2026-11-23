@@ -19,7 +19,7 @@
                 {"calls": ["2661:49"], "note": "gripped: her pull strength 15, the joint's brake off"},
                 {"probe": "object.2661.uberjoint.1", "min": 655, "note": "open to its limit 663.7"},
                 {"probe": "step.horizontal", "min": 560, "note": "she sidesteps with the handle"}]},
-    {"step": "through_the_doorway", "plan": ["wait 1", "go -20173 46272 150"], "duration": 60,
+    {"step": "through_the_doorway", "plan": ["wait 1", "go -20080 54420 60", "go -20173 46272 150"], "duration": 60,
      "expect": [{"calls": ["2661:50"], "note": "let go: braked"},
                 {"probe": "object.2661.uberjoint.1", "min": 655, "note": "it stays open"},
                 {"probe": "step.events", "has": ["activate:2726>2714"], "note": "the spiders behind the door"},
