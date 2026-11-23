@@ -350,6 +350,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         stairsByte = ground.stairs;
     }
     std::optional<bool> onStairs() const override { return stairsByte; }
+    std::optional<glm::vec3> groundNormal() const override { return ground.normal; }
     const PlayerState* player() const override { return &w->player().state(); }
     const World* world() const override { return w; }
 
@@ -911,15 +912,15 @@ bool Shadow::Impl::isBoundary(int st) const {
 // = the jump-candidate query (0x710380, ours jumpCandidates) found one; the ground under her (cast down from the top);
 // probe directions (data s16 +0x600 = 1 -> step pi; +0x628 bit 0x4000 adds the stick probe first: from heading - pi,
 // the control yaw (0x6EBA90) when it lies within (heading - pi, heading), else her heading); per direction: the
-// forward casts at data s16 +0x620 = 2 heights (+0x610 and +0x60C over her root [I: root bone z = her root z]) to
+// forward casts at data s16 +0x620 = 2 heights (local_21c = +0x610 over her instance z, local_204 = +0x60C over her
+// segment-0 matrix translation z, instance +0x90 +0x78 [O: decomp 0x5D7FA0]: ours World::boneWorld(0)) to
 // +0x5F0 = 252.85 ahead (a wall moves the probe point to the hit + 63.21 (+0x618) along the direction); the down cast
 // there; a drop below her by more than +0x5FC = 64 casts back at that height toward her (+0x5F8 = 16 short) for the
 // edge face, a step above her casts from her at the step height for the riser; then 0x5D7A80 picks a record; the
 // direction whose point lies most ahead of her (local_330: [I] the horizontal unit direction to the point . her
 // facing, > 0) keeps its record in +0x31C (+0x320 = 1). Not ported [I]: surface material flags (0x5D3AF0 bits 0x44 /
-// 0x20 -> 0x2000 / 0x1000: none ours), the ledge-top re-cast after a wall (+0x330..+0x35C, which only the climb records
-// read), the carried-object branch (+0x8DC), cast mask 0x442C11E3 | 0x100000 (ours kSolidMask), 0x5D7A80's last two
-// arguments (the call passes six: a record testing +0x14 / +0x18 / +0x1C that could win leaves +0x31C as it was [U]).
+// 0x20 -> 0x2000 / 0x1000: none ours), the climb records' ledge-top fields (+0x330..+0x35C) and 0x710380 (+0x2C5),
+// the carried-object branch (+0x8DC), cast mask 0x442C11E3 | 0x100000 (ours kSolidMask).
 void Shadow::Impl::moveSweep() {
     // +0x320: 0x7002D0 clears it when mask bits 0xA00 are clear (+0x2C1 / +0x2C0 = bits 0x200 / 0x800, no sweep).
     if (!(collisionMask & 0xA00)) { sweepFreshNow = false; return; }
@@ -931,20 +932,23 @@ void Shadow::Impl::moveSweep() {
     if (!base || n <= 0 || size_t(*base) + size_t(n) * 0x84 > c.bytes.size()) return;
     const auto rec = [&](int i) { return c.bytes.data() + *base + size_t(i) * 0x84; };
     const auto f = [](const uint8_t* r, int off) { float v; std::memcpy(&v, r + off, 4); return v; };
-    float maxDrop = 0;
+    float maxDrop = 0, maxLedge = 0; // the caller's sweep block (0x5D93F3 caller): +0x24 = the largest enabled +0x1C
     for (int i = 0; i < n; ++i)
-        if (rec(i)[0]) maxDrop = std::max(maxDrop, f(rec(i), 4));
+        if (rec(i)[0]) maxDrop = std::max(maxDrop, f(rec(i), 4)), maxLedge = std::max(maxLedge, f(rec(i), 0x1C));
     const auto cand = jumpCandidates();
     sweepCand = cand && (cand->a || cand->b);
     const PlayerState& s = w->player().state();
     const auto& col = w->collision();
     const glm::vec3 p = s.pos;
     const float z = p.z, top = z + c.data<float>(0x610), bottom = z - maxDrop * 10.0f;
+    // Every cast here is 0x493330 with local_2b0 = 0x2C19E7, the player ray flags (the mode-6 caller sets
+    // DAT_00E7F14D = 1 around the call) [O]: player rays skip the groups flagged kSkipPlayerRays (l2_puzzleroom: the
+    // wall behind ledge 476 that Wine's ph476_enter walks past).
     const auto cast = [&](glm::vec3 a, glm::vec3 b) -> std::optional<collision::Hit> {
         const glm::vec3 d = b - a;
         const float len = glm::length(d);
         if (len < 1e-4f) return std::nullopt;
-        return col.raycast(a, d / len, len);
+        return col.playerRay(a, d / len, len, true); // [I] object front faces, as rayHit
     };
     float groundZ = z; // local_2c8
     if (const auto g = cast({p.x, p.y, top}, {p.x, p.y, bottom})) groundZ = g->point.z;
@@ -971,24 +975,35 @@ void Shadow::Impl::moveSweep() {
     const float wallIn = c.data<float>(0x618);
     int best = -1;
     float bestScore = 0;
-    bool unknown = false;
     for (const float a : dirs) {
         const glm::vec2 dir(std::cos(a), std::sin(a));
         glm::vec3 probe(glm::vec2(p) + dir * ahead, z);
         std::optional<glm::vec3> wall; // local_1d0: the forward casts' hit (argument 4), else none
+        glm::vec3 wallNrm(0);          // local_200: that hit's normal (argument 7), else the zero vector
         const int heights = c.data<int16_t>(0x620);
-        const float hTop = z + c.data<float>(0x610), hLow = z + c.data<float>(0x60C);
+        const auto root = w->boneWorld(0);
+        const float hTop = z + c.data<float>(0x610), hLow = (root ? root->z : z) + c.data<float>(0x60C);
         for (int k = 0; k < heights && !wall; ++k) {
             const float hz = heights < 2 ? hLow : hTop + float(k) * (hLow - hTop) / float(heights - 1);
             if (const auto hit = cast({p.x, p.y, hz}, {probe.x, probe.y, hz})) {
-                wall = hit->point;
+                wall = hit->point, wallNrm = hit->normal;
                 probe = glm::vec3(glm::vec2(hit->point) + dir * wallIn, z);
             }
         }
         glm::vec3 pt(probe.x, probe.y, top), nrm(0, 0, 1);
         bool dynamic = false;
-        if (const auto d = cast({probe.x, probe.y, top}, {probe.x, probe.y, bottom}))
-            pt = d->point, nrm = d->normal, dynamic = d->dynamic >= 0;
+        const auto down = cast({probe.x, probe.y, top}, {probe.x, probe.y, bottom});
+        if (down) pt = down->point, nrm = down->normal, dynamic = down->dynamic >= 0;
+        // ---- group A: 0x5D7A80's 8th argument (local_2a0, 100000 = 0x47C35000 by default) [O: decomp 0x5D7FA0] ----
+        // after a wall (local_329) and a down hit (local_260), the ledge-top re-cast: from the down hit moved by the
+        // wall normal x local_40 (= -1) x data +0x614, at its height + 0x618, down to its height - the caller's +0x24;
+        // a hit gives (start - hit z) - 0x618 = the down hit's z - the re-cast hit's z.
+        float ledgeDepth = 100000.0f;
+        if (wall && down) {
+            const glm::vec2 xy = glm::vec2(pt) - glm::vec2(wallNrm) * c.data<float>(0x614);
+            if (const auto h = cast({xy.x, xy.y, pt.z + wallIn}, {xy.x, xy.y, pt.z - maxLedge})) ledgeDepth = pt.z - h->point.z;
+        }
+        // ---- end group A ----
         std::optional<glm::vec3> face; // local_160 (argument 5 without a candidate)
         if (pt.z <= z + lip + 1.0f) {
             if (pt.z < z - lip) { // the drop: back toward her at the lip height for the edge face
@@ -1011,8 +1026,22 @@ void Shadow::Impl::moveSweep() {
         const float d4 = glm::length(glm::vec2(wall.value_or(glm::vec3(0)) - p));
         const float d5 = glm::length(glm::vec2(p5.value_or(glm::vec3(0)) - p));
         const float wz = wall.value_or(glm::vec3(0)).z - z;
+        // ---- group A: 0x5D7A80's 7th argument (call 0x5D93F3 pushes eight; ChartJ agreed) and its zero-vector gates ----
+        // arg 7 = &local_200, the forward cast's wall normal: 0x49F530 takes its angle (degrees) against her instance's
+        // segment-0 matrix row +0x10 when the normal is not the zero vector (0x49AFA0), else 0. That row is her facing:
+        // 0x5D7FA0 loads it as local_180 (+0x10 / +0x14 / +0x18) for the "most ahead" score, our fwd [O: decomp]; so a
+        // wall met head on (normal back toward her) reads 180, and record 5's cap (20) needs a normal along her facing.
+        // Record +0x14 caps that angle; +0x18 reads acos(normal z) (0x431CA0(arg7 +8)), the wall's own slope [O].
+        // Each record test first checks its vector with 0x49AFA0 [O: asm, ecx before every call]: +0x20 / +0x1C the
+        // wall point (arg 4), +0x24 arg 5, +0x14 the normal, +0xC / +0x18 / +0x10 / +4 / +8 the point (arg 3, never
+        // the zero vector here); without a wall +0xC / +0x18 are skipped and a +0x10 record fails.
+        const glm::vec3 faceAxis(std::cos(s.yaw), std::sin(s.yaw), 0.0f);
+        const bool hasNrm = glm::dot(wallNrm, wallNrm) > 1e-8f;
+        const float wallAngle = hasNrm ? glm::degrees(std::acos(std::clamp(glm::dot(faceAxis, glm::normalize(wallNrm)), -1.0f, 1.0f))) : 0.0f;
+        const float wallSlope = glm::degrees(std::acos(std::clamp(wallNrm.z, -1.0f, 1.0f)));
+        const bool hasP5 = p5 && glm::dot(*p5, *p5) > 1e-8f;
+        // ---- end group A ----
         int pick = -1;
-        bool pickUnknown = false;
         for (int i = 0; i < n; ++i) {
             const uint8_t* r = rec(i);
             if (!r[0]) continue;
@@ -1020,24 +1049,20 @@ void Shadow::Impl::moveSweep() {
             std::memcpy(&need, r + 0x30, 2);
             need = uint16_t((need & 0xFFFB) * 0x1000);
             if ((need & flags) != need) continue;
-            if (f(r, 0x20) > 0 && !(d4 <= f(r, 0x20))) continue;
-            if (f(r, 0x24) > 0 && !(d5 <= f(r, 0x24))) continue;
-            bool open = f(r, 0x14) > 0 || f(r, 0x1C) > 0; // tests on the 7th / 8th arguments [U]
-            if (!(f(r, 0xC) <= 0 || (drop > 0 && f(r, 0xC) < drop))) continue;
-            if (f(r, 0x18) > 0 && wz < drop) {
-                if (!(drop > 0)) continue;
-                open = true; // its angle reads the 7th argument [U]
-            }
-            if (!(f(r, 0x10) <= 0 || (wz < drop && drop > 0 && drop <= f(r, 0x10)))) continue;
-            if (f(r, 4) > 0 && !(drop <= -f(r, 4))) continue;
+            if (f(r, 0x20) > 0 && !(wall && d4 <= f(r, 0x20))) continue;
+            if (f(r, 0x24) > 0 && !(hasP5 && d5 <= f(r, 0x24))) continue;
+            if (f(r, 0x14) > 0 && !(hasNrm && wallAngle <= f(r, 0x14))) continue;
+            if (wall) {
+                if (!(f(r, 0xC) <= 0 || (drop > 0 && f(r, 0xC) < drop))) continue;
+                if (f(r, 0x18) > 0 && wz <= drop && !(drop > 0 && f(r, 0x18) <= wallSlope)) continue;
+                if (!(f(r, 0x10) <= 0 || (wz < drop && drop > 0 && drop <= f(r, 0x10)))) continue;
+            } else if (f(r, 0x10) > 0) continue;
+            if (f(r, 0x1C) > 0 && !(wall && f(r, 0x1C) < ledgeDepth)) continue;
+            if (f(r, 4) > 0 && !(drop < -f(r, 4))) continue;
             if (f(r, 8) > 0 && !(f(r, 8) <= slope)) continue;
             if (r[0x2E]) { // the side of the surface normal the point lies on, less its part along her up axis
                 const glm::vec3 v(pt.x - p.x, pt.y - p.y, 0.0f);
                 if ((r[0x2E] == 1) != (glm::dot(v, nrm) < 0)) continue;
-            }
-            if (open) {
-                pickUnknown = true;
-                continue;
             }
             if (pick < 0) {
                 pick = i;
@@ -1056,10 +1081,8 @@ void Shadow::Impl::moveSweep() {
         }
         const glm::vec2 to(pt - p);
         const float score = glm::length(to) > 1e-4f ? glm::dot(glm::normalize(to), fwd) : 0.0f;
-        if (pickUnknown && score > bestScore) unknown = true;
         if (pick >= 0 && score > bestScore) best = pick, bestScore = score;
     }
-    if (unknown) return;
     sweepFreshNow = best >= 0; // 0x5D7FA0: a stored record sets +0x320 = 1, none leaves it 0 (LAB_005d988e)
     if (best >= 0) sweepRecord = best;
 }

@@ -530,6 +530,17 @@ in the air, where ours aims only at take-off:
   the address computations `add eax, 0x3A0` at 0x5D826A / 0x5D8C62 (the call sites); the condition at 0x764F51 reads
   both slots the same way (0x759850); no direct store at those offsets exists. [I] 0x710380 is a markup query (it
   returns a count; 0 clears player +0x2C8).
+- **Record pick 0x5D7A80** [O: decomp + asm] (the sweep's +0x31C, read by 0x1E5 / 0x1EA / 0x1EF): eight arguments
+  (the call at 0x5D93F3 pushes eight; Ghidra shows six): player, hit flags, arg 3 the point, arg 4 the forward
+  cast's wall point, arg 5 the edge face / candidate, arg 6 the floor normal, arg 7 the wall normal (local_200),
+  arg 8 the ledge-top re-cast depth (local_2a0, 100000 unless a wall and a floor hit, then the floor z minus the z
+  of a down cast from the floor point moved -normal x data +0x614, from + 0x618 down to - the largest enabled
+  +0x1C). Each record test checks its vector with 0x49AFA0 (zero vector) first: +0x20 / +0x1C need a wall, +0x24
+  arg 5, +0x14 the normal (its angle against her instance row +0x10, 0x49F530); +0xC / +0x18 / +0x10 apply only
+  with a wall (without one a +0x10 record fails); +0x18 compares acos(wall normal z). The sweep's casts (0x493330)
+  use the player ray flags 0x2C19E7 (the mode-6 caller sets DAT_00E7F14D) [O], so they skip kSkipPlayerRays groups.
+  Ported in ChartShadow.cpp moveSweep. Row +0x10 is her facing (0x5D7FA0 loads it as local_180 for the "most ahead"
+  score) [O], so a wall met head on reads 180 deg; record 5 (class 11, cap 20) wants a normal along her facing.
 
 ### Foot locks: conditions 0x12E / 0x131 [O decode, open: not ported]
 
