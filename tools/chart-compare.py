@@ -50,7 +50,7 @@ def case(c):
     orig = f'{W}/chart/wine/{c}.case.json'
     if p != orig and os.path.exists(orig):
         o = json.load(open(orig))
-        for k in ('invalid_from', 'invalid_until', 'invalid_reason', 'drag_checked'):
+        for k in ('invalid_from', 'invalid_until', 'invalid_again', 'invalid_reason', 'drag_checked'):
             j.pop(k, None)
             if k in o: j[k] = o[k]
     return j, t if os.path.exists(t) else f'{W}/chart/wine/{c}.tsv'
@@ -62,11 +62,12 @@ def compare(rundir, c):
     w = rows(wt); o = [(t - shift, *x) for t, *x in rows(ot) if t - shift >= 0]
     # a case JSON's "invalid_from" (a harness artefact in the Wine take, e.g. the post-SPAWN carry, "invalid_reason"):
     # the ticks from it on are not scored; with "invalid_until" only [invalid_from, invalid_until) is skipped (the take is
-    # valid again after it, e.g. ch_hang_land's catch at S533)
+    # valid again after it, e.g. ch_hang_land's catch at S533), and "invalid_again" ends that valid span (a second
+    # artefact from that tick on, e.g. ch_hang_land's post-SPAWN pull from the first S447)
     inv = j.get('invalid_from')
     if inv is not None:
-        until = j.get('invalid_until')
-        ok = (lambda t: t < inv or t >= until) if until is not None else (lambda t: t < inv)
+        until, again = j.get('invalid_until'), j.get('invalid_again')
+        ok = (lambda t: t < inv or (t >= until and (again is None or t < again))) if until is not None else (lambda t: t < inv)
         w = [r for r in w if ok(r[0])]; o = [r for r in o if ok(r[0])]
     ws, os_ = seq(w), seq(o)
     # state match: Wine's sequence states in order with ticks; first divergence
@@ -98,6 +99,7 @@ def compare(rundir, c):
     drag = dt is not None and (inv is None or dt + 2 < inv)  # the whole 3-tick run before the mark
     if inv is not None:  # a harness-truncated take: never a full match, reported on its own
         span = f'ticks {inv}..{j["invalid_until"]} skipped' if j.get('invalid_until') is not None else f'to tick {inv}'
+        if j.get('invalid_until') is not None and j.get('invalid_again') is not None: span += f', to tick {j["invalid_again"]}'
         res = f'match {span} (truncated)' if full else f'{k}/{len(ws)} {span} (truncated)'
     else:
         res = ('match (drag)' if drag else 'MATCH') if full else f'{k}/{len(ws)}'

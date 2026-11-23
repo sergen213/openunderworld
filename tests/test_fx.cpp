@@ -1322,3 +1322,27 @@ TEST(Fx, ClipEventSpansFireEachFrameOnceFromTheClipStart) {
     EXPECT_EQ(fired(w, 0), 1);
     EXPECT_EQ(fired(w, 19), 0);
 }
+
+// Enemies and script objects (no `start`): a new clip standing at 0 fires frame 0 once, on its first advance (it fired
+// twice before: at 0 and again from 0); a script object's loop clock (fmod, World::tickUber) wraps.
+TEST(Fx, ClipEventSpansNewClipAtZeroAndWrappedObjectLoop) {
+    const auto fired = [](const std::vector<std::pair<float, float>>& spans, int frame) {
+        int n = 0;
+        for (const auto& [a, z] : spans) n += float(frame) >= a && float(frame) < z;
+        return n;
+    };
+    const double dt = 1.0 / 60.0, dur = 20.0 / 30.0;
+    int zero = 0;
+    zero += fired(ou::fx::clipEventSpans(0.3, 0.0, dur, false, std::nullopt), 0); // new clip, standing at 0
+    zero += fired(ou::fx::clipEventSpans(0.0, dt, dur, true, std::nullopt), 0);   // its first advance
+    zero += fired(ou::fx::clipEventSpans(dt, 2 * dt, dur, true, std::nullopt), 0);
+    EXPECT_EQ(zero, 1);
+    const auto w = ou::fx::clipEventSpans(dur - dt / 2, dt / 2, dur, true, std::nullopt); // fmod'd clock went back
+    EXPECT_EQ(fired(w, 19), 0);
+    EXPECT_EQ(fired(w, 0), 1);
+    EXPECT_EQ(fired(w, 20), 1);
+    // a restarted enemy clip (start 0): nothing of the old pass
+    const auto r = ou::fx::clipEventSpans(0.5, dt, dur, true, 0.0);
+    EXPECT_EQ(fired(r, 0), 1);
+    EXPECT_EQ(fired(r, 16), 0);
+}
