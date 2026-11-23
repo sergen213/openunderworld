@@ -708,6 +708,7 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     // Action 231's alignment onto a hurdle's AnimTarget (0x73DD70): x/y (and the yaw unless prop 285) approach `to` by
     // the share of the gap each step leaves on top of the clip's root motion, over `frames` (prop 283).
     struct Align { bool on = false; int state = -1; glm::vec3 to{0}; float yawTo = 0; bool yaw = false; float left = 0; } align;
+    struct HoldTurn { float to = 0, left = 0; } holdTurn; // action 231's rotation blend onto a hold's +0x1270
     ChartRuntime* rt = nullptr;   // Lara's chart (agent 0) and the upper body's (agent 1), Shadow's
     ChartRuntime* up = nullptr;
     const Charts* ch = nullptr;
@@ -1586,6 +1587,22 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
         player.restore(ps);
         placements = player.placements();
         return true;
+    }
+    // Action 231 (0x75F550) blends her rotation onto +0x1270 over its frames (mode 3, prop 285 clear). Ours turns her
+    // linearly onto it on a free-climb hold, whose grip 0x752870 / 0x7512A0 wrote it (Ledge.cpp holdGrip) [O-runtime:
+    // Wine cc_dice_right S600 36.48 -> 32.753 in steps of 0.3727 over its 10 frames]; its position part is the hold
+    // pin's there [I]; other markups keep the drive's own alignment (align) [I].
+    if (anim.align.active) {
+        anim.align.active = false;
+        const auto& mk = world.collision().markup;
+        if (!anim.align.positionOnly && chartAttached && *chartAttached && size_t(chartAttached->markup) < mk.size() &&
+            mk[size_t(chartAttached->markup)].type >= 16 && mk[size_t(chartAttached->markup)].type <= 20)
+            holdTurn = {playerFloat(0x1270), anim.align.duration};
+    }
+    if (holdTurn.left > 0) {
+        const float yaw = player.state().yaw;
+        player.setYaw(yaw + std::remainder(holdTurn.to - yaw, 6.2831853f) * std::min(1.0f, timeMult / holdTurn.left));
+        holdTurn.left -= timeMult;
     }
     if (isBoundary(rt->state())) { // the chart hands her over at its boundary edge: the controller decides from here
         player.setVelocity(s0.vel);

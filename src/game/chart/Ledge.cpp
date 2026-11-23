@@ -988,6 +988,13 @@ void holdGrip(ChartContext& ctx, ChartContext::MarkupSlot& s, bool high) {
     }
     ctx.playerFloat(0xCC0) = n.x, ctx.playerFloat(0xCC4) = n.y, ctx.playerFloat(0xCC8) = n.z;
     ctx.playerFloat(0xCDC) = 0;
+    // 0x7512A0's alignment target (action 231 blends onto it): +0x1260 the root, the grip less 316.05 along her up when
+    // high, else point 0 less 158.025 up; +0x1270 the facing 0x70B9E0 makes from the box normal, ours the normal's
+    // heading [O: decomp 0x752870; Wine cc_dice_right S600 turns 36.48 -> 32.753 = heading of hold 898's normal over its
+    // 10 frames]
+    const glm::vec3 root = high ? s.point - glm::vec3(0, 0, 316.05002f) : p0 - glm::vec3(0, 0, 158.02501f);
+    ctx.playerFloat(0x1260) = root.x, ctx.playerFloat(0x1264) = root.y, ctx.playerFloat(0x1268) = root.z;
+    ctx.playerFloat(0x1270) = std::atan2(n.y, n.x);
 }
 
 // 0x752870's entry: the markup 0x72AFB0 picks (the jump target; ours: else the attached one), only a hold (MUD

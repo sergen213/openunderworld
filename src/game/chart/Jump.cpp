@@ -210,22 +210,47 @@ uint32_t markupClassWord(ChartContext& ctx, const ChartContext::MarkupSlot& m) {
 // false [O: decomp]. The search sets the chart's jump target as 0x7296C0 does.
 // 0x744310 (profile `p`'s velocity +0x10 = s): with a = the stick record's angle +0xC (wrapped, 0x431D70; 0 = pad up,
 // + = left), s * (cos a * her up axis + sin a * her model X axis), the matrix rows of her instance +0x90 normalized
-// (0x49D420); y negated at the end, as 0x76FFC0's own velocity sources do (ours: world, unnegated) [O: decomp]. Not
-// ported: the attached markup's surface term (0x6EBEF0 axes x clamp(cos a, +-data +0xE50) / 2 and clamp(sin a, +-data
-// +0xE54) / 2 over profile +0xA4: at most 0.03 a frame for profile 27, against s = 50.57) [I]. Pad: (x right, y down),
-// a = atan2(-x, -y); at rest 0 [I].
-std::optional<glm::vec3> stickQueryVelocity(ChartContext& ctx, float s) {
+// (0x49D420); y negated at the end, as 0x76FFC0's own velocity sources do (ours: world, unnegated) [O: decomp]. Then
+// the attached markup's surface term: 0x6EBEF0's box of +0xC94 (axes u = z x n and w = n x u, n the box normal
+// 0x5C3CC0, each scaled by the points' extent along it) adds (clamp(cos a, +-data +0xE50) / 2 * w - clamp(sin a, +-data
+// +0xE54) / 2 * u) / profile +0xA4 [O: decomp]. Ours for a free-climb hold, n = -unit(cross(p1 - p0, p2 - p0)) [O-runtime:
+// Wine cc_dice_right t100, profile 27 on hold 898 with the stick right: (30.09, -46.79, 0) = the side term 5.06 along
+// the hold's horizontal axis over her own 50.57]; other markups add none [I: their box normal not decoded]. Pad: (x
+// right, y down), a = atan2(-x, -y); at rest 0 [I].
+std::optional<glm::vec3> stickQueryVelocity(ChartContext& ctx, float s, int frames) {
     const auto pad = ctx.pad();
     if (!pad) return std::nullopt;
     const float a = glm::dot(*pad, *pad) > 1e-12f ? std::atan2(-pad->x, -pad->y) : 0.0f;
     const float h = ctx.heading();
     const glm::vec3 up(0, 0, 1), modelX(-std::sin(h), std::cos(h), 0); // model X = her left (she faces model -Y)
-    return s * (std::cos(a) * up + std::sin(a) * modelX);
+    glm::vec3 v = s * (std::cos(a) * up + std::sin(a) * modelX);
+    if (const auto m = ctx.attachedMarkup(); m && (m.flags & 0x8000) && frames > 0)
+        if (const auto s0 = ctx.markupSegment(m.markup, 0), s1 = ctx.markupSegment(m.markup, 1); s0 && s1) {
+            const glm::vec3 p0 = s0->first, p1 = s0->second, p2 = s1->second;
+            glm::vec3 n = glm::cross(p1 - p0, p2 - p0);
+            if (glm::length(n) > 1e-6f) {
+                n = -glm::normalize(n);
+                const glm::vec3 u(-n.y, n.x, 0), w = glm::cross(n, u);
+                float uLo = 0, uHi = 0, wLo = 0, wHi = 0;
+                for (const glm::vec3& p : {p1, p2}) {
+                    glm::vec3 r = p - p0;
+                    r -= glm::dot(r, n) * n;
+                    uLo = std::min(uLo, glm::dot(r, u)), uHi = std::max(uHi, glm::dot(r, u));
+                    wLo = std::min(wLo, glm::dot(r, w)), wHi = std::max(wHi, glm::dot(r, w));
+                }
+                const Charts& d = ctx.chart().charts();
+                const float cu = d.data<float>(0xE50), su = d.data<float>(0xE54);
+                const float fc = std::clamp(std::cos(a), -cu, cu) * 0.5f, fs = -std::clamp(std::sin(a), -su, su) * 0.5f;
+                v += (fc * (wHi - wLo) * w + fs * (uHi - uLo) * u) / float(frames);
+            }
+        }
+    return v;
 }
 
 bool dropDownTarget(ChartContext& ctx, const Cond& c) {
     // 0x74C850: player +0xA40 = 0x744310(profile 27, its +0x10: 50.5689) before the search
-    if (const auto p = decodeProfile(ctx.chart().charts(), 0x1B)) ctx.queryVelocity = stickQueryVelocity(ctx, p->velocity.z);
+    if (const auto p = decodeProfile(ctx.chart().charts(), 0x1B))
+        ctx.queryVelocity = stickQueryVelocity(ctx, p->velocity.z, p->frames);
     const auto found = chartMarkupSearch(ctx, 0x1B);
     ctx.queryVelocity.reset();
     if (!found) return ctx.chart().unported(c);
