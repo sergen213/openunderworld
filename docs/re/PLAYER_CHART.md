@@ -537,8 +537,10 @@ in the air, where ours aims only at take-off:
   of a down cast from the floor point moved -normal x data +0x614, from + 0x618 down to - the largest enabled
   +0x1C). Each record test checks its vector with 0x49AFA0 (zero vector) first: +0x20 / +0x1C need a wall, +0x24
   arg 5, +0x14 the normal (its angle against her instance row +0x10, 0x49F530); +0xC / +0x18 / +0x10 apply only
-  with a wall (without one a +0x10 record fails); +0x18 compares acos(wall normal z). Ported in ChartShadow.cpp
-  moveSweep; [I] that row +0x10 is minus her facing.
+  with a wall (without one a +0x10 record fails); +0x18 compares acos(wall normal z). The sweep's casts (0x493330)
+  use the player ray flags 0x2C19E7 (the mode-6 caller sets DAT_00E7F14D) [O], so they skip kSkipPlayerRays groups.
+  Ported in ChartShadow.cpp moveSweep. Row +0x10 is her facing (0x5D7FA0 loads it as local_180 for the "most ahead"
+  score) [O], so a wall met head on reads 180 deg; record 5 (class 11, cap 20) wants a normal along her facing.
 
 ### Foot locks: conditions 0x12E / 0x131 [O decode, open: not ported]
 
