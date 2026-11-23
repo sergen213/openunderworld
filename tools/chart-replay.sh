@@ -9,8 +9,11 @@
 # Per case: the case JSON from W/chart/wine_startpos, else wine_settle (120 more settle ticks), else wine; spawn at
 # start.ours whenever the case records it (idle starts too), else spawn.ours; a hold case (start.state not an idle
 # 35 / 39 / 40) also gets
-# --chart-state STATE@(hold + settle ticks)@start.ours@t30 (Wine's elapsed frames in that state at case tick 0, the
-# trace's t30 column); the input script is the case JSON itself (its keys, the settle shift and camera_follow, which
+# --chart-state STATE@(hold + settle ticks)@start.ours@t30@spawn.ours (t30: Wine's elapsed frames in that state at case
+# tick 0, the trace's t30 column; spawn.ours: the spawn hold's pose, from which a free-climb seed runs the falling grab
+# search (profile 45) that tru.exe runs once on the hold's first frame, Shadow::grabAt; Wine cc_dice_right: 0x70F300's
+# arc starts at spawn.ours' hang height, not start.ours'); the input script is the case JSON itself (its
+# keys, the settle shift and camera_follow, which
 # pins the stick's world yaw, InputScript::cameraYaw); frames = hold + settle + ticks. Runs headless in a private
 # kwin_wayland --virtual under systemd-run (MemoryMax, KillMode=control-group), never on the user's desktop.
 # Until the --chart-state tick drive mode pins her at start.ours; before a non-hold start state it runs no markup search
@@ -64,7 +67,7 @@ def t30():  # Wine's elapsed frames in the start state at case tick 0
         pass
     return '0'
 if hold:
-    out.append(f"{state}@{lead}@{','.join(str(x) for x in st['ours'])}@{t30()}")
+    out.append(f"{state}@{lead}@{','.join(str(x) for x in st['ours'])}@{t30()}@{','.join(str(x) for x in s['ours'][:4])}")
 elif state in (35, 40) and 'state' in st:
     # an idle start past the 1-foot idle: the take's tick 0 is later than her birth / settle (Wine birth takes are
     # S40 from tick 0; the trace starts after the load), while our chart restarts in S39 at the placement and reaches

@@ -606,10 +606,25 @@ nodes resolved in memory; l3_main_bedroom jump, run-jump, hang / pull-up, drop, 
   at volume 0.5, Waves 545..). Ours played lara.drm's for every outfit [fixed: GameSound adds the worn outfit's DRM over lara.drm,
   `PlexBank::add(drm, true)`].
 - **Death**: S1281 (hard landing) frame records, then the death clip's (2290, 2292, 2288, 2295, 2318), then ~70 starts of
-  lara.drm DTP 961 (Overlap -> Reaction -> Assignment category 42, max distance 7000 -> 2288) through 0x593C90 while the
-  ragdoll moves: rigid-body contact sounds, not done in ours (§9.16).
-- Not compared: hints / script voice lines (no hint condition in the bedroom), the voice bus, rolloff and reverb (the
-  hooks see the start, not FMOD's mix).
+  lara.drm DTP 961 (Overlap -> Reaction on parameter 0 only: impact 30..100 -> volume 0.3..0.5, pitch -1..+3 semitones,
+  nothing below 30 -> Assignment category 42, max distance 7000 -> 2288) while the ragdoll tumbles. A second Wine take
+  with 0x593C90 / 0x4F2840 hooked: every 961 start comes from the joint-sound manager's contact channels (returns
+  0x4F2A26 channel 0 = impact, 0x4F28D5 channel 1 = rolling), i.e. Lara's ragdoll joints are registered joints (the
+  registration call is not decoded [U]). Ours (`physics::Scene::ragdollJoints`, `World::collectJointSounds`): each joint
+  whose limit acts in a step after not acting is an impact at last step's relative angular speed (degrees/s), DTP 961
+  via `JointSound::dtp` [I: Havok's speed along the axis vs our whole relative spin]. Fatal landings build the ragdoll
+  with the death clip (death type 4, `World` pose; DeathState_Entry 0x75AA50) as tru did: ours, l4_pool 2600-unit fall
+  (the death_respawn self-test's): death_fall_normal at tick 62, joint impacts from tick 64 [O, log]; other deaths keep
+  the ragdoll for the clip's end [U: their death types].
+- **Pain**: the bedroom fire trigger hurt neither game; spawns from +1500 / +2500 above the bedroom corridor land on the
+  house roof (z ~1404, 34 degree slope) and slide off its eave in ours, and the Wine takes of those falls carry the
+  "carry after SPAWN" drift in rows 0..4 (LegacyFix), so they are no pain reference; `--die` does not kill in the prologue.
+  l4_ballcourt "combat 4" (crossing plane 6543, as `l4_ballcourt_combat.sh`): tru.exe births panther 6532 and poachers
+  6537..6539 but in 40 s / 80 s standing past the plane, or pinned 600 units from 6539, none hit her (S40 throughout);
+  ours, the same walk, hits her from tick ~540 every 90 ticks (hit_light_front/side/back, frame-1 records DTP 956,
+  2299, 953, 954, 957), so the pain sounds are still not compared [U]; the attack gap is the enemy AI's (OU-CMB-006..8).
+- Not compared: hints / script voice lines (tru plays them from the PDA's FIELD ASSISTANCE menu only; a 30 s idle at
+  l1_seatop starts no Lara line in ours), the voice bus, rolloff and reverb (the hooks see the start, not FMOD's mix).
 
 ### 9.8 Bike engine [V-data; I: inputs]
 

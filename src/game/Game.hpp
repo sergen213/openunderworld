@@ -623,6 +623,12 @@ struct MarkupProfile {
     float ladderFaceDeg = 0;
     uint32_t flags = 0;           // +0x2C (0x80 coming down, 0x40 the ledge class table, 0x400 no gravity)
     int frames = 0;               // +0xA4, else object data +0xBDE
+    // 0x728320's flight check on a picked candidate (0x727F50 builds the flight to the root it would hold, 0x727100
+    // sweeps it): +0x14 added to the start velocity, +0xB8 the flat reach (else object data +0xC04) choosing 0x7236E0's
+    // root, +0xBC the shortest flight in frames (else data +0xC08), +0xE8 the mode (0 / 1 sweep every candidate), +0xEC
+    // the ray offset off her root and the flight [O: decomp]
+    struct Flight { vec3 v0{0}; float flatReach = 0, minFrames = 0; uint32_t mode = 0; vec3 offset{0}; };
+    Flight flight;
     struct Start { int type; float up, out; };
     std::vector<Start> starts;    // +0x8C (+0x88 count): per target type, offsets from the base point
     uint32_t classRecord = 0;     // +0x94's offset in the player data block (0: none)
@@ -906,6 +912,7 @@ private:
         float cornerZone = 0; // MarkupProfile::cornerZone (kinds 28..30)
         int moveZone = -1;    // the chart state's property 499 (0x1F3) markupSearch is asked under; < 0 not known
         float beamInset[2] = {0, 0}; // MarkupProfile::beamInset (strict sweeps of beams, type 14)
+        const MarkupProfile::Flight* flight = nullptr; // data-driven searches: 0x728320's flight check (markupSearch)
         MarkupProfile::Capsule poleH, poleV, hold; // MarkupProfile's class-record capsules (kind 10 on poles / holds)
         float ladderFaceDeg = 0;                   // MarkupProfile::ladderFaceDeg (kind 21 on ladders)
         // The profile's arc starts per target type (+0x8C) for the strict sweep's ladders / pillars (markupSearch).

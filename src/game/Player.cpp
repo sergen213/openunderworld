@@ -2042,7 +2042,13 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     break;
                 }
                 case 6: case 7: { // 0x725980: the angle between the two points as vectors (6: flattened) under v
-                    // degrees; either one nil passes
+                    // degrees; either one nil passes. A limit of 180 passes any pair short of exactly opposite (cos 180 =
+                    // -1, strict), so the screen-space sources 6 / 7 (the camera-projected point 0x48A3F0 / 0x5E7900, the
+                    // stick direction 0x49F5D0, unported) are not read for it [O-runtime: Wine cc_dice_up_hold t100,
+                    // profile 80's kind 6 on 7 / 6 limit 180: AL 1 on all 8 candidates, source 7 (0, 1, 0), source 6
+                    // (-122.0, -1804.4, 463.5)]
+                    const auto screen = [](int s) { return s == 6 || s == 7; };
+                    if ((screen(c.a1) || screen(c.a2)) && c.value >= 180.0f) { r = true; break; }
                     vec3 a = point(c.a1), b = point(c.a2);
                     if (c.kind == 6) a.z = 0, b.z = 0;
                     r = glm::length(a) < 1e-4f || glm::length(b) < 1e-4f ||
@@ -2226,6 +2232,65 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             });
             if (hit == record.end()) return;
             entry = int(hit - record.begin());
+            // 0x728C30 keeps a passing candidate only when 0x728320 clears it. Profile +0xE8 0 / 1 sweep every one (3:
+            // only the attached markup and segment, 4: the attached markup; others pass unswept) [O: asm 0x728320].
+            // 0x727F50 builds the flight from the arc's start to the root she would hold it with (FreeClimb_RootFromHold:
+            // a hold's point 0 less 158.025): start velocity the query's plus +0x14; with +0x2C bit 0x1000 and a static
+            // markup, 0x7236E0 solves a gravity flight (-5.72443) keeping that vertical speed, its time the later root of
+            // z(t) = dz, the earlier root instead when the flat reach |d.xy| is under +0xB8 / data +0xC04 (0x7238A0) and
+            // the speed allows it, at least +0xBC / data +0xC08 frames (then the vertical speed is re-solved for that
+            // time); the candidate time becomes the flight's [O: decomp; Wine cc_dice_right: hold 898's 13.48 -> 15.547,
+            // as this solves]. 0x727100 sweeps it with player line queries (flags 0x3E11E7) offset by +0xEC: her root to
+            // the start, then every 3 frames from frame 1 (4, 7, ...) to the end; a static hit farther than 31.605 from the
+            // flight's end drops the candidate [O: decomp; Wine cc_dice_right: hold 894's candidates dropped (AL 1), 898
+            // kept]. Ours for holds with a static markup and bit 0x400 clear; the others pass unswept [I: their roots,
+            // 0x723850 (moving) / 0x727070 (0x400) and the object hits (local_f4) are not ported]; ours' rays are
+            // playerRay [I: 0x3E11E7's class not decoded].
+            if (q.strict && q.flight && m.type >= 16 && m.type <= 20 && m.points.size() == 3 && m.velocity.empty() &&
+                !(q.profileFlags & 0x400)) {
+                const auto& f = *q.flight;
+                const bool sweep = f.mode == 0 || f.mode == 1 || (f.mode == 3 && int(li) == q.attachMarkup && si == q.attachSeg) ||
+                                   (f.mode == 4 && int(li) == q.attachMarkup);
+                if (sweep) {
+                    const vec3 root = m.points[0] - vec3(0, 0, 158.025f), d = root - from;
+                    vec3 v = q.v + f.v0;
+                    float T = t;
+                    if ((q.profileFlags & 0x1000) && t > 0) {
+                        const float a = -kQueryG * 0.5f;
+                        float vz = v.z;
+                        bool near = glm::length(vec2(d)) < f.flatReach;
+                        if (-d.z == 0.0f) { near = false; if (vz <= 0.1f) vz = 0.1f; }
+                        const float disc = vz * vz - 4.0f * a * -d.z;
+                        if (disc >= 0) {
+                            const float s = std::sqrt(disc);
+                            float tt = (!near || vz <= s ? -vz - s : s - vz) / (a + a);
+                            if (tt >= 0) {
+                                if (tt <= f.minFrames) tt = f.minFrames, vz = d.z / tt - tt * a;
+                                T = tt, v = vec3(d.x / tt, d.y / tt, vz);
+                            }
+                        }
+                    }
+                    T = std::max(T, f.minFrames);
+                    const auto at = [&](float k) { return from + v * k + vec3(0, 0, -kQueryG * 0.5f * k * k); };
+                    const vec3 end = at(T);
+                    vec3 p0 = s_.pos + f.offset, p1 = from + f.offset;
+                    float k = 0;
+                    bool blocked = false;
+                    while (!blocked) {
+                        if (k >= 1.0f) k = std::min(k + 3.0f, T), p1 = at(k) + f.offset;
+                        else k = 1.0f;
+                        const vec3 seg = p1 - p0;
+                        const float len = glm::length(seg);
+                        if (len > 1e-4f)
+                            if (const auto rh = col_.playerRay(p0, seg / len, len); rh && glm::distance(p0 + seg / len * rh->t, end) > 31.605f)
+                                blocked = true;
+                        p0 = p1;
+                        if (k >= T) break;
+                    }
+                    if (blocked) return;
+                    t = T;
+                }
+            }
             // The result record on the hit (0x7296C0 -> 0x729540 with every entry): each passing entry's bits of word 0
             // (candidate +0xA0, copied to player +0xAC0) [O: decomp]. An entry ours cannot evaluate (strict) leaves its
             // own bits uncertain, not the whole answer.
@@ -2334,9 +2399,12 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
             // When the arc's nearest point on the segment is an end (0x46AB60 fraction 0 / 1), or for a point record
             // (+0x74 = 1), 0x6F96C0 runs on the point: the same cubic in 3-D, with a root before the start clamped to 0
             // only when the profile's +0x2C has bit 0x10000 (byte +0x2E bit 0, its last argument), else dropped [O:
-            // decomp]. Ours gates the point records (holds) so; a polyline's inset end keeps the polyline's clamp [I:
-            // gating it lost profile 84's beam 1031 hit 48 in from its end (ch_beam_walk / _walk_back / _jump_along),
-            // which Wine makes: ours' end inset or the fraction test differs from 0x6FE040 / 0x46AB60 there].
+            // decomp]. Ours gates the point records (holds) and the polyline ends so [O-runtime: Wine cc_dice_right's
+            // spawn grab, profile 45 (no 0x10000): 0x6F9940 on hang ledge 934's segment 2 trimmed 79 at its last point
+            // returns no time, the arc 627 along a 599 segment, 30 under it and moving down]; a beam's inset end keeps
+            // the polyline's clamp [I: gating it lost profile 84's beam 1031 hit 48 in from its end (ch_beam_walk /
+            // _walk_back / _jump_along), which Wine makes: ours' beam insets or the fraction test differ from 0x6FE040 /
+            // 0x46AB60 there].
             const auto lineTimes = [&](vec3 r0, vec3 r1, vec3 r2, float out[2]) {
                 float in[2];
                 const int n = arcMinima(r0, r1, r2, q.frames, in);
@@ -2379,7 +2447,7 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                     if (lo <= hi && s >= lo && s <= hi) { check(int(li), si, ts[k], a + u * s, from); continue; }
                     const vec3 e = a + u * (lo > hi ? 0.5f * len : std::clamp(s, lo, hi)); // past an end: that end
                     float te[2];
-                    const int ne = lineTimes(from - e, q.v, a2, te);
+                    const int ne = beam ? lineTimes(from - e, q.v, a2, te) : pointTimes(from - e, q.v, a2, te);
                     for (int j = 0; j < ne; ++j) check(int(li), si, te[j], e, from);
                 }
             }
@@ -2389,11 +2457,21 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
     // could have been met: such a type admitted by the record (0x7232E0 and an entry's gate) and present in the level
     // makes the answer unknown [I: a hit of another type earlier than ours would also win; kept]. Judged on the whole
     // sweep, not on ledgeOnArc's per-moving-markup passes (`only` >= 0: one markup, which says nothing of the others).
-    // Type 0 carries MUD 0x80000000 (disabled: markupFlags), never a candidate.
+    // Type 0 carries MUD 0x80000000 (disabled: markupFlags), never a candidate. Only a markup within the sweep's own
+    // bounds (the prefilter the swept types pass, kSweepPad round the arc's horizontal extent) counts: its points, or for
+    // MUD 0x100000 (type 10) the MarkUp box's diagonal, centre + min to centre + max, the segment 0x70F300 sweeps for it
+    // (0x706770) [O: decomp; I: the bound]
     if (q.strict && only < 0 && best.markup < 0 && !record.empty()) {
         uint64_t present = 0;
-        for (const auto& m : col_.markup)
-            if (m.type < 64) present |= uint64_t(1) << m.type;
+        for (const auto& m : col_.markup) {
+            if (m.type >= 64 || m.points.empty()) continue;
+            vec2 lo = xy(m.points.front()), hi = lo;
+            for (const vec3& p : m.points) lo = glm::min(lo, xy(p)), hi = glm::max(hi, xy(p));
+            if (collision::mud(m) & 0x100000u) lo = xy(m.centre + m.boxMin), hi = xy(m.centre + m.boxMax);
+            if (glm::any(glm::greaterThan(glm::min(lo, hi) - kSweepPad, sHi)) || glm::any(glm::lessThan(glm::max(lo, hi) + kSweepPad, sLo)))
+                continue;
+            present |= uint64_t(1) << m.type;
+        }
         for (int type = 1; type < 64 && !q.unknown; ++type) {
             if (!(present >> type & 1)) continue;
             if (type == 1 || type == 2 || type == 13 || type == 14 || type == 9 || type == 15 || type == 4 || type == 5 || type == 6 ||
@@ -2980,7 +3058,7 @@ Player::MarkupFound Player::markupSearch(const MarkupProfile& p, bool mirrored, 
     q.frames = float(p.frames), q.minT = p.minT, q.cone = glm::radians(p.coneDeg), q.minDist = float(p.minDist);
     q.cornerZone = float(p.cornerZone), q.beamInset[0] = float(p.beamInset[0]), q.beamInset[1] = float(p.beamInset[1]);
     q.moveZone = moveZone;
-    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg;
+    q.poleH = p.poleH, q.poleV = p.poleV, q.hold = p.hold, q.ladderFaceDeg = p.ladderFaceDeg, q.flight = &p.flight;
     q.falling = p.flags & 0x80, q.classify = p.flags & 0x40, q.profileFlags = p.flags, q.lastDetached = lastDetached;
     q.gravity = (p.flags & 0x400) ? 0.001f : kQueryG; // 0x771830: -5.72443, or -0.001 with +0x2C bit 0x400
     q.attach = attached ? int(col_.markup[size_t(atM)].type) : 0;
@@ -4737,8 +4815,11 @@ void Player::drive(const DriveStep& d, float dt) {
         break;
     }
     case DriveStep::Motion::Air: {
-        // tru.exe integrator 0x5DB370 (airMove's), the capsule's contacts clip the velocity; a floor stops the descent
-        // (the chart's landing comes from its ground check, event 455).
+        // tru.exe integrator 0x5DB370 (airMove's); a floor stops the descent (the chart's landing comes from its ground
+        // check, event 455). A wall or overhang the capsule meets moves only her position: the flight's velocity keeps
+        // pushing into it, so she slides along a leaning face [O-runtime: Wine jh_stick_jump_rebound ticks 90..105, vx
+        // 1404.2 on every row while column B's overhang (normal -0.98, 0, -0.18) holds her and carries her 37 out as she
+        // falls; ours, clipping it, stopped dead and fell straight; I: ceilings taken alike]. Floor-like contacts clip it.
         vec3 dd = s_.vel * dt + vec3(0, 0, -0.5f * t_.gravity * dt * dt) + vec3(xy(world), 0);
         s_.vel.z -= t_.gravity * dt;
         vec3 p = s_.pos;
@@ -4755,7 +4836,7 @@ void Player::drive(const DriveStep& d, float dt) {
                 }
             const vec3 rest = dd * (1 - hit->t);
             dd = rest - n * std::min(0.0f, glm::dot(rest, n));
-            s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
+            if (n.z >= t_.slideMinNormalZ) s_.vel -= n * std::min(0.0f, glm::dot(s_.vel, n));
         }
         if (s_.vel.z <= 0)
             if (const auto g = col_.groundProbe(p + vec3(0, 0, t_.radius), t_.radius + kSkin + 2); g && p.z <= g->point.z + 1)

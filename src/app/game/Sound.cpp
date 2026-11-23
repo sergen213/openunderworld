@@ -247,7 +247,7 @@ void GameSound::jointSounds(const game::World& world) {
     const auto tick = (unsigned long long)world.ticks();
     std::set<std::pair<int32_t, int32_t>> live;
     for (const auto& s : world.jointSounds()) {
-        const audio::Plex* p = jointPlex(s.object, s.sound);
+        const audio::Plex* p = s.dtp ? bank_.find(s.dtp) : jointPlex(s.object, s.sound);
         if (!p) continue;
         const auto key = std::make_pair(s.uid, s.joint);
         live.insert(key);

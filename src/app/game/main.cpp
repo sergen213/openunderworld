@@ -2366,7 +2366,14 @@ int main(int argc, char** argv) {
             if (at2 != std::string::npos) {
                 glm::vec4 v(0);
                 if (std::sscanf(opt.chartState.c_str() + at2 + 1, "%f,%f,%f,%f", &v.x, &v.y, &v.z, &v.w) == 4) pose = v;
-                if (const auto at3 = opt.chartState.find('@', at2 + 1); at3 != std::string::npos) elapsed = std::stof(opt.chartState.substr(at3 + 1));
+                if (const auto at3 = opt.chartState.find('@', at2 + 1); at3 != std::string::npos) {
+                    elapsed = std::stof(opt.chartState.substr(at3 + 1));
+                    // a fifth field: the spawn hold's pose (Shadow::grabAt)
+                    if (const auto at4 = opt.chartState.find('@', at3 + 1); at4 != std::string::npos) {
+                        glm::vec4 g(0);
+                        if (std::sscanf(opt.chartState.c_str() + at4 + 1, "%f,%f,%f,%f", &g.x, &g.y, &g.z, &g.w) == 4) chartShadow->grabAt(g);
+                    }
+                }
             }
             chartShadow->enterAt(std::stoi(opt.chartState.substr(0, at)), at == std::string::npos ? 0 : std::stoull(opt.chartState.substr(at + 1, at2 == std::string::npos ? std::string::npos : at2 - at - 1)), pose, elapsed);
         }
