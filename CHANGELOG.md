@@ -6,6 +6,29 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.62.1] - 2026-11-23
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: hand-set settings in config.json were overwritten. The game rewrote the file on every start without the
+  traversal setting (resetting `"traversal": "chart"` to the default), and the launcher could write an old copy over
+  it. Both now change only the settings you changed and keep everything else, including keys they don't know.
+- Added (launcher): a Traversal choice on the Game tab (Default / Chart, experimental) and a Launch options box whose
+  arguments are passed to the game on Play; the full command is shown in the status line and the game log.
+- Fixed: Lara's arms twisted in mirrored animations (the left/right bone pairs now come from the model's own mirror
+  table, as in the original). Chart mode mirrors her run, so this showed there most.
+- Fixed (chart traversal): hurdles, steps and rubble dropped Lara far below the floor; hurdles now use the original's
+  hurdle target. Steps that need the higher hurdle animation are climbed again (the jump target was invisible).
+- Fixed: Lara's movement sounds (efforts, landings, falls) fired several times over, most of all in chart mode, and
+  one tick late. They now fire once per animation pass on the original's tick, use "no surface" in the air, and use
+  the worn outfit's own sound set and variants, matched against the original under Wine.
+- Changed (chart traversal): many more moves follow the original: ledge classes and searches, free-climb holds and
+  the climb-up clearance, beam walking and turning on the beam, wall jumps off chimney walls, and walls met head on.
+  79 of 135 gameplay self-tests pass in chart mode; see Known issues.
+- Known issues (chart traversal, off by default): 9 self-tests in later chapters regressed against 0.62.0 (interaction
+  and route timeouts in ch04, ch09, ch10, ch11, ch13, ch16, ch20 and the slope slide); being fixed for 0.62.2. The
+  default controller passes 133 of 135 (the same two as 0.62.0: gate-room roll timing, grapple-swing jump-off).
+
 ## [0.62.0] - 2026-11-22
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
