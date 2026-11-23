@@ -784,6 +784,9 @@ public:
         float pinTurn = -1; // < 0: set outright
         vec3 blendFrom{0}, blendTo{0};
         float yawFrom = 0, yawTo = 0, blend = 0;
+        // Added to the root motion this tick (Ground / free Hang): action 231's alignment (0x75F550 -> 0x43B870) moving
+        // her onto a hurdle's AnimTarget (0x73DD70) by a share of the gap per step [I: linear share, see ChartShadow].
+        vec3 align{0};
         State coarse = State::Idle; // what World's subsystems read as her state (camera, interactions, carriers)
     };
     void drive(const DriveStep& d, float dt);

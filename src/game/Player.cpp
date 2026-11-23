@@ -4394,6 +4394,7 @@ void Player::drive(const DriveStep& d, float dt) {
         else if (fade_.mode == 2) world += toWorld(glm::mix(fade_.vOutV, fade_.vInV, w) * step); // case 2
         else world += toWorld(vec3(0, -1, 0) * (glm::mix(fade_.vOut, fade_.vIn, w) * step)); // case 1
     }
+    world += d.align;
     if (d.steer) s_.yaw = approachAngle(s_.yaw, *d.steer, d.steerRate * dt);
     s_.state = d.coarse;
     switch (d.motion) {

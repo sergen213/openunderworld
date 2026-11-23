@@ -407,7 +407,10 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
         return g.markup == c.markup ? g : c;
     }
     MarkupSlot jumpTarget() const override {
-        if (driving) return {}; // +0xA64 is the chart's own (chartTarget, chartJumpTarget)
+        // +0xA64 is the chart's own in drive mode (chartTarget, chartJumpTarget): the conditions and actions that read it
+        // through jumpTarget() see it too (action 210's height blend read none, so the prologue slab's hurdle_low_onto
+        // played its 158-high sub-layer alone and she fell back off the 253-high slab)
+        if (driving) return chartTarget.target;
         const PlayerState& s = w->player().state();
         if (s.aimMarkup >= 0) return slot(s.aimMarkup, s.aimSeg, s.aimT);
         if (s.state == game::State::HangJump) return slot(s.ledge, s.ledgeSeg, s.ledgeT);
@@ -660,6 +663,9 @@ struct Shadow::Impl : ChartContext, PlayerDriver {
     int takeoffState = -1;      // the take-off state (action 504) the chart left last, and on which world tick
     uint64_t takeoffTick = ~0ull;
     struct Blend { bool on = false; int state = -1; glm::vec3 from{0}, to{0}; float yawFrom = 0, yawTo = 0, frames = 1, t = 0; } blend;
+    // Action 231's alignment onto a hurdle's AnimTarget (0x73DD70): x/y (and the yaw unless prop 285) approach `to` by
+    // the share of the gap each step leaves on top of the clip's root motion, over `frames` (prop 283).
+    struct Align { bool on = false; int state = -1; glm::vec3 to{0}; float yawTo = 0; bool yaw = false; float left = 0; } align;
     ChartRuntime* rt = nullptr;   // Lara's chart (agent 0) and the upper body's (agent 1), Shadow's
     ChartRuntime* up = nullptr;
     const Charts* ch = nullptr;
@@ -1135,7 +1141,7 @@ void Shadow::Impl::seedAttach() {
 // The chart (re)starts with her where she is (0x787E00 from the root, which settles in the idle by itself).
 void Shadow::Impl::restartChart() {
     started = false, parked = false, launched = false;
-    blend = {};
+    blend = {}, align = {};
     chartAttached = MarkupSlot{}, chartTarget = {}, targetPoint = glm::vec3(0), handedTarget = -1;
     collisionMask = 0x48;
 }
@@ -1326,22 +1332,54 @@ void Shadow::Impl::stateEntered(int from, int to) {
             // beam hang the ledge pose
             const Request* rq = rt->pattern();
             const auto fam = pm->familyPose(a.markup, s.pos, s.yaw, rq ? std::string_view(rq->clip) : std::string_view{});
-            auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
-            if (!fam && (a.flags & 0x10000)) {
-                // a beam (markup flag 0x10000): the pose its attach update holds (0x708830 +0x46 at the grip, offset 0 on
-                // the beam states) facing along it, +0xCDC = 0 / pi by her heading against the segment (0x72A5F0); Wine
-                // h759 S878: yaw -165.6 -> -180 over the mount [O-runtime; I: a linear blend over the mount clip]
-                const glm::vec2 e(p[size_t(seg) + 1] - p[size_t(seg)]);
-                const float len = glm::length(e);
-                root = glm::mix(p[size_t(seg)], p[size_t(seg) + 1], len > 1e-4f ? t / len : 0.0f);
-                yaw = std::atan2(e.y, e.x);
-                if (glm::dot(e, glm::vec2(std::cos(s.yaw), std::sin(s.yaw))) < 0) yaw += 3.14159265f;
+            // Action 230's target class (0x772CA0): prop 420 (type 0x23), else prop 410. 0x273 (627, the hurdle
+            // attaches S955..S960, S997) goes to 0x73DD70, not to the ledge hang root 0x74ED30 (0x262 = 610): target
+            // x/y = the jump target point + prop 281 x the markup's direction, z = her own z + prop 282, yaw = the
+            // direction's heading reversed + prop 284 (degrees) [O decomp]. It only moves her where the state runs
+            // action 231 (0x75F550: over prop 283 frames, prop 285 = position only); S958 (no 231) and S974's root warp
+            // (236) keep the root motion (Wine cc_step941_run_d0: S974 rises 3011 -> 3172 by hurdle_low_onto alone) [O].
+            // The hang pose here put her 498 under the edge in one tick (the prologue's slab and steps).
+            const Property* cls = rt->property(420);
+            if (!cls || cls->type != 0x23) cls = rt->property(410);
+            if (!fam && cls && cls->type == 0x23 && cls->raw == 0x273) {
+                // [I] the direction (0x6FE7E0 at the point): the segment normal on her side; tru.exe's points to the
+                // hurdle's low side, which the down states (S997) turn by prop 284 = 180, so both face the line from
+                // her side
+                const glm::vec2 e = glm::vec2(p[size_t(seg) + 1] - p[size_t(seg)]);
+                glm::vec2 n = glm::length(e) > 1e-4f ? glm::vec2(-e.y, e.x) / glm::length(e) : glm::vec2(0);
+                n *= hangSide(a.markup, seg, a.point);
+                const float p284 = rt->propFloat(284).value_or(0.0f);
+                const glm::vec2 dir = std::abs(p284 - 180.0f) < 1.0f ? -n : n;
+                const glm::vec2 xy = glm::vec2(a.point) + rt->propFloat(281).value_or(0.0f) * dir;
+                const glm::vec3 tgt(xy, s.pos.z + rt->propFloat(282).value_or(0.0f));
+                const float yawTo = std::atan2(-dir.y, -dir.x) + glm::radians(p284);
+                align = {};
+                if (rt->chainHasAction(to, 231)) {
+                    const Property* p283 = rt->property(283);
+                    float frames = rt->remainingFrames();
+                    if (p283 && !(p283->type == 0x23 && p283->raw == 225)) frames = float(rt->propInt(283).value_or(0));
+                    if (frames >= 1) align = {true, to, tgt, yawTo, !rt->propBool(285).value_or(false), frames};
+                }
+                std::fprintf(stderr, "ou-game: chart attach S%d markup %d hurdle target %.1f %.1f %.1f yaw %.1f align %.0f\n", to, a.markup,
+                             xy.x, xy.y, tgt.z, glm::degrees(yawTo), align.on ? align.left : 0.0f);
+            } else {
+                auto [root, yaw] = fam ? *fam : pm->hangPose(a.markup, seg, t, hangSide(a.markup, seg, a.point));
+                if (!fam && (a.flags & 0x10000)) {
+                    // a beam (markup flag 0x10000): the pose its attach update holds (0x708830 +0x46 at the grip, offset 0 on
+                    // the beam states) facing along it, +0xCDC = 0 / pi by her heading against the segment (0x72A5F0); Wine
+                    // h759 S878: yaw -165.6 -> -180 over the mount [O-runtime; I: a linear blend over the mount clip]
+                    const glm::vec2 e(p[size_t(seg) + 1] - p[size_t(seg)]);
+                    const float len = glm::length(e);
+                    root = glm::mix(p[size_t(seg)], p[size_t(seg) + 1], len > 1e-4f ? t / len : 0.0f);
+                    yaw = std::atan2(e.y, e.x);
+                    if (glm::dot(e, glm::vec2(std::cos(s.yaw), std::sin(s.yaw))) < 0) yaw += 3.14159265f;
+                }
+                blend = {true, to, s.pos, root, s.yaw, yaw, std::max(1.0f, rt->remainingFrames()), 0};
+                std::fprintf(stderr, "ou-game: chart attach S%d markup %d type %d clip %s from %.1f %.1f %.1f to %.1f %.1f %.1f over %.0f\n",
+                             to, a.markup, int(w->collision().markup[size_t(a.markup)].type), rq ? rq->clip.c_str() : "-",
+                             s.pos.x, s.pos.y, s.pos.z, root.x, root.y, root.z, rt->remainingFrames());
+                pm->setVelocity(glm::vec3(0));
             }
-            blend = {true, to, s.pos, root, s.yaw, yaw, std::max(1.0f, rt->remainingFrames()), 0};
-            std::fprintf(stderr, "ou-game: chart attach S%d markup %d type %d clip %s from %.1f %.1f %.1f to %.1f %.1f %.1f over %.0f\n",
-                         to, a.markup, int(w->collision().markup[size_t(a.markup)].type), rq ? rq->clip.c_str() : "-",
-                         s.pos.x, s.pos.y, s.pos.z, root.x, root.y, root.z, rt->remainingFrames());
-            pm->setVelocity(glm::vec3(0));
         }
     }
     attachedBefore = now;
@@ -1533,6 +1571,17 @@ bool Shadow::Impl::driveTick(World& world, Player& player, glm::vec2 move, const
     if (d.motion == M::Ground) {
         const std::string lc = lower(d.clip.empty() ? player.state().clip : d.clip);
         if (lc.starts_with("slope") && lc.find("jump") == std::string::npos) d.motion = M::Slide;
+    }
+    // Action 231's alignment onto the hurdle target (0x43B870 moves a step / (end - t) share of the gap, on top of the
+    // clip's root motion) [O decomp; I: the gap taken from her root, not less the clip's remaining root motion]
+    if (align.on && (align.state != st || !(d.motion == M::Ground || (d.motion == M::Hang && !d.snap && !d.pin)))) align.on = false;
+    if (align.on) {
+        const float share = std::min(1.0f, timeMult / align.left);
+        const PlayerState& s = player.state();
+        d.align = glm::vec3((glm::vec2(align.to) - glm::vec2(s.pos)) * share, 0.0f);
+        if (align.yaw) pm->setYaw(s.yaw + std::remainder(align.yawTo - s.yaw, 6.2831853f) * share);
+        align.left -= timeMult;
+        if (align.left <= 0) align.on = false;
     }
     const float z0 = player.state().pos.z;
     d.coarse = coarse(d.motion, d.clip);
