@@ -2187,39 +2187,62 @@ Player::JumpTarget Player::ledgeOnArcIn(const JumpQuery& q, int only) const {
                 for (int k = 0; k < q.typeStarts; ++k)
                     if (q.typeStart[size_t(k)].first == m.type) starts[0] = q.typeStart[size_t(k)].second;
             }
-            // A data-driven (strict) search also meets a markup whose nearest approach is the arc's start (the distance
-            // only grows from t = 0: no minimum inside the range): beam 1031 level with hang ledge 1009 at l3_chapel, met
-            // by profile 84's straight up probe from the attach point (Wine ch_beam_walk: S439 -> S882 on JumpTargetClass
-            // 625 at the jump press) [I: 0x6F9940's polyline times not decoded; gating it on bit 0x10000 as the point
-            // test lost that beam]. The point test 0x6F96C0 (holds) clamps a closest approach before the start to t = 0
-            // only when the profile's +0x2C has bit 0x10000 (byte +0x2E bit 0, its last argument) [O: decomp].
-            const auto minima = [&](vec3 r0, vec3 r1, vec3 r2, float out[2], bool clamp) {
-                const int n = arcMinima(r0, r1, r2, q.frames, out);
-                if (n == 0 && clamp && glm::dot(r0, r1) >= 0) out[0] = 0, out[1] = 0;
-                return n == 0 && clamp && glm::dot(r0, r1) >= 0 ? 1 : n;
+            // Candidate times (strict searches) [O: decomp 0x6F9940 / 0x6F96C0]. A polyline segment (0x6F9940): the real
+            // roots of the cubic r . r' = 0 for the arc's offset r from the (end-inset) segment line, perpendicular to it
+            // (0x6EBBE0). A root before the start is clamped to t = 0 unconditionally, past the last frame to it. A root
+            // counts when the distance has a minimum there (r'.r' + r.r'' > 0 at the clamped time), at most two. So the
+            // start counts whenever the distance grows from it (r . r' >= 0 at t = 0 has a root at or before it) with
+            // r'.r' + r.r'' > 0 there: beam 1031 level with hang ledge 1009 at l3_chapel, met by profile 84's straight-up
+            // probe from the attach point (Wine ch_beam_walk: S439 -> S882 on JumpTargetClass 625 at the jump press).
+            // When the arc's nearest point on the segment is an end (0x46AB60 fraction 0 / 1), or for a point record
+            // (+0x74 = 1), 0x6F96C0 runs on the point: the same cubic in 3-D, with a root before the start clamped to 0
+            // only when the profile's +0x2C has bit 0x10000 (byte +0x2E bit 0, its last argument), else dropped [O:
+            // decomp]. Ours gates the point records (holds) so; a polyline's inset end keeps the polyline's clamp [I:
+            // gating it lost profile 84's beam 1031 hit 48 in from its end (ch_beam_walk / _walk_back / _jump_along),
+            // which Wine makes: ours' end inset or the fraction test differs from 0x6FE040 / 0x46AB60 there].
+            const auto lineTimes = [&](vec3 r0, vec3 r1, vec3 r2, float out[2]) {
+                float in[2];
+                const int n = arcMinima(r0, r1, r2, q.frames, in);
+                if (!q.strict) return std::copy_n(in, n, out), n;
+                int k = 0;
+                if (glm::dot(r0, r1) >= 0 && glm::dot(r1, r1) + 2 * glm::dot(r0, r2) > 0) out[k++] = 0;
+                for (int i = 0; i < n && k < 2; ++i)
+                    if (k == 0 || in[i] != out[0]) out[k++] = in[i];
+                return k;
             };
             const bool pointClamp = q.strict && (q.profileFlags & 0x10000u);
+            const auto pointTimes = [&](vec3 r0, vec3 r1, vec3 r2, float out[2]) {
+                const int n = arcMinima(r0, r1, r2, q.frames, out);
+                if (n == 0 && pointClamp && glm::dot(r0, r1) >= 0 && glm::dot(r1, r1) + 2 * glm::dot(r0, r2) > 0) {
+                    out[0] = 0;
+                    return 1;
+                }
+                return n;
+            };
             for (int fi = 0; fi < nStarts; ++fi) {
                 const vec3 from = starts[fi];
                 // A record whose +0x74 is 1 (the free-climb hold record, Lara data +0x5B8; lara.drm: the only one) meets
                 // the arc at the candidate segment's two end points (0x70F300: 0x5C3AA0 of the segment, 0x6F96C0 on each):
                 // the arc's 3-D closest approaches to the point, which is the hit [O: decomp]
+                // the class record's segment window +0x78 / +0x7C (0x70F300 skips a candidate segment outside it): the
+                // hold record's +0x78 is 1, so only segment 1 (points 1 and 2) [O: decomp + lara.drm]
+                if (hold && q.strict && si < 1) continue;
                 if (hold && q.strict) {
                     for (const vec3 e : {a, b}) {
                         float te[2];
-                        const int ne = minima(from - e, q.v, a2, te, pointClamp);
+                        const int ne = pointTimes(from - e, q.v, a2, te);
                         for (int j = 0; j < ne; ++j) check(int(li), si, te[j], e, from);
                     }
                     continue;
                 }
                 float ts[2];
-                const int nt = minima(perp(from - a), perp(q.v), perp(a2), ts, q.strict);
+                const int nt = lineTimes(perp(from - a), perp(q.v), perp(a2), ts);
                 for (int k = 0; k < nt; ++k) {
                     const float s = glm::dot(arcAt(from, ts[k]) - a, u);
                     if (lo <= hi && s >= lo && s <= hi) { check(int(li), si, ts[k], a + u * s, from); continue; }
                     const vec3 e = a + u * (lo > hi ? 0.5f * len : std::clamp(s, lo, hi)); // past an end: that end
                     float te[2];
-                    const int ne = minima(from - e, q.v, a2, te, q.strict);
+                    const int ne = lineTimes(from - e, q.v, a2, te);
                     for (int j = 0; j < ne; ++j) check(int(li), si, te[j], e, from);
                 }
             }
