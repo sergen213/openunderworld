@@ -114,6 +114,7 @@ struct Options {
     ou::config::GameConfig game;         // --config "game": in-game menu settings
     std::filesystem::path configPath;    // --config FILE: the menus write their settings back to it
     ou::config::InputConfig configInput; // its controls as last read / written
+    ou::config::Config configWritten;    // the whole file as last read / written (config::saveChanges' base)
     ou::config::GraphicsSettings gfx;    // resolved
 };
 
@@ -173,7 +174,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
             const auto c = ou::config::load(argv[i + 1]);
             o.gameDir = c.gameDir, o.renderer = c.renderer, o.width = c.width, o.height = c.height;
             o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen, o.graphics = c.graphics;
-            o.game = c.game, o.configPath = argv[i + 1], o.input = o.configInput = c.controls;
+            o.game = c.game, o.configPath = argv[i + 1], o.input = o.configInput = c.controls, o.configWritten = c;
             o.controls = ou::game::Controls(c.controls);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "--config: %s\n", e.what());
@@ -2735,25 +2736,30 @@ int main(int argc, char** argv) {
         applyControls();
         if (menus.brightness != menuBrightness) menuBrightness = menus.brightness, opt.gfx.brightness = 0.5f * std::exp2(float(menus.brightness) / 5);
         if (menus.graphics != appliedGraphics) applyGraphics();
-        const ou::config::GameConfig g{menus.sfxVolume, menus.musicVolume, menus.cinematicVolume, menus.subtitles,
-                                       menus.reticles, menus.helperButtons, menus.trainingText,
-                                       std::string(ou::locale::languageCode(language)), userTailor};
+        // Only the menu fields: the rest of GameConfig (traversal: no menu, --traversal is per run) stays as read.
+        ou::config::GameConfig g = opt.game;
+        g.sfxVolume = menus.sfxVolume, g.musicVolume = menus.musicVolume, g.cinematicVolume = menus.cinematicVolume;
+        g.subtitles = menus.subtitles, g.reticles = menus.reticles, g.helperButtons = menus.helperButtons, g.trainingText = menus.trainingText;
+        g.language = std::string(ou::locale::languageCode(language)), g.tailoring = userTailor;
         world->setHints(menus.trainingText, menus.helperButtons); // the scripts read both (uiexperienceadjustmentmenu 11 / 12)
         if (opt.configPath.empty() ||
             (g == opt.game && opt.input == opt.configInput && opt.gfx.brightness == opt.graphics.brightness && !graphicsDirty))
             return;
-        try { // re-read: the launcher may have changed other keys meanwhile
-            auto c = ou::config::load(opt.configPath);
-            c.game = opt.game = g;
-            c.controls = opt.configInput = opt.input;
+        try { // only what the menus changed: keys the launcher, a hand edit or --traversal touched stay as on disk
+            auto after = opt.configWritten;
+            const std::string traversal = after.game.traversal;
+            after.game = opt.game = g;
+            after.game.traversal = traversal;
+            after.controls = opt.configInput = opt.input;
             if (graphicsDirty) {
-                c.graphics = opt.graphics;
-                c.renderer = opt.renderer, c.width = opt.width, c.height = opt.height, c.fullscreen = opt.fullscreen;
-                c.fov = opt.fov, c.vsync = opt.vsync;
+                after.graphics = opt.graphics;
+                after.renderer = opt.renderer, after.width = opt.width, after.height = opt.height, after.fullscreen = opt.fullscreen;
+                after.fov = opt.fov, after.vsync = opt.vsync;
                 graphicsDirty = false;
             }
-            c.graphics.brightness = opt.graphics.brightness = opt.gfx.brightness;
-            ou::config::save(opt.configPath, c);
+            after.graphics.brightness = opt.graphics.brightness = opt.gfx.brightness;
+            ou::config::saveChanges(opt.configPath, opt.configWritten, after);
+            opt.configWritten = after;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: saving settings to %s: %s\n", opt.configPath.string().c_str(), e.what());
             opt.configPath.clear();
