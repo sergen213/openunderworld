@@ -277,6 +277,69 @@ TEST_F(LauncherGui, GraphicsSettingsSaveAndAdoptGameChanges) {
     EXPECT_EQ(field<QComboBox>("Weather")->currentData().toString(), "rain");
 }
 
+// A hand edit made while the launcher is open (game.traversal "chart", a key the launcher does not know) survives its
+// Save, Play and close; the Traversal choice round-trips; Launch options reach ou-game only, as separate arguments.
+TEST_F(LauncherGui, HandEditsSurviveTraversalAndLaunchOptions) {
+    ou::config::save(paths.config, ou::config::Config{});
+    open(0);
+    EXPECT_EQ(field<QComboBox>("Traversal")->currentData().toString(), "legacy");
+    auto j = nlohmann::json::parse(readText(paths.config));
+    j["game"]["traversal"] = "chart";
+    j["graphics"]["weather"] = "snow";
+    j["someone_elses"] = "kept";
+    writeText(paths.config, j.dump(2));
+    field<QDoubleSpinBox>("Field of view")->setValue(80);
+    button("Save settings")->click();
+    EXPECT_TRUE(status().startsWith("Saved ")) << s(status());
+    auto c = ou::config::load(paths.config);
+    EXPECT_EQ(c.game.traversal, "chart");
+    EXPECT_EQ(c.graphics.weather, "snow");
+    EXPECT_FLOAT_EQ(c.fov, 80.f);
+    EXPECT_EQ(nlohmann::json::parse(readText(paths.config)).value("someone_elses", ""), "kept");
+    EXPECT_EQ(field<QComboBox>("Traversal")->currentData().toString(), "chart"); // the widgets adopt the file
+    EXPECT_EQ(field<QComboBox>("Weather")->currentData().toString(), "snow");
+    pick(field<QComboBox>("Traversal"), "legacy");
+    button("Save settings")->click();
+    EXPECT_EQ(ou::config::load(paths.config).game.traversal, "legacy");
+    pick(field<QComboBox>("Traversal"), "chart");
+    button("Save settings")->click();
+    EXPECT_EQ(ou::config::load(paths.config).game.traversal, "chart");
+    // A malformed hand edit: Save refuses and leaves the file as it is.
+    const std::string broken = R"({"game": {"traversal": "chart",}})";
+    writeText(paths.config, broken);
+    button("Save settings")->click();
+    EXPECT_TRUE(status().startsWith("Not saved (config.json left as it is): ")) << s(status());
+    EXPECT_EQ(readText(paths.config), broken);
+    writeText(paths.config, j.dump(2));
+    // Launch options: appended to ou-game's command line, split like a shell; the Viewer does not get them.
+    writeText(paths.installRoot / "current/bin/ou-game", fakeTool(), true);
+    writeText(paths.installRoot / "current/bin/ou-viewer", fakeTool(), true);
+    gameDir()->setText(q(tmp / "game"));
+    const QString opts = R"(--no-movies --spawn '1, 2,3' --note "a \"b\"")";
+    field<QLineEdit>("Launch options")->setText(opts);
+    button("Play")->click();
+    const std::string game = (paths.installRoot / "current/bin/ou-game").string();
+    EXPECT_EQ(launches(), game + " --config " + paths.config.string() + " --no-movies --spawn 1, 2,3 --note a \"b\"\n");
+    EXPECT_TRUE(status().contains(q(game + " --config " + paths.config.string() + " --no-movies --spawn '1, 2,3' --note 'a \"b\"'"))) << s(status());
+    EXPECT_EQ(q(ou::config::load(paths.config).gameArgs), opts);
+    EXPECT_EQ(ou::config::load(paths.config).game.traversal, "chart");
+    // An unclosed quote: nothing saved, nothing started.
+    fs::remove(tmp / "launches.txt");
+    field<QLineEdit>("Launch options")->setText("--note 'oops");
+    button("Play")->click();
+    EXPECT_EQ(status(), "Not saved: Launch options: unclosed ' quote");
+    EXPECT_EQ(q(ou::config::load(paths.config).gameArgs), opts);
+    EXPECT_FALSE(fs::exists(tmp / "launches.txt"));
+    field<QLineEdit>("Launch options")->setText(opts);
+    fs::remove(tmp / "launches.txt");
+    button("Viewer")->click();
+    EXPECT_EQ(launches(), (paths.installRoot / "current/bin/ou-viewer").string() + " --config " + paths.config.string() + "\n");
+    // Closing writes nothing.
+    const std::string before = readText(paths.config);
+    w.reset();
+    EXPECT_EQ(readText(paths.config), before);
+}
+
 TEST_F(LauncherGui, ControlsCaptureClearResetAndValidate) {
     open(2);
     auto* t = named<QTableWidget>("bindings");

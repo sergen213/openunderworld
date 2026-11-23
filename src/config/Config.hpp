@@ -177,6 +177,9 @@ struct Config {
     GraphicsConfig graphics;
     InputConfig controls;
     GameConfig game;
+    // Launcher "Launch options" (launcher.game_args): extra ou-game arguments, split like a shell command line
+    // (quotes group words) and appended after --config when the launcher starts the game.
+    std::string gameArgs;
 };
 
 fs::path configHome(); // $XDG_CONFIG_HOME or ~/.config
@@ -186,7 +189,13 @@ fs::path defaultConfigPath(); // configHome()/openunderworld/config.json
 
 // Missing file -> defaults. Throws std::runtime_error on unreadable/malformed JSON or bad values.
 Config load(const fs::path& path);
-// Atomic (write temp + rename); creates parent directories.
+// Atomic (write temp + rename); creates parent directories. Writes every field and drops keys Config does not know:
+// tools that update an existing file use saveChanges.
 void save(const fs::path& path, const Config& c);
+// Writes only what `edited` changed relative to `base` (the caller's last view of the file) into the file as it is on
+// disk now; every other key, including ones no Config field knows and edits made by hand or by another program since,
+// is kept. Returns the resulting file's settings. Throws std::runtime_error, writing nothing, when the file on disk is
+// unreadable or malformed or when the result would not load.
+Config saveChanges(const fs::path& path, const Config& base, const Config& edited);
 
 } // namespace ou::config

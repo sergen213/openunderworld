@@ -221,17 +221,12 @@ bool oldDefault(const std::string& action, const std::vector<std::string>& input
     if (action == "switch" && inputs == std::vector<std::string>{"Z", "Pad rightstick"}) return true;
     return (o != kOldDefaults.end() && o->second == inputs) || (action == "pda" && inputs == std::vector<std::string>{"1"});
 }
-} // namespace
 
-Config load(const fs::path& path) {
+// The JSON document's settings; `where` prefixes the errors. Throws std::runtime_error on a bad value.
+Config fromJson(const nlohmann::json& j, const fs::path& where) {
     Config c;
-    std::ifstream f(path);
-    if (!f) {
-        if (!fs::exists(path)) return c;
-        throw std::runtime_error("cannot read " + path.string());
-    }
     try {
-        auto j = nlohmann::json::parse(f);
+        if (!j.is_object()) throw std::runtime_error("not a JSON object");
         c.gameDir = j.value("game_dir", c.gameDir);
         c.drm = j.value("drm", c.drm);
         c.renderer = j.value("renderer", c.renderer);
@@ -310,23 +305,25 @@ Config load(const fs::path& path) {
             c.game.traversal = g->value("traversal", c.game.traversal);
             if (c.game.traversal != "legacy" && c.game.traversal != "chart") throw std::runtime_error("game.traversal must be legacy or chart");
         }
+        if (auto l = j.find("launcher"); l != j.end()) c.gameArgs = l->value("game_args", c.gameArgs);
     } catch (const std::exception& e) {
-        throw std::runtime_error(path.string() + ": " + e.what());
+        throw std::runtime_error(where.string() + ": " + e.what());
     }
+    const std::string path = where.string();
     if (c.renderer != "auto" && c.renderer != "opengl" && c.renderer != "vulkan")
-        throw std::runtime_error(path.string() + ": renderer must be auto, opengl or vulkan");
-    if (c.width <= 0 || c.height <= 0 || c.fov <= 1.0f || c.fov >= 179.0f) throw std::runtime_error(path.string() + ": bad width/height/fov");
+        throw std::runtime_error(path + ": renderer must be auto, opengl or vulkan");
+    if (c.width <= 0 || c.height <= 0 || c.fov <= 1.0f || c.fov >= 179.0f) throw std::runtime_error(path + ": bad width/height/fov");
     if (!(c.controls.mouseSensitivity >= 0.1f && c.controls.mouseSensitivity <= 10.0f))
-        throw std::runtime_error(path.string() + ": controls.mouse_sensitivity must be 0.1..10");
+        throw std::runtime_error(path + ": controls.mouse_sensitivity must be 0.1..10");
     try {
         resolve(c.graphics);
     } catch (const std::exception& e) {
-        throw std::runtime_error(path.string() + ": " + e.what());
+        throw std::runtime_error(path + ": " + e.what());
     }
     return c;
 }
 
-void save(const fs::path& path, const Config& c) {
+nlohmann::json toJson(const Config& c) {
     nlohmann::json j = {
         {"game_dir", c.gameDir}, {"drm", c.drm}, {"renderer", c.renderer}, {"width", c.width},
         {"height", c.height}, {"fullscreen", c.fullscreen}, {"fov", c.fov}, {"vsync", c.vsync},
@@ -358,6 +355,11 @@ void save(const fs::path& path, const Config& c) {
                  {"subtitles", c.game.subtitles}, {"reticles", c.game.reticles}, {"helper_buttons", c.game.helperButtons},
                  {"training_text", c.game.trainingText}, {"language", c.game.language}, {"tailoring", c.game.tailoring},
                  {"traversal", c.game.traversal}};
+    j["launcher"] = {{"game_args", c.gameArgs}};
+    return j;
+}
+
+void writeAtomic(const fs::path& path, const nlohmann::json& j) {
     if (path.has_parent_path()) fs::create_directories(path.parent_path());
     fs::path tmp = path;
     tmp += ".tmp";
@@ -367,6 +369,58 @@ void save(const fs::path& path, const Config& c) {
         if (!f.flush()) throw std::runtime_error("cannot write " + tmp.string());
     }
     fs::rename(tmp, path);
+}
+
+// Copies onto `disk` every leaf where `edited` differs from `base` (objects recurse; arrays and scalars are leaves) and
+// erases the keys `edited` dropped. Everything else in `disk`, including keys no Config field knows, stays as it is.
+void applyChanges(nlohmann::json& disk, const nlohmann::json& base, const nlohmann::json& edited) {
+    static const nlohmann::json kEmpty = nlohmann::json::object();
+    for (const auto& [key, value] : edited.items()) {
+        const auto b = base.find(key);
+        if (b != base.end() && *b == value) continue;
+        if (value.is_object()) {
+            nlohmann::json& d = disk[key];
+            if (!d.is_object()) d = nlohmann::json::object();
+            applyChanges(d, b != base.end() && b->is_object() ? *b : kEmpty, value);
+        } else {
+            disk[key] = value;
+        }
+    }
+    for (const auto& [key, value] : base.items())
+        if (!edited.contains(key)) disk.erase(key);
+}
+
+// The file as JSON: missing -> an empty object. Throws on unreadable or malformed files.
+nlohmann::json readJson(const fs::path& path) {
+    std::ifstream f(path);
+    if (!f) {
+        if (!fs::exists(path)) return nlohmann::json::object();
+        throw std::runtime_error("cannot read " + path.string());
+    }
+    try {
+        return nlohmann::json::parse(f);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(path.string() + ": " + e.what());
+    }
+}
+} // namespace
+
+Config load(const fs::path& path) { return fromJson(readJson(path), path); }
+
+void save(const fs::path& path, const Config& c) { writeAtomic(path, toJson(c)); }
+
+Config saveChanges(const fs::path& path, const Config& base, const Config& edited) {
+    if (!fs::exists(path)) { // nothing to keep: every key, so the file lists them for hand edits
+        Config merged = fromJson(toJson(edited), path);
+        save(path, edited);
+        return merged;
+    }
+    nlohmann::json disk = readJson(path);
+    if (!disk.is_object()) throw std::runtime_error(path.string() + ": not a JSON object");
+    applyChanges(disk, toJson(base), toJson(edited));
+    Config merged = fromJson(disk, path); // nothing is written when the result would not load
+    writeAtomic(path, disk);
+    return merged;
 }
 
 } // namespace ou::config
