@@ -560,15 +560,24 @@ in the air, where ours aims only at take-off:
   - Records with +0x74 = 1 (only the free-climb hold record, Lara data +0x5B8) meet the arc at the candidate
     segment's two end points (0x5C3AA0, then 0x6F96C0 on each point: the arc's 3-D closest approaches). +0x74 = 2
     (record +0x5B0) is the box test (0x6EBEF0 / 0x6FAEB0); 0 means polylines (0x6F9940).
-  - The point test 0x6F96C0 clamps a closest approach before the arc's start to t = 0 only when profile +0x2C has
-    bit 0x10000. Ours' polyline sweep keeps its [I] start rule (0x6F9940's times are not decoded): gating it the same
-    way lost the beam 1031 hit of profile 84 (ch_beam_* regressed).
+  - Candidate times, 0x6F9940 (polyline segment, after 0x6FE040's end insets): the real roots of the cubic
+    r . r' = 0, with r the arc's offset perpendicular to the segment line (0x6EBBE0). A root before the start is
+    clamped to t = 0 unconditionally, one past the last frame to it. A root counts when r'.r' + r.r'' > 0 at the
+    clamped time, at most two. So the start counts alongside any later minimum, whenever r . r' >= 0 and
+    r'.r' + r.r'' > 0 there. When the arc point's nearest segment point is an end (0x46AB60 fraction 0 / 1), the
+    point test 0x6F96C0 runs on that end. 0x6F96C0 clamps a root before the start only with profile +0x2C bit
+    0x10000, else drops it. A class record's +0x78 / +0x7C is the segment window: the hold record's +0x78 = 1 leaves
+    segment 1 only. Ported: the polyline rule, the point gate for holds, and the window. [I] At a polyline's inset end,
+    ours keeps the polyline clamp: the 0x10000 gate there lost profile 84's beam 1031 hit 48 in from its end
+    (ch_beam_walk / _walk_back / _jump_along), which Wine makes. So ours' inset or fraction test still differs from
+    0x6FE040 / 0x46AB60 there.
   - Free-climb grip, ported (Ledge.cpp holdGrip / holdAttachSetter, action 230 classes 618 / 619 = 0x752870): +0xCA0
     is the higher of points 1 / 2, and +0xCE0 / +0xCE8 is the root offset the pin (0x6FDC90) applies, which keeps her
     root 158.025 under point 0. In Wine cc_dice_up_hold ours' S571 root is now within 0.02 in z and 5 in xy.
-  - Open (cc_dice_*): Wine's falling grab (profile 45) lands S600 on hold 898's point 0. Ours meets hang ledge 934 at
-    its own start first, through that polyline start rule. So cc_dice_right / up_jump seed hold 894, the nearest one;
-    when that rule is gated, profile 45 finds 898. In cc_dice_up_hold T781 (S569 -> S578) fails on 0x20
+  - Open (cc_dice_*): Wine's falling grab (profile 45) lands S600 on hold 898. Under tru's own polyline rule profile
+    45 also meets hang ledge 934 at its start (v = 0: r . r' = 0, r'.r' + r.r'' = r0 . a > 0), so the difference lies
+    in the class tests or the start (ours passes 934 at entry 3). cc_dice_right / up_jump seed hold 894, the nearest
+    one. In cc_dice_up_hold T781 (S569 -> S578) fails on 0x20
     VerticalClearance: the 711-unit ray up from the root bone (moved a third of the way toward +0xCA0) hits geometry
     295 above, where Wine passes.
 
